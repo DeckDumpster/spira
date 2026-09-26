@@ -145,7 +145,7 @@ all_beads, all_events = read_counts(sys.argv[1])
 wm_beads,  wm_events  = read_counts(sys.argv[2])
 all_classes = set(all_beads) | set(wm_beads)
 
-ranked = sorted(all_classes, key=lambda c: (-wm_beads.get(c, 0), -wm_events.get(c, 0)))
+ranked = sorted(all_classes, key=lambda c: (-wm_beads.get(c, 0), -wm_events.get(c, 0), c))
 for cls in ranked:
     b_since = wm_beads.get(cls, 0)
     e_since = wm_events.get(cls, 0)
@@ -327,11 +327,14 @@ done < <(_suppressed_closed_classes)
 while IFS=' ' read -r count class rest; do
     [ -n "$class" ] || continue
     if grep -qxF "$class" "$_TMPDIR/suppressed.txt" 2>/dev/null; then
-        [ "$WITH_SUPPRESSED" -eq 1 ] && printf '%s %s%s [suppressed]\n' \
-            "$count" "$class" "${rest:+ $rest}"
+        if [ "$WITH_SUPPRESSED" -eq 1 ]; then
+            printf '%s %s%s [suppressed]\n' "$count" "$class" "${rest:+ $rest}"
+        fi
     elif grep -qxF "$class" "$_TMPDIR/suppressed_closed.txt" 2>/dev/null; then
-        [ "$WITH_SUPPRESSED" -eq 1 ] && printf '%s %s%s [suppressed: remedy closed, not landed]\n' \
-            "$count" "$class" "${rest:+ $rest}"
+        if [ "$WITH_SUPPRESSED" -eq 1 ]; then
+            printf '%s %s%s [suppressed: remedy closed, not landed]\n' \
+                "$count" "$class" "${rest:+ $rest}"
+        fi
     else
         _orphan=""
         [ -f "$_TMPDIR/orphaned_annots.txt" ] \
@@ -345,3 +348,5 @@ while IFS=' ' read -r count class rest; do
         fi
     fi
 done <<< "$_RANKED"
+
+exit 0
