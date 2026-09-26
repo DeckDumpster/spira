@@ -2,7 +2,14 @@
 #
 # deploy.sh — operator-run release deploy.
 #
-#   deploy.sh [--dry-run] [--force] [--allow-draft] <tag|latest>
+#   deploy.sh [--dry-run] [--force] [--allow-draft] [--tarball <path>] <tag|latest>
+#
+#   --tarball <path>  deploy the NAMED release from a local tarball instead of downloading it,
+#                  making no forge call at all (no draft check, no asset lookup, no download).
+#                  For LOCAL release acceptance only (acceptance-local.sh --predecessor,
+#                  sp-oskp7): the release under test there was never uploaded, and the
+#                  container has no forge credential. Needs a named tag, which the .tags
+#                  sidecar records; never implied, never read from config.
 #
 #   --allow-draft  deploy a NAMED release even though it is still a draft. For release
 #                  acceptance only: a release is published after it passes acceptance, and
@@ -71,19 +78,35 @@ _orig_prod="${SPIRA_PROD:-$SPIRA_HOME}"
 dry_run=0
 force=0
 allow_draft=0
+local_tarball=""
 tag=""
-for _a in "$@"; do
+while [ $# -gt 0 ]; do
+    _a="$1"; shift
     case "$_a" in
         --dry-run) dry_run=1 ;;
         --force)   force=1 ;;
         --allow-draft) allow_draft=1 ;;
+        --tarball)   local_tarball="${1:-}"; shift || true
+                     [ -n "$local_tarball" ] || { printf 'deploy: --tarball needs a path\n' >&2; exit 2; } ;;
+        --tarball=*) local_tarball="${_a#--tarball=}" ;;
         -*) printf 'deploy: unknown option: %s\n' "$_a" >&2; exit 2 ;;
         *)  [ -z "$tag" ] && tag="$_a" \
                 || { printf 'deploy: too many arguments\n' >&2; exit 2; } ;;
     esac
 done
 unset _a
-[ -n "$tag" ] || { printf 'usage: deploy.sh [--dry-run] [--force] [--allow-draft] <tag|latest>\n' >&2; exit 2; }
+[ -n "$tag" ] || { printf 'usage: deploy.sh [--dry-run] [--force] [--allow-draft] [--tarball <path>] <tag|latest>\n' >&2; exit 2; }
+if [ -n "$local_tarball" ]; then
+    [ "$tag" != latest ] || {
+        printf 'deploy: --tarball deploys a NAMED release; "latest" is resolved from the forge\n' >&2; exit 2; }
+    [ -f "$local_tarball" ] || {
+        printf 'deploy: --tarball: no such file: %s\n' "$local_tarball" >&2; exit 2; }
+    case "$(basename "$local_tarball")" in
+        spira-*.tar.gz) ;;
+        *) printf 'deploy: --tarball: %s is not a spira-*.tar.gz release tarball\n' "$local_tarball" >&2; exit 2 ;;
+    esac
+    local_tarball="$(cd "$(dirname "$local_tarball")" && pwd -P)/$(basename "$local_tarball")"
+fi
 
 # Resolve the forge repository identifier for --repo on all gh calls.
 # Required when SPIRA_REPO is an extracted tarball with no .git; also used for normal
@@ -98,7 +121,7 @@ if [ -z "$_gh_repo" ]; then
     unset _remote
 fi
 [ -n "${_gh_repo:-}" ] || _gh_repo="${GH_REPO:-}"
-[ -n "$_gh_repo" ] || {
+[ -n "$_gh_repo" ] || [ -n "$local_tarball" ] || {
     printf 'deploy: SPIRA_FORGE_REPO is not set and forge repository cannot be inferred from git remote\n' >&2
     exit 2
 }
@@ -155,8 +178,13 @@ unset _tag_stem
     printf 'deploy: SPIRA_RELEASES is not set\n' >&2; exit 2
 }
 
+if [ -n "$local_tarball" ]; then
+    log "deploy: $tag from the local tarball $local_tarball (--tarball) — no forge call"
+fi
 # Refuse a draft release before any disruptive action.
-_draft_info="$(gh --repo "$_gh_repo" release view "$tag" --json isDraft 2>/dev/null)" \
+_draft_info=""
+[ -n "$local_tarball" ] \
+    || _draft_info="$(gh --repo "$_gh_repo" release view "$tag" --json isDraft 2>/dev/null)" \
     || _draft_info=""
 if [ -n "$_draft_info" ]; then
     _is_draft="$(printf '%s' "$_draft_info" \
@@ -174,8 +202,13 @@ unset _draft_info _is_draft
 
 # Resolve the asset from the release. The tarball timestamp may differ from the tag
 # timestamp; the asset name is authoritative. Refuse if there is not exactly one match.
-_assets_json="$(gh --repo "$_gh_repo" release view "$tag" --json assets 2>/dev/null)" \
-    || _assets_json=""
+_assets_json=""
+if [ -n "$local_tarball" ]; then
+    _assets_json="$(printf '{"assets":[{"name":"%s"}]}' "$(basename "$local_tarball")")"
+else
+    _assets_json="$(gh --repo "$_gh_repo" release view "$tag" --json assets 2>/dev/null)" \
+        || _assets_json=""
+fi
 _asset_name="$(printf '%s' "${_assets_json:-}" | python3 -c '
 import json,sys
 try:
@@ -278,12 +311,17 @@ mkdir -p "$SPIRA_RUN"
 _deploy_tmp="$(mktemp -d "$SPIRA_RUN/deploy-XXXXXXXX")"
 trap 'rm -rf "$_deploy_tmp"' EXIT
 
-log "deploy: fetching $tag"
-gh --repo "$_gh_repo" release download "$tag" \
-    --pattern "${release_stem}.tar.gz" \
-    --dir "$_deploy_tmp" || {
-    printf 'deploy: fetch failed\n' >&2; exit 2
-}
+if [ -n "$local_tarball" ]; then
+    cp "$local_tarball" "$_deploy_tmp/${release_stem}.tar.gz" || {
+        printf 'deploy: could not copy %s\n' "$local_tarball" >&2; exit 2; }
+else
+    log "deploy: fetching $tag"
+    gh --repo "$_gh_repo" release download "$tag" \
+        --pattern "${release_stem}.tar.gz" \
+        --dir "$_deploy_tmp" || {
+        printf 'deploy: fetch failed\n' >&2; exit 2
+    }
+fi
 _tarball="$_deploy_tmp/${release_stem}.tar.gz"
 [ -f "$_tarball" ] || {
     printf 'deploy: tarball not found after download: %s\n' "$_tarball" >&2; exit 2

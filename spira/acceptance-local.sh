@@ -9,7 +9,7 @@
 # scope, broker units surviving uninstall — would have failed a run of this
 # script in minutes rather than the 25-40 it costs to learn on a real VM.
 #
-# Usage: acceptance-local.sh <tree>
+# Usage: acceptance-local.sh <tree> [--predecessor <tag> [--predecessor-tarball <path>]]
 #
 #   <tree>  a working tree of this repository (a worktree, a plain checkout,
 #           or the harness itself) to build the tarball from and mount at
@@ -24,23 +24,60 @@
 # 3. Set up a scratch repo the same way acceptance-ci.sh does for the forge
 #    run, then run acceptance-run.sh phase A inside the container against the
 #    built tarball (--tarball, so nothing is downloaded) with --agent
-#    acceptance-agent.sh, so no model credential is needed. No --prev-tag: a
-#    local rehearsal has no predecessor to upgrade from, so only phase A runs.
+#    acceptance-agent.sh, so no model credential is needed. Without
+#    --predecessor only phase A runs.
+#
+# --predecessor <tag> (sp-oskp7) runs PHASES B, C AND D too, exactly as the forge
+# run does, so an upgrade/rollback failure reproduces here in minutes instead of
+# a 40-minute remote cycle:
+#   - the published <tag> tarball is downloaded ON THE HOST with gh (the container
+#     has no forge credential), or taken from --predecessor-tarball, and copied in;
+#   - the release under test is named spira-release-<its tarball stem> and every
+#     deploy of either release is handed its local tarball (deploy.sh --tarball);
+#   - /workspace is a self-contained CLONE of <tree> at its HEAD, carrying the
+#     repository's release tags plus a tag for the local release on HEAD — the
+#     forge run's checkout carries both, and skew.sh reads release currency and
+#     the MANIFEST commit from them. A worktree's own .git does not resolve inside
+#     the container, so mounting <tree> itself would leave skew with no tags.
+#   Refused when <tree> has uncommitted changes: the tarball and the mounted
+#   scripts must be the same commit.
 # 4. Report the same PASS/FAIL lines and exit code acceptance-run.sh always
 #    prints; on a phase A FAIL, copy its forensics snapshot out to the host.
 #
 # EXIT
-#   0  phase A passed
-#   1  phase A failed — see the FAIL lines above and the forensics dir printed
+#   0  every phase run passed (A, or A-D with --predecessor)
+#   1  a phase failed — see the FAIL lines above and the forensics dir printed
 #   2  usage error, tarball build failed, or the container could not come up
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/lib.sh"
 
-TREE="${1:-}"
+TREE=""; PRED=""; PRED_TARBALL=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --predecessor)          PRED="${2:-}"; shift 2 || shift ;;
+        --predecessor=*)        PRED="${1#--predecessor=}"; shift ;;
+        --predecessor-tarball)  PRED_TARBALL="${2:-}"; shift 2 || shift ;;
+        --predecessor-tarball=*) PRED_TARBALL="${1#--predecessor-tarball=}"; shift ;;
+        -*) printf 'acceptance-local: unknown option: %s\n' "$1" >&2; exit 2 ;;
+        *)  [ -z "$TREE" ] && TREE="$1" || { printf 'acceptance-local: too many arguments\n' >&2; exit 2; }
+            shift ;;
+    esac
+done
 if [ -z "$TREE" ] || [ ! -d "$TREE" ]; then
-    printf 'usage: acceptance-local.sh <tree>\n' >&2
+    printf 'usage: acceptance-local.sh <tree> [--predecessor <tag> [--predecessor-tarball <path>]]\n' >&2
     exit 2
+fi
+if [ -n "$PRED_TARBALL" ] && [ -z "$PRED" ]; then
+    printf 'acceptance-local: --predecessor-tarball needs --predecessor <tag>\n' >&2; exit 2
+fi
+if [ -n "$PRED" ]; then
+    case "$PRED" in spira-release-spira-*) ;; *)
+        printf 'acceptance-local: --predecessor %s is not a spira-release-spira-* tag\n' "$PRED" >&2; exit 2 ;;
+    esac
+    if [ -n "$PRED_TARBALL" ] && [ ! -f "$PRED_TARBALL" ]; then
+        printf 'acceptance-local: --predecessor-tarball: no such file: %s\n' "$PRED_TARBALL" >&2; exit 2
+    fi
 fi
 TREE="$(cd "$TREE" && pwd -P)"
 if [ ! -f "$TREE/spira/build-tarball.sh" ]; then
@@ -103,7 +140,43 @@ log "acceptance-local: tarball built: $(basename "$_al_tarball")"
 # ---------------------------------------------------------------------------
 bash "$HERE/testenv.sh" down --name "$CNAME" >/dev/null 2>&1 || true
 log "acceptance-local: starting container $CNAME"
-bash "$HERE/testenv.sh" up --name "$CNAME" --checkout "$TREE" >&2 || {
+# WHAT /workspace IS, AND THE PREDECESSOR (phases B-D only).
+_al_mount="$TREE"
+_al_pred_file=""
+if [ -n "$PRED" ]; then
+    _al_stem="$(basename "$_al_tarball" .tar.gz)"
+    if git -C "$TREE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        if [ -n "$(git -C "$TREE" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+            printf 'acceptance-local: %s has uncommitted changes — commit them: phases B-D mount a\n' "$TREE" >&2
+            printf 'acceptance-local:   clone of HEAD, which must be what the tarball was built from\n' >&2
+            exit 2
+        fi
+        _al_mount="$_wd/workspace"
+        git clone -q "$TREE" "$_al_mount" 2>/dev/null \
+            && git -C "$_al_mount" fetch -q "$TREE" 'refs/tags/*:refs/tags/*' 2>/dev/null \
+            && git -C "$_al_mount" checkout -q --detach "$(git -C "$TREE" rev-parse HEAD)" 2>/dev/null \
+            && git -C "$_al_mount" tag -f "spira-release-$_al_stem" HEAD >/dev/null 2>&1 || {
+            printf 'acceptance-local: could not build the self-contained clone of %s\n' "$TREE" >&2
+            exit 2
+        }
+        log "acceptance-local: /workspace is a clone of $(git -C "$TREE" rev-parse --short HEAD) with its release tags + spira-release-$_al_stem"
+    fi
+    if [ -n "$PRED_TARBALL" ]; then
+        _al_pred_file="$PRED_TARBALL"
+    else
+        mkdir -p "$_wd/pred"
+        log "acceptance-local: downloading predecessor $PRED on the host"
+        ( cd "$TREE" && gh release download "$PRED" --pattern 'spira-*.tar.gz' --dir "$_wd/pred" ) >&2 || {
+            printf 'acceptance-local: could not download %s with gh on the host — is gh authenticated\n' "$PRED" >&2
+            printf 'acceptance-local:   for this repository? (or pass --predecessor-tarball <path>)\n' >&2
+            exit 2
+        }
+        _al_pred_file="$(ls "$_wd/pred"/spira-*.tar.gz 2>/dev/null | head -1)"
+        [ -n "$_al_pred_file" ] || { printf 'acceptance-local: %s has no spira-*.tar.gz asset\n' "$PRED" >&2; exit 2; }
+    fi
+fi
+
+bash "$HERE/testenv.sh" up --name "$CNAME" --checkout "$_al_mount" >&2 || {
     printf 'acceptance-local: container did not come up\n' >&2
     exit 2
 }
@@ -115,6 +188,17 @@ podman cp "$_al_tarball" "$CNAME:$_al_ctar" || {
 }
 
 _al_tag="local-$(git -C "$TREE" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)-$(date -u +%Y%m%dT%H%M%SZ)"
+_al_prev_args=""
+if [ -n "$PRED" ]; then
+    # deploy.sh needs a spira-release-<stem> tag, and skew reads the one tagged on HEAD above.
+    _al_tag="spira-release-$(basename "$_al_tarball" .tar.gz)"
+    _al_cpred="/tmp/$(basename "$_al_pred_file")"
+    podman cp "$_al_pred_file" "$CNAME:$_al_cpred" || {
+        printf 'acceptance-local: could not copy the predecessor tarball into the container\n' >&2
+        exit 2
+    }
+    _al_prev_args="--prev-tag '$PRED' --prev-tarball '$_al_cpred'"
+fi
 
 # ---------------------------------------------------------------------------
 # 3. RUN — the same scratch-repo shape acceptance-ci.sh builds for the forge
@@ -140,7 +224,7 @@ printf "scratch-repo | %s | push | origin/main | |\n" "$HOME/scratch-repo" \
 # bead must be filed where the installed sentinel and aeons read. acceptance-run.sh's own
 # default (~/spira-acceptance-test-db) is a path no install creates, so the first local run
 # failed at "bead filed" before reaching anything the release does.
-log "acceptance-local: running acceptance-run.sh phase A (tag=$_al_tag)"
+log "acceptance-local: running acceptance-run.sh $([ -n "$PRED" ] && printf 'phases A-D (predecessor %s)' "$PRED" || printf 'phase A') (tag=$_al_tag)"
 bash "$HERE/testenv.sh" exec --name "$CNAME" --user spirauser bash -c "
 set -uo pipefail
 export SPIRA_ACCEPTANCE_FORENSICS=\"\$HOME/acceptance-forensics\"
@@ -149,7 +233,7 @@ exec bash /workspace/spira/acceptance-run.sh '$_al_tag' \
     --scratch-repo \"\$HOME/scratch-repo\" \
     --tarball '$_al_ctar' \
     --agent /workspace/spira/acceptance-agent.sh \
-    --bd-db \"\$HOME/.local/share/spira/db\"
+    --bd-db \"\$HOME/.local/share/spira/db\" $_al_prev_args
 "
 _al_rc=$?
 

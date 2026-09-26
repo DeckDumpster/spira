@@ -723,6 +723,37 @@ want   "allow-draft: says it is deploying a draft"         "--allow-draft" "$_ou
 
 # ==========================================================================
 echo
+echo "PROPERTY 10b: --tarball deploys a named release from a LOCAL tarball (acceptance only)"
+# ==========================================================================
+# LOCAL ACCEPTANCE PHASES B-D (sp-oskp7). Phases B-D deploy the release under test and roll
+# back to its predecessor; locally the release under test was never uploaded anywhere, and the
+# container has no forge credential. --tarball names the file to activate and skips every
+# forge call (draft check, asset lookup, download). It needs a NAMED tag — the .tags sidecar
+# records it and skew reads it — and it is never implied: without it nothing changes.
+_lt_dir="$TMP/local-tarball"; rm -rf "$_lt_dir"; mkdir -p "$_lt_dir/.stage/$NEW_RELEASE/spira"
+printf '# stub\n' > "$_lt_dir/.stage/$NEW_RELEASE/spira/sentinel.sh"
+tar -czf "$_lt_dir/$NEW_RELEASE.tar.gz" -C "$_lt_dir/.stage" "$NEW_RELEASE" 2>/dev/null
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+_out="$(run_deploy "GH_EXIT=1" -- --tarball "$_lt_dir/$NEW_RELEASE.tar.gz" "$NEW_TAG" 2>&1)"
+_rc=$?
+is0    "local-tarball: deploys with the forge unreachable"         "$_rc"
+islink "local-tarball: current -> the tarball's release"           "$RELEASES/current" "$NEW_RELEASE"
+nowant "local-tarball: no forge call at all"                        "gh " "$(cat "$CALL_LOG")"
+is     "local-tarball: the .tags sidecar names the tag deployed"   "$NEW_TAG" "$(cat "$RELEASES/.tags/$NEW_RELEASE" 2>/dev/null)"
+
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+_out="$(run_deploy "GH_EXIT=1" -- --tarball "$_lt_dir/nope.tar.gz" "$NEW_TAG" 2>&1)"
+_rc=$?
+not0   "local-tarball: a missing file is refused"                  "$_rc"
+islink "local-tarball: and nothing changed"                        "$RELEASES/current" "$PRIOR_RELEASE"
+
+_out="$(run_deploy "GH_EXIT=1" -- --tarball "$_lt_dir/$NEW_RELEASE.tar.gz" latest 2>&1)"
+_rc=$?
+not0   "local-tarball: 'latest' is refused — a local tarball deploys a named tag" "$_rc"
+rm -rf "$_lt_dir"; unset _lt_dir
+
+# ==========================================================================
+echo
 echo "PROPERTY 11: DB migration check distinguishes unreachable from mismatch"
 # (e) A bd migration mismatch stops the deploy before world.sh drain.
 #     A bd unreachable error triggers a dolt start attempt; on recovery the deploy proceeds.

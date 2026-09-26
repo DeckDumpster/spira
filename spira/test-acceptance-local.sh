@@ -154,7 +154,7 @@ is "FAIL: forensics copied out with the real marker (not an empty dir)" \
 echo
 echo "6. Argument wiring: --tarball, --agent, --scratch-repo present; no --prev-tag"
 # ===========================================================================
-# Phase A only: a local rehearsal has no predecessor to upgrade from.
+# Without --predecessor: phase A only.
 
 _stub_args="$(cat "$FT/.stub-args" 2>/dev/null || true)"
 want "stub received --tarball (download skipped)" "--tarball" "$_stub_args"
@@ -162,6 +162,31 @@ want "stub received --agent pointing at the mounted tree" \
     "--agent /workspace/spira/acceptance-agent.sh" "$_stub_args"
 want "stub received --scratch-repo" "--scratch-repo" "$_stub_args"
 nowant "no --prev-tag: only phase A runs locally" "--prev-tag" "$_stub_args"
+
+# ===========================================================================
+echo
+echo "6b. --predecessor: phases B-D wired with a local predecessor tarball (sp-oskp7)"
+# ===========================================================================
+# The fake tree is not a git checkout, so it is mounted as-is; the predecessor comes from
+# --predecessor-tarball, so nothing is downloaded. What is asserted is the wiring: the tag
+# under test becomes spira-release-<stem> (deploy.sh needs that form) and acceptance-run.sh
+# gets --prev-tag and a --prev-tarball path inside the container.
+printf 'fake predecessor\n' > "$SCRATCH/spira-20990101T000000Z.tar.gz"
+rm -f "$FT/.stub-rc" "$FT/.stub-args"; printf '0\n' > "$FT/.stub-rc"
+_rc=0
+SPIRA_ACCEPTANCE_LOCAL_NAME="$CNAME" SPIRA_ACCEPTANCE_LOCAL_FORENSICS="$SCRATCH/forensics-pred" \
+    bash "$SCRIPT" "$FT" --predecessor spira-release-spira-20990101T000000Z \
+        --predecessor-tarball "$SCRATCH/spira-20990101T000000Z.tar.gz" >"$SCRATCH/pred.out" 2>&1 || _rc=$?
+wantrc "--predecessor run exits with the stub's 0" "0" "$_rc"
+_stub_args="$(cat "$FT/.stub-args" 2>/dev/null || true)"
+want "stub received --prev-tag"                 "--prev-tag spira-release-spira-20990101T000000Z" "$_stub_args"
+want "stub received --prev-tarball in the container" "--prev-tarball /tmp/spira-20990101T000000Z.tar.gz" "$_stub_args"
+want "the tag under test is spira-release-<stem>"  "spira-release-spira-fake" "$_stub_args"
+
+bash "$SCRIPT" "$FT" --predecessor not-a-release-tag >/dev/null 2>&1
+wantrc "a malformed --predecessor tag -> exit 2" "2" "$?"
+bash "$SCRIPT" "$FT" --predecessor-tarball "$SCRATCH/spira-20990101T000000Z.tar.gz" >/dev/null 2>&1
+wantrc "--predecessor-tarball without --predecessor -> exit 2" "2" "$?"
 
 # ===========================================================================
 echo
