@@ -154,6 +154,7 @@ statement = "Close-reason classification sorts reasons into INVALID-CLOSED (\"PE
 [[use_case]]
 id = "UC-ops-detection-remediation-31"
 tier = "T1"
+# literal-ok: use-case prose naming the label the groomer removes, not a comparison against it
 statement = "The groomer sweep applies its remedies idempotently — adds `overseer` to asks, removes `awaiting-ci` on push repos, closes description-less unmapped litter naming the predicate, and reports only described or unclaimable beads — logging each action; a dry run writes nothing; after a sweep the detector reports only what the sweep cannot fix."
 
 [[use_case]]
