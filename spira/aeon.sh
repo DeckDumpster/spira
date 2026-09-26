@@ -378,9 +378,15 @@ export GIT_COMMITTER_NAME="aeon-$AEON" GIT_COMMITTER_EMAIL="aeon-$AEON@spira.loc
 # — which may or may not pick a different bead — instead of the NEXT resumable one it already
 # knows about (sp-3ntca). One `git rev-list` per candidate in the band, which is the same
 # work the old break-on-first form paid up to its one candidate.
+#
+# THE SAME EXCLUSIONS AS THE CLAIM (CLAIM_EXCLUDE, not the persona's own list alone). A
+# submitted bead (sp-qsona) is open with work on its branch — exactly what this scan looks
+# for — but its work is finished and waiting on the landing pass; resuming it would re-work
+# done work. The general claim below already excludes it via fayth_exclude; this scan must
+# not be a way around that.
 resume_ids=()
 for cand in $(bdjson "${READY_ARGS[@]}" --label "$FAYTH_LABELS" \
-                  --exclude-label "$FAYTH_EXCLUDE_LABELS" 2>/dev/null | python3 -c '
+                  --exclude-label "$CLAIM_EXCLUDE" 2>/dev/null | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
 except Exception: sys.exit(0)
