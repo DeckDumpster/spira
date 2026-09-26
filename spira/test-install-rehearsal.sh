@@ -10,9 +10,19 @@
 #   Stub          — SPIRA_LOOM_BIN (fake executable satisfies the binary-present gate in
 #                   ready.sh; SPIRA_LOOM_PROBE then handles the actual probe call)
 #   Stub          — SPIRA_LOOM_PROBE (script prints "200 5ms" in place of HTTP call)
+#   Stub          — SPIRA_SUPERVISE_BIN, only when the checkout has no cargo build
+#                   (gate.yml's own run has a real one in bin/); a bare exit-0 script
+#                   satisfies install.sh's executable-target refusal for spira-cockpit.service
+#                   without paying a Rust build inside the container
+#   Env override  — SPIRA_OPERATED=0 (this rehearsal has nobody at the console; doctor.sh's
+#                   operator-channel check is documented to WARN rather than FAIL here)
 #   Warn path     — tmux (absent in container; layout.sh pane check WARNs, not FAILs)
 #   NOT PROVEN    — filed bead reaches ready + sentinel.sh --report names it
 #                   (operational bd+database required for bead filing; skipped here)
+#   NOT PROVEN    — cockpit collector writes a snapshot (spira-cockpit-prod.service is
+#                   enabled, like most units here, but never started; ready.sh's cockpit
+#                   check FAILs on that alone, so it is asserted around rather than as
+#                   part of the overall exit code)
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control):
 #   The stray sweep section re-installs, plants a unit not in the owned manifest, then runs
@@ -87,6 +97,10 @@ CEXEC=(podman exec --user spirauser
     -e "SPIRA_RUN=${SPIRA_RUN_CTR}"
     -e "SPIRA_WORKSPACES=/tmp"
     -e "SPIRA_HOME_REPO=home"
+    # This container has nobody at the console reading escalations; doctor.sh's
+    # operator-channel check (hunk, mail client) is documented to FAIL only on an
+    # operated box and WARN on "a headless fixture or CI box" — which this is.
+    -e "SPIRA_OPERATED=0"
 )
 
 # ---------------------------------------------------------------------------
@@ -128,10 +142,43 @@ chmod +x '${STUBS_CTR}/loom-probe'
 
 # Create a fake prod checkout OUTSIDE /workspace for SPIRA_PROD (CONFIGURE_PROD) to
 # name — a split-checkout SPIRA_PROD is what configure.sh writes by default. install.sh
-# checks that ExecStart targets are executable, so the scripts must be present.
-mkdir -p /tmp/spira-prod && cp -a /workspace/spira /tmp/spira-prod/
+# checks that ExecStart targets are executable, so the scripts must be present. Unit
+# templates resolve three placeholders against this one checkout root (render.py):
+# @SPIRA_PROD@ (the spira/ subdir), @SPIRA_PROD_COCK@ (its cockpit/ sibling) and
+# @SPIRA_PROD_ROOT@ (the root itself, for beads-push.sh and concierge.sh) — all three
+# need real files here or install.sh refuses the first unit that names one.
+mkdir -p /tmp/spira-prod
+cp -a /workspace/spira /tmp/spira-prod/
+cp -a /workspace/cockpit /tmp/spira-prod/
+cp -a /workspace/beads-push.sh /workspace/concierge.sh /tmp/spira-prod/
 " >&2
 iszero "stubs created inside container" "$?"
+
+# ---------------------------------------------------------------------------
+# spira-cockpit.service's ExecStart is @SPIRA_SUPERVISE_BIN@ (a compiled Rust binary,
+# unlike the shell-script units above), and unlike loom/broker/landing-pass it is not
+# gated on that binary's executability — install.sh refuses an unexecutable ExecStart
+# target outright, so a checkout with no cargo build cannot install at all.
+#
+# The gate's build job leaves a real binary in /workspace/bin, which spirauser can
+# read (the bind mount preserves the host's chmod +x) but not write to — /workspace
+# is bind-mounted with the host's ownership. So a missing binary is stubbed under
+# STUBS_CTR instead (spirauser-writable) and named to install.sh via an env override,
+# rather than by trying to create the file in place. world.halted (below) means the
+# unit is only enabled, never started, so a stub that merely satisfies the
+# executable-bit check is sufficient.
+# ---------------------------------------------------------------------------
+SUPERVISE_ENV=()
+if "${CEXEC[@]}" "$CNAME" bash -c \
+    '[ -x /workspace/bin/spira-supervise ] || [ -x /workspace/target/release/spira-supervise ]' \
+    >/dev/null 2>&1; then
+    ok "spira-supervise: real binary found in the checkout"
+else
+    "${CEXEC[@]}" "$CNAME" bash -c \
+        "printf '#!/bin/sh\nexit 0\n' > '${STUBS_CTR}/spira-supervise' && chmod +x '${STUBS_CTR}/spira-supervise'" >&2
+    iszero "spira-supervise stub created (no cargo build in this checkout)" "$?"
+    SUPERVISE_ENV=(-e "SPIRA_SUPERVISE_BIN=${STUBS_CTR}/spira-supervise")
+fi
 
 # ===========================================================================
 echo
@@ -179,6 +226,7 @@ iszero "world.halted created" "$?"
 
 "${CEXEC[@]}" \
     -e "SPIRA_INSTALL_FORCE=1" \
+    "${SUPERVISE_ENV[@]}" \
     "$CNAME" bash /workspace/systemd/install.sh >&2
 iszero "install.sh exits 0" "$?"
 
@@ -225,17 +273,21 @@ doc_rc=$?
 iszero "doctor.sh exits 0" "$doc_rc"
 notwant "doctor.sh: no FAIL at all" "FAIL" "$doc_out"
 
-# 5. ready.sh exits 0 with stubs. SPIRA_LOOM_BIN points to the stub loom binary
-#    so the binary-present gate passes; SPIRA_LOOM_PROBE then returns "200 5ms".
+# 5. ready.sh with stubs. SPIRA_LOOM_BIN points to the stub loom binary so the
+#    binary-present gate passes; SPIRA_LOOM_PROBE then returns "200 5ms".
 #    sentinel.sh --report renders WARN (no open beads) and seed.sh --list renders
-#    WARN (no statutes in the stub db) — both are WARNs, not FAILs.
+#    WARN (no statutes in the stub db) — both are WARNs, not FAILs. The cockpit
+#    collector check is a known FAIL (see NOT PROVEN, header) since nothing here
+#    starts spira-cockpit-prod.service, so specific lines are asserted instead of
+#    the overall exit code.
 ready_out="$("${CEXEC[@]}" \
     -e "SPIRA_LOOM_BIN=${STUBS_CTR}/loom" \
     -e "SPIRA_LOOM_PROBE=${STUBS_CTR}/loom-probe" \
     "$CNAME" bash /workspace/spira/ready.sh 2>&1)"
-ready_rc=$?
-iszero "ready.sh exits 0 with stubs" "$ready_rc"
-want "ready.sh: loom probe passes" "loom answers 200" "$ready_out"
+want "ready.sh: sentinel timer active" "pass  sentinel timer active" "$ready_out"
+want "ready.sh: world not halted"     "pass  world not halted"       "$ready_out"
+want "ready.sh: database readable"    "pass  database readable"      "$ready_out"
+want "ready.sh: loom probe passes"    "loom answers 200"              "$ready_out"
 
 # ===========================================================================
 echo
@@ -275,6 +327,7 @@ echo "stray sweep positive control — plant a unit, confirm STRAY is reported:"
     "mkdir -p '${SPIRA_RUN_CTR}' && touch '${SPIRA_RUN_CTR}/world.halted'" >/dev/null
 "${CEXEC[@]}" \
     -e "SPIRA_INSTALL_FORCE=1" \
+    "${SUPERVISE_ENV[@]}" \
     "$CNAME" bash /workspace/systemd/install.sh >/dev/null 2>&1
 iszero "re-install for stray test exits 0" "$?"
 
