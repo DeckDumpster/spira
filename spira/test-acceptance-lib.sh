@@ -248,4 +248,45 @@ bash -c '
     || bad "a writable forensics dir gets a numbered snapshot directory" \
            "$_rw_dir/01-unit-test not created"
 
+# ===========================================================================
+echo
+echo "10. _acquire_tarball: --tarball skips the download; gh is never invoked"
+# ===========================================================================
+# POSITIVE CONTROL FIRST: prove a poisoned gh WOULD be reached on the download
+# path, before trusting its silence on the --tarball path.
+
+_lib_acquire() { bash -c '. "$0"; _acquire_tarball "$1" "$2" "$3"' "$LIB" "$1" "$2" "$3"; }
+
+POISON_BIN="$SCRATCH/poison-bin"
+mkdir -p "$POISON_BIN"
+POISON_LOG="$SCRATCH/gh-invoked"
+cat > "$POISON_BIN/gh" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$POISON_LOG"
+exit 1
+EOF
+chmod +x "$POISON_BIN/gh"
+
+rm -f "$POISON_LOG"
+_dl_dir="$SCRATCH/dl-empty-given"
+mkdir -p "$_dl_dir"
+PATH="$POISON_BIN:$PATH" _lib_acquire "some-tag" "" "$_dl_dir" >/dev/null 2>&1
+want "positive-control: empty --tarball reaches gh (download path taken)" \
+    "release download some-tag" "$(cat "$POISON_LOG" 2>/dev/null || true)"
+
+rm -f "$POISON_LOG"
+GIVEN_TB="$SCRATCH/given.tar.gz"
+printf 'fake tarball\n' > "$GIVEN_TB"
+_agiven_out="$(PATH="$POISON_BIN:$PATH" _lib_acquire "some-tag" "$GIVEN_TB" "$_dl_dir")"
+_agiven_rc=$?
+is "given path present -> exits 0" "0" "$_agiven_rc"
+is "given path present -> prints the given path, unchanged" "$GIVEN_TB" "$_agiven_out"
+[ -f "$POISON_LOG" ] \
+    && bad "given path present -> gh is never invoked" "gh was called: $(cat "$POISON_LOG")" \
+    || ok "given path present -> gh is never invoked"
+
+_amiss_out="$(_lib_acquire "some-tag" "$SCRATCH/does-not-exist.tar.gz" "$_dl_dir")"
+_amiss_rc=$?
+is "pair: given path absent -> non-zero, nothing printed" "1:" "$_amiss_rc:$_amiss_out"
+
 tl_summary

@@ -7,12 +7,18 @@
 # Usage:
 #   acceptance-run.sh <tag> --scratch-repo <path> [--prev-tag <tag>] [--record]
 #                           [--file-defects] [--bd-db <path>] [--agent <path>]
-#                           [--waive-upgrade]
+#                           [--waive-upgrade] [--tarball <path>]
 #
 # Arguments:
 #   <tag>                  release tag to test (spira-release-spira-*)
 #   --scratch-repo <path>  local checkout of a git repo in Spira's repo-map;
 #                          a trivial bead is filed here and must land
+#   --tarball <path>       use this tarball for phase A instead of `gh release
+#                          download <tag>` — the download is skipped entirely.
+#                          For acceptance-local.sh: rehearsing phase A against a
+#                          tarball built from a working tree, before any tag is
+#                          cut. Phases B/C/D still download <prev-tag> from the
+#                          forge; --tarball only replaces the tag-under-test's own.
 #   --prev-tag <tag>       previous release tag; enables upgrade (phase B),
 #                          rollback (phase C), and aged-install upgrade (phase D)
 #   --record               write PASS/FAIL as a git note on <tag>
@@ -69,11 +75,14 @@ do_file_defects=0
 do_waive_upgrade=0
 bd_db="${HOME}/spira-acceptance-test-db"
 _agent=""
+tarball_path=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --scratch-repo)  scratch_repo="${2:-}"; shift 2 ;;
         --scratch-repo=*) scratch_repo="${1#--scratch-repo=}"; shift ;;
+        --tarball)       tarball_path="${2:-}"; shift 2 ;;
+        --tarball=*)     tarball_path="${1#--tarball=}"; shift ;;
         --prev-tag)      prev_tag="${2:-}"; shift 2 ;;
         --prev-tag=*)    prev_tag="${1#--prev-tag=}"; shift ;;
         --bd-db)         bd_db="${2:-}"; shift 2 ;;
@@ -223,15 +232,22 @@ mkdir -p "$(dirname "$_conf")"
     printf 'SPIRA_RELEASES = %s\n' "$_releases"
 } > "$_conf"
 
-# Download the release tarball.
-_tarball_dir="$TMP/tarball-dl"
-mkdir -p "$_tarball_dir"
-_tarball_dl_rc=0
-_tarball_file="$(_download_tarball "$tag" "$_tarball_dir")" || _tarball_dl_rc=$?
-is0 "phase A: gh release download $tag" "$_tarball_dl_rc"
-[ -n "${_tarball_file:-}" ] \
-    && ok "phase A: tarball found: $(basename "$_tarball_file")" \
-    || bad "phase A: tarball found" "no spira-*.tar.gz in $_tarball_dir"
+# Obtain the release tarball: --tarball skips the download entirely (a local
+# rehearsal has nothing published yet to download); otherwise gh release download.
+if [ -n "$tarball_path" ]; then
+    _tarball_file="$(_acquire_tarball "$tag" "$tarball_path" "")" \
+        && ok "phase A: tarball provided via --tarball (download skipped): $(basename "$_tarball_file")" \
+        || bad "phase A: tarball provided via --tarball" "not found: $tarball_path"
+else
+    _tarball_dir="$TMP/tarball-dl"
+    mkdir -p "$_tarball_dir"
+    _tarball_dl_rc=0
+    _tarball_file="$(_acquire_tarball "$tag" "" "$_tarball_dir")" || _tarball_dl_rc=$?
+    is0 "phase A: gh release download $tag" "$_tarball_dl_rc"
+    [ -n "${_tarball_file:-}" ] \
+        && ok "phase A: tarball found: $(basename "$_tarball_file")" \
+        || bad "phase A: tarball found" "no spira-*.tar.gz in $_tarball_dir"
+fi
 
 # Compute sha256 of the candidate tarball (recorded in the acceptance note).
 _tarball_sha256=""
