@@ -545,7 +545,7 @@ name = "cockpit"
 [resource.spec]
 dashboards = ["queue"]'
 bash "$RECONCILER_SH" --pass >/dev/null 2>&1
-want "health alone no longer satisfies once the Composite asks for queue" "cockpit.sh --no-attach" "$(cat "$COCKPIT_CALLS")"
+want "health alone no longer satisfies once the Composite asks for queue" "--no-attach" "$(cat "$COCKPIT_CALLS")"
 
 reset_state
 cat > "$TMUX_STATE" <<'TEOF'
