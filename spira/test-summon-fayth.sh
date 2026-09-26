@@ -469,7 +469,7 @@ summon_fayth stretchy >/dev/null 2>&1 || true
 args="$(cat "$ARGS_FILE" 2>/dev/null)"
 want "default quota: CPUQuota=70% appears in args" "CPUQuota=70%" "$args"
 
-export SPIRA_AEON_CPU_QUOTA=90%
+export SPIRA_AEON_CPU_QUOTA=90
 rm -f "$ARGS_FILE"
 summon_fayth stretchy >/dev/null 2>&1 || true
 args="$(cat "$ARGS_FILE" 2>/dev/null)"
@@ -606,5 +606,61 @@ rm -f "$SUMMONED"
 bash "$HERE/escape.sh" stretchy 2>/dev/null || true
 want "G8: escape.sh summons even with world.halted present" "SUMMONED:stretchy" "$(cat "$SUMMONED" 2>/dev/null)"
 rm -f "$HALT_STAMP"
+
+# ======================================================================================
+echo
+echo "escape.sh honours SPIRA_AEON_CPU_QUOTA (sp-9ce60.4, part of G8: it used to hard-code 70%)"
+# ======================================================================================
+# escape.sh's world.halted bypass above is deliberate (sp-6rv05, still open) and unchanged.
+# CPUQuota was never part of that question — it shares summon_argv() with summon_fayth now,
+# the same builder UC-dispatch-23 exercises directly below, so the fix is verified here at
+# the escape.sh call site and again there at the function itself.
+QUOTA_ARGV="$T/escape-quota-argv"
+cat > "$T/bin/mock-summon" <<MOCK
+#!/usr/bin/env bash
+printf '%s\n' "\$@" > "$QUOTA_ARGV"
+exit 0
+MOCK
+chmod +x "$T/bin/mock-summon"
+
+rm -f "$QUOTA_ARGV"
+unset SPIRA_AEON_CPU_QUOTA 2>/dev/null || true
+bash "$HERE/escape.sh" stretchy 2>/dev/null || true
+want "escape.sh default CPUQuota=70%" "CPUQuota=70%" "$(cat "$QUOTA_ARGV" 2>/dev/null)"
+
+rm -f "$QUOTA_ARGV"
+export SPIRA_AEON_CPU_QUOTA=55
+bash "$HERE/escape.sh" stretchy 2>/dev/null || true
+want   "escape.sh honours a custom SPIRA_AEON_CPU_QUOTA" "CPUQuota=55%" "$(cat "$QUOTA_ARGV" 2>/dev/null)"
+nowant "escape.sh no longer hard-codes 70%"               "CPUQuota=70%" "$(cat "$QUOTA_ARGV" 2>/dev/null)"
+unset SPIRA_AEON_CPU_QUOTA
+
+cat > "$T/bin/mock-summon" <<'MOCK'
+#!/usr/bin/env bash
+fayth="${@: -1}"
+[ "$fayth" = "--dry-run" ] && fayth="${@: -2:1}"
+printf 'SUMMONED:%s\n' "$fayth" >> "$SUMMONED_FILE"
+exit 0
+MOCK
+chmod +x "$T/bin/mock-summon"
+
+# ======================================================================================
+echo
+echo "UC-dispatch-23 — summon_argv: CPUQuota, TimeoutStartSec, direct on the builder itself"
+# ======================================================================================
+sargv="$(summon_argv anchor | tr '\n' ' ')"
+want "summon_argv: default CPUQuota=70%" "CPUQuota=70%" "$sargv"
+want "summon_argv: TimeoutStartSec from the fayth" \
+     "TimeoutStartSec=$(fayth_get anchor FAYTH_TIMEOUT_SECONDS 3600)" "$sargv"
+export SPIRA_AEON_CPU_QUOTA=42
+sargv2="$(summon_argv anchor | tr '\n' ' ')"
+want "summon_argv: SPIRA_AEON_CPU_QUOTA propagates" "CPUQuota=42%" "$sargv2"
+unset SPIRA_AEON_CPU_QUOTA
+
+# UC-dispatch-23 / G17 — the claude CLI argv (model, tools, --setting-sources) is not built
+# here. aeon.sh's two launch sites both call aeon_claude_argv (lib.sh), a pure function of
+# the fayth's own FAYTH_* knobs already driven directly, in both system-prompt modes, by
+# test-aeon-prompt-layers.sh's table — that table IS the bead-mode row G17 asked for, since
+# the function makes no sweep/bead distinction at all.
 
 tl_summary
