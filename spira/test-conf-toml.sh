@@ -140,5 +140,68 @@ got_prod2="$(conf_val SPIRA_PROD SPIRA_CONF="$CONF_FILE")"
 is "editing spira.conf again regenerates spira.toml on the next read" "$T/v2" "$got_prod2"
 
 # ==========================================================================
+echo
+echo "AUTO-CONVERT carries the repo-map and every fayth, not just spira.conf:"
+# ==========================================================================
+# BLOCKING DEFECT (sp-zs04v.2): the auto-convert call above passed only --conf, so on a
+# box that also has a repo-map and chamber/*.fayth (i.e. any real install) it produced a
+# spira.toml with an empty [repo] table and no personas, and overwrote the real one with
+# it. conf_val's SPIRA_HOME (unset here, so derived from $HARNESS/spira/conf.sh) is where
+# _spira_fayth_paths and _spira_repo_map_candidate look.
+FULL_DIR="$T/legacy-full"
+mkdir -p "$FULL_DIR" "$HARNESS/spira/chamber"
+cp "$CRATE/tests/fixtures/repo-map" "$FULL_DIR/repo-map"
+cp "$CRATE/tests/fixtures/chamber/builder.fayth" "$CRATE/tests/fixtures/chamber/ops.fayth" \
+    "$HARNESS/spira/chamber/"
+FULL_CONF="$FULL_DIR/spira.conf"
+printf 'SPIRA_PROD = %s\n' "$T/full-chosen/spira" > "$FULL_CONF"
+
+conf_val SPIRA_PROD SPIRA_CONF="$FULL_CONF" >/dev/null
+GENERATED="$FULL_DIR/spira.toml"
+generated_text="$(cat "$GENERATED" 2>/dev/null)"
+if [ -n "$generated_text" ]; then
+    want "auto-convert's spira.toml carries the repo-map's [repo.home] table" \
+        "[repo.home]" "$generated_text"
+    want "auto-convert's spira.toml carries builder's [persona.builder] table" \
+        "[persona.builder]" "$generated_text"
+    want "auto-convert's spira.toml carries ops's [persona.ops] table" \
+        "[persona.ops]" "$generated_text"
+else
+    bad "auto-convert with repo-map+fayth present" "no spira.toml produced at $GENERATED"
+fi
+
+# ==========================================================================
+echo
+echo "convert refuses to replace a larger spira.toml with a smaller one:"
+# ==========================================================================
+# Same defect, isolated to the binary: the exact call the old auto-convert made
+# (--conf only, no --repo-map/--fayth) must now be refused rather than accepted, and the
+# existing (larger) document must survive untouched.
+SHRINK_DIR="$T/shrink"; mkdir -p "$SHRINK_DIR"
+SHRINK_TOML="$SHRINK_DIR/spira.toml"
+SHRINK_CONF="$SHRINK_DIR/spira.conf"
+printf 'SPIRA_PROD = %s\n' "$SHRINK_DIR/prod" > "$SHRINK_CONF"
+
+"$SPIRA_CONFIG_BIN" convert --conf "$SHRINK_CONF" \
+    --repo-map "$CRATE/tests/fixtures/repo-map" \
+    --fayth "$CRATE/tests/fixtures/chamber/builder.fayth" \
+    --fayth "$CRATE/tests/fixtures/chamber/ops.fayth" \
+    --home "$SHRINK_DIR" --out "$SHRINK_TOML" >/dev/null 2>&1
+before="$(cat "$SHRINK_TOML" 2>/dev/null)"
+want "first (full) conversion has [repo.home]" "[repo.home]" "$before"
+
+if "$SPIRA_CONFIG_BIN" convert --conf "$SHRINK_CONF" --home "$SHRINK_DIR" \
+    --out "$SHRINK_TOML" >/dev/null 2>&1
+then
+    bad "convert refuses to shrink the existing document" "exited 0 instead of refusing"
+else
+    ok "convert refuses to shrink the existing document"
+fi
+after="$(cat "$SHRINK_TOML" 2>/dev/null)"
+is "the existing (larger) spira.toml is left untouched after the refusal" "$before" "$after"
+leftover="$(ls "$SHRINK_DIR"/spira.toml.tmp* 2>/dev/null | wc -l | tr -d ' ')"
+is "no leftover temp file after the refusal" "0" "$leftover"
+
+# ==========================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

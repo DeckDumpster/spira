@@ -223,6 +223,36 @@ spira_toml_file() {
     return 0
 }
 
+# _spira_repo_map_candidate -> the repo-map path spira_conf_defaults would choose, or
+# empty if none of its candidates exist yet. Factored out of that function so
+# spira_toml_resolve's auto-convert — which runs before spira_conf_defaults, to build the
+# `spira-config convert` call — finds the SAME file rather than converting with no map at
+# all (sp-zs04v.2: an auto-convert with no --repo-map produced a spira.toml with an empty
+# [repo] table, and overwrote a real one).
+_spira_repo_map_candidate() {
+    local cf d c
+    cf="$(spira_conf_file)"
+    [ -n "$cf" ] && d="$(dirname "$cf")" || d=""
+    if [ -n "$_spira_conf_home_env" ]; then
+        set -- "$SPIRA_HOME/repo-map" ${d:+"$d/repo-map"} "$SPIRA_HOME/repo-map.example"
+    else
+        set -- ${d:+"$d/repo-map"} "$SPIRA_HOME/repo-map" "$SPIRA_HOME/repo-map.example"
+    fi
+    for c in "$@"; do
+        [ -f "$c" ] && { printf '%s' "$c"; return 0; }
+    done
+}
+
+# _spira_fayth_paths -> every "*.fayth" file under the chamber in force, one per line.
+# SPIRA_CHAMBER_OVERLAY only replaces prompt text (aeon.sh's *.md overlay); fayth files
+# themselves are never overlaid, so only SPIRA_CHAMBER (or its default) is read here.
+_spira_fayth_paths() {
+    local dir="${SPIRA_CHAMBER:-$SPIRA_HOME/chamber}" f
+    for f in "$dir"/*.fayth; do
+        [ -f "$f" ] && printf '%s\n' "$f"
+    done
+}
+
 # spira_toml_resolve -> the spira.toml path to read, or empty.
 #
 # AUTO-CONVERTS FROM A LEGACY spira.conf, and keeps doing so for as long as one exists. Not
@@ -233,8 +263,15 @@ spira_toml_file() {
 # exists, stays the source of truth and `spira.toml` is a cache regenerated whenever the
 # `.conf` is newer — cheap to check (one `-nt` test) and skipped entirely once the operator
 # deletes the `.conf`, at which point the `.toml` already on disk is read as-is.
+#
+# THE REPO-MAP AND EVERY FAYTH ARE PASSED, not just --conf: a conversion missing them is
+# not incomplete, it is DESTRUCTIVE — `spira-config convert`'s own writer (below) refuses
+# to let a document with fewer [repo]/[persona] tables replace one that has more, so an
+# auto-convert that omitted them would simply fail closed against a box with a real
+# spira.toml already on disk instead of quietly gutting it (sp-zs04v.2).
 spira_toml_resolve() {
-    local toml conf target out
+    local toml conf target out rmap f
+    local -a conv_args
     toml="$(spira_toml_file)"
     conf="$(spira_conf_file)"
     if [ -n "$toml" ] && { [ -z "$conf" ] || [ "$toml" -nt "$conf" ]; }; then
@@ -243,7 +280,13 @@ spira_toml_resolve() {
     fi
     [ -n "$conf" ] || { [ -n "$toml" ] && printf '%s' "$toml"; return 0; }
     target="${toml:-${SPIRA_TOML:-$(dirname "$conf")/spira.toml}}"
-    if out="$("$SPIRA_CONFIG_BIN" convert --conf "$conf" --home "$HOME" --out "$target" 2>&1)"; then
+    conv_args=(--conf "$conf" --home "$HOME" --out "$target")
+    rmap="${SPIRA_REPO_MAP:-$(_spira_repo_map_candidate)}"
+    [ -n "$rmap" ] && conv_args+=(--repo-map "$rmap")
+    while IFS= read -r f; do
+        conv_args+=(--fayth "$f")
+    done < <(_spira_fayth_paths)
+    if out="$("$SPIRA_CONFIG_BIN" convert "${conv_args[@]}" 2>&1)"; then
         printf '%s' "$target"
     else
         printf 'spira.conf: auto-convert to spira.toml failed: %s\n' "$out" >&2
@@ -1578,26 +1621,10 @@ spira_conf_defaults() {
     # example does. Resolution runs beside the config file first, because that is where an
     # operator whose harness lives in a repository they did not write can keep theirs.
     if [ -z "${SPIRA_REPO_MAP:-}" ]; then
-        local cf d c
-        cf="$(spira_conf_file)"
-        [ -n "$cf" ] && d="$(dirname "$cf")" || d=""
-        # AN EXPLICIT SPIRA_HOME PUTS ITS OWN MAP FIRST. Otherwise the config-dir map leads,
-        # for an operator whose harness lives in a repository they did not write.
-        #
-        # The conditional is not a nicety. Every fixture in these suites plants a map at
-        # $SPIRA_HOME/repo-map and sets SPIRA_HOME to reach it; with the config-dir map
-        # unconditionally ahead, all of them silently read the operator's REAL seven
-        # repositories instead — four suites at once, reporting "0 movements" and "not an
-        # ancestor" as though landing were broken, with nothing naming the map they read
-        # (law-gates-run-in-a-clean-environment).
-        if [ -n "$_spira_conf_home_env" ]; then
-            set -- "$SPIRA_HOME/repo-map" ${d:+"$d/repo-map"} "$SPIRA_HOME/repo-map.example"
-        else
-            set -- ${d:+"$d/repo-map"} "$SPIRA_HOME/repo-map" "$SPIRA_HOME/repo-map.example"
-        fi
-        for c in "$@"; do
-            [ -f "$c" ] && { SPIRA_REPO_MAP="$c"; break; }
-        done
+        # An explicit SPIRA_HOME puts its own map first; otherwise the config-dir map leads.
+        # See _spira_repo_map_candidate for why the order matters (law-gates-run-in-a-clean-
+        # environment) — this is the same search spira_toml_resolve's auto-convert makes.
+        SPIRA_REPO_MAP="$(_spira_repo_map_candidate)"
         : "${SPIRA_REPO_MAP:=$SPIRA_HOME/repo-map}"
     fi
 }
