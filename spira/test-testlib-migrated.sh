@@ -31,7 +31,7 @@ test-install-refusal.sh"
 # 9 incident suites + test-install-refusal.sh extension). Mechanical migration (like
 # sp-qvjzb's 459 suites) is blocked until sp-l2be6 decides whether to migrate or exempt.
 # Track this in test-testlib-migrated.sh to prevent silent growth of unmigrated suites.
-DEFERRED_MIGRATION="test-aeon-base-ref-qualify.sh
+DEFERRED_MIGRATION="
 test-archivist.sh
 test-attempts.sh
 test-auron.sh
@@ -128,7 +128,7 @@ test-tmux-env.sh
 test-tokens.sh
 test-tsd.sh
 test-unclaimable-worktree.sh
-test-worktree-absent.sh"
+"
 #
 # Shrink any list as a suite converts, and this check catches a name added to either
 # list for any other reason. DEFERRED_MIGRATION should shrink as sp-l2be6 makes
