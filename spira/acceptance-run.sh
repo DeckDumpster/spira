@@ -268,7 +268,9 @@ is0 "phase A: install.sh exits 0" "$_install_rc"
 # labels the sentinel's predicate reads (law-absence-needs-a-positive-control).
 _a_plan_label="plan"
 _a_scope_label="$(basename "$scratch_repo")"
-if [ "$_install_rc" -eq 0 ] && [ -f "$_releases/current/spira/conf.sh" ]; then
+# Read whenever the release conf exists, not only after a clean install: a non-zero install
+# must not also mislabel the probe bead and mask every stage after it (sp-bn9go).
+if [ -f "$_releases/current/spira/conf.sh" ]; then
     _a_plan_label="$(SPIRA_CONF="$_conf" SPIRA_CONF_LOADED="" \
         SPIRA_HOME_REPO="$(basename "$scratch_repo")" \
         bash -c '. "$1" 2>/dev/null; printf "%s" "${SPIRA_PLAN_LABEL:-plan}"' \
