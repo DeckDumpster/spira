@@ -241,8 +241,9 @@ echo "6. REGRESSION — real repo's --workspace discovery names landing-pass"
 REPO_ROOT="$(cd "$HERE/.." && pwd -P)"
 real_meta="$(env -i PATH="$PATH" HOME="$TMP/home" \
     cargo metadata --format-version=1 --no-deps \
-    --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1)"
-if [ $? -eq 0 ]; then
+    --manifest-path "$REPO_ROOT/Cargo.toml" 2>"$TMP/real-meta.err")"
+real_meta_rc=$?
+if [ "$real_meta_rc" -eq 0 ]; then
     if printf '%s' "$real_meta" | python3 -c "
 import json, sys
 meta = json.load(sys.stdin)
@@ -258,7 +259,7 @@ sys.exit(1)
             "not found in cargo metadata for $REPO_ROOT/Cargo.toml — add it to [workspace] members"
     fi
 else
-    printf '  SKIP  cargo metadata failed against real repo: %s\n' "$real_meta"
+    printf '  SKIP  cargo metadata failed against real repo: %s\n' "$(cat "$TMP/real-meta.err")"
 fi
 
 # ============================================================================
