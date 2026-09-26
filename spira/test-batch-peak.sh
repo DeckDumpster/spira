@@ -19,12 +19,7 @@
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 BATCH="$HERE/testenv-batch.sh"
 CONF_SH="$HERE/conf.sh"
@@ -32,7 +27,7 @@ CONF_SH="$HERE/conf.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-echo "test-batch-peak.sh"
+printf 'test-batch-peak.sh\n'
 
 # ===========================================================================
 # PART A: WARNING fires only once the peak crosses the declared fraction
@@ -64,7 +59,7 @@ _run_peak() {
 
 # 60% of 8192 MiB (8388608 kB / 1024) is 4915 MiB.
 _out_under="$(_run_peak 4900 60)"
-notwant "A1: peak just under 60% ceiling → no WARNING" "WARNING" "$_out_under"
+nowant "A1: peak just under 60% ceiling → no WARNING" "WARNING" "$_out_under"
 
 _out_over="$(_run_peak 5000 60)"
 want "A2: peak just over 60% ceiling → WARNING fires" "WARNING" "$_out_over"
@@ -72,7 +67,7 @@ want "A3: WARNING names the peak" "5000MiB" "$_out_over"
 want "A4: WARNING names MemTotal" "8192MiB" "$_out_over"
 
 _out_disabled="$(_run_peak 8000 0)"
-notwant "A5: SPIRA_BATCH_PEAK_WARN_FRAC=0 disables the check" "WARNING" "$_out_disabled"
+nowant "A5: SPIRA_BATCH_PEAK_WARN_FRAC=0 disables the check" "WARNING" "$_out_disabled"
 
 # ===========================================================================
 # PART B: new key is accepted by conf.sh's allowlist
@@ -87,10 +82,7 @@ _conf_keys="$(
 )"
 
 want "B-SPIRA_BATCH_PEAK_WARN_FRAC" "SPIRA_BATCH_PEAK_WARN_FRAC" "$_conf_keys"
-notwant "B-pos: SPIRA_BATCH_PEAK_NOEXIST absent (positive control)" \
-        "SPIRA_BATCH_PEAK_NOEXIST" "$_conf_keys"
+nowant "B-pos: SPIRA_BATCH_PEAK_NOEXIST absent (positive control)" \
+       "SPIRA_BATCH_PEAK_NOEXIST" "$_conf_keys"
 
-# ===========================================================================
-echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ] || exit 1
+tl_summary
