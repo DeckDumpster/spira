@@ -135,5 +135,31 @@ nowant "unknown row does not say FAIL" "FAIL" "$unknown_out"
 
 # ======================================================================================
 echo
+# ======================================================================================
+echo
+echo "the NEWEST noted release wins, whatever order the note objects' ids sort in (sp-m5ka8):"
+
+# `git notes list` is ordered by object id. Force the older release's commit id to sort
+# AFTER the newer one's, so a probe that takes the list's last line reads the old FAIL.
+P2="$TMP/prod2"; git init -q "$P2"; git -C "$P2" config user.email t@t; git -C "$P2" config user.name t
+empty="$(git -C "$P2" mktree </dev/null)"
+new_c="$(git -C "$P2" commit-tree "$empty" -m "release new")"
+i=0; old_c=""
+while :; do
+    old_c="$(git -C "$P2" commit-tree "$empty" -m "release old $i")"
+    [[ "$old_c" > "$new_c" ]] && break
+    i=$((i+1)); [ "$i" -lt 200 ] || break
+done
+want "fixture: the older release's id sorts after the newer one's" "yes" \
+    "$([[ "$old_c" > "$new_c" ]] && echo yes || echo no)"
+git -C "$P2" tag spira-release-spira-20260201T000000Z "$old_c"
+git -C "$P2" tag spira-release-spira-20260202T000000Z "$new_c"
+git -C "$P2" notes --ref=acceptance add -m "FAIL: install refused" "$old_c"
+git -C "$P2" notes --ref=acceptance add -m "PASS: installed clean" "$new_c"
+out="$(run_unsent SPIRA_PROD="$P2/spira")"
+want "newest noted release's verdict" "SP_ACCEPT_VERDICT=PASS" "$out"
+want "and its tag"                    "SP_ACCEPT_TAG=spira-release-spira-20260202T000000Z" "$out"
+want "nothing cut since it"           "SP_ACCEPT_SINCE=0" "$out"
+
 printf 'test-cockpit-accept: %d ok, %d fail\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

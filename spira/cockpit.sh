@@ -1389,8 +1389,27 @@ print("SP_FUNNEL_DONE_AGE=%s"  % age)
     _acc_verdict="?"; _acc_tag="-"; _acc_at="?"; _acc_since="?"
     if [ -n "${SPIRA_PROD:-}" ] && [ -e "${SPIRA_PROD%/spira}/.git" ]; then
         _acc_repo="${SPIRA_PROD%/spira}"
-        _acc_obj="$(git -C "$_acc_repo" notes --ref=acceptance list 2>/dev/null \
-                    | awk '{print $2}' | tail -1)"
+        # THE NEWEST RELEASE THAT CARRIES A NOTE, NOT THE LAST LINE OF `notes list`. That
+        # list is ordered by object id, so with more than one note its tail was an arbitrary
+        # verdict — an old FAIL could shadow a newer PASS, and the suite flaked on commit
+        # hashes (sp-m5ka8). Walk the release tags newest-first, in the order release.sh
+        # stamps them, and take the first whose tag object or commit has a note.
+        _acc_noted="$(git -C "$_acc_repo" notes --ref=acceptance list 2>/dev/null | awk '{print $2}')"
+        _acc_obj=""
+        if [ -n "$_acc_noted" ]; then
+            while IFS= read -r _acc_t; do
+                [ -n "$_acc_t" ] || continue
+                for _acc_c in "$(git -C "$_acc_repo" rev-parse -q --verify "refs/tags/$_acc_t" 2>/dev/null)" \
+                              "$(git -C "$_acc_repo" rev-parse -q --verify "refs/tags/$_acc_t^{commit}" 2>/dev/null)"; do
+                    if [ -n "$_acc_c" ] && grep -qxF "$_acc_c" <<< "$_acc_noted"; then
+                        _acc_obj="$_acc_c"; break 2
+                    fi
+                done
+            done < <(git -C "$_acc_repo" tag -l 'spira-release-*' 2>/dev/null | sort -r)
+            # A note on something that is not a release tag: fall back to any noted object
+            # rather than reporting NEVER while a verdict exists.
+            [ -n "$_acc_obj" ] || _acc_obj="$(printf '%s\n' "$_acc_noted" | tail -1)"
+        fi
         if [ -n "${_acc_obj:-}" ]; then
             _acc_tag="$(git -C "$_acc_repo" tag --points-at "$_acc_obj" 2>/dev/null \
                         | grep '^spira-release-' | head -1)"
@@ -1419,7 +1438,7 @@ print("SP_FUNNEL_DONE_AGE=%s"  % age)
     echo "SP_ACCEPT_TAG=${_acc_tag:--}"
     echo "SP_ACCEPT_AT=$_acc_at"
     echo "SP_ACCEPT_SINCE=$_acc_since"
-    unset _acc_verdict _acc_tag _acc_at _acc_since _acc_obj _acc_note _acc_repo
+    unset _acc_verdict _acc_tag _acc_at _acc_since _acc_obj _acc_note _acc_repo _acc_noted _acc_t _acc_c
 
     # ---- GATE: what is happening between DONE and LANDED --------------------------------
     # The operator (2026-09-07): "there's currently a lot that happens between 'DONE' and
