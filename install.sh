@@ -120,6 +120,26 @@ _prod_guard() {
 # directory it initialises and stages its files), so refusing it refused every re-install of
 # every instance — acceptance phases B and D exited 2 on it, as would any re-run of install.sh
 # on a box whose database this install had already initialised.
+# _seed_when <fresh:0|1> <server-mode:0|1> <server-up:0|1> -> "now" | "defer"
+# Phase 3 starts a temporary dolt server only to run `bd init`; on a re-install over an
+# existing server-mode database whose server is down (any install after uninstall.sh), seed.sh
+# failed every statute against it and the failure was ignored — 25 "FAILED law-*" lines, and a
+# statute a newer release adds never seeded. Such a seed is deferred to phase 4, after
+# dolt-beads.service is up and bd accepts connections.
+_seed_when() {
+    local fresh="$1" server="$2" up="$3"
+    if [ "$fresh" = 1 ] || [ "$server" != 1 ] || [ "$up" = 1 ]; then echo now; else echo defer; fi
+}
+
+# _dolt_port_of <dolt-data-dir> -> the port its dolt-server.yaml listens on (3307 by default).
+_dolt_port_of() {
+    local p=""
+    [ -f "${1:-}/dolt-server.yaml" ] \
+        && p="$(grep -E '^\s*port\s*:' "$1/dolt-server.yaml" 2>/dev/null | head -1 | sed 's/.*:\s*//' | tr -d ' ')"
+    [ -n "$p" ] && [ "$p" -gt 0 ] 2>/dev/null && { echo "$p"; return; }
+    echo 3307
+}
+
 _db_git_guard() {
     local db="${1:-}" walk remotes
     [ -n "$db" ] || return 0
@@ -603,8 +623,16 @@ fi
 
 # Seed statutes — run seed.sh if the database is present.
 if [ -d "${SPIRA_DB:-}/.beads" ] || [ "$_dry" = 0 ]; then
+    _seed_server=0; _seed_up=0
+    if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
+        _seed_server=1
+        (echo -n "" >/dev/tcp/127.0.0.1/"$(_dolt_port_of "$SPIRA_DOLT_DATA")") 2>/dev/null && _seed_up=1
+    fi
     if [ "$_dry" = 1 ]; then
         phase_info "would run: spira/seed.sh (skips statutes already in force)"
+    elif [ "$(_seed_when "${_db_fresh:-0}" "$_seed_server" "$_seed_up")" = defer ]; then
+        _seed_deferred=1
+        phase_info "seeding statutes after phase 4 — the database server is not running yet"
     else
         phase_info "seeding statutes"
         "$SPIRA_HOME/seed.sh" 2>&1 | sed 's/^/  /'
@@ -623,6 +651,7 @@ if [ -d "${SPIRA_DB:-}/.beads" ] || [ "$_dry" = 0 ]; then
             _phase_fail "database" "seed.sh failed — statutes not seeded on fresh database"
         unset _seed_rc
     fi
+    unset _seed_server _seed_up
 fi
 
 # ---------------------------------------------------------------------------
@@ -742,6 +771,16 @@ else
         unset _db_wait _db_max _db_ok
     fi
 fi
+
+# THE SEED PHASE 3 DEFERRED, now that dolt-beads.service is up and bd accepts connections. A
+# failure here is real — the server is running — so it fails the install.
+if [ "${_seed_deferred:-0}" = 1 ]; then
+    phase_info "seeding statutes (deferred from phase 3 — the database server is up now)"
+    "$SPIRA_HOME/seed.sh" 2>&1 | sed 's/^/  /'
+    [ "${PIPESTATUS[0]}" = 0 ] \
+        || _phase_fail "units" "seed.sh failed with the database server running"
+fi
+unset _seed_deferred
 
 # Linger — enable so user units survive session logout.
 # Record the stamp file only when we actually enable it, so uninstall knows we did it.
