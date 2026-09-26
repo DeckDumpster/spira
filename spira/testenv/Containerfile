@@ -27,6 +27,11 @@
 #   source does not exist at image-build time. So the builder stage is used for
 #   ACQUISITION only — installer and caches are discarded, toolchain is copied.
 
+# Global: redeclared per-stage (ARG scope ends at the next FROM). Stage 3 pins
+# RUSTUP_TOOLCHAIN to this so a workspace rust-toolchain.toml naming another
+# channel can't send rustup to install into the read-only /usr/local/rustup.
+ARG RUST_VERSION=1.96.0
+
 # ── Stage 1: build bd ─────────────────────────────────────────────────────────
 FROM docker.io/library/ubuntu:24.04 AS bd-builder
 
@@ -71,7 +76,7 @@ RUN mkdir /out && \
 # stage, which is discarded whole because bd is compiled once from a pinned
 # tag and only the binary is needed afterwards.
 FROM docker.io/library/ubuntu:24.04 AS rust-builder
-ARG RUST_VERSION=1.96.0
+ARG RUST_VERSION
 RUN apt-get update -q && \
     apt-get install -yq --no-install-recommends curl ca-certificates && \
     rm -rf /var/lib/apt/lists/*
@@ -82,6 +87,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 
 # ── Stage 3: runtime image ────────────────────────────────────────────────────
 FROM docker.io/library/ubuntu:24.04
+ARG RUST_VERSION
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -95,7 +101,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 COPY --from=rust-builder /root/.cargo /usr/local/cargo
 COPY --from=rust-builder /root/.rustup /usr/local/rustup
 ENV RUSTUP_HOME=/usr/local/rustup \
-    PATH=/usr/local/cargo/bin:$PATH
+    PATH=/usr/local/cargo/bin:$PATH \
+    RUSTUP_TOOLCHAIN=${RUST_VERSION}
 
 # ── Base: system init, session bus, core tools ─────────────────────────────
 # All from the distro archive; no external download scripts.
