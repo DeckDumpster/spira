@@ -2011,19 +2011,7 @@ st="${verdict%%	*}"; _vrest="${verdict#*	}"; superseded="${_vrest%%	*}"; deliver
 # Walk the branch first (covers commits from the CURRENT session not yet on the base),
 # then the landing refs (covers commits already on the base). The window is the same in
 # both — SPIRA_VERDICT_WINDOW — to match sentinel CHECK5 and landed() in lib.sh.
-subjects="$(git -C "$REPO" log --format='%s%n%b' -n "${SPIRA_VERDICT_WINDOW:-400}" "$BRANCH" 2>/dev/null)"
-if grep -qF "$BEAD_ID" <<< "$subjects"; then
-    committed=yes
-else
-    _land_refs="$(spira_landrefs "$REPO" 2>/dev/null)" || _land_refs=""
-    if [ -n "$_land_refs" ]; then
-        # shellcheck disable=SC2086
-        _land_subjects="$(git -C "$REPO" log --format='%s%n%b' -n "${SPIRA_VERDICT_WINDOW:-400}" $_land_refs 2>/dev/null)"
-        if grep -qF "$BEAD_ID" <<< "$_land_subjects"; then committed=yes; else committed=no; fi
-    else
-        committed=no
-    fi
-fi
+committed="$(verdict_committed "$REPO" "$BRANCH" "$BEAD_ID")"
 log "$FAYTH: $BEAD_ID status=$st committed=$committed superseded=$superseded delivers=${delivers:-none}"
 
 # EVICTION RACE. eviction_reopen (lib.sh) decides reopen/stale/cap/none from the landstate
@@ -2070,118 +2058,37 @@ if [ "$st" = "closed" ] && [ "$committed" = "yes" ] && [ "$superseded" != 1 ]; t
     unset _evict_ls _evict_state _evict_tip _evict_at _evict_reason
 fi
 
-if [ "$st" = "closed" ] && [ "$committed" = "no" ] && [ "$superseded" != 1 ]; then
-    if [ -n "${delivers:-}" ]; then
-        # VERIFY EACH DECLARED DELIVERABLE. An aeon that set delivers:TYPE labels must have
-        # produced the declared evidence, or the close is on nothing and the bead is reopened.
-        # The sentinel re-checks on the next pass; this check catches the common case at
-        # session end so the bead does not cycle unnecessarily. SESSION_EPOCH is the lower
-        # bound for file mtime: a file written before this session does not count as evidence.
-        _delivers_ok=1
-        _delivers_fail=""
-        _IFS_SAVE="$IFS"; IFS=';'
-        # shellcheck disable=SC2206
-        _deliver_arr=( ${delivers} )
-        IFS="$_IFS_SAVE"
-        for _deliver in "${_deliver_arr[@]}"; do
-            [ -n "$_deliver" ] || continue
-            _dtype="${_deliver%%:*}"
-            _dval="${_deliver#*:}"
-            case "$_dtype" in
-                beads)
-                    # EXCLUDE event-type children. aeon.sh itself creates a state-change
-                    # child (issue_type=event) when it records the branch affinity. That
-                    # internal record is not a deliverable and must not satisfy the check.
-                    _cnt="$(bdjson children "$BEAD_ID" 2>/dev/null | python3 -c '
-import sys,json
-try: d=json.load(sys.stdin)
-except Exception: print(0); sys.exit()
-print(len([x for x in (d if isinstance(d,list) else [d])
-           if x.get("id") and x.get("issue_type") != "event"]))' 2>/dev/null)" || _cnt=0
-                    if [ "${_cnt:-0}" -le 0 ] 2>/dev/null; then
-                        _delivers_ok=0
-                        _delivers_fail="delivers:beads declared but no child beads name $BEAD_ID as source"
-                    fi
-                    ;;
-                note|report)
-                    if [ "$_dval" = "$_dtype" ]; then
-                        _delivers_ok=0
-                        _delivers_fail="delivers:$_dtype has no file path — use delivers:$_dtype:/absolute/path"
-                    elif [ ! -f "$_dval" ]; then
-                        _delivers_ok=0
-                        _delivers_fail="delivers:$_dtype: $_dval does not exist"
-                    elif [[ "$_dval" == */applied.jsonl ]]; then
-                        # Identity check: a record in this shared global ledger must name THIS
-                        # bead. Mtime proves only that someone applied some SOP during this
-                        # session — a concurrent aeon satisfies it for free
-                        # (law-a-pattern-match-is-not-an-identity-check).
-                        if ! grep -q '"bead"[[:space:]]*:[[:space:]]*"'"$BEAD_ID"'"' "$_dval" 2>/dev/null; then
-                            _delivers_ok=0
-                            _delivers_fail="delivers:$_dtype: $_dval has no record naming bead $BEAD_ID. Set delivers:TYPE labels that match the evidence actually produced. Escalate to aeon-bahamut if the criterion cannot be met — the delivers: label may not be removed."
-                        fi
-                    else
-                        _mt="$(stat -c %Y "$_dval" 2>/dev/null)" || _mt=0
-                        if [ "${_mt:-0}" -le "${SESSION_EPOCH:-0}" ] 2>/dev/null; then
-                            _delivers_ok=0
-                            _delivers_fail="delivers:$_dtype: $_dval exists but was not written in this session (mtime ${_mt} <= epoch ${SESSION_EPOCH:-0})"
-                        fi
-                    fi
-                    ;;
-                check)
-                    # Command must follow the colon. Run it in the aeon's environment;
-                    # exit 0 confirms the machine state is in place. No time window — machine
-                    # state is either present or not, independent of when this session started.
-                    #
-                    # BOUNDED BY A TIMEOUT (SPIRA_DELIVERS_CHECK_TIMEOUT). A timeout scores
-                    # exactly like a non-zero exit — not yet — rather than hang the session.
-                    if [ "$_dval" = "$_dtype" ]; then
-                        _delivers_ok=0
-                        _delivers_fail="delivers:check has no command — use delivers:check:<command>"
-                    else
-                        timeout "${SPIRA_DELIVERS_CHECK_TIMEOUT:-60}" bash -c "$_dval" >/dev/null 2>&1
-                        _drc=$?
-                        if [ "$_drc" = 124 ]; then
-                            _delivers_ok=0
-                            _delivers_fail="delivers:check: command timed out after ${SPIRA_DELIVERS_CHECK_TIMEOUT:-60}s: $_dval"
-                        elif [ "$_drc" != 0 ]; then
-                            _delivers_ok=0
-                            _delivers_fail="delivers:check: command exited non-zero: $_dval"
-                        fi
-                    fi
-                    ;;
-                action)
-                    # No machine check — close reason is the evidence.
-                    ;;
-                *)
-                    _delivers_ok=0
-                    _delivers_fail="delivers:$_dtype is not a recognised type (beads, note, report, check, action)"
-                    ;;
-            esac
-            [ "$_delivers_ok" = 1 ] || break
-        done
-        if [ "$_delivers_ok" = 1 ]; then
-            # SAID OUT LOUD. A silent decline is indistinguishable from the check never running.
-            log "$FAYTH: $BEAD_ID closed with nothing committed and NOT reopened — delivers ($delivers) verified"
-        else
-            _producer="$(bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
-import sys,json
-try: d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d; print(d.get("created_by","") or "")
-except Exception: print("")' 2>/dev/null)"
-            _producer_msg=""
-            [ -n "$_producer" ] && _producer_msg=" Escalate to $_producer if the criterion cannot be met — the delivers: label may not be removed."
-            bead_reopen "$BEAD_ID" delivers-mismatch "Reopened by aeon.sh: $_delivers_fail. Set delivers:TYPE labels that match the evidence actually produced.${_producer_msg}"
-            log "$FAYTH: $BEAD_ID REOPENED — delivers not verified: $_delivers_fail"
-        fi
-    else
-        bead_reopen "$BEAD_ID" closed-without-commit "Reopened by aeon.sh: closed without a commit naming $BEAD_ID on $BRANCH. Closed is not landed."
-        log "$FAYTH: $BEAD_ID REOPENED — closed with nothing committed"
-    fi
-elif [ "$st" = "closed" ] && [ "$committed" = "no" ] && [ "$superseded" = 1 ]; then
+# close_verdict/delivers_verdict (lib.sh) decide identically for aeon.sh and sentinel
+# CHECK5 (UC-aeon-execution-13) — SESSION_EPOCH is the lower bound for file mtime: a file
+# written before this session does not count as delivers:note/report evidence.
+_cv="$(close_verdict "$BEAD_ID" "$st" "$superseded" "${delivers:-}" "$committed" "${SESSION_EPOCH:-0}")"
+_cv_outcome="${_cv%%|*}"; _cv_rest="${_cv#*|}"; _cv_reason="${_cv_rest%%|*}"; _cv_msg="${_cv_rest#*|}"
+case "$_cv_outcome|$_cv_reason" in
+keep\|delivers)
+    # SAID OUT LOUD. A silent decline is indistinguishable from the check never running.
+    log "$FAYTH: $BEAD_ID closed with nothing committed and NOT reopened — $_cv_msg"
+    ;;
+keep\|superseded)
     # SAID OUT LOUD. This is the one path where the harness sees a bead closed with nothing
     # committed and declines to act, and a silent decline is indistinguishable from the
     # check never having run at all.
     log "$FAYTH: $BEAD_ID closed with nothing committed and NOT reopened — superseded, so its work landed under another id"
-fi
+    ;;
+reopen\|delivers-mismatch)
+    _producer="$(bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
+import sys,json
+try: d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d; print(d.get("created_by","") or "")
+except Exception: print("")' 2>/dev/null)"
+    _producer_msg=""
+    [ -n "$_producer" ] && _producer_msg=" Escalate to $_producer if the criterion cannot be met — the delivers: label may not be removed."
+    bead_reopen "$BEAD_ID" delivers-mismatch "Reopened by aeon.sh: $_cv_msg. Set delivers:TYPE labels that match the evidence actually produced.${_producer_msg}"
+    log "$FAYTH: $BEAD_ID REOPENED — delivers not verified: $_cv_msg"
+    ;;
+reopen\|closed-without-commit)
+    bead_reopen "$BEAD_ID" closed-without-commit "Reopened by aeon.sh: closed without a commit naming $BEAD_ID on $BRANCH. Closed is not landed."
+    log "$FAYTH: $BEAD_ID REOPENED — closed with nothing committed"
+    ;;
+esac
 
 # ---- own-worktree dirty guard -----------------------------------------------
 # The aeon's own worktree ($WORK) must be clean when the bead is closed. A bead closed while

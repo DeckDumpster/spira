@@ -1427,6 +1427,134 @@ bead_reopen() {
     return 0
 }
 
+# verdict_committed <repo> <branch> <bead-id> [window] -> "yes" or "no"
+#   Walks the branch first (this session's own commits, not yet merged to the base), then
+#   the landing refs (commits already on the base) — same window for both, to match
+#   sentinel CHECK5 and landed()'s SPIRA_VERDICT_WINDOW. A bead's commit sits deeper from a
+#   rebased branch's tip than from the base tip (leftover commits from a prior attempt
+#   shift the depth), so checking only one of the two misses real commits in one direction.
+verdict_committed() {
+    local _repo="$1" _branch="$2" _id="$3" _window="${4:-${SPIRA_VERDICT_WINDOW:-400}}"
+    local _subjects _land_refs _land_subjects
+    _subjects="$(git -C "$_repo" log --format='%s%n%b' -n "$_window" "$_branch" 2>/dev/null)"
+    if grep -qF "$_id" <<< "$_subjects"; then
+        printf 'yes'; return
+    fi
+    _land_refs="$(spira_landrefs "$_repo" 2>/dev/null)" || _land_refs=""
+    if [ -n "$_land_refs" ]; then
+        # shellcheck disable=SC2086
+        _land_subjects="$(git -C "$_repo" log --format='%s%n%b' -n "$_window" $_land_refs 2>/dev/null)"
+        if grep -qF "$_id" <<< "$_land_subjects"; then printf 'yes'; return; fi
+    fi
+    printf 'no'
+}
+
+# delivers_verdict <id> <delivers-string> <since-epoch> -> "1|" (verified) or "0|<reason>"
+#   The one case block for delivers:TYPE evidence, shared by aeon.sh (checking its own
+#   session's work, since-epoch = SESSION_EPOCH) and sentinel CHECK5 (checking a closed
+#   bead's window since started_at) — the two callers pass their own since-epoch and get
+#   the same verdict for the same evidence (UC-aeon-execution-13: aeon and sentinel decide
+#   delivers types identically, by construction, because it is the same function).
+#   RECOGNISED TYPES: beads (a child bead — not aeon.sh's own state-change event record —
+#   names id as source), note/report:/abs/path (the file exists and postdates since-epoch;
+#   a path under .../applied.jsonl is checked for a record naming id instead, since mtime
+#   alone on that shared ledger is satisfied by any concurrent aeon's own application),
+#   check:<command> (exits 0 within SPIRA_DELIVERS_CHECK_TIMEOUT), action (no machine
+#   check — the close reason is the evidence).
+delivers_verdict() {
+    local _id="$1" _delivers="$2" _since="${3:-0}"
+    local _ok=1 _fail=""
+    local _ifs_save="$IFS"; IFS=';'
+    # shellcheck disable=SC2206
+    local _arr=( ${_delivers} )
+    IFS="$_ifs_save"
+    local _d _dtype _dval _cnt _mt _drc
+    for _d in "${_arr[@]}"; do
+        [ -n "$_d" ] || continue
+        _dtype="${_d%%:*}"
+        _dval="${_d#*:}"
+        case "$_dtype" in
+            beads)
+                _cnt="$(bdjson children "$_id" 2>/dev/null | python3 -c '
+import sys,json
+try: d=json.load(sys.stdin)
+except Exception: print(0); sys.exit()
+print(len([x for x in (d if isinstance(d,list) else [d])
+           if x.get("id") and x.get("issue_type") != "event"]))' 2>/dev/null)" || _cnt=0
+                if [ "${_cnt:-0}" -le 0 ] 2>/dev/null; then
+                    _ok=0; _fail="delivers:beads declared but no child beads name $_id as source"
+                fi
+                ;;
+            note|report)
+                if [ "$_dval" = "$_dtype" ]; then
+                    _ok=0; _fail="delivers:$_dtype has no file path — use delivers:$_dtype:/absolute/path"
+                elif [ ! -f "$_dval" ]; then
+                    _ok=0; _fail="delivers:$_dtype: $_dval does not exist"
+                elif [[ "$_dval" == */applied.jsonl ]]; then
+                    if ! grep -q '"bead"[[:space:]]*:[[:space:]]*"'"$_id"'"' "$_dval" 2>/dev/null; then
+                        _ok=0; _fail="delivers:$_dtype: $_dval has no record naming bead $_id"
+                    fi
+                else
+                    _mt="$(stat -c %Y "$_dval" 2>/dev/null)" || _mt=0
+                    if [ "${_mt:-0}" -le "${_since:-0}" ] 2>/dev/null; then
+                        _ok=0; _fail="delivers:$_dtype: $_dval exists but predates the window (mtime ${_mt} <= ${_since:-0})"
+                    fi
+                fi
+                ;;
+            check)
+                if [ "$_dval" = "$_dtype" ]; then
+                    _ok=0; _fail="delivers:check has no command — use delivers:check:<command>"
+                else
+                    timeout "${SPIRA_DELIVERS_CHECK_TIMEOUT:-60}" bash -c "$_dval" >/dev/null 2>&1
+                    _drc=$?
+                    if [ "$_drc" = 124 ]; then
+                        _ok=0; _fail="delivers:check: command timed out after ${SPIRA_DELIVERS_CHECK_TIMEOUT:-60}s: $_dval"
+                    elif [ "$_drc" != 0 ]; then
+                        _ok=0; _fail="delivers:check: command exited non-zero: $_dval"
+                    fi
+                fi
+                ;;
+            action) ;;
+            *)
+                _ok=0; _fail="delivers:$_dtype is not a recognised type (beads, note, report, check, action)"
+                ;;
+        esac
+        [ "$_ok" = 1 ] || break
+    done
+    printf '%s|%s' "$_ok" "$_fail"
+}
+
+# close_verdict <id> <status> <superseded:0|1> <delivers-string> <committed:yes|no> <since-epoch>
+#   -> "keep|<reason>" or "reopen|<cause>|<message>". <cause> is bead_reopen's reason
+#   argument; <message> is the detail to fold into the reopen note (empty for the plain
+#   no-commit case). Not-closed and committed=yes both answer "keep|committed" — the
+#   caller only acts on this after it already knows the bead is closed.
+#
+#   THE GIT WALK IS THE CALLER'S OWN (verdict_committed, or CHECK5's landstate-aware
+#   walk) — this function only decides a CLOSED, NOT-YET-committed bead's fate given
+#   delivers evidence already available. A caller whose own committed determination is
+#   provisional (CHECK5's first-pass subject match, before its landstate exemptions) can
+#   still call this: "reopen" here means "no exemption fired yet", not "act now".
+close_verdict() {
+    local _id="$1" _status="$2" _superseded="$3" _delivers="$4" _committed="$5" _since="${6:-0}"
+    if [ "$_status" != closed ] || [ "$_committed" = yes ]; then
+        printf 'keep|committed'; return
+    fi
+    if [ "$_superseded" = 1 ]; then
+        printf 'keep|superseded'; return
+    fi
+    if [ -n "$_delivers" ]; then
+        local _dv _dok _dfail
+        _dv="$(delivers_verdict "$_id" "$_delivers" "$_since")"
+        _dok="${_dv%%|*}"; _dfail="${_dv#*|}"
+        if [ "$_dok" = 1 ]; then
+            printf 'keep|delivers (%s) verified' "$_delivers"; return
+        fi
+        printf 'reopen|delivers-mismatch|%s' "$_dfail"; return
+    fi
+    printf 'reopen|closed-without-commit|'
+}
+
 # --------------------------------------------------------------------------------------
 # ENDING A CLAIM. An assignee is written when a bead is claimed, and it is the ONLY thing
 # standing between the next aeon and the work, because `bd ready --claim` refuses a bead

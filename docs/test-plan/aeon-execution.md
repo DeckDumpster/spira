@@ -254,8 +254,8 @@ because they need the testlib/plan-lint dependencies actually present in `origin
 - The seam extractions Ryan's review named directly: `aeon_disposition` (teardown decision),
   `hb_tick` (heartbeat tick — also collapses the six 'poisoned at 3 attempts' files and
   replaces test-aeon-lease.sh/test-thrash-wall.sh's self-testing copies with real-function
-  tests), `close_verdict`/`delivers_verdict` (close verdict), and `check4_decide` (CHECK 4
-  decision — the largest single cost cluster in §7).
+  tests), and `check4_decide` (CHECK 4 decision — the largest single cost cluster in §7).
+  `close_verdict`/`delivers_verdict` is done — see sp-eq8a4.2.3 below.
 - The rest of §3/§4's file consolidations and §5's other seams, all of which require
   `spira/testlib.sh` to exist for the AC's "suites all use testlib" requirement.
 - The gap tests in §6, fail-closed rows first (G1, G4-G7, G9-G11, G13-G14), and G17's decision
@@ -378,3 +378,45 @@ this slice's D-items now, against the pre-seam tree, would duplicate work these 
 already did and guarantee a conflict against it once it lands. Deferred to a follow-up bead
 under sp-eq8a4.2 that re-checks landing status (git merge-base --is-ancestor, not `bd show`)
 before claiming.
+
+## 10. Implementation status (sp-eq8a4.2.3)
+
+`spira/testlib.sh` and `spira/plan-lint.sh` are now reachable from `origin/main` (sp-yivi7's
+commit d155383f is an ancestor of this worktree's base), so this slice does row 13's
+DEMOTE-TO-T1 rather than deferring it again.
+
+Landed:
+
+- `close_verdict`, `delivers_verdict` and `verdict_committed` in `lib.sh`. aeon.sh's own
+  post-session check and sentinel CHECK5 both call `delivers_verdict` for delivers:TYPE
+  evidence (aeon.sh via `close_verdict`, sentinel directly, since sentinel's landstate
+  exemptions after a delivers failure have no aeon.sh equivalent and stay in sentinel.sh
+  unchanged). UC-aeon-execution-13's "aeon and sentinel decide delivers types identically"
+  is now true by construction, not by a parity test.
+- `test-delivers-parity.sh` deleted — its awk-extract-and-eval check is exactly what a
+  shared function makes unnecessary.
+- `test-aeon-verdict.sh` rewritten: a T1 table calling `close_verdict`/`delivers_verdict`
+  directly (14 cases), a T2 table calling `verdict_committed` against real git fixtures with
+  no aeon run (5 cases, including the deep-landref-window case sp-fzfw's e2e used to carry),
+  a structural check that both callers use the shared functions and neither keeps its own
+  `case "$_dtype"`, and exactly 2 e2e rows through the real aeon.sh (committed,
+  no-commit-reopen). The brief-rendering cases already in this file (persona wall/no-wall,
+  already-done mentions — UC-aeon-execution-07, not this bead) are untouched.
+- Unifying the two case blocks also reconciled two divergences neither test previously
+  caught: sentinel's `delivers:beads` counted event-type children aeon.sh already excluded
+  (T1 carries this as a named positive control), and sentinel's `delivers:report`/`note`
+  had no identity check on a `.../applied.jsonl` path the way aeon.sh already did. Both
+  callers now get the stricter behavior.
+
+Cost: `test-aeon-verdict.sh` alone (test-delivers-parity.sh deleted, so it carries the whole
+row): 82s, against 77s (aeon-verdict) + 1s (delivers-parity) = 78s before. Not a reduction —
+the file still runs 4 real aeon.sh sessions (2 for this bead's own e2e rows, 2 pre-existing
+for brief-rendering, out of this bead's scope) at ~15-20s of fixed per-session overhead each,
+which the T1/T2 demotion of the other 9 runs does not touch. §7's ~1s T1 projection for
+"close/delivers/eviction verdict" is reachable once the brief-rendering cases move to their
+own file (UC-07, a separate bead) and stop sharing this suite's aeon.sh fixture cost.
+
+Verified: `bash spira/testenv-batch.sh --suites test-aeon-verdict.sh,test-check5-nopayload.sh,
+test-check5-delivers-check.sh,test-check5-delivers-action.sh,
+test-check5-delivers-falls-through.sh,test-check5-sweep-delivers.sh,test-aeon-resume.sh
+spira/sp-eq8a4.2.3` in testenv.

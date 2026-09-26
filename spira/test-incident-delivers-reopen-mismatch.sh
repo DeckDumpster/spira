@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
-# covers: spira/incident.sh spira/aeon.sh
+# covers: spira/incident.sh spira/lib.sh
 #
 # REGRESSION: incident.sh stamped delivers:note:applied.jsonl on every incident by default,
 # so a diagnosis-only incident was reopened when it closed — the criterion could not be met
-# by correct work. The check in aeon.sh was also time-based, not identity-based, so a
-# concurrent unrelated SOP application satisfied the criterion by coincidence.
+# by correct work. The check was also time-based, not identity-based, so a concurrent
+# unrelated SOP application satisfied the criterion by coincidence.
 #
 # Seen to fail against the unfixed tree (commit sp-qqf3q):
 #   FAIL  default stamps delivers:action, not the SOP ledger: not found in incident.sh else branch
-#   FAIL  aeon.sh uses identity check for applied.jsonl, not mtime: not found in aeon.sh note case
+#   FAIL  lib.sh uses identity check for applied.jsonl, not mtime: not found in delivers_verdict's note case
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 INC="$HERE/incident.sh"
-AEON="$HERE/aeon.sh"
+LIB="$HERE/lib.sh"
 INC_CODE="$(grep -vE '^[[:space:]]*#' "$INC")"
 INC_JOINED="$(printf '%s' "$INC_CODE" | sed -e :a -e '/\\$/N; s/\\\n//; ta')"
-AEON_CODE="$(grep -vE '^[[:space:]]*#' "$AEON")"
-AEON_JOINED="$(printf '%s' "$AEON_CODE" | sed -e :a -e '/\\$/N; s/\\\n//; ta')"
-has_inc()  { grep -qE "$1" <<< "$INC_JOINED"; }
-has_aeon() { grep -qE "$1" <<< "$AEON_JOINED"; }
+LIB_CODE="$(grep -vE '^[[:space:]]*#' "$LIB")"
+LIB_JOINED="$(printf '%s' "$LIB_CODE" | sed -e :a -e '/\\$/N; s/\\\n//; ta')"
+has_inc() { grep -qE "$1" <<< "$INC_JOINED"; }
+has_lib() { grep -qE "$1" <<< "$LIB_JOINED"; }
 
 pass=0; fail=0
 ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
@@ -49,23 +49,23 @@ else
 fi
 
 echo
-echo "aeon.sh uses identity check for applied.jsonl, not mtime:"
+echo "lib.sh uses identity check for applied.jsonl, not mtime:"
 # The shared global SOP ledger mtime proves only that someone applied some SOP during
 # this session — a concurrent unrelated aeon satisfies the criterion for free.
 # The check must require a record naming this specific bead.
 # Positive control: a dedicated code path for applied.jsonl exists (absent means unfixed).
-if has_aeon 'applied\.jsonl'; then
-    ok "aeon.sh has a dedicated code path for applied.jsonl (positive control)"
+if has_lib 'applied\.jsonl'; then
+    ok "lib.sh has a dedicated code path for applied.jsonl (positive control)"
 else
-    bad "aeon.sh has a dedicated code path for applied.jsonl (positive control)" \
-        "no applied.jsonl branch in aeon.sh — identity check is absent"
+    bad "lib.sh has a dedicated code path for applied.jsonl (positive control)" \
+        "no applied.jsonl branch in lib.sh — identity check is absent"
 fi
-# That branch must reference BEAD_ID to prove it checks the record's bead field.
-if has_aeon 'applied\.jsonl' && has_aeon 'BEAD_ID'; then
-    ok "aeon.sh applied.jsonl branch references BEAD_ID for identity check"
+# That branch must reference the bead id parameter to prove it checks the record's bead field.
+if has_lib 'applied\.jsonl' && has_lib '"bead".*_id'; then
+    ok "lib.sh applied.jsonl branch references the bead id for identity check"
 else
-    bad "aeon.sh applied.jsonl branch references BEAD_ID for identity check" \
-        "BEAD_ID not referenced near the applied.jsonl check"
+    bad "lib.sh applied.jsonl branch references the bead id for identity check" \
+        "bead id not referenced near the applied.jsonl check"
 fi
 
 echo
