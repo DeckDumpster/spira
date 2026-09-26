@@ -144,7 +144,7 @@ run_aeon() { : > "$WORLD_CALLS"; rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_HOME/aeon
 testdb_reset; seed sp-ws-3
 run_aeon
 world_calls="$(cat "$WORLD_CALLS")"
-is   "bead is closed after session"    closed "$(field sp-ws-3 status)"
+is   "bead is converted to submitted, not left closed" open "$(field sp-ws-3 status)"
 want "world.sh stop was called"        "stop"  "$world_calls"
 want "world.sh start was called"       "start" "$world_calls"
 stop_line="$(grep -n 'stop'  "$WORLD_CALLS" | head -1 | cut -d: -f1)"

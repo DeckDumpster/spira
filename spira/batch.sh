@@ -487,6 +487,7 @@ main() {
                    git -C "$repo" merge-base --is-ancestor "${_ltip:-none}" "$base_sha" \
                        2>/dev/null; then
                     land_mark "$_lid" LANDED "${_ltip:-none}" already-in-base
+                    bead_close_on_land "$_lid" "${_ltip:-none}" || true
                     printf 'batch %s: %s tip already in %s (live branch) — LANDED\n' \
                         "$name" "$_lid" "$base"
                 fi
@@ -499,6 +500,7 @@ main() {
             if git -C "$repo" merge-base --is-ancestor "${_ltip:-none}" "$base_sha" \
                    2>/dev/null; then
                 land_mark "$_lid" LANDED "${_ltip:-none}" already-in-base-orphan
+                bead_close_on_land "$_lid" "${_ltip:-none}" || true
                 printf 'batch %s: %s tip already in %s (orphan) — LANDED\n' \
                     "$name" "$_lid" "$base"
             else
@@ -513,6 +515,7 @@ main() {
                 # though none of their content had reached base).
                 if content_landed "$repo" "${_ltip:-none}" "$base_sha" 2>/dev/null; then
                     land_mark "$_lid" LANDED "${_ltip:-none}" content-landed-orphan
+                    bead_close_on_land "$_lid" "${_ltip:-none}" || true
                     printf 'batch %s: %s has no branch — content on %s (orphan) — LANDED\n' \
                         "$name" "$_lid" "$base"
                 else
@@ -647,13 +650,22 @@ for b in d:
     # confirms the bead is not closed. An empty answer (bd unreachable) is not a
     # confirmation — it is treated as "unknown", not "not closed" (gap G8 already
     # pins bd-unreachable as fail-open elsewhere in this pass).
+    #
+    # SUBMITTED IS ADMISSIBLE (sp-qsona). A work bead's own close is converted at aeon
+    # teardown to open + SPIRA_SUBMITTED_LABEL, and only the landing pass closes it, once
+    # its batch lands — so "open, carrying the submitted label" is exactly the state a
+    # finished work bead waits in, and refusing it here would mean no work bead ever
+    # batches. Every reopen that should bar admission (eject, rework, a red gate) goes
+    # through bead_reopen, which withdraws CERTIFIED, and every eject strips the label.
     if [ -n "${certs:-}" ]; then
         local _sf_filt="" _sf_cl _sf_id _sf_st
         while IFS= read -r _sf_cl; do
             [ -n "$_sf_cl" ] || continue
             _sf_id="${_sf_cl%% *}"
             _sf_st="$(spira_bead_status "$_sf_id")"
-            if [ -n "$_sf_st" ] && [ "$_sf_st" != closed ]; then
+            if [ -n "$_sf_st" ] && [ "$_sf_st" != closed ] \
+               && ! bead_has_label "$(bdjson show "$_sf_id" 2>/dev/null)" \
+                        "${SPIRA_SUBMITTED_LABEL:-spira-submitted}"; then
                 printf 'batch %s: WARN not-closed %s — CERTIFIED landstate but bead status=%s; refusing admission\n' \
                     "$name" "$_sf_id" "$_sf_st"
                 continue
@@ -677,6 +689,7 @@ for b in d:
                     "$name" "$_cid" "${_ctip:0:8}" "${_ltip:0:8}"
                 if git -C "$repo" merge-base --is-ancestor "$_ltip" "$base_sha" 2>/dev/null; then
                     land_mark "$_cid" LANDED "$_ltip" already-in-base
+                    bead_close_on_land "$_cid" "$_ltip" || true
                     printf 'batch %s: %s live tip already in %s — LANDED (already-in-base)\n' \
                         "$name" "$_cid" "$base"
                 else
@@ -694,6 +707,7 @@ for b in d:
                 fi
             elif git -C "$repo" merge-base --is-ancestor "$_ctip" "$base_sha" 2>/dev/null; then
                 land_mark "$_cid" LANDED "$_ctip" already-in-base
+                bead_close_on_land "$_cid" "$_ctip" || true
                 printf 'batch %s: %s tip already in %s — LANDED (already-in-base)\n' \
                     "$name" "$_cid" "$base"
             else
@@ -920,6 +934,7 @@ for b in d:
                     if [ -z "$_unlanded_ahead" ] \
                        || content_landed "$repo" "$_btip" "$base_sha" 2>/dev/null; then
                         land_mark "$_bid" LANDED "$_cited_sha" "${_cited_rule}-complete"
+                        bead_close_on_land "$_bid" "$_cited_sha" || true
                         printf 'batch %s: %s notes cite %s (%s) already on %s — marked landed\n' \
                             "$name" "$_bid" "$_cited_sha" "${_cited_rule}-complete" "$base"
                     else
@@ -1050,6 +1065,7 @@ for b in d:
             bead_reopen "$_lmid" batch-eject \
                 "Ejected by local batch gate: spira/$_lmid reproduced failure in $name." \
                 >/dev/null 2>&1 || true
+            bdq label remove "$_lmid" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1 || true
             land_mark "$_lmid" EJECTED "$_lmtip"
             printf 'QUEUE CAUGHT %s branch=%s\n' "$(date +%s)" "$_lmid" \
                 >> "$SPIRA_RUN/landing.log" 2>/dev/null || true

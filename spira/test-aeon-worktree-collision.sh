@@ -136,9 +136,17 @@ try: d = json.load(sys.stdin)
 except Exception: sys.exit(0)
 d = d if isinstance(d, list) else [d]
 print(d[0].get("status","") if d else "")' 2>/dev/null)"
-[ "$b_status" = "closed" ] \
-    && ok "case 1: bead B's summon reached the model and closed the bead — no FATAL" \
-    || bad "case 1: bead B's summon reached the model and closed the bead — no FATAL" "status=$b_status"
+# A task bead's close is converted to open + spira-submitted at teardown (sp-qsona), so
+# "reached the model and closed it" reads as open carrying the submitted label.
+b_labels="$(bd -C "$SPIRA_DB" show sp-cw-b --json 2>/dev/null | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+d = d if isinstance(d, list) else [d]
+print(",".join(d[0].get("labels") or []) if d else "")' 2>/dev/null)"
+[ "$b_status" = "open" ] && [[ ",$b_labels," == *",spira-submitted,"* ]] \
+    && ok "case 1: bead B's summon reached the model and closed the bead (converted to submitted) — no FATAL" \
+    || bad "case 1: bead B's summon reached the model and closed the bead (converted to submitted) — no FATAL" "status=$b_status labels=$b_labels"
 
 b_branch="$(bd -C "$SPIRA_DB" state sp-cw-b branch 2>/dev/null)"
 is "case 1: bead B's recorded branch was corrected to its own" "spira/sp-cw-b" "$b_branch"

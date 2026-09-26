@@ -378,9 +378,15 @@ export GIT_COMMITTER_NAME="aeon-$AEON" GIT_COMMITTER_EMAIL="aeon-$AEON@spira.loc
 # — which may or may not pick a different bead — instead of the NEXT resumable one it already
 # knows about (sp-3ntca). One `git rev-list` per candidate in the band, which is the same
 # work the old break-on-first form paid up to its one candidate.
+#
+# THE SAME EXCLUSIONS AS THE CLAIM (CLAIM_EXCLUDE, not the persona's own list alone). A
+# submitted bead (sp-qsona) is open with work on its branch — exactly what this scan looks
+# for — but its work is finished and waiting on the landing pass; resuming it would re-work
+# done work. The general claim below already excludes it via fayth_exclude; this scan must
+# not be a way around that.
 resume_ids=()
 for cand in $(bdjson "${READY_ARGS[@]}" --label "$FAYTH_LABELS" \
-                  --exclude-label "$FAYTH_EXCLUDE_LABELS" 2>/dev/null | python3 -c '
+                  --exclude-label "$CLAIM_EXCLUDE" 2>/dev/null | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
 except Exception: sys.exit(0)
@@ -743,7 +749,7 @@ print(d[0].get("status","") if d else "")' 2>/dev/null)"
         local _d_cap_rc=1 _d_reset="" _d_slain=no _d_thrash=no _d_thrash_note="" \
             _d_thrash_tip="" _d_thrash_charged=no _d_thrash_streak=0 _d_lapsed=no \
             _d_lapsed_quiet="" _d_lapsed_last="" _d_gate=no _d_gate_why="" _d_decision=no \
-            _d_operator=no _d_yield=no _d_outcome="-" _d_line _d_status _d_charge \
+            _d_operator=no _d_submitted=no _d_yield=no _d_outcome="-" _d_line _d_status _d_charge \
             _d_reqcause _d_notekey _lapsed_body _lapsed_ts _rq_count
 
         if reset_at="$(capacity_reset_at "$LOGF")"; then
@@ -796,6 +802,13 @@ sys.exit(0)' "$BEAD_ID" 2>/dev/null; then
             : # harness requeue — REQUEUE_CAUSE/REQUEUE_WHY are already set by the verdict block
         elif [ -f "$SPIRA_RUN/$BEAD_ID.operator-wait" ]; then
             _d_operator=yes
+        elif bead_has_label "$(bdjson show "$BEAD_ID" 2>/dev/null)" \
+                 "${SPIRA_SUBMITTED_LABEL:-spira-submitted}"; then
+            # SUBMITTED IS NOT UNLANDED (sp-qsona). A work bead's close is converted back to
+            # open carrying this label (the st=closed branch below); bead_close_on_land
+            # (lib.sh) closes it for real once the commit lands. Open by design, so charging
+            # an attempt would poison work that is done and simply hasn't landed yet.
+            _d_submitted=yes
         elif session_yield_headless "$LOGF"; then
             _d_yield=yes
         elif [ "${SESSION_STARTED:-0}" = 0 ]; then
@@ -807,7 +820,7 @@ sys.exit(0)' "$BEAD_ID" 2>/dev/null; then
         _d_line="$(aeon_disposition "${st:-?}" "$_d_cap_rc" "$_d_slain" "$_d_thrash" \
             "$_d_thrash_charged" "$_d_lapsed" "$_d_gate" "$_d_decision" "${SESSION_RC:-0}" \
             "${committed:-no}" "${REQUEUE_CAUSE:-"-"}" "$_d_operator" "$_d_yield" \
-            "${SESSION_STARTED:-0}" "$_d_outcome")"
+            "${SESSION_STARTED:-0}" "$_d_outcome" "$_d_submitted")"
         read -r _d_status _d_charge _d_reqcause _d_notekey <<<"$_d_line"
         [ "$_d_reqcause" = "-" ] && _d_reqcause=""
 
@@ -898,6 +911,12 @@ Requeued (thrash): the deliverable did not move for ${SPIRA_THRASH_MINUTES:-20}m
             bump_requeue "$BEAD_ID" "$_d_reqcause"
             bdq note "$BEAD_ID" "Released by aeon.sh: the session sent a kind-question mail to the operator and exited awaiting a reply. No attempt charged; the bead becomes ready when the question is answered." >/dev/null 2>&1
             log "$FAYTH: $BEAD_ID operator-wait — sent kind-question mail, released, no attempt charged"
+            release_own_claim "$BEAD_ID"
+            ledger_done "$rc" "$_d_status"
+            exit $rc ;;
+        submitted)
+            bdq note "$BEAD_ID" "Submitted: work committed on branch and marked submitted; the landing pass closes this bead when it lands, citing the merge commit. No attempt charged." >/dev/null 2>&1
+            log "$FAYTH: $BEAD_ID submitted — no attempt charged"
             release_own_claim "$BEAD_ID"
             ledger_done "$rc" "$_d_status"
             exit $rc ;;
@@ -1046,6 +1065,56 @@ $_cert_out"
                 fi ;;
         esac
     fi
+    # A WORK BEAD DOES NOT CLOSE HERE (sp-qsona). bead_close_on_land (lib.sh) is the only
+    # place one closes for a landed reason, called once its commit is actually on the base —
+    # so a close still standing at this point was the builder's own hand and is converted
+    # back to open, carrying SPIRA_SUBMITTED_LABEL, rather than left closed on nothing but the
+    # aeon's say-so (law-closed-is-not-landed). This runs AFTER the close already succeeded:
+    # there is no PreToolUse hook refusing the tool call, only aeon.sh's own teardown, which
+    # runs on every exit path and undoes the close before anything downstream can read it as
+    # a verdict about the work.
+    #
+    # AFTER THE GATE BRANCH ABOVE, NOT INSTEAD OF IT. Certification proceeds from submitted:
+    # the gate branch's queue-mode self-certify (sp-u9f82) still runs for a work bead, so a
+    # branch the session never submitted is CERTIFIED before it is marked submitted, and the
+    # gate branch's own notes keep its verdict visible. When that branch reopened the bead
+    # instead (a recorded FAIL, or a failed self-certification), st is no longer closed and
+    # the bead stays plain open — claimable, like an ejected member — not submitted.
+    #
+    # NEITHER SUPERSEDED NOR CARRYING A delivers: LABEL is converted. A superseded bead's
+    # work was carried onto the successor's branch and lands under the successor's id — it
+    # will never have a commit of its own, so converting it to submitted would make a
+    # permanent zombie: open, labelled submitted, and nothing ever lands to close it.
+    # delivers:TYPE is the same shape for a different reason: groom-trigger.sh,
+    # maechen-trigger.sh and incident.sh all file task/bug beads that close on a note, an
+    # action taken, or child beads filed — never a commit, never a repo: label, never a queue
+    # claim. Forcing those through the submitted/landed pipeline would zombie every one of
+    # them; the legacy commit-or-delivers audit (close_verdict, sp-dvlq) still judges them.
+    if [ "$st" = "closed" ] \
+       && read -r _wct_type _wct_sup _wct_delivers <<< "$(bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: print("\t0\t0"); sys.exit()
+d = d if isinstance(d, list) else [d]
+if not d: print("\t0\t0"); sys.exit()
+sup = 1 if any((x.get("dependency_type") or x.get("type")) == "supersedes"
+               for x in (d[0].get("dependencies") or [])) else 0
+deliv = 1 if any(l.startswith("delivers:") for l in (d[0].get("labels") or [])) else 0
+print("%s\t%s\t%s" % (d[0].get("issue_type") or "", sup, deliv))' 2>/dev/null)" \
+       && bead_is_work_type "${_wct_type:-}" && [ "${_wct_delivers:-0}" != 1 ]; then
+        if [ "${_wct_sup:-0}" = 1 ]; then
+            log "$FAYTH: $BEAD_ID closed a superseded work bead — not converted, close stands"
+        else
+            bead_reopen "$BEAD_ID" work-close-converted "Submitted: work committed on branch; marked submitted instead of closed. The landing pass closes this bead when it lands, citing the merge commit.${gate_why:+ Gate at close: $gate_why.}"
+            bdq label add "$BEAD_ID" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1
+            log "$FAYTH: $BEAD_ID closed a work bead directly — converted to submitted"
+            # $st DRIVES THE FINAL LEDGER LINE (ledger_done "${SESSION_RC:-$rc}" "${st:-?}"
+            # below) — left at its snapshot value of "closed" it would report a status the
+            # bead no longer has, the same misreport eviction-race avoids by setting st=open.
+            st=submitted
+        fi
+    fi
+    unset _wct_type _wct_sup _wct_delivers
     # PIDFILE IS REMOVED HERE, after all bead operations, so holder_alive stays true for the
     # entire teardown. strand-classify.py requires BOTH witnesses absent before classifying a
     # bead ghost: removing the pidfile early caused a bead whose aeon was mid-teardown to be
@@ -1053,16 +1122,19 @@ $_cert_out"
     rm -f "$PIDFILE" "${PIDFILE%.pid}.name"
     rm -rf "${SPIRA_MAIL:-}/aeon-${BEAD_ID:-}" 2>/dev/null || true
     ledger_done "${SESSION_RC:-$rc}" "${st:-?}"
-    # A CLOSED BEAD IS A SUCCEEDED TASK. SESSION_RC is the claude CLI's exit code, held
-    # separately because `rc=$?` at trap time reflects the verdict block's LAST COMMAND —
-    # which may be a `bdq note` or `git` that returned non-zero for cosmetic reasons —
-    # not the session's verdict. A named unit (spira-ops, spira-qa) left in FAILED state
-    # because of a stray command exit code shows up in every `systemctl --state=failed`
-    # check and drowns genuine failures (law-alerts-must-be-actionable).
-    # Exit 0 when the bead is closed: the work succeeded.
+    # A CLOSED BEAD IS A SUCCEEDED TASK, AND SO IS A SUBMITTED ONE. SESSION_RC is the
+    # claude CLI's exit code, held separately because `rc=$?` at trap time reflects the
+    # verdict block's LAST COMMAND — which may be a `bdq note` or `git` that returned
+    # non-zero for cosmetic reasons — not the session's verdict. A named unit (spira-ops,
+    # spira-qa) left in FAILED state because of a stray command exit code shows up in
+    # every `systemctl --state=failed` check and drowns genuine failures
+    # (law-alerts-must-be-actionable). st=submitted is set above when a work bead's close
+    # was converted to the submitted pipeline instead of left closed — the work still
+    # succeeded, only the bead's own status differs now.
+    # Exit 0 when the bead is closed or submitted: the work succeeded.
     # Exit SESSION_RC otherwise: a session that ran and did not close the bead is a
     # genuine failure, and SESSION_RC carries the claude CLI's actual exit code.
-    [ "${st:-}" = "closed" ] && exit 0
+    { [ "${st:-}" = "closed" ] || [ "${st:-}" = "submitted" ]; } && exit 0
     exit "${SESSION_RC:-$rc}"
 }
 # WHY THE HARNESS ITSELF PUT THIS BEAD BACK, if it did. Set by the verdict block at the foot
@@ -2032,8 +2104,8 @@ sup = 1 if any((x.get("dependency_type") or x.get("type")) == "supersedes"
 # reopened for lacking a commit.
 lab = d[0].get("labels") or []
 delivers = ";".join(l[len("delivers:"):] for l in lab if l.startswith("delivers:"))
-print("%s\t%s\t%s" % (d[0].get("status",""), sup, delivers))' 2>/dev/null)"
-st="${verdict%%	*}"; _vrest="${verdict#*	}"; superseded="${_vrest%%	*}"; delivers="${_vrest#*	}"
+print("%s\t%s\t%s\t%s" % (d[0].get("status",""), sup, delivers, d[0].get("issue_type") or ""))' 2>/dev/null)"
+st="${verdict%%	*}"; _vrest="${verdict#*	}"; superseded="${_vrest%%	*}"; _vrest="${_vrest#*	}"; delivers="${_vrest%%	*}"; _vd_issue_type="${_vrest#*	}"
 # NEVER `git log | grep -q` under `set -o pipefail`. grep -q exits on the first match and
 # closes the pipe; git log then dies of SIGPIPE and pipefail propagates 141 as the
 # pipeline's status, so a MATCH reads as a failure. This exact line reported "closed with
@@ -2131,8 +2203,25 @@ except Exception: print("")' 2>/dev/null)"
     log "$FAYTH: $BEAD_ID REOPENED — delivers not verified: $_cv_msg"
     ;;
 reopen\|closed-without-commit)
-    bead_reopen "$BEAD_ID" closed-without-commit "Reopened by aeon.sh: closed without a commit naming $BEAD_ID on $BRANCH. Closed is not landed."
-    log "$FAYTH: $BEAD_ID REOPENED — closed with nothing committed"
+    # A WORK TYPE WITH NO delivers: LABEL SKIPS THIS REOPEN (sp-qsona). Such a bead's close
+    # is never trusted at face value any more, committed or not — cleanup()'s own teardown
+    # (the EXIT trap, which runs after this) converts it back to open with
+    # SPIRA_SUBMITTED_LABEL unconditionally, superseded excepted. Reopening it here first,
+    # on the old evidence-based reading, would race that conversion with a stale
+    # "closed-without-commit" note and leave the bead open WITHOUT the submitted label —
+    # invisible to bead_close_on_land and to CHECK 5's LANDED invariant alike.
+    #
+    # A delivers: LABEL EXEMPTS EVEN A WORK-TYPE BEAD FROM THAT SKIP, which is why only this
+    # arm checks the type: close_verdict answers closed-without-commit only when delivers is
+    # empty. groom-trigger.sh, maechen-trigger.sh and incident.sh file task/bug beads that
+    # declare delivers:note, delivers:action or delivers:beads and close without ever
+    # cutting a branch; the delivers-mismatch arm above still judges their close.
+    if bead_is_work_type "${_vd_issue_type:-}"; then
+        log "$FAYTH: $BEAD_ID closed with nothing committed — work type, left to the submitted conversion at teardown"
+    else
+        bead_reopen "$BEAD_ID" closed-without-commit "Reopened by aeon.sh: closed without a commit naming $BEAD_ID on $BRANCH. Closed is not landed."
+        log "$FAYTH: $BEAD_ID REOPENED — closed with nothing committed"
+    fi
     ;;
 esac
 

@@ -41,8 +41,9 @@ wantrc "bead_has_label: unparseable JSON fails closed (not poisoned, proceeds)" 
 
 # ---- aeon_disposition — field order --------------------------------------------------
 #   status capacity_rc slain thrash thrash_charged lapsed gate_unfinished decision_blocked \
-#   session_rc committed requeue_cause operator_wait yield_headless session_started outcome
-row() {   # row <case> <expected-4-field-line> <15 disposition args...>
+#   session_rc committed requeue_cause operator_wait yield_headless session_started outcome \
+#   [submitted]
+row() {   # row <case> <expected-4-field-line> <15-16 disposition args...>
     local name="$1" expected="$2"; shift 2
     is "$name" "$expected" "$(aeon_disposition "$@")"
 }
@@ -107,6 +108,14 @@ row "operator-wait is free" \
     "operator-wait free unjudged-operator-wait operator-wait" \
     open 1 no no no no no no 0 no - yes no 1 -
 
+row "submitted (sp-qsona) is free: done work waiting on the landing pass" \
+    "submitted free - submitted" \
+    open 1 no no no no no no 0 no - no no 1 unlanded yes
+
+row "submitted omitted (15 args) defaults to no, falls through to unlanded" \
+    "open charge - unlanded" \
+    open 1 no no no no no no 0 no - no no 1 unlanded
+
 # ---- G15: unjudged-<cause> requeue for killed/refused/unknown outcomes --------------------
 
 row "G15 not-judged: refused" \
@@ -158,6 +167,14 @@ row "G8 a harness requeue cause beats operator-wait" \
 row "G8 operator-wait beats yield-headless" \
     "operator-wait free unjudged-operator-wait operator-wait" \
     open 1 no no no no no no 0 no - yes yes 1 -
+
+row "G8 operator-wait beats submitted" \
+    "operator-wait free unjudged-operator-wait operator-wait" \
+    open 1 no no no no no no 0 no - yes no 1 - yes
+
+row "G8 submitted beats yield-headless" \
+    "submitted free - submitted" \
+    open 1 no no no no no no 0 no - no yes 1 - yes
 
 row "G8 yield-headless beats pre-session" \
     "yield-headless charge - yield-headless" \

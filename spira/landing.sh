@@ -1692,8 +1692,9 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 # saying it did (law-closed-is-not-landed, one layer in).
                 land_mark "$id" LANDED "$tip" "$name"
                 rm -f "$LANDSTATE/$id.ejected" 2>/dev/null || true
-                gh_issue_closeout "$id" \
-                    "$(git -C "$land" rev-parse HEAD 2>/dev/null)" "$repo" || true
+                _landed_head="$(git -C "$land" rev-parse HEAD 2>/dev/null)"
+                gh_issue_closeout "$id" "$_landed_head" "$repo" || true
+                bead_close_on_land "$id" "$_landed_head" || true
                 # AFTER the push, never before it: the event says the commit is on the base
                 # branch, which is the one claim CLOSED does not make (law-closed-is-not-landed).
                 spira_event bead.landed "$id" "landed $br on $name's $base" \

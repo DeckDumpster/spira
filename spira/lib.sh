@@ -1100,6 +1100,7 @@ fayth_exclude() {        # fayth_exclude <fayth> -> comma-separated exclusions
     local me="$1" own="${2:-}" f out
     out="$own"
     [ -n "${SPIRA_QUEUE_WAIT_LABEL:-}" ] && out="${out:+$out,}${SPIRA_QUEUE_WAIT_LABEL}"
+    [ -n "${SPIRA_SUBMITTED_LABEL:-}" ] && out="${out:+$out,}${SPIRA_SUBMITTED_LABEL}"
     for f in $(spira_fayths 2>/dev/null); do
         [ "$f" = "$me" ] && continue
         out="${out:+$out,}fayth:$f"
@@ -1416,9 +1417,17 @@ bead_reopen() {
     # selects on landstate alone, and WITHDRAWN is a state it never admits. Every
     # reopen goes through this one function, so this is the one place that can't
     # be skipped by a caller that forgot.
+    #
+    # EXCEPT THE SUBMITTED CONVERSION (sp-qsona). aeon.sh's teardown "reopens" a work bead
+    # its own session closed only to carry SPIRA_SUBMITTED_LABEL until the landing pass
+    # closes it — the work is done and certification proceeds from submitted, so a
+    # CERTIFIED record written moments earlier (the session's own queue.sh submit, or
+    # aeon.sh's self-certify, sp-u9f82) must stay admissible. Withdrawing it here would
+    # strand every converted bead: open, submitted, and never batched.
     local _wd_st _wd_tip
     read -r _wd_st _wd_tip _ <<< "$(land_state "$id" 2>/dev/null)"
-    [ "${_wd_st:-}" = CERTIFIED ] && land_mark "$id" WITHDRAWN "${_wd_tip:-none}" "$cause"
+    [ "${_wd_st:-}" = CERTIFIED ] && [ "$cause" != work-close-converted ] \
+        && land_mark "$id" WITHDRAWN "${_wd_tip:-none}" "$cause"
     bdq reopen "$id" >/dev/null 2>&1 || rc=1
     release_claim "$id" || rc=1
     _bump_write_event "$id" reopen "$cause" || rc=1
@@ -2724,13 +2733,16 @@ sys.exit(0 if d and sys.argv[1] in (d[0].get("labels") or []) else 1)' "${2:-}" 
 #   yield_headless    session_yield_headless on this session's trace
 #   session_started   0 if the aeon died before the claude session ever ran
 #   outcome           session_outcome on this session's trace, else `-` when never started
+#   submitted         (optional, default no) the open bead carries SPIRA_SUBMITTED_LABEL —
+#                     its work bead's close was converted to submitted (sp-qsona); free,
+#                     ranked just below operator_wait
 #
 # Output: one line, "<ledger-status> <charge|free> <requeue-cause> <note-key>".
 aeon_disposition() {
     local status="$1" capacity_rc="$2" slain="$3" thrash="$4" thrash_charged="$5" \
         lapsed="$6" gate_unfinished="$7" decision_blocked="$8" session_rc="$9" \
         committed="${10}" requeue_cause="${11}" operator_wait="${12}" \
-        yield_headless="${13}" session_started="${14}" outcome="${15}"
+        yield_headless="${13}" session_started="${14}" outcome="${15}" submitted="${16:-no}"
     [ "$requeue_cause" = "-" ] && requeue_cause=""
     [ "$outcome" = "-" ] && outcome=""
 
@@ -2759,6 +2771,8 @@ aeon_disposition() {
     if [ "$operator_wait" = yes ]; then
         printf 'operator-wait free unjudged-operator-wait operator-wait\n'; return 0
     fi
+    # SUBMITTED IS NOT UNLANDED: the work is done and waits on the landing pass to close it.
+    if [ "$submitted" = yes ]; then printf 'submitted free - submitted\n'; return 0; fi
     if [ "$yield_headless" = yes ]; then printf 'yield-headless charge - yield-headless\n'; return 0; fi
     if [ "$session_started" = 0 ]; then printf 'pre-session charge - pre-session\n'; return 0; fi
     if outcome_charges "$outcome"; then
@@ -6872,6 +6886,59 @@ if d: print(d[0].get("external_ref") or "")' 2>/dev/null)" || ext_ref=""
         log "gh-closeout $id: closed $ext_ref as $sha_short"
     else
         log "gh-closeout $id: could not comment or close $ext_ref"
+    fi
+}
+
+# bead_is_work_type <issue-type> -> 0 if it is one of SPIRA_WORK_CLOSE_TYPES (task bug
+# feature by default) — the types a builder's own close is converted to submitted instead
+# of left closed (aeon.sh, at session teardown). Non-code types (spike, ask, insight,
+# investigation, event, chore, epic) close by the agent's own hand, unchanged.
+bead_is_work_type() {
+    local t="$1"
+    [ -n "$t" ] || return 1
+    case " ${SPIRA_WORK_CLOSE_TYPES:-task bug feature} " in
+        *" $t "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# bead_close_on_land — the only place a work bead is closed for a landed reason.
+#
+# A builder's own close of a work bead is converted back to open carrying
+# SPIRA_SUBMITTED_LABEL instead of staying closed (aeon.sh, at session teardown, once the
+# close has already happened — not a PreToolUse hook refusing the tool call); this
+# closes it for real once the commit is actually on the base, citing the sha. Called from
+# every LANDED land_mark site, right beside gh_issue_closeout.
+#
+# Idempotent both ways: a bead already closed is left alone, and a bead never marked
+# submitted (an older-style direct close, or a non-code type) is left alone too — this is
+# not the only path that closes a bead, only the landing path for the new one.
+bead_close_on_land() {   # bead_close_on_land <bead-id> <landed-sha>
+    local id="$1" sha="${2:-}"
+    local st lbls
+    read -r st lbls <<< "$(bdjson show "$id" 2>/dev/null | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: raise SystemExit(0)
+d = d if isinstance(d, list) else [d]
+if not d: raise SystemExit(0)
+row = d[0]
+print(row.get("status") or "", ",".join(row.get("labels") or []))
+' 2>/dev/null)"
+    [ -n "${st:-}" ] || return 0
+    [ "$st" = closed ] && return 0
+    case ",${lbls:-}," in
+        *",${SPIRA_SUBMITTED_LABEL:-spira-submitted},"*) ;;
+        *) return 0 ;;
+    esac
+    if bdq close "$id" --reason-file - <<REASON >/dev/null 2>&1
+OUTCOME: landed
+Closed by the landing pass: work landed at ${sha:-unknown} (law-closed-is-not-landed).
+REASON
+    then
+        log "land-close $id: closed at ${sha:-unknown} (submitted -> landed)"
+    else
+        log "land-close $id: bd close failed — left submitted, CHECK 5 will report it"
     fi
 }
 
