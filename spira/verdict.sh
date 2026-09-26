@@ -1295,14 +1295,10 @@ _verdict_process() {
             while IFS= read -r _csline; do
                 case "$_csline" in "head-sha: "*) ci_head="${_csline#head-sha: }" ;; esac
             done <<< "$status_out"
-            if [ -z "${ci_head:-}" ]; then
-                # Unverifiable green (no head-sha to check against the sealed batch
-                # head): fail closed rather than land blind.
-                printf 'verdict %s: PR %s green but head-sha missing — cannot verify sealed head; holding batch\n' \
-                    "$name" "$pr_n"
-                return 0
-            fi
-            if [ "$ci_head" != "$batch_head" ]; then
+            if [ -z "${ci_head:-}" ] || [ "$ci_head" != "$batch_head" ]; then
+                # A missing head-sha cannot be verified against the sealed batch
+                # head, so it is refused exactly like a mismatched one
+                # (law-fail-closed-at-the-source): "unverifiable" is not "clean".
                 "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
                 local _mm _mid _mtip
                 for _mm in $members_str; do
@@ -1310,14 +1306,25 @@ _verdict_process() {
                     land_mark "$_mid" CERTIFIED "$_mtip"
                 done
                 rm -f "$batch_file"
-                printf 'verdict %s: PR %s CI head mismatch (ci=%s sealed=%s) — harness fault; PR closed, members requeued\n' \
-                    "$name" "$pr_n" "$ci_head" "$batch_head"
-                printf '## Note\nMerge queue batch for %s: CI result belongs to a different commit.\n\nCI-reported PR head: %s\nSealed batch head: %s\n\nSomething pushed to the batch branch after sealing. Members returned to CERTIFIED.\n' \
-                    "$name" "$ci_head" "$batch_head" \
-                | bash "$HERE/mail.sh" send operator \
-                    --from "Spira Queue <queue@spira>" \
-                    --subject "Merge queue: $name CI head mismatch" \
-                    2>/dev/null || true
+                if [ -z "${ci_head:-}" ]; then
+                    printf 'verdict %s: PR %s green but head-sha missing — cannot verify sealed head; harness fault; PR closed, members requeued\n' \
+                        "$name" "$pr_n"
+                    printf '## Note\nMerge queue batch for %s: CI reported green but named no head-sha, so its result cannot be tied to the sealed batch head.\n\nSealed batch head: %s\n\nTreated the same as a head mismatch. Members returned to CERTIFIED.\n' \
+                        "$name" "$batch_head" \
+                    | bash "$HERE/mail.sh" send operator \
+                        --from "Spira Queue <queue@spira>" \
+                        --subject "Merge queue: $name CI head unverifiable (missing head-sha)" \
+                        2>/dev/null || true
+                else
+                    printf 'verdict %s: PR %s CI head mismatch (ci=%s sealed=%s) — harness fault; PR closed, members requeued\n' \
+                        "$name" "$pr_n" "$ci_head" "$batch_head"
+                    printf '## Note\nMerge queue batch for %s: CI result belongs to a different commit.\n\nCI-reported PR head: %s\nSealed batch head: %s\n\nSomething pushed to the batch branch after sealing. Members returned to CERTIFIED.\n' \
+                        "$name" "$ci_head" "$batch_head" \
+                    | bash "$HERE/mail.sh" send operator \
+                        --from "Spira Queue <queue@spira>" \
+                        --subject "Merge queue: $name CI head mismatch" \
+                        2>/dev/null || true
+                fi
                 return 0
             fi
             local current_base

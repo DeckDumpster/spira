@@ -45,7 +45,8 @@
 #  32. Stale queue-ref reaping: a green landing cleans up local spira/queue/*
 #      refs already ancestors of the base; a non-ancestor ref survives.
 #  33. Green but check-status omits head-sha → cannot verify the sealed head
-#      was tested; no push, no pr-close, batch held for retry.
+#      was tested; refused exactly like a mismatch: PR closed, members
+#      requeued, operator mailed.
 #  35. Ejection mail names "reproduced-alone" (sp-bdkbw): the failure really
 #      was rerun and reproduced, so the mail says so, plus the bead's title,
 #      a diffstat against base, the failing assertion line, and the CI run.
@@ -1112,8 +1113,9 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 
 # =============================================================================
 # 33. GREEN, CHECK-STATUS OMITS HEAD-SHA — a missing head-sha means we cannot
-#     confirm CI tested the sealed batch head, so it must be treated as
-#     unverifiable: no push, no pr-close, batch held for retry next pass.
+#     confirm CI tested the sealed batch head, so it is refused exactly like a
+#     mismatched one (sp-g68ek, law-fail-closed-at-the-source): PR closed,
+#     members returned to CERTIFIED, operator mailed.
 #     POSITIVE CONTROL: without the fix, an empty ci_head fails the "!="
 #     mismatch test vacuously and falls through to fast-forward landing —
 #     before the fix this case pushes main and closes batch_file.
@@ -1123,12 +1125,13 @@ printf 'green\n' > "$FORGE_STATUS_FILE"
 before_main33="$(remote_main)"
 out="$(verdict "$REPONAME")"
 is   "33. missing-sha: no push"              "$before_main33" "$(remote_main)"
-nowant "33. missing-sha: no pr-close"        "close"          "$(cat "$FORGE_LOG")"
-case "$(landstate sp-vd-hs1)" in BATCHED*) ok "33. missing-sha: sp-vd-hs1 stays BATCHED" ;;
-    *) bad "33. missing-sha: sp-vd-hs1 stays BATCHED" "got: $(landstate sp-vd-hs1)" ;; esac
-case "$(landstate sp-vd-hs2)" in BATCHED*) ok "33. missing-sha: sp-vd-hs2 stays BATCHED" ;;
-    *) bad "33. missing-sha: sp-vd-hs2 stays BATCHED" "got: $(landstate sp-vd-hs2)" ;; esac
-is   "33. missing-sha: batch record kept"    "1" "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+want "33. missing-sha: pr-close called"      "close"          "$(cat "$FORGE_LOG")"
+case "$(landstate sp-vd-hs1)" in CERTIFIED*) ok "33. missing-sha: sp-vd-hs1 CERTIFIED" ;;
+    *) bad "33. missing-sha: sp-vd-hs1 CERTIFIED" "got: $(landstate sp-vd-hs1)" ;; esac
+case "$(landstate sp-vd-hs2)" in CERTIFIED*) ok "33. missing-sha: sp-vd-hs2 CERTIFIED" ;;
+    *) bad "33. missing-sha: sp-vd-hs2 CERTIFIED" "got: $(landstate sp-vd-hs2)" ;; esac
+is   "33. missing-sha: batch record removed" "0" "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+want "33. missing-sha: mail sent"            "send operator" "$(cat "$MAIL_LOG")"
 want "33. missing-sha: reported"             "head-sha missing" "$out"
 clean_case
 
