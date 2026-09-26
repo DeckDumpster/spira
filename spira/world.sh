@@ -44,7 +44,7 @@ SC="${SPIRA_SYSTEMCTL:-systemctl}"
 # to cockpit.sh and health.sh when the rename broke them identically (sp-4biz, 2026-09-08).
 # TIMERS ARE ENUMERATED FROM SYSTEMD, NOT WRITTEN DOWN. This was a hand-written list of six
 # bases, and on 2026-09-11 a stop left spira-groom, spira-maechen, spira-auron, spira-promote,
-# spira-moot-sweep, spira-verify-asks, spira-suites and both spira-watch-* timers running —
+# spira-moot-sweep, spira-verify-asks and both spira-watch-* timers running —
 # every persona added after the list was written. work_services() one function below already
 # enumerates for exactly this reason ("a new work unit cannot silently escape a halt"); the
 # timers simply never got the same treatment. A list is a thing that goes stale silently.

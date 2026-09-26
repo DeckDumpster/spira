@@ -386,12 +386,9 @@ echo "the sweep NAMES the scans rather than running them:"
 # ======================================================================================
 # THE DIVISION IS THE POINT AND IT IS LOAD-BEARING. A several-minute suite run inside this
 # program would make the detector the thing that is down during an outage, and would push a
-# ten-minute cadence past the interval that produces it. So the sweep carries the scan's NAME
-# and the cheap figures that say whether it is worth a pass, and the Ops session spends its
-# own budget on it. The name is asserted because a menu naming nothing is a scan that runs
-# nowhere, which is the defect the runner was written to end.
-want "the sweep names the timed suite run"      "suites.sh run" "$snap"
-want "and says the run is suspended"            "SUSPENDED" "$snap"
+# ten-minute cadence past the interval that produces it. So the sweep carries suites.sh
+# status's cheap figures, not its own run of anything, and the Ops session spends its own
+# budget on it.
 want "and carries its cheap figures, not its output" "suites in the tree" "$snap"
 # It must not have RUN anything: `--show` touches nothing, and a suite executed here would
 # have written a result under the scratch runtime directory.

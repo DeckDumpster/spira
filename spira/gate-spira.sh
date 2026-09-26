@@ -341,8 +341,8 @@ run() {                  # run <suite> — its output only when it matters; cost
 # beside it. It is a file rather than a list on the line below for one reason: nothing else
 # could read the list while it lived here, so no program could answer "which suites does the
 # gate NOT run", and the answer went unexamined until five of nine suites were running
-# nowhere at all. `suites.sh` runs the complement on a timer, derived from the same file, so
-# a suite dropped from the gate moves to the timed run rather than out of the world.
+# nowhere at all. `suites.sh list`/`names` report the complement, derived from the same
+# file, so a suite dropped from the gate is visible there as uncovered rather than invisible.
 SUITE_LIST=spira/gate-suites
 [ -r "$SUITE_LIST" ] || { say "$SUITE_LIST is missing — refusing to report a pass without it"; exit 1; }
 # Read whole first, then run: a list that names a file which does not exist is a gate

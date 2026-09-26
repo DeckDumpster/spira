@@ -9,8 +9,8 @@
 #   cadence.sh clear <unit>             drop the override; back to the template
 #   cadence.sh verify [unit...]         every timer (or the named ones) has a real next elapse
 #
-# <unit> may be given bare (`suites`), as a service name (`spira-suites`), or fully
-# (`spira-suites-prod.timer`). The instance suffix comes from SPIRA_INSTANCE.
+# <unit> may be given bare (`groom`), as a service name (`spira-groom`), or fully
+# (`spira-groom-prod.timer`). The instance suffix comes from SPIRA_INSTANCE.
 #
 # <interval> is either a systemd time span (`6h`, `90min`, `2d`) or an OnCalendar expression
 # (anything containing a `:` or `*`, e.g. `*-*-* 00/6:00:00`, `Mon *-*-* 09:00:00`).
@@ -77,8 +77,8 @@ say() { printf 'cadence: %s\n' "$*" >&2; }
 # ---------------------------------------------------------------------------------------
 # THE UNIT SUFFIX IS NOT conf.sh's PATH SUFFIX. conf.sh gives prod no suffix when deriving
 # paths; install.sh names units the other way — "Units whose names start with 'spira-' get
-# the instance suffix", prod included, so the installed unit is spira-suites-prod.timer while
-# the template is systemd/spira-suites.timer. Units that do NOT start with spira- (cockpit-
+# the instance suffix", prod included, so the installed unit is spira-groom-prod.timer while
+# the template is systemd/spira-groom.timer. Units that do NOT start with spira- (cockpit-
 # ensure, concierge, beads-push, dolt-beads) are shared across instances and carry no suffix
 # at all. Reading conf.sh's rule here made every spira- template resolve to `?`.
 unit_suffix() { printf -- '-%s' "${SPIRA_INSTANCE:-prod}"; }

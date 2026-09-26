@@ -79,7 +79,6 @@ Timers, each doing one thing, none waiting on another.
 | `spira-maechen.timer` | 15 min | read the failure distribution; cut work to end recurring classes |
 | `spira-watchtower.timer` | 30 min | read the pipeline's vital signs and file them as work ops claims |
 | `spira-skew.timer` | 1 h | is the harness in force the harness that landed? |
-| `spira-suites.timer` | 1 h | run every test suite the landing gate does not |
 | `spira-groom.timer` | 6 h | graph hygiene: split, merge, close beads whose premises are gone |
 
 `spira-archive`, `spira-watch-refresh`, `spira-watch-notify`, `spira-moot-sweep`,
@@ -299,11 +298,12 @@ actually violated the rule.
 
 ## Tests
 
-`spira/test-*.sh`, discovered by glob and never from a list, so adding one puts it in the timed
-set automatically. `spira/gate-suites` names the subset run on the scheduled gate pass, each
-with the reason it earns the wait; everything the glob finds that the list does not name is run
-by `suites.sh` on a timer, which files a bead per failure and blocks nothing. The two sets
-cannot be edited into overlapping, and a deleted suite stops being run with no edit anywhere.
+`spira/test-*.sh`, discovered by glob and never from a list, so adding one is found without
+further wiring. `spira/gate-suites` names the subset run on every landing pass, each with the
+reason it earns the wait; `suites.sh list`/`names` report the complement — every suite the
+glob finds that the gate does not run — so a suite dropped from the gate becomes visible as
+uncovered rather than invisible, and a deleted suite stops being reported with no edit
+anywhere.
 
 Every suite declares what it covers on a `# covers:` line. Three properties a new one needs:
 

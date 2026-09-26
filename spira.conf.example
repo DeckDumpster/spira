@@ -294,11 +294,11 @@
 # Recorded in the verdict file so later readers can weigh the override.
 # SPIRA_VERDICT_REPEAT_CONSIDERED =
 
-# ---- the suites, and where each of them runs -----------------------------------------------
+# ---- the suites, and what suites.sh reports about them --------------------------------------
 # Which suites the LANDING GATE runs, as a file of repository-relative paths with the reason
-# each earns the wait beside it. `spira/suites.sh` reads the same file and runs everything the
-# `spira/test-*.sh` glob finds that it does NOT name — so the gated set and the timed set are
-# complements by construction and no suite can fall between them.
+# each earns the wait beside it. `spira/suites.sh list`/`names` read the same file and report
+# everything the `spira/test-*.sh` glob finds that it does NOT name, so a suite dropped from
+# the gate is visible as uncovered rather than invisible.
 #
 # What suites EXIST is the glob and never a list. The list used to live inside the gate where
 # nothing else could read it, so nothing could answer "which suites does the gate not run":
@@ -310,34 +310,27 @@
 # tree, so a configured path would point it back at the code already in force.
 # SPIRA_GATE_SUITES = <the harness>/gate-suites
 
-# Where the timed run records what it found — one file per suite, holding a status, the epoch
-# it was written and how long the suite took. A GREEN CYCLE HAS TO LEAVE A POSITIVE RECORD:
-# without one, "no bead was filed" reads identically whether every suite passed or the runner
-# has not run since the box came up, and an empty directory gives the reassuring reading.
+# Where suites.sh's quarantine machinery keeps state — flake-observation windows, clean-run
+# counts, max-age mail flags. `list`/`status` read the same directory for whatever a suite's
+# last real run left behind.
 # SPIRA_SUITES_STATE = <the runtime directory>/suites
 
-# How long one timed pass may take, and how long any one suite inside it may run, in seconds.
-# The pass runs INSIDE an Ops session whose own wall systemd enforces, so the budget is under
-# it with room for the session to read the sweep and write up what it found. A pass that runs
-# out of budget stops cleanly and leaves a cursor, so the suites it did not reach LEAD the next
-# pass rather than being the ones that are never run. The per-suite timeout is one key for both
-# the gate and the timed pass, because a suite affordable in one and not the other is a suite
-# whose cost nobody has decided.
-# SPIRA_SUITES_BUDGET = 420
+# How long any one suite may run, in seconds, across every caller — the gate, testenv-batch.sh,
+# and suites.sh's own filing paths. One key for all of them, because a suite affordable in one
+# and not another is a suite whose cost nobody has decided.
 # SPIRA_SUITE_TIMEOUT = 600
 
-# The priority a red from the timed pass is filed at. Routine by default: that pass blocks
-# nothing and reopens nothing, and a failure caught twenty minutes after landing is fine when a
-# revert undoes it. A suite covering something where that is not true says so ITSELF, with a
-# `# priority: N` line beside its `# covers:` line — how urgent a failure is, is a claim only
-# the suite's author can make, and a central table of it would be a second list to keep in step
-# with the glob.
+# The priority a red suite.sh observe-flake finds is filed at. Routine by default: it blocks
+# nothing and reopens nothing, and a failure caught after landing is fine when a revert undoes
+# it. A suite covering something where that is not true says so ITSELF, with a `# priority: N`
+# line beside its `# covers:` line — how urgent a failure is, is a claim only the suite's
+# author can make, and a central table of it would be a second list to keep in step with the
+# glob.
 # SPIRA_SUITES_PRIORITY = 2
 
-# How old a suite's result may be before it stops being evidence, in seconds. Past this the
-# sweep reports the suite as unrun rather than as green, because a stale pass and a runner that
-# has stopped are the same silence from outside. Keep it longer than the interval at which the
-# sweep names the scan, so an ordinary quiet hour does not read as a fault.
+# How old a suite's result may be before it stops being evidence, in seconds. Past this
+# `status`/`list` report the suite as unrun rather than as green, because a stale record and
+# a suite nobody has run recently are the same silence from outside.
 # SPIRA_SUITES_STALE = 21600
 
 # ---- the read surface over the live graph --------------------------------------------------

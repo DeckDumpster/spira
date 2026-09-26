@@ -8,12 +8,12 @@
 # checks the DOM afterwards. With no argument it uses `fixture.json`; pass a file holding a
 # raw bead array to look at your own data.
 #
-# WHY THIS IS NOT A `spira/test-*.sh`. That glob is the population `suites.sh` runs unattended
-# on a timer, and a browser is not something a clone — or that timer's environment — has any
-# reason to have. A suite that skips on most machines trains everyone to ignore its skip line,
-# which costs more than the coverage is worth. `spira/test-loom-page.sh` holds the half that
-# needs no browser: the view model, and the structural properties of the page. This is the
-# other half, run by hand when the page changes.
+# WHY THIS IS NOT A `spira/test-*.sh`. That glob is the population `suites.sh list` enumerates
+# and the landing gate partly runs, and a browser is not something a clone — or a gate
+# container — has any reason to have. A suite that skips on most machines trains everyone to
+# ignore its skip line, which costs more than the coverage is worth. `spira/test-loom-page.sh`
+# holds the half that needs no browser: the view model, and the structural properties of the
+# page. This is the other half, run by hand when the page changes.
 #
 # EVERY ASSERTION HERE MUST BE UNSATISFIABLE BY THE STATIC MARKUP, and that is the whole
 # lesson of the file. The first version looked for `<circle`, which the legend supplies

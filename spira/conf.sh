@@ -80,11 +80,11 @@ SPIRA_ARCHIVIST_PER_PASS SPIRA_ARCHIVIST_TIMEOUT_RETRIES
 SPIRA_TESTDB_LIB SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT
 SPIRA_TESTENV_REGISTRY SPIRA_GH_INTAKE_REPO SPIRA_GH_INTAKE_PRIORITY SPIRA_GH_INTAKE_BEAD_REPO SPIRA_FLAKY_GH_REPO SPIRA_RELEASE_REPO SPIRA_RELEASE_RUST_TOOLCHAIN
 SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET SPIRA_GATE_SELECT_CAP SPIRA_AEON_CPU_QUOTA
-SPIRA_GATE_SUITES SPIRA_SUITE_STATE_FILE SPIRA_SUITES_STATE SPIRA_SUITES_BUDGET SPIRA_SUITE_TIMEOUT SPIRA_BATCH_MAXPAR
+SPIRA_GATE_SUITES SPIRA_SUITE_STATE_FILE SPIRA_SUITES_STATE SPIRA_SUITE_TIMEOUT SPIRA_BATCH_MAXPAR
 SPIRA_TIER_BUDGET_T0_MS SPIRA_TIER_BUDGET_T1_MS SPIRA_TIER_BUDGET_T2_MS SPIRA_TIER_BUDGET_T3_MS SPIRA_TIER_BUDGET_WINDOW SPIRA_TIER_ALLOWLIST_MARGIN_PCT SPIRA_TIER_ALLOWLIST SPIRA_TIER_AREA_ALLOWLIST SPIRA_BATCH_MAXPAR_CEILING
 SPIRA_BATCH_MEM_RESERVE_MIB SPIRA_BATCH_MEM_PER_SUITE_MIB SPIRA_BATCH_MEM_AVAIL_MIB SPIRA_BATCH_PSI_THRESHOLD SPIRA_BATCH_ORPHAN_MIN_AGE
 SPIRA_BATCH_ARTIFACT_DAYS SPIRA_BATCH_TAIL_LINES SPIRA_BATCH_LEDGER
-SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE SPIRA_SELF_TEST SPIRA_INCIDENT_PRIORITY SPIRA_WATCHER_INTERVAL_S
+SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE SPIRA_INCIDENT_PRIORITY SPIRA_WATCHER_INTERVAL_S
 SPIRA_FLAKE_QUARANTINE_AT SPIRA_FLAKE_WINDOW SPIRA_QUARANTINE_CLEAN_RUNS SPIRA_QUARANTINE_MAX_AGE
 SPIRA_QUEUE_BATCH_MAX SPIRA_QUEUE_BATCH_WAIT SPIRA_QUEUE_BATCH_IDLE_CUT SPIRA_QUEUE_CI_MAXSEC SPIRA_QUEUE_CI_IDLE_SEC SPIRA_CI_QUEUED_MAX_SECS SPIRA_STARVED_MAX_MINS SPIRA_LOOP_STALL_SECS SPIRA_CI_RED_MAX_SECS SPIRA_BASE_CI_UNREADABLE_GRACE_SECS SPIRA_QUEUE_LOCAL_GATE SPIRA_PREFLIGHT_WALL_SECS SPIRA_PREFLIGHT_SUITE_MAX_SECS SPIRA_QUEUE_INFRA_RETRIES SPIRA_QUEUE_STUCK_AGE SPIRA_QUEUE_DIR SPIRA_FORGE SPIRA_FORGE_REPO SPIRA_QUEUE_WAIT_LABEL SPIRA_QUEUE_ACTIONS_APP_ID SPIRA_EXPRESS_LABEL SPIRA_CERT_IDLE_SKIP SPIRA_QUEUE_BATCHER SPIRA_BATCHER_BIN SPIRA_BATCH_JUDGEMENT_LABEL SPIRA_QUEUE_LOCK_WAIT SPIRA_QUEUE_LOCK_STARVE_MAX
 SPIRA_SUBMITTED_LABEL SPIRA_WORK_CLOSE_TYPES
@@ -1153,21 +1153,13 @@ spira_conf_defaults() {
     # pin it somewhere disposable, which is what stops a suite asserting against the shipped
     # list and passing just as well with the list written back into the code.
     : "${SPIRA_GATE_SUITES:=$SPIRA_HOME/gate-suites}"
-    # WHERE THE TIMED RUN RECORDS WHAT IT FOUND — one file per suite, holding a status, the
-    # epoch it was written and how long the suite took. A green cycle has to leave a POSITIVE
-    # record: without one, "no bead was filed" reads identically whether every suite passed or
-    # the runner has not run since the box came up, and the reassuring reading is the one an
-    # empty directory gives (law-absence-needs-a-positive-control).
+    # WHERE suites.sh's QUARANTINE MACHINERY RECORDS STATE — flake-observation windows,
+    # clean-run counts, max-age mail flags. list/status read the same directory for whatever
+    # a suite's last real run left behind.
     : "${SPIRA_SUITES_STATE:=$SPIRA_RUN/suites}"
-    # HOW LONG ONE TIMED PASS MAY TAKE, in seconds. The pass runs INSIDE an Ops session, whose
-    # own wall is FAYTH_TIMEOUT_SECONDS — 480 — enforced by systemd rather than requested. So
-    # this is under it with room for the session to read the sweep, run the scan and write up
-    # what it found. A pass that runs out of budget stops cleanly and leaves a cursor, so the
-    # suites it did not reach lead the next pass rather than being the ones that are never run.
-    : "${SPIRA_SUITES_BUDGET:=420}"
-    # HOW LONG ANY ONE SUITE MAY RUN, in seconds, in the gate and in the timed pass alike. One
-    # key for both, because a suite that is affordable in one and not the other is a suite
-    # whose cost nobody has decided.
+    # HOW LONG ANY ONE SUITE MAY RUN, in seconds, across every caller — the gate, testenv-
+    # batch.sh, and suites.sh's own filing paths. One key for all of them, because a suite
+    # that is affordable in one and not another is a suite whose cost nobody has decided.
     : "${SPIRA_SUITE_TIMEOUT:=600}"
     : "${SPIRA_BATCH_LEDGER:=$SPIRA_RUN/batch-timing.tsv}"
     # PER-TIER WALL-TIME BUDGETS, in milliseconds (law-unit-tests-run-under-a-second; test
@@ -1355,24 +1347,6 @@ spira_conf_defaults() {
     # SPIRA_QUEUE_THROTTLE_OVERRIDE: set to 'off' to pin the automated throttle disabled.
     # The stamp file is never written while this is 'off'; pool follows SPIRA_MAX_AEONS alone.
     : "${SPIRA_QUEUE_THROTTLE_OVERRIDE:=}"
-    # WHETHER THIS INSTALLATION RUNS ITS OWN TEST SUITES on a timer. On by default when
-    # SPIRA_REPO is a git checkout (development mode — the operator can land changes); off
-    # when it is not (a consumer installation from a release tarball, where SPIRA_REPO has
-    # no .git directory). A consumer has no reason to self-test: the suites assert against
-    # the harness source, and a consumer installation carries a read-only release snapshot
-    # that will never change between installs. The beads those suites file are noise that
-    # competes with the operator's own work queue and cannot be worked (the bead carries a
-    # repo: label that resolves to nothing in the consumer's repo-map).
-    #
-    # Set to 0 to disable; set to 1 to enable even on a non-development installation.
-    # Empty or absent means "derive from the checkout": detect .git in SPIRA_REPO_DERIVED.
-    if [ -z "${SPIRA_SELF_TEST:-}" ]; then
-        if [ -d "${SPIRA_REPO_DERIVED:-}/.git" ] || [ -f "${SPIRA_REPO_DERIVED:-}/.git" ]; then
-            SPIRA_SELF_TEST=1
-        else
-            SPIRA_SELF_TEST=0
-        fi
-    fi
 
     # ---- RELEASE ACTIVATION (activate.sh) -----------------------------------------------
     # WHERE RELEASE TARBALLS ARE UNPACKED. Each activation unpacks a tarball into a
