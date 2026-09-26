@@ -694,6 +694,28 @@ _drain_oneshot() {
     printf 'install: warning — %s did not finish within %ss; proceeding\n' "$svc" "$max" >&2
 }
 
+# _db_server_wait — after dolt-beads.service is applied, wait (bounded) until bd can read
+# the beads database, so no timer enabled after it fires into a server still starting.
+# No database yet (a first install before phase 3's init) or no bd: nothing to wait for.
+# A server that never answers is reported, not fatal — the end-state check below and the
+# units' own failures say what is wrong more precisely than a refusal here would.
+# SPIRA_INSTALL_DB_READY_WAIT bounds the wait (seconds); SPIRA_DRAIN_INTERVAL paces it.
+_db_server_wait() {
+    local waited=0 max="${SPIRA_INSTALL_DB_READY_WAIT:-60}" interval="${SPIRA_DRAIN_INTERVAL:-2}"
+    [ -n "${SPIRA_DB:-}" ] && [ -d "$SPIRA_DB/.beads" ] || return 0
+    command -v "${SPIRA_BD:-bd}" >/dev/null 2>&1 || return 0
+    while :; do
+        "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "select 1" </dev/null >/dev/null 2>&1 && {
+            [ "$waited" -gt 0 ] && printf 'install: beads database answering after %ss\n' "$waited"
+            return 0
+        }
+        [ "$waited" -ge "$max" ] && break
+        [ "$waited" = 0 ] && printf 'install: waiting for the beads database before arming timers\n'
+        sleep "$interval"; waited=$(( waited + (interval > 0 ? interval : 1) ))
+    done
+    printf 'install: warning — the beads database did not answer within %ss; arming timers anyway\n' "$max" >&2
+}
+
 # IF THE WORLD IS HALTED, install the units but leave them stopped. A routine install
 # restarting the loop is the worst shape: the operator believes the world is down, every
 # surface agrees, and it is running. An explicit world.sh start is how a halt is lifted.
@@ -715,7 +737,19 @@ fi
 # THE DECISION ITSELF IS _unit_action (defined above the SPIRA_INSTALL_LIB guard). What
 # follows here is only gathering its six inputs and dispatching the systemctl calls its
 # answer implies.
-for u in "${ENABLE[@]}"; do
+#
+# THE DATABASE SERVER FIRST, AND ANSWERING, BEFORE ANY TIMER IS ARMED. Enabling a timer
+# whose elapsed-since-boot condition is already met fires its service at once, and every
+# timer here reads the beads database. units.sh lists dolt-beads.service near the END of
+# ENABLE, so on an install over an existing database whose server is down — any
+# re-install after uninstall.sh, which stops it — the sentinel fired seconds before
+# dolt-beads started, logged DATABASE UNREADABLE, exited 1 and was left failed; deploy's
+# pre-health check then refused (acceptance phase B, 2026-09-26). So the server is
+# applied first and _db_server_wait holds the rest until bd can read the database.
+_ENABLE_ORDERED=()
+for u in "${ENABLE[@]}"; do [ "$u" = dolt-beads.service ] && _ENABLE_ORDERED+=("$u"); done
+for u in "${ENABLE[@]}"; do [ "$u" = dolt-beads.service ] || _ENABLE_ORDERED+=("$u"); done
+for u in "${_ENABLE_ORDERED[@]}"; do
     _masked=0; [ "${_MASKED[$u]:-}" = "1" ] && _masked=1
     # CONTROL PLANE: a unit declared suspended in $SPIRA_CTRL is not enabled, halted world
     # or not. The subject is the base unit name without instance suffix or extension (e.g.
@@ -756,7 +790,9 @@ for u in "${ENABLE[@]}"; do
             case "$u" in *.timer) _drain_oneshot "${u%.timer}.service" ;; *) _drain_oneshot "$u" ;; esac
             systemctl --user enable --now "$u" && echo "enabled   $u" ;;
     esac
+    [ "$u" = dolt-beads.service ] && [ "$_world_halted" = 0 ] && _db_server_wait
 done
+unset _ENABLE_ORDERED
 
 # AND THE ONE PIECE OF WIRING THAT IS NOT A UNIT. The session hook is registered in the coding
 # agent client's own settings file, outside every checkout, so installing the harness is the
@@ -798,6 +834,18 @@ unset _cr_src _cr_dst _cr_current
 # SPACE-JOINED ABOVE, and that is the whole reason: matched against `units`' raw
 # newline-separated output, every instance failed to find its own row and a second
 # install disabled every watcher it had just enabled.
+#
+# NOT EVERY spira-watch-*-<instance> UNIT IS A WATCHER. spira-watch-refresh and
+# spira-watch-notify are ordinary manifest units (UNITS) whose names happen to fit the
+# watcher pattern, so this prune ran `disable --now` on them every install: a refresh pass
+# caught mid-run was killed with TERM and left FAILED, which deploy's pre-health check then
+# refused on (acceptance phase B, 2026-09-26). A name the manifest itself installs is not a
+# watcher row that has gone; _expected_units (every UNITS entry, per-instance) excludes it.
+_expected_units=" "
+for _eu in "${UNITS[@]}"; do
+    [ "$_eu" = "spira-watch@.service" ] && continue
+    _expected_units="$_expected_units$(inst_name "$_eu") "
+done
 for u in $({ systemctl --user list-unit-files --no-legend \
                  "spira-watch-*-${SPIRA_INSTANCE}.service" 2>/dev/null
              systemctl --user list-units --all --no-legend \
@@ -815,17 +863,13 @@ for u in $({ systemctl --user list-unit-files --no-legend \
            } | tr -s ' \t' '\n\n' \
              | grep -E "^spira-watch-[A-Za-z0-9_-]+-${SPIRA_INSTANCE}\.service$" | sort -u); do
     case "$watch_units" in *" $u "*) continue ;; esac
+    case "$_expected_units" in *" $u "*) continue ;; esac   # a manifest unit, not a watcher
     systemctl --user disable --now "$u" >/dev/null 2>&1 && echo "disabled  $u (no row in the manifest)"
 done
 
 # PRUNE NON-WATCHER SPIRA-* UNITS FOR THIS INSTANCE that are installed but absent from the
 # manifest. Mirrors the watcher prune above. Without this, a unit added in a newer release
 # and then rolled back stays installed against prior-release scripts and crash-loops.
-_expected_units=" "
-for _eu in "${UNITS[@]}"; do
-    [ "$_eu" = "spira-watch@.service" ] && continue
-    _expected_units="$_expected_units$(inst_name "$_eu") "
-done
 for u in $({ systemctl --user list-unit-files --no-legend \
                  "spira-*-${SPIRA_INSTANCE}.service" \
                  "spira-*-${SPIRA_INSTANCE}.timer" 2>/dev/null
