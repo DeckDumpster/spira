@@ -174,6 +174,35 @@ vol_info="$(podman volume inspect "$vol_reg" 2>/dev/null)"
 
 # ==========================================================================
 echo
+echo "rust-toolchain.toml — a pinned channel the image never installed must not redden cargo:"
+# ==========================================================================
+# Positive control: without RUSTUP_TOOLCHAIN, a workspace pin naming an uninstalled
+# channel sends rustup to install it into the read-only /usr/local/rustup and cargo
+# dies with EACCES. Prove that before trusting a green from the image's own env.
+podman exec --user spirauser "$CNAME" bash -c \
+    'mkdir -p /tmp/rttest && printf "[toolchain]\nchannel = \"1.82.0\"\n" > /tmp/rttest/rust-toolchain.toml'
+
+pin_unpatched_out="$(podman exec --user spirauser \
+    -e CARGO_HOME=/var/spira/cargo \
+    "$CNAME" env -u RUSTUP_TOOLCHAIN bash -c 'cd /tmp/rttest && cargo --version' 2>&1)"
+pin_unpatched_rc=$?
+[ "$pin_unpatched_rc" != 0 ] \
+    && ok "positive control: unpinned exec cannot install the toolchain (EACCES)" \
+    || bad "positive control" "expected a failure without RUSTUP_TOOLCHAIN, got rc=0: $pin_unpatched_out"
+
+pin_patched_out="$(podman exec --user spirauser \
+    -e CARGO_HOME=/var/spira/cargo \
+    "$CNAME" bash -c 'cd /tmp/rttest && cargo --version' 2>&1)"
+pin_patched_rc=$?
+iszero "container's own RUSTUP_TOOLCHAIN overrides the workspace pin" "$pin_patched_rc"
+case "$pin_patched_out" in
+    *1.82.0*) bad "cargo used the installed toolchain, not the pin" "got: $pin_patched_out" ;;
+    *)        ok "cargo used the installed toolchain, not the pin" ;;
+esac
+printf '  note  cargo --version under the pin: %s\n' "$pin_patched_out"
+
+# ==========================================================================
+echo
 echo "down — remove container:"
 # ==========================================================================
 bash "$TESTENV" down --name "$CNAME" >&2
