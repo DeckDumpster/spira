@@ -46,7 +46,7 @@ pub fn compose_alert(invariant: &str, now: u64, verdict: &Verdict, last_remedy: 
     )
 }
 
-/// The three classes an operator escalation may name (law-escalate-decisions-not-policy,
+/// The three classes an operator escalation may name (law-escalate-decisions-not-problems,
 /// amended 2026-09-25 to add DESTRUCTIVE). Anything else is refused by construction —
 /// [`classify_escalation`] returns `None` and the caller routes the ask back to the
 /// Concierge instead of the operator.
