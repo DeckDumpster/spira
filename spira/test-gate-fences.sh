@@ -35,7 +35,8 @@ spira/literal-lint.sh
 spira/testdb-mode-lint.sh
 spira/bd-stdin-lint.sh
 spira/suite-state-fence.sh
-spira/orphan-test.sh"
+spira/orphan-test.sh
+spira/tmux-scope-fence.sh"
 
 is "gate_fence_list is exactly the expected set" "$EXPECTED" "$(gate_fence_list)"
 

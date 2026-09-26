@@ -229,6 +229,18 @@ fi
 # Print the clean line on success so gate output is consistent with the other fences.
 [ "$ot_rc" -eq 0 ] && printf '%s\n' "$ot" >&2 || true
 
+# TMUX-SCOPE FENCE. A suite that calls a tmux session command, or runs concierge.sh
+# start/wake/here/stop, with no socket of its own reaches whatever tmux server the
+# caller's environment already points at — the operator's own, on the host, twice
+# (sp-pfca0: the cockpit went down both times). Every such call must carry -L/-S,
+# TMUX_TMPDIR, or CONCIERGE_SOCKET/CONCIERGE_SESSION.
+[ -r spira/tmux-scope-fence.sh ] || { say "spira/tmux-scope-fence.sh is missing — refusing to land unchecked"; exit 1; }
+if ! tsf="$(bash spira/tmux-scope-fence.sh 2>&1)"; then
+    printf '%s\n' "$tsf" >&2
+    exit 1
+fi
+printf '%s\n' "$tsf" >&2
+
 # ---------------------------------------------------------------------------------------
 # 2 AND 3 — the pipeline. Both are real programs run against each other; neither models
 # anything (law-prefer-the-real-dependency).
