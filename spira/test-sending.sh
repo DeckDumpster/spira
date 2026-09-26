@@ -290,6 +290,15 @@ printf 'LANDED %s %s\n' "$(git -C "$REPO" rev-parse spira/sp-cl1)" "$(date +%s)"
 # The aeon session log must be KEPT after the send (CHECK 5 depends on its existence).
 touch "$RUN/sp-cl1.log"
 
+# SYNC origin/main to local main's tip. LANDREF resolves to origin/main (rung 2, since the
+# repo-map's base column is deliberately unset above), but every base-side commit the
+# fixture branches above were built against — sp-supsafe's conflict, sp-sq's squash and
+# advance, sp-otherpr's and sp-cherry's "spira: land ..." commits — was made on the LOCAL
+# main only. Without this, content_landed and landed() would judge every branch against a
+# base frozen at the very first commit.
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+
 echo "test-sending.sh"
 
 # ---- fixture confirmation -------------------------------------------------------------
