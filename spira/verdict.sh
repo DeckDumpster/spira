@@ -271,18 +271,22 @@ _repro_members_par() {
     wait "${_pids[@]}" 2>/dev/null || true
 }
 
-# _suites_red_on_base <suites-csv> <repo> <base-sha> -> space-separated suite names,
-# of those named in <suites-csv>, that are red on <base-sha> ALONE — no member merged
-# in. Every member's tree contains base-sha, so a suite already broken there
-# reproduces against every member regardless of fault; this is run once, before
-# blaming anyone, and its result is subtracted from every member's blame list
-# (sp-a2nk8). Dispatched to CI like any other reproduction (sp-2hee5); a red is
-# confirmed serial before being believed, by gate.yml's own gate-retry.sh, so a
-# base-side flake cannot wrongly excuse a member that actually broke the suite. Any
-# harness fault along the way returns empty: nothing is excluded, which is exactly
-# the old (buggy) behavior, not a worse one.
+# _suites_red_on_base <suites-csv> <repo> <base-sha> -> sets _BASELINE_RED to the
+# space-separated suite names, of those named in <suites-csv>, that are red on
+# <base-sha> ALONE — no member merged in. Every member's tree contains base-sha,
+# so a suite already broken there reproduces against every member regardless of
+# fault; this is run once, before blaming anyone, and its result is subtracted
+# from every member's blame list (sp-a2nk8). Dispatched to CI like any other
+# reproduction (sp-2hee5); a red is confirmed serial before being believed, by
+# gate.yml's own gate-retry.sh, so a base-side flake cannot wrongly excuse a
+# member that actually broke the suite. Any harness fault along the way leaves
+# _BASELINE_RED empty: nothing is excluded, which is exactly the old (buggy)
+# behavior, not a worse one. NEVER call this via command substitution — see
+# _repro_ci_wait, which it calls and which the same deferred-signal hazard applies to.
+_BASELINE_RED=""
 _suites_red_on_base() {
     local suites="$1" repo="$2" base="$3"
+    _BASELINE_RED=""
     [ -n "$suites" ] || return 0
     local forge="${SPIRA_FORGE:-$HERE/forge.sh}" remote br status_out status
     remote="$(_repro_remote "$repo")"
@@ -297,7 +301,7 @@ _suites_red_on_base() {
     status="$(printf '%s\n' "$status_out" | head -1)"
     spira_git_push "$repo" -q "$remote" ":refs/heads/${br}" 2>/dev/null || true
     [ "$status" = red ] || return 0
-    printf '%s\n' "$status_out" | sed -n 's/^red-suite: //p' | tr '\n' ' ' | sed -e 's/^ *//' -e 's/ *$//'
+    _BASELINE_RED="$(printf '%s\n' "$status_out" | sed -n 's/^red-suite: //p' | tr '\n' ' ' | sed -e 's/^ *//' -e 's/ *$//')"
 }
 
 _any_suite_in_selection() {  # _any_suite_in_selection <suites-spacesep> <repo> <base-sha> <tip> -> 0 if any matches
@@ -592,7 +596,8 @@ ${_line#build-error: }" ;;
     # member's tree contains base_sha) and reproduces against all of them regardless of
     # fault. Exclude it from every member's blame list before attributing anyone (sp-a2nk8).
     local suites_csv_all="$suites_csv" baseline_red=""
-    baseline_red="$(_suites_red_on_base "$suites_csv" "$repo" "$base_sha")"
+    _suites_red_on_base "$suites_csv" "$repo" "$base_sha"
+    baseline_red="$_BASELINE_RED"
     if [ -n "$baseline_red" ]; then
         local _rs _kept=""
         for _rs in $red_suites; do
