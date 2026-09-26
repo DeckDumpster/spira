@@ -330,14 +330,30 @@ cmd_up() {
     local ownerfile; ownerfile="$(_owner_file "$name")"
     [ -f "$ownerfile" ] || printf '%s\n' "${PPID:-$$}" > "$ownerfile"
 
-    # Wait for system systemd to reach basic.target (~1s normally). Failing here
-    # means something is wrong with the image or the cgroup setup, not the test code.
-    if ! _wait_for 20 podman exec "$name" systemctl is-active basic.target; then
-        printf 'testenv: system systemd did not reach basic.target\n' >&2
+    # Wait for system systemd to reach basic.target (~1s normally). On high container
+    # concurrency, systemd startup may transiently fail; allow one retry with backoff.
+    # (law-a-control-that-cannot-check-must-refuse: Failing here could mean either
+    # permanent misconfiguration OR transient resource contention; retry once to
+    # distinguish them. If both attempts fail, the issue is real.)
+    local retry_count=0
+    local max_retries=1
+    while true; do
+        if _wait_for 20 podman exec "$name" systemctl is-active basic.target; then
+            break  # Success
+        fi
+        if [ "$retry_count" -lt "$max_retries" ]; then
+            printf 'testenv: systemd basic.target startup attempt %d failed; retrying after 2s\n' "$((retry_count+1))" >&2
+            retry_count=$((retry_count+1))
+            sleep 2
+            # Container is still running; try again
+            continue
+        fi
+        # Both attempts failed; give up
+        printf 'testenv: system systemd did not reach basic.target after %d attempt(s)\n' "$((retry_count+1))" >&2
         podman stop "$name" >/dev/null 2>&1 || true
         podman rm   "$name" >/dev/null 2>&1 || true
         return 1
-    fi
+    done
 
     # loginctl enable-linger writes /var/lib/systemd/linger/spirauser, which causes the
     # system systemd to start user@1001.service and keep it running without a login session.
