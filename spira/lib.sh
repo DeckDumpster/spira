@@ -1079,10 +1079,16 @@ roster_warnings() {      # roster_warnings <roster> -> a WARN line per fayth lef
 # [persona.<name>] table launches under the bare built-in default, not its fayth's
 # declaration (conf.sh's spira_toml_resolve seeds that table from the fayth on first read,
 # so the declared value is not lost — see its own comment for the production-safety case).
+#
+# CALLS spira_toml_resolve() FRESH, not $SPIRA_TOML_FILE cached at conf.sh-sourcing time —
+# the same staleness fix repo_field/repo_names carry (sp-zs04v.3): a long-lived process
+# (cockpit, a sweep) must see a fayth edited after it started, and spira_toml_resolve's own
+# mtime check keeps a call that finds nothing stale cheap.
 persona_model() {
-    local name="$1" def="${2:-claude-opus-5}" bin v=""
-    if [ -n "${SPIRA_TOML_FILE:-}" ] && bin="$(spira_config_bin)"; then
-        v="$("$bin" get "persona.$name.model" "$SPIRA_TOML_FILE" 2>/dev/null)"
+    local name="$1" def="${2:-claude-opus-5}" bin toml v=""
+    toml="$(spira_toml_resolve)"
+    if [ -n "$toml" ] && bin="$(spira_config_bin)"; then
+        v="$("$bin" get "persona.$name.model" "$toml" 2>/dev/null)"
     fi
     printf '%s' "${v:-$def}"
 }
