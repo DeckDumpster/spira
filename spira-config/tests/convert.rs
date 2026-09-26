@@ -5,6 +5,7 @@
 
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use spira_config::convert::convert;
 use spira_config::{LandMode, Lane, SystemPromptMode};
@@ -170,4 +171,192 @@ fn unknown_lane_label_is_refused_not_warned() {
             .any(|e| e.contains("alpha") && e.contains("bogus-lane")),
         "expected an error naming the row and the bad token, got {errors:?}"
     );
+}
+
+// ----------------------------------------------------------------------------------------
+// CLI-level tests of `spira-config convert`'s shrink refusal and atomic write — sp-q5hzx.
+// Exercised through the real binary (not the library's `convert()` alone) because the
+// refusal, the `--force-shrink` override and the temp+rename write all live in main.rs's
+// `--out` handling, not in the converter itself.
+// ----------------------------------------------------------------------------------------
+
+fn scratch_dir(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "spira-config-test-{tag}-{}-{:?}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&dir).expect("scratch dir");
+    dir
+}
+
+fn run_convert(args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_spira-config"))
+        .arg("convert")
+        .args(args)
+        .output()
+        .expect("spira-config convert runs")
+}
+
+const EXISTING_TWO_REPOS_TWO_FAYTHS: &str = "\
+[spira]\nfayths = [\"a\", \"b\"]\n\n\
+[repo.alpha]\npath = \"/tmp/alpha\"\nmode = \"push\"\n\n\
+[repo.beta]\npath = \"/tmp/beta\"\nmode = \"push\"\n";
+
+const EXISTING_ONE_REPO_TWO_FAYTHS: &str = "\
+[spira]\nfayths = [\"a\", \"b\"]\n\n\
+[repo.alpha]\npath = \"/tmp/alpha\"\nmode = \"push\"\n";
+
+const ONE_ROW_REPO_MAP: &str = "alpha | /tmp/alpha | push | origin/main | | true | plan\n";
+
+// POSITIVE CONTROL for both refusal tests below: converting onto an existing document with
+// equal or fewer counts on neither side must still write — the refusal fires on a real
+// shrink only, not on every `--out` that already exists.
+#[test]
+fn convert_over_an_equal_document_still_writes() {
+    let dir = scratch_dir("equal");
+    let out = dir.join("spira.toml");
+    let conf = dir.join("spira.conf");
+    fs::write(&conf, "SPIRA_FAYTHS = a b\n").unwrap();
+    fs::write(&out, EXISTING_ONE_REPO_TWO_FAYTHS).unwrap();
+
+    let result = run_convert(&[
+        "--conf",
+        conf.to_str().unwrap(),
+        "--repo-map",
+        &format!("{}", write_tmp(&dir, "repo-map", ONE_ROW_REPO_MAP).display()),
+        "--home",
+        "/opt/fixture-home",
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert!(
+        result.status.success(),
+        "expected success, got: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let doc = spira_config::validate(&fs::read_to_string(&out).unwrap()).unwrap();
+    assert_eq!(doc.repo.len(), 1);
+    fs::remove_dir_all(&dir).ok();
+}
+
+fn write_tmp(dir: &Path, name: &str, contents: &str) -> std::path::PathBuf {
+    let p = dir.join(name);
+    fs::write(&p, contents).unwrap();
+    p
+}
+
+#[test]
+fn convert_refuses_to_shrink_repo_tables() {
+    let dir = scratch_dir("shrink-repos");
+    let out = dir.join("spira.toml");
+    fs::write(&out, EXISTING_TWO_REPOS_TWO_FAYTHS).unwrap();
+    let conf = write_tmp(&dir, "spira.conf", "SPIRA_FAYTHS = a b\n");
+    let repo_map = write_tmp(&dir, "repo-map", ONE_ROW_REPO_MAP);
+
+    let result = run_convert(&[
+        "--conf",
+        conf.to_str().unwrap(),
+        "--repo-map",
+        repo_map.to_str().unwrap(),
+        "--home",
+        "/opt/fixture-home",
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert!(!result.status.success(), "expected refusal");
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(stderr.contains("refuses to shrink"), "{stderr}");
+    assert!(stderr.contains('2') && stderr.contains('1'), "{stderr}");
+    // The existing document must survive the refused write untouched.
+    assert_eq!(fs::read_to_string(&out).unwrap(), EXISTING_TWO_REPOS_TWO_FAYTHS);
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn convert_refuses_to_shrink_fayths() {
+    let dir = scratch_dir("shrink-fayths");
+    let out = dir.join("spira.toml");
+    fs::write(&out, EXISTING_ONE_REPO_TWO_FAYTHS).unwrap();
+    let conf = write_tmp(&dir, "spira.conf", "SPIRA_FAYTHS = a\n");
+    let repo_map = write_tmp(&dir, "repo-map", ONE_ROW_REPO_MAP);
+
+    let result = run_convert(&[
+        "--conf",
+        conf.to_str().unwrap(),
+        "--repo-map",
+        repo_map.to_str().unwrap(),
+        "--home",
+        "/opt/fixture-home",
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert!(!result.status.success(), "expected refusal");
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(stderr.contains("refuses to shrink"), "{stderr}");
+    assert_eq!(
+        fs::read_to_string(&out).unwrap(),
+        EXISTING_ONE_REPO_TWO_FAYTHS
+    );
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn convert_force_shrink_overrides_the_refusal() {
+    let dir = scratch_dir("force-shrink");
+    let out = dir.join("spira.toml");
+    fs::write(&out, EXISTING_TWO_REPOS_TWO_FAYTHS).unwrap();
+    let conf = write_tmp(&dir, "spira.conf", "SPIRA_FAYTHS = a b\n");
+    let repo_map = write_tmp(&dir, "repo-map", ONE_ROW_REPO_MAP);
+
+    let result = run_convert(&[
+        "--conf",
+        conf.to_str().unwrap(),
+        "--repo-map",
+        repo_map.to_str().unwrap(),
+        "--home",
+        "/opt/fixture-home",
+        "--out",
+        out.to_str().unwrap(),
+        "--force-shrink",
+    ]);
+    assert!(
+        result.status.success(),
+        "expected --force-shrink to override the refusal: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let doc = spira_config::validate(&fs::read_to_string(&out).unwrap()).unwrap();
+    assert_eq!(doc.repo.len(), 1, "the shrink must actually have landed");
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn convert_write_is_atomic_no_leftover_temp_file() {
+    let dir = scratch_dir("atomic");
+    let out = dir.join("spira.toml");
+    let conf = write_tmp(&dir, "spira.conf", "SPIRA_FAYTHS = a\n");
+    let repo_map = write_tmp(&dir, "repo-map", ONE_ROW_REPO_MAP);
+
+    let result = run_convert(&[
+        "--conf",
+        conf.to_str().unwrap(),
+        "--repo-map",
+        repo_map.to_str().unwrap(),
+        "--home",
+        "/opt/fixture-home",
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert!(result.status.success());
+    let leftovers: Vec<_> = fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains(".tmp."))
+        .collect();
+    assert!(leftovers.is_empty(), "leftover temp file(s): {leftovers:?}");
+    fs::remove_dir_all(&dir).ok();
 }

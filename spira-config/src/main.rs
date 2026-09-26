@@ -16,7 +16,7 @@ use std::io::Read;
 use std::path::Path;
 use std::process::ExitCode;
 
-use spira_config::{convert, export_sh, get_path, json_schema, validate};
+use spira_config::{convert, export_sh, get_path, json_schema, shrink_reason, validate, write_atomic};
 
 fn read_input(file: Option<&str>) -> Result<String, String> {
     match file {
@@ -127,6 +127,7 @@ fn cmd_convert(args: &[String]) -> ExitCode {
     let mut fayth_paths: Vec<String> = Vec::new();
     let mut out_path = None;
     let mut home = env::var("HOME").unwrap_or_default();
+    let mut force_shrink = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -154,6 +155,10 @@ fn cmd_convert(args: &[String]) -> ExitCode {
                     home = h.clone();
                 }
                 i += 2;
+            }
+            "--force-shrink" => {
+                force_shrink = true;
+                i += 1;
             }
             other => {
                 eprintln!("spira-config convert: unknown argument {other:?}");
@@ -215,7 +220,20 @@ fn cmd_convert(args: &[String]) -> ExitCode {
     };
     match out_path {
         Some(p) => {
-            if let Err(e) = fs::write(&p, out) {
+            if !force_shrink {
+                if let Ok(existing_text) = fs::read_to_string(&p) {
+                    if let Ok(existing) = validate(&existing_text) {
+                        if let Some(reason) = shrink_reason(&existing, &doc) {
+                            eprintln!(
+                                "spira-config convert: refuses to shrink {p}: {reason} \
+                                 (pass --force-shrink to write it anyway)"
+                            );
+                            return ExitCode::FAILURE;
+                        }
+                    }
+                }
+            }
+            if let Err(e) = write_atomic(Path::new(&p), &out) {
                 eprintln!("spira-config convert: {p}: {e}");
                 return ExitCode::FAILURE;
             }
@@ -254,6 +272,7 @@ fn main() -> ExitCode {
                  \x20 get <dotted.path> [file]\n\
                  \x20 export --sh [file]\n\
                  \x20 convert --conf F --repo-map F [--fayth F]... [--home DIR] [--out F]\n\
+                 \x20         [--force-shrink]\n\
                  \x20 schema"
             );
             ExitCode::FAILURE
