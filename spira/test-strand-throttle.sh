@@ -37,15 +37,12 @@
 #   FAIL  throttle_state: unreadable stamp reads 'unreadable': wanted [unreadable] in [open ]
 #
 # defect: sp-0ua6w
+# tier: T1
 # covers: spira/strand-classify.py spira/strand.sh
 # hermetic-ok: no database, no systemd, no network
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
@@ -119,6 +116,4 @@ chmod 000 "$_stamp"
 out="$(SPIRA_RUN="$TMP/run" bash "$HERE/strand.sh" throttle-state 2>&1)"
 chmod 644 "$_stamp"
 want "throttle_state: unreadable stamp reads unreadable" "unreadable" "$out"
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -28,17 +28,13 @@
 # shipped defaults passes just as well with the numbers written directly into the code,
 # which is what the config keys exist to prevent.
 #
+# tier: T1
 # covers: spira/suites.sh spira/suite-state.sh spira/conf.sh spira/gate-check.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 isz()    { [ "$2" -eq 0 ] && ok "$1" || bad "$1" "wanted 0 got $2"; }
 isnz()   { [ "${2:-0}" -ne 0 ] && ok "$1" || bad "$1" "wanted nonzero got [$2]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 echo "test-suites-hygiene.sh"
 
@@ -324,6 +320,4 @@ else
     bad "max-age test: date -d is unavailable on this platform" "skip"
 fi
 
-printf '\nASSERTIONS %d\n' $(( pass + fail ))
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

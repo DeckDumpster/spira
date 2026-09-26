@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 # test-gate-retry-structural.sh — structural-failure heuristic skips the serial re-run
+# tier: T1
 # covers: spira/gate-retry.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "want [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "no [$3] in [$2]" ;; esac; }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
@@ -87,5 +85,4 @@ has "all six suites sent to retry (one timeout example)" "$(cat "$TMP/log.stdin"
 has "the hard red is also retried"                       "$(cat "$TMP/log.stdin")" "f.sh"
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

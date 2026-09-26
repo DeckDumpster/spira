@@ -34,15 +34,12 @@
 #      sentinel.sh logs "not evaluated (pass budget exhausted)" for both.
 #
 # defect: sp-ow8n
+# tier: T1
 # covers: spira/strand-classify.py spira/strand.sh spira/sentinel.sh spira/lib.sh
 # hermetic-ok: cases 0-3 use no database; case 4 uses no database (SPIRA_SKIP_RECLAIM=1)
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/run"
@@ -201,6 +198,4 @@ want   "alpha logged as not evaluated" "CHECK7 alpha: not evaluated (pass budget
 want   "beta logged as not evaluated"  "CHECK7 beta: not evaluated (pass budget exhausted)"  "$out"
 nowant "alpha NOT logged as summoned"  "summoned a alpha"                                    "$out"
 nowant "beta NOT logged as summoned"   "summoned a beta"                                     "$out"
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

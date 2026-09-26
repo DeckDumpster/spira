@@ -20,14 +20,12 @@
 #
 # A REAL bd AGAINST A THROWAWAY DATABASE (law-prefer-the-real-dependency).
 #
+# tier: T1
 # covers: spira/gate-check.sh spira/gate-retry.sh
 # priority: 1
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "want [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -180,6 +178,4 @@ chmod +x "$TMP/sbin/gh"
 run_gate_check
 
 is "no red-twice beads for flaky-only run" "0" "$(count_red_twice)"
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

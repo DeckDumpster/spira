@@ -22,13 +22,11 @@
 # WITHOUT THE PR-STATE FIX pr-closed reads busy forever: a force-merged PR's own gate run
 # never stops competing with a batch that has nothing left to wait for (sp-wo9yc).
 #
+# tier: T1
 # covers: spira/forge.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-forge-runs-active.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -100,5 +98,4 @@ is "garbage: unparseable payload is unknown, never 0" "?" "$(run)"
 touch "$TMP/fail"
 is "api-fail: a failed call is unknown, never 0" "?" "$(run)"
 
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

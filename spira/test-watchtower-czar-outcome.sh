@@ -22,16 +22,12 @@
 # does. A hand-written stub of bd's JSON output would reproduce only the fields we
 # remembered; the seam between writer and reader is what the test exists to cover.
 #
+# tier: T1
 # covers: spira/watchtower.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testdb.sh"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-watchtower-czar-outcome.sh"
 
@@ -246,5 +242,4 @@ subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
 nowant "non-czar-trigger label not escalated" "CZAR:" "$subjects"
 
 echo
-printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

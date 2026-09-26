@@ -14,12 +14,11 @@
 # script must produce at least one error line. The real check runs second with
 # a working fixture: zero stderr lines required.
 #
+# tier: T1
 # covers: spira/gate-check.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
+. "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -74,6 +73,4 @@ if [ -z "$clean_err" ]; then
 else
     bad "gate-check.sh clean pass is silent on stderr" "got: $clean_err"
 fi
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

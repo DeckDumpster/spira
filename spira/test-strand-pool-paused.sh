@@ -28,15 +28,12 @@
 #   1 passed, 2 failed
 #
 # defect: sp-2es5u
+# tier: T1
 # covers: spira/strand-classify.py spira/strand.sh
 # hermetic-ok: no database, no systemd, no network
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/run"
@@ -105,6 +102,4 @@ env \
 
 mail_sent="$(cat "$MAIL_SENT" 2>/dev/null || true)"
 nowant "no mail: pool-paused info row does not trigger escalation" "operator" "$mail_sent"
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

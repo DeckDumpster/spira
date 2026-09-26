@@ -15,14 +15,11 @@
 # concierge.sh's own _stray-holders scan is exercised directly by test-concierge.sh; this
 # suite is only about doctor.sh wiring its output into a FAIL an operator will see.
 #
+# tier: T1
 # covers: spira/doctor.sh concierge.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in output"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in output"; }
+. "$HERE/testlib.sh"
 
 echo "test-doctor-concierge-singleton.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -107,5 +104,4 @@ want   "missing: warns"                    "warn" "$missing_sec"
 nowant "missing: does not false-claim ok"  "held by no more than the managed session" "$missing_sec"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

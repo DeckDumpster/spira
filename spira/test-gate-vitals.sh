@@ -19,15 +19,12 @@
 #   Part C: the process is confirmed alive before the kill, so a kill that never
 #     ran cannot produce a false positive.
 #
+# tier: T1
 # covers: .github/workflows/gate.yml spira/testenv-batch.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-want()   { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted [$2] in [$3]" ;; esac; }
-nowant() { case "$3" in *"$2"*) bad "$1" "must not contain [$2]" ;; *) ok "$1" ;; esac; }
+. "$HERE/testlib.sh"
 grepok() { printf '%s\n' "$3" | grep -qE "$2" && ok "$1" || bad "$1" "did not match [$2]"; }
 grepno() { printf '%s\n' "$3" | grep -qE "$2" && bad "$1" "must not match [$2]" || ok "$1"; }
 
@@ -37,7 +34,7 @@ GATE_YML="$ROOT/.github/workflows/gate.yml"
 BATCH="$HERE/testenv-batch.sh"
 if [ ! -r "$GATE_YML" ]; then
     bad "gate.yml exists (prerequisite)" "not found at $GATE_YML"
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"; exit 1
+    tl_summary; exit
 fi
 
 _suites_step="$(awk '/^      - name: Suites/{f=1;next} f&&/^      - name:/{exit} f{print}' "$GATE_YML")"
@@ -53,7 +50,7 @@ _suites_env="$(printf '%s\n' "$_suites_step" \
 
 if [ -z "$_suites_env" ]; then
     bad "A0: Suites step env block located" "awk extracted nothing; subsequent checks would be vacuous"
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"; exit 1
+    tl_summary; exit
 fi
 ok "A0: Suites step env block located"
 
@@ -145,5 +142,4 @@ fi
 
 # ---------------------------------------------------------------------------
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ] || exit 1
+tl_summary
