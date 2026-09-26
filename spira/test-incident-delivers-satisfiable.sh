@@ -1,130 +1,132 @@
 #!/usr/bin/env bash
-# covers: spira/incident.sh
+#
+# test-incident-delivers-satisfiable.sh — the delivers: label incident.sh stamps is a
+# criterion a session on THIS install can actually satisfy (UC-ops-detection-remediation-08).
+#
+#   ./test-incident-delivers-satisfiable.sh
 #
 # A delivers: label is a CLOSING CRITERION: the sentinel reopens a bead closed without a
-# commit unless the named path was written during the session. So a label naming a path
-# that cannot exist is not a harmless annotation -- it is a bead that can never be closed
-# by the path the label describes.
+# commit unless the named path was written during the session. incident.sh stamped
+# delivers:note:$SPIRA_RUN/sop/applied.jsonl on EVERY bead it filed, and nothing ever
+# created that directory — eleven open beads carried an unsatisfiable criterion. Two more
+# carried an absolute path from a DIFFERENT install, having travelled between machines.
 #
-# incident.sh stamped delivers:note:$SPIRA_RUN/sop/applied.jsonl on EVERY bead it filed,
-# and nothing ever created that directory. Eleven open beads carried it. Two more carried
-# an absolute path belonging to a DIFFERENT install, having travelled between machines,
-# and no session here could ever satisfy those.
+# THIS WAS A SOURCE-GREP SUITE (regex over incident.sh's own text; "mutually exclusive"
+# passed if `else` appeared anywhere). Replaced here with a real T1 behaviour test: a stub
+# bd captures every `--label` written, in a scratch SPIRA_RUN, so the suite proves what the
+# code DOES rather than what it appears to say.
 #
-# THE RULE IS SCHEMA-ON-WRITE, not repair-on-read: a criterion nobody can satisfy must not
-# be recorded in the first place. Patching the labels afterwards leaves the writer free to
-# mint more.
+# MERGED FROM test-batch-repeat-refused-delivers.sh (deleted): its two cases mirrored this
+# exact contract for testenv-batch.sh's repeat-refused filing shape, at T2 against a real
+# fixture database it never needed — case 5 below reproduces that env shape against the stub.
 #
-# MATCHERS READ CODE, NOT PROSE (law-a-matcher-reads-code-not-prose): the comment above the
-# mechanism in incident.sh names every token these checks look for.
+# tier: T1
+# covers: spira/incident.sh spira/incident-stub-bd.py spira/testenv-batch.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-SCRIPT_UT="$HERE/incident.sh"
-CODE="$(grep -vE '^[[:space:]]*#' "$SCRIPT_UT")"
-JOINED="$(printf '%s' "$CODE" | sed -e :a -e '/\\$/N; s/\\\n//; ta')"
-has() { grep -qE "$1" <<< "$JOINED"; }
-
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
+. "$HERE/testlib.sh"
 
 echo "test-incident-delivers-satisfiable.sh"
+
+INC="$HERE/incident.sh"
+STUB_BD="$HERE/incident-stub-bd.py"
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
+mkdir -p "$TMP/home" "$TMP/run"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/home/mail.sh"; chmod +x "$TMP/home/mail.sh"
+
+export STUB_BD_STATE="$TMP/state.json" STUB_BD_LOG="$TMP/bd.log"
+
+file_one() {  # file_one <ref> [VAR=val ...]
+    local ref="$1"; shift
+    printf 'payload' | env -i HOME="$HOME" PATH="$PATH" \
+        SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" \
+        SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" \
+        SPIRA_HOME="$TMP/home" \
+        SPIRA_INCIDENT_REF="$ref" \
+        SPIRA_INCIDENT_LOCK="$TMP/run/delivers-test.lock" \
+        SPIRA_INCIDENT_REPO= \
+        "$@" bash "$INC" file "delivers test" - >/dev/null 2>&1
+}
+bead_of() {
+    python3 -c '
+import json
+d = json.load(open("'"$STUB_BD_STATE"'"))
+for b in d["beads"].values():
+    if b.get("external_ref") == "'"$1"'": print(b["id"]); break
+'
+}
+delivers_labels() {
+    python3 -c '
+import json
+d = json.load(open("'"$STUB_BD_STATE"'"))
+print(" ".join(l for l in d["beads"].get("'"$1"'", {}).get("labels", []) if l.startswith("delivers:")))
+'
+}
+
+# ======================================================================================
 echo
+echo "1. the default: no SPIRA_INCIDENT_DELIVERS set — delivers:action (evidence is the close reason):"
+# ======================================================================================
+rm -f "$STUB_BD_STATE" "$STUB_BD_LOG"
+file_one "incident:d-default"
+bid1="$(bead_of "incident:d-default")"
+[ -n "$bid1" ] && ok "bead was created" || bad "bead was created" "none found"
+want "delivers:action is stamped by default" "delivers:action" "$(delivers_labels "$bid1")"
 
-# Vacuity guard: if the label write ever moves or is renamed, every check below would pass
-# against a file that no longer does the thing at all.
-if has 'delivers:note:'; then
-    ok "the delivers write was located (positive control)"
-else
-    bad "the delivers write was located (positive control)" "no delivers:note: write in incident.sh; the checks below are vacuous"
-fi
+# ======================================================================================
+echo
+echo "2. SPIRA_INCIDENT_DELIVERS=note, ledger inside SPIRA_RUN: delivers:note:<ledger> is reachable and stamped:"
+# ======================================================================================
+rm -f "$STUB_BD_STATE" "$STUB_BD_LOG"
+LEDGER_IN="$TMP/run/sop/applied.jsonl"
+file_one "incident:d-note-in" SPIRA_INCIDENT_DELIVERS=note SPIRA_SOP_LEDGER="$LEDGER_IN"
+bid2="$(bead_of "incident:d-note-in")"
+want "delivers:note:<ledger> is stamped, not delivers:action" "delivers:note:$LEDGER_IN" "$(delivers_labels "$bid2")"
+is "the ledger's directory is created, so the criterion is reachable" "yes" \
+    "$([ -d "$(dirname "$LEDGER_IN")" ] && echo yes || echo no)"
+
+# ======================================================================================
+echo
+echo "3. SPIRA_INCIDENT_DELIVERS=note, ledger OUTSIDE SPIRA_RUN: falls back to delivers:action, and says why:"
+# ======================================================================================
+# A path outside this install's SPIRA_RUN can never be written by a session here — beads
+# travel between machines carrying an absolute path from wherever they were filed.
+rm -f "$STUB_BD_STATE" "$STUB_BD_LOG"
+LEDGER_OUT="$TMP/elsewhere/applied.jsonl"
+ILOG="$TMP/run/incident.log"
+file_one "incident:d-note-out" SPIRA_INCIDENT_DELIVERS=note SPIRA_SOP_LEDGER="$LEDGER_OUT" SPIRA_INCIDENT_LOG="$ILOG"
+bid3="$(bead_of "incident:d-note-out")"
+_labels3="$(delivers_labels "$bid3")"
+want   "an outside-SPIRA_RUN ledger falls back to delivers:action" "delivers:action" "$_labels3"
+nowant "and delivers:note: is never stamped for it"                "delivers:note:"  "$_labels3"
+want   "the fallback is logged, not silent"                        "outside" "$(cat "$ILOG" 2>/dev/null)"
+
+# ======================================================================================
+echo
+echo "4. SPIRA_INCIDENT_DELIVERS=<unrecognised>: no label is written, and it is logged:"
+# ======================================================================================
+rm -f "$STUB_BD_STATE" "$STUB_BD_LOG"
+ILOG4="$TMP/run/incident4.log"
+file_one "incident:d-bogus" SPIRA_INCIDENT_DELIVERS=bogus SPIRA_INCIDENT_LOG="$ILOG4"
+bid4="$(bead_of "incident:d-bogus")"
+is "no delivers: label of any kind is written for an unrecognised value" "" "$(delivers_labels "$bid4")"
+want "the rejection is logged, not silent" "unrecognised" "$(cat "$ILOG4" 2>/dev/null)"
+
+# ======================================================================================
+echo
+echo "5. SPIRA_INCIDENT_DELIVERS=action (testenv-batch.sh's repeat-refused shape, merged from test-batch-repeat-refused-delivers.sh):"
+# ======================================================================================
+# Mirrors testenv-batch.sh's own call shape exactly, which files a repeat-refused
+# diagnosis bead — a correct diagnosis has no ledger to write, so delivers:action (the
+# close reason is the evidence) is the only criterion it can ever satisfy.
+rm -f "$STUB_BD_STATE" "$STUB_BD_LOG"
+file_one "repeat-refused:spira/test-br:0000000000000000" \
+    SPIRA_INCIDENT_DELIVERS=action SPIRA_INCIDENT_TYPE=task SPIRA_INCIDENT_CAUSE=repeat-refused \
+    SPIRA_INCIDENT_PRIORITY=3
+bid5="$(bead_of "repeat-refused:spira/test-br:0000000000000000")"
+_labels5="$(delivers_labels "$bid5")"
+want   "delivers:action is present"    "delivers:action" "$_labels5"
+nowant "delivers:note: is absent"      "delivers:note:"  "$_labels5"
 
 echo
-echo "a criterion is only written when something can satisfy it:"
-# The ledger's directory must exist, or the very first close is reopened forever.
-# Must name the LEDGER. The first version of this matched `mkdir -p "$SPOOL"
-# "$(dirname "$ILOG")"` on an unrelated line and passed against a file that never
-# created the ledger's directory at all.
-# NOT [^\n] -- inside an ERE bracket expression that is the literal characters
-# backslash and n, so it excludes the letter n, and `dirname` contains one. The
-# matcher reported a correct mkdir as missing. grep is line-based; `.*` is right.
-if has 'mkdir -p .*_sop_ledger'; then
-    ok "the ledger's directory is created, so the path is reachable"
-else
-    bad "the ledger's directory is created, so the path is reachable" "nothing creates it; the first close is reopened and every one after it"
-fi
-
-# A path outside this install can never be written by a session here, and beads travel
-# between machines carrying absolute paths.
-if has 'SPIRA_RUN' && has 'case .*_sop_ledger|\[\[ .*_sop_ledger|\$\{_sop_ledger#'; then
-    ok "a path outside this install's run directory is refused"
-else
-    bad "a path outside this install's run directory is refused" "an absolute path from another install is stamped verbatim and can never be satisfied here"
-fi
-
-# Silence here would recreate the defect in a new shape: a label quietly not written is as
-# hard to diagnose as one that cannot be met.
-if has 'delivers' && has '(log|printf|warn).*deliver'; then
-    ok "skipping the label says so"
-else
-    bad "skipping the label says so" "a silently-omitted criterion is as hard to diagnose as an unsatisfiable one"
-fi
-
-echo
-echo "the retirement migration tells the truth about what it will do:"
-# A --dry-run that mutates is not one. The first version ran mkdir -p on the
-# reachability branch, so the dry run CREATED the directories it was asking about,
-# reported all eight labels reachable, and the real run then retired nothing after
-# the dry run had promised six. A migration whose two modes disagree is worse than
-# no migration: the preview is what an operator decides on.
-_mig="$(printf '%s' "$JOINED" | awk '/retire-unsatisfiable-delivers\)/{f=1} f{print} f&&/^    ;;/{exit}')"
-if [ -n "$_mig" ]; then
-    ok "the migration block was located (positive control)"
-else
-    bad "the migration block was located (positive control)" "not found; the checks below are vacuous"
-fi
-if grep -q 'mkdir' <<< "$_mig"; then
-    bad "the migration only asks, never repairs" "it calls mkdir: --dry-run mutates, and the two modes disagree about what will happen"
-else
-    ok "the migration only asks, never repairs"
-fi
-# Creating the directory was a mirage anyway: the sentinel needs the ledger's MTIME
-# to move during the session, so an empty directory satisfies nothing. Ensuring it
-# belongs in the writer, where a session running sop.sh can actually fill it.
-if grep -q 'mkdir -p .*_sop_ledger' <<< "$JOINED"; then
-    ok "the writer is where the directory is ensured"
-else
-    bad "the writer is where the directory is ensured" "nothing creates it at write time"
-fi
-
-echo
-echo "SPIRA_INCIDENT_DELIVERS: callers can declare an explicit delivers type at filing time:"
-# Positive control: the handler must exist in the code, or the checks below are vacuous.
-if has 'SPIRA_INCIDENT_DELIVERS'; then
-    ok "SPIRA_INCIDENT_DELIVERS handler was located (positive control)"
-else
-    bad "SPIRA_INCIDENT_DELIVERS handler was located (positive control)" "not found in incident.sh; the checks below are vacuous"
-fi
-# An unknown type must not be silently stamped — it would create an unsatisfiable criterion.
-# The handler must validate before writing.
-if has 'SPIRA_INCIDENT_DELIVERS' && has 'case.*SPIRA_INCIDENT_DELIVERS|unrecognised.*SPIRA_INCIDENT_DELIVERS'; then
-    ok "unknown SPIRA_INCIDENT_DELIVERS types are rejected before writing"
-else
-    bad "unknown SPIRA_INCIDENT_DELIVERS types are rejected before writing" "an unvalidated env var could stamp a delivers: type the sentinel cannot verify"
-fi
-# Skipping is logged — same rule as the SOP ledger path.
-if has 'SPIRA_INCIDENT_DELIVERS' && has 'ilog.*SPIRA_INCIDENT_DELIVERS|ilog.*deliver.*SPIRA_INCIDENT'; then
-    ok "SPIRA_INCIDENT_DELIVERS writes are logged"
-else
-    bad "SPIRA_INCIDENT_DELIVERS writes are logged" "a silently-omitted or silently-written criterion is as hard to diagnose as an unsatisfiable one"
-fi
-# When set, it replaces the SOP ledger path — both must not apply to the same bead.
-if has 'SPIRA_INCIDENT_DELIVERS' && has 'else'; then
-    ok "SPIRA_INCIDENT_DELIVERS and the SOP ledger path are mutually exclusive (else branch)"
-else
-    bad "SPIRA_INCIDENT_DELIVERS and the SOP ledger path are mutually exclusive" "both paths could apply, creating a compound criterion the aeon must satisfy both parts of"
-fi
-
-echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

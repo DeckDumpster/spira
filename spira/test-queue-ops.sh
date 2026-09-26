@@ -46,7 +46,7 @@ BD_LOG="$TMP/bd-calls.log"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m init
 mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
-cp "$HERE"/*.sh "$SH/"
+cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 
 # Fake forge: records arguments, succeeds silently. runs-for-branch answers from
 # RUNS_FILE (empty/absent = no in-flight runs); run-cancel fails when CANCEL_FAIL

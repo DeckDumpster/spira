@@ -35,7 +35,7 @@ echo
 echo "POSITIVE CONTROL — a bead with no commit at all is not landed by either reader:"
 # ============================================================================
 SH="$TMP/spira"; mkdir -p "$SH"
-cp "$HERE"/*.sh "$SH/"
+cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 printf 'fixture | %s\n' "$REPO" > "$SH/repo-map"
 export SPIRA_HOME="$SH" SPIRA_REPO_MAP="$SH/repo-map" SPIRA_HOME_REPO=fixture SPIRA_REPO="$REPO"
 . "$SH/lib.sh"

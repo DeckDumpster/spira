@@ -32,7 +32,7 @@ git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 
-cp "$HERE"/*.sh "$SH/"
+cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 cp -r "$HERE/chamber" "$SH/"
 
 # Repo-map must exist before any bead.sh call; bdq validates repo: labels against it.

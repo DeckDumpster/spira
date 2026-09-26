@@ -48,7 +48,7 @@ git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
 
-cp "$HERE"/*.sh "$SH/"
+cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 cp "$HERE/bdsim.py" "$SH/"   # bdq's SPIRA_BDJSON_FIXTURE seam looks beside its own lib.sh
 
 cat > "$SH/repo-map" <<RMAP

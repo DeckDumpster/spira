@@ -31,7 +31,7 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 
 SH="$TMP/spira"; RUN="$TMP/run"
 mkdir -p "$SH" "$RUN/worktree" "$RUN/submitted" "$RUN/landstate"
-cp "$HERE"/*.sh "$SH/"
+cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 

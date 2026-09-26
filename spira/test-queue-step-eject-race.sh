@@ -33,7 +33,7 @@ SLEEP_FILE="$TMP/sleep-seconds"; printf '3\n' > "$SLEEP_FILE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m init
 mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
-cp "$HERE"/*.sh "$SH/"
+cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 
 # The forge fixture sleeps on check-status — the FIRST call verdict.sh makes after
 # taking the per-repo lock (verdict.sh:923 flocks, :930 calls _verdict_process, which

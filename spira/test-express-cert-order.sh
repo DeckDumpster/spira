@@ -40,7 +40,7 @@ git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 
-cp "$HERE"/*.sh "$SH/"
+cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 cp -r "$HERE/chamber" "$SH/"
 
 cat > "$SH/repo-map" <<RMAP

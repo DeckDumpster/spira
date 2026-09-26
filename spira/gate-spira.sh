@@ -204,6 +204,15 @@ if ! gil="$(bash spira/gh-intake-lint.sh 2>&1)"; then
     exit 1
 fi
 
+# INCIDENT-CAUSE FENCE. A SPIRA_INCIDENT_REF filing site with no SPIRA_INCIDENT_CAUSE files
+# recurrences into the undifferentiated "unrecorded" bucket, collapsing the census taxonomy
+# a remedy needs to rank failure classes.
+[ -r spira/incident-cause-lint.sh ] || { say "spira/incident-cause-lint.sh is missing — refusing to land unchecked"; exit 1; }
+if ! icl="$(bash spira/incident-cause-lint.sh 2>&1)"; then
+    printf '%s\n' "$icl" >&2
+    exit 1
+fi
+
 # SUITE-STATE FENCE. A quarantine entry that names a CLOSED bead has no exit path —
 # suites.sh hygiene requires land_state:LANDED, which CLOSED never satisfies. The check
 # also applies suite_state_lint: unknown state, missing reason, bead-less quarantine,

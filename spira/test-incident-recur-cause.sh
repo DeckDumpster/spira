@@ -8,7 +8,7 @@
 # sp-recur-N. Without a cause the corpus cannot be grouped by failure class, which is
 # the prerequisite for Maechen naming a class before Ryan notices it.
 #
-# THREE SCENARIOS:
+# TWO SCENARIOS:
 #
 #   1. Default cause (SPIRA_INCIDENT_CAUSE unset): label is sp-recur-1-unrecorded.
 #      A caller that does not know the cause must still record something — unrecorded is
@@ -18,14 +18,15 @@
 #   2. Named cause (SPIRA_INCIDENT_CAUSE=suite-red): label is sp-recur-1-suite-red, then
 #      sp-recur-2-suite-red on the recurrence. counter_causes must return cause=suite-red.
 #
-#   3. backfill-recur-causes: a bead carrying a bare sp-recur-1 label is converted to
-#      sp-recur-1-unrecorded; a bead already carrying sp-recur-1-unrecorded is not double-
-#      converted (safe to re-run).
-#
-# 4. WATCHER-FILED INCIDENTS (merged from test-watcher-reopen.sh): a bead blocked by an
+# 3. WATCHER-FILED INCIDENTS (merged from test-watcher-reopen.sh): a bead blocked by an
 #    open dep stays open on refile with no reopen event, and pc1/pc2 prove the interval
 #    classifier both ways over a real bead (case2, which only re-ran pc2's exact scenario,
 #    was deleted rather than merged — same assertion, no new fact).
+#
+# WHAT MOVED OUT (sp-fhzib.2, UC-ops-detection-remediation-07/07b): the backfill-recur-causes
+# scenario is now a T1 stub-bd row in test-incident-migrations.sh (that migration needs no
+# database to be true), and the Sin-escalation scenario duplicated test-sin-exempt.sh exactly
+# and is deleted rather than ported. What remains here is UC-operator-channel-36's own scope.
 #
 # A REAL bd ON A FIXTURE DATABASE (law-prefer-the-real-dependency), except the classifier
 # itself (section 0 below), which is pure and needs no database at all — a T1 seam inside a
@@ -36,12 +37,7 @@
 # hermetic-ok: uses a fixture database, no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-incident-recur-cause.sh"
 
@@ -103,16 +99,7 @@ file_incident() {  # file_incident <ref> <title> <payload> [VAR=val ...]
         bash "$INC" file "$title" - 2>/dev/null
 }
 
-# Read the highest sp-recur-N value, regardless of cause suffix.
-recur_max() { B label list "$1" 2>/dev/null | grep -oE 'sp-recur-[0-9]+' \
-    | grep -oE '[0-9]+$' | sort -n | tail -1 || echo 0; }
-
-# Check whether a bead carries a label containing the given substring.
-# Captures before matching — grep -q closes the pipe early and SIGPIPE the writer
-# under pipefail (law-no-grep-q-under-pipefail).
-has_label_like() { local all; all="$(B label list "$1" 2>/dev/null)"; [[ "$all" == *"$2"* ]]; }
-
-# --- helpers for section 6/7 (merged from test-watcher-reopen.sh) -----------------------
+# --- helpers for section 3/4 (merged from test-watcher-reopen.sh) -----------------------
 
 # file_watcher_incident <ref> <title> [VAR=val ...] — files a watcher-style incident
 # (SIN_EXEMPT=1). Uses env (not env -i) to preserve SPIRA_BD so the subprocess's bdq uses
@@ -210,7 +197,7 @@ for i in d:
     if i.get("external_ref")==target: print(i["id"]); break
 ' "$ref" 2>/dev/null)"
 [ -n "$bid" ] && ok "bead was created for default-cause ref" \
-    || { bad "bead was created for default-cause ref" "none found"; printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
+    || { bad "bead was created for default-cause ref" "none found"; tl_summary; exit; }
 
 is "first filing has no recurrence event (only recurrences write events)" "0" "$(recurs_of "$bid")"
 
@@ -234,126 +221,13 @@ for i in d:
     if i.get("external_ref")==target: print(i["id"]); break
 ' "$ref2" 2>/dev/null)"
 [ -n "$bid2" ] && ok "bead was created for named-cause ref" \
-    || { bad "bead was created for named-cause ref" "none found"; printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
+    || { bad "bead was created for named-cause ref" "none found"; tl_summary; exit; }
 
 is "second filing produces exactly one recurrence event" "1" "$(recurs_of "$bid2")"
 
 # ======================================================================================
 echo
-echo "3. backfill-recur-causes converts bare sp-recur-N to sp-recur-N-unrecorded:"
-# ======================================================================================
-testdb_reset; mkdir -p "$TMP/run"
-# Plant a bead manually with a bare sp-recur-1 label (simulates pre-change code).
-bare_id="$(B create "bare recur test" --type bug --priority 2 \
-    --labels spira,incident --external-ref "incident:bare-recur" --silent 2>/dev/null \
-    | tr -d '[:space:]')"
-[ -n "$bare_id" ] || { bad "planted bare-recur bead" "create failed"; \
-    printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
-B label add "$bare_id" "sp-recur-1" >/dev/null 2>&1
-B label add "$bare_id" "sp-recur-2" >/dev/null 2>&1
-
-# Also plant a bead already carrying a typed label — backfill must leave it alone.
-typed_id="$(B create "typed recur test" --type bug --priority 2 \
-    --labels spira,incident --external-ref "incident:typed-recur" --silent 2>/dev/null \
-    | tr -d '[:space:]')"
-[ -n "$typed_id" ] || { bad "planted typed-recur bead" "create failed"; \
-    printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
-B label add "$typed_id" "sp-recur-1-suite-red" >/dev/null 2>&1
-
-out="$(SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$TMP/run" \
-    SPIRA_INCIDENT_LOCK="$TMP/run/rc-cause-test.lock" \
-    bash "$INC" backfill-recur-causes 2>/dev/null)"
-
-want "backfill reports 1 bead backfilled" "backfilled 1" "$out"
-want "backfill reports 0 errors" "errors 0" "$out"
-
-has_label_like "$bare_id" "sp-recur-1-unrecorded" \
-    && ok "bare sp-recur-1 promoted to sp-recur-1-unrecorded" \
-    || bad "bare sp-recur-1 promoted to sp-recur-1-unrecorded" "labels: $(B label list "$bare_id" 2>/dev/null)"
-
-has_label_like "$bare_id" "sp-recur-2-unrecorded" \
-    && ok "bare sp-recur-2 promoted to sp-recur-2-unrecorded" \
-    || bad "bare sp-recur-2 promoted to sp-recur-2-unrecorded" "labels: $(B label list "$bare_id" 2>/dev/null)"
-
-# Bare labels must be removed (not just joined by typed ones — that would double-count).
-# Capture then scan — grep -q under pipefail closes the pipe early and SIGPIPEs the writer.
-_all_backfill="$(B label list "$bare_id" 2>/dev/null)"
-# A bare sp-recur-1 rung appears as its own label token; sp-recur-1-unrecorded also contains
-# "sp-recur-1" as a substring, so match "- sp-recur-1" at end-of-line or before whitespace.
-_found_bare="$(printf '%s\n' "$_all_backfill" | grep -xE '[[:space:]]*-[[:space:]]*sp-recur-1' || true)"
-[ -z "$_found_bare" ] && ok "bare sp-recur-1 removed after backfill" \
-    || bad "bare sp-recur-1 removed after backfill" "still present: $_found_bare"
-
-# The already-typed bead must be unchanged (idempotence positive control).
-has_label_like "$typed_id" "sp-recur-1-suite-red" \
-    && ok "already-typed bead is untouched by backfill" \
-    || bad "already-typed bead is untouched by backfill" "labels: $(B label list "$typed_id" 2>/dev/null)"
-
-# ======================================================================================
-echo
-echo "4. backfill-recur-causes is idempotent (safe to re-run):"
-# ======================================================================================
-out2="$(SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$TMP/run" \
-    SPIRA_INCIDENT_LOCK="$TMP/run/rc-cause-test.lock" \
-    bash "$INC" backfill-recur-causes 2>/dev/null)"
-want "second run reports 0 backfilled" "backfilled 0" "$out2"
-
-
-# ======================================================================================
-echo
-echo "5. Sin escalation fires at SIN_AT recurrences (events-trail count, not labels):"
-# ======================================================================================
-# sp-uq7r: recurrence count was always 1 after sp-lzt deleted sp-recur-N labels.
-# This section verifies that the events trail is used correctly so the count advances
-# and the Sin threshold is crossed.  SIN_AT is pinned to 3 (non-default; default is 5).
-# The ref is filed SIN_AT+1=4 times; the expected log sequence is recurred (1), (2), (3);
-# exactly one Sin ask must be recorded and the bead must carry the sin label.
-testdb_reset; mkdir -p "$TMP/run"; > "$MAIL_LOG"
-rm -f "$TMP/run/incident.log"
-
-ref5="incident:test-sin-escalation"
-SIN_AT_PIN=3
-
-for _i in 1 2 3 4; do
-    file_incident "$ref5" "sin escalation test" "payload $_i" \
-        SPIRA_SIN_AT="$SIN_AT_PIN" SPIRA_INCIDENT_CAUSE=suite-red >/dev/null
-done
-
-# Resolve the bead id (the ask log does not carry it directly).
-bid5="$(B list --status open --limit 0 --label spira,incident --json 2>/dev/null \
-    | python3 -c '
-import json,sys
-target=sys.argv[1]
-try: d=json.load(sys.stdin)
-except: sys.exit(0)
-d=d if isinstance(d,list) else [d]
-for i in d:
-    if i.get("external_ref")==target: print(i["id"]); break
-' "$ref5" 2>/dev/null)"
-[ -n "$bid5" ] && ok "sin-escalation bead was created" \
-    || { bad "sin-escalation bead was created" "none found"; \
-         printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
-
-# (a) incident.log must show the advancing recurrence sequence.
-_ilog="$TMP/run/incident.log"
-want "incident.log contains recurred (2)" "recurred (2)" "$(cat "$_ilog" 2>/dev/null)"
-want "incident.log contains recurred (3)" "recurred (3)" "$(cat "$_ilog" 2>/dev/null)"
-
-# (b) exactly one Sin ask must have been recorded.
-# Count only the args line (starts with 'send') to avoid double-counting body lines that
-# repeat the subject.
-_ask_count=0
-[ -f "$MAIL_LOG" ] && _ask_count="$(grep -cE '^send.*recurred' "$MAIL_LOG" 2>/dev/null || echo 0)"
-is "exactly one Sin ask recorded" "1" "$_ask_count"
-
-# (c) bead carries sin label.
-has_label_like "$bid5" "sin" \
-    && ok "bead carries sin label after escalation" \
-    || bad "bead carries sin label after escalation" "labels: $(B label list "$bid5" 2>/dev/null)"
-
-# ======================================================================================
-echo
-echo "6. dep path — a watcher incident blocked by an open dep stays open on refile:"
+echo "3. dep path — a watcher incident blocked by an open dep stays open on refile:"
 # ======================================================================================
 # Merged from test-watcher-reopen.sh: proves the mechanism that lets an Ops aeon link the
 # incident to its root cause and leave it open without a fresh reopen event on every tick.
@@ -385,7 +259,7 @@ is "blocked bead absent from bd ready" "absent" "$READY1"
 
 # ======================================================================================
 echo
-echo "7. the classifier over a real bead — pc1/pc2 positive control (both directions):"
+echo "4. the classifier over a real bead — pc1/pc2 positive control (both directions):"
 # ======================================================================================
 # law-absence-needs-a-positive-control: prove the classifier fires BOTH ways over a real
 # close-then-refile before trusting anything it says elsewhere. (test-watcher-reopen.sh's
@@ -408,6 +282,4 @@ B close "$PC2" --reason "test" >/dev/null 2>&1
 file_watcher_incident "$REF_PC2" "pc2" SPIRA_WATCHER_INTERVAL_S=9999
 is "pc2: large interval → cause=closed-while-live" "closed-while-live" "$(sql_reopen_cause "$PC2")"
 
-echo
-printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

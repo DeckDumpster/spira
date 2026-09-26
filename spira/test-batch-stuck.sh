@@ -57,7 +57,7 @@ git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
 
-cp "$HERE"/*.sh "$SH/"
+cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 
 # Mail stub: records the call, always exits 0.  The real mail.sh writes to
 # $SPIRA_MAIL; the stub writes to $MAIL_LOG so assertions can count calls

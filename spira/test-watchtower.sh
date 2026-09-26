@@ -559,6 +559,23 @@ wt_file_multi() {   # wt_file_multi [VAR=val ...] -> appends incident subjects t
         SPIRA_INCIDENT_SH="$mock" \
         "$@" bash "$HERE/watchtower.sh" 2>/dev/null
 }
+# wt_sinexempt_multi: like wt_file_multi but captures SPIRA_SIN_EXEMPT (UC-ops-detection-
+# remediation-07) alongside the subject, one "<subject>|<SPIRA_SIN_EXEMPT>" line per
+# incident.sh call — proving the DRAINING escalation cannot itself become a Sin, not just
+# that incident.sh's own exemption plumbing works (that half is test-sin-exempt.sh's job).
+wt_sinexempt_multi() {   # wt_sinexempt_multi [VAR=val ...] -> appends to $TMP/inc-sinexempt
+    local mock="$TMP/mock-inc-sinexempt.sh"
+    printf '#!/usr/bin/env bash\nprintf "%%s|%%s\n" "$2" "${SPIRA_SIN_EXEMPT:-}" >> "%s"\ncat > /dev/null\n' \
+        "$TMP/inc-sinexempt" > "$mock"
+    chmod +x "$mock"
+    env -i PATH="$PATH" HOME="$TMP" \
+        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
+        SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
+        SPIRA_SUITES_SH="$MOCK_SUITES" \
+        SPIRA_INCIDENT_SH="$mock" \
+        "$@" bash "$HERE/watchtower.sh" 2>/dev/null
+}
 # wt_refs_multi: like wt_file_multi but captures SPIRA_INCIDENT_REF (the actual dedupe key)
 # rather than the incident subject. Used to verify two passes with different measured values
 # produce one stable key rather than one per measurement.
@@ -616,6 +633,15 @@ is "above threshold writes the prompt file" "1" \
 nowant "above threshold does not file a routine sweep bead" "Spira sweep" "$subjects"
 want "above threshold files the drain escalation"  "DRAINING:"         "$subjects"
 want "with a fixed subject for dedup"              "world.sh summons"  "$subjects"
+
+# UC-ops-detection-remediation-07: the DRAINING escalation is itself SIN-exempt. A
+# ten-minute sweep timer that keeps finding the world still draining would otherwise
+# cross SPIRA_SIN_AT and page the operator for a condition that is already visible on
+# every prompt — the same reasoning that exempts the routine sweep bead.
+rm -f "$TMP/inc-sinexempt" "$TMP/ops-prompt"
+wt_sinexempt_multi SPIRA_DRAIN_WARN_MINS=15
+sinexempt_lines="$(cat "$TMP/inc-sinexempt" 2>/dev/null || echo "")"
+want "the drain escalation sets SPIRA_SIN_EXEMPT=1" "DRAINING: world.sh summons gated|1" "$sinexempt_lines"
 
 # Threshold is configurable: zero means escalate immediately.
 fresh

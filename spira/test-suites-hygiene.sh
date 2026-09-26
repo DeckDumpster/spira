@@ -69,7 +69,7 @@ BINDIR="$TMP/bin"
 mkdir -p "$SH/chamber" "$STATE" "$RUND" "$BINDIR" "$TMP/home" "$TMP/run/events"
 
 # Copy only the scripts suites.sh and its callees need.
-for f in suites.sh lib.sh conf.sh suite-state.sh suite-covers.sh bead.sh mail.sh incident.sh; do
+for f in suites.sh lib.sh conf.sh suite-state.sh suite-covers.sh bead.sh mail.sh incident.sh incident-dedup-decision.py; do
     cp "$HERE/$f" "$SH/$f"
 done
 cp -r "$HERE/mail" "$SH/mail"

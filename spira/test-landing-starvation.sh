@@ -66,7 +66,7 @@ git -C "$REPO_A" remote add origin "$REMOTE_A"; git -C "$REPO_A" push -q origin 
 git -C "$REPO_B" remote add origin "$REMOTE_B"; git -C "$REPO_B" push -q origin main; git -C "$REPO_B" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 
-cp "$HERE"/*.sh "$SH/"
+cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
 stub gate.sh 'echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2; exit 0'

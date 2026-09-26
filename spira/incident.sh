@@ -110,6 +110,24 @@ _reopen_cause() {
         printf 'recurrence'
     fi
 }
+
+# _recur_note_body <prev-payload-hash-label-or-empty> <payload-file> <was-closed 0|1> -> note suffix
+#
+# PURE FUNCTION OF (PREVIOUS PAYLOAD HASH, CURRENT PAYLOAD). Prints empty when the current
+# payload is byte-identical to the last one recorded AND the bead was not just reopened —
+# an unchanged base-suite red must not grow the bead ~1.3KB per recurrence (sp-obwc). Prints
+# the first 2000 bytes of the payload, prefixed with a newline, otherwise. The caller decides
+# whether to update the payload-hash label from whether this returns anything, rather than
+# recomputing the comparison itself.
+_recur_note_body() {
+    local prev_label="$1" pf="$2" was_closed="$3" cur
+    cur="$(sha256sum "$pf" 2>/dev/null | cut -c1-16)"
+    if [ -n "$cur" ] && [ "payload-hash:${cur}" = "${prev_label:-}" ] && [ "$was_closed" = 0 ]; then
+        printf ''
+    else
+        printf '\n%s' "$(head -c 2000 "$pf")"
+    fi
+}
 # THE CAUSE CARRIED BY EACH RECURRENCE RUNG. Callers that know the kind of event they are
 # filing set SPIRA_INCIDENT_CAUSE to a short slug (suite-red, systemd-fail, etc.). When not
 # set, the rung records unrecorded rather than omitting the cause field — a recurrence must
@@ -198,6 +216,8 @@ _provenance() {
 # the same incident returning. One bead that says "red 6 times over 2 days" lets Ops
 # see the pattern; a chain of six single-occurrence beads does not (sp-srgr6).
 # --------------------------------------------------------------------------------------
+_DEDUP_PY="$(dirname "${BASH_SOURCE[0]}")/incident-dedup-decision.py"
+
 _dedup_incident() {      # _dedup_incident <ref> -> "open <id> <n>" | "closed <id> <n>" | nothing
     local ref="$1" _ref_label _since _r
     _ref_label="ref:$(_ref_hash "$ref")"
@@ -210,15 +230,7 @@ _dedup_incident() {      # _dedup_incident <ref> -> "open <id> <n>" | "closed <i
     # external_ref is confirmed client-side. bdq adds -C "$SPIRA_DB" so the query reaches
     # the configured database, not the auto-discovered one (law-address-the-store-with-spira-bd).
     _r="$(bdq list --status open,in_progress --limit 0 --label "$_ref_label" --json 2>/dev/null \
-      | python3 -c '
-import sys, json
-target = sys.argv[1]
-try:
-    for bead in json.load(sys.stdin):
-        if bead.get('"'"'external_ref'"'"') == target and bead.get('"'"'status'"'"') in ('"'"'open'"'"', '"'"'in_progress'"'"'):
-            print('"'"'open'"'"', bead['"'"'id'"'"']); sys.exit(0)
-except: pass
-' "$ref" 2>/dev/null)"
+      | json_only | python3 "$_DEDUP_PY" open 0 "$ref" 2>/dev/null)"
     if [ -n "$_r" ]; then printf '%s' "$_r"; return; fi
 
     # Sub-path B: fallback for beads without the ref: label (filed by older code).
@@ -227,16 +239,7 @@ except: pass
     # Skips beads that carry any ref: label — those were already checked in sub-path A.
     # Once found here, file_one adds the label so this path is not needed again.
     _r="$(bdq list --status open,in_progress --limit 0 --json 2>/dev/null \
-      | python3 -c '
-import sys, json
-target = sys.argv[1]
-try:
-    for bead in json.load(sys.stdin):
-        if any(l.startswith('"'"'ref:'"'"') for l in (bead.get('"'"'labels'"'"') or [])): continue
-        if bead.get('"'"'external_ref'"'"') == target and bead.get('"'"'status'"'"') in ('"'"'open'"'"', '"'"'in_progress'"'"'):
-            print('"'"'open'"'"', bead['"'"'id'"'"']); sys.exit(0)
-except: pass
-' "$ref" 2>/dev/null)"
+      | json_only | python3 "$_DEDUP_PY" open 1 "$ref" 2>/dev/null)"
     if [ -n "$_r" ]; then printf '%s' "$_r"; return; fi
 
     # PASS 2 — recently-closed. Only reached when no open bead matched.
@@ -248,30 +251,13 @@ except: pass
     # Prints "closed <id> <closed_at>" so the caller can compute how recently
     # the bead was closed and classify the reopen as closed-while-live vs recurrence.
     _r="$(bdq list --status closed --closed-after "$_since" --limit 0 --label "$_ref_label" --json 2>/dev/null \
-      | python3 -c '
-import sys, json
-target = sys.argv[1]
-try:
-    for bead in json.load(sys.stdin):
-        if bead.get('"'"'external_ref'"'"') == target and bead.get('"'"'status'"'"') == '"'"'closed'"'"':
-            print('"'"'closed'"'"', bead['"'"'id'"'"'], bead.get('"'"'closed_at'"'"') or '"'"''"'"'); sys.exit(0)
-except: pass
-' "$ref" 2>/dev/null)"
+      | json_only | python3 "$_DEDUP_PY" closed 0 "$ref" 2>/dev/null)"
     if [ -n "$_r" ]; then printf '%s' "$_r"; return; fi
 
     # Sub-path B for closed beads: fallback for unlabeled beads. No label filter,
     # same reason as the open-bead fallback above.
     bdq list --status closed --closed-after "$_since" --limit 0 --json 2>/dev/null \
-      | python3 -c '
-import sys, json
-target = sys.argv[1]
-try:
-    for bead in json.load(sys.stdin):
-        if any(l.startswith('"'"'ref:'"'"') for l in (bead.get('"'"'labels'"'"') or [])): continue
-        if bead.get('"'"'external_ref'"'"') == target and bead.get('"'"'status'"'"') == '"'"'closed'"'"':
-            print('"'"'closed'"'"', bead['"'"'id'"'"'], bead.get('"'"'closed_at'"'"') or '"'"''"'"'); sys.exit(0)
-except: pass
-' "$ref" 2>/dev/null
+      | json_only | python3 "$_DEDUP_PY" closed 1 "$ref" 2>/dev/null
 }
 
 # --------------------------------------------------------------------------------------
@@ -318,6 +304,7 @@ file_one() {
         if [ "$_was_closed" = 1 ]; then
             _cause=recurrence
             _close_raw="$(bdq show "$id" --json 2>/dev/null \
+                | json_only \
                 | python3 -c 'import sys,json; d=json.load(sys.stdin); b=d if isinstance(d,dict) else (d[0] if d else {}); print(b.get("closed_at",""))' 2>/dev/null || true)"
             [ -z "$_close_raw" ] && _close_raw="${_closed_at_raw:-}"
             _close_ts="$([ -n "$_close_raw" ] && date -u -d "$_close_raw" +%s 2>/dev/null || true)"
@@ -346,15 +333,11 @@ Reopened by dedup — same external ref seen again within ${DEDUP_LOOKBACK_DAYS}
         # unchanged base-suite red otherwise grows the bead ~1.3KB per recurrence (sp-obwc).
         _ph="$(sha256sum "$pf" 2>/dev/null | cut -c1-16)"
         _prev_ph="$(bdq label list "$id" 2>/dev/null | grep -o 'payload-hash:[0-9a-f]*' | head -1 || true)"
-        if [ -n "$_ph" ] && [ "payload-hash:${_ph}" = "${_prev_ph:-}" ] && [ "$_was_closed" = 0 ]; then
-            bdq note "$id" "Recurrence $n at $(date -u +%Y-%m-%dT%H:%M:%SZ).${_reopen_note}" >/dev/null 2>&1
-        else
-            bdq note "$id" "Recurrence $n at $(date -u +%Y-%m-%dT%H:%M:%SZ).${_reopen_note}
-$(head -c 2000 "$pf")" >/dev/null 2>&1
-            if [ -n "$_ph" ]; then
-                [ -n "${_prev_ph:-}" ] && bdq label remove "$id" "$_prev_ph" >/dev/null 2>&1
-                bdq label add "$id" "payload-hash:${_ph}" >/dev/null 2>&1
-            fi
+        _note_body="$(_recur_note_body "${_prev_ph:-}" "$pf" "$_was_closed")"
+        bdq note "$id" "Recurrence $n at $(date -u +%Y-%m-%dT%H:%M:%SZ).${_reopen_note}${_note_body}" >/dev/null 2>&1
+        if [ -n "$_note_body" ] && [ -n "$_ph" ]; then
+            [ -n "${_prev_ph:-}" ] && bdq label remove "$id" "$_prev_ph" >/dev/null 2>&1
+            bdq label add "$id" "payload-hash:${_ph}" >/dev/null 2>&1
         fi
         bump_recur "$id" "$INCIDENT_CAUSE" >/dev/null 2>&1
         ilog "$ref recurred ($n) — $id${_log_suffix}"
@@ -386,6 +369,7 @@ $(head -c 2000 "$pf")" >/dev/null 2>&1
             # must cost the phrase and not the ask.
             age=""
             first="$(bdq show "$id" --json 2>/dev/null \
+                | json_only \
                 | grep -m1 -oE '"created"[^,]*' \
                 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:]+' || true)"
             if [ -n "$first" ]; then
@@ -709,6 +693,7 @@ backfill-ref-labels)
             e=$((e+1))
         fi
     done < <(bdq list --status open,in_progress --limit 0 --label "$LABELS" --json 2>/dev/null \
+      | json_only \
       | python3 -c '
 import sys, json
 try:
@@ -772,6 +757,7 @@ retire-unsatisfiable-delivers)
         fi
         n=$((n+1))
     done < <(bdq list --status open,in_progress --limit 0 --json 2>/dev/null \
+      | json_only \
       | python3 -c '
 import sys, json
 try:
@@ -809,6 +795,7 @@ repair-mismatch-delivers)
         fi
         n=$((n+1))
     done < <(bdq list --status open,in_progress --limit 0 --json 2>/dev/null \
+      | json_only \
       | python3 -c '
 import sys, json
 try:
@@ -877,9 +864,11 @@ except: pass
         _process_backfill "$bid" "$rungs_csv"
     done < <(
         bdq list --status open,in_progress --limit 0 --label "$_bf_lq" --json 2>/dev/null \
+            | json_only \
             | _bare_recur_beads
         [ -n "$_since" ] && \
         bdq list --status closed --closed-after "$_since" --limit 0 --label "$_bf_lq" --json 2>/dev/null \
+            | json_only \
             | _bare_recur_beads || true
     )
     printf 'backfilled %d bead(s), errors %d, skipped %d (already typed)\n' "$n" "$e" "$s"

@@ -91,7 +91,7 @@ mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
 # A REAL COPY OF lib.sh (and its own conf.sh), same as every other batch.sh suite: the IO
 # seam shells out to lib.sh's own land_mark/bead_reopen/bump_requeue/repo_root/repo_land/
 # spira_landref rather than re-deriving their side effects.
-cp "$HERE"/*.sh "$SH/"
+cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/mail.sh"; chmod +x "$SH/mail.sh"
 
 # A REAL COPY OF THE CHAMBER, so bead.sh's own --for batcher can read batcher.fayth the same

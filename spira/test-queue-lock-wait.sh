@@ -51,7 +51,7 @@ git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH" "$QUEUEDIR/$REPONAME"
 
-cp "$HERE"/*.sh "$SH/"
+cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 
 # Pinned to a non-default base ref (origin/main, not the default land ref) so an
 # assertion that passed against the shipped default would not pass here vacuously.

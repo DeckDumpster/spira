@@ -44,7 +44,7 @@ git -C "$B_REPO" remote add origin "$B_REMOTE"
 git -C "$B_REPO" push -q origin master
 git -C "$B_REPO" fetch -q origin
 mkdir -p "$B_RUN/worktree" "$B_SH" "$B_LANDSTATE" "$B_QUEUEDIR/$B_REPONAME"
-cp "$HERE"/*.sh "$B_SH/"
+cp "$HERE"/*.sh "$HERE"/*.py "$B_SH/"
 
 printf '#!/usr/bin/env bash\nexit 0\n' > "$B_SH/gate.sh"; chmod +x "$B_SH/gate.sh"
 B_FORGE_LOG="$TMP/batch-forge-log"; B_BODY_LOG="$TMP/batch-body-log"
@@ -121,7 +121,7 @@ git -C "$V_REPO" remote add origin "$V_REMOTE"
 git -C "$V_REPO" push -q origin master
 git -C "$V_REPO" fetch -q origin
 mkdir -p "$V_RUN/worktree" "$V_SH" "$V_LANDSTATE" "$V_QUEUEDIR/$V_REPONAME"
-cp "$HERE"/*.sh "$V_SH/"
+cp "$HERE"/*.sh "$HERE"/*.py "$V_SH/"
 
 V_FORGE_STATUS_FILE="$TMP/verdict-forge-status"
 cat > "$V_SH/forge-fixture.sh" <<FORGE

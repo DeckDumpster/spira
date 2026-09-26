@@ -35,6 +35,7 @@ spira/literal-lint.sh
 spira/testdb-mode-lint.sh
 spira/bd-stdin-lint.sh
 spira/gh-intake-lint.sh
+spira/incident-cause-lint.sh
 spira/suite-state-fence.sh
 spira/orphan-test.sh
 spira/tmux-scope-fence.sh"

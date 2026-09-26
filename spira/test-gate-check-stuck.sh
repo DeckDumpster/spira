@@ -75,7 +75,7 @@ JSONL
 B gate create --type=gh:run --blocks sp-work 2>/dev/null | head -1 >/dev/null
 
 SH="$TMP/spira"; mkdir -p "$SH"
-cp "$HERE/gate-check.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" "$SH/"
+cp "$HERE/gate-check.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" "$HERE/incident-dedup-decision.py" "$SH/"
 
 # Run gate-check.sh: a real bd against the fixture, no repo-map so discover is a no-op.
 gate_out="$(SPIRA_HOME="$SH" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" \
