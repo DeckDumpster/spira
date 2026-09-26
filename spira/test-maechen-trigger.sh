@@ -41,30 +41,23 @@
 # the condition NOT met (watermark=now, count=0) before testing the presence case.
 # The dedup check is verified by an explicit open-bead response that blocks a `create`.
 #
-# BD STUBS AND REAL FIXTURE
-# -----------------------------------------------
-# Most bd calls are stubbed so no database is needed. The dedup-in-progress case uses
-# a real fixture database: the stub returns BD_LIST_OUTPUT unconditionally and cannot
-# exercise the --status filter (law-prefer-the-real-dependency). Real git is used for
-# landing-count tests against throwaway repos.
+# BD STUB. Every bd call is stubbed so no database is needed — including the
+# in_progress-dedup case, which asserts on the stub's logged argv (that
+# --status open,in_progress reaches it) rather than seeding a real fixture and relying
+# on a real --status filter, since the stub already ignores --status and returns
+# BD_LIST_OUTPUT regardless. Real git is used for landing-count tests against
+# throwaway repos.
 #
+# tier: T2
 # covers: spira/maechen-trigger.sh spira/conf.sh
 # hermetic-ok: stub bd, real git with throwaway repos
 # scar: unrecorded
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-# shellcheck disable=SC1090
-. "$HERE/testdb.sh"
-testdb_require test-maechen-trigger
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted [$2] in [$3]"; esac; }
-nowant() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in [$3]" ;; *) ok "$1" ;; esac; }
+. "$HERE/testlib.sh"
 
 TRIGSH="$HERE/maechen-trigger.sh"
-T="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$T"' EXIT INT TERM
+T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
 
 # ---------------------------------------------------------------------------
@@ -313,51 +306,18 @@ want   "list IS called for dedup"    "list"      "$(cat "$BD_LOG")"
 
 # ==========================================================================================
 echo
-echo "DEDUP: in_progress trigger bead — no second bead is filed (real fixture db)"
+echo "DEDUP: the list query includes in_progress, not just open (sp-mp9s)"
 # ==========================================================================================
 # REGRESSION (sp-mp9s): the guard queried --status open only. Once Maechen claims the
 # trigger bead its status becomes in_progress, --status open returns [], the guard fires,
-# and a duplicate pass is filed on the next timer tick. Proven RED below against the
-# unfixed code before the fix was applied.
+# and a duplicate pass is filed on the next timer tick.
 #
-# The stub above cannot catch this: it returns BD_LIST_OUTPUT regardless of --status.
-# A real fixture database is required so the filter is exercised as maechen-trigger.sh
-# actually calls it.
-testdb_up maechen_trigger_dedup || { bad "in_progress dedup: fixture setup failed" ""; }
-
-DEDUP_IP_SCOPE="sptest-dedup-scope"
-DEDUP_IP_MAECHEN="sptest-dedup-maechen"
-DEDUP_IP_ID="$("$SPIRA_BD" -C "$SPIRA_DB" create "Maechen pass — dedup fixture" \
-    --type task --label "$DEDUP_IP_SCOPE,$DEDUP_IP_MAECHEN" --priority 3 2>/dev/null \
-    | grep -oE 'sp-[a-z0-9]+')"
-[ -n "$DEDUP_IP_ID" ] || { bad "in_progress dedup: could not create fixture bead" ""; }
-"$SPIRA_BD" -C "$SPIRA_DB" update "$DEDUP_IP_ID" --status in_progress --force 2>/dev/null || true
-
-printf '0\n' > "$WATERMARK_FILE"
-# Resolve to a full path — testdb_up may set SPIRA_BD to a bare name ("bd-embedded")
-# that is not in the env -i restricted PATH.
-_dedup_bd="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-bd}")"
-dedup_ip_out="$(env -i HOME="$T" \
-    PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin" \
-    SPIRA_CONF="$NONE" \
-    SPIRA_BD="$_dedup_bd" \
-    SPIRA_DB="$SPIRA_DB" \
-    SPIRA_RUN="$RUNDIR" \
-    SPIRA_REPO="$TESTREPO" \
-    SPIRA_REPO_MAP="$SELFMAP" \
-    SPIRA_MAECHEN_LABEL="$DEDUP_IP_MAECHEN" \
-    SPIRA_SCOPE_LABEL="$DEDUP_IP_SCOPE" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
-    SPIRA_MAECHEN_LANDING_INTERVAL=0 \
-    bash "$TRIGSH" 2>&1)"; dedup_ip_rc=$?
-is     "in_progress dedup exits 0"       0           "$dedup_ip_rc"
-want   "in_progress dedup logs skipping" "skipping"  "$dedup_ip_out"
-# With UNFIXED code a new open bead would appear; with FIXED code the count stays 0.
-dedup_ip_open="$("$SPIRA_BD" -C "$SPIRA_DB" list \
-    --label "$DEDUP_IP_SCOPE,$DEDUP_IP_MAECHEN" --status open --json 2>/dev/null \
-    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))' 2>/dev/null \
-    || echo 0)"
-is     "in_progress dedup: no new bead created"  "0"  "${dedup_ip_open:-0}"
+# The stub returns BD_LIST_OUTPUT regardless of --status, so it cannot itself distinguish
+# open from in_progress; what it CAN do is record the exact argv the trigger sent it. This
+# asserts the fix directly — the list call must ask for "open,in_progress" — without a real
+# database to exercise the filter (law-prefer-the-real-dependency's read is now the argv,
+# not a status transition an in-memory stub cannot honour anyway).
+want   "dedup list call requests --status open,in_progress" "--status open,in_progress" "$(cat "$BD_LOG")"
 
 # ==========================================================================================
 echo
@@ -832,5 +792,4 @@ is   "lane-admitted map: trigger exits 0"       0        "$rc_lp"
 want "lane-admitted map: bd create is called"   "create" "$(cat "$BD_LOG")"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

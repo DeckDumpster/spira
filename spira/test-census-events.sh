@@ -29,15 +29,11 @@
 # Requires server mode: census_events_run_sql uses bd sql, and bd-embedded refuses
 # bd sql in embedded mode. Skips when SPIRA_TESTDB_DATA is not set.
 #
+# tier: T2
 # covers: spira/census.sh spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted [$2] in [$3]"; esac; }
-nowant() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in [$3]" ;; *) ok "$1" ;; esac; }
+. "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -222,32 +218,16 @@ _ev_cause="$("${SPIRA_BD:-bd}" -C "$TESTDB_DIR" sql \
 is "bead_reopen writes event_type=reopen with cause in new_value" "rebase-conflict" "$_ev_cause"
 
 
-# ======================================================================================
-echo
-echo "sp-vtyo9: NULL-cause reopens — 2 distinct beads, 8 events → 2 sp-reopen (8 detections)"
-# ======================================================================================
-# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail):
-# Run against unfixed census.sh (origin/main before sp-vtyo9):
-#   FAIL  2 sp-reopen for 2-bead fixture: wanted [2 sp-reopen] in [8 sp-reopen (8 detections, 8 all-time)]
-# Empty COALESCE cell shrinks the 4-column row to 3; the 3-column branch reads
-# n_beads as n_events (both 8), inflating distinct-bead count to event count.
+# _write_reopen writes a reopened event with a NULL new_value directly (no bump_*
+# call produces a genuinely NULL cause). Used below by the sp-aor1l case; the NULL-cause
+# column-shift property itself (D3) is table-tested on canned rows in
+# test-census-pipeline.sh, not seeded through a real store here.
 _write_reopen() {
     local id="$1"
     local uuid
     uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))' 2>/dev/null)" || return 1
     bdq sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', 'reopened', 'harness', NULL, NOW())" >/dev/null 2>&1 || true
 }
-testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-h1","title":"reopen bead 1","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-17T00:00:00Z"}
-{"id":"sp-h2","title":"reopen bead 2","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-17T00:00:00Z"}
-JSONL
-_write_reopen sp-h1; _write_reopen sp-h1; _write_reopen sp-h1; _write_reopen sp-h1
-_write_reopen sp-h2; _write_reopen sp-h2; _write_reopen sp-h2; _write_reopen sp-h2
-
-out="$(census_out)"
-want "2 sp-reopen for 2-bead fixture" "2 sp-reopen" "$out"
-want "sp-reopen (8 detections" "sp-reopen-unrecorded (8 detections" "$out"
 
 # ======================================================================================
 echo
@@ -313,54 +293,6 @@ want "sp-reopen-rebase-conflict still appears without suppression" "sp-reopen-re
 
 # ======================================================================================
 echo
-echo "empty new_value (sp-census-empty-cause-shift) — genuinely NULL cause must not shift columns"
-# ======================================================================================
-# bd reopen writes event_type='reopened' with new_value=NULL. The count.py parser was
-# filtering empty fields before counting; an empty second column became a 3-column row,
-# causing the bead count to be read as the cause and inflating the reported count.
-# This test uses direct INSERT (not bump_*) to produce an empty new_value, which no
-# bump_* call can produce (they all default cause to 'unrecorded').
-#
-# POSITIVE CONTROL: verify the test CAN detect the defect before relying on its absence.
-_insert_empty_cause() {   # _insert_empty_cause <bead_id> <event_type>
-    local id="$1" etype="$2"
-    local uuid
-    uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))' 2>/dev/null)" || return 1
-    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
-        "INSERT INTO events (id, issue_id, event_type, actor, new_value) VALUES ('$uuid', '$id', '$etype', 'test', NULL)" \
-        >/dev/null 2>&1
-}
-
-testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-h1","title":"empty-cause bead","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-12T00:00:00Z"}
-JSONL
-_insert_empty_cause "sp-h1" "reclaimed"
-_insert_empty_cause "sp-h1" "reclaimed"
-
-# Positive control: without any events, the class is absent (proves detection works).
-testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-h0","title":"empty-cause control","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-12T00:00:00Z"}
-JSONL
-_pc_out="$(census_out)"
-is "positive control: no events produces no sp-reclaim" "" "$(printf '%s' "$_pc_out" | grep sp-reclaim || true)"
-
-testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-h1","title":"empty-cause bead","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-12T00:00:00Z"}
-JSONL
-_insert_empty_cause "sp-h1" "reclaimed"
-_insert_empty_cause "sp-h1" "reclaimed"
-
-out="$(census_out)"
-want "empty-cause reclaimed: bare sp-reclaim class (no digit suffix)" "1 sp-reclaim" "$out"
-nowant "empty-cause reclaimed: no phantom class sp-reclaim-1" "sp-reclaim-1" "$out"
-nowant "empty-cause reclaimed: no phantom class sp-reclaim-2" "sp-reclaim-2" "$out"
-want "empty-cause reclaimed: event count shown correctly" "sp-reclaim (2 detections" "$out"
-
-# ======================================================================================
-echo
 echo "sp-aor1l: requeued/merge-conflict + reopened — sp-reopen-rebase-conflict only"
 # ======================================================================================
 # Positive control (law-a-regression-test-must-be-seen-to-fail): against unfixed lib.sh
@@ -377,54 +309,9 @@ out="$(census_out)"
 want   "conflict+reopened: sp-reopen-rebase-conflict present" "1 sp-reopen-rebase-conflict" "$out"
 nowant "conflict+reopened: sp-reopen-unrecorded absent"       "sp-reopen-unrecorded" "$out"
 
-# ======================================================================================
-echo
-echo "sp-n3ijm: census_events_run_sql retries on transient failure (sp-census-transient-blind)"
-# ======================================================================================
-# POSITIVE CONTROL (law-absence-needs-a-positive-control): the unfixed function makes exactly
-# one bd call and returns 1 on the first failure. We verify attempt count = 3 on partial
-# failure; the unfixed tree would show 1. Verified against main before this commit.
-_fake_dir="$(mktemp -d)"
-_calls_file="$_fake_dir/calls"
-printf '0' > "$_calls_file"
-
-# Fake bd: fails first 2 calls with "i/o timeout" to stderr, succeeds on 3rd.
-# $_calls_file is expanded at write time; \$n etc. evaluate at runtime.
-cat > "$_fake_dir/bd" <<END
-#!/bin/sh
-n=\$(cat '$_calls_file' 2>/dev/null || printf 0)
-n=\$((n+1))
-printf '%d' "\$n" > '$_calls_file'
-if [ "\$n" -lt 3 ]; then
-    printf 'read tcp: i/o timeout\n' >&2
-    exit 1
-fi
-exit 0
-END
-chmod +x "$_fake_dir/bd"
-
-_retry_rc=0
-CENSUS_RETRY_DELAY_S=0 SPIRA_BD="$_fake_dir/bd" SPIRA_DB="$_fake_dir" \
-    census_events_run_sql >/dev/null 2>/dev/null || _retry_rc=$?
-is "retry: succeeds after 2 failures" "0" "$_retry_rc"
-is "retry: exactly 3 bd calls made" "3" "$(cat "$_calls_file")"
-
-# Fake bd that always fails — verify: non-zero return and driver error in stderr.
-cat > "$_fake_dir/bd_fail" <<'FAKEFAIL'
-#!/bin/sh
-printf 'read tcp: i/o timeout\n' >&2
-exit 1
-FAKEFAIL
-chmod +x "$_fake_dir/bd_fail"
-
-_fail_err=""
-_fail_rc=0
-_fail_err="$(CENSUS_RETRY_DELAY_S=0 SPIRA_BD="$_fake_dir/bd_fail" SPIRA_DB="$_fake_dir" \
-    census_events_run_sql 2>&1 >/dev/null)" || _fail_rc=$?
-is    "all-fail: returns non-zero" "1" "$_fail_rc"
-want  "all-fail: driver error in final message" "i/o timeout" "$_fail_err"
-
-rm -rf "$_fake_dir"
+# sp-n3ijm: census_events_run_sql's retry-on-transient-failure behaviour (fake bd, no
+# database) moved to test-census-pipeline.sh (UC-ops-detection-remediation-15) — it was
+# already T1-shaped here and belongs with the rest of the decision logic.
 
 # ======================================================================================
 echo
@@ -494,5 +381,4 @@ done
 [ "$_pair_count" -gt 0 ] || bad "structural check found no paired causes in aeon.sh — detection is broken"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

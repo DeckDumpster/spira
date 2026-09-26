@@ -33,16 +33,11 @@
 # a structured text format that can change. The covers: label is exact, short, and
 # queryable without JSON parsing on the receiving side.
 #
-# WHY PYTHON TEMP FILES INSTEAD OF python3 - <<'PY'
-# A pipe sets up stdin for the reader before the process starts. `python3 - <<'PY'`
-# has the heredoc override stdin so Python reads its SCRIPT from the heredoc, not from
-# the pipe — leaving the pipe writer with no reader (SIGPIPE). Writing the script to a
-# temp file and invoking `python3 "$script"` keeps stdin available for the pipe.
-#
 # covers: spira/census.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/lib.sh"
+CENSUS_PY="$HERE/census"
 
 WITH_SUPPRESSED=0
 case "${1:-}" in --with-suppressed) WITH_SUPPRESSED=1 ;; esac
@@ -52,183 +47,12 @@ REMEDY_LABEL="$SPIRA_MAECHEN_REMEDY_LABEL"
 _TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$_TMPDIR"' EXIT INT TERM
 
-# Python: aggregate failure events → <count> <class> lines, ranked highest first.
-# Reads tabular SQL output from census_events_run_sql.
-# Maps event_type + new_value to the class name used throughout the census pipeline:
-#   requeued  + <cause>           → sp-requeue-<cause>
-#   recurred  + <cause>           → sp-recur-<cause>
-#   reclaimed + (empty/unrecorded)→ sp-reclaim
-#   reclaimed + <named-cause>     → sp-reclaim-<named-cause>
-#   lapsed    + <cause>           → sp-lapsed-<cause>
-#   reopened  + <cause>           → sp-reopen-<cause>
-cat > "$_TMPDIR/count.py" <<'EOF'
-import sys, collections
-
-bc = collections.Counter()
-ec = collections.Counter()
-for line in sys.stdin:
-    line = line.rstrip('\n').strip()
-    if not line or line.startswith('+') or line.startswith('('):
-        continue
-    parts = [p.strip() for p in line.split('|')]
-    while parts and parts[0] == '':
-        parts = parts[1:]
-    while parts and parts[-1] == '':
-        parts = parts[:-1]
-    if len(parts) == 4:
-        event_type, new_value, n_beads, n_events = parts[0], parts[1], parts[2], parts[3]
-    elif len(parts) == 3:
-        event_type, new_value, n_beads = parts[0], parts[1], parts[2]
-        n_events = n_beads
-    else:
-        continue
-    if event_type == 'event_type' or 'COALESCE' in event_type:
-        continue
-    try:
-        n_beads = int(n_beads)
-        n_events = int(n_events)
-    except ValueError:
-        continue
-    if n_beads == 0:
-        continue
-    cause = new_value
-    if event_type == 'requeued':
-        cls = 'sp-requeue-' + (cause or 'unrecorded')
-    elif event_type == 'recurred':
-        cls = 'sp-recur-' + (cause or 'unrecorded')
-    elif event_type == 'reclaimed':
-        if cause and cause != 'unrecorded':
-            cls = 'sp-reclaim-' + cause
-        else:
-            cls = 'sp-reclaim'
-    elif event_type == 'lapsed':
-        cls = 'sp-lapsed-' + (cause or 'unrecorded')
-    elif event_type == 'reopen':
-        cls = 'sp-reopen-' + (cause or 'unrecorded')
-    elif event_type == 'reopened':
-        cls = 'sp-reopen-' + (cause or 'unrecorded')
-    else:
-        continue
-    bc[cls] += n_beads
-    ec[cls] += n_events
-
-for cls, nb in sorted(bc.items(), key=lambda x: (-x[1], -ec.get(x[0], 0))):
-    print(nb, ec[cls], cls)
-EOF
-
-# Python: merge all-time and since-watermark counts, rank by since-watermark.
-# Reads two "N class" files; outputs "N class (M all-time)" ranked by N descending.
-cat > "$_TMPDIR/merge.py" <<'EOF'
-import sys
-
-def read_counts(path):
-    beads = {}
-    events = {}
-    try:
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                parts = line.split(None, 2)
-                if len(parts) == 3:
-                    try:
-                        beads[parts[2]] = int(parts[0])
-                        events[parts[2]] = int(parts[1])
-                    except ValueError:
-                        pass
-    except Exception:
-        pass
-    return beads, events
-
-all_beads, all_events = read_counts(sys.argv[1])
-wm_beads,  wm_events  = read_counts(sys.argv[2])
-all_classes = set(all_beads) | set(wm_beads)
-
-ranked = sorted(all_classes, key=lambda c: (-wm_beads.get(c, 0), -wm_events.get(c, 0)))
-for cls in ranked:
-    b_since = wm_beads.get(cls, 0)
-    e_since = wm_events.get(cls, 0)
-    b_all   = all_beads.get(cls, 0)
-    print('{} {} ({} detections, {} all-time)'.format(b_since, cls, e_since, b_all))
-EOF
-
-# Python: extract covered classes from open remedy beads → one class per line.
-# Accepts the fold-map file as argv[1]: lines of "<alias> <canonical>" resolve
-# a covers: label naming a folded-away class to the class the census emits.
-cat > "$_TMPDIR/covers.py" <<'EOF'
-import sys, json
-
-fold = {}
-try:
-    with open(sys.argv[1]) as f:
-        for line in f:
-            parts = line.split()
-            if len(parts) == 2:
-                fold[parts[0]] = parts[1]
-except Exception:
-    pass
-
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-if not isinstance(data, list):
-    data = [data]
-for b in data:
-    for lbl in (b.get("labels") or []):
-        if lbl.startswith("covers:"):
-            cls = lbl[len("covers:"):]
-            print(fold.get(cls, cls))
-EOF
-
-# Python: closed remedy beads → "<bead-id> <class>" within SPIRA_REMEDY_WINDOW days.
-# Accepts the fold-map file as argv[1]: resolves covers: aliases to canonical names.
-cat > "$_TMPDIR/covers_closed.py" <<EOF
-import sys, json
-from datetime import datetime, timezone, timedelta
-window = ${SPIRA_REMEDY_WINDOW:-30}
-cutoff = datetime.now(timezone.utc) - timedelta(days=window)
-
-fold = {}
-try:
-    with open(sys.argv[1]) as f:
-        for line in f:
-            parts = line.split()
-            if len(parts) == 2:
-                fold[parts[0]] = parts[1]
-except Exception:
-    pass
-
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-if not isinstance(data, list):
-    data = [data]
-for b in data:
-    closed_at = b.get('closed_at') or ''
-    if closed_at:
-        try:
-            dt = datetime.fromisoformat(closed_at.replace('Z', '+00:00'))
-            if dt < cutoff:
-                continue
-        except Exception:
-            pass
-    bid = b.get('id') or ''
-    if not bid:
-        continue
-    for lbl in (b.get('labels') or []):
-        if lbl.startswith('covers:'):
-            cls = lbl[len('covers:'):]
-            print(bid, fold.get(cls, cls))
-EOF
-
 # Aggregate failure events across the whole store, output <count> <class> ranked.
 # census_events_run_sql is defined in lib.sh (sourced above); it queries the events
-# table via bd sql (sp-2lk).
+# table via bd sql (sp-2lk). count.py's mapping and column-shift handling are table-
+# tested directly on canned rows in test-census-pipeline.sh.
 _census_raw() {
-    census_events_run_sql | python3 "$_TMPDIR/count.py"
+    census_events_run_sql | python3 "$CENSUS_PY/count.py"
 }
 
 # READ WATERMARK. $SPIRA_RUN/maechen.watermark holds a Unix epoch integer written by
@@ -259,11 +83,11 @@ if ! _census_raw > "$_TMPDIR/all_time.txt"; then
     exit 1
 fi
 if [ "$_watermark_ts" -gt 0 ] 2>/dev/null; then
-    if ! census_events_run_sql "$_watermark_ts" | python3 "$_TMPDIR/count.py" > "$_TMPDIR/since_wm.txt"; then
+    if ! census_events_run_sql "$_watermark_ts" | python3 "$CENSUS_PY/count.py" > "$_TMPDIR/since_wm.txt"; then
         printf 'census.sh: events substrate is unreachable — cannot produce a census\n' >&2
         exit 1
     fi
-    _RANKED="$(python3 "$_TMPDIR/merge.py" "$_TMPDIR/all_time.txt" "$_TMPDIR/since_wm.txt")"
+    _RANKED="$(python3 "$CENSUS_PY/merge.py" "$_TMPDIR/all_time.txt" "$_TMPDIR/since_wm.txt")"
 else
     _RANKED="$(awk '{print $1, $3, "(" $2 " detections)"}' "$_TMPDIR/all_time.txt")"
 fi
@@ -274,7 +98,7 @@ _census_class_fold_map > "$_TMPDIR/fold_map.txt"
 # Collect classes already covered by an open remedy bead.
 _suppressed_classes() {
     bdq list --status open,in_progress,blocked,deferred --label "$REMEDY_LABEL" --json 2>/dev/null \
-        | python3 "$_TMPDIR/covers.py" "$_TMPDIR/fold_map.txt"
+        | python3 "$CENSUS_PY/covers.py" "$_TMPDIR/fold_map.txt"
 }
 
 # Collect classes covered by a closed remedy bead whose commit is not yet on the base.
@@ -286,7 +110,7 @@ _suppressed_closed_classes() {
     local bead_id class rc _repo
     _repo="$(repo_root)"
     bdq list --status closed --label "$REMEDY_LABEL" --json 2>/dev/null \
-        | python3 "$_TMPDIR/covers_closed.py" "$_TMPDIR/fold_map.txt" \
+        | python3 "$CENSUS_PY/covers_closed.py" "$_TMPDIR/fold_map.txt" \
         | while IFS=' ' read -r bead_id class; do
             landed "$bead_id"; rc=$?
             case $rc in

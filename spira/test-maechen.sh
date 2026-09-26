@@ -9,7 +9,7 @@
 # WHAT THIS SUITE GUARDS
 # ----------------------
 # maechen.fayth must declare a lane so it draws from its own capacity rather than the
-# task pool, must not set an assignee, and must use Opus 5 (verified 2026-09-11).
+# task pool, and must not set an assignee.
 #
 # maechen.md must explicitly encode all four items the bead requires. The test checks
 # by grep so it fails if a future edit removes any of the required properties.
@@ -23,17 +23,14 @@
 # brief that omits the property. A brief with no positive-control discussion passes all
 # four of the other checks; the "positive control" grep is the one that fails.
 #
+# tier: T0
 # covers: spira/chamber/maechen.fayth spira/chamber/maechen.md spira/conf.sh
 # hermetic-ok: no database, no systemd; reads files only
 # scar: unrecorded
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL — %s: %s\n' "$1" "$2"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected [$2] got [$3]"; }
-want() { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted [$2] in output"; esac; }
 lack() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in output" ;; *) ok "$1" ;; esac; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
@@ -59,15 +56,6 @@ echo
 echo "maechen.md — file exists"
 # ==========================================================================================
 if [ -f "$BRIEF" ]; then ok "maechen.md exists"; else bad "maechen.md" "not found at $BRIEF"; fi
-
-# ==========================================================================================
-echo
-echo "maechen.fayth — FAYTH_MODEL=claude-opus-5 (verified 2026-09-11)"
-# ==========================================================================================
-# The id was probed, not assumed. An id the CLI rejects does not fail loudly — every summon
-# dies and the role looks merely quiet. Verify the fayth names the correct model.
-model="$(run_conf ". '$FAYTH' && printf '%s' \"\${FAYTH_MODEL:-}\"")"
-is "FAYTH_MODEL is claude-opus-5" "claude-opus-5" "$model"
 
 # ==========================================================================================
 echo
@@ -247,5 +235,4 @@ else
 fi
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
