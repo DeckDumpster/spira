@@ -868,7 +868,7 @@ Requeued (thrash): the deliverable did not move for ${SPIRA_THRASH_MINUTES:-20}m
                 "$BEAD_ID" "${_d_lapsed_quiet:-?}" "${_d_lapsed_last:-?}" \
                 "$BEAD_ID" "$(git -C "${WORK:-/dev/null}" rev-parse --short HEAD 2>/dev/null || echo ?)" \
                 > "$SPIRA_RUN/lapsed/$BEAD_ID-$_lapsed_ts"
-            bdq note "$BEAD_ID" "Lease lapsed: the trace was silent for ${_d_lapsed_quiet:-?}s (limit ${FAYTH_LEASE_SECONDS:-600}s). Last: ${_d_lapsed_last:-?}. Branch spira/$BEAD_ID preserved. Attempt 2 should start from where attempt 1 wedged." >/dev/null 2>&1
+            bdq note "$BEAD_ID" "Lease lapsed: the trace was silent for ${_d_lapsed_quiet:-?}s (limit $(fayth_lease_seconds "${FAYTH_LEASE_MINUTES:-}")s). Last: ${_d_lapsed_last:-?}. Branch spira/$BEAD_ID preserved. Attempt 2 should start from where attempt 1 wedged." >/dev/null 2>&1
             log "$FAYTH: $BEAD_ID lease lapsed — attempt charged (quiet ${_d_lapsed_quiet:-?}s)"
             release_own_claim "$BEAD_ID"
             ledger_done "$rc" "$_d_status"
@@ -1164,15 +1164,16 @@ fi
 export BEAD_ID SPIRA_MAIL="${SPIRA_MAIL:-}" SPIRA_MAIL_FROM="${FAYTH^} <${FAYTH}@spira>"
 
 # ---- heartbeat: LIVENESS LEASE -------------------------------------------------------
-# A fixed 10-minute lease. The trace file growing — even by one byte — renews it in full.
-# If the lease lapses the aeon is killed, work is preserved, and the bead carries a nudge
-# note for the next attempt. The fuse on the ops pane shows time left in the lease.
+# FAYTH_LEASE_MINUTES sets the lease (fayth_lease_seconds converts it; default 10 minutes
+# for a fayth that declares none). The trace file growing — even by one byte — renews it in
+# full. If the lease lapses the aeon is killed, work is preserved, and the bead carries a
+# nudge note for the next attempt. The fuse on the ops pane shows time left in the lease.
 #
 # WHY TRACE GROWTH IS SUFFICIENT. The CLI emits a tool_progress heartbeat every ~30s while
 # blocked on a single tool call. Measured across 789 aeon traces: only Bash (max 600s),
 # TaskOutput (max 600s), and Agent (max 210s) emit tool_progress — every other tool is
 # silent. So any ongoing tool invocation keeps the trace growing and holds the lease, and
-# Bash's 600s ceiling means no single call can outlast the 600s lease. Silence is the one
+# Bash's 600s ceiling means no single call can outlast a 600s lease. Silence is the one
 # state a wedged aeon reaches, and the one state that lets the lease lapse.
 #
 # THE CASE THIS REPLACES (sp-9ix, 2026-09-12). An aeon whose trailing trace line is a
@@ -1185,7 +1186,7 @@ export BEAD_ID SPIRA_MAIL="${SPIRA_MAIL:-}" SPIRA_MAIL_FROM="${FAYTH^} <${FAYTH}
 (
     _hb_s=""
     trap 'kill "$_hb_s" 2>/dev/null; exit 0' TERM INT
-    _lease_dur="${FAYTH_LEASE_SECONDS:-600}"
+    _lease_dur="$(fayth_lease_seconds "${FAYTH_LEASE_MINUTES:-}")"
     _lease_dir="$SPIRA_RUN/aeon"
     _lease_file="$_lease_dir/$BEAD_ID.lease"
     _prev_mtime="$(stat -c %Y "$LOGF" 2>/dev/null || echo 0)"
@@ -1197,7 +1198,13 @@ export BEAD_ID SPIRA_MAIL="${SPIRA_MAIL:-}" SPIRA_MAIL_FROM="${FAYTH^} <${FAYTH}
     printf '%s' "$_deadline" > "${_lease_file}.tmp" && mv "${_lease_file}.tmp" "$_lease_file"
     while true; do
         sleep "${FAYTH_HEARTBEAT_SECONDS:-30}" & _hb_s=$!
-        wait "$_hb_s" 2>/dev/null || break
+        wait "$_hb_s" 2>/dev/null
+        case "$(hb_wait_outcome "$?")" in
+            shutdown) break ;;
+            retry)
+                log "$FAYTH: $BEAD_ID heartbeat wait failed unexpectedly — retrying, lease still enforced"
+                continue ;;
+        esac
         _cur_mtime="$(stat -c %Y "$LOGF" 2>/dev/null || echo 0)"
         _now="$(date +%s)"
         _dwall="${SPIRA_THRASH_MINUTES:-20}"

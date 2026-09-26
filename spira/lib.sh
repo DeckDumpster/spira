@@ -3604,6 +3604,31 @@ aeon_lease_minutes() {
     printf '%d' "$(( (deadline - now) / 60 ))"
 }
 
+# fayth_lease_seconds [minutes] -> the liveness lease duration in seconds. THE ONE PLACE
+# FAYTH_LEASE_MINUTES IS READ. Every fayth declares it in minutes because that is the unit an
+# operator reasons in; the heartbeat wants seconds, and this is the only arithmetic that may
+# convert between them, so a fayth's declared value and the duration actually enforced cannot
+# drift apart the way FAYTH_LEASE_MINUTES and the old hardcoded FAYTH_LEASE_SECONDS did.
+fayth_lease_seconds() {
+    printf '%d' $(( ${1:-10} * 60 ))
+}
+
+# hb_wait_outcome <wait-exit-status> -> shutdown | ok | retry
+#
+# Classifies why `wait` on the heartbeat's own sleep child returned. A signal-caused exit
+# (128+n) means something deliberately killed that child — cleanup() kills the heartbeat's
+# sleep before it signals the heartbeat subshell itself, so this is the ordinary shutdown
+# path. Anything else (the child could not be forked under load, or was reaped before the
+# wait ever ran) is NOT a shutdown, and treating it as one leaves the aeon running with its
+# lease unenforced for the rest of the session — silently, since nothing else notices.
+hb_wait_outcome() {
+    local rc="${1:-0}"
+    if   [ "$rc" -eq 0 ] 2>/dev/null; then printf 'ok'
+    elif [ "$rc" -gt 128 ] 2>/dev/null; then printf 'shutdown'
+    else printf 'retry'
+    fi
+}
+
 # --------------------------------------------------------------------------------------
 # hb_tick <prev_mtime> <cur_mtime> <now> <deadline> <fuse> <wall> <session_start>
 #   -> ok | renew | lapse | thrash
