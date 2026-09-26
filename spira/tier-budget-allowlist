@@ -377,7 +377,6 @@ test-skew-escalate.sh	T1	4.0
 test-skew-foreign.sh	T1	5.0
 test-skew-refresh.sh	T1	4.0
 test-slay.sh	T1	61.0
-test-sop-lint.sh	T1	15.5
 test-sop.sh	T1	41.0
 test-spike.sh	T1	32.0
 test-spira-config.sh	T1	20.0
