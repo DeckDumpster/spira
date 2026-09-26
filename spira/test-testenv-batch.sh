@@ -1159,6 +1159,125 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# B9b: STOP DISPATCH — a container that dies while suites are still queued
+# behind maxpar must stop launching them, not attempt each one in turn against
+# a container that will never answer. maxpar=1 keeps qb..qe queued behind qa;
+# killing the container while qa is in flight must leave their per-suite home
+# dirs (the podman exec immediately before each suite's own exec) never
+# attempted.
+#
+# POSITIVE CONTROL: the stub's mkdir log is proven live by qa's own entry —
+# exactly one before the kill, so a count above one for qb..qe is not vacuous
+# silence, it is the stub failing to see calls that did happen.
+# ---------------------------------------------------------------------------
+echo
+echo "B9b: parallel container-death stops dispatch to queued suites"
+
+B9B_REAL_PODMAN="$(command -v podman 2>/dev/null || true)"
+if [ -z "$B9B_REAL_PODMAN" ]; then
+    printf 'SKIP B9b: podman not on PATH\n' >&2
+else
+    SUITE_B9B="$TMP/suites-B9b"
+    mkdir -p "$SUITE_B9B"
+    printf '#!/usr/bin/env bash\n# covers: changed.sh\nsleep 999; exit 0\n' \
+        > "$SUITE_B9B/test-fx-qa.sh"
+    for _b9b_name in qb qc qd qe; do
+        printf '#!/usr/bin/env bash\n# covers: changed.sh\nexit 0\n' \
+            > "$SUITE_B9B/test-fx-${_b9b_name}.sh"
+    done
+    chmod +x "$SUITE_B9B"/test-fx-*.sh
+
+    STUB_DIR_B9B="$TMP/stub-b9b"
+    mkdir -p "$STUB_DIR_B9B"
+    MKDIR_LOG_B9B="$TMP/b9b-mkdir-calls"
+    rm -f "$MKDIR_LOG_B9B"
+    cat > "$STUB_DIR_B9B/podman" << STUBEOF
+#!/usr/bin/env bash
+if [ "\$1" = "exec" ]; then
+    for _a in "\$@"; do
+        if [ "\$_a" = "mkdir" ]; then
+            printf 'mkdir\n' >> "$MKDIR_LOG_B9B"
+            break
+        fi
+    done
+fi
+exec "$B9B_REAL_PODMAN" "\$@"
+STUBEOF
+    chmod +x "$STUB_DIR_B9B/podman"
+
+    B9B_INSTANCE="b9bk-$$"
+    B9B_CNAME="spira-batch-${B9B_INSTANCE}"
+    RESULTS_ROOT_B9B="$TMP/results-B9b"
+
+    rc_b9b=0
+    SPIRA_PATH="$STUB_DIR_B9B" \
+    SPIRA_BATCH_SUITE_DIR="$SUITE_B9B" \
+    SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B9B" \
+    SPIRA_BATCH_SKIP_INSTALL=1 \
+    SPIRA_BATCH_INSTANCE="$B9B_INSTANCE" \
+    SPIRA_BATCH_MAXPAR=1 \
+    SPIRA_VERDICT_TTL=0 \
+        bash "$BATCH" --mode parallel \
+        --suites test-fx-qa.sh,test-fx-qb.sh,test-fx-qc.sh,test-fx-qd.sh,test-fx-qe.sh \
+        topic "$FIXTURE" >/dev/null 2>&1 &
+    BATCH_B9B_PID=$!
+
+    _b9b_i=0
+    while ! podman container inspect --format '{{.State.Running}}' "$B9B_CNAME" \
+            2>/dev/null | grep -qx 'true'; do
+        _b9b_i=$((_b9b_i+1))
+        [ "$_b9b_i" -lt 120 ] || break
+        sleep 0.5
+    done
+
+    if ! podman container inspect --format '{{.State.Running}}' "$B9B_CNAME" \
+            2>/dev/null | grep -qx 'true'; then
+        bad "B9b: positive-control: container came up for parallel batch" "never seen running"
+        kill "$BATCH_B9B_PID" 2>/dev/null || true
+        wait "$BATCH_B9B_PID" 2>/dev/null || true
+    else
+        # Wait for qa's own home-dir mkdir before killing, so the kill lands
+        # once dispatch is under way rather than racing container start.
+        _b9b_j=0
+        while [ "$(wc -l < "$MKDIR_LOG_B9B" 2>/dev/null || echo 0)" -lt 1 ]; do
+            _b9b_j=$((_b9b_j+1))
+            [ "$_b9b_j" -lt 120 ] || break
+            sleep 0.5
+        done
+        [ "$(wc -l < "$MKDIR_LOG_B9B" 2>/dev/null || echo 0)" -ge 1 ] \
+            && ok "B9b: positive-control: qa's home dir was attempted before kill" \
+            || bad "B9b: positive-control: qa's home dir was attempted" "never observed"
+
+        podman kill --signal KILL "$B9B_CNAME" >/dev/null 2>&1 || true
+        wait "$BATCH_B9B_PID" 2>/dev/null; rc_b9b=$?
+
+        isexit2 "B9b: parallel container-death exits 2 (harness fault)" "$rc_b9b"
+
+        _b9b_mkdir_n="$(wc -l < "$MKDIR_LOG_B9B" 2>/dev/null || echo 0)"
+        [ "${_b9b_mkdir_n:-0}" -eq 1 ] \
+            && ok "B9b: no further suite was dispatched after the container died" \
+            || bad "B9b: no further suite was dispatched after the container died" \
+                   "expected 1 mkdir call (qa only), got $_b9b_mkdir_n"
+
+        RD_B9B="$(find_results_dir "$RESULTS_ROOT_B9B")"
+        if [ -n "$RD_B9B" ]; then
+            _b9b_red=0
+            for _b9b_s in qa qb qc qd qe; do
+                _b9b_f="$RD_B9B/test-fx-${_b9b_s}.sh.result"
+                [ "$(awk '{print $1}' "$_b9b_f" 2>/dev/null || true)" = "red" ] \
+                    && _b9b_red=$((_b9b_red+1))
+            done
+            [ "$_b9b_red" -eq 0 ] \
+                && ok "B9b: no suite is red after dispatch was stopped" \
+                || bad "B9b: no suite is red after dispatch was stopped" \
+                       "$_b9b_red suite(s) red"
+        else
+            bad "B9b: results directory found" "not found under $RESULTS_ROOT_B9B"
+        fi
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # B10: LIVENESS RETRY — a single failed inspect does not declare the container
 # dead; only a definitive Running=false or N consecutive failures do.
 #

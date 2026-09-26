@@ -1235,11 +1235,6 @@ else
             for _ep in $_par_pids; do wait "$_ep" 2>/dev/null || true; done
             _par_pids=""
             log "batch: draining for exclusive suite $s (${_excl_reason})"
-            _container_check_live
-            if [ "$_batch_container_dead" = 1 ]; then
-                log "batch: container died before exclusive suite $s — remaining suites will be unreached"
-                break
-            fi
         fi
         # PSI guard: pause if the guest is under memory pressure.
         while _psi_above_threshold; do
@@ -1260,6 +1255,17 @@ else
             while [ "$(jobs -rp | wc -l)" -ge "$_maxpar" ]; do
                 wait -n 2>/dev/null || true
             done
+        fi
+
+        # Checked here, after any drain or throttle wait above and before this
+        # suite actually touches the container: a suite queued behind maxpar
+        # can pass a check taken before the wait and still find a dead
+        # container once the wait releases it, so the check belongs at the
+        # last moment before use, not before the queue.
+        _container_check_live
+        if [ "$_batch_container_dead" = 1 ]; then
+            log "batch: container died before suite $s — remaining suites will be unreached"
+            break
         fi
 
         # Create the per-suite home dir inside the container before the subshell
