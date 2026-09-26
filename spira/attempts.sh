@@ -267,6 +267,7 @@ clear)
         fi
         if bdq label remove "$id" spira-poison >/dev/null 2>&1; then
             bump_poison_cleared "$id" operator
+            poison_asked_clear "$id"
             bdq note "$id" "Poison cleared by attempts.sh clear: an operator judged the approach worth retrying. A poison.cleared event was recorded, so the attempt count that produced the poison does not carry forward — only a claim after this point counts toward the threshold again." >/dev/null 2>&1
             printf 'CLEARED  %-20s spira-poison lifted, attempts reset\n' "$id"
         else

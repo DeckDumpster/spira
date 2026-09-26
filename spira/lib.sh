@@ -3040,6 +3040,15 @@ poison_asked_mark() {    # poison_asked_mark <id> <n>
     printf '%s\n' "$2" >> "$SPIRA_POISON_ASKED/$1"
 }
 
+# poison_asked_clear <id> — drop this bead's ask history. A poison.cleared event floors
+# attempts_of back to zero (sp-qd2ul), so a genuinely new run of failures can reach the same
+# raw count (e.g. 3) the pre-clear history already has a "3" entry for, and poison_asked would
+# read that stale entry as "already asked" and suppress the new ask. The count it dedups on
+# was just reset; its history must reset with it.
+poison_asked_clear() {
+    rm -f "${SPIRA_POISON_ASKED:?}/$1" 2>/dev/null || true
+}
+
 # THE LIFT'S OWN DEDUP, FOR THE SAME REASON THE ASK NEEDS ONE. attempts.sh deadlocked takes
 # the label off; it does not and must not touch the attempt count (the rungs are the record
 # of how the bead got here, sp-rq-s in test-requeue.sh asserts the count survives). So the

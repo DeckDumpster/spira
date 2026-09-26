@@ -352,6 +352,9 @@ notes_cl2="$(bdq show sp-cl2 2>/dev/null | tr -s ' \n\t' ' ')" || notes_cl2=""
 # test process can produce back-to-back. Racing that tick here would test the clock, not the
 # floor (law-fixtures-carry-real-cadence).
 sleep 1
+# sp-cl2 is still in_progress from the fixture setup — bd drops a status update that matches
+# the row as a no-op, so the claim below must go through open first to be a real transition.
+bdq update sp-cl2 --status open        >/dev/null 2>&1
 bdq update sp-cl2 --status in_progress >/dev/null 2>&1
 is "a claim after the clear is the whole count, not 4" "1" "$(num "$(attempts_of sp-cl2)")"
 
