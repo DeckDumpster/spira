@@ -1813,6 +1813,24 @@ FIXTURE_BRIEF="$(block_overlay FIXTURE "$FIXTURE_BRIEF")"
 DEADLINE_BRIEF="$(block_overlay DEADLINE "$DEADLINE_BRIEF")"
 
 BEAD_BODY="$(bdq show "$BEAD_ID" 2>/dev/null | grep -vE '^💡|^warning|^  Fix|^  Or')"
+
+# WHO ELSE IS HOLDING THE FILES THIS BEAD NAMES, right now. The paths are read out of the
+# bead's own prose (bead_named_paths matches against the tracked tree, so a bead id or a URL
+# in the same text is never mistaken for one), and only checked when at least one was found:
+# a bead that names no file holds nothing to look up.
+HOLDS_BRIEF=""
+_holds_paths=()
+while IFS= read -r _hp; do
+    [ -n "$_hp" ] && _holds_paths+=("$_hp")
+done < <(bead_named_paths "$BEAD_BODY" "$REPO")
+if [ "${#_holds_paths[@]}" -gt 0 ]; then
+    _holds_out="$(bash "$SPIRA_HOME/holds.sh" --repo "$REPO_NAME" "${_holds_paths[@]}" 2>/dev/null)"
+    _holds_rc=$?
+    HOLDS_BRIEF="$(render_holds_brief "$BEAD_ID" "$_holds_rc" "$_holds_out")"
+fi
+BEAD_BODY="${BEAD_BODY}${HOLDS_BRIEF:+$'\n\n'$HOLDS_BRIEF}"
+unset _holds_paths _hp _holds_out _holds_rc
+
 # A THRASHED BEAD'S BRIEF LEADS WITH THE STICKING POINT, ahead of the "## The bead" heading
 # itself — not folded into {{BEAD}}, which lands AFTER that heading, still above a bare bead
 # body the aeon would otherwise have to scroll a note history to find it in. Only when this
