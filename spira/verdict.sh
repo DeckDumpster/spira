@@ -966,6 +966,18 @@ ${_line#build-error: }" ;;
     fi
     local _ejected_id_set=" $(printf '%s\n' "${ejected[@]}" | sed 's/[:|].*//' | tr '\n' ' ')"
 
+    # Suites attributed to ANY ejected member this run, so one member's note
+    # never lists a sibling's already-claimed suite as unattributed (sp-pnbdz:
+    # every note otherwise names the same batch-wide leftovers).
+    local _all_ej_csv="" _pre_ej _pre_csv
+    for _pre_ej in "${ejected[@]}"; do
+        case "$_pre_ej" in
+            *"|"*) _pre_csv="${_pre_ej#*|}"; _pre_csv="${_pre_csv#*|}" ;;
+            *) _pre_csv="$suites_csv" ;;
+        esac
+        _all_ej_csv="${_all_ej_csv:+$_all_ej_csv,}$_pre_csv"
+    done
+
     # Eject guilty members.
     local _ej _ej_id _ej_tip _ej_csv _ej_rest _ej_fail_lines _ej_unattr
     for _ej in "${ejected[@]}"; do
@@ -1000,8 +1012,8 @@ ${_line#build-error: }" ;;
 (no other members — this batch was this one branch)"
 
         _ej_unattr="$(comm -23 \
-            <(printf '%s\n' "$suites_csv" | tr ',' '\n' | sort) \
-            <(printf '%s\n' "$_ej_csv"   | tr ',' '\n' | sort) \
+            <(printf '%s\n' "$suites_csv"  | tr ',' '\n' | sort -u) \
+            <(printf '%s\n' "$_all_ej_csv" | tr ',' '\n' | sort -u) \
             | tr '\n' ',' | sed 's/,$//')"
         _attr_eject "$_ej_id" "$_ej_tip" "$_ej_csv" "$pr_n" "$name" \
             "${_ej_method[$_ej_id]:-suite-overlap}" "${_ej_detail[$_ej_id]:-}" \
