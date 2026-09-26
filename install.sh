@@ -112,6 +112,42 @@ _prod_guard() {
     return 2
 }
 
+# _db_git_guard <db-path> -> 0 when clear, 2 (refuse) when the database would be published by
+# a git operation: a .git in any directory ABOVE it (someone's checkout, one `git add -A` from
+# publishing every bead body — law-beads-is-never-public), or the database directory's OWN
+# repository once it has a remote (one push from the same). The database's own repository
+# with no remote is allowed: `bd init` creates exactly that (bd 1.2.1 runs `git init` in the
+# directory it initialises and stages its files), so refusing it refused every re-install of
+# every instance — acceptance phases B and D exited 2 on it, as would any re-run of install.sh
+# on a box whose database this install had already initialised.
+_db_git_guard() {
+    local db="${1:-}" walk remotes
+    [ -n "$db" ] || return 0
+    if [ -e "$db/.git" ]; then
+        remotes="$(git -C "$db" remote 2>/dev/null)"
+        if [ -n "$remotes" ]; then
+            printf 'install: REFUSING database at %s — its own git repository has a remote (%s)\n' \
+                "$db" "$(printf '%s' "$remotes" | tr '\n' ' ' | sed 's/ $//')" >&2
+            printf 'install:   a database with a git remote is one push from publishing every bead body.\n' >&2
+            printf 'install:   Remove the remote (git -C %s remote remove <name>) or move SPIRA_DB.\n' "$db" >&2
+            return 2
+        fi
+    fi
+    walk="$(dirname "$db")"
+    while [ "$walk" != "/" ] && [ -n "$walk" ] && [ "$walk" != "." ]; do
+        if [ -e "$walk/.git" ]; then
+            printf 'install: REFUSING database at %s — it is inside a git checkout (%s)\n' \
+                "$db" "$walk" >&2
+            printf 'install:   a git-tracked database accumulates internal notes and is one\n' >&2
+            printf 'install:   "git add -A" from publishing every bead body.\n' >&2
+            printf 'install:   Set SPIRA_DB outside any git checkout in spira.conf.\n' >&2
+            return 2
+        fi
+        walk="$(dirname "$walk")"
+    done
+    return 0
+}
+
 # _conflict_report <exit-code> <message> <remedy> -> prints and returns <exit-code>.
 # The one place all conflict reports go through; never calls exit itself so a
 # caller (test or phase 0.5) composes it with `|| return`/`|| exit`.
@@ -424,27 +460,9 @@ fi
 # ---------------------------------------------------------------------------
 phase_start "phase 3: database"
 
-# Refuse a DB inside a git checkout.
-if [ -n "${SPIRA_DB:-}" ]; then
-    _db_candidate="$SPIRA_DB"
-    _walk="$_db_candidate"
-    _inside_git=0
-    while [ "$_walk" != "/" ] && [ -n "$_walk" ]; do
-        if [ -d "$_walk/.git" ]; then
-            _inside_git=1; break
-        fi
-        _walk="$(dirname "$_walk")"
-    done
-    if [ "$_inside_git" = 1 ]; then
-        printf 'install: REFUSING database at %s — it is inside a git checkout (%s)\n' \
-            "$_db_candidate" "$_walk" >&2
-        printf 'install:   a git-tracked database accumulates internal notes and is one\n' >&2
-        printf 'install:   "git add -A" from publishing every bead body.\n' >&2
-        printf 'install:   Set SPIRA_DB outside any git checkout in spira.conf.\n' >&2
-        exit 2
-    fi
-    unset _db_candidate _walk _inside_git
-fi
+# Refuse a DB inside a git checkout, or one whose own repository has a remote
+# (_db_git_guard, above — bd init's own remote-less repository is allowed).
+_db_git_guard "${SPIRA_DB:-}" || exit 2
 
 # Dolt data directory — write dolt-server.yaml from the template if SPIRA_DOLT_DATA is set.
 if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
