@@ -124,6 +124,31 @@ exit 1
 SHIM
 chmod +x "$BIN/claude-with-relates"
 
+# Shim D (own issue-closeout ask): creates a BLOCKING decision bead titled as the
+# gh-closeout ask for the bead's own issue, then exits non-zero. sp-2a4hd: a bead
+# closed and reopened while its own "Close GitHub issue ... for bead <id>" ask still
+# stood must not be decision-blocked by that ask — it must be worked normally.
+cat > "$BIN/claude-with-own-closeout-ask" <<'SHIM'
+#!/usr/bin/env bash
+cat /dev/stdin > /dev/null
+printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
+_bd="${SPIRA_BD:-bd}"
+id="$(BD_IGNORE_SCHEMA_SKEW=1 "$_bd" -C "$SPIRA_DB" list --json 2>/dev/null \
+    | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; \
+      print(next((x["id"] for x in r if x.get("status")=="in_progress"),""))' 2>/dev/null)"
+if [ -n "$id" ]; then
+    BD_IGNORE_SCHEMA_SKEW=1 "$_bd" -C "$SPIRA_DB" create \
+        "Close GitHub issue github:fixture/testrepo#99 for bead $id" \
+        -l "${SPIRA_ASK_LABEL:-needs-operator},overseer" \
+        --type decision \
+        --deps "blocks:$id" \
+        --silent >/dev/null 2>&1 || true
+fi
+printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
+exit 1
+SHIM
+chmod +x "$BIN/claude-with-own-closeout-ask"
+
 seed() {
     local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
     printf '{"id":"%s","title":"t","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
@@ -202,6 +227,23 @@ want "SEEN RED: attempt IS charged (Unlanded, not released)" "Unlanded" "$notes3
 lacks "SEEN RED: not released as decision-blocked" "No attempt charged" "$notes3"
 lacks "SEEN RED: ledger must not say decision-blocked" "decision-blocked" \
     "$(grep 'done builder sp-db-3' "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null)"
+
+# ======================================================================================
+# CASE: an open ask about the bead's OWN github issue closeout — must be WORKED
+# (attempt charged), not released. sp-2a4hd: a bead reopened while its own closeout
+# ask still stood could not be worked, because that ask decision-blocked it.
+# ======================================================================================
+echo
+echo "own issue-closeout ask — must charge attempt, not release as decision-blocked"
+
+ln -sf "$BIN/claude-with-own-closeout-ask" "$BIN/claude"
+fresh; seed sp-db-4
+rc="$(run_aeon)"
+notes4="$(bead_notes sp-db-4)"
+want "own-closeout-ask: attempt IS charged (Unlanded, not released)" "Unlanded" "$notes4"
+lacks "own-closeout-ask: not released as decision-blocked" "No attempt charged" "$notes4"
+lacks "own-closeout-ask: ledger must not say decision-blocked" "decision-blocked" \
+    "$(grep 'done builder sp-db-4' "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null)"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
