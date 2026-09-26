@@ -165,6 +165,41 @@ is     "and no movement is posted for the duplicate"     ""  "$(mailbox)"
 drop_branch sp-race
 
 # --------------------------------------------------------------------------------------
+# THE SAME RACE, THROUGH AN EXPLICIT REPO-MAP ROW (gap G12). Every case above runs with
+# SPIRA_REPO_MAP pointed at a file that does not exist yet, so repo_names() sees nothing
+# and the home repo resolves through the SPIRA_REPO override in repo_root() — the map file
+# is never actually read for this repo. That leaves the explicit-map path (a real row,
+# matched by name, land/base columns read from it) exercised only by the queue-mode case
+# below, and never for a push-mode race. This case writes the row first, so repo_field()
+# has to parse a real line rather than fail (unread) closed to the override.
+# --------------------------------------------------------------------------------------
+cat > "$SH/repo-map" <<MAP
+$(basename "$REPO") | $REPO | push | origin/main | |
+MAP
+cat > "$REMOTE/hooks/pre-receive" <<'HOOK'
+#!/usr/bin/env bash
+[ -f "$GIT_DIR/rejected-once" ] && exit 0
+: > "$GIT_DIR/rejected-once"
+env -u GIT_QUARANTINE_PATH -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_DIR \
+    bash -c '
+      export GIT_AUTHOR_NAME=other GIT_AUTHOR_EMAIL=o@o GIT_COMMITTER_NAME=other GIT_COMMITTER_EMAIL=o@o
+      old="$(git -C "$1" rev-parse "$2")"
+      new="$(git -C "$1" commit-tree "$old^{tree}" -p "$old" -m "someone else moved the base")"
+      git -C "$1" update-ref "refs/heads/$2" "$new" "$old"
+    ' _ "$(pwd)" main >&2 || echo "the hook could not move the base" >&2
+echo "rejected once, on purpose" >&2
+exit 1
+HOOK
+chmod +x "$REMOTE/hooks/pre-receive"
+seed; branch sp-racemap; out="$(landing)"
+rm -f "$REMOTE/hooks/pre-receive" "$REMOTE/rejected-once" "$SH/repo-map"
+want "with a repo-map row present, a rejected push is still retried, not called a conflict" \
+     "push rejected" "$out"
+want "and the branch still lands on the base that moved" "landed spira/sp-racemap" "$out"
+is   "and the bead is still closed"                       closed "$(status_of sp-racemap)"
+drop_branch sp-racemap
+
+# --------------------------------------------------------------------------------------
 # A PUSH THAT IS REJECTED WITHOUT THE BASE MOVING IS NOT A RACE. The retry loop was
 # written for the case where a concurrent pusher advanced the base; it does not help
 # when the base has not moved. Before this fix every failed push was logged as "the base

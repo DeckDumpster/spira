@@ -12,28 +12,29 @@
 # could be dropped from units.sh or the service could call the wrong subcommand,
 # and nothing would report the regression.
 #
-# THREE PROPERTIES, each with its positive control:
+# TWO PROPERTIES, each with its positive control:
 #
 #   1. THE SERVICE INVOKES queue.sh step — via spira-verdict.sh, which iterates
 #      queue-mode repos. A service that calls verdict.sh directly skips batch.sh,
 #      leaving no new batch open after a landing (next batch waits for the landing
 #      pass). A service that calls the wrong subcommand runs nothing.
 #
-#   2. THE TIMER FIRES PERIODICALLY — OnUnitActiveSec is present. A timer with
-#      only OnBootSec fires once at boot and never again.
+#   2. THE SERVICE LIMITS COVER THE ATTRIBUTION BUDGET (sp-vhvyi) — no CPUQuota,
+#      and a TimeoutStartSec long enough for a full red-batch replay.
 #
-#   3. THE TIMER IS IN THE INSTALL ENABLE LIST — install.sh enables it. A unit
-#      that is installed but not enabled is a timer that never fires.
+# Timer install/enable/periodic-firing (UNITS, _ENABLE_TMPL, OnUnitActiveSec) is
+# test-timer-templates.sh's generic loop over every systemd/*.timer file
+# (duplicate cluster #16, docs/test-plan/landing-merge-queue.md section 4) —
+# spira-verdict.timer is covered there and is not re-asserted here.
 #
 # POSITIVE CONTROL IS FIRST IN EVERY CASE (law-absence-needs-a-positive-control).
 #
 # defect: sp-tv7ue
 # covers: systemd/spira-verdict.timer systemd/spira-verdict.service
-#         spira/spira-verdict.sh systemd/units.sh
+#         spira/spira-verdict.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 UNIT_DIR="$HERE/../systemd"
-UNITS_SH="$UNIT_DIR/units.sh"
 
 pass=0; fail=0
 ok()    { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
@@ -87,25 +88,10 @@ fi
 
 # ============================================================================
 echo
-echo "spira-verdict.timer fires periodically via OnUnitActiveSec:"
+echo "spira-verdict.timer targets the verdict service:"
 # ============================================================================
 TMR="$UNIT_DIR/spira-verdict.timer"
 [ -r "$TMR" ] || { bad "spira-verdict.timer is readable" "not found at $TMR"; }
-
-onbootsec="$(grep '^OnBootSec=' "$TMR" 2>/dev/null | head -1)"
-if [ -z "$onbootsec" ]; then
-    bad "spira-verdict.timer has OnBootSec (positive control)" "none found"
-else
-    ok "spira-verdict.timer has OnBootSec ($onbootsec)"
-
-    onactive="$(grep '^OnUnitActiveSec=' "$TMR" 2>/dev/null | head -1)"
-    if [ -z "$onactive" ]; then
-        bad "spira-verdict.timer has OnUnitActiveSec (fires periodically)" \
-            "directive absent — timer fires once per boot only"
-    else
-        ok "spira-verdict.timer has OnUnitActiveSec ($onactive)"
-    fi
-fi
 
 unit_line="$(grep '^Unit=' "$TMR" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]')"
 if [ -z "$unit_line" ]; then
@@ -113,68 +99,6 @@ if [ -z "$unit_line" ]; then
 else
     ok "spira-verdict.timer has Unit=$unit_line"
     want "Unit= names the verdict service" "spira-verdict" "$unit_line"
-fi
-
-# ============================================================================
-echo
-echo "spira-verdict.timer is in units.sh's enable list:"
-# ============================================================================
-[ -r "$UNITS_SH" ] || { bad "units.sh is readable" "not found at $UNITS_SH"; }
-
-enable_block="$(awk '/_ENABLE_TMPL=\(/{found=1} found{print} found && /\)/{found=0}' \
-    "$UNITS_SH" 2>/dev/null)"
-
-if [ -z "$enable_block" ]; then
-    bad "_ENABLE_TMPL block is parseable (positive control)" "awk found nothing"
-else
-    ok "_ENABLE_TMPL block is parseable (${#enable_block} bytes)"
-
-    # POSITIVE CONTROL: a known entry must appear before any absence verdict.
-    case "$enable_block" in
-        *spira-sentinel.timer*)
-            ok "positive control: spira-sentinel.timer is in the enable list" ;;
-        *)
-            bad "positive control: spira-sentinel.timer is in the enable list" \
-                "not found — the parser may be broken" ;;
-    esac
-
-    case "$enable_block" in
-        *spira-verdict.timer*)
-            ok "spira-verdict.timer is in the enable list" ;;
-        *)
-            bad "spira-verdict.timer is in the enable list" \
-                "not found — timer will not be enabled on install" ;;
-    esac
-fi
-
-units_block="$(awk '/^UNITS=\(/{found=1} found{print} found && /\)/{found=0}' \
-    "$UNITS_SH" 2>/dev/null)"
-if [ -z "$units_block" ]; then
-    bad "UNITS block is parseable (positive control)" "awk found nothing"
-else
-    case "$units_block" in
-        *spira-sentinel.timer*)
-            ok "positive control: spira-sentinel.timer is in UNITS" ;;
-        *)
-            bad "positive control: spira-sentinel.timer is in UNITS" \
-                "not found — the parser may be broken" ;;
-    esac
-
-    case "$units_block" in
-        *spira-verdict.timer*)
-            ok "spira-verdict.timer is in UNITS" ;;
-        *)
-            bad "spira-verdict.timer is in UNITS" \
-                "not found — install will not write the timer file" ;;
-    esac
-
-    case "$units_block" in
-        *spira-verdict.service*)
-            ok "spira-verdict.service is in UNITS" ;;
-        *)
-            bad "spira-verdict.service is in UNITS" \
-                "not found — install will not write the service file" ;;
-    esac
 fi
 
 # ============================================================================
