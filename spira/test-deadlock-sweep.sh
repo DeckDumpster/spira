@@ -39,6 +39,16 @@ export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
+# attempts.sh's candidates() reads fayth_partitions from the chamber (lib.sh) — the same
+# partition builder.fayth declares, so this tool and the summoner cannot disagree about
+# which beads are "ours" (attempts.sh's own header comment).
+cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
+FAYTH_NAME=builder
+FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
+FAYTH_EXCLUDE_LABELS="spira-poison,${SPIRA_ASK_LABEL:-needs-operator}"
+FAYTH_MAX_CONCURRENT=1
+FAYTH_HEARTBEAT_SECONDS=600
+FAYTH
 
 seed() {   # seed <id>
     local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
