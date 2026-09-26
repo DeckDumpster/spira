@@ -1,60 +1,35 @@
 #!/usr/bin/env bash
 #
-# gate-fences.sh — derive and copy the fence files gate-spira.sh declares.
+# gate-fences.sh — the fences gate-spira.sh runs, as data gate-spira.sh itself reads.
+#
+# Before this, three suites each grepped gate-spira.sh's source for their own fence's
+# name (D7) — a fence renamed in the gate but not in the grep would pass silently, since
+# the assertion and the thing it asserts about were two independent copies of the same
+# list. One list, read by the gate's own fence loop and asserted against by a suite,
+# cannot drift out of step with itself (law-a-matcher-reads-code-not-prose).
+#
+# Replaces this file's earlier contents (sp-i7u): a `gate_fence_list <gate-script>`
+# that grep-parsed the fence names back out of gate-spira.sh's `for fence in ...` line for
+# fixture-building suites, all four of which are gone. That direction — deriving the list
+# FROM the gate's own literal — could never let the gate read the list itself without
+# circularity; here the list is the source and the gate reads it.
+#
 # Sourced, never executed.
 #
-# Source this into suites that build a gate-spira.sh fixture. The fence list is
-# read from the gate at call time, so a fence added to gate-spira.sh requires
-# no edit in any suite.
-#
-# THE POSITIVE CONTROL (law-absence-needs-a-positive-control). Both copy
-# functions fail if the gate declares no fences — an empty list and a bad path
-# produce the same silence from outside, and neither may read as success.
-#
-# API
-#   gate_fence_list  <gate-script>                — print one fence path per line
-#   gate_fence_cp    <gate-script> <src> <dst>    — copy real fence files from src into dst
-#   gate_fence_stubs <gate-script> <dst>          — write exit-0 stubs into dst
+# covers: spira/gate-spira.sh
+set -u
 
-# gate_fence_list <gate-script>
-# Print the relative fence paths the gate declares (e.g. spira/literal-lint.sh),
-# one per line. Reads the `for fence in ...; do` loop that gate-spira.sh uses as
-# its machine-readable fence list.
-gate_fence_list() {
-    local gate="$1"
-    grep -oE 'for fence in [^;]+' "$gate" \
-        | sed 's/for fence in //' \
-        | tr ' ' '\n' \
-        | grep '.'
-}
-
-# gate_fence_cp <gate-script> <src-dir> <dst-dir>
-# Copy each fence file (by basename) from src-dir into dst-dir.
-gate_fence_cp() {
-    local gate="$1" src="$2" dst="$3"
-    local list; list="$(gate_fence_list "$gate")"
-    [ -n "$list" ] || {
-        printf 'gate_fence_cp: gate declares no fences — refusing to copy nothing\n' >&2
-        return 1
-    }
-    while IFS= read -r fence; do
-        local name; name="${fence##*/}"
-        cp "$src/$name" "$dst/$name"
-    done <<< "$list"
-}
-
-# gate_fence_stubs <gate-script> <dst-dir>
-# Write a minimal stub (#!/usr/bin/env bash\nexit 0\n) for each declared fence into
-# dst-dir. Used by suites that control which fence "speaks" and want the rest silent.
-gate_fence_stubs() {
-    local gate="$1" dst="$2"
-    local list; list="$(gate_fence_list "$gate")"
-    [ -n "$list" ] || {
-        printf 'gate_fence_stubs: gate declares no fences — refusing to stub nothing\n' >&2
-        return 1
-    }
-    while IFS= read -r fence; do
-        local name; name="${fence##*/}"
-        printf '#!/usr/bin/env bash\nexit 0\n' > "$dst/$name"
-    done <<< "$list"
+gate_fence_list() {    # gate_fence_list -> one repo-relative fence path per line, in the
+                        # order gate-spira.sh runs them
+    printf '%s\n' \
+        spira/exclude.sh \
+        spira/inventory.sh \
+        spira/scratch-fence.sh \
+        spira/wiki-add-fence.sh \
+        spira/sop.sh \
+        spira/literal-lint.sh \
+        spira/testdb-mode-lint.sh \
+        spira/bd-stdin-lint.sh \
+        spira/suite-state-fence.sh \
+        spira/orphan-test.sh
 }
