@@ -129,6 +129,13 @@ else
     ok "phase A scope label is read as the installed services resolve it"
 fi
 
+# POSITIVE CONTROL: a scope/plan label read gated on a clean install is exactly the
+# defect sp-bn9go fixes — a failed install must not also mislabel the probe bead.
+nowantfile "positive control: label read is not re-gated on a clean install (sp-bn9go)" \
+    '_install_rc" -eq 0 \] && \[ -f "\$_releases/current/spira/conf\.sh"' "$SCRIPT"
+wantfile "label read is gated only on the release conf existing (sp-bn9go)" \
+    'if [ -f "$_releases/current/spira/conf.sh" ]; then' "$SCRIPT"
+
 # ============================================================================
 echo
 echo "10. Phase B: install.sh output is streamed (tee), not discarded"

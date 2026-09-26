@@ -461,6 +461,60 @@ want "loom-unkn: ? line present"                "  ?     loom"                 "
 nowant "loom-unkn: no WARN line"                "  WARN  loom not installed"   "$out"
 nowant "loom-unkn: no FAIL"                     "  FAIL  loom"                 "$out"
 
+# All cases above go through SPIRA_LOOM_PROBE, the fixture stub — they never reach the
+# real python probe's retry loop. The grace cases below unset the stub (SPIRA_LOOM_PROBE=)
+# so the loop in ready.sh itself is what is under test.
+# Ports are pinned into the IANA ephemeral range so this suite does not collide with a
+# real registered service on the box.
+_grace_port=$((49152 + (($$ + 3) % 8000)))
+
+# POSITIVE CONTROL: nothing ever listens -> FAIL, bounded by SPIRA_LOOM_READY_GRACE and
+# not by the 20s default (sp-bn9go: a slow control here would mean the grace argument
+# is being ignored).
+echo "positive control: loom never answers, real probe -> FAIL within the configured grace"
+_t0=$(date +%s)
+out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
+                 "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
+                 "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" \
+                 "SPIRA_LOOM_PROBE=" \
+                 "SPIRA_LOOM_ADDR=127.0.0.1:$_grace_port" \
+                 "SPIRA_LOOM_READY_GRACE=1" -- || true)"
+_elapsed=$(( $(date +%s) - _t0 ))
+want "loom-grace-fail: FAIL line present"       "  FAIL  loom does not answer" "$out"
+if [ "$_elapsed" -lt 10 ]; then
+    ok "loom-grace-fail: bounded by grace, not the 20s default (${_elapsed}s)"
+else
+    bad "loom-grace-fail: bounded by grace, not the 20s default" "took ${_elapsed}s"
+fi
+
+# PASS: a loom that starts late is retried until it answers, not failed on the first
+# cold probe — this is the defect sp-bn9go fixes.
+echo "loom starts late, real probe -> retried until it answers"
+cat > "$TMP/grace-server.py" <<'PYEOF'
+import http.server, socketserver, sys, time
+port = int(sys.argv[1])
+time.sleep(float(sys.argv[2]))
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+    def log_message(self, *a):
+        pass
+socketserver.TCPServer.allow_reuse_address = True
+with socketserver.TCPServer(("127.0.0.1", port), H) as httpd:
+    httpd.serve_forever()
+PYEOF
+python3 "$TMP/grace-server.py" "$_grace_port" 1 >/dev/null 2>&1 & _grace_pid=$!
+out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
+                 "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
+                 "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" \
+                 "SPIRA_LOOM_PROBE=" \
+                 "SPIRA_LOOM_ADDR=127.0.0.1:$_grace_port" \
+                 "SPIRA_LOOM_READY_GRACE=8" --)"
+kill "$_grace_pid" 2>/dev/null; wait "$_grace_pid" 2>/dev/null || true
+want "loom-grace-pass: pass line present"       "  pass  loom answers 200" "$out"
+unset _grace_port _grace_pid _t0 _elapsed
+
 # ===========================================================================
 # AGENT
 # ===========================================================================
