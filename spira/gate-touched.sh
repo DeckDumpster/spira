@@ -35,6 +35,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # HEAD positionally without setting either env var.
 SPIRA_GATE_BASE="${SPIRA_GATE_BASE:-$BASE}" bash "$HERE/build-fence.sh" || exit 1
 
+# THE LOCKFILE LINT RUNS ALONGSIDE THE BUILD FENCE, for the same reason: a bumped
+# Cargo.lock with no matching Cargo.toml change is a static property of the tree, not
+# a suite result, and it must be caught before SPIRA_GATE_SUITES=off can skip everything
+# else (sp-4kws1).
+SPIRA_GATE_BASE="${SPIRA_GATE_BASE:-$BASE}" bash "$HERE/lockfile-lint.sh" || exit 1
+
 HEAD="${2:?usage: gate-touched.sh <base> <head>}"
 repo="${SPIRA_GATE_REPO:-.}"
 _tiers="${SPIRA_GATE_TIERS:-T0,T1}"
