@@ -260,9 +260,9 @@ bd -C $SPIRA_DB list | grep sp-yuiuc; verify the incident has no_cause in the de
 
 `sop-presession-death-test-regression`
 
-**Symptom** — Test-aeon-presession-death.sh fails with FATAL line not present, attempt not charged, or error not propagated when run against sp-dd785 or similar pre-session death fixes.
+**Symptom** — test-aeon-teardown-e2e.sh's pre-session-death row fails with the FATAL line not present, attempt not charged, or error not propagated when run against sp-dd785 or similar pre-session death fixes.
 
-**Check** — Run test-aeon-presession-death.sh directly; grep output for "FAIL.*FATAL" and "status=pre-session" in ledger
+**Check** — Run test-aeon-teardown-e2e.sh via testenv-batch.sh; grep output for "not ok.*error message is logged" and "status=pre-session" in the ledger
 
 **Fix**
 
@@ -277,7 +277,7 @@ The fix is incomplete in the target branch. Examine aeon.sh error handling path 
 
 **Reference** — wiki/notes/standard-operating-procedures.md
 
-**Matches** `test-aeon-presession-death.sh.*FAIL.*FATAL`
+**Matches** `test-aeon-teardown-e2e.sh.*not ok.*error message is logged`
 
 ### Queue eject
 

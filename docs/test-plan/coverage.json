@@ -14,7 +14,13 @@
           "id": "UC-aeon-execution-02",
           "tier": "T3",
           "statement": "a worktree-creation failure is a pre-session death: FATAL, attempt charged, ledger `pre-session`, no free resummon loop",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-aeon-teardown-e2e.sh",
+              "tier": "T3",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-aeon-execution-03",
@@ -98,6 +104,11 @@
               "over_budget": false
             },
             {
+              "path": "spira/test-aeon-teardown-e2e.sh",
+              "tier": "T3",
+              "over_budget": false
+            },
+            {
               "path": "spira/test-thrash-teardown.sh",
               "tier": "T2",
               "over_budget": false
@@ -108,7 +119,13 @@
           "id": "UC-aeon-execution-12",
           "tier": "T3",
           "statement": "a harness reopen after a rebase conflict on a closed, committed bead is a requeue, not an attempt",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-aeon-teardown-e2e.sh",
+              "tier": "T3",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-aeon-execution-13",
@@ -149,7 +166,18 @@
           "id": "UC-aeon-execution-18",
           "tier": "T1",
           "statement": "the aeon's exit code and ledger `done` line reflect the real rc, status and spend fields, `?` never 0 when missing",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-aeon-teardown-e2e.sh",
+              "tier": "T3",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-session-result-fields.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-aeon-execution-19",
@@ -185,7 +213,13 @@
           "id": "UC-aeon-execution-24",
           "tier": "T2",
           "statement": "`attempts.sh deadlocked` lists mergeable poisoned beads and `--apply` lifts poison without losing the attempt record",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-deadlock-sweep.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-aeon-execution-25",

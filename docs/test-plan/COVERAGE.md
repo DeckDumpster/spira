@@ -7,7 +7,7 @@ Generated from docs/test-plan/*.toml, every suite's # tier:/# covers: header, an
 | UC | tier | statement | covering suites | status |
 |---|---|---|---|---|
 | UC-aeon-execution-01 | T3 | a bead is worked in a worktree cut from freshly fetched `origin/<landref>`; a stale foreign worktree is moved aside, never removed | — | **GAP** |
-| UC-aeon-execution-02 | T3 | a worktree-creation failure is a pre-session death: FATAL, attempt charged, ledger `pre-session`, no free resummon loop | — | **GAP** |
+| UC-aeon-execution-02 | T3 | a worktree-creation failure is a pre-session death: FATAL, attempt charged, ledger `pre-session`, no free resummon loop | spira/test-aeon-teardown-e2e.sh | covered |
 | UC-aeon-execution-03 | T1 | a bead poisoned right after claim is released before workspace setup, ledger `poison-raced` | spira/test-aeon-disposition.sh | covered |
 | UC-aeon-execution-04 | T1 | the world-halt fence refuses a halt bead (one carrying the configured halt label) with a live aeon and releases the claim; with none it runs stop → session → start | — | **GAP** |
 | UC-aeon-execution-05 | T1 | sweep mode claims nothing, sets no `branch:` label, and refuses when capacity is paused or the world is draining | — | **GAP** |
@@ -16,20 +16,20 @@ Generated from docs/test-plan/*.toml, every suite's # tier:/# covers: header, an
 | UC-aeon-execution-08 | T1 | the lease renews on trace growth and lapses on silence past `FAYTH_LEASE_SECONDS`, killing `-$$` | spira/test-aeon-lease.sh | covered |
 | UC-aeon-execution-09 | T1 | the thrash wall trips only when the fuse and the session age both clear the wall | spira/test-aeon-lease.sh<br>spira/test-thrash.sh | covered |
 | UC-aeon-execution-10 | T1 | session outcome classification (refused/unknown/killed/unlanded/yield-headless) and its charge default-deny | — | **GAP** |
-| UC-aeon-execution-11 | T1 | open-bead teardown disposition runs its 13 branches in precedence order and charges only `unlanded`-family outcomes | spira/test-aeon-disposition.sh<br>spira/test-thrash-teardown.sh | covered |
-| UC-aeon-execution-12 | T3 | a harness reopen after a rebase conflict on a closed, committed bead is a requeue, not an attempt | — | **GAP** |
+| UC-aeon-execution-11 | T1 | open-bead teardown disposition runs its 13 branches in precedence order and charges only `unlanded`-family outcomes | spira/test-aeon-disposition.sh<br>spira/test-aeon-teardown-e2e.sh<br>spira/test-thrash-teardown.sh | covered |
+| UC-aeon-execution-12 | T3 | a harness reopen after a rebase conflict on a closed, committed bead is a requeue, not an attempt | spira/test-aeon-teardown-e2e.sh | covered |
 | UC-aeon-execution-13 | T1 | the close verdict (commit-naming keeps closed; no commit reopens) is decided identically by aeon and sentinel | spira/test-aeon-verdict.sh | covered |
 | UC-aeon-execution-14 | T1 | an eviction-race reopen fires only for a live eviction reason at the current tip, capped at 2/hour | — | **GAP** |
 | UC-aeon-execution-15 | T1 | closing with the gate still running, FAIL, or no gate run leaves a distinct note but does not reopen | — | **GAP** |
 | UC-aeon-execution-16 | T1 | the four close guards (prod-dirty, close-reason override, SOP, groom-escalation) bind to their knob, not the persona name | — | **GAP** |
 | UC-aeon-execution-17 | T1 | wiki writes at exit are committed under an `aeon-` author, excluding pre-dirty files and `wiki/tasks.md` | — | **GAP** |
-| UC-aeon-execution-18 | T1 | the aeon's exit code and ledger `done` line reflect the real rc, status and spend fields, `?` never 0 when missing | — | **GAP** |
+| UC-aeon-execution-18 | T1 | the aeon's exit code and ledger `done` line reflect the real rc, status and spend fields, `?` never 0 when missing | spira/test-aeon-teardown-e2e.sh<br>spira/test-session-result-fields.sh | covered |
 | UC-aeon-execution-19 | T2 | attempts are counted from the bd events trail only, never from a label, and `check4_bulk_data` agrees with per-bead queries | — | **GAP** |
 | UC-aeon-execution-20 | T2 | claim release is compare-and-swap on the claiming actor; naming the fayth leaves it held | — | **GAP** |
 | UC-aeon-execution-21 | T1 | CHECK 4 poisons at `POISON_AT`, clears stale poison, and skips epics/partition-excluded/mid-pass-closed beads | — | **GAP** |
 | UC-aeon-execution-22 | T1 | the poison ask is sent once per (bead, attempt count); a label clear does not re-arm it | — | **GAP** |
 | UC-aeon-execution-23 | T1 | the requeue cap and reclaim cap each send one deduplicated mail at their threshold and never add poison | — | **GAP** |
-| UC-aeon-execution-24 | T2 | `attempts.sh deadlocked` lists mergeable poisoned beads and `--apply` lifts poison without losing the attempt record | — | **GAP** |
+| UC-aeon-execution-24 | T2 | `attempts.sh deadlocked` lists mergeable poisoned beads and `--apply` lifts poison without losing the attempt record | spira/test-deadlock-sweep.sh | covered |
 | UC-aeon-execution-25 | T1 | a repeated lane-cap timeout asks about the lane, not the approach | — | **GAP** |
 | UC-aeon-execution-26 | T2 | `slay.sh` writes `.slain` first; its default/`--close`/`--keep-work` modes and argument refusals are exact | — | **GAP** |
 
