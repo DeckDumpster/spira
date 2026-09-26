@@ -1533,6 +1533,34 @@ spira_single_checkout() {
     case "$_p/" in "${_r%/}/"*) return 0 ;; *) return 1 ;; esac
 }
 
+# spira_config_writeback <candidate> — the ONE path any code that would REGENERATE a
+# config file (spira.toml, a converted spira.conf, ...) resolves its write target through.
+# <candidate> is returned unchanged only when this checkout IS the installed release
+# (SPIRA_HOME resolves to the same directory as SPIRA_PROD) or SPIRA_CONFIG_WRITE=1 is set
+# explicitly; otherwise the write is redirected to $SPIRA_REPO instead, same basename.
+#
+# scar: three cutover branches, each sourcing their own conf.sh with the operator's real
+# HOME, regenerated the operator's real spira.toml from worktree state — three times in one
+# day, each time blinding queue-watch until the file was restored by hand. A worktree has no
+# business writing outside itself, however it got HOME; an unresolved SPIRA_PROD (default
+# not yet derived) compares unequal to SPIRA_HOME and so fails closed into the redirect,
+# which is the safe side of this check.
+spira_config_writeback() {
+    local candidate="$1"
+    if [ "${SPIRA_CONFIG_WRITE:-0}" = "1" ]; then
+        printf '%s' "$candidate"
+        return 0
+    fi
+    local home_p prod_p
+    home_p="$(cd "${SPIRA_HOME:-}" 2>/dev/null && pwd -P)" || home_p="${SPIRA_HOME:-}"
+    prod_p="$(cd "${SPIRA_PROD:-}" 2>/dev/null && pwd -P)" || prod_p="${SPIRA_PROD:-}"
+    if [ -n "$prod_p" ] && [ "$home_p" = "$prod_p" ]; then
+        printf '%s' "$candidate"
+        return 0
+    fi
+    printf '%s/%s' "$SPIRA_REPO" "$(basename "$candidate")"
+}
+
 SPIRA_CONF_FILE="$(spira_conf_file)"
 [ -n "$SPIRA_CONF_FILE" ] && spira_conf_read "$SPIRA_CONF_FILE"
 spira_conf_defaults

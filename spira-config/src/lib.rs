@@ -198,6 +198,46 @@ pub fn validate(text: &str) -> Result<SpiraToml, String> {
     })
 }
 
+/// Whether `new` is a SHRINK of `existing` — fewer `[repo.*]` tables, or fewer
+/// `[spira].fayths` entries — the two counts a converted `spira.toml` can lose without any
+/// parse error to show for it, if it is regenerated from a narrower source (a repo-map
+/// missing rows, a worktree with only some of the real `chamber/*.fayth` files) and written
+/// over a fuller document already in force. `Some(reason)` names both counts for the
+/// caller to report; `None` means `new` carries at least as much as `existing` in both
+/// dimensions.
+pub fn shrink_reason(existing: &SpiraToml, new: &SpiraToml) -> Option<String> {
+    let existing_repos = existing.repo.len();
+    let new_repos = new.repo.len();
+    let existing_fayths = existing.spira.as_ref().map(|s| s.fayths.len()).unwrap_or(0);
+    let new_fayths = new.spira.as_ref().map(|s| s.fayths.len()).unwrap_or(0);
+    if new_repos < existing_repos || new_fayths < existing_fayths {
+        Some(format!(
+            "existing has {existing_repos} [repo.*] table(s) and {existing_fayths} fayth(s); \
+             new document has {new_repos} and {new_fayths}"
+        ))
+    } else {
+        None
+    }
+}
+
+/// Writes `contents` to `path` atomically: a temp file beside it, then a rename. Without
+/// this a reader racing the writer (`spira_toml_read`, another `validate`) can observe a
+/// half-written document — truncated by a writer killed mid-write — as a parse error on a
+/// file that was never actually invalid.
+pub fn write_atomic(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("spira-config-out");
+    let tmp = dir.join(format!(".{name}.tmp.{}", std::process::id()));
+    std::fs::write(&tmp, contents)?;
+    std::fs::rename(&tmp, path)
+}
+
 /// Reads one dotted path out of an already-validated document — `spira.max_aeons`,
 /// `repo.service.mode`, `persona.builder.lease.minutes` — for `spira-config get`.
 pub fn get_path(doc: &SpiraToml, path: &str) -> Option<String> {
