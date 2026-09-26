@@ -737,6 +737,7 @@ land_repo() {
     local name="$1" repo br id st mode base land tip merged pushed nothing wedged attempt brs refresh
     local bead_repo_name bead_repo_path gate_out base_branch base_remote base_fqref bead_labels
     local norebase was _ref _obj gate_suite basefail_filed= _cur_st _budget_cut=0
+    local _cur_base_sha _ls_st _ls_tip _ls_at _ls_reason
     local -a _cert_brs=() _cert_beadids=() _cert_tips=()
     local -A enum_tip=()
     # WHAT THIS PASS HAS ALREADY JUDGED CLOSED, REBASED AND STILL UNLANDED. A branch enters
@@ -1042,6 +1043,22 @@ for i in d:
             refresh="$PR_REFRESH_N"
         fi
 
+        # THE WALK ITSELF SKIPS A KNOWN-STUCK PAIR, not only the reopen it would lead to.
+        # Before this, the dedup a few lines down only suppressed a duplicate bump AFTER
+        # paying for another rebase attempt against the exact tip and base that produced
+        # the mark it is about to duplicate — so a bead deliberately left closed to avoid
+        # reopen churn was rebased again every pass, forever, for as long as neither side of
+        # the pair moved. Checking the same record here turns that into the one question
+        # that ever needed asking: has the tip or the base moved since the mark that
+        # explains why this branch is still here.
+        _cur_base_sha="$(git -C "$repo" rev-parse "$base_fqref" 2>/dev/null)"
+        read -r _ls_st _ls_tip _ls_at _ls_reason <<< "$(land_state "$id" 2>/dev/null || true)"
+        if [ "${_ls_st:-}" = RED ] && [ "${_ls_tip:-}" = "$tip" ] && \
+           [ "${_ls_reason:-}" = "no-rebase@${_cur_base_sha}" ]; then
+            log "CHECK6 $id: tip and base unchanged since last RED mark — skipping repeat rebase attempt"
+            continue
+        fi
+
         if ! rebase_branch "$br" "$base_fqref" "$repo" "$name"; then
             # ONLY A CONFLICT MAY REOPEN. rebase_branch returns 1 for four different things
             # and exactly one of them is a fact about the branch; the other three are the
@@ -1066,9 +1083,12 @@ for i in d:
                 log "CHECK6 $id: $br does not rebase onto $base, but its pull request is merged — landed, not stuck"
                 continue
             fi
-            local _other_beads _reopen_note _rq_n _cur_base_sha _ls_st _ls_tip _ls_at _ls_reason _ls_reason_class
-            _cur_base_sha="$(git -C "$repo" rev-parse "$base_fqref" 2>/dev/null)"
-            read -r _ls_st _ls_tip _ls_at _ls_reason <<< "$(land_state "$id" 2>/dev/null || true)"
+            local _other_beads _reopen_note _rq_n _ls_reason_class
+            # _cur_base_sha and the land_state read above already answered this for the
+            # ordinary case (same tip, same base, same no-rebase mark) by skipping the
+            # rebase_branch call entirely; this re-check only still fires when something
+            # changed between here and there — e.g. rebase_branch itself just produced the
+            # mark this pass, or a different reason class than no-rebase led here.
             if [ "${_ls_st:-}" = RED ] && [ "${_ls_tip:-}" = "$tip" ] && \
                [ "${_ls_reason:-}" = "no-rebase@${_cur_base_sha}" ]; then
                 log "CHECK6 $id: tip and base unchanged since last RED mark — skipping duplicate bump"
