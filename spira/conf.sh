@@ -1701,8 +1701,15 @@ unset _spira_conf_here _spira_conf_env _spira_conf_home_env
 #
 # SPIRA_PATH is prepended and is the config's business; the tail is the box's own and is
 # not, so it is not written into the config.
+#
+# $HOME/.cargo/bin IS IN THE TAIL, not left to SPIRA_PATH, for a bootstrap reason: reading
+# SPIRA_PATH out of spira.toml itself requires SPIRA_CONFIG_BIN, and a fresh worktree (no
+# `cargo build` yet) has none. Without cargo reachable some other way, that worktree can
+# never build the very binary that would let it read config at all — `testenv-batch.sh
+# --with-bins` finds no cargo on PATH and refuses, and nothing breaks the cycle. rustup's
+# own installer default, so a box without cargo there simply gains a dead path segment.
 # --------------------------------------------------------------------------------------
-export PATH="${SPIRA_PATH:+$SPIRA_PATH:}$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+export PATH="${SPIRA_PATH:+$SPIRA_PATH:}$HOME/.local/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
 
 # SPIRA_BD — resolved once, deterministically, after SPIRA_PATH is applied. When the
 # environment or a config file already set it (both captured before this point), the value

@@ -185,9 +185,8 @@ echo "halt tears down a real container recorded in the registry (gap G9)"
 # has never actually run.
 #
 # A stubbed podman must be injected via SPIRA_PATH, not a bare PATH prepend:
-# conf.sh (sourced by landing.sh) unconditionally overwrites PATH with
-# "${SPIRA_PATH:+$SPIRA_PATH:}$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" —
-# SPIRA_PATH is the one seam it prepends first, and is the mechanism every
+# conf.sh (sourced by landing.sh) unconditionally overwrites PATH with a fixed
+# tail after it — SPIRA_PATH is the one seam it prepends first, and is the mechanism every
 # other suite in this tree already injects a mock command through
 # (test-bd-resolve.sh, test-cadence.sh, and others). A first attempt at this
 # case that prepended $PATH directly built a stub that was never reachable —

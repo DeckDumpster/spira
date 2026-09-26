@@ -208,5 +208,25 @@ leftover="$(ls "$SHRINK_DIR"/spira.toml.tmp* 2>/dev/null | wc -l | tr -d ' ')"
 is "no leftover temp file after the refusal" "0" "$leftover"
 
 # ==========================================================================
+echo
+echo "BOOTSTRAP — no spira-config binary anywhere: cargo stays reachable:"
+# ==========================================================================
+# A fresh worktree (no target/, no bin/ — $HARNESS above has neither) cannot resolve
+# SPIRA_CONFIG_BIN, so nothing can be read from spira.conf or spira.toml at all: every
+# SPIRA_* key falls back to its derived default, including SPIRA_PATH (empty). If cargo
+# is reachable only through a configured SPIRA_PATH, this is a deadlock: the binary that
+# would let a worktree build its own spira-config needs cargo on PATH, and cargo isn't
+# there until spira.toml is read. SPIRA_CONFIG_BIN is deliberately left unset (not passed)
+# so the worktree resolves it on its own and finds nothing.
+BOOT_HOME="$T/boot-home"
+mkdir -p "$BOOT_HOME/.cargo/bin"
+printf '#!/bin/sh\nexit 0\n' > "$BOOT_HOME/.cargo/bin/cargo"
+chmod +x "$BOOT_HOME/.cargo/bin/cargo"
+boot_path="$(env -i PATH=/usr/bin:/bin HOME="$BOOT_HOME" SPIRA_CONF=/nonexistent \
+    bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\$PATH\"" 2>/dev/null)"
+want "conf.sh's PATH still reaches \$HOME/.cargo/bin with no spira-config binary built" \
+    "$BOOT_HOME/.cargo/bin" "$boot_path"
+
+# ==========================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
