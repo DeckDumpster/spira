@@ -147,7 +147,6 @@ bead sp-cl0 open
 # sp-cl1: content-landed via merge-tree equality, ahead=1 — an empty commit that names the
 # bead but changes no files (sp-kq8l). Ancestry alone would refuse this (the branch is not
 # reachable from origin/main); content_landed approves it because merging changes nothing.
-# Landstate present, so no ASSERT line.
 git -C "$REPO" checkout -q -b spira/sp-cl1 main
 git -C "$REPO" commit -q --allow-empty -m "sp-cl1: review only, no file changes"
 git -C "$REPO" checkout -q main
@@ -155,8 +154,9 @@ bead sp-cl1 closed
 printf 'LANDED %s %s\n' "$(git -C "$REPO" rev-parse spira/sp-cl1)" "$(date +%s)" \
     > "$RUN/landstate/sp-cl1"
 
-# sp-clnoassert: same shape as sp-cl1, but with NO landstate record — the ASSERT log line
-# (sp-qj8n) must fire, and the send must proceed anyway.
+# sp-clnoassert: same shape as sp-cl1, but with NO landstate record at all — CHECK 5 (the
+# sentinel), not this program, owns the closed-not-landed invariant now (sp-jci6o), so the
+# send must proceed regardless of whether landing.sh left a record.
 git -C "$REPO" checkout -q -b spira/sp-clnoassert main
 git -C "$REPO" commit -q --allow-empty -m "sp-clnoassert: review only"
 git -C "$REPO" checkout -q main
@@ -358,11 +358,9 @@ is     "sp-cl0 is NOT labelled content-landed (ahead=0)" no "$(has_label sp-cl0 
 want   "sp-cl1 is SENT"                     "SENT sp-cl1"          "$out"
 is     "sp-cl1 branch is gone"              1 "$(branch_exists spira/sp-cl1; echo $?)"
 is     "sp-cl1 IS labelled content-landed (ahead=1)" yes "$(has_label sp-cl1 content-landed && echo yes || echo no)"
-nowant "no ASSERT line for sp-cl1 (landstate present)" "ASSERT sp-cl1" "$out"
 
 want   "sp-clnoassert is SENT"              "SENT sp-clnoassert"   "$out"
-want   "ASSERT fires for sp-clnoassert (no landstate)" "ASSERT sp-clnoassert" "$out"
-is     "sp-clnoassert branch is gone despite the ASSERT" 1 "$(branch_exists spira/sp-clnoassert; echo $?)"
+is     "sp-clnoassert branch is gone despite no landstate record" 1 "$(branch_exists spira/sp-clnoassert; echo $?)"
 
 want   "round-54 is SKIPped before disposition ever runs" "SKIP   round-54" "$out"
 nowant "no ASSERT line for a round branch (it never has a landstate)" "ASSERT round-54" "$out"

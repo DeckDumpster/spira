@@ -1201,9 +1201,18 @@ done
 # sending.sh judges by ancestry alone, never by bead status, so it cannot be talked into
 # deleting work by a database that is merely optimistic.
 #
-# BASE-UNCHANGED SKIP. When no repo's land ref has moved since the last walk, nothing could
-# have landed. Stamp: per-repo name=sha lines at $SPIRA_RUN/sending.base, written after
-# each full walk. Repos that repo_root cannot resolve are skipped in both directions.
+# --skip-queue: A QUEUE-MODE REPO IS NOT WALKED HERE AT ALL (sp-jci6o). Its landed batch
+# members are reaped at landing by bead_close_on_land (spira_reap_landed_branch, lib.sh) —
+# the queue's own verdict already knows exactly which branches just landed, so re-scanning
+# every spira/* branch in that repo every two minutes to rediscover the same fact by ancestry
+# is the cost this flag removes. A daily straggler sweep (--queue-only, its own timer) is
+# what catches whatever the landing-time reap missed.
+#
+# BASE-UNCHANGED SKIP. When no SWEPT repo's land ref has moved since the last walk, nothing
+# could have landed. Stamp: per-repo name=sha lines at $SPIRA_RUN/sending.base, written after
+# each full walk. Repos that repo_root cannot resolve, or that are in queue mode, are skipped
+# in both directions — a queue-mode repo's base moving must not force a walk of every other
+# repository just to learn again that this one is not swept here.
 # ======================================================================================
 _sending_base_stamp="$SPIRA_RUN/sending.base"
 _sending_skip=0
@@ -1219,6 +1228,7 @@ if [ -f "$_sending_base_stamp" ]; then
     if [ "$_sending_all_match" -eq 1 ]; then
         while IFS= read -r _sr_name; do
             [ -n "$_sr_name" ] || continue
+            [ "$(repo_land "$_sr_name" 2>/dev/null)" = queue ] && continue
             repo_root "$_sr_name" >/dev/null 2>&1 || continue
             spira_landref "$(repo_root "$_sr_name" 2>/dev/null)" >/dev/null 2>&1 || continue
             grep -qF "${_sr_name}=" "$_sending_base_stamp" 2>/dev/null \
@@ -1230,7 +1240,7 @@ fi
 if [ "$_sending_skip" -eq 1 ]; then
     log "sending: base unchanged — skipped"
 else
-    sent="$("$SPIRA_HOME/sending.sh" 2>&1)"
+    sent="$("$SPIRA_HOME/sending.sh" --skip-queue 2>&1)"
     [ -n "$sent" ] && printf '%s\n' "$sent"
     n_sent="$(grep -c '^SENT' <<< "$sent" || true)"
     if [ "${n_sent:-0}" -gt 0 ]; then
@@ -1241,6 +1251,7 @@ else
     fi
     grep -q '^FAILED' <<< "$sent" && log "sending reported a branch it could not delete"
     { for _sr_name in $(spira_repos 2>/dev/null); do
+        [ "$(repo_land "$_sr_name" 2>/dev/null)" = queue ] && continue
         _sr_repo="$(repo_root "$_sr_name" 2>/dev/null)" || continue
         _sr_ref="$(spira_landref "$_sr_repo" 2>/dev/null)" || continue
         _sr_cur="$(git -C "$_sr_repo" rev-parse "$_sr_ref" 2>/dev/null)" || continue
