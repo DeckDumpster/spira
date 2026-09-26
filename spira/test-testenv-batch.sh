@@ -1507,8 +1507,8 @@ echo
 echo "B13: VOLUME LEAK (sp-vcobo) — teardown removes the cargo-reg/cargo-git pair"
 # ===========================================================================
 # Every batch instance name is derived from BATCH_KEY (tree + selection + harness
-# hash) so it is never reused — the cache-reuse `testenv.sh down` normally preserves
-# a name for never applies here. Before the fix, ordinary teardown (no --volumes)
+# hash) so it is never reused — the cache reuse ordinary `testenv.sh down` exists
+# to protect never applies here. Before the fix, ordinary teardown (no --volumes)
 # left each run's named cargo-reg/cargo-git pair behind forever; over enough runs
 # that exhausted podman's num_locks for the whole host, not just spira's containers.
 #
