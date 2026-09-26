@@ -211,6 +211,7 @@
           "covering_suites": [
             {
               "path": "spira/test-bead-file.sh",
+              "tier": "T1",
               "over_budget": false
             }
           ]
@@ -222,6 +223,7 @@
           "covering_suites": [
             {
               "path": "spira/test-bead-file.sh",
+              "tier": "T1",
               "over_budget": false
             }
           ]
@@ -233,6 +235,7 @@
           "covering_suites": [
             {
               "path": "spira/test-bead-file.sh",
+              "tier": "T1",
               "over_budget": false
             }
           ]
@@ -244,6 +247,7 @@
           "covering_suites": [
             {
               "path": "spira/test-bead-lint.sh",
+              "tier": "T2",
               "over_budget": false
             }
           ]
@@ -279,6 +283,12 @@
           "covering_suites": [
             {
               "path": "spira/test-fayth.sh",
+              "tier": "T1",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-lanes.sh",
+              "tier": "T1",
               "over_budget": false
             }
           ]
@@ -290,6 +300,7 @@
           "covering_suites": [
             {
               "path": "spira/test-fayth.sh",
+              "tier": "T1",
               "over_budget": false
             }
           ]
@@ -349,6 +360,7 @@
           "covering_suites": [
             {
               "path": "spira/test-fayth.sh",
+              "tier": "T1",
               "over_budget": false
             }
           ]
@@ -357,7 +369,13 @@
           "id": "UC-dispatch-14",
           "tier": "T1",
           "statement": "CHECK 7 draws lanes round-robin then fills the task pool in roster order, capped",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-sentinel-pass.sh",
+              "tier": "T3",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-dispatch-15",
@@ -375,7 +393,13 @@
           "id": "UC-dispatch-16",
           "tier": "T1",
           "statement": "CHECK 7c reports an unclaimable ready bead once, naming the rejection reason",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-unclaimable.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-dispatch-17",
@@ -393,31 +417,71 @@
           "id": "UC-dispatch-18",
           "tier": "T1",
           "statement": "CHECK 8 fires only when nothing progressed and plan is starved, subject to cooldown",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-check8-progressed.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-dispatch-19",
           "tier": "T1",
           "statement": "a pass that cannot read the database exits 1 and never reports goal reached",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-sentinel-pass.sh",
+              "tier": "T3",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-dispatch-20",
           "tier": "T1",
           "statement": "a stale lease in every persona's partition is reclaimed and charged; orphans released",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-check2-reaper.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-dispatch-21",
           "tier": "T1",
           "statement": "the ghost classifier never reclaims a bead carrying the ask or reclaim-skip label",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-check2-reclaim.sh",
+              "tier": "T2",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-reclaim-escalated.sh",
+              "tier": "T2",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-strand-partition.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-dispatch-22",
           "tier": "T1",
           "statement": "an unmapped-repo bead is parked with ask+overseer before its claim is released",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-park-unmapped.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-dispatch-23",
@@ -435,7 +499,13 @@
           "id": "UC-dispatch-24",
           "tier": "T0",
           "statement": "ops tools are an allowlist of `Bash(pattern)` entries, never bare `Bash`",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-ops-allowlist.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
         }
       ]
     },

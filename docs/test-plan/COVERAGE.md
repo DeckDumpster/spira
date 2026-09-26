@@ -43,24 +43,24 @@ Generated from docs/test-plan/*.toml, every suite's # tier:/# covers: header, an
 | UC-dispatch-04 | T1 | `bead.sh lint` reports every stored bead lacking `repo:`/partition, unreadable ids named as such | spira/test-bead-lint.sh | covered |
 | UC-dispatch-05 | T0 | no harness script passes a bare `-` body to `bd note`/`bd create -d` | spira/test-bd-stdin.sh | covered |
 | UC-dispatch-06 | T1 | GitHub intake never mutates GitHub, dedups idempotently, promotes only on write access | spira/test-gh-intake-lint.sh | covered |
-| UC-dispatch-07 | T1 | the roster is discovered from `chamber/*.fayth`; lane xor task xor operator, never two | spira/test-fayth.sh | covered |
+| UC-dispatch-07 | T1 | the roster is discovered from `chamber/*.fayth`; lane xor task xor operator, never two | spira/test-fayth.sh<br>spira/test-lanes.sh | covered |
 | UC-dispatch-08 | T1 | every auto-summoned predicate is built from `$SPIRA_*_LABEL`, never a literal | spira/test-fayth.sh | covered |
 | UC-dispatch-09 | T1 | `summon_fayth` asks each persona's own predicate; partitions don't cross-leak | spira/test-summon-fayth.sh | covered |
 | UC-dispatch-10 | T1 | the `summon_fayth` refusal ladder runs in order and logs its real reason | spira/test-summon-fayth.sh | covered |
 | UC-dispatch-11 | T1 | `fayth_free` arithmetic: elastic pool remainder, non-elastic cap-minus-running | spira/test-summon-fayth.sh | covered |
 | UC-dispatch-12 | T1 | a live drain gates every summon; an expired drain is lifted and logged | spira/test-summon-fayth.sh | covered |
 | UC-dispatch-13 | T1 | effective lanes are the intersection of `.spira/modes`, repo-map lanes and `SPIRA_FAYTHS` | spira/test-fayth.sh | covered |
-| UC-dispatch-14 | T1 | CHECK 7 draws lanes round-robin then fills the task pool in roster order, capped | — | **GAP** |
+| UC-dispatch-14 | T1 | CHECK 7 draws lanes round-robin then fills the task pool in roster order, capped | spira/test-sentinel-pass.sh | covered |
 | UC-dispatch-15 | T1 | `escape.sh` summons directly on ready work, bypassing pool and lane caps | spira/test-summon-fayth.sh | covered |
-| UC-dispatch-16 | T1 | CHECK 7c reports an unclaimable ready bead once, naming the rejection reason | — | **GAP** |
+| UC-dispatch-16 | T1 | CHECK 7c reports an unclaimable ready bead once, naming the rejection reason | spira/test-unclaimable.sh | covered |
 | UC-dispatch-17 | T1 | the cockpit's NEXT attribution agrees with the CHECK 7c claimability verdict | spira/test-cockpit-unclaimable.sh | covered |
-| UC-dispatch-18 | T1 | CHECK 8 fires only when nothing progressed and plan is starved, subject to cooldown | — | **GAP** |
-| UC-dispatch-19 | T1 | a pass that cannot read the database exits 1 and never reports goal reached | — | **GAP** |
-| UC-dispatch-20 | T1 | a stale lease in every persona's partition is reclaimed and charged; orphans released | — | **GAP** |
-| UC-dispatch-21 | T1 | the ghost classifier never reclaims a bead carrying the ask or reclaim-skip label | — | **GAP** |
-| UC-dispatch-22 | T1 | an unmapped-repo bead is parked with ask+overseer before its claim is released | — | **GAP** |
+| UC-dispatch-18 | T1 | CHECK 8 fires only when nothing progressed and plan is starved, subject to cooldown | spira/test-check8-progressed.sh | covered |
+| UC-dispatch-19 | T1 | a pass that cannot read the database exits 1 and never reports goal reached | spira/test-sentinel-pass.sh | covered |
+| UC-dispatch-20 | T1 | a stale lease in every persona's partition is reclaimed and charged; orphans released | spira/test-check2-reaper.sh | covered |
+| UC-dispatch-21 | T1 | the ghost classifier never reclaims a bead carrying the ask or reclaim-skip label | spira/test-check2-reclaim.sh<br>spira/test-reclaim-escalated.sh<br>spira/test-strand-partition.sh | covered |
+| UC-dispatch-22 | T1 | an unmapped-repo bead is parked with ask+overseer before its claim is released | spira/test-park-unmapped.sh | covered |
 | UC-dispatch-23 | T1 | summoning passes `CPUQuota`, `FAYTH_TIMEOUT_SECONDS` and `--setting-sources` correctly | spira/test-summon-fayth.sh | covered |
-| UC-dispatch-24 | T0 | ops tools are an allowlist of `Bash(pattern)` entries, never bare `Bash` | — | **GAP** |
+| UC-dispatch-24 | T0 | ops tools are an allowlist of `Bash(pattern)` entries, never bare `Bash` | spira/test-ops-allowlist.sh | covered |
 
 ## gate-verdict
 
