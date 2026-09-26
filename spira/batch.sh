@@ -530,8 +530,9 @@ main() {
     if _batch_is_open "$name"; then
         local _ob_forge="${SPIRA_FORGE:-$HERE/forge.sh}"
         local _ob_file; _ob_file="$(_batch_open_file "$name")"
-        local _ob_pr
+        local _ob_pr _ob_branch
         _ob_pr="$(grep '^pr=' "$_ob_file" 2>/dev/null | head -1)"; _ob_pr="${_ob_pr#pr=}"
+        _ob_branch="$(grep '^branch=' "$_ob_file" 2>/dev/null | head -1)"; _ob_branch="${_ob_branch#branch=}"
         if [ -n "$_ob_pr" ]; then
             local _ob_mstat
             _ob_mstat="$("$_ob_forge" pr-mergeability "$repo" "$_ob_pr" 2>/dev/null)" \
@@ -605,7 +606,7 @@ for b in d:
 
         if [ "${#_ob_express_ids[@]}" -gt 0 ] && [ -n "$_ob_pr" ]; then
             local _ob_status_out _ob_status
-            _ob_status_out="$("$_ob_forge" check-status "$repo" "$_ob_pr" 2>/dev/null)" \
+            _ob_status_out="$("$_ob_forge" check-status "$repo" "$_ob_pr" "${_ob_branch:-}" 2>/dev/null)" \
                 || _ob_status_out="pending"
             _ob_status="$(printf '%s\n' "$_ob_status_out" | head -1)"
             _ob_status="${_ob_status:-pending}"

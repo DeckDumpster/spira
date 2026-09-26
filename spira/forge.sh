@@ -7,7 +7,7 @@
 # pr-list-queue <repo-dir>                     prints PR numbers with head spira/queue/*, one per line
 # pr-mergeability <repo-dir> <pr-number>       prints: DIRTY | CLEAN | UNKNOWN
 # pr-state <repo-dir> <pr-number>              prints: open | merged | closed | unknown
-# check-status <repo-dir> <pr-number>          prints: pending | green | red | harness_fault | provision_fault
+# check-status <repo-dir> <pr-number> <branch> prints: pending | green | red | harness_fault | provision_fault
 #                                              then "flaky: <suite>" for each flaky annotation, and
 #                                              "build-error: <line>" per line of a failed build job's error
 # batch-ci-status <repo-dir> <branch>          prints run-id/run-conclusion/run-completed-at/
@@ -183,60 +183,62 @@ except Exception:
         ;;
     check-status)
         pr_n="${1:-}"
-        rollup_json="$( cd "$repo" && ghq pr view "$pr_n" \
-            --json statusCheckRollup,headRefOid 2>/dev/null )" || rollup_json="{}"
-        status="$(printf '%s\n' "${rollup_json:-"{}"}" | python3 -c "
+        branch="${2:-}"
+        # A run belongs to this PR only when it is scoped to this PR's own head branch.
+        # `gh pr view`'s statusCheckRollup is keyed to the head COMMIT: two PRs sharing a
+        # commit (a batch re-opened on an unchanged tree) see each other's check runs there,
+        # so a re-issued PR could inherit a prior PR's red. Without a branch to scope the
+        # lookup there is no way to tell the two apart, so refuse rather than guess
+        # (law-a-control-that-cannot-check-must-refuse): report pending, not red.
+        if [ -z "$branch" ]; then
+            printf 'pending\n'
+            exit 0
+        fi
+        run_list="$( cd "$repo" && ghq run list --branch "$branch" --workflow Gate \
+            --json databaseId,status,conclusion,headSha,url --limit 1 2>/dev/null )" \
+            || run_list="[]"
+        run_id="" run_status="" run_conclusion="" head_sha="" run_url=""
+        while IFS= read -r _rl; do
+            case "$_rl" in
+                run-id:*) run_id="${_rl#run-id:}" ;;
+                run-status:*) run_status="${_rl#run-status:}" ;;
+                run-conclusion:*) run_conclusion="${_rl#run-conclusion:}" ;;
+                head-sha:*) head_sha="${_rl#head-sha:}" ;;
+                run-url:*) run_url="${_rl#run-url:}" ;;
+            esac
+        done < <(printf '%s\n' "${run_list:-"[]"}" | python3 -c "
 import json, sys
 try:
-    checks = (json.load(sys.stdin).get('statusCheckRollup') or [])
-    gate = next((c for c in checks if c.get('name') == 'gate'), None)
-    if not gate:
-        print('pending'); sys.exit()
-    st = (gate.get('status') or '').upper()
-    c  = (gate.get('conclusion') or '').upper()
-    if st in ('QUEUED','IN_PROGRESS','WAITING','REQUESTED','PENDING',''):
-        print('pending')
-    elif c == 'SUCCESS':
-        print('green')
-    elif c in ('SKIPPED','NEUTRAL','STALE','CANCELLED'):
-        print('harness_fault')
-    else:
-        print('red')
+    d = json.load(sys.stdin)
+    r = d[0] if d else {}
 except Exception:
-    print('pending')
-" 2>/dev/null)"
-        status="${status:-pending}"
-        head_sha="$(printf '%s\n' "${rollup_json:-"{}"}" | python3 -c "
-import json, sys
-try: print(json.load(sys.stdin).get('headRefOid', ''))
-except: pass
-" 2>/dev/null)"
-        run_id="" run_url="" jobs_json="" build_err=""
+    r = {}
+print('run-id:' + str(r.get('databaseId','')))
+print('run-status:' + str(r.get('status','')))
+print('run-conclusion:' + str(r.get('conclusion','')))
+print('head-sha:' + str(r.get('headSha','')))
+print('run-url:' + str(r.get('url','')))
+" 2>/dev/null)
+        if [ -z "${run_id:-}" ] || [ "${run_status:-}" != "completed" ]; then
+            status=pending
+        else
+            case "${run_conclusion:-}" in
+                success) status=green ;;
+                skipped|neutral|stale|cancelled) status=harness_fault ;;
+                *) status=red ;;
+            esac
+        fi
+        jobs_json="" build_err="" _run_attributable=0
         if [ "$status" = "green" ] || [ "$status" = "red" ]; then
-            _gate_url_id="$(printf '%s\n' "${rollup_json:-"{}"}" | python3 -c "
-import json, sys, re
-try:
-    checks = (json.load(sys.stdin).get('statusCheckRollup') or [])
-    gate = next((c for c in checks if c.get('name') == 'gate'), None)
-    if gate:
-        url = gate.get('detailsUrl') or ''
-        print(url)
-        m = re.search(r'/runs/(\d+)', url)
-        if m: print(m.group(1))
-except Exception:
-    pass
-" 2>/dev/null)"
-            run_url="$(printf '%s\n' "$_gate_url_id" | sed -n '1p')"
-            run_id="$(printf '%s\n' "$_gate_url_id" | sed -n '2p')"
-            if [ -n "${run_id:-}" ]; then
-                jobs_json="$( cd "$repo" && ghq api \
-                    "repos/{owner}/{repo}/actions/runs/$run_id/jobs" 2>/dev/null )" \
-                    || jobs_json="{}"
-                # When red, check whether provision failed — gate exit 75 means the
-                # branch was never tested; report provision_fault so verdict.sh treats
-                # it as infrastructure rather than charging the members with a test red.
-                if [ "$status" = "red" ]; then
-                    _prov_failed="$(printf '%s\n' "${jobs_json:-"{}"}" | python3 -c "
+            _run_attributable=1
+            jobs_json="$( cd "$repo" && ghq api \
+                "repos/{owner}/{repo}/actions/runs/$run_id/jobs" 2>/dev/null )" \
+                || jobs_json="{}"
+            # When red, check whether provision failed — gate exit 75 means the
+            # branch was never tested; report provision_fault so verdict.sh treats
+            # it as infrastructure rather than charging the members with a test red.
+            if [ "$status" = "red" ]; then
+                _prov_failed="$(printf '%s\n' "${jobs_json:-"{}"}" | python3 -c "
 import json, sys
 try:
     for j in json.load(sys.stdin).get('jobs', []):
@@ -245,15 +247,15 @@ try:
 except Exception:
     pass
 " 2>/dev/null)"
-                    [ "${_prov_failed:-}" = "yes" ] && status="provision_fault"
-                fi
-                # A failed build job precedes suites entirely, so a red here carries no
-                # suite annotations — the queue bisects it (queue_bisect_split, lib.sh)
-                # rather than attributing to a suite that never ran. Reading the build
-                # job's own error names the failing crate/manifest on the ejected bead
-                # instead of leaving the operator to open the run by hand.
-                if [ "$status" = "red" ]; then
-                    _build_job_id="$(printf '%s\n' "${jobs_json:-"{}"}" | python3 -c "
+                [ "${_prov_failed:-}" = "yes" ] && status="provision_fault"
+            fi
+            # A failed build job precedes suites entirely, so a red here carries no
+            # suite annotations — the queue bisects it (queue_bisect_split, lib.sh)
+            # rather than attributing to a suite that never ran. Reading the build
+            # job's own error names the failing crate/manifest on the ejected bead
+            # instead of leaving the operator to open the run by hand.
+            if [ "$status" = "red" ]; then
+                _build_job_id="$(printf '%s\n' "${jobs_json:-"{}"}" | python3 -c "
 import json, sys
 try:
     for j in json.load(sys.stdin).get('jobs', []):
@@ -262,22 +264,22 @@ try:
 except Exception:
     pass
 " 2>/dev/null)"
-                    if [ -n "${_build_job_id:-}" ]; then
-                        build_err="$( cd "$repo" && ghq api \
-                            "repos/{owner}/{repo}/actions/jobs/$_build_job_id/logs" 2>/dev/null \
-                            | sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z //' \
-                            | grep -E '^error(\[E[0-9]+\])?:|^error: could not compile|failed to load manifest for (workspace member|package)' \
-                            | awk '!seen[$0]++' | head -5 )"
-                    fi
+                if [ -n "${_build_job_id:-}" ]; then
+                    build_err="$( cd "$repo" && ghq api \
+                        "repos/{owner}/{repo}/actions/jobs/$_build_job_id/logs" 2>/dev/null \
+                        | sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z //' \
+                        | grep -E '^error(\[E[0-9]+\])?:|^error: could not compile|failed to load manifest for (workspace member|package)' \
+                        | awk '!seen[$0]++' | head -5 )"
                 fi
-                # The suites job hitting gate.yml's own job timeout (or being cancelled
-                # outright) is read by the gate job as a plain step failure (exit 1), so
-                # the rollup's conclusion is FAILURE like any red suite — but no suite ever
-                # completed, so there is nothing to attribute. Read the job's own
-                # conclusion rather than the rollup's: a cancelled/timed-out suites job is
-                # a harness fault (rerun the batch), never a verdict on its members.
-                if [ "$status" = "red" ]; then
-                    _suites_job_fault="$(printf '%s\n' "${jobs_json:-"{}"}" | python3 -c "
+            fi
+            # The suites job hitting gate.yml's own job timeout (or being cancelled
+            # outright) is read by the gate job as a plain step failure (exit 1), so
+            # the rollup's conclusion is FAILURE like any red suite — but no suite ever
+            # completed, so there is nothing to attribute. Read the job's own
+            # conclusion rather than the rollup's: a cancelled/timed-out suites job is
+            # a harness fault (rerun the batch), never a verdict on its members.
+            if [ "$status" = "red" ]; then
+                _suites_job_fault="$(printf '%s\n' "${jobs_json:-"{}"}" | python3 -c "
 import json, sys
 FAULT = ('cancelled', 'timed_out')
 try:
@@ -292,8 +294,7 @@ try:
 except Exception:
     pass
 " 2>/dev/null)"
-                    [ "${_suites_job_fault:-}" = "yes" ] && status="harness_fault"
-                fi
+                [ "${_suites_job_fault:-}" = "yes" ] && status="harness_fault"
             fi
         fi
         # When red, read the full suite list from the batch-results artifact.
@@ -311,7 +312,7 @@ except Exception:
         fi
         printf '%s\n' "$status"
         [ -n "${head_sha:-}" ] && printf 'head-sha: %s\n' "$head_sha"
-        [ -n "${run_url:-}" ] && printf 'run-url: %s\n' "$run_url"
+        [ "$_run_attributable" -eq 1 ] && [ -n "${run_url:-}" ] && printf 'run-url: %s\n' "$run_url"
         if [ -n "${build_err:-}" ]; then
             while IFS= read -r _beline; do
                 [ -n "$_beline" ] && printf 'build-error: %s\n' "$_beline"
