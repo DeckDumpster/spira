@@ -170,9 +170,13 @@ notpoisoned() { poisoned "$2" && bad "$1" "$2 was poisoned" || ok "$1"; }
 # row creates no edge at all.
 seed() {   # seed — the goal, one unclaimable child of it, and that child's blocker
     testdb_reset
-    # The ask's suppression is a mark in the run directory and testdb_reset does not reach it,
-    # so a case that did not clear it would inherit the previous case's silence.
-    rm -rf "$RUN/poison-asked" "$RUN/requeue-asked" "$RUN/reclaim-asked"
+    # THE ASK'S SUPPRESSION AND THE LIFT'S DEDUP ARE BOTH MARKS IN THE RUN DIRECTORY, and
+    # testdb_reset does not reach either — it resets the database, not $SPIRA_RUN. Without
+    # clearing poison-lifted too, a later case that reuses a bead id at the SAME attempt
+    # count a prior case's deadlocked/clear lifted at inherits that lift and is never
+    # poisoned at all (seen when the sp-qd2ul case right after sp-wiyr2's reused sp-orphan
+    # at count 3, the exact count sp-wiyr2's lift recorded).
+    rm -rf "$RUN/poison-asked" "$RUN/requeue-asked" "$RUN/reclaim-asked" "$RUN/poison-lifted"
     testdb_seed <<JSONL
 {"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 {"id":"sp-block","title":"the blocker","status":"open","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z"}

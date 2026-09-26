@@ -346,6 +346,12 @@ notes_cl2="$(bdq show sp-cl2 2>/dev/null | tr -s ' \n\t' ' ')" || notes_cl2=""
 [[ "$notes_cl2" == *"Poison cleared by attempts.sh clear"* ]] && ok "the bead records why" \
     || bad "the bead records why" "got [$notes_cl2]"
 
+# A REAL SECOND APART, deliberately: the floor is created_at > the clear's own timestamp, at
+# whatever resolution bd's events table carries (seconds), and a real claim reaching a bead
+# an operator just cleared is at minimum a sentinel pass away — minutes, not the same tick a
+# test process can produce back-to-back. Racing that tick here would test the clock, not the
+# floor (law-fixtures-carry-real-cadence).
+sleep 1
 bdq update sp-cl2 --status in_progress >/dev/null 2>&1
 is "a claim after the clear is the whole count, not 4" "1" "$(num "$(attempts_of sp-cl2)")"
 
