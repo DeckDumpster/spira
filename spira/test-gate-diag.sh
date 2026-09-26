@@ -74,6 +74,29 @@ printf '\nT3: positive control — printf -- strips dashes without error\n'
     is "printf with %s format is error-free" "" "$err"
 )
 
+# ── T4: red control — a suite that dies mid-setup with no FAIL line still names
+#        the cause (rc, wall time vs its own declared timeout, last output line)
+#        instead of the old "(no FAIL line — see log)" dead end. Uses the real
+#        test-landing-queue-early.sh (declares `# timeout: 120`) so _decl_to is
+#        read from an actual suite header, not a fixture stand-in — this is the
+#        exact incident shape: rc=255 at 70s with only TRACE lines in the log.
+printf '\nT4: suite that dies mid-setup (no FAIL line) reports rc, timing and last line\n'
+(
+    root="$(mktemp -d)"
+    trap 'rm -rf "$root"' EXIT
+    printf 'red _ 70 _ _ _ 255\n' > "$root/test-landing-queue-early.result"
+    printf 'testdb: TRACE: entering server mode initialization for tag=x\ntestdb: TRACE: calling bd init --server with database=x\n' \
+        > "$root/test-landing-queue-early.out"
+
+    out="$(bash "$HERE/gate-diag.sh" "$root" 2>/dev/null)"
+
+    nowant "no longer the dead-end message" '(no FAIL line — see log)' "$out"
+    want   "names the rc"                   'rc=255'                   "$out"
+    want   "names the wall time"            '70s'                      "$out"
+    want   "names the declared timeout"     '120s'                     "$out"
+    want   "names the last output line"     'calling bd init --server' "$out"
+)
+
 # ── summary ────────────────────────────────────────────────────────────────────
 pass="$(grep -c '^ok$'  "$_RESULTS" 2>/dev/null || true)"
 fail="$(grep -c '^bad$' "$_RESULTS" 2>/dev/null || true)"
