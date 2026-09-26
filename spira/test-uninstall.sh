@@ -17,45 +17,34 @@
 # 5. --purge: config and runtime directories are removed.
 # 6. --dry-run: nothing is changed; exit 0.
 # 7. PARTIAL INSTALL: absent artifacts do not cause non-zero exit.
+# 8. --purge-database (G1): removes the beads database and its Dolt data only when the
+#    operator types back the fake bd backend's bead count; a wrong count leaves it
+#    intact with a non-zero exit; plain --purge never touches it.
 #
 # FAIL-FIRST: tested against the state BEFORE uninstall.sh existed to confirm
 # the suite is not trivially green.
 #
-# covers: spira/uninstall.sh spira/owned.sh systemd/install.sh
+# tier: T2
+# covers: spira/uninstall.sh spira/owned.sh systemd/install.sh UC-instance-lifecycle-38 UC-instance-lifecycle-39
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-REAL_REPO="$(cd "$HERE/.." && pwd -P)"
+. "$HERE/testlib.sh"
 REAL_COCKPIT="$(cd "$HERE/../cockpit" && pwd -P)"
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant()  { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "wanted exit 0, got $2"; }
 nonzero() { [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero exit, got 0"; }
 isfile()  { [ -f "$2" ] && ok "$1" || bad "$1" "expected file: $2"; }
+isdir()   { [ -d "$2" ] && ok "$1" || bad "$1" "expected dir: $2"; }
 nofile()  { [ ! -e "$2" ] && ok "$1" || bad "$1" "expected absent: $2"; }
 
 echo "test-uninstall.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
-# ---------------------------------------------------------------------------
-# Fake git repo (for install.sh landref check bypass via SPIRA_INSTALL_FORCE).
-# ---------------------------------------------------------------------------
-FAKE_ORIGIN="$TMP/origin.git"
+# A2's installed-release model runs install.sh from releases/current, not a git
+# checkout — SPIRA_REPO is not a git repo here, and SPIRA_INSTALL_FORCE=1 skips
+# the landref-currency check that only applies to a source checkout.
 FAKE_REPO="$TMP/repo"
-git init -q --bare -b main "$FAKE_ORIGIN" 2>/dev/null
-git init -q -b main "$FAKE_REPO" 2>/dev/null
-git -C "$FAKE_REPO" config user.email t@t
-git -C "$FAKE_REPO" config user.name test
-printf 'seed\n' > "$FAKE_REPO/f"
-git -C "$FAKE_REPO" add f
-git -C "$FAKE_REPO" commit -qm "seed" 2>/dev/null
-git -C "$FAKE_REPO" remote add origin "$FAKE_ORIGIN"
-git -C "$FAKE_REPO" push -q origin main 2>/dev/null
-git -C "$FAKE_REPO" fetch -q origin 2>/dev/null
-git -C "$FAKE_REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+mkdir -p "$FAKE_REPO"
 
 # ---------------------------------------------------------------------------
 # Fixture: minimal harness tree with real scripts behind symlinks so that
@@ -443,5 +432,87 @@ iszero "partial: exit 0 when DEST is empty" "$partial_rc"
 
 # ==========================================================================
 echo
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+echo "--purge-database — removes the DB only on a matching typed-back count (gap G1):"
+# ==========================================================================
+
+# Fake bd backend: 'list --all --format=json' returns a fixed-length array so the
+# right/wrong count is known ahead of time; anything else (conf.sh's own schema
+# probe) is a no-op success.
+cat > "$MOCK_BIN/bd" <<'MOCK'
+#!/usr/bin/env bash
+case "$*" in
+    *"list --all --format=json"*) printf '%s' "${FAKE_BD_LIST_JSON:-[]}" ;;
+    *) exit 0 ;;
+esac
+MOCK
+chmod +x "$MOCK_BIN/bd"
+FAKE_BD_LIST_JSON='[{"id":"a"},{"id":"b"},{"id":"c"}]'   # 3 beads
+
+PURGEDB_DIR="$TMP/beads-db"
+PURGEDB_DOLT="$TMP/dolt-data"
+PURGEDB_TESTDB="$TMP/testdb-data"
+
+_seed_purgedb() {
+    rm -rf "$PURGEDB_DIR" "$PURGEDB_DOLT" "$PURGEDB_TESTDB"
+    mkdir -p "$PURGEDB_DIR/.beads" "$PURGEDB_DOLT" "$PURGEDB_TESTDB"
+}
+
+# un_purgedb <typed-count> [uninstall.sh flags...] — same controlled environment as
+# un(), plus the fake bd backend and a real .beads dir for the purge-database count.
+un_purgedb() {
+    local confirm="$1"; shift
+    env -i \
+        "PATH=$PATH" \
+        "HOME=$TMP/home" \
+        SPIRA_CONF=/nonexistent \
+        "SPIRA_PATH=$MOCK_BIN" \
+        "SPIRA_RUN=$SPIRA_RUN_DIR" \
+        "SPIRA_HOME=$FIXTURE/spira" \
+        "SPIRA_PROD=$FIXTURE/spira" \
+        "SPIRA_REPO=$FAKE_REPO" \
+        "SPIRA_COCKPIT=$REAL_COCKPIT" \
+        "SPIRA_INSTANCE=test" \
+        "SPIRA_DB=$PURGEDB_DIR" \
+        "SPIRA_BD=$MOCK_BIN/bd" \
+        "SPIRA_DOLT_DATA=$PURGEDB_DOLT" \
+        "SPIRA_TESTDB_DATA=$PURGEDB_TESTDB" \
+        "SPIRA_SYSTEMCTL=$MOCK_BIN/systemctl" \
+        "SPIRA_LOGINCTL=$MOCK_BIN/loginctl" \
+        "SPIRA_TMUX=$MOCK_BIN/tmux" \
+        "MOCK_LOG=$MOCK_LOG" \
+        "LINGER_LOG=$LINGER_LOG" \
+        "LAYOUT_LOG=$LAYOUT_LOG" \
+        "FAKE_BD_LIST_JSON=$FAKE_BD_LIST_JSON" \
+        bash "$FIXTURE/spira/uninstall.sh" test --yes "$@" <<< "$confirm" 2>&1
+}
+
+# Wrong count: database, Dolt data and test Dolt data all left intact; non-zero exit.
+_seed_purgedb
+wrong_out="$(un_purgedb "99" --purge-database)"
+wrong_rc=$?
+nonzero "purge-database: wrong count exits non-zero"           "$wrong_rc"
+want    "purge-database: wrong count reports the mismatch"     "count mismatch" "$wrong_out"
+isdir   "purge-database: wrong count leaves .beads intact"     "$PURGEDB_DIR/.beads"
+
+# Right count: database, Dolt data and test Dolt data are all removed; exit 0.
+_seed_purgedb
+right_out="$(un_purgedb "3" --purge-database)"
+right_rc=$?
+iszero "purge-database: right count exits 0"                "$right_rc"
+nofile "purge-database: right count removes the database"   "$PURGEDB_DIR"
+nofile "purge-database: right count removes Dolt data"       "$PURGEDB_DOLT"
+nofile "purge-database: right count removes test Dolt data"  "$PURGEDB_TESTDB"
+
+# Plain --purge (no --purge-database): never prompts for a count, never touches the DB.
+_seed_purgedb
+plain_out="$(un_purgedb "3" --purge)"
+plain_rc=$?
+iszero "purge-database: plain --purge exits 0"                     "$plain_rc"
+nowant "purge-database: plain --purge does not prompt for a count" "Type the count" "$plain_out"
+isdir  "purge-database: plain --purge leaves .beads intact"        "$PURGEDB_DIR/.beads"
+
+rm -rf "$PURGEDB_DIR" "$PURGEDB_DOLT" "$PURGEDB_TESTDB"
+
+# ==========================================================================
+echo
+tl_summary

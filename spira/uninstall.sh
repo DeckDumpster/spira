@@ -46,6 +46,7 @@
 # SPIRA_SYSTEMCTL  — systemctl binary (set by conf.sh)
 # SPIRA_LOGINCTL   — loginctl binary for linger management
 # SPIRA_TMUX       — tmux binary for cockpit pane removal
+# SPIRA_BD         — bd binary for the --purge-database bead count
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
@@ -58,6 +59,7 @@ _un_yes=0
 _un_dry=0
 _un_purge=0
 _un_purge_db=0
+_un_exit=0
 for _a in "$@"; do
     case "$_a" in
         --yes)             _un_yes=1 ;;
@@ -347,6 +349,7 @@ if [ "$_un_purge_db" = 1 ]; then
             { _un_act "removing test Dolt data: $SPIRA_TESTDB_DATA" rm -rf "$SPIRA_TESTDB_DATA"; }
     else
         printf 'uninstall: count mismatch — database NOT removed.\n' >&2
+        _un_exit=1
     fi
     unset _un_db_confirm _un_bead_count
 fi
@@ -414,3 +417,4 @@ fi
 unset _un_strays _un_s
 
 printf '\nuninstall: done.\n'
+exit "$_un_exit"
