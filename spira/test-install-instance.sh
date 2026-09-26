@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
 #
-# test-install-instance.sh — install.sh renders per-instance unit names; prune
-# follows per-instance naming; installing one instance does not disrupt another.
+# test-install-instance.sh — prune follows per-instance naming; installing one
+# instance does not disrupt another.
 #
 #   ./test-install-instance.sh
 #
 # PROPERTIES UNDER TEST
 # ---------------------
-# 1. PER-INSTANCE NAMING: install.sh test writes spira-*-test.service/timer files to
-#    DEST and does NOT write spira-*-prod.* files (no cross-instance contamination).
-#    Non-spira units (cockpit-ensure, concierge, beads-push) keep their plain names.
-# 2. PRUNE: a spira-watch-*-test.service unit that was installed for a watcher row now
+# 1. PRUNE: a spira-watch-*-test.service unit that was installed for a watcher row now
 #    absent from the manifest is disabled. The old template pattern (spira-watch@*.service)
 #    is gone; prune operates on per-instance names.
-# 3. AEON ISOLATION: installing the 'test' instance succeeds even when 'prod' aeons are
+# 2. AEON ISOLATION: installing the 'test' instance succeeds even when 'prod' aeons are
 #    live, because the guard matches spira-aeon-*-test.service, not spira-aeon-*-prod.service.
-# 4. WATCHER INSTALL: when the manifest has a 'testview' row, install.sh writes
+# 3. WATCHER INSTALL: when the manifest has a 'testview' row, install.sh writes
 #    spira-watch-testview-test.service (not spira-watch@testview.service).
+#
+# Per-instance NAMING itself (UC-instance-lifecycle-24 — spira-*-test.* names, plain
+# shared names, the ENABLE-time name) is demoted to test-install-naming.sh (T1, one
+# shared render, no testenv): none of it needs real systemd, only what this file's
+# other three properties do. The baseline install below survives as fixture setup —
+# PRUNE and the sections after it depend on a real, already-installed baseline to
+# diff against.
 #
 # A THIN PASS-THROUGH LOGGER records every systemctl call to a log file and execs
 # real systemctl, so all enable/disable/start/list operations use actual systemd.
@@ -42,8 +46,6 @@ bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 nowant()  { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "wanted exit 0, got $2"; }
-nonzero() { [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero exit, got 0"; }
-atleast() { [ "$3" -ge "$2" ] && ok "$1" || bad "$1" "wanted >= $2, got $3"; }
 
 echo "test-install-instance.sh"
 
@@ -95,7 +97,7 @@ inst() {
 
 # ==========================================================================
 echo
-echo "PER-INSTANCE NAMING — install.sh test writes spira-*-test.* to DEST:"
+echo "BASELINE INSTALL — seeds DEST and real systemd for the sections below:"
 # ==========================================================================
 
 WATCHERS="$TMP/watchers"
@@ -124,33 +126,8 @@ done <<< "$rendered"
 
 clean_out="$(SPIRA_WATCHERS="$WATCHERS" inst)"
 clean_rc=$?
-clean_log="$(cat "$SCTL_LOG")"
 
-iszero "naming: install.sh test exits 0" "$clean_rc"
-
-# Check rendered unit names rather than DEST contents. The batch pre-installs its
-# own units (spira-*-<hash>.*) in DEST before suites run; a DEST scan would falsely
-# flag those. --render shows exactly what install.sh test WOULD write, with no DEST
-# noise. Non-spira names (cockpit-ensure, concierge, beads-push) are plain and are
-# filtered by the grep before the suffix check.
-bad_rendered="$(printf '%s\n' "$rendered" \
-    | grep '^===== spira-' \
-    | sed 's/^===== \(spira-[^ ]*\) =====/\1/' \
-    | grep -v '^spira-.*-test\.' || true)"
-[ -z "$bad_rendered" ] \
-    && ok "naming: all rendered spira-* units have -test suffix" \
-    || bad "naming: rendered units without -test suffix: $bad_rendered" ""
-
-test_files="$(cd "$DEST" && ls -1 spira-*-test.service spira-*-test.timer 2>/dev/null | wc -l | tr -d ' ')"
-atleast "naming: at least 14 spira-*-test units installed" 14 "$test_files"
-
-want  "naming: cockpit-ensure.service present" "cockpit-ensure.service" "$(ls "$DEST")"
-want  "naming: concierge.service present"      "concierge.service"      "$(ls "$DEST")"
-want  "naming: beads-push.service present"     "beads-push.service"     "$(ls "$DEST")"
-
-want  "naming: sentinel timer enabled with -test suffix" "spira-sentinel-test.timer" "$clean_log"
-nowant "naming: no plain spira-sentinel.timer in enable" \
-      "enable --now spira-sentinel.timer" "$clean_log"
+iszero "baseline: install.sh test exits 0" "$clean_rc"
 
 # ==========================================================================
 echo

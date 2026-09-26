@@ -88,77 +88,27 @@ DEST="$HOME/.config/systemd/user"
 # lives alongside install.sh.
 _install_real_dir="$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")")"
 . "$_install_real_dir/units.sh" || exit 1
-unset _install_real_dir
 
 # `dolt` is resolved once, absolutely, because a systemd unit has no PATH worth the name.
 DOLT="$(command -v dolt 2>/dev/null || true)"
 
 # render <template> [<watcher-name>] -> the unit for this instance on stdout.
 #
-# The substitution is done by a program, not by `sed s|@X@|$X|`: a value containing a `|`,
-# an `&` or a backslash would be interpreted by sed, and these values are paths an operator
-# typed. An UNSUBSTITUTED placeholder is a hard failure rather than a line shipped with an
-# `@NAME@` in it, which systemd would accept and then fail on at the worst moment.
-# HANDED IN, NOT INHERITED. conf.sh deliberately does not export anything derived from where
-# it sits — SPIRA_HOME and its children differ per copy of the harness — so this passes them
-# on argv rather than reading an environment that will not have them.
-# SPIRA_INSTANCE is included so a template may embed the instance name if needed (e.g., in a
-# Description= line). The watcher name, when supplied as the second shell argument, is
-# substituted for every %i in the rendered output — replacing systemd's own instance specifier
-# so the unit is a plain file rather than a template instantiation.
+# THE RENDERER ITSELF LIVES IN render.py, NOT HERE, and is shared with unit-ensure.sh:
+# two independent copies of this substitution drifted apart once (unit-ensure.sh's
+# never learned three keys added later to this one), so it silently failed to render
+# any unit using them. Every value is HANDED IN, NOT INHERITED — conf.sh deliberately
+# does not export anything derived from where it sits, so this passes them as named
+# flags rather than reading an environment that will not have them, or relying on
+# positional argv order (which breaks silently when a caller omits one).
 render() {
-    python3 - "$1" "$SPIRA_HOME" "$SPIRA_REPO" "$SPIRA_RUN" "$SPIRA_DB" "$SPIRA_COCKPIT" \
-                   "$SPIRA_DOLT_DATA" "$SPIRA_TESTDB_DATA" "$DOLT" "$SPIRA_PROD" \
-                   "$SPIRA_INSTANCE" "$SPIRA_TESTDB_PORT" "$SPIRA_SUPERVISE_BIN" \
-                   "$SPIRA_SNAP_STALE_S" "$SPIRA_LANDING_PASS_BIN" "${2:-}" <<'PY'
-import os, re, sys
-keys = ["SPIRA_HOME", "SPIRA_REPO", "SPIRA_RUN", "SPIRA_DB", "SPIRA_COCKPIT",
-        "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "DOLT", "SPIRA_PROD", "SPIRA_INSTANCE",
-        "SPIRA_TESTDB_PORT", "SPIRA_SUPERVISE_BIN", "SPIRA_SNAP_STALE_S",
-        "SPIRA_LANDING_PASS_BIN"]
-m = dict(zip(keys, sys.argv[2:16]))
-watcher_name = sys.argv[16] if len(sys.argv) > 16 else ""
-# FALLBACK: an empty SPIRA_PROD is the documented signal that no checkout split
-# is wanted — everything runs from the development checkout (SPIRA_HOME). An
-# empty string substituted into @SPIRA_PROD@ yields ExecStart=/sentinel.sh,
-# which is both wrong and silent (no unresolved placeholder remains).
-if not m["SPIRA_PROD"]:
-    m["SPIRA_PROD"] = m["SPIRA_HOME"]
-m["SPIRA_PROD_COCK"] = os.path.dirname(m["SPIRA_PROD"]) + "/cockpit"
-m["SPIRA_PROD_ROOT"] = os.path.dirname(m["SPIRA_PROD"])
-text = open(sys.argv[1]).read()
-if not m["DOLT"] and "@DOLT@" in text:
-    sys.stderr.write("install: %s: dolt is not on PATH; install dolt before rendering units that need it\n"
-                     % os.path.basename(sys.argv[1]))
-    raise SystemExit(1)
-out = re.sub(r"@([A-Z_]+)@", lambda x: m.get(x.group(1), x.group(0)), text)
-# Substitute %i with the watcher name for templates that use systemd's instance
-# specifier. Under per-instance naming there is no systemd @-template; %i is
-# only a placeholder that render replaces at install time.
-if watcher_name:
-    out = out.replace("%i", watcher_name)
-# For spira-*.timer templates: rewrite Unit=spira-<svc>.service to the
-# instance-suffixed name. inst_name renames the timer FILE by appending
-# SPIRA_INSTANCE, but the explicit Unit= line in the template names the service
-# without that suffix — which defeats the file rename and points the installed
-# timer at the legacy plain-named service instead. A multiline sub on the parsed
-# output is used rather than a template placeholder so the template stays
-# readable without knowing the instance name.
-_tname = os.path.basename(sys.argv[1])
-if _tname.startswith("spira-") and _tname.endswith(".timer"):
-    out = re.sub(
-        r"^(Unit=spira-[A-Za-z0-9_-]+)\.service$",
-        r"\g<1>-" + m["SPIRA_INSTANCE"] + ".service",
-        out,
-        flags=re.MULTILINE,
-    )
-left = sorted(set(re.findall(r"@([A-Z_]+)@", out)))
-if left:
-    sys.stderr.write("install: %s has placeholders nothing fills: %s\n"
-                     % (os.path.basename(sys.argv[1]), ", ".join(left)))
-    raise SystemExit(1)
-sys.stdout.write(out)
-PY
+    python3 "$_install_real_dir/render.py" "$1" \
+        --home "$SPIRA_HOME" --repo "$SPIRA_REPO" --run "$SPIRA_RUN" --db "$SPIRA_DB" \
+        --cockpit "$SPIRA_COCKPIT" --dolt-data "$SPIRA_DOLT_DATA" \
+        --testdb-data "$SPIRA_TESTDB_DATA" --dolt "$DOLT" --prod "$SPIRA_PROD" \
+        --instance "$SPIRA_INSTANCE" --testdb-port "$SPIRA_TESTDB_PORT" \
+        --supervise-bin "$SPIRA_SUPERVISE_BIN" --snap-stale-s "$SPIRA_SNAP_STALE_S" \
+        --landing-pass-bin "$SPIRA_LANDING_PASS_BIN" --watcher-name "${2:-}"
 }
 
 # --laptop: link only the cockpit dialer on this machine and exit. The two halves of the

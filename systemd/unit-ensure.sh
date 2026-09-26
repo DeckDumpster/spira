@@ -28,45 +28,20 @@ DEST="$HOME/.config/systemd/user"
 mkdir -p "$DEST"
 
 . "$_real/units.sh" || exit 1
-unset _real
 
 SC="${SPIRA_SYSTEMCTL:-systemctl}"
 DOLT="$(command -v dolt 2>/dev/null || true)"
 
-# render <template> [<watcher-name>] — kept in sync with install.sh render().
+# render <template> [<watcher-name>] — the same render.py install.sh uses, so the
+# two callers can never drift the way their independent heredoc copies once did.
 render() {
-    python3 - "$1" "$SPIRA_HOME" "$SPIRA_REPO" "$SPIRA_RUN" "$SPIRA_DB" "$SPIRA_COCKPIT" \
-                   "$SPIRA_DOLT_DATA" "$SPIRA_TESTDB_DATA" "$DOLT" "$SPIRA_PROD" \
-                   "$SPIRA_INSTANCE" "$SPIRA_TESTDB_PORT" "${2:-}" <<'PY'
-import os, re, sys
-keys = ["SPIRA_HOME", "SPIRA_REPO", "SPIRA_RUN", "SPIRA_DB", "SPIRA_COCKPIT",
-        "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "DOLT", "SPIRA_PROD", "SPIRA_INSTANCE",
-        "SPIRA_TESTDB_PORT"]
-m = dict(zip(keys, sys.argv[2:13]))
-watcher_name = sys.argv[13] if len(sys.argv) > 13 else ""
-if not m["SPIRA_PROD"]:
-    m["SPIRA_PROD"] = m["SPIRA_HOME"]
-text = open(sys.argv[1]).read()
-if not m["DOLT"] and "@DOLT@" in text:
-    sys.stderr.write("unit-ensure: %s: dolt is not on PATH\n" % os.path.basename(sys.argv[1]))
-    raise SystemExit(1)
-out = re.sub(r"@([A-Z_]+)@", lambda x: m.get(x.group(1), x.group(0)), text)
-if watcher_name:
-    out = out.replace("%i", watcher_name)
-_tname = os.path.basename(sys.argv[1])
-if _tname.startswith("spira-") and _tname.endswith(".timer"):
-    out = re.sub(
-        r"^(Unit=spira-[A-Za-z0-9_-]+)\.service$",
-        r"\g<1>-" + m["SPIRA_INSTANCE"] + ".service",
-        out, flags=re.MULTILINE,
-    )
-left = sorted(set(re.findall(r"@([A-Z_]+)@", out)))
-if left:
-    sys.stderr.write("unit-ensure: %s has unresolved placeholders: %s\n"
-                     % (os.path.basename(sys.argv[1]), ", ".join(left)))
-    raise SystemExit(1)
-sys.stdout.write(out)
-PY
+    python3 "$_real/render.py" "$1" \
+        --home "$SPIRA_HOME" --repo "$SPIRA_REPO" --run "$SPIRA_RUN" --db "$SPIRA_DB" \
+        --cockpit "$SPIRA_COCKPIT" --dolt-data "$SPIRA_DOLT_DATA" \
+        --testdb-data "$SPIRA_TESTDB_DATA" --dolt "$DOLT" --prod "$SPIRA_PROD" \
+        --instance "$SPIRA_INSTANCE" --testdb-port "$SPIRA_TESTDB_PORT" \
+        --supervise-bin "$SPIRA_SUPERVISE_BIN" --snap-stale-s "$SPIRA_SNAP_STALE_S" \
+        --landing-pass-bin "$SPIRA_LANDING_PASS_BIN" --watcher-name "${2:-}"
 }
 
 declare -A _ue_new=()

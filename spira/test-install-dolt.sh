@@ -20,14 +20,14 @@
 # -------------------------
 # conf.sh unconditionally adds /usr/local/bin to PATH (the container installs
 # dolt there), so PATH manipulation cannot make 'command -v dolt' fail inside
-# install.sh. The renderer is instead extracted from install.sh and called
-# directly with controlled args, bypassing conf.sh entirely. This tests the
-# actual Python code, not a copy: awk reads it from the file at test time.
+# install.sh. render.py — the module install.sh and unit-ensure.sh both call —
+# is instead invoked directly with controlled flags, bypassing conf.sh entirely.
+# This runs the actual renderer, not a copy.
 #
-# covers: systemd/install.sh
+# covers: systemd/render.py systemd/install.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-INSTALL_SH="$HERE/../systemd/install.sh"
+RENDER_PY="$HERE/../systemd/render.py"
 pass=0; fail=0
 ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
@@ -41,37 +41,28 @@ echo "test-install-dolt.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 # ---------------------------------------------------------------------------
-# Part 1: Python renderer guard when DOLT is empty
+# Part 1: render.py's guard when DOLT is empty
 #
-# The renderer is a Python heredoc inlined inside install.sh's render()
-# function. awk extracts it at test time so the test runs the actual code
-# rather than a copy. The runner passes controlled argv: template path, then
-# the 11 key values (SPIRA_HOME..SPIRA_TESTDB_PORT), then no watcher name.
+# render.py is called directly with controlled flags, so this is the actual
+# module install.sh and unit-ensure.sh both invoke, not a copy of it.
 # ---------------------------------------------------------------------------
 
-RENDERER_PY="$(awk '
-    /<<'"'"'PY'"'"'/ { in_py=1; next }
-    /^PY$/ && in_py { in_py=0; next }
-    in_py { print }
-' "$INSTALL_SH")"
-
-if [ -z "$RENDERER_PY" ]; then
-    printf 'FATAL: could not extract Python renderer from %s\n' "$INSTALL_SH" >&2
+if [ ! -f "$RENDER_PY" ]; then
+    printf 'FATAL: %s not found\n' "$RENDER_PY" >&2
     exit 1
 fi
 
 DOLT_TEMPLATE="$HERE/../systemd/dolt-beads.service"
 
 # run_renderer <dolt_value> <template_path>
-# Calls the renderer with controlled argv, returns its stdout+stderr and rc.
+# Calls render.py with controlled flags, returns its stdout+stderr and rc.
 run_renderer() {
     local dolt_val="$1" template="$2"
-    printf '%s\n' "$RENDERER_PY" | \
-    python3 - "$template" \
-        /fake_home /fake_repo /fake_run /fake_db /fake_cockpit \
-        /fake_dolt_data /fake_testdb_data \
-        "$dolt_val" \
-        /fake_prod prod 3307 \
+    python3 "$RENDER_PY" "$template" \
+        --home /fake_home --repo /fake_repo --run /fake_run --db /fake_db \
+        --cockpit /fake_cockpit --dolt-data /fake_dolt_data \
+        --testdb-data /fake_testdb_data --dolt "$dolt_val" \
+        --prod /fake_prod --instance prod --testdb-port 3307 \
         2>&1
 }
 
@@ -84,7 +75,7 @@ ctrl_out="$(run_renderer "" "$DOLT_TEMPLATE")"; ctrl_rc=$?
 nonzero "positive control: renderer exits non-zero when DOLT is empty" "$ctrl_rc"
 want    "positive control: output names dolt"       "dolt"        "$ctrl_out"
 want    "positive control: output says not on PATH" "not on PATH" "$ctrl_out"
-want    "positive control: install: prefix present" "install:"    "$ctrl_out"
+want    "positive control: render: prefix present"  "render:"     "$ctrl_out"
 want    "positive control: template file named"     "dolt-beads"  "$ctrl_out"
 
 # ==========================================================================
