@@ -244,6 +244,13 @@ norepo_got="$(conf_val SPIRA_HOME_REPO SPIRA_REPO="$RELEASE_DIR")"
 isne "MANIFEST without repo line: SPIRA_HOME_REPO is not the release dir name" "spira-20990101T000000Z" "$norepo_got"
 is   "MANIFEST without repo line: SPIRA_HOME_REPO is refused (empty)" "" "$norepo_got"
 
+# Only a release-named directory is refused. A non-git tree with any other name (a test
+# fixture, a scratch copy) keeps its directory name, as before sp-j4vi0; refusing there
+# emptied the scope label for every suite that builds one (Concierge round 24).
+SCRATCH_DIR="$TMP/scratch-fixture-repo"; mkdir -p "$SCRATCH_DIR"
+scratch_got="$(conf_val SPIRA_HOME_REPO SPIRA_REPO="$SCRATCH_DIR")"
+is   "non-release non-git dir: SPIRA_HOME_REPO keeps its directory name" "scratch-fixture-repo" "$scratch_got"
+
 # ==========================================================================
 echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

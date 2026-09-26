@@ -244,6 +244,15 @@ spira_conf_defaults() {
         # name — leaving SPIRA_HOME_REPO (and the scope label derived from it) unset is a
         # known, tested state, not a silent wrong answer.
         SPIRA_HOME_REPO="$(awk '$1=="repo"{print $2; exit}' "$SPIRA_REPO/MANIFEST" 2>/dev/null)"
+        # Only a RELEASE directory's name is unusable. Any other non-git tree (a test
+        # fixture, a scratch copy) keeps the old identity, its directory name; refusing
+        # there emptied the scope label for every suite that builds one (round 24).
+        if [ -z "$SPIRA_HOME_REPO" ]; then
+            case "$(basename "$SPIRA_REPO")" in
+                *-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;;
+                *) SPIRA_HOME_REPO="$(basename "$SPIRA_REPO")" ;;
+            esac
+        fi
     fi
     # THE INSTANCE NAME. Two instances (e.g. 'prod' and 'test') may run side by side on
     # one machine; each reads its own database and writes its own runtime tree. 'prod' is
