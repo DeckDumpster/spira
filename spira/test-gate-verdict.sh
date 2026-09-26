@@ -24,38 +24,21 @@
 # of this harness rather than the installed one — the harness's own bytes are part of the
 # key, so a case about a changed harness has to be able to change one.
 #
-# defect: sp-0v8
+# defect: sp-0v8 sp-p4rl
 # tier: T1
-# covers: spira/gate.sh spira/conf.sh
+# covers: spira/gate.sh spira/conf.sh UC-gate-verdict-13
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+. "$HERE/testlib/gate-fixture.sh"
 isnt()   { [ "$2" != "$3" ] && ok "$1" || bad "$1" "did not want [$3]"; }
 
 command -v flock >/dev/null 2>&1 || { echo "  SKIP  flock is not on PATH"; exit 77; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
-export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
-REPO="$TMP/repo"; REMOTE="$TMP/remote.git"; RUN="$TMP/run"; SH="$TMP/spira"
-MAP="$TMP/repo-map"; VDIR="$TMP/verdicts"; GATELOG="$TMP/gate.log"; HOMEDIR="$TMP/home"
+gate_fixture_init "$TMP"
 RUNS="$TMP/invocations"; TRIP="$TMP/trip"
-mkdir -p "$RUN/worktree" "$HOMEDIR" "$SH"
 : > "$RUNS"
-
-# THE GATE UNDER TEST IS A COPY, and it is the copy's own bytes that go into the key. lib.sh
-# and conf.sh travel with it because lib.sh refuses to run without conf.sh beside it;
-# exclude.sh and skew.sh because the gate fails closed on their absence and hashes both;
-# yield.sh because the gate records what it was worth on every way out, and a suite that left
-# it behind would be exercising a path the real gate never takes.
-cp "$HERE/gate.sh" "$HERE/gate-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/skew.sh" \
-   "$HERE/yield.sh" "$SH/"
-
-git init -q --bare -b main "$REMOTE"
-git init -q -b main "$REPO"
-printf 'base\n' > "$REPO/marker"
-git -C "$REPO" add -A; git -C "$REPO" commit -q -m base
-git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
 
 BR=spira/sp-v1
 W="$TMP/work"
@@ -74,19 +57,12 @@ setcmd() {               # setcmd [extra-shell-prefix]
 setcmd
 runs() { wc -l < "$RUNS" | tr -d ' '; }
 
-# The gate's whole environment, named. Ambient configuration decides verdicts, and a suite
-# that inherited a real spira.conf would be asserting about one box
-# (law-gates-run-in-a-clean-environment). SPIRA_VERDICT_TTL is pinned to a NON-DEFAULT
-# throughout: asserting against the shipped 86400 would pass just as well if the number were
-# written into gate.sh, which is the thing a configuration key exists to stop.
+# SPIRA_VERDICT_TTL IS PINNED TO A NON-DEFAULT throughout: asserting against the shipped
+# 86400 would pass just as well if the number were written into gate.sh, which is the thing a
+# configuration key exists to stop.
 TTL=600
 rungate() {              # rungate [VAR=VAL ...] -> the gate's own exit status, output on stdout
-    env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
-        GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
-        SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
-        SPIRA_DB="$TMP/nonexistent-db" SPIRA_REPO_MAP="$MAP" SPIRA_GATE_LOG="$GATELOG" \
-        SPIRA_VERDICTS="$VDIR" SPIRA_VERDICT_TTL="$TTL" \
-        "$@" bash "$SH/gate.sh" "$BR" repo 2>&1
+    gate_fixture_run "$BR" repo SPIRA_VERDICT_TTL="$TTL" "$@"
 }
 entries() { ls -1 "$VDIR" 2>/dev/null | wc -l | tr -d ' '; }
 newest()  { ls -1t "$VDIR"/* 2>/dev/null | head -1; }
@@ -254,6 +230,23 @@ want "and the verdict line says NO_VERDICT"          "VERDICT=NO_VERDICT" "$out"
 # on its next run with a higher budget. Only a PASS is cached.
 entries_before="$(entries)"
 is  "a timeout records no verdict"     "$entries_before" "$(entries)"
+
+# --------------------------------------------------------------------------------------
+# A HARNESS FAULT IS NOT A RED EITHER (UC-gate-verdict-13, second half). The repo-map
+# command converts a container death (testenv-batch.sh exit 2) to exit $SPIRA_GATE_NOVERDICT;
+# that must arrive as harness-fault — never an ordinary red charged to the branch, and never
+# run through base attribution, because a base trial would trivially pass (no changed files)
+# and make the fault look like the branch's own failure.
+# --------------------------------------------------------------------------------------
+rm -f "$TRIP"
+printf 'repo | %s | push | origin/main |  | exit 75\n' "$REPO" > "$MAP"
+entries_before="$(entries)"
+out="$(rungate)"; rc=$?
+is     "a branch trial reporting a harness fault exits NO_VERDICT" 75 "$rc"
+want   "and says harness-fault"               "reason=harness-fault" "$out"
+nowant "and is never charged to the branch"   "reason=branch-red"    "$out"
+nowant "and never becomes BASE_FAIL"          "VERDICT=BASE_FAIL"    "$out"
+is     "and is not cached"           "$entries_before" "$(entries)"
 
 setcmd
 tl_summary
