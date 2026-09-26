@@ -1042,7 +1042,11 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 #     present, is logged on the ejected bead's note.
 #     POSITIVE CONTROL: test-attribution.sh case 15 proves the two-strike
 #     track still applies when there is no bisect state to match against.
+#     sp-vd-bo1 must exist in testdb so bead_reopen returns 0 (open bead: bd
+#     reopen is a no-op with exit 0); without it _attr_eject escalates instead.
 # =============================================================================
+printf '{"id":"sp-vd-bo1","title":"t","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+    | testdb_seed
 build_batch sp-vd-bo1 > /dev/null
 bo1_tip="$(git -C "$REPO" rev-parse spira/sp-vd-bo1)"
 base_sha_30="$(grep '^base=' "$(batch_file)" | cut -d= -f2)"
