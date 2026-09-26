@@ -306,3 +306,83 @@ SWEEP: groomer.sh sweep found 1 LIVELOCK row (sp-1pez5 unclaimable); acted on 0
 1. sp-1pez5 — repeat attempt: no change — spira/sp-av1xy
 - 166 open beads examined
 - 1 LIVELOCK row resolved (sp-1pez5: incident label corrected)
+- No premise-gone closures
+- No duplicates found
+- No splits needed
+- 2 groom-asked beads skipped (operator answer pending)
+
+---
+
+GROOM PASS sp-7o95g (session 2 — rebase conflict resolved, new LIVELOCK rows)
+===============================================================================
+
+TRIGGER: UNCLAIMABLE: sp-1pez5 — fix the fayth: or partition label
+(Session 1 did the main work; this session resolves the rebase conflict and
+handles 2 new LIVELOCK rows that appeared since the previous pass.)
+
+SWEEP: groomer.sh sweep found 2 LIVELOCK rows (sp-2jsf9, sp-sv4ah unclaimable);
+acted on 0 (sweep does not handle unclaimable beads with descriptions).
+
+LIVELOCK ROWS HANDLED: 2
+
+PARTITION LABELS FIXED:
+
+1. sp-sv4ah — repeat attempt: no change — spira/sp-yxwsz
+   - Problem: had 'partition:incident' but not 'incident'; unclaimable by ops
+     persona (FAYTH_LABELS=spira,incident requires standalone 'incident' label)
+   - Same recurring pattern as previous passes (root cause tracked under sp-ui46l,
+     which has since been closed)
+   - Fix: added 'incident' label, removed 'partition:incident' label
+   - Verified: detect_livelocked returns 0 rows after fix
+
+2. sp-2jsf9 — proposal: test-install-hooks-artifact.sh missing # covers: declaration
+   - Problem: had only 'repo:spira, spira' labels; no partition label
+   - Filed by archivist as a proposal about a code defect (development work)
+   - Fix: added 'plan' partition label (builder fayth requires spira + plan)
+   - Verified: detect_livelocked returns 0 rows after fix
+
+GROOM-ASKED (skipped per rules, operator answer pending):
+
+1. sp-he29a — [bug] sp-y2ml8: test-census.sh timeouts (has groom-asked label)
+
+NOTE: sp-ui46l (previously groom-asked) is now closed.
+
+CURRENT STATE:
+- ~158 open beads examined
+- 2 LIVELOCK rows resolved (sp-sv4ah: incident label corrected; sp-2jsf9: plan label added)
+- No premise-gone closures
+- No duplicates found
+- No splits needed
+- 1 groom-asked bead skipped (sp-he29a; operator answer pending)
+
+---
+
+GROOM PASS sp-7o95g (session 3 — rebase conflict resolved, new LIVELOCK rows)
+===============================================================================
+
+TRIGGER: UNCLAIMABLE: sp-1pez5 — fix the fayth: or partition label
+(Sessions 1 and 2 did the main work; this session resolves the rebase conflict
+and handles 1 new premise-gone bead that appeared since the previous pass.)
+
+SWEEP: groomer.sh sweep found 0 livelocked beads; detect_livelocked returned clean.
+
+LIVELOCK ROWS HANDLED: 0
+
+PREMISE-GONE CLOSURES:
+
+1. sp-173ei — UNCLAIMABLE: sp-mlxk4 — fix the fayth: or partition label
+   - sp-mlxk4 (the bead to fix) is already CLOSED (repeat-refused bead, closed
+     2026-09-26 after fix committed in sp-5m133 commit e39744b3)
+   - No partition label fix needed on a closed bead; premise gone
+
+GROOM-ASKED (skipped per rules, operator answer pending):
+
+1. sp-he29a — [bug] sp-y2ml8: test-census.sh timeouts (has groom-asked label)
+
+CURRENT STATE:
+- ~160 open beads examined
+- 0 LIVELOCK rows (sweep and detect_livelocked both clean)
+- 1 premise-gone bead closed (sp-173ei)
+- No duplicates found
+- No splits needed
+- 1 groom-asked bead skipped (sp-he29a; operator answer pending)
