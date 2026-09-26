@@ -7,12 +7,7 @@
 # covers: spira/overrides.sh spira/skew.sh spira/doctor.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-overrides.sh"
 
@@ -177,5 +172,4 @@ list4="$(env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_HOME
 want "list: no longer failed once apply succeeds" "broken sp-testbroken active" "$list4"
 
 echo
-echo "pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+tl_summary
