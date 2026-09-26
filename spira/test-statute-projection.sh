@@ -268,6 +268,11 @@ want "law-synth: real book writes output" "wrote" "$out_synth_ok"
     && ok "law-synth: rendered common-law.md into the temp wiki" \
     || bad "law-synth: rendered common-law.md into the temp wiki" "file missing"
 
+# Snapshot the page as the positive control above left it — the baseline the negative
+# control below must NOT move it from. (Not HEAD: the positive control above already
+# wrote a real, uncommitted regeneration over HEAD's 10-statute fixture page.)
+page_before_negative="$(cat "$WIKI_TMP/wiki/notes/common-law.md" 2>/dev/null)"
+
 # NEGATIVE CONTROL 1: empty database (reset to fresh, which has no law- memories).
 testdb_reset || { bad "testdb_reset" "failed"; }
 
@@ -280,13 +285,9 @@ fi
 want   "law-synth: empty database: mentions refusing" "refusing" "$out_synth_empty"
 nowant "law-synth: empty database: does NOT write"    "wrote"    "$out_synth_empty"
 
-# Verify the committed page was NOT touched.
-page_after_empty="$(git -C "$WIKI_TMP" diff HEAD -- wiki/notes/common-law.md 2>/dev/null)"
-if [ -z "$page_after_empty" ]; then
-    ok "law-synth: empty database: committed page untouched"
-else
-    bad "law-synth: empty database: committed page untouched" "page was modified"
-fi
+# Verify the page was NOT touched.
+page_after_empty="$(cat "$WIKI_TMP/wiki/notes/common-law.md" 2>/dev/null)"
+is "law-synth: empty database: page untouched" "$page_before_negative" "$page_after_empty"
 
 # NEGATIVE CONTROL 2: pointed at a database with far fewer laws than committed page.
 # Add 3 law- entries (committed page has 10, so 3 < 10/2 = 5).
