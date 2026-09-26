@@ -219,7 +219,9 @@ except Exception:
 # --------------------------------------------------------------------------------------
 doctor_check_failed_units() {
     local sc="${SPIRA_SYSTEMCTL:-systemctl}" out n=0 line unit
-    if ! out="$("$sc" --user list-units --state=failed --no-legend 'spira-*' 2>&1)"; then
+    # --plain: without it systemctl prefixes each failed unit with a "● " status bullet,
+    # and the first field below was the bullet, not the unit ("● is a failed systemd unit").
+    if ! out="$("$sc" --user list-units --state=failed --no-legend --plain 'spira-*' 2>&1)"; then
         FAIL "cannot query failed units: $(printf '%s' "$out" | head -1)" \
              "Check the systemd user manager: $sc --user status"
         return

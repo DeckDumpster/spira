@@ -14,6 +14,13 @@
 #   UNITS                         — all unit template names (incl. optional conditionals)
 #   ENABLE                        — unit names (per-instance) that should be enabled
 #   OPTIONAL                      — template names excluded from UNITS by design
+#   UNBUILT                       — the per-instance spira-* templates in OPTIONAL only
+#                                   because a program they need is absent RIGHT NOW (a
+#                                   binary not built, inotifywait missing). An install from
+#                                   a tree that had it installed them; owned.sh lists them
+#                                   so an uninstall run from a tree that lacks it still
+#                                   removes them.
+#   _watch_unbuilt                — watcher names skipped the same way
 #   _watch_names                  — plain watcher names from the manifest (e.g. "testview")
 #   watch_units                   — space-joined per-instance watcher unit names,
 #                                   space-padded at both ends for membership tests
@@ -108,6 +115,7 @@ unset _t _ENABLE_TMPL
 # listed it" — otherwise the check that exists to catch a forgotten unit cries wolf on every
 # box without a Dolt server, and a check that is always red is a check nobody reads.
 OPTIONAL=()
+UNBUILT=()
 
 # promote.sh and its timer are retired — deploy.sh replaced the split-checkout model.
 OPTIONAL+=(spira-promote.service spira-promote.timer)
@@ -119,7 +127,7 @@ if command -v inotifywait >/dev/null 2>&1; then
     UNITS+=(spira-mail-deliver.service)
     ENABLE+=("$(inst_name spira-mail-deliver.service)")
 else
-    OPTIONAL+=(spira-mail-deliver.service)
+    OPTIONAL+=(spira-mail-deliver.service); UNBUILT+=(spira-mail-deliver.service)
     echo "note: inotifywait not found — not installing spira-mail-deliver.service." >&2
     echo "      Install inotify-tools and re-run install.sh to enable mail delivery." >&2
 fi
@@ -153,7 +161,7 @@ if [ -x "${SPIRA_LOOM_BIN:-}" ]; then
     UNITS+=(spira-loom.service)
     ENABLE+=("$(inst_name spira-loom.service)")
 else
-    OPTIONAL+=(spira-loom.service)
+    OPTIONAL+=(spira-loom.service); UNBUILT+=(spira-loom.service)
     echo "note: loom binary not built at ${SPIRA_LOOM_BIN:-<path not set>} — not installing spira-loom.service." >&2
     echo "      Build it: cd \$SPIRA_REPO/loom && cargo build --release, then re-run install.sh." >&2
 fi
@@ -163,7 +171,7 @@ if [ -x "${SPIRA_BROKER_BIN:-}" ]; then
     UNITS+=(spira-broker.service spira-broker.timer)
     ENABLE+=("$(inst_name spira-broker.timer)")
 else
-    OPTIONAL+=(spira-broker.service spira-broker.timer)
+    OPTIONAL+=(spira-broker.service spira-broker.timer); UNBUILT+=(spira-broker.service spira-broker.timer)
     echo "note: broker binary not built at ${SPIRA_BROKER_BIN:-<path not set>} — not installing spira-broker.service." >&2
     echo "      Build it: cd \$SPIRA_REPO/broker && cargo build --release, then re-run install.sh." >&2
 fi
@@ -173,7 +181,7 @@ if [ -x "${SPIRA_LANDING_PASS_BIN:-}" ]; then
     UNITS+=(spira-landing-pass.service spira-landing-pass.timer)
     ENABLE+=("$(inst_name spira-landing-pass.timer)")
 else
-    OPTIONAL+=(spira-landing-pass.service spira-landing-pass.timer)
+    OPTIONAL+=(spira-landing-pass.service spira-landing-pass.timer); UNBUILT+=(spira-landing-pass.service spira-landing-pass.timer)
     echo "note: landing-pass binary not built at ${SPIRA_LANDING_PASS_BIN:-<path not set>} — not installing spira-landing-pass.service." >&2
     echo "      Build it: cd \$SPIRA_REPO/landing-pass && cargo build --release, then re-run install.sh." >&2
 fi
@@ -192,6 +200,7 @@ fi
 # can produce per-instance watcher unit files. watch_units accumulates the installed unit
 # names (e.g., "spira-watch-testview-prod.service") for the prune membership check below.
 _watch_names=()
+_watch_unbuilt=()
 watch_units=" "
 # A DAEMON ROW WHOSE PROGRAM IS NOT BUILT IS NOT INSTALLED — the same hazard as loom below:
 # watchd.sh is executable, but it execs a binary that is not there, so the unit cycles in
@@ -206,6 +215,7 @@ if watch_list="$("$SPIRA_HOME/watchd.sh" units)"; then
         if [ -n "$_wbin" ] && [ ! -x "$_wbin" ]; then
             echo "note: watcher $_wname: $_wbin is not built — not installing $_inst_wu." >&2
             echo "      Build it: cd \$SPIRA_REPO && make build, then re-run install.sh." >&2
+            _watch_unbuilt+=("$_wname")
             continue
         fi
         ENABLE+=("$_inst_wu")

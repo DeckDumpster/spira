@@ -46,11 +46,17 @@ esac
 exit 0
 MOCK
     else
+        # REAL systemctl MARKS A FAILED UNIT WITH A LEADING "● " unless --plain is given
+        # (acceptance phase B printed "● is a failed systemd unit" three times, naming
+        # nothing). The mock reproduces that, so a doctor that forgets --plain is caught.
         cat > "$BIN/systemctl" <<MOCK
 #!/usr/bin/env bash
 case "\$*" in
     *"list-units"*"--state=failed"*)
-        printf '%s\n' "$1" ;;
+        case " \$* " in
+            *" --plain "*) printf '%s\n' "$1" ;;
+            *) [ -n "$1" ] && printf '%s\n' "$1" | sed 's/^/● /' ;;
+        esac ;;
 esac
 exit 0
 MOCK
@@ -82,6 +88,7 @@ out="$(run_doctor || true)"
 sec="$(units_section "$out")"
 want "positive control: FAIL fires" "FAIL" "$sec"
 want "positive control: names the unit" "spira-czar-pass-prod.service" "$sec"
+nowant "positive control: never names the status bullet as the unit" "● is a failed" "$sec"
 
 # ==========================================================================
 echo

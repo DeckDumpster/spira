@@ -256,6 +256,14 @@ if [ "${#_un_unit_names[@]}" -gt 0 ]; then
         fi
     done
     "${SPIRA_SYSTEMCTL:-systemctl}" --user daemon-reload 2>/dev/null || true
+    # CLEAR THE FAILED STATE THE REMOVED UNITS LEAVE BEHIND. systemd keeps a unit that
+    # ended failed in `list-units --state=failed` — as "not-found failed" once its file is
+    # gone — until reset-failed, so an uninstall that stopped a unit mid-run left a ghost
+    # that the NEXT install's doctor preflight fails on. Acceptance phase B failed on three
+    # of them (spira-archive, spira-mail-tidy, spira-sentinel) left by phase A's uninstall.
+    for _un_u in "${_un_unit_names[@]}"; do
+        "${SPIRA_SYSTEMCTL:-systemctl}" --user reset-failed "$_un_u" 2>/dev/null || true
+    done
     printf 'units: stopped %d, removed %d files\n' "$_un_stopped" "$_un_removed"
 fi
 

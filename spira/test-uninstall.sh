@@ -245,6 +245,10 @@ _remaining="$(ls -1 "$DEST"/spira-*-test.service "$DEST"/spira-*-test.timer 2>/d
 # systemctl stop and disable must have been called.
 want "default: stop called on units"    "stop"    "$(cat "$MOCK_LOG")"
 want "default: disable called on units" "disable" "$(cat "$MOCK_LOG")"
+# A unit stopped mid-run or already failed stays in `list-units --state=failed` as
+# "not-found failed" after its file is deleted, and the next install's doctor fails on it
+# (acceptance phase B: spira-archive/-mail-tidy/-sentinel left by phase A's uninstall).
+want "default: failed state cleared for removed units" "reset-failed spira-sentinel-test.service" "$(cat "$MOCK_LOG")"
 
 # Linger must have been disabled, and the stamp consumed.
 want   "default: loginctl disable-linger called" "disable-linger" "$(cat "$LINGER_LOG")"
@@ -597,6 +601,35 @@ iszero "race: uninstall.sh --yes exits 0" "$race_rc"
     || ok  "race: timer-fires-mid-uninstall does not resurrect the service (T2)"
 
 rm -rf "$RACE_STATE" "$RACE_BIN"
+
+# ==========================================================================
+echo
+echo "UNBUILT HERE, INSTALLED THERE — binary-gated units a tarball install left are removed:"
+# ==========================================================================
+# THE ACCEPTANCE FAILURE. A release tarball ships bin/broker and bin/loom, so installing from
+# it installs spira-broker/-loom units; acceptance then ran uninstall.sh from the source
+# checkout, which has no bin/. units.sh leaves a unit out of UNITS when its binary is not
+# built HERE, so owned.sh's manifest omitted them, and uninstall left spira-broker-prod.
+# service, .timer and spira-loom-prod.service behind (reported as strays, never removed).
+# `un` sets no SPIRA_BROKER_BIN/SPIRA_LOOM_BIN, so conf.sh resolves them under $FAKE_REPO,
+# where nothing is built — the source-checkout shape.
+for _ub in spira-broker-test.service spira-broker-test.timer spira-loom-test.service; do
+    printf '[Unit]\nDescription=left by a tarball install\n' > "$DEST/$_ub"
+done
+[ ! -x "$FAKE_REPO/bin/broker" ] && [ ! -x "$FAKE_REPO/target/release/broker" ] \
+    && ok  "unbuilt: positive control — no broker binary in the uninstalling tree" \
+    || bad "unbuilt: positive control — no broker binary in the uninstalling tree" "one exists"
+unbuilt_out="$(un)"
+unbuilt_rc=$?
+iszero "unbuilt: uninstall exits 0" "$unbuilt_rc"
+for _ub in spira-broker-test.service spira-broker-test.timer spira-loom-test.service; do
+    [ -e "$DEST/$_ub" ] \
+        && bad "unbuilt: $_ub is removed" "still in $DEST" \
+        || ok  "unbuilt: $_ub is removed"
+done
+nowant "unbuilt: none of them is left as a stray" "STRAY  spira-broker-test" "$unbuilt_out"
+want   "unbuilt: the broker service was stopped" "stop spira-broker-test.service" "$(cat "$MOCK_LOG")"
+unset _ub
 
 # ==========================================================================
 echo

@@ -70,6 +70,20 @@ _owned_units() {
         inst_w="$(inst_watch_name "$wname")"
         _row unit "$inst_w" "$UNITDIR/$inst_w" install keep
     done
+    # UNITS THIS TREE WOULD NOT INSTALL, BUT ANOTHER TREE DID. units.sh leaves out a unit whose
+    # program is not built HERE (UNBUILT, _watch_unbuilt), and the tree an install ran from is
+    # not always the tree an uninstall runs from: a release tarball ships bin/, a source
+    # checkout does not. Listed as optional so an absent one is simply absent, and so that an
+    # uninstall from the checkout still removes the broker, loom and watcher units a tarball
+    # install put there — the acceptance run left exactly those four behind.
+    for u in "${UNBUILT[@]+"${UNBUILT[@]}"}"; do
+        inst_u="$(inst_name "$u")"
+        _row unit "$inst_u" "$UNITDIR/$inst_u" install optional
+    done
+    for wname in "${_watch_unbuilt[@]+"${_watch_unbuilt[@]}"}"; do
+        inst_w="$(inst_watch_name "$wname")"
+        _row unit "$inst_w" "$UNITDIR/$inst_w" install optional
+    done
 }
 
 _owned_linger() {
