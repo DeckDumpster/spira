@@ -11,15 +11,11 @@
 #   no bd needed for those — just the function).
 #
 # defect: sp-c9d41 sp-jjnmc
+# tier: T1
 # covers: spira/batch.sh spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -360,6 +356,4 @@ is   "m. positive-control: sp-btm reopened (RED)" "1" \
     "$([ "$(awk '{print $1}' "$LANDSTATE/sp-btm" 2>/dev/null)" = "RED" ] && echo 1 || echo 0)"
 want "m. conflict-note: names conflicting file" "conflict3.txt" "$note_m"
 clean_case
-
-printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -16,15 +16,11 @@
 # dependency: bdsim.py already exists and is exercised against real bd once, in
 # test-cockpit-bd-contract.sh — this file does not re-model it).
 #
+# tier: T1
 # covers: spira/batch.sh spira/conf.sh spira/landing.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
@@ -430,6 +426,4 @@ is "G8: batch still opens the PR despite the bd failure" "1" \
     "$(grep -c '^pr=' "$QUEUEDIR/$REPONAME/open" 2>/dev/null || echo 0)"
 nowant "G8: the bd failure is not logged anywhere" "WARN" "$out_g8"
 clean_case
-
-printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

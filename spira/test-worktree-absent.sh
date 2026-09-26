@@ -30,14 +30,12 @@
 # (law-prefer-the-real-dependency).
 #
 # defect: sp-hl92
+# tier: T1
 # covers: spira/lib.sh
 # scar: spira_destroy_worktree refused to prune a registry entry outside SPIRA_RUN/worktree even when the directory was gone; sentinel.log accrued "was not removed" on every pass permanently.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
@@ -124,6 +122,4 @@ log_entry="$(grep "sp-test2" "$SPIRA_REAPLOG" 2>/dev/null | grep REFUSED || true
 [ -n "$log_entry" ] \
     && ok  "REFUSED is written to the reap log for an existing out-of-root path" \
     || bad "REFUSED is written to the reap log for an existing out-of-root path" "not found in $SPIRA_REAPLOG"
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

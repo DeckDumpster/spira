@@ -28,16 +28,12 @@
 #
 # Requires only git and bash — no database fixture.
 #
+# tier: T1
 # covers: spira/wiki-commit.sh spira/aeon.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 WIKI_COMMIT="$HERE/wiki-commit.sh"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 [ -f "$WIKI_COMMIT" ] || { printf 'FATAL: wiki-commit.sh not found at %s\n' "$WIKI_COMMIT" >&2; exit 1; }
 
@@ -169,5 +165,4 @@ is "no new commit created for already-committed file" \
     "$commits_before" "$(git -C "$WIKI" rev-parse HEAD)"
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

@@ -14,16 +14,13 @@
 # leaving members pinned at BATCHED indefinitely with no alarm.
 #
 # defect: sp-7kcj2
+# tier: T1
 # covers: spira/batch.sh spira/forge.sh spira/conf.sh
 # scar: batch.sh returned early on _batch_is_open with no mergeability check; a DIRTY PR
 #       pinned members at BATCHED indefinitely with no alarm.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -146,6 +143,4 @@ case "$(cat "$LANDSTATE/sp-gama" 2>/dev/null)" in BATCHED*)
     ok "CLEAN: sp-gama remains BATCHED" ;;
     *) bad "CLEAN: sp-gama remains BATCHED" \
            "got: $(cat "$LANDSTATE/sp-gama" 2>/dev/null)" ;; esac
-
-printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

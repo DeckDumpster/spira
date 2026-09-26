@@ -25,15 +25,11 @@
 # one that rejects non-digits, case "unknown" opens a PR and ITS assertion fails. Both were
 # run red before this landed.
 #
+# tier: T2
 # covers: spira/batch.sh spira/conf.sh spira/forge.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -150,6 +146,4 @@ want   "idle: batch opened"            "PR 1 opened"          "$out"
 want   "idle: names the reason"        "CI idle"              "$out"
 want   "idle: names the count"         "0 runs queued or in progress" "$out"
 is     "idle: landstate now BATCHED"   "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-idle1")"
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

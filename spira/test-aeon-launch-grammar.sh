@@ -17,13 +17,12 @@
 # anything. Without it, a binary that ignores all flags would pass both assertions vacuously.
 #
 # defect: sp-w8l21
+# tier: T1
 # covers: spira/aeon.sh spira/archivist.sh spira/doctor.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
 iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "expected exit 0, got $2"; }
 notzero() { [ "$2" != 0 ] && ok "$1" || bad "$1" "expected non-zero exit, got 0"; }
 
@@ -58,5 +57,4 @@ echo "correct invocation — --system-prompt-snapshot on must succeed"
 iszero "--system-prompt-snapshot on is accepted" "$_rc"
 
 echo
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

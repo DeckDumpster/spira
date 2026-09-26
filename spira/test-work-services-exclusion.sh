@@ -21,14 +21,11 @@
 # SYSTEMCTL IS STUBBED — no real units are touched.
 #
 # defect: sp-xfg4
+# tier: T1
 # covers: spira/world.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-work-services-exclusion.sh"
 TMP="$(mktemp -d)"
@@ -127,5 +124,4 @@ nowant "cockpit-prod absent from cycle-stop list" "spira-cockpit-prod.service" "
 nowant "loom-prod absent from cycle-stop list"    "spira-loom-prod.service"    "$stopped2"
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

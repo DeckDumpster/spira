@@ -17,17 +17,13 @@
 #   4. SP_OPS_AGE reports 0 when an ops aeon pid is live, not the stale log mtime.
 #
 # defect: sp-06hs
+# tier: T2
 # covers: spira/*.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 isge(){ [ "${2:-0}" -le "${3:-0}" ] 2>/dev/null && ok "$1" \
         || bad "$1" "wanted [$3] >= [$2], got empty or non-integer"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 echo "test-timeout.sh"
 echo
@@ -198,6 +194,5 @@ exec 3>&-                 # close write end; stub's read returns EOF; stub exits
 wait "$STUB_PID" 2>/dev/null; rm -f "$PF"
 is "live pidfile: SP_OPS_AGE is 0" "0" "$age_live"
 
-printf '\ntest-timeout.sh: %d passed, %d failed\n' "$pass" "$fail"
 wait  # reap zombie subshells from earlier command substitutions before exit
-[ "$fail" -eq 0 ]
+tl_summary

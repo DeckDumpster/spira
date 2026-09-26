@@ -37,12 +37,7 @@
 # covers: spira/aeon.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 # CLEAR ANY INHERITED SHARED FIXTURE before building our own. An aeon session exports
 # TESTDB_SHARED=1 with temp dirs that may no longer exist on disk; running testdb_up
@@ -251,5 +246,4 @@ SPIRA_ALLOW_PROD_DIRTY=1 bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || t
 not_reopened "override (despite dirty worktree)" "$b4"
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

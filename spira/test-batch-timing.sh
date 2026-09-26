@@ -19,18 +19,14 @@
 #   files n_red stays 0 and the assertion fails.  A "ok" .result is planted
 #   for sum_s; if wall_s and seconds are not read the sum is 0 and fails.
 #
+# tier: T0
 # covers: spira/gate-timing.sh spira/testenv-batch.sh spira/conf.sh
 # host-reason: reads no live database; all fixtures are local temp dirs
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "unwanted [$2] in [$3]"; }
 
 GATE_TIMING="$HERE/gate-timing.sh"
 CONF_SH="$HERE/conf.sh"
@@ -164,5 +160,4 @@ SPIRA_BATCH_LEDGER="$TMP/ledger-e.tsv" SPIRA_RUN="$TMP" \
 
 # ===========================================================================
 printf '\n'
-[ "$fail" -eq 0 ] && printf '  %d passed\n' "$pass" || printf '  %d passed, %d FAILED\n' "$pass" "$fail"
-exit "$fail"
+tl_summary
