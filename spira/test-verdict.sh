@@ -121,7 +121,22 @@ FORGE_STATUS_FILE="$TMP/forge-status"
 FORGE_RUN_METADATA_FILE="$TMP/forge-run-metadata"
 MAIL_LOG="$TMP/mail-log"
 SUITES_LOG="$TMP/suites-log"
+# Attribution now dispatches per-member CI runs (sp-2hee5) instead of rerunning
+# suites locally. MEMBER_RC_DIR holds one verdict file per member id (or "base"
+# for the baseline-red-on-base check): line 1 is green|red|flaky|fault, line 2
+# (optional) narrows which of the requested suites that verdict actually covers
+# — needed when a request names more than one suite and only some are red.
+# MEMBER_RC_DEFAULT answers any attribution branch with no matching file.
+# DISPATCH_STATE_DIR is where a dispatch call remembers its answer for the
+# check-status poll that follows it. FAIL_LINES_TEXT is the fail-lines command's
+# canned evidence line, when a case needs one.
+MEMBER_RC_DIR="$TMP/member-rc"
+DISPATCH_STATE_DIR="$TMP/dispatch-state"
+FAIL_LINES_TEXT=""
+MEMBER_RC_DEFAULT="green"
+mkdir -p "$MEMBER_RC_DIR" "$DISPATCH_STATE_DIR"
 export FORGE_LOG FORGE_STATUS_FILE FORGE_RUN_METADATA_FILE MAIL_LOG SUITES_LOG
+export MEMBER_RC_DIR DISPATCH_STATE_DIR FAIL_LINES_TEXT MEMBER_RC_DEFAULT
 
 printf 'pending\n' > "$FORGE_STATUS_FILE"
 : > "$FORGE_LOG"
@@ -130,16 +145,70 @@ printf 'pending\n' > "$FORGE_STATUS_FILE"
 : > "$SUITES_LOG"
 
 # ─── Forge fixture ────────────────────────────────────────────────────────────
-# check-status reads FORGE_STATUS_FILE; run-metadata reads FORGE_RUN_METADATA_FILE;
-# run-cancel, workflow-rerun and pr-close append to FORGE_LOG. All vars exported above.
-# Pinned to a non-default SPIRA_FORGE so an assertion passing against "used gh"
-# fails rather than passing vacuously.
+# check-status reads FORGE_STATUS_FILE for the batch's own branch, or replays a
+# dispatched attribution branch's recorded verdict from DISPATCH_STATE_DIR;
+# run-metadata reads FORGE_RUN_METADATA_FILE; run-cancel, workflow-rerun and
+# pr-close append to FORGE_LOG. All vars exported above. Pinned to a non-default
+# SPIRA_FORGE so an assertion passing against "used gh" fails rather than
+# passing vacuously.
 cat > "$SH/forge-fixture.sh" <<'FORGE'
 #!/usr/bin/env bash
 cmd="${1:-}"; shift; repo="${1:-}"; shift
 case "$cmd" in
     check-status)
-        cat "${FORGE_STATUS_FILE}" 2>/dev/null || printf 'pending\n'
+        branch="${2:-}"
+        case "$branch" in
+            */attr/*)
+                key="$(printf '%s' "$branch" | sha256sum | cut -c1-16)"
+                f="$DISPATCH_STATE_DIR/$key"
+                if [ ! -e "$f" ]; then printf 'pending\n'; exit 0; fi
+                kind="$(sed -n 1p "$f")"; vsuites="$(sed -n 2p "$f")"
+                case "$kind" in
+                    green) printf 'green\n' ;;
+                    red)
+                        printf 'red\n'
+                        IFS=',' read -ra _ss <<< "$vsuites"
+                        for _s in "${_ss[@]}"; do [ -n "$_s" ] && printf 'red-suite: %s\n' "$_s"; done
+                        ;;
+                    flaky)
+                        printf 'green\n'
+                        IFS=',' read -ra _ss <<< "$vsuites"
+                        for _s in "${_ss[@]}"; do [ -n "$_s" ] && printf 'flaky: %s\n' "$_s"; done
+                        ;;
+                    *) printf 'harness_fault\n' ;;
+                esac
+                ;;
+            *)
+                cat "${FORGE_STATUS_FILE}" 2>/dev/null || printf 'pending\n'
+                ;;
+        esac
+        ;;
+    dispatch)
+        branch="${1:-}" suites="${2:-}"
+        printf '%s\t%s\tdispatch\n' "$branch" "$suites" >> "$FORGE_LOG"
+        kind="${MEMBER_RC_DEFAULT:-green}" vsuites="$suites"
+        if [ -d "${MEMBER_RC_DIR:-/nonexistent}" ]; then
+            for mf in "$MEMBER_RC_DIR"/*; do
+                [ -e "$mf" ] || continue
+                needle="$(basename "$mf")"
+                case "$branch" in
+                    *"$needle"*)
+                        kind="$(sed -n 1p "$mf")"
+                        _ov="$(sed -n 2p "$mf")"
+                        [ -n "$_ov" ] && vsuites="$_ov"
+                        break
+                        ;;
+                esac
+            done
+        fi
+        mkdir -p "$DISPATCH_STATE_DIR"
+        key="$(printf '%s' "$branch" | sha256sum | cut -c1-16)"
+        { printf '%s\n' "$kind"; printf '%s\n' "$vsuites"; } > "$DISPATCH_STATE_DIR/$key"
+        ;;
+    fail-lines)
+        suites="${2:-}"
+        [ -n "${FAIL_LINES_TEXT:-}" ] || exit 0
+        for _s in $suites; do printf 'fail-line: %s: %s\n' "$_s" "$FAIL_LINES_TEXT"; done
         ;;
     run-id)
         printf 'run-99\n'
@@ -273,6 +342,9 @@ clean_case() {
     : > "$SUITES_LOG"
     rm -f "$RUN/attribution/results.jsonl"
     printf 'pending\n' > "$FORGE_STATUS_FILE"
+    rm -rf "$MEMBER_RC_DIR" "$DISPATCH_STATE_DIR"; mkdir -p "$MEMBER_RC_DIR" "$DISPATCH_STATE_DIR"
+    MEMBER_RC_DEFAULT="green"
+    FAIL_LINES_TEXT=""
     find "$LANDSTATE" -maxdepth 1 -type f -delete 2>/dev/null || true
     local wt
     for wt in "$RUN/worktree"/*; do
@@ -449,24 +521,11 @@ clean_case
 #     NOTIFICATION CONTROL: verify _attr_notify_red is called with the right
 #     decision text ("together-only red") and recipient email is sent.
 # =============================================================================
-# Create a mock testenv-batch.sh that:
-#   - Fails (exit 1) when called for the batch HEAD or batch branches
-#   - Succeeds (exit 0) when called for individual member branches
-# Signature: testenv-batch --mode serial --suites <suites> <branch>
-cat > "$SH/repro-together-only.sh" <<'REPROMOCK'
-#!/usr/bin/env bash
-# Mock: fail only for batch head or 'spira/queue/*' branches; pass for individuals
-# Args: --mode serial --suites <suites> <branch>
-shift 2  # skip --mode serial
-shift 2  # skip --suites <suites>
-branch="${1:-}"
-if [[ "$branch" == "spira/queue"* ]]; then
-    exit 1  # Batch head is red (together-only)
-else
-    exit 0  # Individual member branches are green
-fi
-REPROMOCK
-chmod +x "$SH/repro-together-only.sh"
+# The batch-head ("together-only") recheck reads back the batch's own already-
+# known CI result (FORGE_STATUS_FILE, set red below) rather than dispatching —
+# it IS that same run. Individual members get their own dispatch and must come
+# back green for the together-only condition to trigger.
+MEMBER_RC_DEFAULT="green"
 
 batch_head85="$(build_batch sp-vd-t85-1 sp-vd-t85-2)"
 # Name the batch branch
@@ -478,10 +537,7 @@ batch_head85="$(build_batch sp-vd-t85-1 sp-vd-t85-2)"
 printf 'red\nred-suite: test-suite-together-only.sh\n' > "$FORGE_STATUS_FILE"
 before_main85="$(remote_main)"
 
-out="$( \
-    SPIRA_QUEUE_REPRO_BATCH="$SH/repro-together-only.sh" \
-    verdict "$REPONAME" \
-)"
+out="$(verdict "$REPONAME")"
 
 # Verify: batch stays open (no push to main)
 is   "8.5 together-only: no push"          "$before_main85" "$(remote_main)"
@@ -603,14 +659,8 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 #     all-suites repro finds nothing, the batch head is also green, and all
 #     members are returned to CERTIFIED without ejection or halving.
 # =============================================================================
-cat > "$SH/repro-batch-attr.sh" <<'REPRO'
-#!/usr/bin/env bash
-# Red if the test-ref tree contains guilty-marker.txt; green otherwise.
-ref="${@: -1}"
-git -C "$SPIRA_REPO" ls-tree "$ref" -- guilty-marker.txt 2>/dev/null | grep -q . && exit 1
-exit 0
-REPRO
-chmod +x "$SH/repro-batch-attr.sh"
+printf 'red\n' > "$MEMBER_RC_DIR/sp-vd-a2"
+printf 'green\n' > "$MEMBER_RC_DIR/sp-vd-a1"
 
 # sp-vd-a1: innocent — adds only a plain text file (claims no .sh covers)
 # sp-vd-a2: guilty   — adds guilty-marker.txt (also uncovered, but repro fails)
@@ -639,7 +689,7 @@ git -C "$REPO" worktree remove -f "$wt15" 2>/dev/null || true
 { printf 'pr=55\nhead=%s\nbase=%s\nmembers=sp-vd-a1:%s sp-vd-a2:%s\nopened=%s\n' \
     "$batch_head15" "$base_sha15" "$tip_a1" "$tip_a2" "$(date +%s)"; } > "$(batch_file)"
 printf 'red\nred-suite: test-attr-suite.sh\n' > "$FORGE_STATUS_FILE"
-out="$(SPIRA_QUEUE_REPRO_BATCH="$SH/repro-batch-attr.sh" verdict "$REPONAME")"
+out="$(verdict "$REPONAME")"
 case "$(landstate sp-vd-a2)" in EJECTED*) ok "15. all-suites-repro: guilty ejected" ;;
     *) bad "15. all-suites-repro: guilty ejected" "got: $(landstate sp-vd-a2)" ;; esac
 case "$(landstate sp-vd-a1)" in CERTIFIED*) ok "15. all-suites-repro: innocent CERTIFIED" ;;
@@ -674,7 +724,7 @@ git -C "$REPO" worktree remove -f "$wt16" 2>/dev/null || true
 { printf 'pr=56\nhead=%s\nbase=%s\nmembers=sp-vd-b1:%s sp-vd-b2:%s\nopened=%s\n' \
     "$batch_head16" "$base_sha16" "$tip_b1" "$tip_b2" "$(date +%s)"; } > "$(batch_file)"
 printf 'red\nred-suite: test-attr-suite.sh\n' > "$FORGE_STATUS_FILE"
-out="$(SPIRA_QUEUE_REPRO_BATCH="$SH/repro-batch-attr.sh" verdict "$REPONAME")"
+out="$(verdict "$REPONAME")"
 case "$(landstate sp-vd-b1)" in CERTIFIED*) ok "16. all-suites-ctrl: sp-vd-b1 CERTIFIED" ;;
     *) bad "16. all-suites-ctrl: sp-vd-b1 CERTIFIED" "got: $(landstate sp-vd-b1)" ;; esac
 case "$(landstate sp-vd-b2)" in CERTIFIED*) ok "16. all-suites-ctrl: sp-vd-b2 CERTIFIED" ;;
@@ -696,23 +746,10 @@ clean_case
 #     REGRESSION TEST (case 21): single member, same forge status, same repro
 #     behaviour — observe-flake must not be called (sp-6zw2p).
 # =============================================================================
-# Mock: first call for each unique test_ref exits 1 (red); second exits 0 (green).
-# State is tracked per-ref via a counter file in REPRO_STATE_DIR.
-REPRO_STATE_DIR="$TMP/repro-state-19"
-mkdir -p "$REPRO_STATE_DIR"
-export REPRO_STATE_DIR
-cat > "$SH/repro-flaky.sh" <<'REPRO'
-#!/usr/bin/env bash
-shift 2; shift 2  # skip --mode serial --suites csv
-ref="${1:-}"
-key="$(printf '%s' "$ref" | sha256sum | cut -c1-8)"
-count_file="$REPRO_STATE_DIR/$key"
-count=0; [ -f "$count_file" ] && count=$(cat "$count_file")
-count=$(( count + 1 ))
-printf '%d\n' "$count" > "$count_file"
-[ "$count" -eq 1 ] && exit 1 || exit 0
-REPRO
-chmod +x "$SH/repro-flaky.sh"
+# CI's own gate-retry.sh already resolves a red-then-green suite before verdict.sh
+# ever sees it — that is what a "flaky" dispatch answer now means (one CI run,
+# already reconciled), so both members simply answer flaky directly.
+MEMBER_RC_DEFAULT="flaky"
 
 base_sha19="$(git -C "$REPO" rev-parse origin/main)"
 for id in sp-vd-f1 sp-vd-f2; do
@@ -736,7 +773,7 @@ git -C "$REPO" worktree remove -f "$wt19" 2>/dev/null || true
     "$batch_head19" "$base_sha19" "$tip_f1" "$tip_f2" "$(date +%s)"; } > "$(batch_file)"
 printf 'red\nred-suite: test-flaky-repro.sh\n' > "$FORGE_STATUS_FILE"
 : > "$SUITES_LOG"
-out="$(SPIRA_QUEUE_REPRO_BATCH="$SH/repro-flaky.sh" verdict "$REPONAME")"
+out="$(verdict "$REPONAME")"
 case "$(landstate sp-vd-f1)" in CERTIFIED*) ok "19. flaky-repro: sp-vd-f1 not ejected (CERTIFIED)" ;;
     EJECTED*) bad "19. flaky-repro: sp-vd-f1 not ejected" "was EJECTED" ;;
     *) bad "19. flaky-repro: sp-vd-f1 not ejected" "got: $(landstate sp-vd-f1)" ;; esac
@@ -753,11 +790,7 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 # 20. ALWAYS-RED CONTROL — same batch shape as case 19, but suite fails twice.
 #     The member must still be ejected (retry does not suppress a real failure).
 # =============================================================================
-cat > "$SH/repro-always-red.sh" <<'REPRO'
-#!/usr/bin/env bash
-exit 1
-REPRO
-chmod +x "$SH/repro-always-red.sh"
+MEMBER_RC_DEFAULT="red"
 
 base_sha20="$(git -C "$REPO" rev-parse origin/main)"
 bwt20="$RUN/worktree/sp-vd-g1"
@@ -770,7 +803,7 @@ printf 'BATCHED %s %s\n' "$tip_g1" "$(date +%s)" > "$LANDSTATE/sp-vd-g1"
 { printf 'pr=72\nhead=%s\nbase=%s\nmembers=sp-vd-g1:%s\nopened=%s\n' \
     "$tip_g1" "$base_sha20" "$tip_g1" "$(date +%s)"; } > "$(batch_file)"
 printf 'red\nred-suite: test-always-red.sh\n' > "$FORGE_STATUS_FILE"
-out="$(SPIRA_QUEUE_REPRO_BATCH="$SH/repro-always-red.sh" verdict "$REPONAME")"
+out="$(verdict "$REPONAME")"
 case "$(landstate sp-vd-g1)" in EJECTED*) ok "20. always-red: sp-vd-g1 ejected" ;;
     *) bad "20. always-red: sp-vd-g1 ejected" "got: $(landstate sp-vd-g1)" ;; esac
 want "20. always-red: ejection reported" "ejected" "$out"
@@ -786,20 +819,10 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 # 24. COULD-NOT-JUDGE MEMBER — rc=2 from one member does not exonerate others;
 #     the guilty member (rc=0) is still ejected.
 # =============================================================================
-# Two members: sp-vd-r1 always fails (rc=1 → _repro_is_red returns 0 → ejected).
-# sp-vd-r2's repro exits 2 (harness fault). Only sp-vd-r1 must be ejected.
-cat > "$SH/repro-fault-one.sh" <<'REPRO'
-#!/usr/bin/env bash
-# Positional parsing: --mode <m> --suites <csv> <ref>
-while [[ "${1:-}" == --* ]]; do shift 2; done
-ref="${1:-}"
-# Fault if REPRO_FAULT_TIP (sp-vd-r2's tip) is a parent of the merge ref.
-# SPIRA_REPO is set by _repro_is_red; --no-walk avoids traversal.
-git -C "${SPIRA_REPO:-.}" log --no-walk --pretty="%P" "${ref:-}" 2>/dev/null \
-    | grep -qF "${REPRO_FAULT_TIP:-}" && exit 2
-exit 1
-REPRO
-chmod +x "$SH/repro-fault-one.sh"
+# Two members: sp-vd-r1 always fails (red → ejected). sp-vd-r2's dispatch faults
+# (harness fault). Only sp-vd-r1 must be ejected.
+MEMBER_RC_DEFAULT="red"
+printf 'fault\n' > "$MEMBER_RC_DIR/sp-vd-r2"
 
 base_sha23="$(git -C "$REPO" rev-parse origin/main)"
 for id in sp-vd-r1 sp-vd-r2; do
@@ -812,9 +835,6 @@ for id in sp-vd-r1 sp-vd-r2; do
 done
 tip_r1="$(git -C "$REPO" rev-parse "spira/sp-vd-r1")"
 tip_r2="$(git -C "$REPO" rev-parse "spira/sp-vd-r2")"
-# Tell the stub which tip to fault: r2's tip is a parent of its merge sha.
-REPRO_FAULT_TIP="$tip_r2"
-export REPRO_FAULT_TIP
 wt23="$RUN/worktree/.b23"
 git -C "$REPO" worktree add -q --detach "$wt23" "$base_sha23" 2>/dev/null || true
 git -C "$wt23" merge -q --no-edit --no-ff -m "spira: land sp-vd-r1" "$tip_r1" >/dev/null 2>&1
@@ -824,7 +844,7 @@ git -C "$REPO" worktree remove -f "$wt23" 2>/dev/null || true
 { printf 'pr=83\nhead=%s\nbase=%s\nmembers=sp-vd-r1:%s sp-vd-r2:%s\nopened=%s\n' \
     "$batch_head23" "$base_sha23" "$tip_r1" "$tip_r2" "$(date +%s)"; } > "$(batch_file)"
 printf 'red\nred-suite: test-fault.sh\n' > "$FORGE_STATUS_FILE"
-SPIRA_QUEUE_REPRO_BATCH="$SH/repro-fault-one.sh" SPIRA_BATCH_MAXPAR=2 verdict "$REPONAME" >/dev/null
+SPIRA_BATCH_MAXPAR=2 verdict "$REPONAME" >/dev/null
 case "$(landstate sp-vd-r1)" in EJECTED*) ok "24. could-not-judge: sp-vd-r1 ejected" ;;
     *) bad "24. could-not-judge: sp-vd-r1 ejected" "got: $(landstate sp-vd-r1)" ;; esac
 case "$(landstate sp-vd-r2)" in EJECTED*) bad "24. could-not-judge: sp-vd-r2 not ejected" "was EJECTED" ;;
@@ -836,21 +856,6 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 # 25. EJECTION SET DETERMINISTIC — same 3-member batch run twice; ejected set
 #     is the same regardless of completion order.
 # =============================================================================
-cat > "$SH/repro-first-red.sh" <<'REPRO'
-#!/usr/bin/env bash
-# First unique ref seen exits 1 (red/ejected); all others exit 0 (green).
-while [[ "${1:-}" == --* ]]; do shift 2; done
-ref="${1:-}"
-key="$(printf '%s' "$ref" | sha256sum | cut -c1-8)"
-first_file="$REPRO_STATE_DIR/first-$key"
-if [ ! -f "$first_file" ]; then
-    printf '1\n' > "$first_file"
-    exit 1
-fi
-exit 0
-REPRO
-chmod +x "$SH/repro-first-red.sh"
-
 _run_shuffled_batch() {
     local bsha; bsha="$(git -C "$REPO" rev-parse origin/main)"
     local ids=(sp-vd-s1 sp-vd-s2 sp-vd-s3)
@@ -876,20 +881,16 @@ _run_shuffled_batch() {
     { printf 'pr=84\nhead=%s\nbase=%s\nmembers=sp-vd-s1:%s sp-vd-s2:%s sp-vd-s3:%s\nopened=%s\n' \
         "$bhead" "$bsha" "$t1" "$t2" "$t3" "$(date +%s)"; } > "$(batch_file)"
     printf 'red\nred-suite: test-det.sh\n' > "$FORGE_STATUS_FILE"
-    SPIRA_QUEUE_REPRO_BATCH="$SH/repro-first-red.sh" SPIRA_BATCH_MAXPAR=3 verdict "$REPONAME" >/dev/null
+    # Every member's first (and only) dispatch answers flaky, deterministically —
+    # regardless of dispatch/completion order — matching case 19's reasoning.
+    MEMBER_RC_DEFAULT="flaky"
+    SPIRA_BATCH_MAXPAR=3 verdict "$REPONAME" >/dev/null
     landstate sp-vd-s1 | head -1 | cut -d' ' -f1
     clean_case >/dev/null 2>&1
     git -C "$REPO" fetch -q origin 2>/dev/null || true
 }
 
-REPRO_STATE_DIR="$TMP/repro-state-25a"
-mkdir -p "$REPRO_STATE_DIR"
-export REPRO_STATE_DIR
 res25a="$(_run_shuffled_batch)"
-
-REPRO_STATE_DIR="$TMP/repro-state-25b"
-mkdir -p "$REPRO_STATE_DIR"
-export REPRO_STATE_DIR
 res25b="$(_run_shuffled_batch)"
 
 [ "$res25a" = "$res25b" ] \
@@ -906,21 +907,7 @@ res25b="$(_run_shuffled_batch)"
 #     in repro) still ejects the member; this case proves survival is from
 #     inconclusive repro, not from a missing ejection path.
 # =============================================================================
-REPRO_STATE_DIR26="$TMP/repro-state-26"
-mkdir -p "$REPRO_STATE_DIR26"
-export REPRO_STATE_DIR26
-cat > "$SH/repro-redtwice.sh" <<'REPRO'
-#!/usr/bin/env bash
-shift 2; shift 2  # skip --mode <mode> --suites <csv>
-ref="${1:-}"
-key="$(printf '%s' "$ref" | sha256sum | cut -c1-8)"
-count_file="$REPRO_STATE_DIR26/$key"
-count=0; [ -f "$count_file" ] && count=$(cat "$count_file")
-count=$(( count + 1 ))
-printf '%d\n' "$count" > "$count_file"
-[ "$count" -eq 1 ] && exit 1 || exit 0
-REPRO
-chmod +x "$SH/repro-redtwice.sh"
+MEMBER_RC_DEFAULT="flaky"
 
 base_sha26="$(git -C "$REPO" rev-parse origin/main)"
 bwt26="$RUN/worktree/sp-vd-r26"
@@ -934,7 +921,7 @@ printf 'BATCHED %s %s\n' "$tip_r26" "$(date +%s)" > "$LANDSTATE/sp-vd-r26"
     "$tip_r26" "$base_sha26" "$tip_r26" "$(date +%s)"; } > "$(batch_file)"
 printf 'red\nred-suite: test-gate-classified.sh\n' > "$FORGE_STATUS_FILE"
 : > "$SUITES_LOG"
-out="$(SPIRA_QUEUE_REPRO_BATCH="$SH/repro-redtwice.sh" verdict "$REPONAME")"
+out="$(verdict "$REPONAME")"
 case "$(landstate sp-vd-r26)" in CERTIFIED*) ok "26. red-suite-no-quarantine: member survived (CERTIFIED)" ;;
     EJECTED*) bad "26. red-suite-no-quarantine: member survived" "was EJECTED" ;;
     *) bad "26. red-suite-no-quarantine: member survived" "got: $(landstate sp-vd-r26)" ;; esac
@@ -1224,12 +1211,8 @@ testdb_seed <<JSONL
 {"id":"sp-vd-em1","title":"fix the frobnicator overflow","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"description":"The frobnicator overflows under sustained load and corrupts the output buffer."}
 JSONL
 
-cat > "$SH/repro-em1.sh" <<'REPRO'
-#!/usr/bin/env bash
-printf 'FAIL: test_frobnicator_overflow (expected 200 got 500)\n'
-exit 1
-REPRO
-chmod +x "$SH/repro-em1.sh"
+MEMBER_RC_DEFAULT="red"
+FAIL_LINES_TEXT="FAIL: test_frobnicator_overflow (expected 200 got 500)"
 
 base_sha35="$(git -C "$REPO" rev-parse origin/main)"
 bwt35="$RUN/worktree/sp-vd-em1"
@@ -1243,7 +1226,7 @@ printf 'BATCHED %s %s\n' "$tip_em1" "$(date +%s)" > "$LANDSTATE/sp-vd-em1"
     "$tip_em1" "$base_sha35" "$tip_em1" "$(date +%s)"; } > "$(batch_file)"
 printf 'red\nred-suite: test-always-red.sh\nrun-url: https://example.invalid/actions/runs/9001\n' \
     > "$FORGE_STATUS_FILE"
-SPIRA_QUEUE_REPRO_BATCH="$SH/repro-em1.sh" verdict "$REPONAME" > /dev/null
+verdict "$REPONAME" > /dev/null
 mail35="$(cat "$MAIL_LOG")"
 case "$(landstate sp-vd-em1)" in EJECTED*) ok "35. reproduced-alone: sp-vd-em1 ejected" ;;
     *) bad "35. reproduced-alone: sp-vd-em1 ejected" "got: $(landstate sp-vd-em1)" ;; esac
@@ -1267,11 +1250,7 @@ testdb_seed <<JSONL
 {"id":"sp-vd-em2","title":"quarantine the flaky uploader suite","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"description":"Marks the uploader suite flaky pending a real fix."}
 JSONL
 
-cat > "$SH/repro-fault2.sh" <<'REPRO'
-#!/usr/bin/env bash
-exit 2
-REPRO
-chmod +x "$SH/repro-fault2.sh"
+MEMBER_RC_DEFAULT="fault"
 
 base_sha36="$(git -C "$REPO" rev-parse origin/main)"
 bwt36="$RUN/worktree/sp-vd-em2"
@@ -1286,7 +1265,7 @@ printf 'BATCHED %s %s\n' "$tip_em2" "$(date +%s)" > "$LANDSTATE/sp-vd-em2"
     "$tip_em2" "$base_sha36" "$tip_em2" "$(date +%s)"; } > "$(batch_file)"
 printf 'red\nred-suite: spira/test-vd-em2.sh\nrun-url: https://example.invalid/actions/runs/9002\n' \
     > "$FORGE_STATUS_FILE"
-SPIRA_QUEUE_REPRO_BATCH="$SH/repro-fault2.sh" verdict "$REPONAME" > /dev/null
+verdict "$REPONAME" > /dev/null
 mail36="$(cat "$MAIL_LOG")"
 case "$(landstate sp-vd-em2)" in EJECTED*) ok "36. suite-overlap: sp-vd-em2 ejected" ;;
     *) bad "36. suite-overlap: sp-vd-em2 ejected" "got: $(landstate sp-vd-em2)" ;; esac
@@ -1401,11 +1380,7 @@ testdb_seed <<JSONL
 JSONL
 
 : > "$BATCHER_LOG"
-cat > "$SH/repro-fault-bo2.sh" <<'REPRO'
-#!/usr/bin/env bash
-exit 2
-REPRO
-chmod +x "$SH/repro-fault-bo2.sh"
+MEMBER_RC_DEFAULT="fault"
 
 base_sha39="$(git -C "$REPO" rev-parse origin/main)"
 bwt39="$RUN/worktree/sp-vd-bo2"
@@ -1421,7 +1396,7 @@ printf 'BATCHED %s %s\n' "$tip_bo2" "$(date +%s)" > "$LANDSTATE/sp-vd-bo2"
 printf 'red\nred-suite: test-owned.sh\nrun-url: https://example.invalid/actions/runs/9005\n' \
     > "$FORGE_STATUS_FILE"
 
-SPIRA_QUEUE_REPRO_BATCH="$SH/repro-fault-bo2.sh" verdict "$REPONAME" > /dev/null
+verdict "$REPONAME" > /dev/null
 is     "39. legacy-owned: judgement-ci never called" "0" "$(wc -l < "$BATCHER_LOG")"
 case "$(landstate sp-vd-bo2)" in EJECTED*) ok "39. legacy-owned: member ejected by verdict's own attribution" ;;
     *) bad "39. legacy-owned: member ejected by verdict's own attribution" "got: $(landstate sp-vd-bo2)" ;; esac
@@ -1447,11 +1422,7 @@ testdb_seed <<JSONL
 {"id":"sp-vd-em4b","title":"touch an unrelated second canary suite","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"description":"Adds test-vd-em4b.sh, unrelated to em4a's failure."}
 JSONL
 
-cat > "$SH/repro-fault4.sh" <<'REPRO'
-#!/usr/bin/env bash
-exit 2
-REPRO
-chmod +x "$SH/repro-fault4.sh"
+MEMBER_RC_DEFAULT="fault"
 
 base_sha40="$(git -C "$REPO" rev-parse origin/main)"
 bwt40a="$RUN/worktree/sp-vd-em4a"
@@ -1480,7 +1451,7 @@ git -C "$REPO" worktree remove -f "$wt40" 2>/dev/null || true
     "$batch_head40" "$base_sha40" "$tip_em4a" "$tip_em4b" "$(date +%s)"; } > "$(batch_file)"
 printf 'red\nred-suite: test-vd-em4a.sh\nred-suite: test-vd-em4b.sh\nrun-url: https://example.invalid/actions/runs/9004\n' \
     > "$FORGE_STATUS_FILE"
-SPIRA_QUEUE_REPRO_BATCH="$SH/repro-fault4.sh" verdict "$REPONAME" > /dev/null
+verdict "$REPONAME" > /dev/null
 
 awk '/^send operator/{n++} {print > ("'"$TMP"'/mailblock40." n)}' "$MAIL_LOG"
 mail40a="$(cat "$TMP/mailblock40.1" 2>/dev/null)"
@@ -1510,34 +1481,14 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 #     that ignored the base-only check would still see both suites red
 #     against the guilty member and could not be told apart by accident.
 # =============================================================================
-cat > "$SH/repro-baseline.sh" <<'REPRO'
-#!/usr/bin/env bash
-# Simulates testenv-batch.sh's own per-suite RED/ok reporting.
-# Args: --mode <parallel|serial> --suites <csv> <ref>
-shift 2
-shift
-csv="$1"; shift
-ref="$1"
-rc=0
-IFS=',' read -ra suites <<< "$csv"
-for s in "${suites[@]}"; do
-    red=0
-    case "$s" in
-        test-base-broken.sh) red=1 ;;
-        test-real-offender.sh)
-            git -C "$SPIRA_REPO" ls-tree "$ref" -- guilty-marker.txt 2>/dev/null | grep -q . && red=1
-            ;;
-    esac
-    if [ "$red" = 1 ]; then
-        printf '  %-32s RED     rc=1 after 1s\n' "$s"
-        rc=1
-    else
-        printf '  %-32s ok      1s\n' "$s"
-    fi
-done
-exit "$rc"
-REPRO
-chmod +x "$SH/repro-baseline.sh"
+# The baseline-red-on-base dispatch (branch names "base") is red for
+# test-base-broken.sh only — the override line narrows the request's full
+# suite list down to the one this check actually found red. The genuine
+# offender (sp-vd-bl2) is red for test-real-offender.sh alone, once baseline
+# exclusion has narrowed what's left to attribute.
+printf 'red\ntest-base-broken.sh\n' > "$MEMBER_RC_DIR/base"
+printf 'red\ntest-real-offender.sh\n' > "$MEMBER_RC_DIR/sp-vd-bl2"
+printf 'green\n' > "$MEMBER_RC_DIR/sp-vd-bl1"
 
 base_sha41="$(git -C "$REPO" rev-parse origin/main)"
 for id in sp-vd-bl1 sp-vd-bl2; do
@@ -1564,7 +1515,7 @@ git -C "$REPO" worktree remove -f "$wt41" 2>/dev/null || true
 { printf 'pr=61\nhead=%s\nbase=%s\nmembers=sp-vd-bl1:%s sp-vd-bl2:%s\nopened=%s\n' \
     "$batch_head41" "$base_sha41" "$tip_bl1" "$tip_bl2" "$(date +%s)"; } > "$(batch_file)"
 printf 'red\nred-suite: test-base-broken.sh\nred-suite: test-real-offender.sh\n' > "$FORGE_STATUS_FILE"
-SPIRA_QUEUE_REPRO_BATCH="$SH/repro-baseline.sh" verdict "$REPONAME" > /dev/null
+verdict "$REPONAME" > /dev/null
 mail41="$(cat "$MAIL_LOG")"
 
 case "$(landstate sp-vd-bl2)" in EJECTED*) ok "41. baseline-red: guilty ejected" ;;
@@ -1618,7 +1569,8 @@ git -C "$REPO" worktree remove -f "$wt42" 2>/dev/null || true
 { printf 'pr=62\nhead=%s\nbase=%s\nmembers=sp-vd-bz1:%s sp-vd-bz2:%s\nopened=%s\n' \
     "$batch_head42" "$base_sha42" "$tip_bz1" "$tip_bz2" "$(date +%s)"; } > "$(batch_file)"
 printf 'red\nred-suite: test-base-broken.sh\n' > "$FORGE_STATUS_FILE"
-out42="$(SPIRA_QUEUE_REPRO_BATCH="$SH/repro-baseline.sh" verdict "$REPONAME")"
+printf 'red\n' > "$MEMBER_RC_DIR/base"
+out42="$(verdict "$REPONAME")"
 mail42="$(cat "$MAIL_LOG")"
 
 case "$(landstate sp-vd-bz1)" in CERTIFIED*) ok "42. all-baseline-red: sp-vd-bz1 CERTIFIED" ;;

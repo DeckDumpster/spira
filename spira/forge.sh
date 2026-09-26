@@ -20,6 +20,8 @@
 # run-metadata <repo-dir> <run-id>             prints: started-at: <epoch>; last-activity: <epoch>
 # run-cancel <repo-dir> <run-id>               cancels an in-progress run
 # workflow-rerun <repo-dir> <run-id>           re-queues a failed workflow run
+# dispatch <repo-dir> <ref> <suites-csv>       triggers a Gate run on <ref> restricted to <suites-csv>
+# fail-lines <repo-dir> <run-id> <suites>      evidence lines for the named suites, from the run's artifact
 # pr-close <repo-dir> <pr-number>              closes the PR without merging
 # pr-comment <repo-dir> <pr-number> <body>     posts a comment to the PR
 # branch-protect <repo-dir> <branch>           set: required gate check, no force-push, no delete
@@ -30,12 +32,11 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 . "$HERE/lib.sh"
 
-# Full suite list from the batch-results artifact, for a completed red run. GitHub caps
-# per-step annotations at 10; the artifact carries the whole list. Prints "red-suite: <s>"
-# / "flaky: <s>" lines, or "artifact-truncated: <n>/<m>" if the artifact's own count says
-# it holds fewer entries than it claims, or nothing if there is no artifact to read.
-_forge_red_suites_artifact() {   # _forge_red_suites_artifact <repo-dir> <run-id>
-    local repo="$1" run_id="$2" _art_id _art_tmp _out=""
+# Downloads the run's batch-results artifact zip to a temp dir and prints the zip's
+# path (caller removes its parent dir), or nothing (rc 1) if no such artifact exists.
+# Shared by the red-suite reader below and by the fail-line reader attribution uses.
+_forge_artifact_zip() {   # _forge_artifact_zip <repo-dir> <run-id>
+    local repo="$1" run_id="$2" _art_id _art_tmp
     _art_id="$( cd "$repo" && ghq api \
         "repos/{owner}/{repo}/actions/runs/$run_id/artifacts" 2>/dev/null \
         | python3 -c "
@@ -46,12 +47,26 @@ try:
             print(a['id']); break
 except: pass
 " 2>/dev/null )" || _art_id=""
-    if [ -n "${_art_id:-}" ]; then
-        _art_tmp="$(mktemp -d)"
-        if ( cd "$repo" && ghq api \
-            "repos/{owner}/{repo}/actions/artifacts/$_art_id/zip" 2>/dev/null ) \
-            > "$_art_tmp/b.zip" 2>/dev/null && [ -s "$_art_tmp/b.zip" ]; then
-            _out="$(python3 - "$_art_tmp/b.zip" <<'PYEOF' 2>/dev/null
+    [ -n "${_art_id:-}" ] || return 1
+    _art_tmp="$(mktemp -d)"
+    if ( cd "$repo" && ghq api \
+        "repos/{owner}/{repo}/actions/artifacts/$_art_id/zip" 2>/dev/null ) \
+        > "$_art_tmp/b.zip" 2>/dev/null && [ -s "$_art_tmp/b.zip" ]; then
+        printf '%s\n' "$_art_tmp/b.zip"
+        return 0
+    fi
+    rm -rf "$_art_tmp" 2>/dev/null || true
+    return 1
+}
+
+# Full suite list from the batch-results artifact, for a completed red run. GitHub caps
+# per-step annotations at 10; the artifact carries the whole list. Prints "red-suite: <s>"
+# / "flaky: <s>" lines, or "artifact-truncated: <n>/<m>" if the artifact's own count says
+# it holds fewer entries than it claims, or nothing if there is no artifact to read.
+_forge_red_suites_artifact() {   # _forge_red_suites_artifact <repo-dir> <run-id>
+    local repo="$1" run_id="$2" _zip _out=""
+    _zip="$(_forge_artifact_zip "$repo" "$run_id")" || { printf '%s' ""; return 0; }
+    _out="$(python3 - "$_zip" <<'PYEOF' 2>/dev/null
 import zipfile, json, sys
 try:
     with zipfile.ZipFile(sys.argv[1]) as z:
@@ -103,10 +118,37 @@ except Exception:
     pass
 PYEOF
 )"
-        fi
-        rm -rf "$_art_tmp" 2>/dev/null || true
-    fi
+    rm -rf "$(dirname "$_zip")" 2>/dev/null || true
     printf '%s' "$_out"
+}
+
+# Evidence lines for an ejected member's mail, read from the same artifact rather than
+# a local rerun's stdout: up to 20 lines containing FAIL from each named suite's own
+# <suite>.out, or its last 20 lines if none matched. Prints "fail-line: <suite>: <text>".
+_forge_fail_lines_artifact() {   # _forge_fail_lines_artifact <repo-dir> <run-id> <suites-space-sep>
+    local repo="$1" run_id="$2" suites="$3" _zip s
+    _zip="$(_forge_artifact_zip "$repo" "$run_id")" || return 0
+    for s in $suites; do
+        python3 - "$_zip" "$s" <<'PYEOF' 2>/dev/null
+import zipfile, sys
+zpath, suite = sys.argv[1], sys.argv[2]
+try:
+    with zipfile.ZipFile(zpath) as z:
+        name = next((n for n in z.namelist()
+                     if n == suite + '.out' or n.endswith('/' + suite + '.out')), None)
+        if name is None:
+            sys.exit(0)
+        lines = z.read(name).decode('utf-8', 'replace').splitlines()
+        fails = [l for l in lines if 'FAIL' in l][:20]
+        if not fails:
+            fails = lines[-20:]
+        for l in fails:
+            print('fail-line: ' + suite + ': ' + l)
+except Exception:
+    pass
+PYEOF
+    done
+    rm -rf "$(dirname "$_zip")" 2>/dev/null || true
 }
 
 # Fallback suite list from per-job annotations (capped at 10 per step by GitHub) — used
@@ -624,6 +666,23 @@ except Exception: pass
     pr-close)
         pr_n="${1:-}"
         ( cd "$repo" && ghq pr close "$pr_n" ) 2>/dev/null
+        ;;
+    dispatch)
+        # dispatch <repo-dir> <ref> <suites-csv> — triggers a Gate workflow_dispatch
+        # run scoped to <ref>, restricted to <suites-csv>. verdict.sh's red-batch
+        # attribution pushes a member's merged tip to a throwaway branch and calls
+        # this instead of rerunning the suites locally (sp-2hee5); check-status on
+        # that same branch reads the verdict once the run completes.
+        ref="${1:-}" suites="${2:-}"
+        [ -n "$ref" ] || { printf 'forge.sh: dispatch: ref required\n' >&2; exit 1; }
+        ( cd "$repo" && ghq workflow run Gate --ref "$ref" -f "suites=$suites" ) 2>/dev/null
+        ;;
+    fail-lines)
+        # fail-lines <repo-dir> <run-id> <suites-space-sep> — evidence lines for an
+        # ejection note, read from the run's own batch-results artifact.
+        run_id="${1:-}" suites="${2:-}"
+        [ -n "$run_id" ] || exit 0
+        _forge_fail_lines_artifact "$repo" "$run_id" "$suites"
         ;;
     pr-comment)
         pr_n="${1:-}" body="${2:-}"

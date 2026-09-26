@@ -554,4 +554,28 @@ if [ -r "$ACC_YML" ]; then
 fi
 
 echo
+echo "22. merge-queue attribution can dispatch a run scoped to specific suites (sp-2hee5):"
+# verdict.sh's red-batch attribution pushes a member's merged tip to a throwaway
+# branch and dispatches a Gate run against it via workflow_dispatch, restricted to
+# the suites in question, instead of rerunning them on the concierge box. Without
+# this input the dispatched run would fall through to "no suites named" and run
+# either nothing (a PR) or the whole corpus (anything else) -- never the specific
+# suite(s) attribution asked about.
+_wd_block="$(awk '/^  workflow_dispatch:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML")"
+if [ -z "$_wd_block" ]; then
+    bad "the workflow_dispatch block was located (positive control)" "awk extracted nothing"
+else
+    ok "the workflow_dispatch block was located"
+fi
+want "workflow_dispatch accepts a suites input" "suites:" "$_wd_block"
+want "the suites input is optional"             "required: false" "$_wd_block"
+if [ -z "$_select_step" ]; then
+    bad "the Select suites step was located (positive control, reused from case 14)" "awk extracted nothing"
+else
+    ok "the Select suites step was located (positive control, reused from case 14)"
+fi
+want "select checks for workflow_dispatch"        "workflow_dispatch" "$_select_step"
+want "select reads the suites input"              "inputs.suites"     "$_select_step"
+
+echo
 tl_summary

@@ -62,11 +62,24 @@ export FORGE_LOG FORGE_STATUS_FILE FORGE_RUN_METADATA_FILE MAIL_LOG SUITES_LOG
 
 : > "$FORGE_LOG"; : > "$FORGE_RUN_METADATA_FILE"; : > "$MAIL_LOG"; : > "$SUITES_LOG"
 
+# check-status answers an attribution branch (spira/attr/...) from ATTR_STATUS_FILE
+# — dispatch itself no longer runs a suite locally (sp-2hee5), so a case that wants
+# attribution "in progress" (case 21) or bounded by concurrency (22/23) does its work
+# in DISPATCH_HOOK, called synchronously once per member from within _repro_is_red.
 cat > "$SH/forge-fixture.sh" <<'FORGE'
 #!/usr/bin/env bash
 cmd="${1:-}"; shift; repo="${1:-}"; shift
 case "$cmd" in
-    check-status) cat "${FORGE_STATUS_FILE}" 2>/dev/null || printf 'pending\n' ;;
+    check-status)
+        branch="${2:-}"
+        case "$branch" in
+            */attr/*) cat "${ATTR_STATUS_FILE:-/dev/null}" 2>/dev/null || printf 'green\n' ;;
+            *) cat "${FORGE_STATUS_FILE}" 2>/dev/null || printf 'pending\n' ;;
+        esac
+        ;;
+    dispatch)
+        [ -x "${DISPATCH_HOOK:-}" ] && "$DISPATCH_HOOK" "$@"
+        ;;
     run-id) printf 'run-99\n' ;;
     run-metadata) cat "${FORGE_RUN_METADATA_FILE}" 2>/dev/null || true ;;
     run-cancel) printf '%s\tcancel\n' "${1:-}" >> "$FORGE_LOG" ;;
@@ -154,19 +167,22 @@ echo "test-verdict-replay.sh"
 # 21. TERM TRAP: a verdict.sh process interrupted by TERM during attribution
 #     writes "attribution of PR ... interrupted after ...s" to landing.log.
 #
-#     POSITIVE CONTROL: the repro stub writes its own PID to a flag file before
-#     sleeping. The test waits for that file before sending TERM, proving that
-#     TERM arrives while the replay is genuinely in progress.
+#     POSITIVE CONTROL: the dispatch hook writes a flag file before returning.
+#     ATTR_STATUS_FILE stays "pending" forever, so verdict.sh is blocked inside
+#     _repro_ci_wait's poll sleep (1s, via SPIRA_QUEUE_REPRO_CI_POLLSEC) when
+#     TERM arrives — genuinely in progress, not exited early.
 # =============================================================================
 _repro21_pid_file="$RUN/repro21-pid"
 rm -f "$_repro21_pid_file"
 
-cat > "$SH/repro-slow.sh" <<REPRO
+cat > "$SH/dispatch-slow.sh" <<REPRO
 #!/usr/bin/env bash
 printf '%s\n' "\$\$" > "$_repro21_pid_file"
-sleep 60
 REPRO
-chmod +x "$SH/repro-slow.sh"
+chmod +x "$SH/dispatch-slow.sh"
+
+ATTR_STATUS_FILE="$TMP/attr-status-21"
+printf 'pending\n' > "$ATTR_STATUS_FILE"
 
 base_sha21t="$(git -C "$REPO" rev-parse origin/main)"
 bwt21t="$RUN/worktree/sp-vd-t1"
@@ -186,7 +202,9 @@ SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
 SPIRA_REPO_MAP="$SH/repo-map" \
 SPIRA_QUEUE_DIR="$QUEUEDIR" \
 SPIRA_FORGE="$SH/forge-fixture.sh" \
-SPIRA_QUEUE_REPRO_BATCH="$SH/repro-slow.sh" \
+SPIRA_QUEUE_REPRO_CI_POLLSEC=1 \
+DISPATCH_HOOK="$SH/dispatch-slow.sh" \
+ATTR_STATUS_FILE="$ATTR_STATUS_FILE" \
     bash "$SH/verdict.sh" "$REPONAME" &
 vd_pid=$!
 
@@ -198,12 +216,10 @@ if [ -f "$_repro21_pid_file" ]; then
     ok "21. TERM trap: positive control — repro started before TERM"
 else
     bad "21. TERM trap: positive control — repro started before TERM" \
-        "repro stub never wrote PID file (verdict may have exited early)"
+        "dispatch hook never wrote PID file (verdict may have exited early)"
 fi
 
-_repro_pid="$(cat "$_repro21_pid_file" 2>/dev/null || true)"
 kill -TERM "$vd_pid" 2>/dev/null || true
-[ -n "$_repro_pid" ] && kill -9 "$_repro_pid" 2>/dev/null || true
 wait "$vd_pid" 2>/dev/null || true
 
 want "21. TERM trap: interrupted line in landing.log" \
@@ -212,16 +228,17 @@ want "21. TERM trap: interrupted line in landing.log" \
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
-# ─── Concurrency-counter stub for cases 22/23 ─────────────────────────────────
-# Each invocation bumps a lock-protected counter, records the running peak,
-# sleeps 1s (long enough that overlapping invocations really do overlap under
-# container load), then decrements. exit 1 keeps the batch red so every member
-# is replayed.
+# ─── Concurrency-counter dispatch hook for cases 22/23 ────────────────────────
+# Each dispatch call (one per member, synchronous within _repro_is_red) bumps a
+# lock-protected counter, records the running peak, sleeps 1s (long enough that
+# overlapping invocations really do overlap under container load), then
+# decrements. ATTR_STATUS_FILE answers green — this case only measures
+# concurrency, not ejection outcome.
 CTR_DIR="$TMP/ctr"
 mkdir -p "$CTR_DIR"
 reset_counter() { printf '0' > "$CTR_DIR/count"; printf '0' > "$CTR_DIR/max"; }
 
-cat > "$SH/repro-concurrency.sh" <<REPRO
+cat > "$SH/dispatch-concurrency.sh" <<REPRO
 #!/usr/bin/env bash
 {
     flock -x 200
@@ -236,9 +253,12 @@ sleep 1
     cur=\$(( \$(cat "$CTR_DIR/count" 2>/dev/null || echo 0) - 1 ))
     printf '%s' "\$cur" > "$CTR_DIR/count"
 } 200>"$CTR_DIR/lock"
-exit 1
 REPRO
-chmod +x "$SH/repro-concurrency.sh"
+chmod +x "$SH/dispatch-concurrency.sh"
+export DISPATCH_HOOK="$SH/dispatch-concurrency.sh"
+ATTR_STATUS_FILE="$TMP/attr-status-2223"
+printf 'green\n' > "$ATTR_STATUS_FILE"
+export ATTR_STATUS_FILE
 
 build_replay_batch() {
     local prefix="$1"
@@ -252,8 +272,7 @@ build_replay_batch() {
 # =============================================================================
 reset_counter
 build_replay_batch sp-vd-p
-SPIRA_QUEUE_REPRO_BATCH="$SH/repro-concurrency.sh" SPIRA_BATCH_MAXPAR=3 \
-    verdict "$REPONAME" >/dev/null
+SPIRA_BATCH_MAXPAR=3 verdict "$REPONAME" >/dev/null
 is "22. parallel: peak concurrency reaches MAXPAR=3" "3" "$(cat "$CTR_DIR/max")"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
@@ -266,8 +285,7 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 # =============================================================================
 reset_counter
 build_replay_batch sp-vd-q
-SPIRA_QUEUE_REPRO_BATCH="$SH/repro-concurrency.sh" SPIRA_BATCH_MAXPAR=1 \
-    verdict "$REPONAME" >/dev/null
+SPIRA_BATCH_MAXPAR=1 verdict "$REPONAME" >/dev/null
 is "23. serial: peak concurrency stays at 1" "1" "$(cat "$CTR_DIR/max")"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
