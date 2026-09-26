@@ -20,7 +20,12 @@
 #    disabled on the next ensure regardless of whether cargo is on PATH — the old
 #    guard skipped the check entirely whenever cargo was present, which is exactly
 #    "cargo present, build never run" — the case that produced 1500+ failed broker
-#    ticks. Paired with a binary-present run that must NOT disable it.
+#    ticks. Paired with a binary-present run that must NOT disable it. Also proven
+#    reachable on a run where no unit file's content changed — the guard used to
+#    sit after an early exit that skipped it in exactly that case.
+# 7. PRODUCER GUARD (sp-5dcpj). spira-broker.timer is disabled whenever
+#    spira_broker_producer_present is false, regardless of the binary or the
+#    rendered file — the case BINARY GUARD does not cover.
 #
 # THE FIXTURE builds from the real installer (law-prefer-the-real-dependency).
 # A mock systemctl records calls without touching systemd.
@@ -98,6 +103,8 @@ ensure() {
         SPIRA_SYSTEMCTL="$TMP/sc" \
         SPIRA_SUPERVISE_BIN="${_ENSURE_SUPERVISE:-$BIN/spira-supervise}" \
         SPIRA_CZAR_PASS_BIN="${_ENSURE_CZAR_PASS_BIN:-$BIN/spira-czar-pass}" \
+        SPIRA_BROKER_BIN="${_ENSURE_BROKER_BIN:-}" \
+        SPIRA_BROKER_ENABLE="${_ENSURE_BROKER_ENABLE:-0}" \
         bash "$HERE/../systemd/unit-ensure.sh" "$@" 2>&1
 }
 
@@ -260,6 +267,60 @@ printf '\n# force another content change (no-guard case)\n' >> "$czar_timer"
 noguard_out="$(ensure)"
 nowant "BINARY GUARD: does not disable when the binary is executable" \
      "DISABLED spira-czar-pass" "$noguard_out"
+
+# ==========================================================================
+echo
+echo "BINARY GUARD — reachable on a run where nothing else changed (sp-5dcpj):"
+# ==========================================================================
+# The guard used to sit after an early exit that fired whenever no unit file's
+# rendered content changed on the run — unreachable in the production case this
+# bead describes, where landing this fix does not itself touch any unit template.
+# No content edit here; only the binary breaks.
+: > "$SC_LOG"
+_ENSURE_CZAR_PASS_BIN="$TMP/nonexistent-czar-pass"
+zero_change_out="$(ensure)"
+unset _ENSURE_CZAR_PASS_BIN
+want "BINARY GUARD: run itself reports no changes" "no changes" "$zero_change_out"
+want "BINARY GUARD: still disables the unit on that same run" \
+     "DISABLED spira-czar-pass-prod.timer" "$zero_change_out"
+
+# ==========================================================================
+echo
+echo "PRODUCER GUARD — spira-broker.timer needs the producer opt-in, disabled without it (sp-5dcpj):"
+# ==========================================================================
+printf '#!/bin/sh\n' > "$BIN/spira-broker" && chmod +x "$BIN/spira-broker"
+
+# POSITIVE CONTROL: producer present (SPIRA_BROKER_ENABLE=1) + binary executable —
+# the timer is installed and enabled.
+_ENSURE_BROKER_BIN="$BIN/spira-broker"
+_ENSURE_BROKER_ENABLE=1
+: > "$SC_LOG"
+broker_on_out="$(ensure)"
+unset _ENSURE_BROKER_ENABLE
+want "PRODUCER GUARD: broker timer enabled when producer present" \
+     "enabled+started  spira-broker-prod.timer" "$broker_on_out"
+
+# NO PRODUCER, NO CONTENT CHANGE: _ENSURE_BROKER_ENABLE unset now (defaults to 0,
+# same as spira_broker_producer_present's default) and nothing about the rendered
+# unit files depends on it, so this run has zero changes — the guard must still fire.
+: > "$SC_LOG"
+noprod_out="$(ensure)"
+want "PRODUCER GUARD: run itself reports no changes" "no changes" "$noprod_out"
+want "PRODUCER GUARD: disables the timer with no producer" \
+     "DISABLED spira-broker-prod.timer (no producer" "$noprod_out"
+if grep -q "disable spira-broker-prod.timer" "$SC_LOG"; then
+    ok "PRODUCER GUARD: systemctl disable was actually called"
+else
+    bad "PRODUCER GUARD: systemctl disable was actually called" "$(cat "$SC_LOG")"
+fi
+
+# PAIR: producer present again — the guard must stay quiet.
+_ENSURE_BROKER_ENABLE=1
+: > "$SC_LOG"
+prod_again_out="$(ensure)"
+unset _ENSURE_BROKER_ENABLE _ENSURE_BROKER_BIN
+nowant "PRODUCER GUARD: does not disable when producer present" \
+     "DISABLED spira-broker" "$prod_again_out"
 
 # ==========================================================================
 tl_summary
