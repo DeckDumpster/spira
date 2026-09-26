@@ -657,36 +657,10 @@ sargv2="$(summon_argv anchor | tr '\n' ' ')"
 want "summon_argv: SPIRA_AEON_CPU_QUOTA propagates" "CPUQuota=42%" "$sargv2"
 unset SPIRA_AEON_CPU_QUOTA
 
-# ======================================================================================
-echo
-echo "UC-dispatch-23 / G17 — aeon_argv: --setting-sources in both sweep and bead mode"
-# ======================================================================================
-# test-fayth-project-instructions.sh drives only --sweep end to end (aeon.sh's sweep and
-# bead launch sites call the same aeon_argv, but running a full bead-mode session needs a
-# claimed bead, a worktree and a real branch). A direct row on aeon_argv — the exact
-# function both of aeon.sh's launch sites call — covers the bead-mode half cheaply, with no
-# aeon.sh process at all.
-mkdir -p "$T/chamber"
-cat > "$T/chamber/pinone.fayth" <<'F'
-FAYTH_NAME=pinone
-FAYTH_LABELS="test,plan"
-FAYTH_PROJECT_INSTRUCTIONS=none
-F
-cat > "$T/chamber/pirepo.fayth" <<'F'
-FAYTH_NAME=pirepo
-FAYTH_LABELS="test,plan"
-FAYTH_PROJECT_INSTRUCTIONS=repo
-F
-
-argv_none_bead="$(aeon_argv pinone bead | tr '\n' ' ')"
-want "G17 bead-mode: --setting-sources in argv" "--setting-sources" "$argv_none_bead"
-want "G17 bead-mode: sources value is user"     "user"              "$argv_none_bead"
-
-argv_repo_bead="$(aeon_argv pirepo bead | tr '\n' ' ')"
-nowant "G17 bead-mode: repo fayth has no --setting-sources" "--setting-sources" "$argv_repo_bead"
-
-argv_none_sweep="$(aeon_argv pinone sweep | tr '\n' ' ')"
-want "sweep mode agrees with bead mode: --setting-sources in argv" \
-     "--setting-sources" "$argv_none_sweep"
+# UC-dispatch-23 / G17 — the claude CLI argv (model, tools, --setting-sources) is not built
+# here. aeon.sh's two launch sites both call aeon_claude_argv (lib.sh), a pure function of
+# the fayth's own FAYTH_* knobs already driven directly, in both system-prompt modes, by
+# test-aeon-prompt-layers.sh's table — that table IS the bead-mode row G17 asked for, since
+# the function makes no sweep/bead distinction at all.
 
 tl_summary

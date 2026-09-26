@@ -1728,33 +1728,6 @@ summon_argv() {
         --setenv=PATH="$PATH" --setenv=HOME="$HOME"
 }
 
-# aeon_settings -> the --settings JSON that wires aeon-fence.sh and the mail/unacked-comment
-# delivery hooks into a claude session. Called by both of aeon.sh's launch sites (sweep,
-# bead) so both sessions carry the same guards (law-guard-binds-the-caller).
-aeon_settings() {
-    python3 -c "
-import json, os
-spira_home = '$SPIRA_HOME'
-hooks = {}
-mail    = os.path.join(spira_home, 'hooks', 'aeon-mail-deliver.sh')
-deliver = os.path.join(spira_home, 'bd-unacked-comment-deliver.sh')
-post_hooks = [{'type': 'command', 'command': mail, 'timeout': 5}]
-if os.access(deliver, os.X_OK):
-    post_hooks.append({'type': 'command', 'command': deliver, 'timeout': 5})
-hooks['PostToolUse'] = [{'hooks': post_hooks}]
-pre_hooks = []
-fence = os.path.join(spira_home, 'hooks', 'aeon-fence.sh')
-if os.access(fence, os.X_OK):
-    pre_hooks.append({'type': 'command', 'command': fence, 'timeout': 5})
-guard = os.path.join(spira_home, 'bd-close-unacked-guard.sh')
-if os.access(guard, os.X_OK):
-    pre_hooks.append({'type': 'command', 'command': guard, 'timeout': 5})
-if pre_hooks:
-    hooks['PreToolUse'] = [{'hooks': pre_hooks}]
-print(json.dumps({'hooks': hooks}))
-" 2>/dev/null
-}
-
 summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label]
     local f="$1" pool="${2:-}" require_label="${3:-}" r free
     world_gate "$f" CHECK7 || return 1

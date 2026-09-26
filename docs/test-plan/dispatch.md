@@ -140,7 +140,7 @@ Cost is ci_secs from the main-push run. When a file covers several use cases, it
 | Lane admission for `bead.sh file` | `bead.sh` l.66–98 (vocab scan + `spira_repo_lanes`) | Already hermetic (stub bd) | Factor out `bead_lane_admits <persona-labels> <repo>` so the table needs no `bead.sh` process |
 | GitHub triage/dedup | `gh-intake.sh` `_accept_actor`, `_ingested`, `_create_*` | ~15 full script runs with python3 per run | Source the script's functions under a `GH_INTAKE_LIB=1` guard and call them over issue JSON |
 | Unmapped-repo park | `aeon.sh` (ask+overseer label before `release_own_claim`) | Not tested (the suite tests bd only) | Extract `park_unmapped <id>` into lib.sh; stub bd to record argv order |
-| Launch argv (CPUQuota, TimeoutStartSec, `--setting-sources`) | `summon_fayth` l.1440, `escape.sh`, `aeon.sh` ×2 sites | Full aeon.sh sweep with an agent shim | `aeon_argv <fayth> <mode>` and `summon_argv <fayth>` shared by summon and escape |
+| Launch argv (CPUQuota, TimeoutStartSec, `--setting-sources`) | `summon_fayth` l.1440, `escape.sh`, `aeon.sh` ×2 sites | Full aeon.sh sweep with an agent shim | `aeon_claude_argv <sys-flag> <sys-file>` (landed independently by sp-eq8a4.2.5) and `summon_argv <fayth>` (sp-9ce60.4), shared by summon and escape |
 
 ---
 
@@ -162,7 +162,7 @@ Cost is ci_secs from the main-push run. When a file covers several use cases, it
 14. **G14: `bead.sh contract` output is untested in the harness.** It is exercised only through test-concierge.
 15. **G15: two CHECK 8 conditions are untested.** Nothing covers the cooldown (`inference is in cooldown`) or the rule that `plan_ready>0` exits before judgement even when an incident is ready (sentinel.sh l.1373–1395).
 16. **G16: RESOLVED (sp-9ce60.2.2).** A direct row in test-fayth.sh now checks `fayth_exclude`'s exclusion of other personas' `fayth:` labels and of `SPIRA_QUEUE_WAIT_LABEL` in the predicate (lib.sh l.914), previously exercised only indirectly through the detectors.
-17. **G17: RESOLVED (sp-9ce60.4).** aeon.sh's two launch sites (sweep, bead) now call one shared `aeon_argv <fayth> <mode>` (moved to lib.sh so it is directly testable without a full aeon.sh process); test-summon-fayth.sh drives it with `mode=bead` directly, alongside `mode=sweep`, so the bead-mode `--setting-sources` path (previously exercised only via test-fayth-project-instructions.sh's `--sweep` proxy) has its own row.
+17. **G17: RESOLVED, independently (sp-eq8a4.2.5).** aeon.sh's two launch sites (sweep, bead) already call one shared `aeon_claude_argv <sys-flag> <sys-file>` (lib.sh) by the time this bead reached it — a different branch extracted the identical seam this gap asked for. The function takes no sweep/bead mode argument at all: it is a pure function of the fayth's own knobs, and test-aeon-prompt-layers.sh's table drives it directly (both system-prompt-flag shapes) proving `--setting-sources` is independent of which launch site calls it. sp-9ce60.4 built its own `aeon_argv <fayth> <mode>` before discovering this and dropped it on rebase rather than duplicate the seam.
 18. **G18 (test-integrity): three tests pass for the wrong reason or prove nothing.**
     - test-id-prefix::`guard allows when custom-prefix id present` passes because the guard fails open when `bd show` cannot reach a db.
     - test-ops-allowlist uses a local glob matcher, not the CLI's permission semantics.
