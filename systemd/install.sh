@@ -55,6 +55,37 @@ _seed_instance_conf() {
     printf 'install: seeded %s with SPIRA_INSTANCE=%s\n' "$file" "$inst"
 }
 
+# _unit_action <changed> <masked> <suspended> <disabled> <halted> <active> -> action word.
+# THE PER-UNIT APPLY DECISION, extracted so a T1 test can drive it directly — no rendered
+# DEST tree, no recording systemctl (spira/test-install-decide.sh). Every argument is 0/1:
+#   changed    rendered content differs from what is installed, or the unit is new
+#   masked     symlinked to /dev/null by the operator
+#   suspended  ctrl.sh reports this unit's subject suspended
+#   disabled   systemctl is-enabled=disabled, and the unit is not newly installed this run
+#   halted     $SPIRA_RUN/world.halted is present
+#   active     systemctl is-active=active
+# -> masked | suspended | operator-disabled | enable | skip | restart | enable-now
+# ORDER IS THE CONTRACT: a masked unit stays masked even if also suspended or disabled: an
+# operator's explicit mask must never be second-guessed by a control-plane state that could
+# be stale. Suspended outranks disabled and halted for the same reason — ctrl.sh is the one
+# surface that answers "why is this not running" and must stay authoritative over it.
+# DEFINED BEFORE BOTH SOURCING GUARDS BELOW, alongside _seed_instance_conf, for the same
+# reason: a test sources this file for the function alone and never reaches past here.
+_unit_action() {
+    local changed="$1" masked="$2" suspended="$3" disabled="$4" halted="$5" active="$6"
+    if [ "$masked" = 1 ]; then echo masked; return 0; fi
+    if [ "$suspended" = 1 ]; then echo suspended; return 0; fi
+    if [ "$disabled" = 1 ]; then echo operator-disabled; return 0; fi
+    if [ "$halted" = 1 ]; then echo enable; return 0; fi
+    if [ "$changed" != 1 ] && [ "$active" = 1 ]; then echo skip; return 0; fi
+    if [ "$changed" = 1 ] && [ "$active" = 1 ]; then echo restart; return 0; fi
+    echo enable-now
+}
+# NAMED GUARD FOR THE T1 SEAM, independent of the generic sourcing guard just below: a
+# later edit to that guard (e.g. if _seed_instance_conf's own sourcing use goes away)
+# must not silently let a SPIRA_INSTALL_LIB=1 source run the whole installer.
+if [ "${SPIRA_INSTALL_LIB:-0}" = 1 ]; then return 0 2>/dev/null || exit 0; fi
+
 if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0 2>/dev/null || true; fi
 
 # PARSE THE INSTANCE ARGUMENT AND THE MODE FLAG BEFORE SOURCING conf.sh SO THAT conf.sh
@@ -74,38 +105,6 @@ done
 unset _a
 [ -n "$_install_instance" ] && export SPIRA_INSTANCE="$_install_instance"
 unset _install_instance
-
-# _unit_action <changed> <masked> <suspended> <disabled> <halted> <active> -> action word.
-# THE PER-UNIT APPLY DECISION, extracted so a T1 test can drive it directly — no rendered
-# DEST tree, no recording systemctl (spira/test-install-decide.sh). Every argument is 0/1:
-#   changed    rendered content differs from what is installed, or the unit is new
-#   masked     symlinked to /dev/null by the operator
-#   suspended  ctrl.sh reports this unit's subject suspended
-#   disabled   systemctl is-enabled=disabled, and the unit is not newly installed this run
-#   halted     $SPIRA_RUN/world.halted is present
-#   active     systemctl is-active=active
-# -> masked | suspended | operator-disabled | enable | skip | restart | enable-now
-# ORDER IS THE CONTRACT: a masked unit stays masked even if also suspended or disabled: an
-# operator's explicit mask must never be second-guessed by a control-plane state that could
-# be stale. Suspended outranks disabled and halted for the same reason — ctrl.sh is the one
-# surface that answers "why is this not running" and must stay authoritative over it.
-_unit_action() {
-    local changed="$1" masked="$2" suspended="$3" disabled="$4" halted="$5" active="$6"
-    if [ "$masked" = 1 ]; then echo masked; return 0; fi
-    if [ "$suspended" = 1 ]; then echo suspended; return 0; fi
-    if [ "$disabled" = 1 ]; then echo operator-disabled; return 0; fi
-    if [ "$halted" = 1 ]; then echo enable; return 0; fi
-    if [ "$changed" != 1 ] && [ "$active" = 1 ]; then echo skip; return 0; fi
-    if [ "$changed" = 1 ] && [ "$active" = 1 ]; then echo restart; return 0; fi
-    echo enable-now
-}
-# SOURCE GUARD: with SPIRA_INSTALL_LIB=1, stop here. Nothing below this line runs — no
-# conf.sh, no systemd, no filesystem writes — so a test can source this file for
-# _unit_action alone. `return` (not `exit`): the file must still work when a caller sources
-# it from an interactive shell, not just from a script that can afford to exit.
-if [ "${SPIRA_INSTALL_LIB:-0}" = 1 ]; then
-    return 0 2>/dev/null || exit 0
-fi
 
 . "$(cd "$SRC/../spira" && pwd -P)/conf.sh"
 . "$(cd "$SRC/../spira" && pwd -P)/lib.sh"
