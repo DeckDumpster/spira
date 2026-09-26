@@ -58,6 +58,12 @@
 #      faults for everyone, so each member is ejected on diff evidence alone.
 #      Each note must name only the suite that member's own diff touched,
 #      never the other member's suite, and never claim "Reproduced alone".
+#  41. A suite already red on the batch's base is excluded from every
+#      member's blame list; the genuine offender is still ejected, for the
+#      suite it actually broke, and the exclusion is named in the mail
+#      (sp-a2nk8).
+#  42. Every red suite is already red on base → nobody is ejected, the batch
+#      requeues unchanged, and the operator is told why (sp-a2nk8).
 #
 # MOVED (docs/test-plan/landing-merge-queue.md UC-43/44/49, section 4 cluster 1):
 #   Cases 12, 14, 17, 18, 27 (age/idle/retry classification over verdict_action,
@@ -1484,4 +1490,134 @@ nowant "40. em4b note: silent on em4a's suite"       "test-vd-em4a.sh"   "$mail4
 nowant "40. em4b note: no false reproduction claim"  "Reproduced alone"  "$mail40b"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 41. BASELINE-RED SUITE EXCLUDED FROM BLAME (sp-a2nk8). CI names two red
+#     suites: one is already red on the batch's own base (predates every
+#     member — every member's tree contains it), the other is a genuine
+#     member-caused failure. Attribution must not blame anyone for the
+#     base-broken suite; the real offender is still ejected, and only for the
+#     suite it actually broke.
+#     POSITIVE CONTROL: the stub reports RED/ok per named suite, so a matcher
+#     that ignored the base-only check would still see both suites red
+#     against the guilty member and could not be told apart by accident.
+# =============================================================================
+cat > "$SH/repro-baseline.sh" <<'REPRO'
+#!/usr/bin/env bash
+# Simulates testenv-batch.sh's own per-suite RED/ok reporting.
+# Args: --mode <parallel|serial> --suites <csv> <ref>
+shift 2
+shift
+csv="$1"; shift
+ref="$1"
+rc=0
+IFS=',' read -ra suites <<< "$csv"
+for s in "${suites[@]}"; do
+    red=0
+    case "$s" in
+        test-base-broken.sh) red=1 ;;
+        test-real-offender.sh)
+            git -C "$SPIRA_REPO" ls-tree "$ref" -- guilty-marker.txt 2>/dev/null | grep -q . && red=1
+            ;;
+    esac
+    if [ "$red" = 1 ]; then
+        printf '  %-32s RED     rc=1 after 1s\n' "$s"
+        rc=1
+    else
+        printf '  %-32s ok      1s\n' "$s"
+    fi
+done
+exit "$rc"
+REPRO
+chmod +x "$SH/repro-baseline.sh"
+
+base_sha41="$(git -C "$REPO" rev-parse origin/main)"
+for id in sp-vd-bl1 sp-vd-bl2; do
+    bwt41="$RUN/worktree/$id"
+    git -C "$REPO" worktree add -q -b "spira/$id" "$bwt41" origin/main 2>/dev/null || true
+    printf '%s\n' "$id" > "$bwt41/$id.txt"
+done
+printf 'offender\n' > "$RUN/worktree/sp-vd-bl2/guilty-marker.txt"
+for id in sp-vd-bl1 sp-vd-bl2; do
+    bwt41="$RUN/worktree/$id"
+    git -C "$bwt41" add -A
+    git -C "$bwt41" commit -q -m "$id: work"
+    printf 'BATCHED %s %s\n' "$(git -C "$REPO" rev-parse "spira/$id")" "$(date +%s)" \
+        > "$LANDSTATE/$id"
+done
+tip_bl1="$(git -C "$REPO" rev-parse "spira/sp-vd-bl1")"
+tip_bl2="$(git -C "$REPO" rev-parse "spira/sp-vd-bl2")"
+wt41="$RUN/worktree/.b41"
+git -C "$REPO" worktree add -q --detach "$wt41" "$base_sha41" 2>/dev/null || true
+git -C "$wt41" merge -q --no-edit --no-ff -m "spira: land sp-vd-bl1" "$tip_bl1" >/dev/null 2>&1
+git -C "$wt41" merge -q --no-edit --no-ff -m "spira: land sp-vd-bl2" "$tip_bl2" >/dev/null 2>&1
+batch_head41="$(git -C "$wt41" rev-parse HEAD)"
+git -C "$REPO" worktree remove -f "$wt41" 2>/dev/null || true
+{ printf 'pr=61\nhead=%s\nbase=%s\nmembers=sp-vd-bl1:%s sp-vd-bl2:%s\nopened=%s\n' \
+    "$batch_head41" "$base_sha41" "$tip_bl1" "$tip_bl2" "$(date +%s)"; } > "$(batch_file)"
+printf 'red\nred-suite: test-base-broken.sh\nred-suite: test-real-offender.sh\n' > "$FORGE_STATUS_FILE"
+SPIRA_QUEUE_REPRO_BATCH="$SH/repro-baseline.sh" verdict "$REPONAME" > /dev/null
+mail41="$(cat "$MAIL_LOG")"
+
+case "$(landstate sp-vd-bl2)" in EJECTED*) ok "41. baseline-red: guilty ejected" ;;
+    *) bad "41. baseline-red: guilty ejected" "got: $(landstate sp-vd-bl2)" ;; esac
+case "$(landstate sp-vd-bl1)" in CERTIFIED*) ok "41. baseline-red: innocent CERTIFIED" ;;
+    *) bad "41. baseline-red: innocent CERTIFIED" "got: $(landstate sp-vd-bl1)" ;; esac
+want   "41. baseline-red: excludes base-broken suite from blame" \
+       "Excluded from blame" "$mail41"
+want   "41. baseline-red: names the excluded suite" \
+       "test-base-broken.sh" "$mail41"
+nowant "41. baseline-red: guilty member not blamed for the base suite" \
+       "spira/sp-vd-bl2 (test-base-broken.sh" "$mail41"
+want   "41. baseline-red: names the real offender's suite" \
+       "spira/sp-vd-bl2 (test-real-offender.sh" "$mail41"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 42. EVERY RED SUITE ALREADY RED ON BASE — NOTHING ATTRIBUTABLE (sp-a2nk8).
+#     CI names exactly one red suite and it is already red on the batch's own
+#     base. Before the fix this reproduced against every member (every
+#     member's tree contains the base) and, worst case, ejected the whole
+#     batch for a breakage none of them own. Now: nobody is ejected, the
+#     batch requeues unchanged, and the operator is told why.
+#     POSITIVE CONTROL: case 41 proves a genuine offender still gets ejected
+#     when one exists; this proves nobody is invented when one does not.
+# =============================================================================
+base_sha42="$(git -C "$REPO" rev-parse origin/main)"
+for id in sp-vd-bz1 sp-vd-bz2; do
+    bwt42="$RUN/worktree/$id"
+    git -C "$REPO" worktree add -q -b "spira/$id" "$bwt42" origin/main 2>/dev/null || true
+    printf '%s\n' "$id" > "$bwt42/$id.txt"
+    git -C "$bwt42" add -A
+    git -C "$bwt42" commit -q -m "$id: work"
+    printf 'BATCHED %s %s\n' "$(git -C "$REPO" rev-parse "spira/$id")" "$(date +%s)" \
+        > "$LANDSTATE/$id"
+done
+tip_bz1="$(git -C "$REPO" rev-parse "spira/sp-vd-bz1")"
+tip_bz2="$(git -C "$REPO" rev-parse "spira/sp-vd-bz2")"
+wt42="$RUN/worktree/.b42"
+git -C "$REPO" worktree add -q --detach "$wt42" "$base_sha42" 2>/dev/null || true
+git -C "$wt42" merge -q --no-edit --no-ff -m "spira: land sp-vd-bz1" "$tip_bz1" >/dev/null 2>&1
+git -C "$wt42" merge -q --no-edit --no-ff -m "spira: land sp-vd-bz2" "$tip_bz2" >/dev/null 2>&1
+batch_head42="$(git -C "$wt42" rev-parse HEAD)"
+git -C "$REPO" worktree remove -f "$wt42" 2>/dev/null || true
+{ printf 'pr=62\nhead=%s\nbase=%s\nmembers=sp-vd-bz1:%s sp-vd-bz2:%s\nopened=%s\n' \
+    "$batch_head42" "$base_sha42" "$tip_bz1" "$tip_bz2" "$(date +%s)"; } > "$(batch_file)"
+printf 'red\nred-suite: test-base-broken.sh\n' > "$FORGE_STATUS_FILE"
+out42="$(SPIRA_QUEUE_REPRO_BATCH="$SH/repro-baseline.sh" verdict "$REPONAME")"
+mail42="$(cat "$MAIL_LOG")"
+
+case "$(landstate sp-vd-bz1)" in CERTIFIED*) ok "42. all-baseline-red: sp-vd-bz1 CERTIFIED" ;;
+    *) bad "42. all-baseline-red: sp-vd-bz1 CERTIFIED" "got: $(landstate sp-vd-bz1)" ;; esac
+case "$(landstate sp-vd-bz2)" in CERTIFIED*) ok "42. all-baseline-red: sp-vd-bz2 CERTIFIED" ;;
+    *) bad "42. all-baseline-red: sp-vd-bz2 CERTIFIED" "got: $(landstate sp-vd-bz2)" ;; esac
+nowant "42. all-baseline-red: no ejection"          "ejected"                 "$out42"
+want   "42. all-baseline-red: not attributable in log" "not attributable"    "$out42"
+want   "42. all-baseline-red: pr-close called"      "close"                   "$(cat "$FORGE_LOG")"
+want   "42. all-baseline-red: operator told why"    "Red on base, not attributable" "$mail42"
+want   "42. all-baseline-red: names the suite"      "test-base-broken.sh"     "$mail42"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
 tl_summary

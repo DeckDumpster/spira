@@ -51,6 +51,29 @@ doctor_check_chamber_overlays() {
 }
 
 # --------------------------------------------------------------------------------------
+# OPERATOR OVERRIDES (sp-qdh0x). overrides.sh doctor names the two conditions that used to be
+# invisible to everything but a log a queue monitor happened to be tailing: a spec that failed
+# to apply or retire, and a spec whose bead closed over a day ago without HEAD ever carrying
+# its `spira: land` commit — the harness's own answer, not a model of it kept here.
+# --------------------------------------------------------------------------------------
+doctor_check_overrides() {
+    local out rc
+    if [ ! -x "$SPIRA_HOME/overrides.sh" ]; then
+        WARN "overrides.sh missing at $SPIRA_HOME/overrides.sh"
+        return
+    fi
+    out="$("$SPIRA_HOME/overrides.sh" doctor 2>&1)"; rc=$?
+    if [ "$rc" = 0 ]; then
+        OK "no problems (checked $SPIRA_OVERRIDES)"
+        return
+    fi
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        FAIL "override: $line"
+    done <<< "$out"
+}
+
+# --------------------------------------------------------------------------------------
 # STORE LISTENER. Two questions: can bd reach $SPIRA_DB, and is whatever it depends on
 # (a managed dolt-beads.service, or an independently-managed server) actually answering.
 # "Managed independently" is a claim to check, not to assume — an unmanaged server that
@@ -348,6 +371,10 @@ echo "spira doctor"
 echo
 echo "chamber overlays"
 doctor_check_chamber_overlays
+
+echo
+echo "operator overrides"
+doctor_check_overrides
 
 echo
 echo "store"

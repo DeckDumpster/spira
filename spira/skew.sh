@@ -429,6 +429,7 @@ refresh() {
         make -C "$repo" install SPIRA_RELEASES="$SPIRA_RELEASES" || {
             echo "skew: refresh: make install failed"; return 1; }
         echo "skew: refreshed — new release installed ($_behind commit(s))"
+        [ -x "$SPIRA_HOME/overrides.sh" ] && "$SPIRA_HOME/overrides.sh" apply "$repo"
         return 0
     fi
     [ -e "$repo/.git" ] || {
@@ -493,6 +494,12 @@ refresh() {
     # Clear the dirty-decline stamp on a successful refresh so watchers see the recovery.
     rm -f "$SPIRA_RUN/skew.refresh-declined" 2>/dev/null || true
     echo "skew: refreshed to $base ($behind commit(s))"
+
+    # RE-APPLY DECLARED OVERRIDES IMMEDIATELY, before this function returns. The reset above
+    # just wrote the base ref's own files over anything an operator override held in this
+    # checkout; without this call there is a window — previously closed only by a timer
+    # running once a minute outside the harness — where the reset brief is live (sp-qdh0x).
+    [ -x "$SPIRA_HOME/overrides.sh" ] && "$SPIRA_HOME/overrides.sh" apply "$repo"
     return 0
 }
 

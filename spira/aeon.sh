@@ -721,8 +721,18 @@ cleanup() {
     # line. A whole window of aeons wrote no `done` ledger line and released no bead, and the
     # ledger's own measurement went with them. A teardown must run to the end regardless: it
     # is the last chance to record what happened. Note that `[ -n "$X" ] && cmd` is itself
-    # one of those failing commands whenever $X is empty.
+    # one of those failing commands whenever $X is empty — which is why the re-entry guard
+    # below runs AFTER this line, not before it.
     set +e
+    # A SIGNAL-DELIVERED cleanup() can exit from inside an early-exit branch (thrash, lapsed,
+    # operator-wait), and that exit fires the EXIT trap — cleanup() again, same process, same
+    # $rc gone stale. The marker the first entry consumed is gone, so the second entry falls
+    # through to the generic branch and writes a second, contradictory requeue event
+    # (sp-u2ve1). One guard at the head binds every branch, present and future
+    # (law-bake-rules-into-tools); the first entry's work is already done by the time the
+    # second one is refused, so nothing here is lost.
+    [ -n "${CLEANUP_ENTERED:-}" ] && return 0
+    CLEANUP_ENTERED=1
     if [ -n "$HB_PID" ]; then
         # Kill the heartbeat's children (e.g., the current `sleep`) BEFORE signalling the
         # subshell. Without this, `kill "$HB_PID"` exits the subshell but leaves the

@@ -78,7 +78,7 @@ FAYTH_STATUTE_CORE="law-filed-bead-queued-xor-escalated,law-no-filing-only-escal
 # so a heavy concierge pass takes capacity from the builders. The brief tells the session to
 # spend accordingly; the model is not where that economy is made, because a cheaper session
 # that reaches the wrong conclusion about what to escalate costs far more than the tokens.
-FAYTH_MODEL=claude-opus-5
+FAYTH_MODEL=claude-opus-5-5
 
 # NO FAYTH_TOOLS, AND THAT IS THE DECLARATION RATHER THAN AN OMISSION. Every other persona
 # names its tools because `aeon.sh` passes them to `--allowedTools`, which is an ALLOW LIST:
