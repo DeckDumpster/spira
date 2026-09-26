@@ -72,6 +72,9 @@ if [ ! -x "$FLOW_BIN" ]; then
     cp -r "$FLOW_ROOT/." "$T/reconciler-flow-src"
     cp -r "$HERE/../reconciler-engine" "$T/reconciler-engine"
     cp -r "$HERE/../tsd" "$T/tsd"
+    # Pin resolution to the workspace's own lock — unlocked, cargo re-resolves transitive
+    # deps fresh and can land on a version needing a newer edition than the toolchain ships.
+    cp "$HERE/../Cargo.lock" "$T/reconciler-flow-src/Cargo.lock"
     printf '  (building reconciler-flow into %s)\n' "$T/reconciler-flow-target"
     CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/reconciler-flow-target" \
         "$CARGO_BIN" build --release \
