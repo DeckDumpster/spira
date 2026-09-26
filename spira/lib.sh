@@ -1674,6 +1674,29 @@ release_orphan_claims_partitions() {
     return 0
 }
 
+# check2_reclaim_stale <partitions-tsv> -> CHECK 2's time-based dead-worker reaper: one
+# `bdq reclaim` per partition named in <partitions-tsv> (fayth_partitions' shape; only the
+# labels column is used), counting and charging every id parse_reclaimed finds through
+# bump_reclaim.
+#
+# A REAPER WITH NOTHING TO REAP OVER SAYS SO. With no partition declared this logs and
+# returns clean, which would otherwise read exactly like a harness with no dead leases.
+check2_reclaim_stale() {
+    local partitions="${1:-}" part out n
+    local n_parts=0 n_reclaimed=0
+    while IFS=$'\t' read -r part _; do
+        [ -n "$part" ] || continue
+        n_parts=$((n_parts+1))
+        out="$(bdq reclaim --older-than 180m --label "$part" --exclude-label "$SPIRA_RECLAIM_SKIP_LABEL" 2>&1)"
+        grep -q 'No stale leases' <<< "$out" && continue
+        n="$(parse_reclaimed "$out")"
+        n_reclaimed=$(( n_reclaimed + ${n:-0} ))
+    done <<< "$partitions"
+    [ "$n_parts" -eq 0 ] && log "CHECK2 no persona in the chamber declares a partition — no lease is being reaped"
+    [ "$n_reclaimed" -gt 0 ] && progress "reclaimed $n_reclaimed stale lease(s)"
+    return 0
+}
+
 # fayth_free <fayth> [pool-remaining] -> free concurrency slots, never negative.
 #
 # THE POOL IS A BATTLE PARTY (the operator, 2026-09-07: "i have a tank, a healer, and then as
