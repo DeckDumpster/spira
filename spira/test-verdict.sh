@@ -54,6 +54,10 @@
 #      the mail says exactly that instead of claiming reproduction.
 #  37. Ejection mail names "bisect-split" for a bisect-singleton eject, and
 #      lists the sibling half that was left pending, not implicated.
+#  38. Two red suites, two members, diff-evidence only (sp-2gcls): repro
+#      faults for everyone, so each member is ejected on diff evidence alone.
+#      Each note must name only the suite that member's own diff touched,
+#      never the other member's suite, and never claim "Reproduced alone".
 #
 # MOVED (docs/test-plan/landing-merge-queue.md UC-43/44/49, section 4 cluster 1):
 #   Cases 12, 14, 17, 18, 27 (age/idle/retry classification over verdict_action,
@@ -1413,6 +1417,76 @@ is     "39. legacy-owned: judgement-ci never called" "0" "$(wc -l < "$BATCHER_LO
 case "$(landstate sp-vd-bo2)" in EJECTED*) ok "39. legacy-owned: member ejected by verdict's own attribution" ;;
     *) bad "39. legacy-owned: member ejected by verdict's own attribution" "got: $(landstate sp-vd-bo2)" ;; esac
 unset SPIRA_BATCHER_BIN
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 40. TWO RED SUITES, TWO MEMBERS, DIFF-EVIDENCE ONLY (sp-2gcls). The repro
+#     stub faults (harness fault) for every call, so neither suite is ever
+#     actually run against anyone — both members are ejected on diff evidence
+#     alone: em4a's diff adds test-vd-em4a.sh, em4b's diff adds the unrelated
+#     test-vd-em4b.sh. Each ejection note must name only the suite that
+#     member's OWN diff touched, not the other member's, and must not claim
+#     "Reproduced alone" — nothing was reproduced for either.
+#     Against the unfixed verdict.sh, both notes name BOTH suites (the
+#     batch-wide list), exactly the sp-kn0hw defect: a suite the member never
+#     touched, and that need not even exist in its tree, shows up as if it
+#     had been tested.
+# =============================================================================
+testdb_seed <<JSONL
+{"id":"sp-vd-em4a","title":"add and break the first canary suite","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"description":"Adds test-vd-em4a.sh, red from the start."}
+{"id":"sp-vd-em4b","title":"touch an unrelated second canary suite","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"description":"Adds test-vd-em4b.sh, unrelated to em4a's failure."}
+JSONL
+
+cat > "$SH/repro-fault4.sh" <<'REPRO'
+#!/usr/bin/env bash
+exit 2
+REPRO
+chmod +x "$SH/repro-fault4.sh"
+
+base_sha40="$(git -C "$REPO" rev-parse origin/main)"
+bwt40a="$RUN/worktree/sp-vd-em4a"
+git -C "$REPO" worktree add -q -b "spira/sp-vd-em4a" "$bwt40a" origin/main 2>/dev/null || true
+printf 'x\n' > "$bwt40a/test-vd-em4a.sh"
+git -C "$bwt40a" add -A
+git -C "$bwt40a" commit -q -m "sp-vd-em4a: work"
+bwt40b="$RUN/worktree/sp-vd-em4b"
+git -C "$REPO" worktree add -q -b "spira/sp-vd-em4b" "$bwt40b" origin/main 2>/dev/null || true
+printf 'x\n' > "$bwt40b/test-vd-em4b.sh"
+git -C "$bwt40b" add -A
+git -C "$bwt40b" commit -q -m "sp-vd-em4b: work"
+for id in sp-vd-em4a sp-vd-em4b; do
+    printf 'BATCHED %s %s\n' "$(git -C "$REPO" rev-parse "spira/$id")" "$(date +%s)" \
+        > "$LANDSTATE/$id"
+done
+tip_em4a="$(git -C "$REPO" rev-parse "spira/sp-vd-em4a")"
+tip_em4b="$(git -C "$REPO" rev-parse "spira/sp-vd-em4b")"
+wt40="$RUN/worktree/.b40"
+git -C "$REPO" worktree add -q --detach "$wt40" "$base_sha40" 2>/dev/null || true
+git -C "$wt40" merge -q --no-edit --no-ff -m "spira: land sp-vd-em4a" "$tip_em4a" >/dev/null 2>&1
+git -C "$wt40" merge -q --no-edit --no-ff -m "spira: land sp-vd-em4b" "$tip_em4b" >/dev/null 2>&1
+batch_head40="$(git -C "$wt40" rev-parse HEAD)"
+git -C "$REPO" worktree remove -f "$wt40" 2>/dev/null || true
+{ printf 'pr=94\nhead=%s\nbase=%s\nmembers=sp-vd-em4a:%s sp-vd-em4b:%s\nopened=%s\n' \
+    "$batch_head40" "$base_sha40" "$tip_em4a" "$tip_em4b" "$(date +%s)"; } > "$(batch_file)"
+printf 'red\nred-suite: test-vd-em4a.sh\nred-suite: test-vd-em4b.sh\nrun-url: https://example.invalid/actions/runs/9004\n' \
+    > "$FORGE_STATUS_FILE"
+SPIRA_QUEUE_REPRO_BATCH="$SH/repro-fault4.sh" verdict "$REPONAME" > /dev/null
+
+awk '/^send operator/{n++} {print > ("'"$TMP"'/mailblock40." n)}' "$MAIL_LOG"
+mail40a="$(cat "$TMP/mailblock40.1" 2>/dev/null)"
+mail40b="$(cat "$TMP/mailblock40.2" 2>/dev/null)"
+
+case "$(landstate sp-vd-em4a)" in EJECTED*) ok "40. diff-evidence: sp-vd-em4a ejected" ;;
+    *) bad "40. diff-evidence: sp-vd-em4a ejected" "got: $(landstate sp-vd-em4a)" ;; esac
+case "$(landstate sp-vd-em4b)" in EJECTED*) ok "40. diff-evidence: sp-vd-em4b ejected" ;;
+    *) bad "40. diff-evidence: sp-vd-em4b ejected" "got: $(landstate sp-vd-em4b)" ;; esac
+want   "40. em4a note: names its own suite"          "test-vd-em4a.sh"   "$mail40a"
+nowant "40. em4a note: silent on em4b's suite"       "test-vd-em4b.sh"   "$mail40a"
+nowant "40. em4a note: no false reproduction claim"  "Reproduced alone"  "$mail40a"
+want   "40. em4b note: names its own suite"          "test-vd-em4b.sh"   "$mail40b"
+nowant "40. em4b note: silent on em4a's suite"       "test-vd-em4a.sh"   "$mail40b"
+nowant "40. em4b note: no false reproduction claim"  "Reproduced alone"  "$mail40b"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 

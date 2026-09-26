@@ -216,17 +216,25 @@ _any_suite_in_selection() {  # _any_suite_in_selection <suites-spacesep> <repo> 
     return 1
 }
 
-_suite_directly_in_diff() {  # _suite_directly_in_diff <suites-spacesep> <repo> <base-sha> <tip> -> 0 if any suite file is in diff
-    local suites="$1" repo="$2" base="$3" tip="$4" tmp s
+_suites_directly_in_diff_csv() {  # _suites_directly_in_diff_csv <suites-spacesep> <repo> <base-sha> <tip>
+                                   # -> csv of the subset of <suites> whose own file is in the diff.
+                                   # Never returns a suite this member's diff didn't touch — the
+                                   # caller uses this, not the full red-suite list, to name what a
+                                   # diff-evidence ejection actually implicates this member in.
+    local suites="$1" repo="$2" base="$3" tip="$4" tmp s csv=""
     tmp="$(mktemp)"
     # Three dots: the member's own change since it forked. Two would add everything the base
     # gained since, blaming a member for suites it never touched (PR 87 ejected all six).
     git -C "$repo" diff --name-only "$base...$tip" 2>/dev/null > "$tmp" || true
     for s in $suites; do
-        grep -qF "$s" "$tmp" 2>/dev/null && { rm -f "$tmp"; return 0; }
+        grep -qF "$s" "$tmp" 2>/dev/null && csv="${csv:+$csv,}$s"
     done
     rm -f "$tmp"
-    return 1
+    printf '%s' "$csv"
+}
+
+_suite_directly_in_diff() {  # _suite_directly_in_diff <suites-spacesep> <repo> <base-sha> <tip> -> 0 if any suite file is in diff
+    [ -n "$(_suites_directly_in_diff_csv "$@")" ]
 }
 
 _meter_write() {  # _meter_write <repo> <members> <caught> <escaped> <start-epoch>
@@ -624,13 +632,18 @@ ${_line#build-error: }" ;;
         if [ "${#ejected[@]}" -eq 0 ]; then
             # Repro found nothing. Try diff-based: eject members whose diff directly
             # contains a red suite — their change added or modified the failing suite.
+            # Nothing was run against these members, so only the suite(s) this
+            # member's own diff names may be attributed to it — never the
+            # batch-wide red_suites, which may include suites another member
+            # added (sp-2gcls: kn0hw was named for a suite it never touched).
             for _mm in "${members_arr[@]}"; do
                 _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
-                if _suite_directly_in_diff "$red_suites" "$repo" "$base_sha" "$_mtip"; then
-                    ejected+=("$_mm")
+                local _dm_csv; _dm_csv="$(_suites_directly_in_diff_csv "$red_suites" "$repo" "$base_sha" "$_mtip")"
+                if [ -n "$_dm_csv" ]; then
+                    ejected+=("$_mid|$_mtip|$_dm_csv")
                     caught=$(( caught + 1 ))
                     _ej_method["$_mid"]="suite-overlap"
-                    _ej_detail["$_mid"]="No member reproduced the failure directly; ejected because this branch's diff directly modifies the failing suite's own file ($red_suites)."
+                    _ej_detail["$_mid"]="No member reproduced the failure directly; ejected because this branch's diff directly modifies the failing suite's own file ($_dm_csv)."
                 fi
             done
         fi
