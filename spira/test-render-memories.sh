@@ -20,6 +20,11 @@
 # carries the "# Memories in force" section — a silent regression in either wrapper would
 # leave a session governed by nothing, looking identical to one that read the law.
 #
+# NAMESPACES. The index tier serves two prefixes (law-, sop-) but one hardcoded header
+# named only rule.sh, so a sop- slug in the index tier was unfetchable by the command its
+# own header named (sp-cvpp0). Each namespace now gets a header naming its own retrieval
+# command, asserted under its own heading below.
+#
 # PAIRS (law-absence-needs-a-positive-control): every negative case has a positive pair.
 #
 # tier: T2
@@ -110,6 +115,38 @@ else
     bad "index heading: rule.sh path is executable" "not executable: [${_rule_path:-<not found>}]"
 fi
 
+echo
+echo "=== mixed namespaces: law- and sop- each get their own retrieval command ==="
+# ==========================================================================
+
+# POSITIVE CONTROL for the offender this suite must catch: a sop- key delivered under a
+# header naming rule.sh (which prepends law- and refuses every sop- key) is unfetchable.
+seed_law "sop-rm-widget" "Widget runbook body."
+out_mixed="$(run_render "" "law-rm-,sop-rm-")"
+
+law_section="$(printf '%s\n' "$out_mixed" | awk '/^## Statutes/{f=1} /^## Runbooks/{f=0} f')"
+sop_section="$(printf '%s\n' "$out_mixed" | awk '/^## Runbooks/{f=1} f')"
+
+want   "mixed: sop slug present"            "sop-rm-widget"  "$out_mixed"
+want   "mixed: sop.sh retrieval command"    "sop.sh show"    "$out_mixed"
+want   "mixed: runbook heading present"     "Runbooks on the shelf" "$out_mixed"
+want   "mixed: law slug still present"      "law-rm-alpha"   "$out_mixed"
+want   "mixed: rule.sh retrieval command"   "rule.sh show"   "$out_mixed"
+
+# Each namespace's slugs sit under ITS OWN header, not the other one's.
+want   "mixed: sop slug under sop header"   "sop-rm-widget"  "$sop_section"
+nowant "mixed: sop slug not under law header" "sop-rm-widget" "$law_section"
+want   "mixed: law slug under law header"   "law-rm-alpha"   "$law_section"
+nowant "mixed: law slug not under sop header" "law-rm-alpha" "$sop_section"
+
+_sop_path="$(printf '%s\n' "$sop_section" | sed -n 's|^ *\(/[^ ]*sop\.sh\) show.*|\1|p' | head -1)"
+if [ -x "${_sop_path:-}" ]; then
+    ok "mixed: sop.sh path is executable"
+else
+    bad "mixed: sop.sh path is executable" "not executable: [${_sop_path:-<not found>}]"
+fi
+
+# ==========================================================================
 echo
 echo "=== empty core: all slugs go to index ==="
 

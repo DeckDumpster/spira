@@ -4058,14 +4058,26 @@ if core_out:
     parts.append("\n".join(core_out))
 
 if index_slugs:
-    rule_cmd = f"    {harness}/rule.sh show <slug-without-law-prefix>"
-    header = (
-        "## Statutes in force — full text on request\n\n"
-        "These are law and bind you exactly as the text above does. The slug states\n"
-        "the rule; read the reasoning and the scar behind any of them with:\n\n"
-        f"{rule_cmd}\n"
-    )
-    parts.append(header + "\n".join(index_slugs))
+    # Two namespaces share this tier, fetched by two different tools — one header
+    # naming one command left the other namespace unfetchable by it.
+    NAMESPACES = {
+        "law-": (
+            "## Statutes in force — full text on request\n\n"
+            "These are law and bind you exactly as the text above does. The slug states\n"
+            "the rule; read the reasoning and the scar behind any of them with:\n\n"
+            f"    {harness}/rule.sh show <slug-without-law-prefix>\n"
+        ),
+        "sop-": (
+            "## Runbooks on the shelf — full text on request\n\n"
+            "These bind exactly as the statutes above do. Read the full runbook —\n"
+            "CHECK, FIX, ESCALATE — with:\n\n"
+            f"    {harness}/spira/sop.sh show <slug-without-sop-prefix>\n"
+        ),
+    }
+    for ns, header in NAMESPACES.items():
+        group = sorted(k for k in index_slugs if k.startswith(ns))
+        if group:
+            parts.append(header + "\n".join(group))
 
 print("\n\n".join(parts))
 ' "$prefixes" "$budget" "$core_csv" "$harness" 2>/dev/null
