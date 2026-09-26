@@ -47,6 +47,23 @@ fi
 
 [ "$tool" = "Bash" ] || exit 0
 
+# STRUCTURAL, NOT CHARGED-AFTER-THE-FACT (sp-4o925). A headless session has no notification
+# channel: backgrounding a command and ending the turn to "wait for" it orphans the process
+# when the session exits, and aeon.sh's yield-headless disposition only charges an attempt
+# for a mistake already made. Refusing the parameter removes the mechanism instead.
+rib="$(printf '%s' "$payload" | python3 -c '
+import json, sys
+try: d = json.load(sys.stdin); print("1" if d.get("tool_input",{}).get("run_in_background") else "")
+except Exception: print("")' 2>/dev/null)"
+if [ "$rib" = "1" ]; then
+    reason="aeon sessions run headless and cannot be woken by a background task notification (sp-4o925: run_in_background is refused) — run this command in the foreground instead"
+    printf 'aeon-fence: BLOCKED aeon=%s bead=%s: %s\n' \
+        "${SPIRA_AEON:-?}" "${BEAD_ID:-?}" "$reason" >&2
+    printf '{"decision":"block","reason":"%s"}\n' \
+        "$(printf '%s' "$reason" | sed 's/"/\\"/g')"
+    exit 0
+fi
+
 cmd="$(printf '%s' "$payload" | python3 -c '
 import json, sys
 try: d = json.load(sys.stdin); print(d.get("tool_input",{}).get("command",""))
