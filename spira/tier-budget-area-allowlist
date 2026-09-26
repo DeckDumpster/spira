@@ -1,0 +1,14 @@
+# tier-budget-area-allowlist — areas (UC-<area>) with more than one T3 suite today
+# (law-unit-tests-run-under-a-second; test plan §4.1; sp-5m133). Same ratchet as
+# tier-budget-allowlist: spira/tier-budget.sh check-areas fails an area not listed here that
+# has more than one T3 suite; spira/tier-budget.sh lint-allowlist --file <this file> fails a
+# branch that adds an area or raises a recorded count. Consolidate an area's T3 coverage down
+# to one suite (or retier the rest) and lower/delete its line — that is the only way this file
+# is meant to change.
+#
+# FORMAT: one entry per line, tab-separated: <area> <count>. Blank lines and `#` comments are
+# ignored.
+#
+# SEEDED 2026-09-25 from the shipped tree's own # tier:/# covers: headers.
+landing-merge-queue	2
+operator-channel	3

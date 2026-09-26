@@ -35,6 +35,15 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # HEAD positionally without setting either env var.
 SPIRA_GATE_BASE="${SPIRA_GATE_BASE:-$BASE}" bash "$HERE/build-fence.sh" || exit 1
 
+# THE ALLOWLIST RATCHETS RUN HERE TOO (sp-5m133), same reason: a suite-selection mode that
+# skips everything must not also skip the checks that keep a violator from getting
+# grandfathered in worse than it already is. check-areas is static (no duckdb, no timing
+# data) so it runs unconditionally; the wall-time budgets themselves are judged per-suite
+# inside testenv-batch.sh, against the suites this call actually selects.
+bash "$HERE/tier-budget.sh" lint-allowlist --base "$BASE" || exit 1
+bash "$HERE/tier-budget.sh" lint-allowlist --base "$BASE" --area || exit 1
+bash "$HERE/tier-budget.sh" check-areas --suite-dir "$HERE" || exit 1
+
 HEAD="${2:?usage: gate-touched.sh <base> <head>}"
 repo="${SPIRA_GATE_REPO:-.}"
 _tiers="${SPIRA_GATE_TIERS:-T0,T1}"
