@@ -204,6 +204,11 @@ JSONL
 rm -rf "$SPIRA_RUN/worktree"
 "$SPIRA_HOME/aeon.sh" builder > "$TMP/out" 2>&1
 
+if [ ! -s "$TMP/prompt" ]; then
+    printf '# DEBUG aeon.sh output:\n' >&2
+    sed 's/^/# /' "$TMP/out" >&2
+fi
+
 want "the claiming aeon's prompt names the holds section" "Files already in flight" "$(cat "$TMP/prompt" 2>/dev/null)"
 want "and names the open bead already touching the file"  "tst-holder"              "$(cat "$TMP/prompt" 2>/dev/null)"
 
