@@ -99,8 +99,10 @@ want   "C: UNITS includes spira-broker.service" "spira-broker.service" \
        "$(printf '%s\n' "$a_out" | grep '^UNITS:')"
 want   "C: UNITS includes spira-broker.timer" "spira-broker.timer" \
        "$(printf '%s\n' "$a_out" | grep '^UNITS:')"
-want   "C: ENABLE includes spira-broker-prod.timer" "spira-broker-prod.timer" \
-       "$(printf '%s\n' "$a_out" | grep '^ENABLE:')"
+# Binary present is not enough to enable: SPIRA_BROKER_ENABLE is unset here (env -i),
+# so the timer stays off with no producer — test-broker-units.sh covers the opt-in case.
+nowant "C: ENABLE does not include spira-broker-prod.timer without SPIRA_BROKER_ENABLE" \
+       "spira-broker-prod.timer" "$(printf '%s\n' "$a_out" | grep '^ENABLE:')"
 nowant "C: OPTIONAL does not include spira-broker" "spira-broker" \
        "$(printf '%s\n' "$a_out" | grep '^OPTIONAL:')"
 

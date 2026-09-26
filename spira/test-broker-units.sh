@@ -20,9 +20,7 @@
 # covers: systemd/units.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
+. "$HERE/testlib.sh"
 
 echo "test-broker-units.sh"
 
@@ -54,37 +52,23 @@ echo
 echo "A: POSITIVE CONTROL — SPIRA_BROKER_ENABLE=1 + binary present: broker timer in ENABLE:"
 # ==========================================================================
 pos_out="$(get_enable 1 "$FAKE_BROKER")"
-if [[ "$pos_out" == *"spira-broker-prod.timer"* ]]; then
-    ok "A: broker-prod.timer in ENABLE when BROKER_ENABLE=1 and binary executable"
-else
-    bad "A: broker-prod.timer in ENABLE when BROKER_ENABLE=1 and binary executable" \
-        "not found in: $pos_out"
-fi
+want "A: broker-prod.timer in ENABLE when BROKER_ENABLE=1 and binary executable" \
+    "spira-broker-prod.timer" "$pos_out"
 
 # ==========================================================================
 echo
 echo "B: NO PRODUCER — SPIRA_BROKER_ENABLE=0: broker timer absent from ENABLE:"
 # ==========================================================================
 noprod_out="$(get_enable 0 "$FAKE_BROKER")"
-if [[ "$noprod_out" != *"spira-broker-prod.timer"* ]]; then
-    ok "B: broker-prod.timer absent from ENABLE when BROKER_ENABLE=0"
-else
-    bad "B: broker-prod.timer absent from ENABLE when BROKER_ENABLE=0" \
-        "unexpectedly present"
-fi
+nowant "B: broker-prod.timer absent from ENABLE when BROKER_ENABLE=0" \
+    "spira-broker-prod.timer" "$noprod_out"
 
 # ==========================================================================
 echo
 echo "C: BINARY MISSING — SPIRA_BROKER_ENABLE=1 but binary not executable: broker timer absent:"
 # ==========================================================================
 nomis_out="$(get_enable 1 "/nonexistent/broker")"
-if [[ "$nomis_out" != *"spira-broker-prod.timer"* ]]; then
-    ok "C: broker-prod.timer absent from ENABLE when binary not executable"
-else
-    bad "C: broker-prod.timer absent from ENABLE when binary not executable" \
-        "unexpectedly present"
-fi
+nowant "C: broker-prod.timer absent from ENABLE when binary not executable" \
+    "spira-broker-prod.timer" "$nomis_out"
 
-echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
