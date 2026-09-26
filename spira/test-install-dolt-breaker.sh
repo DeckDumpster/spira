@@ -268,14 +268,21 @@ FAKE_RUN="$TMP/run"
 FAKE_DB="$TMP/db"
 mkdir -p "$FAKE_HOME" "$FAKE_UNITDIR" "$FAKE_RUN" "$FAKE_DB"
 
-_DOLT_PORT="$(python3 -c "import socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(('127.0.0.1',0)); p=s.getsockname()[1]; s.close(); print(p)")"
+alloc_port() {
+    python3 -c "import socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(('127.0.0.1',0)); p=s.getsockname()[1]; s.close(); print(p)"
+}
+
+_DOLT_PORT="$(alloc_port)"
 _DOLT_DATA="$TMP/dolt-data"
 mkdir -p "$_DOLT_DATA"
-cat > "$_DOLT_DATA/dolt-server.yaml" <<YAML
+write_dolt_yaml() {
+    cat > "$_DOLT_DATA/dolt-server.yaml" <<YAML
 listener:
   port: $_DOLT_PORT
 data_dir: $_DOLT_DATA
 YAML
+}
+write_dolt_yaml
 
 # Python listener that accepts multiple connections (unlike nc which may exit
 # after one). install.sh phase 4 makes two TCP probes: one in the loop and one
@@ -412,6 +419,30 @@ setup_fake_db() {
         "$_DOLT_PORT" "$_DBNAME2" > "$FAKE_DB/.beads/metadata.json"
 }
 
+# Starts the Python listener on $_DOLT_PORT and verifies it actually bound.
+# alloc_port's bind-then-release leaves a gap where a concurrent process (this
+# suite runs under a large parallel batch) can take the port before the real
+# listener does; python's bind then throws and the listener dies immediately.
+# Detect that and retry on a freshly allocated port rather than let install.sh
+# fail at the wrong phase. Sets _py_pid to the listener's pid on success.
+start_dolt_listener() {
+    local attempt
+    for attempt in 1 2 3 4 5; do
+        python3 "$TMP/listener.py" "$_DOLT_PORT" &
+        _py_pid=$!
+        sleep 0.3
+        if kill -0 "$_py_pid" 2>/dev/null && \
+           (echo -n "" >/dev/tcp/127.0.0.1/"$_DOLT_PORT") 2>/dev/null; then
+            return 0
+        fi
+        kill "$_py_pid" 2>/dev/null; wait "$_py_pid" 2>/dev/null || true
+        _DOLT_PORT="$(alloc_port)"
+        write_dolt_yaml
+        setup_fake_db
+    done
+    return 1
+}
+
 # ==========================================================================
 echo
 echo "3. INSTALL POSITIVE CONTROL — no clear: probe fails, install exits non-zero:"
@@ -425,9 +456,7 @@ make_bd_stub 0
 
 # Python listener simulates dolt-beads.service; handles multiple TCP probes
 # (phase 4 makes both a loop probe and a final-confirm probe).
-python3 "$TMP/listener.py" "$_DOLT_PORT" &
-_py_pid=$!
-sleep 0.3
+start_dolt_listener || bad "no-clear: listener bound its port" "failed after retries"
 
 _no_clear_log="$TMP/no-clear-install.log"
 run_install "$_no_clear_log" >/dev/null &
@@ -461,9 +490,8 @@ touch "$_BREAKER_FLAG"   # pre-trip the breaker
 # db stub: doctor removes the flag; list then succeeds.
 make_bd_stub 1
 
-python3 "$TMP/listener.py" "$_DOLT_PORT" &
-_py_pid2=$!
-sleep 0.3
+start_dolt_listener || bad "install passes: listener bound its port" "failed after retries"
+_py_pid2="$_py_pid"
 
 _clear_log="$TMP/clear-install.log"
 run_install "$_clear_log" >/dev/null &
