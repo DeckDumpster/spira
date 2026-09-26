@@ -475,6 +475,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "reconciler-alert"
+version = "1.0.0"
+dependencies = [
+ "reconciler-engine",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "reconciler-engine"
 version = "1.0.0"
 dependencies = [
