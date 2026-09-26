@@ -72,6 +72,203 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # ---------------------------------------------------------------------------
+# GUARD FUNCTIONS — defined before anything else runs so a test can source this
+# file (BASH_SOURCE[0] != $0) and call them directly, without running install.
+# ---------------------------------------------------------------------------
+
+# _configure_prod_guard <path> -> 0 when unset or holds conf.sh, 1 (refuse) otherwise.
+# CONFIGURE_PROD must be the harness subdir, not the clone root.
+_configure_prod_guard() {
+    local path="${1:-}"
+    [ -n "$path" ] || return 0
+    [ -f "$path/conf.sh" ] && return 0
+    printf 'install: CONFIGURE_PROD (%s) does not contain conf.sh\n' "$path" >&2
+    printf 'install:   set CONFIGURE_PROD to the harness subdir: %s/spira\n' "$path" >&2
+    return 1
+}
+
+# _prod_guard <path> -> 0 when clear (or overridden), 2 (refuse) when <path> is a git
+# checkout. A git pull there would be a silent deploy with no audit trail — the release
+# model requires SPIRA_PROD to resolve through SPIRA_RELEASES/current, the symlink
+# activate.sh swaps atomically on each deployment. Override: SPIRA_INSTALL_PROD_GIT_CONSIDERED=1
+_prod_guard() {
+    local path="${1:-}"
+    [ -n "${SPIRA_INSTALL_PROD_GIT_CONSIDERED:-}" ] && return 0
+    [ -n "$path" ] && [ -e "$path" ] || return 0
+    local walk="$path" in_git=0
+    while [ "$walk" != "/" ] && [ -n "$walk" ]; do
+        if [ -d "$walk/.git" ] || [ -f "$walk/.git" ]; then
+            in_git=1; break
+        fi
+        walk="$(dirname "$walk")"
+    done
+    [ "$in_git" = 1 ] || return 0
+    printf 'install: REFUSING — SPIRA_PROD (%s) is a git checkout\n' "$path" >&2
+    printf 'install:   The release model requires SPIRA_PROD to resolve through\n' >&2
+    printf 'install:   %s/current (the symlink activate.sh swaps on each deploy).\n' \
+        "${SPIRA_RELEASES:-}" >&2
+    printf 'install:   Activate a release tarball first: bash spira/activate.sh <tarball>\n' >&2
+    printf 'install:   Override: SPIRA_INSTALL_PROD_GIT_CONSIDERED=1\n' >&2
+    return 2
+}
+
+# _conflict_report <exit-code> <message> <remedy> -> prints and returns <exit-code>.
+# The one place all conflict reports go through; never calls exit itself so a
+# caller (test or phase 0.5) composes it with `|| return`/`|| exit`.
+_conflict_report() {
+    local code="$1" msg="$2" remedy="$3"
+    printf 'install: CONFLICT — %s\n' "$msg" >&2
+    printf 'install:   remedy: %s\n' "$remedy" >&2
+    printf 'install:   override: SPIRA_INSTALL_CONFLICT_CONSIDERED=1\n' >&2
+    return "$code"
+}
+
+# _conflict_foreign <unitdir> <our-home> <instance> <units-lib>
+# -> 0 clear, 5 (refuse) when the installed sentinel unit's ExecStart resolves
+# to a different SPIRA_HOME. A second harness copy owning these unit names is
+# the skew skew.sh reports hourly.
+_conflict_foreign() {
+    local unitdir="$1" our_home="$2" instance="$3" units_lib="$4"
+    local inst_unit inst_file inst_exec inst_exec_dir inst_real our_real
+    inst_unit="$(. "$units_lib" 2>/dev/null; inst_name "spira-sentinel.service" 2>/dev/null || true)"
+    inst_file="$unitdir/${inst_unit:-spira-sentinel-${instance}.service}"
+    [ -f "$inst_file" ] || return 0
+    inst_exec="$(grep -E '^ExecStart=' "$inst_file" 2>/dev/null | head -1 | cut -d= -f2-)"
+    inst_exec_dir="$(dirname "${inst_exec%% *}" 2>/dev/null)"
+    [ -n "$inst_exec_dir" ] && [ "$inst_exec_dir" != "." ] || return 0
+    inst_real="$(realpath "$inst_exec_dir" 2>/dev/null || printf '%s' "$inst_exec_dir")"
+    our_real="$(realpath "$our_home" 2>/dev/null || printf '%s' "$our_home")"
+    [ -n "$inst_real" ] && [ "$inst_real" != "$our_real" ] || return 0
+    _conflict_report 5 \
+        "installed units for instance '$instance' exec from $inst_real (not $our_home)" \
+        "uninstall the other copy first, or re-run with SPIRA_INSTALL_CONFLICT_CONSIDERED=1 to repoint the units"
+}
+
+# _conflict_aeon <home> [<proc-root>] -> 0 clear, 5 (refuse) when a process's cmdline
+# is exactly <home>/aeon.sh. <proc-root> defaults to /proc; injectable so a test can
+# point it at a fixture tree instead of the real process table. Resolved via
+# grep -alFf against /proc/*/cmdline (not pgrep -f, which would match the caller's
+# own command line): law-a-pattern-match-is-not-an-identity-check.
+_conflict_aeon() {
+    local home="$1" proc_root="${2:-/proc}"
+    local match pid
+    match="$(printf '%s\n' "$home/aeon.sh" \
+        | grep -alFf /dev/stdin "$proc_root"/[0-9]*/cmdline 2>/dev/null | head -1)"
+    [ -n "$match" ] || return 0
+    pid="${match%/cmdline}"; pid="${pid##*/}"
+    _conflict_report 5 \
+        "live aeon running under this installation (pid $pid)" \
+        "wait for it to finish, or run: $home/world.sh stop; then re-run install"
+}
+
+# _conflict_lock <gate-lock-path> -> 0 clear, 5 (refuse) when the landing gate's
+# tree lock is held. flock -n exits 1 immediately when another holder has it.
+_conflict_lock() {
+    local lock="$1"
+    [ -f "$lock" ] && command -v flock >/dev/null 2>&1 || return 0
+    flock -n "$lock" true 2>/dev/null && return 0
+    _conflict_report 5 \
+        "landing pass in flight — gate tree lock is held at $lock" \
+        "wait for the landing pass to complete, then re-run install"
+}
+
+# _conflict_instance <unitdir> <instance> <conf-file> <run-dir> <units-lib>
+# -> 0 clear, 5 (refuse) on either: (a) the instance argument disagrees with the
+# existing config's SPIRA_INSTANCE, or (b) another installed instance's sentinel
+# unit already points its SPIRA_RUN at <run-dir>.
+_conflict_instance() {
+    local unitdir="$1" instance="$2" conf_file="$3" run_dir="$4" units_lib="$5"
+    local conf_inst_val
+    if [ -n "$conf_file" ] && [ -f "$conf_file" ]; then
+        conf_inst_val="$(grep -E '^\s*SPIRA_INSTANCE\s*=' "$conf_file" 2>/dev/null \
+            | head -1 | sed 's/.*=\s*//' | tr -d ' ')"
+        if [ -n "$conf_inst_val" ] && [ "$instance" != "$conf_inst_val" ]; then
+            _conflict_report 5 \
+                "instance argument '$instance' disagrees with config SPIRA_INSTANCE='$conf_inst_val'" \
+                "re-run without an instance argument, or edit SPIRA_INSTANCE in $conf_file"
+            return $?
+        fi
+    fi
+    local our_unit other_sent
+    our_unit="$(. "$units_lib" 2>/dev/null; inst_name "spira-sentinel.service" 2>/dev/null || true)"
+    our_unit="${our_unit:-spira-sentinel-${instance}.service}"
+    for other_sent in "$unitdir"/spira-sentinel-*.service; do
+        [ -f "$other_sent" ] || continue
+        local other_bn other_run
+        other_bn="$(basename "$other_sent")"
+        [ "$other_bn" = "$our_unit" ] && continue
+        other_run="$(grep -E '^(StandardOutput|StandardError)=append:' "$other_sent" 2>/dev/null \
+            | head -1 | sed 's/.*=append:\(.*\)\/[^/]*/\1/')"
+        [ -n "$other_run" ] || continue
+        local other_real our_run_real
+        other_real="$(realpath "$other_run" 2>/dev/null || printf '%s' "$other_run")"
+        our_run_real="$(realpath "$run_dir" 2>/dev/null || printf '%s' "$run_dir")"
+        if [ "$other_real" = "$our_run_real" ]; then
+            local other_inst="${other_bn%.service}"; other_inst="${other_inst##*-}"
+            _conflict_report 5 \
+                "instance '$other_inst' units ($other_bn) already point at SPIRA_RUN=$run_dir" \
+                "use a different SPIRA_RUN, or uninstall the other instance first"
+            return $?
+        fi
+    done
+    return 0
+}
+
+# _conflict_dolt_probe <port> -> 0 when a TCP listener answers on 127.0.0.1:<port>.
+# Its own function (rather than inlined into _conflict_dolt) so a test can redefine
+# it instead of binding a real port.
+_conflict_dolt_probe() {
+    (echo -n "" >/dev/tcp/127.0.0.1/"$1") 2>/dev/null
+}
+
+# _conflict_dolt <dolt-data-dir> [<proc-root>] -> 0 clear, 5 (refuse) when a Dolt
+# sql-server is listening on the configured port with a data_dir other than
+# <dolt-data-dir>. <proc-root> defaults to /proc; injectable like _conflict_aeon.
+_conflict_dolt() {
+    local dolt_data="$1" proc_root="${2:-/proc}"
+    [ -n "$dolt_data" ] || return 0
+    local port=3307 yaml="$dolt_data/dolt-server.yaml" yaml_port
+    if [ -f "$yaml" ]; then
+        yaml_port="$(grep -E '^\s*port\s*:' "$yaml" 2>/dev/null | head -1 \
+            | sed 's/.*:\s*//' | tr -d ' ')"
+        [ -n "$yaml_port" ] && [ "$yaml_port" -gt 0 ] 2>/dev/null && port="$yaml_port"
+    fi
+    _conflict_dolt_probe "$port" || return 0
+    local p cmd conf_arg cmd_datadir cmd_real our_real
+    for p in $(printf 'sql-server\n' \
+                | grep -alFf /dev/stdin "$proc_root"/[0-9]*/cmdline 2>/dev/null \
+                | sed 's|/cmdline$||'); do
+        [ -r "$p/cmdline" ] || continue
+        cmd="$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null)" || continue
+        case "$cmd" in *"sql-server"*) ;; *) continue ;; esac
+        cmd_datadir=""
+        case "$cmd" in *"--data-dir"*)
+            cmd_datadir="$(printf '%s' "$cmd" | grep -oE -- '--data-dir\s+\S+' | awk '{print $2}')"
+            ;;
+        esac
+        if [ -z "$cmd_datadir" ]; then
+            conf_arg="$(printf '%s' "$cmd" | grep -oE -- '--config\s+\S+' | awk '{print $2}')"
+            if [ -n "$conf_arg" ] && [ -f "$conf_arg" ]; then
+                cmd_datadir="$(grep -E '^\s*data_dir\s*:' "$conf_arg" 2>/dev/null \
+                    | head -1 | sed 's/.*:\s*//' | tr -d '"'"'"' ')"
+            fi
+        fi
+        [ -n "$cmd_datadir" ] || continue
+        cmd_real="$(realpath "$cmd_datadir" 2>/dev/null || printf '%s' "$cmd_datadir")"
+        our_real="$(realpath "$dolt_data" 2>/dev/null || printf '%s' "$dolt_data")"
+        if [ "$cmd_real" != "$our_real" ]; then
+            _conflict_report 5 \
+                "Dolt server listening on port $port is serving '$cmd_datadir' (not $dolt_data)" \
+                "stop the other Dolt server or set SPIRA_DOLT_DATA to match its data directory"
+            return $?
+        fi
+    done
+    return 0
+}
+
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0 2>/dev/null || true; fi
+
+# ---------------------------------------------------------------------------
 # ARGUMENT PARSING — before sourcing conf.sh so SPIRA_INSTANCE is in the
 # environment when conf.sh derives instance-qualified paths.
 # ---------------------------------------------------------------------------
@@ -138,16 +335,6 @@ _phase_fail() {
     exit 2
 }
 
-_conflict() {
-    # Usage: _conflict <exit-code> <message> <remedy>
-    # The one place all five conflict reports go through.
-    local code="$1" msg="$2" remedy="$3"
-    printf 'install: CONFLICT — %s\n' "$msg" >&2
-    printf 'install:   remedy: %s\n' "$remedy" >&2
-    printf 'install:   override: SPIRA_INSTALL_CONFLICT_CONSIDERED=1\n' >&2
-    exit "$code"
-}
-
 # ---------------------------------------------------------------------------
 # PHASE 0 — PREFLIGHT (doctor.sh)
 # ---------------------------------------------------------------------------
@@ -169,194 +356,30 @@ if [ -z "${SPIRA_INSTALL_CONFLICT_CONSIDERED:-}" ]; then
     phase_start "phase 0.5: conflict checks"
 
     UNITDIR="$HOME/.config/systemd/user"
+    _units_lib="$HERE/systemd/units.sh"
+    _gate_lock="$SPIRA_RUN/worktree/.gate.$(basename "$SPIRA_REPO").lock"
 
-    # -------------------------------------------------------------------------
-    # CONFLICT 1: a different harness copy already owns these unit names.
-    #
-    # Check the sentinel unit for this instance. Its ExecStart resolves to
-    # $SPIRA_PROD/sentinel.sh, which lives under a SPIRA_HOME directory.
-    # If that directory is not our SPIRA_HOME, the wrong harness is installed.
-    # The confusion this prevents: installing from a second clone silently repoints
-    # every unit to the new path — which is the skew skew.sh reports hourly.
-    # -------------------------------------------------------------------------
-    _inst_sentinel_unit="$(
-        . "$HERE/systemd/units.sh" 2>/dev/null
-        inst_name "spira-sentinel.service" 2>/dev/null || true
-    )"
-    _inst_unit_file="$UNITDIR/${_inst_sentinel_unit:-spira-sentinel-${SPIRA_INSTANCE:-prod}.service}"
-    if [ -f "$_inst_unit_file" ]; then
-        _inst_exec="$(grep -E '^ExecStart=' "$_inst_unit_file" 2>/dev/null | head -1 | cut -d= -f2-)"
-        _inst_exec_dir="$(dirname "${_inst_exec%% *}" 2>/dev/null)"
-        # The ExecStart points to $SPIRA_PROD/sentinel.sh. conf.sh sets SPIRA_PROD to SPIRA_HOME
-        # when unset, so the parent's parent is SPIRA_HOME. More precisely: sentinel.sh lives in
-        # SPIRA_HOME (the spira/ subdir), and SPIRA_PROD either equals SPIRA_HOME or is a
-        # separate checkout that also contains a spira/. Comparing the realpath of the installed
-        # dir against our SPIRA_HOME catches both cases.
-        if [ -n "$_inst_exec_dir" ] && [ "$_inst_exec_dir" != "." ]; then
-            _inst_real="$(realpath "$_inst_exec_dir" 2>/dev/null || printf '%s' "$_inst_exec_dir")"
-            _our_real="$(realpath "$SPIRA_HOME" 2>/dev/null || printf '%s' "$SPIRA_HOME")"
-            if [ -n "$_inst_real" ] && [ "$_inst_real" != "$_our_real" ]; then
-                _conflict 5 \
-                    "installed units for instance '${SPIRA_INSTANCE:-prod}' exec from $_inst_real (not $SPIRA_HOME)" \
-                    "uninstall the other copy first, or re-run with SPIRA_INSTALL_CONFLICT_CONSIDERED=1 to repoint the units"
-            fi
-        fi
-    fi
+    _conflict_foreign "$UNITDIR" "$SPIRA_HOME" "${SPIRA_INSTANCE:-prod}" "$_units_lib" \
+        || exit "$?"
     phase_info "conflict 1 clear: no foreign harness owns these unit names"
 
-    # -------------------------------------------------------------------------
-    # CONFLICT 2: a live aeon is running under this installation.
-    #
-    # Resolve from /proc argv — never pgrep -f, which matches the caller's own
-    # command line (law-a-pattern-match-is-not-an-identity-check).
-    # -------------------------------------------------------------------------
-    # grep -alFf reads all cmdlines in one pass; pattern via /dev/stdin so grep's own cmdline
-    # does not contain it — the self-match 'grep -alF PATTERN' would cause
-    # (law-a-pattern-match-is-not-an-identity-check). 30k+ threads: fork-per-PID ~2s, this ~0.02s.
-    _live_aeon_pid=""
-    _aeon_match="$(printf '%s\n' "$SPIRA_HOME/aeon.sh" \
-        | grep -alFf /dev/stdin /proc/[0-9]*/cmdline 2>/dev/null | head -1)"
-    if [ -n "$_aeon_match" ]; then
-        _live_aeon_pid="${_aeon_match%/cmdline}"; _live_aeon_pid="${_live_aeon_pid##*/}"
-    fi
-    unset _aeon_match
-    if [ -n "$_live_aeon_pid" ]; then
-        _conflict 5 \
-            "live aeon running under this installation (pid $_live_aeon_pid)" \
-            "wait for it to finish, or run: $SPIRA_HOME/world.sh stop; then re-run install"
-    fi
+    _conflict_aeon "$SPIRA_HOME" || exit "$?"
     phase_info "conflict 2 clear: no live aeons"
 
-    # -------------------------------------------------------------------------
-    # CONFLICT 3: a landing pass is in flight (gate flock held).
-    #
-    # The gate serialises on $SPIRA_RUN/worktree/.gate.<repo-basename>.lock.
-    # flock -n exits 1 immediately when the lock is held.
-    # -------------------------------------------------------------------------
-    _gate_lock="$SPIRA_RUN/worktree/.gate.$(basename "$SPIRA_REPO").lock"
-    if [ -f "$_gate_lock" ] && command -v flock >/dev/null 2>&1; then
-        if ! flock -n "$_gate_lock" true 2>/dev/null; then
-            _conflict 5 \
-                "landing pass in flight — gate tree lock is held at $_gate_lock" \
-                "wait for the landing pass to complete, then re-run install"
-        fi
-    fi
+    _conflict_lock "$_gate_lock" || exit "$?"
     phase_info "conflict 3 clear: no landing in flight"
 
-    # -------------------------------------------------------------------------
-    # CONFLICT 4: instance mismatch.
-    #
-    # Check two things:
-    #   a) the argument disagrees with SPIRA_INSTANCE from the config file
-    #   b) another installed instance's units point at this database
-    # -------------------------------------------------------------------------
-    # (a) argument vs. config SPIRA_INSTANCE
-    _conf_instance="${SPIRA_CONF_FILE:+}"
-    if [ -n "${SPIRA_CONF_FILE:-}" ] && [ -f "$SPIRA_CONF_FILE" ]; then
-        _conf_inst_val="$(grep -E '^\s*SPIRA_INSTANCE\s*=' "$SPIRA_CONF_FILE" 2>/dev/null \
-            | head -1 | sed 's/.*=\s*//' | tr -d ' ')"
-        if [ -n "$_conf_inst_val" ] && [ "${SPIRA_INSTANCE:-prod}" != "$_conf_inst_val" ]; then
-            _conflict 5 \
-                "instance argument '${SPIRA_INSTANCE:-prod}' disagrees with config SPIRA_INSTANCE='$_conf_inst_val'" \
-                "re-run without an instance argument, or edit SPIRA_INSTANCE in $SPIRA_CONF_FILE"
-        fi
-    fi
-    # (b) another instance's units pointing at our database
-    for _other_sent in "$UNITDIR"/spira-sentinel-*.service; do
-        [ -f "$_other_sent" ] || continue
-        _other_bn="$(basename "$_other_sent")"
-        # Skip the unit for our own instance.
-        _our_unit="${_inst_sentinel_unit:-spira-sentinel-${SPIRA_INSTANCE:-prod}.service}"
-        [ "$_other_bn" = "$_our_unit" ] && continue
-        # Extract SPIRA_DB path from StandardOutput or Environment lines that mention SPIRA_DB.
-        # Most units embed SPIRA_RUN in StandardOutput; extract the run dir and compare.
-        _other_run="$(grep -E '^(StandardOutput|StandardError)=append:' "$_other_sent" 2>/dev/null \
-            | head -1 | sed 's/.*=append:\(.*\)\/[^/]*/\1/')"
-        if [ -n "$_other_run" ]; then
-            _other_real="$(realpath "$_other_run" 2>/dev/null || printf '%s' "$_other_run")"
-            _our_run_real="$(realpath "$SPIRA_RUN" 2>/dev/null || printf '%s' "$SPIRA_RUN")"
-            if [ "$_other_real" = "$_our_run_real" ]; then
-                _other_inst="${_other_bn%.service}"; _other_inst="${_other_inst##*-}"
-                _conflict 5 \
-                    "instance '$_other_inst' units ($(basename "$_other_sent")) already point at SPIRA_RUN=$SPIRA_RUN" \
-                    "use a different SPIRA_RUN, or uninstall the other instance first"
-            fi
-        fi
-    done
-    unset _other_sent _other_bn _other_run _other_real _other_inst _our_run_real
+    _conflict_instance "$UNITDIR" "${SPIRA_INSTANCE:-prod}" "${SPIRA_CONF_FILE:-}" \
+        "$SPIRA_RUN" "$_units_lib" || exit "$?"
     phase_info "conflict 4 clear: no instance mismatch"
 
-    # -------------------------------------------------------------------------
-    # CONFLICT 5: a Dolt server is listening on the configured port with a
-    # different data directory.
-    #
-    # Read the port from $SPIRA_DOLT_DATA/dolt-server.yaml (default 3307).
-    # Probe with /dev/tcp. If listening, find the process via /proc and compare
-    # its data_dir to our SPIRA_DOLT_DATA.
-    # -------------------------------------------------------------------------
-    if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
-        _dolt_port=3307
-        _yaml="$SPIRA_DOLT_DATA/dolt-server.yaml"
-        if [ -f "$_yaml" ]; then
-            _yaml_port="$(grep -E '^\s*port\s*:' "$_yaml" 2>/dev/null | head -1 \
-                | sed 's/.*:\s*//' | tr -d ' ')"
-            [ -n "$_yaml_port" ] && [ "$_yaml_port" -gt 0 ] 2>/dev/null && _dolt_port="$_yaml_port"
-        fi
-        # TCP probe — using /dev/tcp to avoid depending on netstat/ss.
-        if (echo -n "" >/dev/tcp/127.0.0.1/"$_dolt_port") 2>/dev/null; then
-            # Port is listening. Find the process and its data directory from /proc cmdline.
-            # Pattern via /dev/stdin so grep's cmdline lacks it, avoiding self-match
-            # (law-a-pattern-match-is-not-an-identity-check); tr is only called for matches.
-            _found_other_dolt=0
-            for _p in $(printf 'sql-server\n' \
-                        | grep -alFf /dev/stdin /proc/[0-9]*/cmdline 2>/dev/null \
-                        | sed 's|/cmdline$||'); do
-                [ -r "$_p/cmdline" ] || continue
-                _cmd="$(tr '\0' ' ' < "$_p/cmdline" 2>/dev/null)" || continue
-                case "$_cmd" in *"sql-server"*) ;; *) continue ;; esac
-                # Extract the data_dir from the --config yaml or from --data-dir flag.
-                _cmd_datadir=""
-                # Try --data-dir flag first.
-                case "$_cmd" in *"--data-dir"*)
-                    _cmd_datadir="$(printf '%s' "$_cmd" | grep -oE -- '--data-dir\s+\S+' | awk '{print $2}')"
-                    ;;
-                esac
-                # Fall back to --config yaml.
-                if [ -z "$_cmd_datadir" ]; then
-                    _conf_arg="$(printf '%s' "$_cmd" | grep -oE -- '--config\s+\S+' | awk '{print $2}')"
-                    if [ -n "$_conf_arg" ] && [ -f "$_conf_arg" ]; then
-                        _cmd_datadir="$(grep -E '^\s*data_dir\s*:' "$_conf_arg" 2>/dev/null \
-                            | head -1 | sed 's/.*:\s*//' | tr -d '"'"'"' ')"
-                    fi
-                fi
-                if [ -n "$_cmd_datadir" ]; then
-                    _cmd_real="$(realpath "$_cmd_datadir" 2>/dev/null || printf '%s' "$_cmd_datadir")"
-                    _our_dolt_real="$(realpath "$SPIRA_DOLT_DATA" 2>/dev/null || printf '%s' "$SPIRA_DOLT_DATA")"
-                    if [ "$_cmd_real" != "$_our_dolt_real" ]; then
-                        _found_other_dolt=1
-                        _conflict 5 \
-                            "Dolt server listening on port $_dolt_port is serving '$_cmd_datadir' (not $SPIRA_DOLT_DATA)" \
-                            "stop the other Dolt server or set SPIRA_DOLT_DATA to match its data directory"
-                    fi
-                fi
-            done
-            unset _p _cmd _conf_arg _cmd_datadir _cmd_real _our_dolt_real _found_other_dolt
-        fi
-        unset _dolt_port _yaml _yaml_port
-    fi
+    _conflict_dolt "${SPIRA_DOLT_DATA:-}" || exit "$?"
     phase_info "conflict 5 clear: no Dolt port collision"
 
-    unset _inst_sentinel_unit _inst_unit_file _inst_exec _inst_exec_dir _inst_real _our_real
-    unset _live_aeon_pid _gate_lock _conf_instance _conf_inst_val _our_unit
+    unset _units_lib _gate_lock
 fi  # end conflict checks
 
-# Refuse a CONFIGURE_PROD that does not contain conf.sh — must be the harness
-# subdir, not the clone root.
-if [ -n "${CONFIGURE_PROD:-}" ] && [ ! -f "${CONFIGURE_PROD}/conf.sh" ]; then
-    printf 'install: CONFIGURE_PROD (%s) does not contain conf.sh\n' "$CONFIGURE_PROD" >&2
-    printf 'install:   set CONFIGURE_PROD to the harness subdir: %s/spira\n' "$CONFIGURE_PROD" >&2
-    exit 1
-fi
+_configure_prod_guard "${CONFIGURE_PROD:-}" || exit 1
 
 # ---------------------------------------------------------------------------
 # PHASE 1 — CONFIG (configure.sh)
@@ -556,31 +579,7 @@ fi
 # ---------------------------------------------------------------------------
 phase_start "phase 4: units"
 
-# REFUSE a SPIRA_PROD that is inside a git checkout — a git pull would be a silent
-# deploy with no audit trail. The release model requires SPIRA_PROD to resolve through
-# SPIRA_RELEASES/current, the symlink activate.sh swaps atomically on each deployment.
-# Override: SPIRA_INSTALL_PROD_GIT_CONSIDERED=1
-if [ -z "${SPIRA_INSTALL_PROD_GIT_CONSIDERED:-}" ] && [ -n "${SPIRA_PROD:-}" ] && [ -e "$SPIRA_PROD" ]; then
-    _prod_walk="$SPIRA_PROD"
-    _prod_in_git=0
-    while [ "$_prod_walk" != "/" ] && [ -n "$_prod_walk" ]; do
-        if [ -d "$_prod_walk/.git" ] || [ -f "$_prod_walk/.git" ]; then
-            _prod_in_git=1; break
-        fi
-        _prod_walk="$(dirname "$_prod_walk")"
-    done
-    if [ "$_prod_in_git" = 1 ]; then
-        printf 'install: REFUSING — SPIRA_PROD (%s) is a git checkout\n' \
-            "$SPIRA_PROD" >&2
-        printf 'install:   The release model requires SPIRA_PROD to resolve through\n' >&2
-        printf 'install:   %s/current (the symlink activate.sh swaps on each deploy).\n' \
-            "$SPIRA_RELEASES" >&2
-        printf 'install:   Activate a release tarball first: bash spira/activate.sh <tarball>\n' >&2
-        printf 'install:   Override: SPIRA_INSTALL_PROD_GIT_CONSIDERED=1\n' >&2
-        exit 2
-    fi
-    unset _prod_walk _prod_in_git
-fi
+_prod_guard "${SPIRA_PROD:-}" || exit 2
 
 # SPIRA_PROD must exist before systemd/install.sh renders units. When it is missing on
 # a fresh install:
