@@ -20,11 +20,7 @@
 # covers: spira/tmux-scope-fence.sh spira/gate-spira.sh spira/gate-fences.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-tmux-scope-fence.sh"
 
@@ -193,5 +189,4 @@ shipped_out="$(bash "$HERE/tmux-scope-fence.sh" 2>&1)"; shipped_rc=$?
 is "the shipped suite corpus is clean" "0" "$shipped_rc"
 want "and says so" "no unscoped tmux" "$shipped_out"
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

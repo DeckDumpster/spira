@@ -29,6 +29,11 @@ for wf in "$ROOT"/.github/workflows/*.yml; do
     v="$(printf '%s\n' "$block" | awk -F':' '/toolchain:/{gsub(/[\x27 ]/,"",$2); print $2; exit}')"
     if [ -z "$v" ]; then
         ok "$(basename "$wf") defers to rust-toolchain.toml (no explicit toolchain)"
+    elif [ "$v" = '${{steps.toolchain.outputs.version}}' ]; then
+        # Read from rust-toolchain.toml by the workflow's own step, so it follows the pin
+        # by construction; the step itself must be reading that file.
+        want "$(basename "$wf") reads its toolchain from rust-toolchain.toml" \
+            "rust-toolchain.toml" "$(grep -A4 'id: toolchain' "$wf")"
     else
         is "$(basename "$wf") installs the pinned toolchain" "$pin" "$v"
     fi
@@ -37,7 +42,7 @@ done
 # the pin makes cargo fetch the pin into RUSTUP_HOME at test time, which is read-only for
 # the runtime user — every Rust suite goes red inside the container while passing on the
 # host, which has no such restriction.
-img_rust="$(awk -F'[= ]+' '/^ARG RUST_VERSION=/{print $3; exit}' "$ROOT/testenv/Containerfile" 2>/dev/null)"
+img_rust="$(awk -F'[= ]+' '/^ARG RUST_VERSION=/{print $3; exit}' "$ROOT/spira/testenv/Containerfile" 2>/dev/null)"
 is "testenv Containerfile installs the pinned toolchain" "$pin" "$img_rust"
 
 tl_summary
