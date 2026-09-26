@@ -296,14 +296,24 @@ _TESTENV_LABEL="spira.testenv=1"
 
 _testenv_running_count() { podman ps -q --filter "label=$_TESTENV_LABEL" 2>/dev/null | wc -l | tr -d ' '; }
 
+# Read one SPIRA_TESTENV_* value, applying conf.sh's default when the caller has not
+# already exported it. Confined to a subshell, like every other conf.sh load in this file
+# (_image_tag, _remote_ref): sourcing it directly into cmd_up's own process would reset
+# PATH and every other conf.sh-derived global mid-command, for a caller that only wanted
+# one number.
+_testenv_conf() {   # _testenv_conf VAR -> value, or empty if conf.sh does not default it
+    ( [ -z "${SPIRA_CONF_LOADED:-}" ] && . "$HERE/conf.sh" >/dev/null 2>&1
+      eval "printf '%s' \"\${$1:-}\"" )
+}
+
 # Block until a slot is free, polling and reporting progress rather than looping silently
 # (law-a-control-that-cannot-check-must-refuse: a wait with no visible end is
 # indistinguishable from a hang). SPIRA_TESTENV_MAX_CONCURRENT=0 disables the gate.
 _testenv_admit() {
-    [ -z "${SPIRA_CONF_LOADED:-}" ] && . "$HERE/conf.sh"
-    local max="${SPIRA_TESTENV_MAX_CONCURRENT:-8}"
-    local timeout="${SPIRA_TESTENV_QUEUE_TIMEOUT:-900}"
-    local poll="${SPIRA_TESTENV_QUEUE_POLL:-5}"
+    local max timeout poll
+    max="$(_testenv_conf SPIRA_TESTENV_MAX_CONCURRENT)";     max="${max:-8}"
+    timeout="$(_testenv_conf SPIRA_TESTENV_QUEUE_TIMEOUT)";  timeout="${timeout:-900}"
+    poll="$(_testenv_conf SPIRA_TESTENV_QUEUE_POLL)";        poll="${poll:-5}"
     [ "$max" -gt 0 ] 2>/dev/null || return 0
     local waited=0 n; n="$(_testenv_running_count)"
     [ "$n" -lt "$max" ] && return 0

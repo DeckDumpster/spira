@@ -34,8 +34,10 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
 
-saw()    { if grep -q -- "$2" "$3" 2>/dev/null; then ok "$1"; else bad "$1" "no match [$2] in $3"; fi; }
-notsaw() { if grep -q -- "$2" "$3" 2>/dev/null; then bad "$1" "unexpected match [$2] in $3"; else ok "$1"; fi; }
+# -E: assertions below use extended-regex quantifiers ([0-9]+); plain grep treats a bare
+# `+` as a literal character, which would silently never match and pass no assertion at all.
+saw()    { if grep -qE -- "$2" "$3" 2>/dev/null; then ok "$1"; else bad "$1" "no match [$2] in $3"; fi; }
+notsaw() { if grep -qE -- "$2" "$3" 2>/dev/null; then bad "$1" "unexpected match [$2] in $3"; else ok "$1"; fi; }
 
 echo "test-testenv-resource-diagnosis.sh"
 
