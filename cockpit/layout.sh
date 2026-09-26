@@ -97,6 +97,10 @@ RUN="$SPIRA_RUN"
 # having crashed — both leave zero `@cockpit` panes anywhere, which is the one fact
 # `cockpit_windows()` can see. See the `ensure` header comment above.
 DOWN_MARKER="$RUN/cockpit.down"
+# Every tmux call below goes through $TMUX_BIN rather than the bare command, so a test can
+# source this file, point TMUX_BIN at a PATH shim that records argv, and check what a
+# function asked tmux to do without a real server.
+TMUX_BIN="${TMUX_BIN:-tmux}"
 
 # SPIRA_CONF, when set, points to the config file for this instance. Pane commands carry it
 # in the command string so a respawn — from tmux itself or from the ensure timer — uses the
@@ -118,33 +122,29 @@ MAIL_EXE="${MAIL_CMD%% *}"
 [ -n "$MAIL_EXE" ] && command -v "$MAIL_EXE" >/dev/null 2>&1 || MAIL_CMD=""
 mkdir -p "$RUN" || { printf 'cockpit: runtime directory %s is not writable\n' "$RUN" >&2; exit 1; }
 
+# The health pane's command line: SPIRA_CONF (if any) prefixed onto the renderer path
+# resolved above (prod checkout in split-checkout mode, unless SPIRA_DEV_RENDERER=1). Its
+# own function because a test needs the string layout.sh WOULD hand tmux without spawning
+# a pane to read it back off #{pane_start_command}.
+build_health_cmd() { printf '%s' "${_CONF_PREFIX}$COCK/health.sh loop"; }
+
 # Default to the window this script was invoked from; fall back to the claude window.
 default_window() {
     if [ -n "${TMUX_PANE:-}" ]; then
-        tmux display-message -p -t "$TMUX_PANE" '#{session_name}:#{window_index}' 2>/dev/null && return
+        $TMUX_BIN display-message -p -t "$TMUX_PANE" '#{session_name}:#{window_index}' 2>/dev/null && return
     fi
     local w
-    w=$(tmux list-panes -a -F '#{session_name}:#{window_index} #{pane_current_command}' 2>/dev/null \
+    w=$($TMUX_BIN list-panes -a -F '#{session_name}:#{window_index} #{pane_current_command}' 2>/dev/null \
         | awk '$2=="claude"{print $1; exit}')
     [ -n "$w" ] && { echo "$w"; return; }
     echo "cockpit:2"
 }
 
-WINDOW=""
-ACTION="${1:-status}"; shift || true
-while [ $# -gt 0 ]; do
-    case "$1" in
-        --window) WINDOW="${2:?}"; shift 2 ;;
-        *) shift ;;
-    esac
-done
-[ -n "$WINDOW" ] || WINDOW="$(default_window)"
-
 # --- pane identity ------------------------------------------------------------
 # Every listing prints pane IDs (%12), which are stable for the pane's whole life. Index
 # is used only where tmux itself demands one, and never stored.
 
-tag_pane()   { tmux set-option -p -t "$1" @cockpit "$2" 2>/dev/null; }
+tag_pane()   { $TMUX_BIN set-option -p -t "$1" @cockpit "$2" 2>/dev/null; }
 
 # -g rather than per-session: the cockpit is one session among several; scope to it alone
 # leaves the others dead to the mouse, which is the inconsistency that reads as a bug.
@@ -153,7 +153,7 @@ apply_mouse_mode() {
     case "$want" in
         off|no|0) return 0 ;;   # the operator keeps terminal-native drag-select
     esac
-    tmux set-option -g mouse on 2>/dev/null || true
+    $TMUX_BIN set-option -g mouse on 2>/dev/null || true
 }
 
 # An untagged pane is indistinguishable from the session pane — which is how the first
@@ -172,8 +172,21 @@ apply_mouse_mode() {
 # `health`, so the next ensure found no untagged pane, declared the session pane gone, and
 # `up` killed the live session along with the dashboards — every other minute. The executable
 # is argv[0]; when that is a shell, the script it runs is argv[1].
+#
+# Split from the /proc walk below so a test can drive the predicate with synthetic argv,
+# with no pid, pgrep or /proc involved.
+classify_argv() {   # classify_argv <exe> <script> -> health|mail on stdout, nothing when neither
+    local exe="$1" script="$2"
+    if [[ "$exe" == */cockpit/health.sh ]] || [[ "$script" == */cockpit/health.sh ]]; then
+        echo health; return 0
+    fi
+    if [ -n "$MAIL_CMD" ] && [ "${exe##*/}" = "${MAIL_EXE##*/}" ]; then
+        echo mail; return 0
+    fi
+}
+
 pane_role() {   # pane_role <pid> -> health|mail on stdout, nothing when neither
-    local pid="$1" q exe script
+    local pid="$1" q exe script role
     local -a argv
     for q in "$pid" $(pgrep -P "$pid" 2>/dev/null); do
         mapfile -d '' -t argv < "/proc/$q/cmdline" 2>/dev/null || continue
@@ -182,17 +195,13 @@ pane_role() {   # pane_role <pid> -> health|mail on stdout, nothing when neither
         case "${exe##*/}" in
             bash|sh|dash) [ "${#argv[@]}" -gt 1 ] && [ "${argv[1]#-}" = "${argv[1]}" ] && script="${argv[1]}" ;;
         esac
-        if [[ "$exe" == */cockpit/health.sh ]] || [[ "$script" == */cockpit/health.sh ]]; then
-            echo health; return 0
-        fi
-        if [ -n "$MAIL_CMD" ] && [ "${exe##*/}" = "${MAIL_EXE##*/}" ]; then
-            echo mail; return 0
-        fi
+        role="$(classify_argv "$exe" "$script")"
+        [ -n "$role" ] && { echo "$role"; return 0; }
     done
 }
 
 adopt_untagged() {
-    tmux list-panes -t "$WINDOW" -F '#{@cockpit}|#{pane_id}|#{pane_pid}' 2>/dev/null \
+    $TMUX_BIN list-panes -t "$WINDOW" -F '#{@cockpit}|#{pane_id}|#{pane_pid}' 2>/dev/null \
     | while IFS='|' read -r tag id pid; do
         [ -n "$tag" ] && continue
         local role; role=$(pane_role "$pid")
@@ -204,28 +213,28 @@ adopt_untagged() {
 # a tag on a live pane that runs no dashboard at all, which is otherwise permanent: `up` kills
 # every tagged pane, so a wrongly tagged session pane is killed on the next repair.
 retag_dashboards() {
-    tmux list-panes -t "$WINDOW" -F '#{pane_id}|#{pane_pid}|#{pane_dead}|#{@cockpit}' 2>/dev/null \
+    $TMUX_BIN list-panes -t "$WINDOW" -F '#{pane_id}|#{pane_pid}|#{pane_dead}|#{@cockpit}' 2>/dev/null \
     | while IFS='|' read -r id pid dead tag; do
         local role; role=$(pane_role "$pid")
         if [ -n "$role" ]; then
             [ "$role" = "$tag" ] || tag_pane "$id" "$role"
         elif [ -n "$tag" ] && [ "$dead" != 1 ]; then
             heal_log "$WINDOW: $id is tagged $tag but runs no dashboard — clearing the tag"
-            tmux set-option -p -u -t "$id" @cockpit 2>/dev/null || true
+            $TMUX_BIN set-option -p -u -t "$id" @cockpit 2>/dev/null || true
         fi
       done
 }
 
 # pane id of the dashboard tagged $1, empty if absent.
-tagged()     { tmux list-panes -t "$WINDOW" -F '#{@cockpit} #{pane_id}' 2>/dev/null \
+tagged()     { $TMUX_BIN list-panes -t "$WINDOW" -F '#{@cockpit} #{pane_id}' 2>/dev/null \
                  | awk -v t="$1" '$1==t {print $2; exit}'; }
 
 # every tagged dashboard pane id, one per line (catches duplicates from a bad run).
-all_tagged() { tmux list-panes -t "$WINDOW" -F '#{@cockpit} #{pane_id}' 2>/dev/null \
+all_tagged() { $TMUX_BIN list-panes -t "$WINDOW" -F '#{@cockpit} #{pane_id}' 2>/dev/null \
                  | awk 'NF==2 && ($1=="health" || $1=="mail") {print $2}'; }
 
 # untagged panes — the session pane, plus anything the operator split off himself.
-untagged()   { tmux list-panes -t "$WINDOW" -F '#{@cockpit} #{pane_id}' 2>/dev/null \
+untagged()   { $TMUX_BIN list-panes -t "$WINDOW" -F '#{@cockpit} #{pane_id}' 2>/dev/null \
                  | awk '{ if (NF==1) print $1; else if ($1!="health" && $1!="mail") print $2 }'; }
 
 # The session pane: this script's own pane when it is in this window (an agent running
@@ -238,7 +247,7 @@ session_pane() {
     untagged | head -1
 }
 
-panes_in() { tmux list-panes -t "$WINDOW" 2>/dev/null | wc -l; }
+panes_in() { $TMUX_BIN list-panes -t "$WINDOW" 2>/dev/null | wc -l; }
 
 HEAL_LOG="$RUN/cockpit-heal.log"
 HEAL_STAMP="$RUN/.cockpit-heal-stamp"
@@ -259,9 +268,9 @@ heal_log() {
 # every dashboard pane dying, so the window keeps showing up here for `ensure` to heal.
 cockpit_windows() {
     {
-        tmux list-panes -a -F '#{window_id}|#{session_name}:#{window_index}|#{@cockpit}' 2>/dev/null \
+        $TMUX_BIN list-panes -a -F '#{window_id}|#{session_name}:#{window_index}|#{@cockpit}' 2>/dev/null \
             | awk -F'|' '$3=="health" || $3=="mail" {print $1"|"$2}'
-        tmux list-windows -a -F '#{window_id}|#{session_name}:#{window_index}|#{@cockpit_up}' 2>/dev/null \
+        $TMUX_BIN list-windows -a -F '#{window_id}|#{session_name}:#{window_index}|#{@cockpit_up}' 2>/dev/null \
             | awk -F'|' '$3=="1" {print $1"|"$2}'
     } | awk -F'|' '!seen[$1]++ {print $2}'
 }
@@ -305,17 +314,26 @@ heal_ready() {
 #      smallness heuristic and does not help here. `window-size largest` responds to resize
 #      while ignoring activity order, which is exactly what the cockpit needs.
 IDLE_SECS="${COCKPIT_CLIENT_IDLE_SECS:-21600}"
+
+# The selector, split out so a test can feed it "tty activity" lines and a fixed $now
+# instead of a real attached client. Prints "tty age" for every line idle past IDLE_SECS.
+stale_clients() {   # stale_clients <now>, reads "tty act" lines on stdin
+    local now="$1" tty act age
+    while read -r tty act; do
+        [ -n "$tty" ] && [ -n "$act" ] || continue
+        age=$(( now - act ))
+        [ "$age" -gt "$IDLE_SECS" ] && echo "$tty $age"
+    done
+}
+
 detach_idle_clients() {
     [ "$IDLE_SECS" -gt 0 ] 2>/dev/null || return 0
     local now; now=$(date +%s)
-    tmux list-clients -F '#{client_tty} #{client_activity}' 2>/dev/null \
-    | while read -r tty act; do
-        [ -n "$tty" ] && [ -n "$act" ] || continue
-        local age=$(( now - act ))
-        if [ "$age" -gt "$IDLE_SECS" ]; then
-            heal_log "detach: client $tty idle ${age}s — detaching"
-            tmux detach-client -t "$tty" 2>/dev/null || true
-        fi
+    $TMUX_BIN list-clients -F '#{client_tty} #{client_activity}' 2>/dev/null \
+    | stale_clients "$now" \
+    | while read -r tty age; do
+        heal_log "detach: client $tty idle ${age}s — detaching"
+        $TMUX_BIN detach-client -t "$tty" 2>/dev/null || true
     done
 }
 
@@ -329,7 +347,7 @@ restart_if_stale() { # pane_tag script_path
     local tag="$1" src="$2" pane pid started mtime
     pane="$(tagged "$tag")"; [ -n "$pane" ] || return 0
     [ -f "$src" ] || return 0
-    pid=$(tmux list-panes -t "$WINDOW" -F '#{@cockpit} #{pane_pid}' 2>/dev/null | awk -v t="$tag" '$1==t{print $2; exit}')
+    pid=$($TMUX_BIN list-panes -t "$WINDOW" -F '#{@cockpit} #{pane_pid}' 2>/dev/null | awk -v t="$tag" '$1==t{print $2; exit}')
     [ -n "$pid" ] || return 0
     started=$(proc_start "$pid") || {
         heal_log "$WINDOW: $tag start time unreadable — leaving it alone"
@@ -338,7 +356,7 @@ restart_if_stale() { # pane_tag script_path
     mtime=$(stat -c %Y "$src" 2>/dev/null || echo 0)
     [ "$mtime" -gt "$started" ] || return 0
     heal_log "$WINDOW: $tag is running code older than $src — respawning"
-    tmux respawn-pane -k -t "$pane" "${_CONF_PREFIX}$COCK/health.sh loop" 2>/dev/null
+    $TMUX_BIN respawn-pane -k -t "$pane" "$(build_health_cmd)" 2>/dev/null
     tag_pane "$pane" "$tag"
 }
 
@@ -437,17 +455,17 @@ restart_loom_if_stale() {
 # the correct side, the correct width, running the correct program. `-f` spans the full
 # window height whatever the target looks like, so `up` and every repair path agree.
 split_health() {   # split_health <any pane in the left column> -> pane id on stdout
-    tmux split-window -P -F '#{pane_id}' -d -h -f -l "${RIGHT_PCT}%" -t "$1" -c "$CWD" \
-        "${_CONF_PREFIX}$COCK/health.sh loop"
+    $TMUX_BIN split-window -P -F '#{pane_id}' -d -h -f -l "${RIGHT_PCT}%" -t "$1" -c "$CWD" \
+        "$(build_health_cmd)"
 }
 
 # The mail pane is cut from the session pane, AFTER health, so health keeps the full height.
 split_mail() {     # split_mail <session pane> -> pane id on stdout
-    tmux split-window -P -F '#{pane_id}' -d -v -l "${BOTTOM_PCT}%" -t "$1" -c "$CWD" \
+    $TMUX_BIN split-window -P -F '#{pane_id}' -d -v -l "${BOTTOM_PCT}%" -t "$1" -c "$CWD" \
         "${_CONF_PREFIX}$MAIL_CMD"
 }
 
-geom() { tmux display-message -p -t "$1" "$2" 2>/dev/null; }
+geom() { $TMUX_BIN display-message -p -t "$1" "$2" 2>/dev/null; }
 
 # HEALTH MUST BE FULL WINDOW HEIGHT. A half-height health pane is on the right, the right
 # width, and running the right program; only its height is wrong, and the eye reads it as the
@@ -464,7 +482,7 @@ normalize_geometry() {
             heal_log "$WINDOW: health is $hh of $wh rows — rebuilding it as a full-height column"
             anchor="$(session_pane)"
             if [ -n "$anchor" ] && [ "$anchor" != "$h" ]; then
-                tmux kill-pane -t "$h" 2>/dev/null || true
+                $TMUX_BIN kill-pane -t "$h" 2>/dev/null || true
                 h="$(split_health "$anchor")" && [ -n "$h" ] && tag_pane "$h" health
             fi
         fi
@@ -475,16 +493,16 @@ repair_dashboards() {
     local sess; sess="$(session_pane)"
     [ -n "$sess" ] || return 0
 
-    local active_pane; active_pane="$(tmux display-message -t "$WINDOW" -p '#{pane_id}' 2>/dev/null)"
+    local active_pane; active_pane="$($TMUX_BIN display-message -t "$WINDOW" -p '#{pane_id}' 2>/dev/null)"
 
     # DUPLICATES FIRST. A respawn racing this repair could produce two health panes.
     local seen p
     seen=""
-    for p in $(tmux list-panes -t "$WINDOW" -F '#{@cockpit} #{pane_id}' 2>/dev/null \
+    for p in $($TMUX_BIN list-panes -t "$WINDOW" -F '#{@cockpit} #{pane_id}' 2>/dev/null \
                | awk '$1=="health" {print $2}'); do
         if [ -z "$seen" ]; then seen="$p"; continue; fi
         heal_log "$WINDOW: duplicate health pane $p — closing"
-        tmux kill-pane -t "$p" 2>/dev/null || true
+        $TMUX_BIN kill-pane -t "$p" 2>/dev/null || true
     done
 
     local h m
@@ -499,12 +517,29 @@ repair_dashboards() {
         heal_log "$WINDOW: mail pane gone — respawning under the session"
         m="$(split_mail "$sess")" && [ -n "$m" ] && tag_pane "$m" mail
     fi
-    if tmux list-panes -t "$WINDOW" -F '#{pane_id}' 2>/dev/null | grep -q "^${active_pane}$"; then
-        tmux select-pane -t "$active_pane" 2>/dev/null || true
+    if $TMUX_BIN list-panes -t "$WINDOW" -F '#{pane_id}' 2>/dev/null | grep -q "^${active_pane}$"; then
+        $TMUX_BIN select-pane -t "$active_pane" 2>/dev/null || true
     else
-        tmux select-pane -t "$sess" 2>/dev/null || true
+        $TMUX_BIN select-pane -t "$sess" 2>/dev/null || true
     fi
 }
+
+# A SOURCED COPY RUNS NOTHING BELOW THIS LINE. Everything above is functions and the plain
+# variable assignments they read, safe to evaluate for their side effects free — which is what
+# lets a test `.` this file and call e.g. build_health_cmd, apply_mouse_mode or classify_argv
+# directly. Everything below acts on a real tmux server and a real $ACTION, and runs only when
+# this file is executed as a script.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+
+WINDOW=""
+ACTION="${1:-status}"; shift || true
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --window) WINDOW="${2:?}"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+[ -n "$WINDOW" ] || WINDOW="$(default_window)"
 
 # EVERY PANE THIS SCRIPT OPENS TAKES THE SERVER'S ENVIRONMENT, not this process's, and the
 # server's was frozen when it was forked. If it was forked from inside a Claude session it is
@@ -519,7 +554,7 @@ esac
 case "$ACTION" in
 
 up)
-    tmux has-session -t "${WINDOW%%:*}" 2>/dev/null || { echo "no tmux session for '$WINDOW'" >&2; exit 1; }
+    $TMUX_BIN has-session -t "${WINDOW%%:*}" 2>/dev/null || { echo "no tmux session for '$WINDOW'" >&2; exit 1; }
     # Asking for the cockpit back retires the deliberate-down state, whether or not the
     # rest of this succeeds — a failed repair should not read as "still down on purpose".
     rm -f "$DOWN_MARKER" 2>/dev/null || true
@@ -536,12 +571,12 @@ up)
         # THE SESSION PANE RUNS THE CONCIERGE. See header comment for the choice rationale.
         _conc="${SPIRA_REPO}/concierge.sh"
         if [ -x "$_conc" ]; then
-            sess=$(tmux split-window -P -F '#{pane_id}' -b -v -l 60% -t "$(all_tagged | head -1)" -c "$CWD" \
+            sess=$($TMUX_BIN split-window -P -F '#{pane_id}' -b -v -l 60% -t "$(all_tagged | head -1)" -c "$CWD" \
                 "${_CONF_PREFIX}${_conc} here") \
                 || { echo "cockpit: could not restore the session pane" >&2; exit 1; }
             echo "cockpit: session pane was gone — opened concierge.sh here at $sess"
         else
-            sess=$(tmux split-window -P -F '#{pane_id}' -b -v -l 60% -t "$(all_tagged | head -1)" -c "$CWD") \
+            sess=$($TMUX_BIN split-window -P -F '#{pane_id}' -b -v -l 60% -t "$(all_tagged | head -1)" -c "$CWD") \
                 || { echo "cockpit: could not restore the session pane" >&2; exit 1; }
             echo "cockpit: session pane was gone — opened a shell at $sess (concierge.sh not found)"
         fi
@@ -549,7 +584,7 @@ up)
 
     # Rebuild the dashboard from scratch. Killing first is what makes `up` a repair: a duplicate
     # or stale dashboard from an earlier bad run is removed rather than split again.
-    for p in $(all_tagged); do tmux kill-pane -t "$p" 2>/dev/null || true; done
+    for p in $(all_tagged); do $TMUX_BIN kill-pane -t "$p" 2>/dev/null || true; done
 
     hea=$(split_health "$sess") \
         || { echo "cockpit: health split failed" >&2; exit 1; }
@@ -563,14 +598,14 @@ up)
     echo "cockpit: up in $WINDOW (session $sess · health $hea${mai:+ · mail $mai})"
     # Marks the window itself as a cockpit, independent of which dashboard panes are
     # currently alive — see cockpit_windows for why that survives a dead health pane.
-    tmux set-option -w -t "$WINDOW" @cockpit_up 1 2>/dev/null || true
+    $TMUX_BIN set-option -w -t "$WINDOW" @cockpit_up 1 2>/dev/null || true
     # window-size largest so the operator's terminal (always the tallest) governs the cockpit
     # window height regardless of which client was most recently active. See detach_idle_clients
     # for the full rationale.
-    tmux set-option -t "${WINDOW%%:*}" window-size largest 2>/dev/null || true
+    $TMUX_BIN set-option -t "${WINDOW%%:*}" window-size largest 2>/dev/null || true
     apply_mouse_mode
     # ALWAYS hand focus back to the session pane: hunk-open sends keys to the active pane.
-    tmux select-pane -t "$sess" 2>/dev/null || true
+    $TMUX_BIN select-pane -t "$sess" 2>/dev/null || true
     ;;
 
 down)
@@ -583,9 +618,9 @@ down)
         echo "cockpit: no session pane in $WINDOW — run 'layout.sh up' to restore it" >&2
         exit 1
     fi
-    for p in $(all_tagged); do tmux kill-pane -t "$p" 2>/dev/null || true; done
-    tmux set-option -w -u -t "$WINDOW" @cockpit_up 2>/dev/null || true
-    tmux select-pane -t "$sess" 2>/dev/null || true
+    for p in $(all_tagged); do $TMUX_BIN kill-pane -t "$p" 2>/dev/null || true; done
+    $TMUX_BIN set-option -w -u -t "$WINDOW" @cockpit_up 2>/dev/null || true
+    $TMUX_BIN select-pane -t "$sess" 2>/dev/null || true
     # Record that this absence is deliberate. Written after the kill loop, not before: a
     # `down` that failed to remove anything should not leave the marker claiming it did.
     mkdir -p "$RUN" 2>/dev/null || true
@@ -621,7 +656,7 @@ ensure)
     # window. This survives a ghost that reconnects between two ensure runs.
     _cw="$(cockpit_windows)"
     for w in $_cw; do
-        tmux set-option -t "${w%%:*}" window-size largest 2>/dev/null || true
+        $TMUX_BIN set-option -t "${w%%:*}" window-size largest 2>/dev/null || true
     done
     if [ -z "$_cw" ]; then
         # Zero `@cockpit` panes ANYWHERE is what `down` leaves behind, and it is also what a
@@ -703,3 +738,5 @@ status)
 
 *) sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
+
+fi
