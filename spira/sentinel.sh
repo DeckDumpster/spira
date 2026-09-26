@@ -853,10 +853,18 @@ while IFS=$'\x1f' read -r id r_name superseded dropped sentcontent delivers star
             # Sending (content_landed now returns non-zero for zero-ahead) looks like "work
             # on a branch" from here, but has no commits to land and CHECK 6 cannot advance
             # it. Only exempt when the branch actually has commits of its own.
-            _c5_base="${subj_base:-}"
-            _c5_ahead="$(git -C "$r_path" rev-list --count \
-                "${_c5_base:+${_c5_base}..}$_c5_aff" 2>/dev/null)" || _c5_ahead=0
-            [ "${_c5_ahead:-0}" -gt 0 ] 2>/dev/null && continue  # work exists; CHECK 6 lands it
+            #
+            # ONLY ON THE BEAD'S OWN BRANCH. A shared affinity branch is ahead of the base
+            # because of its SIBLINGS' commits, so counting them here would exempt every bead
+            # recorded against a live shared branch, whether or not any commit is its own.
+            # There the subject match above is the whole test; no match falls through to
+            # the reopen.
+            if [ "$_c5_aff" = "spira/$id" ]; then
+                _c5_base="${subj_base:-}"
+                _c5_ahead="$(git -C "$r_path" rev-list --count \
+                    "${_c5_base:+${_c5_base}..}$_c5_aff" 2>/dev/null)" || _c5_ahead=0
+                [ "${_c5_ahead:-0}" -gt 0 ] 2>/dev/null && continue  # work exists; CHECK 6 lands it
+            fi
         else
             # BRANCH MISSING. Restore from the landstate tip or remote tracking ref so
             # landing.sh can pick it up — a deleted ref is not evidence of unlanded work

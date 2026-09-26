@@ -44,7 +44,7 @@ git -C "$REPO" fetch -q origin
 git -C "$REPO" remote set-head origin main
 mkdir -p "$RUN/worktree" "$SH/chamber"
 
-cp "$HERE/sentinel.sh" "$HERE/lib.sh" "$HERE/landing.sh" "$HERE/conf.sh" "$SH/"
+cp "$HERE/sentinel.sh" "$HERE/lib.sh" "$HERE/landing.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub pilgrimage.sh 'exit 0'
 stub strand.sh     'exit 0'
