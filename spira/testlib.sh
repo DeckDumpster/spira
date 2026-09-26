@@ -22,6 +22,10 @@
 #   wantrc  <name> <expected-rc> <actual-rc>  pass iff the two codes are equal
 #   plan  <n>                        declare the case count up front (optional — a suite
 #                                     that never calls it gets a trailing plan instead)
+#   report_cargo <out-file> <rc>     call ok/bad once per Rust test named in a `cargo
+#                                     test` run's captured output — the mechanism every
+#                                     Rust-crate suite in this tree calls instead of each
+#                                     keeping its own copy (sp-crrwo)
 #   skip  <reason>                   the WHOLE SUITE cannot run here: TAP skip-all,
 #                                     exit 77 (the automake-skip code testenv-batch.sh and
 #                                     suites.sh already special-case). A skip is never a
@@ -142,6 +146,41 @@ nowant() {  # nowant <name> <needle> <haystack>
 
 wantrc() {  # wantrc <name> <expected-rc> <actual-rc>
     [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted rc=$2 got rc=$3"
+}
+
+# report_cargo <out-file> <rc> — one ok/bad per `test <path> ... ok|FAILED` line a `cargo
+# test` run wrote to <out-file>, instead of the whole run collapsing to a single line. Cargo
+# interleaves output from parallel test threads, but each test's own result line is whole
+# and unique, so line-based parsing needs no --test-threads=1.
+#
+# <rc> is cargo's own exit code, and decides the one case a per-test line can't: a run that
+# produced no "test ... ok|FAILED" line at all is either a compile error (rc != 0 — the
+# crate's one thing to report as failed) or a filter that matched zero tests (rc = 0 —
+# nothing to report a case for, same as cargo itself saying nothing failed).
+report_cargo() {
+    local out="$1" rc="$2" line name detail seen=0
+    while IFS= read -r line; do
+        case "$line" in
+            "test "*" ... ok")
+                name="${line#test }"; name="${name% ... ok}"
+                ok "$name"; seen=1
+                ;;
+            "test "*" ... FAILED")
+                name="${line#test }"; name="${name% ... FAILED}"
+                detail="$(awk -v t="---- $name stdout ----" '
+                    $0 == t { grab=1; next }
+                    grab && /^----/ { exit }
+                    grab && /^failures:/ { exit }
+                    grab { print }
+                ' "$out" | head -5 | tr '\n' ' ')"
+                bad "$name" "${detail:-see cargo output above}"
+                seen=1
+                ;;
+        esac
+    done < "$out"
+    if [ "$seen" = 0 ] && [ "$rc" != 0 ]; then
+        bad "cargo test" "$(tail -40 "$out" | tr '\n' ' ')"
+    fi
 }
 
 plan() {    # plan <n> — must be called before the first ok/bad/want/nowant/wantrc

@@ -10,10 +10,10 @@
 # about which Rust test broke; a reader had to open the log and read cargo's own output by
 # eye.
 #
-# WHAT THIS DOES INSTEAD. `cargo test`'s stdout already names every test as it finishes
-# (`test <path> ... ok` / `... FAILED`); this suite parses those lines and calls testlib.sh's
-# ok/bad once per Rust test, so each one gets its own TAP14 line and JSONL row keyed to the
-# UC ids on the # covers: line below, instead of being folded into a single suite-level count.
+# WHAT THIS DOES INSTEAD. testlib.sh's report_cargo parses cargo test's own per-test lines
+# and calls ok/bad once per Rust test, so each one gets its own TAP14 line and JSONL row
+# keyed to the UC ids on the # covers: line below, instead of being folded into a single
+# suite-level count.
 #
 # ONE JOB, NOT TWO SHIMS. Loom's tests/endpoint.rs hits a real `bd` on a throwaway database
 # and refuses to run without LOOM_TEST_DB/LOOM_TEST_BD set (see that file's own comment) —
@@ -73,35 +73,11 @@ bdq dep add sp-bbb sp-zzz >/dev/null 2>&1                  # sp-bbb blocks sp-zz
 export LOOM_TEST_DB="$SPIRA_DB"
 export LOOM_TEST_BD="${SPIRA_BD:-bd}"
 
-# _report_cargo_tests <cargo-output-file> — call ok/bad once per `test <name> ... ok|FAILED`
-# line cargo printed. cargo interleaves output from parallel test threads, but each test's
-# own result line is whole and unique, so line-based parsing needs no --test-threads=1.
-_report_cargo_tests() {
-    local out="$1" line name detail
-    while IFS= read -r line; do
-        case "$line" in
-            "test "*" ... ok")
-                name="${line#test }"; name="${name% ... ok}"
-                ok "$name"
-                ;;
-            "test "*" ... FAILED")
-                name="${line#test }"; name="${name% ... FAILED}"
-                detail="$(awk -v t="---- $name stdout ----" '
-                    $0 == t { grab=1; next }
-                    grab && /^----/ { exit }
-                    grab && /^failures:/ { exit }
-                    grab { print }
-                ' "$out" | head -5 | tr '\n' ' ')"
-                bad "$name" "${detail:-see cargo output above}"
-                ;;
-        esac
-    done < "$out"
-}
-
 OUT="$TMP/cargo-test.out"
 CARGO_TERM_COLOR=never "$CARGO_BIN" test --manifest-path "$ROOT/Cargo.toml" \
     -p panel -p loom --no-fail-fast > "$OUT" 2>&1
+_rc=$?
 cat "$OUT"
-_report_cargo_tests "$OUT"
+report_cargo "$OUT" "$_rc"
 
 tl_summary

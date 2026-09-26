@@ -30,18 +30,15 @@ CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
 if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
     CARGO_BIN="$HOME/.cargo/bin/cargo"
 fi
-if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-desired-state: cargo not found on PATH or at ~/.cargo/bin" >&2
-    echo "     install Rust: https://rustup.rs/" >&2
-    exit 77
-fi
+[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin — install Rust: https://rustup.rs/"
 export PATH="$(dirname "$CARGO_BIN"):$PATH"
 
-if out="$("$CARGO_BIN" test --manifest-path "$CRATE/Cargo.toml" 2>&1)"; then
-    ok "desired-state tests passed"
-    printf '%s\n' "$out" | grep -E '^\s*(test |ok |FAILED|running)' || true
-else
-    bad "desired-state tests" "$(printf '%s\n' "$out" | tail -40)"
-fi
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
+OUT="$TMP/cargo-test.out"
+CARGO_TERM_COLOR=never "$CARGO_BIN" test --manifest-path "$CRATE/Cargo.toml" \
+    --no-fail-fast > "$OUT" 2>&1
+_rc=$?
+cat "$OUT"
+report_cargo "$OUT" "$_rc"
 
 tl_summary
