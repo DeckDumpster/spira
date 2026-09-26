@@ -13,12 +13,12 @@
 # only open dep carries the ask label, so the reaper's --exclude-label skips it. The label
 # is removed when the dep closes, so the reaper's exclude-label no longer matches it.
 #
-# FIVE CASES. THE REAPER ITSELF IS NEVER INVOKED — every case asserts on
-# check2_protect_waiting's label state, not on a reclaim actually firing:
+# THREE CASES. THE REAPER ITSELF IS NEVER INVOKED — every case asserts on
+# check2_protect_waiting's label state, not on a reclaim actually firing. D7: dropped the
+# protected / unprotected-after-close cases — test-reclaim-escalated.sh's T2 chain already
+# re-asserts both labels through a real database AND the ghost-check effect they exist for:
 #   1. POSITIVE CONTROL (dead worker, no deps) — not given the skip label.
 #      Without this, a protect-everything implementation reads as correct.
-#   2. PROTECTED (only open dep carries ask label) — skip label applied.
-#   3. UNPROTECTED AFTER DEP CLOSES — skip label removed.
 #   4. NOT PROTECTED (open dep without ask label) — no skip label applied.
 #   5. MIXED DEPS (one ask dep, one non-ask open dep) — no skip label applied.
 #
@@ -78,39 +78,6 @@ acted=0
 check2_protect_waiting
 lacks "dead worker: skip label not applied" "$SKIP" "$(B label list sp-dead1 2>/dev/null)"
 is    "dead worker: no act recorded" "0" "$acted"
-
-# ======================================================================================
-echo
-echo "case 2 — protected: only open dep carries the ask label → skip label applied:"
-# ======================================================================================
-# This is the exact state sp-mfa4 was in. The bead is IN_PROGRESS; its dep is the
-# needs-ryan question the aeon filed and exited for.
-testdb_reset
-testdb_seed <<JSONL
-{"id":"sp-ask1","title":"a decision","status":"open","issue_type":"decision","labels":["$ASK","plan","spira"],"assignee":""}
-{"id":"sp-work1","title":"work blocked on ryan","status":"in_progress","issue_type":"task","labels":["plan","repo:spira","spira"],"assignee":"aeon-x","dependencies":[{"depends_on_id":"sp-ask1","type":"blocks"}]}
-JSONL
-acted=0
-check2_protect_waiting
-has   "blocked bead: skip label applied" "$SKIP" "$(B label list sp-work1 2>/dev/null)"
-is    "blocked bead: one act recorded" "1" "$acted"
-
-# ======================================================================================
-echo
-echo "case 3 — unprotected after dep closes: skip label removed, reaper can fire:"
-# ======================================================================================
-# Ryan answered. The dep closed. check2_protect_waiting must remove the skip label so the
-# reaper's --exclude-label no longer matches (the reaper itself is not invoked here — its
-# reclaim on the next pass is the caller's property, not this suite's).
-testdb_reset
-testdb_seed <<JSONL
-{"id":"sp-ask2","title":"a decision","status":"closed","issue_type":"decision","labels":["$ASK","plan","spira"]}
-{"id":"sp-work2","title":"work whose dep just closed","status":"in_progress","issue_type":"task","labels":["plan","repo:spira","spira","$SKIP"],"assignee":"aeon-x","dependencies":[{"depends_on_id":"sp-ask2","type":"blocks"}]}
-JSONL
-acted=0
-check2_protect_waiting
-lacks "dep closed: skip label removed" "$SKIP" "$(B label list sp-work2 2>/dev/null)"
-is    "dep closed: one act recorded" "1" "$acted"
 
 # ======================================================================================
 echo

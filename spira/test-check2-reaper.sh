@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 #
-# test-check2-reaper.sh — CHECK 2's reclaim-output parsing and CHECK 2c's per-partition
+# test-check2-reaper.sh — CHECK 2's stale-lease reclaim loop and CHECK 2c's per-partition
 #   orphan-claim sweep, both previously untested (dispatch test plan G9, G10).
 #
 #   ./test-check2-reaper.sh
 #
 # G9: parse_reclaimed (lib.sh) turns `bdq reclaim`'s success lines into ids and charges each
-# one through bump_reclaim. Driven by canned bd-output strings standing in for a stubbed
-# `bdq reclaim` — the reclaim loop itself (sentinel.sh CHECK 2) is untouched by this suite.
+# one through bump_reclaim, driven by canned bd-output strings (cases 1-4). check2_reclaim_stale
+# (lib.sh) is the loop itself — one bdq reclaim per partition named in $PARTITIONS, the
+# --exclude-label $SPIRA_RECLAIM_SKIP_LABEL flag on every call, and the "no persona ...
+# declares a partition" log when nothing is named — driven directly with a stubbed bdq
+# (cases 5-6).
 #
 # G10: CHECK 2c's release_orphan_claims_partitions (lib.sh) sweeps every partition
 # fayth_partitions names, not one hardcoded `${SPIRA_SCOPE_LABEL},plan`. Orphaned claims in
@@ -69,7 +72,52 @@ echo "G9 case 4 — a matched line with no parseable id is counted but not charg
 n="$(parse_reclaimed 'Reclaimed 1 lease(s)')"
 is "unparseable id -> count 1"   "1" "$n"
 is "unparseable id -> no charge" "" "$(cat "$BUMPED")"
-unset -f bump_reclaim
+
+# ======================================================================================
+echo
+echo "G9 case 5 — the loop drives one bdq reclaim per partition, exclude-label on every call:"
+# ======================================================================================
+# check2_reclaim_stale must ask about EVERY partition $PARTITIONS names, not just one (the
+# CHECK 2 half of the "one hardcoded partition" defect), and every ask must carry
+# --exclude-label $SPIRA_RECLAIM_SKIP_LABEL — the flag that keeps this loop from re-reclaiming
+# a bead check2_protect_waiting already protected.
+CALLS="$TMP/bdq-calls"; : > "$CALLS"; : > "$BUMPED"
+# Pinned to a non-default value: the shipped default (spira-waiting-operator) would pass
+# just as well against an implementation with that string hardcoded instead of read from
+# $SPIRA_RECLAIM_SKIP_LABEL.
+export SPIRA_RECLAIM_SKIP_LABEL=test-skip-nondefault
+_real_bdq="$(declare -f bdq)"
+bdq() {
+    printf '%s\n' "$*" >> "$CALLS"
+    case " $* " in
+        *"--label plan "*) printf '✓ Reclaimed sp-dead4 (was held by aeon-p, expired 42m ago)\n' ;;
+        *"--label ops "*)  printf 'No stale leases to reclaim in the filtered scope\n' ;;
+    esac
+}
+progressed=0; progress() { progressed=$((progressed+1)); }
+check2_reclaim_stale $'plan\t\nops\t'
+is  "two partitions -> two bdq reclaim calls" "2" "$(grep -c '^reclaim ' "$CALLS")"
+has "plan call carries the exclude-label flag" "--exclude-label test-skip-nondefault" "$(grep 'label plan' "$CALLS")"
+has "ops call carries the exclude-label flag"  "--exclude-label test-skip-nondefault" "$(grep 'label ops' "$CALLS")"
+has "plan partition's reclaim charged"  "sp-dead4 stale-lease" "$(cat "$BUMPED")"
+is  "ops partition's idle output charges nothing extra" "1" "$(wc -l < "$BUMPED")"
+is  "progress reported once (only plan reclaimed)" "1" "$progressed"
+
+echo
+echo "G9 case 6 — no partitions declared: zero bdq calls, and the no-partition log fires:"
+# ======================================================================================
+# A REAPER WITH NOTHING TO REAP OVER SAYS SO. Without this, a loop that silently does
+# nothing when $PARTITIONS is empty reads exactly like a harness with no dead leases.
+: > "$CALLS"; : > "$BUMPED"; progressed=0
+LOGGED="$TMP/logged"; : > "$LOGGED"
+log() { printf '%s\n' "$1" >> "$LOGGED"; }
+check2_reclaim_stale ''
+is  "empty partitions -> zero bdq calls" "0" "$(wc -l < "$CALLS")"
+has "empty partitions -> the no-partition log line" "no persona in the chamber declares a partition" "$(cat "$LOGGED")"
+is  "empty partitions -> progress not reported" "0" "$progressed"
+log() { :; }
+eval "$_real_bdq"
+unset -f progress bump_reclaim
 
 # ======================================================================================
 echo

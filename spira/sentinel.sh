@@ -183,33 +183,18 @@ fi
 # ~600ms and a fixture that creates no stale leases pays that on every pass with nothing
 # to show for it. Test suites that cover CHECK 4 (the poison valve) rather than reclaim
 # behaviour set this to halve the per-pass wall time (16 passes × ~2s saved = ~32s).
-# ======================================================================================
-# Match the SUCCESS shape, not the word. The first version counted lines containing
-# "reclaim", which matches the success message AND the idle message "No stale leases to
-# reclaim in the filtered scope" — so every pass reported an action it had not taken. That
-# is a false alert, and it was not merely noise: `acted` was never 0, so CHECK 8 could
-# never fire and the harness could never notice it was starved.
 #
 # ONE RECLAIM PER PARTITION, ASKED THROUGH THE CHAMBER. This named `spira,plan` — the
 # builder's partition standing in for every persona — so an ops or spike aeon that died left
 # its bead in_progress with a dead lease and no time-based reaper ever looked at it. The
 # /proc ghost sweep in CHECK 2b catches that case faster in practice, but the backstop for
 # everything /proc cannot see did not exist for those partitions at all.
+#
+# The loop is check2_reclaim_stale (lib.sh), which matches the SUCCESS shape via
+# parse_reclaimed rather than the word "reclaim" (which also appears in the idle message).
 if [ "${SPIRA_SKIP_RECLAIM:-0}" != 1 ]; then
 check2_protect_waiting
-n_parts=0; n_reclaimed=0
-while IFS=$'\t' read -r part _; do
-    [ -n "$part" ] || continue
-    n_parts=$((n_parts+1))
-    out="$(bdq reclaim --older-than 180m --label "$part" --exclude-label "$SPIRA_RECLAIM_SKIP_LABEL" 2>&1)"
-    grep -q 'No stale leases' <<< "$out" && continue
-    n="$(parse_reclaimed "$out")"
-    n_reclaimed=$(( n_reclaimed + ${n:-0} ))
-done <<< "$PARTITIONS"
-# A REAPER WITH NOTHING TO REAP OVER SAYS SO. With no partition declared this writes nothing
-# and returns clean, which reads exactly like a harness with no dead leases.
-[ "$n_parts" -eq 0 ] && log "CHECK2 no persona in the chamber declares a partition — no lease is being reaped"
-[ "$n_reclaimed" -gt 0 ] && progress "reclaimed $n_reclaimed stale lease(s)"
+check2_reclaim_stale "$PARTITIONS"
 fi
 
 # ======================================================================================
