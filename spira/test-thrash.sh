@@ -211,23 +211,11 @@ else
     else
         ok "thrash cleanup block does not increment attempts directly"
     fi
-    if grep -q 'bump_requeue "\$BEAD_ID" thrash$' <<< "${thrash_block:-}" 2>/dev/null; then
-        ok "below-cap path still requeues with the bare 'thrash' cause (no attempt)"
-    else
-        bad "below-cap path no longer requeues with the bare 'thrash' cause"
-    fi
-    if grep -q 'bump_requeue "\$BEAD_ID" thrash-stale' <<< "${thrash_block:-}" 2>/dev/null; then
-        ok "at/over-cap path requeues with a cause the SQL exemption does not match (attempt charged)"
-    else
-        bad "at/over-cap path does not requeue with a distinct, non-exempt cause"
-    fi
-
-    # Confirm ledger_done is called with requeue-thrash status anywhere in the file.
-    if grep -q 'ledger_done.*requeue-thrash\|requeue-thrash.*ledger_done' "$AEON"; then
-        ok "aeon.sh calls ledger_done with requeue-thrash"
-    else
-        bad "aeon.sh does not call ledger_done with requeue-thrash"
-    fi
+    # The below-cap/at-cap cause strings and the requeue-thrash ledger status moved into
+    # aeon_disposition's own output (lib.sh) as part of sp-eq8a4.2.1, so they are no longer
+    # literals beside bump_requeue/ledger_done in aeon.sh; behaviour is covered by
+    # test-aeon-disposition.sh's "thrash below the streak cap is free" and "thrash streak at
+    # cap charges" rows instead of a source-order grep here.
 fi
 
 # ---- Part 6: structural — thrash check guarded by idle < STALL_BEATS ----------------

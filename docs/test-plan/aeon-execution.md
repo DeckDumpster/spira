@@ -265,3 +265,56 @@ because they need the testlib/plan-lint dependencies actually present in `origin
 Verified: `bash spira/testenv-batch.sh --suites test-host-reason.sh,test-gate-verdict.sh
 spira/sp-eq8a4` in testenv (the two gate suites that scan the whole tree for exactly this kind
 of change — a deleted suite, an edited doctor.sh, a new doc).
+
+### 9.1 sp-eq8a4.2.1 — aeon_disposition seam + teardown-disposition gap tests
+
+By the time this slice ran, `spira/testlib.sh` (sp-yivi7) and `spira/plan-lint.sh` (via
+sp-hgg3e's snapshot import) were both reachable from `origin/main`, so the blocker §9
+recorded no longer applied.
+
+Landed: `aeon_disposition` (lib.sh) — the teardown-decision seam over aeon.sh `cleanup()`'s
+13 open-bead branches (capacity, slain, thrash bare/streak-charged, lapsed, gate-unfinished,
+decision-blocked, timeout, harness requeue-cause, operator-wait, yield-headless, pre-session,
+session_outcome unlanded/not-judged) — and `bead_has_label`, factored out of the
+read-after-claim poison check. `cleanup()` now gathers inputs (short-circuited in the
+branches' own precedence order, so a marker a higher branch would also match is never
+consumed early) and performs only the side effects the returned verdict names.
+
+`spira/test-aeon-disposition.sh` (T1, testlib.sh, 34 cases, ~1-2s) covers UC-aeon-execution-11
+and UC-aeon-execution-03, and closes gaps G1 (lapsed), G3 (timeout with/without a commit), G4
+(capacity), G5 (slain), G6 (gate-unfinished), G7 (poison-race), G8 (precedence — every
+adjacent branch pair asserted head-to-head), and G15 (unjudged-<cause> for killed/refused/
+unknown). Seen red against a deliberately swapped precedence order before landing
+(law-a-regression-test-must-be-seen-to-fail).
+
+The extraction broke five source-order greps in test-attempts.sh, test-timeout.sh,
+test-aeon-operator-wait.sh and test-thrash.sh that asserted the same teardown-disposition
+behaviour by grepping literal cause strings/variable names at their aeon.sh call sites —
+exactly the SOURCE-GREP class §3 already named for retirement once this seam landed. Two
+(REQUEUE_CAUSE before session_outcome) still name a real invariant and were updated to the
+renamed variable; three that grepped for literal requeue-cause/ledger-status strings now
+computed in lib.sh were removed, superseded by test-aeon-disposition.sh's rows.
+
+Not attempted (separate seams, out of this bead's scope): `world_stop_decide`,
+`aeon_claude_argv`, `close_verdict`/`delivers_verdict`, `eviction_reopen`, `check4_decide` —
+each is its own row in §5's table with its own suite(s) to demote, deferred to
+sp-eq8a4.2.6 (file consolidation) or a later slice.
+
+**Gap test exposed a live product defect, filed rather than fixed here** (sp-kp1fl): the
+capacity, slain, gate-unfinished and timeout(no-commit) branches release the claim and exit
+with no `bump_requeue`/`closed` event to offset the `claimed` event the earlier claim wrote —
+`attempts_of`'s SQL has no other exemption for them. Every branch documented as "free" except
+these four either writes a `requeued` event matching `thrash`/`unjudged%`, or is preceded by
+its own `closed` event; these four write neither, so CHECK 4 will eventually poison a bead
+that only ever hit them, contradicting their own "no attempt charged" notes. `lapsed` is
+correctly exempt from this finding — it is documented and coded to charge.
+
+Verified: `bash spira/testenv-batch.sh --suites test-aeon-disposition.sh,test-attempts.sh,
+test-timeout.sh,test-thrash.sh,test-aeon-decision-blocked.sh,test-aeon-operator-wait.sh,
+test-aeon-presession-death.sh,test-aeon-yield-headless.sh,test-aeon-gate-close-silent.sh,
+test-plan-lint.sh,test-requeue.sh,test-covers-entries.sh,test-host-reason.sh,
+test-gate-verdict.sh,test-inventory.sh,test-literal-lint.sh,test-units-lint.sh spira/sp-eq8a4.2.1`
+in testenv — all green. Before/after suite-seconds: the touched existing suites are
+unchanged in cost (still their full DB/e2e runs; file consolidation is sp-eq8a4.2.6's job),
+plus one new T1 suite at ~1-2s covering eight previously-untested gaps — not the full §7
+projection, which depends on the consolidation this bead does not do.

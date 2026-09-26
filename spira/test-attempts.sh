@@ -199,7 +199,7 @@ done
 # The REQUEUE_CAUSE exemption must still be decided before session_outcome is consulted.
 # A bead that was put back by the harness must not be charged an attempt.
 before="$(grep -n 'REQUEUE_CAUSE" \]; then' "$HERE/aeon.sh" | sed -n 1p | cut -d: -f1)"
-after="$(grep -n 'cause="\$(session_outcome' "$HERE/aeon.sh" | sed -n 1p | cut -d: -f1)"
+after="$(grep -n '_d_outcome="\$(session_outcome' "$HERE/aeon.sh" | sed -n 1p | cut -d: -f1)"
 is "the requeue path exits before the trace is classified" yes \
    "$( [ -n "$before" ] && [ -n "$after" ] && [ "$before" -lt "$after" ] && echo yes || echo no)"
 
@@ -275,10 +275,10 @@ got_b7="$(dolt --data-dir "$FX" sql -q "use fx; $(mk b7)" 2>/dev/null | sed -n '
 got_b8="$(dolt --data-dir "$FX" sql -q "use fx; $(mk b8)" 2>/dev/null | sed -n '4p' | tr -d '| ')"
 is "three claims each ended unjudged = 0 attempts (a dead worker is not a verdict)" "0" "$got_b7"
 is "CONTROL: two unjudged + one real failure = 1 attempt" "1" "$got_b8"
-# The note says no attempt was charged; the counter reads events, so the branch must write one.
-body_unjudged="$(grep -n 'Not judged (' "$HERE/aeon.sh" | head -1 | cut -d: -f1)"
-is "aeon.sh's not-judged branch records an unjudged requeue event" "1" \
-   "$(sed -n "$(( ${body_unjudged:-1} - 6 )),${body_unjudged:-1}p" "$HERE/aeon.sh" | grep -c 'bump_requeue "\$BEAD_ID" "unjudged-' || true)"
+# The note says no attempt was charged; the counter reads events, so the branch must write
+# one. The cause string moved into aeon_disposition's own output (lib.sh) as part of
+# sp-eq8a4.2.1, so it is no longer a literal at aeon.sh's call site; behaviour is covered by
+# test-aeon-disposition.sh's G15 rows instead of a source-order grep here.
 body_attempts="$(sed -n '/^attempts_of()/,/^}/p' "$HERE/lib.sh" 2>/dev/null)"
 is "attempts_of delegates to the SQL builder" "1" \
    "$(grep -c '_attempts_sql_query' <<<"$body_attempts" || true)"

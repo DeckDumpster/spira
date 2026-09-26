@@ -520,14 +520,7 @@ spira_event aeon.claimed "$BEAD_ID" "$AEON claimed $BEAD_ID" "summoned from the 
 # Read-after-claim is the only reliable check: re-read the bead's labels the moment after
 # claiming and release if spira-poison is present. The window is short enough that the
 # check is virtually free, and the cost of missing it is a retried-identical session.
-if bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-d = d if isinstance(d, list) else [d]
-if d and "spira-poison" in (d[0].get("labels") or []): sys.exit(1)' 2>/dev/null; then
-    : # no poison — proceed
-else
+if bead_has_label "$(bdjson show "$BEAD_ID" 2>/dev/null)" spira-poison; then
     release_own_claim "$BEAD_ID"
     log "$FAYTH/$AEON: $BEAD_ID carries spira-poison — released immediately after claim (race with the label)"
     ledger_done 0 poison-raced
@@ -777,122 +770,43 @@ d=d if isinstance(d,list) else [d]
 print(d[0].get("status","") if d else "")' 2>/dev/null)"
     if [ "$st" != "closed" ]; then
         # CHARGING IS DEFAULT-DENY. An attempt is charged ONLY when the harness can say
-        # what the WORK did wrong, because that is what the poison threshold asserts when it
-        # fires: not "this bead has been touched three times" but "we know this work keeps
-        # failing". Anything the trace cannot positively identify as a verdict about the work
-        # is evidence about the WORKER, and goes on the reclaim counter, which stops nothing.
-        # A rate-limit rejection must never poison a bead.
-        #
-        # It used to be the other way round — charge unless a short list of exemptions
-        # excused it — and every failure mode that cost the most was unenumerated when it
-        # fired. law-alerts-must-be-actionable applies to poison too: a threshold reading the
-        # wrong evidence is a false page with teeth, and this one takes work out of
-        # circulation permanently for a condition that heals itself in minutes.
-        #
-        # The three cases below return EARLY rather than relying on session_outcome, and each
-        # for a reason of its own beyond charging: a spent capacity window must also shut the
-        # summoner, a slain aeon is an operator's act and belongs in the ledger as one, and an
-        # unfinished gate names the specific race so the next reader does not have to infer
-        # it. All three would land on the reclaim counter anyway; what they add is the reason.
-        if reset_at="$(capacity_reset_at "$LOGF")"; then
-            capacity_pause_set "$reset_at" "$BEAD_ID"
-            release_own_claim "$BEAD_ID"
-            bdq note "$BEAD_ID" "Returned unchanged by aeon.sh: the account's capacity window was spent mid-session, so this bead was never judged. No attempt was charged and nothing about the work is implied. Summoning is paused until the window reopens." >/dev/null 2>&1
-            log "$FAYTH: $BEAD_ID returned unchanged — the account ran out of capacity, no attempt charged"
-            ledger_done "$rc" capacity
-            exit $rc
-        fi
-        # SLAIN IS NOT FAILED. slay.sh writes this marker before it stops the unit; an
-        # operator stopping an aeon says nothing about whether the bead is hard, so no
-        # attempt is charged toward poison, the same reading as a spent capacity window.
-        if [ -f "$SPIRA_RUN/$BEAD_ID.slain" ]; then
-            release_own_claim "$BEAD_ID"
-            log "$FAYTH: $BEAD_ID slain — released, no attempt charged"
-            ledger_done "$rc" slain
-            exit $rc
-        fi
-        # THRASH IS NOT FAILURE, ONCE. attempts_of subtracts requeued/thrash events, so the
-        # claim that preceded a single thrash is net-zero — the aeon was killed for stalling,
-        # not judged on its work. That reading breaks down for a bead thrashing repeatedly at
-        # the SAME commit: nothing distinguishes one unlucky aeon from a bead nothing is
-        # moving, so the exemption never expired and the attempt cap and poison threshold
-        # never tripped (sp-gs24i: five summons across seven hours, none charged).
-        #
-        # thrash_streak_bump compares this branch's tip to the tip recorded at the LAST
-        # thrash on this bead (bead metadata, survives across summons unlike $SPIRA_RUN). Same
-        # tip bumps the streak; a moved tip — including a bead's first-ever thrash — resets it
-        # to 1. At or over SPIRA_THRASH_STREAK_CAP consecutive same-tip thrashes, the requeue
-        # is charged as an attempt like any other failed session (a cause other than the bare
-        # "thrash" the SQL exemption matches), so the bead reaches the same poison threshold a
-        # bead that kept genuinely failing would.
-        if [ -f "$SPIRA_RUN/$BEAD_ID.thrash" ]; then
-            _thrash_note="$(cat "$SPIRA_RUN/$BEAD_ID.thrash" 2>/dev/null)"
-            rm -f "$SPIRA_RUN/$BEAD_ID.thrash"
-            release_own_claim "$BEAD_ID"
-            _thrash_tip="$(git -C "${WORK:-/dev/null}" rev-parse --short HEAD 2>/dev/null || echo ?)"
-            _thrash_streak="$(thrash_streak_bump "$BEAD_ID" "$_thrash_tip" "${_thrash_note:-?}")"
-            if [ "${_thrash_streak:-0}" -ge "${SPIRA_THRASH_STREAK_CAP:-2}" ] 2>/dev/null; then
-                bump_requeue "$BEAD_ID" thrash-stale
-                bdq note "$BEAD_ID" "STICKING POINT: ${_thrash_note:-?}
+        # what the WORK did wrong — not "this bead has been touched three times" but "we
+        # know this work keeps failing" (law-alerts-must-be-actionable). aeon_disposition
+        # (lib.sh) holds the precedence between the branches below and decides; this block
+        # only gathers the inputs it needs (short-circuited in the same precedence order, so
+        # a marker a higher branch would also match is never consumed early) and performs
+        # the side effects the verdict names.
+        local _d_cap_rc=1 _d_reset="" _d_slain=no _d_thrash=no _d_thrash_note="" \
+            _d_thrash_tip="" _d_thrash_charged=no _d_thrash_streak=0 _d_lapsed=no \
+            _d_lapsed_quiet="" _d_lapsed_last="" _d_gate=no _d_gate_why="" _d_decision=no \
+            _d_operator=no _d_yield=no _d_outcome="-" _d_line _d_status _d_charge \
+            _d_reqcause _d_notekey _lapsed_body _lapsed_ts _rq_count
 
-Requeued (thrash): the deliverable did not move for ${SPIRA_THRASH_MINUTES:-20}m while turns advanced, and this is the ${_thrash_streak}th consecutive thrash with branch $BRANCH still at $_thrash_tip — nothing has been committed since the last one. An attempt IS charged this time: the sticking point above is the next aeon's first move, not something to rediscover by reading back through this bead's notes." >/dev/null 2>&1
-                log "$FAYTH: $BEAD_ID thrash-requeued — attempt charged (streak $_thrash_streak, tip $_thrash_tip unchanged; last: ${_thrash_note:-?})"
-                ledger_done "$rc" "requeue-thrash-charged"
-            else
-                bump_requeue "$BEAD_ID" thrash
-                bdq note "$BEAD_ID" "Requeued (thrash): the deliverable did not move for ${SPIRA_THRASH_MINUTES:-20}m while turns advanced. Last action: ${_thrash_note:-?}. No attempt charged — the next aeon should start from this sticking point." >/dev/null 2>&1
-                log "$FAYTH: $BEAD_ID thrash-requeued — no attempt charged (streak $_thrash_streak, tip $_thrash_tip; last: ${_thrash_note:-?})"
-                ledger_done "$rc" "requeue-thrash"
-            fi
-            exit $rc
-        fi
-        # LEASE LAPSE IS A VERDICT. The heartbeat writes this file when the trace has been
-        # silent for the full lease duration — evidence the session wedged, not merely that
-        # the operator stopped it. Unlike slay or thrash, the attempt IS charged toward
-        # poison so a bead nothing can finish reaches the escalation threshold. The branch
-        # and worktree are preserved (the kill left them intact) so attempt 2 can continue.
-        if [ -f "$SPIRA_RUN/$BEAD_ID.lapsed" ]; then
+        if reset_at="$(capacity_reset_at "$LOGF")"; then
+            _d_cap_rc=0; _d_reset="$reset_at"
+        elif [ -f "$SPIRA_RUN/$BEAD_ID.slain" ]; then
+            _d_slain=yes
+        elif [ -f "$SPIRA_RUN/$BEAD_ID.thrash" ]; then
+            # thrash_streak_bump compares this branch's tip to the tip recorded at the LAST
+            # thrash on this bead (bead metadata, survives across summons unlike $SPIRA_RUN).
+            # Same tip bumps the streak; a moved tip — including a first-ever thrash — resets
+            # it to 1. At or over SPIRA_THRASH_STREAK_CAP consecutive same-tip thrashes the
+            # requeue IS charged (sp-gs24i: five summons across seven hours, none charged).
+            _d_thrash=yes
+            _d_thrash_note="$(cat "$SPIRA_RUN/$BEAD_ID.thrash" 2>/dev/null)"
+            rm -f "$SPIRA_RUN/$BEAD_ID.thrash"
+            _d_thrash_tip="$(git -C "${WORK:-/dev/null}" rev-parse --short HEAD 2>/dev/null || echo ?)"
+            _d_thrash_streak="$(thrash_streak_bump "$BEAD_ID" "$_d_thrash_tip" "${_d_thrash_note:-?}")"
+            [ "${_d_thrash_streak:-0}" -ge "${SPIRA_THRASH_STREAK_CAP:-2}" ] 2>/dev/null && _d_thrash_charged=yes
+        elif [ -f "$SPIRA_RUN/$BEAD_ID.lapsed" ]; then
+            _d_lapsed=yes
             _lapsed_body="$(cat "$SPIRA_RUN/$BEAD_ID.lapsed" 2>/dev/null)"
-            _lapsed_quiet="${_lapsed_body%%$'\t'*}"
-            _lapsed_last="${_lapsed_body#*$'\t'}"
+            _d_lapsed_quiet="${_lapsed_body%%$'\t'*}"
+            _d_lapsed_last="${_lapsed_body#*$'\t'}"
             rm -f "$SPIRA_RUN/$BEAD_ID.lapsed"
-            bump_lapsed "$BEAD_ID" "${_lapsed_last:-?}"
-            mkdir -p "$SPIRA_RUN/lapsed"
-            _lapsed_ts="$(date -u +%Y%m%dT%H%M%SZ)"
-            printf 'bead: %s\nquiet: %ss\nlast: %s\nbranch: spira/%s\ntip: %s\n' \
-                "$BEAD_ID" "${_lapsed_quiet:-?}" "${_lapsed_last:-?}" \
-                "$BEAD_ID" "$(git -C "${WORK:-/dev/null}" rev-parse --short HEAD 2>/dev/null || echo ?)" \
-                > "$SPIRA_RUN/lapsed/$BEAD_ID-$_lapsed_ts"
-            bdq note "$BEAD_ID" "Lease lapsed: the trace was silent for ${_lapsed_quiet:-?}s (limit ${FAYTH_LEASE_SECONDS:-600}s). Last: ${_lapsed_last:-?}. Branch spira/$BEAD_ID preserved. Attempt 2 should start from where attempt 1 wedged." >/dev/null 2>&1
-            log "$FAYTH: $BEAD_ID lease lapsed — attempt charged (quiet ${_lapsed_quiet:-?}s)"
-            release_own_claim "$BEAD_ID"
-            ledger_done "$rc" lapsed
-            exit $rc
-        fi
-        # A VERDICT NOBODY HAS IS NOT A FAILED ATTEMPT. The landing gate outgrew the ceiling
-        # an agent's tool puts on one command, so a session that ran it in the foreground had
-        # it moved to the background, ended its turn to wait — which ends the session — and
-        # left the bead in_progress with an attempt charged for a race it did not lose. A
-        # fresh aeon was then summoned onto the same bead to run the same long gate again.
-        # Seventeen sessions ended that way before anything counted them.
-        #
-        # So the same reading as a spent capacity window and a slain aeon: released, no
-        # attempt, and the reason recorded on the bead rather than only in a log. This cannot
-        # become a way to avoid poison — the next attempt starts its own gate and either
-        # reaches a verdict or fails at the work, and only the gate's own unfinished business
-        # is exempted here.
-        if gate_why="$(gate_unfinished)"; then
-            release_own_claim "$BEAD_ID"
-            bdq note "$BEAD_ID" "Released by aeon.sh: the session ended while its landing gate was still running, so it never held a verdict about its own work. No attempt was charged and nothing about the work is implied — $gate_why. Run the gate through gate-run.sh, which waits in bounded slices, and do not end the session while it is unfinished." >/dev/null 2>&1
-            log "$FAYTH: $BEAD_ID released with its gate still running — no attempt charged ($gate_why)"
-            ledger_done "$rc" gate-unfinished
-            exit $rc
-        fi
-        # BLOCKED ON OPERATOR DECISION. An aeon that filed a question/decision bead as a
-        # blocker and exited correctly — there is nothing it can do until the operator
-        # replies. The exit is not a verdict about the work; no attempt is charged toward
-        # poison. The bead becomes ready when the decision bead is closed by the reply.
-        if ! bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
+        elif gate_why="$(gate_unfinished)"; then
+            _d_gate=yes; _d_gate_why="$gate_why"
+        elif ! bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
 import sys, json, os
 ask = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")  # literal-ok: Python fallback for direct invocation without conf.sh
 try: d = json.load(sys.stdin)
@@ -906,110 +820,146 @@ open_ask = [x for x in deps
             and (x.get("dependency_type") or x.get("type")) == "blocks"]
 if open_ask: sys.exit(1)
 sys.exit(0)' 2>/dev/null; then
+            _d_decision=yes
+        elif [ "${SESSION_RC:-0}" = 124 ] && [ "${committed:-}" != yes ]; then
+            : # timeout — aeon_disposition reads SESSION_RC/committed directly, nothing to gather
+        elif [ -n "$REQUEUE_CAUSE" ]; then
+            : # harness requeue — REQUEUE_CAUSE/REQUEUE_WHY are already set by the verdict block
+        elif [ -f "$SPIRA_RUN/$BEAD_ID.operator-wait" ]; then
+            _d_operator=yes
+        elif session_yield_headless "$LOGF"; then
+            _d_yield=yes
+        elif [ "${SESSION_STARTED:-0}" = 0 ]; then
+            : # pre-session death — nothing to gather
+        else
+            _d_outcome="$(session_outcome "$LOGF")"
+        fi
+
+        _d_line="$(aeon_disposition "${st:-?}" "$_d_cap_rc" "$_d_slain" "$_d_thrash" \
+            "$_d_thrash_charged" "$_d_lapsed" "$_d_gate" "$_d_decision" "${SESSION_RC:-0}" \
+            "${committed:-no}" "${REQUEUE_CAUSE:-"-"}" "$_d_operator" "$_d_yield" \
+            "${SESSION_STARTED:-0}" "$_d_outcome")"
+        read -r _d_status _d_charge _d_reqcause _d_notekey <<<"$_d_line"
+        [ "$_d_reqcause" = "-" ] && _d_reqcause=""
+
+        case "$_d_notekey" in
+        capacity)
+            # A spent capacity window must also shut the summoner, which a bump/note alone
+            # cannot: this is the one branch besides the marker cleanups with a side effect
+            # of its own.
+            capacity_pause_set "$_d_reset" "$BEAD_ID"
             release_own_claim "$BEAD_ID"
-            bump_requeue "$BEAD_ID" "unjudged-decision-blocked"
+            bdq note "$BEAD_ID" "Returned unchanged by aeon.sh: the account's capacity window was spent mid-session, so this bead was never judged. No attempt was charged and nothing about the work is implied. Summoning is paused until the window reopens." >/dev/null 2>&1
+            log "$FAYTH: $BEAD_ID returned unchanged — the account ran out of capacity, no attempt charged"
+            ledger_done "$rc" "$_d_status"
+            exit $rc ;;
+        slain)
+            # SLAIN IS NOT FAILED: an operator stopping an aeon says nothing about the work.
+            release_own_claim "$BEAD_ID"
+            log "$FAYTH: $BEAD_ID slain — released, no attempt charged"
+            ledger_done "$rc" "$_d_status"
+            exit $rc ;;
+        thrash-charged)
+            release_own_claim "$BEAD_ID"
+            bump_requeue "$BEAD_ID" "$_d_reqcause"
+            bdq note "$BEAD_ID" "STICKING POINT: ${_d_thrash_note:-?}
+
+Requeued (thrash): the deliverable did not move for ${SPIRA_THRASH_MINUTES:-20}m while turns advanced, and this is the ${_d_thrash_streak}th consecutive thrash with branch $BRANCH still at $_d_thrash_tip — nothing has been committed since the last one. An attempt IS charged this time: the sticking point above is the next aeon's first move, not something to rediscover by reading back through this bead's notes." >/dev/null 2>&1
+            log "$FAYTH: $BEAD_ID thrash-requeued — attempt charged (streak $_d_thrash_streak, tip $_d_thrash_tip unchanged; last: ${_d_thrash_note:-?})"
+            ledger_done "$rc" "$_d_status"
+            exit $rc ;;
+        thrash)
+            release_own_claim "$BEAD_ID"
+            bump_requeue "$BEAD_ID" "$_d_reqcause"
+            bdq note "$BEAD_ID" "Requeued (thrash): the deliverable did not move for ${SPIRA_THRASH_MINUTES:-20}m while turns advanced. Last action: ${_d_thrash_note:-?}. No attempt charged — the next aeon should start from this sticking point." >/dev/null 2>&1
+            log "$FAYTH: $BEAD_ID thrash-requeued — no attempt charged (streak $_d_thrash_streak, tip $_d_thrash_tip; last: ${_d_thrash_note:-?})"
+            ledger_done "$rc" "$_d_status"
+            exit $rc ;;
+        lapsed)
+            # LEASE LAPSE IS A VERDICT, unlike slay or thrash: the attempt IS charged so a
+            # bead nothing can finish reaches the escalation threshold. Branch and worktree
+            # are preserved (the kill left them intact) so attempt 2 can continue.
+            bump_lapsed "$BEAD_ID" "${_d_lapsed_last:-?}"
+            mkdir -p "$SPIRA_RUN/lapsed"
+            _lapsed_ts="$(date -u +%Y%m%dT%H%M%SZ)"
+            printf 'bead: %s\nquiet: %ss\nlast: %s\nbranch: spira/%s\ntip: %s\n' \
+                "$BEAD_ID" "${_d_lapsed_quiet:-?}" "${_d_lapsed_last:-?}" \
+                "$BEAD_ID" "$(git -C "${WORK:-/dev/null}" rev-parse --short HEAD 2>/dev/null || echo ?)" \
+                > "$SPIRA_RUN/lapsed/$BEAD_ID-$_lapsed_ts"
+            bdq note "$BEAD_ID" "Lease lapsed: the trace was silent for ${_d_lapsed_quiet:-?}s (limit ${FAYTH_LEASE_SECONDS:-600}s). Last: ${_d_lapsed_last:-?}. Branch spira/$BEAD_ID preserved. Attempt 2 should start from where attempt 1 wedged." >/dev/null 2>&1
+            log "$FAYTH: $BEAD_ID lease lapsed — attempt charged (quiet ${_d_lapsed_quiet:-?}s)"
+            release_own_claim "$BEAD_ID"
+            ledger_done "$rc" "$_d_status"
+            exit $rc ;;
+        gate-unfinished)
+            release_own_claim "$BEAD_ID"
+            bdq note "$BEAD_ID" "Released by aeon.sh: the session ended while its landing gate was still running, so it never held a verdict about its own work. No attempt was charged and nothing about the work is implied — $_d_gate_why. Run the gate through gate-run.sh, which waits in bounded slices, and do not end the session while it is unfinished." >/dev/null 2>&1
+            log "$FAYTH: $BEAD_ID released with its gate still running — no attempt charged ($_d_gate_why)"
+            ledger_done "$rc" "$_d_status"
+            exit $rc ;;
+        decision-blocked)
+            release_own_claim "$BEAD_ID"
+            bump_requeue "$BEAD_ID" "$_d_reqcause"
             bdq note "$BEAD_ID" "Released by aeon.sh: blocked on an open decision bead (${SPIRA_ASK_LABEL:-needs-operator} label) — waiting for operator input. No attempt charged; the bead becomes ready when the decision is resolved." >/dev/null 2>&1  # literal-ok: human-readable note, not a label predicate
             log "$FAYTH: $BEAD_ID has open decision blocker — released, no attempt charged"
-            ledger_done "$rc" decision-blocked
-            exit $rc
-        fi
-        # THE LANE CAP KILLING THE SESSION IS NOT A VERDICT ABOUT THE WORK. rc=124 is
-        # `timeout`'s own exit code for a process it killed. Combined with nothing committed,
-        # this is the harness's clock ending the turn — the work was mid-flight, not wrong.
-        # Charge the timeout counter (sp-timeout), not the attempt counter: poison reads
-        # "we know this work keeps failing", and a bead timed out four times in a row has not
-        # been tried once. Follow the slain-aeon reading, which uses the same logic (sp-l7f5).
-        #
-        # After FAYTH_TIMEOUT_LIMIT consecutive timeout kills, the bead is poisoned and
-        # escalated as "too large for its lane" — a different ask from "change the approach",
-        # with the rc=124 streak as its evidence, so the operator knows to re-label or split
-        # the work rather than tell the aeon to try something different.
-        #
-        # committed may be unset if the verdict block did not reach the line that sets it.
-        # The default is "not yes" — the unset case is the case where nothing was committed.
-        if [ "${SESSION_RC:-0}" = 124 ] && [ "${committed:-}" != yes ]; then
-            # Counter labels (sp-timeout-N) are no longer written; the events trail records
-            # the claim. Timeout-specific poisoning is not applied here; CHECK4 poisons on
-            # the events-based attempt count (sp-lzt).
+            ledger_done "$rc" "$_d_status"
+            exit $rc ;;
+        timeout)
+            # rc=124 is `timeout`'s own exit code for a process it killed. Combined with
+            # nothing committed, this is the harness's clock ending the turn, not a verdict
+            # about the work (sp-l7f5, the same reading as a slain aeon).
             bdq note "$BEAD_ID" "Timeout: the session was killed by the lane cap (${FAYTH_TIMEOUT_SECONDS:-?}s) with nothing committed. This is the harness's clock ending the turn, not a verdict about the work. No attempt charged." >/dev/null 2>&1
             log "$FAYTH: $BEAD_ID timed out — no attempt charged"
             release_own_claim "$BEAD_ID"
-            ledger_done "$rc" timeout
-            exit $rc
-        fi
-        # THE BEAD IS OPEN BECAUSE THIS SCRIPT REOPENED IT, thirty lines ago and for a reason
-        # it recorded. session_outcome cannot see that: it reads the session's trace, and the
-        # trace of a session that committed, closed the bead and ran to its own end is
-        # `unlanded` — the one outcome that charges. So the harness's own requeue was charged
-        # against the work, every time round, and the count poisoned beads that were finished.
-        # Checked BEFORE session_outcome, because the trace is not wrong, it is answering a
-        # different question.
-        if [ -n "$REQUEUE_CAUSE" ]; then
-            # Write the requeued event first so requeues_of returns the updated count in the
-            # note. Counter labels (sp-requeue-N) are no longer written (sp-lzt); the events
-            # trail is the authoritative record and landing.sh reads it for escalation.
-            bump_requeue "$BEAD_ID" "$REQUEUE_CAUSE"
+            ledger_done "$rc" "$_d_status"
+            exit $rc ;;
+        requeue)
+            # THE BEAD IS OPEN BECAUSE THIS SCRIPT REOPENED IT. session_outcome cannot see
+            # that — a session that committed, closed the bead and ran to its own end reads
+            # `unlanded`, the one outcome that charges — so this is checked ahead of it.
+            bump_requeue "$BEAD_ID" "$_d_reqcause"
             _rq_count="$(requeues_of "$BEAD_ID")"
-            bdq note "$BEAD_ID" "Requeue $_rq_count ($REQUEUE_CAUSE): $REQUEUE_WHY The session did the work and closed the bead; the harness put it back. NO attempt was charged and nothing about the work is implied." >/dev/null 2>&1
-            log "$FAYTH: $BEAD_ID requeued by the harness ($REQUEUE_CAUSE, count $_rq_count) — no attempt charged"
+            bdq note "$BEAD_ID" "Requeue $_rq_count ($_d_reqcause): $REQUEUE_WHY The session did the work and closed the bead; the harness put it back. NO attempt was charged and nothing about the work is implied." >/dev/null 2>&1
+            log "$FAYTH: $BEAD_ID requeued by the harness ($_d_reqcause, count $_rq_count) — no attempt charged"
             release_own_claim "$BEAD_ID"
-            ledger_done "$rc" "requeue-$REQUEUE_CAUSE"
-            exit $rc
-        fi
-        # OPERATOR-WAIT IS NOT AN ATTEMPT. A session that sent a kind-question (or
-        # kind-decision) mail to the operator and exited left the bead open awaiting a
-        # reply, not because the work failed. mail.sh writes this marker when it sends such
-        # mail in an aeon context.
-        if [ -f "$SPIRA_RUN/$BEAD_ID.operator-wait" ]; then
+            ledger_done "$rc" "$_d_status"
+            exit $rc ;;
+        operator-wait)
             rm -f "$SPIRA_RUN/$BEAD_ID.operator-wait"
-            bump_requeue "$BEAD_ID" "unjudged-operator-wait"
+            bump_requeue "$BEAD_ID" "$_d_reqcause"
             bdq note "$BEAD_ID" "Released by aeon.sh: the session sent a kind-question mail to the operator and exited awaiting a reply. No attempt charged; the bead becomes ready when the question is answered." >/dev/null 2>&1
             log "$FAYTH: $BEAD_ID operator-wait — sent kind-question mail, released, no attempt charged"
             release_own_claim "$BEAD_ID"
-            ledger_done "$rc" "operator-wait"
-            exit $rc
-        fi
-        # YIELD-HEADLESS IS NAMED, NOT GENERIC UNLANDED. rc=0 with the bead open reads
-        # "finished, didn't close" — there is no signal that the session's background tasks
-        # were killed mid-flight. Detecting it here lets the ledger say why and gives the
-        # next summon a specific repair (commit before any long step, not "change approach").
-        # The attempt IS charged: the brief says not to do this.
-        if session_yield_headless "$LOGF"; then
+            ledger_done "$rc" "$_d_status"
+            exit $rc ;;
+        yield-headless)
+            # rc=0 with the bead open reads "finished, didn't close" with no signal that
+            # background tasks were killed mid-flight; named here rather than left generic
+            # `unlanded` so the next summon gets a specific repair.
             bdq note "$BEAD_ID" "Yield-headless: the session ended its turn waiting for a background task notification. This session runs headless — there is no notification channel, so the session terminated and its background tasks were killed. Attempt charged; commit before any long step rather than backgrounding and yielding." >/dev/null 2>&1
             log "$FAYTH: $BEAD_ID yield-headless — ended turn waiting for background task, attempt charged"
             release_own_claim "$BEAD_ID"
-            ledger_done "$rc" yield-headless
-            exit $rc
-        fi
-        # PRE-SESSION DEATH. The session never started — setup failed before claude ran.
-        # Unlike a capacity refusal (transient API condition), a setup failure recurs
-        # identically on every retry until box state changes (law-a-retry-must-change-an-input).
-        # Charge an attempt so repeated pre-session deaths reach the poison threshold.
-        if [ "${SESSION_STARTED:-0}" = 0 ]; then
+            ledger_done "$rc" "$_d_status"
+            exit $rc ;;
+        pre-session)
             # rc=0 with wall_s=? is structurally impossible: if the session never ran, the
             # exit was a failure. Override any accidental zero so the ledger invariant holds.
             [ "$rc" -eq 0 ] && rc=1
             bdq note "$BEAD_ID" "Pre-session death (rc=$rc): the aeon died during setup before its Claude session started. Attempt charged — this failure repeats until the box state changes." >/dev/null 2>&1
             log "$FAYTH: $BEAD_ID pre-session death (rc=$rc) — attempt charged"
             release_own_claim "$BEAD_ID"
-            ledger_done "$rc" pre-session
-            exit $rc
-        fi
-        cause="$(session_outcome "$LOGF")"
-        if outcome_charges "$cause"; then
-            # Counter labels (sp-attempt-N) are no longer written; the events trail records
-            # each claim. The events-based count is what CHECK4 consults for the poison
-            # threshold (sp-lzt).
-            bdq note "$BEAD_ID" "Unlanded ($cause): the session ran to its own end and left this bead open. That is a verdict about the work; the next claim counts toward the poison threshold via the events trail." >/dev/null 2>&1
-            log "$FAYTH: $BEAD_ID not closed ($cause), released"
-        else
-            # Counter labels (sp-reclaim-N) are no longer written. The event cancels this
-            # claim in attempts_of; without it the note below was a promise the counter broke.
-            bump_requeue "$BEAD_ID" "unjudged-$cause"
-            bdq note "$BEAD_ID" "Not judged ($cause): the worker did not survive to judge this bead, so NO attempt was charged and nothing about the work is implied. See $LOGF." >/dev/null 2>&1
-            log "$FAYTH: $BEAD_ID never judged ($cause) — no attempt charged"
-        fi
-        release_own_claim "$BEAD_ID"
+            ledger_done "$rc" "$_d_status"
+            exit $rc ;;
+        unlanded)
+            bdq note "$BEAD_ID" "Unlanded ($_d_outcome): the session ran to its own end and left this bead open. That is a verdict about the work; the next claim counts toward the poison threshold via the events trail." >/dev/null 2>&1
+            log "$FAYTH: $BEAD_ID not closed ($_d_outcome), released"
+            release_own_claim "$BEAD_ID" ;;
+        not-judged)
+            bump_requeue "$BEAD_ID" "$_d_reqcause"
+            bdq note "$BEAD_ID" "Not judged ($_d_outcome): the worker did not survive to judge this bead, so NO attempt was charged and nothing about the work is implied. See $LOGF." >/dev/null 2>&1
+            log "$FAYTH: $BEAD_ID never judged ($_d_outcome) — no attempt charged"
+            release_own_claim "$BEAD_ID" ;;
+        esac
     elif [ -f "$SPIRA_HOME/gate-run.sh" ]; then
         local gate_st
         gate_why="$(bash "$SPIRA_HOME/gate-run.sh" --status "$BRANCH" "$REPO_NAME" 2>/dev/null)"; gate_st=$?
