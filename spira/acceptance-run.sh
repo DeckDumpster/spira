@@ -274,10 +274,8 @@ if [ "$_install_rc" -eq 0 ] && [ -f "$_releases/current/spira/conf.sh" ]; then
         bash -c '. "$1" 2>/dev/null; printf "%s" "${SPIRA_PLAN_LABEL:-plan}"' \
         _ "$_releases/current/spira/conf.sh" 2>/dev/null)" || _a_plan_label="plan"
     [ -z "$_a_plan_label" ] && _a_plan_label="plan"
-    # The scope label exactly as the INSTALLED services resolve it: no SPIRA_HOME_REPO
-    # override. An installed release takes its identity from MANIFEST (sp-j4vi0), so forcing
-    # the scratch repo's name here labelled the probe bead with a scope no persona reads
-    # ("UNCLAIMABLE sp-9co — missing scope label (spira)", acceptance run 36212826461).
+    # No SPIRA_HOME_REPO override: an installed release takes its identity from MANIFEST,
+    # not the scratch repo's name, so the probe bead must be labelled the same way.
     _a_scope_label="$(SPIRA_CONF="$_conf" SPIRA_CONF_LOADED="" \
         bash -c '. "$1" 2>/dev/null; printf "%s" "${SPIRA_SCOPE_LABEL}"' \
         _ "$_releases/current/spira/conf.sh" 2>/dev/null)" || _a_scope_label="$(basename "$scratch_repo")"

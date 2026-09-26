@@ -107,6 +107,13 @@ else
 fi
 wantfile "phase A bead-not-claimable error names the predicate" \
     'builder predicate does not match bead labels' "$SCRIPT"
+_a_scope_snippet="$(grep -A2 -F '_a_scope_label="$(SPIRA_CONF=' "$SCRIPT" 2>/dev/null)"
+if printf '%s' "$_a_scope_snippet" | grep -q 'SPIRA_HOME_REPO'; then
+    bad "phase A scope label is read as the installed services resolve it" \
+        "SPIRA_HOME_REPO forced onto the scope-label read: $_a_scope_snippet"
+else
+    ok "phase A scope label is read as the installed services resolve it"
+fi
 
 # ============================================================================
 echo
