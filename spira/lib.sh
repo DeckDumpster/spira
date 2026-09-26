@@ -7327,6 +7327,7 @@ Closed by the landing pass: work landed at ${sha:-unknown} (law-closed-is-not-la
 REASON
     then
         log "land-close $id: closed at ${sha:-unknown} (submitted -> landed)"
+        land_mark "$id" LANDED "$sha" "Closed by landing pass"
     else
         log "land-close $id: bd close failed — left submitted, CHECK 5 will report it"
     fi
