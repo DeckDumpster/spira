@@ -640,13 +640,22 @@ for b in d:
     # confirms the bead is not closed. An empty answer (bd unreachable) is not a
     # confirmation — it is treated as "unknown", not "not closed" (gap G8 already
     # pins bd-unreachable as fail-open elsewhere in this pass).
+    #
+    # SUBMITTED IS ADMISSIBLE (sp-qsona). A work bead's own close is converted at aeon
+    # teardown to open + SPIRA_SUBMITTED_LABEL, and only the landing pass closes it, once
+    # its batch lands — so "open, carrying the submitted label" is exactly the state a
+    # finished work bead waits in, and refusing it here would mean no work bead ever
+    # batches. Every reopen that should bar admission (eject, rework, a red gate) goes
+    # through bead_reopen, which withdraws CERTIFIED, and every eject strips the label.
     if [ -n "${certs:-}" ]; then
         local _sf_filt="" _sf_cl _sf_id _sf_st
         while IFS= read -r _sf_cl; do
             [ -n "$_sf_cl" ] || continue
             _sf_id="${_sf_cl%% *}"
             _sf_st="$(spira_bead_status "$_sf_id")"
-            if [ -n "$_sf_st" ] && [ "$_sf_st" != closed ]; then
+            if [ -n "$_sf_st" ] && [ "$_sf_st" != closed ] \
+               && ! bead_has_label "$(bdjson show "$_sf_id" 2>/dev/null)" \
+                        "${SPIRA_SUBMITTED_LABEL:-spira-submitted}"; then
                 printf 'batch %s: WARN not-closed %s — CERTIFIED landstate but bead status=%s; refusing admission\n' \
                     "$name" "$_sf_id" "$_sf_st"
                 continue

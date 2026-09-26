@@ -1417,9 +1417,17 @@ bead_reopen() {
     # selects on landstate alone, and WITHDRAWN is a state it never admits. Every
     # reopen goes through this one function, so this is the one place that can't
     # be skipped by a caller that forgot.
+    #
+    # EXCEPT THE SUBMITTED CONVERSION (sp-qsona). aeon.sh's teardown "reopens" a work bead
+    # its own session closed only to carry SPIRA_SUBMITTED_LABEL until the landing pass
+    # closes it — the work is done and certification proceeds from submitted, so a
+    # CERTIFIED record written moments earlier (the session's own queue.sh submit, or
+    # aeon.sh's self-certify, sp-u9f82) must stay admissible. Withdrawing it here would
+    # strand every converted bead: open, submitted, and never batched.
     local _wd_st _wd_tip
     read -r _wd_st _wd_tip _ <<< "$(land_state "$id" 2>/dev/null)"
-    [ "${_wd_st:-}" = CERTIFIED ] && land_mark "$id" WITHDRAWN "${_wd_tip:-none}" "$cause"
+    [ "${_wd_st:-}" = CERTIFIED ] && [ "$cause" != work-close-converted ] \
+        && land_mark "$id" WITHDRAWN "${_wd_tip:-none}" "$cause"
     bdq reopen "$id" >/dev/null 2>&1 || rc=1
     release_claim "$id" || rc=1
     _bump_write_event "$id" reopen "$cause" || rc=1
