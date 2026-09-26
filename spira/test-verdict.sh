@@ -64,6 +64,10 @@
 #      (sp-a2nk8).
 #  42. Every red suite is already red on base → nobody is ejected, the batch
 #      requeues unchanged, and the operator is told why (sp-a2nk8).
+#  43. A red suite the attribution pass could not pin on any member (unselected
+#      by any diff, phase 2/3 short-circuited by an earlier eject) is logged
+#      explicitly as "unattributed" in the machine-readable results — never
+#      just absent (sp-yivi7 archivist note, batch PR 297).
 #
 # MOVED (docs/test-plan/landing-merge-queue.md UC-43/44/49, section 4 cluster 1):
 #   Cases 12, 14, 17, 18, 27 (age/idle/retry classification over verdict_action,
@@ -266,6 +270,7 @@ clean_case() {
     : > "$FORGE_RUN_METADATA_FILE"
     : > "$MAIL_LOG"
     : > "$SUITES_LOG"
+    rm -f "$RUN/attribution/results.jsonl"
     printf 'pending\n' > "$FORGE_STATUS_FILE"
     find "$LANDSTATE" -maxdepth 1 -type f -delete 2>/dev/null || true
     local wt
@@ -1571,6 +1576,11 @@ nowant "41. baseline-red: guilty member not blamed for the base suite" \
        "spira/sp-vd-bl2 (test-base-broken.sh" "$mail41"
 want   "41. baseline-red: names the real offender's suite" \
        "spira/sp-vd-bl2 (test-real-offender.sh" "$mail41"
+attrlog41="$(cat "$RUN/attribution/results.jsonl" 2>/dev/null)"
+want "41. baseline-red: machine-readable log excludes the base-broken suite" \
+     '"suite":"test-base-broken.sh","tier":"","case":"(attribution)","status":"excluded-baseline"' "$attrlog41"
+want "41. baseline-red: machine-readable log attributes the real offender's suite" \
+     '"suite":"test-real-offender.sh","tier":"","case":"(attribution)","status":"attributed"' "$attrlog41"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
@@ -1617,6 +1627,62 @@ want   "42. all-baseline-red: not attributable in log" "not attributable"    "$o
 want   "42. all-baseline-red: pr-close called"      "close"                   "$(cat "$FORGE_LOG")"
 want   "42. all-baseline-red: operator told why"    "Red on base, not attributable" "$mail42"
 want   "42. all-baseline-red: names the suite"      "test-base-broken.sh"     "$mail42"
+attrlog42="$(cat "$RUN/attribution/results.jsonl" 2>/dev/null)"
+want "42. all-baseline-red: machine-readable log excludes the suite, never silent" \
+     '"suite":"test-base-broken.sh","tier":"","case":"(attribution)","status":"excluded-baseline"' "$attrlog42"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 43. A RED SUITE THE ATTRIBUTION PASS COULD NOT PIN ON ANY MEMBER MUST LOG THAT
+#     OUTCOME EXPLICITLY, NEVER BY ABSENCE (sp-yivi7 archivist note; batch PR 297,
+#     2026-09-24). Two red suites, two members: one suite is directly in one
+#     member's diff (attributed via suite-overlap) and repro never reproduces
+#     anyone (always green), so the diff-overlap eject happens in phase 1 and the
+#     OTHER suite — selected by no one's diff — is never phase-2/3 tested. Before
+#     this bead that second suite got no verdict logged anywhere; now it must show
+#     up as "unattributed", not be missing.
+# =============================================================================
+cat > "$SH/repro-never-red.sh" <<'REPRO'
+#!/usr/bin/env bash
+exit 0
+REPRO
+chmod +x "$SH/repro-never-red.sh"
+
+base_sha43="$(git -C "$REPO" rev-parse origin/main)"
+for id in sp-vd-g1 sp-vd-g2; do
+    bwt43="$RUN/worktree/$id"
+    git -C "$REPO" worktree add -q -b "spira/$id" "$bwt43" origin/main 2>/dev/null || true
+    printf '%s\n' "$id" > "$bwt43/$id.txt"
+done
+printf 'marker\n' > "$RUN/worktree/sp-vd-g1/test-diffmarked-suite.sh"
+for id in sp-vd-g1 sp-vd-g2; do
+    bwt43="$RUN/worktree/$id"
+    git -C "$bwt43" add -A
+    git -C "$bwt43" commit -q -m "$id: work"
+    printf 'BATCHED %s %s\n' "$(git -C "$REPO" rev-parse "spira/$id")" "$(date +%s)" \
+        > "$LANDSTATE/$id"
+done
+tip_g1="$(git -C "$REPO" rev-parse "spira/sp-vd-g1")"
+tip_g2="$(git -C "$REPO" rev-parse "spira/sp-vd-g2")"
+wt43="$RUN/worktree/.b43"
+git -C "$REPO" worktree add -q --detach "$wt43" "$base_sha43" 2>/dev/null || true
+git -C "$wt43" merge -q --no-edit --no-ff -m "spira: land sp-vd-g1" "$tip_g1" >/dev/null 2>&1
+git -C "$wt43" merge -q --no-edit --no-ff -m "spira: land sp-vd-g2" "$tip_g2" >/dev/null 2>&1
+batch_head43="$(git -C "$wt43" rev-parse HEAD)"
+git -C "$REPO" worktree remove -f "$wt43" 2>/dev/null || true
+{ printf 'pr=63\nhead=%s\nbase=%s\nmembers=sp-vd-g1:%s sp-vd-g2:%s\nopened=%s\n' \
+    "$batch_head43" "$base_sha43" "$tip_g1" "$tip_g2" "$(date +%s)"; } > "$(batch_file)"
+printf 'red\nred-suite: test-diffmarked-suite.sh\nred-suite: test-silent-suite.sh\n' > "$FORGE_STATUS_FILE"
+SPIRA_QUEUE_REPRO_BATCH="$SH/repro-never-red.sh" verdict "$REPONAME" > /dev/null
+
+case "$(landstate sp-vd-g1)" in EJECTED*) ok "43. silent-suite: diff-marked member ejected" ;;
+    *) bad "43. silent-suite: diff-marked member ejected" "got: $(landstate sp-vd-g1)" ;; esac
+attrlog43="$(cat "$RUN/attribution/results.jsonl" 2>/dev/null)"
+want "43. silent-suite: attributed suite logged" \
+     '"suite":"test-diffmarked-suite.sh","tier":"","case":"(attribution)","status":"attributed"' "$attrlog43"
+want "43. silent-suite: unpinned suite logged explicitly as unattributed, not absent" \
+     '"suite":"test-silent-suite.sh","tier":"","case":"(attribution)","status":"unattributed"' "$attrlog43"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 

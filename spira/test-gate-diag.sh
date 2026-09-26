@@ -97,6 +97,36 @@ printf '\nT4: suite that dies mid-setup (no FAIL line) reports rc, timing and la
     want   "names the last output line"     'calling bd init --server' "$out"
 )
 
+# ── T5: results.jsonl carries a (verdict) row for a plain red suite (no retry) ──
+printf '\nT5: results.jsonl gets a red-red (verdict) row when there is no retry\n'
+(
+    root="$(_make_root test-suite yes)"
+    trap 'rm -rf "$root"' EXIT
+
+    bash "$HERE/gate-diag.sh" "$root" >/dev/null 2>&1
+
+    _row="$(grep '"case":"(verdict)"' "$root/results.jsonl" 2>/dev/null || true)"
+    want "verdict row present for the red suite" '"suite":"test-suite"' "$_row"
+    want "verdict row says red-red (no retry)"   '"status":"red-red"'   "$_row"
+)
+
+# ── T6: results.jsonl carries red-green for a suite the retry pass turned green —
+#        the same red-red/red-green split forge.sh's artifact reader now takes
+#        from this file instead of the narrower red-suites.json (sp-i0umj) ───────
+printf '\nT6: results.jsonl gets a red-green (verdict) row when the retry passed\n'
+(
+    root="$(_make_root test-flaky yes)"
+    trap 'rm -rf "$root" "${root}-retry"' EXIT
+    mkdir -p "${root}-retry"
+    printf 'ok _ 3 _ _ _ 0\n' > "${root}-retry/test-flaky.result"
+
+    bash "$HERE/gate-diag.sh" "$root" >/dev/null 2>&1
+
+    _row="$(grep '"case":"(verdict)"' "$root/results.jsonl" 2>/dev/null || true)"
+    want   "verdict row says red-green (flake) for the retried suite" '"status":"red-green"' "$_row"
+    nowant "verdict row does not also claim red-red for the same suite" '"status":"red-red"'  "$_row"
+)
+
 # ── summary ────────────────────────────────────────────────────────────────────
 pass="$(grep -c '^ok$'  "$_RESULTS" 2>/dev/null || true)"
 fail="$(grep -c '^bad$' "$_RESULTS" 2>/dev/null || true)"

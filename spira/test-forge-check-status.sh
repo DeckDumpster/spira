@@ -267,6 +267,67 @@ is "artifact path: all 28 red-suite lines emitted" "28" "$_cnt28"
 ANNOTATIONS="" ARTIFACTS_JSON="" ARTIFACT_ZIP=""
 
 echo
+echo "results.jsonl in the artifact (sp-i0umj): preferred over red-suites.json, carries"
+echo "the retry-adjusted red-red/red-green split gate-diag.sh now writes there too:"
+runlist completed failure
+python3 -c "
+import zipfile, json, io, sys
+buf = io.BytesIO()
+rows = [
+    {'suite': 'test-jsonl-red.sh', 'case': '(verdict)', 'status': 'red-red'},
+    {'suite': 'test-jsonl-flaky.sh', 'case': '(verdict)', 'status': 'red-green'},
+    {'suite': 'test-jsonl-red.sh', 'case': '(suite)', 'status': 'fail'},
+]
+body = '\n'.join(json.dumps(r) for r in rows) + '\n'
+with zipfile.ZipFile(buf, 'w') as z:
+    z.writestr('results.jsonl', body)
+    z.writestr('red-suites.json', json.dumps({'red': ['test-should-not-be-read.sh'], 'flaky': [], 'red_count': 1}))
+buf.seek(0)
+sys.stdout.buffer.write(buf.read())
+" > "$TMP/artifact-jsonl.zip"
+printf '{"artifacts":[{"id":9,"name":"batch-results-1"}]}\n' > "$TMP/artifacts-9.json"
+ARTIFACTS_JSON="$TMP/artifacts-9.json"
+ARTIFACT_ZIP="$TMP/artifact-jsonl.zip"
+_out_jsonl="$(status_all)"
+is "results.jsonl path: overall status is red" "red" "$(printf '%s\n' "$_out_jsonl" | head -1)"
+printf '%s\n' "$_out_jsonl" | grep -qxF "red-suite: test-jsonl-red.sh" \
+    && ok "results.jsonl path: red-red row emitted as red-suite" \
+    || bad "results.jsonl path: red-red row emitted as red-suite" "not in output: [$_out_jsonl]"
+printf '%s\n' "$_out_jsonl" | grep -qxF "flaky: test-jsonl-flaky.sh" \
+    && ok "results.jsonl path: red-green row emitted as flaky" \
+    || bad "results.jsonl path: red-green row emitted as flaky" "not in output: [$_out_jsonl]"
+printf '%s\n' "$_out_jsonl" | grep -qF "test-should-not-be-read.sh" \
+    && bad "results.jsonl path: red-suites.json is not consulted when results.jsonl has verdict rows" \
+        "found the red-suites.json-only suite in: [$_out_jsonl]" \
+    || ok "results.jsonl path: red-suites.json is not consulted when results.jsonl has verdict rows"
+ARTIFACTS_JSON="" ARTIFACT_ZIP=""
+
+echo
+echo "positive control — results.jsonl present but with no (verdict) rows falls back"
+echo "to red-suites.json in the same artifact (an artifact from before gate-diag.sh"
+echo "wrote verdict rows into results.jsonl):"
+runlist completed failure
+python3 -c "
+import zipfile, json, io, sys
+buf = io.BytesIO()
+rows = [{'suite': 'test-jsonl-red.sh', 'case': '(suite)', 'status': 'fail'}]
+body = '\n'.join(json.dumps(r) for r in rows) + '\n'
+with zipfile.ZipFile(buf, 'w') as z:
+    z.writestr('results.jsonl', body)
+    z.writestr('red-suites.json', json.dumps({'red': ['test-legacy-red.sh'], 'flaky': [], 'red_count': 1}))
+buf.seek(0)
+sys.stdout.buffer.write(buf.read())
+" > "$TMP/artifact-jsonl-noverdict.zip"
+printf '{"artifacts":[{"id":10,"name":"batch-results-1"}]}\n' > "$TMP/artifacts-10.json"
+ARTIFACTS_JSON="$TMP/artifacts-10.json"
+ARTIFACT_ZIP="$TMP/artifact-jsonl-noverdict.zip"
+_out_nov="$(status_all)"
+printf '%s\n' "$_out_nov" | grep -qxF "red-suite: test-legacy-red.sh" \
+    && ok "results.jsonl without verdict rows falls back to red-suites.json" \
+    || bad "results.jsonl without verdict rows falls back to red-suites.json" "not in output: [$_out_nov]"
+ARTIFACTS_JSON="" ARTIFACT_ZIP=""
+
+echo
 echo "positive control — no artifact falls back to annotations:"
 runlist completed failure
 ANNOTATIONS="$TMP/ann-10.json"
