@@ -196,6 +196,14 @@ if ! bsl="$(bash spira/bd-stdin-lint.sh 2>&1)"; then
     exit 1
 fi
 
+# GH-INTAKE FENCE. The tracker is public and gh-intake.sh must only read it
+# (law-beads-is-never-public): no mutating curl flag, no credential reference.
+[ -r spira/gh-intake-lint.sh ] || { say "spira/gh-intake-lint.sh is missing — refusing to land unchecked"; exit 1; }
+if ! gil="$(bash spira/gh-intake-lint.sh 2>&1)"; then
+    printf '%s\n' "$gil" >&2
+    exit 1
+fi
+
 # SUITE-STATE FENCE. A quarantine entry that names a CLOSED bead has no exit path —
 # suites.sh hygiene requires land_state:LANDED, which CLOSED never satisfies. The check
 # also applies suite_state_lint: unknown state, missing reason, bead-less quarantine,
