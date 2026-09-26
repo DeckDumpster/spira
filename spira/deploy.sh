@@ -378,6 +378,28 @@ else
     }
 fi
 
+# _render_release_units — re-render every unit for the release $SPIRA_RELEASES/current points
+# at, through THAT release's install.sh, resolving THAT release's binaries.
+#
+# THE RELEASE, NOT THE INVOKING CHECKOUT. This script sourced conf.sh, which derived and
+# EXPORTED SPIRA_BROKER_BIN, SPIRA_LOOM_BIN, ... (and SPIRA_WAKE) from the SPIRA_REPO it was
+# run from, and the release's install.sh kept them — conf.sh only fills keys that are unset.
+# Run from a source checkout with nothing built (acceptance, or an operator's clone), units.sh
+# found no broker or loom binary and PRUNED spira-broker and spira-loom on every deploy and
+# every rollback; acceptance phase C's rollback then failed its health check on "loom does
+# not answer" and restored the newer release (2026-09-26). SPIRA_REPO is the release, and the
+# derived values are cleared so the release's own conf.sh derives them from its bin/; a value
+# the operator set in spira.conf is read again by that conf.sh, so nothing explicit is lost.
+_render_release_units() {
+    env -u SPIRA_LOOM_BIN -u SPIRA_BROKER_BIN -u SPIRA_CZAR_PASS_BIN -u SPIRA_QUEUE_WATCH_BIN \
+        -u SPIRA_RECONCILER_BIN -u SPIRA_SUPERVISE_BIN -u SPIRA_LANDING_PASS_BIN \
+        -u SPIRA_TSD_BIN -u SPIRA_BATCHER_BIN -u SPIRA_TEST_PLAN_BIN -u SPIRA_PANEL -u SPIRA_WAKE \
+        SPIRA_REPO="$SPIRA_RELEASES/current" \
+        SPIRA_HOME="$SPIRA_RELEASES/current/spira" \
+        SPIRA_PROD="$SPIRA_RELEASES/current/spira" SPIRA_INSTALL_FORCE=1 \
+        bash "${SPIRA_INSTALL_SH:-$SPIRA_RELEASES/current/systemd/install.sh}"
+}
+
 # Rollback: restore prior state, restart, resume.
 # On a non-first deploy: swap current back to the prior release.
 # On a first deploy: remove current and re-render units against the original checkout.
@@ -396,9 +418,7 @@ _rollback() {
         }
         # Re-render units against the prior release, pruning units the newer release added.
         # current now points at the prior release; use its install.sh so SPIRA_HOME is right.
-        SPIRA_HOME="$SPIRA_RELEASES/current/spira" \
-        SPIRA_PROD="$SPIRA_RELEASES/current/spira" SPIRA_INSTALL_FORCE=1 \
-            bash "${SPIRA_INSTALL_SH:-$SPIRA_RELEASES/current/systemd/install.sh}" 2>/dev/null || true
+        _render_release_units 2>/dev/null || true
         # Restore units that were enabled before the deploy but that the incoming release's
         # install disabled (by pruning them from its manifest). install.sh treats a disabled
         # unit as operator-disabled and leaves it alone, so we must restore from the snapshot.
@@ -474,9 +494,7 @@ printf '%s\n' "$tag" > "$SPIRA_RELEASES/.tags/$release_stem" || {
 # a deploy.sh invoked from a temporary directory would otherwise stamp that directory into
 # SPIRA_HOME across all 24+ unit ExecStart lines.
 log "deploy: re-rendering units"
-SPIRA_HOME="$SPIRA_RELEASES/current/spira" \
-SPIRA_PROD="$SPIRA_RELEASES/current/spira" SPIRA_INSTALL_FORCE=1 \
-    bash "${SPIRA_INSTALL_SH:-$SPIRA_RELEASES/current/systemd/install.sh}" || {
+_render_release_units || {
     _rollback "unit re-render failed"
 }
 

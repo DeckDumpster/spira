@@ -162,6 +162,8 @@ chmod +x "$BIN/activate.sh"
 cat > "$BIN/install.sh" <<'IEOF'
 #!/usr/bin/env bash
 printf 'install SPIRA_PROD=%s SPIRA_HOME=%s\n' "${SPIRA_PROD:-UNSET}" "${SPIRA_HOME:-UNSET}" >> "${CALL_LOG:-/dev/null}"
+printf 'install-bins SPIRA_REPO=%s SPIRA_BROKER_BIN=%s SPIRA_LOOM_BIN=%s\n' \
+    "${SPIRA_REPO:-UNSET}" "${SPIRA_BROKER_BIN:-UNSET}" "${SPIRA_LOOM_BIN:-UNSET}" >> "${CALL_LOG:-/dev/null}"
 printf 'install-resolved SPIRA_HOME=%s\n' \
     "$(readlink -f "${SPIRA_HOME:-}" 2>/dev/null || printf '%s' "${SPIRA_HOME:-}")" \
     >> "${CALL_LOG:-/dev/null}"
@@ -396,6 +398,11 @@ islink "rollback: current restored to prior"        "$RELEASES/current" "$PRIOR_
 # activate.sh restarted onto the new release must be restarted again onto the prior one.
 want   "rollback: restarts active unit onto prior release" \
        "SC --user restart spira-sentinel-prod.service" "$(cat "$SC_LOG")"
+# THE ROLLBACK'S RE-RENDER RESOLVES THE PRIOR RELEASE'S OWN BINARIES, as the forward one must
+# (PROPERTY 6b): the last install call is the rollback's.
+is "rollback: re-render runs with SPIRA_REPO = the restored release, derived binary paths cleared" \
+   "install-bins SPIRA_REPO=$RELEASES/current SPIRA_BROKER_BIN=UNSET SPIRA_LOOM_BIN=UNSET" \
+   "$(grep '^install-bins' "$CALL_LOG" | tail -1)"
 
 # The symlink alone does not prove the units re-rendered during rollback actually resolved
 # into the prior release's tree — the literal SPIRA_HOME/SPIRA_PROD string deploy.sh passes
@@ -460,6 +467,19 @@ if [ "$_got_home" = "$RELEASES/current/spira" ]; then
 else
     bad "re-render: SPIRA_HOME=$RELEASES/current/spira" "got [$_got_home]"
 fi
+
+# PROPERTY 6b — THE RE-RENDER RESOLVES THE RELEASE'S BINARIES, NOT THE INVOKING CHECKOUT'S.
+# deploy.sh sources conf.sh, which derives and EXPORTS SPIRA_BROKER_BIN, SPIRA_LOOM_BIN, ...
+# from the SPIRA_REPO it was run from. Handed on, the release's install.sh kept them (conf.sh
+# only fills unset keys): run from a source checkout with nothing built, units.sh found no
+# broker or loom binary and PRUNED spira-broker and spira-loom on every deploy — acceptance
+# phase C's rollback then failed its health check on "loom does not answer" and its unit set
+# came back without broker/loom (2026-09-26). The re-render gets SPIRA_REPO = the release,
+# and the derived binary paths are cleared so the release's own bin/ is what is resolved.
+_got_bins="$(grep '^install-bins' "$CALL_LOG" 2>/dev/null | head -1)"
+is "re-render: SPIRA_REPO is the activated release, derived binary paths cleared" \
+   "install-bins SPIRA_REPO=$RELEASES/current SPIRA_BROKER_BIN=UNSET SPIRA_LOOM_BIN=UNSET" \
+   "$_got_bins"
 
 # ==========================================================================
 echo
