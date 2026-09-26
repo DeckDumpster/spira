@@ -213,7 +213,13 @@
           "id": "UC-dispatch-05",
           "tier": "T0",
           "statement": "no harness script passes a bare `-` body to `bd note`/`bd create -d`",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-bd-stdin.sh",
+              "tier": "T0",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-dispatch-06",
@@ -457,8 +463,8 @@
           "statement": "If a gate command names `bash <path>` and that path is absent from the base, the result is NO_VERDICT `cmd-missing-file` naming the path, never BASE_FAIL. Once the path exists, the command runs. (sp-lkzl)",
           "covering_suites": [
             {
-              "path": "spira/test-gate-missing-cmd.sh",
-              "tier": "T0",
+              "path": "spira/test-gate-preflight.sh",
+              "tier": "T1",
               "over_budget": false
             }
           ]
@@ -547,6 +553,11 @@
           "statement": "Gates on different branches run concurrently in separate trees and never see each other's content. Gates on the same branch serialise, and the wait is metered `waited=Ns`. (sp-64v0)",
           "covering_suites": [
             {
+              "path": "spira/test-gate-tree.sh",
+              "tier": "T2",
+              "over_budget": false
+            },
+            {
               "path": "spira/test-gate-unit.sh",
               "tier": "T1",
               "over_budget": false
@@ -557,19 +568,37 @@
           "id": "UC-gate-verdict-17",
           "tier": "T2",
           "statement": "A gate that cannot get its tree lock within `SPIRA_GATE_LOCK_WAIT` gives NO_VERDICT `lock-timeout` (\"not a fault\") and never removes the holder's tree. Missing `flock` or an unopenable lockfile gives NO_VERDICT (`no-flock`, `no-lockfile`). (sp-d8h0r)",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-tree.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-gate-verdict-18",
           "tier": "T2",
           "statement": "Tree lifecycle. PASS keeps the detached worktree for reuse. Non-PASS removes it, but only when this process held the lock. A worktree that cannot be created gives NO_VERDICT `tree-unidentified`.",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-tree.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-gate-verdict-19",
           "tier": "T2",
           "statement": "`gate-locks.sh` reports FREE, HELD (with PID) or STALE. A lock whose holder PID is dead but whose PGID has a live member (inherited fd) is HELD. A lock that does not exist is not listed.",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-locks.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-gate-verdict-20",
