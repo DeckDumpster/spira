@@ -167,27 +167,11 @@ nowant "CTX label absent"  " CTX " "$pane_out"
 nowant "SELF label absent" " SELF " "$pane_out"
 nowant "GOV label absent"  " GOV " "$pane_out"
 
-# ==========================================================================
-# Failed probe renders ? not 0 (law-absence-needs-a-positive-control)
-# ==========================================================================
-echo
-echo "failed probe: renders ? not 0"
-
-BAD_SNAP="$TMP/bad.env"
-{
-    printf 'SP_AT=%s\n' "$(date +%s)"
-    printf 'SP_MAIL_UNREAD=?\nSP_MAIL_OLDEST_AGE=?\nSP_MAIL_N=0\n'
-    printf 'SP_AEONS=0\nSP_SENTINEL_AGE=5\nSP_OPS_AGE=5\nSP_AURON_AGE=5\n'
-    printf 'SP_SENTINEL_TIMER=1\nSP_OPS_TIMER=1\nSP_AURON_TIMER=1\nSP_AURON_FIRING=0\n'
-    printf 'SP_TOK_WIN=0\nSP_TOK_WINDOW_H=5\n'
-    printf 'SP_RATELIM_5H_PCT=0\nSP_RATELIM_7D_PCT=0\nSP_RATELIM_5H_MIN=0\nSP_RATELIM_7D_MIN=0\n'
-    printf 'SP_RATELIM_5H_ETA=-\nSP_RATELIM_7D_ETA=-\nSP_RATELIM_AGE=0\n'
-} > "$BAD_SNAP"
-
-cp "$BAD_SNAP" "$TMP/cockpit.env"
-bad_pane="$(SPIRA_RUN="$TMP" bash "$HERE/../cockpit/health.sh" once 2>/dev/null)" || true
-want "? probe renders ?" "?" "$bad_pane"
-nowant "? probe not shown as 0 unread" "0 unread" "$bad_pane"
+# "Failed probe renders ? not 0" (an absent SP_MAIL_UNREAD) is test-cockpit-probe-fault.sh's
+# job (cluster 8, docs/test-plan/cockpit-observability.md): its table asserts against the
+# MAIL row specifically, while the case that used to live here only checked that a '?'
+# character appeared somewhere in the whole frame — true of nearly any frame regardless of
+# whether the MAIL row itself was the one that failed.
 
 # ==========================================================================
 echo

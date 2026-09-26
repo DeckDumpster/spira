@@ -5,16 +5,17 @@
 # 1. UNIT CPUQuota: the collector service must not carry CPUQuota. A quota below the
 #    core probe's real cost throttles it until the timeout fires and the snapshot goes
 #    stale. Pair: the old 35% value fails this check.
-# 2. TIMEOUT PROBE RENDERS STALE NOT FAULT: when a probe fragment carries
-#    _PROBE_STATUS=timeout, health.sh shows "STALE <name>: timeout xN", not "FAULT (age)".
-# 3. PASS LOG LINE: collect.sh logs "probe <name> ok <N>s" after a successful run.
+# 2. PASS LOG LINE: collect.sh logs "probe <name> ok <N>s" after a successful run.
+#
+# The STALE-vs-FAULT badge case moved to test-cockpit-probe-fault.sh's renderer table
+# (cluster 8, UC-24, docs/test-plan/cockpit-observability.md) — it is the same "? not 0"-
+# shaped question probe-fault already owns, just keyed on a timed-out probe.
 #
 # defect: sp-onasx
-# covers: systemd/spira-cockpit.service cockpit/health.sh spira/collect.sh
+# covers: systemd/spira-cockpit.service spira/collect.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 UNIT="$(dirname "$HERE")/systemd/spira-cockpit.service"
-PANE="$HERE/../cockpit/health.sh"
 pass=0; fail=0
 ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
@@ -50,53 +51,10 @@ fi
 
 # ============================================================
 echo
-echo "2. Timeout probe renders STALE line, not FAULT"
+echo "2. Pass log line names probe and elapsed seconds"
 # ============================================================
 
 mkdir -p "$TMP/run" "$TMP/bin" "$TMP/home"
-SNAPF="$TMP/run/cockpit.env"
-NOW="$(date +%s)"
-STALE_AT=$(( NOW - 120 ))
-
-printf '#!/bin/sh\necho active\n' > "$TMP/bin/mock-systemctl"
-chmod +x "$TMP/bin/mock-systemctl"
-
-pane() {
-    env -i PATH="$PATH" HOME="$TMP/home" TERM=dumb LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_SYSTEMCTL="$TMP/bin/mock-systemctl" \
-        SPIRA_SNAP_STALE_S=60 \
-        bash "$PANE" once 0 0 2>/dev/null \
-      | sed 's/\x1b\[[?0-9;]*[a-zA-Z]//g'
-}
-
-# Positive control: stale snapshot without probe timeout renders FAULT, not STALE.
-printf "SP_AT='%s'\n" "$STALE_AT" > "$SNAPF"
-p_fault="$(pane)"
-want  "positive control: stale + no timeout renders FAULT"  "FAULT ("  "$p_fault"
-nowant "positive control: STALE absent when no probe timeout"  "STALE"  "$p_fault"
-
-# Main case: stale snapshot with timed-out core probe renders STALE line, not FAULT.
-{
-    printf "SP_AT='%s'\n" "$STALE_AT"
-    printf "_PROBE_STATUS_core='timeout'\n"
-    printf "SP_PROBE_KILLED_core='3'\n"
-} > "$SNAPF"
-p_stale="$(pane)"
-want   "timeout probe: header badge is STALE"        "STALE"           "$p_stale"
-nowant "timeout probe: FAULT badge absent"           "FAULT ("         "$p_stale"
-want   "timeout probe: STALE line names probe"       "core: timeout"   "$p_stale"
-want   "timeout probe: STALE line shows kill count"  "×3"              "$p_stale"
-
-# Also verify the body line format: " STALE  core: timeout ×3"
-stale_line="$(printf '%s\n' "$p_stale" | grep 'STALE' | grep -v '^SPIRA')"
-want "timeout probe: body line has 'STALE'" "STALE" "$stale_line"
-
-# ============================================================
-echo
-echo "3. Pass log line names probe and elapsed seconds"
-# ============================================================
 
 MOCK_COCK="$TMP/mock-cockpit.sh"
 printf '#!/usr/bin/env bash\ncase "$1" in quick) echo SP_MOCK=1 ;; esac\n' \

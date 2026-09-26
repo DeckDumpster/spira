@@ -40,6 +40,7 @@ trap 'chmod -R +w "$TMP" 2>/dev/null || true; rm -rf "$TMP"' EXIT
 FRAG_DIR="$TMP/cockpit.d"
 SNAP="$TMP/cockpit.env"
 mkdir -p "$FRAG_DIR"
+BASE_PATH="$PATH"
 
 # Write a fragment file atomically, same way collect.sh does.
 write_frag() {
@@ -51,55 +52,14 @@ write_frag() {
     } > "$FRAG_DIR/${name}.env"
 }
 
-# Run the Python merge logic from collect.sh directly, in the same temp dir.
+# Merge fixture fragments through the real collect.sh, not a copy of its logic.
 run_merge() {
-    python3 - "$FRAG_DIR" "$SNAP" <<'PY' 2>/dev/null
-import sys, os, glob
-
-frag_dir, snap_tmp_path = sys.argv[1], sys.argv[2]
-
-meta_lines  = []
-value_seen  = set()
-value_lines = []
-
-for frag_path in sorted(glob.glob(os.path.join(frag_dir, "*.env"))):
-    name = os.path.basename(frag_path)[:-4]
-    probe_at     = "0"
-    probe_status = "never"
-    val_pairs = []
-    try:
-        for line in open(frag_path, errors="replace"):
-            line = line.rstrip("\n")
-            if "=" not in line:
-                continue
-            k, _, v = line.partition("=")
-            k = k.strip()
-            if k == "_PROBE_AT":
-                probe_at = v
-            elif k == "_PROBE_STATUS":
-                probe_status = v
-            elif k and (k[0].isalpha() or k[0] == "_"):
-                val_pairs.append((k, v))
-    except OSError:
-        pass
-    meta_lines.append("_PROBE_AT_%s=%s"     % (name, probe_at))
-    meta_lines.append("_PROBE_STATUS_%s=%s" % (name, probe_status))
-    if probe_status not in ("never", "timeout", "error"):
-        for k, v in val_pairs:
-            if k not in value_seen:
-                value_seen.add(k)
-                value_lines.append((k, v))
-
-def shq(v):
-    return "'" + v.replace("'", "'\\''") + "'"
-
-with open(snap_tmp_path, "w") as f:
-    for line in meta_lines:
-        k, _, v = line.partition("=")
-        f.write("%s=%s\n" % (k, shq(v)))
-    for k, v in value_lines:
-        f.write("%s=%s\n" % (k, shq(v)))
-PY
+    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+        SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
+        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+        SPIRA_COCKPIT="$TMP" FRAG_DIR="$FRAG_DIR" \
+        bash "$HERE/collect.sh" merge 2>/dev/null
 }
 
 # ============================================================
@@ -190,32 +150,11 @@ loop_out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
 want "collect.sh loop: refusal message present" "not the supervised process" "$loop_out"
 
 # ============================================================
+# cockpit.sh's own SP_AT ordering and unsupervised-refusal are test-cockpit.sh's job
+# (cluster 7, docs/test-plan/cockpit-observability.md) — not duplicated here.
+
 echo
-echo "7. cockpit.sh now subcommand emits SP_AT:"
-
-# Run cockpit.sh now in a minimal env that can at least parse the script.
-BASE_PATH="$PATH"
-now_out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-    SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
-    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
-    bash "$HERE/cockpit.sh" now 2>/dev/null)" || true
-want "cockpit.sh now: SP_AT present"         "SP_AT="         "$now_out"
-want "cockpit.sh now: SP_WINDOW_HOURS present" "SP_WINDOW_HOURS=" "$now_out"
-
-# SP_AT ordering: SP_AT before SP_WINDOW_HOURS (same invariant as test-cockpit.sh checks).
-at_pos="$(printf '%s\n' "$now_out" | grep -n '^SP_AT=' | head -1 | cut -d: -f1)"
-wh_pos="$(printf '%s\n' "$now_out" | grep -n '^SP_WINDOW_HOURS=' | head -1 | cut -d: -f1)"
-if [ -n "$at_pos" ] && [ -n "$wh_pos" ] && [ "$at_pos" -lt "$wh_pos" ]; then
-    ok "cockpit.sh now: SP_AT before SP_WINDOW_HOURS (ordering invariant)"
-else
-    bad "cockpit.sh now: SP_AT before SP_WINDOW_HOURS (ordering invariant)" \
-        "SP_AT at line ${at_pos:-?}, SP_WINDOW_HOURS at line ${wh_pos:-?}"
-fi
-
-# ============================================================
-echo
-echo "8. timeout status: merge treats it like never (no value keys), _probe_body_test writes it:"
+echo "7. timeout status: merge treats it like never (no value keys), _probe_body_test writes it:"
 
 # Positive control first: a fragment with status=ok contributes its value keys.
 rm -f "$FRAG_DIR"/*.env
@@ -270,7 +209,7 @@ want "_probe_body_test/timeout: journal line mentions timeout" "timeout" "$tout_
 
 # ============================================================
 echo
-echo "9. exit on consecutive merge failures (positive control first):"
+echo "8. exit on consecutive merge failures (positive control first):"
 
 # POSITIVE CONTROL: merge succeeds (SPIRA_RUN writable) → loop keeps running.
 # Run the loop in the background for a short time; it must NOT exit prematurely.
@@ -348,7 +287,7 @@ want "loop exit message names merge failures" "consecutive merge failures" "$_lo
 
 # ============================================================
 echo
-echo "10. SP_COLLECTOR_REV stamped in merged snapshot:"
+echo "9. SP_COLLECTOR_REV stamped in merged snapshot:"
 
 # POSITIVE CONTROL: a probe with ok status contributes values so the merge ran at all.
 rm -f "$FRAG_DIR"/*.env
@@ -372,7 +311,7 @@ fi
 
 # ============================================================
 echo
-echo "11. temp cleanup: external kill leaves no temp in cockpit.d:"
+echo "10. temp cleanup: external kill leaves no temp in cockpit.d:"
 
 # POSITIVE CONTROL: a slow probe in a subshell creates a temp before being killed.
 # Kill it and verify the temp is gone.
@@ -415,7 +354,7 @@ n_kill_tmps="$(find "$KILL_FRAG" -maxdepth 1 -name '.*' | wc -l)"
 
 # ============================================================
 echo
-echo "12. killed counter: timeout increments _PROBE_KILLED, success resets to 0:"
+echo "11. killed counter: timeout increments _PROBE_KILLED, success resets to 0:"
 
 KILLED_FRAG="$TMP/killed_frag"
 mkdir -p "$KILLED_FRAG"
@@ -459,7 +398,7 @@ want "13/success: _PROBE_KILLED=0" "_PROBE_KILLED=0" "$frag_k3"
 
 # ============================================================
 echo
-echo "13. startup sweep: old temps in cockpit.d removed on loop start:"
+echo "12. startup sweep: old temps in cockpit.d removed on loop start:"
 
 SWEEP_RUN="$TMP/sweep_run"
 mkdir -p "$SWEEP_RUN"
@@ -495,7 +434,7 @@ fi
 
 # ============================================================
 echo
-echo "14. SP_PROBE_KILLED_<name> appears in merged snapshot:"
+echo "13. SP_PROBE_KILLED_<name> appears in merged snapshot:"
 
 rm -f "$FRAG_DIR"/*.env
 printf '_PROBE_AT=1\n_PROBE_STATUS=timeout\n_PROBE_KILLED=3\n' > "$FRAG_DIR/core.env"

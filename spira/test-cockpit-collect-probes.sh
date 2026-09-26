@@ -3,12 +3,9 @@
 # test-cockpit-collect-probes.sh — collect.sh probe registry integrity.
 #
 # Verifies that every probe cockpit.sh's probe() calls is registered in
-# collect.sh's PROBES, and that the queue probe's keys reach cockpit.env
-# through the fragment/merge path.
-#
-# POSITIVE CONTROL: a queue fragment at status=never leaves SP_QUEUE_DEPTH
-# absent from cockpit.env; a queue depth of 0 and an unwired probe must never
-# look the same (law-absence-needs-a-positive-control).
+# collect.sh's PROBES, and that the real queue probe's keys reach cockpit.env
+# through the fragment/merge path. The generic ok/never fragment cases are
+# test-cockpit-tiered-collector.sh's job (cluster 6, docs/test-plan/cockpit-observability.md).
 #
 # covers: spira/collect.sh spira/cockpit.sh
 
@@ -52,54 +49,17 @@ PY
 
 PROBES_LIST="$(collect_probes)"
 
-# Run the Python merge logic, same as test-cockpit-tiered-collector.sh.
+# Merge fixture fragments through the real collect.sh, not a copy of its logic. The
+# generic ok/never fragment cases live in test-cockpit-tiered-collector.sh (cluster 6,
+# docs/test-plan/cockpit-observability.md); this suite only needs the merge to prove the
+# real `queue` probe's keys reach cockpit.env.
 run_merge() {
-    python3 - "$FRAG_DIR" "$SNAP" <<'PY' 2>/dev/null
-import sys, os, glob
-
-frag_dir, snap_path = sys.argv[1], sys.argv[2]
-meta_lines  = []
-value_seen  = set()
-value_lines = []
-
-for frag_path in sorted(glob.glob(os.path.join(frag_dir, "*.env"))):
-    name = os.path.basename(frag_path)[:-4]
-    probe_at     = "0"
-    probe_status = "never"
-    val_pairs = []
-    try:
-        for line in open(frag_path, errors="replace"):
-            line = line.rstrip("\n")
-            if "=" not in line:
-                continue
-            k, _, v = line.partition("=")
-            k = k.strip()
-            if k == "_PROBE_AT":
-                probe_at = v
-            elif k == "_PROBE_STATUS":
-                probe_status = v
-            elif k and (k[0].isalpha() or k[0] == "_"):
-                val_pairs.append((k, v))
-    except OSError:
-        pass
-    meta_lines.append("_PROBE_AT_%s=%s"     % (name, probe_at))
-    meta_lines.append("_PROBE_STATUS_%s=%s" % (name, probe_status))
-    if probe_status not in ("never", "timeout", "error"):
-        for k, v in val_pairs:
-            if k not in value_seen:
-                value_seen.add(k)
-                value_lines.append((k, v))
-
-def shq(v):
-    return "'" + v.replace("'", "'\\''") + "'"
-
-with open(snap_path, "w") as f:
-    for line in meta_lines:
-        k, _, v = line.partition("=")
-        f.write("%s=%s\n" % (k, shq(v)))
-    for k, v in value_lines:
-        f.write("%s=%s\n" % (k, shq(v)))
-PY
+    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+        SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
+        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+        SPIRA_COCKPIT="$TMP" FRAG_DIR="$FRAG_DIR" \
+        bash "$HERE/collect.sh" merge 2>/dev/null
 }
 
 # ============================================================
@@ -115,28 +75,7 @@ done
 
 # ============================================================
 echo
-echo "2. positive control — status=never: SP_QUEUE_DEPTH absent from cockpit.env:"
-
-# POSITIVE CONTROL: first prove a status=ok queue fragment DOES contribute SP_QUEUE_DEPTH.
-rm -f "$FRAG_DIR"/*.env
-printf '_PROBE_AT=1000\n_PROBE_STATUS=ok\nSP_QUEUE_DEPTH=3\nSP_QUEUE_EJECTED=0\n' \
-    > "$FRAG_DIR/queue.env"
-run_merge
-snap="$(cat "$SNAP" 2>/dev/null)"
-want "ok fragment: SP_QUEUE_DEPTH present in cockpit.env" "SP_QUEUE_DEPTH=" "$snap"
-
-# Absence case: status=never means the probe has never run — keys must be absent.
-# This is the control that distinguishes an unwired probe from a queue depth of 0.
-rm -f "$FRAG_DIR"/*.env
-printf '_PROBE_AT=0\n_PROBE_STATUS=never\n' > "$FRAG_DIR/queue.env"
-run_merge
-snap="$(cat "$SNAP" 2>/dev/null)"
-nowant "never fragment: SP_QUEUE_DEPTH absent from cockpit.env" "SP_QUEUE_DEPTH=" "$snap"
-want   "never fragment: _PROBE_STATUS_queue=never in cockpit.env" "_PROBE_STATUS_queue='never'" "$snap"
-
-# ============================================================
-echo
-echo "3. queue keys reach cockpit.env via _probe_body_test:"
+echo "2. queue keys reach cockpit.env via _probe_body_test:"
 
 # Build a mock cockpit.sh that emits known SP_QUEUE_* keys.
 MOCK_COCK="$TMP/mock-cockpit.sh"

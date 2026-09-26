@@ -15,6 +15,43 @@
 
 > **2026-09-25: gap #13 closed.** `spira/test-cockpit-rust.sh` replaces `test-panel.sh` and rebuilds the deleted `test-loom.sh`'s fixture-building role: one `cargo test -p panel -p loom` run, parsed into one TAP14/JSONL row per Rust test (UC-27..29, UC-31..32) instead of one collapsed ok/FAIL line. Cluster 11's three geometry sweeps are merged into `render.rs::every_view_fits_every_geometry`; the tautological `the_store_order_stays_oldest_first` and the two `reject_premise_reason_*` cases are deleted (rows 27–29).
 
+> **2026-09-25 (sp-s088v.10): section A/B clusters 6, 7, 8 landed; row 15 demoted; UC-18/19/23
+> fixed.** Cluster 6: `test-cockpit-tiered-collector.sh` and `test-cockpit-collect-probes.sh`
+> both call the real `collect.sh merge` on fixture fragments now, instead of a pasted copy of
+> `_merge_fragments`. Cluster 7: tiered-collector's duplicate of `test-cockpit.sh`'s SP_AT-
+> ordering/unsupervised checks is gone; tiered-collector keeps only `collect.sh`'s own
+> supervision case. UC-01: `cockpit.sh` gets a `BASH_SOURCE[0]==$0` dispatch guard, so
+> `cockpit_may_write` and the new `_loop_guard` function can be sourced and called directly;
+> `test-cockpit.sh` uses this for the INVOCATION_ID-mismatch and unsupervised-loop-refusal
+> cases instead of spawning a full `once`/`loop`. Cluster 8: `health.sh` gets a
+> `render-many <dir>` mode (one frame per `*.env` fragment, one process) — `test-cockpit-
+> probe-fault.sh`'s renderer table now renders all 15 of its fixtures in one process instead
+> of ~25 `health.sh once` spawns, and absorbs UC-24's STALE-vs-FAULT badge case (deleted from
+> `test-cockpit-collector-quota.sh`), UC-21's SP_MAIL_UNREAD row (the weak duplicate in
+> `test-mail-pane.sh` is deleted), and UC-16's "SELF section is gone" case (the four
+> identically-asserting renders in `test-cockpit-self.sh` are deleted). Row 22:
+> `test-cockpit-fuse.sh`'s row-width-fit duplicate of `test-now.sh`'s golden frames is
+> deleted. Row 25: `test-cockpit-snap-absent.sh` no longer renders its "no snapshot" fixture
+> twice. Row 15: `test-cockpit-gate.sh` calls `cockpit.sh now`/`cockpit.sh unsent` — the tier
+> functions each case actually needs — instead of a full `once`. UC-23: `test-now.sh` sources
+> `model_short` from `health.sh` directly (the same guard makes this possible) instead of a
+> sed+eval extraction. UC-19: the BEADS sparkline Python is now its own file,
+> `spira/cockpit-sparklines.py`, with a bucket-distribution assertion. UC-18: the PAGE_N
+> fixture in `test-statute-projection.sh` is built unconditionally, so SP_STATUTE_PAGE_N/SKEW
+> coverage no longer depends on a reachable brain checkout. `test-now.sh`'s pane-geometry
+> sweep and `test-drain-banner.sh` (cluster 12, booked in instance-lifecycle) are unchanged —
+> neither fits render-many's one-environment-per-process model or is this bead's job.
+
+> **2026-09-25 (sp-s088v.10): row 06 demoted; rows 02 and cluster 9 confirmed already
+> closed.** Row 06: `cockpit.sh` gets a `SPIRA_COCKPIT_TEST_SLEEP` seam in `probe()` —
+> mirroring `collect.sh`'s `COCK` slow mode — so `test-cockpit-tmp.sh` can run under `env -i`
+> against a fixture conf/DB instead of the real ambient ones, with the seam holding each
+> killed pass open long enough to land the signal. T3 non-hermetic 11 s → T2 hermetic 6 s.
+> Row 02: already correct — the tiered-collector duplicate it names left with cluster 7, and
+> `SP_COLLECTOR_REV` is `collect.sh`'s own key, not cockpit.sh's, so it stays tested where it
+> is stamped. Cluster 9: already merged into `test-conf-watch.sh` by sp-s088v.8, before this
+> branch forked — no `test-cockpit-conf-change.sh`/`test-loom-conf-change.sh` remain.
+
 Part of [[test-plan-2026-09-23]], section 5. Area id `cockpit-observability`; use-case ids are `UC-cockpit-observability-NN`.
 
 **Scope:** 67 primary records: 59 bash suites, 7 Rust test sources, and 1 dead fixture. There is 1 secondary suite, `test-statute-projection.sh`.

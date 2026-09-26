@@ -4,22 +4,22 @@
 #
 #   ./test-cockpit-tmp.sh
 #
-# write_snapshot builds the snapshot in a temp and renames it, so probing — the slow part,
-# tens of seconds — happens with a file already on disk. A kill landing in that window used
-# to leave the temp behind, and spira-cockpit.service is Restart=always: 303 of them
+# write_snapshot builds the snapshot in a temp and renames it, so a kill landing mid-probe
+# used to leave the temp behind, and spira-cockpit.service is Restart=always: 303 of them
 # accumulated in .runtime/spira, four of those partial writes rather than empty. The cost is
 # not the bytes. A directory that grows a file per unclean exit hides how often unclean exits
 # happen, because nothing counts them.
+#
+# Runs hermetically (env -i, fixture conf/db, never the ambient bd/git) with
+# SPIRA_COCKPIT_TEST_SLEEP giving probe() a fixed, short runway to be interrupted in —
+# mirroring collect.sh's COCK slow mode — instead of depending on a real query's tens of
+# seconds to hold the window open.
 #
 # EVERY CASE CARRIES ITS POSITIVE CONTROL. "No temp remains" is the same observation as "the
 # check ran against the wrong directory", as "the process died before it ever made one", and
 # as "the glob was empty all along" — so each case first asserts the temp IS there, mid-probe,
 # before killing anything. A leak check that has never seen a temp is a hypothesis
 # (law-absence-needs-a-positive-control).
-#
-# If the temp never appears the suite SKIPS with 77 rather than passing: probe needs `bd` and
-# `git` to get far enough to be interrupted, and a box where it cannot start is a box where
-# this property is unobservable, not one where it holds.
 #
 # defect: sp-2yd
 # covers: spira/cockpit.sh
@@ -29,7 +29,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 COCKPIT="$HERE/cockpit.sh"
 pass=0; fail=0
 
-RUN="$(mktemp -d)"; trap 'rm -rf "$RUN"' EXIT
+RUN="$(mktemp -d)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$RUN" "$TMP"' EXIT
+BASE_PATH="$PATH"
 
 # temps -> how many .cockpit.* files are in the scratch run dir right now.
 temps() { find "$RUN" -maxdepth 1 -name '.cockpit.*' | wc -l; }
@@ -53,11 +56,17 @@ echo "a killed pass leaves no temp behind"
 # so the child models systemd and a terminal rather than this test's own shell.
 #
 # os.setpgrp() puts the child in its own process group so `kill -SIG -$p` reaches every
-# probe subprocess. Without this, bash defers the signal trap until the running bd/python3
-# child returns — probe queries the live database, which takes tens of seconds per pass,
-# and the suite would block in `wait` for the full probe duration on every kill.
+# probe subprocess. Without this, bash defers the signal trap until the running child
+# returns — SPIRA_COCKPIT_TEST_SLEEP's `sleep` here, a live query before it was hermetic —
+# and the suite would block in `wait` for that long on every kill.
 spawn() {
-    SPIRA_RUN="$RUN" SPIRA_COCKPIT_FORCE=1 python3 -c '
+    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
+        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+        SPIRA_COCKPIT="$TMP" \
+        SPIRA_COCKPIT_FORCE=1 SPIRA_COCKPIT_TEST_SLEEP=1 \
+        python3 -c '
 import os, signal, sys
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 os.setpgrp()
@@ -114,7 +123,13 @@ echo "sweep_stale_tmps clears pre-existing orphaned temps at startup"
 touch "$RUN/.cockpit.99999" "$RUN/.cockpit.orphan"
 # Use the same python3 shim as spawn so cockpit.sh runs in its own process group — kill
 # -TERM -$sweep_pid then reaches probe's children too, not just bash.
-SPIRA_RUN="$RUN" SPIRA_COCKPIT_FORCE=1 python3 -c '
+env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_COCKPIT="$TMP" \
+    SPIRA_COCKPIT_FORCE=1 SPIRA_COCKPIT_TEST_SLEEP=1 \
+    python3 -c '
 import os, signal, sys
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 os.setpgrp()

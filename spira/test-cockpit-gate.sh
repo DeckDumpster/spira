@@ -29,13 +29,26 @@ trap 'rm -rf "$TMP"' EXIT
 RUN="$TMP/run"; mkdir -p "$RUN"
 BASE_PATH="$PATH"
 
-run_cockpit() {
+# UC-15 (docs/test-plan/cockpit-observability.md, row 15): each case below calls the one
+# tier function it actually exercises — `cockpit.sh now` for the gate-run/proc liveness
+# section, `cockpit.sh unsent` for landing.status/landing.progress — instead of a full
+# `once`, which ran every probe (16 tiers) just to reach one of them.
+run_now() {
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
         "$@" \
-        bash "$HERE/cockpit.sh" once 2>/dev/null
+        bash "$HERE/cockpit.sh" now 2>/dev/null
+}
+run_unsent() {
+    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
+        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+        BD_TIMEOUT=1 \
+        "$@" \
+        bash "$HERE/cockpit.sh" unsent 2>/dev/null
 }
 
 # ======================================================================================
@@ -47,7 +60,7 @@ SP_LAND_RC=0
 SP_LAND_BRANCHES=4
 SP_LAND_MOVED=1
 LAND
-out="$(run_cockpit)"
+out="$(run_unsent)"
 want "SP_LAND_AT from file"       "SP_LAND_AT=1788845658" "$out"
 want "SP_LAND_RC from file"       "SP_LAND_RC=0"          "$out"
 want "SP_LAND_BRANCHES from file" "SP_LAND_BRANCHES=4"    "$out"
@@ -58,7 +71,7 @@ echo
 echo "missing landing.status renders ?:"
 
 rm -f "$RUN/landing.status"
-out="$(run_cockpit)"
+out="$(run_unsent)"
 want "SP_LAND_AT is ?"       "SP_LAND_AT=?" "$out"
 want "SP_LAND_RC is ?"       "SP_LAND_RC=?" "$out"
 want "SP_LAND_BRANCHES is ?" "SP_LAND_BRANCHES=?" "$out"
@@ -71,7 +84,7 @@ mkdir -p "$RUN/gate-run/spira.spira_sp-dead"
 echo 999999999 > "$RUN/gate-run/spira.spira_sp-dead/pid"
 echo "$(date +%s)" > "$RUN/gate-run/spira.spira_sp-dead/started"
 echo "test" > "$RUN/gate-run/spira.spira_sp-dead/out"
-out="$(run_cockpit)"
+out="$(run_now)"
 is "gate live count is 0" "SP_GATE_LIVE=0" "$(grep 'SP_GATE_LIVE=' <<< "$out")"
 nowant "dead gate not in snapshot" "SP_GATE0_SLUG=spira.spira_sp-dead" "$out"
 
@@ -85,7 +98,7 @@ mkdir -p "$RUN/gate-run/spira.spira_sp-recycled"
 echo "$recycled_pid" > "$RUN/gate-run/spira.spira_sp-recycled/pid"
 echo "$(date +%s)" > "$RUN/gate-run/spira.spira_sp-recycled/started"
 echo "test" > "$RUN/gate-run/spira.spira_sp-recycled/out"
-out="$(run_cockpit)"
+out="$(run_now)"
 is "recycled pid: gate live count is 0" "SP_GATE_LIVE=0" "$(grep 'SP_GATE_LIVE=' <<< "$out")"
 nowant "recycled pid not rendered as gate" "SP_GATE0_SLUG=spira.spira_sp-recycled" "$out"
 kill "$recycled_pid" 2>/dev/null; wait "$recycled_pid" 2>/dev/null
@@ -95,7 +108,7 @@ echo
 echo "landing.progress renders into the snapshot:"
 
 printf 'landed spira/sp-35pl\nreopened sp-dvlq -- does not rebase\n' > "$RUN/landing.progress"
-out="$(run_cockpit)"
+out="$(run_unsent)"
 want "LANDPROG0 present" "SP_LANDPROG0=" "$out"
 want "LANDPROG_N=2"      "SP_LANDPROG_N=2" "$out"
 want "landed in progress" "landed spira/sp-35pl" "$out"
@@ -107,7 +120,7 @@ echo
 echo "no gate-run directory renders SP_GATE_LIVE=0:"
 
 rm -rf "$RUN/gate-run"
-out="$(run_cockpit)"
+out="$(run_now)"
 is "no gate-run: live=0" "SP_GATE_LIVE=0" "$(grep 'SP_GATE_LIVE=' <<< "$out")"
 is "no gate-run: N=0"    "SP_GATE_N=0"    "$(grep 'SP_GATE_N=' <<< "$out")"
 

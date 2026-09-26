@@ -188,9 +188,16 @@ out_out="$(run_metrics "" "$LEDGER_BORN_OUT")"
 is "stillborn out-of-window: SP_SELF_STILLBORN_W is 0" "SP_SELF_STILLBORN_W=0" \
    "$(grep '^SP_SELF_STILLBORN_W=' <<< "$out_out")"
 
+# health.sh rendering the SELF section (REPEATING/BIRTH/STALL never appearing, whatever
+# the flags say, because that section was removed) is one row in test-cockpit-probe-fault.sh's
+# renderer table now (cluster 8, UC-16/21, docs/test-plan/cockpit-observability.md): the four
+# fixtures here (none tripped, repeating only, stillborn only, starved only) all asserted the
+# identical "still absent" property, so one fixture with every flag tripped at once proves it
+# in a single row instead of four.
+
 # ======================================================================================
 echo
-echo "health.sh rendering: SELF section removed — no REPEATING/BIRTH/STALL/JUDGE rows"
+echo "health.sh: SP_PASS_SECS rendered in header"
 
 RUN="$TMP/run"; mkdir -p "$RUN"
 BASE_PATH="$PATH"
@@ -203,85 +210,6 @@ run_health() {   # run_health: sources cockpit.env and renders once at 80 cols
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
         bash "$HEALTH" once 0 80 2>/dev/null
 }
-
-# No repeating, no alerts → judgement always shown, no REPEATING, no BIRTH, no STALL.
-cat > "$RUN/cockpit.env" <<'SNAP'
-SP_AT='1000000000'
-SP_SENTINEL_TIMER='1'
-SP_SENTINEL_AGE='10'
-SP_OPS_TIMER='1'
-SP_OPS_AGE='10'
-SP_SINCE_JUDGEMENT='3'
-SP_SELF_REPEATING_N='0'
-SP_SELF_STILLBORN_W='0'
-SP_SELF_STILLBORN_LAST='-'
-SP_SELF_STARVED_W='0'
-SP_SELF_STARVED_LAST='-'
-SNAP
-h_none="$(run_health)"
-nowant "no repeating: no REPEATING row" "REPEATING" "$h_none"
-nowant "no repeating: no BIRTH row"    "BIRTH"      "$h_none"
-nowant "no repeating: no STALL row"    "STALL"      "$h_none"
-nowant "no repeating: no SELF label"   " SELF "     "$h_none"
-
-# One repeating ACT → REPEATING row present.
-cat > "$RUN/cockpit.env" <<'SNAP'
-SP_AT='1000000000'
-SP_SENTINEL_TIMER='1'
-SP_SENTINEL_AGE='10'
-SP_OPS_TIMER='1'
-SP_OPS_AGE='10'
-SP_SINCE_JUDGEMENT='3'
-SP_SELF_REPEATING_N='1'
-SP_SELF_REPEATING0='handled 1 stranded item(s) × 3 passes (6m)'
-SP_SELF_STILLBORN_W='0'
-SP_SELF_STILLBORN_LAST='-'
-SP_SELF_STARVED_W='0'
-SP_SELF_STARVED_LAST='-'
-SNAP
-h_rep="$(run_health)"
-nowant "repeating: no REPEATING row (SELF removed)" "REPEATING" "$h_rep"
-nowant "repeating: no BIRTH row when zero"          "BIRTH"     "$h_rep"
-
-# Stillborn non-zero → BIRTH alert row.
-cat > "$RUN/cockpit.env" <<'SNAP'
-SP_AT='1000000000'
-SP_SENTINEL_TIMER='1'
-SP_SENTINEL_AGE='10'
-SP_OPS_TIMER='1'
-SP_OPS_AGE='10'
-SP_SINCE_JUDGEMENT='3'
-SP_SELF_REPEATING_N='0'
-SP_SELF_STILLBORN_W='1'
-SP_SELF_STILLBORN_LAST='3m ago'
-SP_SELF_STARVED_W='0'
-SP_SELF_STARVED_LAST='-'
-SNAP
-h_birth="$(run_health)"
-nowant "stillborn: no BIRTH row (SELF removed)"     "BIRTH"     "$h_birth"
-nowant "stillborn: no REPEATING row (SELF removed)" "REPEATING" "$h_birth"
-
-# Stalled non-zero → STALL alert row.
-cat > "$RUN/cockpit.env" <<'SNAP'
-SP_AT='1000000000'
-SP_SENTINEL_TIMER='1'
-SP_SENTINEL_AGE='10'
-SP_OPS_TIMER='1'
-SP_OPS_AGE='10'
-SP_SINCE_JUDGEMENT='5'
-SP_SELF_REPEATING_N='0'
-SP_SELF_STILLBORN_W='0'
-SP_SELF_STILLBORN_LAST='-'
-SP_SELF_STARVED_W='2'
-SP_SELF_STARVED_LAST='7m ago'
-SNAP
-h_stall="$(run_health)"
-nowant "stalled: no STALL row (SELF removed)" "STALL" "$h_stall"
-nowant "stalled: no BIRTH row (SELF removed)" "BIRTH" "$h_stall"
-
-# ======================================================================================
-echo
-echo "health.sh: SP_PASS_SECS rendered in header"
 
 # SP_PASS_SECS present → 'pass Ns' appears in header
 cat > "$RUN/cockpit.env" <<'SNAP'

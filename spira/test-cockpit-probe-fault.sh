@@ -15,6 +15,11 @@
 # refuse by one of these mechanisms and asserts health.sh shows '?' or a named error, never 0
 # (law-absence-needs-a-positive-control).
 #
+# PART 1 AND PART 3 are ONE health.sh PROCESS. Every fixture snapshot for the renderer
+# side is written to its own file first, and `health.sh render-many <dir>` (docs/test-
+# plan/cockpit-observability.md, section 5 — cluster 8, UC-21) renders all of them in a
+# single process instead of one `health.sh once` per case (1,844 lines + conf.sh, each).
+#
 # defect: sp-cof
 # covers: cockpit/health.sh spira/cockpit.sh
 set -uo pipefail
@@ -37,37 +42,29 @@ fi
 
 PD="$TMP/pane"
 mkdir -p "$PD/repo/.runtime/spira" "$PD/home" "$PD/bin"
-SNAPF="$PD/repo/.runtime/spira/cockpit.env"
+FIXDIR="$TMP/fixtures"; mkdir -p "$FIXDIR"
 
 printf '#!/bin/sh\necho active\n' > "$PD/bin/mock-systemctl"
 chmod +x "$PD/bin/mock-systemctl"
 
-# snap() writes a cockpit.env from stdin in the single-quoted KEY='value' form
-# that health.sh sources.
-snap() {
+# snap_to <name> — write a fixture cockpit.env from stdin, named <name>.env in FIXDIR, in the
+# single-quoted KEY='value' form that health.sh sources.
+snap_to() {
+    local name="$1"
     python3 -c '
 import sys
 for line in sys.stdin.read().splitlines():
     if not line.strip(): continue
     k, _, v = line.partition("=")
     print("%s=%s" % (k, "\x27" + v.replace("\x27", "\x27\\\x27\x27") + "\x27"))
-' > "$SNAPF"
+' > "$FIXDIR/$name.env"
 }
 
-pane() {    # pane [rows [cols]] -> ANSI-stripped frame
-    env -i PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_REPO="$PD/repo" \
-        SPIRA_RUN="$PD/repo/.runtime/spira" \
-        SPIRA_SYSTEMCTL="$PD/bin/mock-systemctl" \
-        bash "$PANE" once "${1:-0}" "${2:-0}" 2>/dev/null \
-      | sed 's/\x1b\[[?0-9;]*[a-zA-Z]//g'
-}
-
-# base_snap <omit-key> — write a full snapshot that omits the named key.
-# Every other key is set to a plausible non-zero value so the omission is the only
+# base_snap_to <name> <omit-key> — write a full snapshot named <name>.env that omits the named
+# key. Every other key is set to a plausible non-zero value so the omission is the only
 # difference and the failing section is reachable.
-base_snap() {
-    local omit="${1:-__none__}"
+base_snap_to() {
+    local name="$1" omit="${2:-__none__}"
     {
         printf 'SP_AT=%d\n' "$(date +%s)"
         printf 'SP_WINDOW_HOURS=24\n'
@@ -101,6 +98,7 @@ base_snap() {
         printf 'SP_QUEUE_NEXT_N=0\nSP_QUEUE_NEXT_MAX=8\nSP_QUEUE_QUARANTINE_N=0\n'
         [ "$omit" = SP_WAITING     ] || printf 'SP_WAITING=1\n'
         [ "$omit" = SP_UNANSWERED  ] || printf 'SP_UNANSWERED=0\n'
+        [ "$omit" = SP_MAIL_UNREAD ] || printf 'SP_MAIL_UNREAD=2\nSP_MAIL_N=0\nSP_MAIL_OLDEST_AGE=-\n'
         [ "$omit" = SP_UNSENT      ] || printf 'SP_UNSENT=2\nSP_UNSENT_OLDEST_H=1\nSP_BRANCH_DONE=1\nSP_UNADOPTED=0\nSP_ORPHAN_WORK=0\n'
         [ "$omit" = SP_CLOSED_24H  ] || printf 'SP_CLOSED_24H=5\n'
         [ "$omit" = SP_OPENED_24H  ] || printf 'SP_OPENED_24H=3\n'
@@ -122,26 +120,111 @@ base_snap() {
         printf 'SP_YIELD_SOLO_MED=0\nSP_YIELD_CONC_MED=0\nSP_YIELD_TOP_FAULT=-\n'
         printf 'SP_SENT_FAILED=0\nSP_SENT_FAILED_AGE_M=0\n'
         printf 'SP_UNSENT_OLDEST_H=0\n'
-    } | snap
+    } | snap_to "$name"
+}
+
+# ---- Part 1 fixtures: one file per case, all rendered in one process below --------------
+
+base_snap_to full __none__
+base_snap_to omit-SP_NEXT_N          SP_NEXT_N
+base_snap_to omit-SP_INFLOW_N        SP_INFLOW_N
+base_snap_to omit-SP_AWAITING_N      SP_AWAITING_N
+base_snap_to omit-SP_QUEUE_DEPTH     SP_QUEUE_DEPTH
+base_snap_to omit-SP_WAITING         SP_WAITING
+base_snap_to omit-SP_UNANSWERED      SP_UNANSWERED
+base_snap_to omit-SP_MAIL_UNREAD     SP_MAIL_UNREAD
+base_snap_to omit-SP_UNSENT          SP_UNSENT
+base_snap_to omit-SP_CLOSED_24H      SP_CLOSED_24H
+base_snap_to omit-SP_OPENED_24H      SP_OPENED_24H
+base_snap_to omit-SP_BEADS_LANDED_24H SP_BEADS_LANDED_24H
+base_snap_to omit-SP_LANDED          SP_LANDED
+base_snap_to omit-SP_UNLANDED_N      SP_UNLANDED_N
+
+# ---- Part 3 fixtures: collector skew — SP_COLLECTOR_REV renders 'coll <rev>', not ? -----
+
+base_snap_to arc-positive __none__
+printf "SP_TOK_ARC_WIN='10000'\nSP_TOK_ARC_TURNS='2'\nSP_TOK_ARC_CTX='25000'\n" >> "$FIXDIR/arc-positive.env"
+
+base_snap_to arc-skew __none__
+printf "SP_COLLECTOR_REV='a1b2c3d'\n" >> "$FIXDIR/arc-skew.env"
+
+# ---- Part 4 fixtures: a timed-out probe renders STALE, not FAULT ------------------------
+# Moved from test-cockpit-collector-quota.sh (cluster 8, UC-24, docs/test-plan/cockpit-
+# observability.md) — this is the same "? not 0"-shaped badge question as Parts 1 and 3,
+# just keyed on a timed-out probe rather than an absent key.
+STALE_AT=$(( $(date +%s) - 120 ))
+printf "SP_AT='%s'\n" "$STALE_AT" > "$FIXDIR/stale-fault.env"
+{
+    printf "SP_AT='%s'\n" "$STALE_AT"
+    printf "_PROBE_STATUS_core='timeout'\n"
+    printf "SP_PROBE_KILLED_core='3'\n"
+} > "$FIXDIR/stale-timeout.env"
+
+# ---- self-removed fixture: the SELF section (REPEATING/BIRTH/STALL) never renders -------
+# Moved from test-cockpit-self.sh (cluster 8, UC-16/21, docs/test-plan/cockpit-
+# observability.md): every SELF trip condition set at once proves the section is gone in one
+# row, where the original tested "nothing tripped", "repeating only", "stillborn only" and
+# "starved only" as four separate, identically-asserting renders.
+base_snap_to self-removed __none__
+printf "SP_SELF_REPEATING_N='1'\nSP_SELF_REPEATING0='handled 1 stranded item(s) × 3 passes (6m)'\n" >> "$FIXDIR/self-removed.env"
+printf "SP_SELF_STILLBORN_W='1'\nSP_SELF_STILLBORN_LAST='3m ago'\n" >> "$FIXDIR/self-removed.env"
+printf "SP_SELF_STARVED_W='2'\nSP_SELF_STARVED_LAST='7m ago'\n" >> "$FIXDIR/self-removed.env"
+
+# ---- e2e fixture: what the fixed collector emits when bdjson returns nothing ------------
+# Used by "Part 2 summary" below to prove the collector's ? propagates to the pane's ?,
+# closing the end-to-end chain — not just the fixture-directory seam this suite drives it
+# through.
+{
+    printf 'SP_AT=%d\n' "$(date +%s)"
+    printf 'SP_AEON_N=0\nSP_NEXT_N=0\nSP_INFLOW_N=0\nSP_INFLOW_WIN=60\nSP_INFLOW_DEFECT=0\nSP_INFLOW_KINDS=-\n'
+    printf 'SP_AWAITING_N=0\nSP_WAITING=0\nSP_UNANSWERED=0\n'
+    printf 'SP_UNSENT=0\nSP_BRANCH_DONE=0\nSP_UNSENT_OLDEST_H=0\nSP_UNADOPTED=0\nSP_ORPHAN_WORK=0\n'
+    printf 'SP_CLOSED_24H=0\nSP_OPENED_24H=0\nSP_BEADS_LANDED_24H=0\n'
+    printf 'SP_BEADS_SPARK_OPENED=▁▁▁▁▁▁▁▁\nSP_BEADS_SPARK_CLOSED=▁▁▁▁▁▁▁▁\n'
+    printf 'SP_BEADS_SPARK_LANDED=▁▁▁▁▁▁▁▁\nSP_CLOSED_KINDS=-\n'
+    printf 'SP_CLOSED=?\nSP_LANDED=?\nSP_UNLANDED_N=?\n'
+    printf 'SP_QUEUE_DEPTH=?\nSP_QUEUE_EJECTED=0\nSP_QUEUE_RED=0\n'
+    printf 'SP_QUEUE_BATCH_PR=0\nSP_QUEUE_BATCH_N=0\nSP_QUEUE_NEXT_N=0\nSP_QUEUE_NEXT_MAX=8\nSP_QUEUE_QUARANTINE_N=0\n'
+    printf 'SP_SENTINEL_TIMER=1\nSP_SENTINEL_AGE=30\nSP_OPS_TIMER=1\nSP_OPS_AGE=30\n'
+    printf 'SP_AURON_TIMER=1\nSP_AURON_AGE=30\nSP_AURON_FIRING=0\nSP_AURON_KEYS=\n'
+    printf 'SP_GATE_N=0\nSP_GATE_LIVE=0\nSP_CAPACITY_PAUSED=0\n'
+} | snap_to e2e
+
+# ---- Render every fixture in ONE health.sh process --------------------------------------
+
+RENDER_ALL="$(env -i PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_REPO="$PD/repo" \
+    SPIRA_RUN="$PD/repo/.runtime/spira" \
+    SPIRA_SYSTEMCTL="$PD/bin/mock-systemctl" \
+    SPIRA_SNAP_STALE_S=60 \
+    bash "$PANE" render-many "$FIXDIR" 0 0 2>/dev/null \
+  | sed 's/\x1b\[[?0-9;]*[a-zA-Z]//g')"
+
+# block <fixture-name> -> that fixture's rendered frame, ANSI already stripped above.
+block() {
+    awk -v want="=== $1 ===" '
+        $0 == want { grab=1; next }
+        /^=== / && grab { exit }
+        grab { print }
+    ' <<< "$RENDER_ALL"
 }
 
 # ---- Part 1: renderer fault injection ---------------------------------------------------
-# For each SP_* count, write a snapshot that omits it and assert the pane shows ? not 0.
-# A POSITIVE CONTROL PRECEDES EACH FAULT: put the key back and verify the real value
-# appears — proving the field is reachable before claiming its absence is detected.
+# For each SP_* count, a fixture omits it and the pane must show ? not 0.
+# A POSITIVE CONTROL PRECEDES EACH FAULT: the 'full' fixture proves the field is reachable
+# before its absence is asserted.
 
 echo "Part 1: renderer fault injection — absent snapshot key must render ?, not 0"
 
+p="$(block full)"
+
 # SP_NEXT_N — ready-queue count, guarded by unread_row NEXT
-base_snap __none__
-p="$(pane 0)"
 if grep -qF 'NEXT' <<< "$p"; then
     ok "SP_NEXT_N positive control: NEXT section renders"
 else
     bad "SP_NEXT_N positive control: NEXT section absent from frame (cannot test fault)"
 fi
-base_snap SP_NEXT_N
-p="$(pane 0)"
+p="$(block omit-SP_NEXT_N)"
 if grep -q 'NEXT.*?' <<< "$p"; then
     ok "SP_NEXT_N: absent key renders '?' (cannot read the ready queue)"
 else
@@ -154,15 +237,13 @@ else
 fi
 
 # SP_INFLOW_N — inflow count, guarded by unread_row INFLOW
-base_snap __none__
-p="$(pane 0)"
+p="$(block full)"
 if grep -qF 'INFLOW' <<< "$p"; then
     ok "SP_INFLOW_N positive control: INFLOW section renders"
 else
     bad "SP_INFLOW_N positive control: INFLOW section absent (cannot test fault)"
 fi
-base_snap SP_INFLOW_N
-p="$(pane 0)"
+p="$(block omit-SP_INFLOW_N)"
 if grep -q 'INFLOW.*?' <<< "$p"; then
     ok "SP_INFLOW_N: absent key renders '?' (cannot read what is being cut)"
 else
@@ -170,15 +251,13 @@ else
 fi
 
 # SP_AWAITING_N — CI gate count, guarded by unread_row CI
-base_snap __none__
-p="$(pane 0)"
+p="$(block full)"
 if grep -qF ' CI ' <<< "$p"; then
     ok "SP_AWAITING_N positive control: CI section renders"
 else
     bad "SP_AWAITING_N positive control: CI section absent (cannot test fault)"
 fi
-base_snap SP_AWAITING_N
-p="$(pane 0)"
+p="$(block omit-SP_AWAITING_N)"
 if grep -q ' CI .*?' <<< "$p"; then
     ok "SP_AWAITING_N: absent key renders '?' (cannot read what is parked on CI)"
 else
@@ -186,17 +265,15 @@ else
 fi
 
 # SP_QUEUE_DEPTH — queue depth in the 24h worked row and certified count
-base_snap __none__
-p="$(pane 0)"
+p="$(block full)"
 if grep -qF 'QUEUE' <<< "$p"; then
     ok "SP_QUEUE_DEPTH positive control: QUEUE section renders"
 else
     bad "SP_QUEUE_DEPTH positive control: QUEUE section absent (cannot test fault)"
 fi
 # When SP_QUEUE_DEPTH is absent, the funnel certify/red rows show ? because the
-# SP_FUNNEL_* keys are also absent from base_snap — the pane does not render 0.
-base_snap SP_QUEUE_DEPTH
-p="$(pane 0)"
+# SP_FUNNEL_* keys are also absent from the fixture — the pane does not render 0.
+p="$(block omit-SP_QUEUE_DEPTH)"
 if printf '%s\n' "$p" | grep -qE '(certify|red)[[:space:]]+\?'; then
     ok "SP_QUEUE_DEPTH: absent key renders '?' (certify/red rows show ?)"
 else
@@ -204,15 +281,13 @@ else
 fi
 
 # SP_WAITING — operator attention count, rendered with ${SP_WAITING:-?}
-base_snap __none__
-p="$(pane 0)"
+p="$(block full)"
 if grep -qF 'ATTN' <<< "$p"; then
     ok "SP_WAITING positive control: ATTN section renders"
 else
     bad "SP_WAITING positive control: ATTN section absent (cannot test fault)"
 fi
-base_snap SP_WAITING
-p="$(pane 0)"
+p="$(block omit-SP_WAITING)"
 attn_line="$(printf '%s\n' "$p" | grep ' ATTN ')"
 if printf '%s\n' "$attn_line" | grep -q 'waiting on you [?]'; then
     ok "SP_WAITING: absent key renders '?'"
@@ -221,15 +296,13 @@ else
 fi
 
 # SP_UNANSWERED — thread-reply count, rendered with ${SP_UNANSWERED:-?}
-base_snap __none__
-p="$(pane 0)"
+p="$(block full)"
 if grep -qF 'threads awaiting' <<< "$p"; then
     ok "SP_UNANSWERED positive control: thread-reply field renders"
 else
     bad "SP_UNANSWERED positive control: thread-reply field absent (cannot test fault)"
 fi
-base_snap SP_UNANSWERED
-p="$(pane 0)"
+p="$(block omit-SP_UNANSWERED)"
 attn2_line="$(printf '%s\n' "$p" | grep 'threads awaiting')"
 if printf '%s\n' "$attn2_line" | grep -q '[?]$\|[?] '; then
     ok "SP_UNANSWERED: absent key renders '?'"
@@ -237,16 +310,32 @@ else
     bad "SP_UNANSWERED: absent key did not render '?': $attn2_line"
 fi
 
+# SP_MAIL_UNREAD — mailbox unread count, rendered with ${SP_MAIL_UNREAD:-?}. This row used to
+# be test-mail-pane.sh's job, checked so weakly (any '?' anywhere in the frame) that it would
+# have passed against a MAIL row that never failed at all (cluster 8, docs/test-plan/
+# cockpit-observability.md).
+p="$(block full)"
+if grep -qF ' MAIL ' <<< "$p"; then
+    ok "SP_MAIL_UNREAD positive control: MAIL row renders"
+else
+    bad "SP_MAIL_UNREAD positive control: MAIL row absent (cannot test fault)"
+fi
+p="$(block omit-SP_MAIL_UNREAD)"
+mail_line="$(printf '%s\n' "$p" | grep ' MAIL ')"
+if printf '%s\n' "$mail_line" | grep -qF '? cannot read mailbox'; then
+    ok "SP_MAIL_UNREAD: absent key renders '? cannot read mailbox'"
+else
+    bad "SP_MAIL_UNREAD: absent key did not render '? cannot read mailbox': $mail_line"
+fi
+
 # SP_UNSENT — unsent branch count, rendered with ${SP_UNSENT:-?}
-base_snap __none__
-p="$(pane 0)"
+p="$(block full)"
 if grep -qF 'SEND' <<< "$p"; then
     ok "SP_UNSENT positive control: SEND section renders"
 else
     bad "SP_UNSENT positive control: SEND section absent (cannot test fault)"
 fi
-base_snap SP_UNSENT
-p="$(pane 0)"
+p="$(block omit-SP_UNSENT)"
 send_line="$(printf '%s\n' "$p" | grep ' SEND ')"
 if printf '%s\n' "$send_line" | grep -q '[?] branches'; then
     ok "SP_UNSENT: absent key renders '?'"
@@ -255,15 +344,13 @@ else
 fi
 
 # SP_CLOSED_24H — 24h closed count, rendered with ${SP_CLOSED_24H:-?}
-base_snap __none__
-p="$(pane 0)"
+p="$(block full)"
 if grep -qF 'BEADS' <<< "$p"; then
     ok "SP_CLOSED_24H positive control: BEADS section renders"
 else
     bad "SP_CLOSED_24H positive control: BEADS section absent (cannot test fault)"
 fi
-base_snap SP_CLOSED_24H
-p="$(pane 0)"
+p="$(block omit-SP_CLOSED_24H)"
 beads_line="$(printf '%s\n' "$p" | grep ' BEADS ')"
 if printf '%s\n' "$beads_line" | grep -q 'closed [?]'; then
     ok "SP_CLOSED_24H: absent key renders '?'"
@@ -272,8 +359,7 @@ else
 fi
 
 # SP_OPENED_24H — 24h opened count, rendered with ${SP_OPENED_24H:-?}
-base_snap SP_OPENED_24H
-p="$(pane 0)"
+p="$(block omit-SP_OPENED_24H)"
 beads_line="$(printf '%s\n' "$p" | grep ' BEADS ')"
 if printf '%s\n' "$beads_line" | grep -q 'opened [?]'; then
     ok "SP_OPENED_24H: absent key renders '?'"
@@ -282,15 +368,13 @@ else
 fi
 
 # SP_BEADS_LANDED_24H — 24h landed count, rendered with ${SP_BEADS_LANDED_24H:-?}
-base_snap __none__
-p="$(pane 0)"
+p="$(block full)"
 if grep -q 'in 24h' <<< "$p"; then
     ok "SP_BEADS_LANDED_24H positive control: landed line renders"
 else
     bad "SP_BEADS_LANDED_24H positive control: landed line absent (cannot test fault)"
 fi
-base_snap SP_BEADS_LANDED_24H
-p="$(pane 0)"
+p="$(block omit-SP_BEADS_LANDED_24H)"
 if grep -q '[?] in 24h' <<< "$p"; then
     ok "SP_BEADS_LANDED_24H: absent key renders '?'"
 else
@@ -298,15 +382,13 @@ else
 fi
 
 # SP_LANDED — landed count on the 24h-worked row, rendered with ${SP_LANDED:-?}
-base_snap __none__
-p="$(pane 0)"
+p="$(block full)"
 if grep -q '24h worked' <<< "$p"; then
     ok "SP_LANDED positive control: 24h worked row renders"
 else
     bad "SP_LANDED positive control: 24h worked row absent (cannot test fault)"
 fi
-base_snap SP_LANDED
-p="$(pane 0)"
+p="$(block omit-SP_LANDED)"
 worked_line="$(printf '%s\n' "$p" | grep '24h worked')"
 if printf '%s\n' "$worked_line" | grep -q '[?] landed'; then
     ok "SP_LANDED: absent key renders '?'"
@@ -315,16 +397,14 @@ else
 fi
 
 # SP_QUEUE_DEPTH — queued count on the 24h-worked row, rendered with ${SP_QUEUE_DEPTH:-?}
-base_snap __none__
-p="$(pane 0)"
-# Positive control: SP_QUEUE_DEPTH=5 in the base snapshot → "5 queued" appears.
+p="$(block full)"
+# Positive control: SP_QUEUE_DEPTH=5 in the fixture → "5 queued" appears.
 if grep -q '5 queued' <<< "$p"; then
     ok "SP_QUEUE_DEPTH positive control: '5 queued' renders on 24h worked row"
 else
     bad "SP_QUEUE_DEPTH positive control: '5 queued' absent from 24h worked row (cannot test fault)"
 fi
-base_snap SP_QUEUE_DEPTH
-p="$(pane 0)"
+p="$(block omit-SP_QUEUE_DEPTH)"
 worked_line="$(printf '%s\n' "$p" | grep '24h worked')"
 if printf '%s\n' "$worked_line" | grep -q '[?] queued'; then
     ok "SP_QUEUE_DEPTH: absent key renders '? queued'"
@@ -338,15 +418,13 @@ else
 fi
 
 # SP_UNLANDED_N — done count on the 24h-worked row, rendered with ${SP_UNLANDED_N:-?}
-base_snap __none__
-p="$(pane 0)"
+p="$(block full)"
 if grep -q '1 done' <<< "$p"; then
     ok "SP_UNLANDED_N positive control: '1 done' renders on 24h worked row"
 else
     bad "SP_UNLANDED_N positive control: '1 done' absent from 24h worked row (cannot test fault)"
 fi
-base_snap SP_UNLANDED_N
-p="$(pane 0)"
+p="$(block omit-SP_UNLANDED_N)"
 worked_line="$(printf '%s\n' "$p" | grep '24h worked')"
 if printf '%s\n' "$worked_line" | grep -q '[?] done'; then
     ok "SP_UNLANDED_N: absent key renders '?'"
@@ -474,26 +552,11 @@ done
 
 # ---- Part 2 summary: collector output feeds the pane --------------------------------
 # Take the collector output that correctly contains SP_UNLANDED_N=? and verify the pane
-# renders it as ? rather than 0 — closing the end-to-end chain.
+# renders it as ? rather than 0 — closing the end-to-end chain. The 'e2e' fixture was
+# rendered in the same render-many process as Parts 1 and 3, above.
 echo
 echo "end-to-end: collector ? propagates to pane ?"
-{
-    printf 'SP_AT=%d\n' "$(date +%s)"
-    printf 'SP_AEON_N=0\nSP_NEXT_N=0\nSP_INFLOW_N=0\nSP_INFLOW_WIN=60\nSP_INFLOW_DEFECT=0\nSP_INFLOW_KINDS=-\n'
-    printf 'SP_AWAITING_N=0\nSP_WAITING=0\nSP_UNANSWERED=0\n'
-    printf 'SP_UNSENT=0\nSP_BRANCH_DONE=0\nSP_UNSENT_OLDEST_H=0\nSP_UNADOPTED=0\nSP_ORPHAN_WORK=0\n'
-    printf 'SP_CLOSED_24H=0\nSP_OPENED_24H=0\nSP_BEADS_LANDED_24H=0\n'
-    printf 'SP_BEADS_SPARK_OPENED=▁▁▁▁▁▁▁▁\nSP_BEADS_SPARK_CLOSED=▁▁▁▁▁▁▁▁\n'
-    printf 'SP_BEADS_SPARK_LANDED=▁▁▁▁▁▁▁▁\nSP_CLOSED_KINDS=-\n'
-    # THE PROPAGATION CASE: what the fixed collector emits when bdjson returns nothing.
-    printf 'SP_CLOSED=?\nSP_LANDED=?\nSP_UNLANDED_N=?\n'
-    printf 'SP_QUEUE_DEPTH=?\nSP_QUEUE_EJECTED=0\nSP_QUEUE_RED=0\n'
-    printf 'SP_QUEUE_BATCH_PR=0\nSP_QUEUE_BATCH_N=0\nSP_QUEUE_NEXT_N=0\nSP_QUEUE_NEXT_MAX=8\nSP_QUEUE_QUARANTINE_N=0\n'
-    printf 'SP_SENTINEL_TIMER=1\nSP_SENTINEL_AGE=30\nSP_OPS_TIMER=1\nSP_OPS_AGE=30\n'
-    printf 'SP_AURON_TIMER=1\nSP_AURON_AGE=30\nSP_AURON_FIRING=0\nSP_AURON_KEYS=\n'
-    printf 'SP_GATE_N=0\nSP_GATE_LIVE=0\nSP_CAPACITY_PAUSED=0\n'
-} | snap
-e2e_pane="$(pane 0)"
+e2e_pane="$(block e2e)"
 e2e_worked="$(printf '%s\n' "$e2e_pane" | grep '24h worked')"
 if printf '%s\n' "$e2e_worked" | grep -q '[?] done'; then
     ok "end-to-end: collector SP_UNLANDED_N=? propagates to pane '? done'"
@@ -511,9 +574,7 @@ echo "Part 3: collector skew — absent key with SP_COLLECTOR_REV renders 'coll 
 echo
 
 # POSITIVE CONTROL: SP_TOK_ARC_WIN present → archivist row shows the real value, no skew marker.
-base_snap __none__
-printf "SP_TOK_ARC_WIN='10000'\nSP_TOK_ARC_TURNS='2'\nSP_TOK_ARC_CTX='25000'\n" >> "$SNAPF"
-p_arc_pos="$(pane 0)"
+p_arc_pos="$(block arc-positive)"
 arc_pos_line="$(printf '%s\n' "$p_arc_pos" | grep archivist)"
 if [[ "${arc_pos_line:-}" != *"coll "* ]]; then
     ok "collector skew/positive control: archivist row renders normally (no coll marker)"
@@ -524,9 +585,7 @@ fi
 # SKEW CASE: absent SP_TOK_ARC_WIN with SP_COLLECTOR_REV set to a known-old rev.
 # The row must show 'coll <rev>' instead of '?' so the operator can distinguish a schema
 # gap from a probe failure.
-base_snap __none__
-printf "SP_COLLECTOR_REV='a1b2c3d'\n" >> "$SNAPF"
-p_skew="$(pane 0)"
+p_skew="$(block arc-skew)"
 arc_skew_line="$(printf '%s\n' "$p_skew" | grep archivist)"
 if [[ "${arc_skew_line:-}" == *"coll a1b2c3d"* ]]; then
     ok "collector skew: archivist row shows 'coll a1b2c3d'"
@@ -537,6 +596,72 @@ if [[ "${arc_skew_line:-}" == *"?"* ]]; then
     bad "collector skew: archivist row showed '?' — indistinguishable from probe failure"
 else
     ok "collector skew: archivist row did not show '?'"
+fi
+
+echo
+echo "Part 4: timed-out probe renders STALE, not FAULT (moved from test-cockpit-collector-quota.sh)"
+echo
+
+# POSITIVE CONTROL: stale snapshot without probe timeout renders FAULT, not STALE.
+p_fault="$(block stale-fault)"
+if printf '%s\n' "$p_fault" | grep -q 'FAULT ('; then
+    ok "positive control: stale + no timeout renders FAULT"
+else
+    bad "positive control: stale + no timeout did not render FAULT: $p_fault"
+fi
+if printf '%s\n' "$p_fault" | grep -q 'STALE'; then
+    bad "positive control: STALE present when no probe timeout"
+else
+    ok "positive control: STALE absent when no probe timeout"
+fi
+
+# MAIN CASE: stale snapshot with a timed-out core probe renders a STALE line, not FAULT.
+p_stale="$(block stale-timeout)"
+if printf '%s\n' "$p_stale" | grep -q 'STALE'; then
+    ok "timeout probe: header badge is STALE"
+else
+    bad "timeout probe: header badge is not STALE: $p_stale"
+fi
+if printf '%s\n' "$p_stale" | grep -q 'FAULT ('; then
+    bad "timeout probe: FAULT badge present"
+else
+    ok "timeout probe: FAULT badge absent"
+fi
+if printf '%s\n' "$p_stale" | grep -q 'core: timeout'; then
+    ok "timeout probe: STALE line names probe"
+else
+    bad "timeout probe: STALE line did not name probe: $p_stale"
+fi
+if printf '%s\n' "$p_stale" | grep -qF '×3'; then
+    ok "timeout probe: STALE line shows kill count"
+else
+    bad "timeout probe: STALE line did not show kill count: $p_stale"
+fi
+
+echo
+echo "Part 5: SELF section removed — REPEATING/BIRTH/STALL never render (moved from test-cockpit-self.sh)"
+echo
+
+p_self="$(block self-removed)"
+if printf '%s\n' "$p_self" | grep -q 'REPEATING'; then
+    bad "SELF removed: REPEATING row present despite SP_SELF_REPEATING_N=1"
+else
+    ok "SELF removed: no REPEATING row"
+fi
+if printf '%s\n' "$p_self" | grep -q 'BIRTH'; then
+    bad "SELF removed: BIRTH row present despite SP_SELF_STILLBORN_W=1"
+else
+    ok "SELF removed: no BIRTH row"
+fi
+if printf '%s\n' "$p_self" | grep -q 'STALL'; then
+    bad "SELF removed: STALL row present despite SP_SELF_STARVED_W=2"
+else
+    ok "SELF removed: no STALL row"
+fi
+if printf '%s\n' "$p_self" | grep -q ' SELF '; then
+    bad "SELF removed: SELF label present"
+else
+    ok "SELF removed: no SELF label"
 fi
 
 echo

@@ -40,6 +40,9 @@ SNAP="$SPIRA_RUN/cockpit.env"
 # every registered repository — see spira_repos / repo_root in lib.sh.
 WINDOW_HOURS="${SPIRA_COCKPIT_WINDOW_HOURS:-24}"
 INTERVAL="${SPIRA_COCKPIT_INTERVAL:-60}"
+# Test seam, mirroring collect.sh's COCK slow mode: a hermetic pass (env -i, no real bd/git)
+# would otherwise finish before a kill can land mid-probe.
+PROBE_TEST_SLEEP="${SPIRA_COCKPIT_TEST_SLEEP:-0}"
 
 # THE SNAPSHOT HAS EXACTLY ONE WRITER: spira-cockpit.service. A second writer — an aeon
 # running the collector from its worktree, a retired brain collector calling a vendored copy,
@@ -62,6 +65,15 @@ cockpit_may_write() {
         [ -n "$svc_id" ] && [ "$INVOCATION_ID" = "$svc_id" ] && return 0
     done
     return 1
+}
+
+# `loop`'s own fence, same rule as `once`'s but fatal: a loop that started unsupervised
+# would otherwise stamp a wrong SP_WRITER every INTERVAL forever instead of just once.
+_loop_guard() {
+    cockpit_may_write || {
+        echo "cockpit.sh loop: write refused — not the supervised process. Set SPIRA_COCKPIT_FORCE=1 to override." >&2
+        exit 1
+    }
 }
 
 # count <bd-args...> -> number of rows, or `?` if the query or the parse failed.
@@ -97,6 +109,7 @@ probe() {
     # existing per-subcommand functions, keeping cockpit.sh once/loop working unchanged.
     # SP_AT FIRST: now_keys emits it as its very first output line.
     local _probe_start; _probe_start=$(date +%s)
+    [ "$PROBE_TEST_SLEEP" != 0 ] && sleep "$PROBE_TEST_SLEEP"
     now_keys
     core_detail_keys
     core_counts_keys
@@ -903,103 +916,8 @@ for t, i in aged[:20]:
     # DO NOT ADD COLUMNS TO cockpit-history.csv for these: append_history would rotate the
     # file on any HIST_COLS change, discarding all token history. Sparklines are bucketed
     # from timestamps on disk and need no accumulated series.
-    #
-    # The landing.log path is passed as argv[1] so the Python block can read it without
-    # re-invoking bd. FD 3 carries the script so stdin stays free for the bdjson pipe
-    # (law-commit-messages-via-stdin — same shape, different file descriptor).
     bdjson list --all --limit 0 --label "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" 2>/dev/null | \
-    python3 /dev/fd/3 "$SPIRA_RUN/landing.log" 3<<'PY' 2>/dev/null
-import sys, json, datetime, re, os
-
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit
-rows = d if isinstance(d, list) else [d]
-cut = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=24)
-cut_ts = cut.timestamp()
-
-def when(v):
-    try: return datetime.datetime.fromisoformat(str(v).replace("Z", "+00:00"))
-    except Exception: return None
-
-closed = [i for i in rows if i.get("status") == "closed" and (when(i.get("closed_at") or i.get("updated_at")) or cut) >= cut]
-opened = [i for i in rows if (when(i.get("created_at")) or cut - datetime.timedelta(1)) >= cut]
-kinds = {}
-for i in closed: kinds[i.get("issue_type") or "task"] = kinds.get(i.get("issue_type") or "task", 0) + 1
-print("SP_CLOSED_24H=%d" % len(closed))
-print("SP_OPENED_24H=%d" % len(opened))
-print("SP_CLOSED_KINDS=%s" % (", ".join("%s %d" % (k, v) for k, v in sorted(kinds.items(), key=lambda x: -x[1])[:4]) or "-"))
-
-# Sparklines: bucket the 24h window into BUCKETS equal intervals and count events per bucket.
-# EACH SERIES IS SCALED TO ITSELF: the question is "rising or falling" for that series alone.
-# ZERO IS A REAL MEASUREMENT: an interval with no events renders ▁, not dropped. Only an
-# unreadable source is absent — that distinction is what law-absence-needs-a-positive-control
-# requires. Mirroring spark()'s all-equal rule: all-zero → ▁ flat; all-equal non-zero → ▄ flat.
-BUCKETS = 8
-bucket_secs = 86400 / BUCKETS
-blocks = "▁▂▃▄▅▆▇█"
-
-def spark_str(bkts):
-    lo, hi = min(bkts), max(bkts)
-    if hi == lo:
-        return (blocks[0] if hi == 0 else blocks[3]) * len(bkts)
-    return "".join(blocks[min(7, int((v - lo) / (hi - lo) * 7.999))] for v in bkts)
-
-opened_bkts = [0] * BUCKETS
-for i in rows:
-    t = when(i.get("created_at"))
-    if t:
-        ts = t.timestamp()
-        if ts >= cut_ts:
-            opened_bkts[min(BUCKETS - 1, int((ts - cut_ts) / bucket_secs))] += 1
-
-closed_bkts = [0] * BUCKETS
-for i in rows:
-    if i.get("status") == "closed":
-        t = when(i.get("closed_at") or i.get("updated_at"))
-        if t:
-            ts = t.timestamp()
-            if ts >= cut_ts:
-                closed_bkts[min(BUCKETS - 1, int((ts - cut_ts) / bucket_secs))] += 1
-
-print("SP_BEADS_SPARK_OPENED=%s" % spark_str(opened_bkts))
-print("SP_BEADS_SPARK_CLOSED=%s" % spark_str(closed_bkts))
-
-# Landed sparkline: parse landing.log for "spira: landed" lines within the window.
-# A missing or unreadable log renders ?, never 0: the reassuring reading must not be the
-# one a broken probe produces (law-absence-needs-a-positive-control).
-landing_log = sys.argv[1] if len(sys.argv) > 1 else ""
-landed_bkts = [0] * BUCKETS
-landed_24h = 0
-landed_ok = False
-if landing_log and os.path.exists(landing_log):
-    landed_ok = True
-    try:
-        with open(landing_log, errors="replace") as f:
-            for line in f:
-                if "spira: landed" not in line:
-                    continue
-                m = re.match(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)", line)
-                if not m:
-                    continue
-                try:
-                    ts = datetime.datetime.strptime(
-                        m.group(1), "%Y-%m-%dT%H:%M:%SZ"
-                    ).replace(tzinfo=datetime.timezone.utc).timestamp()
-                    if ts >= cut_ts:
-                        landed_24h += 1
-                        landed_bkts[min(BUCKETS - 1, int((ts - cut_ts) / bucket_secs))] += 1
-                except Exception:
-                    pass
-    except Exception:
-        landed_ok = False
-
-if landed_ok:
-    print("SP_BEADS_SPARK_LANDED=%s" % spark_str(landed_bkts))
-    print("SP_BEADS_LANDED_24H=%d" % landed_24h)
-else:
-    print("SP_BEADS_SPARK_LANDED=?")
-    print("SP_BEADS_LANDED_24H=?")
-PY
+    python3 "$HERE/cockpit-sparklines.py" "$SPIRA_RUN/landing.log" 2>/dev/null
 
 
     # ---- TOKENS: what the account is spending, and which half is spending it ------------
@@ -2808,6 +2726,9 @@ print("SP_MAIL_N=%d" % min(len(rows), 5))
 PY
 }
 
+# Sourced (BASH_SOURCE[0] != $0) skips dispatch entirely — the seam test-cockpit.sh uses
+# to call cockpit_may_write and _loop_guard directly, without a full `once`/`loop` run.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 case "${1:-}" in
 ""|once)
     if cockpit_may_write; then
@@ -2843,10 +2764,7 @@ history)
     echo "spira cockpit: $HIST ($(( $(wc -l < "$HIST") - 1 )) rows)"
     ;;
 loop)
-    cockpit_may_write || {
-        echo "cockpit.sh loop: write refused — not the supervised process. Set SPIRA_COCKPIT_FORCE=1 to override." >&2
-        exit 1
-    }
+    _loop_guard
     sweep_stale_tmps
     while :; do write_snapshot; sleep "$INTERVAL"; done
     ;;
@@ -2938,3 +2856,4 @@ czar_triggers)
    echo "  (no args: collect once then attach to the concierge; SPIRA_COCKPIT_NO_ATTACH=1 skips the attach)" >&2
    exit 1 ;;
 esac
+fi

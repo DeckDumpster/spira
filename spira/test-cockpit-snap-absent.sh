@@ -53,24 +53,22 @@ pane_at() {
       | sed 's/\x1b\[[?0-9;]*[a-zA-Z]//g'
 }
 
-# ---- POSITIVE CONTROL: absent snap fires a diagnostic --------------------------------
+# ---- NO SNAPSHOT: cockpit.env not found at any known derivation ----------------------
+# POSITIVE CONTROL FIRST, same render: before asserting the specific "no snapshot" wording,
+# confirm a diagnostic fires at all — a banner that never fires would otherwise pass the
+# specific-wording check by having nothing to compare it against. This used to be two
+# separate `health.sh once` renders of the identical fixture; one render answers both.
 echo
-echo "positive control — absent snap fires a diagnostic (seen before clean case)"
+echo "no snapshot — cockpit.env found nowhere"
 
 rm -f "$PD/repo/.runtime/spira/cockpit.env" \
        "$PD/home/.local/share/spira/run/cockpit.env"
-absent="$(pane_at "$PD/repo/.runtime/spira" 40)"
-if printf '%s\n' "$absent" | grep -qiE 'no snapshot|path mismatch'; then
+nosnap="$(pane_at "$PD/repo/.runtime/spira" 40)"
+if printf '%s\n' "$nosnap" | grep -qiE 'no snapshot|path mismatch'; then
     ok "absent snap fires a diagnostic"
 else
     bad "absent snap fired no diagnostic"
 fi
-
-# ---- NO SNAPSHOT: cockpit.env not found at any known derivation ----------------------
-echo
-echo "no snapshot — cockpit.env found nowhere"
-
-nosnap="$(pane_at "$PD/repo/.runtime/spira" 40)"
 if printf '%s\n' "$nosnap" | grep -qi 'no snapshot'; then
     ok "no cockpit.env anywhere renders a 'no snapshot' notice"
 else

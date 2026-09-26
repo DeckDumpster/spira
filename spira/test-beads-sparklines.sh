@@ -13,7 +13,7 @@
 # No network. No real database. Under a second.
 #
 # defect: sp-mn8q
-# covers: spira/cockpit.sh cockpit/health.sh
+# covers: spira/cockpit.sh spira/cockpit-sparklines.py cockpit/health.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
@@ -27,23 +27,17 @@ echo "test-beads-sparklines.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # ---------------------------------------------------------------------------
-# The sparkline Python block is extracted from cockpit.sh and exercised here
-# directly, with fixture data on stdin and a fixture landing.log.  This is
-# what the suite tests against — not a copy or a model of it, but the real
-# embedded script, so the test catches drifts in the block itself.
+# cockpit-sparklines.py is its own file (not a cockpit.sh heredoc extracted by
+# indentation), so this suite runs the real script cockpit.sh runs, unmodified.
 # ---------------------------------------------------------------------------
-
-# Extract the Python block from cockpit.sh. It starts on the line after
-# "python3 /dev/fd/3" in the THROUGHPUT section and ends at the closing PY.
-PYBLOCK="$(awk '/^    python3 \/dev\/fd\/3.*landing/{found=1; next} found && /^PY$/{exit} found{print}' "$HERE/cockpit.sh")"
-
-if [ -z "$PYBLOCK" ]; then
-    bad "extract" "could not find the THROUGHPUT python block in cockpit.sh"
+SPARKLINES_PY="$HERE/cockpit-sparklines.py"
+if [ ! -f "$SPARKLINES_PY" ]; then
+    bad "extract" "cockpit-sparklines.py not found next to cockpit.sh"
     echo ""
     echo "RESULTS: $pass passed, $fail failed"
     exit 1
 fi
-ok "extract: found THROUGHPUT python block"
+ok "extract: cockpit-sparklines.py present"
 
 # ---------------------------------------------------------------------------
 # Fixture timestamps: pin to a fixed NOW so bucket boundaries are predictable.
@@ -113,13 +107,11 @@ print('%s spira: landed spira/sp-old' % time.strftime('%Y-%m-%dT%H:%M:%SZ', time
 ok "fixture: generated landing.log"
 
 # ---------------------------------------------------------------------------
-# Run the extracted Python block with fixture data.
+# Run the real script with fixture data.
 # ---------------------------------------------------------------------------
 run_block() {
     local landing="${1:-$LANDING_LOG}"
-    printf '%s\n' "$BEADS_JSON" | python3 /dev/fd/3 "$landing" 3<<PYEOF 2>/dev/null
-$PYBLOCK
-PYEOF
+    printf '%s\n' "$BEADS_JSON" | python3 "$SPARKLINES_PY" "$landing" 2>/dev/null
 }
 
 OUT="$(run_block)"
@@ -167,10 +159,24 @@ has "missing landing.log → opened sparkline still renders" "$OUT_NOLAND" "SP_B
 
 # ---------------------------------------------------------------------------
 # cockpit-history.csv is never touched.
-# The block reads from stdin (bdjson) and landing.log only. No HIST reference.
+# The script reads from stdin (bdjson) and landing.log only. No HIST reference.
 # ---------------------------------------------------------------------------
-HIST_REF="$(grep -c 'cockpit-history\|HIST_COLS\|append_history' <<< "$PYBLOCK" 2>/dev/null || true)"
-is "python block has no HIST_COLS/append_history reference" "0" "${HIST_REF:-0}"
+HIST_REF="$(grep -c 'cockpit-history\|HIST_COLS\|append_history' "$SPARKLINES_PY" 2>/dev/null || true)"
+is "script has no HIST_COLS/append_history reference" "0" "${HIST_REF:-0}"
+
+# ---------------------------------------------------------------------------
+# Bucket-distribution assertion: the fixture's opened timestamps land in known
+# buckets (0, 2, 5, 5 — see the offsets above), so the sparkline is not just
+# non-empty but shaped like that distribution. spark_str scales linearly
+# between the series' own min (0) and max (2 events, in bucket 5): bucket 5
+# must render the tallest glyph and an empty bucket (e.g. bucket 1) the
+# shortest — proving the bucket index math, not just that something rendered.
+# ---------------------------------------------------------------------------
+glyph_at() { python3 -c "import sys; print(sys.argv[1][int(sys.argv[2])])" "$1" "$2"; }
+tallest="$(glyph_at "$SPARK_O" 5)"
+shortest="$(glyph_at "$SPARK_O" 1)"
+is "opened bucket 5 (2 events, the max) renders the tallest glyph" "█" "$tallest"
+is "opened bucket 1 (0 events, the min) renders the shortest glyph" "▁" "$shortest"
 
 # ---------------------------------------------------------------------------
 echo ""
