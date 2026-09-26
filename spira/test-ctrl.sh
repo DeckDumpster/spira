@@ -6,7 +6,7 @@
 #
 # WHAT THIS SUITE COVERS
 # ----------------------
-# Three tiers:
+# Two tiers:
 #
 # 1. ctrl.sh core: suspend/resume/check/list cycle; rejection of incomplete entries.
 #
@@ -15,26 +15,20 @@
 #    Positive control: remove the planted suspension → silence, proving silence is
 #    agreement and not a broken check (law-absence-needs-a-positive-control).
 #
-# 3. install.sh integration: a suspended unit is skipped and the skip is named; a
-#    non-suspended unit is enabled normally. Both paths are driven through the real
-#    install.sh with a systemctl stub that records every call it receives.
+# install.sh's own honouring of a suspension is table-driven in test-install-decide.sh
+# over the shared (suspended?, enabled?) predicate — cluster 6, docs/test-plan/
+# instance-lifecycle.md — not re-driven here through a full install.sh run.
 #
 # systemctl IS STUBBED throughout. A suite that queries the real service manager is
 # green for as long as the box happens to be in the state its author had.
 #
-# covers: spira/ctrl.sh systemd/install.sh
+# tier: T1
+# covers: spira/ctrl.sh UC-instance-lifecycle-45
 # hermetic-ok: SPIRA_CTRL env pins control file; SPIRA_SYSTEMCTL stubs systemctl
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-REAL_REPO="$(cd "$HERE/.." && pwd -P)"
-REAL_COCKPIT="$(cd "$HERE/../cockpit" && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
-rc_is()  { [ "$2" -eq "$3" ] && ok "$1" || bad "$1" "wanted rc=$2 got rc=$3"; }
+. "$HERE/testlib.sh"
+rc_is() { wantrc "$1" "$2" "$3"; }
 
 echo "test-ctrl.sh"
 
@@ -223,124 +217,4 @@ nowant "undeclared: declared masked unit not a divergence" "DIVERGENCE" "$out"
 ctrl resume spira-suites >/dev/null
 
 # ==========================================================================
-echo
-echo "INSTALL.SH: suspended unit is skipped; non-suspended unit is enabled"
-# ==========================================================================
-
-# Build a minimal install.sh fixture (mirrors test-install-halt.sh).
-FIXTURE="$TMP/harness"
-mkdir -p "$FIXTURE/systemd" "$FIXTURE/spira"
-
-for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer; do
-    [ -e "$f" ] || continue
-    ln -sf "$f" "$FIXTURE/systemd/$(basename "$f")"
-done
-ln -sf "$HERE/../systemd/install.sh" "$FIXTURE/systemd/install.sh"
-for f in conf.sh watchd.sh lib.sh ctrl.sh; do
-    [ -e "$HERE/$f" ] && ln -sf "$HERE/$f" "$FIXTURE/spira/$f"
-done
-printf '# empty — test fixture\n' > "$FIXTURE/spira/watchers"
-printf '# empty\n' > "$FIXTURE/spira/repo-map.example"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$FIXTURE/spira/install-session-hook.sh"
-chmod +x "$FIXTURE/spira/install-session-hook.sh"
-
-DEST="$TMP/home/.config/systemd/user"
-SPIRA_RUN_INST="$TMP/inst-run"
-MOCK_BIN="$TMP/mock-bin"
-mkdir -p "$DEST" "$SPIRA_RUN_INST" "$MOCK_BIN"
-MOCK_LOG="$TMP/inst-sc.log"
-INST_CTRL="$TMP/inst-ctrl"
-
-# systemctl stub: record every call. Uses ${MOCK_LOG} which is passed via env.
-cat > "$MOCK_BIN/systemctl" <<'MOCK'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "${MOCK_LOG}"
-case "$*" in *is-active*) echo "inactive" ;; *is-enabled*) echo "disabled" ;; esac
-exit 0
-MOCK
-chmod +x "$MOCK_BIN/systemctl"
-
-printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/loginctl"
-chmod +x "$MOCK_BIN/loginctl"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/spira-supervise"
-chmod +x "$MOCK_BIN/spira-supervise"
-
-# SPIRA_PATH is used rather than prepending PATH directly: conf.sh resets PATH, and a
-# prepend to the outer PATH is silently overwritten (law-gates-run-in-a-clean-environment).
-# SPIRA_HOME is set to HERE (the real spira/ directory) so ctrl.sh is found at $SPIRA_HOME/ctrl.sh.
-inst() {
-    > "$MOCK_LOG"
-    env -i PATH="$PATH" HOME="$TMP/home" \
-        SPIRA_CONF=/nonexistent \
-        SPIRA_PATH="$MOCK_BIN" \
-        SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
-        SPIRA_RUN="$SPIRA_RUN_INST" \
-        SPIRA_CTRL="$INST_CTRL" \
-        SPIRA_HOME="$HERE" \
-        SPIRA_PROD="$HERE" \
-        SPIRA_REPO="$REAL_REPO" \
-        SPIRA_COCKPIT="$REAL_COCKPIT" \
-        SPIRA_INSTANCE=prod \
-        "SPIRA_SUPERVISE_BIN=$MOCK_BIN/spira-supervise" \
-        MOCK_LOG="$MOCK_LOG" \
-        SPIRA_INSTALL_FORCE=1 \
-        bash "$FIXTURE/systemd/install.sh" "$@" 2>&1
-}
-
-# Populate DEST so install.sh doesn't fail on missing rendered files.
-rendered="$(inst --render 2>&1)"; rc=$?
-if [ "$rc" != 0 ]; then
-    printf 'FAIL fixture: install.sh --render failed (rc=%s) — cannot continue\n' "$rc"
-    printf '%s\n' "$rendered" | head -20
-    fail=$((fail+1))
-else
-    current_unit=""
-    while IFS= read -r line; do
-        if [[ "$line" =~ ^=====\ (.+)\ =====$ ]]; then
-            current_unit="${BASH_REMATCH[1]}"; > "$DEST/$current_unit"
-        elif [ -n "$current_unit" ]; then
-            printf '%s\n' "$line" >> "$DEST/$current_unit"
-        fi
-    done <<< "$rendered"
-
-    # ---- no suspension: install.sh should try to enable the suites timer
-    rm -f "$INST_CTRL"
-    out="$(inst 2>&1)"; log="$(cat "$MOCK_LOG")"
-    want   "install: no suspension — systemctl called"         "enable"       "$log"
-    nowant "install: no suspension — no skip message"          "suspended"    "$out"
-
-    # ---- suspend spira-suites in the control file
-    env -i PATH="$PATH" HOME="$TMP/home" \
-        SPIRA_CONF=/nonexistent \
-        SPIRA_HOME="$HERE" \
-        SPIRA_RUN="$SPIRA_RUN_INST" \
-        SPIRA_CTRL="$INST_CTRL" \
-        SPIRA_INSTANCE=prod \
-        bash "$HERE/ctrl.sh" suspend spira-suites \
-            --reason "suite-red backlog" --owner sp-jxia >/dev/null
-
-    out="$(inst 2>&1)"; log="$(cat "$MOCK_LOG")"
-    want   "install: suspended — skip message printed"         "suspended"         "$out"
-    want   "install: suspended — names subject in message"     "spira-suites"      "$out"
-    # The timer must NOT appear in systemctl enable calls
-    nowant "install: suspended — suites timer not enabled"     "spira-suites-prod.timer" "$log"
-
-    # ---- resume the suspension: install.sh should enable again
-    env -i PATH="$PATH" HOME="$TMP/home" \
-        SPIRA_CONF=/nonexistent \
-        SPIRA_HOME="$HERE" \
-        SPIRA_RUN="$SPIRA_RUN_INST" \
-        SPIRA_CTRL="$INST_CTRL" \
-        SPIRA_INSTANCE=prod \
-        bash "$HERE/ctrl.sh" resume spira-suites >/dev/null
-
-    out="$(inst 2>&1)"; log="$(cat "$MOCK_LOG")"
-    nowant "install: after resume — no skip message"           "suspended"    "$out"
-fi
-
-# ==========================================================================
-echo
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

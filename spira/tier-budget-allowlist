@@ -264,9 +264,7 @@ test-install-dolt-breaker.sh	T1	13.0
 test-install-dolt-mode.sh	T1	7.0
 test-install-dolt-port-wait.sh	T1	1.5
 test-install-exec.sh	T1	46.5
-test-install-halt.sh	T1	36.5
 test-install-hooks-artifact.sh	T1	9.0
-test-install-idempotent.sh	T1	78.0
 test-install-instance.sh	T1	62.5
 test-install-landref.sh	T1	15.0
 test-install-loom-broker.sh	T1	2.5

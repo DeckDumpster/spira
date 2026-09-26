@@ -55,6 +55,37 @@ _seed_instance_conf() {
     printf 'install: seeded %s with SPIRA_INSTANCE=%s\n' "$file" "$inst"
 }
 
+# _unit_action <changed> <masked> <suspended> <disabled> <halted> <active> -> action word.
+# THE PER-UNIT APPLY DECISION, extracted so a T1 test can drive it directly — no rendered
+# DEST tree, no recording systemctl (spira/test-install-decide.sh). Every argument is 0/1:
+#   changed    rendered content differs from what is installed, or the unit is new
+#   masked     symlinked to /dev/null by the operator
+#   suspended  ctrl.sh reports this unit's subject suspended
+#   disabled   systemctl is-enabled=disabled, and the unit is not newly installed this run
+#   halted     $SPIRA_RUN/world.halted is present
+#   active     systemctl is-active=active
+# -> masked | suspended | operator-disabled | enable | skip | restart | enable-now
+# ORDER IS THE CONTRACT: a masked unit stays masked even if also suspended or disabled: an
+# operator's explicit mask must never be second-guessed by a control-plane state that could
+# be stale. Suspended outranks disabled and halted for the same reason — ctrl.sh is the one
+# surface that answers "why is this not running" and must stay authoritative over it.
+# DEFINED BEFORE BOTH SOURCING GUARDS BELOW, alongside _seed_instance_conf, for the same
+# reason: a test sources this file for the function alone and never reaches past here.
+_unit_action() {
+    local changed="$1" masked="$2" suspended="$3" disabled="$4" halted="$5" active="$6"
+    if [ "$masked" = 1 ]; then echo masked; return 0; fi
+    if [ "$suspended" = 1 ]; then echo suspended; return 0; fi
+    if [ "$disabled" = 1 ]; then echo operator-disabled; return 0; fi
+    if [ "$halted" = 1 ]; then echo enable; return 0; fi
+    if [ "$changed" != 1 ] && [ "$active" = 1 ]; then echo skip; return 0; fi
+    if [ "$changed" = 1 ] && [ "$active" = 1 ]; then echo restart; return 0; fi
+    echo enable-now
+}
+# NAMED GUARD FOR THE T1 SEAM, independent of the generic sourcing guard just below: a
+# later edit to that guard (e.g. if _seed_instance_conf's own sourcing use goes away)
+# must not silently let a SPIRA_INSTALL_LIB=1 source run the whole installer.
+if [ "${SPIRA_INSTALL_LIB:-0}" = 1 ]; then return 0 2>/dev/null || exit 0; fi
+
 if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0 2>/dev/null || true; fi
 
 # PARSE THE INSTANCE ARGUMENT AND THE MODE FLAG BEFORE SOURCING conf.sh SO THAT conf.sh
@@ -666,83 +697,66 @@ _drain_oneshot() {
 # IF THE WORLD IS HALTED, install the units but leave them stopped. A routine install
 # restarting the loop is the worst shape: the operator believes the world is down, every
 # surface agrees, and it is running. An explicit world.sh start is how a halt is lifted.
+_world_halted=0
 if [ -f "$SPIRA_RUN/world.halted" ]; then
+    _world_halted=1
     printf '\ninstall: world is HALTED (%s)\n' "$(head -1 "$SPIRA_RUN/world.halted")"
     printf 'install: reason: %s\n' "$(sed -n 2p "$SPIRA_RUN/world.halted")"
     printf 'install: units installed but NOT started — run world.sh start to lift the halt\n\n'
-    for u in "${ENABLE[@]}"; do
-        if [ "${_MASKED[$u]:-}" = "1" ]; then
-            printf 'install: %s is masked — skipping\n' "$u"; continue
-        fi
-        # CONTROL PLANE: a unit declared suspended in $SPIRA_CTRL is not enabled, even when
-        # the world is halted. The subject is the base unit name without instance suffix or
-        # extension (e.g. "spira-suites" from "spira-suites-prod.timer"). ctrl_is_suspended
-        # reads the single load done above the UNITS loop. If ctrl.sh was absent, the fallback
-        # defined there always says "not suspended" — a missing control tool is not a reason
-        # to refuse enabling everything.
-        _cs="${u%"-${SPIRA_INSTANCE}.service"}"; _cs="${_cs%"-${SPIRA_INSTANCE}.timer"}"
-        _cs="${_cs%.service}"; _cs="${_cs%.timer}"
-        if ctrl_is_suspended _CTRL_SUSPENDED "$_cs" >/dev/null; then
-            printf 'install: %s is suspended (ctrl: %s) — skipping\n' "$u" "$_cs"; continue
-        fi
-        _en="$(systemctl --user is-enabled "$u" 2>/dev/null || true)"
-        if [ "$_en" = "disabled" ] && [ -z "${_NEW[$u]:-}" ]; then
-            printf 'install: %s is disabled by operator — leaving unchanged\n' "$u"; continue
-        fi
-        systemctl --user enable "$u" 2>/dev/null && printf 'enabled   %s (stopped — world is halted)\n' "$u"
-    done
-else
-    # RESTART ONLY WHAT CHANGED. A no-op install touches nothing. An unchanged unit that is
-    # already active is skipped; a changed unit is drained (if it is a running oneshot) and
-    # then restarted. Transient spira-aeon-* units are never in UNITS or ENABLE, so they are
-    # structurally unreachable here — no explicit guard is needed.
-    #
-    # Template units (spira-watch@.service) cover all their instances: if the template
-    # changed, every instance derived from it is restarted.
-    for u in "${ENABLE[@]}"; do
-        if [ "${_MASKED[$u]:-}" = "1" ]; then
-            printf 'install: %s is masked — skipping\n' "$u"; continue
-        fi
-        # CONTROL PLANE: a unit declared suspended in $SPIRA_CTRL is not enabled.
-        # See the HALTED branch above for the full rationale.
-        _cs="${u%"-${SPIRA_INSTANCE}.service"}"; _cs="${_cs%"-${SPIRA_INSTANCE}.timer"}"
-        _cs="${_cs%.service}"; _cs="${_cs%.timer}"
-        if ctrl_is_suspended _CTRL_SUSPENDED "$_cs" >/dev/null; then
-            printf 'install: %s is suspended (ctrl: %s) — skipping\n' "$u" "$_cs"; continue
-        fi
-        # AN OPERATOR-DISABLED UNIT IS LEFT AT ITS CURRENT STATE. A freshly installed unit
-        # (_NEW) also reports 'disabled' from is-enabled because it has never been enabled,
-        # but that is not a decision the operator made, so it is enabled as normal.
-        _en="$(systemctl --user is-enabled "$u" 2>/dev/null || true)"
-        if [ "$_en" = "disabled" ] && [ -z "${_NEW[$u]:-}" ]; then
-            printf 'install: %s is disabled by operator — leaving unchanged\n' "$u"; continue
-        fi
-        tmpl="${u%%@*}@.service"
-        changed="${_CHANGED[$u]:-}${_CHANGED[$tmpl]:-}"
-        if [ -z "$changed" ]; then
-            state="$(systemctl --user is-active "$u" 2>/dev/null || true)"
-            if [ "$state" = "active" ]; then
-                printf 'unchanged %s (active, skipping)\n' "$u"
-                continue
-            fi
-        fi
-        # Drain the backing oneshot service if it is mid-pass.
-        case "$u" in
-            *.timer) _drain_oneshot "${u%.timer}.service" ;;
-            *)       _drain_oneshot "$u" ;;
-        esac
-        # Restart if already active and content changed; enable+start otherwise.
-        if [ -n "$changed" ]; then
-            state="$(systemctl --user is-active "$u" 2>/dev/null || true)"
-            if [ "$state" = "active" ]; then
-                systemctl --user enable "$u" >/dev/null 2>&1 || true
-                systemctl --user restart "$u" && echo "restarted $u"
-                continue
-            fi
-        fi
-        systemctl --user enable --now "$u" && echo "enabled   $u"
-    done
 fi
+# RESTART ONLY WHAT CHANGED. A no-op install touches nothing. An unchanged unit that is
+# already active is skipped; a changed unit is drained (if it is a running oneshot) and
+# then restarted. Transient spira-aeon-* units are never in UNITS or ENABLE, so they are
+# structurally unreachable here — no explicit guard is needed.
+#
+# Template units (spira-watch@.service) cover all their instances: if the template
+# changed, every instance derived from it is restarted.
+#
+# THE DECISION ITSELF IS _unit_action (defined above the SPIRA_INSTALL_LIB guard). What
+# follows here is only gathering its six inputs and dispatching the systemctl calls its
+# answer implies.
+for u in "${ENABLE[@]}"; do
+    _masked=0; [ "${_MASKED[$u]:-}" = "1" ] && _masked=1
+    # CONTROL PLANE: a unit declared suspended in $SPIRA_CTRL is not enabled, halted world
+    # or not. The subject is the base unit name without instance suffix or extension (e.g.
+    # "spira-suites" from "spira-suites-prod.timer"). ctrl_is_suspended reads the single
+    # load done above the UNITS loop. If ctrl.sh was absent, the fallback defined there
+    # always says "not suspended" — a missing control tool is not a reason to refuse
+    # enabling everything.
+    _cs="${u%"-${SPIRA_INSTANCE}.service"}"; _cs="${_cs%"-${SPIRA_INSTANCE}.timer"}"
+    _cs="${_cs%.service}"; _cs="${_cs%.timer}"
+    _suspended=0
+    ctrl_is_suspended _CTRL_SUSPENDED "$_cs" >/dev/null && _suspended=1
+    # AN OPERATOR-DISABLED UNIT IS LEFT AT ITS CURRENT STATE. A freshly installed unit
+    # (_NEW) also reports 'disabled' from is-enabled because it has never been enabled,
+    # but that is not a decision the operator made, so it is enabled as normal.
+    _en="$(systemctl --user is-enabled "$u" 2>/dev/null || true)"
+    _disabled=0; [ "$_en" = "disabled" ] && [ -z "${_NEW[$u]:-}" ] && _disabled=1
+    # A changed template (spira-watch@.service) counts as a change to every instance of it.
+    tmpl="${u%%@*}@.service"
+    _changed=0; [ -n "${_CHANGED[$u]:-}${_CHANGED[$tmpl]:-}" ] && _changed=1
+    _active=0; [ "$(systemctl --user is-active "$u" 2>/dev/null || true)" = "active" ] && _active=1
+
+    case "$(_unit_action "$_changed" "$_masked" "$_suspended" "$_disabled" "$_world_halted" "$_active")" in
+        masked)
+            printf 'install: %s is masked — skipping\n' "$u" ;;
+        suspended)
+            printf 'install: %s is suspended (ctrl: %s) — skipping\n' "$u" "$_cs" ;;
+        operator-disabled)
+            printf 'install: %s is disabled by operator — leaving unchanged\n' "$u" ;;
+        enable)
+            systemctl --user enable "$u" 2>/dev/null && printf 'enabled   %s (stopped — world is halted)\n' "$u" ;;
+        skip)
+            printf 'unchanged %s (active, skipping)\n' "$u" ;;
+        restart)
+            case "$u" in *.timer) _drain_oneshot "${u%.timer}.service" ;; *) _drain_oneshot "$u" ;; esac
+            systemctl --user enable "$u" >/dev/null 2>&1 || true
+            systemctl --user restart "$u" && echo "restarted $u" ;;
+        enable-now)
+            case "$u" in *.timer) _drain_oneshot "${u%.timer}.service" ;; *) _drain_oneshot "$u" ;; esac
+            systemctl --user enable --now "$u" && echo "enabled   $u" ;;
+    esac
+done
 
 # AND THE ONE PIECE OF WIRING THAT IS NOT A UNIT. The session hook is registered in the coding
 # agent client's own settings file, outside every checkout, so installing the harness is the
