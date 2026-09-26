@@ -1429,6 +1429,14 @@ bead_reopen() {
     [ "${_wd_st:-}" = CERTIFIED ] && [ "$cause" != work-close-converted ] \
         && land_mark "$id" WITHDRAWN "${_wd_tip:-none}" "$cause"
     bdq reopen "$id" >/dev/null 2>&1 || rc=1
+    # A REOPEN MEANS REWORK, so a submitted bead stops being submitted. SPIRA_SUBMITTED_LABEL
+    # is excluded from every claim (fayth_exclude), so a bead the landing pass reopens for a
+    # conflict or a red gate while it still carries the label is open, unclaimable and never
+    # landed — stranded. The submitted conversion itself (work-close-converted) is the one
+    # reopen that ADDS the label, right after this call, and is left alone.
+    if [ "$cause" != work-close-converted ]; then
+        bdq label remove "$id" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1 || true
+    fi
     release_claim "$id" || rc=1
     _bump_write_event "$id" reopen "$cause" || rc=1
     [ -n "$note" ] && { bdq note "$id" "$note" >/dev/null 2>&1 || rc=1; }
@@ -7063,6 +7071,27 @@ bead_is_work_type() {
         *" $t "*) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+# bead_land_status <id> -> the bead's status as the landing path must read it: "closed" for
+# a bead whose work is DONE — closed, or carrying SPIRA_SUBMITTED_LABEL (sp-qsona: a work
+# bead's own close is converted to open + submitted and only bead_close_on_land closes it,
+# once it lands) — and the raw status otherwise; "-" when it cannot be read.
+#
+# EVERY NON-QUEUE LANDING PATH GATES ON "closed". landing.sh's CHECK 6 and pr-pass-branch.sh
+# skip, refuse to certify and refuse to land a branch whose bead is not closed — the right
+# rule before sp-qsona, and a total stop after it: in push, pr and hold mode no submitted
+# bead ever landed, so nothing ever closed. One reader, so the rule cannot differ by site.
+bead_land_status() {
+    bdjson show "$1" 2>/dev/null | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: print("-"); raise SystemExit
+d = d if isinstance(d, list) else [d]
+if not d: print("-"); raise SystemExit
+st = d[0].get("status") or "-"
+if sys.argv[1] in (d[0].get("labels") or []): st = "closed"
+print(st)' "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" 2>/dev/null || printf -- '-\n'
 }
 
 # bead_close_on_land — the only place a work bead is closed for a landed reason.

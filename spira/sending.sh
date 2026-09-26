@@ -168,6 +168,22 @@ send_branch() {
 }
 
 # --------------------------------------------------------------------------------------
+# send_landed <id> <branch> — send a branch whose work this sweep found on $LANDREF, and
+# close its bead if it is a submitted work bead (sp-qsona). In pr and hold mode the merge
+# happens on the forge or by hand, never in the landing pass, so this sweep is the first
+# place that sees the work land; bead_close_on_land is idempotent and touches only a bead
+# carrying SPIRA_SUBMITTED_LABEL, so push mode (closed at the landing itself) is unaffected.
+# Only the arms whose verdict is "landed" call this — a superseded, non-code or empty-branch
+# reap sends a branch whose bead's work did NOT land through it.
+# --------------------------------------------------------------------------------------
+send_landed() {
+    local id="$1" br="$2" verb="${3:-SENT}" _lr
+    send_branch "$id" "$br" "$verb" || return $?
+    _lr="$(git -C "$REPO" rev-parse "$LANDREF" 2>/dev/null)" || _lr=""
+    bead_close_on_land "$id" "${_lr:-$LANDREF}" || true
+}
+
+# --------------------------------------------------------------------------------------
 # send_disposition <id> <br> -> prints "<VERB> <CODE>" and returns 0. VERB is one of
 # KEEP, UNADOPTED, SEND, REAP; CODE distinguishes the reason within it. Reads $REPO and
 # $LANDREF (set by sweep_repo for the repository under sweep) and the branch's own bd
@@ -234,7 +250,9 @@ import sys, json
 try: d = json.load(sys.stdin)
 except Exception: sys.exit(1)
 d = d if isinstance(d, list) else [d]
-sys.exit(0 if d and d[0].get("status") == "closed" else 1)' 2>/dev/null; then
+sys.exit(0 if d and (d[0].get("status") == "closed"
+                    or sys.argv[1] in (d[0].get("labels") or [])) else 1)' \
+        "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" 2>/dev/null; then
         _br_tip="$(git -C "$REPO" rev-parse "$br" 2>/dev/null)"
         _pr_tip="$(cd "$REPO" 2>/dev/null && ghq pr view "$br" \
             --json state,headRefOid \
@@ -439,21 +457,21 @@ sweep_repo() {
                 if [ ! -f "${SPIRA_RUN}/landstate/$id" ]; then
                     log "sending: ASSERT $id — content landed but no landstate/$id; landing.sh may not have selected this branch (sp-qj8n shape)"
                 fi
-                send_branch "$id" "$br"
+                send_landed "$id" "$br"
                 ;;
             "SEND ff")
                 if [ "$DRY" = 1 ]; then
                     say "WOULD  $id  send branch $br (zero ahead, commit on $LANDREF names it)"
                     continue
                 fi
-                send_branch "$id" "$br"
+                send_landed "$id" "$br"
                 ;;
             "SEND other-pr")
                 if [ "$DRY" = 1 ]; then
                     say "WOULD  $id  send branch $br (commit on $LANDREF names it)"
                     continue
                 fi
-                send_branch "$id" "$br"
+                send_landed "$id" "$br"
                 ;;
             "REAP superseded-safe")
                 if [ "$DRY" = 1 ]; then
@@ -467,7 +485,7 @@ sweep_repo() {
                     say "WOULD  $id  reap squash-merged branch $br (PR merged at this tip)"
                     continue
                 fi
-                send_branch "$id" "$br" "REAPED"
+                send_landed "$id" "$br" "REAPED"
                 ;;
             "REAP non-code-delivers")
                 if [ "$DRY" = 1 ]; then

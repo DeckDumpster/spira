@@ -843,6 +843,10 @@ for i in d:
     bid = i.get("id", "")
     if not bid: continue
     st = i.get("status", "-")
+    # A SUBMITTED WORK BEAD IS DONE WORK (sp-qsona): its own close was converted to open +
+    # the submitted label, and only bead_close_on_land closes it once this pass lands it.
+    # Read it as closed, exactly as bead_land_status (lib.sh) does for the re-reads below.
+    if sys.argv[2] in (i.get("labels") or []): st = "closed"
     repo = next((l[5:] for l in (i.get("labels") or []) if l.startswith("repo:")), home)
     labels = " ".join(i.get("labels") or [])
     # `bd list` and `bd show` name the supersession field differently: show returns
@@ -860,7 +864,7 @@ for i in d:
     pri = i.get("priority") if i.get("priority") is not None else 9999
     extref = i.get("external_ref") or "-"
     print(f"{bid}\t{st}\t{repo}\t{sup}\t{cat}\t{pri}\t{extref}\t{labels}")
-' "$(spira_home_repo)" 2>/dev/null)
+' "$(spira_home_repo)" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" 2>/dev/null)
     fi
     # CERTIFICATION ORDER (certify_order, landing-lib.sh): base-fix branches
     # (external_ref=basefail:<name>:*) first, so a budget cut cannot defer the fix that
@@ -1163,12 +1167,7 @@ for i in d:
                     # already fetched above — the forge call is paid for only when there is
                     # something to skip (cert queue empty), never to make this comparison.
                     if [ "$(certify_needs_gate 1 "$_cq_n" "$_ci_act")" = skip ]; then
-                        _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys,json
-try:d=json.load(sys.stdin)
-except:raise SystemExit
-d=d if isinstance(d,list) else [d]
-print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
+                        _cur_st="$(bead_land_status "$id")"
                         if [ "${_cur_st:-}" = "closed" ]; then
                             log "CHECK6 $id: CI idle, sole batch member — skipping certification gate"
                             land_mark "$id" CERTIFIED "$tip"
@@ -1227,12 +1226,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                         if _basefail_fix_check "$id" "$gate_out" "$gate_suite" "$name"; then
                             local _fse_cert="${_scan_extref[$id]:-}"
                             _fse_cert="${_fse_cert#basefail:$name:}"
-                            _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys,json
-try:d=json.load(sys.stdin)
-except:raise SystemExit
-d=d if isinstance(d,list) else [d]
-print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
+                            _cur_st="$(bead_land_status "$id")"
                             if [ "${_cur_st:-}" = "closed" ]; then
                                 log "CHECK6 $id: base-fix: $br is green on $name's red suite $_fse_cert — certifying"
                                 land_mark "$id" CERTIFIED "$tip"
@@ -1256,12 +1250,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                         [ "${gate_reason:-}" = timeout ] && land_mark "$id" RED "$tip" timeout
                         continue
                     fi
-                    _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys,json
-try:d=json.load(sys.stdin)
-except:raise SystemExit
-d=d if isinstance(d,list) else [d]
-print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
+                    _cur_st="$(bead_land_status "$id")"
                     if [ "${_cur_st:-}" != "closed" ]; then
                         log "CHECK6 $id: bead is now ${_cur_st:--} (was closed at scan time) — not reopening $br"
                         continue
@@ -1284,12 +1273,7 @@ $(printf '%s' "$gate_out" | tail -20)"
                 [ "${gate_reason:-}" = cached ] \
                     && log "CHECK6 $id: certification PASS on $br in $name — this tree had already passed"
                 rm -f "$SPIRA_RUN/noverdict/$(printf '%s' "$br" | tr -c 'A-Za-z0-9._-' '-')"* 2>/dev/null
-                _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys,json
-try:d=json.load(sys.stdin)
-except:raise SystemExit
-d=d if isinstance(d,list) else [d]
-print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
+                _cur_st="$(bead_land_status "$id")"
                 if [ "${_cur_st:-}" != "closed" ]; then
                     log "CHECK6 $id: bead is now ${_cur_st:--} (was closed at scan time) — not certifying $br"
                     continue
@@ -1454,12 +1438,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 if _basefail_fix_check "$id" "$gate_out" "$gate_suite" "$name"; then
                     local _fse_cert="${_scan_extref[$id]:-}"
                     _fse_cert="${_fse_cert#basefail:$name:}"
-                    _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys,json
-try:d=json.load(sys.stdin)
-except:raise SystemExit
-d=d if isinstance(d,list) else [d]
-print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
+                    _cur_st="$(bead_land_status "$id")"
                     if [ "${_cur_st:-}" = "closed" ]; then
                         log "CHECK6 $id: base-fix: $br is green on $name's red suite $_fse_cert — certifying"
                         land_mark "$id" CERTIFIED "$tip"
@@ -1496,12 +1475,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
             # RE-READ THE BEAD. The gate took minutes; the bead may have been reopened
             # and claimed in that window. Reopening on a stale status puts already-open
             # work back on the board and charges an attempt it did not earn.
-            _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys,json
-try:d=json.load(sys.stdin)
-except:raise SystemExit
-d=d if isinstance(d,list) else [d]
-print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
+            _cur_st="$(bead_land_status "$id")"
             if [ "${_cur_st:-}" != "closed" ]; then
                 log "CHECK6 $id: bead is now ${_cur_st:--} (was closed at scan time) — not reopening $br"
                 continue
@@ -1538,12 +1512,7 @@ $(printf '%s' "$gate_out" | tail -20)"
         # RE-READ THE BEAD before landing. The scan is up to a pass old; the gate in
         # between takes minutes, and landing on a stale status is how landed work gets
         # reopened — the bead may have been reopened and claimed while the gate ran.
-        _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys,json
-try:d=json.load(sys.stdin)
-except:raise SystemExit
-d=d if isinstance(d,list) else [d]
-print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
+        _cur_st="$(bead_land_status "$id")"
         if [ "${_cur_st:-}" != "closed" ]; then
             log "CHECK6 $id: bead is now ${_cur_st:--} (was closed at scan time) — not landing $br"
             continue
@@ -1881,12 +1850,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                     if _basefail_fix_check "$id" "$gate_out" "$gate_suite" "$name"; then
                         local _fse_cert="${_scan_extref[$id]:-}"
                         _fse_cert="${_fse_cert#basefail:$name:}"
-                        _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys,json
-try:d=json.load(sys.stdin)
-except:raise SystemExit
-d=d if isinstance(d,list) else [d]
-print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
+                        _cur_st="$(bead_land_status "$id")"
                         if [ "${_cur_st:-}" = "closed" ]; then
                             log "CHECK6 $id: base-fix: $br is green on $name's red suite $_fse_cert — certifying"
                             land_mark "$id" CERTIFIED "$tip"
@@ -1910,12 +1874,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                     [ "${gate_reason:-}" = timeout ] && land_mark "$id" RED "$tip" timeout
                     return 0
                 fi
-                _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys,json
-try:d=json.load(sys.stdin)
-except:raise SystemExit
-d=d if isinstance(d,list) else [d]
-print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
+                _cur_st="$(bead_land_status "$id")"
                 if [ "${_cur_st:-}" != "closed" ]; then
                     log "CHECK6 $id: bead is now ${_cur_st:--} (was closed at scan time) — not reopening $br"
                     return 0
@@ -1936,12 +1895,7 @@ $(printf '%s' "$gate_out" | tail -20)"
             [ "${gate_reason:-}" = cached ] \
                 && log "CHECK6 $id: certification PASS on $br in $name — this tree had already passed"
             rm -f "$SPIRA_RUN/noverdict/$(printf '%s' "$br" | tr -c 'A-Za-z0-9._-' '-')"* 2>/dev/null
-            _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys,json
-try:d=json.load(sys.stdin)
-except:raise SystemExit
-d=d if isinstance(d,list) else [d]
-print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
+            _cur_st="$(bead_land_status "$id")"
             if [ "${_cur_st:-}" != "closed" ]; then
                 log "CHECK6 $id: bead is now ${_cur_st:--} (was closed at scan time) — not certifying $br"
                 return 0

@@ -105,12 +105,7 @@ elif [ "$confine_rc" != 0 ]; then
 fi
 
 # Re-read the bead before landing — it may have been reopened and reclaimed since the scan.
-_cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except: raise SystemExit
-d = d if isinstance(d, list) else [d]
-print(d[0].get("status", "-") if d else "-")' 2>/dev/null)"
+_cur_st="$(bead_land_status "$id")"
 if [ "${_cur_st:-}" != "closed" ]; then
     log "bead is now ${_cur_st:--} (was closed at scan time) — not landing $br"
     exit 4
