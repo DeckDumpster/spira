@@ -19,8 +19,9 @@
 #   watchd.sh restart [name]        restart the unit behind a watcher
 #   watchd.sh notify                escalate events nobody has drained, and watchers that
 #                                   have been unwell too long; for a timer
-#   watchd.sh prune                 remove lock, cursor and pending files for names not in
-#                                   the manifest; run after retiring a row
+#   watchd.sh prune                 remove lock, cursor and pending files, and disable+remove
+#                                   the unit, for daemon rows retired from the manifest; run
+#                                   after retiring a row
 #   watchd.sh health-ids <file>     assert a state file names at least one of our own beads
 #   watchd.sh health-view <prog> <session>
 #                                   assert the view a follower steers matches the one it wants
@@ -1571,7 +1572,8 @@ _wd_escalate() {
         "$2"
 }
 
-# cmd_prune — remove lock, cursor and pending files for names not in the manifest.
+# cmd_prune — remove lock, cursor and pending files for names not in the manifest, and
+# disable+remove the systemd unit of any daemon row that has gone.
 #
 # A retired watcher row leaves these files behind in $SPIRA_RUN/watchd/, and any guard that
 # iterates *.tail.lock rather than reading the manifest then reads the stale lock as a live
@@ -1581,9 +1583,14 @@ _wd_escalate() {
 # three files removed here are the mechanism files: the reader lock, the delivery cursor,
 # and the backlog clock. None of them carry history worth keeping.
 #
-# A MALFORMED MANIFEST IS REFUSED. Pruning on a broken parse could remove files for a watcher
-# that is valid but unreadable from this call; the noise from refusal costs nothing and pruning
-# the wrong things costs a re-latch from the beginning.
+# THE UNIT IS PRUNED TOO, for the same reason: a `daemon` row removed (or downgraded to a
+# kind with no unit) left its installed unit enabled and running against a target that no
+# longer exists, which is what a leftover lock file used to hide behind — the unit crash-loops
+# and fails, and nothing before this disabled it (sp-07yxy).
+#
+# A MALFORMED MANIFEST IS REFUSED. Pruning on a broken parse could remove files or units for a
+# watcher that is valid but unreadable from this call; the noise from refusal costs nothing and
+# pruning the wrong things costs a re-latch from the beginning.
 cmd_prune() {
     local d; d="$(watchd_dir)"
     if [ ! -d "$d" ]; then
@@ -1592,9 +1599,11 @@ cmd_prune() {
     fi
 
     local rows; rows="$(watchd_rows)" || return 1
-    local known=" " name kind rest
+    local known=" " known_daemons=" " name kind rest
     while IFS='|' read -r name kind rest; do
-        [ -n "$name" ] && known="$known$name "
+        [ -n "$name" ] || continue
+        known="$known$name "
+        [ "$kind" = daemon ] && known_daemons="$known_daemons$name "
     done <<< "$rows"
 
     local f b n removed=0
@@ -1612,6 +1621,24 @@ cmd_prune() {
         printf 'pruned: %s\n' "$f"
         removed=$((removed+1))
     done
+
+    local sc="${SPIRA_SYSTEMCTL:-systemctl}" inst="${SPIRA_INSTANCE:-prod}"
+    local unitdir="$HOME/.config/systemd/user" u wname
+    while IFS= read -r u; do
+        [ -n "$u" ] || continue
+        wname="${u#spira-watch-}"; wname="${wname%-"$inst".service}"
+        case "$known_daemons" in *" $wname "*) continue ;; esac
+        "$sc" --user disable --now "$u" >/dev/null 2>&1
+        rm -f "$unitdir/$u"
+        printf 'pruned unit: %s\n' "$u"
+        removed=$((removed+1))
+    done < <({
+        "$sc" --user list-unit-files --no-legend "spira-watch-*-${inst}.service" 2>/dev/null
+        "$sc" --user list-units --all --no-legend "spira-watch-*-${inst}.service" 2>/dev/null
+        for f in "$unitdir"/spira-watch-*-"${inst}".service; do
+            [ -e "$f" ] && basename "$f"
+        done
+    } | awk '{print $1}' | grep -E "^spira-watch-[A-Za-z0-9_-]+-${inst}\.service\$" | sort -u)
 
     [ "$removed" -gt 0 ] || echo "watchd: prune: nothing to remove"
     return 0

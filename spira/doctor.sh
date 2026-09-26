@@ -14,6 +14,7 @@
 #   doctor_check_store            — is the store listener reachable
 #   doctor_check_events_probe     — does a write/read round trip on the events substrate
 #   doctor_check_failed_units     — are any spira-* systemd units in the failed state
+#   doctor_check_orphan_units     — is any enabled watch unit's watcher gone from the manifest
 #   doctor_check_snapshot_fresh   — is the cockpit collector still writing
 #   doctor_check_operator_channel — can this operated instance actually reach its operator
 #
@@ -237,6 +238,43 @@ doctor_check_failed_units() {
 }
 
 # --------------------------------------------------------------------------------------
+# ORPHAN WATCH UNITS (sp-07yxy). watchd.sh prune disables and removes a retired daemon
+# row's unit; this is the check for when prune was never run — an enabled
+# spira-watch-*-<instance>.service whose watcher name has no `daemon` row in the manifest
+# runs on against a target that no longer exists, and fails, unnoticed, until this asks.
+# --------------------------------------------------------------------------------------
+doctor_check_orphan_units() {
+    local sc="${SPIRA_SYSTEMCTL:-systemctl}" inst="${SPIRA_INSTANCE:-prod}" out rows
+    if ! rows="$(bash "$SPIRA_HOME/watchd.sh" manifest 2>/dev/null)"; then
+        FAIL "cannot read the watcher manifest" \
+             "Check: bash $SPIRA_HOME/watchd.sh manifest"
+        return
+    fi
+    local known=" " name kind rest
+    while IFS='|' read -r name kind rest; do
+        [ -n "$name" ] && [ "$kind" = daemon ] && known="$known$name "
+    done <<< "$rows"
+
+    if ! out="$("$sc" --user list-unit-files --no-legend --state=enabled \
+                    "spira-watch-*-${inst}.service" 2>&1)"; then
+        FAIL "cannot query watch unit files: $(printf '%s' "$out" | head -1)" \
+             "Check the systemd user manager: $sc --user status"
+        return
+    fi
+    local n=0 line unit wname
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        unit="${line%% *}"
+        wname="${unit#spira-watch-}"; wname="${wname%-"$inst".service}"
+        case "$known" in *" $wname "*) continue ;; esac
+        FAIL "$unit is enabled but '$wname' has no daemon row in the manifest" \
+             "Check: bash $SPIRA_HOME/watchd.sh prune"
+        n=$((n+1))
+    done <<< "$out"
+    [ "$n" -eq 0 ] && OK "no orphan spira-watch units"
+}
+
+# --------------------------------------------------------------------------------------
 # SNAPSHOT FRESHNESS. The collector writes cockpit.env on every tick; absence or a stale
 # mtime means the supervisor is not writing — the exact condition that went undetected
 # because nothing else checked it (sp-itsy). Uses SPIRA_SNAP_STALE_S as the threshold.
@@ -360,6 +398,7 @@ doctor_check_events_probe
 echo
 echo "systemd units"
 doctor_check_failed_units
+doctor_check_orphan_units
 
 echo
 echo "the cockpit"
