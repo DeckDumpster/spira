@@ -7,7 +7,7 @@
 # ---------------------
 # Removed by default:
 #   systemd units (stop, disable, delete files, daemon-reload)
-#   linger flag (installer sets it; owned.sh declares it)
+#   linger flag, but only when install.sh's own stamp says this install enabled it
 #   ~/.local/bin symlinks pointing into this harness tree
 #   session hooks in the agent settings file
 #   alert drop-ins (install-intake.sh uninstall)
@@ -260,15 +260,23 @@ if [ "${#_un_unit_names[@]}" -gt 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 2. LINGER. Remove only if currently enabled.
+# 2. LINGER. Disable only if install.sh's own stamp says THIS install turned it on
+# (install.sh writes $SPIRA_RUN/install-linger-enabled only when it flips linger, never
+# when it finds it already set). Linger found on with no stamp predates this harness —
+# disabling it can take the user bus down with it, breaking whatever else on the box
+# still needs one.
 # ---------------------------------------------------------------------------
+_un_linger_stamp="$SPIRA_RUN/install-linger-enabled"
 if [ -n "$_un_linger_user" ]; then
     _un_cur_linger="$("$SPIRA_LOGINCTL" show-user "$_un_linger_user" -p Linger 2>/dev/null || true)"
-    if [ "$_un_cur_linger" = "Linger=yes" ]; then
+    if [ "$_un_cur_linger" != "Linger=yes" ]; then
+        printf '  linger: already off for %s\n' "$_un_linger_user"
+    elif [ ! -f "$_un_linger_stamp" ]; then
+        printf '  linger: left on for %s — not enabled by this install\n' "$_un_linger_user"
+    else
         _un_act "disabling linger for $_un_linger_user" \
             "$SPIRA_LOGINCTL" disable-linger "$_un_linger_user"
-    else
-        printf '  linger: already off for %s\n' "$_un_linger_user"
+        rm -f "$_un_linger_stamp" 2>/dev/null || true
     fi
 fi
 
