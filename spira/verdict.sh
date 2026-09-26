@@ -977,10 +977,20 @@ main() {
     mkdir -p "${SPIRA_QUEUE_DIR:?}/$name" 2>/dev/null || true
     { exec 9>"$lockfile"; } 2>/dev/null \
         || { printf 'verdict %s: cannot open lock file\n' "$name" >&2; return 1; }
-    if ! flock -n 9; then
-        printf 'verdict %s: another queue operation holds the lock\n' "$name"
+    if ! flock -w "${SPIRA_QUEUE_LOCK_WAIT:-90}" 9; then
+        local _skips_file _skips
+        _skips_file="${SPIRA_QUEUE_DIR:?}/$name/lock-skips"
+        _skips=$(( $(cat "$_skips_file" 2>/dev/null || printf '0') + 1 ))
+        printf '%d\n' "$_skips" > "$_skips_file" 2>/dev/null || true
+        if [ "$_skips" -eq "${SPIRA_QUEUE_LOCK_STARVE_MAX:-5}" ]; then
+            printf 'verdict %s: queue lock starvation — skipped %d consecutive ticks waiting for lock\n' \
+                "$name" "$_skips"
+        else
+            printf 'verdict %s: another queue operation holds the lock\n' "$name"
+        fi
         return 0
     fi
+    rm -f "${SPIRA_QUEUE_DIR:?}/$name/lock-skips" 2>/dev/null || true
 
     local batch_file
     batch_file="$(_batch_open_file "$name")"
