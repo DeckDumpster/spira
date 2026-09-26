@@ -949,6 +949,10 @@ case "${1:-}" in
     done)       shift; cmd_done "$@" ;;
     sendmail)   shift; cmd_sendmail "$@" ;;
     tidy)       shift; cmd_tidy "$@" ;;
+    # ensure <mailbox> — create the maildir if it is absent; a no-op when it exists. install.sh
+    # runs it for the operator mailbox so the units that read it never find it missing.
+    ensure)     shift; [ -n "${1:-}" ] || { printf 'mail.sh ensure: a mailbox name is required\n' >&2; exit 2; }
+                _mail_ensure "$1" ;;
     sweep-dismissed) shift; cmd_sweep_dismissed "$@" ;;
     *)          printf 'mail.sh: unknown command: %s\n' "${1:-}" >&2; exit 1 ;;
 esac

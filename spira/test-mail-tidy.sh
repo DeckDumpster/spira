@@ -227,4 +227,27 @@ inbox_after_dry=$(( $(ls "$SPIRA_MAIL/operator/new/" 2>/dev/null | wc -l) \
                   + $(ls "$SPIRA_MAIL/operator/cur/" 2>/dev/null | wc -l) ))
 is "dry-run moves nothing" "$inbox_before_dry" "$inbox_after_dry"
 
+echo
+echo "=== Fresh install: a mailbox install created but no mail ever reached ==="
+# THE DEFECT. The operator mailbox was created lazily, by the first mail sent to it, so on a
+# never-used install it did not exist and the first tidy (its timer fires the moment it is
+# enabled on a box up longer than OnBootSec) exited 1 — "tidy: operator: mailbox not found"
+# — and left spira-mail-tidy FAILED, which deploy's pre-health check refuses on. install.sh
+# now creates it with `mail.sh ensure operator`; tidy's own refusal of a mailbox that does
+# not exist stays (a misconfigured SPIRA_MAIL must not tidy silently).
+FRESH="$TMP/fresh-mail"
+out="$(SPIRA_MAIL="$FRESH" bash "$MAIL" tidy operator 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && ok "positive control: tidy of a mailbox nothing created still refuses" \
+                || bad "positive control: tidy of a mailbox nothing created still refuses" "rc=0"
+want "positive control: and says why" "mailbox not found" "$out"
+SPIRA_MAIL="$FRESH" bash "$MAIL" ensure operator; rc=$?
+is "mail.sh ensure operator exits 0" 0 "$rc"
+[ -d "$FRESH/operator/new" ] && [ -d "$FRESH/operator/cur" ] && [ -d "$FRESH/operator/tmp" ] \
+    && ok  "ensure creates the operator maildir (new, cur, tmp)" \
+    || bad "ensure creates the operator maildir (new, cur, tmp)" "$(ls -R "$FRESH" 2>&1 | head -5)"
+out="$(SPIRA_MAIL="$FRESH" bash "$MAIL" tidy operator 2>&1)"; rc=$?
+is     "tidy of the ensured, empty mailbox exits 0" 0 "$rc"
+nowant "and does not report it missing" "mailbox not found" "$out"
+want   "install.sh ensures the operator mailbox" 'mail.sh" ensure operator' "$(cat "$HERE/../install.sh")"
+
 tl_summary

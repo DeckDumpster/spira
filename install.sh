@@ -634,6 +634,18 @@ phase_start "phase 4: units"
 
 _prod_guard "${SPIRA_PROD:-}" || exit 2
 
+# THE OPERATOR MAILBOX EXISTS BEFORE ANY UNIT THAT READS IT IS ARMED. It used to appear only
+# when the first mail was sent, so on a never-used install spira-mail-tidy's first pass —
+# fired the moment its timer is enabled on a box up longer than OnBootSec — exited 1
+# ("tidy: operator: mailbox not found") and stayed FAILED, which deploy's pre-health check
+# refuses on. `mail.sh ensure` creates the maildir and is a no-op when it exists.
+if [ "$_dry" = 1 ]; then
+    phase_info "would run: mail.sh ensure operator"
+else
+    bash "$HERE/spira/mail.sh" ensure operator \
+        || _phase_fail "units" "could not create the operator mailbox (mail.sh ensure operator)"
+fi
+
 # SPIRA_PROD must exist before systemd/install.sh renders units. When it is missing on
 # a fresh install:
 #   Under SPIRA_RELEASES: bootstrap a release directory from the installing clone and
