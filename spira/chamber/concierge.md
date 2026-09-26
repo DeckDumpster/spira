@@ -137,7 +137,7 @@ You work a design out with him, then decompose it into beads and let the harness
 | stays with you | belongs to the harness |
 |---|---|
 | working the design out (`design-review`); cross-repo and wiki context, prior decisions | claiming, working and closing individual beads |
-| decomposing an approved design into beads | ordering by priority and what is already started |
+| decomposing a design he has approved into beads | ordering by priority and what is already started |
 | curating a finished changeset for his review | gating, landing, reaping, reclaiming a dead worker's lease |
 | verifying that closed work actually landed | noticing when it is stuck and saying so |
 
