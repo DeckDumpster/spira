@@ -9,12 +9,18 @@
 //! (SPIRA_HOME, where lib.sh and forge.sh live). Repo config comes from lib.sh's own
 //! SPIRA_REPO_MAP-backed lookups, not spira.toml — see find_repo.
 //!
+//!   batcher judgement-ci <repo> --suites CSV --members CSV --evidence TEXT
+//!
+//! judgement-ci is the CI-only producer sp-lomk3 adds: verdict.sh calls it, instead of its
+//! own attribution, on a red CI check for a PR its own open-batch record marks owner=batcher
+//! — the suites CSV and a CI run link/evidence line come straight off verdict.sh's own read
+//! of the forge's check-status.
+//!
 //! NOT COVERED (left to later beads): a main-red trigger has no producer wired here yet
 //! (always false); test_ahead_of_code (E) is not re-run here — the pure core exposes it, and
 //! it is the summoned batcher persona (sp-47kq1, see summon_judgement below) that reads a
 //! double-red's own failing assertions and applies it, by judgement rather than blind
-//! reproduction; a CI-only red on an opened batch PR has no producer here at all — that is
-//! verdict.sh's own read of CI, wired to the same persona by sp-lomk3.
+//! reproduction.
 
 mod io;
 
@@ -37,10 +43,14 @@ struct Opts {
     db: Option<PathBuf>,
     home: Option<PathBuf>,
     testenv_batch: Option<PathBuf>,
+    suites: Option<String>,
+    members: Option<String>,
+    evidence: Option<String>,
 }
 
 fn usage() -> ExitCode {
     eprintln!("usage: batcher cut <repo> [--run DIR] [--db DIR] [--home DIR] [--testenv-batch PATH]");
+    eprintln!("       batcher judgement-ci <repo> --suites CSV --members CSV --evidence TEXT [--run DIR] [--db DIR] [--home DIR]");
     ExitCode::from(2)
 }
 
@@ -55,6 +65,9 @@ fn parse() -> Result<Opts, String> {
         db: env::var_os("SPIRA_DB").map(PathBuf::from),
         home: env::var_os("SPIRA_HOME").map(PathBuf::from),
         testenv_batch: env::var_os("SPIRA_BATCHER_TESTENV_BATCH").map(PathBuf::from),
+        suites: None,
+        members: None,
+        evidence: None,
     };
     while let Some(f) = a.next() {
         let mut val = || a.next().ok_or(format!("{f} needs a value"));
@@ -63,6 +76,9 @@ fn parse() -> Result<Opts, String> {
             "--db" => o.db = Some(val()?.into()),
             "--home" => o.home = Some(val()?.into()),
             "--testenv-batch" => o.testenv_batch = Some(val()?.into()),
+            "--suites" => o.suites = Some(val()?),
+            "--members" => o.members = Some(val()?),
+            "--evidence" => o.evidence = Some(val()?),
             other => return Err(format!("unknown flag {other}")),
         }
     }
@@ -248,6 +264,7 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
             members: combined.merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect(),
             branch: batch_br.clone(),
             opened: now().to_string(),
+            owner: "batcher".to_string(),
         },
     )?;
     for m in &combined.merged {
@@ -332,7 +349,15 @@ fn stack_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason,
     io::write_open_batch(
         env_,
         &repo.name,
-        &io::OpenBatch { pr: ob.pr.clone(), head: new_head.clone(), base: ob.base.clone(), members, branch: ob.branch.clone(), opened: ob.opened.clone() },
+        &io::OpenBatch {
+            pr: ob.pr.clone(),
+            head: new_head.clone(),
+            base: ob.base.clone(),
+            members,
+            branch: ob.branch.clone(),
+            opened: ob.opened.clone(),
+            owner: "batcher".to_string(),
+        },
     )?;
     for m in &combined.merged {
         io::land_mark(env_, &m.id, "BATCHED", &m.tip, "");
@@ -380,6 +405,34 @@ fn run_corpus_and_classify(env_: &Env, repo: &Repo, branch: &str, key: &str) -> 
     Ok(classify(&first, &rerun))
 }
 
+/// `batcher judgement-ci` — the CI-only judgement producer (sp-lomk3). verdict.sh calls
+/// this in place of its own attribution when a red batch PR's open-batch record names
+/// `owner=batcher`: the suites CSV and evidence line are read straight off verdict.sh's own
+/// forge check-status call, since this crate has no CI-watching loop of its own. Prints
+/// `id=<bead-id>` on success so the caller can record it without scraping human-facing text
+/// (law-never-derive-an-id-from-output); prints nothing to stdout on failure, the error goes
+/// to stderr, and the exit code alone tells verdict.sh whether to log it as unfiled.
+fn judgement_ci(o: &Opts) -> Result<(), String> {
+    let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
+    let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
+    if o.repo.is_empty() {
+        return Err("repo name required".into());
+    }
+    let suites: Vec<String> = o.suites.as_deref().unwrap_or("").split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect();
+    let members: Vec<String> = o.members.as_deref().unwrap_or("").split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect();
+    let evidence = o.evidence.clone().unwrap_or_default();
+
+    let Some(j) = batcher::core::judgement_for_ci(&suites) else {
+        return Err("no red suites given — nothing to judge".into());
+    };
+
+    let env_ = env_for(o, home, run);
+    let repo = find_repo(&env_, &o.repo)?;
+    let id = io::file_judgement(&env_, &repo, &j, &members, &evidence)?;
+    println!("id={id}");
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let o = match parse() {
         Ok(o) => o,
@@ -390,6 +443,7 @@ fn main() -> ExitCode {
     };
     let r = match o.cmd.as_str() {
         "cut" => cut(&o),
+        "judgement-ci" => judgement_ci(&o),
         _ => return usage(),
     };
     match r {

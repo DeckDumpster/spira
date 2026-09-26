@@ -225,6 +225,8 @@ is   "A: open-batch file exists" "1" "$([ -f "$(open_batch_file)" ] && echo 1 ||
 is   "A: open-batch pr=1"        "1" "$(open_field pr)"
 is   "A: open-batch members carries sp-caaa1:tip" "sp-caaa1:$tip_a" "$(open_field members)"
 is   "A: open-batch branch is spira/queue/*" "1" "$(case "$(open_field branch)" in spira/queue/*) echo 1;; *) echo 0;; esac)"
+is   "A: open-batch owner=batcher (sp-lomk3: verdict's own CI-red routing reads this)" \
+    "batcher" "$(open_field owner)"
 is   "A: sp-caaa1 landstate BATCHED" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-caaa1")"
 want "A: commit message names spira: land sp-caaa1" "spira: land sp-caaa1" \
     "$(git -C "$REPO" log --format=%s "$(open_field branch)" -n 5 2>/dev/null)"
@@ -351,6 +353,36 @@ is   "D: forge pr-create not called again" "$prcreate_before" "$(grep -c '^pr-cr
 nowant "D: open-batch head unchanged (it did move)" "$head_before" "$(open_field head)"
 want "D: open-batch members now carries sp-cddd4" "sp-cddd4:$tip_d" "$(open_field members)"
 is   "D: sp-cddd4 landstate BATCHED" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cddd4")"
+is   "D: stacked open-batch still owner=batcher" "batcher" "$(open_field owner)"
+
+# =============================================================================
+# CASE E — judgement-ci (sp-lomk3): verdict.sh's own CI-red producer, on a red CI
+# check for a PR the batcher owns, calls this subcommand instead of running its
+# own attribution. Exercised directly here, the way verdict.sh's own suite
+# stubs SPIRA_BATCHER_BIN and asserts the wiring from its own side.
+# =============================================================================
+echo
+echo "E. judgement-ci: files a judgement bead for a CI-only red:"
+judge_ci() {
+    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+    SPIRA_REPO_MAP="$SH/repo-map" \
+    SPIRA_QUEUE_DIR="$QUEUEDIR" \
+        "$BATCHER_BIN" judgement-ci "$REPONAME" "$@" 2>&1
+}
+
+out_e="$(judge_ci --suites test-owned.sh --members sp-caaa1 --evidence 'PR 1 — https://example.invalid/actions/runs/1')"
+want "E: prints the filed bead id" "id=sp-" "$out_e"
+judge_id="$(printf '%s\n' "$out_e" | sed -n 's/^id=//p')"
+want "E: judgement bead title names CI"    "CI"             "$(B show "$judge_id" --json 2>/dev/null)"
+want "E: judgement bead title names the suite" "test-owned.sh" "$(B show "$judge_id" --json 2>/dev/null)"
+want "E: judgement bead body names the source" "CI (batcher-owned batch PR)" "$(B show "$judge_id" --long --json 2>/dev/null)"
+want "E: judgement bead body names the member" "sp-caaa1"      "$(B show "$judge_id" --long --json 2>/dev/null)"
+want "E: judgement bead body carries the evidence" "https://example.invalid/actions/runs/1" \
+    "$(B show "$judge_id" --long --json 2>/dev/null)"
+
+out_e2="$(judge_ci --suites '' --members sp-caaa1 --evidence x)"
+is "E: no suites given is refused, not filed" "1" "$([ -z "$(printf '%s\n' "$out_e2" | sed -n 's/^id=//p')" ] && echo 1 || echo 0)"
 
 printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]
