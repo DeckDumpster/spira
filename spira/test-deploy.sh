@@ -9,7 +9,8 @@
 #   2. (a) Basic deploy: latest tag resolves; gh fetches tarball; current points at release.
 #   3. (a) Already-current: refuses (exit 1) if the release is already active.
 #   4. (b) Drain refuses: non-zero drain exit blocks deploy without killing aeons.
-#   5. (c) Rollback non-first: failed health check restores the prior release.
+#   5. (c) Rollback non-first: failed health check restores the prior release, and the
+#          re-rendered units resolve (not merely the symlink) into its tree.
 #   6. (d) Unit re-render: install.sh is called with SPIRA_PROD=$SPIRA_RELEASES/current/spira.
 #   7. (e) Dry-run: --dry-run leaves the releases dir untouched.
 #   8. (f) First-deploy rollback: no prior release → current removed, units on checkout, world resumed.
@@ -23,6 +24,7 @@
 # FAIL-FIRST (law-absence-needs-a-positive-control)
 # Each detector is shown to fire before it is trusted as silent.
 #
+# tier: T2
 # covers: spira/deploy.sh spira/conf.sh
 # host-reason: mock components in isolated temp dirs; no real systemd, database, or network
 set -uo pipefail
@@ -157,10 +159,16 @@ ln -s "$release_name" "$_tmp" && mv -T "$_tmp" "$releases/current"
 AEOF
 chmod +x "$BIN/activate.sh"
 
-# Mock install.sh: records SPIRA_PROD and SPIRA_HOME at call time.
+# Mock install.sh: records SPIRA_PROD and SPIRA_HOME at call time, both as the literal
+# string deploy.sh passed (usually "$SPIRA_RELEASES/current/spira", unchanged whichever
+# release "current" names) and as that path's resolved target — the only way to tell
+# which release's tree the re-render actually ran against.
 cat > "$BIN/install.sh" <<'IEOF'
 #!/usr/bin/env bash
 printf 'install SPIRA_PROD=%s SPIRA_HOME=%s\n' "${SPIRA_PROD:-UNSET}" "${SPIRA_HOME:-UNSET}" >> "${CALL_LOG:-/dev/null}"
+printf 'install-resolved SPIRA_HOME=%s\n' \
+    "$(readlink -f "${SPIRA_HOME:-}" 2>/dev/null || printf '%s' "${SPIRA_HOME:-}")" \
+    >> "${CALL_LOG:-/dev/null}"
 exit "${INSTALL_EXIT:-0}"
 IEOF
 chmod +x "$BIN/install.sh"
@@ -387,6 +395,27 @@ not0   "rollback: exits non-zero on health failure" "$_rc"
 want   "rollback: mentions ROLLBACK"                "ROLLBACK" "$_out"
 want   "rollback: names the failure"                "doctor"   "$_out"
 islink "rollback: current restored to prior"        "$RELEASES/current" "$PRIOR_RELEASE"
+
+# The symlink alone does not prove the units re-rendered during rollback actually resolved
+# into the prior release's tree — the literal SPIRA_HOME/SPIRA_PROD string deploy.sh passes
+# ("$SPIRA_RELEASES/current/spira") is identical no matter which release "current" names.
+# Follow it the way a unit's ExecStart would: resolve it and check what it lands on.
+_real_releases="$(cd "$RELEASES" && pwd -P)"
+_rollback_install="$(grep 'install-resolved' "$CALL_LOG" | tail -1)"
+
+# FAIL-FIRST: a re-render that resolved into the wrong (new) release's tree must be caught.
+_fake_wrong="install-resolved SPIRA_HOME=$_real_releases/$NEW_RELEASE/spira"
+want "fail-first: wrong-release resolution is detectable" \
+    "install-resolved SPIRA_HOME=$_real_releases/$NEW_RELEASE/spira" "$_fake_wrong"
+notwant "fail-first: wrong-release resolution is distinguishable from the prior release" \
+    "install-resolved SPIRA_HOME=$_real_releases/$PRIOR_RELEASE/spira" "$_fake_wrong"
+unset _fake_wrong
+
+want   "rollback: re-rendered units resolve into the prior release's tree" \
+    "install-resolved SPIRA_HOME=$_real_releases/$PRIOR_RELEASE/spira" "$_rollback_install"
+notwant "rollback: re-rendered units do not resolve into the new release's tree" \
+    "$_real_releases/$NEW_RELEASE/spira" "$_rollback_install"
+unset _real_releases _rollback_install
 
 # With skew failure: same behaviour.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
