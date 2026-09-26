@@ -21,9 +21,11 @@
 # --check IS WHAT IS TESTED, never the installing path: that one calls apt-get
 # and usermod, which a suite must not do to the machine it is running on.
 #
+# tier: T1
 # covers: spira/runner-deps.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 SCRIPT="$HERE/runner-deps.sh"
 # EVERY MATCHER IN THIS SUITE READS CODE, NOT PROSE.
 #
@@ -41,16 +43,13 @@ SCRIPT="$HERE/runner-deps.sh"
 _code="$(grep -vE '^[[:space:]]*#' "$SCRIPT")"
 _joined="$(printf '%s' "$_code" | sed -e :a -e '/\\$/N; s/\\\n//; ta')"
 
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
 
 echo "test-runner-deps.sh"
 echo
 
 if [ ! -x "$SCRIPT" ]; then
     bad "runner-deps.sh is executable" "not found or not executable at $SCRIPT"
-    printf '\n  %d passed, %d failed\n' "$pass" "$fail"; exit 1
+    tl_summary; exit
 fi
 ok "runner-deps.sh is executable"
 
@@ -215,5 +214,4 @@ else
 fi
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

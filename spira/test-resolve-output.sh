@@ -16,15 +16,15 @@
 #
 # Driven through BD_BIN and COCKPIT_DB overrides — no database build, under a second.
 #
+# tier: T1
 # covers: cockpit/resolve.sh
 # defect: sp-ve5s
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 COCKPIT="$(cd "$HERE/../cockpit" && pwd)"
 pass=0; fail=0
 
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
@@ -135,5 +135,4 @@ else
 fi
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

@@ -17,14 +17,12 @@
 #      wrapper under /tmp that pipes to a ctx-meter.sh copy in a worktree.
 #
 # defect: sp-9ydp
+# tier: T1
 # covers: spira/statusline-check.py
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()  { printf '  ok    %s\n' "$1"; pass=$((pass+1)); }
-bad() { printf '  FAIL  %s\n        want: [%s]\n        got:  [%s]\n' "$1" "$2" "$3"; fail=$((fail+1)); }
-is()  { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "$2" "$3"; fi; }
 has() { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "contains [$2]" "$3" ;; esac; }
 
 echo "test-statusline.sh"
@@ -150,5 +148,4 @@ is "fragile under worktree" "fragile $WT_OTHER 5" "$out"
 
 # ---------------------------------------------------------------------------
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

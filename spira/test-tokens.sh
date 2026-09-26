@@ -10,14 +10,12 @@
 # No database, no network, under a second.
 #
 # defect: sp-rcr sp-d0jp
+# tier: T1
 # covers: spira/tokens.sh
 # scar: worktree transcripts were attributed to the interactive session; archivist spend landed in session because it runs under $SPIRA_RUN but not under the worktree prefix.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-tokens.sh"
 
@@ -164,5 +162,4 @@ is "control2: session gets misplaced arc"  "2" "$(field3 SP_TOK_SESS_TURNS)"
 
 # ---------------------------------------------------------------------------
 echo ""
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

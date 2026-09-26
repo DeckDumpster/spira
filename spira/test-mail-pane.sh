@@ -5,17 +5,13 @@
 # drives cockpit.sh mail to produce snapshot keys, renders health.sh once,
 # and asserts the three states appear. A failed probe renders ?, never 0.
 #
+# tier: T1
 # covers: cockpit/health.sh spira/cockpit.sh spira/mail.sh spira/collect.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 isz()    { [ "$2" = 0 ] && ok "$1" || bad "$1" "wanted exit 0 got $2"; }
 isnz()   { [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero exit got 0"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in output"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in output"; }
 
 echo "test-mail-pane.sh"
 TMP="$(mktemp -d)"
@@ -175,5 +171,4 @@ nowant "GOV label absent"  " GOV " "$pane_out"
 
 # ==========================================================================
 echo
-printf 'test-mail-pane.sh: %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

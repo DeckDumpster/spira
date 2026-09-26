@@ -23,16 +23,13 @@
 #      so a subsequent narrowing is not silently suppressed.
 #
 # defect: sp-j4j7
+# tier: T1
 # covers: spira/lib.sh
 # hermetic-ok: no database, no systemd; uses a synthetic chamber
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL — %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 RUN="$T/run"; mkdir -p "$RUN"
@@ -90,5 +87,4 @@ out="$(roster_warnings "beta" 2>&1)"
 want "warning fires again after roster re-narrows" "alpha.fayth is in the chamber but not in SPIRA_FAYTHS" "$out"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

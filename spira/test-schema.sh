@@ -15,16 +15,14 @@
 # non-zero and print nothing usable on stdout. The positive cases are the control that proves
 # the negative is not passing by accident (law-a-regression-test-must-be-seen-to-fail).
 #
+# tier: T1
 # covers: spira/*.sh
 # hermetic-ok: no database, no systemd, no network; conf.sh is pointed at a nonexistent file
 # timeout: 60
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL — %s: %s\n' "$1" "$2"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 eq()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 
 S="$HERE/schema.sh"
@@ -86,5 +84,4 @@ done
 printf '  note — %s harness file(s) still carry a declared literal (sp-4wd wires the gate lint)\n' "$lits"
 
 echo
-printf 'test-schema.sh: %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

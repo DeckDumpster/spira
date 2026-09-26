@@ -24,10 +24,7 @@
 # covers: spira/lib.sh spira/aeon.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"
 # shellcheck disable=SC1090
@@ -132,6 +129,4 @@ done
 is "four same-tip thrashes (1 exempt + 3 charged) reach the poison threshold" \
    yes "$(poisons sp-ts4)"
 
-echo
-echo "$pass passed, $fail failed"
-[ "$fail" = 0 ]
+tl_summary
