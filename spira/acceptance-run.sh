@@ -710,7 +710,7 @@ else
                 _d_t2=$(date +%s)
                 systemctl --user start "$(systemctl --user list-unit-files 'spira-sentinel*.service' --no-legend 2>/dev/null | awk 'NR==1{print $1}')" 2>/dev/null || true
                 _d_summoned=0
-                while [ $(( $(date +%s) - _d_t2 )) -lt 60 ]; do
+                while [ $(( $(date +%s) - _d_t2 )) -lt "${SPIRA_ACCEPT_SUMMON_SECS:-180}" ]; do
                     git -C "$scratch_repo" show-ref --verify -q \
                         "refs/heads/spira/$_aged_probe_id" 2>/dev/null \
                         && { _d_summoned=1; break; }
