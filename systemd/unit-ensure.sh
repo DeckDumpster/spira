@@ -92,13 +92,16 @@ for _wname in "${_watch_names[@]}"; do
     fi
 done
 
-if [ "$n_changed" -eq 0 ]; then
+# The guards below (BINARY GUARD, PRODUCER GUARD) must run every invocation, not only
+# when a unit file's rendered content changed — an enabled-but-should-be-disabled unit
+# stays that way forever otherwise, since nothing about its own file content depends
+# on the binary or producer state that makes it wrong to run.
+if [ "$n_changed" -gt 0 ]; then
+    "$SC" --user daemon-reload
+    printf 'unit-ensure: daemon-reload after %d change(s), %d unchanged\n' "$n_changed" "$n_unchanged"
+else
     printf 'unit-ensure: no changes — %d unit(s) current\n' "$n_unchanged"
-    exit 0
 fi
-
-"$SC" --user daemon-reload
-printf 'unit-ensure: daemon-reload after %d change(s), %d unchanged\n' "$n_changed" "$n_unchanged"
 
 # Enable and start newly installed units that belong to the ENABLE set.
 # Updated (DIFFERS) units are not restarted — that is the operator's call.
@@ -163,3 +166,19 @@ for _ue_pair in \
     done
 done
 unset _ue_pair _ue_cbin _ue_rest _ue_cbase _ue_ctype _ue_cname _ue_cargo_note
+
+# PRODUCER GUARD. spira-broker.timer's binary can be executable with no producer to
+# feed it — reads the same spira_broker_producer_present predicate units.sh gates
+# ENABLE on (units.sh sourced above), so a timer enabled before the predicate existed,
+# or enabled by hand, is disabled here regardless of the binary or the rendered file.
+if ! spira_broker_producer_present; then
+    for _ue_bname in \
+        "spira-broker${SPIRA_INSTANCE:+-$SPIRA_INSTANCE}.timer" \
+        "spira-broker.timer"; do
+        "$SC" --user is-enabled "$_ue_bname" >/dev/null 2>&1 || continue
+        "$SC" --user disable "$_ue_bname" >/dev/null 2>&1 \
+            && printf 'unit-ensure: DISABLED %s (no producer; SPIRA_BROKER_ENABLE=1 to opt in)\n' "$_ue_bname" \
+            || printf 'unit-ensure: WARNING could not disable %s\n' "$_ue_bname" >&2
+    done
+fi
+unset _ue_bname

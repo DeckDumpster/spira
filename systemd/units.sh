@@ -61,6 +61,12 @@ inst_name() {
 # spira-watch@<name>.service (watchd.sh output) → spira-watch-<name>-<instance>.service
 inst_watch_name() { printf 'spira-watch-%s-%s.service' "$1" "$SPIRA_INSTANCE"; }
 
+# THE BROKER'S PRODUCER-PRESENT PREDICATE, called from here and from unit-ensure.sh
+# (which sources this file) so enabling and disabling the timer agree on one answer.
+# No submitter exists in the harness yet, so the predicate is the operator's explicit
+# opt-in; it becomes "a submitter is present" the day one lands, in this one place.
+spira_broker_producer_present() { [ "${SPIRA_BROKER_ENABLE:-0}" = "1" ]; }
+
 UNITS=(spira-sentinel.service spira-sentinel.timer
        spira-ops.service spira-ops.timer
        spira-auron.service spira-auron.timer
@@ -179,7 +185,7 @@ fi
 # operator's explicit opt-in while a producer is in development).
 if [ -x "${SPIRA_BROKER_BIN:-}" ]; then
     UNITS+=(spira-broker.service spira-broker.timer)
-    if [ "${SPIRA_BROKER_ENABLE:-0}" = "1" ]; then
+    if spira_broker_producer_present; then
         ENABLE+=("$(inst_name spira-broker.timer)")
     fi
 else
