@@ -31,6 +31,12 @@ SC="${SPIRA_SYSTEMCTL:-systemctl}"
 # The loop, in the order that stops cleanly: summons first so nothing new is born, then the
 # legs that act on what is already there.
 #
+# WORLD_LIB=1 sources this file for its functions (work_services, argv_has, live_aeons,
+# live_workers, _timer_add, _is_ci_watcher, _start_action, _status_timer_row) without
+# discovering TIMERS or running the stop/start/drain/status dispatch below. A T1 suite can
+# then call these directly against a stubbed $SC, with no world.sh process spawned and no
+# real timer enumeration needed (section 5 of docs/test-plan/instance-lifecycle.md).
+#
 # TIMER NAMES ARE INSTANCE-QUALIFIED after install.sh's per-instance migration (sp-trn1).
 # Each base is tried in instance-qualified form first (spira-<base>-<instance>.timer); if
 # neither is-enabled nor is-active confirms it exists, the plain name is used as a fallback.
@@ -57,23 +63,26 @@ _timer_add() {   # _timer_add <unit>
     _timer_seen="$_timer_seen$1 "
     TIMERS+=("$1")
 }
-for _b in "${TIMER_PRIORITY[@]}"; do
-    _i="${_b}${_inst_sfx}.timer"
-    if "$SC" --user is-enabled "$_i" >/dev/null 2>&1 ||
-       "$SC" --user is-active  "$_i" >/dev/null 2>&1; then
-        _timer_add "$_i"
-    else
-        _timer_add "${_b}.timer"
-    fi
-done
-# Everything else systemd knows about, loaded or not — --all so a stopped-but-enabled timer
-# is still named, and so `start` has the same population to work from.
-while IFS= read -r _u; do
-    [ -n "$_u" ] || continue
-    _timer_add "$_u"
-done < <("$SC" --user list-unit-files 'spira-*.timer' --no-legend 2>/dev/null | awk '{print $1}'
-         "$SC" --user list-units      'spira-*.timer' --all --no-legend 2>/dev/null | awk '{print $1}')
-unset _b _i _u _inst_sfx
+if [ "${WORLD_LIB:-0}" != "1" ]; then
+    for _b in "${TIMER_PRIORITY[@]}"; do
+        _i="${_b}${_inst_sfx}.timer"
+        if "$SC" --user is-enabled "$_i" >/dev/null 2>&1 ||
+           "$SC" --user is-active  "$_i" >/dev/null 2>&1; then
+            _timer_add "$_i"
+        else
+            _timer_add "${_b}.timer"
+        fi
+    done
+    # Everything else systemd knows about, loaded or not — --all so a stopped-but-enabled
+    # timer is still named, and so `start` has the same population to work from.
+    while IFS= read -r _u; do
+        [ -n "$_u" ] || continue
+        _timer_add "$_u"
+    done < <("$SC" --user list-unit-files 'spira-*.timer' --no-legend 2>/dev/null | awk '{print $1}'
+             "$SC" --user list-units      'spira-*.timer' --all --no-legend 2>/dev/null | awk '{print $1}')
+    unset _b _i _u
+fi
+unset _inst_sfx
 _is_ci_watcher() {
     local b
     for b in "${CI_WATCHER_BASES[@]}"; do
@@ -153,6 +162,47 @@ live_workers() {
         then printf '%s\n' "${p#/proc/}"; fi
     done
 }
+
+# _start_action <timer> <is-enabled: enabled|disabled> -> "start" | "skip-suspended <reason>"
+# | "skip-disabled". Pure decision over caller-supplied state: no systemctl or ctrl.sh spawn
+# of its own. `start` reads CTRL_SUSPENDED once via ctrl_load_suspended (cluster 6 of
+# docs/test-plan/instance-lifecycle.md) and passes is-enabled per timer — that call stays a
+# systemctl spawn (cheap: no python3, no conf.sh), so only the ctrl read is collapsed to one.
+_start_action() {
+    local t="$1" is_enabled="$2"
+    local subj="${t%.timer}"
+    [ -n "${SPIRA_INSTANCE:-}" ] && subj="${subj%-$SPIRA_INSTANCE}"
+    local reason
+    if reason="$(ctrl_is_suspended CTRL_SUSPENDED "$subj")"; then
+        printf 'skip-suspended %s\n' "$reason"
+        return 0
+    fi
+    if [ "$is_enabled" = disabled ]; then
+        printf 'skip-disabled\n'
+        return 0
+    fi
+    printf 'start\n'
+}
+
+# _status_timer_row <timer> -> the formatted line `status` prints for one timer: its systemd
+# state, plus "(svc: <result>)" when the paired service's last run did not succeed. Extracted
+# so row formatting is testable directly against a stubbed $SC without running the whole
+# status dispatch (section 5, "status row", docs/test-plan/instance-lifecycle.md).
+_status_timer_row() {
+    local t="$1" timer_state svc svc_result
+    timer_state="$("$SC" --user is-active "$t" 2>/dev/null)"
+    svc="${t%.timer}.service"
+    svc_result="$("$SC" --user show "$svc" -p Result --value 2>/dev/null)"
+    if [ -n "$svc_result" ] && [ "$svc_result" != "success" ]; then
+        printf '  %-26s %s (svc: %s)\n' "$t" "$timer_state" "$svc_result"
+    else
+        printf '  %-26s %s\n' "$t" "$timer_state"
+    fi
+}
+
+if [ "${WORLD_LIB:-0}" = "1" ]; then
+    return 0 2>/dev/null || exit 0
+fi
 
 case "${1:-status}" in
 stop)
@@ -262,27 +312,35 @@ stop)
 
 start)
     echo "spira: starting the loop"
+    # READ THE CONTROL FILE ONCE. ctrl.sh sources conf.sh and spawns python3 per call; the old
+    # per-timer `ctrl.sh check` + `ctrl.sh reason` made that a per-timer cost, hundreds of
+    # process starts across a run over units.sh's ~44 timer mentions. CTRL_LIB=1 sources ctrl.sh
+    # for its functions only (no CLI dispatch); ctrl_load_suspended does the one python3 read,
+    # and _start_action decides per timer in pure bash from here on (sp-rnps9).
+    declare -A CTRL_SUSPENDED=()
+    CTRL_LIB=1 . "$SPIRA_HOME/ctrl.sh"
+    ctrl_load_suspended CTRL_SUSPENDED
     for t in "${TIMERS[@]}"; do
-        # Derive the subject: strip .timer, then the instance suffix if set.
-        # ctrl.sh and systemd both record by subject (e.g. spira-ops), not by
-        # unit name (spira-ops-prod.timer).
-        _subj="${t%.timer}"
-        [ -n "${SPIRA_INSTANCE:-}" ] && _subj="${_subj%-$SPIRA_INSTANCE}"
-        # A ctrl-suspended timer: the operator recorded a reason not to run it.
-        # start is the one command most likely to run in the middle of a recovery,
-        # and silently reversing a recorded decision there is the defect (sp-cqyfy).
-        if "$SPIRA_HOME/ctrl.sh" check "$_subj" 2>/dev/null; then
-            _reason="$("$SPIRA_HOME/ctrl.sh" reason "$_subj" 2>/dev/null)"
-            printf '  skipped %s (suspended%s)\n' "$t" "${_reason:+: $_reason}"
-            continue
-        fi
-        # A disabled timer was removed from the loop deliberately. start restores
-        # the loop; a disabled timer was never part of it.
-        if [ "$("$SC" --user is-enabled "$t" 2>/dev/null)" = "disabled" ]; then
-            printf '  skipped %s (disabled)\n' "$t"
-            continue
-        fi
-        "$SC" --user start "$t" 2>/dev/null && printf '  started %s\n' "$t"
+        # A disabled timer was removed from the loop deliberately, but the check must still be
+        # made per timer — is-enabled is a plain systemctl call, not ctrl.sh, so it stays cheap.
+        _is_enabled="disabled"
+        [ "$("$SC" --user is-enabled "$t" 2>/dev/null)" != "disabled" ] && _is_enabled="enabled"
+        # start is the one command most likely to run in the middle of a recovery, and silently
+        # reversing a recorded ctrl suspension there is the defect (sp-cqyfy) — _start_action
+        # checks suspension before is-enabled for that reason, same order as before.
+        _action="$(_start_action "$t" "$_is_enabled")"
+        case "$_action" in
+            "skip-suspended "*)
+                _reason="${_action#skip-suspended }"
+                printf '  skipped %s (suspended%s)\n' "$t" "${_reason:+: $_reason}"
+                ;;
+            skip-disabled)
+                printf '  skipped %s (disabled)\n' "$t"
+                ;;
+            start)
+                "$SC" --user start "$t" 2>/dev/null && printf '  started %s\n' "$t"
+                ;;
+        esac
     done
 
     # START WHAT `stop --hard` STOPPED. The watchers are long-running SERVICES, not
@@ -339,8 +397,7 @@ start)
     ); do
         _subj="${u%.service}"; _subj="${_subj%.timer}"
         [ -n "${SPIRA_INSTANCE:-}" ] && _subj="${_subj%-$SPIRA_INSTANCE}"
-        if "$SPIRA_HOME/ctrl.sh" check "$_subj" 2>/dev/null; then
-            _reason="$("$SPIRA_HOME/ctrl.sh" reason "$_subj" 2>/dev/null)"
+        if _reason="$(ctrl_is_suspended CTRL_SUSPENDED "$_subj")"; then
             printf '  skipped %s (suspended%s)\n' "$u" "${_reason:+: $_reason}"
             continue
         fi

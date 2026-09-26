@@ -11,20 +11,23 @@
 # and spira-landing is neither — it is a transient systemd unit that executes the same
 # gate.sh passes an aeon does, supervised outside the timer loop.
 #
-# THREE PROPERTIES, each a pair (law-absence-needs-a-positive-control):
+# PROPERTIES KEPT HERE, each a pair (law-absence-needs-a-positive-control). The service and
+# timer FILTERS themselves (work_services, _is_ci_watcher, _status_timer_row, _start_action)
+# are T1 decision tables in test-world-decide.sh now; this file keeps only what those tables
+# do not reach — full-process wiring and /proc.
 #
 #   1. status reports spira-landing.service as active when it is, and inactive when it is not.
 #      A status that always shows "inactive" and one that is merely correct look identical.
 #
-#   2. stop stops spira-landing.service (and any other active spira-*.service work unit),
-#      confirmed by what the stub was asked to do.
-#
-#   3. stop exits non-zero and does NOT print STOPPED when a service cannot be stopped.
+#   2. stop exits non-zero and does NOT print STOPPED when a service cannot be stopped.
 #      Without this, the scar is invisible: the operator halts, sees the success message,
 #      and the worker goes on running.
 #
-#   4. live_workers (/proc) is non-zero when a process matching gate.sh or landing.sh is
+#   3. live_workers (/proc) is non-zero when a process matching gate.sh or landing.sh is
 #      running, and zero when it is not.
+#
+#   4. the status line's own CI-watcher-listing loop (over CI_WATCHER_BASES, not through
+#      _is_ci_watcher) names the watchers that are active and says so when none are.
 #
 # systemctl IS STUBBED, not reached. A suite that asks the real systemd is green for as long
 # as the box happens to be in the state its author had (law-gates-run-in-a-clean-environment).
@@ -128,7 +131,7 @@ world_rc() {
 }
 
 # --------------------------------------------------------------------------------------
-# 1. STATUS REPORTS WORK SERVICES
+# 1. STATUS REPORTS SPIRA-LANDING.SERVICE
 # The positive control comes first: a status that always says inactive looks exactly like
 # one that is merely correct when nothing is running (law-absence-needs-a-positive-control).
 # --------------------------------------------------------------------------------------
@@ -145,29 +148,11 @@ out="$(world status)"
 want  "when inactive, spira-landing.service still appears" "spira-landing.service" "$out"
 want  "and is shown as inactive"                           "inactive"              "$out"
 
-# --------------------------------------------------------------------------------------
-# 2. STOP STOPS WORK SERVICES
-# Stop must call systemctl to stop spira-landing.service when it is active. Confirmed by
-# reading the call log, not by asking systemd what state it ended up in.
-# --------------------------------------------------------------------------------------
-echo
-echo "stop stops work services:"
-
-ACTIVE_SVC=spira-landing.service; write_sc; : > "$CALLS"
-out="$(world stop)"
-calls="$(cat "$CALLS")"
-want "stop calls systemctl to stop spira-landing.service"   "stop spira-landing.service"  "$calls"
-want "and reports it stopped"                               "stopped spira-landing.service" "$out"
-want "and prints the STOPPED message"                       "STOPPED"                       "$out"
-
-ACTIVE_SVC=""; write_sc
-out="$(world stop)"
-nowant "when nothing is active, stop does not try to stop spira-landing" \
-       "stop spira-landing.service" "$(cat "$CALLS")"
-want   "and still prints STOPPED"                           "STOPPED" "$out"
+# Which services `stop` acts on (work_services' filter) and which timers a plain halt
+# spares (_is_ci_watcher) are T1 decision tables now: spira/test-world-decide.sh.
 
 # --------------------------------------------------------------------------------------
-# 3. STOP EXITS NON-ZERO WHEN A SERVICE CANNOT BE STOPPED
+# 2. STOP EXITS NON-ZERO WHEN A SERVICE CANNOT BE STOPPED
 # The scar: world.sh printed STOPPED while spira-landing.service was still running.
 # A halt that cannot stop something must say so and exit non-zero.
 # --------------------------------------------------------------------------------------
@@ -184,7 +169,7 @@ want   "and warns about the failure"              "WARNING"  "$out"
 STOP_FAILS=""
 
 # --------------------------------------------------------------------------------------
-# 4. LIVE WORKERS (/proc) — status counts running gate.sh / landing.sh processes
+# 3. LIVE WORKERS (/proc) — status counts running gate.sh / landing.sh processes
 #
 # A REAL background process, because /proc is the real thing and cannot be stubbed. The
 # process is started under $SPIRA_HOME so world.sh's own live_workers() scan finds it —
@@ -248,29 +233,9 @@ nowant "status stops saying DRAINING after resume" "DRAINING" "$out"
 out="$(world resume)"
 want "resume on a world that was not draining says so" "not draining" "$out"
 
-# A DRAIN THAT TIMES OUT MUST FAIL LOUDLY. Reporting DRAINED while an aeon is still working
-# is the whole reason this is a command rather than a hand-typed systemctl. The fake aeon has
-# to carry "$SH/aeon.sh" in its OWN argv, because that substring is exactly what live_aeons
-# matches in /proc — a `sleep 120 &` is invisible to it, which is how the first version of
-# this case passed while proving nothing.
-printf '#!/usr/bin/env bash\nsleep 120\n' > "$SH/aeon.sh"; chmod +x "$SH/aeon.sh"
-bash "$SH/aeon.sh" & WORKER_PID=$!
-sleep 0.3
-
-rc=0
-out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
-       SPIRA_DB="$TMP/no-db" SPIRA_SYSTEMCTL="$TMP/systemctl" \
-       bash "$SH/world.sh" drain --timeout 0 2>&1)" || rc=$?
-
-is  "drain exits non-zero when it times out with an aeon live" "1" "$rc"
-want "and says NOT DRAINED"        "NOT DRAINED"          "$out"
-nowant "and never claims DRAINED"  "spira: DRAINED"       "$out"
-want "and says summons stay gated" "REMAIN GATED"         "$out"
-[ -f "$RUN/world.draining" ] && ok "a timed-out drain leaves the gate in place" \
-                             || bad "a timed-out drain leaves the gate in place" "stamp was removed"
-
-kill -- -"$WORKER_PID" 2>/dev/null; wait "$WORKER_PID" 2>/dev/null; WORKER_PID=""
-world resume >/dev/null
+# drain --timeout 0 with a live aeon (NOT DRAINED / REMAIN GATED / exit 1) is a near-verbatim
+# duplicate of test-world-drain-deadline.sh case 3 (cluster 4, docs/test-plan/instance-lifecycle.md):
+# kept there only.
 
 # ---- THE GATE MUST COVER EVERY DOOR, NOT JUST THE TIDY ONE --------------------------
 # summon_fayth() is called only from sentinel.sh, and that grep is what made the first
@@ -301,32 +266,21 @@ if [ -d "$HARNESS/systemd" ]; then
 fi
 
 # --------------------------------------------------------------------------------------
-# 5. CI WATCHERS — gate-check and pr-notify survive a plain halt; --hard stops them
+# 4. STATUS NAMES THE ACTIVE CI WATCHERS
+# _is_ci_watcher itself (whether a timer counts, and that a plain halt spares it while
+# --hard does not) is the T1 table in test-world-decide.sh now. What is not extracted, and
+# stays here, is the status line's OWN loop over CI_WATCHER_BASES that formats the message.
 # --------------------------------------------------------------------------------------
 echo
-echo "CI watchers (gate-check, pr-notify):"
+echo "status names the active CI watchers:"
 
 ACTIVE_TIMERS="spira-gate-check.timer,spira-pr-notify.timer"
-ACTIVE_SVC=""; write_sc; : > "$CALLS"
-out="$(world stop)"
-calls="$(cat "$CALLS")"
-nowant "plain halt does not stop gate-check"  "stop spira-gate-check.timer"  "$calls"
-nowant "plain halt does not stop pr-notify"   "stop spira-pr-notify.timer"   "$calls"
-want   "plain halt still prints STOPPED"      "STOPPED"                       "$out"
+ACTIVE_SVC=""; write_sc
+world stop >/dev/null   # HALTED state is what gates the status line below
 
-# The stamp was written by stop above; status should name the active CI watchers.
 out="$(world status)"
 want "status names gate-check as CI watcher" "spira-gate-check" "$out"
 want "status names pr-notify as CI watcher"  "spira-pr-notify"  "$out"
-
-# Hard halt: both CI watcher timers must be stopped.
-rm -f "$RUN/world.halted"
-ACTIVE_TIMERS="spira-gate-check.timer,spira-pr-notify.timer"
-ACTIVE_SVC=""; write_sc; : > "$CALLS"
-out="$(world stop --hard)"
-calls="$(cat "$CALLS")"
-want "hard halt stops gate-check"  "stop spira-gate-check.timer"  "$calls"
-want "hard halt stops pr-notify"   "stop spira-pr-notify.timer"   "$calls"
 
 # Status with watchers inactive: nobody is watching CI.
 ACTIVE_TIMERS=""; write_sc
