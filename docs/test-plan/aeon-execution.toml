@@ -19,7 +19,7 @@ statement = "a bead poisoned right after claim is released before workspace setu
 [[use_case]]
 id = "UC-aeon-execution-04"
 tier = "T1"
-statement = "the world-stop fence refuses a `world-stop` bead with a live aeon and releases the claim; with none it runs stop → session → start"
+statement = "the world-halt fence refuses a halt bead (one carrying the configured halt label) with a live aeon and releases the claim; with none it runs stop → session → start"
 
 [[use_case]]
 id = "UC-aeon-execution-05"

@@ -9,7 +9,7 @@ Generated from docs/test-plan/*.toml, every suite's # tier:/# covers: header, an
 | UC-aeon-execution-01 | T3 | a bead is worked in a worktree cut from freshly fetched `origin/<landref>`; a stale foreign worktree is moved aside, never removed | — | **GAP** |
 | UC-aeon-execution-02 | T3 | a worktree-creation failure is a pre-session death: FATAL, attempt charged, ledger `pre-session`, no free resummon loop | — | **GAP** |
 | UC-aeon-execution-03 | T1 | a bead poisoned right after claim is released before workspace setup, ledger `poison-raced` | spira/test-aeon-disposition.sh | covered |
-| UC-aeon-execution-04 | T1 | the world-stop fence refuses a `world-stop` bead with a live aeon and releases the claim; with none it runs stop → session → start | — | **GAP** |
+| UC-aeon-execution-04 | T1 | the world-halt fence refuses a halt bead (one carrying the configured halt label) with a live aeon and releases the claim; with none it runs stop → session → start | — | **GAP** |
 | UC-aeon-execution-05 | T1 | sweep mode claims nothing, sets no `branch:` label, and refuses when capacity is paused or the world is draining | — | **GAP** |
 | UC-aeon-execution-06 | T1 | launch argv is a pure function of the fayth's system-prompt, project-instructions and settings knobs | — | **GAP** |
 | UC-aeon-execution-07 | T1 | brief rendering leaves no unrendered `{{placeholder}}`; RESUME/SLAIN/DEADLINE/ALREADY_DONE each render correctly | — | **GAP** |
