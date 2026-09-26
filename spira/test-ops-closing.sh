@@ -183,8 +183,8 @@ sop() {                  # the same program the aeon runs, in the same environme
         SPIRA_SOP_LEDGER="${LEDGER_OVERRIDE:-$LEDGER}" BEADS_NO_AUTO_IMPORT=1 \
         timeout 120 bash "$HOMEDIR/sop.sh" "$@" 2>&1
 }
-seed() {                 # seed <id>
-    local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
+seed() {                 # seed <id> [extra-label]
+    local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\"${2:+,\"$2\"}"
     printf '{"id":"%s","title":"unit failed","status":"open","issue_type":"bug","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "$_lbl" | testdb_seed
 }
@@ -207,16 +207,23 @@ CHECK: df -h /var | tail -1
 FIX: clear the oldest artifacts, then restart the unit
 SOP
 }
-fresh() {                # fresh <bead-id> — an empty world with one incident and one runbook
+fresh() {                # fresh <bead-id> [extra-label] — an empty world with one bead and one runbook
     testdb_reset
     rm -rf "$TMP/elsewhere"
     shelf
-    seed "$1"
+    seed "$1" "${2:-}"
 }
+# AN INCIDENT CARRIES delivers:action, AS incident.sh STAMPS IT BY DEFAULT. That label is what
+# exempts an incident's close from the submitted conversion (sp-qsona): its deliverable is the
+# action and the close reason, never a landed commit. Without it the healer's bug bead would be
+# converted to open + spira-submitted like any builder's work bead, and "stays closed" below
+# would be testing a bead production never files. The builder cases (sp-oc-8, sp-oc-13) keep
+# a plain work bead on purpose.
+fresh_incident() { fresh "$1" delivers:action; }
 
 echo
 echo "a session that recorded NOTHING — the close is undone and the bead is poisoned:"
-fresh sp-oc-1; run_aeon healer none
+fresh_incident sp-oc-1; run_aeon healer none
 is   "the bead is open again"              open  "$(field sp-oc-1 status)"
 is   "and its claim is released"           ""    "$(field sp-oc-1 assignee)"
 want "it is poisoned"                      "spira-poison" "$(labels sp-oc-1)"
@@ -233,7 +240,7 @@ nowant "and no reclaim rung was hung on it"                "sp-reclaim"      "$(
 
 echo
 echo "a session that WROTE a new runbook — untouched, which is the first honest ending:"
-fresh sp-oc-2; run_aeon healer write-new
+fresh_incident sp-oc-2; run_aeon healer write-new
 is     "the bead stays closed"          closed "$(field sp-oc-2 status)"
 nowant "it is not poisoned"             "spira-poison" "$(labels sp-oc-2)"
 want   "and the verdict saw the write"  "closing-rule wrote=yes" "$(cat "$TMP/out")"
@@ -241,7 +248,7 @@ is     "the runbook is really on the shelf" "0" "$(sop show brand-new >/dev/null
 
 echo
 echo "a session that AMENDED the runbook that fitted — untouched, the second honest ending:"
-fresh sp-oc-3; run_aeon healer amend
+fresh_incident sp-oc-3; run_aeon healer amend
 is     "the bead stays closed"      closed "$(field sp-oc-3 status)"
 nowant "it is not poisoned"         "spira-poison" "$(labels sp-oc-3)"
 # THE ASSERTION THE DIGEST EXISTS FOR. An amendment leaves the shelf exactly the size it was,
@@ -251,7 +258,7 @@ is     "and the shelf is still one runbook" "1" "$(sop digest | grep -c .)"
 
 echo
 echo "a session whose runbook FIT AND HELD — untouched. This is the case that must not fire:"
-fresh sp-oc-4; run_aeon healer applied-yes
+fresh_incident sp-oc-4; run_aeon healer applied-yes
 is     "the bead stays closed"                 closed "$(field sp-oc-4 status)"
 nowant "it is not poisoned"                    "spira-poison" "$(labels sp-oc-4)"
 want   "the verdict credits the application"   "applied=0" "$(cat "$TMP/out")"
@@ -259,13 +266,13 @@ nowant "and nothing was reopened"              "REOPENED" "$(cat "$TMP/out")"
 
 echo
 echo "a runbook that fit and did NOT hold — still untouched, because the truth must stay cheapest:"
-fresh sp-oc-5; run_aeon healer applied-no
+fresh_incident sp-oc-5; run_aeon healer applied-no
 is     "the bead stays closed"  closed "$(field sp-oc-5 status)"
 nowant "it is not poisoned"     "spira-poison" "$(labels sp-oc-5)"
 
 echo
 echo "a runbook whose CHECK did NOT confirm — poisoned, because that says nothing on the shelf fit:"
-fresh sp-oc-6; run_aeon healer applied-fail
+fresh_incident sp-oc-6; run_aeon healer applied-fail
 is   "the bead is open again"                 open "$(field sp-oc-6 status)"
 want "and poisoned"                           "spira-poison" "$(labels sp-oc-6)"
 # THE POSITIVE CONTROL FOR THE FILTER ITSELF: the record exists and is readable, so the
@@ -274,7 +281,7 @@ is   "the record it made is really in the ledger" "0" "$(sop log --bead sp-oc-6 
 
 echo
 echo "a session that only RETIRED a runbook — poisoned; curation is not what the incident owed:"
-fresh sp-oc-7; run_aeon healer retire
+fresh_incident sp-oc-7; run_aeon healer retire
 is   "the bead is open again" open "$(field sp-oc-7 status)"
 want "and poisoned"           "spira-poison" "$(labels sp-oc-7)"
 is   "the shelf really did shrink"  "0" "$(sop digest | grep -c .)"
@@ -282,13 +289,16 @@ is   "the shelf really did shrink"  "0" "$(sop digest | grep -c .)"
 echo
 echo "a BUILDER that closed without touching an SOP — normal work, and nothing happens to it:"
 fresh sp-oc-8; run_aeon builder none
-is     "the bead stays closed"     closed "$(field sp-oc-8 status)"
+# A builder's plain work bead: its close is converted to open + spira-submitted at teardown
+# (sp-qsona) — the closing rule still never touches it.
+is     "the bead's close stands as submitted, not undone" open "$(field sp-oc-8 status)"
+want   "carrying the submitted label" "spira-submitted" "$(labels sp-oc-8)"
 nowant "it is not poisoned"        "spira-poison" "$(labels sp-oc-8)"
 nowant "and the check did not run at all" "closing-rule" "$(cat "$TMP/out")"
 
 echo
 echo "an OLDER session's record does not excuse a later silent one:"
-fresh sp-oc-9
+fresh_incident sp-oc-9
 mkdir -p "$(dirname "$LEDGER")"
 # A record for this very bead, made an hour ago by a session that is not this one. Written
 # by hand because that is precisely what it is: prior history, not something this run did.
@@ -301,7 +311,7 @@ want "and poisoned"                                 "spira-poison" "$(labels sp-
 
 echo
 echo "an unreadable ledger is NOT an absence — nothing is poisoned on the day the harness is broken:"
-fresh sp-oc-10
+fresh_incident sp-oc-10
 LEDGER_OVERRIDE="$TMP/corrupt.jsonl"; printf 'this is not json\nnor is this\n' > "$LEDGER_OVERRIDE"
 run_aeon healer none
 is     "the bead stays closed"                closed "$(field sp-oc-10 status)"
@@ -312,7 +322,7 @@ unset LEDGER_OVERRIDE
 # THE POSITIVE CONTROL FOR THAT DECLINE. The same silent session against a readable ledger
 # poisons, so the pass above is the corruption being detected and not the check having
 # quietly stopped running.
-fresh sp-oc-11; run_aeon healer none
+fresh_incident sp-oc-11; run_aeon healer none
 is   "the same silence against a readable ledger still poisons" open "$(field sp-oc-11 status)"
 want "and is poisoned"                                          "spira-poison" "$(labels sp-oc-11)"
 
@@ -392,6 +402,7 @@ echo "T3: a close reason with a statute phrase is refused — the fence is wired
 # the close reason text, not to the persona's contract.
 fresh sp-oc-13; run_aeon builder bad-reason
 is   "a statute phrase reopens the bead"        open   "$(field sp-oc-13 status)"
+nowant "reopened by the fence, so NOT converted to submitted" "spira-submitted" "$(labels sp-oc-13)"
 want "the note names the matched phrase"        "TEMPORARY WORKAROUND" "$(notes sp-oc-13)"
 want "the log names the override"              "SPIRA_CLOSE_REASON_OVERRIDE" "$(cat "$TMP/out")"
 

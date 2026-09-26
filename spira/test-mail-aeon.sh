@@ -152,7 +152,12 @@ GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=
 
 status="$(bdq show "$BID4" --json 2>/dev/null \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,dict) else d[0]; print(d.get("status",""))' 2>/dev/null)"
-is "SEEN RED (d): bead was closed by the stub aeon"  "closed"  "$status"
+labels="$(bdq show "$BID4" --json 2>/dev/null \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,dict) else d[0]; print(",".join(d.get("labels") or []))' 2>/dev/null)"
+# The stub closes a task bead; aeon.sh's teardown converts that close to open +
+# spira-submitted (sp-qsona) — only the landing pass closes a work bead.
+is   "SEEN RED (d): bead was closed by the stub aeon (converted to submitted)"  "open"  "$status"
+want "SEEN RED (d): carrying the submitted label" "spira-submitted" "$labels"
 
 if [ -f "$MAILBOX_SEEN_MARKER" ]; then
     ok "POSITIVE CONTROL (d): the mailbox existed while the aeon ran"

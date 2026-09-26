@@ -163,8 +163,13 @@ BID="$(B list --status open --label "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}
 
 run_aeon
 
-# The bead is closed (the shim closes it).
-is "the bead ends closed" closed "$(status_of "$BID")"
+# The shim closes the bead; a task bead's close is converted to open + spira-submitted at
+# teardown (sp-qsona) — only the landing pass closes a work bead.
+is "the bead's close was converted to submitted" open "$(status_of "$BID")"
+want "carrying the submitted label" "spira-submitted" \
+    "$(B show "$BID" --json 2>/dev/null | python3 -c '
+import json, sys; d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
+print(",".join(d[0].get("labels") or []))')"
 
 # The commit landed in the SECOND repo. Check ALL local refs, not just origin/main — the
 # branch has not been pushed yet (that is the landing pass's job). The commit is on

@@ -165,6 +165,20 @@ bead_status() {
         | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("status","") if d else "")' 2>/dev/null
 }
 
+# Helper: read a bead's labels, comma-joined.
+bead_labels() {
+    bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
+        | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(",".join(d[0].get("labels") or []) if d else "")' 2>/dev/null
+}
+
+# "STAYS CLOSED" UNDER sp-qsona. A task bead's close is converted to open + spira-submitted
+# at teardown when nothing reopened it first, so "the guard did not fire" now reads as
+# open WITH the submitted label, and "the guard reopened it" as open WITHOUT it.
+not_reopened() {  # not_reopened <case-name> <bead-id>
+    is   "$1: bead not reopened by the guard — converted to submitted" "open" "$(bead_status "$2")"
+    want "$1: carrying the submitted label" "spira-submitted" "$(bead_labels "$2")"
+}
+
 # Helper: count commits on the bead branch ahead of the base.
 branch_commits_ahead() {  # branch_commits_ahead <bead-id>
     local br="spira/$1"
@@ -187,6 +201,7 @@ b1="$(bd -C "$SPIRA_DB" create --title "test: own worktree dirty" --type task \
 unset SPIRA_ALLOW_PROD_DIRTY
 bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
 is "own-dirty: bead is reopened" "open" "$(bead_status "$b1")"
+nowant "own-dirty: reopened by the guard, so NOT converted to submitted" "spira-submitted" "$(bead_labels "$b1")"
 note1="$(latest_note "$b1")"
 want "own-dirty: note names the modified path" "f" "$note1"
 want "own-dirty: note names the override variable" "SPIRA_ALLOW_PROD_DIRTY" "$note1"
@@ -207,7 +222,7 @@ b2="$(bd -C "$SPIRA_DB" create --title "test: repo dirty only" --type task \
 [ -n "$b2" ] || { bad "case 2 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
 bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
-is "repo-dirty: bead stays closed" "closed" "$(bead_status "$b2")"
+not_reopened "repo-dirty" "$b2"
 # Restore HARNESS so it does not affect later cases.
 git -C "$HARNESS" checkout -q -- incident.sh 2>/dev/null || true
 poison_bead "$b2"
@@ -222,7 +237,7 @@ b3="$(bd -C "$SPIRA_DB" create --title "test: clean" --type task \
 [ -n "$b3" ] || { bad "case 3 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
 bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
-is "clean: bead stays closed" "closed" "$(bead_status "$b3")"
+not_reopened "clean" "$b3"
 
 # ============================================================
 echo
@@ -233,7 +248,7 @@ b4="$(bd -C "$SPIRA_DB" create --title "test: own dirty with override" --type ta
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b4" ] || { bad "case 4 bead created" "(bead-create failed)"; true; }
 SPIRA_ALLOW_PROD_DIRTY=1 bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
-is "override: bead stays closed despite dirty worktree" "closed" "$(bead_status "$b4")"
+not_reopened "override (despite dirty worktree)" "$b4"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

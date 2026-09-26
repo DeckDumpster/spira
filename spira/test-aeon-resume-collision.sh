@@ -162,7 +162,17 @@ d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
 print(d.get("status"))' 2>/dev/null)"
 
 is "loser ($first_id): left untouched — still held by the other aeon" "in_progress" "$first_status"
-is "winner ($second_id): this aeon fell through to it and closed it" "closed" "$second_status"
+# A task bead's close is converted to open + spira-submitted at teardown (sp-qsona): only
+# the landing pass closes a work bead.
+second_labels="$(bd -C "$SPIRA_DB" show "$second_id" --json 2>/dev/null | python3 -c '
+import sys, json
+d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
+print(",".join(d.get("labels") or []))' 2>/dev/null)"
+is "winner ($second_id): this aeon fell through to it and closed it (converted to submitted)" "open" "$second_status"
+case ",$second_labels," in
+    *",spira-submitted,"*) ok "winner ($second_id): carrying the submitted label" ;;
+    *) bad "winner ($second_id): carrying the submitted label" "labels=[$second_labels]" ;;
+esac
 want "log: the collision on $first_id is named"      "$first_id"                                    "$(cat "$TMP/out")"
 want "log: the fallback to the next candidate is named" "trying the next resumable candidate"        "$(cat "$TMP/out")"
 want "log: it resumed $second_id, not the general claim head" "resuming $second_id"                  "$(cat "$TMP/out")"
