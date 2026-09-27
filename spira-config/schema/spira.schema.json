@@ -313,6 +313,12 @@
             "null"
           ]
         },
+        "batch_bins_ttl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "batch_judgement_label": {
           "type": [
             "string",
