@@ -994,6 +994,13 @@ land_drain
 [ -r "${SPIRA_HOME}/watchtower.sh" ] && \
     bash "${SPIRA_HOME}/watchtower.sh" --pr-stall-check 2>/dev/null || true
 
+# DISABLED ESSENTIAL TIMER CHECK — escalate a TIMER_PRIORITY timer (sentinel, ops,
+# watchtower, archivist, archive, skew) that is disabled with no recorded ctrl suspension
+# while the world is running. world.sh start catches this at the moment of a restart;
+# this is the periodic leg for everything that happens between one start and the next.
+[ -r "${SPIRA_HOME}/watchtower.sh" ] && \
+    bash "${SPIRA_HOME}/watchtower.sh" --disabled-timer-check 2>/dev/null || true
+
 # THE POSITIVE CONTROL, read before anything is launched so it describes a completed run
 # rather than the one this pass is about to start.
 land_age=-1

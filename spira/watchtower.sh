@@ -486,6 +486,71 @@ if [ "${1:-}" = "--pr-stall-check" ]; then
     exit 0
 fi
 
+# --disabled-timer-check: escalate an essential timer (world.sh's TIMER_PRIORITY) that is
+# disabled with no recorded ctrl suspension, while the world is not stopped. Called by
+# sentinel.sh on every pass, alongside sp-niqjl's failed-unit detector.
+#
+# WHY THIS EXISTS (sp-1ar8t). world.sh start already refuses to print a bare "spira: RUNNING"
+# when this is true — but that check only runs at the moment someone runs `start`. A timer
+# disabled by anything else (an install, a test that reached the host, a hand-run systemctl)
+# between one `start` and the next is invisible until somebody runs world.sh again. This is
+# the periodic leg of the same check, on the cadence the queue itself runs on.
+#
+# TIMER_PRIORITY AND _is_essential_timer COME FROM world.sh (WORLD_LIB=1), not a second
+# hand-written list here — that duplication is exactly what let every timer added after the
+# list was written escape a stop (see world.sh's own TIMERS ARE ENUMERATED comment).
+#
+# ONE ESCALATION PER TIMER, DEDUPED BY incident.sh'S REF, same as every other watchtower
+# detector — a timer left disabled across many passes must produce one open incident, not
+# one per pass.
+if [ "${1:-}" = "--disabled-timer-check" ]; then
+    [ -f "$SPIRA_RUN/world.halted" ] && {
+        log "watchtower: disabled-timer-check skipped — world is halted"
+        exit 0
+    }
+
+    _dtc_inc="${SPIRA_INCIDENT_SH:-$(dirname "$0")/incident.sh}"
+    [ -r "$_dtc_inc" ] || {
+        log "watchtower: disabled-timer-check skipped — $_dtc_inc not readable"
+        exit 0
+    }
+
+    WORLD_LIB=1 . "${SPIRA_HOME}/world.sh"
+    declare -A CTRL_SUSPENDED=()
+    CTRL_LIB=1 . "${SPIRA_HOME}/ctrl.sh"
+    ctrl_load_suspended CTRL_SUSPENDED
+
+    _dtc_sc="${SPIRA_SYSTEMCTL:-systemctl}"
+    _dtc_sfx="${SPIRA_INSTANCE:+-$SPIRA_INSTANCE}"
+    for _dtc_b in "${TIMER_PRIORITY[@]}"; do
+        _dtc_t="${_dtc_b}${_dtc_sfx}.timer"
+        if ! "$_dtc_sc" --user is-enabled "$_dtc_t" >/dev/null 2>&1 &&
+           ! "$_dtc_sc" --user is-active  "$_dtc_t" >/dev/null 2>&1; then
+            _dtc_t="${_dtc_b}.timer"
+        fi
+        [ "$("$_dtc_sc" --user is-enabled "$_dtc_t" 2>/dev/null)" = "disabled" ] || continue
+        ctrl_is_suspended CTRL_SUSPENDED "$_dtc_b" >/dev/null && continue
+
+        printf '%s is disabled with no recorded ctrl suspension.\n\nA disabled essential timer with no ctrl.sh suspension reason is an accident, not a decision. Re-enable it, or record why it is stopped:\n  ctrl.sh suspend %s --reason "..." --owner <bead>\n' \
+            "$_dtc_t" "$_dtc_b" | \
+        SPIRA_DB="$SPIRA_DB" \
+        SPIRA_INCIDENT_TYPE=task \
+        SPIRA_INCIDENT_PRIORITY=1 \
+        SPIRA_INCIDENT_ACTOR=watchtower \
+        SPIRA_SIN_EXEMPT=1 \
+        SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
+        SPIRA_INCIDENT_REF="incident:disabled-timer-${_dtc_b}" \
+        SPIRA_INCIDENT_CAUSE=disabled-timer \
+        bash "$_dtc_inc" file \
+            "DISABLED TIMER: ${_dtc_t} disabled with no recorded suspension" \
+            - >/dev/null || true
+        log "watchtower: disabled-timer-check filed escalation for ${_dtc_t}"
+    done
+
+    log "watchtower: disabled-timer-check complete"
+    exit 0
+fi
+
 # FORMATTING HELPERS AND RENDERERS, hoisted above the main guard (UC-26/UC-27, sp-m0qeh) so a
 # test can source this file and call them directly against a hand-built fixture, at in-process
 # speed, instead of forking a whole watchtower.sh run to exercise one section's logic.
