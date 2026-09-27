@@ -96,6 +96,18 @@ pub struct FlowSpec {
     pub dwell_limit_seconds: BTreeMap<String, u32>,
 }
 
+/// A free-space floor, checked on every path listed. An empty `paths` defers to the
+/// reconciler's own bash/env default (root filesystem plus whatever it can ask podman and
+/// dolt for) rather than naming none at all — the shape every other kind's absence falls
+/// back to (sp-lkfto.3).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DiskSpec {
+    pub floor_pct: u32,
+    #[serde(default)]
+    pub paths: Vec<String>,
+}
+
 /// The union of every kind's spec, published as one JSON Schema (`schema/resources.schema.json`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum KindSpec {
@@ -106,6 +118,7 @@ pub enum KindSpec {
     Release(ReleaseSpec),
     Queue(QueueSpec),
     Flow(FlowSpec),
+    Disk(DiskSpec),
 }
 
 impl KindSpec {
@@ -118,6 +131,7 @@ impl KindSpec {
             KindSpec::Release(_) => "Release",
             KindSpec::Queue(_) => "Queue",
             KindSpec::Flow(_) => "Flow",
+            KindSpec::Disk(_) => "Disk",
         }
     }
 }
@@ -186,6 +200,7 @@ pub fn parse_resource(raw: &RawResource) -> Result<Resource, ResourceError> {
         "Release" => KindSpec::Release(deserialize_spec(&raw.kind, &name, &raw.spec)?),
         "Queue" => KindSpec::Queue(deserialize_spec(&raw.kind, &name, &raw.spec)?),
         "Flow" => KindSpec::Flow(deserialize_spec(&raw.kind, &name, &raw.spec)?),
+        "Disk" => KindSpec::Disk(deserialize_spec(&raw.kind, &name, &raw.spec)?),
         other => {
             return Err(ResourceError::UnknownKind {
                 kind: other.to_string(),
@@ -255,6 +270,21 @@ mod tests {
             parse_resource(&r),
             Err(ResourceError::InvalidSpec { .. })
         ));
+    }
+
+    #[test]
+    fn valid_disk_spec_parses_with_empty_paths_defaulted() {
+        let mut spec = toml::map::Map::new();
+        spec.insert("floor_pct".into(), toml::Value::Integer(15));
+        let r = raw("Disk", "disk", toml::Value::Table(spec));
+        let parsed = parse_resource(&r).expect("valid");
+        match parsed.spec {
+            KindSpec::Disk(d) => {
+                assert_eq!(d.floor_pct, 15);
+                assert!(d.paths.is_empty());
+            }
+            other => panic!("wrong kind: {other:?}"),
+        }
     }
 
     #[test]

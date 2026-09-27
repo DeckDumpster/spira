@@ -45,6 +45,13 @@
 #      partition instead of gapping — a deliberate state is not a fault (sp-qsz01).
 #  26. Fleet: that same pool-at-0 carve-out does not silence a lane partition, which draws
 #      outside SPIRA_MAX_AEONS and so is starved for a different reason.
+#  27. Disk, POSITIVE CONTROL: every path above its floor -> satisfied, no remedy run.
+#  28. Disk: a path below the floor -> gap -> disk-remedy.sh run.
+#  29. Disk: an ERR row (path unreadable) -> unobservable, never satisfied, no remedy run.
+#  30. Disk: a materialised Composite's DiskSpec names the paths checked — disk-usage.sh's
+#      no-Composite default set is never consulted once one exists.
+#  31. Disk: a materialised Composite's DiskSpec.floor_pct replaces the bash/env default
+#      (SPIRA_DISK_FLOOR_PCT), so the same reading can gap under one and satisfy the other.
 #
 # 1-20 run with no Composite ever materialised — every invariant's fallback to its old
 # bash/env default, still the state of an install that has not adopted desired-state yet.
@@ -55,6 +62,7 @@
 # covers: reconciler/src/main.rs reconciler-engine/src/**.rs desired-state/src/store.rs
 #         desired-state/src/resource.rs spira/reconciler.sh
 #         spira/units-manifest.sh spira/fleet-status.sh spira/queue-certified-list.sh
+#         spira/disk-usage.sh spira/disk-remedy.sh
 #         spira/conf.sh cockpit/layout.sh
 #         systemd/spira-reconciler.service systemd/spira-reconciler.timer
 set -uo pipefail
@@ -210,6 +218,26 @@ printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$COCKPIT_CALLS" > 
 chmod +x "$STUB_COCKPIT_SH"
 export SPIRA_COCKPIT_SH="$STUB_COCKPIT_SH"
 
+DISK_LINES="$T/disk-lines"        # "<path>\t<free-pct-or-ERR>" per line, cat'd verbatim
+: > "$DISK_LINES"
+DISK_USAGE_CALLS="$T/disk-usage-calls.log"
+: > "$DISK_USAGE_CALLS"
+STUB_DISK_USAGE="$T/disk-usage.sh"
+cat > "$STUB_DISK_USAGE" <<'DUEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$DISK_USAGE_CALLS"
+cat "$DISK_LINES"
+DUEOF
+chmod +x "$STUB_DISK_USAGE"
+export SPIRA_DISK_USAGE_SH="$STUB_DISK_USAGE" DISK_LINES DISK_USAGE_CALLS
+
+DISK_REMEDY_CALLS="$T/disk-remedy-calls.log"
+: > "$DISK_REMEDY_CALLS"
+STUB_DISK_REMEDY="$T/disk-remedy.sh"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$DISK_REMEDY_CALLS" > "$STUB_DISK_REMEDY"
+chmod +x "$STUB_DISK_REMEDY"
+export SPIRA_DISK_REMEDY_SH="$STUB_DISK_REMEDY"
+
 QUEUE_CALLS="$T/queue-calls.log"
 : > "$QUEUE_CALLS"
 STUB_QUEUE_SH="$T/queue.sh"
@@ -241,6 +269,7 @@ reset_state() {
     rm -f "$SPIRA_RUN/reconciler-state.json" "$SPIRA_RUN/reconciler-status.jsonl" \
           "$SPIRA_RUN/reconciler.log" "$SPIRA_RUN/cockpit.down"
     : > "$SYSTEMCTL_CALLS"; : > "$COCKPIT_CALLS"; : > "$QUEUE_CALLS"; : > "$INC_LOG"
+    : > "$DISK_USAGE_CALLS"; : > "$DISK_REMEDY_CALLS"
     desired_state_clear
 }
 
@@ -607,5 +636,72 @@ bash "$RECONCILER_SH" --pass >/dev/null 2>&1
 want "a starved lane partition still gaps while the task pool is paused" '"key":"fleet:ops","status":"gap"' "$(status_jsonl)"
 want "a starved lane partition still escalates while the task pool is paused" "cause=fleet:ops" "$(cat "$INC_LOG")"
 printf 'TOTAL\t\t0\n' > "$FLEET_LINES"
+
+# ==========================================================================================
+printf '\n%s\n' "27. Disk, POSITIVE CONTROL: every path above its floor -> satisfied, no remedy"
+# ==========================================================================================
+reset_state
+printf '/\t40\n/var/lib/dolt\t62\n' > "$DISK_LINES"
+bash "$RECONCILER_SH" --pass >/dev/null 2>&1
+[ ! -s "$DISK_REMEDY_CALLS" ] && ok "no disk remedy when every path is above its floor" || bad "unexpected disk remedy: $(cat "$DISK_REMEDY_CALLS")"
+want "status jsonl reports / satisfied" '"key":"disk:/","status":"satisfied"' "$(status_jsonl)"
+[ ! -s "$INC_LOG" ] && ok "no incident filed when every path is healthy" || bad "unexpected incident: $(cat "$INC_LOG")"
+
+# ==========================================================================================
+printf '\n%s\n' "28. Disk: a path below the floor -> gap -> disk-remedy.sh run"
+# ==========================================================================================
+reset_state
+printf '/\t4\n' > "$DISK_LINES"
+bash "$RECONCILER_SH" --pass >/dev/null 2>&1
+_n="$(wc -l < "$DISK_REMEDY_CALLS" | tr -d ' ')"
+is "disk-remedy.sh is run exactly once for the breached path" "1" "$_n"
+want "status jsonl records the gap" '"key":"disk:/","desired":">= 15% free","observed":"4% free"' "$(status_jsonl)"
+
+# ==========================================================================================
+printf '\n%s\n' "29. Disk: an ERR row (path unreadable) -> unobservable, never satisfied, no remedy"
+# ==========================================================================================
+reset_state
+printf '/no/such/path\tERR\n' > "$DISK_LINES"
+bash "$RECONCILER_SH" --pass >/dev/null 2>&1
+want "status jsonl reports unobservable" '"key":"disk:/no/such/path","status":"unobservable"' "$(status_jsonl)"
+lack "unobservable disk path is never reported satisfied" '"key":"disk:/no/such/path","status":"satisfied"' "$(status_jsonl)"
+[ ! -s "$DISK_REMEDY_CALLS" ] && ok "no remedy run for a path that cannot be read" || bad "unexpected disk remedy: $(cat "$DISK_REMEDY_CALLS")"
+
+# ==========================================================================================
+printf '\n%s\n' "30. Disk: a materialised Composite's DiskSpec names the paths checked"
+# ==========================================================================================
+reset_state
+printf '/srv/custom\t40\n' > "$DISK_LINES"
+desired_state_write \
+'[[resource]]
+apiVersion = "spira/v1"
+kind = "Disk"
+producer = "test"
+[resource.metadata]
+name = "disk"
+[resource.spec]
+floor_pct = 15
+paths = ["/srv/custom"]'
+bash "$RECONCILER_SH" --pass >/dev/null 2>&1
+want "disk-usage.sh is called with the Composite's own path" "/srv/custom" "$(cat "$DISK_USAGE_CALLS")"
+want "status jsonl reports the Composite's path satisfied" '"key":"disk:/srv/custom","status":"satisfied"' "$(status_jsonl)"
+
+# ==========================================================================================
+printf '\n%s\n' "31. Disk: a materialised Composite's floor_pct replaces the bash/env default"
+# ==========================================================================================
+reset_state
+printf '/\t20\n' > "$DISK_LINES"   # satisfies the default 15% floor
+desired_state_write \
+'[[resource]]
+apiVersion = "spira/v1"
+kind = "Disk"
+producer = "test"
+[resource.metadata]
+name = "disk"
+[resource.spec]
+floor_pct = 25
+paths = ["/"]'
+bash "$RECONCILER_SH" --pass >/dev/null 2>&1
+want "20% free gaps against a Composite floor of 25%, though it would satisfy the default 15%" '"key":"disk:/","status":"gap"' "$(status_jsonl)"
 
 tl_summary

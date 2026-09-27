@@ -8,15 +8,15 @@
 // The pure diff-plus-hysteresis logic (grace periods, unobservable, remedy verification)
 // lives in reconciler-engine and is shared with czar-pass; this binary owns observation
 // (units, tmux, git, the queue) and the deterministic remedies for the resources czar-pass
-// does not already watch: Fleet, Units, Store, Cockpit, Production/Release and two Queue
-// checks czar-pass's own detectors do not cover (the base gate itself is base-red, already
-// watched there — reconciling it a second time here would file a second incident for the
-// same fault).
+// does not already watch: Fleet, Units, Store, Cockpit, Production/Release, Disk, and two
+// Queue checks czar-pass's own detectors do not cover (the base gate itself is base-red,
+// already watched there — reconciling it a second time here would file a second incident
+// for the same fault).
 
 use reconciler_engine::core::{record_remedy, step, HysteresisState, RawStatus, Verdict};
 use reconciler_engine::io::{append_status, load_state, save_state, StateMap};
 use spira_desired_state::compose::Composite;
-use spira_desired_state::resource::{parse_resource, CockpitSpec, FleetSpec, KindSpec, ReleaseSpec, UnitsSpec};
+use spira_desired_state::resource::{parse_resource, CockpitSpec, DiskSpec, FleetSpec, KindSpec, ReleaseSpec, UnitsSpec};
 use spira_desired_state::store::FsStore;
 use std::env;
 use std::fs;
@@ -40,6 +40,7 @@ struct DesiredState {
     units: Option<UnitsSpec>,
     cockpit: Option<CockpitSpec>,
     release: Option<ReleaseSpec>,
+    disk: Option<DiskSpec>,
 }
 
 impl DesiredState {
@@ -67,6 +68,7 @@ impl DesiredState {
                 KindSpec::Units(u) => ds.units = Some(u),
                 KindSpec::Cockpit(c) => ds.cockpit = Some(c),
                 KindSpec::Release(r) => ds.release = Some(r),
+                KindSpec::Disk(d) => ds.disk = Some(d),
                 _ => {}
             }
         }
@@ -125,6 +127,9 @@ struct Config {
     store_unit: String,
     cockpit_sessions: Vec<String>,
     cockpit_mail: String,
+    disk_usage_sh: String,
+    disk_remedy_sh: String,
+    disk_floor_pct: u32,
     grace_secs: u64,
     preflight_wall_secs: u64,
     now_secs: u64,
@@ -182,6 +187,14 @@ impl Config {
                 .unwrap_or_else(|_| "dolt-beads.service".to_string()),
             cockpit_sessions: sessions,
             cockpit_mail: env::var("COCKPIT_MAIL").unwrap_or_default(),
+            disk_usage_sh: env::var("SPIRA_DISK_USAGE_SH")
+                .unwrap_or_else(|_| format!("{}/disk-usage.sh", spira_home)),
+            disk_remedy_sh: env::var("SPIRA_DISK_REMEDY_SH")
+                .unwrap_or_else(|_| format!("{}/disk-remedy.sh", spira_home)),
+            disk_floor_pct: env::var("SPIRA_DISK_FLOOR_PCT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(15),
             grace_secs: env::var("SPIRA_RECONCILER_GRACE_SECS")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -688,6 +701,55 @@ fn observe_release(cfg: &Config) -> Check {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Disk: a free-space floor on every path configured, observed via disk-usage.sh (df, plus
+// podman's own idea of its storage root — never a guessed path). sp-lkfto.3: the root
+// filesystem held 2.6 GB free of 62 GB mid-round with every suite running 2x slower, and
+// nothing noticed until it hit 100% and crashed the store. The remedy (disk-remedy.sh)
+// reaps closed-bead worktrees and prunes dangling podman images/volumes; if that still
+// does not clear the floor, the streak escalates to the Concierge exactly like any other
+// remedy that did not hold.
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn observe_disk(cfg: &Config) -> Vec<Check> {
+    let (floor_pct, declared_paths): (u32, &[String]) = match &cfg.desired.disk {
+        Some(d) => (d.floor_pct, d.paths.as_slice()),
+        None => (cfg.disk_floor_pct, &[]),
+    };
+    let mut args: Vec<&str> = vec![&cfg.disk_usage_sh];
+    args.extend(declared_paths.iter().map(String::as_str));
+    let out = run_cmd("bash", &args);
+
+    let mut checks = Vec::new();
+    for line in out.lines() {
+        let parts: Vec<&str> = line.splitn(2, '\t').collect();
+        if parts.len() != 2 {
+            continue;
+        }
+        let path = parts[0].to_string();
+        let raw = match parts[1].trim() {
+            "ERR" => RawStatus::Unobservable { reason: format!("could not read free space for {}", path) },
+            v => match v.parse::<i64>() {
+                Ok(free_pct) if free_pct >= floor_pct as i64 => RawStatus::Satisfied,
+                Ok(free_pct) => RawStatus::Gap {
+                    desired: format!(">= {}% free", floor_pct),
+                    observed: format!("{}% free", free_pct),
+                    since_hint: None,
+                },
+                Err(_) => continue,
+            },
+        };
+        let remedy = match raw {
+            RawStatus::Gap { .. } => {
+                Remedy::Command { program: "bash".into(), args: vec![cfg.disk_remedy_sh.clone()] }
+            }
+            _ => Remedy::Escalate,
+        };
+        checks.push(Check { key: format!("disk:{}", path), raw, remedy });
+    }
+    checks
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Queue: two structural checks czar-pass's own detectors do not already cover. The base
 // gate itself is base-red, already watched by czar-pass — reconciling it here too would
 // file a second incident for the same fault, so it is deliberately not repeated.
@@ -917,6 +979,7 @@ fn run_pass() -> Result<(), String> {
     checks.extend(observe_fleet(&cfg));
     checks.push(observe_cockpit(&cfg));
     checks.push(observe_release(&cfg));
+    checks.extend(observe_disk(&cfg));
     checks.extend(observe_queue_mergeable(&cfg));
     checks.extend(observe_queue_lock_age(&cfg));
 
@@ -1118,6 +1181,9 @@ mod tests {
             store_unit: "dolt-beads.service".into(),
             cockpit_sessions: vec!["brain".into(), "hunk".into(), "chat".into()],
             cockpit_mail: String::new(),
+            disk_usage_sh: String::new(),
+            disk_remedy_sh: String::new(),
+            disk_floor_pct: 15,
             grace_secs: 300,
             preflight_wall_secs: 240,
             now_secs: 0,
@@ -1153,6 +1219,9 @@ mod tests {
             store_unit: base.store_unit.clone(),
             cockpit_sessions: base.cockpit_sessions.clone(),
             cockpit_mail: base.cockpit_mail.clone(),
+            disk_usage_sh: base.disk_usage_sh.clone(),
+            disk_remedy_sh: base.disk_remedy_sh.clone(),
+            disk_floor_pct: base.disk_floor_pct,
             grace_secs: base.grace_secs,
             preflight_wall_secs: base.preflight_wall_secs,
             now_secs: base.now_secs,
