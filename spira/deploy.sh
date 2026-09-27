@@ -627,8 +627,13 @@ if ! _doctor_out="$(SPIRA_DOCTOR=1 "$_DOCTOR" 2>&1)"; then
     printf '%s\n' "$_doctor_out" | grep -E '^\s*FAIL' | sed 's/^/deploy: doctor: /' >&2
 fi
 unset _doctor_out
-[ "$_skew_exit" -eq 0 ] \
-    || _deploy_failed="${_deploy_failed:+$_deploy_failed, }skew (exit $_skew_exit)"
+# THE SKEW FINDINGS ARE THE EVIDENCE, as doctor's FAIL lines are above. A bare "ROLLBACK — skew
+# (exit 1)" hid which finding rejected the deploy, and the rollback that followed destroyed the state
+# it was judged on (acceptance phase C, run 36296891710, 2026-09-27).
+if [ "$_skew_exit" -ne 0 ]; then
+    _deploy_failed="${_deploy_failed:+$_deploy_failed, }skew (exit $_skew_exit)"
+    printf '%s\n' "$_skew_out" | grep -v '^[[:space:]]*$' | sed 's/^/deploy: skew: /' >&2
+fi
 
 [ -z "$_deploy_failed" ] || { _rollback "$_deploy_failed"; }
 
