@@ -466,4 +466,60 @@ want "conf forwarded"          "SPIRA_CONF=/tmp/pinned-conf"                    
 want "config-bin is the release's, not this checkout's" \
     "SPIRA_CONFIG_BIN=/tmp/pinned-releases/current/bin/spira-config"                       "$_ce_out"
 
+# ===========================================================================
+echo
+echo "17. _wait_for_release_asset: bounded poll for the tarball asset (sp-5olmi)"
+# ===========================================================================
+# POSITIVE CONTROL FIRST: a tag whose asset never appears must time out, not hang —
+# this is the exact scenario the current (unpatched) ordering gets wrong: acceptance
+# fires the instant the tag lands and phase A's one-shot download fails immediately
+# because release.yml has not uploaded the tarball yet. Under a short timeout this
+# proves the wait is bounded rather than looping forever.
+
+_wa_bin="$SCRATCH/wa-bin"; mkdir -p "$_wa_bin"
+_wa_calls="$SCRATCH/wa-calls"
+
+cat > "$_wa_bin/gh" <<'GH'
+#!/usr/bin/env bash
+n=0
+[ -f "$WA_CALLS" ] && n=$(wc -l < "$WA_CALLS")
+printf 'call\n' >> "$WA_CALLS"
+if [ "$n" -ge "${WA_READY_AFTER:-999999}" ]; then
+    printf 'spira-20990101T000000Z.tar.gz\n'
+fi
+GH
+chmod +x "$_wa_bin/gh"
+
+rm -f "$_wa_calls"
+PATH="$_wa_bin:$PATH" WA_CALLS="$_wa_calls" WA_READY_AFTER=999999 \
+    bash -c '. "$0"; _wait_for_release_asset "tag-before-asset" 1 0.2' "$LIB"
+wantrc "positive-control: asset that never appears times out (bounded, not a hang)" \
+    1 $?
+_wa_timeout_calls="$(wc -l < "$_wa_calls" | tr -d ' ')"
+[ "${_wa_timeout_calls:-0}" -gt 1 ] \
+    && ok "positive-control: gh was actually polled more than once before timing out" \
+    || bad "positive-control: gh was actually polled more than once before timing out" \
+           "calls=$_wa_timeout_calls"
+
+# Now believe the silence: the same race, but release.yml's upload catches up
+# after a couple of polls — the fix must wait it out and then succeed.
+rm -f "$_wa_calls"
+PATH="$_wa_bin:$PATH" WA_CALLS="$_wa_calls" WA_READY_AFTER=2 \
+    bash -c '. "$0"; _wait_for_release_asset "tag-race" 30 0.1' "$LIB"
+wantrc "asset appears after the upload catches up -> returns 0" 0 $?
+
+# _ar_gh_repo forwarded to gh as --repo, the same as _download_tarball.
+_wa_repo_log="$SCRATCH/wa-repo-log"
+cat > "$_wa_bin/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$WA_REPO_LOG"
+printf 'spira-20990101T000000Z.tar.gz\n'
+GH
+chmod +x "$_wa_bin/gh"
+rm -f "$_wa_repo_log"
+PATH="$_wa_bin:$PATH" WA_REPO_LOG="$_wa_repo_log" \
+    bash -c '_ar_gh_repo="owner/repo"; . "$0"; _wait_for_release_asset "tag-repo" 5' "$LIB" >/dev/null
+want "the configured repo is forwarded via --repo" \
+    "--repo owner/repo release view tag-repo" "$(cat "$_wa_repo_log" 2>/dev/null || true)"
+
 tl_summary
