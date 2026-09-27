@@ -27,9 +27,10 @@
 #   (spira/queue/*), so the pushed SHA already has its own green gate run from
 #   when it was that PR's head. Selecting suites again here would just re-run
 #   them on a second machine for no new information, so push selects NOTHING —
-#   provision, build and suites are all skipped. The cut job below gets its
-#   positive control (law-absence-needs-a-positive-control) from the queue PR's
-#   own run instead of a fresh one.
+#   provision, build and suites are all skipped. A push never cuts a release
+#   either (see the cut job below); when one is later asked for, its "Assert
+#   gate check" step gets its positive control (law-absence-needs-a-positive-
+#   control) from the queue PR's own run instead of a fresh one.
 #
 # EXIT 75 IS NOT A BRANCH FAILURE. testenv-batch exits 2 when the container never
 # came up and 3 when the install inside it failed. In both cases the branch was
@@ -82,6 +83,11 @@ on:
         description: 'Comma-separated suite list (bypasses diff/full-corpus selection)'
         required: false
         default: ''
+      cut:
+        description: 'Cut a release from this ref (must already hold a green gate check)'
+        type: boolean
+        required: false
+        default: false
 
 # A superseded pull-request run is cancelled; a push to the base branch is never
 # cancelled, because a cancelled push is never gated — and the next cut then carries
@@ -134,6 +140,12 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] \
              && [ -n "${{ inputs.suites }}" ]; then
             _s="${{ inputs.suites }}"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+             && [ "${{ inputs.cut }}" = "true" ]; then
+            # A cut dispatch asks the cut job to check history, not to re-test it:
+            # the ref it names must already hold a green gate check (cut job's own
+            # "Assert gate check" step). Nothing to provision or build for that.
+            _s=""
           elif [ "${{ github.event_name }}" = "pull_request" ] \
              && printf '%s' "${{ github.head_ref }}" | grep -qE '^spira/queue/'; then
             _base="${{ github.event.pull_request.base.sha }}"
@@ -636,7 +648,9 @@ jobs:
           vm-token:           ${{ needs.provision.outputs.vm-token }}
 
   # ---------------------------------------------------------------------------
-  # Cut the release unit. Only from the base branch, only from a gate that passed.
+  # Cut the release unit. A release is asked for, not merged into existence: only
+  # an explicit workflow_dispatch naming cut: true against main reaches this job.
+  # A push to main runs the gate and nothing that tags.
   #
   # ON A HOSTED RUNNER, not the provisioned one: this needs git and release.sh and
   # nothing else, and holding a machine open for it would keep a virtual machine
@@ -645,9 +659,9 @@ jobs:
   cut:
     needs: gate
     # EXPLICIT STATUS FUNCTION (sp-7k4qh). A bare condition gets an implicit success() that
-    # spans every ancestor, and push-to-main skips build/provision/suites (sp-m870j), so a bare
-    # `if` here skipped every cut from 2026-09-27 06:51Z: no release, no acceptance.
-    if: ${{ !cancelled() && needs.gate.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    # spans every ancestor, and a cut dispatch selects no suites and skips build/provision/
+    # suites, so a bare `if` here would skip every cut just as a bare push-triggered one did.
+    if: ${{ !cancelled() && needs.gate.result == 'success' && github.event_name == 'workflow_dispatch' && inputs.cut == true && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -673,11 +687,11 @@ jobs:
       - name: Assert gate check
         # Assert a green gate check on this SHA, and that it belongs to a queue
         # batch PR (spira/queue/*) whose OWN gate run tested a non-empty suite
-        # list. Push no longer runs any suites (select's push branch selects
-        # nothing, above), so the positive control has to come from the run
-        # that actually tested this SHA — the queue PR's pull_request run, not
-        # this push's. A gate that ran zero suites would otherwise report green
-        # and cut a release from nothing (law-absence-needs-a-positive-control).
+        # list. A cut dispatch selects no suites of its own (above), so the
+        # positive control has to come from the run that actually tested this
+        # SHA — the queue PR's pull_request run, not this dispatch's. A gate
+        # that ran zero suites would otherwise report green and cut a release
+        # from nothing (law-absence-needs-a-positive-control).
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

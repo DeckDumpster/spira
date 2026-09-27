@@ -204,4 +204,30 @@ else
 fi
 
 # ============================================================================
+echo
+echo "11. release.sh's --dispatch is the one way to ask gate.yml for a release; a push cannot"
+# ============================================================================
+
+RELEASE_SH="$HERE/release.sh"
+if [ -r "$RELEASE_SH" ]; then
+    ok "release.sh exists"
+    R="$(cat "$RELEASE_SH")"
+    want "release.sh supports --dispatch"                "--dispatch"          "$R"
+    want "--dispatch fires gate.yml's workflow_dispatch"  "workflow run gate.yml" "$R"
+    want "--dispatch asks for a cut"                      "-f cut=true"         "$R"
+else
+    bad "release.sh exists" "not found at $RELEASE_SH"
+fi
+
+_cut_if="$(awk '/^  cut:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f&&/^    if:/{sub(/^    if: */,"");print;exit}' "$GATE_WORKFLOW")"
+if [ -z "$_cut_if" ]; then
+    bad "gate.yml cut job's if: condition was located (positive control)" "awk extracted nothing; assertions below would be vacuous"
+else
+    ok "gate.yml cut job's if: condition was located"
+fi
+want   "cut requires an explicit workflow_dispatch"                     "github.event_name == 'workflow_dispatch'" "$_cut_if"
+want   "cut requires the cut input to be true"                         "inputs.cut == true"                        "$_cut_if"
+nowant "a push event cannot reach gate.yml's cut job (must fail pre-fix)" "github.event_name == 'push'"             "$_cut_if"
+
+# ============================================================================
 tl_summary
