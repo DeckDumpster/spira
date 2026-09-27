@@ -363,21 +363,29 @@ Two suites remain, and both are KEEP, not MERGE or DELETE:
   original integration tier, is now the *sole* coverage of a live mechanism, not a duplicate of
   anything: keeping it is load-bearing, and the T1 gap is filed separately (sp-q1xwz) rather
   than patched here, since restoring it is new test-writing, not a triage verdict.
-- **test-landing-gate-wait.sh: KEEP, deferred.** test-landing-gate-fits.sh's own header names
-  it as what that T1 suite replaces, which would make this a DELETE — except test-landing-gate-
-  fits.sh is itself queued for deletion (sp-tey33, flipped in round 80, law-a-test-that-flips-
-  is-deleted). Deleting the integration suite now on the strength of a T1 replacement that is
-  about to be deleted would leave UC-05/UC-09 (`gate_fits`/`gate_lock_wait`) with zero coverage
-  the moment sp-tey33 lands. Re-decide once sp-tey33 resolves (a deterministic gate-fits fix
-  landing alongside it would make this a clean DELETE then).
+- **test-landing-gate-wait.sh: KEEP.** test-landing-gate-fits.sh's own header names it as what
+  that T1 suite replaces, which would make this a DELETE — except test-landing-gate-fits.sh was
+  itself queued for deletion (sp-tey33, flipped in round 80, law-a-test-that-flips-is-deleted),
+  and no deterministic fix landed alongside that deletion (see sp-tey33 below). So this is a
+  clean KEEP, not a deferral: test-landing-gate-wait.sh is now the *sole* coverage of UC-05/UC-09
+  (`gate_fits`/`gate_lock_wait`).
 
 Suite-second delta from this bead: **0s.** Nothing here was merged or deleted; the delta section
 7 projected for this predicate was already realized by sp-vsob2's deletions above, not by this
 pass.
+
+**sp-tey33 (2026-09-27):** test-landing-gate-fits.sh deleted per law-a-test-that-flips-is-deleted
+(flipped in Concierge round 80: red in the full-corpus round, green on origin/main and on
+every member alone — sp-21xzc root-caused it to a single `now="$(date +%s)"` capture racing
+the subject's own re-read of the clock, which is not an exemption). UC-05 and UC-09's T1
+coverage goes with it; both use cases remain covered at integration tier by
+test-landing-gate-wait.sh, resolving sp-lxoyd's deferral above. A bead against sp-21xzc's
+mechanism may re-add a T1 suite once the subject and its assertions read the same instant.
 
 - sp-s088v.14 — landed: verdict.sh + attribution merge and T1 classifier extraction (UC 43-49)
 - sp-s088v.15 — landed: landing core: embedded-testdb flip (server-Dolt pin) + merges (UC 01-26)
 - sp-s088v.16 — landed: queue-ops + batch-reconcile merges (UC 27-33, 34-42), gaps G5-G8
 - sp-s088v.17 — landed: forge/broker contract tests + rust `#[test]`s (UC 51-57), gaps G1/G11
 - sp-s088v.18 — open: verdict-timer dedup, remaining gaps G3/G4/G9/G10/G12/G13/G14
-- sp-lxoyd — landed: re-triage above (KEEP test-batch-stuck.sh, KEEP-deferred test-landing-gate-wait.sh)
+- sp-lxoyd — landed: re-triage above (KEEP test-batch-stuck.sh, KEEP test-landing-gate-wait.sh)
+- sp-tey33 — landed: test-landing-gate-fits.sh deleted (law-a-test-that-flips-is-deleted)
