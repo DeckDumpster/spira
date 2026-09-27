@@ -115,7 +115,7 @@ fn classify(path: &Path, shell_files: &mut Vec<PathBuf>, brief_files: &mut Vec<P
         shell_files.push(path.to_path_buf());
         return;
     }
-    if path.extension().and_then(|e| e.to_str()) == Some("md") {
+    if matches!(path.extension().and_then(|e| e.to_str()), Some("md") | Some("fayth")) {
         brief_files.push(path.to_path_buf());
         return;
     }

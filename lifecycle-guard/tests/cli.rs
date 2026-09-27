@@ -109,6 +109,12 @@ fn brief_naming_bd_is_reported() {
 }
 
 #[test]
+fn fayth_naming_bd_is_reported() {
+    let findings = run("fayth_bd", None);
+    assert_eq!(classes(&findings), vec!["brief-bd"]);
+}
+
+#[test]
 fn exit_code_is_nonzero_iff_findings_exist() {
     let clean = Command::new(env!("CARGO_BIN_EXE_lifecycle-guard"))
         .arg(fixture("clean"))

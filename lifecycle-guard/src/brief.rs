@@ -1,11 +1,10 @@
 use crate::finding::{Class, Finding};
 use std::path::{Path, PathBuf};
 
-/// Personas and other operator-facing prose are `.md` files (see this repo's own CLAUDE.md:
-/// "a `# covers:` glob outranks a file's extension ... the personas are `.md` files"). Naming
-/// `bd` there teaches an aeon to reach for the tool bd itself was told loses lifecycle
-/// authority, so every whole-word mention is a finding — this file is not the one place that
-/// gets to decide it still knows better.
+/// Personas are `.md` briefs and `.fayth` definitions. Naming `bd` in either teaches an aeon
+/// to reach for the tool bd itself was told loses lifecycle authority, so every whole-word
+/// mention is a finding — this file is not the one place that gets to decide it still knows
+/// better.
 pub fn scan(files: &[PathBuf], root: &Path) -> Vec<Finding> {
     let mut findings = Vec::new();
     for path in files {
