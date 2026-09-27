@@ -18,7 +18,7 @@ This area turns a closed bead's branch into a commit on its repository's base br
 
 It reopens a bead only for a failure it can attribute to that branch: a gate fail on the branch, or a real conflict naming the file. It holds branches, and files one incident, when the base itself is red. It escalates instead of looping.
 
-`batch.sh` builds certified branches into one batch PR when a trigger fires. The triggers are: the count reaches max, the oldest branch has waited long enough, CI is idle, or a bead carries the express label. Before it builds, it reconciles the landstate (already-in-base, orphan, stale certification, base conflict). `verdict.sh` then settles the batch against forge CI:
+`batch.sh` reconciles the landstate every pass (already-in-base, orphan, stale certification, stale gate-key, the queue-stuck alert) and abandons an open batch PR the forge reports DIRTY; the batcher-cut binary (sp-vsob2, superseding batch.sh's own trigger/build/PR-open and the CI-bisect fallback it forced a cut to) then cuts the round itself — trigger, membership, a full local corpus run before the PR, and a filed judgement bead on a double-red — in place of the count/wait/idle/express predicate and the local-gate-then-eject loop this section used to describe. `verdict.sh` then settles the batch against forge CI:
 
 - **green on the same base:** it fast-forwards the base and marks the members `LANDED`
 - **base moved or head SHA changed:** it requeues the members
@@ -83,16 +83,16 @@ Each use case is declared once, as the schema in docs/test-plan/README.md requir
 * `UC-landing-merge-queue-32` [T1] — `queue.sh protect` sets branch protection on the repo's base branch and writes a receipt. Doctor warns on a queue repo that has no receipt and is silent for push mode. *(dim: obs, cfg; where: cert)*
 * `UC-landing-merge-queue-33` [T1] — `queue.sh stats` reports the local red rate, the batch and member counts, cost, and caught/escaped counts from the meter lines. *(dim: obs; where: cert)*
 
-### D. Batch assembly (batch.sh)
+### D. Batch assembly (batch.sh sweep + the batcher-cut binary)
 
-* `UC-landing-merge-queue-34` [T1] — A batch is cut when any trigger fires: count ≥ `BATCH_MAX`, the oldest branch has waited ≥ `BATCH_WAIT`, CI is idle (`runs-active` = 0, with idle-cut on), or a member carries `SPIRA_EXPRESS_LABEL`. `?` and non-numeric answers count as busy. Otherwise the batcher waits. *(tier: T1, a predicate table; dim: corr, fc, cfg; where: cert)*
-* `UC-landing-merge-queue-35` [T2] — An open batch record, a held flock, or an unrecorded open `spira/queue/*` PR prevents a second batch. The operator is mailed once. *(dim: conc, idem; where: cert)*
+* `UC-landing-merge-queue-34` — RETIRED (sp-vsob2). The count/wait/idle/express predicate table was batch.sh's own trigger; the batcher crate's `should_cut` replaces it with an adaptive pool size and an idle-since-last-arrival check, plus main-red and express stacking onto an open PR. Covered by `batcher/src/core/tests.rs` (replay) and `spira/test-batcher-cut.sh` (wiring), not this file.
+* `UC-landing-merge-queue-35` [T2] — An open batch record or a held flock prevents a second batch; batch.sh's own DIRTY-PR check (UC-36) still runs against it every pass. *(dim: conc, idem; where: cert)* The unrecorded-open-`spira/queue/*`-PR mail this UC used to include was part of batch.sh's own PR-open tail and was retired with it (sp-vsob2) — nothing currently detects that race.
 * `UC-landing-merge-queue-36` [T2] — An open batch PR reported DIRTY is abandoned: the PR is closed, the record removed, BATCHED members return to `CERTIFIED`, `RED` stays `RED`, and the operator is mailed. A CLEAN PR is left alone. *(dim: rec, obs; where: batch)*
 * `UC-landing-merge-queue-37` [T1] — Before a batch, and even while one is open, landstate is reconciled: tip in base → `LANDED`; branch gone → `LANDED` if its tip is in base or it appears in reap.log, else `LOST`, never a member, with mail; a branch advanced after certification → a stale-certification log with both SHAs, and `LANDED` only when the live tip equals base; a closed bead with `RED`/`EJECTED` and a live branch → closed-red-live mail. Landstate records without a trailing newline are read. *(tier: T1 for the classifier, plus T2 for one git repo; dim: corr, rec, obs; where: cert)*
-* `UC-landing-merge-queue-38` [T2] — Only a declared (`landed as` / `hand-landed`) or named citation that is an ancestor of base counts as landing evidence. A bare SHA does not. A base-conflicting branch without a valid citation, or with unlanded extra commits, is reopened, keeps its branch, and is stamped merge-conflict with the conflicting file named. Base movement without overlap rebases and batches. *(tier: T2, git + stub notes; dim: fc, rec; where: cert)*
-* `UC-landing-merge-queue-39` [T2] — Members are ordered with suite-state transitions first. A member that conflicts with an earlier member is skipped and stays `CERTIFIED`. *(dim: corr; where: cert)*
-* `UC-landing-merge-queue-40` [T2] — The local gate runs once on the combined tree, or is skipped with a log line when `SPIRA_QUEUE_LOCAL_GATE=0`. On red with a reproducing member, that member is ejected (`EJECTED`, QUEUE CAUGHT, PR comment) and the batch is rebuilt and gated again. On red with no reproducer, the PR still opens. A meter line is always written. *(dim: corr, obs; where: batch)*
-* `UC-landing-merge-queue-41` [T1] — The PR body lists `id — title`, or `(title unavailable)`. The title says `beads for <repo>`. A declared formatter adds a format commit on the batch branch only, and a formatter failure never blocks the PR. *(tier: T1 for `format_batch`, plus T2 for the rest; dim: obs; where: cert)*
+* `UC-landing-merge-queue-38` — RETIRED (sp-vsob2). The citation-aware conflict handling (declared/named citation, an automatic rebase attempt before reopening) was part of batch.sh's own member-merge loop. The batcher's own conflict handling (section F) is simpler by design: a member whose tip conflicts with base is reopened for rebase directly, with no citation check and no automatic rebase attempt of its own — see `batcher/src/core.rs`'s `stale_retry_due` and `spira/test-batcher-cut.sh` case C. `bead_cited_commit_on_base` itself is not retired — aeon.sh still uses it — and its own unit cases stay in `test-batch-cited-commit.sh`.
+* `UC-landing-merge-queue-39` — RETIRED (sp-vsob2). Member ordering (suite-state transitions first) was `queue_sort_rows`, called from batch.sh's own build step. The batcher orders by its own `order_key` (`batcher/src/core.rs`) instead.
+* `UC-landing-merge-queue-40` — RETIRED (sp-vsob2). `SPIRA_QUEUE_LOCAL_GATE` and the fast-suites-only local gate it toggled are gone: the batcher's own round already runs the full corpus locally before opening a PR (a superset of what this gate covered), and a red with no reproducing member is not blindly opened — it is classified (flip on rerun vs. double-red) and, on a double-red, filed for the summoned batcher persona's judgement (sp-47kq1) rather than ejected by reproduction. See `batcher/src/core.rs`'s `classify`/`judgement_for` and `spira/test-batcher-cut.sh` case B.
+* `UC-landing-merge-queue-41` [T1] — The PR body lists `id — title`, or `(title unavailable)`. The title says `beads for <repo>`. *(tier: T1 for the rest; dim: obs; where: cert)* `format_batch` (a declared formatter adds a format commit on the batch branch only, and a formatter failure never blocks the PR) is no longer applied to the batcher's own automatic batches — it survives only as a primitive `queue.sh open-batch` (the hand tool) still calls.
 * `UC-landing-merge-queue-42` [T1] — A queue with no BATCHED/LANDED movement for longer than `SPIRA_QUEUE_STUCK_AGE` mails once and sets a flag. The flag clears when movement resumes, and the alert fires again on a new stall. Depth alone never alerts. A queue with no history is skipped, with a log line. *(dim: obs, idem; where: cert)*
 
 ### E. Verdict and red attribution (verdict.sh)
@@ -211,7 +211,7 @@ The **ci_secs** column is per file, from signals.tsv. Where one file covers seve
 | Idle-skip decision and tip-move invalidation | landing.sh certification path | test-certify (79 s, and order-dependent) | Extract `certify_needs_gate <landstate> <tip> <runs-active> <certified-count>`. |
 | Base-fix selection and budget exemption | landing.sh `_basefail_fix_check` + selection loop | test-landing-basefail-fix (57 s, 11 worktrees × 4) | A sort key function over bead JSON (`external_ref`). |
 | Verdict-cache TTL prune | landing.sh | test-landing (249 s pass) | Extract `verdict_cache_prune <dir> <ttl>`. |
-| Batch trigger (max/wait/idle/express) | batch.sh:394–447 inside `main` | test-batch 1–2, test-batch-express, test-batch-idle-cut (≈9 batch.sh runs on testdb) | batch.sh ends in a bare `main "$@"` (line 827) with no source guard. Add `[[ ${BASH_SOURCE[0]} == "$0" ]] && main "$@"` and extract `batch_should_cut <count> <age> <runs-active> <prio_json>`. *(Done by sp-ulr4e: source guard added; the predicate is three functions — `batch_cut_reason_cheap`, `batch_cut_idle`, `batch_cut_express` — to preserve the "ask the forge/bd last, only when it can change the answer" short-circuit the original inline code depended on.)* |
+| Batch trigger (max/wait/idle/express) | RETIRED (sp-vsob2) — see UC-34. `batch_cut_reason_cheap`/`batch_cut_idle`/`batch_cut_express` and their T1 suites (test-batch-trigger, test-batch-idle-cut, test-batch-express) are deleted; the batcher's `should_cut` replaces the predicate. | — | — |
 | Stuck-queue check | batch.sh:~355–391 | test-batch-stuck (16 s, 8 batch.sh runs with worktrees) | Extract `queue_last_moved <landstate-dir>` and the flag/threshold function, then plant files. *(Done by sp-ulr4e: `queue_last_moved` and `queue_stuck_action`.)* |
 | Landstate reconciliation (in-base, orphan, reaped, stale-cert, closed-red-live) | batch.sh `_certified_orphans`, `_closed_red_live`, reconcile loop | 5 files, each with testdb + 2 repos | Same source guard. Take `bead_status` as an injectable function so bd is not needed. |
 | `format_batch` PR body | batch.sh:23 | test-batch j, k | Source guard. It is already a function. |
@@ -333,6 +333,14 @@ Measured in testenv (isolated `testenv-batch.sh` runs against this branch):
 Nothing existing was demoted or deleted in this slice, so there is no "before" figure for
 it beyond the projection in section 7 — that reduction is unlocked by the re-triage noted
 above, not by this commit.
+
+**sp-vsob2 (2026-09-27):** the mechanism UC-34's predicate table described is retired —
+batch.sh no longer cuts a round at all, the batcher crate does (see section D above) — so
+the re-triage sp-lxoyd names no longer applies to that predicate. `test-batch-trigger.sh`,
+`test-batch-express.sh`, `test-batch-idle-cut.sh`, `test-batch-nocut-reason.sh`,
+`test-batch-bisect-expiry.sh` and `test-batch-conflict.sh` are deleted outright, not
+merged; their properties either have no successor (the predicate and the CI-idle trigger
+are gone by design) or are now `batcher/src/core/tests.rs` and `test-batcher-cut.sh`'s.
 
 - sp-s088v.14 — landed: verdict.sh + attribution merge and T1 classifier extraction (UC 43-49)
 - sp-s088v.15 — landed: landing core: embedded-testdb flip (server-Dolt pin) + merges (UC 01-26)

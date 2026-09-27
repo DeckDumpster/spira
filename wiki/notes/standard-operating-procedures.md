@@ -599,7 +599,7 @@ WATCHER NOTE: watchtower.sh --throttle-check fires "deep+stalled" incident while
 
 **Escalate** — none — this is an Ops incident with operator decision documented 2026-09-17 20:11. Solution implemented as sp-hrkwa and landed.
 
-**Reference** — docs/sp-hsxk8-sop.md
+**Reference** — docs/sp-hsxk8-sop.md. `SPIRA_QUEUE_LOCAL_GATE` itself is retired (sp-vsob2): the batcher's own full-corpus round subsumes it, so this symptom cannot recur.
 
 **Matches** `(landing loop|batch.*gate.*mutex|landing pass.*freeze.*gate)`
 

@@ -1,24 +1,28 @@
 #!/usr/bin/env bash
 #
 # test-batch-red-main.sh — main's own push-gate state carries no back pressure on
-#   the merge queue: neither the CUT (batch.sh) nor the LANDING fast-forward
-#   (verdict.sh) ever holds on it, whatever it reads.
+#   the merge queue: the LANDING fast-forward (verdict.sh) never holds on it,
+#   whatever it reads.
 #
 # THE PROPERTY UNDER TEST (sp-x54re, superseding sp-221n8/sp-wmn0w). The queue's
 # only back pressure is whether a batch PR is open for the repo — not the state of
-# a gate that tested a different tree than the one about to cut or land. Detecting
-# a red main is still wanted (czar-pass's base-red stage, sp-tb5jp), but doing it
-# HERE duplicated that detection as a rejection (law-detection-outranks-rejection),
-# so both holds are gone along with the forge.sh verb they read: main-gate-status no
-# longer exists, and neither batch.sh nor verdict.sh calls the forge at all for this.
+# a gate that tested a different tree than the one about to land. Detecting a red
+# main is still wanted (czar-pass's base-red stage, sp-tb5jp), but doing it HERE
+# duplicated that detection as a rejection (law-detection-outranks-rejection), so
+# this hold is gone along with the forge.sh verb it read: main-gate-status no
+# longer exists, and verdict.sh does not call the forge at all for this.
 #
-# SEEN HELD WITHOUT THE FIX. Against the pre-sp-x54re batch.sh/verdict.sh, every
-# "no HOLD" and "never asked the forge" assertion below fails: red or unknown holds
-# the cut, and red, unknown or pending holds the landing fast-forward
-# (law-a-regression-test-must-be-seen-to-fail).
+# The matching CUT-side case (batch.sh never held on main's gate state either) was
+# retired with batch.sh's own cut (sp-vsob2): the batcher crate cuts now, and its
+# own trigger has no main-gate-status input to hold on in the first place — there
+# is nothing left to regress back to.
+#
+# SEEN HELD WITHOUT THE FIX. Against the pre-sp-x54re verdict.sh, every "no HOLD"
+# and "never asked the forge" assertion below fails: red, unknown or pending holds
+# the landing fast-forward (law-a-regression-test-must-be-seen-to-fail).
 #
 # tier: T2
-# covers: spira/batch.sh spira/verdict.sh spira/forge.sh spira/conf.sh
+# covers: spira/verdict.sh spira/forge.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -84,23 +88,6 @@ FORGE
 chmod +x "$SH/forge-fixture.sh"
 export CALL_LOG
 
-# BATCH_MAX and BATCH_WAIT are huge; express is the only ordinary trigger allowed to
-# fire, so every cut case here is testing what main's gate state does (nothing) to a
-# batch that has already been triggered.
-batch() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_QUEUE_DIR="$QUEUEDIR" \
-    SPIRA_QUEUE_BATCH_MAX=99 \
-    SPIRA_QUEUE_BATCH_WAIT=999999 \
-    SPIRA_QUEUE_BATCH_IDLE_CUT=0 \
-    SPIRA_EXPRESS_LABEL=express \
-    FIXTURE_GATE_STATUS="${GATE_STATUS:-green deadbeef}" \
-    SPIRA_FORGE="$SH/forge-fixture.sh" \
-        bash "$SH/batch.sh" "$@" 2>&1
-}
-
 # verdict() drives the LANDING half (verdict.sh) against whatever batch is
 # currently open — built by build_batch below. FIXTURE_CHECK_STATUS is pinned to
 # green: these cases test only what main's gate state (FIXTURE_GATE_STATUS) does
@@ -134,7 +121,6 @@ git -C "$REPO" add plain1.txt && git -C "$REPO" commit -q -m "sp-plain1: work"
 tip_p="$(git -C "$REPO" rev-parse spira/sp-plain1)"
 git -C "$REPO" checkout -q main
 
-certify_plain() { printf 'CERTIFIED %s %s' "$tip_p" "$NOW" > "$LANDSTATE/sp-plain1"; }
 clear_batch()   { rm -f "$QUEUEDIR/$REPONAME/open"; : > "$FORGE_LOG"; }
 landing_log()   { cat "$RUN/landing.log" 2>/dev/null; }
 clear_log()     { : > "$RUN/landing.log"; }
@@ -174,18 +160,6 @@ build_batch() {
 }
 
 echo "test-batch-red-main.sh"
-
-# =============================================================================
-# CUT (batch.sh): no gate state ever holds it.
-# =============================================================================
-for status in 'green deadbeef' 'pending abc123' 'red badc0de' 'unknown'; do
-    certify_plain; clear_batch; clear_log; clear_calls
-    out="$(GATE_STATUS="$status" batch "$REPONAME")"
-    is     "cut [$status]: batch opened"           "1" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
-    is     "cut [$status]: landstate BATCHED"      "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-plain1")"
-    nowant "cut [$status]: no HOLD in landing.log" "QUEUE HOLD"      "$(landing_log)"
-    nowant "cut [$status]: forge never asked about main's gate" "main-gate-status" "$(cat "$CALL_LOG")"
-done
 
 # =============================================================================
 # LANDING (verdict.sh): no gate state ever holds the fast-forward.
