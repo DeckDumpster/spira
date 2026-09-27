@@ -13,7 +13,9 @@
 #      with certified work still waiting is a GAP — but not yet inside its grace period.
 #   3. The same gap, still open on the next pass past its grace period, is confirmed
 #      (is_gap) and alerts the Concierge mailbox — the only action a flow gap ever gets,
-#      since it has no deterministic remedy.
+#      since it has no deterministic remedy. Once confirmed, the same unresolved streak
+#      does not alert again on the following pass — deduplicated per gap, not per pass
+#      (reconciler_engine::alert::should_alert, law-repeating-conditions-escalate-once).
 #   4. A velocity floor from the desired-state document fires even when the trailing
 #      baseline ratio alone would not.
 #   5. Backlog trend: growth well past the trailing baseline is a gap; ordinary variance
@@ -233,8 +235,13 @@ echo "3. The same gap, past its grace period, is confirmed and alerts the Concie
 sleep 3
 run_pass
 is  "the gap is confirmed on the next pass past grace" True "$(status_of flow:velocity:queue is_gap)"
-[ "$(mail_count)" -ge 1 ] && ok "the Concierge was alerted" || bad "the Concierge was alerted" "mail_count=$(mail_count)"
+is  "exactly one alert fired for the first confirmed pass" "1" "$(mail_count)"
 want "the alert names the gap" "flow:velocity:queue" "$(cat "$MAIL_LOG")"
+
+echo "the same unresolved streak does not alert again on the next pass"
+run_pass
+is  "still confirmed as a gap" True "$(status_of flow:velocity:queue is_gap)"
+is  "no additional alert for the same streak" "1" "$(mail_count)"
 
 # ============================================================================
 echo

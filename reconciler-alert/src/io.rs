@@ -3,28 +3,12 @@
 //! `mail.sh`. Every function here does exactly one read, one write or one subprocess call —
 //! the dedup and classification logic lives in `reconciler_engine::alert`, not here.
 
-use std::collections::BTreeMap;
-use std::fs;
 use std::io::Write;
-use std::path::Path;
 use std::process::{Command, Stdio};
 
-pub type AlertedSinceMap = BTreeMap<String, u64>;
-
-/// A missing or unparsable file is "nothing alerted yet" — the same fail-safe reading
-/// `reconciler_engine::io::load_state` gives HysteresisState: it can only cost one
-/// redundant alert, never suppress one that was owed.
-pub fn load_alerted(path: &Path) -> AlertedSinceMap {
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
-}
-
-pub fn save_alerted(path: &Path, state: &AlertedSinceMap) -> std::io::Result<()> {
-    let json = serde_json::to_string_pretty(state).unwrap_or_else(|_| "{}".to_string());
-    fs::write(path, json)
-}
+// Persistence for which streak each invariant last alerted for lives in reconciler-engine::io
+// now — reconciler-flow shares the exact same file format instead of a second copy of it.
+pub use reconciler_engine::io::{load_alerted, save_alerted, AlertedSinceMap};
 
 /// True if `concierge.sh status` reports a live session — false for "not running" AND for
 /// "cannot tell" (concierge.sh missing, or the call itself failed): either way there is
