@@ -1,0 +1,22 @@
+# Workspace-wide clippy config. clippy resolves this by walking up from the crate being
+# built, stopping at the first file it finds — so the lifecycle crate (once it exists) lifts
+# this locally with a clippy.toml of its own next to its Cargo.toml, and every other crate
+# keeps inheriting this one. That split is the enforcement: only the lifecycle crate may ever
+# hold a connection to spira_lifecycle: see the lifecycle-guard crate for the shell-side half
+# of the same rule.
+disallowed-methods = [
+    { path = "sqlx::query", reason = "raw SQL against spira_lifecycle must go through the lifecycle crate" },
+    { path = "sqlx::query_as", reason = "raw SQL against spira_lifecycle must go through the lifecycle crate" },
+    { path = "sqlx::query_scalar", reason = "raw SQL against spira_lifecycle must go through the lifecycle crate" },
+    { path = "sqlx::raw_sql", reason = "raw SQL against spira_lifecycle must go through the lifecycle crate" },
+    { path = "diesel::sql_query", reason = "raw SQL against spira_lifecycle must go through the lifecycle crate" },
+    { path = "diesel::connection::SimpleConnection::batch_execute", reason = "raw SQL against spira_lifecycle must go through the lifecycle crate" },
+    { path = "rusqlite::Connection::execute", reason = "raw SQL against spira_lifecycle must go through the lifecycle crate" },
+    { path = "rusqlite::Connection::execute_batch", reason = "raw SQL against spira_lifecycle must go through the lifecycle crate" },
+    { path = "rusqlite::Connection::query_row", reason = "raw SQL against spira_lifecycle must go through the lifecycle crate" },
+    { path = "tokio_postgres::Client::query", reason = "raw SQL against spira_lifecycle must go through the lifecycle crate" },
+    { path = "tokio_postgres::Client::execute", reason = "raw SQL against spira_lifecycle must go through the lifecycle crate" },
+    { path = "tokio_postgres::Client::batch_execute", reason = "raw SQL against spira_lifecycle must go through the lifecycle crate" },
+    { path = "mysql::Conn::query", reason = "raw SQL against spira_lifecycle must go through the lifecycle crate" },
+    { path = "mysql::Conn::query_iter", reason = "raw SQL against spira_lifecycle must go through the lifecycle crate" },
+]
