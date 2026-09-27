@@ -2800,6 +2800,26 @@ print("SP_MAIL_N=%d" % min(len(rows), 5))
 PY
 }
 
+# Sending metrics (SP_SENT/SP_SENT_HELD/SP_SENT_KEPT/SP_SENT_FAILED/SP_SENT_FAILED_AGE_M,
+# plus the sentinel/ledger/self families cockpit-metrics.py already computes) — the
+# script existed and was tested by five suites, but nothing in production called it, so
+# every one of its keys read '?' forever (sp-4doni). Same pattern as the missing `queue`
+# arm above: the function was real, the seam to invoke it in production was not.
+sending_keys() {
+    python3 "$HERE/cockpit-metrics.py" \
+        "$SPIRA_RUN/sentinel.log" "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null || {
+        # The script itself already turns internal failures into per-key '?' — this
+        # only covers it not running at all (missing python3, bad path).
+        for k in SP_SENT SP_SENT_HELD SP_SENT_KEPT SP_SENT_FAILED SP_SENT_FAILED_AGE_M \
+                 SP_PASSES SP_ACTS SP_FALSE_ACTS SP_FALSE_PER_PASS SP_SINCE_JUDGEMENT \
+                 SP_STARVED_PASSES SP_AEON_BORN SP_AEON_LIVED SP_AEON_STILLBORN \
+                 SP_AEON_WORKED SP_AEON_THRASH SP_SELF_REPEATING_N SP_SELF_STILLBORN_W \
+                 SP_SELF_STILLBORN_LAST SP_SELF_STARVED_W SP_SELF_STARVED_LAST; do
+            echo "$k=?"
+        done
+    }
+}
+
 # Sourced (BASH_SOURCE[0] != $0) skips dispatch entirely — the seam test-cockpit.sh uses
 # to call cockpit_may_write and _loop_guard directly, without a full `once`/`loop` run.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
@@ -2926,7 +2946,11 @@ mail)
 czar_triggers)
     czar_triggers_keys
     ;;
-*) echo "usage: cockpit.sh [once|loop|history|now|core|core_detail|unsent|strands|sops|ratelim|reachable|sphere|repo_labels|livelock|dup_refs|statute|mail|czar_triggers]" >&2
+# The Sending family (SP_SENT*) plus sentinel/ledger/self metrics from cockpit-metrics.py.
+sending)
+    sending_keys
+    ;;
+*) echo "usage: cockpit.sh [once|loop|history|now|core|core_detail|unsent|strands|sops|ratelim|reachable|sphere|repo_labels|livelock|dup_refs|statute|mail|czar_triggers|sending]" >&2
    echo "  (no args: collect once then attach to the concierge; SPIRA_COCKPIT_NO_ATTACH=1 skips the attach)" >&2
    exit 1 ;;
 esac
