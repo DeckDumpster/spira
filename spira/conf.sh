@@ -340,9 +340,13 @@ spira_toml_read() {
         # file's own convention that every key it honours is SPIRA_-prefixed except the
         # COCKPIT_* ones already spelled that way in spira.conf. Renamed here, once, rather
         # than teach spira-config a naming exception that belongs to this file alone.
-        case "$key" in
-            COCKPIT_*) ;;
-            *) key="SPIRA_$key" ;;
+        #
+        # MEMBERSHIP IN SPIRA_CONF_KEYS, NOT A `COCKPIT_*` WILDCARD: a prefix match would
+        # mis-restore SPIRA_COCKPIT_TRACE_LINES — a SPIRA_-prefixed key whose remainder
+        # itself starts with COCKPIT_ — to the bare COCKPIT_TRACE_LINES, a key nothing reads
+        # (law-a-pattern-match-is-not-an-identity-check).
+        case "$SPIRA_CONF_KEYS" in
+            *" SPIRA_$key "*) key="SPIRA_$key" ;;
         esac
         # THE ENVIRONMENT WINS — the same rule the old KEY=value reader enforced, kept because a
         # config file that could override a test's own SPIRA_DB would point the suite at
