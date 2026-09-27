@@ -1937,9 +1937,8 @@ fayths_for_labels() {    # fayths_for_labels <labels> -> personas whose partitio
 # least.
 # world_gate <fayth> <log-prefix> -> 0 if summons are permitted, 1 if halted or draining.
 # Extracted so a second caller can share the exact check rather than a second copy of it.
-# escape.sh does NOT call this today — it is the "the scheduler is broken, reach around it"
-# hatch, and whether a halt or drain should still bind it is an open decision (sp-6rv05);
-# escape.sh's own characterization test asserts today's bypass, unchanged.
+# escape.sh calls this too (sp-uyw4n, sp-2w2wu): it reaches around a broken scheduler, not
+# around a halt or drain the operator asked for.
 #
 # HALTED — world.sh stop writes this stamp; only world.sh start removes it. Checked before
 # drain: halt is indefinite and requires explicit operator action.

@@ -27,10 +27,8 @@
 #   G7 — governor withholding: MOOT. spira/governor.sh was deleted from main (sp-8mzsh)
 #        before this suite was written, and neither fayth_free nor summon_fayth carries
 #        a governor hook left to test against — there is nothing to write a row for.
-#   G8 — escape.sh and world.halted: a CHARACTERIZATION row of current behaviour
-#        (escape.sh bypasses the halt gate) per sp-6rv05's stated default. That decision
-#        bead is still open; if it resolves the other way, the fix belongs to escape.sh
-#        itself and this row becomes the regression test for it.
+#   G8 — escape.sh and world.halted/world.draining: escape.sh now calls world_gate, the
+#        same refusal summon_fayth uses (sp-uyw4n settled the question; sp-2w2wu wired it).
 #
 # POSITIVE CONTROLS BEFORE EACH REFUSAL (law-absence-needs-a-positive-control).
 #
@@ -597,24 +595,46 @@ echo "G7 — governor withholding: MOOT, spira/governor.sh no longer exists (sp-
 
 # ======================================================================================
 echo
-echo "G8 — escape.sh ignores world.halted (characterization of current behaviour; sp-6rv05 open)"
+echo "G8 — escape.sh honours world_gate: a halt or live drain refuses the escape summon too (sp-uyw4n, sp-2w2wu)"
 # ======================================================================================
 MOCK_READY_stretchy=1
 touch "$T/run/fake-ready"
+
+# POSITIVE CONTROL: with no halt or drain stamp, escape.sh still summons.
+rm -f "$HALT_STAMP" "$T/run/world.draining" "$SUMMONED"
+bash "$HERE/escape.sh" stretchy 2>/dev/null || true
+is "G8 positive control: no halt/drain, escape.sh summons" \
+   "SUMMONED:stretchy" "$(cat "$SUMMONED" 2>/dev/null)"
+
 : > "$HALT_STAMP"
 rm -f "$SUMMONED"
-bash "$HERE/escape.sh" stretchy 2>/dev/null || true
-want "G8: escape.sh summons even with world.halted present" "SUMMONED:stretchy" "$(cat "$SUMMONED" 2>/dev/null)"
+out="$(bash "$HERE/escape.sh" stretchy 2>&1)"; rc=$?
+is "G8: halted — escape.sh does not summon" "absent" "$( [ -f "$SUMMONED" ] && cat "$SUMMONED" || echo absent )"
+want "G8: escape.sh logs the halt refusal" "halted — not summoning" "$out"
+is "G8: escape.sh exits non-zero when halted" "1" "$rc"
 rm -f "$HALT_STAMP"
+
+DRAIN_STAMP_G8="$T/run/world.draining"
+{ echo "now"; echo "gated"; printf 'expires %s\n' "$(( $(date +%s) + 3600 ))"; } > "$DRAIN_STAMP_G8"
+rm -f "$SUMMONED"
+out="$(bash "$HERE/escape.sh" stretchy 2>&1)"; rc=$?
+is "G8: live drain — escape.sh does not summon" "absent" "$( [ -f "$SUMMONED" ] && cat "$SUMMONED" || echo absent )"
+want "G8: escape.sh logs the drain refusal" "draining — not summoning" "$out"
+is "G8: escape.sh exits non-zero when draining" "1" "$rc"
+
+{ echo "now"; echo "gated"; printf 'expires %s\n' "$(( $(date +%s) - 60 ))"; } > "$DRAIN_STAMP_G8"
+rm -f "$SUMMONED"
+bash "$HERE/escape.sh" stretchy 2>/dev/null || true
+is "G8: expired drain — escape.sh summons" "SUMMONED:stretchy" "$(cat "$SUMMONED" 2>/dev/null)"
+rm -f "$DRAIN_STAMP_G8"
 
 # ======================================================================================
 echo
 echo "escape.sh honours SPIRA_AEON_CPU_QUOTA (sp-9ce60.4, part of G8: it used to hard-code 70%)"
 # ======================================================================================
-# escape.sh's world.halted bypass above is deliberate (sp-6rv05, still open) and unchanged.
-# CPUQuota was never part of that question — it shares summon_argv() with summon_fayth now,
-# the same builder UC-dispatch-23 exercises directly below, so the fix is verified here at
-# the escape.sh call site and again there at the function itself.
+# CPUQuota is orthogonal to the halt/drain gate above — it shares summon_argv() with
+# summon_fayth now, the same builder UC-dispatch-23 exercises directly below, so the fix is
+# verified here at the escape.sh call site and again there at the function itself.
 QUOTA_ARGV="$T/escape-quota-argv"
 cat > "$T/bin/mock-summon" <<MOCK
 #!/usr/bin/env bash
