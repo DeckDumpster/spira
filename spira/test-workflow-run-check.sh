@@ -119,8 +119,8 @@ mkbead() {
     bid="$("$BD" -C "$SPIRA_DB" create --title "$title" -l spira --type task 2>/dev/null \
             | grep -oE 'sp-[a-z0-9]+' | head -1)"
     [ -n "$bid" ] || bail "could not create test bead"
-    "$BD" -C "$SPIRA_DB" update "$bid" --claim 2>/dev/null
-    "$BD" -C "$SPIRA_DB" set-state "$bid" "branch=$branch" 2>/dev/null
+    "$BD" -C "$SPIRA_DB" update "$bid" --claim >/dev/null 2>&1
+    "$BD" -C "$SPIRA_DB" set-state "$bid" "branch=$branch" >/dev/null 2>&1
     printf '%s' "$bid"
 }
 
