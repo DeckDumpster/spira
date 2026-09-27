@@ -114,7 +114,7 @@ statement = "`strand.sh report` detects an exhausted sentinel pass budget (\"CHE
 [[use_case]]
 id = "UC-ops-detection-remediation-23"
 tier = "T1"
-statement = "czar-pass's reconciler-engine detectors — DEADLOCK, ATTRIBUTION-FAILED, SORT-FAILED, LOOP-STALLED, CI-STALLED, CI-RED, STARVED and base-red — each fire only past their own threshold and stay silent under it, coexist in one pass, and treat an unreadable input as `?` (unobservable), never as clear."
+statement = "czar-pass's reconciler-engine detectors — DEADLOCK, ATTRIBUTION-FAILED, SORT-FAILED, LOOP-STALLED, CI-STALLED, CI-RED and base-red — each fire only past their own threshold and stay silent under it, coexist in one pass, and treat an unreadable input as `?` (unobservable), never as clear."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-24"

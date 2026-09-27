@@ -10,8 +10,6 @@
 #   3. A concurrent pass is skipped (flock prevents overlap).
 #   4. ci-stalled acceptance case: fixture with a queued CI job > threshold →
 #      DETECTED=yes in czar.log; must FAIL against the previous code (no czar.sh).
-#   5. starved acceptance case: fixture strands.json with first-seen > threshold →
-#      DETECTED=yes in czar.log.
 #   6. Shadow mode: CZAR-WOULD written to czar.log; no bead filed.
 #   7. Act mode: deterministic remedy executed; inference bead filed.
 #   8. World halted: pass exits 0 without acting.
@@ -29,20 +27,20 @@
 #      detectors, ported from test-watchtower-queue.sh (UC-23) — this suite is now the
 #      one place that exercises them against the real binary.
 #  26. marker advances after each pass — the same landing.log line is not re-detected.
-#  27. ci-stalled and starved: the dedupe ref is stable across passes even when the
-#      measured duration changes (ported from test-watchtower-queue.sh).
-#  28-31. attribution-failed/loop-stalled/ci-stalled/starved: each detector's own
-#      trigger-condition boundary (requeued=0 no-op, multi-digit requeued, missing/silent
-#      log, configurable threshold, below-threshold, malformed open file, wrong kind) —
-#      ported from test-watchtower-queue.sh, which is retired once these land (UC-23).
+#  27. ci-stalled: the dedupe ref is stable across passes even when the measured duration
+#      changes (ported from test-watchtower-queue.sh).
+#  28-30. attribution-failed/loop-stalled/ci-stalled: each detector's own trigger-condition
+#      boundary (requeued=0 no-op, multi-digit requeued, missing/silent log, configurable
+#      threshold, below-threshold, malformed open file) — ported from test-watchtower-queue.sh,
+#      which is retired once these land (UC-23).
 #  32. reconciler engine wiring: a failed forge call reports STATUS=unobservable, never
 #      STATUS=satisfied — the old code could not distinguish that from no CI activity.
 #  33. reconciler engine wiring: a deterministic remedy that does not close its gap by
 #      the next pass escalates instead of being retried blind.
 #
-# POSITIVE CONTROL (law-absence-needs-a-positive-control): for detectors 4 and 5,
-# the test first verifies NO detection with an empty/fresh fixture, then adds the
-# trigger and verifies detection. A detector that fires on empty data is not a detector.
+# POSITIVE CONTROL (law-absence-needs-a-positive-control): for detector 4, the test
+# first verifies NO detection with an empty/fresh fixture, then adds the trigger and
+# verifies detection. A detector that fires on empty data is not a detector.
 #
 # tier: T1
 # covers: czar-pass/src/main.rs reconciler-engine/src/**.rs spira/czar.sh spira/conf.sh spira/sentinel.sh spira/watchtower.sh systemd/spira-czar-pass.service systemd/spira-czar-pass.timer UC-ops-detection-remediation-23 UC-ops-detection-remediation-24
@@ -214,57 +212,28 @@ _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "ci-stalled: DETECTED=yes in czar.log" "CLASS=ci-stalled DETECTED=yes" "$_log"
 
 # ==========================================================================================
-printf '\n%s\n' "5. starved acceptance case (POSITIVE CONTROL first)"
-# ==========================================================================================
-# POSITIVE CONTROL: no strands.json → starved not detected.
-rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
-rm -f "$SPIRA_RUN/strands.json"
-# Use minimal forge (no queued jobs for the open batch)
-cat > "$STUB_FORGE" <<'FEOF3'
-#!/usr/bin/env bash
-cmd="${1:-}"
-case "$cmd" in
-    batch-ci-status|queued-since|run-id) exit 0 ;;
-    *) exit 0 ;;
-esac
-FEOF3
-chmod +x "$STUB_FORGE"
-bash "$CZAR" --pass >/dev/null 2>&1
-_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
-want "starved: DETECTED=no when no strands.json" "CLASS=starved DETECTED=no" "$_log"
-
-# SEEN RED: fixture strands.json with first-seen > threshold.
-_sv_first=$(( _now_e - 1800 ))   # 30 min > default threshold of 20 min
-python3 -c "
-import json
-st = {'task:starved:builder': {'first': $_sv_first}}
-print(json.dumps(st))
-" > "$SPIRA_RUN/strands.json"
-
-rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
-bash "$CZAR" --pass >/dev/null 2>&1
-_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
-want "starved: DETECTED=yes in czar.log" "CLASS=starved DETECTED=yes" "$_log"
-
-# ==========================================================================================
 printf '\n%s\n' "6. shadow mode: CZAR-WOULD written, no bead filed"
 # ==========================================================================================
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* \
       "$INC_LOG"
-SPIRA_CZAR_STAGE_STARVED=shadow bash "$CZAR" --pass >/dev/null 2>&1
+printf '%s spira: verdict spira: PR 90 red — no suites identified; leaving batch open\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SPIRA_RUN/landing.log"
+bash "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
-want "shadow: CZAR-WOULD written to czar.log for starved" "CZAR-WOULD: starved" "$_log"
-lack "shadow: no incident filed in shadow mode" "incident: cause=starved" "$_inc_log"
+want "shadow: CZAR-WOULD written to czar.log for deadlock" "CZAR-WOULD: deadlock" "$_log"
+lack "shadow: no incident filed in shadow mode" "incident: cause=deadlock" "$_inc_log"
 
 # ==========================================================================================
-printf '\n%s\n' "7. act mode: inference bead filed for starved"
+printf '\n%s\n' "7. act mode: inference bead filed for deadlock"
 # ==========================================================================================
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* \
       "$INC_LOG"
-SPIRA_CZAR_STAGE_STARVED=act bash "$CZAR" --pass >/dev/null 2>&1
+printf '%s spira: verdict spira: PR 91 red — no suites identified; leaving batch open\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SPIRA_RUN/landing.log"
+SPIRA_CZAR_STAGE_DEADLOCK=act bash "$CZAR" --pass >/dev/null 2>&1
 _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
-want "act: incident filed with cause=starved" "cause=starved" "$_inc_log"
+want "act: incident filed with cause=deadlock" "cause=deadlock" "$_inc_log"
 
 # ==========================================================================================
 printf '\n%s\n' "8. world halted: pass exits without acting"
@@ -653,12 +622,11 @@ _log2="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 lack "marker: second pass does not re-detect the same line" "CLASS=deadlock DETECTED=yes" "$_log2"
 
 # ==========================================================================================
-printf '\n%s\n' "27. ci-stalled and starved: dedupe ref stable across passes with different measured durations"
+printf '\n%s\n' "27. ci-stalled: dedupe ref stable across passes with different measured durations"
 # ==========================================================================================
-# format!("ci-stalled-{}", repo) / format!("starved-{}", partition) must depend only on the
-# identifier, never on the measured duration — otherwise every pass files a fresh bead
-# instead of bumping incident.sh's recurrence count. Same proof as row 18 (base-red),
-# applied to the two classes the retirement plan named explicitly.
+# format!("ci-stalled-{}", repo) must depend only on the identifier, never on the measured
+# duration — otherwise every pass files a fresh bead instead of bumping incident.sh's
+# recurrence count. Same proof as row 18 (base-red).
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
 mkdir -p "$SPIRA_RUN/queue/refstable"
 printf 'branch=spira/queue/refstable-test\n' > "$SPIRA_RUN/queue/refstable/open"
@@ -697,29 +665,6 @@ _ref_b="$(grep -o 'ref=[^ ]*' "$INC_LOG" 2>/dev/null | tail -1)"
 is "ci-stalled: dedupe ref stable across passes with different queued durations" \
     "$_ref_a" "$_ref_b"
 want "ci-stalled ref names the repo" "refstable" "$_ref_a"
-
-rm -f "$SPIRA_RUN/czar-pass.swept" "$INC_LOG"
-_sv1=$(( $(date +%s) - 1500 ))
-python3 -c "
-import json
-st = {'plan,refstable:starved:-': {'first': $_sv1}}
-print(json.dumps(st))
-" > "$SPIRA_RUN/strands.json"
-SPIRA_CZAR_STAGE_STARVED=act bash "$CZAR" --pass >/dev/null 2>&1
-_ref_c="$(grep -o 'ref=[^ ]*' "$INC_LOG" 2>/dev/null | tail -1)"
-
-rm -f "$SPIRA_RUN/czar-pass.swept" "$INC_LOG"
-_sv2=$(( $(date +%s) - 9000 ))
-python3 -c "
-import json
-st = {'plan,refstable:starved:-': {'first': $_sv2}}
-print(json.dumps(st))
-" > "$SPIRA_RUN/strands.json"
-SPIRA_CZAR_STAGE_STARVED=act bash "$CZAR" --pass >/dev/null 2>&1
-_ref_d="$(grep -o 'ref=[^ ]*' "$INC_LOG" 2>/dev/null | tail -1)"
-is "starved: dedupe ref stable across passes with different starved durations" \
-    "$_ref_c" "$_ref_d"
-want "starved ref names the partition" "refstable" "$_ref_c"
 
 # ==========================================================================================
 printf '\n%s\n' "28. ATTRIBUTION-FAILED: requeued 0 is a no-op; multi-digit requeued still fires"
@@ -832,42 +777,6 @@ _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "ci-stalled: DETECTED=no when the open file has no branch= field" \
     "CLASS=ci-stalled DETECTED=no" "$_log"
 printf 'branch=spira/queue/ci30-test\n' > "$_ci30_dir/open"   # restore for later sections
-
-# ==========================================================================================
-printf '\n%s\n' "31. STARVED: below threshold, wrong kind (ghost, not starved)"
-# ==========================================================================================
-# Ported from test-watchtower-queue.sh (UC-23): both are starved's own trigger-condition
-# boundary, not the shared marker/ref mechanism already proven generically in row 27.
-cat > "$STUB_FORGE" <<'FEOF31'
-#!/usr/bin/env bash
-exit 0
-FEOF31
-chmod +x "$STUB_FORGE"
-
-_sv31_recent=$(( $(date +%s) - 300 ))   # 5 minutes, threshold 20 minutes
-python3 -c "
-import json
-st = {'plan,spira:starved:-': {'first': $_sv31_recent}}
-print(json.dumps(st))
-" > "$SPIRA_RUN/strands.json"
-rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
-bash "$CZAR" --pass >/dev/null 2>&1
-_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
-want "starved: DETECTED=no when starved only 5m (threshold 20m)" \
-    "CLASS=starved DETECTED=no" "$_log"
-
-_sv31_old=$(( $(date +%s) - 1500 ))   # 25 minutes — old enough to fire, if it were "starved"
-python3 -c "
-import json
-st = {'plan,spira:ghost:sp-123': {'first': $_sv31_old}}
-print(json.dumps(st))
-" > "$SPIRA_RUN/strands.json"
-rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
-bash "$CZAR" --pass >/dev/null 2>&1
-_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
-want "starved: DETECTED=no for a ghost entry, however old (wrong kind)" \
-    "CLASS=starved DETECTED=no" "$_log"
-rm -f "$SPIRA_RUN/strands.json"
 
 # ==========================================================================================
 printf '\n%s\n' "32. ci-stalled: a forge call failure is unobservable, never satisfied"

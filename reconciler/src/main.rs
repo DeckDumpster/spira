@@ -532,8 +532,8 @@ fn observe_fleet(cfg: &Config) -> Vec<Check> {
         let headroom = (max_live - live_lanes).max(0);
         let desired_live = ready.min(headroom);
         // SPIRA_MAX_AEONS=0 is an operator pausing the task pool on purpose (aeons.sh
-        // pool 0) — the same carve-out czar-pass's detect_starved already gives it. A
-        // lane partition draws outside the pool, so its own gap still means something.
+        // pool 0) — a deliberate state, not a fault. A lane partition draws outside the
+        // pool, so its own gap still means something.
         let deliberately_paused = is_task && pool == Some(0);
         let raw = if live >= desired_live || deliberately_paused {
             RawStatus::Satisfied
