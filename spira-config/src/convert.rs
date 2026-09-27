@@ -140,9 +140,6 @@ pub fn spira_section(
             "SPIRA_QUEUE_CI_MAXSEC" => {
                 s.queue_ci_maxsec = parse_u64(warnings, "queue_ci_maxsec", val)
             }
-            "SPIRA_QUEUE_LOCAL_GATE" => {
-                s.queue_local_gate = parse_bool01(warnings, "queue_local_gate", val)
-            }
             "SPIRA_QUEUE_THROTTLE_RELEASE_AT" => {
                 s.queue_throttle_release_at = parse_u32(warnings, "queue_throttle_release_at", val)
             }

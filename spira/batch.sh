@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# batch.sh — merge-queue batch builder.
+# batch.sh — merge-queue pre-cut sweep.
 # Usage: batch.sh <repo-name>
 #
-# Opens a batch when the repository has no open batch and either
-# SPIRA_QUEUE_BATCH_MAX certified branches exist or the oldest certified
-# branch has waited SPIRA_QUEUE_BATCH_WAIT seconds. Branches are ordered:
-# suite-state transitions first, then bead priority, then certification time.
-# A branch that conflicts with the accumulating batch is skipped (stays
-# CERTIFIED); a branch that conflicts with the land ref itself is reopened.
+# The batcher crate (batcher-cut, sp-jzfog) owns the round itself — trigger, membership,
+# local proving and the PR — in place of this file's old cut (sp-vsob2). What is left here
+# runs every pass regardless of who cuts next: reconciling landstate against what git and bd
+# actually say (orphaned CERTIFIED records, closed beads with a live evicted branch, LANDED
+# records whose tip never reached base, a stale gate-key, a tip that moved since
+# certification), the queue-stuck alert, and the open batch's own DIRTY-PR abandon check.
+# queue.sh's _batch_cut runs this before the batcher, unconditionally.
 #
 # covers: spira/batch.sh spira/conf.sh spira/landing.sh
 
@@ -54,9 +55,6 @@ EOF
     return 0
 }
 
-# SPIRA_QUEUE_REPRO_BATCH: seam for per-member reproduction in tests.
-: "${SPIRA_QUEUE_REPRO_BATCH:=$HERE/testenv-batch.sh}"
-
 # THE PRE-FLIGHT WALL (sp-mb92t). Per Ryan, 2026-09-24: the local pre-flight "CANNOT take
 # more than 4 minutes locally; if it does, we need to start evicting tests." Everything the
 # pre-flight runs — the gate, attribution, the re-gate — shares one deadline, _PF_DEADLINE.
@@ -95,33 +93,6 @@ _pf_left() {   # seconds left before the pre-flight wall; 0 when spent
 _pf_gate() {
     SPIRA_GATE_FAST_MAX_SECS="${SPIRA_PREFLIGHT_SUITE_MAX_SECS:-60}" SPIRA_GATE_BEAD="batch-$3" \
         _pf_run "$(_pf_left)" bash "$HERE/gate.sh" "$1" "$2" 2>&1
-}
-
-# _pf_over <name> <stage> — the wall was hit: say so, name what to evict, and let CI decide.
-_pf_over() {
-    local slow
-    slow="$(bash "$HERE/tsd-query.sh" slow-in-branch "$batch_br" 5 2>/dev/null | python3 -c '
-import json, sys
-try:
-    rows = json.load(sys.stdin)
-except Exception:
-    rows = []
-print(",".join("%ss %s" % (r["wall_secs"], r["suite"]) for r in rows))
-' 2>/dev/null)"
-    printf 'batch %s: pre-flight hit its %ss wall during %s — opening the PR, CI decides. Slowest suites (evict candidates): %s\n' \
-        "$1" "${SPIRA_PREFLIGHT_WALL_SECS:-240}" "$2" "${slow:-none recorded}"
-    printf 'QUEUE PREFLIGHT_OVER %s repo=%s stage=%s wall=%s slowest=%s\n' \
-        "$(date +%s)" "$1" "$2" "${SPIRA_PREFLIGHT_WALL_SECS:-240}" "${slow:-none}" \
-        >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
-}
-
-_lg_red_suites() {   # _lg_red_suites <gate-output> -> comma-separated suite names
-    printf '%s\n' "$1" | awk '{
-        for (i = 1; i < NF; i++)
-            if ($i ~ /\.sh$/ && ($(i+1) ~ /^(RED|TIMEOUT|FAILED)$/ ||
-                ($(i+1) == "was" && $(i+2) == "killed")))
-                if (!seen[$i]++) print $i
-    }' | tr '\n' ',' | sed 's/,$//'
 }
 
 _batch_open_file() { printf '%s/%s/open' "${SPIRA_QUEUE_DIR:?}" "$1"; }
@@ -259,29 +230,6 @@ _base_conflict() {
     return $rc
 }
 
-# batch_cut_reason_cheap <count> <age-seconds> <max> <wait-seconds> <evict-for-express 0|1>
-# -> prints the trigger reason (count|age|evict-express) and returns 0, or prints
-# nothing and returns 1. Pure: the caller already resolved every input, so this needs
-# no repo, no forge, no bd. Covers the two triggers that cost nothing to check and the
-# internal express-eviction re-cut, in the order main() has always evaluated them.
-batch_cut_reason_cheap() {
-    local count="$1" age="$2" max="$3" wait="$4" evict="$5"
-    if [ "$count" -ge "$max" ]; then printf 'count\n'; return 0; fi
-    if [ "$age" -ge "$wait" ]; then printf 'age\n'; return 0; fi
-    if [ "$evict" = 1 ]; then printf 'evict-express\n'; return 0; fi
-    return 1
-}
-
-# batch_cut_idle <runs-active> -> 0 (cut) iff runs-active is the literal string "0".
-# "?" and anything non-numeric must read as busy, never as idle — a forge that cannot
-# answer must never be read as an empty queue (law-absence-needs-a-positive-control).
-batch_cut_idle() {
-    case "${1:-?}" in
-        0) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
 # queue_last_moved <landstate-dir> -> the newest epoch among BATCHED/LANDED records,
 # or 0 when none exist. land_mark writes without a trailing newline, so `read` hits EOF
 # without a delimiter and returns non-zero on the very record this must not skip — every
@@ -322,18 +270,6 @@ queue_stuck_action() {
     else
         printf 'already-alerted\n'
     fi
-}
-
-# batch_cut_express <prio-json> <express-label> -> 0 iff any bead in prio-json carries
-# the label. prio-json is the same bdjson-show array the sort step already fetched.
-batch_cut_express() {
-    PRIO_JSON="$1" EXPRESS_LABEL="$2" python3 -c '
-import sys, json, os
-d = json.loads(os.environ.get("PRIO_JSON", "[]") or "[]")
-d = d if isinstance(d, list) else [d]
-lbl = os.environ.get("EXPRESS_LABEL", "express")
-sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
-' 2>/dev/null
 }
 
 main() {
@@ -526,13 +462,16 @@ main() {
         done
     fi
 
-    local _takeover_for_express=0 _ob_express_ids=()
+    # An open batch's own back pressure (law-queue-back-pressure-is-an-open-pr) is the
+    # batcher's to enforce now — an express or main-red trigger stacks onto it rather than
+    # waiting or evicting it (batcher-cut's stack_round). All that is left here is the one
+    # thing a stacked-onto PR cannot self-detect: it going DIRTY against the base out from
+    # under it.
     if _batch_is_open "$name"; then
         local _ob_forge="${SPIRA_FORGE:-$HERE/forge.sh}"
         local _ob_file; _ob_file="$(_batch_open_file "$name")"
-        local _ob_pr _ob_branch
+        local _ob_pr
         _ob_pr="$(grep '^pr=' "$_ob_file" 2>/dev/null | head -1)"; _ob_pr="${_ob_pr#pr=}"
-        _ob_branch="$(grep '^branch=' "$_ob_file" 2>/dev/null | head -1)"; _ob_branch="${_ob_branch#branch=}"
         if [ -n "$_ob_pr" ]; then
             local _ob_mstat
             _ob_mstat="$("$_ob_forge" pr-mergeability "$repo" "$_ob_pr" 2>/dev/null)" \
@@ -555,93 +494,8 @@ main() {
                 return 0
             fi
         fi
-
-        # An open batch is never evicted for express (Ryan, 2026-09-24): a batch that
-        # might still land green is not spent to save an express bead a wait — it takes
-        # the next slot instead, once this one closes (below, certs sort express-first).
-        # The one exception is a batch CI has already resolved as not-green: waiting for
-        # its local attribution to finish before cutting the express batch defeats the
-        # fast lane, so a certified express branch takes the freed slot immediately and
-        # the failed batch's own attribution — eject the culprit, re-certify survivors —
-        # keeps running separately (verdict.sh, against the file this stashes it in).
-        local _ob_ev_certs _ob_ev_ids=() _ob_ev_id _ob_ev_prio _ob_ev_errfile _ob_ev_lookup_failed=0
-        _ob_ev_certs="$(_certified_list "$repo")"
-        if [ -n "${_ob_ev_certs:-}" ]; then
-            while read -r _ob_ev_id _ _; do _ob_ev_ids+=("$_ob_ev_id"); done <<< "$_ob_ev_certs"
-            if [ "${#_ob_ev_ids[@]}" -gt 0 ]; then
-                # bdq show, not bdjson: bdjson swallows bdq's own stderr internally, and a
-                # `|| fallback="[]"` here cannot be told apart from bdq genuinely finding no
-                # express beads — both read as "nothing express", the case
-                # law-a-control-that-cannot-check-must-refuse names. A failed lookup must
-                # say so and refuse to fall through to the ordinary skip line.
-                _ob_ev_errfile="$(mktemp)"
-                if _ob_ev_prio="$(bdq show "${_ob_ev_ids[@]}" --json 2>"$_ob_ev_errfile" | json_only)"; then
-                    :
-                else
-                    _ob_ev_lookup_failed=1
-                    printf 'batch %s: express lookup FAILED: %s\n' \
-                        "$name" "$(tr '\n' ' ' < "$_ob_ev_errfile")"
-                fi
-                rm -f "$_ob_ev_errfile"
-                if [ "$_ob_ev_lookup_failed" -eq 0 ]; then
-                    local _elab="${SPIRA_EXPRESS_LABEL:-express}"
-                    while IFS= read -r _ob_ev_id; do
-                        [ -n "$_ob_ev_id" ] && _ob_express_ids+=("$_ob_ev_id")
-                    done < <(PRIO_JSON="$_ob_ev_prio" EXPRESS_LABEL="$_elab" python3 -c '
-import sys, json, os
-d = json.loads(os.environ.get("PRIO_JSON", "[]") or "[]")
-d = d if isinstance(d, list) else [d]
-lbl = os.environ.get("EXPRESS_LABEL", "express")
-for b in d:
-    if lbl in (b.get("labels") or []):
-        print(b.get("id", ""))
-' 2>/dev/null)
-                fi
-            fi
-        fi
-
-        if [ "$_ob_ev_lookup_failed" -eq 1 ]; then
-            return 0
-        fi
-
-        if [ "${#_ob_express_ids[@]}" -gt 0 ] && [ -n "$_ob_pr" ]; then
-            local _ob_status_out _ob_status
-            _ob_status_out="$("$_ob_forge" check-status "$repo" "$_ob_pr" "${_ob_branch:-}" 2>/dev/null)" \
-                || _ob_status_out="pending"
-            _ob_status="$(printf '%s\n' "$_ob_status_out" | head -1)"
-            _ob_status="${_ob_status:-pending}"
-            case "$_ob_status" in
-            green|pending) ;;   # may still land clean — express waits for the slot
-            *)
-                # Not green (red, harness_fault, provision_fault, or an unreadable
-                # check-status): stash the open batch's record for verdict.sh to
-                # attribute on its own, and free the slot for the express batch.
-                local _ob_atdir _ob_ev_csv
-                _ob_atdir="$(dirname "$_ob_file")"
-                _ob_ev_csv="$(IFS=,; echo "${_ob_express_ids[*]}")"
-                if mv -f "$_ob_file" "$_ob_atdir/attributing-$_ob_pr" 2>/dev/null; then
-                    printf 'batch %s: open batch PR %s is %s — certified express branch takes over (%s); its attribution continues separately\n' \
-                        "$name" "$_ob_pr" "${_ob_status:-unknown}" "$_ob_ev_csv"
-                    printf '## Note\nOpen batch PR %s for %s resolved %s.\n\nExpress bead(s) %s took the next batch slot rather than waiting for local attribution to finish. The failed batch keeps attributing on its own; its survivors will be re-batched once the express batch lands.\n' \
-                        "$_ob_pr" "$name" "${_ob_status:-unknown}" "$_ob_ev_csv" \
-                    | bash "$HERE/mail.sh" send operator \
-                        --from "Spira Queue <queue@spira>" \
-                        --subject "Merge queue: $name — express takes over from batch $_ob_pr ($_ob_status)" \
-                        2>/dev/null || true
-                    printf 'QUEUE TAKEOVER %s repo=%s pr=%s reason=express express=%s status=%s\n' \
-                        "$(date +%s)" "$name" "$_ob_pr" "$_ob_ev_csv" "${_ob_status:-unknown}" \
-                        >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
-                    _takeover_for_express=1
-                fi
-                ;;
-            esac
-        fi
-
-        if [ "$_takeover_for_express" -eq 0 ]; then
-            printf 'batch %s: open batch exists — skipping\n' "$name"
-            return 0
-        fi
-        # Fall through: cut the express batch now, into the freed slot.
+        printf 'batch %s: open batch exists — leaving the round to the batcher\n' "$name"
+        return 0
     fi
 
     local certs
@@ -728,22 +582,6 @@ for b in d:
         certs="${_filt%$'\n'}"
     fi
 
-    # Express takeover: build the batch from only the branches that triggered it — the
-    # freed slot belongs to express, not to whatever else is CERTIFIED alongside it.
-    if [ "${_takeover_for_express:-0}" = 1 ] && [ "${#_ob_express_ids[@]}" -gt 0 ]; then
-        local _ecerts="" _ecl _ecid _is_express _eid
-        while IFS= read -r _ecl; do
-            [ -n "$_ecl" ] || continue
-            read -r _ecid _ <<< "$_ecl"
-            _is_express=0
-            for _eid in "${_ob_express_ids[@]}"; do
-                [ "$_ecid" = "$_eid" ] && { _is_express=1; break; }
-            done
-            [ "$_is_express" -eq 1 ] && _ecerts="${_ecerts}${_ecl}"$'\n'
-        done <<< "$certs"
-        certs="${_ecerts%$'\n'}"
-    fi
-
     if [ -z "${certs:-}" ]; then
         rm -f "$SPIRA_RUN/queue-stuck-$name" 2>/dev/null || true
         printf 'batch %s: no cut — 0 certified\n' "$name"
@@ -752,7 +590,7 @@ for b in d:
         return 0
     fi
 
-    local count now oldest_epoch age triggered=
+    local count now oldest_epoch age
     count="$(printf '%s\n' "$certs" | grep -c .)"
     now="$(date +%s)"
     oldest_epoch="$(printf '%s\n' "$certs" | awk '{print $3}' | sort -n | head -1)"
@@ -793,497 +631,10 @@ for b in d:
         already-alerted) : ;;
     esac
 
-    local _cheap_reason
-    _cheap_reason="$(batch_cut_reason_cheap "$count" "$age" "${SPIRA_QUEUE_BATCH_MAX:-8}" \
-        "${SPIRA_QUEUE_BATCH_WAIT:-1800}" "${_takeover_for_express:-0}")" && triggered=1
-
-    # BISECT: a prior red with no attributable suite already narrowed the
-    # culprit by persisted binary search (queue_bisect_split, run from
-    # verdict.sh). Force the cut regardless of the other triggers, and force
-    # its membership below to be exactly the recorded half — a fresh
-    # priority-sorted cut would just re-select the same culprit forever
-    # (sp-y931m: PRs 302-304 cycled the same P0 build-breaker).
-    local _bisect_forced=""
-    if [ -n "$(queue_bisect_current "$name" "$repo" "$base_sha")" ]; then
-        _bisect_forced="$(queue_bisect_current_certified "$name" "$certs")"
-        if [ -z "$_bisect_forced" ]; then
-            queue_bisect_advance "$name"
-            printf 'batch %s: bisect group already resolved elsewhere — advancing\n' "$name"
-        fi
-    fi
-    [ -n "$_bisect_forced" ] && triggered=1
-
-    # THIRD TRIGGER: CI IS IDLE, SO WAITING BUYS NOTHING. The wait exists to let certified
-    # branches accumulate into one CI run instead of spending a run each. That trade is only
-    # worth making while a run is in flight — with nothing in CI, a branch that waits its
-    # full SPIRA_QUEUE_BATCH_WAIT is a branch held back from an idle machine for no gain.
-    # The operator, verbatim (2026-09-23): "if there's NOTHING in CI, then we may as well
-    # just send an immediate batch."
-    #
-    # ASKED LAST, AND ONLY WHEN IT CAN CHANGE THE ANSWER. This is a network round trip and
-    # this function runs on every landing pass, so it is reached only when neither cheap
-    # trigger fired and there is certified work waiting. When the other two already said yes,
-    # the answer cannot matter.
-    #
-    # ? IS NOT ZERO. forge.sh runs-active prints ? when it cannot tell, and ? must never cut
-    # a batch: reading a failed API call as "CI is idle" would fire this trigger on every
-    # pass exactly when the forge is unreachable (law-absence-needs-a-positive-control).
-    local _active=""
-    if [ -z "$triggered" ] && [ "${SPIRA_QUEUE_BATCH_IDLE_CUT:-1}" = 1 ] && [ "$count" -gt 0 ]; then
-        _active="$("${SPIRA_FORGE:-$HERE/forge.sh}" runs-active "$repo" 2>/dev/null)" || _active="?"
-        if batch_cut_idle "$_active"; then
-            triggered=1
-            printf 'batch %s: CI idle (0 runs queued or in progress) — cutting %d certified branch(es) without waiting\n' \
-                "$name" "$count"
-        fi
-    fi
-
-    # Collect IDs for a bulk priority/labels query (also used for the express check).
-    local all_ids=()
-    while read -r _id _ _; do all_ids+=("$_id"); done <<< "$certs"
-    local prio_json
-    prio_json="$(bdjson show "${all_ids[@]}" 2>/dev/null)" || prio_json="[]"
-
-    # EXPRESS: a certified express branch triggers a batch immediately.
-    # A batch of one spends a full CI run on a single bead; knowingly accepted.
-    if [ -z "$triggered" ]; then
-        if batch_cut_express "$prio_json" "${SPIRA_EXPRESS_LABEL:-express}"; then
-            printf 'batch %s: express certified branch — triggering immediate batch\n' "$name"
-            triggered=1
-        fi
-    fi
-
-    if [ -z "$triggered" ]; then
-        local _age_m _wait_m _ci_status
-        _age_m=$(( age / 60 ))
-        _wait_m=$(( ${SPIRA_QUEUE_BATCH_WAIT:-1800} / 60 ))
-        _ci_status=""
-        case "${_active:-}" in
-            '')              : ;;
-            '?'|*[!0-9]*)  _ci_status="; CI unknown" ;;
-            *)               _ci_status="; CI busy (${_active} active)" ;;
-        esac
-        printf 'batch %s: no cut — %d certified, need %d; oldest %dm, cuts at %dm%s\n' \
-            "$name" "$count" "${SPIRA_QUEUE_BATCH_MAX:-8}" "$_age_m" "$_wait_m" "$_ci_status"
-        printf 'QUEUE NOCUT %s repo=%s certified=%d need=%d age_seconds=%d wait_seconds=%d\n' \
-            "$(date +%s)" "$name" "$count" "${SPIRA_QUEUE_BATCH_MAX:-8}" "$age" \
-            "${SPIRA_QUEUE_BATCH_WAIT:-1800}" \
-            >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
-        return 0
-    fi
-
-    # Sort: express first, then suite-transition, then priority asc, then epoch asc.
-    # queue_sort_rows (lib.sh) is the canonical implementation shared with the cockpit.
-    # A forced bisect group bypasses this sort entirely — see the BISECT trigger above.
-    local sortfile; sortfile="$(mktemp)"
-    # shellcheck disable=SC2064
-    trap "rm -f '$sortfile'" RETURN
-    if [ -n "$_bisect_forced" ]; then
-        printf '%s\n' "$_bisect_forced" | awk '{printf "0 0 000000000 0000000000 %s %s\n", $1, $2}' \
-            > "$sortfile"
-        printf 'batch %s: bisect in progress — forcing cut to recorded half (%d member(s))\n' \
-            "$name" "$(printf '%s\n' "$_bisect_forced" | grep -c .)"
-    else
-        PRIO_JSON="$prio_json" queue_sort_rows "$repo" "$base_sha" \
-            < <(printf '%s\n' "$certs") > "$sortfile"
-    fi
-
-    # Build batch in a worktree starting at the land ref.
-    local wt
-    wt="$SPIRA_RUN/worktree/.batch-$(basename "$repo")"
-    # Prune stale registrations (e.g. a directory removed without worktree remove).
-    git -C "$repo" worktree prune 2>/dev/null || true
-    if [ -e "$wt/.git" ]; then
-        git -C "$wt" reset -q --hard "$base_sha" 2>/dev/null
-        git -C "$wt" clean -qfd 2>/dev/null || true
-    else
-        mkdir -p "$(dirname "$wt")"
-        git -C "$repo" worktree add -q --detach "$wt" "$base_sha" 2>/dev/null \
-            || { printf 'batch %s: cannot create batch worktree\n' "$name" >&2; return 1; }
-    fi
-
-    local max="${SPIRA_QUEUE_BATCH_MAX:-8}" taken=0
-    local members=() member_ids=()
-    local _bid _btip
-
-    while IFS= read -r _line && [ "$taken" -lt "$max" ]; do
-        read -r _ _ _ _ _bid _btip <<< "$_line"
-        # Warn when the branch head has moved past the certified tip (sp-hm2vw). The
-        # batch uses the certified tip; commits pushed after certification are not included
-        # until the branch is re-certified.
-        local _bcur
-        _bcur="$(git -C "$repo" rev-parse "refs/heads/spira/$_bid" 2>/dev/null || true)"
-        if [ -n "${_bcur:-}" ] && [ "$_bcur" != "$_btip" ]; then
-            printf 'batch %s: WARN %s tip has moved since certification — certified=%s head=%s — using certified tip\n' \
-                "$name" "$_bid" "${_btip:0:8}" "${_bcur:0:8}"
-        fi
-        unset _bcur
-        if git -C "$wt" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" merge --no-edit --no-ff -m "spira: land $_bid" "$_btip" \
-               >/dev/null 2>&1; then
-            members+=("$_bid:$_btip")
-            member_ids+=("$_bid")
-            taken=$(( taken + 1 ))
-        else
-            git -C "$wt" merge --abort 2>/dev/null || true
-            if _base_conflict "$repo" "$base_sha" "$_btip"; then
-                local _cited_result="" _cited_sha="" _cited_rule="" _unlanded_ahead=""
-                _cited_result="$(bead_cited_commit_on_base "$_bid" "$repo" "$base_sha" 2>/dev/null)" || true
-                read -r _cited_sha _cited_rule <<< "$_cited_result"
-                if [ -n "$_cited_sha" ]; then
-                    _unlanded_ahead="$(git -C "$repo" rev-list "$base_sha..$_btip" 2>/dev/null)" \
-                        || _unlanded_ahead=""
-                    if [ -z "$_unlanded_ahead" ] \
-                       || content_landed "$repo" "$_btip" "$base_sha" 2>/dev/null; then
-                        land_mark "$_bid" LANDED "$_cited_sha" "${_cited_rule}-complete"
-                        bead_close_on_land "$_bid" "$_cited_sha" || true
-                        printf 'batch %s: %s notes cite %s (%s) already on %s — marked landed\n' \
-                            "$name" "$_bid" "$_cited_sha" "${_cited_rule}-complete" "$base"
-                    else
-                        printf 'batch %s: %s notes cite %s (%s) on %s but branch has unlanded commits — reopening\n' \
-                            "$name" "$_bid" "$_cited_sha" "$_cited_rule" "$base"
-                        _cited_sha=""
-                    fi
-                fi
-                if [ -z "$_cited_sha" ]; then
-                    # Attempt rebase onto base before reopening.
-                    local _rbwt _rbtip _rbrc _rbfp _rbconf
-                    _rbwt="$SPIRA_RUN/worktree/.batch-rb-$$"
-                    _rbtip="" _rbrc=1 _rbconf=""
-                    if git -C "$repo" worktree add -q --detach "$_rbwt" "$_btip" 2>/dev/null; then
-                        _rbfp="$(git -C "$_rbwt" merge-base HEAD "$base_sha" 2>/dev/null)" || _rbfp=""
-                        if [ -n "$_rbfp" ]; then
-                            git -C "$_rbwt" rebase --onto "$base_sha" "$_rbfp" \
-                                >/dev/null 2>&1; _rbrc=$?
-                            if [ "$_rbrc" -eq 0 ]; then
-                                _rbtip="$(git -C "$_rbwt" rev-parse HEAD 2>/dev/null)"
-                            else
-                                _rbconf="$(git -C "$_rbwt" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
-                                _rbconf="${_rbconf% }"
-                                git -C "$_rbwt" rebase --abort 2>/dev/null || true
-                            fi
-                        fi
-                        git -C "$repo" worktree remove -f "$_rbwt" 2>/dev/null || true
-                    fi
-                    if [ "$_rbrc" -eq 0 ] && [ -n "$_rbtip" ]; then
-                        # update-ref, not branch -f: the aeon's own worktree for this
-                        # bead may still have spira/$_bid checked out, and branch -f
-                        # refuses to move a ref checked out anywhere.
-                        git -C "$repo" update-ref "refs/heads/spira/$_bid" "$_rbtip" 2>/dev/null || true
-                        land_mark "$_bid" RED "$_btip" conflicts-with-base
-                        printf 'batch %s: %s rebased onto %s — handed to the landing pass to re-certify outside the queue lock\n' \
-                            "$name" "$_bid" "$base"
-                    else
-                        bump_requeue "$_bid" merge-conflict >/dev/null 2>&1 || true
-                        bead_reopen "$_bid" rebase-conflict \
-                            "$(conflict_reopen_note "$repo" "spira/$_bid" "$base" "$name" "$_rbconf" "batch builder")" \
-                            >/dev/null 2>&1 || true
-                        land_mark "$_bid" RED "$_btip" conflicts-with-base
-                        printf 'batch %s: %s conflicts with %s — reopened\n' "$name" "$_bid" "$base"
-                    fi
-                    unset _rbwt _rbtip _rbrc _rbfp _rbconf
-                fi
-                unset _cited_result _cited_sha _cited_rule _unlanded_ahead
-            else
-                # Clean merge with the land ref: conflict is only with batch accumulation — skip.
-                printf 'batch %s: %s conflicts with batch — skipped\n' "$name" "$_bid"
-            fi
-        fi
-    done < "$sortfile"
-
-    if [ "${#members[@]}" -eq 0 ]; then
-        printf 'batch %s: no cut — %d certified but all conflicted or skipped\n' "$name" "$count"
-        printf 'QUEUE NOCUT %s repo=%s certified=%d reason=all-conflicted\n' \
-            "$(date +%s)" "$name" "$count" \
-            >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
-        return 0
-    fi
-
-    local stamp batch_br batch_head
-    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-    batch_br="spira/queue/$stamp"
-    format_batch "$wt" "$base_sha" "$name"
-    batch_head="$(git -C "$wt" rev-parse HEAD 2>/dev/null)"
-
-    # LOCAL GATE: run the gate on the combined batch before opening a PR.
-    # Green → push + open PR. Red → attribute, eject, rebuild, gate again.
-    local lg_out lg_rc lg_start lg_cost lg_ejected="" lg_suites_csv=""
-    lg_start="$(date +%s)"
-    git -C "$repo" branch -f "$batch_br" "$batch_head" 2>/dev/null || true
-    # SPIRA_QUEUE_LOCAL_GATE=0 opens the PR without the local gate. The gate runs inside
-    # the landing pass, so every batch paid 30-45 min of it -- with no verdict, no other
-    # batch and no landing moving -- before CI ran the same corpus (sp-hrkwa).
-    if [ "${SPIRA_QUEUE_LOCAL_GATE:-1}" = 0 ]; then
-        lg_out=""; lg_rc=0; lg_cost=0
-        printf 'batch %s: local gate skipped (SPIRA_QUEUE_LOCAL_GATE=0) — CI is the authority\n' "$name"
-    else
-        _PF_DEADLINE=$(( lg_start + ${SPIRA_PREFLIGHT_WALL_SECS:-240} ))
-        lg_out="$(_pf_gate "$batch_br" "$name" "$stamp")"
-        lg_rc=$?
-        lg_cost=$(( $(date +%s) - lg_start ))
-        if [ "$lg_rc" -eq 124 ]; then
-            _pf_over "$name" gate
-            lg_rc=0
-        fi
-    fi
-
-    if [ "$lg_rc" -ne 0 ] && spira_gate_blames_branch "$lg_rc"; then
-        local lg_attr_start lg_attr_cost lg_ejected lg_suites_csv
-        lg_attr_start="$(date +%s)"
-        lg_ejected=""
-        lg_suites_csv="$(_lg_red_suites "$lg_out")"
-
-        # ATTRIBUTION IN PARALLEL, INSIDE THE WALL. Each member reproduces the red suites
-        # alone, all at once; a member whose reproduction did not finish before the wall is
-        # a survivor — an unfinished run is not evidence against it, and CI still decides.
-        local lg_survivors=() lg_ejected_arr=() _lmm _lmid _lmtip _pf_rdir _pf_left_s
-        _pf_rdir="$(mktemp -d)"
-        _pf_left_s="$(_pf_left)"
-        for _lmm in "${members[@]}"; do
-            _lmid="${_lmm%%:*}"
-            (
-                _t="$(mktemp -d)"
-                SPIRA_BATCH_RESULTS="$_t" _pf_run "$_pf_left_s" bash "$SPIRA_QUEUE_REPRO_BATCH" \
-                    --mode serial --suites "${lg_suites_csv:-}" "spira/$_lmid" >/dev/null 2>&1
-                printf '%s' "$?" > "$_pf_rdir/$_lmid"
-                rm -rf "$_t"
-            ) &
-        done
-        wait
-        for _lmm in "${members[@]}"; do
-            _lmid="${_lmm%%:*}"; _lmtip="${_lmm##*:}"
-            if [ "$(cat "$_pf_rdir/$_lmid" 2>/dev/null)" = 1 ]; then
-                lg_ejected_arr+=("$_lmm")
-            else
-                lg_survivors+=("$_lmm")
-            fi
-        done
-        [ "$(_pf_left)" -eq 0 ] && _pf_over "$name" attribution
-        rm -rf "$_pf_rdir"
-
-        for _lmm in "${lg_ejected_arr[@]:-}"; do
-            [ -n "$_lmm" ] || continue
-            _lmid="${_lmm%%:*}"; _lmtip="${_lmm##*:}"
-            bead_reopen "$_lmid" batch-eject \
-                "Ejected by local batch gate: spira/$_lmid reproduced failure in $name." \
-                "$lg_suites_csv" \
-                >/dev/null 2>&1 || true
-            bdq label remove "$_lmid" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1 || true
-            land_mark "$_lmid" EJECTED "$_lmtip" "$lg_suites_csv"
-            printf 'QUEUE CAUGHT %s branch=%s\n' "$(date +%s)" "$_lmid" \
-                >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
-            lg_ejected="$lg_ejected${lg_ejected:+ }$_lmid"
-            printf 'batch %s: ejected %s — reproduced local gate failure\n' "$name" "$_lmid"
-        done
-
-        lg_attr_cost=$(( $(date +%s) - lg_attr_start ))
-        printf 'QUEUE BATCH %s repo=%s members=%d gate_seconds=%d verdict=red attr_seconds=%d ejected=%s\n' \
-            "$(date +%s)" "$name" "${#members[@]}" "$lg_cost" "$lg_attr_cost" \
-            "${lg_ejected:--}" \
-            >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
-
-        # ATTRIBUTION FOUND NOBODY — OPEN THE PR ANYWAY.
-        #
-        # Everything below rebuilds the batch from the survivors and gates it
-        # again. When nothing was ejected, survivors IS members, so the "rebuilt"
-        # batch re-merges the same commits onto the same base and produces a tree
-        # byte-identical to the one that just failed. Gating it again is a
-        # guaranteed-identical result, and at the end the members are marked
-        # CERTIFIED and the branch deleted — so the next pass assembles exactly the
-        # same batch and does it all over. On 2026-09-17 that ran two full gates
-        # (~380s) per landing pass, indefinitely, while the queue drained nothing:
-        # every batch logged `ejected=-` and no pull request was ever opened.
-        #
-        # AND A RED NOBODY REPRODUCES IS NOT EVIDENCE AGAINST ANY MEMBER. CI is the
-        # authority for a batch (law-green-prs-merge-themselves); this gate buys
-        # latency, not coverage (law-local-gates-buy-latency-not-coverage), and
-        # leaving it able to veto means a failure it cannot attribute kills a batch
-        # CI never sees. Let CI adjudicate.
-        #
-        # This is deliberately not a fix for sp-2f51e, which is WHY attribution
-        # finds nobody — testenv-batch.sh runs against the production checkout
-        # rather than the branch it is given, so every member reproduces
-        # identically. This guard is correct on its own terms and stays correct
-        # once that lands: with working attribution, a red the members genuinely do
-        # not carry still belongs to CI.
-        if [ "${#lg_ejected_arr[@]}" -eq 0 ]; then
-            printf 'batch %s: local gate red (%s) but no member reproduced it — opening the PR; CI is the authority\n' \
-                "$name" "${lg_suites_csv:-unattributed}"
-        else
-            if [ "${#lg_survivors[@]}" -eq 0 ]; then
-                SPIRA_REF_SANCTIONED=1 git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
-                printf 'batch %s: no cut — all %d members ejected (%s)\n' \
-                    "$name" "${#lg_ejected_arr[@]}" "${lg_suites_csv:-unknown}"
-                printf 'QUEUE NOCUT %s repo=%s reason=all-ejected ejected=%s\n' \
-                    "$(date +%s)" "$name" "${lg_ejected:--}" \
-                    >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
-                return 0
-            fi
-
-            # Rebuild batch from survivors.
-            members=(); member_ids=()
-            git -C "$wt" reset -q --hard "$base_sha" 2>/dev/null
-            git -C "$wt" clean -qfd 2>/dev/null || true
-            for _lmm in "${lg_survivors[@]}"; do
-                _lmid="${_lmm%%:*}"; _lmtip="${_lmm##*:}"
-                if git -C "$wt" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" merge --no-edit --no-ff -m "spira: land $_lmid" "$_lmtip" \
-                       >/dev/null 2>&1; then
-                    members+=("$_lmid:$_lmtip")
-                    member_ids+=("$_lmid")
-                fi
-            done
-
-            if [ "${#members[@]}" -eq 0 ]; then
-                SPIRA_REF_SANCTIONED=1 git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
-                printf 'batch %s: no cut — rebuilt batch is empty\n' "$name"
-                printf 'QUEUE NOCUT %s repo=%s reason=rebuilt-empty\n' \
-                    "$(date +%s)" "$name" \
-                    >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
-                return 0
-            fi
-
-            # Delete old batch branch; new stamp for the rebuilt batch.
-            SPIRA_REF_SANCTIONED=1 git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
-            format_batch "$wt" "$base_sha" "$name"
-            batch_head="$(git -C "$wt" rev-parse HEAD 2>/dev/null)"
-            stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-            batch_br="spira/queue/$stamp"
-
-            # Gate the rebuilt batch.
-            lg_start="$(date +%s)"
-            git -C "$repo" branch -f "$batch_br" "$batch_head" 2>/dev/null || true
-            lg_out="$(_pf_gate "$batch_br" "$name" "$stamp")"
-            lg_rc=$?
-            lg_cost=$(( $(date +%s) - lg_start ))
-            if [ "$lg_rc" -eq 124 ]; then
-                _pf_over "$name" re-gate
-                lg_rc=0
-            fi
-
-            if [ "$lg_rc" -ne 0 ] && spira_gate_blames_branch "$lg_rc"; then
-                for _lmm in "${lg_survivors[@]}"; do
-                    _lmid="${_lmm%%:*}"; _lmtip="${_lmm##*:}"
-                    land_mark "$_lmid" CERTIFIED "$_lmtip"
-                done
-                SPIRA_REF_SANCTIONED=1 git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
-                printf 'QUEUE BATCH %s repo=%s members=%d gate_seconds=%d verdict=red\n' \
-                    "$(date +%s)" "$name" "${#members[@]}" "$lg_cost" \
-                    >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
-                printf 'batch %s: rebuilt batch also red — no PR opened\n' "$name"
-                return 0
-            fi
-        fi
-    fi
-
-    # GREEN: log the batch meter line, push, open PR.
-    printf 'QUEUE BATCH %s repo=%s members=%d gate_seconds=%d verdict=green\n' \
-        "$(date +%s)" "$name" "${#members[@]}" "${lg_cost:-0}" \
-        >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
-
-    local forge="${SPIRA_FORGE:-$HERE/forge.sh}"
-
-    local _oqprs
-    _oqprs="$("$forge" pr-list-queue "$repo" 2>/dev/null)" || _oqprs=""
-    if [ -n "${_oqprs:-}" ]; then
-        local _oqflag="$SPIRA_RUN/queue-unrecorded-pr-$name"
-        if [ ! -f "$_oqflag" ]; then
-            printf '## Note\nAn open spira/queue/* PR exists for %s that is not in the batch record.\n\nThis indicates concurrent batch builds raced. Inspect and close any orphan queue PR for %s.\n' \
-                "$name" "$name" \
-            | bash "$HERE/mail.sh" send operator \
-                --from "Spira Queue <queue@spira>" \
-                --subject "Merge queue: $name — unrecorded open queue PR" \
-                2>/dev/null && touch "$_oqflag" 2>/dev/null || true
-        fi
-        printf 'batch %s: open queue PR not in batch record — skipping\n' "$name"
-        return 0
-    fi
-
-    if ! spira_git_push "$repo" -q "$remote" \
-           "${batch_head}:refs/heads/${batch_br}" 2>/dev/null; then
-        printf 'batch %s: could not push %s\n' "$name" "$batch_br" >&2
-        return 1
-    fi
-
-    # Open PR via forge seam.
-    local member_titles_json
-    member_titles_json="$(bdjson show "${member_ids[@]}" 2>/dev/null)" || member_titles_json="[]"
-
-    local pr_body pr_n
-    pr_body="$(
-        printf 'Merge-queue batch: %d beads for %s, onto %s.\n\n' \
-            "${#members[@]}" "$name" "$base_branch"
-        for mid in "${member_ids[@]}"; do
-            t="$(printf '%s\n' "$member_titles_json" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-items = data if isinstance(data, list) else [data]
-t = next((str(i.get('title','')) for i in items if i.get('id') == '$mid'), '')
-print((t[:120] if t else '(title unavailable)') or '(title unavailable)')
-" 2>/dev/null)" || t="(title unavailable)"
-            printf -- '- %s — %s\n' "$mid" "${t:-(title unavailable)}"
-        done
-    )"
-    pr_n="$(printf '%s' "$pr_body" \
-            | "$forge" pr-create "$repo" "$batch_br" "$base_branch" \
-                "queue: ${#members[@]} beads for $name" 2>/dev/null)" || {
-        printf 'batch %s: forge pr-create failed for %s\n' "$name" "$batch_br" >&2
-        return 1
-    }
-    [ -n "${pr_n:-}" ] || {
-        printf 'batch %s: forge returned no PR number for %s\n' "$name" "$batch_br" >&2
-        return 1
-    }
-
-    # Post a comment for each ejected member so the PR body stays accurate.
-    if [ -n "${lg_ejected:-}" ]; then
-        local ej_titles_json ej_id ej_title ej_n_remain
-        ej_n_remain="${#members[@]}"
-        # shellcheck disable=SC2086
-        ej_titles_json="$(bdjson show $lg_ejected 2>/dev/null)" || ej_titles_json="[]"
-        for ej_id in $lg_ejected; do
-            ej_title="$(printf '%s\n' "$ej_titles_json" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-items = data if isinstance(data, list) else [data]
-t = next((str(i.get('title','')) for i in items if i.get('id') == '$ej_id'), '')
-print((t[:120] if t else '(title unavailable)') or '(title unavailable)')
-" 2>/dev/null)" || ej_title="(title unavailable)"
-            "$forge" pr-comment "$repo" "$pr_n" \
-                "Ejected: $ej_id — ${ej_title:-(title unavailable)} (${lg_suites_csv:-unknown}); $ej_n_remain remain" \
-                2>/dev/null || true
-        done
-    fi
-
-    # Record the open batch.
-    local bdir; bdir="$(dirname "$(_batch_open_file "$name")")"
-    mkdir -p "$bdir"
-    {
-        printf 'pr=%s\n'      "$pr_n"
-        printf 'head=%s\n'    "$batch_head"
-        printf 'base=%s\n'    "$base_sha"
-        printf 'members=%s\n' "${members[*]}"
-        printf 'opened=%s\n'  "$now"
-        printf 'branch=%s\n'  "$batch_br"
-    } > "$(_batch_open_file "$name")"
-
-    # Mark each member BATCHED.
-    local _mm _mid _mtip
-    for _mm in "${members[@]}"; do
-        _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
-        land_mark "$_mid" BATCHED "$_mtip"
-    done
-    rm -f "$SPIRA_RUN/queue-stuck-$name" 2>/dev/null || true
-
-    # QUEUE BATCH's verdict=green line is written before push/PR-create can still fail,
-    # so it cannot stand in for "a PR actually opened" — a watch on landing.log needs its
-    # own line naming the PR number once one exists.
-    local _ob_opened_msg
-    _ob_opened_msg="$(printf 'batch %s: PR %s opened — %d branches (%s)' \
-        "$name" "$pr_n" "${#members[@]}" "$batch_br")"
-    printf '%s\n' "$_ob_opened_msg"
-    printf '%s\n' "$_ob_opened_msg" >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
+    printf 'batch %s: %d certified — cut decision left to the batcher\n' "$name" "$count"
 }
 
-# Sourced (a T1 suite wants batch_cut_reason_cheap et al. without a real batch run) vs
+# Sourced (queue.sh wants format_batch, _base_conflict et al. without a real sweep run) vs
 # executed: main runs only when this file is the entry point.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     main "$@"

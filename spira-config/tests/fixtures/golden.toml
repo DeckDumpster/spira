@@ -29,7 +29,6 @@ cert_idle_skip = false
 queue_batch_max = 6
 queue_batch_wait = 1200
 queue_ci_maxsec = 21600
-queue_local_gate = false
 queue_throttle_release_at = 12
 suites_budget = 1800
 loom_addr = "127.0.0.1:8788"

@@ -55,7 +55,6 @@ fn converts_conf_repo_map_and_fayths() {
     assert_eq!(spira.fayths, vec!["builder".to_string(), "ops".to_string()]);
     assert_eq!(spira.certify_suites, Some(spira_config::OnOff::Off));
     assert_eq!(spira.cert_idle_skip, Some(false));
-    assert_eq!(spira.queue_local_gate, Some(false));
     assert_eq!(
         spira.czar_stage_deadlock,
         Some(spira_config::CzarStage::Shadow)
