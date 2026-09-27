@@ -6384,7 +6384,7 @@ salvage() {              # salvage <label> <worktree-path> -> 0 saved or nothing
 # spira_destroy_worktree <id> <path> <repo> <why> -> 0 removed or nothing to remove
 # --------------------------------------------------------------------------------------
 spira_destroy_worktree() {
-    local id="$1" w="$2" repo="$3" why="${4:-}" held
+    local id="$1" w="$2" repo="$3" why="${4:-}" held path_id
     [ -n "$w" ] || return 0
     # ABSENT DIRECTORY FIRST — before the fence. A path whose directory no longer exists
     # needs no removal: only a registry prune to clear the dangling entry. git worktree prune
@@ -6410,6 +6410,18 @@ spira_destroy_worktree() {
     esac
     if held="$(spira_holder_witnesses "$id")"; then
         spira_reaplog REFUSED "$id" "worktree $w — $held"
+        return 1
+    fi
+    # A WORKTREE PATH IS KEYED ON THE BEAD (its directory name) independent of whichever
+    # branch happens to be checked out inside it. A caller that derives $id from a landed
+    # BRANCH name, not from this path, can be a different bead than the one live inside
+    # it — a child bead created sharing its parent's branch label leaves a worktree
+    # directory that names the child while the branch inside it names the parent, so the
+    # parent's own landing swept the child's still-running worktree out from under it
+    # (sp-87csm). The path's own id is checked as well whenever it differs.
+    path_id="$(basename "$w")"
+    if [ "$path_id" != "$id" ] && held="$(spira_holder_witnesses "$path_id")"; then
+        spira_reaplog REFUSED "$id" "worktree $w — $held (as $path_id)"
         return 1
     fi
     if ! salvage "$id" "$w"; then
