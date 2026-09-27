@@ -66,9 +66,8 @@ if ! rebase_branch "$br" "$baseref" "$repo" "$name"; then
     if _ls="$(land_state "$id" 2>/dev/null)"; then
         read -r _ls_st _ls_tip _ _ls_reason <<< "$_ls" || true
     fi
-    if [ "${_ls_st:-}" = RED ] && [ "${_ls_tip:-}" = "$tip" ] && \
-       [ "${_ls_reason:-}" = "no-rebase@${_cur_base_sha}" ]; then
-        log "tip and base unchanged since last RED mark — skipping duplicate bump"
+    if [ "${_ls_st:-}" = RED ] && [ "${_ls_tip:-}" = "$tip" ]; then
+        log "tip unchanged since last RED mark — skipping duplicate bump"
         exit 3
     fi
     _reopen_note="$(conflict_reopen_note "$repo" "$br" "$baseref" "$name" "${REBASE_CONFLICTS:-}" "landing-pass")"
@@ -76,6 +75,7 @@ if ! rebase_branch "$br" "$baseref" "$repo" "$name"; then
     bump_requeue "$id" merge-conflict >/dev/null 2>&1
     _rq_n="$(requeues_of "$id")"
     if [ "${_rq_n:-0}" -ge "${SPIRA_REBASE_ESCALATE_AT:-3}" ]; then
+        bead_reopen "$id" rebase-conflict "$_reopen_note"
         spira_ask_rebase_loop "$id" "$br" "$name" "$_rq_n" "${REBASE_CONFLICTS:-unknown}" "$_other_beads"
         log "escalated $id — rebase conflict x${_rq_n} on $br"
     else

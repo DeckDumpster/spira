@@ -18,8 +18,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 testdb_require test-landing-pass
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# testdb-mode: server — the escalate-path test below bumps and reads the requeue counter
+# via bump_requeue/requeues_of, which go through bd sql; embedded mode refuses it outright.
+export SPIRA_TESTDB_MODE=server
 testdb_up landing-pass || {
-    printf 'SKIP test-landing-pass: no bd engine available\n' >&2
+    printf 'SKIP test-landing-pass: no server bd engine available\n' >&2
     exit 77
 }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
@@ -30,7 +33,8 @@ cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 
-stub mail.sh 'exit 0'
+stub mail.sh '[ "${1:-}" = send ] || exit 0; printf "%s\n" "$*" >> "$EMITTED"; cat >> "$EMITTED"; printf "\n" >> "$EMITTED"'
+export EMITTED="$TMP/events"; : > "$EMITTED"
 stub confine.sh 'exit 0'
 stub incident.sh 'echo sp-fake; exit 0'
 
@@ -239,6 +243,61 @@ chmod +x "$SH/gh-hasDup"
 ) >/dev/null 2>&1 || true
 is "dup suppression: pr create not called when dup exists" "" \
     "$(cat "$CREATE_LOG" 2>/dev/null)"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TEST 4: pr-pass-branch.sh's escalate path must also reopen (sp-li2pv, same defect as
+# sp-cgklh in landing.sh's CHECK6 loop). Past SPIRA_REBASE_ESCALATE_AT the escalate branch
+# called spira_ask_rebase_loop without ever calling bead_reopen, leaving the bead closed
+# with an unlandable branch no aeon could claim. Run against the unfixed tree:
+#   FAIL  pr-pass-branch escalate path reopens the bead: wanted [open] got [closed]
+#   FAIL  and fires the escalation ask: wanted [rebase loop] in []
+# ──────────────────────────────────────────────────────────────────────────────
+status_of() { B show "$1" --json 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
+print(d[0].get("status") or "")'; }
+
+ESCL_REMOTE="$TMP/escl-remote.git"; ESCL_REPO="$TMP/escl-repo"
+git init -q --bare -b main "$ESCL_REMOTE"
+git init -q -b main "$ESCL_REPO"
+git -C "$ESCL_REPO" commit -q --allow-empty -m "base"
+git -C "$ESCL_REPO" remote add origin "$ESCL_REMOTE"
+git -C "$ESCL_REPO" push -q origin main
+git -C "$ESCL_REPO" fetch -q origin
+
+git -C "$ESCL_REPO" worktree add -q -b spira/sp-escl-pr "$RUN/worktree/sp-escl-pr" main
+printf 'from-escalate\n' > "$RUN/worktree/sp-escl-pr/shared-escl.txt"
+git -C "$RUN/worktree/sp-escl-pr" add -A
+git -C "$RUN/worktree/sp-escl-pr" commit -q -m "feat: sp-escl-pr — work"
+_escl_tip="$(git -C "$ESCL_REPO" rev-parse spira/sp-escl-pr)"
+
+# Base moves the same file underneath the branch, so the rebase conflicts.
+printf 'base-content\n' > "$ESCL_REPO/shared-escl.txt"
+git -C "$ESCL_REPO" add -A
+git -C "$ESCL_REPO" commit -q -m "base writes shared-escl.txt"
+git -C "$ESCL_REPO" push -q origin main
+git -C "$ESCL_REPO" fetch -q origin
+
+printf '{"id":"sp-escl-pr","title":"escl bead","status":"closed","issue_type":"task","labels":["repo:escl-repo"],"updated_at":"2026-01-01T00:00:00Z"}\n' \
+    | testdb_seed
+
+# Pre-bump the lifetime requeue counter to AT-1 so the pass's own bump (below) brings it to
+# AT on the FIRST sighting of this conflict — land_state is not yet RED, so the duplicate-
+# bump guard does not intercept it first.
+SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+    bash -c '. "$1/lib.sh" >/dev/null 2>&1
+             bump_requeue sp-escl-pr merge-conflict >/dev/null 2>&1
+             bump_requeue sp-escl-pr merge-conflict >/dev/null 2>&1' \
+    _ "$SH"
+
+: > "$EMITTED"
+SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+SPIRA_GH="$SH/gh" GH_TIMEOUT=30 SPIRA_ID_PREFIX=sp SPIRA_REBASE_ESCALATE_AT=3 \
+    bash "$SH/pr-pass-branch.sh" "$ESCL_REPO" spira/sp-escl-pr sp-escl-pr origin/main escl-repo "$_escl_tip" \
+    >/dev/null 2>&1 || true
+
+is   "pr-pass-branch escalate path reopens the bead" open "$(status_of sp-escl-pr)"
+want "and fires the escalation ask" "rebase loop" "$(cat "$EMITTED" 2>/dev/null)"
 
 echo "test-landing-pass.sh"
 tl_summary
