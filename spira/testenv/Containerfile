@@ -265,16 +265,6 @@ RUN bash /tmp/doctor-check/doctor-check.sh \
         /tmp/doctor-check/conf.sh \
         /tmp/doctor-check/doctor-waivers
 
-# The checkout bind-mounts read-write at /workspace (a root-level directory), so conf.sh
-# derives SPIRA_RELEASES under the container's filesystem root; pre-create that directory
-# owned by spirauser, same reason /var/spira/cargo and /workspace are chowned above, or
-# install.sh's release bootstrap has nowhere writable to create it.
-RUN _releases="$(env -i HOME=/root PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_REPO=/workspace \
-        bash -c '. /tmp/doctor-check/conf.sh 2>/dev/null; printf %s "$SPIRA_RELEASES"')" && \
-    [ -n "$_releases" ] && \
-    mkdir -p "$_releases" && chown -R spirauser:spirauser "$_releases" && \
-    rm -rf /tmp/doctor-check
-
 # ── spirauser — non-root user the tests run as ─────────────────────────────
 # A fixed UID keeps the cargo cache volume owner stable across image rebuilds.
 RUN useradd -m -s /bin/bash -u 1001 spirauser && \
@@ -286,8 +276,17 @@ RUN useradd -m -s /bin/bash -u 1001 spirauser && \
 # that inventory.sh would flag. The directory is created owned by spirauser so it
 # is writable from the container's first command without a privilege step.
 ENV CARGO_HOME=/var/spira/cargo
-RUN mkdir -p /var/spira/cargo /workspace && \
-    chown -R spirauser:spirauser /var/spira/cargo /workspace
+# The checkout bind-mounts read-write at /workspace (a root-level directory), so conf.sh
+# derives SPIRA_RELEASES under the container's filesystem root ($SPIRA_RELEASES below reads
+# it from the conf.sh copy staged for doctor-check, above); pre-create that directory owned
+# by spirauser for the same reason /var/spira/cargo and /workspace are, or install.sh's
+# release bootstrap has nowhere writable to create it.
+RUN _releases="$(env -i HOME=/root PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_REPO=/workspace \
+        bash -c '. /tmp/doctor-check/conf.sh 2>/dev/null; printf %s "$SPIRA_RELEASES"')" && \
+    [ -n "$_releases" ] && \
+    mkdir -p /var/spira/cargo /workspace "$_releases" && \
+    chown -R spirauser:spirauser /var/spira/cargo /workspace "$_releases" && \
+    rm -rf /tmp/doctor-check
 
 # Mask services that require privileges the rootless container does not hold.
 # Masking prevents failed-unit churn during systemd startup and does not prevent
