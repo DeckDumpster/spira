@@ -13,13 +13,24 @@
 # directly (skew.sh's escalate is extracted with sed rather than sourcing the whole file,
 # because skew.sh has no main guard and runs a real box audit at source time otherwise).
 #
-# DEFERRED: incident.sh's SIN escalation and archivist.sh's session-drift notice are
-# reachable only through their full subsystems (a real bead store counting recurrences;
-# a live session transcript measured by ctx-meter.sh) — standing those up is follow-up
-# work, not a lint-path check. See this suite's owning bead's close notes.
+# incident.sh's SIN escalation is driven through incident-stub-bd.py (a genuinely stateful
+# fake bd, not a canned response — test-sin-exempt.sh already established that it reproduces
+# the create-then-recur sequence faithfully) rather than a real bd store: what this suite
+# checks is that the message incident.sh builds clears mail.sh's own lint, which needs the
+# real mail.sh, not a real database. Standing up a real recurrence count is test-sin-exempt.sh
+# and test-incident-recur-cause.sh's job, not this one's.
+#
+# archivist.sh's session-drift notice fires from inside a real `sweep`, over a fabricated
+# transcript that ctx-meter.sh measures for real, with SPIRA_AGENT stubbed to do exactly what
+# the real archivist's own brief (chamber/archivist.md) tells it to: call
+# `archivist.sh mark <session> archiving <n>` as it files something. Driving it for real is
+# what caught it NOT clearing mail.sh's lint (sp-sgx77, filed). The assertions below describe
+# that current, verified-true behaviour rather than the wanted one, so this suite stays green
+# until sp-sgx77 lands — at which point the "does NOT reach the operator" assertion is the one
+# that goes red and says so.
 #
 # tier: T2
-# covers: spira/lib.sh spira/watchd.sh spira/skew.sh spira/mail.sh UC-operator-channel-05
+# covers: spira/lib.sh spira/watchd.sh spira/skew.sh spira/incident.sh spira/archivist.sh spira/ctx-meter.sh spira/incident-stub-bd.py spira/mail.sh UC-operator-channel-05
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -86,5 +97,111 @@ before="$(unread)"
 escalate "v2:REAL-SENDER-TEST=1" "planted by the real-sender test" >/dev/null 2>&1
 after="$(unread)"
 is "skew.sh escalate delivers exactly one message" "$((before + 1))" "$after"
+
+echo
+echo "incident.sh: SIN escalation (question)"
+
+INC="$HERE/incident.sh"
+SIN_STATE="$TMP/sin-state.json"
+SIN_LOG="$TMP/sin-bd.log"
+SIN_AT=2
+
+# file_sin_incident <ref> <title> <payload> — a real incident.sh subprocess against
+# incident-stub-bd.py, with the real mail.sh (SPIRA_HOME/SPIRA_MAIL from the suite-wide
+# exports above) so the SIN message actually clears mail.sh's lint.
+file_sin_incident() {
+    local ref="$1" title="$2" payload="$3"
+    printf '%s' "$payload" | \
+        env SPIRA_BD="$HERE/incident-stub-bd.py" \
+        STUB_BD_STATE="$SIN_STATE" STUB_BD_LOG="$SIN_LOG" \
+        SPIRA_DB="fakedb" \
+        SPIRA_INCIDENT_REF="$ref" \
+        SPIRA_INCIDENT_LOCK="$TMP/run/real-sender-sin.lock" \
+        SPIRA_INCIDENT_REPO=real-sender-fixture \
+        SPIRA_SIN_AT="$SIN_AT" \
+        bash "$INC" file "$title" - 2>/dev/null
+}
+
+ref="incident:real-sender-sin-test"
+before="$(unread)"
+# SIN_AT counts RECURRENCES, not sightings: the filing that creates the bead is recurrence 0,
+# so reaching SIN_AT recurrences takes one create plus SIN_AT recurring filings (test-sin-exempt.sh).
+for i in $(seq 1 "$(( SIN_AT + 1 ))"); do
+    file_sin_incident "$ref" "real sender SIN test" "payload $i" >/dev/null
+done
+after="$(unread)"
+is "incident.sh SIN escalation delivers exactly one message" "$((before + 1))" "$after"
+msg="$(ls -t "$SPIRA_MAIL/operator/new" 2>/dev/null | head -1)"
+body="$(cat "$SPIRA_MAIL/operator/new/$msg" 2>/dev/null)"
+want "incident.sh SIN message carries a Default"     "## Default"  "$body"
+want "incident.sh SIN message names the recurrence"  "recurred"    "$body"
+
+echo
+echo "archivist.sh: session-drift notice (note)"
+
+ARC_SH="$HERE/archivist.sh"
+mkdir -p "$TMP/arc-chamber" "$TMP/arc-run" "$TMP/arc-projects/-test-project"
+cp "$HERE/chamber/archivist.md" "$TMP/arc-chamber/"
+
+# mkarctranscript <path> <turns> <ctx> — same synthetic shape test-archivist.sh uses, so
+# ctx-meter.sh measures a real (if fabricated) transcript rather than a hand-typed SP_CTX_*.
+mkarctranscript() {
+    local tp="$1" n="$2" ctx="$3" i per
+    per=$(( ctx / (n > 0 ? n : 1) ))
+    : > "$tp"
+    for i in $(seq 1 "$n"); do
+        printf '{"type":"assistant","message":{"id":"m-%d","usage":{"input_tokens":%d,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10}}}\n' \
+            "$i" "$per" >> "$tp"
+    done
+}
+# 50 turns at 1.1M tokens crosses every band ("over"), and 50 turns of drift against the
+# non-default SPIRA_ARCHIVIST_EVERY=10 below clears the sweep trigger with room to spare.
+mkarctranscript "$TMP/arc-projects/-test-project/sess-realsender.jsonl" 50 1100000
+
+# THE STUB DOES EXACTLY WHAT chamber/archivist.md TELLS A REAL ARCHIVIST TO DO: call
+# `archivist.sh mark <session> archiving <n>` as it files something. That write is what
+# turns items_filed from 0 to 1 — archive() deliberately never parses the model's own prose
+# for a count (see archivist.sh's ITEMS COMES FROM THE STATE FILE comment).
+STUB_ARC_CLAUDE="$TMP/stub-archivist-claude"
+cat > "$STUB_ARC_CLAUDE" <<STUBEOF
+#!/usr/bin/env bash
+cat >/dev/null
+bash "$ARC_SH" mark sess-realsender archiving 1
+exit 0
+STUBEOF
+chmod +x "$STUB_ARC_CLAUDE"
+
+before="$(unread)"
+SPIRA_RUN="$TMP/arc-run" SPIRA_TOKEN_PROJECTS="$TMP/arc-projects" \
+    SPIRA_CTX_WARN=200000 SPIRA_CTX_HIGH=400000 SPIRA_CTX_LIMIT=1000000 \
+    SPIRA_ARCHIVIST_EVERY=10 SPIRA_ARCHIVIST_PER_PASS=1 SPIRA_ARCHIVIST_TIMEOUT=10 \
+    SPIRA_CHAMBER="$TMP/arc-chamber" SPIRA_AGENT="$STUB_ARC_CLAUDE" \
+    bash "$ARC_SH" sweep >/dev/null 2>&1
+after="$(unread)"
+
+# THE SWEEP ITSELF WORKED: the fabricated session crossed the top band and archive()
+# recorded it filed.
+state="$(sed -n 's/^state=//p' "$TMP/arc-run/archivist/sess-realsender.state" 2>/dev/null)"
+items="$(sed -n 's/^items_filed=//p' "$TMP/arc-run/archivist/sess-realsender.state" 2>/dev/null)"
+is "archivist.sh sweep records the session safe to clear" "safe" "$state"
+is "archivist.sh sweep records the item the stub filed"   "1"    "$items"
+
+# BUT THE PUSH ITSELF NEVER REACHES THE OPERATOR (sp-sgx77): mail.sh's archivist-note
+# guard (added by sp-9zthk to stop PER-FINDING notes) also catches this once-per-session
+# "safe to clear" note, because it is `--kind note` from archivist@spira with no
+# `--digest` — the one shape sp-9zthk's guard was never told to let through. The call
+# site swallows the failure (`>/dev/null 2>&1`), so this is what G-05 exists to catch:
+# a real sender whose message never clears mail.sh's own lint. Flip this assertion (and
+# delete this comment) once sp-sgx77 lands.
+is "archivist.sh notice does NOT reach the operator (sp-sgx77)" "$before" "$after"
+
+# THE MECHANISM, ISOLATED: the same send archive() attempts, run directly, fails lint
+# for the stated reason — so the assertion above is not just "nothing changed" for some
+# unrelated cause.
+lint_err="$(printf 'body' | bash "$HERE/mail.sh" send operator \
+    --from "Archivist <archivist@spira>" --subject "isolated repro" --kind note 2>&1 >/dev/null)"
+rc=$?
+is "the isolated repro also fails" "1" "$rc"
+want "the isolated repro names the archivist-note guard" "archivist note refused" "$lint_err"
 
 tl_summary
