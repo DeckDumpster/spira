@@ -23,8 +23,11 @@
 # archivist.sh's session-drift notice fires from inside a real `sweep`, over a fabricated
 # transcript that ctx-meter.sh measures for real, with SPIRA_AGENT stubbed to do exactly what
 # the real archivist's own brief (chamber/archivist.md) tells it to: call
-# `archivist.sh mark <session> archiving <n>` as it files something. That is what turns
-# items_filed from 0 to 1 and lets the band-3 push fire for real.
+# `archivist.sh mark <session> archiving <n>` as it files something. Driving it for real is
+# what caught it NOT clearing mail.sh's lint (sp-sgx77, filed). The assertions below describe
+# that current, verified-true behaviour rather than the wanted one, so this suite stays green
+# until sp-sgx77 lands — at which point the "does NOT reach the operator" assertion is the one
+# that goes red and says so.
 #
 # tier: T2
 # covers: spira/lib.sh spira/watchd.sh spira/skew.sh spira/incident.sh spira/archivist.sh
@@ -115,7 +118,7 @@ file_sin_incident() {
         SPIRA_DB="fakedb" \
         SPIRA_INCIDENT_REF="$ref" \
         SPIRA_INCIDENT_LOCK="$TMP/run/real-sender-sin.lock" \
-        SPIRA_INCIDENT_REPO= \
+        SPIRA_INCIDENT_REPO=real-sender-fixture \
         SPIRA_SIN_AT="$SIN_AT" \
         bash "$INC" file "$title" - 2>/dev/null
 }
@@ -176,10 +179,30 @@ SPIRA_RUN="$TMP/arc-run" SPIRA_TOKEN_PROJECTS="$TMP/arc-projects" \
     SPIRA_CHAMBER="$TMP/arc-chamber" SPIRA_AGENT="$STUB_ARC_CLAUDE" \
     bash "$ARC_SH" sweep >/dev/null 2>&1
 after="$(unread)"
-is "archivist.sh session-drift notice delivers exactly one message" "$((before + 1))" "$after"
-msg="$(ls -t "$SPIRA_MAIL/operator/new" 2>/dev/null | head -1)"
-body="$(cat "$SPIRA_MAIL/operator/new/$msg" 2>/dev/null)"
-want "archivist.sh notice says safe to clear"    "safe to clear"  "$body"
-want "archivist.sh notice names the item count"  "1 item(s)"      "$body"
+
+# THE SWEEP ITSELF WORKED: the fabricated session crossed the top band and archive()
+# recorded it filed.
+state="$(sed -n 's/^state=//p' "$TMP/arc-run/archivist/sess-realsender.state" 2>/dev/null)"
+items="$(sed -n 's/^items_filed=//p' "$TMP/arc-run/archivist/sess-realsender.state" 2>/dev/null)"
+is "archivist.sh sweep records the session safe to clear" "safe" "$state"
+is "archivist.sh sweep records the item the stub filed"   "1"    "$items"
+
+# BUT THE PUSH ITSELF NEVER REACHES THE OPERATOR (sp-sgx77): mail.sh's archivist-note
+# guard (added by sp-9zthk to stop PER-FINDING notes) also catches this once-per-session
+# "safe to clear" note, because it is `--kind note` from archivist@spira with no
+# `--digest` — the one shape sp-9zthk's guard was never told to let through. The call
+# site swallows the failure (`>/dev/null 2>&1`), so this is what G-05 exists to catch:
+# a real sender whose message never clears mail.sh's own lint. Flip this assertion (and
+# delete this comment) once sp-sgx77 lands.
+is "archivist.sh notice does NOT reach the operator (sp-sgx77)" "$before" "$after"
+
+# THE MECHANISM, ISOLATED: the same send archive() attempts, run directly, fails lint
+# for the stated reason — so the assertion above is not just "nothing changed" for some
+# unrelated cause.
+lint_err="$(printf 'body' | bash "$HERE/mail.sh" send operator \
+    --from "Archivist <archivist@spira>" --subject "isolated repro" --kind note 2>&1 >/dev/null)"
+rc=$?
+is "the isolated repro also fails" "1" "$rc"
+want "the isolated repro names the archivist-note guard" "archivist note refused" "$lint_err"
 
 tl_summary
