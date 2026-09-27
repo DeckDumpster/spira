@@ -31,6 +31,10 @@ DRY_FLAG="${2:-}"
 F="$SPIRA_HOME/chamber/$FAYTH.fayth"
 [ -f "$F" ] || die "no such fayth: $F"
 
+# THE OPERATOR OUTRANKS THE ESCAPE HATCH. This reaches around a broken scheduler, not
+# around a halt or drain the operator asked for (sp-uyw4n).
+world_gate "$FAYTH" "escape.sh" || exit 1
+
 # CAPACITY FIRST. An account outage is not a scheduling bug; spending a bead attempt on
 # it is still wrong. aeon.sh checks this too, but checking here avoids the summon entirely.
 if capacity_paused; then
