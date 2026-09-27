@@ -1,0 +1,237 @@
+api_version = "test-plan/v1"
+area = "instance-lifecycle"
+
+[[use_case]]
+id = "UC-instance-lifecycle-01"
+tier = "T1"
+statement = "`build.sh` builds loom, panel, broker, czar-pass and spira-supervise in order to `SPIRA_*_BIN`; with no cargo it exits 0 naming the lost features, and `--skip-build` never invokes cargo"
+
+[[use_case]]
+id = "UC-instance-lifecycle-02"
+tier = "T2"
+statement = "`build-tarball.sh` produces a same-named `spira-YYYYMMDDTHHMMSSZ.tar.gz`/dir pair from a clean checkout; MANIFEST records the source SHA and `--name` pins stem and timestamp"
+
+[[use_case]]
+id = "UC-instance-lifecycle-03"
+tier = "T0"
+statement = "the tarball ships every `@*_BIN@` binary a non-optional unit's ExecStart references, executable; the build refuses without `--supervise-bin` and ships no `sp-*`/`*.fixed` scratch files"
+
+[[use_case]]
+id = "UC-instance-lifecycle-04"
+tier = "T2"
+statement = "`build-tarball.sh verify` accepts a MANIFEST whose commit exists in the source repo and refuses one that does not"
+
+[[use_case]]
+id = "UC-instance-lifecycle-05"
+tier = "T2"
+statement = "`build-bd.sh --from-release` derives `beads_<ver>_<os>_<arch>.tar.gz` and refuses a checksum mismatch before unpacking"
+
+[[use_case]]
+id = "UC-instance-lifecycle-06"
+tier = "T2"
+statement = "`release.sh cut` creates an annotated tag listing bead ids landed since the previous tag on the repo-map base ref, not hardcoded `main`; a no-op cut creates no tag and `show` reads it back"
+
+[[use_case]]
+id = "UC-instance-lifecycle-07"
+tier = "T2"
+statement = "`review.sh` records a ship/block verdict per release unit, files a finding bead on block, and never duplicates it"
+
+[[use_case]]
+id = "UC-instance-lifecycle-08"
+tier = "T2"
+statement = "`activate.sh` unpacks to a versioned read-only release dir, atomically repoints `current` and keeps the previous release; `--dry-run` changes nothing"
+
+[[use_case]]
+id = "UC-instance-lifecycle-09"
+tier = "T1"
+statement = "`activate.sh` prunes releases beyond `SPIRA_RELEASES_KEEP`, oldest first, and never prunes the `current` target"
+
+[[use_case]]
+id = "UC-instance-lifecycle-10"
+tier = "T2"
+statement = "`activate.sh` refuses while this instance's aeons are live, naming them and `SPIRA_ACTIVATE_FORCE`, leaving `current` untouched; after the swap it daemon-reloads and restarts only non-aeon units"
+
+[[use_case]]
+id = "UC-instance-lifecycle-11"
+tier = "T2"
+statement = "rollback is re-activation of an already-unpacked release (unpack skipped), after which units execute the older code"
+
+[[use_case]]
+id = "UC-instance-lifecycle-12"
+tier = "T2"
+statement = "`deploy.sh` resolves `latest` and refuses a draft, the already-current release, a DB-migration mismatch and a failed pre-deploy doctor, all before any disruptive step"
+
+[[use_case]]
+id = "UC-instance-lifecycle-13"
+tier = "T2"
+statement = "`deploy.sh` drains first (a refusal blocks the deploy, `--force` slays with `--keep-work --reopen`), writes `SPIRA_PROD` before activate restarts services, then re-renders units with the new `SPIRA_PROD`"
+
+[[use_case]]
+id = "UC-instance-lifecycle-14"
+tier = "T2"
+statement = "a post-activation health failure rolls back to the prior release and restores spira.conf; on a first deploy it removes `current` and re-renders on the checkout, and never re-enables ctrl-suspended units"
+
+[[use_case]]
+id = "UC-instance-lifecycle-15"
+tier = "T1"
+statement = "a release installed from its tarball runs from a read-only tree: sentinel dispatches and loom serves without cargo, and `conf.sh` resolves `SPIRA_LOOM_BIN` to `bin/loom`"
+
+[[use_case]]
+id = "UC-instance-lifecycle-16"
+tier = "T1"
+statement = "root install refuses with exit 5 on each conflict (foreign harness, live `aeon.sh`, gate lock held, instance mismatch, Dolt port serving another data_dir), naming the remedy and `SPIRA_INSTALL_CONFLICT_CONSIDERED`; a clean box passes"
+
+[[use_case]]
+id = "UC-instance-lifecycle-17"
+tier = "T1"
+statement = "root install refuses a git-checkout `SPIRA_PROD` and a `CONFIGURE_PROD` without `conf.sh`; on an empty `SPIRA_RELEASES` it bootstraps `releases/bootstrap` with `current -> bootstrap`, otherwise it refuses naming `activate.sh`"
+
+[[use_case]]
+id = "UC-instance-lifecycle-18"
+tier = "T2"
+statement = "root install exits 3 when installed but `ready.sh` fails; `--dry-run` prints each phase and mutates nothing"
+
+[[use_case]]
+id = "UC-instance-lifecycle-19"
+tier = "T1"
+statement = "the unit installer refuses a checkout on the wrong branch or behind the landref before writing any unit, skipping the check for artifact deploys and exact-tag detached HEADs; `SPIRA_INSTALL_FORCE` overrides"
+
+[[use_case]]
+id = "UC-instance-lifecycle-20"
+tier = "T1"
+statement = "the unit installer refuses when another instance's config shares any of `SPIRA_RUN`/`SPIRA_DB`/`SPIRA_PROD`/`SPIRA_DOLT_DATA`/`SPIRA_TESTDB_PORT`, naming the key, the other instance and its file, writing no unit"
+
+[[use_case]]
+id = "UC-instance-lifecycle-21"
+tier = "T1"
+statement = "the unit installer refuses while this instance's aeons are live (before daemon-reload), and refuses when any ExecStart target is missing or lacks +x"
+
+[[use_case]]
+id = "UC-instance-lifecycle-22"
+tier = "T1"
+statement = "per-unit apply decision table: changed writes/restarts/counts; unchanged does nothing; masked is left and reported; operator-disabled is not re-enabled; ctrl-suspended is not enabled; world-halted enables without `--now`; `spira-aeon-*` is never restarted or enabled"
+
+[[use_case]]
+id = "UC-instance-lifecycle-23"
+tier = "T2"
+statement = "a changed timer whose oneshot is mid-pass is applied only after the oneshot drains; after install, any enabled-but-inactive unit makes the installer exit non-zero"
+
+[[use_case]]
+id = "UC-instance-lifecycle-24"
+tier = "T1"
+statement = "rendering produces instance-suffixed `spira-*-<inst>` units whose timers target the suffixed service, keeps shared units plain-named, renders watchers as `spira-watch-<name>-<inst>.service` (never `@`), and leaves no `@PLACEHOLDER@`"
+
+[[use_case]]
+id = "UC-instance-lifecycle-25"
+tier = "T1"
+statement = "optional units are gated by what is present (binary, `inotifywait`, `SPIRA_SELF_TEST`); a missing prerequisite marks the unit OPTIONAL, not installed and not enabled, with a note"
+
+[[use_case]]
+id = "UC-instance-lifecycle-26"
+tier = "T1"
+statement = "the renderer refuses `@DOLT@` templates when dolt is absent and never emits an empty ExecStart; explicitly empty `SPIRA_PROD` falls back to `SPIRA_HOME`, and cockpit-ensure derives from `dirname(SPIRA_PROD)`"
+
+[[use_case]]
+id = "UC-instance-lifecycle-27"
+tier = "T2"
+statement = "prune disables, stops and removes a `spira-*-<inst>` unit absent from UNITS and an orphaned watcher (row left the manifest), never touching a manifest watcher; neither loop prunes the other's units"
+
+[[use_case]]
+id = "UC-instance-lifecycle-28"
+tier = "T2"
+statement = "legacy migration disables un-suffixed and `spira-watch@` units before their per-instance replacements are enabled; it never touches shared units, is silent on a clean box, and `--no-migrate-watchers` spares watchers"
+
+[[use_case]]
+id = "UC-instance-lifecycle-29"
+tier = "T1"
+statement = "a non-prod install seeds `SPIRA_INSTANCE=<inst>` into `dirname(SPIRA_PROD)/spira.conf` once, preserving existing lines; a prod install does not write the file"
+
+[[use_case]]
+id = "UC-instance-lifecycle-30"
+tier = "T2"
+statement = "`unit-ensure.sh` reinstalls missing or changed units (daemon-reload only then), is a no-op otherwise, and reports MISSING-TARGET without enabling"
+
+[[use_case]]
+id = "UC-instance-lifecycle-31"
+tier = "T0"
+statement = "unit-file invariants: every timer template is in UNITS (or OPTIONAL) and in ENABLE and fires periodically; restarting services have a reachable start limiter; WatchdogSec appears only on non-shell ExecStart; the verdict service has `TimeoutStartSec>=3600` and no CPUQuota"
+
+[[use_case]]
+id = "UC-instance-lifecycle-32"
+tier = "T1"
+statement = "`cadence.sh` changes a timer's cadence via a revertible drop-in and never leaves it without a next elapse; it refuses unknown units and verify refuses an empty sweep"
+
+[[use_case]]
+id = "UC-instance-lifecycle-33"
+tier = "T2"
+statement = "`owned.sh list` emits every artefact kind in 5-field rows, with unit rows equal to `install.sh --render` for that instance; `check` reports absent, present or drifted per artefact"
+
+[[use_case]]
+id = "UC-instance-lifecycle-34"
+tier = "T2"
+statement = "`install.sh --diff` and `skew.sh units` return 0 clean, 1 with DIFFERS/MISSING, and 3 when the installer is missing"
+
+[[use_case]]
+id = "UC-instance-lifecycle-35"
+tier = "T2"
+statement = "`skew.sh check` returns 1 for NOT-LATEST or MANIFEST-MISMATCH, 0 'in effect', and 3 for missing releases/`current`/MANIFEST; artifact mode reads tags via gh"
+
+[[use_case]]
+id = "UC-instance-lifecycle-36"
+tier = "T2"
+statement = "`skew.sh foreign` refuses branches that change a vendored harness copy outside the harness repo, exempting the harness's own repo and dev source, and returns 3 on conf failure"
+
+[[use_case]]
+id = "UC-instance-lifecycle-37"
+tier = "T2"
+statement = "`skew.sh gap` counts commits behind the remote; `refresh` advances even under a live lease, swaps atomically (new inode) and stashes dirty files"
+
+[[use_case]]
+id = "UC-instance-lifecycle-38"
+tier = "T2"
+statement = "`uninstall.sh` stops/disables/removes owned units, disables linger, removes harness symlinks and session hooks; it is idempotent, refuses ambiguity across instances, reports strays without deleting them, honours `--purge`/`--dry-run`, and a partial install uninstalls with exit 0"
+
+[[use_case]]
+id = "UC-instance-lifecycle-39"
+tier = "T2"
+statement = "`uninstall.sh --purge-database` removes the DB only when the operator types back the bead count, and refuses on mismatch"
+
+[[use_case]]
+id = "UC-instance-lifecycle-40"
+tier = "T4"
+statement = "a fresh-box install→ready→uninstall round trip on real systemd leaves the unit directory byte-identical to before"
+
+[[use_case]]
+id = "UC-instance-lifecycle-41"
+tier = "T1"
+statement = "`world.sh stop` stops active work units (resolved instance-qualified name, plain fallback), never stops cockpit/loom/landing, spares CI watchers unless `--hard`, and exits non-zero without printing STOPPED on any failed stop"
+
+[[use_case]]
+id = "UC-instance-lifecycle-42"
+tier = "T1"
+statement = "`world.sh start` starts timers except those ctrl-suspended or systemd-disabled, revives non-oneshot watchers stopped by `--hard`, and leaves active ones alone"
+
+[[use_case]]
+id = "UC-instance-lifecycle-43"
+tier = "T0"
+statement = "`world.sh drain` touches no unit and writes a stamp with a resume hint; `--timeout` exits 1 NOT DRAINED/REMAIN GATED, `--deadline` slays with `--keep-work --reopen`, `resume` clears the stamp, and every aeon door carries both drain and halt gates"
+
+[[use_case]]
+id = "UC-instance-lifecycle-44"
+tier = "T1"
+statement = "`world.sh status` reports landing, live gate and landing workers from `/proc`, DRAINING, active CI watchers and `svc: <result>` for a failed last run, saying 'unknown' (not 'inactive') for an unresolvable unit"
+
+[[use_case]]
+id = "UC-instance-lifecycle-45"
+tier = "T1"
+statement = "`ctrl.sh`: a suspension needs a reason and an owner; check/list/resume work; divergence reports suspended-but-running and masked-but-undeclared units"
+
+[[use_case]]
+id = "UC-instance-lifecycle-46"
+tier = "T2"
+statement = "`acceptance-ci.sh` builds a scratch repo on `main` with a git identity and a repo-map, puts `~/.local/bin` on PATH, passes `XDG_RUNTIME_DIR`, and propagates `acceptance-run.sh`'s exit code"
+
+[[use_case]]
+id = "UC-instance-lifecycle-47"
+tier = "T1"
+statement = "`acceptance-run.sh` runs install with `SPIRA_OPERATED=0`, runs the clone's own `ready.sh` unmasked, extracts bead ids robustly, proves landing by ancestry, records a git note, and emits a single PASS/FAIL line"

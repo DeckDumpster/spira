@@ -1,0 +1,242 @@
+api_version = "test-plan/v1"
+area = "cockpit-observability"
+
+[[use_case]]
+id = "UC-cockpit-observability-01"
+tier = "T1"
+statement = "the collector writes `cockpit.env` only when it is the supervised unit or `SPIRA_COCKPIT_FORCE=1` (recorded as `SP_WRITER=force`), otherwise prints keys to stdout; `cockpit.sh loop`/`collect.sh loop` refuse to run unsupervised"
+
+[[use_case]]
+id = "UC-cockpit-observability-02"
+tier = "T1"
+statement = "`SP_AT` is stamped before any section data; `SP_WINDOW_HOURS`, `SP_PASS_SECS` and `SP_COLLECTOR_REV` are always emitted"
+
+[[use_case]]
+id = "UC-cockpit-observability-03"
+tier = "T0"
+statement = "every probe a reader depends on is registered in `collect.sh PROBES`"
+
+[[use_case]]
+id = "UC-cockpit-observability-04"
+tier = "T1"
+statement = "fragment merge: an `ok` fragment contributes its keys; `never`/`timeout`/`error` contribute only `_PROBE_AT_<n>`/`_PROBE_STATUS_<n>`; `stale` keeps its last-known-good values; a key clash picks the alphabetically first fragment"
+
+[[use_case]]
+id = "UC-cockpit-observability-05"
+tier = "T1"
+statement = "a probe that times out writes `status=timeout`, logs its name, increments `_PROBE_KILLED` (surfaced as `SP_PROBE_KILLED_<n>`), and leaves no temp file; a success resets the counter and logs `probe <n> ok <N>s`"
+
+[[use_case]]
+id = "UC-cockpit-observability-06"
+tier = "T2"
+statement = "a collector pass killed by TERM/INT/HUP removes its `.cockpit.*` temp, re-raises (exits 128+signo), and never disturbs the published `cockpit.env`; orphan temps are swept at startup for both `cockpit.sh` and `collect.sh`"
+
+[[use_case]]
+id = "UC-cockpit-observability-07"
+tier = "T1"
+statement = "the collector loop exits 1 after N consecutive merge failures, exits 0 with 'config changed' when `SPIRA_CONF` mtime changes, and otherwise keeps running; the same contract holds for `health.sh` and `loom.sh`"
+
+[[use_case]]
+id = "UC-cockpit-observability-08"
+tier = "T1"
+statement = "every bd-backed count is `?` when bd exits non-zero, exits 0 with empty output, prints a schema-mismatch refusal, or the persona set does not resolve; an empty readable store yields numeric `0`"
+
+[[use_case]]
+id = "UC-cockpit-observability-09"
+tier = "T1"
+statement = "reachability: open work reachable from ready seeds through `blocks` edges counts as `SP_REACHABLE`; beads behind a needs-ryan ask or `spira-poison` count as `SP_STRANDED`; asks/insights are excluded, `relates-to` does not block, and the scope label is required"
+
+[[use_case]]
+id = "UC-cockpit-observability-10"
+tier = "T2"
+statement = "landing classification: a closed bead is LANDED only when a commit subject on `origin/<base>` names it (a body mention does not count), for both main- and master-based repos; `SP_CLOSED` covers the last 24h"
+
+[[use_case]]
+id = "UC-cockpit-observability-11"
+tier = "T1"
+statement = "`SP_QUEUE_DEPTH` counts CERTIFIED beads; the open batch yields PR, age and members including still-open beads; certified-but-unbatched beads appear as NEXT in batcher order; quarantined suites are counted"
+
+[[use_case]]
+id = "UC-cockpit-observability-12"
+tier = "T2"
+statement = "`SP_BRANCH_DONE`/`SP_UNSENT` count only bead-backed branches; a no-bead branch ahead of base is `SP_ORPHAN_WORK`, one with tip on base is `SP_UNADOPTED` (named); `spira/queue/*` and `spira-suite-state/*` are protected; a failed bead lookup counts in `SP_PROBE_FAIL`, never `SP_UNADOPTED`"
+
+[[use_case]]
+id = "UC-cockpit-observability-13"
+tier = "T1"
+statement = "`SP_DUP_REFS`/`SP_DUP_BEADS` count external_refs shared by more than one incident bead within the 7-day lookback; `SP_REPO_UNMAPPED`/`SP_REPO_ABSENT` count over non-closed beads; `SP_POISON` counts every non-closed poisoned bead; an unreadable store gives `?`"
+
+[[use_case]]
+id = "UC-cockpit-observability-14"
+tier = "T1"
+statement = "SOP/sweep meters: never-fired and recurred counts respect the window, `held` and `check=fail`; `SP_SWEEP_AGE` is the newest applied-ledger entry's age; a missing, empty or unreadable ledger, or a broken shelf, gives `?`"
+
+[[use_case]]
+id = "UC-cockpit-observability-15"
+tier = "T2"
+statement = "a gate is live only when its pid is alive and its cmdline is the gate; per-aeon FUSE/WALL read 0 fresh, `?` with no worktree, `gate` while its gate runs; `landing.status`/`landing.progress` are copied verbatim, and a missing file gives `?`"
+
+[[use_case]]
+id = "UC-cockpit-observability-16"
+tier = "T1"
+statement = "`SP_RATELIM_*` comes from the newest `rate_limit_event` and is `?` with no trace; SELF metrics (repeated ACT across passes, stillborn aeons) are computed over their window"
+
+[[use_case]]
+id = "UC-cockpit-observability-17"
+tier = "T1"
+statement = "`SP_NEXT` attributes each ready bead to the persona that will claim it, or marks it `unclaimable` when its `fayth:` preference cannot match"
+
+[[use_case]]
+id = "UC-cockpit-observability-18"
+tier = "T1"
+statement = "the statute probe reports DB/page counts and SKEW as `?` with no wiki, MISMATCH when DB < page/2, and OK otherwise"
+
+[[use_case]]
+id = "UC-cockpit-observability-19"
+tier = "T1"
+statement = "the 24h BEADS opened/closed/landed counts and 8-bucket sparklines come only from bead JSON and `landing.log`; an unreadable `landing.log` gives `?` for the landed series"
+
+[[use_case]]
+id = "UC-cockpit-observability-20"
+tier = "T0"
+statement = "`spira_event` records kind/target/title/detail to `events.log`, suppresses repeats per (kind, target) within a window then reports `+N more`, refuses an empty kind or title, and every emitted kind is declared, lowercase-dotted and ≤32 characters"
+
+[[use_case]]
+id = "UC-cockpit-observability-21"
+tier = "T1"
+statement = "every count the pane renders shows `?` when its key is absent or `?`, never `0`; a key missing from collector skew renders `coll <rev>`"
+
+[[use_case]]
+id = "UC-cockpit-observability-22"
+tier = "T1"
+statement = "the pane fills exactly its height: NOW served first, NEXT/RECENT capped at 5, slack to INFLOW, CI keeps its row, no row exceeds 70/96 columns, labels align at column 9"
+
+[[use_case]]
+id = "UC-cockpit-observability-23"
+tier = "T1"
+statement = "NOW rows come from `trace_stats`/`trace_tail`: turns are distinct message ids, ctx is the last usage, only the current attempt counts, MODEL mismatch with `FAYTH_MODEL` shows a warning, an unreadable trace gives `?` and an empty trace gives `-`, live-aeon count comes from pidfiles and /proc"
+
+[[use_case]]
+id = "UC-cockpit-observability-24"
+tier = "T1"
+statement = "DRAINING (minutes and resume hint) and STOPPED are independent banners; a stale snapshot is STALE (naming probe and kill count) when its core probe timed out, FAULT (age) otherwise; the threshold `SPIRA_SNAP_STALE_S` is shared with `watchtower.sh` and `doctor.sh`"
+
+[[use_case]]
+id = "UC-cockpit-observability-25"
+tier = "T1"
+statement = "no snapshot anywhere gives 'no snapshot'; a snapshot at the XDG alternative while the reader looks elsewhere gives PATH MISMATCH naming both paths"
+
+[[use_case]]
+id = "UC-cockpit-observability-26"
+tier = "T1"
+statement = "MAIL, QUEUE and LAND sections render NEW/READ/DONE, `batch #<pr>`, rc and branches, and the lease countdown; retired labels stay removed"
+
+[[use_case]]
+id = "UC-cockpit-observability-27"
+tier = "T1"
+statement = "panel frame: exactly `h` rows and at most `w` columns at every geometry/view/mode, two bands, content never dim, the reply editor wraps losslessly with exactly one caret, ages are coarse durations from an exact epoch/iso pair"
+
+[[use_case]]
+id = "UC-cockpit-observability-28"
+tier = "T1"
+statement = "panel views: events go only to NOTIFICATIONS; alerts are selected by label, sorted oldest-first, self-clear to history; silences expire at their deadline (unparseable deadline silences nothing); acking does not hide an alert; a dismissed insight returns only when the operator spoke last; an optimistic hide ends only when the write is visible; an empty or errored read is never an all-clear"
+
+[[use_case]]
+id = "UC-cockpit-observability-29"
+tier = "T1"
+statement = "panel affordances: FYI never offers a verdict, ALERTS offers ack/silence/history but never decide, `p reject` appears only on DECISIONS, only `ask-*` beads close on reply while `ask-law`/`ask-suit` parse as law; the enact line splits on the first colon without doubling the `law-` prefix"
+
+[[use_case]]
+id = "UC-cockpit-observability-30"
+tier = "T2"
+statement = "panel write paths (close, comment, archive, enact, premise-reject) call `bd`/`rule.sh` with the right arguments and actor, and surface failure"
+
+[[use_case]]
+id = "UC-cockpit-observability-31"
+tier = "T1"
+statement = "Loom `/api/beads` serves only live work: typed edges hoisted once, dangling/closed edges dropped and counted, JSON-escaped titles survive, an advisory preamble is tolerated, two requests within the cache window cost one bd call, over budget returns 503, a bd failure returns 502 (never an empty graph), static routes serve and unknown paths 404"
+
+[[use_case]]
+id = "UC-cockpit-observability-32"
+tier = "T1"
+statement = "Loom `/api/ops` decodes `cockpit.env` shell quoting exactly, exposes only `SP_` keys, leaves absent keys absent, errors on an unreadable file, and reports `halted` and `cockpit_env_age_s`"
+
+[[use_case]]
+id = "UC-cockpit-observability-33"
+tier = "T1"
+statement = "Loom `model.js` derives components/depth/width, excludes closed/provenance/dangling edges and collapses duplicates, honours configured labels, groups by repo and epic, uses a 14-day arrivals flow, and parses real bd JSON; the shipped page carries no embedded payload"
+
+[[use_case]]
+id = "UC-cockpit-observability-34"
+tier = "T1"
+statement = "Loom self-maintenance: `layout.sh` rebuilds when the source is newer than the binary or the binary is missing, and restarts a stale service only when the binary is executable"
+
+[[use_case]]
+id = "UC-cockpit-observability-35"
+tier = "T1"
+statement = "`ready.sh` reports FAIL/`?`/WARN/pass/skip for each check (sentinel timer, halt stamp, DB, dolt starting-port, statutes, ready work, loom latency, agent, snapshot freshness, panes) and exits 1 on any FAIL or `?`"
+
+[[use_case]]
+id = "UC-cockpit-observability-36"
+tier = "T1"
+statement = "`ctx-meter.sh` session pointer: the operator's status-line tick owns the pointer; an idle second session cannot steal it until the holder is stale; a stale, deleted or corrupt pointer means 'no session'"
+
+[[use_case]]
+id = "UC-cockpit-observability-37"
+tier = "T1"
+statement = "`ctx-meter.sh` limits: burn rate is measured over the span not pairwise; a projection appears only if the window fills before it resets; flat/single-sample/short/1-point histories project nothing; a reset is a boundary; an absent or malformed window renders nothing (never 0%); the sample file is pruned to 6h and deduplicated; env mode prints `-`/`?`; the line is ≤110 columns"
+
+[[use_case]]
+id = "UC-cockpit-observability-38"
+tier = "T1"
+statement = "`statusline-check.py` classifies settings as ours, other, absent, unreadable, stale (including through a /tmp wrapper) or fragile"
+
+[[use_case]]
+id = "UC-cockpit-observability-39"
+tier = "T1"
+statement = "`tokens.sh` attributes turns to aeon/archivist/session deduplicated by message id; `model-switch-report.sh` gives $/bead as `$?` (never `$0`) with no cost data; `released-defects.sh` counts only introductions that reached base before the fix and gives `?` for an unresolvable repo"
+
+[[use_case]]
+id = "UC-cockpit-observability-40"
+tier = "T1"
+statement = "`cockpit/resolve.sh` exits non-zero and relays bd's complaint on a failed close, and prints 'resolved' on success"
+
+[[use_case]]
+id = "UC-cockpit-observability-41"
+tier = "T1"
+statement = "pane identity comes from the process a pane actually runs, not argv text that merely mentions `health.sh`; `ensure` untags an impostor, logs it, and never kills the session pane"
+
+[[use_case]]
+id = "UC-cockpit-observability-42"
+tier = "T2"
+statement = "`up` builds session, mail (below, left) and a full-height health pane; `ensure` respawns a closed mail pane; with no mail client, or one not installed, there is no mail pane"
+
+[[use_case]]
+id = "UC-cockpit-observability-43"
+tier = "T1"
+statement = "`ensure` detaches ghost clients idle longer than `COCKPIT_CLIENT_IDLE_SECS`, keeps the live client's height, logs the tty, and does not move the operator's active pane when there is nothing to repair"
+
+[[use_case]]
+id = "UC-cockpit-observability-44"
+tier = "T1"
+statement = "the health pane command carries `SPIRA_CONF`; in split-checkout mode it runs the `SPIRA_PROD` renderer unless `SPIRA_DEV_RENDERER=1`; mouse mode defaults on, can be switched off with off/no/0, and never fails the caller"
+
+[[use_case]]
+id = "UC-cockpit-observability-45"
+tier = "T1"
+statement = "a copy of `layout.sh` refuses `ensure` and names the installed path; the collector watchdog restarts an instance-qualified collector that started before `cockpit.sh` was last promoted"
+
+[[use_case]]
+id = "UC-cockpit-observability-46"
+tier = "T3"
+statement = "`rebuild.sh`, from a dead server, creates brain/hunk/chat/cockpit with dashboards in `brain:0` and cockpit windows linked; it verifies itself and fails naming the session pane when the brief is missing, is idempotent against a healthy server, and reports an over-long socket as unusable"
+
+[[use_case]]
+id = "UC-cockpit-observability-47"
+tier = "T2"
+statement = "`tmux-env.sh` scrubs the Claude session identity from the server's global env; panes opened afterwards do not inherit it, and a second run is idempotent"
+
+[[use_case]]
+id = "UC-cockpit-observability-48"
+tier = "T2"
+statement = "`cockpit-remote`: the dialer refuses an empty `COCKPIT_HOST`; a watcher that loses the lock exits non-zero promptly naming the holder; `start` delegates to systemd when the unit is enabled and forks with setsid otherwise; the orphan-lock probe names the holder's pid and path"

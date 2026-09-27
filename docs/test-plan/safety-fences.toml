@@ -1,0 +1,172 @@
+api_version = "test-plan/v1"
+area = "safety-fences"
+
+[[use_case]]
+id = "UC-safety-fences-01"
+tier = "T1"
+statement = "in an aeon session, queue- and landing-operating commands (`batch.sh`, `git push`, `gh pr create`, `queue.sh flush`, `verdict.sh`, `landing.sh`) are refused, `queue.sh stats` is allowed; a blocked name used as a file argument or suite name is not an invocation, but a compound that also invokes it is"
+
+[[use_case]]
+id = "UC-safety-fences-02"
+tier = "T1"
+statement = "in an aeon session, writes under `SPIRA_PROD` or `SPIRA_RUN/landstate` are refused (redirect, rm, mv, tee, `sed -i`, `git -C` add/commit/reset/checkout/clean); reads/exec from prod, rendered brief commands, `census.sh`, and prod paths in heredoc/prose are allowed"
+
+[[use_case]]
+id = "UC-safety-fences-03"
+tier = "T1"
+statement = "in an aeon session, `bd create` against production is refused for a test-data title or a `repo:` label missing from the repo map; an inline `SPIRA_DB=` does not bypass it, a non-production path passes, and `SPIRA_BD_CREATE_OVERRIDE=1` bypasses"
+
+[[use_case]]
+id = "UC-safety-fences-04"
+tier = "T1"
+statement = "an aeon may not `bd close` while an operator comment posted after its claim is unacknowledged; an `ACK <uuid>` note satisfies the guard; pre-claim and the aeon's own comments are exempt, and the refusal names the comment id and `SPIRA_CLOSE_UNACKED_CONSIDERED`"
+
+[[use_case]]
+id = "UC-safety-fences-05"
+tier = "T1"
+statement = "a post-claim operator comment is delivered to the aeon exactly once as PostToolUse `additionalContext`, naming the ACK command; pre-claim and self comments are not delivered"
+
+[[use_case]]
+id = "UC-safety-fences-06"
+tier = "T1"
+statement = "an aeon may not remove any `delivers:*` label, and the refusal names the criterion's producer; `incident.sh retire-unsatisfiable-delivers` and ordinary labels are allowed"
+
+[[use_case]]
+id = "UC-safety-fences-07"
+tier = "T1"
+statement = "an aeon may not write `sop-*`/`law-*` keys with `bd remember` in any form; the refusal names `sop.sh write`/`rule.sh enact`, and those sanctioned writers pass"
+
+[[use_case]]
+id = "UC-safety-fences-08"
+tier = "T1"
+statement = "a non-aeon session may not edit spec fields of an in-flight bead (in_progress + assignee + branch label); non-spec flags, not-in-flight beads and aeon sessions pass, and the refusal suggests `bd comment`"
+
+[[use_case]]
+id = "UC-safety-fences-09"
+tier = "T1"
+statement = "during a focus period (narrowed `SPIRA_FAYTHS`), an aeon's `bd close` must cite an open bead or a closed insight bead in `--reason`/`--reason-file`; with the full roster the guard is a no-op"
+
+[[use_case]]
+id = "UC-safety-fences-10"
+tier = "T1"
+statement = "in an aeon session, `bd update --status closed` in any argv form is refused with exit 2 naming `bd close`; `bd close` and other status values pass"
+
+[[use_case]]
+id = "UC-safety-fences-11"
+tier = "T1"
+statement = "in an aeon session, writes into `SPIRA_MAIL` are refused whether by Bash redirect/mv/cp/touch or by the Write/Edit tools, for both literal and expanded path; `mail.sh send` and reads are allowed"
+
+[[use_case]]
+id = "UC-safety-fences-12"
+tier = "T1"
+statement = "in an aeon session, direct execution of `spira/test-*.sh` in any shell shape is refused naming `testenv-batch.sh`; `testenv-batch.sh` runs and reading a suite are allowed"
+
+[[use_case]]
+id = "UC-safety-fences-13"
+tier = "T1"
+statement = "`DELETE FROM schema_migrations` is refused as a tool call (`bd sql`/`dolt sql`, case- and whitespace-insensitive) and at `bdq create` even with the needs-ryan label; both refusals point at `bd migrate schema`"
+
+[[use_case]]
+id = "UC-safety-fences-14"
+tier = "T1"
+statement = "`bdq create` refuses harness-halting vocabulary (world stop, `systemd/install.sh`, daemon-reload, `systemctl stop/restart spira-*`, schema migrate) unless the bead carries the ask label, refusing before `bd` is invoked; near-miss text passes"
+
+[[use_case]]
+id = "UC-safety-fences-15"
+tier = "T1"
+statement = "every guard blocks through one documented PreToolUse protocol naming guard, remedy and override; the override works from env and inline; the guard is inert outside its session scope, for tools it does not own, and for single-quoted/heredoc prose; behaviour on an empty or malformed payload is defined and tested"
+
+[[use_case]]
+id = "UC-safety-fences-16"
+tier = "T1"
+statement = "`aeon_settings` registers every guard meant for aeons, identically for the sweep and the claimed launch; a guard that is missing or not executable is reported, never silently dropped"
+
+[[use_case]]
+id = "UC-safety-fences-17"
+tier = "T2"
+statement = "an aeon commit that stages a path already dirty before the session began is refused, naming the path; own-path commits succeed, and `SPIRA_ALLOW_DIRTY_STAGE=1` overrides"
+
+[[use_case]]
+id = "UC-safety-fences-18"
+tier = "T2"
+statement = "`branch-guard.sh staged` refuses an aeon-identity commit on the base branch and an aeon commit outside `SPIRA_WORK`, naming email/branch/both; operator identity, non-base branches and sweeps pass"
+
+[[use_case]]
+id = "UC-safety-fences-19"
+tier = "T2"
+statement = "`branch-guard.sh check` reports an aeon commit at a base tip and a shared checkout ahead of its remote, and reports clean after an operator commit on top"
+
+[[use_case]]
+id = "UC-safety-fences-20"
+tier = "T2"
+statement = "the `reference-transaction` hook refuses unsanctioned deletion of `refs/heads/spira/*` (including `spira/queue/*`) even from inside an aeon worktree; `SPIRA_REF_SANCTIONED=1` allows it, non-spira refs are untouched, the committed phase exits 0, and large stdin drains without SIGPIPE"
+
+[[use_case]]
+id = "UC-safety-fences-21"
+tier = "T2"
+statement = "`worktree-hooks.sh install` arms every canonical hook in an aeon worktree; its composed `pre-commit` runs the canonical fences first then the dirty-path guard; an install failure in `aeon.sh` is loud"
+
+[[use_case]]
+id = "UC-safety-fences-22"
+tier = "T2"
+statement = "the tracked `hooks/pre-commit` runs `exclude.sh staged`, `scratch-fence.sh` and `branch-guard.sh staged` in a clone armed by `exclude.sh install`, and each can refuse through the hook"
+
+[[use_case]]
+id = "UC-safety-fences-23"
+tier = "T1"
+statement = "`exclude.sh` keeps beads data (`.beads/`, `.dolt/`, JSONL exports) out of the harness tree and out of staged files"
+
+[[use_case]]
+id = "UC-safety-fences-24"
+tier = "T1"
+statement = "`scratch-fence.sh` refuses tracked root `sp-*`/`*.fixed` files, ignores subdirectories, exits 3 on an empty index, and honours `SCRATCH_FENCE_OK`"
+
+[[use_case]]
+id = "UC-safety-fences-25"
+tier = "T1"
+statement = "`inventory.sh` refuses absolute home-directory and workspace-container paths, `(per Name, date)` marks and real emails in tracked and untracked files; it exempts its own pattern files and example domains, exits 3 on an empty index, and supports `--scan`/`--patterns`"
+
+[[use_case]]
+id = "UC-safety-fences-26"
+tier = "T2"
+statement = "`orphan-test.sh` refuses a diff that removes a token an unmodified suite still asserts on; it passes when the suite changes in the same diff, on an `orphan-test-ok` annotation, and on a token present on both `-` and `+` lines, exiting 77 without `SPIRA_GATE_BASE`"
+
+[[use_case]]
+id = "UC-safety-fences-27"
+tier = "T1"
+statement = "`host-check.sh` refuses a host suite with neither a non-empty `# host-reason` nor testenv use in code; its counts render a number or `?`, never 0 on an empty tree"
+
+[[use_case]]
+id = "UC-safety-fences-28"
+tier = "T1"
+statement = "`suite-state-fence.sh` refuses a quarantine entry with no bead, a CLOSED bead, a nonexistent suite or no reason; an empty file reports clean"
+
+[[use_case]]
+id = "UC-safety-fences-29"
+tier = "T0"
+statement = "no harness script writes a dimension label (repo/severity/branch/fayth/lane/gate) with `bd label add` or embeds one in `SPIRA_INCIDENT_LABELS`; `bd set-state` is the only writer"
+
+[[use_case]]
+id = "UC-safety-fences-30"
+tier = "T0"
+statement = "persona tool allowlists: no restricted persona (Ops, czar) gets bare `Bash`; each allows its diagnostics and denies mutations (rm, `systemctl start/stop/restart`, `git branch -D`, destructive bd)"
+
+[[use_case]]
+id = "UC-safety-fences-31"
+tier = "T1"
+statement = "the czar stage fence: each class defaults to shadow and refuses, naming `SPIRA_CZAR_STAGE_<CLASS>`; `act` allows, and `queue.sh eject` honours the fence before touching the DB"
+
+[[use_case]]
+id = "UC-safety-fences-32"
+tier = "T2"
+statement = "spike confinement: `confine.sh` refuses a spike branch touching files outside `SPIRA_SPIKE_PATHS` (matching by path prefix against the merge base, bound to the spike persona); an unreadable bead fails open; `landing.sh` reopens an unconfined spike without merging it and keeps the branch"
+
+[[use_case]]
+id = "UC-safety-fences-33"
+tier = "T0"
+statement = "chamber integrity: every `{{PLACEHOLDER}}` is rendered by its program, every command a brief names exists, every fayth parses, spike/ops brief clauses are present, and `bd reopen` is called only through `bead_reopen`"
+
+[[use_case]]
+id = "UC-safety-fences-34"
+tier = "T0"
+statement = "shipped-tree readiness: every shipped shell script parses, `conf.sh` resolves `SPIRA_HOME` without operator config, and the ask-label default names no operator"
