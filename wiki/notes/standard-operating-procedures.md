@@ -1137,13 +1137,13 @@ bd show <bead> | grep -E '\b(groom|incident|maechen-sweep|plan|spike|czar-trigge
 
 **Symptom** — A re-run of the same test suite on the same tree was refused because SPIRA_VERDICT_REPEAT_CONSIDERED was not set or too short (min 10 chars). Multiple recurrences indicate environmental rather than code defects.
 
-**Check** — bash spira/testenv-batch.sh --suites <suite> <branch> and check if it passes. If it passes, the original red was environmental. NOTE: Aeons cannot run this CHECK due to lack of SSH credentials for remote branch access — escalate to operator for re-run or diagnose from available evidence.
+**Check** — bash spira/testenv-batch.sh --suites <suite> <branch> and check if it passes. If it passes, the original red was environmental. NOTE: Aeons cannot run this CHECK (no SSH) — and do not need to: the first refusal for a branch+tip+suite key already mails the Concierge mailbox (branch, tip, suite, last verdict); later refusals of the same key add nothing. First check whether the branch is a cutover-round/epic-assembly bead (lands only via a round bead judging its full corpus, e.g. sp-sa8pn) — if so the environmental-vs-defect call is moot until the round assembles.
 
-**Fix** — Re-run the suite with SPIRA_VERDICT_REPEAT_CONSIDERED="environmental: <reason>" if you need to test the same tree again, or commit a fix if there's a code defect. For recurrences with documented environmental causes (e.g., runner OOM), escalate to operator for re-run once condition clears.
+**Fix** — Re-run with SPIRA_VERDICT_REPEAT_CONSIDERED="environmental: <reason>", or commit a fix if it's a code defect — a new tree gets a new key and the cache does not apply. If the branch is a round-assembly member per the CHECK note, do neither: close citing the round bead as why the verdict doesn't matter yet.
 
-**Escalate** — If the suite continues to fail after re-run with justification, file a new bead documenting the defect. For aeon-claimed beads with remote branch access needed, escalate to operator for re-run coordination via `mail.sh send operator --kind question` with a `## Question` and `## Default` section — as of 2026-09-27 mail.sh send delivers successfully again (verified live under sp-4gz5b after sp-c1ot2's fix closed; no hang). The prior guidance to skip mail.sh and only `bd dep add` onto sp-c1ot2 is now historical — try the send first, and only fall back to the dep-add/leave-open pattern if a send genuinely hangs (check the sp-c1ot2-successor bead for that specific incident before assuming it's still broken).
+**Escalate** — Never as a needs-ryan ask (law-escalate-decisions-not-problems) — a repeat-refused re-run is mechanical, not a decision, permissions, or destructive change. The Concierge message already carries what's needed to re-run; wait for it instead of mailing or filing a second request for the same key. Escalate to the operator only if something beyond a mechanical re-run blocks progress.
 
-**Reference** — wiki/notes/standard-operating-procedures.md
+**Reference** — spira/testenv-batch.sh — the repeat-refused block that mails the Concierge.
 
 **Matches** `repeat.refused|repeat-refused`
 
