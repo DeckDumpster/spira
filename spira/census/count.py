@@ -22,6 +22,7 @@
 # the event count as the bead count (db-i0jd) — so leading/trailing blanks are trimmed
 # positionally, and an empty new_value still counts as its own field.
 import sys, collections
+from classmap import class_for
 
 bc = collections.Counter()
 ec = collections.Counter()
@@ -50,23 +51,8 @@ for line in sys.stdin:
         continue
     if n_beads == 0:
         continue
-    cause = new_value
-    if event_type == 'requeued':
-        cls = 'sp-requeue-' + (cause or 'unrecorded')
-    elif event_type == 'recurred':
-        cls = 'sp-recur-' + (cause or 'unrecorded')
-    elif event_type == 'reclaimed':
-        if cause and cause != 'unrecorded':
-            cls = 'sp-reclaim-' + cause
-        else:
-            cls = 'sp-reclaim'
-    elif event_type == 'lapsed':
-        cls = 'sp-lapsed-' + (cause or 'unrecorded')
-    elif event_type == 'reopen':
-        cls = 'sp-reopen-' + (cause or 'unrecorded')
-    elif event_type == 'reopened':
-        cls = 'sp-reopen-' + (cause or 'unrecorded')
-    else:
+    cls = class_for(event_type, new_value)
+    if cls is None:
         continue
     bc[cls] += n_beads
     ec[cls] += n_events
