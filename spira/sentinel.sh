@@ -435,16 +435,18 @@ print(d[0].get("status", "") if d else "")' 2>/dev/null)"
             # precisely when the bead was (law-no-grep-q-under-pipefail). check4_decide's
             # case match on the already-fetched label string has neither hazard.
             case " $decision " in *' poison '*)
+                # KEPT AS A DUAL WRITE, not replaced (sp-ki12s): dispatchable_open excludes
+                # `spira-poison`, and check4_decide's own "already poisoned" detection reads
+                # that same label from the SAME dispatchable set — remove the label here
+                # without also fixing both of those and this loop poisons the bead again
+                # every single pass (dispatchable_open would keep re-offering it, and
+                # check4_decide would never see "already poisoned"). Converting those two
+                # reads is sp-i2m7y's job (CHECK 2/2b/2c/3b/4 onto events, in full); until
+                # that lands in the same cutover round, the label stays the real mechanism
+                # and lc_hold only starts the lifecycle log's history alongside it.
                 bdq label add "$id" spira-poison >/dev/null 2>&1
-                bdq note "$id" "Poisoned after $n in_progress transition(s) without landing. Triaged by the groomer, not a human: it reads the charged sessions' final results and either credits the harness-caused attempts and lifts the poison (groomer.sh unpoison) or splits/re-scopes the work. Any live holder keeps its claim and releases on its own exit path; no persona can claim it again while the label stands." >/dev/null 2>&1
-                # ADDITIVE, BEST-EFFORT (sp-ki12s): the bd label stays authoritative for
-                # dispatch until sp-wenrl converts readers and sp-sa8pn's deploy activates
-                # the cutover — this only starts the lifecycle machine's own record of the
-                # same poisoning, so the event log already has real history once it does.
-                # A row does not exist yet for any real bead today (sp-t93ky's classifier
-                # has not run), so this is expected to report "no such row" every pass; it
-                # never fails the check either way (lc.sh's own contract).
                 lc_hold "$id" poison "poisoned after $n in_progress transition(s) without landing" sentinel || true
+                bdq note "$id" "Poisoned after $n in_progress transition(s) without landing. Triaged by the groomer, not a human: it reads the charged sessions' final results and either credits the harness-caused attempts and lifts the poison (groomer.sh unpoison) or splits/re-scopes the work. Any live holder keeps its claim and releases on its own exit path; no persona can claim it again while the label stands." >/dev/null 2>&1
                 progress "poisoned $id after $n attempts"
                 # check4_decide only emits `poison` on the transition into poisoned (the
                 # `spira-poison` case in its label match), so this fires once — the bead
