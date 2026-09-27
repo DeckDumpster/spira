@@ -95,6 +95,19 @@ want "restricted to push events"        "github.event_name" "$G"
 want "restricted to the base branch"    "refs/heads/main"   "$G"
 
 echo
+echo "4b. cut and publish survive skipped suites (sp-7k4qh):"
+# GitHub ANDs an implicit success() into an \`if\` that names no status function, and success()
+# covers every ancestor. Since push-to-main skips build/provision/suites (sp-m870j), a bare
+# condition on \`cut\` or \`publish\` is silently skipped: no release was cut from 06:51Z on
+# 2026-09-27 until this was caught. Each must name a status function and check its own parent.
+_job_if() { awk -v j="  $1:" '$0==j{f=1;next} f&&/^  [a-z-]+:$/{exit} f&&/^    if:/{sub(/^    if: */,"");print;exit}' "$GATE_YML"; }
+_cut_if="$(_job_if cut)"; _pub_if="$(_job_if publish)"
+want "cut names a status function"            "!cancelled()"                    "$_cut_if"
+want "cut requires the gate to have passed"   "needs.gate.result == 'success'"  "$_cut_if"
+want "publish names a status function"        "!cancelled()"                    "$_pub_if"
+want "publish requires cut to have passed"    "needs.cut.result == 'success'"   "$_pub_if"
+
+echo
 echo "5. publishing does not rely on the tag trigger:"
 # The tag push happens, but the publish is invoked directly because a
 # GITHUB_TOKEN tag push fires no workflow.

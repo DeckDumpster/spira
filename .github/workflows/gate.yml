@@ -644,7 +644,10 @@ jobs:
   # ---------------------------------------------------------------------------
   cut:
     needs: gate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # EXPLICIT STATUS FUNCTION (sp-7k4qh). A bare condition gets an implicit success() that
+    # spans every ancestor, and push-to-main skips build/provision/suites (sp-m870j), so a bare
+    # `if` here skipped every cut from 2026-09-27 06:51Z: no release, no acceptance.
+    if: ${{ !cancelled() && needs.gate.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -816,7 +819,7 @@ jobs:
   # ---------------------------------------------------------------------------
   publish:
     needs: cut
-    if: needs.cut.outputs.tag != ''
+    if: ${{ !cancelled() && needs.cut.result == 'success' && needs.cut.outputs.tag != '' }}
     uses: ./.github/workflows/release.yml
     permissions:
       contents: write
