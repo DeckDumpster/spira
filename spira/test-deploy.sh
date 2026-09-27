@@ -192,6 +192,10 @@ _fail_on="\${DOCTOR_FAIL_ON_CALL:-}"
 _do_fail=0
 [ "\${DOCTOR_EXIT:-0}" != "0" ] && _do_fail=1
 [ -n "\$_fail_on" ] && [ "\$_cnt" -ge "\$_fail_on" ] && _do_fail=1
+# DOCTOR_FAILED_UNIT_FILE: fail while this file exists (a unit systemd holds failed), from call
+# DOCTOR_FAILED_UNIT_FROM_CALL on (2 = only after activation, as a unit the new release breaks).
+[ -n "\${DOCTOR_FAILED_UNIT_FILE:-}" ] && [ -e "\$DOCTOR_FAILED_UNIT_FILE" ] \\
+    && [ "\$_cnt" -ge "\${DOCTOR_FAILED_UNIT_FROM_CALL:-1}" ] && _do_fail=1
 if [ "\$_do_fail" = 1 ]; then
     printf '  FAIL  %s\n' "\${DOCTOR_FAIL_MSG:-injected failure}"
     exit 1
@@ -251,7 +255,12 @@ chmod +x "$BIN/bd"
 cat > "$BIN/systemctl" <<'SCEOF'
 #!/usr/bin/env bash
 printf 'SC %s\n' "$*" >> "${SC_LOG:-/dev/null}"
-case "$*" in *list-units*) printf 'spira-sentinel-prod.service loaded active running\n' ;; esac
+case "$*" in
+    *reset-failed*spira-skew-*) rm -f "${SKEW_UNIT_FAILED_FILE:-/nonexistent}" ;;
+    *list-units*--state=failed*) [ -n "${SC_FAILED_UNITS:-}" ] && printf '%s\n' "$SC_FAILED_UNITS" ;;
+    *" start "*) case " $* " in *" ${SC_START_FAILS:-@none@} "*) exit 1 ;; esac ;;
+    *list-units*) printf 'spira-sentinel-prod.service loaded active running\n' ;;
+esac
 exit 0
 SCEOF
 chmod +x "$BIN/systemctl"
@@ -469,6 +478,28 @@ _pub_list="[{\"tagName\":\"$NEW_TAG\",\"isDraft\":false}]"
 _out="$(run_deploy "SKEW_EXIT=1" "SKEW_OUT=$_notlatest" "GH_RELEASE_LIST=$_pub_list" -- latest 2>&1)"
 _rc=$?
 not0   "latest: NOT-LATEST after resolving latest still rolls back" "$_rc"
+
+# THE SKEW UNIT FAILS FOR THE SAME ACCEPTED REASON. Under the named older release its
+# periodic spira-skew unit runs the same check, gets NOT-LATEST and sits failed; doctor then
+# counted it as a failed unit and rolled the deliberate rollback back (acceptance phase C,
+# 2026-09-27). The accepted finding clears that unit before doctor runs; any other finding
+# leaves it failed, so doctor still sees it.
+_skewf="$TMP/skew-unit-failed"
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+: > "$_skewf"; rm -f "$DOCTOR_CNT"
+_out="$(run_deploy "SKEW_EXIT=1" "SKEW_OUT=$_notlatest" "DOCTOR_FAILED_UNIT_FILE=$_skewf" "DOCTOR_FAILED_UNIT_FROM_CALL=2" "SKEW_UNIT_FAILED_FILE=$_skewf" -- "$NEW_TAG" 2>&1)"
+_rc=$?
+is0    "older-named: the skew unit's NOT-LATEST failure does not undo a named deploy" "$_rc"
+islink "older-named: current stays on the named release (skew unit cleared)" "$RELEASES/current" "$NEW_RELEASE"
+nowant "older-named: no rollback on the skew unit"          "ROLLBACK" "$_out"
+
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+: > "$_skewf"; rm -f "$DOCTOR_CNT"
+_out="$(run_deploy "SKEW_EXIT=1" "SKEW_OUT=$(printf '%s\nMANIFEST-MISMATCH MANIFEST records a but release tag t points at b' "$_notlatest")" "DOCTOR_FAILED_UNIT_FILE=$_skewf" "DOCTOR_FAILED_UNIT_FROM_CALL=2" "SKEW_UNIT_FAILED_FILE=$_skewf" -- "$NEW_TAG" 2>&1)"
+_rc=$?
+not0   "older-named: a MANIFEST-MISMATCH leaves the skew unit failed and rolls back" "$_rc"
+[ -e "$_skewf" ] && ok "older-named: skew unit NOT cleared on a non-accepted finding" || bad "older-named: skew unit NOT cleared on a non-accepted finding" "reset-failed ran"
+rm -f "$_skewf"; unset _skewf
 unset _notlatest
 
 # ==========================================================================
@@ -513,6 +544,39 @@ _got_bins="$(grep '^install-bins' "$CALL_LOG" 2>/dev/null | head -1)"
 is "re-render: SPIRA_REPO is the activated release, derived binary paths cleared" \
    "install-bins SPIRA_REPO=$RELEASES/current SPIRA_BROKER_BIN=UNSET SPIRA_LOOM_BIN=UNSET" \
    "$_got_bins"
+
+# PROPERTY 6c — A UNIT THE TARGET RELEASE PRUNED LEAVES NO FAILED GHOST. Deploying an OLDER
+# release swaps `current` before its installer prunes the units it does not know; a timer of
+# such a unit firing in that gap cannot exec its binary (203/EXEC), and systemd keeps the
+# failed state after the file is gone ("not-found failed"). doctor then failed the health
+# check and the deploy rolled back (acceptance phase C: spira-reconciler-flow, 2026-09-27).
+# deploy.sh — from the operator's checkout, whatever the target's installer knows — clears the
+# failed state of every spira unit whose file no longer exists. A failed unit that is still
+# INSTALLED is a real failure and is left for doctor.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+_out="$(run_deploy "SC_FAILED_UNITS=$(printf '%s\n%s' \
+    'spira-gone-prod.service not-found failed failed spira-gone-prod.service' \
+    'spira-real-prod.service loaded failed failed A real failure')" -- "$NEW_TAG" 2>&1)"
+want   "pruned-ghost: the not-found failed unit is reset"   "SC --user reset-failed spira-gone-prod.service" "$(cat "$SC_LOG")"
+nowant "pruned-ghost: an installed failed unit is not called a ghost" "cleared the failed state of spira-real-prod.service" "$_out"
+nowant "pruned-ghost: the ghost is not re-run"              "start spira-gone-prod.service" "$(cat "$SC_LOG")"
+
+# PROPERTY 6d — A UNIT THE DEPLOY ITSELF KNOCKED OVER IS RE-RUN, NOT JUDGED. The pre-deploy
+# health check refuses a deploy onto failed units, so a unit failed at the post-deploy check
+# failed INSIDE the deploy window — and the deploy restarts dolt-beads while the timers keep
+# firing: spira-sentinel fired the same second the re-render restarted dolt, lost its
+# database, exited 1, and doctor rolled a healthy release back (acceptance phase B,
+# 2026-09-27). Each installed failed unit is reset and started once under the release in
+# force, after resume; one that fails again stays failed and doctor still judges it.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+_out="$(run_deploy "SC_FAILED_UNITS=spira-real-prod.service loaded failed failed A real failure" -- "$NEW_TAG" 2>&1)"
+want   "deploy-window: the installed failed unit is reset"    "SC --user reset-failed spira-real-prod.service" "$(cat "$SC_LOG")"
+want   "deploy-window: ... and re-run under the release"      "SC --user start spira-real-prod.service" "$(cat "$SC_LOG")"
+want   "deploy-window: the re-run is logged"                  "re-ran spira-real-prod.service" "$_out"
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+_out="$(run_deploy "SC_FAILED_UNITS=spira-real-prod.service loaded failed failed A real failure" \
+    "SC_START_FAILS=spira-real-prod.service" -- "$NEW_TAG" 2>&1)"
+want   "deploy-window: a unit that fails again is left for doctor" "spira-real-prod.service fails again under" "$_out"
 
 # ==========================================================================
 echo

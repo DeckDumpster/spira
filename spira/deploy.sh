@@ -538,6 +538,23 @@ _render_release_units || {
     _rollback "unit re-render failed"
 }
 
+# A UNIT THE TARGET RELEASE PRUNED LEAVES NO FAILED GHOST. `current` is swapped before the
+# target's installer prunes the units it does not know, so on a deploy of an OLDER release a
+# timer of such a unit can fire in between, fail to exec its binary (203/EXEC) and stay failed
+# as "not-found failed" once its file is gone — and doctor then failed this deploy's health
+# check (acceptance phase C: spira-reconciler-flow, 2026-09-27). The unit is not installed
+# any more, so its failure is not the release's: clear it. A failed unit whose file IS still
+# installed is a real failure and is left for doctor. This runs from this checkout, so it
+# holds whatever the target release's own installer knows.
+"$_SC" --user list-units --state=failed --all --no-legend --plain \
+        "spira-*-${SPIRA_INSTANCE}.service" "spira-*-${SPIRA_INSTANCE}.timer" 2>/dev/null \
+    | awk '$2 == "not-found" {print $1}' \
+    | while IFS= read -r _ghost; do
+        [ -n "$_ghost" ] || continue
+        "$_SC" --user reset-failed "$_ghost" 2>/dev/null \
+            && log "deploy: cleared the failed state of $_ghost — the release in force does not install it"
+    done
+
 # Ensure cockpit layout is current.
 log "deploy: ensuring cockpit"
 "$_COCKPIT" ensure 2>/dev/null || true
@@ -546,18 +563,31 @@ log "deploy: ensuring cockpit"
 log "deploy: resuming"
 "$_WORLD" resume
 
+# A UNIT THE DEPLOY ITSELF KNOCKED OVER IS RE-RUN, NOT JUDGED. The pre-deploy health check
+# refused to start on failed units, so any installed unit failed now failed INSIDE this
+# window — and this deploy restarts dolt-beads while the timers keep firing: spira-sentinel
+# fired the same second the re-render restarted dolt, lost its database, exited 1, and doctor
+# rolled a healthy release back (acceptance phase B, 2026-09-27). Reset each one and start it
+# once under the release in force; a unit the release genuinely breaks fails again and stays
+# failed, and doctor below judges it exactly as before.
+"$_SC" --user list-units --state=failed --all --no-legend --plain \
+        "spira-*-${SPIRA_INSTANCE}.service" 2>/dev/null \
+    | awk '$2 == "loaded" {print $1}' \
+    | while IFS= read -r _knocked; do
+        [ -n "$_knocked" ] || continue
+        "$_SC" --user reset-failed "$_knocked" 2>/dev/null || true
+        if timeout "${SPIRA_DEPLOY_RERUN_TIMEOUT:-300}" "$_SC" --user start "$_knocked" 2>/dev/null; then
+            log "deploy: re-ran $_knocked — it failed inside the deploy window and passes under $release_stem"
+        else
+            log "deploy: $_knocked fails again under $release_stem — left failed for the health check"
+        fi
+    done
+
 # Health check: verify the activated release is up and healthy.
 log "deploy: health check"
 _deploy_failed=""
 "$_WORLD" status >/dev/null 2>&1 \
     || _deploy_failed="${_deploy_failed:+$_deploy_failed, }world status"
-# THE FAIL LINES ARE THE EVIDENCE. A bare "ROLLBACK — doctor" says a check failed and not
-# which; the rollback that follows destroys the state it failed on. Print what doctor said.
-if ! _doctor_out="$(SPIRA_DOCTOR=1 "$_DOCTOR" 2>&1)"; then
-    _deploy_failed="${_deploy_failed:+$_deploy_failed, }doctor"
-    printf '%s\n' "$_doctor_out" | grep -E '^\s*FAIL' | sed 's/^/deploy: doctor: /' >&2
-fi
-unset _doctor_out
 _skew_out="$("$_SKEW" check 2>/dev/null)"
 _skew_exit=$?
 # AN OLDER RELEASE THE OPERATOR NAMED IS NOT-LATEST BY CONSTRUCTION. skew.sh check answers
@@ -580,6 +610,23 @@ if [ "$_skew_exit" -eq 1 ] && [ "$_named_tag" = 1 ] \
     fi
 fi
 unset _skew_newer
+# THE SKEW UNIT IS THE SAME CHECK, ON A TIMER. Under the named older release its own
+# spira-skew unit runs skew.sh check, gets the same NOT-LATEST, exits 1 and sits failed; the
+# re-run above cannot help, because it fails again for the same expected reason, and doctor
+# then counted it as a failed unit and rolled the deliberate rollback back (acceptance
+# phase C, 2026-09-27: "spira-skew-prod.service fails again … ROLLBACK — doctor"). The
+# finding was accepted just above, so its unit's failure is that accepted finding: clear it
+# before doctor judges the rest. Only on acceptance — any other skew finding leaves it failed.
+if [ "$_skew_exit" -eq 0 ] && [ "$_named_tag" = 1 ]; then
+    "$_SC" --user reset-failed "spira-skew-${SPIRA_INSTANCE}.service" 2>/dev/null || true
+fi
+# THE FAIL LINES ARE THE EVIDENCE. A bare "ROLLBACK — doctor" says a check failed and not
+# which; the rollback that follows destroys the state it failed on. Print what doctor said.
+if ! _doctor_out="$(SPIRA_DOCTOR=1 "$_DOCTOR" 2>&1)"; then
+    _deploy_failed="${_deploy_failed:+$_deploy_failed, }doctor"
+    printf '%s\n' "$_doctor_out" | grep -E '^\s*FAIL' | sed 's/^/deploy: doctor: /' >&2
+fi
+unset _doctor_out
 [ "$_skew_exit" -eq 0 ] \
     || _deploy_failed="${_deploy_failed:+$_deploy_failed, }skew (exit $_skew_exit)"
 
