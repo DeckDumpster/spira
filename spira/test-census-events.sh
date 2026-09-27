@@ -309,6 +309,55 @@ out="$(census_out)"
 want   "conflict+reopened: sp-reopen-rebase-conflict present" "1 sp-reopen-rebase-conflict" "$out"
 nowant "conflict+reopened: sp-reopen-unrecorded absent"       "sp-reopen-unrecorded" "$out"
 
+# ======================================================================================
+echo
+echo "sp-n8bjo: since-watermark exclusion subquery windows to the same watermark as the count"
+# ======================================================================================
+# The third UNION ALL branch (sp-reopen-unrecorded) excludes any bead that was EVER
+# reopened with a recorded cause, checked with no time bound, while the branch's own
+# count carries the since-watermark bound. A bead reopened with a cause BEFORE the
+# watermark and again with no cause AFTER it is excluded forever, hiding the very
+# causeless reopen a since-watermark pass exists to catch.
+#
+# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail): on the unfixed tree
+# the since-watermark query below reports 0 beads for reopened/unrecorded because the
+# NOT IN subquery finds the pre-watermark cause-recorded reopen with no window applied.
+# Run against the unfixed tree: "since-watermark: causeless reopen counted despite an
+# older cause-recorded reopen: wanted [1] got [0]".
+_insert_event_at() {   # _insert_event_at <bead_id> <event_type> <cause_or_empty> <utc_ts>
+    local id="$1" etype="$2" cause="$3" ts="$4" uuid
+    uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))' 2>/dev/null)" || return 1
+    if [ -n "$cause" ]; then
+        "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
+            "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$etype', 'test', '$cause', '$ts')" \
+            >/dev/null 2>&1
+    else
+        "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
+            "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$etype', 'test', NULL, '$ts')" \
+            >/dev/null 2>&1
+    fi
+}
+
+WATERMARK_TS=1790400000
+_wm_before="$(date -u -d "@$((WATERMARK_TS - 86400))" '+%Y-%m-%d %H:%M:%S')"
+_wm_after="$(date -u -d  "@$((WATERMARK_TS + 3600))"  '+%Y-%m-%d %H:%M:%S')"
+
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-h1","title":"cause then causeless reopen","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-19T00:00:00Z"}
+JSONL
+_insert_event_at "sp-h1" "reopen"   "rebase-conflict" "$_wm_before"
+_insert_event_at "sp-h1" "reopened" ""                "$_wm_after"
+
+_since="$(census_events_run_sql "$WATERMARK_TS" 2>/dev/null)"
+_causeless_beads="$(printf '%s\n' "$_since" | awk -F'|' '/reopened/ && /unrecorded/ {gsub(/ /,"",$3); print $3}')"
+is "since-watermark: causeless reopen counted despite an older cause-recorded reopen" "1" "${_causeless_beads:-0}"
+
+# All-time query still counts it too (windowing the subquery must not break all-time).
+_all="$(census_events_run_sql 2>/dev/null)"
+_causeless_all="$(printf '%s\n' "$_all" | awk -F'|' '/reopened/ && /unrecorded/ {gsub(/ /,"",$3); print $3}')"
+is "all-time: causeless reopen still counted" "1" "${_causeless_all:-0}"
+
 # sp-n3ijm: census_events_run_sql's retry-on-transient-failure behaviour (fake bd, no
 # database) moved to test-census-pipeline.sh (UC-ops-detection-remediation-15) — it was
 # already T1-shaped here and belongs with the rest of the decision logic.
