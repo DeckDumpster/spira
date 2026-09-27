@@ -336,7 +336,7 @@ printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
 exit 0'
 
 stub queue.sh 'exit 0'
-rm -f "$GATE_COUNT" "$GATE_COUNT.fast-done"
+rm -f "$GATE_COUNT"
 seed; branch sp-par-a; branch sp-par-b
 SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
@@ -367,10 +367,10 @@ exit 0'
 # COMPLETION-ORDER: a gate dispatched second is certified as soon as it finishes, without
 # waiting for gates dispatched before it.
 #
-# Gate stub: "-fast" exits immediately and leaves a marker; "-slow" waits for that marker
-# (up to 6s) and then 2s more, so under par=2 the order does not depend on how quickly the
-# second dispatch happens to start on a loaded box. Under par=1 the marker never appears
-# while slow runs, so slow finishes first after its 6s wait.
+# Gate stub: "-fast" exits immediately; "-slow" waits until sp-co-fast's landstate reads
+# CERTIFIED (up to 15s), so under par=2 the order does not depend on how quickly the second
+# dispatch starts, or how long certification takes, on a loaded box. Under par=1 fast cannot
+# run while slow does, so slow times out its wait and certifies first.
 # sp-co-slow has an earlier closed_at, so it sorts first and is dispatched first.
 #
 # par=2: both gates start together; sp-co-fast finishes first and must be certified
@@ -382,11 +382,10 @@ exit 0'
 stub gate.sh '
 printf "%s %s\n" "$(date +%s)" "$1" >> "'"$GATE_COUNT"'"
 if printf "%s" "$1" | grep -q "\-slow"; then
-    i=0; while [ ! -e "'"$GATE_COUNT"'.fast-done" ] && [ $i -lt 60 ]; do sleep 0.1; i=$((i+1)); done
-    sleep 2
+    i=0; until case "$(cat "'"$RUN"'/landstate/sp-co-fast" 2>/dev/null)" in CERTIFIED*) true;; *) false;; esac \
+        || [ $i -ge 150 ]; do sleep 0.1; i=$((i+1)); done
 fi
 printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
-if printf "%s" "$1" | grep -q "\-fast"; then : > "'"$GATE_COUNT"'.fast-done"; fi
 exit 0'
 stub queue.sh 'exit 0'
 
@@ -410,7 +409,7 @@ testdb_reset
 testdb_seed <<'JSONL'
 {"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-01T00:00:00Z"}
 JSONL
-rm -f "$GATE_COUNT" "$GATE_COUNT.fast-done"
+rm -f "$GATE_COUNT" "$RUN"/landstate/sp-co-*
 branch_with_date sp-co-slow "2026-09-01T00:00:00Z"
 branch_with_date sp-co-fast "2026-09-02T00:00:00Z"
 co_out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
@@ -428,7 +427,7 @@ testdb_reset
 testdb_seed <<'JSONL'
 {"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-01T00:00:00Z"}
 JSONL
-rm -f "$GATE_COUNT" "$GATE_COUNT.fast-done"
+rm -f "$GATE_COUNT" "$RUN"/landstate/sp-co-*
 branch_with_date sp-co-slow "2026-09-01T00:00:00Z"
 branch_with_date sp-co-fast "2026-09-02T00:00:00Z"
 co_out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
@@ -476,7 +475,7 @@ rm -f "$RUN"/landstate/* "$RUN"/submitted/* 2>/dev/null || true
 is "idle precondition: no CERTIFIED landstate left over" "0" \
     "$(grep -l '^CERTIFIED' "$RUN"/landstate/* 2>/dev/null | wc -l | tr -d ' ')"
 branch sp-idle-skip
-rm -f "$GATE_COUNT" "$GATE_COUNT.fast-done"
+rm -f "$GATE_COUNT"
 idle_out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" \
@@ -496,7 +495,7 @@ stub forge.sh 'case "${1:-}" in runs-active) echo 1 ;; *) exit 0 ;; esac'
 # Clean previous landstate so the branch is re-evaluated.
 rm -f "$RUN/landstate/sp-idle-skip" "$RUN/submitted/sp-idle-skip" 2>/dev/null || true
 seed; branch sp-busy-gate
-rm -f "$GATE_COUNT" "$GATE_COUNT.fast-done"
+rm -f "$GATE_COUNT"
 busy_out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" \
