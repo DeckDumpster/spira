@@ -132,6 +132,12 @@
 #                           have been running before the orphan sweep reaps it (default
 #                           3600). Guards a container mid-startup, whose owner file has not
 #                           been written yet, from being swept as if it were abandoned.
+#   SPIRA_BATCH_ORPHAN_PREFIX  container-name prefix the startup orphan sweep matches
+#                           (default spira-batch-, every batch-managed container). A suite
+#                           that runs a real, nested testenv-batch.sh against real podman
+#                           must narrow this to a prefix only its own instance can match —
+#                           the sweep has no ownership check, unlike `testenv.sh down`, so
+#                           an unscoped one run nested can reap a container it did not create.
 #   SPIRA_BATCH_PEAK_WARN_FRAC  percent of /proc/meminfo MemTotal above which a logged
 #                           cgroup peak fires a WARNING (default 60; 0 disables). A peak
 #                           was logged every run for months while nothing read it, so a
@@ -732,13 +738,15 @@ trap _batch_cleanup EXIT INT TERM
 #      and /tmp is separately subject to systemd-tmpfiles ageing — and arm 1
 #      can never see a container with no owner file to read a PID from.
 # ---------------------------------------------------------------------------
-while IFS= read -r _sw_line; do
-    [ -n "$_sw_line" ] && log "batch: $_sw_line"
-done < <(_batch_sweep_dead_owners)
+_ORPHAN_PREFIX="${SPIRA_BATCH_ORPHAN_PREFIX:-spira-batch-}"
 
 while IFS= read -r _sw_line; do
     [ -n "$_sw_line" ] && log "batch: $_sw_line"
-done < <(_batch_sweep_ownerless "${SPIRA_BATCH_ORPHAN_MIN_AGE:-3600}")
+done < <(_batch_sweep_dead_owners "$_ORPHAN_PREFIX")
+
+while IFS= read -r _sw_line; do
+    [ -n "$_sw_line" ] && log "batch: $_sw_line"
+done < <(_batch_sweep_ownerless "${SPIRA_BATCH_ORPHAN_MIN_AGE:-3600}" "$_ORPHAN_PREFIX")
 
 if ! _batch_claim_owner "$_BATCH_OWNER_FILE" "$$"; then
     log "batch: $CNAME is already claimed by a live pid — a concurrent run with the same tree+selection is in flight; refusing to share its container"

@@ -141,6 +141,12 @@ ok "P0: pre-flight: container + user systemd available"
 # PART A: timeout fires — slow suite is reaped, after suite still runs.
 # SPIRA_SUITE_TIMEOUT=2s: the 30s slow suite cannot finish in time.
 # Both suites are selected via --suites so the run is deterministic.
+#
+# SPIRA_BATCH_ORPHAN_PREFIX, here and in Parts B and C: each nested $BATCH run does
+# its own startup orphan sweep against whatever real podman it can see, which is
+# not only this test's own containers — the sweep has no ownership check. Scoping
+# the prefix to this exact instance name is what keeps it from reaping one it did
+# not create.
 # ===========================================================================
 echo
 echo "Part A: timeout fires — slow suite reaped, corpus continues"
@@ -151,6 +157,7 @@ SPIRA_BATCH_SUITE_DIR="$SUITE_HOST" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_A" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="bto-a-$$" \
+SPIRA_BATCH_ORPHAN_PREFIX="spira-batch-bto-a-$$" \
 SPIRA_SUITE_TIMEOUT=2 \
     bash "$BATCH" --mode serial --suites "test-fx-slow.sh,test-fx-after.sh" \
          topic "$FIXTURE" || rc_a=$?
@@ -206,6 +213,7 @@ SPIRA_BATCH_SUITE_DIR="$SUITE_HOST" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="bto-b-$$" \
+SPIRA_BATCH_ORPHAN_PREFIX="spira-batch-bto-b-$$" \
 SPIRA_SUITE_TIMEOUT=0 \
     bash "$BATCH" --mode serial --suites "test-fx-slow.sh" \
          topic "$FIXTURE" || rc_b=$?
@@ -256,6 +264,7 @@ SPIRA_BATCH_SUITE_DIR="$SUITE_HOST" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_C" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="bto-c-$$" \
+SPIRA_BATCH_ORPHAN_PREFIX="spira-batch-bto-c-$$" \
 SPIRA_SUITE_TIMEOUT=600 \
     timeout 40 bash "$BATCH" --mode serial --suites "test-fx-leaky.sh,test-fx-after.sh" \
          topic "$FIXTURE" || rc_c=$?

@@ -7,6 +7,7 @@
 #      confirmed gone from podman — the fix for the leak path (sp-mxvdd), where a
 #      failed teardown used to delete the owner file unconditionally.
 #   B. _batch_sweep_dead_owners: owner file present, PID gone -> container reaped.
+#      Also scoped by a caller-given name-prefix (sp-z3i42), same reason as C below.
 #   C. _batch_sweep_ownerless: a container matching a name-prefix with NO owner file
 #      at all, older than a caller-given bound -> reaped. This is the second leak
 #      route: a container that lost its owner file (or never got one written before
@@ -214,6 +215,50 @@ fi
 [ ! -f "$OF_B_DEAD" ] && ok "B1: dead-owner file is removed" \
                        || bad "B1: dead-owner file is removed" "file still present"
 want "B1: sweep reports the container it removed" "$CN_B_DEAD" "$_sweep_out_b"
+
+# B2/B3: _batch_sweep_dead_owners takes a name-prefix (sp-z3i42) so a suite that runs
+# a real, nested testenv-batch.sh can scope its own startup sweep to just the
+# containers it created. A dead-owner container outside that prefix must survive.
+PFX_B="spira-batch-scoped-$$-"
+CN_B_IN="${PFX_B}in"
+_mk_container "$CN_B_IN"
+OF_B_IN="/tmp/${CN_B_IN}.owner"
+( exit 0 ) &
+_b_in_dead_pid=$!
+wait "$_b_in_dead_pid"
+printf '%s\n' "$_b_in_dead_pid" > "$OF_B_IN"
+
+CN_B_OUT="spira-batch-scoped-out-$$"
+_mk_container "$CN_B_OUT"
+OF_B_OUT="/tmp/${CN_B_OUT}.owner"
+( exit 0 ) &
+_b_out_dead_pid=$!
+wait "$_b_out_dead_pid"
+printf '%s\n' "$_b_out_dead_pid" > "$OF_B_OUT"
+
+_sweep_out_b2="$(_batch_sweep_dead_owners "$PFX_B")"
+
+if podman container exists "$CN_B_IN" 2>/dev/null; then
+    bad "B2: in-prefix dead-owner container is swept" "container still exists"
+else
+    ok "B2: in-prefix dead-owner container is swept"
+    _ALL_CNAMES="${_ALL_CNAMES/ $CN_B_IN/}"
+fi
+want "B2: sweep reports the in-prefix container" "$CN_B_IN" "$_sweep_out_b2"
+
+# B3 ACCEPTANCE: a dead-owner container outside the given prefix survives —
+# a scoped sweep never widens back out to every container on the host.
+if podman container exists "$CN_B_OUT" 2>/dev/null; then
+    ok "B3: dead-owner container outside the given prefix is untouched"
+else
+    bad "B3: dead-owner container outside the given prefix is untouched" \
+        "container was removed — sweep escaped its name-prefix scope"
+fi
+[ -f "$OF_B_OUT" ] && ok "B3: out-of-prefix owner file survives" \
+                    || bad "B3: out-of-prefix owner file survives" "file was removed"
+podman rm -f "$CN_B_OUT" >/dev/null 2>&1 || true
+rm -f "$OF_B_OUT"
+_ALL_CNAMES="${_ALL_CNAMES/ $CN_B_OUT/}"
 
 # ===========================================================================
 echo

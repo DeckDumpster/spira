@@ -37,11 +37,14 @@ _batch_claim_owner() {
     printf '%s\n' "$mypid" > "$ownerfile"
 }
 
-# _batch_sweep_dead_owners — arm 1: an owner file names a PID that has exited.
-# Reaps the container it names and the file itself. One line per sweep on stdout.
+# _batch_sweep_dead_owners [name-prefix] — arm 1: an owner file names a PID that has
+# exited. Reaps the container it names and the file itself. One line per sweep on
+# stdout. name-prefix (default spira-batch-, the production scope) narrows the glob
+# to the caller's own containers — see _batch_sweep_ownerless below for why an
+# unscoped call against real podman is dangerous.
 _batch_sweep_dead_owners() {
-    local _sw_f _sw_pid _sw_cname
-    for _sw_f in /tmp/spira-batch-*.owner; do
+    local name_prefix="${1:-spira-batch-}" _sw_f _sw_pid _sw_cname
+    for _sw_f in "/tmp/${name_prefix}"*.owner; do
         [ -f "$_sw_f" ] || continue
         _sw_pid="$(cat "$_sw_f" 2>/dev/null)" || continue
         [ -n "$_sw_pid" ] || continue
