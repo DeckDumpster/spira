@@ -431,6 +431,33 @@ if [ -z "$SELECTED" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# SPIRA_CONFIG_BIN — conf.sh's only path for reading spira.conf: every SPIRA_* key,
+# including SPIRA_PROD, reaches the shell only after this binary converts the legacy
+# KEY=value file to spira.toml. A fresh worktree carries no prebuilt bin/, so without it
+# configure.sh's spira.conf is silently never read and every key falls back to its derived
+# default — invisible on a box that already has a real release installed, fatal in a fresh
+# container where nothing has bootstrapped one yet. Small and fast to build (no LTO-heavy
+# dependents), so build it unconditionally rather than only under --with-bins.
+# Deferred until here — after arguments and suite selection are validated — so an empty
+# selection or an unknown suite name is reported without ever needing cargo on PATH.
+if [ ! -x "$BRANCH_WT/bin/spira-config" ]; then
+    command -v cargo >/dev/null 2>&1 || {
+        printf 'batch: cargo is required on PATH to build spira-config\n' >&2
+        exit 3
+    }
+    _cfgbin_tree="$(git -C "$REPO" rev-parse --verify -q "$BR^{tree}" 2>/dev/null)" || _cfgbin_tree="pid-$$"
+    _cfgbin_target_dir="${SPIRA_BATCH_BINS_TARGET_DIR:-$SPIRA_RUN/cargo-target-bins}/$_cfgbin_tree"
+    mkdir -p "$_cfgbin_target_dir" 2>/dev/null || true
+    log "batch: building spira-config for $BR (conf.sh needs it to read spira.conf)"
+    if ! ( cd "$BRANCH_WT" && CARGO_TARGET_DIR="$_cfgbin_target_dir" cargo build --release -p spira-config ) >&2; then
+        printf 'batch: spira-config failed to build — harness fault\n' >&2
+        exit 3
+    fi
+    mkdir -p "$BRANCH_WT/bin"
+    cp -p "$_cfgbin_target_dir/release/spira-config" "$BRANCH_WT/bin/spira-config"
+fi
+
+# ---------------------------------------------------------------------------
 # IMAGE TAG — part of the verdict-cache key: a green against an old image
 # must not replay after a dependency is added to the image.
 # ---------------------------------------------------------------------------
