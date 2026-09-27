@@ -94,21 +94,10 @@ pub fn cmd_cut(args: &[String], conn: &Conn) -> (i32, String) {
         return (CANNOT_TELL, "cut: --members must name at least one bead".into());
     }
 
-    let mut bead_rows = Vec::new();
-    for (id, tip) in &members {
-        let row = match rows::fetch_bead(conn, id) {
-            Ok(Some(r)) => r,
-            Ok(None) => return (REFUSED, format!("refused: no bead row for {id}")),
-            Err(e) => return cannot_tell(e),
-        };
-        if row.state != bead::BeadState::Certified {
-            return (REFUSED, format!("refused: {id} is {} not CERTIFIED", row.state.as_str()));
-        }
-        if row.tip.as_deref() != Some(tip.as_str()) {
-            return (REFUSED, format!("refused: {id}'s certified tip does not match {tip}"));
-        }
-        bead_rows.push(row);
-    }
+    let bead_rows = match fetch_certified_members(conn, &members) {
+        Ok(r) => r,
+        Err(early) => return early,
+    };
 
     let at = crate::db::now_epoch();
     let mut preamble = format!(
@@ -130,40 +119,163 @@ pub fn cmd_cut(args: &[String], conn: &Conn) -> (i32, String) {
         ));
     }
 
-    let mut steps = Vec::new();
     let mut batch_row = batch::BatchRow::cut(batch_id.as_str(), repo.as_str(), head.as_str(), base.as_str());
     // `cut()` always sets `parent: None` — it has no way to know this is a bisect child.
     // Patch it in before the first `MemberAdded` clones this row, so every subsequent
     // cascade step's SET clause (built from that clone) keeps carrying it forward instead
     // of writing the constructor's NULL back over the preamble's own INSERT.
     batch_row.parent = parent.clone();
+    let steps = match member_added_steps(batch_id, batch_row, &members, &bead_rows, &actor, at, &mut preamble, "cut") {
+        Ok(s) => s,
+        Err(early) => return early,
+    };
+
+    match conn.cascade(&preamble, &steps) {
+        Ok(applied) => {
+            let all_ok = applied.iter().all(|a| *a);
+            let summary = serde_json::json!({"batch_id": batch_id, "members": members.iter().map(|(i,_)| i).collect::<Vec<_>>(), "applied": applied});
+            if all_ok {
+                (0, serde_json::to_string(&summary).unwrap())
+            } else {
+                (REFUSED, serde_json::to_string(&summary).unwrap())
+            }
+        }
+        Err(e) => cannot_tell(e),
+    }
+}
+
+/// `stack <batch-id> --members "id:tip,id:tip" --actor A`
+///
+/// batcher-cut's own pipelining onto an already-OPEN batch (law-queue-back-pressure-is-
+/// an-open-pr): the same `MemberAdded`/`Deliver`/`Cut` cascade `cut` performs for a fresh
+/// batch, minus the batch row's own INSERT — it already exists and must stay OPEN, which
+/// is checked before anything is written, same as `cut` checks every member's own
+/// CERTIFIED tip.
+pub fn cmd_stack(args: &[String], conn: &Conn) -> (i32, String) {
+    let Some(batch_id) = args.first() else {
+        return (CANNOT_TELL, "stack: missing <batch-id>".into());
+    };
+    let (Some(members_s), Some(actor)) = (flag(args, "--members"), flag(args, "--actor")) else {
+        return (CANNOT_TELL, "stack: --members and --actor are both required".into());
+    };
+    let Some(members) = parse_members(&members_s) else {
+        return (CANNOT_TELL, "stack: --members must be \"id:tip,id:tip,...\"".into());
+    };
+    if members.is_empty() {
+        return (CANNOT_TELL, "stack: --members must name at least one bead".into());
+    }
+
+    let batch_row = match rows::fetch_batch(conn, batch_id) {
+        Ok(Some(r)) => r,
+        Ok(None) => return (CANNOT_TELL, format!("stack: no batch row for {batch_id}")),
+        Err(e) => return cannot_tell(e),
+    };
+    if batch_row.state != batch::BatchState::Open {
+        return (REFUSED, format!("refused: {batch_id} is {} not OPEN", batch_row.state.as_str()));
+    }
+
+    let bead_rows = match fetch_certified_members(conn, &members) {
+        Ok(r) => r,
+        Err(early) => return early,
+    };
+
+    let at = crate::db::now_epoch();
+    let mut preamble = String::new();
+    for (id, tip) in &members {
+        preamble.push_str(&format!(
+            "INSERT INTO batch_member (batch_id, bead_id, tip) VALUES ({batch_id}, {id}, {tip});\n",
+            batch_id = q(batch_id),
+            id = q(id),
+            tip = q(tip),
+        ));
+    }
+
+    let steps = match member_added_steps(batch_id, batch_row, &members, &bead_rows, &actor, at, &mut preamble, "stack") {
+        Ok(s) => s,
+        Err(early) => return early,
+    };
+
+    match conn.cascade(&preamble, &steps) {
+        Ok(applied) => {
+            let all_ok = applied.iter().all(|a| *a);
+            let summary = serde_json::json!({"batch_id": batch_id, "members": members.iter().map(|(i,_)| i).collect::<Vec<_>>(), "applied": applied});
+            if all_ok {
+                (0, serde_json::to_string(&summary).unwrap())
+            } else {
+                (REFUSED, serde_json::to_string(&summary).unwrap())
+            }
+        }
+        Err(e) => cannot_tell(e),
+    }
+}
+
+/// Every named member must currently be CERTIFIED at exactly the given tip — checked
+/// before anything is written, so a stale caller (`cut` or `stack` alike) refuses
+/// cleanly instead of admitting a member with the wrong content.
+fn fetch_certified_members(conn: &Conn, members: &[(String, String)]) -> Result<Vec<bead::BeadRow>, (i32, String)> {
+    let mut bead_rows = Vec::new();
+    for (id, tip) in members {
+        let row = match rows::fetch_bead(conn, id) {
+            Ok(Some(r)) => r,
+            Ok(None) => return Err((REFUSED, format!("refused: no bead row for {id}"))),
+            Err(e) => return Err(cannot_tell(e)),
+        };
+        if row.state != bead::BeadState::Certified {
+            return Err((REFUSED, format!("refused: {id} is {} not CERTIFIED", row.state.as_str())));
+        }
+        if row.tip.as_deref() != Some(tip.as_str()) {
+            return Err((REFUSED, format!("refused: {id}'s certified tip does not match {tip}")));
+        }
+        bead_rows.push(row);
+    }
+    Ok(bead_rows)
+}
+
+/// The `MemberAdded` (batch) + `Deliver` (bead) + `Cut` (delivery, appended to `preamble`
+/// as an upsert — not REPLACE: REPLACE is a DELETE+INSERT under the hood, and spira_lc has
+/// no DELETE grant on any table, design §3.3) cascade steps for each of `members`, folded
+/// onto `batch_row` in order so each step's CAS'd version follows the last. Shared by
+/// `cut` (a freshly constructed OPEN row) and `stack` (an existing one fetched from the
+/// database) — both hand this the same batch row shape and get the same steps back.
+#[allow(clippy::too_many_arguments)]
+fn member_added_steps(
+    batch_id: &str,
+    mut batch_row: batch::BatchRow,
+    members: &[(String, String)],
+    bead_rows: &[bead::BeadRow],
+    actor: &str,
+    at: i64,
+    preamble: &mut String,
+    verb: &str,
+) -> Result<Vec<CascadeStep>, (i32, String)> {
+    let mut steps = Vec::new();
     for ((id, tip), bead_row) in members.iter().zip(bead_rows.iter()) {
         let member_ev = batch::BatchEvent {
             expect: batch_row.state,
             version: batch_row.version,
             kind: batch::BatchEventKind::MemberAdded { bead_id: id.clone(), tip: tip.clone() },
-            actor: actor.clone(),
+            actor: actor.to_string(),
         };
         let outcome = batch::apply(&batch_row, &member_ev);
         if !outcome.applied {
-            return (CANNOT_TELL, format!("cut: MemberAdded refused unexpectedly for {id}: {:?}", outcome.refusal));
+            return Err((CANNOT_TELL, format!("{verb}: MemberAdded refused unexpectedly for {id}: {:?}", outcome.refusal)));
         }
         steps.push(CascadeStep {
             table: "batch",
             key_column: "batch_id",
-            key: batch_id.clone(),
+            key: batch_id.to_string(),
             old_version: batch_row.version,
             set_clause: rows::batch_set_clause(&outcome.row),
             applied_to_state: outcome.row.state.as_str().to_string(),
             event: EventRecord {
                 machine: "batch".into(),
-                key: batch_id.clone(),
+                key: batch_id.to_string(),
                 event: "MemberAdded".into(),
                 expect: batch_row.state.as_str().into(),
                 from_state: batch_row.state.as_str().into(),
                 refusal: None,
                 evidence: serde_json::to_value(&member_ev.kind).unwrap_or_default(),
-                actor: actor.clone(),
+                actor: actor.to_string(),
                 at,
             },
         });
@@ -173,11 +285,11 @@ pub fn cmd_cut(args: &[String], conn: &Conn) -> (i32, String) {
             expect: bead::BeadState::Certified,
             version: bead_row.version,
             kind: bead::BeadEventKind::Deliver,
-            actor: actor.clone(),
+            actor: actor.to_string(),
         };
         let bead_outcome = bead::apply(bead_row, &deliver_ev);
         if !bead_outcome.applied {
-            return (CANNOT_TELL, format!("cut: Deliver refused unexpectedly for {id}: {:?}", bead_outcome.refusal));
+            return Err((CANNOT_TELL, format!("{verb}: Deliver refused unexpectedly for {id}: {:?}", bead_outcome.refusal)));
         }
         steps.push(CascadeStep {
             table: "bead",
@@ -194,7 +306,7 @@ pub fn cmd_cut(args: &[String], conn: &Conn) -> (i32, String) {
                 from_state: bead::BeadState::Certified.as_str().into(),
                 refusal: None,
                 evidence: serde_json::to_value(&deliver_ev.kind).unwrap_or_default(),
-                actor: actor.clone(),
+                actor: actor.to_string(),
                 at,
             },
         });
@@ -203,14 +315,11 @@ pub fn cmd_cut(args: &[String], conn: &Conn) -> (i32, String) {
         let cut_ev = delivery::DeliveryEvent {
             expect: delivery::DeliveryState::Queued,
             version: 0,
-            kind: delivery::DeliveryEventKind::Cut { batch_id: batch_id.clone() },
-            actor: actor.clone(),
+            kind: delivery::DeliveryEventKind::Cut { batch_id: batch_id.to_string() },
+            actor: actor.to_string(),
         };
         let delivery_outcome = delivery::apply(&fresh_delivery, &cut_ev);
         preamble.push_str(&format!(
-            // Not REPLACE: REPLACE is a DELETE+INSERT under the hood, and spira_lc has no
-            // DELETE grant on any table (design §3.3) — a second delivery cycle for the
-            // same bead upserts instead, which INSERT/UPDATE alone already covers.
             "INSERT INTO delivery (bead_id, mode, state, batch_id, pr, merge_sha, version)\n\
              VALUES ({id}, 'queue', {state}, {new_batch_id}, NULL, NULL, {version})\n\
              ON DUPLICATE KEY UPDATE mode = 'queue', state = {state}, batch_id = {new_batch_id}, pr = NULL, merge_sha = NULL, version = {version};\n",
@@ -225,23 +334,11 @@ pub fn cmd_cut(args: &[String], conn: &Conn) -> (i32, String) {
             id = q(id),
             to_state = q(delivery_outcome.row.state.as_str()),
             evidence = q(&serde_json::to_string(&cut_ev.kind).unwrap_or_default()),
-            actor = q(&actor),
+            actor = q(actor),
             at = at,
         ));
     }
-
-    match conn.cascade(&preamble, &steps) {
-        Ok(applied) => {
-            let all_ok = applied.iter().all(|a| *a);
-            let summary = serde_json::json!({"batch_id": batch_id, "members": members.iter().map(|(i,_)| i).collect::<Vec<_>>(), "applied": applied});
-            if all_ok {
-                (0, serde_json::to_string(&summary).unwrap())
-            } else {
-                (REFUSED, serde_json::to_string(&summary).unwrap())
-            }
-        }
-        Err(e) => cannot_tell(e),
-    }
+    Ok(steps)
 }
 
 /// `land <batch-id> --expect S --version V --actor A --sha SHA`
