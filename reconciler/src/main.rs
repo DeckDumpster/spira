@@ -466,21 +466,31 @@ fn observe_fleet(cfg: &Config) -> Vec<Check> {
     let out = run_cmd("bash", &[&cfg.fleet_status_sh]);
     let mut max_live: Option<i64> = None;
     let mut live_lanes: i64 = 0;
-    let mut rows: Vec<(String, i64, i64)> = Vec::new();
+    let mut pool: Option<i64> = None;
+    let mut rows: Vec<(String, i64, i64, bool)> = Vec::new();
 
     for line in out.lines() {
         let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() != 3 {
+        if parts.is_empty() {
             continue;
         }
         if parts[0] == "TOTAL" {
-            max_live = parts[1].trim().parse().ok();
-            live_lanes = parts[2].trim().parse().unwrap_or(0);
+            max_live = parts.get(1).and_then(|s| s.trim().parse().ok());
+            live_lanes = parts.get(2).and_then(|s| s.trim().parse().ok()).unwrap_or(0);
+            pool = parts.get(3).and_then(|s| s.trim().parse().ok());
+            continue;
+        }
+        if parts.len() < 3 {
             continue;
         }
         let ready: i64 = parts[1].trim().parse().unwrap_or(0);
         let live: i64 = parts[2].trim().parse().unwrap_or(0);
-        rows.push((parts[0].to_string(), ready, live));
+        // A 4th column names whether this partition is drawn from SPIRA_MAX_AEONS (the
+        // task pool) or is a lane's own (ops/qa/groomer, which draw outside it). Its
+        // absence — every fixture and install before this bead — means "task", the only
+        // shape fleet-status.sh ever emitted.
+        let is_task = parts.get(3).map(|s| s.trim() == "1").unwrap_or(true);
+        rows.push((parts[0].to_string(), ready, live, is_task));
     }
 
     // The Composite's FleetSpec.ceiling is the declared desired state (sp-8c3ib); an install
@@ -494,7 +504,7 @@ fn observe_fleet(cfg: &Config) -> Vec<Check> {
         None => {
             // Neither the Composite nor SPIRA_MAX_LIVE_AEONS declares a ceiling — there is
             // no ceiling to diff against, so this is not a gap, it is unobservable.
-            for (labels, _, _) in rows {
+            for (labels, _, _, _) in rows {
                 checks.push(Check {
                     key: format!("fleet:{}", labels),
                     raw: RawStatus::Unobservable { reason: "no Fleet ceiling declared".into() },
@@ -505,10 +515,14 @@ fn observe_fleet(cfg: &Config) -> Vec<Check> {
         }
     };
 
-    for (labels, ready, live) in rows {
+    for (labels, ready, live, is_task) in rows {
         let headroom = (max_live - live_lanes).max(0);
         let desired_live = ready.min(headroom);
-        let raw = if live >= desired_live {
+        // SPIRA_MAX_AEONS=0 is an operator pausing the task pool on purpose (aeons.sh
+        // pool 0) — the same carve-out czar-pass's detect_starved already gives it. A
+        // lane partition draws outside the pool, so its own gap still means something.
+        let deliberately_paused = is_task && pool == Some(0);
+        let raw = if live >= desired_live || deliberately_paused {
             RawStatus::Satisfied
         } else {
             RawStatus::Gap {

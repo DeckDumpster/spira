@@ -41,6 +41,10 @@
 #      health+mail pair, both when it demands more and when it demands less.
 #  24. Release: a materialised Composite's ReleaseSpec names the target explicitly, and
 #      allow_override lets a local divergence from it satisfy instead of escalating.
+#  25. Fleet: the task pool deliberately at 0 (SPIRA_MAX_AEONS=0) satisfies a starved task
+#      partition instead of gapping — a deliberate state is not a fault (sp-qsz01).
+#  26. Fleet: that same pool-at-0 carve-out does not silence a lane partition, which draws
+#      outside SPIRA_MAX_AEONS and so is starved for a different reason.
 #
 # 1-20 run with no Composite ever materialised — every invariant's fallback to its old
 # bash/env default, still the state of an install that has not adopted desired-state yet.
@@ -584,5 +588,24 @@ release = "v9"
 allow_override = true'
 bash "$RECONCILER_SH" --pass >/dev/null 2>&1
 want "allow_override lets a local override satisfy — a deliberate state is not a fault" '"key":"release","status":"satisfied"' "$(status_jsonl)"
+
+# ==========================================================================================
+printf '\n%s\n' "25. Fleet: SPIRA_MAX_AEONS=0 satisfies a starved task partition, not a gap"
+# ==========================================================================================
+reset_state
+printf 'builder\t150\t0\t1\nTOTAL\t3\t0\t0\n' > "$FLEET_LINES"   # pool column: 0 == deliberately paused
+bash "$RECONCILER_SH" --pass >/dev/null 2>&1
+want "a deliberately paused task pool satisfies the builder partition" '"key":"fleet:builder","status":"satisfied"' "$(status_jsonl)"
+lack "no escalation while the pool is deliberately paused" "cause=fleet:builder" "$(cat "$INC_LOG")"
+
+# ==========================================================================================
+printf '\n%s\n' "26. Fleet: the pool-at-0 carve-out does not cover a lane partition"
+# ==========================================================================================
+reset_state
+printf 'ops\t5\t0\t0\nTOTAL\t3\t0\t0\n' > "$FLEET_LINES"   # is-task=0: ops draws outside SPIRA_MAX_AEONS
+bash "$RECONCILER_SH" --pass >/dev/null 2>&1
+want "a starved lane partition still gaps while the task pool is paused" '"key":"fleet:ops","status":"gap"' "$(status_jsonl)"
+want "a starved lane partition still escalates while the task pool is paused" "cause=fleet:ops" "$(cat "$INC_LOG")"
+printf 'TOTAL\t\t0\n' > "$FLEET_LINES"
 
 tl_summary
