@@ -16,6 +16,7 @@ use std::process::Command;
 use std::time::Duration;
 
 const CANNOT_TELL: i32 = work::CANNOT_TELL;
+const REFUSED: i32 = work::REFUSED;
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 fn main() {
@@ -38,7 +39,7 @@ fn main() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{e}");
-            std::process::exit(3);
+            std::process::exit(REFUSED);
         }
     };
 
