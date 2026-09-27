@@ -149,24 +149,8 @@ _abandon_open_batch() {
         2>/dev/null || rm -f "$ob_file"
 }
 
-# _certified_orphans <repo-path> — print id for each CERTIFIED landstate with no branch ref
-_certified_orphans() {
-    local f id st
-    [ -d "$LANDSTATE" ] || return 0
-    for f in "$LANDSTATE/"*; do
-        [ -f "$f" ] || continue
-        id="$(basename "$f")"
-        st=""; { read -r st _ < "$f"; } 2>/dev/null || [ -n "$st" ] || continue
-        [ "$st" = "CERTIFIED" ] || continue
-        git -C "$1" show-ref --verify -q "refs/heads/spira/$id" 2>/dev/null && continue
-        printf '%s\n' "$id"
-    done
-}
-
 # _closed_red_live <repo-path> — print id for each RED/EJECTED landstate whose branch
-# exists and whose bead is closed. This is the counterpart to _certified_orphans: where
-# that catches CERTIFIED with no branch (deleted while queued), this catches closed with
-# a live branch and a failed landstate — the eviction-race shape where a bead ends up
+# exists and whose bead is closed — the eviction-race shape where a bead ends up
 # closed+RED+live and no queue mechanism retrieves it.
 _closed_red_live() {
     local f id st _crl_st
@@ -187,51 +171,6 @@ if d and d[0].get("status")=="closed": print("closed")' 2>/dev/null)" || _crl_st
         [ "${_crl_st:-}" = "closed" ] || continue
         printf '%s\n' "$id"
     done
-}
-
-# _landed_false <repo-path> <base-ref> — print "<id> <tip>" for each LANDED landstate
-# whose tip is neither an ancestor of base nor provably its content (law-landed-is-content).
-# THE SWEEP for sp-dgaig's defect: a LANDED record written on a REMOVED reap-log line alone,
-# or on landed()'s old any-mention match, never actually reached base. Both writers are fixed
-# elsewhere in this file and in lib.sh; this finds any record either left behind before the
-# fix, or that a caller not yet audited still manages to write.
-_landed_false() {
-    local repo="$1" base="$2" f id st tip
-    [ -d "$LANDSTATE" ] || return 0
-    for f in "$LANDSTATE/"*; do
-        [ -f "$f" ] || continue
-        id="$(basename "$f")"
-        case "$id" in .*|*/*) continue ;; esac
-        st=""; tip=""
-        { read -r st tip _ < "$f"; } 2>/dev/null || [ -n "$st" ] || continue
-        [ "$st" = "LANDED" ] || continue
-        [ -n "${tip:-}" ] && [ "$tip" != none ] || continue
-        git -C "$repo" merge-base --is-ancestor "$tip" "$base" 2>/dev/null && continue
-        content_landed "$repo" "$tip" "$base" 2>/dev/null && continue
-        printf '%s %s\n' "$id" "$tip"
-    done
-}
-
-# _landed_false_restore <id> — if a branch spira/<id> exists locally in any managed
-# repository, or on that repository's own remote-tracking ref, print its tip sha. Restores
-# the local ref from the remote-tracking one first, matching the by-hand recovery this
-# replaces (`git branch spira/<id> <remote>/spira/<id>`; sp-dgaig).
-_landed_false_restore() {
-    local id="$1" rn rp rem
-    for rn in $(spira_repos); do
-        rp="$(repo_root "$rn" 2>/dev/null)" || continue
-        if git -C "$rp" show-ref --verify -q "refs/heads/spira/$id" 2>/dev/null; then
-            git -C "$rp" rev-parse "refs/heads/spira/$id" 2>/dev/null
-            return 0
-        fi
-        rem="$(ref_remote "$(spira_landref "$rp" 2>/dev/null)" 2>/dev/null)" || continue
-        if git -C "$rp" show-ref --verify -q "refs/remotes/$rem/spira/$id" 2>/dev/null &&
-           git -C "$rp" branch "spira/$id" "refs/remotes/$rem/spira/$id" >/dev/null 2>&1; then
-            git -C "$rp" rev-parse "refs/heads/spira/$id" 2>/dev/null
-            return 0
-        fi
-    done
-    return 1
 }
 
 # _certified_list <repo-path> — delegates to queue_certified_list in lib.sh.
@@ -338,28 +277,6 @@ main() {
     # still open.
     queue_sweep_orphan_runs "${SPIRA_FORGE:-$HERE/forge.sh}" "$repo" || true
 
-    # CERTIFIED landstate records with no branch ref were deleted while queued.
-    # batch.sh would skip them silently; log and mail the operator instead.
-    local _orphan _orphans _orphan_list=""
-    _orphans="$(_certified_orphans "$repo")"
-    if [ -n "${_orphans:-}" ]; then
-        while IFS= read -r _orphan; do
-            [ -n "$_orphan" ] || continue
-            printf 'batch %s: WARN certified-orphan %s — CERTIFIED landstate but branch spira/%s is gone\n' \
-                "$name" "$_orphan" "$_orphan"
-            local _orphan_title
-            _orphan_title="$(timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$_orphan" --json 2>/dev/null \
-                | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d; print(d.get("title") or "")' 2>/dev/null || true)"
-            _orphan_list="${_orphan_list}- ${_orphan}${_orphan_title:+ — ${_orphan_title}}\n"
-        done <<< "$_orphans"
-        printf '## Note\nBranch(es) were CERTIFIED in the merge queue for %s but their refs are gone:\n\n%b\nThe next batch will not include them. Check the reap log for what deleted the ref.\n' \
-            "$name" "$_orphan_list" \
-        | bash "$HERE/mail.sh" send operator \
-            --from "Spira Queue <queue@spira>" \
-            --subject "Merge queue: $name — CERTIFIED branch(es) missing" \
-            2>/dev/null || true
-    fi
-
     # Closed beads with RED/EJECTED landstates and live branches are unreachable: the batch
     # builder ignores closed beads and queue_certified_list selects on CERTIFIED. Log and
     # mail the operator so the loss is visible before a "queue drained" conclusion stands.
@@ -381,107 +298,6 @@ main() {
             --from "Spira Queue <queue@spira>" \
             --subject "Merge queue: $name — closed bead(s) with live evicted branch" \
             2>/dev/null || true
-    fi
-
-    # LANDED landstate whose tip never reached base — the shape sp-dgaig fixed two writers
-    # of. Report every one found, and recover what can be: if a branch for the id still
-    # exists anywhere this harness can reach (locally, or on that repository's own remote),
-    # restore it and re-certify so the queue picks the real work back up (law-a-sweep-is-not-
-    # a-bead: this runs every batch pass rather than waiting to be noticed by hand).
-    local _lf_id _lf_tip _lf_entry _lf_entries _lf_list=""
-    _lf_entries="$(_landed_false "$repo" "$base_sha")"
-    if [ -n "${_lf_entries:-}" ]; then
-        while IFS= read -r _lf_entry; do
-            [ -n "$_lf_entry" ] || continue
-            _lf_id="${_lf_entry%% *}"
-            local _lf_restored
-            if _lf_restored="$(_landed_false_restore "$_lf_id")" && [ -n "$_lf_restored" ]; then
-                land_mark "$_lf_id" CERTIFIED "$_lf_restored" recertified-false-landed
-                printf 'batch %s: WARN false-landed %s — tip never reached %s; branch found and RE-CERTIFIED at %s\n' \
-                    "$name" "$_lf_id" "$base" "$_lf_restored"
-            else
-                printf 'batch %s: WARN false-landed %s — tip never reached %s; no branch found anywhere, needs manual recovery\n' \
-                    "$name" "$_lf_id" "$base"
-            fi
-            local _lf_title
-            _lf_title="$(timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$_lf_id" --json 2>/dev/null \
-                | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d; print(d.get("title") or "")' 2>/dev/null || true)"
-            _lf_list="${_lf_list}- ${_lf_id}${_lf_title:+ — ${_lf_title}}\n"
-        done <<< "$_lf_entries"
-        printf '## Note\nBead(s) for %s were recorded LANDED but their tip never reached %s:\n\n%bSee the batch log for which were re-certified and which need recovery by hand.\n' \
-            "$name" "$base" "$_lf_list" \
-        | bash "$HERE/mail.sh" send operator \
-            --from "Spira Queue <queue@spira>" \
-            --subject "Merge queue: $name — LANDED record(s) never reached base" \
-            2>/dev/null || true
-    fi
-
-    # Mark CERTIFIED records whose branches are gone so they drop from the queue view.
-    # This runs before the open-batch guard so stale records are converged even while a
-    # batch PR is pending — without this, a long CI run leaves them accumulating
-    # indefinitely (the guard returned early before this block ever ran).
-    if [ -d "$LANDSTATE" ]; then
-        local _lf _lid _lst _ltip _anyrn _rn _rp
-        for _lf in "$LANDSTATE"/*; do
-            [ -f "$_lf" ] || continue
-            _lid="$(basename "$_lf")"
-            # Skip entries that are not bead IDs (no slashes, no leading dot).
-            case "$_lid" in .*|*/*) continue ;; esac
-            _lst=""; _ltip=""; { read -r _lst _ltip _ < "$_lf"; } 2>/dev/null || [ -n "$_lst" ] || continue
-            [ "$_lst" = "CERTIFIED" ] || continue
-            _anyrn=0
-            for _rn in $(spira_repos); do
-                _rp="$(repo_root "$_rn" 2>/dev/null)" || continue
-                git -C "$_rp" show-ref --verify --quiet "refs/heads/spira/$_lid" 2>/dev/null \
-                    && { _anyrn=1; break; }
-            done
-            if [ "$_anyrn" = 1 ]; then
-                # Branch still exists. Reconcile to LANDED when the certified tip is already
-                # in the base AND the branch hasn't moved past it. If the branch has advanced
-                # since certification, defer to the _certified_list stale-cert path (inside
-                # the open-batch guard), which re-certifies with the live tip first.
-                _lcur="$(git -C "$repo" rev-parse "refs/heads/spira/$_lid" 2>/dev/null || true)"
-                if [ "${_lcur:-none}" = "${_ltip:-none}" ] && \
-                   git -C "$repo" merge-base --is-ancestor "${_ltip:-none}" "$base_sha" \
-                       2>/dev/null; then
-                    land_mark "$_lid" LANDED "${_ltip:-none}" already-in-base
-                    bead_close_on_land "$_lid" "${_ltip:-none}" || true
-                    printf 'batch %s: %s tip already in %s (live branch) — LANDED\n' \
-                        "$name" "$_lid" "$base"
-                fi
-                continue
-            fi
-            # Tip already in base: the branch landed (via external merge before verdict.sh
-            # ran). Mark LANDED rather than LOST so the queue view and queue-wait logic
-            # both see it as done — LOST drops it from the view but does not unblock
-            # queue-waiters that tested for CERTIFIED reaching LANDED.
-            if git -C "$repo" merge-base --is-ancestor "${_ltip:-none}" "$base_sha" \
-                   2>/dev/null; then
-                land_mark "$_lid" LANDED "${_ltip:-none}" already-in-base-orphan
-                bead_close_on_land "$_lid" "${_ltip:-none}" || true
-                printf 'batch %s: %s tip already in %s (orphan) — LANDED\n' \
-                    "$name" "$_lid" "$base"
-            else
-                # A REMOVED reap-log entry says something with this id was deleted, not that
-                # its content is the content on base — the entry carries no tip and no date,
-                # so it was true of any tip ever reaped under this id. Ask the question
-                # content_landed asks instead, against the certified tip itself: it accepts
-                # any commit-ish, so a tip whose branch is gone is judged the same way a live
-                # one would be. A tip that was pruned (object no longer exists) fails the git
-                # calls inside content_landed and this falls to LOST — refuse rather than
-                # guess (sp-dgaig: a REMOVED-alone reading marked five reaped branches LANDED
-                # though none of their content had reached base).
-                if content_landed "$repo" "${_ltip:-none}" "$base_sha" 2>/dev/null; then
-                    land_mark "$_lid" LANDED "${_ltip:-none}" content-landed-orphan
-                    bead_close_on_land "$_lid" "${_ltip:-none}" || true
-                    printf 'batch %s: %s has no branch — content on %s (orphan) — LANDED\n' \
-                        "$name" "$_lid" "$base"
-                else
-                    land_mark "$_lid" LOST "${_ltip:-none}" branch-gone
-                    printf 'batch %s: %s has no branch — LOST (branch-gone)\n' "$name" "$_lid"
-                fi
-            fi
-        done
     fi
 
     # An open batch's own back pressure (law-queue-back-pressure-is-an-open-pr) is the
