@@ -192,6 +192,8 @@ _fail_on="\${DOCTOR_FAIL_ON_CALL:-}"
 _do_fail=0
 [ "\${DOCTOR_EXIT:-0}" != "0" ] && _do_fail=1
 [ -n "\$_fail_on" ] && [ "\$_cnt" -ge "\$_fail_on" ] && _do_fail=1
+# DOCTOR_FAILED_UNIT_FILE: fail while this file exists (a unit systemd holds failed).
+[ -n "\${DOCTOR_FAILED_UNIT_FILE:-}" ] && [ -e "\$DOCTOR_FAILED_UNIT_FILE" ] && _do_fail=1
 if [ "\$_do_fail" = 1 ]; then
     printf '  FAIL  %s\n' "\${DOCTOR_FAIL_MSG:-injected failure}"
     exit 1
@@ -252,6 +254,7 @@ cat > "$BIN/systemctl" <<'SCEOF'
 #!/usr/bin/env bash
 printf 'SC %s\n' "$*" >> "${SC_LOG:-/dev/null}"
 case "$*" in
+    *reset-failed*spira-skew-*) rm -f "${SKEW_UNIT_FAILED_FILE:-/nonexistent}" ;;
     *list-units*--state=failed*) [ -n "${SC_FAILED_UNITS:-}" ] && printf '%s\n' "$SC_FAILED_UNITS" ;;
     *" start "*) case " $* " in *" ${SC_START_FAILS:-@none@} "*) exit 1 ;; esac ;;
     *list-units*) printf 'spira-sentinel-prod.service loaded active running\n' ;;
@@ -473,6 +476,28 @@ _pub_list="[{\"tagName\":\"$NEW_TAG\",\"isDraft\":false}]"
 _out="$(run_deploy "SKEW_EXIT=1" "SKEW_OUT=$_notlatest" "GH_RELEASE_LIST=$_pub_list" -- latest 2>&1)"
 _rc=$?
 not0   "latest: NOT-LATEST after resolving latest still rolls back" "$_rc"
+
+# THE SKEW UNIT FAILS FOR THE SAME ACCEPTED REASON. Under the named older release its
+# periodic spira-skew unit runs the same check, gets NOT-LATEST and sits failed; doctor then
+# counted it as a failed unit and rolled the deliberate rollback back (acceptance phase C,
+# 2026-09-27). The accepted finding clears that unit before doctor runs; any other finding
+# leaves it failed, so doctor still sees it.
+_skewf="$TMP/skew-unit-failed"
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+: > "$_skewf"
+_out="$(run_deploy "SKEW_EXIT=1" "SKEW_OUT=$_notlatest" "DOCTOR_FAILED_UNIT_FILE=$_skewf" "SKEW_UNIT_FAILED_FILE=$_skewf" -- "$NEW_TAG" 2>&1)"
+_rc=$?
+is0    "older-named: the skew unit's NOT-LATEST failure does not undo a named deploy" "$_rc"
+islink "older-named: current stays on the named release (skew unit cleared)" "$RELEASES/current" "$NEW_RELEASE"
+nowant "older-named: no rollback on the skew unit"          "ROLLBACK" "$_out"
+
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+: > "$_skewf"
+_out="$(run_deploy "SKEW_EXIT=1" "SKEW_OUT=$(printf '%s\nMANIFEST-MISMATCH MANIFEST records a but release tag t points at b' "$_notlatest")" "DOCTOR_FAILED_UNIT_FILE=$_skewf" "SKEW_UNIT_FAILED_FILE=$_skewf" -- "$NEW_TAG" 2>&1)"
+_rc=$?
+not0   "older-named: a MANIFEST-MISMATCH leaves the skew unit failed and rolls back" "$_rc"
+[ -e "$_skewf" ] && ok "older-named: skew unit NOT cleared on a non-accepted finding" || bad "older-named: skew unit NOT cleared on a non-accepted finding" "reset-failed ran"
+rm -f "$_skewf"; unset _skewf
 unset _notlatest
 
 # ==========================================================================
