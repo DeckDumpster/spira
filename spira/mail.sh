@@ -374,29 +374,24 @@ cmd_send() {
 
     # For question/decision kinds with a live database: file a tracking decision bead
     # so the operator's reply closes it — not the cited bead (if one exists).
-    # GUARD: a blocking edge onto a non-decision bead makes work beads unclaimable while
-    # law questions wait (sp-aybfy, law-blocking-edges-are-real-dependencies). Refuse it
-    # and wire relates_to instead. Override: SPIRA_MAIL_ALLOW_BLOCKING=1 (not in any
-    # agent brief; the archivist cannot use it without explicit operator instruction).
-    # If no bead is cited, no edge is wired.
+    # GUARD: the tracking bead this creates is itself an ask, and an ask is never a gate
+    # on the work — or the other ask — it cites (law-blocking-edges-are-real-dependencies).
+    # Default is always relates_to; the cited bead's own type never decides this (an ask
+    # citing an ask must not block it). SPIRA_MAIL_ALLOW_BLOCKING=1 opts in to a genuine
+    # blocking dependency (not in any agent brief; the archivist cannot use it without
+    # explicit operator instruction). If no bead is cited, no edge is wired.
     local x_bead="$bead"
     if { [ "$kind" = "question" ] || [ "$kind" = "decision" ]; } \
             && [ -n "${SPIRA_DB:-}" ]; then
-        local dec_bead="" _ask_label _cited_type _do_block
+        local dec_bead="" _ask_label _do_block
         _ask_label="${SPIRA_ASK_LABEL:-needs-operator}"  # literal-ok: bash fallback; SPIRA_ASK_LABEL set by conf.sh
 
-        # Only check cited bead type if a bead was provided
+        _do_block=0
         if [ -n "$bead" ]; then
-            _cited_type="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$bead" --json 2>/dev/null \
-                | sed -n '/^[[{]/,$p' \
-                | python3 -c 'import json,sys; r=json.load(sys.stdin); d=r[0] if isinstance(r,list) else r; print(d.get("issue_type",""))' \
-                2>/dev/null)" || _cited_type=""
-            if [ "$_cited_type" = "decision" ] || [ -n "${SPIRA_MAIL_ALLOW_BLOCKING:-}" ]; then
+            if [ -n "${SPIRA_MAIL_ALLOW_BLOCKING:-}" ]; then
                 _do_block=1
             else
-                _do_block=0
-                printf 'mail: blocking edge refused — %s has type %s, not decision; wiring relates_to instead (override: SPIRA_MAIL_ALLOW_BLOCKING=1)\n' \
-                    "$bead" "${_cited_type:-unknown}" >&2
+                printf 'mail: blocking edge refused — wiring relates_to instead (override: SPIRA_MAIL_ALLOW_BLOCKING=1)\n' >&2
             fi
         fi
 
@@ -406,11 +401,12 @@ cmd_send() {
                 --type decision \
                 --body-file - \
                 --silent 2>/dev/null)" || dec_bead=""
-        if [ -n "$dec_bead" ]; then
-            if [ -n "$bead" ] && [ "$_do_block" -eq 1 ]; then
-                "${SPIRA_BD:-bd}" -C "$SPIRA_DB" dep add "$bead" "$dec_bead" >/dev/null 2>&1 || true
-            elif [ -n "$bead" ]; then
-                "${SPIRA_BD:-bd}" -C "$SPIRA_DB" dep relate "$dec_bead" "$bead" >/dev/null 2>&1 || true
+        if [ -n "$dec_bead" ] && [ -n "$bead" ]; then
+            if [ "$_do_block" -eq 1 ]; then
+                "${SPIRA_BD:-bd}" -C "$SPIRA_DB" dep add "$bead" "$dec_bead" --type blocks >/dev/null 2>&1 \
+                    && printf 'mail: blocking edge wired — %s blocks on %s\n' "$bead" "$dec_bead" >&2
+            else
+                "${SPIRA_BD:-bd}" -C "$SPIRA_DB" dep add "$dec_bead" "$bead" --type relates-to >/dev/null 2>&1 || true
             fi
         fi
         [ -n "$dec_bead" ] && x_bead="$dec_bead"
