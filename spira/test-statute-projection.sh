@@ -233,6 +233,55 @@ is "and the statute is gone from the book regardless" "1" \
 
 # ==========================================================================
 echo
+echo "=== sp-dnrjw: enact rejects unrecognised arguments before touching the book ==="
+# ==========================================================================
+# `text="$*"` used to join every trailing argument into the statute text with no check, so
+# a stray flag (a mistyped --dry-run) became law with no complaint (sp-dnrjw).
+
+run_rule enact sp-dnrjw-enact-guard "Original text for the enact argument guard." >/dev/null 2>&1
+before_guard="$(run_rule show sp-dnrjw-enact-guard)"
+
+# NEGATIVE CONTROL: an unrecognised flag is refused, and the book is untouched.
+out_badflag="$(run_rule enact sp-dnrjw-enact-guard "x" --whatever)"; rc_badflag=$?
+is   "enact: unrecognised flag exits non-zero" "1" "$rc_badflag"
+want "and names the offending argument"        "'--whatever'" "$out_badflag"
+is   "and the statute is left unchanged" "$before_guard" "$(run_rule show sp-dnrjw-enact-guard)"
+
+# NEGATIVE CONTROL: a second, unquoted text argument is refused the same way.
+out_2ndtext="$(run_rule enact sp-dnrjw-enact-guard "x" "y")"; rc_2ndtext=$?
+is   "enact: a second text argument exits non-zero" "1" "$rc_2ndtext"
+want "and names the offending argument"             "'y'" "$out_2ndtext"
+is   "and the statute is still left unchanged" "$before_guard" "$(run_rule show sp-dnrjw-enact-guard)"
+
+# POSITIVE PAIR: one quoted text argument, with no flags, still enacts.
+rc_goodtext=0; run_rule enact sp-dnrjw-enact-guard "Replacement text for the enact argument guard." >/dev/null || rc_goodtext=$?
+is   "enact: one quoted text argument still exits 0" "0" "$rc_goodtext"
+want "and the statute now reads the new text" \
+    "Replacement text for the enact argument guard." "$(run_rule show sp-dnrjw-enact-guard)"
+
+echo
+echo "=== sp-dnrjw: enact prints the prior text before an overwrite ==="
+
+before_overwrite="$(run_rule show sp-dnrjw-enact-guard)"
+out_overwrite="$(run_rule enact sp-dnrjw-enact-guard "Second replacement for the overwrite-visibility test.")"
+want "enact: overwrite prints the prior text" "$before_overwrite" "$out_overwrite"
+want "and prints the new text" "Second replacement for the overwrite-visibility test." "$out_overwrite"
+
+# POSITIVE CONTROL: enacting a brand-new slug prints no "already exists" overwrite banner.
+nowant "enact: a brand-new slug prints no overwrite banner" "already exists" \
+    "$(run_rule enact sp-dnrjw-enact-new "Brand new statute, never enacted before.")"
+
+echo
+echo "=== sp-dnrjw: enact --dry-run writes nothing ==="
+
+before_dry="$(run_rule show sp-dnrjw-enact-guard)"
+out_dry="$(run_rule enact sp-dnrjw-enact-guard "Text that --dry-run must not write." --dry-run)"; rc_dry=$?
+is   "enact --dry-run exits 0"  "0" "$rc_dry"
+want "and says DRY RUN"         "DRY RUN" "$out_dry"
+is   "and the statute is left unchanged" "$before_dry" "$(run_rule show sp-dnrjw-enact-guard)"
+
+# ==========================================================================
+echo
 echo "=== rule.sh: default hook is the harness's own law-synth.sh (sp-fe3ee) ==="
 # ==========================================================================
 
