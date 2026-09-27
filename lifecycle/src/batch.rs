@@ -98,6 +98,13 @@ pub enum BatchEventKind {
     Attributed { bead_id: String, outcome: String },
     Settle,
     Abandon { reason: String },
+    /// A manual, operator/czar-initiated single-member eject, valid only while OPEN or
+    /// CI_RUNNING — before any Red event exists. Distinct from the CI-driven
+    /// Red->Attributing->Settle path: that path's per-member exit is logged only once CI
+    /// has actually run, so a live-batch eject cannot reuse it without fabricating a Red
+    /// that never happened (design: the event log is the record of what happened).
+    /// Per-member bookkeeping; does not itself move the batch.
+    Eject { bead_id: String, reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -153,7 +160,8 @@ pub fn apply(row: &BatchRow, ev: &BatchEvent) -> Outcome<BatchRow> {
         | BatchEventKind::Rebuilt
         | BatchEventKind::FastForward { .. }
         | BatchEventKind::Attributed { .. }
-        | BatchEventKind::Settle => primary_transition(row, &ev.kind),
+        | BatchEventKind::Settle
+        | BatchEventKind::Eject { .. } => primary_transition(row, &ev.kind),
     }
 }
 
@@ -177,6 +185,11 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
                 new.version += 1;
                 Outcome::applied(new)
             }
+            Eject { .. } => {
+                let mut new = row.clone();
+                new.version += 1;
+                Outcome::applied(new)
+            }
             Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. } | Settle | Abandon { .. } => illegal(row, kind),
         },
 
@@ -190,6 +203,11 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
             Red => {
                 let mut new = row.clone();
                 new.state = BatchState::Attributing;
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            Eject { .. } => {
+                let mut new = row.clone();
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -211,9 +229,8 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
                 new.version += 1;
                 Outcome::applied(new)
             }
-            MemberAdded { .. } | CiStarted { .. } | Green | Red | Rebuilt | Attributed { .. } | Settle | Abandon { .. } => {
-                illegal(row, kind)
-            }
+            MemberAdded { .. } | CiStarted { .. } | Green | Red | Rebuilt | Attributed { .. } | Settle | Abandon { .. }
+            | Eject { .. } => illegal(row, kind),
         },
 
         BatchState::Rebuilding => match kind {
@@ -224,7 +241,7 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
                 Outcome::applied(new)
             }
             MemberAdded { .. } | CiStarted { .. } | Green | Red | BaseMoved | FastForward { .. }
-            | Attributed { .. } | Settle | Abandon { .. } => illegal(row, kind),
+            | Attributed { .. } | Settle | Abandon { .. } | Eject { .. } => illegal(row, kind),
         },
 
         BatchState::Attributing => match kind {
@@ -239,14 +256,13 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
                 new.version += 1;
                 Outcome::applied(new)
             }
-            MemberAdded { .. } | CiStarted { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Abandon { .. } => {
-                illegal(row, kind)
-            }
+            MemberAdded { .. } | CiStarted { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Abandon { .. }
+            | Eject { .. } => illegal(row, kind),
         },
 
         BatchState::Landed | BatchState::Settled | BatchState::Abandoned => match kind {
             MemberAdded { .. } | CiStarted { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. }
-            | Attributed { .. } | Settle | Abandon { .. } => terminal(row),
+            | Attributed { .. } | Settle | Abandon { .. } | Eject { .. } => terminal(row),
         },
     }
 }
@@ -278,6 +294,7 @@ mod tests {
             BatchEventKind::Attributed { bead_id: "sp-1".into(), outcome: "requeue".into() },
             BatchEventKind::Settle,
             BatchEventKind::Abandon { reason: "r".into() },
+            BatchEventKind::Eject { bead_id: "sp-1".into(), reason: "manual".into() },
         ]
     }
 
@@ -367,6 +384,27 @@ mod tests {
             let out = apply(&r, &ev(state, 0, BatchEventKind::Abandon { reason: "gave up".into() }));
             assert!(out.applied, "{state:?} should accept abandon");
             assert_eq!(out.row.state, BatchState::Abandoned);
+        }
+    }
+
+    #[test]
+    fn eject_legal_only_from_open_and_ci_running() {
+        for &state in &[BatchState::Open, BatchState::CiRunning] {
+            let r = row(state);
+            let out = apply(&r, &ev(state, 0, BatchEventKind::Eject { bead_id: "sp-1".into(), reason: "manual".into() }));
+            assert!(out.applied, "{state:?} should accept eject");
+            assert_eq!(out.row.state, state, "eject must not move the batch");
+            assert_eq!(out.row.version, r.version + 1);
+        }
+    }
+
+    #[test]
+    fn eject_refused_outside_open_and_ci_running() {
+        for &state in &[BatchState::Green, BatchState::Rebuilding, BatchState::Attributing, BatchState::Landed, BatchState::Settled, BatchState::Abandoned] {
+            let r = row(state);
+            let out = apply(&r, &ev(state, 0, BatchEventKind::Eject { bead_id: "sp-1".into(), reason: "manual".into() }));
+            assert!(!out.applied, "{state:?} must refuse eject");
+            assert_eq!(out.row, r);
         }
     }
 

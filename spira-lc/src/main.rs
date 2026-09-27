@@ -77,6 +77,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("work") => work::dispatch(&args[1..], conn),
         // The cutover round's own verbs (sp-o7nbr): batch creation and the cross-machine
         // cascades a batch's own transition emits to its members (cutover.rs's own doc).
+        Some("show-batch") => cutover::cmd_show_batch(&args[1..], conn),
         Some("create-bead") => cutover::cmd_create_bead(&args[1..], conn),
         Some("cut") => cutover::cmd_cut(&args[1..], conn),
         // batcher-cut's own pipelining onto an already-OPEN batch (sp-o7nbr.4): the same
@@ -85,6 +86,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("land") => cutover::cmd_land(&args[1..], conn),
         Some("settle") => cutover::cmd_settle(&args[1..], conn),
         Some("abandon-batch") => cutover::cmd_abandon_batch(&args[1..], conn),
+        Some("eject-member") => cutover::cmd_eject_member(&args[1..], conn),
         // Not part of the show/list/history/event surface: a plumbing verb the install
         // step and the test fixture use to apply schema.sql/grants.sql through the same
         // connection code the rest of this binary uses, instead of a second copy in shell.
@@ -94,7 +96,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("classify") => classify_cmd::run(&args[1..], conn),
         _ => (
             CANNOT_TELL,
-            "usage: spira-lc show <bead-id> | list [--state S] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | create-bead <id> | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | classify --home DIR --bd-db PATH --landstate-dir DIR --queue-dir DIR [--repo NAME]... [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve".to_string(),
+            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--state S] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | create-bead <id> | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | classify --home DIR --bd-db PATH --landstate-dir DIR --queue-dir DIR [--repo NAME]... [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve".to_string(),
         ),
     }
 }

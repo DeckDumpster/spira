@@ -70,6 +70,42 @@ pub fn cmd_create_bead(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
+/// `show-batch <batch-id>` -> `{"batch_id","state","version",...}`, or exit 1 with `{}` when
+/// absent. A caller driving `abandon-batch`/`eject-member`/`settle` needs the batch's
+/// *current* state and version to build its `--expect`/`--version` pair — those are set by
+/// whichever event last applied (verdict.sh's CI outcome, another operator action), not by
+/// whatever a caller's own record last saw, so this queries spira_lifecycle fresh rather
+/// than letting a caller cache and go stale.
+pub fn cmd_show_batch(args: &[String], conn: &Conn) -> (i32, String) {
+    let Some(batch_id) = args.first() else {
+        return (CANNOT_TELL, "show-batch: missing <batch-id>".into());
+    };
+    match rows::fetch_batch(conn, batch_id) {
+        // Built field-by-field, not a derive-serialize of BatchRow: BatchState's derived
+        // Serialize prints the Rust variant name ("Open"), while every `--expect`/`state`
+        // string elsewhere in this CLI (and the value a caller must feed back into
+        // `--expect`) is `.as_str()`'s upper-snake form ("OPEN"). Two spellings of the same
+        // state would make a caller's own string compare silently always fail.
+        Ok(Some(row)) => (
+            0,
+            serde_json::json!({
+                "batch_id": row.batch_id,
+                "repo": row.repo,
+                "state": row.state.as_str(),
+                "parent": row.parent,
+                "head": row.head,
+                "base": row.base,
+                "run": row.run,
+                "reason": row.reason,
+                "version": row.version,
+            })
+            .to_string(),
+        ),
+        Ok(None) => (1, "{}".to_string()),
+        Err(e) => cannot_tell(e),
+    }
+}
+
 /// `cut <batch-id> --repo R --head H --base B --members "id:tip,id:tip" --actor A [--parent P]`
 ///
 /// Every named member must currently be CERTIFIED at exactly the given tip — checked before
@@ -670,6 +706,114 @@ pub fn cmd_abandon_batch(args: &[String], conn: &Conn) -> (i32, String) {
         Ok(applied) => {
             let all_ok = applied.iter().all(|a| *a);
             let summary = serde_json::json!({"batch_id": batch_id, "steps": steps.len(), "applied": applied});
+            if all_ok {
+                (0, serde_json::to_string(&summary).unwrap())
+            } else {
+                (REFUSED, serde_json::to_string(&summary).unwrap())
+            }
+        }
+        Err(e) => cannot_tell(e),
+    }
+}
+
+/// `eject-member <batch-id> --bead-id ID --expect S --version V --actor A --reason R`
+///
+/// One transaction: `Eject{bead_id,reason}` on the batch (OPEN or CI_RUNNING only; the batch
+/// itself does not move — survivors stay in the batch), and `Requeued{tip}` for the ejected
+/// member's delivery and bead row (tip unchanged, so it resurrects CERTIFIED per the tip
+/// invariant, same as `abandon-batch`). This is the manual, pre-CI-outcome eject
+/// (queue.sh's `cmd_eject`, an operator/czar action) — distinct from `settle`'s own
+/// `--eject` list, which only runs after a real Red event and returns members to REWORK, not
+/// CERTIFIED. Synthesizing a Red here to reuse that path would log CI failure that never
+/// happened; the event log is the record of what happened.
+pub fn cmd_eject_member(args: &[String], conn: &Conn) -> (i32, String) {
+    let Some(batch_id) = args.first() else {
+        return (CANNOT_TELL, "eject-member: missing <batch-id>".into());
+    };
+    let (Some(bead_id), Some(expect), Some(version_s), Some(actor), Some(reason)) = (
+        flag(args, "--bead-id"),
+        flag(args, "--expect"),
+        flag(args, "--version"),
+        flag(args, "--actor"),
+        flag(args, "--reason"),
+    ) else {
+        return (CANNOT_TELL, "eject-member: --bead-id, --expect, --version, --actor and --reason are all required".into());
+    };
+    let Ok(version) = version_s.parse::<u64>() else {
+        return (CANNOT_TELL, "eject-member: --version must be a non-negative integer".into());
+    };
+    let Some(expect_state) = batch::BatchState::from_str(&expect) else {
+        return (CANNOT_TELL, format!("eject-member: unknown batch state {expect:?}"));
+    };
+
+    let batch_row = match rows::fetch_batch(conn, batch_id) {
+        Ok(Some(r)) => r,
+        Ok(None) => return (CANNOT_TELL, format!("eject-member: no batch row for {batch_id}")),
+        Err(e) => return cannot_tell(e),
+    };
+    let members = match fetch_members(conn, batch_id) {
+        Ok(m) => m,
+        Err(e) => return cannot_tell(e),
+    };
+    let Some(tip) = members.iter().find(|(id, _)| id == &bead_id).map(|(_, t)| t.clone()) else {
+        return (CANNOT_TELL, format!("eject-member: {bead_id} is not a member of {batch_id}"));
+    };
+
+    let at = crate::db::now_epoch();
+    let ev = batch::BatchEvent {
+        expect: expect_state,
+        version,
+        kind: batch::BatchEventKind::Eject { bead_id: bead_id.clone(), reason: reason.clone() },
+        actor: actor.clone(),
+    };
+    let outcome = batch::apply(&batch_row, &ev);
+    let evidence = serde_json::to_value(&ev.kind).unwrap_or_default();
+    if !outcome.applied {
+        let rec = EventRecord {
+            machine: "batch".into(),
+            key: batch_id.clone(),
+            event: "Eject".into(),
+            expect: expect.clone(),
+            from_state: batch_row.state.as_str().into(),
+            refusal: outcome.refusal.as_ref().map(refusal_name),
+            evidence,
+            actor: actor.clone(),
+            at,
+        };
+        return match conn.insert_refusal_event(&rec) {
+            Ok(()) => (REFUSED, format!("refused: {:?}", outcome.refusal)),
+            Err(e) => cannot_tell(e),
+        };
+    }
+
+    let mut steps = vec![CascadeStep {
+        table: "batch",
+        key_column: "batch_id",
+        key: batch_id.clone(),
+        old_version: version,
+        set_clause: rows::batch_set_clause(&outcome.row),
+        applied_to_state: outcome.row.state.as_str().to_string(),
+        event: EventRecord {
+            machine: "batch".into(),
+            key: batch_id.clone(),
+            event: "Eject".into(),
+            expect: expect.clone(),
+            from_state: batch_row.state.as_str().into(),
+            refusal: None,
+            evidence,
+            actor: actor.clone(),
+            at,
+        },
+    }];
+
+    if let Err(e) = add_exit_steps(conn, &mut steps, &bead_id, delivery::DeliveryEventKind::Requeued { tip }, &actor, at) {
+        return cannot_tell(e);
+    }
+
+    match conn.cascade("", &steps) {
+        Ok(applied) => {
+            let all_ok = applied.iter().all(|a| *a);
+            let summary = serde_json::json!({"batch_id": batch_id, "bead_id": bead_id, "steps": steps.len(), "applied": applied});
             if all_ok {
                 (0, serde_json::to_string(&summary).unwrap())
             } else {
