@@ -143,6 +143,21 @@ want "SP_UNADOPTED_NAMES names the stray branch" "sp-true-stray" "$(val SP_UNADO
 nowant "SP_UNADOPTED_NAMES excludes orphan work" "tmp-stray" "$(val SP_UNADOPTED_NAMES)"
 
 # ======================================================================================
+# sp-ghi5q: spira/round-NN has no bead and its commits are (by design) not yet on base
+# while a round is in flight — the same shape as tmp-stray above, so a name-blind probe
+# folds it into SP_ORPHAN_WORK, permanently, every round. sending.sh:377 already excludes
+# round-* branches for exactly this reason; cockpit.sh's classifier did not.
+git -C "$ALPHA" checkout -q -b spira/round-81
+git -C "$ALPHA" commit --allow-empty -m "round 81 in flight" -q
+git -C "$ALPHA" checkout -q main 2>/dev/null || git -C "$ALPHA" checkout -q master
+out_round="$(unsent "$TMP/beads.json")"
+valr() { printf '%s' "$out_round" | grep "^$1=" | head -1 | sed "s/^$1=//; s/^'//; s/'\$//"; }
+is "SP_ORPHAN_WORK excludes round branches" "1" "$(valr SP_ORPHAN_WORK)"
+is "SP_ROUND_BRANCHES counts the round branch" "1" "$(valr SP_ROUND_BRANCHES)"
+want "SP_ROUND_BRANCHES_NAMES names it" "round-81" "$(valr SP_ROUND_BRANCHES_NAMES)"
+git -C "$ALPHA" branch -D spira/round-81 >/dev/null 2>&1 || true
+
+# ======================================================================================
 # ABSORBED FROM test-cockpit-unadopted-queue.sh: harness-owned namespaces are never
 # counted as unadopted, even though their tip is already on base.
 nowant "SP_UNADOPTED_NAMES excludes queue branch"       "queue/"              "$(val SP_UNADOPTED_NAMES)"
