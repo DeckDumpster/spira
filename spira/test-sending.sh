@@ -253,11 +253,20 @@ git -C "$REPO" add sp-unlanded.txt && git -C "$REPO" commit -q -m "sp-unlanded: 
 git -C "$REPO" checkout -q main
 bead sp-unlanded open
 
-# sp-noone: real, unique content; no bd record at all. UNADOPTED.
+# sp-noone: real, unique content not on the base; no bd record at all. ORPHAN no-bead —
+# archived at refs/archive/spira/sp-noone, never plain-deleted (sp-hwhnw).
 git -C "$REPO" checkout -q -b spira/sp-noone main
 printf 'orphaned content\n' > "$REPO/sp-noone.txt"
 git -C "$REPO" add sp-noone.txt && git -C "$REPO" commit -q -m "sp-noone: no bead names this"
 git -C "$REPO" checkout -q main
+SP_NOONE_TIP="$(git -C "$REPO" rev-parse spira/sp-noone)"
+
+# sp-stray: no bead, and the tip is already an ancestor of main — nothing on it the base
+# does not already have. content_landed's ancestor shortcut catches this before the
+# bead lookup ever runs (bead or not), so it is SENT via the content-landed arm, not the
+# ORPHAN one below — the "unadopted, ancestor of base -> delete" half of sp-hwhnw's split
+# that was already correct.
+git -C "$REPO" branch -q spira/sp-stray main
 
 # sp-held: a live claim via the status seam. HELD, at the top of the loop, before
 # send_disposition is ever called.
@@ -396,8 +405,21 @@ is     "sp-cherry branch still exists"      0 "$(branch_exists spira/sp-cherry; 
 want   "sp-unlanded is KEPT"                "KEEP   sp-unlanded"   "$out"
 is     "sp-unlanded branch still exists"    0 "$(branch_exists spira/sp-unlanded; echo $?)"
 
-want   "sp-noone is UNADOPTED"              "UNADOPTED sp-noone"   "$out"
-is     "sp-noone branch still exists"       0 "$(branch_exists spira/sp-noone; echo $?)"
+# ORPHAN WORK — archived, never plain-deleted (sp-hwhnw)
+want   "sp-noone is ARCHIVED"               "ARCHIVED sp-noone"    "$out"
+is     "sp-noone branch is gone"            1 "$(branch_exists spira/sp-noone; echo $?)"
+is     "sp-noone's tip is reachable at refs/archive/spira/sp-noone" "$SP_NOONE_TIP" \
+    "$(git -C "$REPO" rev-parse -q --verify refs/archive/spira/sp-noone 2>/dev/null)"
+# Positive control: the orphaned commit itself is still resolvable after the pass, not
+# just the ref that names it.
+is     "sp-noone's commit content is still resolvable" "orphaned content" \
+    "$(git -C "$REPO" show "$SP_NOONE_TIP:sp-noone.txt" 2>/dev/null)"
+
+# UNADOPTED (bead-less, ancestor of the base) — sent via content-landed, no archive
+want   "sp-stray is SENT"                   "SENT sp-stray"        "$out"
+is     "sp-stray branch is gone"            1 "$(branch_exists spira/sp-stray; echo $?)"
+is     "sp-stray leaves no refs/archive entry (nothing to preserve)" "" \
+    "$(git -C "$REPO" rev-parse -q --verify refs/archive/spira/sp-stray 2>/dev/null)"
 
 # HELD
 want   "sp-held is HELD"                    "HELD   sp-held"       "$out"
