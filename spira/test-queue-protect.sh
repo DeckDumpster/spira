@@ -77,7 +77,7 @@ want "protect: receipt contains branch" "main" \
     "$(cat "$TMP/run/queue-protected-$QNAME" 2>/dev/null || true)"
 want "protect: reports success" "protection set" "$protect_out"
 want "protect: attribution note present" "attribution note" "$protect_out"
-want "protect: bisect fallback mentioned" "bisect" "$protect_out"
+want "protect: batcher-judgement fallback mentioned" "batcher persona" "$protect_out"
 
 # ===========================================================================
 # GAP G5 — forge exits non-zero: no receipt is written, and the error names
