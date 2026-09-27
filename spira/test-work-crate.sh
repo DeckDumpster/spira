@@ -83,7 +83,8 @@ out="$(cd "$REPO" && SPIRA_WORK_BIN="$WORK_BIN" SPIRA_DB="/should/not/leak" SPIR
     SPIRA_LC_PASSWORD_FILE="/should/not/leak" \
     bash "$HERE/work-env.sh" sp-bound1 -- bash -c '
         command -v bd >/dev/null 2>&1 && { echo "BD_FOUND"; exit 1; }
-        command -v work >/dev/null 2>&1 || { echo "WORK_MISSING"; exit 1; }
+        work_prog=work
+        command -v "$work_prog" >/dev/null 2>&1 || { echo "WORK_MISSING"; exit 1; }
         [ "$SPIRA_WORK_BEAD_ID" = sp-bound1 ] || { echo "BEAD_ID_WRONG"; exit 1; }
         env | grep -qi "SPIRA_DB\|SPIRA_BD\|SPIRA_LC_PASSWORD\|CREDENTIAL\|_TOKEN\|_SECRET" && { echo "CREDENTIAL_LEAKED"; exit 1; }
         echo OK
