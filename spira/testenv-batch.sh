@@ -672,11 +672,15 @@ if [ -z "${SPIRA_BATCH_SKIP_INSTALL:-}" ]; then
     done
 
     log "batch: install instance $INSTANCE inside $CNAME"
+    # Same value CONFIGURE_PROD gave the configure step: env always wins over conf.sh's
+    # $SPIRA_RELEASES/current/spira default, which fires whenever the config write above
+    # can't be read back and points install.sh at a release dir that was never populated.
     podman exec --user "$_SPIRA_USER" \
         -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
         -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
         -e "CARGO_HOME=${_CONTAINER_CARGO}" \
         -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
+        -e "SPIRA_PROD=${_CONTAINER_WORKSPACE}/spira" \
         -e "SPIRA_INSTALL_FORCE=1" \
         -e "SPIRA_RUN=/tmp/spira-batch-${INSTANCE}" \
         -e "SPIRA_TESTDB_DATA=/tmp/spira-batch-${INSTANCE}/testdb" \
