@@ -631,6 +631,21 @@ fi
 GATE_SUITE="$(red_suites "$out" | head -1)"
 [ -n "$GATE_SUITE" ] || GATE_SUITE=-
 
+# THE EVIDENCE OUTRANKS THE EXIT CODE. testenv-batch.sh already logs the real cause and
+# attempts its own exit 2 the moment it declares the container dead — but a cleanup step or
+# an unkillable podman client working against a dead container can keep the whole command
+# alive past that, so the outer deadline is what finally kills it and $gate_rc_branch reads
+# 124. A verdict may not rename the cause its own evidence states: read the line
+# testenv-batch.sh already wrote before deciding this was a mere deadline.
+_hf_detail="$(printf '%s' "$out" | \
+    sed -n 's/.*batch: harness fault — container died mid-batch (\(.*\))[[:space:]]*$/\1/p' | tail -1)"
+if [ -n "$_hf_detail" ]; then
+    verdict "$NV" harness-fault \
+        "gate: $REPO_NAME's batch reported a harness fault — container died mid-batch ($_hf_detail).
+gate: command: $CMD
+$out"
+fi
+
 if [ "$gate_rc_branch" -eq 124 ]; then
     verdict "$NV" timeout \
         "gate: $REPO_NAME's own gate was killed at ${SPIRA_GATE_TIMEOUT:-2700}s — it judged nothing.
