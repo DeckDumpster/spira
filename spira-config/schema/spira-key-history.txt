@@ -159,6 +159,7 @@ mail_readers
 mail_repeat_window
 mail_session_mailbox
 mail_settle
+mail_settle_event
 mail_tidy_fresh
 mail_unread_age
 mail_wake_backoff

@@ -1168,6 +1168,12 @@
           "format": "uint64",
           "minimum": 0.0
         },
+        "mail_settle_event": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "mail_tidy_fresh": {
           "type": [
             "string",

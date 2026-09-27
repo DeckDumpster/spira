@@ -43,6 +43,12 @@ hasnt() { case "$2" in *"$3"*) bad "$1" "$2" ;; *) ok "$1" ;; esac; }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/home" "$TMP/run"
 
+# conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2); `run()` below
+# points SPIRA_REPO at a fictitious directory so it can never resolve one on its own, so
+# without this every fixture SPIRA_RUN silently reverts to its computed default and the mail
+# assertions below check a directory pr-notify never wrote to.
+SPIRA_CONFIG_BIN="$(testlib_spira_config_bin "$TMP")" || skip "cargo not found — spira-config binary cannot be built"
+
 # ALL VALUES PINNED TO NON-DEFAULTS so sourcing pr-notify.sh cannot read the operator's own
 # configuration (law-gates-run-in-a-clean-environment).
 CONF="$TMP/spira.conf"
@@ -140,7 +146,7 @@ chmod +x "$GH_BIN/gh"
 run() {  # run [args...] -> pr-notify.sh in a clean env; stdout in $TMP/out
     env -i HOME="$TMP/home" PATH="$PATH" \
         SPIRA_PATH="$GH_BIN" SPIRA_CONF="$CONF" SPIRA_REPO_MAP="$REPO_MAP" \
-        SPIRA_REPO="$TMP/empty-repo" GH_LOG="$GH_LOG" \
+        SPIRA_REPO="$TMP/empty-repo" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" GH_LOG="$GH_LOG" \
         bash "$HERE/pr-notify.sh" "$@" > "$TMP/out" 2>"$TMP/err"
 }
 
@@ -165,6 +171,9 @@ for r in queue-repo pr-repo push-repo hold-repo; do
     has   "tick1: $r's PR is reported OPENED"        "$out1" "OPENED #1 Round batch [$r]"
     hasnt "tick1: $r has no RED yet (still pending)" "$out1" "FAIL RED"
 done
+# OPENED is mailed too (every transition is); clear it so TICK 3's count below isolates the
+# RED transitions it actually asserts on.
+rm -f "$RUN"/mail/concierge/new/*
 
 # --- TICK 2: unchanged — nothing re-reported (transitions, not state) ---------------
 run --show
