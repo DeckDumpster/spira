@@ -38,6 +38,10 @@
 #                                     is the suite's exit status, so it MUST be the last
 #                                     statement in the file (not called from a subshell,
 #                                     not followed by anything that resets $?).
+#   tl_subshell_safe                 call once, before the first assertion, when the
+#                                     suite's ok/bad calls run inside `( )` subshells —
+#                                     otherwise their writes to the counters never reach
+#                                     the parent shell (sp-yt3re).
 #
 # CASE IDS. The <name> argument IS the case id — the same string appears as the TAP
 # description and as the JSONL "case" field. Suites already give each assertion a
@@ -72,6 +76,8 @@ _TL_FAIL=0
 _TL_SKIP=0
 _TL_PLANNED=""
 _TL_INITED=0
+_TL_SUBSHELL_SAFE=0
+_TL_COUNTS=""
 _TL_LAST_S=$SECONDS
 _TL_SUITE="$(basename "${BASH_SOURCE[1]:-${0:-suite}}")"
 _TL_JSONL="${SPIRA_TESTLIB_JSONL:-}"
@@ -85,6 +91,30 @@ _tl_init() {
     [ "$_TL_INITED" = 1 ] && return 0
     _TL_INITED=1
     printf 'TAP version 14\n'
+}
+
+# tl_subshell_safe — call once, before the first assertion, when a suite runs ok/bad
+# (directly or via is/want/nowant/wantrc) inside `( )` subshells. A subshell's writes to
+# _TL_NUM/_TL_PASS/_TL_FAIL/_TL_SKIP never reach the parent, so without this the parent's
+# next assertion silently reuses stale counts and TAP case numbers. Backed by a plain file
+# rather than a lock: every suite that needs this runs its subshells one after another,
+# never concurrently, so a read-increment-write is never racing another writer.
+tl_subshell_safe() {
+    _TL_SUBSHELL_SAFE=1
+    _TL_COUNTS="$(mktemp)"
+    _tl_counts_flush
+}
+
+_tl_counts_flush() {   # write _TL_NUM/_TL_PASS/_TL_FAIL/_TL_SKIP to the backing file
+    printf '%s %s %s %s\n' "$_TL_NUM" "$_TL_PASS" "$_TL_FAIL" "$_TL_SKIP" > "$_TL_COUNTS"
+}
+
+_tl_counts_load() {    # read them back — the first thing any counting function does
+    read -r _TL_NUM _TL_PASS _TL_FAIL _TL_SKIP < "$_TL_COUNTS"
+}
+
+_tl_counts_cleanup() {
+    [ "$_TL_SUBSHELL_SAFE" = 1 ] && rm -f "$_TL_COUNTS"
 }
 
 # _tl_json_escape <string> -> the string with \, " and control chars made JSON-safe.
@@ -119,17 +149,21 @@ _tl_jsonl() {
 
 ok() {
     _tl_init
+    [ "$_TL_SUBSHELL_SAFE" = 1 ] && _tl_counts_load
     _TL_NUM=$((_TL_NUM + 1)); _TL_PASS=$((_TL_PASS + 1))
     printf 'ok %s - %s\n' "$_TL_NUM" "$1"
     _tl_jsonl "$1" pass
+    [ "$_TL_SUBSHELL_SAFE" = 1 ] && _tl_counts_flush
 }
 
 bad() {
     _tl_init
+    [ "$_TL_SUBSHELL_SAFE" = 1 ] && _tl_counts_load
     _TL_NUM=$((_TL_NUM + 1)); _TL_FAIL=$((_TL_FAIL + 1))
     printf 'not ok %s - %s\n' "$_TL_NUM" "$1"
     [ -n "${2:-}" ] && printf '# %s\n' "$2"
     _tl_jsonl "$1" fail "${2:-}"
+    [ "$_TL_SUBSHELL_SAFE" = 1 ] && _tl_counts_flush
 }
 
 is() {      # is <name> <expected> <actual>
@@ -195,6 +229,7 @@ plan() {    # plan <n> — must be called before the first ok/bad/want/nowant/wa
 # that then claims "skipped" would hide the cases that did run.
 skip() {
     _tl_init
+    [ "$_TL_SUBSHELL_SAFE" = 1 ] && _tl_counts_load
     if [ "$_TL_NUM" -gt 0 ]; then
         # A partial suite claiming "skipped" would hide the cases that already ran —
         # that is a suite-authoring bug, not a real skip, so it fails loudly rather
@@ -204,6 +239,7 @@ skip() {
     _TL_SKIP=$((_TL_SKIP + 1))
     printf '1..0 # SKIP %s\n' "$1"
     _tl_jsonl "(suite)" skip "$1"
+    _tl_counts_cleanup
     exit 77
 }
 
@@ -213,6 +249,7 @@ bail() {
     _tl_init
     printf 'Bail out! %s\n' "$1"
     _tl_jsonl "(suite)" bail "$1"
+    _tl_counts_cleanup
     exit 2
 }
 
@@ -222,11 +259,13 @@ bail() {
 # already expects, then returns pass/fail as $fail -eq 0 always has.
 tl_summary() {
     _tl_init
+    [ "$_TL_SUBSHELL_SAFE" = 1 ] && _tl_counts_load
     [ -n "$_TL_PLANNED" ] || printf '1..%s\n' "$_TL_NUM"
     printf '\n%d passed, %d failed, %d skipped\n' "$_TL_PASS" "$_TL_FAIL" "$_TL_SKIP"
     # suites.sh's setup-fault detector greps this exact line (`ASSERTIONS 0`) to tell a
     # suite that failed before its first case from one whose cases actually ran and lost.
     printf 'ASSERTIONS %d\n' "$((_TL_PASS + _TL_FAIL))"
+    _tl_counts_cleanup
     [ "$_TL_FAIL" -eq 0 ]
 }
 

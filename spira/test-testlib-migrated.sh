@@ -16,15 +16,13 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 NEVER_OK_FAMILY=""
 #
 # Did use the ok()/want()/nowant() family but do something testlib.sh cannot yet do.
-# Subshell-safe counters (test-canary.sh, test-gate-diag.sh --
-# their assertions run inside `( )` subshells, whose variable writes never reach the
-# parent, so testlib's own internal counters and TAP case numbering would silently
-# corrupt across the subshell boundary): filed as sp-wpr.
 # Custom assertion helpers beyond ok/bad/want/is (test-install-refusal.sh defines
 # is1/absent/present): filed as sp-u1b.
-NEEDS_TESTLIB_EXTENSION="test-canary.sh
-test-gate-diag.sh
-test-install-refusal.sh"
+#
+# test-canary.sh and test-gate-diag.sh ran their assertions inside `( )` subshells, which
+# needed testlib.sh's tl_subshell_safe (sp-yt3re) before they could convert; both now use
+# it and are migrated.
+NEEDS_TESTLIB_EXTENSION="test-install-refusal.sh"
 #
 # Suites carrying unmigrated ok()/want()/nowant() awaiting migration strategy decision
 # from sp-l2be6. These 358 suites were not in the scope of sp-29g55 (which handled
