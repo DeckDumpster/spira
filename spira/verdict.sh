@@ -7,9 +7,10 @@
 # the land ref and marks every member LANDED. A moved base closes the PR and
 # returns members to CERTIFIED. Pending does nothing unless the batch has waited
 # longer than SPIRA_QUEUE_CI_MAXSEC. A harness fault re-runs the workflow up to
-# SPIRA_QUEUE_INFRA_RETRIES times, then mails the operator. A red batch runs local
-# reproduction per member: reproducers are ejected, together-only reds halve the
-# batch, and unreproduced reds requeue without flake quarantine.
+# SPIRA_QUEUE_INFRA_RETRIES times, then mails the operator. A red batch dispatches
+# reproduction per member to the batch PR's own CI, not this box: reproducers are
+# ejected, together-only reds halve the batch, and unreproduced reds requeue
+# without flake quarantine.
 #
 # covers: spira/verdict.sh spira/forge.sh spira/conf.sh spira/batch.sh
 
@@ -70,17 +71,14 @@ _batch_reseal_rebased() {   # _batch_reseal_rebased <file> <new_head> <new_membe
 }
 
 # ---------------------------------------------------------------------------
-# ATTRIBUTION — local per-member reproduction on a red batch.
+# ATTRIBUTION — per-member reproduction dispatched to the batch PR's own CI,
+# not run on this box (sp-2hee5). A member's merged tip is pushed to a
+# throwaway branch and a Gate run is dispatched against it, scoped to the
+# suite(s) in question; forge.sh check-status — the same primitive that reads
+# the batch's own CI verdict — reads it back. The batch-head ("together-only")
+# case needs no dispatch of its own: <tip> already names a branch with a
+# completed run, the very one that made these suites' red list known.
 # ---------------------------------------------------------------------------
-
-# SPIRA_QUEUE_REPRO_BATCH allows tests to substitute testenv-batch.sh.
-: "${SPIRA_QUEUE_REPRO_BATCH:=$HERE/testenv-batch.sh}"
-
-# REPLAY IN PARALLEL (hotfix, concierge 2026-09-21, per Ryan; sp-groic). The replay ran
-# `--mode serial`, so five 200-400 s suites cost their sum per member (~19 min) and six
-# members cost two hours. Parallel mode is bounded by SPIRA_BATCH_MAXPAR like every other
-# batch on this box; the serial re-run that tells a flake from a failure is gate-retry's
-# job on the CI side, not this one's.
 
 # _repro_fault <pr> <member> <step> [testenv-output] — evidence for a return-2 (harness
 # fault): prints the "could not judge" line naming the step, and when [testenv-output] is
@@ -103,19 +101,78 @@ _repro_fault() {
     fi
 }
 
+# _repro_remote <repo> -> the git remote the batch's own base ref lives on ("origin" if
+# the base cannot be resolved — the same fallback plain `git push` would need anyway).
+_repro_remote() {
+    local repo="$1" base
+    base="$(spira_landref "$repo" 2>/dev/null)" && ref_remote "$base" 2>/dev/null && return 0
+    printf 'origin'
+}
+
+# _repro_ci_branch <pr> <member> <test-ref> -> a throwaway branch name for this attempt.
+# Content-addressed on <test-ref> so retrying the same merge reuses the same name
+# instead of accumulating one branch per poll.
+_repro_ci_branch() {
+    printf 'spira/attr/%s-%s-%s' "${1:-x}" "${2:-x}" "${3:0:12}"
+}
+
+# _repro_ci_wait <repo> <branch> <forge> -> sets _REPRO_CI_STATUS_OUT to check-status's
+# output once the run on <branch> leaves pending, or to "pending" after
+# SPIRA_QUEUE_REPRO_CI_MAXSEC of polling (the caller treats that like any other
+# unjudgeable result). NEVER call this via command substitution: bash defers a
+# caught signal until the current foreground command returns, so a TERM sent while
+# this is blocked in the poll's `sleep` only takes effect once that sleep call
+# completes on its own — and `$(_repro_ci_wait ...)` would add a subshell layer
+# between this loop and the process TERM is actually sent to, deferring it until
+# SPIRA_QUEUE_REPRO_CI_MAXSEC instead of one poll interval.
+_REPRO_CI_STATUS_OUT=""
+_repro_ci_wait() {
+    local repo="$1" br="$2" forge="$3"
+    local _pollsec="${SPIRA_QUEUE_REPRO_CI_POLLSEC:-15}" _maxsec="${SPIRA_QUEUE_REPRO_CI_MAXSEC:-1800}"
+    local _elapsed=0 status
+    while :; do
+        _REPRO_CI_STATUS_OUT="$("$forge" check-status "$repo" "" "$br" 2>/dev/null)"
+        status="$(printf '%s\n' "$_REPRO_CI_STATUS_OUT" | head -1)"
+        [ "${status:-pending}" != pending ] && return 0
+        [ "$_elapsed" -ge "$_maxsec" ] && { _REPRO_CI_STATUS_OUT="pending"; return 0; }
+        sleep "$_pollsec"
+        _elapsed=$(( _elapsed + _pollsec ))
+    done
+}
+
 _repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-file] [flaky-file] [wt-id] [pr] [member]
                     # Merges <tip> onto <base-sha> so suites added after the member
-                    # forked are present in the tested tree.
-                    # Empty <base-sha>: tests <tip> directly (batch-head path).
-                    # Returns 0 (red), 1 (green), 2 (harness fault), 3 (flaky: red then green).
+                    # forked are present in the tested tree, pushes the merge to a
+                    # throwaway branch, and dispatches a Gate run against it restricted
+                    # to <suites-csv> — the batch PR's own CI, not this box (sp-2hee5).
+                    # Empty <base-sha>: <tip> already names a branch with a completed
+                    # run (batch-head path) — read it back, dispatch nothing.
+                    # Returns 0 (red), 1 (green), 2 (harness fault), 3 (flaky: a suite
+                    # was red once then green on CI's own serial retry).
                     # If [fail-file] given and result is red, writes FAIL lines there.
                     # If [flaky-file] given and result is flaky, writes suite names there.
-                    # [wt-id] disambiguates the worktree when concurrent callers run together.
-                    # [pr] and [member] name the evidence file for a harness fault; see _repro_fault.
+                    # [wt-id] disambiguates the local merge worktree when concurrent
+                    # callers run together. [pr] and [member] name the throwaway branch
+                    # and the evidence file for a harness fault; see _repro_fault.
     local suites="$1" repo="$2" base="$3" tip="$4" _fail_out="${5:-}" _flaky_out="${6:-}" _wt_id="${7:-$$}"
     local _pr="${8:-}" _member="${9:-$_wt_id}"
-    local tmp rc test_ref wt _repro_out
-    if [ -n "$base" ]; then
+    local forge="${SPIRA_FORGE:-$HERE/forge.sh}"
+    local status_out status run_id="" br="" remote=""
+
+    if [ -z "$base" ]; then
+        if [ -z "$tip" ]; then
+            # No branch to read back — forge.sh's own check-status refuses to guess
+            # from an empty branch (law-a-control-that-cannot-check-must-refuse),
+            # and a batch record with no branch field is exactly that: nothing to
+            # check, not evidence that the batch head is clean.
+            _repro_fault "$_pr" "$_member" "batch-head branch name missing"
+            return 2
+        fi
+        status_out="$("$forge" check-status "$repo" "" "$tip" 2>/dev/null)"
+        status="$(printf '%s\n' "$status_out" | head -1)"
+        run_id="$("$forge" run-id "$repo" "$tip" 2>/dev/null)" || run_id=""
+    else
+        local wt test_ref
         wt="$SPIRA_RUN/worktree/.repro-$_wt_id"
         mkdir -p "$SPIRA_RUN/worktree" 2>/dev/null || true
         git -C "$repo" worktree remove -f "$wt" 2>/dev/null || true
@@ -135,40 +192,50 @@ _repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-f
             return 2
         }
         git -C "$repo" worktree remove -f "$wt" 2>/dev/null || true
-    else
-        test_ref="$tip"
-    fi
-    tmp="$(mktemp -d)"
-    _repro_out="$(SPIRA_REPO="$repo" SPIRA_BATCH_RESULTS="$tmp" bash "$SPIRA_QUEUE_REPRO_BATCH" \
-        --mode parallel --suites "$suites" "$test_ref" 2>&1)"
-    rc=$?
-    rm -rf "$tmp"
-    if [ "$rc" -eq 1 ]; then
-        local _retry_tmp _retry_rc _retry_out
-        _retry_tmp="$(mktemp -d)"
-        _retry_out="$(SPIRA_REPO="$repo" SPIRA_BATCH_RESULTS="$_retry_tmp" bash "$SPIRA_QUEUE_REPRO_BATCH" \
-            --mode serial --suites "$suites" "$test_ref" 2>&1)"
-        _retry_rc=$?
-        rm -rf "$_retry_tmp"
-        if [ "$_retry_rc" -eq 0 ]; then
-            [ -n "$_flaky_out" ] && printf '%s\n' "$suites" > "$_flaky_out" || true
-            return 3
-        elif [ "$_retry_rc" -eq 1 ]; then
-            if [ -n "$_fail_out" ]; then
-                local _ev
-                _ev="$(printf '%s\n' "$_repro_out" | grep 'FAIL' | head -20 || true)"
-                [ -n "$_ev" ] || _ev="$(printf '%s\n' "$_repro_out" | tail -n 20)"
-                printf '%s\n' "$_ev" > "$_fail_out" || true
-            fi
-            return 0
-        else
-            _repro_fault "$_pr" "$_member" "testenv rc $_retry_rc (serial retry)" "$_retry_out"
+
+        remote="$(_repro_remote "$repo")"
+        br="$(_repro_ci_branch "$_pr" "$_member" "$test_ref")"
+        if ! spira_git_push "$repo" -q "$remote" "${test_ref}:refs/heads/${br}" 2>/dev/null; then
+            _repro_fault "$_pr" "$_member" "push attribution branch"
             return 2
         fi
+        if ! "$forge" dispatch "$repo" "$br" "$suites" 2>/dev/null; then
+            spira_git_push "$repo" -q "$remote" ":refs/heads/${br}" 2>/dev/null || true
+            _repro_fault "$_pr" "$_member" "dispatch attribution run"
+            return 2
+        fi
+        _repro_ci_wait "$repo" "$br" "$forge"
+        status_out="$_REPRO_CI_STATUS_OUT"
+        status="$(printf '%s\n' "$status_out" | head -1)"
+        run_id="$("$forge" run-id "$repo" "$br" 2>/dev/null)" || run_id=""
+        spira_git_push "$repo" -q "$remote" ":refs/heads/${br}" 2>/dev/null || true
     fi
-    [ "$rc" -eq 0 ] && return 1
-    _repro_fault "$_pr" "$_member" "testenv rc $rc" "$_repro_out"
-    return 2
+
+    case "$status" in
+        green)
+            local _flaky_names="" _l
+            while IFS= read -r _l; do
+                case "$_l" in "flaky: "*) _flaky_names="$_flaky_names ${_l#flaky: }" ;; esac
+            done <<< "$status_out"
+            _flaky_names="${_flaky_names# }"
+            if [ -n "$_flaky_names" ]; then
+                [ -n "$_flaky_out" ] && printf '%s\n' "$_flaky_names" > "$_flaky_out"
+                return 3
+            fi
+            return 1
+            ;;
+        red)
+            if [ -n "$_fail_out" ] && [ -n "${run_id:-}" ]; then
+                "$forge" fail-lines "$repo" "$run_id" "${suites//,/ }" 2>/dev/null \
+                    | sed -n 's/^fail-line: [^:]*: //p' > "$_fail_out" || true
+            fi
+            return 0
+            ;;
+        *)
+            _repro_fault "$_pr" "$_member" "attribution CI run: ${status:-pending}"
+            return 2
+            ;;
+    esac
 }
 
 _repro_member_bg() {  # background subshell worker: writes rc (and flaky file) to fail_dir
@@ -178,20 +245,19 @@ _repro_member_bg() {  # background subshell worker: writes rc (and flaky file) t
 }
 
 # _repro_members_par <fail_dir> <repo> <base> <pr> <id:tip:csv>...
-# Runs _repro_member_bg concurrently for each entry. Concurrency is bounded by
-# SPIRA_BATCH_MAXPAR: min(mc, MAXPAR) members active at once; each member's
-# testenv-batch width = MAXPAR / active, so total concurrent suites ≤ MAXPAR.
+# Runs _repro_member_bg concurrently for each entry. Each member's reproduction is a CI
+# dispatch and poll, not local suite execution, so concurrency here only bounds how many
+# attribution runs are in flight against the forge at once — SPIRA_BATCH_MAXPAR, the same
+# knob that bounded local parallelism before sp-2hee5.
 _repro_members_par() {
     local _fdir="$1" _repo="$2" _base="$3" _pr="$4"; shift 4
     local _mc="$#"
     local _maxpar; _maxpar="${SPIRA_BATCH_MAXPAR:-$(nproc)}"
-    local _active _width
+    local _active
     if [ "${_maxpar:-0}" -gt 0 ] 2>/dev/null; then
         _active=$(( _mc < _maxpar ? _mc : _maxpar ))
-        _width=$(( _maxpar / _active ))
-        [ "${_width:-0}" -lt 1 ] && _width=1
     else
-        _active=0; _width=0
+        _active=0
     fi
     local _entry _id _rest _tip _csv _pids=()
     for _entry in "$@"; do
@@ -199,54 +265,43 @@ _repro_members_par() {
         if [ "${_active:-0}" -gt 0 ] 2>/dev/null; then
             while [ "$(jobs -rp | wc -l)" -ge "$_active" ]; do wait -n 2>/dev/null || true; done
         fi
-        ( SPIRA_BATCH_MAXPAR="${_width:-}" \
-          _repro_member_bg "$_id" "$_csv" "$_repo" "$_base" "$_tip" "$_fdir" "$_pr" ) &
+        _repro_member_bg "$_id" "$_csv" "$_repo" "$_base" "$_tip" "$_fdir" "$_pr" &
         _pids+=($!)
     done
     wait "${_pids[@]}" 2>/dev/null || true
 }
 
-# _suite_names_red_in_output <testenv-batch.sh output> -> newline-separated suite
-# names testenv-batch.sh marked RED/TIMEOUT/QUARANTINED-RED, read from its own
-# per-suite result lines (the shape batch.sh's _lg_red_suites reads from gate.sh's).
-_suite_names_red_in_output() {
-    printf '%s\n' "$1" | awk '{
-        for (i = 1; i < NF; i++)
-            if ($i ~ /\.sh$/ && $(i+1) ~ /^(RED|TIMEOUT|QUARANTINED-RED)$/)
-                if (!seen[$i]++) print $i
-    }'
-}
-
-# _suites_red_on_base <suites-csv> <repo> <base-sha> -> space-separated suite names,
-# of those named in <suites-csv>, that are red on <base-sha> ALONE — no member merged
-# in. Every member's tree contains base-sha, so a suite already broken there
-# reproduces against every member regardless of fault; this is run once, before
-# blaming anyone, and its result is subtracted from every member's blame list
-# (sp-a2nk8). A red on the first (parallel) pass is confirmed serial before being
-# believed — the same flake guard _repro_is_red uses — so a base-side flake cannot
-# wrongly excuse a member that actually broke the suite. Any harness fault along the
-# way returns empty: nothing is excluded, which is exactly the old (buggy) behavior,
-# not a worse one.
+# _suites_red_on_base <suites-csv> <repo> <base-sha> -> sets _BASELINE_RED to the
+# space-separated suite names, of those named in <suites-csv>, that are red on
+# <base-sha> ALONE — no member merged in. Every member's tree contains base-sha,
+# so a suite already broken there reproduces against every member regardless of
+# fault; this is run once, before blaming anyone, and its result is subtracted
+# from every member's blame list (sp-a2nk8). Dispatched to CI like any other
+# reproduction (sp-2hee5); a red is confirmed serial before being believed, by
+# gate.yml's own gate-retry.sh, so a base-side flake cannot wrongly excuse a
+# member that actually broke the suite. Any harness fault along the way leaves
+# _BASELINE_RED empty: nothing is excluded, which is exactly the old (buggy)
+# behavior, not a worse one. NEVER call this via command substitution — see
+# _repro_ci_wait, which it calls and which the same deferred-signal hazard applies to.
+_BASELINE_RED=""
 _suites_red_on_base() {
     local suites="$1" repo="$2" base="$3"
+    _BASELINE_RED=""
     [ -n "$suites" ] || return 0
-    local tmp out rc names_csv
-    tmp="$(mktemp -d)"
-    out="$(SPIRA_REPO="$repo" SPIRA_BATCH_RESULTS="$tmp" bash "$SPIRA_QUEUE_REPRO_BATCH" \
-        --mode parallel --suites "$suites" "$base" 2>&1)"
-    rc=$?
-    rm -rf "$tmp"
-    [ "$rc" -eq 1 ] || return 0
-    names_csv="$(_suite_names_red_in_output "$out" | paste -sd, -)"
-    [ -n "$names_csv" ] || return 0
-
-    tmp="$(mktemp -d)"
-    out="$(SPIRA_REPO="$repo" SPIRA_BATCH_RESULTS="$tmp" bash "$SPIRA_QUEUE_REPRO_BATCH" \
-        --mode serial --suites "$names_csv" "$base" 2>&1)"
-    rc=$?
-    rm -rf "$tmp"
-    [ "$rc" -eq 1 ] || return 0
-    _suite_names_red_in_output "$out" | tr '\n' ' ' | sed -e 's/^ *//' -e 's/ *$//'
+    local forge="${SPIRA_FORGE:-$HERE/forge.sh}" remote br status_out status
+    remote="$(_repro_remote "$repo")"
+    br="$(_repro_ci_branch base base "$base")"
+    spira_git_push "$repo" -q "$remote" "${base}:refs/heads/${br}" 2>/dev/null || return 0
+    "$forge" dispatch "$repo" "$br" "$suites" 2>/dev/null || {
+        spira_git_push "$repo" -q "$remote" ":refs/heads/${br}" 2>/dev/null || true
+        return 0
+    }
+    _repro_ci_wait "$repo" "$br" "$forge"
+    status_out="$_REPRO_CI_STATUS_OUT"
+    status="$(printf '%s\n' "$status_out" | head -1)"
+    spira_git_push "$repo" -q "$remote" ":refs/heads/${br}" 2>/dev/null || true
+    [ "$status" = red ] || return 0
+    _BASELINE_RED="$(printf '%s\n' "$status_out" | sed -n 's/^red-suite: //p' | tr '\n' ' ' | sed -e 's/^ *//' -e 's/ *$//')"
 }
 
 _any_suite_in_selection() {  # _any_suite_in_selection <suites-spacesep> <repo> <base-sha> <tip> -> 0 if any matches
@@ -541,7 +596,8 @@ ${_line#build-error: }" ;;
     # member's tree contains base_sha) and reproduces against all of them regardless of
     # fault. Exclude it from every member's blame list before attributing anyone (sp-a2nk8).
     local suites_csv_all="$suites_csv" baseline_red=""
-    baseline_red="$(_suites_red_on_base "$suites_csv" "$repo" "$base_sha")"
+    _suites_red_on_base "$suites_csv" "$repo" "$base_sha"
+    baseline_red="$_BASELINE_RED"
     if [ -n "$baseline_red" ]; then
         local _rs _kept=""
         for _rs in $red_suites; do

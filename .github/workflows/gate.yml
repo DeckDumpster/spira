@@ -69,7 +69,16 @@ on:
   # one push gate has completed green. A queue in front of a gate that has
   # never passed blocks every merge indefinitely.
   merge_group:
+  # inputs.suites lets the merge queue's own attribution dispatch a run scoped to
+  # exactly the suites it needs re-checked, on a member's tip, instead of running
+  # them on the concierge box (sp-2hee5). Empty (the manual-run default) falls
+  # through to the ordinary per-event selection below.
   workflow_dispatch:
+    inputs:
+      suites:
+        description: 'Comma-separated suite list (bypasses diff/full-corpus selection)'
+        required: false
+        default: ''
 
 # A superseded pull-request run is cancelled; a push to the base branch is never
 # cancelled, because a cancelled push is never gated — and the next cut then carries
@@ -119,7 +128,10 @@ jobs:
         id: sel
         run: |
           set -uo pipefail
-          if [ "${{ github.event_name }}" = "pull_request" ] \
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+             && [ -n "${{ inputs.suites }}" ]; then
+            _s="${{ inputs.suites }}"
+          elif [ "${{ github.event_name }}" = "pull_request" ] \
              && printf '%s' "${{ github.head_ref }}" | grep -qE '^spira/queue/'; then
             _base="${{ github.event.pull_request.base.sha }}"
             _s="$(bash spira/select.sh --base "$_base" --head "${{ github.sha }}" \
