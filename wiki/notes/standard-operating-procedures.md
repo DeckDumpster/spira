@@ -130,7 +130,21 @@ Root causes: merge commit had wrong subject (sp-vcobo case), or missing land_mar
 
 **Escalate** — To harden CHECK 5 against missed landstate records: always create the LANDED record when closing, regardless of merge subject. Also consider: if CHECK 5 already validates the commit is in the graph, creating the record is redundant — modify CHECK 5 to trust the graph walk instead of requiring a file.
 
-**Reference** — wiki/notes/standard-operating-procedures.md
+**Third case (no commit ever)** — If `$commit` above is empty (no commit for the
+bead exists anywhere in `git log --all`), this is not the land_mark bug and not
+a retroactive-record case: it's a bead legitimately closed via direct
+operational/infrastructure action (disk prune, host config change, manual
+mitigation) with no code change and nothing to land. Check the bead's own close
+reason/notes for language like "no code change was needed", "nothing to
+commit", or "no gate ran ... nothing to certify". If present, close the CHECK-5
+incident as a false alarm citing that evidence; do not add an sp-2dvyh
+dependency (it does nothing for a bead with no commit) and do not attempt a
+retroactive land_mark (there is no commit to mark). Worked example: sp-q3lgs
+(disk-full, closed via `podman image prune`) and its child sp-1046x
+(diagnosis-only, "no gate ran ... nothing to certify"), flagged by sp-4xb7m,
+closed false-alarm 2026-09-27. See wiki/notes/sp-4xb7m-no-commit-ever-case.md.
+
+**Reference** — wiki/notes/standard-operating-procedures.md, wiki/notes/sp-4xb7m-no-commit-ever-case.md
 
 **Matches** `CLOSED NOT LANDED.*has no LANDED record|CHECK 5.*closed.*not.*landed`
 
