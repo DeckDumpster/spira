@@ -319,14 +319,14 @@ wantfile "_ci_deploy_env is built once via _ci_env" \
 # guards — confirm the check below would catch one.
 _pc_bare="$(mktemp)"
 printf 'bash "$HERE/deploy.sh" --allow-draft "$tag"\n' > "$_pc_bare"
-if grep -qE '(^|[^"[:alnum:]_])bash "\$HERE/(deploy|uninstall|world|doctor)\.sh"' "$_pc_bare"; then
+if grep -E 'bash "\$HERE/(deploy|uninstall|world|doctor)\.sh"' "$_pc_bare" | grep -qv '_ci_deploy_env'; then
     ok "positive-control: the bare-invocation pattern matches an un-wired call"
 else
     bad "positive-control: the bare-invocation pattern matches an un-wired call" "no match"
 fi
 rm -f "$_pc_bare"
 
-_bare_ci_calls="$(grep -nE '(^|[^"[:alnum:]_])bash "\$HERE/(deploy|uninstall|world|doctor)\.sh"' "$SCRIPT" || true)"
+_bare_ci_calls="$(grep -nE 'bash "\$HERE/(deploy|uninstall|world|doctor)\.sh"' "$SCRIPT" | grep -v '_ci_deploy_env' || true)"
 [ -z "$_bare_ci_calls" ] \
     && ok  "every deploy.sh/uninstall.sh/world.sh/doctor.sh call runs under _ci_deploy_env" \
     || bad "every deploy.sh/uninstall.sh/world.sh/doctor.sh call runs under _ci_deploy_env" \
