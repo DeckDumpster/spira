@@ -8,6 +8,8 @@ Description=spira-lc — the lifecycle machine's system service (bead/delivery/b
 Documentation=file://@SPIRA_HOME@/lifecycle/schema.sql
 After=dolt-beads.service
 Requires=spira-lc.socket
+StartLimitIntervalSec=30
+StartLimitBurst=5
 
 [Service]
 Type=simple

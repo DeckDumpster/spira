@@ -122,6 +122,11 @@ UNBUILT=()
 # promote.sh and its timer are retired — deploy.sh replaced the split-checkout model.
 OPTIONAL+=(spira-promote.service spira-promote.timer)
 
+# spira-lc.service is a SYSTEM unit (its own Unix user, /etc/systemd/system), installed by
+# the top-level install.sh's --system-user phase, not by this per-instance user-session
+# flow. It belongs in systemd/ so render.py can render it from one place, but never in UNITS.
+OPTIONAL+=(spira-lc.service)
+
 # spira-mail-deliver.service requires inotifywait. Without it the daemon exits 1 on start
 # and crash-loops under Restart=always. Skip when the binary is absent; install inotify-tools
 # and re-run install.sh to enable mail delivery.
