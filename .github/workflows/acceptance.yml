@@ -5,7 +5,13 @@
 #   push to spira-release-* tags: fired by gate.yml's cut job, which pushes the
 #     tag using a GitHub App installation token so the anti-recursion rule does
 #     not apply. prev-tag is derived by acceptance-prev-tag.sh, which excludes
-#     drafts, when not provided.
+#     drafts, when not provided. A push run cannot be waived by hand after the
+#     fact — cancelling it does not stop its job on the runner, so a later
+#     waived workflow_dispatch run only races its retract step for the tag
+#     (sp-rpjn5). The WAIVE_UPGRADE_COMMIT repository variable, set by the
+#     operator/Concierge to the exact commit before the cut, is how this run
+#     honours a waiver itself: acceptance-ci.sh applies it only when it names
+#     this tag's own commit, so a later release never inherits it.
 #   workflow_dispatch: for manual runs or testing outside the release pipeline.
 #     The waive-upgrade input skips derivation and phases B/C/D entirely — an
 #     operator escape hatch for when no predecessor has ever passed acceptance;
@@ -204,6 +210,9 @@ jobs:
           CONFIGURE_MAX_LIVE_AEONS: ""
           CONFIGURE_DOLT_DATA: ""
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Declared waiver (see TRIGGERS above): acceptance-ci.sh applies this
+          # only when it names the commit THIS tag resolves to.
+          SPIRA_WAIVE_UPGRADE_COMMIT: ${{ vars.WAIVE_UPGRADE_COMMIT }}
         run: |
           set -uo pipefail
           _tag="${{ inputs.tag || github.ref_name }}"

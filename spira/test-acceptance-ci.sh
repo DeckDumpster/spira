@@ -303,4 +303,94 @@ _args8="$(cat "$SCRATCH/stub8-args" 2>/dev/null || true)"
 want "acceptance-ci.sh: --waive-upgrade passed through to acceptance-run.sh" \
     "--waive-upgrade" "$_args8"
 
+# --- acceptance.yml: declared waiver (WAIVE_UPGRADE_COMMIT repo variable) wired
+# through to acceptance-ci.sh as SPIRA_WAIVE_UPGRADE_COMMIT ---
+_yml="$(cat "$HERE/../.github/workflows/acceptance.yml" 2>/dev/null || true)"
+want "acceptance.yml: reads the WAIVE_UPGRADE_COMMIT repository variable" \
+    "vars.WAIVE_UPGRADE_COMMIT" "$_yml"
+want "acceptance.yml: declared commit passed to acceptance-ci.sh as SPIRA_WAIVE_UPGRADE_COMMIT" \
+    "SPIRA_WAIVE_UPGRADE_COMMIT" "$_yml"
+
+# --- declared waiver: SPIRA_WAIVE_UPGRADE_COMMIT is honoured only when it names
+# the commit <tag> itself resolves to (a tag-push run has no --waive-upgrade
+# input of its own to set by hand; sp-rpjn5) ---
+_decl_repo="$SCRATCH/declared-repo"
+git init --initial-branch=main "$_decl_repo" >/dev/null 2>&1
+git -C "$_decl_repo" config user.email "t@spira" 2>/dev/null || true
+git -C "$_decl_repo" config user.name "T" 2>/dev/null || true
+git -C "$_decl_repo" commit --allow-empty -m "release A" >/dev/null 2>&1
+_commit_a="$(git -C "$_decl_repo" rev-parse HEAD)"
+git -C "$_decl_repo" tag "spira-release-a"
+git -C "$_decl_repo" commit --allow-empty -m "release B" >/dev/null 2>&1
+git -C "$_decl_repo" tag "spira-release-b"
+
+# matching commit: waiver applied
+CI_HOME9="$SCRATCH/home9"
+mkdir -p "$CI_HOME9"
+git config --file "$CI_HOME9/.gitconfig" user.email "t@spira" 2>/dev/null || true
+git config --file "$CI_HOME9/.gitconfig" user.name "T" 2>/dev/null || true
+STUB9="$SCRATCH/stub9.sh"
+cat > "$STUB9" <<STUB9_BODY
+#!/usr/bin/env bash
+printf '%s\n' "\$*" > "$SCRATCH/stub9-args"
+exit 0
+STUB9_BODY
+chmod +x "$STUB9"
+HOME="$CI_HOME9" \
+    SPIRA_ACCEPTANCE_RUN="$STUB9" \
+    SPIRA_NOTES_REPO="$_decl_repo" \
+    XDG_CONFIG_HOME="$CI_HOME9/.config" \
+    SPIRA_WAIVE_UPGRADE_COMMIT="$_commit_a" \
+    bash "$HERE/acceptance-ci.sh" "spira-release-a" --bd-db "$SCRATCH/bd9" \
+    >/dev/null 2>&1 || true
+_args9="$(cat "$SCRATCH/stub9-args" 2>/dev/null || true)"
+want "declared waiver: commit matching the tag adds --waive-upgrade" \
+    "--waive-upgrade" "$_args9"
+
+# a second release, at a different commit, does not inherit the declaration —
+# the declared commit still names release A, this tag is release B
+CI_HOME10="$SCRATCH/home10"
+mkdir -p "$CI_HOME10"
+git config --file "$CI_HOME10/.gitconfig" user.email "t@spira" 2>/dev/null || true
+git config --file "$CI_HOME10/.gitconfig" user.name "T" 2>/dev/null || true
+STUB10="$SCRATCH/stub10.sh"
+cat > "$STUB10" <<STUB10_BODY
+#!/usr/bin/env bash
+printf '%s\n' "\$*" > "$SCRATCH/stub10-args"
+exit 0
+STUB10_BODY
+chmod +x "$STUB10"
+HOME="$CI_HOME10" \
+    SPIRA_ACCEPTANCE_RUN="$STUB10" \
+    SPIRA_NOTES_REPO="$_decl_repo" \
+    XDG_CONFIG_HOME="$CI_HOME10/.config" \
+    SPIRA_WAIVE_UPGRADE_COMMIT="$_commit_a" \
+    bash "$HERE/acceptance-ci.sh" "spira-release-b" --bd-db "$SCRATCH/bd10" \
+    >/dev/null 2>&1 || true
+_args10="$(cat "$SCRATCH/stub10-args" 2>/dev/null || true)"
+nowant "declared waiver: a second release at a different commit does not inherit it" \
+    "--waive-upgrade" "$_args10"
+
+# no declaration at all: behaves exactly as today
+CI_HOME11="$SCRATCH/home11"
+mkdir -p "$CI_HOME11"
+git config --file "$CI_HOME11/.gitconfig" user.email "t@spira" 2>/dev/null || true
+git config --file "$CI_HOME11/.gitconfig" user.name "T" 2>/dev/null || true
+STUB11="$SCRATCH/stub11.sh"
+cat > "$STUB11" <<STUB11_BODY
+#!/usr/bin/env bash
+printf '%s\n' "\$*" > "$SCRATCH/stub11-args"
+exit 0
+STUB11_BODY
+chmod +x "$STUB11"
+HOME="$CI_HOME11" \
+    SPIRA_ACCEPTANCE_RUN="$STUB11" \
+    SPIRA_NOTES_REPO="$_decl_repo" \
+    XDG_CONFIG_HOME="$CI_HOME11/.config" \
+    bash "$HERE/acceptance-ci.sh" "spira-release-a" --bd-db "$SCRATCH/bd11" \
+    >/dev/null 2>&1 || true
+_args11="$(cat "$SCRATCH/stub11-args" 2>/dev/null || true)"
+nowant "declared waiver: undeclared tag-push run behaves exactly as today" \
+    "--waive-upgrade" "$_args11"
+
 tl_summary
