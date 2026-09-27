@@ -3,9 +3,13 @@
 # test-batch-reconcile.sh — batch.sh's pre-guard reconciliation: what a CERTIFIED,
 #   LANDED, or RED/EJECTED landstate record becomes once branches move, land, or
 #   disappear out from under it. One row per shape (sp-s088v.16, duplicate clusters
-#   #2/#3): merged from test-batch-certified-landed.sh, test-batch-certified-orphan.sh,
-#   test-batch-closed-red-live.sh, the reconcile-shaped cases of test-batch.sh (6, 7, 8,
-#   A, B), and test-batch-stuck.sh's case g.
+#   #2/#3): merged from test-batch-closed-red-live.sh, the reconcile-shaped cases of
+#   test-batch.sh (6, 7, 8, A, B), and test-batch-stuck.sh's case g.
+#
+# sp-o7nbr: the CERTIFIED-orphan (no ref anywhere) and CERTIFIED-tip-already-landed
+# reconcile sweeps this suite once covered (test-batch-certified-landed.sh,
+# test-batch-certified-orphan.sh) are deleted from batch.sh — attribution is a batch
+# state under the lifecycle machine now, not a landstate-file sweep run after the fact.
 #
 # NO BD. Every id below is answered from one static SPIRA_BDJSON_FIXTURE array —
 # bdq routes through bdsim.py instead of a real bd process (lib.sh:bdq). The
@@ -78,13 +82,6 @@ chmod +x "$SH/forge-fixture.sh"
 # SPIRA_BDJSON_FIXTURE seam) answers `show` from this array — see lib.sh:bdq.
 cat > "$BD_FIXTURE" <<'BDJSON'
 [
-  {"id":"sp-good","title":"certified branch with ref","status":"closed","labels":[]},
-  {"id":"sp-gone","title":"certified orphan, no ref","status":"closed","labels":[]},
-  {"id":"sp-in-base","title":"certified orphan already in base","status":"closed","labels":[]},
-  {"id":"sp-reaped","title":"certified orphan reaped by sending","status":"closed","labels":[]},
-  {"id":"sp-content","title":"certified orphan, content on base","status":"closed","labels":[]},
-  {"id":"sp-landed","title":"tip already in main","status":"closed","labels":[]},
-  {"id":"sp-pending","title":"tip not yet in main","status":"closed","labels":[]},
   {"id":"sp-crl-stuck","title":"closed bead eviction race","status":"closed","labels":[]},
   {"id":"sp-crl-open","title":"open bead with red landstate","status":"open","labels":[]},
   {"id":"sp-crl-cert","title":"certified bead","status":"open","labels":[]},
@@ -135,103 +132,6 @@ mkbranch() {   # mkbranch <id> — a spira/<id> branch with one commit, tip prin
 }
 
 echo "test-batch-reconcile.sh"
-
-# =============================================================================
-# CERTIFIED, NO REF — _certified_orphans: logged and mailed; distinguishes an
-# orphan whose tip already reached base (LANDED) from one that cannot be proven
-# (LOST), and a REMOVED reap-log line alone is not proof (sp-e5ow0, sp-dgaig).
-# =============================================================================
-echo
-echo "certified, no ref — orphan detection, LANDED vs LOST:"
-clean_case
-_good_tip="$(mkbranch sp-good)"
-printf 'CERTIFIED %s %s' "$_good_tip" "$(date +%s)" > "$LANDSTATE/sp-good"
-printf 'CERTIFIED fakeshafakeshabrakeshabrakebrakefakeshabrakebra %s' "$(date +%s)" > "$LANDSTATE/sp-gone"
-_base_tip="$(git -C "$REPO" rev-parse origin/main)"
-printf 'CERTIFIED %s %s' "$_base_tip" "$(date +%s)" > "$LANDSTATE/sp-in-base"
-printf 'CERTIFIED fakeshafakeshabrakeshabrakebrakefakeshb %s' "$(date +%s)" > "$LANDSTATE/sp-reaped"
-printf '2026-09-17T23:20:12Z REMOVED    sp-reaped              branch spira/sp-reaped [by sentinel.sh -> sending.sh]\n' \
-    > "$RUN/reap.log"
-git -C "$REPO" checkout -q -b spira/sp-content main
-printf 'shared-content\n' > "$REPO/sp-content-shared.txt"
-git -C "$REPO" add sp-content-shared.txt
-git -C "$REPO" commit -q -m "sp-content: shared change"
-_content_tip="$(git -C "$REPO" rev-parse spira/sp-content)"
-git -C "$REPO" checkout -q main
-printf 'shared-content\n' > "$REPO/sp-content-shared.txt"
-git -C "$REPO" add sp-content-shared.txt
-git -C "$REPO" commit -q -m "spira: land sp-content"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
-git -C "$REPO" branch -D spira/sp-content >/dev/null
-printf 'CERTIFIED %s %s' "$_content_tip" "$(date +%s)" > "$LANDSTATE/sp-content"
-
-out="$(batch "$REPONAME")"
-is   "orphan: batch exits 0"                      0 "$?"
-want "orphan: sp-good survives as certified (positive control)" "1 certified" "$out"
-is   "orphan: sp-good landstate stays CERTIFIED" "CERTIFIED" "$(awk '{print $1}' "$LANDSTATE/sp-good" 2>/dev/null)"
-want "orphan: WARN + mail for sp-gone" "certified-orphan sp-gone" "$out"
-want "orphan: WARN for sp-reaped"      "certified-orphan sp-reaped" "$out"
-want "orphan: mailed the missing-branch subject" "CERTIFIED branch" "$(cat "$MAIL_LOG")"
-nowant "orphan: sp-gone not batched" "sp-gone" "$(cat "$QUEUEDIR/$REPONAME/open" 2>/dev/null)"
-case "$(cat "$LANDSTATE/sp-in-base" 2>/dev/null)" in
-    LANDED*) ok "orphan-in-base: LANDED" ;;
-    *) bad "orphan-in-base: LANDED" "got: $(cat "$LANDSTATE/sp-in-base" 2>/dev/null)" ;;
-esac
-case "$(cat "$LANDSTATE/sp-gone" 2>/dev/null)" in
-    LOST*) ok "orphan-not-in-base: sp-gone LOST" ;;
-    *) bad "orphan-not-in-base: sp-gone LOST" "got: $(cat "$LANDSTATE/sp-gone" 2>/dev/null)" ;;
-esac
-case "$(cat "$LANDSTATE/sp-reaped" 2>/dev/null)" in
-    LOST*) ok "REMOVED-alone: sp-reaped LOST, not LANDED" ;;
-    *) bad "REMOVED-alone: sp-reaped LOST, not LANDED" "got: $(cat "$LANDSTATE/sp-reaped" 2>/dev/null)" ;;
-esac
-case "$(cat "$LANDSTATE/sp-content" 2>/dev/null)" in
-    LANDED*) ok "content-provable orphan: sp-content LANDED" ;;
-    *) bad "content-provable orphan: sp-content LANDED" "got: $(cat "$LANDSTATE/sp-content" 2>/dev/null)" ;;
-esac
-rm -f "$RUN/reap.log"
-clean_case
-
-# =============================================================================
-# CERTIFIED, TIP LANDED WHILE A BATCH IS OPEN — reconciled to LANDED even though
-# _batch_is_open would otherwise skip the normal certified-list pass (sp-dtpc8).
-# =============================================================================
-echo
-echo "certified, tip landed while batch open — reconciled before the open-batch guard:"
-clean_case
-_landed_tip="$(mkbranch sp-landed)"
-git -C "$REPO" checkout -q main
-git -C "$REPO" merge -q --no-edit --ff-only spira/sp-landed
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
-printf 'CERTIFIED %s %s' "$_landed_tip" "$(date +%s)" > "$LANDSTATE/sp-landed"
-_pending_tip="$(mkbranch sp-pending)"
-printf 'CERTIFIED %s %s' "$_pending_tip" "$(date +%s)" > "$LANDSTATE/sp-pending"
-cat > "$QUEUEDIR/$REPONAME/open" <<BATCHOPEN
-pr=42
-head=deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
-base=$(git -C "$REPO" rev-parse origin/main)
-branch=spira/queue/batch-42
-members=sp-other:deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
-opened=$(date +%s)
-retries=0
-BATCHOPEN
-
-out="$(batch "$REPONAME")"
-is   "landed-while-open: batch exits 0"           0 "$?"
-want "landed-while-open: reports open-batch skip" "open batch" "$out"
-case "$(cat "$LANDSTATE/sp-landed" 2>/dev/null)" in
-    LANDED*) ok "sp-landed: CERTIFIED-to-LANDED while batch open" ;;
-    *) bad "sp-landed: CERTIFIED-to-LANDED while batch open" "got: $(cat "$LANDSTATE/sp-landed" 2>/dev/null)" ;;
-esac
-want "landed-while-open: batch logs LANDED for sp-landed" "sp-landed tip already in" "$out"
-case "$(cat "$LANDSTATE/sp-pending" 2>/dev/null)" in
-    CERTIFIED*) ok "positive control: sp-pending stays CERTIFIED (tip not in main)" ;;
-    *) bad "positive control: sp-pending stays CERTIFIED" "got: $(cat "$LANDSTATE/sp-pending" 2>/dev/null)" ;;
-esac
-nowant "sp-pending not logged as LANDED" "sp-pending tip already in" "$out"
-clean_case
 
 # =============================================================================
 # CLOSED + RED/EJECTED + LIVE BRANCH — the eviction-race stuck shape: no queue
@@ -311,26 +211,6 @@ for i in $(seq 1 8); do
     [ "$_st7" = "LANDED" ] && [ "$_rs7" = "already-in-base" ] || { _all7=0; break; }
 done
 is "already-in-base: 8 no-ops LANDED already-in-base" "1" "$_all7"
-clean_case
-
-# =============================================================================
-# BRANCH-GONE: a CERTIFIED record with no branch anywhere is LOST (branch-gone),
-# not LANDED; it does not count toward stuck-queue age or trigger stuck mail.
-# =============================================================================
-echo
-echo "branch-gone: a CERTIFIED ghost with no ref anywhere is LOST:"
-clean_case
-printf 'CERTIFIED fakeshafakeshafakeshafakeshafakeshafakeshafakeshafakes %s\n' \
-    $(( $(date +%s) - 7201 )) > "$LANDSTATE/sp-bt8-ghost"
-_live_tip="$(mkbranch sp-bt8-live)"
-printf 'CERTIFIED %s %s\n' "$_live_tip" "$(date +%s)" > "$LANDSTATE/sp-bt8-live"
-
-out8="$(batch "$REPONAME")"
-is "branch-gone: ghost is LOST (not LANDED)" "1" \
-    "$([ "$(awk '{print $1}' "$LANDSTATE/sp-bt8-ghost" 2>/dev/null)" = "LOST" ] && echo 1 || echo 0)"
-is "branch-gone: ghost reason is branch-gone" "branch-gone" \
-    "$(awk '{print $4}' "$LANDSTATE/sp-bt8-ghost" 2>/dev/null)"
-nowant "branch-gone: no stuck-queue mail" "mailed operator" "$out8"
 clean_case
 
 # =============================================================================
