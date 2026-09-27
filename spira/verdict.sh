@@ -12,6 +12,11 @@
 # ejected, together-only reds halve the batch, and unreproduced reds requeue
 # without flake quarantine.
 #
+# A batch record claimed by the concierge (owner=concierge, queue.sh claim) is refused
+# outright — the whole pass, not just judgement — so a hand edit to the round branch never
+# races a fast-forward merge or a rebuild (sp-91hb5). Every mutation this file does make
+# mails the concierge mailbox as a machine event (queue_notify_concierge).
+#
 # covers: spira/verdict.sh spira/forge.sh spira/conf.sh spira/batch.sh
 
 set -uo pipefail
@@ -603,6 +608,8 @@ _attr_eject() {
         --subject "Merge queue: $id ejected from $name" \
         --bead "$id" \
         2>/dev/null || true
+    queue_notify_concierge "$name" "$id ejected from PR $pr_n" \
+        "spira/$id ejected from PR $pr_n ($method): $suites"
     printf 'verdict %s: ejected %s (suites: %s, method: %s)\n' "$name" "$id" "$suites" "$method"
 }
 
@@ -1137,6 +1144,8 @@ ${_line#build-error: }" ;;
                         _repushed=1
                         printf 'verdict %s: PR %s — ejected %d, survivors re-pushed to same PR (head %s)\n' \
                             "$name" "$pr_n" "${#ejected[@]}" "$_new_head"
+                        queue_notify_concierge "$name" "PR $pr_n rebuilt (member(s) ejected)" \
+                            "PR $pr_n rebuilt after ejecting ${#ejected[@]} member(s) and force-pushed (head $_new_head)."
                     fi
                 fi
             fi
@@ -1358,6 +1367,15 @@ _verdict_process() {
         return 1
     }
 
+    # ONE WRITER PER OPEN BATCH (sp-91hb5): a concierge claim means a hand edit to this
+    # round is in flight on the branch this record names. Refuse the whole verdict pass —
+    # not just the CI-red judgement hand-off owner=batcher already gets — so a green result
+    # can never fast-forward-merge or rebuild out from under it, leaving record and branch
+    # exactly as the claim left them.
+    if queue_owner_refused "$(_batch_field owner "$batch_file")" "${SPIRA_QUEUE_ACTOR:-verdict}" "verdict $name"; then
+        return 0
+    fi
+
     local base remote base_branch
     base="$(spira_landref "$repo")" || {
         printf 'verdict %s: cannot resolve base ref\n' "$name" >&2
@@ -1511,6 +1529,8 @@ _verdict_process() {
                     printf 'verdict %s: PR %s landed by fast-forward (%s)\n' \
                         "$name" "$pr_n" "$batch_head"
                     _lc_land_batch "$batch_file" "$pr_n" "$batch_head"
+                    queue_notify_concierge "$name" "PR $pr_n merged (fast-forward)" \
+                        "PR $pr_n merged onto $base_branch by fast-forward (head $batch_head). Members: $members_str"
                     local _mm _mid _mtip
                     for _mm in $members_str; do
                         _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
@@ -1589,6 +1609,8 @@ _verdict_process() {
                                 _rebased=1
                                 printf 'verdict %s: PR %s rebuilt on moved base (%s) — re-pushed (head %s)\n' \
                                     "$name" "$pr_n" "$current_base" "$_new_reb_head"
+                                queue_notify_concierge "$name" "PR $pr_n rebuilt (base moved)" \
+                                    "PR $pr_n rebuilt onto moved base $current_base and force-pushed (head $_new_reb_head)."
                             fi
                         elif [ "$_rok" -eq 0 ]; then
                             printf 'verdict %s: PR %s base moved — conflict in %s; closing and requeuing\n' \

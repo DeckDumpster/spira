@@ -291,6 +291,14 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
 /// (`should_cut` enforces that gate) — pipelined onto that PR's own head rather than
 /// waiting for it to close (law-queue-back-pressure-is-an-open-pr).
 fn stack_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason, ob: &io::OpenBatch) -> Result<(), String> {
+    // ONE WRITER PER OPEN BATCH (sp-91hb5): owner=concierge means a hand edit to this
+    // round's branch is in flight — force-pushing a stack onto it would race that edit
+    // exactly like verdict.sh's own guard exists to prevent. SPIRA_QUEUE_OWNER_OVERRIDE=1
+    // breaks the glass, same override every other mutator honors.
+    if ob.owner == "concierge" && env::var("SPIRA_QUEUE_OWNER_OVERRIDE").as_deref() != Ok("1") {
+        println!("batcher {}: refused — PR {} is claimed by concierge; override with SPIRA_QUEUE_OWNER_OVERRIDE=1", repo.name, ob.pr);
+        return Ok(());
+    }
     let round_start = now();
     let new_members: Vec<Member> = match reason {
         TriggerReason::Express(id) => pool.iter().filter(|m| &m.id == id).cloned().collect(),

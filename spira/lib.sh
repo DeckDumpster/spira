@@ -6274,6 +6274,53 @@ spira_reaplog() {        # spira_reaplog <verb> <id> <detail>
 }
 
 # --------------------------------------------------------------------------------------
+# ONE WRITER PER OPEN BATCH. An open batch's record, PR branch and membership have exactly
+# one owner at a time: normally the automatic pipeline (batcher, or verdict.sh settling a
+# legacy/hand-opened record) — these cooperate already, through the existing owner=batcher
+# check that routes CI-red judgement. A `concierge` claim is different: it means a human is
+# mid hand-edit on the round branch, and every other mutator must back off rather than race
+# it (sp-91hb5: verdict.sh rebuilt and merged PR 421 while the Concierge was patching the
+# same branch, and neither knew about the other).
+#
+# queue_batch_owner <open-batch-file> -> the owner= field's value, empty when none is set
+# (the legacy/default cooperative state).
+queue_batch_owner() {
+    grep '^owner=' "$1" 2>/dev/null | tail -1 | cut -d= -f2-
+}
+
+# queue_owner_refused <owner> <actor> [<label>] -> 0 (refused; a message is printed naming
+# the owner and the override) when <owner> is "concierge" and <actor> is not itself
+# "concierge". 1 (not refused, nothing printed) for every other owner value, for a matching
+# actor, and when SPIRA_QUEUE_OWNER_OVERRIDE=1 breaks the glass — the caller that set it is
+# on record in its own log line, this prints nothing to explain a check it was told to skip.
+queue_owner_refused() {
+    local owner="$1" actor="$2" label="${3:-queue}"
+    [ "${SPIRA_QUEUE_OWNER_OVERRIDE:-0}" = 1 ] && return 1
+    [ "$owner" = concierge ] || return 1
+    [ "$actor" = concierge ] && return 1
+    printf '%s: refused — this batch is claimed by concierge; override with SPIRA_QUEUE_OWNER_OVERRIDE=1\n' \
+        "$label" >&2
+    return 0
+}
+
+# queue_notify_concierge <name> <subject-suffix> <body> — mails the concierge mailbox as a
+# machine event for a mutation the owner just made to an open batch (eject, rebuild,
+# force-push, merge). spira-mail-deliver.sh watches every registered mailbox and wakes its
+# reader the moment new mail lands (law-machine-events-wake-in-real-time), so the Concierge
+# learns of it within seconds — never by polling the queue by hand, which is what "nobody
+# was told" meant in practice before this existed.
+queue_notify_concierge() {
+    local name="$1" subject="$2" body="$3"
+    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
+    printf '## Alert\n%s\n' "$body" \
+    | "$SPIRA_HOME/mail.sh" send "${SPIRA_MAIL_SESSION_MAILBOX:-concierge}" \
+        --from "Spira Queue <queue@spira>" \
+        --subject "Merge queue: $name $subject" \
+        --kind alert \
+        >/dev/null 2>&1 || true
+}
+
+# --------------------------------------------------------------------------------------
 # EVENTS — what the harness DID, in a form that survives the next repaint.
 #
 # Outcomes used to exist only as text. The health pane's RECENT line scraped three log files
