@@ -472,6 +472,41 @@ if bead_has_label "$(bdjson show "$BEAD_ID" 2>/dev/null)" spira-poison; then
     exit 0
 fi
 
+# ---- lifecycle claim (design §3.1.1, §3.5) --------------------------------------------
+# bd's own claim above is the SELECTION: which bead, which repository. The bead machine's
+# row is the AUTHORITY on whether this aeon may actually work it — CAS Claim(holder,
+# lease_until), preceded by HolderDead when a prior holder died without releasing
+# (lc_claim_bead, lib.sh). A row already past WORKING (SUBMITTED, CERTIFIED, IN_DELIVERY,
+# ...) refuses: the sp-zw9ot fixture is exactly this, a batched bead an aeon still tries
+# to claim.
+#
+# CANNOT TELL IS NOT A REFUSAL, but this aeon still releases and steps back rather than
+# working a bead the machine cannot currently vouch for — the machine being unreachable is
+# its own incident, not license to proceed on bd's word alone.
+#
+# NO spira-lc BINARY AT ALL is a different fact from "unreachable": it means this box has
+# not deployed the semantic layer yet (spira-lc "deploys inert" until it does — sp-uwv2s,
+# sp-3m1p9), not that a deployed machine failed to answer. Skipping the claim entirely here
+# is what lets every existing fixture and suite that never built spira-lc keep working
+# unchanged; a box that HAS built it gets the real CAS below.
+if [ -x "${SPIRA_LC_BIN:-}" ]; then
+    LC_HOLDER="aeon-$AEON"
+    LC_LEASE_UNTIL=$(( $(date +%s) + $(fayth_lease_seconds "${FAYTH_LEASE_MINUTES:-}") ))
+    lc_claim_bead "$BEAD_ID" "$LC_HOLDER" "$LC_LEASE_UNTIL"
+    lc_claim_rc=$?
+    if [ "$lc_claim_rc" -ne 0 ]; then
+        release_own_claim "$BEAD_ID"
+        if [ "$lc_claim_rc" -eq 3 ]; then
+            log "$FAYTH/$AEON: $BEAD_ID — the lifecycle machine refused this claim (not READY/REWORK) — released"
+            ledger_done 0 lc-claim-refused
+        else
+            log "$FAYTH/$AEON: $BEAD_ID — the lifecycle machine could not be reached for this claim — released"
+            ledger_done 0 lc-claim-unreachable
+        fi
+        exit 0
+    fi
+fi
+
 # ---- world-stop fence ----------------------------------------------------------------
 # A bead labelled SPIRA_WORLD_STOP_LABEL declares it needs the world halted while it
 # runs — world.sh stop must be called before the session starts and world.sh start must
@@ -798,6 +833,14 @@ print(d[0].get("status","") if d else "")' 2>/dev/null)"
             : # harness requeue — REQUEUE_CAUSE/REQUEUE_WHY are already set by the verdict block
         elif [ "$_ow_mine" = yes ]; then
             _d_operator=yes
+        elif lc_bead_verified "$BEAD_ID"; then
+            # SUBMITTED IS NOT UNLANDED, LIFECYCLE-VERIFIED (design §3.5). The model has no
+            # bd on PATH, so `work submit`/`work done` are the only way this session moves
+            # its bead, and neither touches bd status — bd's own status field stays exactly
+            # what the claim left it. The bead machine's row is what actually says whether
+            # this session finished; reading it here is what replaces the bd-status "closed"
+            # check the legacy path below (unreachable now that bd close is impossible) used.
+            _d_submitted=yes
         elif bead_has_label "$(bdjson show "$BEAD_ID" 2>/dev/null)" \
                  "${SPIRA_SUBMITTED_LABEL:-spira-submitted}"; then
             # SUBMITTED IS NOT UNLANDED (sp-qsona). A work bead's close is converted back to
@@ -1079,72 +1122,9 @@ $gate_why"
         bdq note "$BEAD_ID" "Closed carrying an operator-wait marker: this session sent a kind-question mail to the operator before closing. Recorded here so the wait is not invisible to anyone asking what is blocked on a reply." >/dev/null 2>&1
         log "$FAYTH: $BEAD_ID closed with its own operator-wait marker — consumed, recorded as operator-wait"
     fi
-    # A WORK BEAD DOES NOT CLOSE HERE (sp-qsona). bead_close_on_land (lib.sh) is the only
-    # place one closes for a landed reason, called once its commit is actually on the base —
-    # so a close still standing at this point was the builder's own hand and is converted
-    # back to open, carrying SPIRA_SUBMITTED_LABEL, rather than left closed on nothing but the
-    # aeon's say-so (law-closed-is-not-landed). This runs AFTER the close already succeeded:
-    # there is no PreToolUse hook refusing the tool call, only aeon.sh's own teardown, which
-    # runs on every exit path and undoes the close before anything downstream can read it as
-    # a verdict about the work.
-    #
-    # AFTER THE GATE BRANCH ABOVE, NOT INSTEAD OF IT. Certification proceeds from submitted:
-    # the gate branch's queue-mode self-certify (sp-u9f82) still runs for a work bead, so a
-    # branch the session never submitted is CERTIFIED before it is marked submitted, and the
-    # gate branch's own notes keep its verdict visible. When that branch reopened the bead
-    # instead (a recorded FAIL, or a failed self-certification), st is no longer closed and
-    # the bead stays plain open — claimable, like an ejected member — not submitted.
-    #
-    # NEITHER SUPERSEDED NOR CARRYING A delivers: LABEL is converted. A superseded bead's
-    # work was carried onto the successor's branch and lands under the successor's id — it
-    # will never have a commit of its own, so converting it to submitted would make a
-    # permanent zombie: open, labelled submitted, and nothing ever lands to close it.
-    # delivers:TYPE is the same shape for a different reason: groom-trigger.sh,
-    # maechen-trigger.sh and incident.sh all file task/bug beads that close on a note, an
-    # action taken, or child beads filed — never a commit, never a repo: label, never a queue
-    # claim. Forcing those through the submitted/landed pipeline would zombie every one of
-    # them; the legacy commit-or-delivers audit (close_verdict, sp-dvlq) still judges them.
-    #
-    # NOR IS A GRAPH-ONLY PERSONA'S CLOSE (FAYTH_GRAPH_ONLY=1), even absent a delivers:
-    # label. delivers: is stamped by the FILER (groom-trigger.sh et al.); a bead the groomer
-    # claims after being filed by hand — sp-yyzm3, filed by `overseer`, no delivers: label —
-    # gets no such stamp, and the groomer's own toolset (no Edit, no Write) cannot produce a
-    # commit regardless of who filed it. Converting that close to submitted zombies it the
-    # same way a missing delivers: label would (sp-wnsks): nothing will ever land to close it.
-    if [ "$st" = "closed" ] && [ "${FAYTH_GRAPH_ONLY:-0}" = 1 ]; then
-        log "$FAYTH: $BEAD_ID closed a work bead — graph-only persona, no commit expected, not converted"
-    elif [ "$st" = "closed" ] \
-       && read -r _wct_type _wct_sup _wct_delivers <<< "$(bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: print("\t0\t0"); sys.exit()
-d = d if isinstance(d, list) else [d]
-if not d: print("\t0\t0"); sys.exit()
-sup = 1 if any((x.get("dependency_type") or x.get("type")) == "supersedes"
-               for x in (d[0].get("dependencies") or [])) else 0
-deliv = 1 if any(l.startswith("delivers:") for l in (d[0].get("labels") or [])) else 0
-print("%s\t%s\t%s" % (d[0].get("issue_type") or "", sup, deliv))' 2>/dev/null)" \
-       && bead_is_work_type "${_wct_type:-}" \
-       && [ "${_wct_delivers:-0}" != 1 ]; then
-        if [ "${_wct_sup:-0}" = 1 ]; then
-            log "$FAYTH: $BEAD_ID closed a superseded work bead — not converted, close stands"
-        # AN EMPTY BRANCH IS THE SAME SHAPE AS A SUPERSEDED ONE (sp-iqb8n): converting it
-        # would mark it submitted for a commit that will never exist, and no round or
-        # landing pass ever certifies nothing. Checked the same way gate_st cases 3/4/5
-        # above decide "nothing to certify" — a commit naming this bead ahead of base.
-        elif ! grep -qF "$BEAD_ID" <<< "$(git -C "$REPO" log --format='%s%n%b' "$BASE_FQREF..$BRANCH" 2>/dev/null)"; then
-            log "$FAYTH: $BEAD_ID closed a work bead but $BRANCH carries no commit of its own ahead of $BASE_FQREF — not converted, close stands"
-        else
-            bead_reopen "$BEAD_ID" work-close-converted "Submitted: work committed on branch; marked submitted instead of closed. The landing pass closes this bead when it lands, citing the merge commit.${gate_why:+ Gate at close: $gate_why.}"
-            bdq label add "$BEAD_ID" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1
-            log "$FAYTH: $BEAD_ID closed a work bead directly — converted to submitted"
-            # $st DRIVES THE FINAL LEDGER LINE (ledger_done "${SESSION_RC:-$rc}" "${st:-?}"
-            # below) — left at its snapshot value of "closed" it would report a status the
-            # bead no longer has, the same misreport eviction-race avoids by setting st=open.
-            st=submitted
-        fi
-    fi
-    unset _wct_type _wct_sup _wct_delivers
+    # NO TEARDOWN CONVERSION (design §3.7). The model has no bd on PATH, so "closed" is not
+    # a thing that happens here any more — work submit/done are lifecycle events, and the
+    # `_d_submitted` gathering above already reads the bead machine's row directly.
     # PIDFILE IS REMOVED HERE, after all bead operations, so holder_alive stays true for the
     # entire teardown. strand-classify.py requires BOTH witnesses absent before classifying a
     # bead ghost: removing the pidfile early caused a bead whose aeon was mid-teardown to be
@@ -2087,9 +2067,26 @@ export GIT_SSH_COMMAND="echo 'aeon: no SSH credentials — landing.sh and batch.
 export GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false
 mapfile -t _AEON_ARGV < <(aeon_claude_argv "$SPIRA_SYSTEM_FLAG" "$SYSTEM_FILE")
 SESSION_STARTED=1
-cat "$TASK_FILE" | ${FAYTH_TIMEOUT_SECONDS:+timeout $FAYTH_TIMEOUT_SECONDS} \
-    "${SPIRA_AGENT:-claude}" "${_AEON_ARGV[@]}" \
-    >> "$LOGF" 2>&1
+# THE MODEL RUNS THROUGH work-env.sh, BOUND TO THIS BEAD (design §3.5): no bd on PATH, no
+# database credential in its environment, reaching the machine only through `work`'s
+# socket. Resolved to an absolute path BEFORE the wrap, because work-env.sh's own `env -i`
+# replaces PATH with its own restricted one — a bare "claude" looked up against THAT PATH
+# would not find the real binary (or a test's SPIRA_AGENT stub, unless already absolute).
+#
+# NO work BINARY AT ALL skips the wrap, same reasoning as SPIRA_LC_BIN above: `work`
+# "deploys inert" until a box has built it (sp-3m1p9), and every existing fixture that
+# stubs SPIRA_AGENT without also building it must keep launching that stub directly.
+_AEON_AGENT_BIN="$(command -v "${SPIRA_AGENT:-claude}" 2>/dev/null || printf '%s' "${SPIRA_AGENT:-claude}")"
+if [ -x "${SPIRA_WORK_BIN:-}" ]; then
+    cat "$TASK_FILE" | ${FAYTH_TIMEOUT_SECONDS:+timeout $FAYTH_TIMEOUT_SECONDS} \
+        bash "$SPIRA_HOME/work-env.sh" "$BEAD_ID" -- \
+        "$_AEON_AGENT_BIN" "${_AEON_ARGV[@]}" \
+        >> "$LOGF" 2>&1
+else
+    cat "$TASK_FILE" | ${FAYTH_TIMEOUT_SECONDS:+timeout $FAYTH_TIMEOUT_SECONDS} \
+        "$_AEON_AGENT_BIN" "${_AEON_ARGV[@]}" \
+        >> "$LOGF" 2>&1
+fi
 rc=$?
 SESSION_RC=$rc   # held for cleanup, which sees only $? at the time the trap fires
 set -e
@@ -2184,49 +2181,8 @@ st="${verdict%%	*}"; _vrest="${verdict#*	}"; superseded="${_vrest%%	*}"; _vrest=
 committed="$(verdict_committed "$REPO" "$BRANCH" "$BEAD_ID")"
 log "$FAYTH: $BEAD_ID status=$st committed=$committed superseded=$superseded delivers=${delivers:-none}"
 
-# EVICTION RACE. eviction_reopen (lib.sh) decides reopen/stale/cap/none from the landstate
-# record, the current branch tip and the prior eviction-race requeue count; this block is
-# the side effects (idempotence sidecar, the reopen/escalate calls, the log lines).
-if [ "$st" = "closed" ] && [ "$committed" = "yes" ] && [ "$superseded" != 1 ]; then
-    _evict_ls="$(land_state "$BEAD_ID" 2>/dev/null)" || _evict_ls=""
-    if [ -n "$_evict_ls" ] && [ "$(eviction_reopen "$_evict_ls" "" 0)" != none ]; then
-        _evict_state="" _evict_tip="" _evict_at="" _evict_reason=""
-        read -r _evict_state _evict_tip _evict_at _evict_reason <<< "$_evict_ls"
-        _evict_seen_f="$LANDSTATE/$BEAD_ID.evict-seen"
-        _evict_seen="$(cat "$_evict_seen_f" 2>/dev/null)" || _evict_seen=""
-        if [ -n "$_evict_seen" ] && [ "$_evict_seen" = "$_evict_tip $_evict_reason" ]; then
-            log "$FAYTH: $BEAD_ID closed with landstate=$_evict_state — tip+reason unchanged since the last eviction-race reopen, duplicate skipped"
-        else
-            _cur_tip="$(git -C "$REPO" rev-parse "$BRANCH" 2>/dev/null)" || _cur_tip=""
-            _evict_count="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
-                "SELECT COUNT(*) FROM events WHERE issue_id='$BEAD_ID' AND event_type='requeued' AND new_value='eviction-race'" \
-                2>/dev/null | sed -n '3p' | tr -d ' ')" || _evict_count=0
-            _evict_count="${_evict_count:-0}"
-            case "$(eviction_reopen "$_evict_ls" "$_cur_tip" "$_evict_count")" in
-            stale)
-                log "$FAYTH: $BEAD_ID closed with landstate=$_evict_state — record tip $_evict_tip ≠ branch tip $_cur_tip, stale record, close stands"
-                ;;
-            cap)
-                bdq label add "$BEAD_ID" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
-                bdq note "$BEAD_ID" "Eviction-race guard capped: reopened $_evict_count time(s) already. Recertify the branch by hand and clear the $SPIRA_ASK_LABEL label; the guard will not reopen it again on its own." >/dev/null 2>&1 || true
-                log "$FAYTH: $BEAD_ID eviction-race escalated — $_evict_count prior requeue(s) ≥ ${SPIRA_EVICTION_ESCALATE_AT:-3}, labeled $SPIRA_ASK_LABEL instead of reopening"
-                printf '%s %s' "$_evict_tip" "$_evict_reason" > "$_evict_seen_f" 2>/dev/null || true
-                ;;
-            reopen)
-                bead_reopen "$BEAD_ID" eviction-race "Reopened by aeon.sh: bead closed while landstate is $_evict_state — the branch was evicted from the batch while this session was in flight. The close is valid but the work cannot re-enter the queue while the bead is closed. Recertify the branch to re-enter the merge queue." || true
-                log "$FAYTH: $BEAD_ID REOPENED — closed with landstate=$_evict_state (eviction race)"
-                st="open"
-                REQUEUE_CAUSE="eviction-race"
-                REQUEUE_WHY="Batch evicted the branch while this aeon was in flight; the bead was re-closed on a stale pass. Recertify the branch."
-                printf '%s %s' "$_evict_tip" "$_evict_reason" > "$_evict_seen_f" 2>/dev/null || true
-                ;;
-            esac
-            unset _cur_tip _evict_count
-        fi
-        unset _evict_seen _evict_seen_f
-    fi
-    unset _evict_ls _evict_state _evict_tip _evict_at _evict_reason
-fi
+# NO EVICTION-RACE GUARD (design §3.7). It existed to repair a bd close raced against a
+# batch eviction; the model has no bd on PATH to close with, so the race cannot arise here.
 
 # close_verdict/delivers_verdict (lib.sh) decide identically for aeon.sh and sentinel
 # CHECK5 (UC-aeon-execution-13) — SESSION_EPOCH is the lower bound for file mtime: a file
@@ -2588,29 +2544,23 @@ if [ "$st" = "closed" ] && [ "$committed" = "yes" ] && [ -z "$SOP_SILENT" ] && [
         log "$FAYTH: $BEAD_ID closed behind $BASE — rebased by the harness after close (the session did not)"
         bdq note "$BEAD_ID" "Rebased onto $BASE by aeon.sh after the session closed the bead without doing so. The replay was clean; the landing gate judges the rebased tree." >/dev/null 2>&1 || true
     else
-        _cited_sha="$(bead_cited_commit_on_base "$BEAD_ID" "$REPO" "$BASE_FQREF" 2>/dev/null)" || _cited_sha=""
-        if [ -n "$_cited_sha" ]; then
-            log "$FAYTH: $BEAD_ID closed behind $BASE but notes cite $_cited_sha on $BASE — retiring as landed"
-            land_mark "$BEAD_ID" LANDED "$_cited_sha" "cited-on-main"
-            spira_destroy_branch "$BEAD_ID" "$BRANCH" "$REPO" \
-                "fix on $BASE cited in notes as $_cited_sha" "cited-landed" \
-                || log "$FAYTH: $BEAD_ID branch retire failed"
+        # NO CITED-ON-MAIN PATH (design §3.7). It trusted a hand-written note's sha over the
+        # commit graph; the bead machine's own ContentOnBase event is the one path that
+        # retires a bead as landed without a commit on its own branch now.
+        _other_beads="$(other_beads_on_conflicts "$REPO" "$BRANCH" "$BASE" "${REBASE_CONFLICTS:-}")"
+        _reopen_note="Reopened by aeon.sh: closed behind $BASE and $BRANCH does not rebase onto it — conflicts in ${REBASE_CONFLICTS:-unknown}. The brief asked for this rebase before closing."
+        if [ -n "$_other_beads" ]; then
+            _reopen_note="$_reopen_note Those files were changed on $BASE by $_other_beads — check whether this work is already landed before resolving."
         else
-            _other_beads="$(other_beads_on_conflicts "$REPO" "$BRANCH" "$BASE" "${REBASE_CONFLICTS:-}")"
-            _reopen_note="Reopened by aeon.sh: closed behind $BASE and $BRANCH does not rebase onto it — conflicts in ${REBASE_CONFLICTS:-unknown}. The brief asked for this rebase before closing."
-            if [ -n "$_other_beads" ]; then
-                _reopen_note="$_reopen_note Those files were changed on $BASE by $_other_beads — check whether this work is already landed before resolving."
-            else
-                _reopen_note="$_reopen_note A merge conflict is not an escalation — the next aeon is handed the rebase and must resolve it."
-            fi
-            bead_reopen "$BEAD_ID" rebase-conflict "$_reopen_note" || true
-            # THE TEARDOWN MUST NOT READ THIS BACK AS A FAILURE OF THE WORK. The work is committed
-            # and the session closed on it; what is missing is a rebase over commits that landed
-            # while it ran, which is a fact about the queue. Charging it made the busiest branches
-            # the likeliest to poison.
-            REQUEUE_CAUSE="rebase-conflict"
-            REQUEUE_WHY="$BRANCH would not rebase onto $BASE (conflicts in ${REBASE_CONFLICTS:-unknown}); the next aeon is handed the rebase."
-            log "$FAYTH: $BEAD_ID REOPENED — closed behind $BASE, conflicts in ${REBASE_CONFLICTS:-unknown}"
+            _reopen_note="$_reopen_note A merge conflict is not an escalation — the next aeon is handed the rebase and must resolve it."
         fi
+        bead_reopen "$BEAD_ID" rebase-conflict "$_reopen_note"
+        # THE TEARDOWN MUST NOT READ THIS BACK AS A FAILURE OF THE WORK. The work is committed
+        # and the session closed on it; what is missing is a rebase over commits that landed
+        # while it ran, which is a fact about the queue. Charging it made the busiest branches
+        # the likeliest to poison.
+        REQUEUE_CAUSE="rebase-conflict"
+        REQUEUE_WHY="$BRANCH would not rebase onto $BASE (conflicts in ${REBASE_CONFLICTS:-unknown}); the next aeon is handed the rebase."
+        log "$FAYTH: $BEAD_ID REOPENED — closed behind $BASE, conflicts in ${REBASE_CONFLICTS:-unknown}"
     fi
 fi
