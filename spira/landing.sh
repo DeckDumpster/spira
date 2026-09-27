@@ -982,6 +982,16 @@ for i in d:
             log "CHECK6 $id: $br is superseded — its work landed under the successor's id; leaving it for the Sending to reap"
             continue
         fi
+        # A CUTOVER-ROUND BEAD LANDS ONLY IN THE CUTOVER ROUND, assembled by hand — never by
+        # this pass. Certifying, rebasing or reopening it here judged a branch that was never
+        # going to land this way, and repeatedly: every RED no-rebase mark filed a
+        # repeat-refused ask about work nothing here could ever have merged (sp-o7nbr.2,
+        # sp-o7nbr.5). Leave it exactly as its aeon left it.
+        case " ${bead_labels:-} " in
+            *" ${SPIRA_CUTOVER_ROUND_LABEL:-cutover-round} "*)
+                log "CHECK6 $id: $br is labelled ${SPIRA_CUTOVER_ROUND_LABEL:-cutover-round} — leaving it for the cutover round"
+                continue ;;
+        esac
         # EJECTED BEAD NEVER RE-QUEUED. batch.sh writes EJECTED landstate when a batch member
         # fails the local gate and ejects the bead; the aeon is expected to fix the failure and
         # re-queue. If the bead was closed before the aeon acted, the EJECTED state is never
