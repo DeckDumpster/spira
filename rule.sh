@@ -2,7 +2,7 @@
 #
 # rule.sh — enact, amend, or retire a statute in one command.
 #
-#   rule.sh enact <slug> "<statute text>"    write it, then synthesise it into the wiki
+#   rule.sh enact <slug> "<statute text>" [--dry-run]   write it, then synthesise it into the wiki
 #   rule.sh retire <slug>                    remove it
 #   rule.sh list                             what is in force
 #   rule.sh show <slug>                      one statute's full text
@@ -82,7 +82,30 @@ case "${1:-}" in
 enact)
     [ $# -ge 3 ] || usage
     key="$(slugify "$2")"; shift 2
-    text="$*"
+
+    # Every remaining argument used to be joined into the statute text with no check, so a
+    # stray flag (a mistyped --dry-run) became law silently. Reject anything that isn't the
+    # one quoted text argument, or the one flag this command implements, before touching
+    # the book (sp-dnrjw).
+    dry_run=0 text="" text_set=0
+    for arg in "$@"; do
+        case "$arg" in
+            --dry-run) dry_run=1 ;;
+            -*)
+                echo "rule: enact does not take '$arg' — usage: rule.sh enact <slug> \"<text>\" [--dry-run]" >&2
+                exit 1
+                ;;
+            *)
+                [ "$text_set" -eq 0 ] || {
+                    echo "rule: enact takes one quoted text argument; '$arg' is a second one — quote the whole statute text" >&2
+                    exit 1
+                }
+                text="$arg"; text_set=1
+                ;;
+        esac
+    done
+    [ "$text_set" -eq 1 ] || usage
+
     words=$(wc -w <<<"$text")
     if [ "$words" -gt 130 ]; then
         echo "rule: refusing — ${words} words. A statute is one paragraph (~70 words);" >&2
@@ -90,6 +113,22 @@ enact)
         echo "      in the wiki and keep the scar here as a single clause." >&2
         exit 1
     fi
+
+    # An overwrite is otherwise invisible: bd remember --key replaces silently, with no undo.
+    # Printing both texts makes the prior statute recoverable from the transcript even when
+    # nothing else survives (sp-dnrjw).
+    if prior="$(bd -C "$DB" recall "$key" 2>/dev/null)"; then
+        echo "rule: '$key' already exists — this enact overwrites it."
+        echo "--- current ---"; echo "$prior"
+        echo "--- new ---"; echo "$text"
+        echo "---"
+    fi
+
+    if [ "$dry_run" -eq 1 ]; then
+        echo "DRY RUN: would enact $key (${words} words). Nothing written."
+        exit 0
+    fi
+
     bd -C "$DB" remember --key "$key" "$text" >/dev/null || {
         echo "rule: failed to write $key to the statute book at $DB" >&2; exit 1; }
     rm -f "${SPIRA_MEMORIES_CACHE:-}" 2>/dev/null || true
