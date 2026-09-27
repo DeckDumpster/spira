@@ -401,12 +401,15 @@ cmd_send() {
                 --type decision \
                 --body-file - \
                 --silent 2>/dev/null)" || dec_bead=""
+        # Direction is always bead -> dec_bead (bead depends on/relates to dec_bead), only
+        # the type varies: _sendmail_close_bead's `dep list $dec_bead --direction=up` finds
+        # the verdict's target by that direction alone, for either edge type.
         if [ -n "$dec_bead" ] && [ -n "$bead" ]; then
             if [ "$_do_block" -eq 1 ]; then
                 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" dep add "$bead" "$dec_bead" --type blocks >/dev/null 2>&1 \
                     && printf 'mail: blocking edge wired — %s blocks on %s\n' "$bead" "$dec_bead" >&2
             else
-                "${SPIRA_BD:-bd}" -C "$SPIRA_DB" dep add "$dec_bead" "$bead" --type relates-to >/dev/null 2>&1 || true
+                "${SPIRA_BD:-bd}" -C "$SPIRA_DB" dep add "$bead" "$dec_bead" --type relates-to >/dev/null 2>&1 || true
             fi
         fi
         [ -n "$dec_bead" ] && x_bead="$dec_bead"
