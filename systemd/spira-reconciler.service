@@ -1,5 +1,5 @@
 [Unit]
-Description=Spira reconciler — structural invariants: fleet, units, store, cockpit, release, queue
+Description=Spira reconciler — structural invariants: fleet, units, store, cockpit, release, disk, queue
 Documentation=file://@SPIRA_HOME@/reconciler.sh
 After=default.target
 

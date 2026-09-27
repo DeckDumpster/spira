@@ -81,3 +81,12 @@ name = "flow"
 queue = 1
 [resources.spec.dwell_limit_seconds]
 review = 3600
+
+[[resources]]
+apiVersion = "spira/v1"
+kind = "Disk"
+[resources.metadata]
+name = "disk"
+[resources.spec]
+floor_pct = 15
+paths = ["/"]

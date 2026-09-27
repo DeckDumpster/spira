@@ -86,6 +86,18 @@
         }
       },
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "Disk"
+      ],
+      "properties": {
+        "Disk": {
+          "$ref": "#/definitions/DiskSpec"
+        }
+      },
+      "additionalProperties": false
     }
   ],
   "definitions": {
@@ -93,6 +105,28 @@
       "type": "object",
       "properties": {
         "dashboards": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "DiskSpec": {
+      "description": "A free-space floor, checked on every path listed. An empty `paths` defers to the reconciler's own bash/env default (root filesystem plus whatever it can ask podman and dolt for) rather than naming none at all — the shape every other kind's absence falls back to (sp-lkfto.3).",
+      "type": "object",
+      "required": [
+        "floor_pct"
+      ],
+      "properties": {
+        "floor_pct": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "paths": {
           "default": [],
           "type": "array",
           "items": {
