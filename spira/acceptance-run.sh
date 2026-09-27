@@ -552,7 +552,7 @@ else
         # Verify .tag sidecar names the new tag (sp-cb0q1: sidecar written to releases dir).
         # Read SPIRA_RELEASES from the installed conf so it matches what deploy.sh used,
         # not a default derived from the workspace checkout (which differs on CI runners).
-        _releases_dir="$(bash -c '. "$1/conf.sh" 2>/dev/null; printf "%s" "${SPIRA_RELEASES:-}"' \
+        _releases_dir="$(env "${_ci_deploy_env[@]}" bash -c '. "$1/conf.sh" 2>/dev/null; printf "%s" "${SPIRA_RELEASES:-}"' \
             -- "$HERE" 2>/dev/null || true)"
         [ -z "$_releases_dir" ] && _releases_dir="${SPIRA_RELEASES:-${HOME}/spira-releases}"
         # deploy.sh writes the full release tag to .tags/<release_stem> beside the release
@@ -563,7 +563,7 @@ else
         is_same "phase B: .tag sidecar names $tag" "$tag" "$_sidecar_val"
 
         # Verify SPIRA_PROD points into the releases directory (not the raw checkout).
-        _spira_prod="$(bash -c '. "$1/conf.sh" 2>/dev/null; printf "%s" "${SPIRA_PROD:-}"' \
+        _spira_prod="$(env "${_ci_deploy_env[@]}" bash -c '. "$1/conf.sh" 2>/dev/null; printf "%s" "${SPIRA_PROD:-}"' \
             -- "$HERE" 2>/dev/null || true)"
         want "phase B: SPIRA_PROD updated to releases path" "${_releases_dir}" "$_spira_prod"
 
