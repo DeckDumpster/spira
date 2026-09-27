@@ -2039,6 +2039,31 @@ summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label]
         "$SPIRA_HOME/aeon.sh" "$f" 2>/dev/null
 }
 
+# named_unit_stop <systemd --user unit glob> — stop every live unit matching it, by NAME.
+#
+# THE ALTERNATIVE THIS REPLACES: reading a process's PPid from /proc and killing that. For
+# an orphan, the PPid is the user manager itself, and SIGTERM to it activates exit.target —
+# the whole session stops, not the leftover process (sp-kb0k5). A systemd-run transient
+# unit's default KillMode=control-group means stopping it BY NAME tears down its whole
+# cgroup, including any child that was reparented to pid 1 within it: reparenting changes a
+# process's PPid, never its cgroup, so an orphan is still caught.
+#
+# No match is not a failure — the run may already be finished. A stop that fails is.
+named_unit_stop() {
+    local glob="$1" u rc=0 any=0
+    for u in $("${SPIRA_SYSTEMCTL:-systemctl}" --user list-units "$glob" --all --no-legend 2>/dev/null | awk '{print $1}'); do
+        any=1
+        if "${SPIRA_SYSTEMCTL:-systemctl}" --user stop "$u" 2>/dev/null; then
+            printf 'stopped %s\n' "$u"
+        else
+            printf 'could not stop %s\n' "$u" >&2
+            rc=1
+        fi
+    done
+    [ "$any" = 1 ] || printf 'no unit matches %s\n' "$glob"
+    return "$rc"
+}
+
 # ======================================================================================
 # API CAPACITY — the account's own five-hour window, and the second unrelated thing in this
 # harness called "capacity".
