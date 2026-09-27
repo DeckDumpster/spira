@@ -22,6 +22,7 @@
 # centre, not a feature.
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/lc.sh"
 
 REPORT=0; [ "${1:-}" = "--report" ] && REPORT=1
 POISON_AT="${SPIRA_POISON_AT:-3}"
@@ -436,6 +437,14 @@ print(d[0].get("status", "") if d else "")' 2>/dev/null)"
             case " $decision " in *' poison '*)
                 bdq label add "$id" spira-poison >/dev/null 2>&1
                 bdq note "$id" "Poisoned after $n in_progress transition(s) without landing. Triaged by the groomer, not a human: it reads the charged sessions' final results and either credits the harness-caused attempts and lifts the poison (groomer.sh unpoison) or splits/re-scopes the work. Any live holder keeps its claim and releases on its own exit path; no persona can claim it again while the label stands." >/dev/null 2>&1
+                # ADDITIVE, BEST-EFFORT (sp-ki12s): the bd label stays authoritative for
+                # dispatch until sp-wenrl converts readers and sp-sa8pn's deploy activates
+                # the cutover — this only starts the lifecycle machine's own record of the
+                # same poisoning, so the event log already has real history once it does.
+                # A row does not exist yet for any real bead today (sp-t93ky's classifier
+                # has not run), so this is expected to report "no such row" every pass; it
+                # never fails the check either way (lc.sh's own contract).
+                lc_hold "$id" poison "poisoned after $n in_progress transition(s) without landing" sentinel || true
                 progress "poisoned $id after $n attempts"
                 # check4_decide only emits `poison` on the transition into poisoned (the
                 # `spira-poison` case in its label match), so this fires once — the bead

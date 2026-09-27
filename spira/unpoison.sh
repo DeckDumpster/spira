@@ -27,6 +27,7 @@
 #       2 usage.
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/lc.sh"
 
 usage() {
     sed -n '4,25p' "$0" | sed 's/^# \{0,1\}//'
@@ -91,6 +92,9 @@ for id in "${IDS[@]}"; do
     poison_asked_clear "$id"
     # 3. The label.
     bdq label remove "$id" "$POISON_LABEL" >/dev/null 2>&1 || true
+    # 3b. ADDITIVE, BEST-EFFORT (sp-ki12s): the lifecycle machine's own record of the
+    # release, alongside the label — see the matching note in sentinel.sh CHECK 4.
+    lc_unhold "$id" poison unpoison.sh || true
     # 4. Why — the next aeon reads this.
     bdq note "$id" "Poison cleared by unpoison.sh (attempts were $n): $CAUSE" >/dev/null 2>&1 || true
     # 5. The operator ask this poisoning raised ("… — change the approach or drop it?").
