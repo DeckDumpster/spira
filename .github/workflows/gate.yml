@@ -701,22 +701,30 @@ jobs:
             printf 'cut: SHA %s has no green gate check\n' "${{ github.sha }}" >&2
             exit 1
           }
-          _run_id="$(gh api \
+          # WALK THE RUNS, DO NOT TAKE THE NEWEST (sp-5h238). A merged queue PR fires a
+          # pull_request 'closed' Gate run that skips every job and concludes success; it is the
+          # newest run for this SHA, and reading it refused every cut (run 36306259348). The run
+          # that tested the SHA is the newest one that actually carries a batch-results artifact.
+          _runs="$(gh api \
             "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=${{ github.sha }}&event=pull_request&status=completed" \
-            --jq '[.workflow_runs[] | select(.name == "Gate" and .conclusion == "success")][0].id // ""' \
+            --jq '.workflow_runs[] | select(.name == "Gate" and .conclusion == "success") | .id' \
             2>/dev/null || true)"
-          [ -n "${_run_id:-}" ] || {
+          [ -n "${_runs:-}" ] || {
             printf 'cut: SHA %s has no completed pull_request Gate run to source suites from\n' \
               "${{ github.sha }}" >&2
             exit 1
           }
-          _art="$(gh api \
-            "repos/$GITHUB_REPOSITORY/actions/runs/${_run_id}/artifacts" \
-            --jq '.artifacts[] | select(.name | startswith("batch-results-")) | .id' \
-            2>/dev/null | head -1 || true)"
+          _run_id=""; _art=""
+          for _rid in $_runs; do
+            _art="$(gh api \
+              "repos/$GITHUB_REPOSITORY/actions/runs/${_rid}/artifacts" \
+              --jq '.artifacts[] | select(.name | startswith("batch-results-")) | .id' \
+              2>/dev/null | head -1 || true)"
+            [ -n "${_art:-}" ] && { _run_id="$_rid"; break; }
+          done
           [ -n "${_art:-}" ] || {
-            printf 'cut: queue PR run %s has no batch-results artifact — no suites ran\n' \
-              "$_run_id" >&2
+            printf 'cut: no pull_request Gate run for SHA %s carries a batch-results artifact (checked: %s) — no suites ran\n' \
+              "${{ github.sha }}" "$(printf '%s ' $_runs)" >&2
             exit 1
           }
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/${_art}/zip" > /tmp/batch-assert.zip
