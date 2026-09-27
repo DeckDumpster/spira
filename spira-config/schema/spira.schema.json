@@ -1860,6 +1860,12 @@
             "null"
           ]
         },
+        "watchers_overlay": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "wiki": {
           "type": [
             "string",

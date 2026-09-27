@@ -62,7 +62,7 @@ SPIRA_CONF_LOADED=1
 # drives a fixture through, and it is explicit rather than ambient.
 SPIRA_CONF_KEYS="
 SPIRA_HOME_REPO SPIRA_DB SPIRA_RUN SPIRA_GOAL
-SPIRA_PATH SPIRA_WORKSPACES SPIRA_REPO_MAP SPIRA_PREFIX_MAP SPIRA_CHAMBER SPIRA_CHAMBER_OVERLAY SPIRA_WATCHERS SPIRA_OVERRIDES
+SPIRA_PATH SPIRA_WORKSPACES SPIRA_REPO_MAP SPIRA_PREFIX_MAP SPIRA_CHAMBER SPIRA_CHAMBER_OVERLAY SPIRA_WATCHERS SPIRA_WATCHERS_OVERLAY SPIRA_OVERRIDES
 SPIRA_ACTIONABLE SPIRA_ID_PREFIX SPIRA_HEALTH_TIMEOUT SPIRA_ANSWER_STATE SPIRA_ANSWER_MARK SPIRA_ANSWER_COMMENT_MARK SPIRA_SELF_CLOSED SPIRA_NOTIFY_AGE SPIRA_WAKE SPIRA_WAKE_WATCHERS
 SPIRA_CLIENT_SETTINGS SPIRA_HOOK_LINES SPIRA_CTRL
 SPIRA_MAIL SPIRA_MAIL_KINDS SPIRA_MAIL_READERS SPIRA_MAIL_UNREAD_AGE SPIRA_MAIL_SETTLE SPIRA_MAIL_SESSION_MAILBOX SPIRA_MAIL_REPEAT_WINDOW SPIRA_MAIL_TIDY_FRESH SPIRA_MAIL_WAKE_BACKOFF SPIRA_MAIL_INDEX
@@ -489,6 +489,13 @@ spira_conf_defaults() {
     # file decides what `install.sh` enables; pointing the key elsewhere is how an operator
     # keeps their own rows out of a checkout they may push.
     : "${SPIRA_WATCHERS:=$SPIRA_HOME/watchers}"
+    # THE OPERATOR'S OWN ROWS, same family as SPIRA_CHAMBER_OVERLAY and for the same reason:
+    # operator state beside the repo-map, never inside a checkout a `spira: land` push can
+    # overwrite. Every `*.watchers` file here is read like SPIRA_WATCHERS itself and merged
+    # into the one manifest, so a watcher the Concierge or an operator owns survives a session
+    # the same way a harness watcher does — as a unit, not an in-session Monitor that dies with
+    # the session that started it.
+    : "${SPIRA_WATCHERS_OVERLAY:=${XDG_CONFIG_HOME:-$HOME/.config}/spira/watchers.d}"
     # WHICH OF A WATCHER'S LINES A READER IS SHOWN BY DEFAULT — an extended regular expression
     # matched against the whole line by `watchd.sh drain` and `watchd.sh tail`, which share it
     # so that the command a session hook advertises and the command a session latches with

@@ -49,6 +49,10 @@ LOG="$RUN/watchd/answers.log"
 # retired there left this suite tailing a name watchd no longer knows.
 printf 'answers|log|%s\n' "$LOG" > "$TMP/watchers"
 export SPIRA_WATCHERS="$TMP/watchers"
+# Pinned to a directory that cannot exist, not left to the operator's own default: this
+# suite does not sandbox HOME, so an unset override would merge in whatever the box running
+# it actually has in ~/.config/spira/watchers.d/ (law-probe-a-fixture-not-production).
+export SPIRA_WATCHERS_OVERLAY="$TMP/no-such-overlay-dir"
 
 kids=""
 cleanup() { for k in $kids; do kill -TERM "$k" 2>/dev/null; done; sleep 1; rm -rf "$TMP"; }

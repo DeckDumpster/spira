@@ -173,6 +173,7 @@ pub fn spira_section(
             }
             "SPIRA_BD" => s.bd = Some(val.clone()),
             "SPIRA_WATCHERS" => s.watchers = Some(val.clone()),
+            "SPIRA_WATCHERS_OVERLAY" => s.watchers_overlay = Some(val.clone()),
             "SPIRA_COCKPIT" => s.cockpit = Some(val.clone()),
             "SPIRA_BATCH_MEM_PER_SUITE_MIB" => {
                 s.batch_mem_per_suite_mib = parse_u32(warnings, "batch_mem_per_suite_mib", val)

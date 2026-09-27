@@ -393,15 +393,13 @@ _wd_expand() {
     _wd_out="$s"; return 0
 }
 
-# watchd_rows -> every valid row on stdout as name|kind|target|health, or 1 having named
-# every fault on stderr and printed nothing.
-watchd_rows() {
-    local file="$SPIRA_WATCHERS"
-    if [ ! -f "$file" ]; then
-        echo "watchd: no watcher manifest at $file" >&2
-        return 1
-    fi
-    local n=0 faults=0 rows="" seen=" " line trimmed nf name kind target health i optional
+# _wd_parse_file <file> — parse one manifest file, same row format as SPIRA_WATCHERS itself.
+# Appends into the CALLER's `rows`, `seen` and `faults` (bash's dynamic scope, not globals:
+# none of the three is declared local here), so an overlay row and a harness row are one
+# manifest for every purpose downstream — a name must be unique across both, because they
+# feed the same systemd instance space and a collision would render one unit for two rows.
+_wd_parse_file() {
+    local file="$1" n=0 line trimmed nf name kind target health i optional
     local -a f
     while IFS= read -r line || [ -n "$line" ]; do
         n=$((n+1))
@@ -493,15 +491,51 @@ watchd_rows() {
         rows="$rows$name|$kind|$target|$health
 "
     done < "$file"
+}
+
+# watchd_rows -> every valid row on stdout as name|kind|target|health, or 1 having named
+# every fault on stderr and printed nothing.
+#
+# THE OVERLAY IS EVERY `*.watchers` FILE IN SPIRA_WATCHERS_OVERLAY, read after the harness's
+# own and merged into the same rows by the same parser — an operator's or the Concierge's own
+# watcher joins the manifest without a harness change, and its `daemon` row may name a program
+# living anywhere (the absolute-path rule above is already about the target, not about which
+# file named it). A MISSING OVERLAY DIRECTORY IS NOT A FAULT: an operator with none of their
+# own watchers is the ordinary case, not a broken install, so this is `-d` tested rather than
+# required to exist the way SPIRA_WATCHERS itself is.
+#
+# ONE MALFORMED FILE REFUSES THE WHOLE MANIFEST, harness rows and overlay rows alike — the
+# same rule the header on `_wd_parse_file` gives for one bad line inside a single file, for
+# the same reason: a parser that answered for the files that parsed and stayed silent about
+# the one that did not would let a typo in an operator's own file quietly run every OTHER
+# watcher while reporting nothing wrong about the one it broke.
+watchd_rows() {
+    local file="$SPIRA_WATCHERS"
+    if [ ! -f "$file" ]; then
+        echo "watchd: no watcher manifest at $file" >&2
+        return 1
+    fi
+    local -a files=("$file")
+    local ov
+    if [ -d "${SPIRA_WATCHERS_OVERLAY:-}" ]; then
+        for ov in "$SPIRA_WATCHERS_OVERLAY"/*.watchers; do
+            [ -f "$ov" ] && files+=("$ov")
+        done
+    fi
+
+    local faults=0 rows="" seen=" "
+    for file in "${files[@]}"; do
+        _wd_parse_file "$file"
+    done
 
     if [ "$faults" != 0 ]; then
-        echo "watchd: $file is malformed — refusing to answer for any of it" >&2
+        echo "watchd: the watcher manifest is malformed — refusing to answer for any of it" >&2
         return 1
     fi
     # An empty manifest is a legitimate answer — an installation may own no watchers — but it
     # is said out loud, because "no watchers" and "the manifest is somewhere else" read the
     # same in an empty stdout.
-    [ -n "$rows" ] || echo "watchd: $file defines no watchers" >&2
+    [ -n "$rows" ] || echo "watchd: no watchers are defined in $SPIRA_WATCHERS or $SPIRA_WATCHERS_OVERLAY" >&2
     printf '%s' "$rows"
     return 0
 }

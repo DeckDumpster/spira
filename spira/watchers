@@ -1,6 +1,11 @@
-# watchers — the single source of truth for what should be watching.
+# watchers — the harness's own rows for what should be watching.
 #
 #   name|kind|target[|health]
+#
+# NOT THE ONLY MANIFEST. Every `*.watchers` file in SPIRA_WATCHERS_OVERLAY (default
+# ~/.config/spira/watchers.d/) is read the same way and merged into the same rows, so an
+# operator's or the Concierge's own watcher joins this one without a change here — see
+# watchd.sh for why a name must still be unique across both.
 #
 # ONE ROW IS ONE WATCHER, and one `daemon` row is one systemd unit: `install.sh` renders
 # `spira-watch@.service` and enables `spira-watch@<name>.service` for every daemon row here,

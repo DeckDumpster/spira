@@ -97,6 +97,7 @@ pub struct SpiraSection {
     pub czar_stage_deadlock: Option<CzarStage>,
     pub bd: Option<String>,
     pub watchers: Option<String>,
+    pub watchers_overlay: Option<String>,
     pub cockpit: Option<String>,
     pub batch_mem_per_suite_mib: Option<u32>,
     pub lanes_max_live: Option<u32>,
