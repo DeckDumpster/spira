@@ -192,8 +192,10 @@ _fail_on="\${DOCTOR_FAIL_ON_CALL:-}"
 _do_fail=0
 [ "\${DOCTOR_EXIT:-0}" != "0" ] && _do_fail=1
 [ -n "\$_fail_on" ] && [ "\$_cnt" -ge "\$_fail_on" ] && _do_fail=1
-# DOCTOR_FAILED_UNIT_FILE: fail while this file exists (a unit systemd holds failed).
-[ -n "\${DOCTOR_FAILED_UNIT_FILE:-}" ] && [ -e "\$DOCTOR_FAILED_UNIT_FILE" ] && _do_fail=1
+# DOCTOR_FAILED_UNIT_FILE: fail while this file exists (a unit systemd holds failed), from call
+# DOCTOR_FAILED_UNIT_FROM_CALL on (2 = only after activation, as a unit the new release breaks).
+[ -n "\${DOCTOR_FAILED_UNIT_FILE:-}" ] && [ -e "\$DOCTOR_FAILED_UNIT_FILE" ] \\
+    && [ "\$_cnt" -ge "\${DOCTOR_FAILED_UNIT_FROM_CALL:-1}" ] && _do_fail=1
 if [ "\$_do_fail" = 1 ]; then
     printf '  FAIL  %s\n' "\${DOCTOR_FAIL_MSG:-injected failure}"
     exit 1
@@ -484,16 +486,16 @@ not0   "latest: NOT-LATEST after resolving latest still rolls back" "$_rc"
 # leaves it failed, so doctor still sees it.
 _skewf="$TMP/skew-unit-failed"
 rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
-: > "$_skewf"
-_out="$(run_deploy "SKEW_EXIT=1" "SKEW_OUT=$_notlatest" "DOCTOR_FAILED_UNIT_FILE=$_skewf" "SKEW_UNIT_FAILED_FILE=$_skewf" -- "$NEW_TAG" 2>&1)"
+: > "$_skewf"; rm -f "$DOCTOR_CNT"
+_out="$(run_deploy "SKEW_EXIT=1" "SKEW_OUT=$_notlatest" "DOCTOR_FAILED_UNIT_FILE=$_skewf" "DOCTOR_FAILED_UNIT_FROM_CALL=2" "SKEW_UNIT_FAILED_FILE=$_skewf" -- "$NEW_TAG" 2>&1)"
 _rc=$?
 is0    "older-named: the skew unit's NOT-LATEST failure does not undo a named deploy" "$_rc"
 islink "older-named: current stays on the named release (skew unit cleared)" "$RELEASES/current" "$NEW_RELEASE"
 nowant "older-named: no rollback on the skew unit"          "ROLLBACK" "$_out"
 
 rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
-: > "$_skewf"
-_out="$(run_deploy "SKEW_EXIT=1" "SKEW_OUT=$(printf '%s\nMANIFEST-MISMATCH MANIFEST records a but release tag t points at b' "$_notlatest")" "DOCTOR_FAILED_UNIT_FILE=$_skewf" "SKEW_UNIT_FAILED_FILE=$_skewf" -- "$NEW_TAG" 2>&1)"
+: > "$_skewf"; rm -f "$DOCTOR_CNT"
+_out="$(run_deploy "SKEW_EXIT=1" "SKEW_OUT=$(printf '%s\nMANIFEST-MISMATCH MANIFEST records a but release tag t points at b' "$_notlatest")" "DOCTOR_FAILED_UNIT_FILE=$_skewf" "DOCTOR_FAILED_UNIT_FROM_CALL=2" "SKEW_UNIT_FAILED_FILE=$_skewf" -- "$NEW_TAG" 2>&1)"
 _rc=$?
 not0   "older-named: a MANIFEST-MISMATCH leaves the skew unit failed and rolls back" "$_rc"
 [ -e "$_skewf" ] && ok "older-named: skew unit NOT cleared on a non-accepted finding" || bad "older-named: skew unit NOT cleared on a non-accepted finding" "reset-failed ran"
@@ -566,10 +568,12 @@ nowant "pruned-ghost: the ghost is not re-run"              "start spira-gone-pr
 # database, exited 1, and doctor rolled a healthy release back (acceptance phase B,
 # 2026-09-27). Each installed failed unit is reset and started once under the release in
 # force, after resume; one that fails again stays failed and doctor still judges it.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
 _out="$(run_deploy "SC_FAILED_UNITS=spira-real-prod.service loaded failed failed A real failure" -- "$NEW_TAG" 2>&1)"
 want   "deploy-window: the installed failed unit is reset"    "SC --user reset-failed spira-real-prod.service" "$(cat "$SC_LOG")"
 want   "deploy-window: ... and re-run under the release"      "SC --user start spira-real-prod.service" "$(cat "$SC_LOG")"
 want   "deploy-window: the re-run is logged"                  "re-ran spira-real-prod.service" "$_out"
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
 _out="$(run_deploy "SC_FAILED_UNITS=spira-real-prod.service loaded failed failed A real failure" \
     "SC_START_FAILS=spira-real-prod.service" -- "$NEW_TAG" 2>&1)"
 want   "deploy-window: a unit that fails again is left for doctor" "spira-real-prod.service fails again under" "$_out"
