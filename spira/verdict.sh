@@ -70,6 +70,84 @@ _batch_reseal_rebased() {   # _batch_reseal_rebased <file> <new_head> <new_membe
         > "$f.$$" && mv -f "$f.$$" "$f"
 }
 
+# _lc_batch_advance <batch_id> <version> <kind-json> <actor> -> new version on
+# success (stdout), nonzero rc and nothing on stdout on refusal. One CAS'd
+# `event batch` call; callers chain these to walk OPEN -> CI_RUNNING -> {GREEN,
+# ATTRIBUTING} before land/settle, which only accept from there.
+_lc_batch_advance() {
+    local batch_id="$1" version="$2" kind="$3" actor="$4" expect="$5"
+    local _out _rc
+    _out="$(lcq event batch "$batch_id" --expect "$expect" --version "$version" \
+        --actor "$actor" --kind "$kind" 2>&1)"
+    _rc=$?
+    if [ "$_rc" -eq 0 ]; then
+        printf '%s' "$(( version + 1 ))"
+        return 0
+    fi
+    printf 'verdict: spira-lc event batch %s (%s) refused (rc=%d): %s\n' \
+        "$batch_id" "$kind" "$_rc" "$_out" >&2
+    return "$_rc"
+}
+
+# _lc_land_batch <batch_file> <pr_n> <sha> — best-effort: the batch's real GREEN ->
+# LANDED transition on spira-lc, mirroring _lc_cut_batch's own "additive, never blocks
+# the existing path" contract (sp-o7nbr.2). batch_id/version are present only when
+# this batch's own cut succeeded; a pre-cutover record has neither and is skipped
+# rather than CASed against a batch that was never written. CiStarted/Green bring a
+# fresh OPEN batch to GREEN — land only accepts from there — fired here since this is
+# the one place a real CI-green fast-forward is known to have happened.
+_lc_land_batch() {
+    local batch_file="$1" pr_n="$2" sha="$3"
+    local batch_id version
+    batch_id="$(_batch_field batch_id "$batch_file")"
+    version="$(_batch_field version "$batch_file")"
+    [ -n "$batch_id" ] && [ -n "$version" ] || return 0
+
+    version="$(_lc_batch_advance "$batch_id" "$version" \
+        "{\"CiStarted\":{\"run\":\"$pr_n\"}}" verdict.sh OPEN)" || return 0
+    version="$(_lc_batch_advance "$batch_id" "$version" '"Green"' verdict.sh CI_RUNNING)" || return 0
+
+    local _out _rc
+    _out="$(lcq land "$batch_id" --expect GREEN --version "$version" \
+        --actor verdict.sh --sha "$sha" 2>&1)"
+    _rc=$?
+    if [ "$_rc" -eq 0 ]; then
+        printf 'verdict: %s landed on spira-lc (sha=%s)\n' "$batch_id" "$sha"
+    else
+        printf 'verdict: spira-lc land refused for %s (rc=%d): %s\n' "$batch_id" "$_rc" "$_out" >&2
+    fi
+}
+
+# _lc_settle_batch <batch_file> <pr_n> <eject_ids_csv> <requeue_ids_csv> — best-effort:
+# the batch's real ATTRIBUTING -> SETTLED transition on spira-lc (design §3.1.3: ejected
+# members get returned, the rest get requeued), fired once at whichever of
+# _q_attribute's several conclude points removed the batch record. CiStarted/Red bring
+# a fresh OPEN batch to ATTRIBUTING — settle only accepts from there. Same skip-if-absent
+# contract as _lc_land_batch: no batch_id/version means this batch's cut never
+# succeeded, or predates the cutover, and there is nothing to CAS against.
+_lc_settle_batch() {
+    local batch_file="$1" pr_n="$2" eject_csv="$3" requeue_csv="$4"
+    local batch_id version
+    batch_id="$(_batch_field batch_id "$batch_file")"
+    version="$(_batch_field version "$batch_file")"
+    [ -n "$batch_id" ] && [ -n "$version" ] || return 0
+
+    version="$(_lc_batch_advance "$batch_id" "$version" \
+        "{\"CiStarted\":{\"run\":\"$pr_n\"}}" verdict.sh OPEN)" || return 0
+    version="$(_lc_batch_advance "$batch_id" "$version" '"Red"' verdict.sh CI_RUNNING)" || return 0
+
+    local _out _rc
+    _out="$(lcq settle "$batch_id" --expect ATTRIBUTING --version "$version" \
+        --actor verdict.sh --eject "$eject_csv" --requeue "$requeue_csv" 2>&1)"
+    _rc=$?
+    if [ "$_rc" -eq 0 ]; then
+        printf 'verdict: %s settled on spira-lc (eject=%s requeue=%s)\n' \
+            "$batch_id" "${eject_csv:-none}" "${requeue_csv:-none}"
+    else
+        printf 'verdict: spira-lc settle refused for %s (rc=%d): %s\n' "$batch_id" "$_rc" "$_out" >&2
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # ATTRIBUTION — per-member reproduction dispatched to the batch PR's own CI,
 # not run on this box (sp-2hee5). A member's merged tip is pushed to a
@@ -633,6 +711,8 @@ ${_line#build-error: }" ;;
             land_mark "$_mid" CERTIFIED "$_mtip"
         done
         "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
+        _lc_settle_batch "$batch_file" "$pr_n" "" \
+            "$(printf '%s\n' "${members_arr[@]}" | cut -d: -f1 | tr '\n' ',' | sed 's/,$//')"
         rm -f "$batch_file"
         local _all_ids; _all_ids="$(printf '%s\n' "${members_arr[@]}" | cut -d: -f1 | tr '\n' ' ' | sed 's/ /, /g' | sed 's/, $//')"
         printf 'verdict %s: PR %s red only on suite(s) already red on base — requeueing all, not attributable: %s\n' \
@@ -663,6 +743,8 @@ ${_line#build-error: }" ;;
         done
         queue_bisect_split "$name" "$base_sha" "${members_arr[@]}"
         "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
+        _lc_settle_batch "$batch_file" "$pr_n" "" \
+            "$(printf '%s\n' "${members_arr[@]}" | cut -d: -f1 | tr '\n' ',' | sed 's/,$//')"
         rm -f "$batch_file"
         local _all_ids; _all_ids="$(printf '%s\n' "${members_arr[@]}" | cut -d: -f1 | tr '\n' ' ' | sed 's/ /, /g' | sed 's/, $//')"
         printf 'verdict %s: PR %s red — no suite annotations; bisect halved (%d+%d)\n' \
@@ -904,6 +986,8 @@ ${_line#build-error: }" ;;
                 done
                 queue_bisect_split "$name" "$base_sha" "${members_arr[@]}"
                 "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
+                _lc_settle_batch "$batch_file" "$pr_n" "" \
+                    "$(printf '%s\n' "${members_arr[@]}" | cut -d: -f1 | tr '\n' ',' | sed 's/,$//')"
                 rm -f "$batch_file"
                 printf 'verdict %s: PR %s together-only red — halved (%d+%d)\n' \
                     "$name" "$pr_n" "$half" "$(( mc - half ))"
@@ -1033,6 +1117,9 @@ ${_line#build-error: }" ;;
         done
         if [ "${#ejected[@]}" -gt 0 ] || [ "${#survivors[@]}" -gt 0 ]; then
             "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
+            _lc_settle_batch "$batch_file" "$pr_n" \
+                "$(printf '%s\n' "${ejected[@]}" | sed 's/[:|].*//' | tr '\n' ',' | sed 's/,$//')" \
+                "$(printf '%s\n' "${survivors[@]}" | cut -d: -f1 | tr '\n' ',' | sed 's/,$//')"
             rm -f "$batch_file"
             if [ "${#ejected[@]}" -gt 0 ]; then
                 printf 'verdict %s: PR %s — ejected %d, requeued %d\n' \
@@ -1390,6 +1477,7 @@ _verdict_process() {
                 if spira_git_push "$repo" "$remote" "${batch_head}:${base_branch}" 2>/dev/null; then
                     printf 'verdict %s: PR %s landed by fast-forward (%s)\n' \
                         "$name" "$pr_n" "$batch_head"
+                    _lc_land_batch "$batch_file" "$pr_n" "$batch_head"
                     local _mm _mid _mtip
                     for _mm in $members_str; do
                         _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
