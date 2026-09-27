@@ -34,7 +34,6 @@ FAYTH_MAX_CONCURRENT=1
 FAYTH_LEASE_MINUTES=90
 FAYTH_HEARTBEAT_SECONDS=30
 FAYTH_LEASE_SECONDS=600
-FAYTH_STALL_BEATS=10
 
 # NO FAYTH_REPO — same reasoning as builder: the repository comes from the bead's own
 # repo:<name> label, which file_judgement always sets.

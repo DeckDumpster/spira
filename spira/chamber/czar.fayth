@@ -76,7 +76,6 @@ FAYTH_LANE=czar
 FAYTH_TIMEOUT_SECONDS=480
 FAYTH_LEASE_MINUTES=10
 FAYTH_HEARTBEAT_SECONDS=30
-FAYTH_STALL_BEATS=8
 
 # TOOLS. The czar reads the queue and invokes the queue toolkit. No Edit, no Write:
 # the "escalate first" row of the authority table (changing fayth count, throttle, or

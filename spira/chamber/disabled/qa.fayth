@@ -66,7 +66,6 @@ FAYTH_LANE=qa
 FAYTH_TIMEOUT_SECONDS=3600
 FAYTH_LEASE_MINUTES=70
 FAYTH_HEARTBEAT_SECONDS=120
-FAYTH_STALL_BEATS=8
 
 # READ-ONLY TOOLSET. QA reads the scar record, queries the database, and files beads. It
 # does not write code; it does not edit tests. Those are builder tasks the bead it files
