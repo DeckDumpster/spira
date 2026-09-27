@@ -26,21 +26,12 @@
 # scar: unrecorded
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
+tl_subshell_safe
 
-# Counters live in temp files so subshells can contribute.
-_RESULTS="$(mktemp)"
-trap 'rm -f "$_RESULTS"' EXIT
-ok()     { printf 'ok\n'   >> "$_RESULTS"; printf '  ok    %s\n' "$1"; }
-bad()    { printf 'bad\n'  >> "$_RESULTS"; printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 isnt()   { [ "$2" != "$3" ] && ok "$1" || bad "$1" "did not want [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "unwanted [$2] in [$3]"; }
 exists() { [ -e "$2" ] && ok "$1" || bad "$1" "expected file/dir: $2"; }
 isexec() { [ -x "$2" ] && ok "$1" || bad "$1" "expected executable: $2"; }
-
-printf 'test-canary\n'
-printf '  (stage.sh + canary.sh end-to-end)\n'
 
 # ─── T1: stage up creates expected structure ──────────────────────────────────
 printf '\nT1: stage up creates expected structure\n'
@@ -238,8 +229,4 @@ printf '\nT7: full canary (sentinel + landing)\n'
     fi
 )
 
-# ─── summary ─────────────────────────────────────────────────────────────────
-pass="$(grep -c '^ok$'  "$_RESULTS" 2>/dev/null || true)"
-fail="$(grep -c '^bad$' "$_RESULTS" 2>/dev/null || true)"
-printf '\n%s passed, %s failed\n' "$pass" "$fail"
-[ "${fail:-0}" -eq 0 ]
+tl_summary

@@ -2,16 +2,8 @@
 # covers: spira/gate-diag.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-
-_RESULTS="$(mktemp)"
-trap 'rm -f "$_RESULTS"' EXIT
-ok()     { printf 'ok\n'  >> "$_RESULTS"; printf '  ok    %s\n' "$1"; }
-bad()    { printf 'bad\n' >> "$_RESULTS"; printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "unwanted [$2] in [$3]"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-
-printf 'test-gate-diag\n'
+. "$HERE/testlib.sh"
+tl_subshell_safe
 
 # Build a results root with one red suite.
 # result file fields: status _ secs _ _ _ rc
@@ -127,8 +119,4 @@ printf '\nT6: results.jsonl gets a red-green (verdict) row when the retry passed
     nowant "verdict row does not also claim red-red for the same suite" '"status":"red-red"'  "$_row"
 )
 
-# ── summary ────────────────────────────────────────────────────────────────────
-pass="$(grep -c '^ok$'  "$_RESULTS" 2>/dev/null || true)"
-fail="$(grep -c '^bad$' "$_RESULTS" 2>/dev/null || true)"
-printf '\n%s passed, %s failed\n' "$pass" "$fail"
-[ "${fail:-0}" -eq 0 ]
+tl_summary
