@@ -624,7 +624,8 @@ echo "UNBUILT HERE, INSTALLED THERE — binary-gated units a tarball install lef
 # service, .timer and spira-loom-prod.service behind (reported as strays, never removed).
 # `un` sets no SPIRA_BROKER_BIN/SPIRA_LOOM_BIN, so conf.sh resolves them under $FAKE_REPO,
 # where nothing is built — the source-checkout shape.
-for _ub in spira-broker-test.service spira-broker-test.timer spira-loom-test.service; do
+for _ub in spira-broker-test.service spira-broker-test.timer spira-loom-test.service \
+           spira-reconciler-flow-test.service spira-reconciler-flow-test.timer; do
     printf '[Unit]\nDescription=left by a tarball install\n' > "$DEST/$_ub"
 done
 [ ! -x "$FAKE_REPO/bin/broker" ] && [ ! -x "$FAKE_REPO/target/release/broker" ] \
@@ -633,7 +634,8 @@ done
 unbuilt_out="$(un)"
 unbuilt_rc=$?
 iszero "unbuilt: uninstall exits 0" "$unbuilt_rc"
-for _ub in spira-broker-test.service spira-broker-test.timer spira-loom-test.service; do
+for _ub in spira-broker-test.service spira-broker-test.timer spira-loom-test.service \
+           spira-reconciler-flow-test.service spira-reconciler-flow-test.timer; do
     [ -e "$DEST/$_ub" ] \
         && bad "unbuilt: $_ub is removed" "still in $DEST" \
         || ok  "unbuilt: $_ub is removed"
