@@ -35,6 +35,13 @@
 # covers: cockpit/rebuild.sh cockpit/layout.sh concierge.sh
 set -uo pipefail
 
+# `scrub` with no -L targets the default socket — but a bare `tmux` prefers $TMUX, the
+# server the INVOKING shell is already attached to, over the default. Run this by hand
+# from inside a session and it would scrub that session's server, not the cockpit's own.
+# Cleared before the first tmux call; an explicit -L/-S in "$@" already outranks $TMUX and
+# is unaffected.
+unset TMUX
+
 # Session identity, in the order the client sets them. Anything that names ONE session,
 # ONE process or ONE installed client belongs here.
 VARS="

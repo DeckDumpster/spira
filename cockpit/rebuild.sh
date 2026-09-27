@@ -74,6 +74,12 @@ SESSIONS="${COCKPIT_SESSIONS:-brain hunk chat}"
 # because SPIRA_HOME is derived from conf.sh's own location and is not settable externally.
 CONC="${COCKPIT_CONCIERGE:-${SPIRA_HOME:-$HERE/..}/concierge.sh}"
 
+# $TMUX names whatever server the invoking shell is already attached to, and every bare
+# `tmux` call below prefers it over the default socket. Run this by hand from inside a
+# session and it repairs — or reforks — THAT session's server, not the cockpit's, leaving
+# the real cockpit untouched. Clear it before the first tmux call.
+unset TMUX
+
 # THE SERVER THIS SCRIPT IS ABOUT TO FORK INHERITS THIS PROCESS'S ENVIRONMENT, AND KEEPS IT
 # FOR LIFE. tmux hands every new pane the environment the server was started with, so running
 # rebuild.sh from inside a Claude session would stamp that session's identity onto every pane

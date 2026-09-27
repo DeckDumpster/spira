@@ -101,6 +101,12 @@ DOWN_MARKER="$RUN/cockpit.down"
 # source this file, point TMUX_BIN at a PATH shim that records argv, and check what a
 # function asked tmux to do without a real server.
 TMUX_BIN="${TMUX_BIN:-tmux}"
+# The cockpit is one specific server (the default socket, or wherever TMUX_TMPDIR points).
+# $TMUX names whatever server the INVOKING shell happens to be attached to — set for every
+# tmux client automatically, including a human or an agent running this by hand from inside
+# an unrelated session — and tmux prefers it over the default socket if left in place. Clear
+# it so this script always reaches the cockpit's own server, never the caller's.
+unset TMUX
 
 # SPIRA_CONF, when set, points to the config file for this instance. Pane commands carry it
 # in the command string so a respawn — from tmux itself or from the ensure timer — uses the
