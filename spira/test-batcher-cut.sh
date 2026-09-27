@@ -224,7 +224,8 @@ is   "A: open-batch branch is spira/queue/*" "1" "$(case "$(open_field branch)" 
 is   "A: open-batch owner=batcher (sp-lomk3: verdict's own CI-red routing reads this)" \
     "batcher" "$(open_field owner)"
 is   "A: sp-caaa1 landstate BATCHED" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-caaa1")"
-want "A: commit message names spira: land sp-caaa1" "spira: land sp-caaa1" \
+want "A: commit message names spira: land sp-caaa1, with the bead's own title" \
+    "spira: land sp-caaa1 — sp-caaa1 bead" \
     "$(git -C "$REPO" log --format=%s "$(open_field branch)" -n 5 2>/dev/null)"
 is   "A: forge pr-create called once" "1" "$(grep -c '^pr-create' "$FORGE_LOG")"
 if [ -x "$TSD_BIN" ]; then

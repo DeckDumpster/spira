@@ -1551,7 +1551,7 @@ $(printf '%s' "$gate_out" | tail -20)"
                 # cost if it is allowed to fall through to the merge.
                 git -C "$land" checkout -q -B landing "$base_fqref" 2>/dev/null || { wedged=1; break; }
                 _pre_merge="$(git -C "$land" rev-parse HEAD 2>/dev/null)"
-                if ! git -C "$land" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" merge --no-edit -q -m "spira: land $id" "$br" 2>/dev/null; then
+                if ! git -C "$land" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" merge --no-edit -q -m "$(land_subject "$id")" "$br" 2>/dev/null; then
                     _merge_conflicts="$(git -C "$land" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
                     _merge_conflicts="${_merge_conflicts% }"
                     git -C "$land" merge --abort 2>/dev/null

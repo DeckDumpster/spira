@@ -654,7 +654,7 @@ cmd_open_batch() {
     while read -r _bid _btip; do
         [ -n "$_bid" ] || continue
         if git -C "$wt" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" \
-               merge --no-edit --no-ff -m "spira: land $_bid" "$_btip" >/dev/null 2>&1; then
+               merge --no-edit --no-ff -m "$(land_subject "$_bid")" "$_btip" >/dev/null 2>&1; then
             members+=("$_bid:$_btip")
             member_ids+=("$_bid")
         else

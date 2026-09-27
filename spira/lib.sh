@@ -3906,6 +3906,29 @@ if notes:
 ' 2>/dev/null || printf '(could not read %s)' "$id"
 }
 
+# land_subject <id> -> "spira: land <id>", or "spira: land <id> — <title>" when the bead
+# has a title. Every writer of a landing merge (verdict.sh, landing.sh, queue.sh,
+# batcher-cut's Rust seam) calls this, so every reader that widens its own match to a
+# trailing title (landed()/landed_sha() below, CHECK5 in sentinel.sh, cockpit.sh,
+# overrides.sh) stays in sync with what is actually written.
+land_subject() {
+    local id="$1" _t
+    _t="$(bdjson show "$id" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
+    t = str(d[0].get("title", "")) if d else ""
+except Exception:
+    t = ""
+print(" ".join(t.split())[:120])
+' 2>/dev/null)"
+    if [ -n "${_t:-}" ]; then
+        printf 'spira: land %s — %s' "$id" "$_t"
+    else
+        printf 'spira: land %s' "$id"
+    fi
+}
+
 # landed <id> <repo> -> 0 landed, 1 not landed, 2 CANNOT TELL.
 #
 # THREE OUTCOMES, NOT TWO. A caller that reads "cannot tell" as "not landed" reopens finished
@@ -3936,12 +3959,13 @@ landed() {
     # commit that talked about the bead, not one that landed it (sp-dgaig). --grep is still
     # used to narrow full history to candidates cheaply; only the SUBJECT of each candidate is
     # then trusted, and only two shapes count: the queue's own merge subject
-    # ("spira: land <id>", produced by batch.sh/landing.sh), or an aeon's own commit for its
-    # own bead ("<id>: ..." — never a substring, the colon must follow immediately).
+    # ("spira: land <id>", optionally " — <title>", written by land_subject() and produced
+    # by batch.sh/verdict.sh/landing.sh), or an aeon's own commit for its own bead
+    # ("<id>: ..." — never a substring, the colon must follow immediately).
     # shellcheck disable=SC2086
     while IFS= read -r _landed_subj; do
         case "$_landed_subj" in
-            "spira: land $id") return 0 ;;
+            "spira: land $id" | "spira: land $id "*) return 0 ;;
             "$id":*) return 0 ;;
         esac
     done < <(git -C "$repo" log --format='%s' --grep="$id" -F $refs 2>/dev/null)
@@ -3957,7 +3981,7 @@ landed_sha() {
     # shellcheck disable=SC2086
     while IFS=$'\t' read -r _sha _subj; do
         case "$_subj" in
-            "spira: land $id") printf '%s' "$_sha"; return 0 ;;
+            "spira: land $id" | "spira: land $id "*) printf '%s' "$_sha"; return 0 ;;
             "$id":*) printf '%s' "$_sha"; return 0 ;;
         esac
     done < <(git -C "$repo" log --format='%H%x09%s' --grep="$id" -F $refs 2>/dev/null)

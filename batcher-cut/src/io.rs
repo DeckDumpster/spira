@@ -82,6 +82,13 @@ pub fn land_mark(env: &Env, id: &str, state: &str, tip: &str, reason: &str) {
     let _ = lib_call(env, "land_mark", [id, state, tip, reason]);
 }
 
+/// The queue's own merge subject for `id` — "spira: land <id>", or with " — <title>"
+/// appended when the bead has one (land_subject(), lib.sh). Falls back to the untitled form
+/// if lib.sh cannot be reached, so a merge is never blocked on this.
+fn land_subject(env: &Env, id: &str) -> String {
+    lib_call(env, "land_subject", [id]).unwrap_or_else(|_| format!("spira: land {id}"))
+}
+
 pub fn bead_reopen(env: &Env, id: &str, cause: &str, note: &str) {
     let _ = lib_call(env, "bead_reopen", [id, cause, note]);
 }
@@ -362,12 +369,13 @@ pub fn worktree_reset(repo: &Repo, wt: &Path, at_sha: &str) -> Result<(), String
 /// reports Conflict on any failure — a dirty merge state must never be left for the next
 /// member's attempt.
 pub fn merge_member(env: &Env, wt: &Path, id: &str, tip: &str) -> MergeResult {
+    let subject = land_subject(env, id);
     let ok = run_status(
         Command::new("git")
             .arg("-C")
             .arg(wt)
             .args(["-c", &format!("user.name={}", env.git_name), "-c", &format!("user.email={}", env.git_email)])
-            .args(["merge", "--no-edit", "--no-ff", "-m", &format!("spira: land {id}")])
+            .args(["merge", "--no-edit", "--no-ff", "-m", &subject])
             .arg(tip),
     );
     if ok {

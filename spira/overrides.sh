@@ -38,11 +38,16 @@ set -uo pipefail
 
 _ov_state_dir() { printf '%s/.state' "$SPIRA_OVERRIDES"; }
 
-# _ov_landed <repo> <bead> — has HEAD's history got a commit titled "spira: land <bead>"?
+# _ov_landed <repo> <bead> — has HEAD's history got a commit titled "spira: land <bead>",
+# optionally followed by " — <title>" (land_subject(), lib.sh)?
 _ov_landed() {
-    local repo="$1" bead="$2"
-    git -C "$repo" log --format='%s' -F --grep="spira: land $bead" -n 1 2>/dev/null \
-        | grep -qFx "spira: land $bead"
+    local repo="$1" bead="$2" _subj
+    while IFS= read -r _subj; do
+        case "$_subj" in
+            "spira: land $bead" | "spira: land $bead "*) return 0 ;;
+        esac
+    done < <(git -C "$repo" log --format='%s' -F --grep="spira: land $bead" 2>/dev/null)
+    return 1
 }
 
 # _ov_load <spec> — source one spec with a clean slate. Resets BEAD and the three functions

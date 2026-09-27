@@ -58,6 +58,34 @@ is "landed_sha(): returns the writer commit's own sha" "$FIX_SHA" "$LIB_SHA"
 
 # ============================================================================
 echo
+echo "THE WIDENED FORM — land_subject() appends the bead's own title, and landed()/landed_sha() still anchor on the id:"
+# ============================================================================
+testdb_seed <<JSONL
+{"id":"sp-titled","title":"a fix with a title","status":"closed","issue_type":"bug","labels":["spira","plan"],"updated_at":"2026-09-05T00:00:00Z"}
+JSONL
+
+SUBJ="$(land_subject sp-titled)"
+is "land_subject(): appends the bead's own title" "spira: land sp-titled — a fix with a title" "$SUBJ"
+
+git -C "$REPO" commit -q --allow-empty -m "$SUBJ"
+TITLED_SHA="$(git -C "$REPO" rev-parse HEAD)"
+
+landed sp-titled "$REPO" 2>/dev/null
+is "landed(): the titled writer form is recognised" "0" "$?"
+
+TITLED_LIB_SHA="$(landed_sha sp-titled "$REPO" 2>/dev/null)"
+is "landed_sha(): returns the titled writer commit's own sha" "$TITLED_SHA" "$TITLED_LIB_SHA"
+
+# A longer id that merely starts with this one's id, even in the titled form, must not
+# false-match — the case pattern anchors on the id followed by a space, never a bare prefix.
+# sp-titledx's own titled commit lands AFTER sp-titled's, so a prefix-matching reader would
+# report sp-titled's tip as this newer commit; the anchored one must not.
+git -C "$REPO" commit -q --allow-empty -m "spira: land sp-titledx — a different, unrelated bead"
+is "landed_sha(): a longer id's titled commit does not shadow this id's own" \
+    "$TITLED_SHA" "$(landed_sha sp-titled "$REPO" 2>/dev/null)"
+
+# ============================================================================
+echo
 echo "THE OTHER READER — gh-issue-backfill.sh's own ancestry search agrees with landed_sha():"
 # gh-issue-backfill.sh does not call landed()/landed_sha(); it runs its own git log
 # --grep="\$id" ancestry search (no subject-shape filter) and trusts the first hit. On
