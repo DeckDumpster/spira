@@ -485,7 +485,11 @@ fa_reset; fa_seed sp-ex-3
 rc="$(fa_run_aeon groomonly)"
 is "graph-only close stands — NOT converted to submitted" "closed" "$(fa_status sp-ex-3)"
 is "aeon exits 0" "0" "$rc"
-want "ledger records the close, not a submitted conversion" "status=closed" "$(fa_ledger_line sp-ex-3)"
+# fa_ledger_line hardcodes the "builder" fayth name; this row runs as groomonly, so read
+# its own last done-line directly rather than duplicating that assumption.
+ledger3="$(grep " sp-ex-3 rc=" "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null | tail -1)"
+want   "ledger has a done line for this bead" "sp-ex-3" "$ledger3"
+nowant "and it does NOT record a submitted conversion" "status=submitted" "$ledger3"
 # The positive control for this UC (the same shim, no FAYTH_GRAPH_ONLY) is the "exit code,
 # bead mode" row above (sp-ex-2): identical close, converted to submitted without the flag.
 
