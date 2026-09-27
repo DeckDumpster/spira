@@ -732,4 +732,67 @@ else
 fi
 
 echo
+echo "28. every job that runs on the provisioned runner refuses to start unless provision succeeded, and provision raises the guest-agent timeout above 120s (sp-5a30t):"
+# always() (or !cancelled() alone) bypasses the default implicit needs-success
+# gate, so a job that uses one WITHOUT also checking needs.provision.result
+# queues on runs-on's runner label even when provision FAILED. No runner is
+# ever registered under a label a failed provision never finished minting, so
+# the job sits queued until someone cancels it or GitHub's 24h limit expires
+# it — acceptance.yml did exactly this until sp-5a30t.
+_provision_if_ok() {
+    # $1 = the job's `if:` value; empty means no if: line at all, which
+    # leaves the default implicit needs-success gate in force and is safe.
+    local _line="$1"
+    [ -z "$_line" ] && return 0
+    printf '%s' "$_line" | grep -qF "needs.provision.result == 'success'" && return 0
+    printf '%s' "$_line" | grep -qE 'always\(\)|cancelled\(\)' && return 1
+    return 0
+}
+# Positive control: prove the matcher actually catches the pre-sp-5a30t shape
+# before trusting it against the real workflows.
+if _provision_if_ok "always() && needs.guard.outputs.already-published != 'true'"; then
+    bad "positive control: an always()-only bypass of provision's result is detected" \
+        "the check passed against the pre-sp-5a30t acceptance.yml condition"
+else
+    ok "positive control: an always()-only bypass of provision's result is detected"
+fi
+if _provision_if_ok "\${{ !cancelled() && needs.provision.result == 'success' && needs.guard.outputs.already-published != 'true' }}"; then
+    ok "positive control: a condition that checks needs.provision.result passes"
+else
+    bad "positive control: a condition that checks needs.provision.result passes" \
+        "the check rejected a condition that does check needs.provision.result"
+fi
+
+_check_provisioned_jobs() {
+    # $1 = workflow label, $2 = workflow file content
+    local _label="$1" _content="$2" _prov_block _job _block _if_line
+    _prov_block="$(awk '/^  provision:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' <<<"$_content")"
+    if [ -z "$_prov_block" ]; then
+        bad "$_label provision job located (positive control)" "awk extracted nothing"
+        return
+    fi
+    want "$_label provision sets AGENT_TIMEOUT to 300" "AGENT_TIMEOUT: 300" "$_prov_block"
+
+    # Match only the job whose OWN runs-on names the provisioned label — not
+    # teardown, which passes that same label as a `with:` input to destroy the
+    # VM and must run under always() precisely because provision can fail.
+    for _job in $(awk '/^  [a-z_-]+:$/{job=$1; sub(/:$/,"",job)} /^    runs-on:.*needs\.provision\.outputs\.label/{print job}' <<<"$_content"); do
+        _block="$(awk -v j="  $_job:" '$0==j{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' <<<"$_content")"
+        _if_line="$(printf '%s\n' "$_block" | sed -n 's/^    if: *//p' | head -1)"
+        if _provision_if_ok "$_if_line"; then
+            ok "$_label job '$_job' (runs on the provisioned runner) does not bypass a failed provision"
+        else
+            bad "$_label job '$_job' (runs on the provisioned runner) does not bypass a failed provision" \
+                "if: [$_if_line] uses always()/cancelled() without checking needs.provision.result — queues on a runner label a failed provision never registers"
+        fi
+    done
+}
+_check_provisioned_jobs "gate.yml" "$G"
+if [ -r "$ACC_YML" ]; then
+    _check_provisioned_jobs "acceptance.yml" "$(cat "$ACC_YML")"
+else
+    bad "acceptance.yml exists for cross-check" "not found at $ACC_YML"
+fi
+
+echo
 tl_summary
