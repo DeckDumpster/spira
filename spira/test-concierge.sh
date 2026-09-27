@@ -214,35 +214,59 @@ want "start escapes the oneshot cgroup via systemd-run --remain-after-exit" \
 echo
 echo "duplicate client detection"
 
-# (b) a second start/here while one holds the id does not launch a second client.
-# concierge_live_pid finds a process by scanning /proc/*/cmdline for the session id.
-#
-# SEEN TO FAIL FIRST: with a non-matching id the pid must NOT be returned, proving the scan
-# is driven by the id and not by "is any claude running".
-LP_SID="live-pid-test-$(date +%s)"
+# concierge_live_pid finds a process by the TRANSCRIPT FILE it has open, not by argv
+# (sp-epe0m): a bare `claude --resume` typed into a terminal with a picker selection never
+# puts the session id in argv at all, so a holder resumed that way was invisible to the old
+# argv scan and a second client got launched onto the same session. Identity is now the
+# transcript path at $SPIRA_TOKEN_PROJECTS/*/<sid>.jsonl held open on a live fd.
+LP_PROJ="$TMP/lp-projects/proj"; mkdir -p "$LP_PROJ"
+LP_HOLD_PY="$TMP/hold-open.py"
+cat > "$LP_HOLD_PY" <<'PY'
+import sys, time
+f = open(sys.argv[1])
+if len(sys.argv) > 3:
+    import os
+    with open(sys.argv[3], 'w') as pf:
+        pf.write(str(os.getpid()))
+time.sleep(float(sys.argv[2]))
+PY
+
 lp() { SPIRA_RUN="$TMP" SPIRA_WIKI="$TMP/fakebrain" SPIRA_CONF="$TMP/no.conf" \
+        SPIRA_TOKEN_PROJECTS="$TMP/lp-projects" \
         bash "$HARNESS/concierge.sh" _live-pid "$1" 2>/dev/null; }
 
-# POSITIVE CONTROL: a non-existent id must return nothing.
-is "no pid for an id no process holds" "" "$(lp "definitely-not-in-any-cmdline-$$")"
+# POSITIVE CONTROL: an id with no transcript file anywhere must return nothing.
+is "no pid for an id with no transcript" "" "$(lp "definitely-no-transcript-$$")"
 
-# THE PROPERTY UNDER TEST: launch a background sleep with the id in its argv and find its pid.
-bash -c "exec -a claude python3 -c 'import time; time.sleep(10)' --resume ${LP_SID}" &
+# THE PROPERTY UNDER TEST: a claude-argv0 process holding the transcript open on an fd is
+# found, with no `--resume` anywhere in its argv — the exact shape a bare, picker-resumed
+# session has.
+LP_SID="live-pid-test-$(date +%s)"
+LP_TRANSCRIPT="$LP_PROJ/$LP_SID.jsonl"; : > "$LP_TRANSCRIPT"
+bash -c "exec -a claude python3 '$LP_HOLD_PY' '$LP_TRANSCRIPT' 10" &
 LP_PID=$!
 sleep 0.3
 trap 'kill "$LP_PID" 2>/dev/null; rm -rf "$TMP"' EXIT
 
 found="$(lp "$LP_SID")" || found=""
-is "live pid is found when a process holds the id" "$LP_PID" "$found"
+is "live pid is found by its open transcript, with no --resume in argv" "$LP_PID" "$found"
 
-# IDENTITY, NOT A MENTION (2026-09-25): a process that only has the id somewhere in its
-# command line — a tail of the transcript, the caller's own shell — is not a holder. The old
-# substring scan reported one as a HEADLESS concierge and refused every start.
-LP_MENTION="mention-only-$(date +%s)-$$"
-bash -c "exec python3 -c 'import time; time.sleep(10)' $LP_MENTION" &
+# ARGV ALONE IS NO LONGER ENOUGH. A process that names the id in argv but never opens the
+# transcript is not a holder — the shape the old scan wrongly trusted.
+LP_MENTION_SID="mention-only-$(date +%s)-$$"
+bash -c "exec -a claude python3 -c 'import time; time.sleep(10)' --resume $LP_MENTION_SID" &
 LP_MPID=$!; sleep 0.3
-is "a process that only mentions the id is not a holder" "" "$(lp "$LP_MENTION")"
+is "naming the id in argv without the transcript open is not a holder" "" "$(lp "$LP_MENTION_SID")"
 kill "$LP_MPID" 2>/dev/null; wait "$LP_MPID" 2>/dev/null || true
+
+# IDENTITY, NOT A MENTION (2026-09-25): a non-claude process holding the transcript open —
+# a `tail -F` of the file — is not a holder either; argv0 still has to be claude.
+LP_TAIL_SID="tail-only-$(date +%s)-$$"
+LP_TAIL_TRANSCRIPT="$LP_PROJ/$LP_TAIL_SID.jsonl"; : > "$LP_TAIL_TRANSCRIPT"
+bash -c "exec -a tail python3 '$LP_HOLD_PY' '$LP_TAIL_TRANSCRIPT' 10" &
+LP_TPID=$!; sleep 0.3
+is "a non-claude process holding the transcript open is not a holder" "" "$(lp "$LP_TAIL_SID")"
+kill "$LP_TPID" 2>/dev/null; wait "$LP_TPID" 2>/dev/null || true
 
 # PROCESS GONE: pid is no longer returned after the process exits.
 kill "$LP_PID" 2>/dev/null; wait "$LP_PID" 2>/dev/null || true
@@ -250,29 +274,40 @@ is "pid is gone after the process exits" "" "$(lp "$LP_SID")"
 trap 'rm -rf "$TMP"' EXIT  # restore trap without the kill
 
 echo
-echo "convergence — a live holder with no tmux session is HEADLESS, not convergence (D10: was two tests)"
+echo "convergence — a live holder with no tty is HEADLESS, not convergence (D10: was two tests)"
 
 # SEEN TO FAIL FIRST: the old behaviour was exit 0 (treating the headless case as
 # convergence). The correct behaviour is exit 3 (HEADLESS): has-session already failed, so a
-# live holder with no session means the tmux server is gone, and no second client is spawned.
-# `claude` is stubbed on PATH so "no client was launched" is checked directly rather than
-# inferred, and the process is a real `python3 -c 'time.sleep'` holding the id in its argv —
-# not tmux, so this needs neither systemd nor tmux to run.
-CONV_SID="conv-test-$(date +%s)"
+# live holder with no controlling terminal means the tmux server that used to hold it is gone,
+# and no second client is spawned. `claude` is stubbed on PATH so "no client was launched" is
+# checked directly rather than inferred. The holder proves itself by an open transcript fd, as
+# concierge_live_pid now requires, and `setsid` detaches it from any controlling terminal —
+# exactly what a claude client actually orphaned by its dead tmux server looks like — so this
+# needs neither systemd nor tmux to run.
+CONV_PROJ="$(mktemp -d)"
 CONV_DIR="$(mktemp -d)"; mkdir -p "$CONV_DIR/bin"
 printf '#!/bin/sh\necho STUB_CLAUDE_RAN\n' > "$CONV_DIR/bin/claude"; chmod +x "$CONV_DIR/bin/claude"
 CONV_BRAIN="$(bash -c ". '$HERE/conf.sh' >/dev/null 2>&1; printf %s \"\${SPIRA_WIKI:-\$SPIRA_REPO}\"")"
+CONV_SID="conv-headless-$(date +%s)"
 printf '%s\n%s\n' "$CONV_SID" "$CONV_BRAIN" > "$CONV_DIR/concierge-session"
-bash -c "exec -a claude python3 -c 'import time; time.sleep(60)' --resume ${CONV_SID}" &
-CONV_PID=$!
-trap 'kill "$CONV_PID" 2>/dev/null; rm -rf "$CONV_DIR"; rm -rf "$TMP"' EXIT
-sleep 0.3
+CONV_TRANSCRIPT="$CONV_PROJ/$CONV_SID.jsonl"; : > "$CONV_TRANSCRIPT"
+CONV_PIDFILE="$CONV_DIR/holder.pid"
+setsid bash -c "exec -a claude python3 '$LP_HOLD_PY' '$CONV_TRANSCRIPT' 60 '$CONV_PIDFILE'" \
+    </dev/null >/dev/null 2>&1 &
+CONV_WRAP=$!
+for _i in 1 2 3 4 5 6 7 8 9 10; do [ -s "$CONV_PIDFILE" ] && break; sleep 0.2; done
+CONV_PID="$(cat "$CONV_PIDFILE" 2>/dev/null)"
+trap 'kill "$CONV_PID" "$CONV_WRAP" 2>/dev/null; rm -rf "$CONV_DIR" "$CONV_PROJ" "$TMP"' EXIT
+
+# POSITIVE CONTROL FOR THE FIXTURE ITSELF: the holder must actually have no controlling
+# terminal, or the HEADLESS branch below is not the branch this exercises.
+want "the headless fixture holder has no tty (positive control)" "?" "$(ps -o tty= -p "$CONV_PID" 2>/dev/null | tr -d '[:space:]')"
 
 CONV_SOCK="conv-no-second-$$"
-conv_out="$(PATH="$CONV_DIR/bin:$PATH" SPIRA_RUN="$CONV_DIR" \
+conv_out="$(PATH="$CONV_DIR/bin:$PATH" SPIRA_RUN="$CONV_DIR" SPIRA_TOKEN_PROJECTS="$CONV_PROJ" \
     CONCIERGE_SOCKET="$CONV_SOCK" CONCIERGE_SESSION="$CONV_SOCK" \
     bash "$HARNESS/concierge.sh" start 2>&1)"; conv_rc=$?
-kill "$CONV_PID" 2>/dev/null; wait "$CONV_PID" 2>/dev/null
+kill "$CONV_PID" "$CONV_WRAP" 2>/dev/null; wait "$CONV_WRAP" 2>/dev/null
 trap 'rm -rf "$TMP"' EXIT
 
 # POSITIVE CONTROL: if the fixture holder was never found, none of the assertions below
@@ -288,12 +323,79 @@ nowant "it does not advise an attach that cannot work"       "attach:  tmux"   "
 # and start proceeds to compose_brief. Pointed at an empty chamber, compose_brief fails with
 # "no brief at..." — proving this is a fallthrough and not a second accidental short-circuit.
 CONV_EMPTY="$(mktemp -d)"
-conv_no_out="$(SPIRA_HOME="$CONV_EMPTY" SPIRA_RUN="$CONV_DIR" \
+conv_no_out="$(SPIRA_HOME="$CONV_EMPTY" SPIRA_RUN="$CONV_DIR" SPIRA_TOKEN_PROJECTS="$CONV_PROJ" \
     CONCIERGE_SOCKET="$CONV_SOCK" CONCIERGE_SESSION="$CONV_SOCK" \
     bash "$HARNESS/concierge.sh" start 2>&1)"; conv_no_rc=$?
 rm -rf "$CONV_EMPTY"
 is   "start does not short-circuit without a live pid (proceeds to compose_brief)" 1 "$conv_no_rc"
 want "and the failure is compose_brief's, not the convergence guard's" "no brief at" "$conv_no_out"
+
+echo
+echo "convergence — a live holder WITH a tty is LIVE ELSEWHERE, and is never killed (sp-epe0m)"
+
+# THE BUG THIS BEAD FIXES. A bare `claude --resume` typed into an SSH terminal with a picker
+# selection has the exact same signature the HEADLESS case above has — no tmux session on
+# this socket — but it is a person mid-conversation, not an orphan. Treating it as HEADLESS
+# would have `start` (and cockpit-ensure, which runs it with CONCIERGE_RECOVER_HEADLESS=1)
+# kill a live session out from under them. A real controlling terminal is what tells the two
+# apart: python's pty module allocates one deterministically regardless of whether this test
+# itself is run under a tty, so the fixture does not depend on how the suite is invoked.
+LIVE_PROJ="$(mktemp -d)"
+LIVE_DIR="$(mktemp -d)"; mkdir -p "$LIVE_DIR/bin"
+printf '#!/bin/sh\necho STUB_CLAUDE_RAN\n' > "$LIVE_DIR/bin/claude"; chmod +x "$LIVE_DIR/bin/claude"
+LIVE_SID="conv-live-elsewhere-$(date +%s)"
+printf '%s\n%s\n' "$LIVE_SID" "$CONV_BRAIN" > "$LIVE_DIR/concierge-session"
+LIVE_TRANSCRIPT="$LIVE_PROJ/$LIVE_SID.jsonl"; : > "$LIVE_TRANSCRIPT"
+LIVE_HOLD_PY="$TMP/hold-open-tty.py"
+cat > "$LIVE_HOLD_PY" <<'PY'
+import os, pty, sys, time
+transcript, secs, pidfile = sys.argv[1], float(sys.argv[2]), sys.argv[3]
+child, _master = pty.fork()
+if child == 0:
+    with open(pidfile, 'w') as pf:
+        pf.write(str(os.getpid()))
+    f = open(transcript)
+    time.sleep(secs)
+    os._exit(0)
+os.waitpid(child, 0)
+PY
+LIVE_PIDFILE="$LIVE_DIR/holder.pid"
+bash -c "exec -a claude python3 '$LIVE_HOLD_PY' '$LIVE_TRANSCRIPT' 30 '$LIVE_PIDFILE'" &
+LIVE_WRAP=$!
+for _i in 1 2 3 4 5 6 7 8 9 10; do [ -s "$LIVE_PIDFILE" ] && break; sleep 0.2; done
+LIVE_PID="$(cat "$LIVE_PIDFILE" 2>/dev/null)"
+trap 'kill "$LIVE_PID" "$LIVE_WRAP" 2>/dev/null; rm -rf "$LIVE_DIR" "$LIVE_PROJ" "$TMP"' EXIT
+
+# POSITIVE CONTROL FOR THE FIXTURE ITSELF: the holder must actually have a real tty, or the
+# LIVE ELSEWHERE branch below is not the branch this exercises.
+_live_tty_check="$(ps -o tty= -p "$LIVE_PID" 2>/dev/null | tr -d '[:space:]')"
+if [ -n "$_live_tty_check" ] && [ "$_live_tty_check" != '?' ]; then
+    ok "the live-elsewhere fixture holder has a real tty (positive control)"
+else
+    bad "the live-elsewhere fixture holder has a real tty (positive control)" "tty=[$_live_tty_check]"
+fi
+
+LIVE_SOCK="live-no-second-$$"
+# CONCIERGE_RECOVER_HEADLESS=1 IS THE EXACT ENVIRONMENT cockpit-ensure RUNS start IN. Proving
+# the holder survives even with recovery enabled is the point: this is the flag that turns the
+# HEADLESS branch's "kill and restart" from advice into an action, and a live holder must never
+# reach that action.
+live_out="$(PATH="$LIVE_DIR/bin:$PATH" SPIRA_RUN="$LIVE_DIR" SPIRA_TOKEN_PROJECTS="$LIVE_PROJ" \
+    CONCIERGE_SOCKET="$LIVE_SOCK" CONCIERGE_SESSION="$LIVE_SOCK" CONCIERGE_RECOVER_HEADLESS=1 \
+    bash "$HARNESS/concierge.sh" start 2>&1)"; live_rc=$?
+
+want   "the fixture holder is detected"                    "$LIVE_SID"       "$live_out"
+is     "start exits 4 (refusing, like the stray-holder case)" 4 "$live_rc"
+want   "it says the session is live elsewhere"              "live elsewhere" "$live_out"
+nowant "it does not call the live holder HEADLESS"           "HEADLESS"      "$live_out"
+nowant "no claude stub was launched"                         "STUB_CLAUDE_RAN" "$live_out"
+if kill -0 "$LIVE_PID" 2>/dev/null; then
+    ok "the live holder was not killed, even with recovery enabled"
+else
+    bad "the live holder was not killed, even with recovery enabled" "pid $LIVE_PID is gone"
+fi
+kill "$LIVE_PID" "$LIVE_WRAP" 2>/dev/null; wait "$LIVE_WRAP" 2>/dev/null
+trap 'rm -rf "$TMP"' EXIT
 
 echo
 echo "singleton — a bare, hand-started holder is detected by name, not by resume id (sp-rig42)"

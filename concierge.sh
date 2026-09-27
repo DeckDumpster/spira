@@ -191,29 +191,38 @@ concierge_resume_id() {
     printf '%s' "$stored_id"
 }
 
-# concierge_live_pid <session-id> -> pid holding that session id in --resume, or non-zero.
-# Scans /proc/*/cmdline rather than pgrep -f: pgrep matches against a rendered string and
-# can collide with process names; reading cmdline directly is exact and cannot be fooled by
-# argv[0] manipulation (law-a-pattern-match-is-not-an-identity-check).
+# concierge_live_pid <session-id> -> pid holding that session id, or non-zero.
+#
+# IDENTITY IS THE OPEN TRANSCRIPT, NOT ARGV (sp-epe0m). A holder used to mean "a claude
+# process with `--resume <sid>` in its command line", but a session resumed from a bare
+# `claude --resume` with a picker selection never puts the id in argv at all — the picker
+# resolves it interactively. That holder was invisible here, so `start` launched a second
+# client onto the same session (2026-09-26). The client keeps the session's transcript file
+# open for as long as it runs, at `$SPIRA_TOKEN_PROJECTS/*/<sid>.jsonl`; a process holding
+# that exact file open is the same identity check by a route argv cannot dodge.
 concierge_live_pid() {
-    local sid="$1" f pid
+    local sid="$1" transcript f pid
+    transcript="$(find "$SPIRA_TOKEN_PROJECTS" -name "$sid.jsonl" -print -quit 2>/dev/null)"
+    [ -n "$transcript" ] || return 1
     for f in /proc/*/cmdline; do
         pid="${f%/cmdline}"; pid="${pid##*/}"
         case "$pid" in *[!0-9]*) continue ;; esac
         [ "$pid" = "$$" ] && continue
         # guard the read: the glob races process exit, and the shell's own error precedes tr's.
         [ -r "$f" ] || continue
-        # IDENTITY, NOT A SUBSTRING. Any process whose command line merely MENTIONS the id —
-        # a `tail -F` of the transcript, a shell the session itself spawned — matched here and
-        # was reported as a headless concierge, refusing every start until it was killed by
-        # hand (2026-09-25). A holder is a claude executable resumed ON this id.
-        local argv0 args
+        # argv0 STILL NARROWS TO A claude EXECUTABLE. The open-file check alone would match a
+        # `tail -F` of the transcript just as readily; requiring both is a stronger identity
+        # check than either alone (law-a-pattern-match-is-not-an-identity-check).
+        local argv0 args fd link
         args="$( { tr '\0' '\n' < "$f"; } 2>/dev/null )" || continue
         argv0="${args%%$'\n'*}"
         [ "${argv0##*/}" = claude ] || continue
-        [[ "$args" == *$'\n'--resume$'\n'"$sid"* ]] || continue
-        printf '%s' "$pid"
-        return 0
+        for fd in /proc/"$pid"/fd/*; do
+            link="$(readlink "$fd" 2>/dev/null)" || continue
+            [ "$link" = "$transcript" ] || continue
+            printf '%s' "$pid"
+            return 0
+        done
     done
     return 1
 }
@@ -271,13 +280,30 @@ start)
         exit 4
     fi
     # CONVERGENCE CHECK BEFORE BRIEF. A live process holding the recorded session id means
-    # the concierge is already up (possibly on a different socket). Starting a second claude
-    # on the same session causes a 4090 eviction race. Exit 0 — it is running, no second
-    # is needed. Find by scanning /proc/*/cmdline, never pgrep -f.
+    # the concierge is already up (possibly on a different socket, or outside tmux entirely —
+    # see the tty check below). Starting a second claude on the same session causes a 4090
+    # eviction race. Exit 0 — it is running, no second is needed. Find by the transcript the
+    # holder has open, never argv (see concierge_live_pid).
     RESUME_ID="$(concierge_resume_id)"
     if [ -n "$RESUME_ID" ]; then
         _live="$(concierge_live_pid "$RESUME_ID")" && {
-            # has-session already failed above; a live holder with no session is headless.
+            # A HOLDER WITH A REAL TTY IS LIVE ELSEWHERE, NOT HEADLESS (sp-epe0m). A bare
+            # `claude --resume` typed into an SSH terminal holds the session with no tmux
+            # session on this socket at all — the same signature the HEADLESS case below has —
+            # but it is a person mid-conversation, not an orphan. Killing it, which
+            # CONCIERGE_RECOVER_HEADLESS does automatically from cockpit-ensure, would end a
+            # live session out from under them. `?` is ps's own mark for a process with no
+            # controlling terminal, which is what a client actually orphaned by its dead tmux
+            # server looks like.
+            _live_tty="$(ps -o tty= -p "$_live" 2>/dev/null | tr -d '[:space:]')"
+            if [ -n "$_live_tty" ] && [ "$_live_tty" != '?' ]; then
+                printf 'concierge: session %s is live elsewhere — pid %s on tty %s (%s)\n' \
+                    "$RESUME_ID" "$_live" "$_live_tty" "$(ps -o lstart= -p "$_live" 2>/dev/null)" >&2
+                printf '  refusing to start a second client onto the same session.\n' >&2
+                printf '  attach there, or end that session, then retry.\n' >&2
+                exit 4
+            fi
+            # has-session already failed above; a live holder with no tty is headless.
             printf 'concierge: session %s is held by pid %s but is HEADLESS — no tmux session on socket %s\n' \
                 "$RESUME_ID" "$_live" "$SOCKET" >&2
             printf '  the claude client outlived its tmux server; it cannot be attached to.\n' >&2
