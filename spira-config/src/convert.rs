@@ -409,6 +409,8 @@ pub fn spira_section(
             "SPIRA_GH_APP_KEY" => s.gh_app_key = Some(val.clone()),
             "SPIRA_GH_APP_PRIVATE_KEY" => s.gh_app_private_key = Some(val.clone()),
             "SPIRA_PVE_ENV" => s.pve_env = Some(val.clone()),
+            "SPIRA_WORKFLOW_ONLY_PATHS" => s.workflow_only_paths = Some(val.clone()),
+            "SPIRA_GH_API" => s.gh_api = Some(val.clone()),
             other => errors.push(format!(
                 "spira.conf: unknown key {other}, refused (not in conf.sh's SPIRA_CONF_KEYS \
                  or a typo — widen the schema in spira-config/src/convert.rs if this key is real)"
