@@ -154,6 +154,10 @@ want "note: text landed on the bd bead" "left by the container-tier suite" "$not
 after_events="$(root_sql --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM event WHERE lc_key='$BID'" -r json 2>&1)"
 is "note: emits no lifecycle event (bd, non-lifecycle, per design §3.5)" "$before_events" "$after_events"
 
+# submit is legal only from WORKING (lifecycle/src/bead.rs) — seed_bead leaves BID at
+# READY, same as every other fixture bead here; move it to WORKING first.
+root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='aeon-test', version=1 WHERE bead_id='$BID'" >/dev/null 2>&1
+
 # ── submit: bead Submit(tip), tip read from the worktree, never taken as an argument ──
 # A throwaway repo, never $REPO: $REPO here is testenv-batch.sh's own bind-mounted worktree,
 # whose .git gitlink points at a commondir that exists on the host, not inside this

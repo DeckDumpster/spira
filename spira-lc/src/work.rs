@@ -96,7 +96,7 @@ fn cmd_blocked(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     // section in the body (every "## " heading in its template is a required section,
     // not just the X-Spira-Default header) — a bare question string is refused.
     let body = format!("## Question\n{question}\n\n## Default\n{default}\n");
-    match crate::bd::ask_operator(&format!("{actor} <{bead_id}>"), question, &default, bead_id, &body) {
+    match crate::bd::ask_operator(&format!("{actor} <{actor}@spira>"), question, &default, bead_id, &body) {
         Ok(_) => (0, format!("hold applied; ask filed for {bead_id}")),
         Err(e) => (CANNOT_TELL, format!("hold applied, but filing the ask failed: {e}")),
     }
@@ -143,7 +143,7 @@ fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, Strin
     let subject = format!("superseded-by {successor}?");
     let question = format!("{bead_id} requests confirmation that it is superseded by {successor}.");
     let body = format!("## Question\n{question}\n\n## Default\n{successor}\n");
-    match crate::bd::ask_operator(&format!("{actor} <{bead_id}>"), &subject, successor, bead_id, &body) {
+    match crate::bd::ask_operator(&format!("{actor} <{actor}@spira>"), &subject, successor, bead_id, &body) {
         Ok(_) => (0, format!("hold applied; supersede-by-{successor} ask filed for {bead_id}")),
         Err(e) => (CANNOT_TELL, format!("hold applied, but filing the ask failed: {e}")),
     }
