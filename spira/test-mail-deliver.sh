@@ -133,7 +133,8 @@ RUN="$TMP/run"; mkdir -p "$RUN"
 WDIR="$RUN/watchd"; mkdir -p "$WDIR"
 MOCK_BIN="$TMP/bin"; mkdir -p "$MOCK_BIN"
 MAIL="$TMP/mail"
-CONCIERGE_NEW="$MAIL/concierge/new"; mkdir -p "$CONCIERGE_NEW"
+CONCIERGE_NEW="$MAIL/concierge/new"
+mkdir -p "$CONCIERGE_NEW" "$MAIL/concierge/cur" "$MAIL/concierge/tmp"
 
 # Manifest: mail-deliver as extern watcher. The health command runs the daemon's own
 # script via SPIRA_HOME (set by conf.sh to the harness directory when watchd.sh sources
