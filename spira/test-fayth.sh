@@ -31,11 +31,14 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 mkdir -p "$T/run"
 
 # Run with the real chamber so the suite exercises the installed fayths, not a model of
-# them. SPIRA_CONF at a nonexistent path so no host config leaks verdicts into the suite
-# (law-gates-run-in-a-clean-environment).
+# them. SPIRA_CONF and SPIRA_TOML at nonexistent paths so no host config leaks verdicts
+# into the suite (law-gates-run-in-a-clean-environment): lib.sh sources conf.sh into THIS
+# process, and an ambient SPIRA_TOML — set for an operator's own shell convenience —
+# would otherwise be read ahead of the fixture and inject a real persona roster.
 export SPIRA_HOME="$HERE"
 export SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
+export SPIRA_TOML="$T/no-such.toml"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 

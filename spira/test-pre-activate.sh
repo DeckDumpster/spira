@@ -81,9 +81,15 @@ EOF
 
 # run <release-dir> -> sets $out and $rc from a pre-activate.sh invocation in an
 # explicit, minimal environment: no ambient spira.toml, a stubbed bd on PATH.
+#
+# SPIRA_TOML IS PINNED TO A NONEXISTENT PATH, not merely left unset: check_config reads
+# ${SPIRA_TOML:-} straight from the environment, so an operator who exports it for their
+# own shell's convenience would otherwise leak a real, unrelated spira.toml into this
+# fixture's "no config in force" case.
 run() {
     out="$(
         HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/home/.config" SPIRA_REPO="$TMP/emptyrepo" \
+        SPIRA_TOML="$TMP/no-such.toml" \
         PATH="$TMP/binstub:$PATH" \
         bash "$HERE/pre-activate.sh" "$1" 2>&1
     )"
@@ -115,6 +121,19 @@ REL="$TMP/rel-config-skip"; mkrel "$REL"
 run "$REL"
 is   "config: no spira.toml: overall exit 0" 0 "$rc"
 want "config: no spira.toml: names the skip" "nothing to validate" "$out"
+
+# POSITIVE CONTROL (law-absence-needs-a-positive-control): export an ambient SPIRA_TOML
+# pointing at a real, valid file in THIS suite's own shell — exactly what an operator's
+# interactive environment does for convenience — and confirm run()'s explicit override to
+# a nonexistent path is what produces the skip, not mere accidental absence. Without that
+# override this assertion fails, since pre-activate.sh would find and report on the
+# ambient file instead.
+export SPIRA_TOML="$TMP/ambient-real.toml"
+printf 'spira = {}\n' > "$SPIRA_TOML"
+run "$REL"
+is   "config: ambient SPIRA_TOML set: overall exit 0 despite it" 0 "$rc"
+want "config: ambient SPIRA_TOML set: still names the skip" "nothing to validate" "$out"
+unset SPIRA_TOML
 
 REL="$TMP/rel-config-ok"; CONFIG_RC=0 mkrel "$REL"
 printf 'spira = {}\n' > "$TMP/spira.toml"
