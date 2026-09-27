@@ -117,7 +117,7 @@ _bead_file() {
         set -- create "$title" -l "$labels"
         [ -n "$priority" ]  && set -- "$@" -p "$priority"
         [ -n "$body_file" ] && set -- "$@" --body-file "$body_file"
-        [ -n "$json" ]      && set -- "$@" --json
+        if [ -n "$json" ]; then set -- "$@" --json; else set -- "$@" --silent; fi
         # --no-inherit-labels: this call already computed the full, correct label set
         # above (persona partition + repo); inheriting the parent's on top would include
         # its branch: label too, which is exactly the two-step dance
@@ -140,7 +140,7 @@ _bead_file() {
         [ "$kind" = "insight" ] && [ -z "$priority" ] && priority=4
         [ -n "$priority" ]  && set -- "$@" -p "$priority"
         [ -n "$body_file" ] && set -- "$@" --body-file "$body_file"
-        [ -n "$json" ]      && set -- "$@" --json
+        if [ -n "$json" ]; then set -- "$@" --json; else set -- "$@" --silent; fi
         [ -n "$parent" ]    && set -- "$@" --parent "$parent" --no-inherit-labels
         bdq "$@"
     fi
