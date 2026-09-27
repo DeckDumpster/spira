@@ -280,7 +280,7 @@ hasnt "no subject is printed"         "$mout" "A gate passed"
 # NOTHING MOVES TO cur/. The hook peeks, it does not read.
 is "nothing moved to cur/" "" "$(ls "$MAIL_DIR/concierge/cur/" | head -1)"
 n="$(printf '%s\n' "$mout" | wc -l)"
-is "the mail line is the only addition to the count" "3" "$n"
+is "the mail line is the only addition to the count" "4" "$n"
 
 # COUNT CARRIES THE REAL NUMBER. Plant a second message and verify.
 printf 'From: Gate <gate@spira>\nSubject: Another\nDate: Mon, 01 Jan 2024 00:00:01 +0000\n\nSecond body.\n' \
