@@ -41,6 +41,7 @@
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
 . "$(dirname "$0")/landing-lib.sh"
+. "$(dirname "$0")/lc-delivery.sh"
 
 # gate_fits and gate_lock_wait live here, ABOVE the source guard below, so a T1 suite can
 # source this file for the arithmetic alone without a live pass ever starting. Each takes
@@ -1657,6 +1658,7 @@ $(printf '%s' "$gate_out" | tail -20)"
                 land_mark "$id" LANDED "$tip" "$name"
                 rm -f "$LANDSTATE/$id.ejected" 2>/dev/null || true
                 _landed_head="$(git -C "$land" rev-parse HEAD 2>/dev/null)"
+                lc_deliver_push_delivered "$id" "$_landed_head"
                 gh_issue_closeout "$id" "$_landed_head" "$repo" || true
                 bead_close_on_land "$id" "$_landed_head" || true
                 # AFTER the push, never before it: the event says the commit is on the base
@@ -1682,6 +1684,7 @@ $(printf '%s' "$gate_out" | tail -20)"
                     log "landing: $br merges clean but push failed — leaving closed"
                 else
                     log "landing: $br merges clean but push kept losing the race — retrying next pass"
+                    lc_deliver_push_requeued "$id" "$tip"
                 fi
             else
                 git -C "$land" merge --abort 2>/dev/null
@@ -1742,6 +1745,7 @@ $(printf '%s' "$gate_out" | tail -20)"
                 else
                     _merge_note="Reopened by sentinel: branch $br conflicts with $base. The branch carries $_rn_merge commit(s) from the previous session — rebase onto $base, resolve the conflict, and finish. A merge conflict is not an escalation."
                 fi
+                lc_deliver_push_returned "$id" "genuinely conflicts with $base"
                 bead_reopen "$id" rebase-conflict "$_merge_note"
                 unset _rn_merge _anc _merge_other _merge_note _merge_conflicts
                 # Counter labels (sp-requeue-N) no longer written (sp-lzt).

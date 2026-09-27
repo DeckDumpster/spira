@@ -1139,6 +1139,15 @@ spira_conf_defaults() {
             SPIRA_LANDING_PASS_BIN="$SPIRA_REPO/target/release/landing-pass"
         fi
     fi
+    # spira-lc — show/list/history/event against spira_lifecycle (design §3.1, sp-uwv2s).
+    # Read by lc-delivery.sh, sourced from pr-pass-branch.sh and landing.sh's push mode.
+    if [ -z "${SPIRA_LC_BIN:-}" ]; then
+        if [ -f "$SPIRA_REPO/bin/spira-lc" ]; then
+            SPIRA_LC_BIN="$SPIRA_REPO/bin/spira-lc"
+        else
+            SPIRA_LC_BIN="$SPIRA_REPO/target/release/spira-lc"
+        fi
+    fi
     # The run/tsd/ writer (sp-sbc6o). Every producer of an observation — land_mark's landing
     # events, a suite's timing, and whatever the reconciler and batcher crate write once they
     # exist — shells out to this one binary rather than each formatting its own JSONL line.

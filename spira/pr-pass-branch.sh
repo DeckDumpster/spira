@@ -13,6 +13,8 @@
 #   4  bead is no longer closed (race with another actor)
 #   5  confine inconclusive (deferred to next pass)
 #   6  already submitted, no refresh needed (skip)
+#   7  pull request merged — recorded as delivered (lifecycle delivery machine, sp-n1ilm)
+#   8  pull request closed unmerged — recorded as returned (lifecycle delivery machine)
 set -uo pipefail
 
 repo="$1" br="$2" id="$3" baseref="$4" name="${5:-}" tip="$6"
@@ -20,6 +22,8 @@ repo="$1" br="$2" id="$3" baseref="$4" name="${5:-}" tip="$6"
 SPIRA_HOME="${SPIRA_HOME:?SPIRA_HOME is unset}"
 # shellcheck source=/dev/null
 . "$SPIRA_HOME/lib.sh"
+# shellcheck source=/dev/null
+. "$SPIRA_HOME/lc-delivery.sh"
 
 log()  { printf '%s spira: landing-pass %s: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$id" "$*"; }
 act()  { log "ACT: $*"; }
@@ -32,6 +36,26 @@ SUBMITTED="${SPIRA_RUN}/submitted"
 if submitted "$id" "$tip"; then
     case "$(submitted_rec "$id" state)" in
         pr)
+            # PR MODE IS EXTERNAL CUSTODY (design §3.1.2): a human or the forge decides
+            # merged/closed, and this pass only observes it. Checked before needs_refresh,
+            # which only fires when the branch has fallen behind the base — a PR that merged
+            # while up to date with its base would never reach that check at all.
+            _pr_st="$(pr_state "$repo" "$br")" || _pr_st=""
+            case "$_pr_st" in
+                MERGED)
+                    _merge_sha="$(cd "$repo" && ghq pr view "$br" --json mergeCommit -q .mergeCommit.oid 2>/dev/null)"
+                    lc_deliver_pr_merged "$repo" "$id" "$br" "${_merge_sha:-$baseref}"
+                    mark_submitted "$id" "$tip" done
+                    act "$br's pull request is merged in $name — delivered"
+                    exit 7
+                    ;;
+                CLOSED)
+                    lc_deliver_pr_closed "$id" "pull request closed unmerged"
+                    mark_submitted "$id" "$tip" done
+                    act "$br's pull request was closed unmerged in $name — returned"
+                    exit 8
+                    ;;
+            esac
             if ! needs_refresh "$repo" "$name" "$br" "$id" "$baseref" "$tip"; then
                 exit 6
             fi
