@@ -253,6 +253,7 @@ cat > "$BIN/systemctl" <<'SCEOF'
 printf 'SC %s\n' "$*" >> "${SC_LOG:-/dev/null}"
 case "$*" in
     *list-units*--state=failed*) [ -n "${SC_FAILED_UNITS:-}" ] && printf '%s\n' "$SC_FAILED_UNITS" ;;
+    *" start "*) case " $* " in *" ${SC_START_FAILS:-@none@} "*) exit 1 ;; esac ;;
     *list-units*) printf 'spira-sentinel-prod.service loaded active running\n' ;;
 esac
 exit 0
@@ -530,7 +531,23 @@ _out="$(run_deploy "SC_FAILED_UNITS=$(printf '%s\n%s' \
     'spira-gone-prod.service not-found failed failed spira-gone-prod.service' \
     'spira-real-prod.service loaded failed failed A real failure')" -- "$NEW_TAG" 2>&1)"
 want   "pruned-ghost: the not-found failed unit is reset"   "SC --user reset-failed spira-gone-prod.service" "$(cat "$SC_LOG")"
-nowant "pruned-ghost: an installed failed unit is not"      "reset-failed spira-real-prod.service" "$(cat "$SC_LOG")"
+nowant "pruned-ghost: an installed failed unit is not called a ghost" "cleared the failed state of spira-real-prod.service" "$_out"
+nowant "pruned-ghost: the ghost is not re-run"              "start spira-gone-prod.service" "$(cat "$SC_LOG")"
+
+# PROPERTY 6d — A UNIT THE DEPLOY ITSELF KNOCKED OVER IS RE-RUN, NOT JUDGED. The pre-deploy
+# health check refuses a deploy onto failed units, so a unit failed at the post-deploy check
+# failed INSIDE the deploy window — and the deploy restarts dolt-beads while the timers keep
+# firing: spira-sentinel fired the same second the re-render restarted dolt, lost its
+# database, exited 1, and doctor rolled a healthy release back (acceptance phase B,
+# 2026-09-27). Each installed failed unit is reset and started once under the release in
+# force, after resume; one that fails again stays failed and doctor still judges it.
+_out="$(run_deploy "SC_FAILED_UNITS=spira-real-prod.service loaded failed failed A real failure" -- "$NEW_TAG" 2>&1)"
+want   "deploy-window: the installed failed unit is reset"    "SC --user reset-failed spira-real-prod.service" "$(cat "$SC_LOG")"
+want   "deploy-window: ... and re-run under the release"      "SC --user start spira-real-prod.service" "$(cat "$SC_LOG")"
+want   "deploy-window: the re-run is logged"                  "re-ran spira-real-prod.service" "$_out"
+_out="$(run_deploy "SC_FAILED_UNITS=spira-real-prod.service loaded failed failed A real failure" \
+    "SC_START_FAILS=spira-real-prod.service" -- "$NEW_TAG" 2>&1)"
+want   "deploy-window: a unit that fails again is left for doctor" "spira-real-prod.service fails again under" "$_out"
 
 # ==========================================================================
 echo
