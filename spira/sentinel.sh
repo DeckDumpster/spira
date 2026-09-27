@@ -670,7 +670,10 @@ for i in (d if isinstance(d, list) else [d]):
 # successor's name), spira-dropped (the operator's verdict that no branch is ever coming),
 # content-landed (the Sending's own verdict that a branch's diff is already on the base,
 # reaped by content rather than by a naming commit — sending.sh labels it but writes no
-# landstate record, so this invariant cannot ask for one), and any delivers:TYPE label.
+# landstate record, so this invariant cannot ask for one), close_reason matching
+# SUBSUMED/DUPLICATE/tracked in epic (the Concierge's own verdict that the work is retired
+# under another bead's name, same as superseded but recorded in prose rather than a
+# dependency edge), and any delivers:TYPE label.
 # NOT CHECKED AT ALL: non-code types. Only SPIRA_WORK_CLOSE_TYPES
 # beads go through the submitted/landed pipeline this invariant polices — spike, ask,
 # insight, investigation, event, chore and epic close by the agent's own hand, same as
@@ -764,7 +767,7 @@ except Exception: sys.exit(0)
 for b in (d if isinstance(d, list) else [d]):
     for l in b.get("labels") or []:
         if l.startswith("ref:"): print(l[4:], b["id"])' 2>/dev/null)
-while IFS=$'\x1f' read -r id r_name superseded dropped delivers content_landed; do
+while IFS=$'\x1f' read -r id r_name superseded dropped delivers content_landed subsumed; do
     [ -n "$id" ] || continue
     # Only beads an aeon worked — anything closed by hand outside the pipeline has its own
     # evidence, and this check has no branch of its own to judge it against.
@@ -773,6 +776,7 @@ while IFS=$'\x1f' read -r id r_name superseded dropped delivers content_landed; 
     [ "$dropped" = 1 ] && continue
     [ -n "${delivers:-}" ] && continue
     [ "$content_landed" = 1 ] && continue
+    [ "$subsumed" = 1 ] && continue
     r_path="$(repo_root "${r_name:-}")" || {
         case $'\n'"$_c5_absent_repos" in
             *$'\n'"$r_name"$'\n'*) ;;
@@ -848,7 +852,7 @@ done < <(
     while IFS=$'\t' read -r part _; do
         [ -n "$part" ] || continue
         bdjson list --status closed --limit 0 --label "$part" 2>/dev/null | python3 -c '
-import sys, json
+import sys, json, re
 try: d = json.load(sys.stdin)
 except Exception: sys.exit(0)
 home = sys.argv[1]
@@ -865,7 +869,9 @@ for i in (d if isinstance(d, list) else [d]):
     drop = 1 if "spira-dropped" in (i.get("labels") or []) else 0
     deliv = "1" if any(l.startswith("delivers:") for l in (i.get("labels") or [])) else ""
     cl = 1 if "content-landed" in (i.get("labels") or []) else 0
-    print("\x1f".join([i["id"], repo, str(sup), str(drop), deliv, str(cl)]))' "$home_repo" \
+    reason = (i.get("close_reason") or "")
+    subs = 1 if re.search(r"SUBSUMED|DUPLICATE|tracked in epic", reason, re.I) else 0
+    print("\x1f".join([i["id"], repo, str(sup), str(drop), deliv, str(cl), str(subs)]))' "$home_repo" \
             "${SPIRA_WORK_CLOSE_TYPES:-task bug feature}" 2>/dev/null
     done <<< "$PARTITIONS" |
     sort -u -t$'\x1f' -k2,2 -k1,1
