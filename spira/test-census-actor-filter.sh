@@ -77,11 +77,12 @@ nowant "hand-written heading does not name the aeon actor" "actor aeon-test"    
 
 # ======================================================================================
 echo
-echo "sp-m4xp9: without --with-suppressed the hand-written class is invisible, not just unranked"
+echo "sp-m4xp9: without --with-suppressed the hand-written heading is gone, the ranked count still excludes the overseer row"
 # ======================================================================================
 _default_out="$(SPIRA_DB="$TESTDB_DIR" bash "$HERE/census.sh" 2>/dev/null)"
 nowant "default output carries no hand-written heading" "hand-written" "$_default_out"
-nowant "default output does not rank the overseer-written class" "sp-requeue-same-cause" "$_default_out"
+want   "default output still ranks the aeon-written bead alone" "1 sp-requeue-same-cause" "$_default_out"
+nowant "default output does not fold in the overseer bead's count" "2 sp-requeue-same-cause" "$_default_out"
 
 # ======================================================================================
 echo

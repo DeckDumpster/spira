@@ -329,11 +329,11 @@ _insert_event_at() {   # _insert_event_at <bead_id> <event_type> <cause_or_empty
     uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))' 2>/dev/null)" || return 1
     if [ -n "$cause" ]; then
         "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
-            "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$etype', 'test', '$cause', '$ts')" \
+            "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$etype', 'harness', '$cause', '$ts')" \
             >/dev/null 2>&1
     else
         "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
-            "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$etype', 'test', NULL, '$ts')" \
+            "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$etype', 'harness', NULL, '$ts')" \
             >/dev/null 2>&1
     fi
 }
