@@ -447,4 +447,23 @@ bash -c '. "$0"; _stage_release_source "$1" "$2" "$3"' "$LIB" \
     "$_rs_dir" "$SCRATCH/absent.tar.gz" spira-release-spira-20990101T000001Z
 wantrc "a missing tarball is refused" 1 $?
 
+# ===========================================================================
+echo
+echo "16. _ci_env: SPIRA_CONFIG_BIN points at the RELEASE's spira-config, not this checkout's"
+# ===========================================================================
+# sp-seae6: deploy.sh/uninstall.sh/world.sh/doctor.sh run straight from this checkout
+# (never an activated release), so conf.sh's own SPIRA_CONFIG_BIN resolution finds
+# neither bin/spira-config nor a cargo build here and no config — SPIRA_OPERATED=0
+# included — is ever read. Pinned to non-default paths: a literal default would pass
+# even if _ci_env stopped forwarding its argument or _releases stopped being read.
+_lib_ci_env() {  # <conf>
+    bash -c '_releases="/tmp/pinned-releases"; . "$0"; _ci_env _ce "$1"; printf "%s\n" "${_ce[@]}"' \
+        "$LIB" "$1"
+}
+
+_ce_out="$(_lib_ci_env "/tmp/pinned-conf")"
+want "conf forwarded"          "SPIRA_CONF=/tmp/pinned-conf"                              "$_ce_out"
+want "config-bin is the release's, not this checkout's" \
+    "SPIRA_CONFIG_BIN=/tmp/pinned-releases/current/bin/spira-config"                       "$_ce_out"
+
 tl_summary

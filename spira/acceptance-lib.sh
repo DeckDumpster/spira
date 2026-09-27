@@ -234,6 +234,17 @@ _phase_env() {
     [ -n "${5:-}" ] && _pe_arr+=(SPIRA_AGENT="$5")
 }
 
+# _ci_env <array-name> <conf> — env array for running deploy.sh/uninstall.sh/world.sh/
+# doctor.sh straight from THIS CHECKOUT, as opposed to an activated release. conf.sh
+# there resolves SPIRA_CONFIG_BIN from $HERE's own SPIRA_REPO, which carries neither
+# bin/spira-config (a release artifact) nor a cargo build of it, so the binary that
+# reads spira.conf is missing and NO config key — including SPIRA_OPERATED=0 — is ever
+# read. Point it at the release under test's own copy instead of building one here.
+_ci_env() {
+    local -n _cie_arr="$1"
+    _cie_arr=(SPIRA_CONF="$2" SPIRA_CONFIG_BIN="${_releases}/current/bin/spira-config")
+}
+
 # _run_ready <ready.sh path> [env=VAL ...] — run ready.sh under the given environment,
 # print its combined output, and return its exit code. The exit code MUST be read from
 # this function's own return, not from $? after the command substitution that captures
