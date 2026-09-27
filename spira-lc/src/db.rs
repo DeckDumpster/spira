@@ -261,6 +261,62 @@ impl Conn {
         }
     }
 
+    /// The migration classifier's own write: insert a fresh row plus its event, in one
+    /// transaction, but only if no row for this key exists yet. There is no prior row to
+    /// compare-and-swap against — the classifier assigns an initial state from legacy
+    /// evidence rather than applying a transition — so `INSERT IGNORE` (refused by the
+    /// primary key alone) plays the role `WHERE version = ?` plays in
+    /// [`Self::cas_update_and_log`], and this is exactly what makes re-running the
+    /// classifier a no-op: a bead already classified is already a row here.
+    pub fn insert_if_absent_and_log(
+        &self,
+        table: &str,
+        insert_columns: &str,
+        insert_values: &str,
+        ev: &EventRecord,
+        to_state: &str,
+    ) -> Result<bool, DbError> {
+        let script = format!(
+            "START TRANSACTION;\n\
+             INSERT IGNORE INTO {table} ({insert_columns}) VALUES ({insert_values});\n\
+             INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, refusal, evidence, actor, at)\n\
+             SELECT {machine}, {lc_key}, {event}, {expect}, {from_state},\n\
+                    IF(ROW_COUNT() = 1, {to_state}, {from_state}),\n\
+                    IF(ROW_COUNT() = 1, 1, 0),\n\
+                    IF(ROW_COUNT() = 1, NULL, {already_reason}),\n\
+                    {evidence}, {actor}, {at};\n\
+             SELECT applied FROM event WHERE seq = LAST_INSERT_ID();\n\
+             COMMIT;\n",
+            table = table,
+            insert_columns = insert_columns,
+            insert_values = insert_values,
+            machine = sql_str(&ev.machine),
+            lc_key = sql_str(&ev.key),
+            event = sql_str(&ev.event),
+            expect = sql_str(&ev.expect),
+            from_state = sql_str(&ev.from_state),
+            to_state = sql_str(to_state),
+            already_reason = sql_str("AlreadyClassified"),
+            evidence = sql_json(&ev.evidence),
+            actor = sql_str(&ev.actor),
+            at = ev.at,
+        );
+
+        match self.run_script(&script) {
+            Ok(stdout) => {
+                let rows = parse_last_json_rows(&stdout)
+                    .ok_or_else(|| DbError::CannotTell(format!("could not parse classification output: {stdout}")))?;
+                let applied = rows.first().and_then(|r| r.get("applied")).and_then(|v| v.as_str()).map(|s| s != "0").unwrap_or(false);
+                Ok(applied)
+            }
+            Err(ScriptFailure::LostRace) => {
+                self.insert_refusal_event(ev)?;
+                Ok(false)
+            }
+            Err(ScriptFailure::CannotTell(e)) => Err(DbError::CannotTell(e)),
+        }
+    }
+
     /// DDL runs without `--use-db`, because `schema.sql` itself opens with `CREATE DATABASE
     /// IF NOT EXISTS spira_lifecycle; USE spira_lifecycle;` — the database need not exist
     /// yet when this is called, which is exactly the state it's called in on a fresh server.

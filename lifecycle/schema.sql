@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS batch (
     base      VARCHAR(64) NULL,
     pr        BIGINT NULL,
     run       VARCHAR(64) NULL,
+    reason    TEXT NULL,
     version   BIGINT NOT NULL,
     opened_at BIGINT NOT NULL
 );

@@ -6,6 +6,7 @@ description = "spira-lc — the lifecycle CLI and system service: show/list/hist
 
 [dependencies]
 lifecycle = { path = "../lifecycle" }
+spira-config = { path = "../spira-config" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

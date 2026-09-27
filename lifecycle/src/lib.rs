@@ -5,6 +5,7 @@
 
 pub mod batch;
 pub mod bead;
+pub mod classify;
 pub mod delivery;
 pub mod replay;
 

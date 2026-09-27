@@ -817,6 +817,7 @@ dependencies = [
  "lifecycle",
  "serde",
  "serde_json",
+ "spira-config",
 ]
 
 [[package]]
