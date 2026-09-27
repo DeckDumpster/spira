@@ -444,9 +444,11 @@ mkdir -p "$RELEASES/$PRIOR_RELEASE"
 ln -s "$PRIOR_RELEASE" "$RELEASES/current"
 > "$DOCTOR_CNT"
 
-_out="$(run_deploy "SKEW_EXIT=1" -- "$NEW_TAG" 2>&1)"
+_out="$(run_deploy "SKEW_EXIT=1" "SKEW_OUT=MANIFEST-MISMATCH MANIFEST records a but release tag t points at b" -- "$NEW_TAG" 2>&1)"
 _rc=$?
 not0   "rollback-skew: exits non-zero" "$_rc"
+want   "rollback-skew: the skew finding that caused the rollback is printed" \
+       "deploy: skew: MANIFEST-MISMATCH MANIFEST records a" "$_out"
 islink "rollback-skew: current restored to prior" "$RELEASES/current" "$PRIOR_RELEASE"
 want   "rollback-skew: restarts active unit onto prior release" \
        "SC --user restart spira-sentinel-prod.service" "$(cat "$SC_LOG")"
