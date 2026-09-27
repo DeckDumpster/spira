@@ -448,12 +448,6 @@
             "null"
           ]
         },
-        "queue_batch_idle_cut": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
         "queue_batch_max": {
           "type": [
             "integer",
