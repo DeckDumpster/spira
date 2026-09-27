@@ -280,55 +280,14 @@ if [ "${1:-}" = "--czar-outcome-check" ]; then
     # Parse and classify beads that need escalation.
     # Outputs: UNCLAIMED <id> <ref> or NOT_CLEARED <id> <ref>
     #
-    # JSON goes to a temp file (not stdin) because `python3 - <<'PYEOF'` uses the
-    # heredoc as the script source; a concurrent pipe to stdin would lose the data —
-    # the heredoc takes precedence and sys.stdin.read() returns empty.
+    # JSON goes to a temp file (not argv or stdin) so a large trigger-bead list never
+    # brushes ARG_MAX — the same reason strand.sh's payloads go through files, not the
+    # environment. The classifier itself is watchtower-czar-outcome.py, table-tested in
+    # test-watchtower-czar-outcome-classify.sh without a bd round-trip.
     _co_json_f="$(mktemp)"
     printf '%s\n' "${_co_raw:-[]}" > "$_co_json_f"
-    _co_hits="$(python3 - "$_co_now" "$_co_outcome_mins" "$_co_unclaimed_mins" "$_co_json_f" <<'PYEOF'
-import sys, json
-from datetime import datetime, timezone
-
-def ts(s):
-    if not s: return None
-    try: return int(datetime.strptime(s.rstrip('Z'), '%Y-%m-%dT%H:%M:%S').replace(tzinfo=timezone.utc).timestamp())
-    except: return None
-
-data = json.loads(open(sys.argv[4]).read() or '[]')
-if not isinstance(data, list): data = [data]
-now_s    = int(sys.argv[1])
-out_secs = int(sys.argv[2]) * 60
-unc_secs = int(sys.argv[3]) * 60
-
-by_ref = {}
-for b in data:
-    ref = b.get('external_ref') or ''
-    if not ref.startswith('incident:queue-'): continue
-    b['_ct']  = ts(b.get('created_at'))
-    b['_cla'] = ts(b.get('closed_at'))
-    by_ref.setdefault(ref, []).append(b)
-
-for ref, beads in by_ref.items():
-    beads.sort(key=lambda b: b.get('_ct') or 0)
-    newest = beads[-1]
-    status = newest.get('status', '')
-    ct = newest.get('_ct')
-
-    if status in ('open', 'in_progress'):
-        if ct and (now_s - ct) >= unc_secs:
-            print('UNCLAIMED', newest['id'], ref)
-        continue
-
-    # Outcome check: find any closed bead followed by a newer bead after its close_at
-    for i, bead in enumerate(beads):
-        if bead.get('status') != 'closed': continue
-        cla = bead.get('_cla')
-        if not cla or (now_s - cla) < out_secs: continue
-        if any(b.get('_ct') and b['_ct'] > cla for b in beads[i+1:]):
-            print('NOT_CLEARED', bead['id'], ref)
-            break
-PYEOF
-    2>/dev/null)" || _co_hits=""
+    _co_hits="$(python3 "$(dirname "$0")/watchtower-czar-outcome.py" \
+        "$_co_now" "$_co_outcome_mins" "$_co_unclaimed_mins" "$_co_json_f" 2>/dev/null)" || _co_hits=""
     rm -f "$_co_json_f"
 
     while IFS=' ' read -r _co_kind _co_id _co_ref; do
