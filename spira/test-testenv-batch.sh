@@ -855,6 +855,7 @@ SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="b7b-$$" \
 SPIRA_VERDICTS="$VERDICTS_B7" \
 SPIRA_VERDICT_TTL=86400 \
+SPIRA_MAIL="$TMP/mail-B7" \
 SPIRA_DB= \
     bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" 2>/dev/null
 )" || rc_b7b=$?
@@ -921,6 +922,7 @@ SPIRA_BATCH_INSTANCE="b7e-$$" \
 SPIRA_VERDICTS="$VERDICTS_B7" \
 SPIRA_VERDICT_TTL=86400 \
 SPIRA_VERDICT_REPEAT_CONSIDERED="1" \
+SPIRA_MAIL="$TMP/mail-B7" \
 SPIRA_DB= \
     bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" 2>/dev/null
 )" || rc_b7e=$?
@@ -949,6 +951,7 @@ SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="b7f-$$" \
 SPIRA_VERDICTS="$VERDICTS_B7" \
 SPIRA_VERDICT_TTL=86400 \
+SPIRA_MAIL="$TMP/mail-B7" \
 SPIRA_DB="$TMP" \
 SPIRA_BATCH_INCIDENT_CMD="$_stub_b7f" \
 STUB_CALLED="$_stub_called_b7f" \
@@ -1838,6 +1841,125 @@ rm -rf "$_D_HOME" 2>/dev/null
 [ $? -eq 0 ] \
     && ok "D5: double-remove of absent home is harmless" \
     || bad "D5: double-remove of absent home is harmless" "rm -rf failed on absent path"
+
+# ===========================================================================
+# B14: REPEAT-REFUSED NOTIFIES THE CONCIERGE, NOT A NEEDS-RYAN ASK
+#
+# A repeat-refused re-run is a mechanical ask, not a decision for Ryan
+# (law-escalate-decisions-not-problems, sp-zfapw). The first refusal for a given
+# branch+tip+suite key mails the Concierge mailbox with branch/tip/suite/last
+# verdict, so it can be re-run without a lookup; a second refusal against the
+# same key adds nothing further, and no bead is ever labelled needs-ryan.
+#
+# REGRESSION (law-a-regression-test-must-be-seen-to-fail): against code before
+# this bead, B14b fails — the concierge mailbox stays empty; nothing ever wrote
+# to it, since the only escalation path was manual, through the SOP.
+# ===========================================================================
+echo
+echo "B14: repeat-refused notifies the Concierge mailbox"
+
+SUITE_B14="$TMP/suites-B14"
+VERDICTS_B14="$TMP/verdicts-B14"
+MAIL_B14="$TMP/mail-B14"
+mkdir -p "$SUITE_B14" "$VERDICTS_B14"
+cp "$SUITE_B2/test-fx-red.sh" "$SUITE_B14/"
+
+_b14_concierge_count() {
+    ls "$MAIL_B14/concierge/new" "$MAIL_B14/concierge/cur" 2>/dev/null | wc -l | tr -d ' '
+}
+
+# B14a: first (uncached) run — genuinely red, not yet a repeat. No notification.
+rc_b14a=0
+env -u SPIRA_DB \
+SPIRA_BATCH_SUITE_DIR="$SUITE_B14" \
+SPIRA_BATCH_RESULTS="$TMP/results-B14a" \
+SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_BATCH_INSTANCE="b14a-$$" \
+SPIRA_VERDICTS="$VERDICTS_B14" \
+SPIRA_VERDICT_TTL=86400 \
+SPIRA_MAIL="$MAIL_B14" \
+SPIRA_DB= \
+    bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" >/dev/null 2>&1 || rc_b14a=$?
+isexit1 "B14a: first (uncached) run exits 1" "$rc_b14a"
+is "B14a: no concierge mail on the first (non-refused) red" "0" "$(_b14_concierge_count)"
+
+# B14b: second attempt at the same key is refused — mails the Concierge once.
+rc_b14b=0
+env -u SPIRA_DB \
+SPIRA_BATCH_SUITE_DIR="$SUITE_B14" \
+SPIRA_BATCH_RESULTS="$TMP/results-B14b" \
+SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_BATCH_INSTANCE="b14b-$$" \
+SPIRA_VERDICTS="$VERDICTS_B14" \
+SPIRA_VERDICT_TTL=86400 \
+SPIRA_MAIL="$MAIL_B14" \
+SPIRA_DB= \
+    bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" >/dev/null 2>&1 || rc_b14b=$?
+isexit2 "B14b: second attempt refused (exit 2)" "$rc_b14b"
+is "B14b: exactly one concierge mailbox message" "1" "$(_b14_concierge_count)"
+
+_b14_msg="$(cat "$MAIL_B14/concierge/new"/* "$MAIL_B14/concierge/cur"/* 2>/dev/null)"
+want "B14b: concierge message names the branch"       "Branch: topic"      "$_b14_msg"
+want "B14b: concierge message names the suite"         "test-fx-red.sh"    "$_b14_msg"
+want "B14b: concierge message names the tip"           "Tip: "             "$_b14_msg"
+want "B14b: concierge message names the last verdict"  "Last verdict: red" "$_b14_msg"
+
+# B14c: a THIRD refusal against the same key adds nothing further (dedup).
+rc_b14c=0
+env -u SPIRA_DB \
+SPIRA_BATCH_SUITE_DIR="$SUITE_B14" \
+SPIRA_BATCH_RESULTS="$TMP/results-B14c" \
+SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_BATCH_INSTANCE="b14c-$$" \
+SPIRA_VERDICTS="$VERDICTS_B14" \
+SPIRA_VERDICT_TTL=86400 \
+SPIRA_MAIL="$MAIL_B14" \
+SPIRA_DB= \
+    bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" >/dev/null 2>&1 || rc_b14c=$?
+isexit2 "B14c: third attempt also refused (exit 2)" "$rc_b14c"
+is "B14c: still exactly one concierge mailbox message (deduped)" "1" "$(_b14_concierge_count)"
+
+# B14d: with a real database, the incident bead the repeat files is never
+# labelled needs-ryan, and the Concierge still gets exactly one notification —
+# same real mail.sh and real incident.sh, run together, not stubbed apart.
+if ! testdb_available; then
+    printf 'SKIP B14d: no bd engine — needs-ryan check skipped\n' >&2
+else
+    testdb_up b14d-testenv-batch || { bad "B14d: testdb_up failed" ""; }
+    _b14_db="$SPIRA_DB"
+    SUITE_B14D="$TMP/suites-B14d"
+    VERDICTS_B14D="$TMP/verdicts-B14d"
+    MAIL_B14D="$TMP/mail-B14d"
+    mkdir -p "$SUITE_B14D" "$VERDICTS_B14D"
+    cp "$SUITE_B2/test-fx-red.sh" "$SUITE_B14D/"
+
+    for _b14d_i in b14d1-$$ b14d2-$$; do
+        SPIRA_BATCH_SUITE_DIR="$SUITE_B14D" \
+        SPIRA_BATCH_RESULTS="$TMP/results-$_b14d_i" \
+        SPIRA_BATCH_SKIP_INSTALL=1 \
+        SPIRA_BATCH_INSTANCE="$_b14d_i" \
+        SPIRA_VERDICTS="$VERDICTS_B14D" \
+        SPIRA_VERDICT_TTL=86400 \
+        SPIRA_MAIL="$MAIL_B14D" \
+        SPIRA_DB="$_b14_db" \
+            bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" >/dev/null 2>&1 || true
+    done
+
+    _b14d_needs_ryan="$(bd -C "$_b14_db" list --status open,in_progress --limit 0 --json 2>/dev/null \
+        | python3 -c '
+import sys, json; count = 0
+try: d = json.load(sys.stdin)
+except Exception: print(0); raise SystemExit(0)
+for i in (d if isinstance(d, list) else [d]):
+    if "needs-ryan" in (i.get("labels") or []): count += 1
+print(count)
+' 2>/dev/null)"
+    is "B14d: repeat-refused with a real database files no needs-ryan bead" "0" "${_b14d_needs_ryan:-0}"
+    is "B14d: one concierge mailbox message with a real database too" "1" \
+        "$(ls "$MAIL_B14D/concierge/new" "$MAIL_B14D/concierge/cur" 2>/dev/null | wc -l | tr -d ' ')"
+
+    testdb_drop
+fi
 
 # ===========================================================================
 echo
