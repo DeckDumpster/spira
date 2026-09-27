@@ -88,11 +88,20 @@ echo "3. an infrastructure fault is distinguished from a branch failure:"
 want "the harness-fault exit code is handled" "75" "$G"
 
 echo
-echo "4. the release is gated, and only on the base branch:"
-want "a job depends on the gate"        "needs:"            "$G"
-want "release.sh cut is what tags"      "release.sh"        "$G"
-want "restricted to push events"        "github.event_name" "$G"
-want "restricted to the base branch"    "refs/heads/main"   "$G"
+echo "4. the release is cut only by an explicit dispatch, never by a push, and only on the base branch:"
+_job_if() { awk -v j="  $1:" '$0==j{f=1;next} f&&/^  [a-z-]+:$/{exit} f&&/^    if:/{sub(/^    if: */,"");print;exit}' "$GATE_YML"; }
+_cut_if="$(_job_if cut)"; _pub_if="$(_job_if publish)"
+if [ -z "$_cut_if" ]; then
+    bad "the cut job's if: condition was located (positive control)" "awk extracted nothing; assertions below would be vacuous"
+else
+    ok "the cut job's if: condition was located (positive control)"
+fi
+want   "a job depends on the gate"                    "needs:"                                       "$G"
+want   "release.sh cut is what tags"                  "release.sh"                                   "$G"
+want   "restricted to the base branch"                "refs/heads/main"                              "$_cut_if"
+want   "cut requires an explicit workflow_dispatch"   "github.event_name == 'workflow_dispatch'"     "$_cut_if"
+want   "cut requires the cut input to be true"        "inputs.cut == true"                           "$_cut_if"
+nowant "a push event cannot reach cut"                "github.event_name == 'push'"                  "$_cut_if"
 
 echo
 echo "4b. cut and publish survive skipped suites (sp-7k4qh):"
@@ -643,6 +652,13 @@ else
 fi
 want "select checks for workflow_dispatch"        "workflow_dispatch" "$_select_step"
 want "select reads the suites input"              "inputs.suites"     "$_select_step"
+
+echo
+echo "22b. a cut dispatch is a boolean input, defaulting false, and selects no suites:"
+want "workflow_dispatch accepts a cut input"  "cut:"             "$_wd_block"
+want "the cut input is a boolean"             "type: boolean"    "$_wd_block"
+want "the cut input defaults to false"        "default: false"   "$_wd_block"
+want "select checks the cut input"            "inputs.cut"       "$_select_step"
 
 echo
 echo "23. cut refuses the job when the tag push to origin fails (sp-j7t1e):"

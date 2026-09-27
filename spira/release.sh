@@ -2,7 +2,7 @@
 #
 # release.sh — cut and inspect Spira release units.
 #
-#   release.sh cut [<name-or-path>]
+#   release.sh cut [<name-or-path>] [--dispatch]
 #   release.sh show <tag>
 #
 # A release unit is an annotated git tag that names every bead id whose
@@ -22,6 +22,10 @@
 #                        the new tag name on stdout. Zero-landed case: says
 #                        so on stderr and exits 0 without creating a tag.
 #
+#           --dispatch   Ask for a release instead of cutting one locally: fires
+#                        gate.yml's workflow_dispatch with cut=true. gate.yml's
+#                        own cut job still refuses a HEAD with no green gate.
+#
 # show <tag>             Print the bead ids and commits in the named release
 #                        tag. The repository is inferred from the tag message.
 #
@@ -38,13 +42,14 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 do_cut() {
     # First positional arg is the repo name or path (optional); remaining are flags.
     local arg="${1:-}"; shift 2>/dev/null || true
-    local pr="" branches=""
+    local pr="" branches="" dispatch=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --pr)         pr="${2:-}"; shift 2 ;;
             --pr=*)       pr="${1#--pr=}"; shift ;;
             --branches)   branches="${2:-}"; shift 2 ;;
             --branches=*) branches="${1#--branches=}"; shift ;;
+            --dispatch)   dispatch=1; shift ;;
             *) printf 'release: unknown argument: %s\n' "$1" >&2; exit 2 ;;
         esac
     done
@@ -75,6 +80,17 @@ do_cut() {
         printf 'release: cannot resolve base ref %s in %s\n' "$base" "$repo" >&2
         exit 1
     }
+
+    if [ -n "$dispatch" ]; then
+        # gh needs a bare branch name, not a remote-tracking ref like origin/main.
+        local branch="${base##*/}"
+        ( cd "$repo" && ghq workflow run gate.yml --ref "$branch" -f cut=true ) || {
+            printf 'release: could not dispatch a cut for %s at %s\n' "$name" "$branch" >&2
+            exit 1
+        }
+        printf 'release: dispatched a cut for %s at %s (%s)\n' "$name" "$branch" "$sha"
+        return
+    fi
 
     # Find the most recent release tag for this repository (if any).
     local tag_prefix="spira-release-${name}-"
@@ -223,9 +239,9 @@ CMD="${1:-}"; shift 2>/dev/null || true
 case "$CMD" in
     cut)  do_cut "$@" ;;
     show) do_show "$@" ;;
-    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
     *)
-        printf 'usage: release.sh cut [<name-or-path>]\n' >&2
+        printf 'usage: release.sh cut [<name-or-path>] [--dispatch]\n' >&2
         printf '       release.sh show <tag>\n' >&2
         exit 2
         ;;
