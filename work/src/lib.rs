@@ -4,6 +4,7 @@
 //! so every rule below is covered without a fixture.
 
 pub const CANNOT_TELL: i32 = 2;
+pub const REFUSED: i32 = 3;
 
 /// `sp-<alphanumeric>`, case-insensitive: the harness's bead id shape (see any `sp-XXXXX`
 /// in this repo's own history). Deliberately loose — a false positive here just means an
