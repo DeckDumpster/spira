@@ -155,8 +155,15 @@ after_events="$(root_sql --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n F
 is "note: emits no lifecycle event (bd, non-lifecycle, per design §3.5)" "$before_events" "$after_events"
 
 # ── submit: bead Submit(tip), tip read from the worktree, never taken as an argument ──
-real_tip="$(git -C "$REPO" rev-parse HEAD)"
-out="$(cd "$REPO" && work_as "$BID" submit 2>&1)"; rc=$?
+# A throwaway repo, never $REPO: $REPO here is testenv-batch.sh's own bind-mounted worktree,
+# whose .git gitlink points at a commondir that exists on the host, not inside this
+# container, so `git rev-parse HEAD` against it fails closed with no tip at all.
+AEON_WT="$TMP/aeon-worktree"
+mkdir -p "$AEON_WT"
+git -C "$AEON_WT" init -q
+git -C "$AEON_WT" -c user.email=aeon@spira.local -c user.name=aeon commit -q --allow-empty -m "fixture commit"
+real_tip="$(git -C "$AEON_WT" rev-parse HEAD)"
+out="$(cd "$AEON_WT" && work_as "$BID" submit 2>&1)"; rc=$?
 is "submit: exits 0 (applied)" "0" "$rc"
 row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state, tip FROM bead WHERE bead_id='$BID'" -r json 2>&1)"
 want "submit: state is SUBMITTED" "SUBMITTED" "$row"
