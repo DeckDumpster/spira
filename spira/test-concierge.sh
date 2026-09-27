@@ -14,7 +14,7 @@
 # and bead.sh, the statute book present, a typo'd core set refusing rather than composing
 # silently) does not depend on what is currently enacted in the real book.
 #
-# defect: sp-u4x
+# defect: sp-u4x sp-epe0m
 # covers: spira/lib.sh concierge.sh spira/chamber/concierge.fayth spira/chamber/concierge.md UC-operator-channel-40 UC-operator-channel-41
 # hermetic-ok: fixture chamber and a private tmux socket; no systemd and no database
 # requires: claude
