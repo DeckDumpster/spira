@@ -16,7 +16,7 @@
 > 40: `test-resolve-output.sh`'s missing-subject guard exits 77, not 0. Row 17 (case 4's
 > per-id assertion) was already fixed by sp-9ce60.6.
 
-> **2026-09-25: `test-snap-stale-threshold.sh` deleted** (law-a-test-that-flips-is-deleted): same tree green in round 6, red twice after. The watchtower/doctor snapshot-staleness threshold has no coverage until a deterministic test replaces it.
+> **2026-09-25: `test-snap-stale-threshold.sh` deleted** (law-a-test-that-flips-is-deleted): same tree green in round 6, red twice after. **2026-09-26 (sp-iuwwu): restored.** The flip's root cause was `run_watchtower()` reading the real `df`/`/proc/meminfo` instead of a stub, coupling the "fresh" assertion to the host's own disk usage; it now pins `SPIRA_PATH`/`SPIRA_MEMINFO_PATH` the same way `test-watchtower.sh` does. Coverage restored.
 
 > **2026-09-25 (sp-s088v.7): the bdjson-fixture seam landed.** `spira/bdsim.py` answers
 > `list`/`show`/`memories` from a `SPIRA_BDJSON_FIXTURE` JSON file; `lib.sh`'s `bdq()` routes
