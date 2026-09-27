@@ -964,6 +964,62 @@ if [ -f "$_stub_called_b7f" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# B7g: SPIRA_DB= MUST NOT RESOLVE TO A REAL DATABASE.
+#
+# B7b/B7e pass SPIRA_DB= (empty) specifically so the repeat-refused branch's
+# `[ -n "${SPIRA_DB:-}" ]` guard skips incident-filing. conf.sh's SPIRA_DB default used to
+# be `${SPIRA_DB:=...}`, which treats an explicitly-empty value the same as an unset one
+# and silently replaced it with the ambient default — so that guard saw a real, non-empty
+# path and incident.sh filed into it anyway. On a real box the ambient default is the
+# box's actual configured database; that is what put "repeat attempt: no change — topic"
+# beads into production.
+#
+# TESTED DIRECTLY AGAINST conf.sh AND incident.sh, not through a container: the defect is
+# in environment-variable resolution, not batch orchestration, so a private HOME proves it
+# at once (no cold container build) and without ever risking this box's own store.
+#
+# REGRESSION (law-a-regression-test-must-be-seen-to-fail): against the pre-fix conf.sh
+# (`SPIRA_DB:=`), $_b7g_ambient_db below comes back non-empty and incident.sh files into
+# it; against the fix, SPIRA_DB stays empty end to end and incident.sh refuses.
+# ---------------------------------------------------------------------------
+echo
+echo "B7g: SPIRA_DB= must not resolve to a real ambient database"
+
+_b7g_home="$TMP/b7g-home"
+mkdir -p "$_b7g_home"
+_b7g_ambient_db="$(
+    env -i PATH="$PATH" HOME="$_b7g_home" XDG_DATA_HOME= SPIRA_CONF=/nonexistent SPIRA_TOML=/nonexistent HERE="$HERE" SPIRA_DB= \
+        bash -c '. "$HERE/lib.sh" 2>/dev/null; printf "%s" "${SPIRA_DB:-}"'
+)"
+[ -z "$_b7g_ambient_db" ] \
+    && ok "B7g: SPIRA_DB= survives conf.sh — stays empty, not silently defaulted" \
+    || bad "B7g: SPIRA_DB= survives conf.sh — stays empty, not silently defaulted" \
+           "conf.sh replaced it with [$_b7g_ambient_db]"
+
+_b7g_inc_out="$TMP/b7g-incident-out"
+_b7g_run="$_b7g_home/.runtime"
+env -i PATH="$PATH" HOME="$_b7g_home" XDG_DATA_HOME= SPIRA_CONF=/nonexistent SPIRA_TOML=/nonexistent SPIRA_DB= SPIRA_RUN="$_b7g_run" \
+    bash "$HERE/incident.sh" file "b7g should not file" - <<<'payload' >"$_b7g_inc_out" 2>&1
+_b7g_inc_rc=$?
+# TEXT, NOT JUST EXIT CODE: a spooled-but-unfiled attempt (the pre-fix path, when the
+# ambient default happens not to be an initialized database) also exits non-zero, so the
+# exit code alone cannot distinguish "refused before doing anything" from "tried, spooled
+# the event to disk, and only then failed". The message is the reliable signal.
+want "B7g: incident.sh's own message names the refusal" "SPIRA_DB is not set" "$(cat "$_b7g_inc_out")"
+[ "$_b7g_inc_rc" -ne 0 ] \
+    && ok "B7g: incident.sh exits non-zero when refusing (exit $_b7g_inc_rc)" \
+    || bad "B7g: incident.sh exits non-zero when refusing" "exited 0"
+
+# Neither a database nor a spool entry anywhere under the private HOME/SPIRA_RUN — proof
+# the refusal happens before spool_write ever runs, not just that the call above said so.
+_b7g_leak_db="$(find "$_b7g_home" -maxdepth 6 -iname '.beads' 2>/dev/null)"
+_b7g_leak_spool="$(find "$_b7g_run" -type f 2>/dev/null)"
+[ -z "$_b7g_leak_db" ] && [ -z "$_b7g_leak_spool" ] \
+    && ok "B7g: no database or spool entry was created anywhere under the private HOME" \
+    || bad "B7g: no database or spool entry was created anywhere under the private HOME" \
+           "db: [$_b7g_leak_db] spool: [$_b7g_leak_spool]"
+
+# ---------------------------------------------------------------------------
 # B8: DEDUP — two refused repeats for the same branch yield one open bead.
 #
 # REGRESSION (law-a-regression-test-must-be-seen-to-fail):

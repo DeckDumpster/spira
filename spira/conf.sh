@@ -415,7 +415,12 @@ spira_conf_defaults() {
     # INSTANCE-QUALIFIED: each instance gets its own sidecar database so stopping or wiping
     # 'test' leaves the 'prod' store untouched. For prod the suffix is empty; the path is
     # identical to what every existing box has.
-    : "${SPIRA_DB:=${XDG_DATA_HOME:-$HOME/.local/share}/spira${_spira_inst_sfx}/db}"
+    # NO COLON: a caller that exports SPIRA_DB="" is declaring "no database for this run",
+    # and that declaration must survive this line. `:=` treats empty the same as unset and
+    # would silently replace it with the ambient default — turning a deliberate "no
+    # database" into a real, wrong one and defeating every caller-side `-n "$SPIRA_DB"`
+    # guard downstream.
+    : "${SPIRA_DB=${XDG_DATA_HOME:-$HOME/.local/share}/spira${_spira_inst_sfx}/db}"
     # INSTANCE-QUALIFIED: each instance writes its own runtime tree — pid files, the aeon
     # ledger, the cockpit state — so a test instance cannot overwrite prod's working state.
     # For prod the suffix is empty; the path is unchanged.
