@@ -342,4 +342,19 @@ SPIRA_DUCKDB_BIN="$T/no-such-duckdb-binary" run_pass
 is "a broken duckdb binary is unobservable, not satisfied" unobservable "$(status_of flow:velocity:queue status)"
 
 # ============================================================================
+echo
+echo "9. A truly fresh box: SPIRA_RUN itself does not exist yet (install.sh normally"
+echo "   creates it once; this binary must not depend on that having survived — a bash"
+echo "   watcher gets it again on every invocation via lib.sh, this binary sources nothing)"
+# ============================================================================
+reset_env
+rm -rf "$SPIRA_RUN"
+SAVED_SPIRA_RUN="$SPIRA_RUN"
+"$FLOW_BIN" --pass >"$T/pass-out.log" 2>&1
+rc=$?
+is "a pass exits 0 even when SPIRA_RUN does not exist yet" "0" "$rc"
+[ -d "$SAVED_SPIRA_RUN" ] && ok "the pass creates SPIRA_RUN itself" || bad "the pass creates SPIRA_RUN itself" "still missing: $SAVED_SPIRA_RUN"
+mkdir -p "$SPIRA_RUN"
+
+# ============================================================================
 tl_summary
