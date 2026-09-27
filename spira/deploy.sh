@@ -588,13 +588,6 @@ log "deploy: health check"
 _deploy_failed=""
 "$_WORLD" status >/dev/null 2>&1 \
     || _deploy_failed="${_deploy_failed:+$_deploy_failed, }world status"
-# THE FAIL LINES ARE THE EVIDENCE. A bare "ROLLBACK — doctor" says a check failed and not
-# which; the rollback that follows destroys the state it failed on. Print what doctor said.
-if ! _doctor_out="$(SPIRA_DOCTOR=1 "$_DOCTOR" 2>&1)"; then
-    _deploy_failed="${_deploy_failed:+$_deploy_failed, }doctor"
-    printf '%s\n' "$_doctor_out" | grep -E '^\s*FAIL' | sed 's/^/deploy: doctor: /' >&2
-fi
-unset _doctor_out
 _skew_out="$("$_SKEW" check 2>/dev/null)"
 _skew_exit=$?
 # AN OLDER RELEASE THE OPERATOR NAMED IS NOT-LATEST BY CONSTRUCTION. skew.sh check answers
@@ -617,6 +610,23 @@ if [ "$_skew_exit" -eq 1 ] && [ "$_named_tag" = 1 ] \
     fi
 fi
 unset _skew_newer
+# THE SKEW UNIT IS THE SAME CHECK, ON A TIMER. Under the named older release its own
+# spira-skew unit runs skew.sh check, gets the same NOT-LATEST, exits 1 and sits failed; the
+# re-run above cannot help, because it fails again for the same expected reason, and doctor
+# then counted it as a failed unit and rolled the deliberate rollback back (acceptance
+# phase C, 2026-09-27: "spira-skew-prod.service fails again … ROLLBACK — doctor"). The
+# finding was accepted just above, so its unit's failure is that accepted finding: clear it
+# before doctor judges the rest. Only on acceptance — any other skew finding leaves it failed.
+if [ "$_skew_exit" -eq 0 ] && [ "$_named_tag" = 1 ]; then
+    "$_SC" --user reset-failed "spira-skew-${SPIRA_INSTANCE}.service" 2>/dev/null || true
+fi
+# THE FAIL LINES ARE THE EVIDENCE. A bare "ROLLBACK — doctor" says a check failed and not
+# which; the rollback that follows destroys the state it failed on. Print what doctor said.
+if ! _doctor_out="$(SPIRA_DOCTOR=1 "$_DOCTOR" 2>&1)"; then
+    _deploy_failed="${_deploy_failed:+$_deploy_failed, }doctor"
+    printf '%s\n' "$_doctor_out" | grep -E '^\s*FAIL' | sed 's/^/deploy: doctor: /' >&2
+fi
+unset _doctor_out
 [ "$_skew_exit" -eq 0 ] \
     || _deploy_failed="${_deploy_failed:+$_deploy_failed, }skew (exit $_skew_exit)"
 
