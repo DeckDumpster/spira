@@ -13,9 +13,14 @@
 //! callers, and the fast path (persistent connection) and the correct-but-slow path
 //! (same-user fallback, a fresh `dolt` process per call) can never drift apart.
 
+mod bd_facts;
+mod classify_cmd;
 mod client;
 mod db;
+mod git_evidence;
+mod legacy_files;
 mod persistent;
+mod repo_config;
 mod rows;
 mod serve;
 
@@ -68,9 +73,12 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         // step and the test fixture use to apply schema.sql/grants.sql through the same
         // connection code the rest of this binary uses, instead of a second copy in shell.
         Some("admin-apply-ddl") => cmd_admin_apply_ddl(&args[1..], conn),
+        // The one-time migration classifier (design §4). Deploys inert like the rest of
+        // this binary: nothing calls it until the cutover deploy step (a later bead).
+        Some("classify") => classify_cmd::run(&args[1..], conn),
         _ => (
             CANNOT_TELL,
-            "usage: spira-lc show <bead-id> | list [--state S] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | serve".to_string(),
+            "usage: spira-lc show <bead-id> | list [--state S] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | classify --home DIR --bd-db PATH --landstate-dir DIR --queue-dir DIR [--repo NAME]... [--base REF] [--dry-run] | serve".to_string(),
         ),
     }
 }
