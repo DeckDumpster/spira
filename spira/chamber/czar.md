@@ -129,9 +129,9 @@ branch has diverged from what was batched.
 failed is not in the member's file list. Merge each member touching the flagged file onto
 the base in a throwaway tree, run the red suite, and eject the one that fails.
 
-**Case 11 — Starved partition** (czar-trigger cause: `starved`): watchtower found ready
-work in a partition with no serving aeons for longer than `${SPIRA_STARVED_MAX_MINS:-20}`
-minutes. Read the last sentinel pass in `{{RUN}}/sentinel.log` (the lines from the most
+**Case 11 — Starved partition** (czar-trigger cause: `starved`): strand.sh found ready
+work in a partition with no serving aeons for longer than `${SPIRA_STRAND_GRACE:-900}`
+seconds. Read the last sentinel pass in `{{RUN}}/sentinel.log` (the lines from the most
 recent `state: goal=` entry onward) to find CHECK7's stated reason, then act:
 
 - **throttle** (`queue-throttled` stamp present): the admission throttle is holding

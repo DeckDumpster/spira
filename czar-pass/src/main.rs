@@ -4,12 +4,11 @@
 // czar-pass --pass
 //
 // Reads only cheap sources: the landing.log tail since the last pass, the open batch
-// record, landstate, CHECK7's last reason from sentinel.log, and at most 2 gh API
-// calls (forge.sh batch-ci-status) for the open batch's run.
+// record, landstate, and at most 2 gh API calls (forge.sh batch-ci-status) for the
+// open batch's run.
 
 use reconciler_engine::core::{last_remedy, record_remedy, step, HysteresisState, RawStatus, Verdict};
 use reconciler_engine::io::{append_status, load_state, save_state, StateMap};
-use serde_json::Value;
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -55,8 +54,6 @@ struct Config {
     queue_dir: PathBuf,
     stall_secs: u64,
     ci_queued_max: u64,
-    starved_max_s: u64,
-    strands_state: PathBuf,
     ci_red_max: u64,
     base_unreadable_grace: u64,
     lock_path: PathBuf,
@@ -66,7 +63,6 @@ struct Config {
     scope_label: String,
     czar_label: String,
     express_label: String,
-    throttle_stamp: PathBuf,
     land_unit: String,
     systemctl: String,
     repo_map: Option<PathBuf>,
@@ -107,14 +103,6 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(600),
-            starved_max_s: env::var("SPIRA_STARVED_MAX_MINS")
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .map(|v| v * 60)
-                .unwrap_or(1200),
-            strands_state: env::var("SPIRA_STRANDS_STATE")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| spira_run.join("strands.json")),
             ci_red_max: env::var("SPIRA_CI_RED_MAX_SECS")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -136,9 +124,6 @@ impl Config {
                 .unwrap_or_else(|_| "czar-trigger".to_string()),
             express_label: env::var("SPIRA_EXPRESS_LABEL")
                 .unwrap_or_else(|_| "express".to_string()),
-            throttle_stamp: env::var("SPIRA_THROTTLE_STAMP")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| spira_run.join("queue-throttled")),
             land_unit: env::var("SPIRA_LAND_UNIT")
                 .unwrap_or_else(|_| "spira-landing".to_string()),
             systemctl: env::var("SPIRA_SYSTEMCTL")
@@ -526,9 +511,6 @@ fn run_pass() -> Result<(), String> {
         .unwrap_or_default();
     let new_lines = read_new_lines(&cfg.qc_log, &prev);
 
-    // CHECK7 reason from sentinel.log — used by the starved detector.
-    let check7 = read_check7(&cfg.spira_run);
-
     // Every invariant's hysteresis lives in one persisted state map, loaded once per pass
     // and saved once per pass (sp-pu7v6) — replacing a flat first-seen marker file per class.
     let mut state = load_state(&cfg.reconciler_state);
@@ -551,9 +533,6 @@ fn run_pass() -> Result<(), String> {
     // ── DETECTOR: base-red (the base ref's own gate run, not a batch's) ──────
     let (br_v, br_rem, br_tier) = detect_base_red(&cfg, &mut state);
 
-    // ── DETECTOR: starved ─────────────────────────────────────────────────────
-    let (sv_v, sv_rem, sv_tier) = detect_starved(&cfg, &mut state, &check7);
-
     // Telemetry — one line per class per pass.
     telem(&cfg, "deadlock",           &dl_v,  dl_rem,  dl_tier);
     telem(&cfg, "attribution-failed", &af_v,  af_rem,  af_tier);
@@ -562,7 +541,6 @@ fn run_pass() -> Result<(), String> {
     telem(&cfg, "ci-stalled",         &cis_v, cis_rem, cis_tier);
     telem(&cfg, "ci-red",             &cir_v, cir_rem, cir_tier);
     telem(&cfg, "base-red",           &br_v,  br_rem,  br_tier);
-    telem(&cfg, "starved",            &sv_v,  sv_rem,  sv_tier);
 
     let _ = save_state(&cfg.reconciler_state, &state);
 
@@ -601,17 +579,6 @@ fn read_new_lines(qc_log: &Path, prev: &str) -> String {
             .collect::<Vec<_>>()
             .join("\n")
     }
-}
-
-fn read_check7(spira_run: &Path) -> String {
-    let log = spira_run.join("sentinel.log");
-    if !log.exists() {
-        return String::new();
-    }
-    let content = fs::read_to_string(&log).unwrap_or_default();
-    let lines: Vec<&str> = content.lines().filter(|l| l.contains("CHECK7")).collect();
-    let start = lines.len().saturating_sub(20);
-    lines[start..].join("\n")
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1156,140 +1123,6 @@ fn detect_base_red(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str
     (rollup(&verdicts), remedy, tier)
 }
 
-fn detect_starved(cfg: &Config, state: &mut StateMap, check7: &str) -> (Verdict, &'static str, &'static str) {
-    if !cfg.strands_state.exists() {
-        let v = evaluate(cfg, state, "starved", RawStatus::Satisfied, 0);
-        return (v, "none", "det");
-    }
-
-    // A missing file is a legitimate "nothing tracked yet" absence; a file that exists but
-    // cannot be read or parsed is a failure to observe, not evidence every partition is
-    // fine (law-a-control-that-cannot-check-must-refuse) — the old code read both the same
-    // way, silently, as "no".
-    let content = match fs::read_to_string(&cfg.strands_state) {
-        Ok(c) => c,
-        Err(e) => {
-            let v = evaluate(cfg, state, "starved", RawStatus::Unobservable { reason: format!("strands.json: {}", e) }, 0);
-            return (v, "none", "det");
-        }
-    };
-    let parsed: Result<Value, _> = serde_json::from_str(&content);
-    let obj = match parsed.as_ref().ok().and_then(|v| v.as_object()) {
-        Some(o) => o,
-        None => {
-            let v = evaluate(
-                cfg,
-                state,
-                "starved",
-                RawStatus::Unobservable { reason: "strands.json: not a JSON object".into() },
-                0,
-            );
-            return (v, "none", "det");
-        }
-    };
-
-    let mut remedy: &'static str = "none";
-    let mut tier: &'static str = "det";
-    let mut verdicts: Vec<Verdict> = Vec::new();
-
-    for (key, val) in obj {
-        let parts: Vec<&str> = key.splitn(3, ':').collect();
-        if parts.len() != 3 || parts[1] != "starved" {
-            continue;
-        }
-        let first_val = match val.get("first").and_then(|v| v.as_f64()) {
-            Some(f) => f as u64,
-            None => continue,
-        };
-        let part = parts[0];
-        let sv_safe = part.replace(',', "-").replace(' ', "-");
-        let raw = RawStatus::Gap {
-            desired: "ready work has a serving aeon".into(),
-            observed: format!("partition [{}] starved", part),
-            since_hint: Some(first_val),
-        };
-        let v = evaluate(cfg, state, &format!("starved:{}", sv_safe), raw, cfg.starved_max_s);
-        verdicts.push(v.clone());
-        if !v.is_gap {
-            continue;
-        }
-        let age = v.since.map(|s| cfg.now_secs.saturating_sub(s)).unwrap_or(0);
-
-        match cfg.stage("starved") {
-            Stage::Shadow => {
-                append_czar_log(
-                    &cfg.czar_log,
-                    &format!(
-                        "{} CZAR-WOULD: starved inference — partition [{}] starved {}m\n",
-                        cfg.now_iso,
-                        part,
-                        age / 60
-                    ),
-                );
-                remedy = "shadow-inference";
-                tier = "inf";
-            }
-            Stage::Act => {
-                let tc_stamp = &cfg.throttle_stamp;
-                let throttle_active = tc_stamp.exists()
-                    && check7.contains("throttle active");
-                let deliberate = check7.contains("SPIRA_MAX_AEONS=0")
-                    || check7.contains("world.halted")
-                    || check7.contains("suspended");
-
-                if throttle_active {
-                    let wt = format!("{}/watchtower.sh", cfg.spira_home);
-                    let _ = Command::new("bash").arg(&wt).arg("--throttle-check").status();
-                    log_print(&format!(
-                        "czar pass: starved → recomputed throttle depth (partition: {})",
-                        part
-                    ));
-                    remedy = "det-throttle-recompute";
-                } else if deliberate {
-                    log_print(&format!(
-                        "czar pass: starved → deliberate state (partition: {})",
-                        part
-                    ));
-                    remedy = "deliberate-state";
-                } else {
-                    let check7_tail: String = check7
-                        .lines()
-                        .rev()
-                        .take(5)
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let body = format!(
-                        "Ready work in partition [{}] has had no serving aeons for {}m \
-                         (threshold: {}m).\n\nCHECK7 reason (sentinel.log):\n{}\n",
-                        part,
-                        age / 60,
-                        cfg.starved_max_s / 60,
-                        check7_tail
-                    );
-                    infer(
-                        cfg,
-                        "starved",
-                        &format!("starved-{}", sv_safe),
-                        &format!(
-                            "QUEUE: partition [{}] starved for {}m",
-                            part,
-                            age / 60
-                        ),
-                        &body,
-                    );
-                    remedy = "inference";
-                    tier = "inf";
-                }
-            }
-        }
-    }
-
-    (rollup(&verdicts), remedy, tier)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1482,8 +1315,6 @@ mod tests {
             queue_dir: dir.join("queue"),
             stall_secs: 3000,
             ci_queued_max: 600,
-            starved_max_s: 1200,
-            strands_state: dir.join("strands.json"),
             ci_red_max: 600,
             base_unreadable_grace: 120,
             lock_path: dir.join("czar-pass.lock"),
@@ -1493,7 +1324,6 @@ mod tests {
             scope_label: String::new(),
             czar_label: "czar-trigger".to_string(),
             express_label: "express".to_string(),
-            throttle_stamp: dir.join("queue-throttled"),
             land_unit: "spira-landing".to_string(),
             // A path that cannot exist, so `systemctl is-failed` always fails to spawn
             // (is_failed = false) instead of depending on the test host's real systemd.
@@ -1514,12 +1344,6 @@ mod tests {
         let map = dir.join("repo-map");
         fs::write(&map, format!("{} | {} | queue | {} | | \n", repo, repo_path, base)).unwrap();
         map
-    }
-
-    fn write_strands_state(dir: &Path, key: &str, first: u64) -> PathBuf {
-        let path = dir.join("strands.json");
-        fs::write(&path, format!(r#"{{"{}": {{"first": {}}}}}"#, key, first)).unwrap();
-        path
     }
 
     #[test]
@@ -1795,67 +1619,5 @@ mod tests {
         assert!(v2.is_gap, "past the grace window an unreadable base is failed, not green");
         assert_eq!(remedy2, "inference");
         assert_eq!(tier2, "inf");
-    }
-
-    #[test]
-    fn detect_starved_silent_with_no_strands_file() {
-        let dir = scratch_dir("starved-no-file");
-        let cfg = test_config(&dir, 2_000_000_000);
-        let mut state = StateMap::new();
-        let (v, remedy, tier) = detect_starved(&cfg, &mut state, "");
-        assert!(!v.is_gap);
-        assert_eq!(remedy, "none");
-        assert_eq!(tier, "det");
-    }
-
-    #[test]
-    fn detect_starved_is_unobservable_and_takes_no_action_on_malformed_json() {
-        let dir = scratch_dir("starved-malformed");
-        let cfg = test_config(&dir, 2_000_000_000);
-        fs::write(&cfg.strands_state, "not json").unwrap();
-        let mut state = StateMap::new();
-        let (v, remedy, _tier) = detect_starved(&cfg, &mut state, "");
-        assert!(matches!(v.status, RawStatus::Unobservable { .. }));
-        assert_eq!(remedy, "none");
-    }
-
-    #[test]
-    fn detect_starved_is_unobservable_when_the_json_is_not_an_object() {
-        let dir = scratch_dir("starved-not-object");
-        let cfg = test_config(&dir, 2_000_000_000);
-        fs::write(&cfg.strands_state, "[1,2,3]").unwrap();
-        let mut state = StateMap::new();
-        let (v, remedy, _tier) = detect_starved(&cfg, &mut state, "");
-        assert!(matches!(v.status, RawStatus::Unobservable { .. }));
-        assert_eq!(remedy, "none");
-    }
-
-    #[test]
-    fn detect_starved_silent_within_the_starved_window() {
-        let dir = scratch_dir("starved-silent");
-        let now = 2_000_000_000u64;
-        let mut cfg = test_config(&dir, now);
-        cfg.strands_state = write_strands_state(&dir, "partA:starved:queue", now - 100);
-        let mut state = StateMap::new();
-        let (v, remedy, _tier) = detect_starved(&cfg, &mut state, "");
-        assert!(!v.is_gap);
-        assert_eq!(remedy, "none");
-    }
-
-    #[test]
-    fn detect_starved_fires_past_the_starved_window() {
-        let dir = scratch_dir("starved-fire");
-        let now = 2_000_000_000u64;
-        let mut cfg = test_config(&dir, now);
-        cfg.strands_state =
-            write_strands_state(&dir, "partA:starved:queue", now - cfg.starved_max_s - 1);
-        let mut state = StateMap::new();
-        let (v, remedy, tier) = detect_starved(&cfg, &mut state, "");
-        assert!(v.is_gap);
-        // Shadow stage names its own ladder rung here, distinct from "det"/"inference" —
-        // detect_starved is the one detector whose Stage match happens before any
-        // throttle/deliberate-state check, so this is the whole story for Shadow.
-        assert_eq!(remedy, "shadow-inference");
-        assert_eq!(tier, "inf");
     }
 }
