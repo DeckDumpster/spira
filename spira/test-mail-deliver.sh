@@ -173,9 +173,15 @@ BASE_ENV=(
 )
 
 run_notify() {
+    # SPIRA_MAIL_REPEAT_WINDOW=0: this section sends several DISTINCT escalations to
+    # operator with the SAME literal subject ("A watcher has stopped producing events") in
+    # one shared SPIRA_RUN — mail.sh's own repeat-check would otherwise silently swallow
+    # every one after the first, which is correct anti-spam behaviour in production and
+    # exactly wrong for a test proving each condition escalates on its own.
     env -i "${BASE_ENV[@]}" \
         SPIRA_NOTIFY_AGE=0 \
         SPIRA_ACTIONABLE=WAKEME \
+        SPIRA_MAIL_REPEAT_WINDOW=0 \
         "${@}" \
         bash "$WATCHD" notify 2>/dev/null
 }
