@@ -280,17 +280,21 @@ _spira_fayth_paths() {
 # auto-convert that omitted them would simply fail closed against a box with a real
 # spira.toml already on disk instead of quietly gutting it (sp-zs04v.2).
 #
-# _spira_toml_convert_from_conf <conf> <target> -> writes <target> from <conf> plus this
+# _spira_toml_convert_from_conf <conf> <target> -> writes <target> exactly (no writeback
+# redirect — the caller has already decided this IS the right place) from <conf> plus this
 # box's repo-map and every fayth, via a full `spira-config convert`, and prints <target> — or
 # prints nothing and reports the failure on stderr. Factored out of spira_toml_resolve so any
 # writer that must create ANOTHER root's spira.toml directly (install.sh seeding a separate
 # SPIRA_PROD checkout's instance) shares the exact same conversion, never a narrower one that
 # drops the repo-map or a fayth and so, per `spira-config convert`'s own refusal, fails closed
 # against a target that already has more (sp-zs04v.2) rather than by construction here.
+# spira_toml_resolve, the one caller resolving an AMBIENT (not explicitly-given) target,
+# applies spira_config_writeback itself before calling in — the redirect guards against a
+# worktree regenerating some ambiguous default path, which does not apply to a target a
+# caller (install.sh, deploy.sh) already named on purpose.
 _spira_toml_convert_from_conf() {
     local conf="$1" target="$2" out rmap f
     local -a conv_args
-    target="$(spira_config_writeback "$target")"
     conv_args=(--conf "$conf" --home "$HOME" --out "$target")
     rmap="${SPIRA_REPO_MAP:-$(_spira_repo_map_candidate)}"
     [ -n "$rmap" ] && conv_args+=(--repo-map "$rmap")
@@ -331,7 +335,8 @@ spira_toml_resolve() {
         return 0
     fi
     [ -n "$conf" ] || return 0
-    _spira_toml_convert_from_conf "$conf" "${SPIRA_TOML:-$(dirname "$conf")/spira.toml}"
+    _spira_toml_convert_from_conf "$conf" \
+        "$(spira_config_writeback "${SPIRA_TOML:-$(dirname "$conf")/spira.toml}")"
 }
 
 # spira_toml_read <file> — apply `spira-config export --sh` for spira.toml to any key NOT
