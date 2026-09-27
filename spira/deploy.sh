@@ -507,38 +507,24 @@ _rollback() {
     exit 1
 }
 
-# Write SPIRA_PROD to the config file in force before restarting services so they come up
-# reading the current release. Rollback restores the backup if activation fails.
+# Write SPIRA_PROD to spira.toml before restarting services so they come up reading the
+# current release. Rollback restores the backup if activation fails.
 #
-# TWO FORMATS. A box with a legacy spira.conf — or with neither file yet, a from-scratch
-# install — keeps being written in that format: spira_toml_resolve (conf.sh) regenerates
-# spira.toml from it on the next read, so this needs no spira-config call and stays correct
-# for every other tool that still edits spira.conf directly (aeons.sh's conf_set, ...). Only
-# where a spira.toml ALREADY EXISTS AND NO spira.conf DOES does this write spira.toml
-# directly, through `spira-config set` rather than a hand-rolled TOML writer — creating a
-# fresh spira.conf in that case would make the next regenerate-on-staleness check overwrite
-# the richer spira.toml with a document holding only the one key just written.
+# ALWAYS spira.toml, THROUGH THE ONE HELPER (conf.sh's spira_config_set) — never a hand-rolled
+# writer, and never spira.conf. spira_config_set resolves the toml to write to and, on a box
+# that has only ever known spira.conf (or neither file yet), CREATES it first via a full
+# auto-convert of any existing spira.conf, repo-map and every fayth — so this never
+# regenerates a document holding only the one key just written, the "gutted spira.toml"
+# failure this bead retires.
 _new_prod="$SPIRA_RELEASES/current/spira"
-_conf_path="$(spira_conf_file)"
-_toml_path="$(spira_toml_file)"
-if [ -n "$_conf_path" ] || [ -z "$_toml_path" ]; then
-    [ -n "$_conf_path" ] || _conf_path="$SPIRA_REPO/spira.conf"
+_conf_path="$(spira_toml_write_target)"
+if [ -n "$_conf_path" ] && [ -f "$_conf_path" ]; then
     _conf_backup="${_conf_path}.pre-deploy.$$"
     cp "$_conf_path" "$_conf_backup" 2>/dev/null || _conf_backup=""
-    grep -v '^SPIRA_PROD[[:space:]]*=' "$_conf_path" > "${_conf_path}.new.$$" 2>/dev/null \
-        || :> "${_conf_path}.new.$$"
-    printf 'SPIRA_PROD = %s\n' "$_new_prod" >> "${_conf_path}.new.$$"
-    mv "${_conf_path}.new.$$" "$_conf_path" \
-        || log "deploy: WARN: could not write SPIRA_PROD to $_conf_path — fix manually"
-    log "deploy: spira.conf updated — SPIRA_PROD = $_new_prod"
-else
-    _conf_path="$_toml_path"
-    _conf_backup="${_conf_path}.pre-deploy.$$"
-    cp "$_conf_path" "$_conf_backup" 2>/dev/null || _conf_backup=""
-    "$SPIRA_CONFIG_BIN" set spira.prod "$_new_prod" "$_conf_path" \
-        || log "deploy: WARN: could not write SPIRA_PROD to $_conf_path — fix manually"
-    log "deploy: spira.toml updated — SPIRA_PROD = $_new_prod"
 fi
+spira_config_set SPIRA_PROD "$_new_prod" \
+    || log "deploy: WARN: could not write SPIRA_PROD to ${_conf_path:-spira.toml} — fix manually"
+log "deploy: spira.toml updated — SPIRA_PROD = $_new_prod"
 
 # Activate the tarball.
 log "deploy: activating"

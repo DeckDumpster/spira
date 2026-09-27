@@ -592,13 +592,13 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// Sets one dotted path (`spira.prod`, `spira.instance`) to a string value on `doc`, for
-/// `spira-config set` — the writer `deploy.sh` and `install.sh` use once nothing reads
-/// `spira.conf`'s `KEY=value` lines anymore. Goes through a JSON round-trip rather than a
-/// hand-written per-field match arm, so a field this schema already knows needs no writer
-/// of its own; `deny_unknown_fields` still refuses a path this schema does not carry, via
-/// the same `serde` deserialize the rest of this crate validates through.
-pub fn set_path(doc: &SpiraToml, path: &str, value: &str) -> Result<SpiraToml, String> {
+/// Sets one dotted path (`spira.prod`, `spira.max_live_aeons`) to a leaf JSON value on `doc`.
+/// Shared by `set_path`'s two attempts, below.
+fn set_path_leaf(
+    doc: &SpiraToml,
+    path: &str,
+    leaf_value: serde_json::Value,
+) -> Result<SpiraToml, String> {
     let segs: Vec<&str> = path.split('.').collect();
     let Some((leaf, parents)) = segs.split_last() else {
         return Err("set: empty path".to_string());
@@ -620,7 +620,7 @@ pub fn set_path(doc: &SpiraToml, path: &str, value: &str) -> Result<SpiraToml, S
     }
     cur.as_object_mut()
         .expect("just made an object")
-        .insert(leaf.to_string(), serde_json::Value::String(value.to_string()));
+        .insert(leaf.to_string(), leaf_value);
     serde_path_to_error::deserialize(json).map_err(|e| {
         let p = e.path().to_string();
         if p.is_empty() {
@@ -629,6 +629,45 @@ pub fn set_path(doc: &SpiraToml, path: &str, value: &str) -> Result<SpiraToml, S
             format!("{p}: {}", e.inner())
         }
     })
+}
+
+/// Sets one dotted path (`spira.prod`, `spira.instance`, `spira.max_live_aeons`) to a value
+/// given as a plain command-line string, for `spira-config set` — the writer `deploy.sh`,
+/// `install.sh` and `conf.sh`'s own `spira_config_set` shell helper use once nothing writes
+/// `spira.conf`'s `KEY=value` lines anymore. Goes through a JSON round-trip rather than a
+/// hand-written per-field match arm, so a field this schema already knows needs no writer of
+/// its own; `deny_unknown_fields` still refuses a path this schema does not carry, via the
+/// same `serde` deserialize the rest of this crate validates through.
+///
+/// TRIES THE VALUE AS A STRING FIRST, because most fields here are paths and names, and a
+/// literal like `"3"` must stay the string `"3"` when the field is one of those — only a
+/// field the schema itself types as a number or bool (`max_live_aeons`, `cert_idle_skip`, ...)
+/// ever takes the second attempt, which parses the same text as JSON and retries. Reports the
+/// first (string) attempt's error when both fail, since "expected u32" names the fix; the
+/// generic JSON-parse failure on a bare word does not.
+pub fn set_path(doc: &SpiraToml, path: &str, value: &str) -> Result<SpiraToml, String> {
+    let as_string_err = match set_path_leaf(doc, path, serde_json::Value::String(value.to_string()))
+    {
+        Ok(d) => return Ok(d),
+        Err(e) => e,
+    };
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value) {
+        if !parsed.is_string() {
+            if let Ok(d) = set_path_leaf(doc, path, parsed) {
+                return Ok(d);
+            }
+        }
+    }
+    Err(as_string_err)
+}
+
+/// Removes one dotted path's value from `doc`, for `spira-config unset` — the writer side of
+/// retiring a key (`aeons.sh unset`'s fleet ceiling) without leaving an empty string behind.
+/// A JSON null deserializes to `None` for every `Option<T>` field this schema has, and `toml`
+/// omits a `None` field entirely on serialization, so the key simply stops appearing in the
+/// document — never a leftover `key = ""` a reader would have to know means "unset".
+pub fn unset_path(doc: &SpiraToml, path: &str) -> Result<SpiraToml, String> {
+    set_path_leaf(doc, path, serde_json::Value::Null)
 }
 
 #[cfg(test)]
@@ -758,5 +797,37 @@ mod tests {
             missing_from_retirement(&history, &active),
             vec!["never_retired".to_string()]
         );
+    }
+
+    #[test]
+    fn set_path_coerces_a_numeric_field() {
+        let doc = set_path(&SpiraToml::default(), "spira.max_live_aeons", "3").unwrap();
+        assert_eq!(doc.spira.unwrap().max_live_aeons, Some(3));
+    }
+
+    #[test]
+    fn set_path_coerces_a_bool_field() {
+        let doc = set_path(&SpiraToml::default(), "spira.cert_idle_skip", "true").unwrap();
+        assert_eq!(doc.spira.unwrap().cert_idle_skip, Some(true));
+    }
+
+    #[test]
+    fn set_path_keeps_a_numeric_looking_string_field_a_string() {
+        // `instance` is a string field; a value that happens to parse as JSON must not be
+        // coerced away from the string the schema actually wants.
+        let doc = set_path(&SpiraToml::default(), "spira.instance", "123").unwrap();
+        assert_eq!(doc.spira.unwrap().instance, Some("123".to_string()));
+    }
+
+    #[test]
+    fn unset_path_removes_the_key_and_keeps_siblings() {
+        let doc = validate("[spira]\nmax_live_aeons = 3\nmax_aeons = 4\n").unwrap();
+        let doc = unset_path(&doc, "spira.max_live_aeons").unwrap();
+        // omitted entirely from the serialized document, not written as an empty value.
+        let out = toml::to_string_pretty(&doc).unwrap();
+        assert!(!out.contains("max_live_aeons"), "{out}");
+        let spira = doc.spira.unwrap();
+        assert_eq!(spira.max_live_aeons, None);
+        assert_eq!(spira.max_aeons, Some(4));
     }
 }

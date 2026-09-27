@@ -35,6 +35,27 @@ OK()   { printf '  ok    %s\n' "$1"; }
 CONF="${SPIRA_CONF_FILE:-}"
 
 # --------------------------------------------------------------------------------------
+# CONFIG FILES. Once spira.toml exists it is the only file conf.sh reads (spira_toml_resolve,
+# sp-usxfl) and the only one any harness writer targets (spira_config_set) — a spira.conf
+# left beside it is inert, not backing anything up, and an operator hand-editing it would see
+# no effect at all. Warn so it gets noticed and removed, per the bead's own acceptance: "the
+# Concierge retires this box's spira.conf" once this lands.
+# --------------------------------------------------------------------------------------
+doctor_check_config_files() {
+    local toml="${SPIRA_TOML_FILE:-}"
+    if [ -n "$CONF" ] && [ -n "$toml" ]; then
+        WARN "both $CONF and $toml exist — spira.conf is no longer read or written" \
+             "Confirm $toml carries everything you need, then remove $CONF."
+    elif [ -n "$toml" ]; then
+        OK "spira.toml only — $toml"
+    elif [ -n "$CONF" ]; then
+        OK "spira.conf only (legacy) — $CONF"
+    else
+        OK "no config file found — running on derived defaults"
+    fi
+}
+
+# --------------------------------------------------------------------------------------
 # CHAMBER OVERLAYS. aeon.sh applies an operator overlay from SPIRA_CHAMBER_OVERLAY silently
 # to a rendered brief; this is the only place that says one is in force at all, so a bead's
 # history that disagrees with what an aeon was told can be checked against something.
@@ -413,6 +434,10 @@ doctor_check_concierge_singleton() {
 }
 
 echo "spira doctor"
+
+echo
+echo "config files"
+doctor_check_config_files
 
 echo
 echo "chamber overlays"
