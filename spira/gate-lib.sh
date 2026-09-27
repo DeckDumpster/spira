@@ -35,6 +35,25 @@ verdict() {              # verdict <status> <reason> [message...]
     fi
     command -v gate_meter >/dev/null 2>&1 && gate_meter "$st" "$reason"
     command -v yield_note >/dev/null 2>&1 && yield_note "$st" "$reason"
+    # CERTIFICATION ONTO EVENTS (sp-vd9dn): the ONE place this gate's verdict becomes a bead-
+    # machine event, so every caller — landing.sh's queue and parallel paths, queue.sh submit,
+    # a foreground gate-run.sh --exec, an aeon's own self-certification — carries the exact
+    # tip and gate_key without saying so itself. Only when the caller named a bead (a fences-
+    # only or ad-hoc gate.sh run may not) and BR_TIP resolved to a real commit.
+    if command -v lc_certify >/dev/null 2>&1 && [ -n "${SPIRA_GATE_BEAD:-}" ] \
+       && [ -n "${BR_TIP:-}" ] && [ "$BR_TIP" != - ]; then
+        case "$st" in
+            0)
+                lc_certify "$SPIRA_GATE_BEAD" "$BR_TIP" pass "${GATE_KEY:-}" >/dev/null 2>&1 || true
+                ;;
+            "$SPIRA_GATE_NOVERDICT"|"$SPIRA_GATE_BASEFAIL")
+                lc_certify "$SPIRA_GATE_BEAD" "$BR_TIP" infra "$reason" >/dev/null 2>&1 || true
+                ;;
+            *)
+                lc_certify "$SPIRA_GATE_BEAD" "$BR_TIP" red "$reason" >/dev/null 2>&1 || true
+                ;;
+        esac
+    fi
     exit "$st"
 }
 

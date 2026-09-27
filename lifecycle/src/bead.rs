@@ -354,7 +354,22 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
-            Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
+            // THE TIP INVARIANT (design §3, sp-vd9dn): a certification is a claim about one
+            // exact tree, and a bead that moved since — a rebase, an amend, a new push — is
+            // no longer that claim. Resubmitting the SAME tip is a no-op (nothing to void);
+            // resubmitting a DIFFERENT one voids the certification and starts a fresh trial,
+            // exactly as a stale-tip GatePass/GateRed/GateInfra is refused by TipMismatch.
+            Submit { tip } => {
+                let mut new = row.clone();
+                if row.tip.as_deref() != Some(tip.as_str()) {
+                    new.state = BeadState::Submitted;
+                    new.tip = Some(tip.clone());
+                    new.gate_key = None;
+                }
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            Claim { .. } | Release | HolderDead | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Delivered { .. } | Returned { .. } | Requeued { .. }
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } => {
                 illegal(row, kind)
@@ -684,6 +699,29 @@ mod tests {
                 assert!(!out.applied || out.row.state == BeadState::InDelivery, "{kind:?} moved out of IN_DELIVERY without being an exit event");
             }
         }
+    }
+
+    #[test]
+    fn resubmitting_a_moved_tip_voids_certification_to_submitted() {
+        let mut r = row(BeadState::Certified);
+        r.tip = Some("abc123".into());
+        r.gate_key = Some("k1".into());
+        let out = apply(&r, &ev(BeadState::Certified, r.version, BeadEventKind::Submit { tip: "def456".into() }));
+        assert!(out.applied);
+        assert_eq!(out.row.state, BeadState::Submitted);
+        assert_eq!(out.row.tip.as_deref(), Some("def456"));
+        assert_eq!(out.row.gate_key, None, "a voided certification carries no gate key forward");
+    }
+
+    #[test]
+    fn resubmitting_the_same_tip_leaves_certification_standing() {
+        let mut r = row(BeadState::Certified);
+        r.tip = Some("abc123".into());
+        r.gate_key = Some("k1".into());
+        let out = apply(&r, &ev(BeadState::Certified, r.version, BeadEventKind::Submit { tip: "abc123".into() }));
+        assert!(out.applied);
+        assert_eq!(out.row.state, BeadState::Certified);
+        assert_eq!(out.row.gate_key.as_deref(), Some("k1"), "an unchanged tip is not a change to void");
     }
 
     #[test]

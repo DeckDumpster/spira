@@ -377,26 +377,35 @@ main() {
             read -r _cid _ctip _cepoch <<< "$_cl"
             _ltip="$(git -C "$repo" rev-parse "refs/heads/spira/$_cid" 2>/dev/null || true)"
             if [ -n "${_ltip:-}" ] && [ "$_ltip" != "$_ctip" ]; then
-                land_mark "$_cid" CERTIFIED "$_ltip"
-                printf 'batch %s: stale-certification %s — certified=%s live=%s — re-certified\n' \
-                    "$name" "$_cid" "${_ctip:0:8}" "${_ltip:0:8}"
                 if git -C "$repo" merge-base --is-ancestor "$_ltip" "$base_sha" 2>/dev/null; then
                     land_mark "$_cid" LANDED "$_ltip" already-in-base
                     bead_close_on_land "$_cid" "$_ltip" || true
                     printf 'batch %s: %s live tip already in %s — LANDED (already-in-base)\n' \
                         "$name" "$_cid" "$base"
                 else
+                    # NO UNGATED RE-CERTIFICATION (sp-vd9dn): the tip moved since this branch
+                    # was certified — a rebase, an amend, a new push — and the tip invariant
+                    # says that alone voids the certification. The gate-key comparison below
+                    # is the ONE exception batch.sh already made for itself (unchanged from
+                    # before this bead: same reviewed tree, same gate command, same harness —
+                    # just re-pointed), and only that exception may write CERTIFIED again.
+                    # Everything else drops out and waits for landing.sh's real gate.
                     _gkf="$LANDSTATE/$_cid.gate-key"
-                    if [ -f "$_gkf" ]; then
-                        _stored_gk="$(cat "$_gkf" 2>/dev/null)"
-                        _current_gk="$(compute_gate_key "$repo" "$name" "spira/$_cid" "$base" 2>/dev/null || true)"
-                        if [ -n "$_stored_gk" ] && [ -n "$_current_gk" ] && [ "$_stored_gk" != "$_current_gk" ]; then
-                            printf 'batch %s: stale-cert-key %s — gate changed; needs fresh gate\n' "$name" "$_cid"
-                            rm -f "${SPIRA_RUN:-/nonexistent}/submitted/$_cid" 2>/dev/null || true
-                            continue
-                        fi
+                    _stored_gk=""; _current_gk="$(compute_gate_key "$repo" "$name" "spira/$_cid" "$base" 2>/dev/null || true)"
+                    [ -f "$_gkf" ] && _stored_gk="$(cat "$_gkf" 2>/dev/null)"
+                    if [ -n "$_stored_gk" ] && [ -n "$_current_gk" ] && [ "$_stored_gk" = "$_current_gk" ]; then
+                        land_mark "$_cid" CERTIFIED "$_ltip"
+                        printf 'batch %s: stale-certification %s — certified=%s live=%s, same gate key — re-certified\n' \
+                            "$name" "$_cid" "${_ctip:0:8}" "${_ltip:0:8}"
+                        lc_certify "$_cid" "$_ltip" pass "$_current_gk" >/dev/null 2>&1 || true
+                        _filt="${_filt}${_cid} ${_ltip} ${_cepoch}"$'\n'
+                    else
+                        printf 'batch %s: stale-certification %s — certified=%s live=%s, gate key differs — needs fresh gate\n' \
+                            "$name" "$_cid" "${_ctip:0:8}" "${_ltip:0:8}"
+                        rm -f "${SPIRA_RUN:-/nonexistent}/submitted/$_cid" 2>/dev/null || true
+                        lc_resubmit "$_cid" "$_ltip" >/dev/null 2>&1 || true
+                        continue
                     fi
-                    _filt="${_filt}${_cid} ${_ltip} ${_cepoch}"$'\n'
                 fi
             elif git -C "$repo" merge-base --is-ancestor "$_ctip" "$base_sha" 2>/dev/null; then
                 land_mark "$_cid" LANDED "$_ctip" already-in-base

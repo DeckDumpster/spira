@@ -78,6 +78,11 @@ REPO="$(repo_root "$REPO_NAME")" || verdict "$NV" no-repo-map \
 # the gate contradicting itself, and nothing else can tell them apart afterwards.
 GATE_TREE="$(git -C "$REPO" rev-parse --verify -q "$BR^{tree}" 2>/dev/null)" || GATE_TREE=""
 [ -n "$GATE_TREE" ] || GATE_TREE=-
+# THE COMMIT, for the lifecycle machine's tip (sp-vd9dn). Distinct from GATE_TREE: two
+# commits can share a tree (an amend, a clean rebase), but the bead machine's tip invariant
+# keys on the commit a caller actually named, not on what the suites happened to read.
+BR_TIP="$(git -C "$REPO" rev-parse --verify -q "$BR^{commit}" 2>/dev/null)" || BR_TIP=""
+[ -n "$BR_TIP" ] || BR_TIP=-
 # THE SUITE, filled in below from the gate command's own output when it names one. `-` until
 # then, and `-` forever if the repository's gate says nothing identifiable — a suite named on
 # a guess is worse than a red attributed to the gate's reason, because the wrong suite is the
