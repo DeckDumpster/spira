@@ -64,7 +64,7 @@ _report() {
     "$SPIRA_HOME/mail.sh" send concierge \
         --from "PR Notify <pr-notify@spira>" \
         --subject "pr-notify: $line" \
-        --kind event <<MAILEOF >/dev/null 2>&1
+        --kind event <<MAILEOF >/dev/null || printf 'pr-notify: mail send failed for: %s\n' "$line" >&2
 ## Event
 $line
 MAILEOF
