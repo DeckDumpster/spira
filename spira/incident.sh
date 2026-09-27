@@ -43,6 +43,16 @@
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
 
+# FAIL CLOSED. SPIRA_DB is still empty here only if a caller explicitly declared "no
+# database for this run" (conf.sh no longer defaults an explicitly-empty SPIRA_DB — see
+# conf.sh's own SPIRA_DB line). Falling through would hand bd an effectively absent -C,
+# and bd's own directory-walk discovery can find a real, unintended store instead of
+# refusing (law-a-control-that-cannot-check-must-refuse).
+[ -n "${SPIRA_DB:-}" ] || {
+    printf 'incident.sh: SPIRA_DB is not set — refusing to file rather than let bd resolve one on its own\n' >&2
+    exit 1
+}
+
 # WHICH PARTITION AN INTAKE LANDS IN, and therefore who works it. `spira,incident` is Ops's
 # and is the default, because the original caller was a crashed unit and Ops is the healer.
 # A caller whose finding is a DEFECT rather than an outage sets this to the builder's labels
