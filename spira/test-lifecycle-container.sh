@@ -30,22 +30,26 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
-. "$HERE/conf.sh"
 
-# Never let an ambient SPIRA_LC_SOCKET (or a stray real one at the hardcoded default path)
-# make a direct-connection assertion silently go through a socket instead. Set back only
-# where this suite means to exercise the socket path, in the bench section below.
-unset SPIRA_LC_SOCKET
-
+# Resolve cargo/rustc and dolt BEFORE conf.sh, which can overwrite PATH with the harness's
+# own tool directories — the testenv image puts cargo at /usr/local/cargo/bin, not under
+# $HOME, so a lookup done after conf.sh runs finds neither (see test-spira-config.sh's own
+# note; this suite hit exactly that skip once, `command -v cargo` empty post-conf.sh).
 CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
 if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
     CARGO_BIN="$HOME/.cargo/bin/cargo"
 fi
 [ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
-export PATH="$(dirname "$CARGO_BIN"):$PATH"
-
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
+
+. "$HERE/conf.sh"
+export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+
+# Never let an ambient SPIRA_LC_SOCKET (or a stray real one at the hardcoded default path)
+# make a direct-connection assertion silently go through a socket instead. Set back only
+# where this suite means to exercise the socket path, in the bench section below.
+unset SPIRA_LC_SOCKET
 
 REPO="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"
