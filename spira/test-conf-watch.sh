@@ -48,7 +48,10 @@ chmod +x "$MOCK_SYSTEMCTL"
 # early), the change case returns as soon as the loop notices — usually within one tick.
 TICK=0.2
 WIN_STAY=0.6
-WIN_CHANGE=3
+# 15, not 3: a loop's startup (sourcing conf.sh and lib.sh) took past 3s under a 16-wide
+# corpus (2026-09-26, rc=124 "Terminated"). The exiting loops return the moment they notice
+# the change, so the window costs time only on failure and for health.sh's reaped re-exec.
+WIN_CHANGE=15
 TOUCH_DELAY=0.3
 
 run_health() {   # run_health <conf> <window>
