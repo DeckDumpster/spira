@@ -269,13 +269,12 @@ fi
 echo
 echo "status names the active CI watchers:"
 
-ACTIVE_TIMERS="spira-gate-check.timer,spira-pr-notify.timer"
+ACTIVE_TIMERS="spira-gate-check.timer"
 ACTIVE_SVC=""; write_sc
 world stop >/dev/null   # HALTED state is what gates the status line below
 
 out="$(world status)"
 want "status names gate-check as CI watcher" "spira-gate-check" "$out"
-want "status names pr-notify as CI watcher"  "spira-pr-notify"  "$out"
 
 # Status with watchers inactive: nobody is watching CI.
 ACTIVE_TIMERS=""; write_sc

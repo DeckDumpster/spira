@@ -82,7 +82,6 @@ UNITS=(spira-sentinel.service spira-sentinel.timer
        spira-moot-sweep.service spira-moot-sweep.timer
        spira-verify-asks.service spira-verify-asks.timer
        spira-gate-check.service spira-gate-check.timer
-       spira-pr-notify.service spira-pr-notify.timer
        spira-mail-tidy.service spira-mail-tidy.timer
        spira-gh-intake.service spira-gh-intake.timer
        spira-verdict.service spira-verdict.timer
@@ -102,7 +101,6 @@ _ENABLE_TMPL=(cockpit-ensure.timer concierge.timer spira-watch-refresh.timer
               spira-moot-sweep.timer
               spira-verify-asks.timer
               spira-gate-check.timer
-              spira-pr-notify.timer
               spira-cockpit.service
               spira-mail-tidy.timer
               spira-gh-intake.timer

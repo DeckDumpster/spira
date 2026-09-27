@@ -54,7 +54,9 @@ SC="${SPIRA_SYSTEMCTL:-systemctl}"
 # list still gets stopped — it just stops after the ones whose order matters.
 TIMER_PRIORITY=(spira-sentinel spira-ops spira-watchtower spira-archivist spira-archive spira-skew)
 # Stopped only on --hard; a plain halt leaves them running (summon nothing, create no worktree).
-CI_WATCHER_BASES=(spira-gate-check spira-pr-notify)
+# pr-notify is a daemon row now (spira-watch@pr-notify), not a timer, so it is already covered
+# by the generic "spira-watch@*.service handled separately by --hard" treatment below.
+CI_WATCHER_BASES=(spira-gate-check)
 _inst_sfx="${SPIRA_INSTANCE:+-$SPIRA_INSTANCE}"
 TIMERS=()
 _timer_seen=" "
