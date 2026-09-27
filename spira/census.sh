@@ -87,7 +87,7 @@ fi
 # clock — that clock is expected to differ from UTC_TIMESTAMP() by the host timezone
 # offset on any non-UTC box (sp-9b8py), and that disagreement is not a clock fault.
 _skew_tolerance="${SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S:-120}"
-_host_utc_epoch="$(date -u +%s)"
+_host_utc_epoch="${SPIRA_NOW:-$(date -u +%s)}"
 _skew_out="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
     "SELECT DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%d %H:%i:%s') AS utc_fn" 2>&1)"
 _skew_rc=$?

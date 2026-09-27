@@ -172,24 +172,12 @@ CENSUS_SQL_FILE="$T/sql_one_class.txt"
 printf 'recurred | fallback-test | 1 | 1\n' > "$CENSUS_SQL_FILE"
 
 # The skew guard now compares the substrate's UTC_TIMESTAMP() against the HOST's own
-# `date -u` clock (sp-9b8py), not against the substrate's NOW(). So the fixtures below
-# must be relative to a host clock the test controls, not a fixed calendar date: a fake
-# `date` binary shadows the real one on PATH, answering the exact "date -u +%s" call
-# census.sh makes for its "what time is it really" reading with a fixed epoch, and
-# passing every other invocation (including census.sh's own "date -u -d ... +%s" parse
-# of the substrate's answer) straight through to the real `date`.
-REAL_DATE="$(command -v date)"
-FAKE_DATE_DIR="$T/fakebin"; mkdir -p "$FAKE_DATE_DIR"
+# UTC clock (sp-9b8py), not against the substrate's NOW(). census.sh reads that clock as
+# ${SPIRA_NOW:-$(date -u +%s)} — the same test-clock override every other suite in this
+# tree pins a clock with (lib.sh:6120, watchd.sh, test-archivist.sh, ...) — so the
+# fixtures below are relative to CENSUS_FIXED_HOST_EPOCH, a fixed epoch this suite pins
+# via SPIRA_NOW, not a fixed calendar date the real clock would eventually catch up to.
 CENSUS_FIXED_HOST_EPOCH=1781000000
-cat > "$FAKE_DATE_DIR/date" <<EOF
-#!/usr/bin/env bash
-if [ "\$#" -eq 2 ] && [ "\$1" = "-u" ] && [ "\$2" = "+%s" ]; then
-    printf '%s\n' "$CENSUS_FIXED_HOST_EPOCH"
-    exit 0
-fi
-exec "$REAL_DATE" "\$@"
-EOF
-chmod +x "$FAKE_DATE_DIR/date"
 
 # _skew_fixture <file> <offset-seconds-from-the-fixed-host-clock> — writes the fake bd's
 # answer to "SELECT DATE_FORMAT(UTC_TIMESTAMP(), ...) AS utc_fn" (same 3-row header/
@@ -197,7 +185,7 @@ chmod +x "$FAKE_DATE_DIR/date"
 # seconds away from CENSUS_FIXED_HOST_EPOCH, so the guard's computed skew is exact.
 _skew_fixture() {
     local file="$1" offset="$2" val
-    val="$("$REAL_DATE" -u -d "@$(( CENSUS_FIXED_HOST_EPOCH + offset ))" '+%Y-%m-%d %H:%M:%S')"
+    val="$(date -u -d "@$(( CENSUS_FIXED_HOST_EPOCH + offset ))" '+%Y-%m-%d %H:%M:%S')"
     printf 'utc_fn\n------\n%s\n' "$val" > "$file"
 }
 
@@ -214,7 +202,7 @@ RUN_NO_WM="$T/run-no-wm"; mkdir -p "$RUN_NO_WM"
 # must not depend on.
 run_census_fake() {   # run_census_fake <SPIRA_RUN> [census-args...]
     local rundir="$1"; shift
-    env PATH="$FAKE_DATE_DIR:$PATH" \
+    env SPIRA_NOW="$CENSUS_FIXED_HOST_EPOCH" \
         SPIRA_BD="$FAKE_BD" \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy \
@@ -278,7 +266,7 @@ is "skew beyond tolerance: exits non-zero" "1" "$skewed_rc"
 is "skew beyond tolerance: no ranking emitted" "" "$skewed_out"
 want "skew beyond tolerance: measured skew named on stderr" "25200" "$(cat "$T/skewed.stderr")"
 want "skew beyond tolerance: substrate clock value named on stderr" \
-    "$("$REAL_DATE" -u -d "@$(( CENSUS_FIXED_HOST_EPOCH + 25200 ))" '+%Y-%m-%d %H:%M:%S')" \
+    "$(date -u -d "@$(( CENSUS_FIXED_HOST_EPOCH + 25200 ))" '+%Y-%m-%d %H:%M:%S')" \
     "$(cat "$T/skewed.stderr")"
 
 # A negative skew (substrate behind UTC) refuses on magnitude, not sign.
