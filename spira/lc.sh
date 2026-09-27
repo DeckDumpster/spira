@@ -30,7 +30,7 @@ _lc_json_string() {  # _lc_json_string <raw-text> -> a JSON-quoted string, safe 
 lc_show() {
     local id="${1:?lc_show needs a bead id}"
     [ -x "${SPIRA_LC_BIN:-}" ] || { printf '{}'; return 2; }
-    "$SPIRA_LC_BIN" show "$id" 2>/dev/null
+    "$SPIRA_LC_BIN" show "$id"
 }
 
 # lc_event <bead-id> <expect-state> <version> <actor> <kind-json> -> applies one event.
@@ -40,7 +40,7 @@ lc_show() {
 lc_event() {
     local id="${1:?}" expect="${2:?}" version="${3:?}" actor="${4:?}" kind="${5:?}"
     [ -x "${SPIRA_LC_BIN:-}" ] || return 2
-    "$SPIRA_LC_BIN" event bead "$id" --expect "$expect" --version "$version" --actor "$actor" --kind "$kind" >/dev/null 2>&1
+    "$SPIRA_LC_BIN" event bead "$id" --expect "$expect" --version "$version" --actor "$actor" --kind "$kind"
 }
 
 # lc_hold <bead-id> <kind: poison|ask|wait|operator> <cause> [actor] -> best-effort: read
