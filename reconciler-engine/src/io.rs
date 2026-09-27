@@ -29,6 +29,27 @@ pub fn save_state(path: &Path, state: &StateMap) -> std::io::Result<()> {
     fs::write(path, json)
 }
 
+/// Which streak (`since`) each invariant last alerted for — the persisted half of
+/// [`crate::alert::should_alert`]'s dedup, shared by every caller of the alert path
+/// (reconciler-alert, reconciler-flow) instead of each keeping its own copy of this file
+/// format.
+pub type AlertedSinceMap = BTreeMap<String, u64>;
+
+/// A missing or unparsable file is "nothing alerted yet" — the same fail-safe reading
+/// [`load_state`] gives HysteresisState: it can only cost one redundant alert, never
+/// suppress one that was owed.
+pub fn load_alerted(path: &Path) -> AlertedSinceMap {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_alerted(path: &Path, state: &AlertedSinceMap) -> std::io::Result<()> {
+    let json = serde_json::to_string_pretty(state).unwrap_or_else(|_| "{}".to_string());
+    fs::write(path, json)
+}
+
 #[derive(Serialize)]
 struct StatusRecord<'a> {
     ts: &'a str,
@@ -99,6 +120,24 @@ mod tests {
         let contents = fs::read_to_string(&status_path).unwrap();
         assert!(contents.contains("\"status\":\"gap\""));
         assert_eq!(contents.lines().count(), 1);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn alerted_since_round_trips_through_a_file() {
+        let dir = std::env::temp_dir().join(format!("reconciler-engine-io-alerted-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let alerted_path = dir.join("alerted.json");
+
+        let mut alerted = load_alerted(&alerted_path);
+        assert!(alerted.is_empty(), "missing file loads as empty, not an error");
+
+        alerted.insert("flow:backlog".to_string(), 100);
+        save_alerted(&alerted_path, &alerted).unwrap();
+
+        let reloaded = load_alerted(&alerted_path);
+        assert_eq!(reloaded.get("flow:backlog"), Some(&100));
 
         fs::remove_dir_all(&dir).ok();
     }

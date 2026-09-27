@@ -18,8 +18,9 @@ use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use reconciler_engine::alert::{compose_alert, should_alert};
 use reconciler_engine::core::{step, HysteresisState, RawStatus, Verdict};
-use reconciler_engine::io::{append_status, load_state, save_state, StateMap};
+use reconciler_engine::io::{append_status, load_alerted, load_state, save_alerted, save_state, AlertedSinceMap, StateMap};
 
 use reconciler_flow::core::{
     backlog_trend_raw, dwell_raw, round_health_raw, velocity_raw, BacklogObserved, DwellObserved,
@@ -55,6 +56,7 @@ struct Config {
     spira_run: PathBuf,
     lock_path: PathBuf,
     state_path: PathBuf,
+    alerted_path: PathBuf,
     status_log: PathBuf,
     tsd_bin: String,
     duckdb_bin: String,
@@ -80,6 +82,9 @@ impl Config {
             state_path: env::var("SPIRA_RECONCILER_FLOW_STATE")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("reconciler-flow-state.json")),
+            alerted_path: env::var("SPIRA_RECONCILER_FLOW_ALERTED")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| spira_run.join("reconciler-flow-alerted.json")),
             status_log: env::var("SPIRA_RECONCILER_STATUS_LOG")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("reconciler-status.jsonl")),
@@ -147,24 +152,25 @@ fn status_word(v: &Verdict) -> &'static str {
 }
 
 /// A flow gap has no deterministic remedy: the only action on `is_gap` is the Concierge
-/// alert path. Deduplication across passes is sp-fufyb's mandate, not reimplemented here —
-/// this sends once per pass the gap is confirmed.
-fn maybe_alert(cfg: &Config, key: &str, verdict: &Verdict) {
-    if !verdict.is_gap {
+/// alert path, deduplicated per gap streak by `reconciler_engine::alert::should_alert` — the
+/// same dedup sp-fufyb built for the structural path, wired here instead of resending once
+/// per pass for as long as the gap stays open (law-repeating-conditions-escalate-once).
+fn maybe_alert(cfg: &Config, alerted: &mut AlertedSinceMap, key: &str, verdict: &Verdict) {
+    let (fire, next) = should_alert(verdict, alerted.get(key).copied());
+    match next {
+        Some(since) => {
+            alerted.insert(key.to_string(), since);
+        }
+        None => {
+            alerted.remove(key);
+        }
+    }
+    if !fire {
         return;
     }
-    let (desired, observed) = match &verdict.status {
-        RawStatus::Gap { desired, observed, .. } => (desired.clone(), observed.clone()),
-        _ => return,
-    };
-    let age_m = verdict.since.map(|s| cfg.now_secs.saturating_sub(s) / 60).unwrap_or(0);
     let subject = format!("RECONCILER: flow gap — {key}");
-    let body = format!(
-        "Flow invariant {key} has been a gap for {age_m}m.\n\n\
-         desired:  {desired}\n\
-         observed: {observed}\n\n\
-         This has no deterministic remedy — it needs judgement, not a retry.\n",
-    );
+    let evidence = compose_alert(key, cfg.now_secs, verdict, None);
+    let body = format!("{evidence}\nThis has no deterministic remedy — it needs judgement, not a retry.\n");
     if let Err(e) = mail_concierge(&cfg.mail_sh, &subject, &body) {
         eprintln!("reconciler-flow: {key}: concierge alert failed: {e}");
     } else {
@@ -198,6 +204,7 @@ fn run_pass() -> Result<(), String> {
     }
 
     let mut state = load_state(&cfg.state_path);
+    let mut alerted = load_alerted(&cfg.alerted_path);
     let (velocity_floor, dwell_limit) = flow_floors(&cfg.desired_dir);
 
     // ── backlog trend ────────────────────────────────────────────────────────────────────
@@ -209,7 +216,7 @@ fn run_pass() -> Result<(), String> {
         (_, Err(e)) => unobservable(e.clone()),
     };
     let v = evaluate(&cfg, &mut state, "flow:backlog", backlog_raw);
-    maybe_alert(&cfg, "flow:backlog", &v);
+    maybe_alert(&cfg, &mut alerted, "flow:backlog", &v);
     log_print(&format!("reconciler-flow: flow:backlog → {}", status_word(&v)));
     if let Ok(cur) = current {
         append_backlog_sample(&cfg.tsd_bin, &cfg.spira_run, cur);
@@ -227,7 +234,7 @@ fn run_pass() -> Result<(), String> {
         (_, Err(e)) => unobservable(e.clone()),
     };
     let v = evaluate(&cfg, &mut state, "flow:velocity:queue", velocity_raw_status);
-    maybe_alert(&cfg, "flow:velocity:queue", &v);
+    maybe_alert(&cfg, &mut alerted, "flow:velocity:queue", &v);
     log_print(&format!("reconciler-flow: flow:velocity:queue → {}", status_word(&v)));
 
     // ── stage dwell ("review") ───────────────────────────────────────────────────────────
@@ -241,7 +248,7 @@ fn run_pass() -> Result<(), String> {
         Err(e) => unobservable(e),
     };
     let v = evaluate(&cfg, &mut state, "flow:dwell:review", dwell_raw_status);
-    maybe_alert(&cfg, "flow:dwell:review", &v);
+    maybe_alert(&cfg, &mut alerted, "flow:dwell:review", &v);
     log_print(&format!("reconciler-flow: flow:dwell:review → {}", status_word(&v)));
 
     // ── round health (flip rate) ─────────────────────────────────────────────────────────
@@ -254,10 +261,11 @@ fn run_pass() -> Result<(), String> {
         Err(e) => unobservable(e),
     };
     let v = evaluate(&cfg, &mut state, "flow:round-health", round_health_raw_status);
-    maybe_alert(&cfg, "flow:round-health", &v);
+    maybe_alert(&cfg, &mut alerted, "flow:round-health", &v);
     log_print(&format!("reconciler-flow: flow:round-health → {}", status_word(&v)));
 
     let _ = save_state(&cfg.state_path, &state);
+    let _ = save_alerted(&cfg.alerted_path, &alerted);
     let elapsed = unix_now().saturating_sub(cfg.now_secs);
     log_print(&format!("reconciler-flow: pass complete ({elapsed}s)"));
 
