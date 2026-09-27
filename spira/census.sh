@@ -82,23 +82,31 @@ fi
 # and a windowed count over them is not a ranking — rc=0 with an all-zero table looks
 # exactly like a quiet graph. Refuse instead, and refuse the same way when the check
 # itself cannot run: a control that cannot check must refuse, not pass silently.
+#
+# Measured against the host's own UTC clock (date -u), never the substrate's local wall
+# clock — that clock is expected to differ from UTC_TIMESTAMP() by the host timezone
+# offset on any non-UTC box (sp-9b8py), and that disagreement is not a clock fault.
 _skew_tolerance="${SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S:-120}"
+_host_utc_epoch="$(date -u +%s)"
 _skew_out="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
-    "SELECT TIMESTAMPDIFF(SECOND, NOW(), UTC_TIMESTAMP()) AS skew_s, NOW() AS now_fn, UTC_TIMESTAMP() AS utc_fn" 2>&1)"
+    "SELECT DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%d %H:%i:%s') AS utc_fn" 2>&1)"
 _skew_rc=$?
 _skew_row="$(printf '%s\n' "$_skew_out" | sed -n '3p')"
-_skew_s="$(printf '%s\n' "$_skew_row" | awk -F'|' '{print $1}' | tr -d ' ')"
-if [ "$_skew_rc" -ne 0 ] || ! printf '%d' "${_skew_s:-}" >/dev/null 2>&1; then
+_substrate_utc="$(printf '%s\n' "$_skew_row" | awk -F'|' '{print $1}' | sed -E 's/^ +//; s/ +$//')"
+_substrate_epoch="$(date -u -d "$_substrate_utc" +%s 2>/dev/null || true)"
+if [ "$_skew_rc" -ne 0 ] || [ -z "${_substrate_epoch:-}" ]; then
     printf 'census.sh: cannot verify the substrate clock against UTC — refusing to rank blind\n%s\n' \
         "$_skew_out" >&2
     exit 1
 fi
+_skew_s=$(( _substrate_epoch - _host_utc_epoch ))
 _skew_abs=$(( _skew_s < 0 ? -_skew_s : _skew_s ))
 if [ "$_skew_abs" -gt "$_skew_tolerance" ]; then
     printf 'census.sh: substrate clock skew is %ss (tolerance %ss) — %s\n' \
         "$_skew_s" "$_skew_tolerance" \
         "refusing to rank a windowed query over a clock that disagrees with UTC" >&2
-    printf 'census.sh: %s\n' "$_skew_row" >&2
+    printf 'census.sh: substrate utc_fn=%s host_utc=%s\n' \
+        "$_substrate_utc" "$(date -u -d "@$_host_utc_epoch" '+%Y-%m-%d %H:%M:%S')" >&2
     exit 1
 fi
 
