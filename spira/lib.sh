@@ -67,7 +67,25 @@ bdq() {
         python3 "$(dirname "${BASH_SOURCE[0]}")/bdsim.py" "$SPIRA_BDJSON_FIXTURE" "$@"
         return $?
     fi
-    timeout "${BD_TIMEOUT:-180}" "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"
+    # A pooled Dolt connection the server already dropped surfaces on the next query as
+    # "invalid connection" — the Go driver detects it dead before sending anything, so the
+    # query never ran and retrying it is exactly as safe as the first attempt. install.sh
+    # already retries `bd init` once on this identical string; every other bd call goes
+    # through here, so this is the one place that covers all of them (sp-ydog2).
+    local _bdq_try=1 _bdq_tries="${SPIRA_BDQ_CONN_RETRIES:-2}" _bdq_rc _bdq_err
+    _bdq_err="$(mktemp)"
+    while :; do
+        timeout "${BD_TIMEOUT:-180}" "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@" 2>"$_bdq_err"
+        _bdq_rc=$?
+        if [ "$_bdq_rc" -eq 0 ] || [ "$_bdq_try" -ge "$_bdq_tries" ] \
+                || ! grep -q "invalid connection" "$_bdq_err"; then
+            break
+        fi
+        _bdq_try=$((_bdq_try + 1))
+    done
+    cat "$_bdq_err" >&2
+    rm -f "$_bdq_err"
+    return "$_bdq_rc"
 }
 
 _bdq_check_repo_label() {   # _bdq_check_repo_label <create-args> -> 0 or refuse
