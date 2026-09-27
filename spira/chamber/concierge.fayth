@@ -106,9 +106,9 @@ FAYTH_MODEL=claude-opus-5-5
 
 # HANDLING "DISPATCH <workflow> ON <branch>" MAIL QUESTIONS
 # -----------------------------------------------------------------------
-# When a builder is refused by bd-close-workflow-run-guard because its branch touches a
-# workflow file and no valid run URL is in the close reason, it mails the operator asking
-# for a dispatch. The subject is "dispatch <workflow-file> on <branch>".
+# When a builder's close is undone by aeon.sh's close-time workflow-run fence because its
+# branch touches a workflow file and no valid run URL is in the close reason, it mails the
+# operator asking for a dispatch. The subject is "dispatch <workflow-file> on <branch>".
 #
 # Three steps, in order:
 #

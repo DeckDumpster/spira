@@ -2804,6 +2804,11 @@ _census_class_fold_map() {
     printf 'sp-requeue-eviction-race sp-reopen-eviction-race\n'
     printf 'sp-requeue-prod-dirty sp-reopen-prod-dirty\n'
     printf 'sp-requeue-unfinished-reason sp-reopen-unfinished-reason\n'
+    printf 'sp-requeue-workflow-run-missing sp-reopen-workflow-run-missing\n'
+    printf 'sp-requeue-workflow-run-wrong-branch sp-reopen-workflow-run-wrong-branch\n'
+    printf 'sp-requeue-workflow-run-stale-sha sp-reopen-workflow-run-stale-sha\n'
+    printf 'sp-requeue-workflow-run-wrong-file sp-reopen-workflow-run-wrong-file\n'
+    printf 'sp-requeue-workflow-run-unverifiable sp-reopen-workflow-run-unverifiable\n'
 }
 census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular output; exits non-zero when unreachable
     local q
@@ -4578,9 +4583,6 @@ if os.access(fence, os.X_OK):
 guard = os.path.join(spira_home, 'bd-close-unacked-guard.sh')
 if os.access(guard, os.X_OK):
     pre_hooks.append({'type': 'command', 'command': guard, 'timeout': 5})
-wf_guard = os.path.join(spira_home, 'bd-close-workflow-run-guard.sh')
-if os.access(wf_guard, os.X_OK):
-    pre_hooks.append({'type': 'command', 'command': wf_guard, 'timeout': 5})
 if pre_hooks:
     hooks['PreToolUse'] = [{'hooks': pre_hooks}]
 print(json.dumps({'hooks': hooks}))
