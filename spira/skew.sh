@@ -231,13 +231,33 @@ check() {
     # anything is current. No tags means the check cannot prove currency or detect a mismatch.
     # Artifact mode: SPIRA_REPO has no .git; fall back to gh release list when
     # SPIRA_RELEASE_REPO is set. Defaults to SPIRA_GH_INTAKE_REPO for single-repo installs.
+    # SPIRA_RELEASE_REPO names the source: a forge repository (owner/repo, read with gh), or a
+    # LOCAL directory (a path or file://) of release tarballs, each beside a <stem>.tag sidecar
+    # naming its tag — the source for a box whose user units have no forge credential.
     local all_tags=""
     all_tags="$(git -C "$SPIRA_REPO" tag -l 'spira-release-*' 2>/dev/null | sort)"
     local _rel_repo="${SPIRA_RELEASE_REPO:-${SPIRA_GH_INTAKE_REPO:-}}"
-    if [ -z "$all_tags" ] && [ -n "$_rel_repo" ]; then
-        local _rel_json=""
-        _rel_json="$(ghq release list --repo "$_rel_repo" --json tagName,isDraft 2>/dev/null)" \
-            || _rel_json=""
+    local _rel_dir=""
+    case "$_rel_repo" in
+        file://*) _rel_dir="${_rel_repo#file://}" ;;
+        /*)       _rel_dir="$_rel_repo" ;;
+    esac
+    if [ -z "$all_tags" ] && [ -n "$_rel_dir" ]; then
+        if [ ! -d "$_rel_dir" ]; then
+            echo "skew: SPIRA_RELEASE_REPO names the local release directory $_rel_dir, which does not exist" >&2
+            return 3
+        fi
+        all_tags="$(cat "$_rel_dir"/*.tag 2>/dev/null | tr -d ' \t' | grep '^spira-release-' | sort -u)"
+    elif [ -z "$all_tags" ] && [ -n "$_rel_repo" ]; then
+        local _rel_json="" _rel_err="$SPIRA_RUN/.skew-gh-err.$$"
+        mkdir -p "$SPIRA_RUN" 2>/dev/null || true
+        if ! _rel_json="$(ghq release list --repo "$_rel_repo" --json tagName,isDraft 2>"$_rel_err")"; then
+            printf 'skew: could not list the releases of %s with gh (%s) — make a gh credential visible to user units (the systemd user manager'"'"'s environment, or gh auth as %s), or set SPIRA_RELEASE_REPO to a local directory of release tarballs\n' \
+                "$_rel_repo" "$(head -1 "$_rel_err" 2>/dev/null)" "$(id -un 2>/dev/null)" >&2
+            rm -f "$_rel_err"
+            return 3
+        fi
+        rm -f "$_rel_err"
         if [ -n "$_rel_json" ]; then
             all_tags="$(printf '%s' "$_rel_json" | python3 -c '
 import json, sys
@@ -252,9 +272,12 @@ except Exception:
     pass
 ' 2>/dev/null)"
         fi
+    elif [ -z "$all_tags" ]; then
+        echo "skew: no release source — set SPIRA_RELEASE_REPO to the forge repository that publishes this install's releases (owner/repo) or to a local directory of release tarballs" >&2
+        return 3
     fi
     if [ -z "$all_tags" ]; then
-        echo "skew: no release tags found — cannot determine release currency" >&2
+        echo "skew: no release tags found in ${_rel_dir:-${_rel_repo:-the checkout}} — cannot determine release currency" >&2
         return 3
     fi
 

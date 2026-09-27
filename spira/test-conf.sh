@@ -240,6 +240,22 @@ norepo_got="$(conf_val SPIRA_HOME_REPO SPIRA_REPO="$RELEASE_DIR")"
 isne "MANIFEST without repo line: SPIRA_HOME_REPO is not the release dir name" "spira-20990101T000000Z" "$norepo_got"
 is   "MANIFEST without repo line: SPIRA_HOME_REPO is refused (empty)" "" "$norepo_got"
 
+# ==========================================================================
+echo
+echo "installed release — SPIRA_RELEASE_REPO comes from MANIFEST's release-repo when unset:"
+# ==========================================================================
+# A release install is never sourceless: the tarball records the forge it was published from,
+# and skew.sh's release-currency check reads SPIRA_RELEASE_REPO (exit 3 without one).
+printf 'commit 0000000000000000000000000000000000000000\ntimestamp 20990101T000000Z\nrepo spira\nrelease-repo owner/publisher\n' \
+    > "$RELEASE_DIR/MANIFEST"
+is "stamped release: SPIRA_RELEASE_REPO is the MANIFEST's release-repo" "owner/publisher" \
+   "$(conf_val SPIRA_RELEASE_REPO SPIRA_REPO="$RELEASE_DIR")"
+is "an explicit SPIRA_RELEASE_REPO still wins" "/srv/releases" \
+   "$(conf_val SPIRA_RELEASE_REPO SPIRA_REPO="$RELEASE_DIR" SPIRA_RELEASE_REPO=/srv/releases)"
+is "and so does SPIRA_GH_INTAKE_REPO, as before" "owner/intake" \
+   "$(conf_val SPIRA_RELEASE_REPO SPIRA_REPO="$RELEASE_DIR" SPIRA_GH_INTAKE_REPO=owner/intake)"
+rm -f "$RELEASE_DIR/MANIFEST"
+
 # Only a release-named directory is refused. A non-git tree with any other name (a test
 # fixture, a scratch copy) keeps its directory name, as before sp-j4vi0; refusing there
 # emptied the scope label for every suite that builds one (Concierge round 24).

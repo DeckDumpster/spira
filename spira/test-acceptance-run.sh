@@ -196,7 +196,39 @@ else
     bad "acceptance-agent.sh exists and is executable" "missing or not executable at $AGENT"
 fi
 wantfile "acceptance-agent.sh drains stdin"  "cat >/dev/null" "$AGENT"
-wantfile "acceptance-agent.sh commits probe" "acceptance-probe.txt" "$AGENT"
+# THE STUB MUST COMMIT FOR EVERY BEAD, NOT ONCE PER SCRATCH REPO. It wrote the same empty
+# acceptance-probe.txt every time; phase A committed it to the scratch repo's main, so the
+# phase-D bead (same repo, surviving state) found "nothing to commit", closed with no
+# commit, was converted to submitted and never landed (stage 3: "no commit naming bead id
+# on branch after 60s", 2026-09-26). Driven for real, twice, the second time on a branch
+# that already carries the first probe — exactly phase D's shape.
+_ag_tmp="$(mktemp -d)"
+git init -q -b main "$_ag_tmp/repo"
+git -C "$_ag_tmp/repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+printf '#!/usr/bin/env bash\nexit 0\n' > "$_ag_tmp/bd"; chmod +x "$_ag_tmp/bd"
+_ag_run() {   # _ag_run <bead-id>
+    ( cd "$_ag_tmp/repo" && env -i PATH="$PATH" HOME="$_ag_tmp" SPIRA_CONF=/nonexistent \
+        SPIRA_BD="$_ag_tmp/bd" SPIRA_DB="$_ag_tmp/db" SPIRA_RUN="$_ag_tmp/run" BEAD_ID="$1" \
+        GIT_AUTHOR_NAME=a GIT_AUTHOR_EMAIL=a@a GIT_COMMITTER_NAME=a GIT_COMMITTER_EMAIL=a@a \
+        bash "$AGENT" </dev/null >/dev/null 2>&1 )
+}
+_ag_run sp-agt1
+is "acceptance-agent.sh commits for the first bead" "sp-agt1: acceptance probe" \
+   "$(git -C "$_ag_tmp/repo" log -1 --format=%s 2>/dev/null)"
+git -C "$_ag_tmp/repo" checkout -q -b spira/sp-agt2
+_ag_run sp-agt2
+is "and again for a second bead on a branch that already carries the first probe" \
+   "sp-agt2: acceptance probe" "$(git -C "$_ag_tmp/repo" log -1 --format=%s 2>/dev/null)"
+# A SWEEP SESSION HAS NO BEAD. Ops and the other sweep personas summon the agent with no
+# BEAD_ID; the stub exited 1 ("BEAD_ID not set"), spira-ops was left FAILED, and every later
+# deploy's pre-health check refused on it (local phases B and D, 2026-09-26). A sweep has
+# nothing to commit or close: the stub reports a finished turn and exits 0.
+_sw_out="$( cd "$_ag_tmp/repo" && env -i PATH="$PATH" HOME="$_ag_tmp" SPIRA_CONF=/nonexistent \
+    SPIRA_BD="$_ag_tmp/bd" SPIRA_DB="$_ag_tmp/db" SPIRA_RUN="$_ag_tmp/run" \
+    bash "$AGENT" </dev/null 2>&1 )"; _sw_rc=$?
+is   "acceptance-agent.sh: a sweep session (no BEAD_ID) exits 0" 0 "$_sw_rc"
+want "and reports a finished turn"                             '"type":"result"' "$_sw_out"
+rm -rf "$_ag_tmp"; unset _ag_tmp _sw_out _sw_rc
 wantfile "acceptance-agent.sh closes bead"   "close" "$AGENT"
 
 # ============================================================================
@@ -229,6 +261,16 @@ case " $_conf_keys " in
     *) bad "the override key is one conf.sh honours" "${_aged_key:-<none>} is not in SPIRA_CONF_KEYS" ;;
 esac
 wantfile "phase D checks operator override survives"  "_aged_override_got" "$SCRIPT"
+
+# THE BOX IS NEVER SOURCELESS. Its user units cannot read the forge (no credential reaches
+# them), so the run stages every release it holds into a local source and points
+# SPIRA_RELEASE_REPO at it in spira.conf; skew's release-currency check reads that.
+wantfile "phase A stages the release under test into the local release source" \
+    '_stage_release_source "$_release_src"' "$SCRIPT"
+wantfile "spira.conf points SPIRA_RELEASE_REPO at it" \
+    "SPIRA_RELEASE_REPO = %s" "$SCRIPT"
+wantrefile "phase B stages the predecessor too" \
+    '_stage_release_source "\$_release_src" "\$_prev_tarball_file"' "$SCRIPT"
 
 # THE RELEASE UNDER TEST IS A DRAFT until it passes, so every deploy of "$tag" must say
 # --allow-draft; deploy.sh refuses a draft otherwise and phases B-D could never pass.

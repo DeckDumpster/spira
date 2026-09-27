@@ -95,7 +95,8 @@ jobs:
             --workspace . \
             --output /tmp/artifacts \
             --name "spira-${ts}" \
-            --repo-name "$reponame")
+            --repo-name "$reponame" \
+            --release-repo "$GITHUB_REPOSITORY")
           printf 'path=%s\n' "$tarball" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release (draft)

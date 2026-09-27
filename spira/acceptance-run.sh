@@ -7,7 +7,7 @@
 # Usage:
 #   acceptance-run.sh <tag> --scratch-repo <path> [--prev-tag <tag>] [--record]
 #                           [--file-defects] [--bd-db <path>] [--agent <path>]
-#                           [--waive-upgrade] [--tarball <path>]
+#                           [--waive-upgrade] [--tarball <path>] [--prev-tarball <path>]
 #
 # Arguments:
 #   <tag>                  release tag to test (spira-release-spira-*)
@@ -17,8 +17,14 @@
 #                          download <tag>` — the download is skipped entirely.
 #                          For acceptance-local.sh: rehearsing phase A against a
 #                          tarball built from a working tree, before any tag is
-#                          cut. Phases B/C/D still download <prev-tag> from the
-#                          forge; --tarball only replaces the tag-under-test's own.
+#                          cut. Every deploy of <tag> in phases B and D is then
+#                          given the same file (deploy.sh --tarball), since a local
+#                          build was never uploaded.
+#   --prev-tarball <path>  use this tarball for <prev-tag> instead of downloading it,
+#                          and hand it to every deploy of <prev-tag> (phases C and D's
+#                          rollbacks). For acceptance-local.sh --predecessor, which
+#                          downloads the published predecessor on the host: the
+#                          container has no forge credential (sp-oskp7).
 #   --prev-tag <tag>       previous release tag; enables upgrade (phase B),
 #                          rollback (phase C), and aged-install upgrade (phase D)
 #   --record               write PASS/FAIL as a git note on <tag>
@@ -76,6 +82,7 @@ do_waive_upgrade=0
 bd_db="${HOME}/spira-acceptance-test-db"
 _agent=""
 tarball_path=""
+prev_tarball_path=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -83,6 +90,8 @@ while [ $# -gt 0 ]; do
         --scratch-repo=*) scratch_repo="${1#--scratch-repo=}"; shift ;;
         --tarball)       tarball_path="${2:-}"; shift 2 ;;
         --tarball=*)     tarball_path="${1#--tarball=}"; shift ;;
+        --prev-tarball)   prev_tarball_path="${2:-}"; shift 2 ;;
+        --prev-tarball=*) prev_tarball_path="${1#--prev-tarball=}"; shift ;;
         --prev-tag)      prev_tag="${2:-}"; shift 2 ;;
         --prev-tag=*)    prev_tag="${1#--prev-tag=}"; shift ;;
         --bd-db)         bd_db="${2:-}"; shift 2 ;;
@@ -113,6 +122,12 @@ fi
 # Waiver overrides any --prev-tag: phases B/C/D skip via the same empty-prev_tag
 # path they already take when no predecessor exists.
 [ "$do_waive_upgrade" -eq 1 ] && prev_tag=""
+
+# WHERE EACH DEPLOY GETS ITS RELEASE. The forge by default, as a real upgrade does; a local
+# file when this run was handed one (acceptance-local.sh — nothing local is on the forge).
+_deploy_tag_src=(); _deploy_prev_src=()
+[ -n "$tarball_path" ]      && _deploy_tag_src=(--tarball "$tarball_path")
+[ -n "$prev_tarball_path" ] && _deploy_prev_src=(--tarball "$prev_tarball_path")
 
 # Derive the repo root (this file is in spira/, one level below the repo root).
 REPO_ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -226,10 +241,17 @@ _releases="$TMP/releases"
 mkdir -p "$_releases"
 _conf="${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf"
 mkdir -p "$(dirname "$_conf")"
+# THE RELEASE SOURCE THIS BOX'S USER UNITS READ. They carry no forge credential (the workflow's
+# GH_TOKEN reaches its own steps only), so every release this run holds is staged into a local
+# source and SPIRA_RELEASE_REPO points at it — skew.sh's currency check reads it, and without
+# one it cannot check and fails (exit 3) by design.
+_release_src="$TMP/release-source"
+mkdir -p "$_release_src"
 {
     [ -n "$_agent" ] && printf 'SPIRA_AGENT = %s\n' "$_agent"
     printf 'SPIRA_OPERATED = 0\n'
     printf 'SPIRA_RELEASES = %s\n' "$_releases"
+    printf 'SPIRA_RELEASE_REPO = %s\n' "$_release_src"
 } > "$_conf"
 
 # Obtain the release tarball: --tarball skips the download entirely (a local
@@ -248,6 +270,8 @@ else
         && ok "phase A: tarball found: $(basename "$_tarball_file")" \
         || bad "phase A: tarball found" "no spira-*.tar.gz in $_tarball_dir"
 fi
+
+[ -f "${_tarball_file:-}" ] && _stage_release_source "$_release_src" "$_tarball_file" "$tag"
 
 # Compute sha256 of the candidate tarball (recorded in the acceptance note).
 _tarball_sha256=""
@@ -327,7 +351,7 @@ _bead_title="acceptance-run: trivial land proof for $tag"
 _bead_out=""
 _bead_out="$(bd -C "$bd_db" create \
     --title "$_bead_title" \
-    --description "Acceptance test: commit an empty file named acceptance-probe.txt to prove end-to-end landing works. Content: the tag under test is $tag." \
+    --description "Acceptance test: commit a file named acceptance-probe-<bead-id>.txt to prove end-to-end landing works. Content: the tag under test is $tag." \
     --label "acceptance,${_a_plan_label},${_a_scope_label},repo:$(basename "$scratch_repo")" \
     --type task \
     2>&1)" || true
@@ -400,18 +424,12 @@ except Exception:
             "no commit naming bead id on branch after ${_a_s3_elapsed}s"
     fi
 
-    # Stage 4: Closed — bead status is closed.
+    # Stage 4: Closed — the aeon's close is recorded: closed, or submitted (sp-qsona), which
+    # the landing pass turns into closed when it lands (stage 5).
     _a_t4=$(date +%s)
     _a_closed=0
     while [ $(( $(date +%s) - _a_t4 )) -lt 30 ]; do
-        _a_s4_st="$(bd -C "$bd_db" show "$_bead_id" --json 2>/dev/null \
-            | sed -n '/^[[{]/,$p' \
-            | python3 -c 'import json,sys
-try:
-    d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
-    print(d[0].get("status","") if d else "")
-except Exception: print("")' 2>/dev/null)" || _a_s4_st=""
-        [ "$_a_s4_st" = "closed" ] && { _a_closed=1; break; }
+        _bead_finished "$bd_db" "$_bead_id" && { _a_closed=1; break; }
         sleep 2
     done
     _a_s4_elapsed=$(( $(date +%s) - _a_t4 ))
@@ -473,11 +491,13 @@ else
     _prev_tb_dir="$TMP/prev-tarball-dl"
     mkdir -p "$_prev_tb_dir"
     _prev_tarball_dl_rc=0
-    _prev_tarball_file="$(_download_tarball "$prev_tag" "$_prev_tb_dir")" || _prev_tarball_dl_rc=$?
+    _prev_tarball_file="$(_acquire_tarball "$prev_tag" "$prev_tarball_path" "$_prev_tb_dir")" \
+        || _prev_tarball_dl_rc=$?
     if [ "$_prev_tarball_dl_rc" -ne 0 ] || [ -z "${_prev_tarball_file:-}" ]; then
         bad "phase B: gh release download $prev_tag" "rc=$_prev_tarball_dl_rc"
     else
         ok "phase B: prev tarball downloaded: $(basename "$_prev_tarball_file")"
+        _stage_release_source "$_release_src" "$_prev_tarball_file" "$prev_tag"
 
         _install_from_tarball "$_prev_tarball_file" "$_releases" "$_conf" \
             2>&1 | tee "$TMP/prev-activate.log" || true
@@ -497,12 +517,11 @@ else
         else
 
         # Capture unit set BEFORE upgrade.
-        _units_pre_upgrade="$(systemctl --user list-unit-files --no-legend 2>/dev/null \
-            | awk '{print $1, $2}' | grep '^spira-' | sort || true)"
+        _units_pre_upgrade="$(_unit_set)"
 
         # Run deploy.sh to upgrade to newest tag.
         _deploy_rc=0
-        bash "$HERE/deploy.sh" --allow-draft "$tag" 2>&1 | tee "$TMP/deploy-upgrade.log" || _deploy_rc=$?
+        bash "$HERE/deploy.sh" --allow-draft "${_deploy_tag_src[@]}" "$tag" 2>&1 | tee "$TMP/deploy-upgrade.log" || _deploy_rc=$?
         is0 "phase B: deploy.sh $tag exits 0 (no rollback)" "$_deploy_rc"
 
         # Verify .tag sidecar names the new tag (sp-cb0q1: sidecar written to releases dir).
@@ -530,13 +549,12 @@ else
         # ===========================================================================
 
         _rollback_rc=0
-        bash "$HERE/deploy.sh" "$prev_tag" 2>&1 | tee "$TMP/deploy-rollback.log" \
+        bash "$HERE/deploy.sh" "${_deploy_prev_src[@]}" "$prev_tag" 2>&1 | tee "$TMP/deploy-rollback.log" \
             || _rollback_rc=$?
         is0 "phase C: deploy.sh $prev_tag (rollback) exits 0" "$_rollback_rc"
 
         # Capture unit set AFTER rollback.
-        _units_post_rollback="$(systemctl --user list-unit-files --no-legend 2>/dev/null \
-            | awk '{print $1, $2}' | grep '^spira-' | sort || true)"
+        _units_post_rollback="$(_unit_set)"
 
         # Verify the unit set is identical to the pre-upgrade snapshot.
         # sp-x6ygl: rollback must restore the prior release's ExecStart paths AND unit set.
@@ -575,7 +593,7 @@ else
     # Reuse the prev_tag tarball (already downloaded for phase B if --prev-tag was given).
     _aged_tb_dir="$TMP/prev-tarball-dl"
     [ -d "$_aged_tb_dir" ] || mkdir -p "$_aged_tb_dir"
-    _aged_tarball_file="$(ls "$_aged_tb_dir"/spira-*.tar.gz 2>/dev/null | head -1)"
+    _aged_tarball_file="${prev_tarball_path:-$(ls "$_aged_tb_dir"/spira-*.tar.gz 2>/dev/null | head -1)}"
     if [ -z "${_aged_tarball_file:-}" ]; then
         _aged_tb_rc=0
         _aged_tarball_file="$(_download_tarball "$prev_tag" "$_aged_tb_dir")" || _aged_tb_rc=$?
@@ -660,7 +678,7 @@ else
 
         # Upgrade to tag from the aged, populated state.
         _aged_deploy_rc=0
-        bash "$HERE/deploy.sh" --allow-draft "$tag" 2>&1 | tee "$TMP/aged-deploy.log" \
+        bash "$HERE/deploy.sh" --allow-draft "${_deploy_tag_src[@]}" "$tag" 2>&1 | tee "$TMP/aged-deploy.log" \
             || _aged_deploy_rc=$?
         is0 "phase D: deploy.sh $tag (aged upgrade) exits 0 — no rollback" "$_aged_deploy_rc"
 
@@ -762,18 +780,11 @@ else
                         "no commit naming bead id on branch after ${_d_s3_elapsed}s"
                 fi
 
-                # Stage 4: Closed — bead status is closed.
+                # Stage 4: Closed — the aeon's close is recorded: closed, or submitted.
                 _d_t4=$(date +%s)
                 _d_closed=0
                 while [ $(( $(date +%s) - _d_t4 )) -lt 30 ]; do
-                    _d_s4_st="$(bd -C "$bd_db" show "$_aged_probe_id" --json 2>/dev/null \
-                        | sed -n '/^[[{]/,$p' \
-                        | python3 -c 'import json,sys
-try:
-    d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
-    print(d[0].get("status","") if d else "")
-except Exception: print("")' 2>/dev/null)" || _d_s4_st=""
-                    [ "$_d_s4_st" = "closed" ] && { _d_closed=1; break; }
+                    _bead_finished "$bd_db" "$_aged_probe_id" && { _d_closed=1; break; }
                     sleep 2
                 done
                 _d_s4_elapsed=$(( $(date +%s) - _d_t4 ))
@@ -816,7 +827,7 @@ except Exception: print("")' 2>/dev/null)" || _d_s4_st=""
         echo
         echo "phase D — aged rollback: deploy $prev_tag (refuse-or-succeed)"
         _aged_rollback_rc=0
-        _aged_rollback_out="$(bash "$HERE/deploy.sh" "$prev_tag" 2>&1)" \
+        _aged_rollback_out="$(bash "$HERE/deploy.sh" "${_deploy_prev_src[@]}" "$prev_tag" 2>&1)" \
             || _aged_rollback_rc=$?
         if [ "$_aged_rollback_rc" -ne 0 ]; then
             if printf '%s' "$_aged_rollback_out" | grep -qi 'migrat'; then

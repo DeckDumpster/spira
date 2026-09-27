@@ -2,7 +2,14 @@
 #
 # deploy.sh — operator-run release deploy.
 #
-#   deploy.sh [--dry-run] [--force] [--allow-draft] <tag|latest>
+#   deploy.sh [--dry-run] [--force] [--allow-draft] [--tarball <path>] <tag|latest>
+#
+#   --tarball <path>  deploy the NAMED release from a local tarball instead of downloading it,
+#                  making no forge call at all (no draft check, no asset lookup, no download).
+#                  For LOCAL release acceptance only (acceptance-local.sh --predecessor,
+#                  sp-oskp7): the release under test there was never uploaded, and the
+#                  container has no forge credential. Needs a named tag, which the .tags
+#                  sidecar records; never implied, never read from config.
 #
 #   --allow-draft  deploy a NAMED release even though it is still a draft. For release
 #                  acceptance only: a release is published after it passes acceptance, and
@@ -71,19 +78,35 @@ _orig_prod="${SPIRA_PROD:-$SPIRA_HOME}"
 dry_run=0
 force=0
 allow_draft=0
+local_tarball=""
 tag=""
-for _a in "$@"; do
+while [ $# -gt 0 ]; do
+    _a="$1"; shift
     case "$_a" in
         --dry-run) dry_run=1 ;;
         --force)   force=1 ;;
         --allow-draft) allow_draft=1 ;;
+        --tarball)   local_tarball="${1:-}"; shift || true
+                     [ -n "$local_tarball" ] || { printf 'deploy: --tarball needs a path\n' >&2; exit 2; } ;;
+        --tarball=*) local_tarball="${_a#--tarball=}" ;;
         -*) printf 'deploy: unknown option: %s\n' "$_a" >&2; exit 2 ;;
         *)  [ -z "$tag" ] && tag="$_a" \
                 || { printf 'deploy: too many arguments\n' >&2; exit 2; } ;;
     esac
 done
 unset _a
-[ -n "$tag" ] || { printf 'usage: deploy.sh [--dry-run] [--force] [--allow-draft] <tag|latest>\n' >&2; exit 2; }
+[ -n "$tag" ] || { printf 'usage: deploy.sh [--dry-run] [--force] [--allow-draft] [--tarball <path>] <tag|latest>\n' >&2; exit 2; }
+if [ -n "$local_tarball" ]; then
+    [ "$tag" != latest ] || {
+        printf 'deploy: --tarball deploys a NAMED release; "latest" is resolved from the forge\n' >&2; exit 2; }
+    [ -f "$local_tarball" ] || {
+        printf 'deploy: --tarball: no such file: %s\n' "$local_tarball" >&2; exit 2; }
+    case "$(basename "$local_tarball")" in
+        spira-*.tar.gz) ;;
+        *) printf 'deploy: --tarball: %s is not a spira-*.tar.gz release tarball\n' "$local_tarball" >&2; exit 2 ;;
+    esac
+    local_tarball="$(cd "$(dirname "$local_tarball")" && pwd -P)/$(basename "$local_tarball")"
+fi
 
 # Resolve the forge repository identifier for --repo on all gh calls.
 # Required when SPIRA_REPO is an extracted tarball with no .git; also used for normal
@@ -98,14 +121,16 @@ if [ -z "$_gh_repo" ]; then
     unset _remote
 fi
 [ -n "${_gh_repo:-}" ] || _gh_repo="${GH_REPO:-}"
-[ -n "$_gh_repo" ] || {
+[ -n "$_gh_repo" ] || [ -n "$local_tarball" ] || {
     printf 'deploy: SPIRA_FORGE_REPO is not set and forge repository cannot be inferred from git remote\n' >&2
     exit 2
 }
 
 # Resolve "latest" to the newest PUBLISHED (non-draft) spira-release-* release.
 # gh release list skips drafts by filtering isDraft; fall back to git tags if gh unavailable.
+_named_tag=1
 if [ "$tag" = "latest" ]; then
+    _named_tag=0
     tag=""
     git -C "$SPIRA_REPO" fetch --tags --quiet 2>/dev/null || true
     _rel_list="$(gh --repo "$_gh_repo" release list --json tagName,isDraft 2>/dev/null)" \
@@ -153,8 +178,13 @@ unset _tag_stem
     printf 'deploy: SPIRA_RELEASES is not set\n' >&2; exit 2
 }
 
+if [ -n "$local_tarball" ]; then
+    log "deploy: $tag from the local tarball $local_tarball (--tarball) — no forge call"
+fi
 # Refuse a draft release before any disruptive action.
-_draft_info="$(gh --repo "$_gh_repo" release view "$tag" --json isDraft 2>/dev/null)" \
+_draft_info=""
+[ -n "$local_tarball" ] \
+    || _draft_info="$(gh --repo "$_gh_repo" release view "$tag" --json isDraft 2>/dev/null)" \
     || _draft_info=""
 if [ -n "$_draft_info" ]; then
     _is_draft="$(printf '%s' "$_draft_info" \
@@ -172,8 +202,13 @@ unset _draft_info _is_draft
 
 # Resolve the asset from the release. The tarball timestamp may differ from the tag
 # timestamp; the asset name is authoritative. Refuse if there is not exactly one match.
-_assets_json="$(gh --repo "$_gh_repo" release view "$tag" --json assets 2>/dev/null)" \
-    || _assets_json=""
+_assets_json=""
+if [ -n "$local_tarball" ]; then
+    _assets_json="$(printf '{"assets":[{"name":"%s"}]}' "$(basename "$local_tarball")")"
+else
+    _assets_json="$(gh --repo "$_gh_repo" release view "$tag" --json assets 2>/dev/null)" \
+        || _assets_json=""
+fi
 _asset_name="$(printf '%s' "${_assets_json:-}" | python3 -c '
 import json,sys
 try:
@@ -276,12 +311,17 @@ mkdir -p "$SPIRA_RUN"
 _deploy_tmp="$(mktemp -d "$SPIRA_RUN/deploy-XXXXXXXX")"
 trap 'rm -rf "$_deploy_tmp"' EXIT
 
-log "deploy: fetching $tag"
-gh --repo "$_gh_repo" release download "$tag" \
-    --pattern "${release_stem}.tar.gz" \
-    --dir "$_deploy_tmp" || {
-    printf 'deploy: fetch failed\n' >&2; exit 2
-}
+if [ -n "$local_tarball" ]; then
+    cp "$local_tarball" "$_deploy_tmp/${release_stem}.tar.gz" || {
+        printf 'deploy: could not copy %s\n' "$local_tarball" >&2; exit 2; }
+else
+    log "deploy: fetching $tag"
+    gh --repo "$_gh_repo" release download "$tag" \
+        --pattern "${release_stem}.tar.gz" \
+        --dir "$_deploy_tmp" || {
+        printf 'deploy: fetch failed\n' >&2; exit 2
+    }
+fi
 _tarball="$_deploy_tmp/${release_stem}.tar.gz"
 [ -f "$_tarball" ] || {
     printf 'deploy: tarball not found after download: %s\n' "$_tarball" >&2; exit 2
@@ -378,6 +418,28 @@ else
     }
 fi
 
+# _render_release_units — re-render every unit for the release $SPIRA_RELEASES/current points
+# at, through THAT release's install.sh, resolving THAT release's binaries.
+#
+# THE RELEASE, NOT THE INVOKING CHECKOUT. This script sourced conf.sh, which derived and
+# EXPORTED SPIRA_BROKER_BIN, SPIRA_LOOM_BIN, ... (and SPIRA_WAKE) from the SPIRA_REPO it was
+# run from, and the release's install.sh kept them — conf.sh only fills keys that are unset.
+# Run from a source checkout with nothing built (acceptance, or an operator's clone), units.sh
+# found no broker or loom binary and PRUNED spira-broker and spira-loom on every deploy and
+# every rollback; acceptance phase C's rollback then failed its health check on "loom does
+# not answer" and restored the newer release (2026-09-26). SPIRA_REPO is the release, and the
+# derived values are cleared so the release's own conf.sh derives them from its bin/; a value
+# the operator set in spira.conf is read again by that conf.sh, so nothing explicit is lost.
+_render_release_units() {
+    env -u SPIRA_LOOM_BIN -u SPIRA_BROKER_BIN -u SPIRA_CZAR_PASS_BIN -u SPIRA_QUEUE_WATCH_BIN \
+        -u SPIRA_RECONCILER_BIN -u SPIRA_SUPERVISE_BIN -u SPIRA_LANDING_PASS_BIN \
+        -u SPIRA_TSD_BIN -u SPIRA_BATCHER_BIN -u SPIRA_TEST_PLAN_BIN -u SPIRA_PANEL -u SPIRA_WAKE \
+        SPIRA_REPO="$SPIRA_RELEASES/current" \
+        SPIRA_HOME="$SPIRA_RELEASES/current/spira" \
+        SPIRA_PROD="$SPIRA_RELEASES/current/spira" SPIRA_INSTALL_FORCE=1 \
+        bash "${SPIRA_INSTALL_SH:-$SPIRA_RELEASES/current/systemd/install.sh}"
+}
+
 # Rollback: restore prior state, restart, resume.
 # On a non-first deploy: swap current back to the prior release.
 # On a first deploy: remove current and re-render units against the original checkout.
@@ -396,9 +458,7 @@ _rollback() {
         }
         # Re-render units against the prior release, pruning units the newer release added.
         # current now points at the prior release; use its install.sh so SPIRA_HOME is right.
-        SPIRA_HOME="$SPIRA_RELEASES/current/spira" \
-        SPIRA_PROD="$SPIRA_RELEASES/current/spira" SPIRA_INSTALL_FORCE=1 \
-            bash "${SPIRA_INSTALL_SH:-$SPIRA_RELEASES/current/systemd/install.sh}" 2>/dev/null || true
+        _render_release_units 2>/dev/null || true
         # Restore units that were enabled before the deploy but that the incoming release's
         # install disabled (by pruning them from its manifest). install.sh treats a disabled
         # unit as operator-disabled and leaves it alone, so we must restore from the snapshot.
@@ -474,9 +534,7 @@ printf '%s\n' "$tag" > "$SPIRA_RELEASES/.tags/$release_stem" || {
 # a deploy.sh invoked from a temporary directory would otherwise stamp that directory into
 # SPIRA_HOME across all 24+ unit ExecStart lines.
 log "deploy: re-rendering units"
-SPIRA_HOME="$SPIRA_RELEASES/current/spira" \
-SPIRA_PROD="$SPIRA_RELEASES/current/spira" SPIRA_INSTALL_FORCE=1 \
-    bash "${SPIRA_INSTALL_SH:-$SPIRA_RELEASES/current/systemd/install.sh}" || {
+_render_release_units || {
     _rollback "unit re-render failed"
 }
 
@@ -493,10 +551,35 @@ log "deploy: health check"
 _deploy_failed=""
 "$_WORLD" status >/dev/null 2>&1 \
     || _deploy_failed="${_deploy_failed:+$_deploy_failed, }world status"
-SPIRA_DOCTOR=1 "$_DOCTOR" >/dev/null 2>&1 \
-    || _deploy_failed="${_deploy_failed:+$_deploy_failed, }doctor"
-"$_SKEW" check >/dev/null 2>&1
+# THE FAIL LINES ARE THE EVIDENCE. A bare "ROLLBACK — doctor" says a check failed and not
+# which; the rollback that follows destroys the state it failed on. Print what doctor said.
+if ! _doctor_out="$(SPIRA_DOCTOR=1 "$_DOCTOR" 2>&1)"; then
+    _deploy_failed="${_deploy_failed:+$_deploy_failed, }doctor"
+    printf '%s\n' "$_doctor_out" | grep -E '^\s*FAIL' | sed 's/^/deploy: doctor: /' >&2
+fi
+unset _doctor_out
+_skew_out="$("$_SKEW" check 2>/dev/null)"
 _skew_exit=$?
+# AN OLDER RELEASE THE OPERATOR NAMED IS NOT-LATEST BY CONSTRUCTION. skew.sh check answers
+# NOT-LATEST (exit 1) whenever a newer release tag exists — exactly the state a deliberate
+# rollback to a named release produces — and reading it as a failed health check undid every
+# such rollback (acceptance phase C, 2026-09-26). Accepted ONLY when the finding is nothing
+# but NOT-LATEST, the operator named $tag explicitly, and the release skew calls latest is a
+# DIFFERENT tag that sorts AFTER $tag: a genuinely newer release exists. A NOT-LATEST about the
+# release this deploy just made newest (skew misreading its own sidecar), MANIFEST-MISMATCH,
+# or NOT-LATEST after `latest` still fails.
+_skew_newer=""
+if [ "$_skew_exit" -eq 1 ] && [ "$_named_tag" = 1 ] \
+   && [ -z "$(printf '%s\n' "$_skew_out" | grep -v '^NOT-LATEST ' | grep -v '^[[:space:]]*$' || true)" ]; then
+    _skew_newer="$(printf '%s\n' "$_skew_out" \
+        | sed -n 's/^NOT-LATEST .* is not the latest published release \(spira-release-[^ ]*\)$/\1/p' | head -1)"
+    if [ -n "$_skew_newer" ] && [ "$_skew_newer" != "$tag" ] \
+       && [ "$(printf '%s\n%s\n' "$tag" "$_skew_newer" | sort | tail -1)" = "$_skew_newer" ]; then
+        log "deploy: skew: NOT-LATEST — a newer release ($_skew_newer) exists; expected, $tag was named explicitly"
+        _skew_exit=0
+    fi
+fi
+unset _skew_newer
 [ "$_skew_exit" -eq 0 ] \
     || _deploy_failed="${_deploy_failed:+$_deploy_failed, }skew (exit $_skew_exit)"
 

@@ -162,6 +162,8 @@ chmod +x "$BIN/activate.sh"
 cat > "$BIN/install.sh" <<'IEOF'
 #!/usr/bin/env bash
 printf 'install SPIRA_PROD=%s SPIRA_HOME=%s\n' "${SPIRA_PROD:-UNSET}" "${SPIRA_HOME:-UNSET}" >> "${CALL_LOG:-/dev/null}"
+printf 'install-bins SPIRA_REPO=%s SPIRA_BROKER_BIN=%s SPIRA_LOOM_BIN=%s\n' \
+    "${SPIRA_REPO:-UNSET}" "${SPIRA_BROKER_BIN:-UNSET}" "${SPIRA_LOOM_BIN:-UNSET}" >> "${CALL_LOG:-/dev/null}"
 printf 'install-resolved SPIRA_HOME=%s\n' \
     "$(readlink -f "${SPIRA_HOME:-}" 2>/dev/null || printf '%s' "${SPIRA_HOME:-}")" \
     >> "${CALL_LOG:-/dev/null}"
@@ -202,6 +204,7 @@ chmod +x "$BIN/doctor.sh"
 cat > "$BIN/skew.sh" <<'SEOF'
 #!/usr/bin/env bash
 printf 'skew %s\n' "$*" >> "${CALL_LOG:-/dev/null}"
+[ -n "${SKEW_OUT:-}" ] && printf '%s\n' "$SKEW_OUT"
 exit "${SKEW_EXIT:-0}"
 SEOF
 chmod +x "$BIN/skew.sh"
@@ -390,12 +393,20 @@ _rc=$?
 not0   "rollback: exits non-zero on health failure" "$_rc"
 want   "rollback: mentions ROLLBACK"                "ROLLBACK" "$_out"
 want   "rollback: names the failure"                "doctor"   "$_out"
+# AND WHICH DOCTOR CHECK. The rollback destroys the state the check failed on, so a bare
+# "doctor" left nothing to diagnose (acceptance phase B, 2026-09-26).
+want   "rollback: prints doctor's own FAIL line"    "deploy: doctor:   FAIL  injected failure" "$_out"
 islink "rollback: current restored to prior"        "$RELEASES/current" "$PRIOR_RELEASE"
 # ExecStart is parameterized by the "current" symlink and never changes text across releases,
 # so install.sh's diff-based re-render alone restarts nothing — the already-active unit that
 # activate.sh restarted onto the new release must be restarted again onto the prior one.
 want   "rollback: restarts active unit onto prior release" \
        "SC --user restart spira-sentinel-prod.service" "$(cat "$SC_LOG")"
+# THE ROLLBACK'S RE-RENDER RESOLVES THE PRIOR RELEASE'S OWN BINARIES, as the forward one must
+# (PROPERTY 6b): the last install call is the rollback's.
+is "rollback: re-render runs with SPIRA_REPO = the restored release, derived binary paths cleared" \
+   "install-bins SPIRA_REPO=$RELEASES/current SPIRA_BROKER_BIN=UNSET SPIRA_LOOM_BIN=UNSET" \
+   "$(grep '^install-bins' "$CALL_LOG" | tail -1)"
 
 # The symlink alone does not prove the units re-rendered during rollback actually resolved
 # into the prior release's tree — the literal SPIRA_HOME/SPIRA_PROD string deploy.sh passes
@@ -431,6 +442,35 @@ islink "rollback-skew: current restored to prior" "$RELEASES/current" "$PRIOR_RE
 want   "rollback-skew: restarts active unit onto prior release" \
        "SC --user restart spira-sentinel-prod.service" "$(cat "$SC_LOG")"
 
+# A DELIBERATE DEPLOY OF AN OLDER RELEASE IS NOT-LATEST BY CONSTRUCTION. skew.sh check
+# answers NOT-LATEST (exit 1) whenever a newer release tag exists, which is exactly the state a
+# rollback to a named older release produces; reading it as a failed health check undid every
+# deliberate rollback (acceptance phase C, 2026-09-26: "ROLLBACK — doctor, skew (exit 1)",
+# then "restored" the newer release). With an explicitly named tag a NOT-LATEST-only finding
+# is logged and accepted; MANIFEST-MISMATCH still rolls back, and so does NOT-LATEST after
+# `latest` (the check disagreeing with what deploy just resolved as newest).
+_notlatest="NOT-LATEST activated $NEW_RELEASE is not the latest published release spira-release-spira-20990101T000000Z"
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+_out="$(run_deploy "SKEW_EXIT=1" "SKEW_OUT=$_notlatest" -- "$NEW_TAG" 2>&1)"
+_rc=$?
+is0    "older-named: a NOT-LATEST-only skew finding does not undo a named deploy" "$_rc"
+islink "older-named: current -> the named release"            "$RELEASES/current" "$NEW_RELEASE"
+want   "older-named: the finding is said, not swallowed"      "NOT-LATEST" "$_out"
+nowant "older-named: no rollback"                             "ROLLBACK" "$_out"
+
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+_out="$(run_deploy "SKEW_EXIT=1" "SKEW_OUT=$(printf '%s\nMANIFEST-MISMATCH MANIFEST records a but release tag t points at b' "$_notlatest")" -- "$NEW_TAG" 2>&1)"
+_rc=$?
+not0   "older-named: a MANIFEST-MISMATCH still rolls back"    "$_rc"
+islink "older-named: current restored to prior"               "$RELEASES/current" "$PRIOR_RELEASE"
+
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+_pub_list="[{\"tagName\":\"$NEW_TAG\",\"isDraft\":false}]"
+_out="$(run_deploy "SKEW_EXIT=1" "SKEW_OUT=$_notlatest" "GH_RELEASE_LIST=$_pub_list" -- latest 2>&1)"
+_rc=$?
+not0   "latest: NOT-LATEST after resolving latest still rolls back" "$_rc"
+unset _notlatest
+
 # ==========================================================================
 echo
 echo "PROPERTY 6: re-render calls install.sh with SPIRA_PROD=\$SPIRA_RELEASES/current/spira"
@@ -460,6 +500,19 @@ if [ "$_got_home" = "$RELEASES/current/spira" ]; then
 else
     bad "re-render: SPIRA_HOME=$RELEASES/current/spira" "got [$_got_home]"
 fi
+
+# PROPERTY 6b — THE RE-RENDER RESOLVES THE RELEASE'S BINARIES, NOT THE INVOKING CHECKOUT'S.
+# deploy.sh sources conf.sh, which derives and EXPORTS SPIRA_BROKER_BIN, SPIRA_LOOM_BIN, ...
+# from the SPIRA_REPO it was run from. Handed on, the release's install.sh kept them (conf.sh
+# only fills unset keys): run from a source checkout with nothing built, units.sh found no
+# broker or loom binary and PRUNED spira-broker and spira-loom on every deploy — acceptance
+# phase C's rollback then failed its health check on "loom does not answer" and its unit set
+# came back without broker/loom (2026-09-26). The re-render gets SPIRA_REPO = the release,
+# and the derived binary paths are cleared so the release's own bin/ is what is resolved.
+_got_bins="$(grep '^install-bins' "$CALL_LOG" 2>/dev/null | head -1)"
+is "re-render: SPIRA_REPO is the activated release, derived binary paths cleared" \
+   "install-bins SPIRA_REPO=$RELEASES/current SPIRA_BROKER_BIN=UNSET SPIRA_LOOM_BIN=UNSET" \
+   "$_got_bins"
 
 # ==========================================================================
 echo
@@ -670,6 +723,37 @@ _rc=$?
 is0    "allow-draft: the draft deploys"                    "$_rc"
 islink "allow-draft: current -> the draft's release"       "$RELEASES/current" "$NEW_RELEASE"
 want   "allow-draft: says it is deploying a draft"         "--allow-draft" "$_out"
+
+# ==========================================================================
+echo
+echo "PROPERTY 10b: --tarball deploys a named release from a LOCAL tarball (acceptance only)"
+# ==========================================================================
+# LOCAL ACCEPTANCE PHASES B-D (sp-oskp7). Phases B-D deploy the release under test and roll
+# back to its predecessor; locally the release under test was never uploaded anywhere, and the
+# container has no forge credential. --tarball names the file to activate and skips every
+# forge call (draft check, asset lookup, download). It needs a NAMED tag — the .tags sidecar
+# records it and skew reads it — and it is never implied: without it nothing changes.
+_lt_dir="$TMP/local-tarball"; rm -rf "$_lt_dir"; mkdir -p "$_lt_dir/.stage/$NEW_RELEASE/spira"
+printf '# stub\n' > "$_lt_dir/.stage/$NEW_RELEASE/spira/sentinel.sh"
+tar -czf "$_lt_dir/$NEW_RELEASE.tar.gz" -C "$_lt_dir/.stage" "$NEW_RELEASE" 2>/dev/null
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+_out="$(run_deploy "GH_EXIT=1" -- --tarball "$_lt_dir/$NEW_RELEASE.tar.gz" "$NEW_TAG" 2>&1)"
+_rc=$?
+is0    "local-tarball: deploys with the forge unreachable"         "$_rc"
+islink "local-tarball: current -> the tarball's release"           "$RELEASES/current" "$NEW_RELEASE"
+nowant "local-tarball: no forge call at all"                        "gh " "$(cat "$CALL_LOG")"
+is     "local-tarball: the .tags sidecar names the tag deployed"   "$NEW_TAG" "$(cat "$RELEASES/.tags/$NEW_RELEASE" 2>/dev/null)"
+
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+_out="$(run_deploy "GH_EXIT=1" -- --tarball "$_lt_dir/nope.tar.gz" "$NEW_TAG" 2>&1)"
+_rc=$?
+not0   "local-tarball: a missing file is refused"                  "$_rc"
+islink "local-tarball: and nothing changed"                        "$RELEASES/current" "$PRIOR_RELEASE"
+
+_out="$(run_deploy "GH_EXIT=1" -- --tarball "$_lt_dir/$NEW_RELEASE.tar.gz" latest 2>&1)"
+_rc=$?
+not0   "local-tarball: 'latest' is refused — a local tarball deploys a named tag" "$_rc"
+rm -rf "$_lt_dir"; unset _lt_dir
 
 # ==========================================================================
 echo

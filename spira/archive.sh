@@ -303,6 +303,15 @@ if MODE in ("sweep", "hook"):
             # A MISSING SOURCE DIRECTORY IS NOT AN EMPTY ONE. Reported as "0 archived" it reads
             # as "nothing new", which is the reading that stops anyone looking
             # (law-absence-needs-a-positive-control).
+            #
+            # EXCEPT THE DEFAULT, BEFORE ANY SESSION HAS RUN. Claude creates ~/.claude/projects
+            # with its first session, so on a freshly installed box the default path does not
+            # exist yet; refusing there failed spira-archive on its first tick and every
+            # deploy's health check refused on it (local acceptance phase B, 2026-09-26). Said
+            # and exit 0 for the default only; a path someone configured still refuses.
+            if os.path.abspath(PROJECTS) == os.path.abspath(os.path.join(os.path.expanduser("~"), ".claude", "projects")):
+                sys.stderr.write("archive: %s does not exist yet — no Claude session has run on this box, nothing to archive\n" % PROJECTS)
+                sys.exit(0)
             die("transcript directory %s does not exist — set SPIRA_TOKEN_PROJECTS" % PROJECTS)
         todo = sources()
         if not todo:
