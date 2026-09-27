@@ -7,6 +7,9 @@
 #       next with 2, in batcher order
 #   (c) an open bead that is batched still appears under its batch
 #   (d) the next-list order equals batch.sh's selection order (suite-trans, prio, epoch)
+#   (e) 32 CERTIFIED records, no open batch → header count is the whole 32, row count
+#       is capped (sp-hpeft: the header was reading the row-capped loop counter, so it
+#       could never show more than the cap regardless of how many records existed)
 #
 # ABSORBED FROM test-cockpit-queue.sh (coverage row 11 / cluster 2): QUARANTINE_N (count of
 # quarantined suites in suite-state) and a non-zero BATCH_AGE. Its own copies of the batch/
@@ -183,6 +186,85 @@ want "pane renders sp-b1" "sp-b1" "$pane"
 want "pane renders sp-c1" "sp-c1" "$pane"
 want "pane renders sp-bopen" "sp-bopen" "$pane"
 nowant "pane does not render old UNLND label" "UNLND" "$pane"
+
+echo "--- (e) 32 certified, no open batch: header is the whole count, rows are capped ---"
+TMP2="$(mktemp -d)"
+trap 'rm -rf "$TMP" "$TMP2"' EXIT INT TERM
+REPO2="$TMP2/repo"
+git init -q -b main "$REPO2"
+git -C "$REPO2" commit --allow-empty -m "init" -q
+
+N_CERT=32
+BEADS2_JSON="$TMP2/beads.json"
+{
+    printf '[\n'
+    for i in $(seq 1 "$N_CERT"); do
+        bid="$(printf 'sp-e%02d' "$i")"
+        git -C "$REPO2" checkout -q -b "spira/$bid" main
+        git -C "$REPO2" commit --allow-empty -m "$bid: work" -q
+        [ "$i" -gt 1 ] && printf ',\n'
+        printf '  {"id":"%s","title":"cert item %d","status":"closed","priority":2,"labels":["%s","plan","repo:alpha"]}' \
+            "$bid" "$i" "$SPIRA_SCOPE_LABEL"
+    done
+    printf '\n]\n'
+} > "$BEADS2_JSON"
+git -C "$REPO2" checkout -q main
+
+RUN2="$TMP2/run"
+mkdir -p "$RUN2/landstate" "$TMP2/queue"
+NOW2="$(date +%s)"
+for i in $(seq 1 "$N_CERT"); do
+    bid="$(printf 'sp-e%02d' "$i")"
+    tip="$(git -C "$REPO2" rev-parse "spira/$bid")"
+    printf 'CERTIFIED %s %s\n' "$tip" "$(( NOW2 - i ))" > "$RUN2/landstate/$bid"
+done
+
+MAP2="$TMP2/repo-map"
+printf '# name | path | land | base | format | gate\nalpha | %s | queue | main | |\n' "$REPO2" > "$MAP2"
+
+out2="$(env -i PATH="$BASE_PATH" HOME="$TMP2" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP2/no.conf" SPIRA_HOME="$HERE" \
+    SPIRA_REPO="$REPO2" SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
+    SPIRA_RUN="$RUN2" SPIRA_DB="$TMP2/nodb" \
+    SPIRA_REPO_MAP="$MAP2" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_QUEUE_DIR="$TMP2/queue" \
+    SPIRA_BDJSON_FIXTURE="$BEADS2_JSON" \
+    bash "$HERE/cockpit.sh" queue 2>/dev/null)"
+val2() { printf '%s' "$out2" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
+
+is "SP_QUEUE_NEXT_N is the whole 32, not the row cap" "32" "$(val2 SP_QUEUE_NEXT_N)"
+
+_rows2="$(printf '%s\n' "$out2" | grep -c '^SP_QUEUE_NEXT[0-9]')"
+[ "$_rows2" -gt 0 ] && [ "$_rows2" -le 20 ] \
+    && ok "SP_QUEUE_NEXT rows emitted are capped (got $_rows2)" \
+    || bad "SP_QUEUE_NEXT rows emitted are capped" "got [$_rows2]"
+
+PANE2="$HERE/../cockpit/health.sh"
+{
+    printf '%s\n' "$out2" | python3 -c '
+import sys
+for line in sys.stdin:
+    line = line.rstrip("\n")
+    if "=" not in line: continue
+    k, _, v = line.partition("=")
+    k = k.strip()
+    if not k or not (k[0].isalpha() or k[0] == "_"): continue
+    print("%s=%s" % (k, "\x27" + v.replace("\x27", "\x27\\\x27\x27") + "\x27"))
+'
+} > "$RUN2/cockpit.env"
+
+pane2="$(env -i PATH="$BASE_PATH" HOME="$TMP2" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP2/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$REPO2" \
+    SPIRA_RUN="$RUN2" SPIRA_DB="$TMP2/nodb" SPIRA_BD="${REAL_BD:-bd}" \
+    SPIRA_REPO_MAP="$MAP2" SPIRA_FAYTHS=t \
+    bash "$PANE2" once 0 120 2>/dev/null)"
+
+want "pane header reads 32 certified" "32 certified" "$pane2"
+nowant "pane header does not read 20 certified" "20 certified" "$pane2"
+_prows2="$(printf '%s\n' "$pane2" | grep -c 'sp-e[0-9][0-9]')"
+[ "$_prows2" -gt 0 ] && [ "$_prows2" -le 20 ] \
+    && ok "pane rows are capped at the row cap (got $_prows2)" \
+    || bad "pane rows are capped at the row cap" "got [$_prows2]"
 
 echo
 tl_summary

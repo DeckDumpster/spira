@@ -1652,8 +1652,11 @@ else:
 
     # --- Next items: CERTIFIED entries sorted by batcher order, not in current batch ---
     # queue_sort_rows (lib.sh) is the canonical sort shared with batch.sh so the two agree.
-    local _next_n=0 _next_max="${SPIRA_QUEUE_BATCH_MAX:-8}"
-    local _rname _rp _rbase _rbase_sha _cert _cert_ids _pj _sorted _srow _nid _ndata _npri _ntitle
+    # _next_n counts rows emitted (capped, for display); _next_total counts every
+    # CERTIFIED id not in the open batch (uncapped, for the header) — the same split
+    # the NEXT section above uses between SP_NEXT_N and its rows[:5] render cap.
+    local _next_n=0 _next_total=0 _next_max="${SPIRA_QUEUE_BATCH_MAX:-8}"
+    local _rname _rp _rbase _rbase_sha _cert _cert_ids _cert_ids_arr _pj _sorted _srow _nid _ndata _npri _ntitle
     for _rname in $(spira_repos 2>/dev/null); do
         _rp="$(repo_root "$_rname" 2>/dev/null)" || continue
         [ "$(repo_land "$_rname" 2>/dev/null)" = "queue" ] || continue
@@ -1670,6 +1673,9 @@ else:
             _cert_ids="${_cert_ids}${_cert_ids:+ }$_cid"
         done <<< "$_cert"
         [ -n "${_cert_ids:-}" ] || continue
+        # shellcheck disable=SC2206
+        _cert_ids_arr=($_cert_ids)
+        _next_total=$(( _next_total + ${#_cert_ids_arr[@]} ))
         # shellcheck disable=SC2086
         _pj="$(bdjson show $_cert_ids 2>/dev/null)" || _pj="[]"
         # Sort and emit rows. Each sort row:
@@ -1701,7 +1707,7 @@ else:
             printf '%s\n' "$_cl"
         done | PRIO_JSON="$_pj" queue_sort_rows "$_rp" "$_rbase_sha")
     done
-    echo "SP_QUEUE_NEXT_N=$_next_n"
+    echo "SP_QUEUE_NEXT_N=$_next_total"
     echo "SP_QUEUE_NEXT_MAX=$_next_max"
 
     # --- Quarantine count (unchanged) ---
