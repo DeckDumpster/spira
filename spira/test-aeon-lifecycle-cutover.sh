@@ -148,7 +148,7 @@ rc=$?
 is "sp-zw9ot fixture: claim on IN_DELIVERY is refused (exit 3)" "3" "$rc"
 _zw9="$(row_json sp-zw9ot)"
 want "sp-zw9ot fixture: row is untouched, still IN_DELIVERY" '"state":"IN_DELIVERY"' "$_zw9"
-want "sp-zw9ot fixture: version did not advance on a refusal" '"version":0' "$_zw9"
+want "sp-zw9ot fixture: version did not advance on a refusal" '"version":"0"' "$_zw9"
 
 # ===========================================================================
 echo
@@ -160,7 +160,7 @@ is "claim over a dead holder: applied (exit 0)" "0" "$?"
 _dead="$(row_json sp-lcdead)"
 want "claim over a dead holder: row is WORKING under the new holder" '"state":"WORKING"' "$_dead"
 want "claim over a dead holder: holder is the new claimant" '"holder":"aeon-t2"' "$_dead"
-want "claim over a dead holder: two transitions applied (HolderDead then Claim)" '"version":2' "$_dead"
+want "claim over a dead holder: two transitions applied (HolderDead then Claim)" '"version":"2"' "$_dead"
 
 # ===========================================================================
 echo
