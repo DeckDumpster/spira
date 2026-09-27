@@ -274,4 +274,75 @@ is "the batch ends landed" "LANDED" "$(batch_field batch-race state)"
 event_count="$(root_sql --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM event WHERE machine='batch' AND lc_key='batch-race' AND event='FastForward'" -r json | python3 -c 'import json,sys; print(json.load(sys.stdin)["rows"][0]["n"])' 2>/dev/null)"
 is "every racing land left its own event row, applied or refused" "$N" "$event_count"
 
+# ── sp-o7nbr.2: batch.sh's own _abandon_open_batch, onto this same fixture ───────────────
+# Sources the real spira/batch.sh (not a reimplementation) and calls its own
+# _abandon_open_batch directly — the function the DIRTY eviction path calls in
+# production — against this suite's already-running server. Cutting itself moved to the
+# batcher-cut crate (sp-vsob2), which does not go through spira-lc, so the batch this
+# abandon test needs is set up with the same direct `lc cut` the legacy-record case below
+# uses, not a batch.sh function.
+export SPIRA_HOME="$REPO/spira"
+export SPIRA_RUN="$TMP/shell-run"
+mkdir -p "$SPIRA_RUN/landstate" "$SPIRA_RUN/queue/fixture-repo"
+export SPIRA_QUEUE_DIR="$SPIRA_RUN/queue"
+export SPIRA_LC_BIN="$BIN"
+# shellcheck disable=SC1091
+. "$REPO/spira/batch.sh"
+
+certify sp-lc-cut1 tipC1
+certify sp-lc-cut2 tipC2
+lc cut batch-shell-cut --repo fixture-repo --head headH --base baseH \
+    --members "sp-lc-cut1:tipC1,sp-lc-cut2:tipC2" --actor test >/dev/null
+is "cut batch is OPEN with two members" "OPEN" "$(batch_field batch-shell-cut state)"
+is "member 1 moved CERTIFIED -> IN_DELIVERY" "IN_DELIVERY" "$(member_field sp-lc-cut1 bead state)"
+is "member 2 moved CERTIFIED -> IN_DELIVERY" "IN_DELIVERY" "$(member_field sp-lc-cut2 bead state)"
+
+# _abandon_open_batch's spira-lc call: an open-batch record carrying batch_id=/version=
+# drives spira-lc abandon-batch — asserted here directly against spira_lifecycle, not the
+# landstate file _abandon_open_batch also still writes for every other current LANDSTATE
+# consumer. batcher-cut (sp-vsob2) does not write batch_id=/version= into its own
+# open-batch record yet, so in production this is currently always the skip path below —
+# still asserted here so the call is proven correct once batcher-cut's record carries them.
+ob_file="$TMP/ob-file-shell-cut"
+cat > "$ob_file" <<OBFILE
+pr=1
+head=headH
+base=baseH
+members=sp-lc-cut1:tipC1 sp-lc-cut2:tipC2
+opened=1
+branch=batch-shell-cut
+batch_id=batch-shell-cut
+version=2
+OBFILE
+_abandon_open_batch fixture-repo /bin/true fixture-repo "$ob_file" 1 \
+    "sp-lc-cut1:tipC1 sp-lc-cut2:tipC2" "test abandon" >/dev/null 2>&1
+is "abandoned batch reaches ABANDONED" "ABANDONED" "$(batch_field batch-shell-cut state)"
+is "member 1 returns to CERTIFIED (tip unchanged)" "CERTIFIED" "$(member_field sp-lc-cut1 bead state)"
+is "member 2 returns to CERTIFIED (tip unchanged)" "CERTIFIED" "$(member_field sp-lc-cut2 bead state)"
+is "_abandon_open_batch still writes the old landstate file too" "CERTIFIED" \
+    "$(cut -d' ' -f1 "$SPIRA_RUN/landstate/sp-lc-cut1" 2>/dev/null)"
+
+# POSITIVE CONTROL: an open-batch record from before this cutover (no batch_id=/version=,
+# the shape every record had until this bead) skips the new-system call instead of CASing
+# against a batch_id that was never written — proving the additive-field guard actually
+# guards, not just that the happy path calls through.
+certify sp-lc-legacy tipL
+lc cut batch-shell-legacy --repo fixture-repo --head headH --base baseH \
+    --members "sp-lc-legacy:tipL" --actor test >/dev/null
+ob_file_legacy="$TMP/ob-file-legacy"
+cat > "$ob_file_legacy" <<OBFILE
+pr=2
+head=headH
+base=baseH
+members=sp-lc-legacy:tipL
+opened=1
+branch=batch-shell-legacy
+OBFILE
+_abandon_open_batch fixture-repo /bin/true fixture-repo "$ob_file_legacy" 2 \
+    "sp-lc-legacy:tipL" "test abandon (legacy record)" >/dev/null 2>&1
+is "a pre-cutover record's batch is untouched on spira-lc (no batch_id to CAS against)" \
+    "OPEN" "$(batch_field batch-shell-legacy state)"
+is "the old landstate path still ran for a pre-cutover record" "CERTIFIED" \
+    "$(cut -d' ' -f1 "$SPIRA_RUN/landstate/sp-lc-legacy" 2>/dev/null)"
+
 tl_summary

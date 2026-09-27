@@ -104,6 +104,28 @@ _batch_is_open() { [ -f "$(_batch_open_file "$1")" ]; }
 # Single abandonment path — used by DIRTY and express eviction alike.
 _abandon_open_batch() {
     local name="$1" forge="$2" repo="$3" ob_file="$4" pr_n="$5" members_val="$6" comment_text="${7:-Batch abandoned.}"
+
+    # spira-lc's own OPEN-batch lifecycle (sp-o7nbr.2): one cascade returns every member
+    # to CERTIFIED (tip unchanged) or SUBMITTED (tip moved) atomically. batch_id/version
+    # are present only on a record this session's open_batch wrote (cut succeeded) — a
+    # record from before this cutover, or one whose cut refused, has neither, and the new
+    # call is skipped rather than CASing against a batch that was never written there.
+    local _lc_batch_id _lc_version
+    _lc_batch_id="$(grep '^batch_id=' "$ob_file" 2>/dev/null | head -1)"; _lc_batch_id="${_lc_batch_id#batch_id=}"
+    _lc_version="$(grep '^version=' "$ob_file" 2>/dev/null | head -1)"; _lc_version="${_lc_version#version=}"
+    if [ -n "$_lc_batch_id" ] && [ -n "$_lc_version" ]; then
+        local _lc_out _lc_rc
+        _lc_out="$(lcq abandon-batch "$_lc_batch_id" --expect OPEN --version "$_lc_version" \
+            --actor batch.sh --reason "$comment_text" 2>&1)"
+        _lc_rc=$?
+        if [ "$_lc_rc" -eq 0 ]; then
+            printf 'batch %s: %s abandoned on spira-lc\n' "$name" "$_lc_batch_id"
+        else
+            printf 'batch %s: spira-lc abandon-batch refused for %s (rc=%d): %s\n' \
+                "$name" "$_lc_batch_id" "$_lc_rc" "$_lc_out" >&2
+        fi
+    fi
+
     local _m mid mtip cur_state
     for _m in $members_val; do
         mid="${_m%%:*}"; mtip="${_m##*:}"

@@ -245,6 +245,12 @@ json_only() { sed -n '/^[[{]/,$p'; }
 
 bdjson() { bdq "$@" --json 2>/dev/null | json_only; }
 
+# lcq <verb> [args...] -> spira-lc's own exit code (0 applied, 3 refused, 2 cannot tell);
+# stdout is spira-lc's own reply. Same timeout-wrapped-external-tool shape as ghq above,
+# and the same reason: this is the one thing outside the harness's own state a caller must
+# not hang on.
+lcq() { timeout "${SPIRA_LC_TIMEOUT:-30}" "${SPIRA_LC_BIN:?}" "$@"; }
+
 # ask_already_open <subject> -> 0 when an OPEN operator ask already carries that subject.
 #
 # THE STRONGEST DEDUPE IS "IS IT ALREADY IN FRONT OF HIM", not a clock and not a stamp file.
