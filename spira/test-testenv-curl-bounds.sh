@@ -102,6 +102,12 @@ is "the shipped Containerfile: every curl fetch is bounded" "" "$out"
 # never routed, guaranteed not to answer. Extract the exact flags the Containerfile ships
 # for the duckdb fetch and fire them at that address — if the flags were typos or the
 # wrong curl option names, this is where that would show up instead of at a hung gate.
+#
+# --retry-all-errors resends the connect attempt on a connect-timeout too, so the
+# worst case is (retries + 1) * --connect-timeout plus curl's own backoff between
+# tries, not --connect-timeout alone: with --retry 3 --connect-timeout 10 that is a
+# deterministic ~47s, never observed here past 90s. Bounded and finite is the bar —
+# the defect this suite guards against is unbounded, not merely slow.
 # ---------------------------------------------------------------------------------------
 flags="$(join_continuations "$CONTAINERFILE" | grep -oE 'curl +-fsSL[^|&]*duckdb\.gz' \
     | sed -E 's/-o [^ ]+//; s/"[^"]*"//; s/curl //')"
@@ -110,10 +116,10 @@ if [ -z "$flags" ]; then
         "no matching curl invocation found"
 else
     start=$SECONDS
-    timeout 60 curl $flags -o /dev/null "http://192.0.2.1/unreachable" >/dev/null 2>&1
+    timeout 120 curl $flags -o /dev/null "http://192.0.2.1/unreachable" >/dev/null 2>&1
     rc=$?
     elapsed=$((SECONDS - start))
-    not_hung() { [ "$1" -lt 30 ] && ok "$2" || bad "$2" "took ${1}s"; }
+    not_hung() { [ "$1" -lt 90 ] && ok "$2" || bad "$2" "took ${1}s"; }
     not_hung "$elapsed" "live probe: an unreachable host fails within the bound, not after it"
     [ "$rc" -ne 0 ] && ok "live probe: an unreachable host is a curl failure, not a silent hang" \
         || bad "live probe: an unreachable host is a curl failure, not a silent hang" "rc=0"
