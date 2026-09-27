@@ -189,4 +189,16 @@ want   "bare gate-check name is a CI watcher"       "yes" "$(world_lib '_is_ci_w
 want   "instance-qualified pr-notify is a CI watcher" "yes" "$(world_lib '_is_ci_watcher spira-pr-notify-prod.timer && echo yes || echo no')"
 want   "positive control — an unrelated timer is not a CI watcher" "no" "$(world_lib '_is_ci_watcher spira-sentinel-prod.timer && echo yes || echo no')"
 
+# ============================================================================
+echo
+echo "_is_essential_timer <timer> — which timers a disabled+unsuspended state DEGRADEs (sp-1ar8t):"
+# ============================================================================
+# SPIRA_INSTANCE=prod is already exported for this whole suite (see above), so the
+# instance-qualified rows below exercise the suffix-stripping path for free.
+want   "bare sentinel name is essential"                 "yes" "$(world_lib '_is_essential_timer spira-sentinel.timer && echo yes || echo no')"
+want   "instance-qualified sentinel is essential"        "yes" "$(world_lib '_is_essential_timer spira-sentinel-prod.timer && echo yes || echo no')"
+want   "instance-qualified archivist is essential"       "yes" "$(world_lib '_is_essential_timer spira-archivist-prod.timer && echo yes || echo no')"
+want   "positive control — a non-priority timer is not essential" "no" "$(world_lib '_is_essential_timer spira-groom.timer && echo yes || echo no')"
+want   "positive control — a CI watcher is not essential"          "no" "$(world_lib '_is_essential_timer spira-gate-check.timer && echo yes || echo no')"
+
 tl_summary

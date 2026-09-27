@@ -90,6 +90,18 @@ _is_ci_watcher() {
     done
     return 1
 }
+
+# _is_essential_timer <timer> -> 0 when <timer> is one of TIMER_PRIORITY, the timers whose
+# absence sp-1ar8t's DEGRADED verdict is about. Same subj computation _start_action uses, so
+# the two agree on which unit an instance-qualified name resolves to.
+_is_essential_timer() {
+    local subj="${1%.timer}" b
+    [ -n "${SPIRA_INSTANCE:-}" ] && subj="${subj%-$SPIRA_INSTANCE}"
+    for b in "${TIMER_PRIORITY[@]}"; do
+        [ "$subj" = "$b" ] && return 0
+    done
+    return 1
+}
 STAMP="$SPIRA_RUN/world.halted"
 DRAIN_STAMP="$SPIRA_RUN/world.draining"
 
@@ -320,6 +332,11 @@ start)
     declare -A CTRL_SUSPENDED=()
     CTRL_LIB=1 . "$SPIRA_HOME/ctrl.sh"
     ctrl_load_suspended CTRL_SUSPENDED
+    # DEGRADED TIMERS: essential (TIMER_PRIORITY) timers skipped as disabled with no ctrl
+    # suspension recorded. A disabled timer is a decision only when ctrl.sh has the reason;
+    # without one it is an accident (sp-1ar8t: every spira-*-prod timer was disabled and
+    # `start` still printed a bare "spira: RUNNING", so the fleet sat dead for over an hour).
+    degraded=()
     for t in "${TIMERS[@]}"; do
         # A disabled timer was removed from the loop deliberately, but the check must still be
         # made per timer — is-enabled is a plain systemctl call, not ctrl.sh, so it stays cheap.
@@ -336,6 +353,7 @@ start)
                 ;;
             skip-disabled)
                 printf '  skipped %s (disabled)\n' "$t"
+                _is_essential_timer "$t" && degraded+=("$t")
                 ;;
             start)
                 "$SC" --user start "$t" 2>/dev/null && printf '  started %s\n' "$t"
@@ -407,6 +425,15 @@ start)
     done
 
     rm -f "$STAMP"
+    # A BARE "RUNNING" MUST MEAN THE ESSENTIAL TIMERS ARE ACTUALLY RUNNING. Printing it
+    # regardless of how many were skipped as disabled is the defect this bead exists to fix:
+    # every essential timer can be disabled and the verdict was still RUNNING, with the only
+    # evidence a per-unit "skipped" line scrolling past mid-transcript.
+    if [ "${#degraded[@]}" -gt 0 ]; then
+        printf 'spira: RUNNING (DEGRADED: %s essential timer(s) disabled with no recorded suspension: %s)\n' \
+            "${#degraded[@]}" "${degraded[*]}" >&2
+        exit 1
+    fi
     echo "spira: RUNNING"
     ;;
 
@@ -521,7 +548,27 @@ status)
         else
             printf 'spira: nobody is watching CI\n'
         fi
-    else echo "spira: not halted by world.sh"; fi
+    else
+        echo "spira: not halted by world.sh"
+        # DEGRADED: an essential timer disabled with no recorded ctrl suspension is an
+        # accident, not a decision (sp-1ar8t) — the same check `start` makes, read here
+        # without starting or stopping anything, so the state is visible without a restart.
+        declare -A CTRL_SUSPENDED=()
+        CTRL_LIB=1 . "$SPIRA_HOME/ctrl.sh"
+        ctrl_load_suspended CTRL_SUSPENDED
+        _degraded=()
+        for _t in "${TIMERS[@]}"; do
+            _is_essential_timer "$_t" || continue
+            _subj="${_t%.timer}"; [ -n "${SPIRA_INSTANCE:-}" ] && _subj="${_subj%-$SPIRA_INSTANCE}"
+            ctrl_is_suspended CTRL_SUSPENDED "$_subj" >/dev/null && continue
+            [ "$("$SC" --user is-enabled "$_t" 2>/dev/null)" = "disabled" ] && _degraded+=("$_t")
+        done
+        if [ "${#_degraded[@]}" -gt 0 ]; then
+            printf 'spira: DEGRADED — %s essential timer(s) disabled with no recorded suspension: %s\n' \
+                "${#_degraded[@]}" "${_degraded[*]}"
+        fi
+        unset _t _subj _degraded
+    fi
     for t in "${TIMERS[@]}"; do
         timer_state="$("$SC" --user is-active "$t" 2>/dev/null)"
         svc="${t%.timer}.service"
