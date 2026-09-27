@@ -19,13 +19,20 @@
 # covers: spira/conf.sh spira-config/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want() { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted to contain [$2] got [$3]" ;; esac; }
+. "$HERE/testlib.sh"
 
 echo "test-conf-toml.sh"
+
+# ==========================================================================
+# Resolve or build the spira-config binary. Skip (not fail) if cargo is unavailable — every
+# case below, including T0, needs it. Checked BEFORE any case runs: testlib's skip() bails
+# instead of skipping once a case has already recorded (law-a-refusal-names-its-exit).
+# ==========================================================================
+CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
+[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
+if [ -z "$CARGO_BIN" ]; then
+    skip "cargo not found — spira-config binary cannot be built"
+fi
 
 # ==========================================================================
 echo
@@ -35,18 +42,6 @@ if grep -q 'spira_conf_read' "$HERE/conf.sh"; then
     bad "spira_conf_read is gone from conf.sh" "still present in $HERE/conf.sh"
 else
     ok "spira_conf_read is gone from conf.sh"
-fi
-
-# ==========================================================================
-# Resolve or build the spira-config binary. Skip (not fail) if cargo is unavailable —
-# T1 and AUTO-CONVERT both need it; T0 above already ran.
-# ==========================================================================
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-conf-toml: cargo not found — spira-config binary cannot be built"
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"
-    exit 77
 fi
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
@@ -61,9 +56,7 @@ fi
 if [ -x "$SPIRA_CONFIG_BIN" ]; then
     ok "spira-config binary is present and executable"
 else
-    bad "spira-config binary" "not found/built at $SPIRA_CONFIG_BIN"
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"
-    exit 1
+    bail "spira-config binary not found/built at $SPIRA_CONFIG_BIN"
 fi
 
 # A minimal harness tree so conf.sh resolves sensibly; SPIRA_CONFIG_BIN is passed in
@@ -249,5 +242,4 @@ want "conf.sh's PATH still reaches \$HOME/.cargo/bin with no spira-config binary
     "$BOOT_HOME/.cargo/bin" "$boot_path"
 
 # ==========================================================================
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

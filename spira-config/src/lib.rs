@@ -96,6 +96,19 @@ pub struct SpiraSection {
     pub cockpit_bottom_pct: Option<u32>,
     pub cockpit_right_pct: Option<u32>,
     pub czar_stage_deadlock: Option<CzarStage>,
+    pub bd: Option<String>,
+    pub watchers: Option<String>,
+    pub cockpit: Option<String>,
+    pub batch_mem_per_suite_mib: Option<u32>,
+    pub lanes_max_live: Option<u32>,
+    pub thrash_minutes: Option<u32>,
+    pub mail_settle: Option<u64>,
+    pub queue_batch_idle_cut: Option<bool>,
+    pub queue_throttle_override: Option<String>,
+    pub hook_lines: Option<u32>,
+    pub client_settings: Option<String>,
+    pub mail: Option<String>,
+    pub mail_session_mailbox: Option<String>,
 }
 
 /// How a landed branch reaches its base — see `repo-map.example`'s own `land` column.

@@ -52,6 +52,11 @@ hasnt() { case "$2" in *"$3"*) bad "$1" "$2" ;; *) ok "$1" ;; esac; }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/home"
 
+# conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2); the CLONE and
+# NOMAIL trees below carry none of this checkout's own target/, so without this every
+# configured value below is silently dropped instead of read.
+SPIRA_CONFIG_BIN="$(testlib_spira_config_bin "$TMP")" || skip "cargo not found — spira-config binary cannot be built"
+
 # A harness tree that is NOT this checkout, so nothing here can read the operator's own
 # configuration and report a pass it did not earn.
 CLONE="$TMP/clone"
@@ -101,7 +106,7 @@ _spira_now() { printf '%s' "$(( $(date +%s) + CLOCK_BUMP ))"; }
 
 # notify <age> [manifest] -> rc; stdout in $TMP/out, stderr in $TMP/err
 notify() {
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" \
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
         SPIRA_WATCHERS="${2:-$MAN}" SPIRA_ACTIONABLE="${FILTER_OVERRIDE-$FILTER}" \
         SPIRA_NOTIFY_AGE="$1" SPIRA_NOW="$(_spira_now)" \
         NOTIFY_LOG="$ASKS" ${NOTIFY_REFUSE:+NOTIFY_REFUSE=1} \
@@ -109,7 +114,7 @@ notify() {
 }
 # wd <args...> — any other watchd command, in the same environment.
 wd() {
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" \
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
         SPIRA_WATCHERS="$MAN" SPIRA_ACTIONABLE="$FILTER" \
         bash "$CLONE/spira/watchd.sh" "$@"
 }
@@ -386,14 +391,14 @@ is "and the event finally reaches somebody"            "1" "$(asks)"
 has "carrying what it was holding all along"           "$(cat "$ASKS")" "the channel is down"
 
 reset
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" SPIRA_WATCHERS="$MAN" \
     SPIRA_ACTIONABLE="$FILTER" SPIRA_NOTIFY_AGE=0 \
     bash "$NOMAIL/watchd.sh" notify >/dev/null 2>"$TMP/err"
 printf '%s nobody to tell\n' "$FILTER" >> "$A"
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" SPIRA_WATCHERS="$MAN" \
     SPIRA_ACTIONABLE="$FILTER" SPIRA_NOTIFY_AGE=0 \
     bash "$NOMAIL/watchd.sh" notify >/dev/null 2>"$TMP/err"
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" SPIRA_WATCHERS="$MAN" \
     SPIRA_ACTIONABLE="$FILTER" SPIRA_NOTIFY_AGE=0 \
     bash "$NOMAIL/watchd.sh" notify >/dev/null 2>"$TMP/err"; rc=$?
 is "no escalation path at all is a broken mechanism too" "3" "$rc"
@@ -405,7 +410,7 @@ has "and it says the events reach nobody"              "$(cat "$TMP/err")" "reac
 # =======================================================================================
 echo
 echo "the verb takes no arguments"
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" SPIRA_WATCHERS="$MAN" \
     SPIRA_ACTIONABLE="$FILTER" NOTIFY_LOG="$ASKS" \
     bash "$CLONE/spira/watchd.sh" notify --all >/dev/null 2>"$TMP/err"
 is "an unexpected argument is refused"                 "3" "$?"
@@ -501,7 +506,7 @@ chmod +x "$STUBBIN/systemctl"
 # notify_d <age> — the same command over the daemon manifest. SPIRA_ACTIONABLE stays pinned
 # so the events half cannot match a line by accident and answer for the health half.
 notify_d() {
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_PATH="$STUBBIN" SPIRA_CONF="$CONF" \
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_PATH="$STUBBIN" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
         SPIRA_WATCHERS="$MAND" SPIRA_ACTIONABLE="$FILTER" \
         SPIRA_NOTIFY_AGE="$1" SPIRA_NOW="$(_spira_now)" \
         SC_STATE="$SC_STATE" SC_NR="$SC_NR" SC_SILENT="$SC_SILENT" \
@@ -511,7 +516,7 @@ notify_d() {
 # status_d — the same daemon manifest through `status` (UC-operator-channel-30: HALTED vs
 # DEGRADED), reusing the fixture above rather than a fixture of its own.
 status_d() {
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_PATH="$STUBBIN" SPIRA_CONF="$CONF" \
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_PATH="$STUBBIN" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
         SPIRA_WATCHERS="$MAND" bash "$CLONE/spira/watchd.sh" status 2>/dev/null
 }
 mature_unhealthy() {

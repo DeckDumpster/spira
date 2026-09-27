@@ -241,6 +241,12 @@ _spira_repo_map_candidate() {
     for c in "$@"; do
         [ -f "$c" ] && { printf '%s' "$c"; return 0; }
     done
+    # EXPLICIT, not left to the loop's own exit status: this function is called as
+    # `X="${X:-$(_spira_repo_map_candidate)}"`, and when no candidate exists the loop's
+    # last executed command is the final failing `[ -f "$c" ]` — under errexit (every
+    # `set -e` caller conf.sh is sourced by, e.g. aerc/accept-default.sh) that aborts the
+    # caller right at the assignment instead of yielding "".
+    return 0
 }
 
 # _spira_fayth_paths -> every "*.fayth" file under the chamber in force, one per line.
@@ -269,11 +275,24 @@ _spira_fayth_paths() {
 # to let a document with fewer [repo]/[persona] tables replace one that has more, so an
 # auto-convert that omitted them would simply fail closed against a box with a real
 # spira.toml already on disk instead of quietly gutting it (sp-zs04v.2).
+#
+# WHEN SPIRA_CONF IS PINNED EXPLICITLY BUT SPIRA_TOML IS NOT, the toml candidate is looked
+# for ONLY beside that conf — never through the ordinary $SPIRA_REPO/XDG/etc tiers.
+# Those tiers answer "where does THIS host's config live", a question the caller already
+# answered by naming a conf file directly; consulting them anyway can find a toml that has
+# nothing to do with the pinned conf; comparing its mtime decides whether that unrelated file
+# is read as-is or is the one just overwritten with THIS conf's content (sp-zs04v.2: a test
+# fixture's spira.conf gutted an unrelated, real spira.toml this way).
 spira_toml_resolve() {
     local toml conf target out rmap f
     local -a conv_args
-    toml="$(spira_toml_file)"
     conf="$(spira_conf_file)"
+    if [ -n "${SPIRA_CONF+set}" ] && [ -z "${SPIRA_TOML+set}" ]; then
+        toml=""
+        [ -n "$conf" ] && [ -f "$(dirname "$conf")/spira.toml" ] && toml="$(dirname "$conf")/spira.toml"
+    else
+        toml="$(spira_toml_file)"
+    fi
     if [ -n "$toml" ] && { [ -z "$conf" ] || [ "$toml" -nt "$conf" ]; }; then
         printf '%s' "$toml"
         return 0
@@ -292,7 +311,13 @@ spira_toml_resolve() {
         printf '%s' "$target"
     else
         printf 'spira.conf: auto-convert to spira.toml failed: %s\n' "$out" >&2
-        [ -n "$toml" ] && printf '%s' "$toml"
+        # UNCONDITIONAL, not `[ -n "$toml" ] && printf ...`: this function is called as
+        # `X="$(spira_toml_resolve)"`, a subshell that inherits errexit from every `set -e`
+        # caller (aerc/accept-default.sh). A guard whose condition is false IS this
+        # subshell's last command, so under errexit the subshell — and the substitution —
+        # exits non-zero right here instead of yielding "". `printf` with an empty argument
+        # is a no-op that always succeeds, so this is the guard, spelled to survive errexit.
+        printf '%s' "$toml"
     fi
 }
 

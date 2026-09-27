@@ -44,6 +44,11 @@ ln -s "$HERE/conf.sh" "$HARNESS/spira/conf.sh"
 printf '# empty\n' > "$HARNESS/spira/repo-map.example"
 printf '# empty\n' > "$HARNESS/spira/watchers"
 
+# conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2); HARNESS
+# carries none of this checkout's own target/, so without this the config-file case below
+# reads no configured value at all.
+SPIRA_CONFIG_BIN="$(testlib_spira_config_bin "$TMP")" || skip "cargo not found — spira-config binary cannot be built"
+
 # A fake database: just needs .beads to exist so the schema check fires.
 FAKEDB="$TMP/fakedb"
 mkdir -p "$FAKEDB/.beads"
@@ -90,7 +95,7 @@ conf_val() {
         SPIRA_CONF=/nonexistent \
         SPIRA_WATCHERS="$HARNESS/spira/watchers" \
         SPIRA_DB="$TMP/empty-db" \
-        SPIRA_PATH="$spira_path" \
+        SPIRA_PATH="$spira_path" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
         "$@" \
         bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_BD:-}\"" 2>/dev/null
 }
@@ -105,7 +110,7 @@ conf_with_db() {
         SPIRA_CONF=/nonexistent \
         SPIRA_WATCHERS="$HARNESS/spira/watchers" \
         SPIRA_DB="$FAKEDB" \
-        SPIRA_PATH="$spira_path" \
+        SPIRA_PATH="$spira_path" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
         "$@" \
         bash -c ". '$HARNESS/spira/conf.sh'" 2>/dev/null
 }
@@ -166,7 +171,7 @@ got="$(env -i PATH="/usr/local/bin:/usr/bin:/bin" \
     SPIRA_CONF="$CONF_FILE" \
     SPIRA_WATCHERS="$HARNESS/spira/watchers" \
     SPIRA_DB="$TMP/empty-db" \
-    SPIRA_PATH="$TMP/bin-bad" \
+    SPIRA_PATH="$TMP/bin-bad" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
     bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_BD:-}\"" 2>/dev/null)"
 is "config-file SPIRA_BD wins over PATH-derived default" "$BD_GOOD" "$got"
 
@@ -178,7 +183,7 @@ got="$(env -i PATH="/usr/local/bin:/usr/bin:/bin" \
     SPIRA_CONF="$CONF_FILE" \
     SPIRA_WATCHERS="$HARNESS/spira/watchers" \
     SPIRA_DB="$TMP/empty-db" \
-    SPIRA_PATH="$TMP/bin-bad" \
+    SPIRA_PATH="$TMP/bin-bad" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
     SPIRA_BD="$BD_BAD" \
     bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_BD:-}\"" 2>/dev/null)"
 is "env wins over config file for SPIRA_BD" "$BD_BAD" "$got"
