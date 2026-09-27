@@ -1,0 +1,22 @@
+[package]
+name = "lifecycle-guard"
+version = "1.0.0"
+edition = "2021"
+description = "lifecycle-guard — static analyser: refuses any path that reaches spira_lifecycle by anything but the machine."
+
+[dependencies]
+tree-sitter = "=0.22.6"
+tree-sitter-bash = "=0.21.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+walkdir = "2"
+
+[[bin]]
+name = "lifecycle-guard"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
