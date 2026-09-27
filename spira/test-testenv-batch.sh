@@ -102,6 +102,25 @@ cat > "$REMOTE/spira/test-fx-p.sh" << 'EOF'
 printf '  ok    test-fx-p ran\n'; exit 0
 EOF
 
+# B11b fixture (user-account fault): three suites that just exit 0, so the
+# only way any of them shows non-ok is podman's own --user refusal once
+# spirauser is removed mid-batch, not suite content.
+cat > "$REMOTE/spira/test-fx-y1.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: changed.sh
+printf '  ok    test-fx-y1 ran\n'; exit 0
+EOF
+cat > "$REMOTE/spira/test-fx-y2.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: changed.sh
+printf '  ok    test-fx-y2 ran\n'; exit 0
+EOF
+cat > "$REMOTE/spira/test-fx-y3.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: changed.sh
+printf '  ok    test-fx-y3 ran\n'; exit 0
+EOF
+
 # B12 fixture: coordination via shared /tmp files inside the container.
 # test-fx-b12a writes a start marker; test-fx-b12b (exclusive, listed AFTER a)
 # checks it is absent — proving exclusive suites are front-loaded ahead of the
@@ -1515,6 +1534,121 @@ STUBEOF
             && ok "B11: no suite is red after exec-storm (reclassified as unreached)" \
             || bad "B11: no suite is red after exec-storm" \
                    "$_b11_red suite(s) still marked red — reclassification did not fire"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# B11b: USER-ACCOUNT FAULT — sp-mxsgy. A suite that removes the container's
+# --user account (round 91: spirauser vanished from /etc/passwd mid-run) makes
+# podman itself refuse every later exec with "unable to find user ... passwd
+# file", rc=255 — podman failing before the suite script ever ran, not the
+# suite failing. Every suite after the account disappears must come out
+# unreached, not red, and the batch must exit 2 (harness fault), not 1.
+#
+# Uses a REAL container and REAL podman (host-reason at top of file): the
+# account is removed with `podman exec --user root ... userdel` between
+# suites, so the fault text asserted on below is podman's own, not a guess.
+#
+# POSITIVE CONTROL: y1 completes ok before the account is removed, proving
+# suites in this container run normally; only y2/y3 (execed after removal)
+# are affected.
+# ---------------------------------------------------------------------------
+echo
+echo "B11b: user-account fault (spirauser removed mid-batch)"
+
+if [ -z "$REAL_PODMAN" ]; then
+    printf 'SKIP B11b: podman not on PATH\n' >&2
+else
+    # test-fx-y1/y2/y3 come from the committed fixture (top of file), not a
+    # private SPIRA_BATCH_SUITE_DIR: the container executes whatever topic's
+    # git tree carries, so a suite that exists only in a scratch host
+    # directory would never be found inside the container and would fail
+    # rc=127 for an unrelated reason before ever exercising this fault.
+    B11B_INSTANCE="b11b-$$"
+    B11B_CNAME="spira-batch-${B11B_INSTANCE}"
+    RESULTS_ROOT_B11B="$TMP/results-B11b"
+
+    rc_b11b=0
+    B11B_OUT_FILE="$TMP/b11b-batch.out"
+    (
+    SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B11B" \
+    SPIRA_BATCH_SKIP_INSTALL=1 \
+    SPIRA_BATCH_INSTANCE="$B11B_INSTANCE" \
+    SPIRA_VERDICT_TTL=0 \
+        bash "$BATCH" --mode serial \
+        --suites test-fx-y1.sh,test-fx-y2.sh,test-fx-y3.sh \
+        topic "$FIXTURE" >"$B11B_OUT_FILE" 2>&1
+    ) &
+    BATCH_B11B_PID=$!
+
+    # Positive control: poll until y1's result file says ok — not just that the
+    # file exists, which a suite failing for an unrelated reason (e.g. rc=127,
+    # script not found) would also produce.
+    _b11b_i=0
+    while [ "$(awk '{print $1}' "$(find "$RESULTS_ROOT_B11B" -name 'test-fx-y1.sh.result' 2>/dev/null)" 2>/dev/null)" != "ok" ] \
+          && [ "$_b11b_i" -lt 120 ]; do
+        sleep 0.5; _b11b_i=$((_b11b_i+1))
+    done
+
+    _b11b_y1_st="$(awk '{print $1}' "$(find "$RESULTS_ROOT_B11B" -name 'test-fx-y1.sh.result' 2>/dev/null)" 2>/dev/null)"
+    if [ "$_b11b_y1_st" != "ok" ]; then
+        bad "B11b: positive-control: y1 completed before account removal" \
+            "timed out after 60s waiting for status ok (got '${_b11b_y1_st:-none}'); batch may have exited early"
+        kill "$BATCH_B11B_PID" 2>/dev/null || true
+        wait "$BATCH_B11B_PID" 2>/dev/null || true
+        "$REAL_PODMAN" rm -f "$B11B_CNAME" >/dev/null 2>&1 || true
+    else
+        ok "B11b: positive-control: y1 ran normally before account removal"
+
+        "$REAL_PODMAN" exec --user root "$B11B_CNAME" userdel spirauser >/dev/null 2>&1
+        _b11b_userdel_rc=$?
+        [ "$_b11b_userdel_rc" -eq 0 ] \
+            && ok "B11b: positive-control: spirauser removed from container passwd" \
+            || bad "B11b: positive-control: spirauser removed from container passwd" \
+                   "userdel rc=$_b11b_userdel_rc"
+
+        wait "$BATCH_B11B_PID" 2>/dev/null; rc_b11b=$?
+
+        isexit2 "B11b: user-account fault exits 2 (harness fault, not branch fault)" "$rc_b11b"
+        b11b_out="$(cat "$B11B_OUT_FILE" 2>/dev/null || true)"
+        want "B11b: harness fault message names the missing account" "passwd" "$b11b_out"
+
+        RD_B11B="$(find_results_dir "$RESULTS_ROOT_B11B")"
+        if [ -n "$RD_B11B" ]; then
+            st_y1="$(awk '{print $1}' "$RD_B11B/test-fx-y1.sh.result" 2>/dev/null || true)"
+            [ "$st_y1" = ok ] && ok "B11b: y1 status remains ok (not overwritten)" \
+                               || bad "B11b: y1 status remains ok" "got $st_y1"
+
+            _b11b_red=0
+            for _b11b_s in y2 y3; do
+                _b11b_f="$RD_B11B/test-fx-${_b11b_s}.sh.result"
+                [ -f "$_b11b_f" ] || continue
+                [ "$(awk '{print $1}' "$_b11b_f" 2>/dev/null)" = "red" ] \
+                    && _b11b_red=$((_b11b_red+1))
+            done
+            [ "$_b11b_red" -eq 0 ] \
+                && ok "B11b: y2/y3 are never marked red (podman refusal, not a suite failure)" \
+                || bad "B11b: y2/y3 are never marked red" "$_b11b_red suite(s) red"
+
+            # Which of y2/y3 actually hits the podman refusal first is a timing
+            # detail (host load shifts exactly when userdel takes effect
+            # relative to each exec) — the invariant under test is that at
+            # least one of them was reclassified, not which one.
+            _b11b_unreached=0
+            for _b11b_s in y2 y3; do
+                _b11b_f="$RD_B11B/test-fx-${_b11b_s}.sh.result"
+                [ -f "$_b11b_f" ] || continue
+                [ "$(awk '{print $1}' "$_b11b_f" 2>/dev/null)" = "unreached" ] \
+                    && _b11b_unreached=$((_b11b_unreached+1))
+            done
+            [ "$_b11b_unreached" -gt 0 ] \
+                && ok "B11b: at least one of y2/y3 is unreached" \
+                || bad "B11b: at least one of y2/y3 is unreached" "none found"
+        else
+            bad "B11b: results directory found" "not found under $RESULTS_ROOT_B11B"
+        fi
+
+        "$REAL_PODMAN" rm -f "$B11B_CNAME" >/dev/null 2>&1 || true
     fi
 fi
 
