@@ -248,6 +248,40 @@ concierge_fd_holders() {
     done
 }
 
+# tmux_shim_dir / write_tmux_shim -> a directory holding a `tmux` that adds -w to
+# `load-buffer`, on the launcher's PATH only.
+#
+# CLAUDE CODE COPIES A MOUSE SELECTION WITH `tmux load-buffer -` (no -w). That fills only the
+# buffer of the tmux server the copy ran against — here, the concierge's OWN nested socket,
+# short of the operator's real terminal. `-w` additionally forwards the buffer via the
+# terminal's OSC 52 escape, which the outer (cockpit/layout) server only relays when its own
+# `set-clipboard` is on (see cockpit/layout.sh apply_clipboard_mode) — the two-part fix, and
+# either half alone does nothing.
+#
+# A SHIM DIRECTORY ON THE LAUNCHER'S PATH, NOT A BOX-WIDE FILE. A `tmux` dropped in
+# ~/.local/bin rewrites `load-buffer` for every tmux invocation on the box, concierge or not.
+# Confining the shim to a directory added to PATH only inside the launcher script — and
+# guarding it on SPIRA_CONCIERGE=1 besides — means nothing outside this one session's claude
+# process ever sees a different `tmux` than the one already installed.
+tmux_shim_dir() { printf '%s' "$SPIRA_RUN/concierge-tmux-shim"; }
+
+write_tmux_shim() {
+    local dir real
+    dir="$(tmux_shim_dir)"
+    real="$(command -v tmux)" || { echo "concierge: no tmux on PATH to shim load-buffer" >&2; return 1; }
+    mkdir -p "$dir" || return 1
+    cat > "$dir/tmux" <<SHIM || return 1
+#!/usr/bin/env bash
+if [ "\${SPIRA_CONCIERGE:-}" = 1 ] && [ "\${1:-}" = load-buffer ]; then
+    shift
+    exec "$real" load-buffer -w "\$@"
+fi
+exec "$real" "\$@"
+SHIM
+    chmod +x "$dir/tmux" || return 1
+    printf '%s' "$dir"
+}
+
 # concierge_stray_holders -> pids of live processes registered under `--remote-control
 # $SESSION` other than the one this socket manages, one per line.
 #
@@ -351,6 +385,7 @@ start)
     BRIEF="$(compose_brief)" || exit 1
     MODEL="$(fayth_get "$FAYTH" FAYTH_MODEL "")"
     brief_summary "$BRIEF" "$MODEL"
+    SHIM_DIR="$(write_tmux_shim)" || exit 1
 
     # NO --allowedTools. For an interactive session under bypassed permissions that flag can
     # only SUBTRACT, and the persona's remit is unbounded — see concierge.fayth, where the
@@ -370,6 +405,7 @@ start)
     {
         printf '#!/usr/bin/env bash\n'
         printf 'export SPIRA_CONCIERGE=1\n'
+        printf 'export PATH=%q:$PATH\n' "$SHIM_DIR"
         printf 'exec claude --remote-control %q --dangerously-skip-permissions ' "$SESSION"
         [ -n "$MODEL" ] && printf -- '--model %q ' "$MODEL"
         [ -n "$RESUME_ID" ] && printf -- '--resume %q ' "$RESUME_ID"
@@ -407,6 +443,7 @@ start)
         {
             printf '#!/usr/bin/env bash\n'
             printf 'export SPIRA_CONCIERGE=1\n'
+            printf 'export PATH=%q:$PATH\n' "$SHIM_DIR"
             printf 'exec claude --remote-control %q --dangerously-skip-permissions ' "$SESSION"
             [ -n "$MODEL" ] && printf -- '--model %q ' "$MODEL"
             printf -- '--append-system-prompt %q\n' "$(cat "$BRIEF")"
@@ -512,6 +549,7 @@ stop)    $TM kill-session -t "$SESSION" 2>/dev/null && echo "concierge: stopped"
 _resume-id)      concierge_resume_id ;;      # internal: used by test suite
 _live-pid)       concierge_live_pid "${2:-}" ;;      # internal: used by test suite
 _stray-holders)  concierge_stray_holders ;;  # internal: used by test suite and doctor.sh
+_write-tmux-shim) write_tmux_shim ;;         # internal: used by test suite
 
 *)       sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

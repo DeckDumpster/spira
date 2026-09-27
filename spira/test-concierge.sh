@@ -166,6 +166,41 @@ want "the launcher source contains SPIRA_CONCIERGE export" \
     "SPIRA_CONCIERGE=1" "$(cat "$HARNESS/concierge.sh")"
 
 echo
+echo "the clipboard shim (sp-gg587) — load-buffer gains -w only under SPIRA_CONCIERGE=1"
+
+# THE MECHANISM. Claude Code copies a mouse selection with `tmux load-buffer -` (no -w),
+# which fills only the buffer of the tmux server it runs against — the concierge's own
+# nested socket, short of the operator's terminal. `-w` additionally relays the buffer via
+# OSC 52 (see cockpit/layout.sh apply_clipboard_mode for the other half). The shim must add
+# -w to exactly that command, only when SPIRA_CONCIERGE=1, and leave everything else
+# untouched — a fake `tmux` that just echoes its own argv stands in for the real one, so
+# nothing here needs an actual tmux server.
+SHIM_TMP="$(mktemp -d)"; trap 'rm -rf "$SHIM_TMP" "$TMP"' EXIT
+SHIM_REAL="$SHIM_TMP/realbin"; mkdir -p "$SHIM_REAL"
+printf '#!/bin/sh\nprintf "REAL:%%s\\n" "$*"\n' > "$SHIM_REAL/tmux"; chmod +x "$SHIM_REAL/tmux"
+
+shim_dir="$(PATH="$SHIM_REAL:$PATH" SPIRA_RUN="$SHIM_TMP/run" bash "$HARNESS/concierge.sh" _write-tmux-shim)"
+want "the shim dir is under SPIRA_RUN" "$SHIM_TMP/run/concierge-tmux-shim" "$shim_dir"
+[ -x "$shim_dir/tmux" ] && ok "the shim script is executable" \
+    || bad "the shim script is executable" "missing at $shim_dir/tmux"
+
+out_on="$(SPIRA_CONCIERGE=1 PATH="$shim_dir:$SHIM_REAL:$PATH" tmux load-buffer -)"
+want "SPIRA_CONCIERGE=1: load-buffer gains -w" "REAL:load-buffer -w -" "$out_on"
+
+out_off="$(PATH="$shim_dir:$SHIM_REAL:$PATH" tmux load-buffer -)"
+want "without SPIRA_CONCIERGE=1: load-buffer is untouched (positive control)" \
+    "REAL:load-buffer -" "$out_off"
+
+out_other="$(SPIRA_CONCIERGE=1 PATH="$shim_dir:$SHIM_REAL:$PATH" tmux attach -t foo)"
+want "SPIRA_CONCIERGE=1: a non-load-buffer command passes through untouched" \
+    "REAL:attach -t foo" "$out_other"
+
+rm -rf "$SHIM_TMP"; trap 'rm -rf "$TMP"' EXIT
+
+want "the launcher composes PATH from the tmux shim dir before exec'ing claude" \
+    'export PATH=%q:$PATH' "$(cat "$HARNESS/concierge.sh")"
+
+echo
 echo "here — convergence: attach when session exists; start-then-attach otherwise"
 
 # SEEN TO FAIL FIRST: old `here` composed a brief and launched a standalone claude in every
