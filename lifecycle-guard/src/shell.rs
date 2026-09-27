@@ -1,5 +1,8 @@
 use crate::finding::{Class, Finding};
-use crate::rules::{Rules, CREDENTIAL_TOKENS, FORBIDDEN_BARE_VERBS, FORBIDDEN_UPDATE_FLAGS, READ_VERBS};
+use crate::rules::{
+    landstate_path_allowed, Rules, CREDENTIAL_TOKENS, FORBIDDEN_BARE_VERBS, FORBIDDEN_UPDATE_FLAGS,
+    READ_VERBS,
+};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Parser, Tree};
@@ -312,6 +315,30 @@ pub fn scan(files: &[PathBuf], root: &Path, rules: &Rules) -> Result<ShellScan, 
         }
     }
 
+    // Direct calls into the landstate ledger: land_mark/landed/landed_sha, the shell half of
+    // this bead's read barrier. Independent of the bd/bdq call graph above — these are lib.sh
+    // functions, never bd/bdq itself, and every call site outside the allow-list is a finding.
+    for call in &all_calls {
+        if !matches!(call.callee.as_str(), "land_mark" | "landed" | "landed_sha") {
+            continue;
+        }
+        let rel = &parsed[call.scope.file_idx].rel_path;
+        if landstate_path_allowed(rel) {
+            continue;
+        }
+        findings.push(Finding {
+            class: Class::LandstateCall,
+            file: rel.clone(),
+            line: call.line,
+            function: call.scope.function.clone(),
+            callee: Some(call.callee.clone()),
+            detail: format!(
+                "{} is a direct call into the landstate ledger; read it through spira-lc show/list instead",
+                call.callee
+            ),
+        });
+    }
+
     // Credential / DSN references, and retired-label / deleted-path checks: independent of
     // the call graph, so a single textual+structural pass per file is enough.
     for pf in &parsed {
@@ -349,6 +376,9 @@ pub fn scan(files: &[PathBuf], root: &Path, rules: &Rules) -> Result<ShellScan, 
             &rules.deleted_state_paths,
             &mut findings,
         );
+        if !landstate_path_allowed(&pf.rel_path) {
+            find_landstate_reads(pf.tree.root_node(), pf.text.as_bytes(), &pf.rel_path, &mut findings);
+        }
     }
 
     Ok(ShellScan { findings })
@@ -651,4 +681,88 @@ fn find_deleted_path_writes(
         }
         find_deleted_path_writes(child, source, rel_path, deleted_paths, out);
     }
+}
+
+/// Commands that read a landstate file's contents rather than merely test for its presence —
+/// the shell shapes named in this bead: `ls`/`cat`/`find` given a landstate path, an input
+/// redirect (`read ... < "$LANDSTATE/..."`) reading one, or a `for` loop globbing one.
+const LANDSTATE_READ_COMMANDS: &[&str] = &["ls", "cat", "find"];
+
+fn mentions_landstate(text: &str) -> bool {
+    text.to_ascii_lowercase().contains("landstate")
+}
+
+fn find_landstate_reads(node: Node, source: &[u8], rel_path: &str, out: &mut Vec<Finding>) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "redirected_statement" => {
+                if redirect_reads_landstate(child, source) {
+                    push_landstate_path(out, rel_path, child.start_position().row + 1, "read");
+                }
+            }
+            "command" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = text_of(name_node, source);
+                    if LANDSTATE_READ_COMMANDS.contains(&name.as_str())
+                        && command_args_mention_landstate(child, source)
+                    {
+                        push_landstate_path(out, rel_path, child.start_position().row + 1, &name);
+                    }
+                }
+            }
+            "for_statement" => {
+                if for_value_mentions_landstate_glob(child, source) {
+                    push_landstate_path(out, rel_path, child.start_position().row + 1, "glob");
+                }
+            }
+            _ => {}
+        }
+        find_landstate_reads(child, source, rel_path, out);
+    }
+}
+
+fn push_landstate_path(out: &mut Vec<Finding>, rel_path: &str, line: usize, mechanism: &str) {
+    out.push(Finding {
+        class: Class::LandstatePath,
+        file: rel_path.to_string(),
+        line,
+        function: None,
+        callee: None,
+        detail: format!(
+            "{mechanism} reads the landstate ledger directly; read it through spira-lc show/list instead"
+        ),
+    });
+}
+
+fn command_args_mention_landstate(node: Node, source: &[u8]) -> bool {
+    let mut cursor = node.walk();
+    let args: Vec<Node> = node.children_by_field_name("argument", &mut cursor).collect();
+    args.iter().any(|arg| mentions_landstate(&text_of(*arg, source)))
+}
+
+fn redirect_reads_landstate(node: Node, source: &[u8]) -> bool {
+    let Some(redirect) = node.child_by_field_name("redirect") else {
+        return false;
+    };
+    if redirect.kind() != "file_redirect" {
+        return false;
+    }
+    let mut cursor = redirect.walk();
+    if !redirect.children(&mut cursor).any(|c| c.kind() == "<") {
+        return false;
+    }
+    let Some(dest) = redirect.child_by_field_name("destination") else {
+        return false;
+    };
+    mentions_landstate(&text_of(dest, source))
+}
+
+fn for_value_mentions_landstate_glob(node: Node, source: &[u8]) -> bool {
+    let mut cursor = node.walk();
+    let values: Vec<Node> = node.children_by_field_name("value", &mut cursor).collect();
+    values.iter().any(|v| {
+        let text = text_of(*v, source);
+        mentions_landstate(&text) && text.contains('*')
+    })
 }

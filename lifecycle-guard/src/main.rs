@@ -1,5 +1,6 @@
 mod brief;
 mod finding;
+mod landstate;
 mod rules;
 mod shell;
 
@@ -82,19 +83,21 @@ fn main() -> ExitCode {
 }
 
 fn run_one(root: &Path, rules: &Rules) -> Result<Vec<Finding>, String> {
-    let (shell_files, brief_files) = discover(root)?;
+    let (shell_files, brief_files, rust_files) = discover(root)?;
     let mut findings = shell::scan(&shell_files, root, rules)?.into_findings();
     findings.extend(brief::scan(&brief_files, root));
+    findings.extend(landstate::scan_rust(&rust_files, root));
     Ok(findings)
 }
 
-fn discover(root: &Path) -> Result<(Vec<PathBuf>, Vec<PathBuf>), String> {
+fn discover(root: &Path) -> Result<(Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>), String> {
     let mut shell_files = Vec::new();
     let mut brief_files = Vec::new();
+    let mut rust_files = Vec::new();
 
     if root.is_file() {
-        classify(root, &mut shell_files, &mut brief_files);
-        return Ok((shell_files, brief_files));
+        classify(root, &mut shell_files, &mut brief_files, &mut rust_files);
+        return Ok((shell_files, brief_files, rust_files));
     }
 
     for entry in walkdir::WalkDir::new(root)
@@ -102,17 +105,27 @@ fn discover(root: &Path) -> Result<(Vec<PathBuf>, Vec<PathBuf>), String> {
         .filter_map(|e| e.ok())
     {
         if entry.file_type().is_file() {
-            classify(entry.path(), &mut shell_files, &mut brief_files);
+            classify(entry.path(), &mut shell_files, &mut brief_files, &mut rust_files);
         }
     }
     shell_files.sort();
     brief_files.sort();
-    Ok((shell_files, brief_files))
+    rust_files.sort();
+    Ok((shell_files, brief_files, rust_files))
 }
 
-fn classify(path: &Path, shell_files: &mut Vec<PathBuf>, brief_files: &mut Vec<PathBuf>) {
+fn classify(
+    path: &Path,
+    shell_files: &mut Vec<PathBuf>,
+    brief_files: &mut Vec<PathBuf>,
+    rust_files: &mut Vec<PathBuf>,
+) {
     if path.extension().and_then(|e| e.to_str()) == Some("sh") {
         shell_files.push(path.to_path_buf());
+        return;
+    }
+    if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+        rust_files.push(path.to_path_buf());
         return;
     }
     if matches!(path.extension().and_then(|e| e.to_str()), Some("md") | Some("fayth")) {

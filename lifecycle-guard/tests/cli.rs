@@ -115,6 +115,53 @@ fn fayth_naming_bd_is_reported() {
 }
 
 #[test]
+fn landstate_call_is_reported_in_shell() {
+    let findings = run("landstate_call", None);
+    let cs = classes(&findings);
+    assert_eq!(cs, vec!["landstate-call", "landstate-call", "landstate-call"], "{findings:#?}");
+    assert!(
+        findings.iter().any(|f| f["callee"] == "landed" && f["function"] == "is_done"),
+        "{findings:#?}"
+    );
+    assert!(
+        findings.iter().any(|f| f["callee"] == "land_mark" && f["function"] == "mark_it"),
+        "{findings:#?}"
+    );
+    assert!(
+        findings.iter().any(|f| f["callee"] == "landed_sha" && f["function"] == "cite_it"),
+        "{findings:#?}"
+    );
+}
+
+#[test]
+fn landstate_direct_path_read_is_reported_in_shell() {
+    let findings = run("landstate_path", None);
+    let cs = classes(&findings);
+    assert_eq!(cs, vec!["landstate-path", "landstate-path", "landstate-path"], "{findings:#?}");
+}
+
+#[test]
+fn landstate_call_is_reported_in_rust() {
+    let findings = run("landstate_rust_call", None);
+    assert_eq!(classes(&findings), vec!["landstate-call"], "{findings:#?}");
+    assert_eq!(findings[0]["file"], "main.rs");
+    assert_eq!(findings[0]["callee"], "land_mark");
+}
+
+#[test]
+fn landstate_direct_path_read_is_reported_in_rust() {
+    let findings = run("landstate_rust_path", None);
+    assert_eq!(classes(&findings), vec!["landstate-path"], "{findings:#?}");
+    assert_eq!(findings[0]["file"], "io.rs");
+}
+
+#[test]
+fn landstate_findings_are_silent_inside_the_allow_listed_crates() {
+    let findings = run("landstate_allowlist", None);
+    assert!(findings.is_empty(), "expected no findings, got {findings:#?}");
+}
+
+#[test]
 fn exit_code_is_nonzero_iff_findings_exist() {
     let clean = Command::new(env!("CARGO_BIN_EXE_lifecycle-guard"))
         .arg(fixture("clean"))

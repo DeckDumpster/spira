@@ -12,6 +12,8 @@ pub enum Class {
     RetiredLabel,
     DeletedPath,
     BriefBd,
+    LandstateCall,
+    LandstatePath,
 }
 
 impl Class {
@@ -25,6 +27,8 @@ impl Class {
             Class::RetiredLabel => "retired-label",
             Class::DeletedPath => "deleted-path",
             Class::BriefBd => "brief-bd",
+            Class::LandstateCall => "landstate-call",
+            Class::LandstatePath => "landstate-path",
         }
     }
 }
