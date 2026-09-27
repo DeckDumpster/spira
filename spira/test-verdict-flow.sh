@@ -198,7 +198,7 @@ is "decision bead id is present" "0" "$([ -n "$x_bead_a" ] && echo 0 || echo 1)"
 is "work bead has 0 open blocking-deps after send (guard prevented blocking)" "0" "$(bead_open_deps "$WORK_A")"
 is "work bead is still open" "open" "$(bead_status "$WORK_A")"
 is "decision bead is open (waiting for reply)" "open" "$(bead_status "$x_bead_a")"
-is "SEEN GREEN: relates_to was actually wired, not just skipped" "1" "$(bead_relates_count "$WORK_A")"
+is "SEEN GREEN: relates_to was actually wired, not just skipped" "1" "$(bead_relates_count "$x_bead_a")"
 
 # ==========================================================================
 # sp-tyqxi — citing an ask (a decision-typed bead, itself carrying the ask label) from
@@ -217,9 +217,10 @@ send_question operator "$ASK_B"
 MSGID_ASKB="$(msgid_of operator)"
 [ -n "$MSGID_ASKB" ] || { echo "test-verdict-flow: could not send question citing an ask"; exit 1; }
 want "guard logged the blocking-edge refusal" "blocking edge refused" "$(cat "$TMP/send.err")"
+x_bead_askb="$(xbead_of operator)"
 is "cited ask still has 0 open blocking-deps after send (ask-citing-ask never blocks)" "0" "$(bead_open_deps "$ASK_B")"
 is "cited ask is still open" "open" "$(bead_status "$ASK_B")"
-is "relates_to was wired to the cited ask" "1" "$(bead_relates_count "$ASK_B")"
+is "relates_to was wired between the tracking bead and the cited ask" "1" "$(bead_relates_count "$x_bead_askb")"
 
 echo
 echo "UC-14: a question with no --bead still files a decision bead"
