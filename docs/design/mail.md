@@ -104,8 +104,8 @@ attached and typing at that moment, the injected text can mix into their half-wr
 Typing from the phone is not affected. The daemon inherits this from the shared wake path and
 does not attempt to solve it.
 
-Fresh context: the session hook prints the concierge's unread mail (bounded by
-`SPIRA_HOOK_LINES`) and marks nothing read. It prints no Monitor instructions.
+Fresh context: the session hook prints the concierge's unread mail as a single count line
+and marks nothing read. It prints no Monitor instructions.
 
 ## Health
 

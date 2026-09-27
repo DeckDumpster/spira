@@ -992,14 +992,6 @@
             "null"
           ]
         },
-        "hook_lines": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "minimum": 0.0
-        },
         "id_prefix": {
           "type": [
             "string",

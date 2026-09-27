@@ -184,7 +184,6 @@ pub fn spira_section(
             "COCKPIT_CLIPBOARD" => s.cockpit_clipboard = Some(val.clone()),
             "SPIRA_LC_BIN" => s.lc_bin = Some(val.clone()),
             "SPIRA_QUEUE_THROTTLE_OVERRIDE" => s.queue_throttle_override = Some(val.clone()),
-            "SPIRA_HOOK_LINES" => s.hook_lines = parse_u32(warnings, "hook_lines", val),
             "SPIRA_CLIENT_SETTINGS" => s.client_settings = Some(val.clone()),
             "SPIRA_MAIL" => s.mail = Some(val.clone()),
             "SPIRA_MAIL_SESSION_MAILBOX" => s.mail_session_mailbox = Some(val.clone()),

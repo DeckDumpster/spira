@@ -7,9 +7,9 @@
 #   install-session-hook.sh uninstall          remove Spira's entries
 #   install-session-hook.sh prune <substring>  remove every entry whose command contains it
 #
-# WHAT IT WIRES, AND WHY THOSE TWO EVENTS
-# ---------------------------------------
-# `SessionStart` with NO MATCHER, and `PostCompact` with no matcher.
+# WHAT IT WIRES, AND WHY ONLY THAT ONE EVENT
+# -------------------------------------------
+# `SessionStart` with NO MATCHER.
 #
 # A matcher is a regular expression tested against the event's match query, and an absent or
 # `*` matcher matches everything. For `SessionStart` the match query is its `source`, which
@@ -20,12 +20,11 @@
 # attached, which is the only condition this hook is about. An absent matcher also survives
 # the client adding a sixth source, where a list would go quietly missing on it.
 #
-# `PostCompact` is registered as well because compaction does NOT reach the hook through
-# `SessionStart` in every client build: the compaction routine raises `PreCompact` before and
-# `PostCompact` after, and `PostCompact`'s results are appended to the rebuilt context. Its
-# match query is the trigger, `manual` or `auto`, and an automatic compaction is precisely the
-# one nobody is present for. Registering both is what makes the claim "a context reset
-# re-latches" true rather than true-on-the-paths-somebody-tested.
+# `PostCompact` is NOT ALSO REGISTERED. A compaction already raises `SessionStart` with
+# `source=compact`, so registering both ran the hook twice on every compaction — once for
+# each event the client fired. `install` strips any `PostCompact` registration of this hook it
+# finds rather than leaving it as a second, silent trigger for a box that registered it before
+# this was known.
 #
 # `SessionEnd` is NOT registered. Under systemd there are no processes for a departing session
 # to guarantee, and its output goes into a context that is being discarded. The hook handles
@@ -54,7 +53,13 @@ SETTINGS="$SPIRA_CLIENT_SETTINGS"
 # — one `systemctl is-active` for the whole manifest and a few file reads — because the
 # penalty for being slow is a warning and the penalty for being killed is a session that
 # starts with no idea what is watching it.
-EVENTS="SessionStart PostCompact"
+EVENTS="SessionStart"
+
+# A RETIRED EVENT, stripped on install but never (re-)added. `PostCompact` used to carry this
+# hook too, before `SessionStart`'s own `source=compact` was known to fire on every compaction
+# — a box that installed under the old EVENTS still has that entry, and `install` is the repair
+# path that reaches every box.
+RETIRE_EVENTS="PostCompact"
 TIMEOUT=10
 
 usage() {
@@ -70,11 +75,12 @@ usage() {
 # hold settings nothing here knows about, which is why it is parsed and re-serialised rather
 # than templated.
 edit() {
-    python3 - "$SETTINGS" "$HOOK" "$1" "${2-}" "$TIMEOUT" "$EVENTS" <<'PY'
+    python3 - "$SETTINGS" "$HOOK" "$1" "${2-}" "$TIMEOUT" "$EVENTS" "$RETIRE_EVENTS" <<'PY'
 import json, os, sys, tempfile
 
-settings, hook, mode, needle, timeout, events = sys.argv[1:7]
+settings, hook, mode, needle, timeout, events, retire_events = sys.argv[1:8]
 events = events.split()
+retire_events = retire_events.split()
 
 try:
     with open(settings) as fh:
@@ -145,6 +151,11 @@ if mode == "status":
             rc = 1
         for c in others:
             print("  other   %-14s %s" % (ev, c))
+    for ev in retire_events:
+        entries = hooks.get(ev) or []
+        if [c for e in entries for c in commands(e) if c == hook]:
+            print("  STALE   %-14s the session hook is still registered here; run install to remove it" % ev)
+            rc = 1
     raise SystemExit(rc)
 
 changed = []
@@ -166,6 +177,17 @@ if mode == "install":
                                    "timeout": int(timeout)}]})
         hooks[ev] = entries
         changed.append(ev)
+    # A RETIRED EVENT IS CLEANED UP, NOT REGISTERED. A box that installed under the old EVENTS
+    # still fires this hook twice on every compaction until its stale entry is stripped; install
+    # is the repair path that reaches every box, so it removes without re-adding.
+    for ev in retire_events:
+        entries, dropped = strip(hooks.get(ev) or [], lambda c: c == hook)
+        if dropped:
+            changed.append("%s (retired)" % ev)
+        if entries:
+            hooks[ev] = entries
+        else:
+            hooks.pop(ev, None)
 elif mode == "uninstall":
     for ev in list(hooks):
         entries, dropped = strip(hooks.get(ev) or [], lambda c: c == hook)

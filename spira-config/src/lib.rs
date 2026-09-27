@@ -106,7 +106,6 @@ pub struct SpiraSection {
     pub cockpit_clipboard: Option<String>,
     pub lc_bin: Option<String>,
     pub queue_throttle_override: Option<String>,
-    pub hook_lines: Option<u32>,
     pub client_settings: Option<String>,
     pub mail: Option<String>,
     pub mail_session_mailbox: Option<String>,
@@ -437,6 +436,7 @@ pub struct RetiredKey {
 pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "queue_local_gate", bead: "sp-vsob2" },
     RetiredKey { key: "queue_batch_idle_cut", bead: "sp-vsob2" },
+    RetiredKey { key: "hook_lines", bead: "sp-o9nkc" },
 ];
 
 /// Every key in `history` that is neither an active `[spira]` field (`active`) nor listed in
