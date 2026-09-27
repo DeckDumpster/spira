@@ -1065,9 +1065,10 @@ for b in d:
             _lmid="${_lmm%%:*}"; _lmtip="${_lmm##*:}"
             bead_reopen "$_lmid" batch-eject \
                 "Ejected by local batch gate: spira/$_lmid reproduced failure in $name." \
+                "$lg_suites_csv" \
                 >/dev/null 2>&1 || true
             bdq label remove "$_lmid" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1 || true
-            land_mark "$_lmid" EJECTED "$_lmtip"
+            land_mark "$_lmid" EJECTED "$_lmtip" "$lg_suites_csv"
             printf 'QUEUE CAUGHT %s branch=%s\n' "$(date +%s)" "$_lmid" \
                 >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
             lg_ejected="$lg_ejected${lg_ejected:+ }$_lmid"

@@ -1390,7 +1390,12 @@ except Exception:
 ' 2>/dev/null)
 }
 
-# bead_reopen <id> <cause> [note] — hand a bead back to the graph so the NEXT aeon can claim it.
+# bead_reopen <id> <cause> [note] [suites] — hand a bead back to the graph so the NEXT aeon can claim it.
+#
+# <suites>, when given, is a comma-separated list of suites this withdrawal is known to have
+# reddened. Written to $LANDSTATE/<id>.ejected — the sidecar gate.sh already reads
+# unconditionally — so the next certification forces them via SPIRA_GATE_EJECTED_SUITES
+# instead of running fences-only and rediscovering the same red (law-a-retry-must-change-an-input).
 #
 # REOPENING IS NOT ENOUGH. `bd reopen` keeps the assignee, and `bd ready --claim` skips any
 # bead that has one even though `bd ready` lists it — so a bead reopened by the landing
@@ -1412,7 +1417,7 @@ except Exception:
 # It is written AFTER bd's own `reopened` event, under event_type='reopen', so the two
 # rows are distinct and the census never double-counts a harness reopen.
 bead_reopen() {
-    local id="$1" cause="${2:-unrecorded}" note="${3:-}" rc=0
+    local id="$1" cause="${2:-unrecorded}" note="${3:-}" suites="${4:-}" rc=0
     # A CERTIFIED bead reopened here must stop being admissible: the batch builder
     # selects on landstate alone, and WITHDRAWN is a state it never admits. Every
     # reopen goes through this one function, so this is the one place that can't
@@ -1426,8 +1431,15 @@ bead_reopen() {
     # strand every converted bead: open, submitted, and never batched.
     local _wd_st _wd_tip
     read -r _wd_st _wd_tip _ <<< "$(land_state "$id" 2>/dev/null)"
-    [ "${_wd_st:-}" = CERTIFIED ] && [ "$cause" != work-close-converted ] \
-        && land_mark "$id" WITHDRAWN "${_wd_tip:-none}" "$cause"
+    if [ "${_wd_st:-}" = CERTIFIED ] && [ "$cause" != work-close-converted ]; then
+        local _wd_reason="$cause"
+        [ -n "$suites" ] && _wd_reason="$cause suites=$suites"
+        land_mark "$id" WITHDRAWN "${_wd_tip:-none}" "$_wd_reason"
+    fi
+    if [ -n "$suites" ]; then
+        printf '%s' "$suites" > "$LANDSTATE/$id.ejected.$$" 2>/dev/null \
+            && mv -f "$LANDSTATE/$id.ejected.$$" "$LANDSTATE/$id.ejected" 2>/dev/null || true
+    fi
     bdq reopen "$id" >/dev/null 2>&1 || rc=1
     # A REOPEN MEANS REWORK, so a submitted bead stops being submitted. SPIRA_SUBMITTED_LABEL
     # is excluded from every claim (fayth_exclude), so a bead the landing pass reopens for a
