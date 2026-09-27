@@ -698,6 +698,21 @@ with fh:
     for ln in fh:
         try: o = json.loads(ln)
         except Exception: continue
+        # A MESSAGE TYPED MID-TURN NEVER BECOMES A "user" ROW. The client queues it, then either
+        # `dequeue`s it — silently, no content — to open the next real user turn (which this
+        # loop already sees when it arrives), or `remove`s it — WITH the content, tagged
+        # absorbed_mid_turn or delivered_to_agent — because it was folded straight into the turn
+        # already running. Only `remove` carries content nothing else will ever print: skipping
+        # it is how a verdict Ryan actually typed reads back as invented (sp-83y1m).
+        if o.get("type") == "queue-operation":
+            if o.get("operation") == "remove":
+                content = o.get("content")
+                if isinstance(content, str) and content.strip():
+                    shown = turn + 1
+                    if shown >= frm:
+                        print("--- turn %d [user]" % shown)
+                        print(content.strip())
+            continue
         m = o.get("message")
         if not isinstance(m, dict): continue
         role = m.get("role") or o.get("type")

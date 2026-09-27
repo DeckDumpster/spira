@@ -640,6 +640,51 @@ adigest() {  # adigest <archivist.sh args...>
 
 # ==========================================================================================
 echo
+echo "digest transcript render: a verdict delivered only as a queue-operation entry is found (sp-83y1m)"
+# ==========================================================================================
+# A message typed while the session was mid-turn is stored as queue-operation/enqueue, then
+# either dequeue (silently — it will open a real "user" row later, already covered) or remove
+# (WITH the content, tagged absorbed_mid_turn or delivered_to_agent — folded straight into the
+# turn already running, and never appearing as a "user" row at all). Pre-fix, the digest reader
+# only recognised rows carrying a "message" object, so the second case — the only one that is
+# the sole record of what Ryan said — was invisible to it.
+rm -rf "$T/run" "$T/projects" "$T/home"
+mkdir -p "$T/home" "$T/run" "$T/projects/-test-project"
+QTP="$T/projects/-test-project/sess-queued.jsonl"
+: > "$QTP"
+printf '%s\n' '{"type":"assistant","message":{"id":"m-1","role":"assistant","content":[{"type":"text","text":"Working on it."}]}}' >> "$QTP"
+printf '%s\n' '{"type":"queue-operation","operation":"enqueue","timestamp":"2026-09-27T16:34:10.000Z","sessionId":"sess-queued","content":"close sp-fixture, the fix landed and tests are green"}' >> "$QTP"
+printf '%s\n' '{"type":"queue-operation","operation":"remove","timestamp":"2026-09-27T16:34:19.000Z","sessionId":"sess-queued","content":"close sp-fixture, the fix landed and tests are green","reason":"absorbed_mid_turn"}' >> "$QTP"
+printf '%s\n' '{"type":"assistant","message":{"id":"m-2","role":"assistant","content":[{"type":"text","text":"Closing it now."}]}}' >> "$QTP"
+
+dout="$(adigest digest "$QTP")"
+has  "the digest finds the verdict that was only ever a queue-operation entry" \
+    "$dout" "close sp-fixture, the fix landed and tests are green"
+has  "it is rendered as a user row" "$dout" "[user]"
+
+# POSITIVE CONTROL: a real, ordinary user turn is still found too — the fix must not have
+# traded one blind spot for another.
+rm -rf "$T/run" "$T/projects" "$T/home"
+mkdir -p "$T/home" "$T/run" "$T/projects/-test-project"
+UTP="$T/projects/-test-project/sess-plain.jsonl"
+: > "$UTP"
+printf '%s\n' '{"type":"user","message":{"role":"user","content":"an ordinary typed message"}}' >> "$UTP"
+uout="$(adigest digest "$UTP")"
+has  "an ordinary user turn is still found (control)" "$uout" "an ordinary typed message"
+
+# CONTROL: the enqueue half of the pair carries the same text but must not be printed a second
+# time under its own line — only `remove` is the terminal, otherwise-invisible copy.
+rm -rf "$T/run" "$T/projects" "$T/home"
+mkdir -p "$T/home" "$T/run" "$T/projects/-test-project"
+ETP="$T/projects/-test-project/sess-enqueue-only.jsonl"
+: > "$ETP"
+printf '%s\n' '{"type":"queue-operation","operation":"enqueue","timestamp":"2026-09-27T16:00:00.000Z","sessionId":"sess-e","content":"a message still sitting in the queue"}' >> "$ETP"
+eout="$(adigest digest "$ETP")"
+hasnt "an enqueue with no matching remove is not printed (not yet delivered)" \
+    "$eout" "a message still sitting in the queue"
+
+# ==========================================================================================
+echo
 echo "digest: record queues a line; digest-send mails it once and clears the queue"
 # ==========================================================================================
 rm -rf "$T/run" "$T/mail"
