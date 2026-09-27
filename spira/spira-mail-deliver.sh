@@ -10,6 +10,9 @@
 # new/ -> cur/ move is what makes a wake for an already-read message impossible to send
 # twice. Unregistered mailboxes are never watched.
 #
+#   spira-mail-deliver.sh health   exit 0 if every registered mailbox has a live watcher —
+#                                  watchd's health probe for this daemon's `extern` row.
+#
 # NOTE: SPIRA_WAKE types text into the concierge's tmux pane. A locally
 # attached operator who is mid-keystroke when the wake fires may see the
 # injected text mix into their half-written line. Typing from the phone is
@@ -82,10 +85,37 @@ _watch() {
     done
 }
 
+# cmd_health — is every registered mailbox still being watched. This is watchd's only
+# liveness signal for this daemon (its `extern` health command); aged unread mail is
+# mail-health.sh's alarm, not this one. Exit 0: every mailbox has a live watcher. Exit 1:
+# at least one does not (named on stderr).
+cmd_health() {
+    command -v pgrep >/dev/null 2>&1 || {
+        echo "spira-mail-deliver: no 'pgrep' on PATH — cannot confirm a mailbox is watched" >&2
+        return 1
+    }
+    local rc=0 _line _mb _dir
+    while IFS= read -r _line; do
+        case "$_line" in ''|'#'*) continue ;; esac
+        _mb="${_line%%=*}"
+        [ -z "$_mb" ] && continue
+        _dir="$SPIRA_MAIL/$_mb/new"
+        pgrep -f "inotifywait -m -q -e close_write -e moved_to $_dir\$" >/dev/null 2>&1 || {
+            echo "spira-mail-deliver: not watching $_mb ($_dir)" >&2
+            rc=1
+        }
+    done <<< "${SPIRA_MAIL_READERS:-}"
+    return "$rc"
+}
+
 # SOURCEABLE, AND SILENT WHEN IT IS — same convention as watchd.sh. A test drives _wake_loop
 # and _kick directly, against a stub wake command and a real Maildir, without inotifywait or
 # a spawned daemon in the loop; sourcing must not itself start watching mailboxes.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+
+if [ "${1:-}" = health ]; then
+    cmd_health; exit $?
+fi
 
 _pids=()
 _cleanup() {
