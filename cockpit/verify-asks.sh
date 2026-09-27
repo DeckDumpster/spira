@@ -83,6 +83,8 @@ for r in rows:
         continue
     if (r.get("status") or "") == "closed":
         continue
+    if r.get("issue_type") == "epic":
+        continue
     m = re.search(r"^\s*VERIFY:\s*(.+)$", r.get("description") or "", re.M)
     if m:
         print("%s\t%s" % (r.get("id"), m.group(1).strip()))

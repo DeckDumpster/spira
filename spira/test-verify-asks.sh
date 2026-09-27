@@ -122,15 +122,24 @@ echo "mislabelled epics (epics with the ask label) are reported:"
 
 printf '[%s]' "$(row sp-vepic1 open epic "" "VERIFY: exit 0")" > "$ROWS_FILE"
 : > "$CLOSED_LOG"
-# No --apply: the MISLABELLED report and the close sweep are two independent passes over the
-# same rows (verify-asks.sh's close loop does not itself exclude issue_type=epic — an epic
-# that also carries a VERIFY line is not proven safe from --apply by this case; only that the
-# report fires and that --apply's own gate, exercised elsewhere in this suite, still holds).
 out="$(verify 2>&1)"
 want "mislabelled epic is reported" "MISLABELLED" "$out"
 want "and names the bead"           "sp-vepic1"   "$out"
 want "and names the issue type"     "epic"        "$out"
 is "nothing closes without --apply, epic included" "" "$(cat "$CLOSED_LOG")"
+
+echo
+echo "a mislabelled epic that also carries a passing VERIFY line survives --apply unclosed:"
+
+printf '[%s]' "$(row sp-vepic2 open epic "" "VERIFY: exit 0")" > "$ROWS_FILE"
+: > "$CLOSED_LOG"
+# The close loop and the MISLABELLED loop are two independent passes over the same rows: this
+# row matches both (ask label + VERIFY line, AND epic). --apply must not close it — the close
+# loop excludes issue_type=epic the same way the MISLABELLED loop selects for it.
+out="$(verify --apply 2>&1)"
+want   "still reported as mislabelled under --apply" "MISLABELLED" "$out"
+nowant "SEEN RED control: never reported as SATISFIED" "SATISFIED" "$out"
+is "the stub's close was NOT called for an epic, even with a passing VERIFY" "" "$(cat "$CLOSED_LOG")"
 
 echo
 echo "already-closed asks are not re-closed or re-reported:"
