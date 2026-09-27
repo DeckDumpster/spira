@@ -338,4 +338,32 @@ _ci_call_count="$(grep -cE '"\$\{_ci_deploy_env\[@\]\}" bash "\$HERE/(deploy|uni
     || bad "at least 11 calls (one per phase A/B/C/D deploy, uninstall, world, doctor site) are wired" \
            "found $_ci_call_count"
 
+# ============================================================================
+echo
+echo "16. Every \"\$1/conf.sh\" read runs under _ci_deploy_env (sp-d9j74)"
+# ============================================================================
+# Phase B's .tag-sidecar and SPIRA_PROD checks recompute conf.sh's values in a bare
+# subshell to see what deploy.sh saw. A read with no _ci_deploy_env resolves conf.sh's
+# own default search instead of the scratch conf deploy.sh was pinned to, and finds no
+# config there — so the checks compare against a value conf.sh never actually produced.
+
+# POSITIVE CONTROL: an unwired read of conf.sh is exactly the defect this guards —
+# confirm the check below would catch one.
+_pc_bare_conf="$(mktemp)"
+cat > "$_pc_bare_conf" <<'EOF'
+_x="$(bash -c '. "$1/conf.sh" 2>/dev/null; printf "%s" "${SPIRA_RELEASES:-}"' -- "$HERE" 2>/dev/null || true)"
+EOF
+if grep -nE '\. "\$1/conf\.sh"' "$_pc_bare_conf" | grep -qv '_ci_deploy_env'; then
+    ok "positive-control: an unwired conf.sh read matches the check below"
+else
+    bad "positive-control: an unwired conf.sh read matches the check below" "no match"
+fi
+rm -f "$_pc_bare_conf"
+
+_bare_conf_reads="$(grep -nE '\. "\$1/conf\.sh"' "$SCRIPT" | grep -v '_ci_deploy_env' || true)"
+[ -z "$_bare_conf_reads" ] \
+    && ok  "every \$HERE/conf.sh read runs under _ci_deploy_env" \
+    || bad "every \$HERE/conf.sh read runs under _ci_deploy_env" \
+           "$_bare_conf_reads"
+
 tl_summary
