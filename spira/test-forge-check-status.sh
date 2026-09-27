@@ -243,6 +243,30 @@ grep -q -- '--failed' "$RERUN_LOG" \
     || ok  "rerun: no --failed when in_progress"
 
 echo
+echo "run-cancel: always the plain cancel endpoint, never force-cancel (sp-hktkb):"
+# force-cancel skips a run's entire job graph immediately, including any job
+# conditioned on if: always() — gate.yml's and acceptance.yml's teardown jobs
+# among them — so a run cancelled that way leaks its provisioned VM. run-cancel
+# must always reach `gh run cancel`, the plain endpoint that still lets
+# if: always() jobs run.
+: > "$RERUN_LOG"
+printf 'api -X POST repos/x/y/actions/runs/99/force-cancel\n' > "$RERUN_LOG"
+grep -q 'force-cancel' "$RERUN_LOG" \
+    && ok  "run-cancel: positive control detects force-cancel" \
+    || bad "run-cancel: positive control detects force-cancel" "planted force-cancel not found"
+
+: > "$RERUN_LOG"
+env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
+    SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh-rr" RERUN_LOG="$RERUN_LOG" \
+    bash "$HERE/forge.sh" run-cancel "$TMP/repo" 99 2>/dev/null
+grep -q 'force-cancel' "$RERUN_LOG" \
+    && bad "run-cancel: never calls force-cancel" "found force-cancel in: $(cat "$RERUN_LOG")" \
+    || ok  "run-cancel: never calls force-cancel"
+grep -q 'run cancel' "$RERUN_LOG" \
+    && ok  "run-cancel: calls the plain cancel endpoint" \
+    || bad "run-cancel: calls the plain cancel endpoint" "no cancel in: $(cat "$RERUN_LOG")"
+
+echo
 echo "artifact-based suite list: 28 suites in artifact, only 10 in annotations:"
 runlist completed failure
 python3 -c "

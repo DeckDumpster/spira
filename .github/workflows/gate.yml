@@ -227,6 +227,13 @@ jobs:
       # provision stamps one: teardown REFUSES a VM that carries a token when
       # the caller presents none. Unwired, every run would leak its VM under
       # `if: always()` while reporting success.
+      #
+      # THIS OUTPUT CAN STILL BE EMPTY EVEN THOUGH THE VM CARRIES A TOKEN. The
+      # token is stamped into the VM's description at clone time, but
+      # provision.sh only emits it on stdout afterward; a clone-task failure in
+      # that gap leaves a VM this job can't name. That gap is inside
+      # provision.sh itself (DeckDumpster/ephemeral-ci, not vendored here) and
+      # cannot be closed from this workflow -- tracked as sp-rtgbv.
       vm-token: ${{ steps.vm.outputs.vm-token }}
     # provision.sh's guest-agent wait defaults to 120s. Three consecutive boots of
     # the same template on a busy host measured ~117s, >120s (fault), then ~20s --
@@ -609,6 +616,12 @@ jobs:
   # itself when there is nothing to destroy, and it still has a runner
   # registration to remove, which a provision that registered but never got a job
   # scheduled onto it would otherwise leak.
+  #
+  # CANCEL THIS RUN BY THE PLAIN ENDPOINT ONLY (the Actions UI's Cancel button,
+  # `gh run cancel`, or forge.sh's run-cancel). A force-cancel (`gh api -X POST
+  # .../force-cancel`) skips the entire job graph immediately, including this
+  # job's `if: always()` — teardown never runs and the VM leaks regardless of
+  # anything written here.
   # ---------------------------------------------------------------------------
   teardown:
     needs: [select, provision, suites]
