@@ -176,14 +176,25 @@ is "startup with SPIRA_CONCIERGE=1 records the session id" \
    "hook-sid-startup" "$(sed -n '1p' "$SID_HOOK_DIR/run/concierge-session" 2>/dev/null)"
 is "and records the cwd on the second line" \
    "$SID_HOOK_DIR" "$(sed -n '2p' "$SID_HOOK_DIR/run/concierge-session" 2>/dev/null)"
+# POSITIVE CONTROL for the `previous:` checks below: the very first write has nothing before
+# it to carry forward, so a third line here would mean the hook writes one unconditionally.
+is "a first-ever write carries no previous: line" \
+   "" "$(sed -n '3p' "$SID_HOOK_DIR/run/concierge-session" 2>/dev/null)"
 
 # CLEAR AND COMPACT BOTH UPDATE THE ID. Every clear, compact or fork mints a new session id.
+# sp-aaew9: whatever id is displaced is kept as a `previous:` line rather than vanishing —
+# concierge.sh's own fallback-fresh path relies on this hook, and never deletes the file
+# itself, to be the one place a discarded id is still one command away from recovery.
 run_hook "hook-sid-after-clear" "clear" SPIRA_CONCIERGE=1
 is "/clear updates the recorded id to the new session id" \
    "hook-sid-after-clear" "$(sed -n '1p' "$SID_HOOK_DIR/run/concierge-session" 2>/dev/null)"
+is "and keeps the displaced id as a previous: line" \
+   "previous:hook-sid-startup" "$(sed -n '3p' "$SID_HOOK_DIR/run/concierge-session" 2>/dev/null)"
 run_hook "hook-sid-after-compact" "compact" SPIRA_CONCIERGE=1
 is "/compact updates the recorded id" \
    "hook-sid-after-compact" "$(sed -n '1p' "$SID_HOOK_DIR/run/concierge-session" 2>/dev/null)"
+is "and rolls the previous: line forward, not accumulating" \
+   "previous:hook-sid-after-clear" "$(sed -n '3p' "$SID_HOOK_DIR/run/concierge-session" 2>/dev/null)"
 
 # A DIFFERENT SESSION WITH THE FLAG UNSET DOES NOT OVERWRITE. Other brain sessions fire the
 # same global hook; only the concierge one has SPIRA_CONCIERGE=1.

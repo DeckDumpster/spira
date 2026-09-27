@@ -191,15 +191,20 @@ concierge_resume_id() {
     printf '%s' "$stored_id"
 }
 
+# concierge_transcript_path <session-id> -> path to that session's transcript, or empty.
+# Searched by id across every project directory rather than composed from BRAIN's own slug:
+# the client's slugging rule already lives in one place (archivist.sh's `slug`), and matching
+# by id instead of reproducing that rule here cannot drift from it.
+concierge_transcript_path() {
+    find "$SPIRA_TOKEN_PROJECTS" -name "$1.jsonl" -print -quit 2>/dev/null
+}
+
 # concierge_live_pid <session-id> -> pid holding that session id, or non-zero.
 #
-# IDENTITY IS THE OPEN TRANSCRIPT, NOT ARGV (sp-epe0m). A holder used to mean "a claude
-# process with `--resume <sid>` in its command line", but a session resumed from a bare
-# `claude --resume` with a picker selection never puts the id in argv at all — the picker
-# resolves it interactively. That holder was invisible here, so `start` launched a second
-# client onto the same session (2026-09-26). The client keeps the session's transcript file
-# open for as long as it runs, at `$SPIRA_TOKEN_PROJECTS/*/<sid>.jsonl`; a process holding
-# that exact file open is the same identity check by a route argv cannot dodge.
+# IDENTITY IS THE OPEN TRANSCRIPT, NOT ARGV (sp-epe0m). A bare `claude --resume` resolved via
+# the picker never puts the id in argv, so an argv-only holder check misses it; the client
+# keeps the transcript file open for as long as it runs, which argv cannot dodge. argv0 is
+# still checked below to narrow to a claude process (law-a-pattern-match-is-not-an-identity-check).
 concierge_live_pid() {
     local sid="$1" transcript f pid
     transcript="$(find "$SPIRA_TOKEN_PROJECTS" -name "$sid.jsonl" -print -quit 2>/dev/null)"
@@ -225,6 +230,22 @@ concierge_live_pid() {
         done
     done
     return 1
+}
+
+# concierge_fd_holders <path> -> pids with the given file open, one per line.
+# /proc/*/fd rather than lsof/fuser: neither is guaranteed installed, and this is exact — the
+# same reasoning as concierge_live_pid, applied to an open file instead of an argv.
+concierge_fd_holders() {
+    local target="$1" pid fd link
+    [ -e "$target" ] || return 0
+    for fd in /proc/[0-9]*/fd/*; do
+        [ -e "$fd" ] || continue
+        link="$(readlink "$fd" 2>/dev/null)" || continue
+        [ "$link" = "$target" ] || continue
+        pid="${fd#/proc/}"; pid="${pid%%/*}"
+        [ "$pid" = "$$" ] && continue
+        printf '%s\n' "$pid"
+    done
 }
 
 # concierge_stray_holders -> pids of live processes registered under `--remote-control
@@ -361,18 +382,27 @@ start)
     # --remain-after-exit keeps the unit active after tmux new-session daemonizes and exits,
     # preventing the KillMode cleanup until the server itself stops.
     # PATH and HOME are the minimum the launcher needs: PATH to find claude, HOME for config.
+    #
+    # remain-on-exit ON, chained onto the same tmux invocation rather than set afterwards —
+    # a set-option issued after the fact races the client's own exit. Without it, a client
+    # that exits fast destroys the pane and the session with it, and the "session not found 3s
+    # later" this function observes cannot be told apart from "the id truly cannot be resumed
+    # any more" — which is the defect this whole branch exists to fix (sp-aaew9).
     systemd-run --user --collect --quiet --remain-after-exit \
         --setenv=PATH="$PATH" --setenv=HOME="$HOME" -- \
-        tmux -L "$SOCKET" new-session -d -s "$SESSION" -c "$BRAIN" "$LAUNCHER"
+        tmux -L "$SOCKET" new-session -d -s "$SESSION" -c "$BRAIN" "$LAUNCHER" \
+        ';' set-option -t "$SESSION" remain-on-exit on
     sleep 3
-    if $TM has-session -t "$SESSION" 2>/dev/null; then
+    _dead="$($TM list-panes -t "$SESSION" -F '#{pane_dead}' 2>/dev/null | head -1)"
+    if $TM has-session -t "$SESSION" 2>/dev/null && [ "$_dead" != 1 ]; then
         echo "concierge: started as Remote Control session '$SESSION'"
         echo "  attach locally:  tmux -L $SOCKET attach -t $SESSION"
         echo "  on the phone:    Claude app -> Remote Control -> $SESSION"
-    elif [ -n "$RESUME_ID" ]; then
-        # --resume failed (session not found or transcript gone); retry without it.
-        printf 'concierge: start failed with --resume %s — retrying without it\n' "$RESUME_ID" >&2
-        rm -f "$SPIRA_RUN/concierge-session"
+    elif [ -n "$RESUME_ID" ] && [ -z "$(concierge_transcript_path "$RESUME_ID")" ]; then
+        # THE ONLY CASE A FRESH SESSION IS THE RIGHT ANSWER: the transcript itself is gone, so
+        # there is nothing left to resume. Recorded before it is overwritten — session.sh's
+        # hook keeps it as a `previous:` line the moment the fresh session records its own id.
+        printf 'concierge: --resume %s has no transcript any more — starting fresh\n' "$RESUME_ID" >&2
         # Regenerate rather than filter: the launcher is one line, so grep -v would delete it.
         {
             printf '#!/usr/bin/env bash\n'
@@ -394,6 +424,28 @@ start)
         echo "concierge: failed to stay up even without --resume — run it in the foreground:" >&2
         echo "  cd $BRAIN && claude --remote-control $SESSION" >&2
         exit 1
+    elif [ -n "$RESUME_ID" ]; then
+        # THE DEFECT THIS FIXES (sp-aaew9): the transcript is intact — the real conversation —
+        # but the client exited anyway (another holder, a crash, an eviction). NEVER discard
+        # the id in this case: fail loudly instead, with what caused it, so recovery is one
+        # command rather than a silent switch to an empty session nobody notices for hours.
+        printf 'concierge: --resume %s exited without starting, but its transcript is intact — refusing to discard it\n' "$RESUME_ID" >&2
+        if [ "$_dead" = 1 ]; then
+            printf 'concierge: last output from the dead pane:\n' >&2
+            $TM capture-pane -t "$SESSION" -p -S -50 2>/dev/null | tail -n 20 >&2
+        fi
+        _tp="$(concierge_transcript_path "$RESUME_ID")"
+        _holders="$(concierge_fd_holders "$_tp")"
+        if [ -n "$_holders" ]; then
+            printf 'concierge: the transcript is held open by:\n' >&2
+            while IFS= read -r _hp; do
+                printf '  pid %s  %s\n' "$_hp" "$(ps -o cmd= -p "$_hp" 2>/dev/null)" >&2
+            done <<<"$_holders"
+        else
+            printf 'concierge: nothing currently has the transcript open.\n' >&2
+        fi
+        printf '  recover by hand:  cd %s && claude --resume %s\n' "$BRAIN" "$RESUME_ID" >&2
+        exit 5
     else
         echo "concierge: failed to stay up — run it in the foreground to see why:" >&2
         echo "  cd $BRAIN && claude --remote-control $SESSION" >&2

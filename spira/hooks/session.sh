@@ -113,7 +113,17 @@ except Exception: pass
     _ccwd="$(printf '%s\n' "$_hook_record" | sed -n '2p')"
     if [ -n "$_csid" ] && [ -n "$_ccwd" ]; then
         mkdir -p "$SPIRA_RUN" 2>/dev/null
-        printf '%s\n%s\n' "$_csid" "$_ccwd" > "$SPIRA_RUN/concierge-session" 2>/dev/null || true
+        _cf="$SPIRA_RUN/concierge-session"
+        # A THIRD LINE, NEVER OVERWRITTEN BLINDLY. concierge.sh's own fallback-fresh path
+        # (sp-aaew9) never deletes this file before a client can record a new id over it, so
+        # whatever id was here before this write is about to be replaced — carry it forward as
+        # `previous:` rather than let it vanish, so recovering a session this hook just
+        # replaced is one `claude --resume` away instead of a grep through old transcripts.
+        _cprev="$(sed -n '1p' "$_cf" 2>/dev/null)"
+        {
+            printf '%s\n%s\n' "$_csid" "$_ccwd"
+            [ -n "$_cprev" ] && [ "$_cprev" != "$_csid" ] && printf 'previous:%s\n' "$_cprev"
+        } > "$_cf" 2>/dev/null || true
     fi
 fi
 

@@ -115,18 +115,65 @@ exec sleep 30
 STUB
 chmod +x "$_ddir/bin/claude"
 printf '%s\n%s\n' "$_dfake_id" "$_ddir" > "$_ddir/concierge-session"
+mkdir -p "$_ddir/projects"    # no transcript for $_dfake_id anywhere under here — genuinely gone
 _dsock="test-concierge-dangle-$$"
 tmux -L "$_dsock" kill-server 2>/dev/null || true
 _dout="$(PATH="$_ddir/bin:$PATH" SPIRA_RUN="$_ddir" SPIRA_WIKI="$_ddir" \
+         SPIRA_TOKEN_PROJECTS="$_ddir/projects" \
          CONCIERGE_SOCKET="$_dsock" CONCIERGE_SESSION="$_dsock" \
          bash "$HARNESS/concierge.sh" start 2>&1)"; _drc=$?
 _dsess_after="$(cat "$_ddir/concierge-session" 2>/dev/null)"
 tmux -L "$_dsock" kill-server 2>/dev/null || true
-rm -rf "$_ddir"
-want "dangling resume triggers retry"  "retrying without it" "$_dout"
-want "retry reports a FRESH start"     "FRESH"               "$_dout"
-is   "session file is cleared"         ""                    "$_dsess_after"
+want "a resume with no transcript anywhere triggers a fresh retry" "starting fresh" "$_dout"
+want "retry reports a FRESH start"                                 "FRESH"          "$_dout"
+# concierge.sh no longer deletes the session file itself (sp-aaew9) — only a real client's
+# own SessionStart hook may replace it, once a fresh session exists to record. This stub
+# `claude` never fires that hook, so the dangling id is exactly what it was before the call.
+is   "session file is left alone by concierge.sh — nothing but the hook may replace it" \
+     "$(printf '%s\n%s\n' "$_dfake_id" "$_ddir")" "$_dsess_after"
 is   "start exits 0 after fresh retry" 0                     "$_drc"
+rm -rf "$_ddir"
+
+echo
+echo "sp-aaew9: --resume exits fast but the transcript is REAL — refuse, never discard the id"
+
+# THE DEFECT ITSELF. Unlike the dangling case above, a transcript exists for the recorded id
+# — the real conversation. A fast exit here must never be read as "cannot be resumed"; it
+# must fail loudly and leave the id exactly where it was, so recovery is `claude --resume
+# <id>` and not a grep through old transcripts nobody thought to look at until hours later.
+_rdir="$(mktemp -d)"; mkdir -p "$_rdir/bin"
+_rid="real-convo-$$-$(date +%s)"
+_rproj="$_rdir/projects/-some-slug"; mkdir -p "$_rproj"
+_rtranscript="$_rproj/$_rid.jsonl"
+printf '{"type":"user"}\n' > "$_rtranscript"
+cat > "$_rdir/bin/claude" <<'STUB'
+#!/bin/sh
+case " $* " in *' --resume '*) exit 1 ;; esac
+exec sleep 30
+STUB
+chmod +x "$_rdir/bin/claude"
+printf '%s\n%s\n' "$_rid" "$_rdir" > "$_rdir/concierge-session"
+
+# HOLD THE TRANSCRIPT OPEN so the fd-holder scan has something real to name.
+( exec 9<"$_rtranscript"; sleep 30 ) &
+_rholder=$!
+sleep 0.3
+
+_rsock="test-concierge-real-$$"
+tmux -L "$_rsock" kill-server 2>/dev/null || true
+_rout="$(PATH="$_rdir/bin:$PATH" SPIRA_RUN="$_rdir" SPIRA_WIKI="$_rdir" \
+         SPIRA_TOKEN_PROJECTS="$_rdir/projects" \
+         CONCIERGE_SOCKET="$_rsock" CONCIERGE_SESSION="$_rsock" \
+         bash "$HARNESS/concierge.sh" start 2>&1)"; _rrc=$?
+_rsess_after="$(cat "$_rdir/concierge-session" 2>/dev/null)"
+tmux -L "$_rsock" kill-server 2>/dev/null || true
+kill "$_rholder" 2>/dev/null; wait "$_rholder" 2>/dev/null || true
+rm -rf "$_rdir"
+
+is   "start refuses rather than exiting 0 or falling back fresh" 5 "$_rrc"
+want "and says the transcript is intact"           "transcript is intact"       "$_rout"
+want "and names the holder it found by open fd"    "$_rholder"                  "$_rout"
+is   "the recorded id is NEVER touched"            "$(printf '%s\n%s\n' "$_rid" "$_rdir")" "$_rsess_after"
 
 echo
 echo "cockpit.sh attaches the operator: layout.sh up builds the session pane from concierge.sh here"

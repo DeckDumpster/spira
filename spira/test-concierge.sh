@@ -473,9 +473,27 @@ _src="$(cat "$HARNESS/concierge.sh")"
 want "/proc read is guarded before it is attempted"            '[ -r "$f" ] || continue' "$_src"
 want "redirect is grouped so the shell's own error is covered" '{ tr' "$_src"
 
-want  "a failed start retries without --resume"     "retrying without it"                  "$_src"
-want  "and clears the id that could not be resumed" 'rm -f "$SPIRA_RUN/concierge-session"' "$_src"
+want  "a resume with no transcript left retries fresh"       "starting fresh"      "$_src"
 # The launcher is one line; grep -v deletes it entirely. Verify regeneration is used instead.
 nowant "the retry regenerates rather than filtering the launcher" 'LAUNCHER.noresume' "$_src"
+
+echo
+echo "sp-aaew9: an intact transcript is never discarded for a resume that merely exited"
+
+# THE DEFECT THIS FIXES, as source shape (the live behaviour is exercised in
+# test-concierge-acceptance.sh, which needs a real tmux/systemd session to run the launcher).
+# The old code deleted the session file unconditionally the moment --resume failed to stay
+# up for 3s; a fast exit for ANY reason — another holder, an eviction — was indistinguishable
+# from "the id cannot be resumed" and threw the real conversation away.
+nowant "no unconditional rm -f of the session file on a resume failure" \
+    'rm -f "$SPIRA_RUN/concierge-session"' "$_src"
+want "the fresh-vs-refuse fork checks whether the transcript itself still exists" \
+    "concierge_transcript_path" "$_src"
+want "an intact transcript refuses rather than retrying" \
+    "refusing to discard it" "$_src"
+want "the refusal names any process holding the transcript open" \
+    "concierge_fd_holders" "$_src"
+want "and captures the dead pane's last output" \
+    "capture-pane" "$_src"
 
 tl_summary
