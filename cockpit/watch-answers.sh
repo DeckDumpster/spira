@@ -26,7 +26,7 @@
 # what let two sessions attach the blind one.
 set -uo pipefail
 
-. "$(dirname "$0")/db.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/db.sh"
 # THE WITNESS: proof this watcher can SEE, kept apart from how far it has read. Every pass
 # writes the ids its query returned here, and the manifest's health assertion greps it for one
 # of ours — a watcher reading a database that was retired underneath it holds rows, just not
@@ -60,7 +60,8 @@ COMMENT_CURSOR="${COMMENT_CURSOR:-$SPIRA_RUN/.comment-cursor}"
 # ANSWERS_BIN is the seam a suite drives to test this loop's own contract (does it print, does
 # it wake, does it exit 1 on a failing pass) without paying for a real bd round trip through
 # the actual answers.py on every case.
-ANSWERS="${ANSWERS_BIN:-$(cd "$(dirname "$0")/../spira" && pwd -P)/answers.py}"
+SPIRA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../spira" && pwd -P)"
+ANSWERS="${ANSWERS_BIN:-$SPIRA_DIR/answers.py}"
 
 emit() {
     # NARROWED BY THE SERVER. This ran every 45 seconds against every bead in the database and
@@ -86,18 +87,53 @@ emit() {
 wake() {
     [ -n "${SPIRA_WAKE:-}" ] || return 0
     # shellcheck disable=SC2086  # SPIRA_WAKE is a command line, split on purpose
-    $SPIRA_WAKE "New answers from ${SPIRA_OPERATOR:-the operator}. Run $(cd "$(dirname "$0")/../spira" && pwd -P)/watchd.sh drain answers and act on every verdict it prints." >/dev/null 2>&1 \
-        || echo "watch-answers: SPIRA_WAKE refused — these answers reach no reader until the page" >&2
+    if $SPIRA_WAKE "New answers from ${SPIRA_OPERATOR:-the operator}. Run $SPIRA_DIR/watchd.sh drain answers and act on every verdict it prints." >/dev/null 2>&1; then
+        return 0
+    fi
+    echo "watch-answers: SPIRA_WAKE refused — these answers reach no reader until the page" >&2
+    return 1
 }
+
+# emit() advances the cursors on every pass that finds something, whether or not wake()
+# later delivers -- so a dropped wake would otherwise lose that verdict for good (V10,
+# sp-12uu8, adapted to a cursor design). Snapshotting the marks before emit() and restoring
+# them when wake() fails makes the next pass re-announce instead.
+snapshot_cursors() {
+    for f in "$VERDICT_CURSOR" "$COMMENT_CURSOR"; do
+        rm -f "$f.rollback"
+        [ -f "$f" ] && cp -p "$f" "$f.rollback"
+    done
+}
+rollback_cursors() {
+    for f in "$VERDICT_CURSOR" "$COMMENT_CURSOR"; do
+        if [ -f "$f.rollback" ]; then mv -f "$f.rollback" "$f"; else rm -f "$f"; fi
+    done
+}
+
+# One iteration of `loop`, split out so a suite can drive it directly and assert on the
+# cursor files between passes instead of racing a `sleep`-paced loop under a `timeout`.
+_watch_pass() {
+    snapshot_cursors
+    local out
+    out="$(emit)" || return 1
+    if [ -n "$out" ]; then
+        printf '%s\n' "$out"
+        wake || rollback_cursors
+    fi
+    rm -f "$VERDICT_CURSOR.rollback" "$COMMENT_CURSOR.rollback"
+}
+
+# SOURCEABLE, AND SILENT WHEN IT IS: a test sources this file to call _watch_pass (or emit,
+# wake) directly against a stub ANSWERS_BIN, without a daemon loop or its sleeps in the way.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 
 case "${1:-loop}" in
     once) emit ;;
     loop) while true; do
-              out="$(emit)" || exit 1
-              [ -n "$out" ] || { sleep "$INTERVAL"; continue; }
-              printf '%s\n' "$out"
-              wake
+              _watch_pass || exit 1
               sleep "$INTERVAL"
           done ;;
     *) echo "usage: watch-answers.sh [once|loop]" >&2; exit 2 ;;
 esac
+
+fi
