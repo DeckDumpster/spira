@@ -105,16 +105,25 @@ tl_subshell_safe() {
     _tl_counts_flush
 }
 
+# The three functions below are called unconditionally from ok/bad/skip/bail/tl_summary
+# and no-op (returning 0) when tl_subshell_safe was never called — the guard lives HERE,
+# not at each call site, because a guard on the call site that lands as a function's last
+# statement makes the whole function return false whenever the guard doesn't fire, which
+# corrupts every is/want/nowant caller's `cond && ok || bad` (both branches then run).
+
 _tl_counts_flush() {   # write _TL_NUM/_TL_PASS/_TL_FAIL/_TL_SKIP to the backing file
+    [ "$_TL_SUBSHELL_SAFE" = 1 ] || return 0
     printf '%s %s %s %s\n' "$_TL_NUM" "$_TL_PASS" "$_TL_FAIL" "$_TL_SKIP" > "$_TL_COUNTS"
 }
 
 _tl_counts_load() {    # read them back — the first thing any counting function does
+    [ "$_TL_SUBSHELL_SAFE" = 1 ] || return 0
     read -r _TL_NUM _TL_PASS _TL_FAIL _TL_SKIP < "$_TL_COUNTS"
 }
 
 _tl_counts_cleanup() {
-    [ "$_TL_SUBSHELL_SAFE" = 1 ] && rm -f "$_TL_COUNTS"
+    [ "$_TL_SUBSHELL_SAFE" = 1 ] || return 0
+    rm -f "$_TL_COUNTS"
 }
 
 # _tl_json_escape <string> -> the string with \, " and control chars made JSON-safe.
@@ -149,21 +158,21 @@ _tl_jsonl() {
 
 ok() {
     _tl_init
-    [ "$_TL_SUBSHELL_SAFE" = 1 ] && _tl_counts_load
+    _tl_counts_load
     _TL_NUM=$((_TL_NUM + 1)); _TL_PASS=$((_TL_PASS + 1))
     printf 'ok %s - %s\n' "$_TL_NUM" "$1"
     _tl_jsonl "$1" pass
-    [ "$_TL_SUBSHELL_SAFE" = 1 ] && _tl_counts_flush
+    _tl_counts_flush
 }
 
 bad() {
     _tl_init
-    [ "$_TL_SUBSHELL_SAFE" = 1 ] && _tl_counts_load
+    _tl_counts_load
     _TL_NUM=$((_TL_NUM + 1)); _TL_FAIL=$((_TL_FAIL + 1))
     printf 'not ok %s - %s\n' "$_TL_NUM" "$1"
     [ -n "${2:-}" ] && printf '# %s\n' "$2"
     _tl_jsonl "$1" fail "${2:-}"
-    [ "$_TL_SUBSHELL_SAFE" = 1 ] && _tl_counts_flush
+    _tl_counts_flush
 }
 
 is() {      # is <name> <expected> <actual>
@@ -229,7 +238,7 @@ plan() {    # plan <n> — must be called before the first ok/bad/want/nowant/wa
 # that then claims "skipped" would hide the cases that did run.
 skip() {
     _tl_init
-    [ "$_TL_SUBSHELL_SAFE" = 1 ] && _tl_counts_load
+    _tl_counts_load
     if [ "$_TL_NUM" -gt 0 ]; then
         # A partial suite claiming "skipped" would hide the cases that already ran —
         # that is a suite-authoring bug, not a real skip, so it fails loudly rather
@@ -259,7 +268,7 @@ bail() {
 # already expects, then returns pass/fail as $fail -eq 0 always has.
 tl_summary() {
     _tl_init
-    [ "$_TL_SUBSHELL_SAFE" = 1 ] && _tl_counts_load
+    _tl_counts_load
     [ -n "$_TL_PLANNED" ] || printf '1..%s\n' "$_TL_NUM"
     printf '\n%d passed, %d failed, %d skipped\n' "$_TL_PASS" "$_TL_FAIL" "$_TL_SKIP"
     # suites.sh's setup-fault detector greps this exact line (`ASSERTIONS 0`) to tell a
