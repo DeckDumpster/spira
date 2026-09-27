@@ -10,6 +10,7 @@ Description=Evaluate gh:run CI gates every two minutes
 # a gate that sits unresolved for two minutes while CI has already finished is a bead
 # that stays invisible for that window, which is the cost of a coarser cadence.
 OnBootSec=90
+OnActiveSec=90
 OnUnitActiveSec=2min
 AccuracySec=30s
 Unit=spira-gate-check.service

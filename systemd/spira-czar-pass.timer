@@ -8,6 +8,7 @@ Description=Czar fast pass — deterministic queue-stall detection every 30 seco
 # fault-to-action time from ~6 min to under 60 s for every deterministic case.
 # The flock in czar.sh --pass prevents overlap when a pass takes longer than expected.
 OnBootSec=60s
+OnActiveSec=60s
 OnUnitActiveSec=30s
 AccuracySec=10s
 Unit=spira-czar-pass.service

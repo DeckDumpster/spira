@@ -16,6 +16,7 @@ Description=Wake Ops on a timer and hand it the pipeline's vital signs
 # half an hour rather than the fifty minutes it took before any of this existed — but the
 # instrument must not cost more than what it instruments.
 OnBootSec=3min
+OnActiveSec=3min
 OnUnitActiveSec=30min
 AccuracySec=30s
 Unit=spira-watchtower.service

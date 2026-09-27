@@ -8,6 +8,7 @@ Description=Archive session transcripts every twenty minutes
 # goes away between passes. The session-end hook covers the ordinary case; this covers the
 # session that never ends cleanly.
 OnBootSec=5min
+OnActiveSec=5min
 OnUnitActiveSec=20min
 AccuracySec=1min
 Persistent=true

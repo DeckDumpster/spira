@@ -6,6 +6,7 @@ Description=Resolve moot asks every fifteen minutes
 # fifteen-minute window means a cleared condition rarely sits in the queue for a full
 # session. Janitorial — latency does not matter here, only that it runs.
 OnBootSec=5min
+OnActiveSec=5min
 OnUnitActiveSec=15min
 AccuracySec=2min
 Persistent=true

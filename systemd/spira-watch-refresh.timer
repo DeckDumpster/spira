@@ -7,6 +7,7 @@ Description=Check every minute for a watcher running code older than the file on
 # writes nothing when everything is current, so the cadence is bounded by the cost of being
 # wrong rather than by the cost of asking.
 OnBootSec=90
+OnActiveSec=90
 OnUnitActiveSec=1min
 AccuracySec=15s
 Unit=spira-watch-refresh.service

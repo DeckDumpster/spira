@@ -8,6 +8,7 @@ Description=Ask on a cadence whether any watcher's events have gone unread
 # the alert: the escalation is suppressed while one backlog stands, so asking more often
 # costs a `grep` and never a second ask.
 OnBootSec=5min
+OnActiveSec=5min
 OnUnitActiveSec=5min
 # Loose. Nothing downstream is waiting on the answer within a minute of its being due, and a
 # wide window lets the service manager batch this with whatever else is scheduled.

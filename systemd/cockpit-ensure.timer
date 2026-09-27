@@ -3,6 +3,7 @@ Description=Re-ensure the cockpit every minute
 
 [Timer]
 OnBootSec=120
+OnActiveSec=120
 OnUnitActiveSec=1min
 AccuracySec=15s
 Unit=cockpit-ensure.service
