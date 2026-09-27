@@ -927,13 +927,6 @@ for t, i in aged[:20]:
         echo "SP_AWAITING_OLDEST=?"; echo "SP_AWAITING_AGE=?"
     fi
 
-    # ---- UNANSWERED: operator threads awaiting a reply --------------------------------------
-    # unanswered.sh makes one bd list call then one bd comments call per matching bead, so
-    # it belongs in the slow tier rather than the medium-tier counts probe.
-    local unread
-    unread=$("$COCK_DIR/unanswered.sh" --count 2>/dev/null | tail -1)
-    echo "SP_UNANSWERED=${unread:-?}"
-
     # ---- THROUGHPUT: what closed and what opened, by kind, plus sparklines ---------------
     # ONE bd list call for both the summary counts AND the sparkline timestamps.
     # DO NOT ADD COLUMNS TO cockpit-history.csv for these: append_history would rotate the

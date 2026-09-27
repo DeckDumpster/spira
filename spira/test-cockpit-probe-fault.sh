@@ -91,7 +91,6 @@ base_snap_to() {
         printf 'SP_QUEUE_BATCH_PR=0\nSP_QUEUE_BATCH_AGE=0\nSP_QUEUE_BATCH_N=0\n'
         printf 'SP_QUEUE_NEXT_N=0\nSP_QUEUE_NEXT_MAX=8\nSP_QUEUE_QUARANTINE_N=0\n'
         [ "$omit" = SP_WAITING     ] || printf 'SP_WAITING=1\n'
-        [ "$omit" = SP_UNANSWERED  ] || printf 'SP_UNANSWERED=0\n'
         [ "$omit" = SP_MAIL_UNREAD ] || printf 'SP_MAIL_UNREAD=2\nSP_MAIL_N=0\nSP_MAIL_OLDEST_AGE=-\n'
         [ "$omit" = SP_UNSENT      ] || printf 'SP_UNSENT=2\nSP_UNSENT_OLDEST_H=1\nSP_BRANCH_DONE=1\nSP_UNADOPTED=0\nSP_ORPHAN_WORK=0\n'
         [ "$omit" = SP_CLOSED_24H  ] || printf 'SP_CLOSED_24H=5\n'
@@ -125,7 +124,6 @@ base_snap_to omit-SP_INFLOW_N        SP_INFLOW_N
 base_snap_to omit-SP_AWAITING_N      SP_AWAITING_N
 base_snap_to omit-SP_QUEUE_DEPTH     SP_QUEUE_DEPTH
 base_snap_to omit-SP_WAITING         SP_WAITING
-base_snap_to omit-SP_UNANSWERED      SP_UNANSWERED
 base_snap_to omit-SP_MAIL_UNREAD     SP_MAIL_UNREAD
 base_snap_to omit-SP_UNSENT          SP_UNSENT
 base_snap_to omit-SP_CLOSED_24H      SP_CLOSED_24H
@@ -171,7 +169,7 @@ printf "SP_SELF_STARVED_W='2'\nSP_SELF_STARVED_LAST='7m ago'\n" >> "$FIXDIR/self
 {
     printf 'SP_AT=%d\n' "$(date +%s)"
     printf 'SP_AEON_N=0\nSP_NEXT_N=0\nSP_INFLOW_N=0\nSP_INFLOW_WIN=60\nSP_INFLOW_DEFECT=0\nSP_INFLOW_KINDS=-\n'
-    printf 'SP_AWAITING_N=0\nSP_WAITING=0\nSP_UNANSWERED=0\n'
+    printf 'SP_AWAITING_N=0\nSP_WAITING=0\n'
     printf 'SP_UNSENT=0\nSP_BRANCH_DONE=0\nSP_UNSENT_OLDEST_H=0\nSP_UNADOPTED=0\nSP_ORPHAN_WORK=0\n'
     printf 'SP_CLOSED_24H=0\nSP_OPENED_24H=0\nSP_BEADS_LANDED_24H=0\n'
     printf 'SP_BEADS_SPARK_OPENED=▁▁▁▁▁▁▁▁\nSP_BEADS_SPARK_CLOSED=▁▁▁▁▁▁▁▁\n'
@@ -287,21 +285,6 @@ if printf '%s\n' "$attn_line" | grep -q 'waiting on you [?]'; then
     ok "SP_WAITING: absent key renders '?'"
 else
     bad "SP_WAITING: absent key did not render '?': $attn_line"
-fi
-
-# SP_UNANSWERED — thread-reply count, rendered with ${SP_UNANSWERED:-?}
-p="$(block full)"
-if grep -qF 'threads awaiting' <<< "$p"; then
-    ok "SP_UNANSWERED positive control: thread-reply field renders"
-else
-    bad "SP_UNANSWERED positive control: thread-reply field absent (cannot test fault)"
-fi
-p="$(block omit-SP_UNANSWERED)"
-attn2_line="$(printf '%s\n' "$p" | grep 'threads awaiting')"
-if printf '%s\n' "$attn2_line" | grep -q '[?]$\|[?] '; then
-    ok "SP_UNANSWERED: absent key renders '?'"
-else
-    bad "SP_UNANSWERED: absent key did not render '?': $attn2_line"
 fi
 
 # SP_MAIL_UNREAD — mailbox unread count, rendered with ${SP_MAIL_UNREAD:-?}. This row used to

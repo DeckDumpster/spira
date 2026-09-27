@@ -101,20 +101,40 @@ id = "UC-operator-channel-20"
 tier = "T1"
 statement = "answers.py renders a verdict as RYAN ANSWERED / verdict on. A premise rejection (label premise-rejected OR reason prefix premise-rejected:) renders as RYAN…"
 
+[use_case.uncovered]
+reason = "retired: answers.py and every bd-scanning answer reader were deleted (sp-xsl8i, per Ryan: \"all of this should be coming via emails\"). The pane's own close/comment now mails the concierge directly (model.rs close_decision/comment); there is no bead-scan left to render a verdict from."
+date = "2026-09-27"
+bead = "sp-xsl8i"
+
 [[use_case]]
 id = "UC-operator-channel-21"
 tier = "T1"
 statement = "Every monitor headline carries the bead's own closed_at, in the format watchd.sh parses."
+
+[use_case.uncovered]
+reason = "retired: the monitor (watch-answers.sh) and its answers.py headline format were deleted (sp-xsl8i) along with the bd-scanning answer readers."
+date = "2026-09-27"
+bead = "sp-xsl8i"
 
 [[use_case]]
 id = "UC-operator-channel-22"
 tier = "T1"
 statement = "Answer-reader cursors: a cold start seeds silently and writes the cursor. Crash recovery (witness present, cursors absent) prints SEEDED AT with the count…"
 
+[use_case.uncovered]
+reason = "retired: the cursor files and the answers.py that maintained them were deleted (sp-xsl8i); a pane answer now mails the concierge directly instead of being read back off a cursor."
+date = "2026-09-27"
+bead = "sp-xsl8i"
+
 [[use_case]]
 id = "UC-operator-channel-23"
 tier = "T2"
 statement = "watch-answers.sh loop wakes the reader exactly once per pass that found answers, and an empty SPIRA_WAKE wakes nobody. The loop exits 1 when a pass fails (so…"
+
+[use_case.uncovered]
+reason = "retired: watch-answers.sh was deleted (sp-xsl8i). Waking the reader is now spira-mail-deliver's job against the concierge mailbox, already covered under mail transport (UC-operator-channel-09/10)."
+date = "2026-09-27"
+bead = "sp-xsl8i"
 
 [[use_case]]
 id = "UC-operator-channel-24"

@@ -55,15 +55,13 @@ cockpit_beads() {
 }
 
 # Only the beads the attention surface is ABOUT, narrowed by the server rather than by the
-# reader. `--label-any` is an OR, and these three labels are exactly what answers.py then
-# filters on: the escalation label and `overseer` for a question, `insight` for an FYI, which
-# is created closed and carries neither.
+# reader. `--label-any` is an OR: the escalation label and `overseer` for a question,
+# `insight` for an FYI, which is created closed and carries neither.
 #
 # WHY IT IS A SEPARATE FUNCTION. `cockpit_beads` promises every bead and something may yet
 # want that; this promises a subset and says which. Measured on a live database: 1867 rows in
 # 644ms against 109 rows in 342ms, every 45 seconds, forever — and the whole difference was
-# being thrown away in Python one line later. It also keeps the payload well under
-# answers.py's scan ceiling, which is announced but still a ceiling.
+# being thrown away one line later.
 #
 # A NARROWED QUERY IS A PLACE TO GO BLIND, which is why the label comes from configuration
 # and never from a literal: an installation whose escalation label is its own would otherwise

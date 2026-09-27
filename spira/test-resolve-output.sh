@@ -51,7 +51,6 @@ run_resolve() {
     BD_BIN="$stub" \
     COCKPIT_DB="$DB" \
     SPIRA_DB="$SPIRA_DB_PATH" \
-    SELF_CLOSED="$TMP/self-closed-$$" \
     bash "$COCKPIT/resolve.sh" "$id" "$reason" 2>&1 >/dev/null
   ) || rc=$?
   return "$rc"
@@ -114,7 +113,6 @@ stdout_out=$(
   BD_BIN="$BD_OK" \
   COCKPIT_DB="$DB" \
   SPIRA_DB="$SPIRA_DB_PATH" \
-  SELF_CLOSED="$TMP/self-closed-ok" \
   bash "$COCKPIT/resolve.sh" sp-test-id "close reason" 2>/dev/null
 ) && rc3=0 || rc3=$?
 

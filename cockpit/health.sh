@@ -1258,8 +1258,6 @@ ci_section() {
 # The standing figures. Fixed height by construction — each is one number that is always
 # worth a row — so they are not part of the share and are never elided by it.
 standing_lines() {
-    # FLOW — everything moving between the operator and the harness, in one place.
-    local unans_col="$C_OK"; [ "${SP_UNANSWERED:-0}" != 0 ] && unans_col="${C_BAD}${C_B}"
     # ALARM DIMS WHEN OLD. The 24h FAILED count is a monument to every refusal in the window,
     # not a description of what is happening now. A count that is non-zero but whose most
     # recent FAILED line is older than 60m (30× the 2m sending interval) is resolved — the
@@ -1273,12 +1271,9 @@ standing_lines() {
             fail_col="${C_BAD}${C_B}"
         fi
     fi
-    # TWO LINES. As one it ran to ~140 characters against a pane about 100 wide and
-    # truncated mid-word — which is how a dashboard ends up showing a stray "f".
-    printf ' %sATTN%s   %swaiting on you%s %s%s%s   %sthreads awaiting my reply%s %s%s%s\n' \
+    printf ' %sATTN%s   %swaiting on you%s %s%s%s\n' \
         "$C_DIM" "$C_RST" \
-        "$C_DIM" "$C_RST" "$C_B" "${SP_WAITING:-?}" "$C_RST" \
-        "$C_DIM" "$C_RST" "$unans_col" "${SP_UNANSWERED:-?}" "$C_RST"
+        "$C_DIM" "$C_RST" "$C_B" "${SP_WAITING:-?}" "$C_RST"
     # WHERE THIS SITS IN THE LIFECYCLE, because it was read as the verification BEFORE a
     # bead closes and it is the opposite end: gate.sh is the trial a branch passes before
     # it may merge, CHECK 6 is the merge, and the Sending is what happens AFTER — laying
