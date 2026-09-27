@@ -285,6 +285,101 @@ is "given path present -> prints the given path, unchanged" "$GIVEN_TB" "$_agive
     && bad "given path present -> gh is never invoked" "gh was called: $(cat "$POISON_LOG")" \
     || ok "given path present -> gh is never invoked"
 
+# ===========================================================================
+echo
+echo "14. _check_oneshots: starts oneshot units only, and surfaces a failed start"
+# ===========================================================================
+# POSITIVE CONTROL: spira-beta.service's start is made to fail, so a silent pass below
+# is trusted (law-absence-needs-a-positive-control). spira-gamma.service is Type=simple
+# and must never be started at all.
+
+_co_bin="$SCRATCH/co-bin"; mkdir -p "$_co_bin"
+_co_log="$SCRATCH/co-started"
+rm -f "$_co_log"
+cat > "$_co_bin/systemctl" <<'SC'
+#!/usr/bin/env bash
+case "$2" in
+    list-unit-files)
+        printf 'spira-alpha.service enabled\nspira-beta.service enabled\nspira-gamma.service enabled\n'
+        ;;
+    show)
+        case "${*: -1}" in
+            spira-gamma.service) printf 'simple\n' ;;
+            *)                   printf 'oneshot\n' ;;
+        esac
+        ;;
+    start)
+        printf '%s\n' "${*: -1}" >> "$CO_LOG"
+        [ "${*: -1}" = "spira-beta.service" ] && exit 1
+        exit 0
+        ;;
+    *) exit 0 ;;
+esac
+SC
+chmod +x "$_co_bin/systemctl"
+
+_co_out="$(PATH="$_co_bin:$PATH" CO_LOG="$_co_log" bash -c '
+    . "$0"
+    _cur_phase="test"; _phase_start_ts=0; _jsonl_file=/dev/null
+    _check_oneshots "phase X"
+' "$LIB" 2>&1)"
+
+want "a failed oneshot start is surfaced, naming the unit" \
+    "failed: spira-beta.service" "$_co_out"
+want "the succeeding oneshot unit was started" "spira-alpha.service" "$(cat "$_co_log")"
+nowant "positive-control: the non-oneshot unit is never started" \
+    "spira-gamma.service" "$(cat "$_co_log")"
+
+# ===========================================================================
+echo
+echo "15. _take_snapshot: passes --plain to list-units (no bullet-prefixed unit names)"
+# ===========================================================================
+# Without --plain, systemctl prefixes a failed unit's line with "● ", and awk '{print $1}'
+# takes the bullet as the unit name — the forensics collector then wrote the failed unit's
+# own status/journal to a file named literally "●.txt" instead of capturing it at all.
+
+_ts_bin="$SCRATCH/ts-bin"; mkdir -p "$_ts_bin"
+cat > "$_ts_bin/systemctl" <<'SC'
+#!/usr/bin/env bash
+case "$2" in
+    list-units)
+        _plain=0
+        for _a in "$@"; do [ "$_a" = "--plain" ] && _plain=1; done
+        if [ "$_plain" = 1 ]; then
+            printf 'spira-broken.service loaded failed failed X\n'
+        else
+            printf '\xe2\x97\x8f spira-broken.service loaded failed failed X\n'
+        fi
+        ;;
+    list-timers) printf '' ;;
+    status)      printf 'status-ok\n' ;;
+    *)           exit 0 ;;
+esac
+SC
+chmod +x "$_ts_bin/systemctl"
+cat > "$_ts_bin/journalctl" <<'SC'
+#!/usr/bin/env bash
+printf 'journal-ok\n'
+SC
+chmod +x "$_ts_bin/journalctl"
+
+_snap2_dir="$SCRATCH/snap2"; mkdir -p "$_snap2_dir"
+PATH="$_ts_bin:$PATH" bash -c '
+    . "$0"
+    _forensics_dir="$1"
+    _snap_count=0
+    _run_start_wall="today"
+    _take_snapshot "unit-test" >/dev/null 2>&1
+' "$LIB" "$_snap2_dir"
+
+[ -f "$_snap2_dir/01-unit-test/journal/spira-broken.service.txt" ] \
+    && ok "journal captured under the real unit name" \
+    || bad "journal captured under the real unit name" \
+           "$(ls "$_snap2_dir/01-unit-test/journal" 2>&1)"
+[ -e "$_snap2_dir/01-unit-test/journal/●.txt" ] \
+    && bad "positive-control: no bullet-named journal file" "●.txt was written" \
+    || ok "positive-control: no bullet-named journal file"
+
 _amiss_out="$(_lib_acquire "some-tag" "$SCRATCH/does-not-exist.tar.gz" "$_dl_dir")"
 _amiss_rc=$?
 is "pair: given path absent -> non-zero, nothing printed" "1:" "$_amiss_rc:$_amiss_out"
