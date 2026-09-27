@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: systemd/spira-mail-deliver.service spira/world.sh spira/watchd.sh spira/watchers spira/spira-mail-deliver.sh spira/mail.sh spira/conf.sh UC-operator-channel-10
+# covers: systemd/spira-mail-deliver.service spira/world.sh spira/watchd.sh spira/watchers spira/spira-mail-deliver.sh spira/mail.sh spira/mail-health.sh spira/conf.sh UC-operator-channel-10
 #
 # PROPERTIES UNDER TEST
 # ---------------------
@@ -10,13 +10,17 @@
 #    spira-mail-deliver when it is enabled-but-inactive, leaves a disabled unit alone, and
 #    does not restart an already-active one (coverage-map row 10, SOURCE-GREP: a source
 #    grep proved the code MENTIONS these rules; running `start` proves it OBEYS them).
-# 3. DETECTOR: watchd notify files exactly one escalation when the delivery daemon is
-#    inactive AND there are unread concierge replies older than SPIRA_NOTIFY_AGE.  With
-#    no unread mail the compound condition is not met and no escalation fires.
-# 4. LOG PATH: the unit's StandardOutput path is the exact path watchd.sh's own _wd_logfile
+# 3. LIVENESS: watchd's extern health probe is daemon liveness only — is the daemon active,
+#    and is it watching every registered mailbox. Inactive escalates unconditionally now;
+#    active-but-not-watching a mailbox escalates too; active-and-watching stays healthy.
+#    Unread mail age plays no part here — that alarm moved to mail-health.sh.
+# 4. COMPOUND: a down delivery daemon plus aged concierge mail produces exactly one
+#    liveness message (from watchd) and one aged-mail message (from mail-health.sh) — never
+#    zero, never a duplicate of either.
+# 5. LOG PATH: the unit's StandardOutput path is the exact path watchd.sh's own _wd_logfile
 #    computes for this row — sp-12uu8's fixed defect, where the two literals had drifted apart
 #    and nothing was ever appended to the path the watcher health row advertised as its log.
-# 5. WAKE RETRY: a mailbox with unread mail and nobody reading gets woken again on
+# 6. WAKE RETRY: a mailbox with unread mail and nobody reading gets woken again on
 #    SPIRA_MAIL_WAKE_BACKOFF, not once and forgotten (T1); reading the mail is what stops
 #    the retries, not a retry ceiling (T2). sp-12uu8: "confirm delivery and retry" alone is
 #    exactly-once in spirit — dropped in favour of at-least-once-until-read.
@@ -28,6 +32,8 @@
 # scar: sp-12uu8 — two operator replies produced no notification; the wake was a fire-and-
 # forget tmux keystroke with no ack, and the log the watcher health row named was never
 # written to.
+# scar: a health probe that reads unread-mail age duplicated mail-health.sh's own alarm and
+# could double-escalate one down-daemon-plus-backlog condition; narrowed to liveness only.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -119,7 +125,7 @@ is "start is idempotent for an already-active mail-deliver unit" "0" "${started:
 
 # ---------------------------------------------------------------------------
 echo
-echo "3. DETECTOR — compound condition: daemon inactive AND unread concierge mail:"
+echo "3. LIVENESS — the extern health command is daemon liveness only:"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP" "$WTMP"' EXIT
 mkdir -p "$TMP/home"
@@ -129,23 +135,24 @@ MOCK_BIN="$TMP/bin"; mkdir -p "$MOCK_BIN"
 MAIL="$TMP/mail"
 CONCIERGE_NEW="$MAIL/concierge/new"; mkdir -p "$CONCIERGE_NEW"
 
-# Manifest: mail-deliver as extern watcher. The health command calls mail.sh using
-# SPIRA_HOME (set by conf.sh to the harness directory when watchd.sh sources it).
+# Manifest: mail-deliver as extern watcher. The health command runs the daemon's own
+# script via SPIRA_HOME (set by conf.sh to the harness directory when watchd.sh sources
+# it) — asking it whether it is watching its registered mailboxes, nothing about mail age.
 MAN="$TMP/watchers"
-printf 'mail-deliver|extern|mail-deliver|@SPIRA_HOME@/mail.sh unread-age concierge\n' > "$MAN"
+printf 'mail-deliver|extern|mail-deliver|@SPIRA_HOME@/spira-mail-deliver.sh health\n' > "$MAN"
 
-# Mock systemctl: is-enabled exits 0 (enabled), is-active echoes inactive,
-# show returns ActiveState=inactive for any *.service.
+# Mock systemctl: is-enabled exits 0 (enabled); is-active/show answer with $ACTIVE_STATE
+# (default inactive) so a test selects the unit state without a second mock.
 cat > "$MOCK_BIN/systemctl" <<'MOCK'
 #!/usr/bin/env bash
 shift  # --user
 cmd="$1"; shift
 case "$cmd" in
-    is-active)  for _u in "$@"; do echo "inactive"; done ;;
+    is-active)  for _u in "$@"; do echo "${ACTIVE_STATE:-inactive}"; done ;;
     show)
         for _a in "$@"; do
             case "$_a" in
-                *.service) printf 'Id=%s\nActiveState=inactive\nNRestarts=0\n\n' "$_a" ;;
+                *.service) printf 'Id=%s\nActiveState=%s\nNRestarts=0\n\n' "$_a" "${ACTIVE_STATE:-inactive}" ;;
             esac
         done ;;
 esac
@@ -161,13 +168,21 @@ BASE_ENV=(
     SPIRA_RUN="$RUN"
     SPIRA_INSTANCE=test
     SPIRA_WATCHERS="$MAN"
+    SPIRA_HOME="$HERE"
     SPIRA_MAIL="$MAIL"
 )
 
 run_notify() {
+    # SPIRA_MAIL_REPEAT_WINDOW=0: this section sends several DISTINCT escalations to
+    # operator with the SAME literal subject ("A watcher has stopped producing events") in
+    # one shared SPIRA_RUN — mail.sh's own repeat-check would otherwise silently swallow
+    # every one after the first, which is correct anti-spam behaviour in production and
+    # exactly wrong for a test proving each condition escalates on its own.
     env -i "${BASE_ENV[@]}" \
         SPIRA_NOTIFY_AGE=0 \
         SPIRA_ACTIONABLE=WAKEME \
+        SPIRA_MAIL_REPEAT_WINDOW=0 \
+        "${@}" \
         bash "$WATCHD" notify 2>/dev/null
 }
 
@@ -189,30 +204,61 @@ backdate() { printf '%s\n' "$(( $(date +%s) - 3600 ))" > "$1"; }
 MD_UF="$WDIR/mail-deliver.unhealthy"
 
 echo
-echo "3a. POSITIVE CONTROL — daemon inactive + old unread mail -> escalation fires:"
+echo "3a. POSITIVE CONTROL — daemon inactive, mailbox EMPTY -> escalation fires anyway:"
+# No mail is planted here at all: proves the old aged-mail gate is gone from this path.
 reset_run
-plant_mail
 backdate "$MD_UF"
-run_notify || true
-is "escalation fires with inactive daemon and unread mail" "1" "$(asks)"
+run_notify ACTIVE_STATE=inactive || true
+is "escalation fires on inactive daemon alone" "1" "$(asks)"
 
 echo
-echo "3b. DEDUP — second notify pass with same conditions -> no new escalation:"
-run_notify || true
+echo "3b. DEDUP — second notify pass with the same condition -> no new escalation:"
+run_notify ACTIVE_STATE=inactive || true
 is "second notify does not file a duplicate escalation" "1" "$(asks)"
 
 echo
-echo "3c. COMPOUND CONDITION — daemon inactive but empty mailbox -> no escalation:"
+echo "3c. active but NOT watching its registered mailbox -> escalation fires:"
 reset_run
-rm -f "$CONCIERGE_NEW"/* 2>/dev/null
 backdate "$MD_UF"
-run_notify || true
-is "no escalation when mailbox is empty" "0" "$(asks)"
-# Prove the path was reachable: 3a already fired with the same setup minus the mail.
+run_notify ACTIVE_STATE=active SPIRA_MAIL_READERS="concierge=echo wake" || true
+is "escalation fires when active but not watching a registered mailbox" "1" "$(asks)"
+
+echo
+echo "3d. active AND watching its registered mailbox -> healthy, no escalation:"
+reset_run
+backdate "$MD_UF"
+inotifywait -m -q -e close_write -e moved_to "$CONCIERGE_NEW" >/dev/null 2>&1 &
+WATCH_PID=$!
+tries=0
+while ! pgrep -f "inotifywait -m -q -e close_write -e moved_to $CONCIERGE_NEW\$" >/dev/null 2>&1 \
+      && [ "$tries" -lt 50 ]; do
+    sleep 0.1; tries=$((tries+1))
+done
+run_notify ACTIVE_STATE=active SPIRA_MAIL_READERS="concierge=echo wake" || true
+kill "$WATCH_PID" 2>/dev/null; wait "$WATCH_PID" 2>/dev/null || true
+is "no escalation when watching every registered mailbox" "0" "$(asks)"
+is "unhealthy file is cleared once healthy" "1" "$([ -f "$MD_UF" ] && echo 0 || echo 1)"
 
 # ---------------------------------------------------------------------------
 echo
-echo "4. LOG PATH — the unit's StandardOutput is the path watchd.sh's own _wd_logfile computes:"
+echo "4. COMPOUND — a down delivery daemon plus aged concierge mail:"
+
+reset_run
+plant_mail
+backdate "$MD_UF"
+run_notify ACTIVE_STATE=inactive SPIRA_MAIL_READERS="concierge=echo wake" SPIRA_MAIL_UNREAD_AGE=0 || true
+
+total="$(asks)"
+liveness="$(grep -l 'stopped producing events' "$MAIL/operator/new/"* 2>/dev/null | wc -l | tr -d ' ')"
+aged="$(grep -l 'is not reading its mail' "$MAIL/operator/new/"* 2>/dev/null | wc -l | tr -d ' ')"
+
+is "4a: exactly two operator messages total" "2" "$total"
+is "4b: exactly one liveness message from watchd" "1" "$liveness"
+is "4c: exactly one aged-mail message from mail-health.sh" "1" "$aged"
+
+# ---------------------------------------------------------------------------
+echo
+echo "5. LOG PATH — the unit's StandardOutput is the path watchd.sh's own _wd_logfile computes:"
 
 # Ask watchd.sh's own function what path an extern row named "mail-deliver" logs to,
 # rather than re-typing the "watchd/<name>.log" convention as a second literal here.
@@ -221,12 +267,12 @@ expected_logfile="$(
     env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_RUN="$LOGRUN" \
         bash -c '. "$1"; _wd_logfile mail-deliver extern mail-deliver' _ "$WATCHD"
 )"
-is "4a: _wd_logfile computes the log under watchd/" "$LOGRUN/watchd/mail-deliver.log" "$expected_logfile"
+is "5a: _wd_logfile computes the log under watchd/" "$LOGRUN/watchd/mail-deliver.log" "$expected_logfile"
 
 unit_line="$(grep -m1 '^StandardOutput=append:' "$SERVICE")"
 unit_resolved="${unit_line#StandardOutput=append:}"
 unit_resolved="${unit_resolved//@SPIRA_RUN@/$LOGRUN}"
-is "4b: unit's StandardOutput is the path _wd_logfile computes" "$expected_logfile" "$unit_resolved"
+is "5b: unit's StandardOutput is the path _wd_logfile computes" "$expected_logfile" "$unit_resolved"
 
 # ---------------------------------------------------------------------------
 # _wake_count <file> -> lines containing "wake sent". Not `grep -c ... || echo 0`: grep -c
@@ -246,7 +292,7 @@ _bg_exited() {
 }
 
 echo
-echo "5. WAKE RETRY — T1: nobody reads; the wake is not fired once and forgotten:"
+echo "6. WAKE RETRY — T1: nobody reads; the wake is not fired once and forgotten:"
 
 WMAIL1="$TMP/wake-mail-1"; mkdir -p "$WMAIL1/wakebox/new" "$WMAIL1/wakebox/cur" "$WMAIL1/wakebox/tmp"
 WRUN1="$TMP/wake-run-1"; mkdir -p "$WRUN1"
@@ -280,14 +326,14 @@ attempts1="$(_wake_count "$ATT1")"
 calls1="$(wc -l < "$CALLS1" 2>/dev/null | tr -d ' ')"
 last_msg="$(tail -1 "$CALLS1" | cut -f2-)"
 
-is "5a: wake fires more than once while unread and unread" "1" "$([ "$attempts1" -ge 3 ] && echo 1 || echo 0)"
-is "5b: the stub wake command was actually invoked each time" "$attempts1" "${calls1:-0}"
-is "5c: backoff delays retries (3 attempts at 1s steps takes >=2s, not 0)" "1" "$([ "$elapsed" -ge 2 ] && echo 1 || echo 0)"
-want "5d: the wake message says how many are unread" "You have 1 unread messages" "$last_msg"
-want "5e: the wake message says how old the oldest unread is" "oldest" "$last_msg"
+is "6a: wake fires more than once while unread and unread" "1" "$([ "$attempts1" -ge 3 ] && echo 1 || echo 0)"
+is "6b: the stub wake command was actually invoked each time" "$attempts1" "${calls1:-0}"
+is "6c: backoff delays retries (3 attempts at 1s steps takes >=2s, not 0)" "1" "$([ "$elapsed" -ge 2 ] && echo 1 || echo 0)"
+want "6d: the wake message says how many are unread" "You have 1 unread messages" "$last_msg"
+want "6e: the wake message says how old the oldest unread is" "oldest" "$last_msg"
 
 echo
-echo "6. WAKE RETRY — T2: reading the mail stops it (reading is the ack, not the wake):"
+echo "7. WAKE RETRY — T2: reading the mail stops it (reading is the ack, not the wake):"
 
 WMAIL2="$TMP/wake-mail-2"; mkdir -p "$WMAIL2/wakebox/new" "$WMAIL2/wakebox/cur" "$WMAIL2/wakebox/tmp"
 WRUN2="$TMP/wake-run-2"; mkdir -p "$WRUN2"
@@ -321,8 +367,8 @@ sleep 2.5
 loop_exited=0; _bg_exited "$LOOP2_PID" 30 && loop_exited=1
 after_read="$(_wake_count "$ATT2")"
 
-is "6a: at least one wake fired before the mail was read" "1" "$([ "$first_seen" -ge 1 ] && echo 1 || echo 0)"
-is "6b: the wake loop exits once the mail is read, no retry ceiling needed" "1" "$loop_exited"
-is "6c: no further wake after the mail was read" "$first_seen" "$after_read"
+is "7a: at least one wake fired before the mail was read" "1" "$([ "$first_seen" -ge 1 ] && echo 1 || echo 0)"
+is "7b: the wake loop exits once the mail is read, no retry ceiling needed" "1" "$loop_exited"
+is "7c: no further wake after the mail was read" "$first_seen" "$after_read"
 
 tl_summary

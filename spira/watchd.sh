@@ -1305,26 +1305,7 @@ _wd_notify_health() {
             if [ -f "$SPIRA_RUN/world.halted" ]; then
                 rm -f "$(_wd_unhealthyfile "$n")" 2>/dev/null; continue
             fi
-            if [ "${ukind[$i]}" = extern ] && [ -n "${uhealth[$i]}" ]; then
-                # COMPOUND CONDITION: extern unit inactive + health command has output.
-                # For mail-deliver the health command is `mail.sh unread-age <mailbox>`;
-                # empty output means the mailbox is clear and no escalation is needed —
-                # a stopped delivery daemon with nothing waiting is not yet urgent.
-                local _cond _tmo
-                _tmo="$(command -v timeout 2>/dev/null)" || _tmo=""
-                if [ -n "$_tmo" ]; then
-                    _cond="$("$_tmo" "${SPIRA_HEALTH_TIMEOUT:-10}" bash -c "${uhealth[$i]}" 2>/dev/null)"
-                else
-                    _cond="$(bash -c "${uhealth[$i]}" 2>/dev/null)"
-                fi
-                case "${_cond:-}" in
-                    ''|*[!0-9]*) rm -f "$(_wd_unhealthyfile "$n")" 2>/dev/null; continue ;;
-                esac
-                [ "$_cond" -ge "$SPIRA_NOTIFY_AGE" ] || { rm -f "$(_wd_unhealthyfile "$n")" 2>/dev/null; continue; }
-                _wd_hstate=DEGRADED; _wd_hwhy="unit is $state; unread reply pending"
-            else
-                _wd_hstate=DEGRADED; _wd_hwhy="unit is $state — no writer"
-            fi
+            _wd_hstate=DEGRADED; _wd_hwhy="unit is $state — no writer"
         else
             _wd_probe "${uhealth[$i]}"
         fi
