@@ -353,10 +353,12 @@ _since="$(census_events_run_sql "$WATERMARK_TS" 2>/dev/null)"
 _causeless_beads="$(printf '%s\n' "$_since" | awk -F'|' '/reopened/ && /unrecorded/ {gsub(/ /,"",$3); print $3}')"
 is "since-watermark: causeless reopen counted despite an older cause-recorded reopen" "1" "${_causeless_beads:-0}"
 
-# All-time query still counts it too (windowing the subquery must not break all-time).
+# All-time has no watermark, so since_clause is empty and the subquery is unchanged by
+# the fix: sp-h1 still has a cause-recorded reopen somewhere in its (unbounded) history
+# and stays excluded from the all-time bucket, exactly as before the fix.
 _all="$(census_events_run_sql 2>/dev/null)"
 _causeless_all="$(printf '%s\n' "$_all" | awk -F'|' '/reopened/ && /unrecorded/ {gsub(/ /,"",$3); print $3}')"
-is "all-time: causeless reopen still counted" "1" "${_causeless_all:-0}"
+is "all-time: still excluded (dedup is 'ever' with no window to narrow it)" "0" "${_causeless_all:-0}"
 
 # sp-n3ijm: census_events_run_sql's retry-on-transient-failure behaviour (fake bd, no
 # database) moved to test-census-pipeline.sh (UC-ops-detection-remediation-15) — it was
