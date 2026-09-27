@@ -1,0 +1,18 @@
+[package]
+name = "work"
+version = "1.0.0"
+edition = "2021"
+description = "work — the aeon semantic layer client: show/note/submit/done/blocked/file-followup/split/superseded-by, bound to one summoned bead and reached only through the spira-lc socket. Holds no DB connection code at all, by construction — the aeon's environment has no credential for one to hold. Deploys inert."
+
+[dependencies]
+serde_json = "1"
+
+[[bin]]
+name = "work"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

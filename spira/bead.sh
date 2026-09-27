@@ -2,8 +2,8 @@
 #
 # bead.sh — file a bead through the contract; never call bd create directly.
 #
-#   bead.sh file "<title>" --for <persona> --repo <name> [--priority N] [--body-file F] [--json]
-#   bead.sh file "<title>" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--json]
+#   bead.sh file "<title>" --for <persona> --repo <name> [--priority N] [--body-file F] [--json] [--parent <id>]
+#   bead.sh file "<title>" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--json] [--parent <id>]
 #   bead.sh lint [--all|<id>...]     check that beads in the store satisfy the contract
 #   bead.sh contract                 legal personas, repos and kinds, read from source
 #
@@ -28,7 +28,7 @@ BEAD_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 _bead_file() {
     local title="${1:-}"; shift || true
     [ -n "$title" ] || { printf 'bead: title required\n' >&2; return 2; }
-    local for_fayth="" repo="" priority="" body_file="" kind="" express="" json=""
+    local for_fayth="" repo="" priority="" body_file="" kind="" express="" json="" parent=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --for)          shift; for_fayth="${1:-}" ;;
@@ -36,6 +36,7 @@ _bead_file() {
             --priority|-p)  shift; priority="${1:-}" ;;
             --body-file)    shift; body_file="${1:-}" ;;
             --kind)         shift; kind="${1:-}" ;;
+            --parent)       shift; parent="${1:-}" ;;
             --express)      express=1 ;;
             --json)         json=1 ;;
             *) printf 'bead: unknown option: %s\n' "$1" >&2; return 2 ;;
@@ -117,6 +118,11 @@ _bead_file() {
         [ -n "$priority" ]  && set -- "$@" -p "$priority"
         [ -n "$body_file" ] && set -- "$@" --body-file "$body_file"
         [ -n "$json" ]      && set -- "$@" --json
+        # --no-inherit-labels: this call already computed the full, correct label set
+        # above (persona partition + repo); inheriting the parent's on top would include
+        # its branch: label too, which is exactly the two-step dance
+        # groomer.sh split-piece exists to undo after the fact (sp-zs04v).
+        [ -n "$parent" ]    && set -- "$@" --parent "$parent" --no-inherit-labels
         bdq "$@"
     else
         # Non-work kind: no persona, no partition labels — deliberately unclaimable
@@ -135,6 +141,7 @@ _bead_file() {
         [ -n "$priority" ]  && set -- "$@" -p "$priority"
         [ -n "$body_file" ] && set -- "$@" --body-file "$body_file"
         [ -n "$json" ]      && set -- "$@" --json
+        [ -n "$parent" ]    && set -- "$@" --parent "$parent" --no-inherit-labels
         bdq "$@"
     fi
 }

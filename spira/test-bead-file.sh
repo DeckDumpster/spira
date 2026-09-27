@@ -210,4 +210,19 @@ out="$(run_bead "implement feature X" --for builder --repo dev-repo)"; rc=$?
 is   "builder plan: exits 0"          "0"      "$rc"
 want "builder plan: bd create called" "create" "$(cat "$BD_LOG")"
 
+# =====================================================================================
+# --parent: the aeon semantic layer's file-followup/split, filed through this same
+# contract (sp-3m1p9). --no-inherit-labels always rides along — a bare --parent would
+# inherit the parent's branch: label too (groomer.sh split-piece's own comment on why).
+# =====================================================================================
+out="$(run_bead "a split piece" --for builder --repo testrepo --parent sp-orig)"; rc=$?
+is   "parent: exits 0"                    "0"                   "$rc"
+want "parent: --parent passed through"    "--parent sp-orig"    "$(cat "$BD_LOG")"
+want "parent: --no-inherit-labels passed" "--no-inherit-labels" "$(cat "$BD_LOG")"
+
+out="$(run_bead "no parent given" --for builder --repo testrepo)"; rc=$?
+is     "no parent: exits 0"                     "0"                   "$rc"
+nowant "no parent: --parent NOT passed"         "--parent"            "$(cat "$BD_LOG")"
+nowant "no parent: --no-inherit-labels NOT passed" "--no-inherit-labels" "$(cat "$BD_LOG")"
+
 tl_summary

@@ -13,6 +13,7 @@
 //! callers, and the fast path (persistent connection) and the correct-but-slow path
 //! (same-user fallback, a fresh `dolt` process per call) can never drift apart.
 
+mod bd;
 mod bd_facts;
 mod classify_cmd;
 mod client;
@@ -23,6 +24,7 @@ mod persistent;
 mod repo_config;
 mod rows;
 mod serve;
+mod work;
 
 use db::Conn;
 use lifecycle::{batch, bead, delivery};
@@ -69,6 +71,9 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("list") => cmd_list(&args[1..], conn),
         Some("history") => cmd_history(&args[1..], conn),
         Some("event") => cmd_event(&args[1..], conn),
+        // The aeon semantic layer (design §3.5): a `work` client binds one bead id and
+        // forwards here over this same socket — see work.rs's module doc.
+        Some("work") => work::dispatch(&args[1..], conn),
         // Not part of the show/list/history/event surface: a plumbing verb the install
         // step and the test fixture use to apply schema.sql/grants.sql through the same
         // connection code the rest of this binary uses, instead of a second copy in shell.
@@ -78,7 +83,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("classify") => classify_cmd::run(&args[1..], conn),
         _ => (
             CANNOT_TELL,
-            "usage: spira-lc show <bead-id> | list [--state S] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | classify --home DIR --bd-db PATH --landstate-dir DIR --queue-dir DIR [--repo NAME]... [--base REF] [--dry-run] | serve".to_string(),
+            "usage: spira-lc show <bead-id> | list [--state S] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | classify --home DIR --bd-db PATH --landstate-dir DIR --queue-dir DIR [--repo NAME]... [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve".to_string(),
         ),
     }
 }
@@ -221,6 +226,22 @@ fn run_bead_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &st
         Ok(false) => (REFUSED, "refused: lost the race to another writer".into()),
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
     }
+}
+
+/// Applies a bead event against whatever the row's current state and version are, rather
+/// than a caller-supplied `expect`/`version` — the CAS still protects the write, but the
+/// semantic layer (work.rs) always means "from wherever the bead is now", never a stale
+/// view it captured earlier. `run_bead_event` above stays the CLI/testable primitive that
+/// takes `expect`/`version` explicitly, because the (state, event) transition table and
+/// stale-version refusal need a caller who can name a wrong one on purpose.
+pub(crate) fn apply_bead_event(conn: &Conn, key: &str, actor: &str, kind: bead::BeadEventKind) -> (i32, String) {
+    let row = match rows::fetch_bead(conn, key) {
+        Ok(Some(r)) => r,
+        Ok(None) => return (CANNOT_TELL, format!("work: no bead row for {key}")),
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+    };
+    let kind_json = serde_json::to_string(&kind).unwrap_or_default();
+    run_bead_event(conn, key, row.state.as_str(), row.version, actor, &kind_json, db::now_epoch())
 }
 
 fn run_delivery_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &str, kind_json: &str, at: i64) -> (i32, String) {
