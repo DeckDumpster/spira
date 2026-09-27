@@ -601,4 +601,91 @@ want "select checks for workflow_dispatch"        "workflow_dispatch" "$_select_
 want "select reads the suites input"              "inputs.suites"     "$_select_step"
 
 echo
+echo "23. cut refuses the job when the tag push to origin fails (sp-j7t1e):"
+# set -uo pipefail has no -e: a bare 'git push' whose failure is not checked
+# leaves the job green with a tag output that was never pushed, so publish
+# later mints the tag at whatever main's head is instead of the built commit.
+# Positive control: a push line with no failure handling must be flagged.
+_push_line='push origin "refs/tags/$tag"'
+_push_line_guarded='push origin "refs/tags/$tag" || {'
+case "$_push_line" in
+    *'|| {'*) bad "positive control: bare push line has no failure handling" \
+                  "fixture already contains failure handling" ;;
+    *)        ok "positive control: bare push line has no failure handling" ;;
+esac
+case "$_cut_block" in
+    *"$_push_line_guarded"*) ok "cut job checks the tag push for failure" ;;
+    *) bad "cut job checks the tag push for failure" \
+           "expected '$_push_line_guarded' in the cut job block" ;;
+esac
+want "a failed tag push exits the job non-zero" "exit 1" "$_cut_block"
+
+echo
+echo "24. release.yml pins the draft release to the built commit (sp-j7t1e):"
+# Without --target, a tag that has not yet reached the remote has nothing to
+# bind to, and GitHub mints one at the default branch's head at whatever
+# moment the release is later published — not the commit this job built.
+REL_BLOCK="$(awk '/^      - name: Create GitHub release \(draft\)$/{f=1;next} f&&/^      - name:/{exit} f{print}' "$REL_YML")"
+if [ -z "$REL_BLOCK" ]; then
+    bad "release.yml create-draft step located (positive control)" "awk extracted nothing"
+else
+    ok "release.yml create-draft step located"
+fi
+want "release.yml resolves the checked-out commit" "git rev-parse HEAD" "$REL_BLOCK"
+want "release.yml passes --target to gh release create" "--target" "$REL_BLOCK"
+
+echo
+echo "25. acceptance.yml refuses to publish when the tag disagrees with the tested MANIFEST (sp-j7t1e):"
+if [ -r "$ACC_YML" ]; then
+    A="$(cat "$ACC_YML")"
+    want "acceptance.yml verifies the tag before publishing" \
+         "Verify the tag is bound to the tested commit" "$A"
+    want "the verify step resolves the tag to a commit" \
+         'git rev-parse "${_tag}^{commit}"' "$A"
+    want "the verify step reads the release asset's MANIFEST" \
+         "release download" "$A"
+    want "the verify step compares against the MANIFEST commit" \
+         '$_manifest_commit" = "$_tag_commit"' "$A"
+else
+    bad "acceptance.yml exists for cross-check" "not found at $ACC_YML"
+fi
+
+echo
+echo "26. acceptance.yml never retracts an already-published release (sp-j7t1e):"
+# A tag corrected by hand re-fires the push trigger against a release that
+# already published; the FAIL path must check isDraft before deleting anything.
+if [ -r "$ACC_YML" ]; then
+    _retract_block="$(awk '/^      - name: Retract release and tag on FAIL$/{f=1;next} f&&/^      - name:/{exit} f{print}' "$ACC_YML")"
+    if [ -z "$_retract_block" ]; then
+        bad "the retract step was located (positive control)" "awk extracted nothing"
+    else
+        ok "the retract step was located"
+    fi
+    want "retract checks isDraft before deleting" "isDraft" "$_retract_block"
+    want "retract refuses on an already-published release" '$_draft" != "true"' "$_retract_block"
+else
+    bad "acceptance.yml exists for cross-check" "not found at $ACC_YML"
+fi
+
+echo
+echo "27. acceptance.yml skips a re-run against an already-published tag (sp-j7t1e):"
+# Correcting a tag by hand re-fires the push trigger; workflow_dispatch is a
+# deliberate manual re-run and must not be skipped by this guard.
+if [ -r "$ACC_YML" ]; then
+    _guard_block="$(awk '/^  guard:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$ACC_YML")"
+    if [ -z "$_guard_block" ]; then
+        bad "the guard job was located (positive control)" "awk extracted nothing"
+    else
+        ok "the guard job was located"
+    fi
+    want "guard runs only on a tag push"          "github.event_name == 'push'" "$_guard_block"
+    want "guard checks whether the release already published" "isDraft" "$_guard_block"
+    want "provision is gated on the guard output"  "needs.guard.outputs.already-published" "$A"
+    want "acceptance is gated on the guard output"  "needs: [provision, guard]" "$A"
+    want "teardown is gated on the guard output"    "needs: [provision, acceptance, guard]" "$A"
+else
+    bad "acceptance.yml exists for cross-check" "not found at $ACC_YML"
+fi
+
+echo
 tl_summary

@@ -794,10 +794,17 @@ jobs:
           # here would push the tag with GITHUB_TOKEN and GitHub's anti-recursion
           # rule would swallow it silently, so the App token must be handed to
           # git explicitly via a credential helper (sp-db8sw, sp-njr3s).
+          # set -uo pipefail has no -e: a failed push here would otherwise be
+          # swallowed and the job would report the tag as pushed when it was
+          # not, letting publish mint the tag at whatever main's head is when
+          # it runs instead of the commit that was built (sp-j7t1e).
           git -c http.https://github.com/.extraheader= \
               -c credential.helper= \
               -c credential.helper='!f(){ echo username=x-access-token; echo "password=$GH_TOKEN"; }; f' \
-              push origin "refs/tags/$tag"
+              push origin "refs/tags/$tag" || {
+            printf 'cut: failed to push tag %s to origin — refusing to publish\n' "$tag" >&2
+            exit 1
+          }
           printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
           printf 'prev-tag=%s\n' "${_prev:-}" >> "$GITHUB_OUTPUT"
 
