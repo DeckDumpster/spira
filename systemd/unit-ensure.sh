@@ -167,11 +167,26 @@ for _ue_pair in \
 done
 unset _ue_pair _ue_cbin _ue_rest _ue_cbase _ue_ctype _ue_cname _ue_cargo_note
 
-# PRODUCER GUARD. spira-broker.timer's binary can be executable with no producer to
-# feed it — reads the same spira_broker_producer_present predicate units.sh gates
-# ENABLE on (units.sh sourced above), so a timer enabled before the predicate existed,
-# or enabled by hand, is disabled here regardless of the binary or the rendered file.
-if ! spira_broker_producer_present; then
+# PRODUCER GUARD. spira-broker.timer's enabled state must track spira_broker_producer_present
+# on every invocation, not only when the unit is newly installed or its rendered content
+# changes — the ENABLE loop above only reaches new units, but the timer's own file never
+# changes when the operator flips SPIRA_BROKER_ENABLE, so that loop would never turn it on.
+# Reads the same predicate units.sh gates ENABLE on (units.sh sourced above). The producer
+# decision is made once, not per candidate name — a name with no installed file (the bare
+# name when SPIRA_INSTANCE is set, or vice versa) must not fall through to disable just
+# because its own file is missing while the producer is in fact present.
+if spira_broker_producer_present && [ -x "${SPIRA_BROKER_BIN:-}" ]; then
+    for _ue_bname in \
+        "spira-broker${SPIRA_INSTANCE:+-$SPIRA_INSTANCE}.timer" \
+        "spira-broker.timer"; do
+        _ue_bfile="$DEST/$_ue_bname"
+        [ -f "$_ue_bfile" ] && _ue_execstart_ok "$_ue_bfile" || continue
+        "$SC" --user enable "$_ue_bname" >/dev/null 2>&1 \
+            && "$SC" --user start "$_ue_bname" >/dev/null 2>&1 \
+            && printf 'unit-ensure: enabled+started  %s\n' "$_ue_bname" \
+            || printf 'unit-ensure: failed to enable %s\n' "$_ue_bname" >&2
+    done
+else
     for _ue_bname in \
         "spira-broker${SPIRA_INSTANCE:+-$SPIRA_INSTANCE}.timer" \
         "spira-broker.timer"; do
@@ -181,4 +196,4 @@ if ! spira_broker_producer_present; then
             || printf 'unit-ensure: WARNING could not disable %s\n' "$_ue_bname" >&2
     done
 fi
-unset _ue_bname
+unset _ue_bname _ue_bfile
