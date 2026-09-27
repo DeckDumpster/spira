@@ -16,13 +16,55 @@ spira/sop.sh write <slug> -   # text on stdin
 
 Statutes are how to behave; SOPs are how to fix. They share one mechanism, split by prefix — `law-` and `sop-` — so the [[spira]] Ops persona reads its runbooks exactly the way every agent already reads [[common-law]]. Ops is summoned by an incident bead filed from a failed systemd unit, matches the payload against the `MATCH:` lines below, and executes the first one that fires.
 
-**60 SOP(s)** on the shelf as of 2026-09-27.
+**72 SOP(s)** on the shelf as of 2026-09-27.
 
 ## The closing rule
 
 **An incident resolved without an SOP must produce one.** This is `law-bake-rules-into-tools` applied to production, and it is enforced rather than asked for: writing an SOP is what regenerates this page, the regenerated page is the commit that names the incident bead, and a bead closed with no commit naming it is reopened by `aeon.sh`. An incident fixed by hand and forgotten does not close.
 
 ## The shelf
+
+### Aeon fetch via local remote
+
+`sop-aeon-fetch-via-local-remote`
+
+**Symptom**
+
+```
+Aeon runs finishing-checklist `git fetch origin`/`rebase origin/main` before
+  closing a bead; fails: "aeon: no SSH credentials" / "Could not read from remote
+  repository." Burned prior sessions' wall re-deriving this dead end.
+```
+
+**Check**
+
+```
+git remote -v — look for a `local` remote pointing at a filesystem path (the
+  production checkout) instead of a git@github.com URL.
+```
+
+**Fix**
+
+```
+Use the local filesystem remote, no creds needed (plain path, not network):
+    git fetch local main
+    git merge-base --is-ancestor HEAD~<n> FETCH_HEAD && echo "already current"
+    git rebase FETCH_HEAD
+  Answers "is my branch based on current main / does it rebase clean" without `origin`.
+  Read-only substitute for that one question — not a general forge-read fix (no PR/CI/
+  issue access via this path).
+```
+
+**Escalate**
+
+```
+no `local` remote present, or `git fetch local main` also fails — real
+  infrastructure gap, escalate rather than retry.
+```
+
+**Reference** — wiki/notes/aeon-has-no-forge-read-path.md
+
+**Matches** `git fetch origin.*(Could not read from remote|no SSH credentials)|aeon.*no SSH credentials`
 
 ### Aeon swept uncommitted work
 
@@ -71,6 +113,22 @@ Statutes are how to behave; SOPs are how to fix. They share one mechanism, split
 **Reference** — sp-xpj0w
 
 **Matches** `(base moved|abandon the batch|cancel the batch|in-flight batch|batch is blocking|express bead waiting on an open batch)`
+
+### Batch container rustc stale
+
+`sop-batch-container-rustc-stale`
+
+**Symptom** — Gate returns VERDICT=NO_VERDICT reason=harness-fault (exit 75) for a clean branch: image's rustc too old for Cargo.lock's lockfile version, Rust binaries "not built", conf.sh/install.sh fail on missing target/release artifacts. Not the branch's fault; nothing auto-retries the gate, so it sits stuck. Likely affects every branch batched through that image — corroborate with a growing stranded-branch count (see sp-67an8-style alerts).
+
+**Check** — grep -E 'rustc too old for lockfile|harness fault' in the gate log; bead is CLOSED with a commit but no LANDED record, VERDICT=NO_VERDICT reason=harness-fault.
+
+**Fix** — Ops has no access to rebuild/redeploy the container. Escalate to queue/batch team/operator: rebuild image with rustc matching current lockfile version, then re-submit each stranded branch via queue.sh submit. File one action bead for the rebuild; link every stranded branch as blocked-by it.
+
+**Escalate** — Always — Ops cannot rebuild the gate container. Send the operator a decision request rather than closing quietly.
+
+**Reference** — wiki/notes/standard-operating-procedures.md
+
+**Matches** `harness-fault|NO_VERDICT.*exit 75|rustc too old for lockfile|not built.*spira-config|install failed — harness fault`
 
 ### Batched stranded branch
 
@@ -214,6 +272,45 @@ to open sp-znoj6).
 
 **Matches** `recurrence.*closed.*LANDED|143.*incidents.*CHECK 5|sp-0wr0f.*CHECK 5.*close`
 
+### Cockpit probe missing dispatch arm
+
+`sop-cockpit-probe-missing-dispatch-arm`
+
+**Symptom**
+
+```
+A sweep vital sign permanently reads '?' though the function computing it exists
+  and passes tests. Grep for the metric/script in production code finds only test hits.
+```
+
+**Check**
+
+```
+Run the suspected producer by hand (e.g. `bash spira/cockpit.sh <name>` or the
+  underlying script) against real inputs; confirm it prints the missing key with a value.
+  Then check cockpit.sh's dispatch `case` and collect.sh's PROBES array for that name.
+```
+
+**Fix**
+
+```
+Add a `<name>_keys()` in cockpit.sh emitting the keys, a `<name>)` dispatch arm
+  calling it, and a PROBES entry in collect.sh so the loop schedules it. Smoke-test the
+  standalone subcommand before wiring PROBES. Landed instances: sp-4doni (SP_SENT_FAILED)
+  and cockpit.sh:2898 (SP_QUEUE_DEPTH/queue).
+```
+
+**Escalate**
+
+```
+If wiring changes what the number MEANS, or if retiring the row instead of
+  wiring is on the table, that's an operator/Concierge decision, not Ops's to guess.
+```
+
+**Reference** — wiki/notes/cockpit-probe-missing-dispatch-arm.md
+
+**Matches** `has no producer|renders.*\?.*$|no live caller in.*production|tested function.*never called`
+
 ### Conf schema grep q pipefail
 
 `sop-conf-schema-grep-q-pipefail`
@@ -227,6 +324,52 @@ to open sp-znoj6).
 **Reference** — sp-m2zdm
 
 **Matches** `bd migrate schema failed.*dolt_server_port|schema.*failed.*deprecated|conf.sh.*grep.*pipefail`
+
+### Dedup meter toctou race
+
+`sop-dedup-meter-toctou-race`
+
+**Symptom**
+
+```
+Dedup meter fires: two+ beads share one external_ref. incident.sh
+says a recurrence should reopen the existing bead, not create a new one.
+```
+
+**Check**
+
+```
+For each ref in "Worst offenders", diff created_at + labels of all
+beads with that external_ref:
+  bd -C "$SPIRA_DB" show <id> --json | python3 -c \
+    'import sys,json;d=json.load(sys.stdin);b=d if isinstance(d,dict) else d[0];print(b["created_at"],b["labels"])'
+If two beads share a ref, were created seconds apart, and only one carries
+ref:<hash>, this is a TOCTOU race: file_one()'s dedup-check-then-act is not
+locked, so two concurrent filers both saw "no bead yet" and both created one.
+```
+
+**Fix**
+
+```
+collapse, don't re-diagnose the race each time:
+  bd -C "$SPIRA_DB" duplicate <id-to-drop> --of <survivor>
+  bd -C "$SPIRA_DB" label add <survivor> "ref:<hash>"
+Keep the actively-worked bead (owner/branch/submitted labels) as survivor
+even if not literally first-created.
+```
+
+**Escalate**
+
+```
+Never widen DEDUP_LOOKBACK_DAYS to quiet this — the race is in
+concurrency, not window length. Code fix (lock the check+create+label
+sequence on the ref hash) is tracked at sp-ljbvd; check it landed before
+filing a new bead for the same root cause.
+```
+
+**Reference** — wiki/notes/standard-operating-procedures.md
+
+**Matches** `DEDUP:.*duplicate incident refs detected|dedup-meter-nonzero`
 
 ### Delivers action invalid
 
@@ -311,6 +454,71 @@ bd show $bead_id | grep -i "delivers:action"
 **Reference** — wiki/notes/spira-duplicate-incidents.md
 
 **Matches** `host_cores.*function.*missing|function.*undefined.*host_cores`
+
+### Escalation gate self close
+
+`sop-escalation-gate-self-close`
+
+**Symptom** — An escalation-gate bead is filed as a `blocks` dependency, mailed to the operator, then closed by the same session citing an "operator-wait marker". bd's dep check only reads status, not reason text, so the close immediately lifts the block and the dependent bead is re-summoned with no reply confirmed.
+
+**Check**
+
+```
+bd -C "$SPIRA_DB" show <gate-bead> | grep -i "operator-wait marker"
+  grep -rl <msg-id-or-subject> "$SPIRA_RUN/mail/operator-archive/" 2>/dev/null
+  bd -C "$SPIRA_DB" dep list <dependent-bead>
+```
+
+**Fix** — Decided (sp-s81vy, Concierge, 2026-09-27): option (a). Enacted as law-a-gate-closes-on-the-reply -- an escalation-gate bead closes ONLY on Ryan's recorded answer, cited in the close reason (e.g. "operator replied <msg-id> on <date>: <answer>"). Never close it on a "sent the mail, standing in for the reply" marker alone. Until a reply lands: add/keep a stopgap `blocks` edge from a still-open bead onto the dependent so it stays blocked, and leave the gate bead open and in_progress rather than closing it and relying on note text. Mechanical enforcement (bd or aeon.sh refusing the close, or the dependent re-verifying operator-archive itself) is not yet built -- filed as a follow-up code-fix bead; until it lands this FIX is session discipline, not a guard.
+
+**Escalate** — No longer a design question -- law-a-gate-closes-on-the-reply settles it. Still escalate the *content* of the underlying question the gate bead exists to ask (e.g. missing SSH/forge-write access) if it recurs unanswered past a wall or two.
+
+**Reference** — wiki/notes/sp-5iapb-escalation-gate-self-close.md
+
+**Matches** `operator-wait marker|Blocked until you act.*both stay open|closes itself after sending operator mail`
+
+### Escalation staleness wall burn
+
+`sop-escalation-staleness-wall-burn`
+
+**Symptom**
+
+```
+Bead reclaimed by 3+ consecutive sessions, each re-confirming an unanswered
+  operator question with zero progress possible. Applies recursively: the tracking bead
+  itself (e.g. sp-al7ph) can suffer the same reclaim loop as the siblings it protects.
+```
+
+**Check**
+
+```
+bd show <bead-id> | grep -c Escalat   # may read 0 even when SYMPTOM clearly
+  matches -- don't treat 0 as disconfirming, read the bead body too.
+  Also: bd show sp-wb7ip  # if open, mail.sh send operator hangs, delivers nothing.
+```
+
+**Fix**
+
+```
+Do not re-send mail; escalate via bd note only if sp-wb7ip-class bug is open.
+  Record the pending decision as a bd note. SELF-APPLICATION: if this bead itself risks
+  recursive reclaim, create a placeholder bead and `bd dep add <this-bead> <placeholder>`
+  to block its own reclaim too, same as siblings -- this is Ops-executable without
+  operator action, do it even while awaiting (a) below. Leave the bead open.
+```
+
+**Escalate**
+
+```
+Always — operator/harness-owner: (a) mail-staleness watcher after ~20-30min
+  unanswered [default], or (b) placeholder-dependency block (Ops can do this part now).
+  Separately: sop.sh applied can hang (exit 124) even with no --why (sp-ejjiv) -- budget
+  a short timeout, fall back to bd note if it hangs.
+```
+
+**Reference** — wiki/notes/escalation-staleness-wall-burn.md
+
+**Matches** `repeating conditions escalate once|burning wall time|go unanswered for [0-9]+\+? min`
 
 ### False alarm no cause
 
@@ -410,6 +618,67 @@ bd -C $SPIRA_DB list | grep sp-yuiuc; verify the incident has no_cause in the de
 
 **Matches** `fetched 0 open issue.*gh-intake`
 
+### Groom closes placeholder gate bead
+
+`sop-groom-closes-placeholder-gate-bead`
+
+**Symptom** — A placeholder bead gating a dependent via bd-dep, created to block reclaim until an operator decision lands, is force-closed by a groom sweep as generic cruft. Effect: dependent's blocker clears, gets reclaimed, churn resumes, decision still unanswered.
+
+**Check**
+
+```
+bd show <placeholder> — CLOSED, gating language in description, close reason is a generic groom summary not naming it. bd show <dependent> — reclaimed after placeholder's close time.
+```
+
+**Fix** — Groom-logic gap, not Ops's to fix in place. File against groom (see sp-yyros/epic sp-pswer, lifecycle cutover deletes "groomer's three sweeps" — may obsolete this). Suggested: groom should never close a bead that is a live bd-dep target without checking the dependent's condition, or placeholder beads get a `placeholder-gate` label groom skips. Re-escalate the gated decision directly rather than trusting the placeholder to survive.
+
+**Escalate** — Choice of groom fix design is operator/harness-owner's, not Ops's.
+
+**Reference** — wiki/notes/groom-closes-placeholder-gate-bead.md
+
+**Matches** `close reason contains "Groom pass complete" AND the closed bead's own description contains "Close this bead" + "only when" AND the bead is not named in its own close reason's action list.`
+
+### Host wide gate admission
+
+`sop-host-wide-gate-admission`
+
+**Symptom**
+
+```
+certify-par var retuned to cut concurrent gate trials; reds/harness-fault streak
+  keeps growing. ps shows multiple independent gate chains at once: landing pass's own
+  certify loop plus chains started by queue submit.
+```
+
+**Check**
+
+```
+grep certify-par in landing script -> only bounds its own certify loop. grep gate
+  invocation in queue-submit script -> calls gate directly, no certify-par reference. Gate's
+  own lock is keyed per branch tree -> serialises same branch only, not host-wide.
+```
+
+**Fix**
+
+```
+don't retune certify-par again, it's not wired to queue submit. Add admission control
+  INSIDE the gate script itself, ahead of the tree lock: N flock'd slot files under a
+  run-dir admission dir (N = certify-par, default = landing's own formula), tried in order
+  on a spare fd, auto-released on exit, times out to no-verdict after gate lock-wait.
+  Landed as a gate-script commit, see sp-083ux -- start there.
+```
+
+**Escalate**
+
+```
+pool priority between callers (landing pass vs ad-hoc queue submit) is a policy
+  call for the operator, not Ops.
+```
+
+**Reference** — wiki/notes/standard-operating-procedures.md
+
+**Matches** `certify_par.*(queue submit|bypass)|host-wide gate admission`
+
 ### Landed citation mismatch
 
 `sop-landed-citation-mismatch`
@@ -452,6 +721,53 @@ pinning which mechanism fired for a given bead needs the landing pass's own log
 **Reference** — wiki/notes/sp-9geby-landed-citation-mismatch.md
 
 **Matches** `closed .* 'landed'.*citing|citing.*(unrelated|wrong).*commit|orphan-work.*count unchanged`
+
+### Mail send kind question body format
+
+`sop-mail-send-kind-question-body-format`
+
+**Symptom**
+
+```
+mail.sh send <mailbox> --kind question --default X lints
+  `section "Question" is empty` / `section "Default" is empty` even with
+  --subject/--default set; guessed body flags (--body, --message,
+  --question, positional, "-" heredoc) are rejected as unknown option.
+```
+
+**Check**
+
+```
+printf 'Question: q?\nDefault: x\n' | timeout 8 mail.sh send operator \
+    --from "Ops <ops@spira>" --subject test --kind question --default x
+  Reproduces the empty-section lint (plain "Label:" text does not satisfy
+  the parser). Confirmed 2026-09-27 on sp-wkonl.
+```
+
+**Fix**
+
+```
+No body flag exists. Pipe markdown headers on stdin:
+    printf '## Question\n<q>\n\n## Default\n<d>\n' | mail.sh send <mailbox> \
+      --from "Ops <ops@spira>" --subject "<topic, no leading bead id>" \
+      --kind question --default "<d>" --bead <id>
+  --default on the CLI is still required (checked separately from the
+  body's "## Default"). Subject must not lead with a bead id — use --bead
+  (relates_to edge; a bug-typed bead refuses a blocking edge unless
+  SPIRA_MAIL_ALLOW_BLOCKING=1, relates_to is fine). Verified twice
+  end-to-end, messages landed in run/mail/operator/cur, exit 0.
+```
+
+**Escalate**
+
+```
+A hang with no lint error at all is sop-mail-send-loom-splice-hang
+  (different failure mode) — don't conflate the two.
+```
+
+**Reference** — sp-wkonl
+
+**Matches** `mail\.sh send.*(unknown option|--body|--message|--question)|section "Question" is empty|section "Default" is empty`
 
 ### Mail send loom splice hang
 
@@ -709,6 +1025,71 @@ The fix is incomplete in the target branch. Examine aeon.sh error handling path 
 
 **Matches** `^Queue throttle lifted:.*CERTIFIED depth now.*filed (\d+) times`
 
+### Recur bead defer until checkpoint
+
+`sop-recur-bead-defer-until-checkpoint`
+
+**Symptom** — Root-cause fix landed (as a dep bead or prod mitigation) but effectiveness only confirmable at a future timestamp. Deps closed -> bead unblocked -> `bd ready` re-claims it every queue cycle -> each fresh aeon re-derives the same "too early" conclusion. Confirmed: sp-bokuj claimed 4+ times, identical conclusion each time.
+
+**Check**
+
+```
+bd show <bead> | grep -c "too early\|do NOT re-check\|nothing new to establish" -- 2+ hits across separate sessions confirms the pattern.
+```
+
+**Fix** — `bd defer <bead> --until=<checkpoint+slack> --reason="<why>"`. --until makes it a snooze: bd auto-reopens it once the date passes, so the next claim happens near the checkpoint instead of every cycle before it. Not a close -- deps/notes/lease untouched, still in `bd list`. Pick --until past the checkpoint (add slack) so the waking aeon actually finds something new.
+
+**Escalate** — checkpoint process itself doesn't exist or its schedule is unknown -- mail the operator, don't guess --until.
+
+**Reference** — sp-bokuj
+
+**Matches** `incident bead notes contain 2\+ session entries each saying a verification checkpoint hasn't arrived yet ("too early to check", "do NOT re-check before", "nothing new to establish") AND the bead's deps are already closed`
+
+### Round branch orphan work
+
+`sop-round-branch-orphan-work`
+
+**Symptom**
+
+```
+cockpit.sh's orphan-work probe counts a spira/round-NN branch into SP_ORPHAN_WORK
+  (or SP_UNADOPTED): no bead resolves for it, and while in flight its commits are not yet
+  on base — same shape as real unlanded work. SP_ORPHAN_WORK means "do not delete"; a round
+  branch inflates it every round, permanently, so the field can never read zero.
+```
+
+**Check**
+
+```
+grep -n "round-\*" spira/cockpit.sh — must show a case arm excluding round branches
+  in the no-bead classifier, before the merge-base ancestor test (near SP_ORPHAN_WORK).
+  Absent, or a live snapshot naming spira/round-[0-9]+ under ORPHAN/UNADOPTED, means it
+  regressed or was never applied.
+```
+
+**Fix**
+
+```
+In the `if [ -z "$_st" ]; then` branch (no bead), add
+  `case "$_b" in spira/round-*) continue ;; esac` before the merge-base check, mirroring
+  sending.sh:377's explicit round-branch skip. Route it to its own counter
+  (SP_ROUND_BRANCHES) rather than dropping it silently. Add a regression case to
+  test-cockpit-unsent.sh: round-NN with an unlanded commit, assert it out of
+  SP_ORPHAN_WORK; confirm the assertion fails pre-fix first.
+```
+
+**Escalate**
+
+```
+if another ref-walking instrument does the same no-bead-is-orphan classification
+  without this exclusion, it's the same class of bug — apply the same case arm, don't
+  refile as new.
+```
+
+**Reference** — sp-ghi5q
+
+**Matches** `SP_ORPHAN_WORK|SP_UNADOPTED|orphan work.*round|round.*orphan work`
+
 ### Server testdb suite budget
 
 `sop-server-testdb-suite-budget`
@@ -729,17 +1110,17 @@ The fix is incomplete in the target branch. Examine aeon.sh error handling path 
 
 `sop-sopsh-applied-ledger-contention`
 
-**Symptom** — `sop.sh applied` takes 60-120s+ or hits a caller's short `timeout` (exit 124) on a hot bead (25+ ledger entries). Can hit 124 with NO entry appended (killed before append).
+**Symptom** — `sop.sh applied` takes 60-120s+ or hits a caller's short `timeout` (124), possibly with NO entry appended. Heredoc/stdin not required (sp-ejjiv). Confirmed again sp-ovng3 2026-09-27: a live --why call exceeded 120s, was backgrounded (task bdpb97hgi), then finished on its own with rc=0 and a correct entry after ~365s. Slow under contention, not a deadlock.
 
-**Check** — Two `sop.sh applied` calls on the same bead, short timeouts back to back; diff applied.jsonl line count before/after. Both timing out with no line added confirms this.
+**Check** — Two `applied` calls on the same bead, short timeouts back to back; diff applied.jsonl line count before/after. Both timing out with no line added confirms this (sp-ejjiv: 610/610).
 
-**Fix** — sp-ohnz7 read the code: no full-file lock and no wiki-regen in `applied` -- ruled out. Real per-call cost is 3 bd/dolt subprocess calls (shelf read, optional METRIC cockpit call, bead-note write); ledger append itself is a cheap unlocked printf. Ops: mitigate as before (background it, size timeouts 150s+, don't wrap in a short timeout). Builder: do NOT try to reproduce by timing the 3 calls under deliberately-induced load -- standalone they run <1s (confirmed sp-ohnz7, 2026-09-27) and generating load against prod dolt to force contention is itself unsafe (law-fence-loops-on-shared-hardware, law-probe-a-fixture-not-production). Instead land sp-h54i5 first: opt-in per-call timing trace in `applied()` so the next NATURAL hang leaves evidence of which of the 3 calls blocked. Fix at that layer once identified. Sharding/batching the ledger will NOT help.
+**Fix** — No lock or wiki-regen in `applied` (sp-ohnz7); cost is 3 bd/dolt subprocess calls, append is a cheap unlocked printf. Ops: background with `nohup ... </dev/null >out.log 2>&1 &`, never a short `timeout`. If your own wall forces you to move on, note the backgrounded PID/output path on the bead rather than waiting live -- it finishes on its own. Builder: land sp-h54i5's per-call trace (commit 893111da9) to catch the next hang with subprocess detail -- still NOT on origin/main as of sp-ovng3, so trace diagnosis stays blocked.
 
-**Escalate** — If timing finds a different mechanism than bd/dolt latency, amend this SOP again rather than filing a new one.
+**Escalate** — different mechanism than bd/dolt latency -> amend here. A hang that never returns even after minutes backgrounded is new -- escalate.
 
 **Reference** — wiki/notes/sop-sopsh-applied-ledger-contention.md
 
-**Matches** `sop\.sh applied.*(hang|timeout|124|slow).*(concurrent|lock|contention)|applied\.jsonl.*(lock|contention|hang)`
+**Matches** `sop\.sh applied.*(hang|timeout|124|slow).*(concurrent|lock|contention)|applied\.jsonl.*(lock|contention|hang)|sop\.sh applied.*hung.*live`
 
 ### Sp 214zs queue open batch
 
@@ -917,6 +1298,26 @@ Two issues:
 **Reference** — wiki/notes/watcher-suite-timing.md
 
 **Matches** `test-answers-premise-rejected.sh.*the watcher printed the verdict.*wanted \[ANSWERED\] in \[\]`
+
+### Test fixture litter in store
+
+`sop-test-fixture-litter-in-store`
+
+**Symptom** — Incident bead names branch "topic" / suite "test-fx-red.sh" — these are fixtures spira/test-testenv-batch.sh heredocs into a temp dir during its own test run; a run wrote its fixture batch key into the PRODUCTION store, so incident.sh filed a real bead on fake data. sp-6e51y burned 5+ sessions applying sop-verdict-repeat-refused and escalating to the operator before this was noticed.
+
+**Check**
+
+```
+git rev-parse --verify topic (fails: no such branch); grep -n test-fx-red.sh spira/test-testenv-batch.sh (only appears inside a heredoc writing to a temp dir).
+```
+
+**Fix** — Close as fixture litter — do not re-run testenv-batch.sh or escalate about SSH. Reason: "OUTCOME: not-a-defect (fixture litter)". File a separate bead: test-testenv-batch.sh leaks into the production bd store instead of an isolated fixture db.
+
+**Escalate** — If the same key recurs after close, escalate: something schedules that suite against production and needs stopping.
+
+**Reference** — wiki/notes/sp-6e51y-fixture-litter.md
+
+**Matches** `repeat-refused:topic:|test-fx-red\.sh`
 
 ### Test sop
 
@@ -1201,7 +1602,7 @@ bd show <bead> | grep -E '\b(groom|incident|maechen-sweep|plan|spike|czar-trigge
 
 **Symptom** — World is in DRAINING state for extended period, blocking new aeon summons while in-flight aeons complete
 
-**Check** — SPIRA_AEON_OVERRIDE=1 world.sh drain --timeout 0
+**Check** — test -e "$SPIRA_RUN/world.draining" && echo DRAINING || echo NOT_DRAINING
 
 **Fix**
 
@@ -1209,6 +1610,10 @@ bd show <bead> | grep -E '\b(groom|incident|maechen-sweep|plan|spike|czar-trigge
 If 16+ aeons have been live for >15 minutes during drain, summons are likely unnecessarily blocked.
   Resume with: SPIRA_AEON_OVERRIDE=1 world.sh resume
   Resuming does not kill in-flight aeons—they complete normally while new summons proceed.
+WARNING: Do NOT use `SPIRA_AEON_OVERRIDE=1 world.sh drain --timeout 0` as the CHECK - running
+  that command re-arms draining as a side effect even when only checking status. An aeon that
+  ran it after already resuming had to call `world.sh resume` a second time to undo it. Use the
+  file-existence test above instead, which only reads state and cannot re-trigger drain.
 ```
 
 **Escalate** — None (Ops owns this)
