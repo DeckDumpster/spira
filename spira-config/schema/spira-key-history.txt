@@ -17,6 +17,7 @@ auron_restart_window
 auron_restarts
 base_ci_unreadable_grace_secs
 batch_artifact_days
+batch_bins_ttl
 batch_judgement_label
 batch_ledger
 batch_maxpar
