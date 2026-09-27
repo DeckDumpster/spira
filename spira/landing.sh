@@ -484,12 +484,12 @@ find "${SPIRA_VERDICTS:-$SPIRA_RUN/verdicts}" -maxdepth 1 -type f \
 # established from the logs rather than guessed at, a guard against it is a guess with a
 # comment attached. sp-q9i keeps that question.
 #
-# THE SECOND USE is the assertion in sending.sh (sp-bjzj). Before it reaps a branch,
-# sending.sh checks that landing.sh left a landstate entry for it. An absent entry means
-# landing.sh never selected this branch — the selection bug that caused sp-qj8n to close
-# four times without the work ever reaching the base. Every code path here writes a record:
-# GATED / REBASED / RED / CONTENT / LANDED, so any branch that slips past the loop is
-# visible on the first reap rather than after four reopen cycles.
+# THE SECOND USE was an assertion in sending.sh (sp-bjzj): before reaping a branch it
+# checked that landing.sh had left a landstate entry, since an absent one meant landing.sh
+# never selected the branch — the sp-qj8n selection bug. CHECK 5 (sentinel.sh) now proves
+# the same closed-not-landed invariant directly off the commit graph, so that diagnostic
+# was removed as redundant (sp-jci6o). Every code path here still writes a record — GATED /
+# REBASED / RED / CONTENT / LANDED — for the analysis use below.
 #
 # What the record IS for originally: the stretch between DONE and LANDED is invisible, and
 # every fact needed to show it is already computed and then dropped (sp-idml). One line per

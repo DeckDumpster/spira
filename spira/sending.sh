@@ -7,6 +7,14 @@
 #   sending.sh --dry-run           print each branch's disposition, change nothing
 #   sending.sh <bead-id>           send exactly one bead's branch and worktree
 #   sending.sh --status-from <f>   read `id<TAB>status` from a file instead of bd (tests)
+#   sending.sh --skip-queue        sweep every repo EXCEPT queue-mode ones (the sentinel's
+#                                  per-pass call, sp-jci6o: a queue-mode repo's landed
+#                                  members are reaped at landing by bead_close_on_land, so
+#                                  re-scanning every one of its branches here every two
+#                                  minutes finds only what already left)
+#   sending.sh --queue-only        sweep ONLY queue-mode repos (the daily straggler sweep —
+#                                  catches whatever the landing-time reap missed: a held
+#                                  branch, a repo:/branch: label that would not resolve)
 #
 # WHAT THIS REPLACES
 # ------------------
@@ -79,17 +87,20 @@ REPO=""
 # being asked to go and look. Set beside REPO in sweep_repo so the two cannot disagree.
 REPONAME=""
 
-DRY=0; FETCH=1; ONLY=""; STATUS_FROM=""
+DRY=0; FETCH=1; ONLY=""; STATUS_FROM=""; SKIP_QUEUE=0; QUEUE_ONLY=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run)     DRY=1 ;;
         --no-fetch)    FETCH=0 ;;
         --status-from) STATUS_FROM="${2:?--status-from needs a file}"; shift ;;
+        --skip-queue)  SKIP_QUEUE=1 ;;
+        --queue-only)  QUEUE_ONLY=1 ;;
         -*)            die "unknown flag: $1" ;;
         *)             ONLY="$1" ;;
     esac
     shift
 done
+[ "$SKIP_QUEUE" = 1 ] && [ "$QUEUE_ONLY" = 1 ] && die "--skip-queue and --queue-only are mutually exclusive"
 
 say() { printf '%s\n' "$*"; }
 
@@ -115,7 +126,7 @@ LANDREF=""
 # is the entire bug this file exists for.
 # --------------------------------------------------------------------------------------
 send_branch() {
-    local id="$1" br="$2" verb="${3:-SENT}" w held
+    local id="$1" br="$2" verb="${3:-SENT}" held
     # Re-check liveness immediately before acting. The sentinel summons aeons in the same
     # pass that lands branches, so the gap between deciding and doing is a real window. Both
     # witnesses again, not just the pidfile: this recheck used to ask only `holder_alive`,
@@ -124,40 +135,19 @@ send_branch() {
         say "HELD   $id  $held (mid-send)"; return 0
     fi
 
-    w="$(worktree_of "$br" "$REPO")"
-    if [ -n "$w" ] && ! spira_destroy_worktree "$id" "$w" "$REPO" "landed in $LANDREF"; then
-        say "FAILED $id  worktree $w was not removed — see $SPIRA_REAPLOG"
-        failed=$((failed+1)); return 1
-    fi
-
-    # VERIFY. `git branch -D` failing silently is the whole reason this program exists; a
-    # reaper that trusts its own exit status inherits the bug it was written to fix. The
-    # verification is inside spira_destroy_branch, which re-reads the ref after the delete.
-    SPIRA_DESTROY_ERR=""
-    if ! spira_destroy_branch "$id" "$br" "$REPO" "landed in $LANDREF" sending; then
-        [ "${SPIRA_DESTROY_ERR:-}" = "certified-queued" ] \
+    # THE VERIFIED DELETION ITSELF — worktree, then branch (re-verified after the delete),
+    # then the remote ref, then the branch: label — lives in lib.sh as
+    # spira_reap_landed_branch, shared with bead_close_on_land's own landing-time reap
+    # (sp-jci6o). "sending" as the caller tag skips its content-landed fence: send_disposition
+    # already decided this branch's content is safe to reap, by ancestry, content_landed or
+    # the superseded exception, and re-asking the same question here would reject the
+    # zero-ahead and superseded-safe arms that ancestry alone cannot approve.
+    if ! spira_reap_landed_branch "$id" "$br" "$REPO" "landed in $LANDREF" sending; then
+        [ "${SPIRA_REAP_ERR:-}" = "certified-queued" ] \
             && { say "SKIP   $id  CERTIFIED/BATCHED — waiting for verdict"; return 0; }
-        say "FAILED $id  branch $br survived deletion: ${SPIRA_DESTROY_ERR:-refused, see $SPIRA_REAPLOG}"
+        say "FAILED $id  ${SPIRA_REAP_ERR:-refused, see $SPIRA_REAPLOG}"
         failed=$((failed+1)); return 1
     fi
-
-    # Under `pr` the branch IS pushed, and under `push` only the landing branch is, so this
-    # is defensive rather than routine. It is guarded on existence because a delete of a ref
-    # that was never there is an error the caller would have to learn to ignore — and it
-    # names the base's own remote rather than assuming `origin`.
-    local rem; rem="$(ref_remote "$LANDREF")" || rem=""
-    if [ -n "$rem" ] && git -C "$REPO" rev-parse --verify -q "$rem/$br" >/dev/null 2>&1; then
-        spira_git_push "$REPO" -q "$rem" --delete "$br" 2>/dev/null \
-            && say "  deleted $rem/$br"
-    fi
-
-    # AND THE `branch:` LABEL GOES WITH THE REF. The label records which branch a bead's
-    # work lives on so a reopened bead returns to it (law-branch-affinity-is-recorded), and
-    # that affinity is over the moment the branch is deleted: a bead reopened afterwards
-    # would be handed the name of a ref that no longer exists, and an aeon that recreates it
-    # from the base rebuilds a branch whose work already landed. Dropped only here, after the
-    # ref is verifiably gone, so the label and the branch cannot disagree.
-    bdq label remove "$id" "branch:$br" >/dev/null 2>&1 || true
 
     # The aeon's session log is deliberately KEPT. Sentinel CHECK 5 uses the existence of
     # .runtime/spira/<id>.log to tell a bead an aeon worked from one a human closed by hand,
@@ -457,14 +447,6 @@ sweep_repo() {
                 if [ "${n:-0}" -gt 0 ] 2>/dev/null; then
                     bdq label add "$id" content-landed >/dev/null 2>&1 || true
                 fi
-                # ASSERT: every branch content_landed confirms as done should have been seen
-                # by landing.sh first, which writes $SPIRA_RUN/landstate/$id on every code
-                # path that processes a branch. A missing record means the branch slipped
-                # past landing.sh's selection entirely — the shape of sp-qj8n. Logged, not
-                # blocking: the send proceeds regardless.
-                if [ ! -f "${SPIRA_RUN}/landstate/$id" ]; then
-                    log "sending: ASSERT $id — content landed but no landstate/$id; landing.sh may not have selected this branch (sp-qj8n shape)"
-                fi
                 send_landed "$id" "$br"
                 ;;
             "SEND ff")
@@ -594,7 +576,16 @@ if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0 2>/dev/null || true; fi
     say "RETIRED $(basename "$legacy")  superseded by the per-repository tree"
 done
 
+# --skip-queue/--queue-only PARTITION THE REPOSITORY SET, NEVER A BRANCH WITHIN ONE. A
+# queue-mode repo's landed members are reaped at landing by bead_close_on_land
+# (spira_reap_landed_branch, lib.sh), so the per-pass sentinel call passes --skip-queue and
+# leaves that repo to the daily straggler sweep (--queue-only), which catches whatever the
+# landing-time reap missed (sp-jci6o). Neither flag changes what a swept repo's own branches
+# get judged by — only which repos are swept at all.
 for repo_name in $(spira_repos); do
+    repo_mode="$(repo_land "$repo_name" 2>/dev/null)"
+    [ "$SKIP_QUEUE" = 1 ] && [ "$repo_mode" = queue ] && continue
+    [ "$QUEUE_ONLY" = 1 ] && [ "$repo_mode" != queue ] && continue
     sweep_repo "$repo_name"
 done
 

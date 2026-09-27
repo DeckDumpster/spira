@@ -6426,6 +6426,46 @@ spira_destroy_branch() {
 }
 
 # --------------------------------------------------------------------------------------
+# spira_reap_landed_branch <id> <branch> <repo> <why> [caller] -> 0 sent, 1 failed, 2 refused
+# (certified-queued or the content fence). Sets SPIRA_REAP_ERR on 1 or 2.
+#
+# THE ONE SEQUENCE EVERY DELETER OF A LANDED BRANCH SHARES: remove the worktree, then the
+# branch, then its remote counterpart — worktree first because git refuses to delete a
+# branch a worktree still holds, which was sending.sh's whole reason to exist (see its own
+# header). <caller> is passed straight through to spira_destroy_branch: empty runs its
+# content-landed fence (never a tip comparison; refuses when <branch>'s diff is not on the
+# repository's own base), non-empty skips it for a caller that already established safety
+# by other means (spira_destroy_branch's own CALLER EXCEPTIONS list).
+# --------------------------------------------------------------------------------------
+spira_reap_landed_branch() {
+    local id="$1" br="$2" repo="$3" why="${4:-landed}" caller="${5:-}" w rem
+    SPIRA_REAP_ERR=""
+    w="$(worktree_of "$br" "$repo")"
+    if [ -n "$w" ] && ! spira_destroy_worktree "$id" "$w" "$repo" "$why"; then
+        SPIRA_REAP_ERR="worktree $w was not removed — see ${SPIRA_REAPLOG:-the reap log}"
+        return 1
+    fi
+    SPIRA_DESTROY_ERR=""
+    if ! spira_destroy_branch "$id" "$br" "$repo" "$why" "$caller"; then
+        if [ "${SPIRA_DESTROY_ERR:-}" = "certified-queued" ]; then
+            SPIRA_REAP_ERR="certified-queued"
+            return 2
+        fi
+        SPIRA_REAP_ERR="branch $br not deleted: ${SPIRA_DESTROY_ERR:-refused — content not landed, held, or checked out; see ${SPIRA_REAPLOG:-the reap log}}"
+        return 1
+    fi
+    rem="$(ref_remote "$(spira_landref "$repo" 2>/dev/null)" 2>/dev/null)" || rem=""
+    if [ -n "$rem" ] && git -C "$repo" rev-parse --verify -q "$rem/$br" >/dev/null 2>&1; then
+        spira_git_push "$repo" -q "$rem" --delete "$br" 2>/dev/null \
+            && log "reap $id: deleted $rem/$br"
+    fi
+    # THE branch: LABEL GOES WITH THE REF (law-branch-affinity-is-recorded): a bead reopened
+    # after this would otherwise be handed the name of a ref that no longer exists.
+    bdq label remove "$id" "branch:$br" >/dev/null 2>&1 || true
+    return 0
+}
+
+# --------------------------------------------------------------------------------------
 # worktree_evict_foreign <work> <repo> — move a worktree aside unless it demonstrably belongs
 # to <repo>: another repository's, or one whose `.git` resolves to nothing. Prints the path it
 # was moved to. rc 0 = moved, 1 = nothing to do, 2 = refused.
@@ -7389,24 +7429,35 @@ print(st)' "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" 2>/dev/null || printf -- 
 # Idempotent both ways: a bead already closed is left alone, and a bead never marked
 # submitted (an older-style direct close, or a non-code type) is left alone too — this is
 # not the only path that closes a bead, only the landing path for the new one.
+#
+# REAPS THE BRANCH AND WORKTREE HERE TOO (sp-jci6o), the same verified deletion sending.sh
+# uses (spira_reap_landed_branch), so a bead closed by any landing path — push, pr, hold or
+# queue — loses its worktree and branch the moment it is known landed rather than waiting
+# for the next per-pass Sending scan to rediscover it by ancestry. Best-effort: the caller's
+# own repo:/branch: labels resolve the branch, spira_destroy_branch's content fence refuses
+# if that branch's diff is somehow not on the repository's base, and either kind of miss is
+# still caught by the Sending, which remains the backstop for everything this cannot reach.
 bead_close_on_land() {   # bead_close_on_land <bead-id> <landed-sha>
     local id="$1" sha="${2:-}"
-    local st lbls
-    read -r st lbls <<< "$(bdjson show "$id" 2>/dev/null | python3 -c '
+    local st repo_label br_label
+    read -r st repo_label br_label <<< "$(bdjson show "$id" 2>/dev/null | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
 except Exception: raise SystemExit(0)
 d = d if isinstance(d, list) else [d]
 if not d: raise SystemExit(0)
 row = d[0]
-print(row.get("status") or "", ",".join(row.get("labels") or []))
-' 2>/dev/null)"
+labs = row.get("labels") or []
+submitted = sys.argv[1] in labs
+repo = next((l[5:] for l in labs if l.startswith("repo:")), "-")
+br = next((l[7:] for l in labs if l.startswith("branch:")), "-")
+st = row.get("status") or "-"
+if st != "closed" and submitted: st = "submitted"
+print(f"{st} {repo} {br}")
+' "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" 2>/dev/null)"
     [ -n "${st:-}" ] || return 0
     [ "$st" = closed ] && return 0
-    case ",${lbls:-}," in
-        *",${SPIRA_SUBMITTED_LABEL:-spira-submitted},"*) ;;
-        *) return 0 ;;
-    esac
+    [ "$st" = submitted ] || return 0
     if bdq close "$id" --reason-file - <<REASON >/dev/null 2>&1
 OUTCOME: landed
 Closed by the landing pass: work landed at ${sha:-unknown} (law-closed-is-not-landed).
@@ -7416,6 +7467,18 @@ REASON
         land_mark "$id" LANDED "$sha" "Closed by landing pass"
     else
         log "land-close $id: bd close failed — left submitted, CHECK 5 will report it"
+        return 0
+    fi
+    if [ "$repo_label" != "-" ] && [ "$br_label" != "-" ]; then
+        local _rp
+        if _rp="$(repo_root "$repo_label" 2>/dev/null)" \
+           && git -C "$_rp" show-ref --verify -q "refs/heads/$br_label" 2>/dev/null; then
+            if spira_reap_landed_branch "$id" "$br_label" "$_rp" "landed at ${sha:-unknown}"; then
+                log "land-close $id: reaped branch $br_label"
+            else
+                log "land-close $id: branch $br_label not reaped: ${SPIRA_REAP_ERR:-unknown} — left for the Sending"
+            fi
+        fi
     fi
 }
 

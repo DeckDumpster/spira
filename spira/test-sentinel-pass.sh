@@ -122,8 +122,9 @@ JSONL
 
 SUMMON_LOG="$TMP/summon.log"
 SENDING_LOG="$TMP/sending.log"
-# sending.sh records each invocation so assertions can verify whether it was called.
-printf '#!/bin/sh\necho called >> "$SENDING_LOG"\n' > "$STUBS/sending.sh"; chmod +x "$STUBS/sending.sh"
+# sending.sh records each invocation (and its flags) so assertions can verify whether, and
+# how, it was called.
+printf '#!/bin/sh\necho "called $*" >> "$SENDING_LOG"\n' > "$STUBS/sending.sh"; chmod +x "$STUBS/sending.sh"
 # mock-summon records each summon so the fill assertion can count them.
 printf '#!/bin/sh\necho summoned >> "$SUMMON_LOG"\n' > "$STUBS/mock-summon"; chmod +x "$STUBS/mock-summon"
 
@@ -161,6 +162,8 @@ is   "pass 1 fill: pool=3 + 5 ready beads -> 3 summons" \
 want "pass 1 order: CHECK7 line appears in log" "CHECK7" "$pass1_out"
 is   "pass 1 sending: no stamp yet -> sending.sh called" \
      "1" "$(grep -c . "$SENDING_LOG" 2>/dev/null || echo 0)"
+want "pass 1 sending: called with --skip-queue (queue-mode repos are the landing-time reap's job, sp-jci6o)" \
+     "--skip-queue" "$(cat "$SENDING_LOG" 2>/dev/null)"
 lack "pass 1 sending: log does NOT say base unchanged" "base unchanged" "$pass1_out"
 lack "pass 1: does NOT report DATABASE UNREADABLE (positive control: DB is readable)" \
      "DATABASE UNREADABLE" "$pass1_out"
