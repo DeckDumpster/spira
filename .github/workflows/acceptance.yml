@@ -109,6 +109,13 @@ jobs:
       vmid:  ${{ steps.vm.outputs.vmid }}
       vm-token: ${{ steps.vm.outputs.vm-token }}
       label: ${{ steps.vm.outputs.label }}
+    # provision.sh's guest-agent wait defaults to 120s, which sits inside the
+    # normal boot range on a busy hypervisor (gate.yml's provision carries the
+    # same value, and the same reasoning: sp-5a30t). Unset here, an agent that
+    # comes up slow but healthy times out and acceptance queues on a runner
+    # label no runner will ever hold.
+    env:
+      AGENT_TIMEOUT: 300
     steps:
       - uses: DeckDumpster/ephemeral-ci/provision@v1
         id: vm
@@ -129,7 +136,15 @@ jobs:
   # ---------------------------------------------------------------------------
   acceptance:
     needs: [provision, guard]
-    if: always() && needs.guard.outputs.already-published != 'true'
+    # needs.provision.result == 'success' is load-bearing, not decorative:
+    # always() alone (the pre-sp-5a30t condition) queues this job on
+    # runs-on's runner label even when provision FAILED, and no runner will
+    # ever register under a label provision never finished minting. The job
+    # then sits queued until someone cancels it or GitHub's 24h limit expires
+    # it (sp-5a30t). !cancelled() keeps it running when guard was skipped
+    # (workflow_dispatch) without readmitting a failed provision the way
+    # always() did.
+    if: ${{ !cancelled() && needs.provision.result == 'success' && needs.guard.outputs.already-published != 'true' }}
     runs-on: [self-hosted, "${{ needs.provision.outputs.label }}"]
     # Phase D (aged-install) adds ~30 min to the fresh-install run. 90 min
     # covers all four phases (A fresh, B upgrade, C rollback, D aged-install)
