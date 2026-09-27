@@ -256,19 +256,37 @@ esac
 ACC_YML="$ROOT/.github/workflows/acceptance.yml"
 
 echo
-echo "14. push to main runs the whole corpus (law-a-runner-takes-a-list):"
-# The select job pre-computes the suite list before any machine is provisioned.
-# For push it enumerates the full corpus (test-*.sh); for queue PRs it uses
-# select.sh. The suites job pipes the pre-computed list via --suites -.
+echo "14. push to main selects nothing — the queue PR's own gate run already tested this SHA:"
+# main only advances by verdict.sh fast-forwarding a queue batch PR's head, so a push
+# never carries untested work of its own; the select job's push branch selects nothing,
+# which skips provision/build/suites entirely (their if: guards key off a non-empty
+# selection). The merge_group/manual-dispatch fallback still names the full corpus
+# explicitly (law-a-runner-takes-a-list) for the events that DO need it, and queue PRs
+# still use select.sh's diff-derived selection.
 _select_step="$(awk '/^      - name: Select suites/{f=1;next} f&&/^      - name:/{exit} f{print}' "$GATE_YML")"
 if [ -z "$_select_step" ]; then
     bad "the Select suites step was located (positive control)" "awk extracted nothing"
 else
     ok "the Select suites step was located (positive control)"
 fi
-want "push enumerates test-*.sh"       'test-*.sh'    "$_select_step"
 want "queue PRs are matched"           'spira/queue/' "$_select_step"
 want "queue selection uses select.sh"  "select.sh"    "$_select_step"
+want "select has a dedicated push branch" '"push"' "$_select_step"
+_push_branch="$(printf '%s\n' "$_select_step" | awk '/= "push"/{f=1;next} f&&/^          else$/{exit} f{print}')"
+if [ -z "$_push_branch" ]; then
+    bad "the push branch of the select step was located (positive control)" "awk extracted nothing"
+else
+    ok "the push branch of the select step was located"
+fi
+want "push selects nothing"                  '_s=""'      "$_push_branch"
+nowant "push does not enumerate the corpus"  'test-*.sh'  "$_push_branch"
+_fallback_branch="$(printf '%s\n' "$_select_step" | awk '/^          else$/{f=1;next} f&&/^          fi$/{exit} f{print}')"
+if [ -z "$_fallback_branch" ]; then
+    bad "the merge_group/dispatch fallback branch was located (positive control)" "awk extracted nothing"
+else
+    ok "the merge_group/dispatch fallback branch was located"
+fi
+want "merge_group/dispatch fallback still enumerates the corpus" 'test-*.sh' "$_fallback_branch"
 _suites_block="$(awk '/^      - name: Suites/{f=1;next} f&&/^      - name:/{exit} f{print}' "$GATE_YML")"
 if [ -z "$_suites_block" ]; then
     bad "the Suites step block was located (positive control)" "awk extracted nothing"
@@ -279,18 +297,23 @@ want "suites step pipes pre-computed list to batch" '--suites -' "$_suites_block
 
 echo
 echo "15. the cut job asserts a green gate check and non-empty suite results before tagging:"
-# The push gate runs the full corpus. Assert both: a green gate check on this SHA,
-# and that the batch-results artifact has .result files (law-absence-needs-a-positive-control).
+# Push runs no suites of its own (case 14), so the positive control has to come from
+# the queue PR whose head this SHA is: assert the SHA belongs to a spira/queue/* PR,
+# that PR's gate check is green, and that PR's OWN run (not this push's) has a
+# batch-results artifact with .result files (law-absence-needs-a-positive-control).
 _cut_block="$(awk '/^  cut:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML")"
 if [ -z "$_cut_block" ]; then
     bad "the cut job block was located (positive control)" "awk extracted nothing"
 else
     ok "the cut job block was located (positive control)"
 fi
+want "cut confirms the SHA is a queue PR head" 'spira/queue/*' "$_cut_block"
 want "cut queries check-runs for the SHA"  "check-runs"    "$_cut_block"
 want "cut filters on the gate check name"  '"gate"'        "$_cut_block"
+want "cut looks up the queue PR's own run" "event=pull_request" "$_cut_block"
 want "cut checks batch-results artifact"   "batch-results" "$_cut_block"
 want "cut counts .result files"            ".result"       "$_cut_block"
+want "cut has actions:read to read the queue PR's run" "actions: read" "$_cut_block"
 want "release.sh cut receives the workspace" "release.sh cut" "$_cut_block"
 
 echo

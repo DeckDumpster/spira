@@ -22,11 +22,14 @@
 # PULL REQUEST vs PUSH ARE DIFFERENT GATES, AND MUST BE.
 #   On any pull request, select.sh derives the suite selection from the diff
 #   against the base ref. That is the right, fast answer for a branch.
-#   On a push to the base branch that diff is EMPTY. Diff-derived selection would
-#   select nothing, exit 0, and cut a release off a gate that ran zero suites — a
-#   green that means "nothing was tested". So the push gate names the whole
-#   corpus explicitly (law-a-runner-takes-a-list), and that is the run a release
-#   is cut from.
+#   A push to main never carries untested work of its own: main only ever
+#   advances by verdict.sh fast-forwarding a queue batch PR's head
+#   (spira/queue/*), so the pushed SHA already has its own green gate run from
+#   when it was that PR's head. Selecting suites again here would just re-run
+#   them on a second machine for no new information, so push selects NOTHING —
+#   provision, build and suites are all skipped. The cut job below gets its
+#   positive control (law-absence-needs-a-positive-control) from the queue PR's
+#   own run instead of a fresh one.
 #
 # EXIT 75 IS NOT A BRANCH FAILURE. testenv-batch exits 2 when the container never
 # came up and 3 when the install inside it failed. In both cases the branch was
@@ -140,6 +143,11 @@ jobs:
             _base="${{ github.event.pull_request.base.sha }}"
             _s="$(bash spira/gate-touched.sh "$_base" "${{ github.sha }}" \
                   | tr '\n' ',' | sed 's/,$//')"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            # The pushed SHA already carries a green gate run from its life as a
+            # queue batch PR's head (see the PULL REQUEST vs PUSH comment above).
+            # cut's own "Assert gate check" step reads that run, not this one.
+            _s=""
           else
             _s="$(ls spira/test-*.sh | xargs -n1 basename \
                   | tr '\n' ',' | sed 's/,$//')"
@@ -642,6 +650,10 @@ jobs:
       contents: write
       checks: read
       pull-requests: read
+      # The Assert gate check step below looks up the queue PR's own gate run
+      # and downloads its batch-results artifact — both are Actions-API reads,
+      # a different scope than checks:read above.
+      actions: read
     outputs:
       tag:      ${{ steps.cut.outputs.tag }}
       prev-tag: ${{ steps.cut.outputs.prev-tag }}
@@ -656,13 +668,28 @@ jobs:
           fetch-tags: true
 
       - name: Assert gate check
-        # Assert a green gate check on this SHA and that the suites job ran a
-        # non-empty list. A gate that ran zero suites would report green and cut a
-        # release from nothing; this refuses that (law-absence-needs-a-positive-control).
+        # Assert a green gate check on this SHA, and that it belongs to a queue
+        # batch PR (spira/queue/*) whose OWN gate run tested a non-empty suite
+        # list. Push no longer runs any suites (select's push branch selects
+        # nothing, above), so the positive control has to come from the run
+        # that actually tested this SHA — the queue PR's pull_request run, not
+        # this push's. A gate that ran zero suites would otherwise report green
+        # and cut a release from nothing (law-absence-needs-a-positive-control).
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
+          _pr_ref="$(gh api \
+            "repos/$GITHUB_REPOSITORY/commits/${{ github.sha }}/pulls" \
+            --jq '.[0].head.ref // ""' 2>/dev/null || true)"
+          case "${_pr_ref:-}" in
+            spira/queue/*) ;;
+            *)
+              printf 'cut: SHA %s is not the head of a queue batch PR (head ref: %s)\n' \
+                "${{ github.sha }}" "${_pr_ref:-<none>}" >&2
+              exit 1
+              ;;
+          esac
           _n="$(gh api \
             "repos/$GITHUB_REPOSITORY/commits/${{ github.sha }}/check-runs" \
             --jq '[.check_runs[] | select(.name == "gate" and .conclusion == "success")] | length' \
@@ -671,24 +698,33 @@ jobs:
             printf 'cut: SHA %s has no green gate check\n' "${{ github.sha }}" >&2
             exit 1
           }
+          _run_id="$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=${{ github.sha }}&event=pull_request&status=completed" \
+            --jq '[.workflow_runs[] | select(.name == "Gate" and .conclusion == "success")][0].id // ""' \
+            2>/dev/null || true)"
+          [ -n "${_run_id:-}" ] || {
+            printf 'cut: SHA %s has no completed pull_request Gate run to source suites from\n' \
+              "${{ github.sha }}" >&2
+            exit 1
+          }
           _art="$(gh api \
-            "repos/$GITHUB_REPOSITORY/actions/runs/${{ github.run_id }}/artifacts" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/${_run_id}/artifacts" \
             --jq '.artifacts[] | select(.name | startswith("batch-results-")) | .id' \
             2>/dev/null | head -1 || true)"
           [ -n "${_art:-}" ] || {
-            printf 'cut: run %s has no batch-results artifact — no suites ran\n' \
-              "${{ github.run_id }}" >&2
+            printf 'cut: queue PR run %s has no batch-results artifact — no suites ran\n' \
+              "$_run_id" >&2
             exit 1
           }
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/${_art}/zip" > /tmp/batch-assert.zip
           unzip -q /tmp/batch-assert.zip -d /tmp/batch-assert
           _count="$(find /tmp/batch-assert -name '*.result' | wc -l)"
           [ "${_count:-0}" -gt 0 ] || {
-            printf 'cut: run %s has zero .result files — suite list was empty\n' \
-              "${{ github.run_id }}" >&2
+            printf 'cut: queue PR run %s has zero .result files — suite list was empty\n' \
+              "$_run_id" >&2
             exit 1
           }
-          printf 'cut: %s suite results found in this run\n' "$_count"
+          printf 'cut: %s suite results found in queue PR run %s\n' "$_count" "$_run_id"
 
       - name: Mint App token for tag push
         # An App installation token is not subject to GitHub's anti-recursion rule,
