@@ -179,6 +179,25 @@ _stage_release_source() {
     printf '%s\n' "$_rs_tag" > "$_rs_dir/$_rs_stem.tag"
 }
 
+# _wait_for_release_asset <tag> <timeout-secs> [poll-interval-secs] — poll
+# `gh release view` until a spira-*.tar.gz asset is attached to <tag>, or the
+# timeout elapses. release.yml creates the release as a draft and uploads the
+# tarball afterward in the same job; a tag-push-triggered acceptance run starts
+# the instant the tag lands, which can be before that upload finishes
+# (sp-5olmi). Returns 0 once an asset is seen, 1 on timeout.
+_wait_for_release_asset() {
+    local _wa_tag="$1" _wa_timeout="${2:-600}" _wa_interval="${3:-15}" _wa_start
+    local _wa_args=()
+    [ -n "${_ar_gh_repo:-}" ] && _wa_args+=(--repo "$_ar_gh_repo")
+    _wa_start="$(date +%s)"
+    while :; do
+        gh "${_wa_args[@]}" release view "$_wa_tag" --json assets \
+            --jq '.assets[].name' 2>/dev/null | grep -q '\.tar\.gz$' && return 0
+        [ $(( $(date +%s) - _wa_start )) -ge "$_wa_timeout" ] && return 1
+        sleep "$_wa_interval"
+    done
+}
+
 # _download_tarball <tag> <destdir> — download the release tarball; print path on stdout.
 _download_tarball() {
     local _dtag="$1" _ddir="$2"

@@ -267,6 +267,18 @@ if [ -n "$tarball_path" ]; then
 else
     _tarball_dir="$TMP/tarball-dl"
     mkdir -p "$_tarball_dir"
+    # A tag-push-triggered run starts the instant the tag lands, which can race
+    # release.yml's own build and upload of the tarball asset (sp-5olmi). Wait,
+    # bounded, before attempting the download so a slow upload reads as a wait,
+    # not as a download failure.
+    _asset_wait_rc=0
+    _wait_for_release_asset "$tag" "${SPIRA_ACCEPT_ASSET_WAIT_SECS:-600}" || _asset_wait_rc=$?
+    if [ "$_asset_wait_rc" -eq 0 ]; then
+        ok "phase A: release asset appears for $tag"
+    else
+        bad "phase A: release asset appears for $tag" \
+            "no spira-*.tar.gz asset within ${SPIRA_ACCEPT_ASSET_WAIT_SECS:-600}s — release.yml's upload never appeared"
+    fi
     _tarball_dl_rc=0
     _tarball_file="$(_acquire_tarball "$tag" "" "$_tarball_dir")" || _tarball_dl_rc=$?
     is0 "phase A: gh release download $tag" "$_tarball_dl_rc"
