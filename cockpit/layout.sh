@@ -162,6 +162,22 @@ apply_mouse_mode() {
     $TMUX_BIN set-option -g mouse on 2>/dev/null || true
 }
 
+# set-clipboard on FORWARDS OSC 52 UP FROM THE NESTED CONCIERGE CLIENT. The session pane runs
+# `concierge.sh here`, which attaches an inner tmux on its own socket; Claude Code's mouse-copy
+# path there runs `tmux load-buffer -w` (see concierge.sh's PATH shim), and `-w` asks THIS
+# server — the one actually attached to the operator's terminal — to relay the buffer via OSC
+# 52. tmux defaults set-clipboard off, and a rebuilt server starts from that default, so this
+# is applied every time, not assumed to persist. Either half of this fix without the other
+# does nothing: a shim with no relay has nowhere to send the buffer, and a relay with no -w
+# is never asked to.
+apply_clipboard_mode() {
+    local want="${COCKPIT_CLIPBOARD:-on}"
+    case "$want" in
+        off|no|0) return 0 ;;
+    esac
+    $TMUX_BIN set-option -g set-clipboard on 2>/dev/null || true
+}
+
 # An untagged pane is indistinguishable from the session pane — which is how the first
 # repair run picked the ORPHANED decisions pane as the session and split it. So tag it.
 #
@@ -610,6 +626,7 @@ up)
     # for the full rationale.
     $TMUX_BIN set-option -t "${WINDOW%%:*}" window-size largest 2>/dev/null || true
     apply_mouse_mode
+    apply_clipboard_mode
     # ALWAYS hand focus back to the session pane: hunk-open sends keys to the active pane.
     $TMUX_BIN select-pane -t "$sess" 2>/dev/null || true
     ;;
@@ -658,6 +675,7 @@ ensure)
     # with mouse off and `up` may never run again on it, so a cockpit that has been
     # merely `ensure`d would stay unclickable.
     apply_mouse_mode
+    apply_clipboard_mode
     # Defence in depth: ensure window-size largest is set for every session hosting a cockpit
     # window. This survives a ghost that reconnects between two ensure runs.
     _cw="$(cockpit_windows)"
