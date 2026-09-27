@@ -36,6 +36,7 @@ pub struct Fake {
     pub counter: RefCell<String>,
     pub failed_units: RefCell<Result<Vec<String>, String>>,
     pub watchd: RefCell<Result<String, String>>,
+    pub unit_execs: RefCell<Result<Vec<(String, String, String)>, String>>,
     pub enabled_units: RefCell<Result<Vec<String>, String>>,
     pub spira_unit: RefCell<String>,
     pub file_ages: RefCell<BTreeMap<PathBuf, u64>>,
@@ -76,6 +77,7 @@ impl Default for Fake {
             counter: RefCell::new("0".into()),
             failed_units: RefCell::new(Ok(Vec::new())),
             watchd: RefCell::new(Ok(String::new())),
+            unit_execs: RefCell::new(Ok(Vec::new())),
             enabled_units: RefCell::new(Ok(Vec::new())),
             spira_unit: RefCell::new(String::new()),
             file_ages: RefCell::new(BTreeMap::new()),
@@ -172,6 +174,9 @@ impl World for Fake {
     }
     fn systemd_enabled_unit_files(&self, _pattern: &str) -> Result<Vec<String>, String> {
         self.enabled_units.borrow().clone()
+    }
+    fn systemd_installed_unit_execs(&self) -> Result<Vec<(String, String, String)>, String> {
+        self.unit_execs.borrow().clone()
     }
     fn spira_unit(&self, _kind: &str, _subkind: &str) -> String {
         self.spira_unit.borrow().clone()
@@ -973,4 +978,69 @@ fn run_exit_code_reflects_fatal_count() {
     let rc = run(&f);
     assert_eq!(rc, 1);
     assert!(f.stdout.borrow().iter().any(|l| l.contains("fatal") && l.contains("not healthy")));
+}
+
+// ============================================================================ prod checkout
+
+fn exec_row(unit: &str, state: &str, path: &str) -> (String, String, String) {
+    (unit.into(), state.into(), path.into())
+}
+
+#[test]
+fn prod_checkout_unit_outside_releases_fails() {
+    let f = Fake::default();
+    f.set("SPIRA_RELEASES", "/fixture/releases");
+    *f.unit_execs.borrow_mut() = Ok(vec![exec_row("spira-sentinel-prod.service", "enabled", "/fixture/checkout/spira/sentinel.sh")]);
+    let out = check_prod_checkout(&f);
+    assert_eq!(levels(&out), vec![Level::Fail]);
+    assert!(out[0].msg.contains("spira-sentinel-prod.service"));
+    assert!(out[0].detail.as_deref().unwrap().contains("/fixture/checkout/spira/sentinel.sh"));
+}
+
+#[test]
+fn prod_checkout_all_under_releases_is_ok() {
+    let f = Fake::default();
+    f.set("SPIRA_RELEASES", "/fixture/releases");
+    *f.unit_execs.borrow_mut() = Ok(vec![exec_row("beads-push.service", "enabled", "/fixture/releases/current/beads-push.sh")]);
+    assert_eq!(levels(&check_prod_checkout(&f)), vec![Level::Ok]);
+}
+
+#[test]
+fn prod_checkout_sibling_prefix_is_outside() {
+    let f = Fake::default();
+    f.set("SPIRA_RELEASES", "/fixture/releases");
+    *f.unit_execs.borrow_mut() = Ok(vec![exec_row("beads-push.service", "enabled", "/fixture/releases-old/x")]);
+    assert_eq!(levels(&check_prod_checkout(&f)), vec![Level::Fail]);
+}
+
+#[test]
+fn prod_checkout_each_offender_gets_a_line() {
+    let f = Fake::default();
+    f.set("SPIRA_RELEASES", "/fixture/releases");
+    *f.unit_execs.borrow_mut() = Ok(vec![
+        exec_row("a.service", "enabled", "/co/a"),
+        exec_row("b.service", "enabled", "/fixture/releases/b"),
+        exec_row("c.service", "static", "/co/c"),
+    ]);
+    assert_eq!(levels(&check_prod_checkout(&f)), vec![Level::Fail, Level::Fail]);
+}
+
+#[test]
+fn prod_checkout_transient_and_aeon_units_are_not_flagged() {
+    let f = Fake::default();
+    f.set("SPIRA_RELEASES", "/fixture/releases");
+    *f.unit_execs.borrow_mut() = Ok(vec![
+        exec_row("spira-job.service", "transient", "/co/job"),
+        exec_row("spira-aeon-x.service", "static", "/co/aeon"),
+        exec_row("spira-nopath.service", "enabled", ""),
+    ]);
+    assert_eq!(levels(&check_prod_checkout(&f)), vec![Level::Ok]);
+}
+
+#[test]
+fn prod_checkout_probe_failure_fails() {
+    let f = Fake::default();
+    f.set("SPIRA_RELEASES", "/fixture/releases");
+    *f.unit_execs.borrow_mut() = Err("Failed to connect to bus".into());
+    assert_eq!(levels(&check_prod_checkout(&f)), vec![Level::Fail]);
 }

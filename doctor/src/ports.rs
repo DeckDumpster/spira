@@ -85,6 +85,10 @@ pub trait World {
     /// (distinguishing "no match" — silent, exit 1, Ok(vec![]) — from a real query fault,
     /// which DOES print something even on a non-zero exit).
     fn systemd_enabled_unit_files(&self, pattern: &str) -> Result<Vec<String>, String>;
+    /// Every installed `spira-*` / `beads-push` unit file as (unit, state, ExecStart path),
+    /// path empty when none resolves. Err(first output line) when the manager cannot be
+    /// queried.
+    fn systemd_installed_unit_execs(&self) -> Result<Vec<(String, String, String)>, String>;
     /// `spira_unit <kind> <subkind>` (lib.sh seam) — a rendered unit name for a hint line.
     fn spira_unit(&self, kind: &str, subkind: &str) -> String;
 
