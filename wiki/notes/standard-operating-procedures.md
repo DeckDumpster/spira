@@ -219,7 +219,9 @@ bd show $ID | grep "CLOSED"; git merge-base --is-ancestor $COMMIT origin/main &&
 **Check**
 
 ```
-Verify the bead's commit is actually on base.
+Verify the bead's commit is actually on base. Re-derive the commit by
+grep on the bead id — a close reason's cited hash can belong to a different
+bead's land commit (sp-825tb).
 ```
 bead_id=sp-vcobo  # substitute the bead from the incident title
 commit=$(git log --all --oneline | grep "$bead_id" | head -1 | awk '{print $1}')
