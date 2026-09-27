@@ -44,7 +44,7 @@ Tier key: T0 static · T1 unit · T2 component · T3 integration · T4 acceptanc
 
 | ID | Requirement | Dimensions | Tier / where |
 |---|---|---|---|
-| UC-operator-channel-14 | `send --kind question|decision --bead W` files a separate decision bead, names it in `X-Spira-Bead`, and links it to W as relates_to, never as a blocking dependency (sp-aybfy). It logs the refusal of the blocking edge. `SPIRA_MAIL_ALLOW_BLOCKING=1` restores the blocking edge. | correctness, contract | T3 (real bd is the observable) / CI |
+| UC-operator-channel-14 | `send --kind question|decision --bead W` files a separate decision bead, names it in `X-Spira-Bead`, and links it to W as relates_to, never as a blocking dependency (sp-aybfy) — regardless of W's own type, so citing an ask from an ask never blocks the cited ask either (sp-tyqxi). It logs the refusal of the blocking edge. `SPIRA_MAIL_ALLOW_BLOCKING=1` restores the blocking edge and logs what it wired. | correctness, contract | T3 (real bd is the observable) / CI |
 | UC-operator-channel-15 | A reply to a message carrying `X-Spira-Bead` closes that bead, leaves the work bead open and writes the verdict and reply body into the work bead's notes. Under ALLOW_BLOCKING the reply also unblocks the work bead. | correctness, contract | T3 / CI |
 | UC-operator-channel-16 | The mail client's accept-default key (`aerc/accept-default.sh`) closes the decision with the message's `X-Spira-Default` as the verdict, using a real spira.conf. | config-compat, contract | T3 / CI |
 | UC-operator-channel-17 | Reply routing: a reply goes to the sender's mailbox when one exists. It goes to concierge when the sender is a chamber persona, when the sender has no mailbox, or when there is no In-Reply-To. | correctness | **T2** (no db) / cert |

@@ -54,8 +54,10 @@ BODY
 
 When an ask or proposed statute cites a specific bead, pass `--bead <id>` to the `{{NOTIFY}}`
 call. This creates a non-blocking reference (a relates_to link): the cited bead stays
-ready and claimable. An ask is never a gate on the work it references; the guard in
-`mail.sh` enforces this and will refuse any attempt to wire a blocking edge.
+ready and claimable, whether it is a work bead or another ask. An ask is never a gate on
+the work — or the other ask — it references; the guard in `mail.sh` enforces this
+regardless of the cited bead's own type and will refuse any attempt to wire a blocking
+edge.
 
 **Rolling repeated questions into one ask.** When several loose questions are really the same
 ask, file one and link the ones it subsumes to it with `bd dep relate <rollup> <ask>`, naming
