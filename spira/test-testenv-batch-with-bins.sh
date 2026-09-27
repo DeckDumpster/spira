@@ -231,4 +231,34 @@ if [ "$rc_d3a" != 0 ] || [ "$rc_d3b" != 0 ]; then
 fi
 
 echo
+echo "D4: --with-bins prunes a stale sibling entry before building (sp-uq6up)"
+echo "    tree A's own entry (built above, D3a) survives untouched if fresh, but"
+echo "    once backdated past a short SPIRA_BATCH_BINS_TTL it is gone by the time"
+echo "    tree B's rebuild below finishes — pruned, not merely left alone."
+
+TREE_A="$(git -C "$TMP/d3a/fixture" rev-parse HEAD^{tree})"
+ENTRY_A="$BINS_TARGET_DIR/$TREE_A"
+if [ -d "$ENTRY_A" ]; then
+    touch -d "1 hour ago" "$ENTRY_A"
+else
+    printf 'D4: SETUP FAILED — tree A entry %s does not exist after D3\n' "$ENTRY_A" >&2
+fi
+
+rc_d4=0
+SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_BATCH_RESULTS="$TMP/results-D4" \
+SPIRA_BATCH_INSTANCE="wb-d4-$$" \
+SPIRA_BATCH_BINS_TARGET_DIR="$BINS_TARGET_DIR" \
+SPIRA_BATCH_BINS_TTL=60 \
+SPIRA_VERDICT_TTL=0 \
+    bash "$BATCH" --with-bins --suites test-target.sh main "$TMP/d3b/fixture" >"$TMP/d4.log" 2>&1 \
+    || rc_d4=$?
+
+iszero "D4: tree B's rebuild still succeeds while a sibling entry is pruned" "$rc_d4"
+[ ! -d "$ENTRY_A" ] \
+    && ok "D4: tree A's stale entry was pruned by tree B's --with-bins run" \
+    || bad "D4: stale sibling entry pruned" "entry still present: $ENTRY_A"
+[ "$rc_d4" != 0 ] && { printf '  ---- d4.log ----\n'; cat "$TMP/d4.log" >&2; }
+
+echo
 tl_summary
