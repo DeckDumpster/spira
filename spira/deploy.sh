@@ -563,6 +563,26 @@ log "deploy: ensuring cockpit"
 log "deploy: resuming"
 "$_WORLD" resume
 
+# A UNIT THE DEPLOY ITSELF KNOCKED OVER IS RE-RUN, NOT JUDGED. The pre-deploy health check
+# refused to start on failed units, so any installed unit failed now failed INSIDE this
+# window — and this deploy restarts dolt-beads while the timers keep firing: spira-sentinel
+# fired the same second the re-render restarted dolt, lost its database, exited 1, and doctor
+# rolled a healthy release back (acceptance phase B, 2026-09-27). Reset each one and start it
+# once under the release in force; a unit the release genuinely breaks fails again and stays
+# failed, and doctor below judges it exactly as before.
+"$_SC" --user list-units --state=failed --all --no-legend --plain \
+        "spira-*-${SPIRA_INSTANCE}.service" 2>/dev/null \
+    | awk '$2 == "loaded" {print $1}' \
+    | while IFS= read -r _knocked; do
+        [ -n "$_knocked" ] || continue
+        "$_SC" --user reset-failed "$_knocked" 2>/dev/null || true
+        if timeout "${SPIRA_DEPLOY_RERUN_TIMEOUT:-300}" "$_SC" --user start "$_knocked" 2>/dev/null; then
+            log "deploy: re-ran $_knocked — it failed inside the deploy window and passes under $release_stem"
+        else
+            log "deploy: $_knocked fails again under $release_stem — left failed for the health check"
+        fi
+    done
+
 # Health check: verify the activated release is up and healthy.
 log "deploy: health check"
 _deploy_failed=""
