@@ -40,8 +40,23 @@ _lc_show() {
     "$SPIRA_LC_BIN" show "$1" 2>/dev/null
 }
 
-_lc_field() {   # _lc_field <json> <jq-path> -> value, or empty
-    printf '%s' "$1" | jq -r "$2 // empty" 2>/dev/null
+# _lc_field <json> <dotted-path, e.g. .bead.state> -> the value, or empty. python3, not
+# jq: jq is not guaranteed present (SEEN RED in the testenv container, which has python3 but
+# no jq at all — every call here read "cannot tell" instead of the row it was just shown).
+_lc_field() {
+    printf '%s' "$1" | python3 -c '
+import json, sys
+try:
+    v = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for part in sys.argv[1].lstrip(".").split("."):
+    if not isinstance(v, dict) or part not in v:
+        sys.exit(0)
+    v = v[part]
+if v is not None:
+    print(v)
+' "$2" 2>/dev/null
 }
 
 # _lc_event <bead-id> <expect-state> <version> <kind-json> -> spira-lc's own exit code
