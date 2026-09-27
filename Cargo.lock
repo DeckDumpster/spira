@@ -368,6 +368,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
+name = "lifecycle"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "lifecycle-guard"
 version = "1.0.0"
 dependencies = [
@@ -800,6 +808,15 @@ dependencies = [
  "serde_path_to_error",
  "sha2",
  "toml",
+]
+
+[[package]]
+name = "spira-lc"
+version = "1.0.0"
+dependencies = [
+ "lifecycle",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
