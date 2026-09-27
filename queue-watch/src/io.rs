@@ -122,6 +122,16 @@ fn run(cmd: &mut Command, what: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&o.stdout).to_string())
 }
 
+/// Like `run`, but a dropped pooled Dolt connection ("invalid connection" — the Go driver
+/// detected it dead before sending the query, so it never ran) is retried once rather than
+/// surfaced (sp-ydog2).
+fn run_bd(cmd: &mut Command, what: &str) -> Result<String, String> {
+    match run(cmd, what) {
+        Err(e) if e.contains("invalid connection") => run(cmd, what),
+        r => r,
+    }
+}
+
 pub fn read_beads(env: &Env, ids: &BTreeSet<String>) -> Result<(BTreeMap<String, Bead>, BTreeMap<String, String>), String> {
     let mut beads = BTreeMap::new();
     let mut repos = BTreeMap::new();
@@ -133,7 +143,7 @@ pub fn read_beads(env: &Env, ids: &BTreeSet<String>) -> Result<(BTreeMap<String,
         cmd.current_dir(db);
     }
     cmd.arg("show").arg("--json").args(ids);
-    let text = run(&mut cmd, "bd show")?;
+    let text = run_bd(&mut cmd, "bd show")?;
     let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("bd show: unparsed output: {e}"))?;
     let items = match v {
         serde_json::Value::Array(a) => a,
@@ -276,4 +286,78 @@ pub fn snapshot(env: &Env, repo: &Repo, prev: &RepoState, now: u64) -> Snapshot 
         }
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    fn scratch_path(tag: &str) -> PathBuf {
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        std::env::temp_dir().join(format!("queue-watch-run_bd-test-{}-{}-{n}", std::process::id(), tag))
+    }
+
+    fn make_stub(body: &str) -> PathBuf {
+        let path = scratch_path("stub");
+        fs::write(&path, format!("#!/usr/bin/env bash\n{body}\n")).unwrap();
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&path, perms).unwrap();
+        path
+    }
+
+    #[test]
+    fn run_bd_retries_once_on_invalid_connection() {
+        let calls = scratch_path("calls");
+        fs::write(&calls, "0").unwrap();
+        let stub = make_stub(&format!(
+            r#"n=$(($(cat "{calls}") + 1)); echo "$n" > "{calls}"
+if [ "$n" -eq 1 ]; then echo "Error: failed to open database: invalid connection" >&2; exit 1; fi
+echo ok"#,
+            calls = calls.display()
+        ));
+        let out = run_bd(&mut Command::new(&stub), "bd show");
+        assert_eq!(out.as_deref(), Ok("ok\n"));
+        assert_eq!(fs::read_to_string(&calls).unwrap().trim(), "2");
+        let _ = fs::remove_file(&stub);
+        let _ = fs::remove_file(&calls);
+    }
+
+    // POSITIVE CONTROL: an error that is not "invalid connection" is not retried — one call.
+    #[test]
+    fn run_bd_does_not_retry_other_errors() {
+        let calls = scratch_path("calls");
+        fs::write(&calls, "0").unwrap();
+        let stub = make_stub(&format!(
+            r#"n=$(($(cat "{calls}") + 1)); echo "$n" > "{calls}"
+echo "Error: something else went wrong" >&2; exit 1"#,
+            calls = calls.display()
+        ));
+        let out = run_bd(&mut Command::new(&stub), "bd show");
+        assert!(out.is_err());
+        assert_eq!(fs::read_to_string(&calls).unwrap().trim(), "1");
+        let _ = fs::remove_file(&stub);
+        let _ = fs::remove_file(&calls);
+    }
+
+    // POSITIVE CONTROL: a connection that never recovers is retried exactly once, not forever.
+    #[test]
+    fn run_bd_bounds_the_retry() {
+        let calls = scratch_path("calls");
+        fs::write(&calls, "0").unwrap();
+        let stub = make_stub(&format!(
+            r#"n=$(($(cat "{calls}") + 1)); echo "$n" > "{calls}"
+echo "Error: failed to open database: invalid connection" >&2; exit 1"#,
+            calls = calls.display()
+        ));
+        let out = run_bd(&mut Command::new(&stub), "bd show");
+        assert!(out.is_err());
+        assert_eq!(fs::read_to_string(&calls).unwrap().trim(), "2");
+        let _ = fs::remove_file(&stub);
+        let _ = fs::remove_file(&calls);
+    }
 }
