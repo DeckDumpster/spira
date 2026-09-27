@@ -1865,7 +1865,8 @@ mkdir -p "$SUITE_B14" "$VERDICTS_B14"
 cp "$SUITE_B2/test-fx-red.sh" "$SUITE_B14/"
 
 _b14_concierge_count() {
-    ls "$MAIL_B14/concierge/new" "$MAIL_B14/concierge/cur" 2>/dev/null | wc -l | tr -d ' '
+    find "$MAIL_B14/concierge/new" "$MAIL_B14/concierge/cur" -mindepth 1 -type f \
+        2>/dev/null | wc -l | tr -d ' '
 }
 
 # B14a: first (uncached) run — genuinely red, not yet a repeat. No notification.
@@ -1956,7 +1957,8 @@ print(count)
 ' 2>/dev/null)"
     is "B14d: repeat-refused with a real database files no needs-ryan bead" "0" "${_b14d_needs_ryan:-0}"
     is "B14d: one concierge mailbox message with a real database too" "1" \
-        "$(ls "$MAIL_B14D/concierge/new" "$MAIL_B14D/concierge/cur" 2>/dev/null | wc -l | tr -d ' ')"
+        "$(find "$MAIL_B14D/concierge/new" "$MAIL_B14D/concierge/cur" -mindepth 1 -type f \
+            2>/dev/null | wc -l | tr -d ' ')"
 
     testdb_drop
 fi
