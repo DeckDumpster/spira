@@ -775,6 +775,24 @@ try: d=json.load(sys.stdin)
 except Exception: print(""); sys.exit()
 d=d if isinstance(d,list) else [d]
 print(d[0].get("status","") if d else "")' 2>/dev/null)"
+
+    # THE MARKER IS SCOPED TO THE SESSION THAT WROTE IT (sp-nw7jb). mail.sh stamps it with
+    # the writing session's SESSION_EPOCH; a marker whose stamp does not match THIS
+    # session's is not this session's wait — it is a previous session's, abandoned by a
+    # crash or by closing without reaching the operator-wait branch below, and reading it
+    # as live would release a session that never asked anything with no attempt charged.
+    # Cleared here, unconditionally, so it can never outlive the session that wrote it.
+    _ow_marker="$SPIRA_RUN/$BEAD_ID.operator-wait"
+    _ow_mine=no
+    if [ -f "$_ow_marker" ]; then
+        if [ "$(cat "$_ow_marker" 2>/dev/null)" = "${SESSION_EPOCH:-}" ]; then
+            _ow_mine=yes
+        else
+            rm -f "$_ow_marker"
+            log "$FAYTH: $BEAD_ID operator-wait marker predates this session — cleared, not treated as a wait"
+        fi
+    fi
+
     if [ "$st" != "closed" ]; then
         # CHARGING IS DEFAULT-DENY. An attempt is charged ONLY when the harness can say
         # what the WORK did wrong — not "this bead has been touched three times" but "we
@@ -837,7 +855,7 @@ sys.exit(0)' "$BEAD_ID" 2>/dev/null; then
             : # timeout — aeon_disposition reads SESSION_RC/committed directly, nothing to gather
         elif [ -n "$REQUEUE_CAUSE" ]; then
             : # harness requeue — REQUEUE_CAUSE/REQUEUE_WHY are already set by the verdict block
-        elif [ -f "$SPIRA_RUN/$BEAD_ID.operator-wait" ]; then
+        elif [ "$_ow_mine" = yes ]; then
             _d_operator=yes
         elif bead_has_label "$(bdjson show "$BEAD_ID" 2>/dev/null)" \
                  "${SPIRA_SUBMITTED_LABEL:-spira-submitted}"; then
@@ -947,7 +965,7 @@ Requeued (thrash): the deliverable did not move for ${SPIRA_THRASH_MINUTES:-20}m
             ledger_done "$rc" "$_d_status"
             exit $rc ;;
         operator-wait)
-            rm -f "$SPIRA_RUN/$BEAD_ID.operator-wait"
+            rm -f "$_ow_marker"
             bump_requeue "$BEAD_ID" "$_d_reqcause"
             bdq note "$BEAD_ID" "Released by aeon.sh: the session sent a kind-question mail to the operator and exited awaiting a reply. No attempt charged; the bead becomes ready when the question is answered." >/dev/null 2>&1
             log "$FAYTH: $BEAD_ID operator-wait — sent kind-question mail, released, no attempt charged"
@@ -1142,6 +1160,18 @@ $_cert_out"
                     fi
                 fi ;;
         esac
+    fi
+    # A CLOSED BEAD STILL OWES ITS OWN MARKER (sp-nw7jb). The disposition gathering above
+    # only runs for an open bead, so a session that sent a kind-question mail and then
+    # closed its own bead never reaches the operator-wait case that consumes the marker —
+    # it was left to strand every later summon into misreading a dead wait as live. Checked
+    # here, after every branch above (each of which already consumes its own "mine" marker
+    # when operator-wait is the verdict it reaches), so this only fires for the one path
+    # that never looked: a marker this exact session wrote that outlived a close.
+    if [ "$_ow_mine" = yes ] && [ -f "$_ow_marker" ]; then
+        rm -f "$_ow_marker"
+        bdq note "$BEAD_ID" "Closed carrying an operator-wait marker: this session sent a kind-question mail to the operator before closing. Recorded here so the wait is not invisible to anyone asking what is blocked on a reply." >/dev/null 2>&1
+        log "$FAYTH: $BEAD_ID closed with its own operator-wait marker — consumed, recorded as operator-wait"
     fi
     # A WORK BEAD DOES NOT CLOSE HERE (sp-qsona). bead_close_on_land (lib.sh) is the only
     # place one closes for a landed reason, called once its commit is actually on the base —
@@ -2065,6 +2095,7 @@ system_prompt_split "$SYSTEM_FILE" "$TASK_FILE" "$STATUTES" "$PROMPT"
 # an earlier session did the honest thing would otherwise hand a later silent session a pass.
 SOP_REQUIRED="${FAYTH_SOP_REQUIRED:-0}"
 SHELF_BEFORE=""; SHELF_BEFORE_OK=0; SESSION_EPOCH="$(date -u +%s)"
+export SESSION_EPOCH
 if [ "$SOP_REQUIRED" = 1 ]; then
     # THE INSTRUMENT BEFORE ITS SILENCE IS BELIEVED. The applications ledger reads as
     # UNREADABLE when the file does not exist — correctly, because from inside sop.sh an

@@ -197,7 +197,7 @@ cat > "$FA_BIN/claude" <<'SHIM'
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
 if [ -n "${BEAD_ID:-}" ] && [ -n "${SPIRA_RUN:-}" ]; then
-    touch "$SPIRA_RUN/$BEAD_ID.operator-wait"
+    printf '%s\n' "$SESSION_EPOCH" > "$SPIRA_RUN/$BEAD_ID.operator-wait"
 fi
 printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
 exit 0
@@ -228,6 +228,77 @@ BODY
 ' _ "$HERE" >/dev/null 2>&1
 is "mail.sh send kind=question wrote the marker itself" "yes" \
    "$([ -e "$SPIRA_RUN/sp-ow-mail.operator-wait" ] && echo yes || echo no)"
+
+# ==========================================================================================
+echo
+echo "ROW: operator-wait marker present AND bead closed — consumed, not left stranded (sp-nw7jb)"
+# ==========================================================================================
+# THE DEFECT THIS GUARDS. The disposition gathering that consumes the operator-wait marker
+# only runs for an OPEN bead (the `st != closed` branch above) — so a session that sent a
+# kind-question mail and then closed its own bead in the same breath never reached the
+# branch that removes the marker. It sat on disk forever: no garbage collector, one
+# consumer, and that consumer never ran.
+#
+# COMMITTED, so close_verdict reads "keep|committed" and the close genuinely stands — a
+# close with nothing committed is reopened by an entirely different, unrelated mechanism
+# (closed-without-commit) that would otherwise obscure what this row is proving. Chore, not
+# task: a work-type close is converted to "submitted" by a later, unrelated block regardless
+# of commit or this fix, for the same reason.
+cat > "$FA_BIN/claude" <<'SHIM'
+#!/usr/bin/env bash
+cat /dev/stdin > /dev/null
+printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
+_bd="${SPIRA_BD:-bd}"
+id="$(BD_IGNORE_SCHEMA_SKEW=1 "$_bd" -C "$SPIRA_DB" list --json 2>/dev/null \
+    | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; \
+      print(next((x["id"] for x in r if x.get("status")=="in_progress"),""))' 2>/dev/null)"
+if [ -n "$id" ]; then
+    printf 'the aeon wrote this %s\n' "$(date +%s%N)" > f
+    git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — the work"
+    printf '%s\n' "$SESSION_EPOCH" > "$SPIRA_RUN/$id.operator-wait"
+    BD_IGNORE_SCHEMA_SKEW=1 "$_bd" -C "$SPIRA_DB" close "$id" --reason "done, asked a question in passing" >/dev/null 2>&1
+fi
+printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
+exit 0
+SHIM
+chmod +x "$FA_BIN/claude"
+fa_reset; fa_seed sp-ow-3; bd -C "$SPIRA_DB" update sp-ow-3 --type chore >/dev/null 2>&1
+fa_run_aeon >/dev/null
+is   "the marker does not survive the session that wrote it, even though the bead closed" "no" \
+     "$([ -e "$SPIRA_RUN/sp-ow-3.operator-wait" ] && echo yes || echo no)"
+is   "the close stands (a non-work type closes by the agent's own hand, unchanged)" "closed" "$(fa_status sp-ow-3)"
+want "the close is recorded as carrying an operator-wait marker" \
+     "operator-wait marker" "$(fa_notes sp-ow-3)"
+
+# ==========================================================================================
+echo
+echo "ROW: operator-wait marker from a PREVIOUS session is ignored, not read as this one's wait (sp-nw7jb)"
+# ==========================================================================================
+# THE DEFECT THIS GUARDS. Before mail.sh stamped the marker with its writing session's own
+# SESSION_EPOCH, the marker carried no identity at all — any later session on the same bead
+# that exited without closing was released here with NO attempt charged, on the strength of
+# a question a DIFFERENT, earlier session asked. Reproduced by pre-seeding a marker stamped
+# with an epoch that cannot be this run's (`1`, 1970) before the aeon ever starts.
+cat > "$FA_BIN/claude" <<'SHIM'
+#!/usr/bin/env bash
+cat /dev/stdin > /dev/null
+printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
+printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
+exit 1
+SHIM
+chmod +x "$FA_BIN/claude"
+fa_reset; fa_seed sp-ow-4
+printf '1\n' > "$SPIRA_RUN/sp-ow-4.operator-wait"
+fa_run_aeon >/dev/null
+is   "bead is still open (session did not close)" "open" "$(fa_status sp-ow-4)"
+notes_stale="$(fa_notes sp-ow-4)"
+want   "charged as the normal unlanded case, not released as operator-wait" "Unlanded" "$notes_stale"
+nowant "not released on a stranger's wait" "kind-question mail" "$notes_stale"
+nowant "ledger must not say operator-wait" "operator-wait" "$(fa_ledger_line sp-ow-4)"
+is   "the stale marker was cleared, not left for the next summon either" "no" \
+     "$([ -e "$SPIRA_RUN/sp-ow-4.operator-wait" ] && echo yes || echo no)"
+want "the log says the marker predates this session" \
+     "operator-wait marker predates this session" "$(fa_out)"
 
 # ==========================================================================================
 echo

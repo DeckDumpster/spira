@@ -447,7 +447,11 @@ cmd_send() {
         _repeat_stamp
         if { [ "$kind" = "question" ] || [ "$kind" = "decision" ]; } \
                 && [ -n "${BEAD_ID:-}" ] && [ -n "${SPIRA_RUN:-}" ]; then
-            touch "$SPIRA_RUN/$BEAD_ID.operator-wait"
+            # STAMPED WITH THE WRITING SESSION'S OWN EPOCH, not a bare touch: aeon.sh
+            # compares this against its own SESSION_EPOCH so a marker a session never
+            # consumed cannot be read as THIS session's wait by whatever later summon
+            # finds it sitting on disk (sp-nw7jb).
+            printf '%s\n' "${SESSION_EPOCH:-}" > "$SPIRA_RUN/$BEAD_ID.operator-wait"
         fi
         # Record msgid -> bead so a later deletion of this file can be told apart from a
         # reply or a move (cmd_sweep_dismissed). Only asks: a notice with no bead carries
