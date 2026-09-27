@@ -30,7 +30,7 @@
 #
 # defect: sp-t93ky
 # tier: T2
-# covers: lifecycle/classify.rs spira-lc/*
+# covers: lifecycle/src/classify.rs spira-lc/*
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
