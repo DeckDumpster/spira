@@ -35,6 +35,15 @@ echo "test-watchtower-lapse.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
+# FAST MOCK FOR suites.sh status — see test-watchtower.sh for why: every wt()/wt_file()
+# call invokes watchtower.sh, which calls suites.sh status (~3.5s x2 for host-check.sh)
+# unless this is set. Missing here made this suite pay that cost on every one of its
+# ~20 invocations for no reason this suite's assertions ever needed.
+MOCK_SUITES="$TMP/mock-suites.sh"
+printf '#!/usr/bin/env bash\nprintf "  suites in the tree                  0   (0 gated, 0 timed)\\n"\n' \
+    > "$MOCK_SUITES"
+chmod +x "$MOCK_SUITES"
+
 # Run watchtower --show in a clean, minimal environment.
 # SPIRA_LAPSED_DIR lets tests override the directory without touching SPIRA_RUN.
 wt() {  # wt [VAR=val ...] -> the snapshot
@@ -42,6 +51,7 @@ wt() {  # wt [VAR=val ...] -> the snapshot
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_LAPSED_DIR="${SPIRA_LAPSED_DIR_OVERRIDE:-$TMP/run/lapsed}" \
         SPIRA_LAPSED_MARKER="${SPIRA_LAPSED_MARKER_OVERRIDE:-$TMP/run/lapsed.swept}" \
+        SPIRA_SUITES_SH="$MOCK_SUITES" \
         "$@" bash "$HERE/watchtower.sh" --show 2>/dev/null
 }
 
@@ -56,6 +66,7 @@ wt_file() {  # wt_file [VAR=val ...] -> $TMP/ops-prompt written
         SPIRA_LAPSED_MARKER="${SPIRA_LAPSED_MARKER_OVERRIDE:-$TMP/run/lapsed.swept}" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_INCIDENT_SH="$mock" \
+        SPIRA_SUITES_SH="$MOCK_SUITES" \
         "$@" bash "$HERE/watchtower.sh" 2>/dev/null
 }
 
