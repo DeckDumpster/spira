@@ -174,7 +174,6 @@ test-cockpit-unsent.sh	T1	47.0
 test-cockpit-watcher-owner.sh	T1	5.0
 test-cockpit.sh	T1	13.0
 test-concierge.sh	T1	28.0
-test-conf-watch.sh	T1	5.0
 test-conf.sh	T1	3.0
 test-configure.sh	T1	2.0
 test-containment.sh	T1	21.5

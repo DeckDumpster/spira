@@ -36,6 +36,11 @@ id = "UC-cockpit-observability-07"
 tier = "T1"
 statement = "the collector loop exits 1 after N consecutive merge failures, exits 0 with 'config changed' when `SPIRA_CONF` mtime changes, and otherwise keeps running; the same contract holds for `health.sh` and `loom.sh`"
 
+[use_case.uncovered]
+reason = "test-conf-watch.sh flipped in round 93b under full-corpus load (red, then green twice on the same tree) and was deleted; root cause and re-add is sp-vlxxl"
+date = "2026-09-27"
+bead = "sp-vlxxl"
+
 [[use_case]]
 id = "UC-cockpit-observability-08"
 tier = "T1"
