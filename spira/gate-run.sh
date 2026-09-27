@@ -10,11 +10,14 @@
 #
 # Exit codes, and they are the interface:
 #
-#   0  the gate passed              1  the gate failed, or could not be run
+#   0  the gate passed              1  a recorded FAIL, or the command could not even start
 #   2  still deciding — call the same command again
 #   3  (--status only) no gate is running for that branch and none has finished
 #   4  (--status only) a verdict is recorded, but for a different tree — a rebase, a new
 #      commit, or the base moving invalidated it. Not the same claim as 3: a gate DID run.
+#   5  the run started and then died before recording a verdict — killed with its
+#      environment, OOM, a reboot. Not the same claim as 1: gate.sh never rendered a
+#      judgment on this tree, so a caller must not read this as a FAIL (sp-k7klr).
 #
 # WHY THIS EXISTS. An agent's Bash tool moves a foreground command to the background at a
 # fixed ceiling and hands the session back a task id. The gate outgrew that ceiling, so the
@@ -187,14 +190,18 @@ report() {              # report -> prints the verdict and exits with it
             exit 1 ;;
     esac
     # No exit code and nothing running. The run died — killed with the session that started
-    # it, out of memory, or the box rebooted — and the one thing that must not happen is for
-    # that to read as a pass. The state is cleared so the next call starts a run rather than
+    # it, out of memory, or the box rebooted. This is its own exit code, not 1: gate.sh never
+    # rendered a verdict on this tree, so a caller that read it as a recorded FAIL would keep
+    # reopening a bead against a corpse that never judged it, forever, no matter what the
+    # branch's tip became (sp-k7klr). Printed to stdout, like every other verdict here, so a
+    # caller capturing this call's output can tell a died run from a real FAIL apart from the
+    # exit code alone. The state is cleared so the next call starts a run rather than
     # rereading this corpse; a status probe clears nothing, because it is asked from an exit
     # path and a probe that changed the state would change the answer it was asked for.
-    echo "gate-run: the gate run for $BR died after $(elapsed)s without recording a verdict" >&2
+    echo "gate-run: the gate run for $BR died after $(elapsed)s without recording a verdict"
     tail -20 "$OUT" 2>/dev/null >&2
     [ "$MODE" = wait ] && rm -rf "$D"
-    exit 1
+    exit 5
 }
 
 stale_key() { [ "$(cat "$KEYF" 2>/dev/null)" != "$key" ]; }

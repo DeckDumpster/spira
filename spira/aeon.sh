@@ -1107,6 +1107,40 @@ $_cert_out"
                         fi
                     fi
                 fi ;;
+            5)  # THE RUN STARTED AND DIED BEFORE RECORDING A VERDICT — killed with its
+                # environment, OOM, a reboot. gate.sh never judged this tree, so this is not
+                # a FAIL and must be treated exactly like case 3 (no verdict at all): sp-5dcpj
+                # was reopened as cert-gate-red 20+ times over 5 days against one such corpse,
+                # because gate-run.sh used to collapse this into the same exit code as a real
+                # recorded FAIL and this case statement believed it (sp-k7klr).
+                if [ "$_cert_mode" != queue ]; then
+                    bdq note "$BEAD_ID" "Closed without ever obtaining a gate verdict — the gate run died before recording one. $gate_why" >/dev/null 2>&1
+                    log "$FAYTH: $BEAD_ID closed with no gate verdict (run died) — $gate_why"
+                elif [ "$_cert_hasown" != 1 ]; then
+                    bdq note "$BEAD_ID" "Closed without ever obtaining a gate verdict — the gate run died before recording one. $BRANCH carries no commit of $BEAD_ID's own ahead of $REPO_NAME's base, so there is nothing to certify." >/dev/null 2>&1
+                    log "$FAYTH: $BEAD_ID closed with no gate verdict (run died) — nothing ahead of base to certify"
+                else
+                    _cert_tip="$(git -C "$REPO" rev-parse "$BRANCH" 2>/dev/null)"
+                    _cert_ls_state=""; _cert_ls_tip=""
+                    read -r _cert_ls_state _cert_ls_tip _ <<< "$(land_state "$BEAD_ID" 2>/dev/null)"
+                    if [ "${_cert_ls_state:-}" = CERTIFIED ] && [ -n "${_cert_tip:-}" ] && [ "${_cert_ls_tip:-}" = "$_cert_tip" ]; then
+                        log "$FAYTH: $BEAD_ID closed with no gate verdict (run died), but $_cert_tip is already CERTIFIED — the session submitted it itself"
+                    else
+                        _cert_out="$(bash "$SPIRA_HOME/queue.sh" submit "$BRANCH" "$REPO_NAME" 2>&1)"; _cert_rc=$?
+                        if [ "$_cert_rc" -eq 0 ]; then
+                            bdq note "$BEAD_ID" "Certified by aeon.sh: closed without ever obtaining a gate verdict — the gate run died before recording one — so aeon.sh certified $BRANCH itself rather than leave it stranded — $_cert_out" >/dev/null 2>&1
+                            log "$FAYTH: $BEAD_ID certified by aeon.sh after a died gate run — $_cert_out"
+                        elif ! spira_gate_blames_branch "$_cert_rc"; then
+                            self_cert_no_blame "$BEAD_ID" "$BRANCH" "$REPO_NAME" "$_cert_rc" "$_cert_out"
+                        else
+                            bead_reopen "$BEAD_ID" cert-gate-red "Reopened by aeon.sh: closed without ever obtaining a gate verdict — the gate run died before recording one — so aeon.sh certified $BRANCH itself (queue.sh submit) and it failed.
+
+$_cert_out"
+                            st=open
+                            log "$FAYTH: $BEAD_ID REOPENED — self-certification failed after a died gate run ($_cert_out)"
+                        fi
+                    fi
+                fi ;;
         esac
     fi
     # A WORK BEAD DOES NOT CLOSE HERE (sp-qsona). bead_close_on_land (lib.sh) is the only

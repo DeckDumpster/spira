@@ -42,6 +42,12 @@
 #      same 3 it would answer for a branch that was never gated at all (sp-7uah8).
 #   8. gate status 4 through aeon.sh's own routing (the stub): self-certifies exactly as
 #      status 3 does, but the note names the stale verdict and never claims no gate ran.
+#   9. gate-run.sh ITSELF: a run that started and then died without ever recording a verdict
+#      answers 5, never 1 — 1 must mean a real recorded FAIL from gate.sh, not a corpse with
+#      no rc file (sp-k7klr: this collapse is what let sp-5dcpj be reopened as cert-gate-red
+#      20+ times against one dead run, with no code change in between).
+#   10. gate status 5 through aeon.sh's own routing (the stub): self-certifies exactly as
+#      status 3 does, and the note never claims a recorded FAIL verdict.
 #
 # SUBMITTED, NOT CLOSED (sp-qsona). Every case whose close is not undone by a reopen ends
 # open carrying spira-submitted — the conversion runs AFTER the gate/self-certify branch, so
@@ -96,6 +102,7 @@ case "$code" in
     2) echo "gate-run: still running for fixture — 10s so far, pid $$" ;;
     1) echo "gate-run: FAILED fixture in fixture after 10s" ;;
     4) echo "gate-run: the recorded verdict for fixture is for a different tree — key was oldtip oldbase, now newtip newbase. A rebase, a new commit, or the base moving invalidated it." ;;
+    5) echo "gate-run: the gate run for fixture died after 10s without recording a verdict" ;;
 esac
 exit "$code"
 STUB
@@ -388,6 +395,64 @@ want "st=4: log mentions certifying after a stale verdict" \
     "certified by aeon.sh after a stale gate verdict" "$(cat "$TMP/out" 2>/dev/null)"
 is   "st=4: bead is not reopened — converted to submitted" "open" "$(bead_status sp-gcs-stale4)"
 want "st=4: carrying the submitted label" "spira-submitted" "$(bead_labels sp-gcs-stale4)"
+
+# ======================================================================================
+echo
+echo "st=5 (gate run died before recording a verdict) through aeon.sh's own routing (the"
+echo "stub): self-certifies exactly like st=3 — and the note never claims a FAIL verdict"
+echo "(sp-k7klr: that conflation is the exact bug that reopened sp-5dcpj 20+ times):"
+# ======================================================================================
+fresh; seed sp-gcs-died5
+run_aeon 5 0
+want "st=5: note mentions certification, not a FAIL verdict" "Certified by aeon.sh" "$(bead_notes sp-gcs-died5)"
+nowant "st=5: note must never claim a recorded FAIL verdict" "FAIL gate verdict" "$(bead_notes sp-gcs-died5)"
+want "st=5: log mentions certifying after a died gate run" \
+    "certified by aeon.sh after a died gate run" "$(cat "$TMP/out" 2>/dev/null)"
+is   "st=5: bead is not reopened — converted to submitted" "open" "$(bead_status sp-gcs-died5)"
+want "st=5: carrying the submitted label" "spira-submitted" "$(bead_labels sp-gcs-died5)"
+
+# ======================================================================================
+echo
+echo "st=5, self-certification comes back red — reopened on the fresh evaluation, never on"
+echo "the died run itself being mistaken for a recorded FAIL:"
+# ======================================================================================
+fresh; seed sp-gcs-died5-red
+run_aeon 5 1
+want "st=5 red: note mentions self-certification failure" "queue.sh submit) and it failed" "$(bead_notes sp-gcs-died5-red)"
+nowant "st=5 red: note must never claim closed against a recorded FAIL verdict" \
+    "closed against a recorded FAIL gate verdict" "$(bead_notes sp-gcs-died5-red)"
+want "st=5 red: log mentions REOPENED" "REOPENED — self-certification failed after a died gate run" \
+    "$(cat "$TMP/out" 2>/dev/null)"
+want "st=5 red: bead is reopened" "open" "$(bead_status sp-gcs-died5-red)"
+nowant "st=5 red: and NOT marked submitted — it must be claimable again" "spira-submitted" "$(bead_labels sp-gcs-died5-red)"
+
+# ======================================================================================
+echo
+echo "gate-run.sh ITSELF (not the stub): a run that started and then died without ever"
+echo "recording a verdict answers 5, never 1 — 1 must mean a real recorded FAIL, not a"
+echo "corpse with no rc file (sp-k7klr):"
+# ======================================================================================
+BR4="spira/sp-gcs-died"
+git -C "$REPO" branch -q "$BR4" origin/main 2>/dev/null || true
+tip4="$(git -C "$REPO" rev-parse "$BR4")"
+base4="$(git -C "$REPO" rev-parse origin/main)"
+
+# A pid that is certainly dead by the time gate-run.sh reads it: fork and wait it out.
+( : ) & deadpid4=$!; wait "$deadpid4" 2>/dev/null
+
+slug4="$(printf '%s.%s' fixture "$BR4" | tr -c 'A-Za-z0-9._-' '_')"
+D4="$SPIRA_RUN/gate-run/$slug4"
+mkdir -p "$D4"
+printf '%s' "$deadpid4" > "$D4/pid"
+printf '%s %s' "$tip4" "$base4" > "$D4/key"
+date +%s > "$D4/started"
+: > "$D4/out"
+# no rc file written — the run died before ever recording one
+
+out4="$(bash "$HERE/gate-run.sh" --status "$BR4" fixture 2>&1)"; rc4=$?
+is   "died without a verdict answers 5, never 1" "5" "$rc4"
+want "st=5: message says the run died without recording a verdict" "died" "$out4"
+nowant "st=5: message must never claim FAILED" "FAILED" "$out4"
 
 echo
 tl_summary
