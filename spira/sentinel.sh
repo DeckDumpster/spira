@@ -1320,10 +1320,15 @@ if [ -n "$collision_out" ]; then
     park_out="$(park_branch_collisions "$collision_out")"
     [ -n "$park_out" ] && printf '%s\n' "$park_out"
     n_freed="$(grep -c '^FREED' <<< "$park_out" || true)"
-    n_parked=$((n_col - n_freed))
+    n_unlabeled="$(grep -c '^UNLABELED' <<< "$park_out" || true)"
+    n_parked=$((n_col - n_freed - n_unlabeled))
     if [ "$n_freed" -gt 0 ]; then
         log "CHECK7d: freed $n_freed stale squatting worktree(s) whose owning bead is closed and clean"
         act "freed $n_freed branch-collision worktree(s)"
+    fi
+    if [ "$n_unlabeled" -gt 0 ]; then
+        log "CHECK7d: cut $n_unlabeled bead(s) off an inherited branch: label naming another bead's canonical branch"
+        act "unlabeled $n_unlabeled inherited branch-collision bead(s)"
     fi
     if [ "$n_parked" -gt 0 ]; then
         log "CHECK7d: $n_parked bead(s) whose recorded branch is held by another bead's worktree — parking with $SPIRA_ASK_LABEL"

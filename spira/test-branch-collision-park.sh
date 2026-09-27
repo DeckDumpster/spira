@@ -98,19 +98,29 @@ nowant "unrelated bead with its own worktree is not flagged"        "COLLISION s
 
 # ==========================================================================================
 echo
-echo "case 2 — park_branch_collisions labels and notes each collision, once"
+echo "case 2 — park_branch_collisions parks a real collision, but cuts an inherited label (sp-ln4ke)"
 # ==========================================================================================
-park_branch_collisions "$out"
+park_out2="$(park_branch_collisions "$out")"
 
-for id in sp-root sp-child; do
-    labels="$(bdq label list "$id" 2>/dev/null)"
-    want "case 2: $id labeled $SPIRA_ASK_LABEL" "$SPIRA_ASK_LABEL" "$labels"
-    want "case 2: $id labeled overseer"          "overseer"        "$labels"
-done
+labels_root="$(bdq label list sp-root 2>/dev/null)"
+want "case 2: sp-root (own branch squatted) is labeled $SPIRA_ASK_LABEL" "$SPIRA_ASK_LABEL" "$labels_root"
+want "case 2: sp-root (own branch squatted) is labeled overseer"          "overseer"        "$labels_root"
+
+labels_child="$(bdq label list sp-child 2>/dev/null)"
+nowant "case 2: sp-child (inherited its parent's branch label) is never labeled $SPIRA_ASK_LABEL" "$SPIRA_ASK_LABEL" "$labels_child"
+nowant "case 2: sp-child (inherited its parent's branch label) is never labeled overseer"          "overseer"        "$labels_child"
+nowant "case 2: sp-child's inherited branch: label is gone"                                        "branch:spira/sp-root" "$labels_child"
+want   "case 2: park_branch_collisions reports sp-child UNLABELED, naming sp-root" \
+       "UNLABELED sp-child fixture spira/sp-root sp-root" "$park_out2"
 
 notes_root="$(bd -C "$SPIRA_DB" show sp-root --json 2>/dev/null \
     | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("notes","") if d else "")' 2>/dev/null)"
 want "case 2: parked note names the true holder" "sp-hold" "$notes_root"
+
+notes_child="$(bd -C "$SPIRA_DB" show sp-child --json 2>/dev/null \
+    | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("notes","") if d else "")' 2>/dev/null)"
+want "case 2: sp-child's note names the parent it inherited from, not needs-ryan prose" "inherited branch:spira/sp-root from sp-root" "$notes_child"
+nowant "case 2: sp-child's note never tells Ryan to free a worktree" "free $SPIRA_RUN" "$notes_child"
 
 for id in sp-hold sp-fine; do
     labels="$(bdq label list "$id" 2>/dev/null)"
@@ -119,20 +129,51 @@ done
 
 # ==========================================================================================
 echo
-echo "case 3 — a second sweep neither re-detects nor re-notes an already-parked bead"
+echo "case 2b — an inherited label with the child's OWN commits already on it is noted, not stranded"
+# ==========================================================================================
+git -C "$REPO" worktree add -q -b spira/sp-root2 "$SPIRA_RUN/worktree/sp-hold2" main
+printf 'sp-child2 was here\n' > "$SPIRA_RUN/worktree/sp-hold2/child2.txt"
+git -C "$SPIRA_RUN/worktree/sp-hold2" add child2.txt
+git -C "$SPIRA_RUN/worktree/sp-hold2" commit -qm "sp-child2: work committed onto the inherited branch"
+
+seed sp-root2                       # default branch spira/sp-root2, squatted by sp-hold2
+seed sp-child2 spira/sp-root2       # inherited affinity, but it already committed onto it
+
+out2b="$(detect_branch_collisions 2>/dev/null)"
+want "case 2b: sp-child2 detected as a collision before correction" "COLLISION sp-child2 fixture spira/sp-root2 sp-hold2" "$out2b"
+
+park_out2b="$(park_branch_collisions "$out2b")"
+want "case 2b: park_branch_collisions reports sp-child2 UNLABELED" "UNLABELED sp-child2 fixture spira/sp-root2 sp-root2" "$park_out2b"
+
+labels_child2="$(bdq label list sp-child2 2>/dev/null)"
+nowant "case 2b: sp-child2 is never labeled $SPIRA_ASK_LABEL" "$SPIRA_ASK_LABEL" "$labels_child2"
+
+notes_child2="$(bd -C "$SPIRA_DB" show sp-child2 --json 2>/dev/null \
+    | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("notes","") if d else "")' 2>/dev/null)"
+want "case 2b: sp-child2's own commit is named so it is not stranded" "sp-child2: work committed onto the inherited branch" "$notes_child2"
+
+# ==========================================================================================
+echo
+echo "case 3 — a second sweep neither re-detects nor re-notes an already-parked or already-cut bead"
 # ==========================================================================================
 out2="$(detect_branch_collisions 2>/dev/null)"
 nowant "already-parked bead excluded from a repeat detect pass" "sp-root" "$out2"
-nowant "already-parked bead excluded from a repeat detect pass" "sp-child" "$out2"
+nowant "already-cut bead excluded from a repeat detect pass"    "sp-child" "$out2"
 
 # park_branch_collisions itself is idempotent even fed stale output directly (defense in
-# depth: detect already excludes parked beads, but park must not re-note if it is ever
-# handed a line for a bead parked since the output was produced).
-park_branch_collisions "$out"
+# depth: detect already excludes parked/cut beads, but park must not re-note if it is ever
+# handed a line for a bead already resolved since the output was produced).
+park_out_repeat="$(park_branch_collisions "$out")"
 notes_root2="$(bd -C "$SPIRA_DB" show sp-root --json 2>/dev/null \
     | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("notes","") if d else "")' 2>/dev/null)"
 n_notes="$(grep -c "Parked by detect_branch_collisions" <<< "$notes_root2" || true)"
 is "case 3: exactly one park note on sp-root, not re-appended" "1" "$n_notes"
+
+notes_child2b="$(bd -C "$SPIRA_DB" show sp-child --json 2>/dev/null \
+    | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("notes","") if d else "")' 2>/dev/null)"
+n_child_notes="$(grep -c "Corrected by detect_branch_collisions" <<< "$notes_child2b" || true)"
+is "case 3: exactly one correction note on sp-child, not re-appended" "1" "$n_child_notes"
+nowant "case 3: a stale re-fed sp-child line is not re-reported as UNLABELED" "UNLABELED sp-child " "$park_out_repeat"
 
 # ==========================================================================================
 echo

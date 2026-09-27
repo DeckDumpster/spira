@@ -4980,7 +4980,19 @@ for i in (d if isinstance(d, list) else [d]):
 # (re-checks the label directly) so calling this on stale output does not re-note a bead
 # detect_branch_collisions itself would already have excluded.
 #
-# BUT A CLOSED, CLEAN, UNHELD SQUATTER NEEDS NO HUMAN (sp-vcxmz): its aeon already
+# AN INHERITED LABEL IS NOT A COLLISION FOR RYAN (sp-ln4ke). `bd create --parent` copies
+# every label onto a child, so a split child can carry the parent's branch:spira/<parent>
+# untouched — the child never chose that branch, it cut no branch of its own, and Ryan has
+# no decision to make about it. Checked BEFORE the closed/clean free below: even if the
+# named bead happens to be closed and clean right now, the label itself is still wrong and
+# would send this bead onto that branch on its next claim (the exact incident this fixes —
+# two split children committed onto their parent's branch before being parked by hand). The
+# fix is mechanical, so it needs no human (law-deterministic-before-inference): strip the
+# label so bead_branch falls back to this bead's own default, and note whatever commits it
+# already made under the wrong name so they are not silently stranded. Prints "UNLABELED
+# <id> <repo> <branch> <other-id>".
+#
+# BUT A CLOSED, CLEAN, UNHELD SQUATTER NEEDS NO HUMAN EITHER (sp-vcxmz): its aeon already
 # finished and left, so nothing but a stale worktree registration stands between the
 # blocked bead and a claim. Freed through the one destruction chokepoint
 # (spira_destroy_worktree) rather than a bare `git worktree remove` — same salvage and
@@ -4992,11 +5004,33 @@ for i in (d if isinstance(d, list) else [d]):
 park_branch_collisions() {
     local line id repo branch holder_id holder_path labels
     local holder_status holder_dirty holder_repo_root
+    local inherited_from inherited_commits pc_sha pc_subj
     while IFS= read -r line; do
         case "$line" in COLLISION\ *) ;; *) continue ;; esac
         read -r _ id repo branch holder_id holder_path <<< "$line"
         labels="$(bdq label list "$id" 2>/dev/null)"
         case "$labels" in *"${SPIRA_ASK_LABEL}"*) continue ;; esac
+
+        inherited_from="${branch#spira/}"
+        if [ "$inherited_from" != "$branch" ] && [ -n "$inherited_from" ] \
+           && [ "$inherited_from" != "$id" ] && bdq show "$inherited_from" --json >/dev/null 2>&1; then
+            case "$labels" in
+                *"branch:$branch"*)
+                    inherited_commits="$(git -C "$holder_path" log --format='%h%x09%s' --grep="$id:" -F 2>/dev/null \
+                        | while IFS=$'\t' read -r pc_sha pc_subj; do
+                              case "$pc_subj" in "$id":*) printf '%s %s\n' "$pc_sha" "$pc_subj" ;; esac
+                          done)"
+                    bdq label remove "$id" "branch:$branch" >/dev/null 2>&1 || true
+                    if [ -n "$inherited_commits" ]; then
+                        bdq note "$id" "Corrected by detect_branch_collisions: inherited branch:$branch from $inherited_from; cuts its own branch. This bead has its own commit(s) sitting unlanded on $branch, made before this label was removed: $inherited_commits" >/dev/null 2>&1 || true
+                    else
+                        bdq note "$id" "Corrected by detect_branch_collisions: inherited branch:$branch from $inherited_from; cuts its own branch." >/dev/null 2>&1 || true
+                    fi
+                    printf 'UNLABELED %s %s %s %s\n' "$id" "$repo" "$branch" "$inherited_from"
+                    ;;
+            esac
+            continue
+        fi
 
         holder_status="$(spira_bead_status "$holder_id")"
         if [ "$holder_status" = closed ] && ! holder_alive "$holder_id"; then
