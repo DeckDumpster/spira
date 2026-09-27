@@ -241,6 +241,10 @@ _releases="$TMP/releases"
 mkdir -p "$_releases"
 _conf="${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf"
 mkdir -p "$(dirname "$_conf")"
+# Env for deploy.sh/uninstall.sh/world.sh/doctor.sh run straight from THIS checkout
+# (see _ci_env in acceptance-lib.sh) — not the install.sh/ready.sh calls, which run
+# from an activated release and resolve SPIRA_CONFIG_BIN correctly on their own.
+_ci_deploy_env=(); _ci_env _ci_deploy_env "$_conf"
 # THE RELEASE SOURCE THIS BOX'S USER UNITS READ. They carry no forge credential (the workflow's
 # GH_TOKEN reaches its own steps only), so every release this run holds is staged into a local
 # source and SPIRA_RELEASE_REPO points at it — skew.sh's currency check reads it, and without
@@ -469,7 +473,7 @@ fi
 echo
 echo "phase A — uninstall and clean state"
 # ===========================================================================
-_uninstall_out="$(bash "$HERE/uninstall.sh" --yes 2>&1)"
+_uninstall_out="$(env "${_ci_deploy_env[@]}" bash "$HERE/uninstall.sh" --yes 2>&1)"
 is0 "phase A: uninstall.sh --yes exits 0" "$?"
 
 # Verify no spira-* units remain.
@@ -526,7 +530,7 @@ else
 
         # Run deploy.sh to upgrade to newest tag.
         _deploy_rc=0
-        bash "$HERE/deploy.sh" --allow-draft "${_deploy_tag_src[@]}" "$tag" 2>&1 | tee "$TMP/deploy-upgrade.log" || _deploy_rc=$?
+        env "${_ci_deploy_env[@]}" bash "$HERE/deploy.sh" --allow-draft "${_deploy_tag_src[@]}" "$tag" 2>&1 | tee "$TMP/deploy-upgrade.log" || _deploy_rc=$?
         is0 "phase B: deploy.sh $tag exits 0 (no rollback)" "$_deploy_rc"
 
         # Exercise every installed oneshot unit now, deterministically, rather than trusting
@@ -558,7 +562,7 @@ else
         # ===========================================================================
 
         _rollback_rc=0
-        bash "$HERE/deploy.sh" "${_deploy_prev_src[@]}" "$prev_tag" 2>&1 | tee "$TMP/deploy-rollback.log" \
+        env "${_ci_deploy_env[@]}" bash "$HERE/deploy.sh" "${_deploy_prev_src[@]}" "$prev_tag" 2>&1 | tee "$TMP/deploy-rollback.log" \
             || _rollback_rc=$?
         is0 "phase C: deploy.sh $prev_tag (rollback) exits 0" "$_rollback_rc"
 
@@ -579,7 +583,7 @@ else
                    "$(printf '%s\n' "$_unit_diff" | head -10)"
 
         # Final uninstall.
-        bash "$HERE/uninstall.sh" --yes >/dev/null 2>&1
+        env "${_ci_deploy_env[@]}" bash "$HERE/uninstall.sh" --yes >/dev/null 2>&1
         is0 "phase C: uninstall.sh --yes after rollback exits 0" "$?"
 
         fi  # end guard: phase B install succeeded
@@ -677,7 +681,7 @@ else
         printf '\nSPIRA_CHECK5_MAX_FILE = %s\n' "$_aged_override_val" >> "$_aged_conf"
 
         # Start world and confirm the sentinel timer is active.
-        bash "$HERE/world.sh" start 2>&1 | tee "$TMP/aged-world-start.log" || true
+        env "${_ci_deploy_env[@]}" bash "$HERE/world.sh" start 2>&1 | tee "$TMP/aged-world-start.log" || true
         _aged_sentinel="$(systemctl --user list-units --state=active --no-legend 2>/dev/null \
             | awk '{print $1}' | grep 'spira-sentinel' | head -1)"
         [ -n "$_aged_sentinel" ] \
@@ -690,7 +694,7 @@ else
 
         # Upgrade to tag from the aged, populated state.
         _aged_deploy_rc=0
-        bash "$HERE/deploy.sh" --allow-draft "${_deploy_tag_src[@]}" "$tag" 2>&1 | tee "$TMP/aged-deploy.log" \
+        env "${_ci_deploy_env[@]}" bash "$HERE/deploy.sh" --allow-draft "${_deploy_tag_src[@]}" "$tag" 2>&1 | tee "$TMP/aged-deploy.log" \
             || _aged_deploy_rc=$?
         is0 "phase D: deploy.sh $tag (aged upgrade) exits 0 — no rollback" "$_aged_deploy_rc"
 
@@ -715,7 +719,7 @@ else
 
             # Assert: doctor.sh exits 0 (no fatal).
             _aged_doctor_rc=0
-            bash "$HERE/doctor.sh" 2>&1 | tee "$TMP/aged-doctor.log" \
+            env "${_ci_deploy_env[@]}" bash "$HERE/doctor.sh" 2>&1 | tee "$TMP/aged-doctor.log" \
                 || _aged_doctor_rc=$?
             is0 "phase D: doctor.sh no fatal after aged upgrade" "$_aged_doctor_rc"
 
@@ -736,7 +740,7 @@ else
                        "$_aged_failed"
 
             # Assert: world resumed after upgrade (no HALTED/STOPPED state).
-            _aged_world_out="$(bash "$HERE/world.sh" status 2>&1)"
+            _aged_world_out="$(env "${_ci_deploy_env[@]}" bash "$HERE/world.sh" status 2>&1)"
             if printf '%s' "$_aged_world_out" | grep -qE 'HALTED|STOPPED'; then
                 bad "phase D: world running after aged upgrade" \
                     "$(printf '%s' "$_aged_world_out" \
@@ -839,7 +843,7 @@ else
         echo
         echo "phase D — aged rollback: deploy $prev_tag (refuse-or-succeed)"
         _aged_rollback_rc=0
-        _aged_rollback_out="$(bash "$HERE/deploy.sh" "${_deploy_prev_src[@]}" "$prev_tag" 2>&1)" \
+        _aged_rollback_out="$(env "${_ci_deploy_env[@]}" bash "$HERE/deploy.sh" "${_deploy_prev_src[@]}" "$prev_tag" 2>&1)" \
             || _aged_rollback_rc=$?
         if [ "$_aged_rollback_rc" -ne 0 ]; then
             if printf '%s' "$_aged_rollback_out" | grep -qi 'migrat'; then
@@ -850,7 +854,7 @@ else
             fi
         else
             ok "phase D: rollback to $prev_tag succeeded"
-            _aged_rollback_world="$(bash "$HERE/world.sh" status 2>&1)"
+            _aged_rollback_world="$(env "${_ci_deploy_env[@]}" bash "$HERE/world.sh" status 2>&1)"
             if printf '%s' "$_aged_rollback_world" | grep -qE 'HALTED|STOPPED'; then
                 bad "phase D: world running after aged rollback" \
                     "$(printf '%s' "$_aged_rollback_world" \
@@ -860,7 +864,7 @@ else
             fi
         fi
 
-        bash "$HERE/uninstall.sh" --yes >/dev/null 2>&1
+        env "${_ci_deploy_env[@]}" bash "$HERE/uninstall.sh" --yes >/dev/null 2>&1
         is0 "phase D: uninstall.sh exits 0" "$?"
     fi
 fi

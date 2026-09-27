@@ -302,4 +302,40 @@ wantfile "phase A: download path also acquires via _acquire_tarball (one mechani
 wantfile "phase A: --tarball reports the download as skipped" \
     "download skipped" "$SCRIPT"
 
+# ============================================================================
+echo
+echo "15. deploy.sh/uninstall.sh/world.sh/doctor.sh see SPIRA_OPERATED=0 (sp-seae6)"
+# ============================================================================
+# These four run straight from THIS checkout, never an activated release, so conf.sh's
+# own SPIRA_CONFIG_BIN resolution finds neither bin/spira-config nor a cargo build here
+# and no config — SPIRA_OPERATED=0 included — is ever read (sp-seae6). Every such
+# invocation must run under _ci_deploy_env, built by acceptance-lib.sh's _ci_env, which
+# points SPIRA_CONFIG_BIN at the release under test's own binary instead.
+
+wantfile "_ci_deploy_env is built once via _ci_env" \
+    '_ci_deploy_env=(); _ci_env _ci_deploy_env "$_conf"' "$SCRIPT"
+
+# POSITIVE CONTROL: a bare invocation of any of the four is exactly the defect this
+# guards — confirm the check below would catch one.
+_pc_bare="$(mktemp)"
+printf 'bash "$HERE/deploy.sh" --allow-draft "$tag"\n' > "$_pc_bare"
+if grep -qE '(^|[^"[:alnum:]_])bash "\$HERE/(deploy|uninstall|world|doctor)\.sh"' "$_pc_bare"; then
+    ok "positive-control: the bare-invocation pattern matches an un-wired call"
+else
+    bad "positive-control: the bare-invocation pattern matches an un-wired call" "no match"
+fi
+rm -f "$_pc_bare"
+
+_bare_ci_calls="$(grep -nE '(^|[^"[:alnum:]_])bash "\$HERE/(deploy|uninstall|world|doctor)\.sh"' "$SCRIPT" || true)"
+[ -z "$_bare_ci_calls" ] \
+    && ok  "every deploy.sh/uninstall.sh/world.sh/doctor.sh call runs under _ci_deploy_env" \
+    || bad "every deploy.sh/uninstall.sh/world.sh/doctor.sh call runs under _ci_deploy_env" \
+           "$_bare_ci_calls"
+
+_ci_call_count="$(grep -cE '"\$\{_ci_deploy_env\[@\]\}" bash "\$HERE/(deploy|uninstall|world|doctor)\.sh"' "$SCRIPT" || true)"
+[ -n "$_ci_call_count" ] && [ "$_ci_call_count" -ge 11 ] \
+    && ok  "at least 11 calls (one per phase A/B/C/D deploy, uninstall, world, doctor site) are wired" \
+    || bad "at least 11 calls (one per phase A/B/C/D deploy, uninstall, world, doctor site) are wired" \
+           "found $_ci_call_count"
+
 tl_summary
