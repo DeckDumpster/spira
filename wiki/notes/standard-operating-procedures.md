@@ -1,7 +1,7 @@
 ---
 type: note
 created: 2026-09-05
-updated: 2026-09-26
+updated: 2026-09-27
 tags: [spira, ops, sop, runbook, generated]
 aliases: [SOPs, Standard operating procedures, The shelf]
 ---
@@ -16,7 +16,7 @@ spira/sop.sh write <slug> -   # text on stdin
 
 Statutes are how to behave; SOPs are how to fix. They share one mechanism, split by prefix — `law-` and `sop-` — so the [[spira]] Ops persona reads its runbooks exactly the way every agent already reads [[common-law]]. Ops is summoned by an incident bead filed from a failed systemd unit, matches the payload against the `MATCH:` lines below, and executes the first one that fires.
 
-**54 SOP(s)** on the shelf as of 2026-09-26.
+**58 SOP(s)** on the shelf as of 2026-09-27.
 
 ## The closing rule
 
@@ -72,6 +72,50 @@ Statutes are how to behave; SOPs are how to fix. They share one mechanism, split
 
 **Matches** `SENDING.*BATCHED.*absent.*open batch|Stranded BATCHED|SP_BATCHED_STRANDED=[1-9]|BATCHED.*landstate.*no.*open batch`
 
+### Builder work reclaimed by ops
+
+`sop-builder-work-reclaimed-by-ops`
+
+**Symptom**
+
+```
+A bead's body says it "needs a branch through the normal gate, not an Ops
+hand-patch" or requires multi-item research. Each Ops wall (~7-8min) is too short for
+any item, so each session re-derives "not Ops work" and exits with no commit. Every
+such note counts toward the poison threshold with zero code ever attempted.
+```
+
+**Check**
+
+```
+`bd show <id>` — count notes matching "Ops session (". Two or more reaching the
+same "not safe under an Ops wall" conclusion, no code diff between them, confirms this
+is dispatch, not a fresh incident.
+```
+
+**Fix**
+
+```
+Do not attempt partial builder work. Check `mail.sh list operator` for a reply; if
+none and one was already sent, do not resend (law-repeating-conditions-escalate-once).
+Fix is outside Ops: re-type to a builder lane with a wall long enough for research plus
+repro. Past ~10 identical reclaims, stop writing a full note each time -- record
+`sop.sh applied --held yes` (background it, sp-dnu2c) and leave one short line instead.
+```
+
+**Escalate**
+
+```
+On first sighting, send one question and stop; record recurrence count only.
+Past 20+ reclaims with no reply, send one further, distinct escalation about the
+dispatch mechanism itself (why does the loop keep summoning Ops for a bead Ops can
+never close?), then go quiet the same way.
+```
+
+**Reference** — wiki/notes/sop-builder-work-reclaimed-by-ops-match-gap.md
+
+**Matches** `Ops session \([0-9]+(st|nd|rd|th)`
+
 ### Closed branch cleanup missed
 
 `sop-closed-branch-cleanup-missed`
@@ -101,44 +145,39 @@ bd show $ID | grep "CLOSED"; git merge-base --is-ancestor $COMMIT origin/main &&
 **Check**
 
 ```
-Verify that the bead's commit is actually on the base branch.
+Verify the bead's commit is actually on base.
 ```
 bead_id=sp-vcobo  # substitute the bead from the incident title
 commit=$(git log --all --oneline | grep "$bead_id" | head -1 | awk '{print $1}')
 git merge-base --is-ancestor "$commit" origin/main
 ```
-If 0, work IS landed: false alarm from the systemic bug, not a missing commit.
+0 → landed: false alarm from the systemic bug, not a missing commit.
 
-If nonzero AND `bd show` finds the bead currently OPEN, this SOP doesn't apply: it likely flapped closed->open between scan and check (aeon.sh certify-close fallback, then a verdict reopened it — see sp-2d14d). File a bead documenting the flap; do not apply this FIX.
+Nonzero AND `bd show` finds the bead OPEN → doesn't apply, likely flapped closed->open (sp-2d14d). File a bead; don't apply FIX.
+
+Nonzero, `$commit` empty, close reason is a direct ops/infra action (prune, host config, manual mitigation) → no-commit-ever case, see REF.
 ```
 
 **Fix**
 
 ```
-ESCALATE if sp-2dvyh (bead_close_on_land land_mark fix) is not yet landed — root cause is systemic and cannot be patched retroactively in Ops context (guard sp-kz8ob). Add it as a blocker dependency and leave the incident open.
+ESCALATE if sp-2dvyh (land_mark fix) not yet landed — add as blocker dep, leave open (guard sp-kz8ob).
 
-Once sp-2dvyh IS landed: re-check this incident's own BLOCKS list. Child incidents self-resolve once their underlying bead lands or gets requeued/reworked — no separate retroactive-repair step exists or is needed. If every blocked bead now shows CLOSED, this incident is resolved; close it citing their close reasons. New individual incidents for other beads are separate work, not a reason to hold this one.
+Once sp-2dvyh IS landed: blocked incidents self-resolve; close citing their reasons.
+
+No-commit-ever case: condition is PERMANENT, watcher refiles forever. Do NOT
+close as false alarm. File/link a bead against the watcher's own predicate and
+`bd dep add` this incident onto it; leave OPEN. Worked example: REF.
+
+Dependency rot: if that blocker bead is later closed as SUBSUMED/DUPLICATE/
+"tracked in epic X" rather than landed, `bd dep` reads it as satisfied anyway
+and the incident recurs. Re-read the blocker's close reason; re-point the dep
+at whatever successor is still open. Repeat down the chain. Full narrative: REF.
 ```
 
-**Escalate** — Only while sp-2dvyh has not landed. See REF for the sp-b8ot4 case history.
+**Escalate** — Only the land_mark-bug case, while sp-2dvyh is unlanded.
 
-**Escalate** — To harden CHECK 5 against missed landstate records: always create the LANDED record when closing, regardless of merge subject. Also consider: if CHECK 5 already validates the commit is in the graph, creating the record is redundant — modify CHECK 5 to trust the graph walk instead of requiring a file.
-
-**Third case (no commit ever)** — If `$commit` above is empty (no commit for the
-bead exists anywhere in `git log --all`), this is not the land_mark bug and not
-a retroactive-record case: it's a bead legitimately closed via direct
-operational/infrastructure action (disk prune, host config change, manual
-mitigation) with no code change and nothing to land. Check the bead's own close
-reason/notes for language like "no code change was needed", "nothing to
-commit", or "no gate ran ... nothing to certify". If present, close the CHECK-5
-incident as a false alarm citing that evidence; do not add an sp-2dvyh
-dependency (it does nothing for a bead with no commit) and do not attempt a
-retroactive land_mark (there is no commit to mark). Worked example: sp-q3lgs
-(disk-full, closed via `podman image prune`) and its child sp-1046x
-(diagnosis-only, "no gate ran ... nothing to certify"), flagged by sp-4xb7m,
-closed false-alarm 2026-09-27. See wiki/notes/sp-4xb7m-no-commit-ever-case.md.
-
-**Reference** — wiki/notes/standard-operating-procedures.md, wiki/notes/sp-4xb7m-no-commit-ever-case.md, wiki/notes/sp-b8ot4-closed-not-landed-resolution.md
+**Reference** — wiki/notes/standard-operating-procedures.md, wiki/notes/sp-b8ot4-closed-not-landed-resolution.md, wiki/notes/sp-4xb7m-no-commit-ever-case.md
 
 **Matches** `CLOSED NOT LANDED.*has no LANDED record|CHECK 5.*closed.*not.*landed`
 
@@ -223,6 +262,22 @@ bd show $bead_id | grep -i "delivers:action"
 **Reference** — spira/doctor.sh lines 324-330, 337-347, 548-554, 576-586
 
 **Matches** `doctor\.sh.*SPIRA_DOCTOR_INSTALLING.*FAIL.*downgrade`
+
+### Dolt groupby leak blocks shutdown
+
+`sop-dolt-groupby-leak-blocks-shutdown`
+
+**Symptom** — dolt-beads.service is ActiveState=active (0% CPU, threads parked on futex) but :3307 stops accepting. Clients see "circuit breaker is open". Goroutine dump shows connections stuck in go-mysql-server GROUP BY (groupByGroupingIter -> errguard -> WaitGroup.Wait): client timed out and left but the server-side query goroutine never exits, leaking a slot. Enough leaks stop the listener; a later restart/SIGTERM then blocks forever on the leaked queries.
+
+**Check** — `systemctl --user is-active dolt-beads` reads "active" through the whole outage -- not sufficient alone. Confirm with `ss -tln | grep 3307`: active unit + empty result = this bug.
+
+**Fix** — Recovery only, does not fix the leak. Snapshot store if wanted. `restart` is likely refused by a RefuseManualStop drop-in -- check first. `kill --signal=TERM` will NOT end it. `kill --signal=QUIT` does, and Restart=always brings it back; capture `journalctl --user -u dolt-beads -n 500` right after for the dump. Verify with `ss -tln | grep 3307` plus a real bd call. Move any snapshot off root once done -- root has a 90% watcher.
+
+**Escalate** — Real fix is sp-ynow8, a builder task, not an Ops hand-patch -- confirmed it does not fit an Ops wall. dolt-server.yaml has no execution-timeout key (only connection read/write_timeout_millis, which won't kill a stuck query). The health check to fix, $SPIRA_RUN/concierge-notes/cert-pool-watch.sh:38, is a live hand-deployed loop with no git backing -- locate its canonical source before editing.
+
+**Reference** — incident sp-nmzok (goroutine dump); sp-ynow8 (builder follow-up, in_progress)
+
+**Matches** `circuit breaker is open|client connection went away while a query was executing|groupByGroupingIter|errguard.*WaitGroup`
 
 ### Duplicate incident host cores
 
@@ -381,48 +436,88 @@ pinning which mechanism fired for a given bead needs the landing pass's own log
 
 **Matches** `closed .* 'landed'.*citing|citing.*(unrelated|wrong).*commit|orphan-work.*count unchanged`
 
-### Orphaned branches blocking sending
+### Mail send loom splice hang
 
-`sop-orphaned-branches-blocking-sending`
+`sop-mail-send-loom-splice-hang`
 
-**Symptom** — Branches exist in git with multiple commits but no corresponding bead in database. sending.sh reap cannot clean these branches because it requires a bead reference, so they persist indefinitely and block SP_UNSENT_OLDEST_H from clearing below alert threshold (~48h).
+**Symptom**
+
+```
+mail.sh send operator backgrounds/hangs then exits 124 under a short timeout.
+  Reproduces deterministically with a fresh throwaway message.
+```
 
 **Check**
 
 ```
-Verify orphaned branches exist with no bead entries:
-  cd $SPIRA_WORK
-  git branch | grep 'round-' | wc -l  # Should show branches
-  # Confirm with: bd -C $SPIRA_DB query branch:<name> returns empty
+strace -f -tt -o /tmp/trace.log timeout 8 mail.sh send operator --from X --subject Y --kind question --default Z
+  Confirms if trace ends in a bare `cat` (execve(.../cat,["cat"])) whose fd0 is
+  S_IFSOCK, dup2'd from a bash-coproc fd (pipe2, fd>=10), blocked forever in
+  splice(0,NULL,1,NULL,...) past strace's own ceiling.
 ```
 
 **Fix**
 
 ```
-This requires operator decision between two options:
-
-  OPTION A (DESTRUCTIVE): Delete orphaned branches immediately
-    Effect: Clears refs, frees SP_UNSENT_OLDEST_H below 48h on next watcher tick
-    Risk: Irreversible without git reflog; unintended deletion of active branches
-    Command: for b in round-{12..34} allcert; do git branch -D spira/$b; done
-
-  OPTION B (SAFE): Enhance sending.sh to handle branches without beads
-    Effect: Future-proofs against orphaned branches recurring
-    Risk: Requires development effort; may delete branches unintentionally
-    Benefit: Prevents similar issues systematically
+Not Ops-actionable — code defect. loom.sh/loom binary were confirmed running,
+  port 8788 open, no stale lock, mailboxes small: this is not an environment fault.
+  Builder fix: wrap the coprocess-output read/cat step in mail.sh's loom-backed send
+  path with a real deadline; SPIRA_LOOM_BUDGET_MS=1500 is set but not enforced on
+  this path. See REF for full trace analysis.
 ```
 
 **Escalate**
 
 ```
-Operator chooses between immediate cleanup (A) or systematic enhancement (B). Include context:
-  - Which branches are orphaned (have commits but no beads)
-  - Duration of orphan status
-  - Active development on any affected branches
-  - Risk/benefit of each path
+File a bug bead for a builder. If mail.sh send operator is the only
+  escalation channel and it's down, escalate via `bd note` directly; don't retry.
 ```
 
-**Reference** — sp-cc7gs
+**Reference** — wiki/notes/mail-send-loom-splice-hang.md
+
+**Matches** `mail\.sh send.*(hang|timed? ?out|exit 124)|mail\.sh.*>?120s`
+
+### Orphaned branches blocking sending
+
+`sop-orphaned-branches-blocking-sending`
+
+**Symptom**
+
+```
+Bead-less branches accumulate because sending.sh reap requires a
+bead. Cockpit splits them: SP_UNADOPTED (commits on base, safe to discard) vs
+SP_ORPHAN_WORK (commits not on base, unlanded - deleting destroys work).
+```
+
+**Check** — grep -E 'SP_UNADOPTED|SP_ORPHAN_WORK|SP_UNSENT_OLDEST_H' "$SPIRA_RUN/cockpit.env"
+
+**Fix**
+
+```
+Do not delete ORPHAN_WORK branches. Archive-not-delete (move ref to
+refs/archive/<name>, publish to origin, then delete branch ref) is the
+demonstrated fix - see REF for mechanism and the local-vs-remote durability
+gap. Aeons have no push credentials; this is diagnosis, not self-service.
+
+Once escalated, immediately upgrade the incident<->decision-bead relation to
+`blocks` (`bd dep remove`, then `bd dep add ... --type blocks`) so `bd ready
+--claim` stops resurfacing the incident every tick. Four sessions re-derived
+the same finding and died at the wall because this was left as relates-to.
+
+Confirm mail delivery before trusting a prior session's claim that it sent -
+`mail.sh send` can hang and get backgrounded; a task output of only
+"[killed]" means it never sent. Resend backgrounded, don't retry foreground.
+```
+
+**Escalate**
+
+```
+Whether sending.sh should adopt archive-then-publish as standing
+behavior for bead-less branches is an open operator decision (sp-vazlj).
+Until answered, leave ORPHAN_WORK alone and keep the incident blocked on it.
+```
+
+**Reference** — wiki/notes/orphaned-branches-archive-mechanism.md, sp-cc7gs, sp-vazlj
 
 **Matches** `SP_UNSENT_OLDEST_H remains high.*orphaned.*branch|sending\.sh.*blocked|round-[0-9]+.*no.*bead`
 
@@ -560,6 +655,22 @@ The fix is incomplete in the target branch. Examine aeon.sh error handling path 
 **Reference** — wiki/notes/server-testdb-suite-budget.md
 
 **Matches** `(SIGTERM|timeout|watchdog.*killed).*test.*server.*testdb|testdb.*server.*\(slow\|84s\|overhead\)`
+
+### Sopsh applied ledger contention
+
+`sop-sopsh-applied-ledger-contention`
+
+**Symptom** — `sop.sh applied` takes 60-120s+ or hits a caller's short `timeout` (exit 124) when called against a bead Ops has reclaimed many times (applied.jsonl has 25+ entries for one bead, ~230KB/579+ lines total). A short-wall session can burn its budget on one call. On repeat, calls can hit 124 with NO entry appended (verified via wc -l before/after) -- killed before append, not just slow.
+
+**Check** — Run two `sop.sh applied` calls on the same bead with short timeouts back to back; diff applied.jsonl line count before/after. Both timing out with no line added confirms this.
+
+**Fix** — Ops cannot edit sop.sh (production, out of scope here). Mitigate: don't wrap `applied` in a short timeout on a hot bead -- background it and poll instead; size timeouts 150s+. Escalate to a builder to profile for lock contention on the growing ledger and/or a wiki regen+commit step run every call; candidate fixes: append-only/sharded ledger, batched wiki regen, or documented latency. See sp-dnu2c.
+
+**Escalate** — If profiling finds a different mechanism (stuck flock, network call), amend this SOP rather than filing a new one.
+
+**Reference** — wiki/notes/sop-sopsh-applied-ledger-contention.md
+
+**Matches** `sop\.sh applied.*(hang|timeout|124|slow).*(concurrent|lock|contention)|applied\.jsonl.*(lock|contention|hang)`
 
 ### Sp 214zs queue open batch
 
