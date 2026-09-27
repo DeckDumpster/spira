@@ -178,12 +178,20 @@ for f in landing.sh batch.sh sending.sh verdict.sh queue.sh; do
     # sending.sh's own remote-branch delete moved into lib.sh's spira_reap_landed_branch
     # (sp-jci6o), shared with bead_close_on_land's landing-time reap — spira_git_push is
     # still what it calls, just one hop further away than a literal grep on this file sees.
-    if [ "$f" = "sending.sh" ]; then
+    #
+    # batch.sh's own cut retired (sp-vsob2): the batcher crate cuts and queue.sh
+    # (already in this list) pushes the batch. batch.sh pushes nothing anymore, so
+    # it only gets the bare-push check below, not the positive presence check.
+    if [ "$f" = "batch.sh" ]; then
+        want_sym=''
+    elif [ "$f" = "sending.sh" ]; then
         want_sym='spira_git_push|spira_reap_landed_branch'
     else
         want_sym='spira_git_push'
     fi
-    if grep -qE "$want_sym" "$HERE/$f"; then
+    if [ -z "$want_sym" ]; then
+        :
+    elif grep -qE "$want_sym" "$HERE/$f"; then
         ok "$f: spira_git_push present"
     else
         bad "$f: spira_git_push present" "not found"

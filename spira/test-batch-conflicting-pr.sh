@@ -81,7 +81,6 @@ batch() {
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
     SPIRA_QUEUE_BATCH_MAX=8 \
     SPIRA_QUEUE_BATCH_WAIT=0 \
-    SPIRA_QUEUE_LOCAL_GATE=0 \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
         bash "$SH/batch.sh" "$@" 2>&1
 }

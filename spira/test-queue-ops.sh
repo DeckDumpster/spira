@@ -516,7 +516,6 @@ dirty_out="$(env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" \
     SPIRA_FORGE="$SH/forge-dirty.sh" \
     FORGE_LOG="$FORGE_LOG" DIRTY_MERGE_LOG="$DIRTY_MERGE_LOG" DIRTY_MAIL_LOG="$DIRTY_MAIL_LOG" \
     RUNS_FILE="$RUNS_FILE" SPIRA_QUEUE_BATCH_MAX=8 SPIRA_QUEUE_BATCH_WAIT=0 \
-    SPIRA_QUEUE_LOCAL_GATE=0 \
     bash "$SH/batch.sh" "$REPONAME" 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "DIRTY: batch exits 0" || bad "DIRTY: batch exits 0" "rc=$rc out=$dirty_out"
 want "DIRTY: batch logs the DIRTY detection" "DIRTY" "$dirty_out"
