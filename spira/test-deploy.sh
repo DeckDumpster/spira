@@ -11,7 +11,8 @@
 #   4. (b) Drain refuses: non-zero drain exit blocks deploy without killing aeons.
 #   5. (c) Rollback non-first: failed health check restores the prior release, and the
 #          re-rendered units resolve (not merely the symlink) into its tree.
-#   6. (d) Unit re-render: install.sh is called with SPIRA_PROD=$SPIRA_RELEASES/current/spira.
+#   6. (d) Unit re-render: install.sh is called with SPIRA_PROD=$SPIRA_RELEASES/current/spira,
+#          and none of the checkout's own derived paths (SPIRA_RUN, SPIRA_CTRL, ...) leak in.
 #   7. (e) Dry-run: --dry-run leaves the releases dir untouched.
 #   8. (f) First-deploy rollback: no prior release → current removed, units on checkout, world resumed.
 #   9. (g) spira.conf update: after successful deploy SPIRA_PROD written to conf.
@@ -164,6 +165,9 @@ cat > "$BIN/install.sh" <<'IEOF'
 printf 'install SPIRA_PROD=%s SPIRA_HOME=%s\n' "${SPIRA_PROD:-UNSET}" "${SPIRA_HOME:-UNSET}" >> "${CALL_LOG:-/dev/null}"
 printf 'install-bins SPIRA_REPO=%s SPIRA_BROKER_BIN=%s SPIRA_LOOM_BIN=%s\n' \
     "${SPIRA_REPO:-UNSET}" "${SPIRA_BROKER_BIN:-UNSET}" "${SPIRA_LOOM_BIN:-UNSET}" >> "${CALL_LOG:-/dev/null}"
+printf 'install-paths SPIRA_RUN=%s SPIRA_CTRL=%s SPIRA_TESTDB_DATA=%s SPIRA_WORKSPACES=%s SPIRA_MAIL=%s SPIRA_DOLT_DATA=%s\n' \
+    "${SPIRA_RUN:-UNSET}" "${SPIRA_CTRL:-UNSET}" "${SPIRA_TESTDB_DATA:-UNSET}" \
+    "${SPIRA_WORKSPACES:-UNSET}" "${SPIRA_MAIL:-UNSET}" "${SPIRA_DOLT_DATA:-UNSET}" >> "${CALL_LOG:-/dev/null}"
 printf 'install-resolved SPIRA_HOME=%s\n' \
     "$(readlink -f "${SPIRA_HOME:-}" 2>/dev/null || printf '%s' "${SPIRA_HOME:-}")" \
     >> "${CALL_LOG:-/dev/null}"
@@ -577,6 +581,37 @@ rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" 
 _out="$(run_deploy "SC_FAILED_UNITS=spira-real-prod.service loaded failed failed A real failure" \
     "SC_START_FAILS=spira-real-prod.service" -- "$NEW_TAG" 2>&1)"
 want   "deploy-window: a unit that fails again is left for doctor" "spira-real-prod.service fails again under" "$_out"
+
+# PROPERTY 6e — THE RE-RENDER DOES NOT LEAK THE CHECKOUT'S DERIVED RUNTIME PATHS. conf.sh
+# derives SPIRA_RUN (and, chained under it, SPIRA_CTRL, SPIRA_TESTDB_DATA, SPIRA_WORKSPACES,
+# SPIRA_MAIL, SPIRA_DOLT_DATA) from the checkout's own SPIRA_REPO when nothing sets them
+# explicitly; the release's own conf.sh keeps any such value it inherits instead of deriving
+# its own. A deploy from a source checkout then rendered units pointed at the CHECKOUT's
+# runtime tree, and after a rollback a unit reading a file under it found no such directory.
+# "SPIRA_RUN=" overrides run_deploy's usual forced value with
+# empty, which is as unset as no value for conf.sh's `:=` — every other property here forces
+# SPIRA_RUN, so this is the one place the checkout is left to derive it as an operator's
+# checkout with nothing configured would.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+DERIVED_RUN="$FAKE_REPO/.runtime/spira"
+rm -rf "$DERIVED_RUN"
+
+_out="$(run_deploy "SPIRA_RUN=" -- "$NEW_TAG" 2>&1)"
+_rc=$?
+is0 "leak/fail-first: deploy exits 0" "$_rc"
+
+# POSITIVE CONTROL: the checkout's own conf.sh really did derive a checkout-rooted SPIRA_RUN
+# (deploy.sh mkdir -p's it) — proving there was something here to leak before trusting that
+# it did not (law-absence-needs-a-positive-control).
+[ -d "$DERIVED_RUN" ] \
+    && ok  "leak/fail-first: checkout's own conf.sh derived $DERIVED_RUN (control)" \
+    || bad "leak/fail-first: checkout's own conf.sh derived $DERIVED_RUN (control)" "not created"
+
+_got_paths="$(grep '^install-paths' "$CALL_LOG" 2>/dev/null | head -1)"
+is "leak: none of the checkout-derived runtime paths reach the release re-render" \
+   "install-paths SPIRA_RUN=UNSET SPIRA_CTRL=UNSET SPIRA_TESTDB_DATA=UNSET SPIRA_WORKSPACES=UNSET SPIRA_MAIL=UNSET SPIRA_DOLT_DATA=UNSET" \
+   "$_got_paths"
+unset DERIVED_RUN _got_paths
 
 # ==========================================================================
 echo

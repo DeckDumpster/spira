@@ -51,6 +51,11 @@
 #   2  fatal (usage error, draft release, fetch failed, activation error)
 # covers: spira/deploy.sh spira/activate.sh spira/world.sh cockpit/layout.sh
 set -uo pipefail
+
+# Captured before conf.sh derives anything from THIS checkout, for _render_release_units to
+# render the release's units under — see that function for why.
+mapfile -d '' _spira_orig_env < <(env -0)
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/conf.sh"
 . "$HERE/lib.sh"
@@ -419,21 +424,21 @@ else
 fi
 
 # _render_release_units — re-render every unit for the release $SPIRA_RELEASES/current points
-# at, through THAT release's install.sh, resolving THAT release's binaries.
+# at, through THAT release's install.sh, resolving THAT release's binaries and paths.
 #
-# THE RELEASE, NOT THE INVOKING CHECKOUT. This script sourced conf.sh, which derived and
-# EXPORTED SPIRA_BROKER_BIN, SPIRA_LOOM_BIN, ... (and SPIRA_WAKE) from the SPIRA_REPO it was
-# run from, and the release's install.sh kept them — conf.sh only fills keys that are unset.
-# Run from a source checkout with nothing built (acceptance, or an operator's clone), units.sh
-# found no broker or loom binary and PRUNED spira-broker and spira-loom on every deploy and
-# every rollback; acceptance phase C's rollback then failed its health check on "loom does
-# not answer" and restored the newer release (2026-09-26). SPIRA_REPO is the release, and the
-# derived values are cleared so the release's own conf.sh derives them from its bin/; a value
-# the operator set in spira.conf is read again by that conf.sh, so nothing explicit is lost.
+# THE RELEASE, NOT THE INVOKING CHECKOUT. This script's conf.sh derives and exports both
+# binary paths (SPIRA_BROKER_BIN, SPIRA_LOOM_BIN, ...) and runtime paths (SPIRA_RUN,
+# SPIRA_CTRL, SPIRA_TESTDB_DATA, ...) from the SPIRA_REPO it was run from, and a release's
+# conf.sh keeps any such value it inherits rather than deriving its own — so run from a source
+# checkout, the release's rendered units pointed at the checkout's own runtime tree (acceptance
+# phase C, 2026-09-26) after having already pruned units for binaries the checkout never built
+# (2026-09-26, earlier same phase). Naming every such key here would re-leak the next one
+# conf.sh grows, so instead this renders under $_spira_orig_env — the environment as invoked,
+# captured before conf.sh had a chance to derive anything — plus only the release's identity.
+# The release's own conf.sh then derives everything else from ITS bin/ and reads spira.conf
+# for itself, so a value the operator actually set there is not lost.
 _render_release_units() {
-    env -u SPIRA_LOOM_BIN -u SPIRA_BROKER_BIN -u SPIRA_CZAR_PASS_BIN -u SPIRA_QUEUE_WATCH_BIN \
-        -u SPIRA_RECONCILER_BIN -u SPIRA_SUPERVISE_BIN -u SPIRA_LANDING_PASS_BIN \
-        -u SPIRA_TSD_BIN -u SPIRA_BATCHER_BIN -u SPIRA_TEST_PLAN_BIN -u SPIRA_PANEL -u SPIRA_WAKE \
+    env -i "${_spira_orig_env[@]}" \
         SPIRA_REPO="$SPIRA_RELEASES/current" \
         SPIRA_HOME="$SPIRA_RELEASES/current/spira" \
         SPIRA_PROD="$SPIRA_RELEASES/current/spira" SPIRA_INSTALL_FORCE=1 \
