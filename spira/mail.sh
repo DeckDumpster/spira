@@ -137,7 +137,18 @@ _section_empty() {
     [ -z "$result" ]
 }
 
-_REPEAT_FP=""  # set by _repeat_check; consumed by _repeat_stamp
+_REPEAT_FP=""       # set by _repeat_check; consumed by _repeat_stamp/_repeat_release
+_REPEAT_LOCK_FD=""  # held from a passing _repeat_check until _repeat_stamp/_repeat_release
+
+# Releases the per-fingerprint lock _repeat_check acquired, without touching the stamp.
+# Callers must invoke this on every path between a passing _repeat_check and _repeat_stamp
+# that does not end in delivery (e.g. a lint failure) — otherwise the lock leaks for the
+# life of the process and every later send for that fingerprint blocks forever.
+_repeat_release() {
+    [ -n "${_REPEAT_LOCK_FD:-}" ] || return 0
+    exec {_REPEAT_LOCK_FD}>&- 2>/dev/null || true
+    _REPEAT_LOCK_FD=""
+}
 
 _repeat_check() {
     # Refuses a repeat mail to the same recipient within SPIRA_MAIL_REPEAT_WINDOW.
@@ -146,6 +157,11 @@ _repeat_check() {
     # escalation. Override: SPIRA_MAIL_REPEAT_CONSIDERED=<reason>, recorded and counted.
     # Each refusal is counted under SPIRA_RUN/mail-repeat so audits are possible.
     # Stamp is written only on success, by _repeat_stamp, after lint and delivery.
+    #
+    # ATOMICITY (sp-ifh5h): a per-fingerprint flock is held from here until _repeat_stamp
+    # (or _repeat_release on an abandoned send), so a second caller for the same fingerprint
+    # blocks here rather than reading the stamp before the first caller writes it — it then
+    # runs this same check against the now-current stamp instead of a stale "no stamp yet".
     local mailbox="$1" subject="$2"
     [ -n "${SPIRA_MAIL_REPEAT_CONSIDERED:-}" ] && return 0
 
@@ -174,7 +190,13 @@ _repeat_check() {
 
     local stamp_dir="${SPIRA_RUN:-/tmp}/mail-repeat"
     local stamp_file="$stamp_dir/$fp"
+    local lock_file="$stamp_dir/$fp.lock"
     local window="${SPIRA_MAIL_REPEAT_WINDOW:-14400}"
+
+    mkdir -p "$stamp_dir"
+    { exec {_REPEAT_LOCK_FD}>"$lock_file"; } 2>/dev/null \
+        || { printf 'mail: repeat guard: cannot open lock for %s\n' "$mailbox" >&2; return 1; }
+    flock "${_REPEAT_LOCK_FD}"
 
     if [ -f "$stamp_file" ]; then
         local stamp_time now elapsed
@@ -182,12 +204,12 @@ _repeat_check() {
         now="$(date +%s)"
         elapsed=$(( now - stamp_time ))
         if [ "$elapsed" -lt "$window" ]; then
-            mkdir -p "$stamp_dir"
             printf '1\n' >> "$stamp_dir/$fp.refused"
             local nrefused
             nrefused="$(wc -l < "$stamp_dir/$fp.refused" 2>/dev/null | tr -d ' ')"
             printf 'mail: repeat refused — %s already sent to %s within %ss window (refusals: %s) — override: SPIRA_MAIL_REPEAT_CONSIDERED=<reason>\n' \
                 "$caller" "$mailbox" "$window" "${nrefused:-1}" >&2
+            _repeat_release
             return 1
         fi
     fi
@@ -201,6 +223,7 @@ _repeat_stamp() {
     local stamp_dir="${SPIRA_RUN:-/tmp}/mail-repeat"
     mkdir -p "$stamp_dir"
     touch "$stamp_dir/$_REPEAT_FP"
+    _repeat_release
 }
 
 _lint_check() {
@@ -340,7 +363,10 @@ cmd_send() {
     if [ "$mailbox" = "operator" ]; then
         _repeat_check "$mailbox" "$subject" || return 1
     fi
-    _lint_check "$from" "$subject" "${kind:-}" "${default:-}" "${urgent:-}" "$body" "${digest:-}" || return 1
+    if ! _lint_check "$from" "$subject" "${kind:-}" "${default:-}" "${urgent:-}" "$body" "${digest:-}"; then
+        [ "$mailbox" = "operator" ] && _repeat_release
+        return 1
+    fi
 
     _mail_ensure "$mailbox"
     local dir; dir="$(_mail_dir "$mailbox")"
