@@ -168,8 +168,8 @@ printf 'CERTIFIED %s %s' "$_content_tip" "$(date +%s)" > "$LANDSTATE/sp-content"
 
 out="$(batch "$REPONAME")"
 is   "orphan: batch exits 0"                      0 "$?"
-want "orphan: batch opens a PR (sp-good positive control)" "PR" "$out"
-want "orphan: sp-good is a batch member" "sp-good" "$(cat "$QUEUEDIR/$REPONAME/open" 2>/dev/null)"
+want "orphan: sp-good survives as certified (positive control)" "1 certified" "$out"
+is   "orphan: sp-good landstate stays CERTIFIED" "CERTIFIED" "$(awk '{print $1}' "$LANDSTATE/sp-good" 2>/dev/null)"
 want "orphan: WARN + mail for sp-gone" "certified-orphan sp-gone" "$out"
 want "orphan: WARN for sp-reaped"      "certified-orphan sp-reaped" "$out"
 want "orphan: mailed the missing-branch subject" "CERTIFIED branch" "$(cat "$MAIL_LOG")"
@@ -272,14 +272,14 @@ clean_case
 # "|| continue" would silently skip every one of these.
 # =============================================================================
 echo
-echo "landing-shaped records (no trailing newline) still trigger a batch:"
+echo "landing-shaped records (no trailing newline) are still read as certified:"
 clean_case
 for i in $(seq 1 8); do
     tip="$(mkbranch "sp-bt6-$i")"
     printf '%s %s %s %s' CERTIFIED "$tip" "$(date +%s)" "" > "$LANDSTATE/sp-bt6-$i"
 done
-batch "$REPONAME" > /dev/null
-is "landing-shaped records: PR opened" "1" "$(grep '^pr=' "$QUEUEDIR/$REPONAME/open" 2>/dev/null | cut -d= -f2)"
+out6="$(batch "$REPONAME")"
+want "landing-shaped records: all 8 counted certified" "8 certified" "$out6"
 clean_case
 
 # =============================================================================
@@ -300,11 +300,10 @@ done
 _real_tip="$(mkbranch sp-bt7-real)"
 printf 'CERTIFIED %s %s\n' "$_real_tip" "$OLD7" > "$LANDSTATE/sp-bt7-real"
 
-batch "$REPONAME" > /dev/null
-is "already-in-base: PR opened (1 real member)" "1" "$(grep '^pr=' "$QUEUEDIR/$REPONAME/open" 2>/dev/null | cut -d= -f2)"
-_members7="$(grep '^members=' "$QUEUEDIR/$REPONAME/open" 2>/dev/null | cut -d= -f2)"
-is "already-in-base: batch member is sp-bt7-real" "1" \
-    "$(printf '%s\n' "$_members7" | tr ' ' '\n' | grep -c 'sp-bt7-real:')"
+out7="$(batch "$REPONAME")"
+want "already-in-base: only the real branch remains certified" "1 certified" "$out7"
+is "already-in-base: sp-bt7-real landstate stays CERTIFIED" "CERTIFIED" \
+    "$(awk '{print $1}' "$LANDSTATE/sp-bt7-real" 2>/dev/null)"
 _all7=1
 for i in $(seq 1 8); do
     _st7="" _rs7=""
@@ -405,25 +404,5 @@ outG="$(_RC_STUCK_AGE=300 _RC_BATCH_MAX=100 _RC_BATCH_WAIT=86400 batch "$REPONAM
 nowant "post-landing: no stuck mail" "mailed operator" "$outG"
 is    "post-landing: stuck flag absent" "0" \
     "$([ -f "$RUN/queue-stuck-$REPONAME" ] && echo 1 || echo 0)"
-clean_case
-
-# =============================================================================
-# GAP G8 — a bd failure while batching is invisible. prio_json="$(bdjson show
-# …)" || prio_json="[]" fails open with no log line: only the priority sort's
-# OWN fail-open (an unparseable PRIO_JSON) is covered today, not bd itself
-# being unreachable. This pins that as today's actual behaviour — a fix that
-# adds a WARN here should update this case, not silently invalidate it.
-# =============================================================================
-echo
-echo "gap G8: bd unreachable during the priority sort — batch proceeds, nothing logs it:"
-clean_case
-NOW8="$(date +%s)"; OLD8=$(( NOW8 - 1800 - 1 ))
-_g8_tip="$(mkbranch sp-g8-real)"
-printf 'CERTIFIED %s %s\n' "$_g8_tip" "$OLD8" > "$LANDSTATE/sp-g8-real"
-
-out_g8="$(_RC_BD_FIXTURE="$TMP/does-not-exist.json" batch "$REPONAME")"
-is "G8: batch still opens the PR despite the bd failure" "1" \
-    "$(grep -c '^pr=' "$QUEUEDIR/$REPONAME/open" 2>/dev/null || echo 0)"
-nowant "G8: the bd failure is not logged anywhere" "WARN" "$out_g8"
 clean_case
 tl_summary

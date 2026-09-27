@@ -7,13 +7,14 @@
 # this area hardcodes `-b main` for its fixture repo and `origin/main` in its
 # repo-map row.
 #
-# THREE ROWS, one per land mode that actually advances a base: batch.sh's merge
-# onto spira_landref, verdict.sh's fast-forward, and landing.sh push. (queue mode's
-# certify step and pr mode never move a base branch themselves, so they carry no
-# row here.) Each drives the real script against a repo whose base is `master`.
+# THREE ROWS, one per land mode that actually advances a base: the batcher's cut
+# (batch.sh's own merge onto spira_landref, retired sp-vsob2), verdict.sh's fast-forward,
+# and landing.sh push. (queue mode's certify step and pr mode never move a base branch
+# themselves, so they carry no row here.) Each drives the real script/binary against a
+# repo whose base is `master`.
 #
 # tier: T2
-# covers: spira/batch.sh spira/verdict.sh spira/landing.sh spira/lib.sh
+# covers: batcher-cut/src/*.rs batcher/src/*.rs spira/verdict.sh spira/landing.sh spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -24,13 +25,35 @@ testdb_require test-config-compat-master-base
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up cfgcompatmaster || skip "testdb not available"
 
+# ── build the batcher binary (law-absence-needs-a-positive-control: no binary, no row).
+# Same toolchain-directory and CARGO_TARGET_DIR pinning as test-batcher-cut.sh — see its
+# own comments for why cargo's bare PATH entry and $ROOT/target are both the wrong answer
+# inside testenv-batch.sh's podman exec.
+ROOT="$(cd "$HERE/.." && pwd -P)"
+CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
+[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
+[ -z "$CARGO_BIN" ] && [ -x "/usr/local/cargo/bin/cargo" ] && CARGO_BIN="/usr/local/cargo/bin/cargo"
+if [ -z "$CARGO_BIN" ]; then
+    echo "SKIP test-config-compat-master-base: cargo not found — the batcher binary cannot be built"
+    exit 77
+fi
+PATH="$(dirname "$CARGO_BIN"):$PATH"; export PATH
+CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
+BATCHER_BIN="$CARGO_TARGET_DIR_FOR_BUILD/release/batcher"
+if [ ! -x "$BATCHER_BIN" ]; then
+    printf '  (building batcher-cut into %s)\n' "$BATCHER_BIN"
+    CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
+        "$CARGO_BIN" build --release --manifest-path "$ROOT/Cargo.toml" -p batcher-cut 2>&1 | tail -10
+fi
+[ -x "$BATCHER_BIN" ] || { echo "test-config-compat-master-base: batcher binary did not build"; exit 1; }
+
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 echo "test-config-compat-master-base.sh"
 
 # ============================================================================
 echo
-echo "batch.sh: a CERTIFIED branch is merged onto a MASTER-based spira_landref:"
+echo "batcher cut: a CERTIFIED branch is merged onto a MASTER-based spira_landref:"
 # ============================================================================
 B_REPONAME=fixture-batch
 B_REPO="$TMP/batch-repo"; B_REMOTE="$TMP/batch-remote.git"
@@ -39,35 +62,53 @@ B_LANDSTATE="$B_RUN/landstate"; B_QUEUEDIR="$B_RUN/queue"
 
 git init -q --bare -b master "$B_REMOTE"
 git init -q -b master "$B_REPO"
-git -C "$B_REPO" commit -q --allow-empty -m base
+mkdir -p "$B_REPO/spira"
+: > "$B_REPO/spira/test-a.sh"
+git -C "$B_REPO" add -A && git -C "$B_REPO" commit -q -m base
 git -C "$B_REPO" remote add origin "$B_REMOTE"
 git -C "$B_REPO" push -q origin master
 git -C "$B_REPO" fetch -q origin
 mkdir -p "$B_RUN/worktree" "$B_SH" "$B_LANDSTATE" "$B_QUEUEDIR/$B_REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$B_SH/"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$B_SH/mail.sh"; chmod +x "$B_SH/mail.sh"
 
-printf '#!/usr/bin/env bash\nexit 0\n' > "$B_SH/gate.sh"; chmod +x "$B_SH/gate.sh"
-B_FORGE_LOG="$TMP/batch-forge-log"; B_BODY_LOG="$TMP/batch-body-log"
-: > "$B_FORGE_LOG"; : > "$B_BODY_LOG"
+cat > "$B_SH/testenv-batch-stub.sh" <<'STUB'
+#!/usr/bin/env bash
+suites_csv=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --suites) shift; suites_csv="${1:-}"; shift ;;
+        *) shift ;;
+    esac
+done
+results="${SPIRA_BATCH_RESULTS:?SPIRA_BATCH_RESULTS unset}"
+mkdir -p "$results"
+IFS=',' read -r -a suites <<< "$suites_csv"
+for s in "${suites[@]:-}"; do
+    [ -n "$s" ] || continue
+    printf 'ok %s 1 - serial explicit 0\n' "$(date +%s)" > "$results/$s.result"
+    : > "$results/$s.out"
+done
+exit 0
+STUB
+chmod +x "$B_SH/testenv-batch-stub.sh"
+
+B_FORGE_LOG="$TMP/batch-forge-log"
+: > "$B_FORGE_LOG"
 cat > "$B_SH/forge-fixture.sh" <<FORGE
 #!/usr/bin/env bash
 cmd="\${1:-}"; shift; repo="\${1:-}"; shift
 case "\$cmd" in
-    main-gate-status) printf 'green deadbeef\n' ;;
     pr-create)
         n=\$(( \$(wc -l < "$B_FORGE_LOG" 2>/dev/null || echo 0) + 1 ))
-        body="\$(cat)"
+        cat >/dev/null
         printf '%s\n' "\$n" >> "$B_FORGE_LOG"
-        printf '%s\n' "\$body" >> "$B_BODY_LOG"
         printf '%s\n' "\$n"
         ;;
-    pr-number) grep "^\${1:-}	" "$B_FORGE_LOG" 2>/dev/null | tail -1 | cut -f2 ;;
-    pr-comment|pr-list-queue) : ;;
     *) printf 'forge-fixture: unknown: %s\n' "\$cmd" >&2; exit 1 ;;
 esac
 FORGE
 chmod +x "$B_SH/forge-fixture.sh"
-printf '#!/usr/bin/env bash\ntrue\n' > "$B_SH/mail.sh"; chmod +x "$B_SH/mail.sh"
 
 # THE ROW: base is origin/master, declared explicitly rather than left to auto-detect.
 printf '%s | %s | queue | origin/master | | |\n' "$B_REPONAME" "$B_REPO" > "$B_SH/repo-map"
@@ -75,7 +116,7 @@ printf '%s | %s | queue | origin/master | | |\n' "$B_REPONAME" "$B_REPO" > "$B_S
 testdb_seed <<'JSONL'
 {"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
-printf '{"id":"sp-mbase","title":"master-base fix","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-mbase","depends_on_id":"sp-goal","type":"parent-child"}]}\n' \
+printf '{"id":"sp-mbase","title":"master-base fix","status":"closed","issue_type":"task","labels":["express"],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-mbase","depends_on_id":"sp-goal","type":"parent-child"}]}\n' \
     | testdb_seed
 
 git -C "$B_REPO" worktree add -q -b spira/sp-mbase "$B_RUN/worktree/sp-mbase" master
@@ -83,25 +124,26 @@ printf 'sp-mbase\n' > "$B_RUN/worktree/sp-mbase/sp-mbase.txt"
 git -C "$B_RUN/worktree/sp-mbase" add -A
 git -C "$B_RUN/worktree/sp-mbase" commit -q -m "sp-mbase: work"
 B_TIP="$(git -C "$B_REPO" rev-parse spira/sp-mbase)"
+git -C "$B_REPO" worktree remove -f "$B_RUN/worktree/sp-mbase"
 printf 'CERTIFIED %s %s\n' "$B_TIP" "$(date +%s)" > "$B_LANDSTATE/sp-mbase"
 
 out="$(SPIRA_HOME="$B_SH" SPIRA_RUN="$B_RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO_MAP="$B_SH/repo-map" \
-    SPIRA_QUEUE_DIR="$B_QUEUEDIR" SPIRA_QUEUE_BATCH_MAX=1 SPIRA_QUEUE_BATCH_WAIT=0 \
+    SPIRA_QUEUE_DIR="$B_QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 \
     SPIRA_FORGE="$B_SH/forge-fixture.sh" \
-        bash "$B_SH/batch.sh" "$B_REPONAME" 2>&1)"
+        "$BATCHER_BIN" cut "$B_REPONAME" --testenv-batch "$B_SH/testenv-batch-stub.sh" 2>&1)"
 
-want "batch: a PR was opened for the master-based batch" "opened" "$out"
+want "batcher cut: a PR was opened for the master-based batch" "opened" "$out"
 case "$(cat "$B_LANDSTATE/sp-mbase" 2>/dev/null)" in
-    BATCHED*) ok "batch: sp-mbase is BATCHED, not left CERTIFIED" ;;
-    *) bad "batch: sp-mbase is BATCHED, not left CERTIFIED" "got: $(cat "$B_LANDSTATE/sp-mbase" 2>/dev/null)" ;;
+    BATCHED*) ok "batcher cut: sp-mbase is BATCHED, not left CERTIFIED" ;;
+    *) bad "batcher cut: sp-mbase is BATCHED, not left CERTIFIED" "got: $(cat "$B_LANDSTATE/sp-mbase" 2>/dev/null)" ;;
 esac
 B_BATCH_BRANCH="$(grep '^branch=' "$B_QUEUEDIR/$B_REPONAME/open" 2>/dev/null | cut -d= -f2)"
 if [ -n "$B_BATCH_BRANCH" ] \
    && git -C "$B_REPO" merge-base --is-ancestor master "refs/heads/$B_BATCH_BRANCH" 2>/dev/null; then
-    ok "batch: the batch branch was merged onto MASTER (spira_landref), not main"
+    ok "batcher cut: the batch branch was merged onto MASTER (spira_landref), not main"
 else
-    bad "batch: the batch branch was merged onto MASTER (spira_landref), not main" \
+    bad "batcher cut: the batch branch was merged onto MASTER (spira_landref), not main" \
         "branch=$B_BATCH_BRANCH"
 fi
 

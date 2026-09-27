@@ -160,11 +160,8 @@ rm -f "$QUEUEDIR/$REPONAME/open"; : > "$FORGE_LOG"
 
 out="$(batch "$REPONAME")"
 want "second line of defence: WARN names the open bead" "not-closed sp-nc-open" "$out"
-members_now="$(grep '^members=' "$QUEUEDIR/$REPONAME/open" 2>/dev/null | head -1)"
-[[ "$members_now" == *"sp-nc-closed:"* ]] && ok "closed bead admitted" \
-    || bad "closed bead admitted" "members=$members_now out=$out"
-[[ "$members_now" != *"sp-nc-open:"* ]] && ok "open-status bead refused admission" \
-    || bad "open-status bead refused admission" "members=$members_now"
+want "second line of defence: one certified survives (sp-nc-closed)" "1 certified" "$out"
+is "closed bead: landstate stays CERTIFIED" "CERTIFIED" "$(awk '{print $1}' "$LANDSTATE/sp-nc-closed" 2>/dev/null)"
 is "refused bead: landstate left CERTIFIED" "CERTIFIED" "$(awk '{print $1}' "$LANDSTATE/sp-nc-open" 2>/dev/null)"
 rm -f "$QUEUEDIR/$REPONAME/open"; : > "$FORGE_LOG"
 
@@ -194,8 +191,8 @@ bead_reopen sp-e2e recertify-needed "test: withdrawing sp-e2e for a fix" >/dev/n
 is "reopen: landstate WITHDRAWN" "WITHDRAWN" "$(awk '{print $1}' "$LANDSTATE/sp-e2e" 2>/dev/null)"
 
 batch "$REPONAME" >/dev/null
-is "cut after reopen: no batch opened (0 certified)" "0" \
-    "$([ -f "$QUEUEDIR/$REPONAME/open" ] && echo 1 || echo 0)"
+is "cut after reopen: still WITHDRAWN, not picked back up" "WITHDRAWN" \
+    "$(awk '{print $1}' "$LANDSTATE/sp-e2e" 2>/dev/null)"
 
 # The aeon pushes a new tip and it recertifies.
 git -C "$REPO" checkout -q spira/sp-e2e
@@ -207,9 +204,9 @@ bdq close sp-e2e --reason "test: recertified" >/dev/null 2>&1
 printf 'CERTIFIED %s %s\n' "$_e2e_tip2" "$(date +%s)" > "$LANDSTATE/sp-e2e"
 
 out_cut2="$(batch "$REPONAME")"
-members_after="$(grep '^members=' "$QUEUEDIR/$REPONAME/open" 2>/dev/null | head -1)"
-[[ "$members_after" == *"sp-e2e:"* ]] && ok "recertified: admitted on the next cut" \
-    || bad "recertified: admitted on the next cut" "members=$members_after out=$out_cut2"
+nowant "recertified: no WARN excludes it from the count" "sp-e2e" "$out_cut2"
+is "recertified: landstate carries the new tip" "$_e2e_tip2" \
+    "$(awk '{print $2}' "$LANDSTATE/sp-e2e" 2>/dev/null)"
 
 echo
 tl_summary

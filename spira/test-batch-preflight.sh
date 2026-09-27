@@ -64,7 +64,7 @@ fi
 
 # --- 2 and 3. the wall -----------------------------------------------------------------------
 # Lift just the pre-flight helpers out of batch.sh (it runs main when sourced).
-helpers="$(sed -n '/^_pf_run() {/,/^_lg_red_suites() {/p' "$HERE/batch.sh" | sed '$d')"
+helpers="$(sed -n '/^_pf_run() {/,/^_batch_open_file() {/p' "$HERE/batch.sh" | sed '$d')"
 [ -n "$helpers" ] || bail "could not extract the _pf_ helpers from batch.sh"
 eval "$helpers"
 

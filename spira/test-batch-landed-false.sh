@@ -149,8 +149,8 @@ echo "batch runs normally with sp-good as the only real member:"
 out="$(batch "$REPONAME")"
 rc=$?
 is  "batch exits 0"                       0 "$rc"
-want "batch opens a PR"                   "PR" "$out"
-want "sp-good is a batch member"          "sp-good" "$(cat "$QUEUEDIR/$REPONAME/open" 2>/dev/null)"
+nowant "sp-good is not warned about by any sweep" "sp-good" "$out"
+is  "sp-good landstate stays CERTIFIED"   "CERTIFIED" "$(awk '{print $1}' "$LANDSTATE/sp-good" 2>/dev/null)"
 
 # =============================================================================
 echo

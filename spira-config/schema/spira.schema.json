@@ -478,12 +478,6 @@
           "format": "uint64",
           "minimum": 0.0
         },
-        "queue_local_gate": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
         "queue_throttle_override": {
           "type": [
             "string",

@@ -86,7 +86,6 @@ pub struct SpiraSection {
     pub queue_batch_max: Option<u32>,
     pub queue_batch_wait: Option<u64>,
     pub queue_ci_maxsec: Option<u64>,
-    pub queue_local_gate: Option<bool>,
     pub queue_throttle_release_at: Option<u32>,
     pub suites_budget: Option<u64>,
     pub loom_addr: Option<String>,

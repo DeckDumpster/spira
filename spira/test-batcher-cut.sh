@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 #
 # test-batcher-cut.sh — ONE end-to-end suite for the batcher crate's IO seam (sp-jzfog): a
-# whole round through a real fixture repo, a stub testenv-batch and a fake forge, wired the
-# same way queue.sh calls it (SPIRA_QUEUE_BATCHER=1). This checks WIRING, not behaviour —
-# the pure core's replay tests (test-batcher.sh) already cover triggers, membership,
-# set-asides and classification as fixtures with no IO at all.
+# whole round through a real fixture repo, a stub testenv-batch and a fake forge, invoking the
+# built binary directly the way queue.sh's _batch_cut does (sp-vsob2: unconditionally, batch.sh's
+# own cut retired). This checks WIRING, not behaviour — the pure core's replay tests
+# (test-batcher.sh) already cover triggers, membership, set-asides and classification as
+# fixtures with no IO at all.
 #
 # FOUR CASES:
 #   A. happy path    — an express-certified member merges, the stub corpus is green, a PR

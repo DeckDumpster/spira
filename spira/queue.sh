@@ -227,19 +227,22 @@ cmd_protect() {
     printf 'queue.sh protect: attribution note: suite-level attribution requires CI to emit\n'
     printf 'queue.sh protect:   failure annotations whose path matches spira/test-*.sh,\n'
     printf 'queue.sh protect:   or a check annotation titled "red-twice suite".\n'
-    printf 'queue.sh protect:   Without them the queue uses bisect attribution (O(log n) CI runs).\n'
+    printf 'queue.sh protect:   Without them a red batch PR is left for the batcher persona to judge.\n'
 }
 
-# _batch_cut <repo-name> — the merge-queue's round cutter. Delegates to the batcher crate
-# (sp-jzfog) when SPIRA_QUEUE_BATCHER=1 and its binary is built; batch.sh's own inline cut
-# otherwise. Off by default — sp-vsob2 retires batch.sh's cut and flips this once the
-# batcher has proven itself live, which is a deliberate cutover, not this flag's default.
+# _batch_cut <repo-name> — the merge-queue's round cutter. batch.sh's own sweep runs first,
+# unconditionally, every pass (reconciliation, the stuck-queue alert, the open batch's DIRTY
+# check — none of that is the cut itself, see batch.sh's own header); the batcher crate
+# (sp-jzfog) then owns the round: trigger, membership, local proving and the PR (sp-vsob2
+# retires batch.sh's own cut, the bisect-forced cut and the local-gate-before-cut in its
+# favour, once it had proven itself live on 2026-09-24).
 _batch_cut() {
-    if [ "${SPIRA_QUEUE_BATCHER:-0}" = 1 ] && [ -x "${SPIRA_BATCHER_BIN:-}" ]; then
-        "$SPIRA_BATCHER_BIN" cut "$1"
-        return $?
-    fi
     bash "$HERE/batch.sh" "$1"
+    if [ -z "${SPIRA_BATCHER_BIN:-}" ] || [ ! -x "$SPIRA_BATCHER_BIN" ]; then
+        printf 'queue.sh: SPIRA_BATCHER_BIN not available — cannot cut a round for %s\n' "$1" >&2
+        return 1
+    fi
+    "$SPIRA_BATCHER_BIN" cut "$1"
 }
 
 cmd_flush() {

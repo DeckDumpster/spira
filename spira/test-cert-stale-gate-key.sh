@@ -106,9 +106,6 @@ batch() {
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
     SPIRA_FORGE="$SH/forge.sh" \
-    SPIRA_QUEUE_LOCAL_GATE=0 \
-    SPIRA_QUEUE_BATCH_MAX=1 \
-    SPIRA_QUEUE_BATCH_WAIT=0 \
         bash "$SH/batch.sh" "$@" 2>&1
 }
 
