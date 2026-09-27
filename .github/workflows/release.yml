@@ -102,11 +102,18 @@ jobs:
       - name: Create GitHub release (draft)
         # Draft: acceptance downloads and tests this tarball before it is published.
         # acceptance.yml publishes (undrafts) on PASS; on FAIL it deletes the draft.
+        #
+        # --target PINS THE COMMIT. Without it, a tag that has not yet reached the
+        # remote has no commit to bind to, and GitHub mints one at the default
+        # branch's head at whatever moment the release is later published — not the
+        # commit this job built (sp-j7t1e). The checked-out HEAD is that commit.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${{ inputs.tag || github.ref_name }}"
+          sha="$(git rev-parse HEAD)"
           gh release create "$tag" \
             --title "$tag" \
+            --target "$sha" \
             --draft \
             "${{ steps.tarball.outputs.path }}"

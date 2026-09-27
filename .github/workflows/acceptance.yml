@@ -62,9 +62,42 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # Refuse to spend a machine re-running acceptance against a tag whose release
+  # has already been published. Correcting a tag by hand (moving it to the
+  # right commit) re-fires the push trigger below against that release; without
+  # this a later failure would reach the retract step for a release every later
+  # acceptance run depends on (sp-j7t1e). workflow_dispatch is a deliberate
+  # manual re-run and is never skipped.
+  # ---------------------------------------------------------------------------
+  guard:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    outputs:
+      already-published: ${{ steps.check.outputs.already-published }}
+    permissions:
+      contents: read
+    steps:
+      - name: Check whether this tag's release is already published
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          _tag="${{ github.ref_name }}"
+          _draft="$(gh release view "$_tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || echo true)"
+          if [ "$_draft" = "false" ]; then
+            printf 'guard: %s is already published — skipping acceptance re-run\n' "$_tag"
+            printf 'already-published=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'already-published=false\n' >> "$GITHUB_OUTPUT"
+          fi
+
+  # ---------------------------------------------------------------------------
   # Create the machine the acceptance run will use.
   # ---------------------------------------------------------------------------
   provision:
+    needs: guard
+    if: always() && needs.guard.outputs.already-published != 'true'
     runs-on: ubuntu-latest
     outputs:
       vmid:  ${{ steps.vm.outputs.vmid }}
@@ -89,7 +122,8 @@ jobs:
   # The acceptance run itself, on the provisioned machine.
   # ---------------------------------------------------------------------------
   acceptance:
-    needs: provision
+    needs: [provision, guard]
+    if: always() && needs.guard.outputs.already-published != 'true'
     runs-on: [self-hosted, "${{ needs.provision.outputs.label }}"]
     # Phase D (aged-install) adds ~30 min to the fresh-install run. 90 min
     # covers all four phases (A fresh, B upgrade, C rollback, D aged-install)
@@ -203,6 +237,40 @@ jobs:
           path: ~/acceptance-forensics
           if-no-files-found: warn
 
+      - name: Verify the tag is bound to the tested commit
+        # Refuse to publish when the remote tag has drifted from the commit the
+        # tested tarball's MANIFEST records. Without this, undrafting a release
+        # whose tag never reached the remote lets GitHub mint the tag at whatever
+        # main's head is at that moment, disagreeing with what was tested
+        # (sp-j7t1e). Reads the MANIFEST fresh from the release asset rather than
+        # from local install state, which phases B/C/D repoint to other releases.
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          _tag="${{ inputs.tag || github.ref_name }}"
+          _tag_commit="$(git rev-parse "${_tag}^{commit}" 2>/dev/null)" || {
+            printf 'acceptance: refusing to publish %s — tag does not resolve to a commit\n' "$_tag" >&2
+            exit 1
+          }
+          _dl="$(mktemp -d)"
+          gh release download "$_tag" --repo "$GITHUB_REPOSITORY" --pattern '*.tar.gz' --dir "$_dl" || {
+            printf 'acceptance: refusing to publish %s — could not download release asset to verify MANIFEST\n' "$_tag" >&2
+            exit 1
+          }
+          _manifest_commit="$(tar -xzOf "$_dl"/*.tar.gz --wildcards '*/MANIFEST' 2>/dev/null | sed -n 's/^commit //p')"
+          [ -n "$_manifest_commit" ] || {
+            printf 'acceptance: refusing to publish %s — no commit line in release asset MANIFEST\n' "$_tag" >&2
+            exit 1
+          }
+          [ "$_manifest_commit" = "$_tag_commit" ] || {
+            printf 'acceptance: refusing to publish %s — tag resolves to %s but MANIFEST records %s\n' \
+              "$_tag" "$_tag_commit" "$_manifest_commit" >&2
+            exit 1
+          }
+          printf 'acceptance: verified tag %s matches MANIFEST commit %s\n' "$_tag" "$_manifest_commit"
+
       - name: Publish release on PASS
         # The release was created as a draft by release.yml so acceptance could test the
         # exact artifact. Undraft it now that acceptance passed.
@@ -216,21 +284,30 @@ jobs:
 
       - name: Retract release and tag on FAIL
         # Delete the draft release and the tag so no broken release is left visible.
+        # NEVER an already-published one: a re-triggered run against a published
+        # tag (e.g. correcting the tag by hand re-fires the push trigger) must not
+        # retract the release every later acceptance run depends on (sp-j7t1e).
         if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           _tag="${{ inputs.tag || github.ref_name }}"
+          _draft="$(gh release view "$_tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || echo false)"
+          if [ "$_draft" != "true" ]; then
+            printf 'acceptance: %s is already published — refusing to retract\n' "$_tag"
+            exit 0
+          fi
           gh release delete "$_tag" --yes --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
           gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$_tag" 2>/dev/null || true
           printf 'acceptance: retracted draft release and tag %s\n' "$_tag"
 
   # ---------------------------------------------------------------------------
-  # Destroy the machine. Runs even when provision or acceptance fail.
+  # Destroy the machine. Runs even when provision or acceptance fail — but not
+  # when the guard skipped them, since no machine was ever provisioned.
   # ---------------------------------------------------------------------------
   teardown:
-    needs: [provision, acceptance]
-    if: always()
+    needs: [provision, acceptance, guard]
+    if: always() && needs.guard.outputs.already-published != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: DeckDumpster/ephemeral-ci/teardown@v1
