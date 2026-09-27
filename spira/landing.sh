@@ -1238,16 +1238,8 @@ for i in d:
                         continue
                     fi
                     if ! spira_gate_blames_branch "$gate_rc"; then
-                        nv_key="$(printf '%s' "$br-${gate_reason:-unspecified}" | tr -c 'A-Za-z0-9._-' '-')"
-                        nv_file="$SPIRA_RUN/noverdict/$nv_key"
-                        mkdir -p "$SPIRA_RUN/noverdict"
-                        nv_n=$(( $(cat "$nv_file" 2>/dev/null || echo 0) + 1 ))
-                        printf '%s\n' "$nv_n" > "$nv_file"
-                        if [ "$nv_n" -ge "${SPIRA_NOVERDICT_MAX:-3}" ] && [ ! -e "$nv_file.asked" ]; then
-                            : > "$nv_file.asked"
-                            spira_ask_machinery "$id" "$br" "$name" "$gate_outcome" "$gate_reason" "$nv_n" "$gate_out"
-                            progress "escalated $id — $gate_outcome x$nv_n on $br"
-                        fi
+                        spira_land_noverdict "$id" "$br" "$name" "${gate_reason:-unspecified}" \
+                            "$gate_outcome" "$gate_out"
                         [ "${gate_reason:-}" = timeout ] && land_mark "$id" RED "$tip" timeout
                         continue
                     fi
@@ -1458,18 +1450,12 @@ $(printf '%s' "$gate_out" | tail -20)"
                 # BUT A MACHINERY FAULT THAT REPEATS IS AN ESCALATION, not a retry forever.
                 # Retrying forever is exactly what made today's livelock invisible — the pass
                 # said "the next pass takes it" eleven times and was, each time, telling the
-                # truth. The counter is per branch and per reason, so a lock that clears on
-                # its own costs nothing and a lock that never clears reaches the operator.
-                nv_key="$(printf '%s' "$br-${gate_reason:-unspecified}" | tr -c 'A-Za-z0-9._-' '-')"
-                nv_file="$SPIRA_RUN/noverdict/$nv_key"
-                mkdir -p "$SPIRA_RUN/noverdict"
-                nv_n=$(( $(cat "$nv_file" 2>/dev/null || echo 0) + 1 ))
-                printf '%s\n' "$nv_n" > "$nv_file"
-                if [ "$nv_n" -ge "${SPIRA_NOVERDICT_MAX:-3}" ] && [ ! -e "$nv_file.asked" ]; then
-                    : > "$nv_file.asked"
-                    spira_ask_machinery "$id" "$br" "$name" "$gate_outcome" "$gate_reason" "$nv_n" "$gate_out"
-                    progress "escalated $id — $gate_outcome x$nv_n on $br"
-                fi
+                # truth. The counter is per branch and per reason, except a harness-fault
+                # reason, which spira_land_noverdict counts and escalates by repo+reason —
+                # a dead container fails every branch's gate identically, so eight branches
+                # behind one fault is one escalation, not eight (law-alerts-must-be-actionable).
+                spira_land_noverdict "$id" "$br" "$name" "${gate_reason:-unspecified}" \
+                    "$gate_outcome" "$gate_out"
                 continue
             fi
 
@@ -1873,7 +1859,7 @@ for i in d:
         # name/repo/base/basefail_filed are read via dynamic scope.
         _cert_process_result() {
             local br id tip gate_rc gate_out gate_outcome gate_reason gate_suite
-            local _rn_cert _rn_scope nv_key nv_file nv_n _cur_st
+            local _rn_cert _rn_scope _cur_st
             local _finished_pid _idx _tmp
             wait -n -p _finished_pid "${_cp_pids[@]}" 2>/dev/null; gate_rc=$?
             _idx=0
@@ -1930,16 +1916,8 @@ for i in d:
                     return 0
                 fi
                 if ! spira_gate_blames_branch "$gate_rc"; then
-                    nv_key="$(printf '%s' "$br-${gate_reason:-unspecified}" | tr -c 'A-Za-z0-9._-' '-')"
-                    nv_file="$SPIRA_RUN/noverdict/$nv_key"
-                    mkdir -p "$SPIRA_RUN/noverdict"
-                    nv_n=$(( $(cat "$nv_file" 2>/dev/null || echo 0) + 1 ))
-                    printf '%s\n' "$nv_n" > "$nv_file"
-                    if [ "$nv_n" -ge "${SPIRA_NOVERDICT_MAX:-3}" ] && [ ! -e "$nv_file.asked" ]; then
-                        : > "$nv_file.asked"
-                        spira_ask_machinery "$id" "$br" "$name" "$gate_outcome" "$gate_reason" "$nv_n" "$gate_out"
-                        progress "escalated $id — $gate_outcome x$nv_n on $br"
-                    fi
+                    spira_land_noverdict "$id" "$br" "$name" "${gate_reason:-unspecified}" \
+                        "$gate_outcome" "$gate_out"
                     [ "${gate_reason:-}" = timeout ] && land_mark "$id" RED "$tip" timeout
                     return 0
                 fi

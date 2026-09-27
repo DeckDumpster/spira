@@ -1050,7 +1050,11 @@ _container_check_live() {
     _cl_oom="$(podman container inspect \
         --format '{{.State.OOMKilled}}' "$CNAME" 2>/dev/null || true)"
     _batch_container_dead=1
-    _batch_container_fault_detail="ExitCode=${_cl_exit:-?} OOMKilled=${_cl_oom:-?}"
+    # A LOOKUP THAT FAILS SAYS SO. An empty inspect result printed as a bare `?` is
+    # indistinguishable from a value that was never asked for — 27 hours of the same fault
+    # carried no evidence of cause because every report read the same unreadable "?". Name
+    # which lookup failed instead, so the next reader knows to fix the inspect, not the batch.
+    _batch_container_fault_detail="ExitCode=${_cl_exit:-inspect-failed} OOMKilled=${_cl_oom:-inspect-failed}"
 }
 
 if [ "$MODE" = serial ]; then

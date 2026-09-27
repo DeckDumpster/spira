@@ -248,5 +248,24 @@ nowant "and is never charged to the branch"   "reason=branch-red"    "$out"
 nowant "and never becomes BASE_FAIL"          "VERDICT=BASE_FAIL"    "$out"
 is     "and is not cached"           "$entries_before" "$(entries)"
 
+# --------------------------------------------------------------------------------------
+# A CONTAINER DEATH DISCOVERED ONLY AT THE DEADLINE IS STILL A HARNESS FAULT, NEVER A
+# TIMEOUT (sp-1pe0w). testenv-batch.sh logs the real cause the moment it declares the
+# container dead, but a cleanup step or an unkillable podman client working against a dead
+# container can keep the whole command alive past that — so the outer `timeout` is what
+# finally kills it and the exit code alone reads 124. A verdict may not rename the cause its
+# own evidence already states: the reason must still be harness-fault, carrying the real
+# ExitCode/OOMKilled the batch captured, never the generic budget message.
+# --------------------------------------------------------------------------------------
+rm -f "$TRIP"
+setcmd "printf '%s\\n' 'batch: harness fault — container died mid-batch (ExitCode=137 OOMKilled=false)'; sleep 10; "
+entries_before="$(entries)"
+out="$(rungate SPIRA_GATE_TIMEOUT=1)"; rc=$?
+is     "a container death found only at the deadline exits NO_VERDICT"  75 "$rc"
+want   "and says harness-fault, not timeout"        "reason=harness-fault"        "$out"
+nowant "and never says timeout"                     "reason=timeout"              "$out"
+want   "and carries the real ExitCode/OOMKilled"    "ExitCode=137 OOMKilled=false" "$out"
+is     "and is not cached"                          "$entries_before" "$(entries)"
+
 setcmd
 tl_summary

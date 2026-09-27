@@ -338,6 +338,92 @@ $_ev
 MAILEOF
 }
 
+# spira_ask_machinery_class — escalate a machinery fault that belongs to no single branch.
+#
+# THE CASE THIS EXISTS FOR. A dead container is not any one branch's problem — every branch
+# gated against it fails the same way — so counting and escalating it per branch produced
+# eight separate asks for one fault, each advising a fix that could not help because the
+# reason string itself was wrong. Escalated by class (repo+reason) instead, this fires once
+# and names every branch the fault touched.
+spira_ask_machinery_class() {  # <repo> <reason> <branches-csv> <outcome> <count> <gate output>
+    local repo="$1" reason="$2" branches="$3" outcome="$4" n="$5" out="$6"
+    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
+    ask_already_open "$repo cannot be judged: $outcome ($reason)" && return 0
+    local _subj="$repo cannot be judged: $outcome x$n in a day ($reason) — $branches"
+    local _dflt="this is one machinery fault behind every branch named above, not one per branch; fix the cause this reason names, then let the next pass take all of them"
+    local _why="$outcome/$reason means the machinery could not reach a verdict for any of these branches — none of them is at fault and none has been charged. It has recurred $n times across $repo within a day, so this is escalated once for the class rather than once per branch."
+    local _ev; _ev="$(printf '%s' "$out" | tail -20)"
+    "$SPIRA_HOME/mail.sh" send operator \
+        --from "Landing gate <gate@spira>" \
+        --subject "$_subj" \
+        --kind question \
+        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
+## Question
+$_subj
+
+## Default
+$_dflt
+
+$_why
+
+Affected branches: $branches
+
+$_ev
+MAILEOF
+}
+
+# spira_land_noverdict — record one NO_VERDICT occurrence for a branch and escalate when it
+# recurs (law-alerts-must-be-actionable at the machinery level, same as spira_ask_machinery
+# above).
+#
+# A HARNESS-FAULT REASON IS COUNTED AND ESCALATED BY CLASS (repo+reason), not by branch. A
+# dead container makes every branch's gate fail identically, so the count that decides
+# whether this has become a pattern belongs to the fault, and the ask that follows names
+# every branch it has touched instead of filing one ask per branch. Every other NO_VERDICT
+# reason (a lock wait, a missing base ref) is still genuinely per-branch and keeps the old
+# per-branch key.
+#
+# THE CLASS WINDOW RESETS. An .asked marker older than SPIRA_NOVERDICT_CLASS_WINDOW (default
+# a day) is cleared along with its count, so a fault that went away and came back on a later
+# day escalates again rather than being silenced forever by yesterday's ask.
+spira_land_noverdict() {  # <bead> <branch> <repo-name> <reason> <outcome> <gate output>
+    local id="$1" br="$2" name="$3" reason="${4:-unspecified}" outcome="$5" out="$6"
+    local nv_key nv_file nv_n
+
+    if [ "$reason" = harness-fault ]; then
+        nv_key="$(printf '%s' "$name-$reason" | tr -c 'A-Za-z0-9._-' '-')"
+        nv_file="$SPIRA_RUN/noverdict/$nv_key"
+        mkdir -p "$SPIRA_RUN/noverdict"
+        if [ -e "$nv_file.asked" ]; then
+            local _age=$(( $(date +%s) - $(date -r "$nv_file.asked" +%s 2>/dev/null || echo 0) ))
+            if [ "$_age" -ge "${SPIRA_NOVERDICT_CLASS_WINDOW:-86400}" ]; then
+                rm -f "$nv_file" "$nv_file.asked" "$nv_file.branches"
+            fi
+        fi
+        nv_n=$(( $(cat "$nv_file" 2>/dev/null || echo 0) + 1 ))
+        printf '%s\n' "$nv_n" > "$nv_file"
+        grep -qxF "$br" "$nv_file.branches" 2>/dev/null || printf '%s\n' "$br" >> "$nv_file.branches"
+        if [ "$nv_n" -ge "${SPIRA_NOVERDICT_MAX:-3}" ] && [ ! -e "$nv_file.asked" ]; then
+            : > "$nv_file.asked"
+            local _branches; _branches="$(paste -sd, "$nv_file.branches" 2>/dev/null)"
+            spira_ask_machinery_class "$name" "$reason" "${_branches:-$br}" "$outcome" "$nv_n" "$out"
+            progress "escalated $name — $outcome x$nv_n in a day ($reason) across ${_branches:-$br}"
+        fi
+        return 0
+    fi
+
+    nv_key="$(printf '%s' "$br-$reason" | tr -c 'A-Za-z0-9._-' '-')"
+    nv_file="$SPIRA_RUN/noverdict/$nv_key"
+    mkdir -p "$SPIRA_RUN/noverdict"
+    nv_n=$(( $(cat "$nv_file" 2>/dev/null || echo 0) + 1 ))
+    printf '%s\n' "$nv_n" > "$nv_file"
+    if [ "$nv_n" -ge "${SPIRA_NOVERDICT_MAX:-3}" ] && [ ! -e "$nv_file.asked" ]; then
+        : > "$nv_file.asked"
+        spira_ask_machinery "$id" "$br" "$name" "$outcome" "$reason" "$nv_n" "$out"
+        progress "escalated $id — $outcome x$nv_n on $br"
+    fi
+}
+
 # spira_ask_rebase_loop — escalate a bead whose rebase keeps failing.
 #
 # Seven reopens on sp-dvlq, each one handing the next aeon "resolve the conflict" against a
