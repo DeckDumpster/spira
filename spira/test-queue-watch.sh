@@ -14,8 +14,11 @@
 #   3. health: passes after a good poll, fails when the last poll was blind, and fails when
 #      it has never polled — silence must never read as a quiet queue.
 #   4. An install with no mode=queue repository (or no spira.toml yet) is IDLE: it says so,
-#      stays up, and health passes — a daemon row must not crash-loop an install without a
-#      queue. A spira.toml that does not parse is fatal.
+#      stays up, and health FAILS (DEGRADED) rather than passing — idle must not look like a
+#      healthy quiet queue. A spira.toml that does not parse is fatal.
+#   4b. An idle watcher re-reads its config every tick rather than latching idle forever: a
+#       config gutted down to no queue-mode repo, then restored, is noticed and watching
+#       resumes with no restart.
 #   5. The watchd manifest row expands, and conf.sh resolves SPIRA_QUEUE_WATCH_BIN.
 #
 # QUEUE_WATCH_BIN may point at another binary; pointing it at a stub that prints nothing is
@@ -185,11 +188,32 @@ rout="$("$BIN" watch --ticks 1 --interval 1 --run "$IRUN" --home "$FX" --config 
 [ "$rrc" -eq 0 ] && ok "no queue-mode repository is idle, not an exit" || bad "no queue-mode repository is idle, not an exit (rc=$rrc)"
 want "idle says why"                              'idle: '"$FX"'/push-only.toml: no repository has mode = "queue"' "$rout"
 hout="$("$BIN" health --run "$IRUN" 2>&1)"; hrc=$?
-[ "$hrc" -eq 0 ] && ok "health passes when idle" || bad "health passes when idle (rc=$hrc)"
+[ "$hrc" -ne 0 ] && ok "idle reads DEGRADED, not healthy" || bad "idle reads DEGRADED, not healthy (rc=$hrc)"
 want "health names the idle reason"               "idle:" "$hout"
 printf 'not = [valid\n' > "$FX/broken.toml"
 bout="$("$BIN" watch --ticks 1 --run "$IRUN" --home "$FX" --config "$FX/broken.toml" 2>&1)"; brc=$?
 [ "$brc" -ne 0 ] && ok "an unparseable spira.toml is fatal" || bad "an unparseable spira.toml is fatal (rc=$brc)"
+
+# --- 4b. a gutted config is re-read, not latched idle forever ---------------------------------
+# Mirrors the incident: spira.toml loses its queue repo, queue-watch goes idle, the file is
+# restored a while later, and nothing brings watching back until a human notices.
+APPEAR="$FX/appear.toml"
+printf '[repo.p]\npath = "%s"\nmode = "push"\n' "$T/repo" > "$APPEAR"
+ARUN="$T/appear-run"
+mkdir -p "$ARUN/queue/q" "$ARUN/landstate"
+(
+    sleep 0.5
+    printf '[repo.q]\npath = "%s"\nmode = "queue"\nbase = "origin/main"\n' "$T/repo" > "$APPEAR.tmp"
+    mv "$APPEAR.tmp" "$APPEAR"
+) &
+appear_pid=$!
+aout="$("$BIN" watch --ticks 3 --interval 2 --run "$ARUN" --home "$FX" --config "$APPEAR" 2>&1)"; arc=$?
+wait "$appear_pid" 2>/dev/null || true
+[ "$arc" -eq 0 ] && ok "watch keeps running across the config being restored" || bad "watch keeps running across the config being restored (rc=$arc)"
+want "starts idle on the gutted config"            'idle: '"$APPEAR"': no repository has mode = "queue"' "$aout"
+want "notices the restored repo and resumes"       "watching resumed: 1 queue-mode repo(s) found" "$aout"
+hout2="$("$BIN" health --run "$ARUN" 2>&1)"; hrc2=$?
+[ "$hrc2" -eq 0 ] && ok "health is healthy again once watching resumed" || bad "health is healthy again once watching resumed (rc=$hrc2)"
 
 # --- 5. wiring -------------------------------------------------------------------------------
 row="$(command grep -E '^queue-watch\|daemon\|' "$HERE/watchers" || true)"

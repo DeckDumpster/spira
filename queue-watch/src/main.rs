@@ -3,9 +3,9 @@
 //!
 //!   queue-watch watch  [--interval S] [--ticks N] [--json]   loop; one line per event
 //!   queue-watch health                                      exit non-zero when the last
-//!                                                           poll is stale or was blind;
-//!                                                           an install with no queue-mode
-//!                                                           repo is idle, and healthy
+//!                                                           poll is stale, was blind, or
+//!                                                           found no queue-mode repo — idle
+//!                                                           is DEGRADED, never healthy
 //!
 //! Common flags: --run DIR (SPIRA_RUN), --db DIR (SPIRA_DB), --home DIR (SPIRA_HOME, where
 //! forge.sh lives), --config FILE (spira.toml; default search: SPIRA_TOML, $SPIRA_REPO,
@@ -156,21 +156,6 @@ fn render(t: u64, repo: &str, e: &Event, json: bool) -> String {
     }
 }
 
-/// Nothing to watch: say it once, keep the health record fresh, and stay up so a daemon row
-/// on an install without a queue does not become a restart loop.
-fn idle(o: &Opts, run: &Path, why: &str) -> Result<(), String> {
-    println!("{} - idle: {why}; nothing to watch", iso(now()));
-    let mut tick = 0u64;
-    loop {
-        write_idle(run, now(), o.interval, why);
-        tick += 1;
-        if o.ticks.map(|n| tick >= n).unwrap_or(false) {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_secs(o.interval));
-    }
-}
-
 fn write_idle(run: &Path, t: u64, interval: u64, why: &str) {
     let p = health_file(run);
     let _ = fs::create_dir_all(p.parent().unwrap());
@@ -201,11 +186,6 @@ fn write_health(run: &Path, t: u64, interval: u64, repos: usize, blind: &[String
 fn watch(o: &Opts) -> Result<(), String> {
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
     let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
-    let repos = match queue_repos(find_config(o), &home) {
-        Ok(r) => r,
-        Err(NoRepos::Fatal(e)) => return Err(e),
-        Err(NoRepos::Idle(why)) => return idle(o, &run, &why),
-    };
     let env_ = Env {
         queue_dir: env::var_os("SPIRA_QUEUE_DIR").map(PathBuf::from).unwrap_or_else(|| run.join("queue")),
         landstate: run.join("landstate"),
@@ -220,8 +200,38 @@ fn watch(o: &Opts) -> Result<(), String> {
     let mut states: BTreeMap<String, RepoState> = BTreeMap::new();
     let mut tick = 0u64;
     let stdout = std::io::stdout();
+    // Idle is not a one-shot verdict: a queue-mode repo can appear in spira.toml after this
+    // process started (or reappear after an unlanded branch gutted it), so every tick with
+    // nothing to watch re-reads the config rather than latching idle forever
+    // (law-absence-needs-a-positive-control — an idle watcher must keep proving it is still
+    // looking, not just that it once found nothing).
+    let mut repos: Vec<Repo> = Vec::new();
+    let mut last_idle_why: Option<String> = None;
     loop {
         let t = now();
+        if repos.is_empty() {
+            match queue_repos(find_config(o), &home) {
+                Ok(r) => {
+                    println!("{} - watching resumed: {} queue-mode repo(s) found", iso(t), r.len());
+                    repos = r;
+                    last_idle_why = None;
+                }
+                Err(NoRepos::Fatal(e)) => return Err(e),
+                Err(NoRepos::Idle(why)) => {
+                    if last_idle_why.as_deref() != Some(why.as_str()) {
+                        println!("{} - idle: {why}; nothing to watch", iso(t));
+                        last_idle_why = Some(why.clone());
+                    }
+                    write_idle(&run, t, o.interval, &why);
+                    tick += 1;
+                    if o.ticks.map(|n| tick >= n).unwrap_or(false) {
+                        return Ok(());
+                    }
+                    std::thread::sleep(Duration::from_secs(o.interval));
+                    continue;
+                }
+            }
+        }
         let mut blind = Vec::new();
         for r in &repos {
             let prev = states.remove(&r.name).unwrap_or_default();
@@ -247,7 +257,10 @@ fn watch(o: &Opts) -> Result<(), String> {
 }
 
 /// The watchd health probe. Fails when the watcher has never polled, when its last poll is
-/// older than three intervals (it is hung or dead), or when that poll was blind.
+/// older than three intervals (it is hung or dead), when that poll was blind, or when it is
+/// idle: an idle watcher is retrying every tick, but nothing proves the queue is actually
+/// quiet rather than the config being wrong, so it reads DEGRADED and not healthy
+/// (law-absence-needs-a-positive-control).
 fn health(o: &Opts) -> Result<(), String> {
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
     let p = health_file(&run);
@@ -263,10 +276,7 @@ fn health(o: &Opts) -> Result<(), String> {
     }
     match st {
         "ok" => Ok(()),
-        "idle" => {
-            println!("idle: {}", f.get(4).unwrap_or(&"?").replace('_', " "));
-            Ok(())
-        }
+        "idle" => Err(format!("idle: {}", f.get(4).unwrap_or(&"?").replace('_', " "))),
         _ => Err(format!("last poll was blind: {}", f.get(4).unwrap_or(&"?"))),
     }
 }
