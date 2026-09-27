@@ -157,6 +157,9 @@ rec1="$(cat "$(open_batch_file)" 2>/dev/null)"
 want "1. record names pr=1"       "pr=1"     "$rec1"
 want "1. record lists sp-a:"      "sp-a:"    "$rec1"
 want "1. record lists sp-b:"      "sp-b:"    "$rec1"
+branch1="$(printf '%s\n' "$rec1" | sed -n 's/^branch=//p')"
+want "1. commit message names sp-a with its own title" "spira: land sp-a — bead for sp-a" \
+    "$(git -C "$REPO" log --format=%s "$branch1" -n 5 2>/dev/null)"
 is   "1. sp-a is BATCHED"  "BATCHED" "$(landstate_of sp-a)"
 is   "1. sp-b is BATCHED"  "BATCHED" "$(landstate_of sp-b)"
 want "1. landing.log records the batch" "verdict=green source=open-batch" \

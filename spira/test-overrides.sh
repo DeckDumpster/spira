@@ -88,11 +88,13 @@ echo
 echo "refresh retires the override once HEAD carries the land commit:"
 # ===========================================================================
 # The permanent fix lands for real: main's own brief.txt now carries the operator's edit, in
-# a commit titled the way the sentinel names a landing. Once refresh advances the checkout
-# there, on_landed must have run once and the spec must no longer be active.
+# a commit titled the way the sentinel names a landing — with a trailing " — <title>"
+# (land_subject(), lib.sh), which _ov_landed must recognise same as the bare form. Once
+# refresh advances the checkout there, on_landed must have run once and the spec must no
+# longer be active.
 
 printf 'operator brief\n' > "$ORIGIN/brief.txt"
-git -C "$ORIGIN" commit -qam "spira: land $BEAD"
+git -C "$ORIGIN" commit -qam "spira: land $BEAD — the permanent fix"
 LAND_COMMIT="$(git -C "$ORIGIN" rev-parse HEAD)"
 
 RUN2="$(mktemp -d "$TMP/run-XXXXX")"

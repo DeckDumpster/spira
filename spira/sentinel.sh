@@ -587,6 +587,24 @@ if [ -n "$_c4_closed" ]; then
             log "CHECK4-closed $id: reopens=$_requeues but already landed — no escalation"
             continue
         fi
+        # ANCESTRY, NOT ONLY THE SUBJECT. landed() only recognises the queue's own subject
+        # shapes; a hand-resolved merge that reaches the base under git's own default
+        # subject (a bare "Merge branch ..." with no bead id at all) is invisible to it, and
+        # a widened regex still cannot read an id that was never written. The landstate tip
+        # is the same ancestry proof CHECK 5 trusts below — ask it here too, before mailing
+        # the operator about work that is already on the base (sp-2exzw).
+        if [ -n "$_r_path" ] && [ -r "$SPIRA_RUN/landstate/$id" ]; then
+            _c4_ls_state=""; _c4_ls_tip=""
+            read -r _c4_ls_state _c4_ls_tip _ < "$SPIRA_RUN/landstate/$id" 2>/dev/null || true
+            if [ "${_c4_ls_state:-}" = LANDED ] && [ -n "${_c4_ls_tip:-}" ] && [ "$_c4_ls_tip" != none ]; then
+                _c4_base="$(spira_landref "$_r_path" 2>/dev/null)" || _c4_base=""
+                if [ -n "$_c4_base" ] \
+                        && git -C "$_r_path" merge-base --is-ancestor "$_c4_ls_tip" "$_c4_base" 2>/dev/null; then
+                    log "CHECK4-closed $id: landed by ancestry (landstate tip on $_r_name) — no escalation"
+                    continue
+                fi
+            fi
+        fi
         _rq_causes="$(printf '%s' "$_labels" | tr ',' '\n' \
             | grep -E '^sp-requeue-[0-9]+(-|$)' \
             | sed -E 's/^sp-requeue-([0-9]+)$/\1 unrecorded/;s/^sp-requeue-([0-9]+)-(.*)$/\1 \2/' \
@@ -688,9 +706,10 @@ for i in (d if isinstance(d, list) else [d]):
 # a landing, so a bead that landed rounds ago has no file at all; reading that absence as "not
 # landed" filed 138 incidents in 30 minutes on the day this invariant went live and pushed
 # the pass past its TimeoutStartSec. The base's own history is the other proof, by the same
-# two subject shapes landed() (lib.sh) trusts: the queue's merge subject, exactly
-# "spira: land <id>", or an aeon's own "<id>: ..." commit — never a mention elsewhere in a
-# subject, and never a longer id that merely starts with this one. The subject list is read
+# two subject shapes landed() (lib.sh) trusts: the queue's merge subject, "spira: land
+# <id>" optionally followed by " — <title>" (land_subject(), lib.sh), or an aeon's own
+# "<id>: ..." commit — never a mention elsewhere in a subject, and never a longer id that
+# merely starts with this one. The subject list is read
 # ONCE per repository per pass into a set (_c5_landed), so each bead costs a lookup, not a
 # git walk.
 #
@@ -799,7 +818,7 @@ while IFS=$'\x1f' read -r id r_name superseded dropped delivers content_landed s
             while IFS= read -r _c5_lid; do
                 [ -n "$_c5_lid" ] && _c5_landed["$_c5_lid"]=1
             done < <(git -C "$r_path" log --format=%s "$subj_base" 2>/dev/null | awk '
-                substr($0, 1, 12) == "spira: land " { r = substr($0, 13); if (r != "" && r !~ / /) print r; next }
+                substr($0, 1, 12) == "spira: land " { r = substr($0, 13); split(r, a, " "); if (a[1] != "") print a[1]; next }
                 index($0, "Merge branch \047spira/") == 1 { r = substr($0, 21); sub(/\047.*/, "", r); if (r != "" && r !~ / / && r !~ /^round-/) print r; next }
                 match($0, /^[^: ]+:/) { print substr($0, 1, RLENGTH - 1) }')
         fi

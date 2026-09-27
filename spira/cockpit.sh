@@ -1320,8 +1320,9 @@ $(git -C "$_p" for-each-ref --format='%(refname:short)' 'refs/heads/spira/' 'ref
         echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_UNLANDED_N=?"
         echo "SP_STRANDED_N=?"; echo "SP_CERT_N=?"; echo "SP_FUNNEL_DONE_AGE=?"
     else
-        # Subjects only (no bodies). Landed = subject is "spira: land <id>" or "<id>: <desc>"
-        # (law-aeon-commits-name-their-bead). Body mentions do not count as landing.
+        # Subjects only (no bodies). Landed = subject is "spira: land <id>", optionally
+        # " — <title>", or "<id>: <desc>" (law-aeon-commits-name-their-bead). Body mentions
+        # do not count as landing.
         # SP_UNLANDED_N: closed beads with a branch but no landstate entry (queue anomaly).
         # SP_STRANDED_N: same but closed longer than SPIRA_CERT_WINDOW_MINS ago (truly stuck).
         # SP_CERT_N: same but closed within the cert window (normal in-flight state).
@@ -1352,7 +1353,7 @@ landed_set = set()
 for i in ids:
     for s in subjects:
         s = s.strip()
-        if s.startswith("spira: land " + i) or s.startswith(i + ": "):
+        if s == "spira: land " + i or s.startswith("spira: land " + i + " ") or s.startswith(i + ": "):
             landed_set.add(i)
             break
 anomaly = 0; stranded = 0; awaiting = 0

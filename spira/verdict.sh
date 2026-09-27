@@ -1038,7 +1038,7 @@ ${_line#build-error: }" ;;
                 for _rmm in "${survivors[@]}"; do
                     _rmid="${_rmm%%:*}"; _rmtip="${_rmm##*:}"
                     if ! git -C "$_rwt" merge -q --no-edit --no-ff \
-                            -m "spira: land $_rmid" "$_rmtip" >/dev/null 2>&1; then
+                            -m "$(land_subject "$_rmid")" "$_rmtip" >/dev/null 2>&1; then
                         git -C "$_rwt" merge --abort 2>/dev/null || true
                         _rok=0; break
                     fi
@@ -1482,7 +1482,7 @@ _verdict_process() {
                         for _rebmm in $members_str; do
                             _rebmid="${_rebmm%%:*}"; _rebtip="${_rebmm##*:}"
                             if ! git -C "$_rwt" merge -q --no-edit --no-ff \
-                                    -m "spira: land $_rebmid" "$_rebtip" \
+                                    -m "$(land_subject "$_rebmid")" "$_rebtip" \
                                     >/dev/null 2>&1; then
                                 git -C "$_rwt" merge --abort 2>/dev/null || true
                                 _rok=0; _conflict_member="$_rebmid"; break
