@@ -99,13 +99,13 @@ branch_with_workflow() {
     git -C "$REPO" commit -q -m "add acceptance workflow"
 }
 branch_with_workflow_only() {
-    git -C "$REPO" checkout -q -b test-only-branch
+    git -C "$REPO" checkout -q -b test-only-branch main
     printf '# acceptance-ci\n' > "$REPO/spira/acceptance-ci.sh"
     git -C "$REPO" add spira/acceptance-ci.sh
     git -C "$REPO" commit -q -m "update acceptance-ci"
 }
 branch_with_lib() {
-    git -C "$REPO" checkout -q -b test-lib-branch
+    git -C "$REPO" checkout -q -b test-lib-branch main
     printf '# lib updated\n' > "$REPO/spira/lib.sh"
     git -C "$REPO" add spira/lib.sh
     git -C "$REPO" commit -q -m "update lib"

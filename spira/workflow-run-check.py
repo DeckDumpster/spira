@@ -118,9 +118,12 @@ if head_sha:
     except Exception:
         pass
 
-run_path = (run.get("path") or "").lstrip("./")
+def _strip_dotslash(p):
+    return p[2:] if p.startswith("./") else p
+
+run_path = _strip_dotslash(run.get("path") or "")
 if wf_changed and run_path:
-    if run_path not in [f.lstrip("./") for f in wf_changed]:
+    if run_path not in [_strip_dotslash(f) for f in wf_changed]:
         print(f"WRONG_WORKFLOW:{run_path}")
         sys.exit(1)
 
