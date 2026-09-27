@@ -604,13 +604,23 @@ _BATCH_OWNER_FILE="/tmp/${CNAME}.owner"
 _BATCH_HOME="/tmp/spira-batch-${INSTANCE}"
 
 _batch_cleanup() {
-    # --volumes: the container name is keyed off BATCH_KEY (tree + selection +
-    # harness hash), so it is never reused across runs — the warm-cache reuse
-    # `down` normally preserves a name for never happens here, and skipping
-    # --volumes only left every run's cargo-reg/cargo-git pair to accumulate
-    # forever, eventually exhausting podman's num_locks for the whole host.
-    bash "$TESTENV" down --name "$CNAME" --volumes >/dev/null 2>&1 || \
-        log "batch: teardown failed for $CNAME — checking whether it survived"
+    # --volumes: skipping it left every run's cargo-reg/cargo-git pair to
+    # accumulate forever, eventually exhausting podman's num_locks for the whole
+    # host — a warm-cache repeat of the same BATCH_KEY is meant to reuse a name,
+    # not its volumes.
+    #
+    # ONLY THE CLAIMED OWNER TEARS DOWN. _batch_claim_owner refuses a colliding run
+    # before it ever touches the container, but the file itself could still have
+    # been reassigned since (a crash that skipped the refusal, an older binary) —
+    # tearing down unconditionally would take a live, unrelated run's container out
+    # from under its still-running suites (sp-cltz3). A file that no longer names
+    # this pid is not this run's to tear down.
+    if [ "$(cat "$_BATCH_OWNER_FILE" 2>/dev/null || true)" = "$$" ]; then
+        bash "$TESTENV" down --name "$CNAME" --volumes >/dev/null 2>&1 || \
+            log "batch: teardown failed for $CNAME — checking whether it survived"
+    else
+        log "batch: $CNAME's owner file no longer names this run — leaving teardown to its real owner"
+    fi
     rm -rf "$_BATCH_HOME" 2>/dev/null || true
     # _batch_owner_release unlinks the owner file only once the container is
     # confirmed gone from podman — a failed teardown that leaves it running
@@ -643,7 +653,10 @@ while IFS= read -r _sw_line; do
     [ -n "$_sw_line" ] && log "batch: $_sw_line"
 done < <(_batch_sweep_ownerless "${SPIRA_BATCH_ORPHAN_MIN_AGE:-3600}")
 
-printf '%s\n' "$$" > "$_BATCH_OWNER_FILE"
+if ! _batch_claim_owner "$_BATCH_OWNER_FILE" "$$"; then
+    log "batch: $CNAME is already claimed by a live pid — a concurrent run with the same tree+selection is in flight; refusing to share its container"
+    exit 2
+fi
 mkdir -p "$_BATCH_HOME" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------

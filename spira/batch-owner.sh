@@ -16,6 +16,27 @@ _batch_owner_release() {
     rm -f "$ownerfile"
 }
 
+# _batch_claim_owner <owner-file> <my-pid>
+# Claims <owner-file> for <my-pid>, UNLESS it already names a different pid that is
+# still alive — a container name is keyed off BATCH_KEY (tree + selection + harness
+# hash) so a REPEAT run of the same tree is meant to reuse it, but two runs that
+# overlap in time compute the identical key too. Overwriting the file unconditionally
+# (the old behavior) let the second one silently steal the claim; whichever of the
+# two exited first then tore the shared container down in its own ordinary cleanup,
+# killing the other's still-running suites by signal mid-flight (sp-cltz3) — a name
+# collision, not a suite fault. Returns 1 without touching the file when a live,
+# different owner already holds the claim; the caller must refuse to share.
+_batch_claim_owner() {
+    local ownerfile="$1" mypid="$2" existing
+    if [ -f "$ownerfile" ]; then
+        existing="$(cat "$ownerfile" 2>/dev/null)" || existing=""
+        if [ -n "$existing" ] && [ "$existing" != "$mypid" ] && [ -d "/proc/$existing" ]; then
+            return 1
+        fi
+    fi
+    printf '%s\n' "$mypid" > "$ownerfile"
+}
+
 # _batch_sweep_dead_owners — arm 1: an owner file names a PID that has exited.
 # Reaps the container it names and the file itself. One line per sweep on stdout.
 _batch_sweep_dead_owners() {

@@ -118,6 +118,60 @@ fi
 
 # ===========================================================================
 echo
+echo "A2: _batch_claim_owner (sp-cltz3: a same-key concurrent run must not steal a live claim)"
+# ===========================================================================
+# No podman needed here — the claim is pure PID-file logic, exercised against real
+# background processes rather than a hand-written "is it alive" model.
+
+OF_A2="$TMP/claim-a2.owner"
+
+# A2-0: a fresh (nonexistent) owner file — the claim succeeds and writes the file.
+rm -f "$OF_A2"
+if _batch_claim_owner "$OF_A2" "12345"; then
+    ok "A2-0: claim succeeds against a fresh owner file"
+else
+    bad "A2-0: claim succeeds against a fresh owner file" "returned failure"
+fi
+is "A2-0: owner file now names the claimant" "12345" "$(cat "$OF_A2" 2>/dev/null)"
+
+# A2-1 THE OFFENDER: a live, DIFFERENT pid already owns the file — the old
+# unconditional overwrite stole this claim silently; a later run's cleanup then
+# tore the shared container down under the first run's still-running suites
+# (sp-cltz3). The claim must refuse and must leave the file untouched.
+sleep 100 &
+LIVE_PID=$!
+printf '%s\n' "$LIVE_PID" > "$OF_A2"
+if _batch_claim_owner "$OF_A2" "$$"; then
+    bad "A2-1: claim refuses a live, different owner" "returned success"
+else
+    ok "A2-1: claim refuses a live, different owner (rc=1)"
+fi
+is "A2-1: owner file still names the live owner, not stolen" "$LIVE_PID" "$(cat "$OF_A2" 2>/dev/null)"
+kill "$LIVE_PID" 2>/dev/null; wait "$LIVE_PID" 2>/dev/null
+
+# A2-2 POSITIVE CONTROL: once that same pid is confirmed gone (reaped, not a
+# zombie), the identical call now succeeds — A2-1's refusal was the live pid,
+# not some other reason a bare string compare would also trip on.
+if _batch_claim_owner "$OF_A2" "$$"; then
+    ok "A2-2: claim succeeds once the prior owner is confirmed gone"
+else
+    bad "A2-2: claim succeeds once the prior owner is gone" "returned failure"
+fi
+is "A2-2: owner file now names this process" "$$" "$(cat "$OF_A2" 2>/dev/null)"
+
+# A2-3: re-claiming with the file already naming ourselves is a no-op success —
+# the ordinary repeat-call case (testenv-batch.sh's own EXIT-trap teardown reads
+# this same file after having claimed it earlier in the same process).
+if _batch_claim_owner "$OF_A2" "$$"; then
+    ok "A2-3: re-claiming our own existing claim succeeds"
+else
+    bad "A2-3: re-claiming our own claim succeeds" "returned failure"
+fi
+
+rm -f "$OF_A2"
+
+# ===========================================================================
+echo
 echo "B: _batch_sweep_dead_owners (owner file present, PID gone)"
 # ===========================================================================
 
