@@ -65,6 +65,11 @@ chmod +x "$SH/bd-stub.sh"
 printf '#!/usr/bin/env bash\ntrue\n' > "$SH/mail.sh"; chmod +x "$SH/mail.sh"
 printf '#!/usr/bin/env bash\ntrue\n' > "$SH/suites.sh"; chmod +x "$SH/suites.sh"
 
+# _batch_cut (queue.sh) unconditionally invokes the batcher binary after batch.sh's
+# own sweep — this race is about the per-repo lock, not the batcher, so the stub
+# does nothing and exits 0.
+printf '#!/usr/bin/env bash\ntrue\n' > "$SH/batcher-stub.sh"; chmod +x "$SH/batcher-stub.sh"
+
 RMAP="$TMP/repo-map"
 printf '%s | %s | queue | main | | |\n' "$REPONAME" "$REPO" > "$RMAP"
 
@@ -79,6 +84,7 @@ run() {
         SPIRA_HOME_REPO="$REPONAME" \
         SPIRA_REPO_MAP="$RMAP" \
         SPIRA_QUEUE_DIR="$QUEUEDIR" \
+        SPIRA_BATCHER_BIN="$SH/batcher-stub.sh" \
         SPIRA_QUEUE_CI_MAXSEC=3600 \
         SPIRA_QUEUE_CI_IDLE_SEC=600 \
         SPIRA_QUEUE_INFRA_RETRIES=2 \
