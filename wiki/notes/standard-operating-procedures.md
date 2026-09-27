@@ -1040,7 +1040,13 @@ bd show <bead> | grep -E '\b(groom|incident|maechen-sweep|plan|spike|czar-trigge
 
 **Fix** — Set SPIRA_VERDICT_REPEAT_CONSIDERED environment variable when requesting verdict repeat to determine if failure is repeatable or transient
 
-**Escalate** — Not applicable — this is procedural
+**Escalate** — Not applicable — this is procedural. For aeon-claimed beads needing remote branch
+access (no SSH creds), escalate to operator via `mail.sh send operator --kind question` with a
+`## Question` and `## Default` section. As of 2026-09-27, `mail.sh send` delivers successfully
+again (verified live under sp-4gz5b, after sp-c1ot2's loom-splice-hang fix closed — no hang).
+The prior guidance to skip mail.sh entirely and only `bd dep add` onto sp-c1ot2 is now
+historical: try the send first, and only fall back to the dep-add/leave-open pattern if a send
+genuinely hangs.
 
 **Reference** — sop-verdict-repeat-refused
 
