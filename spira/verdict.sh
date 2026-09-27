@@ -90,9 +90,10 @@ _lc_batch_advance() {
 }
 
 # _lc_land_batch <batch_file> <pr_n> <sha> — best-effort: the batch's real GREEN ->
-# LANDED transition on spira-lc, mirroring _lc_cut_batch's own "additive, never blocks
-# the existing path" contract (sp-o7nbr.2). batch_id/version are present only when
-# this batch's own cut succeeded; a pre-cutover record has neither and is skipped
+# LANDED transition on spira-lc, additive and never blocking the existing land_mark-based
+# path (matching _abandon_open_batch's own contract, sp-o7nbr.2). batch_id/version are
+# present only when this batch's own cut wrote them into the open-batch record — currently
+# never, since batcher-cut (sp-vsob2) does not yet — and a record without them is skipped
 # rather than CASed against a batch that was never written. CiStarted/Green bring a
 # fresh OPEN batch to GREEN — land only accepts from there — fired here since this is
 # the one place a real CI-green fast-forward is known to have happened.

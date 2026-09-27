@@ -356,8 +356,8 @@ is "the old landstate path still ran for a pre-cutover record" "CERTIFIED" \
 
 certify sp-lc-vland1 tipVL1
 certify sp-lc-vland2 tipVL2
-_lc_cut_batch fixture-repo batch-verdict-land headVL baseVL \
-    sp-lc-vland1:tipVL1 sp-lc-vland2:tipVL2 >/dev/null
+lc cut batch-verdict-land --repo fixture-repo --head headVL --base baseVL \
+    --members "sp-lc-vland1:tipVL1,sp-lc-vland2:tipVL2" --actor test >/dev/null
 vl_ob="$TMP/ob-file-verdict-land"
 cat > "$vl_ob" <<OBFILE
 pr=10
@@ -385,8 +385,8 @@ is "a second _lc_land_batch call against an already-landed batch does not re-app
 
 certify sp-lc-vsettle-e tipVSE
 certify sp-lc-vsettle-r tipVSR
-_lc_cut_batch fixture-repo batch-verdict-settle headVS baseVS \
-    sp-lc-vsettle-e:tipVSE sp-lc-vsettle-r:tipVSR >/dev/null
+lc cut batch-verdict-settle --repo fixture-repo --head headVS --base baseVS \
+    --members "sp-lc-vsettle-e:tipVSE,sp-lc-vsettle-r:tipVSR" --actor test >/dev/null
 vs_ob="$TMP/ob-file-verdict-settle"
 cat > "$vs_ob" <<OBFILE
 pr=11
