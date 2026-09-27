@@ -289,6 +289,12 @@
             "null"
           ]
         },
+        "attribute_maxpar": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "auron_restart_window": {
           "type": [
             "string",

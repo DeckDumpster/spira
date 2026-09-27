@@ -13,6 +13,7 @@ archivist_per_pass
 archivist_timeout
 archivist_timeout_retries
 ask_label
+attribute_maxpar
 auron_restart_window
 auron_restarts
 base_ci_unreadable_grace_secs

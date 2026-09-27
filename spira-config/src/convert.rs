@@ -342,6 +342,7 @@ pub fn spira_section(
             "SPIRA_BATCH_PSI_THRESHOLD" => s.batch_psi_threshold = Some(val.clone()),
             "SPIRA_BATCH_ORPHAN_MIN_AGE" => s.batch_orphan_min_age = Some(val.clone()),
             "SPIRA_BATCH_BINS_TTL" => s.batch_bins_ttl = Some(val.clone()),
+            "SPIRA_ATTRIBUTE_MAXPAR" => s.attribute_maxpar = Some(val.clone()),
             "SPIRA_BATCH_PEAK_WARN_FRAC" => s.batch_peak_warn_frac = Some(val.clone()),
             "SPIRA_BATCH_ARTIFACT_DAYS" => s.batch_artifact_days = Some(val.clone()),
             "SPIRA_BATCH_TAIL_LINES" => s.batch_tail_lines = Some(val.clone()),
