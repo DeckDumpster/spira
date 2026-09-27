@@ -114,6 +114,9 @@ is "gate_key_hash(): SPIRA_GATE_SUITES (suites=on vs off) moves the key" \
 nk="$(gate_key_hash spira treeA filesA cmdA harnessA on sp-other)"
 is "gate_key_hash(): a different bead id moves the key" \
     "1" "$([ "$nk" != "$base_key" ] && echo 1 || echo 0)"
+nk="$(gate_key_hash spira treeA filesA cmdA harnessA on none test-x.sh)"
+is "gate_key_hash(): a different ejected-suites list moves the key (sp-hkfdp)" \
+    "1" "$([ "$nk" != "$base_key" ] && echo 1 || echo 0)"
 
 # --- 5. cache_fresh(): TTL/eval hardening (UC-gate-verdict-15; gap #10, previously eval'd) -
 entry="$TMP/entry"

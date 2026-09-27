@@ -43,14 +43,21 @@ gate_tree_key() {
     printf '%s' "$1" | tr '/' '-' | tr -c 'A-Za-z0-9.-' '-'
 }
 
-# gate_key_hash <repo> <tree> <files_h> <cmd_h> <harness_h> <suites> <bead> -> sha256.
+# gate_key_hash <repo> <tree> <files_h> <cmd_h> <harness_h> <suites> <bead> [ejected] -> sha256.
 #
 # Pure string concatenation and hashing. gate.sh's own gate_key() does the git/file reads
 # (rev-parse, cat "$0" "$EXCLUDE" "$SKEW", sha256sum of $files/$CMD) and passes the results
 # here — so a T1 row can assert "changing one input moves the key" against fixed strings,
 # without a git repository at all.
+#
+# [ejected] IS IN THE KEY (sp-hkfdp) because SPIRA_GATE_EJECTED_SUITES changes what the gate
+# command is told to run without changing the tree, the command or SPIRA_GATE_SUITES. Without
+# it, a bead's own prior self-certification (same tree, same fences-only mode) leaves a cached
+# PASS that a later re-certification — now carrying a forced suite from a withdrawal — would
+# reuse untouched, never invoking the gate command at all and never running the suite it exists
+# to force (law-a-retry-must-change-an-input).
 gate_key_hash() {
-    printf '%s\n' "$1 $2 $3 $4 $5 suites=$6 bead=$7" | sha256sum | cut -d" " -f1
+    printf '%s\n' "$1 $2 $3 $4 $5 suites=$6 bead=$7 ejected=${8:-}" | sha256sum | cut -d" " -f1
 }
 
 # cache_fresh <entry-file> <ttl> <now> -> 0 and "when|by" on stdout if the entry is fresh,

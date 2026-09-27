@@ -77,6 +77,7 @@ rm -f "$RUN/landstate/sp-wsx" "$RUN/landstate/sp-wsx.ejected" "$RUN/queue/sp-wsx
 out="$(submit)"; rc=$?
 [ "$rc" -eq 0 ] && ok "A: exit 0, no withdrawal history" || bad "A: exit 0" "rc=$rc out=$out"
 want "A: certified" "certified" "$out"
+want "A: the gate command actually ran" "ejected=" "$(cat "$GATELOG")"
 nowant "A: gate command was never told to force test-x.sh" "test-x.sh" "$(cat "$GATELOG")"
 
 echo
