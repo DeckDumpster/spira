@@ -108,6 +108,16 @@ want "publish names a status function"        "!cancelled()"                    
 want "publish requires cut to have passed"    "needs.cut.result == 'success'"   "$_pub_if"
 
 echo
+echo "4c. cut sources its positive control from the run that tested the SHA (sp-5h238):"
+# A merged queue PR fires a pull_request 'closed' Gate run that skips every job and concludes
+# success, and it is the NEWEST run for the SHA. Picking runs[0] read that empty run and
+# refused every cut (gate run 36306259348, 2026-09-27). Cut must walk the runs for one with
+# a batch-results artifact.
+_cut_step="$(awk '/^  cut:$/{f=1} f&&/^  publish:$/{exit} f' "$GATE_YML")"
+nowant "cut does not take the newest run blindly" "select(.name == \"Gate\" and .conclusion == \"success\")][0].id" "$_cut_step"
+want   "cut walks the runs for an artifact"       "for _rid in"                                          "$_cut_step"
+
+echo
 echo "5. publishing does not rely on the tag trigger:"
 # The tag push happens, but the publish is invoked directly because a
 # GITHUB_TOKEN tag push fires no workflow.
