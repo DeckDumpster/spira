@@ -378,6 +378,64 @@ gate: gate PASS covered suites: $_cached_suites"
     fi
 fi
 
+# HOST-WIDE GATE ADMISSION, ahead of the per-branch tree lock. The tree lock below only
+# serialises two gates on the SAME branch tree; it does nothing to stop N gates on N
+# DIFFERENT branches all running their trials at once, and that is exactly the gap
+# sp-083ux / sp-ld9j3 found: landing.sh's own certify loop honours SPIRA_CERTIFY_PAR by
+# limiting its own job count, but every OTHER caller — queue.sh submit's independent
+# gate.sh runs chief among them — starts a trial with no ceiling at all, so the host was
+# oversubscribed by however many aeons happened to submit at once. Enforcing the same
+# ceiling here, inside gate.sh itself, means every caller shares one admission pool
+# instead of each one pretending it is the only gate running.
+#
+# A COUNTING SEMAPHORE OF SPIRA_CERTIFY_PAR SLOTS, not a single lock: the whole point is to
+# allow that many trials concurrently, the same number landing.sh already budgets for, not
+# to serialise the host down to one gate at a time.
+#
+# THE DEFAULT MATCHES landing.sh's OWN FORMULA (spira/landing.sh:375) so a host with no
+# SPIRA_CERTIFY_PAR set gets the same ceiling everywhere rather than one number inside
+# landing.sh and an unbounded free-for-all everywhere else.
+_gate_admission_par() {
+    if [ -n "${SPIRA_CERTIFY_PAR:-}" ]; then
+        case "$SPIRA_CERTIFY_PAR" in *[!0-9]*|'') ;; *) printf '%s' "$SPIRA_CERTIFY_PAR"; return ;; esac
+    fi
+    local nproc_all mem_avail_mib par par_mem
+    nproc_all="$(nproc --all 2>/dev/null || echo 4)"
+    mem_avail_mib="$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 1600)"
+    par=$(( nproc_all / 4 )); [ "$par" -ge 1 ] || par=1
+    par_mem=$(( mem_avail_mib / 400 )); [ "$par_mem" -ge 1 ] || par_mem=1
+    [ "$par_mem" -lt "$par" ] && par="$par_mem"
+    printf '%s' "$par"
+}
+ADMISSION_DIR="$SPIRA_RUN/gate-admission"
+mkdir -p "$ADMISSION_DIR" 2>/dev/null || true
+ADMISSION_PAR="$(_gate_admission_par)"
+case "$ADMISSION_PAR" in ''|*[!0-9]*) ADMISSION_PAR=1 ;; esac
+ADMISSION_WAIT="${SPIRA_GATE_LOCK_WAIT:-$(( ${SPIRA_GATE_TIMEOUT:-2700} * 4 ))}"
+ADMISSION_WAIT0=$(date +%s)
+ADMISSION_HELD=""
+while :; do
+    slot=1
+    while [ "$slot" -le "$ADMISSION_PAR" ]; do
+        exec 8>"$ADMISSION_DIR/slot.$slot.lock"
+        if flock -n 8; then
+            ADMISSION_HELD="$slot"
+            break 2
+        fi
+        exec 8>&-
+        slot=$(( slot + 1 ))
+    done
+    if [ $(( $(date +%s) - ADMISSION_WAIT0 )) -ge "$ADMISSION_WAIT" ]; then
+        verdict "$NV" admission-timeout \
+            "gate: all $ADMISSION_PAR host-wide gate admission slots busy for ${ADMISSION_WAIT}s — no verdict on $BR
+gate: this is host-wide gate concurrency (SPIRA_CERTIFY_PAR=$ADMISSION_PAR), not a fault in the branch."
+    fi
+    sleep 1
+done
+# fd 8 stays open (and the flock held) for the rest of this process's life; it is released
+# automatically when gate.sh exits, whichever way it exits — no explicit unlock needed, and
+# nothing here can leak the slot past this trial.
+
 # THE TREE IS THE BRANCH, never the shared checkout. `cd "$REPO"` would run the copy of
 # these suites that is already installed on main — so a branch that breaks a guard would be
 # tested by the guard it had not broken yet, and a branch that ADDS a suite would fail its
