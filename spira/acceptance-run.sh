@@ -484,6 +484,11 @@ _cur_phase="phase-B"; _phase_snapped=0; _phase_start_ts="$(date +%s)"
 echo
 echo "phase B — upgrade: install $prev_tag, deploy to $tag, verify no rollback"
 # ===========================================================================
+# The predecessor's archive.sh dies when ~/.claude/projects does not exist (fixed in this
+# release, archive.sh:306-314). Until every predecessor acceptance still upgrades from
+# carries that fix, ensure the directory so phase C's oneshot check exercises the
+# predecessor's spira-archive.service instead of failing on an already-fixed-forward bug.
+mkdir -p "${SPIRA_TOKEN_PROJECTS:-$HOME/.claude/projects}"
 if [ -z "$prev_tag" ]; then
     printf '  skip  phase B+C: --prev-tag not given\n'
 else
@@ -524,6 +529,10 @@ else
         bash "$HERE/deploy.sh" --allow-draft "${_deploy_tag_src[@]}" "$tag" 2>&1 | tee "$TMP/deploy-upgrade.log" || _deploy_rc=$?
         is0 "phase B: deploy.sh $tag exits 0 (no rollback)" "$_deploy_rc"
 
+        # Exercise every installed oneshot unit now, deterministically, rather than trusting
+        # a 5-minute timer to have ticked inside this phase's window by luck.
+        _check_oneshots "phase B"
+
         # Verify .tag sidecar names the new tag (sp-cb0q1: sidecar written to releases dir).
         # Read SPIRA_RELEASES from the installed conf so it matches what deploy.sh used,
         # not a default derived from the workspace checkout (which differs on CI runners).
@@ -552,6 +561,9 @@ else
         bash "$HERE/deploy.sh" "${_deploy_prev_src[@]}" "$prev_tag" 2>&1 | tee "$TMP/deploy-rollback.log" \
             || _rollback_rc=$?
         is0 "phase C: deploy.sh $prev_tag (rollback) exits 0" "$_rollback_rc"
+
+        # Exercise every installed oneshot unit now, deterministically (see phase B).
+        _check_oneshots "phase C"
 
         # Capture unit set AFTER rollback.
         _units_post_rollback="$(_unit_set)"

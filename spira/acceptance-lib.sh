@@ -63,8 +63,12 @@ _take_snapshot() {
     mkdir -p "$_sdir" 2>/dev/null || return 0
     systemctl --user list-timers --all          > "$_sdir/timers.txt"      2>&1 || true
     systemctl --user list-units 'spira-*' --all > "$_sdir/units.txt"       2>&1 || true
+    # --plain: without it, a failed unit's line is prefixed with a "● " status bullet that
+    # becomes $1 instead of the unit name (doctor.sh's doctor_check_failed_units hit the
+    # same parse; here it wrote the failed unit's own status/journal to journal/●.txt instead
+    # of capturing it at all).
     {
-        systemctl --user list-units 'spira-*' --all --no-legend 2>/dev/null \
+        systemctl --user list-units 'spira-*' --all --no-legend --plain 2>/dev/null \
             | awk '{print $1}' \
             | while read -r _u; do
                 printf '\n=== %s ===\n' "$_u"
@@ -74,7 +78,7 @@ _take_snapshot() {
     journalctl --user --since="${_run_start_wall:-today}" --no-pager -l \
         > "$_sdir/journal-full.txt" 2>&1 || true
     mkdir -p "$_sdir/journal"
-    systemctl --user list-units 'spira-*' --all --no-legend 2>/dev/null \
+    systemctl --user list-units 'spira-*' --all --no-legend --plain 2>/dev/null \
         | awk '{print $1}' \
         | while read -r _u; do
             journalctl --user -u "$_u" --since="${_run_start_wall:-today}" --no-pager -l \
@@ -139,6 +143,27 @@ sys.exit(0 if r.get("status") == "closed" or "spira-submitted" in (r.get("labels
 _unit_set() {
     systemctl --user list-unit-files --no-legend 2>/dev/null \
         | awk '$1 ~ /^spira-/ && $2 != "transient" {print $1, $2}' | sort
+}
+
+# _check_oneshots <label> — start every installed oneshot spira-* service once and require
+# none to fail. Several of these units carry OnBootSec=5min timers; whether their first
+# tick lands inside the window a phase happens to be watching is luck, so exercising them
+# by explicit `systemctl start` after each deploy makes the check deterministic instead of
+# depending on when CI or a local run happens to catch that tick (2026-09-26).
+_check_oneshots() {
+    local _label="$1" _co_failed="" _co_u _co_type
+    for _co_u in $(systemctl --user list-unit-files --no-legend --plain 'spira-*.service' 2>/dev/null \
+                   | awk '{print $1}'); do
+        _co_type="$(systemctl --user show -p Type --value "$_co_u" 2>/dev/null)"
+        [ "$_co_type" = "oneshot" ] || continue
+        systemctl --user start "$_co_u" 2>/dev/null \
+            || _co_failed="${_co_failed:+$_co_failed, }$_co_u"
+    done
+    if [ -z "$_co_failed" ]; then
+        ok "$_label: every installed oneshot spira-* unit starts clean"
+    else
+        bad "$_label: every installed oneshot spira-* unit starts clean" "failed: $_co_failed"
+    fi
 }
 
 # _stage_release_source <dir> <tarball> <tag> — add a release to a LOCAL release source, the
