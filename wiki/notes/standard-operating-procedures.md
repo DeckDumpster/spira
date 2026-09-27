@@ -16,7 +16,7 @@ spira/sop.sh write <slug> -   # text on stdin
 
 Statutes are how to behave; SOPs are how to fix. They share one mechanism, split by prefix — `law-` and `sop-` — so the [[spira]] Ops persona reads its runbooks exactly the way every agent already reads [[common-law]]. Ops is summoned by an incident bead filed from a failed systemd unit, matches the payload against the `MATCH:` lines below, and executes the first one that fires.
 
-**58 SOP(s)** on the shelf as of 2026-09-27.
+**60 SOP(s)** on the shelf as of 2026-09-27.
 
 ## The closing rule
 
@@ -39,6 +39,22 @@ Statutes are how to behave; SOPs are how to fix. They share one mechanism, split
 **Reference** — wiki/notes/standard-operating-procedures.md
 
 **Matches** `(swept|sweeping|committed.*uncommitted|commit.*included|commit.*contained).*\b(concierge|session|work|draft|test-plan)\b|law-commit-only-paths-you-changed`
+
+### Applied trace instrumentation
+
+`sop-applied-trace-instrumentation`
+
+**Symptom** — `sop.sh applied` (or any bd-backed subcommand) hangs or times out under real concurrent dolt load. sp-ohnz7 found the 3 subprocess calls applied() makes (bdjson memories, bead-note write) each cost well under 1s in isolation — the hang only reproduces under live contention from other aeon sessions, which cannot safely be forced (law-probe-a-fixture-not-production, law-fence-loops-on-shared-hardware).
+
+**Check** — grep -q 'SOP_APPLIED_TRACE' spira/lib.sh && echo pass || echo fail
+
+**Fix** — sp-h54i5 landed passive timing instrumentation at the single choke point every bd call goes through — `bdq()` in spira/lib.sh — rather than wrapping each of sop.sh's 3 call sites individually. Set SOP_APPLIED_TRACE=1 (optionally SOP_APPLIED_TRACE_FILE=<path>, default $SPIRA_RUN/sop/trace.log) and every bd invocation appends one line: `<pid> start=<ts> end=<ts> rc=<rc> argv=<the bd args>`. Off by default — zero cost when unset (verified: no trace file written with the flag unset). Next time a hang happens naturally, read the trace file rather than reproducing it: the last line with no matching `end=` (or the widest start/end gap) is the call that was in flight when the caller's timeout fired.
+
+**Escalate** — if the trace shows the hang is NOT in a bd subprocess call at all (e.g. it's in cockpit.sh's `timeout 30 bash` for METRIC enforcement, or in wiki regen) — that's a different mechanism than sp-ohnz7 hypothesized and needs its own diagnosis, not a wider net on this SOP.
+
+**Reference** — sp-ohnz7, sp-h54i5
+
+**Matches** `(sop\.sh applied.*(hang|timeout|contention)|applied\(\).*ledger.*contention|SOP_APPLIED_TRACE)`
 
 ### Batch abandon break glass
 
@@ -165,14 +181,15 @@ ESCALATE if sp-2dvyh (land_mark fix) not yet landed — add as blocker dep, leav
 
 Once sp-2dvyh IS landed: blocked incidents self-resolve; close citing their reasons.
 
-No-commit-ever case: condition is PERMANENT, watcher refiles forever. Do NOT
-close as false alarm. File/link a bead against the watcher's own predicate and
-`bd dep add` this incident onto it; leave OPEN. Worked example: REF.
+No-commit-ever case: PERMANENT, watcher refiles forever. Do NOT close as false
+alarm. File/link a bead against the watcher's predicate, `bd dep add` this
+incident onto it, leave OPEN. Worked example: REF.
 
-Dependency rot: if that blocker bead is later closed as SUBSUMED/DUPLICATE/
-"tracked in epic X" rather than landed, `bd dep` reads it as satisfied anyway
-and the incident recurs. Re-read the blocker's close reason; re-point the dep
-at whatever successor is still open. Repeat down the chain. Full narrative: REF.
+Dependency rot: a blocker closed SUBSUMED/DUPLICATE/SUPERSEDED (not landed)
+still reads as satisfied to `bd dep`. Check `bd show <dep-id>` for a
+"SUPERSEDED BY" line before trusting a dep edge; re-point at the open
+successor too (sp-8wcnv: sp-wlnv7->sp-c1ot2 stayed satisfied after supersede
+to open sp-znoj6).
 ```
 
 **Escalate** — Only the land_mark-bug case, while sp-2dvyh is unlanded.
@@ -469,13 +486,65 @@ Not Ops-actionable — code defect. loom.sh/loom binary were confirmed running,
 **Escalate**
 
 ```
-File a bug bead for a builder. If mail.sh send operator is the only
-  escalation channel and it's down, escalate via `bd note` directly; don't retry.
+File the builder-fix bead with plain `bd create --type bug` (no
+  `incident` label, do NOT use incident.sh). A fix bead filed via incident.sh
+  inherits `label:incident` + `branch:spira/<id>`, which routes it to ANOTHER
+  Ops session instead of a builder queue — that Ops session correctly follows
+  "do not fix, file" and closes it with nowhere to point, producing a circular
+  incident->incident handoff with no builder ever touching the code. Confirmed
+  2026-09-27: sp-ic5pu was filed via incident.sh, got re-summoned as Ops, and
+  closed itself pointing back at sp-wb7ip. Re-filed correctly as sp-znoj6 via
+  bare `bd create`. If mail.sh send operator is the only escalation channel and
+  it's down, escalate via `bd note` directly; don't retry mail.sh.
 ```
 
 **Reference** — wiki/notes/mail-send-loom-splice-hang.md
 
 **Matches** `mail\.sh send.*(hang|timed? ?out|exit 124)|mail\.sh.*>?120s`
+
+### Ops wall cannot write fix
+
+`sop-ops-wall-cannot-write-fix`
+
+**Symptom**
+
+```
+An Ops session lands on a bug bead already holding a fully-specified code patch
+for a live periodic script, marked NOT DONE because a prior session ran out of wall-clock.
+It churns: each session re-derives the same diagnosis and dies at the wall without
+committing, because the real fix needs a new regression-test fixture harness
+(law-a-regression-test-must-be-seen-to-fail) that does not fit an Ops wall on top of
+re-reading the diagnosis.
+```
+
+**Check**
+
+```
+grep the bead for "NOT DONE"/"ran out of wall-clock" plus a specified patch. Confirm
+no fix landed since: git log --all --oneline -i --grep="<check-name>". If a "files already
+in flight" conflict is listed, check whether that bead already landed — it may be stale.
+```
+
+**Fix**
+
+```
+Don't re-diagnose or attempt code+test in one session if fixtures for that check don't
+exist yet — that's builder work. Confirm the patch site still matches, confirm/refute the
+"in flight" conflict, note both on the bead, leave it open/in_progress for a builder with a
+full wall rather than closing (close needs a landing commit naming the bead).
+```
+
+**Escalate**
+
+```
+Nth consecutive session dying at the wall on one bead means it's sized wrong for
+the loop — ask the operator to hand it to a builder directly, or split into a fixture-harness
+bead plus the patch bead.
+```
+
+**Reference** — sp-m8c34
+
+**Matches** `[Bb]ug bead.*(patch site identified|NOT DONE).*(sentinel\.sh|landing\.sh)`
 
 ### Orphaned branches blocking sending
 
@@ -660,13 +729,13 @@ The fix is incomplete in the target branch. Examine aeon.sh error handling path 
 
 `sop-sopsh-applied-ledger-contention`
 
-**Symptom** — `sop.sh applied` takes 60-120s+ or hits a caller's short `timeout` (exit 124) when called against a bead Ops has reclaimed many times (applied.jsonl has 25+ entries for one bead, ~230KB/579+ lines total). A short-wall session can burn its budget on one call. On repeat, calls can hit 124 with NO entry appended (verified via wc -l before/after) -- killed before append, not just slow.
+**Symptom** — `sop.sh applied` takes 60-120s+ or hits a caller's short `timeout` (exit 124) on a hot bead (25+ ledger entries). Can hit 124 with NO entry appended (killed before append).
 
-**Check** — Run two `sop.sh applied` calls on the same bead with short timeouts back to back; diff applied.jsonl line count before/after. Both timing out with no line added confirms this.
+**Check** — Two `sop.sh applied` calls on the same bead, short timeouts back to back; diff applied.jsonl line count before/after. Both timing out with no line added confirms this.
 
-**Fix** — Ops cannot edit sop.sh (production, out of scope here). Mitigate: don't wrap `applied` in a short timeout on a hot bead -- background it and poll instead; size timeouts 150s+. Escalate to a builder to profile for lock contention on the growing ledger and/or a wiki regen+commit step run every call; candidate fixes: append-only/sharded ledger, batched wiki regen, or documented latency. See sp-dnu2c.
+**Fix** — sp-ohnz7 read the code: no full-file lock and no wiki-regen in `applied` -- ruled out. Real per-call cost is 3 bd/dolt subprocess calls (shelf read, optional METRIC cockpit call, bead-note write); ledger append itself is a cheap unlocked printf. Ops: mitigate as before (background it, size timeouts 150s+, don't wrap in a short timeout). Builder: do NOT try to reproduce by timing the 3 calls under deliberately-induced load -- standalone they run <1s (confirmed sp-ohnz7, 2026-09-27) and generating load against prod dolt to force contention is itself unsafe (law-fence-loops-on-shared-hardware, law-probe-a-fixture-not-production). Instead land sp-h54i5 first: opt-in per-call timing trace in `applied()` so the next NATURAL hang leaves evidence of which of the 3 calls blocked. Fix at that layer once identified. Sharding/batching the ledger will NOT help.
 
-**Escalate** — If profiling finds a different mechanism (stuck flock, network call), amend this SOP rather than filing a new one.
+**Escalate** — If timing finds a different mechanism than bd/dolt latency, amend this SOP again rather than filing a new one.
 
 **Reference** — wiki/notes/sop-sopsh-applied-ledger-contention.md
 
@@ -710,7 +779,7 @@ WATCHER NOTE: watchtower.sh --throttle-check fires "deep+stalled" incident while
 
 **Escalate** — none — this is an Ops incident with operator decision documented 2026-09-17 20:11. Solution implemented as sp-hrkwa and landed.
 
-**Reference** — docs/sp-hsxk8-sop.md. `SPIRA_QUEUE_LOCAL_GATE` itself is retired (sp-vsob2): the batcher's own full-corpus round subsumes it, so this symptom cannot recur.
+**Reference** — docs/sp-hsxk8-sop.md
 
 **Matches** `(landing loop|batch.*gate.*mutex|landing pass.*freeze.*gate)`
 
@@ -1040,13 +1109,7 @@ bd show <bead> | grep -E '\b(groom|incident|maechen-sweep|plan|spike|czar-trigge
 
 **Fix** — Set SPIRA_VERDICT_REPEAT_CONSIDERED environment variable when requesting verdict repeat to determine if failure is repeatable or transient
 
-**Escalate** — Not applicable — this is procedural. For aeon-claimed beads needing remote branch
-access (no SSH creds), escalate to operator via `mail.sh send operator --kind question` with a
-`## Question` and `## Default` section. As of 2026-09-27, `mail.sh send` delivers successfully
-again (verified live under sp-4gz5b, after sp-c1ot2's loom-splice-hang fix closed — no hang).
-The prior guidance to skip mail.sh entirely and only `bd dep add` onto sp-c1ot2 is now
-historical: try the send first, and only fall back to the dep-add/leave-open pattern if a send
-genuinely hangs.
+**Escalate** — Not applicable — this is procedural
 
 **Reference** — sop-verdict-repeat-refused
 
@@ -1078,7 +1141,7 @@ genuinely hangs.
 
 **Fix** — Re-run the suite with SPIRA_VERDICT_REPEAT_CONSIDERED="environmental: <reason>" if you need to test the same tree again, or commit a fix if there's a code defect. For recurrences with documented environmental causes (e.g., runner OOM), escalate to operator for re-run once condition clears.
 
-**Escalate** — If the suite continues to fail after re-run with justification, file a new bead documenting the defect. For aeon-claimed beads with remote branch access needed, escalate to operator for re-run coordination.
+**Escalate** — If the suite continues to fail after re-run with justification, file a new bead documenting the defect. For aeon-claimed beads with remote branch access needed, escalate to operator for re-run coordination via `mail.sh send operator --kind question` with a `## Question` and `## Default` section — as of 2026-09-27 mail.sh send delivers successfully again (verified live under sp-4gz5b after sp-c1ot2's fix closed; no hang). The prior guidance to skip mail.sh and only `bd dep add` onto sp-c1ot2 is now historical — try the send first, and only fall back to the dep-add/leave-open pattern if a send genuinely hangs (check the sp-c1ot2-successor bead for that specific incident before assuming it's still broken).
 
 **Reference** — wiki/notes/standard-operating-procedures.md
 
