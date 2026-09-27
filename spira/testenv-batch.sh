@@ -52,7 +52,8 @@
 # EXIT STATUS
 #   0   all selected suites passed or skipped
 #   1   suites ran, some were red
-#   2   container did not come up, or died mid-batch (harness fault — not the branch)
+#   2   container did not come up, died mid-batch, or lost its --user account mid-batch
+#       (harness fault — not the branch)
 #   3   install inside the container failed (harness fault — not the branch)
 #   4   --with-bins: the candidate's workspace failed to build (branch fault — not harness)
 #
@@ -1047,6 +1048,21 @@ _batch_container_dead=0
 _batch_container_fault_detail=""
 _batch_exec_fault=0
 _batch_exec_fault_n=0  # consecutive rc!=0 after 0s with no output (serial mode)
+_batch_user_account_fault=0
+_batch_user_account_fault_detail=""
+
+# _is_user_account_fault — true when a suite's captured output is podman's own
+# pre-exec refusal ("unable to find user X: no matching entries in passwd
+# file"), not the suite running and failing. Every suite in a round shares one
+# container and one --user, so this means something removed the account mid-run
+# and every suite after it will fail identically — a harness fault, not a
+# branch fault.
+_is_user_account_fault() {
+    case "$1" in
+        *"unable to find user"*"passwd file"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
 
 # Per-suite timeout: 0 disables; default 600 seconds, mirroring gate-spira.sh.
 # The `timeout` command exits 124 when the limit fires; we map that to status=timeout
@@ -1156,6 +1172,17 @@ if [ "$MODE" = serial ]; then
                 printf 'unreached %s 0 -\n' "$(date +%s)" > "$_es_res"
                 : > "$RESULTS/$_es_s.out"
             done
+            break
+        fi
+
+        # User-account fault: podman itself refused --user spirauser, so $s never
+        # ran. Breaking here, before this suite's own result is written, leaves it
+        # (and everything after it) with no result file — the finalization pass
+        # below marks those unreached, not red.
+        if [ "$_rc" -ne 0 ] && _is_user_account_fault "$out"; then
+            _batch_user_account_fault=1
+            _batch_user_account_fault_detail="podman exec --user $_SPIRA_USER failed during $s: account missing from container passwd"
+            log "batch: harness fault — ${_batch_user_account_fault_detail} — remaining suites will be unreached"
             break
         fi
 
@@ -1303,6 +1330,16 @@ else
             break
         fi
 
+        # A subshell already in flight found spirauser missing and dropped the
+        # marker below. Suites launched after this point would fail identically,
+        # so stop launching; already-running suites are reclassified after drain.
+        if [ -f "$_par_tmp/USER_ACCOUNT_FAULT" ]; then
+            _batch_user_account_fault=1
+            _batch_user_account_fault_detail="$(cat "$_par_tmp/USER_ACCOUNT_FAULT" 2>/dev/null)"
+            log "batch: harness fault — ${_batch_user_account_fault_detail} — remaining suites will be unreached"
+            break
+        fi
+
         # Create the per-suite home dir inside the container before the subshell
         # starts. The suite then runs with HOME pointing here; $HOME/.config and
         # $HOME/.local are clean per-suite scratch that no other suite can see.
@@ -1355,6 +1392,15 @@ else
 
             _secs=$(( $(date +%s) - _t0 ))
             _out="$(cat "$_par_tmp/$s.rawout" 2>/dev/null || true)"
+
+            # Drop the marker the dispatch loop watches for, so it stops launching
+            # new suites. This subshell's own result is still recorded below (as
+            # red, for now) and reclassified to unreached in the post-drain pass —
+            # concurrent siblings may already be past this point.
+            if [ "$_inner_rc" -ne 0 ] && _is_user_account_fault "$_out"; then
+                printf 'podman exec --user %s failed during %s: account missing from container passwd\n' \
+                    "$_SPIRA_USER" "$s" > "$_par_tmp/USER_ACCOUNT_FAULT" 2>/dev/null || true
+            fi
 
             # Write output before result — same ordering guarantee as serial.
             printf '%s\n' "$_out" > "$RESULTS/$s.out"
@@ -1413,6 +1459,15 @@ else
         wait "$_pid" 2>/dev/null || true
     done
 
+    # A fault dropped by one of the last suites launched — after the dispatch
+    # loop's own check had already passed and the loop ended normally — is
+    # only visible here.
+    if [ -f "$_par_tmp/USER_ACCOUNT_FAULT" ]; then
+        _batch_user_account_fault=1
+        _batch_user_account_fault_detail="$(cat "$_par_tmp/USER_ACCOUNT_FAULT" 2>/dev/null)"
+        log "batch: harness fault — ${_batch_user_account_fault_detail}"
+    fi
+
     # Container-death check with retry after all jobs have finished.
     _container_check_live
     if [ "$_batch_container_dead" = 1 ]; then
@@ -1436,20 +1491,26 @@ else
         fi
     fi
 
-    # Reclassify red+0s+empty-output suites as unreached when the container died or
-    # exec-storm was detected: podman exec failed rather than the suite running and
-    # failing. Recording them as red feeds gate-retry's flake observer and quarantines
-    # healthy suites; unreached lets the retry logic skip them.
-    if [ "$_batch_container_dead" = 1 ] || [ "$_batch_exec_fault" = 1 ]; then
+    # Reclassify red suites as unreached when the container died, exec-storm was
+    # detected, or the user account went missing mid-run: podman exec failed
+    # rather than the suite running and failing. Recording them as red feeds
+    # gate-retry's flake observer and quarantines healthy suites; unreached lets
+    # the retry logic skip them. The first two faults are recognized by their
+    # 0s+empty-output shape; the account fault carries podman's own error text
+    # instead, so it is matched on that regardless of timing.
+    if [ "$_batch_container_dead" = 1 ] || [ "$_batch_exec_fault" = 1 ] \
+           || [ "$_batch_user_account_fault" = 1 ]; then
         for _cd_s in $SELECTED; do
             _cd_res="$RESULTS/$_cd_s.result"
             [ -f "$_cd_res" ]                                           || continue
             _cd_status="$(awk '{print $1}' "$_cd_res" 2>/dev/null)"
             [ "$_cd_status" = "red" ]                                   || continue
             _cd_secs="$(awk '{print $3}' "$_cd_res" 2>/dev/null)"
-            [ "${_cd_secs:-1}" = "0" ]                                  || continue
-            _cd_out="$(cat "$RESULTS/$_cd_s.out" 2>/dev/null | tr -d '[:space:]')"
-            [ -z "$_cd_out" ]                                           || continue
+            _cd_raw_out="$(cat "$RESULTS/$_cd_s.out" 2>/dev/null)"
+            _cd_out="$(printf '%s' "$_cd_raw_out" | tr -d '[:space:]')"
+            if [ "${_cd_secs:-1}" != "0" ] || [ -n "$_cd_out" ]; then
+                _is_user_account_fault "$_cd_raw_out" || continue
+            fi
             printf 'unreached %s 0 -\n' "$(date +%s)" > "$_cd_res"
             : > "$RESULTS/$_cd_s.out"
             rm -f "$_par_tmp/$_cd_s.rc"
@@ -1627,6 +1688,11 @@ fi
 
 if [ "$_batch_container_dead" = 1 ]; then
     log "batch: harness fault — container died mid-batch (${_batch_container_fault_detail})"
+    exit 2
+fi
+
+if [ "$_batch_user_account_fault" = 1 ]; then
+    log "batch: harness fault — ${_batch_user_account_fault_detail}"
     exit 2
 fi
 
