@@ -17,8 +17,8 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use spira_config::{
-    convert, export_sh, get_path, json_schema, set_path, shrink_reason, validate, write_atomic,
-    SpiraToml,
+    convert, export_sh, get_path, json_schema, set_path, shrink_reason, validate,
+    validate_with_warnings, write_atomic, SpiraToml,
 };
 
 fn read_input(file: Option<&str>) -> Result<String, String> {
@@ -55,8 +55,11 @@ fn cmd_validate(file: Option<&str>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match validate(&text) {
-        Ok(_) => {
+    match validate_with_warnings(&text) {
+        Ok((_, warnings)) => {
+            for w in &warnings {
+                eprintln!("spira-config: warning: {w}");
+            }
             println!("ok");
             ExitCode::SUCCESS
         }
