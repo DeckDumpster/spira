@@ -126,7 +126,7 @@ LANDREF=""
 # is the entire bug this file exists for.
 # --------------------------------------------------------------------------------------
 send_branch() {
-    local id="$1" br="$2" verb="${3:-SENT}" held
+    local id="$1" br="$2" verb="${3:-SENT}" caller="${4:-sending}" held
     # Re-check liveness immediately before acting. The sentinel summons aeons in the same
     # pass that lands branches, so the gap between deciding and doing is a real window. Both
     # witnesses again, not just the pidfile: this recheck used to ask only `holder_alive`,
@@ -138,11 +138,11 @@ send_branch() {
     # THE VERIFIED DELETION ITSELF — worktree, then branch (re-verified after the delete),
     # then the remote ref, then the branch: label — lives in lib.sh as
     # spira_reap_landed_branch, shared with bead_close_on_land's own landing-time reap
-    # (sp-jci6o). "sending" as the caller tag skips its content-landed fence: send_disposition
-    # already decided this branch's content is safe to reap, by ancestry, content_landed or
-    # the superseded exception, and re-asking the same question here would reject the
-    # zero-ahead and superseded-safe arms that ancestry alone cannot approve.
-    if ! spira_reap_landed_branch "$id" "$br" "$REPO" "landed in $LANDREF" sending; then
+    # (sp-jci6o). The caller tag skips its content-landed fence for a branch this file has
+    # already established safety for by some other means (lib.sh's CALLER EXCEPTIONS):
+    # "sending", the default, for content_landed/ancestry/superseded; "archived" for
+    # send_orphan, which parks the tip at refs/archive/<br> first.
+    if ! spira_reap_landed_branch "$id" "$br" "$REPO" "landed in $LANDREF" "$caller"; then
         [ "${SPIRA_REAP_ERR:-}" = "certified-queued" ] \
             && { say "SKIP   $id  CERTIFIED/BATCHED — waiting for verdict"; return 0; }
         say "FAILED $id  ${SPIRA_REAP_ERR:-refused, see $SPIRA_REAPLOG}"
@@ -174,8 +174,32 @@ send_landed() {
 }
 
 # --------------------------------------------------------------------------------------
+# send_orphan <id> <br> — ORPHAN WORK has no owning bead, so nothing else will ever land
+# it or copy it anywhere; a plain branch delete would drop the only ref reaching those
+# commits. Write refs/archive/<br> at the branch's own tip FIRST, verify the write by
+# reading the ref back, and only then reap the branch — the same
+# "checked after the fact" discipline this file's header states for every deletion.
+# --------------------------------------------------------------------------------------
+send_orphan() {
+    local id="$1" br="$2" tip archive_ref back
+    tip="$(git -C "$REPO" rev-parse "$br" 2>/dev/null)" || {
+        say "FAILED $id  cannot resolve tip of $br"; failed=$((failed+1)); return 1; }
+    archive_ref="refs/archive/$br"
+    if ! git -C "$REPO" update-ref "$archive_ref" "$tip"; then
+        say "FAILED $id  update-ref $archive_ref failed"; failed=$((failed+1)); return 1
+    fi
+    back="$(git -C "$REPO" rev-parse -q --verify "$archive_ref" 2>/dev/null)"
+    if [ "$back" != "$tip" ]; then
+        say "FAILED $id  $archive_ref reads back as ${back:-nothing}, expected $tip"
+        failed=$((failed+1)); return 1
+    fi
+    log "sending: archived $REPONAME $br at $tip -> $archive_ref"
+    send_branch "$id" "$br" "ARCHIVED" archived
+}
+
+# --------------------------------------------------------------------------------------
 # send_disposition <id> <br> -> prints "<VERB> <CODE>" and returns 0. VERB is one of
-# KEEP, UNADOPTED, SEND, REAP; CODE distinguishes the reason within it. Reads $REPO and
+# KEEP, SEND, REAP, ORPHAN; CODE distinguishes the reason within it. Reads $REPO and
 # $LANDREF (set by sweep_repo for the repository under sweep) and the branch's own bd
 # record; performs no destructive action and no caller-visible I/O beyond that reading —
 # sweep_repo alone deletes a ref, frees a worktree, or writes a label, chosen by the
@@ -327,9 +351,16 @@ except Exception: sys.exit(1)
 d = d if isinstance(d, list) else [d]
 sys.exit(0 if d and "status" in d[0] else 1)' 2>/dev/null; then
         printf 'KEEP unlanded\n'
-    else
-        printf 'UNADOPTED no-bead\n'
+        return 0
     fi
+
+    # NO BEAD RESOLVES FOR THIS BRANCH AT ALL, AND ITS TIP IS NOT AN ANCESTOR OF $LANDREF —
+    # a bead-less ancestor tip was already sent above, at the very first check in this
+    # function: content_landed's ancestor shortcut fires for ANY branch, bead or not (that
+    # is cockpit.sh's SP_UNADOPTED case, sp-doh5). Reaching here means real commits absent
+    # from $LANDREF with no owning bead to land them: SP_ORPHAN_WORK, archived rather than
+    # deleted so the ref, not memory of it, is what keeps them reachable.
+    printf 'ORPHAN no-bead\n'
 }
 
 # ======================================================================================
@@ -422,9 +453,13 @@ sweep_repo() {
                 n="$(git -C "$REPO" rev-list --count "$LANDREF..$br" 2>/dev/null || echo '?')"
                 say "KEEP   $id  $n commit(s) not in $LANDREF; landed() names it but git cherry finds unapplied commits — not safe to reap"
                 ;;
-            "UNADOPTED no-bead")
+            "ORPHAN no-bead")
                 n="$(git -C "$REPO" rev-list --count "$LANDREF..$br" 2>/dev/null || echo '?')"
-                say "UNADOPTED $id  no bead — $n commit(s) not in $LANDREF"
+                if [ "$DRY" = 1 ]; then
+                    say "WOULD  $id  archive orphan branch $br ($n commit(s) not in $LANDREF) to refs/archive/$br"
+                    continue
+                fi
+                send_orphan "$id" "$br"
                 ;;
             "SEND content-landed")
                 if [ "$DRY" = 1 ]; then

@@ -6447,11 +6447,14 @@ spira_destroy_worktree() {
 #
 # CALLER EXCEPTIONS. Pass a non-empty fifth argument when the caller has already verified
 # that deletion is safe, so the content check is not repeated here:
-#   "sending" — the Sending's selector already ran content_landed (or the superseded
-#               exception), and send_branch confirmed liveness once more before this call.
-#   "slain"   — slay.sh has already parked any unlanded commits at refs/slain/<id>; the
-#               branch still carries content not on the base, but the durable copy is no
-#               longer in refs/heads alone, so deletion is safe.
+#   "sending"  — the Sending's selector already ran content_landed (or the superseded
+#                exception), and send_branch confirmed liveness once more before this call.
+#   "slain"    — slay.sh has already parked any unlanded commits at refs/slain/<id>; the
+#                branch still carries content not on the base, but the durable copy is no
+#                longer in refs/heads alone, so deletion is safe.
+#   "archived" — sending.sh's send_orphan has already parked a bead-less branch's unlanded
+#                commits at refs/archive/<branch> and verified the write reads back, the
+#                same durable-copy-exists reasoning as "slain".
 # Any other non-empty value is treated the same way (future callers that have verified
 # safety by their own means). An empty fifth argument applies the content fence.
 # --------------------------------------------------------------------------------------
