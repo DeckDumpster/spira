@@ -23,6 +23,12 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
+# Sections below drive `git commit` directly, rather than through the `env -i` wrapper
+# run_guard() uses, so the pre-commit hook it triggers sources conf.sh in THIS suite's own
+# ambient environment. An operator's SPIRA_TOML, exported for their own shell's
+# convenience, would otherwise leak a real config into the guard's decisions.
+unset SPIRA_TOML SPIRA_CONF 2>/dev/null || true
+
 # Minimal harness copy the guard resolves relative to its own location.
 SH="$TMP/spira"
 mkdir -p "$SH/hooks"
