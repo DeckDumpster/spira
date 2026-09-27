@@ -17,6 +17,7 @@ mod bd;
 mod bd_facts;
 mod classify_cmd;
 mod client;
+mod cutover;
 mod db;
 mod git_evidence;
 mod legacy_files;
@@ -74,6 +75,13 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         // The aeon semantic layer (design §3.5): a `work` client binds one bead id and
         // forwards here over this same socket — see work.rs's module doc.
         Some("work") => work::dispatch(&args[1..], conn),
+        // The cutover round's own verbs (sp-o7nbr): batch creation and the cross-machine
+        // cascades a batch's own transition emits to its members (cutover.rs's own doc).
+        Some("create-bead") => cutover::cmd_create_bead(&args[1..], conn),
+        Some("cut") => cutover::cmd_cut(&args[1..], conn),
+        Some("land") => cutover::cmd_land(&args[1..], conn),
+        Some("settle") => cutover::cmd_settle(&args[1..], conn),
+        Some("abandon-batch") => cutover::cmd_abandon_batch(&args[1..], conn),
         // Not part of the show/list/history/event surface: a plumbing verb the install
         // step and the test fixture use to apply schema.sql/grants.sql through the same
         // connection code the rest of this binary uses, instead of a second copy in shell.
@@ -83,7 +91,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("classify") => classify_cmd::run(&args[1..], conn),
         _ => (
             CANNOT_TELL,
-            "usage: spira-lc show <bead-id> | list [--state S] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | classify --home DIR --bd-db PATH --landstate-dir DIR --queue-dir DIR [--repo NAME]... [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve".to_string(),
+            "usage: spira-lc show <bead-id> | list [--state S] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | create-bead <id> | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | classify --home DIR --bd-db PATH --landstate-dir DIR --queue-dir DIR [--repo NAME]... [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve".to_string(),
         ),
     }
 }

@@ -1809,6 +1809,15 @@ if [ -z "${SPIRA_BD:-}" ]; then
 fi
 export SPIRA_BD
 
+# SPIRA_LC_BIN — same resolution and the same reason as SPIRA_BD above: PATH order
+# differs between calling contexts, so resolve once, after SPIRA_PATH is applied, rather
+# than at call time. Falls back to the workspace release build install.sh's own systemd
+# unit render points at, for a checkout where `spira-lc` is not yet on PATH.
+if [ -z "${SPIRA_LC_BIN:-}" ]; then
+    SPIRA_LC_BIN="$(command -v spira-lc 2>/dev/null || printf '%s' "$SPIRA_HOME/target/release/spira-lc")"
+fi
+export SPIRA_LC_BIN
+
 # BD SCHEMA REFUSAL. When the resolved bd's migration count disagrees with the database's,
 # bd exits 0 with the complaint on stdout — callers that check exit status read success and
 # parse the error as data. Catching it here, once, stops the mismatch from propagating to

@@ -327,6 +327,104 @@ impl Conn {
             Err(ScriptFailure::CannotTell(e)) => Err(DbError::CannotTell(e)),
         }
     }
+
+    /// One or more statements that do not themselves need CAS bookkeeping — a plain INSERT,
+    /// or a script this caller has already made idempotent (`... WHERE NOT EXISTS (...)`).
+    /// A lost race here is a bug, not a real condition, because nothing that calls this
+    /// competes with another writer on the same key by construction (row creation, keyed by
+    /// an id nothing else mints).
+    pub fn run_plain(&self, script: &str) -> Result<(), DbError> {
+        match self.run_script(script) {
+            Ok(_) => Ok(()),
+            Err(ScriptFailure::LostRace) => Err(DbError::CannotTell("a plain insert unexpectedly lost a race".into())),
+            Err(ScriptFailure::CannotTell(e)) => Err(DbError::CannotTell(e)),
+        }
+    }
+
+    /// The cross-machine cascade (design §3.3): every row a batch-landing/settling/
+    /// abandoning touches, CAS'd and logged in one transaction. Each step is independent —
+    /// no step's SQL depends on another's outcome — because Dolt's own commit-time
+    /// serialization check (see this module's doc) already makes the whole script
+    /// all-or-nothing against a *concurrent* cascade on the same rows: two racing cascades
+    /// touch the same batch row, so one's COMMIT fails with 40001 and every row it touched,
+    /// event inserts included, rolls back together. What this does not catch is one row
+    /// among many going stale for an unrelated reason (its own version already moved before
+    /// this cascade was built) — that row's step simply logs `applied=false` like any single
+    /// CAS does, and the periodic consistency read (design Intent 5) is what notices it.
+    /// `preamble` runs first, in the same transaction, before any step — the constructor
+    /// inserts (a fresh batch row, its `batch_member` rows) that a cascade like `cut` needs
+    /// alongside its CAS steps, with no separate round trip and no separate transaction.
+    pub fn cascade(&self, preamble: &str, steps: &[CascadeStep]) -> Result<Vec<bool>, DbError> {
+        let mut script = String::from("START TRANSACTION;\n");
+        script.push_str(preamble);
+        for step in steps {
+            script.push_str(&format!(
+                "UPDATE {table} SET {set_clause} WHERE {key_column} = {key_q} AND version = {old_version};\n\
+                 INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, refusal, evidence, actor, at)\n\
+                 SELECT {machine}, {lc_key}, {event}, {expect}, {from_state},\n\
+                        IF(ROW_COUNT() = 1, {to_state}, {from_state}),\n\
+                        IF(ROW_COUNT() = 1, 1, 0),\n\
+                        IF(ROW_COUNT() = 1, NULL, {stale_reason}),\n\
+                        {evidence}, {actor}, {at};\n\
+                 SELECT applied FROM event WHERE seq = LAST_INSERT_ID();\n",
+                table = step.table,
+                key_column = step.key_column,
+                key_q = sql_str(&step.key),
+                old_version = step.old_version,
+                set_clause = step.set_clause,
+                machine = sql_str(&step.event.machine),
+                lc_key = sql_str(&step.event.key),
+                event = sql_str(&step.event.event),
+                expect = sql_str(&step.event.expect),
+                from_state = sql_str(&step.event.from_state),
+                to_state = sql_str(&step.applied_to_state),
+                stale_reason = sql_str("StaleVersion"),
+                evidence = sql_json(&step.event.evidence),
+                actor = sql_str(&step.event.actor),
+                at = step.event.at,
+            ));
+        }
+        script.push_str("COMMIT;\n");
+
+        match self.run_script(&script) {
+            Ok(stdout) => {
+                let blocks = parse_all_json_rows(&stdout);
+                Ok(steps
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| {
+                        blocks
+                            .get(i)
+                            .and_then(|r| r.first())
+                            .and_then(|r| r.get("applied"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s != "0")
+                            .unwrap_or(false)
+                    })
+                    .collect())
+            }
+            Err(ScriptFailure::LostRace) => {
+                for step in steps {
+                    self.insert_refusal_event(&step.event)?;
+                }
+                Ok(vec![false; steps.len()])
+            }
+            Err(ScriptFailure::CannotTell(e)) => Err(DbError::CannotTell(e)),
+        }
+    }
+}
+
+/// One row's CAS-update-and-log inside a `cascade`. Shaped like `cas_update_and_log`'s own
+/// arguments because it is the same primitive, just assembled N times into one script
+/// instead of one script each — see `cascade`'s doc for why that is enough.
+pub struct CascadeStep {
+    pub table: &'static str,
+    pub key_column: &'static str,
+    pub key: String,
+    pub old_version: u64,
+    pub set_clause: String,
+    pub applied_to_state: String,
+    pub event: EventRecord,
 }
 
 pub(crate) enum ScriptFailure {
@@ -359,17 +457,24 @@ fn sql_json(v: &serde_json::Value) -> String {
 /// `dolt sql -r json` prints one `{...}` block per statement, separated by blank lines.
 /// The block this crate ever needs is the last non-empty one that carries a `rows` array.
 fn parse_last_json_rows(text: &str) -> Option<Vec<serde_json::Value>> {
-    let mut last_rows: Option<Vec<serde_json::Value>> = None;
-    for block in text.split("\n\n") {
-        let block = block.trim();
-        if block.is_empty() {
-            continue;
-        }
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(block) {
-            if let Some(rows) = v.get("rows").and_then(|r| r.as_array()) {
-                last_rows = Some(rows.clone());
-            }
-        }
-    }
-    last_rows.or_else(|| if text.trim().is_empty() { None } else { Some(Vec::new()) })
+    let blocks = parse_all_json_rows(text);
+    blocks.into_iter().last().or_else(|| if text.trim().is_empty() { None } else { Some(Vec::new()) })
+}
+
+/// Every block in script order that carries a `rows` array — a `cascade` script has one
+/// per step's trailing `SELECT applied ...`, and callers zip them back to steps by position.
+///
+/// NOT `text.split("\n\n")`: `dolt sql -r json` does not reliably put a blank line between
+/// every pair of blocks — a `{"rows": [...]}` block is sometimes followed immediately, with
+/// no blank line, by the next statement's bare `{}`. Splitting on blank lines then glues the
+/// two into one unparseable chunk and silently drops it — SEEN RED as a `cascade` script's
+/// first step's result vanishing while a later one's survived. A streaming deserializer
+/// reads exactly one JSON value at a time regardless of the whitespace between them, which
+/// is the actual grammar of this output, not "one block per blank-separated paragraph."
+fn parse_all_json_rows(text: &str) -> Vec<Vec<serde_json::Value>> {
+    serde_json::Deserializer::from_str(text)
+        .into_iter::<serde_json::Value>()
+        .flatten()
+        .filter_map(|v| v.get("rows").and_then(|r| r.as_array()).cloned())
+        .collect()
 }
