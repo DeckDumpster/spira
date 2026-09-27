@@ -129,6 +129,24 @@ _bootstrap_decision() {
     return 2
 }
 
+# _bootstrap_release <boot-dir> <releases> <here> -> 0 once <boot-dir> holds a copy of <here>
+# and <releases>/current points at it, 2 (refuse) the moment any step fails — a root-mounted
+# checkout (SPIRA_REPO="/") derives a SPIRA_RELEASES the installing user cannot write, and a
+# silent mkdir/cp failure there used to leave `current` unset while systemd rendered units
+# against a release directory that was never populated.
+_bootstrap_release() {
+    local boot_dir="$1" releases="$2" here="$3" tmp
+    mkdir -p "$boot_dir" \
+        || { printf 'install: could not create %s (check %s is writable)\n' "$boot_dir" "$releases" >&2; return 2; }
+    cp -rp "$here/." "$boot_dir/" \
+        || { printf 'install: could not populate %s from %s\n' "$boot_dir" "$here" >&2; return 2; }
+    tmp="$releases/.current.bootstrap.$$"
+    ln -s "$(basename "$boot_dir")" "$tmp" \
+        && mv -T "$tmp" "$releases/current" \
+        || { printf 'install: failed to create %s/current symlink\n' "$releases" >&2; return 2; }
+    return 0
+}
+
 # _db_git_guard <db-path> -> 0 when clear, 2 (refuse) when the database would be published by
 # a git operation: a .git in any directory ABOVE it (someone's checkout, one `git add -A` from
 # publishing every bead body — law-beads-is-never-public), or the database directory's OWN
@@ -704,15 +722,10 @@ if ! spira_single_checkout && [ -n "${SPIRA_PROD:-}" ] && [ ! -d "$SPIRA_PROD" ]
         phase_info "would bootstrap: cp clone → $_boot_dir, current → $_boot_name"
     else
         phase_info "bootstrapping release directory from clone at $_boot_dir"
-        mkdir -p "$_boot_dir"
-        cp -rp "$HERE/." "$_boot_dir/"
-        _tmp="$SPIRA_RELEASES/.current.bootstrap.$$"
-        ln -s "$_boot_name" "$_tmp" \
-            && mv -T "$_tmp" "$SPIRA_RELEASES/current" \
-            || _phase_fail "units" "failed to create $SPIRA_RELEASES/current symlink"
+        _bootstrap_release "$_boot_dir" "$SPIRA_RELEASES" "$HERE" || exit 2
         _changes=$((_changes+1))
     fi
-    unset _boot_name _boot_dir _tmp
+    unset _boot_name _boot_dir
 fi
 
 _unit_args=("${SPIRA_INSTANCE:-prod}")

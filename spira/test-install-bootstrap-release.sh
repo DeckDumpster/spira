@@ -45,7 +45,29 @@ want   "refuse: names SPIRA_PROD path"    "$OUTSIDE_PROD" "$_refuse_out"
 
 # ===========================================================================
 echo
-echo "BOOTSTRAP: SPIRA_PROD under SPIRA_RELEASES proceeds"
+echo "GUARD: SPIRA_RELEASES not writable → _bootstrap_release refuses, no stray current"
+# ===========================================================================
+# Regression for the root-mounted-repo condition (SPIRA_REPO="/", equivalently a container
+# whose checkout is bind-mounted at a root-level directory): SPIRA_RELEASES then resolves
+# under a path the installing user cannot write. mkdir under it must fail, and
+# _bootstrap_release must refuse loudly rather than leave a current symlink pointing at a
+# release that was never actually populated — proven here before the clean bootstrap below
+# is trusted.
+RELEASES_C="$TMP/releases-c"
+mkdir -p "$RELEASES_C"
+chmod 555 "$RELEASES_C"
+_guard_out="$(_bootstrap_release "$RELEASES_C/bootstrap" "$RELEASES_C" "$HERE" 2>&1)"
+_guard_rc=$?
+chmod 755 "$RELEASES_C"
+wantrc "guard: _bootstrap_release exits 2 on an unwritable release dir" "2" "$_guard_rc"
+want   "guard: names the unwritable directory"                          "$RELEASES_C" "$_guard_out"
+[ ! -L "$RELEASES_C/current" ] \
+    && ok  "guard: no current symlink left behind after a failed bootstrap" \
+    || bad "guard: current symlink" "found $RELEASES_C/current after mkdir should have failed"
+
+# ===========================================================================
+echo
+echo "BOOTSTRAP: SPIRA_PROD under SPIRA_RELEASES absent → release dir + current symlink"
 # ===========================================================================
 RELEASES_B="$TMP/releases-b"
 UNDER_PROD="$RELEASES_B/current"
@@ -54,5 +76,15 @@ mkdir -p "$RELEASES_B"
 _boot_out="$(_bootstrap_decision "$UNDER_PROD" "$RELEASES_B" 2>&1)"; _boot_rc=$?
 wantrc "bootstrap: exits 0"                             "0" "$_boot_rc"
 nowant "bootstrap: does not mention 'activate.sh'"      "activate.sh" "$_boot_out"
+
+_release_rc=0
+_bootstrap_release "$RELEASES_B/bootstrap" "$RELEASES_B" "$HERE" || _release_rc=$?
+wantrc "bootstrap: _bootstrap_release exits 0"          "0" "$_release_rc"
+[ -L "$RELEASES_B/current" ] && [ "$(readlink "$RELEASES_B/current")" = "bootstrap" ] \
+    && ok  "bootstrap: current symlink points at bootstrap" \
+    || bad "bootstrap: current symlink" "expected $RELEASES_B/current -> bootstrap"
+[ -f "$RELEASES_B/bootstrap/install.sh" ] \
+    && ok  "bootstrap: release dir holds a copy of the installing clone" \
+    || bad "bootstrap: release dir contents" "install.sh missing under $RELEASES_B/bootstrap"
 
 tl_summary

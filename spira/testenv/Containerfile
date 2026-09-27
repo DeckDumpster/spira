@@ -263,7 +263,16 @@ COPY testenv/doctor-check.sh /tmp/doctor-check/doctor-check.sh
 COPY testenv/doctor-waivers /tmp/doctor-check/doctor-waivers
 RUN bash /tmp/doctor-check/doctor-check.sh \
         /tmp/doctor-check/conf.sh \
-        /tmp/doctor-check/doctor-waivers && \
+        /tmp/doctor-check/doctor-waivers
+
+# The checkout bind-mounts read-write at /workspace (a root-level directory), so conf.sh
+# derives SPIRA_RELEASES under the container's filesystem root; pre-create that directory
+# owned by spirauser, same reason /var/spira/cargo and /workspace are chowned above, or
+# install.sh's release bootstrap has nowhere writable to create it.
+RUN _releases="$(env -i HOME=/root PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_REPO=/workspace \
+        bash -c '. /tmp/doctor-check/conf.sh 2>/dev/null; printf %s "$SPIRA_RELEASES"')" && \
+    [ -n "$_releases" ] && \
+    mkdir -p "$_releases" && chown -R spirauser:spirauser "$_releases" && \
     rm -rf /tmp/doctor-check
 
 # ── spirauser — non-root user the tests run as ─────────────────────────────
