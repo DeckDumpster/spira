@@ -267,6 +267,7 @@ pub struct SpiraSection {
     pub batch_psi_threshold: Option<String>,
     pub batch_orphan_min_age: Option<String>,
     pub batch_bins_ttl: Option<String>,
+    pub attribute_maxpar: Option<String>,
     pub batch_peak_warn_frac: Option<String>,
     pub batch_artifact_days: Option<String>,
     pub batch_tail_lines: Option<String>,
