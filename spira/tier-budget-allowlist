@@ -269,7 +269,6 @@ test-install-landref.sh	T1	15.0
 test-install-loom-broker.sh	T1	2.5
 test-install-mail-deliver.sh	T1	3.5
 test-install-migrate.sh	T1	48.0
-test-install-paths.sh	T1	63.0
 test-install-prod-checkout.sh	T1	9.5
 test-install-rehearsal.sh	T1	1.5
 test-install-unit-directive.sh	T1	2.0

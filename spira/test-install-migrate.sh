@@ -77,7 +77,7 @@ touch "$SPIRA_RUN_DIR/world.halted"
 printf '# empty\n' > "$WATCHERS"
 
 # PARALLEL-SAFE INSTANCE NAME. This suite shares the real DEST directory with
-# other container-first suites (test-install-instance.sh, test-install-paths.sh).
+# other container-first suites (test-install-instance.sh).
 # test-install-instance.sh uses "test" as its instance. The cleanup loops below
 # delete all spira-*-${_INST}.* files; using a distinct name prevents those loops
 # from deleting test-install-instance.sh's units when both suites run in parallel.

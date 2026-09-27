@@ -81,6 +81,67 @@ _unit_action() {
     if [ "$changed" = 1 ] && [ "$active" = 1 ]; then echo restart; return 0; fi
     echo enable-now
 }
+
+# REFUSE IF ANOTHER INSTALLED INSTANCE SHARES A CRITICAL PATH. A shared SPIRA_RUN
+# lets a test reaper delete production worktrees; a shared SPIRA_DB makes test aeons
+# file real beads. Checked before any directory is created or unit written, so a
+# refusal leaves the box as it was.
+#
+# OTHER INSTANCES ARE FOUND BY SCANNING *.conf FILES ALONGSIDE THE CURRENT CONFIG.
+# Only EXPLICIT settings in each file are compared against this instance's resolved
+# values — defaults are instance-qualified by construction and cannot collide without
+# an operator's help. A missing or non-existent config file skips the check.
+# DEFINED BEFORE BOTH SOURCING GUARDS BELOW, alongside _unit_action, so a T1 test can
+# source this file for the function alone (SPIRA_INSTALL_LIB=1) and feed it a temp dir
+# of spira-*.conf files directly — no rendered DEST tree, no real systemd.
+_check_path_collisions() {
+    local conf_dir other_conf key val other_instance collision=0
+    [ -n "${SPIRA_CONF_FILE:-}" ] || return 0
+    conf_dir="$(dirname "$SPIRA_CONF_FILE")"
+    [ -d "$conf_dir" ] || return 0
+
+    local -A _other
+    for other_conf in "$conf_dir"/*.conf; do
+        [ -f "$other_conf" ] || continue
+        [ "$other_conf" = "$SPIRA_CONF_FILE" ] && continue
+        _other=()
+        other_instance="prod"
+        while IFS= read -r line || [ -n "$line" ]; do
+            line="${line#"${line%%[![:space:]]*}"}"          # ltrim
+            case "$line" in ''|'#'*) continue ;; esac
+            case "$line" in *=*) ;; *) continue ;; esac
+            key="${line%%=*}"; val="${line#*=}"
+            key="${key%"${key##*[![:space:]]}"}"             # rtrim key
+            val="${val#"${val%%[![:space:]]*}"}"             # ltrim val
+            val="${val%"${val##*[![:space:]]}"}"             # rtrim val
+            case "$val" in
+                \"*\") val="${val#\"}"; val="${val%\"}" ;;
+                \'*\') val="${val#\'}"; val="${val%\'}" ;;
+            esac
+            case "$val" in '~'|'~/'*) val="$HOME${val#\~}" ;; esac
+            val="${val//\$HOME/$HOME}"; val="${val//\$\{HOME\}/$HOME}"
+            case "$key" in
+                SPIRA_INSTANCE) other_instance="$val" ;;
+                SPIRA_RUN|SPIRA_DB|SPIRA_PROD|SPIRA_DOLT_DATA|SPIRA_TESTDB_PORT)
+                    _other[$key]="$val" ;;
+            esac
+        done < "$other_conf"
+        [ "$other_instance" = "$SPIRA_INSTANCE" ] && continue
+        for key in SPIRA_RUN SPIRA_DB SPIRA_PROD SPIRA_DOLT_DATA SPIRA_TESTDB_PORT; do
+            val="${_other[$key]:-}"
+            [ -n "$val" ] || continue
+            local this_val="${!key}"
+            [ -n "$this_val" ] || continue
+            if [ "$val" = "$this_val" ]; then
+                printf 'install: refusing — %s collides with instance %s (%s)\n' \
+                    "$key" "$other_instance" "$(basename "$other_conf")" >&2
+                printf 'install:   both set to: %s\n' "$this_val" >&2
+                collision=1
+            fi
+        done
+    done
+    return "$collision"
+}
 # NAMED GUARD FOR THE T1 SEAM, independent of the generic sourcing guard just below: a
 # later edit to that guard (e.g. if _seed_instance_conf's own sourcing use goes away)
 # must not silently let a SPIRA_INSTALL_LIB=1 source run the whole installer.
@@ -305,63 +366,9 @@ _check_landref_current() {
     fi
 }
 
-# REFUSE IF ANOTHER INSTALLED INSTANCE SHARES A CRITICAL PATH. A shared SPIRA_RUN
-# lets a test reaper delete production worktrees; a shared SPIRA_DB makes test aeons
-# file real beads. Checked before any directory is created or unit written, so a
-# refusal leaves the box as it was.
-#
-# OTHER INSTANCES ARE FOUND BY SCANNING *.conf FILES ALONGSIDE THE CURRENT CONFIG.
-# Only EXPLICIT settings in each file are compared against this instance's resolved
-# values — defaults are instance-qualified by construction and cannot collide without
-# an operator's help. A missing or non-existent config file skips the check.
-_check_path_collisions() {
-    local conf_dir other_conf key val other_instance collision=0
-    [ -n "${SPIRA_CONF_FILE:-}" ] || return 0
-    conf_dir="$(dirname "$SPIRA_CONF_FILE")"
-    [ -d "$conf_dir" ] || return 0
-
-    local -A _other
-    for other_conf in "$conf_dir"/*.conf; do
-        [ -f "$other_conf" ] || continue
-        [ "$other_conf" = "$SPIRA_CONF_FILE" ] && continue
-        _other=()
-        other_instance="prod"
-        while IFS= read -r line || [ -n "$line" ]; do
-            line="${line#"${line%%[![:space:]]*}"}"          # ltrim
-            case "$line" in ''|'#'*) continue ;; esac
-            case "$line" in *=*) ;; *) continue ;; esac
-            key="${line%%=*}"; val="${line#*=}"
-            key="${key%"${key##*[![:space:]]}"}"             # rtrim key
-            val="${val#"${val%%[![:space:]]*}"}"             # ltrim val
-            val="${val%"${val##*[![:space:]]}"}"             # rtrim val
-            case "$val" in
-                \"*\") val="${val#\"}"; val="${val%\"}" ;;
-                \'*\') val="${val#\'}"; val="${val%\'}" ;;
-            esac
-            case "$val" in '~'|'~/'*) val="$HOME${val#\~}" ;; esac
-            val="${val//\$HOME/$HOME}"; val="${val//\$\{HOME\}/$HOME}"
-            case "$key" in
-                SPIRA_INSTANCE) other_instance="$val" ;;
-                SPIRA_RUN|SPIRA_DB|SPIRA_PROD|SPIRA_DOLT_DATA|SPIRA_TESTDB_PORT)
-                    _other[$key]="$val" ;;
-            esac
-        done < "$other_conf"
-        [ "$other_instance" = "$SPIRA_INSTANCE" ] && continue
-        for key in SPIRA_RUN SPIRA_DB SPIRA_PROD SPIRA_DOLT_DATA SPIRA_TESTDB_PORT; do
-            val="${_other[$key]:-}"
-            [ -n "$val" ] || continue
-            local this_val="${!key}"
-            [ -n "$this_val" ] || continue
-            if [ "$val" = "$this_val" ]; then
-                printf 'install: refusing — %s collides with instance %s (%s)\n' \
-                    "$key" "$other_instance" "$(basename "$other_conf")" >&2
-                printf 'install:   both set to: %s\n' "$this_val" >&2
-                collision=1
-            fi
-        done
-    done
-    return "$collision"
-}
+# _check_path_collisions is defined above, alongside _unit_action, so a T1 test can
+# source it without conf.sh. Called here, after conf.sh has resolved this instance's
+# paths, and before any directory is created or unit written.
 _check_path_collisions || exit 1
 
 if [ -z "${SPIRA_INSTALL_FORCE:-}" ]; then
