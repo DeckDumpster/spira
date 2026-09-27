@@ -147,7 +147,7 @@ if [ -x "$MAIL" ] && [ -n "${SPIRA_MAIL_SESSION_MAILBOX:-}" ]; then
     fi
 fi
 
-# ONE LINE PER WATCHER, AND NOTHING ELSE (per Ryan, 2026-09-27). A fresh context window is the
+# ONE LINE PER WATCHER, AND NOTHING ELSE. A fresh context window is the
 # most expensive place text can go, and the session re-attaches with `watchd.sh tail <name>`,
 # which replays everything from its cursor anyway — so a preview of unread events here is paid
 # twice. Each line is the watcher, its health, and its unread count; a DEGRADED one carries
