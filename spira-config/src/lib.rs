@@ -416,19 +416,74 @@ pub fn json_schema() -> schemars::schema::RootSchema {
     schemars::schema_for!(SpiraToml)
 }
 
+/// A `[spira]` key dropped from `SpiraSection` whose presence in a live config must not
+/// break loading it. `validate` accepts these fields with a warning instead of the hard
+/// "unknown field" error a genuine typo gets.
+pub struct RetiredKey {
+    pub key: &'static str,
+    pub bead: &'static str,
+}
+
+/// Removing a field from `SpiraSection` requires adding it here, or
+/// `retiring_a_key_requires_updating_the_history` (tests/validate.rs) fails: it diffs the
+/// schema's current field set against `schema/spira-key-history.txt`, the all-time set, and
+/// a key present in history but neither active nor listed here is reported as silently
+/// dropped.
+pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
+    RetiredKey { key: "queue_local_gate", bead: "sp-vsob2" },
+    RetiredKey { key: "queue_batch_idle_cut", bead: "sp-vsob2" },
+];
+
+/// Every key in `history` that is neither an active `[spira]` field (`active`) nor listed in
+/// [`RETIRED_SPIRA_KEYS`] — a key the schema dropped without retiring it.
+pub fn missing_from_retirement(
+    history: &std::collections::BTreeSet<String>,
+    active: &std::collections::BTreeSet<String>,
+) -> Vec<String> {
+    let retired: std::collections::BTreeSet<&str> =
+        RETIRED_SPIRA_KEYS.iter().map(|k| k.key).collect();
+    history
+        .iter()
+        .filter(|k| !active.contains(k.as_str()) && !retired.contains(k.as_str()))
+        .cloned()
+        .collect()
+}
+
 /// Parses `text` as `spira.toml` and reports the first error at the TOML path it occurred
 /// on (`spira.max_aeons`, `repo.service.mode`, ...) rather than a bare line/column, so a
-/// hard error names the thing to fix instead of the place the parser gave up.
+/// hard error names the thing to fix instead of the place the parser gave up. A
+/// [`RETIRED_SPIRA_KEYS`] member under `[spira]` is dropped before deserializing rather than
+/// refused: see [`validate_with_warnings`] for the warning that names it.
 pub fn validate(text: &str) -> Result<SpiraToml, String> {
-    let de = toml::Deserializer::new(text);
-    serde_path_to_error::deserialize(de).map_err(|e| {
+    validate_with_warnings(text).map(|(doc, _)| doc)
+}
+
+/// Like [`validate`], but returns one warning per [`RETIRED_SPIRA_KEYS`] member found under
+/// `[spira]` — naming the key and the bead that retired it — instead of silently dropping
+/// them. A key `SPIRA_CONF_KEYS`/`SpiraSection` never accepted still hard-errors: only
+/// listed retirements are stripped before the deserialize that would otherwise refuse them.
+pub fn validate_with_warnings(text: &str) -> Result<(SpiraToml, Vec<String>), String> {
+    let mut root: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    let mut warnings = Vec::new();
+    if let Some(spira) = root.get_mut("spira").and_then(|v| v.as_table_mut()) {
+        for retired in RETIRED_SPIRA_KEYS {
+            if spira.remove(retired.key).is_some() {
+                warnings.push(format!(
+                    "{} is retired ({}) and ignored — remove it",
+                    retired.key, retired.bead
+                ));
+            }
+        }
+    }
+    let doc = serde_path_to_error::deserialize(root).map_err(|e| {
         let path = e.path().to_string();
         if path.is_empty() {
             e.inner().to_string()
         } else {
             format!("{path}: {}", e.inner())
         }
-    })
+    })?;
+    Ok((doc, warnings))
 }
 
 /// Whether `new` is a SHRINK of `existing` — fewer `[repo.*]` tables, or fewer
@@ -662,5 +717,41 @@ mod tests {
     fn set_path_refuses_an_unknown_field() {
         let err = set_path(&SpiraToml::default(), "spira.bogus", "x").unwrap_err();
         assert!(err.starts_with("spira.bogus"), "{err}");
+    }
+
+    #[test]
+    fn a_retired_key_warns_instead_of_erroring() {
+        let (doc, warnings) = validate_with_warnings("[spira]\nqueue_local_gate = 1\n")
+            .expect("a retired key must not be a hard error");
+        assert!(doc.spira.is_some());
+        assert!(
+            warnings.iter().any(|w| w.contains("queue_local_gate") && w.contains("sp-vsob2")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn a_misspelt_key_still_errors() {
+        // Positive control for a_retired_key_warns_instead_of_erroring: a key that looks
+        // like a retired one but isn't must still be refused, not silently accepted.
+        let err = validate("[spira]\nqueue_local_gatee = 1\n").unwrap_err();
+        assert!(err.starts_with("spira.queue_local_gatee"), "{err}");
+    }
+
+    #[test]
+    fn missing_from_retirement_catches_a_dropped_key() {
+        use std::collections::BTreeSet;
+        let active: BTreeSet<String> = ["a", "b"].iter().map(|s| s.to_string()).collect();
+        let mut history = active.clone();
+        history.insert("queue_local_gate".to_string());
+        // Dropped, but listed in RETIRED_SPIRA_KEYS — not an offender.
+        assert!(missing_from_retirement(&history, &active).is_empty());
+
+        // Planted offender: dropped from `active` and never retired.
+        history.insert("never_retired".to_string());
+        assert_eq!(
+            missing_from_retirement(&history, &active),
+            vec!["never_retired".to_string()]
+        );
     }
 }

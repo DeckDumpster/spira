@@ -2,10 +2,11 @@
 //! `[spira]`, `[repo.<name>]` and `[persona.<name>]` each — plus the T0 check that the
 //! shipped example validates, and that the checked-in schema still matches the types.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use spira_config::{json_schema, validate};
+use spira_config::{json_schema, missing_from_retirement, validate};
 
 fn manifest_path(rel: &str) -> String {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -64,6 +65,73 @@ mod spira_section {
         // Every [spira] key is optional (conf.sh's own philosophy): an empty table is a
         // valid document, matching a clean clone that overrides nothing.
         validate("[spira]\n").expect("an empty [spira] table is valid");
+    }
+}
+
+mod retired_keys {
+    use super::*;
+    use spira_config::validate_with_warnings;
+
+    #[test]
+    fn retired_key_warns_naming_the_key_and_bead() {
+        let (doc, warnings) = validate_with_warnings("[spira]\nqueue_local_gate = 1\n")
+            .expect("a retired key must validate, not error");
+        assert!(doc.spira.is_some());
+        assert!(
+            warnings.iter().any(|w| w.contains("queue_local_gate") && w.contains("sp-vsob2")),
+            "expected a warning naming queue_local_gate and sp-vsob2, got {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn a_misspelt_key_still_fails() {
+        let err = validate("[spira]\nqueue_batch_idle_cutt = 1\n").unwrap_err();
+        assert!(err.starts_with("spira.queue_batch_idle_cutt"), "{err}");
+    }
+
+    #[test]
+    fn dropping_a_key_without_retiring_it_fails_the_suite() {
+        let history: BTreeSet<String> =
+            ["home_repo", "max_aeons", "never_retired_by_anything"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+        let active: BTreeSet<String> =
+            ["home_repo", "max_aeons"].iter().map(|s| s.to_string()).collect();
+        let missing = missing_from_retirement(&history, &active);
+        assert_eq!(missing, vec!["never_retired_by_anything".to_string()]);
+    }
+
+    #[test]
+    fn the_schemas_current_field_set_matches_its_checked_in_history() {
+        let history_text = fs::read_to_string(manifest_path("schema/spira-key-history.txt"))
+            .expect("schema/spira-key-history.txt exists");
+        let history: BTreeSet<String> = history_text
+            .lines()
+            .map(str::to_string)
+            .filter(|l| !l.is_empty())
+            .collect();
+
+        let schema = serde_json::to_value(json_schema()).expect("schema serializes");
+        let active: BTreeSet<String> = schema["definitions"]["SpiraSection"]["properties"]
+            .as_object()
+            .expect("SpiraSection has properties")
+            .keys()
+            .cloned()
+            .collect();
+
+        let missing = missing_from_retirement(&history, &active);
+        assert!(
+            missing.is_empty(),
+            "key(s) dropped from the schema without retiring: {missing:?} — add to \
+             spira_config::RETIRED_SPIRA_KEYS"
+        );
+
+        let unrecorded: Vec<_> = active.difference(&history).cloned().collect();
+        assert!(
+            unrecorded.is_empty(),
+            "active key(s) missing from schema/spira-key-history.txt: {unrecorded:?}"
+        );
     }
 }
 
