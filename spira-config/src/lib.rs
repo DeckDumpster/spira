@@ -161,6 +161,7 @@ pub struct SpiraSection {
     pub reconciler_bin: Option<String>,
     pub test_plan_bin: Option<String>,
     pub reconciler_flow_bin: Option<String>,
+    pub lc_bin: Option<String>,
     pub loom_cache_s: Option<String>,
     pub loom_bin: Option<String>,
     pub loom_ready_grace: Option<String>,

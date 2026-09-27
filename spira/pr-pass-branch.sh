@@ -37,26 +37,38 @@ if submitted "$id" "$tip"; then
     case "$(submitted_rec "$id" state)" in
         pr)
             # PR MODE IS EXTERNAL CUSTODY (design §3.1.2): a human or the forge decides
-            # merged/closed, and this pass only observes it. Checked before needs_refresh,
-            # which only fires when the branch has fallen behind the base — a PR that merged
-            # while up to date with its base would never reach that check at all.
-            _pr_st="$(pr_state "$repo" "$br")" || _pr_st=""
-            case "$_pr_st" in
-                MERGED)
-                    _merge_sha="$(cd "$repo" && ghq pr view "$br" --json mergeCommit -q .mergeCommit.oid 2>/dev/null)"
-                    lc_deliver_pr_merged "$repo" "$id" "$br" "${_merge_sha:-$baseref}"
-                    mark_submitted "$id" "$tip" done
-                    act "$br's pull request is merged in $name — delivered"
-                    exit 7
-                    ;;
-                CLOSED)
-                    lc_deliver_pr_closed "$id" "pull request closed unmerged"
-                    mark_submitted "$id" "$tip" done
-                    act "$br's pull request was closed unmerged in $name — returned"
-                    exit 8
-                    ;;
-            esac
-            if ! needs_refresh "$repo" "$name" "$br" "$id" "$baseref" "$tip"; then
+            # merged/closed, and this pass only observes it. Asked whenever the branch has
+            # fallen behind its base (needs_refresh would ask anyway) or has never once been
+            # asked since it was last pushed (refreshes=0) — a PR that merges while level
+            # with its base would otherwise never reach a gh call at all. Once asked, the
+            # answer is handed to needs_refresh as a hint so one pass never asks gh twice,
+            # and a branch that is neither behind nor unasked is not asked again either.
+            _base_fq="$(qualify_base_ref "$baseref" "$repo")"
+            _behind=1
+            git -C "$repo" merge-base --is-ancestor "$_base_fq" "refs/heads/$br" 2>/dev/null && _behind=0
+            _n="$(submitted_rec "$id" refreshes)"
+            case "${_n:-}" in ''|*[!0-9]*) _n=0 ;; esac
+            _pr_st=""
+            if [ "$_behind" = 1 ] || [ "$_n" = 0 ]; then
+                _pr_st="$(pr_state "$repo" "$br")" || _pr_st=""
+                case "$_pr_st" in
+                    MERGED)
+                        _merge_sha="$(cd "$repo" && ghq pr view "$br" --json mergeCommit -q .mergeCommit.oid 2>/dev/null)"
+                        lc_deliver_pr_merged "$repo" "$id" "$br" "${_merge_sha:-$baseref}"
+                        mark_submitted "$id" "$tip" done
+                        act "$br's pull request is merged in $name — delivered"
+                        exit 7
+                        ;;
+                    CLOSED)
+                        lc_deliver_pr_closed "$id" "pull request closed unmerged"
+                        mark_submitted "$id" "$tip" done
+                        act "$br's pull request was closed unmerged in $name — returned"
+                        exit 8
+                        ;;
+                esac
+            fi
+            [ "$_behind" = 0 ] && exit 6
+            if ! needs_refresh "$repo" "$name" "$br" "$id" "$baseref" "$tip" "$_pr_st"; then
                 exit 6
             fi
             refresh="$PR_REFRESH_N"

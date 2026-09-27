@@ -7989,7 +7989,10 @@ pr_state() {             # pr_state <repo> <branch> -> OPEN|MERGED|CLOSED, non-z
 }
 
 # needs_refresh — 0 when this already-submitted branch should be rebased and force-pushed.
-needs_refresh() {        # needs_refresh <repo> <name> <branch> <id> <base> <tip>
+# An optional 7th arg is a pr_state answer the caller already paid for this pass (sp-n1ilm's
+# delivery check runs first and knows OPEN/MERGED/CLOSED/unreadable already) — passing it,
+# even empty, skips this function's own gh ask so one pass never asks gh twice.
+needs_refresh() {        # needs_refresh <repo> <name> <branch> <id> <base> <tip> [pr-state-hint]
     local repo="$1" name="$2" br="$3" id="$4" base="$5" tip="$6" st n base_fq
     base_fq="$(qualify_base_ref "$base" "$repo")"
     PR_REFRESH_N=0
@@ -7998,9 +8001,15 @@ needs_refresh() {        # needs_refresh <repo> <name> <branch> <id> <base> <tip
         stale) log "$id: $br is behind $base and already escalated — leaving it standing"; return 1 ;;
         done)  return 1 ;;
     esac
-    st="$(pr_state "$repo" "$br")" || {
+    if [ $# -ge 7 ]; then
+        st="$7"
+    else
+        st="$(pr_state "$repo" "$br")" || st=""
+    fi
+    if [ -z "$st" ]; then
         log "$id: $br is behind $base but gh will not say whether its pull request is open — not touching it"
-        return 1; }
+        return 1
+    fi
     if [ "$st" != OPEN ]; then
         log "$id: $br is behind $base but its pull request is $st — nothing to refresh"
         mark_submitted "$id" "$tip" done

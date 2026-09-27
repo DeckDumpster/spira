@@ -239,6 +239,7 @@ pub fn spira_section(
             "SPIRA_RECONCILER_BIN" => s.reconciler_bin = Some(val.clone()),
             "SPIRA_TEST_PLAN_BIN" => s.test_plan_bin = Some(val.clone()),
             "SPIRA_RECONCILER_FLOW_BIN" => s.reconciler_flow_bin = Some(val.clone()),
+            "SPIRA_LC_BIN" => s.lc_bin = Some(val.clone()),
             "SPIRA_LOOM_CACHE_S" => s.loom_cache_s = Some(val.clone()),
             "SPIRA_LOOM_BIN" => s.loom_bin = Some(val.clone()),
             "SPIRA_LOOM_READY_GRACE" => s.loom_ready_grace = Some(val.clone()),

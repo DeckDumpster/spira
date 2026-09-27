@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Sourced, never executed.
 # lc-delivery.sh — wires the delivery state machine (lifecycle crate, design §3.1.2,
 # sp-n1ilm) into pr-pass-branch.sh and landing.sh's push mode. Sourced by both, so a
 # pr-mode merge and a push-mode push are recorded through the one function that asks
