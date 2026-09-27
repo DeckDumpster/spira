@@ -6,6 +6,14 @@
 #                                [--agent <path>] [--record] [--waive-upgrade]
 #
 # Override acceptance-run.sh for testing: SPIRA_ACCEPTANCE_RUN=<path>
+#
+# DECLARED WAIVER (law-waive-upgrade-once-when-the-fix-cannot-reach-the-predecessor).
+# A tag-push-triggered run has no --waive-upgrade input to set by hand, and a
+# workflow_dispatch run started after the fact races the push run's own retract
+# step for the tag (sp-rpjn5). SPIRA_WAIVE_UPGRADE_COMMIT names the exact commit
+# a waiver was declared for, ahead of the cut, in $GITHUB_REPOSITORY's
+# WAIVE_UPGRADE_COMMIT repository variable; it is honoured only when it matches
+# <tag>'s own commit, so a later release at a different commit can never inherit it.
 set -uo pipefail
 
 _tag=""
@@ -44,6 +52,17 @@ export PATH="$HOME/.local/bin:$PATH"
 
 # Overridable for testing; in production matches the checkout this script lives in.
 _NOTES_REPO="${SPIRA_NOTES_REPO:-$HERE/..}"
+
+# A declared waiver applies only to the exact commit it names — the same match
+# that makes it self-consuming, since the next release is always a different
+# commit (see header comment).
+if [ "$_waive_upgrade" -eq 0 ] && [ -n "${SPIRA_WAIVE_UPGRADE_COMMIT:-}" ]; then
+    _tag_commit="$(git -C "$_NOTES_REPO" rev-parse "${_tag}^{commit}" 2>/dev/null || true)"
+    if [ -n "$_tag_commit" ] && [ "$_tag_commit" = "$SPIRA_WAIVE_UPGRADE_COMMIT" ]; then
+        _waive_upgrade=1
+        printf 'acceptance-ci: honoring declared upgrade waiver for commit %s\n' "$_tag_commit"
+    fi
+fi
 
 git init --bare --initial-branch=main "$HOME/scratch-repo.git"
 git clone "$HOME/scratch-repo.git" "$HOME/scratch-repo"
