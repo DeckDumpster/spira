@@ -248,4 +248,57 @@ run_watch_loop "" "$TMP/wrun3" >/dev/null 2>&1 || loop_rc=$?
     || bad "watch-answers.sh loop exits 1 when a pass fails" \
            "got exit $loop_rc (0=stub did not fail, 124=looped forever)"
 
+echo
+echo "UC-23: a failed wake leaves the cursor unadvanced, so the pass is re-announced (V10, sp-12uu8, adapted to a cursor design)"
+
+# A stub that behaves like answers.py's own cursor write: it advances both marks on every
+# call, whether or not the wake that follows will succeed. _watch_pass is sourced directly
+# (rather than run through `loop` under a `timeout`) so the cursor files can be asserted on
+# between passes without racing a kill signal against the rollback.
+STUB_ANSWERS_CURSOR="$TMP/stub-answers-cursor.sh"
+cat > "$STUB_ANSWERS_CURSOR" <<'STUBEOF'
+#!/usr/bin/env bash
+cat >/dev/null
+echo "cursor-advanced-$$" > "$VERDICT_CURSOR"
+echo "cursor-advanced-$$" > "$COMMENT_CURSOR"
+echo "sp-ta-loop THE OPERATOR ANSWERED sp-ta-loop — stub output"
+STUBEOF
+chmod +x "$STUB_ANSWERS_CURSOR"
+
+FAILWAKE="$TMP/wake-fail.sh"
+cat > "$FAILWAKE" <<'W'
+#!/usr/bin/env bash
+exit 1
+W
+chmod +x "$FAILWAKE"
+
+RUNDIR="$TMP/wrun-rollback"; mkdir -p "$RUNDIR"
+printf 'seed-verdict\n' > "$RUNDIR/.vc"
+printf 'seed-comment\n' > "$RUNDIR/.cc"
+
+run_watch_pass() {   # run_watch_pass <wake-cmd> -> _watch_pass's stdout
+    env \
+        COCKPIT_DB="$FAKE_COCKPIT_DB" BD_BIN="$STUB_BD_ROWS" \
+        SPIRA_ASK_LABEL="$ASK_LABEL" SPIRA_RUN="$RUNDIR" \
+        ANSWER_STATE="$RUNDIR/witness" VERDICT_CURSOR="$RUNDIR/.vc" COMMENT_CURSOR="$RUNDIR/.cc" \
+        SELF_CLOSED="$TMP/self-closed" ANSWERS_BIN="$STUB_ANSWERS_CURSOR" SPIRA_WAKE="$1" \
+        bash -c '. "$1"; _watch_pass' _ "$HERE/../cockpit/watch-answers.sh"
+}
+
+out="$(run_watch_pass "$FAILWAKE" 2>/dev/null)"
+want "positive control: the pass still printed the stub's answer" "ANSWERED" "$out"
+is "a failed wake leaves VERDICT_CURSOR unadvanced" "seed-verdict" "$(cat "$RUNDIR/.vc")"
+is "a failed wake leaves COMMENT_CURSOR unadvanced" "seed-comment" "$(cat "$RUNDIR/.cc")"
+
+out2="$(run_watch_pass "$FAILWAKE" 2>/dev/null)"
+want "wake still failing: the next pass re-announces the same answer" "ANSWERED" "$out2"
+is "wake still failing: VERDICT_CURSOR is still unadvanced" "seed-verdict" "$(cat "$RUNDIR/.vc")"
+
+out3="$(run_watch_pass "$TMP/wake" 2>/dev/null)"
+want "a succeeding wake still prints the answer" "ANSWERED" "$out3"
+vc_after="$(cat "$RUNDIR/.vc")"
+[ "$vc_after" != "seed-verdict" ] \
+    && ok "a succeeding wake lets VERDICT_CURSOR advance" \
+    || bad "a succeeding wake lets VERDICT_CURSOR advance" "cursor still at seed value"
+
 tl_summary
