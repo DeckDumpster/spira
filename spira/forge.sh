@@ -650,6 +650,10 @@ except Exception: pass
 " 2>/dev/null
         ;;
     run-cancel)
+        # `gh run cancel` hits the plain cancel endpoint, which still runs a
+        # cancelled job's `if: always()` steps -- teardown included. NEVER
+        # switch this to force-cancel: it skips the whole job graph outright
+        # and leaks any VM the run had provisioned.
         run_id="${1:-}"
         ( cd "$repo" && ghq run cancel "$run_id" ) 2>/dev/null
         ;;

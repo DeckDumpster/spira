@@ -107,6 +107,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       vmid:  ${{ steps.vm.outputs.vmid }}
+      # Can be empty even when the VM carries a token — see gate.yml's
+      # provision job for why (sp-rtgbv, not fixable from this workflow).
       vm-token: ${{ steps.vm.outputs.vm-token }}
       label: ${{ steps.vm.outputs.label }}
     # provision.sh's guest-agent wait defaults to 120s, which sits inside the
@@ -328,6 +330,9 @@ jobs:
   # ---------------------------------------------------------------------------
   # Destroy the machine. Runs even when provision or acceptance fail — but not
   # when the guard skipped them, since no machine was ever provisioned.
+  #
+  # CANCEL BY THE PLAIN ENDPOINT ONLY. See gate.yml's teardown job: a
+  # force-cancel skips this job's `if: always()` entirely and leaks the VM.
   # ---------------------------------------------------------------------------
   teardown:
     needs: [provision, acceptance, guard]
