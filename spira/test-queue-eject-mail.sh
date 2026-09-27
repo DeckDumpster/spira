@@ -52,7 +52,20 @@ cat > "$SH/forge-fixture.sh" <<'FORGE'
 #!/usr/bin/env bash
 cmd="${1:-}"; shift; shift
 case "$cmd" in
-    check-status)    cat "${FORGE_STATUS_FILE}" 2>/dev/null || printf 'pending\n' ;;
+    check-status)
+        # The baseline-red-on-base dispatch (branch names "attr/base-base-") must
+        # never answer from the ambient FORGE_STATUS_FILE: that file is the
+        # member's own red verdict, and reusing it here would make the suite
+        # look already-red-on-base and get wrongly excluded before the member
+        # is ever attributed (same contamination test-verdict.sh's fixture
+        # guards against for the same reason).
+        case "${2:-}" in
+            */attr/base-base-*) printf 'green\n' ;;
+            *)                  cat "${FORGE_STATUS_FILE}" 2>/dev/null || printf 'pending\n' ;;
+        esac
+        ;;
+    dispatch)        printf '%s\t%s\tdispatch\n' "${1:-}" "${2:-}" >> "$FORGE_LOG" ;;
+    fail-lines)      true ;;
     run-id)          printf 'run-99\n' ;;
     run-metadata)    cat "${FORGE_RUN_METADATA_FILE}" 2>/dev/null || true ;;
     run-cancel)      printf '%s\tcancel\n' "${1:-}" >> "$FORGE_LOG" ;;
