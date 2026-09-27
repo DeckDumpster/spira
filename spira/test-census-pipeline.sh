@@ -146,7 +146,7 @@ cat > "$FAKE_BD" <<'STUB'
 case "${1:-}" in
     sql)
         case "${2:-}" in
-            *skew_s*)
+            *utc_fn*)
                 cat "${CENSUS_SKEW_FILE:-/dev/null}"
                 exit "${CENSUS_SKEW_RC:-0}"
                 ;;
@@ -171,12 +171,28 @@ chmod +x "$FAKE_BD"
 CENSUS_SQL_FILE="$T/sql_one_class.txt"
 printf 'recurred | fallback-test | 1 | 1\n' > "$CENSUS_SQL_FILE"
 
-# CENSUS_SKEW_FILE is the fake bd's answer to the clock-skew check (skew_s | now_fn |
-# utc_fn), same 3-row shape (header, separator, data) as census.sh's own sed -n '3p'
-# expects. Default: in sync, so tests unrelated to the skew guard see it pass through.
+# The skew guard now compares the substrate's UTC_TIMESTAMP() against the HOST's own
+# UTC clock (sp-9b8py), not against the substrate's NOW(). census.sh reads that clock as
+# ${SPIRA_NOW:-$(date -u +%s)} — the same test-clock override every other suite in this
+# tree pins a clock with (lib.sh:6120, watchd.sh, test-archivist.sh, ...) — so the
+# fixtures below are relative to CENSUS_FIXED_HOST_EPOCH, a fixed epoch this suite pins
+# via SPIRA_NOW, not a fixed calendar date the real clock would eventually catch up to.
+CENSUS_FIXED_HOST_EPOCH=1781000000
+
+# _skew_fixture <file> <offset-seconds-from-the-fixed-host-clock> — writes the fake bd's
+# answer to "SELECT DATE_FORMAT(UTC_TIMESTAMP(), ...) AS utc_fn" (same 3-row header/
+# separator/data shape census.sh's own sed -n '3p' expects) as an exact number of
+# seconds away from CENSUS_FIXED_HOST_EPOCH, so the guard's computed skew is exact.
+_skew_fixture() {
+    local file="$1" offset="$2" val
+    val="$(date -u -d "@$(( CENSUS_FIXED_HOST_EPOCH + offset ))" '+%Y-%m-%d %H:%M:%S')"
+    printf 'utc_fn\n------\n%s\n' "$val" > "$file"
+}
+
+# Default: substrate agrees with the host clock, so tests unrelated to the skew guard
+# see it pass through.
 CENSUS_SKEW_FILE="$T/skew_in_sync.txt"
-printf 'skew_s | now_fn | utc_fn\n------ | ------ | ------\n0 | 2026-01-01 00:00:00 +0000 UTC | 2026-01-01 00:00:00 +0000 UTC\n' \
-    > "$CENSUS_SKEW_FILE"
+_skew_fixture "$CENSUS_SKEW_FILE" 0
 RUN_NO_WM="$T/run-no-wm"; mkdir -p "$RUN_NO_WM"
 
 # SPIRA_REPO_MAP points at a scratch path that never exists: census.sh sources lib.sh,
@@ -186,7 +202,8 @@ RUN_NO_WM="$T/run-no-wm"; mkdir -p "$RUN_NO_WM"
 # must not depend on.
 run_census_fake() {   # run_census_fake <SPIRA_RUN> [census-args...]
     local rundir="$1"; shift
-    env SPIRA_BD="$FAKE_BD" \
+    env SPIRA_NOW="$CENSUS_FIXED_HOST_EPOCH" \
+        SPIRA_BD="$FAKE_BD" \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy \
         SPIRA_CONF="$T/no-conf" \
@@ -243,19 +260,18 @@ lack "clock in sync: no skew refusal on stderr" "clock skew" "$(cat "$T/insync.s
 # UNFIXED SIGNATURE: skew far outside tolerance, rc=0 from the skew query, ranking would
 # have been returned unfixed. FIXED SIGNATURE: refusal, no ranking, skew named on stderr.
 CENSUS_SKEW_FILE="$T/skew_skewed.txt"
-printf 'skew_s | now_fn | utc_fn\n------ | ------ | ------\n25200 | 2026-01-01 10:00:00 +0000 UTC | 2026-01-01 17:00:00 +0000 UTC\n' \
-    > "$CENSUS_SKEW_FILE"
+_skew_fixture "$CENSUS_SKEW_FILE" 25200
 skewed_out="$(run_census_fake "$RUN_NO_WM" 2>"$T/skewed.stderr")"; skewed_rc=$?
 is "skew beyond tolerance: exits non-zero" "1" "$skewed_rc"
 is "skew beyond tolerance: no ranking emitted" "" "$skewed_out"
 want "skew beyond tolerance: measured skew named on stderr" "25200" "$(cat "$T/skewed.stderr")"
-want "skew beyond tolerance: both clock values named on stderr" \
-    "2026-01-01 10:00:00 +0000 UTC" "$(cat "$T/skewed.stderr")"
+want "skew beyond tolerance: substrate clock value named on stderr" \
+    "$(date -u -d "@$(( CENSUS_FIXED_HOST_EPOCH + 25200 ))" '+%Y-%m-%d %H:%M:%S')" \
+    "$(cat "$T/skewed.stderr")"
 
-# A negative skew (substrate ahead of UTC) refuses on magnitude, not sign.
+# A negative skew (substrate behind UTC) refuses on magnitude, not sign.
 CENSUS_SKEW_FILE="$T/skew_negative.txt"
-printf 'skew_s | now_fn | utc_fn\n------ | ------ | ------\n-9000 | 2026-01-01 12:30:00 +0000 UTC | 2026-01-01 10:00:00 +0000 UTC\n' \
-    > "$CENSUS_SKEW_FILE"
+_skew_fixture "$CENSUS_SKEW_FILE" -9000
 neg_out="$(run_census_fake "$RUN_NO_WM" 2>"$T/neg.stderr")"; neg_rc=$?
 is "negative skew beyond tolerance: exits non-zero" "1" "$neg_rc"
 is "negative skew beyond tolerance: no ranking emitted" "" "$neg_out"
@@ -268,6 +284,45 @@ tolerant_out="$(run_census_fake "$RUN_NO_WM" 2>"$T/tolerant.stderr")"; tolerant_
 SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S=120
 is "widened tolerance: same skew now passes" "0" "$tolerant_rc"
 want "widened tolerance: ranking produced" "1 sp-recur-fallback-test (1 detections)" "$tolerant_out"
+
+# ------------------------------------------------------------------------------
+# REGRESSION (sp-9b8py): the guard used to measure the substrate's NOW() against its own
+# UTC_TIMESTAMP() — a proxy for host timezone, not for the window invariant. On any box
+# whose system timezone is not UTC (this suite's fixture forces PDT below) those two
+# always disagree by the offset, so the guard refused permanently. The property that
+# matters is whether UTC_TIMESTAMP() agrees with the HOST's true UTC clock; NOW() must be
+# irrelevant to the refusal.
+# ------------------------------------------------------------------------------
+
+# COMPANION CASE (must rank and exit 0): substrate UTC_TIMESTAMP() agrees with the host's
+# true UTC clock while the substrate is configured for a non-UTC system timezone (so its
+# own NOW() would read hours off, exactly as fb8f68151 tripped on this box). Since the
+# fixed query no longer asks for NOW() at all, TZ=America/Los_Angeles proves the guard
+# cannot be reading the substrate's local wall clock by any path.
+CENSUS_SKEW_FILE="$T/skew_in_sync.txt"
+pdt_insync_out="$(TZ=America/Los_Angeles run_census_fake "$RUN_NO_WM" 2>"$T/pdt_insync.stderr")"
+pdt_insync_rc=$?
+is "PDT box, substrate clock in sync with true UTC: exits zero" "0" "$pdt_insync_rc"
+want "PDT box, substrate clock in sync with true UTC: ranking produced" \
+    "1 sp-recur-fallback-test (1 detections)" "$pdt_insync_out"
+lack "PDT box, substrate clock in sync with true UTC: no refusal on stderr" \
+    "clock skew" "$(cat "$T/pdt_insync.stderr")"
+
+# REGRESSION CASE (must be seen to fail before the fix — see the bead's close notes for
+# the pre-fix run against the unfixed guard): the substrate's clock is genuinely wrong,
+# disagreeing with the host's true UTC by 600s, well past the default 120s tolerance.
+# This is exactly the fault this guard exists to catch, and it must still catch it once
+# NOW() is out of the picture.
+CENSUS_SKEW_FILE="$T/skew_real_fault.txt"
+_skew_fixture "$CENSUS_SKEW_FILE" 600
+realfault_out="$(run_census_fake "$RUN_NO_WM" 2>"$T/realfault.stderr")"; realfault_rc=$?
+is "substrate clock genuinely 600s off true UTC: exits non-zero" "1" "$realfault_rc"
+is "substrate clock genuinely 600s off true UTC: no ranking emitted" "" "$realfault_out"
+want "substrate clock genuinely 600s off true UTC: measured skew named on stderr" \
+    "600" "$(cat "$T/realfault.stderr")"
+
+# The refusal condition itself no longer references NOW() anywhere in the source.
+lack "skew guard source no longer references NOW()" "NOW()" "$(cat "$CENSUS")"
 
 # A control that cannot check must refuse (law-a-control-that-cannot-check-must-refuse):
 # the skew query itself failing is not read as "in sync".
