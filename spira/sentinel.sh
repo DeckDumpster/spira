@@ -22,6 +22,7 @@
 # centre, not a feature.
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/lc.sh"
 
 REPORT=0; [ "${1:-}" = "--report" ] && REPORT=1
 POISON_AT="${SPIRA_POISON_AT:-3}"
@@ -434,7 +435,17 @@ print(d[0].get("status", "") if d else "")' 2>/dev/null)"
             # precisely when the bead was (law-no-grep-q-under-pipefail). check4_decide's
             # case match on the already-fetched label string has neither hazard.
             case " $decision " in *' poison '*)
+                # KEPT AS A DUAL WRITE, not replaced (sp-ki12s): dispatchable_open excludes
+                # `spira-poison`, and check4_decide's own "already poisoned" detection reads
+                # that same label from the SAME dispatchable set — remove the label here
+                # without also fixing both of those and this loop poisons the bead again
+                # every single pass (dispatchable_open would keep re-offering it, and
+                # check4_decide would never see "already poisoned"). Converting those two
+                # reads is sp-i2m7y's job (CHECK 2/2b/2c/3b/4 onto events, in full); until
+                # that lands in the same cutover round, the label stays the real mechanism
+                # and lc_hold only starts the lifecycle log's history alongside it.
                 bdq label add "$id" spira-poison >/dev/null 2>&1
+                lc_hold "$id" poison "poisoned after $n in_progress transition(s) without landing" sentinel || true
                 bdq note "$id" "Poisoned after $n in_progress transition(s) without landing. Triaged by the groomer, not a human: it reads the charged sessions' final results and either credits the harness-caused attempts and lifts the poison (groomer.sh unpoison) or splits/re-scopes the work. Any live holder keeps its claim and releases on its own exit path; no persona can claim it again while the label stands." >/dev/null 2>&1
                 progress "poisoned $id after $n attempts"
                 # check4_decide only emits `poison` on the transition into poisoned (the
