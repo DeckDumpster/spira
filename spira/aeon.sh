@@ -1198,7 +1198,16 @@ $_cert_out"
     # action taken, or child beads filed — never a commit, never a repo: label, never a queue
     # claim. Forcing those through the submitted/landed pipeline would zombie every one of
     # them; the legacy commit-or-delivers audit (close_verdict, sp-dvlq) still judges them.
-    if [ "$st" = "closed" ] \
+    #
+    # NOR IS A GRAPH-ONLY PERSONA'S CLOSE (FAYTH_GRAPH_ONLY=1), even absent a delivers:
+    # label. delivers: is stamped by the FILER (groom-trigger.sh et al.); a bead the groomer
+    # claims after being filed by hand — sp-yyzm3, filed by `overseer`, no delivers: label —
+    # gets no such stamp, and the groomer's own toolset (no Edit, no Write) cannot produce a
+    # commit regardless of who filed it. Converting that close to submitted zombies it the
+    # same way a missing delivers: label would (sp-wnsks): nothing will ever land to close it.
+    if [ "$st" = "closed" ] && [ "${FAYTH_GRAPH_ONLY:-0}" = 1 ]; then
+        log "$FAYTH: $BEAD_ID closed a work bead — graph-only persona, no commit expected, not converted"
+    elif [ "$st" = "closed" ] \
        && read -r _wct_type _wct_sup _wct_delivers <<< "$(bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
@@ -1209,7 +1218,8 @@ sup = 1 if any((x.get("dependency_type") or x.get("type")) == "supersedes"
                for x in (d[0].get("dependencies") or [])) else 0
 deliv = 1 if any(l.startswith("delivers:") for l in (d[0].get("labels") or [])) else 0
 print("%s\t%s\t%s" % (d[0].get("issue_type") or "", sup, deliv))' 2>/dev/null)" \
-       && bead_is_work_type "${_wct_type:-}" && [ "${_wct_delivers:-0}" != 1 ]; then
+       && bead_is_work_type "${_wct_type:-}" \
+       && [ "${_wct_delivers:-0}" != 1 ]; then
         if [ "${_wct_sup:-0}" = 1 ]; then
             log "$FAYTH: $BEAD_ID closed a superseded work bead — not converted, close stands"
         else
