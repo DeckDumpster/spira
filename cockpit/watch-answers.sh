@@ -26,7 +26,7 @@
 # what let two sessions attach the blind one.
 set -uo pipefail
 
-. "$(dirname "$0")/db.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/db.sh"
 # THE WITNESS: proof this watcher can SEE, kept apart from how far it has read. Every pass
 # writes the ids its query returned here, and the manifest's health assertion greps it for one
 # of ours — a watcher reading a database that was retired underneath it holds rows, just not
@@ -60,7 +60,8 @@ COMMENT_CURSOR="${COMMENT_CURSOR:-$SPIRA_RUN/.comment-cursor}"
 # ANSWERS_BIN is the seam a suite drives to test this loop's own contract (does it print, does
 # it wake, does it exit 1 on a failing pass) without paying for a real bd round trip through
 # the actual answers.py on every case.
-ANSWERS="${ANSWERS_BIN:-$(cd "$(dirname "$0")/../spira" && pwd -P)/answers.py}"
+SPIRA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../spira" && pwd -P)"
+ANSWERS="${ANSWERS_BIN:-$SPIRA_DIR/answers.py}"
 
 emit() {
     # NARROWED BY THE SERVER. This ran every 45 seconds against every bead in the database and
@@ -86,7 +87,7 @@ emit() {
 wake() {
     [ -n "${SPIRA_WAKE:-}" ] || return 0
     # shellcheck disable=SC2086  # SPIRA_WAKE is a command line, split on purpose
-    if $SPIRA_WAKE "New answers from ${SPIRA_OPERATOR:-the operator}. Run $(cd "$(dirname "$0")/../spira" && pwd -P)/watchd.sh drain answers and act on every verdict it prints." >/dev/null 2>&1; then
+    if $SPIRA_WAKE "New answers from ${SPIRA_OPERATOR:-the operator}. Run $SPIRA_DIR/watchd.sh drain answers and act on every verdict it prints." >/dev/null 2>&1; then
         return 0
     fi
     echo "watch-answers: SPIRA_WAKE refused — these answers reach no reader until the page" >&2
