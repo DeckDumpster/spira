@@ -1839,6 +1839,74 @@ rm -rf "$_D_HOME" 2>/dev/null
     && ok "D5: double-remove of absent home is harmless" \
     || bad "D5: double-remove of absent home is harmless" "rm -rf failed on absent path"
 
+# ---------------------------------------------------------------------------
+# B14: INSTALL STEP RECEIVES SPIRA_PROD EXPLICITLY (sp-l33zk).
+#
+# conf.sh falls back to $SPIRA_RELEASES/current/spira for SPIRA_PROD whenever it
+# can't read the value configure.sh just wrote (e.g. spira-config missing from
+# the image) — silently, by design. install.sh then renders units against a
+# release directory nothing ever populated. Passing SPIRA_PROD in the exec
+# environment, the same way CONFIGURE_PROD already reaches the configure step,
+# removes the dependency on that read-back entirely.
+#
+# The fixture checkout has no real spira/ harness code (only fixture suites),
+# so configure.sh and ctrl.sh would fail before install.sh is ever reached.
+# The stub no-ops those two and records install.sh's argv instead of running
+# it; every other podman call (up/probe/suite exec) forwards to the real
+# binary so the container comes up and the batch completes normally. Reuses
+# the already-committed test-fx-p.sh fixture (trivial, always green) rather
+# than adding a suite of its own — no coverage-selection is exercised here.
+# ---------------------------------------------------------------------------
+echo
+echo "B14: install step receives SPIRA_PROD explicitly"
+
+B14_REAL_PODMAN="$(command -v podman 2>/dev/null || true)"
+if [ -z "$B14_REAL_PODMAN" ]; then
+    printf 'SKIP B14: podman not on PATH\n' >&2
+else
+    STUB_DIR_B14="$TMP/stub-b14"
+    mkdir -p "$STUB_DIR_B14"
+    ARGV_LOG_B14="$TMP/b14-install-argv"
+    rm -f "$ARGV_LOG_B14"
+    cat > "$STUB_DIR_B14/podman" << STUBEOF
+#!/usr/bin/env bash
+if [ "\$1" = "exec" ]; then
+    for _a in "\$@"; do
+        case "\$_a" in
+            */systemd/install.sh)
+                printf '%s\n' "\$*" > "$ARGV_LOG_B14"
+                exit 0
+                ;;
+            */spira/configure.sh|*/spira/ctrl.sh)
+                exit 0
+                ;;
+        esac
+    done
+fi
+exec "$B14_REAL_PODMAN" "\$@"
+STUBEOF
+    chmod +x "$STUB_DIR_B14/podman"
+
+    RESULTS_ROOT_B14="$TMP/results-B14"
+    rc_b14=0
+    SPIRA_PATH="$STUB_DIR_B14" \
+    SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B14" \
+    SPIRA_BATCH_INSTANCE="b14-$$" \
+    SPIRA_VERDICT_TTL=0 \
+        bash "$BATCH" --mode serial --suites test-fx-p.sh topic "$FIXTURE" \
+        >/dev/null 2>&1 || rc_b14=$?
+
+    isfile "B14: install exec argv was captured (positive control: stub saw the call)" \
+        "$ARGV_LOG_B14"
+    if [ -f "$ARGV_LOG_B14" ]; then
+        grep -qF -- "-e SPIRA_PROD=/workspace/spira" "$ARGV_LOG_B14" \
+            && ok "B14: install exec carries -e SPIRA_PROD=/workspace/spira" \
+            || bad "B14: install exec carries -e SPIRA_PROD=/workspace/spira" \
+                   "argv: $(cat "$ARGV_LOG_B14")"
+    fi
+    iszero "B14: batch exits 0 (install call stubbed success, suite green)" "$rc_b14"
+fi
+
 # ===========================================================================
 echo
 tl_summary
