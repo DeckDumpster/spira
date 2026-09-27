@@ -75,6 +75,16 @@ HEAD="${2:?usage: gate-touched.sh <base> <head>}"
 repo="${SPIRA_GATE_REPO:-.}"
 _tiers="${SPIRA_GATE_TIERS:-T0,T1}"
 
+# SPIRA_GATE_ALL=1: bypass coverage-based selection entirely and return the whole corpus.
+# This is the consumer of the seam gate.sh documents — landing.sh sets it for a member
+# ejected twice running, because diff-selection is exactly what let that member's last
+# fix miss the rest of what was red (a sibling's suite, or a contract only a full run
+# would assert). Overrides SPIRA_GATE_SUITES=off: full-corpus is the stronger request.
+if [ "${SPIRA_GATE_ALL:-0}" = 1 ]; then
+    _suite_dir="${SPIRA_BATCH_SUITE_DIR:-$HERE}"
+    _covered="$(cd "$_suite_dir" && ls test-*.sh 2>/dev/null | sort -u)"
+else
+
 # SPIRA_GATE_SUITES=off: select NOTHING beyond SPIRA_CERTIFY_ALWAYS_COVERS, so the gate
 # command's `[ -n "$_s" ] || exit 0` passes after its fences have run. landing.sh sets it for
 # queue-mode certification when SPIRA_CERTIFY_SUITES=off; the batch's CI run is where the rest
@@ -162,6 +172,8 @@ if [ -f "${SPIRA_GATE_FILES:-}" ]; then
 else
     _covered="$(bash "$HERE/select.sh" --base "$BASE" --head "$HEAD" --repo "$repo" \
         --no-all-fallback --tiers "$_tiers" 2>/dev/null || true)"
+fi
+
 fi
 
 _ejected=""

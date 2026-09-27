@@ -103,5 +103,21 @@ is     "D3: dedup — ejecting an already-covered suite changes nothing" \
        "$a_sel" "$(sel_ej test-a.sh)"
 nowant "D4: an ejected suite absent from the tree is silently skipped" "test-gone.sh" "$(sel_ej test-gone.sh)"
 
+# ---------------------------------------------------------------------------
+# SPIRA_GATE_ALL (sp-pnbdz): bypasses coverage-based selection and returns the
+# whole corpus, regardless of the diff. This is what a member ejected twice
+# needs — diff-selection is exactly the mechanism that let the rest of a red
+# run go unattributed and uncorrected the first time.
+# ---------------------------------------------------------------------------
+echo
+echo "Part E: SPIRA_GATE_ALL"
+all_sel="$(cd "$R" && SPIRA_GATE_REPO="$R" SPIRA_BATCH_SUITE_DIR="$R/spira" SPIRA_GATE_ALL=1 \
+    bash "$TOUCHED" main br 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//')"
+want "E1: GATE_ALL=1: uncovered suite still selected" "test-b.sh" "$all_sel"
+want "E2: GATE_ALL=1: covering suite still selected"  "test-a.sh" "$all_sel"
+ctrl_sel="$(cd "$R" && SPIRA_GATE_REPO="$R" SPIRA_BATCH_SUITE_DIR="$R/spira" SPIRA_GATE_ALL=0 \
+    bash "$TOUCHED" main br 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//')"
+nowant "E3: GATE_ALL=0 (control): uncovered suite not selected" "test-b.sh" "$ctrl_sel"
+
 echo
 tl_summary
