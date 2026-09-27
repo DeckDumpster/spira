@@ -236,6 +236,346 @@
       ]
     },
     {
+      "area": "cockpit-observability",
+      "use_cases": [
+        {
+          "id": "UC-cockpit-observability-01",
+          "tier": "T1",
+          "statement": "the collector writes `cockpit.env` only when it is the supervised unit or `SPIRA_COCKPIT_FORCE=1` (recorded as `SP_WRITER=force`), otherwise prints keys to stdout; `cockpit.sh loop`/`collect.sh loop` refuse to run unsupervised",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-02",
+          "tier": "T1",
+          "statement": "`SP_AT` is stamped before any section data; `SP_WINDOW_HOURS`, `SP_PASS_SECS` and `SP_COLLECTOR_REV` are always emitted",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-03",
+          "tier": "T0",
+          "statement": "every probe a reader depends on is registered in `collect.sh PROBES`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-04",
+          "tier": "T1",
+          "statement": "fragment merge: an `ok` fragment contributes its keys; `never`/`timeout`/`error` contribute only `_PROBE_AT_<n>`/`_PROBE_STATUS_<n>`; `stale` keeps its last-known-good values; a key clash picks the alphabetically first fragment",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-05",
+          "tier": "T1",
+          "statement": "a probe that times out writes `status=timeout`, logs its name, increments `_PROBE_KILLED` (surfaced as `SP_PROBE_KILLED_<n>`), and leaves no temp file; a success resets the counter and logs `probe <n> ok <N>s`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-06",
+          "tier": "T2",
+          "statement": "a collector pass killed by TERM/INT/HUP removes its `.cockpit.*` temp, re-raises (exits 128+signo), and never disturbs the published `cockpit.env`; orphan temps are swept at startup for both `cockpit.sh` and `collect.sh`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-07",
+          "tier": "T1",
+          "statement": "the collector loop exits 1 after N consecutive merge failures, exits 0 with 'config changed' when `SPIRA_CONF` mtime changes, and otherwise keeps running; the same contract holds for `health.sh` and `loom.sh`",
+          "covering_suites": [
+            {
+              "path": "spira/test-conf-watch.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-cockpit-observability-08",
+          "tier": "T1",
+          "statement": "every bd-backed count is `?` when bd exits non-zero, exits 0 with empty output, prints a schema-mismatch refusal, or the persona set does not resolve; an empty readable store yields numeric `0`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-09",
+          "tier": "T1",
+          "statement": "reachability: open work reachable from ready seeds through `blocks` edges counts as `SP_REACHABLE`; beads behind a needs-ryan ask or `spira-poison` count as `SP_STRANDED`; asks/insights are excluded, `relates-to` does not block, and the scope label is required",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-10",
+          "tier": "T2",
+          "statement": "landing classification: a closed bead is LANDED only when a commit subject on `origin/<base>` names it (a body mention does not count), for both main- and master-based repos; `SP_CLOSED` covers the last 24h",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-11",
+          "tier": "T1",
+          "statement": "`SP_QUEUE_DEPTH` counts CERTIFIED beads; the open batch yields PR, age and members including still-open beads; certified-but-unbatched beads appear as NEXT in batcher order; quarantined suites are counted",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-12",
+          "tier": "T2",
+          "statement": "`SP_BRANCH_DONE`/`SP_UNSENT` count only bead-backed branches; a no-bead branch ahead of base is `SP_ORPHAN_WORK`, one with tip on base is `SP_UNADOPTED` (named); `spira/queue/*` and `spira-suite-state/*` are protected; a failed bead lookup counts in `SP_PROBE_FAIL`, never `SP_UNADOPTED`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-13",
+          "tier": "T1",
+          "statement": "`SP_DUP_REFS`/`SP_DUP_BEADS` count external_refs shared by more than one incident bead within the 7-day lookback; `SP_REPO_UNMAPPED`/`SP_REPO_ABSENT` count over non-closed beads; `SP_POISON` counts every non-closed poisoned bead; an unreadable store gives `?`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-14",
+          "tier": "T1",
+          "statement": "SOP/sweep meters: never-fired and recurred counts respect the window, `held` and `check=fail`; `SP_SWEEP_AGE` is the newest applied-ledger entry's age; a missing, empty or unreadable ledger, or a broken shelf, gives `?`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-15",
+          "tier": "T2",
+          "statement": "a gate is live only when its pid is alive and its cmdline is the gate; per-aeon FUSE/WALL read 0 fresh, `?` with no worktree, `gate` while its gate runs; `landing.status`/`landing.progress` are copied verbatim, and a missing file gives `?`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-16",
+          "tier": "T1",
+          "statement": "`SP_RATELIM_*` comes from the newest `rate_limit_event` and is `?` with no trace; SELF metrics (repeated ACT across passes, stillborn aeons) are computed over their window",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-17",
+          "tier": "T1",
+          "statement": "`SP_NEXT` attributes each ready bead to the persona that will claim it, or marks it `unclaimable` when its `fayth:` preference cannot match",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-18",
+          "tier": "T1",
+          "statement": "the statute probe reports DB/page counts and SKEW as `?` with no wiki, MISMATCH when DB < page/2, and OK otherwise",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-19",
+          "tier": "T1",
+          "statement": "the 24h BEADS opened/closed/landed counts and 8-bucket sparklines come only from bead JSON and `landing.log`; an unreadable `landing.log` gives `?` for the landed series",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-20",
+          "tier": "T0",
+          "statement": "`spira_event` records kind/target/title/detail to `events.log`, suppresses repeats per (kind, target) within a window then reports `+N more`, refuses an empty kind or title, and every emitted kind is declared, lowercase-dotted and ≤32 characters",
+          "covering_suites": [
+            {
+              "path": "spira/test-event-taxonomy.sh",
+              "tier": "T0",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-event.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-cockpit-observability-21",
+          "tier": "T1",
+          "statement": "every count the pane renders shows `?` when its key is absent or `?`, never `0`; a key missing from collector skew renders `coll <rev>`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-22",
+          "tier": "T1",
+          "statement": "the pane fills exactly its height: NOW served first, NEXT/RECENT capped at 5, slack to INFLOW, CI keeps its row, no row exceeds 70/96 columns, labels align at column 9",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-23",
+          "tier": "T1",
+          "statement": "NOW rows come from `trace_stats`/`trace_tail`: turns are distinct message ids, ctx is the last usage, only the current attempt counts, MODEL mismatch with `FAYTH_MODEL` shows a warning, an unreadable trace gives `?` and an empty trace gives `-`, live-aeon count comes from pidfiles and /proc",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-24",
+          "tier": "T1",
+          "statement": "DRAINING (minutes and resume hint) and STOPPED are independent banners; a stale snapshot is STALE (naming probe and kill count) when its core probe timed out, FAULT (age) otherwise; the threshold `SPIRA_SNAP_STALE_S` is shared with `watchtower.sh` and `doctor.sh`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-25",
+          "tier": "T1",
+          "statement": "no snapshot anywhere gives 'no snapshot'; a snapshot at the XDG alternative while the reader looks elsewhere gives PATH MISMATCH naming both paths",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-26",
+          "tier": "T1",
+          "statement": "MAIL, QUEUE and LAND sections render NEW/READ/DONE, `batch #<pr>`, rc and branches, and the lease countdown; retired labels stay removed",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-27",
+          "tier": "T1",
+          "statement": "panel frame: exactly `h` rows and at most `w` columns at every geometry/view/mode, two bands, content never dim, the reply editor wraps losslessly with exactly one caret, ages are coarse durations from an exact epoch/iso pair",
+          "covering_suites": [
+            {
+              "path": "spira/test-cockpit-rust.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-cockpit-observability-28",
+          "tier": "T1",
+          "statement": "panel views: events go only to NOTIFICATIONS; alerts are selected by label, sorted oldest-first, self-clear to history; silences expire at their deadline (unparseable deadline silences nothing); acking does not hide an alert; a dismissed insight returns only when the operator spoke last; an optimistic hide ends only when the write is visible; an empty or errored read is never an all-clear",
+          "covering_suites": [
+            {
+              "path": "spira/test-cockpit-rust.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-cockpit-observability-29",
+          "tier": "T1",
+          "statement": "panel affordances: FYI never offers a verdict, ALERTS offers ack/silence/history but never decide, `p reject` appears only on DECISIONS, only `ask-*` beads close on reply while `ask-law`/`ask-suit` parse as law; the enact line splits on the first colon without doubling the `law-` prefix",
+          "covering_suites": [
+            {
+              "path": "spira/test-cockpit-rust.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-cockpit-observability-30",
+          "tier": "T2",
+          "statement": "panel write paths (close, comment, archive, enact, premise-reject) call `bd`/`rule.sh` with the right arguments and actor, and surface failure",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-31",
+          "tier": "T1",
+          "statement": "Loom `/api/beads` serves only live work: typed edges hoisted once, dangling/closed edges dropped and counted, JSON-escaped titles survive, an advisory preamble is tolerated, two requests within the cache window cost one bd call, over budget returns 503, a bd failure returns 502 (never an empty graph), static routes serve and unknown paths 404",
+          "covering_suites": [
+            {
+              "path": "spira/test-cockpit-rust.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-cockpit-observability-32",
+          "tier": "T1",
+          "statement": "Loom `/api/ops` decodes `cockpit.env` shell quoting exactly, exposes only `SP_` keys, leaves absent keys absent, errors on an unreadable file, and reports `halted` and `cockpit_env_age_s`",
+          "covering_suites": [
+            {
+              "path": "spira/test-cockpit-rust.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-cockpit-observability-33",
+          "tier": "T1",
+          "statement": "Loom `model.js` derives components/depth/width, excludes closed/provenance/dangling edges and collapses duplicates, honours configured labels, groups by repo and epic, uses a 14-day arrivals flow, and parses real bd JSON; the shipped page carries no embedded payload",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-34",
+          "tier": "T1",
+          "statement": "Loom self-maintenance: `layout.sh` rebuilds when the source is newer than the binary or the binary is missing, and restarts a stale service only when the binary is executable",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-35",
+          "tier": "T1",
+          "statement": "`ready.sh` reports FAIL/`?`/WARN/pass/skip for each check (sentinel timer, halt stamp, DB, dolt starting-port, statutes, ready work, loom latency, agent, snapshot freshness, panes) and exits 1 on any FAIL or `?`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-36",
+          "tier": "T1",
+          "statement": "`ctx-meter.sh` session pointer: the operator's status-line tick owns the pointer; an idle second session cannot steal it until the holder is stale; a stale, deleted or corrupt pointer means 'no session'",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-37",
+          "tier": "T1",
+          "statement": "`ctx-meter.sh` limits: burn rate is measured over the span not pairwise; a projection appears only if the window fills before it resets; flat/single-sample/short/1-point histories project nothing; a reset is a boundary; an absent or malformed window renders nothing (never 0%); the sample file is pruned to 6h and deduplicated; env mode prints `-`/`?`; the line is ≤110 columns",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-38",
+          "tier": "T1",
+          "statement": "`statusline-check.py` classifies settings as ours, other, absent, unreadable, stale (including through a /tmp wrapper) or fragile",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-39",
+          "tier": "T1",
+          "statement": "`tokens.sh` attributes turns to aeon/archivist/session deduplicated by message id; `model-switch-report.sh` gives $/bead as `$?` (never `$0`) with no cost data; `released-defects.sh` counts only introductions that reached base before the fix and gives `?` for an unresolvable repo",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-40",
+          "tier": "T1",
+          "statement": "`cockpit/resolve.sh` exits non-zero and relays bd's complaint on a failed close, and prints 'resolved' on success",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-41",
+          "tier": "T1",
+          "statement": "pane identity comes from the process a pane actually runs, not argv text that merely mentions `health.sh`; `ensure` untags an impostor, logs it, and never kills the session pane",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-42",
+          "tier": "T2",
+          "statement": "`up` builds session, mail (below, left) and a full-height health pane; `ensure` respawns a closed mail pane; with no mail client, or one not installed, there is no mail pane",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-43",
+          "tier": "T1",
+          "statement": "`ensure` detaches ghost clients idle longer than `COCKPIT_CLIENT_IDLE_SECS`, keeps the live client's height, logs the tty, and does not move the operator's active pane when there is nothing to repair",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-44",
+          "tier": "T1",
+          "statement": "the health pane command carries `SPIRA_CONF`; in split-checkout mode it runs the `SPIRA_PROD` renderer unless `SPIRA_DEV_RENDERER=1`; mouse mode defaults on, can be switched off with off/no/0, and never fails the caller",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-45",
+          "tier": "T1",
+          "statement": "a copy of `layout.sh` refuses `ensure` and names the installed path; the collector watchdog restarts an instance-qualified collector that started before `cockpit.sh` was last promoted",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-46",
+          "tier": "T3",
+          "statement": "`rebuild.sh`, from a dead server, creates brain/hunk/chat/cockpit with dashboards in `brain:0` and cockpit windows linked; it verifies itself and fails naming the session pane when the brief is missing, is idempotent against a healthy server, and reports an over-long socket as unusable",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-47",
+          "tier": "T2",
+          "statement": "`tmux-env.sh` scrubs the Claude session identity from the server's global env; panes opened afterwards do not inherit it, and a second run is idempotent",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-cockpit-observability-48",
+          "tier": "T2",
+          "statement": "`cockpit-remote`: the dialer refuses an empty `COCKPIT_HOST`; a watcher that loses the lock exits non-zero promptly naming the holder; `start` delegates to systemd when the unit is enabled and forks with setsid otherwise; the orphan-lock probe names the holder's pid and path",
+          "covering_suites": []
+        }
+      ]
+    },
+    {
       "area": "dispatch",
       "use_cases": [
         {
@@ -840,6 +1180,468 @@
           "covering_suites": [
             {
               "path": "spira/test-gate-metering.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "area": "instance-lifecycle",
+      "use_cases": [
+        {
+          "id": "UC-instance-lifecycle-01",
+          "tier": "T1",
+          "statement": "`build.sh` builds loom, panel, broker, czar-pass and spira-supervise in order to `SPIRA_*_BIN`; with no cargo it exits 0 naming the lost features, and `--skip-build` never invokes cargo",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-02",
+          "tier": "T2",
+          "statement": "`build-tarball.sh` produces a same-named `spira-YYYYMMDDTHHMMSSZ.tar.gz`/dir pair from a clean checkout; MANIFEST records the source SHA and `--name` pins stem and timestamp",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-03",
+          "tier": "T0",
+          "statement": "the tarball ships every `@*_BIN@` binary a non-optional unit's ExecStart references, executable; the build refuses without `--supervise-bin` and ships no `sp-*`/`*.fixed` scratch files",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-04",
+          "tier": "T2",
+          "statement": "`build-tarball.sh verify` accepts a MANIFEST whose commit exists in the source repo and refuses one that does not",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-05",
+          "tier": "T2",
+          "statement": "`build-bd.sh --from-release` derives `beads_<ver>_<os>_<arch>.tar.gz` and refuses a checksum mismatch before unpacking",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-06",
+          "tier": "T2",
+          "statement": "`release.sh cut` creates an annotated tag listing bead ids landed since the previous tag on the repo-map base ref, not hardcoded `main`; a no-op cut creates no tag and `show` reads it back",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-07",
+          "tier": "T2",
+          "statement": "`review.sh` records a ship/block verdict per release unit, files a finding bead on block, and never duplicates it",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-08",
+          "tier": "T2",
+          "statement": "`activate.sh` unpacks to a versioned read-only release dir, atomically repoints `current` and keeps the previous release; `--dry-run` changes nothing",
+          "covering_suites": [
+            {
+              "path": "spira/test-activate.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-09",
+          "tier": "T1",
+          "statement": "`activate.sh` prunes releases beyond `SPIRA_RELEASES_KEEP`, oldest first, and never prunes the `current` target",
+          "covering_suites": [
+            {
+              "path": "spira/test-activate.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-10",
+          "tier": "T2",
+          "statement": "`activate.sh` refuses while this instance's aeons are live, naming them and `SPIRA_ACTIVATE_FORCE`, leaving `current` untouched; after the swap it daemon-reloads and restarts only non-aeon units",
+          "covering_suites": [
+            {
+              "path": "spira/test-activate.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-11",
+          "tier": "T2",
+          "statement": "rollback is re-activation of an already-unpacked release (unpack skipped), after which units execute the older code",
+          "covering_suites": [
+            {
+              "path": "spira/test-activate.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-12",
+          "tier": "T2",
+          "statement": "`deploy.sh` resolves `latest` and refuses a draft, the already-current release, a DB-migration mismatch and a failed pre-deploy doctor, all before any disruptive step",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-13",
+          "tier": "T2",
+          "statement": "`deploy.sh` drains first (a refusal blocks the deploy, `--force` slays with `--keep-work --reopen`), writes `SPIRA_PROD` before activate restarts services, then re-renders units with the new `SPIRA_PROD`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-14",
+          "tier": "T2",
+          "statement": "a post-activation health failure rolls back to the prior release and restores spira.conf; on a first deploy it removes `current` and re-renders on the checkout, and never re-enables ctrl-suspended units",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-15",
+          "tier": "T1",
+          "statement": "a release installed from its tarball runs from a read-only tree: sentinel dispatches and loom serves without cargo, and `conf.sh` resolves `SPIRA_LOOM_BIN` to `bin/loom`",
+          "covering_suites": [
+            {
+              "path": "spira/test-artifact-install.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-16",
+          "tier": "T1",
+          "statement": "root install refuses with exit 5 on each conflict (foreign harness, live `aeon.sh`, gate lock held, instance mismatch, Dolt port serving another data_dir), naming the remedy and `SPIRA_INSTALL_CONFLICT_CONSIDERED`; a clean box passes",
+          "covering_suites": [
+            {
+              "path": "spira/test-install-conflicts.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-17",
+          "tier": "T1",
+          "statement": "root install refuses a git-checkout `SPIRA_PROD` and a `CONFIGURE_PROD` without `conf.sh`; on an empty `SPIRA_RELEASES` it bootstraps `releases/bootstrap` with `current -> bootstrap`, otherwise it refuses naming `activate.sh`",
+          "covering_suites": [
+            {
+              "path": "spira/test-install-prod-checkout.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-18",
+          "tier": "T2",
+          "statement": "root install exits 3 when installed but `ready.sh` fails; `--dry-run` prints each phase and mutates nothing",
+          "covering_suites": [
+            {
+              "path": "spira/test-install-refusal.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-19",
+          "tier": "T1",
+          "statement": "the unit installer refuses a checkout on the wrong branch or behind the landref before writing any unit, skipping the check for artifact deploys and exact-tag detached HEADs; `SPIRA_INSTALL_FORCE` overrides",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-20",
+          "tier": "T1",
+          "statement": "the unit installer refuses when another instance's config shares any of `SPIRA_RUN`/`SPIRA_DB`/`SPIRA_PROD`/`SPIRA_DOLT_DATA`/`SPIRA_TESTDB_PORT`, naming the key, the other instance and its file, writing no unit",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-21",
+          "tier": "T1",
+          "statement": "the unit installer refuses while this instance's aeons are live (before daemon-reload), and refuses when any ExecStart target is missing or lacks +x",
+          "covering_suites": [
+            {
+              "path": "spira/test-install-aeons.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-22",
+          "tier": "T1",
+          "statement": "per-unit apply decision table: changed writes/restarts/counts; unchanged does nothing; masked is left and reported; operator-disabled is not re-enabled; ctrl-suspended is not enabled; world-halted enables without `--now`; `spira-aeon-*` is never restarted or enabled",
+          "covering_suites": [
+            {
+              "path": "spira/test-install-decide.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-23",
+          "tier": "T2",
+          "statement": "a changed timer whose oneshot is mid-pass is applied only after the oneshot drains; after install, any enabled-but-inactive unit makes the installer exit non-zero",
+          "covering_suites": [
+            {
+              "path": "spira/test-install-aeons.sh",
+              "tier": "T2",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-install-decide.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-24",
+          "tier": "T1",
+          "statement": "rendering produces instance-suffixed `spira-*-<inst>` units whose timers target the suffixed service, keeps shared units plain-named, renders watchers as `spira-watch-<name>-<inst>.service` (never `@`), and leaves no `@PLACEHOLDER@`",
+          "covering_suites": [
+            {
+              "path": "spira/test-install-naming.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-25",
+          "tier": "T1",
+          "statement": "optional units are gated by what is present (binary, `inotifywait`, `SPIRA_SELF_TEST`); a missing prerequisite marks the unit OPTIONAL, not installed and not enabled, with a note",
+          "covering_suites": [
+            {
+              "path": "spira/test-units-optional.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-26",
+          "tier": "T1",
+          "statement": "the renderer refuses `@DOLT@` templates when dolt is absent and never emits an empty ExecStart; explicitly empty `SPIRA_PROD` falls back to `SPIRA_HOME`, and cockpit-ensure derives from `dirname(SPIRA_PROD)`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-27",
+          "tier": "T2",
+          "statement": "prune disables, stops and removes a `spira-*-<inst>` unit absent from UNITS and an orphaned watcher (row left the manifest), never touching a manifest watcher; neither loop prunes the other's units",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-28",
+          "tier": "T2",
+          "statement": "legacy migration disables un-suffixed and `spira-watch@` units before their per-instance replacements are enabled; it never touches shared units, is silent on a clean box, and `--no-migrate-watchers` spares watchers",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-29",
+          "tier": "T1",
+          "statement": "a non-prod install seeds `SPIRA_INSTANCE=<inst>` into `dirname(SPIRA_PROD)/spira.conf` once, preserving existing lines; a prod install does not write the file",
+          "covering_suites": [
+            {
+              "path": "spira/test-install-conf-seed.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-30",
+          "tier": "T2",
+          "statement": "`unit-ensure.sh` reinstalls missing or changed units (daemon-reload only then), is a no-op otherwise, and reports MISSING-TARGET without enabling",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-31",
+          "tier": "T0",
+          "statement": "unit-file invariants: every timer template is in UNITS (or OPTIONAL) and in ENABLE and fires periodically; restarting services have a reachable start limiter; WatchdogSec appears only on non-shell ExecStart; the verdict service has `TimeoutStartSec>=3600` and no CPUQuota",
+          "covering_suites": [
+            {
+              "path": "spira/test-timer-templates.sh",
+              "tier": "T0",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-32",
+          "tier": "T1",
+          "statement": "`cadence.sh` changes a timer's cadence via a revertible drop-in and never leaves it without a next elapse; it refuses unknown units and verify refuses an empty sweep",
+          "covering_suites": [
+            {
+              "path": "spira/test-cadence-seams.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-33",
+          "tier": "T2",
+          "statement": "`owned.sh list` emits every artefact kind in 5-field rows, with unit rows equal to `install.sh --render` for that instance; `check` reports absent, present or drifted per artefact",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-34",
+          "tier": "T2",
+          "statement": "`install.sh --diff` and `skew.sh units` return 0 clean, 1 with DIFFERS/MISSING, and 3 when the installer is missing",
+          "covering_suites": [
+            {
+              "path": "spira/test-unit-drift.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-35",
+          "tier": "T2",
+          "statement": "`skew.sh check` returns 1 for NOT-LATEST or MANIFEST-MISMATCH, 0 'in effect', and 3 for missing releases/`current`/MANIFEST; artifact mode reads tags via gh",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-36",
+          "tier": "T2",
+          "statement": "`skew.sh foreign` refuses branches that change a vendored harness copy outside the harness repo, exempting the harness's own repo and dev source, and returns 3 on conf failure",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-37",
+          "tier": "T2",
+          "statement": "`skew.sh gap` counts commits behind the remote; `refresh` advances even under a live lease, swaps atomically (new inode) and stashes dirty files",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-38",
+          "tier": "T2",
+          "statement": "`uninstall.sh` stops/disables/removes owned units, disables linger, removes harness symlinks and session hooks; it is idempotent, refuses ambiguity across instances, reports strays without deleting them, honours `--purge`/`--dry-run`, and a partial install uninstalls with exit 0",
+          "covering_suites": [
+            {
+              "path": "spira/test-uninstall.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-39",
+          "tier": "T2",
+          "statement": "`uninstall.sh --purge-database` removes the DB only when the operator types back the bead count, and refuses on mismatch",
+          "covering_suites": [
+            {
+              "path": "spira/test-uninstall.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-40",
+          "tier": "T4",
+          "statement": "a fresh-box install→ready→uninstall round trip on real systemd leaves the unit directory byte-identical to before",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-41",
+          "tier": "T1",
+          "statement": "`world.sh stop` stops active work units (resolved instance-qualified name, plain fallback), never stops cockpit/loom/landing, spares CI watchers unless `--hard`, and exits non-zero without printing STOPPED on any failed stop",
+          "covering_suites": [
+            {
+              "path": "spira/test-world-decide.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-42",
+          "tier": "T1",
+          "statement": "`world.sh start` starts timers except those ctrl-suspended or systemd-disabled, revives non-oneshot watchers stopped by `--hard`, and leaves active ones alone",
+          "covering_suites": [
+            {
+              "path": "spira/test-world-decide.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-43",
+          "tier": "T0",
+          "statement": "`world.sh drain` touches no unit and writes a stamp with a resume hint; `--timeout` exits 1 NOT DRAINED/REMAIN GATED, `--deadline` slays with `--keep-work --reopen`, `resume` clears the stamp, and every aeon door carries both drain and halt gates",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-instance-lifecycle-44",
+          "tier": "T1",
+          "statement": "`world.sh status` reports landing, live gate and landing workers from `/proc`, DRAINING, active CI watchers and `svc: <result>` for a failed last run, saying 'unknown' (not 'inactive') for an unresolvable unit",
+          "covering_suites": [
+            {
+              "path": "spira/test-world-decide.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-45",
+          "tier": "T1",
+          "statement": "`ctrl.sh`: a suspension needs a reason and an owner; check/list/resume work; divergence reports suspended-but-running and masked-but-undeclared units",
+          "covering_suites": [
+            {
+              "path": "spira/test-ctrl.sh",
+              "tier": "T1",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-world-decide.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-46",
+          "tier": "T2",
+          "statement": "`acceptance-ci.sh` builds a scratch repo on `main` with a git identity and a repo-map, puts `~/.local/bin` on PATH, passes `XDG_RUNTIME_DIR`, and propagates `acceptance-run.sh`'s exit code",
+          "covering_suites": [
+            {
+              "path": "spira/test-acceptance-local.sh",
+              "tier": "T2",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-acceptance-run.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-instance-lifecycle-47",
+          "tier": "T1",
+          "statement": "`acceptance-run.sh` runs install with `SPIRA_OPERATED=0`, runs the clone's own `ready.sh` unmasked, extracts bead ids robustly, proves landing by ancestry, records a git note, and emits a single PASS/FAIL line",
+          "covering_suites": [
+            {
+              "path": "spira/test-acceptance-lib.sh",
+              "tier": "T1",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-acceptance-local.sh",
+              "tier": "T2",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-acceptance-run.sh",
               "tier": "T2",
               "over_budget": false
             }
@@ -1737,6 +2539,394 @@
             "date": "2026-09-26",
             "bead": "sp-fhzib.4"
           }
+        }
+      ]
+    },
+    {
+      "area": "safety-fences",
+      "use_cases": [
+        {
+          "id": "UC-safety-fences-01",
+          "tier": "T1",
+          "statement": "in an aeon session, queue- and landing-operating commands (`batch.sh`, `git push`, `gh pr create`, `queue.sh flush`, `verdict.sh`, `landing.sh`) are refused, `queue.sh stats` is allowed; a blocked name used as a file argument or suite name is not an invocation, but a compound that also invokes it is",
+          "covering_suites": [
+            {
+              "path": "spira/test-guards.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-02",
+          "tier": "T1",
+          "statement": "in an aeon session, writes under `SPIRA_PROD` or `SPIRA_RUN/landstate` are refused (redirect, rm, mv, tee, `sed -i`, `git -C` add/commit/reset/checkout/clean); reads/exec from prod, rendered brief commands, `census.sh`, and prod paths in heredoc/prose are allowed",
+          "covering_suites": [
+            {
+              "path": "spira/test-guards.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-03",
+          "tier": "T1",
+          "statement": "in an aeon session, `bd create` against production is refused for a test-data title or a `repo:` label missing from the repo map; an inline `SPIRA_DB=` does not bypass it, a non-production path passes, and `SPIRA_BD_CREATE_OVERRIDE=1` bypasses",
+          "covering_suites": [
+            {
+              "path": "spira/test-guards.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-04",
+          "tier": "T1",
+          "statement": "an aeon may not `bd close` while an operator comment posted after its claim is unacknowledged; an `ACK <uuid>` note satisfies the guard; pre-claim and the aeon's own comments are exempt, and the refusal names the comment id and `SPIRA_CLOSE_UNACKED_CONSIDERED`",
+          "covering_suites": [
+            {
+              "path": "spira/test-guards.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-05",
+          "tier": "T1",
+          "statement": "a post-claim operator comment is delivered to the aeon exactly once as PostToolUse `additionalContext`, naming the ACK command; pre-claim and self comments are not delivered",
+          "covering_suites": [
+            {
+              "path": "spira/test-guards.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-06",
+          "tier": "T1",
+          "statement": "an aeon may not remove any `delivers:*` label, and the refusal names the criterion's producer; `incident.sh retire-unsatisfiable-delivers` and ordinary labels are allowed",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-safety-fences-07",
+          "tier": "T1",
+          "statement": "an aeon may not write `sop-*`/`law-*` keys with `bd remember` in any form; the refusal names `sop.sh write`/`rule.sh enact`, and those sanctioned writers pass",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-safety-fences-08",
+          "tier": "T1",
+          "statement": "a non-aeon session may not edit spec fields of an in-flight bead (in_progress + assignee + branch label); non-spec flags, not-in-flight beads and aeon sessions pass, and the refusal suggests `bd comment`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-safety-fences-09",
+          "tier": "T1",
+          "statement": "during a focus period (narrowed `SPIRA_FAYTHS`), an aeon's `bd close` must cite an open bead or a closed insight bead in `--reason`/`--reason-file`; with the full roster the guard is a no-op",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-safety-fences-10",
+          "tier": "T1",
+          "statement": "in an aeon session, `bd update --status closed` in any argv form is refused with exit 2 naming `bd close`; `bd close` and other status values pass",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-safety-fences-11",
+          "tier": "T1",
+          "statement": "in an aeon session, writes into `SPIRA_MAIL` are refused whether by Bash redirect/mv/cp/touch or by the Write/Edit tools, for both literal and expanded path; `mail.sh send` and reads are allowed",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-safety-fences-12",
+          "tier": "T1",
+          "statement": "in an aeon session, direct execution of `spira/test-*.sh` in any shell shape is refused naming `testenv-batch.sh`; `testenv-batch.sh` runs and reading a suite are allowed",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-safety-fences-13",
+          "tier": "T1",
+          "statement": "`DELETE FROM schema_migrations` is refused as a tool call (`bd sql`/`dolt sql`, case- and whitespace-insensitive) and at `bdq create` even with the needs-ryan label; both refusals point at `bd migrate schema`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-safety-fences-14",
+          "tier": "T1",
+          "statement": "`bdq create` refuses harness-halting vocabulary (world stop, `systemd/install.sh`, daemon-reload, `systemctl stop/restart spira-*`, schema migrate) unless the bead carries the ask label, refusing before `bd` is invoked; near-miss text passes",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-safety-fences-15",
+          "tier": "T1",
+          "statement": "every guard blocks through one documented PreToolUse protocol naming guard, remedy and override; the override works from env and inline; the guard is inert outside its session scope, for tools it does not own, and for single-quoted/heredoc prose; behaviour on an empty or malformed payload is defined and tested",
+          "covering_suites": [
+            {
+              "path": "spira/test-guards.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-16",
+          "tier": "T1",
+          "statement": "`aeon_settings` registers every guard meant for aeons, identically for the sweep and the claimed launch; a guard that is missing or not executable is reported, never silently dropped",
+          "covering_suites": [
+            {
+              "path": "spira/test-aeon-settings-guard-allowlist.sh",
+              "tier": "T1",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-guards.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-17",
+          "tier": "T2",
+          "statement": "an aeon commit that stages a path already dirty before the session began is refused, naming the path; own-path commits succeed, and `SPIRA_ALLOW_DIRTY_STAGE=1` overrides",
+          "covering_suites": [
+            {
+              "path": "spira/test-aeon-dirty-commit.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-18",
+          "tier": "T2",
+          "statement": "`branch-guard.sh staged` refuses an aeon-identity commit on the base branch and an aeon commit outside `SPIRA_WORK`, naming email/branch/both; operator identity, non-base branches and sweeps pass",
+          "covering_suites": [
+            {
+              "path": "spira/test-branch-guard.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-19",
+          "tier": "T2",
+          "statement": "`branch-guard.sh check` reports an aeon commit at a base tip and a shared checkout ahead of its remote, and reports clean after an operator commit on top",
+          "covering_suites": [
+            {
+              "path": "spira/test-branch-guard.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-20",
+          "tier": "T2",
+          "statement": "the `reference-transaction` hook refuses unsanctioned deletion of `refs/heads/spira/*` (including `spira/queue/*`) even from inside an aeon worktree; `SPIRA_REF_SANCTIONED=1` allows it, non-spira refs are untouched, the committed phase exits 0, and large stdin drains without SIGPIPE",
+          "covering_suites": [
+            {
+              "path": "spira/test-ref-guard.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-21",
+          "tier": "T2",
+          "statement": "`worktree-hooks.sh install` arms every canonical hook in an aeon worktree; its composed `pre-commit` runs the canonical fences first then the dirty-path guard; an install failure in `aeon.sh` is loud",
+          "covering_suites": [
+            {
+              "path": "spira/test-ref-guard.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-22",
+          "tier": "T2",
+          "statement": "the tracked `hooks/pre-commit` runs `exclude.sh staged`, `scratch-fence.sh` and `branch-guard.sh staged` in a clone armed by `exclude.sh install`, and each can refuse through the hook",
+          "covering_suites": [
+            {
+              "path": "spira/test-branch-guard.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-23",
+          "tier": "T1",
+          "statement": "`exclude.sh` keeps beads data (`.beads/`, `.dolt/`, JSONL exports) out of the harness tree and out of staged files",
+          "covering_suites": [
+            {
+              "path": "spira/test-exclude.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-24",
+          "tier": "T1",
+          "statement": "`scratch-fence.sh` refuses tracked root `sp-*`/`*.fixed` files, ignores subdirectories, exits 3 on an empty index, and honours `SCRATCH_FENCE_OK`",
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-fences.sh",
+              "tier": "T1",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-scratch-fence.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-25",
+          "tier": "T1",
+          "statement": "`inventory.sh` refuses absolute home-directory and workspace-container paths, `(per Name, date)` marks and real emails in tracked and untracked files; it exempts its own pattern files and example domains, exits 3 on an empty index, and supports `--scan`/`--patterns`",
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-fences.sh",
+              "tier": "T1",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-inventory.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-26",
+          "tier": "T2",
+          "statement": "`orphan-test.sh` refuses a diff that removes a token an unmodified suite still asserts on; it passes when the suite changes in the same diff, on an `orphan-test-ok` annotation, and on a token present on both `-` and `+` lines, exiting 77 without `SPIRA_GATE_BASE`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-safety-fences-27",
+          "tier": "T1",
+          "statement": "`host-check.sh` refuses a host suite with neither a non-empty `# host-reason` nor testenv use in code; its counts render a number or `?`, never 0 on an empty tree",
+          "covering_suites": [
+            {
+              "path": "spira/test-host-reason.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-28",
+          "tier": "T1",
+          "statement": "`suite-state-fence.sh` refuses a quarantine entry with no bead, a CLOSED bead, a nonexistent suite or no reason; an empty file reports clean",
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-fences.sh",
+              "tier": "T1",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-suite-state.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-29",
+          "tier": "T0",
+          "statement": "no harness script writes a dimension label (repo/severity/branch/fayth/lane/gate) with `bd label add` or embeds one in `SPIRA_INCIDENT_LABELS`; `bd set-state` is the only writer",
+          "covering_suites": [
+            {
+              "path": "spira/test-set-state-semantics.sh",
+              "tier": "T2",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-set-state-writers.sh",
+              "tier": "T0",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-30",
+          "tier": "T0",
+          "statement": "persona tool allowlists: no restricted persona (Ops, czar) gets bare `Bash`; each allows its diagnostics and denies mutations (rm, `systemctl start/stop/restart`, `git branch -D`, destructive bd)",
+          "covering_suites": [
+            {
+              "path": "spira/test-ops-allowlist.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-31",
+          "tier": "T1",
+          "statement": "the czar stage fence: each class defaults to shadow and refuses, naming `SPIRA_CZAR_STAGE_<CLASS>`; `act` allows, and `queue.sh eject` honours the fence before touching the DB",
+          "covering_suites": [
+            {
+              "path": "spira/test-czar-lint.sh",
+              "tier": "T0",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-czar-shadow.sh",
+              "tier": "T1",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-ops-allowlist.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-32",
+          "tier": "T2",
+          "statement": "spike confinement: `confine.sh` refuses a spike branch touching files outside `SPIRA_SPIKE_PATHS` (matching by path prefix against the merge base, bound to the spike persona); an unreadable bead fails open; `landing.sh` reopens an unconfined spike without merging it and keeps the branch",
+          "covering_suites": [
+            {
+              "path": "spira/test-spike.sh",
+              "tier": "T3",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-33",
+          "tier": "T0",
+          "statement": "chamber integrity: every `{{PLACEHOLDER}}` is rendered by its program, every command a brief names exists, every fayth parses, spike/ops brief clauses are present, and `bd reopen` is called only through `bead_reopen`",
+          "covering_suites": [
+            {
+              "path": "spira/test-lint-chamber.sh",
+              "tier": "T0",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-safety-fences-34",
+          "tier": "T0",
+          "statement": "shipped-tree readiness: every shipped shell script parses, `conf.sh` resolves `SPIRA_HOME` without operator config, and the ask-label default names no operator",
+          "covering_suites": [
+            {
+              "path": "spira/test-freshclone.sh",
+              "tier": "T0",
+              "over_budget": false
+            }
+          ]
         }
       ]
     },
