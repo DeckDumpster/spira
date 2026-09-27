@@ -60,7 +60,6 @@ FAYTH_LANE=maechen
 FAYTH_TIMEOUT_SECONDS=3600
 FAYTH_LEASE_MINUTES=70
 FAYTH_HEARTBEAT_SECONDS=30
-FAYTH_STALL_BEATS=8
 
 # READ-AND-FILE TOOLSET. Maechen reads the corpus, runs diagnostic commands, and files
 # beads. It does not write code; it does not edit the harness. A retrospective that lands

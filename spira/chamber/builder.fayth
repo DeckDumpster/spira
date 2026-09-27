@@ -89,10 +89,6 @@ FAYTH_ELASTIC=1
 FAYTH_LEASE_MINUTES=90
 FAYTH_HEARTBEAT_SECONDS=30
 
-# FAYTH_STALL_BEATS is unused by the lease mechanism and retained only to avoid breaking any
-# tooling that still reads it.
-FAYTH_STALL_BEATS=10
-
 FAYTH_TOOLS="Bash,Read,Edit,Write,Glob,Grep,TodoWrite"
 FAYTH_PROJECT_INSTRUCTIONS=repo
 

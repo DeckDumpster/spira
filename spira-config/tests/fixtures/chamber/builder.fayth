@@ -90,10 +90,7 @@ FAYTH_HEARTBEAT_SECONDS=30
 # LIVENESS LEASE. An aeon holds a fixed 10-minute liveness lease renewed by its trace
 # growing. If the lease lapses the aeon is killed with work preserved. FAYTH_LEASE_SECONDS
 # is the liveness lease duration (not the Dolt claim TTL above); 600s is 10 minutes.
-# FAYTH_STALL_BEATS and FAYTH_STALL_GRANTS are unused by the new lease mechanism and
-# retained here only to avoid breaking any tooling that reads them.
 FAYTH_LEASE_SECONDS=600
-FAYTH_STALL_BEATS=10
 
 FAYTH_TOOLS="Bash,Read,Edit,Write,Glob,Grep,TodoWrite"
 FAYTH_PROJECT_INSTRUCTIONS=repo

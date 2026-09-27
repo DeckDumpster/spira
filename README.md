@@ -120,8 +120,8 @@ landed" and "the landing worker never ran" look identical from outside.
 2. **An aeon claims it** atomically under a lease with a TTL the persona sets.
 3. **It gets a worktree** cut from that repository's declared base ref, and a brief assembled
    from the persona's `.md`, the statutes in force, and the bead itself.
-4. **It works.** A heartbeat refreshes the lease only while something observably moves; a
-   persona quiet for `FAYTH_STALL_BEATS` checks stops heartbeating and its lease expires.
+4. **It works.** A heartbeat renews the lease only while the aeon's trace file is still
+   growing; one that goes quiet for `FAYTH_LEASE_MINUTES` stops renewing and its lease lapses.
    There is deliberately no wall-clock ceiling on the worker persona — a clock cannot tell slow
    from stuck, and killing on one charges an attempt for being legitimately long.
 5. **It commits naming the bead id**, cuts the review, and **exits.** An aeon does not sit
