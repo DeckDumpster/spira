@@ -16,7 +16,7 @@ spira/sop.sh write <slug> -   # text on stdin
 
 Statutes are how to behave; SOPs are how to fix. They share one mechanism, split by prefix — `law-` and `sop-` — so the [[spira]] Ops persona reads its runbooks exactly the way every agent already reads [[common-law]]. Ops is summoned by an incident bead filed from a failed systemd unit, matches the payload against the `MATCH:` lines below, and executes the first one that fires.
 
-**50 SOP(s)** on the shelf as of 2026-09-26.
+**54 SOP(s)** on the shelf as of 2026-09-26.
 
 ## The closing rule
 
@@ -107,26 +107,20 @@ bead_id=sp-vcobo  # substitute the bead from the incident title
 commit=$(git log --all --oneline | grep "$bead_id" | head -1 | awk '{print $1}')
 git merge-base --is-ancestor "$commit" origin/main
 ```
-If git merge-base returns 0, the work IS actually landed. The incident is a false alarm.
+If 0, work IS landed: false alarm from the systemic bug, not a missing commit.
+
+If nonzero AND `bd show` finds the bead currently OPEN, this SOP doesn't apply: it likely flapped closed->open between scan and check (aeon.sh certify-close fallback, then a verdict reopened it — see sp-2d14d). File a bead documenting the flap; do not apply this FIX.
 ```
 
 **Fix**
 
 ```
-If the commit is on origin/main, the work is genuinely landed but may lack a LANDED record if:
-1. The landing pass didn't recognize the merge commit (wrong merge subject), or
-2. The landstate file was pruned (pruning happens after landing)
+ESCALATE if sp-2dvyh (bead_close_on_land land_mark fix) is not yet landed — root cause is systemic and cannot be patched retroactively in Ops context (guard sp-kz8ob). Add it as a blocker dependency and leave the incident open.
 
-Create the missing LANDED record retroactively:
-```
-export LANDSTATE="$SPIRA_RUN/landstate"
-source "$SPIRA_HOME/lib.sh"
-land_mark <bead_id> LANDED <commit_hash> "Retroactively marked: commit is on origin/main"
+Once sp-2dvyh IS landed: re-check this incident's own BLOCKS list. Child incidents self-resolve once their underlying bead lands or gets requeued/reworked — no separate retroactive-repair step exists or is needed. If every blocked bead now shows CLOSED, this incident is resolved; close it citing their close reasons. New individual incidents for other beads are separate work, not a reason to hold this one.
 ```
 
-bead_close_on_land (lib.sh) calls land_mark LANDED after successfully closing the bead (sp-svkio fix).
-Root causes: merge commit had wrong subject (sp-vcobo case), or missing land_mark call, or pruned landstate files.
-```
+**Escalate** — Only while sp-2dvyh has not landed. See REF for the sp-b8ot4 case history.
 
 **Escalate** — To harden CHECK 5 against missed landstate records: always create the LANDED record when closing, regardless of merge subject. Also consider: if CHECK 5 already validates the commit is in the graph, creating the record is redundant — modify CHECK 5 to trust the graph walk instead of requiring a file.
 
@@ -144,9 +138,25 @@ retroactive land_mark (there is no commit to mark). Worked example: sp-q3lgs
 (diagnosis-only, "no gate ran ... nothing to certify"), flagged by sp-4xb7m,
 closed false-alarm 2026-09-27. See wiki/notes/sp-4xb7m-no-commit-ever-case.md.
 
-**Reference** — wiki/notes/standard-operating-procedures.md, wiki/notes/sp-4xb7m-no-commit-ever-case.md
+**Reference** — wiki/notes/standard-operating-procedures.md, wiki/notes/sp-4xb7m-no-commit-ever-case.md, wiki/notes/sp-b8ot4-closed-not-landed-resolution.md
 
 **Matches** `CLOSED NOT LANDED.*has no LANDED record|CHECK 5.*closed.*not.*landed`
+
+### Closed not landed systemic
+
+`sop-closed-not-landed-systemic`
+
+**Symptom** — Watcher-filed incidents report closed beads with no LANDED landstate record. Systemic flood: ~143 incidents filed during CHECK 5's first production run (sp-qsona, 2026-09-26 10:35-11:06Z) before fix 359016dc5 landed. Fix prevents NEW floods but CHECK 5 cannot close incidents it previously filed.
+
+**Check** — Verify if systemic by checking for multiple incidents in close succession and sp-42xw9 (bug analysis bead) being OPEN. Verify if individual false alarm by: `bead_id=sp-XXXXX; commit=$(git log --all --oneline | grep "$bead_id" | head -1 | awk '{print $1}'); git merge-base --is-ancestor "$commit" origin/main` (returns 0 if landed).
+
+**Fix** — File sp-0wr0f (or verify it's filed): CHECK 5 must close incidents for beads proven landed via commit graph (sentinel.sh lines 739-767). When a bead is proven landed, close the corresponding external_ref incident (closed-not-landed:<bead-id>). Block sp-7xec0 on sp-0wr0f landing. For individual false alarms, create missing LANDED record retroactively using land_mark LANDED.
+
+**Escalate** — Systemic flood requires sp-0wr0f implementation work.
+
+**Reference** — wiki/notes/standard-operating-procedures.md sp-42xw9 sp-0wr0f
+
+**Matches** `recurrence.*closed.*LANDED|143.*incidents.*CHECK 5|sp-0wr0f.*CHECK 5.*close`
 
 ### Conf schema grep q pipefail
 
@@ -181,6 +191,22 @@ bd show $bead_id | grep -i "delivers:action"
 **Reference** — Only valid delivers labels are: beads (for child beads), note (for narrative findings), report (for metrics/data), check (for verification). delivers:action will cause sentinel to reject the close and reopen the bead.
 
 **Matches** `delivers:action is not a recognised type.*beads.*note.*report.*check`
+
+### Disk full container image accumulation
+
+`sop-disk-full-container-image-accumulation`
+
+**Symptom** — df -h / shows root LV above the 90% warn threshold while /tmp (tmpfs) is fine, ruling out sp-q7d72's /tmp-quota mode; the consumer is on the root LV itself.
+
+**Check** — du -xh --max-depth=1 "$HOME/.local" on the host; if .local/share/containers/storage is tens of GB, confirm with `podman images -a | wc -l` (dozens-to-hundreds is the signature) and check CREATED ages of localhost/spira-testenv tags for a steady one-per-1-2h drip with no pruning.
+
+**Fix** — Ops does not run this, file it for a builder/operator. Stopgap (reversible, images rebuild on next suite run): `podman image prune -a -f` on the host, typically reclaims tens of GB. Permanent: add `podman image prune -f` to the container-build path used by suites.sh/test-container harness so every build stops leaving a dangling ~2-4GB layer, capped per law-fence-loops-on-shared-hardware. Also glance at checkpoint/old-beads and stale cargo-target-bins-r* dirs under the run directory for smaller free wins.
+
+**Escalate** — reclaiming disk via podman prune is a bulk delete on shared host storage an Ops aeon cannot fully verify is safe against in-flight runs -- send the operator a decision mail with a default action rather than running it in-session.
+
+**Reference** — wiki/notes/sp-q3lgs-disk-full-container-images.md
+
+**Matches** `(Disk on /.*(9[0-9]|100)% used)|(root filesystem.*near capacity)|(FAULT \([0-9]+%, warn at)`
 
 ### Doctor installing guards
 
@@ -311,6 +337,49 @@ bd -C $SPIRA_DB list | grep sp-yuiuc; verify the incident has no_cause in the de
 **Reference** — wiki/notes/gh-intake-no-issues.md
 
 **Matches** `fetched 0 open issue.*gh-intake`
+
+### Landed citation mismatch
+
+`sop-landed-citation-mismatch`
+
+**Symptom**
+
+```
+bead closed OUTCOME:landed citing a real origin/main commit unrelated to the
+  bead's content/authorship; the bead's own problem stays unfixed after closure.
+```
+
+**Check**
+
+```
+git log -1 --format='%an %ae %s' <cited-sha>; compare to bead owner/description.
+  If unrelated but real (git merge-base --is-ancestor <cited-sha> origin/main), this is it.
+```
+
+**Fix**
+
+```
+Diagnosis only. Two mechanisms found (sp-9geby/sp-dyw7l), neither patched yet:
+  (1) lib.sh bead_cited_commit_on_base()'s "declared" branch (~3927) accepts a
+      self-declared `landed as <sha>` note once it's an ancestor of base, with no
+      id-in-message/content check (the "bare" branch below it does check — copy that).
+  (2) landing.sh:1663-1667 land_mark cites $tip correctly, then bead_close_on_land is
+      passed a fresh `git rev-parse HEAD` re-read instead — vulnerable if the shared land
+      worktree advances between the two reads. Pass $tip everywhere, never re-read HEAD.
+  Grep bead_close_on_land for all call sites before assuming one fix covers every path.
+```
+
+**Escalate**
+
+```
+pinning which mechanism fired for a given bead needs the landing pass's own log
+  near its close time (may be rotated); grep bd notes for "landed as"/"hand-landed" first —
+  absence rules out mechanism #1 for that bead.
+```
+
+**Reference** — wiki/notes/sp-9geby-landed-citation-mismatch.md
+
+**Matches** `closed .* 'landed'.*citing|citing.*(unrelated|wrong).*commit|orphan-work.*count unchanged`
 
 ### Orphaned branches blocking sending
 
@@ -929,6 +998,22 @@ bd show <bead> | grep -E '\b(groom|incident|maechen-sweep|plan|spike|czar-trigge
 **Reference** — sp-ezeiy: watchtower was extracting systemctl's formatting bullet as a unit name
 
 **Matches** `Invalid unit name "●" escaped|FAILED UNIT: ● failing`
+
+### Worktree accumulation
+
+`sop-worktree-accumulation`
+
+**Symptom** — Root filesystem at critical capacity; accumulated worktrees from completed beads consuming significant storage
+
+**Check** — du -sh $SPIRA_RUN/worktree && ls -d $SPIRA_RUN/worktree/* 2>/dev/null | wc -l
+
+**Fix** — Identify completed/closed beads with corresponding worktrees and remove stale worktrees; implement automated cleanup after bead closure
+
+**Escalate** — Implement automated worktree cleanup mechanism — storage management requires operator decision on retention policy and deployment
+
+**Reference** — wiki/notes/standard-operating-procedures.md
+
+**Matches** `filesystem 8[0-9]% used|filesystem 9[0-9]% used|Root .* filesystem.*approaching critical`
 
 ### World drain stall
 
