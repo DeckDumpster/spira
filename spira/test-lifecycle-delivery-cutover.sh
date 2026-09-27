@@ -136,9 +136,14 @@ delivery_state() {  # delivery_state <id> -> state
 delivery_merge_sha() {
     root_sql --use-db spira_lifecycle sql -q "SELECT IFNULL(merge_sha,'') FROM delivery WHERE bead_id='$1'" -r csv 2>/dev/null | tail -n1
 }
-last_event() {       # last_event <id> -> "<event> <applied>"
-    root_sql --use-db spira_lifecycle sql -q \
-        "SELECT event, applied FROM event WHERE lc_key='$1' AND machine='delivery' ORDER BY seq DESC LIMIT 1" -r csv 2>/dev/null | tail -n1 | tr ',' ' '
+last_event() {       # last_event <id> -> "<event> <applied>", or empty if none
+    local out n
+    out="$(root_sql --use-db spira_lifecycle sql -q \
+        "SELECT event, applied FROM event WHERE lc_key='$1' AND machine='delivery' ORDER BY seq DESC LIMIT 1" -r csv 2>/dev/null)"
+    n="$(printf '%s\n' "$out" | wc -l)"
+    # csv prints the header row even with zero matches — one line means no data row.
+    [ "$n" -ge 2 ] || return 0
+    printf '%s\n' "$out" | tail -n1 | tr ',' ' '
 }
 
 # ── git fixture: a base branch and a bead branch, for the content-proof tests ─────────
@@ -157,6 +162,7 @@ mk_pr_branch() {    # mk_pr_branch <id> -> leaves spira/<id> checked out with tw
 }
 
 squash_merge() {    # squash_merge <id> -> prints the merge commit sha on main
+    local id="$1"
     git -C "$GITREPO" checkout -q main
     git -C "$GITREPO" merge -q --squash "spira/$id" >/dev/null
     git -C "$GITREPO" commit -q -m "squash merge $id"

@@ -36,7 +36,9 @@ except Exception:
 dv = d.get("delivery")
 if not dv:
     raise SystemExit(1)
-print(f"{dv.get(\"state\", \"\")} {dv.get(\"version\", 0)}")
+state = dv.get("state", "")
+version = dv.get("version", 0)
+print(f"{state} {version}")
 ' <<< "$out"
 }
 
