@@ -16,13 +16,11 @@
 #   strand.sh:    detect that line in the most recent pass and emit 'pass-truncated' (info)
 #                 instead of 'starved' (escalate).
 #
-# FOUR CASES (law-absence-needs-a-positive-control):
-#
-#   0. POSITIVE CONTROL (classify.py) — PASS_TRUNCATED=0, ready beads, no live aeon →
-#      classifier DOES produce "starved". Proves the check can fire before trusting silence.
-#
-#   1. PASS TRUNCATED (classify.py) — PASS_TRUNCATED=1, same fixture → "pass-truncated"
-#      IS emitted as an info row; "starved" IS NOT emitted.
+# THREE CASES (law-absence-needs-a-positive-control). The classifier's own disposition
+# once PASS_TRUNCATED is set (the positive control and the info-row assertion) moved to
+# test-strand-classify.sh, which shares one positive control across every deliberate-state
+# suppression instead of re-proving it per file. This suite keeps the pass-budget coverage
+# that only it has:
 #
 #   2. STRAND.SH DETECTION — sentinel log contains "not evaluated" for a fayth working
 #      this partition → strand.sh report emits "pass-truncated", not "starved".
@@ -35,8 +33,8 @@
 #
 # defect: sp-ow8n
 # tier: T1
-# covers: spira/strand-classify.py spira/strand.sh spira/sentinel.sh spira/lib.sh
-# hermetic-ok: cases 0-3 use no database; case 4 uses no database (SPIRA_SKIP_RECLAIM=1)
+# covers: spira/strand.sh spira/sentinel.sh spira/lib.sh
+# hermetic-ok: cases 2-3 use no database; case 4 uses no database (SPIRA_SKIP_RECLAIM=1)
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -44,40 +42,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/run"
 
-# One ready bead, no live aeons — the fixture that starved fires on.
-BEADS='[{"id":"sp-t1","title":"test bead","status":"open","labels":["spira","plan"]}]'
-READY='[{"id":"sp-t1","title":"test bead","status":"open","labels":["spira","plan"]}]'
-
-classify_py() {
-    local truncated="${1:-0}"
-    printf '%s' "$BEADS" > "$TMP/beads.json"
-    printf '%s' "$READY"  > "$TMP/ready.json"
-    BEADS_FILE="$TMP/beads.json" \
-    READY_FILE="$TMP/ready.json" \
-    HOLDERS="" LIVE=0 GHOST_GRACE=300 \
-    SPIRA_ASK_LABEL=needs-operator \
-    CAPACITY_PAUSED=0 \
-    PASS_TRUNCATED="$truncated" \
-        python3 "$HERE/strand-classify.py"
-}
-
 echo "test-strand-truncated.sh"
-
-# ======================================================================================
-echo
-echo "case 0 — positive control: PASS_TRUNCATED=0 → classifier DOES produce starved:"
-# ======================================================================================
-out="$(classify_py 0)"
-want "positive control: starved IS raised" "starved" "$out"
-
-# ======================================================================================
-echo
-echo "case 1 — pass truncated: PASS_TRUNCATED=1 → pass-truncated info, no starved:"
-# ======================================================================================
-out="$(classify_py 1)"
-want   "pass-truncated IS emitted"    "pass-truncated" "$out"
-nowant "starved IS NOT emitted"       "starved"        "$out"
-want   "disposition is info"          "info"           "$out"
 
 # ======================================================================================
 echo

@@ -22,6 +22,19 @@
 #
 #   escalation count: 2   (wanted 1)
 #
+# GAP G11 (deterministic concurrency, case 1). A wall-clock sleep before recording proves
+# nothing about a host fast enough to finish runner 1 before runner 2 even attempts the lock.
+# The barrier below replaces it: runner 1's mail.sh signals "I am inside the critical
+# section, still holding the lock" over a FIFO and then blocks on a second FIFO until the
+# test releases it. The driver's blocking read of the first FIFO cannot return before that
+# write happens, so runner 2 is only launched once runner 1 is provably still holding the
+# lock — true on any host at any speed.
+#
+# THIS SUITE ALSO ABSORBS THE mail.sh STUB'S OTHER TWO CALLERS (duplicate cluster D8): a
+# pool-paused info row must never reach mail.sh (cmd_check skips info rows before the
+# escalation path), and a starved row's evidence must carry its own partition's label
+# through the full stack, not just through the classifier in isolation.
+#
 # The fixture uses --from to bypass live graph queries. STRAND_GRACE=0 ensures the strand
 # fires immediately without waiting for the 15-minute grace window.
 #
@@ -30,8 +43,6 @@
 # covers: spira/strand.sh
 # hermetic-ok: no systemd, no gh; reads SPIRA_DB for conf.sh schema check only (read-only)
 set -uo pipefail
-# covers: spira/strand.sh
-
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
@@ -51,15 +62,11 @@ echo "sentinel ok" > "$TMP/run/sentinel.log"
 COUNT_FILE="$TMP/count"
 echo 0 > "$COUNT_FILE"
 
-# mail.sh stub: records "send" invocations. sleep 0.2 before recording widens the race
-# window between state_apply (read) and state_mark (write) so both concurrent runners
-# have time to read was_escalated=0 before either writes escalated=1 — reliably
-# reproducing the lost-update on the unfixed tree.
+# mail.sh stub: records "send" invocations.
 mkdir -p "$TMP/strand-home"
 cat > "$TMP/strand-home/mail.sh" <<STUB
 #!/usr/bin/env bash
 [ "\${1:-}" = send ] || exit 0
-sleep 0.2
 ( flock -x 9; n=\$(cat "$COUNT_FILE"); echo \$((n + 1)) > "$COUNT_FILE" ) 9>"$COUNT_FILE.lock"
 cat >/dev/null
 STUB
@@ -96,14 +103,48 @@ echo "case 1 — two concurrent runs file exactly one escalation (the lock invar
 rm -f "$TMP/run/strands.json" "$TMP/run/strands.json.lock"
 echo 0 > "$COUNT_FILE"
 
-run_check &
+# THE BARRIER. Runner 1's mail.sh (called from inside cmd_check's locked section) writes
+# to LOCKED_FIFO and then blocks reading PROCEED_FIFO. The driver's blocking read of
+# LOCKED_FIFO cannot return before that write happens, so by the time it does, runner 1 is
+# provably still holding the lock (it cannot reach `exec 9>&-` until mail.sh returns).
+# Only then does the driver launch runner 2, which must find the lock held.
+LOCKED_FIFO="$TMP/locked.fifo"; PROCEED_FIFO="$TMP/proceed.fifo"
+mkfifo "$LOCKED_FIFO" "$PROCEED_FIFO"
+
+BARRIER_HOME="$TMP/strand-home-barrier"; mkdir -p "$BARRIER_HOME"
+cat > "$BARRIER_HOME/mail.sh" <<STUB
+#!/usr/bin/env bash
+[ "\${1:-}" = send ] || exit 0
+printf locked > "$LOCKED_FIFO"
+read -r _ < "$PROCEED_FIFO"
+( flock -x 9; n=\$(cat "$COUNT_FILE"); echo \$((n + 1)) > "$COUNT_FILE" ) 9>"$COUNT_FILE.lock"
+cat >/dev/null
+STUB
+chmod +x "$BARRIER_HOME/mail.sh"
+
+env SPIRA_RUN="$TMP/run" SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$BARRIER_HOME" \
+    bash "$HERE/strand.sh" check --from "$TMP/fixture.tsv" >"$TMP/runner1.log" 2>&1 &
 P1=$!
-run_check &
-P2=$!
-wait "$P1" "$P2"
+
+# Blocks until runner 1's mail.sh signals it is inside the critical section.
+read -r _ < "$LOCKED_FIFO"
+
+# Runner 2 now races for the same lock runner 1 still holds. Deterministically declines.
+LOG2="$TMP/runner2.log"
+run_check_logged() {
+    env "${CHECK_ENV[@]}" bash "$HERE/strand.sh" check --from "$TMP/fixture.tsv" >"$LOG2" 2>&1
+}
+run_check_logged
+P2_rc=$?
+
+# Release runner 1 and wait for it to finish.
+printf go > "$PROCEED_FIFO"
+wait "$P1"
 
 n="$(cat "$COUNT_FILE")"
 is "concurrent runs: exactly 1 escalation" "1" "$n"
+is "runner 2 exits 0 while declining" "0" "$P2_rc"
+want "runner 2 logs the decline" "declining" "$(cat "$LOG2" 2>/dev/null)"
 
 # ======================================================================================
 echo
@@ -120,15 +161,61 @@ rm -f "$TMP/run/strands.json" "$TMP/run/strands.json.lock"
 exec 9>"$TMP/run/strands.json.lock"
 flock -x 9
 
-LOG2="$TMP/decline.log"
-env "${CHECK_ENV[@]}" bash "$HERE/strand.sh" check --from "$TMP/fixture.tsv" >"$LOG2" 2>/dev/null
+LOG3="$TMP/decline.log"
+env "${CHECK_ENV[@]}" bash "$HERE/strand.sh" check --from "$TMP/fixture.tsv" >"$LOG3" 2>/dev/null
 
 # Release the lock so subsequent cleanup can remove the file.
 exec 9>&-
 
-if grep -q "declining" "$LOG2" 2>/dev/null; then
+if grep -q "declining" "$LOG3" 2>/dev/null; then
     ok "declining runner: decline message logged"
 else
-    bad "declining runner: decline message logged" "(not found in stdout; got: $(cat "$LOG2" 2>/dev/null))"
+    bad "declining runner: decline message logged" "(not found in stdout; got: $(cat "$LOG3" 2>/dev/null))"
 fi
+
+# ======================================================================================
+echo
+echo "case 3 — no mail on pool-paused (D8): an info row never reaches mail.sh:"
+# ======================================================================================
+# cmd_check skips rows with disposition=info before the escalation path — pool-paused,
+# capacity-paused and fleet-saturated all share this. One representative info row proves
+# the skip; the classifier-level distinction between them is strand-classify.py's job
+# (test-strand-classify.sh), not this suite's.
+rm -f "$TMP/run/strands.json" "$TMP/run/strands.json.lock"
+printf 'pool-paused\t-\tinfo\t1 bead(s) ready but the task pool is set to zero: sp-example\taeons.sh pool <n>\n' \
+    > "$TMP/fixture-info.tsv"
+
+MAIL_SENT="$TMP/mail-sent-info"
+env SPIRA_RUN="$TMP/run" SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$TMP/strand-home" \
+    bash "$HERE/strand.sh" check --from "$TMP/fixture-info.tsv" >/dev/null 2>&1
+n_info="$(cat "$COUNT_FILE")"
+is "info row: mail.sh not called (count unchanged)" "1" "$n_info"
+
+# ======================================================================================
+echo
+echo "case 4 — full stack: a starved row's evidence carries its own partition's label:"
+# ======================================================================================
+# Exercises strand.sh check's own plumbing (classify()'s --from label-prepending, and
+# escalate()'s mail body), not just the classifier in isolation (sp-15u9f).
+rm -f "$TMP/run/strands.json" "$TMP/run/strands.json.lock"
+printf 'starved\t-\tescalate\t1 bead(s) ready and no live aeon; 0 of 3 aeon slot(s) are serving this partition (1 live across fleet): sp-pa1\tcheck sentinel\n' \
+    > "$TMP/fixture-partition.tsv"
+
+ARGS_A="$TMP/mail-args-a"
+mkdir -p "$TMP/home-a"
+cat > "$TMP/home-a/mail.sh" <<STUB
+#!/usr/bin/env bash
+[ "\${1:-}" = send ] || exit 0
+printf '%s\n' "\$@" >> "$ARGS_A"
+cat >> "$ARGS_A"
+STUB
+chmod +x "$TMP/home-a/mail.sh"
+
+env SPIRA_RUN="$TMP/run" SPIRA_STRAND_GRACE=0 SPIRA_LABELS=spira,plan SPIRA_HOME="$TMP/home-a" \
+    bash "$HERE/strand.sh" check --from "$TMP/fixture-partition.tsv" >/dev/null 2>&1
+
+args_a="$(cat "$ARGS_A" 2>/dev/null || true)"
+want "full stack: sp-pa1 in evidence"          "sp-pa1"     "$args_a"
+want "full stack: title names plan partition"  "spira,plan" "$args_a"
+
 tl_summary
