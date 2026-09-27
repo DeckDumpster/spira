@@ -1,0 +1,29 @@
+[Unit]
+# INERT ON PURPOSE (sp-uwv2s). This unit exists so `sudo ... --system-user` has something
+# real to install and enable, and so the testenv image and acceptance workflow exercise the
+# actual privilege split (design §3.6.4) — a Unix user of its own, so the spira_lc DB
+# credential is unreadable to every other process on the box. Nothing calls this service's
+# socket yet: the aeon-facing semantic layer (a separate bead) is its first real client.
+Description=spira-lc — the lifecycle machine's system service (bead/delivery/batch state)
+Documentation=file://@SPIRA_HOME@/lifecycle/schema.sql
+After=dolt-beads.service
+Requires=spira-lc.socket
+
+[Service]
+Type=simple
+User=spira-lc
+Group=spira
+ExecStart=@SPIRA_REPO@/target/release/spira-lc serve
+Environment=SPIRA_LC_PASSWORD_FILE=/etc/spira-lc/credential
+Environment=SPIRA_LC_USER=spira_lc
+Environment=SPIRA_LC_DATA_DIR=/tmp
+Restart=on-failure
+RestartSec=5
+# Nice=10 is the fence (law-fence-loops-on-shared-hardware).
+Nice=10
+StandardOutput=append:@SPIRA_RUN@/spira-lc.log
+StandardError=append:@SPIRA_RUN@/spira-lc.log
+
+[Install]
+# Socket-activated (spira-lc.socket), not enabled directly — see install.sh's
+# --system-user phase, which enables the socket, not this unit.

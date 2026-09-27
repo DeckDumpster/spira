@@ -334,6 +334,7 @@ _ephemeral=0
 _laptop=0
 _skip_build=0
 _no_hook=0
+_system_user=0
 
 for _a in "$@"; do
     case "$_a" in
@@ -342,6 +343,7 @@ for _a in "$@"; do
         --laptop)         _laptop=1 ;;
         --skip-build)     _skip_build=1 ;;
         --no-session-hook) _no_hook=1 ;;
+        --system-user)    _system_user=1 ;;
         --*)              printf 'install: unknown flag: %s\n' "$_a" >&2; exit 2 ;;
         *) [ -z "$_inst_arg" ] && _inst_arg="$_a" \
            || { printf 'install: extra argument: %s\n' "$_a" >&2; exit 2; }
@@ -908,6 +910,60 @@ else
     phase_info "  $SPIRA_REPO/cockpit/layout.sh up"
 fi
 unset _bin _cockpit_dir _panel
+
+# ---------------------------------------------------------------------------
+# PHASE 6.5 — spira-lc's system user (design §3.6.4)
+#
+# `--system-user` is the one root-requiring step in this installer, on purpose: it is the
+# only way the spira_lifecycle credential ends up unreadable by anything but the process
+# that needs it, and that requires a Unix user of its own. Every other phase here runs
+# unprivileged, and this one refuses to touch anything if it is not run as root — it never
+# half-installs. Without the flag, or without root, this phase prints one line and moves
+# on: `spira-lc` still runs, in same-user fallback, with no privilege separation to lose,
+# because nothing calls it yet (this bead ships it inert).
+# ---------------------------------------------------------------------------
+phase_start "phase 6.5: spira-lc system user"
+if [ "$_system_user" != 1 ]; then
+    phase_info "not requested (--system-user) — spira-lc runs in same-user fallback"
+elif [ "$(id -u)" != 0 ]; then
+    phase_info "--system-user requires root — spira-lc runs in same-user fallback"
+else
+    if [ "$_dry" = 1 ]; then
+        phase_info "would create user $SPIRA_LC_UNIX_USER, group $SPIRA_LC_UNIX_GROUP, and install spira-lc.service/.socket"
+    else
+        getent group "$SPIRA_LC_UNIX_GROUP" >/dev/null 2>&1 \
+            || phase_act "create group $SPIRA_LC_UNIX_GROUP" groupadd --system "$SPIRA_LC_UNIX_GROUP"
+        id -u "$SPIRA_LC_UNIX_USER" >/dev/null 2>&1 \
+            || phase_act "create user $SPIRA_LC_UNIX_USER (system, no login, no home)" \
+                useradd --system --no-create-home --shell /usr/sbin/nologin \
+                --gid "$SPIRA_LC_UNIX_GROUP" "$SPIRA_LC_UNIX_USER"
+
+        _lc_cred_dir="/etc/spira-lc"
+        _lc_cred_file="$_lc_cred_dir/credential"
+        if [ ! -f "$_lc_cred_file" ]; then
+            phase_act "create $_lc_cred_dir" install -d -m 0750 -o "$SPIRA_LC_UNIX_USER" -g "$SPIRA_LC_UNIX_GROUP" "$_lc_cred_dir"
+            phase_act "generate the spira_lc credential (mode 0600, owned by $SPIRA_LC_UNIX_USER)" \
+                sh -c "umask 077; head -c 32 /dev/urandom | base64 | tr -d '=+/\n' > '$_lc_cred_file'; chown '$SPIRA_LC_UNIX_USER:$SPIRA_LC_UNIX_GROUP' '$_lc_cred_file'; chmod 0600 '$_lc_cred_file'"
+        else
+            phase_skip "$_lc_cred_file already exists"
+        fi
+
+        for _unit in spira-lc.service spira-lc.socket; do
+            _lc_bin="$(command -v spira-lc 2>/dev/null || printf '%s' "$SPIRA_HOME/target/release/spira-lc")"
+            "$SPIRA_HOME/systemd/render.py" "$SPIRA_HOME/systemd/$_unit" \
+                --home "$SPIRA_HOME" --repo "$SPIRA_REPO" --run "$SPIRA_RUN" \
+                > "/etc/systemd/system/$_unit.tmp" \
+                && phase_act "install /etc/systemd/system/$_unit" \
+                    install -m 0644 "/etc/systemd/system/$_unit.tmp" "/etc/systemd/system/$_unit"
+            rm -f "/etc/systemd/system/$_unit.tmp"
+        done
+        unset _lc_bin _unit
+        phase_act "reload systemd" systemctl daemon-reload
+        phase_act "enable spira-lc.socket (spira-lc.service itself is socket-activated, not enabled directly)" \
+            systemctl enable --now spira-lc.socket
+        unset _lc_cred_dir _lc_cred_file
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # PHASE 7 — VERIFY (ready.sh)

@@ -1,0 +1,16 @@
+[Unit]
+Description=Socket for the spira-lc lifecycle service (design §3.6.4)
+Documentation=file://@SPIRA_HOME@/lifecycle/schema.sql
+
+[Socket]
+ListenStream=/run/spira-lc/sock
+# Group-readable/writable only: the operator's group (spira) reaches the socket; the
+# credential this service holds is never exposed through it, only used to answer requests.
+SocketMode=0660
+SocketUser=spira-lc
+SocketGroup=spira
+RuntimeDirectory=spira-lc
+RuntimeDirectoryMode=0750
+
+[Install]
+WantedBy=sockets.target

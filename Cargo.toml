@@ -19,6 +19,8 @@ members = [
     "landing-pass",
     "reconciler-flow",
     "lifecycle-guard",
+    "lifecycle",
+    "spira-lc",
 ]
 resolver = "2"
 

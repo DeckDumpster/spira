@@ -1,0 +1,20 @@
+[package]
+name = "spira-lc"
+version = "1.0.0"
+edition = "2021"
+description = "spira-lc — the lifecycle CLI and system service: show/list/history/event against spira_lifecycle, over a local socket when the system-user service is installed, or a direct connection in same-user fallback. Deploys inert."
+
+[dependencies]
+lifecycle = { path = "../lifecycle" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[[bin]]
+name = "spira-lc"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

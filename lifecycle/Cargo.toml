@@ -1,0 +1,17 @@
+[package]
+name = "lifecycle"
+version = "1.0.0"
+edition = "2021"
+description = "lifecycle — the three pure bead/delivery/batch transition machines and the event log fold. No I/O, no clock, no git."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

@@ -631,6 +631,19 @@ spira_conf_defaults() {
     # that would have removed it (sp-2p7o, landed 14:15, blocked everything until 15:0x).
     : "${SPIRA_TESTDB_DATA:=$(_spira_join "$SPIRA_WORKSPACES" beads-test)}"
     : "${SPIRA_TESTDB_PORT:=3308}"
+    # A THIRD, disposable Dolt server, for spira_lifecycle's container-tier tests only —
+    # same reasoning as SPIRA_TESTDB_DATA/PORT above (its own store, its own port, never
+    # the box's real dolt-beads.service), and a distinct one from it because that fixture
+    # is bd's own database and this one needs real grants, which bd's fixture never applies.
+    : "${SPIRA_LC_TESTDB_DATA:=$(_spira_join "$SPIRA_WORKSPACES" lc-test)}"
+    : "${SPIRA_LC_TESTDB_PORT:=3309}"
+    # The Unix user and socket the spira-lc system service runs as (design §3.6.4). Not
+    # settable to a path under SPIRA_HOME/SPIRA_REPO: it must exist at the same place
+    # regardless of which checkout renders the unit, so every install agrees on where the
+    # credential-holding process listens.
+    : "${SPIRA_LC_UNIX_USER:=spira-lc}"
+    : "${SPIRA_LC_UNIX_GROUP:=spira}"
+    : "${SPIRA_LC_SOCKET:=/run/spira-lc/sock}"
     # WHERE THE TEST IMAGE IS PUBLISHED, if anywhere. Empty means build it locally and
     # never reach the network, which is the right default: the registry is somebody's
     # account, and a harness that reached for one by default would fail on every machine
@@ -1948,6 +1961,7 @@ export SPIRA_INSTANCE \
        SPIRA_WORKSPACES SPIRA_OPERATOR SPIRA_OPERATOR_ACTOR SPIRA_TZ SPIRA_ASK_LABEL SPIRA_RECLAIM_SKIP_LABEL \
        SPIRA_CI_LABEL SPIRA_CI_PARK_MAX \
        SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT SPIRA_INCIDENT_PRIORITY SPIRA_TESTENV_REGISTRY SPIRA_TESTENV_MAX_CONCURRENT SPIRA_TESTENV_QUEUE_TIMEOUT SPIRA_TESTENV_QUEUE_POLL SPIRA_GH_INTAKE_REPO SPIRA_GH_INTAKE_PRIORITY SPIRA_GH_INTAKE_BEAD_REPO SPIRA_FLAKY_GH_REPO SPIRA_RELEASE_REPO \
+       SPIRA_LC_TESTDB_DATA SPIRA_LC_TESTDB_PORT SPIRA_LC_UNIX_USER SPIRA_LC_UNIX_GROUP SPIRA_LC_SOCKET \
        SPIRA_LAND_MAXSEC SPIRA_LAND_GATE_RESERVE \
        SPIRA_LOOM_ADDR SPIRA_LOOM_BUDGET_MS SPIRA_LOOM_CACHE_S SPIRA_LOOM_BIN SPIRA_LOOM_READY_GRACE SPIRA_BROKER_BIN SPIRA_RUN SPIRA_SYSTEMCTL \
        SPIRA_SPIKE_LABEL SPIRA_SPIKE_DIR SPIRA_SPIKE_PATHS SPIRA_SCOPE_LABEL \
