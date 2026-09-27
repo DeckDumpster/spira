@@ -262,7 +262,7 @@ cmd_step() {
 }
 
 cmd_eject() {
-    local id="${1:-}" reason="" dry_run=0 name=""
+    local id="${1:-}" reason="" dry_run=0 name="" suites=""
     [ -n "$id" ] || { printf 'queue.sh eject: bead id required\n' >&2; return 2; }
     if [ "${SPIRA_FAYTH:-}" = czar ] && [ -n "${SPIRA_CZAR_CLASS:-}" ]; then
         bash "$HERE/czar-fence.sh" "$SPIRA_CZAR_CLASS" || return 1
@@ -273,6 +273,8 @@ cmd_eject() {
         case "$1" in
         --reason)   shift; reason="${1:-}"; shift ;;
         --reason=*) reason="${1#--reason=}"; shift ;;
+        --suites)   shift; suites="${1:-}"; shift ;;
+        --suites=*) suites="${1#--suites=}"; shift ;;
         --dry-run)  dry_run=1; shift ;;
         -*)         printf 'queue.sh eject: unknown option: %s\n' "$1" >&2; return 2 ;;
         *)          name="$1"; shift ;;
@@ -333,6 +335,7 @@ cmd_eject() {
         if [ "$dry_run" -eq 1 ]; then
             printf 'dry-run: %s is CERTIFIED but not yet batched for %s (tip=%s)\n' "$id" "$name" "$_cert_tip"
             printf 'dry-run: would write WITHDRAWN to %s/%s\n' "$LANDSTATE" "$id"
+            [ -n "$suites" ] && printf 'dry-run: would write suites=%s to %s/%s.ejected\n' "$suites" "$LANDSTATE" "$id"
             printf 'dry-run: would reopen bead %s and clear assignee\n' "$id"
             printf 'dry-run: would post comment to %s\n' "$id"
             bdq show "$id" >/dev/null 2>&1 || {
@@ -341,10 +344,11 @@ cmd_eject() {
             return 0
         fi
 
-        bead_reopen "$id" "eject"
+        bead_reopen "$id" "eject" "" "$suites"
 
         local _comment
         _comment="Ejected while certified but not yet batched in $name.${reason:+$'\n\n'${reason}}"$'\n\n'"Landstate written as WITHDRAWN. Recertify the branch before it can rejoin the queue."
+        [ -n "$suites" ] && _comment="$_comment"$'\n\n'"Recertification will force these suites regardless of SPIRA_CERTIFY_SUITES: $suites"
         printf '%s' "$_comment" | bdq comment "$id" --stdin >/dev/null 2>&1 || true
 
         printf 'queue.sh eject: ejected %s (certified, not yet batched) for %s (landstate=WITHDRAWN)\n' "$id" "$name"
@@ -354,6 +358,7 @@ cmd_eject() {
     if [ "$dry_run" -eq 1 ]; then
         printf 'dry-run: %s is in the open batch for %s (tip=%s)\n' "$id" "$name" "$tip"
         printf 'dry-run: would write RED to %s/%s\n' "$LANDSTATE" "$id"
+        [ -n "$suites" ] && printf 'dry-run: would write suites=%s to %s/%s.ejected\n' "$suites" "$LANDSTATE" "$id"
         printf 'dry-run: would reopen bead %s and clear assignee\n' "$id"
         printf 'dry-run: would post comment to %s\n' "$id"
         printf 'dry-run: would close PR %s\n' "$pr_n"
@@ -372,7 +377,7 @@ cmd_eject() {
     # RED is the operator's verdict on a manually identified failure.
     land_mark "$id" RED "$tip" "${reason:-ejected}"
 
-    bead_reopen "$id" "eject"
+    bead_reopen "$id" "eject" "" "$suites"
     # A submitted bead is excluded from ready (fayth_exclude) so it is not reclaimed
     # mid-flight; an ejected bead must be claimable again, so the label goes with it.
     bdq label remove "$id" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1 || true

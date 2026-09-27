@@ -170,6 +170,20 @@ want "bd reopen called" "reopen sp-ej-cert" "$(cat "$BD_LOG")"
 rm -f "$LANDSTATE/sp-ej-cert"
 
 echo
+echo "eject: --suites records the suites in the WITHDRAWN reason and the .ejected sidecar (sp-hkfdp):"
+printf 'CERTIFIED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ej-suites"
+> "$BD_LOG"
+out="$(run eject sp-ej-suites --reason 'suite reds' --suites 'test-x.sh,test-y.sh')"; rc=$?
+[ "$rc" -eq 0 ] && ok "exit 0 with --suites" || bad "exit 0 with --suites" "rc=$rc out=$out"
+st="$(awk '{print $1}' "$LANDSTATE/sp-ej-suites" 2>/dev/null || true)"
+[ "$st" = "WITHDRAWN" ] && ok "landstate WITHDRAWN with --suites" || bad "landstate WITHDRAWN" "got $st"
+want "reason names the suites" "suites=test-x.sh,test-y.sh" "$(cat "$LANDSTATE/sp-ej-suites")"
+[ "$(cat "$LANDSTATE/sp-ej-suites.ejected" 2>/dev/null)" = "test-x.sh,test-y.sh" ] \
+    && ok "sidecar .ejected carries the suites" \
+    || bad "sidecar .ejected carries the suites" "got [$(cat "$LANDSTATE/sp-ej-suites.ejected" 2>/dev/null)]"
+rm -f "$LANDSTATE/sp-ej-suites" "$LANDSTATE/sp-ej-suites.ejected"
+
+echo
 echo "eject: CERTIFIED, unbatched bead — an unrelated open batch does not block it:"
 write_eject_batch
 printf 'BATCHED %s %s\n'   "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ej01"

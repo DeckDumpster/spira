@@ -341,7 +341,7 @@ gate_key() {
     # The hashing itself is gate_key_hash() (gate-lib.sh) — pure, so a T1 row can assert
     # each input moves the key without a git repository.
     gate_key_hash "$REPO_NAME" "$tree" "$files_h" "$cmd_h" "$harness_h" \
-        "${SPIRA_GATE_SUITES:-on}" "${SPIRA_BEAD_ID:-none}"
+        "${SPIRA_GATE_SUITES:-on}" "${SPIRA_BEAD_ID:-none}" "${ejected_suites:-}"
 }
 GATE_KEY="$(gate_key || true)"
 
