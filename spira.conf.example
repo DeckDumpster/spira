@@ -184,14 +184,6 @@
 # Default: $HOME/.claude/settings.json
 # SPIRA_CLIENT_SETTINGS = $HOME/.config/some-agent/settings.json
 
-# How many lines the session hook may spend, as a ceiling. Its output is prepended to a context
-# window that has just opened, which is the most expensive place text can go — so the status
-# table and the latch commands are printed whole and the preview of unread events is given
-# exactly what is left. Raise it if you watch many things; 0 means no budget at all, and a
-# large backlog will then print in full.
-# Default: 32
-# SPIRA_HOOK_LINES = 50
-
 # ---- where your binaries are --------------------------------------------------------------
 # Directories PREPENDED to PATH for the harness and everything it spawns. Everything here runs
 # from systemd and from tmux, where a login shell's PATH does not exist, so `bd` in ~/.local/bin

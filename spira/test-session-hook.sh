@@ -9,23 +9,24 @@
 # its registration lives in a file no landing gate can reach. Both fail silently by nature, so
 # every property below is one that would otherwise be believed rather than known:
 #
-#   1. A SUMMARY, NEVER A REPLAY. A three-hundred-event backlog must cost a glance. The
-#      assertion is on the line count against the configured budget, because the failure being
-#      fixed was a hook offering to replay 283 raw lines into a fresh session.
-#   2. IT MARKS NOTHING READ. The hook peeks. If it drained, every line it had no room for
-#      would be recorded as delivered and the latch that follows would replay nothing — data
-#      loss that grows with the size of the backlog.
-#   3. DEGRADED IS LIFTED OUT OF THE TABLE. A watcher that is running and blind is silent in
-#      exactly the way a healthy quiet one is, so the word is surfaced in its own section —
-#      and the suite plants one before believing that it can be absent
-#      (law-absence-needs-a-positive-control).
-#   4. THE LATCH COMMAND IS THERE FOR EVERY ROW. A hook cannot attach a Monitor, so the
-#      command it prints is the only path back to the events it summarised.
+#   1. ONE LINE PER WATCHER, AND NOTHING ELSE. Output is one header line, one line per manifest
+#      row, and at most one mail line — never a backlog preview. The assertion is on the exact
+#      line count against a fixture manifest, because the failure being fixed was a hook that
+#      printed 38 lines of watcher backlog plus a 409-line summary into a fresh context.
+#   2. NO EVENT CONTENT LEAKS. `peek` is never called; a watcher's unread count is reported but
+#      none of its log lines are, because the session re-attaches with `watchd.sh tail <name>`,
+#      which replays the same backlog from its cursor.
+#   3. A DEGRADED ROW CARRIES ITS OWN REASON, inline on the same line — a watcher that is
+#      running and blind is silent in exactly the way a healthy quiet one is, so the suite
+#      plants one before believing that it can be absent (law-absence-needs-a-positive-control).
+#   4. IT MARKS NOTHING READ. `peek`, not `drain` — the unread count is unchanged across two
+#      hook calls.
 #   5. IT NEVER BREAKS A SESSION START. No stdin, malformed stdin, no manifest, an unreadable
 #      one: exit 0 every time, and silence where there is nothing to say.
-#   6. THE REGISTRATION IS MANAGED, NOT DESCRIBED. Installing twice leaves one entry,
-#      unrelated settings survive, and the entry carries NO matcher — a SessionStart matcher
-#      naming a subset of sources is how a hook comes to be missing from `compact` and `fork`.
+#   6. THE REGISTRATION IS MANAGED, NOT DESCRIBED. Installing twice leaves one entry, unrelated
+#      settings survive, the entry carries NO matcher, and it is on `SessionStart` only — a
+#      stale `PostCompact` registration (from before that was known to double-fire on every
+#      compaction) is reported by `status` and removed by `install`.
 #
 # It needs no database and no beads server. Every configured value is pinned to a NON-DEFAULT,
 # so a literal written into the hook cannot pass by coincidence, and nothing here can reach
@@ -40,7 +41,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "$2" ;; esac; }
 hasnt() { case "$2" in *"$3"*) bad "$1" "$2" ;; *) ok "$1" ;; esac; }
-le()  { if [ "$3" -le "$2" ]; then ok "$1"; else bad "$1" "want <= $2, got $3"; fi; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/home" "$TMP/bin"
@@ -67,12 +67,11 @@ exit 0
 EOF
 chmod +x "$TMP/bin/systemctl"
 
-# EVERY CONFIGURED VALUE PINNED TO A NON-DEFAULT. SPIRA_RUN would derive to $CLONE/.runtime,
-# SPIRA_WATCHERS to $CLONE/spira/watchers and the budget to the shipped number; all three are
-# moved, so a literal written into the hook cannot pass.
+# EVERY CONFIGURED VALUE PINNED TO A NON-DEFAULT. SPIRA_RUN would derive to $CLONE/.runtime and
+# SPIRA_WATCHERS to $CLONE/spira/watchers; both are moved, so a literal written into the hook
+# cannot pass.
 RUN="$TMP/elsewhere/run"; mkdir -p "$RUN/watchd"
 MANIFEST="$TMP/elsewhere/watchers"
-BUDGET=26
 MAIL_DIR="$TMP/elsewhere/mail"
 mkdir -p "$MAIL_DIR/concierge/new" "$MAIL_DIR/concierge/cur" "$MAIL_DIR/concierge/tmp"
 CONF="$TMP/spira.conf"
@@ -83,7 +82,6 @@ cat > "$CONF" <<EOF
 SPIRA_PROD = $CLONE/spira
 SPIRA_RUN = $RUN
 SPIRA_WATCHERS = $MANIFEST
-SPIRA_HOOK_LINES = $BUDGET
 SPIRA_CLIENT_SETTINGS = $TMP/elsewhere/settings.json
 SPIRA_MAIL = $MAIL_DIR
 SPIRA_MAIL_SESSION_MAILBOX = concierge
@@ -94,16 +92,13 @@ answers|daemon|/bin/sleep 3600
 cron|log|@SPIRA_RUN@/watchd/somebody-elses.log
 EOF
 
-# THE BACKLOG. Three hundred events, thirty of them actionable — the same shape as the real
-# one that prompted this: mostly progress, a minority that needs somebody.
+# THE BACKLOG. A distinguishing marker in the content, never in a summary line — that is what
+# proves the difference between a count and a preview.
 python3 - "$RUN/watchd/answers.log" <<'PY'
 import sys
 with open(sys.argv[1], "w") as fh:
     for i in range(300):
-        if i % 10 == 0:
-            fh.write("ESCALATED sp-%03d wants a decision\n" % i)
-        else:
-            fh.write("progress %d, and nothing to do about it\n" % i)
+        fh.write("ESCALATED-MARKER sp-%03d wants a decision\n" % i)
 PY
 : > "$RUN/watchd/somebody-elses.log"
 
@@ -112,71 +107,51 @@ PY
 hook() {
     local ev="$1" src="$2"; shift 2
     printf '{"hook_event_name":"%s","source":"%s"}' "$ev" "$src" \
-      | env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" SPIRA_WAKE="${WAKE-}" "$@" \
+      | env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" "$@" \
         bash "$CLONE/spira/hooks/session.sh"
 }
 
-echo "a summary, never a replay — the positive control"
+echo "one line per watcher, and nothing else — the positive control"
 # A CHECK THAT FINDS NOTHING MUST FIRST PROVE IT COULD HAVE FOUND SOMETHING. Every absence
 # asserted below is believable only because this passes: the hook can read a real manifest and
 # a real backlog, so silence later is about the case and not about the fixture.
 out="$(hook SessionStart startup)"; rc=$?
 is  "the hook exits clean"                       "0" "$rc"
-has "it names itself"                            "$out" "## Spira watchers"
-has "the status table is there whole"            "$out" "answers"
+has "it names itself and how to re-attach"       "$out" "## Spira watchers — re-attach with:"
+has "the re-attach command names watchd tail"    "$out" "watchd.sh tail <name>"
+has "the answers row is there, with its count"   "$out" "answers"
+has "and its unread count"                       "$out" "300 unread"
 has "and so is the log row"                      "$out" "cron"
-has "the backlog's size is stated"               "$out" "300"
-has "and how much of it was actionable"          "$out" "30 actionable of 300 new"
 n="$(printf '%s\n' "$out" | wc -l)"
-# THE ACCEPTANCE CRITERION, and it is measured rather than estimated: the hook assembles the
-# fixed sections first and gives the preview exactly what is left.
-le  "a 300-event backlog fits the budget"        "$BUDGET" "$n"
-[ "$n" -gt 8 ] && ok "and it is not empty — $n lines" || bad "and it is not empty" "$n lines"
+# THE ACCEPTANCE CRITERION: one header line plus one line per manifest row (two rows here) —
+# never a preview, whatever the backlog's size.
+is "output is exactly 1 header + 1 line per row" "3" "$n"
 
 echo
-echo "and it marks nothing read"
-# IF THE HOOK DRAINED, the lines it had no room for would be recorded as delivered and the
-# latch below would replay nothing. The cursor is the whole evidence: the contract is a log
-# and an integer, and the integer must not have moved.
+echo "no event content leaks — peek is never called from the hook"
+# A 300-EVENT BACKLOG WOULD HAVE FILLED THE OLD PREVIEW WITH THIS MARKER. Its absence here,
+# together with the accurate count above, is what shows the hook reports on the backlog rather
+# than replaying any of it.
+hasnt "no raw event text in the output"          "$out" "ESCALATED-MARKER"
+
+echo
+echo "it marks nothing read"
+# IF THE HOOK DRAINED, the count would fall after the first read. The cursor is the whole
+# evidence: the contract is a log and an integer, and the integer must not have moved.
 is  "no cursor file is written"                  "" "$(ls "$RUN/watchd" | grep cursor || true)"
-after="$(env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
-         bash "$CLONE/spira/watchd.sh" status)"
-has "so the backlog is still unread afterwards"  "$after" "300"
 out2="$(hook SessionStart clear)"
-has "and a second session sees the same 300"     "$out2" "30 actionable of 300 new"
+has "a second session sees the same count"       "$out2" "300 unread"
 
 echo
 echo "no Monitor instructions are printed"
-# THE HOOK PRINTS NO LATCH COMMANDS. Delivery and replies now handle operator communication
-# through mail; the Monitor latch is retired.
+# Delivery and replies now handle operator communication through mail; the Monitor latch is
+# retired.
 hasnt "no Monitor instruction is emitted"         "$out" "Monitor:"
 hasnt "no resume-from-cursor text"                "$out" "Nothing above was marked read"
 # IT NEVER SENDS THE READER TO ListAgents. ListAgents enumerates agents and sessions and no
 # tool enumerates a session's own Monitors, so "attach only the streams not already listed
 # there" reported nothing attached every time (sp-vv4p, superseded).
 hasnt "it does not send the reader to ListAgents" "$out" "ListAgents"
-
-echo
-echo "the newest lines are the ones kept"
-# `peek` KEEPS EACH WATCHER'S MOST RECENT LINES. A backlog is read for its current state, so a
-# cap that kept the oldest would answer the least useful question — and an early version did
-# exactly that by trimming the assembled text from the end.
-has "the newest actionable line survives the cap" "$out" "sp-290"
-hasnt "and the oldest is the one withheld"        "$out" "sp-000"
-has "with the withholding stated, not silent"     "$out" "withheld"
-
-echo
-echo "the budget is a ceiling, and it is configuration"
-for b in 20 60; do
-    m="$(hook SessionStart startup SPIRA_HOOK_LINES="$b" | wc -l)"
-    le "a budget of $b is honoured" "$b" "$m"
-done
-# AND A LITERAL COULD NOT PASS EITHER OF THOSE, because a wider budget must actually print
-# more: a hook that ignored the key would give the same number twice.
-a="$(hook SessionStart startup SPIRA_HOOK_LINES=20 | wc -l)"
-b="$(hook SessionStart startup SPIRA_HOOK_LINES=60 | wc -l)"
-if [ "$b" -gt "$a" ]; then ok "a wider budget prints more ($a then $b)"
-else bad "a wider budget prints more" "$a then $b"; fi
 
 echo
 echo "every session-start source is summarised, none is special"
@@ -187,9 +162,6 @@ for src in startup resume clear compact fork; do
     got="$(hook SessionStart "$src")"
     has "source '$src' is summarised" "$got" "## Spira watchers"
 done
-# PostCompact carries a trigger rather than a source, and an automatic compaction is precisely
-# the one nobody is present for.
-has "PostCompact is summarised too" "$(hook PostCompact auto)" "## Spira watchers"
 
 echo
 echo "SessionEnd has nothing to say"
@@ -228,14 +200,10 @@ is "a malformed manifest exits clean" "0" "$rc"
 is "and says nothing at all"          "" "$out8"
 
 echo
-echo "DEGRADED is lifted out of the table"
+echo "a DEGRADED row carries its own reason, inline"
 # DRIVEN THROUGH THE REAL `watchd.sh`, never a planted table (law-prefer-the-real-dependency).
-# An earlier version of this section stubbed `status` with the table's shape as it was
-# remembered, and that stub is precisely what let a real defect through: `status` grew a
-# trailing `DEGRADED` block below the table, the stub did not, and the hook — which read the
-# table as "everything after line one" — swallowed the block's lines as rows and printed
-# `watchd.sh tail DEGRADED` as a latch command. The suite was green throughout. A health probe
-# that exits non-zero is all the real thing needs, so there is nothing here worth faking.
+# A health probe that exits non-zero is all the real thing needs, so there is nothing here
+# worth faking.
 DRUN="$TMP/elsewhere/drun"; mkdir -p "$DRUN/watchd"
 printf 'one event\n' > "$DRUN/watchd/answers.log"
 printf 'one event\n' > "$DRUN/watchd/cron.log"
@@ -255,48 +223,32 @@ dmanifest "$DOK"  'true'
 dhook() { hook SessionStart startup SPIRA_RUN="$DRUN" SPIRA_WATCHERS="$1"; }
 
 dout="$(dhook "$DBAD")"
-has "a DEGRADED watcher gets its own section" "$dout" "DEGRADED — running and blind"
-has "silence from it is called out"           "$dout" "not good news"
-# THE REASON, NOT JUST THE WORD. `DEGRADED` alone says a check failed and not which, so the
-# next step would be to re-run the probe by hand — the work this output exists to have done.
-has "and it carries the probe's own reason"   "$dout" "no local ids in the state file"
-has "attributed to the watcher that earned it" "$dout" "answers:"
+has "the degraded watcher's row is there"     "$dout" "answers DEGRADED"
+# THE REASON, NOT JUST THE WORD, AND ON THE SAME LINE. `DEGRADED` alone says a check failed and
+# not which, so the next step would be to re-run the probe by hand — the work this output
+# exists to have done.
+has "and it carries the probe's own reason, on the row" \
+    "$(printf '%s\n' "$dout" | grep '^answers DEGRADED')" "no local ids in the state file"
+has "the healthy row has no such text"        "$dout" "cron OK"
 
 hasnt "no Monitor instruction in DEGRADED case"   "$dout" "Monitor:"
 
-# AND THE SECTION APPEARS ONCE. Printing the status whole and then adding a call-out rendered
-# the same reason twice, which reads as two faults.
-is  "the reason is printed exactly once"      "1" \
-    "$(printf '%s\n' "$dout" | grep -c 'no local ids in the state file' || true)"
-
 hout="$(dhook "$DOK")"
-hasnt "a healthy manifest raises no such section" "$hout" "running and blind"
+hasnt "a healthy manifest raises no DEGRADED row" "$hout" "DEGRADED"
 has  "but the table is still printed"             "$hout" "answers"
 hasnt "no Monitor instruction in healthy case"    "$hout" "Monitor:"
 
 echo
 echo "a watcher this installation has not got is shown, and never latched"
 # A MANIFEST MAY SHIP A ROW FOR A WATCHER THE OPERATOR HAS NOT CONFIGURED — a leading `?`
-# marks it optional and it renders as kind `off`, so `status` grows a THIRD section below
-# DEGRADED naming what is not installed. Two things in the hook read that output, and both
-# were written when there were two sections:
-#
-#   - the DEGRADED block was taken as "everything after the word DEGRADED", so it swallowed
-#     the NOT INSTALLED heading and its rows and reported an unconfigured watcher as running
-#     and blind — an alert for a thing that is not a fault, in the section whose whole value
-#     is that everything in it is one (law-alerts-must-be-actionable);
-#   - the latch block named every row of the table, and `watchd.sh tail` refuses an `off`
-#     row, so the one block meant to be pasted and run carried a command that cannot work.
-#
-# Both are live on a default installation, not hypothetical: the shipped manifest carries one
-# such row and its key is empty until an operator sets it.
+# marks it optional and it renders as kind `off`, with every column `-`.
 ORUN="$TMP/elsewhere/orun"; mkdir -p "$ORUN/watchd"
 printf 'one event\n' > "$ORUN/watchd/answers.log"
 printf 'one event\n' > "$ORUN/watchd/view.log"
 
 OMANIFEST="$TMP/elsewhere/watchers.optional"
 cat > "$OMANIFEST" <<EOF
-answers|log|$ORUN/watchd/answers.log|echo "no local ids in the state file" >&2; exit 1
+answers|log|$ORUN/watchd/answers.log|true
 ?view|daemon|@SPIRA_VIEW@ watch|true
 EOF
 
@@ -311,23 +263,7 @@ has "a configured optional row is a watcher like any other" "$oout" "view"
 offout="$(ohook)"
 has  "an unconfigured one is still named in the table"  "$offout" "view"
 hasnt "no Monitor latch is emitted for it"              "$offout" "tail view"
-
-has  "the degraded watcher still gets its section"      "$offout" "DEGRADED — running and blind"
-has  "and its reason"                                   "$offout" "no local ids in the state file"
-# THE BLEED, ASSERTED FROM BOTH ENDS: the heading must not appear, and neither must the text
-# of the row underneath it — a fix that dropped only the word would still print the row.
-hasnt "the section stops before what is merely not installed" "$offout" "NOT INSTALLED"
-hasnt "so an unconfigured watcher is never called blind"      "$offout" "is not set in"
-
-echo
-echo "unconfigured-only manifest: table prints, no Monitor block"
-# A manifest of nothing BUT unconfigured rows still has a table to print — the row is how an
-# operator learns the watcher exists.
-NMANIFEST="$TMP/elsewhere/watchers.none-on"
-printf '?view|daemon|@SPIRA_VIEW@ watch|true\n' > "$NMANIFEST"
-nout="$(hook SessionStart startup SPIRA_RUN="$ORUN" SPIRA_WATCHERS="$NMANIFEST")"
-has  "the table still says the watcher exists" "$nout" "view"
-hasnt "no Monitor command is printed"          "$nout" "Monitor:"
+hasnt "and it is never reported as DEGRADED"            "$offout" "view DEGRADED"
 
 echo
 echo "mail count line in the session hook"
@@ -343,6 +279,8 @@ hasnt "no message body is printed"    "$mout" "Body text here"
 hasnt "no subject is printed"         "$mout" "A gate passed"
 # NOTHING MOVES TO cur/. The hook peeks, it does not read.
 is "nothing moved to cur/" "" "$(ls "$MAIL_DIR/concierge/cur/" | head -1)"
+n="$(printf '%s\n' "$mout" | wc -l)"
+is "the mail line is the only addition to the count" "3" "$n"
 
 # COUNT CARRIES THE REAL NUMBER. Plant a second message and verify.
 printf 'From: Gate <gate@spira>\nSubject: Another\nDate: Mon, 01 Jan 2024 00:00:01 +0000\n\nSecond body.\n' \
@@ -393,7 +331,7 @@ ish install >/dev/null
 out="$(ish status)"; rc=$?
 is  "after install, status is clean"           "0" "$rc"
 has "SessionStart carries the hook"            "$out" "ok      SessionStart"
-has "and so does PostCompact"                  "$out" "ok      PostCompact"
+hasnt "PostCompact is not registered"          "$out" "PostCompact"
 
 # NO MATCHER AT ALL. An absent matcher matches every source; a matcher naming a subset is how
 # a hook comes to be missing from `compact` and `fork`, both of which open a context window
@@ -410,8 +348,8 @@ PY
 )"
 is "the SessionStart entry carries no matcher" "SessionStart matcher=None" \
    "$(printf '%s\n' "$ours" | grep '^SessionStart')"
-is "and neither does PostCompact"              "PostCompact matcher=None" \
-   "$(printf '%s\n' "$ours" | grep '^PostCompact')"
+is "and there is no PostCompact entry at all" "" \
+   "$(printf '%s\n' "$ours" | grep '^PostCompact' || true)"
 
 # INSTALLING TWICE LEAVES ONE ENTRY. It is run from `doctor` and by hand, so a second run that
 # appended would grow the file without bound and run the hook twice per session start.
@@ -423,7 +361,7 @@ print(sum(1 for entries in doc["hooks"].values() for e in entries
           for h in e.get("hooks", []) if h.get("command") == sys.argv[2]))
 PY
 )"
-is "installing twice leaves one entry per event" "2" "$n"
+is "installing twice leaves one entry, on SessionStart alone" "1" "$n"
 
 # AND EVERYTHING ELSE IN THE FILE SURVIVES. This is the operator's live client configuration
 # and it holds settings nothing here knows about, which is why it is parsed and re-serialised
@@ -432,7 +370,38 @@ keep="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["statusL
 is "unrelated settings are untouched" "/some/meter.sh" "$keep"
 is "a backup of the prior file is left" "1" "$(ls "$SET.spira.bak" >/dev/null 2>&1 && echo 1 || echo 0)"
 
-# PRUNE IS HOW A FOREIGN ENTRY IS REMOVED — by name, deliberately, one substring at a time.
+echo
+echo "a stale PostCompact registration is reported, then removed"
+# A BOX THAT INSTALLED BEFORE THIS WAS KNOWN still carries this hook on PostCompact, which
+# fires it a second time on every compaction — `SessionStart` already sees the same compaction
+# with `source=compact`. The repair path is `install`; `status` names the fault first, so the
+# suite can prove it was there before proving it is gone (law-absence-needs-a-positive-control).
+STALESET="$TMP/elsewhere/stale-settings.json"
+python3 - "$CLONE/spira/hooks/session.sh" > "$STALESET" <<'PY'
+import json, sys
+hook = sys.argv[1]
+entry = {"hooks": [{"type": "command", "command": hook, "timeout": 10}]}
+doc = {"hooks": {"SessionStart": [entry], "PostCompact": [entry]}}
+print(json.dumps(doc))
+PY
+ish2() { env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+         SPIRA_CLIENT_SETTINGS="$STALESET" bash "$CLONE/spira/install-session-hook.sh" "$@"; }
+
+out="$(ish2 status)"; rc=$?
+is  "status flags the stale registration"      "1" "$rc"
+has "and names PostCompact by its state"       "$out" "STALE   PostCompact"
+
+out="$(ish2 install)"
+has "install reports the removal"              "$out" "PostCompact (retired)"
+after="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["hooks"]))' "$STALESET")"
+hasnt "and PostCompact is gone from the file"  "$after" "PostCompact"
+has   "while SessionStart still carries it"    "$after" "SessionStart"
+
+out="$(ish2 status)"; rc=$?
+is  "status is clean afterwards"               "0" "$rc"
+
+echo
+echo "PRUNE IS HOW A FOREIGN ENTRY IS REMOVED — by name, deliberately, one substring at a time."
 out="$(ish prune /gone)"
 has "prune names what it removed" "$out" "/gone/hooks/old-session.sh"
 out="$(ish status)"
