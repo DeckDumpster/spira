@@ -119,5 +119,24 @@ ctrl_sel="$(cd "$R" && SPIRA_GATE_REPO="$R" SPIRA_BATCH_SUITE_DIR="$R/spira" SPI
     bash "$TOUCHED" main br 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//')"
 nowant "E3: GATE_ALL=0 (control): uncovered suite not selected" "test-b.sh" "$ctrl_sel"
 
+# ---------------------------------------------------------------------------
+# REAL CORPUS REGRESSION (sp-2jsf9): test-install-hooks-artifact.sh exercises
+# systemd/install.sh directly (it symlinks it in and runs it) but its own
+# # covers: line once named only the top-level install.sh — a glob that a
+# `case` match never satisfies against the systemd/ path. Isolate the real
+# suite (not the synthetic fixture above) so a regression in its own
+# declaration is caught, not just the selector mechanism in the abstract.
+# ---------------------------------------------------------------------------
+echo
+echo "Part F: real corpus — a unit-installer-only diff selects test-install-hooks-artifact.sh"
+REAL_SUITE_DIR="$HERE"
+ISO="$TMP/iso-suites"; mkdir -p "$ISO"
+ln -s "$REAL_SUITE_DIR/test-install-hooks-artifact.sh" "$ISO/test-install-hooks-artifact.sh"
+printf 'systemd/install.sh\n' > "$TMP/real-flist"
+real_sel="$(bash "$HERE/select.sh" --files "$TMP/real-flist" --suite-dir "$ISO" \
+    --repo "$(cd "$HERE/.." && pwd -P)" --no-all-fallback 2>/dev/null)"
+want "F1: unit installer diff selects test-install-hooks-artifact.sh" \
+    "test-install-hooks-artifact.sh" "$real_sel"
+
 echo
 tl_summary
