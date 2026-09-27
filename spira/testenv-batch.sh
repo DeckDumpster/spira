@@ -42,6 +42,9 @@
 #               for THIS branch. Without this flag, only $REPO/bin (if present) is
 #               copied in — the pre-sp-hr5kj behavior, which never reflects Rust
 #               changes made on the branch itself.
+#               Before building, entries under SPIRA_BATCH_BINS_TARGET_DIR older than
+#               SPIRA_BATCH_BINS_TTL are pruned (sp-uq6up) — never the tree about to be
+#               built, never one a concurrent run still holds the build lock on.
 #   --report N  print each suite's median wall_secs over its last N run/tsd/ rows (default
 #               20), local and CI counted together; no branch or container is required.
 #               Delegates to tsd-query.sh suite-medians.
@@ -63,6 +66,11 @@
 #                           only a repeat run of the same tree reuses (and stays incremental
 #                           in) the same subdirectory. The branch worktree's own target/ is
 #                           not used, so nothing here survives worktree cleanup.
+#   SPIRA_BATCH_BINS_TTL    seconds an entry under SPIRA_BATCH_BINS_TARGET_DIR may sit
+#                           untouched before --with-bins prunes it on its next run (default
+#                           21600, 6h). Never applies to the tree about to be built or to an
+#                           entry a concurrent run still holds the build lock on
+#                           (cargo-target-bins-prune.sh).
 #   SPIRA_BATCH_INSTANCE    container instance name; determines CNAME and the
 #                           install instance; default: first 12 chars of the batch key
 #   SPIRA_BATCH_SUITE_DIR   where to look for test-*.sh on the host
@@ -128,6 +136,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/suite-covers.sh"
 . "$HERE/suite-state.sh"
 . "$HERE/batch-owner.sh"
+. "$HERE/cargo-target-bins-prune.sh"
 TESTENV="$HERE/testenv.sh"
 
 # ---------------------------------------------------------------------------
@@ -279,16 +288,34 @@ if [ "$WITH_BINS" = 1 ]; then
     # so each tree gets its own subdirectory under the base dir. Same tree,
     # repeat run -> same subdirectory -> still incremental.
     _bins_tree="$(git -C "$REPO" rev-parse --verify -q "$BR^{tree}" 2>/dev/null)" || _bins_tree="pid-$$"
-    _bins_target_dir="${SPIRA_BATCH_BINS_TARGET_DIR:-$SPIRA_RUN/cargo-target-bins}/$_bins_tree"
+    _bins_base_dir="${SPIRA_BATCH_BINS_TARGET_DIR:-$SPIRA_RUN/cargo-target-bins}"
+    _bins_target_dir="$_bins_base_dir/$_bins_tree"
+
+    # PRUNE BEFORE BUILDING (sp-uq6up): nothing removed an entry here before, so
+    # every distinct tree ever tested accumulated forever. Never the tree about
+    # to be built (skipped by name below); never an entry whose builder still
+    # holds the shared flock this run takes right after.
+    while IFS= read -r _bp_line; do
+        [ -n "$_bp_line" ] && log "batch: $_bp_line"
+    done < <(_bins_prune_stale "$_bins_base_dir" "$_bins_tree" "${SPIRA_BATCH_BINS_TTL:-21600}")
+
     mkdir -p "$_bins_target_dir" 2>/dev/null || true
+    # SHARED flock, held for the whole build+copy below: a prune pass elsewhere
+    # (this tree's entry, from a different concurrent run) takes the same file
+    # EXCLUSIVE-nonblocking to ask "is anyone using this?" — two concurrent
+    # builds of the SAME tree can each still hold the shared lock at once.
+    exec 8>"$_bins_target_dir.lock"
+    flock -s 8
     log "batch: --with-bins: building workspace binaries for $BR"
     if ! CARGO_TARGET_DIR="$_bins_target_dir" make -C "$BRANCH_WT" build >&2; then
+        flock -u 8; exec 8>&-
         printf 'batch: --with-bins: workspace failed to build — candidate fault\n' >&2
         exit 4
     fi
     mkdir -p "$BRANCH_WT/bin"
     find "$_bins_target_dir/release" -maxdepth 1 -type f -executable \
         -exec cp -p {} "$BRANCH_WT/bin/" \; 2>/dev/null || true
+    flock -u 8; exec 8>&-
 elif [ -d "$REPO/bin" ]; then
     mkdir -p "$BRANCH_WT/bin"
     cp -p "$REPO"/bin/* "$BRANCH_WT/bin/" 2>/dev/null || true
