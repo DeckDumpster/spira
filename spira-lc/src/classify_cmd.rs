@@ -33,6 +33,11 @@ struct Args {
     repos: Vec<String>,
     base_override: Option<String>,
     dry_run: bool,
+    /// The configured ask-hold label (`schema.sh name ask`) — read by the caller, which can
+    /// reach the accessor, and handed in rather than hardcoded here (law-schema-over-code).
+    /// `None` means no hold ever fires, rather than assuming either of schema.sh's two
+    /// historical values for it.
+    ask_label: Option<String>,
 }
 
 fn flag(args: &[String], name: &str) -> Option<String> {
@@ -58,6 +63,7 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
         repos: flag_all(args, "--repo"),
         base_override: flag(args, "--base"),
         dry_run: args.iter().any(|a| a == "--dry-run"),
+        ask_label: flag(args, "--ask-label"),
     })
 }
 
@@ -147,6 +153,7 @@ pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
             let facts = BeadFacts {
                 bd_status: bd.status,
                 holder_alive: false,
+                has_ask_hold: parsed.ask_label.as_deref().is_some_and(|l| bd.labels.contains(l)),
                 labels: bd.labels.clone(),
                 supersedes: bd.supersedes.clone(),
                 landstate,

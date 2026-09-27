@@ -94,6 +94,10 @@ pub struct BeadFacts {
     /// than an assumption baked into the function.
     pub holder_alive: bool,
     pub labels: BTreeSet<String>,
+    /// Whether `labels` carries the configured ask-hold name (`schema.sh name ask`, an
+    /// operator-settable value never hardcoded here — law-schema-over-code). Computed by
+    /// the caller, which can read the accessor; this module never can, since it does no I/O.
+    pub has_ask_hold: bool,
     /// `Some(id)` when a `supersedes` dependency names `id` as this bead's replacement.
     pub supersedes: Option<String>,
     pub landstate: Option<LandState>,
@@ -145,7 +149,7 @@ pub fn classify(f: &BeadFacts) -> Classification {
     if f.labels.contains("spira-poison") {
         holds.insert(HoldKind::Poison);
     }
-    if f.labels.contains("needs-ryan") {
+    if f.has_ask_hold {
         holds.insert(HoldKind::Ask);
     }
 
@@ -298,6 +302,7 @@ mod tests {
             bd_status: BdStatus::Open,
             holder_alive: false,
             labels: BTreeSet::new(),
+            has_ask_hold: false,
             supersedes: None,
             landstate: None,
             tip_ancestor_of_base: false,
@@ -381,7 +386,7 @@ mod tests {
     #[test]
     fn held_is_a_hold_on_top_of_ready_not_a_state_of_its_own() {
         let mut f = base_facts();
-        f.labels = labels(&["needs-ryan"]);
+        f.has_ask_hold = true;
         let c = classify(&f);
         assert_eq!(c.state, BeadState::Ready);
         assert!(c.holds.contains(&HoldKind::Ask));

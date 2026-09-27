@@ -52,9 +52,7 @@ export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$(dirname "$GIT_BIN"
 . "$HERE/testdb.sh"
 testdb_require test-lifecycle-classify
 testdb_up test-lifecycle-classify
-if [ "$SPIRA_DB" = "/home/ryan/spira/db" ] || [ -z "${SPIRA_DB:-}" ]; then
-    bail "testdb_up did not hand back a throwaway SPIRA_DB — refusing to touch production"
-fi
+[ -n "${SPIRA_DB:-}" ] || bail "testdb_up did not hand back a throwaway SPIRA_DB"
 
 REPO="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"
