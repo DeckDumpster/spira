@@ -299,6 +299,7 @@ want "widened tolerance: ranking produced" "1 sp-recur-fallback-test (1 detectio
 # own NOW() would read hours off, exactly as fb8f68151 tripped on this box). Since the
 # fixed query no longer asks for NOW() at all, TZ=America/Los_Angeles proves the guard
 # cannot be reading the substrate's local wall clock by any path.
+CENSUS_SKEW_FILE="$T/skew_in_sync.txt"
 pdt_insync_out="$(TZ=America/Los_Angeles run_census_fake "$RUN_NO_WM" 2>"$T/pdt_insync.stderr")"
 pdt_insync_rc=$?
 is "PDT box, substrate clock in sync with true UTC: exits zero" "0" "$pdt_insync_rc"
