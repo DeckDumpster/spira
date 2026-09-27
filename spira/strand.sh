@@ -248,11 +248,14 @@ classify_one() {   # classify_one <labels> <exclude-labels> -> the classifier's 
     # refused by `bd ready --claim`, so counting it here would answer yes about work nobody
     # can take and hide the strand this program exists to find.
     #
-    # SPIRA_QUEUE_WAIT_LABEL is excluded for the same reason fayth_exclude adds it: a bead
-    # holding this label is waiting on a queue blocker and is not claimable, so counting it
-    # as "ready and unserved" produces a false strand escalation.
-    local _qw="${SPIRA_QUEUE_WAIT_LABEL:-}"
-    local _excl="${exclude}${_qw:+${exclude:+,}${_qw}}"
+    # ready_shared_exclude (lib.sh) is the SAME call fayth_exclude makes for CHECK7's
+    # summon predicate — a bead carrying SPIRA_QUEUE_WAIT_LABEL is waiting on a queue
+    # blocker, and one carrying SPIRA_SUBMITTED_LABEL is done and waiting on the landing
+    # pass; neither is claimable, so counting either here produces a false strand
+    # escalation (sp-wnsks). Sharing the call rather than each keeping its own copy of the
+    # label list is what keeps the two predicates from drifting apart again.
+    local _shared="$(ready_shared_exclude)"
+    local _excl="${exclude}${_shared:+${exclude:+,}${_shared}}"
     ready="$(bdjson "${READY_ARGS[@]}" --label "$labels" --exclude-label "$_excl")"
     live="$(live_aeons "$labels")"
 
