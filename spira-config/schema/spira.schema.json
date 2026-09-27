@@ -421,6 +421,12 @@
             "null"
           ]
         },
+        "broker_enable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "broker_gh_config_dir": {
           "type": [
             "string",

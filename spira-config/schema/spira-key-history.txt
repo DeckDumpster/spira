@@ -37,6 +37,7 @@ bd_tag
 brief_keep_recurrences
 brief_notes_max_chars
 broker_bin
+broker_enable
 broker_gh_config_dir
 broker_gh_token
 capacity_probe_interval

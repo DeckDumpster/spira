@@ -90,6 +90,11 @@ printf '#!/bin/sh\n' > "$BIN/spira-czar-pass" && chmod +x "$BIN/spira-czar-pass"
 printf '#!/bin/sh\nexit 0\n' > "$BIN/cargo" && chmod +x "$BIN/cargo"
 
 # ensure <args> — run unit-ensure.sh in a controlled environment.
+# SPIRA_BROKER_BIN defaults to a path under $TMP that is never created, not to "" —
+# conf.sh fills an empty SPIRA_BROKER_BIN with $SPIRA_REPO/{bin,target/release}/broker,
+# and SPIRA_REPO here derives to the real checkout, so an empty default would pick up
+# a real built broker binary whenever one exists (e.g. under --with-bins) and falsely
+# satisfy the BINARY GUARD's executable check.
 ensure() {
     env -i PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
@@ -103,7 +108,7 @@ ensure() {
         SPIRA_SYSTEMCTL="$TMP/sc" \
         SPIRA_SUPERVISE_BIN="${_ENSURE_SUPERVISE:-$BIN/spira-supervise}" \
         SPIRA_CZAR_PASS_BIN="${_ENSURE_CZAR_PASS_BIN:-$BIN/spira-czar-pass}" \
-        SPIRA_BROKER_BIN="${_ENSURE_BROKER_BIN:-}" \
+        SPIRA_BROKER_BIN="${_ENSURE_BROKER_BIN:-$TMP/no-such-broker}" \
         SPIRA_BROKER_ENABLE="${_ENSURE_BROKER_ENABLE:-0}" \
         bash "$HERE/../systemd/unit-ensure.sh" "$@" 2>&1
 }

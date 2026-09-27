@@ -145,6 +145,7 @@ pub struct SpiraSection {
     pub pr_stall_mins: Option<String>,
     pub deferral_escalate_at: Option<String>,
     pub broker_bin: Option<String>,
+    pub broker_enable: Option<String>,
     pub broker_gh_config_dir: Option<String>,
     pub broker_gh_token: Option<String>,
     pub czar_pass_bin: Option<String>,
