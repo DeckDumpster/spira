@@ -894,6 +894,7 @@ sys.exit(0)' "$BEAD_ID" 2>/dev/null; then
         slain)
             # SLAIN IS NOT FAILED: an operator stopping an aeon says nothing about the work.
             release_own_claim "$BEAD_ID"
+            bump_requeue "$BEAD_ID" "$_d_reqcause"
             log "$FAYTH: $BEAD_ID slain — released, no attempt charged"
             ledger_done "$rc" "$_d_status"
             exit $rc ;;

@@ -77,7 +77,7 @@ row "G4 capacity loss mid-session is free" \
     open 0 no no no no no no 0 no - no no 1 -
 
 row "G5 aeon-side slain is free" \
-    "slain free - slain" \
+    "slain free unjudged-slain slain" \
     open 1 yes no no no no no 0 no - no no 1 -
 
 row "thrash below the streak cap is free (bare exemption)" \
@@ -137,7 +137,7 @@ row "G8 capacity beats slain" \
     open 0 yes no no no no no 0 no - no no 1 -
 
 row "G8 slain beats thrash" \
-    "slain free - slain" \
+    "slain free unjudged-slain slain" \
     open 1 yes yes yes no no no 0 no - no no 1 -
 
 row "G8 thrash beats lapsed" \
