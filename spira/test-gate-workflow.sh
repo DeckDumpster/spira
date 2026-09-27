@@ -487,6 +487,27 @@ if [ -n "$_gate_tear_block" ] && [ -n "$_tear_required" ]; then
     esac
 fi
 
+# Positive control: a fixture provision block missing pve-ca-cert is detected.
+# Same check as above, mirrored for provision so a regression that drops the
+# input from provision's `with:` block (or from the fixture's required list)
+# is caught here too, not just on teardown.
+if [ -n "$_gate_prov_block" ] && [ -n "$_prov_required" ]; then
+    _fixture_no_cert="$(printf '%s\n' "$_gate_prov_block" | grep -v 'pve-ca-cert')"
+    _detected=""
+    while IFS= read -r _inp; do
+        [ -n "$_inp" ] || continue
+        case "$_fixture_no_cert" in
+            *"$_inp"*) ;;
+            *) _detected="$_detected $_inp" ;;
+        esac
+    done <<< "$_prov_required"
+    case "$_detected" in
+        *pve-ca-cert*) ok "positive control: fixture missing pve-ca-cert is detected (provision)" ;;
+        *) bad "positive control: fixture missing pve-ca-cert is detected (provision)" \
+               "required-input check did not flag pve-ca-cert as missing from the fixture" ;;
+    esac
+fi
+
 echo
 echo "18. acceptance fires via App-token tag push, not manual dispatch:"
 # GitHub's anti-recursion rule: a tag pushed with GITHUB_TOKEN triggers no
