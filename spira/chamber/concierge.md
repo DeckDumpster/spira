@@ -127,6 +127,10 @@ anything — verdicts land in the bead, not a log file.
 
 **Never `pgrep -f`/`pkill -f` on a pattern alone** — it can match the caller's own command
 line. Address a process by PID from `/proc/<pid>/cmdline`, or by systemd unit name.
+**Never kill a PPid read from `/proc/<pid>/status`** — an orphan's parent is the user
+manager itself, and SIGTERM to it stops the whole session (sp-kb0k5). A leftover local
+acceptance run has a name, not just a pid: `acceptance-local.sh stop <round>` stops exactly
+its own cgroup.
 **Address dashboard panes by tag, never by index** — tmux renumbers indices when a pane
 dies.
 

@@ -10,11 +10,22 @@
 # script in minutes rather than the 25-40 it costs to learn on a real VM.
 #
 # Usage: acceptance-local.sh <tree> [--predecessor <tag> [--predecessor-tarball <path>]]
+#        acceptance-local.sh start <round> <tree> [...same args...]
+#        acceptance-local.sh stop <round>
 #
 #   <tree>  a working tree of this repository (a worktree, a plain checkout,
 #           or the harness itself) to build the tarball from and mount at
 #           /workspace, so acceptance-run.sh and acceptance-agent.sh run from
 #           the tree under test.
+#
+#   start <round> <tree> [...]  runs this build+run exactly as the plain form does, but
+#           detached inside a named systemd --user transient unit (spira-acc-<round>-<ts>),
+#           logging to $SPIRA_RUN/acceptance-local-<round>.log. Use this for a run meant to
+#           outlive the session that started it.
+#   stop <round>  stops every spira-acc-<round>-* unit — its whole cgroup, nothing else.
+#           This is the ONLY sanctioned way to end a run started with `start`. Never derive
+#           a pid's PPid and kill it: an orphan's parent is the user manager itself, and
+#           SIGTERM to it stops the whole session, not the leftover run (sp-kb0k5).
 #
 # 1. Build the release tarball from <tree> via build-tarball.sh, under the
 #    Rust toolchain release.yml pins (SPIRA_RELEASE_RUST_TOOLCHAIN) — the
@@ -51,6 +62,35 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/lib.sh"
+
+if [ "${1:-}" = stop ]; then
+    ROUND="${2:?usage: acceptance-local.sh stop <round>}"
+    named_unit_stop "spira-acc-$ROUND-*"
+    exit $?
+fi
+if [ "${1:-}" = start ]; then
+    shift
+    ROUND="${1:?usage: acceptance-local.sh start <round> <tree> [...]}"; shift
+    UNIT="spira-acc-$ROUND-$(date +%s)"
+    LOG="$SPIRA_RUN/acceptance-local-$ROUND.log"
+    # THE ENVIRONMENT IS EXPLICIT, NOT INHERITED (like every other systemd-run seam here) —
+    # pass what a detached run of this script itself reads and nothing else.
+    "${SPIRA_SUMMON:-systemd-run}" --user --collect --quiet --unit="$UNIT" \
+        --property=StandardOutput="append:$LOG" --property=StandardError="append:$LOG" \
+        --setenv=PATH="$PATH" --setenv=HOME="$HOME" \
+        --setenv=SPIRA_HOME="$SPIRA_HOME" --setenv=SPIRA_RUN="$SPIRA_RUN" \
+        --setenv=SPIRA_CONF="${SPIRA_CONF:-}" --setenv=SPIRA_DB="${SPIRA_DB:-}" \
+        --setenv=SPIRA_REPO="${SPIRA_REPO:-}" --setenv=SPIRA_HOME_REPO="$(spira_home_repo 2>/dev/null)" \
+        --setenv=SPIRA_RELEASE_RUST_TOOLCHAIN="${SPIRA_RELEASE_RUST_TOOLCHAIN:-}" \
+        --setenv=SPIRA_ACCEPTANCE_LOCAL_NAME="${SPIRA_ACCEPTANCE_LOCAL_NAME:-}" \
+        --setenv=SPIRA_ACCEPTANCE_LOCAL_FORENSICS="${SPIRA_ACCEPTANCE_LOCAL_FORENSICS:-}" \
+        --setenv=GH_TOKEN="${GH_TOKEN:-}" \
+        -- bash "$HERE/acceptance-local.sh" "$@" || exit 1
+    printf 'acceptance-local: started %s\n' "$UNIT"
+    printf 'acceptance-local: log at %s\n' "$LOG"
+    printf 'acceptance-local: stop with: acceptance-local.sh stop %s\n' "$ROUND"
+    exit 0
+fi
 
 TREE=""; PRED=""; PRED_TARBALL=""
 while [ $# -gt 0 ]; do
