@@ -342,9 +342,42 @@ the re-triage sp-lxoyd names no longer applies to that predicate. `test-batch-tr
 merged; their properties either have no successor (the predicate and the CI-idle trigger
 are gone by design) or are now `batcher/src/core/tests.rs` and `test-batcher-cut.sh`'s.
 
+**sp-lxoyd (2026-09-27):** the re-triage itself, against the file set left once sp-vsob2's
+deletions above had already landed. Of the four suites this bead was scoped to (test-batch-
+express.sh, test-batch-stuck.sh, test-landing-gate-wait.sh, test-batch-idle-cut.sh) and the
+round-17 files, two were already gone by the time this ran (test-batch-express.sh,
+test-batch-idle-cut.sh, both deleted outright above) and none of the round-17 files
+(test-batch-landed-false.sh, test-batch-maxpar.sh, test-batch-owner.sh, test-batch-preflight.sh,
+test-batch-reconcile.sh, test-batch-red-main.sh, test-batch-timing.sh, test-batch-conflicting-
+pr.sh) reference the trigger or stuck-queue predicate at all — grepping every test-*.sh for
+`batch_cut_reason_cheap`/`batch_cut_idle`/`batch_cut_express`/`queue_last_moved`/
+`queue_stuck_action` turns up nothing outside the two files below, so they carry no verdict.
+
+Two suites remain, and both are KEEP, not MERGE or DELETE:
+
+- **test-batch-stuck.sh: KEEP.** Its stated T1 replacement was test-batch-trigger.sh (UC-42),
+  but sp-vsob2 deleted that file wholesale because most of what it drove (UC-34's trigger
+  predicate) was retired. `queue_last_moved` and `queue_stuck_action` were not retired —
+  batch.sh's sweep still calls them every pass — so deleting their only T1 suite alongside the
+  retired one left them with no pure-function coverage at all. test-batch-stuck.sh, at its
+  original integration tier, is now the *sole* coverage of a live mechanism, not a duplicate of
+  anything: keeping it is load-bearing, and the T1 gap is filed separately (sp-q1xwz) rather
+  than patched here, since restoring it is new test-writing, not a triage verdict.
+- **test-landing-gate-wait.sh: KEEP, deferred.** test-landing-gate-fits.sh's own header names
+  it as what that T1 suite replaces, which would make this a DELETE — except test-landing-gate-
+  fits.sh is itself queued for deletion (sp-tey33, flipped in round 80, law-a-test-that-flips-
+  is-deleted). Deleting the integration suite now on the strength of a T1 replacement that is
+  about to be deleted would leave UC-05/UC-09 (`gate_fits`/`gate_lock_wait`) with zero coverage
+  the moment sp-tey33 lands. Re-decide once sp-tey33 resolves (a deterministic gate-fits fix
+  landing alongside it would make this a clean DELETE then).
+
+Suite-second delta from this bead: **0s.** Nothing here was merged or deleted; the delta section
+7 projected for this predicate was already realized by sp-vsob2's deletions above, not by this
+pass.
+
 - sp-s088v.14 — landed: verdict.sh + attribution merge and T1 classifier extraction (UC 43-49)
 - sp-s088v.15 — landed: landing core: embedded-testdb flip (server-Dolt pin) + merges (UC 01-26)
 - sp-s088v.16 — landed: queue-ops + batch-reconcile merges (UC 27-33, 34-42), gaps G5-G8
 - sp-s088v.17 — landed: forge/broker contract tests + rust `#[test]`s (UC 51-57), gaps G1/G11
 - sp-s088v.18 — open: verdict-timer dedup, remaining gaps G3/G4/G9/G10/G12/G13/G14
-- sp-lxoyd — open: re-triage the batch.sh/test-batch.sh minification verdicts against the post-round-17 file set
+- sp-lxoyd — landed: re-triage above (KEEP test-batch-stuck.sh, KEEP-deferred test-landing-gate-wait.sh)
