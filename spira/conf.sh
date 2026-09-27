@@ -72,7 +72,7 @@ SPIRA_TOWN SPIRA_MIRROR SPIRA_EXPORTER SPIRA_DESIGN SPIRA_WIKI SPIRA_WIKI_HOOK S
 SPIRA_VIEW SPIRA_VIEW_SESSION
 SPIRA_ALERT_GLOB
 SPIRA_BD SPIRA_BD_PIN SPIRA_BD_TAG
-SPIRA_FAYTHS SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LANES SPIRA_LANES_MAX_LIVE SPIRA_QA_DEPTH SPIRA_THRASH_MINUTES SPIRA_THRASH_STREAK_CAP SPIRA_RAPID_RECUR_THRESHOLD
+SPIRA_FAYTHS SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LANES SPIRA_LANES_MAX_LIVE SPIRA_QA_DEPTH SPIRA_THRASH_MINUTES SPIRA_THRASH_STREAK_CAP SPIRA_RAPID_RECUR_THRESHOLD SPIRA_BRIEF_KEEP_RECURRENCES SPIRA_BRIEF_NOTES_MAX_CHARS
 SPIRA_CLAIM_RETRIES SPIRA_CLAIM_RETRY_DELAY_S
 SPIRA_TOKEN_WINDOW_H SPIRA_TOKEN_PROJECTS SPIRA_CTX_WARN SPIRA_CTX_HIGH SPIRA_CTX_LIMIT
 SPIRA_ARCHIVE
@@ -729,6 +729,16 @@ spira_conf_defaults() {
     # HOW MANY CONSECUTIVE sub-10s aeon runs on one bead trigger the rapid-recur alert.
     # Three in quick succession is already a setup loop; lower means earlier but noisier.
     : "${SPIRA_RAPID_RECUR_THRESHOLD:=3}"
+    # HOW MANY OF A RECURRING INCIDENT'S NEWEST "Recurrence N at ..." notes an aeon brief
+    # keeps verbatim; everything older is folded into one count line. A recurring incident
+    # (incident.sh) appends one such note per recurrence and never trims — sp-kogm reached
+    # 404 of them and ~216k tokens, over the context window of every aeon summoned for it.
+    : "${SPIRA_BRIEF_KEEP_RECURRENCES:=5}"
+    # THE HARD CEILING ON A BEAD'S NOTES TEXT IN A BRIEF, in characters, applied after the
+    # recurrence fold above (or directly, for a bead whose notes carry no recurrence
+    # markers at all). Whatever exceeds it is cut from the front — the newest text is what
+    # the aeon needs, and truncation says so rather than silently rendering a partial note.
+    : "${SPIRA_BRIEF_NOTES_MAX_CHARS:=8000}"
     # DEPTH OF THE QA SWEEP — controls how wide the periodic QA pass looks.
     # Three settings, each a strict superset of the one before it:
     #

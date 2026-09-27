@@ -4397,6 +4397,55 @@ bead_named_paths() {
     done
 }
 
+# bound_bead_notes <keep-recurrences> <max-chars> <<< bead-show-text -> stdout
+#
+# A recurring incident (incident.sh) appends one "Recurrence N at <timestamp>." note per
+# recurrence and never trims: sp-kogm reached 404 of them, ~216k tokens, over the context
+# window of every aeon summoned to work it (sp-n3m6k). Keeps the newest <keep-recurrences>
+# such notes verbatim and folds everything older into one count line; a notes blob with no
+# recurrence markers at all (an ordinary bead) instead falls straight to the <max-chars>
+# tail-truncation below, since there is nothing to fold.
+#
+# THE NOTES SECTION IS FOUND BY THE HEADERS AROUND IT, not by byte offset: `bd show`'s NOTES
+# block runs from its own "NOTES" heading to whichever of LABELS/CHILDREN/BLOCKS/RELATED/
+# COMMENTS comes first, or end of text when a bead carries none of those (a bare, unlabelled
+# bead's NOTES is the last thing printed).
+bound_bead_notes() {
+    local keep="${1:-5}" max="${2:-8000}"
+    python3 -c '
+import re, sys
+keep = int(sys.argv[1])
+max_chars = int(sys.argv[2])
+text = sys.stdin.read()
+
+m = re.search(r"(?m)^NOTES$", text)
+if not m:
+    sys.stdout.write(text)
+    sys.exit(0)
+start = m.end()
+tail_m = re.search(r"(?m)^(LABELS:|CHILDREN$|BLOCKS$|RELATED$|COMMENTS$)", text[start:])
+end = start + tail_m.start() if tail_m else len(text)
+head, notes, tail = text[:start], text[start:end], text[end:]
+
+lines = notes.split("\n")
+marker = re.compile(r"^\s*Recurrence (\d+) at \S+\.\s*$")
+starts = [i for i, l in enumerate(lines) if marker.match(l)]
+if len(starts) > keep:
+    cut = len(starts) - keep
+    nums = [marker.match(lines[i]).group(1) for i in starts]
+    preamble = "\n".join(lines[:starts[0]])
+    banner = "\n  [%s earlier recurrence notes omitted — recurrences %s..%s]\n" % (
+        cut, nums[0], nums[cut - 1])
+    kept = "\n".join(lines[starts[cut]:])
+    notes = preamble + banner + kept
+
+if len(notes) > max_chars:
+    notes = ("\n  [notes truncated to the last %d characters]\n" % max_chars) + notes[-max_chars:]
+
+sys.stdout.write(head + notes + tail)
+' "$keep" "$max"
+}
+
 # render_holds_brief <bead-id> <holds-rc> <holds-output> -> the HOLDS_BRIEF text: which open
 # beads already have a branch touching a path this bead names, or empty when the check ran
 # clean and found none. <holds-output> is holds.sh's own stdout (tab-separated

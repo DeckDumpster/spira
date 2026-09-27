@@ -1851,6 +1851,10 @@ FIXTURE_BRIEF="$(block_overlay FIXTURE "$FIXTURE_BRIEF")"
 DEADLINE_BRIEF="$(block_overlay DEADLINE "$DEADLINE_BRIEF")"
 
 BEAD_BODY="$(bdq show "$BEAD_ID" 2>/dev/null | grep -vE '^💡|^warning|^  Fix|^  Or')"
+# BOUNDED, NOT RAW: a recurring incident's notes grow one entry per recurrence and never
+# shrink (sp-kogm, sp-n3m6k) — unbounded, they can exceed the model's context window before
+# an aeon ever reads past them.
+BEAD_BODY="$(bound_bead_notes "$SPIRA_BRIEF_KEEP_RECURRENCES" "$SPIRA_BRIEF_NOTES_MAX_CHARS" <<<"$BEAD_BODY")"
 
 # WHO ELSE IS HOLDING THE FILES THIS BEAD NAMES, right now. The paths are read out of the
 # bead's own prose (bead_named_paths matches against the tracked tree, so a bead id or a URL
