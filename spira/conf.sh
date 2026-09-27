@@ -13,23 +13,30 @@
 #      through, and a config file that could override a test's own SPIRA_DB would point the
 #      suite at the operator's real database. Environment first is not a convenience here;
 #      it is what keeps the suites isolated.
-#   2. the CONFIG FILE — `spira.conf`, the operator's box.
+#   2. the CONFIG FILE — `spira.toml`, the operator's box.
 #   3. a DERIVED DEFAULT — computed from where this file sits, so a clean clone with no
 #      config at all still resolves to something coherent rather than to someone else's box.
 #
 # WHERE THE CONFIG FILE IS LOOKED FOR, first hit wins:
 #
-#   $SPIRA_CONF                                  an explicit path; set it to a nonexistent
+#   $SPIRA_TOML                                  an explicit path; set it to a nonexistent
 #                                                one to read no file at all
-#   $SPIRA_REPO/spira.conf                       beside the checkout the harness runs from
-#   ${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf
-#   /etc/spira/spira.conf
+#   $SPIRA_REPO/spira.toml                       beside the checkout the harness runs from
+#   ${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml
+#   /etc/spira/spira.toml
 #
-# IT IS NOT SOURCED. A config file that is shell can set PATH, run a command, or shadow a
-# function this library defines, and it is read by a process that summons agents. It is
-# parsed as `KEY=value` lines, `#` comments, keys restricted to the ones named below, and
-# nothing else is honoured — an unknown key is reported, not obeyed, because a typo that is
-# silently ignored is a setting the operator believes is in force.
+# NO SPIRA_TOML? A LEGACY spira.conf IS AUTO-CONVERTED, so a box that has only ever known
+# `spira.conf` (KEY=value) does not silently lose every SPIRA_* setting the moment this file
+# stops parsing that format itself. `spira_toml_resolve` runs `spira-config convert` and keeps
+# regenerating the `.toml` from the `.conf` for as long as the `.conf` is the newer of the two
+# — so an operator's existing tools (`aeons.sh`, `deploy.sh`, ...), which still read and write
+# `spira.conf` unmodified, keep taking effect. Once the operator deletes `spira.conf`, the
+# `.toml` already on disk becomes authoritative and nothing regenerates it again.
+#
+# IT IS NOT SOURCED. A config file that is shell — or a value inside one — can set PATH, run
+# a command, or shadow a function this library defines, and it is read by a process that
+# summons agents. `spira-config` parses TOML into a typed document with `deny_unknown_fields`,
+# so a typo is a hard parse error naming the field, not a setting silently ignored.
 
 [ -n "${SPIRA_CONF_LOADED:-}" ] && return 0
 SPIRA_CONF_LOADED=1
@@ -38,10 +45,13 @@ SPIRA_CONF_LOADED=1
 # Every key this harness honours, with the default the CODE carries. A key absent from this
 # list is refused when it appears in a config file.
 #
-# This list is also the allowlist: `spira_conf_read` refuses anything not named here, so a
-# misspelled key is reported rather than silently ignored. The defaults themselves live in
-# `spira_conf_defaults`, which runs AFTER the file is read, so a default may refer to a key
-# the operator set.
+# This list also records WHICH KEYS THE ENVIRONMENT ALREADY ANSWERED, before the config file
+# or `spira_conf_defaults` (which runs AFTER the file is read, so a default may refer to a key
+# the operator set) get a chance to. `spira.toml` itself refuses a misspelled key: it is typed,
+# with `deny_unknown_fields`, so a typo is a parse error rather than a setting silently
+# ignored — but its `[spira]` table only covers the keys a real install actually sets, a
+# narrower set than this list, which runs past 200 (most of them derived defaults nothing
+# overrides).
 # --------------------------------------------------------------------------------------
 # SPIRA_HOME AND SPIRA_REPO ARE ABSENT FROM THIS LIST DELIBERATELY, and that is a fence.
 # Where the harness IS is not a configuration question — it is a fact about where this file
@@ -157,6 +167,19 @@ SPIRA_REPO="${SPIRA_REPO:-$SPIRA_REPO_DERIVED}"
 # everywhere else. NOT exported, for the same reason SPIRA_HOME is not: it is a fact about
 # this copy of the harness, and whatever sources its own conf.sh resolves its own.
 
+# SPIRA_CONFIG_BIN IS RESOLVED HERE, NOT IN spira_conf_defaults, AND IS ABSENT FROM
+# SPIRA_CONF_KEYS — the same fence as SPIRA_HOME/SPIRA_REPO, for a sibling reason: this is
+# the binary that READS the config file, so it must exist before the config file can be
+# read, and a value the config file itself tried to set would never take effect. A release
+# tarball places it at bin/spira-config; a source checkout places it at
+# target/release/spira-config after a workspace cargo build.
+if [ -z "${SPIRA_CONFIG_BIN:-}" ]; then
+    if [ -f "$SPIRA_REPO/bin/spira-config" ]; then
+        SPIRA_CONFIG_BIN="$SPIRA_REPO/bin/spira-config"
+    else
+        SPIRA_CONFIG_BIN="$SPIRA_REPO/target/release/spira-config"
+    fi
+fi
 
 # One line, single-spaced, padded at both ends — because the membership test below is a
 # `case` on " $key ", and a key that happened to sit at the end of a line in the list above
@@ -165,7 +188,10 @@ SPIRA_REPO="${SPIRA_REPO:-$SPIRA_REPO_DERIVED}"
 # prevent happening to a typo.
 SPIRA_CONF_KEYS=" $(echo $SPIRA_CONF_KEYS) "
 
-# spira_conf_file -> the path of the config file in force, or empty
+# spira_conf_file -> the path of the LEGACY spira.conf in force, or empty. Kept so tools
+# that still read and write that format directly (aeons.sh's `conf_set`, deploy.sh, ...)
+# keep resolving the same file they always have; `spira_toml_resolve` below is the only
+# thing that also treats this as a conversion SOURCE.
 spira_conf_file() {
     local c
     if [ -n "${SPIRA_CONF+set}" ]; then
@@ -180,50 +206,150 @@ spira_conf_file() {
     return 0
 }
 
-# spira_conf_read <file> — apply the file's settings to any key NOT already set in the
-# environment. Prints a warning for a key it does not know and for a malformed line; it
-# never fails the caller, because a harness that refuses to start over one bad line in a
-# config is a harness that cannot be repaired from the box it is broken on.
-spira_conf_read() {
-    local file="$1" line key val n=0
+# spira_toml_file -> the path of spira.toml in force, or empty. Same three-tier search
+# spira.conf used, and for the same reason: an explicit path, beside the checkout, XDG,
+# then /etc/spira.
+spira_toml_file() {
+    local c
+    if [ -n "${SPIRA_TOML+set}" ]; then
+        [ -f "$SPIRA_TOML" ] && printf '%s' "$SPIRA_TOML"
+        return 0
+    fi
+    for c in "$SPIRA_REPO/spira.toml" \
+             "${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml" \
+             /etc/spira/spira.toml; do
+        [ -f "$c" ] && { printf '%s' "$c"; return 0; }
+    done
+    return 0
+}
+
+# _spira_repo_map_candidate -> the repo-map path spira_conf_defaults would choose, or
+# empty if none of its candidates exist yet. Factored out of that function so
+# spira_toml_resolve's auto-convert — which runs before spira_conf_defaults, to build the
+# `spira-config convert` call — finds the SAME file rather than converting with no map at
+# all (sp-zs04v.2: an auto-convert with no --repo-map produced a spira.toml with an empty
+# [repo] table, and overwrote a real one).
+_spira_repo_map_candidate() {
+    local cf d c
+    cf="$(spira_conf_file)"
+    [ -n "$cf" ] && d="$(dirname "$cf")" || d=""
+    if [ -n "$_spira_conf_home_env" ]; then
+        set -- "$SPIRA_HOME/repo-map" ${d:+"$d/repo-map"} "$SPIRA_HOME/repo-map.example"
+    else
+        set -- ${d:+"$d/repo-map"} "$SPIRA_HOME/repo-map" "$SPIRA_HOME/repo-map.example"
+    fi
+    for c in "$@"; do
+        [ -f "$c" ] && { printf '%s' "$c"; return 0; }
+    done
+    # EXPLICIT, not left to the loop's own exit status: this function is called as
+    # `X="${X:-$(_spira_repo_map_candidate)}"`, and when no candidate exists the loop's
+    # last executed command is the final failing `[ -f "$c" ]` — under errexit (every
+    # `set -e` caller conf.sh is sourced by, e.g. aerc/accept-default.sh) that aborts the
+    # caller right at the assignment instead of yielding "".
+    return 0
+}
+
+# _spira_fayth_paths -> every "*.fayth" file under the chamber in force, one per line.
+# SPIRA_CHAMBER_OVERLAY only replaces prompt text (aeon.sh's *.md overlay); fayth files
+# themselves are never overlaid, so only SPIRA_CHAMBER (or its default) is read here.
+_spira_fayth_paths() {
+    local dir="${SPIRA_CHAMBER:-$SPIRA_HOME/chamber}" f
+    for f in "$dir"/*.fayth; do
+        [ -f "$f" ] && printf '%s\n' "$f"
+    done
+}
+
+# spira_toml_resolve -> the spira.toml path to read, or empty.
+#
+# AUTO-CONVERTS FROM A LEGACY spira.conf, and keeps doing so for as long as one exists. Not
+# a one-time migration: a box with only spira.conf must not silently lose every SPIRA_* key
+# the moment this file stops parsing that format itself, and tools that still edit
+# spira.conf directly (aeons.sh's `conf_set`, deploy.sh's SPIRA_PROD write, ...) must keep
+# taking effect without themselves becoming spira.toml writers. So `spira.conf`, while it
+# exists, stays the source of truth and `spira.toml` is a cache regenerated whenever the
+# `.conf` is newer — cheap to check (one `-nt` test) and skipped entirely once the operator
+# deletes the `.conf`, at which point the `.toml` already on disk is read as-is.
+#
+# THE REPO-MAP AND EVERY FAYTH ARE PASSED, not just --conf: a conversion missing them is
+# not incomplete, it is DESTRUCTIVE — `spira-config convert`'s own writer (below) refuses
+# to let a document with fewer [repo]/[persona] tables replace one that has more, so an
+# auto-convert that omitted them would simply fail closed against a box with a real
+# spira.toml already on disk instead of quietly gutting it (sp-zs04v.2).
+#
+# WHEN SPIRA_CONF IS PINNED EXPLICITLY BUT SPIRA_TOML IS NOT, the toml candidate is looked
+# for ONLY beside that conf — never through the ordinary $SPIRA_REPO/XDG/etc tiers.
+# Those tiers answer "where does THIS host's config live", a question the caller already
+# answered by naming a conf file directly; consulting them anyway can find a toml that has
+# nothing to do with the pinned conf; comparing its mtime decides whether that unrelated file
+# is read as-is or is the one just overwritten with THIS conf's content (sp-zs04v.2: a test
+# fixture's spira.conf gutted an unrelated, real spira.toml this way).
+spira_toml_resolve() {
+    local toml conf target out rmap f
+    local -a conv_args
+    conf="$(spira_conf_file)"
+    if [ -n "${SPIRA_CONF+set}" ] && [ -z "${SPIRA_TOML+set}" ]; then
+        toml=""
+        [ -n "$conf" ] && [ -f "$(dirname "$conf")/spira.toml" ] && toml="$(dirname "$conf")/spira.toml"
+    else
+        toml="$(spira_toml_file)"
+    fi
+    if [ -n "$toml" ] && { [ -z "$conf" ] || [ "$toml" -nt "$conf" ]; }; then
+        printf '%s' "$toml"
+        return 0
+    fi
+    [ -n "$conf" ] || { [ -n "$toml" ] && printf '%s' "$toml"; return 0; }
+    target="${toml:-${SPIRA_TOML:-$(dirname "$conf")/spira.toml}}"
+    target="$(spira_config_writeback "$target")"
+    conv_args=(--conf "$conf" --home "$HOME" --out "$target")
+    rmap="${SPIRA_REPO_MAP:-$(_spira_repo_map_candidate)}"
+    [ -n "$rmap" ] && conv_args+=(--repo-map "$rmap")
+    while IFS= read -r f; do
+        conv_args+=(--fayth "$f")
+    done < <(_spira_fayth_paths)
+    if out="$("$SPIRA_CONFIG_BIN" convert "${conv_args[@]}" 2>&1)"; then
+        [ -n "$out" ] && printf '%s\n' "$out" >&2
+        printf '%s' "$target"
+    else
+        printf 'spira.conf: auto-convert to spira.toml failed: %s\n' "$out" >&2
+        # UNCONDITIONAL, not `[ -n "$toml" ] && printf ...`: this function is called as
+        # `X="$(spira_toml_resolve)"`, a subshell that inherits errexit from every `set -e`
+        # caller (aerc/accept-default.sh). A guard whose condition is false IS this
+        # subshell's last command, so under errexit the subshell — and the substitution —
+        # exits non-zero right here instead of yielding "". `printf` with an empty argument
+        # is a no-op that always succeeds, so this is the guard, spelled to survive errexit.
+        printf '%s' "$toml"
+    fi
+}
+
+# spira_toml_read <file> — apply `spira-config export --sh` for spira.toml to any key NOT
+# already set in the environment. An invalid document is reported and nothing here fails
+# the caller: every key still falls through to spira_conf_defaults, because a harness that
+# refuses to start over one bad config is one that cannot be repaired from the box it is
+# broken on.
+spira_toml_read() {
+    local file="$1" out line key val
     [ -f "$file" ] || return 0
+    out="$("$SPIRA_CONFIG_BIN" export --sh "$file" 2>&1)" || {
+        printf 'spira.toml:%s: %s\n' "$file" "$out" >&2
+        return 0
+    }
     while IFS= read -r line || [ -n "$line" ]; do
-        n=$((n+1))
-        line="${line#"${line%%[![:space:]]*}"}"          # ltrim
-        case "$line" in ''|'#'*) continue ;; esac
-        case "$line" in *=*) ;; *)
-            printf 'spira.conf:%s: not KEY=value, ignored: %s\n' "$n" "$line" >&2
-            continue ;;
-        esac
+        [ -n "$line" ] || continue
         key="${line%%=*}"; val="${line#*=}"
-        key="${key%"${key##*[![:space:]]}"}"             # rtrim key
-        val="${val#"${val%%[![:space:]]*}"}"             # ltrim value
-        val="${val%"${val##*[![:space:]]}"}"             # rtrim value
-        # Quotes are stripped so a value with a trailing space can be written; they are not
-        # required, because the common case is a path.
-        case "$val" in
-            \"*\") val="${val#\"}"; val="${val%\"}" ;;
-            \'*\') val="${val#\'}"; val="${val%\'}" ;;
+        # `export --sh` names each [spira] field as-is, uppercased — it does not know this
+        # file's own convention that every key it honours is SPIRA_-prefixed except the
+        # COCKPIT_* ones already spelled that way in spira.conf. Renamed here, once, rather
+        # than teach spira-config a naming exception that belongs to this file alone.
+        case "$key" in
+            COCKPIT_*) ;;
+            *) key="SPIRA_$key" ;;
         esac
-        case "$SPIRA_CONF_KEYS" in
-            *" $key "*) ;;
-            *) printf 'spira.conf:%s: unknown key %s, ignored\n' "$n" "$key" >&2
-               continue ;;
-        esac
-        # `~` and $HOME expand, and nothing else does. A value is not shell: `$(date)` in a
-        # config file read by the process that summons agents is a command this harness
-        # would run as the operator.
-        case "$val" in
-            '~'|'~/'*) val="$HOME${val#\~}" ;;
-        esac
-        val="${val//\$HOME/$HOME}"
-        val="${val//\$\{HOME\}/$HOME}"
-        # THE ENVIRONMENT WINS. `${!key+set}` is the only test that distinguishes "unset"
-        # from "set to empty" — and set-to-empty is meaningful here, since an empty
-        # SPIRA_TOWN is how an operator says they have no Gas Town.
+        # THE ENVIRONMENT WINS — the same rule the old KEY=value reader enforced, kept because a
+        # config file that could override a test's own SPIRA_DB would point the suite at
+        # the operator's real database.
         case " $_spira_conf_env " in *" $key "*) continue ;; esac
-        printf -v "$key" '%s' "$val"
-    done < "$file"
+        eval "$key=$val"
+    done <<< "$out"
 }
 
 # _spira_join <base> <rel> — join a base path and a relative segment without doubling
@@ -1527,26 +1653,10 @@ spira_conf_defaults() {
     # example does. Resolution runs beside the config file first, because that is where an
     # operator whose harness lives in a repository they did not write can keep theirs.
     if [ -z "${SPIRA_REPO_MAP:-}" ]; then
-        local cf d c
-        cf="$(spira_conf_file)"
-        [ -n "$cf" ] && d="$(dirname "$cf")" || d=""
-        # AN EXPLICIT SPIRA_HOME PUTS ITS OWN MAP FIRST. Otherwise the config-dir map leads,
-        # for an operator whose harness lives in a repository they did not write.
-        #
-        # The conditional is not a nicety. Every fixture in these suites plants a map at
-        # $SPIRA_HOME/repo-map and sets SPIRA_HOME to reach it; with the config-dir map
-        # unconditionally ahead, all of them silently read the operator's REAL seven
-        # repositories instead — four suites at once, reporting "0 movements" and "not an
-        # ancestor" as though landing were broken, with nothing naming the map they read
-        # (law-gates-run-in-a-clean-environment).
-        if [ -n "$_spira_conf_home_env" ]; then
-            set -- "$SPIRA_HOME/repo-map" ${d:+"$d/repo-map"} "$SPIRA_HOME/repo-map.example"
-        else
-            set -- ${d:+"$d/repo-map"} "$SPIRA_HOME/repo-map" "$SPIRA_HOME/repo-map.example"
-        fi
-        for c in "$@"; do
-            [ -f "$c" ] && { SPIRA_REPO_MAP="$c"; break; }
-        done
+        # An explicit SPIRA_HOME puts its own map first; otherwise the config-dir map leads.
+        # See _spira_repo_map_candidate for why the order matters (law-gates-run-in-a-clean-
+        # environment) — this is the same search spira_toml_resolve's auto-convert makes.
+        SPIRA_REPO_MAP="$(_spira_repo_map_candidate)"
         : "${SPIRA_REPO_MAP:=$SPIRA_HOME/repo-map}"
     fi
 }
@@ -1584,7 +1694,9 @@ spira_single_checkout() {
 # config file (spira.toml, a converted spira.conf, ...) resolves its write target through.
 # <candidate> is returned unchanged only when this checkout IS the installed release
 # (SPIRA_HOME resolves to the same directory as SPIRA_PROD) or SPIRA_CONFIG_WRITE=1 is set
-# explicitly; otherwise the write is redirected to $SPIRA_REPO instead, same basename.
+# explicitly; otherwise the write is redirected to $SPIRA_REPO, then further to
+# XDG_CONFIG_HOME, then to a private scratch file, at the first of those that is actually
+# writable.
 #
 # scar: three cutover branches, each sourcing their own conf.sh with the operator's real
 # HOME, regenerated the operator's real spira.toml from worktree state — three times in one
@@ -1592,6 +1704,14 @@ spira_single_checkout() {
 # business writing outside itself, however it got HOME; an unresolved SPIRA_PROD (default
 # not yet derived) compares unequal to SPIRA_HOME and so fails closed into the redirect,
 # which is the safe side of this check.
+#
+# $SPIRA_REPO IS CHECKED, NOT ASSUMED, WRITABLE (sp-jv49c): a testenv container bind-mounts
+# it read-write for its host owner but read-only (or foreign-UID-owned) for the user conf.sh
+# runs as, so a redirect that lands there unconditionally hands `spira-config convert` a
+# target it cannot write and the whole auto-convert fails — silently reverting every
+# SPIRA_* key to its computed default instead of what spira.conf actually says. The final
+# fallback, a private scratch file, is chosen precisely because `mktemp` always succeeds:
+# the auto-convert this run's values depend on must not fail for want of a place to land.
 spira_config_writeback() {
     local candidate="$1"
     if [ "${SPIRA_CONFIG_WRITE:-0}" = "1" ]; then
@@ -1605,11 +1725,21 @@ spira_config_writeback() {
         printf '%s' "$candidate"
         return 0
     fi
-    printf '%s/%s' "$SPIRA_REPO" "$(basename "$candidate")"
+    if [ -w "$SPIRA_REPO" ]; then
+        printf '%s/%s' "$SPIRA_REPO" "$(basename "$candidate")"
+        return 0
+    fi
+    local xdg_dir="${XDG_CONFIG_HOME:-$HOME/.config}/spira"
+    if mkdir -p "$xdg_dir" 2>/dev/null && [ -w "$xdg_dir" ]; then
+        printf '%s/%s' "$xdg_dir" "$(basename "$candidate")"
+        return 0
+    fi
+    mktemp "${TMPDIR:-/tmp}/spira-toml.XXXXXX"
 }
 
 SPIRA_CONF_FILE="$(spira_conf_file)"
-[ -n "$SPIRA_CONF_FILE" ] && spira_conf_read "$SPIRA_CONF_FILE"
+SPIRA_TOML_FILE="$(spira_toml_resolve)"
+[ -n "$SPIRA_TOML_FILE" ] && spira_toml_read "$SPIRA_TOML_FILE"
 spira_conf_defaults
 unset _spira_conf_here _spira_conf_env _spira_conf_home_env
 
@@ -1620,8 +1750,15 @@ unset _spira_conf_here _spira_conf_env _spira_conf_home_env
 #
 # SPIRA_PATH is prepended and is the config's business; the tail is the box's own and is
 # not, so it is not written into the config.
+#
+# $HOME/.cargo/bin IS IN THE TAIL, not left to SPIRA_PATH, for a bootstrap reason: reading
+# SPIRA_PATH out of spira.toml itself requires SPIRA_CONFIG_BIN, and a fresh worktree (no
+# `cargo build` yet) has none. Without cargo reachable some other way, that worktree can
+# never build the very binary that would let it read config at all — `testenv-batch.sh
+# --with-bins` finds no cargo on PATH and refuses, and nothing breaks the cycle. rustup's
+# own installer default, so a box without cargo there simply gains a dead path segment.
 # --------------------------------------------------------------------------------------
-export PATH="${SPIRA_PATH:+$SPIRA_PATH:}$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+export PATH="${SPIRA_PATH:+$SPIRA_PATH:}$HOME/.local/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
 
 # SPIRA_BD — resolved once, deterministically, after SPIRA_PATH is applied. When the
 # environment or a config file already set it (both captured before this point), the value
@@ -1819,7 +1956,7 @@ export SPIRA_INSTANCE \
        SPIRA_TOWN SPIRA_MIRROR SPIRA_EXPORTER SPIRA_DESIGN SPIRA_WIKI SPIRA_WIKI_HOOK SPIRA_DOLT_DATA \
        SPIRA_ALERT_GLOB \
        SPIRA_GATE_NOVERDICT SPIRA_GATE_BASEFAIL \
-       SPIRA_BD SPIRA_CONF_FILE SPIRA_PROD SPIRA_CTRL \
+       SPIRA_BD SPIRA_CONF_FILE SPIRA_TOML_FILE SPIRA_CONFIG_BIN SPIRA_PROD SPIRA_CTRL \
        SPIRA_RELEASES \
        SPIRA_REVIEWER_VERDICTS SPIRA_REVIEWER_MODEL SPIRA_REVIEW_LABEL
 

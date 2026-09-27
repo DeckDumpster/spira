@@ -45,9 +45,9 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # _seed_instance_conf <conf-file> <instance> -> append SPIRA_INSTANCE=<instance> unless
 # that exact line is already there. APPEND, NOT OVERWRITE: the file may carry operator
-# settings, and appending overrides any earlier value (spira_conf_read: last write wins)
-# without disturbing lines placed before it. Defined before conf.sh is sourced so a test
-# can source this file (BASH_SOURCE[0] != $0) and call it directly.
+# settings, and appending a later line overrides any earlier one without disturbing lines
+# placed before it. Defined before conf.sh is sourced so a test can source this file
+# (BASH_SOURCE[0] != $0) and call it directly.
 _seed_instance_conf() {
     local file="$1" inst="$2"
     grep -qxF "SPIRA_INSTANCE=$inst" "$file" 2>/dev/null && return 0
@@ -410,9 +410,17 @@ _place_dolt_yaml() {  # args: <template-name> <data-dir>
 # $SPIRA_REPO/spira.conf BEFORE ~/.config/spira/spira.conf. Without that file the sentinel
 # falls through to the prod config — using the prod database, prod runtime tree, and
 # SPIRA_INSTANCE=prod — so the containment fence never fires (it is a no-op for prod).
-# Writing SPIRA_INSTANCE=<instance> to dirname($SPIRA_PROD)/spira.conf closes the gap: every
+# Writing SPIRA_INSTANCE=<instance> to dirname($SPIRA_PROD)'s config closes the gap: every
 # path the sentinel derives from it (SPIRA_DB, SPIRA_RUN, etc.) inherits the instance
 # qualifier automatically, and the containment check fires as intended.
+#
+# TWO FORMATS — the same rule deploy.sh's SPIRA_PROD writer uses. A pre-existing spira.conf,
+# or a root with NEITHER file yet, is still written in that format via _seed_instance_conf
+# (APPENDED TO, NOT OVERWRITTEN — conf.sh's regenerate-on-staleness check picks it up on the
+# next read). Only where a spira.toml ALREADY EXISTS AND NO spira.conf DOES does this write
+# spira.toml directly, through `spira-config set` — writing a fresh spira.conf there instead
+# would make that check overwrite the richer spira.toml with a document holding only the one
+# key just written.
 if [ "$SPIRA_INSTANCE" != "prod" ] && [ -n "${SPIRA_PROD:-}" ]; then
     _prod_root="$(dirname "$SPIRA_PROD")"
     _home_root="$(dirname "$SPIRA_HOME")"
@@ -421,7 +429,17 @@ if [ "$SPIRA_INSTANCE" != "prod" ] && [ -n "${SPIRA_PROD:-}" ]; then
     # fixture or a no-split install. In real usage the prod tree lives in a sibling
     # directory (e.g. spira-harness-test/) and the two parents differ.
     if [ "$_prod_root" != "$_home_root" ]; then
-        _seed_instance_conf "$_prod_root/spira.conf" "$SPIRA_INSTANCE"
+        _prod_repo_conf="$_prod_root/spira.conf"
+        _prod_repo_toml="$_prod_root/spira.toml"
+        if [ -f "$_prod_repo_conf" ] || [ ! -f "$_prod_repo_toml" ]; then
+            _seed_instance_conf "$_prod_repo_conf" "$SPIRA_INSTANCE"
+        else
+            if [ "$("$SPIRA_CONFIG_BIN" get spira.instance "$_prod_repo_toml" 2>/dev/null)" != "$SPIRA_INSTANCE" ]; then
+                "$SPIRA_CONFIG_BIN" set spira.instance "$SPIRA_INSTANCE" "$_prod_repo_toml" \
+                    && printf 'install: seeded %s with instance = %s\n' "$_prod_repo_toml" "$SPIRA_INSTANCE"
+            fi
+        fi
+        unset _prod_repo_conf _prod_repo_toml
     fi
     unset _prod_root _home_root
 fi

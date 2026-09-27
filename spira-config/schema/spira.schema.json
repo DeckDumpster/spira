@@ -219,6 +219,20 @@
           "format": "uint32",
           "minimum": 0.0
         },
+        "batch_mem_per_suite_mib": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "bd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "cert_idle_skip": {
           "type": [
             "boolean",
@@ -244,6 +258,18 @@
           ]
         },
         "ci_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "client_settings": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cockpit": {
           "type": [
             "string",
             "null"
@@ -312,6 +338,28 @@
             "null"
           ]
         },
+        "hook_lines": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "instance": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lanes_max_live": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
         "loom_addr": {
           "type": [
             "string",
@@ -326,11 +374,31 @@
           "format": "uint64",
           "minimum": 0.0
         },
+        "mail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "mail_readers": {
           "type": [
             "string",
             "null"
           ]
+        },
+        "mail_session_mailbox": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mail_settle": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
         },
         "max_aeons": {
           "type": [
@@ -380,6 +448,12 @@
             "null"
           ]
         },
+        "queue_batch_idle_cut": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "queue_batch_max": {
           "type": [
             "integer",
@@ -407,6 +481,12 @@
         "queue_local_gate": {
           "type": [
             "boolean",
+            "null"
+          ]
+        },
+        "queue_throttle_override": {
+          "type": [
+            "string",
             "null"
           ]
         },
@@ -438,6 +518,14 @@
           "format": "uint64",
           "minimum": 0.0
         },
+        "thrash_minutes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
         "tz": {
           "type": [
             "string",
@@ -453,6 +541,12 @@
           "minimum": 0.0
         },
         "view": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "watchers": {
           "type": [
             "string",
             "null"

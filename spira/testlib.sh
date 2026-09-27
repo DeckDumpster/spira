@@ -191,6 +191,31 @@ wantrc() {  # wantrc <name> <expected-rc> <actual-rc>
     [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted rc=$2 got rc=$3"
 }
 
+# testlib_spira_config_bin <scratch-dir> — a spira-config binary for a suite that sources
+# conf.sh OUTSIDE this checkout's own target/ (a scratch clone, a fixture harness tree with
+# no Cargo build of its own): conf.sh's spira.toml auto-convert shells out to this binary
+# (sp-zs04v.2), and testenv-batch.sh only hands SPIRA_CONFIG_BIN to its own bring-up steps,
+# not to suites, so a clone with no target/ built into it resolves nothing and every
+# SPIRA_* key silently reverts to a computed default. Prints the resolved path on success;
+# prints nothing and returns 1 when cargo is unavailable, matching test-configure.sh's own
+# tolerance — the caller decides whether that is its own skip or its own bail.
+testlib_spira_config_bin() {
+    local scratch="$1" bin cargo
+    bin="$HERE/../target/release/spira-config"
+    if [ -x "$bin" ]; then
+        printf '%s' "$bin"
+        return 0
+    fi
+    cargo="$(command -v cargo 2>/dev/null || true)"
+    [ -z "$cargo" ] && [ -x "$HOME/.cargo/bin/cargo" ] && cargo="$HOME/.cargo/bin/cargo"
+    [ -n "$cargo" ] || return 1
+    CARGO_TARGET_DIR="$scratch/spira-config-target" "$cargo" build --release \
+        --manifest-path "$HERE/../spira-config/Cargo.toml" >/dev/null 2>&1
+    bin="$scratch/spira-config-target/release/spira-config"
+    [ -x "$bin" ] || return 1
+    printf '%s' "$bin"
+}
+
 # report_cargo <out-file> <rc> — one ok/bad per `test <path> ... ok|FAILED` line a `cargo
 # test` run wrote to <out-file>, instead of the whole run collapsing to a single line. Cargo
 # interleaves output from parallel test threads, but each test's own result line is whole

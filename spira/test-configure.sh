@@ -31,6 +31,25 @@ iszero() { [ "${2:-1}" -eq 0 ] && ok "$1" || bad "$1" "wanted exit 0, got ${2:-?
 echo "test-configure.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
+# conf.sh's spira.conf path shells out to spira-config to auto-convert (sp-zs04v.2), and
+# testenv-batch only hands SPIRA_CONFIG_BIN to its own bring-up steps, not to suites — so
+# both sourcings of conf.sh below need one of their own, mirroring test-conf.sh. Skip (not
+# fail) if cargo is unavailable, matching that suite's own tolerance.
+CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
+[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
+SPIRA_CONFIG_BIN="$HERE/../target/release/spira-config"
+if [ ! -x "$SPIRA_CONFIG_BIN" ] && [ -n "$CARGO_BIN" ]; then
+    CARGO_TARGET_DIR="$TMP/spira-config-target" "$CARGO_BIN" build --release \
+        --manifest-path "$HERE/../spira-config/Cargo.toml" >/dev/null 2>&1
+    SPIRA_CONFIG_BIN="$TMP/spira-config-target/release/spira-config"
+fi
+[ -x "$SPIRA_CONFIG_BIN" ] || SPIRA_CONFIG_BIN=""
+if [ -z "$SPIRA_CONFIG_BIN" ]; then
+    echo "SKIP: cargo not found — spira-config cannot be built to exercise the auto-convert path"
+    printf '\n%d passed, %d failed\n' "$pass" "$fail"
+    exit 77
+fi
+
 # ==========================================================================
 echo
 echo "positive control (a) — conf.sh refuses an unknown key:"
@@ -40,7 +59,7 @@ echo "positive control (a) — conf.sh refuses an unknown key:"
 # wrote garbage (law-absence-needs-a-positive-control).
 _pc_conf="$TMP/pc-bad.conf"
 printf 'SPIRA_NONEXISTENT_KEY_ZZZZZ = value\n' > "$_pc_conf"
-_pc_warn="$(SPIRA_CONF="$_pc_conf" SPIRA_DB=/tmp/pc-nodb-$$ \
+_pc_warn="$(SPIRA_CONF="$_pc_conf" SPIRA_DB=/tmp/pc-nodb-$$ SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
     bash -c ". '$HERE/conf.sh'" 2>&1 1>/dev/null || true)"
 if printf '%s\n' "$_pc_warn" | grep -q 'unknown key'; then
     ok "conf.sh warns about an unknown key in the config file"
@@ -146,7 +165,7 @@ echo "round-trip — conf.sh accepts the generated file (no unknown-key warnings
 # ==========================================================================
 # Source conf.sh with the generated file as the config and capture stderr.
 # Any "unknown key" warning means configure.sh wrote a key conf.sh doesn't recognise.
-_rt_warn="$(SPIRA_CONF="$OUT" SPIRA_DB="/tmp/configure-test-nodb-$$" \
+_rt_warn="$(SPIRA_CONF="$OUT" SPIRA_DB="/tmp/configure-test-nodb-$$" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
     bash -c ". '$HERE/conf.sh'" 2>&1 1>/dev/null || true)"
 if printf '%s\n' "$_rt_warn" | grep -q 'unknown key'; then
     bad "round-trip" "conf.sh rejected a key: $_rt_warn"

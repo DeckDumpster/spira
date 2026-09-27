@@ -5,9 +5,8 @@
 #   ./test-spira-config.sh
 #
 # WHERE IT RUNS: the TIMED set, found by the `spira/test-*.sh` glob and run by `suites.sh`,
-# because `gate-suites` does not name it. No consumer reads spira.toml yet (sp-upkae ships
-# the crate only), so nothing depends on this at landing time; it moves to the gate once a
-# consumer does.
+# because `gate-suites` does not name it. conf.sh is now a consumer (sp-zs04v.2); the
+# consumer's own coverage lives in test-conf-toml.sh, which does name this crate.
 #
 # WHAT IS EXERCISED: schema validation per section (valid / unknown key / wrong type / bad
 # enum / missing field), the spira.conf/repo-map/fayth converter's golden test, and the T0

@@ -61,6 +61,7 @@ pub struct SpiraSection {
     pub path: Option<String>,
     pub workspaces: Option<String>,
     pub prod: Option<String>,
+    pub instance: Option<String>,
     pub dolt_data: Option<String>,
     pub wiki: Option<String>,
     pub wiki_hook: Option<String>,
@@ -95,6 +96,19 @@ pub struct SpiraSection {
     pub cockpit_bottom_pct: Option<u32>,
     pub cockpit_right_pct: Option<u32>,
     pub czar_stage_deadlock: Option<CzarStage>,
+    pub bd: Option<String>,
+    pub watchers: Option<String>,
+    pub cockpit: Option<String>,
+    pub batch_mem_per_suite_mib: Option<u32>,
+    pub lanes_max_live: Option<u32>,
+    pub thrash_minutes: Option<u32>,
+    pub mail_settle: Option<u64>,
+    pub queue_batch_idle_cut: Option<bool>,
+    pub queue_throttle_override: Option<String>,
+    pub hook_lines: Option<u32>,
+    pub client_settings: Option<String>,
+    pub mail: Option<String>,
+    pub mail_session_mailbox: Option<String>,
 }
 
 /// How a landed branch reaches its base — see `repo-map.example`'s own `land` column.
@@ -299,6 +313,45 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
+/// Sets one dotted path (`spira.prod`, `spira.instance`) to a string value on `doc`, for
+/// `spira-config set` — the writer `deploy.sh` and `install.sh` use once nothing reads
+/// `spira.conf`'s `KEY=value` lines anymore. Goes through a JSON round-trip rather than a
+/// hand-written per-field match arm, so a field this schema already knows needs no writer
+/// of its own; `deny_unknown_fields` still refuses a path this schema does not carry, via
+/// the same `serde` deserialize the rest of this crate validates through.
+pub fn set_path(doc: &SpiraToml, path: &str, value: &str) -> Result<SpiraToml, String> {
+    let segs: Vec<&str> = path.split('.').collect();
+    let Some((leaf, parents)) = segs.split_last() else {
+        return Err("set: empty path".to_string());
+    };
+    let mut json = serde_json::to_value(doc).map_err(|e| e.to_string())?;
+    let mut cur = &mut json;
+    for seg in parents {
+        if !cur.is_object() {
+            *cur = serde_json::Value::Object(Default::default());
+        }
+        cur = cur
+            .as_object_mut()
+            .expect("just made an object")
+            .entry(seg.to_string())
+            .or_insert_with(|| serde_json::Value::Object(Default::default()));
+    }
+    if !cur.is_object() {
+        *cur = serde_json::Value::Object(Default::default());
+    }
+    cur.as_object_mut()
+        .expect("just made an object")
+        .insert(leaf.to_string(), serde_json::Value::String(value.to_string()));
+    serde_path_to_error::deserialize(json).map_err(|e| {
+        let p = e.path().to_string();
+        if p.is_empty() {
+            e.inner().to_string()
+        } else {
+            format!("{p}: {}", e.inner())
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,5 +422,26 @@ mod tests {
         let out = export_sh(&doc);
         assert!(out.contains("HOME_REPO='a b'\n"), "{out}");
         assert!(out.contains("MAX_AEONS='4'\n"), "{out}");
+    }
+
+    #[test]
+    fn set_path_on_empty_document_creates_the_table() {
+        let doc = set_path(&SpiraToml::default(), "spira.prod", "/srv/x").unwrap();
+        assert_eq!(doc.spira.unwrap().prod, Some("/srv/x".to_string()));
+    }
+
+    #[test]
+    fn set_path_replaces_without_disturbing_siblings() {
+        let doc = validate("[spira]\nprod = \"/old\"\nmax_aeons = 4\n").unwrap();
+        let doc = set_path(&doc, "spira.prod", "/new").unwrap();
+        let spira = doc.spira.unwrap();
+        assert_eq!(spira.prod, Some("/new".to_string()));
+        assert_eq!(spira.max_aeons, Some(4));
+    }
+
+    #[test]
+    fn set_path_refuses_an_unknown_field() {
+        let err = set_path(&SpiraToml::default(), "spira.bogus", "x").unwrap_err();
+        assert!(err.starts_with("spira.bogus"), "{err}");
     }
 }

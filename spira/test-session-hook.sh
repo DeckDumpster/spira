@@ -45,6 +45,11 @@ le()  { if [ "$3" -le "$2" ]; then ok "$1"; else bad "$1" "want <= $2, got $3"; 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/home" "$TMP/bin"
 
+# conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2); CLONE and GONE
+# below carry none of this checkout's own target/, so without this every configured value
+# below is silently dropped instead of read.
+SPIRA_CONFIG_BIN="$(testlib_spira_config_bin "$TMP")" || skip "cargo not found — spira-config binary cannot be built"
+
 # A harness tree that is NOT this checkout, so nothing here can read the operator's own
 # configuration, their watcher manifest or their client settings and report a pass it did not
 # earn.
@@ -107,7 +112,7 @@ PY
 hook() {
     local ev="$1" src="$2"; shift 2
     printf '{"hook_event_name":"%s","source":"%s"}' "$ev" "$src" \
-      | env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" SPIRA_WAKE="${WAKE-}" "$@" \
+      | env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" SPIRA_WAKE="${WAKE-}" "$@" \
         bash "$CLONE/spira/hooks/session.sh"
 }
 
@@ -134,7 +139,7 @@ echo "and it marks nothing read"
 # latch below would replay nothing. The cursor is the whole evidence: the contract is a log
 # and an integer, and the integer must not have moved.
 is  "no cursor file is written"                  "" "$(ls "$RUN/watchd" | grep cursor || true)"
-after="$(env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" \
+after="$(env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
          bash "$CLONE/spira/watchd.sh" status)"
 has "so the backlog is still unread afterwards"  "$after" "300"
 out2="$(hook SessionStart clear)"
@@ -197,7 +202,7 @@ is "and prints nothing at all" "" "$out3"
 echo
 echo "it never breaks a session start"
 run_raw() {                        # run_raw <stdin> — the hook with an arbitrary payload
-    printf '%s' "$1" | env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" \
+    printf '%s' "$1" | env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
         bash "$CLONE/spira/hooks/session.sh"
 }
 out4="$(run_raw 'not json at all')"; is "malformed stdin still exits clean" "0" "$?"
@@ -374,7 +379,7 @@ cat > "$SET" <<'EOF'
   }
 }
 EOF
-ish() { env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" \
+ish() { env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
         bash "$CLONE/spira/install-session-hook.sh" "$@"; }
 
 out="$(ish status)"; rc=$?
@@ -467,7 +472,7 @@ GONE="$TMP/gone-clone"
 mkdir -p "$GONE/spira/hooks"
 cp "$HERE/conf.sh" "$HERE/install-session-hook.sh" "$GONE/spira/"
 SET2="$TMP/elsewhere/settings2.json"
-out="$(env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" \
+out="$(env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
        SPIRA_CLIENT_SETTINGS="$SET2" bash "$GONE/spira/install-session-hook.sh" install 2>&1)"; rc=$?
 is  "install refuses when the hook is not there" "1" "$rc"
 has "and names what is missing"                  "$out" "not executable"

@@ -214,10 +214,16 @@ run_hook_link() {
         bash "$HOOK" >/dev/null 2>&1
 }
 # NEGATIVE CONTROL: a symlink SPIRA_PROD pointing somewhere else must still refuse.
-ln -sfn "$TMP" "$SID_LINK_DIR/spira-other"
-HOOK_CONF_OTHER="$SID_LINK_DIR/spira-other.conf"
+# ITS OWN DIRECTORY, not $SID_LINK_DIR: conf.sh's auto-convert derives its spira.toml
+# target from the conf file's own directory, and two different confs sharing one
+# directory would derive the SAME target — the second conversion would then either reuse
+# the first's now-stale-relative-to-itself toml or overwrite it, corrupting whichever
+# scenario ran second regardless of which SPIRA_PROD it actually named.
+SID_OTHER_DIR="$TMP/hookrun_other"; mkdir -p "$SID_OTHER_DIR"
+ln -sfn "$TMP" "$SID_OTHER_DIR/spira-other"
+HOOK_CONF_OTHER="$SID_OTHER_DIR/spira-other.conf"
 cat > "$HOOK_CONF_OTHER" <<EOF
-SPIRA_PROD = $SID_LINK_DIR/spira-other
+SPIRA_PROD = $SID_OTHER_DIR/spira-other
 SPIRA_RUN = $SID_LINK_DIR/run
 SPIRA_WATCHERS = $SID_LINK_DIR/no-watchers
 EOF

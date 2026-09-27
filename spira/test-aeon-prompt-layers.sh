@@ -191,7 +191,13 @@ echo "groomer system.md has the five operations; task.md has the finishing contr
 # ==========================================================================================
 # Use a real groomer fayth to verify the content split meets the acceptance criteria.
 # Run through the real chamber file (not the test stub), using a groomer bead.
-GROOMER_LABEL="$(. "$HERE/conf.sh" 2>/dev/null; printf '%s' "${SPIRA_GROOMER_LABEL:-groomer}")"
+# HOME/SPIRA_CONF/SPIRA_TOML pinned to the fixture: sourcing conf.sh unguarded picks up
+# whatever spira.conf/spira.toml the ambient HOME happens to have, and the auto-convert
+# path WRITES there (sp-zs04v.2 — a suite that can reach ~/.config/spira is a production
+# write, not a test).
+GROOMER_LABEL="$(env -i PATH="$PATH" HOME="$TMP" SPIRA_HOME="$SPIRA_HOME" \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_TOML="$TMP/no.toml" \
+    bash -c '. "$SPIRA_HOME/conf.sh" 2>/dev/null; printf "%s" "${SPIRA_GROOMER_LABEL:-groomer}"')"
 BID_G="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "groomer layers test" --type task \
     -l "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}$GROOMER_LABEL,repo:fixture" 2>/dev/null \
     | grep -oE 'sp-[a-z0-9]+' | head -1)"

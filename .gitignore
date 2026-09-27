@@ -21,6 +21,7 @@ __pycache__/
 # second position is not dead weight a colleague ignores, it is the map their clone silently
 # USES, naming checkouts they do not have.
 /spira.conf
+/spira.toml
 spira/repo-map
 spira/repo-map.local
 

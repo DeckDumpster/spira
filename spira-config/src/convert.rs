@@ -169,8 +169,25 @@ pub fn spira_section(
                     }
                 }
             }
+            "SPIRA_BD" => s.bd = Some(val.clone()),
+            "SPIRA_WATCHERS" => s.watchers = Some(val.clone()),
+            "SPIRA_COCKPIT" => s.cockpit = Some(val.clone()),
+            "SPIRA_BATCH_MEM_PER_SUITE_MIB" => {
+                s.batch_mem_per_suite_mib = parse_u32(warnings, "batch_mem_per_suite_mib", val)
+            }
+            "SPIRA_LANES_MAX_LIVE" => s.lanes_max_live = parse_u32(warnings, "lanes_max_live", val),
+            "SPIRA_THRASH_MINUTES" => s.thrash_minutes = parse_u32(warnings, "thrash_minutes", val),
+            "SPIRA_MAIL_SETTLE" => s.mail_settle = parse_u64(warnings, "mail_settle", val),
+            "SPIRA_QUEUE_BATCH_IDLE_CUT" => {
+                s.queue_batch_idle_cut = parse_bool01(warnings, "queue_batch_idle_cut", val)
+            }
+            "SPIRA_QUEUE_THROTTLE_OVERRIDE" => s.queue_throttle_override = Some(val.clone()),
+            "SPIRA_HOOK_LINES" => s.hook_lines = parse_u32(warnings, "hook_lines", val),
+            "SPIRA_CLIENT_SETTINGS" => s.client_settings = Some(val.clone()),
+            "SPIRA_MAIL" => s.mail = Some(val.clone()),
+            "SPIRA_MAIL_SESSION_MAILBOX" => s.mail_session_mailbox = Some(val.clone()),
             other => warnings.push(format!(
-                "spira.conf: {other} has no [spira] field yet (schema covers the keys this \
+                "spira.conf: unknown key {other}, ignored (schema covers the keys this \
                  install sets; widen it in the cutover bead if a consumer still needs it)"
             )),
         }

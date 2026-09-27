@@ -27,6 +27,11 @@ mkdir -p "$TMP/home"
 CLONE="$TMP/clone"
 mkdir -p "$CLONE/spira" "$CLONE/cockpit"
 ln -s "$HERE"/*.sh "$CLONE/spira/"
+
+# conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2); CLONE carries
+# none of this checkout's own target/, so without this the render pass below reads no
+# configured value at all.
+SPIRA_CONFIG_BIN="$(testlib_spira_config_bin "$TMP")" || skip "cargo not found — spira-config binary cannot be built"
 cp -r "$ROOT/systemd" "$CLONE/systemd"
 ln -s "$ROOT/beads-push.sh" "$ROOT/concierge.sh" "$CLONE/"
 
@@ -49,6 +54,7 @@ printf 'test-units-lint.sh\n'
 # which is what every removed per-suite section actually needed to check content.
 # =======================================================================================
 rendered="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" \
+    SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
     bash "$CLONE/systemd/install.sh" --render 2>"$TMP/render.err")"
 is "the render pass produced units" "yes" "$([ -n "$rendered" ] && echo yes || echo no)"
 # `note:` lines are install.sh commenting on units this suite does not touch (an unbuilt
