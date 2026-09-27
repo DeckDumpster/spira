@@ -288,7 +288,7 @@ _spira_fayth_paths() {
 # drops the repo-map or a fayth and so, per `spira-config convert`'s own refusal, fails closed
 # against a target that already has more (sp-zs04v.2) rather than by construction here.
 _spira_toml_convert_from_conf() {
-    local conf="$1" target out rmap f
+    local conf="$1" target="$2" out rmap f
     local -a conv_args
     target="$(spira_config_writeback "$target")"
     conv_args=(--conf "$conf" --home "$HOME" --out "$target")
