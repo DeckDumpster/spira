@@ -13,8 +13,10 @@
 #      dropping the other.
 #   4. Each ejection of the same member increments $SPIRA_RUN/eject-count/<id>.
 #
-# The repro batch is stubbed via SPIRA_QUEUE_REPRO_BATCH; no container is used.
-# The forge is a local fixture; no network is reached.
+# Reproduction is stubbed at the forge: dispatch resolves the pushed attribution
+# branch's merge commit and decides red/green by checking its parents against
+# $REPRO_FAIL_FILE, mirroring test-verdict.sh's forge-fixture.sh. No container,
+# no network.
 #
 # covers: spira/verdict.sh spira/landing.sh
 set -uo pipefail
@@ -56,16 +58,57 @@ SUITES_LOG="$TMP/suites-log"
 REPRO_FAIL_FILE="$TMP/repro-fail"
 REPRO_FAULT_FILE="$TMP/repro-fault"
 MAIL_LOG="$TMP/mail-log"
-export FORGE_LOG FORGE_STATUS_FILE SUITES_LOG REPRO_FAIL_FILE REPRO_FAULT_FILE MAIL_LOG
+DISPATCH_STATE_DIR="$TMP/dispatch-state"
+export FORGE_LOG FORGE_STATUS_FILE SUITES_LOG REPRO_FAIL_FILE REPRO_FAULT_FILE MAIL_LOG DISPATCH_STATE_DIR
 
 printf 'red\n' > "$FORGE_STATUS_FILE"
 : > "$FORGE_LOG"; : > "$SUITES_LOG"; : > "$REPRO_FAIL_FILE"; : > "$REPRO_FAULT_FILE"; : > "$MAIL_LOG"
+mkdir -p "$DISPATCH_STATE_DIR"
 
+# _repro_is_red pushes the member's tip merged onto base to a throwaway branch named
+# spira/attr/<pr>-<member>-<sha12> (verdict.sh:_repro_ci_branch) and polls check-status
+# on it. dispatch resolves that trailing sha12 back to the merge commit — the branch is
+# never fetched into $repo as a ref, only its commit object is — and decides red/green
+# by whether any $REPRO_FAIL_FILE branch's tip is among its parents (established idiom,
+# test-verdict.sh case 24).
 cat > "$SH/forge-fixture.sh" <<'FORGE'
 #!/usr/bin/env bash
 cmd="${1:-}"; shift; repo="${1:-}"; shift
 case "$cmd" in
-    check-status) cat "${FORGE_STATUS_FILE}" 2>/dev/null || printf 'pending\n' ;;
+    check-status)
+        branch="${2:-}"
+        case "$branch" in
+            spira/attr/*)
+                key="$(printf '%s' "$branch" | sha256sum | cut -c1-16)"
+                f="${DISPATCH_STATE_DIR:-/nonexistent}/$key"
+                [ -e "$f" ] && cat "$f" || printf 'pending\n'
+                ;;
+            *) cat "${FORGE_STATUS_FILE}" 2>/dev/null || printf 'pending\n' ;;
+        esac
+        ;;
+    dispatch)
+        branch="${1:-}" suites="${2:-}"
+        sha12="${branch##*-}"
+        full="$(git -C "$repo" rev-parse "$sha12" 2>/dev/null || true)"
+        parents="$(git -C "$repo" log --no-walk --pretty='%P' "$full" 2>/dev/null || true)"
+        kind=green
+        fail_list="$(cat "${REPRO_FAIL_FILE}" 2>/dev/null || true)"
+        for f in $fail_list; do
+            tip="$(git -C "$repo" rev-parse "$f" 2>/dev/null || true)"
+            [ -n "$tip" ] || continue
+            if printf '%s' "$parents" | grep -qF "$tip"; then kind=red; break; fi
+        done
+        key="$(printf '%s' "$branch" | sha256sum | cut -c1-16)"
+        {
+            printf '%s\n' "$kind"
+            [ "$kind" = red ] && for s in ${suites//,/ }; do printf 'red-suite: %s\n' "$s"; done
+        } > "${DISPATCH_STATE_DIR:?}/$key"
+        ;;
+    fail-lines)
+        suites="${2:-}"
+        [ -n "${REPRO_FAIL_LINE:-}" ] || exit 0
+        for s in $suites; do printf 'fail-line: %s: %s\n' "$s" "$REPRO_FAIL_LINE"; done
+        ;;
     run-id)       printf 'run-99\n' ;;
     pr-close)     printf '%s\tclose\n' "${1:-}" >> "$FORGE_LOG" ;;
     workflow-rerun) printf '%s\trerun\n' "${1:-}" >> "$FORGE_LOG" ;;
@@ -77,28 +120,6 @@ case "$cmd" in
 esac
 FORGE
 chmod +x "$SH/forge-fixture.sh"
-
-# _repro_is_red merges the member's tip onto base with --no-ff before testing, so the
-# ref this stub receives is a merge commit, not the branch tip itself. Identify the
-# member by parent commit (established idiom, test-verdict.sh case 24) rather than by
-# comparing branch names against a merge SHA, which never matches.
-cat > "$SH/repro-stub.sh" <<'REPRO'
-#!/usr/bin/env bash
-while [[ "${1:-}" == --* ]]; do shift 2; done
-ref="${1:-}"
-parents="$(git -C "${SPIRA_REPO:-.}" log --no-walk --pretty="%P" "$ref" 2>/dev/null)"
-fail_list="$(cat "${REPRO_FAIL_FILE}" 2>/dev/null || true)"
-for f in $fail_list; do
-    tip="$(git -C "${SPIRA_REPO:-.}" rev-parse "$f" 2>/dev/null || true)"
-    [ -n "$tip" ] || continue
-    if printf '%s' "$parents" | grep -qF "$tip"; then
-        [ -n "${REPRO_FAIL_LINE:-}" ] && printf '%s\n' "$REPRO_FAIL_LINE"
-        exit 1
-    fi
-done
-exit 0
-REPRO
-chmod +x "$SH/repro-stub.sh"
 
 cat > "$SH/suites.sh" <<'SUITES'
 #!/usr/bin/env bash
@@ -120,8 +141,8 @@ verdict() {
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
     SPIRA_QUEUE_CI_MAXSEC=3600 \
     SPIRA_QUEUE_INFRA_RETRIES=2 \
+    SPIRA_QUEUE_REPRO_CI_POLLSEC=1 \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
-    SPIRA_QUEUE_REPRO_BATCH="$SH/repro-stub.sh" \
         bash "$SH/verdict.sh" "$@" 2>&1
 }
 
