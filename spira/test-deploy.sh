@@ -251,7 +251,10 @@ chmod +x "$BIN/bd"
 cat > "$BIN/systemctl" <<'SCEOF'
 #!/usr/bin/env bash
 printf 'SC %s\n' "$*" >> "${SC_LOG:-/dev/null}"
-case "$*" in *list-units*) printf 'spira-sentinel-prod.service loaded active running\n' ;; esac
+case "$*" in
+    *list-units*--state=failed*) [ -n "${SC_FAILED_UNITS:-}" ] && printf '%s\n' "$SC_FAILED_UNITS" ;;
+    *list-units*) printf 'spira-sentinel-prod.service loaded active running\n' ;;
+esac
 exit 0
 SCEOF
 chmod +x "$BIN/systemctl"
@@ -513,6 +516,21 @@ _got_bins="$(grep '^install-bins' "$CALL_LOG" 2>/dev/null | head -1)"
 is "re-render: SPIRA_REPO is the activated release, derived binary paths cleared" \
    "install-bins SPIRA_REPO=$RELEASES/current SPIRA_BROKER_BIN=UNSET SPIRA_LOOM_BIN=UNSET" \
    "$_got_bins"
+
+# PROPERTY 6c — A UNIT THE TARGET RELEASE PRUNED LEAVES NO FAILED GHOST. Deploying an OLDER
+# release swaps `current` before its installer prunes the units it does not know; a timer of
+# such a unit firing in that gap cannot exec its binary (203/EXEC), and systemd keeps the
+# failed state after the file is gone ("not-found failed"). doctor then failed the health
+# check and the deploy rolled back (acceptance phase C: spira-reconciler-flow, 2026-09-27).
+# deploy.sh — from the operator's checkout, whatever the target's installer knows — clears the
+# failed state of every spira unit whose file no longer exists. A failed unit that is still
+# INSTALLED is a real failure and is left for doctor.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+_out="$(run_deploy "SC_FAILED_UNITS=$(printf '%s\n%s' \
+    'spira-gone-prod.service not-found failed failed spira-gone-prod.service' \
+    'spira-real-prod.service loaded failed failed A real failure')" -- "$NEW_TAG" 2>&1)"
+want   "pruned-ghost: the not-found failed unit is reset"   "SC --user reset-failed spira-gone-prod.service" "$(cat "$SC_LOG")"
+nowant "pruned-ghost: an installed failed unit is not"      "reset-failed spira-real-prod.service" "$(cat "$SC_LOG")"
 
 # ==========================================================================
 echo

@@ -538,6 +538,23 @@ _render_release_units || {
     _rollback "unit re-render failed"
 }
 
+# A UNIT THE TARGET RELEASE PRUNED LEAVES NO FAILED GHOST. `current` is swapped before the
+# target's installer prunes the units it does not know, so on a deploy of an OLDER release a
+# timer of such a unit can fire in between, fail to exec its binary (203/EXEC) and stay failed
+# as "not-found failed" once its file is gone — and doctor then failed this deploy's health
+# check (acceptance phase C: spira-reconciler-flow, 2026-09-27). The unit is not installed
+# any more, so its failure is not the release's: clear it. A failed unit whose file IS still
+# installed is a real failure and is left for doctor. This runs from this checkout, so it
+# holds whatever the target release's own installer knows.
+"$_SC" --user list-units --state=failed --all --no-legend --plain \
+        "spira-*-${SPIRA_INSTANCE}.service" "spira-*-${SPIRA_INSTANCE}.timer" 2>/dev/null \
+    | awk '$2 == "not-found" {print $1}' \
+    | while IFS= read -r _ghost; do
+        [ -n "$_ghost" ] || continue
+        "$_SC" --user reset-failed "$_ghost" 2>/dev/null \
+            && log "deploy: cleared the failed state of $_ghost — the release in force does not install it"
+    done
+
 # Ensure cockpit layout is current.
 log "deploy: ensuring cockpit"
 "$_COCKPIT" ensure 2>/dev/null || true
