@@ -752,7 +752,10 @@ _check_provisioned_jobs() {
     fi
     want "$_label provision sets AGENT_TIMEOUT to 300" "AGENT_TIMEOUT: 300" "$_prov_block"
 
-    for _job in $(awk '/^  [a-z_-]+:$/{job=$1; sub(/:$/,"",job)} /needs\.provision\.outputs\.label/{print job}' <<<"$_content"); do
+    # Match only the job whose OWN runs-on names the provisioned label — not
+    # teardown, which passes that same label as a `with:` input to destroy the
+    # VM and must run under always() precisely because provision can fail.
+    for _job in $(awk '/^  [a-z_-]+:$/{job=$1; sub(/:$/,"",job)} /^    runs-on:.*needs\.provision\.outputs\.label/{print job}' <<<"$_content"); do
         _block="$(awk -v j="  $_job:" '$0==j{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' <<<"$_content")"
         _if_line="$(printf '%s\n' "$_block" | sed -n 's/^    if: *//p' | head -1)"
         if _provision_if_ok "$_if_line"; then
