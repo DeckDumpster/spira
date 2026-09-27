@@ -8045,6 +8045,9 @@ _prune_candidates() {
 }
 
 LANDSTATE="${SPIRA_RUN}/landstate"
+# Reasons written by the batch/queue eviction machinery. Only these warrant the eviction-race
+# reopen in aeon.sh; no-rebase@*, gate and confine are landing.sh REDs with their own paths.
+LAND_EVICTION_REASONS="ejected conflicts-with-base rebase-suite-red"
 
 # _tsd_landing_event <id> <state> <tip> [reason]
 # Best-effort: appends a landing-event row (run/tsd/) via tsd-write. Never affects the
@@ -8174,6 +8177,39 @@ land_state() {   # land_state <id> -> "<state> <tip> <at> [reason]" or empty
 # queue_certified_list <repo-path>
 # Print "<id> <tip> <epoch>" for each CERTIFIED branch with a live ref.
 # Reads $SPIRA_RUN/landstate/<id>.
+# eviction_reopen <land-state-string> <cur-tip> <recent-eviction-requeues>
+#   -> reopen | stale | cap | none
+#
+# <land-state-string> is land_state's own output: "<state> <tip> <at> [reason]". Decides
+# whether a closed, committed bead was actually evicted mid-session (aeon.sh's caller gates
+# on st=closed/committed=yes first): EJECTED is always a batch eviction; RED counts only for
+# LAND_EVICTION_REASONS, so a gate-red or no-rebase@ close is not one. A stale recorded tip
+# (the session pushed past the eviction) leaves the close standing. At
+# SPIRA_EVICTION_ESCALATE_AT prior eviction-race requeues the caller escalates instead of
+# reopening again, so this never loops unbounded.
+eviction_reopen() {
+    local ls="$1" cur_tip="$2" recent="${3:-0}"
+    local state tip at reason
+    read -r state tip at reason <<< "$ls"
+    local is_eviction=0
+    if [ "${state:-}" = "EJECTED" ]; then
+        is_eviction=1
+    elif [ "${state:-}" = "RED" ]; then
+        local er
+        for er in $LAND_EVICTION_REASONS; do
+            [ "${reason:-}" = "$er" ] && { is_eviction=1; break; }
+        done
+    fi
+    [ "$is_eviction" = 1 ] || { printf 'none'; return 0; }
+    if [ -n "${tip:-}" ] && [ "$tip" != "none" ] && [ -n "$cur_tip" ] && [ "$tip" != "$cur_tip" ]; then
+        printf 'stale'; return 0
+    fi
+    if printf '%d' "$recent" >/dev/null 2>&1 && [ "$recent" -ge "${SPIRA_EVICTION_ESCALATE_AT:-3}" ]; then
+        printf 'cap'; return 0
+    fi
+    printf 'reopen'
+}
+
 queue_certified_list() {
     local br id f st tip epoch
     git -C "$1" for-each-ref --format='%(refname:short) %(objectname)' 'refs/heads/spira/*' \
