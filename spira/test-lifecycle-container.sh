@@ -26,7 +26,7 @@
 # defect: sp-uwv2s
 # tier: T2
 # covers: lifecycle/* spira-lc/*
-# timeout: 180
+# timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -100,9 +100,16 @@ as_user() {
     "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u "$u" -p "$p" --no-tls "$@"
 }
 
-"$CARGO_BIN" build --manifest-path "$REPO/spira-lc/Cargo.toml" --quiet 2>"$TMP/build.log" \
+# PIN CARGO_TARGET_DIR EXPLICITLY (same hazard as test-batcher-cut.sh): a suite runs
+# inside testenv-batch.sh's own podman exec, which sets its own CARGO_TARGET_DIR for the
+# suites that build Rust under test. Trusting $REPO/target here builds into that redirected
+# directory instead, and this suite's own binary lookup finds nothing there — SEEN RED
+# without this pin, as "cargo build" reporting success while the lookup path stayed empty.
+CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
+CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
+    "$CARGO_BIN" build --manifest-path "$REPO/spira-lc/Cargo.toml" --quiet 2>"$TMP/build.log" \
     || bail "spira-lc failed to build: $(cat "$TMP/build.log")"
-BIN="$REPO/target/debug/spira-lc"
+BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-lc"
 
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$PORT"
