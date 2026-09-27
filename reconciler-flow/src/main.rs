@@ -180,6 +180,13 @@ fn run_pass() -> Result<(), String> {
         return Ok(());
     }
 
+    // install.sh creates SPIRA_RUN once, at install time (systemd/install.sh: "the units
+    // start things that source only conf.sh, and those fail on a path that does not exist
+    // yet"). A bash watcher gets a fresh mkdir on every invocation via lib.sh; this binary
+    // sources nothing, so it must not depend on that directory having survived since install.
+    std::fs::create_dir_all(&cfg.spira_run)
+        .map_err(|e| format!("create {}: {e}", cfg.spira_run.display()))?;
+
     let lock_file = OpenOptions::new()
         .create(true)
         .write(true)
