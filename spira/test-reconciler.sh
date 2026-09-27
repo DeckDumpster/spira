@@ -641,6 +641,8 @@ printf 'TOTAL\t\t0\n' > "$FLEET_LINES"
 printf '\n%s\n' "27. Disk, POSITIVE CONTROL: every path above its floor -> satisfied, no remedy"
 # ==========================================================================================
 reset_state
+: > "$UNITS_LIST"          # 22 left "wrong.service" here, unread by any systemctl fixture since
+echo main > "$GIT_BRANCH_STATE"   # 24 left this on "feature-x" — a positive control must not inherit it
 printf '/\t40\n/var/lib/dolt\t62\n' > "$DISK_LINES"
 bash "$RECONCILER_SH" --pass >/dev/null 2>&1
 [ ! -s "$DISK_REMEDY_CALLS" ] && ok "no disk remedy when every path is above its floor" || bad "unexpected disk remedy: $(cat "$DISK_REMEDY_CALLS")"
@@ -655,7 +657,7 @@ printf '/\t4\n' > "$DISK_LINES"
 bash "$RECONCILER_SH" --pass >/dev/null 2>&1
 _n="$(wc -l < "$DISK_REMEDY_CALLS" | tr -d ' ')"
 is "disk-remedy.sh is run exactly once for the breached path" "1" "$_n"
-want "status jsonl records the gap" '"key":"disk:/","desired":">= 15% free","observed":"4% free"' "$(status_jsonl)"
+want "status jsonl records the gap" '"key":"disk:/","status":"gap","desired":">= 15% free","observed":"4% free"' "$(status_jsonl)"
 
 # ==========================================================================================
 printf '\n%s\n' "29. Disk: an ERR row (path unreadable) -> unobservable, never satisfied, no remedy"
