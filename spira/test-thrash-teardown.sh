@@ -20,7 +20,7 @@
 # behind after a kill -TERM -$$: this suite is about cleanup()'s read of that marker, not
 # about the heartbeat's own trip condition (that is hb_tick's table, test-aeon-lease.sh) or
 # the streak arithmetic itself (thrash_streak_bump's cap/reset/poison-via-thrash cases are
-# test-thrash-streak.sh's, called directly against a real bead with no aeon.sh run at all).
+# the retired test-thrash-streak.sh's, called directly against a real bead with no aeon.sh run at all).
 # This suite exists to prove cleanup() is actually WIRED to that arithmetic — the note text,
 # the bump_requeue cause, and the ledger status it writes once the streak crosses the cap.
 #

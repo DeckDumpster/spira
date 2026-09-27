@@ -204,7 +204,7 @@ jobs:
       - name: Run acceptance (scratch repo, config, run, verdict)
         # acceptance-ci.sh creates the scratch repo with --initial-branch=main,
         # writes the repo-map, calls acceptance-run.sh, pushes notes, and writes
-        # the step summary. Exercisable by test-acceptance-ci.sh without the forge.
+        # the step summary. (Its suite, test-acceptance-ci.sh, was deleted as a flip 2026-09-27.)
         env:
           CONFIGURE_MAX_AEONS: "1"
           CONFIGURE_MAX_LIVE_AEONS: ""

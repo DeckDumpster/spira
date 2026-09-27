@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # acceptance-ci.sh — shell-only steps of the acceptance workflow.
-# Tested by test-acceptance-ci.sh; called by acceptance.yml.
+# Called by acceptance.yml. (test-acceptance-ci.sh was deleted as a flip, 2026-09-27; re-add it with the fix.)
 #
 # Usage: acceptance-ci.sh <tag> [--prev-tag <t>] [--bd-db <path>]
 #                                [--agent <path>] [--record] [--waive-upgrade]
