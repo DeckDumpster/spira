@@ -44,6 +44,12 @@
 #   stop     kill the watcher.
 set -u
 
+# $TMUX names whatever server the invoking shell is already attached to. Every bare `tmux`
+# call below would target THAT server instead of the cockpit's own when this is run by hand
+# from inside an unrelated session (see cockpit/layout.sh, which clears it for the same
+# reason). Cleared before the first tmux call.
+unset TMUX
+
 # ---- config -----------------------------------------------------------------
 HUNK="${HUNK:-$HOME/.local/bin/hunk}"          # absolute: ssh sessions lack the login PATH
 BRAIN_DIR="${COCKPIT_BRAIN_DIR:-$HOME}"
