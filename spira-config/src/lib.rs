@@ -103,6 +103,8 @@ pub struct SpiraSection {
     pub lanes_max_live: Option<u32>,
     pub thrash_minutes: Option<u32>,
     pub mail_settle: Option<u64>,
+    pub cockpit_clipboard: Option<String>,
+    pub lc_bin: Option<String>,
     pub queue_throttle_override: Option<String>,
     pub hook_lines: Option<u32>,
     pub client_settings: Option<String>,

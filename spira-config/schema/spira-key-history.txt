@@ -61,6 +61,7 @@ claim_retry_delay_s
 client_settings
 cockpit
 cockpit_bottom_pct
+cockpit_clipboard
 cockpit_cwd
 cockpit_db
 cockpit_host
@@ -135,6 +136,7 @@ land_maxsec
 landing_pass_bin
 lanes
 lanes_max_live
+lc_bin
 loom_addr
 loom_bin
 loom_budget_ms

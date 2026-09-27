@@ -589,6 +589,12 @@
           "format": "uint32",
           "minimum": 0.0
         },
+        "cockpit_clipboard": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "cockpit_cwd": {
           "type": [
             "string",
@@ -1043,6 +1049,12 @@
           ],
           "format": "uint32",
           "minimum": 0.0
+        },
+        "lc_bin": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "loom_addr": {
           "type": [

@@ -1328,6 +1328,11 @@
           "statement": "root install refuses a git-checkout `SPIRA_PROD` and a `CONFIGURE_PROD` without `conf.sh`; on an empty `SPIRA_RELEASES` it bootstraps `releases/bootstrap` with `current -> bootstrap`, otherwise it refuses naming `activate.sh`",
           "covering_suites": [
             {
+              "path": "spira/test-install-bootstrap-release.sh",
+              "tier": "T1",
+              "over_budget": false
+            },
+            {
               "path": "spira/test-install-prod-checkout.sh",
               "tier": "T1",
               "over_budget": false
@@ -1356,7 +1361,13 @@
           "id": "UC-instance-lifecycle-20",
           "tier": "T1",
           "statement": "the unit installer refuses when another instance's config shares any of `SPIRA_RUN`/`SPIRA_DB`/`SPIRA_PROD`/`SPIRA_DOLT_DATA`/`SPIRA_TESTDB_PORT`, naming the key, the other instance and its file, writing no unit",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-install-collisions.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-instance-lifecycle-21",
@@ -2075,6 +2086,11 @@
           "tier": "T1",
           "statement": "prune removes the runtime files of watcher names that are no longer in the manifest and keeps active ones. A malformed manifest removes nothing, and a missing…",
           "covering_suites": [
+            {
+              "path": "spira/test-watchd-overlay.sh",
+              "tier": "T1",
+              "over_budget": false
+            },
             {
               "path": "spira/test-watchd-prune.sh",
               "tier": "T1",
