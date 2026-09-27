@@ -24,6 +24,13 @@
 #    SPIRA_MAIL_WAKE_BACKOFF, not once and forgotten (T1); reading the mail is what stops
 #    the retries, not a retry ceiling (T2). sp-12uu8: "confirm delivery and retry" alone is
 #    exactly-once in spirit — dropped in favour of at-least-once-until-read.
+# 7. LIVENESS SETTLE (UC-operator-channel-38): a `--kind event` message (a machine event —
+#    PR/watcher transitions) is not held for SPIRA_MAIL_SETTLE, the window that batches the
+#    OPERATOR's own replies landing in the same mailbox; it gets SPIRA_MAIL_SETTLE_EVENT
+#    instead. Proven three ways: an event present from the start settles fast; a reply-only
+#    burst still waits the full reply window; and an event arriving MID-WAY THROUGH an
+#    already-running reply wait cuts it short rather than queuing behind it — the chosen
+#    design flushes the pending reply early too, rather than tracking two timers.
 #
 # systemctl is mocked so no real unit manager is touched.
 #
@@ -371,5 +378,53 @@ after_read="$(_wake_count "$ATT2")"
 is "7a: at least one wake fired before the mail was read" "1" "$([ "$first_seen" -ge 1 ] && echo 1 || echo 0)"
 is "7b: the wake loop exits once the mail is read, no retry ceiling needed" "1" "$loop_exited"
 is "7c: no further wake after the mail was read" "$first_seen" "$after_read"
+
+# ---------------------------------------------------------------------------
+echo
+echo "8. LIVENESS SETTLE — a machine event does not sit through the reply-batching window:"
+
+SDIR="$TMP/settle-dir"
+
+msg_reply() { printf 'From: Ryan <ryan@spira>\nSubject: ok\n\nbody\n'; }
+msg_event() { printf 'From: PR Notify <pr-notify@spira>\nSubject: pr-notify: FAIL RED\nX-Spira-Kind: event\n\nFAIL RED #1 x [queue-repo]: suites\n'; }
+
+echo
+echo "8a. POSITIVE CONTROL — an event present from the start settles near-instantly:"
+rm -rf "$SDIR"; mkdir -p "$SDIR"
+msg_event > "$SDIR/event1"
+t0=$SECONDS
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent \
+    SPIRA_MAIL_SETTLE=10 SPIRA_MAIL_SETTLE_EVENT=0 \
+    bash -c '. "$1"; _settle_wait "$2"' _ "$HERE/spira-mail-deliver.sh" "$SDIR"
+elapsed=$((SECONDS - t0))
+is "8a: an already-present event settles well under the reply window" "1" "$([ "$elapsed" -le 2 ] && echo 1 || echo 0)"
+
+echo
+echo "8b. a reply-only burst still waits the full reply window (no regression):"
+rm -rf "$SDIR"; mkdir -p "$SDIR"
+msg_reply > "$SDIR/reply1"
+t0=$SECONDS
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent \
+    SPIRA_MAIL_SETTLE=3 SPIRA_MAIL_SETTLE_EVENT=0 \
+    bash -c '. "$1"; _settle_wait "$2"' _ "$HERE/spira-mail-deliver.sh" "$SDIR"
+elapsed=$((SECONDS - t0))
+is "8b: reply-only settle takes the full SPIRA_MAIL_SETTLE window" "1" "$([ "$elapsed" -ge 3 ] && echo 1 || echo 0)"
+
+echo
+echo "8c. THE ACCEPTANCE CASE — an event arriving mid-way through an already-running reply"
+echo "    wait is not delayed behind it (a reply pending in its window must not delay an event):"
+rm -rf "$SDIR"; mkdir -p "$SDIR"
+msg_reply > "$SDIR/reply1"
+( sleep 2; msg_event > "$SDIR/event1" ) &
+DROP_PID=$!
+t0=$SECONDS
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent \
+    SPIRA_MAIL_SETTLE=10 SPIRA_MAIL_SETTLE_EVENT=0 \
+    bash -c '. "$1"; _settle_wait "$2"' _ "$HERE/spira-mail-deliver.sh" "$SDIR"
+elapsed=$((SECONDS - t0))
+wait "$DROP_PID" 2>/dev/null
+is "8c: a mid-window event cuts the wait short, not the full reply window" "1" \
+    "$([ "$elapsed" -ge 2 ] && [ "$elapsed" -le 4 ] && echo 1 || echo 0)"
+is "8c: well under the 10s liveness bound end to end" "1" "$([ "$elapsed" -le 10 ] && echo 1 || echo 0)"
 
 tl_summary

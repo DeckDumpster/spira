@@ -50,6 +50,26 @@ _pr_state_file() { printf '%s/%s.tsv' "$STATE_DIR" "$1"; }
 
 _emit() { printf '%s\n' "$1"; }
 
+# _report <line> — a PR transition: printed (the watchd log, for history) AND mailed
+# straight to the concierge mailbox as `--kind event`, never `note`: a machine event gets
+# spira-mail-deliver's near-zero SPIRA_MAIL_SETTLE_EVENT, not the multi-minute
+# SPIRA_MAIL_SETTLE window that batches the operator's OWN replies landing in the same
+# mailbox. The log line alone depends on a session holding an in-session Monitor or the
+# watch-notify escalation timer, either of which can be down or unattended; mailing here
+# means delivery survives both, because it never depends on anything but this tick running.
+_report() {
+    local line="$1"
+    _emit "$line"
+    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
+    "$SPIRA_HOME/mail.sh" send concierge \
+        --from "PR Notify <pr-notify@spira>" \
+        --subject "pr-notify: $line" \
+        --kind event <<MAILEOF >/dev/null 2>&1
+## Event
+$line
+MAILEOF
+}
+
 # _PR_STATUS_PY — Python3 script to classify every open PR from `gh pr list --json` output.
 #
 # Reads JSON from stdin, writes one tab-separated line per PR: number, status
@@ -118,18 +138,18 @@ _pr_transitions() {
         is_new=0
         if [ -z "${prev_status[$n]+x}" ]; then
             is_new=1
-            _emit "OPENED #$n $title [$repo_name]"
+            _report "OPENED #$n $title [$repo_name]"
         fi
         if [ "$is_new" -eq 1 ] || [ "$st" != "${prev_status[$n]:-}" ]; then
             case "$st" in
                 red)
-                    _emit "FAIL RED #$n $title [$repo_name]${fail:+: $fail}"
+                    _report "FAIL RED #$n $title [$repo_name]${fail:+: $fail}"
                     ;;
                 green)
                     if [ "$land" = pr ]; then
-                        _emit "⚠ GREEN #$n $title [$repo_name]"
+                        _report "⚠ GREEN #$n $title [$repo_name]"
                     else
-                        _emit "GREEN #$n $title [$repo_name]: lands automatically"
+                        _report "GREEN #$n $title [$repo_name]: lands automatically"
                     fi
                     ;;
             esac
@@ -141,8 +161,8 @@ _pr_transitions() {
         [ -n "${cur_status[$m]+x}" ] && continue
         final="$(cd "$repo_dir" && gh pr view "$m" --json state -q .state 2>/dev/null)"
         case "$final" in
-            MERGED) _emit "MERGED #$m ${prev_title[$m]} [$repo_name]" ;;
-            CLOSED) _emit "CLOSED #$m ${prev_title[$m]} [$repo_name]" ;;
+            MERGED) _report "MERGED #$m ${prev_title[$m]} [$repo_name]" ;;
+            CLOSED) _report "CLOSED #$m ${prev_title[$m]} [$repo_name]" ;;
             # Unresolved (gh unreachable, or the PR vanished from both calls): keep tracking
             # it rather than drop it silently — the next tick gets another chance to resolve
             # what became of it (law-a-control-that-cannot-check-must-refuse).

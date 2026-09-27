@@ -77,7 +77,10 @@
 # row fed by a 30-minute external timer that only covered land=pr repos, which is why a
 # queue-mode batch PR could go red for ten minutes with nothing watching
 # (law-concierge-watches-every-registered-repo). `watchd drain pr-notify` delivers queued
-# findings; `watchd notify` escalates the actionable ones past SPIRA_NOTIFY_AGE.
+# findings; `watchd notify` escalates the actionable ones past SPIRA_NOTIFY_AGE. Every
+# transition is ALSO mailed straight to the concierge mailbox as it happens — the log line
+# is history, not the delivery, so it does not depend on a session holding a Monitor or on
+# the watch-notify escalation timer being armed.
 pr-notify|daemon|@SPIRA_HOME@/pr-notify.sh watch --interval 90|@SPIRA_HOME@/pr-notify.sh health
 
 # THE VIEW FOLLOWER is the highest-consequence watcher here — it decides which window the

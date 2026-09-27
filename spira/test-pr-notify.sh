@@ -22,6 +22,9 @@
 #   6. BRANCHES WITH NO PR (T2: real git, stubbed gh) — pr-mode only; unchanged from before.
 #   7. THE MANIFEST ROW is a daemon now, not a log fed by an external timer — this is what
 #      lets `watchd.sh status` show it active instead of external.
+#   8. EVERY TRANSITION IS ALSO MAILED to the concierge mailbox directly (`--kind event`),
+#      not only logged — delivery this way does not depend on a session holding an
+#      in-session Monitor or on the watch-notify escalation timer.
 #
 # THE CLASSIFIER (_PR_STATUS_PY) IS A PURE FUNCTION OF STDIN JSON, exercised directly; the
 # transition engine is exercised through the real script with a stubbed `gh` so a PR's
@@ -29,7 +32,7 @@
 # never a hand-written model of what `gh` would say.
 #
 # tier: T1
-# covers: spira/pr-notify.sh spira/watchers UC-operator-channel-38
+# covers: spira/pr-notify.sh spira/watchers spira/mail.sh spira/mail/kinds UC-operator-channel-38
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -179,6 +182,18 @@ for r in queue-repo pr-repo push-repo hold-repo; do
     has "tick3: $r's now-red PR is reported, naming the failing check" \
         "$out3" "FAIL RED #1 Round batch [$r]: suites"
 done
+
+# --- TICK 3 MAIL: THE SCOPE ADDITION — every transition is also mailed straight to the
+#     concierge mailbox, so delivery does not depend on a session holding an in-session
+#     Monitor or on the separate (and separately broken) watch-notify escalation timer.
+#     This is what makes queue-repo's red batch PR reach an unread message with no
+#     Concierge session attached to anything.
+mail_matches="$(grep -l "FAIL RED #1 Round batch \[queue-repo\]: suites" \
+    "$RUN"/mail/concierge/new/* 2>/dev/null | wc -l | tr -d ' ')"
+is "tick3: queue-repo's RED is mailed to the concierge mailbox" "1" "${mail_matches:-0}"
+mail_unread="$(ls "$RUN/mail/concierge/new" 2>/dev/null | wc -l | tr -d ' ')"
+is "tick3: one mail per repo's RED transition (4 repos)" "4" "$mail_unread"
+rm -f "$RUN"/mail/concierge/new/*
 
 # --- TICK 4: unchanged again — the RED is not re-announced --------------------------
 run --show

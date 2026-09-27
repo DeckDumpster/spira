@@ -4,8 +4,11 @@
 # Reads SPIRA_MAIL_READERS (<mailbox>=<wake command>, one per line, # comments).
 # Spawns one inotifywait watcher per registered mailbox, plus an immediate catch-up pass
 # for mail already unread when the daemon (re)starts. On arrival: waits SPIRA_MAIL_SETTLE
-# for a burst to finish, then wakes and keeps waking on SPIRA_MAIL_WAKE_BACKOFF (last step
-# repeats) for as long as the mailbox has unread mail, logging every attempt. Reading is
+# for a burst to finish — SPIRA_MAIL_SETTLE_EVENT instead, the moment any waiting mail is a
+# machine `--kind event`, so a live PR/watcher event never sits through the window that
+# exists to batch the operator's own replies — then wakes and keeps waking on
+# SPIRA_MAIL_WAKE_BACKOFF (last step repeats) for as long as the mailbox has unread mail,
+# logging every attempt. Reading is
 # the ack, not the wake — a mailbox with nothing unread is never retried, and mail.sh's own
 # new/ -> cur/ move is what makes a wake for an already-read message impossible to send
 # twice. Unregistered mailboxes are never watched.
@@ -70,6 +73,46 @@ _kick() {
     ) 9>"$lock" &
 }
 
+# _msg_kind <file> -> its X-Spira-Kind header value, or empty.
+_msg_kind() {
+    awk '/^[[:space:]]*$/ { exit }
+         tolower($0) ~ /^x-spira-kind:/ { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$1" 2>/dev/null
+}
+
+# _dir_has_event_kind <dir> -> true if any file currently in <dir> is `--kind event`.
+_dir_has_event_kind() {
+    local d="$1" f
+    for f in "$d"/*; do
+        [ -f "$f" ] || continue
+        [ "$(_msg_kind "$f")" = event ] && return 0
+    done
+    return 1
+}
+
+# _settle_wait <dir> — LIVENESS (UC-operator-channel-38): a machine event (`--kind event` —
+# PR transitions, watcher events) must not sit through SPIRA_MAIL_SETTLE, the window that
+# exists to batch the OPERATOR's own replies landing in this same mailbox. Polls in 1s ticks
+# rather than sleeping the whole reply window up front, so an event that arrives mid-window
+# is seen and cuts the wait to SPIRA_MAIL_SETTLE_EVENT immediately, instead of queuing behind
+# whatever reply-settle sleep was already running.
+#
+# CHOICE MADE: an event arriving mid-window also flushes whatever reply is already waiting,
+# one tick early — the simpler design, over tracking two independent timers per mailbox for
+# a wake that is the same generic "you have unread mail" ping either way.
+_settle_wait() {
+    local dir="$1"
+    local budget="${SPIRA_MAIL_SETTLE:-2}" event_settle="${SPIRA_MAIL_SETTLE_EVENT:-0}"
+    local waited=0
+    while [ "$waited" -lt "$budget" ]; do
+        if _dir_has_event_kind "$dir"; then
+            sleep "$event_settle"
+            return
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+}
+
 _watch() {
     local mailbox="$1" wake_cmd="$2"
     local dir="$SPIRA_MAIL/$mailbox/new"
@@ -78,7 +121,7 @@ _watch() {
     _kick "$mailbox" "$wake_cmd"
     inotifywait -m -q -e close_write -e moved_to "$dir" 2>/dev/null | \
     while IFS= read -r _event; do
-        sleep "${SPIRA_MAIL_SETTLE:-2}"
+        _settle_wait "$dir"
         # Drain events that piled up during the settle period.
         while IFS= read -r -t 0.1 _burst 2>/dev/null; do :; done
         _kick "$mailbox" "$wake_cmd"
