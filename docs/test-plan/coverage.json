@@ -44,7 +44,13 @@
           "id": "UC-aeon-execution-05",
           "tier": "T1",
           "statement": "sweep mode claims nothing, sets no `branch:` label, and refuses when capacity is paused or the world is draining",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-aeon-sweep.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-aeon-execution-06",
@@ -106,6 +112,11 @@
             {
               "path": "spira/test-aeon-teardown-e2e.sh",
               "tier": "T3",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-rapid-recur.sh",
+              "tier": "T1",
               "over_budget": false
             },
             {

@@ -24,7 +24,7 @@
 #
 # defect: sp-2tbr
 # tier: T2
-# covers: spira/aeon.sh spira/lib.sh
+# covers: spira/aeon.sh spira/lib.sh UC-aeon-execution-05
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -224,6 +224,24 @@ printf 'stdin sweep prompt content' | aeon testsweep --sweep -
 want "stdin prompt reached model" "stdin sweep prompt content" \
      "$(cat "$TMP/sweep-prompt" 2>/dev/null)"
 
+# ======================================================================================
+echo
+echo "--sweep: a refused session (no tool calls, claude rc=1) exits non-zero:"
+# ======================================================================================
+# POSITIVE CONTROL for UC-aeon-execution-05's "exits non-zero if the API refused it": a
+# refused sweep — no tool calls at all — must not be folded into the same "ran and did
+# work" exit-0 path a stray non-zero tool-call rc gets (sweep_cleanup's session_outcome
+# check). Rehomed from test-aeon-teardown-e2e.sh (sp-5t53s), cut there for the area's 60s cap.
+cat > "$BIN/claude" <<'SHIM'
+#!/usr/bin/env bash
+cat /dev/stdin > /dev/null
+printf '{"type":"result","subtype":"error","is_error":true,"result":"you have reached your session limit","duration_ms":100,"num_turns":0,"total_cost_usd":0}\n'
+exit 1
+SHIM
+chmod +x "$BIN/claude"
+
+aeon testsweep --sweep --prompt "check pipeline"; rc=$?
+is "a refused sweep exits non-zero (a real ops failure stays visible)" "1" "$rc"
 
 # ======================================================================================
 echo

@@ -3,7 +3,8 @@
 # test-aeon-disposition.sh — aeon_disposition (lib.sh), the teardown-decision seam pulled
 # out of aeon.sh cleanup() (sp-eq8a4.2.1). Precedence table over the 13 open-bead teardown
 # branches (UC-aeon-execution-11) plus bead_has_label, the read-after-claim poison check
-# (UC-aeon-execution-03). Both are pure: no worktree, no database, no systemd.
+# (UC-aeon-execution-03), and open_ask_blocker, the decision_blocked input. All three are
+# pure: no worktree, no database, no systemd.
 #
 # FAIL-CLOSED FIRST (per docs/test-plan/aeon-execution.md §6): the branches that were
 # undertested gaps (G1 lapsed, G3 timeout, G4 capacity, G5 slain, G6 gate-unfinished,
@@ -13,6 +14,7 @@
 # G8 (precedence) is the second half of the table: every adjacent pair of branches is given
 # BOTH markers at once and must resolve to the higher one, never a coincidence of test order.
 #
+# defect: sp-dvsqc sp-2a4hd
 # tier: T1
 # covers: spira/lib.sh spira/aeon.sh UC-aeon-execution-11 UC-aeon-execution-03
 set -uo pipefail
@@ -38,6 +40,35 @@ wantrc "bead_has_label: list-wrapped bd-show JSON" 0 $?
 
 bead_has_label '' spira-poison
 wantrc "bead_has_label: unparseable JSON fails closed (not poisoned, proceeds)" 1 $?
+
+# ---- open_ask_blocker — the decision_blocked input to aeon_disposition ---------------
+# Rehomed from test-aeon-teardown-e2e.sh (sp-5t53s), cut there for the area's 60s cap.
+# Same fixtures the e2e row drove through a live aeon.sh, asserted here as a table instead.
+
+open_ask_blocker '[{"dependencies":[{"status":"open","labels":["needs-operator"],"dependency_type":"blocks","title":"decide"}]}]' sp-x
+wantrc "open_ask_blocker: open ask-labelled blocks dep IS a blocker (positive control)" 0 $?
+
+# sp-dvsqc: mail.sh wires a non-decision cited bead's ask via `dep relate`, which is
+# dependency_type "relates-to" — must NOT be read as a blocker (SEEN RED before the fix).
+open_ask_blocker '[{"dependencies":[{"status":"open","labels":["needs-operator"],"dependency_type":"relates-to","title":"decide"}]}]' sp-x
+wantrc "open_ask_blocker: relates-to edge is NOT a blocker (sp-dvsqc)" 1 $?
+
+open_ask_blocker '[{"dependencies":[{"status":"closed","labels":["needs-operator"],"dependency_type":"blocks","title":"decide"}]}]' sp-x
+wantrc "open_ask_blocker: a closed ask dep is not a blocker" 1 $?
+
+open_ask_blocker '[{"dependencies":[{"status":"open","labels":["plan"],"dependency_type":"blocks","title":"decide"}]}]' sp-x
+wantrc "open_ask_blocker: an open blocks dep with no ask label is not a blocker" 1 $?
+
+# sp-2a4hd: this bead's own gh-closeout ask must not decision-block the reopened bead
+# it is itself waiting to close.
+open_ask_blocker '[{"dependencies":[{"status":"open","labels":["needs-operator"],"dependency_type":"blocks","title":"Close GitHub issue 5 for bead sp-x"}]}]' sp-x
+wantrc "open_ask_blocker: this bead's own gh-closeout ask is NOT its own blocker (sp-2a4hd)" 1 $?
+
+open_ask_blocker '[{"dependencies":[{"status":"open","labels":["needs-operator"],"dependency_type":"blocks","title":"Close GitHub issue 5 for bead sp-OTHER"}]}]' sp-x
+wantrc "open_ask_blocker: a gh-closeout ask for a DIFFERENT bead IS still a blocker" 0 $?
+
+open_ask_blocker '' sp-x
+wantrc "open_ask_blocker: unparseable JSON fails closed (not blocked, proceeds)" 1 $?
 
 # ---- aeon_disposition — field order --------------------------------------------------
 #   status capacity_rc slain thrash thrash_charged lapsed gate_unfinished decision_blocked \
