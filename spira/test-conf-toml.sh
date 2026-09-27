@@ -14,8 +14,11 @@
 #    spira.conf (no spira.toml) gets one derived from it, and conf.sh reads the derived
 #    file correctly, so retiring the old reader does not silently blank every SPIRA_* key
 #    on a box that has never seen spira.toml.
+# 4. TOML WINS UNCONDITIONALLY (sp-usxfl): once a spira.toml exists, editing a spira.conf
+#    beside it — even to a newer mtime — never regenerates it. Every writer now targets
+#    spira.toml directly, so a surviving spira.conf is stale by construction.
 #
-# defect: sp-zs04v.2
+# defect: sp-zs04v.2, sp-usxfl
 # covers: spira/conf.sh spira-config/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -130,12 +133,16 @@ else
     bad "auto-convert wrote a spira.toml beside spira.conf" "not found at $LEGACY_DIR/spira.toml"
 fi
 
-# regenerate-on-staleness: editing the .conf after the first conversion must still take
-# effect, since aeons.sh and deploy.sh keep writing that file, not the derived .toml.
+# ONCE A spira.toml EXISTS IT WINS UNCONDITIONALLY (sp-usxfl) — no more mtime comparison.
+# Editing the .conf again, even to a value newer than the .toml, must NOT regenerate it:
+# every writer now targets spira.toml directly (spira_config_set), so a spira.conf that
+# still exists is stale by construction, and regenerating from it would silently discard
+# whatever the .toml alone has gained since (the "gutted spira.toml" failure this bead
+# retires).
 sleep 1.1
 printf 'SPIRA_PROD = %s/v2\n' "$T" > "$CONF_FILE"
 got_prod2="$(conf_val SPIRA_PROD SPIRA_CONF="$CONF_FILE" SPIRA_CONFIG_WRITE=1)"
-is "editing spira.conf again regenerates spira.toml on the next read" "$T/v2" "$got_prod2"
+is "editing spira.conf again does NOT regenerate the existing spira.toml" "$conf_prod" "$got_prod2"
 
 # ==========================================================================
 echo

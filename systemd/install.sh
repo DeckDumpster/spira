@@ -43,16 +43,23 @@ set -uo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-# _seed_instance_conf <conf-file> <instance> -> append SPIRA_INSTANCE=<instance> unless
-# that exact line is already there. APPEND, NOT OVERWRITE: the file may carry operator
-# settings, and appending a later line overrides any earlier one without disturbing lines
-# placed before it. Defined before conf.sh is sourced so a test can source this file
-# (BASH_SOURCE[0] != $0) and call it directly.
-_seed_instance_conf() {
-    local file="$1" inst="$2"
-    grep -qxF "SPIRA_INSTANCE=$inst" "$file" 2>/dev/null && return 0
-    printf 'SPIRA_INSTANCE=%s\n' "$inst" >> "$file"
-    printf 'install: seeded %s with SPIRA_INSTANCE=%s\n' "$file" "$inst"
+# _seed_prod_instance <conf-candidate> <toml-candidate> <instance> -> writes
+# SPIRA_INSTANCE=<instance> into the [spira] table at that root, through conf.sh's own
+# spira_config_set_at/spira_toml_write_target_for (creating spira.toml there first, via a
+# full auto-convert of any spira.conf already at that root plus THIS box's repo-map and
+# every fayth, if it does not exist yet). A no-op, reporting nothing, when the value there
+# is already right. ALWAYS spira.toml, NEVER a hand-rolled append to spira.conf — the same
+# rule deploy.sh's SPIRA_PROD writer follows (sp-usxfl): those two helpers are conf.sh's, so
+# this function itself needs conf.sh sourced first, unlike its predecessor — defined here,
+# before conf.sh is sourced, only so the SPIRA_INSTALL_LIB=1 test seam still defines it
+# alongside _unit_action; a test that calls it also sources conf.sh itself.
+_seed_prod_instance() {
+    local conf="$1" toml_candidate="$2" instance="$3" target
+    target="$(spira_toml_write_target_for "$conf" "$toml_candidate")"
+    [ -n "$target" ] || return 1
+    [ "$("$SPIRA_CONFIG_BIN" get spira.instance "$target" 2>/dev/null)" = "$instance" ] && return 0
+    spira_config_set_at "$conf" "$toml_candidate" SPIRA_INSTANCE "$instance" \
+        && printf 'install: seeded %s with instance = %s\n' "$target" "$instance"
 }
 
 # _unit_action <changed> <masked> <suspended> <disabled> <halted> <active> -> action word.
@@ -69,7 +76,7 @@ _seed_instance_conf() {
 # operator's explicit mask must never be second-guessed by a control-plane state that could
 # be stale. Suspended outranks disabled and halted for the same reason — ctrl.sh is the one
 # surface that answers "why is this not running" and must stay authoritative over it.
-# DEFINED BEFORE BOTH SOURCING GUARDS BELOW, alongside _seed_instance_conf, for the same
+# DEFINED BEFORE BOTH SOURCING GUARDS BELOW, alongside _seed_prod_instance, for the same
 # reason: a test sources this file for the function alone and never reaches past here.
 _unit_action() {
     local changed="$1" masked="$2" suspended="$3" disabled="$4" halted="$5" active="$6"
@@ -143,7 +150,7 @@ _check_path_collisions() {
     return "$collision"
 }
 # NAMED GUARD FOR THE T1 SEAM, independent of the generic sourcing guard just below: a
-# later edit to that guard (e.g. if _seed_instance_conf's own sourcing use goes away)
+# later edit to that guard (e.g. if _seed_prod_instance's own sourcing use goes away)
 # must not silently let a SPIRA_INSTALL_LIB=1 source run the whole installer.
 if [ "${SPIRA_INSTALL_LIB:-0}" = 1 ]; then return 0 2>/dev/null || exit 0; fi
 
@@ -421,13 +428,10 @@ _place_dolt_yaml() {  # args: <template-name> <data-dir>
 # path the sentinel derives from it (SPIRA_DB, SPIRA_RUN, etc.) inherits the instance
 # qualifier automatically, and the containment check fires as intended.
 #
-# TWO FORMATS — the same rule deploy.sh's SPIRA_PROD writer uses. A pre-existing spira.conf,
-# or a root with NEITHER file yet, is still written in that format via _seed_instance_conf
-# (APPENDED TO, NOT OVERWRITTEN — conf.sh's regenerate-on-staleness check picks it up on the
-# next read). Only where a spira.toml ALREADY EXISTS AND NO spira.conf DOES does this write
-# spira.toml directly, through `spira-config set` — writing a fresh spira.conf there instead
-# would make that check overwrite the richer spira.toml with a document holding only the one
-# key just written.
+# ALWAYS spira.toml, THROUGH _seed_prod_instance (conf.sh's spira_config_set_at) — never a
+# hand-rolled append to spira.conf. It resolves (and, if needed, creates via a full
+# auto-convert) the toml at that root FIRST, so this never regenerates a document holding
+# only the one key just written (sp-usxfl).
 if [ "$SPIRA_INSTANCE" != "prod" ] && [ -n "${SPIRA_PROD:-}" ]; then
     _prod_root="$(dirname "$SPIRA_PROD")"
     _home_root="$(dirname "$SPIRA_HOME")"
@@ -436,17 +440,7 @@ if [ "$SPIRA_INSTANCE" != "prod" ] && [ -n "${SPIRA_PROD:-}" ]; then
     # fixture or a no-split install. In real usage the prod tree lives in a sibling
     # directory (e.g. spira-harness-test/) and the two parents differ.
     if [ "$_prod_root" != "$_home_root" ]; then
-        _prod_repo_conf="$_prod_root/spira.conf"
-        _prod_repo_toml="$_prod_root/spira.toml"
-        if [ -f "$_prod_repo_conf" ] || [ ! -f "$_prod_repo_toml" ]; then
-            _seed_instance_conf "$_prod_repo_conf" "$SPIRA_INSTANCE"
-        else
-            if [ "$("$SPIRA_CONFIG_BIN" get spira.instance "$_prod_repo_toml" 2>/dev/null)" != "$SPIRA_INSTANCE" ]; then
-                "$SPIRA_CONFIG_BIN" set spira.instance "$SPIRA_INSTANCE" "$_prod_repo_toml" \
-                    && printf 'install: seeded %s with instance = %s\n' "$_prod_repo_toml" "$SPIRA_INSTANCE"
-            fi
-        fi
-        unset _prod_repo_conf _prod_repo_toml
+        _seed_prod_instance "$_prod_root/spira.conf" "$_prod_root/spira.toml" "$SPIRA_INSTANCE"
     fi
     unset _prod_root _home_root
 fi

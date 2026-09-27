@@ -26,14 +26,13 @@
 # running aeon is never touched — this changes what may be SUMMONED, not what is alive
 # (the harness does not halt live work to satisfy a lowered ceiling; see slay.sh for that).
 #
-# IT DOES NOT EDIT A CONFIG FILE IT DID NOT FIND. The path comes from conf.sh's own
-# resolution ($SPIRA_CONF_FILE), never a hardcoded ~/.config path, so this writes to the
-# file the harness actually reads — including on a host that keeps it beside the checkout
-# or in /etc (law-every-path-comes-from-conf).
+# IT WRITES THROUGH conf.sh's OWN HELPER (spira_config_set/spira_config_unset), never a
+# hand-rolled edit of either config format: those resolve (and, if needed, create) the
+# spira.toml in force so this always writes to the file the harness actually reads —
+# including on a host that keeps it beside the checkout or in /etc (law-every-path-comes-
+# from-conf) — and never gutted one by regenerating it from a stale spira.conf (sp-usxfl).
 set -uo pipefail
 . "$(dirname "$0")/conf.sh"
-
-CONF="${SPIRA_CONF_FILE:-}"
 
 die() { printf 'aeons.sh: %s\n' "$*" >&2; exit 1; }
 
@@ -55,36 +54,6 @@ lane_caps() {
         detail="${detail:+$detail, }$f=$n"
     done
     printf '%s %s' "$total" "${detail:-none}"
-}
-
-# conf_set <KEY> <value> <comment...> — write a key into the config file in force.
-#
-# WRITTEN BESIDE AND MOVED, never edited in place: a sentinel pass may be sourcing this file
-# at the moment of the write, and a half-written config is a harness that reads garbage for
-# one pass (law-replace-running-files-atomically). An existing key is replaced in place so
-# the comment above it — which is usually the REASON, and the only record of it — survives;
-# a missing key is appended with the comment this tool was given.
-conf_set() {
-    local key="$1" val="$2"; shift 2
-    local comment="$*" tmp
-    [ -n "$CONF" ] || die "no config file in force — conf.sh resolved none. Set \$SPIRA_CONF."
-    [ -w "$CONF" ] || die "$CONF is not writable"
-    tmp="$(mktemp "${CONF}.XXXXXX")" || die "cannot write beside $CONF"
-    if grep -qE "^[[:space:]]*${key}[[:space:]]*=" "$CONF"; then
-        awk -v k="$key" -v v="$val" '
-            $0 ~ "^[[:space:]]*"k"[[:space:]]*=" { printf "%-20s = %s\n", k, v; next }
-            { print }
-        ' "$CONF" > "$tmp" || die "rewrite failed"
-    else
-        cat "$CONF" > "$tmp" || die "copy failed"
-        {
-            printf '\n'
-            [ -n "$comment" ] && printf '# %s\n' "$comment"
-            printf '%-20s = %s\n' "$key" "$val"
-        } >> "$tmp"
-    fi
-    chmod --reference="$CONF" "$tmp" 2>/dev/null || true
-    mv -f "$tmp" "$CONF" || die "install failed"
 }
 
 status() {
@@ -114,7 +83,8 @@ status() {
         printf '  ---\n  at most %s aeon(s) at once (%s pool + %s lanes). `aeons.sh set <n>` to cap the total.\n' \
             "$(( ${pool:-0} + ${lt:-0} ))" "$pool" "$lt"
     fi
-    [ -n "$CONF" ] && printf '  config            %s\n' "$CONF"
+    local shown="${SPIRA_TOML_FILE:-${SPIRA_CONF_FILE:-}}"
+    [ -n "$shown" ] && printf '  config            %s\n' "$shown"
 }
 
 CMD="${1:-status}"
@@ -125,8 +95,7 @@ status)
 set)
     N="${2:-}"
     case "$N" in ''|*[!0-9]*) die "usage: aeons.sh set <n>   (a whole number; 0 stops summoning entirely)" ;; esac
-    conf_set SPIRA_MAX_LIVE_AEONS "$N" \
-        "THE WHOLE-FLEET CEILING — at most N aeons at once, counting lane fayths (ops, qa, groomer) that draw outside SPIRA_MAX_AEONS. Set by aeons.sh on $(TZ=America/Los_Angeles date '+%Y-%m-%d')."
+    spira_config_set SPIRA_MAX_LIVE_AEONS "$N" || die "could not write the fleet ceiling"
     printf 'fleet ceiling set to %s — in force on the next sentinel pass (<=2 min), no restart needed.\n' "$N"
     [ "$N" = 0 ] && printf 'NOTE: 0 stops every summon. `aeons.sh unset` or `set <n>` to resume; live aeons are untouched.\n'
     # RE-READ IN A CLEAN PROCESS, and this is not fussiness. conf.sh returns early when
@@ -137,13 +106,13 @@ set)
     env -u SPIRA_CONF_LOADED -u SPIRA_MAX_LIVE_AEONS "$0" status 2>/dev/null || true
     ;;
 unset)
-    conf_set SPIRA_MAX_LIVE_AEONS "" ""
+    spira_config_unset SPIRA_MAX_LIVE_AEONS || die "could not remove the fleet ceiling"
     printf 'fleet ceiling removed — the limit is again the task pool plus one per lane.\n'
     ;;
 pool)
     N="${2:-}"
     case "$N" in ''|*[!0-9]*) die "usage: aeons.sh pool <n>" ;; esac
-    conf_set SPIRA_MAX_AEONS "$N" "How many TASK aeons may run at once. Lanes draw outside this; see aeons.sh."
+    spira_config_set SPIRA_MAX_AEONS "$N" || die "could not write the task pool"
     printf 'task pool set to %s. NOTE: lanes draw outside it — `aeons.sh set <n>` is the total.\n' "$N"
     ;;
 -h|--help|help)
