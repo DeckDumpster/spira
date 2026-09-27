@@ -33,9 +33,11 @@ position: the remedy for a poisoned state file is to delete it, and seeding at `
 would silently swallow every answer given since the last read.
 
 Reads the bead list on stdin, because which database to address is the caller's decision
-and there is one place that decides it. Shells out only for the bodies, one process at a
-time: an unbounded fan-out over every bead spawned hundreds of concurrent `bd` processes
-against a single server and drove a four-core box into swap.
+and there is one place that decides it. The closing actor and the comment bodies each come
+from ONE `bd sql` query over all candidates, not one `bd history`/`bd comments` process per
+bead: that fan-out is what took answered-since.sh past a minute against a loaded Dolt
+(sp-xsl8i) after an earlier fix had already bounded it to one process at a time rather than
+an unbounded burst.
 """
 
 import json
@@ -188,23 +190,43 @@ def cap(candidates, what):
     return sorted(candidates, key=lambda r: r.get("updated_at") or "", reverse=True)[:SCAN_MAX]
 
 
-def closed_by(cfg, ident):
-    """The actor beads recorded for the most recent close of this bead, or None.
+def sql_in(ids):
+    return ",".join("'%s'" % i.replace("'", "''") for i in ids)
 
-    `bd history --events` is the only place the closing actor exists; the issue row has no
-    field for it. None means the audit trail could not be read, which is NOT the same as
-    "somebody else closed it" -- the caller reports those separately rather than treating an
-    unreadable trail as either an answer or a silence.
+
+def closed_actors(cfg, ids):
+    """The actor beads recorded for the most recent close of each id, in ONE query.
+
+    `events` is the only place a closing actor exists; the issue row has no field for it. An
+    id absent from the result maps to None, which is NOT the same as "somebody else closed
+    it" -- the caller reports those separately rather than treating an unreadable trail as
+    either an answer or a silence. That is also what a query that fails outright yields, via
+    `rows_of`'s empty list.
     """
-    doc = bd(cfg, ["history", ident, "--events", "--json"])
-    evs = rows_of(doc, "events")
-    if not evs:
-        return None
-    closes = [e for e in evs if (e.get("event_type") or "") == "closed"]
-    if not closes:
-        return None
-    closes.sort(key=lambda e: e.get("created_at") or "")
-    return closes[-1].get("actor") or None
+    if not ids:
+        return {}
+    rows = rows_of(bd(cfg, ["sql", "--json",
+        "SELECT issue_id, actor, created_at FROM events WHERE event_type='closed' "
+        "AND issue_id IN (%s)" % sql_in(ids)]), "rows")
+    latest = {}
+    for r in rows:
+        ident, ts = r.get("issue_id") or "", r.get("created_at") or ""
+        if ident not in latest or ts >= latest[ident][0]:
+            latest[ident] = (ts, r.get("actor") or None)
+    return {k: v[1] for k, v in latest.items()}
+
+
+def comment_threads(cfg, ids):
+    """Every comment on these ids, in ONE query. {id: [comment, ...]}, oldest first."""
+    if not ids:
+        return {}
+    rows = rows_of(bd(cfg, ["sql", "--json",
+        "SELECT issue_id, id, author, text, created_at FROM comments WHERE issue_id IN (%s) "
+        "ORDER BY created_at" % sql_in(ids)]), "rows")
+    threads = {}
+    for r in rows:
+        threads.setdefault(r.get("issue_id") or "", []).append(r)
+    return threads
 
 
 def self_closed_ids(path):
@@ -258,10 +280,12 @@ def verdicts(cfg, rows, mark):
             continue
         cands.append(r)
 
+    capped = cap(cands, "a verdict")
+    actors = closed_actors(cfg, [r.get("id") or "?" for r in capped])
     out = []
-    for r in cap(cands, "a verdict"):
+    for r in capped:
         ident = r.get("id") or "?"
-        if closed_by(cfg, ident) != cfg["operator_actor"]:
+        if actors.get(ident) != cfg["operator_actor"]:
             continue
         reason = (r.get("close_reason") or "").strip() or "(closed with no reason given)"
         labels = set(r.get("labels") or [])
@@ -289,11 +313,12 @@ def comments(cfg, rows, mark):
              if ({"insight", ask, "overseer"} & set(r.get("labels") or []))
              and (r.get("comment_count") or 0) > 0]
 
+    capped = cap(cands, "a comment")
+    threads = comment_threads(cfg, [r.get("id") or "?" for r in capped])
     out = []
-    for r in cap(cands, "a comment"):
+    for r in capped:
         ident = r.get("id") or "?"
-        thread = rows_of(bd(cfg, ["comments", ident, "--json"]), "comments")
-        for c in thread:
+        for c in threads.get(ident, []):
             if (c.get("author") or "") != cfg["operator_actor"]:
                 continue
             ts = c.get("created_at") or ""

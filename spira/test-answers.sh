@@ -28,15 +28,27 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 ASK_LABEL="needs-attention"   # pinned to a non-default (law-gates-run-in-a-clean-environment)
 OPERATOR_ACTOR="testop"
 
-# THE STUB. answers.py's closed_by() calls `bd history <id> --events --json`, which no fixture
-# JSON can answer (it comes from the audit trail, not the issue row). Every id here is treated
-# as closed by the operator — that is the fact every fixture row below is built to assert about.
+# THE STUB. answers.py's closed_actors() issues one `bd sql --json 'SELECT ... FROM events
+# ...'` batched over every candidate id, which no fixture JSON can answer (it comes from the
+# audit trail, not the issue row). Every id named in the query's IN (...) is treated as closed
+# by the operator — that is the fact every fixture row below is built to assert about.
 STUB_BD="$TMP/bd"
 cat > "$STUB_BD" <<STUBEOF
 #!/usr/bin/env bash
 for arg; do
     case "\$arg" in
-        --events) exec python3 -c "import sys; print('{\"events\":[{\"event_type\":\"closed\",\"actor\":\"$OPERATOR_ACTOR\",\"created_at\":\"2026-09-10T00:00:00Z\"}]}')" ;;
+        *"FROM events"*)
+            printf '['
+            first=1
+            for id in \$(printf '%s' "\$arg" | grep -oE "'[^']+'" | tr -d "'"); do
+                [ "\$first" = 1 ] || printf ','
+                first=0
+                printf '{"issue_id":"%s","actor":"%s","created_at":"2026-09-10T00:00:00Z"}' \
+                    "\$id" "$OPERATOR_ACTOR"
+            done
+            printf ']'
+            exit 0
+            ;;
     esac
 done
 echo '[]'
@@ -300,5 +312,73 @@ vc_after="$(cat "$RUNDIR/.vc")"
 [ "$vc_after" != "seed-verdict" ] \
     && ok "a succeeding wake lets VERDICT_CURSOR advance" \
     || bad "a succeeding wake lets VERDICT_CURSOR advance" "cursor still at seed value"
+
+# ==========================================================================
+# UC-24 (sp-xsl8i) — the fan-out is gone: hundreds of candidates on each leg
+# cost a FIXED number of bd calls, not one per bead. A stub that logs every
+# invocation it receives is the only way to assert a call COUNT rather than
+# wall time, which is what the bead requires.
+# ==========================================================================
+echo
+echo "UC-24: hundreds of candidates cost a bounded number of bd calls, not one per bead"
+
+N=300
+CALLS="$TMP/calls.log"
+STUB_BD_BOUNDED="$TMP/bd-bounded"
+cat > "$STUB_BD_BOUNDED" <<STUBEOF
+#!/usr/bin/env bash
+echo "\$*" >> "$CALLS"
+for arg; do
+    case "\$arg" in
+        *"FROM events"*|*"FROM comments"*)
+            table=events; case "\$arg" in *"FROM comments"*) table=comments;; esac
+            printf '['
+            first=1
+            for id in \$(printf '%s' "\$arg" | grep -oE "'[^']+'" | tr -d "'"); do
+                [ "\$first" = 1 ] || printf ','
+                first=0
+                if [ "\$table" = events ]; then
+                    printf '{"issue_id":"%s","actor":"%s","created_at":"2026-09-10T00:00:00Z"}' \
+                        "\$id" "$OPERATOR_ACTOR"
+                else
+                    printf '{"issue_id":"%s","id":"c-%s","author":"%s","text":"ack","created_at":"2026-09-10T00:00:00Z"}' \
+                        "\$id" "\$id" "$OPERATOR_ACTOR"
+                fi
+            done
+            printf ']'
+            exit 0
+            ;;
+    esac
+done
+echo '[]'
+STUBEOF
+chmod +x "$STUB_BD_BOUNDED"
+
+rows=""
+for i in $(seq 1 "$N"); do
+    rows="$rows$(bead_row "sp-ta-v$i" "2026-09-10T00:00:00Z" "" "verdict $i"),"
+done
+for i in $(seq 1 "$N"); do
+    rows="${rows}{\"id\":\"sp-ta-c$i\",\"title\":\"c $i\",\"status\":\"open\",\"labels\":[\"insight\"],\"comment_count\":1},"
+done
+BIG_FIXTURE="[${rows%,}]"
+
+: > "$CALLS"
+printf '{"ts":"2020-01-01T00:00:00Z","seen":[]}\n' > "$TMP/vmark-big"
+printf '{"ts":"2020-01-01T00:00:00Z","seen":[]}\n' > "$TMP/cmark-big"
+out_big=$(printf '%s' "$BIG_FIXTURE" | python3 "$HERE/answers.py" \
+    "bd=$STUB_BD_BOUNDED" "db=unused" \
+    "ask_label=$ASK_LABEL" "operator_actor=$OPERATOR_ACTOR" "operator=ryan" \
+    "verdict_cursor=$TMP/vmark-big" "comment_cursor=$TMP/cmark-big" \
+    "self_closed=$TMP/self-closed" "format=monitor" 2>&1)
+
+ncalls=$(grep -c . "$CALLS" 2>/dev/null || echo 0)
+[ "${ncalls:-0}" -le 4 ] \
+    && ok "answers.py issues a bounded number of bd calls for $((N * 2)) candidates (got $ncalls)" \
+    || bad "answers.py issues a bounded number of bd calls for $((N * 2)) candidates" \
+           "got $ncalls calls, wanted <= 4"
+
+want "positive control: a verdict candidate still gets reported" "ANSWERED sp-ta-v1 " "$out_big"
+want "positive control: a comment candidate still gets reported" "COMMENTED ON sp-ta-c1 " "$out_big"
 
 tl_summary
