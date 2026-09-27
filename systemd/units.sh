@@ -191,7 +191,7 @@ if [ -x "${SPIRA_RECONCILER_FLOW_BIN:-}" ]; then
     UNITS+=(spira-reconciler-flow.service spira-reconciler-flow.timer)
     ENABLE+=("$(inst_name spira-reconciler-flow.timer)")
 else
-    OPTIONAL+=(spira-reconciler-flow.service spira-reconciler-flow.timer)
+    OPTIONAL+=(spira-reconciler-flow.service spira-reconciler-flow.timer); UNBUILT+=(spira-reconciler-flow.service spira-reconciler-flow.timer)
     echo "note: reconciler-flow binary not built at ${SPIRA_RECONCILER_FLOW_BIN:-<path not set>} — not installing spira-reconciler-flow.service." >&2
     echo "      Build it: cargo build --release --workspace, then re-run install.sh." >&2
 fi
