@@ -53,6 +53,14 @@ export SPIRA_MAIL_KINDS="$TMP/kinds"
 mkdir -p "$SPIRA_MAIL_KINDS"
 cp -r "$HERE/mail/kinds/." "$SPIRA_MAIL_KINDS/"
 
+# A repo-map fixture, never the host's real one: repo-map.example (the shipped fallback)
+# names no repo this suite could use, and the real map is host-specific inventory.
+# Empty lanes column admits every lane, so builder's plan partition is always granted.
+cat > "$TMP/repo-map" <<MAP
+testrepo | $TMP | push | origin/main | | |
+MAP
+export SPIRA_REPO_MAP="$TMP/repo-map"
+
 mkdir -p "$TMP/data"
 cat > "$TMP/server.yaml" <<YAML
 log_level: warning
@@ -123,7 +131,7 @@ done
 export SPIRA_LC_SOCKET="$SOCK"
 
 # ── one real bd bead, filed through bead.sh's own contract, and its lifecycle twin ───
-BID="$(bash "$HERE/bead.sh" file "aeon semantic layer container-tier fixture" --for builder --repo spira)"
+BID="$(bash "$HERE/bead.sh" file "aeon semantic layer container-tier fixture" --for builder --repo testrepo)"
 [ -n "$BID" ] || bail "bead.sh file did not return an id"
 seed_bead "$BID"
 
@@ -155,7 +163,7 @@ want "submit: state is SUBMITTED" "SUBMITTED" "$row"
 want "submit: tip is the worktree's real HEAD, not something the aeon could type" "$real_tip" "$row"
 
 # ── done needs WORKING, not SUBMITTED — reset via a fresh bead for the rest ──────────
-DID="$(bash "$HERE/bead.sh" file "aeon semantic layer: done/blocked/split fixture" --for builder --repo spira)"
+DID="$(bash "$HERE/bead.sh" file "aeon semantic layer: done/blocked/split fixture" --for builder --repo testrepo)"
 seed_bead "$DID"
 root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='aeon-test', version=1 WHERE bead_id='$DID'" >/dev/null 2>&1
 
@@ -166,7 +174,7 @@ want "done: state is DONE" "\"state\":\"DONE\"" "$row"
 want "done: reason carries the delivers evidence" "a document at wiki/x" "$row"
 
 # ── blocked: a hold, plus an ask filed for the operator ──────────────────────────────
-BLID="$(bash "$HERE/bead.sh" file "aeon semantic layer: blocked fixture" --for builder --repo spira)"
+BLID="$(bash "$HERE/bead.sh" file "aeon semantic layer: blocked fixture" --for builder --repo testrepo)"
 seed_bead "$BLID"
 before_unread="$(ls "$SPIRA_MAIL/operator/new" 2>/dev/null | wc -l)"
 out="$(work_as "$BLID" blocked "which persona owns this?" --default "builder" 2>&1)"; rc=$?
@@ -191,7 +199,7 @@ out="$(work_as "$BID" split "a split piece filed by the container-tier suite" 2>
 is "split: exits 0" "0" "$rc"
 
 # ── superseded-by: a hold plus a confirmation ask, never bd supersede directly ───────
-SBID="$(bash "$HERE/bead.sh" file "aeon semantic layer: superseded-by fixture" --for builder --repo spira)"
+SBID="$(bash "$HERE/bead.sh" file "aeon semantic layer: superseded-by fixture" --for builder --repo testrepo)"
 seed_bead "$SBID"
 out="$(work_as "$SBID" superseded-by "$BID" 2>&1)"; rc=$?
 is "superseded-by: exits 0" "0" "$rc"
