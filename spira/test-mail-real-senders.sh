@@ -30,8 +30,7 @@
 # that goes red and says so.
 #
 # tier: T2
-# covers: spira/lib.sh spira/watchd.sh spira/skew.sh spira/incident.sh spira/archivist.sh
-#         spira/ctx-meter.sh spira/incident-stub-bd.py spira/mail.sh UC-operator-channel-05
+# covers: spira/lib.sh spira/watchd.sh spira/skew.sh spira/incident.sh spira/archivist.sh spira/ctx-meter.sh spira/incident-stub-bd.py spira/mail.sh UC-operator-channel-05
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
