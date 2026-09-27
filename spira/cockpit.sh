@@ -980,6 +980,7 @@ unsent_keys() {
     # branches aged forever — the reassuring answer, produced by looking in the wrong place.
     # Refs are a local read, so this costs nothing per repository; no fetch happens here.
     _fail=0; _n=0; _o=""; _done=0; _unadopted=0; _orphan_work=0; _unadopted_names=""
+    _round_branches=0; _round_branches_names=""
     _probe_fail=0; _probe_fail_names=""
     _protected=0; _protected_names=""
     _batched_stranded=0; _batched_stranded_names=""
@@ -1039,6 +1040,20 @@ else:
                     continue
                 fi
                 if [ -z "$_st" ]; then
+                    # ROUND BRANCHES ARE NOT BEAD BRANCHES, same as sending.sh:377 — spira/round-NN
+                    # has no bead and never will, so it always resolves to an empty $_st and would
+                    # otherwise fall into SP_ORPHAN_WORK on every round, permanently, since an
+                    # in-flight round branch's commits are (by design) not yet on base. SP_ORPHAN_WORK
+                    # is the one field that means "unlanded work, deletion would destroy" — a round
+                    # branch inflating it every round teaches a reader to discount the whole field
+                    # (sp-ghi5q). Counted separately so the age is still visible if it matters.
+                    case "$_b" in
+                        spira/round-*)
+                            _round_branches=$((_round_branches+1))
+                            _round_branches_names="${_round_branches_names:+$_round_branches_names }${_b#spira/}"
+                            continue
+                            ;;
+                    esac
                     if [ -n "$_base" ] && git -C "$_p" merge-base --is-ancestor "$_b" "$_base" 2>/dev/null; then
                         _unadopted=$((_unadopted+1))
                         _unadopted_names="${_unadopted_names:+$_unadopted_names }${_b#spira/}"
@@ -1144,6 +1159,8 @@ else:
     echo "SP_UNADOPTED=$_unadopted"
     echo "SP_UNADOPTED_NAMES='$_unadopted_names'"
     echo "SP_ORPHAN_WORK=$_orphan_work"
+    echo "SP_ROUND_BRANCHES=$_round_branches"
+    echo "SP_ROUND_BRANCHES_NAMES='$_round_branches_names'"
     echo "SP_PROBE_FAIL=$_probe_fail"
     echo "SP_PROBE_FAIL_NAMES='$_probe_fail_names'"
     echo "SP_PROTECTED=$_protected"
