@@ -269,6 +269,7 @@ wake
 wake_watchers
 watcher_interval_s
 watchers
+watchers_overlay
 wiki
 wiki_hook
 work_close_types
