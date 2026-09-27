@@ -249,7 +249,7 @@ wr_sigterm() { kill -TERM "$1" 2>/dev/null || true; }
 # Where to look for process information. Tests override this to a scratch tree.
 WR_PROC_ROOT="${WR_PROC_ROOT:-/proc}"
 
-# wr_reap_orphans [dry] — terminate any watch-answers.sh or `watchd.sh tail` process whose
+# wr_reap_orphans [dry] — terminate any watch-answers.sh or `watchd.sh exec` process whose
 # cgroup is not under spira-watch@.
 #
 # WHY /proc, NOT pgrep -f. pgrep -f matches the CALLER's command line: a script whose body
@@ -258,14 +258,21 @@ WR_PROC_ROOT="${WR_PROC_ROOT:-/proc}"
 # survivor that was the enumerating shell itself. Reading /proc/$pid/cmdline is the kernel's
 # own argv; skipping $$ is the only remaining self-match to guard against.
 #
+# SELECT ON WHAT THE PROCESS IS EXECUTING, NEVER ON WHAT ITS ARGV MERELY MENTIONS
+# (law-a-pattern-match-is-not-an-identity-check). A session carries its whole brief on argv
+# (--append-system-prompt "..."), and prose in that brief can name these scripts without the
+# process being either of them. argv[0] (and argv[1], past a bash/sh wrapper) is the kernel's
+# record of what actually runs; a later argument is just a string.
+#
 # WHY CGROUP, NOT FIRST-ARRIVAL. An flock (sp-21hk) would have given the lock to whichever
 # process arrived first — an 8-hour-old orphan takes it and shuts the supervised unit out.
 # Cgroup membership selects on who OWNS the process, not who arrived first: a process inside
 # spira-watch@ is there because systemd put it there, and this path cannot touch it.
 #
-# COST. One grep across all /proc/*/cmdline files, then one tr and one cgroup read per
-# candidate. Candidates are usually zero or one. Kept separate from wr_pass so the staleness
-# check's two-exec invariant stays exact and measurable independently.
+# COST. One grep across all /proc/*/cmdline files — deliberately broad, a pre-filter and not
+# the decision — then one NUL-split read, one tr and one cgroup read per candidate. Candidates
+# are usually zero or one. Kept separate from wr_pass so the staleness check's two-exec
+# invariant stays exact and measurable independently.
 wr_reap_orphans() {
     local dry="${1:-}"
 
@@ -279,23 +286,38 @@ wr_reap_orphans() {
 
     [ "${#candidates[@]}" -gt 0 ] || return 0
 
-    local dir pid argv
+    local dir pid argv prog verb_idx v
+    local -a parts
     for dir in "${candidates[@]}"; do
         pid="${dir##*/}"
         [ "$pid" = "$$" ] && continue   # never signal ourselves
 
-        # Confirm the verb. For watchd.sh, `tail` is a reader that a session opens via
-        # Monitor — killing it severs the channel the SessionStart hook just told the session
-        # to open (law-bind-the-actor). Only `exec` (the supervised daemon verb) should ever
-        # be a reap target; in practice exec processes are inside spira-watch@ anyway, so
-        # the cgroup guard below would protect them too — this is belt-and-braces.
-        argv="$(tr '\0' ' ' 2>/dev/null < "$dir/cmdline")" || continue
-        case "$argv" in
-            *watch-answers.sh*) : ;;
-            *watchd.sh*)
-                case "$argv" in *" tail "*) continue ;; esac ;;
-            *) continue ;;
+        # argv[0] is the file this process is executing; argv[1] is the script named past a
+        # bash/sh wrapper. Matched by exact element, never by substring of the joined line.
+        parts=()
+        while IFS= read -r -d '' v; do parts+=("$v"); done < "$dir/cmdline" 2>/dev/null
+        [ "${#parts[@]}" -gt 0 ] || continue
+
+        prog=""; verb_idx=1
+        case "${parts[0]##*/}" in
+            watch-answers.sh) prog=watch-answers.sh ;;
+            watchd.sh)        prog=watchd.sh ;;
+            bash|sh|dash)
+                case "${parts[1]:-}" in
+                    */watch-answers.sh) prog=watch-answers.sh; verb_idx=2 ;;
+                    */watchd.sh)        prog=watchd.sh;        verb_idx=2 ;;
+                esac ;;
         esac
+        [ -n "$prog" ] || continue
+
+        # `tail` is a reader that a session opens via Monitor — killing it severs the channel
+        # the SessionStart hook just told the session to open (law-bind-the-actor). Only
+        # `exec` (the supervised daemon verb) should ever be a reap target; in practice exec
+        # processes are inside spira-watch@ anyway, so the cgroup guard below would protect
+        # them too — this is belt-and-braces.
+        [ "$prog" = watchd.sh ] && [ "${parts[$verb_idx]:-}" = tail ] && continue
+
+        argv="${parts[*]}"
 
         # THE GUARD. A process inside any spira-watch unit is supervised; this path must never
         # touch it. Cgroup membership is what systemd writes and nothing else can write it.

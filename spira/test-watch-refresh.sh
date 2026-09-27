@@ -392,6 +392,16 @@ printf 'bash\0%s\0tail\0answers\0' "$CLONE/spira/watchd.sh" > "$FAKEPROC/$TAIL_P
 printf '0::/user.slice/user-1000.slice/user@1000.service/\n' \
     > "$FAKEPROC/$TAIL_PID/cgroup"
 
+# a concierge session: argv[0] is claude, and a LATER argument merely names watch-answers.sh
+# because its brief documents the watcher table (sp-wazql). Not in any spira-watch unit, so
+# the cgroup guard alone would not save it — the acceptance criterion for sp-faqqt.
+BRIEF_PID=10006
+mkdir -p "$FAKEPROC/$BRIEF_PID"
+printf 'claude\0--remote-control\0concierge\0--append-system-prompt\0...watch-answers.sh and watchd.sh are the watchers...\0' \
+    > "$FAKEPROC/$BRIEF_PID/cmdline"
+printf '0::/user.slice/user-1000.slice/user@1000.service/\n' \
+    > "$FAKEPROC/$BRIEF_PID/cgroup"
+
 # runreap [dry] — runs wr_reap_orphans against the fake proc tree. wr_sigterm is redefined
 # to log the pid it would signal rather than sending a real signal.
 runreap() {
@@ -406,19 +416,22 @@ runreap() {
 }
 reap_acted() { tr '\n' ' ' < "$REAP_ACT"; }
 
-# THE FOUR CASES: orphaned daemon is gone; template unit, non-template unit, and session tail
-# all survive. THE SESSION TAIL IS THE ACCEPTANCE CRITERION FOR sp-fcom: a tail outside
-# any spira-watch unit must not be reaped — it is a reader the SessionStart hook just told
-# the session to open, and killing it severs that channel (seen failing against code before
-# this fix). THE NON-TEMPLATE UNIT IS THE ACCEPTANCE CRITERION FOR sp-2bb8: a standalone
-# unit spira-watch-* has no `@` in its cgroup path and was reaped by the old guard, which
-# checked only for spira-watch@.
+# THE FIVE CASES: orphaned daemon is gone; template unit, non-template unit, session tail, and
+# a brief that merely names the pattern all survive. THE SESSION TAIL IS THE ACCEPTANCE
+# CRITERION FOR sp-fcom: a tail outside any spira-watch unit must not be reaped — it is a
+# reader the SessionStart hook just told the session to open, and killing it severs that
+# channel (seen failing against code before this fix). THE NON-TEMPLATE UNIT IS THE ACCEPTANCE
+# CRITERION FOR sp-2bb8: a standalone unit spira-watch-* has no `@` in its cgroup path and was
+# reaped by the old guard, which checked only for spira-watch@. THE BRIEF IS THE ACCEPTANCE
+# CRITERION FOR sp-faqqt: a substring match over the whole command line reaped a concierge
+# whose argv merely mentioned the pattern (seen failing against code before this fix).
 runreap; rc=$?
 is "reap pass exits clean"                                    "0" "$rc"
 has "the orphan watch-answers.sh is terminated"               "$(reap_acted)" "$ORPHAN_PID"
 hasnt "a session tail is NOT terminated (it is a reader)"     "$(reap_acted)" "$TAIL_PID"
 hasnt "the template supervised unit is NOT terminated"        "$(reap_acted)" "$SUPERVISED_PID"
 hasnt "a non-template supervised unit is NOT terminated"      "$(reap_acted)" "$PROD_PID"
+hasnt "a brief that merely NAMES watch-answers.sh survives"   "$(reap_acted)" "$BRIEF_PID"
 
 echo
 echo "orphan reaping — dry-run says what it would do and sends no signal"
@@ -430,6 +443,7 @@ has "naming the orphan pid in the output"     "$(cat "$REAP_OUT")" "$ORPHAN_PID"
 hasnt "and not mentioning the supervised pid" "$(cat "$REAP_OUT")" "$SUPERVISED_PID"
 hasnt "and not mentioning the non-template supervised pid" "$(cat "$REAP_OUT")" "$PROD_PID"
 hasnt "and not mentioning the session tail"   "$(cat "$REAP_OUT")" "$TAIL_PID"
+hasnt "and not mentioning the brief"          "$(cat "$REAP_OUT")" "$BRIEF_PID"
 
 echo
 echo "orphan reaping — watchd exec outside any spira-watch unit is a target; tail never is"
