@@ -648,6 +648,16 @@ spira_conf_defaults() {
     : "${SPIRA_LC_UNIX_USER:=spira-lc}"
     : "${SPIRA_LC_UNIX_GROUP:=spira}"
     : "${SPIRA_LC_SOCKET:=/run/spira-lc/sock}"
+    # The compiled `work` client (design §3.5): the aeon semantic layer's only binary, and
+    # the only one work-env.sh's restricted PATH grants. Same tarball-vs-source-checkout
+    # resolution as SPIRA_LOOM_BIN above.
+    if [ -z "${SPIRA_WORK_BIN:-}" ]; then
+        if [ -f "$SPIRA_REPO/bin/work" ]; then
+            SPIRA_WORK_BIN="$SPIRA_REPO/bin/work"
+        else
+            SPIRA_WORK_BIN="$SPIRA_REPO/target/release/work"
+        fi
+    fi
     # WHERE THE TEST IMAGE IS PUBLISHED, if anywhere. Empty means build it locally and
     # never reach the network, which is the right default: the registry is somebody's
     # account, and a harness that reached for one by default would fail on every machine
@@ -1951,7 +1961,7 @@ export SPIRA_INSTANCE \
        SPIRA_WORKSPACES SPIRA_OPERATOR SPIRA_OPERATOR_ACTOR SPIRA_TZ SPIRA_ASK_LABEL SPIRA_RECLAIM_SKIP_LABEL \
        SPIRA_CI_LABEL SPIRA_CI_PARK_MAX \
        SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT SPIRA_INCIDENT_PRIORITY SPIRA_TESTENV_REGISTRY SPIRA_TESTENV_MAX_CONCURRENT SPIRA_TESTENV_QUEUE_TIMEOUT SPIRA_TESTENV_QUEUE_POLL SPIRA_GH_INTAKE_REPO SPIRA_GH_INTAKE_PRIORITY SPIRA_GH_INTAKE_BEAD_REPO SPIRA_FLAKY_GH_REPO SPIRA_RELEASE_REPO \
-       SPIRA_LC_TESTDB_DATA SPIRA_LC_TESTDB_PORT SPIRA_LC_UNIX_USER SPIRA_LC_UNIX_GROUP SPIRA_LC_SOCKET \
+       SPIRA_LC_TESTDB_DATA SPIRA_LC_TESTDB_PORT SPIRA_LC_UNIX_USER SPIRA_LC_UNIX_GROUP SPIRA_LC_SOCKET SPIRA_WORK_BIN \
        SPIRA_LAND_MAXSEC SPIRA_LAND_GATE_RESERVE \
        SPIRA_LOOM_ADDR SPIRA_LOOM_BUDGET_MS SPIRA_LOOM_CACHE_S SPIRA_LOOM_BIN SPIRA_LOOM_READY_GRACE SPIRA_BROKER_BIN SPIRA_RUN SPIRA_SYSTEMCTL \
        SPIRA_SPIKE_LABEL SPIRA_SPIKE_DIR SPIRA_SPIKE_PATHS SPIRA_SCOPE_LABEL \
