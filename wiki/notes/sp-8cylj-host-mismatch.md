@@ -13,7 +13,8 @@ produced nothing — suspect the unit name or a journal this user cannot read."
 
 ## What this session found
 
-- `hostname` on the aeon session assigned to this incident: `agent-swarm-test`.
+- `hostname` on the aeon session assigned to this incident named a host that
+  is not the one that runs `dolt-beads.service`.
 - `systemctl list-units --all | grep -i dolt` on that host: **no matches at
   all** — the unit does not exist here, not merely inactive.
 - `systemctl show dolt-beads.service` returned a blank/zeroed record
@@ -24,17 +25,17 @@ produced nothing — suspect the unit name or a journal this user cannot read."
 - `journalctl -u dolt-beads.service --since ... --until ...` printed
   `-- No entries --`, which is exactly what an unreadable-journal case would
   also print.
-- `bd -C /home/ryan/spira/db show sp-8cylj` succeeded promptly, proving the
+- `bd -C "$SPIRA_DB" show sp-8cylj` succeeded promptly, proving the
   beads store itself is reachable right now from this host — whatever outage
   the incident describes has already ended (or never touched this host).
 
 ## Conclusion
 
-The aeon assigned to `sp-8cylj` is running on a host (`agent-swarm-test`)
-that never ran `dolt-beads.service`. Intake's own guess — "unit name or a
-journal this user cannot read" — is the wrong diagnosis; the real cause is
-that the incident names a unit that lives on a different host than the one
-the aeon loop happened to schedule this session onto. No amount of retrying
+The aeon assigned to `sp-8cylj` is running on a host that never ran
+`dolt-beads.service`. Intake's own guess — "unit name or a journal this user
+cannot read" — is the wrong diagnosis; the real cause is that the incident
+names a unit that lives on a different host than the one the aeon loop
+happened to schedule this session onto. No amount of retrying
 `systemctl`/`journalctl` here will ever produce the evidence, because the
 evidence was never on this box.
 
