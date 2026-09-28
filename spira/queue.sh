@@ -8,6 +8,8 @@
 #   queue.sh step <repo>
 #   queue.sh abandon [<repo>] --reason <text> [--dry-run]
 #   queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run]
+#   queue.sh claim [<repo>] --reason <text> [--force]
+#   queue.sh release [<repo>]
 #
 # submit: certifies any branch by running the repository's gate. In a queue-mode
 # repository, a green branch is recorded CERTIFIED for the batch builder.
@@ -41,6 +43,16 @@
 # (law-local-gates-buy-latency-not-coverage); it is never the default, and the PR body says
 # so when it is used. --dry-run reports the members, the skips, the merge head and the exact
 # open record that would be written, without creating a branch, pushing, or opening a PR.
+#
+# ONE WRITER PER OPEN BATCH (sp-91hb5). The open record names an owner: normally the
+# automatic pipeline (batcher, or the actor that ran open-batch by hand), which every
+# automatic path already cooperates with. claim hands exclusive control to the concierge —
+# for a hand edit to the round branch — and every mutator here (eject, abandon), verdict.sh
+# and the batcher then refuse rather than race it, naming the owner and the override
+# (SPIRA_QUEUE_OWNER_OVERRIDE=1). release hands it back. Every mutation the recorded owner
+# actually makes mails the concierge mailbox, which wakes the pane in real time
+# (law-machine-events-wake-in-real-time) — so the owner's own legitimate work is never a
+# silent surprise either.
 #
 # covers: spira/queue.sh spira/suites.sh spira/conf.sh
 set -uo pipefail
@@ -289,6 +301,9 @@ cmd_eject() {
         printf 'queue.sh eject: no such repo: %s\n' "$name" >&2; return 1
     }
 
+    local actor; actor="${SPIRA_QUEUE_ACTOR:-${BEADS_ACTOR:-${SPIRA_AEON:+aeon-$SPIRA_AEON}}}"
+    actor="${actor:-${USER:-unknown}}"
+
     # Take the per-repo lock — eject racing a batch build produces the
     # two-PRs-one-batch state the lock exists to prevent. Held for both paths below:
     # a batch build can race either an ejection from the open batch or a withdrawal
@@ -318,6 +333,10 @@ cmd_eject() {
                 new_members="${new_members}${new_members:+ }$_m"
             fi
         done
+    fi
+
+    if [ "$found" -eq 1 ] && queue_owner_refused "$(queue_batch_owner "$open_file")" "$actor" "queue.sh eject"; then
+        return 1
     fi
 
     if [ "$found" -eq 0 ]; then
@@ -401,6 +420,9 @@ cmd_eject() {
     "$forge" pr-close "$repo_dir" "$pr_n" 2>/dev/null || true
     rm -f "$open_file"
 
+    queue_notify_concierge "$name" "$id ejected (queue.sh eject)" \
+        "$id ejected from PR $pr_n by $actor.${reason:+ Reason: $reason}"$'\n'"Survivors returned to CERTIFIED: ${new_members:-<none>}"
+
     printf 'queue.sh eject: ejected %s from %s batch (landstate=RED)\n' "$id" "$name"
 }
 
@@ -428,7 +450,8 @@ cmd_abandon() {
         return 2
     }
 
-    local actor; actor="${BEADS_ACTOR:-${SPIRA_AEON:+aeon-$SPIRA_AEON}}"; actor="${actor:-${USER:-unknown}}"
+    local actor; actor="${SPIRA_QUEUE_ACTOR:-${BEADS_ACTOR:-${SPIRA_AEON:+aeon-$SPIRA_AEON}}}"
+    actor="${actor:-${USER:-unknown}}"
 
     [ -n "$name" ] || name="$(spira_home_repo)"
     repo_root "$name" >/dev/null 2>&1 || {
@@ -451,6 +474,8 @@ cmd_abandon() {
         printf 'queue.sh abandon: no open batch for %s\n' "$name" >&2
         return 1
     fi
+
+    queue_owner_refused "$(queue_batch_owner "$open_file")" "$actor" "queue.sh abandon" && return 1
 
     local pr_n members_val branch_val
     pr_n="$(grep '^pr=' "$open_file" | head -1)"; pr_n="${pr_n#pr=}"
@@ -533,6 +558,9 @@ cmd_abandon() {
     spira_event queue.abandoned - "abandoned PR $pr_n for $name (actor=$actor)" \
         "members=${member_audit:-<none>} reason=$reason_clean" || true
 
+    queue_notify_concierge "$name" "batch abandoned (queue.sh abandon)" \
+        "PR $pr_n abandoned by $actor. Reason: $reason_clean"$'\n'"Members: ${member_audit:-<none>}"
+
     printf 'queue.sh abandon: PR %s closed, batch abandoned for %s\n' "$pr_n" "$name"
 }
 
@@ -559,6 +587,7 @@ cmd_open_batch() {
         esac
     done
     [ -n "$name" ] || name="$(spira_home_repo)"
+    local actor; actor="${SPIRA_QUEUE_ACTOR:-operator}"
 
     local repo; repo="$(repo_root "$name" 2>/dev/null)" || {
         printf 'queue.sh open-batch: no such repo: %s\n' "$name" >&2; return 1
@@ -580,7 +609,9 @@ cmd_open_batch() {
     fi
 
     if _batch_is_open "$name"; then
-        printf 'queue.sh open-batch: a batch is already open for %s\n' "$name" >&2
+        local _ob_owner; _ob_owner="$(queue_batch_owner "$(_batch_open_file "$name")")"
+        printf 'queue.sh open-batch: a batch is already open for %s (owner=%s) — no override; abandon it first (queue.sh abandon)\n' \
+            "$name" "${_ob_owner:-batcher}" >&2
         return 1
     fi
 
@@ -698,6 +729,7 @@ cmd_open_batch() {
         printf '  members=%s\n' "${members[*]}"
         printf '  opened=<pending>\n'
         printf '  branch=%s\n' "$batch_br"
+        printf '  owner=%s\n' "$actor"
         git -C "$repo" worktree remove -f "$wt" 2>/dev/null || true
         return 0
     fi
@@ -778,6 +810,7 @@ print((t[:120] if t else '(title unavailable)') or '(title unavailable)')
         printf 'members=%s\n' "${members[*]}"
         printf 'opened=%s\n'  "$opened_at"
         printf 'branch=%s\n'  "$batch_br"
+        printf 'owner=%s\n'   "$actor"
     } > "$(_batch_open_file "$name")"
 
     local _mm _mid2 _mtip2
@@ -794,6 +827,104 @@ print((t[:120] if t else '(title unavailable)') or '(title unavailable)')
         "$pr_n" "${#members[@]}" "$batch_br"
 }
 
+# cmd_claim: the Concierge's own tool for taking exclusive hand control of an already-open
+# batch before editing its round branch directly — the gap sp-91hb5 closes. Every other
+# mutator (verdict.sh, the batcher, queue.sh eject/abandon) checks queue_owner_refused and
+# backs off while owner=concierge. Refuses if already claimed; --force takes it anyway
+# (the claim is a courtesy against concurrent hand edits, not a lock against the operator).
+cmd_claim() {
+    local name="" reason="" force=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        --reason)   shift; reason="${1:-}"; shift ;;
+        --reason=*) reason="${1#--reason=}"; shift ;;
+        --force)    force=1; shift ;;
+        -*)         printf 'queue.sh claim: unknown option: %s\n' "$1" >&2; return 2 ;;
+        *)          name="$1"; shift ;;
+        esac
+    done
+    [ -n "$reason" ] || {
+        printf 'queue.sh claim: --reason is required — say what the hand edit is for\n' >&2
+        return 2
+    }
+    [ -n "$name" ] || name="$(spira_home_repo)"
+    repo_root "$name" >/dev/null 2>&1 || {
+        printf 'queue.sh claim: no such repo: %s\n' "$name" >&2; return 1
+    }
+
+    local lockfile; lockfile="${SPIRA_QUEUE_DIR:?}/$name/lock"
+    mkdir -p "${SPIRA_QUEUE_DIR:?}/$name" 2>/dev/null || true
+    { exec 9>"$lockfile"; } 2>/dev/null \
+        || { printf 'queue.sh claim: cannot open lock file for %s\n' "$name" >&2; return 1; }
+    if ! flock -n 9; then
+        printf 'queue.sh claim: another queue operation holds the lock for %s\n' "$name" >&2
+        return 1
+    fi
+
+    local open_file="${SPIRA_QUEUE_DIR:?}/$name/open"
+    [ -f "$open_file" ] || {
+        printf 'queue.sh claim: no open batch for %s\n' "$name" >&2; return 1
+    }
+
+    local cur; cur="$(queue_batch_owner "$open_file")"
+    if [ "$cur" = concierge ] && [ "$force" -eq 0 ]; then
+        printf 'queue.sh claim: %s is already claimed by concierge — pass --force to reclaim\n' "$name" >&2
+        return 1
+    fi
+
+    { grep -vE '^(owner|pre_claim_owner|claim_reason)=' "$open_file" 2>/dev/null
+      printf 'owner=concierge\n'
+      printf 'pre_claim_owner=%s\n' "$cur"
+      printf 'claim_reason=%s\n' "${reason//$'\n'/ }"
+    } > "$open_file.$$" && mv -f "$open_file.$$" "$open_file"
+
+    queue_notify_concierge "$name" "batch claimed for hand-edit" \
+        "Claimed the open batch for $name (was: ${cur:-<none>}). Reason: $reason"
+
+    printf 'queue.sh claim: %s claimed for concierge (was: %s)\n' "$name" "${cur:-<none>}"
+}
+
+# cmd_release: hands the open batch back to whichever owner held it before the claim
+# (batcher, or the legacy default) so the automatic pipeline resumes settling it.
+cmd_release() {
+    local name=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        -*) printf 'queue.sh release: unknown option: %s\n' "$1" >&2; return 2 ;;
+        *)  name="$1"; shift ;;
+        esac
+    done
+    [ -n "$name" ] || name="$(spira_home_repo)"
+    repo_root "$name" >/dev/null 2>&1 || {
+        printf 'queue.sh release: no such repo: %s\n' "$name" >&2; return 1
+    }
+
+    local lockfile; lockfile="${SPIRA_QUEUE_DIR:?}/$name/lock"
+    mkdir -p "${SPIRA_QUEUE_DIR:?}/$name" 2>/dev/null || true
+    { exec 9>"$lockfile"; } 2>/dev/null \
+        || { printf 'queue.sh release: cannot open lock file for %s\n' "$name" >&2; return 1; }
+    if ! flock -n 9; then
+        printf 'queue.sh release: another queue operation holds the lock for %s\n' "$name" >&2
+        return 1
+    fi
+
+    local open_file="${SPIRA_QUEUE_DIR:?}/$name/open"
+    [ -f "$open_file" ] || {
+        printf 'queue.sh release: no open batch for %s\n' "$name" >&2; return 1
+    }
+    if [ "$(queue_batch_owner "$open_file")" != concierge ]; then
+        printf 'queue.sh release: %s is not claimed by concierge\n' "$name" >&2
+        return 1
+    fi
+
+    local restore; restore="$(grep '^pre_claim_owner=' "$open_file" 2>/dev/null | tail -1 | cut -d= -f2-)"
+    { grep -vE '^(owner|pre_claim_owner|claim_reason)=' "$open_file" 2>/dev/null
+      printf 'owner=%s\n' "$restore"
+    } > "$open_file.$$" && mv -f "$open_file.$$" "$open_file"
+
+    printf 'queue.sh release: %s released back to %s\n' "$name" "${restore:-<none>}"
+}
+
 case "${1:-}" in
     submit)  shift; cmd_submit "$@" ;;
     protect) shift; cmd_protect "$@" ;;
@@ -803,5 +934,7 @@ case "${1:-}" in
     eject)   shift; cmd_eject "$@" ;;
     abandon) shift; cmd_abandon "$@" ;;
     open-batch) shift; cmd_open_batch "$@" ;;
-    *) printf 'usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run]\n' >&2; exit 2 ;;
+    claim)   shift; cmd_claim "$@" ;;
+    release) shift; cmd_release "$@" ;;
+    *) printf 'usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>]\n' >&2; exit 2 ;;
 esac
