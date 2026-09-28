@@ -9,6 +9,7 @@
 #   groomer.sh correct-lane   <id> --lane <lane>                             correct a mislabelled lane label
 #   groomer.sh depends-on-fix <bug-id> --fix <id> --evidence <text>         link bug to in-flight fix, order accordingly
 #   groomer.sh unpoison       <id> --cause <c> --evidence <text>            credit a harness-caused attempt, lift spira-poison
+#   groomer.sh triage-poison  <id> --verdict <work-fault|drop> --evidence <text>  close out a work-caused poison charge
 #   groomer.sh unwanted       ...                                            REFUSED — exits 2 always
 #
 # WHAT IT DOES NOT DO:
@@ -44,7 +45,7 @@ BD_CMD="${SPIRA_BD:-bd}"
 DB="${SPIRA_DB:-.}"
 
 usage() {
-    printf 'usage: groomer.sh sweep|split-piece|supersede|close|correct-lane|depends-on-fix|unwanted ...\n' >&2
+    printf 'usage: groomer.sh sweep|split-piece|supersede|close|correct-lane|depends-on-fix|unpoison|triage-poison|unwanted ...\n' >&2
     exit 1
 }
 
@@ -455,6 +456,74 @@ except Exception: pass
     poison_asked_clear "$id"
     "$BD_CMD" -C "$DB" note "$id" "Poison lifted by groomer.sh unpoison, cause: $cause. $evidence A requeued/unjudged-$cause event was recorded, crediting the charged attempt(s) to the harness rather than the work; a poison.cleared event floors the attempt count so this does not immediately re-poison. A genuinely new failure after this still poisons the bead again, at the count starting from zero." >/dev/null 2>&1
     printf 'UNPOISONED %s cause=%s\n' "$id" "$cause"
+    ;;
+
+  triage-poison)
+    # groomer.sh triage-poison <id> --verdict <work-fault|drop> --evidence <text>
+    #
+    # The other side of poison triage from `unpoison`: unpoison lifts a HARNESS-caused
+    # charge; this closes out a WORK-caused one. A poisoned bead admits no claim (aeon.sh
+    # refuses it at claim time), so a triage that leaves the label standing with a note
+    # reading "poison stands, next claim must fix X" strands the bead forever — nothing
+    # can ever be the next claim. "Poison stands" is a legal outcome only for `drop`,
+    # which removes the bead from ready by closing it, not by leaving it stuck open.
+    #
+    #   work-fault   lifts spira-poison and the lifecycle poison hold, so the bead is
+    #                claimable again — the fix this triage names IS the next claim. The
+    #                attempt count is floored (bump_poison_cleared, same as unpoison) but
+    #                NOT discounted: no requeued/unjudged event is written, because the
+    #                charged attempts really were the work's fault and stay charged.
+    #   drop         closes the bead and labels it spira-dropped: the triage decided this
+    #                is not worth a next claim at all.
+    id="${1:-}"; [ $# -gt 0 ] && shift
+    verdict=""
+    evidence=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --verdict)
+          [ $# -lt 2 ] && { printf 'groomer: --verdict requires a value\n' >&2; exit 1; }
+          verdict="$2"; shift 2 ;;
+        --evidence)
+          [ $# -lt 2 ] && { printf 'groomer: --evidence requires a value\n' >&2; exit 1; }
+          evidence="$2"; shift 2 ;;
+        *) printf 'groomer: triage-poison: unknown option: %s\n' "$1" >&2; exit 1 ;;
+      esac
+    done
+    [ -z "$id" ] && { printf 'groomer: triage-poison: bead id required\n' >&2; exit 1; }
+    case "$verdict" in
+      work-fault|drop) ;;
+      *) printf 'groomer: triage-poison: --verdict must be work-fault or drop (got %s)\n' "${verdict:-<empty>}" >&2; exit 1 ;;
+    esac
+    if [ -z "$evidence" ]; then
+        printf 'groomer: triage-poison: --evidence <text> is required\n' >&2
+        exit 1
+    fi
+
+    if [ "$verdict" = drop ]; then
+        "$BD_CMD" -C "$DB" close "$id" --reason-file - <<< "GROOM: Poison triage — DROP. $evidence" || exit 1
+        "$BD_CMD" -C "$DB" label add "$id" spira-dropped >/dev/null 2>&1
+        printf 'DROPPED %s\n' "$id"
+        exit 0
+    fi
+
+    # shellcheck source=lib.sh
+    . "$HERE/lib.sh"
+    # shellcheck source=lc.sh
+    . "$HERE/lc.sh"
+
+    _tp_labels="$("$BD_CMD" -C "$DB" label list "$id" 2>/dev/null)" || _tp_labels=""
+    if ! grep -q spira-poison <<< "$_tp_labels"; then
+        printf 'groomer: triage-poison: %s does not carry spira-poison — nothing to triage\n' "$id" >&2
+        exit 1
+    fi
+
+    bump_poison_cleared "$id" "work-fault-triage"
+    "$BD_CMD" -C "$DB" label remove "$id" spira-poison >/dev/null 2>&1 \
+        || { printf 'groomer: triage-poison: could not remove spira-poison from %s\n' "$id" >&2; exit 1; }
+    poison_asked_clear "$id"
+    lc_unhold "$id" poison groomer.sh >/dev/null 2>&1 || true
+    "$BD_CMD" -C "$DB" note "$id" "GROOM: Poison triage — WORK'S FAULT. $evidence Poison lifted (not credited — the charged attempts stand); the fix this triage names is the next claim. A poison.cleared event floors the attempt count so this does not immediately re-poison." >/dev/null 2>&1
+    printf 'TRIAGED %s verdict=work-fault\n' "$id"
     ;;
 
   unwanted)
