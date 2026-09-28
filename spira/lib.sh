@@ -2982,7 +2982,7 @@ aeon_disposition() {
     [ "$outcome" = "-" ] && outcome=""
 
     if [ "$capacity_rc" = 0 ]; then printf 'capacity free unjudged-capacity capacity\n'; return 0; fi
-    if [ "$slain" = yes ]; then printf 'slain free - slain\n'; return 0; fi
+    if [ "$slain" = yes ]; then printf 'slain free unjudged-slain slain\n'; return 0; fi
     if [ "$thrash" = yes ]; then
         if [ "$thrash_charged" = yes ]; then
             printf 'requeue-thrash-charged charge thrash-stale thrash-charged\n'
