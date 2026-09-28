@@ -524,19 +524,28 @@ pub fn head_of(wt: &Path) -> Result<String, String> {
 // parse its per-suite result protocol into SuiteRun.
 // ---------------------------------------------------------------------------------------
 
-pub fn all_suites(repo: &Repo) -> Vec<String> {
-    let dir = repo.path.join("spira");
-    let mut out = Vec::new();
-    if let Ok(rd) = fs::read_dir(&dir) {
-        for ent in rd.flatten() {
-            let name = ent.file_name().to_string_lossy().to_string();
-            if name.starts_with("test-") && name.ends_with(".sh") {
-                out.push(name);
-            }
-        }
-    }
-    out.sort();
-    out
+/// The round's own suite corpus: every `test-*.sh` committed under `spira/` at `branch`'s
+/// tip — read from the git tree, never `repo.path`'s working directory. `repo.path` is the
+/// production checkout, which stays on its own branch throughout a round (the round's commits
+/// live in a separate worktree, merged into `branch` by `set_branch`); a suite the round
+/// added is invisible in that checkout, one it deleted still sits there, and an untracked
+/// stray in that checkout is neither — reading the branch's own tree gets all three right at
+/// once, matching exactly what testenv-batch.sh validates `--suites` against.
+pub fn all_suites(repo: &Repo, branch: &str) -> Vec<String> {
+    let out = run(
+        Command::new("git").arg("-C").arg(&repo.path).args(["ls-tree", "-r", "--name-only", branch, "--", "spira/"]),
+        "git ls-tree suites",
+    )
+    .unwrap_or_default();
+    let mut suites: Vec<String> = out
+        .lines()
+        .filter_map(|l| l.rsplit('/').next())
+        .filter(|name| name.starts_with("test-") && name.ends_with(".sh"))
+        .map(str::to_string)
+        .collect();
+    suites.sort();
+    suites.dedup();
+    suites
 }
 
 /// Run `suites` (explicit list — never diff-selected) against `branch` and parse the result
@@ -551,11 +560,28 @@ pub fn run_suites(env: &Env, repo: &Repo, branch: &str, suites: &[String], resul
     let mut cmd = Command::new("bash");
     cmd.env("SPIRA_BATCH_RESULTS", results_dir);
     cmd.arg(&env.testenv_batch).arg("--suites").arg(suites.join(",")).arg(branch).arg(&repo.path);
-    let status = cmd.status().map_err(|e| format!("testenv-batch.sh: {e}"))?;
-    // Exit 1 means "suites ran, some red" — a real answer, not a fault. Only 2/3 (harness
-    // fault: the container never came up, or install failed) refuse to report a verdict.
+    cmd.stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| format!("testenv-batch.sh: {e}"))?;
+    let mut stderr_buf = String::new();
+    if let Some(mut se) = child.stderr.take() {
+        use std::io::Read;
+        let _ = se.read_to_string(&mut stderr_buf);
+    }
+    let status = child.wait().map_err(|e| format!("testenv-batch.sh: {e}"))?;
+    if !stderr_buf.is_empty() {
+        eprint!("{stderr_buf}");
+    }
+    // Exit 1 means "suites ran, some red" — a real answer, not a fault. Exit 2 is
+    // overloaded: usually the container never came up, but testenv-batch.sh also raises it,
+    // before any container is touched, when a --suites name isn't in the branch's own tree.
+    // That is a suite-list bug, not a container fault, so it is read off the "unknown suite"
+    // line rather than folded into the same harness-fault verdict.
     match status.code() {
         Some(0) | Some(1) | None => {}
+        Some(2) if stderr_buf.contains("batch: unknown suite:") => {
+            let line = stderr_buf.lines().find(|l| l.contains("batch: unknown suite:")).unwrap_or("batch: unknown suite").trim();
+            return Err(format!("testenv-batch.sh: suite list mismatch, not a harness fault — {line}"));
+        }
         Some(2) => return Err("testenv-batch.sh: harness fault — container did not come up or died".into()),
         Some(3) => return Err("testenv-batch.sh: harness fault — install failed".into()),
         Some(c) => return Err(format!("testenv-batch.sh: unexpected exit {c}")),
