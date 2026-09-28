@@ -37,7 +37,7 @@ fn json_col(row: &Value, col: &str) -> Value {
 
 pub fn fetch_bead(conn: &Conn, bead_id: &str) -> Result<Option<BeadRow>, DbError> {
     let rows = conn.query(&format!(
-        "SELECT bead_id, state, tip, gate_key, holder, lease_until, holds, reason, version FROM bead WHERE bead_id = '{}'",
+        "SELECT bead_id, state, tip, gate_key, holder, lease_until, holds, reason, version, stack, stack_depth FROM bead WHERE bead_id = '{}'",
         escape(bead_id)
     ))?;
     let Some(row) = rows.first() else { return Ok(None) };
@@ -46,6 +46,10 @@ pub fn fetch_bead(conn: &Conn, bead_id: &str) -> Result<Option<BeadRow>, DbError
     let holds: BTreeSet<HoldKind> = json_col(row, "holds")
         .as_array()
         .map(|a| a.iter().filter_map(|v| v.as_str()).filter_map(HoldKind::from_str).collect())
+        .unwrap_or_default();
+    let stack: lifecycle::bead::Stack = json_col(row, "stack")
+        .as_object()
+        .map(|m| m.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
         .unwrap_or_default();
     Ok(Some(BeadRow {
         bead_id: bead_id.to_string(),
@@ -57,13 +61,16 @@ pub fn fetch_bead(conn: &Conn, bead_id: &str) -> Result<Option<BeadRow>, DbError
         holds,
         reason: text(row, "reason"),
         version: number(row, "version").unwrap_or(0) as u64,
+        stack,
+        stack_depth: number(row, "stack_depth").unwrap_or(0) as u32,
     }))
 }
 
 pub fn bead_set_clause(row: &BeadRow) -> String {
     let holds_json = Value::Array(row.holds.iter().map(|h| Value::String(h.as_str().to_string())).collect());
+    let stack_json = Value::Object(row.stack.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect());
     format!(
-        "state = '{}', tip = {}, gate_key = {}, holder = {}, lease_until = {}, holds = '{}', reason = {}, version = {}, updated_at = {}",
+        "state = '{}', tip = {}, gate_key = {}, holder = {}, lease_until = {}, holds = '{}', reason = {}, version = {}, stack = '{}', stack_depth = {}, updated_at = {}",
         row.state.as_str(),
         opt_str(&row.tip),
         opt_str(&row.gate_key),
@@ -72,6 +79,8 @@ pub fn bead_set_clause(row: &BeadRow) -> String {
         holds_json,
         opt_str(&row.reason),
         row.version,
+        stack_json,
+        row.stack_depth,
         crate::db::now_epoch(),
     )
 }

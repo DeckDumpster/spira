@@ -22,6 +22,12 @@ CREATE TABLE IF NOT EXISTS bead (
     holds       JSON NOT NULL,
     reason      TEXT NULL,
     version     BIGINT NOT NULL,
+    -- Stacked dependents (design stacked-dependents-2026-09-28 §1): the certified tip of
+    -- each prerequisite this bead's current work was built on, and the depth that stack
+    -- reaches. Empty/zero for an unstacked bead. An existing database gets these columns
+    -- from migrations/0001-stack.sql instead of re-running this CREATE TABLE.
+    stack       JSON NOT NULL DEFAULT (JSON_OBJECT()),
+    stack_depth BIGINT NOT NULL DEFAULT 0,
     updated_at  BIGINT NOT NULL
 );
 

@@ -30,6 +30,14 @@ pub enum Refusal {
     TipMismatch { event_tip: String, row_tip: String },
     /// The row is in a terminal state; terminal states have no outgoing transitions.
     Terminal { state: String },
+    /// A `claim`'s proposed `stack_depth` exceeds `stack_max_depth` (design stacked-
+    /// dependents-2026-09-28 §1: "the meter and the cap").
+    DepthExceeded { depth: u32, max: u32 },
+    /// A `base_withdrawn` (or `prereq_landed`) named a `(prereq, tip)` the row's own `stack`
+    /// does not carry — a misrouted or stale cascade, not evidence about this row.
+    NotInStack { prereq: String, tip: String },
+    /// `submit` while the row's `stack` still names a tip `base_withdrawn` disowned.
+    StackStale { prereqs: Vec<String> },
 }
 
 /// The result of applying one event to one row. `row` is the new row when `applied` is

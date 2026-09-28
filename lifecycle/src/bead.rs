@@ -1,10 +1,15 @@
 //! The bead machine (design §3.1.1): mode-independent, one row per work bead. It never
 //! knows whether delivery is a batch, a PR or a push — that is the delivery machine's job.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::reason::{DropReason, GateRedReason, HoldCause, ReturnedReason};
 use crate::{Outcome, Refusal, Version};
+
+/// A dependent's stack (design stacked-dependents-2026-09-28 §1): the certified tip of
+/// each prerequisite its current work was built on, keyed by prerequisite `bead_id`. Empty
+/// for a bead that is not stacked on anything.
+pub type Stack = BTreeMap<String, String>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 pub enum BeadState {
@@ -103,6 +108,13 @@ pub struct BeadRow {
     pub holds: BTreeSet<HoldKind>,
     pub reason: Option<String>,
     pub version: Version,
+    /// The prerequisite tips this bead's current work was built on, recorded at `claim`.
+    /// Empty for an unstacked bead (design §1: "the stack is state the machine holds").
+    #[serde(default)]
+    pub stack: Stack,
+    /// `1 + max(depth of each prerequisite)`, recorded alongside `stack` at `claim`.
+    #[serde(default)]
+    pub stack_depth: u32,
 }
 
 impl BeadRow {
@@ -119,13 +131,22 @@ impl BeadRow {
             holds: BTreeSet::new(),
             reason: None,
             version: 0,
+            stack: Stack::new(),
+            stack_depth: 0,
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BeadEventKind {
-    Claim { holder: String, lease_until: i64 },
+    /// `stack`/`stack_depth` are the caller's already-computed proposal (design §1: "stack
+    /// recorded at claim, from the certified tips of every open work-bead blocker"); this
+    /// machine checks only the depth ceiling it can see from the event alone — whether the
+    /// proposed stack itself is still fresh against each prerequisite's live row is a
+    /// multi-row check the caller makes before ever proposing a claim (see
+    /// `stale_stack_entries`). `stack_max_depth` is the caller's own config read, carried
+    /// as evidence exactly like `lease_until`.
+    Claim { holder: String, lease_until: i64, #[serde(default)] stack: Stack, #[serde(default)] stack_depth: u32, #[serde(default)] stack_max_depth: u32 },
     Release,
     HolderDead,
     Submit { tip: String },
@@ -146,6 +167,16 @@ pub enum BeadEventKind {
     /// display when given, falling back to the category's own name otherwise.
     Hold { kind: HoldKind, cause: HoldCause, #[serde(default)] detail: Option<String> },
     Unhold { kind: HoldKind },
+    /// Machine-emitted (design §1), same transaction as the prerequisite's backwards move,
+    /// for every dependent whose `stack` names `(prereq, tip)`. Per-state outcomes: READY
+    /// re-applies the wait hold; WORKING/IN_DELIVERY/REWORK record it in `reason` and stay
+    /// put (whether the stack is still fresh enough to `submit`/`deliver` is a multi-row
+    /// check — `stale_stack_entries` — the caller makes against live prerequisite rows, the
+    /// same way `claim` does); SUBMITTED/CERTIFIED move to REWORK.
+    BaseWithdrawn { prereq: String, tip: String },
+    /// A prerequisite named in `stack` reached LANDED: it drops out of `stack` (design §1:
+    /// "a LANDED prerequisite drops out of every dependent's stack").
+    PrereqLanded { prereq: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -172,6 +203,22 @@ fn tip_mismatch(row: &BeadRow, event_tip: &str) -> Outcome<BeadRow> {
         row.clone(),
         Refusal::TipMismatch { event_tip: event_tip.to_string(), row_tip: row.tip.clone().unwrap_or_default() },
     )
+}
+
+fn depth_exceeded(row: &BeadRow, depth: u32, max: u32) -> Outcome<BeadRow> {
+    Outcome::refuse(row.clone(), Refusal::DepthExceeded { depth, max })
+}
+
+fn not_in_stack(row: &BeadRow, prereq: &str, tip: &str) -> Outcome<BeadRow> {
+    Outcome::refuse(row.clone(), Refusal::NotInStack { prereq: prereq.to_string(), tip: tip.to_string() })
+}
+
+/// A `base_withdrawn(prereq, tip)` is evidence about this row only when `stack` still names
+/// exactly that tip for that prerequisite — otherwise it is a cascade aimed at a stale or
+/// unrelated view of this row, refused the same way a tip mismatch is (design §1: "the tip
+/// invariant, extended").
+fn base_withdrawn_applies(row: &BeadRow, prereq: &str, tip: &str) -> bool {
+    row.stack.get(prereq).map(String::as_str) == Some(tip)
 }
 
 /// Apply one event to one row. Pure: the only inputs are the row and the event, and the
@@ -254,7 +301,9 @@ pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
         | BeadEventKind::Deliver
         | BeadEventKind::Delivered { .. }
         | BeadEventKind::Returned { .. }
-        | BeadEventKind::Requeued { .. } => primary_transition(row, &ev.kind),
+        | BeadEventKind::Requeued { .. }
+        | BeadEventKind::BaseWithdrawn { .. }
+        | BeadEventKind::PrereqLanded { .. } => primary_transition(row, &ev.kind),
     }
 }
 
@@ -268,11 +317,32 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
 
     match row.state {
         BeadState::Ready => match kind {
-            Claim { holder, lease_until } => {
+            Claim { holder, lease_until, stack, stack_depth, stack_max_depth } => {
+                if *stack_depth > *stack_max_depth {
+                    return depth_exceeded(row, *stack_depth, *stack_max_depth);
+                }
                 let mut new = row.clone();
                 new.state = BeadState::Working;
                 new.holder = Some(holder.clone());
                 new.lease_until = Some(*lease_until);
+                new.stack = stack.clone();
+                new.stack_depth = *stack_depth;
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            // Not yet claimed: the wait hold this bead's own `blocks` edge already carries
+            // is simply re-applied (design §1's base_withdrawn table, the READY row). There
+            // is no stack to check — an unclaimed bead's `stack` (if any survives an earlier
+            // release) is superseded wholesale by its next `claim`.
+            BaseWithdrawn { prereq: _, tip: _ } => {
+                let mut new = row.clone();
+                new.holds.insert(HoldKind::Wait);
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            PrereqLanded { prereq } => {
+                let mut new = row.clone();
+                new.stack.remove(prereq);
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -287,6 +357,10 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.state = BeadState::Ready;
                 new.holder = None;
                 new.lease_until = None;
+                // The claim this stack belonged to is voided; the next claim proposes a
+                // fresh one rather than carrying a stale one into READY.
+                new.stack = Stack::new();
+                new.stack_depth = 0;
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -302,6 +376,25 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 let mut new = row.clone();
                 new.state = BeadState::Done;
                 new.reason = Some(delivers.clone());
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            // Stays WORKING; the holder is told outside this crate. Whether the row's
+            // `submit` is refused for still naming this withdrawn tip is a multi-row check
+            // (`stale_stack_entries` against the live prerequisite) the caller makes before
+            // ever proposing the `submit` event — the same split `claim` uses.
+            BaseWithdrawn { prereq, tip } => {
+                if !base_withdrawn_applies(row, prereq, tip) {
+                    return not_in_stack(row, prereq, tip);
+                }
+                let mut new = row.clone();
+                new.reason = Some(format!("base_withdrawn: {prereq} {tip}"));
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            PrereqLanded { prereq } => {
+                let mut new = row.clone();
+                new.stack.remove(prereq);
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -342,6 +435,22 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
+            BaseWithdrawn { prereq, tip } => {
+                if !base_withdrawn_applies(row, prereq, tip) {
+                    return not_in_stack(row, prereq, tip);
+                }
+                let mut new = row.clone();
+                new.state = BeadState::Rework;
+                new.reason = Some(format!("base_withdrawn: {prereq} {tip}"));
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            PrereqLanded { prereq } => {
+                let mut new = row.clone();
+                new.stack.remove(prereq);
+                new.version += 1;
+                Outcome::applied(new)
+            }
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | Deliver | Delivered { .. }
             | Returned { .. } | Requeued { .. }
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } => illegal(row, kind),
@@ -366,6 +475,22 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                     new.tip = Some(tip.clone());
                     new.gate_key = None;
                 }
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            BaseWithdrawn { prereq, tip } => {
+                if !base_withdrawn_applies(row, prereq, tip) {
+                    return not_in_stack(row, prereq, tip);
+                }
+                let mut new = row.clone();
+                new.state = BeadState::Rework;
+                new.reason = Some(format!("base_withdrawn: {prereq} {tip}"));
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            PrereqLanded { prereq } => {
+                let mut new = row.clone();
+                new.stack.remove(prereq);
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -400,17 +525,54 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
+            // Its batch member is marked for eject with the prerequisite (design §1); the
+            // actual eject/REWORK move happens through `returned(batch-ejected)`, above.
+            BaseWithdrawn { prereq, tip } => {
+                if !base_withdrawn_applies(row, prereq, tip) {
+                    return not_in_stack(row, prereq, tip);
+                }
+                let mut new = row.clone();
+                new.reason = Some(format!("base_withdrawn: {prereq} {tip}"));
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            PrereqLanded { prereq } => {
+                let mut new = row.clone();
+                new.stack.remove(prereq);
+                new.version += 1;
+                Outcome::applied(new)
+            }
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Deliver
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } => illegal(row, kind),
         },
 
         BeadState::Rework => match kind {
-            Claim { holder, lease_until } => {
+            Claim { holder, lease_until, stack, stack_depth, stack_max_depth } => {
+                if *stack_depth > *stack_max_depth {
+                    return depth_exceeded(row, *stack_depth, *stack_max_depth);
+                }
                 let mut new = row.clone();
                 new.state = BeadState::Working;
                 new.holder = Some(holder.clone());
                 new.lease_until = Some(*lease_until);
+                new.stack = stack.clone();
+                new.stack_depth = *stack_depth;
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            BaseWithdrawn { prereq, tip } => {
+                if !base_withdrawn_applies(row, prereq, tip) {
+                    return not_in_stack(row, prereq, tip);
+                }
+                let mut new = row.clone();
+                new.reason = Some(format!("base_withdrawn: {prereq} {tip}"));
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            PrereqLanded { prereq } => {
+                let mut new = row.clone();
+                new.stack.remove(prereq);
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -419,7 +581,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } => illegal(row, kind),
         },
 
-        // Terminal states: every one of the 17 events is illegal here, because there is no
+        // Terminal states: every one of the 19 events is illegal here, because there is no
         // outgoing transition at all — not because any one event is refused for its own
         // reason. Named individually, per the no-wildcard rule. (The orthogonal five are
         // unreachable in practice, since `apply` intercepts and refuses them before this
@@ -428,10 +590,72 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
         BeadState::Landed | BeadState::Superseded | BeadState::Dropped | BeadState::Done => match kind {
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. }
-            | Requeued { .. }
+            | Requeued { .. } | BaseWithdrawn { .. } | PrereqLanded { .. }
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } => terminal(row),
         },
     }
+}
+
+/// One entry of a proposed stack that no longer matches its prerequisite's live row —
+/// evidence a claim's caller gathers before ever proposing the claim (design §1: "the tip
+/// invariant, extended"). `current_tip` is `None` when the prerequisite is not (or no
+/// longer) CERTIFIED at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StaleStackEntry {
+    pub prereq: String,
+    pub given_tip: String,
+    pub current_tip: Option<String>,
+}
+
+/// Every entry of `stack` whose tip no longer matches the named prerequisite's own row —
+/// empty means the proposed stack is entirely fresh. Pure and multi-row (unlike `apply`,
+/// which sees only the one row being transitioned): the caller already read every
+/// prerequisite's row to build `stack` in the first place, so passing them back in adds no
+/// I/O this crate would otherwise have to perform itself.
+pub fn stale_stack_entries(stack: &Stack, prereqs: &[BeadRow]) -> Vec<StaleStackEntry> {
+    stack
+        .iter()
+        .filter_map(|(prereq, given_tip)| {
+            let current_tip = prereqs.iter().find(|r| &r.bead_id == prereq).and_then(|r| r.tip.clone());
+            if current_tip.as_deref() == Some(given_tip.as_str()) {
+                None
+            } else {
+                Some(StaleStackEntry { prereq: prereq.clone(), given_tip: given_tip.clone(), current_tip })
+            }
+        })
+        .collect()
+}
+
+/// Whether `submit` should be refused for a WORKING row because a `base_withdrawn` has
+/// disowned a tip its `stack` still names (design §1: "its eventual submit is refused while
+/// the stack names a withdrawn tip"). Reuses `stale_stack_entries` against the same live
+/// prerequisite rows the caller reads before proposing `submit` — the machine's own `apply`
+/// cannot make this check itself, since it sees only the one row being transitioned.
+pub fn submit_refusal_for_stale_stack(row: &BeadRow, prereqs: &[BeadRow]) -> Option<Refusal> {
+    let stale = stale_stack_entries(&row.stack, prereqs);
+    if stale.is_empty() {
+        None
+    } else {
+        Some(Refusal::StackStale { prereqs: stale.into_iter().map(|e| e.prereq).collect() })
+    }
+}
+
+/// The hold-release rule (design §1) for a blocker that is a work bead in the *same
+/// repository* — the one case the rule changes. Every other blocker kind (an epic, a
+/// decision, a cross-repository blocker) is unaffected by this epic and keeps waiting for
+/// the blocker to close, exactly as today; this crate has no opinion on that path since it
+/// models only work-bead rows.
+pub fn wait_hold_released_for_work_blocker(blocker_state: BeadState) -> bool {
+    matches!(blocker_state, BeadState::Certified | BeadState::InDelivery | BeadState::Landed)
+}
+
+/// Whether a wait hold already released for this blocker must be re-applied, because the
+/// blocker left CERTIFIED/IN_DELIVERY backwards before the dependent was claimed (design
+/// §1: "re-applied if the blocker moves backwards"). REWORK is the direct backwards move;
+/// SUBMITTED covers a fresh tip resubmitted after CERTIFIED (also backwards, since the new
+/// tip has not been certified yet).
+pub fn wait_hold_reapplies_for_work_blocker(blocker_state: BeadState) -> bool {
+    matches!(blocker_state, BeadState::Rework | BeadState::Submitted)
 }
 
 #[cfg(test)]
@@ -465,7 +689,9 @@ mod tests {
 
     fn sample_kinds() -> Vec<BeadEventKind> {
         vec![
-            BeadEventKind::Claim { holder: "h".into(), lease_until: 1 },
+            BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4 },
+            BeadEventKind::BaseWithdrawn { prereq: "sp-prereq".into(), tip: "t1".into() },
+            BeadEventKind::PrereqLanded { prereq: "sp-prereq".into() },
             BeadEventKind::Release,
             BeadEventKind::HolderDead,
             BeadEventKind::Submit { tip: "t1".into() },
@@ -520,7 +746,7 @@ mod tests {
     #[test]
     fn claim_from_ready_enters_working() {
         let r = row(BeadState::Ready);
-        let e = ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: "aeon-1".into(), lease_until: 100 });
+        let e = ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: "aeon-1".into(), lease_until: 100, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4 });
         let out = apply(&r, &e);
         assert!(out.applied);
         assert_eq!(out.row.state, BeadState::Working);
@@ -596,7 +822,7 @@ mod tests {
     #[test]
     fn expect_mismatch_never_mutates() {
         let r = row(BeadState::Ready);
-        let e = ev(BeadState::Working, 0, BeadEventKind::Claim { holder: "h".into(), lease_until: 1 });
+        let e = ev(BeadState::Working, 0, BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4 });
         let out = apply(&r, &e);
         assert!(!out.applied);
         assert_eq!(out.row, r);
@@ -607,7 +833,7 @@ mod tests {
     fn stale_version_never_mutates() {
         let mut r = row(BeadState::Ready);
         r.version = 5;
-        let e = ev(BeadState::Ready, 4, BeadEventKind::Claim { holder: "h".into(), lease_until: 1 });
+        let e = ev(BeadState::Ready, 4, BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4 });
         let out = apply(&r, &e);
         assert!(!out.applied);
         assert_eq!(out.row, r);
@@ -729,7 +955,7 @@ mod tests {
         let mut r = row(BeadState::Ready);
         let mut last = r.version;
         let chain: Vec<(BeadState, BeadEventKind)> = vec![
-            (BeadState::Ready, BeadEventKind::Claim { holder: "h".into(), lease_until: 1 }),
+            (BeadState::Ready, BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4 }),
             (BeadState::Working, BeadEventKind::Submit { tip: "t1".into() }),
             (BeadState::Submitted, BeadEventKind::GatePass { tip: "t1".into(), gate_key: "k".into() }),
             (BeadState::Certified, BeadEventKind::Deliver),
@@ -854,5 +1080,236 @@ mod tests {
             let parsed: Result<BeadEventKind, _> = serde_json::from_str(bogus);
             assert!(parsed.is_err(), "{bogus} names a reason no enum has, and must be refused, got {parsed:?}");
         }
+    }
+
+    // ── stacked dependents (design stacked-dependents-2026-09-28 §1) ──────────────────
+
+    fn claim_ev(expect: BeadState, version: Version, stack: Stack, stack_depth: u32, stack_max_depth: u32) -> BeadEvent {
+        ev(expect, version, BeadEventKind::Claim { holder: "aeon-1".into(), lease_until: 100, stack, stack_depth, stack_max_depth })
+    }
+
+    #[test]
+    fn claim_records_the_proposed_stack_and_depth() {
+        let r = row(BeadState::Ready);
+        let mut stack = Stack::new();
+        stack.insert("sp-a".into(), "tip-a".into());
+        let out = apply(&r, &claim_ev(BeadState::Ready, 0, stack.clone(), 1, 4));
+        assert!(out.applied);
+        assert_eq!(out.row.stack, stack);
+        assert_eq!(out.row.stack_depth, 1);
+    }
+
+    #[test]
+    fn depth_at_the_ceiling_is_allowed_one_past_it_is_refused() {
+        let r = row(BeadState::Ready);
+        let out = apply(&r, &claim_ev(BeadState::Ready, 0, Stack::new(), 4, 4));
+        assert!(out.applied, "depth == max must be allowed");
+
+        let r = row(BeadState::Ready);
+        let out = apply(&r, &claim_ev(BeadState::Ready, 0, Stack::new(), 5, 4));
+        assert!(!out.applied, "depth == max + 1 must be refused");
+        assert_eq!(out.row, r, "a refused claim must not mutate the row");
+        assert!(matches!(out.refusal, Some(Refusal::DepthExceeded { depth: 5, max: 4 })));
+    }
+
+    #[test]
+    fn stack_max_depth_zero_reproduces_todays_behaviour_no_stacking_allowed() {
+        let r = row(BeadState::Ready);
+        let out = apply(&r, &claim_ev(BeadState::Ready, 0, Stack::new(), 0, 0));
+        assert!(out.applied, "an unstacked claim (depth 0) is still legal at the zero ceiling");
+
+        let r = row(BeadState::Ready);
+        let mut stack = Stack::new();
+        stack.insert("sp-a".into(), "tip-a".into());
+        let out = apply(&r, &claim_ev(BeadState::Ready, 0, stack, 1, 0));
+        assert!(!out.applied, "any depth above zero is refused when stack_max_depth is 0");
+    }
+
+    #[test]
+    fn a_config_ceiling_above_four_would_be_refused_by_the_schema_this_crate_only_enforces_the_number_given() {
+        // The hard ceiling of 4 is spira-config's own schema job (ceiling 4, per Ryan
+        // 2026-09-28); this crate enforces whatever `stack_max_depth` the event carries,
+        // exactly as it enforces `lease_until` without knowing where it came from.
+        let r = row(BeadState::Ready);
+        let out = apply(&r, &claim_ev(BeadState::Ready, 0, Stack::new(), 5, 5));
+        assert!(out.applied, "this crate trusts the ceiling it is given");
+    }
+
+    #[test]
+    fn stale_stack_entries_reports_a_prerequisite_whose_tip_moved() {
+        let mut stack = Stack::new();
+        stack.insert("sp-a".into(), "old-tip".into());
+        stack.insert("sp-b".into(), "current-tip".into());
+
+        let mut prereq_a = row(BeadState::Certified);
+        prereq_a.bead_id = "sp-a".into();
+        prereq_a.tip = Some("new-tip".into());
+        let mut prereq_b = row(BeadState::Certified);
+        prereq_b.bead_id = "sp-b".into();
+        prereq_b.tip = Some("current-tip".into());
+
+        let stale = stale_stack_entries(&stack, &[prereq_a, prereq_b]);
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].prereq, "sp-a");
+        assert_eq!(stale[0].given_tip, "old-tip");
+        assert_eq!(stale[0].current_tip.as_deref(), Some("new-tip"));
+    }
+
+    #[test]
+    fn stale_stack_entries_is_empty_when_every_tip_still_matches() {
+        let mut stack = Stack::new();
+        stack.insert("sp-a".into(), "tip-a".into());
+        let mut prereq_a = row(BeadState::Certified);
+        prereq_a.bead_id = "sp-a".into();
+        prereq_a.tip = Some("tip-a".into());
+
+        assert!(stale_stack_entries(&stack, &[prereq_a]).is_empty());
+    }
+
+    #[test]
+    fn stale_stack_entries_reports_a_prerequisite_with_no_row_at_all() {
+        let mut stack = Stack::new();
+        stack.insert("sp-gone".into(), "tip-x".into());
+        let stale = stale_stack_entries(&stack, &[]);
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].current_tip, None);
+    }
+
+    fn claimed_row(state: BeadState, prereq: &str, tip: &str) -> BeadRow {
+        let mut r = row(state);
+        r.stack.insert(prereq.into(), tip.into());
+        r.stack_depth = 1;
+        r.tip = Some("own-tip".into());
+        r
+    }
+
+    #[test]
+    fn base_withdrawn_on_ready_reapplies_the_wait_hold_and_leaves_stack_untouched() {
+        let r = row(BeadState::Ready);
+        let out = apply(&r, &ev(BeadState::Ready, 0, BeadEventKind::BaseWithdrawn { prereq: "sp-a".into(), tip: "t1".into() }));
+        assert!(out.applied);
+        assert!(out.row.holds.contains(&HoldKind::Wait));
+        assert!(out.row.stack.is_empty());
+    }
+
+    #[test]
+    fn base_withdrawn_on_working_stays_working_and_is_refused_if_the_tip_does_not_match() {
+        let r = claimed_row(BeadState::Working, "sp-a", "t1");
+        let out = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::BaseWithdrawn { prereq: "sp-a".into(), tip: "t1".into() }));
+        assert!(out.applied);
+        assert_eq!(out.row.state, BeadState::Working);
+        assert_eq!(out.row.stack.get("sp-a").map(String::as_str), Some("t1"), "base_withdrawn does not itself mutate stack");
+
+        let r = claimed_row(BeadState::Working, "sp-a", "t1");
+        let out = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::BaseWithdrawn { prereq: "sp-a".into(), tip: "different".into() }));
+        assert!(!out.applied);
+        assert!(matches!(out.refusal, Some(Refusal::NotInStack { .. })));
+    }
+
+    #[test]
+    fn submit_is_refused_once_the_prerequisite_row_shows_the_stack_is_stale() {
+        let r = claimed_row(BeadState::Working, "sp-a", "old-tip");
+        let mut prereq = row(BeadState::Certified);
+        prereq.bead_id = "sp-a".into();
+        prereq.tip = Some("new-tip".into());
+
+        let refusal = submit_refusal_for_stale_stack(&r, &[prereq.clone()]);
+        assert!(matches!(refusal, Some(Refusal::StackStale { .. })), "a withdrawn tip must block submit");
+
+        prereq.tip = Some("old-tip".into());
+        assert_eq!(submit_refusal_for_stale_stack(&r, &[prereq]), None, "a fresh stack must not block submit");
+    }
+
+    #[test]
+    fn base_withdrawn_moves_submitted_and_certified_to_rework_with_the_reason_named() {
+        for state in [BeadState::Submitted, BeadState::Certified] {
+            let r = claimed_row(state, "sp-a", "t1");
+            let out = apply(&r, &ev(state, r.version, BeadEventKind::BaseWithdrawn { prereq: "sp-a".into(), tip: "t1".into() }));
+            assert!(out.applied, "{state:?} should move to REWORK on base_withdrawn");
+            assert_eq!(out.row.state, BeadState::Rework);
+            assert_eq!(out.row.reason.as_deref(), Some("base_withdrawn: sp-a t1"));
+        }
+    }
+
+    #[test]
+    fn base_withdrawn_on_in_delivery_stays_in_delivery_pending_the_batch_ejects_it() {
+        let r = claimed_row(BeadState::InDelivery, "sp-a", "t1");
+        let out = apply(&r, &ev(BeadState::InDelivery, r.version, BeadEventKind::BaseWithdrawn { prereq: "sp-a".into(), tip: "t1".into() }));
+        assert!(out.applied);
+        assert_eq!(out.row.state, BeadState::InDelivery);
+    }
+
+    #[test]
+    fn base_withdrawn_is_refused_on_a_terminal_row() {
+        for state in [BeadState::Landed, BeadState::Superseded, BeadState::Dropped, BeadState::Done] {
+            let r = row(state);
+            let out = apply(&r, &ev(state, 0, BeadEventKind::BaseWithdrawn { prereq: "sp-a".into(), tip: "t1".into() }));
+            assert!(!out.applied);
+            assert!(matches!(out.refusal, Some(Refusal::Terminal { .. })));
+        }
+    }
+
+    #[test]
+    fn prereq_landed_drops_the_entry_from_stack_and_is_idempotent() {
+        let r = claimed_row(BeadState::Working, "sp-a", "t1");
+        let out = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::PrereqLanded { prereq: "sp-a".into() }));
+        assert!(out.applied);
+        assert!(!out.row.stack.contains_key("sp-a"), "a LANDED prerequisite drops out of the stack");
+
+        // Idempotent: landing a prerequisite already absent from the stack is still legal.
+        let out2 = apply(&out.row, &ev(BeadState::Working, out.row.version, BeadEventKind::PrereqLanded { prereq: "sp-a".into() }));
+        assert!(out2.applied);
+    }
+
+    #[test]
+    fn release_from_working_clears_the_voided_stack() {
+        let r = claimed_row(BeadState::Working, "sp-a", "t1");
+        let out = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::Release));
+        assert!(out.applied);
+        assert_eq!(out.row.state, BeadState::Ready);
+        assert!(out.row.stack.is_empty());
+        assert_eq!(out.row.stack_depth, 0);
+    }
+
+    #[test]
+    fn a_certified_same_repo_blocker_releases_the_wait_hold_others_do_not() {
+        for state in [BeadState::Certified, BeadState::InDelivery, BeadState::Landed] {
+            assert!(wait_hold_released_for_work_blocker(state), "{state:?} should release the wait hold");
+        }
+        for state in [BeadState::Ready, BeadState::Working, BeadState::Submitted, BeadState::Rework] {
+            assert!(!wait_hold_released_for_work_blocker(state), "{state:?} should not yet release the wait hold");
+        }
+    }
+
+    #[test]
+    fn a_blocker_moving_backwards_from_certified_reapplies_the_wait_hold() {
+        for state in [BeadState::Rework, BeadState::Submitted] {
+            assert!(wait_hold_reapplies_for_work_blocker(state), "{state:?} is a backwards move and must reapply the hold");
+        }
+        for state in [BeadState::Certified, BeadState::InDelivery, BeadState::Landed] {
+            assert!(!wait_hold_reapplies_for_work_blocker(state));
+        }
+    }
+
+    #[test]
+    fn replay_reproduces_stack_exactly_across_claim_and_base_withdrawn() {
+        let mut stack = Stack::new();
+        stack.insert("sp-a".into(), "tip-a".into());
+        let log = vec![
+            claim_ev(BeadState::Ready, 0, stack.clone(), 1, 4),
+            ev(BeadState::Working, 1, BeadEventKind::BaseWithdrawn { prereq: "sp-a".into(), tip: "tip-a".into() }),
+            ev(BeadState::Working, 2, BeadEventKind::PrereqLanded { prereq: "sp-a".into() }),
+        ];
+
+        let mut incremental = BeadRow::filed("sp-replay-stack");
+        for e in &log {
+            incremental = apply(&incremental, e).row;
+        }
+
+        let replayed = crate::replay::fold_bead("sp-replay-stack", &log);
+
+        assert_eq!(incremental, replayed);
+        assert!(replayed.stack.is_empty(), "the landed prerequisite dropped out of the stack");
+        assert_eq!(replayed.stack_depth, 1, "stack_depth is the claim-time meter, not re-derived on drop");
     }
 }

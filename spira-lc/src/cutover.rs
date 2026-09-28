@@ -948,5 +948,8 @@ fn refusal_name(r: &lifecycle::Refusal) -> String {
         lifecycle::Refusal::IllegalTransition { .. } => "IllegalTransition".to_string(),
         lifecycle::Refusal::TipMismatch { .. } => "TipMismatch".to_string(),
         lifecycle::Refusal::Terminal { .. } => "Terminal".to_string(),
+        lifecycle::Refusal::DepthExceeded { .. } => "DepthExceeded".to_string(),
+        lifecycle::Refusal::NotInStack { .. } => "NotInStack".to_string(),
+        lifecycle::Refusal::StackStale { .. } => "StackStale".to_string(),
     }
 }
