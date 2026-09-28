@@ -491,12 +491,27 @@ fi
 # working a bead the machine cannot currently vouch for — the machine being unreachable is
 # its own incident, not license to proceed on bd's word alone.
 #
-# NO spira-lc BINARY AT ALL is a different fact from "unreachable": it means this box has
-# not deployed the semantic layer yet (spira-lc "deploys inert" until it does — sp-uwv2s,
-# sp-3m1p9), not that a deployed machine failed to answer. Skipping the claim entirely here
-# is what lets every existing fixture and suite that never built spira-lc keep working
-# unchanged; a box that HAS built it gets the real CAS below.
-if [ -x "${SPIRA_LC_BIN:-}" ]; then
+# WHETHER THIS AEON TAKES THE RESTRICTED PATH AT ALL IS lifecycle_enforce, AN EXPLICIT
+# CONFIG DECISION — never "spira-lc/work happen to be built". SPIRA_WORK_BIN/SPIRA_LC_BIN
+# auto-resolve from $SPIRA_REPO/target/release whenever unset (conf.sh), so a tree that has
+# simply run a workspace build — a --with-bins corpus run, a production checkout after
+# `round.sh land` — must not flip every aeon fixture onto a machine nothing has deployed
+# (sp-74gzo). Default off skips both this claim and the work-env.sh wrap below unchanged.
+#
+# ENABLED WITH A BINARY MISSING IS A MISCONFIGURATION, refused here — before any claim or
+# session setup — rather than silently downgraded to the legacy path
+# (law-a-control-that-cannot-check-must-refuse). Checked for both binaries together so the
+# work-env.sh wrap below never has to re-derive this.
+LIFECYCLE_ENFORCE="${SPIRA_LIFECYCLE_ENFORCE:-0}"
+if [ "$LIFECYCLE_ENFORCE" = 1 ]; then
+    if [ ! -x "${SPIRA_LC_BIN:-}" ] || [ ! -x "${SPIRA_WORK_BIN:-}" ]; then
+        release_own_claim "$BEAD_ID"
+        log "$FAYTH/$AEON: $BEAD_ID — lifecycle_enforce is set but SPIRA_LC_BIN/SPIRA_WORK_BIN are not both executable — refusing rather than falling back to the legacy path"
+        ledger_done 0 lifecycle-enforce-binary-missing
+        exit 1
+    fi
+fi
+if [ "$LIFECYCLE_ENFORCE" = 1 ]; then
     LC_HOLDER="aeon-$AEON"
     LC_LEASE_UNTIL=$(( $(date +%s) + $(fayth_lease_seconds "${FAYTH_LEASE_MINUTES:-}") ))
     lc_claim_bead "$BEAD_ID" "$LC_HOLDER" "$LC_LEASE_UNTIL"
@@ -2147,11 +2162,12 @@ SESSION_STARTED=1
 # replaces PATH with its own restricted one — a bare "claude" looked up against THAT PATH
 # would not find the real binary (or a test's SPIRA_AGENT stub, unless already absolute).
 #
-# NO work BINARY AT ALL skips the wrap, same reasoning as SPIRA_LC_BIN above: `work`
-# "deploys inert" until a box has built it (sp-3m1p9), and every existing fixture that
-# stubs SPIRA_AGENT without also building it must keep launching that stub directly.
+# GATED ON lifecycle_enforce, SAME AS THE CLAIM ABOVE — not on SPIRA_WORK_BIN's mere
+# existence, and not re-checked here: the earlier gate already refused if enforce is set
+# with either binary missing, so this flag alone decides. Every existing fixture that stubs
+# SPIRA_AGENT without setting the flag keeps launching that stub directly.
 _AEON_AGENT_BIN="$(command -v "${SPIRA_AGENT:-claude}" 2>/dev/null || printf '%s' "${SPIRA_AGENT:-claude}")"
-if [ -x "${SPIRA_WORK_BIN:-}" ]; then
+if [ "$LIFECYCLE_ENFORCE" = 1 ]; then
     # READ BY THE TEARDOWN BELOW (cleanup() and the post-session verdict block), which
     # skips every bd-close reinterpretation once this session genuinely had no `bd` on its
     # PATH to close with — see "design §3.7" at each of those sites.

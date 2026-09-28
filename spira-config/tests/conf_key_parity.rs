@@ -75,6 +75,7 @@ fn typed_cases() -> BTreeMap<&'static str, (&'static str, &'static str)> {
         "SPIRA_CERT_IDLE_SKIP",
         "SPIRA_QUEUE_LOCAL_GATE",
         "SPIRA_QUEUE_BATCH_IDLE_CUT",
+        "SPIRA_LIFECYCLE_ENFORCE",
     ] {
         m.insert(k, ("1", "true"));
     }

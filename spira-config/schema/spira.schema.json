@@ -1110,6 +1110,13 @@
             "null"
           ]
         },
+        "lifecycle_enforce": {
+          "description": "Switches an aeon onto the lifecycle semantic layer (work-env.sh, no bd, lc_claim_bead CAS). Default off: a tree that has simply built work/spira-lc must not flip onto it by binary presence alone (sp-74gzo) — conf.sh still resolves lc_bin/work_bin wherever they exist, but aeon.sh only takes the restricted path when this is set, and refuses rather than falling back when set with either binary missing.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "local_backlog_age": {
           "type": [
             "integer",

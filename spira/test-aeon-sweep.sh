@@ -74,9 +74,6 @@ grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
     || { printf 'test-aeon-sweep: aeon.sh has no SPIRA_AGENT injection point — refusing to run the real model\n' >&2; exit 1; }
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-# Pinned so this fixture stays on the pre-cutover legacy paths even when a --with-bins run
-# has built work/spira-lc for other suites in the same batch (design §3.5, LC_MODEL_RESTRICTED).
-export SPIRA_WORK_BIN="$TMP/no-work-bin" SPIRA_LC_BIN="$TMP/no-lc-bin"
 # The mock emits a tool_use + result event so that session_outcome classifies it as
 # `unlanded` (the outcome that charges an attempt). Without the tool_use, the session
 # looks like a refusal, which does NOT charge — and the positive control would not fire.

@@ -218,6 +218,10 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+# The restricted path is an explicit config decision (sp-74gzo), not a fact discovered from
+# these binaries existing — without this, aeon.sh takes the legacy path even though
+# SPIRA_LC_BIN/SPIRA_WORK_BIN are both built and executable above.
+export SPIRA_LIFECYCLE_ENFORCE=1
 grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
     || bail "aeon.sh has no SPIRA_AGENT injection point — refusing to run the real model"
 

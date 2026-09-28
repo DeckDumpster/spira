@@ -198,6 +198,9 @@ pub fn spira_section(
             "SPIRA_MAIL_SETTLE" => s.mail_settle = parse_u64(warnings, "mail_settle", val),
             "COCKPIT_CLIPBOARD" => s.cockpit_clipboard = Some(val.clone()),
             "SPIRA_LC_BIN" => s.lc_bin = Some(val.clone()),
+            "SPIRA_LIFECYCLE_ENFORCE" => {
+                s.lifecycle_enforce = parse_bool01(warnings, "lifecycle_enforce", val)
+            }
             "SPIRA_MAIL_SETTLE_EVENT" => s.mail_settle_event = Some(val.clone()),
             "SPIRA_QUEUE_THROTTLE_OVERRIDE" => s.queue_throttle_override = Some(val.clone()),
             "SPIRA_CLIENT_SETTINGS" => s.client_settings = Some(val.clone()),
