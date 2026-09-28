@@ -1360,6 +1360,12 @@
             "null"
           ]
         },
+        "publish_remote": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "pve_env": {
           "type": [
             "string",

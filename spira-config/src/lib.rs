@@ -310,6 +310,7 @@ pub struct SpiraSection {
     pub queue_repro_ci_pollsec: Option<String>,
     pub queue_repro_ci_maxsec: Option<String>,
     pub submitted_label: Option<String>,
+    pub publish_remote: Option<String>,
     pub open_children_label: Option<String>,
     pub work_close_types: Option<String>,
     pub queue_throttle_depth_at: Option<String>,

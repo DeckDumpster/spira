@@ -394,6 +394,7 @@ pub fn spira_section(
             "SPIRA_QUEUE_REPRO_CI_POLLSEC" => s.queue_repro_ci_pollsec = Some(val.clone()),
             "SPIRA_QUEUE_REPRO_CI_MAXSEC" => s.queue_repro_ci_maxsec = Some(val.clone()),
             "SPIRA_SUBMITTED_LABEL" => s.submitted_label = Some(val.clone()),
+            "SPIRA_PUBLISH_REMOTE" => s.publish_remote = Some(val.clone()),
             "SPIRA_OPEN_CHILDREN_LABEL" => s.open_children_label = Some(val.clone()),
             "SPIRA_WORK_CLOSE_TYPES" => s.work_close_types = Some(val.clone()),
             "SPIRA_QUEUE_THROTTLE_DEPTH_AT" => s.queue_throttle_depth_at = Some(val.clone()),
