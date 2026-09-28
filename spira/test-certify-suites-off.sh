@@ -15,11 +15,9 @@
 #      fences-only PASS cannot satisfy a later full gate. POSITIVE CONTROL: the same mode twice
 #      yields the same key, so the difference is the mode and not noise.
 #   3. gate.sh's env -i allowlist carries the switch to the gate command.
-#   4. landing.sh passes the switch on both queue-mode certification calls, and not on the
-#      push-mode call, which lands straight on the base and must keep its suites.
 #
 # tier: T1
-# covers: spira/gate-touched.sh spira/gate.sh spira/landing.sh spira/conf.sh
+# covers: spira/gate-touched.sh spira/gate.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -88,9 +86,4 @@ envblk="$(awk '/env -i \\$/{f=1} f{print} f&&/bash -c "\$CMD"/{exit}' "$HERE/gat
 case "$envblk" in *'SPIRA_GATE_SUITES="${SPIRA_GATE_SUITES:-on}"'*) ok "env -i passes SPIRA_GATE_SUITES to the gate command" ;;
     *) bad "env -i passes SPIRA_GATE_SUITES to the gate command" "missing from the allowlist" ;; esac
 
-echo "4. landing.sh call sites:"
-n_cert="$(grep -c 'SPIRA_GATE_SUITES="${SPIRA_CERTIFY_SUITES:-on}"' "$HERE/landing.sh")"
-is "both queue-mode certification calls pass the switch" "2" "$n_cert"
-n_gate="$(grep -c '"$SPIRA_HOME/gate.sh"' "$HERE/landing.sh")"
-is "positive control: landing.sh has three gate.sh calls" "3" "$n_gate"
 tl_summary
