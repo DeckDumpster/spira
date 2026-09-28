@@ -4,6 +4,11 @@
 #   (CERTIFIED/BATCHED landstate) is held by SPIRA_QUEUE_WAIT_LABEL until the blocker
 #   reaches LANDED; once it does, the bead is summonable again.
 #
+#   Same-repo work-bead blockers release earlier (at CERTIFIED) under the stacked-dependents
+#   rule (stack_max_depth) — see wiki/projects/spira/designs/stacked-dependents-2026-09-28.md.
+#   This suite covers the wait-for-LANDED path this label still governs: cross-repo and
+#   non-work blockers.
+#
 # THE PROBLEM. bd considers a dep resolved when the blocker is closed. In queue mode,
 # CLOSED ≠ LANDED — the work is in the batch pipeline but has not yet been pushed to base.
 # Summoning the dependent now would let it build on work that may still be revised or

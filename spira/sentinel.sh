@@ -1375,6 +1375,8 @@ land_drain
 # reaches LANDED. close_landed_queue_waiters closes any bead that already carries LANDED in
 # its landstate but still has the wait label — these have no branch left to land through the
 # normal path and would otherwise stay open and invisible to fayths indefinitely.
+# Same-repo work-bead blockers release earlier under the stacked-dependents rule
+# (stack_max_depth) — see wiki/projects/spira/designs/stacked-dependents-2026-09-28.md.
 _phase "CHECK3b"
 mark_queue_waiters 2>/dev/null || true
 close_landed_queue_waiters 2>/dev/null || true
