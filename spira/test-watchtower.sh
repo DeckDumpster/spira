@@ -1335,5 +1335,74 @@ fresh
 IFS='|' read -r t1_disp t1_br t1_lbl <<<"$(gate_wait_t1 SPIRA_WATCH_GATE_WINDOW=172800)"
 is "T1: the window is genuinely read from configuration" "last 48h" "$t1_lbl"
 
+# ======================================================================================
+echo
+echo "idle-while-ready escalation (sp-o4trx): a fayth with ready work whose last N"
+echo "summons ALL ledgered idle is a claim-error masquerading as an empty queue:"
+# ======================================================================================
+# A FIXTURE CHAMBER, NOT THE REAL ONE. bulk_ready_by_fayth reads FAYTH_LABELS from
+# $SPIRA_HOME/chamber/<fayth>.fayth and calls $SPIRA_HOME/ready-bucket.py; a minimal
+# fixture pins FAYTH_LABELS to a literal (never the shipped default) and avoids this
+# suite depending on the real builder.fayth's own label composition.
+IWR_HOME="$TMP/iwr-home"; mkdir -p "$IWR_HOME/chamber"
+cp "$HERE/ready-bucket.py" "$IWR_HOME/"
+cat > "$IWR_HOME/chamber/builder.fayth" <<'FAYTH'
+FAYTH_NAME=builder
+FAYTH_LABELS=plan
+FAYTH_EXCLUDE_LABELS=""
+FAYTH
+
+iwr_ledger_idle5() {   # write 5 consecutive "awake builder idle" lines
+    : > "$TMP/run/aeon-ledger.log"
+    for i in 1 2 3 4 5; do
+        printf '2026-01-01T00:00:%02dZ awake builder idle\n' "$i" >> "$TMP/run/aeon-ledger.log"
+    done
+}
+iwr_ready_nonempty="$TMP/iwr-ready-nonempty.json"
+printf '[{"id":"sp-iwr1","status":"open","labels":["plan"]}]' > "$iwr_ready_nonempty"
+iwr_ready_empty="$TMP/iwr-ready-empty.json"
+printf '[]' > "$iwr_ready_empty"
+
+# CASE A: 5/5 idle, non-empty ready set for 'builder' — alarms.
+fresh
+iwr_ledger_idle5
+rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
+wt_file_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder SPIRA_READY_SNAPSHOT="$iwr_ready_nonempty"
+subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
+want "5 idles + ready work fires the idle-while-ready escalation" "IDLE-WHILE-READY:" "$subjects"
+want "it names the fayth" "builder" "$subjects"
+
+# CASE B: 5/5 idle, EMPTY ready set — does not alarm. Idle is the correct report when
+# there is genuinely nothing ready; the escalation exists for the other case.
+fresh
+iwr_ledger_idle5
+rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
+wt_file_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder SPIRA_READY_SNAPSHOT="$iwr_ready_empty"
+subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
+nowant "an empty ready set does not fire the escalation despite 5 idles" "IDLE-WHILE-READY:" "$subjects"
+
+# CASE C: only 4 of the last 5 summons are idle (the 5th claimed real work) — not ALL
+# idle, so this is ordinary draw-down, not a stall.
+fresh
+: > "$TMP/run/aeon-ledger.log"
+printf '2026-01-01T00:00:01Z awake builder sp-real1\n' >> "$TMP/run/aeon-ledger.log"
+for i in 2 3 4 5; do
+    printf '2026-01-01T00:00:%02dZ awake builder idle\n' "$i" >> "$TMP/run/aeon-ledger.log"
+done
+rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
+wt_file_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder SPIRA_READY_SNAPSHOT="$iwr_ready_nonempty"
+subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
+nowant "a mix of idle and a real claim in the last N does not fire the escalation" "IDLE-WHILE-READY:" "$subjects"
+
+# DEDUP: the ref is a stable, fayth-keyed string — not one that embeds the ready count
+# or a timestamp, which would file a fresh bead on every sweep instead of bumping one
+# recurrence (the same defect class as sp-srgr6, tested above for other escalations).
+fresh
+iwr_ledger_idle5
+rm -f "$TMP/inc-refs" "$TMP/ops-prompt"
+wt_refs_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder SPIRA_READY_SNAPSHOT="$iwr_ready_nonempty"
+refs="$(cat "$TMP/inc-refs" 2>/dev/null || echo "")"
+want "the dedup ref names the fayth" "idle-while-ready:builder" "$refs"
+
 echo
 tl_summary
