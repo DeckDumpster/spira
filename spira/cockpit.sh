@@ -2029,6 +2029,15 @@ for i in d:
     ref = i.get("external_ref") or ""
     if not ref:
         continue
+    # A bead collapsed via `bd duplicate` per sop-dedup-meter-toctou-race carries a
+    # duplicate-of:<survivor> label (set by the FIX step in that SOP). bd JSON has
+    # no other durable marker distinguishing a resolved duplicate from any other
+    # close, so without this it re-counts as surplus every sweep until closed_at
+    # ages past the lookback (sp-sxrf8). Exclude it unconditionally -- a marked
+    # duplicate is resolved regardless of how long ago it closed.
+    labels = i.get("labels") or []
+    if any(str(l).startswith("duplicate-of:") for l in labels):
+        continue
     # Include non-closed beads always; include closed beads only within the lookback.
     if i.get("status") == "closed" and cutoff:
         closed_at = (i.get("closed_at") or "")[:10]

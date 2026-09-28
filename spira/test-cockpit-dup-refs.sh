@@ -160,5 +160,27 @@ keys_old="$(dup_refs "$TMP/old.json")"
 is   "old closed beads outside 7-day window: SP_DUP_REFS=0" "0" "$(key "$keys_old" SP_DUP_REFS)"
 is   "SP_DUP_BEADS=0"                                        "0" "$(key "$keys_old" SP_DUP_BEADS)"
 
+
+# ======================================================================================
+echo
+echo "a bead marked duplicate-of: is excluded even within the lookback (sp-sxrf8):"
+# ======================================================================================
+# sop-dedup-meter-toctou-race's FIX collapses a race with `bd duplicate <drop> --of
+# <survivor>` and labels the dropped bead duplicate-of:<survivor>. Before this fix,
+# dup_refs_keys() could not tell that closure apart from any other close and kept
+# re-counting the pair as surplus for the full lookback (sp-66eu1 recurred on an
+# already-resolved pair). A closed bead sharing a ref, labeled duplicate-of:, closed
+# TODAY (well inside the 7-day window) must not be counted.
+cat > "$TMP/marked.json" <<'JSON'
+[
+  {"id":"sp-083ux","title":"survivor","status":"open","issue_type":"task","labels":["spira","incident"],"updated_at":"2026-09-27T00:00:00Z","external_ref":"marked-dup-ref"},
+  {"id":"sp-ixt9z","title":"collapsed duplicate","status":"closed","issue_type":"task","labels":["spira","incident","duplicate-of:sp-083ux"],"updated_at":"2026-09-27T00:00:00Z","closed_at":"2026-09-27T00:00:00Z","external_ref":"marked-dup-ref"}
+]
+JSON
+
+keys_marked="$(dup_refs "$TMP/marked.json")"
+is   "marked duplicate-of: pair does not count as a live surplus: SP_DUP_REFS=0" "0" "$(key "$keys_marked" SP_DUP_REFS)"
+is   "SP_DUP_BEADS=0"                                                            "0" "$(key "$keys_marked" SP_DUP_BEADS)"
+
 echo
 tl_summary

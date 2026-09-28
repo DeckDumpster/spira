@@ -16,7 +16,7 @@ spira/sop.sh write <slug> -   # text on stdin
 
 Statutes are how to behave; SOPs are how to fix. They share one mechanism, split by prefix — `law-` and `sop-` — so the [[spira]] Ops persona reads its runbooks exactly the way every agent already reads [[common-law]]. Ops is summoned by an incident bead filed from a failed systemd unit, matches the payload against the `MATCH:` lines below, and executes the first one that fires.
 
-**73 SOP(s)** on the shelf as of 2026-09-27.
+**76 SOP(s)** on the shelf as of 2026-09-27.
 
 ## The closing rule
 
@@ -86,17 +86,59 @@ no `local` remote present, or `git fetch local main` also fails — real
 
 `sop-applied-trace-instrumentation`
 
-**Symptom** — `sop.sh applied` (or any bd-backed subcommand) hangs or times out under real concurrent dolt load. sp-ohnz7 found the 3 subprocess calls applied() makes (bdjson memories, bead-note write) each cost well under 1s in isolation — the hang only reproduces under live contention from other aeon sessions, which cannot safely be forced (law-probe-a-fixture-not-production, law-fence-loops-on-shared-hardware).
+**Symptom** — `sop.sh applied` (or any bd-backed subcommand) hangs or times out under real concurrent dolt load. sp-ohnz7 found the 3 subprocess calls applied() makes each cost well under 1s in isolation — the hang only reproduces under live contention, which cannot safely be forced (law-probe-a-fixture-not-production, law-fence-loops-on-shared-hardware).
 
 **Check** — grep -q 'SOP_APPLIED_TRACE' spira/lib.sh && echo pass || echo fail
 
-**Fix** — sp-h54i5 landed passive timing instrumentation at the single choke point every bd call goes through — `bdq()` in spira/lib.sh — rather than wrapping each of sop.sh's 3 call sites individually. Set SOP_APPLIED_TRACE=1 (optionally SOP_APPLIED_TRACE_FILE=<path>, default $SPIRA_RUN/sop/trace.log) and every bd invocation appends one line: `<pid> start=<ts> end=<ts> rc=<rc> argv=<the bd args>`. Off by default — zero cost when unset (verified: no trace file written with the flag unset). Next time a hang happens naturally, read the trace file rather than reproducing it: the last line with no matching `end=` (or the widest start/end gap) is the call that was in flight when the caller's timeout fired.
+**Fix** — sp-h54i5 landed passive timing at the choke point every bd call goes through — `bdq()` in spira/lib.sh. Set SOP_APPLIED_TRACE=1 (optionally SOP_APPLIED_TRACE_FILE=<path>) and every bd call appends one line: `<pid> start=<ts> end=<ts> rc=<rc> tries=<n> argv=<args>`. Wraps the whole invalid-connection retry loop (sp-ydog2, reconciled here during rebase) — tries>1 means the window covers a reconnect retry, not one call. Off by default, verified zero-cost when unset and one line per call when set. Next hang: read the trace, the last line with no `end=` is the call in flight when the timeout fired.
 
-**Escalate** — if the trace shows the hang is NOT in a bd subprocess call at all (e.g. it's in cockpit.sh's `timeout 30 bash` for METRIC enforcement, or in wiki regen) — that's a different mechanism than sp-ohnz7 hypothesized and needs its own diagnosis, not a wider net on this SOP.
+**Escalate** — if the trace shows the hang is NOT in a bd subprocess call (e.g. cockpit.sh's METRIC timeout, or wiki regen) — different mechanism, needs its own diagnosis.
 
 **Reference** — sp-ohnz7, sp-h54i5
 
 **Matches** `(sop\.sh applied.*(hang|timeout|contention)|applied\(\).*ledger.*contention|SOP_APPLIED_TRACE)`
+
+### Bash redirect order stderr leak
+
+`sop-bash-redirect-order-stderr-leak`
+
+**Symptom**
+
+```
+A guard reads /proc/$PPID/cmdline with a trailing `2>/dev/null` on the same
+command, e.g. `tr '\0' '\n' < "/proc/$PPID/cmdline" 2>/dev/null`. If the pid already
+exited (short-lived intermediate shell, TOCTOU), "No such file or directory" still
+reaches real stderr. Not a PID-race alone: bash wires redirections left-to-right per
+simple command and aborts on first failure, so a trailing `2>/dev/null` never fires
+if an earlier `<` failed to open.
+```
+
+**Check**
+
+```
+`bash -c 'tr x < /proc/999999999/cmdline 2>/dev/null'` — if this prints the
+error to your terminal despite the redirect, this is the bug.
+```
+
+**Fix**
+
+```
+Test readability before reading, not after: `if [ -r "/proc/$PID/cmdline" ]; then
+... ; else caller="unknown"; fi`. Trailing `2>/dev/null` on an input redirection does
+not suppress its own open failure. Still TOCTOU between check and read — treat a read
+failure past the check as non-fatal fallback, never fatal to the caller.
+```
+
+**Escalate**
+
+```
+Never — local code fix. Same pattern on any other transient /proc path:
+apply the same existence-check-first fix.
+```
+
+**Reference** — spira/mail.sh (_repeat_check, ~line 165), fixed in sp-9by2e (commit 5e40aabfc)
+
+**Matches** `/proc/[0-9]+/cmdline.*No such file or directory`
 
 ### Batch abandon break glass
 
@@ -239,7 +281,7 @@ Nonzero, `$commit` empty, close reason is a direct ops/infra action (prune, host
 ```
 ESCALATE if sp-2dvyh (land_mark fix) not yet landed — add as blocker dep, leave open (guard sp-kz8ob).
 
-Once sp-2dvyh IS landed: blocked incidents self-resolve; close citing their reasons.
+Once sp-2dvyh IS landed: blocked incidents self-resolve; close citing reasons.
 
 No-commit-ever case: PERMANENT, watcher refiles forever. Do NOT close as false
 alarm. File/link a bead against the watcher's predicate, `bd dep add` this
@@ -248,8 +290,7 @@ incident onto it, leave OPEN. Worked example: REF.
 Dependency rot: a blocker closed SUBSUMED/DUPLICATE/SUPERSEDED (not landed)
 still reads as satisfied to `bd dep`. Check `bd show <dep-id>` for a
 "SUPERSEDED BY" line before trusting a dep edge; re-point at the open
-successor too (sp-8wcnv: sp-wlnv7->sp-c1ot2 stayed satisfied after supersede
-to open sp-znoj6).
+successor too.
 ```
 
 **Escalate** — Only the land_mark-bug case, while sp-2dvyh is unlanded.
@@ -331,23 +372,17 @@ If wiring changes what the number MEANS, or if retiring the row instead of
 
 `sop-dedup-meter-toctou-race`
 
-**Symptom**
-
-```
-Dedup meter fires: two+ beads share one external_ref. incident.sh
-says a recurrence should reopen the existing bead, not create a new one.
-```
+**Symptom** — Dedup meter fires: two+ beads share one external_ref.
 
 **Check**
 
 ```
-For each ref in "Worst offenders", diff created_at + labels of all
-beads with that external_ref:
+For each ref in "Worst offenders", diff created_at + labels:
   bd -C "$SPIRA_DB" show <id> --json | python3 -c \
-    'import sys,json;d=json.load(sys.stdin);b=d if isinstance(d,dict) else d[0];print(b["created_at"],b["labels"])'
-If two beads share a ref, were created seconds apart, and only one carries
-ref:<hash>, this is a TOCTOU race: file_one()'s dedup-check-then-act is not
-locked, so two concurrent filers both saw "no bead yet" and both created one.
+    'import sys,json;d=json.load(sys.stdin);b=d if isinstance(d,dict) else d[0];print(b["created_at"],b["labels"],b["status"])'
+Created seconds apart, only one carries ref:<hash> -> TOCTOU race in
+file_one()'s check-then-act. Same pair as a PRIOR recurrence, one side
+already `duplicate`/closed with ref: on the survivor -> not a new race.
 ```
 
 **Fix**
@@ -356,18 +391,15 @@ locked, so two concurrent filers both saw "no bead yet" and both created one.
 collapse, don't re-diagnose the race each time:
   bd -C "$SPIRA_DB" duplicate <id-to-drop> --of <survivor>
   bd -C "$SPIRA_DB" label add <survivor> "ref:<hash>"
-Keep the actively-worked bead (owner/branch/submitted labels) as survivor
-even if not literally first-created.
+  bd -C "$SPIRA_DB" label add <id-to-drop> "duplicate-of:<survivor>"
+Keep the actively-worked bead (owner/branch/submitted) as survivor. The
+duplicate-of: label is REQUIRED: it is what stops the meter re-counting
+this pair (fixed by sp-sxrf8 in dup_refs_keys(), cockpit.sh:2002).
+If this fires again on a pair where the dropped bead ALREADY carries
+duplicate-of:, the fix regressed -- do not re-collapse, re-open sp-sxrf8.
 ```
 
-**Escalate**
-
-```
-Never widen DEDUP_LOOKBACK_DAYS to quiet this — the race is in
-concurrency, not window length. Code fix (lock the check+create+label
-sequence on the ref hash) is tracked at sp-ljbvd; check it landed before
-filing a new bead for the same root cause.
-```
+**Escalate** — Never widen DEDUP_LOOKBACK_DAYS. New-race code fix: sp-ljbvd.
 
 **Reference** — wiki/notes/standard-operating-procedures.md
 
@@ -696,6 +728,22 @@ pool priority between callers (landing pass vs ad-hoc queue submit) is a policy
 **Reference** — wiki/notes/standard-operating-procedures.md
 
 **Matches** `certify_par.*(queue submit|bypass)|host-wide gate admission`
+
+### Incident host mismatch
+
+`sop-incident-host-mismatch`
+
+**Symptom** — Incident bead for a systemd unit event says intake "gathered NO payload" and guesses "unit name or a journal this user cannot read." Claiming aeon also gets nothing from systemctl/journalctl.
+
+**Check** — `hostname`; `systemctl list-units --all | grep -i <unit-stem>`. If the unit is entirely absent (not just inactive), this session is on a host that never ran it. `systemctl show` on a nonexistent unit returns a blank record, not an error; `journalctl -u` prints "-- No entries --". Both look like "unreadable journal" but mean host mismatch.
+
+**Fix** — No local fix for evidence on another host. Confirm the store itself is reachable now (`bd -C $SPIRA_DB show <bead>` succeeding = outage already self-resolved). Record hostname + unit-absent finding as a bead; do not close citing "already resolved" without a commit.
+
+**Escalate** — Always, for root cause. Ask intake to snapshot the journalctl excerpt into the payload at file-time, or stamp the source hostname on the bead.
+
+**Reference** — wiki/notes/sp-8cylj-host-mismatch.md
+
+**Matches** `gathered NO payload for incident.*systemctl/journalctl produced nothing`
 
 ### Landed citation mismatch
 
@@ -1128,11 +1176,11 @@ if another ref-walking instrument does the same no-bead-is-orphan classification
 
 `sop-sopsh-applied-ledger-contention`
 
-**Symptom** — `sop.sh applied` takes 60-120s+ or hits a caller's short `timeout` (124), possibly with NO entry appended. Heredoc/stdin not required (sp-ejjiv). Confirmed again sp-ovng3 2026-09-27: a live --why call exceeded 120s, was backgrounded (task bdpb97hgi), then finished on its own with rc=0 and a correct entry after ~365s. Slow under contention, not a deadlock.
+**Symptom** — `sop.sh applied` takes 60-120s+ or hits a caller's short `timeout` (124), possibly with NO entry appended. Heredoc/stdin not required (sp-ejjiv). Confirmed again sp-ovng3 2026-09-27: a live --why call exceeded 120s, was backgrounded (task bdpb97hgi), then finished on its own with rc=0 and a correct entry after ~365s. Slow under contention, not a deadlock. 3rd occurrence confirmed sp-oc2i6 2026-09-27 on the same sp-ld9j3-lineage incident.
 
 **Check** — Two `applied` calls on the same bead, short timeouts back to back; diff applied.jsonl line count before/after. Both timing out with no line added confirms this (sp-ejjiv: 610/610).
 
-**Fix** — No lock or wiki-regen in `applied` (sp-ohnz7); cost is 3 bd/dolt subprocess calls, append is a cheap unlocked printf. Ops: background with `nohup ... </dev/null >out.log 2>&1 &`, never a short `timeout`. If your own wall forces you to move on, note the backgrounded PID/output path on the bead rather than waiting live -- it finishes on its own. Builder: land sp-h54i5's per-call trace (commit 893111da9) to catch the next hang with subprocess detail -- still NOT on origin/main as of sp-ovng3, so trace diagnosis stays blocked.
+**Fix** — No lock or wiki-regen in `applied` (sp-ohnz7); cost is 3 bd/dolt subprocess calls, append is a cheap unlocked printf. Ops: background with `nohup ... </dev/null >out.log 2>&1 &`, never a short `timeout`. If your own wall forces you to move on, note the backgrounded PID/output path on the bead rather than waiting live -- it finishes on its own. Builder: sp-h54i5's per-call trace was closed as landed (commit 097f64cc0, amended 3c8a74fa4, branch spira/sp-h54i5) but as of sp-oc2i6 2026-09-27 that commit is NOT an ancestor of origin/main and spira/lib.sh at the origin/main tip has no SOP_APPLIED_TRACE -- a closed-not-landed gap, tracked at sp-lov93. Trace diagnosis stays blocked until sp-lov93's branch actually lands; check sp-lov93 (or its successor) before assuming the trace exists.
 
 **Escalate** — different mechanism than bd/dolt latency -> amend here. A hang that never returns even after minutes backgrounded is new -- escalate.
 
@@ -1321,21 +1369,21 @@ Two issues:
 
 `sop-test-fixture-litter-in-store`
 
-**Symptom** — Incident bead names branch "topic" / suite "test-fx-red.sh" — these are fixtures spira/test-testenv-batch.sh heredocs into a temp dir during its own test run; a run wrote its fixture batch key into the PRODUCTION store, so incident.sh filed a real bead on fake data. sp-6e51y burned 5+ sessions applying sop-verdict-repeat-refused and escalating to the operator before this was noticed.
+**Symptom** — incident.sh files a bead on a branch (e.g. "topic") that doesn't exist and/or a suite name that only appears in heredoc self-test fixtures inside spira/test-testenv-batch.sh. A fixture batch key got written into the real $SPIRA_DB, not an isolated test db.
 
 **Check**
 
 ```
-git rev-parse --verify topic (fails: no such branch); grep -n test-fx-red.sh spira/test-testenv-batch.sh (only appears inside a heredoc writing to a temp dir).
+git rev-parse --verify <branch-in-payload> fails, and the suite name only appears in heredocs writing to $REMOTE/$SUITE_B2 in spira/test-testenv-batch.sh.
 ```
 
-**Fix** — Close as fixture litter — do not re-run testenv-batch.sh or escalate about SSH. Reason: "OUTCOME: not-a-defect (fixture litter)". File a separate bead: test-testenv-batch.sh leaks into the production bd store instead of an isolated fixture db.
+**Fix** — root cause was bdq() in spira/lib.sh calling bd -C "$SPIRA_DB" with no guard for empty/unset SPIRA_DB, so bd fell through to auto-discovery (can hit production). Fixed by making bdq() refuse (return 1) when SPIRA_DB is empty/unset. Landed via sp-ejqfy (audit: sp-25b7s; first never-landed attempt: sp-agdzk). No cleanup of existing litter rows needed; they're harmless once recognized by CHECK.
 
-**Escalate** — If the same key recurs after close, escalate: something schedules that suite against production and needs stopping.
+**Escalate** — if branch is real or suite isn't a self-test fixture, it's a real incident — diagnose normally.
 
-**Reference** — wiki/notes/sp-6e51y-fixture-litter.md
+**Reference** — wiki/notes/sop-test-fixture-litter-in-store.md
 
-**Matches** `repeat-refused:topic:|test-fx-red\.sh`
+**Matches** `external_ref:^incident:test-testenv-batch|repeat-refused:topic:|test-fx-red\.sh`
 
 ### Test sop
 
@@ -1380,6 +1428,26 @@ git rev-parse --verify topic (fails: no such branch); grep -n test-fx-red.sh spi
 **Reference** — wiki/notes/standard-operating-procedures.md
 
 **Matches** `testenv.*system systemd did not reach basic.target`
+
+### Timer onactivesec rearm
+
+`sop-timer-onactivesec-rearm`
+
+**Symptom** — A systemd --user timer using only OnBootSec=+OnUnitActiveSec shows `active (elapsed)`/`Trigger: n/a` after `systemctl --user restart <unit>.timer`, long after boot: no reboot to re-arm OnBootSec, no in-run service activation to re-arm OnUnitActiveSec. Seen on 3 units: spira-pr-notify-prod, spira-watch-notify-prod (sp-0djeb/sp-argo3), spira-mail-tidy-prod (sp-ly6l9).
+
+**Check**
+
+```
+systemctl --user status <unit>.timer -- "Trigger: n/a" + age >> period; confirm unit has only OnBootSec=/OnUnitActiveSec=, no OnCalendar=/OnActiveSec=.
+```
+
+**Fix** — Either (a) cadence.sh's preferred OnCalendar= wall-clock conversion (e.g. OnCalendar=*-*-* *:0/5:00), immune since it's not reference-point-based; or (b) minimal one-line OnActiveSec=<period> added alongside the existing directives -- relative to the TIMER's own last activation (re-armed by every restart, unlike OnUnitActiveSec/OnBootSec). systemd fires on the earliest Timer= directive, so (b) is additive. Verify: daemon-reload; restart <unit>.timer; list-timers -- NEXT must be real, not n/a.
+
+**Escalate** — If test-units-lint.sh asserts a literal OnUnitActiveSec= string or a ratio derived from it, update the test in the same change. If another open bead's branch already touches the same unit file, add a bd dep instead of a second edit to the same lines (sp-0djeb->sp-ly6l9, 2026-09-27).
+
+**Reference** — sp-0djeb
+
+**Matches** `active \(elapsed\).*Trigger: n/a|OnUnitActiveSec.*restart.*no next trigger`
 
 ### Timer repair focus neutral
 
@@ -1554,15 +1622,15 @@ bd show <bead> | grep -E '\b(groom|incident|maechen-sweep|plan|spike|czar-trigge
 
 `sop-verdict-repeat-refused`
 
-**Symptom** — A re-run of the same test suite on the same tree was refused because SPIRA_VERDICT_REPEAT_CONSIDERED was not set or too short (min 10 chars). Multiple recurrences indicate environmental rather than code defects.
+**Symptom** — Re-run refused: SPIRA_VERDICT_REPEAT_CONSIDERED not set/too short. Recurrence suggests environmental, not code defect.
 
-**Check** — bash spira/testenv-batch.sh --suites <suite> <branch> and check if it passes. If it passes, the original red was environmental. NOTE: Aeons cannot run this CHECK (no SSH) — and do not need to: the first refusal for a branch+tip+suite key already mails the Concierge mailbox (branch, tip, suite, last verdict); later refusals of the same key add nothing. First check whether the branch is a cutover-round/epic-assembly bead (lands only via a round bead judging its full corpus, e.g. sp-sa8pn) — if so the environmental-vs-defect call is moot until the round assembles.
+**Check** — Aeons cannot run testenv-batch.sh (no SSH). Instead verify the premise: the first refusal is SUPPOSED to mail Concierge (branch, tip, suite, verdict); later refusals add nothing. Confirm the mail actually exists: `mail.sh list concierge --all | grep -i <branch-or-suite>` and `grep -rli <branch-or-suite> $SPIRA_RUN/mail/concierge`. Confirmed ABSENT for spira/sp-argo3 + test-pr-notify.sh (sp-0dgzr) — mailer didn't fire; bug filed as sp-58zvx. Also check if branch is a round-assembly bead (e.g. sp-sa8pn) — if so the call is moot until the round assembles.
 
-**Fix** — Re-run with SPIRA_VERDICT_REPEAT_CONSIDERED="environmental: <reason>", or commit a fix if it's a code defect — a new tree gets a new key and the cache does not apply. If the branch is a round-assembly member per the CHECK note, do neither: close citing the round bead as why the verdict doesn't matter yet.
+**Fix** — Re-run with SPIRA_VERDICT_REPEAT_CONSIDERED="environmental: <reason>", or commit a code fix (new tree = new key). Round-assembly member: close citing the round bead. If the mail-existence check fails, that absence IS the finding — file/link a mailer-bug bead once, close citing it. Don't re-investigate the underlying suite red yourself; it belongs to the branch owner. Don't hunt indefinitely for a mail the SOP once assumed always exists.
 
-**Escalate** — Never as a needs-ryan ask (law-escalate-decisions-not-problems) — a repeat-refused re-run is mechanical, not a decision, permissions, or destructive change. The Concierge message already carries what's needed to re-run; wait for it instead of mailing or filing a second request for the same key. Escalate to the operator only if something beyond a mechanical re-run blocks progress.
+**Escalate** — Never needs-ryan — mechanical. Missing mail is a mailer bug (file it), not an escalation.
 
-**Reference** — spira/testenv-batch.sh — the repeat-refused block that mails the Concierge.
+**Reference** — spira/testenv-batch.sh mailer. sp-58zvx.
 
 **Matches** `repeat.refused|repeat-refused`
 
