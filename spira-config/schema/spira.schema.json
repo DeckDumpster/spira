@@ -385,6 +385,12 @@
             "null"
           ]
         },
+        "batcher_wall_secs": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "bd": {
           "type": [
             "string",

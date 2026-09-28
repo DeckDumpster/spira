@@ -31,6 +31,7 @@ batch_peak_warn_frac
 batch_psi_threshold
 batch_tail_lines
 batcher_bin
+batcher_wall_secs
 bd
 bd_pin
 bd_tag
