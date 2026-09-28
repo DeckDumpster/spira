@@ -164,7 +164,7 @@ bead = "sp-b99nj"
 [[use_case]]
 id = "UC-test-infrastructure-30"
 tier = "T2"
-statement = "The per-suite watchdog kills a hung suite at its limit (process group). The runner continues. A leaky background child holding stdout does not wedge the pass and marks its suite red."
+statement = "The per-suite watchdog kills a hung suite at its limit. The runner continues. A leaky background child does not wedge the pass."
 
 [[use_case]]
 id = "UC-test-infrastructure-31"
@@ -180,6 +180,11 @@ statement = "The suite-state file parser, `state_of`, write, clear and lint beha
 id = "UC-test-infrastructure-33"
 tier = "T0"
 statement = "The suites systemd unit runs `suites.sh run` periodically. It injects `SPIRA_SUITES_MAXSEC = TimeoutStartSec`, and the conf default budget is under it. It treats exit 2 as success. It is installed only under `SPIRA_SELF_TEST`."
+
+[use_case.uncovered]
+reason = "systemd/spira-suites.{service,timer} and the SPIRA_SELF_TEST gate that installed them were deleted outright with the background suites sweep — there is no unit left to check"
+date = "2026-09-26"
+bead = "sp-b99nj"
 
 [[use_case]]
 id = "UC-test-infrastructure-34"
