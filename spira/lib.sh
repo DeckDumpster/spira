@@ -67,6 +67,15 @@ bdq() {
         python3 "$(dirname "${BASH_SOURCE[0]}")/bdsim.py" "$SPIRA_BDJSON_FIXTURE" "$@"
         return $?
     fi
+    # Refuse rather than fall through to bd's own auto-discovery: bd -C "" does not
+    # error, it walks up from $PWD to find a store, which for anything run from
+    # inside an operator's harness checkout resolves to that operator's real,
+    # production database. A silent SPIRA_DB propagation loss must become a
+    # loud failure here, not a write to the wrong database (sp-agdzk / sp-25b7s).
+    if [ -z "${SPIRA_DB:-}" ]; then
+        echo "bdq: refusing - SPIRA_DB is empty/unset (would fall through to bd auto-discovery)" >&2
+        return 1
+    fi
     # A pooled Dolt connection the server already dropped surfaces on the next query as
     # "invalid connection" — the Go driver detects it dead before sending anything, so the
     # query never ran and retrying it is exactly as safe as the first attempt. install.sh
