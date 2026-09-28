@@ -976,7 +976,7 @@ else
         fi
 
         for _unit in spira-lc.service spira-lc.socket; do
-            _lc_bin="$(command -v spira-lc 2>/dev/null || printf '%s' "$SPIRA_HOME/target/release/spira-lc")"
+            _lc_bin="$(command -v spira-lc 2>/dev/null)" || _lc_bin="$(spira_bin spira-lc 2>/dev/null)"
             "$SPIRA_HOME/systemd/render.py" "$SPIRA_HOME/systemd/$_unit" \
                 --home "$SPIRA_HOME" --repo "$SPIRA_REPO" --run "$SPIRA_RUN" \
                 > "/etc/systemd/system/$_unit.tmp" \

@@ -1249,7 +1249,7 @@ cmd_land_local() {
     # running against it, and the two can silently disagree about schema or protocol.
     # testenv-batch.sh --with-bins builds the round head's own workspace into this exact
     # directory, keyed by tree so a fast-forward always finds its own corpus, never a
-    # stranger's from a different tree that happens to share the same target/release/.
+    # stranger's from a different tree that happens to share the same build-output dir.
     local bins_dir; bins_dir="$(_land_local_bins_dir "$repo" "$head")" || {
         printf 'queue.sh land-local: no built binaries for %s at %s — run testenv-batch.sh --with-bins first; refused, nothing changed\n' \
             "$head" "${SPIRA_BATCH_BINS_TARGET_DIR:-${SPIRA_RUN:-<SPIRA_RUN unset>}/cargo-target-bins}/<tree>/release" >&2

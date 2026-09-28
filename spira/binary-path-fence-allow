@@ -1,0 +1,76 @@
+# binary-path-fence-allow — files exempt from binary-path-fence.sh, one repo-relative path
+# per line, `#` comments. Add here only what genuinely IS the build/release/test machinery
+# a hardcoded path is unavoidable in; a caller of a binary belongs on spira_bin instead.
+
+# THE BUILD AND RELEASE TOOLING ITSELF — these assemble bin/ or a tarball; they are the
+# thing spira_bin's production branch trusts, not a second reader of it.
+Makefile
+spira/build-tarball.sh
+spira/pre-activate.sh
+spira/acceptance-lib.sh
+spira/testenv-batch.sh
+
+# conf.sh's spira_config_bin(): a pre-cutover, memoized ad-hoc build kept for the one
+# caller (lib.sh persona_model) that may run before conf.sh's own SPIRA_CONFIG_BIN
+# resolution has happened. Out of scope for sp-zv7j4's testenv-batch rewrite.
+spira/conf.sh
+
+# testlib_spira_config_bin() — a suite fixture needs SPIRA_CONFIG_BIN resolved BEFORE it
+# can source conf.sh at all (conf.sh needs the binary to convert spira.conf), so it cannot
+# itself go through spira_bin.
+spira/testlib.sh
+
+# A THIRD LANGUAGE'S COPY OF THE RESOLVER — landing-pass is a compiled Rust process, not a
+# shell script that could source conf.sh, so it carries its own fallback for the one
+# binary (spira-lc) it calls when SPIRA_LC_BIN is not already exported. Migrating it onto
+# SPIRA_ARTIFACTS is follow-up work, not part of this fence.
+landing-pass/src/main.rs
+
+# spira-loom.service deliberately runs from the dev checkout, never a release (its own
+# comment explains why) — its ExecStart path is that deliberate exception, not a bug.
+systemd/spira-loom.service
+
+# systemd unit templates render via @KEY@ substitution (render.py), not a shell that could
+# call spira_bin — spira-lc.service is inert (sp-uwv2s) and has no render.py plumbing yet
+# for a resolved SPIRA_LC_BIN placeholder; wiring one is follow-up work.
+systemd/spira-lc.service
+
+# TEST SUITES that build or plant their OWN binary and export the SPIRA_*_BIN env var
+# directly, never relying on conf.sh's resolution — the path here is the fixture under
+# test, not a second resolver.
+spira/test-acceptance-lib.sh
+spira/test-acceptance-run.sh
+spira/test-artifact-install.sh
+spira/test-broker.sh
+spira/test-concierge.sh
+spira/test-conf-toml.sh
+spira/test-conf-writeback.sh
+spira/test-czar-pass.sh
+spira/test-deploy.sh
+spira/test-install-conf-seed.sh
+spira/test-install-instance.sh
+spira/test-install-migrate.sh
+spira/test-install-rehearsal.sh
+spira/test-install-unit-prune.sh
+spira/test-loom-rebuild.sh
+spira/test-persona-model.sh
+spira/test-pre-activate.sh
+spira/test-queue-watch.sh
+spira/test-reconciler-alert.sh
+spira/test-reconciler-flow.sh
+spira/test-reconciler.sh
+spira/test-tarball-bins.sh
+spira/test-testenv-batch.sh
+spira/test-testlib.sh
+spira/test-tier-budget.sh
+spira/test-timer-templates.sh
+spira/test-tsd-producers.sh
+spira/test-tsd.sh
+spira/test-uninstall.sh
+spira/test-workspace-dist.sh
+
+# cockpit/layout.sh — rebuild_loom_if_stale/restart_loom_if_stale compare mtimes of a
+# specific compiled artifact and its source; a repo-relative source-checkout path is what
+# the check is FOR, not a call site of spira_bin (there is no running cockpit under
+# SPIRA_ARTIFACTS).
+cockpit/layout.sh

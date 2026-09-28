@@ -24,6 +24,7 @@ gate_fence_list() {    # gate_fence_list -> one repo-relative fence path per lin
     printf '%s\n' \
         spira/exclude.sh \
         spira/inventory.sh \
+        spira/binary-path-fence.sh \
         spira/scratch-fence.sh \
         spira/wiki-add-fence.sh \
         spira/sop.sh \

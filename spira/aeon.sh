@@ -513,11 +513,8 @@ fi
 # its own incident, not license to proceed on bd's word alone.
 #
 # WHETHER THIS AEON TAKES THE RESTRICTED PATH AT ALL IS lifecycle_enforce, AN EXPLICIT
-# CONFIG DECISION — never "spira-lc/work happen to be built". SPIRA_WORK_BIN/SPIRA_LC_BIN
-# auto-resolve from $SPIRA_REPO/target/release whenever unset (conf.sh), so a tree that has
-# simply run a workspace build — a --with-bins corpus run, a production checkout after
-# `round.sh land` — must not flip every aeon fixture onto a machine nothing has deployed
-# (sp-74gzo). Default off skips both this claim and the work-env.sh wrap below unchanged.
+# CONFIG DECISION — never "spira-lc/work happen to be built" (sp-74gzo). Default off skips
+# both this claim and the work-env.sh wrap below unchanged.
 #
 # ENABLED WITH A BINARY MISSING IS A MISCONFIGURATION, refused here — before any claim or
 # session setup — rather than silently downgraded to the legacy path

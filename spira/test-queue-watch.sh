@@ -220,6 +220,6 @@ row="$(command grep -E '^queue-watch\|daemon\|' "$HERE/watchers" || true)"
 want "watchd row runs the binary"                 "@SPIRA_QUEUE_WATCH_BIN@ watch --run @SPIRA_RUN@" "$row"
 want "watchd row carries a health probe"          "@SPIRA_QUEUE_WATCH_BIN@ health --run @SPIRA_RUN@" "$row"
 want "watchd knows the placeholder"               "SPIRA_QUEUE_WATCH_BIN" "$(command grep -E '^WATCHD_KEYS=|SPIRA_QUEUE_WATCH_BIN"' "$HERE/watchd.sh")"
-want "conf.sh resolves the binary"                'SPIRA_QUEUE_WATCH_BIN="$SPIRA_REPO/target/release/queue-watch"' "$(cat "$HERE/conf.sh")"
+want "conf.sh resolves the binary"                'SPIRA_QUEUE_WATCH_BIN:=$(spira_bin queue-watch' "$(cat "$HERE/conf.sh")"
 
 tl_summary
