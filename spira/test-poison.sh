@@ -675,6 +675,7 @@ seed; rm -rf "$RUN/poison-asked"
 testdb_seed <<JSONL
 {"id":"sp-failquery","title":"would poison this pass if the bulk query worked","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
+mklc sp-failquery
 cycle sp-failquery 3   # at POISON_AT=3 — this pass would poison it, if the query ran
 
 REAL_BD_PATH="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-bd}")"
