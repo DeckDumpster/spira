@@ -19,10 +19,25 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # check_undeclared <dir> — emit one "UNDECLARED <file>:<line>" per SPIRA_INCIDENT_REF
 # site that lacks a SPIRA_INCIDENT_CAUSE in its surrounding window.
+#
+# A match is only a site if it is code, not prose: a #-comment line explaining an
+# assignment, or a quoted string mentioning one, names the pattern without being it
+# (law-a-matcher-reads-code-not-prose).
 check_undeclared() {
     local dir="$1"
     grep -rn "SPIRA_INCIDENT_REF=" --include='*.sh' "$dir" | grep -v '/test-' | \
     while IFS=: read -r f l r; do
+        trimmed="$r"
+        while [ "${trimmed:0:1}" = " " ] || [ "${trimmed:0:1}" = "$(printf '\t')" ]; do
+            trimmed="${trimmed:1}"
+        done
+        case "$trimmed" in
+        '#'*) continue ;;
+        esac
+        before="${r%%SPIRA_INCIDENT_REF=*}"
+        case "$before" in
+        *'"'*|*"'"*) continue ;;
+        esac
         [ "$(sed -n "$((l-10)),$((l+3))p" "$f" | grep -c SPIRA_INCIDENT_CAUSE)" -eq 0 ] \
             && printf 'UNDECLARED %s:%s\n' "$f" "$l"
     done
