@@ -16,6 +16,13 @@ Documentation=file://@SPIRA_HOME@/README.md
 After=default.target
 StartLimitIntervalSec=60
 StartLimitBurst=5
+# RefuseManualStop: `systemctl stop`/`restart` on this unit is denied (sp-39gqq — two
+# aeons stopped the live store on 2026-09-25 by running suites on the host). install.sh's
+# own restart path uses `kill` instead, which Restart=always turns into a restart without
+# ever asking systemd for a stop job (sp-hsnqk). To stop it deliberately: `systemctl --user
+# edit dolt-beads.service`, add `RefuseManualStop=no` under `[Unit]`, `daemon-reload`, then
+# `stop`; `systemctl --user revert dolt-beads.service` restores the guard afterward.
+RefuseManualStop=yes
 
 [Service]
 Type=simple
