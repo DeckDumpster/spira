@@ -144,6 +144,7 @@ landing_pass_bin
 lanes
 lanes_max_live
 lc_bin
+lifecycle_enforce
 loom_addr
 loom_bin
 loom_budget_ms

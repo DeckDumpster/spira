@@ -77,8 +77,6 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/c
 # THE SHIM IS THE SESSION: commit, then close the bead the way a builder does. conf.sh
 # replaces PATH, so the model is injected through SPIRA_AGENT and nothing else.
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-# Pinned to the pre-cutover legacy paths even when a --with-bins run built work/spira-lc (sp-74gzo retires this).
-export SPIRA_WORK_BIN="$TMP/no-work-bin" SPIRA_LC_BIN="$TMP/no-lc-bin"
 grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
     || { echo "test-submitted-lands: aeon.sh has no SPIRA_AGENT injection point" >&2; exit 1; }
 cat > "$BIN/claude" <<'SHIM'

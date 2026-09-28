@@ -132,9 +132,6 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP HARNESS WIKI ORIGIN REPO
-# Pinned so this fixture stays on the pre-cutover legacy paths even when a --with-bins run
-# has built work/spira-lc for other suites in the same batch (design §3.5, LC_MODEL_RESTRICTED).
-export SPIRA_WORK_BIN="$TMP/no-work-bin" SPIRA_LC_BIN="$TMP/no-lc-bin"
 grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
     || { echo "test-aeon-wiki-dirty: aeon.sh has no SPIRA_AGENT injection point" >&2; exit 1; }
 cat > "$BIN/claude" <<'SHIM'

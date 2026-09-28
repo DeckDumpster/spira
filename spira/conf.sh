@@ -240,6 +240,7 @@ SPIRA_LAND_MAXSEC
 SPIRA_LANES
 SPIRA_LANES_MAX_LIVE
 SPIRA_LC_BIN
+SPIRA_LIFECYCLE_ENFORCE
 SPIRA_LOOM_ADDR
 SPIRA_LOOM_BIN
 SPIRA_LOOM_BUDGET_MS
@@ -933,6 +934,12 @@ spira_conf_defaults() {
     : "${SPIRA_LC_UNIX_USER:=spira-lc}"
     : "${SPIRA_LC_UNIX_GROUP:=spira}"
     : "${SPIRA_LC_SOCKET:=/run/spira-lc/sock}"
+    # Whether an aeon takes the lifecycle semantic layer at all (design §3.5). Default off:
+    # SPIRA_WORK_BIN/SPIRA_LC_BIN below resolve to wherever the binaries happen to exist, and
+    # a tree that built them — a --with-bins corpus run, a production checkout after `round.sh
+    # land` — must not flip onto the restricted path by that fact alone. Only aeon.sh's own
+    # gates read this; it does not change binary resolution (sp-74gzo).
+    : "${SPIRA_LIFECYCLE_ENFORCE:=0}"
     # The compiled `work` client (design §3.5): the aeon semantic layer's only binary, and
     # the only one work-env.sh's restricted PATH grants. Same tarball-vs-source-checkout
     # resolution as SPIRA_LOOM_BIN above.
