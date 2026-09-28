@@ -456,10 +456,23 @@ pub fn worktree_reset(repo: &Repo, wt: &Path, at_sha: &str) -> Result<(), String
     Ok(())
 }
 
+/// Is `tip` already an ancestor of the worktree's current HEAD? True for a member reset to
+/// an old base, or with no commits of its own — `git merge` on such a tip succeeds as a
+/// no-op ("Already up to date") even with `--no-ff`, which is indistinguishable from a real
+/// merge by exit status alone, so this must be checked before `merge_member` ever shells out
+/// to `git merge`.
+fn tip_already_in_round(wt: &Path, tip: &str) -> bool {
+    run_status(Command::new("git").arg("-C").arg(wt).args(["merge-base", "--is-ancestor", tip, "HEAD"]))
+}
+
 /// Merge one member's tip into the worktree with the queue's own commit message. Aborts and
 /// reports Conflict on any failure — a dirty merge state must never be left for the next
-/// member's attempt.
+/// member's attempt. A tip already an ancestor of HEAD is reported Empty without attempting
+/// a merge at all, since git would otherwise report success for a no-op.
 pub fn merge_member(env: &Env, wt: &Path, id: &str, tip: &str) -> MergeResult {
+    if tip_already_in_round(wt, tip) {
+        return MergeResult::Empty;
+    }
     let subject = land_subject(env, id);
     let ok = run_status(
         Command::new("git")

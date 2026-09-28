@@ -25,6 +25,9 @@
 #   I. suite corpus     — the round's suite corpus comes from the round branch's own tree,
 #                       not the production checkout's working directory (law-batcher-earns-
 #                       the-round-by-parity).
+#   J. batcher parity   — a member whose tip is already an ancestor of the round head (reset
+#                       to an old base, or no commits of its own) merges as a git no-op; it
+#                       must be set aside as EMPTY, never merged, never marked BATCHED (sp-5xki9).
 #   K. batcher parity (sp-myi6w) — the corpus invocation matches the Concierge's own
 #                       (round.sh): --mode parallel, --with-bins, SPIRA_BATCH_MAXPAR,
 #                       RUSTUP_TOOLCHAIN all present on argv/env; a --with-bins build
@@ -741,6 +744,26 @@ is "I: the round's new suite is requested"        "1" "$([ -f "$results_i/test-n
 is "I: the round's deleted suite is not requested" "0" "$([ -f "$results_i/test-old.sh.result" ] && echo 1 || echo 0)"
 is "I: an untracked stray in the checkout is not requested" "0" "$([ -f "$results_i/test-stray.sh.result" ] && echo 1 || echo 0)"
 rm -f "$REPO/spira/test-stray.sh"
+
+# =============================================================================
+# CASE J — batcher parity (sp-5xki9): a member whose tip is already an ancestor
+# of the round head — reset to an old base, or with no commits of its own —
+# merges as a git no-op ("Already up to date"). It must be set aside as EMPTY,
+# never merged into the batch worktree, and never marked BATCHED.
+# =============================================================================
+echo
+echo "J. batcher parity: a member whose tip is already in the round is set aside, never merged or marked:"
+rm -f "$(open_batch_file)"
+plant sp-cjjjj express
+base_now="$(git -C "$REPO" rev-parse origin/main)"
+certify sp-cjjjj "$base_now"
+prcreate_before_j="$(grep -c '^pr-create' "$FORGE_LOG")"
+
+out_j="$(STUB_RED_SUITES="" cut_repo)"
+want "J: reports the member set aside as EMPTY, not a member" "EMPTY sp-cjjjj: tip is already in the round — not a member" "$out_j"
+nowant "J: no PR opens crediting a no-op tip" "PR " "$out_j"
+is   "J: sp-cjjjj stays CERTIFIED, never marked BATCHED" "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cjjjj")"
+is   "J: forge pr-create not called for the empty round" "$prcreate_before_j" "$(grep -c '^pr-create' "$FORGE_LOG")"
 
 # =============================================================================
 # CASE K — batcher parity (sp-myi6w): the corpus invocation matches the Concierge's own

@@ -146,6 +146,31 @@ fn all_conflict_round_merges_nothing() {
     assert_eq!(combined.set_aside.len(), 3);
 }
 
+/// A member whose tip is already an ancestor of the round head (reset to an old base, or no
+/// commits of its own) is set aside as Empty, never merged, and never mixed in with a real
+/// conflict's reason — sp-5xki9's batcher parity fix.
+#[test]
+fn an_empty_member_is_set_aside_never_merged() {
+    let pool = vec![m("sp-a", 1, false, 0), m("sp-b", 1, false, 0)];
+    let mut merges = BTreeMap::new();
+    merges.insert("sp-a".to_string(), MergeResult::Ok);
+    merges.insert("sp-b".to_string(), MergeResult::Empty);
+    let deleted = BTreeMap::new();
+    let sequenced = BTreeMap::new();
+    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced });
+    assert_eq!(combined.merged.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-a"]);
+    assert_eq!(combined.set_aside, vec![SetAside { id: "sp-b".into(), reason: SetAsideReason::Empty }]);
+}
+
+#[test]
+fn evicted_event_for_an_empty_member_names_it_not_a_member() {
+    let sa = SetAside { id: "sp-b".into(), reason: SetAsideReason::Empty };
+    let e = evicted_event(&sa);
+    assert_eq!(e.kind, "evicted");
+    assert!(e.text.contains("sp-b"));
+    assert!(e.text.contains("not a member"));
+}
+
 /// A member absent from the merge-results map (never attempted) is treated as a conflict,
 /// not silently merged — a missing lookup fails closed.
 #[test]
