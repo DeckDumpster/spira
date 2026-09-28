@@ -15,9 +15,10 @@
 #   2. (late)  Forge is pending at the start, green by the end: the batch lands at the late
 #      check, after the gate. The log names the late check ("queue late:").
 #
-# gate.sh is stubbed to sleep briefly and write a marker so the test can determine when the
-# gate ran relative to the queue step output. verdict.sh and batch.sh are stubbed to control
-# what the forge reports.
+# A queue-mode branch is certified instantly (no local gate — law-a-round-takes-
+# certified-tips), so ordering is read off the pass's own log rather than a gate delay:
+# the "certified spira/<id>" line is land_repo's own marker that the branch loop reached
+# this branch. verdict.sh and batch.sh are stubbed to control what the forge reports.
 #
 # covers: spira/landing.sh
 # timeout: 120
@@ -67,14 +68,6 @@ stub mail.sh    '[ "${1:-}" = send ] || exit 0'
 stub skew.sh    'exit 0'
 stub gh         'exit 1'
 
-# GATE STUB: writes a "gate-ran" marker to a control file so we can verify ordering,
-# then sleeps briefly to simulate a non-zero gate cost. Passes unconditionally.
-stub gate.sh '
-printf "gate-ran\n" >> "'"$RUN"'/order-log"
-sleep 1
-echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2
-exit 0'
-
 # VERDICT STUB: stateful — outputs a landing line exactly once (simulates a batch file that
 # disappears after a fast-forward). After the first call the batch is gone; subsequent calls
 # are silent. batch.sh is a no-op (no new batch to open in this fixture).
@@ -92,7 +85,6 @@ landing() {
 
 seed() {
     testdb_reset
-    : > "$RUN/order-log"
     testdb_seed <<'JSONL'
 {"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
@@ -134,20 +126,20 @@ cp "$SH/landing.sh.bak" "$SH/landing.sh"; rm -f "$SH/landing.sh.bak"
 # silent (the batch file is gone after a fast-forward, so the real verdict.sh would also be
 # silent on the second call).
 stub verdict.sh '
-printf "verdict-ran\n" >> "'"$RUN"'/order-log"
 [ -f "'"$RUN"'/batch-landed" ] && exit 0
 touch "'"$RUN"'/batch-landed"
 printf "verdict fixture: PR 1 landed by fast-forward (abc123)\n"'
 
 seed
 branch sp-earlyq
-: > "$RUN/order-log"; rm -f "$RUN/batch-landed"
+rm -f "$RUN/batch-landed"
 out="$(landing)"; _landing_rc=$?
 [ "$_landing_rc" -eq 0 ] || bad "1. landing-crashed" "landing.sh exited $_landing_rc (a stub or subprocess died)"
 
 want "1. early green: early check logs a landing" "queue early: verdict fixture: PR 1 landed by fast-forward" "$out"
 nowant "1. early green: late check is not where it landed" "queue late: verdict fixture: PR 1 landed by fast-forward" "$out"
-before_in_output "1. early green: verdict ran before the gate" "verdict-ran" "gate-ran" "$(cat "$RUN/order-log")"
+before_in_output "1. early green: verdict ran before the branch loop reached sp-earlyq" \
+    "queue early: verdict fixture: PR 1 landed by fast-forward" "certified spira/sp-earlyq" "$out"
 
 git -C "$REPO" worktree remove --force "$RUN/worktree/sp-earlyq" 2>/dev/null || true
 git -C "$REPO" branch -D "spira/sp-earlyq" 2>/dev/null || true
@@ -157,29 +149,26 @@ git -C "$REPO" branch -D "spira/sp-earlyq" 2>/dev/null || true
 # The batch lands at the late check, after the gate runs.
 # --------------------------------------------------------------------------------------
 
-# verdict.sh stub: first call (early) is pending (no output); second call (late) reports landing.
-# The VERDICT_CALL_COUNT file tracks how many times verdict.sh has been called.
-rm -f "$RUN/verdict-call-count"
+# verdict.sh stub: pending until sp-lateq is certified (land_repo's own marker file),
+# then reports landing on the next call. This ties "late" to the branch loop having
+# actually run, rather than to a call count tuned around a gate delay that no longer
+# exists (queue-mode branches certify with no local gate — law-a-round-takes-
+# certified-tips).
 stub verdict.sh '
-count=0
-[ -f "'"$RUN"'/verdict-call-count" ] && count="$(cat "'"$RUN"'/verdict-call-count")"
-count=$(( count + 1 ))
-printf "%d\n" "$count" > "'"$RUN"'/verdict-call-count"
-printf "verdict-ran\n" >> "'"$RUN"'/order-log"
-if [ "$count" -ge 2 ]; then
+if [ -f "'"$RUN"'/landstate/sp-lateq" ] && grep -q "^CERTIFIED" "'"$RUN"'/landstate/sp-lateq"; then
     printf "verdict fixture: PR 1 landed by fast-forward (abc456)\n"
 fi'
 
 seed
 branch sp-lateq
-: > "$RUN/order-log"
-rm -f "$RUN/verdict-call-count"
+rm -f "$RUN/landstate/sp-lateq"
 out="$(landing)"; _landing_rc=$?
 [ "$_landing_rc" -eq 0 ] || bad "2. landing-crashed" "landing.sh exited $_landing_rc (a stub or subprocess died)"
 
 nowant "2. late green: early check does not show a landing" "queue early: verdict fixture: PR 1 landed by fast-forward" "$out"
 want   "2. late green: late check logs a landing"           "queue late: verdict fixture: PR 1 landed by fast-forward" "$out"
-before_in_output "2. late green: gate ran before the late verdict" "gate-ran" "verdict-ran" "$(tail -2 "$RUN/order-log")"
+before_in_output "2. late green: branch loop reached sp-lateq before the late verdict" \
+    "certified spira/sp-lateq" "queue late: verdict fixture: PR 1 landed by fast-forward" "$out"
 
 git -C "$REPO" worktree remove --force "$RUN/worktree/sp-lateq" 2>/dev/null || true
 git -C "$REPO" branch -D "spira/sp-lateq" 2>/dev/null || true

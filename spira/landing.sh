@@ -6,15 +6,21 @@
 #
 #   step                             push   pr    hold  queue
 #   ──────────────────────────────── ─────  ────  ────  ─────
-#   rebase_branch onto base           ✓            ✓     ✓
+#   rebase_branch onto base           ✓            ✓
 #   confine.sh check                  ✓            ✓
 #   gate.sh                           ✓            ✓
-#   land_mark CERTIFIED                                   ✓
 #   merge + push to base              ✓
 #   note bead, hold for hand                       ✓
 #   rebase_survivors after landing    ✓
 #
 # pr mode: landing-pass owns it end-to-end (rebase, confine, push, PR, no gate).
+#
+# QUEUE MODE HAS NO STEP HERE (law-a-round-takes-certified-tips). This pass neither
+# rebases nor gates a queue-mode branch — the round (batcher-cut: merge, full corpus,
+# attribute.sh, eject) and CI are the only judges of a SUBMITTED branch. It marks a
+# closed branch CERTIFIED without running anything, so the round's own CERTIFIED-pool
+# read finds it; a branch that conflicts with the base is caught and returned for
+# rebase by the round builder itself, not by this pass.
 #
 # land-modes: push hold queue
 #
@@ -35,9 +41,6 @@
 #
 # deploy.sh (operator-run, mode-independent):
 #   Drain, swap SPIRA_PROD symlink, restart units, health-check, rollback on failure.
-#
-# Certifying (queue mode) requires bead status = closed.
-# Poisoned/unclaimable beads have status != closed and are already excluded.
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
 . "$(dirname "$0")/landing-lib.sh"
@@ -373,24 +376,7 @@ LAND_GATE_RESERVE="${SPIRA_LAND_GATE_RESERVE:-1200}"
 # calls them with zero arguments and gets PASS_START/LAND_MAXSEC/LAND_GATE_RESERVE (set
 # above this line) as their defaults.
 
-# HOW MANY CERTIFICATION GATES RUN IN PARALLEL THIS PASS. Derived from the box when
-# SPIRA_CERTIFY_PAR is unset: min(nproc --all/4, free-memory/400MiB), at least 1.
-# nproc --all reads /proc/cpuinfo directly, not cgroup limits (law-measure-inside-the-fence).
-certify_pass_par="${SPIRA_CERTIFY_PAR:-}"
-_certify_par_detail=""
-if [ -z "$certify_pass_par" ]; then
-    _cp_np=$(nproc --all 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo 4)
-    _cp_mem=$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 1600)
-    _cp_by_cpu=$(( _cp_np / 4 ))
-    _cp_by_mem=$(( _cp_mem / 400 ))
-    certify_pass_par=$(( _cp_by_cpu < _cp_by_mem ? _cp_by_cpu : _cp_by_mem ))
-    _certify_par_detail=" (cpu ${_cp_np}/4, mem ${_cp_mem}/400)"
-    unset _cp_np _cp_mem _cp_by_cpu _cp_by_mem
-fi
-[ "${certify_pass_par:-0}" -lt 1 ] && certify_pass_par=1
-
-log "landing: starting a pass over [$(spira_repos | tr '\n' ' ')] certify_par=${certify_pass_par}${_certify_par_detail}"
-unset _certify_par_detail
+log "landing: starting a pass over [$(spira_repos | tr '\n' ' ')]"
 
 # THE VERDICT CACHE IS PRUNED HERE, once a pass, because this is the only thing that runs on
 # a clock and already touches every repository. Entries are keyed by content — an entry can
@@ -740,7 +726,6 @@ land_repo() {
     local bead_repo_name bead_repo_path gate_out base_branch base_remote base_fqref bead_labels
     local norebase was _ref _obj gate_suite basefail_filed= _cur_st _budget_cut=0
     local _cur_base_sha _ls_st _ls_tip _ls_at _ls_reason
-    local -a _cert_brs=() _cert_beadids=() _cert_tips=() _cert_gate_alls=()
     local -A enum_tip=()
     # WHAT THIS PASS HAS ALREADY JUDGED CLOSED, REBASED AND STILL UNLANDED. A branch enters
     # when its rebase onto the base succeeds and leaves the moment it stops being that — it
@@ -1044,6 +1029,24 @@ for i in d:
             continue
         fi
 
+        # QUEUE MODE: no local rebase, no local gate (law-a-round-takes-certified-tips).
+        # The round (batcher-cut) and CI are the only judges of a SUBMITTED branch now;
+        # a base conflict is caught and returned for rebase by the round builder itself.
+        # All this pass does is bookkeeping so the round's own CERTIFIED-pool read finds
+        # a branch the moment its bead closes, whether or not anything ever gated it —
+        # most already carry a gate verdict from the aeon's own queue.sh submit at
+        # teardown, and this never re-checks it.
+        if [ "$mode" = queue ]; then
+            tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
+            read -r _ls_st _ls_tip _ls_at _ls_reason <<< "$(land_state "$id" 2>/dev/null || true)"
+            if [ "${_ls_st:-}" != CERTIFIED ] || [ "${_ls_tip:-}" != "$tip" ]; then
+                land_mark "$id" CERTIFIED "$tip"
+                mark_submitted "$id" "$tip" certified
+                progress "certified $br in $name — no local gate, round and CI are the judges"
+            fi
+            continue
+        fi
+
         # A branch already sent under a mode that leaves it standing is not re-sent. Checked
         # before the rebase, because rebasing an open pull request's branch on every pass
         # would rewrite it under its own reviewer — and the ONE thing that overrides that is
@@ -1150,169 +1153,6 @@ for i in d:
         fi
         tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
         judged["$br"]=1
-
-        # QUEUE MODE: gate before certifying so fence violations are caught per-branch
-        # and never reach a batch PR or CI where they are unattributable (sp-hm2vw).
-        #
-        # SPIRA_CERTIFY_SUITES=off KEEPS THE FENCES AND DROPS THE SUITES. Every branch still
-        # gets bash -n, the no-beads-data check and the repository's fence commands; the
-        # suites are left to the batch's CI run, which runs them anyway on a runner fleet
-        # that was sitting idle while this box ran them first. 2026-09-23: thirty closed
-        # beads in 48 hours were RED here (thirteen of them `timeout`) and none reached a
-        # batch — including sp-a5jpo, the fix for exactly this (per Ryan: "we're running tests
-        # locally, holding up those beads. then we'll batch them … to be tested again").
-        # Push mode (below) lands straight on the base and keeps the full gate.
-        # With certify_pass_par > 1, branches are collected here and gated in parallel
-        # after the loop; with certify_pass_par == 1, the serial path runs inline.
-        if [ "$mode" = queue ]; then
-            # IDLE-SKIP (sp-a5jpo): when the cert queue is empty and CI is idle, this
-            # branch would be the sole batch member. At batch size 1 the bisect argument
-            # for per-branch certification is vacuous — CI runs the same work anyway. Skip
-            # the local gate and certify directly; the CI gate is the only authority.
-            # cert queue is checked first (local file reads) so the forge call is only
-            # made when there is actually something to skip.
-            if [ "${SPIRA_CERT_IDLE_SKIP:-1}" = 1 ]; then
-                _cq_n="$(queue_certified_list "$repo" 2>/dev/null | grep -c . || true)"
-                if [ "${_cq_n:-1}" -eq 0 ]; then
-                    _ci_act="$("${SPIRA_FORGE:-$SPIRA_HOME/forge.sh}" runs-active "$repo" 2>/dev/null)" || _ci_act="?"
-                    # certify_needs_gate (landing-lib.sh): the decision itself, over counts
-                    # already fetched above — the forge call is paid for only when there is
-                    # something to skip (cert queue empty), never to make this comparison.
-                    if [ "$(certify_needs_gate 1 "$_cq_n" "$_ci_act")" = skip ]; then
-                        _cur_st="$(bead_land_status "$id")"
-                        if [ "${_cur_st:-}" = "closed" ]; then
-                            log "CHECK6 $id: CI idle, sole batch member — skipping certification gate"
-                            land_mark "$id" CERTIFIED "$tip"
-                            mark_submitted "$id" "$tip" certified
-                            progress "certified $br in $name — CI idle, sole batch member"
-                        else
-                            log "CHECK6 $id: bead is now ${_cur_st:--} (was closed at scan time) — not certifying $br"
-                        fi
-                        continue
-                    fi
-                fi
-            fi
-
-            local _ej_count=0 _ej_count_f="$SPIRA_RUN/eject-count/$id"
-            { read -r _ej_count < "$_ej_count_f"; } 2>/dev/null || true
-            local _gate_all=0
-            [ "${_ej_count:-0}" -ge 2 ] && _gate_all=1
-            if [ "${certify_pass_par:-1}" -le 1 ]; then
-                if ! gate_fits; then
-                    case "${_scan_extref[$id]:-}" in
-                        basefail:"$name":*)
-                            log "CHECK6 $id: base-fix branch — gating despite budget exhaustion" ;;
-                        *)
-                            _budget_cut=1; break ;;
-                    esac
-                fi
-                _land_state "repo=$name" "branch=$br" "phase=gate"
-                gate_lock_wait
-                land_mark "$id" GATING "$tip"
-                gate_out="$(SPIRA_GATE_LOCK_WAIT="$_gate_wait" SPIRA_GATE_BEAD="$id" \
-                    SPIRA_GATE_SUITES="${SPIRA_CERTIFY_SUITES:-on}" \
-                    SPIRA_GATE_ALL="$_gate_all" \
-                    "$SPIRA_HOME/gate.sh" "$br" "$name" 2>&1)"
-                gate_rc=$?
-                _land_state "repo=$name" "branch=$br"
-                gate_outcome="$(spira_gate_outcome "$gate_rc")"
-                gate_reason="$(printf '%s' "$gate_out" \
-                    | sed -n 's/^gate: VERDICT=[A-Z_]* reason=\([^ ]*\).*$/\1/p' | tail -1)"
-                gate_suite="$(printf '%s' "$gate_out" \
-                    | sed -n 's/^gate: VERDICT=.* suite=\([^ ]*\).*$/\1/p' | tail -1)"
-                [ -n "$gate_suite" ] || gate_suite=-
-                if [ "$gate_rc" -ne 0 ]; then
-                    log "CHECK6 $id: certification gate $gate_outcome on $br in $name (${gate_reason:-unspecified})"
-                    land_mark "$id" GATED "$tip" "$gate_outcome:${gate_reason:-unspecified}"
-                    if [ "$gate_rc" = "$SPIRA_GATE_BASEFAIL" ]; then
-                        log "CHECK6 $id: held — the base fails its own gate (suite $gate_suite)"
-                        if _basefail_fix_check "$id" "$gate_out" "$gate_suite" "$name"; then
-                            local _fse_cert="${_scan_extref[$id]:-}"
-                            _fse_cert="${_fse_cert#basefail:$name:}"
-                            if [ "${_scan_st[$id]:-}" = "closed" ]; then
-                                log "CHECK6 $id: base-fix: $br is green on $name's red suite $_fse_cert — certifying"
-                                land_mark "$id" CERTIFIED "$tip"
-                                mark_submitted "$id" "$tip" certified
-                                progress "certified $br in $name — base-fix (suite $_fse_cert)"
-                            fi
-                        else
-                            if [ "${basefail_filed:-}" != 1 ]; then
-                                basefail_filed=1
-                                base_incident "$name" "$gate_suite" "${gate_reason:-base-red}" \
-                                              "$br" "$base" "$gate_out"
-                            fi
-                        fi
-                        if _basefail_fix_check "$id" "$gate_out" "$gate_suite" "$name"; then
-                            local _fse_cert="${_scan_extref[$id]:-}"
-                            _fse_cert="${_fse_cert#basefail:$name:}"
-                            _cur_st="$(bead_land_status "$id")"
-                            if [ "${_cur_st:-}" = "closed" ]; then
-                                log "CHECK6 $id: base-fix: $br is green on $name's red suite $_fse_cert — certifying"
-                                land_mark "$id" CERTIFIED "$tip"
-                                mark_submitted "$id" "$tip" certified
-                                progress "certified $br in $name — base-fix (suite $_fse_cert)"
-                            fi
-                        fi
-                        continue
-                    fi
-                    if ! spira_gate_blames_branch "$gate_rc"; then
-                        spira_land_noverdict "$id" "$br" "$name" "${gate_reason:-unspecified}" \
-                            "$gate_outcome" "$gate_out"
-                        [ "${gate_reason:-}" = timeout ] && land_mark "$id" RED "$tip" timeout
-                        continue
-                    fi
-                    _cur_st="$(bead_land_status "$id")"
-                    if [ "${_cur_st:-}" != "closed" ]; then
-                        log "CHECK6 $id: bead is now ${_cur_st:--} (was closed at scan time) — not reopening $br"
-                        continue
-                    fi
-                    local _rn_cert _rn_scope
-                    _rn_cert="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
-                    _rn_scope="$(cert_gate_red_scope_note "$name" "$br" "$gate_suite")"
-                    bead_reopen "$id" cert-gate-red "Reopened by sentinel: branch $br failed $name's certification gate. The branch carries $_rn_cert commit(s) from the previous session — the next aeon should resume from the existing work, not restart.
-${_rn_scope:+
-$_rn_scope}
-
-$(printf '%s' "$gate_out" | tail -20)"
-                    unset _rn_cert _rn_scope
-                    progress "reopened $id — failed the certification gate"
-                    spira_event bead.reopened "$id" "reopened $id — $br failed $name's certification gate" \
-                        "$(printf '%s' "$gate_out" | tail -3)" || true
-                    land_mark "$id" RED "$tip" gate
-                    continue
-                fi
-                [ "${gate_reason:-}" = cached ] \
-                    && log "CHECK6 $id: certification PASS on $br in $name — this tree had already passed"
-                rm -f "$SPIRA_RUN/noverdict/$(printf '%s' "$br" | tr -c 'A-Za-z0-9._-' '-')"* 2>/dev/null
-                _cur_st="$(bead_land_status "$id")"
-                if [ "${_cur_st:-}" != "closed" ]; then
-                    log "CHECK6 $id: bead is now ${_cur_st:--} (was closed at scan time) — not certifying $br"
-                    continue
-                fi
-                local _cert_mode=""
-                [ "${_gate_all:-0}" -eq 1 ] && { _cert_mode="full-corpus"; rm -f "$_ej_count_f" 2>/dev/null || true; }
-                land_mark "$id" CERTIFIED "$tip" "$_cert_mode"
-                _cert_gk="$(compute_gate_key "$repo" "$name" "$br" "$base" 2>/dev/null || true)"
-                [ -n "${_cert_gk:-}" ] && printf '%s\n' "$_cert_gk" > "$LANDSTATE/$id.gate-key"
-                unset _cert_gk
-                mark_submitted "$id" "$tip" certified
-                progress "certified $br in $name — queued"
-                continue
-            fi
-            # Parallel path: defer gating to Phase 2 after the loop.
-            # Budget is checked here so a tight pass cuts in Phase 1 and the
-            # cut message fires at the same point it does on the serial path.
-            if ! gate_fits; then
-                case "${_scan_extref[$id]:-}" in
-                    basefail:"$name":*)
-                        log "CHECK6 $id: base-fix branch — gating despite budget exhaustion" ;;
-                    *)
-                        _budget_cut=1; break ;;
-                esac
-            fi
-            _cert_brs+=("$br"); _cert_beadids+=("$id"); _cert_tips+=("$tip"); _cert_gate_alls+=("${_gate_all:-0}")
-            continue
-        fi
 
         # CONFINEMENT COMES BEFORE THE GATE. A spike's branch may pass every test in the
         # repository and still be the wrong thing to merge — its experiment compiles, which
@@ -1795,292 +1635,6 @@ $(printf '%s' "$gate_out" | tail -20)"
         for _ubr in $brs; do
             rm -f "$LAND_DEFERRED_DIR/${_ubr//\//_}" 2>/dev/null || true
         done
-    fi
-
-    # ==========================================================================
-    # RE-READ BEFORE EACH DISPATCH (sp-ob7uq / sp-ceemq). _cert_brs above comes from the
-    # bulk bdjson show taken once at the top of this function (the scan that fills
-    # _scan_st). A bead that closes after that snapshot is invisible to it — and the bead
-    # most likely to close mid-pass is a P0 base fix, the thing an aeon is rushed onto when
-    # the base goes red. _p2_admitted holds every id already in the phase-2 pipeline (from
-    # the snapshot, or admitted here); an id outside it is re-checked on every call — one
-    # cheap bulk query — for as long as bd still reports it open, and given exactly one
-    # admission attempt (rebase onto base, same as phase 1's own queue-mode prep) the
-    # moment bd reports it closed. A failed rebase is left for the next full pass rather
-    # than retried here, so a genuine conflict costs one rebase, not one per remaining
-    # dispatch this pass — the reopen/escalation machinery for that stays phase 1's alone.
-    # ==========================================================================
-    local -A _p2_admitted=()
-    local _p2_seed_id
-    for _p2_seed_id in "${_cert_beadids[@]}"; do _p2_admitted["$_p2_seed_id"]=1; done
-    _p2_admit_new_candidates() {
-        [ "$mode" = queue ] || return 0
-        local _adm_id _adm_st _adm_br _adm_tip _adm_repo_path _adm_ej_st
-        local _adm_ej_count _adm_gate_all
-        local -a _adm_probe=()
-        for _adm_br in $brs; do
-            _adm_id="${_adm_br#spira/}"
-            [ "${_scan_st[$_adm_id]:-}" = closed ] && continue
-            [ -n "${_p2_admitted[$_adm_id]:-}" ] && continue
-            _adm_probe+=("$_adm_id")
-        done
-        [ "${#_adm_probe[@]}" -gt 0 ] || return 0
-        while IFS=$'\t' read -r _adm_id _adm_st; do
-            [ -n "${_adm_id:-}" ] || continue
-            [ "$_adm_st" = closed ] || continue
-            _p2_admitted["$_adm_id"]=1
-            _adm_br="spira/$_adm_id"
-            git -C "$repo" show-ref --verify --quiet "refs/heads/$_adm_br" || continue
-            _adm_repo_path="$(repo_root "${_scan_repo[$_adm_id]:-}" 2>/dev/null)" || _adm_repo_path=""
-            [ "$_adm_repo_path" = "$repo" ] || continue
-            [ "${_scan_superseded[$_adm_id]:-0}" = 1 ] && continue
-            if [ -r "$LANDSTATE/$_adm_id" ]; then
-                _adm_ej_st=""
-                { read -r _adm_ej_st _ < "$LANDSTATE/$_adm_id"; } 2>/dev/null || true
-                [ "${_adm_ej_st:-}" = EJECTED ] && continue
-            fi
-            holder_alive "$_adm_id" && continue
-            content_landed "$repo" "$_adm_br" "$base_fqref" && continue
-            _adm_tip="$(git -C "$repo" rev-parse "$_adm_br" 2>/dev/null)"
-            submitted "$_adm_id" "$_adm_tip" && continue
-            rebase_branch "$_adm_br" "$base_fqref" "$repo" "$name" || continue
-            _adm_tip="$(git -C "$repo" rev-parse "$_adm_br" 2>/dev/null)"
-            judged["$_adm_br"]=1
-            log "CHECK6 $_adm_id: closed mid-pass — admitting $_adm_br to the running candidate list"
-            _adm_ej_count=0
-            { read -r _adm_ej_count < "$SPIRA_RUN/eject-count/$_adm_id"; } 2>/dev/null || true
-            _adm_gate_all=0
-            [ "${_adm_ej_count:-0}" -ge 2 ] && _adm_gate_all=1
-            _cert_brs=("$_adm_br" "${_cert_brs[@]}")
-            _cert_beadids=("$_adm_id" "${_cert_beadids[@]}")
-            _cert_tips=("$_adm_tip" "${_cert_tips[@]}")
-            _cert_gate_alls=("$_adm_gate_all" "${_cert_gate_alls[@]}")
-        done < <(bdjson show "${_adm_probe[@]}" 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit
-d = d if isinstance(d, list) else [d]
-sub = sys.argv[1]
-for i in d:
-    bid = i.get("id", "")
-    if not bid: continue
-    st = i.get("status", "-")
-    if sub in (i.get("labels") or []): st = "closed"
-    print(f"{bid}\t{st}")
-' "${SPIRA_SUBMITTED_LABEL:-spira-submitted}")
-    }
-    _p2_admit_new_candidates
-
-    # ==========================================================================
-    # PHASE 2: PARALLEL CERTIFICATION. Branches deferred to _cert_brs above are
-    # dispatched to gate.sh up to certify_pass_par at a time. Each result is
-    # processed the moment its gate finishes (wait -n -p), not in dispatch order,
-    # so a fast gate is never blocked behind a slow one. All DB writes stay on
-    # one process.
-    # ==========================================================================
-    if [ "${#_cert_brs[@]}" -gt 0 ]; then
-        local -a _cp_pids=() _cp_brs=() _cp_ids=() _cp_tips=() _cp_tmps=() _cp_gate_alls=()
-        log "landing: certify phase 2: ${#_cert_brs[@]} candidate(s) in $name (before tier sort)"
-
-        # Waits for whichever running gate finishes next, then applies cert logic.
-        # Uses wait -n -p (bash 5.1+) to collect results in completion order so a
-        # fast gate is never blocked behind a slower one dispatched before it.
-        # name/repo/base/basefail_filed are read via dynamic scope.
-        _cert_process_result() {
-            local br id tip gate_rc gate_out gate_outcome gate_reason gate_suite
-            local _rn_cert _rn_scope _cur_st
-            local _finished_pid _idx _tmp _p_gate_all
-            wait -n -p _finished_pid "${_cp_pids[@]}" 2>/dev/null; gate_rc=$?
-            _idx=0
-            while [ "$_idx" -lt "${#_cp_pids[@]}" ] && \
-                  [ "${_cp_pids[$_idx]}" != "$_finished_pid" ]; do
-                _idx=$(( _idx + 1 ))
-            done
-            _tmp="${_cp_tmps[$_idx]}"
-            br="${_cp_brs[$_idx]}"; id="${_cp_ids[$_idx]}"; tip="${_cp_tips[$_idx]}"
-            _p_gate_all="${_cp_gate_alls[$_idx]:-0}"
-            _cp_pids=("${_cp_pids[@]:0:$_idx}" "${_cp_pids[@]:$((_idx+1))}")
-            _cp_brs=("${_cp_brs[@]:0:$_idx}" "${_cp_brs[@]:$((_idx+1))}")
-            _cp_ids=("${_cp_ids[@]:0:$_idx}" "${_cp_ids[@]:$((_idx+1))}")
-            _cp_tips=("${_cp_tips[@]:0:$_idx}" "${_cp_tips[@]:$((_idx+1))}")
-            _cp_tmps=("${_cp_tmps[@]:0:$_idx}" "${_cp_tmps[@]:$((_idx+1))}")
-            _cp_gate_alls=("${_cp_gate_alls[@]:0:$_idx}" "${_cp_gate_alls[@]:$((_idx+1))}")
-            gate_out="$(cat "$_tmp" 2>/dev/null)"; rm -f "$_tmp"
-            gate_outcome="$(spira_gate_outcome "$gate_rc")"
-            gate_reason="$(printf '%s' "$gate_out" \
-                | sed -n 's/^gate: VERDICT=[A-Z_]* reason=\([^ ]*\).*$/\1/p' | tail -1)"
-            gate_suite="$(printf '%s' "$gate_out" \
-                | sed -n 's/^gate: VERDICT=.* suite=\([^ ]*\).*$/\1/p' | tail -1)"
-            [ -n "$gate_suite" ] || gate_suite=-
-            if [ "$gate_rc" -ne 0 ]; then
-                log "CHECK6 $id: certification gate $gate_outcome on $br in $name (${gate_reason:-unspecified})"
-                land_mark "$id" GATED "$tip" "$gate_outcome:${gate_reason:-unspecified}"
-                if [ "$gate_rc" = "$SPIRA_GATE_BASEFAIL" ]; then
-                    log "CHECK6 $id: held — the base fails its own gate (suite $gate_suite)"
-                    if _basefail_fix_check "$id" "$gate_out" "$gate_suite" "$name"; then
-                        local _fse_cert="${_scan_extref[$id]:-}"
-                        _fse_cert="${_fse_cert#basefail:$name:}"
-                        if [ "${_scan_st[$id]:-}" = "closed" ]; then
-                            log "CHECK6 $id: base-fix: $br is green on $name's red suite $_fse_cert — certifying"
-                            land_mark "$id" CERTIFIED "$tip"
-                            mark_submitted "$id" "$tip" certified
-                            progress "certified $br in $name — base-fix (suite $_fse_cert)"
-                        fi
-                    else
-                        if [ "${basefail_filed:-}" != 1 ]; then
-                            basefail_filed=1
-                            base_incident "$name" "$gate_suite" "${gate_reason:-base-red}" \
-                                          "$br" "$base" "$gate_out"
-                        fi
-                    fi
-                    if _basefail_fix_check "$id" "$gate_out" "$gate_suite" "$name"; then
-                        local _fse_cert="${_scan_extref[$id]:-}"
-                        _fse_cert="${_fse_cert#basefail:$name:}"
-                        _cur_st="$(bead_land_status "$id")"
-                        if [ "${_cur_st:-}" = "closed" ]; then
-                            log "CHECK6 $id: base-fix: $br is green on $name's red suite $_fse_cert — certifying"
-                            land_mark "$id" CERTIFIED "$tip"
-                            mark_submitted "$id" "$tip" certified
-                            progress "certified $br in $name — base-fix (suite $_fse_cert)"
-                        fi
-                    fi
-                    return 0
-                fi
-                if ! spira_gate_blames_branch "$gate_rc"; then
-                    spira_land_noverdict "$id" "$br" "$name" "${gate_reason:-unspecified}" \
-                        "$gate_outcome" "$gate_out"
-                    [ "${gate_reason:-}" = timeout ] && land_mark "$id" RED "$tip" timeout
-                    return 0
-                fi
-                _cur_st="$(bead_land_status "$id")"
-                if [ "${_cur_st:-}" != "closed" ]; then
-                    log "CHECK6 $id: bead is now ${_cur_st:--} (was closed at scan time) — not reopening $br"
-                    return 0
-                fi
-                _rn_cert="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
-                _rn_scope="$(cert_gate_red_scope_note "$name" "$br" "$gate_suite")"
-                bead_reopen "$id" cert-gate-red "Reopened by sentinel: branch $br failed $name's certification gate. The branch carries $_rn_cert commit(s) from the previous session — the next aeon should resume from the existing work, not restart.
-${_rn_scope:+
-$_rn_scope}
-
-$(printf '%s' "$gate_out" | tail -20)"
-                progress "reopened $id — failed the certification gate"
-                spira_event bead.reopened "$id" "reopened $id — $br failed $name's certification gate" \
-                    "$(printf '%s' "$gate_out" | tail -3)" || true
-                land_mark "$id" RED "$tip" gate
-                return 0
-            fi
-            [ "${gate_reason:-}" = cached ] \
-                && log "CHECK6 $id: certification PASS on $br in $name — this tree had already passed"
-            rm -f "$SPIRA_RUN/noverdict/$(printf '%s' "$br" | tr -c 'A-Za-z0-9._-' '-')"* 2>/dev/null
-            _cur_st="$(bead_land_status "$id")"
-            if [ "${_cur_st:-}" != "closed" ]; then
-                log "CHECK6 $id: bead is now ${_cur_st:--} (was closed at scan time) — not certifying $br"
-                return 0
-            fi
-            local _cert_mode_p=""
-            [ "${_p_gate_all:-0}" -eq 1 ] && { _cert_mode_p="full-corpus"; rm -f "$SPIRA_RUN/eject-count/$id" 2>/dev/null || true; }
-            land_mark "$id" CERTIFIED "$tip" "$_cert_mode_p"
-            _cert_gk="$(compute_gate_key "$repo" "$name" "$br" "$base" 2>/dev/null || true)"
-            [ -n "${_cert_gk:-}" ] && printf '%s\n' "$_cert_gk" > "$LANDSTATE/$id.gate-key"
-            unset _cert_gk
-            mark_submitted "$id" "$tip" certified
-            progress "certified $br in $name — queued"
-        }
-
-        # PHASE 2 TIER ORDERING. Never-gated branches (no prior landstate record) go first,
-        # joined by RED branches whose record is stale: the tip has moved since RED was
-        # written, or the reason is conflicts-with-base and the base has advanced since the
-        # record was written (that record is a statement about a pair; either side moving
-        # makes it stale). Branches with a non-RED landstate go second. RED branches whose
-        # record is current go third. A RED branch whose tip and base are unchanged and
-        # whose failure is not base-red is skipped — the same tip and base will produce the
-        # same result, and the slot is better spent on a branch that has never been tried.
-        # Timeouts write RED (above) and are subject to the same skip condition.
-        local -a _t0_brs=() _t0_ids=() _t0_tips=() _t0_gas=()
-        local -a _t1_brs=() _t1_ids=() _t1_tips=() _t1_gas=()
-        local -a _t2_brs=() _t2_ids=() _t2_tips=() _t2_gas=()
-        local _p2_skip=0 _p2_ls _p2_ls_st _p2_ls_tip _p2_ls_at _p2_ls_reason _p2_ci _p2_br _p2_id _p2_tip _p2_base_ct _p2_tier_out _p2_tier _p2_tag
-        # Read once: every branch in this phase-2 pass is classified against the same
-        # base, so one git log replaces what used to be a fresh read per conflicts-with-
-        # base candidate.
-        _p2_base_ct="$(git -C "$repo" log --format="%ct" -1 "$base" 2>/dev/null)"
-        for _p2_ci in "${!_cert_brs[@]}"; do
-            _p2_br="${_cert_brs[$_p2_ci]}"
-            _p2_id="${_cert_beadids[$_p2_ci]}"
-            _p2_tip="${_cert_tips[$_p2_ci]}"
-            _p2_ls_st=""; _p2_ls_tip=""; _p2_ls_at=""; _p2_ls_reason=""
-            _p2_ls="$(land_state "$_p2_id" 2>/dev/null || true)"
-            read -r _p2_ls_st _p2_ls_tip _p2_ls_at _p2_ls_reason <<< "$_p2_ls"
-            # certify_tier (landing-lib.sh): the classification itself, over a landstate
-            # record already read and a base timestamp already fetched above.
-            _p2_tier_out="$(certify_tier "${_p2_ls_st:-}" "${_p2_ls_tip:-}" "${_p2_ls_at:-}" "${_p2_ls_reason:-}" "$_p2_tip" "${_p2_base_ct:-}")"
-            _p2_tier="${_p2_tier_out#tier=}"; _p2_tier="${_p2_tier%% *}"
-            _p2_tag="${_p2_tier_out#*reason=}"
-            if [ "$_p2_tier" = 0 ]; then
-                case "$_p2_tag" in
-                    cwb-stale-base) log "CHECK6 $_p2_id: RED conflicts-with-base stale (base advanced since ${_p2_ls_at}) — treating as never-gated" ;;
-                    tip-stale) log "CHECK6 $_p2_id: RED record tip stale (was ${_p2_ls_tip:-none}) — treating as never-gated" ;;
-                esac
-                _t0_brs+=("$_p2_br"); _t0_ids+=("$_p2_id"); _t0_tips+=("$_p2_tip"); _t0_gas+=("${_cert_gate_alls[$_p2_ci]:-0}")
-            elif [ "$_p2_tier" = skip ]; then
-                _p2_skip=$(( _p2_skip + 1 ))
-                log "CHECK6 $_p2_id: tip unchanged since RED mark (reason=${_p2_ls_reason:-unknown}) — skipping re-gate of $_p2_br"
-            elif [ "$_p2_tier" = 2 ]; then
-                _t2_brs+=("$_p2_br"); _t2_ids+=("$_p2_id"); _t2_tips+=("$_p2_tip"); _t2_gas+=("${_cert_gate_alls[$_p2_ci]:-0}")
-            else
-                _t1_brs+=("$_p2_br"); _t1_ids+=("$_p2_id"); _t1_tips+=("$_p2_tip"); _t1_gas+=("${_cert_gate_alls[$_p2_ci]:-0}")
-            fi
-        done
-        log "landing: certify phase 2 tiers in $name: never-gated=${#_t0_brs[@]} non-red=${#_t1_brs[@]} red=${#_t2_brs[@]} skipped=$_p2_skip width=${certify_pass_par}"
-        _cert_brs=("${_t0_brs[@]+"${_t0_brs[@]}"}" "${_t1_brs[@]+"${_t1_brs[@]}"}" "${_t2_brs[@]+"${_t2_brs[@]}"}")
-        _cert_beadids=("${_t0_ids[@]+"${_t0_ids[@]}"}" "${_t1_ids[@]+"${_t1_ids[@]}"}" "${_t2_ids[@]+"${_t2_ids[@]}"}")
-        _cert_tips=("${_t0_tips[@]+"${_t0_tips[@]}"}" "${_t1_tips[@]+"${_t1_tips[@]}"}" "${_t2_tips[@]+"${_t2_tips[@]}"}")
-        _cert_gate_alls=("${_t0_gas[@]+"${_t0_gas[@]}"}" "${_t1_gas[@]+"${_t1_gas[@]}"}" "${_t2_gas[@]+"${_t2_gas[@]}"}")
-
-        local _ctmp _dbr _did _dtip _dga
-        # A while loop consuming from the front, not `for _ci in "${!_cert_brs[@]}"`:
-        # bash expands that index list once when the for loop starts, so an admission
-        # appended by _p2_admit_new_candidates mid-loop would never be iterated. Popping
-        # from a live array is what makes "before each dispatch" literal.
-        while [ "${#_cert_brs[@]}" -gt 0 ]; do
-            _dbr="${_cert_brs[0]}"; _did="${_cert_beadids[0]}"; _dtip="${_cert_tips[0]}"
-            _dga="${_cert_gate_alls[0]:-0}"
-            _cert_brs=("${_cert_brs[@]:1}")
-            _cert_beadids=("${_cert_beadids[@]:1}")
-            _cert_tips=("${_cert_tips[@]:1}")
-            _cert_gate_alls=("${_cert_gate_alls[@]:1}")
-            if ! gate_fits; then
-                case "${_scan_extref[${_dbr#spira/}]:-}" in
-                    basefail:"$name":*)
-                        log "CHECK6 $_did: base-fix branch — gating despite budget exhaustion" ;;
-                    *)
-                        _budget_cut=1; break ;;
-                esac
-            fi
-            while [ "${#_cp_pids[@]}" -ge "${certify_pass_par:-1}" ]; do
-                _cert_process_result
-            done
-            # PERSIST ACROSS A RESTART (sp-ob7uq / sp-ceemq): written the instant dispatch
-            # starts, so a pass killed while this gate is running leaves GATING on disk
-            # rather than nothing. certify_tier (landing-lib.sh) reads a later pass's own
-            # GATING record as never-gated, so the kill costs only this one gate's minutes,
-            # not a wait behind every other candidate first.
-            land_mark "$_did" GATING "$_dtip"
-            _ctmp="$(mktemp -t spira-cert.XXXXXX)"
-            gate_lock_wait
-            SPIRA_GATE_LOCK_WAIT="$_gate_wait" SPIRA_GATE_BEAD="$_did" \
-                SPIRA_GATE_SUITES="${SPIRA_CERTIFY_SUITES:-on}" \
-                SPIRA_GATE_ALL="$_dga" \
-                "$SPIRA_HOME/gate.sh" "$_dbr" "$name" >"$_ctmp" 2>&1 &
-            _cp_pids+=("$!"); _cp_brs+=("$_dbr"); _cp_ids+=("$_did")
-            _cp_tips+=("$_dtip"); _cp_tmps+=("$_ctmp"); _cp_gate_alls+=("$_dga")
-            _p2_admit_new_candidates
-        done
-        while [ "${#_cp_pids[@]}" -gt 0 ]; do
-            _cert_process_result
-        done
-        _land_state "repo=$name"
     fi
 
     return 0

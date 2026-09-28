@@ -275,7 +275,6 @@ test-install-unit-prune.sh	T1	45.0
 test-land-build-ensure.sh	T1	3.0
 test-landed-stays-landed.sh	T1	44.5
 test-landing-base-fail.sh	T1	32.5
-test-landing-basefail-fix.sh	T1	85.0
 test-landing-build.sh	T1	3.5
 test-landing-gate-wait.sh	T1	21.0
 test-landing-halt.sh	T1	17.5
