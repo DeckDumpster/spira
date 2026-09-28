@@ -92,13 +92,16 @@ for _wname in "${_watch_names[@]}"; do
     fi
 done
 
-if [ "$n_changed" -eq 0 ]; then
+# The guards below (BINARY GUARD, PRODUCER GUARD) must run every invocation, not only
+# when a unit file's rendered content changed — an enabled-but-should-be-disabled unit
+# stays that way forever otherwise, since nothing about its own file content depends
+# on the binary or producer state that makes it wrong to run.
+if [ "$n_changed" -gt 0 ]; then
+    "$SC" --user daemon-reload
+    printf 'unit-ensure: daemon-reload after %d change(s), %d unchanged\n' "$n_changed" "$n_unchanged"
+else
     printf 'unit-ensure: no changes — %d unit(s) current\n' "$n_unchanged"
-    exit 0
 fi
-
-"$SC" --user daemon-reload
-printf 'unit-ensure: daemon-reload after %d change(s), %d unchanged\n' "$n_changed" "$n_unchanged"
 
 # Enable and start newly installed units that belong to the ENABLE set.
 # Updated (DIFFERS) units are not restarted — that is the operator's call.
@@ -135,30 +138,62 @@ for _en in "${ENABLE[@]}"; do
 done
 unset _ue_file _ue_exec
 
-# CARGO-BINARY GUARD. When cargo is absent, a unit whose binary was never built will
-# fail on every tick (exit 2 or 127). Disable it so the box is not red; doctor reports
-# the absent binary and that cargo is not on PATH.
-if ! command -v cargo >/dev/null 2>&1; then
-    for _ue_pair in \
-        "${SPIRA_LOOM_BIN:-}:loom:service" \
-        "${SPIRA_BROKER_BIN:-}:broker:timer" \
-        "${SPIRA_PANEL:-}:cockpit:service" \
-        "${SPIRA_CZAR_PASS_BIN:-}:czar-pass:timer"; do
-        _ue_cbin="${_ue_pair%%:*}"
-        _ue_rest="${_ue_pair#*:}"
-        _ue_cbase="${_ue_rest%%:*}"
-        _ue_ctype="${_ue_rest#*:}"
-        [ -n "${_ue_cbin:-}" ] || continue
-        [ -x "${_ue_cbin}" ] && continue
-        for _ue_cname in \
-            "spira-${_ue_cbase}${SPIRA_INSTANCE:+-$SPIRA_INSTANCE}.${_ue_ctype}" \
-            "spira-${_ue_cbase}.${_ue_ctype}"; do
-            "$SC" --user is-enabled "$_ue_cname" >/dev/null 2>&1 || continue
-            "$SC" --user disable "$_ue_cname" >/dev/null 2>&1 \
-                && printf 'unit-ensure: DISABLED %s (cargo absent, binary missing at %s)\n' \
-                    "$_ue_cname" "${_ue_cbin}" \
-                || printf 'unit-ensure: WARNING could not disable %s\n' "$_ue_cname" >&2
-        done
+# BINARY GUARD. A unit whose binary is not executable will exit 127 on every tick whether
+# or not cargo is on PATH — "cargo present but build never ran" is the case the old guard
+# missed by gating the whole loop on cargo being absent. Disable any such enabled unit;
+# doctor reports the missing binary and names the correct remedy.
+for _ue_pair in \
+    "${SPIRA_LOOM_BIN:-}:loom:service" \
+    "${SPIRA_BROKER_BIN:-}:broker:timer" \
+    "${SPIRA_PANEL:-}:cockpit:service" \
+    "${SPIRA_CZAR_PASS_BIN:-}:czar-pass:timer"; do
+    _ue_cbin="${_ue_pair%%:*}"
+    _ue_rest="${_ue_pair#*:}"
+    _ue_cbase="${_ue_rest%%:*}"
+    _ue_ctype="${_ue_rest#*:}"
+    [ -n "${_ue_cbin:-}" ] || continue
+    [ -x "${_ue_cbin}" ] && continue
+    _ue_cargo_note=""
+    command -v cargo >/dev/null 2>&1 || _ue_cargo_note=" (cargo not on PATH)"
+    for _ue_cname in \
+        "spira-${_ue_cbase}${SPIRA_INSTANCE:+-$SPIRA_INSTANCE}.${_ue_ctype}" \
+        "spira-${_ue_cbase}.${_ue_ctype}"; do
+        "$SC" --user is-enabled "$_ue_cname" >/dev/null 2>&1 || continue
+        "$SC" --user disable "$_ue_cname" >/dev/null 2>&1 \
+            && printf 'unit-ensure: DISABLED %s (binary not executable at %s%s)\n' \
+                "$_ue_cname" "${_ue_cbin}" "${_ue_cargo_note}" \
+            || printf 'unit-ensure: WARNING could not disable %s\n' "$_ue_cname" >&2
     done
-    unset _ue_pair _ue_cbin _ue_rest _ue_cbase _ue_ctype _ue_cname
+done
+unset _ue_pair _ue_cbin _ue_rest _ue_cbase _ue_ctype _ue_cname _ue_cargo_note
+
+# PRODUCER GUARD. spira-broker.timer's enabled state must track spira_broker_producer_present
+# on every invocation, not only when the unit is newly installed or its rendered content
+# changes — the ENABLE loop above only reaches new units, but the timer's own file never
+# changes when the operator flips SPIRA_BROKER_ENABLE, so that loop would never turn it on.
+# Reads the same predicate units.sh gates ENABLE on (units.sh sourced above). The producer
+# decision is made once, not per candidate name — a name with no installed file (the bare
+# name when SPIRA_INSTANCE is set, or vice versa) must not fall through to disable just
+# because its own file is missing while the producer is in fact present.
+if spira_broker_producer_present && [ -x "${SPIRA_BROKER_BIN:-}" ]; then
+    for _ue_bname in \
+        "spira-broker${SPIRA_INSTANCE:+-$SPIRA_INSTANCE}.timer" \
+        "spira-broker.timer"; do
+        _ue_bfile="$DEST/$_ue_bname"
+        [ -f "$_ue_bfile" ] && _ue_execstart_ok "$_ue_bfile" || continue
+        "$SC" --user enable "$_ue_bname" >/dev/null 2>&1 \
+            && "$SC" --user start "$_ue_bname" >/dev/null 2>&1 \
+            && printf 'unit-ensure: enabled+started  %s\n' "$_ue_bname" \
+            || printf 'unit-ensure: failed to enable %s\n' "$_ue_bname" >&2
+    done
+else
+    for _ue_bname in \
+        "spira-broker${SPIRA_INSTANCE:+-$SPIRA_INSTANCE}.timer" \
+        "spira-broker.timer"; do
+        "$SC" --user is-enabled "$_ue_bname" >/dev/null 2>&1 || continue
+        "$SC" --user disable "$_ue_bname" >/dev/null 2>&1 \
+            && printf 'unit-ensure: DISABLED %s (no producer; SPIRA_BROKER_ENABLE=1 to opt in)\n' "$_ue_bname" \
+            || printf 'unit-ensure: WARNING could not disable %s\n' "$_ue_bname" >&2
+    done
 fi
+unset _ue_bname _ue_bfile

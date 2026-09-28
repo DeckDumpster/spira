@@ -234,6 +234,7 @@ pub fn spira_section(
             "SPIRA_PR_STALL_MINS" => s.pr_stall_mins = Some(val.clone()),
             "SPIRA_DEFERRAL_ESCALATE_AT" => s.deferral_escalate_at = Some(val.clone()),
             "SPIRA_BROKER_BIN" => s.broker_bin = Some(val.clone()),
+            "SPIRA_BROKER_ENABLE" => s.broker_enable = Some(val.clone()),
             "SPIRA_BROKER_GH_CONFIG_DIR" => s.broker_gh_config_dir = Some(val.clone()),
             "SPIRA_BROKER_GH_TOKEN" => s.broker_gh_token = Some(val.clone()),
             "SPIRA_CZAR_PASS_BIN" => s.czar_pass_bin = Some(val.clone()),
