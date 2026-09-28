@@ -910,6 +910,13 @@ fn describe(verdict: &Verdict) -> String {
     }
 }
 
+// FILES A BEAD, NOT reconciler_engine::alert'S LIVE WAKE — a decision, not an oversight.
+// Structural gaps reach here only after a remedy already failed or none exists, which makes
+// them trackable Ops work, not a judgement call; incident.sh's own dedup (one bead per ref,
+// a recurrence count bumped every pass, an operator page only past its threshold) already
+// absorbs a persisting gap without repeat noise, the same job should_alert's per-streak dedup
+// does for a medium — live mail — that cannot absorb a repeat itself. Two dedup mechanisms
+// because there are two destinations with different absorption, not one duplicated by mistake.
 fn escalate(cfg: &Config, key: &str, verdict: &Verdict) {
     let subj = format!("RECONCILER: {} — {}", key, describe(verdict));
     let age = verdict.since.map(|s| cfg.now_secs.saturating_sub(s)).unwrap_or(0);
