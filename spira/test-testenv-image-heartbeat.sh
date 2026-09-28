@@ -116,6 +116,18 @@ grep 'testenv: building — ' "$ERR" | grep -q 'STEP' \
 
 # ──────────────────────────────────────────────────────────────────────────────
 echo
+echo "the loop wakes when the build exits, not after the full heartbeat interval:"
+# ──────────────────────────────────────────────────────────────────────────────
+# A 1s build under a 60s heartbeat interval used to sleep the full 60s regardless.
+t0=$(date +%s)
+run 60 1 0 ""
+t1=$(date +%s)
+elapsed=$((t1 - t0))
+[ "$elapsed" -lt 3 ] && ok "a 1s build under a 60s heartbeat interval returns in under 3s ($elapsed s)" \
+    || bad "a 1s build under a 60s heartbeat interval returns in under 3s" "took ${elapsed}s"
+
+# ──────────────────────────────────────────────────────────────────────────────
+echo
 echo "SEEN RED then SEEN GREEN — disk exhaustion is named, not left to look like a hang:"
 # ──────────────────────────────────────────────────────────────────────────────
 # RED: a generic build failure does NOT get misreported as disk exhaustion.

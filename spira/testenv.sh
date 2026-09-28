@@ -225,10 +225,17 @@ _build_image() {
     podman build -t "$img" -f "$TESTENV_DIR/Containerfile" "$HERE" >"$buildlog" 2>&1 &
     local build_pid=$!
 
-    while kill -0 "$build_pid" 2>/dev/null; do
+    # wait -n -p (bash 5.1+, already relied on by landing.sh) wakes as soon as the
+    # build exits instead of always sleeping the full interval.
+    while true; do
         sleep "$_BUILD_HEARTBEAT_SECONDS" &
-        wait $!
-        kill -0 "$build_pid" 2>/dev/null || break
+        local sleep_pid=$! finished_pid
+        wait -n -p finished_pid "$build_pid" "$sleep_pid" 2>/dev/null
+        if [ "$finished_pid" = "$build_pid" ]; then
+            kill "$sleep_pid" 2>/dev/null
+            wait "$sleep_pid" 2>/dev/null
+            break
+        fi
         _build_heartbeat "$start" "$buildlog"
     done
 
