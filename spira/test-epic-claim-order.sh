@@ -205,29 +205,45 @@ FAYTH_HEARTBEAT_SECONDS=600
 FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$AEON_HOME/chamber/builder.md"
 
-BIN="$TMP/bin"; mkdir -p "$BIN"
+BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
-printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":1}\n'
+cat /dev/stdin > "$TMP/prompt"
+id="$(sed -n 's/^work \(sp-[a-z0-9-]*\) .*/\1/p' "$TMP/prompt" | head -1)"
+printf 'claimed\n' >> f
+git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id - claimed"
+bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
+printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\n'
 exit 0
 SHIM
 chmod +x "$BIN/claude"
 
 ( SPIRA_HOME="$AEON_HOME" SPIRA_RUN="$AEON_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP" \
-  SPIRA_CONF="$TMP/no-such2.conf" SPIRA_AGENT="$BIN/claude" \
+  SPIRA_CONF="$TMP/no-such2.conf" \
   "$AEON_HOME/aeon.sh" builder > "$TMP/aeon-out" 2>&1 )
 
+# A task bead's close is converted to open + spira-submitted at teardown (sp-qsona): only
+# the landing pass closes a work bead directly, so "claimed and finished" reads as
+# open+submitted, not in_progress or closed.
 e1_status="$(bd -C "$SPIRA_DB" show sp-e1-rework --json 2>/dev/null | python3 -c '
 import sys, json
 d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
 print(d.get("status"))' 2>/dev/null)"
+e1_labels="$(bd -C "$SPIRA_DB" show sp-e1-rework --json 2>/dev/null | python3 -c '
+import sys, json
+d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
+print(",".join(d.get("labels") or []))' 2>/dev/null)"
 unrelated_status="$(bd -C "$SPIRA_DB" show sp-unrelated-p0 --json 2>/dev/null | python3 -c '
 import sys, json
 d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
 print(d.get("status"))' 2>/dev/null)"
-is "aeon.sh claimed the started epic's reworked child, not the unrelated P0 head" \
-    "in_progress" "$e1_status"
-is "the unrelated P0 bead was left alone, still ready" "open" "$unrelated_status"
+is "aeon.sh claimed and finished the started epic's reworked child, not the unrelated P0 head" \
+    "open" "$e1_status"
+case ",$e1_labels," in
+    *",spira-submitted,"*) ok "sp-e1-rework: carrying the submitted label (its work was done)" ;;
+    *) bad "sp-e1-rework: carrying the submitted label (its work was done)" "labels=[$e1_labels]" ;;
+esac
+is "the unrelated P0 bead was left alone, still ready and unclaimed" "open" "$unrelated_status"
 want "the log names the epic-first rank as the reason" "epic-first rank" "$(cat "$TMP/aeon-out")"
 
 tl_summary
