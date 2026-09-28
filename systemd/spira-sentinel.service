@@ -18,8 +18,9 @@ ExecStart=@SPIRA_PROD@/sentinel.sh
 # once an hour inside the script and runs detached, so this ceiling never truncates it.
 TimeoutStartSec=900
 # This box runs prod and the CI runner. Anything that polls in a loop on shared hardware
-# gets a quota (law-fence-loops-on-shared-hardware).
-CPUQuota=40%
+# gets a quota (law-fence-loops-on-shared-hardware). 40% throttled 967 of 1,352 scheduling
+# periods and floored a serial pass at ~175s on a 32-core box (sp-bo67y); still capped.
+CPUQuota=150%
 Nice=10
 StandardOutput=append:@SPIRA_RUN@/sentinel.log
 StandardError=append:@SPIRA_RUN@/sentinel.log

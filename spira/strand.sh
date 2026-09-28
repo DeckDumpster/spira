@@ -242,7 +242,23 @@ classify() {
 
 classify_one() {   # classify_one <labels> <exclude-labels> -> the classifier's own TSV
     local labels="$1" exclude="$2" beads ready live holders id
-    beads="$(bdjson list --limit 0 --label "$labels")"
+    # SPIRA_LIST_SNAPSHOT, WHEN SET, REPLACES THE PER-PARTITION QUERY — sentinel.sh's full
+    # pass fetches `bd list --all` once (sp-bo67y) and every partition filters the same
+    # cached JSON in-process instead of asking bd again. `strand.sh report`, run standalone
+    # with no snapshot exported, falls back to its own query exactly as before.
+    if [ -n "${SPIRA_LIST_SNAPSHOT:-}" ] && [ -r "$SPIRA_LIST_SNAPSHOT" ]; then
+        beads="$(SPIRA_LBL="$labels" python3 -c '
+import json, os, sys
+need = {x for x in os.environ.get("SPIRA_LBL", "").split(",") if x}
+try: d = json.load(sys.stdin)
+except Exception: d = []
+out = [b for b in (d if isinstance(d, list) else [d])
+       if b.get("status") != "closed" and need <= set(b.get("labels") or [])]
+print(json.dumps(out))
+' < "$SPIRA_LIST_SNAPSHOT" 2>/dev/null)"
+    else
+        beads="$(bdjson list --limit 0 --label "$labels")"
+    fi
     # READY_ARGS (lib.sh), not a copy. The classifier asks "is any of this epic's work
     # actionable"; a bead carrying a dead aeon's assignee is listed by a bare `bd ready` and
     # refused by `bd ready --claim`, so counting it here would answer yes about work nobody
@@ -256,7 +272,32 @@ classify_one() {   # classify_one <labels> <exclude-labels> -> the classifier's 
     # label list is what keeps the two predicates from drifting apart again.
     local _shared="$(ready_shared_exclude)"
     local _excl="${exclude}${_shared:+${exclude:+,}${_shared}}"
-    ready="$(bdjson "${READY_ARGS[@]}" --label "$labels" --exclude-label "$_excl")"
+    # SPIRA_READY_SNAPSHOT is the ready_raw_args superset (no SPIRA_SCOPE_LABEL filter) —
+    # re-apply scope, the partition's own labels and its exclusions in-process instead of
+    # asking bd again for an identically-shaped, narrower query.
+    if [ -n "${SPIRA_READY_SNAPSHOT:-}" ] && [ -r "$SPIRA_READY_SNAPSHOT" ]; then
+        ready="$(SPIRA_LBL="$labels" SPIRA_EXCL="$_excl" SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" python3 -c '
+import json, os, sys
+need = {x for x in os.environ.get("SPIRA_LBL", "").split(",") if x}
+excl = {x for x in os.environ.get("SPIRA_EXCL", "").split(",") if x}
+scope = os.environ.get("SPIRA_SCOPE_LABEL", "")
+try: d = json.load(sys.stdin)
+except Exception: d = []
+out = []
+for b in (d if isinstance(d, list) else [d]):
+    L = set(b.get("labels") or [])
+    if scope and scope not in L:
+        continue
+    if not need <= L:
+        continue
+    if excl & L:
+        continue
+    out.append(b)
+print(json.dumps(out))
+' < "$SPIRA_READY_SNAPSHOT" 2>/dev/null)"
+    else
+        ready="$(bdjson "${READY_ARGS[@]}" --label "$labels" --exclude-label "$_excl")"
+    fi
     live="$(live_aeons "$labels")"
 
     holders="$(printf '%s' "$beads" | python3 -c '
