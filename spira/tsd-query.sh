@@ -20,6 +20,10 @@
 #                                                           (local and CI) counted together
 #   tsd-query.sh suite-medians  <n>                        the same, for every suite in one
 #                                                           query: suite, median, n
+#   tsd-query.sh suite-p90s     <n>                        the same shape as suite-medians,
+#                                                           quantile 0.9 instead of 0.5 —
+#                                                           gate-budget-select.sh's predicted
+#                                                           cost for a measured suite
 #   tsd-query.sh last-run                                  most recent run_id: sum(wall_secs)
 #                                                           over its suites, and its __batch__
 #                                                           row's wall_secs
@@ -55,6 +59,7 @@ usage:
   tsd-query.sh by-group      <family> <group> <field> [<hours>]
   tsd-query.sh suite-p50     <suite> <n>
   tsd-query.sh suite-medians <n>
+  tsd-query.sh suite-p90s    <n>
   tsd-query.sh last-run
   tsd-query.sh slow-in-branch <branch> <n>
 USAGE
@@ -190,6 +195,23 @@ case "$cmd" in
                 FROM read_ndjson_auto('$path')
             )
             SELECT suite, quantile_cont(wall_secs, 0.5) AS median, count(*) AS n
+            FROM ranked
+            WHERE rn <= $n
+            GROUP BY suite
+            ORDER BY suite;
+        "
+        ;;
+    suite-p90s)
+        n="${1:?n required}"
+        _check_n "$n"
+        path="$(_check_family suite-timing)" || exit $?
+        duckdb -json -c "
+            WITH ranked AS (
+                SELECT suite, wall_secs,
+                       row_number() OVER (PARTITION BY suite ORDER BY ts DESC) AS rn
+                FROM read_ndjson_auto('$path')
+            )
+            SELECT suite, quantile_cont(wall_secs, 0.9) AS p90, count(*) AS n
             FROM ranked
             WHERE rn <= $n
             GROUP BY suite

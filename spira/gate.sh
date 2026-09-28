@@ -634,6 +634,12 @@ run_gate() {             # run_gate <ref-being-tested> -> the command's own stat
     # too, producing BASE_FAIL against every branch. SPIRA_GATE_HOST_CORES is set here from
     # host_cores(), which reads getconf and is immune to the quota. A repository's CI can
     # substitute it for nproc where the raw host count is what it needs.
+    #
+    # SPIRA_GATE_BUDGET AND SPIRA_RUN MUST BOTH BE ON THIS LIST, for gate-touched.sh's own
+    # sake: env -i dropped both, so its budgeted selector (sp-vq2za) ran with no budget set
+    # and no run/tsd/ to read timing from — every candidate's cost silently fell back to its
+    # tier cap, and SPIRA_GATE_BUDGET's default of 300 was reachable only through the old
+    # gate-spira.sh path, never the one every branch actually gates through.
     ( cd "$TREE" && env -i \
         PATH="$HOME/.cargo/bin:$PATH" \
         HOME="$HOME" \
@@ -651,6 +657,8 @@ run_gate() {             # run_gate <ref-being-tested> -> the command's own stat
         SPIRA_CERTIFY_ALWAYS_COVERS="${SPIRA_CERTIFY_ALWAYS_COVERS:-}" \
         SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-}" \
         SPIRA_VERDICT_REPEAT_CONSIDERED="${SPIRA_VERDICT_REPEAT_CONSIDERED:-}" \
+        SPIRA_GATE_BUDGET="${SPIRA_GATE_BUDGET:-300}" \
+        SPIRA_RUN="$SPIRA_RUN" \
         timeout "${SPIRA_GATE_TIMEOUT:-2700}" bash -c "$CMD" 9>&- ) 2>&1
     return $?
 }

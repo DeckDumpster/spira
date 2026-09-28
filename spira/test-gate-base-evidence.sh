@@ -87,6 +87,7 @@ ENV_BR="$TMP/env-branch"; ENV_BASE="$TMP/env-base"
 _dump="echo BRANCH=\$SPIRA_GATE_BRANCH; echo BASE=\$SPIRA_GATE_BASE;"
 _dump="$_dump echo SELECT_HEAD=\$SPIRA_GATE_SELECT_HEAD;"
 _dump="$_dump echo HOST_CORES=\$SPIRA_GATE_HOST_CORES; echo EJECTED=\$SPIRA_GATE_EJECTED_SUITES;"
+_dump="$_dump echo BUDGET=\$SPIRA_GATE_BUDGET; echo RUN=\$SPIRA_RUN;"
 _dump="$_dump echo SUITES=\$SPIRA_GATE_SUITES; cat \"\$SPIRA_GATE_FILES\""
 _cmd="if [ \"\$SPIRA_GATE_BRANCH\" = \"$BR\" ]; then f=\"$ENV_BR\"; else f=\"$ENV_BASE\"; fi"
 _cmd="$_cmd; { $_dump; } > \"\$f\"; exit 1"
@@ -102,6 +103,9 @@ want "the branch trial sees the changed file"      "f1.txt"               "$bran
 want "HOST_CORES is the real host count, not a cgroup-limited one" "HOST_CORES=$real_cores" "$branch_env"
 want "SUITES defaults to conf.sh's gate-suites path" "SUITES=/" "$branch_env"
 want "and names gate-suites"                         "gate-suites"          "$branch_env"
+want "BUDGET reaches the branch trial (sp-vq2za: gate-touched.sh's own budget)" "BUDGET=300" "$branch_env"
+want "BUDGET reaches the base trial too"              "BUDGET=300"           "$base_env"
+want "RUN reaches the branch trial, not dropped by env -i" "RUN=$RUN"        "$branch_env"
 
 # --------------------------------------------------------------------------------------
 # UC-gate-verdict-14 — THE FULL OUTPUT SURVIVES, NOT A `tail -20` WINDOW (folds in

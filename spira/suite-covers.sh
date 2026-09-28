@@ -115,3 +115,16 @@ suite_uc_of() {  # suite_uc_of <file-path> -> space-separated UC-<area>-NN token
     done
     printf '%s\n' "${_out# }"
 }
+
+suite_tier_budget_ms() {  # suite_tier_budget_ms <tier> -> the ms budget for that tier
+    # (docs/test-plan/README.md), the single source tier-budget.sh and gate-budget-select.sh
+    # both read. An unknown or empty tier counts as T1, never as "no budget" — untagged is
+    # the common case while the corpus migrates (sp-5ayw5).
+    case "$1" in
+        T0) printf '%s' "${SPIRA_TIER_BUDGET_T0_MS:-1000}" ;;
+        T1) printf '%s' "${SPIRA_TIER_BUDGET_T1_MS:-1000}" ;;
+        T2) printf '%s' "${SPIRA_TIER_BUDGET_T2_MS:-10000}" ;;
+        T3) printf '%s' "${SPIRA_TIER_BUDGET_T3_MS:-60000}" ;;
+        *)  printf '%s' "${SPIRA_TIER_BUDGET_T1_MS:-1000}" ;;
+    esac
+}
