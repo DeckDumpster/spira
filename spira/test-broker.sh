@@ -3,12 +3,12 @@
 # test-broker.sh — broker: one end-to-end smoke, binary through execute through gh.
 #
 # WHAT MOVED OUT. The policy table (fayth × verb refusal), intent JSON field shape, and gh
-# argv per verb are now cargo #[cfg(test)] unit tests in broker/src/{policy,submit,execute,
-# read}.rs — see UC-landing-merge-queue-55. Those don't need a compiled binary or a
-# subprocess; this suite does, because what it proves is that main.rs's dispatch, real file
-# I/O under SPIRA_RUN, and env var propagation to a real gh stub actually wire together — a
-# property no unit test working on in-process functions can see. The conf.sh/build.sh/
-# broker.sh declaration greps moved to broker-allowlist-lint.sh, which runs without cargo.
+# argv per verb are cargo #[cfg(test)] unit tests in broker/src/{policy,submit,execute,
+# read}.rs — see UC-landing-merge-queue-55 — run below via `cargo test -p broker`. The
+# end-to-end smoke that follows proves what no in-process unit test can: that main.rs's
+# dispatch, real file I/O under SPIRA_RUN, and env var propagation to a real gh stub actually
+# wire together. The conf.sh/build.sh/broker.sh declaration greps moved to
+# broker-allowlist-lint.sh, which runs without cargo.
 #
 # THE "FAILS OPEN" CASE IS GONE. It called the gh stub directly, bypassing the broker
 # entirely, to "prove what the broker prevents" — but a check that always passes regardless
@@ -42,6 +42,17 @@ BROKER_BIN="$BROKER_ROOT/target/release/broker"
 
 # Scratch space: also used if we need to build broker from a writable copy.
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
+
+# =========================================================================
+echo
+echo "CARGO TEST — broker's own #[test] units (policy/submit/execute/read)"
+# =========================================================================
+CARGO_TEST_LOG="$T/cargo-test-broker.log"
+CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/broker-test-target" \
+    "$CARGO_BIN" test --locked -p broker --manifest-path "$HERE/../Cargo.toml" \
+    --no-fail-fast > "$CARGO_TEST_LOG" 2>&1
+_cargo_test_rc=$?
+report_cargo "$CARGO_TEST_LOG" "$_cargo_test_rc"
 
 # =========================================================================
 echo

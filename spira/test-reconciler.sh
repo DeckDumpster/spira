@@ -86,6 +86,13 @@ CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
 # out of a copy with no Cargo.lock re-resolved every dependency to its newest release, and
 # one of those needs edition2024 — which the pinned 1.82 toolchain cannot build, so the
 # suite went red the moment the test image stopped carrying a newer cargo.
+CARGO_TEST_LOG="$T/cargo-test-reconciler.log"
+CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/reconciler-test-target" \
+    "$CARGO_BIN" test --locked -p reconciler --manifest-path "$HERE/../Cargo.toml" \
+    --no-fail-fast > "$CARGO_TEST_LOG" 2>&1
+_cargo_test_rc=$?
+report_cargo "$CARGO_TEST_LOG" "$_cargo_test_rc"
+
 RECONCILER_BIN="$HERE/../target/release/reconciler"
 if [ ! -x "$RECONCILER_BIN" ]; then
     printf '  (building reconciler into %s)\n' "$T/reconciler-target"

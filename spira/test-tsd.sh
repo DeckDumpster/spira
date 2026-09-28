@@ -54,6 +54,14 @@ if [ ! -x "$TSD_BIN" ]; then
 fi
 [ -x "$TSD_BIN" ] || bail "tsd-write binary not found at $TSD_BIN"
 
+# ── tsd's own #[test] units (tsd/src/lib.rs) ────────────────────────────────────────────────
+CARGO_TEST_LOG="$T/cargo-test-tsd.log"
+CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/tsd-test-target" \
+    "$CARGO_BIN" test --locked -p tsd --manifest-path "$HERE/../Cargo.toml" \
+    --no-fail-fast > "$CARGO_TEST_LOG" 2>&1
+_cargo_test_rc=$?
+report_cargo "$CARGO_TEST_LOG" "$_cargo_test_rc"
+
 jpy() {  # jpy <file> <python-expr-on-"rows"> — rows is a list of parsed JSON lines
     python3 -c '
 import json, sys
