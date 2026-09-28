@@ -323,5 +323,23 @@ is     "threshold=3, score=2: exits 0"          0         "$rc_t3"
 nowant "threshold=3, score=2: no create call"   "create"  "$(cat "$BD_LOG")"
 want   "threshold=3, score=2: logs no-pass"     "no-pass" "$out_t3"
 
+# ==========================================================================================
+echo
+echo "CONCURRENCY (gap G10): a second instance declines while the lock is held:"
+# ==========================================================================================
+# Deterministic, not timing-based: the test holds the lock file directly before running
+# the script, so the script's own flock --nonblock is guaranteed to find it taken.
+mkdir -p "$T/run"
+exec 8>"$T/run/groom-trigger.lock"
+flock -x 8
+
+: > "$BD_LOG"
+out_locked="$(BD_LIST_OUTPUT="[]" BD_TOTAL_OUTPUT="$FIVE_OPEN" run_trigger)"; rc_locked=$?
+exec 8>&-
+
+is     "locked: exits 0 (a skipped tick is not an error)" 0             "$rc_locked"
+nowant "locked: bd create NOT called"                     "create"      "$(cat "$BD_LOG")"
+want   "locked: logs the reason"                           "skipping"   "$out_locked"
+
 echo
 tl_summary

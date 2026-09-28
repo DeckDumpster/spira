@@ -5926,6 +5926,44 @@ _spira_expand_lanes() {  # _spira_expand_lanes <repo-name> <raw> -> space-separa
     printf '%s' "$result"
 }
 
+# spira_lane_admitted <lane> -> 0 if the home repo or some repo in SPIRA_REPO_MAP admits
+# it, 1 otherwise. Shared by groom-trigger.sh and maechen-trigger.sh (duplicate cluster
+# D14) — on a consuming install with no repo willing to run a lane, its trigger would
+# otherwise accumulate trigger beads for work nobody can do.
+spira_lane_admitted() {
+    local lane="$1" hr hl rn rest rl
+    hr="$(spira_home_repo 2>/dev/null)" || hr=""
+    if [ -n "$hr" ]; then
+        hl="$(spira_repo_lanes "$hr" 2>/dev/null)" || hl=""
+        case " $hl " in *" $lane "*) return 0 ;; esac
+    fi
+    [ -f "${SPIRA_REPO_MAP:-}" ] || return 1
+    while IFS='|' read -r rn rest; do
+        rn="${rn#"${rn%%[![:space:]]*}"}"; rn="${rn%"${rn##*[![:space:]]}"}"
+        case "${rn:-}" in ''|'#'*) continue ;; esac
+        rl="$(spira_repo_lanes "$rn" 2>/dev/null)" || continue
+        case " $rl " in *" $lane "*) return 0 ;; esac
+    done < "$SPIRA_REPO_MAP"
+    return 1
+}
+
+# spira_open_trigger_count <labels> -> count of open-or-in_progress beads carrying every
+# label in <labels> (comma-separated), or 0 on a query failure (fail toward filing rather
+# than silently going quiet — the caller's own dedup guard is what a false 0 would defeat).
+# in_progress is included because a claimed trigger bead leaves --status open, and a dedup
+# query scoped to open alone would file a duplicate on the very next tick (sp-mp9s — the
+# defect that motivated including it in maechen-trigger.sh, extracted here so
+# groom-trigger.sh gets the same fix rather than drifting from it).
+spira_open_trigger_count() {
+    local labels="$1" json n
+    json="$("${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --status open,in_progress --label "$labels" --json 2>/dev/null)" \
+        || json="[]"
+    [ -z "$json" ] && json="[]"
+    n="$(printf '%s\n' "$json" \
+        | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))' 2>/dev/null)" || n=0
+    printf '%s' "${n:-0}"
+}
+
 _spira_modes_lanes() {    # <path> -> lane set from .spira/modes; empty if absent
     local mf="$1/.spira/modes" raw
     [ -f "$mf" ] || return 0

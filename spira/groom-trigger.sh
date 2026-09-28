@@ -44,41 +44,34 @@ else
     LABELS="${SPIRA_GROOMER_LABEL}"
 fi
 
-# DEDUP — at most one open trigger bead at a time. The query uses the same labels
-# the groomer's predicate uses; a bead present here is one the groomer will claim.
-# bd list --json returns a JSON array; [] means nothing open, [...] means at least
-# one. The python3 count is borrowed from lib.sh's ready_count rather than
-# reimplemented in a way that might drift.
-open_count=0
-open_json="$("$BD" -C "$DB" list --status open --label "$LABELS" --json 2>/dev/null)" || open_json="[]"
-# An empty string means bd succeeded but returned nothing — treat as no results.
-[ -z "$open_json" ] && open_json="[]"
-open_count="$(printf '%s\n' "$open_json" \
-    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))' 2>/dev/null)" || open_count=0
+# MUTUAL EXCLUSION (gap G10). Dedup below is list-then-create: two overlapping callers
+# (the timer plus a manual run) can both read zero open triggers before either files one,
+# each filing its own. strand.sh check and incident.sh needed the same flock for the same
+# reason (sp-uq55c, sp-io5e); a second caller that cannot take it simply skips this tick —
+# the timer runs again shortly, so losing one tick to contention is free.
+exec 9>"${SPIRA_RUN:-.}/groom-trigger.lock"
+if ! flock --nonblock 9; then
+    log "another instance holds the lock — skipping to avoid a duplicate trigger"
+    exit 0
+fi
 
+# DEDUP — at most one open-or-in_progress trigger bead at a time. The query uses the
+# same labels the groomer's predicate uses; a bead present here is one the groomer will
+# claim. Shared with maechen-trigger.sh via spira_open_trigger_count (duplicate cluster
+# D14), which is also where in_progress got included (sp-mp9s): a claimed trigger bead
+# leaves --status open, and a query scoped to open alone would file a duplicate on the
+# very next tick.
+open_count="$(spira_open_trigger_count "$LABELS")"
 if [ "${open_count:-0}" -gt 0 ] 2>/dev/null; then
     log "trigger already open ($open_count bead(s) with labels [$LABELS]) — skipping"
     exit 0
 fi
 
 # LANE CHECK. Skip when no repository admits the groom lane — on a consuming install
-# this prevents trigger beads from accumulating for work nobody can do.
+# this prevents trigger beads from accumulating for work nobody can do. Shared with
+# maechen-trigger.sh via spira_lane_admitted (duplicate cluster D14).
 _gr_lane="${SPIRA_GROOMER_LABEL:-groom}"  # literal-ok: bash fallback; SPIRA_GROOMER_LABEL set by conf.sh
-_lane_admitted=0
-_hr="$(spira_home_repo 2>/dev/null)" || _hr=""
-if [ -n "$_hr" ]; then
-    _hl="$(spira_repo_lanes "$_hr" 2>/dev/null)" || _hl=""
-    case " $_hl " in *" $_gr_lane "*) _lane_admitted=1 ;; esac
-fi
-if [ "$_lane_admitted" = 0 ] && [ -f "${SPIRA_REPO_MAP:-}" ]; then
-    while IFS='|' read -r _rn _rest; do
-        _rn="${_rn#"${_rn%%[![:space:]]*}"}"; _rn="${_rn%"${_rn##*[![:space:]]}"}"
-        case "${_rn:-}" in ''|'#'*) continue ;; esac
-        _rl="$(spira_repo_lanes "$_rn" 2>/dev/null)" || continue
-        case " $_rl " in *" $_gr_lane "*) _lane_admitted=1; break ;; esac
-    done < "$SPIRA_REPO_MAP"
-fi
-if [ "$_lane_admitted" = 0 ]; then
+if ! spira_lane_admitted "$_gr_lane"; then
     log "no repository admits lane ${_gr_lane} — skipping trigger"
     exit 0
 fi

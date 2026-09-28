@@ -124,22 +124,9 @@ case "$cmd" in
                     _sw_log "REPORT $_sw_bid unmapped-repo — bd show failed; leaving for model. $_sw_reason"
                     continue
                 fi
-                _sw_has_content="$(printf '%s\n' "$_sw_bj" | python3 -c '
-import json,sys
-try:
-    d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; b=d[0]
-    print(1 if (b.get("description") or "").strip() else 0)
-except Exception: print(0)
-' 2>/dev/null)"
-                _sw_meta="$(printf '%s\n' "$_sw_bj" | python3 -c '
-import json,sys,re
-try:
-    d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; b=d[0]
-    ca = re.sub(r"[^A-Za-z0-9:.T_-]","_",(b.get("created_at") or "unknown"))
-    ag = re.sub(r"[^A-Za-z0-9._@-]","_",(b.get("assignee") or "unknown"))
-    print("created_at: %s, assignee: %s" % (ca, ag))
-except Exception: print("")
-' 2>/dev/null)"
+                _sw_pred="$(printf '%s\n' "$_sw_bj" | python3 "$HERE/groomer-litter-predicate.py" 2>/dev/null)"
+                _sw_has_content="$(printf '%s\n' "$_sw_pred" | sed -n 's/^HAS_CONTENT //p')"
+                _sw_meta="$(printf '%s\n' "$_sw_pred" | sed -n 's/^META //p')"
                 if [ "${_sw_has_content:-0}" = "0" ]; then
                     _sw_log "CLOSED $_sw_bid — litter: no description, $_sw_meta. Detector: $_sw_reason"
                     if [ "$_sw_dry" -eq 0 ]; then

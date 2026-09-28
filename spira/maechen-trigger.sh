@@ -75,39 +75,32 @@ else
     LABELS="${SPIRA_MAECHEN_LABEL}"
 fi
 
+# MUTUAL EXCLUSION (gap G10). Dedup below is list-then-create: two overlapping callers
+# (the timer plus a manual run) can both read zero open-or-in_progress triggers before
+# either files one, each filing its own. strand.sh check and incident.sh needed the same
+# flock for the same reason (sp-uq55c, sp-io5e); a second caller that cannot take it simply
+# skips this tick — the timer runs again shortly, so losing one tick to contention is free.
+exec 9>"${SPIRA_RUN:-.}/maechen-trigger.lock"
+if ! flock --nonblock 9; then
+    log "another instance holds the lock — skipping to avoid a duplicate trigger"
+    exit 0
+fi
+
 # DEDUP — at most one open-or-in-progress trigger bead at a time. Query uses the same
 # labels as maechen.fayth's predicate. in_progress is included because a claimed bead
 # leaves --status open and the guard would file a duplicate on the next tick (sp-mp9s).
-open_count=0
-open_json="$("$BD" -C "$DB" list --status open,in_progress --label "$LABELS" --json 2>/dev/null)" || open_json="[]"
-[ -z "$open_json" ] && open_json="[]"
-open_count="$(printf '%s\n' "$open_json" \
-    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))' 2>/dev/null)" \
-    || open_count=0
-
+# Shared with groom-trigger.sh via spira_open_trigger_count (duplicate cluster D14).
+open_count="$(spira_open_trigger_count "$LABELS")"
 if [ "${open_count:-0}" -gt 0 ] 2>/dev/null; then
     log "trigger already open or in_progress (${open_count} bead(s) with labels [$LABELS]) — skipping"
     exit 0
 fi
 
 # LANE CHECK. Skip when no repository admits the maechen lane — on a consuming install
-# this prevents trigger beads from accumulating for work nobody can do.
+# this prevents trigger beads from accumulating for work nobody can do. Shared with
+# groom-trigger.sh via spira_lane_admitted (duplicate cluster D14).
 _mae_lane="${SPIRA_MAECHEN_LABEL:-maechen-sweep}"  # literal-ok: bash fallback; SPIRA_MAECHEN_LABEL set by conf.sh
-_lane_admitted=0
-_hr="$(spira_home_repo 2>/dev/null)" || _hr=""
-if [ -n "$_hr" ]; then
-    _hl="$(spira_repo_lanes "$_hr" 2>/dev/null)" || _hl=""
-    case " $_hl " in *" $_mae_lane "*) _lane_admitted=1 ;; esac
-fi
-if [ "$_lane_admitted" = 0 ] && [ -f "${SPIRA_REPO_MAP:-}" ]; then
-    while IFS='|' read -r _rn _rest; do
-        _rn="${_rn#"${_rn%%[![:space:]]*}"}"; _rn="${_rn%"${_rn##*[![:space:]]}"}"
-        case "${_rn:-}" in ''|'#'*) continue ;; esac
-        _rl="$(spira_repo_lanes "$_rn" 2>/dev/null)" || continue
-        case " $_rl " in *" $_mae_lane "*) _lane_admitted=1; break ;; esac
-    done < "$SPIRA_REPO_MAP"
-fi
-if [ "$_lane_admitted" = 0 ]; then
+if ! spira_lane_admitted "$_mae_lane"; then
     log "no repository admits lane ${_mae_lane} — skipping trigger"
     exit 0
 fi
