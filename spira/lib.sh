@@ -3006,7 +3006,14 @@ _attempts_sql_query() {   # _attempts_sql_query <id> -> the SQL that counts atte
     # (_check4_bulk_sql) unusable at more than a few ids (sp-rp4g4). Filtering the inner
     # subquery on the same literal id removes the correlation outright: it is now
     # independent of the outer row and evaluated once.
-    printf "select greatest(sum(case when event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%') then 1 else 0 end) - sum(case when event_type='closed' then 1 else 0 end) - sum(case when event_type='requeued' and (new_value='thrash' or new_value like 'unjudged%%') then 1 else 0 end), 0) from events where issue_id='%s' and created_at > coalesce((select max(created_at) from events where issue_id='%s' and event_type='poison.cleared'), '1970-01-01')" "$1" "$1"
+    #
+    # EACH sum() IS COALESCEd BEFORE THE ARITHMETIC. The outer WHERE can leave zero rows —
+    # every event at or before a just-written poison.cleared floor, the exact state right
+    # after a clear — and sum() over zero rows is NULL, not 0. NULL minus NULL is NULL, and
+    # greatest(NULL,0) is NULL too: the query printed "<nil>" instead of "0", and
+    # attempts_of's own fail-closed check (sp-418h5) correctly refused to parse it, reading
+    # as a query failure a caller right after unpoison.sh could not tell from a real one.
+    printf "select greatest(coalesce(sum(case when event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%') then 1 else 0 end),0) - coalesce(sum(case when event_type='closed' then 1 else 0 end),0) - coalesce(sum(case when event_type='requeued' and (new_value='thrash' or new_value like 'unjudged%%') then 1 else 0 end),0), 0) from events where issue_id='%s' and created_at > coalesce((select max(created_at) from events where issue_id='%s' and event_type='poison.cleared'), '1970-01-01')" "$1" "$1"
 }
 
 # attempts_of <id> -> count of in_progress status-change events
