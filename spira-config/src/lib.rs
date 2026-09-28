@@ -298,6 +298,7 @@ pub struct SpiraSection {
     pub ci_red_max_secs: Option<String>,
     pub base_ci_unreadable_grace_secs: Option<String>,
     pub preflight_wall_secs: Option<String>,
+    pub batcher_wall_secs: Option<String>,
     pub preflight_suite_max_secs: Option<String>,
     pub queue_infra_retries: Option<String>,
     pub queue_stuck_age: Option<String>,

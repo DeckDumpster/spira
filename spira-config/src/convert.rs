@@ -382,6 +382,7 @@ pub fn spira_section(
             "SPIRA_CI_RED_MAX_SECS" => s.ci_red_max_secs = Some(val.clone()),
             "SPIRA_BASE_CI_UNREADABLE_GRACE_SECS" => s.base_ci_unreadable_grace_secs = Some(val.clone()),
             "SPIRA_PREFLIGHT_WALL_SECS" => s.preflight_wall_secs = Some(val.clone()),
+            "SPIRA_BATCHER_WALL_SECS" => s.batcher_wall_secs = Some(val.clone()),
             "SPIRA_PREFLIGHT_SUITE_MAX_SECS" => s.preflight_suite_max_secs = Some(val.clone()),
             "SPIRA_QUEUE_INFRA_RETRIES" => s.queue_infra_retries = Some(val.clone()),
             "SPIRA_QUEUE_STUCK_AGE" => s.queue_stuck_age = Some(val.clone()),
