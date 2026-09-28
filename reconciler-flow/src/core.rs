@@ -45,9 +45,9 @@ const SENTINEL_OVERRUN_RATIO: f64 = 2.0;
 /// has no configured limit at all, only ever its own history.
 const DWELL_REGRESSION_RATIO: f64 = 3.0;
 
-/// Reopens per landed bead above which the rate is a gap (per Ryan, 2026-09-27: "take your
-/// default"). The caller (reconciler-flow's main) holds this report-only until 24h of
-/// `bead-stage` history exist, per the same decision.
+/// Reopens per landed bead above which the rate is a gap — one reopen per landed bead, taken
+/// as-is rather than derived from a fixture. The caller (reconciler-flow's main) holds this
+/// report-only until 24h of `bead-stage` history exist.
 const REWORK_THRESHOLD: f64 = 1.0;
 
 /// The lifecycle states `stage_dwell_regression_raw` is evaluated for every pass — the same
@@ -63,7 +63,7 @@ pub struct BacklogObserved {
     pub baseline: f64,
 }
 
-/// "The backlog drains" (per the design's intent, verbatim from Ryan): a backlog trending
+/// "The backlog drains" (the design's intent): a backlog trending
 /// past `BACKLOG_GROWTH_RATIO` times its own trailing 24h average is the flow gap this
 /// invariant exists to catch. A `baseline` of zero means there is no history yet — not a
 /// gap, since there is nothing yet to have grown past.
@@ -212,9 +212,8 @@ pub fn idle_capacity_raw(prev: &SlotsSample, current: &SlotsSample) -> RawStatus
     }
 }
 
-/// "Sentinel overrun: pass wall time more than twice the timer period" (design §3) — the
-/// literal recon finding of 2026-09-27 ("a sentinel pass took a median of 213s against a
-/// 2-minute timer") is inside this ratio; only a pass running past double the period fires.
+/// "Sentinel overrun: pass wall time more than twice the timer period" (design §3) — only a
+/// pass running past double the period fires.
 pub fn sentinel_overrun_raw(pass_wall_secs: u64, timer_period_secs: u64) -> RawStatus {
     let ceiling = timer_period_secs as f64 * SENTINEL_OVERRUN_RATIO;
     if (pass_wall_secs as f64) > ceiling {

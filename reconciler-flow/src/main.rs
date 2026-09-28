@@ -2,8 +2,7 @@
 // a trailing baseline (with optional per-stage floors from the desired-state document), stage
 // dwell, and round health (flip rate); plus idle capacity, sentinel overrun, rework rate and
 // stage dwell regression (design reconciler-time-series-2026-09-27 §3) — over the run/tsd/
-// time series. Runs on a 30-minute timer (Ryan's default window) — see
-// systemd/spira-reconciler-flow.timer.
+// time series. Runs on a 30-minute timer — see systemd/spira-reconciler-flow.timer.
 //
 // reconciler-flow --pass
 //
