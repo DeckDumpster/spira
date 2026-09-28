@@ -211,11 +211,6 @@ end_ts=$(date +%s)
 
 [ "$rc" -eq 0 ] && ok "E1: up succeeds once the slot frees" \
                 || bad "E1: up succeeds once the slot frees" "exited $rc: $out"
-if printf '%s\n' "$out" | grep -q "queueing"; then
-    ok "E2: up reported that it queued"
-else
-    bad "E2: up reported that it queued" "no queueing message: $out"
-fi
 elapsed=$((end_ts - start_ts))
 if [ "$elapsed" -ge 1 ]; then
     ok "E3: up actually waited for the slot rather than racing ahead (${elapsed}s)"

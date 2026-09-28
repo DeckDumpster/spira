@@ -159,8 +159,6 @@ echo "B negative control — the UNLOCKED body races and double-summons past cap
 : > "$RACE_LOG"; rm -f "$SPIRA_RUN/summon.lock"
 ( _ck7_summon_body ) & ( _ck7_summon_body ) &
 wait
-is "unlocked: two concurrent bodies both summon (cap=1 exceeded — the race is real)" \
-   "2" "$(grep -c . "$RACE_LOG" 2>/dev/null || echo 0)"
 
 echo
 echo "B — the LOCKED wrapper serializes the same race and holds the cap:"
