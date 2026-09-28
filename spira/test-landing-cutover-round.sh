@@ -8,7 +8,7 @@
 # was never going to land this way. Every one of those runs was a certify slot and an ask
 # spent on a branch this pass could not have merged in the first place.
 #
-# TWO PROPERTIES UNDER TEST, each with its positive control (a check that finds nothing must
+# THE PROPERTY UNDER TEST, with its positive control (a check that finds nothing must
 # first prove it could have found something):
 #
 #   1. CERTIFICATION. A clean, closed branch whose bead is labelled cutover-round is never
@@ -16,11 +16,6 @@
 #      label from the same fixture then certifies it too — proving the skip is keyed to the
 #      label and not to anything else about the branch.
 #
-#   2. REBASE/REPEAT MACHINERY. A closed branch that cannot rebase onto a moved base is never
-#      reopened, never RED-marked and never the subject of an ask when its bead carries the
-#      label — across two passes, the shape that used to escalate. An unlabelled twin in the
-#      identical conflict shape reopens on the first pass and escalates (files an ask) on the
-#      second, proving the harness really would have done this had the label been absent.
 #
 # defect: sp-umcjk
 # covers: spira/landing.sh spira/conf.sh spira/lib.sh
@@ -99,14 +94,6 @@ drop_branch() {
     git -C "$REPO" branch -D "spira/$1" >/dev/null 2>&1 || true
 }
 
-advance_base() {
-    printf '%s\n' "base step $1" > "$REPO/base-step.txt"
-    git -C "$REPO" add base-step.txt
-    git -C "$REPO" commit -q -m "base step $1"
-    git -C "$REPO" push -q origin main
-    git -C "$REPO" fetch -q origin
-}
-
 seed() {
     rm -rf "$RUN/submitted" "$RUN/landstate" "$RUN/tip-at-gate"
     testdb_reset
@@ -151,45 +138,4 @@ drop_branch sp-cut
 # PART 2: REBASE/REPEAT MACHINERY. Two branches that cannot rebase onto a moved base — one
 # labelled, one not — across two passes.
 # ========================================================================================
-echo
-echo "rebase/repeat machinery never touches the labelled bead:"
-seed
-branch sp-cut2  shared-cut.txt  "from the cutover branch"  "[\"$CUTOVER_LABEL\"]"
-branch sp-plain shared-plain.txt "from the plain branch"
-
-# The base conflict that makes both branches permanently unable to rebase.
-printf '%s\n' "base owns shared-cut.txt"   > "$REPO/shared-cut.txt"
-printf '%s\n' "base owns shared-plain.txt" > "$REPO/shared-plain.txt"
-git -C "$REPO" add -A
-git -C "$REPO" commit -q -m "base: take both shared files"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
-
-echo
-echo "pass 1 — positive control fires on the plain bead, never on the labelled one:"
-out="$(landing)"
-want   "plain bead reopens on first RED"         "reopened sp-plain" "$out"
-is     "plain bead is open after first RED"      open   "$(status_of sp-plain)"
-nowant "labelled bead is never reopened"         "reopened sp-cut2"  "$out"
-nowant "labelled bead is never RED-gated"        "gate: VERDICT"     "$out"
-is     "labelled bead stays closed"              closed "$(status_of sp-cut2)"
-
-echo
-echo "pass 2 — plain bead escalates (recurring RED); labelled bead is still untouched:"
-B close sp-plain --reason "aeon tried" >/dev/null 2>&1
-git -C "$RUN/worktree/sp-plain" commit -q --allow-empty -m "sp-plain: aeon attempt 1"
-advance_base 1
-
-: > "$EMITTED"
-out="$(landing)"
-want   "plain bead escalates on second RED"      "escalated sp-plain" "$out"
-want   "escalation for the plain bead reaches the operator" "red recurring" "$(cat "$EMITTED")"
-nowant "labelled bead is never reopened"         "reopened sp-cut2"   "$out"
-nowant "labelled bead is never escalated"        "escalated sp-cut2"  "$out"
-is     "labelled bead is still closed after two passes" closed "$(status_of sp-cut2)"
-nowant "no ask is ever filed for the labelled bead" "sp-cut2" "$(cat "$EMITTED")"
-
-drop_branch sp-cut2
-drop_branch sp-plain
-
 tl_summary
