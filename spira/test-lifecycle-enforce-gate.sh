@@ -119,8 +119,8 @@ fresh; seed sp-lea-1
 rc="$(run_aeon)"
 is    "aeon.sh exits 0"                                    "0"    "$rc"
 is    "bead closed via the legacy path"                     "closed" "$(bead_status sp-lea-1)"
-nowant "SEEN RED: the stub spira-lc was never invoked"      "" "$([ -e "$TMP/stub-lc-invoked" ] && echo INVOKED)"
-nowant "SEEN RED: the stub work client was never invoked"   "" "$([ -e "$TMP/stub-work-invoked" ] && echo INVOKED)"
+is    "SEEN RED: the stub spira-lc was never invoked"       "absent" "$([ -e "$TMP/stub-lc-invoked" ] && echo INVOKED || echo absent)"
+is    "SEEN RED: the stub work client was never invoked"    "absent" "$([ -e "$TMP/stub-work-invoked" ] && echo INVOKED || echo absent)"
 is    "bd was on the model's PATH (legacy, unwrapped)"      "BD_FOUND" "$(cat "$TMP/bd-found" 2>/dev/null || echo absent)"
 is    "no work-env.sh restricted env reached the model"     "" "$(cat "$TMP/restricted-env" 2>/dev/null || true)"
 
