@@ -6381,12 +6381,26 @@ _spira_gitstore() {      # _spira_gitstore <path> -> its shared git directory, a
 # `queue.forge` NORMALIZES TO `queue` HERE, so every existing `[ "$mode" = queue ]` dispatcher
 # in landing.sh, queue.sh, verdict.sh, batch.sh and this file keeps working unchanged against
 # the alias — the one place that decides land mode is the one place that needs to know the
-# alias exists. `queue.local` stays distinct: nothing that dispatches on `queue` today should
-# also fire for it, since its landing pipeline is separate work.
+# alias exists. `queue.local` stays distinct at this layer: its round lands locally
+# (land-local) rather than through a batch PR, so a dispatcher that is specifically about the
+# batch-PR pipeline must still spell out `queue` alone. Certification and the periodic
+# step/verdict dispatch are not specific to that pipeline — see repo_land_queued.
 repo_land() {            # repo_land <name> -> push | pr | hold | queue | queue.local
     local m; m="$(repo_field "${1:-}" land)"
     [ "$m" = "queue.forge" ] && m=queue
     printf '%s' "${m:-push}"
+}
+
+# repo_land_queued <name> -> 0 when the repo is EITHER merge-queue mode (queue or
+# queue.local), 1 otherwise. Certification (queue.sh submit, aeon.sh's own self-cert), the
+# landing pass's "no local rebase" arm, and the periodic step/verdict dispatch all judge a
+# SUBMITTED branch the same way regardless of how its round eventually lands — only the
+# round's own terminal step (a batch PR vs. land-local) differs between the two.
+repo_land_queued() {
+    case "$(repo_land "${1:-}")" in
+        queue|queue.local) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
 # spira_repo_lanes <name> -> the granted lane set (space-separated partition labels).

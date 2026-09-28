@@ -13,6 +13,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/lib.sh"
 
 for _name in $(spira_repos); do
-    [ "$(repo_land "$_name")" = queue ] || continue
+    repo_land_queued "$_name" || continue
     bash "$HERE/queue.sh" step "$_name" || true
 done

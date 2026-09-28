@@ -42,7 +42,8 @@ mkdir -p "$RUN/worktree" "$SH"
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
-stub queue.sh 'exit 0'
+QUEUE_LOG="$TMP/queue-calls.log"
+stub queue.sh 'printf "%s\n" "$*" >> "'"$QUEUE_LOG"'"; exit 0'
 stub gh 'exit 1'
 
 # THE GATE IS ALSO THE COUNTER. Each invocation appends the branch name so the suite can
@@ -71,7 +72,7 @@ RMAP
 write_map
 
 landing() {
-    rm -f "$RUN/landing.progress" "$GATE_COUNT"
+    rm -f "$RUN/landing.progress" "$GATE_COUNT" "$QUEUE_LOG"
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" \
@@ -231,5 +232,71 @@ push_after="$(git -C "$PUSHREMOTE" rev-parse main 2>/dev/null)"
 want "push-mode branch reports landed"  "landed spira/sp-push-a"  "$out"
 is   "push-mode remote actually moved"  "yes"  "$([ "$push_before" != "$push_after" ] && echo yes || echo no)"
 is   "push-mode positive control: gate was called" "1" "$(gate_n)"
+
+# -----------------------------------------------------------------------------------------
+# QUEUE.LOCAL: the same certify-not-rebase arm (sp-xe12f) — a closed branch is CERTIFIED
+# with zero gate calls and, unlike every other mode, is NEVER REBASED onto the (local) base
+# even when it conflicts. Before sp-xe12f, landing.sh's queue-mode arm matched only the
+# literal string "queue", so a queue.local repo fell through to the ordinary rebase path
+# below it and this whole case reopened the bead on the planted conflict instead of
+# certifying it — the positive control for that: local/main advances with a conflicting
+# edit to the SAME file the branch touches, so a landing pass that attempts the rebase (the
+# old behaviour) must hit that conflict and reopen the bead, while one that only certifies
+# (the fixed behaviour) leaves the branch's own tip byte-identical and the bead closed.
+# -----------------------------------------------------------------------------------------
+LOCALREPO="$TMP/local-repo"
+git init -q -b trunk "$LOCALREPO"
+git -C "$LOCALREPO" commit -q --allow-empty -m base
+git -C "$LOCALREPO" branch local/main trunk
+
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-qlocal-cert","title":"qlocal","status":"closed","issue_type":"task","labels":["repo:local-fixture"],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-qlocal-cert","depends_on_id":"sp-goal","type":"parent-child"}]}
+JSONL
+
+mkdir -p "$RUN/worktree-local"
+git -C "$LOCALREPO" worktree add -q -b "spira/sp-qlocal-cert" "$RUN/worktree-local/sp-qlocal-cert" local/main
+printf 'branch-version\n' > "$RUN/worktree-local/sp-qlocal-cert/shared.txt"
+git -C "$RUN/worktree-local/sp-qlocal-cert" add -A
+git -C "$RUN/worktree-local/sp-qlocal-cert" commit -q -m "sp-qlocal-cert sp-1fm88 — the work"
+qlocal_tip="$(git -C "$LOCALREPO" rev-parse spira/sp-qlocal-cert)"
+
+# Advance local/main with a CONFLICTING edit to the same file, after the branch was cut.
+git -C "$LOCALREPO" checkout -q local/main
+printf 'base-version\n' > "$LOCALREPO/shared.txt"
+git -C "$LOCALREPO" add -A
+git -C "$LOCALREPO" commit -q -m "base moves on, conflicting"
+git -C "$LOCALREPO" checkout -q trunk
+localmain_before="$(git -C "$LOCALREPO" rev-parse local/main)"
+
+cat > "$SH/repo-map" <<RMAP
+$REPONAME     | $REPO      | queue       | origin/main | | |
+local-fixture | $LOCALREPO | queue.local | local/main  | | |
+RMAP
+rm -f "$GATE_COUNT" "$RUN/landing.progress"
+out="$(landing)"
+is   "queue.local: gate NOT called"          "0" "$(gate_n)"
+want "queue.local: certify is reported"      "certified spira/sp-qlocal-cert" "$out"
+is   "queue.local: local/main is untouched"  "$localmain_before" "$(git -C "$LOCALREPO" rev-parse local/main)"
+is   "queue.local: branch tip is byte-identical (never rebased)" \
+    "$qlocal_tip" "$(git -C "$LOCALREPO" rev-parse spira/sp-qlocal-cert)"
+case "$(landstate sp-qlocal-cert)" in
+    CERTIFIED*) ok "queue.local: landstate says CERTIFIED" ;;
+    *)          bad "queue.local: landstate says CERTIFIED" "got: $(landstate sp-qlocal-cert)" ;;
+esac
+is   "queue.local: bead stays closed"        "closed" "$(status_of sp-qlocal-cert)"
+nowant "queue.local: no reopen for the planted conflict" "Reopened by sentinel" "$out"
+
+# QUEUE.LOCAL IS ALSO DISPATCHED THE SAME AS QUEUE: before sp-xe12f, landing.sh's three
+# `queue.sh step` call sites matched only the literal string "queue", so a queue.local repo
+# was certified above but never had `queue.sh step` (verdict.sh's settle, the batcher's
+# local round, queue.sh publish) called for it at all — the certified pool filled and
+# nothing ever drained it. queue.sh itself is stubbed above to log its own invocation.
+case "$(cat "$QUEUE_LOG" 2>/dev/null)" in
+    *"step local-fixture"*) ok "queue.local: queue.sh step was dispatched for it" ;;
+    *)                      bad "queue.local: queue.sh step was dispatched for it" \
+                                 "got: [$(cat "$QUEUE_LOG" 2>/dev/null)]" ;;
+esac
 
 tl_summary

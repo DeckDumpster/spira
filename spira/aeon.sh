@@ -945,25 +945,26 @@ Requeued (thrash): the deliverable did not move for ${SPIRA_THRASH_MINUTES:-20}m
             release_own_claim "$BEAD_ID" ;;
         esac
     elif [ -f "$SPIRA_HOME/gate-run.sh" ]; then
-        local gate_st _cert_mode _cert_ahead_subjects _cert_hasown _cert_tip _cert_ls_state _cert_ls_tip
+        local gate_st _cert_queued _cert_ahead_subjects _cert_hasown _cert_tip _cert_ls_state _cert_ls_tip
         gate_why="$(bash "$SPIRA_HOME/gate-run.sh" --status "$BRANCH" "$REPO_NAME" 2>/dev/null)"; gate_st=$?
         # A CLOSED, COMMITTED BRANCH MUST NOT DEPEND ON THE SESSION HAVING CALLED
         # queue.sh submit ITSELF (sp-u9f82). A branch ahead of the base is certified here,
         # by the harness, unless it is CERTIFIED already.
         #
-        # QUEUE MODE ONLY. Every other mode's periodic landing pass already walks every
-        # branch under refs/heads/spira/* and lands or reopens it without needing a
-        # landstate record first — only queue mode's batch builder selects on CERTIFIED
-        # alone, which is the one case a missing record actually strands a branch. In push
-        # mode, "certify" IS "land": queue.sh submit rebases and pushes straight to the
-        # base, a repository-wide side effect this file has no business causing mid-teardown.
-        _cert_mode="$(repo_land "$REPO_NAME" 2>/dev/null)"
+        # MERGE-QUEUE MODES ONLY (queue and queue.local). Every other mode's periodic
+        # landing pass already walks every branch under refs/heads/spira/* and lands or
+        # reopens it without needing a landstate record first — only these two modes'
+        # round builder selects on CERTIFIED alone, which is the one case a missing
+        # record actually strands a branch. In push mode, "certify" IS "land": queue.sh
+        # submit rebases and pushes straight to the base, a repository-wide side effect
+        # this file has no business causing mid-teardown.
+        repo_land_queued "$REPO_NAME" && _cert_queued=1 || _cert_queued=0
         # "AHEAD" MEANS A COMMIT NAMING THIS BEAD, not merely a nonzero count. sp-vd-deep
         # (test-aeon-verdict.sh) landed its own commit straight onto the base and was closed
         # over a branch that still carried unrelated leftover commits from an earlier,
         # abandoned attempt; those commits are ahead of the base but are nobody's fault this
         # bead answers for, and gating or certifying them in its name is simply wrong.
-        if [ "$_cert_mode" = queue ]; then
+        if [ "$_cert_queued" = 1 ]; then
             _cert_ahead_subjects="$(git -C "$REPO" log --format='%s%n%b' "$BASE_FQREF..$BRANCH" 2>/dev/null)"
             if grep -qF "$BEAD_ID" <<< "$_cert_ahead_subjects"; then _cert_hasown=1; else _cert_hasown=0; fi
         else
@@ -983,7 +984,7 @@ Requeued (thrash): the deliverable did not move for ${SPIRA_THRASH_MINUTES:-20}m
                 # and the landing pass gates the branch again before it merges. Must not be silent.
                 bdq note "$BEAD_ID" "Closed by the session while its landing gate was still running — $gate_why. The close carries no gate verdict; the landing pass gates this branch again and reopens the bead if it fails." >/dev/null 2>&1
                 log "$FAYTH: $BEAD_ID closed with its gate still running ($gate_why)" ;;
-            1)  if [ "$_cert_mode" != queue ]; then
+            1)  if [ "$_cert_queued" != 1 ]; then
                     bdq note "$BEAD_ID" "Closed against a recorded FAIL verdict for this exact tree — ${gate_why:-gate returned fail}. The landing pass will reopen this bead." >/dev/null 2>&1
                     log "$FAYTH: $BEAD_ID closed against a recorded FAIL gate verdict"
                 elif [ "$_cert_hasown" != 1 ]; then
@@ -1001,7 +1002,7 @@ $gate_why"
                     st=open
                     log "$FAYTH: $BEAD_ID REOPENED — closed against a recorded FAIL gate verdict"
                 fi ;;
-            3)  if [ "$_cert_mode" != queue ]; then
+            3)  if [ "$_cert_queued" != 1 ]; then
                     bdq note "$BEAD_ID" "Closed without ever obtaining a gate verdict — no gate ran or finished for this branch." >/dev/null 2>&1
                     log "$FAYTH: $BEAD_ID closed with no gate verdict (none ran)"
                 elif [ "$_cert_hasown" != 1 ]; then
@@ -1024,7 +1025,7 @@ $gate_why"
                 # same function — makes the key stale. That is not "no gate ran": the
                 # session's move was correct and the note must not accuse it of skipping a
                 # step it did not skip (law-a-deliberate-state-is-not-a-fault).
-                if [ "$_cert_mode" != queue ]; then
+                if [ "$_cert_queued" != 1 ]; then
                     bdq note "$BEAD_ID" "Closed holding a gate verdict that no longer applies — $gate_why. Something (most likely this teardown's own rebase onto $BASE after the close) changed the tree the verdict was for. This is not a missing gate run; the landing pass gates $BRANCH as it now stands." >/dev/null 2>&1
                     log "$FAYTH: $BEAD_ID closed with a stale gate verdict ($gate_why)"
                 elif [ "$_cert_hasown" != 1 ]; then
@@ -1047,7 +1048,7 @@ $gate_why"
                 # was reopened as cert-gate-red 20+ times over 5 days against one such corpse,
                 # because gate-run.sh used to collapse this into the same exit code as a real
                 # recorded FAIL and this case statement believed it (sp-k7klr).
-                if [ "$_cert_mode" != queue ]; then
+                if [ "$_cert_queued" != 1 ]; then
                     bdq note "$BEAD_ID" "Closed without ever obtaining a gate verdict — the gate run died before recording one. $gate_why" >/dev/null 2>&1
                     log "$FAYTH: $BEAD_ID closed with no gate verdict (run died) — $gate_why"
                 elif [ "$_cert_hasown" != 1 ]; then

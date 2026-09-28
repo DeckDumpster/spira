@@ -8,7 +8,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::core::{Batch, Bead, Ci, Member, Outcome, PrState, RepoState, Snapshot};
+use crate::core::{Batch, Bead, Ci, Member, Outcome, PrState, Publish, PublishOutcome, RepoState, Snapshot};
 
 #[derive(Clone, Debug)]
 pub struct Repo {
@@ -66,6 +66,18 @@ pub fn read_batch(dir: &Path) -> Result<Option<Batch>, String> {
         head: kv.get("head").cloned().unwrap_or_default(),
         members: members(kv.get("members").map(String::as_str).unwrap_or("")),
     }))
+}
+
+/// The `publish` record queue.sh's `_lc_publish_step` writes for a queue.local repo, once its
+/// PR number is known — written atomically (a temp file renamed into place), unlike `open`,
+/// so there is no "cut in progress" partial state to filter out here.
+pub fn read_publish(dir: &Path) -> Result<Option<Publish>, String> {
+    let Some(kv) = read_kv(&dir.join("publish"))? else { return Ok(None) };
+    let pr = kv.get("pr").cloned().unwrap_or_default();
+    if pr.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(Publish { pr, head: kv.get("head").cloned().unwrap_or_default() }))
 }
 
 pub fn read_bisect(dir: &Path) -> Result<Option<(Vec<String>, u64)>, String> {
@@ -275,6 +287,10 @@ pub fn snapshot(env: &Env, repo: &Repo, prev: &RepoState, now: u64) -> Snapshot 
         Ok(b) => s.bisect = b,
         Err(e) => s.errors.push(e),
     }
+    match read_publish(&qdir) {
+        Ok(p) => s.publish = p,
+        Err(e) => s.errors.push(e),
+    }
     let certified = match read_certified(&env.landstate) {
         Ok(c) => c,
         Err(e) => {
@@ -317,6 +333,19 @@ pub fn snapshot(env: &Env, repo: &Repo, prev: &RepoState, now: u64) -> Snapshot 
             let state = read_pr_state(repo, &pb.pr);
             let on_base = if state == PrState::Merged { read_on_base(repo, &pb.members) } else { vec![] };
             s.outcome = Some(Outcome { pr: pb.pr.clone(), state, on_base });
+        }
+    }
+
+    if let Some(p) = &s.publish {
+        match read_ci(repo, &p.pr) {
+            Ok(c) => s.publish_ci = Some(c),
+            Err(e) => s.errors.push(e),
+        }
+    }
+    if let Some(pp) = prev.publish() {
+        if s.publish.as_ref().map(|p| p.pr != pp.pr).unwrap_or(true) {
+            let state = read_pr_state(repo, &pp.pr);
+            s.publish_outcome = Some(PublishOutcome { pr: pp.pr.clone(), state });
         }
     }
     s
