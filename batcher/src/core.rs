@@ -418,6 +418,43 @@ pub fn abandoned_event(id: &Id, why: &str) -> Event {
 }
 
 // ---------------------------------------------------------------------------------------
+// Local red-suite attribution (sp-hqoap): a round that goes red on its own local corpus is
+// never sent to CI. attribute.sh (sp-q8xs9) names, per red suite, either the member(s) whose
+// tip reproduces it or BASE — the base itself, unrelated to any round member. What is pure
+// here is just naming the two outcomes the IO seam's attribute() call can produce; the
+// attribution itself (bisection, per-member reproduction) is attribute.sh's own, already
+// tested (test-attribute.sh) and not reproduced in this crate.
+// ---------------------------------------------------------------------------------------
+
+/// One member ejected from the round before it ever reached CI, and the suite(s) attribute.sh
+/// found it responsible for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ejection {
+    pub id: Id,
+    pub suites: Vec<Id>,
+}
+
+pub fn ejected_event(e: &Ejection) -> Event {
+    ev("ejected", vec![e.id.clone()], format!("{} ejected: red on {} (local attribution, pre-PR)", e.id, e.suites.join(",")))
+}
+
+/// A suite red against the base itself blocks the whole round — no member is at fault, so
+/// none is ejected — and is filed as an incident instead (base_fail_body).
+pub fn base_fail_event(repo: &str, suites: &[Id]) -> Event {
+    ev("basefail", vec![], format!("{repo}: base itself red on {} — held for Ops, no member ejected", suites.join(",")))
+}
+
+/// The body of the incident filed for a base-red or an unattributable local red: same shape
+/// as judgement_body (repo, where, suites, evidence), but with no member list — a base fail
+/// has no round member to name, and an unattributed red names none by definition.
+pub fn base_fail_body(repo: &str, round_branch: &str, suites: &[Id], evidence: &str) -> String {
+    format!(
+        "Repo: {repo}\nRound branch: {round_branch}\nFailing suite(s): {}\nEvidence: {evidence}\n",
+        suites.join(", ")
+    )
+}
+
+// ---------------------------------------------------------------------------------------
 // Judgement: a red the corpus or CI produced that this crate cannot resolve mechanically —
 // re-run already happened (classify), delete-if-it-flips already didn't apply. What is left
 // is Scope C: pin it to a member, fix it, sequence it behind a dependency, or revert main.

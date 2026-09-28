@@ -102,7 +102,11 @@ RMAP
 
 # ── stub testenv-batch: writes the exact result protocol testenv-batch.sh itself documents
 # (<status> <epoch> <secs> <fp> <mode> <producer> <rc>), red for every suite named in
-# STUB_RED_SUITES (comma-separated), ok otherwise.
+# STUB_RED_SUITES (comma-separated), ok otherwise. STUB_FLAKE_SUITE is red only for its first
+# STUB_FLAKE_RED_TIMES invocations (counted in STUB_FLAKE_COUNTER_FILE) and green after — a
+# suite that would flip green on an immediate rerun, the shape case G needs to show that a
+# local red now goes through attribution regardless of whether an internal retry would have
+# waved it through.
 cat > "$SH/testenv-batch-stub.sh" <<'STUB'
 #!/usr/bin/env bash
 suites_csv=""
@@ -122,9 +126,18 @@ is_red() {
     for r in "${redset[@]:-}"; do [ -n "$r" ] && [ "$r" = "$s" ] && return 0; done
     return 1
 }
+is_flake_red() {
+    local s="$1" n=0
+    [ -n "${STUB_FLAKE_SUITE:-}" ] && [ "$s" = "$STUB_FLAKE_SUITE" ] || return 1
+    local cf="${STUB_FLAKE_COUNTER_FILE:?STUB_FLAKE_COUNTER_FILE unset}"
+    [ -r "$cf" ] && n="$(cat "$cf")"
+    n=$((n + 1))
+    printf '%s' "$n" > "$cf"
+    [ "$n" -le "${STUB_FLAKE_RED_TIMES:-1}" ]
+}
 for s in "${suites[@]:-}"; do
     [ -n "$s" ] || continue
-    if is_red "$s"; then
+    if is_red "$s" || is_flake_red "$s"; then
         printf 'red %s 1 fp serial explicit 1\n' "$(date +%s)" > "$results/$s.result"
         printf '  FAIL — synthetic failure planted in %s\n' "$s" > "$results/$s.out"
         red=1
@@ -137,6 +150,73 @@ done
 exit 0
 STUB
 chmod +x "$SH/testenv-batch-stub.sh"
+
+# ── stub attribute.sh: the round's own local red-suite attribution, stubbed so this suite
+# checks WIRING (does a red go through attribution, does an EJECT line actually eject, does a
+# BASE owner block the round) without paying for real bisection or containers — that is
+# test-attribute.sh's own job (host-reason: podman). STUB_ATTR_MODE selects the shape:
+#   eject     — every suite named in --suites is attributed to STUB_ATTR_OWNER
+#   basefail  — every suite named in --suites is attributed to BASE
+#   fail      — the attribution step itself is unavailable (default: fails closed rather
+#               than silently reporting "nothing to blame" for a mode nobody set)
+cat > "$SH/attribute-stub.sh" <<'ATTR'
+#!/usr/bin/env bash
+suites_csv=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --suites) shift; suites_csv="${1:-}"; shift ;;
+        --round|--base|--members|--repo) shift 2 ;;
+        *) shift ;;
+    esac
+done
+case "${STUB_ATTR_MODE:-fail}" in
+    eject)
+        IFS=',' read -r -a _s <<< "$suites_csv"
+        for s in "${_s[@]}"; do
+            [ -n "$s" ] || continue
+            printf 'ATTR %s owner=%s method=single wall=1s fail=\n' "$s" "${STUB_ATTR_OWNER:?STUB_ATTR_OWNER unset}"
+        done
+        printf 'EJECT %s %s\n' "${STUB_ATTR_OWNER:?}" "$suites_csv"
+        exit 0
+        ;;
+    basefail)
+        IFS=',' read -r -a _s <<< "$suites_csv"
+        for s in "${_s[@]}"; do
+            [ -n "$s" ] || continue
+            printf 'ATTR %s owner=BASE method=base wall=1s fail=\n' "$s"
+        done
+        exit 0
+        ;;
+    *)
+        printf 'attribute-stub: attribution step is stubbed out and refuses\n' >&2
+        exit 1
+        ;;
+esac
+ATTR
+chmod +x "$SH/attribute-stub.sh"
+
+# ── stub incident.sh: logs the Ops filing (title, dedupe ref, cause) and returns an
+# incrementing bead id, the same log-and-return-id shape as the spira-lc stub below.
+INCIDENT_LOG="$TMP/incident-log"; : > "$INCIDENT_LOG"
+cat > "$SH/incident.sh" <<INC
+#!/usr/bin/env bash
+cmd="\${1:-}"; shift
+case "\$cmd" in
+    file)
+        title="\${1:-}"; src="\${2:--}"
+        body="\$(cat "\$src" 2>/dev/null)"
+        n=\$(( \$(wc -l < "$INCIDENT_LOG" 2>/dev/null || echo 0) + 1 ))
+        {
+            printf 'FILE title=%s ref=%s repo=%s cause=%s\n' \
+                "\$title" "\${SPIRA_INCIDENT_REF:-}" "\${SPIRA_INCIDENT_REPO:-}" "\${SPIRA_INCIDENT_CAUSE:-}"
+            printf '%s\n' "\$body"
+        } >> "$INCIDENT_LOG"
+        printf 'sp-inc%d\n' "\$n"
+        ;;
+    *) printf 'incident-stub: unexpected call: %s\n' "\$cmd" >&2; exit 1 ;;
+esac
+INC
+chmod +x "$SH/incident.sh"
 
 # ── fake forge: pr-create logs (head, base, title) and returns an incrementing PR number.
 FORGE_LOG="$TMP/forge-log"; : > "$FORGE_LOG"
@@ -191,10 +271,16 @@ cut_repo() {
     SPIRA_FORGE="$SH/forge-fixture.sh" \
     SPIRA_TSD_BIN="$TSD_BIN" \
     STUB_RED_SUITES="${STUB_RED_SUITES:-}" \
+    STUB_FLAKE_SUITE="${STUB_FLAKE_SUITE:-}" \
+    STUB_FLAKE_COUNTER_FILE="${STUB_FLAKE_COUNTER_FILE:-}" \
+    STUB_FLAKE_RED_TIMES="${STUB_FLAKE_RED_TIMES:-1}" \
+    STUB_ATTR_MODE="${STUB_ATTR_MODE:-}" \
+    STUB_ATTR_OWNER="${STUB_ATTR_OWNER:-}" \
     SPIRA_LC_BIN="${SPIRA_LC_BIN:-}" \
     SPIRA_LC_STUB_LOG="${SPIRA_LC_STUB_LOG:-}" \
     SPIRA_LC_STUB_RC="${SPIRA_LC_STUB_RC:-0}" \
-        "$BATCHER_BIN" cut "$REPONAME" --testenv-batch "$SH/testenv-batch-stub.sh" 2>&1
+        "$BATCHER_BIN" cut "$REPONAME" --testenv-batch "$SH/testenv-batch-stub.sh" \
+            --attribute "$SH/attribute-stub.sh" 2>&1
 }
 
 B() { "${TESTDB_BD:-bd}" -C "$SPIRA_DB" "$@"; }
@@ -204,6 +290,12 @@ d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(d[0].get("status",""))' 2>/dev/null; }
 open_batch_file() { printf '%s/%s/open' "$QUEUEDIR" "$REPONAME"; }
 open_field() { grep "^${1}=" "$(open_batch_file)" 2>/dev/null | head -1 | cut -d= -f2-; }
+notes_of() {
+    B show "$1" --json 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
+print(d[0].get("notes","") or "")' 2>/dev/null
+}
 
 plant() {   # plant <id> [express]
     local id="$1" express_label="" lbls="\"spira\",\"plan\",\"repo:$REPONAME\""
@@ -264,11 +356,15 @@ members_case_a="$(open_field members)"
 branch_case_a="$(open_field branch)"
 
 # =============================================================================
-# CASE B — double-red: the stub corpus fails test-b.sh on both the first run and
-# the re-run. No PR opens; the member is left CERTIFIED for judgement to resolve.
+# CASE B — local attribution (sp-hqoap, law-a-round-takes-certified-tips as amended
+# 2026-09-27): the stub corpus turns test-b.sh red; attribution names sp-cbbb2 its owner.
+# sp-cbbb2 is ejected — bead reopened, landstate EJECTED, note naming every suite it turned
+# red — and the round re-runs on the reduced membership: green, so the PR opens WITHOUT the
+# ejected member but WITH its innocent bystander (the positive control for "only the named
+# member is dropped, not the whole round").
 # =============================================================================
 echo
-echo "B. double-red: no PR opens, member stays CERTIFIED:"
+echo "B. local attribution ejects the culprit; the PR opens without it:"
 plant sp-cbbb2 express
 git -C "$REPO" worktree add -q -b spira/sp-cbbb2 "$RUN/worktree/sp-cbbb2" main
 printf 'b\n' > "$RUN/worktree/sp-cbbb2/b.txt"
@@ -277,27 +373,95 @@ git -C "$RUN/worktree/sp-cbbb2" commit -q -m "sp-cbbb2: work"
 tip_b="$(git -C "$REPO" rev-parse spira/sp-cbbb2)"
 git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cbbb2"
 certify sp-cbbb2 "$tip_b"
+
+plant sp-cbbb3
+git -C "$REPO" worktree add -q -b spira/sp-cbbb3 "$RUN/worktree/sp-cbbb3" main
+printf 'b3\n' > "$RUN/worktree/sp-cbbb3/b3.txt"
+git -C "$RUN/worktree/sp-cbbb3" add -A
+git -C "$RUN/worktree/sp-cbbb3" commit -q -m "sp-cbbb3: work"
+tip_b3="$(git -C "$REPO" rev-parse spira/sp-cbbb3)"
+git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cbbb3"
+certify sp-cbbb3 "$tip_b3"
 rm -f "$(open_batch_file)"
 
-out_b="$(STUB_RED_SUITES="test-b.sh" cut_repo)"
-want "B: reports the double-red"        "double-red"  "$out_b"
-nowant "B: does not report a PR opening" "PR "         "$out_b"
-is   "B: no open-batch file"            "0" "$([ -f "$(open_batch_file)" ] && echo 1 || echo 0)"
-is   "B: sp-cbbb2 still CERTIFIED"      "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cbbb2")"
+# The stub corpus cannot see which member's diff caused a suite to fail (it is a fixed
+# red/green switch, not a real interpreter of the tree under test) — so test-b.sh is scripted
+# red on the FIRST corpus run only (STUB_FLAKE_RED_TIMES=1), the same shape as sp-cbbb2's own
+# commit actually being the cause: once it is ejected and the round re-runs, the suite is
+# green, exactly as removing the real culprit's diff would make it.
+FLAKE_COUNTER_B="$TMP/flake-counter-b"; rm -f "$FLAKE_COUNTER_B"
+prcreate_before_b="$(grep -c '^pr-create' "$FORGE_LOG")"
+out_b="$(STUB_FLAKE_SUITE=test-b.sh STUB_FLAKE_COUNTER_FILE="$FLAKE_COUNTER_B" STUB_FLAKE_RED_TIMES=1 \
+         STUB_ATTR_MODE=eject STUB_ATTR_OWNER=sp-cbbb2 cut_repo)"
+want   "B: reports the ejection, naming the member and the suite" "sp-cbbb2 ejected: red on test-b.sh" "$out_b"
+want   "B: still reports the PR opening"                          "PR "                                "$out_b"
+nowant "B: no judgement/double-red language — this was resolved mechanically" "judgement" "$out_b"
+is     "B: sp-cbbb2 landstate EJECTED"    "EJECTED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cbbb2")"
+is     "B: sp-cbbb2 reopened, not left closed" "open" "$(status_of sp-cbbb2)"
+want   "B: ejection note names every suite it turned red" "test-b.sh" "$(notes_of sp-cbbb2)"
+is     "B: sp-cbbb3 (the bystander) landstate BATCHED" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cbbb3")"
+is     "B: open-batch carries only the bystander" "sp-cbbb3:$tip_b3" "$(open_field members)"
+nowant "B: open-batch does not carry the ejected member" "sp-cbbb2" "$(open_field members)"
+is     "B: forge pr-create called (once more than before this case)" "$((prcreate_before_b + 1))" "$(grep -c '^pr-create' "$FORGE_LOG")"
 
-# THE SUMMON (sp-47kq1): a double-red the crate cannot resolve mechanically files a bead for
-# the batcher persona through bead.sh's own contract, never bd create directly, so its
-# partition label comes from batcher.fayth rather than being guessed here a second time.
-want "B: reports the judgement bead it filed" "filed sp-" "$out_b"
-judgement_id="$(printf '%s\n' "$out_b" | sed -n 's/.*filed \(sp-[a-z0-9.]*\) for judgement.*/\1/p')"
-is   "B: exactly one bead filed for judgement" "1" \
-    "$(B list --all --label batch-judgement --label "repo:$REPONAME" --json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d if isinstance(d,list) else [d]))')"
-want "B: judgement bead title names the repo and suite" "$REPONAME" "$(B show "$judgement_id" --json 2>/dev/null)"
-want "B: judgement bead title names the failing suite" "test-b.sh" "$(B show "$judgement_id" --json 2>/dev/null)"
-want "B: judgement bead body names the culprit member" "sp-cbbb2" "$(B show "$judgement_id" --long --json 2>/dev/null)"
+# =============================================================================
+# CASE G — attribution itself is unavailable: a locally-red round never opens a PR, even
+# when the very next run of the same suite would have come back green. The fixture's own
+# red is a FLAKE (red once, green after) precisely because a static, always-red suite would
+# already have been blocked by the pre-sp-hqoap code's own double-red/judgement path for an
+# unrelated reason — this shape is the one that exposes the actual gap: the old code's own
+# internal retry flipped a transient red to green and opened the PR regardless of any
+# attribution step, since it never called one. SEEN RED without the fix: reverting the
+# batcher-cut/main.rs changes in this branch and rerunning this case opens a PR.
+# =============================================================================
+echo
+echo "G. attribution stubbed out (fails): a locally-red round never opens a PR:"
+rm -f "$(open_batch_file)"
+plant sp-cgflk express
+git -C "$REPO" worktree add -q -b spira/sp-cgflk "$RUN/worktree/sp-cgflk" main
+printf 'g-flake\n' > "$RUN/worktree/sp-cgflk/g-flake.txt"
+git -C "$RUN/worktree/sp-cgflk" add -A
+git -C "$RUN/worktree/sp-cgflk" commit -q -m "sp-cgflk: work"
+tip_g="$(git -C "$REPO" rev-parse spira/sp-cgflk)"
+git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cgflk"
+certify sp-cgflk "$tip_g"
 
-land_mark_before="$(grep -c '^pr-create' "$FORGE_LOG")"
-is   "B: forge pr-create not called again" "$land_mark_before" "$(grep -c '^pr-create' "$FORGE_LOG")"
+FLAKE_COUNTER="$TMP/flake-counter-g"; rm -f "$FLAKE_COUNTER"
+prcreate_before_g="$(grep -c '^pr-create' "$FORGE_LOG")"
+out_g="$(STUB_FLAKE_SUITE=test-b.sh STUB_FLAKE_COUNTER_FILE="$FLAKE_COUNTER" STUB_FLAKE_RED_TIMES=1 cut_repo)"
+want   "G: reports attribute.sh's own failure" "attribute.sh" "$out_g"
+nowant "G: never reports a PR opening"         "PR "          "$out_g"
+is     "G: forge pr-create not called"    "$prcreate_before_g" "$(grep -c '^pr-create' "$FORGE_LOG")"
+is     "G: no open-batch file"            "0" "$([ -f "$(open_batch_file)" ] && echo 1 || echo 0)"
+is     "G: sp-cgflk stays CERTIFIED — held, not ejected (attribution itself is what failed, not the member)" \
+       "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cgflk")"
+
+# =============================================================================
+# CASE H — BASE_FAIL: a suite red against the base itself blocks the round and is filed as
+# an Ops incident; no member is ejected for it (the deliverable's own wording).
+# =============================================================================
+echo
+echo "H. base itself is red: round blocked, filed for Ops, nobody ejected:"
+rm -f "$(open_batch_file)"
+plant sp-chbas express
+git -C "$REPO" worktree add -q -b spira/sp-chbas "$RUN/worktree/sp-chbas" main
+printf 'h\n' > "$RUN/worktree/sp-chbas/h.txt"
+git -C "$RUN/worktree/sp-chbas" add -A
+git -C "$RUN/worktree/sp-chbas" commit -q -m "sp-chbas: work"
+tip_h2="$(git -C "$REPO" rev-parse spira/sp-chbas)"
+git -C "$REPO" worktree remove -f "$RUN/worktree/sp-chbas"
+certify sp-chbas "$tip_h2"
+
+prcreate_before_h="$(grep -c '^pr-create' "$FORGE_LOG")"
+out_h="$(STUB_RED_SUITES="test-a.sh" STUB_ATTR_MODE=basefail cut_repo)"
+want   "H: reports the base fail, naming the suite" "test-a.sh" "$out_h"
+want   "H: reports filing an Ops incident"          "filed sp-inc"  "$out_h"
+nowant "H: never reports a PR opening"              "PR "           "$out_h"
+is     "H: forge pr-create not called"    "$prcreate_before_h" "$(grep -c '^pr-create' "$FORGE_LOG")"
+is     "H: no open-batch file"            "0" "$([ -f "$(open_batch_file)" ] && echo 1 || echo 0)"
+is     "H: sp-chbas stays CERTIFIED — not ejected, the base is at fault" \
+       "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-chbas")"
+want   "H: the incident names the base-red reason" "local-round-red" "$(cat "$INCIDENT_LOG")"
 
 # =============================================================================
 # CASE C — a stale member: an express-certified branch that conflicts with the

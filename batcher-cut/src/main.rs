@@ -26,13 +26,13 @@ mod io;
 
 use std::collections::BTreeMap;
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use batcher::core::{
-    adaptive_n, classify, combine, cut_event, opened_event, order_key, pr_record, should_cut, skipped_event,
-    stale_retry_due, CombineInput, Member, MergeResult, TriggerInputs, TriggerReason,
+    adaptive_n, combine, cut_event, ejected_event, opened_event, order_key, pr_record, should_cut, skipped_event,
+    stale_retry_due, CombineInput, Ejection, Member, MergeResult, TriggerInputs, TriggerReason,
 };
 use io::{Env, Repo};
 
@@ -43,13 +43,14 @@ struct Opts {
     db: Option<PathBuf>,
     home: Option<PathBuf>,
     testenv_batch: Option<PathBuf>,
+    attribute: Option<PathBuf>,
     suites: Option<String>,
     members: Option<String>,
     evidence: Option<String>,
 }
 
 fn usage() -> ExitCode {
-    eprintln!("usage: batcher cut <repo> [--run DIR] [--db DIR] [--home DIR] [--testenv-batch PATH]");
+    eprintln!("usage: batcher cut <repo> [--run DIR] [--db DIR] [--home DIR] [--testenv-batch PATH] [--attribute PATH]");
     eprintln!("       batcher judgement-ci <repo> --suites CSV --members CSV --evidence TEXT [--run DIR] [--db DIR] [--home DIR]");
     ExitCode::from(2)
 }
@@ -65,6 +66,7 @@ fn parse() -> Result<Opts, String> {
         db: env::var_os("SPIRA_DB").map(PathBuf::from),
         home: env::var_os("SPIRA_HOME").map(PathBuf::from),
         testenv_batch: env::var_os("SPIRA_BATCHER_TESTENV_BATCH").map(PathBuf::from),
+        attribute: env::var_os("SPIRA_BATCHER_ATTRIBUTE").map(PathBuf::from),
         suites: None,
         members: None,
         evidence: None,
@@ -76,6 +78,7 @@ fn parse() -> Result<Opts, String> {
             "--db" => o.db = Some(val()?.into()),
             "--home" => o.home = Some(val()?.into()),
             "--testenv-batch" => o.testenv_batch = Some(val()?.into()),
+            "--attribute" => o.attribute = Some(val()?.into()),
             "--suites" => o.suites = Some(val()?),
             "--members" => o.members = Some(val()?),
             "--evidence" => o.evidence = Some(val()?),
@@ -122,6 +125,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
         express_label: env::var("SPIRA_EXPRESS_LABEL").unwrap_or_else(|_| "express".into()),
         tsd_bin: env::var_os("SPIRA_TSD_BIN").map(PathBuf::from),
         testenv_batch: o.testenv_batch.clone().unwrap_or_else(|| home.join("testenv-batch.sh")),
+        attribute: o.attribute.clone().unwrap_or_else(|| home.join("attribute.sh")),
         git_name: env::var("SPIRA_GIT_NAME").unwrap_or_else(|_| "spira".into()),
         git_email: env::var("SPIRA_GIT_EMAIL").unwrap_or_else(|_| "spira@spira.invalid".into()),
         lc_bin: env::var_os("SPIRA_LC_BIN").map(PathBuf::from),
@@ -200,6 +204,98 @@ fn handle_base_conflicts(
     deleted
 }
 
+/// What a round looks like once its local corpus is green: the surviving members (a subset of
+/// what went in, once attribution has ejected any culprit) and how long that took, so the
+/// caller can record both without a second pass over the same data.
+struct StableRound {
+    members: Vec<Member>,
+    /// Wall time of the (first) attribute.sh call that named a culprit — None when the round
+    /// was green from its very first corpus run and attribution never ran.
+    attribution_seconds: Option<u64>,
+    /// Wall time from the first local red to this round finally going green — None for the
+    /// same reason.
+    regreen_seconds: Option<u64>,
+}
+
+/// Enforces law-a-round-takes-certified-tips (amended 2026-09-27): a round that is red on its
+/// own local corpus is never sent to CI. Runs the full corpus against `starting` merged onto
+/// `start_sha`; a red is handed to attribute.sh (sp-q8xs9), which names either a BASE_FAIL
+/// (blocks the round, filed for Ops, nobody ejected) or an owning member per suite (ejected,
+/// with every suite it turned red named in its bead's own note). Repeats on the reduced
+/// membership until the corpus is green or the round is empty. Returns `Ok(None)` for either
+/// terminal non-green outcome — the caller opens no PR and changes no open-batch record in
+/// that case, the same as if this round had never been cut.
+fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting: Vec<Member>) -> Result<Option<StableRound>, String> {
+    let mut round_members = starting;
+    let mut red_detected_at: Option<u64> = None;
+    let mut attribution_seconds: Option<u64> = None;
+    let mut iteration: u32 = 0;
+
+    loop {
+        io::worktree_reset(repo, wt, start_sha)?;
+        round_members.retain(|m| io::merge_member(env_, wt, &m.id, &m.tip) == MergeResult::Ok);
+        if round_members.is_empty() {
+            println!("{}", skipped_event("round emptied rebuilding the tree after ejection").text);
+            return Ok(None);
+        }
+
+        let head = io::head_of(wt)?;
+        let iter_branch = format!("spira/batcher-attr/{}-{}-{}", repo.name, now(), iteration);
+        io::set_branch(repo, &iter_branch, &head);
+
+        let suites = io::all_suites(repo);
+        let results_dir = env_.run.join("batch-results").join(format!("{}-{}-attr{iteration}", repo.name, now()));
+        let first = io::run_suites(env_, repo, &iter_branch, &suites, &results_dir)?;
+        let reds = io::red_names(&first);
+        if reds.is_empty() {
+            let regreen_seconds = red_detected_at.map(|at| now().saturating_sub(at));
+            return Ok(Some(StableRound { members: round_members, attribution_seconds, regreen_seconds }));
+        }
+        if red_detected_at.is_none() {
+            red_detected_at = Some(now());
+        }
+
+        let member_ids: Vec<String> = round_members.iter().map(|m| m.id.clone()).collect();
+        let attr_start = now();
+        let attr = io::attribute(env_, repo, &iter_branch, start_sha, &reds, &member_ids)?;
+        if attribution_seconds.is_none() {
+            attribution_seconds = Some(now().saturating_sub(attr_start));
+        }
+
+        let evidence = results_dir.display().to_string();
+        if !attr.base_suites.is_empty() {
+            println!("{}", batcher::core::base_fail_event(&repo.name, &attr.base_suites).text);
+            match io::file_local_red_incident(env_, repo, &attr.base_suites, &iter_branch, &evidence, "base") {
+                Ok(id) => println!("batcher {}: base itself red — filed {id} for Ops", repo.name),
+                Err(e) => println!("batcher {}: base itself red — could not file for Ops: {e}", repo.name),
+            }
+            return Ok(None);
+        }
+        if attr.ejections.is_empty() {
+            // Defensive: attribute.sh's own bisection always narrows to an owner or BASE for
+            // a red it is given, so this is not expected to fire — but an empty attribution
+            // must never fall through to "nothing to eject, proceed to a PR" silently.
+            println!("batcher {}: local red ({}) could not be attributed to anyone", repo.name, reds.join(","));
+            match io::file_local_red_incident(env_, repo, &reds, &iter_branch, &evidence, "unattributed") {
+                Ok(id) => println!("batcher {}: filed {id} for Ops", repo.name),
+                Err(e) => println!("batcher {}: could not file for Ops: {e}", repo.name),
+            }
+            return Ok(None);
+        }
+        for (id, suites) in &attr.ejections {
+            let tip = round_members.iter().find(|m| &m.id == id).map(|m| m.tip.clone()).unwrap_or_default();
+            io::eject_member(env_, &repo.name, id, &tip, suites);
+            println!("{}", ejected_event(&Ejection { id: id.clone(), suites: suites.clone() }).text);
+        }
+        round_members.retain(|m| !attr.ejections.contains_key(&m.id));
+        if round_members.is_empty() {
+            println!("{}", skipped_event("round emptied by ejection").text);
+            return Ok(None);
+        }
+        iteration += 1;
+    }
+}
+
 fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason) -> Result<(), String> {
     let round_start = now();
     let base_sha = io::resolve_base_sha(repo)?;
@@ -227,43 +323,41 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
     }
     println!("{}", cut_event(reason, &combined).text);
 
+    let stable = match stabilize_round(env_, repo, &wt, &base_sha, combined.merged.clone())? {
+        Some(s) => s,
+        None => {
+            io::write_local_verdict(env_, &repo.name, "red", "local corpus red — held before reaching CI");
+            io::tsd_append_round(
+                env_,
+                &[
+                    ("repo", repo.name.clone()),
+                    ("verdict", "blocked".to_string()),
+                    ("duration_ms", ((now() - round_start) * 1000).to_string()),
+                    ("base", base_sha),
+                ],
+            );
+            return Ok(());
+        }
+    };
+    let merged = stable.members;
+
     let batch_head = io::head_of(&wt)?;
     let stamp = format!("{}", round_start);
     let batch_br = format!("spira/queue/{stamp}");
     io::set_branch(repo, &batch_br, &batch_head);
 
-    let results_key = format!("{}-{stamp}", repo.name);
-    let verdicts = run_corpus_and_classify(env_, repo, &batch_br, &results_key)?;
-    if let Some(j) = batcher::core::judgement_for(&verdicts) {
-        let members: Vec<String> = combined.merged.iter().map(|m| m.id.clone()).collect();
-        let evidence = env_.run.join("batch-results").join(&results_key).display().to_string();
-        summon_judgement(env_, repo, &j, &members, &evidence);
-        io::tsd_append_round(
-            env_,
-            &[
-                ("repo", repo.name.clone()),
-                ("verdict", "doublered".to_string()),
-                ("members", combined.merged.len().to_string()),
-                ("suites", j.suites.join(",")),
-                ("duration_ms", ((now() - round_start) * 1000).to_string()),
-                ("base", base_sha.clone()),
-            ],
-        );
-        return Ok(());
-    }
-
     io::push_branch(repo, &batch_head, &batch_br)?;
-    let prr = pr_record(&combined.merged);
+    let prr = pr_record(&merged);
     let base_branch = repo.base.rsplit('/').next().unwrap_or(&repo.base).to_string();
-    let title = format!("queue: {} beads for {}", combined.merged.len(), repo.name);
-    let body = format!("Merge-queue batch: {} beads for {}, onto {}.\n\n{}\n", combined.merged.len(), repo.name, base_branch, prr.body);
+    let title = format!("queue: {} beads for {}", merged.len(), repo.name);
+    let body = format!("Merge-queue batch: {} beads for {}, onto {}.\n\n{}\n", merged.len(), repo.name, base_branch, prr.body);
     let pr_n = io::forge_pr_create(repo, &batch_br, &base_branch, &title, &body)?;
 
     // spira-lc's own OPEN-batch lifecycle (sp-o7nbr.4, same contract as sp-o7nbr.2's
     // _lc_cut_batch for batch.sh): best-effort and additive, never blocking the PR or
     // the land_mark loop below. A refusal leaves batch_id/version unset on the record,
     // so verdict.sh's own land/settle wiring finds nothing to CAS against later.
-    let member_pairs: Vec<(String, String)> = combined.merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
+    let member_pairs: Vec<(String, String)> = merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
     let lc_version = io::lc_cut_batch(env_, &repo.name, &batch_br, &batch_head, &base_sha, &member_pairs);
 
     io::write_open_batch(
@@ -281,23 +375,28 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
             version: lc_version.unwrap_or_default(),
         },
     )?;
-    for m in &combined.merged {
+    for m in &merged {
         io::land_mark(env_, &m.id, "BATCHED", &m.tip, "");
     }
+    io::write_local_verdict(env_, &repo.name, "green", "");
     println!("{}", opened_event(&prr).text);
-    println!("batcher {}: PR {} opened — {} member(s) ({})", repo.name, pr_n, combined.merged.len(), batch_br);
+    println!("batcher {}: PR {} opened — {} member(s) ({})", repo.name, pr_n, merged.len(), batch_br);
 
-    io::tsd_append_round(
-        env_,
-        &[
-            ("repo", repo.name.clone()),
-            ("verdict", "green".to_string()),
-            ("members", combined.merged.len().to_string()),
-            ("pr", pr_n),
-            ("duration_ms", ((now() - round_start) * 1000).to_string()),
-            ("base", base_sha),
-        ],
-    );
+    let mut fields = vec![
+        ("repo", repo.name.clone()),
+        ("verdict", "green".to_string()),
+        ("members", merged.len().to_string()),
+        ("pr", pr_n),
+        ("duration_ms", ((now() - round_start) * 1000).to_string()),
+        ("base", base_sha),
+    ];
+    if let Some(a) = stable.attribution_seconds {
+        fields.push(("attribution_seconds", a.to_string()));
+    }
+    if let Some(r) = stable.regreen_seconds {
+        fields.push(("regreen_seconds", r.to_string()));
+    }
+    io::tsd_append_round(env_, &fields);
     Ok(())
 }
 
@@ -340,34 +439,31 @@ fn stack_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason,
         return Ok(());
     }
 
+    let stable = match stabilize_round(env_, repo, &wt, &ob.head, combined.merged.clone())? {
+        Some(s) => s,
+        None => {
+            io::write_local_verdict(env_, &repo.name, "red", "stacked members held — local corpus red before reaching CI");
+            io::tsd_append_round(
+                env_,
+                &[
+                    ("repo", repo.name.clone()),
+                    ("verdict", "blocked".to_string()),
+                    ("pr", ob.pr.clone()),
+                    ("stacked", "true".to_string()),
+                    ("duration_ms", ((now() - round_start) * 1000).to_string()),
+                ],
+            );
+            return Ok(());
+        }
+    };
+    let merged = stable.members;
+
     let new_head = io::head_of(&wt)?;
     io::set_branch(repo, &ob.branch, &new_head);
 
-    let stamp = format!("{round_start}-stack");
-    let results_key = format!("{}-{stamp}", repo.name);
-    let verdicts = run_corpus_and_classify(env_, repo, &ob.branch, &results_key)?;
-    if let Some(j) = batcher::core::judgement_for(&verdicts) {
-        let mut members: Vec<String> = ob.members.iter().map(|(id, _)| id.clone()).collect();
-        members.extend(combined.merged.iter().map(|m| m.id.clone()));
-        let evidence = env_.run.join("batch-results").join(&results_key).display().to_string();
-        summon_judgement(env_, repo, &j, &members, &evidence);
-        io::tsd_append_round(
-            env_,
-            &[
-                ("repo", repo.name.clone()),
-                ("verdict", "doublered".to_string()),
-                ("pr", ob.pr.clone()),
-                ("stacked", "true".to_string()),
-                ("suites", j.suites.join(",")),
-                ("duration_ms", ((now() - round_start) * 1000).to_string()),
-            ],
-        );
-        return Ok(());
-    }
-
     io::force_push_branch(repo, &new_head, &ob.branch)?;
     let mut members = ob.members.clone();
-    let new_pairs: Vec<(String, String)> = combined.merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
+    let new_pairs: Vec<(String, String)> = merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
     members.extend(new_pairs.iter().cloned());
 
     // spira-lc's own pipelining onto the already-cut batch (sp-o7nbr.4): only when the
@@ -396,50 +492,28 @@ fn stack_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason,
             version: lc_version,
         },
     )?;
-    for m in &combined.merged {
+    for m in &merged {
         io::land_mark(env_, &m.id, "BATCHED", &m.tip, "");
     }
-    println!("batcher {}: PR {} stacked — +{} member(s) ({})", repo.name, ob.pr, combined.merged.len(), ob.branch);
+    io::write_local_verdict(env_, &repo.name, "green", "");
+    println!("batcher {}: PR {} stacked — +{} member(s) ({})", repo.name, ob.pr, merged.len(), ob.branch);
 
-    io::tsd_append_round(
-        env_,
-        &[
-            ("repo", repo.name.clone()),
-            ("verdict", "green".to_string()),
-            ("pr", ob.pr.clone()),
-            ("stacked", "true".to_string()),
-            ("members", combined.merged.len().to_string()),
-            ("duration_ms", ((now() - round_start) * 1000).to_string()),
-        ],
-    );
-    Ok(())
-}
-
-/// File a judgement bead for the summoned batcher persona (sp-47kq1) and print the result.
-/// Best-effort like the round's own TSD write: a filing failure is reported, never fatal —
-/// the round already stopped short of a PR, and a human still has the printed suites and
-/// evidence path to go on even if the bead itself did not get filed.
-fn summon_judgement(env_: &Env, repo: &Repo, j: &batcher::core::Judgement, members: &[String], evidence: &str) {
-    match io::file_judgement(env_, repo, j, members, evidence) {
-        Ok(id) => println!("batcher {}: double-red ({}) — filed {} for judgement", repo.name, j.suites.join(","), id),
-        Err(e) => println!("batcher {}: double-red ({}) — could not file for judgement: {}", repo.name, j.suites.join(","), e),
+    let mut fields = vec![
+        ("repo", repo.name.clone()),
+        ("verdict", "green".to_string()),
+        ("pr", ob.pr.clone()),
+        ("stacked", "true".to_string()),
+        ("members", merged.len().to_string()),
+        ("duration_ms", ((now() - round_start) * 1000).to_string()),
+    ];
+    if let Some(a) = stable.attribution_seconds {
+        fields.push(("attribution_seconds", a.to_string()));
     }
-}
-
-/// Run the full corpus, then re-run only the reds, and classify. The core's E and bisect
-/// primitives are not driven here — see the module doc's NOT COVERED note.
-fn run_corpus_and_classify(env_: &Env, repo: &Repo, branch: &str, key: &str) -> Result<Vec<batcher::core::SuiteVerdict>, String> {
-    let suites = io::all_suites(repo);
-    let results_dir = env_.run.join("batch-results").join(key);
-    let first = io::run_suites(env_, repo, branch, &suites, &results_dir)?;
-    let reds = io::red_names(&first);
-    let rerun = if reds.is_empty() {
-        vec![]
-    } else {
-        let rerun_dir = env_.run.join("batch-results").join(format!("{key}-rerun"));
-        io::run_suites(env_, repo, branch, &reds, &rerun_dir)?
-    };
-    Ok(classify(&first, &rerun))
+    if let Some(r) = stable.regreen_seconds {
+        fields.push(("regreen_seconds", r.to_string()));
+    }
+    io::tsd_append_round(env_, &fields);
+    Ok(())
 }
 
 /// `batcher judgement-ci` — the CI-only judgement producer (sp-lomk3). verdict.sh calls
