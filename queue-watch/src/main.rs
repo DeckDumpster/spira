@@ -1,5 +1,6 @@
-//! queue-watch — streams merge-queue transitions for every `mode = "queue"` repository in
-//! spira.toml, derived from queue state and the forge, never from log lines.
+//! queue-watch — streams merge-queue transitions for every `queue`/`queue.forge`/
+//! `queue.local` repository in spira.toml, derived from queue state and the forge, never
+//! from log lines.
 //!
 //!   queue-watch watch  [--interval S] [--ticks N] [--json]   loop; one line per event
 //!   queue-watch health                                      exit non-zero when the last
@@ -100,9 +101,10 @@ enum NoRepos {
     Fatal(String),
 }
 
-/// Every `mode = "queue"` repository. An install with none, or with no spira.toml yet, is
-/// IDLE — a fact about the install, said once and reported by health — never a crash loop.
-/// A spira.toml that does not parse is fatal: that is a fault someone must fix.
+/// Every `queue`/`queue.forge`/`queue.local` repository (sp-o1jm6, epic sp-hq9x8). An install
+/// with none, or with no spira.toml yet, is IDLE — a fact about the install, said once and
+/// reported by health — never a crash loop. A spira.toml that does not parse is fatal: that is
+/// a fault someone must fix.
 fn queue_repos(cfg: Option<PathBuf>, home: &Path) -> Result<Vec<Repo>, NoRepos> {
     let Some(cfg) = cfg else { return Err(NoRepos::Idle("no spira.toml found".into())) };
     let cfg = cfg.as_path();
@@ -114,12 +116,15 @@ fn queue_repos(cfg: Option<PathBuf>, home: &Path) -> Result<Vec<Repo>, NoRepos> 
     let repos: Vec<Repo> = doc
         .repo
         .iter()
-        .filter(|(_, r)| r.mode == spira_config::LandMode::Queue)
+        .filter(|(_, r)| {
+            matches!(r.mode, spira_config::LandMode::Queue | spira_config::LandMode::QueueForge | spira_config::LandMode::QueueLocal)
+        })
         .map(|(name, r)| Repo {
             name: name.clone(),
             path: PathBuf::from(&r.path),
             base: r.base.clone().unwrap_or_else(|| "origin/main".into()),
             forge: r.forge.as_ref().map(PathBuf::from).unwrap_or_else(|| default_forge.clone()),
+            local: r.mode == spira_config::LandMode::QueueLocal,
         })
         .collect();
     if repos.is_empty() {
@@ -305,12 +310,68 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::iso;
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn iso_is_utc_civil_time() {
         assert_eq!(iso(0), "1970-01-01T00:00:00Z");
         assert_eq!(iso(1_790_303_413), "2026-09-25T02:30:13Z");
         assert_eq!(iso(951_782_400), "2000-02-29T00:00:00Z");
+    }
+
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    // POSITIVE CONTROL: today's code filters on `LandMode::Queue` alone, so this fails on it —
+    // "qf" and "ql" are silently dropped from the watched set, and the fixed code's `local`
+    // flag (a compile error against the old, field-less `Repo`) cannot even be asserted.
+    #[test]
+    fn queue_repos_accepts_queue_queue_forge_and_queue_local() {
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("queue-watch-queue-repos-test-{}-{n}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let cfg = dir.join("spira.toml");
+        fs::write(
+            &cfg,
+            r#"
+[repo.q]
+path = "/tmp/q"
+mode = "queue"
+
+[repo.qf]
+path = "/tmp/qf"
+mode = "queue.forge"
+
+[repo.ql]
+path = "/tmp/ql"
+mode = "queue.local"
+base = "local/main"
+
+[repo.p]
+path = "/tmp/p"
+mode = "push"
+"#,
+        )
+        .unwrap();
+
+        let repos = match queue_repos(Some(cfg), &dir) {
+            Ok(r) => r,
+            Err(NoRepos::Idle(w)) => panic!("unexpectedly idle: {w}"),
+            Err(NoRepos::Fatal(w)) => panic!("unexpectedly fatal: {w}"),
+        };
+        let names: Vec<&str> = repos.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.contains(&"q"), "queue: {names:?}");
+        assert!(names.contains(&"qf"), "queue.forge (alias, regression): {names:?}");
+        assert!(names.contains(&"ql"), "queue.local: {names:?}");
+        assert!(!names.contains(&"p"), "push must stay unwatched: {names:?}");
+
+        let ql = repos.iter().find(|r| r.name == "ql").unwrap();
+        assert!(ql.local, "queue.local repo must carry local=true");
+        assert_eq!(ql.base, "local/main");
+
+        let qf = repos.iter().find(|r| r.name == "qf").unwrap();
+        assert!(!qf.local, "queue.forge is not local (regression)");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

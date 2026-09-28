@@ -18,12 +18,22 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use batcher::core::{Member, MergeResult, PoolHistory, SuiteOutcome, SuiteRun};
 
+/// Where a repo's landed branch goes — `repo_land`'s `queue`/`queue.forge` alias normalizes
+/// to `Forge`; `queue.local` is `Local`. Carried on `Repo` so a caller never has to re-derive
+/// it from the base ref's own spelling (see `push_branch`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Land {
+    Forge,
+    Local,
+}
+
 #[derive(Clone, Debug)]
 pub struct Repo {
     pub name: String,
     pub path: PathBuf,
     pub base: String,
     pub forge: PathBuf,
+    pub land: Land,
 }
 
 #[derive(Clone, Debug)]
@@ -482,6 +492,7 @@ pub fn deleted_suites(repo: &Repo, member_tip: &str, base_sha: &str) -> Vec<Stri
 }
 
 pub fn push_branch(repo: &Repo, sha: &str, branch: &str) -> Result<(), String> {
+    assert_eq!(repo.land, Land::Forge, "push_branch: unreachable under queue.local — it lands via queue.sh land-local (sp-828tp), never a push");
     let remote = repo.base.split_once('/').map(|(r, _)| r).unwrap_or("origin");
     run(
         Command::new("git").arg("-C").arg(&repo.path).args(["push", "-q", remote]).arg(format!("{sha}:refs/heads/{branch}")),
@@ -491,6 +502,7 @@ pub fn push_branch(repo: &Repo, sha: &str, branch: &str) -> Result<(), String> {
 }
 
 pub fn force_push_branch(repo: &Repo, sha: &str, branch: &str) -> Result<(), String> {
+    assert_eq!(repo.land, Land::Forge, "force_push_branch: unreachable under queue.local — it lands via queue.sh land-local (sp-828tp), never a push");
     let remote = repo.base.split_once('/').map(|(r, _)| r).unwrap_or("origin");
     run(
         Command::new("git").arg("-C").arg(&repo.path).args(["push", "-q", "-f", remote]).arg(format!("{sha}:refs/heads/{branch}")),
@@ -844,5 +856,38 @@ pub fn try_lock(env: &Env, repo: &str) -> Result<Option<Lock>, String> {
         Ok(Some(Lock { _file: f }))
     } else {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod land_tests {
+    use super::*;
+
+    fn repo(land: Land) -> Repo {
+        Repo { name: "r".into(), path: PathBuf::from("/nonexistent"), base: "local/main".into(), forge: PathBuf::new(), land }
+    }
+
+    // POSITIVE CONTROL: under Forge land, push_branch reaches the real git push (and fails on
+    // this nonexistent path for an ordinary IO reason) rather than tripping the assert —
+    // proving the assert is keyed on `land`, not unconditional.
+    #[test]
+    fn push_branch_under_forge_land_does_not_assert() {
+        let r = repo(Land::Forge);
+        let err = push_branch(&r, "deadbeef", "spira/queue/1").unwrap_err();
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "unreachable under queue.local")]
+    fn push_branch_under_local_land_is_unreachable() {
+        let r = repo(Land::Local);
+        let _ = push_branch(&r, "deadbeef", "spira/queue/1");
+    }
+
+    #[test]
+    #[should_panic(expected = "unreachable under queue.local")]
+    fn force_push_branch_under_local_land_is_unreachable() {
+        let r = repo(Land::Local);
+        let _ = force_push_branch(&r, "deadbeef", "spira/queue/1");
     }
 }

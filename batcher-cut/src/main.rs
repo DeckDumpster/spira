@@ -34,7 +34,7 @@ use batcher::core::{
     adaptive_n, combine, cut_event, ejected_event, opened_event, order_key, pr_record, should_cut, skipped_event,
     stale_retry_due, CombineInput, Ejection, Member, MergeResult, TriggerInputs, TriggerReason,
 };
-use io::{Env, Repo};
+use io::{Env, Land, Repo};
 
 struct Opts {
     cmd: String,
@@ -93,11 +93,18 @@ fn parse() -> Result<Opts, String> {
 /// separate, newer config path queue-watch reads; the queue this bead wires into still runs
 /// on the repo-map, and a second source of truth for the same fact is exactly what
 /// law-schema-over-code exists to prevent.
+///
+/// `repo_land` already normalizes the `queue.forge` alias to `queue`, so only `queue` and
+/// `queue.local` are ever seen here (sp-o1jm6, epic sp-hq9x8). `queue.local`'s push path is
+/// not implemented by this crate yet (sp-828tp) — `Land::Local` is recorded so `push_branch`/
+/// `force_push_branch` can refuse to guess at it.
 fn find_repo(env_: &Env, name: &str) -> Result<Repo, String> {
     let mode = io::lib_call(env_, "repo_land", [name])?.trim().to_string();
-    if mode != "queue" {
-        return Err(format!("{name}: mode is {mode:?}, not queue"));
-    }
+    let land = match mode.as_str() {
+        "queue" => Land::Forge,
+        "queue.local" => Land::Local,
+        other => return Err(format!("{name}: mode is {other:?}, not queue or queue.local")),
+    };
     let path = io::lib_call(env_, "repo_root", [name])?.trim().to_string();
     if path.is_empty() {
         return Err(format!("{name}: repo_root returned nothing — no repo-map entry"));
@@ -107,7 +114,7 @@ fn find_repo(env_: &Env, name: &str) -> Result<Repo, String> {
         return Err(format!("{name}: spira_landref could not resolve a base ref"));
     }
     let forge = env::var_os("SPIRA_FORGE").map(PathBuf::from).unwrap_or_else(|| env_.home.join("forge.sh"));
-    Ok(Repo { name: name.to_string(), path: PathBuf::from(path), base, forge })
+    Ok(Repo { name: name.to_string(), path: PathBuf::from(path), base, forge, land })
 }
 
 fn now() -> u64 {
