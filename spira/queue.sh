@@ -11,6 +11,7 @@
 #   queue.sh claim [<repo>] --reason <text> [--force]
 #   queue.sh release [<repo>]
 #   queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]>
+#   queue.sh publish [<repo>]
 #
 # submit: certifies any branch by running the repository's gate. In a queue-mode
 # repository, a green branch is recorded CERTIFIED for the batch builder.
@@ -62,7 +63,20 @@
 # under the repo's queue lock, skipped via SPIRA_QUEUE_LOCK_HELD=1 for a caller (the
 # batcher) that already holds it, so it cannot deadlock on its own lock.
 #
-# covers: spira/queue.sh spira/suites.sh spira/conf.sh
+# publish: the queue.local publish queue (row 3 of the local/main design). Pushes
+# local/main's commits since the forge target's own current tip to a new forge branch
+# (spira/publish/<stamp>) and opens ONE PR into it — the local round already fast-forwarded
+# sequentially, so this pushes the range as-is: no assembled merge commit, identical SHAs.
+# Refuses, writing nothing, if the forge target is not an ancestor of local/main (something
+# else moved it) or if there is nothing new to publish. The record lives at
+# queue/<repo>/publish, deliberately NOT queue/<repo>/open: `open` is the queue.forge batch
+# builder's own file, and a publish record there would make batch_open/merge_one treat a
+# publish-in-flight as a batch-in-flight, blocking every local cut behind a PR the local
+# queue never opened. verdict.sh settles it separately (green fast-forwards the forge
+# target with no land_mark and no bead close; red runs local attribution and files one
+# fix-forward bead) — see verdict.sh's own header.
+#
+# covers: spira/queue.sh spira/verdict.sh spira/suites.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/lib.sh"
@@ -1162,6 +1176,188 @@ cmd_land_local() {
         "$base" "$head" "$n" "$archive_ref"
 }
 
+_publish_file() { printf '%s/%s/publish' "${SPIRA_QUEUE_DIR:?}" "$1"; }
+_publish_field() { grep "^$1=" "$2" 2>/dev/null | cut -d= -f2-; }
+
+# _publish_members <repo> <forge-sha> <head-sha> -> "id:tip id:tip ..." — every LANDED
+# bead in LANDSTATE whose landed tip is in the range (forge-sha, head-sha]. Reuses
+# land-local's own bookkeeping rather than a second record of "what a round contained":
+# an id whose tip does not exist in <repo> at all (another repository's bead; LANDSTATE is
+# one flat store, not per-repo) fails cat-file and is skipped, same as one already published
+# (its tip is an ancestor of forge-sha) or not yet landed (not an ancestor of head-sha).
+_publish_members() {
+    local repo="$1" forge_sha="$2" head_sha="$3" f id state tip out=""
+    [ -d "$LANDSTATE" ] || return 0
+    for f in "$LANDSTATE"/*; do
+        [ -f "$f" ] || continue
+        case "$f" in *.ejected|*.ejected.*|*.rc) continue ;; esac
+        id="$(basename "$f")"
+        read -r state tip _ < "$f" 2>/dev/null || continue
+        [ "$state" = LANDED ] || continue
+        git -C "$repo" cat-file -e "${tip}^{commit}" 2>/dev/null || continue
+        git -C "$repo" merge-base --is-ancestor "$tip" "$head_sha" 2>/dev/null || continue
+        git -C "$repo" merge-base --is-ancestor "$tip" "$forge_sha" 2>/dev/null && continue
+        out="${out:+$out }${id}:${tip}"
+    done
+    printf '%s' "$out"
+}
+
+# cmd_publish: see the header comment above (queue.sh publish:). Pushes local/main's
+# commits since the last publish (the forge target's own current tip, fetched fresh —
+# there is no separate "last published" pointer to drift from it) to a new forge branch
+# and opens one PR. Refuses outright, publishing nothing, if the forge target is not an
+# ancestor of the local landing ref — something else moved it, and row 4 (the divergence
+# alarm) is what raises that to the operator; this only refuses to make it worse.
+cmd_publish() {
+    local name=""
+    if [ "${SPIRA_FAYTH:-}" = czar ] && [ -n "${SPIRA_CZAR_CLASS:-}" ]; then
+        bash "$HERE/czar-fence.sh" "$SPIRA_CZAR_CLASS" || return 1
+    fi
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        -*) printf 'queue.sh publish: unknown option: %s\n' "$1" >&2; return 2 ;;
+        *)  name="$1"; shift ;;
+        esac
+    done
+    [ -n "$name" ] || name="$(spira_home_repo)"
+
+    local repo; repo="$(repo_root "$name" 2>/dev/null)" || {
+        printf 'queue.sh publish: no such repo: %s\n' "$name" >&2; return 1
+    }
+    local mode; mode="$(repo_land "$name")"
+    [ "$mode" = "queue.local" ] || {
+        printf 'queue.sh publish: repo is not in queue.local mode (mode=%s)\n' "$mode" >&2; return 1
+    }
+
+    local base; base="$(spira_landref "$repo")" || {
+        printf 'queue.sh publish: cannot resolve landing ref for %s\n' "$name" >&2; return 1
+    }
+    if ref_remote "$base" "$repo" >/dev/null 2>&1; then
+        printf 'queue.sh publish: %s resolves to a remote-tracking ref (%s) — not a queue.local base\n' \
+            "$name" "$base" >&2
+        return 1
+    fi
+    local base_branch="$base"
+
+    local target remote forge_branch
+    target="$(spira_publish_forge "$name")" || {
+        printf 'queue.sh publish: cannot resolve a forge target for %s\n' "$name" >&2; return 1
+    }
+    read -r remote forge_branch <<< "$target"
+
+    local lockfile; lockfile="${SPIRA_QUEUE_DIR:?}/$name/lock"
+    mkdir -p "${SPIRA_QUEUE_DIR:?}/$name" 2>/dev/null || true
+    { exec 9>"$lockfile"; } 2>/dev/null \
+        || { printf 'queue.sh publish: cannot open lock file for %s\n' "$name" >&2; return 1; }
+    if ! flock -n 9; then
+        printf 'queue.sh publish: another queue operation holds the lock for %s\n' "$name" >&2
+        return 1
+    fi
+
+    local publish_file; publish_file="$(_publish_file "$name")"
+    if [ -f "$publish_file" ]; then
+        printf 'queue.sh publish: a publish PR is already open for %s (pr=%s) — settle it first\n' \
+            "$name" "$(_publish_field pr "$publish_file")" >&2
+        return 1
+    fi
+
+    git -C "$repo" fetch -q "$remote" "$forge_branch" 2>/dev/null || {
+        printf 'queue.sh publish: could not fetch %s/%s\n' "$remote" "$forge_branch" >&2
+        return 1
+    }
+    local forge_sha head_sha
+    forge_sha="$(git -C "$repo" rev-parse -q --verify "refs/remotes/$remote/$forge_branch" 2>/dev/null)" || {
+        printf 'queue.sh publish: cannot resolve %s/%s\n' "$remote" "$forge_branch" >&2
+        return 1
+    }
+    head_sha="$(git -C "$repo" rev-parse -q --verify "$base_branch" 2>/dev/null)" || {
+        printf 'queue.sh publish: cannot resolve %s\n' "$base_branch" >&2
+        return 1
+    }
+
+    if ! git -C "$repo" merge-base --is-ancestor "$forge_sha" "$head_sha" 2>/dev/null; then
+        printf 'queue.sh publish: %s/%s is not an ancestor of %s — refusing to publish (something else moved the forge)\n' \
+            "$remote" "$forge_branch" "$base_branch" >&2
+        return 1
+    fi
+
+    if [ "$forge_sha" = "$head_sha" ]; then
+        printf 'queue.sh publish: nothing to publish for %s (%s/%s already at %s)\n' \
+            "$name" "$remote" "$forge_branch" "${head_sha:0:12}"
+        return 0
+    fi
+
+    local members; members="$(_publish_members "$repo" "$forge_sha" "$head_sha")"
+    [ -n "$members" ] || {
+        printf 'queue.sh publish: %s has new commits on %s but no LANDED member in range — refusing\n' \
+            "$name" "$base_branch" >&2
+        return 1
+    }
+
+    local stamp branch
+    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    branch="spira/publish/$stamp"
+
+    if ! spira_git_push "$repo" -q "$remote" "${head_sha}:refs/heads/${branch}" 2>/dev/null; then
+        printf 'queue.sh publish: could not push %s\n' "$branch" >&2
+        return 1
+    fi
+
+    local forge="${SPIRA_FORGE:-$HERE/forge.sh}"
+    local member_ids=() _m
+    for _m in $members; do member_ids+=("${_m%%:*}"); done
+    local member_titles_json
+    member_titles_json="$(bdjson show "${member_ids[@]}" 2>/dev/null)" || member_titles_json="[]"
+
+    local pr_body mid t
+    pr_body="$(
+        printf 'Publish queue: %d bead(s) landed on %s since the last publish, for %s.\n\n' \
+            "${#member_ids[@]}" "$base_branch" "$name"
+        printf 'These commits already fast-forwarded %s locally; CI here is confirmation, not the gate. A red run files a fix-forward bead — it never rolls back production.\n\n' "$base_branch"
+        for mid in "${member_ids[@]}"; do
+            t="$(printf '%s\n' "$member_titles_json" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+items = data if isinstance(data, list) else [data]
+t = next((str(i.get('title','')) for i in items if i.get('id') == '$mid'), '')
+print((t[:120] if t else '(title unavailable)') or '(title unavailable)')
+" 2>/dev/null)" || t="(title unavailable)"
+            printf -- '- %s — %s\n' "$mid" "${t:-(title unavailable)}"
+        done
+    )"
+
+    local pr_n
+    pr_n="$(printf '%s' "$pr_body" \
+            | "$forge" pr-create "$repo" "$branch" "$forge_branch" \
+                "publish: ${#member_ids[@]} bead(s) for $name" 2>/dev/null)" || {
+        printf 'queue.sh publish: forge pr-create failed for %s\n' "$branch" >&2
+        return 1
+    }
+    [ -n "${pr_n:-}" ] || {
+        printf 'queue.sh publish: forge returned no PR number for %s\n' "$branch" >&2
+        return 1
+    }
+
+    mkdir -p "$(dirname "$publish_file")"
+    local opened_at; opened_at="$(date +%s)"
+    {
+        printf 'pr=%s\n'           "$pr_n"
+        printf 'head=%s\n'         "$head_sha"
+        printf 'base=%s\n'         "$forge_sha"
+        printf 'members=%s\n'      "$members"
+        printf 'opened=%s\n'       "$opened_at"
+        printf 'branch=%s\n'       "$branch"
+        printf 'remote=%s\n'       "$remote"
+        printf 'forge_branch=%s\n' "$forge_branch"
+    } > "$publish_file"
+
+    printf 'QUEUE PUBLISH %s repo=%s pr=%s members=%d\n' \
+        "$opened_at" "$name" "$pr_n" "${#member_ids[@]}" >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
+
+    printf 'queue.sh publish: PR %s opened — %d bead(s) since last publish (%s)\n' \
+        "$pr_n" "${#member_ids[@]}" "$branch"
+}
+
 main() {
     case "${1:-}" in
         submit)  shift; cmd_submit "$@" ;;
@@ -1175,7 +1371,8 @@ main() {
         claim)   shift; cmd_claim "$@" ;;
         release) shift; cmd_release "$@" ;;
         land-local) shift; cmd_land_local "$@" ;;
-        *) printf 'usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]>\n' >&2; return 2 ;;
+        publish) shift; cmd_publish "$@" ;;
+        *) printf 'usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>]\n' >&2; return 2 ;;
     esac
 }
 
