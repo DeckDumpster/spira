@@ -539,22 +539,31 @@ wake)
     # the pane's two rules — holds text, and deliver the moment it is empty. This never drops
     # a wake: it waits as long as the operator is typing. Serialised by a lock so two
     # callers (the mail deliverer, the inbox-keeper watcher) never interleave keystrokes.
-    _wake_input_busy() {
+    # declare -F lets a caller `export -f` its own _wake_input_busy/_wake_deliver first, to
+    # observe or control the poll and the delivery deterministically instead of a real pane.
+    declare -F _wake_input_busy >/dev/null || _wake_input_busy() {
         local line
         line="$($TM capture-pane -p -t "$SESSION" 2>/dev/null | grep -m1 -E '^❯' || true)"
         [ -n "$line" ] || return 1
         line="${line#❯}"; line="${line#"${line%%[![:space:]]*}"}"
         [ -n "$line" ]
     }
+    declare -F _wake_deliver >/dev/null || _wake_deliver() {
+        # -l sends the text literally; Enter is a separate key so a prompt mid-turn is queued, not split.
+        $TM send-keys -t "$SESSION" -l -- "$1" && $TM send-keys -t "$SESSION" Enter
+    }
     mkdir -p "$SPIRA_RUN" 2>/dev/null
     exec 8>"$SPIRA_RUN/concierge-wake.lock"
     flock 8
-    while _wake_input_busy; do sleep 2; done
+    # AN INJECTABLE CLOCK: a test that already serialises each poll via the hook above sets
+    # these to 0 rather than also waiting out two real cadences on top of it.
+    _wake_poll_secs="${CONCIERGE_WAKE_POLL_SECS:-2}"
+    _wake_settle_secs="${CONCIERGE_WAKE_SETTLE_SECS:-1}"
+    while _wake_input_busy; do sleep "$_wake_poll_secs"; done
     # SETTLE: he may be between keystrokes; require a second quiet check before delivering.
-    sleep 1
-    while _wake_input_busy; do sleep 2; done
-    # -l sends the text literally; Enter is a separate key so a prompt mid-turn is queued, not split.
-    $TM send-keys -t "$SESSION" -l -- "$2" && $TM send-keys -t "$SESSION" Enter
+    sleep "$_wake_settle_secs"
+    while _wake_input_busy; do sleep "$_wake_poll_secs"; done
+    _wake_deliver "$2"
     ;;
 
 # CONVERGENCE ENTRY POINT. `here` is how the operator and the cockpit session pane join the

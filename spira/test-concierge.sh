@@ -565,6 +565,93 @@ is "the wake call returns once the line clears" 0 \
 tmux -L "$WK_HOLD" kill-server 2>/dev/null || true
 
 echo
+echo "wake — delivery is proved only after the line empties, with no wall-clock sleep (sp-a9uuu)"
+
+# THE GAP round 102 LEFT: the pane-capture assertion that proved the woken text landed
+# passed once, then flipped at load average ~24 against the same code, and was deleted
+# (law-a-test-that-flips-is-deleted). "the wake call returns" above proves only that the
+# process exited, not that it typed anything — and a faster wall-clock sleep would flip the
+# same way. This replaces it with a lock-step: concierge.sh's wake adopts
+# _wake_input_busy/_wake_deliver from the environment when they are already functions
+# (declare -F guards each), so a write to the control FIFO cannot return until wake's own
+# loop is on the other end asking for the next state. "Still busy" and "delivered" become
+# facts about ordering, not about how long something waited.
+DET_SOCK="test-wake-det-$$"
+tmux -L "$DET_SOCK" kill-server 2>/dev/null || true
+tmux -L "$DET_SOCK" new-session -d -s "$DET_SOCK" "sleep 30"
+
+DET_CTL="$TMP/wake-det-ctl"; mkfifo "$DET_CTL"
+DET_LOG="$TMP/wake-det-deliver.log"; : > "$DET_LOG"
+DET_RUN="$TMP/wake-det-run"; mkdir -p "$DET_RUN"
+# EXPORTED, NOT JUST THE FUNCTIONS: concierge.sh runs under set -u, so a hook that closes
+# over an unexported variable dies the instant it is called there, in the child process,
+# with "DET_CTL: unbound variable" — the paths, not only the functions that read them, have
+# to cross into that environment.
+export DET_CTL DET_LOG
+
+# THE HOOK, adopted by concierge.sh's own declare -F guard: busy is "the test has not yet
+# said empty", read one state per call so each call blocks until the test feeds it.
+_wake_input_busy() {
+    local state
+    read -r state < "$DET_CTL" || return 1
+    [ "$state" = "busy" ]
+}
+# THE OBSERVATION: what would have been a real tmux send-keys is recorded instead, so
+# delivery is read from a file rather than inferred from a pane capture.
+_wake_deliver() { printf '%s\n' "$1" >> "$DET_LOG"; }
+export -f _wake_input_busy _wake_deliver
+
+(
+    CONCIERGE_WAKE_POLL_SECS=0 CONCIERGE_WAKE_SETTLE_SECS=0 SPIRA_RUN="$DET_RUN" \
+        CONCIERGE_SOCKET="$DET_SOCK" CONCIERGE_SESSION="$DET_SOCK" \
+        timeout 30 bash "$HARNESS/concierge.sh" wake "the woken text" >"$TMP/wake-det.out" 2>&1
+) &
+DET_PID=$!
+trap 'kill "$DET_PID" 2>/dev/null; tmux -L "$DET_SOCK" kill-server 2>/dev/null; rm -rf "$TMP"' EXIT
+
+# feed <state> -> hand wake's hook its next state, or fail fast (never hang the suite) if
+# nothing is on the other end asking for one — the 30s outer timeout above is what turns a
+# wake that delivered early into a bounded, readable failure here instead of the pane-capture
+# assertion's old failure mode: a flip discovered only much later, under load.
+det_fed=1
+feed() {
+    if ! timeout 10 bash -c 'printf "%s\n" "$1" > "$2"' _ "$1" "$DET_CTL"; then
+        bad "wake asked for the next poll state ('$1')" "timed out — it must have returned already"
+        det_fed=0
+    fi
+}
+
+# TWO BUSY POLLS. Each write blocks until wake's loop has opened the FIFO asking for the
+# next state — proof, by the write returning at all, that the loop ran and is asking again
+# rather than having fallen through to delivery.
+feed busy
+feed busy
+
+# THE PROPERTY: at this exact point wake cannot have progressed past the busy loop — it is
+# blocked reading the FIFO for a third state — so this is not a race against a moving
+# target, it is a fact about where the process is stuck.
+is "still busy: nothing has been delivered yet"      "" "$(cat "$DET_LOG")"
+is "still busy: the wake call has not returned"      1  "$(kill -0 "$DET_PID" 2>/dev/null && echo 1 || echo 0)"
+
+# EMPTY THE LINE — fed twice: once for the first busy loop's exit check, once more for the
+# settle re-check's own call to the same hook.
+feed empty
+feed empty
+
+if [ "$det_fed" -eq 1 ]; then
+    wait "$DET_PID"; det_rc=$?
+    is   "the wake call exits 0 once the line is empty" 0 "$det_rc"
+    want "and the delivered text is exactly what was recorded, not inferred from a pane" \
+        "the woken text" "$(cat "$DET_LOG")"
+else
+    kill "$DET_PID" 2>/dev/null; wait "$DET_PID" 2>/dev/null
+    bad "the wake call exits 0 once the line is empty" "skipped — a feed above timed out"
+fi
+trap 'tmux -L "$DET_SOCK" kill-server 2>/dev/null; rm -rf "$TMP"' EXIT
+tmux -L "$DET_SOCK" kill-server 2>/dev/null || true
+unset -f _wake_input_busy _wake_deliver
+
+echo
 echo "the way in — /proc scan hygiene and the dangling-resume retry, as source shape"
 
 _src="$(cat "$HARNESS/concierge.sh")"
