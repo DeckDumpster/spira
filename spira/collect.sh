@@ -56,6 +56,7 @@ _MERGE_FAIL_MAX="${SPIRA_COCKPIT_MERGE_FAIL_MAX:-3}"
 # Interval classifies tier (fast=5, medium=60, slow=600).
 PROBES=(
     "now:5:30:now"
+    "slots:30:20:slots"
     "reachable:60:120:reachable"
     "sphere:60:90:sphere"
     "repo_labels:60:90:repo_labels"
@@ -126,6 +127,11 @@ _run_probe_body() {
         local hdr_tmp; hdr_tmp="$(mktemp "$FRAG_DIR/.${name}.XXXXXX")" || { rm -f "$out_tmp"; return 1; }
         { printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\n' "$now"; cat "$out_tmp"; } > "$hdr_tmp" \
             && mv "$hdr_tmp" "$frag"
+        # THE ONE PROBE WITH A TSD FAMILY OF ITS OWN. Every other probe's fragment feeds only
+        # the merged snapshot; the slots probe's own fresh fragment (not the merge, which
+        # would double-count a later tick's stale first-wins read) is also this pass's slots
+        # row (run/tsd/, sp-69m85) — the seam that turns a 30s cadence into a time series.
+        [ "$name" = slots ] && _tsd_slots_sample "$frag"
         rm -f "$out_tmp"
         printf 'collect.sh: probe %s ok %ss\n' "$name" "$(( $(date +%s) - now ))" >&2
     else

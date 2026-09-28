@@ -86,9 +86,11 @@ impl Config {
             alerted_path: env::var("SPIRA_RECONCILER_FLOW_ALERTED")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("reconciler-flow-alerted.json")),
+            // Under run/tsd/ (design reconciler-time-series-2026-09-27 §2), same move and
+            // same env var as reconciler/src/main.rs — one family, two writers.
             status_log: env::var("SPIRA_RECONCILER_STATUS_LOG")
                 .map(PathBuf::from)
-                .unwrap_or_else(|_| spira_run.join("reconciler-status.jsonl")),
+                .unwrap_or_else(|_| spira_run.join("tsd").join("reconciler-status.jsonl")),
             tsd_bin: env::var("SPIRA_TSD_BIN").unwrap_or_default(),
             duckdb_bin: env::var("SPIRA_DUCKDB_BIN").unwrap_or_else(|_| "duckdb".to_string()),
             bd_bin: env::var("SPIRA_BD").unwrap_or_else(|_| "bd".to_string()),

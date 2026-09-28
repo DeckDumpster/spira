@@ -113,6 +113,7 @@ probe() {
     now_keys
     core_detail_keys
     core_counts_keys
+    slots_keys
     unsent_keys
     queue_keys
     reachable_keys
@@ -417,6 +418,37 @@ core_counts_keys() {
         echo "SP_WAITING=${_w:-?}"
     fi
 
+}
+
+# slots_keys — the fleet's own snapshot for run/tsd/'s slots family (sp-69m85): live aeons,
+# the fleet ceiling, lane-live count, ready work and the capacity pause — every value here
+# is a config read, a /proc scan or a file check, never a database query, so a 30s cadence
+# costs nothing CHECK 7's own summon loop does not already pay.
+#
+# SP_READY IS READ FROM THE MERGED SNAPSHOT, NOT RECOMPUTED. core_detail_keys' own
+# multi-partition query is the authority for it and already runs every 60s; asking the
+# database again here would be a second query for a number already in hand, twice as often.
+slots_keys() {
+    echo "SP_SLOTS_LIVE=$(aeons_live_total 2>/dev/null || printf '?')"
+
+    local pool="${SPIRA_MAX_AEONS:-0}" lt=0 f
+    for f in $(spira_lane_fayths 2>/dev/null); do
+        local ln; ln="$(fayth_get "$f" FAYTH_MAX_CONCURRENT 1)"; ln="${ln:-1}"
+        lt=$((lt + ln))
+    done
+    echo "SP_SLOTS_CEILING=${SPIRA_MAX_LIVE_AEONS:-$((pool + lt))}"
+
+    echo "SP_SLOTS_LANES_LIVE=$(aeons_live_lanes 2>/dev/null || printf '?')"
+
+    local ready
+    ready="$(awk -F= '/^SP_READY=/{print $2; exit}' "$SPIRA_RUN/cockpit.env" 2>/dev/null | tr -d "'")"
+    echo "SP_SLOTS_READY=${ready:-?}"
+
+    if capacity_paused; then
+        echo "SP_SLOTS_CAPACITY_PAUSED=1"
+    else
+        echo "SP_SLOTS_CAPACITY_PAUSED=0"
+    fi
 }
 
 # Slow-tier core detail: per-partition ready listing, event feed, CI parking,
@@ -2916,6 +2948,11 @@ core)
 # Slow-tier core detail — SP_NEXT* listing, event feed, sparklines, token meters.
 core_detail)
     core_detail_keys
+    ;;
+# The fleet's own slots snapshot — the seam collect.sh drives on its own 30s tick, and the
+# seam a tsd row is written from after each successful run (sp-69m85).
+slots)
+    slots_keys
     ;;
 # Slow-tier keys only — the seam collect.sh drives on each 600s tick.
 unsent)

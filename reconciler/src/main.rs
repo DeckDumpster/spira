@@ -155,9 +155,12 @@ impl Config {
             state_path: env::var("SPIRA_RECONCILER_STATE")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("reconciler-state.json")),
+            // Under run/tsd/ (design reconciler-time-series-2026-09-27 §2): the reconciler's
+            // per-resource status is one of the families that live there, moved from
+            // $SPIRA_RUN directly.
             status_log: env::var("SPIRA_RECONCILER_STATUS_LOG")
                 .map(PathBuf::from)
-                .unwrap_or_else(|_| spira_run.join("reconciler-status.jsonl")),
+                .unwrap_or_else(|_| spira_run.join("tsd").join("reconciler-status.jsonl")),
             lock_path: spira_run.join("reconciler.lock"),
             spira_db: env::var("SPIRA_DB").unwrap_or_default(),
             scope_label: env::var("SPIRA_SCOPE_LABEL").unwrap_or_default(),

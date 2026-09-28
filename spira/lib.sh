@@ -7831,6 +7831,88 @@ _tsd_landing_event() {
     fi
 }
 
+# _tsd_kv_field "<k=v k=v ...>" <key> -> the value for <key>, or "?" when absent. Reads the
+# space-separated key=value string session_result_fields (below) already built — never a
+# second pass over the trace it was parsed from.
+_tsd_kv_field() {
+    local kv
+    for kv in $1; do
+        case "$kv" in "$2="*) printf '%s' "${kv#*=}"; return 0 ;; esac
+    done
+    printf '?'
+}
+
+# _tsd_aeon_session <bead> <fayth> <rc> <status> <fields> — appends this session's
+# aeon-session row (run/tsd/), reusing the fields session_result_fields already computed
+# for ledger_done's own ledger line. Best-effort, like _tsd_landing_event.
+_tsd_aeon_session() {
+    local bin="${SPIRA_TSD_BIN:-}"
+    [ -n "$bin" ] && [ -x "$bin" ] || return 0
+    local bead="$1" fayth="$2" rc="$3" status="$4" fields="$5"
+    "$bin" --family aeon-session --root "${SPIRA_RUN:-}" \
+        --field-str "bead=$bead" --field-str "fayth=$fayth" \
+        --field "rc=$rc" --field-str "status=$status" \
+        --field "wall_s=$(_tsd_kv_field "$fields" wall_s)" \
+        --field "api_s=$(_tsd_kv_field "$fields" api_s)" \
+        --field "turns=$(_tsd_kv_field "$fields" turns)" \
+        --field "cost_usd=$(_tsd_kv_field "$fields" cost_usd)" \
+        >/dev/null 2>&1 || true
+}
+
+# _tsd_slots_sample <fragment-file> — appends the slots family's row (run/tsd/) from a
+# successful slots probe's own fragment (collect.sh). Best-effort, like every tsd producer
+# here. Reads the fragment directly, never the merged cockpit.env: the fragment is this
+# probe's own fresh sample, and the merge's first-wins rule can otherwise repeat a stale one.
+_tsd_slots_sample() {
+    local bin="${SPIRA_TSD_BIN:-}"
+    [ -n "$bin" ] && [ -x "$bin" ] || return 0
+    local frag="$1" k v
+    local live="?" ceiling="?" lanes_live="?" ready="?" paused="?"
+    while IFS='=' read -r k v; do
+        case "$k" in
+            SP_SLOTS_LIVE)            live="$v" ;;
+            SP_SLOTS_CEILING)         ceiling="$v" ;;
+            SP_SLOTS_LANES_LIVE)      lanes_live="$v" ;;
+            SP_SLOTS_READY)           ready="$v" ;;
+            SP_SLOTS_CAPACITY_PAUSED) paused="$v" ;;
+        esac
+    done < "$frag"
+    "$bin" --family slots --root "${SPIRA_RUN:-}" \
+        --field "live=$live" --field "ceiling=$ceiling" --field "lanes_live=$lanes_live" \
+        --field "ready=$ready" --field "capacity_paused=$paused" \
+        >/dev/null 2>&1 || true
+}
+
+# _tsd_sentinel_phase <pass> <check> <secs> — appends one CHECK's wall time for one
+# sentinel.sh pass (run/tsd/sentinel-phase). Best-effort, like every tsd producer here.
+_tsd_sentinel_phase() {
+    local bin="${SPIRA_TSD_BIN:-}"
+    [ -n "$bin" ] && [ -x "$bin" ] || return 0
+    "$bin" --family sentinel-phase --root "${SPIRA_RUN:-}" \
+        --field-str "pass=$1" --field-str "check=$2" --field "secs=$3" \
+        >/dev/null 2>&1 || true
+}
+
+# THE WHITELIST IS THE GUARANTEE (design §2, "round rows carry no state"): a round's state
+# changes are batch-machine events and arrive through bead-stage (sp-h82cz), never here.
+# Refusing any phase name outside the round's own timing vocabulary is what keeps a stray
+# CUT/GREEN/RED/EJECTED from ever entering this family as if it belonged.
+_TSD_ROUND_PHASES=" build corpus attribute rerun land publish "
+
+# _tsd_round_phase <batch_id> <phase> <secs> <members> <reds> — appends one round phase's
+# timing (run/tsd/round). TIMINGS ONLY: no state field exists on this row to carry one.
+# Best-effort, like every tsd producer here.
+_tsd_round_phase() {
+    local bin="${SPIRA_TSD_BIN:-}"
+    [ -n "$bin" ] && [ -x "$bin" ] || return 0
+    local batch_id="$1" phase="$2" secs="$3" members="${4:-0}" reds="${5:-0}"
+    case "$_TSD_ROUND_PHASES" in *" $phase "*) ;; *) return 0 ;; esac
+    "$bin" --family round --root "${SPIRA_RUN:-}" \
+        --field-str "batch_id=$batch_id" --field-str "phase=$phase" \
+        --field "secs=$secs" --field "members=$members" --field "reds=$reds" \
+        >/dev/null 2>&1 || true
+}
+
 land_mark() {    # land_mark <id> <state> <tip> [reason] [extra]
     mkdir -p "$(dirname "$LANDSTATE/$1")" 2>/dev/null || return 0
     printf '%s %s %s %s' "$2" "${3:-none}" "$(date +%s)" "${4:-}" \

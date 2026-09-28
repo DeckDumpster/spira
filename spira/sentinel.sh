@@ -195,6 +195,20 @@ if [ "$REPORT" = 1 ]; then
     exit 0
 fi
 
+# PER-CHECK WALL TIME (run/tsd/'s sentinel-phase family, law-producers-stamp-their-own-
+# clock). _phase <name> flushes the CHECK that just ended and starts the clock for <name>,
+# so every second of the pass belongs to exactly one row and an unlogged stretch (the design
+# named "about 75s before CHECK4" and "the post-sending tail") becomes visible as part of
+# whichever CHECK precedes it, rather than vanishing between two log lines.
+PASS_ID="${HOSTNAME:-$(hostname 2>/dev/null || printf unknown)}-$$-$EPOCHSECONDS"
+_PHASE_NAME="setup"
+_PHASE_T0=$EPOCHSECONDS
+_phase() {
+    _tsd_sentinel_phase "$PASS_ID" "$_PHASE_NAME" "$(( EPOCHSECONDS - _PHASE_T0 ))"
+    _PHASE_NAME="$1"
+    _PHASE_T0=$EPOCHSECONDS
+}
+
 # ======================================================================================
 # ONE STORE READ PER PASS (sp-bo67y). strand.sh, dispatchable_open and check4_closed_branched
 # each asked bd once per partition below, and mark_queue_waiters, detect_unclaimable_ready
@@ -247,6 +261,7 @@ trap 'rm -f "${SPIRA_LIST_SNAPSHOT:-}" "${SPIRA_READY_SNAPSHOT:-}" "${SPIRA_READ
 # harness that can announce exactly one of them announces nothing the moment a second
 # design is in flight — which is the state Gas Town was in with six convoys open.
 # ======================================================================================
+_phase "CHECK1"
 completed="$("$SPIRA_HOME/pilgrimage.sh" check 2>&1)"
 [ -n "$completed" ] && printf '%s\n' "$completed"
 n_done="$(printf '%s' "$completed" | grep -c '^PILGRIMAGE COMPLETE' || true)"
@@ -284,6 +299,7 @@ fi
 #
 # The loop is check2_reclaim_stale (lib.sh), which matches the SUCCESS shape via
 # parse_reclaimed rather than the word "reclaim" (which also appears in the idle message).
+_phase "CHECK2"
 if [ "${SPIRA_SKIP_RECLAIM:-0}" != 1 ]; then
 check2_protect_waiting
 check2_reclaim_stale "$PARTITIONS"
@@ -299,6 +315,7 @@ fi
 # It acts where the fix is mechanical and escalates ONCE where it is not, so it neither
 # retries forever nor pages the operator every two minutes. `strand.sh report` is the human view.
 # ======================================================================================
+_phase "CHECK2b"
 stranded="$("$SPIRA_HOME/strand.sh" check 2>&1)"
 [ -n "$stranded" ] && printf '%s\n' "$stranded"
 n_strand="$(grep -cE '^(RECLAIMED|RECOMPUTED|STRANDED)' <<< "$stranded" || true)"
@@ -336,6 +353,7 @@ n_escal="$(grep -cE '^STRANDED' <<< "$stranded" || true)"
 # (lib.sh). A single hardcoded `${SPIRA_SCOPE_LABEL},plan` call left orphaned claims in ops,
 # spike or groom partitions unreleased forever: nothing else in the harness sweeps them.
 # ======================================================================================
+_phase "CHECK2c"
 if [ "${SPIRA_SKIP_RECLAIM:-0}" != 1 ]; then
 released="$(release_orphan_claims_partitions "$PARTITIONS")"
 [ -n "$released" ] && printf '%s\n' "$released"
@@ -356,6 +374,7 @@ fi
 # correct is_blocked column by construction, so recompute-blocked finds nothing and costs
 # two bd calls (~700ms) for no gain.
 # ======================================================================================
+_phase "CHECK3"
 if [ "${SPIRA_SKIP_RECLAIM:-0}" != 1 ] \
     && [ "$plan_ready" -eq 0 ] && [ "$plan_inprog" -eq 0 ] && [ "$n_open" -gt 0 ]; then
     bdq recompute-blocked >/dev/null 2>&1
@@ -404,6 +423,7 @@ if [ "$AUDIT" = 1 ]; then
 # exit path anyway. Labelling is sufficient: every fayth's partition excludes spira-poison,
 # so the moment the holder lets go, CHECK 7 stops summoning for it.
 # ======================================================================================
+_phase "CHECK4"
 dispatchable="$(dispatchable_open)"
 log "CHECK4 examining $(printf '%s' "$dispatchable" | grep -c . || true) dispatchable bead(s), poison=$POISON_AT requeue=$REQUEUE_AT reclaim=$RECLAIM_AT"
 # ONE QUERY FOR ALL ATTEMPTS, REOPENS AND RECLAIMS. dispatchable_open already parsed each
@@ -696,6 +716,7 @@ done <<< "$dispatchable"
 # is never examined by the loop above. Find closed beads that carry a branch: label, get
 # their reopen counts, and apply the same escalation for those at or above the cap that
 # have not yet landed. requeue_asked/requeue_asked_mark provide the same per-bead dedup.
+_phase "CHECK4_SUPPLEMENT"
 _c4_closed="$(check4_closed_branched)"
 if [ -n "$_c4_closed" ]; then
     declare -A _c4c_reopens
@@ -871,6 +892,7 @@ for i in (d if isinstance(d, list) else [d]):
 # beads directly has none of them in $SPIRA_RUN/<id>.log, so every row is skipped anyway —
 # but the query cost per partition is not worth paying to prove that.
 # ======================================================================================
+_phase "CHECK5"
 if [ "${SPIRA_SKIP_CLOSED_CHECK:-0}" != 1 ]; then
 _c5_absent_repos=""
 declare -A _c5_landed=()
@@ -1184,6 +1206,7 @@ if [ "$AUDIT" = 0 ]; then
 # RuntimeMaxSec is the knob that applies to a `simple` service, which is what systemd-run
 # creates; TimeoutStartSec would be ignored.
 # ======================================================================================
+_phase "CHECK6"
 LAND_UNIT="${SPIRA_LAND_UNIT:-spira-landing}"
 # THE CAP IS SIZED AGAINST THE GATE, AND THE WORKER IS TOLD WHAT IT IS. At 1800s this leg
 # could not finish a single pass once anything closed: a full spira gate measured 776s cold
@@ -1345,6 +1368,7 @@ land_drain
 # reaches LANDED. close_landed_queue_waiters closes any bead that already carries LANDED in
 # its landstate but still has the wait label — these have no branch left to land through the
 # normal path and would otherwise stay open and invisible to fayths indefinitely.
+_phase "CHECK3b"
 mark_queue_waiters 2>/dev/null || true
 close_landed_queue_waiters 2>/dev/null || true
 
@@ -1363,6 +1387,7 @@ close_landed_queue_waiters 2>/dev/null || true
 # so it can be exercised by test-fayth.sh, which a version inlined here could not be:
 # everything else in a sentinel pass touches the real repository and the real database.
 # ======================================================================================
+_phase "CHECK7"
 ck7_summon_pass
 fi  # AUDIT (CHECK 6, CHECK 7)
 
@@ -1391,6 +1416,7 @@ if [ "$AUDIT" = 1 ]; then
 # in both directions — a queue-mode repo's base moving must not force a walk of every other
 # repository just to learn again that this one is not swept here.
 # ======================================================================================
+_phase "CHECK6b"
 _sending_base_stamp="$SPIRA_RUN/sending.base"
 _sending_skip=0
 if [ -f "$_sending_base_stamp" ]; then
@@ -1459,6 +1485,7 @@ fi
 # Skipped when SPIRA_SKIP_RECLAIM=1: the raw-ready query costs ~400ms and fixture beads
 # are labelled correctly by construction, so this check finds nothing and only costs time.
 # ======================================================================================
+_phase "CHECK7c"
 if [ "${SPIRA_SKIP_RECLAIM:-0}" != 1 ]; then
 unclaimable_out="$(detect_unclaimable_ready 2>/dev/null)"
 if [ -n "$unclaimable_out" ]; then
@@ -1483,6 +1510,7 @@ fi  # SPIRA_SKIP_RECLAIM
 # worktree and let the blocked bead through. Only a squatter that is open, dirty or still
 # live needs the operator, and that is what still gets parked with $SPIRA_ASK_LABEL.
 # ======================================================================================
+_phase "CHECK7d"
 if [ "${SPIRA_SKIP_RECLAIM:-0}" != 1 ]; then
 collision_out="$(detect_branch_collisions 2>/dev/null)"
 if [ -n "$collision_out" ]; then
@@ -1519,6 +1547,7 @@ if [ "$AUDIT" = 1 ]; then
 fi
 
 if [ "$GOAL_REACHED" = 1 ]; then
+    _phase "end"
     log "pass complete — $acted action(s), $progressed progress, goal reached"
     exit 0
 fi
@@ -1530,12 +1559,14 @@ fi
 # (a ready INCIDENT says nothing about the plan and must not silence it), and rate-limiting
 # keeps inference, a cost centre, from reasoning every minute about nothing.
 # ======================================================================================
+_phase "CHECK8"
 _ck8_now="$(date +%s)"
 _ck8_last=0; [ -f "$COOLDOWN" ] && _ck8_last="$(cat "$COOLDOWN" 2>/dev/null || echo 0)"
 case "$(check8_should_judge "$plan_ready" "$plan_inprog" "$n_open" "$progressed" \
             "$_ck8_last" "$_ck8_now" "$INFERENCE_EVERY")" in
     cooldown)
         log "starved, but inference is in cooldown ($(( INFERENCE_EVERY - _ck8_now + _ck8_last ))s left)"
+        _phase "end"
         log "pass complete — $acted action(s), $progressed progress"
         exit 0
         ;;
@@ -1547,4 +1578,5 @@ case "$(check8_should_judge "$plan_ready" "$plan_inprog" "$n_open" "$progressed"
         ;;
 esac
 
+_phase "end"
 log "pass complete — $acted action(s), $progressed progress"

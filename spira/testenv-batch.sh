@@ -1716,6 +1716,20 @@ _BATCH_WALL=$(( $(date +%s) - _BATCH_T0 ))
 _tsd_suite_timing "__batch__" "0" "$_BATCH_WALL" "0" "0" "$MODE"
 log "batch: wall ${_BATCH_WALL}s"
 
+# round: TIMINGS ONLY (run/tsd/, sp-69m85) — opt-in via SPIRA_ROUND_BATCH_ID, set only by a
+# caller running this batch AS a round's own corpus build; an ordinary suite run leaves it
+# unset and writes nothing here. Never the round's state — see the whitelist in
+# _tsd_round_phase (lib.sh, design §2a: state changes are batch-machine events, not rows
+# here).
+if [ -n "${SPIRA_ROUND_BATCH_ID:-}" ]; then
+    _rb_n_red=0
+    for _rb_f in "$RESULTS"/*.result; do
+        [ -f "$_rb_f" ] || continue
+        case "$(awk '{print $1}' "$_rb_f" 2>/dev/null)" in red|timeout) _rb_n_red=$((_rb_n_red+1)) ;; esac
+    done
+    _tsd_round_phase "$SPIRA_ROUND_BATCH_ID" build "$_BATCH_WALL" "${SPIRA_ROUND_MEMBERS:-0}" "$_rb_n_red"
+fi
+
 # ---------------------------------------------------------------------------
 # RUNNER METADATA — machine shape captured alongside batch.meta.
 # ---------------------------------------------------------------------------

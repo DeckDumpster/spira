@@ -121,6 +121,7 @@ export SPIRA_MAIL_SH="$T/mail.sh"
 run_pass() { "$FLOW_BIN" --pass >"$T/pass-out.log" 2>&1; }
 status_of() {
     # Last reconciler-status.jsonl line for key $1, field $2 ("status" or "is_gap").
+    # Under run/tsd/ (design reconciler-time-series-2026-09-27 §2, sp-69m85).
     python3 -c '
 import json, sys
 path, key, field = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -137,7 +138,7 @@ if last is None:
     print("NO-ROW")
 else:
     print(last.get(field))
-' "$SPIRA_RUN/reconciler-status.jsonl" "$1" "$2"
+' "$SPIRA_RUN/tsd/reconciler-status.jsonl" "$1" "$2"
 }
 mail_count() {
     local n
