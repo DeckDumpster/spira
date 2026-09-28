@@ -521,6 +521,10 @@ WK_HOLD="test-wake-hold-$$"
 tmux -L "$WK_HOLD" kill-server 2>/dev/null || true
 tmux -L "$WK_HOLD" new-session -d -s "$WK_HOLD" -x 80 -y 24 \
     "bash --norc -c 'printf \"❯ \"; read -r _line'"
+# remain-on-exit: the fixture shell's `read` returns and the pane's process exits the
+# instant the wake delivers text + Enter — without this the session (and its screen
+# content) would vanish before the final assertion below can capture it.
+tmux -L "$WK_HOLD" set-option -t "$WK_HOLD" remain-on-exit on
 sleep 0.3
 tmux -L "$WK_HOLD" send-keys -t "$WK_HOLD" -l -- "half-written"
 sleep 0.3
@@ -548,7 +552,7 @@ is "the wake call has not returned while the line is busy" 1 \
 tmux -L "$WK_HOLD" send-keys -t "$WK_HOLD" BSpace BSpace BSpace BSpace BSpace \
     BSpace BSpace BSpace BSpace BSpace BSpace BSpace BSpace
 sleep 0.3
-want "the input line is now empty" "❯ " "$(tmux -L "$WK_HOLD" capture-pane -p -t "$WK_HOLD" | grep -m1 '❯')"
+nowant "the input line is now empty" "half-written" "$(tmux -L "$WK_HOLD" capture-pane -p -t "$WK_HOLD")"
 
 # THE WAKE DELIVERS ONCE THE LINE IS EMPTY, AND RETURNS. Its own loop polls every 2s with
 # a 1s settle, so this allows a full margin over that cadence.
