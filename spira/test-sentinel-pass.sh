@@ -65,7 +65,11 @@ for _s in pilgrimage.sh strand.sh reflect.sh; do
     printf '#!/bin/sh\n' > "$STUBS/$_s"; chmod +x "$STUBS/$_s"
 done
 printf '#!/bin/sh\necho inactive\n'  > "$STUBS/mock-systemctl"; chmod +x "$STUBS/mock-systemctl"
-printf '#!/bin/sh\nexit 0\n'         > "$STUBS/mock-launch";    chmod +x "$STUBS/mock-launch"
+LAUNCH_ARGV="$TMP/launch-argv"
+# mock-launch stands in for systemd-run: it records the CHECK6 land-dispatch's own argv
+# (SPIRA_LAUNCH is used for nothing else in sentinel.sh) so the CPUQuota property it was
+# given can be inspected without a real systemd unit ever starting.
+printf '#!/bin/sh\necho "$@" >> "%s"\nexit 0\n' "$LAUNCH_ARGV" > "$STUBS/mock-launch"; chmod +x "$STUBS/mock-launch"
 printf '#!/bin/sh\nexit 0\n'         > "$STUBS/mock-notify";    chmod +x "$STUBS/mock-notify"
 touch "$STUBS/repo-map"   # empty: no repos, Sending finds nothing to walk
 # THE REAL CHAMBER, symlinked once up front: `ln -sf` onto a directory that already
@@ -167,6 +171,23 @@ want "pass 1 sending: called with --skip-queue (queue-mode repos are the landing
 lack "pass 1 sending: log does NOT say base unchanged" "base unchanged" "$pass1_out"
 lack "pass 1: does NOT report DATABASE UNREADABLE (positive control: DB is readable)" \
      "DATABASE UNREADABLE" "$pass1_out"
+
+# ======================================================================================
+echo
+echo "CHECK6 land dispatch — CPUQuota is SPIRA_LAND_CPU_QUOTA, not a hardcoded 40% (sp-u7wrz):"
+# ======================================================================================
+want   "default quota: CPUQuota=70% appears in the land-dispatch argv" \
+       "CPUQuota=70%" "$(cat "$LAUNCH_ARGV" 2>/dev/null)"
+nowant "default quota: no longer hard-codes CPUQuota=40%" \
+       "CPUQuota=40%" "$(cat "$LAUNCH_ARGV" 2>/dev/null)"
+
+rm -f "$LAUNCH_ARGV" "$SUMMON_LOG" "$SENDING_LOG"
+out_customquota="$(run_pass "$_run" SPIRA_LAND_CPU_QUOTA=55)"
+want   "custom quota: CPUQuota=55% appears in the land-dispatch argv" \
+       "CPUQuota=55%" "$(cat "$LAUNCH_ARGV" 2>/dev/null)"
+nowant "custom quota: default CPUQuota=70% is absent" \
+       "CPUQuota=70%" "$(cat "$LAUNCH_ARGV" 2>/dev/null)"
+lack "custom quota: pass still runs cleanly" "DATABASE UNREADABLE" "$out_customquota"
 
 # pass 1's walk just wrote the base stamp, so pass 2 (same run dir, same fixture) takes
 # the skip path — which is also the only path that logs a literal "sending:" line, so the
