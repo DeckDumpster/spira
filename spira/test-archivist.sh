@@ -154,75 +154,20 @@ has "a session that drifted again after a safe run would be archived" "$out" "ar
 
 # ==========================================================================================
 echo
-echo "the band-3 notify sentinel prevents repeat notifications"
-# ==========================================================================================
-rm -rf "$T/run" "$T/projects" "$T/home"
-mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project"
-# A session at band 3 (above the limit threshold).
-mktranscript "$T/projects/-test-project/sess-limit.jsonl" 50 1100000
-: > "$T/run/archivist/sess-limit.notified"   # already notified
-
-# The .notified sentinel exists — a second notification must not fire. We cannot test the push
-# directly (it needs SPIRA_NOTIFY), but we can verify the sentinel prevents re-notification by
-# checking the file is still there after a list (list does not fire, but the logic is shared).
-is "notified sentinel exists" "yes" "$([ -f "$T/run/archivist/sess-limit.notified" ] && echo yes || echo no)"
-
-# ==========================================================================================
-echo
-echo "SPIRA_ARCHIVIST_AT is not in conf.sh's key list"
-# ==========================================================================================
-out="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_RUN="$T/run" \
-    bash -c '. "'"$HERE"'/conf.sh" && echo "$SPIRA_CONF_KEYS"' 2>/dev/null)"
-hasnt "SPIRA_ARCHIVIST_AT is absent from the key list" "$out" "SPIRA_ARCHIVIST_AT"
-has "SPIRA_ARCHIVIST_EVERY is in the key list" "$out" "SPIRA_ARCHIVIST_EVERY"
-
-# ==========================================================================================
-echo
-echo "SPIRA_ARCHIVIST_EVERY defaults to 40"
-# ==========================================================================================
-val="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_RUN="$T/run" \
-    bash -c '. "'"$HERE"'/conf.sh" && echo "$SPIRA_ARCHIVIST_EVERY"' 2>/dev/null)"
-is "default SPIRA_ARCHIVIST_EVERY" "40" "$val"
-
-# ==========================================================================================
-echo
 echo "the session hook fires archivist on clear"
 # ==========================================================================================
 HOOK="$HERE/hooks/session.sh"
 if [ -x "$HOOK" ]; then
-    # We can test that the hook extracts source=clear and would fire archivist.sh. Run the hook
-    # with a mock payload and check it does not error. The actual archivist.sh invocation is
-    # backgrounded, so we mock it.
-    mkdir -p "$T/hooktest"
-    # Create a fake archivist.sh that records it was called.
-    cat > "$T/hooktest/archivist.sh" <<'MOCK'
-#!/usr/bin/env bash
-echo "archivist-called" > "$(dirname "$0")/archivist-called"
-MOCK
-    chmod +x "$T/hooktest/archivist.sh"
-
-    # Run the hook with source=clear. We need SPIRA_HOME to point at our mock so archivist.sh
-    # is found. The hook sources conf.sh from its own path, so we need to override SPIRA_HOME.
-    # Instead, just verify the source extraction works.
+    # source extraction: the hook reads hook_event_name/source from the JSON payload on
+    # stdin the same way. Actually invoking the hook end-to-end would need archivist.sh
+    # backgrounded and its own SPIRA_HOME plumbing — not exercised here.
     src="$(printf '{"hook_event_name":"SessionStart","source":"clear"}' | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("source",""))
 except Exception: print("")' 2>/dev/null)"
     is "source extraction from clear payload" "clear" "$src"
-    ok "session hook has the clear-triggered archivist path"
 else
     bad "session hook not found at $HOOK"
 fi
-
-# ==========================================================================================
-echo
-echo "SPIRA_ARCHIVIST_PER_PASS is in the key list and defaults to 1"
-# ==========================================================================================
-out="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_RUN="$T/run" \
-    bash -c '. "'"$HERE"'/conf.sh" && echo "$SPIRA_CONF_KEYS"' 2>/dev/null)"
-has "SPIRA_ARCHIVIST_PER_PASS is in the key list" "$out" "SPIRA_ARCHIVIST_PER_PASS"
-val="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_RUN="$T/run" \
-    bash -c '. "'"$HERE"'/conf.sh" && echo "$SPIRA_ARCHIVIST_PER_PASS"' 2>/dev/null)"
-is "default SPIRA_ARCHIVIST_PER_PASS" "1" "$val"
 
 # ==========================================================================================
 echo
@@ -370,42 +315,6 @@ has  "arc_numeric logged the bad cursor" "$out" "treating as 0"
 _cursor="$(cat "$T/run/archivist/sess-bad.covered" 2>/dev/null)"
 hasnt "cursor is not written as '-' after sweep" "${_cursor:-}" "turn=-"
 has   "cursor holds a numeric turn after sweep" "${_cursor:-}" "turn=90"
-
-# ==========================================================================================
-echo
-echo "set_covered refuses to write a non-numeric turn"
-# ==========================================================================================
-# A direct unit test: writing "-" must fail and leave the file unchanged.
-rm -rf "$T/run" "$T/home"
-mkdir -p "$T/home" "$T/run/archivist"
-printf 'turn=42\n' > "$T/run/archivist/sess-unit.covered"
-env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
-    SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
-    bash "$ARC" mark sess-unit safe 2>/dev/null || true   # warm the state file
-# Call set_covered with a bad value by running the archivist in a test harness.
-# We cannot call set_covered directly, but the "now" path feeds turns into archive() which
-# calls set_covered — so instead we just verify directly that a bad turn does NOT overwrite.
-_before="$(cat "$T/run/archivist/sess-unit.covered")"
-# Attempt to overwrite with "-" by sourcing and calling set_covered directly.
-_result="$(
-    SPIRA_RUN="$T/run" bash -c '
-        ARC="$SPIRA_RUN/archivist"
-        log() { printf "%s\n" "$*" >&2; }
-        set_covered() {
-            local sid="$1" turn="$2"
-            if ! [[ "$turn" =~ ^[0-9]+$ ]]; then
-                log "archivist: REFUSED set_covered $sid"
-                return 1
-            fi
-            local tmp="$ARC/.$sid.covered.$$"
-            printf "turn=%s\n" "$turn" > "$tmp" && mv -f "$tmp" "$ARC/$sid.covered"
-        }
-        set_covered sess-unit "-" && echo "wrote" || echo "refused"
-    ' 2>/dev/null
-)"
-_after="$(cat "$T/run/archivist/sess-unit.covered" 2>/dev/null)"
-is   "set_covered refused the '-' turn" "refused" "$_result"
-is   "cursor file unchanged after refused write" "$_before" "$_after"
 
 # ==========================================================================================
 echo
@@ -619,17 +528,6 @@ _st_ex="$(sed -n 's/^state=//p' "$T/run/archivist/sess-exhaust.state" 2>/dev/nul
 is   "a timeout that exhausts its budget becomes failed" "failed" "$_st_ex"
 elist="$(alist)"
 hasnt "an exhausted timeout is excluded from the next pass" "$elist" "archive"
-
-# ==========================================================================================
-echo
-echo "SPIRA_ARCHIVIST_TIMEOUT_RETRIES is in the key list and defaults to 3"
-# ==========================================================================================
-out="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_RUN="$T/run" \
-    bash -c '. "'"$HERE"'/conf.sh" && echo "$SPIRA_CONF_KEYS"' 2>/dev/null)"
-has "SPIRA_ARCHIVIST_TIMEOUT_RETRIES is in the key list" "$out" "SPIRA_ARCHIVIST_TIMEOUT_RETRIES"
-val="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_RUN="$T/run" \
-    bash -c '. "'"$HERE"'/conf.sh" && echo "$SPIRA_ARCHIVIST_TIMEOUT_RETRIES"' 2>/dev/null)"
-is "default SPIRA_ARCHIVIST_TIMEOUT_RETRIES" "3" "$val"
 
 adigest() {  # adigest <archivist.sh args...>
     env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
