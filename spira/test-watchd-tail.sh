@@ -156,5 +156,46 @@ printf '\nthe flag is refused where it means nothing\n'
 out="$(SPIRA_RUN="$RUN" bash "$WATCHD" peek answers --takeover 2>&1)"; rc=$?
 is  "peek --takeover is refused"             "2"   "$rc"
 has "and says why"                           "$out" "only applies to 'tail'"
+out="$(SPIRA_RUN="$RUN" bash "$WATCHD" peek answers --from-start 2>&1)"; rc=$?
+is  "peek --from-start is refused"           "2"   "$rc"
+has "and says why"                           "$out" "only applies to 'tail'"
+
+# sp-z8wfb: a re-armed `tail --takeover` on a cursor already at EOF delivered zero lines —
+# `--all` did not help, because it drops the subject filter and leaves the cursor alone.
+# `--from-start` is the flag that bypasses the cursor itself, and every attach now says
+# where it resumed from so this is visible without reasoning about the cursor file by hand.
+printf '\nresume position is announced, and --from-start bypasses the cursor\n'
+FS_LOG="$RUN/watchd/fromstart.log"
+printf 'line one\nline two\nline three\n' > "$FS_LOG"
+printf 'fromstart|log|%s\n' "$FS_LOG" >> "$TMP/watchers"
+# The cursor already at EOF is the defect's own fixture: nothing here has read these three
+# lines through watchd, but the cursor claims they are all delivered already.
+printf '3\n' > "$RUN/watchd/fromstart.cursor"
+
+_lines_at_least() { [ "$(wc -l < "$2" 2>/dev/null || echo 0)" -ge "$1" ]; }
+_fromstart_free() { case "$(_tailers)" in *"fromstart|"*) return 1 ;; *) return 0 ;; esac; }
+
+p5="$(SPIRA_RUN="$RUN" bash "$WATCHD" tail fromstart --all >"$TMP/fs1.out" 2>"$TMP/fs1.err" & kids="$kids $!"; echo $!)"
+poll_for 5 _tailer_shows "fromstart|$p5|"
+sleep 0.3
+is  "default tail replays nothing from a cursor already at EOF" "" "$(cat "$TMP/fs1.out")"
+has "and it announces where it resumed from"    "$(cat "$TMP/fs1.err")" "resuming from line 3 of 3"
+kill -TERM "$p5" 2>/dev/null
+poll_for 5 _gone "$p5"
+# THE LOCK OUTLIVES THE WRAPPER until its inherited-descriptor children (tail, awk) exit too
+# — the same fact test 4/5 above exercises for a takeover. Waited for here rather than
+# assumed, or the next attach below refuses as a second reader on a lock nobody meant to hold.
+poll_for 5 _fromstart_free
+
+p6="$(SPIRA_RUN="$RUN" bash "$WATCHD" tail fromstart --from-start >"$TMP/fs2.out" 2>"$TMP/fs2.err" & kids="$kids $!"; echo $!)"
+poll_for 5 _tailer_shows "fromstart|$p6|"
+poll_for 5 _lines_at_least 3 "$TMP/fs2.out"
+is  "--from-start emits every existing line despite the cursor at EOF" "3" "$(wc -l < "$TMP/fs2.out" 2>/dev/null || echo 0)"
+has "including the first line the cursor had already marked read" "$(cat "$TMP/fs2.out")" "line one"
+has "the from-start resume line names line 0, not the cursor"  "$(cat "$TMP/fs2.err")" "resuming from line 0 of 3"
+has "and it still names the cursor it bypassed"                "$(cat "$TMP/fs2.err")" "cursor stays at 3"
+kill -TERM "$p6" 2>/dev/null
+poll_for 5 _gone "$p6"
+is  "the shared cursor is untouched by the replay" "3" "$(cat "$RUN/watchd/fromstart.cursor" 2>/dev/null)"
 
 tl_summary

@@ -11,10 +11,12 @@
 #   watchd.sh drain [name] [--all]  print what nobody has read, and mark it read
 #   watchd.sh peek [name] [--all] [--limit N]
 #                                   the same, capped, and marking NOTHING read
-#   watchd.sh tail <name> [--all] [--takeover]
+#   watchd.sh tail <name> [--all] [--takeover] [--from-start]
 #                                   replay from the cursor, then stream; for a Monitor.
 #                                   ONE AT A TIME per watcher — a second refuses unless
-#                                   --takeover is given, which ends the incumbent first
+#                                   --takeover is given, which ends the incumbent first.
+#                                   --from-start replays the whole log, bypassing the
+#                                   shared cursor; the cursor itself is untouched by it
 #   watchd.sh tailers               name|pid|since for every watcher being tailed now
 #   watchd.sh restart [name]        restart the unit behind a watcher
 #   watchd.sh notify                escalate events nobody has drained, and watchers that
@@ -604,13 +606,14 @@ cmd_exec() {
 # and it does so precisely when there are most of them — which is when losing them matters
 # most. Capping is therefore only available to the reader that consumes nothing.
 _wd_args() {
-    _wd_name=""; _wd_all=""; _wd_peek=""; _wd_limit=0; _wd_takeover=""
+    _wd_name=""; _wd_all=""; _wd_peek=""; _wd_limit=0; _wd_takeover=""; _wd_from_start=""
     local v
     while [ $# -gt 0 ]; do
         case "$1" in
             --all)  _wd_all=1 ;;
             --peek) _wd_peek=1 ;;
             --takeover) _wd_takeover=1 ;;
+            --from-start) _wd_from_start=1 ;;
             --limit|--limit=*)
                     if [ "$1" = --limit ]; then shift; v="${1-}"; else v="${1#--limit=}"; fi
                     case "$v" in ''|*[!0-9]*)
@@ -634,6 +637,13 @@ _wd_args() {
     # incantation to be sprinkled on any watchd command.
     if [ -n "$_wd_takeover" ] && [ -n "$_wd_peek" ]; then
         echo "watchd: --takeover only applies to 'tail' — nothing else holds a reader lock" >&2
+        return 2
+    fi
+    # `--from-start` ONLY APPLIES TO `tail`, for the same reason `--takeover` does: `peek`
+    # and `drain` already read forward from the cursor without disturbing it, so bypassing
+    # the cursor for the START position is a distinction only a stream has.
+    if [ -n "$_wd_from_start" ] && [ -n "$_wd_peek" ]; then
+        echo "watchd: --from-start only applies to 'tail' — peek already reads from the cursor without moving it" >&2
         return 2
     fi
     return 0
@@ -868,7 +878,8 @@ cmd_drain() {
     return 0
 }
 
-# cmd_tail <name> [--all] — replay from the cursor, then stream. This is the Monitor command.
+# cmd_tail <name> [--all] [--from-start] — replay from the cursor, then stream. This is the
+# Monitor command.
 #
 # It never exits on its own, and it advances the cursor AS IT READS rather than at the end.
 # Both properties are what make re-latching after a context reset correct: attaching replays
@@ -876,11 +887,27 @@ cmd_drain() {
 # nothing, because the position was written down line by line. Advancing only on exit would
 # make every re-attach re-fire the whole history — which is the noise the filter exists to
 # remove, arriving by a different route.
+#
+# `--from-start` REPLAYS EVERYTHING AND TOUCHES NOTHING. Like `--all` it drops the subject
+# filter, and it also starts at line 0 regardless of what the cursor holds — and, unlike the
+# default, never writes the cursor as it streams: a re-inspection of history must not move
+# the position a normal tail resumes from out from under it. `--all` ALONE does not bypass
+# the cursor, which is the gap sp-z8wfb found — a re-armed `tail --takeover` after the
+# cursor had already reached EOF delivered nothing, `--all` included, because it only ever
+# touched the filter and never `_wd_pos`.
+#
+# EVERY ATTACH NAMES WHERE IT RESUMED FROM, on stderr, before the first line streams — the
+# fact the same defect needed and did not have: nothing told the reader the cursor had
+# already passed the events it was waiting for.
 cmd_tail() {
     _wd_args "$@" || return 2
-    [ -n "$_wd_name" ] || { echo "usage: watchd.sh tail <name> [--all]" >&2; return 2; }
+    [ -n "$_wd_name" ] || { echo "usage: watchd.sh tail <name> [--all] [--from-start]" >&2; return 2; }
+    # `--from-start` DROPS THE SUBJECT FILTER TOO, not only the cursor. A full replay asked
+    # for by name is a request to see everything that is there, and a filtered one would
+    # still miss the very history `--all` alone was already shown not to recover
+    # (sp-z8wfb): the filter and the cursor are two different ways the same lines go missing.
     local re=""
-    [ -n "$_wd_all" ] || { re="$(_wd_filter)" || return 2; }
+    [ -n "$_wd_all" ] || [ -n "$_wd_from_start" ] || { re="$(_wd_filter)" || return 2; }
     local rows; rows="$(watchd_rows)" || return 1
     _wd_find "$rows" "$_wd_name" || return 2
     # REFUSED RATHER THAN WAITED ON. `tail -F` retries by name and would sit forever on a log
@@ -938,7 +965,17 @@ cmd_tail() {
     # this line, is what holds the claim.
     printf '%s\n' "$$" >"$lkf" 2>/dev/null || :
 
-    pos="$(_wd_pos "$_wd_name" "$(_wd_total "$lf")")"
+    local total cursor_pos stamp
+    total="$(_wd_total "$lf")"
+    cursor_pos="$(_wd_pos "$_wd_name" "$total")"
+    stamp="$(TZ=UTC printf '%(%Y-%m-%dT%H:%M:%SZ)T' "$(_wd_now)")"
+    if [ -n "$_wd_from_start" ]; then
+        pos=0
+        echo "watchd: '$_wd_name' resuming from line 0 of $total — from the start, cursor stays at $cursor_pos ($stamp)" >&2
+    else
+        pos="$cursor_pos"
+        echo "watchd: '$_wd_name' resuming from line $pos of $total ($stamp)" >&2
+    fi
     # A LOG THAT IS NOT THERE YET IS SAID OUT LOUD, then waited for. `-F` retries by name, so
     # attaching before the unit has started is legitimate and works; what is not acceptable is
     # doing it silently, because a watcher whose log never appears and a watcher with nothing
@@ -967,14 +1004,21 @@ cmd_tail() {
     # shellcheck disable=SC2064
     trap "_wd_tail_stop '$pidf'" TERM INT HUP EXIT
 
+    # THE CURSOR IS NOT WRITTEN AT ALL UNDER `--from-start`. It read line 0 rather than the
+    # cursor's own value to decide where to start, and if it went on to advance that same
+    # cursor as it streamed, a replay attached for inspection would silently relocate the
+    # position a normal tail resumes from — the shared bookkeeping a re-inspection of
+    # history must leave untouched.
+    local wc=1; [ -n "$_wd_from_start" ] && wc=0
     _wd_stream_awk
-    if [ -n "$_wd_all" ]; then
+    if [ -n "$_wd_all" ] || [ -n "$_wd_from_start" ]; then
         { tail -n +$(( pos + 1 )) -F "$lf" & [ -n "$pidf" ] && echo $! > "$pidf"; wait; } \
-            | "${_WD_AWK[@]}" -v c="$cf" -v p="$pos" '{ n=p+NR; print; fflush(); print n > c; close(c) }' &
+            | "${_WD_AWK[@]}" -v c="$cf" -v p="$pos" -v wc="$wc" \
+                '{ n=p+NR; print; fflush(); if (wc) { print n > c; close(c) } }' &
     else
         { tail -n +$(( pos + 1 )) -F "$lf" & [ -n "$pidf" ] && echo $! > "$pidf"; wait; } \
-            | "${_WD_AWK[@]}" -v c="$cf" -v p="$pos" -v re="$re" \
-                '{ n=p+NR; if ($0 ~ re) { print; fflush() } print n > c; close(c) }' &
+            | "${_WD_AWK[@]}" -v c="$cf" -v p="$pos" -v re="$re" -v wc="$wc" \
+                '{ n=p+NR; if ($0 ~ re) { print; fflush() } if (wc) { print n > c; close(c) } }' &
     fi
     _wd_tail_pipe=$!
     wait "$_wd_tail_pipe"
