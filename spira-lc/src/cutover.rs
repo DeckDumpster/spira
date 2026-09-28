@@ -852,7 +852,10 @@ fn add_exit_steps(
     let bead_kind = match &kind {
         delivery::DeliveryEventKind::Returned { reason } => bead::BeadEventKind::Returned { reason: reason.clone() },
         delivery::DeliveryEventKind::Requeued { tip } => bead::BeadEventKind::Requeued { tip: tip.clone() },
-        delivery::DeliveryEventKind::Delivered { .. } | delivery::DeliveryEventKind::Cut { .. } => {
+        delivery::DeliveryEventKind::Delivered { .. }
+        | delivery::DeliveryEventKind::Cut { .. }
+        | delivery::DeliveryEventKind::Published { .. }
+        | delivery::DeliveryEventKind::PublishRed { .. } => {
             return Ok(()); // not a settle/abandon exit shape — never reached by this module's callers
         }
     };
