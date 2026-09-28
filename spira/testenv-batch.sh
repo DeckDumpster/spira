@@ -102,7 +102,8 @@
 #                           file so a later refusal of the same key sends nothing further.
 #   SPIRA_SUITE_TIMEOUT     per-suite wall-clock limit in seconds; 0 = disabled
 #                           (default: 600). A suite that exceeds this limit is
-#                           recorded as "timeout" and the corpus continues. This
+#                           recorded as "timeout" (or "quarantined-red" for a
+#                           quarantined suite) and the corpus continues. This
 #                           mirrors gate-spira.sh's per-suite watchdog so neither
 #                           runner can be held indefinitely by one runaway suite.
 #   SPIRA_BATCH_MAXPAR      max parallel suites in --mode parallel. When unset (the normal
@@ -539,9 +540,9 @@ _timing_cpu1="0 0"
 # SUITE STATE — read from the candidate tree, never from the installed harness.
 # Disabled suites are pre-empted here (before the container starts); their
 # result files carry status=disabled. Quarantined suites run normally but a
-# non-zero exit is recorded as quarantined-red rather than red and does not
-# increment _batch_red. Fail-closed: an absent or unreadable state file means
-# every suite is active (blocking).
+# non-zero exit or timeout is recorded as quarantined-red rather than red or
+# timeout and does not increment _batch_red. Fail-closed: an absent or
+# unreadable state file means every suite is active (blocking).
 # ---------------------------------------------------------------------------
 _STS_TMP="$(mktemp)"
 _STS_QUARANTINED=""
@@ -1329,10 +1330,17 @@ if [ "$MODE" = serial ]; then
                 printf '  %-32s SKIPPED\n' "$s"
                 ;;
             124)
-                printf '%s %s %s %s %s%s 124\n' timeout "$(date +%s)" "$secs" "timeout:$s" "$MODE" \
-                    "$_result_extra" > "$res_file"
-                _batch_red=$(( _batch_red + 1 ))
-                printf '  %-32s TIMEOUT after %ss\n' "$s" "$secs"
+                if [ "$_s_quarantined" = 1 ]; then
+                    printf '%s %s %s %s %s%s %s\n' quarantined-red "$(date +%s)" "$secs" \
+                        "timeout:$s" "$MODE" "$_result_extra" 124 > "$res_file"
+                    _batch_quarantined_red=$(( _batch_quarantined_red + 1 ))
+                    printf '  %-32s QUARANTINED-RED  TIMEOUT after %ss\n' "$s" "$secs"
+                else
+                    printf '%s %s %s %s %s%s 124\n' timeout "$(date +%s)" "$secs" "timeout:$s" "$MODE" \
+                        "$_result_extra" > "$res_file"
+                    _batch_red=$(( _batch_red + 1 ))
+                    printf '  %-32s TIMEOUT after %ss\n' "$s" "$secs"
+                fi
                 ;;
             *)
                 _fp_val="$(_fp "$_rc" "$out")"
@@ -1536,9 +1544,15 @@ else
                     printf '  %-32s SKIPPED\n' "$s"
                     ;;
                 124)
-                    printf '%s %s %s %s %s%s 124\n' timeout "$(date +%s)" "$_secs" "timeout:$s" "$MODE" \
-                        "$_par_extra" > "$RESULTS/$s.result"
-                    printf '  %-32s TIMEOUT after %ss\n' "$s" "$_secs"
+                    if [ "$_par_quarantined" = 1 ]; then
+                        printf '%s %s %s %s %s%s %s\n' quarantined-red "$(date +%s)" "$_secs" \
+                            "timeout:$s" "$MODE" "$_par_extra" 124 > "$RESULTS/$s.result"
+                        printf '  %-32s QUARANTINED-RED  TIMEOUT after %ss\n' "$s" "$_secs"
+                    else
+                        printf '%s %s %s %s %s%s 124\n' timeout "$(date +%s)" "$_secs" "timeout:$s" "$MODE" \
+                            "$_par_extra" > "$RESULTS/$s.result"
+                        printf '  %-32s TIMEOUT after %ss\n' "$s" "$_secs"
+                    fi
                     ;;
                 *)
                     _fp_val="$(_fp "$_inner_rc" "$_out")"

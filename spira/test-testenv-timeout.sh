@@ -18,6 +18,9 @@
 #      (sp-a8c5, a host-side pipe held open by an orphan) does not reach this
 #      runner. This proves only "does not wedge" — the leak itself is not
 #      detected or classified here; see docs/test-plan/test-infrastructure.md G17.
+#   D. A quarantined suite that times out records "quarantined-red", not
+#      "timeout", and does not fail the batch — quarantine applies to the
+#      timeout path the same way it already applies to a non-zero exit.
 #
 # SEEN TO FAIL AGAINST UNFIXED TREE (law-a-regression-test-must-be-seen-to-fail):
 #   Against original testenv-batch.sh (before per-suite timeout):
@@ -30,6 +33,9 @@
 #   always run suites through `podman exec`, never the host pipe sp-a8c5 fixed.
 #   Its own outer `timeout` guard is what turns a future regression into a loud
 #   failure instead of a silent hang (law-absence-needs-a-positive-control).
+#   Part D fails against the tree before this fix: the timeout path ignored
+#   suite-state, so D1 sees rc=1 (not 0) and D3 sees status "timeout" (not
+#   "quarantined-red").
 #
 # host-reason: The per-suite timeout is applied by the host's `timeout` command
 #              around each podman exec; Parts A and C require a container.
@@ -295,6 +301,61 @@ if [ -n "$RD_C" ]; then
         [ "$_after_c_status" = ok ] \
             && ok "C4: suite after the leaker ran and passed" \
             || bad "C4: suite after the leaker ran and passed" "got status '$_after_c_status'"
+    fi
+fi
+
+# ===========================================================================
+# PART D: a quarantined suite that times out is recorded quarantined-red,
+# not timeout, and does not fail the batch (sp-m4qwi).
+# ===========================================================================
+echo
+echo "Part D: quarantined suite times out — recorded quarantined-red, not blocking"
+
+cat > "$FIXTURE/spira/suite-state" << 'EOF'
+test-fx-slow.sh | quarantined | 2026-01-01T00:00:00Z | sp-m4qwi | test fixture: quarantined slow suite
+EOF
+git -C "$FIXTURE" add spira/suite-state
+git -C "$FIXTURE" commit -q -m "quarantine test-fx-slow.sh"
+
+RESULTS_ROOT_D="$TMP/results-D"
+rc_d=0
+SPIRA_BATCH_SUITE_DIR="$SUITE_HOST" \
+SPIRA_BATCH_RESULTS="$RESULTS_ROOT_D" \
+SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_BATCH_INSTANCE="bto-d-$$" \
+SPIRA_BATCH_ORPHAN_PREFIX="spira-batch-bto-d-$$" \
+SPIRA_SUITE_TIMEOUT=2 \
+    bash "$BATCH" --mode serial --suites "test-fx-slow.sh,test-fx-after.sh" \
+         topic "$FIXTURE" || rc_d=$?
+
+# D1: batch exits 0 — quarantine absorbs the timeout, the round is not failed by it.
+[ "$rc_d" -eq 0 ] \
+    && ok "D1: batch exits 0 when the timed-out suite is quarantined (rc=$rc_d)" \
+    || bad "D1: batch exits 0 when the timed-out suite is quarantined" "expected 0, got $rc_d"
+
+RD_D="$(find_results_dir "$RESULTS_ROOT_D")"
+[ -n "$RD_D" ] \
+    && ok "D2: results directory created" \
+    || bad "D2: results directory created" "not found under $RESULTS_ROOT_D"
+
+if [ -n "$RD_D" ]; then
+    isfile "D3: quarantined slow suite has a result file" "$RD_D/test-fx-slow.sh.result"
+    if [ -f "$RD_D/test-fx-slow.sh.result" ]; then
+        _d_status="$(awk '{print $1}' "$RD_D/test-fx-slow.sh.result")"
+        [ "$_d_status" = quarantined-red ] \
+            && ok "D3: quarantined slow suite result status is 'quarantined-red'" \
+            || bad "D3: quarantined slow suite result status is 'quarantined-red'" "got '$_d_status'"
+        isnoteq "D3: status is not 'timeout' when the suite is quarantined" \
+            "timeout" "$_d_status"
+    fi
+
+    isfile "D4: after suite has a result file (corpus continued)" \
+           "$RD_D/test-fx-after.sh.result"
+    if [ -f "$RD_D/test-fx-after.sh.result" ]; then
+        _d_after_status="$(awk '{print $1}' "$RD_D/test-fx-after.sh.result")"
+        [ "$_d_after_status" = ok ] \
+            && ok "D4: after suite status is 'ok' (ran after quarantined timeout)" \
+            || bad "D4: after suite status is 'ok'" "got '$_d_after_status'"
     fi
 fi
 
