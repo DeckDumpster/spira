@@ -43,16 +43,17 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
-# c4d <attempts> <requeues> <reclaims> <labels> <asked-stamp> [poison_at] [requeue_at] [reclaim_at]
+# c4d <attempts> <requeues> <reclaims> <labels> <asked-stamp> [poisoned] [poison_at] [requeue_at] [reclaim_at]
 # -> check4_decide's real output, sourced fresh each call so no case can leak state into
-# the next through an exported POISON_AT/REQUEUE_AT/RECLAIM_AT.
+# the next through an exported POISON_AT/REQUEUE_AT/RECLAIM_AT. `poisoned` (sp-i2m7y) is the
+# caller's own spira-lc hold read, no longer parsed from `labels` — see lib.sh's own note.
 c4d() {
-    local n="$1" rq="$2" rc="$3" labels="$4" stamp="$5"
-    local p_at="${6:-3}" r_at="${7:-5}" c_at="${8:-5}"
+    local n="$1" rq="$2" rc="$3" labels="$4" stamp="$5" poisoned="${6:-0}"
+    local p_at="${7:-3}" r_at="${8:-5}" c_at="${9:-5}"
     env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         POISON_AT="$p_at" REQUEUE_AT="$r_at" RECLAIM_AT="$c_at" \
-        bash -c '. "$1"/lib.sh; check4_decide "$2" "$3" "$4" "$5" "$6"' \
-        _ "$HERE" "$n" "$rq" "$rc" "$labels" "$stamp" 2>/dev/null
+        bash -c '. "$1"/lib.sh; check4_decide "$2" "$3" "$4" "$5" "$6" "$7"' \
+        _ "$HERE" "$n" "$rq" "$rc" "$labels" "$stamp" "$poisoned" 2>/dev/null
 }
 
 echo "poison / ask — threshold, zero-attempt guard, POISON_AT=0 edge (D1, UC-21):"
@@ -60,12 +61,12 @@ echo "poison / ask — threshold, zero-attempt guard, POISON_AT=0 edge (D1, UC-2
 is "below threshold: no decision"                    "none"        "$(c4d 2 0 0 "spira,plan" 0:0:0)"
 is "AT threshold, none asked: poison and ask"         "poison ask"  "$(c4d 3 0 0 "spira,plan" 0:0:0)"
 is "above threshold, none asked: poison and ask too"  "poison ask"  "$(c4d 5 0 0 "spira,plan" 0:0:0)"
-is "already labeled, not yet asked at this count: ask only" "ask"   "$(c4d 3 0 0 "spira,plan,spira-poison" 0:0:0)"
-is "already labeled and already asked at this count: none"  "none"  "$(c4d 3 0 0 "spira,plan,spira-poison" 0:0:1)"
+is "already held, not yet asked at this count: ask only" "ask"   "$(c4d 3 0 0 "spira,plan" 0:0:0 1)"
+is "already held and already asked at this count: none"  "none"  "$(c4d 3 0 0 "spira,plan" 0:0:1 1)"
 is "zero attempts at POISON_AT=0: no decision (nothing failed)" "none" \
-   "$(c4d 0 0 0 "spira,plan" 0:0:0 0)"
+   "$(c4d 0 0 0 "spira,plan" 0:0:0 0 0)"
 is "CONTROL: one attempt at POISON_AT=0 still poisons"      "poison ask" \
-   "$(c4d 1 0 0 "spira,plan" 0:0:0 0)"
+   "$(c4d 1 0 0 "spira,plan" 0:0:0 0 0)"
 
 echo
 echo "a recorded lift (sp-wiyr2): attempts.sh deadlocked takes the label off but not the"
@@ -101,19 +102,19 @@ mark sp-x 5
 is "a later lift at a higher count re-covers the bead" "yes" "$(lifted sp-x 5)"
 
 echo
-echo "ask dedup is keyed on (bead, count), not the label (D4, UC-22):"
+echo "ask dedup is keyed on (bead, count), not the hold (D4, UC-22):"
 
 is "a higher count re-asks (the caller resolves per-count dedup before calling)" "ask" \
-   "$(c4d 4 0 0 "spira,plan,spira-poison" 0:0:0)"
-is "clearing the label re-poisons at the SAME count but does not re-arm ITS ask" "poison" \
-   "$(c4d 3 0 0 "spira,plan" 0:0:1)"
+   "$(c4d 4 0 0 "spira,plan" 0:0:0 1)"
+is "clearing the hold re-poisons at the SAME count but does not re-arm ITS ask" "poison" \
+   "$(c4d 3 0 0 "spira,plan" 0:0:1 0)"
 
 echo
 echo "stale poison clear (D3, UC-21):"
 
-is "labeled bead below threshold: clear"              "clear" "$(c4d 1 0 0 "spira,plan,spira-poison" 1:1:1)"
-is "labeled bead AT threshold: kept, not cleared"      "none"  "$(c4d 3 0 0 "spira,plan,spira-poison" 1:1:1)"
-is "unlabeled bead below threshold: nothing to clear"  "none"  "$(c4d 1 0 0 "spira,plan" 1:1:1)"
+is "held bead below threshold: clear"                  "clear" "$(c4d 1 0 0 "spira,plan" 1:1:1 1)"
+is "held bead AT threshold: kept, not cleared"          "none"  "$(c4d 3 0 0 "spira,plan" 1:1:1 1)"
+is "unheld bead below threshold: nothing to clear"      "none"  "$(c4d 1 0 0 "spira,plan" 1:1:1 0)"
 
 echo
 echo "requeue cap: threshold, dedup, delivers:action exemption (D2, UC-23):"
@@ -151,21 +152,21 @@ echo "fail loudly if invoked, then the whole table above runs again through the 
 
 MARKER="$TMP/per-bead-query-called"
 c4d_guarded() {
-    local n="$1" rq="$2" rc="$3" labels="$4" stamp="$5"
+    local n="$1" rq="$2" rc="$3" labels="$4" stamp="$5" poisoned="${6:-0}"
     env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         POISON_AT=3 REQUEUE_AT=5 RECLAIM_AT=5 MARKER="$MARKER" \
         bash -c '. "$1"/lib.sh
 attempts_of() { echo "$MARKER" >> "$MARKER"; return 1; }
 reopens_of()  { echo "$MARKER" >> "$MARKER"; return 1; }
 reclaims_of() { echo "$MARKER" >> "$MARKER"; return 1; }
-check4_decide "$2" "$3" "$4" "$5" "$6"' \
-        _ "$HERE" "$n" "$rq" "$rc" "$labels" "$stamp" 2>/dev/null
+check4_decide "$2" "$3" "$4" "$5" "$6" "$7"' \
+        _ "$HERE" "$n" "$rq" "$rc" "$labels" "$stamp" "$poisoned" 2>/dev/null
 }
 rm -f "$MARKER"
 c4d_guarded 3 0 0 "spira,plan" 0:0:0 >/dev/null
 c4d_guarded 3 6 0 "spira,plan,delivers:action" 1:0:0 >/dev/null
 c4d_guarded 0 0 5 "spira,plan" 0:0:0 >/dev/null
-c4d_guarded 1 0 0 "spira,plan,spira-poison" 1:1:1 >/dev/null
+c4d_guarded 1 0 0 "spira,plan" 1:1:1 1 >/dev/null
 is "no per-bead query function was called across the table" "" \
    "$([ -f "$MARKER" ] && cat "$MARKER" || printf '')"
 

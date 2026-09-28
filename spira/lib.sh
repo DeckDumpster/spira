@@ -5459,12 +5459,19 @@ for line in sys.stdin:
 }
 
 # --------------------------------------------------------------------------------------
-# check4_decide <attempts> <requeues> <reclaims> <labels> <asked-stamp> -> decision tokens
+# check4_decide <attempts> <requeues> <reclaims> <labels> <asked-stamp> [poisoned:0|1] -> decision tokens
 #   asked-stamp = "<requeue-already-asked 0|1>:<reclaim-already-asked 0|1>:<poison-already-asked-at-n 0|1>:<poison-lifted-at-or-above-n 0|1>"
 #   the fourth field is optional (bash `read` leaves a missing trailing field empty, which
 #   this treats as "not lifted") so every existing three-field caller is unaffected.
 #   thresholds come from POISON_AT/REQUEUE_AT/RECLAIM_AT, sentinel.sh's own shell vars,
 #   defaulted here so a caller (a test) need not export them.
+#
+#   `poisoned` is the caller's own read of the bead's spira-lc poison hold (sp-i2m7y) — NOT
+#   parsed from `labels` here, because the spira-poison bd label is no longer written and a
+#   lifecycle decision must not read one anyway. Defaults to 0 (not poisoned) so a caller
+#   that has not been converted yet gets the pre-poison behaviour rather than a silent wrong
+#   answer. `labels` still carries `delivers:action` (a deliverable-type marker, not
+#   lifecycle state) for the requeue exemption below.
 #
 #   -> a space-separated subset of: requeue-mail reclaim-mail poison clear ask
 #      "none" when nothing applies.
@@ -5483,6 +5490,7 @@ for line in sys.stdin:
 # --------------------------------------------------------------------------------------
 check4_decide() {
     local n="${1:-0}" requeues="${2:-0}" reclaims="${3:-0}" labels="${4:-}" stamp="${5:-0:0:0:0}"
+    local poisoned="${6:-0}"
     local rq_asked="0" rc_asked="0" po_asked="0" pl_lifted="0"
     IFS=: read -r rq_asked rc_asked po_asked pl_lifted <<<"$stamp"
     local p_at="${POISON_AT:-3}" r_at="${REQUEUE_AT:-5}" c_at="${RECLAIM_AT:-5}"
@@ -5501,23 +5509,20 @@ check4_decide() {
         out="$out reclaim-mail"
     fi
 
-    case "$labels" in
-        *spira-poison*)
-            # A bead at the threshold with zero charged attempts means POISON_AT=0 and
-            # nothing failed — but a labeled bead cannot be at n=0 by that route, so the
-            # clear condition needs only the threshold, not the n>0 guard poison/ask need.
-            if [ "$n" -lt "$p_at" ]; then out="$out clear"; fi
-            ;;
-        *)
-            # A LIFT AT THIS COUNT OR HIGHER MEANS NOTHING NEW HAS FAILED SINCE. The count
-            # itself is not touched by the lift (the rungs are the record), so without this
-            # guard the very next pass reads the same n against a label that just came off
-            # and re-poisons inside minutes — the count was never the thing that changed.
-            if [ "$n" -ge "$p_at" ] && [ "$n" -gt 0 ] && [ "${pl_lifted:-0}" != 1 ]; then
-                out="$out poison"
-            fi
-            ;;
-    esac
+    if [ "$poisoned" = 1 ]; then
+        # A bead at the threshold with zero charged attempts means POISON_AT=0 and
+        # nothing failed — but a held bead cannot be at n=0 by that route, so the
+        # clear condition needs only the threshold, not the n>0 guard poison/ask need.
+        if [ "$n" -lt "$p_at" ]; then out="$out clear"; fi
+    else
+        # A LIFT AT THIS COUNT OR HIGHER MEANS NOTHING NEW HAS FAILED SINCE. The count
+        # itself is not touched by the lift (the rungs are the record), so without this
+        # guard the very next pass reads the same n against a hold that just came off
+        # and re-poisons inside minutes — the count was never the thing that changed.
+        if [ "$n" -ge "$p_at" ] && [ "$n" -gt 0 ] && [ "${pl_lifted:-0}" != 1 ]; then
+            out="$out poison"
+        fi
+    fi
 
     if [ "$n" -ge "$p_at" ] && [ "$n" -gt 0 ] && [ "${po_asked:-0}" != 1 ]; then
         out="$out ask"

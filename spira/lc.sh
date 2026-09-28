@@ -184,3 +184,21 @@ lc_holds() {
     [ $? = 0 ] || return 0
     _lc_json_field "$js" '"\n".join(json.loads(d.get("bead",{}).get("holds") or "[]"))' 2>/dev/null
 }
+
+# lc_held <bead-id> <kind> -> 0 if the row currently carries that hold, 1 otherwise
+# (including "no such row" and "cannot tell" — a caller that only wants a yes/no answer
+# should not have to distinguish those from "not held").
+lc_held() {
+    local id="${1:?lc_held needs a bead id}" kind="${2:?lc_held needs a hold kind}"
+    lc_holds "$id" | grep -qx "$kind"
+}
+
+# lc_list_held <kind> -> every bead id currently carrying that hold, one per line (empty if
+# none, or the binary/DB is unreachable). The bulk counterpart to lc_held: a sweep over many
+# beads (CHECK 4's stale-poison scan) asks this once instead of lc_holds per bead.
+lc_list_held() {
+    local kind="${1:?lc_list_held needs a hold kind}"
+    [ -x "${SPIRA_LC_BIN:-}" ] || return 0
+    local js; js="$("$SPIRA_LC_BIN" list --hold "$kind" 2>/dev/null)" || return 0
+    _lc_json_field "$js" '"\n".join(r.get("bead_id","") for r in (d if isinstance(d, list) else []))' 2>/dev/null
+}
