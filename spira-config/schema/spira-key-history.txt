@@ -294,3 +294,7 @@ concierge_inbox_backoff
 flow_unobservable_grace_secs
 open_children_label
 publish_remote
+queue_transition_pollsec
+queue_transition_maxsec
+local_backlog_count
+local_backlog_age

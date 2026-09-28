@@ -180,6 +180,10 @@ pub fn spira_section(
             }
             "SPIRA_LANES_MAX_LIVE" => s.lanes_max_live = parse_u32(warnings, "lanes_max_live", val),
             "SPIRA_THRASH_MINUTES" => s.thrash_minutes = parse_u32(warnings, "thrash_minutes", val),
+            "SPIRA_QUEUE_TRANSITION_POLLSEC" => s.queue_transition_pollsec = parse_u32(warnings, "queue_transition_pollsec", val),
+            "SPIRA_QUEUE_TRANSITION_MAXSEC" => s.queue_transition_maxsec = parse_u32(warnings, "queue_transition_maxsec", val),
+            "SPIRA_LOCAL_BACKLOG_COUNT" => s.local_backlog_count = parse_u32(warnings, "local_backlog_count", val),
+            "SPIRA_LOCAL_BACKLOG_AGE" => s.local_backlog_age = parse_u32(warnings, "local_backlog_age", val),
             "SPIRA_SUMMON_LOCK_WAIT" => s.summon_lock_wait = parse_u32(warnings, "summon_lock_wait", val),
             "SPIRA_CONCIERGE_INBOX" => s.concierge_inbox = Some(val.clone()),
             "SPIRA_CONCIERGE_INBOX_DEDUP" => {

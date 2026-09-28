@@ -1104,6 +1104,22 @@
             "null"
           ]
         },
+        "local_backlog_age": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "local_backlog_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
         "loom_addr": {
           "type": [
             "string",
@@ -1499,6 +1515,22 @@
             "string",
             "null"
           ]
+        },
+        "queue_transition_maxsec": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "queue_transition_pollsec": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
         },
         "queue_wait_label": {
           "type": [
