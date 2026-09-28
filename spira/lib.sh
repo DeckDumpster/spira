@@ -1094,6 +1094,19 @@ READY_ARGS=(ready --limit 0 --exclude-type epic,event -u)
 [[ -n "${SPIRA_SCOPE_LABEL:-}" ]] && READY_ARGS+=(--label "$SPIRA_SCOPE_LABEL")
 [[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && READY_ARGS+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
 
+# ready_raw_args -> READY_ARGS without the SPIRA_SCOPE_LABEL restriction, one argv token a
+# line. This is the broadest "is this bead claimable by ANY persona" query — detect_unclaimable_
+# ready's own reason for existing is seeing a bead that is MISSING the scope label, so it
+# cannot ask through READY_ARGS. It is also the one shape sentinel.sh's full pass fetches
+# ONCE into SPIRA_READY_SNAPSHOT (sp-bo67y): every scope-restricted consumer (bulk_ready_by_
+# fayth via each fayth's own FAYTH_LABELS, mark_queue_waiters via an explicit filter) narrows
+# the cached superset in-process rather than asking bd again with a narrower --label.
+ready_raw_args() {
+    local args=(ready --limit 0 --exclude-type epic,event -u)
+    [[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && args+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
+    printf '%s\n' "${args[@]}"
+}
+
 # ready_count <labels> <exclude-labels> -> how many beads that predicate can claim.
 #
 # A FAILED QUERY IS NOT A ZERO. bd's own circuit breaker or a Dolt lock can refuse the read
@@ -1362,9 +1375,20 @@ fayth_ready() {
 # buckets it in-process with ready-bucket.py, applying the identical predicate fayth_ready
 # would (FAYTH_LABELS, FAYTH_EXCLUDE_LABELS, and fayth: preference — mirrored from
 # unclaimable.py's own claimers loop, not reimplemented a third time).
+#
+# SPIRA_READY_SNAPSHOT, WHEN SET, REPLACES THE QUERY — sentinel.sh's full pass fetches the
+# ready_raw_args superset once (sp-bo67y) and every fayth here still gets the identical
+# count: FAYTH_LABELS already carries SPIRA_SCOPE_LABEL itself (every chamber file sets
+# `FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}..."`), so the `inc <= L` test in
+# ready-bucket.py rejects an out-of-scope bead exactly as READY_ARGS's own --label would
+# have, and reading the broader snapshot changes no fayth's count.
 bulk_ready_by_fayth() {
     local raw parts f inc exc
-    raw="$(bdjson "${READY_ARGS[@]}" 2>/dev/null)"
+    if [ -n "${SPIRA_READY_SNAPSHOT:-}" ] && [ -r "$SPIRA_READY_SNAPSHOT" ]; then
+        raw="$(cat "$SPIRA_READY_SNAPSHOT")"
+    else
+        raw="$(bdjson "${READY_ARGS[@]}" 2>/dev/null)"
+    fi
     [ -n "$raw" ] || return 0
     parts=""
     for f in $(spira_fayths); do
@@ -1508,24 +1532,31 @@ mark_queue_waiters() {
     local label="${SPIRA_QUEUE_WAIT_LABEL:-}"
     [ -n "$label" ] || return 0
     local landstate_dir="$SPIRA_RUN/landstate"
-    local sf id state tip qblockers=""
+    local id state tip qblockers=""
 
     # Active queue blockers: CERTIFIED or BATCHED beads with a real commit tip.
     # tip="none" means no commit was recorded (design, diagnosis, superseded bead);
     # such a bead will never reach LANDED and is treated as already satisfied.
+    #
+    # ONE AWK FOR THE WHOLE DIRECTORY, not a per-file loop forking two awks apiece — 546
+    # landstate files forked ~1,092 processes to read two fields each (sp-bo67y). A single
+    # invocation over every filename argument resets FNR at each file boundary, so one call
+    # still prints exactly one "<path> <state> <tip>" line per file.
     if [ -d "$landstate_dir" ]; then
-        for sf in "$landstate_dir/"*; do
-            [ -f "$sf" ] || continue
-            id="$(basename "$sf")"
-            state="$(awk 'NR==1{print $1}' "$sf" 2>/dev/null)"
-            tip="$(awk   'NR==1{print $2}' "$sf" 2>/dev/null)"
-            case "$state" in
-                CERTIFIED|BATCHED)
-                    [ -n "$tip" ] && [ "$tip" != "none" ] \
-                        && qblockers="${qblockers}${id} "
-                    ;;
-            esac
-        done
+        local -a _mq_all=("$landstate_dir"/*) _mq_files=() _mq_sf
+        for _mq_sf in "${_mq_all[@]}"; do [ -f "$_mq_sf" ] && _mq_files+=("$_mq_sf"); done
+        if [ "${#_mq_files[@]}" -gt 0 ]; then
+            while IFS=' ' read -r sf state tip; do
+                [ -n "$sf" ] || continue
+                id="${sf##*/}"
+                case "$state" in
+                    CERTIFIED|BATCHED)
+                        [ -n "$tip" ] && [ "$tip" != "none" ] \
+                            && qblockers="${qblockers}${id} "
+                        ;;
+                esac
+            done < <(awk 'FNR==1{print FILENAME, $1, $2}' "${_mq_files[@]}" 2>/dev/null)
+        fi
     fi
 
     # Collect labeled beads and ready beads, then decide each bead's label state
@@ -1535,8 +1566,26 @@ mark_queue_waiters() {
     labeled_json="$(bdjson list --status open --label "$label" --limit 0 2>/dev/null)" \
         || labeled_json=""
     ready_json=""
-    [ -n "$qblockers" ] \
-        && { ready_json="$(bdjson "${READY_ARGS[@]}" 2>/dev/null)" || ready_json=""; }
+    if [ -n "$qblockers" ]; then
+        # SPIRA_READY_SNAPSHOT, WHEN SET, IS THE BROADER ready_raw_args SUPERSET (no
+        # SPIRA_SCOPE_LABEL filter) that sentinel.sh's full pass fetches once (sp-bo67y).
+        # READY_ARGS itself narrows to scope, so the python below re-applies that one
+        # restriction rather than asking bd again for an identical, narrower query.
+        if [ -n "${SPIRA_READY_SNAPSHOT:-}" ] && [ -r "$SPIRA_READY_SNAPSHOT" ]; then
+            ready_json="$(SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" python3 -c '
+import json, os, sys
+scope = os.environ.get("SPIRA_SCOPE_LABEL", "")
+try: d = json.load(sys.stdin)
+except Exception: d = []
+d = d if isinstance(d, list) else [d]
+if scope:
+    d = [b for b in d if scope in (b.get("labels") or [])]
+print(json.dumps(d))
+' < "$SPIRA_READY_SNAPSHOT" 2>/dev/null)" || ready_json=""
+        else
+            ready_json="$(bdjson "${READY_ARGS[@]}" 2>/dev/null)" || ready_json=""
+        fi
+    fi
 
     # labeled_json goes through the environment (typically a small set of beads);
     # ready_json goes through stdin to avoid the env-size ceiling on large partitions.
@@ -5048,16 +5097,30 @@ dispatchable_open() {
         while IFS=$'\t' read -r labels exclude; do
             [ -n "$labels" ] || continue
             n=$((n+1))
-            bdjson list --limit 0 --label "$labels" 2>/dev/null \
-            | SPIRA_EXCL="$exclude" python3 -c '
+            # SPIRA_LIST_SNAPSHOT, WHEN SET, REPLACES THE PER-PARTITION QUERY —
+            # sentinel.sh's full pass fetches `bd list --all` once (sp-bo67y) and every
+            # partition below filters the same cached JSON in-process instead of asking bd
+            # again; label and exclude-label matching moves into this python either way, so
+            # the fallback bd query (already narrowed to $labels) is filtered identically
+            # and harmlessly a second time.
+            if [ -n "${SPIRA_LIST_SNAPSHOT:-}" ] && [ -r "$SPIRA_LIST_SNAPSHOT" ]; then
+                cat "$SPIRA_LIST_SNAPSHOT"
+            else
+                bdjson list --limit 0 --label "$labels" 2>/dev/null
+            fi \
+            | SPIRA_EXCL="$exclude" SPIRA_LBL="$labels" python3 -c '
 import json, os, sys
 excl = {x for x in (os.environ.get("SPIRA_EXCL") or "").split(",") if x}
+need = {x for x in (os.environ.get("SPIRA_LBL") or "").split(",") if x}
 try: d = json.load(sys.stdin)
 except Exception: sys.exit(0)
 for i in (d if isinstance(d, list) else [d]):
     if i.get("status") == "closed" or i.get("issue_type") in ("epic", "event"):
         continue
-    if excl & set(i.get("labels") or []):
+    lbls = set(i.get("labels") or [])
+    if not need <= lbls:
+        continue
+    if excl & lbls:
         continue
     print(i["id"] + "\t" + ",".join(i.get("labels") or []))
 ' 2>/dev/null
@@ -5075,10 +5138,19 @@ check4_closed_branched() {
     {
         while IFS=$'\t' read -r labels exclude; do
             [ -n "$labels" ] || continue
-            bdjson list --limit 0 --label "$labels" --status closed 2>/dev/null \
-            | SPIRA_EXCL="$exclude" python3 -c '
+            # SPIRA_LIST_SNAPSHOT, WHEN SET, REPLACES THE PER-PARTITION QUERY — see
+            # dispatchable_open's identical comment (sp-bo67y). The bead's own reason for
+            # this one being singled out: it pulled ~10.5MB of closed JSON per partition,
+            # every pass, to find a handful of branch:-carrying rows.
+            if [ -n "${SPIRA_LIST_SNAPSHOT:-}" ] && [ -r "$SPIRA_LIST_SNAPSHOT" ]; then
+                cat "$SPIRA_LIST_SNAPSHOT"
+            else
+                bdjson list --limit 0 --label "$labels" --status closed 2>/dev/null
+            fi \
+            | SPIRA_EXCL="$exclude" SPIRA_LBL="$labels" python3 -c '
 import json, os, sys
 excl = {x for x in (os.environ.get("SPIRA_EXCL") or "").split(",") if x}
+need = {x for x in (os.environ.get("SPIRA_LBL") or "").split(",") if x}
 try: d = json.load(sys.stdin)
 except Exception: sys.exit(0)
 for i in (d if isinstance(d, list) else [d]):
@@ -5086,9 +5158,11 @@ for i in (d if isinstance(d, list) else [d]):
         continue
     if i.get("issue_type") in ("epic", "event"):
         continue
-    if excl & set(i.get("labels") or []):
-        continue
     lbls = i.get("labels") or []
+    if not need <= set(lbls):
+        continue
+    if excl & set(lbls):
+        continue
     if not any(l.startswith("branch:") for l in lbls):
         continue
     print(i["id"] + "\t" + ",".join(lbls))
@@ -5274,6 +5348,7 @@ detect_unclaimable_ready() {
                     -u SPIRA_CZAR_LABEL -u SPIRA_GROOMER_LABEL \
                     -u SPIRA_GROOM_ASK_LABEL \
                     -u SPIRA_MAECHEN_LABEL -u SPIRA_SPIKE_LABEL \
+                    -u SPIRA_READY_SNAPSHOT -u SPIRA_LIST_SNAPSHOT -u SPIRA_READY_CACHE \
                     SPIRA_HOME="$_duc_prod_home" \
                     bash -c ". \"$_duc_prod_home/lib.sh\"; detect_unclaimable_ready"
                 return $?
@@ -5298,9 +5373,14 @@ detect_unclaimable_ready() {
         [ -n "$inc" ] && all_parts="${all_parts}${f}|${inc}|${exc}"$'\n'
     done
 
-    local _det_args=(ready --limit 0 --exclude-type epic,event -u)
-    [[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && _det_args+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
-    bdjson "${_det_args[@]}" 2>/dev/null \
+    # SPIRA_READY_SNAPSHOT is exactly this query (ready_raw_args), fetched once for the whole
+    # pass (sp-bo67y) — read it instead of asking bd again when the caller has one ready.
+    if [ -n "${SPIRA_READY_SNAPSHOT:-}" ] && [ -r "$SPIRA_READY_SNAPSHOT" ]; then
+        cat "$SPIRA_READY_SNAPSHOT"
+    else
+        local _det_args; mapfile -t _det_args < <(ready_raw_args)
+        bdjson "${_det_args[@]}" 2>/dev/null
+    fi \
     | PARTS="$parts" ALL_PARTS="$all_parts" python3 "$SPIRA_HOME/unclaimable.py" 2>/dev/null
 }
 

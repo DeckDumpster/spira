@@ -175,6 +175,46 @@ if [ "$REPORT" = 1 ]; then
 fi
 
 # ======================================================================================
+# ONE STORE READ PER PASS (sp-bo67y). strand.sh, dispatchable_open and check4_closed_branched
+# each asked bd once per partition below, and mark_queue_waiters, detect_unclaimable_ready
+# and every fayth_ready call inside CHECK 7's summon loop asked bd ready again independently
+# — roughly 30 bd list/ready calls in one pass, measured 05:43:23 2026-09-28 (375s wall,
+# 69.8s CPU; check4_closed_branched alone pulled ~10.5MB of closed JSON per partition).
+# Fetch each shape ONCE here; every consumer named above reads the cached JSON instead of
+# asking bd again. Cleaned up by the trap regardless of which exit path below fires.
+#
+# SPIRA_READY_SNAPSHOT is the BROADEST ready set (ready_raw_args — no SPIRA_SCOPE_LABEL
+# filter), because detect_unclaimable_ready must see a bead missing the scope label to
+# report it; every scope- or partition-restricted consumer narrows it in-process instead
+# (bulk_ready_by_fayth via each fayth's own FAYTH_LABELS, mark_queue_waiters and strand.sh
+# via an explicit filter).
+#
+# SPIRA_READY_CACHE is bulk_ready_by_fayth's own per-fayth bucketing of that same snapshot —
+# populated here too, not only under --summon-only (sp-0y2av), so every fayth_ready call
+# CHECK 7's summon loop makes (the elastic and lane last-slot checks, and the final
+# readiness check per persona) reads the cache fayth_ready already knows how to use instead
+# of paying its own `bd ready` call.
+# ======================================================================================
+SPIRA_LIST_SNAPSHOT="$(mktemp "$SPIRA_RUN/list-snapshot.XXXXXX" 2>/dev/null)" || SPIRA_LIST_SNAPSHOT=""
+SPIRA_READY_SNAPSHOT="$(mktemp "$SPIRA_RUN/ready-snapshot.XXXXXX" 2>/dev/null)" || SPIRA_READY_SNAPSHOT=""
+SPIRA_READY_CACHE=""
+if [ -n "$SPIRA_LIST_SNAPSHOT" ]; then
+    bdjson list --all --limit 0 > "$SPIRA_LIST_SNAPSHOT" 2>/dev/null
+    export SPIRA_LIST_SNAPSHOT
+fi
+if [ -n "$SPIRA_READY_SNAPSHOT" ]; then
+    _snap_ready_args=(); while IFS= read -r _snap_arg; do _snap_ready_args+=("$_snap_arg"); done < <(ready_raw_args)
+    bdjson "${_snap_ready_args[@]}" > "$SPIRA_READY_SNAPSHOT" 2>/dev/null
+    export SPIRA_READY_SNAPSHOT
+    SPIRA_READY_CACHE="$(mktemp "$SPIRA_RUN/ready-cache.XXXXXX" 2>/dev/null)" || SPIRA_READY_CACHE=""
+    if [ -n "$SPIRA_READY_CACHE" ]; then
+        bulk_ready_by_fayth > "$SPIRA_READY_CACHE" 2>/dev/null
+        export SPIRA_READY_CACHE
+    fi
+fi
+trap 'rm -f "${SPIRA_LIST_SNAPSHOT:-}" "${SPIRA_READY_SNAPSHOT:-}" "${SPIRA_READY_CACHE:-}"' EXIT
+
+# ======================================================================================
 # CHECK 1 — completed pilgrimages. An epic whose children have all closed is done: announce
 # it to its subscribers, then close it. This is `gt convoy check` plus `gt convoy watch`
 # rebuilt on epic beads; pilgrimage.sh holds the detection, the watcher list and the manual
