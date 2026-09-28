@@ -28,6 +28,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 SH="$TMP/spira"; mkdir -p "$SH"
 cp -r "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null || true
+cp -r "$HERE/mail" "$SH/mail" 2>/dev/null || true
 chmod +x "$SH"/*.sh 2>/dev/null || true
 
 # --- fixture repo 1: queue.local, the alarm's own target -------------------------------
