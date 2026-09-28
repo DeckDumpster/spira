@@ -56,7 +56,7 @@ _MERGE_FAIL_MAX="${SPIRA_COCKPIT_MERGE_FAIL_MAX:-3}"
 # Interval classifies tier (fast=5, medium=60, slow=600).
 PROBES=(
     "now:5:30:now"
-    "slots:30:20:slots"
+    "slots:60:20:slots"
     "reachable:60:120:reachable"
     "sphere:60:90:sphere"
     "repo_labels:60:90:repo_labels"
