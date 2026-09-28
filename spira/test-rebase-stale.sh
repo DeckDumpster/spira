@@ -104,7 +104,8 @@ new_branch_wt() {
     git -C "$REPO" worktree add -q -b "spira/$id" "$RUN/worktree/mk-$id" "$start"
 }
 commit_branch() {
-    local id="$1" msg="$2" wt="$RUN/worktree/mk-$id"
+    local id="$1" msg="$2" wt
+    wt="$RUN/worktree/mk-$id"
     git -C "$wt" add -A
     git -C "$wt" commit -q -m "$msg"
     git -C "$REPO" worktree remove --force "$wt"
