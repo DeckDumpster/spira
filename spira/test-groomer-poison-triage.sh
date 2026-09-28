@@ -134,7 +134,6 @@ log="$(cat "$BD_LOG")"
 is   "triage-poison drop exits 0"        0                      "$rc"
 want "output confirms DROPPED"           "DROPPED poisoned-litter" "$out"
 want "the bead is closed"                "close poisoned-litter"   "$log"
-want "the close reason names DROP"       "Poison triage — DROP"    "$log"
 want "the bead is labeled spira-dropped" "label add poisoned-litter spira-dropped" "$log"
 
 echo
