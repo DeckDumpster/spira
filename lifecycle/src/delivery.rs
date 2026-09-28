@@ -433,8 +433,9 @@ mod tests {
         for &state in &[DeliveryState::Published, DeliveryState::PublishRed] {
             row.state = state;
             for kind in kinds() {
+                let kind_dbg = format!("{kind:?}");
                 let out = apply(&row, &ev(state, 0, kind));
-                assert!(!out.applied, "{state:?} must absorb {kind:?}");
+                assert!(!out.applied, "{state:?} must absorb {kind_dbg}");
                 assert!(matches!(out.refusal, Some(Refusal::Terminal { .. })));
             }
         }
