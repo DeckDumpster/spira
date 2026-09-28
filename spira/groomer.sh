@@ -78,6 +78,8 @@ case "$cmd" in
 
     # shellcheck source=lib.sh
     . "$HERE/lib.sh"
+    # shellcheck source=lc.sh
+    . "$HERE/lc.sh"
 
     _sw_log() {
         local _ts _msg
@@ -113,6 +115,7 @@ case "$cmd" in
                 if [ "$_sw_dry" -eq 0 ]; then
                     "$BD_CMD" -C "$DB" label remove "$_sw_bid" "${SPIRA_CI_LABEL:?}" >/dev/null 2>&1 \
                         || printf 'groomer: sweep: WARN label remove %s failed for %s\n' "$SPIRA_CI_LABEL" "$_sw_bid" >&2
+                    lc_unhold "$_sw_bid" wait groomer.sh || true
                 fi
                 _sw_n=$((_sw_n+1))
                 ;;
