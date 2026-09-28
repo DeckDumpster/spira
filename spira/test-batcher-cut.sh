@@ -43,7 +43,7 @@ ROOT="$(cd "$HERE/.." && pwd -P)"
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
 testdb_require test-batcher-cut
-TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+TMP="$(mktemp -d)"; trap 'testdb_drop; chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT INT TERM
 testdb_up batchercut || { echo "test-batcher-cut: could not build fixture database"; exit 1; }
 
 # ── build the batcher binary (law-absence-needs-a-positive-control: no binary, no suite) ──
@@ -918,7 +918,12 @@ out_l2="$(cut_local)"
 want   "L2: reports landing locally"      "landed locally" "$out_l2"
 nowant "L2: never reports a PR opening"   "PR "            "$out_l2"
 is     "L2: forge pr-create never called" "$prcreate_before_l2" "$(grep -c '^pr-create' "$FORGE_LOG")"
-is     "L2: local/main fast-forwards to the round head" "$tip_l2" "$(git -C "$LREPO" rev-parse local/main)"
+# The round head is a --no-ff merge commit, not the member's own tip — its parents are
+# [local/main's pre-round head, tip_l2], so compare local/main against what the batcher
+# itself reported landing at, and separately prove that head really does carry tip_l2.
+head_l2="$(printf '%s\n' "$out_l2" | sed -n 's/.*landed locally at \([0-9a-f]\{7,\}\).*/\1/p' | head -1)"
+is     "L2: local/main fast-forwards to the round's own merge head" "$head_l2" "$(git -C "$LREPO" rev-parse local/main)"
+is     "L2: the round head descends from the member's own tip" "0" "$(git -C "$LREPO" merge-base --is-ancestor "$tip_l2" "$head_l2"; echo $?)"
 is     "L2: no open-batch file under queue.local" "0" "$([ -f "$QUEUEDIR/locland/open" ] && echo 1 || echo 0)"
 is     "L2: sp-clbb2 landstate LANDED" "LANDED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-clbb2")"
 if [ -x "$TSD_BIN" ]; then
