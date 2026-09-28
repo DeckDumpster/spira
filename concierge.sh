@@ -113,6 +113,16 @@ compose_brief() {
         "$(fayth_get "$FAYTH" FAYTH_MEMORY_PREFIXES law-)" "" \
         "$(fayth_get "$FAYTH" FAYTH_STATUTE_CORE "")")" || statutes=""
     if [ -z "$statutes" ]; then
+        # render_memories swallows bd's stderr, so empty output means either "bd could not
+        # reach the store" or "the store answered and there is genuinely nothing" — and
+        # those call for opposite diagnoses. `bd ping` tells them apart before either is
+        # reported: a down database and an empty statute book cost a whole session to
+        # distinguish by hand once (sp-n93br).
+        local ping_err
+        if ! ping_err="$(bd -C "${SPIRA_DB:?}" ping 2>&1 >/dev/null)"; then
+            echo "concierge: cannot reach the statute book database at $SPIRA_DB: $ping_err" >&2
+            return 1
+        fi
         echo "concierge: the statute book rendered empty — refusing to start without it" >&2
         echo "  check: $HARNESS/rule.sh list" >&2
         return 1

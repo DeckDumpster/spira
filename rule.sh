@@ -73,6 +73,20 @@ synth() {
 }
 slugify() { printf 'law-%s' "${1#law-}"; }
 
+# memories_json -> bd's memories --json on stdout, or exit 1 with bd's own stderr text
+# reported and named against $DB. A down database and a genuinely empty statute book both
+# used to reach here as empty stdin, and json.load could not tell them apart — it raised on
+# the former and would have been correct to return {} on the latter (sp-n93br). Checking
+# bd's exit status here, before anything is handed to python3, keeps the two distinguishable.
+memories_json() {
+    local out
+    out="$(bd -C "$DB" memories --json 2>&1)" || {
+        echo "rule: cannot reach the statute book at $DB: $out" >&2
+        exit 1
+    }
+    printf '%s' "$out"
+}
+
 # A missing `.beads` is a real fault to report, never a reason to quietly address whatever
 # database the working directory happens to resolve to.
 [ -d "$DB/.beads" ] || { echo "rule: $DB has no .beads — refusing to guess a database" >&2; exit 1; }
@@ -129,8 +143,8 @@ enact)
         exit 0
     fi
 
-    bd -C "$DB" remember --key "$key" "$text" >/dev/null || {
-        echo "rule: failed to write $key to the statute book at $DB" >&2; exit 1; }
+    remember_err="$(bd -C "$DB" remember --key "$key" "$text" 2>&1 >/dev/null)" || {
+        echo "rule: failed to write $key to the statute book at $DB: $remember_err" >&2; exit 1; }
     rm -f "${SPIRA_MEMORIES_CACHE:-}" 2>/dev/null || true
     echo "enacted $key (${words} words)"
     if synth; then
@@ -153,10 +167,12 @@ enact)
 retire)
     [ $# -eq 2 ] || usage
     key="$(slugify "$2")"
-    bd -C "$DB" memories --json 2>/dev/null \
+    json="$(memories_json)" || exit 1
+    printf '%s' "$json" \
       | python3 -c 'import json,sys;d=json.load(sys.stdin);sys.exit(0 if sys.argv[1] in d else 1)' "$key" || {
         echo "rule: no statute '$key' in the statute book at $DB" >&2; exit 1; }
-    bd -C "$DB" forget "$key" >/dev/null 2>&1 && echo "forgot $key"
+    forget_err="$(bd -C "$DB" forget "$key" 2>&1 >/dev/null)" && echo "forgot $key" || {
+        echo "rule: failed to forget $key: $forget_err" >&2; exit 1; }
     rm -f "${SPIRA_MEMORIES_CACHE:-}" 2>/dev/null || true
     if synth; then
         echo
@@ -177,7 +193,8 @@ retire)
     ;;
 
 list)
-    bd -C "$DB" memories --json 2>/dev/null | python3 -c '
+    json="$(memories_json)" || exit 1
+    printf '%s' "$json" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
 laws = {k: v for k, v in sorted(d.items()) if k.startswith("law-") and isinstance(v, str)}
@@ -191,8 +208,15 @@ show)
     key="$(slugify "$2")"
     # `recall` only. The first version fell through to `bd remember "$key"` when recall
     # found nothing, which is a WRITE command reached by mistyping a slug in a read.
-    bd -C "$DB" recall "$key" 2>/dev/null || {
-        echo "rule: no statute '$key' — \`rule.sh list\` shows what is in force" >&2; exit 1; }
+    # bd's own stderr is surfaced rather than replaced: it already says "no memory with
+    # that key" or names the real connection failure, and swallowing it collapsed both
+    # into the same misleading "no statute" line (sp-n93br).
+    out="$(bd -C "$DB" recall "$key" 2>&1)" || {
+        echo "rule: $out" >&2
+        echo "rule: \`rule.sh list\` shows what is in force" >&2
+        exit 1
+    }
+    printf '%s\n' "$out"
     ;;
 
 *) usage ;;
