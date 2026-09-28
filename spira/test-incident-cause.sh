@@ -47,6 +47,21 @@ rm -f "$OFFENDER"
 out="$(bash "$LINT" --dir "$TMP" 2>&1)"; rc=$?
 is "GREEN AFTER: an empty scratch directory is clean" "0" "$rc"
 
+# --- comments are prose, not code (law-a-matcher-reads-code-not-prose) -----------
+# The shape that turned Concierge round 49 red: a COMMENT quoting the assignment,
+# with no real SPIRA_INCIDENT_CAUSE anywhere near it.
+COMMENTED="$TMP/commented.sh"
+cat > "$COMMENTED" <<'SCRIPT'
+# fixed by rewording the comment that used to quote
+# SPIRA_INCIDENT_REF="closed-not-landed:$id" here
+do_thing() { :; }
+SCRIPT
+
+out="$(bash "$LINT" --dir "$TMP" 2>&1)"; rc=$?
+is   "GREEN: a comment quoting the assignment is not a site" "0" "$rc"
+nowant "and it is not named as undeclared" "commented.sh" "$out"
+rm -f "$COMMENTED"
+
 # --- real property: the shipped tree has no undeclared sites ---------------------
 out="$(bash "$LINT" 2>&1)"; rc=$?
 is   "the shipped spira/ tree is clean" "0" "$rc"
