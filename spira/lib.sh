@@ -2584,7 +2584,14 @@ _attempts_sql_query() {   # _attempts_sql_query <id> -> the SQL that counts atte
     printf "select greatest(sum(case when event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%') then 1 else 0 end) - sum(case when event_type='closed' then 1 else 0 end) - sum(case when event_type='requeued' and (new_value='thrash' or new_value like 'unjudged%%') then 1 else 0 end), 0) from events where issue_id='%s' and created_at > coalesce((select max(created_at) from events where issue_id='%s' and event_type='poison.cleared'), '1970-01-01')" "$1" "$1"
 }
 
-attempts_of() {          # attempts_of <id> -> count of in_progress status-change events
+# attempts_of <id> -> count of in_progress status-change events
+# FAIL CLOSED, NOT OPEN. A query failure used to fall through to `printf '0'` with a 0 exit —
+# indistinguishable from a bead that genuinely never failed, so a poisoned bead's per-bead
+# re-check (sentinel.sh's stale-poison-clear scan) read a false zero as "below threshold" and
+# cleared it, only for the next pass's bulk query to see the true count and poison it right
+# back (law-a-control-that-cannot-check-must-refuse). Prints nothing and returns 1 on error;
+# callers must treat that as "cannot tell", never default it to 0.
+attempts_of() {
     local id="$1" q result=""
     q="$(_attempts_sql_query "$id")"
     if result="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" 2>/dev/null | sed -n '3p' \
@@ -2592,7 +2599,7 @@ attempts_of() {          # attempts_of <id> -> count of in_progress status-chang
        && printf '%d' "$result" >/dev/null 2>&1; then
         printf '%d' "$result"; return 0
     fi
-    printf '0'
+    return 1
 }
 
 reopens_of() {         # reopens_of <id> -> count of reopened events
