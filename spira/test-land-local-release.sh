@@ -6,10 +6,10 @@
 # the previous release and resets the ref to its archived head; skew.sh refresh, under
 # queue.local, only checks current against local/main's head and never deploys.
 #
-# WHY THIS MATTERS (2026-09-27): production ran round 97's source next to a spira-config
-# binary built before round 97's schema — resetting the checkout advanced the source but
-# never touched the binary. Every assertion below is either "the activated bin/ is this
-# round's own corpus, byte for byte" or "a mismatch is reported and nothing was deployed".
+# WHY THIS MATTERS: resetting a checkout advances the source but never touches whatever
+# binary is already running, so the two can silently disagree about schema or protocol.
+# Every assertion below is either "the activated bin/ is this round's own corpus, byte for
+# byte" or "a mismatch is reported and nothing was deployed".
 #
 # tier: T1
 # covers: spira/queue.sh spira/build-tarball.sh spira/activate.sh spira/skew.sh spira/lib.sh

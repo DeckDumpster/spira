@@ -1214,8 +1214,8 @@ cmd_land_local() {
     fi
 
     # PRODUCTION RUNS BUILT ARTIFACTS, SO A LAND WITH NONE TO PACKAGE IS REFUSED HERE, before
-    # the ref moves — resetting the checkout is not a deployment (2026-09-27: production ran
-    # round 97's source next to a spira-config binary built before round 97's schema).
+    # the ref moves — resetting the checkout advances the source but not whatever binary is
+    # running against it, and the two can silently disagree about schema or protocol.
     # testenv-batch.sh --with-bins builds the round head's own workspace into this exact
     # directory, keyed by tree so a fast-forward always finds its own corpus, never a
     # stranger's from a different tree that happens to share the same target/release/.
