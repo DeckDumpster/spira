@@ -791,5 +791,21 @@ out_lp="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
 is   "lane-admitted map: trigger exits 0"       0        "$rc_lp"
 want "lane-admitted map: bd create is called"   "create" "$(cat "$BD_LOG")"
 
+# ==========================================================================================
+echo
+echo "CONCURRENCY (gap G10): a second instance declines while the lock is held:"
+# ==========================================================================================
+# Deterministic, not timing-based: the test holds the lock file directly before running
+# the script, so the script's own flock --nonblock is guaranteed to find it taken.
+exec 8>"$RUNDIR/maechen-trigger.lock"
+flock -x 8
+
+BD_LIST_OUTPUT="[]" out_locked="$(run_trigger)"; rc_locked=$?
+exec 8>&-
+
+is     "locked: exits 0 (a skipped tick is not an error)" 0           "$rc_locked"
+nowant "locked: bd create NOT called"                     "create"    "$(cat "$BD_LOG")"
+want   "locked: logs the reason"                          "skipping"  "$out_locked"
+
 echo
 tl_summary
