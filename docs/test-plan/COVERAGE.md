@@ -110,7 +110,7 @@ Generated from docs/test-plan/*.toml, every suite's # tier:/# covers: header, an
 | UC-dispatch-18 | T1 | CHECK 8 fires only when nothing progressed and plan is starved, subject to cooldown | spira/test-check8-progressed.sh | covered |
 | UC-dispatch-19 | T1 | a pass that cannot read the database exits 1 and never reports goal reached | spira/test-sentinel-pass.sh | covered |
 | UC-dispatch-20 | T1 | a stale lease in every persona's partition is reclaimed and charged; orphans released | spira/test-check2-reaper.sh | covered |
-| UC-dispatch-21 | T1 | the ghost classifier never reclaims a bead carrying the ask or reclaim-skip label | spira/test-check2-reclaim.sh<br>spira/test-reclaim-escalated.sh<br>spira/test-strand-partition.sh | covered |
+| UC-dispatch-21 | T1 | the ghost classifier never reclaims a bead carrying the ask or reclaim-skip label | spira/test-check2-reclaim.sh<br>spira/test-reclaim-escalated.sh | covered |
 | UC-dispatch-22 | T1 | an unmapped-repo bead is parked with ask+overseer before its claim is released | spira/test-park-unmapped.sh | covered |
 | UC-dispatch-23 | T1 | summoning passes `CPUQuota`, `FAYTH_TIMEOUT_SECONDS` and `--setting-sources` correctly | spira/test-summon-fayth.sh | covered |
 | UC-dispatch-24 | T0 | ops tools are an allowlist of `Bash(pattern)` entries, never bare `Bash` | spira/test-ops-allowlist.sh | covered |

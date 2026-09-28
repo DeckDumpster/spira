@@ -836,11 +836,6 @@
               "path": "spira/test-reclaim-escalated.sh",
               "tier": "T2",
               "over_budget": false
-            },
-            {
-              "path": "spira/test-strand-partition.sh",
-              "tier": "T1",
-              "over_budget": false
             }
           ]
         },
