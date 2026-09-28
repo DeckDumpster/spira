@@ -569,4 +569,47 @@ nowant "no mail went out on the strength of a query that failed" "sp-failquery" 
 ispoisoned "the very next (working) pass poisons it as normal" sp-failquery
 want "and the operator is asked, same as any other poisoning" "sp-failquery" "$(cat "$MAIL_LOG")"
 
+# --------------------------------------------------------------------------------------
+# sp-418h5 — THE STALE-POISON-CLEAR SCAN FAILS CLOSED TOO, on the per-bead attempts_of call
+# it makes (distinct from the bulk query sp-rp4g4 fixed above). attempts_of used to return
+# '0' on any query error, indistinguishable from a bead that genuinely never failed — so this
+# scan cleared a poisoned bead off a query that never ran, and the very next pass's bulk
+# query (unaffected by this stub, since a poisoned bead is excluded from dispatchable_open
+# only while the label is on) read the bead's real, unchanged count and poisoned it right
+# back. Run every 15-60s, that is the exact flip sp-kogm lived through: poisoned 75 times,
+# cleared 74, across 175 passes. The seam is SPIRA_BD again, matching on a substring unique
+# to attempts_of's own single-id query (the bulk query's outer SELECT has no such text).
+# --------------------------------------------------------------------------------------
+echo
+seed; rm -rf "$RUN/poison-asked"
+testdb_seed <<JSONL
+{"id":"sp-flipstale","title":"would clear this pass if attempts_of's query ran","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","spira-poison"],"updated_at":"2026-09-04T00:00:00Z"}
+JSONL
+cycle sp-flipstale 1   # genuinely below POISON_AT=3 — a real stale poison, if the query ran
+
+FAIL_ATTEMPTS_BD="$TMP/fail-attempts-bd"
+{
+    printf '#!/usr/bin/env bash\n'
+    printf 'case "$*" in\n'
+    printf '  *"0) from events where issue_id="*) printf "fail-attempts-bd: simulated dolt failure\\n" >&2; exit 1 ;;\n'
+    printf 'esac\n'
+    printf 'exec %q "$@"\n' "$REAL_BD_PATH"
+} > "$FAIL_ATTEMPTS_BD"
+chmod +x "$FAIL_ATTEMPTS_BD"
+
+: > "$MAIL_LOG"
+for i in 1 2 3; do
+    out="$(SPIRA_BD="$FAIL_ATTEMPTS_BD" SPIRA_POISON_AT=3 sentinel)"
+    ispoisoned "pass $i: a stale poison is not cleared off a query that never ran" sp-flipstale
+    want "pass $i: the failure is logged by name, not swallowed" \
+         "attempts query failed" "$out"
+    nowant "pass $i: no clear was reported off the failed query" "stale poison cleared" "$out"
+done
+
+# RECOVERY: the failure was in the READ, not the events trail — a normal pass right after
+# clears it exactly as if the failed passes had never happened.
+out="$(SPIRA_POISON_AT=3 sentinel)"
+notpoisoned "the very next (working) pass clears the real stale poison" sp-flipstale
+want "and the pass records the clear" "stale poison cleared" "$out"
+
 tl_summary

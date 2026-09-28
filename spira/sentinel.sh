@@ -709,9 +709,17 @@ fi
 # Each poisoned bead is queried individually; the per-bead cost is one SQL call. This scan
 # iterates the (usually small) poisoned set, not the whole dispatchable set — the N+1
 # query sp-f1m7f removed is the CHECK4 main loop above, not this one.
+#
+# FAIL CLOSED, NOT OPEN. attempts_of prints nothing and returns nonzero on a query error; a
+# poisoned bead this pass cannot read a count for is left exactly as it is, not cleared on a
+# false zero that the next pass's bulk query (CHECK4 main loop above) would only re-poison a
+# moment later (law-a-control-that-cannot-check-must-refuse).
 while read -r id; do
     [ -n "$id" ] || continue
-    n="$(attempts_of "$id")"; n="${n:-0}"
+    if ! n="$(attempts_of "$id")"; then
+        log "CHECK4 $id: attempts query failed — stale-poison-clear makes no decision this pass"
+        continue
+    fi
     decision="$(check4_decide "$n" 0 0 "spira-poison" "1:1:1")"
     case " $decision " in *' clear '*) ;; *) continue ;; esac
     bdq label remove "$id" spira-poison >/dev/null 2>&1
