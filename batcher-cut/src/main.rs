@@ -328,6 +328,69 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
     }
 }
 
+/// queue.local's terminal step (sp-828tp): `terminal_ready` (core) gates both land modes on
+/// the same GREEN-on-this-exact-head/every-member-named/bins-present contract before this box
+/// changes anything; only the action taken once it passes differs — here, `queue.sh
+/// land-local` (fast-forward, package, activate, LANDED, bead close) in place of a push and a
+/// PR. Never rebuilds binaries (law-deploy-the-tested-artifacts): the corpus's own --with-bins
+/// run already built the tree `bins_present` looks for.
+fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_start: u64, stable: &StableRound) -> Result<(), String> {
+    let head = io::head_of(wt)?;
+    let named = io::named_ids(repo, base_sha, &head, &stable.members);
+    let bins_ok = io::bins_present(env_, repo, &head);
+
+    if let Err(refusal) = batcher::core::terminal_ready(&stable.members, &head, &head, &named, bins_ok) {
+        let msg = format!("batcher {}: refused to land locally at {head} — {refusal}", repo.name);
+        println!("{msg}");
+        io::write_local_verdict(env_, &repo.name, "red", &msg);
+        io::tsd_append_round(
+            env_,
+            &[
+                ("repo", repo.name.clone()),
+                ("verdict", "refused".to_string()),
+                ("duration_ms", ((now() - round_start) * 1000).to_string()),
+                ("base", base_sha.to_string()),
+            ],
+        );
+        return Ok(());
+    }
+
+    let member_pairs: Vec<(String, String)> = stable.members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
+    let landed = io::land_local(env_, repo, &head, &member_pairs)?;
+    if !landed {
+        io::write_local_verdict(env_, &repo.name, "red", "queue.sh land-local refused — see its own stderr above");
+        io::tsd_append_round(
+            env_,
+            &[
+                ("repo", repo.name.clone()),
+                ("verdict", "refused".to_string()),
+                ("duration_ms", ((now() - round_start) * 1000).to_string()),
+                ("base", base_sha.to_string()),
+            ],
+        );
+        return Ok(());
+    }
+
+    io::write_local_verdict(env_, &repo.name, "green", "");
+    println!("batcher {}: landed locally at {head} — {} member(s)", repo.name, stable.members.len());
+
+    let mut fields = vec![
+        ("repo", repo.name.clone()),
+        ("verdict", "landed_local".to_string()),
+        ("members", stable.members.len().to_string()),
+        ("duration_ms", ((now() - round_start) * 1000).to_string()),
+        ("base", base_sha.to_string()),
+    ];
+    if let Some(a) = stable.attribution_seconds {
+        fields.push(("attribution_seconds", a.to_string()));
+    }
+    if let Some(r) = stable.regreen_seconds {
+        fields.push(("regreen_seconds", r.to_string()));
+    }
+    io::tsd_append_round(env_, &fields);
+    Ok(())
+}
+
 fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason) -> Result<(), String> {
     let round_start = now();
     let base_sha = io::resolve_base_sha(repo)?;
@@ -371,6 +434,14 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
             return Ok(());
         }
     };
+
+    // queue.local's terminal step is not a batch PR (sp-828tp, epic sp-hq9x8): no push, no
+    // open-batch record, and stack_round is never reached for a Local repo — read_open_batch
+    // always finds nothing since this branch never writes that file, so `cut()`'s own
+    // Some(ob)/None match always takes the None arm here.
+    if repo.land == Land::Local {
+        return finish_local_round(env_, repo, &wt, &base_sha, round_start, &stable);
+    }
     let merged = stable.members;
 
     let batch_head = io::head_of(&wt)?;

@@ -841,4 +841,89 @@ else
 fi
 want "K4: reports the wall bound as the cause" "wall bound" "$out_g4"
 
+# =============================================================================
+# CASE L — queue.local's terminal step (sp-828tp, epic sp-hq9x8): a round lands locally via
+# queue.sh land-local — no push, no forge call, no open-batch record — and terminal_ready
+# (core) refuses before land-local is even invoked when the round's own --with-bins corpus is
+# missing. SEEN RED on today's code: Land::Local reaches push_branch, whose own assert fires
+# ("unreachable under queue.local"), so the batcher process panics instead of landing.
+# =============================================================================
+echo
+echo "L. queue.local: a round lands locally via queue.sh land-local — no push, no PR:"
+
+LREPO="$TMP/local-land-repo"
+git init -q -b trunk "$LREPO"
+git -C "$LREPO" commit -q --allow-empty -m base
+git -C "$LREPO" branch local/main trunk
+LRELEASES="$TMP/local-releases"; mkdir -p "$LRELEASES"
+
+cat > "$SH/repo-map" <<RMAP
+$REPONAME | $REPO  | queue       | origin/main | | |
+locland   | $LREPO | queue.local | local/main  | | |
+RMAP
+
+cut_local() {
+    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+    SPIRA_REPO_MAP="$SH/repo-map" \
+    SPIRA_QUEUE_DIR="$QUEUEDIR" \
+    SPIRA_QUEUE_BATCH_WAIT=999999 \
+    SPIRA_RELEASES="$LRELEASES" \
+    SPIRA_TSD_BIN="$TSD_BIN" \
+        "$BATCHER_BIN" cut locland --testenv-batch "$SH/testenv-batch-stub.sh" \
+            --attribute "$SH/attribute-stub.sh" 2>&1
+}
+mk_local_bins() {   # mk_local_bins <tip> — the --with-bins corpus for <tip>'s own tree
+    local tip="$1" tree dir
+    tree="$(git -C "$LREPO" rev-parse "${tip}^{tree}")"
+    dir="$RUN/cargo-target-bins/$tree/release"
+    mkdir -p "$dir"
+    printf 'fakebin\n' > "$dir/fakebin"
+    chmod +x "$dir/fakebin"
+}
+
+# L1 — missing --with-bins corpus: terminal_ready refuses before land-local is ever called,
+# nothing changes.
+localmain_pre="$(git -C "$LREPO" rev-parse local/main)"
+plant sp-claa1 express
+git -C "$LREPO" worktree add -q -b spira/sp-claa1 "$RUN/worktree/sp-claa1" trunk
+printf 'l1\n' > "$RUN/worktree/sp-claa1/l1.txt"
+git -C "$RUN/worktree/sp-claa1" add -A
+git -C "$RUN/worktree/sp-claa1" commit -q -m "sp-claa1: work"
+tip_l1="$(git -C "$LREPO" rev-parse spira/sp-claa1)"
+git -C "$LREPO" worktree remove -f "$RUN/worktree/sp-claa1"
+certify sp-claa1 "$tip_l1"
+
+out_l1="$(cut_local)"
+want   "L1: refuses — no --with-bins corpus for this head" "no --with-bins" "$out_l1"
+nowant "L1: never reports landing locally"                  "landed locally" "$out_l1"
+is     "L1: local/main is untouched"          "$localmain_pre" "$(git -C "$LREPO" rev-parse local/main)"
+is     "L1: sp-claa1 stays CERTIFIED — refused, not ejected" \
+       "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-claa1")"
+
+# L2 — the --with-bins corpus is present: lands locally, no push, no PR, no open-batch file.
+rm -f "$LANDSTATE/sp-claa1"
+plant sp-clbb2 express
+git -C "$LREPO" worktree add -q -b spira/sp-clbb2 "$RUN/worktree/sp-clbb2" trunk
+printf 'l2\n' > "$RUN/worktree/sp-clbb2/l2.txt"
+git -C "$RUN/worktree/sp-clbb2" add -A
+git -C "$RUN/worktree/sp-clbb2" commit -q -m "sp-clbb2: work"
+tip_l2="$(git -C "$LREPO" rev-parse spira/sp-clbb2)"
+git -C "$LREPO" worktree remove -f "$RUN/worktree/sp-clbb2"
+certify sp-clbb2 "$tip_l2"
+mk_local_bins "$tip_l2"
+
+prcreate_before_l2="$(grep -c '^pr-create' "$FORGE_LOG")"
+out_l2="$(cut_local)"
+want   "L2: reports landing locally"      "landed locally" "$out_l2"
+nowant "L2: never reports a PR opening"   "PR "            "$out_l2"
+is     "L2: forge pr-create never called" "$prcreate_before_l2" "$(grep -c '^pr-create' "$FORGE_LOG")"
+is     "L2: local/main fast-forwards to the round head" "$tip_l2" "$(git -C "$LREPO" rev-parse local/main)"
+is     "L2: no open-batch file under queue.local" "0" "$([ -f "$QUEUEDIR/locland/open" ] && echo 1 || echo 0)"
+is     "L2: sp-clbb2 landstate LANDED" "LANDED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-clbb2")"
+if [ -x "$TSD_BIN" ]; then
+    want "L2: TSD batch-round row records verdict=landed_local" '"verdict":"landed_local"' \
+        "$(tail -1 "$RUN/tsd/batch-round.jsonl" 2>/dev/null)"
+fi
+
 tl_summary
