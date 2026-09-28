@@ -124,6 +124,11 @@ pub fn should_cut(t: &TriggerInputs) -> Option<TriggerReason> {
 pub enum MergeResult {
     Ok,
     Conflict,
+    /// The member's tip was already an ancestor of the round head before any merge was
+    /// attempted — reset to an old base, or no commits of its own. `git merge` here would
+    /// succeed as a no-op ("Already up to date"), which is indistinguishable from `Ok` by
+    /// exit status alone, so the IO seam must classify this before ever shelling out.
+    Empty,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -135,6 +140,9 @@ pub enum SetAsideReason {
     TestAheadOfCode { waits_on: Id },
     /// A member sequenced behind a dependency by prior judgement (C), not yet cleared.
     Dependency { waits_on: Id },
+    /// The member's tip was already in the round before it was ever merged — nothing of
+    /// its own reaches the tree, so it must never be marked BATCHED or LANDED for it.
+    Empty,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -172,6 +180,7 @@ pub fn combine(input: &CombineInput) -> Combined {
         }
         match input.merges.get(&m.id) {
             Some(MergeResult::Ok) => merged.push(m.clone()),
+            Some(MergeResult::Empty) => set_aside.push(SetAside { id: m.id.clone(), reason: SetAsideReason::Empty }),
             _ => {
                 let deleted = input.deleted_suites.get(&m.id).cloned().unwrap_or_default();
                 set_aside.push(SetAside { id: m.id.clone(), reason: SetAsideReason::Conflict { deleted_suites: deleted } });
@@ -409,6 +418,7 @@ pub fn evicted_event(set_aside: &SetAside) -> Event {
             format!("{} set aside: test ahead of its code, sequenced behind {waits_on}", set_aside.id)
         }
         SetAsideReason::Dependency { waits_on } => format!("{} set aside: sequenced behind {waits_on}", set_aside.id),
+        SetAsideReason::Empty => format!("EMPTY {}: tip is already in the round — not a member", set_aside.id),
     };
     ev("evicted", vec![set_aside.id.clone()], text)
 }
