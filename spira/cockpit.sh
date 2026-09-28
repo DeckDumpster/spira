@@ -2989,7 +2989,14 @@ czar_triggers)
 sending)
     sending_keys
     ;;
-*) echo "usage: cockpit.sh [once|loop|history|now|core|core_detail|unsent|strands|sops|ratelim|reachable|sphere|repo_labels|livelock|dup_refs|statute|mail|czar_triggers|sending]" >&2
+# The startup sweep alone, run synchronously and to completion — the seam
+# test-cockpit-tmp.sh drives so the orphan-removal property needs no wall-clock wait on a
+# backgrounded `once`/`loop`. Same function 'once' and 'loop' call, so what is tested is
+# what runs.
+sweep-temps)
+    sweep_stale_tmps
+    ;;
+*) echo "usage: cockpit.sh [once|loop|history|now|core|core_detail|unsent|strands|sops|ratelim|reachable|sphere|repo_labels|livelock|dup_refs|statute|mail|czar_triggers|sending|sweep-temps]" >&2
    echo "  (no args: collect once then attach to the concierge; SPIRA_COCKPIT_NO_ATTACH=1 skips the attach)" >&2
    exit 1 ;;
 esac
