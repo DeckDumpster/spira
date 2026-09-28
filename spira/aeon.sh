@@ -25,6 +25,12 @@ set -uo pipefail
 # launched — by then the claim, the worktree and the fixture have already spent some of it.
 AEON_T0="$(date +%s)"
 
+# THIS AEON'S OWN UNIT, if any — excluded from every aeon_count/fayth_free call below so a
+# capacity check never counts the unit asking it (sp-0hnm6). Env override (unset in
+# production, same idiom as SPIRA_INCIDENT_UNIT) lets a suite hand this a synthetic unit
+# name without a real systemd-run session.
+AEON_OWN_UNIT="${AEON_OWN_UNIT:-$(aeon_own_unit)}"
+
 FAYTH="${1:-}"; [ -n "$FAYTH" ] || die "usage: aeon.sh <fayth> [--dry-run | --sweep [--prompt <text>|-]]"
 DRY=0; SWEEP=0; SWEEP_PROMPT=""
 case "${2:-}" in
@@ -133,7 +139,7 @@ ledger "born $FAYTH $$"
 # work. A sweep does not claim, so the fence has nothing to guard and must not run here.
 # It is not deleted for that reason; claim mode reaches it on the path below.
 if [ "$SWEEP" = 1 ]; then
-    have_sw="$(aeon_count "$FAYTH")"
+    have_sw="$(aeon_count "$FAYTH" "$AEON_OWN_UNIT")"
     if [ "$have_sw" -ge "${FAYTH_MAX_CONCURRENT:-1}" ]; then
         log "$FAYTH: at capacity ($have_sw/${FAYTH_MAX_CONCURRENT:-1}), not sweeping"
         ledger "awake $FAYTH capacity"
@@ -218,14 +224,14 @@ fi
 # fayth_free the right question. Passing SPIRA_MAX_AEONS through as the remainder is the same
 # subtraction sentinel.sh does before every fayth_free call; a non-elastic persona gets an
 # empty pool argument and fayth_free falls through to FAYTH_MAX_CONCURRENT exactly as before.
-have="$(aeon_count "$FAYTH")"
+have="$(aeon_count "$FAYTH" "$AEON_OWN_UNIT")"
 limit="${FAYTH_MAX_CONCURRENT:-1}"
 pool=""
 if [ "$(fayth_get "$FAYTH" FAYTH_ELASTIC 0)" = 1 ] && [ -n "${SPIRA_MAX_AEONS:-}" ]; then
     limit="$SPIRA_MAX_AEONS"
     pool=$(( SPIRA_MAX_AEONS > have ? SPIRA_MAX_AEONS - have : 0 ))
 fi
-if [ "$(fayth_free "$FAYTH" "$pool")" -eq 0 ]; then
+if [ "$(fayth_free "$FAYTH" "$pool" "$AEON_OWN_UNIT")" -eq 0 ]; then
     log "$FAYTH: at capacity ($have/$limit), not summoning"
     # A healthy no-op, and it must read as one: an aeon that declined to summon LIVED, it
     # simply had nothing to do. Counting it as stillborn would put a permanent false

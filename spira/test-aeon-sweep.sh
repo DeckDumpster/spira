@@ -203,6 +203,59 @@ rm -f "$CAP_FILE"; unset SPIRA_CAPACITY_PAUSE_FILE
 
 # ======================================================================================
 echo
+echo "--sweep: the capacity check excludes the caller's own unit (sp-0hnm6):"
+# ======================================================================================
+# Since sp-0y2av, aeon_count lists live spira-aeon-<fayth>-* units — and a freshly
+# summoned aeon's own transient unit already exists (systemd-run created it before this
+# script ever ran), so a naive count sees it too. Left unexcluded, "1/1 at capacity"
+# fires on the FIRST aeon of a fayth with FAYTH_MAX_CONCURRENT=1 (testsweep, like the
+# groomer), and it never sweeps at all.
+#
+# AEON_OWN_UNIT (env override, same idiom as SPIRA_INCIDENT_UNIT) stands in for a real
+# systemd-run session's unit name — no real --user session is needed to prove the count
+# excludes it. SPIRA_SYSTEMCTL is the mock systemctl test-summon-fast-path.sh's section A
+# already established for the same purpose.
+cat > "$BIN/mock-systemctl" <<'MOCK'
+#!/usr/bin/env bash
+if [ "$2" = list-units ]; then
+    glob="$3"
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        case "$line" in $glob) printf '%s\n' "$line" ;; esac
+    done < "$MOCK_UNITS_FILE"
+fi
+MOCK
+chmod +x "$BIN/mock-systemctl"
+export SPIRA_SYSTEMCTL="$BIN/mock-systemctl"
+export AEON_OWN_UNIT="spira-aeon-testsweep-selfunit.service"
+MOCK_UNITS_FILE="$TMP/mock-units"; export MOCK_UNITS_FILE
+
+# THE DEFECT ITSELF: the only live unit of this fayth is the caller's own. Today's code
+# (aeon_count with no exclusion) counts it, sees 1/1, and refuses to sweep at all.
+rm -f "$LEDGER"
+printf '%s\n' "$AEON_OWN_UNIT" > "$MOCK_UNITS_FILE"
+
+aeon testsweep --sweep --prompt "capacity self-count check"
+
+want  "own unit excluded: the sweep proceeds" "awake testsweep sweep" "$(cat "$LEDGER" 2>/dev/null)"
+want  "own unit excluded: teardown still runs" "done testsweep" "$(cat "$LEDGER" 2>/dev/null)"
+nowant "own unit excluded: no capacity refusal" "awake testsweep capacity" "$(cat "$LEDGER" 2>/dev/null)"
+
+# THE COMPANION CHECK: a second, genuinely OTHER live unit of the same fayth must still
+# trip the cap — excluding the caller's own unit must not disable the check entirely.
+rm -f "$LEDGER"
+printf '%s\nspira-aeon-testsweep-other.service\n' "$AEON_OWN_UNIT" > "$MOCK_UNITS_FILE"
+
+aeon testsweep --sweep --prompt "should not run: at capacity"
+
+want   "one other live unit: capacity refusal fires" "awake testsweep capacity" "$(cat "$LEDGER" 2>/dev/null)"
+nowant "one other live unit: no done line (never ran)" "done testsweep" "$(cat "$LEDGER" 2>/dev/null)"
+
+unset SPIRA_SYSTEMCTL AEON_OWN_UNIT MOCK_UNITS_FILE
+rm -f "$LEDGER"
+
+# ======================================================================================
+echo
 echo "--sweep: draining world rejects the sweep:"
 # ======================================================================================
 rm -f "$LEDGER"
