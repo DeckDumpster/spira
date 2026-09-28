@@ -10,6 +10,9 @@
 #   pve.sh template <vmid>
 #   pve.sh guest-exec <vmid> [--timeout <s>] <cmd> [args...]
 #   pve.sh guest-exec-status <vmid> <pid>
+#   pve.sh guest-file-write <vmid> <path>   (content read from stdin, delivered base64)
+#   pve.sh guest-net <vmid>                 (raw agent/network-get-interfaces result)
+#   pve.sh destroy <vmid> [--purge]
 #   pve.sh nextid
 #   pve.sh list [--pool <pool>]
 #
@@ -142,6 +145,9 @@ usage: pve.sh <verb> [args]
   template <vmid>
   guest-exec <vmid> [--timeout <s>] <cmd> [args...]
   guest-exec-status <vmid> <pid>
+  guest-file-write <vmid> <path>
+  guest-net <vmid>
+  destroy <vmid> [--purge]
   nextid
   list [--pool <pool>]
 EOF
@@ -233,7 +239,9 @@ guest-exec)
     timeout="$_PVE_EXEC_TIMEOUT"
     [ "${1:-}" = "--timeout" ] && { timeout="$2"; shift 2; }
     [ $# -ge 1 ] || { printf 'pve.sh guest-exec: no command given\n' >&2; exit 1; }
-    api_args=(--data-urlencode "capture-output=1")
+    # No capture-output param: this Proxmox rejects it (HTTP 400 "property is not
+    # defined in schema"); exec-status returns out-data regardless of the flag.
+    api_args=()
     for a in "$@"; do
         api_args+=(--data-urlencode "command=${a}")
     done
@@ -265,6 +273,37 @@ guest-exec-status)
     vmid="$1" pid="$2"
     _pve_api GET "/nodes/${PVE_NODE}/qemu/${vmid}/agent/exec-status?pid=${pid}" || exit 1
     _pve_data
+    ;;
+
+guest-file-write)
+    [ $# -ge 2 ] || { printf 'pve.sh guest-file-write: usage: pve.sh guest-file-write <vmid> <path> (content on stdin)\n' >&2; exit 1; }
+    vmid="$1" path="$2"
+    b64="$(base64 -w0)"
+    _pve_api POST "/nodes/${PVE_NODE}/qemu/${vmid}/agent/file-write" \
+        --data-urlencode "file=${path}" \
+        --data-urlencode "content=${b64}" \
+        --data-urlencode "encoding=base64" || exit 1
+    ;;
+
+guest-net)
+    [ $# -ge 1 ] || { printf 'pve.sh guest-net: usage: pve.sh guest-net <vmid>\n' >&2; exit 1; }
+    _pve_api GET "/nodes/${PVE_NODE}/qemu/${1}/agent/network-get-interfaces" || exit 1
+    _pve_data
+    ;;
+
+destroy)
+    [ $# -ge 1 ] || { printf 'pve.sh destroy: usage: pve.sh destroy <vmid> [--purge]\n' >&2; exit 1; }
+    vmid="$1"; shift
+    purge=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --purge) purge=1; shift ;;
+            *) printf 'pve.sh destroy: unknown option: %s\n' "$1" >&2; exit 1 ;;
+        esac
+    done
+    _pve_api DELETE "/nodes/${PVE_NODE}/qemu/${vmid}?purge=${purge}" || exit 1
+    upid="$(_pve_data)"
+    [ -n "$upid" ] && _pve_poll_task "$upid" || true
     ;;
 
 nextid)
