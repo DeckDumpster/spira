@@ -16,7 +16,7 @@ spira/sop.sh write <slug> -   # text on stdin
 
 Statutes are how to behave; SOPs are how to fix. They share one mechanism, split by prefix — `law-` and `sop-` — so the [[spira]] Ops persona reads its runbooks exactly the way every agent already reads [[common-law]]. Ops is summoned by an incident bead filed from a failed systemd unit, matches the payload against the `MATCH:` lines below, and executes the first one that fires.
 
-**72 SOP(s)** on the shelf as of 2026-09-27.
+**73 SOP(s)** on the shelf as of 2026-09-27.
 
 ## The closing rule
 
@@ -219,7 +219,9 @@ bd show $ID | grep "CLOSED"; git merge-base --is-ancestor $COMMIT origin/main &&
 **Check**
 
 ```
-Verify the bead's commit is actually on base.
+Verify the bead's commit is actually on base. Re-derive the commit by
+grep on the bead id — a close reason's cited hash can belong to a different
+bead's land commit (sp-825tb).
 ```
 bead_id=sp-vcobo  # substitute the bead from the incident title
 commit=$(git log --all --oneline | grep "$bead_id" | head -1 | awk '{print $1}')
@@ -601,6 +603,22 @@ bd -C $SPIRA_DB list | grep sp-yuiuc; verify the incident has no_cause in the de
 **Reference** — sp-m2zdm
 
 **Matches** `left background jobs after exit|gate harness.*orphan|orphan.*gate.*false positive`
+
+### Generated page rebase theirs reversal
+
+`sop-generated-page-rebase-theirs-reversal`
+
+**Symptom** — Rebase onto origin/main conflicts in the GENERATED page wiki/notes/standard-operating-procedures.md (sop.sh synth output). Instinct: `git checkout --theirs <file>`.
+
+**Check** — `git status` shows "rebasing branch". Under `git rebase` (unlike merge) --ours/--theirs are REVERSED: --theirs is YOUR own replayed commit, --ours is upstream. `checkout --theirs` here silently restores your stale pre-rebase content, discarding every SOP other sessions landed since — no error, caught only by diffing HEAD against origin/main after (law-verify-nothing-was-dropped).
+
+**Fix** — `git checkout <upstream-sha> -- <file>` for origin's real content, isolate your intended edit via `git diff <parent>..<your-orig-commit> -- <file>`, reapply just that hunk with Edit. `git diff origin/main..HEAD -- <file>` must show ONLY your change. The wiki dir may be gitignored despite being tracked — use `git add -f`. `sop.sh synth` was seen writing to a separate checkout, not this worktree — hand-edit the worktree file instead of trusting it.
+
+**Escalate** — If your edit can't be isolated as one clean hunk (heavy concurrent overlap), ask the operator — no merge tool understands SOP semantics.
+
+**Reference** — wiki/notes/standard-operating-procedures.md
+
+**Matches** `conflicts in.*wiki/notes/standard-operating-procedures\.md|CONFLICT.*standard-operating-procedures\.md`
 
 ### Gh intake no issues
 
