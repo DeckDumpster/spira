@@ -1302,7 +1302,7 @@ for i in (d if isinstance(d, list) else [d]):
         _p="$(repo_root "$_r")" || continue
         [ -e "$_p/.git" ] || continue
         _refs="$(spira_landrefs "$_p")" || continue
-        if _rem="$(ref_remote "${_refs%% *}")"; then git -C "$_p" fetch -q "$_rem" 2>/dev/null; fi
+        if _rem="$(ref_remote "${_refs%% *}" "$_p")"; then git -C "$_p" fetch -q "$_rem" 2>/dev/null; fi
         # shellcheck disable=SC2086
         subjects="$subjects
 $(git -C "$_p" log --format='%s' -n 2000 $_refs 2>/dev/null)"

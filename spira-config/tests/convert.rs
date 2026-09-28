@@ -129,6 +129,34 @@ fn converts_conf_repo_map_and_fayths() {
     );
 }
 
+// sp-0inic: `queue.forge` is the explicit spelling of the `queue` alias (both land in
+// LandMode::Queue / LandMode::QueueForge, distinct types but the same forge-queue mode);
+// `queue.local` is the new local-landing mode with its ref in the `base` column. Before this
+// change both words hit the `other` arm and were dropped with a warning rather than
+// converted — this is the regression test for that (law-a-regression-test-must-be-seen-to-fail).
+#[test]
+fn queue_forge_and_queue_local_land_modes_convert() {
+    let repo_map = "alpha | /tmp/alpha | queue.forge | origin/main | | |\n\
+                     beta  | /tmp/beta  | queue.local | local/main  | | |\n";
+    let (doc, warnings) =
+        convert("", "/opt/fixture-home", repo_map, &[]).expect("both land modes must convert");
+    assert!(
+        warnings.0.is_empty(),
+        "unexpected warnings: {:?}",
+        warnings.0
+    );
+    assert_eq!(doc.repo.get("alpha").unwrap().mode, LandMode::QueueForge);
+    assert_eq!(
+        doc.repo.get("alpha").unwrap().base,
+        Some("origin/main".to_string())
+    );
+    assert_eq!(doc.repo.get("beta").unwrap().mode, LandMode::QueueLocal);
+    assert_eq!(
+        doc.repo.get("beta").unwrap().base,
+        Some("local/main".to_string())
+    );
+}
+
 // POSITIVE CONTROL for the two refusal tests below: a valid mode word and a valid explicit
 // lane list both still convert, so a check pointed at the wrong thing and a check that found
 // nothing look different (law-absence-needs-a-positive-control).

@@ -130,7 +130,7 @@ cmd_submit() {
             printf 'queue.sh submit: cannot resolve landing ref for %s\n' "$name" >&2
             return 1
         }
-        base_remote="$(ref_remote "$base")" || base_remote=""
+        base_remote="$(ref_remote "$base" "$repo")" || base_remote=""
         base_branch="$(ref_branch "$base")"
         [ -n "$base_remote" ] && git -C "$repo" fetch -q "$base_remote" 2>/dev/null || true
         rebase_branch "$br" "$base" "$repo" "$name" 2>/dev/null || {
@@ -720,7 +720,7 @@ cmd_open_batch() {
     base_sha="$(git -C "$repo" rev-parse "$base" 2>/dev/null)" || {
         printf 'queue.sh open-batch: cannot resolve %s\n' "$base" >&2; return 1
     }
-    remote="$(ref_remote "$base")"
+    remote="$(ref_remote "$base" "$repo")"
     base_branch="$(ref_branch "$base")"
 
     local certs; certs="$(queue_certified_list "$repo")"

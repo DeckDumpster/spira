@@ -36,15 +36,24 @@
 #                   protection is required — run `queue.sh protect` after switching. A bead in
 #                   queue mode must NOT park on CI: the batch PR is opened by the batch
 #                   builder, not by the individual branch landing, and there is no run for a
-#                   bead to wait for.
+#                   bead to wait for. `queue.forge` is the same mode, spelled out; `queue`
+#                   remains a bare alias for it and behaves identically.
+#            queue.local
+#                   certify locally and land straight onto `base` (a local branch such as
+#                   `local/main` — no remote, no forge round trip on the critical path). A
+#                   separate publish queue pushes unpublished commits to the forge later, as
+#                   one PR; CI there is confirmation, not the gate. Everything queue.forge
+#                   does with a repo's remote (fetch, push, PR) is skipped for a queue.local
+#                   row — `base` names a LOCAL ref, never a remote-tracking one.
 #
 #          THIS COLUMN ALSO DECIDES WHETHER THERE IS A CI RUN TO WAIT FOR. Only `pr` opens a
-#          pull request, so only `pr` has one — under `push`, `hold`, and `queue` the landing
-#          gate is the whole gate for the individual branch, and a bead parked on CI in any of
-#          those waits for an event that cannot occur. Because the park label is excluded from
-#          every persona's predicate AND from the stranded-work report, that wait is invisible
-#          as well as endless. The sweep strips such a park and the aeon's brief tells it not
-#          to apply one, but the fact both of those read is this column.
+#          pull request, so only `pr` has one — under `push`, `hold`, `queue`/`queue.forge` and
+#          `queue.local` the landing gate is the whole gate for the individual branch, and a
+#          bead parked on CI in any of those waits for an event that cannot occur. Because the
+#          park label is excluded from every persona's predicate AND from the stranded-work
+#          report, that wait is invisible as well as endless. The sweep strips such a park and
+#          the aeon's brief tells it not to apply one, but the fact both of those read is this
+#          column.
 #   base   the ref every branch in that repository is cut from and judged against, written as
 #          git resolves it — `origin/main`, `origin/master`, a differently-named remote, or a
 #          bare local branch for a repository nothing pushes. DO NOT ASSUME `main`: on the box

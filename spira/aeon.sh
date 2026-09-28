@@ -1343,7 +1343,7 @@ BASE="$(spira_landref "$REPO")" || {
     bdq note "$BEAD_ID" "Released by aeon.sh: repo:$REPO_NAME has no resolvable default branch — $SPIRA_REPO_MAP declares no \`base\` for it, its remote publishes no HEAD, and it is not a local-only repository. Give it a base column. Refusing to guess: a branch cut from a guessed base rebases onto a ref nobody chose, and \`main\` is a guess that is wrong wherever a repository still uses \`master\`." >/dev/null 2>&1
     exit 1; }   # the EXIT trap unclaims it and writes the ledger line
 BASE_BRANCH="$(ref_branch "$BASE")"
-BASE_REMOTE="$(ref_remote "$BASE")" || BASE_REMOTE=""
+BASE_REMOTE="$(ref_remote "$BASE" "$REPO")" || BASE_REMOTE=""
 if [ -n "$BASE_REMOTE" ]; then
     git -C "$REPO" fetch -q "$BASE_REMOTE" 2>/dev/null \
         || log "$FAYTH: fetch of $BASE_REMOTE failed — basing on a possibly stale $BASE"

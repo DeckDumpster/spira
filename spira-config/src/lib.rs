@@ -333,6 +333,10 @@ pub struct SpiraSection {
 }
 
 /// How a landed branch reaches its base — see `repo-map.example`'s own `land` column.
+/// `Queue` and `QueueForge` are the same mode under two spellings — `queue` is the alias a
+/// row has always been able to write, `queue.forge` names it explicitly now that
+/// `QueueLocal` exists to contrast it with. `QueueLocal` lands on a local branch (`local/main`
+/// in the `base` column) with no forge round trip on the critical path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum LandMode {
@@ -340,6 +344,10 @@ pub enum LandMode {
     Pr,
     Hold,
     Queue,
+    #[serde(rename = "queue.forge")]
+    QueueForge,
+    #[serde(rename = "queue.local")]
+    QueueLocal,
 }
 
 /// A persona lane a repository admits — the explicit form of `repo-map.example`'s `lanes`

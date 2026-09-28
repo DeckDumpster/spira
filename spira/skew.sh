@@ -440,7 +440,7 @@ refresh() {
         local _base _remote _behind
         _base="$(spira_landref "$repo")" || {
             echo "skew: refresh: cannot resolve the ref $repo lands on"; return 1; }
-        _remote="$(ref_remote "$_base" 2>/dev/null)" || _remote=""
+        _remote="$(ref_remote "$_base" "$repo" 2>/dev/null)" || _remote=""
         [ -n "$_remote" ] && git -C "$repo" fetch -q --no-write-fetch-head "$_remote" 2>/dev/null
         _behind="$(git -C "$repo" rev-list --count "HEAD..$_base" 2>/dev/null || echo 0)"
         if [ "${_behind:-0}" -eq 0 ]; then
@@ -460,7 +460,7 @@ refresh() {
     base="$(spira_landref "$repo")" || {
         echo "skew: refresh: cannot resolve the ref $repo lands on"; return 1; }
     base_branch="$(ref_branch "$base")"
-    remote="$(ref_remote "$base" 2>/dev/null)" || remote=""
+    remote="$(ref_remote "$base" "$repo" 2>/dev/null)" || remote=""
     [ -n "$remote" ] && git -C "$repo" fetch -q --no-write-fetch-head "$remote" 2>/dev/null
 
     behind="$(git -C "$repo" rev-list --count "HEAD..$base" 2>/dev/null || echo 0)"
@@ -543,7 +543,7 @@ gap() {
     base="$(spira_landref "$repo")" || {
         echo "skew: gap: cannot resolve the ref $repo lands on" >&2; return 3; }
     base_branch="$(ref_branch "$base")"
-    remote="$(ref_remote "$base" 2>/dev/null)" || remote=""
+    remote="$(ref_remote "$base" "$repo" 2>/dev/null)" || remote=""
     if [ -n "$remote" ]; then
         git -C "$repo" fetch -q --no-write-fetch-head "$remote" 2>/dev/null || {
             echo "skew: gap: cannot fetch from $remote — gap is unknown" >&2; return 3; }

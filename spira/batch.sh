@@ -268,7 +268,7 @@ main() {
         || { printf 'batch %s: cannot resolve base ref\n' "$name" >&2; return 1; }
     base_sha="$(git -C "$repo" rev-parse "$base" 2>/dev/null)" \
         || { printf 'batch %s: cannot resolve %s\n' "$name" "$base" >&2; return 1; }
-    remote="$(ref_remote "$base")"
+    remote="$(ref_remote "$base" "$repo")"
     base_branch="$(ref_branch "$base")"
 
     # Orphan-run sweep: a spira/queue/* branch's Gate run left in-progress after its

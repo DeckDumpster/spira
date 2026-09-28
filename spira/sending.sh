@@ -398,7 +398,7 @@ sweep_repo() {
         return 0; }
     # The base's OWN remote, not a literal `origin`: a remote need not be called that, so
     # fetch was a quiet no-op in the one repository nothing else here refreshes.
-    if rem="$(ref_remote "$LANDREF")" && [ "$FETCH" = 1 ] && [ -n "$brs" ]; then
+    if rem="$(ref_remote "$LANDREF" "$REPO")" && [ "$FETCH" = 1 ] && [ -n "$brs" ]; then
         git -C "$REPO" fetch -q "$rem" 2>/dev/null
     fi
     for br in $brs; do
