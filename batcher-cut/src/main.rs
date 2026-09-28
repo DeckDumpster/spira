@@ -133,6 +133,14 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
         tsd_bin: env::var_os("SPIRA_TSD_BIN").map(PathBuf::from),
         testenv_batch: o.testenv_batch.clone().unwrap_or_else(|| home.join("testenv-batch.sh")),
         attribute: o.attribute.clone().unwrap_or_else(|| home.join("attribute.sh")),
+        // Batcher-parity (sp-myi6w): the Concierge's own proven values, not testenv-batch.sh's
+        // own hardware-derived or unpinned defaults — see io::run_suites.
+        maxpar: env::var("SPIRA_BATCH_MAXPAR").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(16),
+        wall_secs: env::var("SPIRA_BATCHER_WALL_SECS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(3600),
+        rust_toolchain: {
+            let v = env::var("SPIRA_RELEASE_RUST_TOOLCHAIN").unwrap_or_default();
+            if v.trim().is_empty() { "1.82.0".to_string() } else { v }
+        },
         git_name: env::var("SPIRA_GIT_NAME").unwrap_or_else(|_| "spira".into()),
         git_email: env::var("SPIRA_GIT_EMAIL").unwrap_or_else(|_| "spira@spira.invalid".into()),
         lc_bin: env::var_os("SPIRA_LC_BIN").map(PathBuf::from),

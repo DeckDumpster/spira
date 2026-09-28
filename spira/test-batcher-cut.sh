@@ -22,6 +22,12 @@
 #                       second PR (law-queue-back-pressure-is-an-open-pr).
 #   G. land mode        — find_repo (sp-o1jm6) accepts queue.local, not only queue, and treats
 #                       queue.forge byte-identically to a bare queue row.
+#   J. batcher parity (sp-myi6w) — the corpus invocation matches the Concierge's own
+#                       (round.sh): --mode parallel, --with-bins, SPIRA_BATCH_MAXPAR,
+#                       RUSTUP_TOOLCHAIN all present on argv/env; a --with-bins build
+#                       failure (exit 4) is a round-level red attributed to every member,
+#                       not a harness fault that drops the round unreported; a hung
+#                       testenv-batch.sh is killed at the configured wall bound.
 #
 # tier: T2
 # covers: batcher-cut/src/*.rs batcher/src/*.rs spira/queue.sh spira/conf.sh spira/lib.sh spira/bead.sh spira/chamber/batcher.fayth spira/chamber/batcher.md
@@ -109,9 +115,23 @@ RMAP
 # STUB_FLAKE_RED_TIMES invocations (counted in STUB_FLAKE_COUNTER_FILE) and green after — a
 # suite that would flip green on an immediate rerun, the shape case G needs to show that a
 # local red now goes through attribution regardless of whether an internal retry would have
-# waved it through.
+# waved it through. STUB_ARGV_LOG, when set, records this invocation's full argv plus the env
+# batcher-parity (sp-myi6w) requires — RUSTUP_TOOLCHAIN, SPIRA_BATCH_MAXPAR — one line each,
+# so a case can assert on them without guessing at io::run_suites' own internals.
+# STUB_SLEEP_SECS hangs before doing anything else, for the wall-bound case. STUB_EXIT4 exits
+# 4 immediately, before any suite ever runs — mirroring testenv-batch.sh's own --with-bins
+# build failure, which happens before suite selection.
 cat > "$SH/testenv-batch-stub.sh" <<'STUB'
 #!/usr/bin/env bash
+if [ -n "${STUB_ARGV_LOG:-}" ]; then
+    {
+        printf 'argv:'; printf ' %s' "$@"; printf '\n'
+        printf 'RUSTUP_TOOLCHAIN=%s\n' "${RUSTUP_TOOLCHAIN:-}"
+        printf 'SPIRA_BATCH_MAXPAR=%s\n' "${SPIRA_BATCH_MAXPAR:-}"
+    } >> "$STUB_ARGV_LOG"
+fi
+[ -n "${STUB_SLEEP_SECS:-}" ] && sleep "$STUB_SLEEP_SECS"
+[ -n "${STUB_EXIT4:-}" ] && exit 4
 suites_csv=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -279,6 +299,12 @@ cut_repo() {
     STUB_FLAKE_RED_TIMES="${STUB_FLAKE_RED_TIMES:-1}" \
     STUB_ATTR_MODE="${STUB_ATTR_MODE:-}" \
     STUB_ATTR_OWNER="${STUB_ATTR_OWNER:-}" \
+    STUB_ARGV_LOG="${STUB_ARGV_LOG:-}" \
+    STUB_SLEEP_SECS="${STUB_SLEEP_SECS:-}" \
+    STUB_EXIT4="${STUB_EXIT4:-}" \
+    SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-}" \
+    SPIRA_BATCHER_WALL_SECS="${SPIRA_BATCHER_WALL_SECS:-}" \
+    SPIRA_RELEASE_RUST_TOOLCHAIN="${SPIRA_RELEASE_RUST_TOOLCHAIN:-}" \
     SPIRA_LC_BIN="${SPIRA_LC_BIN:-}" \
     SPIRA_LC_STUB_LOG="${SPIRA_LC_STUB_LOG:-}" \
     SPIRA_LC_STUB_RC="${SPIRA_LC_STUB_RC:-0}" \
@@ -711,5 +737,102 @@ is "I: the round's new suite is requested"        "1" "$([ -f "$results_i/test-n
 is "I: the round's deleted suite is not requested" "0" "$([ -f "$results_i/test-old.sh.result" ] && echo 1 || echo 0)"
 is "I: an untracked stray in the checkout is not requested" "0" "$([ -f "$results_i/test-stray.sh.result" ] && echo 1 || echo 0)"
 rm -f "$REPO/spira/test-stray.sh"
+
+# =============================================================================
+# CASE J — batcher parity (sp-myi6w): the corpus invocation matches the Concierge's own
+# (round.sh test), and a --with-bins build failure is a round-level red attributed to
+# members, never a harness fault that silently drops the round.
+# =============================================================================
+echo
+echo "J. batcher parity: --mode parallel --with-bins, maxpar, toolchain, wall bound, exit 4:"
+
+# J1 — default argv/env: SPIRA_BATCH_MAXPAR and SPIRA_RELEASE_RUST_TOOLCHAIN both unset, so
+# the batcher's own defaults (16, 1.82.0) must appear on the child's argv/env regardless of
+# whether the ambient environment happens to carry the Concierge's own values.
+rm -f "$(open_batch_file)"
+plant sp-cgaa1 express
+git -C "$REPO" worktree add -q -b spira/sp-cgaa1 "$RUN/worktree/sp-cgaa1" main
+printf 'g1\n' > "$RUN/worktree/sp-cgaa1/g1.txt"
+git -C "$RUN/worktree/sp-cgaa1" add -A
+git -C "$RUN/worktree/sp-cgaa1" commit -q -m "sp-cgaa1: work"
+tip_g1="$(git -C "$REPO" rev-parse spira/sp-cgaa1)"
+git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cgaa1"
+certify sp-cgaa1 "$tip_g1"
+
+ARGV_LOG="$TMP/argv-log-default"; : > "$ARGV_LOG"
+STUB_ARGV_LOG="$ARGV_LOG" cut_repo >/dev/null
+want "J1: corpus run in --mode parallel --with-bins" "argv: --mode parallel --with-bins" "$(cat "$ARGV_LOG")"
+want "J1: default toolchain pin is 1.82.0 (release.yml's own pin, no independent default)" \
+    "RUSTUP_TOOLCHAIN=1.82.0" "$(cat "$ARGV_LOG")"
+want "J1: default maxpar is 16 (the Concierge's own proven parallelism)" \
+    "SPIRA_BATCH_MAXPAR=16" "$(cat "$ARGV_LOG")"
+
+# J2 — configured overrides are honored, pinned to NON-DEFAULT values so this cannot pass
+# against code that hard-codes J1's own defaults.
+rm -f "$(open_batch_file)"
+plant sp-cgbb2 express
+git -C "$REPO" worktree add -q -b spira/sp-cgbb2 "$RUN/worktree/sp-cgbb2" main
+printf 'g2\n' > "$RUN/worktree/sp-cgbb2/g2.txt"
+git -C "$RUN/worktree/sp-cgbb2" add -A
+git -C "$RUN/worktree/sp-cgbb2" commit -q -m "sp-cgbb2: work"
+tip_g2="$(git -C "$REPO" rev-parse spira/sp-cgbb2)"
+git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cgbb2"
+certify sp-cgbb2 "$tip_g2"
+
+ARGV_LOG2="$TMP/argv-log-override"; : > "$ARGV_LOG2"
+SPIRA_BATCH_MAXPAR=7 SPIRA_RELEASE_RUST_TOOLCHAIN=1.77.3 STUB_ARGV_LOG="$ARGV_LOG2" cut_repo >/dev/null
+want "J2: SPIRA_BATCH_MAXPAR overrides the default" "SPIRA_BATCH_MAXPAR=7" "$(cat "$ARGV_LOG2")"
+want "J2: SPIRA_RELEASE_RUST_TOOLCHAIN overrides the default toolchain pin" \
+    "RUSTUP_TOOLCHAIN=1.77.3" "$(cat "$ARGV_LOG2")"
+
+# J3 — a --with-bins build failure (exit 4) is a round-level red: attributed to the round's
+# own members via the ordinary double-red/judgement path, not a harness fault that aborts
+# the round with nobody blamed (the defect this bead names: "unexpected exit 4").
+rm -f "$(open_batch_file)"
+plant sp-cgcc3 express
+git -C "$REPO" worktree add -q -b spira/sp-cgcc3 "$RUN/worktree/sp-cgcc3" main
+printf 'g3\n' > "$RUN/worktree/sp-cgcc3/g3.txt"
+git -C "$RUN/worktree/sp-cgcc3" add -A
+git -C "$RUN/worktree/sp-cgcc3" commit -q -m "sp-cgcc3: work"
+tip_g3="$(git -C "$REPO" rev-parse spira/sp-cgcc3)"
+git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cgcc3"
+certify sp-cgcc3 "$tip_g3"
+
+prcreate_before_g3="$(grep -c '^pr-create' "$FORGE_LOG")"
+out_g3="$(STUB_EXIT4=1 cut_repo)"
+want   "J3: a workspace build failure is reported as a round-level red" "double-red" "$out_g3"
+nowant "J3: never reported as an unexpected exit"                       "unexpected exit" "$out_g3"
+nowant "J3: never reported as a harness fault"                          "harness fault"   "$out_g3"
+is     "J3: no PR opened for a round whose workspace failed to build" \
+    "$prcreate_before_g3" "$(grep -c '^pr-create' "$FORGE_LOG")"
+is     "J3: sp-cgcc3 stays CERTIFIED — attributed, not silently dropped" \
+    "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cgcc3")"
+want   "J3: reports the judgement bead it filed" "filed sp-" "$out_g3"
+judgement_id_g3="$(printf '%s\n' "$out_g3" | sed -n 's/.*filed \(sp-[a-z0-9.]*\) for judgement.*/\1/p')"
+want   "J3: judgement bead body names the round's member" "sp-cgcc3" "$(B show "$judgement_id_g3" --long --json 2>/dev/null)"
+
+# J4 — a hung testenv-batch.sh is killed at the configured wall bound, not left to hold the
+# round lock forever (main.rs's cut() holds it for the whole call).
+rm -f "$(open_batch_file)"
+plant sp-cgdd4 express
+git -C "$REPO" worktree add -q -b spira/sp-cgdd4 "$RUN/worktree/sp-cgdd4" main
+printf 'g4\n' > "$RUN/worktree/sp-cgdd4/g4.txt"
+git -C "$RUN/worktree/sp-cgdd4" add -A
+git -C "$RUN/worktree/sp-cgdd4" commit -q -m "sp-cgdd4: work"
+tip_g4="$(git -C "$REPO" rev-parse spira/sp-cgdd4)"
+git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cgdd4"
+certify sp-cgdd4 "$tip_g4"
+
+g4_start="$(date +%s)"
+out_g4="$(SPIRA_BATCHER_WALL_SECS=1 STUB_SLEEP_SECS=30 cut_repo)"
+g4_elapsed=$(( $(date +%s) - g4_start ))
+# Generous margin above the 1s bound plus timeout's own 10s kill-after: this proves the round
+# is bounded at all, not that it is bounded tightly.
+if [ "$g4_elapsed" -lt 20 ]; then
+    ok "J4: a hung corpus run is killed near the configured wall bound (${g4_elapsed}s)"
+else
+    bad "J4: a hung corpus run is killed near the configured wall bound" "still running after ${g4_elapsed}s"
+fi
+want "J4: reports the wall bound as the cause" "wall bound" "$out_g4"
 
 tl_summary
