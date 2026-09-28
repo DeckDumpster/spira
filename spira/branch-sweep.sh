@@ -37,7 +37,7 @@ for _a in "$@"; do [ "$_a" = "--dry-run" ] && DRY_RUN=1; done
 [ -n "$REPO" ] && [ -e "$REPO/.git" ] || { echo "branch-sweep: no repository at '${REPO:-<empty>}'" >&2; exit 2; }
 
 base="$(spira_landref "$REPO")" || { echo "branch-sweep: cannot resolve a base ref for $REPO" >&2; exit 2; }
-remote="$(ref_remote "$base")" || { echo "branch-sweep: base '$base' has no remote; nothing to sweep" >&2; exit 2; }
+remote="$(ref_remote "$base" "$REPO")" || { echo "branch-sweep: base '$base' has no remote; nothing to sweep" >&2; exit 2; }
 
 swept=0
 kept=0

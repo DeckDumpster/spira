@@ -179,7 +179,7 @@ check)
         fi
 
         # 2. Is the shared checkout ahead of its remote?
-        remote="$(ref_remote "$landref" 2>/dev/null)" || remote=""
+        remote="$(ref_remote "$landref" "$root" 2>/dev/null)" || remote=""
         if [ -n "$remote" ]; then
             ahead="$(git -C "$root" rev-list --count \
                          "${remote}/${base}..refs/heads/${base}" 2>/dev/null)" || ahead="?"

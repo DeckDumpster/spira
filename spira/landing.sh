@@ -787,7 +787,7 @@ land_repo() {
         log "CHECK6 $name: cannot resolve the ref its branches land on — skipped. Give it a \`base\` in repo-map."
         return 0; }
     base_branch="$(ref_branch "$base")"
-    base_remote="$(ref_remote "$base")" || base_remote=""
+    base_remote="$(ref_remote "$base" "$repo")" || base_remote=""
     [ -n "$base_remote" ] && git -C "$repo" fetch -q --no-write-fetch-head "$base_remote" 2>/dev/null
     base_fqref="$(qualify_base_ref "$base" "$repo")"
     land="$SPIRA_RUN/worktree/.landing.$(basename "$repo")"

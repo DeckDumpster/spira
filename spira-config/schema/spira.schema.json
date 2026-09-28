@@ -40,13 +40,15 @@
       ]
     },
     "LandMode": {
-      "description": "How a landed branch reaches its base — see `repo-map.example`'s own `land` column.",
+      "description": "How a landed branch reaches its base — see `repo-map.example`'s own `land` column. `Queue` and `QueueForge` are the same mode under two spellings — `queue` is the alias a row has always been able to write, `queue.forge` names it explicitly now that `QueueLocal` exists to contrast it with. `QueueLocal` lands on a local branch (`local/main` in the `base` column) with no forge round trip on the critical path.",
       "type": "string",
       "enum": [
         "push",
         "pr",
         "hold",
-        "queue"
+        "queue",
+        "queue.forge",
+        "queue.local"
       ]
     },
     "Lane": {

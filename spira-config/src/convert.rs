@@ -581,6 +581,8 @@ pub fn repo_sections(
             "pr" => LandMode::Pr,
             "hold" => LandMode::Hold,
             "queue" => LandMode::Queue,
+            "queue.forge" => LandMode::QueueForge,
+            "queue.local" => LandMode::QueueLocal,
             other => {
                 warnings.push(format!(
                     "repo-map: {}: unknown land mode {other:?}",

@@ -1343,7 +1343,7 @@ BASE="$(spira_landref "$REPO")" || {
     bdq note "$BEAD_ID" "Released by aeon.sh: repo:$REPO_NAME has no resolvable default branch — $SPIRA_REPO_MAP declares no \`base\` for it, its remote publishes no HEAD, and it is not a local-only repository. Give it a base column. Refusing to guess: a branch cut from a guessed base rebases onto a ref nobody chose, and \`main\` is a guess that is wrong wherever a repository still uses \`master\`." >/dev/null 2>&1
     exit 1; }   # the EXIT trap unclaims it and writes the ledger line
 BASE_BRANCH="$(ref_branch "$BASE")"
-BASE_REMOTE="$(ref_remote "$BASE")" || BASE_REMOTE=""
+BASE_REMOTE="$(ref_remote "$BASE" "$REPO")" || BASE_REMOTE=""
 if [ -n "$BASE_REMOTE" ]; then
     git -C "$REPO" fetch -q "$BASE_REMOTE" 2>/dev/null \
         || log "$FAYTH: fetch of $BASE_REMOTE failed — basing on a possibly stale $BASE"
@@ -2002,12 +2002,17 @@ bead as retired and skip it correctly. A close reason alone is not read by any o
 # 12 of the first 23 reopens this harness performed were exactly that. The session that
 # holds the context is the one that should pay for the conflict, so it is told to, and the
 # verdict step below checks that it did.
+#
+# BASE_REMOTE is empty for a local base ref (queue.local's local/main) — name the ref, not a
+# fetch of a remote that does not exist.
+CLOSE_FETCH_STEP="git -C $WORK fetch $BASE_REMOTE"
+[ -n "$BASE_REMOTE" ] || CLOSE_FETCH_STEP="# $BASE is a local ref already in this checkout; no fetch needed"
 CLOSE_BRIEF="## Before you close: rebase onto \`$BASE\`
 
 Other aeons land while you work, so \`$BASE\` has probably moved. The last thing you do
 before closing the bead — after your commits, before the close — is:
 
-    git -C $WORK fetch ${BASE_REMOTE:-origin}
+    $CLOSE_FETCH_STEP
     git -C $WORK rebase $BASE
 
 Resolve any conflict yourself: you wrote these commits and you know what they mean, and the

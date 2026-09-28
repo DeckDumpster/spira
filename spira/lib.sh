@@ -5856,8 +5856,16 @@ _spira_gitstore() {      # _spira_gitstore <path> -> its shared git directory, a
     printf '%s' "$d"
 }
 
-repo_land() {            # repo_land <name> -> push | pr | hold | queue
+# repo_land <name> -> push | pr | hold | queue | queue.local
+#
+# `queue.forge` NORMALIZES TO `queue` HERE, so every existing `[ "$mode" = queue ]` dispatcher
+# in landing.sh, queue.sh, verdict.sh, batch.sh and this file keeps working unchanged against
+# the alias — the one place that decides land mode is the one place that needs to know the
+# alias exists. `queue.local` stays distinct: nothing that dispatches on `queue` today should
+# also fire for it, since its landing pipeline is separate work.
+repo_land() {            # repo_land <name> -> push | pr | hold | queue | queue.local
     local m; m="$(repo_field "${1:-}" land)"
+    [ "$m" = "queue.forge" ] && m=queue
     printf '%s' "${m:-push}"
 }
 
@@ -6263,8 +6271,22 @@ spira_landref() {        # spira_landref [repo-path-or-name] -> the base ref, or
 # what a fetch names. Every call site did these two strips by hand as ${base#origin/} and a
 # literal `origin`, both of which are assumptions about a remote's name, and a remote need
 # not be called that. String operations, not lookups, so a caller holding a ref never re-resolves it.
-ref_remote() {           # ref_remote <ref> -> its remote, or non-zero if the ref is local
-    case "${1:-}" in */*) printf '%s' "${1%%/*}" ;; *) return 1 ;; esac
+#
+# A queue.local row's ref is `local/main` — a LOCAL branch that happens to contain a slash,
+# not a remote-tracking one. Splitting on the first `/` unconditionally would read it as
+# remote `local`, branch `main`, and every caller below would then try to fetch a remote
+# that does not exist. So when a repo is given, the prefix only counts as a remote when
+# `git remote` actually lists it; otherwise the ref is answered as local, same as one with no
+# slash at all. Without a repo (a caller that predates this), the old unconditional split is
+# kept.
+ref_remote() {           # ref_remote <ref> [repo] -> its remote, or non-zero if the ref is local
+    local ref="${1:-}" repo="${2:-}" prefix remotes
+    case "$ref" in */*) prefix="${ref%%/*}" ;; *) return 1 ;; esac
+    if [ -n "$repo" ]; then
+        remotes="$(git -C "$repo" remote 2>/dev/null)"
+        grep -qx -- "$prefix" <<< "$remotes" || return 1
+    fi
+    printf '%s' "$prefix"
 }
 ref_branch() {           # ref_branch <ref> -> the branch name, without any remote
     printf '%s' "${1#*/}"
@@ -6273,7 +6295,7 @@ qualify_base_ref() {     # qualify_base_ref <ref> <repo> -> refs/remotes/... or 
     # A bare origin/main is ambiguous when refs/heads/origin/main also exists. Use the
     # fully-qualified remote-tracking ref so git commands resolve it deterministically.
     local ref="$1" repo="$2" remote branch fq
-    remote="$(ref_remote "$ref")" || { printf '%s' "$ref"; return 0; }
+    remote="$(ref_remote "$ref" "$repo")" || { printf '%s' "$ref"; return 0; }
     branch="$(ref_branch "$ref")"
     fq="refs/remotes/$remote/$branch"
     git -C "$repo" rev-parse --verify -q "$fq" >/dev/null 2>&1 \
@@ -6843,7 +6865,7 @@ spira_reap_landed_branch() {
         SPIRA_REAP_ERR="branch $br not deleted: ${SPIRA_DESTROY_ERR:-refused — content not landed, held, or checked out; see ${SPIRA_REAPLOG:-the reap log}}"
         return 1
     fi
-    rem="$(ref_remote "$(spira_landref "$repo" 2>/dev/null)" 2>/dev/null)" || rem=""
+    rem="$(ref_remote "$(spira_landref "$repo" 2>/dev/null)" "$repo" 2>/dev/null)" || rem=""
     if [ -n "$rem" ] && git -C "$repo" rev-parse --verify -q "$rem/$br" >/dev/null 2>&1; then
         spira_git_push "$repo" -q "$rem" --delete "$br" 2>/dev/null \
             && log "reap $id: deleted $rem/$br"
@@ -8242,7 +8264,7 @@ needs_refresh() {        # needs_refresh <repo> <name> <branch> <id> <base> <tip
 # "origin" and "main" — two repositories here default to master.
 land_pr() {
     local repo="$1" br="$2" id="$3" baseref="$4" num title remote base dup
-    remote="$(ref_remote "$baseref")" || remote=origin
+    remote="$(ref_remote "$baseref" "$repo")" || remote=origin
     base="$(ref_branch "$baseref")"
     if ! spira_git_push "$repo" -q --force-with-lease -u "$remote" "$br" 2>/dev/null; then
         log "$id: could not push $br to $remote"

@@ -189,7 +189,7 @@ _repro_fault() {
 # the base cannot be resolved — the same fallback plain `git push` would need anyway).
 _repro_remote() {
     local repo="$1" base
-    base="$(spira_landref "$repo" 2>/dev/null)" && ref_remote "$base" 2>/dev/null && return 0
+    base="$(spira_landref "$repo" 2>/dev/null)" && ref_remote "$base" "$repo" 2>/dev/null && return 0
     printf 'origin'
 }
 
@@ -1381,7 +1381,7 @@ _verdict_process() {
         printf 'verdict %s: cannot resolve base ref\n' "$name" >&2
         return 1
     }
-    remote="$(ref_remote "$base")"
+    remote="$(ref_remote "$base" "$repo")"
     base_branch="$(ref_branch "$base")"
 
     local forge="${SPIRA_FORGE:-$HERE/forge.sh}"
