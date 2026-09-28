@@ -1191,6 +1191,10 @@ ready_count() {
 # Started (any child closed, in progress, or carrying the submitted label): `bd children`
 # takes one parent at a time, so this is one query per DISTINCT epic — still bounded by the
 # number of epics in flight, never by the number of ready beads.
+#
+# A NONZERO RETURN IS A FAILED LOOKUP, NOT AN EMPTY ONE (law-payloads-go-on-stdin): the
+# caller must treat it as a claim-error, the same as a failed bd query, never as "nothing
+# ready".
 epic_parent_lookup() {
     local ready_json="$1" parents prio_json="[]" started_csv=""
     parents="$(printf '%s' "$ready_json" | python3 -c '
@@ -1228,18 +1232,24 @@ sys.exit(1)
         done <<< "$parents"
         started_csv="$(IFS=,; printf '%s' "${started_ids[*]:-}")"
     fi
-    python3 -c '
+    # prio_json ON STDIN, NEVER ARGV (law-payloads-go-on-stdin): it scales with the number of
+    # DISTINCT EPICS referenced, unbounded by the same fact that made ready_json unbounded
+    # (sp-o4trx). started_csv is a short id list, safe as an argv token.
+    printf '%s' "$prio_json" | python3 -c '
 import json, sys
-prio_rows = json.loads(sys.argv[1]) if sys.argv[1] else []
+prio_rows = json.loads(sys.stdin.read() or "[]")
 prio_rows = prio_rows if isinstance(prio_rows, list) else [prio_rows]
 prio = {r["id"]: r.get("priority", 99) for r in prio_rows}
-started = [x for x in sys.argv[2].split(",") if x]
+started = [x for x in sys.argv[1].split(",") if x]
 print(json.dumps({"prio": prio, "started": started}))
-' "$prio_json" "$started_csv"
+' "$started_csv"
 }
 
 # epic_rank_rows <ready-beads-json> <epic-lookup-json> [<resumable-csv>] -> TSV, best first:
 #   epic_priority  epic_started(0|1)  bead_priority  resumable(0|1)  created_at  id  epic_id
+#
+# A NONZERO RETURN IS A FAILED RANK, NOT AN EMPTY ONE (law-payloads-go-on-stdin): the caller
+# must treat it as a claim-error, the same as a failed bd query, never as "nothing ready".
 #
 # THE RANK, in the order the rule states it (sp-ns46j): the parent epic's priority; then,
 # among epics of equal priority, a started epic before an unstarted one; then the bead's own
@@ -1253,15 +1263,21 @@ print(json.dumps({"prio": prio, "started": started}))
 # at exactly the rank its epic already holds.
 epic_rank_rows() {
     local ready_json="$1" lookup_json="$2" resume_csv="${3:-}"
-    python3 -c '
-import json, sys
+    # READY_JSON ON STDIN, LOOKUP_JSON IN A TEMP FILE — NEVER ARGV (law-payloads-go-on-stdin).
+    # At 142 ready beads this argument alone was already past MAX_ARG_STRLEN and every exec
+    # here died E2BIG, silently, as an empty ranked list read as "nothing ready" (sp-o4trx).
+    local _lkf; _lkf="$(mktemp)" || return 1
+    printf '%s' "$lookup_json" > "$_lkf"
+    printf '%s' "$ready_json" | LOOKUP_FILE="$_lkf" python3 -c '
+import json, os, sys
 
-ready = json.loads(sys.argv[1]) if sys.argv[1] else []
+ready = json.loads(sys.stdin.read() or "[]")
 ready = ready if isinstance(ready, list) else [ready]
-lookup = json.loads(sys.argv[2]) if sys.argv[2] else {}
+with open(os.environ["LOOKUP_FILE"]) as f:
+    lookup = json.loads(f.read() or "{}")
 prio = lookup.get("prio", {})
 started = set(lookup.get("started", []))
-resume = set(x for x in sys.argv[3].split(",") if x)
+resume = set(x for x in sys.argv[1].split(",") if x)
 
 def rank(r):
     pid = r.get("parent") or ""
@@ -1276,7 +1292,10 @@ def rank(r):
 for r in sorted(ready, key=rank):
     k = rank(r)
     print("%s\t%s\t%s\t%s\t%s\t%s\t%s" % k)
-' "$ready_json" "$lookup_json" "$resume_csv"
+' "$resume_csv"
+    local _rc=$?
+    rm -f "$_lkf"
+    return $_rc
 }
 
 # claim_retry <bdq claim args...> -> stdout: bd's JSON result (already through json_only).
@@ -1762,10 +1781,12 @@ print(json.dumps(d))
         fi
     fi
 
-    # labeled_json goes through the environment (typically a small set of beads);
-    # ready_json goes through stdin to avoid the env-size ceiling on large partitions.
+    # labeled_json goes in a temp file, ready_json on stdin — neither through the
+    # environment or argv (law-payloads-go-on-stdin): both scale with queue size, unbounded.
+    local _lqf; _lqf="$(mktemp)" || return 1
+    printf '%s' "${labeled_json:-[]}" > "$_lqf"
     QUEUE_BLOCKERS="$qblockers" QUEUE_LABEL="$label" \
-    LABELED_JSON="${labeled_json:-[]}" python3 -c '
+    LABELED_FILE="$_lqf" python3 -c '
 import json, sys, os
 
 active = set(os.environ.get("QUEUE_BLOCKERS", "").split())
@@ -1776,7 +1797,8 @@ def parse(s):
     try: d = json.loads(s); return d if isinstance(d, list) else [d]
     except Exception: return []
 
-labeled = {b["id"]: b for b in parse(os.environ.get("LABELED_JSON", "")) if b.get("id")}
+with open(os.environ["LABELED_FILE"]) as f:
+    labeled = {b["id"]: b for b in parse(f.read()) if b.get("id")}
 ready   = {b["id"]: b for b in parse(sys.stdin.read()) if b.get("id")}
 
 def blocks_active(bead):
@@ -1815,6 +1837,7 @@ for bid in labeled:
                 ;;
         esac
     done
+    rm -f "$_lqf"
 }
 
 # close_landed_queue_waiters — close any open bead carrying SPIRA_QUEUE_WAIT_LABEL whose
