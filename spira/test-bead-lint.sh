@@ -138,7 +138,7 @@ echo "T4: a work bead blocks-dependent on an incident/alarm bead (sp-3bc6t, sp-i
 # ("incident-test") by run_lint so this proves the check reads the configured key rather
 # than a literal "incident".
 testdb_seed <<'JSONL'
-{"id":"sp-lint-inc-alarm","title":"recurring alarm","status":"open","issue_type":"task","labels":["incident-test","spira"],"updated_at":"2026-09-25T00:00:00Z"}
+{"id":"sp-lint-inc-alarm","title":"recurring alarm","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-09-25T00:00:00Z"}
 {"id":"sp-lint-inc-work","title":"work bead wrongly blocked on the alarm","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-25T00:00:00Z","dependencies":[{"issue_id":"sp-lint-inc-work","depends_on_id":"sp-lint-inc-alarm","type":"blocks"}]}
 {"id":"sp-lint-inc-rel","title":"work bead related to the alarm, not blocked","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-25T00:00:00Z","dependencies":[{"issue_id":"sp-lint-inc-rel","depends_on_id":"sp-lint-inc-alarm","type":"relates-to"}]}
 {"id":"sp-lint-work-a","title":"ordinary work a","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-25T00:00:00Z"}
