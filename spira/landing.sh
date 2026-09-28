@@ -46,9 +46,8 @@ set -uo pipefail
 # gate_fits and gate_lock_wait live here, ABOVE the source guard below, so a T1 suite can
 # source this file for the arithmetic alone without a live pass ever starting. Each takes
 # its inputs as optional parameters, defaulting to the pass globals (PASS_START, LAND_MAXSEC,
-# LAND_GATE_RESERVE, set further down) and env (SPIRA_GATE_TIMEOUT, SPIRA_GATE_LOCK_WAIT) —
-# every real call site below still calls them with zero arguments and gets the exact same
-# globals it always read.
+# LAND_GATE_RESERVE, set further down) and env (SPIRA_GATE_LOCK_WAIT) — every real call site
+# below still calls them with zero arguments and gets the exact same globals it always read.
 
 # gate_fits [maxsec] [pass-start] [reserve] -> 0 if there is room for another gate in this
 # pass, 1 if the pass should stop. ZERO OR NEGATIVE MAXSEC MEANS NO LIMIT, which is how a
@@ -62,24 +61,26 @@ gate_fits() {
     [ $(( maxsec - spent )) -ge "$reserve" ]
 }
 
-# gate_lock_wait [maxsec] [pass-start] [gate-timeout] [explicit-wait] — sets _gate_wait to
-# how long this pass may wait for the gate tree (not stdout, so log() messages are not
+# gate_lock_wait [maxsec] [pass-start] [explicit-wait] — sets _gate_wait to how long this
+# pass may wait for a branch's own gate tree lock (not stdout, so log() messages are not
 # consumed by a $() caller).
 #
-# DERIVED FROM THE GATE TIMEOUT, not the pass budget. gate.sh documents why the wait must
-# be at least 2 * gate-timeout: one holder can legitimately run two full trials (branch +
-# base), so a shorter wait times out against a healthy holder. An explicit wait is honored
-# so the operator can size the two independently. When the remaining pass budget is shorter
-# than the ideal, the wait is capped and logged so rc=75 is readable as contention rather
-# than as a branch fault.
+# SHORT ON PURPOSE. The lock's usual contender is the branch's own aeon, mid-gate on the
+# same tree, and waiting that out here head-of-line blocks every OTHER candidate behind it
+# in the same pass — up to 44 of 60 minutes on two such waits, measured (sp-u7wrz). Giving
+# up quickly costs little: a timed-out wait returns NO_VERDICT, not a branch fault, and the
+# holder's own verdict — once it finishes — is cached by (tree, base, command), so the next
+# pass's attempt at the same candidate need not wait at all. An explicit SPIRA_GATE_LOCK_WAIT
+# is honored unchanged, for an operator who has sized it on purpose; a short pass budget can
+# still cap it further, logged so rc=75 there reads as contention rather than a branch fault.
 gate_lock_wait() {
     local maxsec="${1:-${LAND_MAXSEC:-0}}" pass_start="${2:-${PASS_START:-0}}" \
-        timeout="${3:-${SPIRA_GATE_TIMEOUT:-2700}}" explicit="${4:-${SPIRA_GATE_LOCK_WAIT:-}}"
+        explicit="${3:-${SPIRA_GATE_LOCK_WAIT:-}}"
     if [ -n "$explicit" ]; then
         _gate_wait="$explicit"
         return
     fi
-    local ideal=$(( timeout * 2 ))
+    local ideal=120
     if [ "$maxsec" -gt 0 ]; then
         local remaining=$(( maxsec - ($(date +%s) - pass_start) ))
         if [ "$remaining" -lt "$ideal" ]; then

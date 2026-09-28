@@ -955,13 +955,13 @@ fi  # SPIRA_SKIP_CLOSED_CHECK
 # environment (law-gates-run-in-a-clean-environment). Pass what landing.sh needs and
 # nothing else — in particular not SPIRA_FAYTHS, which is this pass's business alone.
 #
-# 40% AND A RuntimeMaxSec, BECAUSE THIS LEAVES THE SENTINEL'S CGROUP. Landing ran under
-# spira-sentinel.service's CPUQuota=40% until it was split out; a transient unit is its own
-# cgroup, so without a quota of its own the split would quietly hand the box more Spira than
-# it had before. 40% is the same ceiling it already had. This machine also runs prod, two CI
-# runners and the operator's session, and anything that polls in a loop on it gets a quota before it
-# is enabled (law-fence-loops-on-shared-hardware). RuntimeMaxSec is the knob that applies to
-# a `simple` service, which is what systemd-run creates; TimeoutStartSec would be ignored.
+# SPIRA_LAND_CPU_QUOTA AND A RuntimeMaxSec, BECAUSE THIS LEAVES THE SENTINEL'S CGROUP. A
+# transient unit is its own cgroup, so without a quota of its own the split from
+# spira-sentinel.service would quietly hand the box more Spira than it had before. This
+# machine also runs prod, two CI runners and the operator's session, and anything that polls
+# in a loop on it gets a quota before it is enabled (law-fence-loops-on-shared-hardware).
+# RuntimeMaxSec is the knob that applies to a `simple` service, which is what systemd-run
+# creates; TimeoutStartSec would be ignored.
 # ======================================================================================
 LAND_UNIT="${SPIRA_LAND_UNIT:-spira-landing}"
 # THE CAP IS SIZED AGAINST THE GATE, AND THE WORKER IS TOLD WHAT IT IS. At 1800s this leg
@@ -1060,7 +1060,7 @@ if land_active; then
 elif "${SPIRA_LAUNCH:-systemd-run}" --user --collect --quiet \
         --unit="$LAND_UNIT" \
         --property=RuntimeMaxSec="$LAND_MAXSEC" \
-        --property=CPUQuota=40% --property=Nice=10 \
+        --property=CPUQuota="${SPIRA_LAND_CPU_QUOTA:-70}%" --property=Nice=10 \
         --property=StandardOutput="append:$SPIRA_RUN/landing.log" \
         --property=StandardError="append:$SPIRA_RUN/landing.log" \
         --setenv=PATH="$PATH" --setenv=HOME="$HOME" \
