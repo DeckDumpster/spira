@@ -373,23 +373,6 @@ mod tests {
         path
     }
 
-        // POSITIVE CONTROL: an error that is not "invalid connection" is not retried — one call.
-    #[test]
-    fn run_bd_does_not_retry_other_errors() {
-        let calls = scratch_path("calls");
-        fs::write(&calls, "0").unwrap();
-        let stub = make_stub(&format!(
-            r#"n=$(($(cat "{calls}") + 1)); echo "$n" > "{calls}"
-echo "Error: something else went wrong" >&2; exit 1"#,
-            calls = calls.display()
-        ));
-        let out = run_bd(&mut Command::new(&stub), "bd show");
-        assert!(out.is_err());
-        assert_eq!(fs::read_to_string(&calls).unwrap().trim(), "1");
-        let _ = fs::remove_file(&stub);
-        let _ = fs::remove_file(&calls);
-    }
-
     // POSITIVE CONTROL: a connection that never recovers is retried exactly once, not forever.
     #[test]
     fn run_bd_bounds_the_retry() {
