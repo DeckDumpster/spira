@@ -79,6 +79,9 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         // cascades a batch's own transition emits to its members (cutover.rs's own doc).
         Some("create-bead") => cutover::cmd_create_bead(&args[1..], conn),
         Some("cut") => cutover::cmd_cut(&args[1..], conn),
+        // batcher-cut's own pipelining onto an already-OPEN batch (sp-o7nbr.4): the same
+        // MemberAdded/Deliver/Cut cascade `cut` performs, minus the batch row's own INSERT.
+        Some("stack") => cutover::cmd_stack(&args[1..], conn),
         Some("land") => cutover::cmd_land(&args[1..], conn),
         Some("settle") => cutover::cmd_settle(&args[1..], conn),
         Some("abandon-batch") => cutover::cmd_abandon_batch(&args[1..], conn),
@@ -91,7 +94,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("classify") => classify_cmd::run(&args[1..], conn),
         _ => (
             CANNOT_TELL,
-            "usage: spira-lc show <bead-id> | list [--state S] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | create-bead <id> | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | classify --home DIR --bd-db PATH --landstate-dir DIR --queue-dir DIR [--repo NAME]... [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve".to_string(),
+            "usage: spira-lc show <bead-id> | list [--state S] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | create-bead <id> | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | classify --home DIR --bd-db PATH --landstate-dir DIR --queue-dir DIR [--repo NAME]... [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve".to_string(),
         ),
     }
 }

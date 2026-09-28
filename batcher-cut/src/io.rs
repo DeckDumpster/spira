@@ -39,6 +39,8 @@ pub struct Env {
     pub testenv_batch: PathBuf,
     pub git_name: String,
     pub git_email: String,
+    pub lc_bin: Option<PathBuf>,
+    pub lc_timeout: u64,
 }
 
 fn now() -> u64 {
@@ -95,6 +97,58 @@ pub fn bead_reopen(env: &Env, id: &str, cause: &str, note: &str) {
 
 pub fn bump_requeue(env: &Env, id: &str, reason: &str) {
     let _ = lib_call(env, "bump_requeue", [id, reason]);
+}
+
+// ---------------------------------------------------------------------------------------
+// spira-lc: the cutover round's own OPEN-batch lifecycle (sp-o7nbr.4, same contract as
+// sp-o7nbr.2's batch.sh _lc_cut_batch/lcq — best-effort and additive, never blocking the
+// existing land_mark-based path). No SPIRA_LC_BIN, or a refusal, is logged to stderr and
+// returns None; a caller that gets None simply leaves batch_id/version unset on the
+// open-batch record, same as a legacy or refused-cut record already does.
+// ---------------------------------------------------------------------------------------
+
+fn lcq(env: &Env, args: &[&str]) -> Result<String, String> {
+    let bin = env.lc_bin.as_ref().ok_or_else(|| "SPIRA_LC_BIN unset".to_string())?;
+    let mut cmd = Command::new("timeout");
+    cmd.arg(env.lc_timeout.to_string()).arg(bin).args(args);
+    run(&mut cmd, "spira-lc")
+}
+
+/// Ensure a bead row exists for every member (never a shortcut to CERTIFIED — that
+/// transition is sp-vd9dn's territory) then `spira-lc cut` a brand-new batch. On success
+/// the batch's version is exactly the member count (cut's own `MemberAdded` events are
+/// the only thing that advances it from 0) — returned so the caller can record it on the
+/// open-batch file the same way sp-o7nbr.2's `_lc_cut_batch` does.
+pub fn lc_cut_batch(env: &Env, repo: &str, batch_id: &str, head: &str, base: &str, members: &[(String, String)]) -> Option<String> {
+    for (id, _) in members {
+        let _ = lcq(env, &["create-bead", id]);
+    }
+    let members_s = members.iter().map(|(id, tip)| format!("{id}:{tip}")).collect::<Vec<_>>().join(",");
+    match lcq(env, &["cut", batch_id, "--repo", repo, "--head", head, "--base", base, "--members", &members_s, "--actor", "batcher"]) {
+        Ok(_) => Some(members.len().to_string()),
+        Err(e) => {
+            eprintln!("batcher {repo}: spira-lc cut refused for {batch_id}: {e}");
+            None
+        }
+    }
+}
+
+/// `spira-lc stack` new members onto an already-OPEN batch — batcher-cut's own
+/// pipelining (law-queue-back-pressure-is-an-open-pr). On success the batch's version
+/// advances by exactly the new member count, so `prior_version + members.len()` is
+/// recorded without a second round trip to read it back.
+pub fn lc_stack_batch(env: &Env, repo: &str, batch_id: &str, prior_version: u64, members: &[(String, String)]) -> Option<String> {
+    for (id, _) in members {
+        let _ = lcq(env, &["create-bead", id]);
+    }
+    let members_s = members.iter().map(|(id, tip)| format!("{id}:{tip}")).collect::<Vec<_>>().join(",");
+    match lcq(env, &["stack", batch_id, "--members", &members_s, "--actor", "batcher"]) {
+        Ok(_) => Some((prior_version + members.len() as u64).to_string()),
+        Err(e) => {
+            eprintln!("batcher {repo}: spira-lc stack refused for {batch_id}: {e}");
+            None
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -256,6 +310,13 @@ pub struct OpenBatch {
     /// separate default to keep in sync). verdict.sh reads it to decide whether a CI red
     /// on this PR is its own attribution's or the summoned batcher persona's (sp-lomk3).
     pub owner: String,
+    /// spira-lc's own key for this batch and its current CAS version (sp-o7nbr.4, same
+    /// field names as sp-o7nbr.2's `_lc_cut_batch` writes for batch.sh) — present only
+    /// when `spira-lc cut`/`stack` actually succeeded. verdict.sh's `_lc_land_batch`/
+    /// `_lc_settle_batch` read these generically off this same open-batch file
+    /// regardless of which cutter wrote it; absent means skip, not CAS against nothing.
+    pub batch_id: String,
+    pub version: String,
 }
 
 fn open_file(env: &Env, repo: &str) -> PathBuf {
@@ -295,6 +356,8 @@ pub fn read_open_batch(env: &Env, repo: &str) -> Result<Option<OpenBatch>, Strin
         branch: kv.get("branch").cloned().unwrap_or_default(),
         opened: kv.get("opened").cloned().unwrap_or_default(),
         owner: kv.get("owner").cloned().unwrap_or_default(),
+        batch_id: kv.get("batch_id").cloned().unwrap_or_default(),
+        version: kv.get("version").cloned().unwrap_or_default(),
     }))
 }
 
@@ -304,10 +367,13 @@ pub fn write_open_batch(env: &Env, repo: &str, ob: &OpenBatch) -> Result<(), Str
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     let members = ob.members.iter().map(|(id, tip)| format!("{id}:{tip}")).collect::<Vec<_>>().join(" ");
-    let body = format!(
+    let mut body = format!(
         "pr={}\nhead={}\nbase={}\nmembers={}\nopened={}\nbranch={}\nowner={}\n",
         ob.pr, ob.head, ob.base, members, ob.opened, ob.branch, ob.owner
     );
+    if !ob.batch_id.is_empty() && !ob.version.is_empty() {
+        body.push_str(&format!("batch_id={}\nversion={}\n", ob.batch_id, ob.version));
+    }
     let tmp = p.with_extension("tmp");
     fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
     fs::rename(&tmp, &p).map_err(|e| format!("{}: {e}", p.display()))

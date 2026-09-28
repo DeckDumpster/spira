@@ -16,6 +16,10 @@
 #     re-cutting two new batches from that pool, each recorded with `parent` set to the
 #     original;
 #   - two `land` calls racing on one batch: exactly one applies, the rest are refused.
+#   - `stack` (sp-o7nbr.4, batcher-cut's own pipelining onto an already-OPEN batch): new
+#     members join the same batch_id, its version advances once per member, and it refuses
+#     — a member not CERTIFIED there, or a batch that already left OPEN — exactly as `cut`
+#     does for a fresh batch.
 #
 # host-reason: starts its own disposable `dolt sql-server`, the same shape every
 # testdb.sh server-mode suite already uses without a container call — testenv-batch.sh
@@ -423,5 +427,48 @@ OBFILE
 _lc_land_batch "$vleg_ob" 12 sha-verdict-legacy >/dev/null 2>&1
 is "a pre-cutover record's batch is untouched by _lc_land_batch (no batch_id to CAS against)" \
     "OPEN" "$(batch_field batch-verdict-legacy state)"
+
+# ── criterion 5: stack pipelines new members onto an already-OPEN batch ──────────────────
+certify sp-lc-s1 tipS1
+lc cut batch-stack --repo spira --head H6 --base B6 --members "sp-lc-s1:tipS1" --actor test >/dev/null
+v="$(batch_field batch-stack version)"
+is "cut leaves the batch's version at 1 (one MemberAdded)" "1" "$v"
+
+certify sp-lc-s2 tipS2
+certify sp-lc-s3 tipS3
+out="$(lc stack batch-stack --members "sp-lc-s2:tipS2,sp-lc-s3:tipS3" --actor test)"
+wantrc "stack applies" 0 $?
+want "stack applied every step" '"applied":[true,true,true,true]' "$out"
+
+is "stack does not insert a second batch row — still OPEN" "OPEN" "$(batch_field batch-stack state)"
+is "stack advances the batch's version by exactly the new member count" "3" "$(batch_field batch-stack version)"
+is "the original member is untouched" "IN_DELIVERY" "$(member_field sp-lc-s1 bead state)"
+is "stacked member 2 enters delivery" "IN_DELIVERY" "$(member_field sp-lc-s2 bead state)"
+is "stacked member 2's delivery is batched onto this batch" "BATCHED" "$(member_field sp-lc-s2 delivery state)"
+is "stacked member 3 enters delivery" "IN_DELIVERY" "$(member_field sp-lc-s3 bead state)"
+
+# POSITIVE CONTROL: a member CERTIFIED at a different tip than named refuses, and writes
+# nothing — the batch's version is unchanged, not partially advanced by an earlier member
+# in the same call that did check out.
+certify sp-lc-s5 tipS5
+out="$(lc stack batch-stack --members "sp-lc-s5:tip-does-not-match" --actor test)"
+rc=$?
+wantrc "PLANTED VIOLATION: stack refuses a member whose certified tip does not match" 3 $rc
+is "the refused stack left the batch's version untouched" "3" "$(batch_field batch-stack version)"
+is "the refused member is left CERTIFIED, not admitted" "CERTIFIED" "$(member_field sp-lc-s5 bead state)"
+
+# POSITIVE CONTROL: stacking onto a batch that already left OPEN (settled here) refuses —
+# there is no longer a live round for a new member to join.
+v="$(batch_field batch-stack version)"
+lc event batch batch-stack --expect OPEN --version "$v" --actor test --kind '{"CiStarted":{"run":"r1"}}' >/dev/null
+v="$(batch_field batch-stack version)"
+lc event batch batch-stack --expect CI_RUNNING --version "$v" --actor test --kind '"Red"' >/dev/null
+v="$(batch_field batch-stack version)"
+lc settle batch-stack --expect ATTRIBUTING --version "$v" --actor test --requeue sp-lc-s1,sp-lc-s2,sp-lc-s3 >/dev/null
+certify sp-lc-s4 tipS4
+out="$(lc stack batch-stack --members "sp-lc-s4:tipS4" --actor test)"
+rc=$?
+wantrc "PLANTED VIOLATION: stack refuses a batch that is SETTLED, not OPEN" 3 $rc
+is "the refused stack did not touch the settled batch's state" "SETTLED" "$(batch_field batch-stack state)"
 
 tl_summary

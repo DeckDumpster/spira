@@ -157,6 +157,23 @@ esac
 FORGE
 chmod +x "$SH/forge-fixture.sh"
 
+# ── stub spira-lc: logs every invocation's argv (one line, space-joined) to
+# SPIRA_LC_STUB_LOG, exits 0 for create-bead always (matching lcq's own "never a shortcut
+# to CERTIFIED, but never blocks on it either" contract) and SPIRA_LC_STUB_RC (default 0)
+# for cut/stack — so a test can plant a refusal (rc=3) as a POSITIVE CONTROL for the
+# "additive, never blocks the round" contract without a real spira_lifecycle database.
+cat > "$SH/spira-lc-stub.sh" <<'LCSTUB'
+#!/usr/bin/env bash
+log="${SPIRA_LC_STUB_LOG:?}"
+printf '%s\n' "$*" >> "$log"
+case "${1:-}" in
+    create-bead) exit 0 ;;
+    cut|stack) exit "${SPIRA_LC_STUB_RC:-0}" ;;
+    *) exit 0 ;;
+esac
+LCSTUB
+chmod +x "$SH/spira-lc-stub.sh"
+
 REQUEUE_SPY="$TMP/requeue-spy"; : > "$REQUEUE_SPY"
 cat >> "$SH/lib.sh" <<LIBSPY
 bump_requeue() {
@@ -174,6 +191,9 @@ cut_repo() {
     SPIRA_FORGE="$SH/forge-fixture.sh" \
     SPIRA_TSD_BIN="$TSD_BIN" \
     STUB_RED_SUITES="${STUB_RED_SUITES:-}" \
+    SPIRA_LC_BIN="${SPIRA_LC_BIN:-}" \
+    SPIRA_LC_STUB_LOG="${SPIRA_LC_STUB_LOG:-}" \
+    SPIRA_LC_STUB_RC="${SPIRA_LC_STUB_RC:-0}" \
         "$BATCHER_BIN" cut "$REPONAME" --testenv-batch "$SH/testenv-batch-stub.sh" 2>&1
 }
 
@@ -224,6 +244,8 @@ is   "A: open-batch branch is spira/queue/*" "1" "$(case "$(open_field branch)" 
 is   "A: open-batch owner=batcher (sp-lomk3: verdict's own CI-red routing reads this)" \
     "batcher" "$(open_field owner)"
 is   "A: sp-caaa1 landstate BATCHED" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-caaa1")"
+is   "A: no batch_id without SPIRA_LC_BIN (legacy default, never blocks the PR)" "" "$(open_field batch_id)"
+is   "A: no version without SPIRA_LC_BIN"                                        "" "$(open_field version)"
 want "A: commit message names spira: land sp-caaa1, with the bead's own title" \
     "spira: land sp-caaa1 — sp-caaa1 bead" \
     "$(git -C "$REPO" log --format=%s "$(open_field branch)" -n 5 2>/dev/null)"
@@ -380,5 +402,72 @@ want "E: judgement bead body carries the evidence" "https://example.invalid/acti
 
 out_e2="$(judge_ci --suites '' --members sp-caaa1 --evidence x)"
 is "E: no suites given is refused, not filed" "1" "$([ -z "$(printf '%s\n' "$out_e2" | sed -n 's/^id=//p')" ] && echo 1 || echo 0)"
+
+# =============================================================================
+# CASE F — spira-lc wiring (sp-o7nbr.4): BATCHED at a fresh cut and a stack both call
+# spira-lc, and the open-batch record carries batch_id/version exactly when spira-lc
+# applied. POSITIVE CONTROL last: a planted refusal (rc=3) proves the call is additive —
+# the PR still opens and batch_id/version stay unset, never blocking the round.
+# =============================================================================
+echo
+echo "F. spira-lc wiring: cut and stack call spira-lc and record batch_id/version:"
+rm -f "$(open_batch_file)"
+LC_LOG="$TMP/lc-log"; : > "$LC_LOG"
+
+plant sp-cfff6 express
+git -C "$REPO" worktree add -q -b spira/sp-cfff6 "$RUN/worktree/sp-cfff6" main
+printf 'f\n' > "$RUN/worktree/sp-cfff6/f.txt"
+git -C "$RUN/worktree/sp-cfff6" add -A
+git -C "$RUN/worktree/sp-cfff6" commit -q -m "sp-cfff6: work"
+tip_f="$(git -C "$REPO" rev-parse spira/sp-cfff6)"
+git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cfff6"
+certify sp-cfff6 "$tip_f"
+
+SPIRA_LC_BIN="$SH/spira-lc-stub.sh" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
+branch_f="$(open_field branch)"; head_f="$(open_field head)"; base_f="$(open_field base)"
+want "F: cut calls spira-lc create-bead for the member" "create-bead sp-cfff6" "$(cat "$LC_LOG")"
+want "F: cut calls spira-lc cut naming the same batch-id, head and base as the open-batch record" \
+    "cut $branch_f --repo $REPONAME --head $head_f --base $base_f --members sp-cfff6:$tip_f --actor batcher" \
+    "$(cat "$LC_LOG")"
+is   "F: open-batch batch_id is the branch spira-lc cut" "$branch_f" "$(open_field batch_id)"
+is   "F: open-batch version is 1 (one MemberAdded)"      "1"         "$(open_field version)"
+
+: > "$LC_LOG"
+plant sp-cggg7 express
+git -C "$REPO" worktree add -q -b spira/sp-cggg7 "$RUN/worktree/sp-cggg7" main
+printf 'g\n' > "$RUN/worktree/sp-cggg7/g.txt"
+git -C "$RUN/worktree/sp-cggg7" add -A
+git -C "$RUN/worktree/sp-cggg7" commit -q -m "sp-cggg7: work"
+tip_g="$(git -C "$REPO" rev-parse spira/sp-cggg7)"
+git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cggg7"
+certify sp-cggg7 "$tip_g"
+
+SPIRA_LC_BIN="$SH/spira-lc-stub.sh" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
+want "F: stacking calls spira-lc stack, not cut, on the same batch-id" \
+    "stack $branch_f --members sp-cggg7:$tip_g --actor batcher" "$(cat "$LC_LOG")"
+nowant "F: stacking never calls spira-lc cut again for the same batch-id" "cut $branch_f " "$(cat "$LC_LOG")"
+is   "F: open-batch batch_id unchanged across the stack" "$branch_f" "$(open_field batch_id)"
+is   "F: open-batch version advanced to 2"               "2"         "$(open_field version)"
+
+# POSITIVE CONTROL: spira-lc refusing (rc=3, e.g. a member not CERTIFIED there) does not
+# block the round — the PR still opens, batch_id/version are simply left unset, same as
+# a legacy pre-cutover record.
+rm -f "$(open_batch_file)"
+: > "$LC_LOG"
+plant sp-chhh8 express
+git -C "$REPO" worktree add -q -b spira/sp-chhh8 "$RUN/worktree/sp-chhh8" main
+printf 'h\n' > "$RUN/worktree/sp-chhh8/h.txt"
+git -C "$RUN/worktree/sp-chhh8" add -A
+git -C "$RUN/worktree/sp-chhh8" commit -q -m "sp-chhh8: work"
+tip_h="$(git -C "$REPO" rev-parse spira/sp-chhh8)"
+git -C "$REPO" worktree remove -f "$RUN/worktree/sp-chhh8"
+certify sp-chhh8 "$tip_h"
+
+out_f_refused="$(SPIRA_LC_BIN="$SH/spira-lc-stub.sh" SPIRA_LC_STUB_LOG="$LC_LOG" SPIRA_LC_STUB_RC=3 cut_repo)"
+want "F: PLANTED REFUSAL — cut still reports the PR opening" "PR " "$out_f_refused"
+want "F: PLANTED REFUSAL — the refusal is logged" "spira-lc cut refused for" "$out_f_refused"
+is   "F: PLANTED REFUSAL — open-batch batch_id stays unset" "" "$(open_field batch_id)"
+is   "F: PLANTED REFUSAL — open-batch version stays unset"  "" "$(open_field version)"
+is   "F: PLANTED REFUSAL — member still lands BATCHED" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-chhh8")"
 
 tl_summary
