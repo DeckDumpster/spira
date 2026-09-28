@@ -140,7 +140,11 @@ pub enum BeadEventKind {
     ContentOnBase { proof: String },
     Supersede { by: String },
     Drop { reason: DropReason },
-    Hold { kind: HoldKind, cause: HoldCause },
+    /// `detail` is the free text a caller already knows (a question, a proposed successor
+    /// id) — carried alongside `cause`'s category, never folded into it (design: the same
+    /// split as `gate_red`'s `tip` versus its `reason`). It becomes the row's own `reason`
+    /// display when given, falling back to the category's own name otherwise.
+    Hold { kind: HoldKind, cause: HoldCause, #[serde(default)] detail: Option<String> },
     Unhold { kind: HoldKind },
 }
 
@@ -218,13 +222,13 @@ pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
             new.version += 1;
             Outcome::applied(new)
         }
-        BeadEventKind::Hold { kind, cause } => {
+        BeadEventKind::Hold { kind, cause, detail } => {
             if row.state.is_terminal() {
                 return terminal(row);
             }
             let mut new = row.clone();
             new.holds.insert(*kind);
-            new.reason = Some(cause.as_str().to_string());
+            new.reason = Some(detail.clone().unwrap_or_else(|| cause.as_str().to_string()));
             new.version += 1;
             Outcome::applied(new)
         }
@@ -461,7 +465,7 @@ mod tests {
             BeadEventKind::ContentOnBase { proof: "p".into() },
             BeadEventKind::Supersede { by: "sp-2".into() },
             BeadEventKind::Drop { reason: DropReason::Unwanted },
-            BeadEventKind::Hold { kind: HoldKind::Poison, cause: HoldCause::AttemptsExhausted },
+            BeadEventKind::Hold { kind: HoldKind::Poison, cause: HoldCause::AttemptsExhausted, detail: None },
             BeadEventKind::Unhold { kind: HoldKind::Poison },
         ]
     }
@@ -598,7 +602,7 @@ mod tests {
     #[test]
     fn hold_and_unhold_suspend_without_losing_state() {
         let r = row(BeadState::Submitted);
-        let out = apply(&r, &ev(BeadState::Submitted, 0, BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion }));
+        let out = apply(&r, &ev(BeadState::Submitted, 0, BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: None }));
         assert!(out.applied);
         assert_eq!(out.row.state, BeadState::Submitted);
         assert!(out.row.holds.contains(&HoldKind::Ask));
@@ -612,7 +616,7 @@ mod tests {
     #[test]
     fn hold_is_refused_on_a_terminal_row() {
         let r = row(BeadState::Landed);
-        let out = apply(&r, &ev(BeadState::Landed, 0, BeadEventKind::Hold { kind: HoldKind::Poison, cause: HoldCause::AttemptsExhausted }));
+        let out = apply(&r, &ev(BeadState::Landed, 0, BeadEventKind::Hold { kind: HoldKind::Poison, cause: HoldCause::AttemptsExhausted, detail: None }));
         assert!(!out.applied);
         assert!(matches!(out.refusal, Some(Refusal::Terminal { .. })));
     }
@@ -773,11 +777,29 @@ mod tests {
     fn every_hold_cause_holds_a_ready_bead_and_is_recorded() {
         for cause in ALL_HOLD_CAUSES {
             let r = row(BeadState::Ready);
-            let out = apply(&r, &ev(BeadState::Ready, 0, BeadEventKind::Hold { kind: HoldKind::Operator, cause }));
+            let out = apply(&r, &ev(BeadState::Ready, 0, BeadEventKind::Hold { kind: HoldKind::Operator, cause, detail: None }));
             assert!(out.applied, "{cause:?} should hold a READY bead");
             assert!(out.row.holds.contains(&HoldKind::Operator));
             assert_eq!(out.row.reason.as_deref(), Some(cause.as_str()));
         }
+    }
+
+    #[test]
+    fn hold_detail_overrides_the_causes_own_name_in_the_row() {
+        // work.rs's superseded-by asks the operator to confirm against a specific successor
+        // id, which the row's `reason` must still show — the category alone (`cause.as_str()`)
+        // would lose it. `detail` carries it alongside `cause`, never inside it.
+        let r = row(BeadState::Ready);
+        let out = apply(
+            &r,
+            &ev(
+                BeadState::Ready,
+                0,
+                BeadEventKind::Hold { kind: HoldKind::Operator, cause: HoldCause::SupersedeRequest, detail: Some("sp-9999".into()) },
+            ),
+        );
+        assert!(out.applied);
+        assert_eq!(out.row.reason.as_deref(), Some("sp-9999"));
     }
 
     #[test]
