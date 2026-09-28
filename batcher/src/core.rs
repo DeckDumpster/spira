@@ -510,6 +510,58 @@ pub fn judgement_event(j: &Judgement, repo: &str) -> Event {
 /// on 2026-09-24 had in front of them — repo, where the red was seen, which suites, which
 /// members were in the round (a double-red's culprit is one of these), and where the
 /// evidence lives (a local results dir, or a CI run link once sp-lomk3 supplies one).
+// ---------------------------------------------------------------------------------------
+// Terminal gate (sp-828tp, epic sp-hq9x8): the one check both queue.forge's PR-open and
+// queue.local's land-local finish run before a round is allowed to leave this box. Nothing
+// here shells out — `head`/`verdict_head`/`named_ids`/`bins_present` are the IO seam's own
+// read of git, the local-verdict record and the --with-bins cache, so a caller can never
+// manufacture a green out of "no reds seen" alone (law-absence-needs-a-positive-control):
+// an aborted run (--with-bins exit 4, zero suites reported) leaves `verdict_head` unset or
+// stale, never equal to `head`.
+// ---------------------------------------------------------------------------------------
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Refusal {
+    /// The round's local corpus was never confirmed green at `head` itself.
+    NotGreenOnHead { head: Id, verdict_head: Id },
+    /// A round member has no merge commit reachable from `head` carrying its own certified
+    /// tip as a parent — named_ids is the IO seam's own git-log-verified set, so this also
+    /// catches a tip silently swapped for a different patch after the corpus went green.
+    MemberNotNamed { id: Id },
+    /// No --with-bins corpus artifacts for this head's own tree.
+    BinsMissing,
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Refusal::NotGreenOnHead { head, verdict_head } => {
+                write!(f, "not green on {head} (last green verdict: {})", if verdict_head.is_empty() { "none" } else { verdict_head })
+            }
+            Refusal::MemberNotNamed { id } => write!(f, "{id} is not named by any commit reachable from head"),
+            Refusal::BinsMissing => write!(f, "no --with-bins corpus artifacts for this head"),
+        }
+    }
+}
+
+/// Refuses unless every one of `members` is in `named_ids` AND `head` is exactly the head the
+/// last green verdict was for AND `bins_present`. Checked in that order so the message a
+/// refusal prints is always the first thing actually wrong.
+pub fn terminal_ready(members: &[Member], head: &str, verdict_head: &str, named_ids: &[Id], bins_present: bool) -> Result<(), Refusal> {
+    if verdict_head.is_empty() || head != verdict_head {
+        return Err(Refusal::NotGreenOnHead { head: head.to_string(), verdict_head: verdict_head.to_string() });
+    }
+    for m in members {
+        if !named_ids.iter().any(|id| id == &m.id) {
+            return Err(Refusal::MemberNotNamed { id: m.id.clone() });
+        }
+    }
+    if !bins_present {
+        return Err(Refusal::BinsMissing);
+    }
+    Ok(())
+}
+
 pub fn judgement_body(repo: &str, j: &Judgement, members: &[Id], evidence: &str) -> String {
     let members_line = if members.is_empty() { "(none)".to_string() } else { members.join(", ") };
     let where_ = match j.source {

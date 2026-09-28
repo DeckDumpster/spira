@@ -8,9 +8,11 @@
 //! same bd/landstate/event-log side effects a second time in Rust.
 
 use std::collections::BTreeMap;
+use std::env;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::ErrorKind;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -531,6 +533,39 @@ pub fn head_of(wt: &Path) -> Result<String, String> {
     Ok(run(Command::new("git").arg("-C").arg(wt).args(["rev-parse", "HEAD"]), "git rev-parse HEAD")?.trim().to_string())
 }
 
+/// The member ids `terminal_ready` (core) can treat as actually landed at `head`: every merge
+/// commit in `base_sha..head` carries one parent — `merge_member`'s own `--no-ff` always makes
+/// the merged tip the second parent, never rewritten by a conflict resolution — so a member
+/// whose own certified tip is not among those parents never really merged, or was swapped for
+/// a different patch after the corpus run that validated this round.
+pub fn named_ids(repo: &Repo, base_sha: &str, head: &str, members: &[Member]) -> Vec<String> {
+    let out = run(
+        Command::new("git").arg("-C").arg(&repo.path).args(["log", "--merges", "--format=%P", &format!("{base_sha}..{head}")]),
+        "git log merges",
+    )
+    .unwrap_or_default();
+    let parents: std::collections::BTreeSet<&str> = out.split_whitespace().collect();
+    members.iter().filter(|m| parents.contains(m.tip.as_str())).map(|m| m.id.clone()).collect()
+}
+
+/// Whether `head`'s own tree has a --with-bins corpus already built for it — the exact
+/// directory `queue.sh land-local`'s own `_land_local_bins_dir` reads (keyed by TREE, not
+/// commit, so any head sharing that tree finds the corpus run_suites' own --with-bins call
+/// already produced for it).
+pub fn bins_present(env: &Env, repo: &Repo, head: &str) -> bool {
+    let Ok(tree) = run(Command::new("git").arg("-C").arg(&repo.path).args(["rev-parse", &format!("{head}^{{tree}}")]), "git rev-parse tree")
+    else {
+        return false;
+    };
+    let base = env::var_os("SPIRA_BATCH_BINS_TARGET_DIR").map(PathBuf::from).unwrap_or_else(|| env.run.join("cargo-target-bins"));
+    let dir = base.join(tree.trim()).join("release");
+    let Ok(rd) = fs::read_dir(&dir) else { return false };
+    rd.flatten().any(|e| {
+        let path = e.path();
+        path.is_file() && fs::metadata(&path).map(|md| md.permissions().mode() & 0o111 != 0).unwrap_or(false)
+    })
+}
+
 // ---------------------------------------------------------------------------------------
 // testenv-batch: run the full corpus, or a named subset (the re-run of the reds), and
 // parse its per-suite result protocol into SuiteRun.
@@ -819,6 +854,37 @@ pub fn forge_pr_create(repo: &Repo, head: &str, base: &str, title: &str, body: &
         return Err("forge pr-create: no PR number returned".into());
     }
     Ok(n)
+}
+
+// ---------------------------------------------------------------------------------------
+// queue.local's own terminal step (sp-828tp): fast-forward the local landing ref, package and
+// activate the round's own --with-bins corpus, mark every member LANDED and close its bead —
+// all of it queue.sh land-local's own contract (queue.sh:1148), never re-derived here.
+// ---------------------------------------------------------------------------------------
+
+/// Land `head` locally via `queue.sh land-local`, under the round lock this crate's own
+/// `try_lock` already holds — SPIRA_QUEUE_LOCK_HELD=1 tells land-local to skip its own flock
+/// rather than block forever on a lock this same process already owns (queue.sh:1202).
+/// A non-zero exit is land-local's own refusal (non-fast-forward, no --with-bins corpus, a
+/// concurrent mover) — reported, not an error, since "refused, nothing changed" is exactly the
+/// same benign outcome `try_lock`'s own None already models for this crate's other refusals.
+pub fn land_local(env: &Env, repo: &Repo, head: &str, members: &[(String, String)]) -> Result<bool, String> {
+    let members_arg = members.iter().map(|(id, tip)| format!("{id}:{tip}")).collect::<Vec<_>>().join(",");
+    let mut cmd = Command::new("bash");
+    cmd.arg(env.home.join("queue.sh")).arg("land-local").arg(&repo.name);
+    cmd.arg("--head").arg(head);
+    cmd.arg("--members").arg(&members_arg);
+    cmd.env("SPIRA_QUEUE_LOCK_HELD", "1");
+    let o = cmd.output().map_err(|e| format!("queue.sh land-local: {e}"))?;
+    let out = String::from_utf8_lossy(&o.stdout);
+    let err = String::from_utf8_lossy(&o.stderr);
+    if !out.is_empty() {
+        print!("{out}");
+    }
+    if !err.is_empty() {
+        eprint!("{err}");
+    }
+    Ok(o.status.success())
 }
 
 // ---------------------------------------------------------------------------------------
