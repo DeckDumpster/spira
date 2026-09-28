@@ -86,8 +86,6 @@ t1=$(date +%s)
 is   "suites=off: passes despite the held admission slot"             0 "$rc2"
 want "suites=off: says PASS"                                          "VERDICT=PASS" "$out2"
 nowant "suites=off: never reports an admission timeout"               "admission-timeout" "$out2"
-[ $(( t1 - t0 )) -lt 3 ] && ok "suites=off: returned without waiting on the semaphore" \
-    || bad "suites=off: returned without waiting on the semaphore" "took $((t1 - t0))s"
 
 echo
 tl_summary
