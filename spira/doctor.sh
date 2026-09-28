@@ -215,7 +215,7 @@ except Exception: print("")
 # --------------------------------------------------------------------------------------
 doctor_check_duckdb() {
     local duckdb_bin="${SPIRA_DUCKDB_BIN:-duckdb}"
-    local found
+    local found=""
     if [[ "$duckdb_bin" == */* ]]; then
         [[ -x "$duckdb_bin" ]] && found="$duckdb_bin"
     else
