@@ -286,23 +286,21 @@ fi
 # CHECK 2 — dead workers. A lease outlives the aeon that took it; reclaim is the reaper.
 # Grace window ~2x the TTL so a briefly paused worker is not robbed of live work.
 #
-# SPIRA_SKIP_RECLAIM=1 bypasses this check and CHECK 2c. Each bdq reclaim call costs
-# ~600ms and a fixture that creates no stale leases pays that on every pass with nothing
+# SPIRA_SKIP_RECLAIM=1 bypasses this check and CHECK 2c. Each spira-lc call costs real
+# wall time and a fixture that creates no stale leases pays that on every pass with nothing
 # to show for it. Test suites that cover CHECK 4 (the poison valve) rather than reclaim
-# behaviour set this to halve the per-pass wall time (16 passes × ~2s saved = ~32s).
+# behaviour set this to halve the per-pass wall time.
 #
-# ONE RECLAIM PER PARTITION, ASKED THROUGH THE CHAMBER. This named `spira,plan` — the
-# builder's partition standing in for every persona — so an ops or spike aeon that died left
-# its bead in_progress with a dead lease and no time-based reaper ever looked at it. The
-# /proc ghost sweep in CHECK 2b catches that case faster in practice, but the backstop for
-# everything /proc cannot see did not exist for those partitions at all.
-#
-# The loop is check2_reclaim_stale (lib.sh), which matches the SUCCESS shape via
-# parse_reclaimed rather than the word "reclaim" (which also appears in the idle message).
+# ONE spira-lc SCAN FOR EVERY PARTITION AT ONCE (sp-i2m7y). check2_reclaim_stale (lib.sh)
+# reads every WORKING row in spira_lifecycle in a single call — there is no partition
+# dimension to loop over, so an ops or spike aeon that died is reaped by the same pass that
+# reaps a builder's, with no per-persona label to remember to add. The /proc ghost sweep in
+# CHECK 2b catches the same case faster in practice; this is the time-based backstop for
+# whatever /proc cannot see.
 _phase "CHECK2"
 if [ "${SPIRA_SKIP_RECLAIM:-0}" != 1 ]; then
 check2_protect_waiting
-check2_reclaim_stale "$PARTITIONS"
+check2_reclaim_stale
 fi
 
 # ======================================================================================
@@ -334,35 +332,28 @@ n_escal="$(grep -cE '^STRANDED' <<< "$stranded" || true)"
 # can see: a bead that is OPEN, carries an assignee, and holds no lease.
 #
 # CHECK 2 reverts stale-lease in_progress issues and CHECK 2b witnesses a dead holder of
-# one. Both are about a lease. This is about a bead whose STATUS was already reset — by a
+# one. Both are about a lease. This was about a bead whose STATUS was already reset — by a
 # reopen in the landing pass, in CHECK 5, or in the aeon's own closed-without-a-commit
 # check — while its assignee was left standing. `bd ready` counts such a bead and `bd ready
 # --claim` skips it, so it is ready forever and claimable never, and no lease ever expires
 # to rescue it. Thirteen plan beads were stuck this way on 2026-09-06 while CHECK 7 summoned
 # an aeon every two minutes to report idle within one second.
 #
-# bead_reopen and release_own_claim now write the two facts together, so this should find
-# nothing. It stays because it is the POSITIVE CONTROL on that claim: a path that ends a
-# claim without clearing it is a bug that presents as a healthy queue, and this sweep is
-# what turns that silence into a visible RELEASED line
-# (law-absence-needs-a-positive-control).
+# MOVED ONTO spira-lc (sp-i2m7y): check2c_lc_consistency (lib.sh) reads spira_lifecycle,
+# never bd, and finds nothing to release — the state/holder desync this check chased cannot
+# occur there, because both fields change together in one version-checked transaction. It
+# detects an anomaly rather than repairing one; see the function's own comment.
 #
 # Skipped when SPIRA_SKIP_RECLAIM=1 — see CHECK 2 above.
-#
-# ONE SWEEP PER PARTITION, ASKED THROUGH THE CHAMBER — see release_orphan_claims_partitions
-# (lib.sh). A single hardcoded `${SPIRA_SCOPE_LABEL},plan` call left orphaned claims in ops,
-# spike or groom partitions unreleased forever: nothing else in the harness sweeps them.
 # ======================================================================================
 _phase "CHECK2c"
 if [ "${SPIRA_SKIP_RECLAIM:-0}" != 1 ]; then
-released="$(release_orphan_claims_partitions "$PARTITIONS")"
-[ -n "$released" ] && printf '%s\n' "$released"
-n_rel="$(grep -c '^RELEASED' <<< "$released" || true)"
-if [ "${n_rel:-0}" -gt 0 ]; then
-    progress "released $n_rel orphaned claim(s)"
-    # Every bead the sweep freed is claimable NOW, so the count CHECK 3 and CHECK 8 reason
-    # about is stale by exactly this much. Re-queried only when something actually moved.
-    plan_ready="$(ready_count "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" "spira-poison,$SPIRA_ASK_LABEL")"
+inconsistent="$(check2c_lc_consistency)"
+if [ -n "$inconsistent" ]; then
+    printf '%s\n' "$inconsistent"
+    n_inc="$(grep -c '^INCONSISTENT' <<< "$inconsistent" || true)"
+    log "CHECK2c: $n_inc spira-lc row(s) with holder/state out of sync — a bug reached spira_lifecycle outside its own CAS"
+    act "surfaced $n_inc inconsistent spira-lc row(s)"
 fi
 fi
 
@@ -420,8 +411,9 @@ if [ "$AUDIT" = 1 ]; then
 #
 # THE POISONED BEAD KEEPS ITS CLAIM. If a live aeon holds it, unclaiming here would cut the
 # lease out from under a session that is still writing — and the aeon releases on its own
-# exit path anyway. Labelling is sufficient: every fayth's partition excludes spira-poison,
-# so the moment the holder lets go, CHECK 7 stops summoning for it.
+# exit path anyway. The poison hold itself is enough: once the round that makes the dispatch
+# predicate read spira-lc holds lands (a companion cutover bead, not this one), the moment
+# the holder lets go CHECK 7 stops summoning for it on that same fact.
 # ======================================================================================
 _phase "CHECK4"
 dispatchable="$(dispatchable_open)"
@@ -463,7 +455,12 @@ done <<< "$_c4_bulk_out"
     _rc_asked=0; reclaim_asked "$id" && _rc_asked=1
     _po_asked=0; poison_asked "$id" "$n" && _po_asked=1
     _pl_lifted=0; poison_lifted "$id" "$n" && _pl_lifted=1
-    decision="$(check4_decide "$n" "$_requeues" "$_reclaims" "$_labels" "$_rq_asked:$_rc_asked:$_po_asked:$_pl_lifted")"
+    # THE POISON HOLD, READ FROM SPIRA-LC, NOT THE bd LABEL (sp-i2m7y). This is the read
+    # dispatchable_open no longer excludes on, so an already-poisoned bead reaches this loop
+    # every pass instead of being invisible to it — check4_decide's `clear` branch is what
+    # keeps it from being poisoned again here.
+    _poisoned=0; lc_held "$id" poison && _poisoned=1
+    decision="$(check4_decide "$n" "$_requeues" "$_reclaims" "$_labels" "$_rq_asked:$_rc_asked:$_po_asked:$_pl_lifted" "$_poisoned")"
 
     # REQUEUE CAP. A bead completed and requeued past the cap is stuck in a loop the harness
     # is causing: the session finished the work, closed the bead, and the harness put it back
@@ -570,28 +567,17 @@ print(d[0].get("status", "") if d else "")' 2>/dev/null)"
             # are counted from the events trail (sp-lzt); the per-cause breakdown labels once
             # provided is gone, the count itself is the signal.
             #
-            # Check the poison label from _labels. `... | grep -q` under `set -o pipefail`
-            # hands back 141 when it MATCHES — grep exits at the first hit and the writer
-            # dies of SIGPIPE — so `if ! ... | grep -q spira-poison` read as "not poisoned"
-            # precisely when the bead was (law-no-grep-q-under-pipefail). check4_decide's
-            # case match on the already-fetched label string has neither hazard.
+            # THE ONLY WRITE IS THE SPIRA-LC HOLD (sp-i2m7y): the spira-poison bd label sp-
+            # ki12s kept as a dual write is gone — dispatchable_open no longer excludes on
+            # it and check4_decide's "already poisoned" branch reads $_poisoned (lc_held
+            # above), not a label, so nothing left in this pass ever reads or writes it.
             case " $decision " in *' poison '*)
-                # KEPT AS A DUAL WRITE, not replaced (sp-ki12s): dispatchable_open excludes
-                # `spira-poison`, and check4_decide's own "already poisoned" detection reads
-                # that same label from the SAME dispatchable set — remove the label here
-                # without also fixing both of those and this loop poisons the bead again
-                # every single pass (dispatchable_open would keep re-offering it, and
-                # check4_decide would never see "already poisoned"). Converting those two
-                # reads is sp-i2m7y's job (CHECK 2/2b/2c/3b/4 onto events, in full); until
-                # that lands in the same cutover round, the label stays the real mechanism
-                # and lc_hold only starts the lifecycle log's history alongside it.
-                bdq label add "$id" spira-poison >/dev/null 2>&1
                 lc_hold "$id" poison "poisoned after $n in_progress transition(s) without landing" sentinel || true
-                bdq note "$id" "Poisoned after $n in_progress transition(s) without landing. Triaged by the groomer, not a human: it reads the charged sessions' final results and either credits the harness-caused attempts and lifts the poison (groomer.sh unpoison) or splits/re-scopes the work. Any live holder keeps its claim and releases on its own exit path; no persona can claim it again while the label stands." >/dev/null 2>&1
+                bdq note "$id" "Poisoned after $n in_progress transition(s) without landing. Triaged by the groomer, not a human: it reads the charged sessions' final results and either credits the harness-caused attempts and lifts the poison (groomer.sh unpoison) or splits/re-scopes the work. Any live holder keeps its claim and releases on its own exit path; no persona can claim it again while the hold stands." >/dev/null 2>&1
                 progress "poisoned $id after $n attempts"
                 # check4_decide only emits `poison` on the transition into poisoned (the
-                # `spira-poison` case in its label match), so this fires once — the bead
-                # keeps the label, and every later pass takes the other branch.
+                # $_poisoned=0 branch), so this fires once — the bead keeps the hold, and
+                # every later pass takes the other branch.
                 spira_event bead.poisoned "$id" "poisoned $id after $n attempts" \
                     "the groomer triages it, not a human" || true
                 ;;
@@ -796,17 +782,19 @@ MAILEOF
     done <<< "$_c4_closed"
 fi
 
-# STALE POISON CLEAR. spira-poison is added when a bead's attempt count reaches the
-# threshold; the operator clears it after changing the approach. But the label also becomes
-# stale when someone removes attempt labels and the count drops below the threshold: the
-# label makes the bead invisible to dispatchable_open, so CHECK 4 never evaluates it, and
-# nothing can clear it — a circular dependency that makes the hold permanent (defect sp-9szt).
+# STALE POISON CLEAR. A poison hold is applied when a bead's attempt count reaches the
+# threshold; the operator clears it after changing the approach. But the hold also becomes
+# stale when someone removes attempt labels and the count drops below the threshold, so this
+# scan finds it independently of whether it is ever otherwise re-examined (defect sp-9szt,
+# and the mechanism that made it circular under the bd label — dispatchable_open excluding a
+# poisoned bead from the very set CHECK 4 walks — no longer applies: sp-i2m7y).
 #
 # Scan all poisoned non-closed beads. Any whose count is now below the threshold is
 # released: the condition that warranted the hold is gone.
-# EVENTS-BASED COUNT: attempt count comes from status_changed events, not labels (sp-lzt).
-# Each poisoned bead is queried individually; the per-bead cost is one SQL call. This scan
-# iterates the (usually small) poisoned set, not the whole dispatchable set — the N+1
+# THE POISON SET COMES FROM SPIRA-LC (sp-i2m7y), not a bd label scan. EVENTS-BASED COUNT:
+# attempt count comes from status_changed events, not labels (sp-lzt). Each poisoned bead is
+# queried individually for its status/type — the per-bead cost is one SQL call each. This
+# scan iterates the (usually small) poisoned set, not the whole dispatchable set — the N+1
 # query sp-f1m7f removed is the CHECK4 main loop above, not this one.
 #
 # FAIL CLOSED, NOT OPEN. attempts_of prints nothing and returns nonzero on a query error; a
@@ -815,24 +803,27 @@ fi
 # moment later (law-a-control-that-cannot-check-must-refuse).
 while read -r id; do
     [ -n "$id" ] || continue
+    _cst_json="$(bdjson show "$id" 2>/dev/null)" || _cst_json=""
+    _cst="$(printf '%s' "$_cst_json" | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    i = (d if isinstance(d, list) else [d])[0]
+except Exception:
+    print(""); raise SystemExit
+print(i.get("status","") + "\t" + str(i.get("issue_type","")))' 2>/dev/null)"
+    _cst_status="${_cst%%$'\t'*}"; _cst_type="${_cst#*$'\t'}"
+    [ "$_cst_status" = closed ] && continue
+    case "$_cst_type" in epic|event) continue ;; esac
     if ! n="$(attempts_of "$id")"; then
         log "CHECK4 $id: attempts query failed — stale-poison-clear makes no decision this pass"
         continue
     fi
-    decision="$(check4_decide "$n" 0 0 "spira-poison" "1:1:1")"
+    decision="$(check4_decide "$n" 0 0 "" "1:1:1" 1)"
     case " $decision " in *' clear '*) ;; *) continue ;; esac
-    bdq label remove "$id" spira-poison >/dev/null 2>&1
+    lc_unhold "$id" poison sentinel || true
     progress "CHECK4 $id: stale poison cleared — $n attempt(s), below threshold $POISON_AT"
-done < <(bdjson list --limit 0 --label spira-poison 2>/dev/null \
-    | python3 -c '
-import json, sys
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-for i in (d if isinstance(d, list) else [d]):
-    if i.get("status") == "closed" or i.get("issue_type") in ("epic", "event"):
-        continue
-    print(i["id"])
-' 2>/dev/null || true)
+done < <(lc_list_held poison 2>/dev/null)
 
 # ======================================================================================
 # CHECK 5 — closed but not landed. One invariant: a closed work bead must carry a LANDED

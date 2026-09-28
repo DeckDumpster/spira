@@ -9,11 +9,11 @@
 # bead on its next pass (2026-09-26, six beads, minutes later). attempts.sh deadlocked had the
 # same hole. Crediting attempts by hand worked only when every step was remembered. This is
 # the one path: it writes the poison.cleared floor the attempt count is measured from
-# (sp-qd2ul), resets the poison-ask history, releases the poison hold on spira-lc (sp-rlyl0:
-# the bd label is CHECK 4's own — it still writes and stale-clears it, until sp-i2m7y moves
-# dispatch off the label entirely), records why, resolves the "change the approach or drop it?"
-# ask — and then VERIFIES, with the same functions CHECK 4 uses, that the next pass will not
-# put it back.
+# (sp-qd2ul), resets the poison-ask history, releases the lifecycle hold CHECK 4 actually
+# reads (sp-i2m7y; the label is vestigial and gets best-effort cleanup only — CHECK 4's own
+# stale-poison-clear scan no longer touches it either), records why, resolves the "change
+# the approach or drop it?" ask — and then VERIFIES, with the same functions CHECK 4 uses,
+# that the next pass will not put it back.
 #
 #   --cause    required. What made the poison wrong: the evidence, not an opinion ("every
 #              charged session ended waiting for a background batch — yield-headless").
@@ -71,7 +71,10 @@ for id in "${IDS[@]}"; do
     labels="$(field "$js" '",".join(b.get("labels") or [])')"
     assignee="$(field "$js" 'b.get("assignee") or ""')"
     n="$(attempts_of "$id")"
-    poisoned=0; case ",$labels," in *",$POISON_LABEL,"*) poisoned=1 ;; esac
+    # THE HOLD, NOT THE LABEL (sp-i2m7y): CHECK 4 stopped writing spira-poison, so a bead
+    # it poisoned carries no label at all — reading one here would see every real poison
+    # as healthy and SKIP it.
+    poisoned=0; lc_held "$id" poison && poisoned=1
 
     if [ "$poisoned" = 0 ] && [ "${n:-0}" -lt "$P_AT" ]; then
         printf 'SKIP %s: not poisoned and attempts %s < %s — nothing to clear\n' "$id" "$n" "$P_AT"; continue
@@ -92,11 +95,10 @@ for id in "${IDS[@]}"; do
     bump_poison_cleared "$id" "$(printf '%s' "$CAUSE" | tr -d "'\"\\\\" | cut -c1-200)"
     # 2. The ask-dedup history, so a genuine future poisoning is asked about again.
     poison_asked_clear "$id"
-    # 3. The lifecycle hold — the one write this bead makes for the poison itself (sp-rlyl0).
-    # The bd label is CHECK 4's own to manage: it still adds it on poisoning and clears it on
-    # its own next pass once attempts falls back below threshold (check4_decide returns
-    # "clear" for exactly that, verified in step 6 below) — no dual-write here to race it.
+    # 3. The lifecycle hold — the real poison since CHECK 4's sp-i2m7y cutover. The label
+    # removal is vestigial best-effort cleanup only: CHECK 4 no longer writes or clears it.
     lc_unhold "$id" poison unpoison.sh || true
+    bdq label remove "$id" "$POISON_LABEL" >/dev/null 2>&1 || true
     # 4. Why — the next aeon reads this.
     bdq note "$id" "Poison cleared by unpoison.sh (attempts were $n): $CAUSE" >/dev/null 2>&1 || true
     # 5. The operator ask this poisoning raised ("… — change the approach or drop it?").
@@ -112,15 +114,13 @@ for b in (d if isinstance(d, list) else [d]):
             && printf '     resolved ask %s\n' "$a"
     done
 
-    # 6. VERIFY with CHECK 4's own decision function: the next pass must not put the bead
-    # back into poison, AND the lifecycle hold this script itself owns must be gone. The bd
-    # label is NOT checked here — it is CHECK 4's own to remove (its next pass reads
-    # "clear" below and takes it off itself), so a label still present at this instant is
-    # expected, not a failure to verify.
+    # 6. VERIFY with CHECK 4's own decision function, given CHECK 4's own read of the
+    # lifecycle hold (sp-i2m7y) — not the label, which check4_decide no longer consults.
     js2="$(bdjson show "$id" 2>/dev/null)"
     labels2="$(field "$js2" '",".join(b.get("labels") or [])')"
     n2="$(attempts_of "$id")"
-    decision="$(check4_decide "${n2:-0}" "$(requeues_of "$id")" "$(reclaims_of "$id")" "$labels2" 2>/dev/null)"
+    poisoned2=0; lc_held "$id" poison && poisoned2=1
+    decision="$(check4_decide "${n2:-0}" "$(requeues_of "$id")" "$(reclaims_of "$id")" "$labels2" "" "$poisoned2" 2>/dev/null)"
     bad=""
     if lc_holds "$id" 2>/dev/null | grep -qx poison; then bad="$bad lifecycle-hold-still-present"; fi
     [ "${n2:-99}" -lt "$P_AT" ] || bad="$bad attempts-still-$n2"
@@ -133,9 +133,8 @@ for b in (d if isinstance(d, list) else [d]):
 done
 
 # --watch: one full sentinel pass must complete and leave every cleared bead unpoisoned. The
-# lifecycle hold is checked, not the bd label — this script does not clear the label itself
-# (see step 3 above), so the label's own presence proves nothing about re-poisoning; the
-# lifecycle hold is released immediately above, so its reappearance is unambiguous.
+# lifecycle hold is checked, not the label — CHECK 4 does not consult the label at all
+# (sp-i2m7y), so only the hold's reappearance means anything about re-poisoning.
 if [ "$WATCH" = 1 ] && [ "$DRY" = 0 ] && [ "$rc_all" = 0 ]; then
     log_f="$SPIRA_RUN/sentinel.log"
     start="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

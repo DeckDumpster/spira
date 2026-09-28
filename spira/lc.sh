@@ -184,3 +184,93 @@ lc_holds() {
     [ $? = 0 ] || return 0
     _lc_json_field "$js" '"\n".join(json.loads(d.get("bead",{}).get("holds") or "[]"))' 2>/dev/null
 }
+
+# lc_held <bead-id> <kind> -> 0 if the row currently carries that hold, 1 otherwise
+# (including "no such row" and "cannot tell" — a caller that only wants a yes/no answer
+# should not have to distinguish those from "not held").
+lc_held() {
+    local id="${1:?lc_held needs a bead id}" kind="${2:?lc_held needs a hold kind}"
+    lc_holds "$id" | grep -qx "$kind"
+}
+
+# lc_list_held <kind> -> every bead id currently carrying that hold, one per line (empty if
+# none, or the binary/DB is unreachable). The bulk counterpart to lc_held: a sweep over many
+# beads (CHECK 4's stale-poison scan) asks this once instead of lc_holds per bead.
+lc_list_held() {
+    local kind="${1:?lc_list_held needs a hold kind}"
+    [ -x "${SPIRA_LC_BIN:-}" ] || return 0
+    local js; js="$("$SPIRA_LC_BIN" list --hold "$kind" 2>/dev/null)" || return 0
+    _lc_json_field "$js" '"\n".join(r.get("bead_id","") for r in (d if isinstance(d, list) else []))' 2>/dev/null
+}
+
+# lc_list_state <state> -> "<id>\t<lease_until>\t<holds-comma-separated>" for every bead
+# currently in that state, one per line (empty if none, or the binary/DB is unreachable).
+# CHECK 2's reclaim scan asks this once (state=WORKING) instead of a per-bead lc_show call
+# against every dispatchable bead — the same bulk-over-per-bead shape lc_list_held gives
+# CHECK 4.
+lc_list_state() {
+    local state="${1:?lc_list_state needs a bead state}"
+    [ -x "${SPIRA_LC_BIN:-}" ] || return 0
+    local js; js="$("$SPIRA_LC_BIN" list --state "$state" 2>/dev/null)" || return 0
+    _lc_json_field "$js" '"\n".join("%s\t%s\t%s" % (
+        r.get("bead_id",""),
+        r.get("lease_until") if r.get("lease_until") is not None else "",
+        ",".join(json.loads(r.get("holds") or "[]"))
+    ) for r in (d if isinstance(d, list) else []))' 2>/dev/null
+}
+
+# lc_list_all -> "<id>\t<state>\t<holder>" for every bead row spira_lifecycle holds, one per
+# line (empty if none, or the binary/DB is unreachable). CHECK 2c's consistency sweep asks
+# this once instead of a per-bead lc_show call against every dispatchable bead.
+lc_list_all() {
+    [ -x "${SPIRA_LC_BIN:-}" ] || return 0
+    local js; js="$("$SPIRA_LC_BIN" list 2>/dev/null)" || return 0
+    _lc_json_field "$js" '"\n".join("%s\t%s\t%s" % (
+        r.get("bead_id",""), r.get("state",""), r.get("holder") or ""
+    ) for r in (d if isinstance(d, list) else []))' 2>/dev/null
+}
+
+# lc_release <bead-id> [actor] -> best-effort: WORKING -> READY, the holder handing its own
+# claim back voluntarily. Same rc contract as lc_hold (0 applied, 1 no row, 2 cannot tell, 3
+# refused — a stale or already-vacated row is logged, never fatal to the caller).
+lc_release() {
+    local id="${1:?lc_release needs a bead id}" actor="${2:-sentinel}"
+    local js; js="$(lc_show "$id")"; local rc=$?
+    [ "$rc" = 0 ] || return "$rc"
+    local state version
+    state="$(_lc_json_field "$js" 'd.get("bead",{}).get("state","")')"
+    version="$(_lc_json_field "$js" 'd.get("bead",{}).get("version","")')"
+    [ -n "$state" ] && [ -n "$version" ] || return 1
+    lc_event "$id" "$state" "$version" "$actor" '"Release"'
+}
+
+# lc_holder_dead <bead-id> [actor] -> best-effort: WORKING -> READY, the same transition as
+# lc_release but with a distinct event name — evidence that nobody released the claim, the
+# lease simply outlived its holder (CHECK 2's time-based reap, CHECK 2b's /proc ghost check).
+# Same rc contract as lc_hold.
+lc_holder_dead() {
+    local id="${1:?lc_holder_dead needs a bead id}" actor="${2:-sentinel}"
+    local js; js="$(lc_show "$id")"; local rc=$?
+    [ "$rc" = 0 ] || return "$rc"
+    local state version
+    state="$(_lc_json_field "$js" 'd.get("bead",{}).get("state","")')"
+    version="$(_lc_json_field "$js" 'd.get("bead",{}).get("version","")')"
+    [ -n "$state" ] && [ -n "$version" ] || return 1
+    lc_event "$id" "$state" "$version" "$actor" '"HolderDead"'
+}
+
+# lc_content_on_base <bead-id> <proof> [actor] -> best-effort: any non-terminal state ->
+# LANDED, on merge-tree evidence rather than a delivery machine's own `delivered(sha)` — the
+# Sending's own case, a branch whose diff the base already carries with no batch/PR/push
+# ever recording it. Same rc contract as lc_hold.
+lc_content_on_base() {
+    local id="${1:?lc_content_on_base needs a bead id}" proof="${2:?lc_content_on_base needs a proof}" actor="${3:-sending}"
+    local js; js="$(lc_show "$id")"; local rc=$?
+    [ "$rc" = 0 ] || return "$rc"
+    local state version
+    state="$(_lc_json_field "$js" 'd.get("bead",{}).get("state","")')"
+    version="$(_lc_json_field "$js" 'd.get("bead",{}).get("version","")')"
+    [ -n "$state" ] && [ -n "$version" ] || return 1
+    local proofj; proofj="$(_lc_json_string "$proof")"
+    lc_event "$id" "$state" "$version" "$actor" "{\"ContentOnBase\":{\"proof\":$proofj}}"
+}

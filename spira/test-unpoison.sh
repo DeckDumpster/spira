@@ -14,6 +14,17 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
+# Resolved BEFORE conf.sh (sourced transitively by testdb.sh/lib.sh below), which can
+# overwrite PATH with the harness's own tool directories first — see test-poison.sh's own
+# note (and test-attempts.sh's own fix for the same ordering bug).
+CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
+if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
+    CARGO_BIN="$HOME/.cargo/bin/cargo"
+fi
+[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
+DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
+[ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
+
 echo "test-unpoison.sh"
 . "$HERE/testdb.sh"
 testdb_available || skip "no fixture database reachable"
@@ -23,18 +34,12 @@ TMP="$(mktemp -d)"
 export SPIRA_TESTDB_MODE=server
 testdb_up unpoison || skip "server testdb not available"
 . "$HERE/lib.sh"
+export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
 export SPIRA_POISON_ASKED="$TMP/poison-asked"; mkdir -p "$SPIRA_POISON_ASKED"
 
 # A REAL spira-lc against a throwaway Dolt server (sp-rlyl0), so the poison hold this bead
 # makes unpoison.sh release is proven against the actual machine, not assumed from lc.sh's
 # own exit code. Same shape as test-lc-hold.sh.
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
-DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
-[ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 unset SPIRA_LC_SOCKET
 
 REPO="$(cd "$HERE/.." && pwd)"
@@ -122,11 +127,11 @@ echo "unpoison.sh clears so it sticks:"
 out="$(bash "$UNPOISON" --bead pz1 --cause "every session ended its turn 'waiting for' a background batch" 2>&1)"; rc=$?
 is   "exit 0" "0" "$rc"
 want "reports OK" "OK   pz1" "$out"
-# THE LABEL IS NOT unpoison.sh's TO REMOVE (sp-rlyl0): it belongs to CHECK 4, which adds it
-# on poisoning and stale-clears it on its own next pass once attempts falls back below
-# threshold — this fixture never runs CHECK 4, so the label legitimately stays. What
-# unpoison.sh guarantees directly is the floored attempt count and check4_decide's verdict.
-want "label is left for CHECK 4's own stale-clear to remove" "spira-poison" "$(labels_of pz1)"
+# THE LABEL IS VESTIGIAL, NOT CHECK 4's TO MANAGE (sp-i2m7y): CHECK 4 no longer writes or
+# clears spira-poison at all once its poison hold lives entirely in spira-lc, so nothing
+# would ever take a stale label off if unpoison.sh left it — it removes it itself,
+# best-effort, alongside the hold that actually matters.
+nowant "the vestigial label is removed too" "spira-poison" "$(labels_of pz1)"
 is   "attempt count floored to 0" "0" "$(attempts_of pz1)"
 nowant "check4 no longer decides poison" "poison" "$(decide pz1)"
 nowant "the lifecycle poison hold is released, against a real spira-lc" "poison" "$(lc_holds pz1)"

@@ -96,7 +96,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("classify") => classify_cmd::run(&args[1..], conn),
         _ => (
             CANNOT_TELL,
-            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--state S] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | create-bead <id> | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | classify --home DIR --bd-db PATH --landstate-dir DIR --queue-dir DIR [--repo NAME]... [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve".to_string(),
+            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--state S] [--hold poison|ask|wait|operator] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | create-bead <id> | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | classify --home DIR --bd-db PATH --landstate-dir DIR --queue-dir DIR [--repo NAME]... [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve".to_string(),
         ),
     }
 }
@@ -147,13 +147,19 @@ fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
 }
 
 fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
-    let sql = match flag(args, "--state") {
-        Some(state) => format!(
-            "SELECT bead_id, state, tip, version FROM bead WHERE state = '{}' ORDER BY bead_id",
-            rows::escape(&state)
-        ),
-        None => "SELECT bead_id, state, tip, version FROM bead ORDER BY bead_id".to_string(),
-    };
+    let mut clauses = Vec::new();
+    if let Some(state) = flag(args, "--state") {
+        clauses.push(format!("state = '{}'", rows::escape(&state)));
+    }
+    // --hold <kind>: beads currently carrying that hold (design §3.1: "Holds are a
+    // dimension, not states"), e.g. every poison-held bead regardless of its underlying
+    // state — the bulk query CHECK 4's stale-clear sweep needs instead of a per-bead
+    // lc_holds call against every dispatchable bead.
+    if let Some(kind) = flag(args, "--hold") {
+        clauses.push(format!("JSON_CONTAINS(holds, '\"{}\"')", rows::escape(&kind)));
+    }
+    let where_clause = if clauses.is_empty() { String::new() } else { format!(" WHERE {}", clauses.join(" AND ")) };
+    let sql = format!("SELECT bead_id, state, tip, holder, lease_until, holds, version FROM bead{where_clause} ORDER BY bead_id");
     match conn.query(&sql) {
         Ok(r) => (0, serde_json::to_string_pretty(&Value::Array(r)).unwrap()),
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),

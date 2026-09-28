@@ -42,23 +42,127 @@
 # thing in question (law-prefer-the-real-dependency). The sub-programs ARE stubs: what they
 # do is not under test here, only which beads the valve reaches.
 #
+# THE POISON HOLD IS SPIRA-LC'S, NOT A bd LABEL (sp-i2m7y): CHECK 4 reads and writes it
+# through spira-lc, so this suite starts its own throwaway `dolt sql-server` for
+# spira_lifecycle (never dolt-beads.service) and builds a real spira-lc binary, the same
+# shape test-lifecycle-container.sh and test-lifecycle-cutover.sh already use — a stub
+# lc_hold/lc_held would only prove this suite's own model of spira-lc agrees with itself.
+#
 # tier: T3
 # defect: sp-mqnf sp-njwb sp-fx1p sp-pi3ez sp-wiyr2 sp-qd2ul
-# covers: spira/sentinel.sh spira/lib.sh spira/attempts.sh spira/chamber/*
+# covers: spira/sentinel.sh spira/lib.sh spira/attempts.sh spira/lc.sh spira/chamber/* lifecycle/* spira-lc/*
 # timeout: 240
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
+# Resolve cargo/dolt BEFORE conf.sh (sourced transitively by testdb.sh below), which can
+# overwrite PATH with the harness's own tool directories first — see
+# test-lifecycle-container.sh's own note.
+CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
+if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
+    CARGO_BIN="$HOME/.cargo/bin/cargo"
+fi
+[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
+DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
+[ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
+
 . "$HERE/testdb.sh"
 testdb_available || skip "no fixture database reachable"
 testdb_require test-poison
-TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+TMP="$(mktemp -d)"; trap 'testdb_drop; [ -n "${LC_SERVER_PID:-}" ] && kill "$LC_SERVER_PID" >/dev/null 2>&1; rm -rf "$TMP"' EXIT INT TERM
+export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+unset SPIRA_LC_SOCKET
 # testdb-mode: server — sentinel's poison threshold reads attempts_of/check4_bulk_data via
 # bd sql, which embedded mode refuses.
 export SPIRA_TESTDB_MODE=server
 testdb_up poison || skip "server testdb not available"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+
+SRC_ROOT="$(cd "$HERE/.." && pwd)"
+LC_PORT=$((SPIRA_LC_TESTDB_PORT + 1000 + (RANDOM % 500)))
+LC_TMP="$TMP/lc"; mkdir -p "$LC_TMP/data"
+cat > "$LC_TMP/server.yaml" <<YAML
+log_level: warning
+listener:
+  port: $LC_PORT
+  max_connections: 100
+  read_timeout_millis: 30000
+  write_timeout_millis: 30000
+data_dir: "$LC_TMP/data"
+behavior:
+  dolt_transaction_commit: false
+  event_scheduler: "OFF"
+YAML
+"$DOLT_BIN" sql-server --config "$LC_TMP/server.yaml" > "$LC_TMP/server.log" 2>&1 &
+LC_SERVER_PID=$!
+lc_up=0
+for _ in $(seq 1 50); do
+    if "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+        lc_up=1; break
+    fi
+    sleep 0.2
+done
+[ "$lc_up" = 1 ] || bail "dolt sql-server for spira_lifecycle never came up: $(cat "$LC_TMP/server.log")"
+lc_root_sql() { "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls "$@"; }
+
+LC_CARGO_TARGET="$LC_TMP/cargo-target"
+CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$LC_CARGO_TARGET" \
+    "$CARGO_BIN" build --manifest-path "$SRC_ROOT/spira-lc/Cargo.toml" --quiet 2>"$LC_TMP/build.log" \
+    || bail "spira-lc failed to build: $(cat "$LC_TMP/build.log")"
+LC_BIN="$LC_CARGO_TARGET/debug/spira-lc"
+
+export SPIRA_LC_HOST=127.0.0.1
+export SPIRA_LC_PORT="$LC_PORT"
+export SPIRA_LC_DB=spira_lifecycle
+export SPIRA_LC_DATA_DIR="$LC_TMP"
+export SPIRA_LC_USER=root
+export SPIRA_LC_PASSWORD=""
+"$LC_BIN" admin-apply-ddl "$SRC_ROOT/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
+wantrc "spira_lifecycle schema applies cleanly" 0 $?
+LC_PASS="test-pass-$$"
+sed "s/@SPIRA_LC_PASSWORD@/$LC_PASS/" "$SRC_ROOT/lifecycle/grants.sql" > "$LC_TMP/grants_filled.sql"
+lc_root_sql sql < "$LC_TMP/grants_filled.sql" >"$LC_TMP/grants.log" 2>&1
+wantrc "spira_lifecycle grants apply cleanly" 0 $?
+# From here on SPIRA_LC_BIN runs as spira_lc, the real production grant set — never root.
+export SPIRA_LC_USER=spira_lc
+export SPIRA_LC_PASSWORD="$LC_PASS"
+export SPIRA_LC_BIN="$LC_BIN"
+
+# mklc <id>... — a fresh READY row for each id, dropping any row a prior scenario left
+# behind (bd's own fixture resets on every seed/seed_poison call via testdb_reset, but the
+# lifecycle server is a single long-lived instance across this whole suite, so a hold or
+# state a previous scenario applied would otherwise leak into the next one's assertions).
+mklc() {
+    local i
+    for i in "$@"; do
+        lc_root_sql --use-db spira_lifecycle sql -q "DELETE FROM bead WHERE bead_id = '$i'" >/dev/null 2>&1
+        "$LC_BIN" create-bead "$i" >/dev/null 2>&1
+    done
+}
+# mkpoison <id>... — mklc, then a real Hold{Poison} event through lc.sh's own lc_hold, for
+# fixtures that need to start already poisoned (the stale-clear scenario below).
+mkpoison() {
+    local i
+    for i in "$@"; do
+        mklc "$i"
+        SPIRA_LC_BIN="$LC_BIN" bash -c '. "$1"/lc.sh; lc_hold "$2" poison "seed" test' _ "$SH" "$i" >/dev/null 2>&1
+    done
+}
+# rmpoison <id>... — the test-side equivalent of a human clearing the hold directly
+# (bypassing attempts.sh/unpoison.sh, which have their own coverage elsewhere), via the same
+# lc_unhold this suite asserts sentinel.sh's own CHECK 4 reads.
+rmpoison() {
+    local i
+    for i in "$@"; do
+        SPIRA_LC_BIN="$LC_BIN" bash -c '. "$1"/lc.sh; lc_unhold "$2" poison test' _ "$SH" "$i" >/dev/null 2>&1
+    done
+}
+# lcheld <id> -> 0 if spira-lc currently holds the poison kind on <id> — the real
+# lc_held/lc_holds this suite's own $SH/lc.sh ships, not a model of it.
+lcheld() {
+    SPIRA_LC_BIN="$LC_BIN" bash -c '. "$1"/lc.sh; lc_held "$2" poison' _ "$SH" "$1"
+}
 
 REPO="$TMP/repo"; RUN="$TMP/run"; REMOTE="$TMP/remote.git"; SH="$TMP/spira"
 git init -q --bare -b main "$REMOTE"
@@ -71,7 +175,7 @@ mkdir -p "$RUN/worktree" "$SH/chamber"
 
 # The program under test, run out of its own directory so it sources the real lib.sh but
 # finds stubbed sub-programs beside it.
-cp "$HERE/sentinel.sh" "$HERE/lib.sh" "$HERE/landing.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HERE/attempts.sh" "$SH/"
+cp "$HERE/sentinel.sh" "$HERE/lib.sh" "$HERE/lc.sh" "$HERE/landing.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HERE/attempts.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub pilgrimage.sh 'printf "%s" "${PILGRIMAGE_OUT:-}"'
 stub strand.sh     'printf "%s" "${STRAND_OUT:-}"'
@@ -171,10 +275,6 @@ clearpoison() {
     SPIRA_GOAL=sp-goal SPIRA_FAYTHS="${ROSTER:-t tinc}" \
         bash "$SH/attempts.sh" clear "$@" 2>&1
 }
-labels_of() { B show "$1" --json 2>/dev/null | python3 -c '
-import json, sys
-d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
-print(" ".join(d[0].get("labels") or []))'; }
 status_of() { B show "$1" --json 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
@@ -183,7 +283,9 @@ assignee_of() { B show "$1" --json 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(d[0].get("assignee") or "")'; }
-poisoned()    { [[ " $(labels_of "$1") " == *" spira-poison "* ]]; }
+# THE POISON HOLD, READ FROM THE REAL SPIRA-LC (sp-i2m7y) — not the bd label, which CHECK 4
+# no longer writes at all.
+poisoned()    { lcheld "$1"; }
 ispoisoned()  { poisoned "$2" && ok "$1" || bad "$1" "$2 was not poisoned"; }
 notpoisoned() { poisoned "$2" && bad "$1" "$2 was poisoned" || ok "$1"; }
 
@@ -204,6 +306,7 @@ seed() {   # seed — the goal, one unclaimable child of it, and that child's bl
 {"id":"sp-block","title":"the blocker","status":"open","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 {"id":"sp-open","title":"blocked","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-open","depends_on_id":"sp-goal","type":"parent-child"},{"issue_id":"sp-open","depends_on_id":"sp-block","type":"blocks"}]}
 JSONL
+    mklc sp-goal sp-block sp-open
 }
 
 # `sp-orphan` IS the bug: it carries the builder's labels, so bd ready offers it and an aeon
@@ -238,6 +341,7 @@ seedn() {   # seedn <id> <event_type> <new_value> <n> — n raw events via bd sq
 seed_poison() {
     seed
     testdb_seed <<< "$POISON_SEED"
+    mklc sp-orphan sp-kid sp-young
     cycle sp-orphan 3   # at POISON_AT=3
     cycle sp-kid 3      # at POISON_AT=3
     cycle sp-young 2    # below threshold
@@ -277,8 +381,8 @@ want "and carries a failure excerpt (session log)" "--- last session log" "$(cat
 want "and the poisoning is recorded as an event" "kind: bead.poisoned" "$(cat "$RUN/events.log" 2>/dev/null)"
 want "against the bead that poisoned"            "target: sp-orphan"   "$(cat "$RUN/events.log" 2>/dev/null)"
 nowant "the event mail is not in the operator mailbox" "kind: bead.poisoned" "$(cat "$MAIL_LOG")"
-# AND ONLY ON THE TRANSITION. The next pass sees spira-poison on the bead and takes the `;;`
-# branch — the spira_event call is never reached.
+# AND ONLY ON THE TRANSITION. The next pass sees the bead's spira-lc poison hold already
+# held and takes the `;;` branch — the spira_event call is never reached.
 : > "$MAIL_LOG"; out="$(sentinel)"
 nowant "an already-poisoned bead emits nothing new to mail" "3 in_progress" "$(cat "$MAIL_LOG")"
 ispoisoned  "a goal child at the threshold is poisoned too"    sp-kid
@@ -298,6 +402,7 @@ seed_poison
 testdb_seed <<JSONL
 {"id":"sp-epic","title":"an epic at the threshold","status":"open","issue_type":"epic","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
+mklc sp-epic
 out="$(sentinel)"
 notpoisoned "an epic is never poisoned" sp-epic
 
@@ -313,6 +418,7 @@ seed_held() {
     testdb_seed <<JSONL
 {"id":"sp-orphan","title":"dispatchable, unparented","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
+    mklc sp-orphan
     cycle sp-orphan 3
     BEADS_ACTOR=aeon-holder B ready --claim --limit 0 --label "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan}" >/dev/null 2>&1
 }
@@ -332,7 +438,7 @@ want "the note says the holder keeps its claim" "releases on its own exit path" 
 release() { B update sp-orphan --status open >/dev/null 2>&1; B update sp-orphan --assignee "" >/dev/null 2>&1; }
 release; out="$(sentinel)"
 want "CHECK 7 declines to summon for a poisoned bead" "t: nothing ready in its partition" "$out"
-B label remove sp-orphan spira-poison >/dev/null 2>&1
+rmpoison sp-orphan
 release; out="$(SPIRA_POISON_AT=99 sentinel)"
 nowant "and would have summoned for it unpoisoned" "t: nothing ready in its partition" "$out"
 want   "the same bead unpoisoned is ready for its fayth" "t: 1 ready" "$out"
@@ -366,19 +472,20 @@ git -C "$REPO" branch -D "spira/sp-orphan" 2>/dev/null || true
 
 # --------------------------------------------------------------------------------------
 # STALE POISON CLEAR (sp-fx1p, ex test-poison-edge.sh): a bead whose attempt count drops
-# below the threshold must have its spira-poison label removed automatically.
+# below the threshold must have its spira-lc poison hold released automatically.
 # --------------------------------------------------------------------------------------
 echo
 seed; rm -rf "$RUN/poison-asked"
 testdb_seed <<JSONL
-{"id":"sp-stale","title":"stale poison — count below threshold","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","spira-poison"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-live","title":"live poison — count at threshold","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","spira-poison"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-stale","title":"stale poison — count below threshold","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-live","title":"live poison — count at threshold","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
+mkpoison sp-stale sp-live
 cycle sp-stale 1
 cycle sp-live 3
 out="$(SPIRA_POISON_AT=3 sentinel)"
-notpoisoned "a poisoned bead with count below threshold has its label cleared"  sp-stale
-ispoisoned  "a poisoned bead with count at threshold keeps its label"           sp-live
+notpoisoned "a poisoned bead with count below threshold has its hold released"  sp-stale
+ispoisoned  "a poisoned bead with count at threshold keeps its hold"           sp-live
 want        "the pass records the stale clear" "stale poison cleared" "$out"
 
 # --------------------------------------------------------------------------------------
@@ -390,6 +497,7 @@ testdb_seed <<JSONL
 {"id":"sp-thrash","title":"thrash-only","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 {"id":"sp-real","title":"real failures","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
+mklc sp-thrash sp-real
 for i in 1 2 3; do
     B update sp-thrash --status in_progress >/dev/null 2>&1
     seedn sp-thrash requeued thrash 1
@@ -409,6 +517,7 @@ testdb_seed <<JSONL
 {"id":"sp-zero","title":"zero attempts","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 {"id":"sp-one","title":"one attempt","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
+mklc sp-zero sp-one
 cycle sp-one 1
 out="$(SPIRA_POISON_AT=0 sentinel)"
 notpoisoned "a bead with zero attempts is not poisoned even at POISON_AT=0" sp-zero
@@ -428,13 +537,13 @@ out="$(sentinel)"
 is "a second pass over the same count asks nothing more" "1" \
    "$(grep -cE '^send.*Spira bead sp-orphan.*3 attempts' "$MAIL_LOG")"
 
-B label remove sp-orphan spira-poison >/dev/null 2>&1
+rmpoison sp-orphan
 out="$(sentinel)"
 ispoisoned "the bead is poisoned again, because it is still over the threshold" sp-orphan
-is "but clearing the label did NOT re-arm the ask" "1" \
+is "but clearing the hold did NOT re-arm the ask" "1" \
    "$(grep -cE '^send.*Spira bead sp-orphan.*3 attempts' "$MAIL_LOG")"
 
-B label remove sp-orphan spira-poison >/dev/null 2>&1
+rmpoison sp-orphan
 cycle sp-orphan 1
 out="$(sentinel)"
 is "a fourth attempt is a new fact and asks again" "1" \
@@ -448,6 +557,7 @@ seed_poison; : > "$MAIL_LOG"
 testdb_seed <<JSONL
 {"id":"sp-late","title":"closed while the pass ran","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","incident"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
+mklc sp-late
 cycle sp-late 3
 out="$(ASK_CLOSES=sp-late sentinel)"
 is          "the fixture really did close it mid-pass" "closed" "$(status_of sp-late)"
@@ -473,6 +583,7 @@ seed; rm -rf "$RUN/poison-asked" "$RUN/reclaim-asked"; : > "$MAIL_LOG"
 testdb_seed <<JSONL
 {"id":"sp-reclaimed","title":"the box keeps killing its worker","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
+mklc sp-reclaimed
 seedn sp-reclaimed reclaimed '' 5
 out="$(SPIRA_RECLAIM_AT=5 sentinel)"
 want "the reclaim cap fires a real mail from real reclaimed events" \
@@ -495,6 +606,7 @@ seed; rm -rf "$RUN/poison-asked" "$RUN/requeue-asked"; : > "$MAIL_LOG"
 testdb_seed <<JSONL
 {"id":"sp-tinc-req","title":"an incident-partition bead over the requeue cap","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","incident"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
+mklc sp-tinc-req
 seedn sp-tinc-req reopened '' 5
 out="$(SPIRA_REQUEUE_AT=5 sentinel)"
 want "the requeue cap fires for the tinc partition's own bead too" \
@@ -502,9 +614,9 @@ want "the requeue cap fires for the tinc partition's own bead too" \
 
 # --------------------------------------------------------------------------------------
 # sp-wiyr2 — A LIFT BY attempts.sh deadlocked SURVIVES THE NEXT SENTINEL PASS. deadlocked
-# takes the spira-poison label off finished, mergeable work; it does not touch the attempt
+# releases the poison hold on finished, mergeable work; it does not touch the attempt
 # count (the rungs are the record of how the bead got here). Without the fix CHECK 4 reads
-# that same unchanged count against a bead with no label on its very next pass and poisons
+# that same unchanged count against an unheld bead on its very next pass and poisons
 # it right back — the finished-work exemption undone within minutes of being granted.
 # --------------------------------------------------------------------------------------
 echo
@@ -517,15 +629,15 @@ git -C "$REPO" commit -qm "sp-orphan — the work"
 git -C "$REPO" checkout -q main
 dl_out="$(deadlocked --apply)"
 want "the sweep finds it finished and lifts the poison" "RESTORED sp-orphan" "$dl_out"
-notpoisoned "the label is off right after the lift" sp-orphan
+notpoisoned "the hold is off right after the lift" sp-orphan
 : > "$MAIL_LOG"; out="$(sentinel)"
 notpoisoned "and it is STILL off after the very next sentinel pass" sp-orphan
 nowant "no fresh poison ask went out for it either" "sp-orphan" "$(cat "$MAIL_LOG")"
 want "the check log shows CHECK 4 actually examined the set" "CHECK4 examining" "$out"
 
 # --------------------------------------------------------------------------------------
-# sp-qd2ul — CLEARING THE POISON LABEL MUST STICK. The operator's own remedy (sentinel's ask
-# tells a human to "clear spira-poison") is `attempts.sh clear`, not the tool-specific
+# sp-qd2ul — CLEARING THE POISON HOLD MUST STICK. The operator's own remedy (sentinel's ask
+# tells a human to run attempts.sh clear) is `attempts.sh clear`, not the tool-specific
 # `deadlocked` sweep above — the bead need not be finished, only judged worth retrying. What
 # is asserted here is the property the bare-removal case at line ~399 shows this codebase does
 # NOT get for free: a clear survives a sentinel pass with nothing new against it, and is NOT a
@@ -536,7 +648,7 @@ seed_poison; : > "$MAIL_LOG"; out="$(sentinel)"
 ispoisoned "sp-orphan is poisoned by the first pass" sp-orphan
 cl_out="$(clearpoison sp-orphan --apply)"
 want "attempts.sh clear reports the lift" "CLEARED  sp-orphan" "$cl_out"
-notpoisoned "the label is off right after the clear" sp-orphan
+notpoisoned "the hold is off right after the clear" sp-orphan
 : > "$MAIL_LOG"; out="$(sentinel)"
 notpoisoned "and it is STILL off after the very next sentinel pass" sp-orphan
 nowant "no fresh poison ask went out for it either" "sp-orphan" "$(cat "$MAIL_LOG")"
@@ -563,6 +675,7 @@ seed; rm -rf "$RUN/poison-asked"
 testdb_seed <<JSONL
 {"id":"sp-failquery","title":"would poison this pass if the bulk query worked","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
+mklc sp-failquery
 cycle sp-failquery 3   # at POISON_AT=3 — this pass would poison it, if the query ran
 
 REAL_BD_PATH="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-bd}")"

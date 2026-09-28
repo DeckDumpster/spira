@@ -139,7 +139,7 @@ pub struct SpiraSection {
     pub notify: Option<String>,
     pub panel: Option<String>,
     pub verify_timeout: Option<String>,
-    pub reclaim_skip_label: Option<String>,
+    pub reclaim_grace_secs: Option<String>,
     pub operated: Option<String>,
     pub ci_park_max: Option<String>,
     pub world_stop_label: Option<String>,
@@ -466,6 +466,7 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "answer_comment_mark", bead: "sp-xsl8i" },
     RetiredKey { key: "self_closed", bead: "sp-xsl8i" },
     RetiredKey { key: "wake_watchers", bead: "sp-xsl8i" },
+    RetiredKey { key: "reclaim_skip_label", bead: "sp-i2m7y" },
 ];
 
 /// Every key in `history` that is neither an active `[spira]` field (`active`) nor listed in

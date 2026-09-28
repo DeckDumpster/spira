@@ -99,12 +99,12 @@ statement = "a pass that cannot read the database exits 1 and never reports goal
 [[use_case]]
 id = "UC-dispatch-20"
 tier = "T1"
-statement = "a stale lease in every persona's partition is reclaimed and charged; orphans released"
+statement = "a stale lease anywhere in spira-lc is reclaimed and charged, whatever partition it belongs to; orphans released"
 
 [[use_case]]
 id = "UC-dispatch-21"
 tier = "T1"
-statement = "the ghost classifier never reclaims a bead carrying the ask or reclaim-skip label"
+statement = "the ghost classifier never reclaims a bead carrying the ask label or a spira-lc wait hold"
 
 [[use_case]]
 id = "UC-dispatch-22"

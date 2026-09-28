@@ -73,6 +73,7 @@
 # land or reopen, not this program's to tidy away.
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/lc.sh"
 
 # EVERY REPOSITORY THE HARNESS MANAGES, not one. A branch lives in the checkout the aeon
 # cut it from, and an aeon's checkout now comes from its bead's `repo:` label — so a reaper
@@ -466,21 +467,24 @@ sweep_repo() {
                     say "WOULD  $id  send branch $br$( [ -n "$(worktree_of "$br" "$REPO")" ] && printf ' and its worktree')"
                     continue
                 fi
-                # LABEL BEFORE DELETING, AND ONLY WHEN THERE WAS WORK TO LAND. This branch is
-                # about to disappear, and with it the only evidence CHECK 5 has that the bead
-                # was not simply closed on nothing: it searches the base for a commit naming
-                # the id, and a content reap makes no such commit. Without the label it
-                # reopens the bead a pass later and a fresh aeon redoes finished work — 99
-                # reopens over 80 beads in a day (sp-796o).
+                # EVENT BEFORE DELETING, AND ONLY WHEN THERE WAS WORK TO LAND. This branch is
+                # about to disappear, and with it the only evidence that the bead was not
+                # simply closed on nothing: it searches the base for a commit naming the id,
+                # and a content reap makes no such commit. ContentOnBase (spira-lc, sp-i2m7y)
+                # replaces the retired content-landed bd label as that evidence — a downtime
+                # cut, not a dual write: CHECK 5 does not read spira-lc yet (sp-yyros's own
+                # cutover), so until it lands a content reap is invisible to it exactly as an
+                # unclassified bead already is.
                 #
                 # AHEAD-COUNT FIRST, because content_landed is also true for a branch
                 # carrying nothing. Zero ahead is either a real fast-forward merge, whose
-                # commit names the bead so CHECK 5 is satisfied anyway, or empty work that
-                # SHOULD be reopened. Only a branch with commits of its own whose diff is
-                # nonetheless already on the base is the case this label describes.
+                # commit names the bead so a landed-commit search is satisfied anyway, or
+                # empty work that SHOULD be reopened. Only a branch with commits of its own
+                # whose diff is nonetheless already on the base is the case this event
+                # describes.
                 n="$(git -C "$REPO" rev-list --count "$LANDREF..$br" 2>/dev/null || echo 0)"
                 if [ "${n:-0}" -gt 0 ] 2>/dev/null; then
-                    bdq label add "$id" content-landed >/dev/null 2>&1 || true
+                    lc_content_on_base "$id" "merge-tree:$(git -C "$REPO" rev-parse "$LANDREF" 2>/dev/null)" sending >/dev/null 2>&1 || true
                 fi
                 send_landed "$id" "$br"
                 ;;

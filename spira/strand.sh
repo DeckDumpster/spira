@@ -52,6 +52,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
+. "$HERE/lc.sh"
 
 # EVERY PARTITION THE CHAMBER DECLARES, NOT ONE NAMED HERE. This defaulted to `spira,plan`
 # — the builder's partition standing in for every persona — so stalled work belonging to any
@@ -299,6 +300,10 @@ print(json.dumps(out))
         ready="$(bdjson "${READY_ARGS[@]}" --label "$labels" --exclude-label "$_excl")"
     fi
     live="$(live_aeons "$labels")"
+    # BEADS check2_protect_waiting HAS PUT A spira-lc "wait" HOLD ON (sp-i2m7y): the ghost
+    # classifier must exempt the same beads CHECK 2's own reclaim scan skips, or the two
+    # checks disagree about which stale leases are legitimately waiting on an operator.
+    local wait_held; wait_held="$(lc_list_held wait | tr '\n' ' ')"
 
     holders="$(printf '%s' "$beads" | python3 -c '
 import sys, json
@@ -372,6 +377,7 @@ print("\n".join(r["id"] for r in rows if r.get("status") == "in_progress"))' 2>/
     GHOST_GRACE="$GHOST_GRACE" CAPACITY_PAUSED="$_cap_paused" CAPACITY_DETAIL="$_cap_detail" \
     PASS_TRUNCATED="$_truncated" POOL_PAUSED="$_pool_paused" \
     THROTTLE_STATE="$_throttle_state" THROTTLE_DETAIL="$_throttle_detail" \
+    WAIT_HELD="$wait_held" \
     python3 "$HERE/strand-classify.py"
     local rc=$?
     rm -rf "$tmp"
@@ -540,7 +546,7 @@ MAILEOF
 }
 
 cmd_check() {
-    local lock="$STATE.lock" rows acted=0 n a; local -a scope
+    local lock="$STATE.lock" rows acted=0 n a
     # MUTUAL EXCLUSION — the whole read-modify-write of strands.json must be atomic. Without
     # a lock, two concurrent runners (sentinel + concierge, operator + timer) both read
     # escalated=0 from state_apply before either writes escalated=1 from state_mark, and both
@@ -569,16 +575,12 @@ cmd_check() {
         if [ "$disp" = act ] && [ "$was_acted" = 0 ]; then
             case "$kind" in
                 ghost)
-                    # --older-than 1s deliberately: reclaim's grace window is a heuristic for
-                    # liveness it cannot observe, and we have already observed it directly.
-                    # The bump is the point — a hard-killed aeon never runs its cleanup trap,
-                    # so without this the attempt counter under-counts and a bead that kills
-                    # its aeon every time is never poisoned.
-                    # SCOPED TO THE ROW'S OWN PARTITION, never to one named here: a
-                    # reclaim filtered by the builder's labels is a no-op on every other
-                    # persona's bead, and it exits 0 saying nothing.
-                    scope=(); [ "$part" != "-" ] && scope=(--label "$part")
-                    bdq reclaim --id "$id" --older-than 1s "${scope[@]}" >/dev/null 2>&1
+                    # THE SPIRA-LC HolderDead EVENT, NOT bdq reclaim (sp-i2m7y). Liveness was
+                    # already observed directly (/proc, above) — there is no grace window left
+                    # to apply, unlike CHECK 2's own time-based reap. WORKING -> READY on the
+                    # bead's own row; no label, no partition filter, because spira-lc has
+                    # neither dimension.
+                    lc_holder_dead "$id" strand >/dev/null 2>&1
                     bump_reclaim "$id" ghost >/dev/null 2>&1
                     # THIS IS NOT AN ATTEMPT AND MUST NEVER FEED POISON. A hard-killed aeon
                     # never runs its teardown, so this is the only record that the death

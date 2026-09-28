@@ -30,7 +30,7 @@ echo "test-schema.sh"
 
 echo
 echo "every declared name resolves to something non-empty"
-for k in ask ci scope spike groomer maechen maechen_remedy review reclaim_skip world_stop insight; do
+for k in ask ci scope spike groomer maechen maechen_remedy review world_stop insight; do
     v="$("$S" name "$k" 2>/dev/null)"; rc=$?
     if [ "$rc" = 0 ] && [ -n "$v" ]; then ok "name $k -> $v"; else bad "name $k" "rc=$rc value=[$v]"; fi
 done
