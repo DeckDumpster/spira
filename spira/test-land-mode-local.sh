@@ -175,7 +175,10 @@ exec "$REAL_GIT" "\$@"
 SHIM
 chmod +x "$GITSHIM/git"
 
-out="$(PATH="$GITSHIM:$PATH" SPIRA_HOME="$E_SH" SPIRA_RUN="$E_RUN" SPIRA_DB="$SPIRA_DB" \
+# conf.sh rebuilds PATH from SPIRA_PATH (plus a fixed tail) rather than inheriting the
+# caller's — a plain PATH= prefix here would be overwritten before landing.sh's first git
+# call, and the shim would silently stop seeing anything.
+out="$(PATH="$GITSHIM:$PATH" SPIRA_PATH="$GITSHIM" SPIRA_HOME="$E_SH" SPIRA_RUN="$E_RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="$E_SH/bd-stub.sh" SPIRA_REPO="$TMP/no-such-home-repo" \
     SPIRA_REPO_MAP="$E_SH/repo-map" \
         bash "$E_SH/landing.sh" 2>&1)"

@@ -2002,12 +2002,17 @@ bead as retired and skip it correctly. A close reason alone is not read by any o
 # 12 of the first 23 reopens this harness performed were exactly that. The session that
 # holds the context is the one that should pay for the conflict, so it is told to, and the
 # verdict step below checks that it did.
+#
+# BASE_REMOTE is empty for a local base ref (queue.local's local/main) — name the ref, not a
+# fetch of a remote that does not exist.
+CLOSE_FETCH_STEP="git -C $WORK fetch $BASE_REMOTE"
+[ -n "$BASE_REMOTE" ] || CLOSE_FETCH_STEP="# $BASE is a local ref already in this checkout; no fetch needed"
 CLOSE_BRIEF="## Before you close: rebase onto \`$BASE\`
 
 Other aeons land while you work, so \`$BASE\` has probably moved. The last thing you do
 before closing the bead — after your commits, before the close — is:
 
-    git -C $WORK fetch ${BASE_REMOTE:-origin}
+    $CLOSE_FETCH_STEP
     git -C $WORK rebase $BASE
 
 Resolve any conflict yourself: you wrote these commits and you know what they mean, and the
