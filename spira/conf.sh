@@ -793,7 +793,8 @@ spira_conf_defaults() {
     # HOW MANY REBASE-CONFLICT REOPENS BEFORE THE BEAD IS ESCALATED INSTEAD. A bead reopened
     # this many times for a rebase conflict is not learning from the reopen, and repeating it
     # cycles the machinery while an aeon session is spent on every turn. At this threshold the
-    # landing pass labels the bead needs-operator and asks rather than reopening again.
+    # landing pass sends the Concierge a machine event rather than reopening again — never
+    # Ryan (law-a-rebase-loop-is-sequenced-not-split).
     : "${SPIRA_REBASE_ESCALATE_AT:=3}"
     # HOW MANY EVICTION-RACE REOPENS BEFORE THE BEAD IS ESCALATED INSTEAD, mirroring
     # SPIRA_REBASE_ESCALATE_AT above: a bead whose eviction-race reopen keeps firing is not
@@ -801,9 +802,12 @@ spira_conf_defaults() {
     : "${SPIRA_EVICTION_ESCALATE_AT:=3}"
     # HOW MANY FILES A REBASE-LOOP ESCALATION CALLS "SEVERAL HOT FILES" — past this, the
     # branch is not unlucky, its scope is racing every landing that touches the same files.
-    # A re-cut that cannot clear the conflict is telling the operator to split the bead, not
+    # A re-cut that cannot clear the conflict tells the Concierge to split the bead, not
     # to try the rebase by hand again (law-decompose-by-deliverable).
     : "${SPIRA_REBASE_DECOMPOSE_FILES:=4}"
+    # FILES A REBASE-LOOP EVENT NAMES AS GENERATED — regenerate, never hand-merge
+    # (law-regenerate-derived-summaries). Path substrings, space-separated.
+    : "${SPIRA_REBASE_GENERATED_FILES:=coverage.json COVERAGE.md standard-operating-procedures.md spira-config/schema}"
     # THE CUTOVER-ROUND LABEL. A branch whose bead carries it lands only in the cutover round
     # (sp-sa8pn) assembles by hand, never through the ordinary landing pass — so certification,
     # rebase and the repeat/escalation machinery all leave it exactly as its aeon left it.

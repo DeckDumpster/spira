@@ -457,18 +457,37 @@ spira_land_noverdict() {  # <bead> <branch> <repo-name> <reason> <outcome> <gate
     fi
 }
 
-# spira_ask_rebase_loop — escalate a bead whose rebase keeps failing.
+# spira_is_generated_file <path> -> 0 if path names a file this harness regenerates whole
+# rather than hand-merges (law-regenerate-derived-summaries). A rebase conflict on one of
+# these is resolved by rerunning its generator, never by reconciling the two hunks by hand.
+# The declared list lives in SPIRA_REBASE_GENERATED_FILES (conf.sh) — a path substring
+# match, since a generated file is named the same regardless of which directory it sits in.
+spira_is_generated_file() {
+    local path="$1" pat
+    for pat in ${SPIRA_REBASE_GENERATED_FILES:-}; do
+        case "$path" in
+            *"$pat"*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# spira_ask_rebase_loop — tell the Concierge a bead's rebase keeps failing.
 #
 # Seven reopens on sp-dvlq, each one handing the next aeon "resolve the conflict" against a
 # branch whose correct resolution was "drop it". The repetition is the signal: a bead that
 # cannot rebase N times in a row is not learning from the reopen, and repeating it is
 # machinery cycling on itself (law-alerts-must-be-actionable at the machinery level).
+#
+# NEVER RYAN'S DECISION (law-a-rebase-loop-is-sequenced-not-split) — every one of these was
+# resolved by the Concierge with rebase guidance, never by him. So this sends a machine event
+# to the Concierge's mailbox (real time, law-machine-events-wake-in-real-time) — never a
+# --kind question/decision, which would file the same needs-ryan ask under another name.
 spira_ask_rebase_loop() {  # <bead> <branch> <repo-name> <requeue-count> <conflicts> <other-beads> [<repo-dir> <base>]
     local id="$1" br="$2" name="$3" n="$4" conflicts="$5" others="$6"
     local repo_dir="${7:-}" base_ref="${8:-}"
     [ -x "$SPIRA_HOME/mail.sh" ] || return 0
-    ask_already_open "$br rebase loop" && return 0
-    # Fetch bead title and status so the escalation names the work and its current state.
+    # Fetch bead title and status so the event names the work and its current state.
     local bead_title bead_status
     bead_title="$(bdjson show "$id" 2>/dev/null | python3 -c '
 import sys, json
@@ -495,21 +514,35 @@ print(d[0].get("title", "") if d else "")' 2>/dev/null)"
     if [ "${nfiles:-0}" -ge "${SPIRA_REBASE_DECOMPOSE_FILES:-4}" ]; then
         decompose_ctx=" $br touches $nfiles files — a bead this wide re-enters the rebase race every landing; consider splitting it into smaller beads instead of hand-rebasing the whole thing again."
     fi
-    # Subject: title first so the operator knows what the work is (law-escalations-lead-with-the-bead).
+    # Subject: title first so the Concierge knows what the work is (law-escalations-lead-with-the-bead).
     local _subj
     if [ -n "$bead_title" ]; then
         _subj="${bead_title}: $br rebase loop x$n in $name"
     else
         _subj="$br rebase loop x$n in $name"
     fi
-    # Default: no empty slots — omit the duplicate clause when others is empty.
-    local _dflt
-    if [ "${nfiles:-0}" -ge "${SPIRA_REBASE_DECOMPOSE_FILES:-4}" ]; then
-        _dflt="split $br into smaller beads by file/deliverable and land those independently, rather than rebasing the whole thing by hand again"
+    # Per-file listing, one line per conflicted file, flagging any that are GENERATED
+    # (regenerate, don't hand-merge) instead of leaving that judgement to the reader.
+    local _file _files_note="" _gen_note=""
+    for _file in $conflicts; do
+        if spira_is_generated_file "$_file"; then
+            _files_note="${_files_note}${_files_note:+$'\n'}  - $_file (GENERATED — regenerate it, do not merge it by hand)"
+            _gen_note=1
+        else
+            _files_note="${_files_note}${_files_note:+$'\n'}  - $_file"
+        fi
+    done
+    [ -n "$_files_note" ] || _files_note="  - ${conflicts:-unknown}"
+    # Suggested action: no empty slots — omit the duplicate clause when others is empty.
+    local _sugg
+    if [ -n "$_gen_note" ]; then
+        _sugg="regenerate the GENERATED file(s) named above via their own generator and rebase again — do not hand-merge them"
+    elif [ "${nfiles:-0}" -ge "${SPIRA_REBASE_DECOMPOSE_FILES:-4}" ]; then
+        _sugg="split $br into smaller beads by file/deliverable and land those independently, rather than rebasing the whole thing by hand again"
     elif [ -n "$others" ]; then
-        _dflt="check whether $br is a duplicate of $others and close it if so; if the work is genuinely new, rebase by hand and push"
+        _sugg="check whether $br is a duplicate of $others and close it if so; if the work is genuinely new, rebase by hand and push"
     else
-        _dflt="rebase $br by hand and push, or close it if the work is already landed"
+        _sugg="rebase $br by hand and push, or close it if the work is already landed"
     fi
     # Extra lines for the body: status and branch info.
     local _extra=""
@@ -517,18 +550,23 @@ print(d[0].get("title", "") if d else "")' 2>/dev/null)"
     if [ -n "$tip_short" ] && [ -n "$ahead" ]; then
         _extra="${_extra:+$_extra$'\n'}Branch: ${tip_short} (${ahead} commit(s) ahead of ${base_ref})."
     fi
-    "$SPIRA_HOME/mail.sh" send operator \
+    "$SPIRA_HOME/mail.sh" send concierge \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
+        --kind note <<MAILEOF >/dev/null 2>&1
+## Note
+
 $_subj
 
-## Default
-$_dflt
+$id has been reopened for a rebase conflict $n times and the loop is not converging. This is
+machinery cycling on itself, not a decision for Ryan (law-a-rebase-loop-is-sequenced-not-split)
+— rebase with explicit guidance and fast-track the bead into a round the moment it certifies.
 
-$id has been reopened for a rebase conflict $n times and the loop is not converging. Conflicts in: ${conflicts:-unknown}.$ctx$decompose_ctx
+Conflicting file(s):
+$_files_note
+$ctx$decompose_ctx
+
+Suggested action: $_sugg
 
 $_extra
 MAILEOF
