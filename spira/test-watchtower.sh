@@ -132,6 +132,11 @@ eval "$(sed -n '/^land_mark() *{/,/^}/p' "$HERE/lib.sh")" 2>/dev/null
 # which is also where D12's two "every section present" loops merge into one.
 eval "$(sed -n '/^write_lapse_record() *{/,/^}/p' "$HERE/lib.sh")" 2>/dev/null
 
+# land_mark_at writes an EXPLICIT epoch into the record content (land_mark always stamps
+# `date +%s`, so a fixture cannot make it name a chosen age). Used only where a T1 case
+# needs a deterministic since_land, not for the positive control above.
+eval "$(sed -n '/^land_mark_at() *{/,/^}/p' "$HERE/lib.sh")" 2>/dev/null
+
 if [ "$(type -t land_mark 2>/dev/null)" = function ]; then
     land_mark sp-ctl LANDED deadbeef spira
     is "the real writer produced a record" 1 "$(ls "$LANDSTATE" | wc -l)"
@@ -1267,6 +1272,68 @@ want "T1: ...and carries who handled it through"    "aeon-fake" "$(printf '%s\n'
 row="$(czar_row "$block" loop-stalled)"
 want "T1: an unrelated class is untouched by another class's keys" \
      "?" "$(printf '%s\n' "$row" | awk '{print $2}')"
+
+# ======================================================================================
+echo
+echo "collect_landing_field() (UC-26, sp-fhzib) is a T1 seam: sourcing watchtower.sh must
+define it without running the sweep, and calling it directly must render the same figures
+the T2 tests above proved via a full subprocess run, in-process instead of forked:"
+# ======================================================================================
+landing_field_t1() {   # landing_field_t1 [VAR=val ...] -> "$last_land_id|$since_land"
+    ( cd "$HERE" && env -i HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        WT_NOW="$NOW" "$@" \
+        bash -c 'set -uo pipefail
+                 now="$WT_NOW"
+                 . ./watchtower.sh
+                 collect_landing_field
+                 printf "%s|%s" "$last_land_id" "$since_land"' )
+}
+
+fresh
+land_mark_at sp-land LANDED cafe1 "$(( NOW - 600 ))"
+IFS='|' read -r t1_id t1_since <<<"$(landing_field_t1)"
+is "T1: a LANDED record names the bead that landed" "sp-land" "$t1_id"
+is "T1: ...and renders its age in minutes"           "10"      "$t1_since"
+
+fresh
+land_mark sp-red1 RED cafe2 gate
+IFS='|' read -r t1_id t1_since <<<"$(landing_field_t1)"
+# last_land_id's own sentinel is "" (empty), not "?" — the heredoc's
+# ${last_land_id:-none recorded} is what turns it into words for the reader.
+is "T1: only RED leaves the bead id unset" ""  "$t1_id"
+is "T1: ...and renders the age as ?"       "?" "$t1_since"
+
+# ======================================================================================
+echo
+echo "collect_gate_wait() (UC-26, sp-fhzib) is a T1 seam: sourcing watchtower.sh must
+define it without running the sweep, and calling it directly must bound the wait by TIME,
+not by row count, and render ? rather than 0 when nothing qualifies:"
+# ======================================================================================
+gate_wait_t1() {  # gate_wait_t1 [VAR=val ...] -> "$gate_wait_disp|$oldest_br|$gate_win_label"
+    ( cd "$HERE" && env -i HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        WT_NOW="$NOW" "$@" \
+        bash -c 'set -uo pipefail
+                 now="$WT_NOW"
+                 . ./watchtower.sh
+                 collect_gate_wait
+                 printf "%s|%s|%s" "$gate_wait_disp" "$oldest_br" "$gate_win_label"' )
+}
+
+fresh
+{ row 90000 spira/sp-ancient 1584; row 600 spira/sp-recent 7; } > "$TMP/run/gate.log"
+IFS='|' read -r t1_disp t1_br t1_lbl <<<"$(gate_wait_t1)"
+is "T1: a row inside the window is reported" "7s"        "$t1_disp"
+is "T1: ...and names its branch"             "spira/sp-recent" "$t1_br"
+is "T1: ...and the window is named in the field" "last 6h" "$t1_lbl"
+
+fresh
+{ row 90000 spira/sp-ancient 1584; row 80000 spira/sp-older 900; } > "$TMP/run/gate.log"
+IFS='|' read -r t1_disp t1_br t1_lbl <<<"$(gate_wait_t1)"
+is "T1: nothing inside the window renders ?, never a bare zero" "?" "$t1_disp"
+
+fresh
+IFS='|' read -r t1_disp t1_br t1_lbl <<<"$(gate_wait_t1 SPIRA_WATCH_GATE_WINDOW=172800)"
+is "T1: the window is genuinely read from configuration" "last 48h" "$t1_lbl"
 
 echo
 tl_summary
