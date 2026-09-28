@@ -14,6 +14,7 @@
 #   queue.sh publish [<repo>]
 #   queue.sh to-forge [<repo>]
 #   queue.sh to-local [<repo>]
+#   queue.sh rollback-local [<repo>]
 #
 # submit: certifies any branch by running the repository's gate. In a queue-mode
 # repository, a green branch is recorded CERTIFIED for the batch builder.
@@ -60,10 +61,18 @@
 #
 # land-local: the queue.local ending — fast-forwards the repo's local landing ref to a
 # round head with no PR, refusing (and writing nothing) unless the head descends from the
-# ref's current tip. Archives the head at refs/archive/rounds/<n>, land_marks every member
-# LANDED and closes its bead via bead_close_on_land. THE ONLY WRITER of that ref; runs
-# under the repo's queue lock, skipped via SPIRA_QUEUE_LOCK_HELD=1 for a caller (the
-# batcher) that already holds it, so it cannot deadlock on its own lock.
+# ref's current tip. Production runs built artifacts, not a checkout, so a land also
+# packages the round head's source with the binaries its own tree's --with-bins corpus
+# built (build-tarball.sh --bin-dir) and activates the result atomically (activate.sh) —
+# refusing, ref move reverted, if either step fails or the corpus is missing. Archives the
+# head at refs/archive/rounds/<n>, land_marks every member LANDED and closes its bead via
+# bead_close_on_land. THE ONLY WRITER of that ref; runs under the repo's queue lock,
+# skipped via SPIRA_QUEUE_LOCK_HELD=1 for a caller (the batcher) that already holds it, so
+# it cannot deadlock on its own lock.
+#
+# rollback-local: re-activates the previous round's retained release and resets the ref back
+# to its archived head. Bead state is untouched — a round's beads stay LANDED regardless of
+# what is currently running.
 #
 # publish: the queue.local publish queue (row 3 of the local/main design). Pushes
 # local/main's commits since the forge target's own current tip to a new forge branch
@@ -1092,6 +1101,45 @@ cmd_release() {
     printf 'queue.sh release: %s released back to %s\n' "$name" "${restore:-<none>}"
 }
 
+# _land_local_bins_dir <repo> <head> -> the --with-bins corpus directory for this tree, if
+# it holds at least one executable; prints nothing and fails otherwise. Keyed by TREE, not
+# commit, matching testenv-batch.sh's --with-bins cache key exactly, so a head that is its
+# own round's tip always finds the corpus that round's own gate run built.
+_land_local_bins_dir() {
+    local repo="$1" head="$2" tree dir
+    tree="$(git -C "$repo" rev-parse -q --verify "${head}^{tree}" 2>/dev/null)" || return 1
+    dir="${SPIRA_BATCH_BINS_TARGET_DIR:-${SPIRA_RUN:?}/cargo-target-bins}/$tree/release"
+    [ -d "$dir" ] || return 1
+    find "$dir" -maxdepth 1 -type f -executable -print -quit 2>/dev/null | grep -q . || return 1
+    printf '%s' "$dir"
+}
+
+# _land_local_release <repo> <name> <head> <bins_dir> -> package the round head's source
+# with the binaries its own tree built and activate the result atomically. Prints the
+# release name on success. Tarballs are retained under SPIRA_RELEASES/.tarballs so
+# cmd_rollback_local can re-activate one without rebuilding (activate.sh only reads the
+# tarball's name when the release directory it names is already unpacked).
+_land_local_release() {
+    local repo="$1" name="$2" head="$3" bins_dir="$4"
+    local retain="${SPIRA_RELEASES:?}/.tarballs"
+    mkdir -p "$retain" 2>/dev/null || {
+        printf 'queue.sh land-local: cannot create %s\n' "$retain" >&2; return 1; }
+
+    local built
+    built="$(bash "$HERE/build-tarball.sh" build --workspace "$repo" --bin-dir "$bins_dir" \
+        --repo-name "$name" --name "spira-$head" --output "$retain" "$head" "$repo")"
+    if [ -z "$built" ] || [ ! -f "$built" ]; then
+        printf 'queue.sh land-local: build-tarball.sh did not produce a tarball\n' >&2
+        return 1
+    fi
+
+    local act_out act_rc
+    act_out="$(bash "$HERE/activate.sh" "$built" 2>&1)"; act_rc=$?
+    printf '%s\n' "$act_out" >&2
+    [ "$act_rc" -eq 0 ] || return 1
+    printf 'spira-%s' "$head"
+}
+
 # cmd_land_local: see the header comment above (land-local:).
 cmd_land_local() {
     local name="" head="" members_arg=""
@@ -1165,6 +1213,18 @@ cmd_land_local() {
         return 1
     fi
 
+    # PRODUCTION RUNS BUILT ARTIFACTS, SO A LAND WITH NONE TO PACKAGE IS REFUSED HERE, before
+    # the ref moves — resetting the checkout is not a deployment (2026-09-27: production ran
+    # round 97's source next to a spira-config binary built before round 97's schema).
+    # testenv-batch.sh --with-bins builds the round head's own workspace into this exact
+    # directory, keyed by tree so a fast-forward always finds its own corpus, never a
+    # stranger's from a different tree that happens to share the same target/release/.
+    local bins_dir; bins_dir="$(_land_local_bins_dir "$repo" "$head")" || {
+        printf 'queue.sh land-local: no built binaries for %s at %s — run testenv-batch.sh --with-bins first; refused, nothing changed\n' \
+            "$head" "${SPIRA_BATCH_BINS_TARGET_DIR:-${SPIRA_RUN:-<SPIRA_RUN unset>}/cargo-target-bins}/<tree>/release" >&2
+        return 1
+    }
+
     # A CAS, not a plain write: refuses instead of clobbering if something else moved the
     # ref between the resolve above and here (this is exactly the "another writer" case,
     # not just belt-and-suspenders around the lock).
@@ -1172,6 +1232,17 @@ cmd_land_local() {
         printf 'queue.sh land-local: %s moved concurrently — refused, nothing changed\n' "$base" >&2
         return 1
     fi
+
+    # PACKAGE AND ACTIVATE BEFORE ANYTHING ELSE OBSERVES THE LAND. A packaging or activation
+    # failure reverts the ref move so this call leaves exactly nothing changed, the same
+    # contract every other refusal above already gives its caller.
+    local release_name
+    if ! release_name="$(_land_local_release "$repo" "$name" "$head" "$bins_dir")"; then
+        git -C "$repo" update-ref "refs/heads/$base_branch" "$base_sha" "$head" 2>/dev/null || true
+        printf 'queue.sh land-local: packaging/activation failed for %s — reverted, nothing changed\n' "$head" >&2
+        return 1
+    fi
+    printf 'queue.sh land-local: activated %s\n' "$release_name"
 
     local seqfile="${SPIRA_QUEUE_DIR:?}/$name/round-seq" n
     n="$(cat "$seqfile" 2>/dev/null)"; case "$n" in ''|*[!0-9]*) n=0 ;; esac
@@ -1721,6 +1792,79 @@ cmd_to_local() {
         "$name" "$new_base_branch" "$remote" "$forge_branch"
 }
 
+# cmd_rollback_local: activate the previous round's already-built release and reset
+# local/main back to its archived head. THE ONLY UNDO for a round that landed and activated
+# cleanly but turned out wrong — it does not touch bead state, which land-local already
+# closed against the round now being rolled back from; that is a fact about what shipped and
+# stays true regardless of what is running.
+cmd_rollback_local() {
+    local name="${1:-$(spira_home_repo)}"
+    if [ "${SPIRA_FAYTH:-}" = czar ] && [ -n "${SPIRA_CZAR_CLASS:-}" ]; then
+        bash "$HERE/czar-fence.sh" "$SPIRA_CZAR_CLASS" || return 1
+    fi
+
+    local repo; repo="$(repo_root "$name" 2>/dev/null)" || {
+        printf 'queue.sh rollback-local: no such repo: %s\n' "$name" >&2; return 1; }
+    local mode; mode="$(repo_land "$name")"
+    [ "$mode" = "queue.local" ] || {
+        printf 'queue.sh rollback-local: repo is not in queue.local mode (mode=%s)\n' "$mode" >&2; return 1; }
+
+    local base; base="$(spira_landref "$repo")" || {
+        printf 'queue.sh rollback-local: cannot resolve landing ref for %s\n' "$name" >&2; return 1; }
+    local base_branch="$base"
+
+    local lockfile; lockfile="${SPIRA_QUEUE_DIR:?}/$name/lock"
+    mkdir -p "${SPIRA_QUEUE_DIR:?}/$name" 2>/dev/null || true
+    if [ "${SPIRA_QUEUE_LOCK_HELD:-0}" != 1 ]; then
+        { exec 9>"$lockfile"; } 2>/dev/null \
+            || { printf 'queue.sh rollback-local: cannot open lock file for %s\n' "$name" >&2; return 1; }
+        if ! flock -n 9; then
+            printf 'queue.sh rollback-local: another queue operation holds the lock for %s\n' "$name" >&2
+            return 1
+        fi
+    fi
+
+    local seqfile="${SPIRA_QUEUE_DIR:?}/$name/round-seq" n
+    n="$(cat "$seqfile" 2>/dev/null)"; case "$n" in ''|*[!0-9]*) n=0 ;; esac
+    [ "$n" -ge 2 ] || {
+        printf 'queue.sh rollback-local: round-seq is %s — no landed round to roll back to\n' "$n" >&2
+        return 1
+    }
+    local prev_head; prev_head="$(git -C "$repo" rev-parse -q --verify "refs/archive/rounds/$((n-1))" 2>/dev/null)" || {
+        printf 'queue.sh rollback-local: refs/archive/rounds/%d has no archived head\n' "$((n-1))" >&2
+        return 1
+    }
+
+    local tarball="${SPIRA_RELEASES:?}/.tarballs/spira-$prev_head.tar.gz"
+    [ -f "$tarball" ] || {
+        printf 'queue.sh rollback-local: no retained tarball for the previous release at %s\n' "$tarball" >&2
+        return 1
+    }
+
+    local act_out act_rc
+    act_out="$(bash "$HERE/activate.sh" "$tarball" 2>&1)"; act_rc=$?
+    printf '%s\n' "$act_out" >&2
+    [ "$act_rc" -eq 0 ] || {
+        printf 'queue.sh rollback-local: activate.sh failed to re-activate spira-%s\n' "$prev_head" >&2
+        return 1
+    }
+
+    local cur_sha; cur_sha="$(git -C "$repo" rev-parse -q --verify "$base_branch" 2>/dev/null)" || cur_sha=""
+    if [ -n "$cur_sha" ]; then
+        git -C "$repo" update-ref "refs/heads/$base_branch" "$prev_head" "$cur_sha" 2>/dev/null || {
+            printf 'queue.sh rollback-local: %s moved concurrently — release rolled back but the ref did not\n' "$base" >&2
+            return 1
+        }
+    else
+        git -C "$repo" update-ref "refs/heads/$base_branch" "$prev_head" 2>/dev/null
+    fi
+
+    queue_notify_concierge "$name" "local rollback (round $n -> $((n-1)))" \
+        "$base reset to $prev_head (release spira-$prev_head re-activated)."
+
+    printf 'queue.sh rollback-local: activated spira-%s, %s reset to %s\n' "$prev_head" "$base" "$prev_head"
+}
+
 main() {
     case "${1:-}" in
         submit)  shift; cmd_submit "$@" ;;
@@ -1737,7 +1881,8 @@ main() {
         publish) shift; cmd_publish "$@" ;;
         to-forge) shift; cmd_to_forge "$@" ;;
         to-local) shift; cmd_to_local "$@" ;;
-        *) printf 'usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>]\n' >&2; return 2 ;;
+        rollback-local) shift; cmd_rollback_local "$@" ;;
+        *) printf 'usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>]\n' >&2; return 2 ;;
     esac
 }
 

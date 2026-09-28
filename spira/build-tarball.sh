@@ -8,6 +8,9 @@
 #
 #   The 'build' subcommand is the default: omitting it is equivalent.
 #   --workspace <path>: auto-discover all [[bin]] targets via cargo metadata.
+#   --bin-dir <dir>: look up each discovered binary at <dir>/<name> instead of
+#     <workspace>/target/release/<name> — for building from a corpus's own
+#     CARGO_TARGET_DIR rather than the workspace's default one.
 #   --repo-name <name>: the identity stamped into MANIFEST's `repo` line (see below).
 #   --release-repo <owner/repo>: the forge repository that publishes this release, stamped
 #     into MANIFEST's `release-repo` line; conf.sh reads it back as SPIRA_RELEASE_REPO when
@@ -66,11 +69,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # ---------------------------------------------------------------------------
 do_build() {
     local outdir="." loom_bin="" panel_bin="" broker_bin="" supervise_bin="" landing_pass_bin="" reconciler_flow_bin="" commit="" repo="" name_override="" repo_name="" release_repo=""
-    local workspace=""  # workspace root for auto-discovery via cargo metadata
+    local workspace="" bin_dir=""  # workspace root for auto-discovery via cargo metadata; bin_dir overrides where the discovered names are looked up
 
     while [ $# -gt 0 ]; do
         case "$1" in
             --output)            outdir="$2";            shift 2 ;;
+            --bin-dir)           bin_dir="$2";            shift 2 ;;
             --loom-bin)          loom_bin="$2";          shift 2 ;;
             --panel-bin)         panel_bin="$2";         shift 2 ;;
             --broker-bin)        broker_bin="$2";        shift 2 ;;
@@ -142,7 +146,7 @@ do_build() {
         local _binname
         while IFS= read -r _binname; do
             [ -n "$_binname" ] || continue
-            local _binpath="$workspace/target/release/$_binname"
+            local _binpath="${bin_dir:-$workspace/target/release}/$_binname"
             if [ ! -f "$_binpath" ]; then
                 printf 'build-tarball.sh: binary not built: %s\n' "$_binpath" >&2
                 printf 'build-tarball.sh:   run: make build\n' >&2

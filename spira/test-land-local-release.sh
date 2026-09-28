@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+#
+# test-land-local-release.sh — sp-sf60f: under queue.local, a land packages the round head's
+# source with the binaries its own tree's --with-bins corpus built and activates the result
+# atomically; a land with no corpus is refused before anything changes; rollback re-activates
+# the previous release and resets the ref to its archived head; skew.sh refresh, under
+# queue.local, only checks current against local/main's head and never deploys.
+#
+# WHY THIS MATTERS (2026-09-27): production ran round 97's source next to a spira-config
+# binary built before round 97's schema — resetting the checkout advanced the source but
+# never touched the binary. Every assertion below is either "the activated bin/ is this
+# round's own corpus, byte for byte" or "a mismatch is reported and nothing was deployed".
+#
+# tier: T1
+# covers: spira/queue.sh spira/build-tarball.sh spira/activate.sh spira/skew.sh spira/lib.sh
+set -uo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
+
+# shellcheck disable=SC1090
+. "$HERE/testdb.sh"
+testdb_require test-land-local-release
+TMP="$(mktemp -d)"
+trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+testdb_up llocrel || { echo "test-land-local-release: could not build a fixture database"; exit 1; }
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+
+echo "test-land-local-release.sh"
+
+SH="$TMP/spira"; mkdir -p "$SH"
+cp -r "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null || true
+cat > "$SH/mail.sh" <<'EOFM'
+#!/usr/bin/env bash
+[ "${1:-}" = send ] || exit 0
+echo "mail sent" >&2
+cat > "$MAIL_BODY_FILE"
+EOFM
+chmod +x "$SH/mail.sh"
+MAIL_BODY_FILE="$TMP/mail-body"
+rm -f "$MAIL_BODY_FILE"
+
+# ---------------------------------------------------------------------------
+# Fixture repo: a minimal cargo workspace (one [[bin]] target, no dependencies — cargo
+# metadata resolves it with no network call) so build-tarball.sh --workspace can discover
+# the binary NAME while a fake, content-stamped file supplies its BYTES from the
+# --with-bins corpus directory, never from an actual `cargo build`.
+# ---------------------------------------------------------------------------
+REPO="$TMP/repo"
+git init -q -b trunk "$REPO"
+mkdir -p "$REPO/src"
+cat > "$REPO/Cargo.toml" <<'EOF'
+[package]
+name = "fakebin"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "fakebin"
+path = "src/main.rs"
+EOF
+echo 'fn main() {}' > "$REPO/src/main.rs"
+git -C "$REPO" add Cargo.toml src
+git -C "$REPO" commit -q -m base
+git -C "$REPO" branch local/main trunk
+
+RUN="$TMP/run"; QDIR="$RUN/queue"; RELEASES="$TMP/releases"
+mkdir -p "$RUN/worktree" "$QDIR" "$RELEASES"
+RMAP="$TMP/repo-map"
+printf 'fixq | %s | queue.local | local/main | | |\n' "$REPO" > "$RMAP"
+
+B() { bd -C "$SPIRA_DB" "$@"; }
+field() { B show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
+import sys,json
+d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
+v=d[0].get(sys.argv[1])
+print(",".join(v) if isinstance(v,list) else (v or ""))' "$2" 2>/dev/null; }
+seed() {
+    printf '{"id":"%s","title":"t","status":"open","issue_type":"task","labels":["plan","repo:fixq","spira-submitted"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+        "$1" | testdb_seed
+}
+
+run_q() {
+    SPIRA_CONF=/nonexistent \
+    SPIRA_HOME="$SH" \
+    SPIRA_HOME_REPO=fixq \
+    SPIRA_REPO="$REPO" \
+    SPIRA_RUN="$RUN" \
+    SPIRA_QUEUE_DIR="$QDIR" \
+    SPIRA_REPO_MAP="$RMAP" \
+    SPIRA_RELEASES="$RELEASES" \
+        bash "$SH/queue.sh" "$@" 2>&1
+}
+run_skew() {
+    MAIL_BODY_FILE="$MAIL_BODY_FILE" \
+    SPIRA_CONF=/nonexistent \
+    SPIRA_HOME="$SH" \
+    SPIRA_REPO="$REPO" \
+    SPIRA_RUN="$RUN" \
+    SPIRA_REPO_MAP="$RMAP" \
+    SPIRA_RELEASES="$RELEASES" \
+        bash "$SH/skew.sh" "$@" 2>&1
+}
+localmain() { git -C "$REPO" rev-parse local/main; }
+current_name() { readlink "$RELEASES/current" 2>/dev/null; }
+
+# mk_round <branch> <file> <content> -> commit on local/main's tip, print the head sha.
+mk_round() {
+    local br="$1" file="$2" content="$3"
+    git -C "$REPO" checkout -qb "$br" local/main
+    printf '%s\n' "$content" > "$REPO/$file"
+    git -C "$REPO" add "$file"
+    git -C "$REPO" commit -q -m "round: $file"
+    local head; head="$(git -C "$REPO" rev-parse "$br")"
+    git -C "$REPO" checkout -q trunk
+    git -C "$REPO" branch -D "$br" >/dev/null 2>&1
+    printf '%s' "$head"
+}
+# mk_bins <head> <content> -> populate the --with-bins corpus for <head>'s own tree.
+mk_bins() {
+    local head="$1" content="$2" tree dir
+    tree="$(git -C "$REPO" rev-parse "${head}^{tree}")"
+    dir="$RUN/cargo-target-bins/$tree/release"
+    mkdir -p "$dir"
+    printf '%s' "$content" > "$dir/fakebin"
+    chmod +x "$dir/fakebin"
+}
+
+# ============================================================================
+echo
+echo "0 — rollback with no landed round is refused"
+# ============================================================================
+out="$(run_q rollback-local fixq)"; rc=$?
+[ "$rc" -ne 0 ] && ok "0: exit non-zero with nothing to roll back to" \
+    || bad "0: exit non-zero with nothing to roll back to" "got rc=$rc out=$out"
+want "0: names the reason" "no landed round" "$out"
+
+# ============================================================================
+echo
+echo "1 — a land with no built binaries is refused before anything changes"
+# ============================================================================
+testdb_reset
+seed sp-lrel1
+PRE_MAIN="$(localmain)"
+HEAD1="$(mk_round round-1 one.txt v1)"
+
+out="$(run_q land-local fixq --head "$HEAD1" --members "sp-lrel1:$HEAD1")"; rc=$?
+[ "$rc" -ne 0 ] && ok "1: exit non-zero with no corpus for the round's tree" \
+    || bad "1: exit non-zero with no corpus for the round's tree" "got rc=$rc out=$out"
+want "1: names the missing corpus"       "no built binaries" "$out"
+is   "1: local/main is unchanged"        "$PRE_MAIN" "$(localmain)"
+is   "1: nothing is activated"           "" "$(current_name)"
+is   "1: the bead is left open"          open "$(field sp-lrel1 status)"
+
+# ============================================================================
+echo
+echo "2 — the same head, corpus now built: packages, activates, lands"
+# ============================================================================
+mk_bins "$HEAD1" v1-binary
+
+out="$(run_q land-local fixq --head "$HEAD1" --members "sp-lrel1:$HEAD1")"; rc=$?
+[ "$rc" -eq 0 ] && ok "2: exit 0 once the corpus exists" \
+    || bad "2: exit 0 once the corpus exists" "got rc=$rc out=$out"
+want "2: reports the activated release" "activated spira-$HEAD1" "$out"
+is   "2: local/main advances to the round head" "$HEAD1" "$(localmain)"
+is   "2: current is activated to this round's release" "spira-$HEAD1" "$(current_name)"
+is   "2: bin/fakebin is this round's own corpus, byte for byte" \
+     "v1-binary" "$(cat "$RELEASES/spira-$HEAD1/bin/fakebin" 2>/dev/null)"
+want "2: MANIFEST records the round head commit" "commit $HEAD1" "$(cat "$RELEASES/spira-$HEAD1/MANIFEST" 2>/dev/null)"
+is   "2: the bead is closed"             closed "$(field sp-lrel1 status)"
+want "2: close reason declares landed"   "OUTCOME: landed" "$(field sp-lrel1 close_reason)"
+
+# ============================================================================
+echo
+echo "3 — a second round lands its own, different corpus"
+# ============================================================================
+seed sp-lrel3
+HEAD2="$(mk_round round-2 two.txt v2)"
+mk_bins "$HEAD2" v2-binary
+
+out="$(run_q land-local fixq --head "$HEAD2" --members "sp-lrel3:$HEAD2")"; rc=$?
+[ "$rc" -eq 0 ] && ok "3: second round lands" || bad "3: second round lands" "got rc=$rc out=$out"
+is   "3: current advances to the second round's release" "spira-$HEAD2" "$(current_name)"
+is   "3: bin/fakebin is the second round's own corpus" \
+     "v2-binary" "$(cat "$RELEASES/spira-$HEAD2/bin/fakebin" 2>/dev/null)"
+[ -d "$RELEASES/spira-$HEAD1" ] && ok "3: the first release directory is still present" \
+    || bad "3: the first release directory is still present" "missing $RELEASES/spira-$HEAD1"
+
+# ============================================================================
+echo
+echo "4 — skew refresh under queue.local: matched — checks, deploys nothing"
+# ============================================================================
+out="$(run_skew refresh "$REPO")"; rc=$?
+is   "4: exit 0 when running matches local/main" "0" "$rc"
+want "4: reports nothing to deploy" "nothing to deploy" "$out"
+is   "4: current is unchanged"      "spira-$HEAD2" "$(current_name)"
+
+# ============================================================================
+echo
+echo "5 — skew refresh under queue.local: mismatched — alarms, deploys nothing"
+# ============================================================================
+# Simulate a stray write to local/main that bypassed queue.sh land-local (the one writer):
+# no release was ever packaged for this head, so running (still HEAD2's release) now
+# disagrees with local/main.
+STRAY="$(mk_round round-stray stray.txt strayed)"
+git -C "$REPO" update-ref refs/heads/local/main "$STRAY"
+REPO_HEAD_BEFORE="$(git -C "$REPO" rev-parse trunk)"
+
+out="$(run_skew refresh "$REPO")"; rc=$?
+[ "$rc" -ne 0 ] && ok "5: exit non-zero on a running/local-main mismatch" \
+    || bad "5: exit non-zero on a running/local-main mismatch" "got rc=$rc out=$out"
+want "5: names the condition" "LOCAL-SKEW" "$out"
+want "5: escalation reported on stdout" "escalated" "$out"
+[ -s "$MAIL_BODY_FILE" ] && ok "5: an alarm mail was actually sent" \
+    || bad "5: an alarm mail was actually sent" "no mail body file was written"
+is   "5: current is still the second round's release — nothing was deployed" \
+     "spira-$HEAD2" "$(current_name)"
+is   "5: the checkout HEAD was never touched" "$REPO_HEAD_BEFORE" "$(git -C "$REPO" rev-parse trunk)"
+is   "5: local/main is left exactly as found — refresh never resets it either way" \
+     "$STRAY" "$(localmain)"
+
+# ============================================================================
+echo
+echo "6 — rollback-local re-activates the previous release and resets local/main"
+# ============================================================================
+git -C "$REPO" update-ref refs/heads/local/main "$HEAD2"   # undo the stray write above
+
+out="$(run_q rollback-local fixq)"; rc=$?
+[ "$rc" -eq 0 ] && ok "6: rollback exits 0" || bad "6: rollback exits 0" "got rc=$rc out=$out"
+want "6: reports the re-activated release" "spira-$HEAD1" "$out"
+is   "6: current rolls back to the first round's release" "spira-$HEAD1" "$(current_name)"
+is   "6: bin/fakebin is the first round's corpus again" \
+     "v1-binary" "$(cat "$RELEASES/spira-$HEAD1/bin/fakebin" 2>/dev/null)"
+is   "6: local/main resets to the first round's archived head" "$HEAD1" "$(localmain)"
+is   "6: the first round's bead is still landed (bead state is untouched)" \
+     closed "$(field sp-lrel1 status)"
+
+tl_summary
