@@ -68,7 +68,7 @@ is "all $N rows survive a PRIO_JSON past 128 KiB" "$N" "$got"
 
 # 2. PRIORITY IS STILL HONOURED when the payload is large. Priority 0 beads sort first.
 first_prio="$(PRIO_JSON="$big_json" queue_sort_rows "$TMP/repo" "$base" < "$rows" 2>/dev/null \
-              | head -1 | awk '{print $3+0}')"
+              | head -1 | awk '{print $2+0}')"
 is "priority still orders the rows" "0" "$first_prio"
 
 # 3. THE SMALL CASE, so the fix is not a regression on the path that always worked.
@@ -76,6 +76,39 @@ small='[{"id":"sp-t001","priority":2},{"id":"sp-t002","priority":0}]'
 got="$(printf 'sp-t001 %s 1\nsp-t002 %s 2\n' "$base" "$base" \
        | PRIO_JSON="$small" queue_sort_rows "$TMP/repo" "$base" 2>/dev/null | awk '{print $5}' | tr '\n' ' ')"
 is "a small PRIO_JSON still sorts by priority" "sp-t002 sp-t001 " "$got"
+
+# 3b. PRIORITY RANKS FIRST; A SUITE-STATE TRANSITION IS ONLY A TIEBREAKER WITHIN A
+#     PRIORITY (sp-ihxa0). PR 330 cut sp-npa6v (P3) and sp-y9hzy (P1) -- both touching
+#     spira/suite-state -- ahead of nine certified P0s that touched nothing: the transition
+#     flag was outranking priority instead of only breaking a tie inside one.
+#
+# SEEN RED against the lib.sh that preceded sp-ihxa0: the P1-with-a-transition sorted
+# ahead of the P0-without-one.
+git -C "$TMP/repo" checkout -q "$base"
+mkdir -p "$TMP/repo/$(dirname "$SPIRA_SUITE_STATE_FILE")"
+echo state > "$TMP/repo/$SPIRA_SUITE_STATE_FILE"
+git -C "$TMP/repo" add "$SPIRA_SUITE_STATE_FILE" >/dev/null 2>&1
+git -C "$TMP/repo" commit -qm transition >/dev/null 2>&1
+trans_tip="$(git -C "$TMP/repo" rev-parse HEAD)"
+
+git -C "$TMP/repo" checkout -q "$base"
+echo other > "$TMP/repo/other"
+git -C "$TMP/repo" add other >/dev/null 2>&1
+git -C "$TMP/repo" commit -qm plain >/dev/null 2>&1
+plain_tip="$(git -C "$TMP/repo" rev-parse HEAD)"
+
+prio_vs_trans='[{"id":"sp-p0","priority":0},{"id":"sp-p1","priority":1}]'
+got="$(printf 'sp-p1 %s 1\nsp-p0 %s 2\n' "$trans_tip" "$plain_tip" \
+       | PRIO_JSON="$prio_vs_trans" queue_sort_rows "$TMP/repo" "$base" 2>/dev/null | awk '{print $5}' | tr '\n' ' ')"
+is "a certified P0 without a suite-state change sorts ahead of a P1 with one" "sp-p0 sp-p1 " "$got"
+
+# 3c. WITHIN ONE PRIORITY the suite-state transition still sorts first, and certification
+#     age (arrival order, lowest first) still breaks any remaining tie.
+same_prio='[{"id":"sp-t","priority":2},{"id":"sp-p","priority":2}]'
+got="$(printf 'sp-p %s 1\nsp-t %s 2\n' "$plain_tip" "$trans_tip" \
+       | PRIO_JSON="$same_prio" queue_sort_rows "$TMP/repo" "$base" 2>/dev/null | awk '{print $5}' | tr '\n' ' ')"
+is "within a priority, the suite-state transition sorts first despite arriving later" \
+   "sp-t sp-p " "$got"
 
 # 4. FAIL OPEN. Ranking is an optimisation; if it breaks, the rows must still come out.
 #    Garbage priority data must not empty the queue.

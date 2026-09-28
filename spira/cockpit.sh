@@ -1705,7 +1705,7 @@ else:
         # shellcheck disable=SC2086
         _pj="$(bdjson show $_cert_ids 2>/dev/null)" || _pj="[]"
         # Sort and emit rows. Each sort row:
-        #   "<express_flag> <trans_flag> <prio_pad> <epoch_pad> <id> <tip>"
+        #   "<express_flag> <prio_pad> <trans_flag> <epoch_pad> <id> <tip>"
         while IFS= read -r _srow && [ "$_next_n" -lt 20 ]; do
             [ -n "$_srow" ] || continue
             read -r _ _ _ _ _nid _ <<< "$_srow"
