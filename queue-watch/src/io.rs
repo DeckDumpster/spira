@@ -16,6 +16,9 @@ pub struct Repo {
     pub path: PathBuf,
     pub base: String,
     pub forge: PathBuf,
+    /// `true` for a `queue.local` repo: `base` is a LOCAL branch (`local/main`) already in
+    /// this checkout, never a remote to fetch (see `read_on_base`).
+    pub local: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -200,7 +203,16 @@ pub fn read_pr_state(repo: &Repo, pr: &str) -> PrState {
 
 /// Is each member's tip on the base branch? Fetches first: an unfetched base is the stale
 /// checkout that reads as "not landed" (law-closed-is-not-landed).
+///
+/// A `queue.local` repo's base (`local/main`) is a LOCAL branch already in this checkout, not
+/// a remote-tracking one — `repo.local` is the structural fact from the repo-map's land
+/// column, so this never falls back to guessing a remote off the ref's own spelling. Nothing
+/// to fetch, and the ref is qualified to `refs/heads/...` so a repo that happens to have a
+/// remote genuinely named `local` still resolves the LOCAL branch, never that remote's copy.
 pub fn read_on_base(repo: &Repo, ms: &[Member]) -> Vec<(String, Option<bool>)> {
+    if repo.local {
+        return read_on_local_base(repo, ms);
+    }
     let remote = repo.base.split_once('/').map(|(r, _)| r).unwrap_or("origin");
     let fetched = Command::new("git")
         .arg("-C")
@@ -218,6 +230,28 @@ pub fn read_on_base(repo: &Repo, ms: &[Member]) -> Vec<(String, Option<bool>)> {
                 .arg("-C")
                 .arg(&repo.path)
                 .args(["merge-base", "--is-ancestor", &m.tip, &repo.base])
+                .status();
+            let v = match st.ok().and_then(|s| s.code()) {
+                Some(0) => Some(true),
+                Some(1) => Some(false),
+                _ => None,
+            };
+            (m.id.clone(), v)
+        })
+        .collect()
+}
+
+fn read_on_local_base(repo: &Repo, ms: &[Member]) -> Vec<(String, Option<bool>)> {
+    let base_ref = format!("refs/heads/{}", repo.base);
+    ms.iter()
+        .map(|m| {
+            if m.tip.is_empty() {
+                return (m.id.clone(), None);
+            }
+            let st = Command::new("git")
+                .arg("-C")
+                .arg(&repo.path)
+                .args(["merge-base", "--is-ancestor", &m.tip, &base_ref])
                 .status();
             let v = match st.ok().and_then(|s| s.code()) {
                 Some(0) => Some(true),
@@ -342,5 +376,48 @@ echo "Error: failed to open database: invalid connection" >&2; exit 1"#,
         assert_eq!(fs::read_to_string(&calls).unwrap().trim(), "2");
         let _ = fs::remove_file(&stub);
         let _ = fs::remove_file(&calls);
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let st = Command::new("git").arg("-C").arg(dir).args(args).status().expect("git");
+        assert!(st.success(), "git {args:?} in {}", dir.display());
+    }
+
+    fn git_out(dir: &Path, args: &[&str]) -> String {
+        let o = Command::new("git").arg("-C").arg(dir).args(args).output().expect("git");
+        assert!(o.status.success(), "git {args:?} in {}", dir.display());
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    }
+
+    // POSITIVE CONTROL — the hazard this guards against: a queue.local repo's base is a LOCAL
+    // branch that happens to contain a slash (local/main). Splitting it on the first '/' and
+    // fetching what remains as a remote is exactly what `repo.local` exists to bypass; proved
+    // here by configuring a remote genuinely NAMED "local" that cannot be fetched — deriving
+    // the remote from the ref's own spelling would go blind on that fetch failure, while this
+    // code answers correctly because it never attempts the fetch at all.
+    #[test]
+    fn read_on_local_base_needs_no_fetch_and_ignores_a_remote_named_local() {
+        let dir = scratch_path("local-repo");
+        fs::create_dir_all(&dir).unwrap();
+        git(&dir, &["init", "-q", "-b", "trunk"]);
+        git(&dir, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "base"]);
+        git(&dir, &["branch", "local/main", "trunk"]);
+        // A member landed on local/main: an ancestor of the local branch.
+        git(&dir, &["checkout", "-q", "local/main"]);
+        git(&dir, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "landed"]);
+        let tip_in = git_out(&dir, &["rev-parse", "HEAD"]);
+        // A member still on trunk, never merged into local/main: not an ancestor.
+        git(&dir, &["checkout", "-q", "trunk"]);
+        git(&dir, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "open"]);
+        let tip_out = git_out(&dir, &["rev-parse", "HEAD"]);
+
+        // NEGATIVE CONTROL PROVING THE CHECK IS REAL, not a hardcoded "local" denylist: a
+        // remote is genuinely named "local", pointed at a path that cannot be fetched.
+        git(&dir, &["remote", "add", "local", "/nonexistent-local-remote"]);
+
+        let repo = Repo { name: "l".into(), path: dir.clone(), base: "local/main".into(), forge: PathBuf::new(), local: true };
+        let res = read_on_base(&repo, &[Member { id: "sp-in".into(), tip: tip_in }, Member { id: "sp-out".into(), tip: tip_out }]);
+        assert_eq!(res, vec![("sp-in".to_string(), Some(true)), ("sp-out".to_string(), Some(false))]);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

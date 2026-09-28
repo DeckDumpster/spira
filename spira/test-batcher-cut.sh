@@ -20,6 +20,8 @@
 #   D. stacking        — with case A's batch PR still open, a second express-certified member
 #                       is pushed onto that PR's own head rather than waiting or opening a
 #                       second PR (law-queue-back-pressure-is-an-open-pr).
+#   G. land mode        — find_repo (sp-o1jm6) accepts queue.local, not only queue, and treats
+#                       queue.forge byte-identically to a bare queue row.
 #
 # tier: T2
 # covers: batcher-cut/src/*.rs batcher/src/*.rs spira/queue.sh spira/conf.sh spira/lib.sh spira/bead.sh spira/chamber/batcher.fayth spira/chamber/batcher.md
@@ -469,5 +471,48 @@ want "F: PLANTED REFUSAL — the refusal is logged" "spira-lc cut refused for" "
 is   "F: PLANTED REFUSAL — open-batch batch_id stays unset" "" "$(open_field batch_id)"
 is   "F: PLANTED REFUSAL — open-batch version stays unset"  "" "$(open_field version)"
 is   "F: PLANTED REFUSAL — member still lands BATCHED" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-chhh8")"
+
+# =============================================================================
+# CASE G — land mode (sp-o1jm6): find_repo accepts queue.local, never just queue, and
+# queue.forge behaves byte-identically to a bare queue row (the alias lib.sh's own repo_land
+# already normalizes). SEEN RED on today's code: find_repo refuses any mode but "queue", so
+# localmode's cut reports "mode is \"queue.local\", not queue" instead of ever reaching
+# should_cut.
+# =============================================================================
+echo
+echo "G. land mode: queue.forge alias regression, queue.local accepted by find_repo:"
+
+FREPO="$TMP/forge-alias-repo"
+git init -q -b main "$FREPO"
+git -C "$FREPO" commit -q --allow-empty -m base
+
+LREPO="$TMP/local-mode-repo"
+git init -q -b trunk "$LREPO"
+git -C "$LREPO" commit -q --allow-empty -m base
+git -C "$LREPO" branch local/main trunk
+
+cat > "$SH/repo-map" <<RMAP
+$REPONAME  | $REPO  | queue       | origin/main | | |
+forgealias | $FREPO | queue.forge | main        | | |
+localmode  | $LREPO | queue.local | local/main  | | |
+RMAP
+
+cut_other() {
+    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+    SPIRA_REPO_MAP="$SH/repo-map" \
+    SPIRA_QUEUE_DIR="$QUEUEDIR" \
+    SPIRA_QUEUE_BATCH_WAIT=999999 \
+    SPIRA_FORGE="$SH/forge-fixture.sh" \
+        "$BATCHER_BIN" cut "$1" --testenv-batch "$SH/testenv-batch-stub.sh" 2>&1
+}
+
+out_g_forge="$(cut_other forgealias)"
+nowant "G: queue.forge alias is accepted, not refused (regression)" "not queue" "$out_g_forge"
+want   "G: queue.forge alias reaches no-trigger cleanly, same as a bare queue row" "no round cut: no trigger" "$out_g_forge"
+
+out_g_local="$(cut_other localmode)"
+nowant "G: queue.local is accepted by find_repo (SEEN RED on today's code: refuses it)" "not queue" "$out_g_local"
+want   "G: queue.local reaches no-trigger cleanly, never a push" "no round cut: no trigger" "$out_g_local"
 
 tl_summary
