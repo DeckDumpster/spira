@@ -431,5 +431,42 @@ for _cause in $_reopen_causes; do
 done
 [ "$_pair_count" -gt 0 ] || bad "structural check found no paired causes in aeon.sh — detection is broken"
 
+# ======================================================================================
+echo
+echo "sp-a0of5: one re-filing's reopen-timing verdict does not rank as a second class"
+# ======================================================================================
+# incident.sh's file_one writes a 'recurred'/<incident-cause> event AND a
+# 'reopen'/<timing-verdict> event ('closed-while-live' or 'recurrence') for the SAME
+# re-filing (incident.sh:318,342). The timing verdict is not a cause — it is _reopen_cause's
+# read of how recently the bead closed — so ranking it separately double-counts the filing.
+#
+# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail): on the unfixed tree this
+# single paired filing produces TWO class lines: "1 sp-recur-closed-not-landed" AND
+# "1 sp-reopen-closed-while-live". Verified to fail before this commit.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-j1","title":"paired refiling","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-26T00:00:00Z"}
+JSONL
+_insert_event_at "sp-j1" "recurred" "closed-not-landed" "2026-09-26 22:04:27"
+_insert_event_at "sp-j1" "reopen"   "closed-while-live" "2026-09-26 22:04:31"
+
+out="$(census_out)"
+want   "sp-recur-closed-not-landed still ranked under its true cause" "1 sp-recur-closed-not-landed" "$out"
+nowant "sp-reopen-closed-while-live absent: it's a timing verdict, not a cause" "sp-reopen-closed-while-live" "$out"
+_paired_lines="$(printf '%s\n' "$out" | grep -c 'closed-not-landed\|closed-while-live' || true)"
+is "exactly one class line for the paired filing" "1" "$_paired_lines"
+
+# The 'recurrence' timing verdict gets the same treatment.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-j2","title":"paired refiling 2","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-26T00:00:00Z"}
+JSONL
+_insert_event_at "sp-j2" "recurred" "oldest-unsent" "2026-09-26 22:10:00"
+_insert_event_at "sp-j2" "reopen"   "recurrence"    "2026-09-26 22:10:04"
+
+out="$(census_out)"
+want   "sp-recur-oldest-unsent still ranked under its true cause" "1 sp-recur-oldest-unsent" "$out"
+nowant "sp-reopen-recurrence absent: it's a timing verdict, not a cause" "sp-reopen-recurrence" "$out"
+
 echo
 tl_summary
