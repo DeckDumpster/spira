@@ -963,6 +963,18 @@ else
             phase_skip "$_lc_cred_file already exists"
         fi
 
+        # spira_lc_ro (grants.sql) holds SELECT only, so unlike the credential above its
+        # secrecy protects nothing a leak would make worse — world-readable is what lets
+        # read-only callers (spira-lc history, tsd-lifecycle-export) authenticate without
+        # the privilege the spira_lc credential carries.
+        _lc_ro_cred_file="$_lc_cred_dir/credential-ro"
+        if [ ! -f "$_lc_ro_cred_file" ]; then
+            phase_act "generate the spira_lc_ro credential (mode 0644, world-readable)" \
+                sh -c "umask 022; head -c 32 /dev/urandom | base64 | tr -d '=+/\n' > '$_lc_ro_cred_file'; chown '$SPIRA_LC_UNIX_USER:$SPIRA_LC_UNIX_GROUP' '$_lc_ro_cred_file'; chmod 0644 '$_lc_ro_cred_file'"
+        else
+            phase_skip "$_lc_ro_cred_file already exists"
+        fi
+
         for _unit in spira-lc.service spira-lc.socket; do
             _lc_bin="$(command -v spira-lc 2>/dev/null || printf '%s' "$SPIRA_HOME/target/release/spira-lc")"
             "$SPIRA_HOME/systemd/render.py" "$SPIRA_HOME/systemd/$_unit" \
