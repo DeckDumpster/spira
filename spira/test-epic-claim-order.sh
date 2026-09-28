@@ -174,6 +174,27 @@ is "the 'started' check is one 'bd children' call per DISTINCT epic (2), not per
 
 # ==========================================================================================
 echo
+echo "T6a: epic-rank.sh (the round cutter) groups beads by epic, groups in rank order,"
+echo "     members within a group by their own priority"
+# ==========================================================================================
+seed <<JSONL
+$(epic sp-e1 1)
+$(closed_child sp-e1-done sp-e1)
+$(bead sp-e1-y sp-e1 1)
+$(bead sp-e1-x sp-e1 3)
+$(epic sp-e2 1)
+$(bead sp-e2-z sp-e2 2)
+JSONL
+cut_out="$(bash "$HERE/epic-rank.sh" --label plan)"
+is "grouped, group order by epic rank, members by their own priority within a group" \
+"== sp-e1 (P1, started) ==
+  sp-e1-y
+  sp-e1-x
+== sp-e2 (P1, unstarted) ==
+  sp-e2-z" "$cut_out"
+
+# ==========================================================================================
+echo
 echo "T6: aeon.sh's own claim, wired end to end, claims the epic-first candidate — not"
 echo "    whatever 'bd ready --claim' would have taken on bead priority alone"
 # ==========================================================================================
