@@ -7,9 +7,9 @@
 # WHAT THIS SUITE IS GUARDING. The archivist sweeps a session when its turn count has drifted
 # past SPIRA_ARCHIVIST_EVERY since the last successful archive, regardless of context depth.
 # A session that has not drifted is not swept. A session whose last run failed is not re-fired.
-# The band-3 push notification fires at most once per session. A sweep is skipped entirely when
-# the account capacity is paused. A pass archives at most SPIRA_ARCHIVIST_PER_PASS sessions,
-# choosing the most drifted first. No two archives run concurrently, even across entry points.
+# A sweep is skipped entirely when the account capacity is paused. A pass archives at most
+# SPIRA_ARCHIVIST_PER_PASS sessions, choosing the most drifted first. No two archives run
+# concurrently, even across entry points.
 #
 # Also guards the daily digest (sp-9zthk): `record` queues one line per durably-filed
 # finding, `digest-send` mails at most one `--kind note` a day and empties the queue only on
