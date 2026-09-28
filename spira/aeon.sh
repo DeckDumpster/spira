@@ -2212,7 +2212,7 @@ if [ "$st" = "closed" ] && [ "$committed" = "yes" ] && [ "$superseded" != 1 ]; t
                 printf '%s %s' "$_evict_tip" "$_evict_reason" > "$_evict_seen_f" 2>/dev/null || true
                 ;;
             reopen)
-                bead_reopen "$BEAD_ID" eviction-race "Reopened by aeon.sh: bead closed while landstate is $_evict_state — the branch was evicted from the batch while this session was in flight. The close is valid but the work cannot re-enter the queue while the bead is closed. Recertify the branch to re-enter the merge queue."
+                bead_reopen "$BEAD_ID" eviction-race "Reopened by aeon.sh: bead closed while landstate is $_evict_state — the branch was evicted from the batch while this session was in flight. The close is valid but the work cannot re-enter the queue while the bead is closed. Recertify the branch to re-enter the merge queue." || true
                 log "$FAYTH: $BEAD_ID REOPENED — closed with landstate=$_evict_state (eviction race)"
                 st="open"
                 REQUEUE_CAUSE="eviction-race"
@@ -2250,7 +2250,7 @@ try: d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d; print(d.get("c
 except Exception: print("")' 2>/dev/null)"
     _producer_msg=""
     [ -n "$_producer" ] && _producer_msg=" Escalate to $_producer if the criterion cannot be met — the delivers: label may not be removed."
-    bead_reopen "$BEAD_ID" delivers-mismatch "Reopened by aeon.sh: $_cv_msg. Set delivers:TYPE labels that match the evidence actually produced.${_producer_msg}"
+    bead_reopen "$BEAD_ID" delivers-mismatch "Reopened by aeon.sh: $_cv_msg. Set delivers:TYPE labels that match the evidence actually produced.${_producer_msg}" || true
     log "$FAYTH: $BEAD_ID REOPENED — delivers not verified: $_cv_msg"
     ;;
 reopen\|closed-without-commit)
@@ -2270,7 +2270,7 @@ reopen\|closed-without-commit)
     if bead_is_work_type "${_vd_issue_type:-}"; then
         log "$FAYTH: $BEAD_ID closed with nothing committed — work type, left to the submitted conversion at teardown"
     else
-        bead_reopen "$BEAD_ID" closed-without-commit "Reopened by aeon.sh: closed without a commit naming $BEAD_ID on $BRANCH. Closed is not landed."
+        bead_reopen "$BEAD_ID" closed-without-commit "Reopened by aeon.sh: closed without a commit naming $BEAD_ID on $BRANCH. Closed is not landed." || true
         log "$FAYTH: $BEAD_ID REOPENED — closed with nothing committed"
     fi
     ;;
@@ -2328,7 +2328,7 @@ Remedy: git -C $WORK checkout -- $_spd_identical"
 
 Override (only when the modification is intentional and will be committed separately): SPIRA_ALLOW_PROD_DIRTY=1"
 
-        bead_reopen "$BEAD_ID" prod-dirty "$_spd_note"
+        bead_reopen "$BEAD_ID" prod-dirty "$_spd_note" || true
         # PREVENT DOUBLE-FIRING. The SOP check and rebase check below both test [ st=closed ].
         # Setting st here skips them: the bead is already reopened, and re-running those checks
         # against a bead this process just put back would produce contradicting notes.
@@ -2397,7 +2397,7 @@ if [ "$SOP_REQUIRED" = 1 ] && [ "$st" = "closed" ] && [ "$superseded" != 1 ]; th
         # runbook should have said. POISONED is in the log line on purpose — it is one of
         # the strings the operator's panes treat as actionable, so this reaches somebody
         # without a second notification path to build and forget.
-        bead_reopen "$BEAD_ID" no-sop "Reopened and poisoned by aeon.sh: this incident was closed and no runbook came out of it. The session recorded neither an SOP written or amended (sop.sh write) nor a runbook whose CHECK confirmed (sop.sh applied --check pass), so nothing on the shelf is any better for this incident having happened and the next occurrence costs exactly as much. The closing rule is not optional: an incident resolved without an SOP must produce one. To clear this, write the runbook this incident should have left — or, if one already fitted and held, record it — then remove the spira-poison label."
+        bead_reopen "$BEAD_ID" no-sop "Reopened and poisoned by aeon.sh: this incident was closed and no runbook came out of it. The session recorded neither an SOP written or amended (sop.sh write) nor a runbook whose CHECK confirmed (sop.sh applied --check pass), so nothing on the shelf is any better for this incident having happened and the next occurrence costs exactly as much. The closing rule is not optional: an incident resolved without an SOP must produce one. To clear this, write the runbook this incident should have left — or, if one already fitted and held, record it — then remove the spira-poison label." || true
         bdq label add "$BEAD_ID" spira-poison >/dev/null 2>&1
         printf '%s spira: %s: %s REOPENED and POISONED — closed with no runbook written and no SOP application recorded\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$FAYTH" "$BEAD_ID"
         SOP_SILENT=1
@@ -2443,7 +2443,7 @@ if d: print((d[0].get("close_reason") or ""))' 2>/dev/null)" || _cr_raw=""
     if [ -n "$_cr_raw" ] && [ -z "${SPIRA_CLOSE_REASON_OVERRIDE:-}" ]; then
         _cr_hit="$(python3 "$SPIRA_HOME/close-reason-flags.py" "$_cr_raw" 2>/dev/null)" || _cr_hit=""
         if [ -n "$_cr_hit" ]; then
-            bead_reopen "$BEAD_ID" unfinished-reason "Reopened by aeon.sh: close reason contains a statute phrase (\"$_cr_hit\") that says the work is not done (law-no-close-reason-admits-unfinished). A remainder is a bead, not a sentence in the close reason. Two endings: (a) file the remainder with bead.sh, cite its id in the reason, then close; (b) groomer.sh depends-on-fix $BEAD_ID --fix <blocker-bead> if a fix is already in flight (law-a-bug-with-a-fix-in-flight-depends-on-it)."
+            bead_reopen "$BEAD_ID" unfinished-reason "Reopened by aeon.sh: close reason contains a statute phrase (\"$_cr_hit\") that says the work is not done (law-no-close-reason-admits-unfinished). A remainder is a bead, not a sentence in the close reason. Two endings: (a) file the remainder with bead.sh, cite its id in the reason, then close; (b) groomer.sh depends-on-fix $BEAD_ID --fix <blocker-bead> if a fix is already in flight (law-a-bug-with-a-fix-in-flight-depends-on-it)." || true
             printf '%s spira: %s: %s REOPENED — close reason contains statute phrase: %s. Override: SPIRA_CLOSE_REASON_OVERRIDE=<why>\n' \
                 "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$FAYTH" "$BEAD_ID" "$_cr_hit"
             st="open"
@@ -2478,7 +2478,7 @@ if [ "$GROOM_ESCALATION_CHECK" = 1 ] && [ "$st" = "closed" ] && [ "$superseded" 
         _unproven="$(groom_claims_verified "$_groom_new" "${_ask_json:-[]}" "$SESSION_EPOCH")"
         if [ -n "$_unproven" ]; then
             bead_reopen "$BEAD_ID" no-groom-ask \
-                "Reopened and poisoned: groom log claimed ESCALATED for $_unproven but no ask bead was filed in this session naming those beads. A log claim is not an escalation. File the ask via mail.sh send operator --kind question, then re-run the pass."
+                "Reopened and poisoned: groom log claimed ESCALATED for $_unproven but no ask bead was filed in this session naming those beads. A log claim is not an escalation. File the ask via mail.sh send operator --kind question, then re-run the pass." || true
             bdq label add "$BEAD_ID" spira-poison >/dev/null 2>&1
             printf '%s spira: %s: %s REOPENED and POISONED — groom log claimed ESCALATED for %s but no ask bead found in this session\n' \
                 "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$FAYTH" "$BEAD_ID" "$_unproven"
@@ -2602,7 +2602,7 @@ if [ "$st" = "closed" ] && [ "$committed" = "yes" ] && [ -z "$SOP_SILENT" ] && [
             else
                 _reopen_note="$_reopen_note A merge conflict is not an escalation — the next aeon is handed the rebase and must resolve it."
             fi
-            bead_reopen "$BEAD_ID" rebase-conflict "$_reopen_note"
+            bead_reopen "$BEAD_ID" rebase-conflict "$_reopen_note" || true
             # THE TEARDOWN MUST NOT READ THIS BACK AS A FAILURE OF THE WORK. The work is committed
             # and the session closed on it; what is missing is a rebase over commits that landed
             # while it ran, which is a fact about the queue. Charging it made the busiest branches

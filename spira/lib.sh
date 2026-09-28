@@ -1732,12 +1732,12 @@ except Exception:
 # the 23 reopens the landing log holds had the same defect. Clearing the assignee is what
 # makes a reopen a reopen; it is done here so no site can forget it.
 #
-# IT ALWAYS RETURNS 0, and that is load-bearing rather than sloppy. Callers reopen under
-# `set -e`, and a bd that refuses either half would otherwise abort the caller partway —
-# leaving a bead reopened with no record of WHY, so the next aeon reads an ordinary open
-# bead and repeats whatever produced it. That is worse than not reopening at all. Each half
-# is guarded for the same reason, and bd's refusal is reported on stderr where the harness
-# log keeps it.
+# RETURNS NON-ZERO IF ANY SUB-OPERATION FAILED, so a caller that needs to know — verdict.sh's
+# _attr_eject, which must not report an ejection that never reopened the bead (sp-vjfv6) —
+# can branch on it. Every other call site fires this under `set -e` and does not check the
+# return, so each is suffixed `|| true`: a bd refusal must not abort the caller partway,
+# leaving a bead reopened with no record of WHY. bd's refusal is reported on stderr where the
+# harness log keeps it either way.
 #
 # <cause> is a stable slug (gate-red, rebase-conflict, closed-without-commit, …) written
 # as a harness event row so census.sh can break sp-reopen into classified subclasses.
@@ -1780,7 +1780,7 @@ bead_reopen() {
     _bump_write_event "$id" reopen "$cause" || rc=1
     [ -n "$note" ] && { bdq note "$id" "$note" >/dev/null 2>&1 || rc=1; }
     [ "$rc" = 0 ] || printf 'bead_reopen: %s — bd refused the reopen, the release or the note\n' "$id" >&2
-    return 0
+    return "$rc"
 }
 
 # verdict_committed <repo> <branch> <bead-id> [window] -> "yes" or "no"

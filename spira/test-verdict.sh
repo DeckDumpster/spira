@@ -69,6 +69,8 @@
 #      by any diff, phase 2/3 short-circuited by an earlier eject) is logged
 #      explicitly as "unattributed" in the machine-readable results — never
 #      just absent (sp-yivi7 archivist note, batch PR 297).
+#  44. Failed reopen blocks ejection: bd refuses bead_reopen → no EJECTED mark,
+#      no "ejected" mail, refusal logged, escalation mail sent.
 #
 # MOVED (docs/test-plan/landing-merge-queue.md UC-43/44/49, section 4 cluster 1):
 #   Cases 12, 14, 17, 18, 27 (age/idle/retry classification over verdict_action,
@@ -667,7 +669,15 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 #     POSITIVE CONTROL (case 16): same shape of batch with no offender — the
 #     all-suites repro finds nothing, the batch head is also green, and all
 #     members are returned to CERTIFIED without ejection or halving.
+#
+#     sp-vd-a2 must exist in testdb so bead_reopen returns 0 for it (it is
+#     open, so bd reopen is a no-op with exit 0). Without this, bead_reopen
+#     returns 1 (no issue found), _attr_eject escalates, and EJECTED is never
+#     written — which is the correct production behaviour but would hide the
+#     diff-attribution logic that this case exercises.
 # =============================================================================
+printf '{"id":"sp-vd-a2","title":"t","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+    | testdb_seed
 printf 'red\n' > "$MEMBER_RC_DIR/sp-vd-a2"
 printf 'green\n' > "$MEMBER_RC_DIR/sp-vd-a1"
 
@@ -798,7 +808,11 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 # =============================================================================
 # 20. ALWAYS-RED CONTROL — same batch shape as case 19, but suite fails twice.
 #     The member must still be ejected (retry does not suppress a real failure).
+#     sp-vd-g1 must exist in testdb so bead_reopen returns 0 (open bead: bd
+#     reopen is a no-op with exit 0); without it _attr_eject escalates instead.
 # =============================================================================
+printf '{"id":"sp-vd-g1","title":"t","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+    | testdb_seed
 MEMBER_RC_DEFAULT="red"
 
 base_sha20="$(git -C "$REPO" rev-parse origin/main)"
@@ -827,7 +841,11 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 # =============================================================================
 # 24. COULD-NOT-JUDGE MEMBER — rc=2 from one member does not exonerate others;
 #     the guilty member (rc=0) is still ejected.
+#     sp-vd-r1 must exist in testdb so bead_reopen returns 0 (open bead: bd
+#     reopen is a no-op with exit 0); without it _attr_eject escalates instead.
 # =============================================================================
+printf '{"id":"sp-vd-r1","title":"t","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+    | testdb_seed
 # Two members: sp-vd-r1 always fails (red → ejected). sp-vd-r2's dispatch faults
 # (harness fault). Only sp-vd-r1 must be ejected.
 MEMBER_RC_DEFAULT="red"
@@ -1024,7 +1042,11 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 #     present, is logged on the ejected bead's note.
 #     POSITIVE CONTROL: test-attribution.sh case 15 proves the two-strike
 #     track still applies when there is no bisect state to match against.
+#     sp-vd-bo1 must exist in testdb so bead_reopen returns 0 (open bead: bd
+#     reopen is a no-op with exit 0); without it _attr_eject escalates instead.
 # =============================================================================
+printf '{"id":"sp-vd-bo1","title":"t","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+    | testdb_seed
 build_batch sp-vd-bo1 > /dev/null
 bo1_tip="$(git -C "$REPO" rev-parse spira/sp-vd-bo1)"
 base_sha_30="$(grep '^base=' "$(batch_file)" | cut -d= -f2)"
@@ -1495,6 +1517,11 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 # suite list down to the one this check actually found red. The genuine
 # offender (sp-vd-bl2) is red for test-real-offender.sh alone, once baseline
 # exclusion has narrowed what's left to attribute.
+#
+# sp-vd-bl2 must exist in testdb so bead_reopen returns 0 (open bead: bd
+# reopen is a no-op with exit 0); without it _attr_eject escalates instead.
+printf '{"id":"sp-vd-bl2","title":"t","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+    | testdb_seed
 printf 'red\ntest-base-broken.sh\n' > "$MEMBER_RC_DIR/base"
 printf 'red\ntest-real-offender.sh\n' > "$MEMBER_RC_DIR/sp-vd-bl2"
 printf 'green\n' > "$MEMBER_RC_DIR/sp-vd-bl1"
@@ -1647,6 +1674,40 @@ want "43. silent-suite: attributed suite logged" \
      '"suite":"test-diffmarked-suite.sh","tier":"","case":"(attribution)","status":"attributed"' "$attrlog43"
 want "43. silent-suite: unpinned suite logged explicitly as unattributed, not absent" \
      '"suite":"test-silent-suite.sh","tier":"","case":"(attribution)","status":"unattributed"' "$attrlog43"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 44. FAILED REOPEN BLOCKS EJECTION (sp-vjfv6). Same batch shape as case 20
+#     (single always-red member) but sp-vd-nr1 is deliberately NOT seeded in
+#     testdb, so bd refuses its reopen. _attr_eject must not write the EJECTED
+#     mark or send the "ejected" mail; it must log the refusal and escalate.
+#     POSITIVE CONTROL: case 20's identical shape, with the member seeded,
+#     proves the normal path ejects and reports "ejected" — so this case's
+#     silence on EJECTED/ejected-mail is the refusal path, not a fixture gap.
+# =============================================================================
+: > "$RUN/landing.log"
+base_sha44="$(git -C "$REPO" rev-parse origin/main)"
+bwt44="$RUN/worktree/sp-vd-nr1"
+git -C "$REPO" worktree add -q -b "spira/sp-vd-nr1" "$bwt44" origin/main 2>/dev/null || true
+printf 'sp-vd-nr1\n' > "$bwt44/sp-vd-nr1.txt"
+git -C "$bwt44" add -A
+git -C "$bwt44" commit -q -m "sp-vd-nr1: work"
+tip_nr1="$(git -C "$REPO" rev-parse "spira/sp-vd-nr1")"
+printf 'BATCHED %s %s\n' "$tip_nr1" "$(date +%s)" > "$LANDSTATE/sp-vd-nr1"
+{ printf 'pr=64\nhead=%s\nbase=%s\nmembers=sp-vd-nr1:%s\nopened=%s\n' \
+    "$tip_nr1" "$base_sha44" "$tip_nr1" "$(date +%s)"; } > "$(batch_file)"
+printf 'red\nred-suite: test-attr-suite.sh\n' > "$FORGE_STATUS_FILE"
+MEMBER_RC_DEFAULT="red"
+out44="$(verdict "$REPONAME")"
+nowant "44. reopen-refused: no QUEUE ESCAPED"   "QUEUE ESCAPED"     "$(cat "$RUN/landing.log" 2>/dev/null)"
+want   "44. reopen-refused: refusal logged"      "bead_reopen: sp-vd-nr1" "$out44"
+nowant "44. reopen-refused: no ejected mail"     "ejected from"      "$(cat "$MAIL_LOG")"
+want   "44. reopen-refused: escalation mail"     "reopen refused"    "$(cat "$MAIL_LOG")"
+case "$(landstate sp-vd-nr1)" in
+    EJECTED*) bad "44. reopen-refused: no EJECTED landstate" "got: $(landstate sp-vd-nr1)" ;;
+    *) ok "44. reopen-refused: no EJECTED landstate" ;;
+esac
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 

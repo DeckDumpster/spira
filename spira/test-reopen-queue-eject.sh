@@ -21,12 +21,22 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 . "$HERE/testlib/gate-fixture.sh"
+. "$HERE/testdb.sh"
 command -v flock >/dev/null 2>&1 || { echo "  SKIP  flock is not on PATH"; exit 77; }
+testdb_require test-reopen-queue-eject
 
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
+TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 gate_fixture_init "$TMP"
 BR=spira/sp-ej1
 gate_fixture_branch "$BR"
+
+# _attr_eject now blocks the EJECTED mark unless bead_reopen actually succeeds
+# (sp-vjfv6), so sp-ej1 must exist in a real store for the writer section below —
+# SPIRA_DB_NONE would make every _attr_eject call fail the reopen and never reach
+# the sidecar write this suite exists to check.
+testdb_up reopen-queue-eject || { echo "test-reopen-queue-eject: could not build fixture database"; exit 1; }
+printf '{"id":"sp-ej1","title":"t","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+    | testdb_seed
 
 # A gate command that only ever reports what it was handed, so every case below is one
 # gate.sh run rather than a hand-rolled read of the sidecar.
@@ -53,13 +63,16 @@ is "no eject history: nothing reaches the gate command" "" "$(seen_ejected sp-no
 # ---------------------------------------------------------------------------
 # THE REAL WRITER. verdict.sh's _attr_eject is what the merge queue calls when it ejects a
 # branch; it reopens the bead, marks the landstate EJECTED, and writes the suites CSV to
-# $LANDSTATE/<id>.ejected. SPIRA_DB points nowhere and SPIRA_RUN is the fixture's own RUN
-# (so LANDSTATE here is the same directory gate.sh's subprocess below reads), so the bead
-# and mail side effects _attr_eject also has fail closed and harmless rather than reaching
-# anything real (law-run-in-explicit-minimal-environment).
+# $LANDSTATE/<id>.ejected. SPIRA_DB points at the throwaway testdb fixture (sp-ej1 seeded
+# open, so the reopen is a harmless no-op) rather than nowhere: _attr_eject now blocks the
+# EJECTED mark when bead_reopen fails (sp-vjfv6), so a reopen that cannot succeed would
+# never reach the sidecar write this suite checks. SPIRA_RUN is still the fixture's own RUN
+# (so LANDSTATE here is the same directory gate.sh's subprocess below reads), so the mail
+# side effect _attr_eject also has is harmless rather than reaching anything real
+# (law-run-in-explicit-minimal-environment).
 # ---------------------------------------------------------------------------
 (
-    export HOME="$HOMEDIR" SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB_NONE"
+    export HOME="$HOMEDIR" SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD"
     . "$HERE/verdict.sh"
     _attr_eject sp-ej1 deadbeef test-other.sh 1 repo suite-overlap "" "" "" "" "" "" >/dev/null 2>&1
 )
