@@ -81,4 +81,68 @@ syh "$f"; wantrc "an empty trace does not yield" 1 "$?"
 
 syh "$TMP/no-such-file.log"; wantrc "an unreadable trace does not yield" 1 "$?"
 
+# ===========================================================================
+echo
+echo "trace-based detection (sp-47d49) — a tool call the harness moved to the background,"
+echo "with no later tool_result for that tool_use_id, yields even when the model's closing"
+echo "prose never mentions waiting:"
+# ===========================================================================
+# prose_only <file> -> the OLD detector: regex over the last assistant text only. Ported
+# here (rather than diffed against a prior commit) so this suite still proves the gap even
+# after the trace-based check above is deleted or changed — the whole point is that a
+# prose-only regex cannot see this fixture, on ANY revision of the phrasing table.
+prose_only() {
+    python3 -c '
+import sys, json, re
+PATTERNS = [
+    r"background task notification",
+    r"background.{0,30}(wait|waiting|woken|wake|notification)",
+    r"(wait|waiting).{0,40}background.{0,30}task",
+    r"will be woken",
+    r"run_in_background",
+]
+last_text = ""
+for line in sys.stdin:
+    line = line.strip()
+    if not line.startswith("{"): continue
+    try: e = json.loads(line)
+    except Exception: continue
+    if e.get("type") != "assistant": continue
+    for c in (e.get("message", {}) or {}).get("content", []) or []:
+        if c.get("type") == "text" and c.get("text", "").strip():
+            last_text = c["text"]
+if not last_text:
+    sys.exit(1)
+for p in PATTERNS:
+    if re.search(p, last_text, re.IGNORECASE | re.DOTALL):
+        sys.exit(0)
+sys.exit(1)
+' < "$1"
+}
+
+: > "$f"
+python3 -c 'import json; print(json.dumps({"type":"assistant","message":{"id":"m1","content":[
+    {"type":"text","text":"Running the test suite now."},
+    {"type":"tool_use","id":"toolu_bg1","name":"Bash","input":{"command":"bash spira/testenv-batch.sh --suites test-foo.sh branch","timeout":1800000}}
+]}}))' >> "$f"
+python3 -c 'import json; print(json.dumps({"type":"user","message":{"content":[
+    {"type":"tool_result","tool_use_id":"toolu_bg1","content":"Command running in the background with ID bash_1. Command was moved to the background because it exceeded the 120000ms timeout. You will be notified when it completes."}
+]}}))' >> "$f"
+
+prose_only "$f"; wantrc "POSITIVE: prose-only detector misses the backgrounded-tool-call fixture (today's gap)" 1 "$?"
+syh "$f"; wantrc "trace-based detector catches the same fixture: backgrounded tool_use with no later tool_result" 0 "$?"
+
+: > "$f"
+python3 -c 'import json; print(json.dumps({"type":"assistant","message":{"id":"m1","content":[
+    {"type":"tool_use","id":"toolu_bg2","name":"Bash","input":{"command":"slow command","timeout":1800000}}
+]}}))' >> "$f"
+python3 -c 'import json; print(json.dumps({"type":"user","message":{"content":[
+    {"type":"tool_result","tool_use_id":"toolu_bg2","content":"Command running in the background with ID bash_2. Moved to the background."}
+]}}))' >> "$f"
+python3 -c 'import json; print(json.dumps({"type":"assistant","message":{"id":"m2","content":[{"type":"text","text":"Finished up."}]}}))' >> "$f"
+python3 -c 'import json; print(json.dumps({"type":"user","message":{"content":[
+    {"type":"tool_result","tool_use_id":"toolu_bg2","content":"exit 0\nall tests passed"}
+]}}))' >> "$f"
+syh "$f"; wantrc "a backgrounded call later resolved by a tool_result for the same id does not yield" 1 "$?"
+
 tl_summary

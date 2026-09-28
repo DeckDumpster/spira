@@ -3062,8 +3062,12 @@ aeon_disposition() {
 }
 
 # session_yield_headless <logfile> -> 0 if the session's last turn ended waiting for a
-# background task notification. In headless mode there is no such channel: the session
-# terminates and background tasks are killed, leaving rc=0 with no diagnostic signal.
+# background task notification, OR the trace shows a tool call the harness moved to the
+# background with no later tool_result for that same tool_use_id. In headless mode there is
+# no channel for that notification to arrive on: the session terminates and background tasks
+# are killed, leaving rc=0 with no diagnostic signal. The trace check catches this even when
+# the model's own closing prose never mentions waiting — most sessions cut off by the
+# auto-background just end their turn on unrelated text (sp-47d49).
 session_yield_headless() {
     local f="${1:-}"
     [ -r "$f" ] || return 1
@@ -3076,16 +3080,38 @@ PATTERNS = [
     r"will be woken",
     r"run_in_background",
 ]
+BACKGROUNDED = re.compile(r"moved to the background", re.IGNORECASE)
 last_text = ""
+pending_bg = {}   # tool_use_id -> backgrounded and not yet resolved by a later tool_result
 for line in sys.stdin:
     line = line.strip()
     if not line.startswith("{"): continue
     try: e = json.loads(line)
     except Exception: continue
-    if e.get("type") != "assistant": continue
-    for c in (e.get("message", {}) or {}).get("content", []) or []:
-        if c.get("type") == "text" and c.get("text", "").strip():
-            last_text = c["text"]
+    etype = e.get("type")
+    content = (e.get("message", {}) or {}).get("content", []) or []
+    if etype == "assistant":
+        for c in content:
+            if c.get("type") == "text" and c.get("text", "").strip():
+                last_text = c["text"]
+            elif c.get("type") == "tool_use" and c.get("id") \
+                    and (c.get("input") or {}).get("run_in_background"):
+                pending_bg[c["id"]] = True
+    elif etype == "user":
+        for c in content:
+            if c.get("type") != "tool_result":
+                continue
+            tid = c.get("tool_use_id")
+            if tid is None:
+                continue
+            body = c.get("content")
+            text = body if isinstance(body, str) else json.dumps(body)
+            if BACKGROUNDED.search(text or ""):
+                pending_bg[tid] = True
+            else:
+                pending_bg.pop(tid, None)
+if pending_bg:
+    sys.exit(0)
 if not last_text:
     sys.exit(1)
 for p in PATTERNS:
@@ -4560,6 +4586,12 @@ print(", ".join(unproven))
 # delivery hooks into a claude session. Reads only $SPIRA_HOME (which hooks exist and are
 # executable), so both the sweep and the claimed-bead launch call the one function and carry
 # the same guards (law-guard-binds-the-caller).
+#
+# THE env BLOCK KEEPS COMMANDS IN THE FOREGROUND. A headless session has no channel for the
+# "moved to the background" notification the Bash tool sends past its default 120s: the
+# session ends the turn waiting for a wakeup that never comes, and the bead is left
+# in_progress with nothing having failed (sp-47d49). Raising the timeouts and disabling
+# auto-backgrounding outright is cheaper than teaching every aeon prompt to avoid the trap.
 aeon_settings() {
     python3 -c "
 import json, os
@@ -4580,7 +4612,12 @@ if os.access(guard, os.X_OK):
     pre_hooks.append({'type': 'command', 'command': guard, 'timeout': 5})
 if pre_hooks:
     hooks['PreToolUse'] = [{'hooks': pre_hooks}]
-print(json.dumps({'hooks': hooks}))
+env = {
+    'BASH_DEFAULT_TIMEOUT_MS': '1800000',
+    'BASH_MAX_TIMEOUT_MS': '3600000',
+    'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS': '1',
+}
+print(json.dumps({'hooks': hooks, 'env': env}))
 " 2>/dev/null
 }
 

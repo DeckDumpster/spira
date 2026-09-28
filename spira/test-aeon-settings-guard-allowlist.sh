@@ -104,5 +104,32 @@ case "$REAL_JSON" in
     *) bad "allow-listed hook bd-close-unacked-guard.sh still wired" "missing from [$REAL_JSON]" ;;
 esac
 
+# ===========================================================================
+echo
+echo "aeon_settings() carries the foreground env block (sp-47d49) — headless sessions have"
+echo "no channel for a >120s Bash call's 'moved to the background' notification, so it must"
+echo "never fire in one:"
+# ===========================================================================
+env_check() {
+    python3 -c '
+import json, sys
+d = json.loads(sys.argv[1])
+env = d.get("env", {})
+want = {
+    "BASH_DEFAULT_TIMEOUT_MS": "1800000",
+    "BASH_MAX_TIMEOUT_MS": "3600000",
+    "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
+}
+missing = [k for k, v in want.items() if env.get(k) != v]
+print(",".join(missing))
+' "$1"
+}
+env_missing="$(env_check "$REAL_JSON")"
+if [ -z "$env_missing" ]; then
+    ok "aeon_settings() env block sets BASH_DEFAULT_TIMEOUT_MS/BASH_MAX_TIMEOUT_MS/CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"
+else
+    bad "aeon_settings() env block sets BASH_DEFAULT_TIMEOUT_MS/BASH_MAX_TIMEOUT_MS/CLAUDE_CODE_DISABLE_BACKGROUND_TASKS" "missing/wrong: $env_missing"
+fi
+
 echo
 tl_summary
