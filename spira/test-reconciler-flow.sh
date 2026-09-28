@@ -173,6 +173,33 @@ seed_beads() {
         printf '{"id":"rcf-b%s","title":"t","status":"open","issue_type":"task","labels":["plan"],"updated_at":"2026-09-04T00:00:00Z"}\n' "$i"
     done | testdb_seed
 }
+emit_slots_sample() {
+    # emit_slots_sample <live> <ceiling> <ready> <paused 0|1> <age_seconds_ago> — one run/tsd/
+    # slots row (sp-69m85), oldest-first is not required: reconciler-flow orders by its own ts.
+    local live="$1" ceiling="$2" ready="$3" paused="$4" age="$5" ts
+    ts="$(epoch_iso "$(($(date +%s) - age))")"
+    mkdir -p "$SPIRA_RUN/tsd"
+    printf '{"ts":"%s","host":"t","family":"slots","live":%s,"ceiling":%s,"ready":%s,"capacity_paused":%s}\n' \
+        "$ts" "$live" "$ceiling" "$ready" "$paused" >> "$SPIRA_RUN/tsd/slots.jsonl"
+}
+emit_sentinel_phase() {
+    # emit_sentinel_phase <pass> <check> <secs> <age_seconds_ago> — one run/tsd/sentinel-phase
+    # row (sp-69m85).
+    local pass="$1" check="$2" secs="$3" age="$4" ts
+    ts="$(epoch_iso "$(($(date +%s) - age))")"
+    mkdir -p "$SPIRA_RUN/tsd"
+    printf '{"ts":"%s","host":"t","family":"sentinel-phase","pass":"%s","check":"%s","secs":%s}\n' \
+        "$ts" "$pass" "$check" "$secs" >> "$SPIRA_RUN/tsd/sentinel-phase.jsonl"
+}
+emit_bead_stage() {
+    # emit_bead_stage <key> <to_state> <age_seconds_ago> <seq> — one run/tsd/bead-stage row
+    # (sp-qz2yj), applied, in the lifecycle's own state names.
+    local key="$1" to_state="$2" age="$3" seq="$4" ts
+    ts="$(epoch_iso "$(($(date +%s) - age))")"
+    mkdir -p "$SPIRA_RUN/tsd"
+    printf '{"ts":"%s","host":"t","family":"bead-stage","seq":%s,"machine":"bead","key":"%s","event":"e","from_state":"X","to_state":"%s","applied":true,"actor":"a","source":"legacy"}\n' \
+        "$ts" "$seq" "$key" "$to_state" >> "$SPIRA_RUN/tsd/bead-stage.jsonl"
+}
 reset_env() {
     testdb_reset
     rm -rf "$SPIRA_RUN" "$SPIRA_DESIRED_DIR"
@@ -389,6 +416,191 @@ echo "the same unresolved streak does not alert again on the next pass"
 SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=2 run_pass
 is "still unobservable" unobservable "$(status_of flow:velocity:queue status)"
 is "no additional alert for the same streak" "1" "$(mail_count_for flow:velocity:queue)"
+
+# ============================================================================
+echo
+echo "12. Idle capacity: a free slot while ready work exists, across two consecutive slots"
+echo "    samples, is a gap; a single blip, a full fleet, a paused fleet or nothing ready is not"
+# ============================================================================
+reset_env
+run_pass
+is "no slots rows yet -> unobservable" unobservable "$(status_of flow:idle-capacity status)"
+
+reset_env
+emit_slots_sample 8 8 12 0 60
+emit_slots_sample 8 8 12 0 30
+run_pass
+is "a full fleet (live == ceiling) is satisfied" satisfied "$(status_of flow:idle-capacity status)"
+
+reset_env
+emit_slots_sample 8 8 12 0 60   # busy
+emit_slots_sample 3 8 12 0 30   # idle, but only the most recent sample
+run_pass
+is "one idle sample after a busy one is not yet a gap" satisfied "$(status_of flow:idle-capacity status)"
+
+reset_env
+emit_slots_sample 3 8 12 1 60   # idle, but capacity is deliberately paused
+emit_slots_sample 3 8 12 1 30
+run_pass
+is "idle capacity while deliberately paused is satisfied" satisfied "$(status_of flow:idle-capacity status)"
+
+reset_env
+emit_slots_sample 3 8 0 0 60    # idle, but nothing is ready to claim
+emit_slots_sample 3 8 0 0 30
+run_pass
+is "idle capacity with nothing ready to claim is satisfied" satisfied "$(status_of flow:idle-capacity status)"
+
+reset_env
+emit_slots_sample 3 8 12 0 60   # idle
+emit_slots_sample 3 8 12 0 30   # idle again — positive control
+run_pass
+is "idle capacity across two consecutive samples is a gap" gap "$(status_of flow:idle-capacity status)"
+is "but not yet confirmed — inside its grace period" False "$(status_of flow:idle-capacity is_gap)"
+is "no concierge alert while inside grace" "0" "$(mail_count_for flow:idle-capacity)"
+sleep 3
+run_pass
+is "the gap is confirmed on the next pass past grace" True "$(status_of flow:idle-capacity is_gap)"
+is "exactly one alert fired" "1" "$(mail_count_for flow:idle-capacity)"
+run_pass
+is "the same unresolved streak does not alert again" "1" "$(mail_count_for flow:idle-capacity)"
+
+# ============================================================================
+echo
+echo "13. Sentinel overrun: a pass's own wall time (its sentinel-phase rows summed) past twice"
+echo "    the configured timer period is a gap; the most recent pass is the one that counts"
+# ============================================================================
+reset_env
+SPIRA_FLOW_SENTINEL_PERIOD_SECS=100 run_pass
+is "no sentinel-phase rows yet -> unobservable" unobservable "$(status_of flow:sentinel-overrun status)"
+
+reset_env
+emit_sentinel_phase pass-1 CHECK1 60 90
+emit_sentinel_phase pass-1 CHECK2 60 30   # pass-1 total: 120s, under 2x100=200
+SPIRA_FLOW_SENTINEL_PERIOD_SECS=100 run_pass
+is "a pass under twice the period is satisfied" satisfied "$(status_of flow:sentinel-overrun status)"
+
+reset_env
+emit_sentinel_phase pass-old CHECK1 500 3600   # an old pass, badly overrun, but stale
+emit_sentinel_phase pass-new CHECK1 60 30      # the most recent pass: fine
+SPIRA_FLOW_SENTINEL_PERIOD_SECS=100 run_pass
+is "an old overrunning pass does not matter once a newer pass is fine" satisfied "$(status_of flow:sentinel-overrun status)"
+
+reset_env
+emit_sentinel_phase pass-2 CHECK1 150 90
+emit_sentinel_phase pass-2 CHECK2 150 30   # pass-2 total: 300s, over 2x100=200 — positive control
+SPIRA_FLOW_SENTINEL_PERIOD_SECS=100 run_pass
+is "a pass past twice the period is a gap" gap "$(status_of flow:sentinel-overrun status)"
+is "but not yet confirmed — inside its grace period" False "$(status_of flow:sentinel-overrun is_gap)"
+sleep 3
+SPIRA_FLOW_SENTINEL_PERIOD_SECS=100 run_pass
+is "the gap is confirmed on the next pass past grace" True "$(status_of flow:sentinel-overrun is_gap)"
+is "exactly one alert fired" "1" "$(mail_count_for flow:sentinel-overrun)"
+SPIRA_FLOW_SENTINEL_PERIOD_SECS=100 run_pass
+is "the same unresolved streak does not alert again" "1" "$(mail_count_for flow:sentinel-overrun)"
+
+# ============================================================================
+echo
+echo "14. Rework: reopens per landed bead over its own (6h default, pinned here to 3h) window,"
+echo "    above 1.0, is a gap — but report-only until 24h of bead-stage history exist"
+# ============================================================================
+reset_env
+SPIRA_FLOW_REWORK_WINDOW_HOURS=3 run_pass
+is "no bead-stage rows yet -> unobservable" unobservable "$(status_of flow:rework status)"
+
+reset_env
+# 24h+ of history (warm), a healthy ratio within the 3h rework window.
+for h in 1 6 12 18 24 30; do emit_bead_stage "rcf-warm-$h" LANDED $((h*3600)) "$h"; done
+emit_bead_stage rcf-r1 REWORK 3600 100
+emit_bead_stage rcf-l1 LANDED 3000 101
+emit_bead_stage rcf-l2 LANDED 1800 102
+SPIRA_FLOW_REWORK_WINDOW_HOURS=3 run_pass
+is "warm history, a healthy ratio, is satisfied" satisfied "$(status_of flow:rework status)"
+
+reset_env
+# 24h+ of history (warm) again, but this time the ratio crosses the threshold — positive control.
+for h in 1 6 12 18 24 30; do emit_bead_stage "rcf-warm2-$h" LANDED $((h*3600)) "$h"; done
+emit_bead_stage rcf-r2 REWORK 3600 200
+emit_bead_stage rcf-r3 REWORK 3000 201
+emit_bead_stage rcf-r4 REWORK 2400 202
+emit_bead_stage rcf-l3 LANDED 1800 203
+SPIRA_FLOW_REWORK_WINDOW_HOURS=3 run_pass
+is "warm history, ratio over threshold, is a gap" gap "$(status_of flow:rework status)"
+is "but not yet confirmed — inside its grace period" False "$(status_of flow:rework is_gap)"
+is "no alert while inside grace" "0" "$(mail_count_for flow:rework)"
+sleep 3
+SPIRA_FLOW_REWORK_WINDOW_HOURS=3 run_pass
+is "the gap is confirmed on the next pass past grace" True "$(status_of flow:rework is_gap)"
+is "exactly one alert fired" "1" "$(mail_count_for flow:rework)"
+
+reset_env
+# Only ~2h of bead-stage history — under the 24h warm-up — but a ratio far over the threshold.
+emit_bead_stage rcf-cold-1 LANDED 7200 1
+emit_bead_stage rcf-r5 REWORK 3600 2
+emit_bead_stage rcf-r6 REWORK 3000 3
+SPIRA_FLOW_REWORK_WINDOW_HOURS=3 run_pass
+is "still recorded as a gap even before the warm-up ends (report-only, not hidden)" gap "$(status_of flow:rework status)"
+is "no alert before 24h of history exist, even with a ratio this far over" "0" "$(mail_count_for flow:rework)"
+sleep 3
+SPIRA_FLOW_REWORK_WINDOW_HOURS=3 run_pass
+is "confirmed past its gap grace, but still report-only" True "$(status_of flow:rework is_gap)"
+is "still no alert — report-only until 24h of history exist" "0" "$(mail_count_for flow:rework)"
+
+# ============================================================================
+echo
+echo "15. Stage dwell regression: a lifecycle state's p90 dwell past 3x its trailing baseline"
+echo "    p90 is a gap — a healthy baseline is established with enough volume that the current"
+echo "    window's own bad data cannot dilute it (same shape section 7's round-health uses)"
+# ============================================================================
+reset_env
+run_pass
+is "no bead-stage rows yet -> unobservable" unobservable "$(status_of flow:dwell-regression:working status)"
+
+seed_dwell_baseline() {
+    # 80 beads dwelling ~100s in WORKING, completions spread from 1h to ~23h ago — well
+    # outside the current 30-minute window, but inside the 24h baseline.
+    local i seq=1 age_leave age_enter
+    for i in $(seq 1 80); do
+        age_leave=$((3600 + i * 1000))
+        age_enter=$((age_leave + 100))
+        emit_bead_stage "rcf-dwbl-$i" WORKING "$age_enter" "$seq"; seq=$((seq + 1))
+        emit_bead_stage "rcf-dwbl-$i" SUBMITTED "$age_leave" "$seq"; seq=$((seq + 1))
+    done
+}
+
+reset_env
+seed_dwell_baseline
+# Current window (last ~17 minutes): 8 beads dwelling ~250s — within 3x the ~100s baseline.
+seq=9000
+for i in $(seq 1 8); do
+    age_leave=$((60 + i * 120))
+    age_enter=$((age_leave + 250))
+    emit_bead_stage "rcf-dwcur-$i" WORKING "$age_enter" "$seq"; seq=$((seq + 1))
+    emit_bead_stage "rcf-dwcur-$i" SUBMITTED "$age_leave" "$seq"; seq=$((seq + 1))
+done
+run_pass
+is "current dwell within 3x the baseline is satisfied" satisfied "$(status_of flow:dwell-regression:working status)"
+
+reset_env
+seed_dwell_baseline
+# Current window: 8 beads dwelling ~3600s — 36x the ~100s baseline. Positive control.
+seq=9000
+for i in $(seq 1 8); do
+    age_leave=$((60 + i * 120))
+    age_enter=$((age_leave + 3600))
+    emit_bead_stage "rcf-dwbad-$i" WORKING "$age_enter" "$seq"; seq=$((seq + 1))
+    emit_bead_stage "rcf-dwbad-$i" SUBMITTED "$age_leave" "$seq"; seq=$((seq + 1))
+done
+run_pass
+is "current dwell past 3x the baseline is a gap" gap "$(status_of flow:dwell-regression:working status)"
+is "but not yet confirmed — inside its grace period" False "$(status_of flow:dwell-regression:working is_gap)"
+is "no alert while inside grace" "0" "$(mail_count_for flow:dwell-regression:working)"
+sleep 3
+run_pass
+is "the gap is confirmed on the next pass past grace" True "$(status_of flow:dwell-regression:working is_gap)"
+is "exactly one alert fired" "1" "$(mail_count_for flow:dwell-regression:working)"
+run_pass
+is "the same unresolved streak does not alert again" "1" "$(mail_count_for flow:dwell-regression:working)"
+is "a state with no transitions of its own stays satisfied" satisfied "$(status_of flow:dwell-regression:ready status)"
 
 # ============================================================================
 tl_summary

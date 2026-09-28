@@ -433,6 +433,8 @@ pub struct SpiraSection {
     pub flow_baseline_hours: Option<String>,
     pub flow_grace_secs: Option<String>,
     pub flow_unobservable_grace_secs: Option<String>,
+    pub flow_rework_window_hours: Option<String>,
+    pub flow_sentinel_period_secs: Option<String>,
     pub desired_dir: Option<String>,
     pub gh: Option<String>,
     pub gh_app_config: Option<String>,

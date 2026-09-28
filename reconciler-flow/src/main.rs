@@ -1,7 +1,9 @@
 // reconciler-flow — the flow half of the reconciler: backlog trend, stage velocities against
 // a trailing baseline (with optional per-stage floors from the desired-state document), stage
-// dwell, and round health (flip rate), over the run/tsd/ time series. Runs on a 30-minute
-// timer (Ryan's default window) — see systemd/spira-reconciler-flow.timer.
+// dwell, and round health (flip rate); plus idle capacity, sentinel overrun, rework rate and
+// stage dwell regression (design reconciler-time-series-2026-09-27 §3) — over the run/tsd/
+// time series. Runs on a 30-minute timer (Ryan's default window) — see
+// systemd/spira-reconciler-flow.timer.
 //
 // reconciler-flow --pass
 //
@@ -23,12 +25,15 @@ use reconciler_engine::core::{step, HysteresisState, RawStatus, Verdict};
 use reconciler_engine::io::{append_status, load_alerted, load_state, save_alerted, save_state, AlertedSinceMap, StateMap};
 
 use reconciler_flow::core::{
-    backlog_trend_raw, dwell_raw, round_health_raw, velocity_raw, BacklogObserved, DwellObserved,
-    RoundHealthObserved, VelocityObserved,
+    backlog_trend_raw, dwell_raw, dwell_regression_raw, idle_capacity_raw, round_health_raw,
+    rework_raw, sentinel_overrun_raw, velocity_raw, BacklogObserved, DwellObserved,
+    DwellRegressionObserved, ReworkObserved, RoundHealthObserved, VelocityObserved,
+    DWELL_REGRESSION_STATES,
 };
 use reconciler_flow::io::{
-    append_backlog_sample, backlog_baseline, backlog_count, dwell_metrics, flow_floors,
-    mail_concierge, round_health_metrics, velocity_metrics, waiting_to_land,
+    append_backlog_sample, backlog_baseline, backlog_count, dwell_metrics,
+    dwell_regression_metrics, flow_floors, mail_concierge, rework_metrics, round_health_metrics,
+    sentinel_pass_wall_seconds, slots_samples, velocity_metrics, waiting_to_land,
 };
 
 extern "C" {
@@ -69,6 +74,8 @@ struct Config {
     baseline_hours: f64,
     grace_secs: u64,
     unobservable_grace_secs: u64,
+    rework_window_hours: f64,
+    sentinel_timer_secs: u64,
     now_secs: u64,
     now_iso: String,
 }
@@ -139,6 +146,19 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(3600),
+            // The design's own rework window (6h), distinct from the 30-minute flow window
+            // the other new invariants share — a ratio over 30 minutes of landings is too
+            // thin a sample to mean anything.
+            rework_window_hours: env::var("SPIRA_FLOW_REWORK_WINDOW_HOURS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(6.0),
+            // Must match systemd/spira-sentinel.timer's OnUnitActiveSec — two independent
+            // literals of the same fact is exactly how they drift.
+            sentinel_timer_secs: env::var("SPIRA_FLOW_SENTINEL_PERIOD_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(120),
             now_secs: unix_now(),
             now_iso: compute_now_iso(),
             spira_run,
@@ -302,6 +322,84 @@ fn run_pass() -> Result<(), String> {
     let v = evaluate(&cfg, &mut state, "flow:round-health", round_health_raw_status);
     maybe_alert(&cfg, &mut alerted, "flow:round-health", &v);
     log_print(&format!("reconciler-flow: flow:round-health → {}", status_word(&v)));
+
+    // ── idle capacity ────────────────────────────────────────────────────────────────────
+    let idle_raw_status = match slots_samples(&cfg.duckdb_bin, &cfg.spira_run) {
+        Ok((prev, cur)) => idle_capacity_raw(&prev, &cur),
+        Err(e) => unobservable(e),
+    };
+    let v = evaluate(&cfg, &mut state, "flow:idle-capacity", idle_raw_status);
+    maybe_alert(&cfg, &mut alerted, "flow:idle-capacity", &v);
+    log_print(&format!("reconciler-flow: flow:idle-capacity → {}", status_word(&v)));
+
+    // ── sentinel overrun ─────────────────────────────────────────────────────────────────
+    let sentinel_raw_status = match sentinel_pass_wall_seconds(&cfg.duckdb_bin, &cfg.spira_run) {
+        Ok(secs) => sentinel_overrun_raw(secs, cfg.sentinel_timer_secs),
+        Err(e) => unobservable(e),
+    };
+    let v = evaluate(&cfg, &mut state, "flow:sentinel-overrun", sentinel_raw_status);
+    maybe_alert(&cfg, &mut alerted, "flow:sentinel-overrun", &v);
+    log_print(&format!("reconciler-flow: flow:sentinel-overrun → {}", status_word(&v)));
+
+    // ── rework ───────────────────────────────────────────────────────────────────────────
+    // Report-only until 24h of bead-stage history exist (design: "the rework alert starts at
+    // 1.0 reopens per landed bead over 6h ... report-only for 24h, then tuned") — reusing
+    // baseline_hours as that warm-up window, since it is already this pass's own "how much
+    // history counts as enough" answer.
+    match rework_metrics(&cfg.duckdb_bin, &cfg.spira_run, cfg.rework_window_hours) {
+        Ok((reopens, landed, history_hours)) => {
+            let raw = rework_raw(&ReworkObserved { reopens, landed });
+            let v = evaluate(&cfg, &mut state, "flow:rework", raw);
+            if history_hours >= cfg.baseline_hours {
+                maybe_alert(&cfg, &mut alerted, "flow:rework", &v);
+            } else {
+                log_print(&format!(
+                    "reconciler-flow: flow:rework → report-only, {history_hours:.1}h of {:.0}h warm-up",
+                    cfg.baseline_hours
+                ));
+            }
+            log_print(&format!("reconciler-flow: flow:rework → {}", status_word(&v)));
+        }
+        Err(e) => {
+            let v = evaluate(&cfg, &mut state, "flow:rework", unobservable(e));
+            maybe_alert(&cfg, &mut alerted, "flow:rework", &v);
+            log_print(&format!("reconciler-flow: flow:rework → {}", status_word(&v)));
+        }
+    }
+
+    // ── stage dwell regression ───────────────────────────────────────────────────────────
+    match dwell_regression_metrics(&cfg.duckdb_bin, &cfg.spira_run, cfg.window_hours, cfg.baseline_hours) {
+        Ok(rows) => {
+            for state_name in DWELL_REGRESSION_STATES {
+                let key = format!("flow:dwell-regression:{}", state_name.to_ascii_lowercase());
+                let raw = match rows.iter().find(|(s, ..)| s == state_name) {
+                    Some((_, cur_p90, cur_n, base_p90, base_n)) => dwell_regression_raw(&DwellRegressionObserved {
+                        p90_seconds: *cur_p90,
+                        n: *cur_n,
+                        baseline_p90_seconds: *base_p90,
+                        baseline_n: *base_n,
+                    }),
+                    None => dwell_regression_raw(&DwellRegressionObserved {
+                        p90_seconds: 0.0,
+                        n: 0,
+                        baseline_p90_seconds: 0.0,
+                        baseline_n: 0,
+                    }),
+                };
+                let v = evaluate(&cfg, &mut state, &key, raw);
+                maybe_alert(&cfg, &mut alerted, &key, &v);
+                log_print(&format!("reconciler-flow: {key} → {}", status_word(&v)));
+            }
+        }
+        Err(e) => {
+            for state_name in DWELL_REGRESSION_STATES {
+                let key = format!("flow:dwell-regression:{}", state_name.to_ascii_lowercase());
+                let v = evaluate(&cfg, &mut state, &key, unobservable(e.clone()));
+                maybe_alert(&cfg, &mut alerted, &key, &v);
+                log_print(&format!("reconciler-flow: {key} → {}", status_word(&v)));
+            }
+        }
+    }
 
     let _ = save_state(&cfg.state_path, &state);
     let _ = save_alerted(&cfg.alerted_path, &alerted);

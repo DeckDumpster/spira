@@ -325,3 +325,5 @@ test_par
 summon_jitter
 sccache_dav_addr
 round_vm_cache_home
+flow_rework_window_hours
+flow_sentinel_period_secs

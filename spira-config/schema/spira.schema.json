@@ -874,6 +874,18 @@
             "null"
           ]
         },
+        "flow_rework_window_hours": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "flow_sentinel_period_secs": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "flow_unobservable_grace_secs": {
           "type": [
             "string",
