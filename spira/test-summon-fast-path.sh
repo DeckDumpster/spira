@@ -74,6 +74,35 @@ is "precision: a builder unit does not count toward ops" "0" "$(aeon_count ops)"
 printf 'spira-aeon-builder-1700000001.service\n' >> "$MOCK_UNITS_FILE"
 is "two live units -> aeon_count returns 2" "2" "$(aeon_count builder)"
 
+# SELF-EXCLUSION (sp-0hnm6): a caller's own unit must not count toward its own capacity
+# question, or the FIRST aeon of a fayth with max=1 reads "1/1 at capacity" forever.
+: > "$MOCK_UNITS_FILE"
+printf 'spira-aeon-builder-1700000002.service\n' > "$MOCK_UNITS_FILE"
+is "sole unit is the caller's own -> excluded, count is 0" "0" \
+   "$(aeon_count builder spira-aeon-builder-1700000002.service)"
+printf 'spira-aeon-builder-1700000003.service\n' >> "$MOCK_UNITS_FILE"
+is "own unit excluded, one OTHER unit still counts -> 1" "1" \
+   "$(aeon_count builder spira-aeon-builder-1700000002.service)"
+is "no exclusion given -> both units count (unaffected callers keep old behaviour)" "2" \
+   "$(aeon_count builder)"
+
+# fayth_free must carry the same exclusion through to aeon_count — aeon.sh's own
+# capacity gate (aeon.sh:228) goes through fayth_free, not aeon_count directly.
+cat > "$T/chamber/onecap.fayth" <<'F'
+FAYTH_NAME=onecap
+FAYTH_LABELS="test"
+FAYTH_MAX_CONCURRENT=1
+FAYTH_HEARTBEAT_SECONDS=60
+F
+: > "$MOCK_UNITS_FILE"
+printf 'spira-aeon-onecap-self.service\n' > "$MOCK_UNITS_FILE"
+is "fayth_free: sole unit is caller's own -> 1 slot free, not 0" "1" \
+   "$(fayth_free onecap "" spira-aeon-onecap-self.service)"
+printf 'spira-aeon-onecap-other.service\n' >> "$MOCK_UNITS_FILE"
+is "fayth_free: own unit excluded, one other live -> 0 free (still capped)" "0" \
+   "$(fayth_free onecap "" spira-aeon-onecap-self.service)"
+rm -f "$T/chamber/onecap.fayth"
+
 echo
 echo "A (fallback) — a non-systemd-run SPIRA_SUMMON (test doubles) still counts by pidfile:"
 export SPIRA_SUMMON="$T/bin/mock-summon-noop"

@@ -818,18 +818,38 @@ aeon_alive() {           # aeon_alive <pidfile> -> 0 if the recorded pid is a li
     return 0
 }
 
-# aeon_count <fayth> -> how many aeons of that fayth are genuinely running.
+# aeon_own_unit -> this process's own spira-aeon-*.service unit name, or empty when not
+# running under one (a suite, a hand-run session, the pid-file fallback path).
+#
+# READ FROM /proc/self/cgroup, not passed down as an argument: systemd-run picks the unit
+# name (aeon.sh:2299, "spira-aeon-$f-$(date +%s)") before exec'ing this script, so nothing
+# in the aeon's own argv or environment carries it back. The cgroup path systemd places the
+# process in names the unit as its last non-empty segment, on both v1 and v2 hierarchies.
+aeon_own_unit() {
+    grep -oE 'spira-aeon-[^/[:space:]]+\.service' /proc/self/cgroup 2>/dev/null | tail -n1
+}
+
+# aeon_count <fayth> [exclude-unit] -> how many aeons of that fayth are genuinely running.
 #
 # THE UNIT LIST, NOT THE PID FILE, for the same reason aeons_live_total reads units: aeon.sh
 # writes its pidfile only after it claims a bead, so a fast re-summon landing in that gap
 # counted the slot as free a second time (sp-0y2av). ${SPIRA_SYSTEMCTL:-systemctl}, not bare
 # systemctl, so a suite can stub the fleet without a real user session.
 #
-# THE PID FALLBACK IS FOR SUITES, not for production, exactly as aeons_live_total's own.
+# EXCLUDE-UNIT IS THE CALLER'S OWN UNIT, when the caller is itself a live aeon of this
+# fayth. systemd-run's transient unit exists before aeon.sh's capacity check ever runs, so a
+# sweep or a claim counting units of its own fayth was counting itself — "1/1 at capacity"
+# on the very first aeon, respawning forever without ever seeing a free slot (sp-0hnm6).
+# Callers outside an aeon's own unit (the sentinel's CHECK 7, watchtower's fleet total) pass
+# nothing and get the old, unfiltered count.
+#
+# THE PID FALLBACK IS FOR SUITES, not for production, exactly as aeons_live_total's own. It
+# never sees this bug: aeon.sh writes its own pidfile only after this check has already run.
 aeon_count() {
-    local fayth="$1" n=0 pf
+    local fayth="$1" exclude="${2:-}" n=0 pf
     if [ "${SPIRA_SUMMON:-systemd-run}" = systemd-run ]; then
-        n="$("${SPIRA_SYSTEMCTL:-systemctl}" --user list-units "spira-aeon-${fayth}-*" --no-legend 2>/dev/null | wc -l)"
+        n="$("${SPIRA_SYSTEMCTL:-systemctl}" --user list-units "spira-aeon-${fayth}-*" --no-legend 2>/dev/null \
+            | awk -v ex="$exclude" '$1 != ex' | wc -l)"
         printf '%d' "${n:-0}"
         return
     fi
@@ -1954,7 +1974,9 @@ check2_reclaim_stale() {
     return 0
 }
 
-# fayth_free <fayth> [pool-remaining] -> free concurrency slots, never negative.
+# fayth_free <fayth> [pool-remaining] [exclude-unit] -> free concurrency slots, never negative.
+# exclude-unit is passed straight through to aeon_count: a live aeon asking its own capacity
+# question must not count its own unit (sp-0hnm6).
 #
 # THE POOL IS A BATTLE PARTY (the operator, 2026-09-07: "i have a tank, a healer, and then as
 # much DPS as i can"). SPIRA_MAX_AEONS is the party size, and every persona is one of two
@@ -2005,8 +2027,8 @@ check2_reclaim_stale() {
 # has no arithmetic to get wrong: a role that never competes cannot be starved.
 # THE POOL IS A CEILING, NOT A FLOOR. It only ever lowers what a persona may start, so a
 # host that sets nothing behaves exactly as before.
-fayth_free() {           # fayth_free <fayth> [pool-remaining]
-    local f="$1" pool="${2:-}" max have free
+fayth_free() {           # fayth_free <fayth> [pool-remaining] [exclude-unit]
+    local f="$1" pool="${2:-}" exclude="${3:-}" max have free
     max="$(fayth_get "$f" FAYTH_MAX_CONCURRENT 1)"; max="${max:-1}"
     # ELASTIC: the remainder of the pool, not this persona's own number. With no pool given
     # there is no remainder to take, so it falls back to its declared cap rather than to
@@ -2021,7 +2043,7 @@ fayth_free() {           # fayth_free <fayth> [pool-remaining]
     # from sentinel.sh) is how many MORE may start. Subtracting the running count from it
     # again withholds more the more is running, so the system saturates at half its ceiling
     # and reports itself at its limit.
-    have="$(aeon_count "$f")"
+    have="$(aeon_count "$f" "$exclude")"
     if [ "$is_remainder" = 1 ]; then
         free="$max"
     else
