@@ -36,6 +36,9 @@
 #                       Ops incident, never attributed suite by suite and never a harness fault
 #                       that drops the round unreported; a hung round-vm.sh is killed at the
 #                       configured wall bound.
+#   N. batcher parity (sp-7qk8u) — a CERTIFIED landstate record whose bead is open and not
+#                       spira-submitted (the shape an ejected-then-recertified bead is in) is
+#                       excluded from the round pool, not batched.
 #
 # tier: T2
 # covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* spira/conf.sh spira/lib.sh spira/bead.sh spira/chamber/batcher.fayth spira/chamber/batcher.md
@@ -1013,33 +1016,36 @@ is     "M: merged in topological order A, B, C" \
        "$(git -C "$LREPO" log --first-parent --format=%s "$head_m" | sed -n 's/^spira: land \(sp-cm[a-z0-9]*\).*/\1/p' | tac)"
 
 # =============================================================================
-# CASE J — batcher parity (sp-7qk8u): landstate CERTIFIED alone is not enough to admit a
+# CASE N — batcher parity (sp-7qk8u): landstate CERTIFIED alone is not enough to admit a
 # member. A bead re-marked CERTIFIED at the same tip right after an eject (sp-pedat) is open
 # again, not spira-submitted — the same admission batch.sh's own _certified_list already
 # refuses ("CERTIFIED landstate but bead status=open; refusing admission"). SEEN RED without
 # the fix: certified_pool admitted this member on landstate alone and the round cut it in.
 # =============================================================================
 echo
-echo "J. batcher parity: CERTIFIED landstate but bead status=open (not spira-submitted) is excluded:"
-rm -f "$(open_batch_file)"
+echo "N. batcher parity: CERTIFIED landstate but bead status=open (not spira-submitted) is excluded:"
+# sp-cjjjj (J), sp-cgcc3 (K3) and sp-cgdd4 (K4) all stay CERTIFIED by design in their own
+# cases and their branches persist in $REPO — retire them first so this round is only
+# sp-ciiii, the way case C already retires case G/H's own leftovers (line 548 above).
+rm -f "$(open_batch_file)" "$LANDSTATE/sp-cjjjj" "$LANDSTATE/sp-cgcc3" "$LANDSTATE/sp-cgdd4"
 plant_open sp-ciiii express
 git -C "$REPO" worktree add -q -b spira/sp-ciiii "$RUN/worktree/sp-ciiii" main
 printf 'i\n' > "$RUN/worktree/sp-ciiii/i.txt"
 git -C "$RUN/worktree/sp-ciiii" add -A
 git -C "$RUN/worktree/sp-ciiii" commit -q -m "sp-ciiii: work"
-tip_j="$(git -C "$REPO" rev-parse spira/sp-ciiii)"
+tip_n="$(git -C "$REPO" rev-parse spira/sp-ciiii)"
 git -C "$REPO" worktree remove -f "$RUN/worktree/sp-ciiii"
-certify sp-ciiii "$tip_j"
+certify sp-ciiii "$tip_n"
 
-prcreate_before_j="$(grep -c '^pr-create' "$FORGE_LOG")"
-out_j="$(STUB_RED_SUITES="" cut_repo)"
-want   "J: WARN names the excluded bead and its open status" "WARN not-closed sp-ciiii" "$out_j"
-want   "J: WARN names the reason" "refusing admission" "$out_j"
-nowant "J: never reports a PR opening for the excluded-only round" "PR " "$out_j"
-is     "J: forge pr-create not called" "$prcreate_before_j" "$(grep -c '^pr-create' "$FORGE_LOG")"
-is     "J: no open-batch file" "0" "$([ -f "$(open_batch_file)" ] && echo 1 || echo 0)"
-is     "J: sp-ciiii landstate stays CERTIFIED — untouched, not re-ejected" \
+prcreate_before_n="$(grep -c '^pr-create' "$FORGE_LOG")"
+out_n="$(STUB_RED_SUITES="" cut_repo)"
+want   "N: WARN names the excluded bead and its open status" "WARN not-closed sp-ciiii" "$out_n"
+want   "N: WARN names the reason" "refusing admission" "$out_n"
+nowant "N: never reports a PR opening for the excluded-only round" "PR " "$out_n"
+is     "N: forge pr-create not called" "$prcreate_before_n" "$(grep -c '^pr-create' "$FORGE_LOG")"
+is     "N: no open-batch file" "0" "$([ -f "$(open_batch_file)" ] && echo 1 || echo 0)"
+is     "N: sp-ciiii landstate stays CERTIFIED — untouched, not re-ejected" \
        "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-ciiii")"
-is     "J: sp-ciiii bead status stays open" "open" "$(status_of sp-ciiii)"
+is     "N: sp-ciiii bead status stays open" "open" "$(status_of sp-ciiii)"
 
 tl_summary
