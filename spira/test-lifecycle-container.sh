@@ -170,7 +170,10 @@ root_sql --use-db spira_lifecycle sql -q \
     >/dev/null 2>&1
 
 out="$(as_user spira_lc_ro "$RO_PASS" --use-db spira_lifecycle sql -q "SELECT bead_id FROM bead WHERE bead_id='sp-ro-hist'" -r json 2>&1)"
-want "POSITIVE CONTROL: spira_lc_ro CAN select bead" "sp-ro-hist" "$out"
+# "rows", not the bead id: a denied connection's error text echoes the failing query
+# verbatim ("...for query SELECT ... bead_id='sp-ro-hist': Access denied..."), so a wanted
+# string drawn from the query itself would pass on a refusal exactly as it does on success.
+want "POSITIVE CONTROL: spira_lc_ro CAN select bead" "rows" "$out"
 
 out="$(as_user spira_lc_ro "$RO_PASS" --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM event" -r json 2>&1)"
 want "POSITIVE CONTROL: spira_lc_ro CAN select event" "rows" "$out"
@@ -187,7 +190,10 @@ want "spira_lc_ro cannot INSERT event" "denied" "$out"
 hist_out="$(SPIRA_LC_USER=spira_lc_ro SPIRA_LC_PASSWORD="$RO_PASS" "$BIN" history sp-ro-hist)"
 hist_rc=$?
 is "spira-lc history <id> succeeds as the read-only user (sp-dz438 acceptance)" 0 "$hist_rc"
-want "spira-lc history <id> returns rows on this box" "sp-ro-hist" "$hist_out"
+# The pretty-printed JSON key, quoted and colon-spaced, not the bare id: on denial, cmd_history's
+# own error text echoes the failing query verbatim (lc_key = 'sp-ro-hist', unquoted key, no
+# colon), which would satisfy a bare "sp-ro-hist" check exactly as a real result would.
+want "spira-lc history <id> returns rows on this box" '"lc_key": "sp-ro-hist"' "$hist_out"
 
 unset RO_PASS
 
