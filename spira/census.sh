@@ -27,6 +27,12 @@
 # open remedy bead, or a closed remedy bead whose commit is not yet on the base.
 # Closed remedies beyond SPIRA_REMEDY_WINDOW days are excluded from the check.
 #
+# ACTOR FILTER — the ranked block only counts events written by harness or an aeon-*
+# session (_census_events_sql in lib.sh). An operator's hand-written events-table row
+# (e.g. an attempt-ledger offset) is real state, not a failure class, and is listed
+# instead under a trailing "hand-written (not ranked):" line when --with-suppressed
+# is given (law-absence-needs-a-positive-control).
+#
 # WHY THE COVERS LABEL, NOT THE TITLE OR DESCRIPTION
 # A label is a machine-readable primary key. A title is human prose and may drift from
 # the class name over the bead's lifetime. Grepping a description field requires parsing
@@ -207,5 +213,15 @@ while IFS=' ' read -r count class rest; do
         fi
     fi
 done <<< "$_RANKED"
+
+# HAND-WRITTEN LEDGER CORRECTIONS — events an operator inserted directly (actor
+# outside harness/aeon-*), excluded from the ranked block above by the actor
+# predicate in _census_events_sql. Listed here rather than dropped silently
+# (law-absence-needs-a-positive-control): a deliberate ledger correction is not a
+# failure class a fix could flatline (law-a-deliberate-state-is-not-a-fault), so it
+# must not compete for a Maechen selection, but it must not vanish either.
+if [ "$WITH_SUPPRESSED" -eq 1 ]; then
+    census_handwritten_run_sql | python3 "$CENSUS_PY/handwritten.py"
+fi
 
 exit 0

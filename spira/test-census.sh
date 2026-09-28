@@ -133,7 +133,7 @@ testdb_reset
 bid_stale="$(plant_bead "stale-watermark-bead")"
 _uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"
 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
-    "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$_uuid', '$bid_stale', 'recurred', 'test', 'stale-class', FROM_UNIXTIME(1000000000))" \
+    "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$_uuid', '$bid_stale', 'recurred', 'harness', 'stale-class', FROM_UNIXTIME(1000000000))" \
     >/dev/null 2>&1
 
 bid_live="$(plant_bead "live-watermark-bead")"
