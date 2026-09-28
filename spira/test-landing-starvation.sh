@@ -48,10 +48,10 @@ testdb_up landing-starvation || {
 }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
-# Two repos: REPO_A (home) and REPO_B (secondary), both hold mode. Hold (not queue) is
-# the fixture because it still runs a real per-branch gate_fits budget check — queue mode
-# certifies instantly with no local gate and so has nothing left for a budget to protect
-# (law-a-round-takes-certified-tips).
+# Two repos: REPO_A (home) and REPO_B (secondary), both hold mode. Hold (not queue) is the
+# fixture because its per-branch gate_fits budget check is the older, more heavily tested
+# path; queue mode shares the same gate_fits/LAND_GATE_RESERVE budget now too (see
+# test-certify.sh), so this suite need not duplicate that coverage per land mode.
 REPO_A="$TMP/repo-a"; REMOTE_A="$TMP/remote-a.git"; NAME_A=fixture-repo-a
 REPO_B="$TMP/repo-b"; REMOTE_B="$TMP/remote-b.git"; NAME_B=fixture-repo-b
 RUN="$TMP/run"; SH="$TMP/spira"

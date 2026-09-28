@@ -8,19 +8,24 @@
 #   ──────────────────────────────── ─────  ────  ────  ─────
 #   rebase_branch onto base           ✓            ✓
 #   confine.sh check                  ✓            ✓
-#   gate.sh                           ✓            ✓
+#   gate.sh                           ✓            ✓     ✓
 #   merge + push to base              ✓
 #   note bead, hold for hand                       ✓
+#   land_mark CERTIFIED                                   ✓
 #   rebase_survivors after landing    ✓
 #
 # pr mode: landing-pass owns it end-to-end (rebase, confine, push, PR, no gate).
 #
-# QUEUE MODE HAS NO STEP HERE (law-a-round-takes-certified-tips). This pass neither
-# rebases nor gates a queue-mode branch — the round (batcher-cut: merge, full corpus,
-# attribute.sh, eject) and CI are the only judges of a SUBMITTED branch. It marks a
-# closed branch CERTIFIED without running anything, so the round's own CERTIFIED-pool
-# read finds it; a branch that conflicts with the base is caught and returned for
-# rebase by the round builder itself, not by this pass.
+# QUEUE MODE DOES NOT REBASE HERE (law-a-round-takes-certified-tips): a branch that
+# conflicts with the base is caught and returned for rebase by the round builder itself,
+# not by this pass. It DOES gate here — restored 2026-09-28 (per Ryan: "bring it back,
+# and measure it") after a gap in which nothing gated a queue-mode branch at all: the
+# aeon's own teardown defers certification to this pass (sp-dv6ae) and this pass had
+# stopped gating too (sp-5d8j7), so a branch reached the round completely unjudged. The
+# gate run here is the repository's own gate command from SPIRA_REPO_MAP — fences plus
+# the suites its diff touches — bounded the same way push/pr/hold already are: gate.sh's
+# own SPIRA_GATE_TIMEOUT per branch, gate_fits/LAND_GATE_RESERVE for the pass. The
+# round's full corpus and CI remain the coarser, second check.
 #
 # land-modes: push hold queue
 #
@@ -1029,14 +1034,12 @@ for i in d:
             continue
         fi
 
-        # QUEUE MODE (queue and queue.local both): no local rebase, no local gate
-        # (law-a-round-takes-certified-tips). The round (batcher-cut, or land-local's
-        # round for queue.local) and CI/local proving are the only judges of a SUBMITTED
-        # branch now; a base conflict is caught and returned for rebase by the round
-        # builder itself. All this pass does is bookkeeping so the round's own
-        # CERTIFIED-pool read finds a branch the moment its bead closes, whether or not
-        # anything ever gated it — most already carry a gate verdict from the aeon's own
-        # queue.sh submit at teardown, and this never re-checks it.
+        # QUEUE MODE (queue and queue.local both): no local rebase — a base conflict is
+        # caught and returned for rebase by the round builder itself
+        # (law-a-round-takes-certified-tips). It IS gated here, once per tip, with the
+        # repository's own gate command (fences plus the suites its diff touches); see the
+        # header comment for why. The round's full corpus and CI are the second, coarser
+        # judges of a CERTIFIED branch.
         if repo_land_queued "$name"; then
             tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
             read -r _ls_st _ls_tip _ls_at _ls_reason <<< "$(land_state "$id" 2>/dev/null || true)"
@@ -1050,11 +1053,99 @@ for i in d:
                 log "CHECK6 $id: withdrawn at $tip — staying WITHDRAWN until the tip changes"
                 continue
             fi
-            if [ "${_ls_st:-}" != CERTIFIED ] || [ "${_ls_tip:-}" != "$tip" ]; then
-                land_mark "$id" CERTIFIED "$tip"
-                mark_submitted "$id" "$tip" certified
-                progress "certified $br in $name — no local gate, round and CI are the judges"
+            # ALREADY CERTIFIED AT THIS TIP: nothing to do. This is what keeps a branch from
+            # being re-gated every pass while it sits waiting for a round.
+            if [ "${_ls_st:-}" = CERTIFIED ] && [ "${_ls_tip:-}" = "$tip" ]; then
+                continue
             fi
+            # THE BUDGET CHECK SITS HERE, same as the push/pr/hold gate below: everything
+            # above is cheap, and a branch that needs no gate should still be processed in
+            # the tail of a pass.
+            if ! gate_fits; then
+                case "${_scan_extref[$id]:-}" in
+                    basefail:"$name":*)
+                        log "CHECK6 $id: base-fix branch — gating despite budget exhaustion" ;;
+                    *)
+                        _budget_cut=1; break ;;
+                esac
+            fi
+            _land_state "repo=$name" "branch=$br" "phase=gate"
+            gate_lock_wait
+            land_mark "$id" GATING "$tip"
+            gate_out="$(SPIRA_GATE_LOCK_WAIT="$_gate_wait" SPIRA_GATE_BEAD="$id" \
+                "$SPIRA_HOME/gate.sh" "$br" "$name" 2>&1)"
+            gate_rc=$?
+            _land_state "repo=$name" "branch=$br"
+            gate_outcome="$(spira_gate_outcome "$gate_rc")"
+            gate_reason="$(printf '%s' "$gate_out" \
+                | sed -n 's/^gate: VERDICT=[A-Z_]* reason=\([^ ]*\).*$/\1/p' | tail -1)"
+            gate_suite="$(printf '%s' "$gate_out" \
+                | sed -n 's/^gate: VERDICT=.* suite=\([^ ]*\).*$/\1/p' | tail -1)"
+            [ -n "$gate_suite" ] || gate_suite=-
+            if [ "$gate_rc" -ne 0 ]; then
+                log "CHECK6 $id: certification gate $gate_outcome on $br in $name (${gate_reason:-unspecified})"
+                land_mark "$id" GATED "$tip" "$gate_outcome:${gate_reason:-unspecified}"
+                if [ "$gate_rc" = "$SPIRA_GATE_BASEFAIL" ]; then
+                    log "CHECK6 $id: held — the base fails its own gate (suite $gate_suite)"
+                    if _basefail_fix_check "$id" "$gate_out" "$gate_suite" "$name"; then
+                        local _fse_cert="${_scan_extref[$id]:-}"
+                        _fse_cert="${_fse_cert#basefail:$name:}"
+                        _cur_st="$(bead_land_status "$id")"
+                        if [ "${_cur_st:-}" = "closed" ]; then
+                            log "CHECK6 $id: base-fix: $br is green on $name's red suite $_fse_cert — certifying"
+                            land_mark "$id" CERTIFIED "$tip"
+                            mark_submitted "$id" "$tip" certified
+                            progress "certified $br in $name — base-fix (suite $_fse_cert)"
+                        fi
+                    else
+                        if [ "${basefail_filed:-}" != 1 ]; then
+                            basefail_filed=1
+                            base_incident "$name" "$gate_suite" "${gate_reason:-base-red}" \
+                                          "$br" "$base" "$gate_out"
+                        fi
+                    fi
+                    continue
+                fi
+                if ! spira_gate_blames_branch "$gate_rc"; then
+                    # NO_VERDICT — the machinery could not judge, so nobody is charged: no
+                    # reopen, no attempt. A repeating NO_VERDICT still escalates
+                    # (spira_land_noverdict), which is the "reported once" this bead asked
+                    # for rather than a silent rc=75 followed by certification anyway.
+                    spira_land_noverdict "$id" "$br" "$name" "${gate_reason:-unspecified}" \
+                        "$gate_outcome" "$gate_out"
+                    continue
+                fi
+                _cur_st="$(bead_land_status "$id")"
+                if [ "${_cur_st:-}" != "closed" ]; then
+                    log "CHECK6 $id: bead is now ${_cur_st:--} (was closed at scan time) — not reopening $br"
+                    continue
+                fi
+                local _rn_cert _rn_scope
+                _rn_cert="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
+                _rn_scope="$(cert_gate_red_scope_note "$name" "$br" "$gate_suite")"
+                bead_reopen "$id" cert-gate-red "Reopened by sentinel: branch $br failed $name's certification gate. The branch carries $_rn_cert commit(s) from the previous session — the next aeon should resume from the existing work, not restart.
+${_rn_scope:+
+$_rn_scope}
+
+$(printf '%s' "$gate_out" | tail -20)"
+                unset _rn_cert _rn_scope
+                progress "reopened $id — failed the certification gate"
+                spira_event bead.reopened "$id" "reopened $id — $br failed $name's certification gate" \
+                    "$(printf '%s' "$gate_out" | tail -3)" || true
+                land_mark "$id" RED "$tip" gate
+                continue
+            fi
+            [ "${gate_reason:-}" = cached ] \
+                && log "CHECK6 $id: certification PASS on $br in $name — this tree had already passed"
+            rm -f "$SPIRA_RUN/noverdict/$(printf '%s' "$br" | tr -c 'A-Za-z0-9._-' '-')"* 2>/dev/null
+            _cur_st="$(bead_land_status "$id")"
+            if [ "${_cur_st:-}" != "closed" ]; then
+                log "CHECK6 $id: bead is now ${_cur_st:--} (was closed at scan time) — not certifying $br"
+                continue
+            fi
+            land_mark "$id" CERTIFIED "$tip"
+            mark_submitted "$id" "$tip" certified
+            progress "certified $br in $name — gate passed, round and CI are the remaining judges"
             continue
         fi
 

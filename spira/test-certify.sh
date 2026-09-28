@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
-# test-certify.sh — queue land mode: a closed branch is CERTIFIED immediately, with no
-# local rebase and no local gate (law-a-round-takes-certified-tips). The round (batcher-cut)
-# and CI are the only judges of a SUBMITTED branch now; this pass is pure bookkeeping so the
-# round's own CERTIFIED-pool read finds a branch the moment its bead closes.
+# test-certify.sh — queue land mode: a closed branch is gated once per tip, then CERTIFIED
+# on PASS, with no local rebase (law-a-round-takes-certified-tips — a base conflict is caught
+# and returned for rebase by the round builder itself). Restored 2026-09-28 (sp-8gr1w, per
+# Ryan: "bring it back, and measure it") after a gap in which nothing gated a queue-mode
+# branch at all. The round (batcher-cut) and CI remain the coarser, second judges of a
+# CERTIFIED branch.
 #
-# Cases: a branch is CERTIFIED with zero gate.sh calls; a second pass at the same tip is a
-# no-op; a tip move re-certifies the new tip, still with no gate call; ten branches in one
-# pass all reach CERTIFIED with zero gate.sh invocations total; a push-mode fixture in the
-# same repo-map still pushes and still calls the gate (positive control — proves the gate
-# stub counter works and that push mode is unaffected).
+# Cases: a branch is gated once and CERTIFIED on PASS; a second pass at the same tip is a
+# no-op (no re-gate); a tip move re-gates and re-certifies the new tip; a FAIL reopens the
+# bead and does not certify; a NO_VERDICT (e.g. a gate that timed out) does not certify and
+# does not reopen the bead — the branch keeps its turn; ten branches in one pass all reach
+# CERTIFIED with exactly ten gate.sh invocations; a push-mode fixture in the same repo-map
+# still pushes and still gates (positive control — proves the gate stub counter works and
+# that push mode is unaffected).
 #
-# The gate is a stub counter. Every "zero calls" assertion below depends on the positive
-# control showing the counter works: the push-mode fixture must increment it.
+# The gate is a stub counter whose verdict per branch is steered by a control file
+# (law-a-check-that-finds-nothing-must-first-prove-it-could-have-found-something) — the FAIL
+# and NO_VERDICT cases are the plant, and the assertion that the branch is NOT certified is
+# what would fail against the queue-mode arm this replaces.
 #
 # confine.sh is a stub; the real db is testdb.sh with an embedded engine.
 # The bare remote is real git so ancestry checks are real.
@@ -47,12 +53,26 @@ stub queue.sh 'printf "%s\n" "$*" >> "'"$QUEUE_LOG"'"; exit 0'
 stub gh 'exit 1'
 
 # THE GATE IS ALSO THE COUNTER. Each invocation appends the branch name so the suite can
-# assert it was (or was not) called (law-absence-needs-a-positive-control).
+# assert it was (or was not) called (law-absence-needs-a-positive-control). Its verdict per
+# branch is steered by a control file — PASS unless a case wrote FAIL or NOVERDICT for that
+# branch name into $TMP/gate-verdicts/<branch>.
 GATE_COUNT="$TMP/gate-count"
+mkdir -p "$TMP/gate-verdicts/spira"
 stub gate.sh '
 printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
-printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
-exit 0'
+v="'"$TMP"'/gate-verdicts/$1"
+mode="PASS"; [ -f "$v" ] && mode="$(cat "$v")"
+case "$mode" in
+FAIL)
+    printf "gate: VERDICT=FAIL reason=suite-red suite=test-stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
+    exit 1 ;;
+NOVERDICT)
+    printf "gate: VERDICT=NO_VERDICT reason=timeout suite=- branch=%s repo=%s\n" "$1" "${2:-?}" >&2
+    exit 75 ;;
+*)
+    printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
+    exit 0 ;;
+esac'
 
 B() { bd -C "$SPIRA_DB" "$@"; }
 status_of() {
@@ -104,12 +124,12 @@ gate_n()       { [ -f "$GATE_COUNT" ] && wc -l < "$GATE_COUNT" || echo 0; }
 echo "test-certify.sh"
 
 # -----------------------------------------------------------------------------------------
-# QUEUE-MODE ENTRY: a closed branch is CERTIFIED with zero gate calls.
+# QUEUE-MODE ENTRY: a closed branch is gated exactly once, then CERTIFIED on PASS.
 # -----------------------------------------------------------------------------------------
 seed; branch sp-cert-green
 before="$(main_tip)"
 out="$(landing)"
-is   "gate NOT called at queue-mode entry"   "0"        "$(gate_n)"
+is   "gate called once at queue-mode entry"  "1"        "$(gate_n)"
 want "certify is reported"                   "certified spira/sp-cert-green" "$out"
 is   "remote main is unchanged"              "$before"  "$(main_tip)"
 case "$(landstate sp-cert-green)" in
@@ -119,28 +139,64 @@ esac
 is   "bead stays closed after certify"       "closed"   "$(status_of sp-cert-green)"
 
 # -----------------------------------------------------------------------------------------
-# SECOND PASS ON THE SAME TIP: no-op — no gate call, no duplicate certify message.
+# SECOND PASS ON THE SAME TIP: no-op — already CERTIFIED at this tip, so no re-gate and no
+# duplicate certify message. This is what keeps a waiting branch from being re-gated every
+# pass.
 # -----------------------------------------------------------------------------------------
 out2="$(landing)"
-is   "gate still not called on second pass"  "0"        "$(gate_n)"
+is   "gate not re-called on second pass"     "0"        "$(gate_n)"
 nowant "no second certify message"           "certified spira/sp-cert-green" "$out2"
 
 # -----------------------------------------------------------------------------------------
-# TIP MOVE: moving the branch tip after certification re-certifies the new tip — still
-# with zero gate calls.
+# TIP MOVE: moving the branch tip after certification re-gates and re-certifies the new tip.
 # -----------------------------------------------------------------------------------------
 seed; branch sp-cert-move
-landing > /dev/null   # first pass: certify
+landing > /dev/null   # first pass: gate + certify
 printf 'v2\n' > "$RUN/worktree/sp-cert-move/sp-cert-move.txt"
 git -C "$RUN/worktree/sp-cert-move" add -A
 git -C "$RUN/worktree/sp-cert-move" commit -q -m "sp-cert-move sp-1fm88 — second commit"
 new_tip="$(git -C "$REPO" rev-parse spira/sp-cert-move 2>/dev/null)"
-out="$(landing)"   # second pass: re-certifies the new tip
-is   "gate not called after tip move"  "0"  "$(gate_n)"
+out="$(landing)"   # second pass: re-gates and re-certifies the new tip
+is   "gate re-called after tip move"   "1"  "$(gate_n)"
 want "second certify reported"         "certified spira/sp-cert-move" "$out"
 case "$(landstate sp-cert-move)" in
     *"$new_tip"*) ok "landstate updated to new tip" ;;
     *)            bad "landstate updated to new tip" "expected [$new_tip] in [$(landstate sp-cert-move)]" ;;
+esac
+
+# -----------------------------------------------------------------------------------------
+# GATE FAIL REOPENS THE BEAD AND DOES NOT CERTIFY. This is the plant that a landing.sh with
+# no queue-mode gate step could never produce (seen red first) — the acceptance fixture for
+# the gate this bead restores.
+# -----------------------------------------------------------------------------------------
+seed; branch sp-cert-fail
+echo FAIL > "$TMP/gate-verdicts/spira/sp-cert-fail"
+out="$(landing)"
+is   "FAIL: gate was called"           "1"    "$(gate_n)"
+want "FAIL: reopen is reported"        "reopened sp-cert-fail — failed the certification gate" "$out"
+is   "FAIL: bead is no longer closed"  "no"   "$([ "$(status_of sp-cert-fail)" = closed ] && echo yes || echo no)"
+case "$(landstate sp-cert-fail)" in
+    RED*) ok "FAIL: landstate says RED" ;;
+    *)    bad "FAIL: landstate says RED" "got: $(landstate sp-cert-fail)" ;;
+esac
+nowant "FAIL: never reaches CERTIFIED" "certified spira/sp-cert-fail" "$out"
+
+# -----------------------------------------------------------------------------------------
+# GATE NO_VERDICT (e.g. a gate that exceeded its own budget and was killed) DOES NOT
+# CERTIFY AND DOES NOT REOPEN. Nobody is charged for a machinery fault the branch did not
+# cause; the branch simply keeps its turn for the next pass. This is the "reported no-verdict
+# instead of a silent rc=75 followed by certification anyway" this bead asked for.
+# -----------------------------------------------------------------------------------------
+seed; branch sp-cert-noverdict
+echo NOVERDICT > "$TMP/gate-verdicts/spira/sp-cert-noverdict"
+out="$(landing)"
+is   "NO_VERDICT: gate was called"          "1"      "$(gate_n)"
+is   "NO_VERDICT: bead stays closed"        "closed" "$(status_of sp-cert-noverdict)"
+nowant "NO_VERDICT: never reopened"         "reopened sp-cert-noverdict" "$out"
+nowant "NO_VERDICT: never certified"        "certified spira/sp-cert-noverdict" "$out"
+case "$(landstate sp-cert-noverdict)" in
+    CERTIFIED*) bad "NO_VERDICT: landstate is not CERTIFIED" "got: $(landstate sp-cert-noverdict)" ;;
+    *)          ok "NO_VERDICT: landstate is not CERTIFIED" ;;
 esac
 
 # -----------------------------------------------------------------------------------------
@@ -163,12 +219,13 @@ case "$(landstate sp-cert-withdrawn)" in
     *)          bad "landstate stays WITHDRAWN at the same tip" "got: $(landstate sp-cert-withdrawn)" ;;
 esac
 
-# A new tip (the aeon's rework) recertifies normally.
+# A new tip (the aeon's rework) recertifies normally — and is gated again.
 printf 'v2\n' > "$RUN/worktree/sp-cert-withdrawn/sp-cert-withdrawn.txt"
 git -C "$RUN/worktree/sp-cert-withdrawn" add -A
 git -C "$RUN/worktree/sp-cert-withdrawn" commit -q -m "sp-cert-withdrawn sp-1fm88 — rework"
 wd_tip2="$(git -C "$REPO" rev-parse spira/sp-cert-withdrawn 2>/dev/null)"
 out="$(landing)"
+is   "moved tip: gate re-called"      "1" "$(gate_n)"
 want "moved tip: certify is reported" "certified spira/sp-cert-withdrawn" "$out"
 case "$(landstate sp-cert-withdrawn)" in
     *"$wd_tip2"*) ok "landstate certifies the new tip" ;;
@@ -176,16 +233,14 @@ case "$(landstate sp-cert-withdrawn)" in
 esac
 
 # -----------------------------------------------------------------------------------------
-# TEN BRANCHES, ONE PASS: every one reaches CERTIFIED and the gate is never invoked.
-# The acceptance fixture for law-a-round-takes-certified-tips — must be seen to fail
-# against a landing.sh that still gates queue-mode branches before certifying them.
+# TEN BRANCHES, ONE PASS: every one is gated exactly once and reaches CERTIFIED.
 # -----------------------------------------------------------------------------------------
 seed
 for i in 1 2 3 4 5 6 7 8 9 10; do
     branch "sp-ten-$i"
 done
 out="$(landing)"
-is "ten branches: zero gate.sh invocations" "0" "$(gate_n)"
+is "ten branches: exactly ten gate.sh invocations" "10" "$(gate_n)"
 _certified_n=0
 for i in 1 2 3 4 5 6 7 8 9 10; do
     case "$(landstate "sp-ten-$i")" in
@@ -234,15 +289,15 @@ is   "push-mode remote actually moved"  "yes"  "$([ "$push_before" != "$push_aft
 is   "push-mode positive control: gate was called" "1" "$(gate_n)"
 
 # -----------------------------------------------------------------------------------------
-# QUEUE.LOCAL: the same certify-not-rebase arm (sp-xe12f) — a closed branch is CERTIFIED
-# with zero gate calls and, unlike every other mode, is NEVER REBASED onto the (local) base
-# even when it conflicts. Before sp-xe12f, landing.sh's queue-mode arm matched only the
-# literal string "queue", so a queue.local repo fell through to the ordinary rebase path
-# below it and this whole case reopened the bead on the planted conflict instead of
-# certifying it — the positive control for that: local/main advances with a conflicting
-# edit to the SAME file the branch touches, so a landing pass that attempts the rebase (the
-# old behaviour) must hit that conflict and reopen the bead, while one that only certifies
-# (the fixed behaviour) leaves the branch's own tip byte-identical and the bead closed.
+# QUEUE.LOCAL: the same certify-not-rebase arm (sp-xe12f) — a closed branch is gated and
+# CERTIFIED but, unlike every other mode, is NEVER REBASED onto the (local) base even when
+# it conflicts. Before sp-xe12f, landing.sh's queue-mode arm matched only the literal string
+# "queue", so a queue.local repo fell through to the ordinary rebase path below it and this
+# whole case reopened the bead on the planted conflict instead of certifying it — the
+# positive control for that: local/main advances with a conflicting edit to the SAME file
+# the branch touches, so a landing pass that attempts the rebase (the old behaviour) must
+# hit that conflict and reopen the bead, while one that only gates and certifies (the fixed
+# behaviour) leaves the branch's own tip byte-identical and the bead closed.
 # -----------------------------------------------------------------------------------------
 LOCALREPO="$TMP/local-repo"
 git init -q -b trunk "$LOCALREPO"
@@ -276,7 +331,7 @@ local-fixture | $LOCALREPO | queue.local | local/main  | | |
 RMAP
 rm -f "$GATE_COUNT" "$RUN/landing.progress"
 out="$(landing)"
-is   "queue.local: gate NOT called"          "0" "$(gate_n)"
+is   "queue.local: gate called once"         "1" "$(gate_n)"
 want "queue.local: certify is reported"      "certified spira/sp-qlocal-cert" "$out"
 is   "queue.local: local/main is untouched"  "$localmain_before" "$(git -C "$LOCALREPO" rev-parse local/main)"
 is   "queue.local: branch tip is byte-identical (never rebased)" \
