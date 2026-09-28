@@ -51,7 +51,7 @@ else
     ok "lib.sh no longer reads FAYTH_MODEL"
 fi
 want "aeon_claude_argv calls persona_model" \
-     'persona_model "$FAYTH"' "$(cat "$HARNESS/spira/lib.sh")"
+     'persona_model "${FAYTH:-}"' "$(cat "$HARNESS/spira/lib.sh")"
 
 if grep -qE '\$\{?FAYTH_MODEL' "$HARNESS/concierge.sh"; then
     bad "concierge.sh no longer reads FAYTH_MODEL" "still present"
