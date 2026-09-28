@@ -88,7 +88,7 @@ produced the 36 use cases. Columns marked **applied** reflect code that is actua
 | 05 | Demote to T1 (stub bd plus a maildir). | **Applied**. |
 | 06 | Demote the note-size decision to T1; keep one real row; delete `test-incident-recur-bounded.sh`. | **Applied**. |
 | 07 | Demote `test-sin-exempt.sh` to T1 against a stub-`bd sql` count; merge the real-events row into the census integration suite; move the watchtower DRAINING-exempt assertion to `test-watchtower.sh`. | **Applied** except the real-events row, which was deferred by `sp-fhzib.3` until `sp-fhzib.2` landed. **Landed by this bead** (`sp-n1twd`): `test-census.sh` gained the Sin real-events row — see §8. |
-| 07b | Delete the backfill-recur-causes test; propose retiring the migration itself. | **Applied**: rows removed from `test-incident-recur-cause.sh`; `sp-vy86f` filed proposing retirement (undecided, out of this area's scope to force). |
+| 07b | Delete the backfill-recur-causes test; propose retiring the migration itself. | **Retired** (`sp-76ec4`): rows removed from `test-incident-recur-cause.sh` and `test-incident-migrations.sh`; the migration itself deleted from `incident.sh` — `sp-lzt` removed every `sp-recur-N` label write, so nothing bare is left to backfill. |
 | 08 | Rewrite `test-incident-delivers-satisfiable.sh` from source-grep to a real T1 behaviour test; merge `test-batch-repeat-refused-delivers.sh` in. | **Applied**. |
 | 09 | Move the REF/CAUSE pairing check to the gate's T0 fence stage. | **Applied**: `spira/incident-cause-lint.sh`, wired into `gate-spira.sh`. |
 | 10 | New suite against a genuinely unreachable bd (gap G1). | **Applied**: `test-incident-spool-drain.sh`. |

@@ -1,20 +1,17 @@
 #!/usr/bin/env bash
 #
-# test-incident-migrations.sh — incident.sh's one-time migration subcommands
-# (gap G9: backfill-ref-labels; UC-ops-detection-remediation-07b: backfill-recur-causes).
+# test-incident-migrations.sh — incident.sh's one-time migration subcommands (gap G9).
 #
 #   ./test-incident-migrations.sh
 #
-# NEITHER MIGRATION IS TESTED TODAY (gap G9). backfill-ref-labels is what the label-keyed
+# THE MIGRATION IS UNTESTED TODAY (gap G9). backfill-ref-labels is what the label-keyed
 # dedup path (UC-04) depends on for beads filed before the ref: label existed — an untested
 # migration that silently mislabels or skips a bead leaves that bead on the slow O(N)
-# fallback path forever, or worse, unfindable. backfill-recur-causes is ported here from
-# test-incident-recur-cause.sh, which deleted its own copy (UC-07b) — retiring the migration
-# itself is proposed separately, not decided in this suite.
+# fallback path forever, or worse, unfindable.
 #
-# A STUB BD (incident-stub-bd.py), not a fixture database: both migrations are pure
-# list-then-label-then-relist sequences over beads this suite plants itself, and neither
-# reads the events table or anything else a stub cannot answer.
+# A STUB BD (incident-stub-bd.py), not a fixture database: the migration is a pure
+# list-then-label-then-relist sequence over beads this suite plants itself, and reads
+# nothing a stub cannot answer.
 #
 # tier: T1
 # covers: spira/incident.sh spira/incident-stub-bd.py
@@ -81,42 +78,6 @@ printf '{"id":"sp-noref","external_ref":"","status":"open","labels":["spira","in
 out3="$(run_migration backfill-ref-labels)"
 want "a bead with no external_ref is not counted" "backfilled 0" "$out3"
 is "and it gets no ref: label" "" "$(labels_of sp-noref | grep -o 'ref:[0-9a-f]*' || true)"
-
-# ======================================================================================
-echo
-echo "4. backfill-recur-causes converts bare sp-recur-N to sp-recur-N-unrecorded (UC-07b, ported):"
-# ======================================================================================
-rm -f "$STUB_BD_STATE" "$STUB_BD_LOG"
-printf '{"id":"sp-bare","external_ref":"incident:bare-recur","status":"open","labels":["spira","incident","sp-recur-1","sp-recur-2"]}' | seed
-printf '{"id":"sp-typed","external_ref":"incident:typed-recur","status":"open","labels":["spira","incident","sp-recur-1-suite-red"]}' | seed
-
-out4="$(run_migration backfill-recur-causes)"
-want "backfill reports 1 bead backfilled" "backfilled 1" "$out4"
-want "backfill reports 0 errors"          "errors 0"     "$out4"
-
-has_label sp-bare "sp-recur-1-unrecorded" \
-    && ok "bare sp-recur-1 promoted to sp-recur-1-unrecorded" \
-    || bad "bare sp-recur-1 promoted to sp-recur-1-unrecorded" "labels: $(labels_of sp-bare)"
-has_label sp-bare "sp-recur-2-unrecorded" \
-    && ok "bare sp-recur-2 promoted to sp-recur-2-unrecorded" \
-    || bad "bare sp-recur-2 promoted to sp-recur-2-unrecorded" "labels: $(labels_of sp-bare)"
-
-# Bare labels must be removed, not just joined by typed ones (double-counting).
-_bare_gone="$(labels_of sp-bare | tr ' ' '\n' | grep -xE 'sp-recur-1|sp-recur-2' || true)"
-[ -z "$_bare_gone" ] && ok "bare sp-recur-N labels removed after backfill" \
-    || bad "bare sp-recur-N labels removed after backfill" "still present: $_bare_gone"
-
-# The already-typed bead is the idempotence positive control: untouched.
-has_label sp-typed "sp-recur-1-suite-red" \
-    && ok "an already-typed bead is untouched by backfill" \
-    || bad "an already-typed bead is untouched by backfill" "labels: $(labels_of sp-typed)"
-
-# ======================================================================================
-echo
-echo "5. backfill-recur-causes is idempotent (safe to re-run):"
-# ======================================================================================
-out5="$(run_migration backfill-recur-causes)"
-want "second run reports 0 backfilled" "backfilled 0" "$out5"
 
 echo
 tl_summary
