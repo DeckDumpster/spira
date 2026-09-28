@@ -30,6 +30,24 @@ gate_fixture_init "$TMP"
 BR=spira/sp-ej1
 gate_fixture_branch "$BR"
 
+# HOST MAILBOX SENTINEL (sp-rya9d): models whatever SPIRA_MAIL an outer process (an aeon
+# session, or a batch container's own install) has already exported by the time this suite
+# runs. conf.sh's `: "${SPIRA_MAIL:=...}"` only derives from SPIRA_RUN when SPIRA_MAIL is
+# still unset — overriding SPIRA_RUN below is not enough once something upstream already set
+# it, and that is exactly how a fixture ejection mail ("sp-ej1 ejected from PR 1") reached a
+# real Concierge Maildir during a corpus run. The writer subshell must pin SPIRA_MAIL itself;
+# this sentinel is the proof — its count must never move.
+HOSTMAIL="$TMP/hostmail"
+export SPIRA_MAIL="$HOSTMAIL"
+
+_maildir_count() {  # _maildir_count <mailbox-dir> -> files in new/ + cur/
+    local n=0 f
+    for f in "$1"/new/* "$1"/cur/*; do
+        [ -f "$f" ] && n=$((n + 1))
+    done
+    printf '%d' "$n"
+}
+
 # _attr_eject now blocks the EJECTED mark unless bead_reopen actually succeeds
 # (sp-vjfv6), so sp-ej1 must exist in a real store for the writer section below —
 # SPIRA_DB_NONE would make every _attr_eject call fail the reopen and never reach
@@ -67,12 +85,16 @@ is "no eject history: nothing reaches the gate command" "" "$(seen_ejected sp-no
 # open, so the reopen is a harmless no-op) rather than nowhere: _attr_eject now blocks the
 # EJECTED mark when bead_reopen fails (sp-vjfv6), so a reopen that cannot succeed would
 # never reach the sidecar write this suite checks. SPIRA_RUN is still the fixture's own RUN
-# (so LANDSTATE here is the same directory gate.sh's subprocess below reads), so the mail
-# side effect _attr_eject also has is harmless rather than reaching anything real
+# (so LANDSTATE here is the same directory gate.sh's subprocess below reads), and SPIRA_MAIL
+# is pinned to that same RUN — not merely inherited via SPIRA_RUN's `:=` default, which never
+# fires once SPIRA_MAIL is already set (HOSTMAIL, above) — so the mail side effect
+# _attr_eject also has lands in this fixture's own mailbox rather than reaching anything real
 # (law-run-in-explicit-minimal-environment).
 # ---------------------------------------------------------------------------
+_hostmail_before="$(_maildir_count "$HOSTMAIL/concierge")"
 (
-    export HOME="$HOMEDIR" SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD"
+    export HOME="$HOMEDIR" SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_RUN="$RUN" SPIRA_MAIL="$RUN/mail" \
+           SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD"
     . "$HERE/verdict.sh"
     _attr_eject sp-ej1 deadbeef test-other.sh 1 repo suite-overlap "" "" "" "" "" "" >/dev/null 2>&1
 )
@@ -80,6 +102,17 @@ is "writer: landstate reads EJECTED after _attr_eject" \
     "EJECTED" "$(cut -d' ' -f1 < "$RUN/landstate/sp-ej1" 2>/dev/null)"
 is "reader: gate.sh's own subprocess is handed the ejected suite" \
     "test-other.sh" "$(seen_ejected sp-ej1)"
+
+# ---------------------------------------------------------------------------
+# MAIL ISOLATION (sp-rya9d, ACCEPTANCE): the ejection mail queue_notify_concierge sends
+# must land in this fixture's own concierge mailbox, and the host sentinel mailbox
+# (HOSTMAIL, standing in for a real production Maildir) must be left exactly as it was.
+# ---------------------------------------------------------------------------
+is "host concierge Maildir is untouched by the fixture's ejection mail" \
+    "$_hostmail_before" "$(_maildir_count "$HOSTMAIL/concierge")"
+fixture_mail="$(cat "$RUN/mail/concierge/new"/* 2>/dev/null)"
+want "fixture mailbox received the ejection mail" \
+    "spira/sp-ej1 ejected from PR 1 (suite-overlap): test-other.sh" "$fixture_mail"
 
 # ---------------------------------------------------------------------------
 # THE DEFECT (sp-px6ng): a failed re-certification overwrites the EJECTED landstate
