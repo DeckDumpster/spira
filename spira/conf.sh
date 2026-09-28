@@ -583,6 +583,14 @@ _spira_toml_convert_from_conf() {
 # by naming a conf file directly; consulting them anyway can find a toml that has nothing to
 # do with the pinned conf (sp-zs04v.2: a test fixture's spira.conf gutted an unrelated, real
 # spira.toml this way).
+#
+# ALSO regenerates [persona.*] from chamber/*.fayth (sp-zs04v.4), on top of whatever toml was
+# just resolved, whenever a fayth is newer than it or it has no [persona.*] table yet — a box
+# whose only record of a persona's model is FAYTH_MODEL must not silently lose it the moment
+# fayth_get stops reading that field at launch (persona_model, lib.sh). This is narrower than
+# the full spira.conf conversion above: it passes only --fayth, never --conf/--repo-map, so it
+# must never run in place of that conversion — only after a toml already exists, or when there
+# is no spira.conf to convert from at all.
 spira_toml_resolve() {
     local toml conf
     conf="$(spira_conf_file)"
@@ -592,13 +600,50 @@ spira_toml_resolve() {
     else
         toml="$(spira_toml_file)"
     fi
-    if [ -n "$toml" ]; then
-        printf '%s' "$toml"
+
+    if [ -z "$toml" ] && [ -n "$conf" ]; then
+        _spira_toml_convert_from_conf "$conf" \
+            "$(spira_config_writeback "${SPIRA_TOML:-$(dirname "$conf")/spira.toml}")"
         return 0
     fi
-    [ -n "$conf" ] || return 0
-    _spira_toml_convert_from_conf "$conf" \
-        "$(spira_config_writeback "${SPIRA_TOML:-$(dirname "$conf")/spira.toml}")"
+
+    local fayth_dir f stale=0
+    local -a fayth_files=()
+    fayth_dir="${SPIRA_CHAMBER:-$SPIRA_HOME/chamber}"
+    if [ -d "$fayth_dir" ]; then
+        for f in "$fayth_dir"/*.fayth; do
+            [ -f "$f" ] && fayth_files+=("$f")
+        done
+    fi
+    if [ "${#fayth_files[@]}" -eq 0 ]; then
+        [ -n "$toml" ] && printf '%s' "$toml"
+        return 0
+    fi
+    if [ -z "$toml" ]; then
+        stale=1
+    else
+        grep -q '^\[persona\.' "$toml" 2>/dev/null || stale=1
+        for f in "${fayth_files[@]}"; do
+            [ "$f" -nt "$toml" ] && stale=1
+        done
+    fi
+    [ "$stale" -eq 0 ] && { printf '%s' "$toml"; return 0; }
+
+    local bin target out
+    bin="$(spira_config_bin)" || { [ -n "$toml" ] && printf '%s' "$toml"; return 0; }
+    # spira_config_writeback: $toml may resolve to the operator's real spira.toml
+    # (spira_toml_file checks $HOME before regenerating anything from this worktree's own
+    # fayths).
+    target="$(spira_config_writeback "${toml:-$SPIRA_REPO/spira.toml}")"
+    local -a args=(--home "$HOME" --out "$target")
+    for f in "${fayth_files[@]}"; do args+=(--fayth "$f"); done
+    if out="$("$bin" convert "${args[@]}" 2>&1)"; then
+        [ -n "$out" ] && printf '%s\n' "$out" >&2
+        printf '%s' "$target"
+    else
+        printf '%s\n' "$out" >&2
+        [ -n "$toml" ] && printf '%s' "$toml"
+    fi
 }
 
 # spira_toml_read <file> — apply `spira-config export --sh` for spira.toml to any key NOT
@@ -636,23 +681,6 @@ spira_toml_read() {
     done <<< "$out"
 }
 
-# spira_toml_file -> the path of the typed config in force, or empty. Same search order as
-# spira_conf_file, one file extension over: an explicit SPIRA_TOML wins, then the repo, then
-# XDG, then /etc.
-spira_toml_file() {
-    local c
-    if [ -n "${SPIRA_TOML+set}" ]; then
-        [ -f "$SPIRA_TOML" ] && printf '%s' "$SPIRA_TOML"
-        return 0
-    fi
-    for c in "$SPIRA_REPO/spira.toml" \
-             "${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml" \
-             /etc/spira/spira.toml; do
-        [ -f "$c" ] && { printf '%s' "$c"; return 0; }
-    done
-    return 0
-}
-
 # spira_config_bin -> the spira-config binary, or empty if none can be found or built.
 # A release install ships it at $SPIRA_REPO/bin/spira-config (make install's release
 # layout: bin/ is a sibling of the spira/ this file sits in, never inside it — see
@@ -681,53 +709,6 @@ spira_config_bin() {
     [ -x "$SPIRA_REPO/target/release/spira-config" ] || return 1
     SPIRA_CONFIG_BIN="$SPIRA_REPO/target/release/spira-config"
     printf '%s' "$SPIRA_CONFIG_BIN"
-}
-
-# spira_toml_resolve -> the spira.toml path to read, or empty.
-#
-# SEEDED FROM chamber/*.fayth ONLY, for now: this is sp-zs04v.4's own scope (persona models),
-# not the fuller spira.conf/repo-map cutover (sp-zs04v.2, .3), which is expected to extend
-# this same function once it lands. Regenerated whenever a fayth is newer than the cached
-# toml, or the toml has no [persona.*] table at all yet — the same "cache, don't migrate
-# once" shape as spira_conf_file, and for the same reason: a box whose only record of a
-# persona's model is FAYTH_MODEL in the fayth itself must not silently lose it the moment
-# fayth_get stops reading that field at launch (persona_model, lib.sh).
-spira_toml_resolve() {
-    local toml fayth_dir f stale=0
-    local -a fayth_files=()
-    toml="$(spira_toml_file)"
-    fayth_dir="${SPIRA_CHAMBER:-$SPIRA_HOME/chamber}"
-    if [ -d "$fayth_dir" ]; then
-        for f in "$fayth_dir"/*.fayth; do
-            [ -f "$f" ] && fayth_files+=("$f")
-        done
-    fi
-    [ "${#fayth_files[@]}" -eq 0 ] && { [ -n "$toml" ] && printf '%s' "$toml"; return 0; }
-    if [ -z "$toml" ]; then
-        stale=1
-    else
-        grep -q '^\[persona\.' "$toml" 2>/dev/null || stale=1
-        for f in "${fayth_files[@]}"; do
-            [ "$f" -nt "$toml" ] && stale=1
-        done
-    fi
-    [ "$stale" -eq 0 ] && { printf '%s' "$toml"; return 0; }
-
-    local bin target out
-    bin="$(spira_config_bin)" || { [ -n "$toml" ] && printf '%s' "$toml"; return 0; }
-    # spira_config_writeback: $toml may resolve to the operator's real spira.toml
-    # (spira_toml_file checks $HOME before regenerating anything from this worktree's own
-    # fayths).
-    target="$(spira_config_writeback "${toml:-$SPIRA_REPO/spira.toml}")"
-    local -a args=(--home "$HOME" --out "$target")
-    for f in "${fayth_files[@]}"; do args+=(--fayth "$f"); done
-    if out="$("$bin" convert "${args[@]}" 2>&1)"; then
-        [ -n "$out" ] && printf '%s\n' "$out" >&2
-        printf '%s' "$target"
-    else
-        printf '%s\n' "$out" >&2
-        [ -n "$toml" ] && printf '%s' "$toml"
-    fi
 }
 
 # _spira_join <base> <rel> — join a base path and a relative segment without doubling
