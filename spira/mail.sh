@@ -167,8 +167,19 @@ _repeat_check() {
 
     local caller=""
     local _c0 _c1 _src
-    _c0="$(tr '\0' '\n' < "/proc/$PPID/cmdline" 2>/dev/null | sed -n '1p')" || _c0=""
-    _c1="$(tr '\0' '\n' < "/proc/$PPID/cmdline" 2>/dev/null | sed -n '2p')" || _c1=""
+    # TOCTOU guard (sp-9by2e): the parent may have already exited by the time we get
+    # here (a short-lived intermediate shell). A bare `< "/proc/$PPID/cmdline"` on a
+    # missing file fails *before* the `2>/dev/null` on the same simple command takes
+    # effect (bash sets up redirections left-to-right and aborts on the first failure),
+    # so the "No such file or directory" reaches the caller's real stderr even though
+    # it looks suppressed. Check readability first and skip the read entirely on loss.
+    if [ -r "/proc/$PPID/cmdline" ]; then
+        _c0="$(tr '\0' '\n' < "/proc/$PPID/cmdline" 2>/dev/null | sed -n '1p')" || _c0=""
+        _c1="$(tr '\0' '\n' < "/proc/$PPID/cmdline" 2>/dev/null | sed -n '2p')" || _c1=""
+    else
+        _c0=""
+        _c1=""
+    fi
     # argv[1] starting with '-' is a flag (e.g. bash -c '...'), not a script path.
     if [[ "${_c1:-}" == -* ]] || [ -z "${_c1:-}" ]; then
         _src="${_c0:-unknown}"
