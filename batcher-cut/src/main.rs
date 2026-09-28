@@ -250,7 +250,7 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
         let iter_branch = format!("spira/batcher-attr/{}-{}-{}", repo.name, now(), iteration);
         io::set_branch(repo, &iter_branch, &head);
 
-        let suites = io::all_suites(repo);
+        let suites = io::all_suites(repo, &iter_branch);
         let results_dir = env_.run.join("batch-results").join(format!("{}-{}-attr{iteration}", repo.name, now()));
         let first = io::run_suites(env_, repo, &iter_branch, &suites, &results_dir)?;
         let reds = io::red_names(&first);

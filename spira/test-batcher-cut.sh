@@ -80,6 +80,7 @@ git init -q -b main "$REPO"
 mkdir -p "$REPO/spira"
 : > "$REPO/spira/test-a.sh"
 : > "$REPO/spira/test-b.sh"
+: > "$REPO/spira/test-old.sh"
 git -C "$REPO" add -A && git -C "$REPO" commit -q -m base
 git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin main
@@ -679,5 +680,36 @@ want   "G: queue.forge alias reaches no-trigger cleanly, same as a bare queue ro
 out_g_local="$(cut_other localmode)"
 nowant "G: queue.local is accepted by find_repo (SEEN RED on today's code: refuses it)" "not queue" "$out_g_local"
 want   "G: queue.local reaches no-trigger cleanly, never a push" "no round cut: no trigger" "$out_g_local"
+
+# =============================================================================
+# CASE I — batcher parity: the round's suite corpus comes from the round branch's
+# own tree, not the production checkout's working directory (law-batcher-earns-
+# the-round-by-parity). A suite the round adds must run, one it deletes must not
+# be requested, and an untracked stray sitting in the checkout must not either.
+# =============================================================================
+echo
+echo "I. suite corpus tracks the round branch, not the checkout's working tree:"
+rm -f "$(open_batch_file)"
+
+# POSITIVE CONTROL for the stray case: never committed, never on any branch.
+: > "$REPO/spira/test-stray.sh"
+
+plant sp-ciii9 express
+git -C "$REPO" worktree add -q -b spira/sp-ciii9 "$RUN/worktree/sp-ciii9" main
+git -C "$RUN/worktree/sp-ciii9" rm -q spira/test-old.sh
+: > "$RUN/worktree/sp-ciii9/spira/test-new.sh"
+git -C "$RUN/worktree/sp-ciii9" add -A
+git -C "$RUN/worktree/sp-ciii9" commit -q -m "sp-ciii9: drop test-old.sh, add test-new.sh"
+tip_i="$(git -C "$REPO" rev-parse spira/sp-ciii9)"
+git -C "$REPO" worktree remove -f "$RUN/worktree/sp-ciii9"
+certify sp-ciii9 "$tip_i"
+
+out_i="$(STUB_RED_SUITES="" cut_repo)"
+want "I: reports the PR opening" "PR " "$out_i"
+results_i="$(ls -td "$RUN"/batch-results/"$REPONAME"-* 2>/dev/null | grep -v -- '-rerun$' | head -1)"
+is "I: the round's new suite is requested"        "1" "$([ -f "$results_i/test-new.sh.result" ] && echo 1 || echo 0)"
+is "I: the round's deleted suite is not requested" "0" "$([ -f "$results_i/test-old.sh.result" ] && echo 1 || echo 0)"
+is "I: an untracked stray in the checkout is not requested" "0" "$([ -f "$results_i/test-stray.sh.result" ] && echo 1 || echo 0)"
+rm -f "$REPO/spira/test-stray.sh"
 
 tl_summary
