@@ -319,6 +319,7 @@ impl<'a> Sentinel<'a> {
                     &subj,
                     REQUEUE_DEFAULT,
                     &ask_body(&subj, REQUEUE_DEFAULT, &ev, REQUEUE_TAIL),
+                    id,
                     true,
                 ) {
                     mark(&self.cfg.requeue_asked, id, c.requeues);
@@ -346,6 +347,7 @@ impl<'a> Sentinel<'a> {
                     &subj,
                     RECLAIM_DEFAULT,
                     &ask_body(&subj, RECLAIM_DEFAULT, &ev, RECLAIM_TAIL),
+                    id,
                     true,
                 ) {
                     mark(&self.cfg.reclaim_asked, id, c.reclaims);
@@ -462,7 +464,7 @@ impl<'a> Sentinel<'a> {
         let body = format!(
             "## Question\n{subj}\n\n## Default\n{dflt}\n\nnothing downstream of it can proceed, and no aeon will take it again while it is poisoned\n\n{ev}\n"
         );
-        if self.mail(FROM, &subj, &dflt, &body, false) {
+        if self.mail(FROM, &subj, &dflt, &body, id, false) {
             mark(&self.cfg.poison_asked, id, n);
         } else {
             self.log(&format!("CHECK4 {id}: the escalation path refused the ask — it stands, and the next pass retries it"));
@@ -564,6 +566,7 @@ impl<'a> Sentinel<'a> {
                 &subj,
                 REQUEUE_DEFAULT,
                 &ask_body(&subj, REQUEUE_DEFAULT, &ev, REQUEUE_TAIL),
+                    id,
                 true,
             ) {
                 mark(&self.cfg.requeue_asked, id, rq);

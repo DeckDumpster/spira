@@ -233,11 +233,14 @@ impl<'a> RealLib<'a> {
     /// `body` on stdin. Every escalation path below goes through this one subprocess call
     /// (sp-gypjk: by bare name), so an escalation that silently drops a message would show
     /// up here, not three times over.
-    fn send_mail(&self, to: &str, from: &str, subject: &str, kind: &str, default: Option<&str>, body: &str) -> bool {
+    fn send_mail(&self, to: &str, from: &str, subject: &str, kind: &str, default: Option<&str>, bead: &str, body: &str) -> bool {
         let mut c = command("mail");
         c.arg("send").arg(to).arg("--from").arg(from).arg("--subject").arg(subject).arg("--kind").arg(kind);
         if let Some(d) = default {
             c.arg("--default").arg(d);
+        }
+        if !bead.is_empty() {
+            c.arg("--bead").arg(bead);
         }
         c.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
         let Ok(mut child) = c.spawn() else { return false };
@@ -256,7 +259,7 @@ impl<'a> RealLib<'a> {
         }
         let ev = crate::util::tail_lines(out, 20);
         let (subj, dflt, body) = crate::ask::machinery_mail(id, branch, repo, outcome, reason, n, &ev);
-        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), &body);
+        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), id, &body);
     }
 
     /// lib.sh `spira_ask_machinery_class` — one ask per (repo, reason) class, naming every
@@ -266,8 +269,9 @@ impl<'a> RealLib<'a> {
             return;
         }
         let ev = crate::util::tail_lines(out, 20);
+        let lead_bead = branches.split(',').next().unwrap_or("").rsplit('/').next().unwrap_or("");
         let (subj, dflt, body) = crate::ask::machinery_class_mail(repo, reason, branches, outcome, n, &ev);
-        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), &body);
+        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), lead_bead, &body);
     }
 }
 
@@ -381,7 +385,7 @@ impl<'a> Lib for RealLib<'a> {
             nfiles,
         };
         let (subj, body) = crate::ask::rebase_loop_mail(id, branch, repo, n, conflicts, others, base, &rctx, self.s.rebase_decompose_files, &self.s.rebase_generated_files);
-        self.send_mail("concierge", "Landing gate <gate@spira>", &subj, "note", None, &body);
+        self.send_mail("concierge", "Landing gate <gate@spira>", &subj, "note", None, id, &body);
     }
     /// lib.sh `spira_ask_red_recurring` — ported natively (sp-31hjr; was the S7 seam).
     fn ask_red_recurring(&self, id: &str, branch: &str, repo: &str, class: &str, first_at: &str) {
@@ -391,7 +395,7 @@ impl<'a> Lib for RealLib<'a> {
         let first_epoch: i64 = first_at.trim().parse().unwrap_or(0);
         let elapsed_h = if first_epoch > 0 { (unix_now() as i64 - first_epoch) / 3600 } else { 0 };
         let (subj, dflt, body) = crate::ask::red_recurring_mail(id, branch, repo, class, elapsed_h);
-        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), &body);
+        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), id, &body);
     }
     /// lib.sh `spira_ask_rebase_refused` — ported natively (sp-31hjr; was the S7 seam).
     fn ask_rebase_refused(&self, id: &str, branch: &str, repo: &str, reason: &str) {
@@ -399,7 +403,7 @@ impl<'a> Lib for RealLib<'a> {
             return;
         }
         let (subj, dflt, body) = crate::ask::rebase_refused_mail(id, branch, repo, reason);
-        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), &body);
+        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), id, &body);
     }
     /// lib.sh `spira_ask_budget_deferred` — ported natively (sp-31hjr; was the S7 seam).
     /// Kind `alert`, no `--default` (unlike every other ask in this family).
@@ -408,7 +412,7 @@ impl<'a> Lib for RealLib<'a> {
             return;
         }
         let (subj, body) = crate::ask::budget_deferred_mail(branch, repo, n);
-        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "alert", None, &body);
+        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "alert", None, branch.rsplit('/').next().unwrap_or(""), &body);
     }
     fn rebase(&self, branch: &str, onto: &str, repo: &Path, name: &str) -> Rebase {
         let (rc, ans) = self.seam.call(Op::Rebase, &[branch, onto, &p(repo), name]);
@@ -511,7 +515,7 @@ impl<'a> Lib for RealLib<'a> {
         let behind = git_out(c).unwrap_or_else(|| "?".into());
         let ctx = self.beads.context(id, unix_now() as i64);
         let (subj, dflt, body) = crate::ask::refresh_loop_mail(id, branch, name, base_fq, &behind, n, self.s.pr_refresh_max, &ctx);
-        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), &body);
+        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), id, &body);
     }
     fn deliver_pr_merged(&self, repo: &Path, id: &str, branch: &str, merge_sha: &str) {
         self.seam.call(Op::DeliverPrMerged, &[&p(repo), id, branch, merge_sha]);

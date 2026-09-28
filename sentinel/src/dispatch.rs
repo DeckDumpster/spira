@@ -271,7 +271,7 @@ impl<'a> Sentinel<'a> {
         );
         // An escalation is a write, never a movement: counting a report of paralysis as
         // progress would mute the one check that notices paralysis.
-        if self.mail("Landing gate <gate@spira>", &subj, dflt, &body, false) {
+        if self.mail("Landing gate <gate@spira>", &subj, dflt, &body, "", false) {
             self.act("escalated: the landing leg is not running");
         }
     }

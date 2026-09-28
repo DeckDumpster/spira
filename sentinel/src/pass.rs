@@ -282,6 +282,7 @@ impl<'a> Sentinel<'a> {
         subject: &str,
         default: &str,
         body: &str,
+        bead: &str,
         own_dedup: bool,
     ) -> bool {
         let mut s = Spec::args_owned(
@@ -302,6 +303,10 @@ impl<'a> Sentinel<'a> {
         .stdin(body.as_bytes().to_vec())
         .out(Io::Null)
         .err(Io::Null);
+        if !bead.is_empty() {
+            s.args.push("--bead".into());
+            s.args.push(bead.into());
+        }
         if own_dedup {
             s = s.env("SPIRA_MAIL_REPEAT_CONSIDERED", "sentinel-own-dedup");
         }

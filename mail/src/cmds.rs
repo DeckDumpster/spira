@@ -104,12 +104,7 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
         }
     }
 
-    let render_id = if !args.bead.is_empty() {
-        args.bead.to_string()
-    } else {
-        let haystack = format!("{}\n{}\n", args.subject, body);
-        lint::bead_id_regex(env.id_prefix_for_regex()).find(&haystack).map(|m| m.as_str().to_string()).unwrap_or_default()
-    };
+    let render_id = args.bead.to_string();
     let final_body = if render_id.is_empty() {
         body
     } else {
