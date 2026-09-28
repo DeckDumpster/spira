@@ -32,6 +32,15 @@
 # out that somebody did. The copies here are the source of truth, because
 # ~/.config/systemd/user is one directory on one disk that nothing backs up.
 #
+# EVERY TIMER USING OnBootSec/OnUnitActiveSec ALSO CARRIES OnActiveSec=<same value as
+# OnBootSec>. OnBootSec is relative to boot, not to this unit's own activation; when the
+# user manager restarts without a reboot (a re-login, daemon-reexec, session teardown),
+# OnBootSec's deadline is already in the past and OnUnitActiveSec has no prior activation
+# in this run to measure from, so the timer goes active (elapsed), Trigger: n/a, and never
+# fires again. OnActiveSec is relative to the timer's own (re)activation, so it always
+# supplies a future trigger regardless of when boot was. A timer with OnCalendar instead
+# needs no OnActiveSec: OnCalendar is wall-clock, not activation-relative, and is immune.
+#
 # UNITS ARE CATTLE: unique plain names per instance — spira-sentinel-prod.service,
 # spira-sentinel-test.service — no systemd templates, no %i, each unit carrying its
 # instance written out in full. Units whose names start with 'spira-' get the instance

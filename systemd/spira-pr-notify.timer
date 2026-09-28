@@ -6,6 +6,7 @@ Description=Scan managed-repo PRs and branches on a cadence
 # and adds noise; a longer one is indistinguishable from not running. At thirty minutes a
 # green PR is noticed within the span of one aeon session.
 OnBootSec=5min
+OnActiveSec=5min
 OnUnitActiveSec=30min
 AccuracySec=30s
 # A box that was asleep still has unmerged PRs when it wakes.

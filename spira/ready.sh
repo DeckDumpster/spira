@@ -15,6 +15,7 @@
 # CHECKS (each names what it read):
 #
 #   sentinel    — timer active
+#   timers      — every active spira-*-<instance>.timer still has a next trigger
 #   world       — not halted; stamp file named with its mtime when present
 #   database    — readable (bead count); statutes in force
 #   ready work  — sentinel.sh --report sees open work
@@ -70,6 +71,41 @@ else
          "Start it: systemctl --user start $_sent_timer
     Or re-run install.sh to enable and start all timers."
 fi
+
+# =============================================================================
+echo ""
+echo "timers"
+# =============================================================================
+# A timer that has stopped scheduling still reports is-active — "active (elapsed)" is
+# an active state, not an inactive one — so the sentinel check above cannot see it. This
+# is the sp-ly6l9 shape: OnBootSec's deadline was already past and no OnUnitActiveSec
+# activation existed in this run to measure from, so the timer elapsed once and never
+# rearmed. NextElapseUSecRealtime and NextElapseUSecMonotonic are both unset (empty or
+# 0) in exactly that state; a timer with any future trigger reports at least one of them.
+_timer_dir="$HOME/.config/systemd/user"
+_timers_checked=0
+if [ -d "$_timer_dir" ]; then
+    for _tf in "$_timer_dir"/spira-*-"${SPIRA_INSTANCE:-prod}".timer; do
+        [ -e "$_tf" ] || continue
+        _tu="$(basename "$_tf")"
+        "$SC" --user is-active --quiet "$_tu" 2>/dev/null || continue
+        _timers_checked=$((_timers_checked+1))
+        _next_r="$("$SC" --user show -p NextElapseUSecRealtime --value "$_tu" 2>/dev/null)"
+        _next_m="$("$SC" --user show -p NextElapseUSecMonotonic --value "$_tu" 2>/dev/null)"
+        if { [ -z "$_next_r" ] || [ "$_next_r" = "0" ]; } && \
+           { [ -z "$_next_m" ] || [ "$_next_m" = "0" ]; }; then
+            FAIL "$_tu is active but has stopped scheduling (elapsed, no next trigger)" \
+                 "systemctl --user status $_tu
+    Likely cause: the user manager restarted after OnBootSec's deadline had already
+    passed. Restart it: systemctl --user restart $_tu"
+        else
+            PASS "$_tu still scheduled"
+        fi
+    done
+fi
+[ "$_timers_checked" -eq 0 ] && \
+    SKIP "timers — no installed spira-*-${SPIRA_INSTANCE:-prod}.timer found"
+unset _timer_dir _timers_checked _tf _tu _next_r _next_m
 
 # =============================================================================
 echo ""

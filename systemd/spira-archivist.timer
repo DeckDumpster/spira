@@ -9,6 +9,7 @@ Description=Sweep the live sessions for unfinished business when enough turns ha
 # It is also not free. A drift that exceeds the threshold summons a model session, so the
 # cadence is the ceiling on how often that can happen.
 OnBootSec=5min
+OnActiveSec=5min
 OnUnitActiveSec=5min
 AccuracySec=1min
 # NOT Persistent. A missed tick is a session that filled up while the box was off, and there

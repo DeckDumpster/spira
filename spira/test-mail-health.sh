@@ -44,6 +44,10 @@ op_count() {
 
 export SPIRA_MAIL_READERS="concierge=echo wake"
 
+# install.sh runs this before any timer can read the operator mailbox; a read verb now
+# refuses a mailbox that was never provisioned, so the fixture must match that order.
+bash "$MAIL" ensure operator
+
 echo
 echo "=== POSITIVE CONTROL — fires when threshold exceeded ==="
 

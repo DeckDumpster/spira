@@ -13,6 +13,7 @@ Description=Evaluate Maechen trigger conditions every 15 minutes
 # (SPIRA_MAECHEN_LANDING_INTERVAL, SPIRA_MAECHEN_MAX_GAP_SECONDS) govern the
 # thresholds, not the check frequency.
 OnBootSec=15min
+OnActiveSec=15min
 OnUnitActiveSec=15min
 AccuracySec=2min
 Unit=spira-maechen.service

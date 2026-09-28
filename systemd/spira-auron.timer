@@ -12,6 +12,7 @@ Description=Ask every two minutes whether the Spira loop is still moving
 # reading while the sentinel is still on its own OnBootSec delay, and a loop that has not
 # been given a chance to run yet is not a stalled one.
 OnBootSec=420
+OnActiveSec=420
 OnUnitActiveSec=2min
 AccuracySec=30s
 Unit=spira-auron.service

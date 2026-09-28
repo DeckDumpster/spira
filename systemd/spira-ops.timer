@@ -7,6 +7,7 @@ Description=Summon an Ops aeon for any waiting incident
 # waking a model every two minutes to find an empty queue is real. aeon.sh no-ops in a
 # fraction of a second when nothing is ready, so the floor here is the ExecStartPre pair.
 OnBootSec=300
+OnActiveSec=300
 OnUnitActiveSec=5min
 AccuracySec=30s
 Unit=spira-ops.service

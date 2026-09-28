@@ -5,6 +5,7 @@ Description=Run the verify-asks sweep every fifteen minutes
 # FIFTEEN MINUTES. Staggered five minutes after the moot sweep (OnBootSec=7min vs
 # 5min) so the two janitorial passes do not both hit the database at boot.
 OnBootSec=7min
+OnActiveSec=7min
 OnUnitActiveSec=15min
 AccuracySec=2min
 Persistent=true

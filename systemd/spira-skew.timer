@@ -10,6 +10,7 @@ Description=Check hourly that the harness in force is the harness that landed
 # bead instead of filing a new one, so the cadence decides how fast a NEW divergence is
 # noticed and nothing else.
 OnBootSec=10min
+OnActiveSec=10min
 OnUnitActiveSec=1h
 # Loose, because nothing downstream is waiting on the answer, and a wide window lets the
 # service manager batch this with whatever else is due.

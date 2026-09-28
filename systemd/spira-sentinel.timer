@@ -6,6 +6,7 @@ Description=Reconcile the Spira work graph every two minutes
 # of bead queries, so the loop can run often enough that a dead aeon is noticed in minutes
 # rather than at the next time someone looks.
 OnBootSec=180
+OnActiveSec=180
 OnUnitActiveSec=2min
 AccuracySec=30s
 Unit=spira-sentinel.service

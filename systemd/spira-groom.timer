@@ -11,6 +11,7 @@ Description=File a groomer trigger bead every six hours
 # THIS FILE IS THE ONLY PLACE THE CADENCE IS WRITTEN. groomer.fayth's comment
 # references it; nothing reads a SPIRA_GROOM_EVERY key, because none exists.
 OnBootSec=15min
+OnActiveSec=15min
 OnUnitActiveSec=6h
 AccuracySec=5min
 Unit=spira-groom.service

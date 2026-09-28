@@ -34,6 +34,40 @@ _mail_dir()    { printf '%s/%s' "${SPIRA_MAIL}" "$1"; }
 _mail_ensure() { local d; d="$(_mail_dir "$1")"; mkdir -p "$d/tmp" "$d/new" "$d/cur"; }
 _mail_msgid()  { printf '%s.%s.%s' "$(date +%s)" "$RANDOM" "$$"; }
 
+# _mailbox_valid <mailbox> <cmd> -> 0 if usable, else 1 with a message on stderr. The
+# mailbox is positional, and an option that lands in that slot (a caller's typo, a flag
+# meant for elsewhere) is otherwise a legal directory name: nine calls of the shape
+# `mail.sh list --unread` or `mail.sh list --help` each silently created and then
+# truthfully reported on an empty mailbox named after the flag. No mailbox is
+# legitimately named with a leading '-'.
+_mailbox_valid() {
+    local mailbox="$1" cmd="$2"
+    if [ -z "$mailbox" ]; then
+        printf 'mail.sh %s: mailbox required\n' "$cmd" >&2
+        return 1
+    fi
+    case "$mailbox" in
+        -*)
+            printf 'mail.sh %s: %s: looks like an option in the mailbox slot, not a mailbox name — refusing\n' \
+                "$cmd" "$mailbox" >&2
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+# _mailbox_exists <mailbox> <cmd> -> 0 if the maildir is present, else 1 with a message.
+# A read verb must never create the mailbox it reads: reporting zero mail from a mailbox
+# that does not exist is indistinguishable from a real empty inbox. Only `send` and the
+# explicit `ensure` command create one.
+_mailbox_exists() {
+    local mailbox="$1" cmd="$2" dir
+    dir="$(_mail_dir "$mailbox")"
+    [ -d "$dir/new" ] && [ -d "$dir/cur" ] && return 0
+    printf 'mail.sh %s: %s: no such mailbox\n' "$cmd" "$mailbox" >&2
+    return 1
+}
+
 # _index_record <mailbox> <msgid> <bead> <kind> <default> — append-only, one line per ask
 # mail that carries a bead. TSV; fields cannot contain tabs or newlines (subject/default
 # text is never stored here, only the message-id and bead id needed to find them again).
@@ -344,6 +378,7 @@ _lint_check() {
 
 cmd_send() {
     local mailbox="$1"; shift
+    _mailbox_valid "$mailbox" send || return 1
     # aeon:<id> routes to the aeon's per-claim mailbox; refuse if no live mailbox exists.
     case "$mailbox" in
         aeon:*)
@@ -486,10 +521,11 @@ cmd_template() {
 
 cmd_list() {
     local mailbox="$1"; shift
+    _mailbox_valid "$mailbox" list || return 1
     local unread_only=0
     [ "${1:-}" = "--unread" ] && unread_only=1
 
-    _mail_ensure "$mailbox"
+    _mailbox_exists "$mailbox" list || return 1
     local dir; dir="$(_mail_dir "$mailbox")"
     local dirs=("$dir/new")
     [ "$unread_only" -eq 0 ] && dirs+=("$dir/cur")
@@ -510,8 +546,9 @@ cmd_list() {
 
 cmd_read() {
     local mailbox="$1"; shift
+    _mailbox_valid "$mailbox" read || return 1
     local msg="${1:-}"
-    _mail_ensure "$mailbox"
+    _mailbox_exists "$mailbox" read || return 1
     local dir; dir="$(_mail_dir "$mailbox")"
 
     local f=""
@@ -539,7 +576,8 @@ cmd_read() {
 
 cmd_count() {
     local mailbox="$1"
-    _mail_ensure "$mailbox"
+    _mailbox_valid "$mailbox" count || return 1
+    _mailbox_exists "$mailbox" count || return 1
     local dir; dir="$(_mail_dir "$mailbox")"
     local count=0 f
     for f in "$dir/new"/*; do
@@ -550,7 +588,8 @@ cmd_count() {
 
 cmd_unread_age() {
     local mailbox="$1"
-    _mail_ensure "$mailbox"
+    _mailbox_valid "$mailbox" unread-age || return 1
+    _mailbox_exists "$mailbox" unread-age || return 1
     local dir; dir="$(_mail_dir "$mailbox")"
 
     local oldest_t="" t f
@@ -675,9 +714,9 @@ cmd_done() {
     local mailbox="${1:-}"; shift || true
     local msgid="${1:-}"; shift || true
     local note="${*:-}"
-    [ -z "$mailbox" ] && { printf 'mail.sh done: mailbox required\n' >&2; return 1; }
-    [ -z "$msgid"   ] && { printf 'mail.sh done: message id required\n' >&2; return 1; }
-    _mail_ensure "$mailbox"
+    _mailbox_valid "$mailbox" done || return 1
+    [ -z "$msgid" ] && { printf 'mail.sh done: message id required\n' >&2; return 1; }
+    _mailbox_exists "$mailbox" done || return 1
     local dir; dir="$(_mail_dir "$mailbox")"
     local f="" candidate
     for candidate in "$dir/new/$msgid" "$dir/cur/$msgid"; do
@@ -762,7 +801,7 @@ _is_unread() {
 
 cmd_tidy() {
     local mailbox="${1:-}"
-    [ -z "$mailbox" ] && { printf 'mail.sh tidy: mailbox required\n' >&2; return 1; }
+    _mailbox_valid "$mailbox" tidy || return 1
     shift
     local dry_run=0
     while [ $# -gt 0 ]; do
@@ -926,6 +965,7 @@ for e in d:
 # must-refuse) — a false "nothing to dismiss" here would silently strand every open ask.
 cmd_sweep_dismissed() {
     local mailbox="${1:-operator}"
+    _mailbox_valid "$mailbox" sweep-dismissed || return 1
 
     if [ -z "${SPIRA_DB:-}" ]; then
         printf 'sweep-dismissed: bead store not configured — refusing to dismiss anything\n' >&2
@@ -991,7 +1031,7 @@ case "${1:-}" in
     tidy)       shift; cmd_tidy "$@" ;;
     # ensure <mailbox> — create the maildir if it is absent; a no-op when it exists. install.sh
     # runs it for the operator mailbox so the units that read it never find it missing.
-    ensure)     shift; [ -n "${1:-}" ] || { printf 'mail.sh ensure: a mailbox name is required\n' >&2; exit 2; }
+    ensure)     shift; _mailbox_valid "${1:-}" ensure || exit 2
                 _mail_ensure "$1" ;;
     sweep-dismissed) shift; cmd_sweep_dismissed "$@" ;;
     *)          printf 'mail.sh: unknown command: %s\n' "${1:-}" >&2; exit 1 ;;
