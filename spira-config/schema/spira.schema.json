@@ -1282,6 +1282,12 @@
           "format": "uint64",
           "minimum": 0.0
         },
+        "open_children_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "operated": {
           "type": [
             "string",

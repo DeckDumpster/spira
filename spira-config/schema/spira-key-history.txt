@@ -292,3 +292,4 @@ concierge_inbox_dedup
 concierge_inbox_stall
 concierge_inbox_backoff
 flow_unobservable_grace_secs
+open_children_label
