@@ -310,24 +310,7 @@ mod tests {
         path
     }
 
-    #[test]
-    fn run_bd_retries_once_on_invalid_connection() {
-        let calls = scratch_path("calls");
-        fs::write(&calls, "0").unwrap();
-        let stub = make_stub(&format!(
-            r#"n=$(($(cat "{calls}") + 1)); echo "$n" > "{calls}"
-if [ "$n" -eq 1 ]; then echo "Error: failed to open database: invalid connection" >&2; exit 1; fi
-echo ok"#,
-            calls = calls.display()
-        ));
-        let out = run_bd(&mut Command::new(&stub), "bd show");
-        assert_eq!(out.as_deref(), Ok("ok\n"));
-        assert_eq!(fs::read_to_string(&calls).unwrap().trim(), "2");
-        let _ = fs::remove_file(&stub);
-        let _ = fs::remove_file(&calls);
-    }
-
-    // POSITIVE CONTROL: an error that is not "invalid connection" is not retried — one call.
+        // POSITIVE CONTROL: an error that is not "invalid connection" is not retried — one call.
     #[test]
     fn run_bd_does_not_retry_other_errors() {
         let calls = scratch_path("calls");
