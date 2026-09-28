@@ -1809,6 +1809,105 @@ When the work is committed on your branch, close the bead with its evidence and 
 branch reaches \`$BASE_BRANCH\` from there is described above, and none of it needs you."
 fi
 
+# HOW A BUILDER FINISHES IS lifecycle_enforce, THE SAME FLAG THAT GATES THE CLAIM ABOVE AND
+# THE work-env.sh WRAP BELOW — never re-derived from whether $SPIRA_WORK_BIN happens to
+# exist, for the identical reason: a tree that has simply built the binaries must not tell a
+# builder to call a daemon (spira-lc.service) nothing here started (sp-wmcvb). Only builder.md
+# has a {{FINISH}} token — every other persona's "## Finishing" section still names `bd`
+# directly, because sp-xethq only ever rewrote this one persona for the restricted path.
+if [ "$LIFECYCLE_ENFORCE" = 1 ]; then
+    FINISH_BRIEF="**You have no \`bd\`.** \`bd\` is not on your PATH and no database credential is in your
+environment (design §3.5) — the only way you act on your bead is \`work\`, bound to exactly
+this one: \`$BEAD_ID\`. Naming any other bead to \`work\` is refused.
+
+When the work is committed on your branch:
+
+    work submit
+
+The tip is read from your own worktree's \`HEAD\` — you never pass one. This moves the bead to
+SUBMITTED; the landing pass carries it from there and lands it once it certifies.
+
+When the deliverable is not code on this branch — child beads, a document, a mail message:
+
+    work done --delivers \"<what you produced, or where it lives>\"
+
+When you are blocked on a question only the operator can answer:
+
+    work blocked \"<the question>\" --default \"<what you would do by default>\"
+
+This both holds the bead and files the ask; you do not also send mail yourself.
+
+When you discover other work rather than doing it:
+
+    work file-followup \"<title>\"
+    work split \"<title>\"
+
+Both file through \`bead.sh\`'s own contract, parented to \`$BEAD_ID\` — you never name the
+parent yourself.
+
+When you believe this bead's work already landed under another id:
+
+    work superseded-by <successor-id>
+
+This is a *request* — it holds the bead pending confirmation; it does not close it.
+
+To leave a plain note on \`$BEAD_ID\` (no lifecycle effect):
+
+    work note \"<text>\"
+
+If you genuinely cannot finish and none of the above fits — leave a note with \`work note\`
+saying precisely what is blocked and what you would do by default, and exit non-zero. An
+honest failure is cheap. A bead whose lifecycle event doesn't match what actually happened
+is expensive, because everything downstream of it acts on that record."
+else
+    FINISH_BRIEF="When the work is committed on your branch, close the bead with evidence. The first line of
+the reason must declare the terminal outcome:
+
+    bd -C $SPIRA_DB close $BEAD_ID --reason-file - <<'REASON'
+    OUTCOME: submitted
+    <what landed, and how it was verified>
+    REASON
+
+The seven valid outcomes, and when each applies:
+
+| Outcome     | When to use |
+|-------------|-------------|
+| \`submitted\` | Work committed on your branch; the landing pass carries it from here |
+| \`delivered\` | Deliverable is not code — beads, a note, a document; name what you wrote |
+| \`escalated\` | Blocked on an operator decision; name the ask bead (which must list this bead as a dependent) |
+| \`blocked\`   | Blocked on another bead; name it |
+| \`abandoned\` | Bead should not be done; explain why |
+| \`parked\`    | Out of lifetime; name what remains |
+| \`landed\`    | Work is already on the base branch (sentinel's record) |
+
+\`submitted\` is the standard outcome for a builder. Use \`delivered\` when the work is
+child beads, a mail message, or a document rather than a code commit.
+
+\`--reason-file -\`, never \`--reason -\`. \`bd close\` does not read stdin for \`--reason\`: it
+stores the literal string \`-\`, prints a success line and exits 0, so a close whose whole
+value is its evidence silently becomes a dash. Prose belongs on stdin anyway — backticks
+and \`\$( )\` inside a double-quoted argument are command substitution
+(\`law-commit-messages-via-stdin\`).
+
+**A bead whose deliverable is child beads closes with \`--force\`.** From bd v1.2.1 a close is
+refused while the bead has open children — *\"cannot close X: 1 open child issue(s); close
+children first or use --force to override\"*. When you filed those children deliberately and
+said so with \`delivers:beads\`, that refusal is aimed at the wrong thing: the children ARE the
+work, and closing them first would be a lie. Pass \`--force\` in that case and only that case —
+if you did not declare \`delivers:beads\`, an open child means you are not finished. A close
+that fails leaves the bead \`in_progress\`, so the verdict finds no commit and reopens it, and
+the attempt counts toward poisoning the bead.
+
+If you cannot finish — the bead is ambiguous, needs a credential, or needs a decision that
+is the operator's to make — do **not** close it. Leave it open, add a note saying precisely what is
+blocked and what you would do by default, and exit non-zero:
+
+    bd -C $SPIRA_DB note $BEAD_ID \"BLOCKED: <what is blocked>. Default: <what you would do>.\"
+
+An honest failure is cheap. A bead closed without its work landing is expensive, because
+everything downstream of it unblocks on a lie."
+fi
+
 # WHAT THIS SESSION IS ACTUALLY HOLDING. The brief is read by aeons working every repository
 # and most of them have no fixture library at all, so a persona that stated flatly "your
 # fixture is already built" would be wrong more often than right — and an instruction that is
@@ -1925,6 +2024,7 @@ block_overlay() {   # block_overlay <name> <built-in text> -> stdout
 PARK_BRIEF="$(block_overlay PARK "$PARK_BRIEF")"
 FIXTURE_BRIEF="$(block_overlay FIXTURE "$FIXTURE_BRIEF")"
 DEADLINE_BRIEF="$(block_overlay DEADLINE "$DEADLINE_BRIEF")"
+FINISH_BRIEF="$(block_overlay FINISH "$FINISH_BRIEF")"
 
 BEAD_BODY="$(bdq show "$BEAD_ID" 2>/dev/null | grep -vE '^💡|^warning|^  Fix|^  Or')"
 # BOUNDED, NOT RAW: a recurring incident's notes grow one entry per recurrence and never
@@ -1989,6 +2089,7 @@ PROMPT="${PROMPT/\{\{BEAD\}\}/$BEAD_BODY}"
 PROMPT="${PROMPT/\{\{PARK\}\}/$PARK_BRIEF}"
 PROMPT="${PROMPT/\{\{FIXTURE\}\}/$FIXTURE_BRIEF}"
 PROMPT="${PROMPT/\{\{DEADLINE\}\}/$DEADLINE_BRIEF}"
+PROMPT="${PROMPT/\{\{FINISH\}\}/$FINISH_BRIEF}"
 # The banner belongs in task.md, not system.md — system_prompt_split (lib.sh) cuts PROMPT at
 # the FIRST "<!-- task -->" marker, so a plain prepend to PROMPT would land the banner in the
 # system half. Insert it just after that marker instead; a persona with no marker puts its
