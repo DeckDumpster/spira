@@ -1155,6 +1155,106 @@ ready_count() {
     printf '%s' "$out" | json_only | json_count
 }
 
+# epic_parent_lookup <ready-beads-json> -> {"prio": {epic_id: priority, ...}, "started": [epic_id, ...]}
+#
+# THE EPIC-FIRST CLAIM ORDER'S OWN BATCHED LOOKUP (sp-ns46j). Every ready bead already
+# carries its own "parent" field (bd list/ready return it inline), so which epic a bead
+# belongs to costs nothing further to learn; what is missing is the EPIC's own priority and
+# whether it has started. Both are fetched here — once per distinct epic referenced, never
+# once per bead, however many beads reference the same epic.
+#
+# Priority: one `bd list --id a,b,c` for every distinct epic in the set.
+# Started (any child closed, in progress, or carrying the submitted label): `bd children`
+# takes one parent at a time, so this is one query per DISTINCT epic — still bounded by the
+# number of epics in flight, never by the number of ready beads.
+epic_parent_lookup() {
+    local ready_json="$1" parents prio_json="[]" started_csv=""
+    parents="$(printf '%s' "$ready_json" | python3 -c '
+import json, sys
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+d = d if isinstance(d, list) else [d]
+ids = sorted({r["parent"] for r in d if r.get("parent")})
+print("\n".join(ids))
+' 2>/dev/null)"
+    if [ -n "$parents" ]; then
+        local csv; csv="$(printf '%s' "$parents" | paste -sd, -)"
+        prio_json="$(bdjson list --id "$csv" --status all --limit 0 2>/dev/null)"
+        [ -n "$prio_json" ] || prio_json="[]"
+        local started_ids=() p kids
+        while IFS= read -r p; do
+            [ -n "$p" ] || continue
+            kids="$(bdjson children "$p" 2>/dev/null)"
+            [ -n "$kids" ] || continue
+            if printf '%s' "$kids" | SPIRA_SUBMITTED_LABEL="${SPIRA_SUBMITTED_LABEL:-spira-submitted}" python3 -c '
+import sys, json, os
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(1)
+d = d if isinstance(d, list) else [d]
+subl = os.environ.get("SPIRA_SUBMITTED_LABEL", "spira-submitted")
+for c in d:
+    if c.get("status") in ("in_progress", "closed"):
+        sys.exit(0)
+    if c.get("status") == "open" and subl in (c.get("labels") or []):
+        sys.exit(0)
+sys.exit(1)
+' 2>/dev/null; then
+                started_ids+=("$p")
+            fi
+        done <<< "$parents"
+        started_csv="$(IFS=,; printf '%s' "${started_ids[*]:-}")"
+    fi
+    python3 -c '
+import json, sys
+prio_rows = json.loads(sys.argv[1]) if sys.argv[1] else []
+prio_rows = prio_rows if isinstance(prio_rows, list) else [prio_rows]
+prio = {r["id"]: r.get("priority", 99) for r in prio_rows}
+started = [x for x in sys.argv[2].split(",") if x]
+print(json.dumps({"prio": prio, "started": started}))
+' "$prio_json" "$started_csv"
+}
+
+# epic_rank_rows <ready-beads-json> <epic-lookup-json> [<resumable-csv>] -> TSV, best first:
+#   epic_priority  epic_started(0|1)  bead_priority  resumable(0|1)  created_at  id  epic_id
+#
+# THE RANK, in the order the rule states it (sp-ns46j): the parent epic's priority; then,
+# among epics of equal priority, a started epic before an unstarted one; then the bead's own
+# priority within the epic; then resumable work, then oldest. A bead with no epic (or whose
+# epic the lookup found nothing for) ranks as its own epic, at its own priority, unstarted —
+# epic_id is then the bead's own id, so a round-cutter grouping on that column still gets one
+# group per bead rather than merging every unaffiliated bead into one.
+#
+# A REWORKED OR EJECTED BEAD KEEPS ITS EPIC'S RANK for free: nothing here reads the bead's
+# own history, only its current parent and priority, so a bead sent back to ready re-enters
+# at exactly the rank its epic already holds.
+epic_rank_rows() {
+    local ready_json="$1" lookup_json="$2" resume_csv="${3:-}"
+    python3 -c '
+import json, sys
+
+ready = json.loads(sys.argv[1]) if sys.argv[1] else []
+ready = ready if isinstance(ready, list) else [ready]
+lookup = json.loads(sys.argv[2]) if sys.argv[2] else {}
+prio = lookup.get("prio", {})
+started = set(lookup.get("started", []))
+resume = set(x for x in sys.argv[3].split(",") if x)
+
+def rank(r):
+    pid = r.get("parent") or ""
+    epic_id = pid or r["id"]
+    eprio = prio.get(pid, r.get("priority", 99)) if pid else r.get("priority", 99)
+    estarted = 0 if pid in started else 1
+    bprio = r.get("priority", 99)
+    resumable = 0 if r["id"] in resume else 1
+    age = r.get("created_at") or r.get("updated_at") or ""
+    return (eprio, estarted, bprio, resumable, age, r["id"], epic_id)
+
+for r in sorted(ready, key=rank):
+    k = rank(r)
+    print("%s\t%s\t%s\t%s\t%s\t%s\t%s" % k)
+' "$ready_json" "$lookup_json" "$resume_csv"
+}
+
 # claim_retry <bdq claim args...> -> stdout: bd's JSON result (already through json_only).
 # Empty stdout with rc 0 is a REAL empty result — bd ran the query and it matched nothing.
 # rc 1 means every retry failed to complete at all; the first line of bd's own stderr from

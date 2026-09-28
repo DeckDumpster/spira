@@ -173,7 +173,7 @@ case ",$second_labels," in
     *) bad "winner ($second_id): carrying the submitted label" "labels=[$second_labels]" ;;
 esac
 want "log: the collision on $first_id is named"      "$first_id"                                    "$(cat "$TMP/out")"
-want "log: the fallback to the next candidate is named" "trying the next resumable candidate"        "$(cat "$TMP/out")"
+want "log: the fallback to the next candidate is named" "trying the next ranked candidate"        "$(cat "$TMP/out")"
 want "log: it resumed $second_id, not the general claim head" "resuming $second_id"                  "$(cat "$TMP/out")"
 
 tl_summary
