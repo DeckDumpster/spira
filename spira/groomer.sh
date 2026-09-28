@@ -68,6 +68,12 @@ case "$cmd" in
     #   closed-never-landed    → reopen for rebase (conflict) or reopen batch-ready (clean);
     #                            either way the bead was claimed done and is not
     #   blocked-by-unlanded    → note only; the blocker's own reopen above is the remedy
+    #
+    # Then a scan over the incident partition alone (sp-18v9k, law-no-decision-work-has-a-
+    # persona-owner): an incident bead whose recorded branch already carries a commit is
+    # rerouted to the builders (SPIRA_INCIDENT_LABEL → SPIRA_PLAN_LABEL). Ops has no Edit or
+    # Write tool, so that commit cannot be Ops's own work — fully computable, and it cannot
+    # fire on a genuinely operational incident, which never produces one.
     _sw_dry=0
     while [ $# -gt 0 ]; do
       case "$1" in
@@ -233,6 +239,29 @@ case "$cmd" in
                 esac
             done <<< "$_sw_fb"
         fi
+    fi
+
+    # ---- incident partition: a bead whose branch already carries a commit is code, not
+    # an operational incident — reroute it to the builders (sp-18v9k) ----
+    _sw_inc="$(detect_incident_needs_builder 2>/dev/null)"
+    if [ -n "$_sw_inc" ]; then
+        while IFS= read -r _sw_line; do
+            [ -n "$_sw_line" ] || continue
+            case "$_sw_line" in
+                STATE\ *\ incident-is-code\ *)
+                    _sw_rest="${_sw_line#STATE }"
+                    _sw_bid="${_sw_rest%% *}"
+                    _sw_reason="${_sw_rest#*incident-is-code — }"
+                    _sw_log "REROUTED $_sw_bid — incident-is-code: $_sw_reason"
+                    if [ "$_sw_dry" -eq 0 ]; then
+                        "$BD_CMD" -C "$DB" label remove "$_sw_bid" "${SPIRA_INCIDENT_LABEL:?}" >/dev/null 2>&1
+                        "$BD_CMD" -C "$DB" label add "$_sw_bid" "${SPIRA_PLAN_LABEL:?}" >/dev/null 2>&1
+                        "$BD_CMD" -C "$DB" note "$_sw_bid" "Moved by groomer.sh sweep: $SPIRA_INCIDENT_LABEL -> $SPIRA_PLAN_LABEL. $_sw_reason" >/dev/null 2>&1
+                    fi
+                    _sw_n=$((_sw_n+1))
+                    ;;
+            esac
+        done <<< "$_sw_inc"
     fi
 
     _sw_log "sweep complete; acted on $_sw_n bead(s)"
