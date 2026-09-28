@@ -11,7 +11,9 @@
 # and charges an attempt that is not a fact about the work (sp-oz0b, sp-7pi).
 #
 # A REAL bd ON A THROWAWAY DATABASE, because every claim is about what bd does
-# with a status, a claim and an assignee (law-prefer-the-real-dependency).
+# with a status, a claim and an assignee (law-prefer-the-real-dependency). The
+# pure pidfile-liveness logic (hold_alive/holder_alive/spira_holder_witnesses,
+# no bd needed) is test-hold-liveness.sh (T1).
 #
 # defect: sp-oz0b
 # tier: T2
@@ -60,52 +62,7 @@ JSONL
 }
 
 # ======================================================================================
-# 1. POSITIVE CONTROL: hold_alive recognises a hold pidfile with a live pid.
-#    Without this, every absence check below is meaningless.
-# ======================================================================================
-echo "hold_alive positive control:"
-
-# Use our own pid — it is certainly alive.
-echo $$ > "$SPIRA_RUN/hold-sp-pos.pid"
-if hold_alive "$SPIRA_RUN/hold-sp-pos.pid"; then ok "hold_alive sees a live pid"
-else bad "hold_alive sees a live pid" "returned 1"; fi
-rm -f "$SPIRA_RUN/hold-sp-pos.pid"
-
-# ======================================================================================
-# 2. NEGATIVE CONTROL: hold_alive rejects a dead pid.
-# ======================================================================================
-echo
-echo "hold_alive negative control:"
-
-echo 999999999 > "$SPIRA_RUN/hold-sp-neg.pid"
-if hold_alive "$SPIRA_RUN/hold-sp-neg.pid"; then bad "hold_alive rejects a dead pid" "returned 0"
-else ok "hold_alive rejects a dead pid"; fi
-rm -f "$SPIRA_RUN/hold-sp-neg.pid"
-
-# Missing pidfile.
-if hold_alive "$SPIRA_RUN/hold-sp-none.pid"; then bad "hold_alive rejects a missing pidfile" "returned 0"
-else ok "hold_alive rejects a missing pidfile"; fi
-
-# ======================================================================================
-# 3. holder_alive checks hold pidfiles. This is the core fix: before sp-oz0b,
-#    holder_alive only looked at aeon-*-<id>.pid.
-# ======================================================================================
-echo
-echo "holder_alive recognises a hold:"
-
-echo $$ > "$SPIRA_RUN/hold-sp-ha.pid"
-if holder_alive sp-ha; then ok "holder_alive sees a hold pidfile"
-else bad "holder_alive sees a hold pidfile" "returned 1"; fi
-rm -f "$SPIRA_RUN/hold-sp-ha.pid"
-
-# And still sees aeon pidfiles too.
-echo $$ > "$SPIRA_RUN/aeon-test-sp-ha2.pid"
-# This will fail aeon_alive (our argv is not aeon.sh), but that is correct — the positive
-# control for the aeon path is already in test-slay. Here we test the hold path.
-rm -f "$SPIRA_RUN/aeon-test-sp-ha2.pid"
-
-# ======================================================================================
-# 4. hold.sh claims a bead and writes the pidfile.
+# 1. hold.sh claims a bead and writes the pidfile.
 # ======================================================================================
 echo
 echo "hold.sh:"
@@ -134,7 +91,7 @@ if [ -n "$hbpid" ] && [ -d "/proc/$hbpid" ]; then ok "heartbeat is alive"
 else bad "heartbeat is alive" "pid=${hbpid:-empty} not in /proc"; fi
 
 # ======================================================================================
-# 5. hold.sh refuses a bead already held.
+# 2. hold.sh refuses a bead already held.
 # ======================================================================================
 echo
 echo "hold.sh refuses double hold:"
@@ -144,7 +101,7 @@ rc=$?
 is "hold.sh refuses double hold" 1 "$rc"
 
 # ======================================================================================
-# 6. unhold.sh tears down the hold.
+# 3. unhold.sh tears down the hold.
 # ======================================================================================
 echo
 echo "unhold.sh:"
@@ -161,7 +118,7 @@ if [ -n "$hbpid" ] && [ -d "/proc/$hbpid" ]; then bad "heartbeat is dead" "pid $
 else ok "heartbeat is dead"; fi
 
 # ======================================================================================
-# 7. holder_alive returns 1 after release.
+# 4. holder_alive returns 1 after release.
 # ======================================================================================
 echo
 echo "holder_alive after release:"
@@ -170,7 +127,7 @@ if holder_alive sp-h1; then bad "holder_alive returns 1 after release" "returned
 else ok "holder_alive returns 1 after release"; fi
 
 # ======================================================================================
-# 8. A dead holder's pid frees the bead. This is the liveness contract: if the
+# 5. A dead holder's pid frees the bead. This is the liveness contract: if the
 #    holding process dies, the next sweep finds /proc/<pid> gone and reports the
 #    bead unheld.
 # ======================================================================================
@@ -206,20 +163,6 @@ if [ -n "$hbpid2" ]; then
     sleep 0.05
 fi
 rm -f "$SPIRA_RUN/hold-sp-h2.pid" "$SPIRA_RUN/hold-sp-h2.hb"
-
-# ======================================================================================
-# 9. spira_holder_witnesses respects a hold. This is the two-witness system: the
-#    destruction chokepoint must refuse while a hold is live.
-# ======================================================================================
-echo
-echo "spira_holder_witnesses with a hold:"
-
-seed sp-h3 in_progress
-echo $$ > "$SPIRA_RUN/hold-sp-h3.pid"
-witness="$(spira_holder_witnesses sp-h3)"
-wrc=$?
-is "witnesses say held"  0 "$wrc"
-rm -f "$SPIRA_RUN/hold-sp-h3.pid"
 
 # ======================================================================================
 # SUMMARY
