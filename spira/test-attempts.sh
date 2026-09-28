@@ -33,6 +33,13 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
+# Resolved BEFORE lib.sh (conf.sh's own PATH export replaces PATH wholesale, dropping
+# whatever put cargo/dolt on it — test-poison.sh's own note) even though only the "clear"
+# section far below needs them, against a real spira-lc/Dolt server.
+CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
+[ -n "$CARGO_BIN" ] || [ ! -x "$HOME/.cargo/bin/cargo" ] || CARGO_BIN="$HOME/.cargo/bin/cargo"
+DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
+
 # ======================================================================================
 # session_outcome — what ended this session? Pure text over a trace file, so it runs with no
 # database at all. Only `unlanded` may charge an attempt; every other answer, INCLUDING the
@@ -42,6 +49,8 @@ TMP="$(mktemp -d)"
 export SPIRA_DB="${SPIRA_DB:-$TMP/no-such-db}" SPIRA_RUN="$TMP/run"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
+[ -z "$CARGO_BIN" ] || export PATH="$(dirname "$CARGO_BIN"):$PATH"
+[ -z "$DOLT_BIN" ] || export PATH="$(dirname "$DOLT_BIN"):$PATH"
 
 echo "session_outcome:"
 
@@ -312,15 +321,11 @@ echo "attempts.sh clear — lift a poison and make it stick (sp-qd2ul):"
 # poisoned() (attempts.sh) reads a real spira-lc hold, not the bd label (sp-i2m7y), so
 # clear's own gate needs a real spira-lc/Dolt server behind it — the same throwaway-server
 # shape test-lc-hold.sh and test-check2-reaper.sh use, not a stub of lc_held that would only
-# prove this suite's model of spira-lc agrees with itself.
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
-DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
-[ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+# prove this suite's model of spira-lc agrees with itself. CARGO_BIN/DOLT_BIN were resolved
+# at the top of this file, before conf.sh could drop them from PATH; other cases already ran,
+# so a missing tool here is bail, not skip (law-a-refusal-names-its-exit).
+[ -n "$CARGO_BIN" ] || bail "cargo not found on PATH or at ~/.cargo/bin"
+[ -n "$DOLT_BIN" ] || bail "dolt not found on PATH — install dolt before running this suite"
 unset SPIRA_LC_SOCKET
 
 SRC_ROOT="$(cd "$HERE/.." && pwd)"
