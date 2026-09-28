@@ -125,4 +125,11 @@ saw    "it pushes the closure hash"     "$TAG"   "$LOG"
 notsaw "it does not push :latest"       ":latest" "$LOG"
 
 echo
+# The two builds above ran under the default 60s heartbeat interval. Before the
+# heartbeat loop woke on build exit, each padded to a full interval regardless
+# of how fast the (stub) build actually finished.
+elapsed=$SECONDS
+[ "$elapsed" -lt 5 ] && ok "the whole suite finishes in under 5s (no heartbeat-padded waits)" \
+    || bad "the whole suite finishes in under 5s (no heartbeat-padded waits)" "took ${elapsed}s"
+
 tl_summary
