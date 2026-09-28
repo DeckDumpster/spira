@@ -123,7 +123,7 @@ advance_main() {
 run_rebase_stale() {
     env SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
         SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" \
-        SPIRA_REBASE_STALE_LOG="$RUN/rebase-stale.log" \
+        SPIRA_REBASE_STALE_LOG="$RUN/rebase-stale.log" REBASE_STALE_DEBUG=1 \
         bash "$SH/rebase-stale.sh" "$1" "$REPONAME"
 }
 
