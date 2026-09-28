@@ -43,6 +43,16 @@ gate_tree_key() {
     printf '%s' "$1" | tr '/' '-' | tr -c 'A-Za-z0-9.-' '-'
 }
 
+# gate_bead_id -> the bead id gate.sh's own gate_key() hashes into the verdict cache key.
+#
+# SPIRA_GATE_BEAD is the name queue.sh, landing.sh and batch.sh already set — it is also
+# what the ejected-suites lookup above reads. A prior version of gate_key() read a
+# never-set SPIRA_BEAD_ID instead, so every verdict hashed the literal "none" and two
+# different beads whose branches produced the same tree could collide in the cache.
+gate_bead_id() {
+    printf '%s' "${SPIRA_GATE_BEAD:-none}"
+}
+
 # gate_key_hash <repo> <tree> <files_h> <cmd_h> <harness_h> <suites> <bead> [ejected] -> sha256.
 #
 # Pure string concatenation and hashing. gate.sh's own gate_key() does the git/file reads

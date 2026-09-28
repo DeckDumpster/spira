@@ -118,6 +118,15 @@ nk="$(gate_key_hash spira treeA filesA cmdA harnessA on none test-x.sh)"
 is "gate_key_hash(): a different ejected-suites list moves the key (sp-hkfdp)" \
     "1" "$([ "$nk" != "$base_key" ] && echo 1 || echo 0)"
 
+# gate_bead_id(): the real env var gate.sh's own gate_key() reads into the argument above
+# (sp-r6dji). gate_key_hash() only proves the hash moves given a different string; it says
+# nothing about whether gate.sh ever produces one. SPIRA_BEAD_ID (never set anywhere) was
+# the name previously read here, so every verdict hashed the literal "none".
+unset SPIRA_GATE_BEAD
+is "gate_bead_id(): unset SPIRA_GATE_BEAD yields 'none'" "none" "$(gate_bead_id)"
+is "gate_bead_id(): reads SPIRA_GATE_BEAD from the environment" \
+    "sp-abc12" "$(SPIRA_GATE_BEAD="sp-abc12" gate_bead_id)"
+
 # --- 5. cache_fresh(): TTL/eval hardening (UC-gate-verdict-15; gap #10, previously eval'd) -
 entry="$TMP/entry"
 now=1000000000
