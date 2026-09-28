@@ -12,6 +12,8 @@
 #   queue.sh release [<repo>]
 #   queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]>
 #   queue.sh publish [<repo>]
+#   queue.sh to-forge [<repo>]
+#   queue.sh to-local [<repo>]
 #
 # submit: certifies any branch by running the repository's gate. In a queue-mode
 # repository, a green branch is recorded CERTIFIED for the batch builder.
@@ -74,7 +76,18 @@
 # publish-in-flight as a batch-in-flight, blocking every local cut behind a PR the local
 # queue never opened. verdict.sh settles it separately (green fast-forwards the forge
 # target with no land_mark and no bead close; red runs local attribution and files one
-# fix-forward bead) — see verdict.sh's own header.
+# fix-forward bead) — see verdict.sh's own header. Skips its own lock under
+# SPIRA_QUEUE_LOCK_HELD=1, same as land-local, for to-forge below.
+#
+# to-forge/to-local: row 6 of the local/main design — the transition between queue.local
+# and queue.forge. to-forge holds the repo's queue lock for the whole move (so no local
+# round can land underneath it), runs a final publish, blocks until the forge PR settles
+# (refusing, unchanged, on red or a timeout), verifies the forge target and local/main are
+# now identical, then flips repo-map's (and, if a spira.toml is in force, its matching
+# [repo.*]) land/base columns and archives local/main at refs/archive/<base>. to-local is
+# the reverse: it re-derives a local branch from the forge base (reusing an old archive
+# when one exists, refusing if it does not fast-forward from there) before flipping back.
+# Both refuse, writing nothing, if repo-map and spira.toml already disagree about the row.
 #
 # covers: spira/queue.sh spira/verdict.sh spira/suites.sh spira/conf.sh
 set -uo pipefail
@@ -1179,6 +1192,91 @@ cmd_land_local() {
 _publish_file() { printf '%s/%s/publish' "${SPIRA_QUEUE_DIR:?}" "$1"; }
 _publish_field() { grep "^$1=" "$2" 2>/dev/null | cut -d= -f2-; }
 
+# _land_mode_toml_mode/_land_mode_toml_base <name> <toml> -> the [repo.<name>] value spira-
+# config reads out of a GIVEN toml file, with queue.forge normalized to queue the same way
+# repo_land aliases it — spira.toml's own LandMode enum does not alias the two, so a row
+# written as one and read as the other would otherwise look like a disagreement that is not
+# one. Empty (not an error) when the file has no such repo or key at all.
+_land_mode_toml_mode() {
+    local name="$1" toml="$2" v
+    v="$("$SPIRA_CONFIG_BIN" get "repo.$name.mode" "$toml" 2>/dev/null)"
+    [ "$v" = "queue.forge" ] && v=queue
+    printf '%s' "$v"
+}
+_land_mode_toml_base() { "${SPIRA_CONFIG_BIN:?}" get "repo.${1:?}.base" "${2:?}" 2>/dev/null; }
+
+# _land_mode_agrees <name> -> 0 when repo-map and spira.toml already agree about this
+# repo's land/base (or there is no spira.toml in force to disagree with, or no
+# SPIRA_CONFIG_BIN to ask), 1 and a named diff otherwise. Checked BEFORE either transition
+# below touches anything: the two files are already a second source of truth for the same
+# fact (see this bead's notes), and a transition is the last place that should paper over an
+# existing split rather than refuse on it.
+_land_mode_agrees() {
+    local name="$1" toml; toml="$(spira_toml_resolve 2>/dev/null)"
+    [ -n "$toml" ] || return 0
+    [ -x "${SPIRA_CONFIG_BIN:-}" ] || return 0
+    local rm_land rm_base tm_land tm_base
+    rm_land="$(repo_land "$name")"
+    rm_base="$(repo_field "$name" base)"
+    tm_land="$(_land_mode_toml_mode "$name" "$toml")"
+    tm_base="$(_land_mode_toml_base "$name" "$toml")"
+    if [ "$rm_land" != "$tm_land" ] || [ "$rm_base" != "$tm_base" ]; then
+        printf 'queue.sh: repo-map and spira.toml already disagree about %s (repo-map: %s|%s; spira.toml: %s|%s) — refused, reconcile by hand first\n' \
+            "$name" "$rm_land" "$rm_base" "$tm_land" "$tm_base" >&2
+        return 1
+    fi
+    return 0
+}
+
+# _land_mode_write_row <name> <land> <base> — the one writer of a repo's land/base pair,
+# across both surfaces that carry it: repo-map (rewrites only columns 3/4 of the matching
+# row via NF, same rule repo_field itself reads by — never a fixed position — so path,
+# format, gate and lanes survive untouched whatever width the row is) and, when a spira.toml
+# is in force, its [repo.<name>] mode/base. A row narrower than the base column (NF<6)
+# predates queue.local entirely and is refused rather than guessed at.
+_land_mode_write_row() {
+    local name="$1" land="$2" base="$3"
+    [ -f "$SPIRA_REPO_MAP" ] || {
+        printf 'queue.sh: no repo-map at %s\n' "${SPIRA_REPO_MAP:-<unset>}" >&2; return 1
+    }
+    local tmp; tmp="$(mktemp)"
+    if ! awk -v want="$name" -v newland=" $land " -v newbase=" $base " '
+        BEGIN { FS = OFS = "|" }
+        /^[ \t]*#/ { print; next }
+        {
+            n = $1; gsub(/^[ \t]+|[ \t]+$/, "", n)
+            if (n == want) {
+                if (NF < 6) { print "SHORT_ROW" > "/dev/stderr"; exit 1 }
+                $3 = newland; $4 = newbase
+            }
+            print
+        }' "$SPIRA_REPO_MAP" > "$tmp" 2>"$tmp.err"; then
+        grep -q SHORT_ROW "$tmp.err" 2>/dev/null && \
+            printf 'queue.sh: %s row in %s has no base column (NF<6) — add one by hand first\n' \
+                "$name" "$SPIRA_REPO_MAP" >&2
+        rm -f "$tmp" "$tmp.err"
+        return 1
+    fi
+    rm -f "$tmp.err"
+    [ -s "$tmp" ] || { rm -f "$tmp"; printf 'queue.sh: repo-map rewrite produced an empty file — refused\n' >&2; return 1; }
+    mv -f "$tmp" "$SPIRA_REPO_MAP" || { rm -f "$tmp"; return 1; }
+
+    local toml; toml="$(spira_toml_resolve 2>/dev/null)"
+    if [ -n "$toml" ] && [ -x "${SPIRA_CONFIG_BIN:-}" ]; then
+        "$SPIRA_CONFIG_BIN" set "repo.$name.mode" "$land" "$toml" || {
+            printf 'queue.sh: repo-map now says %s|%s for %s but spira.toml set mode failed — the two disagree, fix by hand\n' \
+                "$land" "$base" "$name" >&2
+            return 1
+        }
+        "$SPIRA_CONFIG_BIN" set "repo.$name.base" "$base" "$toml" || {
+            printf 'queue.sh: repo-map and spira.toml mode now say %s for %s but spira.toml set base failed — the two disagree, fix by hand\n' \
+                "$land" "$name" >&2
+            return 1
+        }
+    fi
+    return 0
+}
+
 # _publish_members <repo> <forge-sha> <head-sha> -> "id:tip id:tip ..." — every LANDED
 # bead in LANDSTATE whose landed tip is in the range (forge-sha, head-sha]. Reuses
 # land-local's own bookkeeping rather than a second record of "what a round contained":
@@ -1250,11 +1348,13 @@ cmd_publish() {
 
     local lockfile; lockfile="${SPIRA_QUEUE_DIR:?}/$name/lock"
     mkdir -p "${SPIRA_QUEUE_DIR:?}/$name" 2>/dev/null || true
-    { exec 9>"$lockfile"; } 2>/dev/null \
-        || { printf 'queue.sh publish: cannot open lock file for %s\n' "$name" >&2; return 1; }
-    if ! flock -n 9; then
-        printf 'queue.sh publish: another queue operation holds the lock for %s\n' "$name" >&2
-        return 1
+    if [ "${SPIRA_QUEUE_LOCK_HELD:-0}" != 1 ]; then
+        { exec 9>"$lockfile"; } 2>/dev/null \
+            || { printf 'queue.sh publish: cannot open lock file for %s\n' "$name" >&2; return 1; }
+        if ! flock -n 9; then
+            printf 'queue.sh publish: another queue operation holds the lock for %s\n' "$name" >&2
+            return 1
+        fi
     fi
 
     local publish_file; publish_file="$(_publish_file "$name")"
@@ -1361,6 +1461,257 @@ print((t[:120] if t else '(title unavailable)') or '(title unavailable)')
         "$pr_n" "${#member_ids[@]}" "$branch"
 }
 
+# cmd_to_forge: see the header comment above (to-forge/to-local:). Holds the repo's queue
+# lock for the whole move — the same lock land-local and publish take — so nothing else can
+# cut a local round out from under it. A red or timed-out final publish is left OPEN for the
+# ordinary cadence (verdict.sh) to settle; this never runs attribution itself.
+cmd_to_forge() {
+    local name=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        -*) printf 'queue.sh to-forge: unknown option: %s\n' "$1" >&2; return 2 ;;
+        *)  name="$1"; shift ;;
+        esac
+    done
+    [ -n "$name" ] || name="$(spira_home_repo)"
+
+    local repo; repo="$(repo_root "$name" 2>/dev/null)" || {
+        printf 'queue.sh to-forge: no such repo: %s\n' "$name" >&2; return 1
+    }
+    local mode; mode="$(repo_land "$name")"
+    [ "$mode" = "queue.local" ] || {
+        printf 'queue.sh to-forge: %s is not in queue.local mode (mode=%s) — nothing to transition\n' "$name" "$mode" >&2
+        return 1
+    }
+    _land_mode_agrees "$name" || return 1
+
+    local base; base="$(spira_landref "$repo")" || {
+        printf 'queue.sh to-forge: cannot resolve landing ref for %s\n' "$name" >&2; return 1
+    }
+    if ref_remote "$base" "$repo" >/dev/null 2>&1; then
+        printf 'queue.sh to-forge: %s resolves to a remote-tracking ref (%s) — not a queue.local base\n' \
+            "$name" "$base" >&2
+        return 1
+    fi
+    local base_branch="$base"
+    git -C "$repo" show-ref --verify --quiet "refs/heads/$base_branch" || {
+        printf 'queue.sh to-forge: %s does not exist as a local branch in %s\n' "$base_branch" "$repo" >&2
+        return 1
+    }
+
+    local checked_out; checked_out="$(git -C "$repo" symbolic-ref -q --short HEAD 2>/dev/null)"
+    [ "$checked_out" != "$base_branch" ] || {
+        printf 'queue.sh to-forge: the checkout at %s is on %s — check out a different branch before repointing it\n' \
+            "$repo" "$base_branch" >&2
+        return 1
+    }
+
+    local target remote forge_branch
+    target="$(spira_publish_forge "$name")" || {
+        printf 'queue.sh to-forge: cannot resolve a forge target for %s\n' "$name" >&2; return 1
+    }
+    read -r remote forge_branch <<< "$target"
+
+    local lockfile; lockfile="${SPIRA_QUEUE_DIR:?}/$name/lock"
+    mkdir -p "${SPIRA_QUEUE_DIR:?}/$name" 2>/dev/null || true
+    { exec 9>"$lockfile"; } 2>/dev/null \
+        || { printf 'queue.sh to-forge: cannot open lock file for %s\n' "$name" >&2; return 1; }
+    if ! flock -n 9; then
+        printf 'queue.sh to-forge: another queue operation holds the lock for %s — stop cutting local rounds first\n' "$name" >&2
+        return 1
+    fi
+
+    # Re-read under the lock: a concurrent land-local or a prior transition could have
+    # moved the mode between the unlocked checks above and here.
+    mode="$(repo_land "$name")"
+    [ "$mode" = "queue.local" ] || {
+        printf 'queue.sh to-forge: %s is not in queue.local mode (mode=%s) — nothing to transition\n' "$name" "$mode" >&2
+        return 1
+    }
+
+    printf 'queue.sh to-forge: running the final publish for %s\n' "$name"
+    local pub_out pub_rc
+    pub_out="$(SPIRA_QUEUE_LOCK_HELD=1 cmd_publish "$name" 2>&1)"; pub_rc=$?
+    printf '%s\n' "$pub_out"
+    [ "$pub_rc" -eq 0 ] || {
+        printf 'queue.sh to-forge: the final publish failed — refused, nothing changed\n' >&2
+        return 1
+    }
+
+    local publish_file; publish_file="$(_publish_file "$name")"
+    if [ -f "$publish_file" ]; then
+        # shellcheck disable=SC1090
+        . "$HERE/verdict.sh"
+        local pr_n; pr_n="$(_publish_field pr "$publish_file")"
+        local interval="${SPIRA_QUEUE_TRANSITION_POLLSEC:-5}"
+        local deadline=$(( $(date +%s) + ${SPIRA_QUEUE_TRANSITION_MAXSEC:-1800} ))
+        printf 'queue.sh to-forge: waiting for publish PR %s to settle green\n' "$pr_n"
+        while :; do
+            _verdict_settle_publish "$name" "$repo"
+            local settle_rc=$?
+            if [ "$settle_rc" -eq 3 ]; then
+                printf 'queue.sh to-forge: the final publish (PR %s) is red — refused, nothing changed; it is left open for the normal fix-forward recovery\n' \
+                    "$pr_n" >&2
+                return 1
+            fi
+            [ -f "$publish_file" ] || break
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+                printf 'queue.sh to-forge: timed out waiting for publish PR %s to settle — refused, nothing changed\n' "$pr_n" >&2
+                return 1
+            fi
+            sleep "$interval"
+        done
+    fi
+
+    # THE PRECONDITION THE DESIGN NAMES: origin/main (the forge target, fetched fresh) must
+    # be IDENTICAL to local/main, not merely an ancestor — the settle above already made it
+    # so on a green publish, but re-verifying rather than trusting that catches anything else
+    # that moved either ref in between.
+    git -C "$repo" fetch -q "$remote" "$forge_branch" 2>/dev/null || {
+        printf 'queue.sh to-forge: could not fetch %s/%s to verify\n' "$remote" "$forge_branch" >&2
+        return 1
+    }
+    local forge_sha local_sha
+    forge_sha="$(git -C "$repo" rev-parse -q --verify "refs/remotes/$remote/$forge_branch" 2>/dev/null)"
+    local_sha="$(git -C "$repo" rev-parse -q --verify "$base_branch" 2>/dev/null)"
+    if [ -z "$forge_sha" ] || [ -z "$local_sha" ] || [ "$forge_sha" != "$local_sha" ]; then
+        printf 'queue.sh to-forge: %s/%s (%s) and %s (%s) differ — refused, nothing changed\n' \
+            "$remote" "$forge_branch" "${forge_sha:-<none>}" "$base_branch" "${local_sha:-<none>}" >&2
+        return 1
+    fi
+
+    local new_base="$remote/$forge_branch"
+    _land_mode_write_row "$name" "queue.forge" "$new_base" || {
+        printf 'queue.sh to-forge: writing the new row failed for %s — reconcile repo-map/spira.toml by hand\n' "$name" >&2
+        return 1
+    }
+
+    local new_mode new_ref
+    new_mode="$(repo_land "$name")"
+    new_ref="$(spira_landref "$name" 2>/dev/null)"
+    if [ "$new_mode" != "queue" ] || [ "$new_ref" != "$new_base" ]; then
+        printf 'queue.sh to-forge: post-write verification failed for %s (mode=%s ref=%s, expected queue at %s) — fix by hand\n' \
+            "$name" "$new_mode" "$new_ref" "$new_base" >&2
+        return 1
+    fi
+
+    local archive_ref="refs/archive/$base_branch"
+    git -C "$repo" update-ref "$archive_ref" "$local_sha" 2>/dev/null || true
+    git -C "$repo" branch -D "$base_branch" >/dev/null 2>&1 || true
+
+    queue_notify_concierge "$name" "flipped to queue.forge" \
+        "$name moved from queue.local to queue.forge; base is now $new_base. $base_branch archived at $archive_ref."
+
+    printf 'queue.sh to-forge: %s is now queue.forge (base=%s); %s archived at %s\n' \
+        "$name" "$new_base" "$base_branch" "$archive_ref"
+}
+
+# cmd_to_local: the reverse of cmd_to_forge. Re-derives local/<branch> from the forge base —
+# reusing the archive cmd_to_forge left behind when one exists there, and refusing unless the
+# forge base descends from it — then syncs it to the forge's current tip before flipping the
+# row back. A repo that has never been through queue.local has no archive to reuse, so its
+# first flip to queue.local simply starts the local branch at the forge's current tip.
+cmd_to_local() {
+    local name=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        -*) printf 'queue.sh to-local: unknown option: %s\n' "$1" >&2; return 2 ;;
+        *)  name="$1"; shift ;;
+        esac
+    done
+    [ -n "$name" ] || name="$(spira_home_repo)"
+
+    local repo; repo="$(repo_root "$name" 2>/dev/null)" || {
+        printf 'queue.sh to-local: no such repo: %s\n' "$name" >&2; return 1
+    }
+    local mode; mode="$(repo_land "$name")"
+    [ "$mode" = "queue" ] || {
+        printf 'queue.sh to-local: %s is not in queue.forge mode (mode=%s) — nothing to transition\n' "$name" "$mode" >&2
+        return 1
+    }
+    _land_mode_agrees "$name" || return 1
+
+    local base; base="$(spira_landref "$repo")" || {
+        printf 'queue.sh to-local: cannot resolve landing ref for %s\n' "$name" >&2; return 1
+    }
+    local remote; remote="$(ref_remote "$base" "$repo")" || {
+        printf 'queue.sh to-local: %s does not resolve to a remote-tracking ref — not a queue.forge base\n' "$base" >&2
+        return 1
+    }
+    local forge_branch; forge_branch="$(ref_branch "$base")"
+    local new_base_branch="local/$forge_branch"
+
+    local checked_out; checked_out="$(git -C "$repo" symbolic-ref -q --short HEAD 2>/dev/null)"
+    [ "$checked_out" != "$new_base_branch" ] || {
+        printf 'queue.sh to-local: the checkout at %s is already on %s — check out a different branch first\n' \
+            "$repo" "$new_base_branch" >&2
+        return 1
+    }
+    git -C "$repo" show-ref --verify --quiet "refs/heads/$new_base_branch" && {
+        printf 'queue.sh to-local: %s already exists as a local branch — refused, nothing changed\n' "$new_base_branch" >&2
+        return 1
+    }
+
+    local lockfile; lockfile="${SPIRA_QUEUE_DIR:?}/$name/lock"
+    mkdir -p "${SPIRA_QUEUE_DIR:?}/$name" 2>/dev/null || true
+    { exec 9>"$lockfile"; } 2>/dev/null \
+        || { printf 'queue.sh to-local: cannot open lock file for %s\n' "$name" >&2; return 1; }
+    if ! flock -n 9; then
+        printf 'queue.sh to-local: another queue operation holds the lock for %s\n' "$name" >&2
+        return 1
+    fi
+
+    mode="$(repo_land "$name")"
+    [ "$mode" = "queue" ] || {
+        printf 'queue.sh to-local: %s is not in queue.forge mode (mode=%s) — nothing to transition\n' "$name" "$mode" >&2
+        return 1
+    }
+
+    git -C "$repo" fetch -q "$remote" "$forge_branch" 2>/dev/null || {
+        printf 'queue.sh to-local: could not fetch %s/%s\n' "$remote" "$forge_branch" >&2
+        return 1
+    }
+    local forge_sha; forge_sha="$(git -C "$repo" rev-parse -q --verify "refs/remotes/$remote/$forge_branch" 2>/dev/null)"
+    [ -n "$forge_sha" ] || {
+        printf 'queue.sh to-local: cannot resolve %s/%s\n' "$remote" "$forge_branch" >&2
+        return 1
+    }
+
+    local archive_ref="refs/archive/$new_base_branch" start_sha
+    start_sha="$(git -C "$repo" rev-parse -q --verify "$archive_ref" 2>/dev/null)"
+    if [ -n "$start_sha" ] && ! git -C "$repo" merge-base --is-ancestor "$start_sha" "$forge_sha" 2>/dev/null; then
+        printf 'queue.sh to-local: the archived %s (%s) is not an ancestor of %s/%s (%s) — refs differ, refused\n' \
+            "$new_base_branch" "$start_sha" "$remote" "$forge_branch" "$forge_sha" >&2
+        return 1
+    fi
+
+    git -C "$repo" branch "$new_base_branch" "$forge_sha" 2>/dev/null || {
+        printf 'queue.sh to-local: could not create %s at %s\n' "$new_base_branch" "$forge_sha" >&2
+        return 1
+    }
+
+    if ! _land_mode_write_row "$name" "queue.local" "$new_base_branch"; then
+        git -C "$repo" branch -D "$new_base_branch" >/dev/null 2>&1 || true
+        printf 'queue.sh to-local: writing the new row failed for %s — reconcile repo-map/spira.toml by hand\n' "$name" >&2
+        return 1
+    fi
+
+    local new_mode new_ref
+    new_mode="$(repo_land "$name")"
+    new_ref="$(spira_landref "$name" 2>/dev/null)"
+    if [ "$new_mode" != "queue.local" ] || [ "$new_ref" != "$new_base_branch" ]; then
+        printf 'queue.sh to-local: post-write verification failed for %s (mode=%s ref=%s, expected queue.local at %s) — fix by hand\n' \
+            "$name" "$new_mode" "$new_ref" "$new_base_branch" >&2
+        return 1
+    fi
+
+    queue_notify_concierge "$name" "flipped to queue.local" \
+        "$name moved from queue.forge to queue.local; base is now $new_base_branch, synced to $remote/$forge_branch at $forge_sha."
+
+    printf 'queue.sh to-local: %s is now queue.local (base=%s, synced to %s/%s)\n' \
+        "$name" "$new_base_branch" "$remote" "$forge_branch"
+}
+
 main() {
     case "${1:-}" in
         submit)  shift; cmd_submit "$@" ;;
@@ -1375,7 +1726,9 @@ main() {
         release) shift; cmd_release "$@" ;;
         land-local) shift; cmd_land_local "$@" ;;
         publish) shift; cmd_publish "$@" ;;
-        *) printf 'usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>]\n' >&2; return 2 ;;
+        to-forge) shift; cmd_to_forge "$@" ;;
+        to-local) shift; cmd_to_local "$@" ;;
+        *) printf 'usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>]\n' >&2; return 2 ;;
     esac
 }
 
