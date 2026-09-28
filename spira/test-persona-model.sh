@@ -28,6 +28,7 @@
 # that logic is the binary's own now).
 #
 # defect: sp-zs04v.4
+# tier: T2
 # covers: spira/lib.sh aeon/src/* concierge.sh spira/reflect.sh spira/conf.sh spira/chamber/*.fayth
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
