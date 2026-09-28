@@ -41,7 +41,15 @@ MAN="$TMP/watchers"
 # A daemon row, not a log row: only "daemon" watchers get a spira-watch@ unit
 # (watchd.sh cmd_units), which is the one this suite needs rendered.
 printf 'alpha|daemon|/usr/bin/true|\n' > "$MAN"
-CONF="$TMP/spira.conf"
+RENDER_DIR="$TMP/render"; mkdir -p "$RENDER_DIR"
+CONF="$RENDER_DIR/spira.conf"
+# ITS OWN DIRECTORY, SEPARATE FROM THE INSTALL PASS'S CONF BELOW: spira_toml_resolve's
+# pinned-conf auto-convert writes its spira.toml beside the pinned conf (sp-zs04v.4), so two
+# unrelated conf files sharing one directory would collide on that one toml — the render
+# pass's (SPIRA_PROD pinned empty) landing first and the install pass silently inheriting
+# it instead of converting its own conf, exactly the cross-contamination
+# law-absence-needs-a-positive-control's sibling scar (sp-zs04v.2) warns about.
+#
 # SPIRA_PROD pinned to empty: render() then falls back to SPIRA_HOME ($CLONE/spira), so
 # ExecStart resolves from the clone rather than this box's own derived release path.
 printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PROD = \n' \

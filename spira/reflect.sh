@@ -58,7 +58,7 @@ beginning 'CHECK:' followed by the proposed deterministic check. Do not take any
 and do not modify any bead."
 
 printf '\n===== %s =====\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-out="$(printf '%s' "$PROMPT" | timeout 600 claude -p --model claude-opus-5 \
+out="$(printf '%s' "$PROMPT" | timeout 600 claude -p --model "${SPIRA_REFLECT_MODEL:-claude-opus-5}" \
         --allowedTools "Read,Grep,Glob" --dangerously-skip-permissions 2>&1)"
 printf '%s\n' "$out"
 

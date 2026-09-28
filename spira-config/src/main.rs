@@ -279,7 +279,8 @@ fn cmd_convert(args: &[String]) -> ExitCode {
         .map(|(p, t)| (p.as_str(), t.as_str()))
         .collect();
 
-    let (doc, warnings) = match convert::convert(&conf_text, &home, &repo_map_text, &fayth_refs) {
+    let (mut doc, warnings) = match convert::convert(&conf_text, &home, &repo_map_text, &fayth_refs)
+    {
         Ok(r) => r,
         Err(errors) => {
             for e in &errors {
@@ -290,6 +291,30 @@ fn cmd_convert(args: &[String]) -> ExitCode {
     };
     for w in &warnings.0 {
         eprintln!("spira-config convert: {w}");
+    }
+    // A CALLER THAT OMITS --conf ENTIRELY IS ASKING FOR A NARROWER REFRESH (conf.sh's
+    // persona-only regenerate passes just --fayth), not "this box has no [spira]/[repo]
+    // config" — read_conf against empty text returns only defaults, and writing that over an
+    // --out file with real content would silently erase every scalar spira.toml key the
+    // omitted input didn't re-supply (shrink_reason only counts [repo.*] tables and the
+    // fayths list, so a scalar wipe like this passes it unnoticed). Fall back to whatever the
+    // target already holds for [spira]/[repo] when there is no --conf to derive them from.
+    //
+    // ONLY WHEN --conf ITSELF IS ABSENT, not merely --repo-map: a caller that passes --conf
+    // without --repo-map is doing a real (if incomplete) conversion, and shrink_reason's
+    // refusal is the intended backstop for that shape (sp-zs04v.2) — preserving [repo.*] out
+    // from under it here would silence the exact refusal that guard exists to raise.
+    if conf_path.is_none() {
+        if let Some(p) = &out_path {
+            if let Ok(existing_text) = fs::read_to_string(p) {
+                if let Ok(existing) = validate(&existing_text) {
+                    doc.spira = existing.spira;
+                    if repo_map_path.is_none() {
+                        doc.repo = existing.repo;
+                    }
+                }
+            }
+        }
     }
     let out = match toml::to_string_pretty(&doc) {
         Ok(s) => s,

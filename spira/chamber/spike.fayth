@@ -33,6 +33,9 @@ FAYTH_MEMORY_PREFIXES="law-"
 # NO FAYTH_REPO. The repository comes from the BEAD, through its `repo:<name>` label, exactly
 # as it does for every other persona — a spike into one repository's problem is written up in
 # that repository, and a spike with no `repo:` label is the home repo.
+# SEED ONLY (sp-zs04v.4): the live value is persona.spike.model in spira.toml,
+# resolved by lib.sh's persona_model — this line only seeds that table on first
+# convert and is no longer read at launch.
 FAYTH_MODEL=claude-opus-5
 
 # ONE. A spike is not throughput work: its output is a decision, and two aeons answering two

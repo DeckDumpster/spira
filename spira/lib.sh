@@ -1069,6 +1069,30 @@ roster_warnings() {      # roster_warnings <roster> -> a WARN line per fayth lef
     return 0
 }
 
+# persona_model <fayth> [default] -> the model this persona launches under.
+#
+# THE ONE RESOLVER (sp-z134z, sp-zs04v.4): every launch path calls this rather than each
+# reading a model out of its own copy of the fayth. Reads persona.<fayth>.model out of
+# spira.toml through spira-config — the operator's override surface, changeable without a
+# change to main — falling back to a built-in default. NOT a fallback to the fayth's own
+# FAYTH_MODEL: that was the file-scraping this resolver replaces, so a persona with no
+# [persona.<name>] table launches under the bare built-in default, not its fayth's
+# declaration (conf.sh's spira_toml_resolve seeds that table from the fayth on first read,
+# so the declared value is not lost — see its own comment for the production-safety case).
+#
+# CALLS spira_toml_resolve() FRESH, not $SPIRA_TOML_FILE cached at conf.sh-sourcing time —
+# the same staleness fix repo_field/repo_names carry (sp-zs04v.3): a long-lived process
+# (cockpit, a sweep) must see a fayth edited after it started, and spira_toml_resolve's own
+# mtime check keeps a call that finds nothing stale cheap.
+persona_model() {
+    local name="$1" def="${2:-claude-opus-5}" bin toml v=""
+    toml="$(spira_toml_resolve)"
+    if [ -n "$toml" ] && bin="$(spira_config_bin)"; then
+        v="$("$bin" get "persona.$name.model" "$toml" 2>/dev/null)"
+    fi
+    printf '%s' "${v:-$def}"
+}
+
 fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a fayth
     local f="$1" var="$2" def="${3:-}" F="$SPIRA_HOME/chamber/$1.fayth"
     [ -f "$F" ] || { printf '%s' "$def"; return 1; }
@@ -3024,12 +3048,15 @@ capacity_probe_maybe() {
 #
 # Uses SPIRA_AGENT (the configured agent CLI, default: claude) so tests drive it through
 # the same seam that aeon.sh uses for its own injections. Uses SPIRA_CAPACITY_PROBE_MODEL
-# so an operator whose pool runs a different model can match the probe to it. Timeouts are
-# treated as refusals — an API that does not answer in SPIRA_CAPACITY_PROBE_TIMEOUT seconds
-# is not evidence the account is open, and the conservative direction is to keep the pause.
+# so an operator whose pool runs a different model can match the probe to it; unset, it
+# DEFAULTS TO THE BUILDER'S OWN RESOLVED MODEL — a probe the builder's model cannot answer
+# is evidence the account is genuinely out for builders, so the two must not drift apart.
+# Timeouts are treated as refusals — an API that does not answer in
+# SPIRA_CAPACITY_PROBE_TIMEOUT seconds is not evidence the account is open, and the
+# conservative direction is to keep the pause.
 capacity_probe() {
     printf 'ok' | timeout "${SPIRA_CAPACITY_PROBE_TIMEOUT:-30}" \
-        "${SPIRA_AGENT:-claude}" -p --model "${SPIRA_CAPACITY_PROBE_MODEL:-claude-sonnet-4-6}" \
+        "${SPIRA_AGENT:-claude}" -p --model "${SPIRA_CAPACITY_PROBE_MODEL:-$(persona_model builder)}" \
         >/dev/null 2>&1
 }
 
@@ -4491,7 +4518,7 @@ still_waiting() {
     # short ceiling: this runs while a lease is on the line and must not itself hang.
     command -v claude >/dev/null 2>&1 || return 1
     verdict="$(printf 'A background agent has produced no output for several minutes. Its last action was:\n\n%s\n\nIs it plausibly WAITING on something that legitimately takes more than ten minutes (a CI run, a build, a large clone, a long test suite, a rate limit), or is it STUCK? Answer with exactly one word: WAITING or STUCK.' "$last" \
-        | timeout 90 claude -p --model claude-haiku-4-5-20251001 2>/dev/null | tr -d "[:space:]" | tr "[:lower:]" "[:upper:]")"
+        | timeout 90 claude -p --model "${SPIRA_LIVENESS_MODEL:-claude-haiku-4-5-20251001}" 2>/dev/null | tr -d "[:space:]" | tr "[:lower:]" "[:upper:]")"
     case "$verdict" in *WAITING*) return 0 ;; esac
     return 1
 }
@@ -5277,7 +5304,7 @@ aeon_claude_argv() {
     local sys_flag="$1" sys_file="$2"
     printf -- '-p\n--output-format\nstream-json\n--verbose\n--include-partial-messages\n--system-prompt-snapshot\non\n'
     printf '%s\n%s\n' "$sys_flag" "$sys_file"
-    printf -- '--model\n%s\n' "${FAYTH_MODEL:-claude-opus-5}"
+    printf -- '--model\n%s\n' "$(persona_model "${FAYTH:-}")"
     printf -- '--allowedTools\n%s\n' "${FAYTH_TOOLS:-Bash,Read,Edit,Write,Glob,Grep}"
     printf -- '--dangerously-skip-permissions\n'
     [ "${FAYTH_PROJECT_INSTRUCTIONS:-}" = "none" ] && printf -- '--setting-sources\nuser\n'

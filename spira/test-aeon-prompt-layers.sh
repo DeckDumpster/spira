@@ -65,8 +65,11 @@ want "the default model"                                                    "cla
 want "the default tool allowlist"                                           "Bash,Read,Edit,Write,Glob,Grep" "$out"
 
 out="$(argv_for replace '' claude-sonnet-5 'Bash,Read')"
-want   "FAYTH_MODEL overrides the default"       "claude-sonnet-5" "$out"
-nowant "and the default model is not also present" "claude-opus-5" "$out"
+# sp-zs04v.4: the model no longer comes from FAYTH_MODEL — persona_model (lib.sh) is the
+# one resolver now, reading persona.<fayth>.model out of spira.toml; see
+# test-persona-model.sh for its own fallback ladder and end-to-end argv coverage.
+nowant "FAYTH_MODEL no longer overrides the default" "claude-sonnet-5" "$out"
+want   "the default model still wins with no spira.toml entry" "claude-opus-5" "$out"
 want   "FAYTH_TOOLS overrides the default"       "$(printf -- '--allowedTools\nBash,Read')" "$out"
 
 # --settings always appears — aeon_settings() (lib.sh) wires the mail-delivery hook
