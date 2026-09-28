@@ -1884,6 +1884,7 @@ PROMPT="$(sed -e "s|{{BEAD_ID}}|$BEAD_ID|g" -e "s|{{BRANCH}}|$BRANCH|g" \
               -e "s|{{SOP}}|$SPIRA_HOME/sop.sh|g" -e "s|{{INCIDENT}}|$SPIRA_HOME/incident.sh|g" \
               -e "s|{{ASK}}|$SPIRA_HOME/mail.sh|g" -e "s|{{SUITES}}|$SPIRA_HOME/suites.sh|g" \
               -e "s|{{GROOM}}|$SPIRA_HOME/groomer.sh|g" \
+              -e "s|{{DEP}}|$SPIRA_HOME/bead.sh dep add|g" \
               -e "s|{{SPIRA_HOME}}|$SPIRA_HOME|g" \
               -e "s|{{RUN}}|$SPIRA_RUN|g" \
               -e "s|{{MAX_BEADS}}|$SPIRA_MAECHEN_MAX_BEADS|g" \

@@ -6,6 +6,9 @@
 #   bead.sh file "<title>" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--json] [--parent <id>]
 #   bead.sh lint [--all|<id>...]     check that beads in the store satisfy the contract
 #   bead.sh contract                 legal personas, repos and kinds, read from source
+#   bead.sh dep add <id> <depends-on-id> [--type <type>]
+#                                     wrap `bd dep add`, refusing a blocks edge onto an
+#                                     incident-labelled bead (use `bd dep relate` for those)
 #
 # WHY THIS EXISTS AND NOT bd create DIRECTLY
 # ------------------------------------------
@@ -209,8 +212,8 @@ _bead_lint_judge() {
 
 _bead_lint() {
     local rc=0 n=0 bad=0 id labels show_out show_rc show_parsed bead_status bead_type
-    local ids="" _ask_label="$SPIRA_ASK_LABEL"
-    local -A _ask_cache=()
+    local ids="" _ask_label="$SPIRA_ASK_LABEL" _inc_label="${SPIRA_INCIDENT_LABEL:-incident}"
+    local -A _oid_labels_cache=()
     if [ "${1:-}" = "--all" ] || [ $# -eq 0 ]; then
         ids="$(bdq list --all --limit 0 --json 2>/dev/null \
             | python3 -c '
@@ -277,16 +280,12 @@ print(d.get("issue_type") or "")
                 bad=$((bad+1)); rc=1
             fi
         fi
-        # Two beads that both carry the ask label must never share a `blocks` edge: an ask
-        # to the operator does not gate another ask, and a blocked one drops out of `bd
-        # ready` silently. `bd dep relate` is the right edge for "this rollup subsumes that".
-        case " $labels " in
-            *" $_ask_label "*)
-                local _blk_other _oid
-                # `dep list` shapes its --json rows differently for one id (a nested issue,
-                # keyed "id") than for a batch of ids (a flat record, keyed "depends_on_id") —
-                # read whichever key the single-id call actually returned.
-                _blk_other="$(bdq dep list "$id" --type blocks --json 2>/dev/null | python3 -c '
+        # WHAT THIS BEAD DEPENDS ON (blocks-type edges). Fetched once per id and shared by
+        # both checks below. `dep list` shapes its --json rows differently for one id (a
+        # nested issue, keyed "id") than for a batch of ids (a flat record, keyed
+        # "depends_on_id") — read whichever key the single-id call actually returned.
+        local _blk_other _oid
+        _blk_other="$(bdq dep list "$id" --type blocks --json 2>/dev/null | python3 -c '
 import json, sys
 try:
     data = json.load(sys.stdin)
@@ -295,11 +294,10 @@ except ValueError:
 for d in data:
     print(d.get("depends_on_id") or d.get("id") or "")
 ' 2>/dev/null)"
-                while IFS= read -r _oid; do
-                    [ -n "$_oid" ] || continue
-                    if [ -z "${_ask_cache[$_oid]+x}" ]; then
-                        local _oid_labels
-                        _oid_labels="$(bdq show "$_oid" --json 2>/dev/null | python3 -c '
+        while IFS= read -r _oid; do
+            [ -n "$_oid" ] || continue
+            if [ -z "${_oid_labels_cache[$_oid]+x}" ]; then
+                _oid_labels_cache[$_oid]="$(bdq show "$_oid" --json 2>/dev/null | python3 -c '
 import json, sys
 try:
     data = json.load(sys.stdin)
@@ -308,19 +306,43 @@ try:
 except Exception:
     print("")
 ' 2>/dev/null)"
-                        case " $_oid_labels " in
-                            *" $_ask_label "*) _ask_cache[$_oid]=1 ;;
-                            *)                  _ask_cache[$_oid]=0 ;;
-                        esac
-                    fi
-                    if [ "${_ask_cache[$_oid]}" = 1 ]; then
-                        printf 'bead: %s: blocks edge to ask-labelled %s (asks must not block each other; use bd dep relate)\n' \
-                            "$id" "$_oid" >&2
-                        bad=$((bad+1)); rc=1
-                    fi
+            fi
+        done <<< "$_blk_other"
+
+        # Two beads that both carry the ask label must never share a `blocks` edge: an ask
+        # to the operator does not gate another ask, and a blocked one drops out of `bd
+        # ready` silently. `bd dep relate` is the right edge for "this rollup subsumes that".
+        case " $labels " in
+            *" $_ask_label "*)
+                while IFS= read -r _oid; do
+                    [ -n "$_oid" ] || continue
+                    case " ${_oid_labels_cache[$_oid]:-} " in
+                        *" $_ask_label "*)
+                            printf 'bead: %s: blocks edge to ask-labelled %s (asks must not block each other; use bd dep relate)\n' \
+                                "$id" "$_oid" >&2
+                            bad=$((bad+1)); rc=1
+                            ;;
+                    esac
                 done <<< "$_blk_other"
                 ;;
         esac
+
+        # A blocks edge onto an incident bead has no completion path: an alarm re-arms
+        # forever, so nothing an aeon does ever satisfies it (sp-ivlj4, law-a-refusal-is-not-an-undo
+        # for the mirror case — here the edge itself is the thing that must never exist).
+        # `bd dep relate` is the right edge for "this work is related to that alarm" without
+        # gating readiness on it. Checked regardless of $id's own labels: it is the target
+        # that can never finish, not the source.
+        while IFS= read -r _oid; do
+            [ -n "$_oid" ] || continue
+            case " ${_oid_labels_cache[$_oid]:-} " in
+                *" $_inc_label "*)
+                    printf 'bead: %s: blocks edge to incident-labelled %s (alarms must not block work; use bd dep relate)\n' \
+                        "$id" "$_oid" >&2
+                    bad=$((bad+1)); rc=1
+                    ;;
+            esac
+        done <<< "$_blk_other"
 
         local judge_out
         judge_out="$(_bead_lint_judge "$labels" "$bead_status" "$bead_type" "$_part")"
@@ -380,6 +402,75 @@ _bead_amend() {
     done
 }
 
+# _bead_dep_add <id> <depends-on-id> [--type <type>|--blocked-by <id>|--depends-on <id>]
+#
+# THE HARNESS DEPENDENCY PATH (sp-ivlj4, sp-3bc6t). A blocks edge means "<id> depends on
+# (is blocked by) <depends-on-id>" — bd's own semantics, confirmed by `bd dep add --help`.
+# When <depends-on-id> carries the incident label it can never finish: an alarm re-arms on
+# every recurrence, so the edge has no completion path and only ever gets removed by hand
+# (sp-pyowh sat blocked 22 hours on sp-kogm this way). Refused here, before bd is called,
+# rather than left for `bead.sh lint` to notice after the fact (law-bake-rules-into-tools).
+# `bd dep relate` records the same provenance without gating readiness on it.
+#
+# Bulk `--file` wiring is not wrapped — it is not a shape an aeon composes by hand, and the
+# same incident check belongs in bead.sh lint's sweep for edges however they were made.
+_bead_dep_add() {
+    local id="" depid="" type="" pos_n=0
+    local -a rest=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --type|-t)      shift; type="${1:-}" ;;
+            --blocked-by)   shift; depid="${1:-}" ;;
+            --depends-on)   shift; depid="${1:-}" ;;
+            --file)
+                printf 'bead: dep add: --file bulk wiring is not wrapped; use bd dep add --file directly\n' >&2
+                return 2 ;;
+            -*)             rest+=("$1") ;;
+            *)
+                case "$pos_n" in
+                    0) id="$1"; pos_n=1 ;;
+                    1) [ -n "$depid" ] || depid="$1"; pos_n=2 ;;
+                    *) rest+=("$1") ;;
+                esac
+                ;;
+        esac
+        shift
+    done
+    [ -n "$id" ] && [ -n "$depid" ] || {
+        printf 'usage: bead.sh dep add <id> <depends-on-id> [--type <type>]\n' >&2
+        return 2
+    }
+
+    # blocks is the default type, and 'blocked-by'/'depends-on' are bd's own aliases for it
+    # (see bd dep add --help) — every spelling that produces a blocks edge is checked here.
+    case "${type:-blocks}" in
+        blocks|blocked-by|depends-on)
+            local _inc="${SPIRA_INCIDENT_LABEL:-incident}" _target_labels
+            _target_labels="$(bdq show "$depid" --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    d = data[0] if isinstance(data, list) else data
+    print(" ".join(d.get("labels") or []))
+except Exception:
+    print("")
+' 2>/dev/null)"
+            case " $_target_labels " in
+                *" $_inc "*)
+                    printf 'bead: dep add: refusing — %s carries the %s label and can never finish (an alarm re-arms on every recurrence); a blocks edge onto it has no completion path. Use: bd dep relate %s %s\n' \
+                        "$depid" "$_inc" "$id" "$depid" >&2
+                    return 1
+                    ;;
+            esac
+            ;;
+    esac
+
+    local -a call=(dep add "$id" "$depid")
+    [ -n "$type" ] && call+=(--type "$type")
+    call+=("${rest[@]}")
+    bdq "${call[@]}"
+}
+
 # Guarded so a test can source this file to reach _bead_lint_judge directly without
 # also running the CLI dispatch against the sourcing shell's own positional params.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
@@ -388,9 +479,17 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
         amend)    shift; _bead_amend "$@" ;;
         contract) _bead_contract ;;
         lint)     shift; _bead_lint "$@" ;;
+        dep)
+            shift
+            case "${1:-}" in
+                add) shift; _bead_dep_add "$@" ;;
+                *) printf 'usage: bead.sh dep add <id> <depends-on-id> [--type <type>]\n' >&2; exit 2 ;;
+            esac
+            ;;
         *) printf 'usage: bead.sh file "<title>" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--json]\n' >&2
            printf '       bead.sh file "<title>" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--json]\n' >&2
            printf '       bead.sh amend <id> [--note "<text>"] [--body-file F] [--express]\n' >&2
+           printf '       bead.sh dep add <id> <depends-on-id> [--type <type>]\n' >&2
            printf '       bead.sh lint [--all|<id>...]\n' >&2
            printf '       bead.sh contract\n' >&2
            exit 2 ;;

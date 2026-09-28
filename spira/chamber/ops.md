@@ -192,14 +192,16 @@ Quote the current reading in the close reason. If the condition still holds:
 - **The cause is a peer bead (stranded branch, unlanded fix):** add the dependency and leave
   this bead open without closing.
 
-      bd -C {{DB}} dep add {{BEAD_ID}} <root-bead-id>
+      {{DEP}} {{BEAD_ID}} <root-bead-id>
 
   A bead with an open blocker is skipped by `bd ready --claim`; the watcher's next filing
   adds a note to the open bead rather than reopening it. Close this bead only after the
-  blocking bead lands and the condition clears on the next watcher tick.
+  blocking bead lands and the condition clears on the next watcher tick. Use `{{DEP}}`, not
+  raw `bd dep add` — it refuses a blocks edge whose target is itself an incident/alarm bead,
+  which has no completion path (law-a-refusal-names-its-exit).
 
 - **The cause is not a bead (infrastructure, config, deliberate state):** file a new bead
-  for the root cause, link it with `bd dep add`, and leave this bead open.
+  for the root cause, link it with `{{DEP}}`, and leave this bead open.
 
 - **The condition is a deliberate state** (gate in progress, known backlog): do not close and
   do not add a dependency — file a bead against the watcher's predicate so it stops firing
