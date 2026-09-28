@@ -59,6 +59,23 @@ if v is not None:
 ' "$2" 2>/dev/null
 }
 
+# _lc_gate_red_reason <raw-reason> -> one of lifecycle::reason::GateRedReason's six kebab-
+# case variants. bead.rs's GateRed carries a closed enum (reason.rs), not the caller's free
+# text — gate.sh's own verdict() reasons (branch-red, syntax, beads-data, foreign-harness,
+# plus whatever a future caller passes) map onto it here, once, so a reason spira-lc cannot
+# parse never turns an otherwise-applicable event into a silent "cannot tell" (SEEN RED:
+# "branch-red" is gate.sh's actual reason token and was never a variant name itself).
+_lc_gate_red_reason() {
+    case "$1" in
+        syntax) printf 'syntax' ;;
+        beads-data|foreign-harness) printf 'policy-violation' ;;
+        no-rebase) printf 'no-rebase' ;;
+        timeout) printf 'timeout' ;;
+        confine) printf 'confine' ;;
+        *) printf 'suites-failed' ;;
+    esac
+}
+
 # _lc_event <bead-id> <expect-state> <version> <kind-json> -> spira-lc's own exit code
 # (0 applied, 3 refused, 2 cannot tell). Actor is the calling script's own name, so an
 # event's producer in the log is never guessed after the fact.
@@ -135,7 +152,7 @@ lc_resubmit() {
 # error, see lifecycle::Refusal).
 #
 #   outcome=pass   detail = gate_key
-#   outcome=red    detail = reason
+#   outcome=red    detail = reason (mapped onto GateRedReason by _lc_gate_red_reason)
 #   outcome=infra  detail ignored
 #
 # THE TIP INVARIANT (design §3 / this bead) IS APPLIED HERE, NOT ASSUMED. A row the machine
@@ -162,7 +179,7 @@ lc_certify() {
             kind="{\"GatePass\":{\"tip\":\"$(_lc_json_escape "$tip")\",\"gate_key\":\"$(_lc_json_escape "$detail")\"}}"
             ;;
         red)
-            kind="{\"GateRed\":{\"tip\":\"$(_lc_json_escape "$tip")\",\"reason\":\"$(_lc_json_escape "${detail:-unspecified}")\"}}"
+            kind="{\"GateRed\":{\"tip\":\"$(_lc_json_escape "$tip")\",\"reason\":\"$(_lc_gate_red_reason "$detail")\"}}"
             ;;
         infra)
             kind="{\"GateInfra\":{\"tip\":\"$(_lc_json_escape "$tip")\"}}"

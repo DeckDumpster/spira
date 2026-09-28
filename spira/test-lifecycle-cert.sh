@@ -173,6 +173,19 @@ lc_certify sp-red ddd444 red "branch-red" >/dev/null 2>&1
 is "GateRed applies" "0" "$?"
 is "row is REWORK" "REWORK" "$(row_field sp-red state)"
 
+# GateRedReason (lifecycle/src/reason.rs) is a closed enum — spira-lc refuses to parse a
+# --kind whose reason is not one of its six kebab-case variants. gate.sh's own verdict()
+# reasons (branch-red, syntax, beads-data, foreign-harness, ...) are free text, so
+# lc_certify's red arm must map every one of them, including one this table has never seen,
+# onto a variant the machine accepts — not pass the raw string through (SEEN RED: it did,
+# and "branch-red" itself — the one gate.sh actually emits — failed to parse).
+echo
+echo "GateRed with an unrecognized raw reason still applies (mapped, not passed through):"
+seed_bead sp-red2 SUBMITTED fff777 -
+lc_certify sp-red2 fff777 red "a-reason-spira-lc-has-never-heard-of" >/dev/null 2>&1
+is "GateRed with an unmapped reason still applies" "0" "$?"
+is "row is REWORK" "REWORK" "$(row_field sp-red2 state)"
+
 echo
 echo "GateInfra leaves a submitted bead SUBMITTED but still advances its version:"
 seed_bead sp-infra SUBMITTED eee555 -
