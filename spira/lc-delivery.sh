@@ -91,11 +91,12 @@ lc_deliver_pr_merged() {
         "$(printf '{"Delivered":{"merge_sha":%s,"proof":%s}}' "$(_lc_json_str "$merge_sha")" "$(_lc_json_str "$proof")")"
 }
 
-# lc_deliver_pr_closed <id> <reason> — pr mode's `closed unmerged` exit.
+# lc_deliver_pr_closed <id> <reason> — pr mode's `closed unmerged` exit. ReturnedReason is a
+# closed enum (lifecycle/src/reason.rs): this function IS the pr-closed-unmerged category,
+# so <reason> is not forwarded as the typed field — only pr-pass-branch's own log line uses it.
 lc_deliver_pr_closed() {
-    local id="$1" reason="$2"
-    _lc_deliver "$id" PR_OPEN pr-pass-branch \
-        "$(printf '{"Returned":{"reason":%s}}' "$(_lc_json_str "$reason")")"
+    local id="$1"
+    _lc_deliver "$id" PR_OPEN pr-pass-branch '{"Returned":{"reason":"pr-closed-unmerged"}}'
 }
 
 # lc_deliver_push_delivered <id> <merge-sha> — push mode's `pushed` exit. The proof is
@@ -116,9 +117,10 @@ lc_deliver_push_requeued() {
 }
 
 # lc_deliver_push_returned <id> <reason> — a genuine conflict with the base: the failure is
-# the bead's own, so it goes back to REWORK.
+# the bead's own, so it goes back to REWORK. ReturnedReason is a closed enum (lifecycle/src/
+# reason.rs): this function IS the push-rejected category, so <reason> is not forwarded as
+# the typed field — only landing.sh's own log line uses it.
 lc_deliver_push_returned() {
-    local id="$1" reason="$2"
-    _lc_deliver "$id" PUSHING landing.sh \
-        "$(printf '{"Returned":{"reason":%s}}' "$(_lc_json_str "$reason")")"
+    local id="$1"
+    _lc_deliver "$id" PUSHING landing.sh '{"Returned":{"reason":"push-rejected"}}'
 }

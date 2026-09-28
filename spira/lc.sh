@@ -57,6 +57,19 @@ lc_event() {
     "$SPIRA_LC_BIN" event bead "$id" --expect "$expect" --version "$version" --actor "$actor" --kind "$kind" >/dev/null 2>&1
 }
 
+# HoldCause is a closed enum (lifecycle/src/reason.rs), never a caller's own prose — the
+# category a hold kind already implies. A caller's free-text `cause` still reaches the row
+# (as the event's `detail`, lifecycle/src/bead.rs), just not as the typed field itself.
+_lc_hold_kind_cause() {   # _lc_hold_kind_cause <poison|ask|wait|operator> -> HoldCause tag
+    case "$1" in
+        poison)   echo attempts-exhausted ;;
+        ask)      echo operator-question ;;
+        wait)     echo unlanded-blocker ;;
+        operator) echo manual-hold ;;
+        *)        echo "lc: unknown hold kind '$1'" >&2; return 1 ;;
+    esac
+}
+
 # lc_hold <bead-id> <kind: poison|ask|wait|operator> <cause> [actor] -> best-effort: read
 # the row, apply Hold. rc 0 applied · 1 no row (not yet classified) · 2 cannot tell (no
 # binary, DB down) · 3 refused (terminal, or lost the race — the caller's bd-side write
@@ -70,8 +83,9 @@ lc_hold() {
     version="$(_lc_json_field "$js" 'd.get("bead",{}).get("version","")')"
     [ -n "$state" ] && [ -n "$version" ] || return 1
     local tag; tag="$(_lc_hold_kind_tag "$kind")" || return 2
-    local causej; causej="$(_lc_json_string "$cause")"
-    lc_event "$id" "$state" "$version" "$actor" "{\"Hold\":{\"kind\":\"$tag\",\"cause\":$causej}}"
+    local causetag; causetag="$(_lc_hold_kind_cause "$kind")" || return 2
+    local detailj; detailj="$(_lc_json_string "$cause")"
+    lc_event "$id" "$state" "$version" "$actor" "{\"Hold\":{\"kind\":\"$tag\",\"cause\":\"$causetag\",\"detail\":$detailj}}"
 }
 
 # lc_unhold <bead-id> <kind> [actor] -> best-effort: read the row, apply Unhold. Same rc
@@ -122,6 +136,11 @@ lc_holderdead() {
 # legal from any non-terminal state, so this applies whether or not a Claim/Submit ever
 # reached the row (design: "Terminal means terminal", but nothing upstream of terminal is
 # out of reach).
+#
+# DropReason is a closed enum (lifecycle/src/reason.rs): `unwanted` is the operator's own
+# policy call, and slay.sh --close (this function's only caller today) is exactly that — an
+# operator decided this bead should not be done. The caller's own free-text `<reason>`
+# still reaches bd (slay.sh's own note), just not this typed field.
 lc_drop() {
     local id="${1:?lc_drop needs a bead id}" reason="${2:?lc_drop needs a reason}" actor="${3:-sentinel}"
     local js; js="$(lc_show "$id")"; local rc=$?
@@ -130,13 +149,17 @@ lc_drop() {
     state="$(_lc_json_field "$js" 'd.get("bead",{}).get("state","")')"
     version="$(_lc_json_field "$js" 'd.get("bead",{}).get("version","")')"
     [ -n "$state" ] && [ -n "$version" ] || return 1
-    local reasonj; reasonj="$(_lc_json_string "$reason")"
-    lc_event "$id" "$state" "$version" "$actor" "{\"Drop\":{\"reason\":$reasonj}}"
+    lc_event "$id" "$state" "$version" "$actor" '{"Drop":{"reason":"unwanted"}}'
 }
 
 # lc_returned <bead-id> <reason> [actor] -> best-effort: read the row, apply Returned (the
 # delivery-exit event legal from IN_DELIVERY, landing the bead in REWORK) — a batch member
 # pulled back out of an open batch for a reason specific to it, not the whole batch.
+#
+# ReturnedReason is a closed enum (lifecycle/src/reason.rs); queue.sh's eject (this
+# function's only caller today) is always the queue mode's own `batch-ejected` category.
+# The caller's own free-text `<reason>` still reaches land_mark's RED record, just not
+# this typed field.
 lc_returned() {
     local id="${1:?lc_returned needs a bead id}" reason="${2:?lc_returned needs a reason}" actor="${3:-sentinel}"
     local js; js="$(lc_show "$id")"; local rc=$?
@@ -145,8 +168,7 @@ lc_returned() {
     state="$(_lc_json_field "$js" 'd.get("bead",{}).get("state","")')"
     version="$(_lc_json_field "$js" 'd.get("bead",{}).get("version","")')"
     [ -n "$state" ] && [ -n "$version" ] || return 1
-    local reasonj; reasonj="$(_lc_json_string "$reason")"
-    lc_event "$id" "$state" "$version" "$actor" "{\"Returned\":{\"reason\":$reasonj}}"
+    lc_event "$id" "$state" "$version" "$actor" '{"Returned":{"reason":"batch-ejected"}}'
 }
 
 # lc_holds <bead-id> -> the row's current hold kinds, one per line (empty if none, not
