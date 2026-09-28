@@ -7,14 +7,15 @@
 #   sending.sh --dry-run           print each branch's disposition, change nothing
 #   sending.sh <bead-id>           send exactly one bead's branch and worktree
 #   sending.sh --status-from <f>   read `id<TAB>status` from a file instead of bd (tests)
-#   sending.sh --skip-queue        sweep every repo EXCEPT queue-mode ones (the sentinel's
-#                                  per-pass call, sp-jci6o: a queue-mode repo's landed
-#                                  members are reaped at landing by bead_close_on_land, so
-#                                  re-scanning every one of its branches here every two
-#                                  minutes finds only what already left)
-#   sending.sh --queue-only        sweep ONLY queue-mode repos (the daily straggler sweep —
-#                                  catches whatever the landing-time reap missed: a held
-#                                  branch, a repo:/branch: label that would not resolve)
+#   sending.sh --skip-queue        sweep every repo EXCEPT queue/queue.local ones (the
+#                                  sentinel's per-pass call, sp-jci6o/sp-ksmdb: a queue-mode
+#                                  repo's landed members are reaped at landing by
+#                                  bead_close_on_land, so re-scanning every one of its
+#                                  branches here every two minutes finds only what already
+#                                  left)
+#   sending.sh --queue-only        sweep ONLY queue/queue.local repos (the daily straggler
+#                                  sweep — catches whatever the landing-time reap missed: a
+#                                  held branch, a repo:/branch: label that would not resolve)
 #
 # WHAT THIS REPLACES
 # ------------------
@@ -616,15 +617,14 @@ if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0 2>/dev/null || true; fi
 done
 
 # --skip-queue/--queue-only PARTITION THE REPOSITORY SET, NEVER A BRANCH WITHIN ONE. A
-# queue-mode repo's landed members are reaped at landing by bead_close_on_land
-# (spira_reap_landed_branch, lib.sh), so the per-pass sentinel call passes --skip-queue and
-# leaves that repo to the daily straggler sweep (--queue-only), which catches whatever the
-# landing-time reap missed (sp-jci6o). Neither flag changes what a swept repo's own branches
-# get judged by — only which repos are swept at all.
+# queue-mode repo's landed members (repo_land_queued: queue or queue.local) are reaped at
+# landing by bead_close_on_land (spira_reap_landed_branch, lib.sh), so the per-pass sentinel
+# call passes --skip-queue and leaves that repo to the daily straggler sweep (--queue-only),
+# which catches whatever the landing-time reap missed (sp-jci6o). Neither flag changes what a
+# swept repo's own branches get judged by — only which repos are swept at all.
 for repo_name in $(spira_repos); do
-    repo_mode="$(repo_land "$repo_name" 2>/dev/null)"
-    [ "$SKIP_QUEUE" = 1 ] && [ "$repo_mode" = queue ] && continue
-    [ "$QUEUE_ONLY" = 1 ] && [ "$repo_mode" != queue ] && continue
+    [ "$SKIP_QUEUE" = 1 ] && repo_land_queued "$repo_name" && continue
+    [ "$QUEUE_ONLY" = 1 ] && ! repo_land_queued "$repo_name" && continue
     sweep_repo "$repo_name"
 done
 

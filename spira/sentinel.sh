@@ -1445,7 +1445,7 @@ if [ -f "$_sending_base_stamp" ]; then
     if [ "$_sending_all_match" -eq 1 ]; then
         while IFS= read -r _sr_name; do
             [ -n "$_sr_name" ] || continue
-            [ "$(repo_land "$_sr_name" 2>/dev/null)" = queue ] && continue
+            repo_land_queued "$_sr_name" && continue
             repo_root "$_sr_name" >/dev/null 2>&1 || continue
             spira_landref "$(repo_root "$_sr_name" 2>/dev/null)" >/dev/null 2>&1 || continue
             grep -qF "${_sr_name}=" "$_sending_base_stamp" 2>/dev/null \
@@ -1468,7 +1468,7 @@ else
     fi
     grep -q '^FAILED' <<< "$sent" && log "sending reported a branch it could not delete"
     { for _sr_name in $(spira_repos 2>/dev/null); do
-        [ "$(repo_land "$_sr_name" 2>/dev/null)" = queue ] && continue
+        repo_land_queued "$_sr_name" && continue
         _sr_repo="$(repo_root "$_sr_name" 2>/dev/null)" || continue
         _sr_ref="$(spira_landref "$_sr_repo" 2>/dev/null)" || continue
         _sr_cur="$(git -C "$_sr_repo" rev-parse "$_sr_ref" 2>/dev/null)" || continue
