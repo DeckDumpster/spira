@@ -1037,6 +1037,6 @@ head_m="$(git -C "$LREPO" rev-parse local/main)"
 # A, B, C along local/main's first-parent history, not the certification order C, A, B.
 is     "M: merged in topological order A, B, C" \
        "$(printf 'sp-cmaa1\nsp-cmbb2\nsp-cmcc3')" \
-       "$(git -C "$LREPO" log --first-parent --format=%s "$head_m" | grep -o 'sp-cm[a-z0-9]*' | tac)"
+       "$(git -C "$LREPO" log --first-parent --format=%s "$head_m" | sed -n 's/^spira: land \(sp-cm[a-z0-9]*\).*/\1/p' | tac)"
 
 tl_summary
