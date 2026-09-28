@@ -207,11 +207,11 @@ _SCB="$SCRATCH/scb"; mkdir -p "$_SCB/spira" "$_SCB/bin" "$_SCB/target/release"
 _scb_run() { HERE="$_SCB/spira" bash -c ". '$TESTLIB' >/dev/null; testlib_spira_config_bin"; }
 
 is "testlib_spira_config_bin(): picks bin/ when both bin/ and target/release exist" \
-    "$_SCB/bin/spira-config" "$(_scb_run)"
+    "$_SCB/spira/../bin/spira-config" "$(_scb_run)"
 
 rm -f "$_SCB/bin/spira-config"
 is "testlib_spira_config_bin(): falls back to target/release when bin/ is absent" \
-    "$_SCB/target/release/spira-config" "$(_scb_run)"
+    "$_SCB/spira/../target/release/spira-config" "$(_scb_run)"
 
 rm -f "$_SCB/target/release/spira-config"
 _SCB_OUT="$(_scb_run)"; _SCB_RC=$?
