@@ -112,7 +112,7 @@ sentinel() {
     SPIRA_CONF="$TMP/no-such-conf" \
     SPIRA_INCIDENT_SH="$TMP/mock-incident.sh" \
     SPIRA_SKIP_RECLAIM=1 \
-        bash "$SH/sentinel.sh" 2>&1
+        bash "$SH/sentinel.sh" --audit 2>&1
 }
 
 status_of() { B show "$1" --json 2>/dev/null | python3 -c '

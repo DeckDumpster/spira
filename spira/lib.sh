@@ -2073,14 +2073,22 @@ fayths_for_labels() {    # fayths_for_labels <labels> -> personas whose partitio
     return 0
 }
 
-# summon_fayth <fayth> [pool-remaining] [require-label] -> 0 if an aeon was started, 1
-# otherwise.
+# summon_fayth <fayth> [pool-remaining] [require-label] [reuse-ready] -> 0 if an aeon was
+# started, 1 otherwise.
 #
 # require-label is passed to the aeon as SPIRA_REQUIRE_LABEL, which it adds to its own
 # FAYTH_LABELS before claiming (aeon.sh). Set it only when the slot itself is restricted —
 # an express grant, say — so the aeon summoned under it cannot claim a bead outside that
 # restriction. A normal summon leaves it unset and claims under the fayth's own predicate
 # exactly as before.
+#
+# reuse-ready=1 skips the fayth_ready bd round trip and uses SUMMON_FAYTH_CACHED_READY
+# (set by the previous call, in this same shell, for the SAME fayth) instead — a caller
+# looping repeated summons for one fayth in one pass already knows the count from its last
+# call, decremented by exactly the summon it just made; asking bd again for the same
+# partition, once per attempt, was the cost CHECK7's fill loop paid for nothing (sp-994y9).
+# Every other caller omits it, defaulting to 0: always a live query, exactly today's
+# behaviour.
 #
 # THE STATUS IS THE ANSWER, not a word on stdout. A caller that captured the output to look
 # for "summoned" would swallow the log lines below with it, and the sentinel's stdout IS the
@@ -2166,8 +2174,8 @@ summon_argv() {
         --setenv=PATH="$PATH" --setenv=HOME="$HOME"
 }
 
-summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label]
-    local f="$1" pool="${2:-}" require_label="${3:-}" r free
+summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label] [reuse-ready]
+    local f="$1" pool="${2:-}" require_label="${3:-}" reuse_ready="${4:-0}" r free
     world_gate "$f" CHECK7 || return 1
     # THE ACCOUNT BEFORE THE QUEUE. A summon during a capacity outage cannot succeed, and it
     # does not fail for free: the aeon it starts claims a bead, is refused by the API, and
@@ -2270,21 +2278,30 @@ summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label]
             fi
         fi
     fi
-    local _fr_err; _fr_err="$(mktemp)"
-    r="$(fayth_ready "$f" 2>"$_fr_err")"; local _fr_rc=$? _fr_errmsg
-    _fr_errmsg="$(cat "$_fr_err" 2>/dev/null)"
-    rm -f "$_fr_err"
-    if [ "$_fr_rc" -eq 2 ]; then
-        log "CHECK7 $f: no fayth in the chamber — skipped"
-        return 1
-    elif [ "$_fr_rc" -ne 0 ]; then
-        log "CHECK7 $f: ready query failed: ${_fr_errmsg:-bd gave no reason} — skipped, not counted as zero ready"
+    if [ "$reuse_ready" = 1 ] && [ -n "${SUMMON_FAYTH_CACHED_READY:-}" ]; then
+        r="$SUMMON_FAYTH_CACHED_READY"
+    else
+        local _fr_err; _fr_err="$(mktemp)"
+        r="$(fayth_ready "$f" 2>"$_fr_err")"; local _fr_rc=$? _fr_errmsg
+        _fr_errmsg="$(cat "$_fr_err" 2>/dev/null)"
+        rm -f "$_fr_err"
+        if [ "$_fr_rc" -eq 2 ]; then
+            log "CHECK7 $f: no fayth in the chamber — skipped"
+            return 1
+        elif [ "$_fr_rc" -ne 0 ]; then
+            log "CHECK7 $f: ready query failed: ${_fr_errmsg:-bd gave no reason} — skipped, not counted as zero ready"
+            return 1
+        fi
+    fi
+    if [ "${r:-0}" -eq 0 ]; then
+        log "CHECK7 $f: nothing ready in its partition"
+        SUMMON_FAYTH_CACHED_READY=0
         return 1
     fi
-    if [ "${r:-0}" -eq 0 ]; then log "CHECK7 $f: nothing ready in its partition"; return 1; fi
     free="$(fayth_free "$f" "$pool")"
     if [ "${free:-0}" -eq 0 ]; then
         log "CHECK7 $f: $r ready, at concurrency cap"
+        SUMMON_FAYTH_CACHED_READY="$r"
         return 1
     fi
 
@@ -2300,6 +2317,9 @@ summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label]
         "${_sargv[@]}" \
         ${require_label:+--setenv=SPIRA_REQUIRE_LABEL="$require_label"} \
         "$SPIRA_HOME/aeon.sh" "$f" 2>/dev/null
+    local _rc=$?
+    [ "$_rc" -eq 0 ] && SUMMON_FAYTH_CACHED_READY=$(( r > 0 ? r - 1 : 0 ))
+    return "$_rc"
 }
 
 # _ck7_summon_body -> CHECK 7's lane-then-pool summon loop, unlocked. Never call this
@@ -2368,7 +2388,15 @@ _ck7_summon_body() {
             continue
         fi
         local _fill=0
-        while summon_fayth "$f" "$pool" "$_ck7_express_label"; do
+        # ONE fayth_ready PER PERSONA PER PASS, NOT ONE PER SUMMON. A pool of N ready beads
+        # used to cost N bd round trips here — the fill loop re-asked "anything ready?"
+        # before every summon even though nothing between one attempt and the next could
+        # have changed the answer except the summon itself, and that decrement is known
+        # locally (sp-994y9).
+        unset SUMMON_FAYTH_CACHED_READY
+        local _ck7_reuse=0
+        while summon_fayth "$f" "$pool" "$_ck7_express_label" "$_ck7_reuse"; do
+            _ck7_reuse=1
             act "summoned a $f aeon"
             [ -n "$pool" ] && pool=$(( pool > 0 ? pool - 1 : 0 ))
             _fill=$(( _fill + 1 ))
