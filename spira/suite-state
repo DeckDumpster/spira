@@ -11,3 +11,4 @@
 # This file is read from the TREE UNDER TEST, not from the installed harness,
 # so testenv-batch.sh, CI and the hourly run each judge the tree they carry.
 # Transitions are written by: suites.sh quarantine|disable|activate.
+test-poison.sh | quarantined | 2026-09-28T12:35:54Z | sp-ytbma | times out under corpus load (366-474 s against the 600 s cap; timed out in rounds 105 and 106); quarantined until sp-ytbma makes it fast
