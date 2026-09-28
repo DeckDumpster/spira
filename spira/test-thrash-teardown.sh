@@ -59,6 +59,7 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+export SPIRA_WORK_BIN="$TMP/no-work-bin" SPIRA_LC_BIN="$TMP/no-lc-bin"  # legacy aeon path under --with-bins; sp-74gzo retires this
 grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
     || bail "aeon.sh has no SPIRA_AGENT injection — refusing to run the real model"
 
