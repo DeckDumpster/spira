@@ -54,7 +54,13 @@ SPIRA_CONFIG_BIN="$(testlib_spira_config_bin "$TMP")" || skip "cargo not found â
 CONF="$TMP/spira.conf"
 RUN="$TMP/run"
 printf 'SPIRA_RUN = %s\n' "$RUN" > "$CONF"
-export SPIRA_CONF="$CONF" HOME="$TMP/home"
+# REPO_MAP PINNED (empty for now) BEFORE THE FIRST SOURCE BELOW: an unset SPIRA_REPO_MAP
+# falls back to this checkout's own real repo-map, auto-converting it into this fixture's
+# spira.toml â€” and every later, smaller fixture conversion then trips spira-config convert's
+# shrink guard, so $CONF's SPIRA_RUN is silently never read.
+REPO_MAP="$TMP/repo-map"
+: > "$REPO_MAP"
+export SPIRA_CONF="$CONF" HOME="$TMP/home" SPIRA_REPO_MAP="$REPO_MAP"
 
 # SOURCEABLE, AND SILENT WHEN IT IS (pr-notify.sh's own guard): this reaches _PR_STATUS_PY
 # without triggering a live repo-map scan.
@@ -114,7 +120,6 @@ echo "transitions across every land mode (push, pr, queue, hold)"
 
 mkdir -p "$TMP/repos/queue-repo/.git" "$TMP/repos/pr-repo/.git" \
          "$TMP/repos/push-repo/.git" "$TMP/repos/hold-repo/.git"
-REPO_MAP="$TMP/repo-map"
 {
     printf '%s|%s|queue\n' "queue-repo" "$TMP/repos/queue-repo"
     printf '%s|%s|pr\n'    "pr-repo"    "$TMP/repos/pr-repo"
