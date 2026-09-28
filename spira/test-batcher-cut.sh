@@ -806,7 +806,7 @@ certify sp-cgcc3 "$tip_g3"
 
 prcreate_before_g3="$(grep -c '^pr-create' "$FORGE_LOG")"
 out_g3="$(STUB_EXIT4=1 cut_repo)"
-want   "K3: a workspace build failure is reported as a local round red" "workspace-build" "$out_g3"
+want   "K3: a workspace build failure is reported as a local round red" "workspace failed to build" "$out_g3"
 nowant "K3: never reported as an unexpected exit"                       "unexpected exit" "$out_g3"
 nowant "K3: never reported as a harness fault"                          "harness fault"   "$out_g3"
 is     "K3: no PR opened for a round whose workspace failed to build" \
