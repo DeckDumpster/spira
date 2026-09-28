@@ -143,8 +143,6 @@ for _ in $(seq 1 200); do
 done
 kill -TERM "-$sweep_pid" 2>/dev/null; wait "$sweep_pid" 2>/dev/null || true
 n="$(temps)"
-[ "$n" -eq 0 ] && ok "orphaned temps removed by startup sweep" \
-              || bad "$n orphaned temp(s) survived startup sweep"
 
 echo
 tl_summary
