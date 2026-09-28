@@ -34,9 +34,13 @@ nowant "ops.fayth no longer uses FAYTH_ROLE=party" "FAYTH_ROLE=party" "$(grep -v
 want "SPIRA_LANES is a recognised conf key" "SPIRA_LANES" "$(cat "$HERE/conf.sh")"
 want "ops is in the SPIRA_LANES default"    "ops"          "$(grep 'SPIRA_LANES:=' "$HERE/conf.sh")"
 
-# The sentinel handles lane fayths in a separate loop.
-want "sentinel.sh references spira_lane_fayths" "spira_lane_fayths" "$(cat "$HERE/sentinel.sh")"
-want "sentinel.sh handles LANE_FAYTHS in CHECK 7" "LANE_FAYTHS" "$(cat "$HERE/sentinel.sh")"
+# The sentinel handles lane fayths in a separate loop, inside the summon pass it shares with
+# --summon-only (sp-0y2av): sentinel.sh calls ck7_summon_pass; the loop is in its body.
+want "sentinel.sh runs the shared summon pass" "ck7_summon_pass" "$(cat "$HERE/sentinel.sh")"
+want "the summon pass references spira_lane_fayths" "spira_lane_fayths" \
+    "$(awk '/^_ck7_summon_body\(\)/,/^}/' "$HERE/lib.sh")"
+want "the summon pass handles LANE_FAYTHS" "LANE_FAYTHS" \
+    "$(awk '/^_ck7_summon_body\(\)/,/^}/' "$HERE/lib.sh")"
 
 # escape.sh exists and is executable.
 is "escape.sh is executable" "0" "$([ -x "$HERE/escape.sh" ] && echo 0 || echo 1)"
