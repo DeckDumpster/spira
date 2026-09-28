@@ -24,7 +24,7 @@
 # read the events table via `bd sql`, which embedded mode refuses (testdb.sh), and mode is
 # a property of the whole store, not chosen per call.
 #
-# defect: sp-egge2 sp-ne93n sp-l7f5 sp-214 sp-ywlti sp-iu10 sp-2a4hd
+# defect: sp-egge2 sp-ne93n sp-l7f5 sp-214 sp-ywlti sp-iu10 sp-2a4hd sp-wnsks
 # tier: T3
 # covers: spira/aeon.sh spira/lib.sh spira/mail.sh UC-aeon-execution-02 UC-aeon-execution-11 UC-aeon-execution-12 UC-aeon-execution-18
 # timeout: 120
@@ -445,6 +445,50 @@ want "ledger still records the real rc" "rc=1" "$(fa_ledger_line sp-ex-2)"
 want "and records the submitted status" "status=submitted" "$(fa_ledger_line sp-ex-2)"
 # The positive control for this UC (bead not closed, claude rc=1, aeon exits non-zero) is
 # the "session did not close" row above (sp-rq-2) — the same discrimination, one fewer run.
+
+# ==========================================================================================
+echo
+echo "ROW: FAYTH_GRAPH_ONLY persona closes a work bead with no commit — close stands (sp-wnsks)"
+# ==========================================================================================
+# The groomer's own shape: no Edit or Write in FAYTH_TOOLS, so its close is never followed
+# by a commit — sp-yyzm3 (filed by hand, no delivers: label) was converted to submitted
+# by the row above's same logic and stranded there forever, since a graph-only edit never
+# produces the commit that conversion waits for. FAYTH_GRAPH_ONLY=1 is the fix: the
+# conversion above must not fire for this persona, commit or no commit.
+cat > "$FA_HOME/chamber/groomonly.fayth" <<GOFAYTH
+FAYTH_NAME=groomonly
+FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
+FAYTH_EXCLUDE_LABELS="spira-poison,${SPIRA_ASK_LABEL:-needs-operator}"
+FAYTH_MAX_CONCURRENT=1
+FAYTH_HEARTBEAT_SECONDS=600
+FAYTH_GRAPH_ONLY=1
+GOFAYTH
+printf 'groom-only close {{BEAD_ID}}\n{{PARK}}\n' > "$FA_HOME/chamber/groomonly.md"
+
+cat > "$FA_BIN/claude" <<'SHIM'
+#!/usr/bin/env bash
+printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
+cat /dev/stdin > /dev/null 2>&1
+id="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" list --json 2>/dev/null \
+    | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; \
+      print(next((x["id"] for x in r if x.get("status")=="in_progress"),""))' 2>/dev/null)"
+BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" close "$id" --reason "graph-only: dependency re-pointed, nothing to commit" >/dev/null 2>&1
+printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
+exit 0
+SHIM
+chmod +x "$FA_BIN/claude"
+
+fa_reset; fa_seed sp-ex-3
+rc="$(fa_run_aeon groomonly)"
+is "graph-only close stands — NOT converted to submitted" "closed" "$(fa_status sp-ex-3)"
+is "aeon exits 0" "0" "$rc"
+# fa_ledger_line hardcodes the "builder" fayth name; this row runs as groomonly, so read
+# its own last done-line directly rather than duplicating that assumption.
+ledger3="$(grep " sp-ex-3 rc=" "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null | tail -1)"
+want   "ledger has a done line for this bead" "sp-ex-3" "$ledger3"
+nowant "and it does NOT record a submitted conversion" "status=submitted" "$ledger3"
+# The positive control for this UC (the same shim, no FAYTH_GRAPH_ONLY) is the "exit code,
+# bead mode" row above (sp-ex-2): identical close, converted to submitted without the flag.
 
 # ==========================================================================================
 echo

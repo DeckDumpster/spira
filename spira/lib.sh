@@ -1215,11 +1215,25 @@ for item in (d if isinstance(d, list) else [d]):
 #
 # `--exclude-label` is OR (verified against bd: adding an unused label to the list does not
 # change the count), so appending is exactly the semantics wanted here.
-fayth_exclude() {        # fayth_exclude <fayth> -> comma-separated exclusions
-    local me="$1" own="${2:-}" f out
-    out="$own"
+#
+# ready_shared_exclude -> the two labels every "is this claimable" predicate excludes
+# regardless of caller: SPIRA_QUEUE_WAIT_LABEL and SPIRA_SUBMITTED_LABEL, neither of which
+# marks a bead an aeon can take. fayth_exclude and strand.sh's classify_one both call this
+# rather than each carrying its own copy, because a copy is how one of them drifts
+# (sp-wnsks: strand.sh's counted a spira-submitted bead as ready and reported starvation on
+# a partition the sentinel correctly saw as empty).
+ready_shared_exclude() {
+    local out=""
     [ -n "${SPIRA_QUEUE_WAIT_LABEL:-}" ] && out="${out:+$out,}${SPIRA_QUEUE_WAIT_LABEL}"
     [ -n "${SPIRA_SUBMITTED_LABEL:-}" ] && out="${out:+$out,}${SPIRA_SUBMITTED_LABEL}"
+    printf '%s' "$out"
+}
+
+fayth_exclude() {        # fayth_exclude <fayth> -> comma-separated exclusions
+    local me="$1" own="${2:-}" f out shared
+    out="$own"
+    shared="$(ready_shared_exclude)"
+    [ -n "$shared" ] && out="${out:+$out,}${shared}"
     for f in $(spira_fayths 2>/dev/null); do
         [ "$f" = "$me" ] && continue
         out="${out:+$out,}fayth:$f"

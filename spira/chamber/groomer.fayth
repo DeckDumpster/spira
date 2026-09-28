@@ -15,6 +15,15 @@ FAYTH_DESC="Groomer — the reconciler: splits unsplittable beads, merges duplic
 FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_GROOMER_LABEL"
 FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
 
+# THE GROOMER NEVER COMMITS. FAYTH_TOOLS below has no Edit or Write, so every close this
+# persona makes is graph-only by construction — true of a groom-trigger.sh bead (which
+# stamps its own delivers:note) and equally true of one filed by hand with no delivers:
+# label at all (sp-yyzm3: filed by `overseer`, no such label, stranded in spira-submitted
+# forever because a graph edit never produces the commit that label waits for). aeon.sh's
+# teardown reads this flag to skip that conversion for the whole persona, not bead by bead
+# (sp-wnsks).
+FAYTH_GRAPH_ONLY=1
+
 # Statutes only. The groomer executes no runbook.
 FAYTH_MEMORY_PREFIXES="law-"
 
