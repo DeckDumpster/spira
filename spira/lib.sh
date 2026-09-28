@@ -2032,6 +2032,87 @@ release_claim() {        # release_claim <id> -> 0 if the assignee is now clear
     bdq assign "$1" "" >/dev/null 2>&1
 }
 
+# ---- lifecycle: the bead machine, via spira-lc (design §3.1.1, §3.5) -----------------
+# aeon.sh is the trusted driver, not the sandboxed model, so it calls spira-lc directly —
+# never through `work`, whose whole point is binding one bead to one aeon's restricted
+# unit. These three functions are the only place aeon.sh's own claim/release/holder-dead
+# reach the machine.
+
+# lc_bead_row <id> -> "STATE<TAB>VERSION<TAB>HOLDER<TAB>LEASE_UNTIL", or a non-zero return
+# when spira-lc could not be reached or the bead carries no row yet (not migrated). The
+# caller must fail closed on that — never assume READY for a row it cannot read.
+lc_bead_row() {
+    local id="$1" out
+    out="$("$SPIRA_LC_BIN" show "$id" 2>/dev/null)" || return 1
+    printf '%s' "$out" | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(1)
+b = d.get("bead")
+if not b: sys.exit(1)
+print("%s\t%s\t%s\t%s" % (b.get("state") or "", b.get("version") if b.get("version") is not None else "",
+                           b.get("holder") or "", b.get("lease_until") if b.get("lease_until") is not None else ""))' \
+        2>/dev/null
+}
+
+# lc_event_bead <id> <expect-state> <version> <actor> <kind-json> — one CAS event against
+# the bead machine, spira-lc's own exit codes passed straight through: 0 applied, 3
+# refused, 2 cannot tell (the machine was unreachable — never treated as a refusal, so a
+# caller that retries a "cannot tell" is safe and one that retries a real refusal is not).
+lc_event_bead() {
+    "$SPIRA_LC_BIN" event bead "$1" --expect "$2" --version "$3" --actor "$4" --kind "$5" >/dev/null 2>&1
+}
+
+# lc_claim_bead <id> <holder> <lease-until-epoch> -> 0 applied, 3 refused (the sp-zw9ot
+# fixture: a bead already IN_DELIVERY, or genuinely held by a live holder), 2 cannot tell.
+#
+# HOLDERDEAD BEFORE CLAIM. A row this aeon can see is WORKING only because a prior holder
+# died without releasing — the fayth predicate already excludes any bead bd itself shows
+# as claimed, so a live holder never reaches here. A CAS HolderDead(WORKING->READY) clears
+# it; Claim is illegal from WORKING (lifecycle/src/bead.rs), so this is the only path back.
+lc_claim_bead() {
+    local id="$1" holder="$2" lease_until="$3" row state version rc
+    row="$(lc_bead_row "$id")" || return 2
+    IFS=$'\t' read -r state version _ _ <<< "$row"
+    [ -n "$state" ] || return 2
+    if [ "$state" = WORKING ]; then
+        lc_event_bead "$id" WORKING "$version" "$holder" '"HolderDead"'
+        rc=$?
+        [ "$rc" -eq 0 ] || return "$rc"
+        row="$(lc_bead_row "$id")" || return 2
+        IFS=$'\t' read -r state version _ _ <<< "$row"
+    fi
+    lc_event_bead "$id" "$state" "$version" "$holder" \
+        "{\"Claim\":{\"holder\":\"$holder\",\"lease_until\":$lease_until}}"
+}
+
+# lc_release_bead <id> <actor> — best-effort Release. Called on every release_own_claim, so
+# it fires from states where Release is illegal (SUBMITTED, DONE, ...) as often as from
+# WORKING; those refusals are expected, not errors, and are never surfaced to the caller —
+# the row is already exactly where it should be.
+lc_release_bead() {
+    local id="$1" actor="$2" row state version
+    row="$(lc_bead_row "$id")" || return 0
+    IFS=$'\t' read -r state version _ _ <<< "$row"
+    [ -n "$state" ] || return 0
+    lc_event_bead "$id" "$state" "$version" "$actor" '"Release"'
+    return 0
+}
+
+# lc_bead_verified <id> -> 0 when the bead machine's row already carries a definitive,
+# non-failing outcome (SUBMITTED and beyond, or DONE). bd's own status never changes for a
+# work-verb-driven session (design §3.4: bd status is inert for work beads) — this is
+# aeon.sh's replacement for reading "closed" off bd to decide a session actually finished.
+lc_bead_verified() {
+    local row state
+    row="$(lc_bead_row "$1" 2>/dev/null)" || return 1
+    state="${row%%$'\t'*}"
+    case "$state" in
+        SUBMITTED|CERTIFIED|IN_DELIVERY|LANDED|DONE) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # release_own_claim <id> — an aeon hands back a bead it is still holding.
 #
 # Sets status back to open and clears the assignee in one update call. `bd assign <id> ""`
@@ -2049,6 +2130,7 @@ release_claim() {        # release_claim <id> -> 0 if the assignee is now clear
 release_own_claim() {
     local id="$1" me="${BEADS_ACTOR:-aeon-${SPIRA_AEON:-}}"
     [ -n "$me" ] && [ "$me" != "aeon-" ] || return 1
+    lc_release_bead "$id" "$me"
     bdq update "$id" --status open --assignee "" >/dev/null 2>&1
 }
 
@@ -8112,6 +8194,9 @@ land_state() {   # land_state <id> -> "<state> <tip> <at> [reason]" or empty
     tr -d '\n' < "$f" 2>/dev/null
 }
 
+# queue_certified_list <repo-path>
+# Print "<id> <tip> <epoch>" for each CERTIFIED branch with a live ref.
+# Reads $SPIRA_RUN/landstate/<id>.
 # eviction_reopen <land-state-string> <cur-tip> <recent-eviction-requeues>
 #   -> reopen | stale | cap | none
 #
@@ -8145,9 +8230,6 @@ eviction_reopen() {
     printf 'reopen'
 }
 
-# queue_certified_list <repo-path>
-# Print "<id> <tip> <epoch>" for each CERTIFIED branch with a live ref.
-# Reads $SPIRA_RUN/landstate/<id>.
 queue_certified_list() {
     local br id f st tip epoch
     git -C "$1" for-each-ref --format='%(refname:short) %(objectname)' 'refs/heads/spira/*' \

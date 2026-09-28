@@ -214,6 +214,9 @@ echo "the legacy reopen's positive control (everything else above is T1/T2):"
 # $PATH, so a suite that tried to shim `claude` by PATH alone would run the real model
 # against a real account, silently and at full cost.
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+# Pinned so this fixture stays on the pre-cutover legacy paths even when a --with-bins run
+# has built work/spira-lc for other suites in the same batch (design §3.5, LC_MODEL_RESTRICTED).
+export SPIRA_WORK_BIN="$TMP/no-work-bin" SPIRA_LC_BIN="$TMP/no-lc-bin"
 grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
     || { echo "test-aeon-verdict: aeon.sh has no SPIRA_AGENT injection point — refusing to run the real model" >&2; exit 1; }
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH

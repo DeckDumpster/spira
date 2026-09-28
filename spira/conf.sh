@@ -944,6 +944,17 @@ spira_conf_defaults() {
             SPIRA_WORK_BIN="$SPIRA_REPO/target/release/work"
         fi
     fi
+    # The compiled `spira-lc` CLI, called directly by aeon.sh itself (the trusted driver,
+    # never the sandboxed model) to CAS the bead machine's Claim/Release/HolderDead events —
+    # the one thing the `work` client's bound-to-one-bead surface deliberately has no verb
+    # for (design §3.5's table has no "claim").
+    if [ -z "${SPIRA_LC_BIN:-}" ]; then
+        if [ -f "$SPIRA_REPO/bin/spira-lc" ]; then
+            SPIRA_LC_BIN="$SPIRA_REPO/bin/spira-lc"
+        else
+            SPIRA_LC_BIN="$SPIRA_REPO/target/release/spira-lc"
+        fi
+    fi
     # WHERE THE TEST IMAGE IS PUBLISHED, if anywhere. Empty means build it locally and
     # never reach the network, which is the right default: the registry is somebody's
     # account, and a harness that reached for one by default would fail on every machine
