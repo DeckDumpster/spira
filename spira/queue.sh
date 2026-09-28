@@ -92,7 +92,8 @@ cmd_submit() {
     repo="$(repo_root "$name" 2>/dev/null)" || repo="$SPIRA_REPO"
     mode="$(repo_land "$name")"
 
-    if [ "$mode" = "queue" ]; then
+    case "$mode" in
+    queue|queue.local)
         case "$br" in
         spira/*|spira-suite-state/*) ;;
         *)
@@ -100,7 +101,8 @@ cmd_submit() {
             return 1
             ;;
         esac
-    fi
+        ;;
+    esac
 
     git -C "$repo" show-ref --verify --quiet "refs/heads/$br" 2>/dev/null || {
         printf 'queue.sh submit: branch not found: %s\n' "$br" >&2
@@ -137,7 +139,7 @@ cmd_submit() {
         >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
 
     case "$mode" in
-    queue)
+    queue|queue.local)
         land_mark "$id" CERTIFIED "$tip"
         mkdir -p "$(dirname "$SPIRA_QUEUE_DIR/$id")" 2>/dev/null
         printf 'CERTIFIED %s %s\n' "$tip" "$(date +%s)" > "$SPIRA_QUEUE_DIR/$id" || {
@@ -297,6 +299,13 @@ cmd_step() {
     local name="${1:?queue.sh step: repo required}"
     bash "$HERE/verdict.sh" "$name"
     _batch_cut "$name"
+    # queue.local has no batch PR to cut — _batch_cut's local round (batcher -> land-local)
+    # already advanced local/main above, if anything was CERTIFIED — but nothing yet asks
+    # the forge to catch up with it. verdict.sh (just above) only SETTLES an already-open
+    # publish record; opening the next one, when local/main has pulled ahead again, is this.
+    if [ "$(repo_land "$name")" = "queue.local" ]; then
+        cmd_publish "$name" 2>&1
+    fi
 }
 
 # spira-lc's own OPEN-batch lifecycle (sp-o7nbr.5, same shape as batch.sh's own

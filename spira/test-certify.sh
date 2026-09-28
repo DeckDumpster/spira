@@ -42,7 +42,8 @@ mkdir -p "$RUN/worktree" "$SH"
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
-stub queue.sh 'exit 0'
+QUEUE_LOG="$TMP/queue-calls.log"
+stub queue.sh 'printf "%s\n" "$*" >> "'"$QUEUE_LOG"'"; exit 0'
 stub gh 'exit 1'
 
 # THE GATE IS ALSO THE COUNTER. Each invocation appends the branch name so the suite can
@@ -71,7 +72,7 @@ RMAP
 write_map
 
 landing() {
-    rm -f "$RUN/landing.progress" "$GATE_COUNT"
+    rm -f "$RUN/landing.progress" "$GATE_COUNT" "$QUEUE_LOG"
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" \
@@ -286,5 +287,16 @@ case "$(landstate sp-qlocal-cert)" in
 esac
 is   "queue.local: bead stays closed"        "closed" "$(status_of sp-qlocal-cert)"
 nowant "queue.local: no reopen for the planted conflict" "Reopened by sentinel" "$out"
+
+# QUEUE.LOCAL IS ALSO DISPATCHED THE SAME AS QUEUE: before sp-xe12f, landing.sh's three
+# `queue.sh step` call sites matched only the literal string "queue", so a queue.local repo
+# was certified above but never had `queue.sh step` (verdict.sh's settle, the batcher's
+# local round, queue.sh publish) called for it at all — the certified pool filled and
+# nothing ever drained it. queue.sh itself is stubbed above to log its own invocation.
+case "$(cat "$QUEUE_LOG" 2>/dev/null)" in
+    *"step local-fixture"*) ok "queue.local: queue.sh step was dispatched for it" ;;
+    *)                      bad "queue.local: queue.sh step was dispatched for it" \
+                                 "got: [$(cat "$QUEUE_LOG" 2>/dev/null)]" ;;
+esac
 
 tl_summary
