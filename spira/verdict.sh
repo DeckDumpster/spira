@@ -17,7 +17,13 @@
 # races a fast-forward merge or a rebuild (sp-91hb5). Every mutation this file does make
 # mails the concierge mailbox as a machine event (queue_notify_concierge).
 #
-# covers: spira/verdict.sh spira/forge.sh spira/conf.sh spira/batch.sh
+# For a queue.local repository this instead settles queue.sh publish's own record
+# (queue/<repo>/publish, never the queue.forge `open` file above): green fast-forwards the
+# forge target to identical SHAs with no land_mark and no bead close; red runs local
+# attribution (attribute.sh) against the published range and files one fix-forward bead,
+# never reopening a member or calling judgement-ci. See _verdict_settle_publish below.
+#
+# covers: spira/verdict.sh spira/forge.sh spira/conf.sh spira/batch.sh spira/queue.sh spira/attribute.sh
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1304,6 +1310,146 @@ verdict_action() {
     esac
 }
 
+# ---------------------------------------------------------------------------
+# PUBLISH SETTLEMENT — queue.local's publish queue (row 3 of the local/main design,
+# queue.sh's own `publish:`). Distinct from the queue.forge batch machinery above: no
+# land_mark, no bead close, no judgement-ci, no reopening a member. The member beads
+# already closed when local/main landed them (queue.sh land-local); the forge here is
+# confirmation of a publish, not a gate, and a red one is fixed forward, never rolled back.
+# ---------------------------------------------------------------------------
+
+_publish_file() { printf '%s/%s/publish' "${SPIRA_QUEUE_DIR:?}" "$1"; }
+_publish_field() { grep "^$1=" "$2" 2>/dev/null | cut -d= -f2-; }
+
+# _verdict_settle_publish <name> <repo> — the fast path, run under the repo's queue lock:
+# reads the open publish record and checks its CI status. green fast-forwards the forge
+# target to identical SHAs (a plain, non-forced push — refused rather than clobbered if it
+# would not fast-forward, which means something else moved the forge target since the PR
+# was opened) and retires the record. pending/harness_fault leave it for the next tick.
+# red is NOT settled here — attribution below can run real suites and must not hold the
+# queue lock while it does, the same reason _verdict_process_attributing runs after this
+# file's own lock is released — this returns 3 and leaves the record for the caller to
+# hand to _verdict_settle_publish_red once the lock is dropped.
+_PUBLISH_STATUS_OUT=""
+_verdict_settle_publish() {
+    local name="$1" repo="$2"
+    local pfile; pfile="$(_publish_file "$name")"
+    [ -f "$pfile" ] || return 0
+
+    local pr_n branch remote forge_branch head_sha
+    pr_n="$(_publish_field pr "$pfile")"
+    branch="$(_publish_field branch "$pfile")"
+    remote="$(_publish_field remote "$pfile")"
+    forge_branch="$(_publish_field forge_branch "$pfile")"
+    head_sha="$(_publish_field head "$pfile")"
+    if [ -z "$pr_n" ] || [ -z "$branch" ] || [ -z "$remote" ] || [ -z "$forge_branch" ] || [ -z "$head_sha" ]; then
+        printf 'verdict %s: publish record is missing a field — leaving it for a hand look: %s\n' "$name" "$pfile" >&2
+        return 1
+    fi
+
+    local forge="${SPIRA_FORGE:-$HERE/forge.sh}"
+    _PUBLISH_STATUS_OUT="$("$forge" check-status "$repo" "$pr_n" "$branch" 2>/dev/null)"
+    local status; status="$(verdict_normalize_status "$(printf '%s\n' "$_PUBLISH_STATUS_OUT" | head -1)")"
+
+    case "$status" in
+        green)
+            if ! git -C "$repo" push "$remote" "${head_sha}:refs/heads/${forge_branch}" 2>&1; then
+                printf 'verdict %s: publish PR %s green but %s/%s would not fast-forward — something moved it; leaving the record for a hand look\n' \
+                    "$name" "$pr_n" "$remote" "$forge_branch" >&2
+                queue_notify_concierge "$name" "publish PR $pr_n green but fast-forward refused" \
+                    "$remote/$forge_branch did not fast-forward to $head_sha for PR $pr_n — something else moved it. Left open for a hand look."
+                return 1
+            fi
+            "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
+            rm -f "$pfile"
+            printf 'QUEUE PUBLISH_GREEN %s repo=%s pr=%s head=%s\n' \
+                "$(date +%s)" "$name" "$pr_n" "$head_sha" >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
+            queue_notify_concierge "$name" "publish PR $pr_n merged" \
+                "$remote/$forge_branch fast-forwarded to $head_sha (PR $pr_n)."
+            printf 'verdict %s: publish PR %s green — %s/%s fast-forwarded to %s\n' \
+                "$name" "$pr_n" "$remote" "$forge_branch" "$head_sha"
+            return 0
+            ;;
+        red)
+            return 3
+            ;;
+        *)
+            printf 'verdict %s: publish PR %s: %s — waiting\n' "$name" "$pr_n" "$status"
+            return 0
+            ;;
+    esac
+}
+
+# _verdict_settle_publish_red <name> <repo> — run UNLOCKED (see above). Attributes the
+# published range locally (attribute.sh, sp-q8xs9's tooling — every member's certified tip
+# still lives at refs/heads/spira/<id> until branch-sweep reaps it) and files ONE
+# fix-forward bead naming what it found. Never reopens a member bead (they are already
+# closed and correct — local/main already has their work) and never calls judgement-ci
+# (that persona exists for queue.forge's own batch attribution, a different lifecycle).
+# Production is untouched either way: this settles the PUBLISH record, not local/main.
+_verdict_settle_publish_red() {
+    local name="$1" repo="$2"
+    local pfile; pfile="$(_publish_file "$name")"
+    [ -f "$pfile" ] || return 0
+
+    local pr_n branch forge_sha head_sha members
+    pr_n="$(_publish_field pr "$pfile")"
+    branch="$(_publish_field branch "$pfile")"
+    forge_sha="$(_publish_field base "$pfile")"
+    head_sha="$(_publish_field head "$pfile")"
+    members="$(_publish_field members "$pfile")"
+
+    local red_suites="" run_url="" _line
+    while IFS= read -r _line; do
+        case "$_line" in
+            "red-suite: "*) red_suites="$red_suites ${_line#red-suite: }" ;;
+            "run-url: "*) run_url="${_line#run-url: }" ;;
+        esac
+    done <<< "$_PUBLISH_STATUS_OUT"
+    red_suites="${red_suites# }"
+    local suites_csv; suites_csv="$(printf '%s\n' $red_suites | awk '!seen[$0]++' | tr '\n' ',' | sed 's/,$//')"
+
+    local member_ids="" _m
+    for _m in $members; do member_ids="${member_ids:+$member_ids,}${_m%%:*}"; done
+
+    local attr_out=""
+    if [ -n "$suites_csv" ] && [ -n "$member_ids" ]; then
+        attr_out="$(bash "$HERE/attribute.sh" --round "$branch" --base "$forge_sha" \
+            --suites "$suites_csv" --members "$member_ids" --repo "$repo" 2>&1)"
+    fi
+
+    local forge="${SPIRA_FORGE:-$HERE/forge.sh}"
+    "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
+
+    local body
+    body="$(
+        printf 'Publish PR %s red for %s (%s).\n\n' "$pr_n" "$name" "${run_url:-run link unavailable}"
+        printf 'Published range: %s..%s\n' "${forge_sha:0:12}" "${head_sha:0:12}"
+        printf 'Red suites: %s\n\n' "${suites_csv:-<none named>}"
+        printf 'Members in this publish: %s\n\n' "${member_ids:-<none>}"
+        if [ -n "$attr_out" ]; then
+            printf 'Local attribution (attribute.sh):\n%s\n\n' "$attr_out"
+        fi
+        printf 'Fix forward on local/main — the next publish carries the fix. Production was never rolled back and no member bead was reopened.\n'
+    )"
+    local bf; bf="$(mktemp)"
+    printf '%s' "$body" > "$bf"
+    local fid
+    fid="$(BEADS_ACTOR="${SPIRA_QUEUE_ACTOR:-queue.sh}" bdq create \
+        "publish PR $pr_n red for $name${suites_csv:+: $suites_csv}" \
+        --type bug --priority "${SPIRA_INCIDENT_PRIORITY:-1}" \
+        --labels "spira,plan,repo:$name" --body-file "$bf" --silent 2>/dev/null | tr -d '[:space:]')"
+    rm -f "$bf"
+
+    rm -f "$pfile"
+    printf 'QUEUE PUBLISH_RED %s repo=%s pr=%s suites=%s fix_forward=%s\n' \
+        "$(date +%s)" "$name" "$pr_n" "${suites_csv:-none}" "${fid:-<create-failed>}" \
+        >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
+    queue_notify_concierge "$name" "publish PR $pr_n red" \
+        "PR $pr_n red (suites: ${suites_csv:-none}). Fix-forward bead: ${fid:-<create failed>}."
+    printf 'verdict %s: publish PR %s red — filed fix-forward %s\n' "$name" "$pr_n" "${fid:-<create-failed>}"
+}
+
 main() {
     local name="${1:-}"
     [ -n "$name" ] || { printf 'verdict.sh: repo name required\n' >&2; exit 1; }
@@ -1323,6 +1469,21 @@ main() {
         return 1
     }
     mode="$(repo_land "$name")"
+    if [ "$mode" = "queue.local" ]; then
+        local pub_lockfile; pub_lockfile="${SPIRA_QUEUE_DIR:?}/$name/lock"
+        mkdir -p "${SPIRA_QUEUE_DIR:?}/$name" 2>/dev/null || true
+        { exec 9>"$pub_lockfile"; } 2>/dev/null \
+            || { printf 'verdict %s: cannot open lock file\n' "$name" >&2; return 1; }
+        if ! flock -n 9; then
+            printf 'verdict %s: another queue operation holds the lock\n' "$name"
+            return 0
+        fi
+        _verdict_settle_publish "$name" "$repo"
+        local _pub_rc=$?
+        flock -u 9 2>/dev/null || true
+        [ "$_pub_rc" -eq 3 ] && _verdict_settle_publish_red "$name" "$repo"
+        return 0
+    fi
     [ "$mode" = "queue" ] || return 0
 
     local lockfile; lockfile="${SPIRA_QUEUE_DIR:?}/$name/lock"

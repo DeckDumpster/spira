@@ -6877,6 +6877,25 @@ spira_landrefs() {
     fi
 }
 
+# spira_publish_forge <name> -> "<remote> <branch>": the forge target a queue.local
+# repository's publish queue fast-forwards on a green publish PR. Never ref_remote of the
+# land ref — under queue.local that ref is a bare local branch by design (spira_landref's
+# own callers refuse a remote-tracking base for this mode), so the forge target cannot be
+# derived from it and must be named instead. Defaults: the remote is "origin"
+# (SPIRA_PUBLISH_REMOTE, per-repo SPIRA_PUBLISH_REMOTE_<NAME> overrides it — a remote need
+# not be called origin); the branch is the land ref's own name with a leading "local/"
+# stripped (SPIRA_PUBLISH_BRANCH_<NAME> overrides that).
+spira_publish_forge() {
+    local name="$1" base key remote branch
+    base="$(spira_landref "$name" 2>/dev/null)" || return 1
+    key="$(printf '%s' "$name" | tr 'a-z-' 'A-Z_')"
+    local remote_var="SPIRA_PUBLISH_REMOTE_$key" branch_var="SPIRA_PUBLISH_BRANCH_$key"
+    remote="${!remote_var:-${SPIRA_PUBLISH_REMOTE:-origin}}"
+    branch="${!branch_var:-${base#local/}}"
+    [ -n "$branch" ] || return 1
+    printf '%s %s\n' "$remote" "$branch"
+}
+
 # --------------------------------------------------------------------------------------
 # worktree_of <branch> [repo] -> the registered worktree path holding it, or empty.
 # Read from `git worktree list --porcelain` rather than guessed from the bead id, so a
