@@ -195,6 +195,7 @@ dependencies = [
 name = "census"
 version = "1.0.0"
 dependencies = [
+ "aeon",
  "spira-config",
 ]
 

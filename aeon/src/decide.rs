@@ -112,8 +112,12 @@ fn d(status: &str, charge: bool, cause: Option<&str>, note: NoteKey) -> Disposit
 /// `outcome_charges`: only a session that ran to its own end (`unlanded`) may charge —
 /// and even then, only once [`disposition`] also finds a commit (see [`NoteKey::NoProgress`]).
 pub fn outcome_charges(outcome: &str) -> bool {
-    outcome == "unlanded"
+    outcome == CHARGING_OUTCOME
 }
+
+/// The one outcome that charges; census reads it to rank only `unjudged-<it>` among the
+/// `unjudged-*` causes, every other of which `disposition` declares free.
+pub const CHARGING_OUTCOME: &str = "unlanded";
 
 /// The exempt requeue cause an `unlanded`-but-uncommitted exit writes (sp-1zxru):
 /// `events::is_legacy_exempt` reads the `unjudged-` prefix the same way every other
