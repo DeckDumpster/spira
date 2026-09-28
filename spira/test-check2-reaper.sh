@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 #
-# test-check2-reaper.sh — CHECK 2's stale-lease reclaim scan (against a real spira-lc) and
-#   CHECK 2c's per-partition orphan-claim sweep, both previously untested (dispatch test
-#   plan G9, G10).
+# test-check2-reaper.sh — CHECK 2's stale-lease reclaim scan and CHECK 2c's consistency
+#   sweep, both against a real spira-lc (dispatch test plan G9, G10).
 #
 #   ./test-check2-reaper.sh
 #
@@ -13,15 +12,15 @@
 # as a recorder here — what is under test is which rows the scan selects and the real
 # spira-lc transition it drives, not bump_reclaim's own bd write (covered elsewhere).
 #
-# G10: CHECK 2c's release_orphan_claims_partitions (lib.sh) sweeps every partition
-# fayth_partitions names, not one hardcoded `${SPIRA_SCOPE_LABEL},plan`. Orphaned claims in
-# an ops partition are released exactly like a plan one — the "one hardcoded partition"
-# defect the fayth_partitions comment says was already removed from CHECK 2 and CHECK 5.
-# Untouched by sp-i2m7y (bd claim/assignee, not spira-lc — CHECK 2c's own cutover is a
-# separate bead); its stubbed `bd` fixture needs no spira-lc at all.
+# G10: check2c_lc_consistency (lib.sh) replaces the bd-based release_orphan_claims_partitions
+# (sp-i2m7y). The race it fixed — a status reset that leaves the assignee standing, because
+# bd's status and assignee are two separate writes — cannot happen in spira_lifecycle, so
+# this is a detector, not a repair: it names a row whose holder and state disagree (seeded
+# directly by SQL here, bypassing the CAS on purpose, since no legal transition can produce
+# one) rather than releasing anything.
 #
-# host-reason: G9 starts its own disposable `dolt sql-server`, same shape as
-# test-lc-hold.sh (sp-ki12s) — testenv-batch.sh already provides the container.
+# host-reason: starts its own disposable `dolt sql-server`, same shape as test-lc-hold.sh
+# (sp-ki12s) — testenv-batch.sh already provides the container.
 #
 # defect: sp-9ce60 (dispatch test plan, gaps G9/G10)
 # tier: T2
@@ -164,46 +163,37 @@ eval "$_real_bdq"
 
 # ======================================================================================
 echo
-echo "G10 case 0 — positive control: a single partition's orphan is released:"
+echo "G10 — CHECK 2c moved onto spira-lc (sp-i2m7y): check2c_lc_consistency detects, never"
+echo "repairs, a holder/state row the machine's own CAS should make unreachable:"
 # ======================================================================================
-mkdir -p "$TMP/bin" "$TMP/state"
-cat > "$TMP/bin/bd" <<'STUB'
-#!/usr/bin/env bash
-case " $* " in
-    *" list "*"--label plan "*) cat "$BD_STATE/plan.json" ;;
-    *" list "*"--label ops "*)  cat "$BD_STATE/ops.json" ;;
-    *" assign "*) printf '%s\n' "$*" >> "$BD_STATE/assigns"; exit 0 ;;
-    *) printf '[]' ;;
-esac
-exit 0
-STUB
-chmod +x "$TMP/bin/bd"
-export BD_STATE="$TMP/state"
-printf '[{"id":"sp-plan1","assignee":"aeon-p","status":"open"}]' > "$BD_STATE/plan.json"
-printf '[]' > "$BD_STATE/ops.json"
-: > "$BD_STATE/assigns"
-
-out="$(PATH="$TMP/bin:$PATH" SPIRA_BD=bd SPIRA_DB=fixture release_orphan_claims_partitions $'plan\t')"
-has "plan-only sweep releases sp-plan1" "sp-plan1" "$out"
-is  "plan-only sweep releases exactly one" "1" "$(grep -c '^RELEASED' <<< "$out")"
+# release_orphan_claims_partitions (the bd-based sweep G10 used to drive) is gone — its
+# race (a status reset that leaves the assignee standing) cannot occur here, because
+# holder and state change together in one version-checked transaction. What replaces it
+# is a pure consistency scan with nothing to write, so these rows are seeded by SQL
+# directly, bypassing the CAS on purpose — the only way to produce the anomaly at all.
+lc_root_sql --use-db spira_lifecycle sql -q "DELETE FROM bead" >/dev/null 2>&1
 
 echo
-echo "G10 case 1 — a second, non-plan partition (ops) is swept too, not just plan:"
-# ======================================================================================
-# Before the fix this called release_orphan_claims once, hardcoded to
-# \${SPIRA_SCOPE_LABEL},plan — an orphaned claim in ops (or spike, or groom) was never
-# released. Without this case, a fix that still sweeps only 'plan' reads as correct.
-: > "$BD_STATE/assigns"
-printf '[{"id":"sp-ops1","assignee":"aeon-o","status":"open"}]' > "$BD_STATE/ops.json"
-out="$(PATH="$TMP/bin:$PATH" SPIRA_BD=bd SPIRA_DB=fixture release_orphan_claims_partitions $'plan\t\nops\t')"
-has "plan partition still released"  "sp-plan1" "$out"
-has "ops partition ALSO released"    "sp-ops1"  "$out"
-is  "both partitions swept -> 2 released" "2" "$(grep -c '^RELEASED' <<< "$out")"
+echo "case 0 — positive control: a consistent WORKING row is not flagged:"
+seed_working sp-fine1 -10
+out="$(check2c_lc_consistency)"
+is "consistent row -> no output" "" "$out"
 
 echo
-echo "G10 case 2 — no partitions declared: nothing is swept, and nothing is released:"
-: > "$BD_STATE/assigns"
-out="$(PATH="$TMP/bin:$PATH" SPIRA_BD=bd SPIRA_DB=fixture release_orphan_claims_partitions '')"
-is "empty partition list -> no output" "" "$out"
+echo "case 1 — WORKING with no holder is flagged:"
+lc_root_sql --use-db spira_lifecycle sql -q \
+    "INSERT INTO bead (bead_id, state, holder, holds, version, updated_at) VALUES ('sp-bad1','WORKING',NULL,'[]',0,0)" >/dev/null 2>&1
+out="$(check2c_lc_consistency)"
+has "WORKING-no-holder -> flagged" "sp-bad1" "$out"
+has "WORKING-no-holder -> names the anomaly" "WORKING with no holder" "$out"
+
+echo
+echo "case 2 — READY with a holder still set is flagged:"
+lc_root_sql --use-db spira_lifecycle sql -q "DELETE FROM bead WHERE bead_id = 'sp-bad1'" >/dev/null 2>&1
+lc_root_sql --use-db spira_lifecycle sql -q \
+    "INSERT INTO bead (bead_id, state, holder, holds, version, updated_at) VALUES ('sp-bad2','READY','aeon-stale','[]',0,0)" >/dev/null 2>&1
+out="$(check2c_lc_consistency)"
+has "READY-with-holder -> flagged" "sp-bad2" "$out"
+has "READY-with-holder -> names the anomaly" "READY with a holder still set" "$out"
 
 tl_summary

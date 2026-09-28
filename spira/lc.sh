@@ -219,6 +219,17 @@ lc_list_state() {
     ) for r in (d if isinstance(d, list) else []))' 2>/dev/null
 }
 
+# lc_list_all -> "<id>\t<state>\t<holder>" for every bead row spira_lifecycle holds, one per
+# line (empty if none, or the binary/DB is unreachable). CHECK 2c's consistency sweep asks
+# this once instead of a per-bead lc_show call against every dispatchable bead.
+lc_list_all() {
+    [ -x "${SPIRA_LC_BIN:-}" ] || return 0
+    local js; js="$("$SPIRA_LC_BIN" list 2>/dev/null)" || return 0
+    _lc_json_field "$js" '"\n".join("%s\t%s\t%s" % (
+        r.get("bead_id",""), r.get("state",""), r.get("holder") or ""
+    ) for r in (d if isinstance(d, list) else []))' 2>/dev/null
+}
+
 # lc_release <bead-id> [actor] -> best-effort: WORKING -> READY, the holder handing its own
 # claim back voluntarily. Same rc contract as lc_hold (0 applied, 1 no row, 2 cannot tell, 3
 # refused — a stale or already-vacated row is logged, never fatal to the caller).

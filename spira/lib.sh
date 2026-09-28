@@ -2060,56 +2060,6 @@ park_unmapped() {
     release_own_claim "$id"
 }
 
-# orphan_claims [labels] -> "<id>\t<assignee>" for every bead holding a claim nobody works.
-#
-# The predicate is status=open AND an assignee AND no lease in the future. in_progress is
-# deliberately NOT here: a live claim is `bd reclaim`'s to time out and strand.sh's to
-# witness, and a third opinion about liveness is how work gets robbed mid-flight.
-orphan_claims() {
-    bdjson list --status open --limit 0 --label "${1:-${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan}" 2>/dev/null | python3 -c '
-import sys, json, datetime
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-now = datetime.datetime.now(datetime.timezone.utc)
-for i in (d if isinstance(d, list) else [d]):
-    if not (i.get("assignee") or "").strip(): continue
-    lease = i.get("lease_expires_at")
-    if lease:
-        try:
-            if datetime.datetime.fromisoformat(str(lease).replace("Z", "+00:00")) > now: continue
-        except Exception:
-            continue   # unparseable is not evidence of death; leave it alone
-    print("%s\t%s" % (i.get("id"), i.get("assignee")))' 2>/dev/null
-}
-
-release_orphan_claims() {   # release_orphan_claims [labels] -> a RELEASED line per bead freed
-    local id who
-    while IFS=$'\t' read -r id who; do
-        [ -n "${id:-}" ] || continue
-        # Report only what actually moved. An assign that lost a race to a real claim
-        # returns non-zero and changes nothing, and counting it would be a check reporting
-        # an action it did not take.
-        release_claim "$id" && printf 'RELEASED\t%s\t%s\n' "$id" "$who"
-    done < <(orphan_claims "${1:-${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan}")
-    return 0
-}
-
-# release_orphan_claims_partitions <partitions-tsv> -> a RELEASED line per bead freed, across
-# every partition named (first field of each "<labels>\t<exclude-labels>" line, the shape
-# fayth_partitions produces).
-#
-# ONE SWEEP PER PARTITION, ASKED THROUGH THE CHAMBER — the same fix fayth_partitions already
-# gave CHECK 2's reclaim loop. A single call hardcoded to `${SPIRA_SCOPE_LABEL},plan` left
-# orphaned claims in ops, spike or groom partitions unreleased forever: nothing else in the
-# harness sweeps them.
-release_orphan_claims_partitions() {
-    local partitions="${1:-}" part rest
-    while IFS=$'\t' read -r part rest; do
-        [ -n "$part" ] || continue
-        release_orphan_claims "$part"
-    done <<< "$partitions"
-    return 0
-}
 
 # check2_reclaim_stale -> CHECK 2's time-based dead-worker reaper: every spira-lc bead row in
 # WORKING state whose lease has been expired for more than SPIRA_RECLAIM_GRACE_SECS gets a
@@ -2123,6 +2073,32 @@ release_orphan_claims_partitions() {
 #
 # A WAIT-HELD BEAD (check2_protect_waiting, above) IS SKIPPED: its lease is stale because its
 # aeon exited on a legitimate contract, not because the worker died.
+# check2c_lc_consistency -> CHECK 2c moved onto spira-lc (sp-i2m7y). The bd-specific race
+# it fixed — a status reset that leaves the assignee standing, because bd's status and
+# assignee are two separate writes with a gap between them — cannot happen in spira_lifecycle:
+# holder and state change together in one version-checked transaction (bead.rs's own Claim/
+# Release/HolderDead transitions). release_claim/release_own_claim stay exactly as they are:
+# they are aeon.sh's own claim contract on bd, a different bead's cutover, not this check's.
+#
+# DETECTS, NEVER REPAIRS. An inconsistent row here means some writer reached spira_lifecycle
+# outside the machine's own CAS — this sweep cannot tell which field is the wrong one, so it
+# names the anomaly rather than guessing a fix (law-a-control-that-cannot-check-must-refuse).
+# It stays as the POSITIVE CONTROL on the invariant the design's own CAS is supposed to
+# guarantee: a bypass that produces a healthy-looking row is a bug, and this is what turns
+# that silence into a visible line (law-absence-needs-a-positive-control).
+check2c_lc_consistency() {   # check2c_lc_consistency -> an INCONSISTENT line per bad row
+    local id state holder
+    while IFS=$'\t' read -r id state holder; do
+        [ -n "$id" ] || continue
+        if [ "$state" = WORKING ] && [ -z "$holder" ]; then
+            printf 'INCONSISTENT\t%s\tWORKING with no holder\n' "$id"
+        elif [ "$state" != WORKING ] && [ -n "$holder" ]; then
+            printf 'INCONSISTENT\t%s\t%s with a holder still set\n' "$id" "$state"
+        fi
+    done < <(lc_list_all)
+    return 0
+}
+
 check2_reclaim_stale() {
     local grace="${SPIRA_RECLAIM_GRACE_SECS:-10800}" id lease_until holds now
     local n_reclaimed=0

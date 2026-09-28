@@ -332,35 +332,28 @@ n_escal="$(grep -cE '^STRANDED' <<< "$stranded" || true)"
 # can see: a bead that is OPEN, carries an assignee, and holds no lease.
 #
 # CHECK 2 reverts stale-lease in_progress issues and CHECK 2b witnesses a dead holder of
-# one. Both are about a lease. This is about a bead whose STATUS was already reset — by a
+# one. Both are about a lease. This was about a bead whose STATUS was already reset — by a
 # reopen in the landing pass, in CHECK 5, or in the aeon's own closed-without-a-commit
 # check — while its assignee was left standing. `bd ready` counts such a bead and `bd ready
 # --claim` skips it, so it is ready forever and claimable never, and no lease ever expires
 # to rescue it. Thirteen plan beads were stuck this way on 2026-09-06 while CHECK 7 summoned
 # an aeon every two minutes to report idle within one second.
 #
-# bead_reopen and release_own_claim now write the two facts together, so this should find
-# nothing. It stays because it is the POSITIVE CONTROL on that claim: a path that ends a
-# claim without clearing it is a bug that presents as a healthy queue, and this sweep is
-# what turns that silence into a visible RELEASED line
-# (law-absence-needs-a-positive-control).
+# MOVED ONTO spira-lc (sp-i2m7y): check2c_lc_consistency (lib.sh) reads spira_lifecycle,
+# never bd, and finds nothing to release — the state/holder desync this check chased cannot
+# occur there, because both fields change together in one version-checked transaction. It
+# detects an anomaly rather than repairing one; see the function's own comment.
 #
 # Skipped when SPIRA_SKIP_RECLAIM=1 — see CHECK 2 above.
-#
-# ONE SWEEP PER PARTITION, ASKED THROUGH THE CHAMBER — see release_orphan_claims_partitions
-# (lib.sh). A single hardcoded `${SPIRA_SCOPE_LABEL},plan` call left orphaned claims in ops,
-# spike or groom partitions unreleased forever: nothing else in the harness sweeps them.
 # ======================================================================================
 _phase "CHECK2c"
 if [ "${SPIRA_SKIP_RECLAIM:-0}" != 1 ]; then
-released="$(release_orphan_claims_partitions "$PARTITIONS")"
-[ -n "$released" ] && printf '%s\n' "$released"
-n_rel="$(grep -c '^RELEASED' <<< "$released" || true)"
-if [ "${n_rel:-0}" -gt 0 ]; then
-    progress "released $n_rel orphaned claim(s)"
-    # Every bead the sweep freed is claimable NOW, so the count CHECK 3 and CHECK 8 reason
-    # about is stale by exactly this much. Re-queried only when something actually moved.
-    plan_ready="$(ready_count "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" "spira-poison,$SPIRA_ASK_LABEL")"
+inconsistent="$(check2c_lc_consistency)"
+if [ -n "$inconsistent" ]; then
+    printf '%s\n' "$inconsistent"
+    n_inc="$(grep -c '^INCONSISTENT' <<< "$inconsistent" || true)"
+    log "CHECK2c: $n_inc spira-lc row(s) with holder/state out of sync — a bug reached spira_lifecycle outside its own CAS"
+    act "surfaced $n_inc inconsistent spira-lc row(s)"
 fi
 fi
 
