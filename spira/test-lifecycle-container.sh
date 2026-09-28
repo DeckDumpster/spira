@@ -13,6 +13,9 @@
 #     work, so a refusal here is the grant working, not a broken connection;
 #   - spira_lc can write bead/delivery/batch/batch_member but cannot UPDATE or DELETE a row
 #     in `event` — INSERT and SELECT are checked to still work, for the same reason;
+#   - spira_lc_ro can SELECT every table but is refused INSERT and UPDATE, and
+#     `spira-lc history <key>` run as spira_lc_ro returns rows (sp-dz438's acceptance) —
+#     spira_lc's own grants are asserted unchanged by the checks above;
 #   - two writers racing `spira-lc event` on one row yield exactly one applied transition,
 #     and the event log has exactly one applied row and the rest refused;
 #   - a transaction killed after its UPDATE but before COMMIT leaves no trace: the row and
@@ -123,7 +126,9 @@ wantrc "schema applies cleanly" 0 $?
 cat "$TMP/schema.log" >&2
 
 PASS="test-pass-$$"
-sed "s/@SPIRA_LC_PASSWORD@/$PASS/" "$REPO/lifecycle/grants.sql" > "$TMP/grants_filled.sql"
+RO_PASS="test-ro-pass-$$"
+sed -e "s/@SPIRA_LC_PASSWORD@/$PASS/" -e "s/@SPIRA_LC_RO_PASSWORD@/$RO_PASS/" \
+    "$REPO/lifecycle/grants.sql" > "$TMP/grants_filled.sql"
 root_sql sql < "$TMP/grants_filled.sql" >"$TMP/grants.log" 2>&1
 wantrc "grants apply cleanly" 0 $?
 cat "$TMP/grants.log" >&2
@@ -157,6 +162,34 @@ want "spira_lc cannot DELETE event" "denied" "$out"
 
 out="$(as_user spira_lc "$PASS" --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM event" -r json 2>&1)"
 want "POSITIVE CONTROL: spira_lc CAN insert+select event (already has rows from schema/grant application's own transitions)" "rows" "$out"
+
+# ── spira_lc_ro: SELECT everywhere, refused every write (sp-dz438) ────────────────────
+seed_bead sp-ro-hist
+root_sql --use-db spira_lifecycle sql -q \
+    "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, evidence, actor, at) VALUES ('bead','sp-ro-hist','claim','READY','READY','WORKING',1,'{}','ro-seed',0)" \
+    >/dev/null 2>&1
+
+out="$(as_user spira_lc_ro "$RO_PASS" --use-db spira_lifecycle sql -q "SELECT bead_id FROM bead WHERE bead_id='sp-ro-hist'" -r json 2>&1)"
+want "POSITIVE CONTROL: spira_lc_ro CAN select bead" "sp-ro-hist" "$out"
+
+out="$(as_user spira_lc_ro "$RO_PASS" --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM event" -r json 2>&1)"
+want "POSITIVE CONTROL: spira_lc_ro CAN select event" "rows" "$out"
+
+out="$(as_user spira_lc_ro "$RO_PASS" --use-db spira_lifecycle sql -q "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('sp-ro-hack','READY','[]',0,0)" 2>&1)"
+want "spira_lc_ro cannot INSERT bead" "denied" "$out"
+
+out="$(as_user spira_lc_ro "$RO_PASS" --use-db spira_lifecycle sql -q "UPDATE bead SET reason='hack' WHERE bead_id='sp-ro-hist'" 2>&1)"
+want "spira_lc_ro cannot UPDATE bead" "denied" "$out"
+
+out="$(as_user spira_lc_ro "$RO_PASS" --use-db spira_lifecycle sql -q "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, evidence, actor, at) VALUES ('bead','x','x','READY','READY','READY',1,'{}','x',0)" 2>&1)"
+want "spira_lc_ro cannot INSERT event" "denied" "$out"
+
+hist_out="$(SPIRA_LC_USER=spira_lc_ro SPIRA_LC_PASSWORD="$RO_PASS" "$BIN" history sp-ro-hist)"
+hist_rc=$?
+is "spira-lc history <id> succeeds as the read-only user (sp-dz438 acceptance)" 0 "$hist_rc"
+want "spira-lc history <id> returns rows on this box" "sp-ro-hist" "$hist_out"
+
+unset RO_PASS
 
 # ── two racing writers on one row: exactly one applied transition ────────────────────
 seed_bead sp-race

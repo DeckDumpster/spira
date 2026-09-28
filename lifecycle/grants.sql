@@ -20,3 +20,16 @@ GRANT SELECT, INSERT, UPDATE ON spira_lifecycle.batch_member TO 'spira_lc'@'%';
 -- reserved for CREATE TABLE, SELECT, INSERT or UPDATE, which is why nothing else in this
 -- schema quotes it) — found by running this file against a real Dolt 2.2.3 server.
 GRANT SELECT, INSERT ON spira_lifecycle.`event` TO 'spira_lc'@'%';
+
+-- A second, read-only user: SELECT on every table, nothing else, for callers that only ever
+-- read (spira-lc history, tsd-lifecycle-export) and so must never hold spira_lc's own
+-- INSERT/UPDATE authority. @SPIRA_LC_RO_PASSWORD@ is substituted the same way as
+-- @SPIRA_LC_PASSWORD@ above, and independently of it — the two credentials are never the
+-- same secret.
+CREATE USER IF NOT EXISTS 'spira_lc_ro'@'%' IDENTIFIED BY '@SPIRA_LC_RO_PASSWORD@';
+
+GRANT SELECT ON spira_lifecycle.bead TO 'spira_lc_ro'@'%';
+GRANT SELECT ON spira_lifecycle.delivery TO 'spira_lc_ro'@'%';
+GRANT SELECT ON spira_lifecycle.batch TO 'spira_lc_ro'@'%';
+GRANT SELECT ON spira_lifecycle.batch_member TO 'spira_lc_ro'@'%';
+GRANT SELECT ON spira_lifecycle.`event` TO 'spira_lc_ro'@'%';
