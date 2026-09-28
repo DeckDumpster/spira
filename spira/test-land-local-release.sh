@@ -68,6 +68,24 @@ mkdir -p "$RUN/worktree" "$QDIR" "$RELEASES"
 RMAP="$TMP/repo-map"
 printf 'fixq | %s | queue.local | local/main | | |\n' "$REPO" > "$RMAP"
 
+# ---------------------------------------------------------------------------
+# Mock systemctl (sp-zt0ae, sections 8-9) — live-aeon fixture for the release step's
+# guard. MOCK_AEONS, when exported, is echoed back as the live-unit list; unset (the
+# default for sections 0-7) it reports none, same as a real systemctl with no aeons up.
+# ---------------------------------------------------------------------------
+SC_LOG="$TMP/sc.log"
+MOCK_SC="$TMP/mock-sc"
+cat > "$MOCK_SC" <<EOF
+#!/usr/bin/env bash
+printf 'SC: %s\n' "\$*" >> "$SC_LOG"
+case "\$*" in
+    *spira-aeon-*) printf '%s\n' "\${MOCK_AEONS:-}" ;;
+    *list-units*)  printf 'spira-sentinel-prod.service loaded active running Sentinel\n' ;;
+esac
+exit 0
+EOF
+chmod +x "$MOCK_SC"
+
 B() { bd -C "$SPIRA_DB" "$@"; }
 field() { B show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
@@ -88,6 +106,8 @@ run_q() {
     SPIRA_QUEUE_DIR="$QDIR" \
     SPIRA_REPO_MAP="$RMAP" \
     SPIRA_RELEASES="$RELEASES" \
+    SPIRA_SYSTEMCTL="$MOCK_SC" \
+    MOCK_AEONS="${MOCK_AEONS:-}" \
         bash "$SH/queue.sh" "$@" 2>&1
 }
 run_skew() {
@@ -275,5 +295,53 @@ is   "7: the checkout's HEAD (trunk) is never moved" "$PRE_TRUNK" "$(git -C "$RE
 is   "7: GitHub's own ref is never written to" "$PRE_GITHUB_MAIN" "$(git -C "$GITHUB" rev-parse local/main)"
 [ ! -e "$REPO/.git/FETCH_HEAD" ] && ok "7: refresh never fetched GitHub" \
     || bad "7: refresh never fetched GitHub" "FETCH_HEAD exists"
+
+# ============================================================================
+echo
+echo "8 — no current symlink, aeons live: release step is skipped, not refused (sp-zt0ae)"
+# ============================================================================
+# Production has not run the installed-release cutover (sp-tkds8) yet, so nothing reads
+# $SPIRA_RELEASES/current. Absent that symlink, the land must skip packaging/activation
+# entirely — including its live-aeon refusal — rather than fail every land the loop makes,
+# since the loop always has aeons live.
+rm -f "$RELEASES/current"
+seed sp-lrel8
+HEAD8="$(mk_round round-8 eight.txt v8)"
+mk_bins "$HEAD8" v8-binary
+export MOCK_AEONS="spira-aeon-abc-prod.service"
+
+out="$(run_q land-local fixq --head "$HEAD8" --members "sp-lrel8:$HEAD8")"; rc=$?
+unset MOCK_AEONS
+[ "$rc" -eq 0 ] && ok "8: exit 0 despite live aeons — skipped, not refused" \
+    || bad "8: exit 0 despite live aeons — skipped, not refused" "got rc=$rc out=$out"
+want   "8: names the skip"                   "release step skipped: production runs a checkout" "$out"
+nowant "8: never reports an activation"      "activated" "$out"
+is     "8: local/main advances to the round head" "$HEAD8" "$(localmain)"
+is     "8: still nothing activated — no current symlink" "" "$(current_name)"
+is     "8: the bead is closed"               closed "$(field sp-lrel8 status)"
+
+# ============================================================================
+echo
+echo "9 — current symlink present, aeons live: activates without refusing (sp-zt0ae)"
+# ============================================================================
+# Once production runs from a release (current exists), the release step must run even
+# with aeons live — the loop never has zero live aeons — so land-local's own call into
+# activate.sh must not hit the default live-aeon guard.
+ln -s "spira-$HEAD1" "$RELEASES/current"
+seed sp-lrel9
+HEAD9="$(mk_round round-9 nine.txt v9)"
+mk_bins "$HEAD9" v9-binary
+export MOCK_AEONS="spira-aeon-abc-prod.service"
+
+out="$(run_q land-local fixq --head "$HEAD9" --members "sp-lrel9:$HEAD9")"; rc=$?
+unset MOCK_AEONS
+[ "$rc" -eq 0 ] && ok "9: exit 0 — the release step runs despite live aeons" \
+    || bad "9: exit 0 — the release step runs despite live aeons" "got rc=$rc out=$out"
+want   "9: reports the activated release"    "activated spira-$HEAD9" "$out"
+nowant "9: never refuses on the live-aeon guard" "refusing" "$out"
+is     "9: current advances to this round's release" "spira-$HEAD9" "$(current_name)"
+is     "9: bin/fakebin is this round's own corpus" \
+       "v9-binary" "$(cat "$RELEASES/spira-$HEAD9/bin/fakebin" 2>/dev/null)"
+is     "9: the bead is closed"               closed "$(field sp-lrel9 status)"
 
 tl_summary

@@ -1121,11 +1121,25 @@ _land_local_bins_dir() {
 
 # _land_local_release <repo> <name> <head> <bins_dir> -> package the round head's source
 # with the binaries its own tree built and activate the result atomically. Prints the
-# release name on success. Tarballs are retained under SPIRA_RELEASES/.tarballs so
-# cmd_rollback_local can re-activate one without rebuilding (activate.sh only reads the
-# tarball's name when the release directory it names is already unpacked).
+# release name on success and nothing when the step is skipped (still success — see below).
+# Tarballs are retained under SPIRA_RELEASES/.tarballs so cmd_rollback_local can re-activate
+# one without rebuilding (activate.sh only reads the tarball's name when the release
+# directory it names is already unpacked).
+#
+# Production runs from a release only once $SPIRA_RELEASES/current exists (the installed-
+# release cutover, sp-tkds8); until then it runs the checkout directly and nothing reads
+# that symlink, so packaging and swinging it would only refuse on live aeons (routine here)
+# for no observer. Skip the whole step in that case rather than force past the refusal.
+# SPIRA_ACTIVATE_LAND_LOCAL=1 (see activate.sh) is what lets the step run at all once
+# current exists, since land-local's aeons are never confirmed gone.
 _land_local_release() {
     local repo="$1" name="$2" head="$3" bins_dir="$4"
+    if [ ! -L "${SPIRA_RELEASES:?}/current" ]; then
+        printf 'queue.sh land-local: release step skipped: production runs a checkout (no %s/current)\n' \
+            "$SPIRA_RELEASES" >&2
+        return 0
+    fi
+
     local retain="${SPIRA_RELEASES:?}/.tarballs"
     mkdir -p "$retain" 2>/dev/null || {
         printf 'queue.sh land-local: cannot create %s\n' "$retain" >&2; return 1; }
@@ -1139,7 +1153,7 @@ _land_local_release() {
     fi
 
     local act_out act_rc
-    act_out="$(bash "$HERE/activate.sh" "$built" 2>&1)"; act_rc=$?
+    act_out="$(SPIRA_ACTIVATE_LAND_LOCAL=1 bash "$HERE/activate.sh" "$built" 2>&1)"; act_rc=$?
     printf '%s\n' "$act_out" >&2
     [ "$act_rc" -eq 0 ] || return 1
     printf 'spira-%s' "$head"
@@ -1259,7 +1273,7 @@ cmd_land_local() {
         printf 'queue.sh land-local: packaging/activation failed for %s — reverted, nothing changed\n' "$head" >&2
         return 1
     fi
-    printf 'queue.sh land-local: activated %s\n' "$release_name"
+    [ -n "$release_name" ] && printf 'queue.sh land-local: activated %s\n' "$release_name"
 
     local seqfile="${SPIRA_QUEUE_DIR:?}/$name/round-seq" n
     n="$(cat "$seqfile" 2>/dev/null)"; case "$n" in ''|*[!0-9]*) n=0 ;; esac
