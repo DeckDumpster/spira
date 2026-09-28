@@ -558,6 +558,68 @@ collect_disk_mem() {
     [ "$_mem_breach" = 1 ] && _mem_disp="FAULT (${_mem_avail_mb}MB, warn below ${MEM_WARN_MB}MB)"
 }
 
+# HOW LONG SINCE ANYTHING LANDED (UC-26, sp-fhzib). Hoisted above the main guard, same
+# reasoning as collect_disk_mem: a test can source watchtower.sh and call this directly
+# against a fixture $SPIRA_RUN/landstate, instead of forking a whole run per case.
+# Needs $now and $SPIRA_RUN set by the caller. Sets last_land, last_land_id, since_land.
+#
+# THE FOUR VARIABLES ARE RESET BEFORE EACH READ — load-bearing, not tidy: `read` leaves the
+# previous iteration's values in place when it fails early (the landstate record format has
+# no trailing newline, so `read` always reports failure even once it has populated every
+# variable), so an unreadable file would otherwise be judged on the LAST file's state.
+collect_landing_field() {
+    last_land="?"; last_land_id=""
+    if [ -d "$SPIRA_RUN/landstate" ]; then
+        while IFS= read -r f; do
+            [ -r "$f" ] || continue
+            st=""; _tip=""; at=""; _why=""
+            read -r st _tip at _why < "$f" 2>/dev/null || true
+            [ "$st" = LANDED ] || continue
+            case "$at" in ''|*[!0-9]*) continue ;; esac
+            if [ "$last_land" = "?" ] || [ "$at" -gt "$last_land" ]; then
+                last_land="$at"; last_land_id="$(basename "$f")"
+            fi
+        done < <(find "$SPIRA_RUN/landstate" -maxdepth 1 -type f 2>/dev/null)
+    fi
+    since_land="?"
+    [ "$last_land" != "?" ] && since_land=$(( (now - last_land) / 60 ))
+}
+
+# WHAT IS STUCK, AND FOR HOW LONG (UC-26, sp-fhzib). Hoisted for the same reason as
+# collect_landing_field(). Needs $now, $SPIRA_RUN and optionally $SPIRA_WATCH_GATE_WINDOW /
+# $SPIRA_GATE_LOG. Sets GATE_WINDOW, WT_GATE_LOG, oldest_wait, oldest_br, gate_wait_disp,
+# gate_win_label.
+#
+# THE WINDOW IS A DURATION, NEVER A ROW COUNT, and no row inside it renders `?`, not 0 —
+# "no gate has waited recently" and "no gate has RUN recently" are opposite facts
+# (law-absence-needs-a-positive-control). The cutoff is compared as a string: the meter
+# writes `date -u +%Y-%m-%dT%H:%M:%SZ`, and fixed-width ISO-8601 UTC timestamps sort
+# lexicographically in chronological order, so no date parsing is needed in awk.
+collect_gate_wait() {
+    GATE_WINDOW="${SPIRA_WATCH_GATE_WINDOW:-21600}"
+    WT_GATE_LOG="${SPIRA_GATE_LOG:-$SPIRA_RUN/gate.log}"
+    oldest_wait="?"; oldest_br=""
+    if [ -r "$WT_GATE_LOG" ]; then
+        gate_since="$(date -u -d "@$(( now - GATE_WINDOW ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
+        if [ -n "$gate_since" ]; then
+            read -r oldest_wait oldest_br < <(awk -v since="$gate_since" '
+                $1 >= since && $1 ~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z$/ &&
+                match($0, /waited=[0-9]+s/) {
+                    w = substr($0, RSTART+7, RLENGTH-8) + 0
+                    if (!n++ || w > m) { m = w; b = $3 }
+                } END { if (n) print m, b; else print "?", "" }' "$WT_GATE_LOG" 2>/dev/null)
+        fi
+    fi
+    # What the field PRINTS, decided here rather than in the heredoc, so that a `?` is not
+    # rendered as `?s` — a unit on an unreadable field invites reading it as a measurement.
+    gate_wait_disp="?"
+    [ "$oldest_wait" = "?" ] || gate_wait_disp="${oldest_wait}s"
+    # The window is NAMED in the field: a reader who can see the bound can tell a quiet six
+    # hours from a broken probe.
+    if [ "$GATE_WINDOW" -ge 3600 ] 2>/dev/null; then gate_win_label="last $(( GATE_WINDOW / 3600 ))h"
+    else gate_win_label="last $(( GATE_WINDOW / 60 ))m"; fi
+}
+
 # THE CZAR TRIGGER TABLE — per-class display of the four queue-check trigger classes. Read
 # from cockpit.env (written by czar_triggers_keys via collect.sh). A missing key renders ?
 # (law-absence-needs-a-positive-control). _cz_row() is hoisted above the main guard.
@@ -803,93 +865,14 @@ if [ "${SP_UNSENT:-?}" != "?" ] && [ "${SP_CLOSED_STRANDED:-?}" != "?" ] 2>/dev/
     _unsent_inflight=$(( SP_UNSENT - SP_CLOSED_STRANDED ))
 fi
 
-# ---------------------------------------------------------------------------------------
-# HOW LONG SINCE ANYTHING LANDED — the one number that says whether the pipeline works, and
-# the one nothing recorded until landing.sh began writing a landstate file per bead. Read
-# from those records rather than from the log, because a log line is prose and this has to
-# be arithmetic.
-# ---------------------------------------------------------------------------------------
-# THE RECORD HAS NO TRAILING NEWLINE, and `read` reports that as failure. land_mark writes
-# with `printf '%s %s %s %s'` deliberately — the in-tree reader strips newlines anyway — so
-# every landstate file ends mid-line, and `read` returns 1 at EOF-without-delimiter EVEN
-# THOUGH IT HAS ALREADY POPULATED EVERY VARIABLE. A `|| continue` on that status therefore
-# discarded a perfectly good record, and this field rendered `?  (last: none recorded)` on
-# every sweep ever filed, including passes where six beads had landed in the previous twelve
-# minutes. Three Ops sessions were woken by it, each one re-deriving the same directory by
-# hand to prove the pipeline was moving.
-#
-# So the reader tolerates the failed status and lets the guards below it judge the content:
-# a record is believed only if its state is LANDED and its timestamp is numeric, which a
-# truncated or empty file cannot satisfy. Do not "fix" this by adding a newline to the
-# writer — two readers already depend on the current format and the writer is not wrong.
-#
-# THE FOUR VARIABLES ARE RESET BEFORE EACH READ, and that is load-bearing rather than tidy:
-# `read` leaves the previous iteration's values in place when it fails early, so an
-# unreadable file would otherwise be judged on the LAST file's state and this loop would
-# attribute one bead's landing to another.
-last_land="?"; last_land_id=""
-if [ -d "$SPIRA_RUN/landstate" ]; then
-    while IFS= read -r f; do
-        [ -r "$f" ] || continue
-        st=""; _tip=""; at=""; _why=""
-        read -r st _tip at _why < "$f" 2>/dev/null || true
-        [ "$st" = LANDED ] || continue
-        case "$at" in ''|*[!0-9]*) continue ;; esac
-        if [ "$last_land" = "?" ] || [ "$at" -gt "$last_land" ]; then
-            last_land="$at"; last_land_id="$(basename "$f")"
-        fi
-    done < <(find "$SPIRA_RUN/landstate" -maxdepth 1 -type f 2>/dev/null)
-fi
-since_land="?"
-[ "$last_land" != "?" ] && since_land=$(( (now - last_land) / 60 ))
+# HOW LONG SINCE ANYTHING LANDED — the one number that says whether the pipeline works.
+# collect_landing_field() is hoisted above the main guard so a test can call it directly
+# against a fixture $SPIRA_RUN/landstate.
+collect_landing_field
 
-# ---------------------------------------------------------------------------------------
-# WHAT IS STUCK, AND FOR HOW LONG. A queue depth on its own says nothing — a deep queue that
-# is moving is a busy system. The age of its oldest member is what tells them apart.
-# ---------------------------------------------------------------------------------------
-# THE WINDOW IS A DURATION, NEVER A ROW COUNT. "The worst wait in the last 50 rows" reads as
-# recent and is not: gate.log holds one row per gate run, so on a quiet day fifty rows are a
-# week and "recent" silently means "ever". That is not hypothetical either — this field spent
-# a day reporting 1584s from a wait produced by a locking topology the gate rebuild had
-# already deleted, while every row written since read `waited=0s`. A decommissioned
-# mechanism's worst case was being presented to Ops as a live signal, and three sweeps
-# re-investigated it.
-#
-# THE CUTOFF IS COMPARED AS A STRING, which is exactly as sound as arithmetic here and needs
-# no date parsing in awk: the meter writes `date -u +%Y-%m-%dT%H:%M:%SZ`, and ISO-8601 UTC
-# timestamps of fixed width sort lexicographically in chronological order. A row whose first
-# field is not such a timestamp — a truncated write, a line from some older format — falls
-# outside every window and is ignored rather than counted as now.
-#
-# NO ROW INSIDE THE WINDOW RENDERS `?`, NOT 0. "No gate has waited recently" and "no gate has
-# RUN recently" are opposite facts and a zero states the reassuring one (law-absence-needs-a-
-# positive-control); the second is what a stalled pipeline looks like from here.
-GATE_WINDOW="${SPIRA_WATCH_GATE_WINDOW:-21600}"
-# THROUGH THE SAME KEY THE METER WRITES. This read `$SPIRA_RUN/gate.log` directly, so an
-# operator who moved the log left this field reading `?` forever while the gate went on
-# writing somewhere else — a probe pointed at the wrong place, which is the failure the whole
-# `?` convention exists to make visible rather than one it is allowed to have.
-WT_GATE_LOG="${SPIRA_GATE_LOG:-$SPIRA_RUN/gate.log}"
-oldest_wait="?"; oldest_br=""
-if [ -r "$WT_GATE_LOG" ]; then
-    gate_since="$(date -u -d "@$(( now - GATE_WINDOW ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
-    if [ -n "$gate_since" ]; then
-        read -r oldest_wait oldest_br < <(awk -v since="$gate_since" '
-            $1 >= since && $1 ~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z$/ &&
-            match($0, /waited=[0-9]+s/) {
-                w = substr($0, RSTART+7, RLENGTH-8) + 0
-                if (!n++ || w > m) { m = w; b = $3 }
-            } END { if (n) print m, b; else print "?", "" }' "$WT_GATE_LOG" 2>/dev/null)
-    fi
-fi
-# What the field PRINTS, decided here rather than in the heredoc, so that a `?` is not
-# rendered as `?s` — a unit on an unreadable field invites reading it as a measurement.
-gate_wait_disp="?"
-[ "$oldest_wait" = "?" ] || gate_wait_disp="${oldest_wait}s"
-# The window is NAMED in the field, because "recent" is the word that let this go wrong: a
-# reader who can see the bound can tell a quiet six hours from a broken probe.
-if [ "$GATE_WINDOW" -ge 3600 ] 2>/dev/null; then gate_win_label="last $(( GATE_WINDOW / 3600 ))h"
-else gate_win_label="last $(( GATE_WINDOW / 60 ))m"; fi
+# WHAT IS STUCK, AND FOR HOW LONG. collect_gate_wait() is hoisted above the main guard so a
+# test can call it directly against a fixture $SPIRA_RUN/gate.log.
+collect_gate_wait
 
 # ---------------------------------------------------------------------------------------
 # IS THE GATE WORTH WHAT IT COSTS? The wait above says what the gate costs the queue; these
