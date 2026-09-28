@@ -114,16 +114,11 @@ touching anything. The panel launches through `{{COCKPIT}}/panel-run.sh`, never 
 directly — tmux gives a new pane the tmux server's environment, so a bare binary starts
 without `COCKPIT_DB`.
 
-Three watchers, three scopes — do not assume one covers another:
-
-| watcher | sees a verdict-close | sees a comment on an FYI |
-|---|---|---|
-| `answered-since.sh` | yes | no — skips insights |
-| `unanswered.sh` | — | yes, as an open obligation |
-| `watch-answers.sh` | yes | yes |
-
-Attach `watch-answers.sh` as a Monitor at the start of any session that escalates
-anything — verdicts land in the bead, not a log file.
+**His answer arrives as mail, not as something you go read off a bead.** A reply to an
+escalation closes its tracking bead through `mail.sh sendmail`; the pane's own close or
+comment on a decision mails the concierge the same way. Both land in this session's mailbox
+and `spira-mail-deliver` wakes you — there is nothing to attach a Monitor to, and no bead list
+to re-scan for what he said.
 
 **Never `pgrep -f`/`pkill -f` on a pattern alone** — it can match the caller's own command
 line. Address a process by PID from `/proc/<pid>/cmdline`, or by systemd unit name.

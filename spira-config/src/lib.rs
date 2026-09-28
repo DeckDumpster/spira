@@ -116,12 +116,7 @@ pub struct SpiraSection {
     pub overrides: Option<String>,
     pub id_prefix: Option<String>,
     pub health_timeout: Option<String>,
-    pub answer_state: Option<String>,
-    pub answer_mark: Option<String>,
-    pub answer_comment_mark: Option<String>,
-    pub self_closed: Option<String>,
     pub wake: Option<String>,
-    pub wake_watchers: Option<String>,
     pub ctrl: Option<String>,
     pub mail_kinds: Option<String>,
     pub mail_unread_age: Option<String>,
@@ -439,6 +434,11 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "queue_local_gate", bead: "sp-vsob2" },
     RetiredKey { key: "queue_batch_idle_cut", bead: "sp-vsob2" },
     RetiredKey { key: "hook_lines", bead: "sp-o9nkc" },
+    RetiredKey { key: "answer_state", bead: "sp-xsl8i" },
+    RetiredKey { key: "answer_mark", bead: "sp-xsl8i" },
+    RetiredKey { key: "answer_comment_mark", bead: "sp-xsl8i" },
+    RetiredKey { key: "self_closed", bead: "sp-xsl8i" },
+    RetiredKey { key: "wake_watchers", bead: "sp-xsl8i" },
 ];
 
 /// Every key in `history` that is neither an active `[spira]` field (`active`) nor listed in

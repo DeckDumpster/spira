@@ -1050,10 +1050,7 @@ function drawOps(){
   h+=sep();
 
   /* ATTN */
-  const ua=q('SP_UNANSWERED');
-  h+=row('ATTN',
-    dim('waiting on you')+' '+bold(str('SP_WAITING'))+'  '+
-    dim('threads')+' '+(ua!==null&&String(ua)!=='0'?bad(String(ua)):ok(ua!==null?String(ua):'?')));
+  h+=row('ATTN', dim('waiting on you')+' '+bold(str('SP_WAITING')));
 
   /* SEND */
   const sf=q('SP_SENT_FAILED'),bd3=q('SP_BRANCH_DONE');

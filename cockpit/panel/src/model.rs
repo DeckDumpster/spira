@@ -339,19 +339,108 @@ fn run_as(cmd: &str, args: &[&str], actor: Option<&str>) -> Result<(), String> {
 /// And should the close fail anyway, the typed text is written to the bead as a comment
 /// before the error is returned. Whatever else goes wrong, the answer survives in the one
 /// place the next reader will look.
-fn close_decision(db: &str, id: &str, reason: &str) -> Result<(), String> {
+fn close_decision(db: &str, item: &Item, reason: &str) -> Result<(), String> {
     let actor = operator_actor();
+    let id = &item.id;
     let e = match run_as(
         "bd",
         &["-C", db, "close", id, "--reason", reason, "--force"],
         Some(&actor),
     ) {
-        Ok(()) => return Ok(()),
+        Ok(()) => {
+            notify_or_log(db, item, "verdict", reason, &actor);
+            return Ok(());
+        }
         Err(e) => e,
     };
     match run_as("bd", &["-C", db, "comments", "add", id, reason], Some(&actor)) {
         Ok(()) => Err(format!("{e} — still open; your answer is kept as a comment")),
         Err(_) => Err(format!("{e} — AND THE ANSWER WAS NOT SAVED: {reason}")),
+    }
+}
+
+/// Where `mail.sh` is, found rather than known — same reasoning as `rule_sh`: no hardcoded
+/// path, because a harness that names one operator's checkout is unbuildable for anyone
+/// else. `SPIRA_MAIL_BIN` overrides for a fixture; otherwise the binary walks up from
+/// itself looking for `spira/mail.sh`, an ancestor of wherever the panel was built.
+fn mail_sh() -> Result<String, String> {
+    if let Ok(p) = std::env::var("SPIRA_MAIL_BIN") {
+        if !p.is_empty() {
+            return Ok(p);
+        }
+    }
+    let exe = std::env::current_exe().map_err(|e| format!("cannot locate myself: {e}"))?;
+    for anc in exe.ancestors() {
+        let c = anc.join("spira").join("mail.sh");
+        if c.is_file() {
+            return Ok(c.to_string_lossy().to_string());
+        }
+    }
+    Err("mail.sh not found above this binary — set SPIRA_MAIL_BIN".into())
+}
+
+/// Run a command for its exit status, feeding it stdin — the seam `mail.sh sendmail` needs,
+/// since a message is a body on stdin and every other command here only ever needs argv.
+fn run_piped(cmd: &str, args: &[&str], stdin_body: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut c = Command::new(cmd);
+    c.args(args)
+        .env("PATH", crate::store::child_path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = c.spawn().map_err(|e| format!("{cmd}: {e}"))?;
+    child
+        .stdin
+        .take()
+        .expect("stdin was piped")
+        .write_all(stdin_body.as_bytes())
+        .map_err(|e| format!("{cmd}: {e}"))?;
+    let o = child.wait_with_output().map_err(|e| format!("{cmd}: {e}"))?;
+    if !o.status.success() {
+        return Err(format!(
+            "{cmd}: {}",
+            String::from_utf8_lossy(&o.stderr)
+                .lines()
+                .next()
+                .unwrap_or("failed")
+        ));
+    }
+    Ok(())
+}
+
+/// Deliver a pane answer to the concierge mailbox — the one route `spira-mail-deliver`
+/// wakes a session on, and the same one a real email reply lands in. No `In-Reply-To` is
+/// sent: the pane has already written the answer to the bead itself, so `sendmail`'s
+/// reply-closes-a-tracking-bead leg never engages here — this is pure delivery, replacing
+/// the bd-scanning readers that used to notice this write after the fact
+/// (law-answers-need-a-delivery-path).
+fn notify_concierge(id: &str, subject: &str, from: &str, body: &str) -> Result<(), String> {
+    let mail = mail_sh()?;
+    let msg = format!("From: {from} <{from}@spira>\nSubject: {subject}\nX-Spira-Bead: {id}\n\n{body}\n");
+    run_piped(&mail, &["sendmail"], &msg)
+}
+
+/// Forward an answer to the concierge, and if the mail itself fails to send, say so on the
+/// bead rather than let a lost mail be indistinguishable from a lost answer. The bead is the
+/// source of truth — it is already closed or commented by the time this runs — so a failed
+/// send here is a paging failure, not a data-loss one, and is recorded rather than retried.
+fn notify_or_log(db: &str, item: &Item, verb: &str, text: &str, actor: &str) {
+    let subject = format!("{verb} on {}: {}", item.id, item.title);
+    if let Err(e) = notify_concierge(&item.id, &subject, actor, text) {
+        let _ = run_as(
+            "bd",
+            &[
+                "-C",
+                db,
+                "comments",
+                "add",
+                &item.id,
+                &format!("[mail to concierge failed: {e}]"),
+            ],
+            Some(actor),
+        );
     }
 }
 
@@ -413,7 +502,7 @@ pub fn act(
         // as an answer the operator never gave. A session that acts on that is acting
         // on its own echo, and it is silent because the text reads exactly like a
         // real verdict.
-        (View::Decisions, _) => close_decision(&db, &item.id, reason),
+        (View::Decisions, _) => close_decision(&db, item, reason),
         (View::Insights | View::Notifications, _) => run(
             "bd",
             &[
@@ -487,7 +576,7 @@ pub fn reject_premise(item: &Item, why: &str) -> Result<(), String> {
     } else {
         format!("{PREMISE_REJECTED}: {}", why.trim())
     };
-    close_decision(&db, &item.id, &reason)
+    close_decision(&db, item, &reason)
 }
 
 // ── promotion: an insight becomes a statute ────────────────────────────────────────────
@@ -707,14 +796,14 @@ pub fn suit_verdict(item: &Item, verdict: &str) -> Result<(), String> {
     match first.as_str() {
         "uphold" => {
             // Uphold: statute unchanged; just close.
-            close_decision(&db, &item.id, "uphold")?;
+            close_decision(&db, item, "uphold")?;
         }
         "retire" => {
             let slug = suit_slug(item)
                 .ok_or_else(|| "no statute:law-<slug> label on this bead".to_string())?;
             let rule = rule_sh()?;
             run_verbose(&rule, &["retire", &slug])?;
-            close_decision(&db, &item.id, &format!("retire: law-{slug} retired"))?;
+            close_decision(&db, item, &format!("retire: law-{slug} retired"))?;
         }
         "amend" => {
             // "amend: <new text>" — colon is optional, everything after the verb is the text.
@@ -728,7 +817,7 @@ pub fn suit_verdict(item: &Item, verdict: &str) -> Result<(), String> {
                 .ok_or_else(|| "no statute:law-<slug> label on this bead".to_string())?;
             let rule = rule_sh()?;
             run_verbose(&rule, &["enact", &slug, rest])?;
-            close_decision(&db, &item.id, &format!("amend: law-{slug} amended"))?;
+            close_decision(&db, item, &format!("amend: law-{slug} amended"))?;
         }
         _ => {
             return Err(format!(
@@ -771,7 +860,7 @@ pub fn enact_law(item: &Item, input: &str) -> Result<(), String> {
     // Close the bead now that the statute is in force.
     let db = crate::store::db();
     let evidence = format!("enacted law-{} from panel", slug.trim_start_matches("law-"));
-    close_decision(&db, &item.id, &evidence)
+    close_decision(&db, item, &evidence)
         .map_err(|e| format!("enacted law-{slug} but could not close {}: {e}", item.id))
 }
 
@@ -786,7 +875,7 @@ pub fn decline_law(item: &Item, why: &str) -> Result<(), String> {
     } else {
         format!("declined: {}", why.trim())
     };
-    close_decision(&db, &item.id, &reason)
+    close_decision(&db, item, &reason)
 }
 
 /// A comment is never a completion. Replying used to mark things done, which once recorded
@@ -803,11 +892,14 @@ pub fn comment(view: View, item: &Item, text: &str) -> Result<(), String> {
         // tellable apart, or a reply of the agent's reads as an answer.
         _ => {
             let db = crate::store::db();
+            let actor = operator_actor();
             run_as(
                 "bd",
                 &["-C", &db, "comments", "add", &item.id, text],
-                Some(&operator_actor()),
-            )
+                Some(&actor),
+            )?;
+            notify_or_log(&db, item, "comment", text, &actor);
+            Ok(())
         }
     }
 }
@@ -827,6 +919,22 @@ mod tests {
             enacted: None,
             thread: Vec::new(),
             labels: labels.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// A bare item for tests that only care about the id (the close_decision failure paths,
+    /// which never get far enough to read title or labels).
+    fn an_item(id: &str) -> Item {
+        Item {
+            id: id.into(),
+            title: "a decision".into(),
+            lead: String::new(),
+            body: String::new(),
+            badge: "decision".into(),
+            when: "2026-09-05T10:00:00Z".into(),
+            enacted: None,
+            thread: Vec::new(),
+            labels: Vec::new(),
         }
     }
 
@@ -1105,14 +1213,53 @@ mod tests {
 
     #[test]
     fn close_decision_success_closes_with_force_as_the_operator() {
-        let stub = crate::test_support::StubBd::new().env("SPIRA_OPERATOR_ACTOR", "optest");
-        let r = close_decision("/fake/db", "sp-x1", "raise the pool to 32");
+        let stub = crate::test_support::StubBd::new()
+            .mail()
+            .env("SPIRA_OPERATOR_ACTOR", "optest");
+        let item = an_alert(&["overseer"]);
+        let r = close_decision("/fake/db", &item, "raise the pool to 32");
         assert!(r.is_ok(), "{r:?}");
         let log = stub.argv_log();
-        want(&log, "close sp-x1");
+        want(&log, "close sp-a1");
         want(&log, "--reason raise the pool to 32");
         want(&log, "--force");
         want(&log, "ACTOR: optest");
+    }
+
+    /// THE REPLACEMENT FOR THE BD-SCANNING READERS. A verdict must reach the concierge
+    /// mailbox on its own, with no `In-Reply-To` — the bead is already closed by the time
+    /// this runs, so `sendmail`'s reply-closes-a-tracking-bead leg must never engage here.
+    #[test]
+    fn close_decision_success_mails_the_concierge() {
+        let stub = crate::test_support::StubBd::new()
+            .mail()
+            .env("SPIRA_OPERATOR_ACTOR", "optest");
+        let item = an_alert(&["overseer"]);
+        let r = close_decision("/fake/db", &item, "raise the pool to 32");
+        assert!(r.is_ok(), "{r:?}");
+        want(&stub.argv_log(), "MAIL: sendmail");
+        let msg = stub.mail_inbox();
+        want(&msg, "From: optest <optest@spira>");
+        want(&msg, "Subject: verdict on sp-a1");
+        want(&msg, "X-Spira-Bead: sp-a1");
+        want(&msg, "raise the pool to 32");
+        assert!(!msg.contains("In-Reply-To"), "no In-Reply-To: {msg:?}");
+    }
+
+    /// A mail that fails to send must not be lost silently: the bead is already the answer's
+    /// durable home, so the failure is recorded there rather than swallowed or retried.
+    #[test]
+    fn close_decision_success_survives_a_failed_mail() {
+        let stub = crate::test_support::StubBd::new()
+            .mail()
+            .env("SPIRA_OPERATOR_ACTOR", "optest")
+            .env("MAIL_RC", "1")
+            .env("MAIL_ERR", "mail.sh: disk full");
+        let item = an_alert(&["overseer"]);
+        let r = close_decision("/fake/db", &item, "raise the pool to 32");
+        assert!(r.is_ok(), "a failed mail must not undo a successful close: {r:?}");
+        want(&stub.argv_log(), "comments add sp-a1 [mail to concierge failed");
+        want(&stub.argv_log(), "mail.sh: disk full");
     }
 
     /// THE FAILURE-RELAY CASE. `bd close` refuses (e.g. a blocked-issue guard); the pane must
@@ -1124,7 +1271,8 @@ mod tests {
         let stub = crate::test_support::StubBd::new()
             .env("BD_CLOSE_RC", "1")
             .env("BD_CLOSE_ERR", "cannot close blocked issue: sp-x1 is blocked by [sp-x0]");
-        let r = close_decision("/fake/db", "sp-x1", "my answer");
+        let item = an_item("sp-x1");
+        let r = close_decision("/fake/db", &item, "my answer");
         let e = r.expect_err("close should have failed");
         want(&e, "cannot close blocked issue");
         want(&e, "still open; your answer is kept as a comment");
@@ -1140,7 +1288,8 @@ mod tests {
             .env("BD_CLOSE_ERR", "cannot close blocked issue")
             .env("BD_COMMENTS_RC", "1")
             .env("BD_COMMENTS_ERR", "database is locked");
-        let r = close_decision("/fake/db", "sp-x1", "my important answer");
+        let item = an_item("sp-x1");
+        let r = close_decision("/fake/db", &item, "my important answer");
         let e = r.expect_err("close should have failed");
         want(&e, "AND THE ANSWER WAS NOT SAVED");
         want(&e, "my important answer");
@@ -1158,6 +1307,7 @@ mod tests {
     #[test]
     fn comment_on_other_views_adds_a_bd_comment_as_the_operator() {
         let stub = crate::test_support::StubBd::new()
+            .mail()
             .env("SPIRA_DB", "/fake/db")
             .env("SPIRA_OPERATOR_ACTOR", "optest");
         let item = an_alert(&["alert"]);
@@ -1166,6 +1316,43 @@ mod tests {
         let log = stub.argv_log();
         want(&log, "comments add sp-a1 known, chasing it");
         want(&log, "ACTOR: optest");
+    }
+
+    /// A comment is an answer too — it must reach the concierge exactly the way a verdict
+    /// does, or the pane's reply-in-a-thread path would still depend on someone scanning
+    /// beads for it.
+    #[test]
+    fn comment_on_other_views_mails_the_concierge() {
+        let stub = crate::test_support::StubBd::new()
+            .mail()
+            .env("SPIRA_DB", "/fake/db")
+            .env("SPIRA_OPERATOR_ACTOR", "optest");
+        let item = an_alert(&["alert"]);
+        let r = comment(View::Alerts, &item, "known, chasing it");
+        assert!(r.is_ok(), "{r:?}");
+        want(&stub.argv_log(), "MAIL: sendmail");
+        let msg = stub.mail_inbox();
+        want(&msg, "From: optest <optest@spira>");
+        want(&msg, "Subject: comment on sp-a1");
+        want(&msg, "X-Spira-Bead: sp-a1");
+        want(&msg, "known, chasing it");
+    }
+
+    /// Same fallback as a closed decision: a comment that reaches the bead but not the
+    /// concierge's mailbox must say so on the bead, not vanish.
+    #[test]
+    fn comment_survives_a_failed_mail() {
+        let stub = crate::test_support::StubBd::new()
+            .mail()
+            .env("SPIRA_DB", "/fake/db")
+            .env("SPIRA_OPERATOR_ACTOR", "optest")
+            .env("MAIL_RC", "1")
+            .env("MAIL_ERR", "mail.sh: disk full");
+        let item = an_alert(&["alert"]);
+        let r = comment(View::Alerts, &item, "known, chasing it");
+        assert!(r.is_ok(), "a failed mail must not undo a saved comment: {r:?}");
+        want(&stub.argv_log(), "comments add sp-a1 [mail to concierge failed");
+        want(&stub.argv_log(), "mail.sh: disk full");
     }
 
     /// `enact`'s other write path: `rule.sh` first, THEN the citation label — never the other

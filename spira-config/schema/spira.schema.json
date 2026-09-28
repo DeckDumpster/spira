@@ -223,24 +223,6 @@
             "null"
           ]
         },
-        "answer_comment_mark": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "answer_mark": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "answer_state": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "archive": {
           "type": [
             "string",
@@ -1576,12 +1558,6 @@
             "null"
           ]
         },
-        "self_closed": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "self_test": {
           "type": [
             "string",
@@ -1859,12 +1835,6 @@
           ]
         },
         "wake": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "wake_watchers": {
           "type": [
             "string",
             "null"

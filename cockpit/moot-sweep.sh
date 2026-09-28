@@ -21,9 +21,8 @@
 #   A predicate that errors or times out leaves the ask open. A failed probe must never read
 #   as "condition cleared" — that is the ? not 0 rule (law-absence-needs-a-positive-control).
 #
-#   Resolution goes through resolve.sh, NEVER a raw bd close. A raw close is announced by
-#   watch-answers.sh as an operator verdict; resolve.sh records the actor as claude so the
-#   watcher knows not to page.
+#   Resolution goes through resolve.sh, NEVER a raw bd close. resolve.sh records the actor
+#   as claude, so the audit trail can always tell this close from the operator's own.
 set -uo pipefail
 
 . "$(dirname "$0")/db.sh"

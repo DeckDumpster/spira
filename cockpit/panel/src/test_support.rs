@@ -20,6 +20,7 @@ pub struct StubBd {
     log: std::path::PathBuf,
     set_vars: Vec<String>,
     saved_spira_path: Option<String>,
+    mail_inbox: Option<std::path::PathBuf>,
     _guard: MutexGuard<'static, ()>,
 }
 
@@ -79,6 +80,7 @@ exit "$rc"
             log,
             set_vars: Vec::new(),
             saved_spira_path,
+            mail_inbox: None,
             _guard: guard,
         }
     }
@@ -116,6 +118,45 @@ exit "$rc"
         std::env::set_var("SPIRA_RULE", &script);
         self.set_vars.push("SPIRA_RULE".to_string());
         self
+    }
+
+    /// Also installs a `mail.sh` stub beside the `bd` one and points `SPIRA_MAIL_BIN` at
+    /// it, for `close_decision`/`comment`'s mail-delivery leg. The stub's stdin (the whole
+    /// RFC 5322 message) is captured to its own file, since argv alone (`sendmail`) says
+    /// nothing about what was sent. Controlled by `MAIL_RC`.
+    pub fn mail(mut self) -> Self {
+        let script = self.dir.join("mail.sh");
+        let inbox = self.dir.join("mail-inbox");
+        std::fs::write(
+            &script,
+            format!(
+                r#"#!/usr/bin/env bash
+printf 'MAIL: %s\n' "$*" >> {log:?}
+cat > {inbox:?}
+rc="${{MAIL_RC:-0}}"; err="${{MAIL_ERR:-}}"
+[ -n "$err" ] && printf '%s\n' "$err" >&2
+exit "$rc"
+"#,
+                log = self.log,
+                inbox = inbox,
+            ),
+        )
+        .expect("write stub mail.sh");
+        let mut perm = std::fs::metadata(&script).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perm, 0o755);
+        std::fs::set_permissions(&script, perm).expect("chmod stub mail.sh");
+        std::env::set_var("SPIRA_MAIL_BIN", &script);
+        self.set_vars.push("SPIRA_MAIL_BIN".to_string());
+        self.mail_inbox = Some(inbox);
+        self
+    }
+
+    /// The last message the stubbed `mail.sh sendmail` received on stdin, whole.
+    pub fn mail_inbox(&self) -> String {
+        self.mail_inbox
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .unwrap_or_default()
     }
 
     pub fn argv_log(&self) -> String {
