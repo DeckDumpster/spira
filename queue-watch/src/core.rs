@@ -27,6 +27,22 @@ impl Batch {
     }
 }
 
+/// A `queue.local` repo's async forge publish: no members of its own (it carries whatever
+/// local/main holds, not a per-bead round) and no batch machinery (no bisect, no ejection —
+/// a red publish never blocks local landing, only files a fix-forward bead).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Publish {
+    pub pr: String,
+    pub head: String,
+}
+
+/// What became of a publish PR that is no longer the open one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublishOutcome {
+    pub pr: String,
+    pub state: PrState,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PrState {
     Open,
@@ -71,6 +87,11 @@ pub struct Snapshot {
     pub certified: Vec<String>,
     pub beads: BTreeMap<String, Bead>,
     pub outcome: Option<Outcome>,
+    /// queue.local's async publish: same shape of question as `batch`/`ci`/`outcome`, but a
+    /// wholly separate pipeline (no members, no bisect, no ejection).
+    pub publish: Option<Publish>,
+    pub publish_ci: Option<Ci>,
+    pub publish_outcome: Option<PublishOutcome>,
     /// Anything that could not be read. Non-empty means this snapshot is not evidence of a
     /// quiet queue, and the core says so instead of reporting nothing.
     pub errors: Vec<String>,
@@ -98,11 +119,16 @@ pub struct RepoState {
     idle_since: Option<u64>,
     idle_warned: bool,
     blind: Option<String>,
+    publish: Option<Publish>,
+    publish_ci: Option<Ci>,
 }
 
 impl RepoState {
     pub fn batch(&self) -> Option<&Batch> {
         self.batch.as_ref()
+    }
+    pub fn publish(&self) -> Option<&Publish> {
+        self.publish.as_ref()
     }
 }
 
@@ -200,6 +226,8 @@ pub fn step(prev: &RepoState, snap: &Snapshot, lim: Limits) -> (RepoState, Vec<E
         }
         st.batch = snap.batch.clone();
         st.ci = snap.ci.clone();
+        st.publish = snap.publish.clone();
+        st.publish_ci = snap.publish_ci.clone();
         idle_bookkeeping(&mut st, snap, lim, &mut out);
         return (st, out);
     }
@@ -279,7 +307,81 @@ pub fn step(prev: &RepoState, snap: &Snapshot, lim: Limits) -> (RepoState, Vec<E
         }
     }
     idle_bookkeeping(&mut st, snap, lim, &mut out);
+    step_publish(&mut st, snap, &mut out);
     (st, out)
+}
+
+/// queue.local's async publish, tracked independently of the batch/round machinery above:
+/// no members (it carries whatever local/main holds, not a per-bead round), no bisect, no
+/// ejection — a red publish never blocks local landing, only files a fix-forward bead.
+fn step_publish(st: &mut RepoState, snap: &Snapshot, out: &mut Vec<Event>) {
+    let prev_publish = st.publish.clone();
+    let same_pub = matches!((&prev_publish, &snap.publish), (Some(a), Some(b)) if a.pr == b.pr);
+
+    if let Some(pp) = &prev_publish {
+        if !same_pub {
+            out.push(publish_outcome_event(pp, snap));
+        }
+    }
+    if let Some(cp) = &snap.publish {
+        if !same_pub {
+            out.push(ev(
+                "publish-opened",
+                Some(&cp.pr),
+                vec![],
+                format!("publish PR {} opened (head {})", cp.pr, cp.head),
+            ));
+            st.publish_ci = None;
+        }
+    }
+    st.publish = snap.publish.clone();
+
+    if let (Some(cp), Some(ci)) = (&snap.publish, &snap.publish_ci) {
+        if st.publish_ci.as_ref() != Some(ci) {
+            let text = match ci {
+                Ci::Pending => format!("publish PR {} CI running", cp.pr),
+                Ci::Green => format!("publish PR {} CI green — lands on the next publish pass", cp.pr),
+                Ci::Red => format!("publish PR {} CI red — a fix-forward bead is filed, not a block", cp.pr),
+                Ci::Fault(k) => format!("publish PR {} CI did not test the branch ({k})", cp.pr),
+            };
+            out.push(ev("publish-ci", Some(&cp.pr), vec![], text));
+            st.publish_ci = Some(ci.clone());
+        }
+    } else if snap.publish.is_none() {
+        st.publish_ci = None;
+    }
+}
+
+fn publish_outcome_event(pp: &Publish, snap: &Snapshot) -> Event {
+    match snap.publish_outcome.as_ref().filter(|o| o.pr == pp.pr).map(|o| o.state) {
+        Some(PrState::Merged) => ev(
+            "publish-landed",
+            Some(&pp.pr),
+            vec![],
+            format!("publish PR {} landed (head {})", pp.pr, pp.head),
+        ),
+        Some(PrState::Closed) => ev(
+            "publish-closed-unlanded",
+            Some(&pp.pr),
+            vec![],
+            format!(
+                "publish PR {} closed without landing — likely went red; check for a fix-forward bead",
+                pp.pr
+            ),
+        ),
+        Some(PrState::Open) => ev(
+            "publish-closed-unlanded",
+            Some(&pp.pr),
+            vec![],
+            format!("the queue dropped publish PR {} but it is still open on the forge", pp.pr),
+        ),
+        _ => ev(
+            "publish-closed-unlanded",
+            Some(&pp.pr),
+            vec![],
+            format!("publish PR {} is no longer open and its forge state could not be read", pp.pr),
+        ),
+    }
 }
 
 fn ci_word(ci: Option<&Ci>) -> &'static str {

@@ -195,3 +195,56 @@ fn blind_poll_does_not_close_the_open_batch() {
     let evs = replay(&[s0, bad, s2]);
     assert_eq!(kinds(&evs), vec!["blind", "recovered"]);
 }
+
+fn pub_(pr: &str, head: &str) -> Publish {
+    Publish { pr: pr.into(), head: head.into() }
+}
+
+// POSITIVE CONTROL: queue.local's publish PR is a wholly separate pipeline from the batch
+// above (sp-xe12f) — before this, Snapshot carried no `publish` field at all and this
+// sequence produced zero events, silently. Green settles the same way verdict.sh settles a
+// queue-mode batch: fast-forward, reported here as "landed", never "ejected"/"repushed"/
+// "forced-cut" (batch-only concepts that do not apply to a memberless publish).
+#[test]
+fn publish_open_ci_green_land() {
+    let s0 = snap(0);
+    let mut s1 = snap(30);
+    s1.publish = Some(pub_("41", "h1"));
+    s1.publish_ci = Some(Ci::Pending);
+    let mut s2 = s1.clone();
+    s2.now = 60;
+    s2.publish_ci = Some(Ci::Green);
+    let mut s3 = snap(90);
+    s3.publish_outcome = Some(PublishOutcome { pr: "41".into(), state: PrState::Merged });
+    let evs = replay(&[s0, s1, s2, s3]);
+    assert_eq!(kinds(&evs), vec!["publish-opened", "publish-ci", "publish-ci", "publish-landed"]);
+    assert!(evs[0].text.contains("41"), "{}", evs[0].text);
+    assert!(evs[3].text.contains("landed"), "{}", evs[3].text);
+}
+
+// A red publish is never an ejection or a block — queue.local's whole point is that local
+// landing does not wait on the forge. The PR simply closes without landing; queue.sh's own
+// fix-forward bead filing is asserted at the shell layer (test-queue-publish.sh), not here.
+#[test]
+fn publish_red_closes_without_landing_not_an_ejection() {
+    let s0 = snap(0);
+    let mut s1 = snap(30);
+    s1.publish = Some(pub_("42", "h1"));
+    s1.publish_ci = Some(Ci::Red);
+    let mut s2 = snap(60);
+    s2.publish_outcome = Some(PublishOutcome { pr: "42".into(), state: PrState::Closed });
+    let evs = replay(&[s0, s1, s2]);
+    assert_eq!(kinds(&evs), vec!["publish-opened", "publish-ci", "publish-closed-unlanded"]);
+}
+
+// The batch's own PR opening and a publish PR opening are independent: one repo can watch
+// both a round PR and a publish PR in the same pass, each reported under its own kind.
+#[test]
+fn batch_and_publish_events_are_independent() {
+    let s0 = snap(0);
+    let mut s1 = snap(30);
+    s1.batch = Some(batch("50", "bh", &["sp-a"]));
+    s1.publish = Some(pub_("51", "ph"));
+    let evs = replay(&[s0, s1]);
+    assert_eq!(kinds(&evs), vec!["opened", "publish-opened"]);
+}

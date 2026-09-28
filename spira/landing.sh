@@ -1029,14 +1029,15 @@ for i in d:
             continue
         fi
 
-        # QUEUE MODE: no local rebase, no local gate (law-a-round-takes-certified-tips).
-        # The round (batcher-cut) and CI are the only judges of a SUBMITTED branch now;
-        # a base conflict is caught and returned for rebase by the round builder itself.
-        # All this pass does is bookkeeping so the round's own CERTIFIED-pool read finds
-        # a branch the moment its bead closes, whether or not anything ever gated it —
-        # most already carry a gate verdict from the aeon's own queue.sh submit at
-        # teardown, and this never re-checks it.
-        if [ "$mode" = queue ]; then
+        # QUEUE MODE (queue and queue.local both): no local rebase, no local gate
+        # (law-a-round-takes-certified-tips). The round (batcher-cut, or land-local's
+        # round for queue.local) and CI/local proving are the only judges of a SUBMITTED
+        # branch now; a base conflict is caught and returned for rebase by the round
+        # builder itself. All this pass does is bookkeeping so the round's own
+        # CERTIFIED-pool read finds a branch the moment its bead closes, whether or not
+        # anything ever gated it — most already carry a gate verdict from the aeon's own
+        # queue.sh submit at teardown, and this never re-checks it.
+        if repo_land_queued "$name"; then
             tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
             read -r _ls_st _ls_tip _ls_at _ls_reason <<< "$(land_state "$id" 2>/dev/null || true)"
             # A WITHDRAWAL AT THIS TIP MUST STICK. queue.sh eject writes WITHDRAWN when a
@@ -1660,7 +1661,7 @@ $(printf '%s' "$gate_out" | tail -20)"
 # Idempotent with the late check: a batch that lands here is gone by the late check, and one
 # still pending here is the one the late check settles.
 for repo_name in $(spira_repos); do
-    [ "$(repo_land "$repo_name")" = queue ] || continue
+    repo_land_queued "$repo_name" || continue
     bash "$SPIRA_HOME/queue.sh" step "$repo_name" 2>&1 \
         | while IFS= read -r _bl; do log "queue early: $_bl"; done || true
 done
@@ -1671,7 +1672,7 @@ done
 # work is the highest-value action in the pass; take it before certifying anything. The
 # step runs again below so newly certified branches can still form a batch this pass.
 for repo_name in $(spira_repos); do
-    [ "$(repo_land "$repo_name")" = queue ] || continue
+    repo_land_queued "$repo_name" || continue
     bash "$SPIRA_HOME/queue.sh" step "$repo_name" 2>&1 \
         | while IFS= read -r _bl; do log "$_bl"; done || true
 done
@@ -1749,7 +1750,7 @@ fi
 
 # After all certification passes, settle each queue-mode repo's open batch and open the next.
 for repo_name in $(spira_repos); do
-    [ "$(repo_land "$repo_name")" = queue ] || continue
+    repo_land_queued "$repo_name" || continue
     bash "$SPIRA_HOME/queue.sh" step "$repo_name" 2>&1 \
         | while IFS= read -r _bl; do log "queue late: $_bl"; done || true
 done
