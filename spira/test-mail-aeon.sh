@@ -146,7 +146,7 @@ BID4="$(bdq create "Test mailbox cleanup bead" -l "${SPIRA_SCOPE_LABEL:+${SPIRA_
 aeon_rc=0
 SPIRA_HOME="$SPIRA_HOME" SPIRA_RUN="$SPIRA_RUN" SPIRA_MAIL="$SPIRA_MAIL" \
 SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
-SPIRA_AGENT="$BIN/claude" SPIRA_CONF="" \
+SPIRA_WORK_BIN="$TMP/no-work-bin" SPIRA_LC_BIN="$TMP/no-lc-bin" SPIRA_AGENT="$BIN/claude" SPIRA_CONF="" \
 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
     bash "$HERE/aeon.sh" builder >/dev/null 2>&1 || aeon_rc=$?
 
