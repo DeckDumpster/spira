@@ -657,6 +657,12 @@
             "null"
           ]
         },
+        "cutover_round_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "czar_label": {
           "type": [
             "string",

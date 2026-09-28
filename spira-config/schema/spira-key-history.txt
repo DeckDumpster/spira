@@ -75,6 +75,7 @@ ctrl
 ctx_high
 ctx_limit
 ctx_warn
+cutover_round_label
 czar_label
 czar_pass_bin
 czar_stage_attribution_failed
