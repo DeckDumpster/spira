@@ -62,6 +62,7 @@ inst_name() {
 inst_watch_name() { printf 'spira-watch-%s-%s.service' "$1" "$SPIRA_INSTANCE"; }
 
 UNITS=(spira-sentinel.service spira-sentinel.timer
+       spira-summon.service spira-summon.timer
        spira-ops.service spira-ops.timer
        spira-auron.service spira-auron.timer
        spira-watchtower.service spira-watchtower.timer
@@ -92,7 +93,7 @@ UNITS=(spira-sentinel.service spira-sentinel.timer
 # as well would also run it once at boot, outside the schedule.
 # Template names mapped through inst_name so the enabled unit matches its installed name.
 _ENABLE_TMPL=(cockpit-ensure.timer concierge.timer spira-watch-refresh.timer
-              beads-push.timer spira-sentinel.timer spira-ops.timer spira-auron.timer
+              beads-push.timer spira-sentinel.timer spira-summon.timer spira-ops.timer spira-auron.timer
               spira-watchtower.timer spira-skew.timer spira-czar-pass.timer
               spira-reconciler.timer
               spira-archive.timer

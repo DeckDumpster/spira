@@ -52,7 +52,7 @@ SC="${SPIRA_SYSTEMCTL:-systemctl}"
 # ORDER IS STILL LOAD-BEARING: summons first so nothing new is born, then the legs that act on
 # what already exists, then everything else systemd reports. Anything not named in the priority
 # list still gets stopped — it just stops after the ones whose order matters.
-TIMER_PRIORITY=(spira-sentinel spira-ops spira-watchtower spira-archivist spira-archive spira-skew)
+TIMER_PRIORITY=(spira-sentinel spira-summon spira-ops spira-watchtower spira-archivist spira-archive spira-skew)
 # Stopped only on --hard; a plain halt leaves them running (summon nothing, create no worktree).
 CI_WATCHER_BASES=(spira-gate-check spira-pr-notify)
 _inst_sfx="${SPIRA_INSTANCE:+-$SPIRA_INSTANCE}"

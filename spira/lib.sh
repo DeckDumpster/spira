@@ -759,8 +759,21 @@ aeon_alive() {           # aeon_alive <pidfile> -> 0 if the recorded pid is a li
     return 0
 }
 
-aeon_count() {           # how many aeons of a fayth are genuinely running
+# aeon_count <fayth> -> how many aeons of that fayth are genuinely running.
+#
+# THE UNIT LIST, NOT THE PID FILE, for the same reason aeons_live_total reads units: aeon.sh
+# writes its pidfile only after it claims a bead, so a fast re-summon landing in that gap
+# counted the slot as free a second time (sp-0y2av). ${SPIRA_SYSTEMCTL:-systemctl}, not bare
+# systemctl, so a suite can stub the fleet without a real user session.
+#
+# THE PID FALLBACK IS FOR SUITES, not for production, exactly as aeons_live_total's own.
+aeon_count() {
     local fayth="$1" n=0 pf
+    if [ "${SPIRA_SUMMON:-systemd-run}" = systemd-run ]; then
+        n="$("${SPIRA_SYSTEMCTL:-systemctl}" --user list-units "spira-aeon-${fayth}-*" --no-legend 2>/dev/null | wc -l)"
+        printf '%d' "${n:-0}"
+        return
+    fi
     for pf in "$SPIRA_RUN"/aeon-"$fayth"-*.pid; do
         [ -e "$pf" ] || continue
         if aeon_alive "$pf"; then n=$((n+1)); else rm -f "$pf"; fi
@@ -1263,6 +1276,14 @@ fayth_ready() {
         printf 'fayth_ready: no fayth in the chamber: %s\n' "$F" >&2
         return 2
     fi
+    # SPIRA_READY_CACHE: sentinel.sh --summon-only precomputes every fayth's ready count
+    # with ONE bd call (bulk_ready_by_fayth) rather than paying this function's own call
+    # once per partition, to hit its ~1s target (sp-0y2av). Unset in the full pass, which
+    # still pays its own per-fayth query below exactly as before.
+    if [ -n "${SPIRA_READY_CACHE:-}" ] && [ -f "$SPIRA_READY_CACHE" ]; then
+        awk -v f="$f" '$1==f{print $2; found=1} END{if(!found) print 0}' "$SPIRA_READY_CACHE"
+        return 0
+    fi
     _errtmp="$(mktemp)"
     # shellcheck disable=SC1090
     out="$( ( . "$F" 2>/dev/null
@@ -1273,6 +1294,30 @@ fayth_ready() {
     rm -f "$_errtmp"
     printf '%s' "$out"
     return "$rc"
+}
+
+# bulk_ready_by_fayth -> "<fayth> <count>" lines, one per active fayth, from ONE bd query.
+#
+# fayth_ready pays one `bd ready` call per partition; sentinel.sh --summon-only cannot
+# afford N of those and still land near 1s, so this fetches the whole ready set once and
+# buckets it in-process with ready-bucket.py, applying the identical predicate fayth_ready
+# would (FAYTH_LABELS, FAYTH_EXCLUDE_LABELS, and fayth: preference — mirrored from
+# unclaimable.py's own claimers loop, not reimplemented a third time).
+bulk_ready_by_fayth() {
+    local raw parts f inc exc
+    raw="$(bdjson "${READY_ARGS[@]}" 2>/dev/null)"
+    [ -n "$raw" ] || return 0
+    parts=""
+    for f in $(spira_fayths); do
+        inc="$(fayth_get "$f" FAYTH_LABELS)"
+        [ -n "$inc" ] || continue
+        exc="$(fayth_get "$f" FAYTH_EXCLUDE_LABELS)"
+        parts="${parts}${f}|${inc}|${exc}"$'\n'
+    done
+    [ -n "$parts" ] || return 0
+    printf '%s' "$raw" | json_only \
+        | PARTS="$parts" SPIRA_QUEUE_WAIT_LABEL="${SPIRA_QUEUE_WAIT_LABEL:-}" \
+          SPIRA_SUBMITTED_LABEL="${SPIRA_SUBMITTED_LABEL:-}" python3 "$SPIRA_HOME/ready-bucket.py"
 }
 
 # express_ready_in_task_pool <task-fayths> <express-label>
@@ -2029,6 +2074,27 @@ world_gate() {
     return 0
 }
 
+# summon_refill_argv -> the ExecStopPost property that refills this slot the instant the
+# aeon it is attached to exits, rather than waiting for the next timer tick (sp-0y2av).
+#
+# A NESTED systemd-run, NOT A BACKGROUNDED CHILD OF THIS UNIT. ExecStopPost runs inside the
+# exiting aeon's own unit, and that unit's cgroup is torn down the moment ExecStopPost's own
+# process exits (KillMode=control-group, the same fact summon_fayth's own comment explains) —
+# a `nohup ... &` here would be reaped mid-flight by that teardown. A second systemd-run puts
+# the fast pass in ITS OWN unit and cgroup, unaffected by the first one's exit, and returns in
+# milliseconds (the job is submitted, not awaited) so the aeon's own exit is never delayed.
+#
+# THE RESOLVED PATH, NOT THE BARE NAME: systemd validates an ExecStopPost command line itself
+# (it is not shelled out through the caller's PATH), and refuses a bare "systemd-run" as "not
+# an absolute path" — silently, so the refill would never fire and nothing would say why.
+# `command -v` also passes an already-absolute path straight through, which is what every
+# test's SPIRA_SUMMON stub is, so the same line works under a fixture unchanged.
+summon_refill_argv() {
+    local bin; bin="$(command -v "${SPIRA_SUMMON:-systemd-run}" 2>/dev/null || printf '%s' "${SPIRA_SUMMON:-systemd-run}")"
+    printf -- '--property=ExecStopPost=%s --user --collect --quiet %s --summon-only' \
+        "$bin" "$SPIRA_HOME/sentinel.sh"
+}
+
 # summon_argv <fayth> -> systemd-run --property/--setenv flags shared by every summon path
 # (summon_fayth, escape.sh), one argv token per line. The caller supplies its own --unit
 # name and the aeon.sh invocation that follows.
@@ -2037,6 +2103,7 @@ summon_argv() {
     printf '%s\n' \
         --property=CPUQuota="${SPIRA_AEON_CPU_QUOTA:-70}%" --property=Nice=10 \
         --property=TimeoutStartSec="$(fayth_get "$f" FAYTH_TIMEOUT_SECONDS 3600)" \
+        "$(summon_refill_argv)" \
         --setenv=PATH="$PATH" --setenv=HOME="$HOME"
 }
 
@@ -2174,6 +2241,107 @@ summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label]
         "${_sargv[@]}" \
         ${require_label:+--setenv=SPIRA_REQUIRE_LABEL="$require_label"} \
         "$SPIRA_HOME/aeon.sh" "$f" 2>/dev/null
+}
+
+# _ck7_summon_body -> CHECK 7's lane-then-pool summon loop, unlocked. Never call this
+# directly outside ck7_summon_pass (below) and its own unlocked-race test row: two of these
+# running at once each read "N live, 1 free" before either's summon lands and both summon,
+# which is exactly the double-summon ck7_summon_pass's flock exists to prevent.
+_ck7_summon_body() {
+    local TASK_FAYTHS LANE_FAYTHS pool f
+    TASK_FAYTHS="$(spira_task_fayths)"
+    if [ -n "${SPIRA_MAX_AEONS:-}" ]; then
+        local task_live=0
+        for f in $TASK_FAYTHS; do task_live=$((task_live + $(aeon_count "$f"))); done
+        pool="$(ck7_pool "$SPIRA_MAX_AEONS" "$task_live")"
+        log "CHECK7 pool: ${SPIRA_MAX_AEONS} slot(s), $task_live live, $pool free — order: $TASK_FAYTHS"
+    else
+        pool=""
+    fi
+
+    # LANE FAYTHS DRAW FIRST — a lane is a partition no builder will ever take, and a
+    # builder loop run first would take every free slot before a starved lane is asked.
+    # THE FLEET CEILING STILL BINDS THEM via SPIRA_MAX_LIVE_AEONS inside summon_fayth; no
+    # pool argument is passed here because SPIRA_MAX_AEONS is the task pool alone.
+    LANE_FAYTHS="$(spira_lane_fayths)"
+    [ -n "$LANE_FAYTHS" ] && log "CHECK7 lanes (${SPIRA_LANES:-none} declared): $LANE_FAYTHS"
+    local _lane_rr="$SPIRA_RUN/lane-round-robin" _lane_last
+    _lane_last="$(cat "$_lane_rr" 2>/dev/null)"
+    LANE_FAYTHS="$(lane_rotate "$_lane_last" $LANE_FAYTHS)"
+
+    # WHEN INDIVIDUAL BD CALLS ARE SLOW, a partition this pass did not reach must log as
+    # "not evaluated" rather than silently reading identical to "nothing ready" to strand.sh.
+    local _ck7_start _ck7_budget
+    _ck7_start="$(date +%s)"
+    _ck7_budget="${SPIRA_SENTINEL_PASS_BUDGET_SECS:-90}"
+    for f in $LANE_FAYTHS; do
+        if [ $(( $(date +%s) - _ck7_start )) -ge "$_ck7_budget" ]; then
+            log "CHECK7 $f: not evaluated (pass budget exhausted)"
+            continue
+        fi
+        if summon_fayth "$f"; then
+            act "summoned a $f lane aeon"
+            printf '%s' "$f" > "$_lane_rr"
+        fi
+    done
+
+    # THE POOL DRAWS ON WHAT IS LEFT, recomputed after the lanes above consumed some of it.
+    #
+    # ADMISSION THROTTLE: if --throttle-check engaged the stamp, hold the task pool at 0
+    # (lanes are unaffected — the stamp says the queue is over capacity, not lane work).
+    local _tc_stamp_ck7 _ck7_express_label="" _ck7_stamp_exists=0
+    _tc_stamp_ck7="${SPIRA_THROTTLE_STAMP:-$SPIRA_RUN/queue-throttled}"
+    [ -f "$_tc_stamp_ck7" ] && _ck7_stamp_exists=1
+    if [ "$(ck7_throttled "$_ck7_stamp_exists" "${SPIRA_QUEUE_THROTTLE_OVERRIDE:-}")" = 1 ]; then
+        local _ck7_express_ready=0
+        express_ready_in_task_pool "$TASK_FAYTHS" "${SPIRA_EXPRESS_LABEL:-express}" && _ck7_express_ready=1
+        pool="$(check7_pool_decision 1 "${pool:-0}" "$_ck7_express_ready")"
+        if [ "$_ck7_express_ready" = 1 ]; then
+            _ck7_express_label="${SPIRA_EXPRESS_LABEL:-express}"
+            log "CHECK7 pool: throttle active — express bead ready, granting pool=$pool (restricted to '$_ck7_express_label')"
+        else
+            log "CHECK7 pool: throttle active ($(head -1 "$_tc_stamp_ck7" 2>/dev/null)) — task pool held at $pool"
+        fi
+    fi
+    for f in $TASK_FAYTHS; do
+        if [ $(( $(date +%s) - _ck7_start )) -ge "$_ck7_budget" ]; then
+            log "CHECK7 $f: not evaluated (pass budget exhausted)"
+            continue
+        fi
+        local _fill=0
+        while summon_fayth "$f" "$pool" "$_ck7_express_label"; do
+            act "summoned a $f aeon"
+            [ -n "$pool" ] && pool=$(( pool > 0 ? pool - 1 : 0 ))
+            _fill=$(( _fill + 1 ))
+            [ "$(ck7_fill_cap "$_fill" "$pool")" = stop ] && break
+            [ $(( $(date +%s) - _ck7_start )) -ge "$_ck7_budget" ] && break
+        done
+    done
+}
+
+# ck7_summon_pass -> _ck7_summon_body, serialized against every other caller of this
+# function by one flock on $SPIRA_RUN/summon.lock.
+#
+# ONE LOCK, TWO ENTRY POINTS. sentinel.sh's full pass and sentinel.sh --summon-only both
+# reach the fleet through this one function, so a slot a fast pass just filled cannot be
+# filled AGAIN by a full pass that read "free" a moment earlier, or by two fast passes
+# firing back to back off ExecStopPost and the 15s timer (sp-0y2av). The lock lives here,
+# not around each caller, so there is exactly one place either path can get this wrong.
+#
+# A FIXED FD, NOT A SUBSHELL. `( flock ...; _ck7_summon_body )` would run the body in a
+# subshell, and `act`'s counter increments would not survive past it — the pass summary
+# would report 0 actions on a pass that plainly summoned something.
+ck7_summon_pass() {
+    local _lockfile="${SPIRA_RUN:-/tmp}/summon.lock"
+    mkdir -p "${SPIRA_RUN:-/tmp}" 2>/dev/null
+    exec 9>"$_lockfile" || { log "CHECK7: cannot open $_lockfile"; return 1; }
+    if ! flock -w "${SPIRA_SUMMON_LOCK_WAIT:-30}" 9; then
+        log "CHECK7: another summon pass holds summon.lock — skipping this pass"
+        exec 9>&-
+        return 1
+    fi
+    _ck7_summon_body
+    exec 9>&-
 }
 
 # named_unit_stop <systemd --user unit glob> — stop every live unit matching it, by NAME.

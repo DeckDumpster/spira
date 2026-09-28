@@ -17,7 +17,7 @@
 # assertion is preceded by a fixture that proves the detector can fire.
 #
 # tier: T1
-# covers: spira/watchtower.sh spira/sentinel.sh spira/conf.sh
+# covers: spira/watchtower.sh spira/sentinel.sh spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -347,12 +347,17 @@ is "ck7_fill_cap: pool exhausted before the cap -> stop" \
 is "ck7_fill_cap: unset SPIRA_MAX_LIVE_AEONS defaults to 4" \
    "stop" "$(libcall 'ck7_fill_cap 4 ""')"
 
-# Structural control retained: lanes must still precede the pool gate in sentinel.sh, since
+# Structural control retained: lanes must still precede the pool gate in _ck7_summon_body
+# (lib.sh — CHECK 7's lane+pool loop, extracted from sentinel.sh and shared with
+# sentinel.sh --summon-only under ck7_summon_pass's flock, sp-0y2av), since
 # ck7_throttled/check7_pool_decision replacing the pool are only reached after the lane
 # loop — a real behaviour row cannot see file ordering, so this stays a source check.
-sentinel="$HERE/sentinel.sh"
+sentinel="$HERE/lib.sh"
 lane_line="$(grep -n 'for f in \$LANE_FAYTHS' "$sentinel" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
-gate_line="$(grep -n 'ck7_throttled' "$sentinel" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
+# 'ck7_throttled "' (not the bare name) so this matches _ck7_summon_body's CALL site,
+# not ck7_throttled's own function definition earlier in the file — lib.sh, unlike the
+# old inlined sentinel.sh, defines the helper before the loop that calls it.
+gate_line="$(grep -n 'ck7_throttled "' "$sentinel" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
 if [ -n "$lane_line" ] && [ -n "$gate_line" ] && \
    [ "$lane_line" -gt 0 ] && [ "$gate_line" -gt 0 ] && \
    [ "$lane_line" -lt "$gate_line" ]; then
