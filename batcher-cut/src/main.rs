@@ -271,6 +271,23 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
         }
 
         let member_ids: Vec<String> = round_members.iter().map(|m| m.id.clone()).collect();
+
+        // A --with-bins build failure (exit 4, sp-myi6w) is never something attribute.sh can
+        // bisect: its own job is rerunning a named suite against member subsets, and there is
+        // no subset rerun that answers "does the merged tree compile" — only whether it did.
+        // Filed as an Ops incident naming every member still in the round, the same as an
+        // unresolved local red below, rather than handed to attribute.sh where it could only
+        // ever refuse.
+        if reds == [io::WORKSPACE_BUILD.to_string()] {
+            let evidence = results_dir.display().to_string();
+            println!("batcher {}: workspace failed to build — local round red ({})", repo.name, member_ids.join(","));
+            match io::file_local_red_incident(env_, repo, &reds, &iter_branch, &evidence, "workspace-build") {
+                Ok(id) => println!("batcher {}: filed {id} for Ops", repo.name),
+                Err(e) => println!("batcher {}: could not file for Ops: {e}", repo.name),
+            }
+            return Ok(None);
+        }
+
         let attr_start = now();
         let attr = io::attribute(env_, repo, &iter_branch, start_sha, &reds, &member_ids)?;
         if attribution_seconds.is_none() {

@@ -562,7 +562,7 @@ pub fn all_suites(repo: &Repo, branch: &str) -> Vec<String> {
 
 /// The round-level pseudo-suite name a --with-bins build failure (exit 4) reports under —
 /// never a real `test-*.sh` file, so it can't collide with one all_suites() would select.
-const WORKSPACE_BUILD: &str = "workspace-build";
+pub const WORKSPACE_BUILD: &str = "workspace-build";
 
 /// Run `suites` (explicit list — never diff-selected) against `branch`, exactly as the
 /// Concierge's own round.sh invokes testenv-batch.sh (RUSTUP_TOOLCHAIN, SPIRA_BATCH_MAXPAR,
@@ -603,8 +603,8 @@ pub fn run_suites(env: &Env, repo: &Repo, branch: &str, suites: &[String], resul
     // That is a suite-list bug, not a container fault, so it is read off the "unknown suite"
     // line rather than folded into the same harness-fault verdict. 4 is a round-level red
     // (--with-bins: the candidate's own workspace failed to build) — the branch's fault, not
-    // the harness's, so it is attributed to the round's members via the ordinary double-red/
-    // judgement path rather than aborting the round unreported.
+    // the harness's, so the caller reports it as a local round red (stabilize_round's
+    // WORKSPACE_BUILD case) rather than aborting the round unreported.
     match status.code() {
         Some(0) | Some(1) | None => {}
         Some(4) => {
