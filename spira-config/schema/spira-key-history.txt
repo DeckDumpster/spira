@@ -265,6 +265,7 @@ token_projects
 token_window_h
 town
 tsd_bin
+tsd_lifecycle_export_bin
 tz
 verdict_ttl
 verdict_window

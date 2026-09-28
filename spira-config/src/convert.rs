@@ -241,6 +241,7 @@ pub fn spira_section(
             "SPIRA_SUPERVISE_BIN" => s.supervise_bin = Some(val.clone()),
             "SPIRA_LANDING_PASS_BIN" => s.landing_pass_bin = Some(val.clone()),
             "SPIRA_TSD_BIN" => s.tsd_bin = Some(val.clone()),
+            "SPIRA_TSD_LIFECYCLE_EXPORT_BIN" => s.tsd_lifecycle_export_bin = Some(val.clone()),
             "SPIRA_RECONCILER_BIN" => s.reconciler_bin = Some(val.clone()),
             "SPIRA_TEST_PLAN_BIN" => s.test_plan_bin = Some(val.clone()),
             "SPIRA_RECONCILER_FLOW_BIN" => s.reconciler_flow_bin = Some(val.clone()),
