@@ -27,6 +27,12 @@ HARNESS="$(cd "$HERE/.." && pwd)"
 . "$HERE/testlib.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
+# EVERY `concierge.sh start` BELOW MUST NEVER TOUCH THE OPERATOR'S REAL CLIENT SETTINGS.
+# `start` now ensures the SessionStart hook is registered (install-session-hook.sh), which
+# defaults SPIRA_CLIENT_SETTINGS to $HOME/.claude/settings.json — and none of the fixtures
+# below override HOME. Exported once here rather than on every invocation below.
+export SPIRA_CLIENT_SETTINGS="$TMP/settings.json"
+
 echo "the escalation list — three classes, not the old five (sp-3dggv)"
 
 # SEEN TO FAIL FIRST: before sp-3dggv, concierge.md escalated on five-plus classes, including
@@ -503,6 +509,58 @@ CONCIERGE_SOCKET="$WK_LIVE" CONCIERGE_SESSION="$WK_LIVE" \
     bash "$HARNESS/concierge.sh" wake "hi" >/dev/null 2>&1 || rc_wake_live=$?
 is "wake succeeds against a live pane (positive control)" 0 "$rc_wake_live"
 tmux -L "$WK_LIVE" kill-server 2>/dev/null || true
+
+echo
+echo "wake — never types into a non-empty input line"
+
+# A PANE WITH THE CLIENT'S OWN INPUT-LINE MARKER, `❯ `, HOLDING TEXT. bash --norc prints
+# the marker itself (no real Claude Code needed) and then blocks on `read`, so send-keys
+# after it echoes onto the same screen line exactly as a person mid-keystroke would leave
+# it — the shape `_wake_input_busy` in concierge.sh looks for.
+WK_HOLD="test-wake-hold-$$"
+tmux -L "$WK_HOLD" kill-server 2>/dev/null || true
+tmux -L "$WK_HOLD" new-session -d -s "$WK_HOLD" -x 80 -y 24 \
+    "bash --norc -c 'printf \"❯ \"; read -r _line'"
+sleep 0.3
+tmux -L "$WK_HOLD" send-keys -t "$WK_HOLD" -l -- "half-written"
+sleep 0.3
+want "the fixture pane shows the half-written input line (positive control)" \
+    "❯ half-written" "$(tmux -L "$WK_HOLD" capture-pane -p -t "$WK_HOLD")"
+
+WK_HOLD_RUN="$TMP/wake-hold-run"; mkdir -p "$WK_HOLD_RUN"
+(
+    SPIRA_RUN="$WK_HOLD_RUN" CONCIERGE_SOCKET="$WK_HOLD" CONCIERGE_SESSION="$WK_HOLD" \
+        bash "$HARNESS/concierge.sh" wake "the woken text" >"$TMP/wake-hold.out" 2>&1
+) &
+WK_WAKE_PID=$!
+
+# WHILE THE LINE STAYS BUSY, THE WAKE MUST NOT HAVE DELIVERED ANYTHING.
+sleep 1.5
+want "still busy: the pane still shows only the half-written text" \
+    "❯ half-written" "$(tmux -L "$WK_HOLD" capture-pane -p -t "$WK_HOLD")"
+nowant "still busy: the wake has not delivered its text yet" \
+    "the woken text" "$(tmux -L "$WK_HOLD" capture-pane -p -t "$WK_HOLD")"
+is "the wake call has not returned while the line is busy" 1 \
+    "$(kill -0 "$WK_WAKE_PID" 2>/dev/null && echo 1 || echo 0)"
+
+# EMPTY THE LINE, NEVER SUBMITTING IT — the wake is what may act, not a person's Enter.
+# "half-written" is 12 characters; one extra BSpace is a harmless no-op on an empty line.
+tmux -L "$WK_HOLD" send-keys -t "$WK_HOLD" BSpace BSpace BSpace BSpace BSpace \
+    BSpace BSpace BSpace BSpace BSpace BSpace BSpace BSpace
+sleep 0.3
+want "the input line is now empty" "❯ " "$(tmux -L "$WK_HOLD" capture-pane -p -t "$WK_HOLD" | grep -m1 '❯')"
+
+# THE WAKE DELIVERS ONCE THE LINE IS EMPTY, AND RETURNS. Its own loop polls every 2s with
+# a 1s settle, so this allows a full margin over that cadence.
+for _i in $(seq 1 20); do
+    kill -0 "$WK_WAKE_PID" 2>/dev/null || break
+    sleep 0.5
+done
+is "the wake call returns once the line clears" 0 \
+    "$(kill -0 "$WK_WAKE_PID" 2>/dev/null && echo 1 || echo 0)"
+want "the woken text was delivered after the line emptied" \
+    "the woken text" "$(tmux -L "$WK_HOLD" capture-pane -p -t "$WK_HOLD")"
+tmux -L "$WK_HOLD" kill-server 2>/dev/null || true
 
 echo
 echo "the way in — /proc scan hygiene and the dangling-resume retry, as source shape"

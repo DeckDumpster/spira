@@ -37,6 +37,12 @@ fi
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
+# EVERY `concierge.sh start` BELOW MUST NEVER TOUCH THE OPERATOR'S REAL CLIENT SETTINGS.
+# `start` now ensures the SessionStart hook is registered (install-session-hook.sh), which
+# defaults SPIRA_CLIENT_SETTINGS to $HOME/.claude/settings.json. Exported for the two direct
+# invocations below; the systemd-run ones do not inherit this and name it explicitly.
+export SPIRA_CLIENT_SETTINGS="$TMP/settings.json"
+
 echo "start — session survives the oneshot's cgroup teardown"
 
 # THE PROPERTY UNDER TEST. concierge.service is Type=oneshot/KillMode=control-group: the
@@ -48,7 +54,7 @@ tmux -L "$SOCK" kill-server 2>/dev/null || true
 
 rc_start=0
 systemd-run --user --wait --collect --quiet -- \
-    env CONCIERGE_SOCKET="$SOCK" CONCIERGE_SESSION="$SOCK" \
+    env SPIRA_CLIENT_SETTINGS="$TMP/settings.json" CONCIERGE_SOCKET="$SOCK" CONCIERGE_SESSION="$SOCK" \
     bash "$HARNESS/concierge.sh" start 2>>"$TMP/err" || rc_start=$?
 
 is "start exits 0 under a simulated oneshot" 0 "$rc_start"
@@ -72,7 +78,8 @@ rm -f "$TMP_RUN/concierge-session"
 SOCK_NR="test-concierge-noresume-$$"
 tmux -L "$SOCK_NR" kill-server 2>/dev/null || true
 systemd-run --user --wait --collect --quiet -- \
-    env SPIRA_RUN="$TMP_RUN" CONCIERGE_SOCKET="$SOCK_NR" CONCIERGE_SESSION="$SOCK_NR" \
+    env SPIRA_RUN="$TMP_RUN" SPIRA_CLIENT_SETTINGS="$TMP/settings.json" \
+        CONCIERGE_SOCKET="$SOCK_NR" CONCIERGE_SESSION="$SOCK_NR" \
     bash "$HARNESS/concierge.sh" start 2>>"$TMP/err" || true
 tmux -L "$SOCK_NR" kill-server 2>/dev/null || true
 if [ -f "$TMP_RUN/concierge-launch.sh" ]; then
@@ -88,7 +95,7 @@ printf '%s\n%s\n' "$FAKE_SID_R" "$TMP_RUN" > "$TMP_RUN/concierge-session"
 SOCK_R="test-concierge-resume2-$$"
 tmux -L "$SOCK_R" kill-server 2>/dev/null || true
 systemd-run --user --wait --collect --quiet -- \
-    env SPIRA_RUN="$TMP_RUN" SPIRA_WIKI="$TMP_RUN" \
+    env SPIRA_RUN="$TMP_RUN" SPIRA_WIKI="$TMP_RUN" SPIRA_CLIENT_SETTINGS="$TMP/settings.json" \
         CONCIERGE_SOCKET="$SOCK_R" CONCIERGE_SESSION="$SOCK_R" \
     bash "$HARNESS/concierge.sh" start 2>>"$TMP/err" || true
 tmux -L "$SOCK_R" kill-server 2>/dev/null || true

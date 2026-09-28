@@ -97,6 +97,12 @@ pr-notify|log|@SPIRA_RUN@/watchd/pr-notify.log
 # mailbox, so it is not asked here too.
 mail-deliver|extern|mail-deliver|@SPIRA_HOME@/spira-mail-deliver.sh health
 
+# INBOX-KEEPER is the only path that may type into the concierge pane, and only a re-arm
+# line when no inbox-triage.sh Monitor has read SPIRA_CONCIERGE_INBOX for a while with
+# events waiting (a /clear or compaction killed it). Everything else reaches the concierge
+# through that durable inbox, never a keystroke. See inbox-keeper.sh.
+inbox-keeper|daemon|@SPIRA_HOME@/inbox-keeper.sh
+
 # queue-watch — merge-queue transitions for every `mode = "queue"` repository: batch opened,
 # CI, ejected, re-pushed, landed (verified on base), closed without landing, forced cuts,
 # priority inversions and stalls. Derived from queue state and the forge, never from the
