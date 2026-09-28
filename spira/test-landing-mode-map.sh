@@ -174,7 +174,9 @@ else
     for m in $real_modes; do
         case "$m" in
         queue)
-            if grep -q '"$mode" = queue' <<<"$real_body"; then
+            # queue mode (queue and queue.local) is dispatched by repo_land_queued since sp-xe12f;
+            # the literal test stays accepted for the synthetic positive control above.
+            if grep -qE '"\$mode" = queue|repo_land_queued ' <<<"$real_body"; then
                 ok "mode 'queue' handled (early return in land_repo)"
             else
                 bad "mode 'queue' handled" "no '\\\$mode = queue' in land_repo"
