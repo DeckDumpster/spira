@@ -204,7 +204,7 @@ want "case ids: the same string names the case in TAP and in JSONL" \
 _SCB="$SCRATCH/scb"; mkdir -p "$_SCB/spira" "$_SCB/bin" "$_SCB/target/release"
 : > "$_SCB/bin/spira-config"; chmod +x "$_SCB/bin/spira-config"
 : > "$_SCB/target/release/spira-config"; chmod +x "$_SCB/target/release/spira-config"
-_scb_run() { HERE="$_SCB/spira" bash -c ". '$TESTLIB'; testlib_spira_config_bin"; }
+_scb_run() { HERE="$_SCB/spira" bash -c ". '$TESTLIB' >/dev/null; testlib_spira_config_bin"; }
 
 is "testlib_spira_config_bin(): picks bin/ when both bin/ and target/release exist" \
     "$_SCB/bin/spira-config" "$(_scb_run)"
@@ -236,6 +236,6 @@ is "testlib_spira_config_bin(): never shells out to cargo" "0" \
 _SCB_ENV="$_SCB/env-provided-spira-config"; : > "$_SCB_ENV"; chmod +x "$_SCB_ENV"
 is "testlib_spira_config_bin(): \$SPIRA_CONFIG_BIN wins when already set and executable" \
     "$_SCB_ENV" \
-    "$(HERE="$_SCB/spira" SPIRA_CONFIG_BIN="$_SCB_ENV" bash -c ". '$TESTLIB'; testlib_spira_config_bin")"
+    "$(HERE="$_SCB/spira" SPIRA_CONFIG_BIN="$_SCB_ENV" bash -c ". '$TESTLIB' >/dev/null; testlib_spira_config_bin")"
 
 tl_summary
