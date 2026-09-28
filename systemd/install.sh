@@ -723,6 +723,20 @@ _drain_oneshot() {
     printf 'install: warning — %s did not finish within %ss; proceeding\n' "$svc" "$max" >&2
 }
 
+# _restart_active_unit <unit> — apply a changed, already-active unit. dolt-beads.service
+# ships RefuseManualStop=yes (sp-hsnqk), which denies `systemctl restart` outright since a
+# restart job is an explicit stop+start; `kill` sends the signal directly, bypassing job
+# control entirely, and Restart=always brings the process back under the just-reloaded
+# unit file — the same end state a restart job would have produced.
+_restart_active_unit() {
+    local u="$1"
+    if [ "$u" = dolt-beads.service ]; then
+        systemctl --user kill "$u" && printf 'restarted %s (kill — RefuseManualStop=yes)\n' "$u"
+        return
+    fi
+    systemctl --user restart "$u" && echo "restarted $u"
+}
+
 # _db_server_wait — after dolt-beads.service is applied, wait (bounded) until bd can read
 # the beads database, so no timer enabled after it fires into a server still starting.
 # No database yet (a first install before phase 3's init) or no bd: nothing to wait for.
@@ -814,7 +828,7 @@ for u in "${_ENABLE_ORDERED[@]}"; do
         restart)
             case "$u" in *.timer) _drain_oneshot "${u%.timer}.service" ;; *) _drain_oneshot "$u" ;; esac
             systemctl --user enable "$u" >/dev/null 2>&1 || true
-            systemctl --user restart "$u" && echo "restarted $u" ;;
+            _restart_active_unit "$u" ;;
         enable-now)
             case "$u" in *.timer) _drain_oneshot "${u%.timer}.service" ;; *) _drain_oneshot "$u" ;; esac
             systemctl --user enable --now "$u" && echo "enabled   $u" ;;
