@@ -143,6 +143,38 @@ case "$(landstate sp-cert-move)" in
 esac
 
 # -----------------------------------------------------------------------------------------
+# WITHDRAWN AT THE SAME TIP STAYS WITHDRAWN (sp-pedat): a bead ejected while certified
+# stays closed in the store (queue.sh eject's mid-batch path writes RED/WITHDRAWN without
+# reopening the bd issue), so this pass reaches it as an ordinary closed queue-mode bead.
+# "not CERTIFIED" must not be read as "needs certifying" — a withdrawal at the current tip
+# holds until the tip moves.
+# -----------------------------------------------------------------------------------------
+seed; branch sp-cert-withdrawn
+landing > /dev/null   # first pass: certify
+wd_tip="$(git -C "$REPO" rev-parse spira/sp-cert-withdrawn 2>/dev/null)"
+printf 'WITHDRAWN %s %s eject\n' "$wd_tip" "$(date +%s)" > "$RUN/landstate/sp-cert-withdrawn"
+rm -f "$GATE_COUNT" "$RUN/landing.progress"
+out="$(landing)"
+is   "gate not called on a withdrawn bead" "0" "$(gate_n)"
+nowant "no re-certify message for the withdrawn bead" "certified spira/sp-cert-withdrawn" "$out"
+case "$(landstate sp-cert-withdrawn)" in
+    WITHDRAWN*) ok "landstate stays WITHDRAWN at the same tip" ;;
+    *)          bad "landstate stays WITHDRAWN at the same tip" "got: $(landstate sp-cert-withdrawn)" ;;
+esac
+
+# A new tip (the aeon's rework) recertifies normally.
+printf 'v2\n' > "$RUN/worktree/sp-cert-withdrawn/sp-cert-withdrawn.txt"
+git -C "$RUN/worktree/sp-cert-withdrawn" add -A
+git -C "$RUN/worktree/sp-cert-withdrawn" commit -q -m "sp-cert-withdrawn sp-1fm88 — rework"
+wd_tip2="$(git -C "$REPO" rev-parse spira/sp-cert-withdrawn 2>/dev/null)"
+out="$(landing)"
+want "moved tip: certify is reported" "certified spira/sp-cert-withdrawn" "$out"
+case "$(landstate sp-cert-withdrawn)" in
+    *"$wd_tip2"*) ok "landstate certifies the new tip" ;;
+    *)            bad "landstate certifies the new tip" "expected [$wd_tip2] in [$(landstate sp-cert-withdrawn)]" ;;
+esac
+
+# -----------------------------------------------------------------------------------------
 # TEN BRANCHES, ONE PASS: every one reaches CERTIFIED and the gate is never invoked.
 # The acceptance fixture for law-a-round-takes-certified-tips — must be seen to fail
 # against a landing.sh that still gates queue-mode branches before certifying them.

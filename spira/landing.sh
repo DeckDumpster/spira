@@ -1039,6 +1039,16 @@ for i in d:
         if [ "$mode" = queue ]; then
             tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
             read -r _ls_st _ls_tip _ls_at _ls_reason <<< "$(land_state "$id" 2>/dev/null || true)"
+            # A WITHDRAWAL AT THIS TIP MUST STICK. queue.sh eject writes WITHDRAWN when a
+            # certified-but-unbatched bead is pulled back out; "not CERTIFIED" is exactly
+            # the state a withdrawal produces, so trusting that alone re-marked the bead
+            # CERTIFIED at the same tip seconds after the eject and put ejected work
+            # straight back into the next round (sp-pedat). Only a moved tip (the aeon's
+            # rework) or an explicit un-eject may recertify it.
+            if [ "${_ls_st:-}" = WITHDRAWN ] && [ "${_ls_tip:-}" = "$tip" ]; then
+                log "CHECK6 $id: withdrawn at $tip — staying WITHDRAWN until the tip changes"
+                continue
+            fi
             if [ "${_ls_st:-}" != CERTIFIED ] || [ "${_ls_tip:-}" != "$tip" ]; then
                 land_mark "$id" CERTIFIED "$tip"
                 mark_submitted "$id" "$tip" certified
