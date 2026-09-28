@@ -48,7 +48,10 @@ testdb_up landing-starvation || {
 }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
-# Two repos: REPO_A (home) and REPO_B (secondary), both queue mode.
+# Two repos: REPO_A (home) and REPO_B (secondary), both hold mode. Hold (not queue) is
+# the fixture because it still runs a real per-branch gate_fits budget check — queue mode
+# certifies instantly with no local gate and so has nothing left for a budget to protect
+# (law-a-round-takes-certified-tips).
 REPO_A="$TMP/repo-a"; REMOTE_A="$TMP/remote-a.git"; NAME_A=fixture-repo-a
 REPO_B="$TMP/repo-b"; REMOTE_B="$TMP/remote-b.git"; NAME_B=fixture-repo-b
 RUN="$TMP/run"; SH="$TMP/spira"
@@ -72,8 +75,8 @@ stub mail.sh '[ "${1:-}" = send ] || exit 0; printf "%s\n" "$*" >> "$EMITTED"; c
 export EMITTED="$TMP/events"; : > "$EMITTED"
 
 cat > "$SH/repo-map" <<MAP
-$NAME_A | $REPO_A | queue | |
-$NAME_B | $REPO_B | queue | |
+$NAME_A | $REPO_A | hold | |
+$NAME_B | $REPO_B | hold | |
 MAP
 
 B() { bd -C "$SPIRA_DB" "$@"; }
@@ -134,7 +137,7 @@ reset_all
 branch_at sp-star-a "$REPO_A" "$NAME_A"
 branch_at sp-star-b "$REPO_B" "$NAME_B"
 out="$(landing)"
-want "full-budget pass certifies both branches" "certified" "$out"
+want "full-budget pass gates and holds both branches" "gated and held" "$out"
 nowant "full-budget pass emits no budget-cut" "budget cut" "$out"
 [ -f "$RUN/landing.cursor" ] \
     && bad "no cursor written on full-budget pass" "cursor file exists: $(cat "$RUN/landing.cursor")" \
@@ -210,7 +213,7 @@ want "escalation names the deferred branch" "spira/sp-def-a" "$(cat "$EMITTED")"
 # After the reset, another tight pass should NOT immediately re-escalate.
 : > "$EMITTED"
 out="$(landing)"   # full-budget: processes the branch
-want "full-budget pass certifies the branch" "certified" "$out"
+want "full-budget pass gates and holds the branch" "gated and held" "$out"
 # Now run tight again — deferral count reset, mail already closed, no re-escalation
 out="$(landing_tight_thresh "$THRESHOLD")"
 nowant "no re-escalation after deferral count reset" "budget-deferred" "$(cat "$EMITTED")"

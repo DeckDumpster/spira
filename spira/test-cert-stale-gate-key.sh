@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 #
 # test-cert-stale-gate-key.sh — batch.sh skips a CERTIFIED branch whose stored gate
-# key no longer matches the current gate command; landing.sh stores the key on cert.
+# key no longer matches the current gate command.
 #
 # THE DEFECT (sp-4w1pp). CERTIFIED is written by paths that do not run the gate.
 # When the gate command changes, old CERTIFIED records survive as if the new command
 # had judged them. A batch built from such a record fails CI on the new check.
 #
-# FOUR CASES:
+# landing.sh no longer certifies through a gate at all (law-a-round-takes-certified-
+# tips) — the round's own full-corpus run is what would now catch a gate-command
+# change, not a stored key. This suite covers what remains: batch.sh's own read of
+# a `.gate-key` sidecar, however it got there (a hand-planted key below stands in for
+# whatever future writer produces one).
 #
-#   landing-writes-key: landing.sh writes a .gate-key file after certifying a branch.
-#     Without this, no key is ever stored and the stale-key path is never triggered.
+# THREE CASES:
 #
 #   no-key (lenient): CERTIFIED landstate, no .gate-key file.
 #     Old entries have no key; batch.sh does not block them (backward compatibility).
@@ -91,15 +94,6 @@ write_map_cmd2() {
 }
 write_map_cmd1
 
-landing() {
-    rm -f "$RUN/landing.progress" "$GATE_COUNT"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-    SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$REPONAME" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
-        bash "$SH/landing.sh" 2>&1
-}
-
 batch() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
@@ -143,23 +137,7 @@ batch_open()    { printf '%s/%s/open' "$QUEUEDIR" "$REPONAME"; }
 reset_queue() { rm -f "$(batch_open)"; }
 
 echo "test-cert-stale-gate-key.sh"
-
-# -----------------------------------------------------------------------------------------
-# landing.sh writes .gate-key after a gate pass.
-# -----------------------------------------------------------------------------------------
-echo
-echo "landing.sh stores gate key at certification:"
-write_map_cmd1; seed; branch sp-gk-land
-out="$(landing)"
-want "certified sp-gk-land" "certified spira/sp-gk-land" "$out"
-gkf="$(gate_key_file sp-gk-land)"
-if [ -f "$gkf" ]; then
-    ok "landing.sh wrote .gate-key file"
-    gk="$(cat "$gkf")"
-    is ".gate-key is non-empty" "1" "$([ -n "${gk:-}" ] && echo 1 || echo 0)"
-else
-    bad "landing.sh wrote .gate-key file" "absent: $gkf"
-fi
+write_map_cmd1
 
 # -----------------------------------------------------------------------------------------
 # no-key (lenient): CERTIFIED without .gate-key — batch does not block the branch.

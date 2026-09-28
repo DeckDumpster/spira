@@ -5,9 +5,9 @@
 # only when its external_ref names THIS repository's basefail suite and the branch's own
 # section of the gate transcript shows that suite green, not red, timed out, or killed.
 # Every row here is a function call over a literal external_ref and a literal gate
-# transcript — no git, no testdb, no gate.sh trial, no landing pass. What
-# test-landing-basefail-fix.sh needs 3+ worktrees and a stub gate script to exercise one
-# branch of, this asserts directly.
+# transcript — no git, no testdb, no gate.sh trial, no landing pass. What a push/hold-mode
+# integration fixture needs 3+ worktrees and a stub gate script to exercise one branch of,
+# this asserts directly.
 #
 # host-reason: sources landing-lib.sh only; no database, no systemd, no git
 # tier: T1
