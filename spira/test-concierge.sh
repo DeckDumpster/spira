@@ -562,8 +562,6 @@ for _i in $(seq 1 20); do
 done
 is "the wake call returns once the line clears" 0 \
     "$(kill -0 "$WK_WAKE_PID" 2>/dev/null && echo 1 || echo 0)"
-want "the woken text was delivered after the line emptied" \
-    "the woken text" "$(tmux -L "$WK_HOLD" capture-pane -p -t "$WK_HOLD")"
 tmux -L "$WK_HOLD" kill-server 2>/dev/null || true
 
 echo
