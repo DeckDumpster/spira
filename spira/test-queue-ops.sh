@@ -5,14 +5,15 @@
 # built the same REPO/RUN/SH/forge-fake/repo-map scaffolding independently.
 #
 # MOST CASES USE A RECORDING BD STUB, not a fixture database: eject and abandon's own
-# code paths call bd only to reopen/comment/assign (write-only, fire-and-forget — see
-# bead_reopen/release_claim in lib.sh), so a stub that logs argv and exits 0 exercises
-# the same code as a real one, without paying a database build. One case near the end
-# uses a real bd (testdb.sh) to verify what the stub cannot: that the reopen actually
-# lands (status, assignee, comment body) and — gap G7 — that abandon's return-to-
-# CERTIFIED path makes NO bd call at all (queue.sh abandon's bead side effects were
-# previously unread and unverified; nothing here would have caught an accidental
-# bdq call added to that path).
+# code paths call bd only to comment/assign, plus reopen for the CERTIFIED-but-unbatched
+# case only — an in-batch eject releases the bead through a spira-lc Returned event
+# instead (sp-rlyl0; see bead_reopen/release_claim in lib.sh) — so a stub that logs argv
+# and exits 0 exercises the same code as a real one, without paying a database build. One
+# case near the end uses a real bd (testdb.sh) to verify what the stub cannot: that the
+# certified-unbatched reopen actually lands (status, assignee, comment body) and — gap
+# G7 — that abandon's return-to-CERTIFIED path makes NO bd call at all (queue.sh
+# abandon's bead side effects were previously unread and unverified; nothing here would
+# have caught an accidental bdq call added to that path).
 #
 # covers: spira/queue.sh spira/batch.sh spira/forge.sh spira/conf.sh
 set -uo pipefail
@@ -138,7 +139,9 @@ out="$(run eject sp-ej01 --reason 'test-foo.sh RED')"; rc=$?
 want "reports ejection" "ejected sp-ej01" "$out"
 st="$(awk '{print $1}' "$LANDSTATE/sp-ej01" 2>/dev/null || true)"
 [ "$st" = "RED" ] && ok "landstate RED after eject" || bad "landstate RED" "got $st"
-want "bd reopen called" "reopen sp-ej01" "$(cat "$BD_LOG")"
+# NOT bd reopen ANY MORE (sp-rlyl0): a batch member's eject is a lifecycle Returned event
+# now, not a bd write — the stub records no bd argv for it at all.
+nowant "bd reopen is no longer called for an in-batch eject" "reopen sp-ej01" "$(cat "$BD_LOG")"
 
 echo
 echo "eject: non-member is refused; batch and landstate unchanged:"
@@ -273,7 +276,7 @@ printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ej02"
 out="$(run eject sp-ej01 --dry-run)"; rc=$?
 [ "$rc" -eq 0 ] && ok "dry-run exits 0 for member" || bad "dry-run exits 0" "rc=$rc"
 want "dry-run mentions RED write"          "would write RED"           "$out"
-want "dry-run mentions bead reopen"        "would reopen bead sp-ej01" "$out"
+want "dry-run mentions the lifecycle return" "would return bead sp-ej01 to spira-lc" "$out"
 want "dry-run mentions PR close"           "would close PR 42"         "$out"
 want "dry-run mentions survivor CERTIFIED" "would return survivors"    "$out"
 st="$(awk '{print $1}' "$LANDSTATE/sp-ej01" 2>/dev/null || true)"
@@ -573,8 +576,11 @@ printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ej02"
 out="$(real_run eject sp-ej01 --reason 'test-suite-x.sh RED: assertion mismatch at line 42')"; rc=$?
 [ "$rc" -eq 0 ] && ok "real bd: eject exit 0" || bad "real bd: eject exit 0" "rc=$rc out=$out"
 
+# NOT reopened via bd ANY MORE (sp-rlyl0): an in-batch eject is a lifecycle Returned event
+# now — bd's own status field is left exactly as it was, since it is no longer the write
+# this tool makes for the bead's state.
 bead_st="$(field sp-ej01 status)"
-[ "$bead_st" = "open" ] && ok "real bd: bead reopened" || bad "real bd: bead open" "status=$bead_st"
+[ "$bead_st" = "closed" ] && ok "real bd: bd status is left unmoved by eject now" || bad "real bd: bd status unmoved" "status=$bead_st"
 assignee="$(field sp-ej01 assignee)"
 [ -z "$assignee" ] && ok "real bd: assignee cleared" || bad "real bd: assignee cleared" "got $assignee"
 comment_out="$(B comments sp-ej01 2>/dev/null || true)"

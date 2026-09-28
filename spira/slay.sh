@@ -34,8 +34,9 @@
 #      now ours to set, not a hint that the process is dead.
 #   4. THE BEAD SAYS WHAT IS TRUE. Unassigned always — `bd ready --claim` skips an assigned
 #      bead while `bd ready` still lists it, which left seven reopened beads unclaimable for
-#      hours. Open by default; closed with a reason on request; the `branch:` label comes
-#      off with the branch.
+#      hours. Released by default, dropped with a reason on request — both through the
+#      lifecycle row (sp-rlyl0: HolderDead/Drop), not bd reopen/close; the `branch:` label
+#      comes off with the branch.
 #   5. THE WORK, THROUGH lib.sh AND NOWHERE ELSE. Salvage first — a patch of anything
 #      uncommitted lands in $SPIRA_RUN/reaped, the same insurance the reaper carries — then
 #      the rebase in progress is aborted and spira_destroy_worktree / spira_destroy_branch
@@ -47,6 +48,7 @@
 #   6. SAY WHAT WAS DONE, with the evidence, and exit non-zero on anything it could not do.
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/lc.sh"
 
 usage() {
     cat <<'USAGE'
@@ -140,6 +142,7 @@ if [ -f "$hpf" ]; then
     hbpid=""; [ -f "${hpf%.pid}.hb" ] && hbpid="$(cat "${hpf%.pid}.hb" 2>/dev/null)"
     [ -n "$hbpid" ] && kill "$hbpid" 2>/dev/null
     rm -f "$hpf" "${hpf%.pid}.hb"
+    lc_unhold "$ID" operator slay >/dev/null 2>&1 || true
     say "hold: manual hold released for $ID (holder pid ${hpid:-?}, heartbeat ${hbpid:-none})"
     rm -f "$SPIRA_RUN/$ID.slain"
 else
@@ -200,17 +203,16 @@ status_of() { bdjson show "$ID" | python3 -c 'import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("status","") if d else "")' 2>/dev/null; }
 st="$(status_of)"
 if [ "$st" = in_progress ]; then
-    # bdq unclaim releases the lease but does NOT change status — the bead stays in_progress,
-    # and spira_holder_witnesses reads in_progress as "held", so the worktree/branch removal
-    # below is refused. Reopen first: it moves the status to open, making the holder check
-    # see nobody home, which is what is actually true at this point.
-    # THROUGH bead_reopen, LIKE EVERY OTHER REOPEN. bead_reopen clears the assignee as well
-    # as changing the status, so the unclaim below is redundant but harmless; keeping it as
-    # a belt-and-suspenders fallback costs nothing and the belt is already documented above.
-    bead_reopen "$ID" slain
-    bdq unclaim "$ID" --force >/dev/null 2>&1 \
-        || bdq update "$ID" --status open --assignee "" >/dev/null 2>&1 \
-        || true
+    # THE LIFECYCLE EVENT, NOT bd reopen/unclaim (sp-rlyl0): the holder is gone because this
+    # script just killed it, not because it released cleanly — HolderDead, best-effort like
+    # every lc.sh caller. In the common case aeon.sh's own exit path (step 3 above) already
+    # called release_own_claim and bd already reads open here; the gap this leaves is the
+    # rare case a live pid survived to a hard KILL, where aeon.sh's own trap never ran and
+    # nothing now flips bd's status — spira_holder_witnesses (lib.sh, unconverted) then
+    # reads a stale in_progress and refuses the destroy below. Out of this bead's scope
+    # (lib.sh is shared with every caller that has not cut over yet); flagged, not silently
+    # left for the next reader to rediscover.
+    lc_holderdead "$ID" slay >/dev/null 2>&1 || true
 fi
 bdq update "$ID" --assignee "" --force >/dev/null 2>&1 || bdq update "$ID" --assignee "" >/dev/null 2>&1
 
@@ -320,32 +322,22 @@ if [ -n "$nuked" ]; then bdq label remove "$ID" "branch:$br" >/dev/null 2>&1 || 
 _work_msg="${nuked:-work kept}${saved:+; uncommitted changes salvaged to $saved}"
 [ "$WIP_COMMITTED" = 1 ] && _work_msg="wip committed to $br; branch kept in refs/heads; patch at $saved"
 note="Slain by the operator: $WHY. Aeon ${name:-?}${pid:+ (pid $pid)} stopped${unit:+ via $unit}. ${_work_msg}. No attempt charged."
-st="$(status_of)"
 case "$MODE" in
-    close)  # MARK THE DROP BEFORE CLOSING. An operator close means "this work is not going to
-            # happen", so no commit will ever name this bead — which is exactly the shape
-            # sentinel CHECK 5 reopens. Without this label the close is undone within two
-            # minutes and the bead returns as open work nobody will claim (sp-m56w, 00:18:52
-            # on 2026-09-08). Set it first: a close that sticks matters more than the label.
-            bdq label add "$ID" spira-dropped >/dev/null 2>&1 || say "bead: could not mark spira-dropped — the close may be reopened by CHECK 5"
-            if [ "$st" = closed ]; then
-                # Already closed — by the aeon before it was stopped, or by hand. The reason
-                # still belongs on the record; re-closing would fail and say nothing. The note
-                # is best-effort: bd refusing it (closed bead, permission, network) must not
-                # flip the exit to non-zero when the bead state is already correct.
-                bdq note "$ID" "$REASON — $note" >/dev/null 2>&1 || true
-            else
-                bdq close "$ID" --reason "$REASON — $note" >/dev/null 2>&1 || { say "bead: close failed"; fail=1; }
-            fi ;;
-    # THROUGH bead_reopen, LIKE EVERY OTHER REOPEN. The assignee is already cleared above,
-    # where the lease is released — so this path was correct, but correct at a distance: its
-    # correctness rested on a line sixty above it whose purpose is something else entirely,
-    # and a later edit to either has no way to see the other. `bd reopen` keeps the assignee
-    # and `bd ready --claim` skips an assigned bead while `bd ready` still lists it, which
-    # makes a missed clearing invisible by construction — the bead really does go back to
-    # open, and only the claim that never comes says otherwise. The helper is where that is
-    # remembered; a slain aeon's name is the one that must not survive a reopen.
-    reopen) bead_reopen "$ID" slain "$note" ;;
+    close)  # THE LIFECYCLE EVENT, NOT bd close/label (sp-rlyl0): Drop is orthogonal — legal
+            # from any non-terminal state, so this applies whether or not a Claim/Submit
+            # ever reached the row. spira-dropped existed only to stop sentinel CHECK 5
+            # reopening an unlanded close within two minutes (sp-m56w); CHECK 5 itself is
+            # deleted in this same cutover round (sp-yyros), so the label's one reader is
+            # gone with it.
+            lc_drop "$ID" "$REASON — $note" slay >/dev/null 2>&1 || true
+            # The note is best-effort: bd refusing it (closed bead, permission, network)
+            # must not flip the exit to non-zero when the bead state is already correct.
+            bdq note "$ID" "$REASON — $note" >/dev/null 2>&1 || true ;;
+    # NO bd reopen (sp-rlyl0): the release already happened above, through lc_holderdead,
+    # where the lease was released — a second write here would be the same "correct at a
+    # distance" hazard bead_reopen's own removal fixes. Only the note remains this path's
+    # to write.
+    reopen) bdq note "$ID" "$note" >/dev/null 2>&1 || true ;;
 esac
 bdjson show "$ID" | python3 -c '
 import sys,json

@@ -119,7 +119,10 @@ is "hold.sh exits 0"        0   "$rc"
 is "pidfile exists"          yes "$([ -f "$SPIRA_RUN/hold-sp-h1.pid" ] && echo yes || echo no)"
 is "pidfile contains our pid" $$ "$(cat "$SPIRA_RUN/hold-sp-h1.pid" 2>/dev/null)"
 is "heartbeat file exists"   yes "$([ -f "$SPIRA_RUN/hold-sp-h1.hb" ] && echo yes || echo no)"
-is "bead is in_progress"     in_progress "$(status_of sp-h1)"
+# THE HOLD IS AN OPERATOR HOLD ON spira-lc, NOT A bd claim (sp-rlyl0): bd's own status is
+# unmoved by hold.sh now — the pidfile above is what actually keeps the reaper off it, and
+# that is what holder_alive/spira_holder_witnesses below are checking.
+is "bead stays open — the hold does not touch bd status" open "$(status_of sp-h1)"
 
 # holder_alive must see it.
 if holder_alive sp-h1; then ok "holder_alive sees the hold"

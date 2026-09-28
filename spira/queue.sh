@@ -58,6 +58,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/lib.sh"
+. "$HERE/lc.sh"
 
 
 cmd_submit() {
@@ -381,7 +382,7 @@ cmd_eject() {
         printf 'dry-run: %s is in the open batch for %s (tip=%s)\n' "$id" "$name" "$tip"
         printf 'dry-run: would write RED to %s/%s\n' "$LANDSTATE" "$id"
         [ -n "$suites" ] && printf 'dry-run: would write suites=%s to %s/%s.ejected\n' "$suites" "$LANDSTATE" "$id"
-        printf 'dry-run: would reopen bead %s and clear assignee\n' "$id"
+        printf 'dry-run: would return bead %s to spira-lc via a Returned event\n' "$id"
         printf 'dry-run: would post comment to %s\n' "$id"
         printf 'dry-run: would close PR %s\n' "$pr_n"
         if [ -n "$new_members" ]; then
@@ -399,10 +400,15 @@ cmd_eject() {
     # RED is the operator's verdict on a manually identified failure.
     land_mark "$id" RED "$tip" "${reason:-ejected}"
 
-    bead_reopen "$id" "eject" "" "$suites"
-    # A submitted bead is excluded from ready (fayth_exclude) so it is not reclaimed
-    # mid-flight; an ejected bead must be claimable again, so the label goes with it.
-    bdq label remove "$id" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1 || true
+    # THE LIFECYCLE EVENT, NOT bead_reopen/bd label (sp-rlyl0): pulling one member out of an
+    # open batch mid-CI is the delivery-exit event legal from IN_DELIVERY — Returned, the
+    # same one verdict.sh's own settle cascade applies to a red batch's ejected member.
+    # Best-effort like every lc.sh caller: batcher-cut (sp-vsob2) does not write batch_id/
+    # version into the open-batch record yet, so this is CANNOT_TELL in production today.
+    lc_returned "$id" "${reason:-ejected}" >/dev/null 2>&1 || true
+    # The assignee clear is bd metadata this tool still keeps (not a status/label write) —
+    # a dead actor's name should not survive an eject any more than a reopen.
+    release_claim "$id"
 
     local _comment
     _comment="Ejected from open batch in $name.${reason:+$'\n\n'${reason}}"$'\n\n'"Landstate written as RED. Fix the failing issue and re-certify before rejoining the queue."

@@ -4,12 +4,13 @@
 #
 #   unhold.sh <bead-id>
 #
-# Kills the heartbeat, removes the pidfile, and releases the database claim. The bead
-# returns to open/unassigned, available for the loop to pick up. If the bead was already
-# closed (the work is done), the claim is still released but the status is not changed.
+# Kills the heartbeat, removes the pidfile, and releases the operator hold on spira-lc
+# (sp-rlyl0) that hold.sh applied — best-effort, the same construction every lc.sh caller
+# uses. The bead is available for the loop to pick up as soon as nothing else holds it.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
+. "$HERE/lc.sh"
 
 ID=""
 while [ $# -gt 0 ]; do
@@ -37,7 +38,7 @@ if [ -f "$HBFILE" ]; then
 fi
 rm -f "$PIDFILE" "$HBFILE"
 
-# Release the database claim.
-release_own_claim "$ID" 2>/dev/null || bdq unclaim "$ID" --force >/dev/null 2>&1 || true
+# Release the operator hold on spira-lc.
+lc_unhold "$ID" operator "hold-$ID" >/dev/null 2>&1 || true
 
 printf 'released %s\n' "$ID"

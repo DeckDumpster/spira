@@ -6444,6 +6444,21 @@ spira_holder_witnesses() {
     fi
     st="$(spira_bead_status "$id")"
     if [ "$st" = in_progress ]; then
+        # bd's in_progress can be stale once a caller releases the claim through spira-lc
+        # instead of bd (sp-rlyl0: slay.sh's HolderDead) — trust it UNLESS the lifecycle row
+        # exists and positively says the claim is gone (any state but WORKING). A row this
+        # cannot read at all (lc.sh not sourced by the caller, no binary, DB down, not yet
+        # classified) proves nothing either way, so bd's own signal still governs then —
+        # this can only make the check LESS restrictive, never more, for a caller that has
+        # not sourced lc.sh at all.
+        if declare -F lc_show >/dev/null 2>&1 && declare -F _lc_json_field >/dev/null 2>&1; then
+            local _lcjs _lcrc _lcstate
+            _lcjs="$(lc_show "$id")"; _lcrc=$?
+            if [ "$_lcrc" = 0 ]; then
+                _lcstate="$(_lc_json_field "$_lcjs" 'd.get("bead",{}).get("state","")')"
+                [ -n "$_lcstate" ] && [ "$_lcstate" != WORKING ] && return 1
+            fi
+        fi
         printf 'in_progress — the lease has not been released'; return 0
     fi
     return 1
