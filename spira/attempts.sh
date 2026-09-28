@@ -222,16 +222,18 @@ deadlocked)
         # re-poison within its next pass. poison_lifted_mark records the count this lift
         # happened at; check4_decide will not re-poison as long as nothing has moved past it,
         # and a genuinely new failure (one more claim after this lift) still poisons it again.
-        if bdq label remove "$id" spira-poison >/dev/null 2>&1; then
-            # THE HOLD, ALONGSIDE THE (now vestigial) LABEL: poisoned() above reads lc_held,
-            # so this is the write that actually lifts what CHECK 4 checks (sp-i2m7y).
-            lc_unhold "$id" poison attempts.sh || true
+        # THE HOLD IS THE GATE, NOT THE (now vestigial) LABEL: poisoned() above reads
+        # lc_held, and CHECK 4 no longer writes the label at all (sp-i2m7y) — gating on
+        # `bdq label remove` succeeding would refuse every real poison forever, since
+        # there is never a label there to remove.
+        if lc_unhold "$id" poison attempts.sh; then
+            bdq label remove "$id" spira-poison >/dev/null 2>&1
             bdq note "$id" "Poison lifted by attempts.sh deadlocked: $br carries a commit naming $id and merges cleanly into $base, so this is finished, landable work. A poisoned bead stays open, an open bead carrying the label is claimed by nobody, and the landing pass lands only closed beads — so the label was holding completed work out of the queue permanently. The counters are left standing as the record of how it got here." >/dev/null 2>&1
             att="$(attempts_of "$id")"; poison_lifted_mark "$id" "${att:-0}" || true
             n_done=$((n_done+1))
             printf 'RESTORED %-20s poison lifted; %s is finished and merges into %s\n' "$id" "$br" "$base"
         else
-            printf 'REFUSED  %-20s the poison label would not come off\n' "$id"
+            printf 'REFUSED  %-20s the poison hold would not come off\n' "$id"
         fi
     done
     # ZERO IS A CLAIM AND IT NEEDS A CONTROL: an empty sweep and a sweep against a database it
@@ -270,15 +272,15 @@ clear)
             printf 'would clear %-20s spira-poison, attempts %s -> 0\n' "$id" "$(attempts_of "$id")"
             continue
         fi
-        if bdq label remove "$id" spira-poison >/dev/null 2>&1; then
-            # THE HOLD, ALONGSIDE THE (now vestigial) LABEL — see the matching note above.
-            lc_unhold "$id" poison attempts.sh || true
+        # THE HOLD IS THE GATE, NOT THE (now vestigial) LABEL — see the matching note above.
+        if lc_unhold "$id" poison attempts.sh; then
+            bdq label remove "$id" spira-poison >/dev/null 2>&1
             bump_poison_cleared "$id" operator
             poison_asked_clear "$id"
             bdq note "$id" "Poison cleared by attempts.sh clear: an operator judged the approach worth retrying. A poison.cleared event was recorded, so the attempt count that produced the poison does not carry forward — only a claim after this point counts toward the threshold again." >/dev/null 2>&1
             printf 'CLEARED  %-20s spira-poison lifted, attempts reset\n' "$id"
         else
-            printf 'REFUSED  %-20s the poison label would not come off\n' "$id"
+            printf 'REFUSED  %-20s the poison hold would not come off\n' "$id"
         fi
     done
     [ "$n" = 0 ] && printf 'nothing to clear — no named bead carries spira-poison\n'
