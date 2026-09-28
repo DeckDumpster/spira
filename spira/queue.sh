@@ -10,6 +10,7 @@
 #   queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run]
 #   queue.sh claim [<repo>] --reason <text> [--force]
 #   queue.sh release [<repo>]
+#   queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]>
 #
 # submit: certifies any branch by running the repository's gate. In a queue-mode
 # repository, a green branch is recorded CERTIFIED for the batch builder.
@@ -53,6 +54,13 @@
 # actually makes mails the concierge mailbox, which wakes the pane in real time
 # (law-machine-events-wake-in-real-time) — so the owner's own legitimate work is never a
 # silent surprise either.
+#
+# land-local: the queue.local ending — fast-forwards the repo's local landing ref to a
+# round head with no PR, refusing (and writing nothing) unless the head descends from the
+# ref's current tip. Archives the head at refs/archive/rounds/<n>, land_marks every member
+# LANDED and closes its bead via bead_close_on_land. THE ONLY WRITER of that ref; runs
+# under the repo's queue lock, skipped via SPIRA_QUEUE_LOCK_HELD=1 for a caller (the
+# batcher) that already holds it, so it cannot deadlock on its own lock.
 #
 # covers: spira/queue.sh spira/suites.sh spira/conf.sh
 set -uo pipefail
@@ -1048,6 +1056,112 @@ cmd_release() {
     printf 'queue.sh release: %s released back to %s\n' "$name" "${restore:-<none>}"
 }
 
+# cmd_land_local: see the header comment above (land-local:).
+cmd_land_local() {
+    local name="" head="" members_arg=""
+    if [ "${SPIRA_FAYTH:-}" = czar ] && [ -n "${SPIRA_CZAR_CLASS:-}" ]; then
+        bash "$HERE/czar-fence.sh" "$SPIRA_CZAR_CLASS" || return 1
+    fi
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        --head)      shift; head="${1:-}"; shift ;;
+        --head=*)    head="${1#--head=}"; shift ;;
+        --members)   shift; members_arg="${1:-}"; shift ;;
+        --members=*) members_arg="${1#--members=}"; shift ;;
+        -*)          printf 'queue.sh land-local: unknown option: %s\n' "$1" >&2; return 2 ;;
+        *)           name="$1"; shift ;;
+        esac
+    done
+    [ -n "$name" ] || name="$(spira_home_repo)"
+    [ -n "$head" ] || {
+        printf 'queue.sh land-local: --head is required\n' >&2; return 2
+    }
+    [ -n "$members_arg" ] || {
+        printf 'queue.sh land-local: --members is required\n' >&2; return 2
+    }
+
+    local repo; repo="$(repo_root "$name" 2>/dev/null)" || {
+        printf 'queue.sh land-local: no such repo: %s\n' "$name" >&2; return 1
+    }
+    local mode; mode="$(repo_land "$name")"
+    [ "$mode" = "queue.local" ] || {
+        printf 'queue.sh land-local: repo is not in queue.local mode (mode=%s)\n' "$mode" >&2; return 1
+    }
+
+    local base; base="$(spira_landref "$repo")" || {
+        printf 'queue.sh land-local: cannot resolve landing ref for %s\n' "$name" >&2; return 1
+    }
+    # queue.local's base is a LOCAL branch (e.g. local/main) that happens to contain a
+    # slash, never remote-tracking — so unlike every queue.forge caller, the branch name is
+    # $base UNSPLIT: ref_branch's ${ref#*/} strip assumes a remote/branch shape and would
+    # mangle "local/main" into "main", a branch this land is not the one to move. A row
+    # whose declared base IS a real remote ref is misconfigured for this mode.
+    if ref_remote "$base" "$repo" >/dev/null 2>&1; then
+        printf 'queue.sh land-local: %s resolves to a remote-tracking ref (%s) — not a queue.local base\n' \
+            "$name" "$base" >&2
+        return 1
+    fi
+    local base_branch="$base"
+
+    head="$(git -C "$repo" rev-parse --verify -q "$head" 2>/dev/null)" || {
+        printf 'queue.sh land-local: cannot resolve head\n' >&2; return 1
+    }
+
+    local lockfile; lockfile="${SPIRA_QUEUE_DIR:?}/$name/lock"
+    mkdir -p "${SPIRA_QUEUE_DIR:?}/$name" 2>/dev/null || true
+    if [ "${SPIRA_QUEUE_LOCK_HELD:-0}" != 1 ]; then
+        { exec 9>"$lockfile"; } 2>/dev/null \
+            || { printf 'queue.sh land-local: cannot open lock file for %s\n' "$name" >&2; return 1; }
+        if ! flock -n 9; then
+            printf 'queue.sh land-local: another queue operation holds the lock for %s\n' "$name" >&2
+            return 1
+        fi
+    fi
+
+    local base_sha; base_sha="$(git -C "$repo" rev-parse --verify -q "$base_branch" 2>/dev/null)" || {
+        printf 'queue.sh land-local: cannot resolve %s\n' "$base_branch" >&2; return 1
+    }
+
+    if ! git -C "$repo" merge-base --is-ancestor "$base_sha" "$head" 2>/dev/null; then
+        printf 'queue.sh land-local: %s does not fast-forward from %s (%s) — refused, nothing changed\n' \
+            "$head" "$base" "$base_sha" >&2
+        return 1
+    fi
+
+    # A CAS, not a plain write: refuses instead of clobbering if something else moved the
+    # ref between the resolve above and here (this is exactly the "another writer" case,
+    # not just belt-and-suspenders around the lock).
+    if ! git -C "$repo" update-ref "refs/heads/$base_branch" "$head" "$base_sha" 2>/dev/null; then
+        printf 'queue.sh land-local: %s moved concurrently — refused, nothing changed\n' "$base" >&2
+        return 1
+    fi
+
+    local seqfile="${SPIRA_QUEUE_DIR:?}/$name/round-seq" n
+    n="$(cat "$seqfile" 2>/dev/null)"; case "$n" in ''|*[!0-9]*) n=0 ;; esac
+    n=$(( n + 1 ))
+    local archive_ref="refs/archive/rounds/$n"
+    git -C "$repo" update-ref "$archive_ref" "$head" 2>/dev/null || true
+    printf '%s\n' "$n" > "$seqfile.$$" 2>/dev/null && mv -f "$seqfile.$$" "$seqfile" 2>/dev/null
+
+    local _m _mid _mtip
+    for _m in $(printf '%s' "$members_arg" | tr ',' ' '); do
+        [ -n "$_m" ] || continue
+        _mid="${_m%%:*}"; _mtip="${_m#*:}"
+        [ "$_mtip" = "$_m" ] && _mtip="$head"
+        land_mark "$_mid" LANDED "$_mtip"
+        gh_issue_closeout "$_mid" "$head" "$repo" || true
+        bead_close_on_land "$_mid" "$head" || true
+        printf 'queue.sh land-local: %s landed at %s\n' "$_mid" "$head"
+    done
+
+    queue_notify_concierge "$name" "local landing (round $n)" \
+        "$base fast-forwarded to $head (round $n, archived at $archive_ref). Members: $members_arg"
+
+    printf 'queue.sh land-local: %s fast-forwarded to %s (round %d, archived at %s)\n' \
+        "$base" "$head" "$n" "$archive_ref"
+}
+
 main() {
     case "${1:-}" in
         submit)  shift; cmd_submit "$@" ;;
@@ -1060,7 +1174,8 @@ main() {
         open-batch) shift; cmd_open_batch "$@" ;;
         claim)   shift; cmd_claim "$@" ;;
         release) shift; cmd_release "$@" ;;
-        *) printf 'usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>]\n' >&2; return 2 ;;
+        land-local) shift; cmd_land_local "$@" ;;
+        *) printf 'usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]>\n' >&2; return 2 ;;
     esac
 }
 
