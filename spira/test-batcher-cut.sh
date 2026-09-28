@@ -756,6 +756,11 @@ echo "J. batcher parity: a member whose tip is already in the round is set aside
 rm -f "$(open_batch_file)"
 plant sp-cjjjj express
 base_now="$(git -C "$REPO" rev-parse origin/main)"
+# THE BRANCH MUST EXIST for certified_pool to admit it (repo_branch_ids scopes the
+# landstate directory to this repo's own refs/heads/spira/* — see io.rs). Its tip is the
+# CURRENT base itself: exactly the "reset to an old main" / "no commits of its own" shape
+# the bead names, an ancestor of the round head before any merge is attempted.
+git -C "$REPO" branch -f spira/sp-cjjjj "$base_now"
 certify sp-cjjjj "$base_now"
 prcreate_before_j="$(grep -c '^pr-create' "$FORGE_LOG")"
 
