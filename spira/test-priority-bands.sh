@@ -16,6 +16,8 @@
 #
 # tier: T1
 # covers: spira/conf.sh testenv/src/suites/ports.rs spira/gh-intake.sh spira/incident.sh
+# tier: T0
+# covers: spira/conf.sh spira/suites.sh spira/gh-intake.sh spira/incident.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

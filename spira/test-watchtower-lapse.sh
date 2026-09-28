@@ -85,24 +85,32 @@ plant_lapse() {
 
 # ======================================================================================
 echo
-echo "gap G8 — the real aeon.sh writer feeds the reader, not a hand-written fixture:"
+echo "gap G8 — the real writer's record reaches the real reader:"
 # ======================================================================================
-# THE WRITER ITSELF, not a copy of what it emits (mirrors test-watchtower.sh's land_mark
-# lift, law-prefer-the-real-dependency). Every assertion above and below this block is
-# checked through plant_lapse's hand-formatted record, which reproduces whichever half of
-# the aeon.sh/watchtower.sh format the test author remembered. This one proves the two
-# programs still agree on the format lib.sh's write_lapse_record actually writes.
+# THE WRITER ITSELF, not a copy of what it emits (compare test-watchtower.sh's land_mark
+# control, the same seam for landstate). Every other case in this file hand-writes the
+# lapse record because it needs a CONTROLLED past timestamp for marker/new-vs-old testing,
+# which write_lapse_record does not take as an argument (it stamps "now"). This one case
+# proves the format those hand-written fixtures assume is the format the real writer
+# produces — if lib.sh renames or reshapes write_lapse_record, the extraction below finds
+# nothing and this control fails, which is the report wanted: every hand-written fixture
+# below it would then be asserting against a format nothing writes any more.
 fresh
 eval "$(sed -n '/^write_lapse_record() *{/,/^}/p' "$HERE/lib.sh")" 2>/dev/null
 [ "$(type -t write_lapse_record 2>/dev/null)" = function ] \
     && ok "lib.sh's write_lapse_record could be lifted out and run" \
     || bad "lib.sh's write_lapse_record could be lifted out and run" "no such function — the record format has moved"
+
 if [ "$(type -t write_lapse_record 2>/dev/null)" = function ]; then
-    SPIRA_RUN="$TMP/run" write_lapse_record sp-real 600 "writing output file" cafe5 >/dev/null
+    SPIRA_RUN="$TMP/run" write_lapse_record sp-g8real 600 "writing output file" abc1234 >/dev/null
+    n_written="$(ls "$TMP/run/lapsed" 2>/dev/null | wc -l | tr -d ' ')"
+    is "the real writer produced one record" 1 "$n_written"
+
+    snap="$(wt)"
+    want "the real writer's record reaches the snapshot" "sp-g8real" "$snap"
+    want "and its quiet field renders"                    "600s"      "$snap"
+    want "and its last-action field renders"               "writing output file" "$snap"
 fi
-snap="$(wt)"
-want "a record from the real writer reaches the snapshot" "sp-real" "$snap"
-want "and carries the real writer's quiet field"          "quiet"   "$snap"
 
 # ======================================================================================
 echo
