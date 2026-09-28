@@ -25,6 +25,11 @@
 #      window is not.
 #   8. A duckdb that cannot run at all (not the file — the query engine) is UNOBSERVABLE
 #      too, distinct from a missing family file.
+#   10. Unobservable has its own grace period (SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS, default
+#       1h), decoupled from a gap's (SPIRA_FLOW_GRACE_SECS): outlasting the gap grace alone
+#       does not confirm it.
+#   11. Unobservable past its own grace period alerts the Concierge exactly once, through
+#       the same deduplicated path a gap uses (sp-fufyb) — never once per pass.
 #
 # Driven through the real binary against a real bd (testdb.sh) and a real duckdb over
 # hand-written run/tsd/ fixtures — not a model of either (law-prefer-the-real-dependency).
@@ -137,6 +142,14 @@ else:
 mail_count() {
     local n
     n="$(grep -c '^CALL send concierge' "$MAIL_LOG" 2>/dev/null)"
+    printf '%s' "${n:-0}"
+}
+mail_count_for() {
+    # Alerts naming invariant $1 specifically — a plain reset_env leaves velocity, dwell
+    # and round-health unobservable together (none of them has a landing-event row yet),
+    # so a raw mail_count conflates three invariants' independent alerts into one number.
+    local n
+    n="$(grep -c "^invariant: $1\$" "$MAIL_LOG" 2>/dev/null)"
     printf '%s' "${n:-0}"
 }
 
@@ -362,6 +375,41 @@ rc=$?
 is "a pass exits 0 even when SPIRA_RUN does not exist yet" "0" "$rc"
 [ -d "$SAVED_SPIRA_RUN" ] && ok "the pass creates SPIRA_RUN itself" || bad "the pass creates SPIRA_RUN itself" "still missing: $SAVED_SPIRA_RUN"
 mkdir -p "$SPIRA_RUN"
+
+# ============================================================================
+echo
+echo "10. Unobservable has its own grace period, decoupled from a gap's: outlasting the"
+echo "    short gap grace (SPIRA_FLOW_GRACE_SECS=2, this suite's default) alone must not"
+echo "    confirm an unobservable invariant against its own, longer grace"
+# ============================================================================
+reset_env
+SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=999 run_pass
+is "unobservable, first pass, inside its own long grace" unobservable "$(status_of flow:velocity:queue status)"
+sleep 3
+SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=999 run_pass
+is "still unobservable past the gap's own 2s grace" unobservable "$(status_of flow:velocity:queue status)"
+is "not confirmed — inside its own (999s) grace" False "$(status_of flow:velocity:queue is_gap)"
+is "no concierge alert while inside the unobservable grace" "0" "$(mail_count_for flow:velocity:queue)"
+
+# ============================================================================
+echo
+echo "11. Unobservable past its own grace period alerts the Concierge exactly once,"
+echo "    through the same deduplicated path a gap uses (sp-fufyb) — not once per pass"
+# ============================================================================
+reset_env
+SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=2 run_pass
+is "unobservable, first pass, inside grace" unobservable "$(status_of flow:velocity:queue status)"
+is "no alert yet" "0" "$(mail_count_for flow:velocity:queue)"
+sleep 3
+SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=2 run_pass
+is "confirmed past its own grace" True "$(status_of flow:velocity:queue is_gap)"
+is "exactly one alert fired for the first confirmed pass" "1" "$(mail_count_for flow:velocity:queue)"
+want "the alert names the invariant" "flow:velocity:queue" "$(cat "$MAIL_LOG")"
+
+echo "the same unresolved streak does not alert again on the next pass"
+SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=2 run_pass
+is "still unobservable" unobservable "$(status_of flow:velocity:queue status)"
+is "no additional alert for the same streak" "1" "$(mail_count_for flow:velocity:queue)"
 
 # ============================================================================
 tl_summary

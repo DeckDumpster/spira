@@ -12,6 +12,7 @@
 #
 #   doctor_check_chamber_overlays — which operator overlay, if any, is in force
 #   doctor_check_store            — is the store listener reachable
+#   doctor_check_duckdb           — is run/tsd/'s query layer queryable
 #   doctor_check_events_probe     — does a write/read round trip on the events substrate
 #   doctor_check_failed_units     — are any spira-* systemd units in the failed state
 #   doctor_check_orphan_units     — is any enabled watch unit's watcher gone from the manifest
@@ -202,6 +203,30 @@ except Exception: print("")
         else
             OK "SPIRA_DOLT_DATA is empty — dolt server is managed independently"
         fi
+    fi
+}
+
+# --------------------------------------------------------------------------------------
+# DUCKDB (sp-ujhmm). Runtime-tier in deps.toml: the query layer over run/tsd/'s JSONL
+# families that tsd-query.sh and reconciler-flow both shell out to. Its absence does not
+# crash the loop — every flow invariant just logs unobservable forever, which reads
+# identically to "nothing to report" until someone reads reconciler-status.jsonl by hand.
+# FAIL, not warn, so a blind detector shows up here first.
+# --------------------------------------------------------------------------------------
+doctor_check_duckdb() {
+    local duckdb_bin="${SPIRA_DUCKDB_BIN:-duckdb}"
+    local found=""
+    if [[ "$duckdb_bin" == */* ]]; then
+        [[ -x "$duckdb_bin" ]] && found="$duckdb_bin"
+    else
+        found="$(command -v "$duckdb_bin" 2>/dev/null || true)"
+    fi
+    if [[ -n "$found" ]]; then
+        OK "duckdb — $found"
+    else
+        FAIL "duckdb is not on PATH" \
+             "tsd-query.sh refuses every query and every reconciler-flow invariant logs
+        unobservable until this is installed. See deps.toml's duckdb entry."
     fi
 }
 
@@ -450,6 +475,10 @@ doctor_check_overrides
 echo
 echo "store"
 doctor_check_store
+
+echo
+echo "time series query layer"
+doctor_check_duckdb
 
 echo
 echo "events substrate"
