@@ -25,6 +25,17 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 SLAY="$HERE/slay.sh"
 
+# T2 below proves slay.sh's release against a real spira-lc, which needs a spira-lc binary
+# built from source and a throwaway dolt server. Checked here, before T1 runs any case, so
+# a missing dependency is a clean skip (testlib refuses skip once cases have already run).
+CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
+if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
+    CARGO_BIN="$HOME/.cargo/bin/cargo"
+fi
+[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
+DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
+[ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
+
 # ===========================================================================================
 echo "T1: argument parsing — before testdb/bd is ever touched, no store"
 # ===========================================================================================
@@ -85,13 +96,6 @@ testdb_up slay || { echo "test-slay: could not build a fixture database"; exit 1
 # through HolderDead/Drop on the lifecycle row, not bd reopen/close, and
 # spira_holder_witnesses (lib.sh) trusts the row over a stale bd in_progress once one
 # exists — so the destroy step below only proceeds when this fixture is real.
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
-DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
-[ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 unset SPIRA_LC_SOCKET
 
 LCREPO="$(cd "$HERE/.." && pwd)"
