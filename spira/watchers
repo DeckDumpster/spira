@@ -109,6 +109,16 @@ mail-deliver|extern|mail-deliver|@SPIRA_HOME@/spira-mail-deliver.sh health
 # through that durable inbox, never a keystroke. See inbox-keeper.sh.
 inbox-keeper|daemon|@SPIRA_HOME@/inbox-keeper.sh
 
+# PUBLISH-BACKLOG is a daemon: it scans every repo-map row on a cadence and, for the ones in
+# queue.local mode, mails the concierge when local/main's unpublished commits cross
+# SPIRA_LOCAL_BACKLOG_COUNT or the oldest of them crosses SPIRA_LOCAL_BACKLOG_AGE — row 5 of
+# the local/main design. It exists because queue.local decouples landing from publishing: a
+# repo whose publish queue stalls looks perfectly healthy locally (beads keep closing on
+# local landings) while the forge silently falls behind. `watchd drain publish-backlog`
+# delivers queued crossings; only the crossing itself is mailed (TRANSITIONS, NOT STATE,
+# same as pr-notify), so a backlog stuck over threshold does not become a siren.
+publish-backlog|daemon|@SPIRA_HOME@/publish-backlog.sh watch --interval 900|@SPIRA_HOME@/publish-backlog.sh health
+
 # queue-watch — merge-queue transitions for every `mode = "queue"` repository: batch opened,
 # CI, ejected, re-pushed, landed (verified on base), closed without landing, forced cuts,
 # priority inversions and stalls. Derived from queue state and the forge, never from the
