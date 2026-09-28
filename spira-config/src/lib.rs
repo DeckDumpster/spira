@@ -159,6 +159,7 @@ pub struct SpiraSection {
     pub supervise_bin: Option<String>,
     pub landing_pass_bin: Option<String>,
     pub tsd_bin: Option<String>,
+    pub tsd_lifecycle_export_bin: Option<String>,
     pub reconciler_bin: Option<String>,
     pub test_plan_bin: Option<String>,
     pub reconciler_flow_bin: Option<String>,

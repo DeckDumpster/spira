@@ -1866,6 +1866,12 @@
             "null"
           ]
         },
+        "tsd_lifecycle_export_bin": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "tz": {
           "type": [
             "string",

@@ -989,6 +989,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tsd-lifecycle-export"
+version = "1.0.0"
+dependencies = [
+ "lifecycle",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
