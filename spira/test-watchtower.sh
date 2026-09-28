@@ -40,7 +40,7 @@
 #
 # defect: sp-86q8
 # tier: T1
-# covers: spira/watchtower.sh spira/landing.sh spira/cockpit.sh
+# covers: spira/watchtower.sh spira/landing.sh spira/cockpit.sh spira/lib.sh spira/aeon.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -128,6 +128,9 @@ eval "$(sed -n '/^land_mark() *{/,/^}/p' "$HERE/lib.sh")" 2>/dev/null
 [ "$(type -t land_mark 2>/dev/null)" = function ] \
     && ok "lib.sh's land_mark could be lifted out and run" \
     || bad "lib.sh's land_mark could be lifted out and run" "no such function — the record format has moved"
+# Same lift for write_lapse_record (gap G8) — used by the whole-snapshot render below,
+# which is also where D12's two "every section present" loops merge into one.
+eval "$(sed -n '/^write_lapse_record() *{/,/^}/p' "$HERE/lib.sh")" 2>/dev/null
 
 if [ "$(type -t land_mark 2>/dev/null)" = function ]; then
     land_mark sp-ctl LANDED deadbeef spira
@@ -366,11 +369,16 @@ echo "the snapshot still renders as a whole:"
 # ======================================================================================
 # A CHEAP END-TO-END, because every assertion above reads one line out of a document that a
 # `set -u` failure would truncate silently — leaving a `sed` that matches nothing and a
-# handful of assertions that never ran.
+# handful of assertions that never ran. Plants both a landed record and a lapse record so
+# this one snapshot exercises every section — D12: this used to be two near-identical loops,
+# here and in test-watchtower-lapse.sh, differing only in 'The graph' vs 'Lapsed aeons'.
 fresh
 land_mark sp-whole LANDED cafe5 spira
+if [ "$(type -t write_lapse_record 2>/dev/null)" = function ]; then
+    SPIRA_RUN="$TMP/run" write_lapse_record sp-whole-lapsed 600 "writing output file" cafe5 >/dev/null
+fi
 snap="$(wt)"
-for section in 'The far end' 'The Sending' 'The workers' 'The graph' 'The menu' 'Can this snapshot be believed'; do
+for section in 'The far end' 'The Sending' 'The workers' 'The graph' 'Lapsed aeons' 'The menu' 'Can this snapshot be believed'; do
     want "the snapshot still carries: $section" "$section" "$snap"
 done
 want "and still warns that ? is not a zero" "never treat it as a zero" "$snap"
