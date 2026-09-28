@@ -77,6 +77,11 @@ pub struct SpiraSection {
     pub verdict_ttl: Option<u64>,
     pub max_aeons: Option<u32>,
     pub max_live_aeons: Option<u32>,
+    /// Deepest a dependent's stack may go (stacked-dependents-2026-09-28 §1) before a claim
+    /// naming it is refused. Hard ceiling 4: raising it past what the schema below allows is
+    /// a design change, not a config edit (per Ryan 2026-09-28: "4 is a good place to start,
+    /// no higher"). 0 reproduces today's behaviour — no stacking at all.
+    pub stack_max_depth: Option<u32>,
     #[serde(default)]
     pub fayths: Vec<String>,
     pub batch_maxpar: Option<u32>,
@@ -446,8 +451,22 @@ pub struct PersonaSection {
 /// The JSON Schema for [`SpiraToml`], as shipped in `schema/spira.schema.json`. Generated
 /// from the same types `validate` deserializes into, so the shipped schema and the actual
 /// hard errors can never name different fields.
+///
+/// One field is patched after generation: `stack_max_depth`'s hard ceiling of 4 (design
+/// stacked-dependents-2026-09-28 §1) has no derive-macro spelling in schemars 0.8 (no
+/// `#[schemars(range(...))]`), and a `schema_with` override loses the derive's own
+/// `Option<u32>` handling — it names a synthetic wrapper type instead, which schemars then
+/// treats as *required* rather than nullable. Patching the generated node in place keeps the
+/// `Option` semantics schemars already got right and adds only the one property this crate
+/// cannot express through the derive.
 pub fn json_schema() -> schemars::schema::RootSchema {
-    schemars::schema_for!(SpiraToml)
+    let mut root = schemars::schema_for!(SpiraToml);
+    if let Some(schemars::schema::Schema::Object(spira_section)) = root.definitions.get_mut("SpiraSection") {
+        if let Some(schemars::schema::Schema::Object(prop)) = spira_section.object().properties.get_mut("stack_max_depth") {
+            prop.number().maximum = Some(4.0);
+        }
+    }
+    root
 }
 
 /// A `[spira]` key dropped from `SpiraSection` whose presence in a live config must not

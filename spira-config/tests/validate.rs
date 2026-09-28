@@ -34,6 +34,15 @@ fn shipped_schema_matches_the_types() {
     );
 }
 
+#[test]
+fn stack_max_depths_schema_ceiling_is_four() {
+    // Hard ceiling per Ryan 2026-09-28 ("4 is a good place to start, no higher") — raising
+    // it is a schema/design change, not a config edit.
+    let schema = serde_json::to_value(json_schema()).expect("schema serializes");
+    let field = &schema["definitions"]["SpiraSection"]["properties"]["stack_max_depth"];
+    assert_eq!(field["maximum"], serde_json::json!(4.0), "{field}");
+}
+
 mod spira_section {
     use super::validate;
 
@@ -65,6 +74,22 @@ mod spira_section {
         // Every [spira] key is optional (conf.sh's own philosophy): an empty table is a
         // valid document, matching a clean clone that overrides nothing.
         validate("[spira]\n").expect("an empty [spira] table is valid");
+    }
+
+    #[test]
+    fn stack_max_depth_at_the_pinned_non_default_value_is_valid() {
+        // Pinned away from the shipped default (4) per this repo's own fixture rule: 2
+        // would still pass if the code had the default hard-coded instead of actually
+        // reading the key.
+        let doc = validate("[spira]\nstack_max_depth = 2\n").expect("valid");
+        assert_eq!(doc.spira.unwrap().stack_max_depth, Some(2));
+    }
+
+    #[test]
+    fn stack_max_depth_zero_is_valid() {
+        // stacked-dependents-2026-09-28 §1: 0 reproduces today's no-stacking behaviour.
+        let doc = validate("[spira]\nstack_max_depth = 0\n").expect("valid");
+        assert_eq!(doc.spira.unwrap().stack_max_depth, Some(0));
     }
 }
 
