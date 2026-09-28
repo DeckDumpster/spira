@@ -71,6 +71,7 @@ PROBES=(
     "unsent:600:300:unsent"
     "statute:600:300:statute"
     "czar_triggers:600:300:czar_triggers"
+    "sending:600:300:sending"
 )
 
 # Maximum concurrent slow-tier (interval>=600) probes. The service CPUQuota caps the

@@ -51,7 +51,7 @@ for entry in "${PROBES[@]}"; do
     [ "${timeout_s:-0}" -lt "${interval:-0}" ] 2>/dev/null && shorter_timeout=$((shorter_timeout+1))
 done
 
-is "16 probes registered"                       "16" "${#PROBES[@]}"
+is "17 probes registered"                       "17" "${#PROBES[@]}"
 is "no malformed entries (4 colon-fields each)" "0"  "$malformed"
 is "no duplicate probe names"                   "0"  "$dup"
 is "every interval is a declared tier (5/60/600)" "0" "$bad_interval"
