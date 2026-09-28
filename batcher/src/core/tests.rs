@@ -400,6 +400,35 @@ fn abandoned_event_names_the_member_and_why() {
     assert!(e.text.contains("sp-a"));
 }
 
+// -- Local attribution: ejection and base-fail (sp-hqoap) -----------------------------------
+
+#[test]
+fn ejected_event_names_the_member_and_every_suite() {
+    let e = ejected_event(&Ejection { id: "sp-a".into(), suites: vec!["test-x.sh".into(), "test-y.sh".into()] });
+    assert_eq!(e.kind, "ejected");
+    assert_eq!(e.ids, vec!["sp-a".to_string()]);
+    assert!(e.text.contains("test-x.sh"));
+    assert!(e.text.contains("test-y.sh"));
+}
+
+#[test]
+fn base_fail_event_names_no_member_and_every_suite() {
+    let e = base_fail_event("spira", &["test-x.sh".to_string(), "test-y.sh".to_string()]);
+    assert_eq!(e.kind, "basefail");
+    assert!(e.ids.is_empty());
+    assert!(e.text.contains("test-x.sh"));
+    assert!(e.text.contains("test-y.sh"));
+}
+
+#[test]
+fn base_fail_body_carries_repo_branch_suites_and_evidence() {
+    let body = base_fail_body("spira", "spira/queue/123", &["test-x.sh".to_string()], "/run/batch-results/spira-123");
+    assert!(body.contains("Repo: spira"));
+    assert!(body.contains("spira/queue/123"));
+    assert!(body.contains("test-x.sh"));
+    assert!(body.contains("/run/batch-results/spira-123"));
+}
+
 // -- End-to-end shaped replay: a full round on synthetic pool/merge/suite/bisect inputs ------
 
 /// A full round through the pure core in sequence, shaped like the incidents the bead

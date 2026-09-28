@@ -37,6 +37,7 @@ pub struct Env {
     pub express_label: String,
     pub tsd_bin: Option<PathBuf>,
     pub testenv_batch: PathBuf,
+    pub attribute: PathBuf,
     pub git_name: String,
     pub git_email: String,
     pub lc_bin: Option<PathBuf>,
@@ -571,6 +572,151 @@ fn parse_result(results_dir: &Path, suite: &str) -> SuiteRun {
 
 pub fn red_names(verdicts: &[SuiteRun]) -> Vec<String> {
     verdicts.iter().filter(|s| s.outcome == SuiteOutcome::Red).map(|s| s.name.clone()).collect()
+}
+
+// ---------------------------------------------------------------------------------------
+// Local attribution (sp-hqoap): attribute.sh (sp-q8xs9) names, per red suite, either the
+// member(s) whose tip reproduces it or BASE. Parsed from its stdout protocol rather than
+// re-deriving bisection here — that mechanism is attribute.sh's own, already tested.
+// ---------------------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Attribution {
+    /// Suites attribute.sh found red against the base alone — nobody's fault.
+    pub base_suites: Vec<String>,
+    /// Member id -> the suite(s) attribute.sh attributed to it (attribute.sh's own EJECT
+    /// lines); a suite it attributed to more than one member (a bisected interaction) appears
+    /// under each.
+    pub ejections: BTreeMap<String, Vec<String>>,
+}
+
+fn parse_attribution(out: &str) -> Attribution {
+    let mut a = Attribution::default();
+    for line in out.lines() {
+        if let Some(rest) = line.strip_prefix("ATTR ") {
+            let mut it = rest.splitn(2, ' ');
+            let suite = it.next().unwrap_or("");
+            let remainder = it.next().unwrap_or("");
+            let owner_kv = remainder.splitn(4, ' ').next().unwrap_or("");
+            if owner_kv.strip_prefix("owner=") == Some("BASE") {
+                a.base_suites.push(suite.to_string());
+            }
+        } else if let Some(rest) = line.strip_prefix("EJECT ") {
+            let mut it = rest.splitn(2, ' ');
+            let id = it.next().unwrap_or("").to_string();
+            let suites: Vec<String> = it.next().unwrap_or("").split(',').map(str::to_string).filter(|s| !s.is_empty()).collect();
+            if !id.is_empty() && !suites.is_empty() {
+                a.ejections.insert(id, suites);
+            }
+        }
+    }
+    a
+}
+
+/// Run attribute.sh over the round's own red suites, on this box, and parse who it blames.
+/// A non-zero exit (a stubbed-out or broken attribution step) is an error, not an empty
+/// attribution — the caller must never read that as "nothing to blame, proceed to a PR"
+/// (law-a-control-that-cannot-check-must-refuse).
+pub fn attribute(
+    env: &Env,
+    repo: &Repo,
+    round_branch: &str,
+    base_sha: &str,
+    suites: &[String],
+    members: &[String],
+) -> Result<Attribution, String> {
+    let out = run(
+        Command::new("bash")
+            .arg(&env.attribute)
+            .arg("--round")
+            .arg(round_branch)
+            .arg("--base")
+            .arg(base_sha)
+            .arg("--suites")
+            .arg(suites.join(","))
+            .arg("--members")
+            .arg(members.join(","))
+            .arg("--repo")
+            .arg(&repo.path),
+        "attribute.sh",
+    )?;
+    Ok(parse_attribution(&out))
+}
+
+/// Eject one member from the round before it ever reaches CI: reopen its bead (which, being
+/// CERTIFIED, withdraws that certification — bead_reopen's own contract) with a note naming
+/// every suite it turned red, then record the landstate EJECTED the same way verdict.sh's own
+/// CI-side ejection does, so the funnel (cockpit, census) counts a local and a CI ejection the
+/// same way. `queue-eject-local` is a distinct reopen cause from verdict.sh's `queue-eject`,
+/// so census.sh can tell the two apart.
+pub fn eject_member(env: &Env, repo_name: &str, id: &str, tip: &str, suites: &[String]) {
+    let suites_csv = suites.join(",");
+    let note = format!(
+        "Ejected by the merge queue's local attribution (pre-PR): spira/{id} turned red on: {}.",
+        suites.join(", ")
+    );
+    bead_reopen(env, id, "queue-eject-local", &note);
+    land_mark(env, id, "EJECTED", tip, &suites_csv);
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(env.run.join("landing.log")) {
+        use std::io::Write;
+        let _ = writeln!(f, "QUEUE LOCAL-EJECT {} repo={repo_name} id={id} suites={suites_csv}", now());
+    }
+}
+
+/// File an Ops incident for a local red the round could not resolve mechanically: a suite red
+/// against the base itself, or (defensively) a red attribute.sh could not attribute to
+/// anyone. Filed through incident.sh's own dedupe/spool contract, never `bd create` directly,
+/// so a flapping base red files one bead and bumps a recurrence rather than one per round.
+pub fn file_local_red_incident(
+    env: &Env,
+    repo: &Repo,
+    suites: &[String],
+    round_branch: &str,
+    evidence: &str,
+    reason: &str,
+) -> Result<String, String> {
+    let title = format!("{}: local round red ({reason}) on {} — nothing can land", repo.name, suites.join(","));
+    let body = batcher::core::base_fail_body(&repo.name, round_branch, suites, evidence);
+    let tmp_dir = env.run.join("tmp");
+    fs::create_dir_all(&tmp_dir).map_err(|e| format!("{}: {e}", tmp_dir.display()))?;
+    let tmp = tmp_dir.join(format!("local-red-{}-{}.txt", repo.name, now()));
+    fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    let out = run(
+        Command::new("bash").arg(env.home.join("incident.sh")).arg("file").arg(&title).arg(&tmp).env("SPIRA_INCIDENT_TYPE", "bug").env(
+            "SPIRA_INCIDENT_PRIORITY",
+            "1",
+        ).env("SPIRA_INCIDENT_ACTOR", "batcher").env("SPIRA_INCIDENT_REPO", &repo.name).env(
+            "SPIRA_INCIDENT_REF",
+            format!("basefail-local:{}:{}:{reason}", repo.name, suites.join(",")),
+        ).env("SPIRA_INCIDENT_CAUSE", "local-round-red"),
+        "incident.sh file",
+    );
+    let _ = fs::remove_file(&tmp);
+    let out = out?;
+    // THE LAST NON-EMPTY LINE, NOT THE WHOLE OUTPUT: incident.sh logs progress through the
+    // same stdout it returns the id on (landing.sh's base_incident hits the same seam).
+    let id = out.lines().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()).unwrap_or_default();
+    if id.is_empty() {
+        return Err(format!("incident.sh file: no id returned: {out}"));
+    }
+    Ok(id)
+}
+
+/// The last local corpus verdict for this repo's round — read by queue.sh's own open-batch so
+/// a hand-invoked cut never sends a round CI would only reject (law-a-round-takes-certified-
+/// tips). Best-effort like every other queue-dir write here: a failure to record it leaves
+/// open-batch with nothing to refuse on, never blocks the round itself.
+pub fn write_local_verdict(env: &Env, repo: &str, verdict: &str, detail: &str) {
+    let dir = env.queue_dir.join(repo);
+    if fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let p = dir.join("local-verdict");
+    let tmp = p.with_extension("tmp");
+    let body = format!("verdict={verdict}\nat={}\ndetail={detail}\n", now());
+    if fs::write(&tmp, body).is_ok() {
+        let _ = fs::rename(&tmp, &p);
+    }
 }
 
 // ---------------------------------------------------------------------------------------
