@@ -1,3 +1,45 @@
+GROOM PASS sp-i1e4x
+===================
+
+TRIGGER: UNCLAIMABLE: sp-91gn5 — fix the fayth: or partition label
+
+SWEEP: groomer.sh sweep found 0 livelocked beads; closed 4 landed-but-open beads
+(sp-pedat, sp-bo67y, sp-994y9, sp-kogm).
+
+LIVELOCK ROWS HANDLED: 1
+
+PARTITION LABELS FIXED:
+
+1. sp-91gn5 — sp-n0c9d step 3: SEEN-GREEN fix-path assertion + wire into suite discovery
+   - Problem: had only 'repo:spira, spira' labels; no partition label; unclaimable
+   - Fix: added 'plan' partition label
+
+DUPLICATES MERGED:
+
+1. sp-91gn5 -> sp-bz7uh.6
+   - Both describe sp-n0c9d step 3 (SEEN-GREEN fix-path assertion + suite discovery wiring)
+   - sp-91gn5 created by sp-lw2op decomp-3; sp-bz7uh.6 is the canonical child of sp-bz7uh
+   - Pattern: same as sp-sahn4->sp-bz7uh.5 merged in prior groom pass
+   - sp-91gn5 superseded by sp-bz7uh.6, then closed; work proceeds under sp-bz7uh.6
+
+PREMISE-GONE CLOSURES:
+
+1. sp-nh5xc — CLOSED NOT LANDED: sp-994y9 has no LANDED record on spira
+   - sp-994y9 is on origin/main ("spira: land sp-994y9" commit found)
+   - Sweep also closed sp-994y9 as landed-but-open at 2026-09-28T10:48:52Z
+   - Premise (sp-994y9 not landed) gone; closed
+
+CURRENT STATE:
+- 221 open beads examined (220 after closures)
+- 1 LIVELOCK row resolved (sp-91gn5: plan label added then merged into sp-bz7uh.6)
+- 1 duplicate merged (sp-91gn5->sp-bz7uh.6)
+- 1 premise-gone bead closed (sp-nh5xc)
+- No splits needed
+- No lane mislabels found
+- No poison beads
+
+---
+
 GROOM PASS sp-3qcpz - Graph Hygiene Results
 ============================================
 
