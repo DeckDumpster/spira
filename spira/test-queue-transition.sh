@@ -52,8 +52,8 @@ git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin main
 git -C "$REPO" branch local/main main
 
-RUN="$TMP/run"; QDIR="$RUN/queue"; REPONAME=fixtrans
-mkdir -p "$RUN/worktree" "$QDIR"
+RUN="$TMP/run"; QDIR="$RUN/queue"; REPONAME=fixtrans; RELEASES="$TMP/releases"
+mkdir -p "$RUN/worktree" "$QDIR" "$RELEASES"
 RMAP="$TMP/repo-map"
 printf '%s | %s | queue.local | local/main | | |\n' "$REPONAME" "$REPO" > "$RMAP"
 
@@ -92,6 +92,7 @@ export SPIRA_RUN="$RUN"
 export SPIRA_QUEUE_DIR="$QDIR"
 export SPIRA_REPO_MAP="$RMAP"
 export SPIRA_FORGE="$SH/forge-fixture.sh"
+export SPIRA_RELEASES="$RELEASES"
 export SPIRA_QUEUE_TRANSITION_POLLSEC=1
 export SPIRA_QUEUE_TRANSITION_MAXSEC=5
 
@@ -103,6 +104,17 @@ verdict() {
     FIXTURE_CHECK_STATUS="${CHECK_STATUS:-green}" \
         bash "$SH/verdict.sh" "$REPONAME" 2>&1
 }
+# mk_bins <head> — land-local refuses without a --with-bins corpus for the tree it is
+# landing (sp-sf60f); every head this suite lands needs one.
+mk_bins() {
+    local head="$1" tree dir
+    tree="$(git -C "$REPO" rev-parse "${head}^{tree}")"
+    dir="$RUN/cargo-target-bins/$tree/release"
+    mkdir -p "$dir"
+    printf 'fake\n' > "$dir/fakebin"
+    chmod +x "$dir/fakebin"
+}
+
 land() {   # land <id> <file> <content> — one round, landed onto local/main
     local id="$1" file="$2" content="$3"
     git -C "$REPO" checkout -qb "round-$id" local/main
@@ -112,6 +124,7 @@ land() {   # land <id> <file> <content> — one round, landed onto local/main
     local tip; tip="$(git -C "$REPO" rev-parse "round-$id")"
     git -C "$REPO" checkout -q main
     git -C "$REPO" branch -D "round-$id" >/dev/null 2>&1
+    mk_bins "$tip"
     queue land-local "$REPONAME" --head "$tip" --members "$id:$tip" >/dev/null
 }
 
