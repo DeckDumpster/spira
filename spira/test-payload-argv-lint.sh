@@ -109,8 +109,26 @@ is   "and it is executable"           "0" "$([ -x "$HERE/payload-argv-lint.sh" ]
 
 # ---------------------------------------------------------------------------------------
 # THE SHIPPED TREE. Read through the control above, this now means something.
+#
+# In the gate container a worktree's .git FILE resolves to the host, which is not
+# bind-mounted inside the container: git exits non-zero and payload-argv-lint.sh exits 3.
+# Build a portable mirror from the real files and run against that instead — the set of
+# files is identical; only the git plumbing differs (same seam as test-bd-stdin.sh).
 # ---------------------------------------------------------------------------------------
 out="$(bash "$HERE/payload-argv-lint.sh")"; rc=$?
+if [ "$rc" = 3 ]; then
+    MIRROR="$TMP/shipped-mirror"
+    mkdir -p "$MIRROR"
+    SHIPPED="$(cd "$HERE/.." && pwd -P)"
+    cp -a "$SHIPPED/." "$MIRROR/"
+    rm -rf "$MIRROR/.git"
+    git init -q -b main "$MIRROR"
+    git -C "$MIRROR" config user.email t@t
+    git -C "$MIRROR" config user.name t
+    git -C "$MIRROR" add .
+    git -C "$MIRROR" commit -q -m mirror
+    out="$(bash "$MIRROR/spira/payload-argv-lint.sh")"; rc=$?
+fi
 is "the shipped tree passes" "0" "$rc"
 [ "$rc" = 0 ] || printf '%s\n' "$out"
 
