@@ -35,7 +35,8 @@ BDCLOSE_DELIVER="$HERE/bd-unacked-comment-deliver.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 FAKE_RUN="$TMP/run"; FAKE_PROD="$TMP/prod"; FIXDIR="$TMP/fixtures"
-mkdir -p "$FAKE_RUN" "$FAKE_PROD" "$FIXDIR"
+FAKE_CONFIG="$TMP/.config/spira"
+mkdir -p "$FAKE_RUN" "$FAKE_PROD" "$FIXDIR" "$FAKE_CONFIG"
 BDCLOSE_RC=""
 ACTOR="guard-test-actor"
 
@@ -501,6 +502,47 @@ nowant "gap6/write-outside-prod-allowed" '"decision":"block"' "$out"
 
 out="$(fence_run_tool Write "$FAKE_PROD/aeon.sh" SPIRA_AEON=test-aeon SPIRA_AEON_OVERRIDE=1)"
 nowant "gap6/override-bypasses-write-block" '"decision":"block"' "$out"
+
+# ===========================================================================
+echo
+echo "sp-iks0y — aeon session: writes to the operator's live \$HOME/.config/spira refused:"
+# ===========================================================================
+out="$(fence_run_tool Edit "$FAKE_CONFIG/repo-map" SPIRA_AEON=test-aeon)"
+want "sp-iks0y/edit-repo-map-blocked"    '"decision":"block"' "$out"
+want "sp-iks0y/reason-names-sp-iks0y"    "sp-iks0y"           "$out"
+
+out="$(fence_run_tool Write "$FAKE_CONFIG/repo-map" SPIRA_AEON=test-aeon)"
+want "sp-iks0y/write-repo-map-blocked" '"decision":"block"' "$out"
+
+out="$(fence_run_tool Write "$TMP/outside/notes.md" SPIRA_AEON=test-aeon)"
+nowant "sp-iks0y/write-outside-config-allowed" '"decision":"block"' "$out"
+
+out="$(fence_run_tool Edit "$FAKE_RUN/worktree/sp-x/notes.md" SPIRA_AEON=test-aeon)"
+nowant "sp-iks0y/edit-inside-worktree-allowed" '"decision":"block"' "$out"
+
+out="$(fence_run_tool Edit "$FAKE_CONFIG/repo-map" SPIRA_AEON=test-aeon SPIRA_AEON_OVERRIDE=1)"
+nowant "sp-iks0y/override-bypasses-config-write-block" '"decision":"block"' "$out"
+
+out="$(fence_run "echo x > ${FAKE_CONFIG}/repo-map" SPIRA_AEON=test-aeon)"
+want "sp-iks0y/bash-redirect-into-config-blocked" '"decision":"block"' "$out"
+
+out="$(fence_run "printf x >> ${FAKE_CONFIG}/repo-map" SPIRA_AEON=test-aeon)"
+want "sp-iks0y/bash-append-into-config-blocked" '"decision":"block"' "$out"
+
+out="$(fence_run "rm ${FAKE_CONFIG}/repo-map" SPIRA_AEON=test-aeon)"
+want "sp-iks0y/bash-rm-config-blocked" '"decision":"block"' "$out"
+
+out="$(fence_run "sed -i s/a/b/ ${FAKE_CONFIG}/repo-map" SPIRA_AEON=test-aeon)"
+want "sp-iks0y/bash-sed-i-config-blocked" '"decision":"block"' "$out"
+
+out="$(fence_run "echo x | tee ${FAKE_CONFIG}/repo-map" SPIRA_AEON=test-aeon)"
+want "sp-iks0y/bash-tee-config-blocked" '"decision":"block"' "$out"
+
+out="$(fence_run "cat ${FAKE_CONFIG}/repo-map" SPIRA_AEON=test-aeon)"
+nowant "sp-iks0y/bash-cat-config-allowed" '"decision":"block"' "$out"
+
+out="$(fence_run "rm ${FAKE_CONFIG}/repo-map" SPIRA_AEON=test-aeon SPIRA_AEON_OVERRIDE=1)"
+nowant "sp-iks0y/override-bypasses-bash-config-block" '"decision":"block"' "$out"
 
 # ===========================================================================
 echo

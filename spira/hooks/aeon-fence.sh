@@ -27,20 +27,32 @@ except Exception: print("")' 2>/dev/null)"
 # $SPIRA_PROD the same as a Bash redirect (sp-qsr44 gap 6: this guard used to
 # inspect Bash only, so Write/Edit into prod passed through unrefused).
 if [ "$tool" = "Write" ] || [ "$tool" = "Edit" ]; then
-    if [ -n "${SPIRA_PROD:-}" ]; then
-        file_path="$(printf '%s' "$payload" | python3 -c '
+    file_path="$(printf '%s' "$payload" | python3 -c '
 import json, sys
 try: d = json.load(sys.stdin); print(d.get("tool_input",{}).get("file_path",""))
 except Exception: print("")' 2>/dev/null)"
+    tw_reason=""
+    if [ -n "$file_path" ] && [ -n "${SPIRA_PROD:-}" ]; then
         case "$file_path" in
             "${SPIRA_PROD}"|"${SPIRA_PROD}"/*)
-                reason="aeons may not write to the production checkout \$SPIRA_PROD via $tool (sp-kz8ob: use SPIRA_AEON_OVERRIDE=1 for Ops incidents)"
-                printf 'aeon-fence: BLOCKED aeon=%s bead=%s: %s\n' \
-                    "${SPIRA_AEON:-?}" "${BEAD_ID:-?}" "$reason" >&2
-                printf '{"decision":"block","reason":"%s"}\n' \
-                    "$(printf '%s' "$reason" | sed 's/"/\\"/g')"
-                ;;
+                tw_reason="aeons may not write to the production checkout \$SPIRA_PROD via $tool (sp-kz8ob: use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
         esac
+    fi
+    # The operator's own config (repo-map, spira.toml, ...) is not this aeon's ref either
+    # (law-an-aeon-touches-only-its-own-ref): sp-iks0y, an aeon Edit landed an unlanded
+    # clause in the operator's live repo-map and broke every gate reading it.
+    if [ -z "$tw_reason" ] && [ -n "$file_path" ]; then
+        _config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/spira"
+        case "$file_path" in
+            "${_config_dir}"|"${_config_dir}"/*)
+                tw_reason="aeons may not write to the operator's config \$HOME/.config/spira via $tool (sp-iks0y: a config change belongs in the bead's notes as a deploy step; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
+        esac
+    fi
+    if [ -n "$tw_reason" ]; then
+        printf 'aeon-fence: BLOCKED aeon=%s bead=%s: %s\n' \
+            "${SPIRA_AEON:-?}" "${BEAD_ID:-?}" "$tw_reason" >&2
+        printf '{"decision":"block","reason":"%s"}\n' \
+            "$(printf '%s' "$tw_reason" | sed 's/"/\\"/g')"
     fi
     exit 0
 fi
@@ -168,6 +180,47 @@ for seg in re.split(r"&&|\|\||;|\||\n", cmd):
                 print("1"); sys.exit(0)
 ' "${SPIRA_RUN}/landstate" "${SPIRA_RUN}/queue" 2>/dev/null)"
         [ "$_run_write" = "1" ] && reason="aeons may not write to \$SPIRA_RUN/landstate or \$SPIRA_RUN/queue (sp-kz8ob: use SPIRA_AEON_OVERRIDE=1 for Ops incidents)"
+    fi
+fi
+
+# The operator's config lives outside every worktree, so it is never this aeon's ref to
+# write (law-an-aeon-touches-only-its-own-ref): sp-iks0y, an Edit tool call landed an
+# unlanded clause in the operator's live repo-map and broke the in-force gate.
+if [ -z "$reason" ]; then
+    _config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/spira"
+    case "$cmd" in
+        *">${_config_dir}"*|*"> ${_config_dir}"*|\
+        *">>${_config_dir}"*|*">> ${_config_dir}"*)
+            reason="aeons may not write to the operator's config \$HOME/.config/spira (sp-iks0y: a config change belongs in the bead's notes as a deploy step; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
+    esac
+    if [ -z "$reason" ]; then
+        _config_write="$(printf '%s' "$cmd" | python3 -c '
+import sys, re
+cmd = sys.stdin.read()
+guarded = sys.argv[1]
+WRITE = {"rm", "mv", "cp", "truncate", "tee", "install", "ln", "chmod", "chown", "mkdir"}
+for seg in re.split(r"&&|\|\||;|\||\n", cmd):
+    seg = seg.strip()
+    if not seg or guarded not in seg:
+        continue
+    rem = seg
+    while True:
+        m = re.match(r"^[A-Za-z_][A-Za-z0-9_]*=[^\s]*\s+", rem)
+        if not m:
+            break
+        rem = rem[m.end():]
+    toks = rem.split()
+    if not toks:
+        continue
+    t0 = toks[0].split("/")[-1]
+    if t0 in WRITE:
+        print("1"); sys.exit(0)
+    if t0 == "sed":
+        for t in toks[1:]:
+            if t == "-i" or (t.startswith("-") and not t.startswith("--") and "i" in t[1:]):
+                print("1"); sys.exit(0)
+' "$_config_dir" 2>/dev/null)"
+        [ "$_config_write" = "1" ] && reason="aeons may not write to the operator's config \$HOME/.config/spira (sp-iks0y: a config change belongs in the bead's notes as a deploy step; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)"
     fi
 fi
 
