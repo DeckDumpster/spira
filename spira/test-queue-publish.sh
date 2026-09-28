@@ -124,7 +124,7 @@ seed() {   # seed <id>
 remote_main()  { git -C "$REMOTE" rev-parse main 2>/dev/null; }
 localmain()    { git -C "$REPO" rev-parse local/main; }
 publish_file() { cat "$QDIR/$REPONAME/publish" 2>/dev/null; }
-callcount()    { grep -c "^$1\$" "$CALL_LOG" 2>/dev/null || echo 0; }
+callcount()    { grep -c "^$1" "$CALL_LOG" 2>/dev/null; }
 clear_calls()  { : > "$CALL_LOG"; }
 landing_log()  { cat "$RUN/landing.log" 2>/dev/null; }
 clear_log()    { : > "$RUN/landing.log"; }

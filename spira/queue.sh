@@ -1192,7 +1192,10 @@ _publish_members() {
         [ -f "$f" ] || continue
         case "$f" in *.ejected|*.ejected.*|*.rc) continue ;; esac
         id="$(basename "$f")"
-        read -r state tip _ < "$f" 2>/dev/null || continue
+        # land_mark writes no trailing newline, so `read ... < "$f"` returns non-zero
+        # (EOF) even when it parsed the line fine — a here-string does not have that
+        # problem, since `<<<` always appends the newline `read` wants.
+        read -r state tip _ <<< "$(cat "$f" 2>/dev/null)"
         [ "$state" = LANDED ] || continue
         git -C "$repo" cat-file -e "${tip}^{commit}" 2>/dev/null || continue
         git -C "$repo" merge-base --is-ancestor "$tip" "$head_sha" 2>/dev/null || continue
