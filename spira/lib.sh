@@ -5304,7 +5304,7 @@ aeon_claude_argv() {
     local sys_flag="$1" sys_file="$2"
     printf -- '-p\n--output-format\nstream-json\n--verbose\n--include-partial-messages\n--system-prompt-snapshot\non\n'
     printf '%s\n%s\n' "$sys_flag" "$sys_file"
-    printf -- '--model\n%s\n' "$(persona_model "$FAYTH")"
+    printf -- '--model\n%s\n' "$(persona_model "${FAYTH:-}")"
     printf -- '--allowedTools\n%s\n' "${FAYTH_TOOLS:-Bash,Read,Edit,Write,Glob,Grep}"
     printf -- '--dangerously-skip-permissions\n'
     [ "${FAYTH_PROJECT_INSTRUCTIONS:-}" = "none" ] && printf -- '--setting-sources\nuser\n'
