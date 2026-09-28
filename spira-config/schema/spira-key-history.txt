@@ -304,3 +304,4 @@ queue_transition_maxsec
 local_backlog_count
 local_backlog_age
 stack_max_depth
+rebase_stale_log

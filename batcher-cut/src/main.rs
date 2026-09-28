@@ -206,6 +206,9 @@ fn handle_base_conflicts(
         }
         deleted.insert(m.id.clone(), io::deleted_suites(repo, &m.tip, base_sha));
         if stale_retry_due(m.certified_at, base_moved_at) {
+            if io::rebase_stale(env_, &repo.name, &m.id) {
+                continue; // rebased and re-certified mechanically — next cut picks up the new tip
+            }
             io::bump_requeue(env_, &m.id, "merge-conflict");
             io::bead_reopen(
                 env_,

@@ -124,6 +124,18 @@ pub fn bump_requeue(env: &Env, id: &str, reason: &str) {
     let _ = lib_call(env, "bump_requeue", [id, reason]);
 }
 
+/// Tries the mechanical rebase before a member conflicting with the base is handed to an
+/// aeon (sp-oxwvc). On success rebase-stale.sh has already rebased `spira/<id>` onto the
+/// base, re-certified it and noted the bead — this round leaves the member for the next cut
+/// to pick up at its new, already-certified tip rather than reopening it. On failure the
+/// script has already reopened the bead itself (a real content conflict or a red gate), with
+/// the conflicting hunks or gate output quoted in the note.
+pub fn rebase_stale(env: &Env, repo_name: &str, id: &str) -> bool {
+    let mut cmd = Command::new("bash");
+    cmd.arg(env.home.join("rebase-stale.sh")).arg(id).arg(repo_name);
+    run_status(&mut cmd)
+}
+
 // ---------------------------------------------------------------------------------------
 // spira-lc: the cutover round's own OPEN-batch lifecycle (sp-o7nbr.4, same contract as
 // sp-o7nbr.2's batch.sh _lc_cut_batch/lcq — best-effort and additive, never blocking the

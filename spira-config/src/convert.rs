@@ -235,6 +235,7 @@ pub fn spira_section(
             "SPIRA_LAND_GATE_RESERVE" => s.land_gate_reserve = Some(val.clone()),
             "SPIRA_CERTIFY_ALWAYS_COVERS" => s.certify_always_covers = Some(val.clone()),
             "SPIRA_REBASE_ESCALATE_AT" => s.rebase_escalate_at = Some(val.clone()),
+            "SPIRA_REBASE_STALE_LOG" => s.rebase_stale_log = Some(val.clone()),
             "SPIRA_EVICTION_ESCALATE_AT" => s.eviction_escalate_at = Some(val.clone()),
             "SPIRA_VERDICT_WINDOW" => s.verdict_window = Some(val.clone()),
             "SPIRA_CHECK5_MAX_FILE" => s.check5_max_file = Some(val.clone()),

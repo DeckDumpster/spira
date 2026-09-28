@@ -1575,6 +1575,12 @@
             "null"
           ]
         },
+        "rebase_stale_log": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "reclaim_grace_secs": {
           "type": [
             "string",
