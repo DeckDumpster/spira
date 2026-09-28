@@ -629,9 +629,14 @@ run_gate() {             # run_gate <ref-being-tested> -> the command's own stat
     # host_cores(), which reads getconf and is immune to the quota. A repository's CI can
     # substitute it for nproc where the raw host count is what it needs.
     ( cd "$TREE" && env -i \
-        PATH="$HOME/.cargo/bin:$PATH" HOME="$HOME" TERM=dumb \
-        SPIRA_GATE_REPO="$REPO" SPIRA_GATE_REPO_NAME="$REPO_NAME" \
-        SPIRA_GATE_BRANCH="$1" SPIRA_GATE_BASE="$BASE" SPIRA_GATE_SELECT_HEAD="$BR" \
+        PATH="$HOME/.cargo/bin:$PATH" \
+        HOME="$HOME" \
+        TERM=dumb \
+        SPIRA_GATE_REPO="$REPO" \
+        SPIRA_GATE_REPO_NAME="$REPO_NAME" \
+        SPIRA_GATE_BRANCH="$1" \
+        SPIRA_GATE_BASE="$BASE" \
+        SPIRA_GATE_SELECT_HEAD="$BR" \
         SPIRA_GATE_FILES="$FILELIST" \
         SPIRA_GATE_HOST_CORES="$(host_cores)" \
         SPIRA_GATE_EJECTED_SUITES="${ejected_suites:-}" \
@@ -640,7 +645,6 @@ run_gate() {             # run_gate <ref-being-tested> -> the command's own stat
         SPIRA_CERTIFY_ALWAYS_COVERS="${SPIRA_CERTIFY_ALWAYS_COVERS:-}" \
         SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-}" \
         SPIRA_VERDICT_REPEAT_CONSIDERED="${SPIRA_VERDICT_REPEAT_CONSIDERED:-}" \
-        SPIRA_GATE_HOST_CORES="$(host_cores)" \
         timeout "${SPIRA_GATE_TIMEOUT:-2700}" bash -c "$CMD" 9>&- ) 2>&1
     return $?
 }
