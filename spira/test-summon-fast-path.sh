@@ -242,11 +242,23 @@ run_summon_only() {   # run_summon_only <run-dir> [KEY=VAL ...]
 # not by the ready count, because the mock summon below never actually claims a bead — the
 # same shape test-sentinel-pass.sh's own "fill" pass exercises. Pool=2 here so the summon
 # count this asserts (2) is unambiguous rather than an artifact of the fixture's 2 ready beads.
-_drun="$T/run-summon-only"
+#
+# ONE SHARED $SPIRA_RUN FOR THE WHOLE SECTION, PRIMED FIRST. conf.sh runs its own `bd
+# migrate schema` the first time any script sources it against a given $SPIRA_RUN (cached
+# by a stamp file there after) — orthogonal to sentinel.sh's own bd usage, but a bd call
+# all the same, and counted by the same wrapper. Priming it once, behind world.halted so
+# nothing is summoned by the prime itself, keeps that unrelated check out of the counts
+# below as far as it can; the assertions themselves count "ready" calls specifically
+# (never a bare call count) so a leftover connection retry cannot flip them either.
+_drun="$T/run-summon-only"; mkdir -p "$_drun"
+: > "$_drun/world.halted"
+run_summon_only "$_drun" >/dev/null 2>&1
+rm -f "$_drun/world.halted"
+
 rm -f "$SUMMON_LOG" "$BD_CALL_LOG"
 out_d1="$(run_summon_only "$_drun")"
 is "D: pool=2 -> exactly 2 summons (elastic fill, bounded by the pool)" "2" "$(grep -c . "$SUMMON_LOG" 2>/dev/null || echo 0)"
-is "D: exactly ONE bd call fetched the ready set" "1" "$(grep -c . "$BD_CALL_LOG" 2>/dev/null || echo 0)"
+is "D: exactly ONE bd call fetched the ready set" "1" "$(grep -c ' ready ' "$BD_CALL_LOG" 2>/dev/null || echo 0)"
 want "D: the one call was a ready query" "ready" "$(cat "$BD_CALL_LOG" 2>/dev/null)"
 want "D: log reports the summon-only pass" "summon-only pass complete" "$out_d1"
 nowant "D: no full-pass state line" "state: goal=" "$out_d1"
@@ -256,11 +268,10 @@ nowant "D: no Sending" "sending:" "$out_d1"
 echo
 echo "D — world.halted short-circuits before the live count or any bd call:"
 rm -f "$SUMMON_LOG" "$BD_CALL_LOG"
-_drun2="$T/run-summon-halted"; mkdir -p "$_drun2"
-: > "$_drun2/world.halted"
-out_halted="$(run_summon_only "$_drun2")"
+: > "$_drun/world.halted"
+out_halted="$(run_summon_only "$_drun")"
 is "halted: no summon happens" "0" "$(grep -c . "$SUMMON_LOG" 2>/dev/null || echo 0)"
-is "halted: no bd call is made at all" "0" "$(grep -c . "$BD_CALL_LOG" 2>/dev/null || echo 0)"
+is "halted: no bd 'ready' call is made" "0" "$(grep -c ' ready ' "$BD_CALL_LOG" 2>/dev/null || echo 0)"
 want "halted: says so" "halted — not summoning" "$out_halted"
 
 # ============================================================================
