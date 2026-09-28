@@ -98,26 +98,16 @@ _rs_mid_rebase() {
 mechanical=0
 failed=0
 while _rs_mid_rebase; do
-    if [ -n "${REBASE_STALE_DEBUG:-}" ]; then
-        echo "DEBUG mid-rebase status:" >&2
-        git -C "$scratch" status --short >&2
-        echo "DEBUG git-path rebase-merge: $(git -C "$scratch" rev-parse --git-path rebase-merge 2>&1)" >&2
-    fi
     conflicted="$(git -C "$scratch" diff --name-only --diff-filter=U 2>/dev/null)"
     if [ -z "$conflicted" ] || ! bash "$HERE/mech-resolve.sh" "$scratch"; then
         failed=1
         break
     fi
     mechanical=1
-    if [ -n "${REBASE_STALE_DEBUG:-}" ]; then
-        git -C "$scratch" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" \
-            rebase --continue -q >/tmp/rs-continue-out.txt 2>&1
-        echo "DEBUG rebase --continue rc=$? ; output:" >&2
-        cat /tmp/rs-continue-out.txt >&2
-    else
-        git -C "$scratch" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" \
-            rebase --continue -q >/dev/null 2>&1
-    fi
+    # `--continue` TAKES NO OTHER FLAGS — `rebase --continue -q` is a usage error (git
+    # parses `--continue` as a standalone mode switch), unlike the initial `rebase -q`.
+    git -C "$scratch" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" \
+        rebase --continue >/dev/null 2>&1
 done
 if [ "$failed" = 0 ] && ! git -C "$scratch" merge-base --is-ancestor "$landref" HEAD 2>/dev/null; then
     failed=1   # git refused the rebase outright, with nothing left conflicted to name
