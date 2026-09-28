@@ -51,9 +51,10 @@ seed() { testdb_reset; testdb_seed; }   # seed <<JSONL ... JSONL, after a clean 
 epic()         { printf '{"id":"%s","title":"epic","status":"open","issue_type":"epic","priority":%s,"labels":[],"updated_at":"2026-09-04T00:00:00Z"}\n' "$1" "$2"; }
 closed_child() { printf '{"id":"%s","title":"done child","status":"closed","issue_type":"task","priority":2,"labels":[],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"%s","type":"parent-child"}]}\n' "$1" "$1" "$2"; }
 bead() {
-    local id="$1" parent="$2" prio="$3" deps=""
+    local id="$1" parent="$2" prio="$3" deps="" labels="\"plan\""
     [ -n "$parent" ] && deps=",\"dependencies\":[{\"issue_id\":\"$id\",\"depends_on_id\":\"$parent\",\"type\":\"parent-child\"}]"
-    printf '{"id":"%s","title":"t","status":"open","issue_type":"task","priority":%s,"labels":["plan"],"updated_at":"2026-09-04T00:00:00Z"%s}\n' "$id" "$prio" "$deps"
+    [ -n "${SPIRA_SCOPE_LABEL:-}" ] && labels="\"$SPIRA_SCOPE_LABEL\",$labels"
+    printf '{"id":"%s","title":"t","status":"open","issue_type":"task","priority":%s,"labels":[%s],"updated_at":"2026-09-04T00:00:00Z"%s}\n' "$id" "$prio" "$labels" "$deps"
 }
 
 # ranked_ids -> the ready set's own ids (READY_ARGS shape, plan label), ranked best-first.
