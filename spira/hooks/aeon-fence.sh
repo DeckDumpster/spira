@@ -130,10 +130,45 @@ if [ -z "$reason" ]; then
 fi
 
 if [ -z "$reason" ] && [ -n "${SPIRA_RUN:-}" ]; then
+    # Refuse write shapes only, mirroring the \$SPIRA_PROD rule below: reads, script
+    # execution and mentions of the path in prose (a heredoc body, a quoted string) are
+    # permitted (sp-ozym9; law-a-matcher-reads-code-not-prose).
     case "$cmd" in
-        *"${SPIRA_RUN}/landstate"*|*"${SPIRA_RUN}/queue"*)
-            reason="aeons may not write to \$SPIRA_RUN/landstate or \$SPIRA_RUN/queue (sp-kz8ob)" ;;
+        *">${SPIRA_RUN}/landstate"*|*"> ${SPIRA_RUN}/landstate"*|\
+        *">>${SPIRA_RUN}/landstate"*|*">> ${SPIRA_RUN}/landstate"*|\
+        *">${SPIRA_RUN}/queue"*|*"> ${SPIRA_RUN}/queue"*|\
+        *">>${SPIRA_RUN}/queue"*|*">> ${SPIRA_RUN}/queue"*)
+            reason="aeons may not write to \$SPIRA_RUN/landstate or \$SPIRA_RUN/queue (sp-kz8ob: use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
     esac
+    if [ -z "$reason" ]; then
+        _run_write="$(printf '%s' "$cmd" | python3 -c '
+import sys, re
+cmd = sys.stdin.read()
+guarded = sys.argv[1:]
+WRITE = {"rm", "mv", "cp", "truncate", "tee", "install", "ln", "chmod", "chown", "mkdir"}
+for seg in re.split(r"&&|\|\||;|\||\n", cmd):
+    seg = seg.strip()
+    if not seg or not any(g in seg for g in guarded):
+        continue
+    rem = seg
+    while True:
+        m = re.match(r"^[A-Za-z_][A-Za-z0-9_]*=[^\s]*\s+", rem)
+        if not m:
+            break
+        rem = rem[m.end():]
+    toks = rem.split()
+    if not toks:
+        continue
+    t0 = toks[0].split("/")[-1]
+    if t0 in WRITE:
+        print("1"); sys.exit(0)
+    if t0 == "sed":
+        for t in toks[1:]:
+            if t == "-i" or (t.startswith("-") and not t.startswith("--") and "i" in t[1:]):
+                print("1"); sys.exit(0)
+' "${SPIRA_RUN}/landstate" "${SPIRA_RUN}/queue" 2>/dev/null)"
+        [ "$_run_write" = "1" ] && reason="aeons may not write to \$SPIRA_RUN/landstate or \$SPIRA_RUN/queue (sp-kz8ob: use SPIRA_AEON_OVERRIDE=1 for Ops incidents)"
+    fi
 fi
 
 if [ -z "$reason" ] && [ -n "${SPIRA_PROD:-}" ]; then
