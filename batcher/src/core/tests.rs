@@ -250,24 +250,31 @@ fn a_red_suite_missing_from_the_rerun_fails_closed_to_double_red() {
 
 /// The design's Section E paragraph names three E-shaped double-reds of 2026-09-24/25 — a
 /// bead landing a test (or lint) asserting behaviour another, unlanded bead provides:
-/// sp-ui46l, sp-29g55, sp-q4swv. Only two hold up against the wiki's own account. Round 1's
-/// `test-testlib-migrated` red was sp-29g55, sequenced behind sp-qvjzb once it landed
-/// (concierge-as-batcher-2026-09-24.md, "What the first two rounds actually found"); round
-/// 3's recurrence of the same suite was sp-q4swv, sequenced behind sp-29g55 in turn (same
-/// page, "Rounds 3 and after"). sp-ui46l is excluded: its real bead (`bd show sp-ui46l`) is
-/// a P3 fix for a `SPIRA_INCIDENT_LABELS` partition-label prefix, closed per standing
-/// operator instruction after bouncing from batch 327 — nothing like a test landing ahead
-/// of its code, so there is no real waits_on fact to give it here.
+/// sp-ui46l, sp-29g55, sp-q4swv. Only sp-q4swv gives a clean positive case here. Round 3's
+/// `test-testlib-migrated` recurrence was sp-q4swv, sequenced behind sp-29g55
+/// (concierge-as-batcher-2026-09-24.md, "Rounds 3 and after"). sp-ui46l is excluded: its
+/// real bead (`bd show sp-ui46l`) is a P3 fix for a `SPIRA_INCIDENT_LABELS` partition-label
+/// prefix, closed per standing operator instruction after bouncing from batch 327 — nothing
+/// like a test landing ahead of its code. sp-29g55's own real dependency (sp-qvjzb, round
+/// 1's occurrence of the same suite) is covered separately below as a negative case, not
+/// here — see `waits_on_misses_a_real_dependency_id_with_no_digit_in_its_suffix`.
 #[test]
-fn each_recorded_test_ahead_of_code_shape_sequences_behind_its_dependency() {
-    for (member, dep, assertion) in [
-        ("sp-29g55", "sp-qvjzb", "test-testlib-migrated: adds a lint that cannot pass until sp-qvjzb lands"),
-        ("sp-q4swv", "sp-29g55", "test-testlib-migrated: a lint ahead of the migration it checks, sequenced behind sp-29g55"),
-    ] {
-        let own = vec![suite("test-own", SuiteOutcome::Red, &[assertion])];
-        let sa = test_ahead_of_code(&member.to_string(), &own).expect("should sequence behind the named dependency");
-        assert_eq!(sa.reason, SetAsideReason::TestAheadOfCode { waits_on: dep.into() });
-    }
+fn a_recorded_test_ahead_of_code_shape_sequences_behind_its_dependency() {
+    let assertion = "test-testlib-migrated: a lint ahead of the migration it checks, sequenced behind sp-29g55";
+    let own = vec![suite("test-own", SuiteOutcome::Red, &[assertion])];
+    let sa = test_ahead_of_code(&"sp-q4swv".to_string(), &own).expect("should sequence behind the named dependency");
+    assert_eq!(sa.reason, SetAsideReason::TestAheadOfCode { waits_on: "sp-29g55".into() });
+}
+
+/// sp-29g55's real round-1 dependency was sp-qvjzb (concierge-as-batcher-2026-09-24.md,
+/// "What the first two rounds actually found": "`sp-29g55` adds a lint that cannot pass
+/// until `sp-qvjzb` lands"). `waits_on` requires a digit after "sp-" so prose like a bare
+/// "sp-" is never mistaken for an id (see `waits_on_ignores_a_bare_sp_dash_with_no_digits`
+/// above) — but `sp-qvjzb`'s suffix is all letters, so the real dependency is missed.
+/// Filed forward as sp-odxhz; not this bead's fix to make.
+#[test]
+fn waits_on_misses_a_real_dependency_id_with_no_digit_in_its_suffix() {
+    assert_eq!(waits_on("adds a lint that cannot pass until sp-qvjzb lands"), None);
 }
 
 #[test]
@@ -563,23 +570,25 @@ fn judgement_body_renders_no_members_explicitly() {
 ///   only" headers the lint could not recognise. Again no named dependency; fixed directly
 ///   on `sp-04yh0`'s own branch.
 /// - `test-testlib-migrated` — `sp-29g55` adds a lint that cannot pass until `sp-qvjzb`
-///   lands. This is the one true test-ahead-of-code case: reopened and made to depend on
-///   `sp-qvjzb`.
+///   lands. Reopened and made to depend on `sp-qvjzb` by hand.
 ///
-/// So `judgement_for` must flag all three by name (the crate's half of the record: it
-/// cannot resolve any of them mechanically without a member's own suite run), and
-/// `test_ahead_of_code` must resolve only the third to a dependency — failing closed to
-/// `None` for the first two, exactly as no dependency was named for them either.
+/// `test_ahead_of_code` (design Section E) did not exist at the time — all three were
+/// resolved by a person, not this mechanism. So `judgement_for` must still flag all three by
+/// name (the crate's only mechanical read of a corpus run), and `test_ahead_of_code` resolves
+/// none of them replayed against real assertion text today either: the first two never named
+/// a dependency, and the third's real dependency, `sp-qvjzb`, has no digit in its suffix and
+/// so is missed by `waits_on` (`waits_on_misses_a_real_dependency_id_with_no_digit_in_its_suffix`
+/// above; filed forward as sp-odxhz).
 #[test]
 fn round_1s_three_double_reds_are_flagged_for_judgement_and_resolve_like_what_was_done() {
     let round1 = [
-        ("test-skew-check-release", None, "origin/main itself is red: run_skew_artifact still copies the bare template, no activated release"),
-        ("test-script-exec", None, "gate-lib.sh and tap-jsonl.sh sourced-only headers not recognised by the lint"),
-        ("test-testlib-migrated", Some("sp-qvjzb"), "adds a lint that cannot pass until sp-qvjzb lands"),
+        ("test-skew-check-release", "origin/main itself is red: run_skew_artifact still copies the bare template, no activated release"),
+        ("test-script-exec", "gate-lib.sh and tap-jsonl.sh sourced-only headers not recognised by the lint"),
+        ("test-testlib-migrated", "adds a lint that cannot pass until sp-qvjzb lands"),
     ];
-    let first: Vec<SuiteRun> = round1.iter().map(|(suite_name, _, assertion)| suite(suite_name, SuiteOutcome::Red, &[assertion])).collect();
+    let first: Vec<SuiteRun> = round1.iter().map(|(suite_name, assertion)| suite(suite_name, SuiteOutcome::Red, &[assertion])).collect();
     let verdicts = classify(&first, &first); // re-run reproduces the same failure: still red both times
-    for (suite_name, ..) in round1 {
+    for (suite_name, _) in round1 {
         assert_eq!(verdicts.iter().find(|v| v.name == suite_name).unwrap().classification, Classification::DoubleRed);
     }
 
@@ -587,16 +596,12 @@ fn round_1s_three_double_reds_are_flagged_for_judgement_and_resolve_like_what_wa
     assert_eq!(j.source, RedSource::Local);
     assert_eq!(j.suites.len(), 3);
 
-    for (suite_name, dep, assertion) in round1 {
+    for (suite_name, assertion) in round1 {
         let own = vec![suite(suite_name, SuiteOutcome::Red, &[assertion])];
-        let sa = test_ahead_of_code(&"member".to_string(), &own);
-        match dep {
-            Some(dep) => assert_eq!(
-                sa.expect("test-testlib-migrated names its dependency").reason,
-                SetAsideReason::TestAheadOfCode { waits_on: dep.into() },
-                "sp-29g55 must resolve exactly as it did on 2026-09-24"
-            ),
-            None => assert_eq!(sa, None, "{suite_name} named no dependency on 2026-09-24 either — it was fixed directly"),
-        }
+        assert_eq!(
+            test_ahead_of_code(&"member".to_string(), &own),
+            None,
+            "{suite_name}: none of round 1's fixes were auto-sequenced, by hand on 2026-09-24 or by the matcher replayed today"
+        );
     }
 }
