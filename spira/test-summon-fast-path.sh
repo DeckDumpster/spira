@@ -140,28 +140,56 @@ RACE_LOG="$T/race-summoned.log"
 capacity_paused() { return 1; }
 world_gate() { return 0; }
 fayth_ready() { printf '1'; }
-# A DELIBERATE, WIDE WINDOW: the real defect is a race between two processes reading
-# "N live" before either's summon lands (aeon.sh writes its pidfile late; a second
-# process's systemd-run call takes real wall-clock time). 0.3s is generous enough that
-# two backgrounded shells started within milliseconds of each other reliably overlap
-# inside it, without depending on true OS scheduling nondeterminism.
-aeon_count() { sleep 0.3; local n; n="$(grep -c . "$RACE_LOG" 2>/dev/null)"; printf '%s' "${n:-0}"; }
-cat > "$T/bin/mock-summon-race" <<EOF
-#!/usr/bin/env bash
-echo summoned >> "$RACE_LOG"
-EOF
-chmod +x "$T/bin/mock-summon-race"
-export SPIRA_SUMMON="$T/bin/mock-summon-race"
+aeon_count() { local n; n="$(grep -c . "$RACE_LOG" 2>/dev/null)"; printf '%s' "${n:-0}"; }
 acted=0; act() { acted=$((acted+1)); }
 
 echo
 echo "B negative control — the UNLOCKED body races and double-summons past cap=1:"
+# A DETERMINISTIC INTERLEAVE, not a sleep-based window: a 0.3s sleep in aeon_count
+# reliably overlapped two backgrounded bodies at low load, then stopped overlapping
+# under load ~24 on unchanged code (sp-2usbl, law-a-test-that-flips-is-deleted). The
+# mock SPIRA_SUMMON below is a real two-party barrier on the WRITE side: neither body
+# can record its summon until the other has also read cap=1/have=0 and committed to
+# summoning too, so both reads are forced to see the same pre-race state on every run,
+# on any host — the double-summon this proves is no longer a timing gamble.
+BARRIER_LOCK="$T/race-barrier.lock"; BARRIER_ARRIVALS="$T/race-barrier.count"
+BARRIER_FIFO="$T/race-barrier.fifo"
+: > "$BARRIER_ARRIVALS"; rm -f "$BARRIER_FIFO"; mkfifo "$BARRIER_FIFO"
+cat > "$T/bin/mock-summon-barrier" <<EOF
+#!/usr/bin/env bash
+mynum=\$(
+    exec 8>"$BARRIER_LOCK"
+    flock 8
+    printf 'x\n' >> "$BARRIER_ARRIVALS"
+    wc -l < "$BARRIER_ARRIVALS"
+)
+if [ "\$mynum" -ge 2 ]; then
+    printf go > "$BARRIER_FIFO"
+else
+    read -r _ < "$BARRIER_FIFO"
+fi
+echo summoned >> "$RACE_LOG"
+EOF
+chmod +x "$T/bin/mock-summon-barrier"
+export SPIRA_SUMMON="$T/bin/mock-summon-barrier"
 : > "$RACE_LOG"; rm -f "$SPIRA_RUN/summon.lock"
 ( _ck7_summon_body ) & ( _ck7_summon_body ) &
 wait
+is "unlocked: two concurrent bodies both summon (cap=1 exceeded — the race is real)" \
+   "2" "$(grep -c . "$RACE_LOG" 2>/dev/null || echo 0)"
 
 echo
 echo "B — the LOCKED wrapper serializes the same race and holds the cap:"
+# THE VARIANT WITH THE RACE REMOVED: the same body, the same cap, wrapped in
+# ck7_summon_pass's flock instead of called bare. A plain (non-barrier) summon mock —
+# under the lock only one process is ever inside the body at once, so a second arrival
+# at a two-party barrier would never come and the run would hang forever.
+cat > "$T/bin/mock-summon-plain" <<EOF
+#!/usr/bin/env bash
+echo summoned >> "$RACE_LOG"
+EOF
+chmod +x "$T/bin/mock-summon-plain"
+export SPIRA_SUMMON="$T/bin/mock-summon-plain"
 : > "$RACE_LOG"; rm -f "$SPIRA_RUN/summon.lock"
 ( ck7_summon_pass ) & ( ck7_summon_pass ) &
 wait
