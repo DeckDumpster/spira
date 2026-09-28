@@ -17,6 +17,10 @@ pub struct Member {
     pub priority: Option<u8>,
     pub express: bool,
     pub certified_at: u64,
+    /// Prerequisite bead id -> the tip this member's own work was built on (design
+    /// stacked-dependents-2026-09-28 §1). Empty for an unstacked member — the pool's default,
+    /// and byte-identical to today's behaviour wherever a caller never populates it.
+    pub stack: BTreeMap<Id, String>,
 }
 
 /// Lowest number is most urgent; an unknown priority sorts last so it never manufactures an
@@ -27,6 +31,64 @@ pub struct Member {
 /// batch-accumulation conflict, and that has to be the same express/priority/arrival order.
 pub fn order_key(m: &Member) -> (u8, u8, u64) {
     (if m.express { 0 } else { 1 }, m.priority.unwrap_or(u8::MAX), m.certified_at)
+}
+
+/// Topological merge order (design §3, "Order"): a member merges only after every
+/// prerequisite named in its `stack` that is also present in `members` — Kahn's algorithm,
+/// picking among the members with no unmet prerequisite by `order_key` so a pool with no
+/// stacking at all sorts exactly as before. A cycle (which claim-time depth checking should
+/// have already refused) cannot stall this: once nothing is ready, the lowest `order_key`
+/// member breaks it rather than the round silently dropping members.
+pub fn topo_order(members: &[Member]) -> Vec<Member> {
+    let ids: std::collections::BTreeSet<&Id> = members.iter().map(|m| &m.id).collect();
+    let mut remaining: Vec<Member> = members.to_vec();
+    let mut placed: std::collections::BTreeSet<Id> = std::collections::BTreeSet::new();
+    let mut out = Vec::with_capacity(members.len());
+    while !remaining.is_empty() {
+        let ready: Vec<usize> = remaining
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.stack.keys().all(|p| !ids.contains(p) || placed.contains(p)))
+            .map(|(i, _)| i)
+            .collect();
+        let idx = if ready.is_empty() {
+            (0..remaining.len()).min_by_key(|&i| order_key(&remaining[i])).unwrap()
+        } else {
+            *ready.iter().min_by_key(|&&i| order_key(&remaining[i])).unwrap()
+        };
+        let picked = remaining.remove(idx);
+        placed.insert(picked.id.clone());
+        out.push(picked);
+    }
+    out
+}
+
+/// True when some other pool member's `stack` names `id` as a prerequisite — the fact that
+/// tells "empty because a dependent already carried this tip into the round" apart from
+/// "empty because it genuinely has no commits of its own", which `MergeResult::Empty` alone
+/// cannot say (design §3, "Closure": a contained member is still a member, never dropped).
+pub fn stacked_into(pool: &[Member], id: &Id) -> bool {
+    pool.iter().any(|m| m.stack.contains_key(id))
+}
+
+/// member_added's stale-stack refusal (design §3): a member whose `stack` names a
+/// prerequisite tip that is not, at that exact tip, another member of this same pool is
+/// refused — sequenced behind that prerequisite via `combine`'s existing `Dependency`
+/// set-aside, the tip invariant extended to round assembly. A prerequisite present in the
+/// pool at the recorded tip is closure working as intended: it merges into the same round.
+pub fn stack_sequencing(pool: &[Member]) -> BTreeMap<Id, Id> {
+    let by_id: BTreeMap<&Id, &Member> = pool.iter().map(|m| (&m.id, m)).collect();
+    let mut sequenced = BTreeMap::new();
+    for m in pool {
+        for (prereq, tip) in &m.stack {
+            let current = by_id.get(prereq).map(|p| &p.tip == tip).unwrap_or(false);
+            if !current {
+                sequenced.insert(m.id.clone(), prereq.clone());
+                break;
+            }
+        }
+    }
+    sequenced
 }
 
 /// A title as a reader should see it: a leading `sp-xxxx:` names some OTHER bead and makes
@@ -180,6 +242,7 @@ pub fn combine(input: &CombineInput) -> Combined {
         }
         match input.merges.get(&m.id) {
             Some(MergeResult::Ok) => merged.push(m.clone()),
+            Some(MergeResult::Empty) if stacked_into(input.pool, &m.id) => merged.push(m.clone()),
             Some(MergeResult::Empty) => set_aside.push(SetAside { id: m.id.clone(), reason: SetAsideReason::Empty }),
             _ => {
                 let deleted = input.deleted_suites.get(&m.id).cloned().unwrap_or_default();
@@ -187,7 +250,7 @@ pub fn combine(input: &CombineInput) -> Combined {
             }
         }
     }
-    merged.sort_by_key(order_key);
+    let merged = topo_order(&merged);
     Combined { merged, set_aside }
 }
 

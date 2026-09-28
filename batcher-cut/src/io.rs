@@ -176,6 +176,25 @@ pub fn lc_stack_batch(env: &Env, repo: &str, batch_id: &str, prior_version: u64,
     }
 }
 
+/// `id`'s stack (design stacked-dependents-2026-09-28 §1: `{prereq_bead_id: certified_tip}`)
+/// off the lifecycle machine's own bead row — `spira-lc show`, the same best-effort contract
+/// as `lc_cut_batch`: no `SPIRA_LC_BIN`, a refusal, or a row with no `stack` column at all
+/// (today's `spira-lc show`, or a bead the machine has never seen) all read as unstacked,
+/// never a hard error a round would have to refuse over.
+fn read_stack(env: &Env, id: &str) -> BTreeMap<String, String> {
+    let Ok(out) = lcq(env, &["show", id]) else { return BTreeMap::new() };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&out) else { return BTreeMap::new() };
+    let stack = match v.get("bead").and_then(|b| b.get("stack")) {
+        Some(serde_json::Value::String(s)) => serde_json::from_str::<serde_json::Value>(s).unwrap_or(serde_json::Value::Null),
+        Some(other) => other.clone(),
+        None => return BTreeMap::new(),
+    };
+    stack
+        .as_object()
+        .map(|o| o.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
+        .unwrap_or_default()
+}
+
 // ---------------------------------------------------------------------------------------
 // The certified pool: landstate CERTIFIED records, narrowed to this repo, with title/
 // priority/express filled in from the bead store. Same construction as queue-watch's
@@ -261,7 +280,8 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
     let mut out = Vec::new();
     for (id, tip, epoch) in certified {
         let Some((priority, title, express)) = by_id.get(&id) else { continue };
-        out.push(Member { id, tip, title: title.clone(), priority: *priority, express: *express, certified_at: epoch });
+        let stack = if env.lc_bin.is_some() { read_stack(env, &id) } else { BTreeMap::new() };
+        out.push(Member { id, tip, title: title.clone(), priority: *priority, express: *express, certified_at: epoch, stack });
     }
     Ok(out)
 }
