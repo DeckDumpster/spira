@@ -63,6 +63,7 @@ printf '\n%s\n' "1-2. legacy: bd events -> bead-stage rows, and a re-run exports
 . "$HERE/testdb.sh"
 testdb_available || skip "no fixture database reachable"
 testdb_require tsd-lifecycle-export
+# testdb-mode: server — the fixture is seeded with `bdq sql` INSERT/DELETE on events, and `bd sql` is refused in embedded mode.
 export SPIRA_TESTDB_MODE=server
 testdb_up tsd-lifecycle-export || skip "server testdb not available"
 trap 'testdb_drop; rm -rf "$T"' EXIT INT TERM
