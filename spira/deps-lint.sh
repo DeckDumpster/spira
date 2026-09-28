@@ -48,7 +48,7 @@ SYSTEM_ALLOW = {
     "timeout", "curl", "gcc", "nc", "setsid", "pgrep", "fuser", "script",
     "systemctl", "systemd-run",
     "nodejs",                        # alternate name for node on some platforms
-    "gate_meter", "yield_note", "fayth_names",  # shell functions, not programs
+    "gate_meter", "yield_note", "fayth_names", "lc_certify",  # shell functions, not programs
 }
 
 CV_RE = re.compile(r'command\s+-v\s+([a-z][a-z0-9_-]+)')
