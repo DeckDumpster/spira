@@ -1174,6 +1174,11 @@ land_drain
 mark_queue_waiters 2>/dev/null || true
 close_landed_queue_waiters 2>/dev/null || true
 
+# CHECK 3c — a coordination bead with any open parent-child-linked child is not currently
+# dispatchable: mark_open_children applies SPIRA_OPEN_CHILDREN_LABEL so fayth_ready and the
+# claim it counts on both exclude it, and removes the label once every child has closed.
+mark_open_children 2>/dev/null || true
+
 # CHECK 7 — idle capacity. Ready work and a free aeon is the whole point of the system.
 #
 # EVERY FAYTH IS ASKED ITS OWN PREDICATE, AND EVERY FAYTH IS ASKED. This whole block used
