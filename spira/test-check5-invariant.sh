@@ -120,6 +120,8 @@ import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(d[0].get("status") or "")'; }
 
+ref_hash() { printf '%s' "$1" | sha256sum | cut -c1-8; }
+
 echo "test-check5-invariant.sh"
 
 # ======================================================================================
@@ -392,6 +394,82 @@ want "(c) a genuinely unlanded closed bead still files an incident" "REF=closed-
 
 # ======================================================================================
 echo
+echo "RESOLVER 3 — BRANCH ANCESTRY: a landed commit whose subject names nobody, no landstate,"
+echo "  resolved by its recorded branch tip (sp-7youp's exact shape, sp-noa5s):"
+# ======================================================================================
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-nosubj","title":"landed under an unrecognised subject","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO","branch:spira/sp-nosubj"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-nosubj","depends_on_id":"sp-goal","type":"parent-child"}]}
+JSONL
+touch "$RUN/sp-nosubj.log"
+rm -f "$RUN/landstate/sp-nosubj"
+git -C "$REPO" checkout -q -b spira/sp-nosubj
+git -C "$REPO" commit -q --allow-empty -m "improve substrate connectivity"
+git -C "$REPO" checkout -q main
+git -C "$REPO" merge -q --ff-only spira/sp-nosubj
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+: > "$INC_LOG"
+
+out="$(sentinel)"
+is "sp-nosubj stays closed" closed "$(status_of sp-nosubj)"
+inc_out="$(cat "$INC_LOG")"
+nowant "no incident for a bead resolved by its branch's ancestry alone" "sp-nosubj" "$inc_out"
+
+# ======================================================================================
+echo
+echo "RESOLVER 3 RESOLVE — the same, but an incident was already filed for it:"
+# ======================================================================================
+testdb_reset
+INC_HASH="$(ref_hash "closed-not-landed:sp-brold")"
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-brold","title":"landed under an unrecognised subject, incident already open","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO","branch:spira/sp-brold"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-brold","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-broldinc","title":"CLOSED NOT LANDED: sp-brold has no LANDED record on $HOME_REPO","status":"open","issue_type":"bug","labels":["spira","incident","ref:$INC_HASH"],"updated_at":"2026-09-04T00:00:00Z"}
+JSONL
+touch "$RUN/sp-brold.log"
+rm -f "$RUN/landstate/sp-brold"
+git -C "$REPO" checkout -q -b spira/sp-brold
+git -C "$REPO" commit -q --allow-empty -m "improve substrate connectivity further"
+git -C "$REPO" checkout -q main
+git -C "$REPO" merge -q --ff-only spira/sp-brold
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+: > "$INC_LOG"
+
+is "the incident starts open" open "$(status_of sp-broldinc)"
+out="$(sentinel)"
+is "sp-brold stays closed" closed "$(status_of sp-brold)"
+is "the incident this check filed is now closed" closed "$(status_of sp-broldinc)"
+want "the resolve is logged, naming the branch as the evidence" "recorded branch (spira/sp-brold)" "$out"
+
+# ======================================================================================
+echo
+echo "RESOLVER 3 COMPANION — a recorded branch NOT an ancestor of the base still files:"
+# ======================================================================================
+# Guards against the resolver degrading into "a branch: label alone is enough": the branch
+# must actually be merged, not merely named.
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-unmerged","title":"branch recorded but never merged","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO","branch:spira/sp-unmerged"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-unmerged","depends_on_id":"sp-goal","type":"parent-child"}]}
+JSONL
+touch "$RUN/sp-unmerged.log"
+rm -f "$RUN/landstate/sp-unmerged"
+git -C "$REPO" checkout -q -b spira/sp-unmerged
+git -C "$REPO" commit -q --allow-empty -m "unmerged work"
+git -C "$REPO" checkout -q main
+: > "$INC_LOG"
+
+out="$(sentinel)"
+is "sp-unmerged stays closed" closed "$(status_of sp-unmerged)"
+inc_out="$(cat "$INC_LOG")"
+want "a recorded branch that never merged still files" "REF=closed-not-landed:sp-unmerged " "$inc_out"
+git -C "$REPO" branch -D spira/sp-unmerged >/dev/null 2>&1
+
+# ======================================================================================
+echo
 echo "A FLOOD IS IMPOSSIBLE — N+1 unlanded beads file exactly N, and the skip is logged:"
 # ======================================================================================
 testdb_reset
@@ -431,8 +509,6 @@ is   "(f) the budget alone stops every filing, not just the count cap" 0 "$(grep
 want "(f) the pass logs the budget, not the count cap, as the reason" \
     "pass budget exhausted (SPIRA_CHECK5_BUDGET_SECS=0)" "$out"
 is   "(f) sp-tb1 stays closed — reported, not reopened" closed "$(status_of sp-tb1)"
-
-ref_hash() { printf '%s' "$1" | sha256sum | cut -c1-8; }
 
 # ======================================================================================
 echo

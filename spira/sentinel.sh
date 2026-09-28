@@ -878,6 +878,14 @@ for i in (d if isinstance(d, list) else [d]):
 # ONCE per repository per pass into a set (_c5_landed), so each bead costs a lookup, not a
 # git walk.
 #
+# LANDED IS ALSO PROVEN BY THE BEAD'S OWN BRANCH, when neither of the above catches it: a
+# commit that reaches the base under a subject naming nobody, with landstate never written
+# (sp-noa5s). The subject walk and the landstate file are both readings OF a landing; this
+# resolver asks the repository directly — the branch: label's ref, if the reap that runs
+# alongside a landing close has not yet claimed it, is checked for ancestry the same way
+# the landstate tip is. A bead with no resolvable branch is left to the next resolver,
+# never read as unlanded on that account alone.
+#
 # A FLOOD IS IMPOSSIBLE. At most SPIRA_CHECK5_MAX_FILE incidents are filed per pass (each
 # costs an incident.sh run); the rest are counted and named in one log line, and the next
 # pass files the next batch. Filing is the rare path and must stay bounded however wrong the
@@ -952,7 +960,7 @@ except Exception: sys.exit(0)
 for b in (d if isinstance(d, list) else [d]):
     for l in b.get("labels") or []:
         if l.startswith("ref:"): print(l[4:], b["id"])' 2>/dev/null)
-while IFS=$'\x1f' read -r id r_name superseded dropped delivers content_landed subsumed; do
+while IFS=$'\x1f' read -r id r_name superseded dropped delivers content_landed subsumed branch; do
     [ -n "$id" ] || continue
     # Only beads an aeon worked — anything closed by hand outside the pipeline has its own
     # evidence, and this check has no branch of its own to judge it against.
@@ -998,6 +1006,13 @@ while IFS=$'\x1f' read -r id r_name superseded dropped delivers content_landed s
     if [ -n "${_c5_landed[$id]:-}" ]; then
         _c5_graph=$((_c5_graph + 1))
         _c5_resolve "$id" "$id is landed: $r_name's base ($subj_base) names it in a 'spira: land' or '<id>:' subject, proven by the same commit-graph walk that filed this incident (law-closed-is-not-landed)."
+        continue
+    fi
+    # RESOLVER 3 (sp-noa5s) — see the header block above.
+    if [ -n "${branch:-}" ] \
+           && git -C "$r_path" show-ref --verify -q "refs/heads/$branch" \
+           && git -C "$r_path" merge-base --is-ancestor "refs/heads/$branch" "$subj_base" 2>/dev/null; then
+        _c5_resolve "$id" "$id is landed: its recorded branch ($branch) tip is an ancestor of $r_name's base ($subj_base), proven directly by the commit graph — no commit subject names it and no landstate record exists (law-closed-is-not-landed)."
         continue
     fi
     _c5_ls_state=""; _c5_ls_tip=""
@@ -1056,7 +1071,8 @@ for i in (d if isinstance(d, list) else [d]):
     cl = 1 if "content-landed" in (i.get("labels") or []) else 0
     reason = (i.get("close_reason") or "")
     subs = 1 if re.search(r"SUBSUMED|DUPLICATE|tracked in epic", reason, re.I) else 0
-    print("\x1f".join([i["id"], repo, str(sup), str(drop), deliv, str(cl), str(subs)]))' "$home_repo" \
+    branch = next((l[7:] for l in (i.get("labels") or []) if l.startswith("branch:")), "")
+    print("\x1f".join([i["id"], repo, str(sup), str(drop), deliv, str(cl), str(subs), branch]))' "$home_repo" \
             "${SPIRA_WORK_CLOSE_TYPES:-task bug feature}" 2>/dev/null
     done <<< "$PARTITIONS" |
     sort -u -t$'\x1f' -k2,2 -k1,1
