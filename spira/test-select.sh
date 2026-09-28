@@ -485,9 +485,13 @@ _n="$(grep -c 'select\.sh' "$TOUCHED" 2>/dev/null || true)"
 # The new gate-touched.sh reads # covers: via select.sh and selects it.
 # test-aeon-world-stop.sh is tier T2, so SPIRA_GATE_TIERS must include it here — the default
 # T0,T1 cert-gate restriction (sp-qu948) is a separate concern from this covers: match.
+# SPIRA_GATE_REPO is pinned off the real tree (SPIRA_BATCH_SUITE_DIR is deliberately left
+# unset — this is the one case that must still scan the real corpus) so plan-matrix-fence
+# and the lockfile/build fences skip instead of building test-plan and re-scanning the same
+# corpus a second and third time; select.sh's own covers-matching is what's under test here.
 FLIST_CONF="$TMP/flist-conf"
 printf 'spira/conf.sh\n' > "$FLIST_CONF"
-out_k="$(SPIRA_GATE_FILES="$FLIST_CONF" SPIRA_GATE_TIERS="T0,T1,T2" \
+out_k="$(SPIRA_GATE_FILES="$FLIST_CONF" SPIRA_GATE_TIERS="T0,T1,T2" SPIRA_GATE_REPO="$TMP" \
     bash "$TOUCHED" dummy-base dummy-head 2>/dev/null)"
 want "K2: conf.sh change selects test-aeon-world-stop.sh (acceptance criterion)" \
     "test-aeon-world-stop.sh" "$out_k"
