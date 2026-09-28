@@ -153,6 +153,7 @@ testdb_seed <<'JSONL'
 {"id":"c2","title":"three failures, cleared, one new failure","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-06T00:00:00Z"}
 {"id":"c3","title":"reopens and reclaims stand either side of a clear","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-06T00:00:00Z"}
 {"id":"c4","title":"never cleared","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-06T00:00:00Z"}
+{"id":"c5","title":"only event is poison.cleared","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-06T00:00:00Z"}
 JSONL
 
 # c1: three claims before the clear, nothing after. THE CONTROL for the fixture itself: an
@@ -178,6 +179,21 @@ seedt c4 claimed '' '2026-09-06 00:00:01'
 seedt c4 claimed '' '2026-09-06 00:00:02'
 seedt c4 claimed '' '2026-09-06 00:00:03'
 is "CONTROL c4: three claims, never cleared = 3 attempts" "3" "$(num "$(attempts_of c4)")"
+
+# c5: ZERO rows match the floor at all — not even the bead's own created/label_added rows,
+# which testdb_seed writes at real wall-clock time and which a past-dated floor (like c1's)
+# does NOT exclude, so c1 alone cannot exercise this: it always has non-attempt rows after
+# its floor, and sum(0 over non-empty rows) is 0 — never NULL. A floor placed after every
+# real row (created/label_added included) is the only way to make the matched set truly
+# empty. sum() over an empty group is NULL, and greatest(NULL, 0) is itself NULL in
+# Dolt/MySQL: attempts_of must still print 0 rc 0, not empty rc 1 (sp-r66qd). Exercised
+# directly against the raw query too, so a regression shows the <nil> bd sql prints, not
+# just a failed printf downstream of it.
+seedt c5 poison.cleared operator '2099-01-01 00:00:00'
+c5_raw="$(bdq sql "$(_attempts_sql_query c5)" 2>/dev/null | sed -n '3p' | tr -d ' ')"
+is "c5: no events since the only poison.cleared = raw SQL result is 0, not <nil>" "0" "$c5_raw"
+is "c5: no events since the only poison.cleared = 0 attempts"   "0" "$(num "$(attempts_of c5)")"
+is "c5: attempts_of succeeds (rc 0) rather than 'cannot tell'"  "0" "$(attempts_of c5 >/dev/null 2>&1; echo $?)"
 
 echo
 echo "bump_poison_cleared writes no label (D6):"
