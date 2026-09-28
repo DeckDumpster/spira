@@ -72,7 +72,8 @@ want "verdict runs before batch"   "verdict-called" "$is_first"
 
 echo
 echo "landing's queue pass runs step, not the batch builder alone:"
-lq="$(grep -A3 '= queue \] || continue' "$HERE/landing.sh" | grep -E 'queue\.sh|batch\.sh' | head -1)"
+# The queue-pass loop is gated by repo_land_queued (queue and queue.local) since sp-xe12f.
+lq="$(grep -E -A3 '= queue \] \|\| continue|repo_land_queued "\$repo_name" \|\| continue' "$HERE/landing.sh" | grep -E 'queue\.sh|batch\.sh' | head -1)"
 want   "landing calls queue.sh step" 'queue.sh" step' "$lq"
 nowant "landing does not call batch.sh directly" 'batch.sh' "$lq"
 
