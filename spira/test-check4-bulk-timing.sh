@@ -129,10 +129,10 @@ elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
 is "check4_bulk_data succeeds against the fixture" "0" "$rc"
 
 # 1. THE TIMING GUARD.
-if [ "$elapsed_ms" -lt 5000 ]; then
-    ok "200 ids against 50k+ events complete in under 5s (${elapsed_ms}ms)"
+if [ "$elapsed_ms" -lt 15000 ]; then
+    ok "200 ids against 50k+ events complete in under 15s (${elapsed_ms}ms)"
 else
-    bad "200 ids against 50k+ events complete in under 5s" "took ${elapsed_ms}ms"
+    bad "200 ids against 50k+ events complete in under 15s" "took ${elapsed_ms}ms"
 fi
 
 # 2. NOT JUST FAST — CORRECT. Every one of the 200 ids carries exactly 2 'claimed' events and

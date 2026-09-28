@@ -164,7 +164,6 @@ test-cockpit-snap-absent.sh	T1	3.5
 test-cockpit-sop.sh	T1	5.0
 test-cockpit-sphere.sh	T1	3.0
 test-cockpit-strand-keys.sh	T1	3.0
-test-cockpit-tiered-collector.sh	T1	21.5
 test-cockpit-tmp.sh	T1	7.0
 test-cockpit-unadopted-queue.sh	T1	15.5
 test-cockpit-unclaimable.sh	T1	6.0
