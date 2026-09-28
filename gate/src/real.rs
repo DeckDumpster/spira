@@ -517,6 +517,28 @@ impl World for Real {
             .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
             .unwrap_or_default()
     }
+    fn commit_cite(&self, script: &Path, repo: &Path, base: &str, branch: &str) -> (i32, String) {
+        let o = Command::new("bash")
+            .arg(script)
+            .arg("land")
+            .arg(repo)
+            .arg(base)
+            .arg(branch)
+            .env("SPIRA_HOME", &self.home)
+            .stdin(Stdio::null())
+            .output();
+        match o {
+            Ok(o) => (
+                o.status.code().unwrap_or(-1),
+                trim_nl(format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&o.stdout),
+                    String::from_utf8_lossy(&o.stderr)
+                )),
+            ),
+            Err(e) => (3, e.to_string()),
+        }
+    }
     fn skew_foreign(&self, skew: &Path, repo: &Path, base: &str, branch: &str) -> (i32, String) {
         // `skew` is a compiled binary now (sp-yyk47), executed directly — never wrapped in
         // `bash`, unlike the retired `skew.sh`. skew.sh found lib.sh beside its OWN script

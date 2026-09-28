@@ -28,6 +28,7 @@ struct Fake {
     bash_n_bad: RefCell<HashSet<Vec<u8>>>,
     beads: RefCell<String>,
     skew: Cell<i32>,
+    cite: Cell<i32>,
     admission_free: Cell<bool>,
     admission_who: RefCell<Vec<String>>,
     lock_free: Cell<bool>,
@@ -156,6 +157,7 @@ impl Fake {
             "/cfg/repo-map",
             "/h/exclude.sh",
             "/h/skew",
+            "/h/commit-cite.sh",
             "/h/yield.sh",
         ]
         .iter()
@@ -179,6 +181,7 @@ impl Fake {
             bash_n_bad: RefCell::new(HashSet::new()),
             beads: RefCell::new(String::new()),
             skew: Cell::new(0),
+            cite: Cell::new(0),
             admission_free: Cell::new(true),
             admission_who: RefCell::new(Vec::new()),
             lock_free: Cell::new(true),
@@ -371,6 +374,9 @@ impl World for Fake {
     }
     fn skew_foreign(&self, _: &Path, _: &Path, _: &str, _: &str) -> (i32, String) {
         (self.skew.get(), "skew says".into())
+    }
+    fn commit_cite(&self, _: &Path, _: &Path, _: &str, _: &str) -> (i32, String) {
+        (self.cite.get(), "abc cites sp-nope".into())
     }
     fn sweep(&self, _: &Path, _: &Path) {}
     fn yield_sh(&self, _: &Path, run: &str, args: &[&str]) {
@@ -1422,6 +1428,18 @@ fn skew_init_fault_and_foreign_harness() {
     f.skew.set(1);
     assert_eq!(f.run(), FAIL);
     assert!(f.verdict_line().contains("reason=foreign-harness"));
+}
+
+#[test]
+fn phantom_bead_id_fails_and_store_fault_is_no_verdict() {
+    let f = Fake::new();
+    f.cite.set(1);
+    assert_eq!(f.run(), FAIL);
+    assert!(f.verdict_line().contains("reason=phantom-bead-id"));
+    let f = Fake::new();
+    f.cite.set(3);
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=commit-cite-fault"));
 }
 
 // ---------------------------------------------------------------------------- cache & key

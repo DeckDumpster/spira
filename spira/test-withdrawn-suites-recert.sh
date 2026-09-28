@@ -33,7 +33,7 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 REPO="$TMP/repo"; RUN="$TMP/run"; SH="$TMP/spira"
 mkdir -p "$RUN/worktree" "$RUN/landstate" "$RUN/queue/fixq" "$SH"
 cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
-   "$HERE/exclude.sh" "$HERE/yield.sh" "$HERE/suite-covers.sh" \
+   "$HERE/exclude.sh" "$HERE/commit-cite.sh" "$HERE/yield.sh" "$HERE/suite-covers.sh" \
    "$HERE/gate-sweep.sh" "$SH/"
 # `skew` is a compiled binary now (sp-yyk47): reached via `$BIN_DIR` on PATH below, not
 # copied here.

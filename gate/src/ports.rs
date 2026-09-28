@@ -98,6 +98,8 @@ pub trait World {
     fn exclude_filter(&self, exclude: &Path, names: &str) -> String;
     /// `skew foreign <repo> <base> <ref>` → (status, combined output).
     fn skew_foreign(&self, skew: &Path, repo: &Path, base: &str, branch: &str) -> (i32, String);
+    /// `bash commit-cite.sh land <repo> <base> <ref>` → (status, combined output).
+    fn commit_cite(&self, script: &Path, repo: &Path, base: &str, branch: &str) -> (i32, String);
     fn sweep(&self, sweep: &Path, repo: &Path);
     /// `SPIRA_RUN=<run> bash yield.sh <args…>`, output discarded.
     fn yield_sh(&self, yield_sh: &Path, run: &str, args: &[&str]);

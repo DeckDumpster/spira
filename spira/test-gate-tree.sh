@@ -43,7 +43,7 @@ mkdir -p "$RUN/worktree" "$HOMEDIR" "$SH"
 
 # The gate under test is a copy — the harness's own bytes are part of the verdict key, so
 # the installed copy must not be what is tested.
-cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" \
+cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/commit-cite.sh" \
    "$HERE/yield.sh" "$HERE/suite-covers.sh" "$SH/"
 # `skew` is a compiled binary now (sp-yyk47): reached via `$TOOLS` on PATH below, not
 # copied here.
@@ -61,7 +61,7 @@ for i in 1 2; do
     w="$TMP/mk$i"
     git -C "$REPO" worktree add -q -b "spira/sp-t$i" "$w" origin/main
     printf 'sp-t%s\n' "$i" > "$w/f$i.txt"
-    git -C "$w" add -A; git -C "$w" commit -q -m "feat: sp-t$i — work"
+    git -C "$w" add -A; git -C "$w" commit -q -m "feat: fixture branch $i — work"
     git -C "$REPO" worktree remove --force "$w"
 done
 
