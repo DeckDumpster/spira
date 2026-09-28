@@ -64,6 +64,12 @@ statement = "a claim writes a lease"
 EOF
 printf '#!/usr/bin/env bash\n# tier: T1\n# covers: spira/dispatch.sh UC-dispatch-01\necho hi\n' \
     > "$ROOT/spira/test-covers-00.sh"
+# A catch-all claiming every suite file itself, mirroring the real corpus's
+# test-covers-entries.sh — without it, select.sh would refuse ANY new suite file as an
+# unclaimed source file (spira/*.sh), a real but unrelated property of select.sh this
+# fixture must not trip over.
+printf '#!/usr/bin/env bash\n# tier: T1\n# covers: spira/test-*.sh\necho catchall\n' \
+    > "$ROOT/spira/test-catchall.sh"
 
 matrix() { ( cd "$ROOT" && SPIRA_TEST_PLAN_BIN="$SPIRA_TEST_PLAN_BIN" bash spira/plan-matrix.sh "$@" ); }
 fence()  { ( cd "$ROOT" && SPIRA_TEST_PLAN_BIN="$SPIRA_TEST_PLAN_BIN" bash spira/plan-matrix-fence.sh "$@" ); }
