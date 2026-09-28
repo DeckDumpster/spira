@@ -44,7 +44,7 @@ mkdir -p "$TMP/home"
 # conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2); the CLONE
 # below carries none of this checkout's own target/, so without this the pass below reads
 # no configured value at all and every property under test is vacuous.
-SPIRA_CONFIG_BIN="$(testlib_spira_config_bin "$TMP")" || skip "cargo not found — spira-config binary cannot be built"
+SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)" || skip "no spira-config binary found — cannot be built here"
 
 REAL_STAT="$(command -v stat)"
 REAL_MKDIR="$(command -v mkdir)"

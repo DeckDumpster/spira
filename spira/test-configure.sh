@@ -32,20 +32,11 @@ echo "test-configure.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # conf.sh's spira.conf path shells out to spira-config to auto-convert (sp-zs04v.2), and
-# testenv-batch only hands SPIRA_CONFIG_BIN to its own bring-up steps, not to suites — so
 # both sourcings of conf.sh below need one of their own, mirroring test-conf.sh. Skip (not
-# fail) if cargo is unavailable, matching that suite's own tolerance.
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-SPIRA_CONFIG_BIN="$HERE/../target/release/spira-config"
-if [ ! -x "$SPIRA_CONFIG_BIN" ] && [ -n "$CARGO_BIN" ]; then
-    CARGO_TARGET_DIR="$TMP/spira-config-target" "$CARGO_BIN" build --release \
-        --manifest-path "$HERE/../spira-config/Cargo.toml" >/dev/null 2>&1
-    SPIRA_CONFIG_BIN="$TMP/spira-config-target/release/spira-config"
-fi
-[ -x "$SPIRA_CONFIG_BIN" ] || SPIRA_CONFIG_BIN=""
+# fail) if no prebuilt binary is available, matching that suite's own tolerance.
+SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)"
 if [ -z "$SPIRA_CONFIG_BIN" ]; then
-    echo "SKIP: cargo not found — spira-config cannot be built to exercise the auto-convert path"
+    echo "SKIP: no spira-config binary found — cannot exercise the auto-convert path"
     printf '\n%d passed, %d failed\n' "$pass" "$fail"
     exit 77
 fi

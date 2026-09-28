@@ -27,19 +27,9 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 echo "test-doctor-config-files.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-[ -n "$CARGO_BIN" ] || skip "cargo not found — spira-config binary cannot be built"
+SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)" || skip "no spira-config binary found — cannot be built here"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
-
-SPIRA_CONFIG_BIN="$HERE/../target/release/spira-config"
-if [ ! -x "$SPIRA_CONFIG_BIN" ]; then
-    CARGO_TARGET_DIR="$TMP/cargo-target" "$CARGO_BIN" build --release \
-        --manifest-path "$HERE/../spira-config/Cargo.toml" >/dev/null 2>&1
-    SPIRA_CONFIG_BIN="$TMP/cargo-target/release/spira-config"
-fi
-[ -x "$SPIRA_CONFIG_BIN" ] || bail "spira-config binary not found/built at $SPIRA_CONFIG_BIN"
 
 mkdir -p "$TMP/bin" "$TMP/db/.beads" "$TMP/run" "$TMP/home" "$TMP/chamber"
 : > "$TMP/repo-map"

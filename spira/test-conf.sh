@@ -43,19 +43,11 @@ ln -s "$HERE/conf.sh" "$HARNESS/spira/conf.sh"
 printf '# empty\n' > "$HARNESS/spira/repo-map.example"
 printf '# empty\n' > "$HARNESS/spira/watchers"
 
-# Resolve or build spira-config: the "config file" block below exercises conf.sh's
-# auto-convert-from-spira.conf path, which shells out to it. Skip (not fail) if cargo is
-# unavailable, mirroring test-broker.sh (law-absence-needs-a-positive-control: skip, not a
-# vacuous pass on the auto-convert assertion).
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-SPIRA_CONFIG_BIN="$HERE/../target/release/spira-config"
-if [ ! -x "$SPIRA_CONFIG_BIN" ] && [ -n "$CARGO_BIN" ]; then
-    CARGO_TARGET_DIR="$TMP/spira-config-target" "$CARGO_BIN" build --release \
-        --manifest-path "$HERE/../spira-config/Cargo.toml" >/dev/null 2>&1
-    SPIRA_CONFIG_BIN="$TMP/spira-config-target/release/spira-config"
-fi
-[ -x "$SPIRA_CONFIG_BIN" ] || SPIRA_CONFIG_BIN=""
+# The "config file" block below exercises conf.sh's auto-convert-from-spira.conf path,
+# which shells out to spira-config. Skip (not fail) that one block if no prebuilt binary
+# is available, mirroring test-broker.sh (law-absence-needs-a-positive-control: skip, not
+# a vacuous pass on the auto-convert assertion).
+SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)"
 
 # Load conf.sh in a subprocess and print the value of the requested key.
 conf_val() {
@@ -98,7 +90,7 @@ echo
 echo "config file — SPIRA_PROD from spira.conf wins over derived default:"
 # ==========================================================================
 if [ -z "$SPIRA_CONFIG_BIN" ]; then
-    echo "SKIP: cargo not found — spira-config cannot be built to auto-convert spira.conf"
+    echo "SKIP: no spira-config binary found — cannot auto-convert spira.conf"
 else
     CONF_FILE="$TMP/spira.conf"
     conf_prod="$TMP/conf-chosen/spira"
