@@ -299,8 +299,6 @@ fi
 # the day an aeon is summoned every two minutes for work it cannot take, which is what
 # READY_ARGS is shared to prevent; fayth_exclude is shared for the same reason.
 CLAIM_EXCLUDE="$(fayth_exclude "$FAYTH" "$FAYTH_EXCLUDE_LABELS")"
-claim_args=("${READY_ARGS[@]}" --claim
-            --label "$FAYTH_LABELS" --exclude-label "$CLAIM_EXCLUDE")
 
 if [ "$DRY" = 1 ]; then
     log "$FAYTH: dry run — candidates:"
@@ -316,67 +314,78 @@ export SPIRA_AEON="$AEON"
 export BEADS_ACTOR="aeon-$AEON"
 export GIT_AUTHOR_NAME="aeon-$AEON" GIT_AUTHOR_EMAIL="aeon-$AEON@spira.local"
 export GIT_COMMITTER_NAME="aeon-$AEON" GIT_COMMITTER_EMAIL="aeon-$AEON@spira.local"
-# RESUMPTION BEATS INITIATION — WITHIN ONE PRIORITY, NEVER ACROSS ONE. `bd ready --claim`
-# takes the first row, and priority was the only ordering — so a bead carrying 21 commits
-# and an open pull request lost to a bead with nothing started, twice. That is not untidy,
-# it is expensive: an unfinished branch decays, its base moves under it, and every pass it
-# sits costs another rebase.
+# EPIC-FIRST CLAIM ORDER (sp-ns46j, per Ryan 2026-09-28). `bd ready --claim` only orders by
+# bead priority, so a bead reworked from the epic being delivered competes on its own
+# P-number with every unrelated P0 — with the fleet narrowed to a few aeons, that starves
+# the epic instead of finishing it. The rank is: the parent epic's priority; then, among
+# epics of equal priority, a STARTED epic (any child closed, in progress, or submitted)
+# before an unstarted one, so the fleet finishes what it started; then the bead's own
+# priority within the epic; then resumable work, then oldest — see epic_rank_rows (lib.sh).
+# A bead with no epic ranks as its own epic at its own priority.
 #
-# So look for resumable work FIRST: a ready bead whose recorded branch exists and is ahead
-# of its base. Claim that one by id, atomically, with `bd update --claim`. Only when there
-# is none do we fall back to taking the head of the queue.
+# ONE QUERY FETCHES EVERY CANDIDATE (READY_ARGS, same shape the old code used); everything
+# below is computation against that one payload, plus epic_parent_lookup's own batched
+# lookup (one query per distinct EPIC referenced, never one per bead).
 #
-# THE PRIORITY FLOOR IS THE HALF THAT WAS MISSING, and without it this block was a priority
-# inversion that starved every P0 in the queue. The loop took the first RESUMABLE candidate
-# at any depth, so one P1 with a single commit on its branch beat seven P0s with nothing
-# started — measured 2026-09-07: the queue's head was sp-2tv (P0, the bead describing this
-# very starvation) and the loop reached past it to candidate twelve, sp-4vp (P1, one commit
-# ahead), on every pass. The operator watched more than five aeons walk over it.
-#
-# A resumable bead is worth preferring over an unstarted PEER. It is not worth preferring
-# over more important work: the decaying-branch cost this block exists to avoid is bounded
-# by a rebase, while the cost of never starting a P0 is unbounded. So candidates are
-# filtered to the best priority present before the branch test runs, and a lower band is
-# reached only when the whole band above it is unstarted — which is exactly when the
-# fallback `bd ready --claim` head is already the right bead.
-#
-# Filtered in python over the whole payload rather than by breaking out of the loop on the
-# first priority change, so it does not silently depend on `bd ready` returning rows in
-# priority order — an ordering nothing promises and one this file already learned not to
-# trust for the claim itself.
-# EVERY RESUMABLE CANDIDATE IN THE TOP BAND IS KEPT, not just the first: aeons summoned
+# A bd ERROR here is not an empty queue: a Dolt lock or a dropped connection is a different
+# fact from a query that ran cleanly and found zero rows, and collapsing the two is what let
+# a transient bd failure report as "nothing ready to claim" while work was ready (sp-3ntca).
+# claim_retry's own retry-then-surface-the-error behaviour covers this query exactly as it
+# always covered the general claim.
+_ready_err="$SPIRA_RUN/.ready-err.$$"
+ready_json="$(claim_retry "${READY_ARGS[@]}" --label "$FAYTH_LABELS" \
+                  --exclude-label "$CLAIM_EXCLUDE" 2>"$_ready_err")"
+ready_rc=$?
+ready_errmsg="$(cat "$_ready_err" 2>/dev/null)"
+rm -f "$_ready_err"
+if [ "$ready_rc" -ne 0 ]; then
+    log "$FAYTH: claim-error ${ready_errmsg:-bd gave no reason} — retries exhausted, not reporting idle for a query that never completed"
+    ledger "awake $FAYTH claim-error ${ready_errmsg:-bd gave no reason}"
+    exit 1
+fi
+[ -n "$ready_json" ] || ready_json="[]"
+
+epic_lookup="$(epic_parent_lookup "$ready_json")"
+
+# RESUMABILITY (rank level 4) IS CHECKED ONLY IN THE TOP-RANKED TIER, never across the whole
+# ready set: `git rev-list` is one process per candidate per repo, and the decaying-branch
+# cost this exists to avoid is bounded by a rebase while the cost of never starting more
+# important work is unbounded — the same reasoning the old priority-only band used, now keyed
+# by the epic-first rank (epic priority, epic-started, bead priority) instead of raw bead
+# priority alone. EVERY CANDIDATE IN THE TIER IS KEPT, not just the first: aeons summoned
 # seconds apart run this same query and reach the same first candidate, so a fallback that
-# gives up the instant that one claim is lost sends the loser straight to the general claim
-# — which may or may not pick a different bead — instead of the NEXT resumable one it already
-# knows about (sp-3ntca). One `git rev-list` per candidate in the band, which is the same
-# work the old break-on-first form paid up to its one candidate.
-#
-# THE SAME EXCLUSIONS AS THE CLAIM (CLAIM_EXCLUDE, not the persona's own list alone). A
-# submitted bead (sp-qsona) is open with work on its branch — exactly what this scan looks
-# for — but its work is finished and waiting on the landing pass; resuming it would re-work
-# done work. The general claim below already excludes it via fayth_exclude; this scan must
-# not be a way around that.
-resume_ids=()
-for cand in $(bdjson "${READY_ARGS[@]}" --label "$FAYTH_LABELS" \
-                  --exclude-label "$CLAIM_EXCLUDE" 2>/dev/null | python3 -c '
-import sys, json
+# gives up the instant that one claim is lost must have the NEXT resumable one already in
+# hand (sp-3ntca) — filtering happens in python over the whole payload, not by breaking out
+# of a loop, since nothing promises `bd ready` returns rows in rank order.
+band_lines="$(printf '%s' "$ready_json" | EPIC_LOOKUP="$epic_lookup" python3 -c '
+import sys, json, os
 try: d = json.load(sys.stdin)
 except Exception: sys.exit(0)
 rows = d if isinstance(d, list) else [d]
-# A row with no priority sorts last, not first: an unknown must never outrank a stated P0.
-def prio(i):
-    p = i.get("priority")
-    return p if isinstance(p, int) else 99
 if not rows: sys.exit(0)
-top = min(prio(i) for i in rows)
-for i in rows:
-    if prio(i) != top: continue
-    labs = i.get("labels") or []
+lookup = json.loads(os.environ.get("EPIC_LOOKUP") or "{}")
+prio = lookup.get("prio", {})
+started = set(lookup.get("started", []))
+
+def rank3(r):
+    pid = r.get("parent") or ""
+    eprio = prio.get(pid, r.get("priority", 99)) if pid else r.get("priority", 99)
+    estarted = 0 if pid in started else 1
+    bprio = r.get("priority", 99)
+    return (eprio, estarted, bprio)
+
+top = min(rank3(r) for r in rows)
+for r in rows:
+    if rank3(r) != top: continue
+    labs = r.get("labels") or []
     br = next((l[7:] for l in labs if l.startswith("branch:")), "")
     repo = next((l[5:] for l in labs if l.startswith("repo:")), "")
-    print("%s|%s|%s|%s" % (i["id"], br, repo, top))' 2>/dev/null); do
-    cid="${cand%%|*}"; rest="${cand#*|}"; cbr="${rest%%|*}"
-    rest="${rest#*|}"; crepo="${rest%%|*}"; cprio="${rest##*|}"
+    print("%s|%s|%s|%s|%s|%s" % (r["id"], br, repo, top[0], top[1], top[2]))
+' 2>/dev/null)"
+
+resume_ids=()
+while IFS='|' read -r cid cbr crepo ceprio cestarted cbprio; do
+    [ -n "$cid" ] || continue
     [ -n "$cbr" ] || cbr="spira/$cid"
     croot="$(repo_root "${crepo:-}" 2>/dev/null)" || continue
     [ -d "$croot/.git" ] || continue
@@ -384,8 +393,18 @@ for i in rows:
     # Ahead of its base is the test — a branch that exists but adds nothing is not
     # resumable work, it is a leftover.
     n="$(git -C "$croot" rev-list --count "$cbase..$cbr" 2>/dev/null || echo 0)"
-    if [ "${n:-0}" -gt 0 ]; then resume_ids+=("$cid"); RESUME_PRIO="$cprio"; fi
-done
+    if [ "${n:-0}" -gt 0 ]; then
+        resume_ids+=("$cid")
+        RESUME_TIER="P${ceprio}$([ "$cestarted" = 0 ] && echo '/started')/P${cbprio}"
+    fi
+done <<< "$band_lines"
+resume_csv="$(IFS=,; printf '%s' "${resume_ids[*]:-}")"
+
+# THE FULL RANKED LIST, resumability now folded in as its tiebreaker. One `bd update --claim`
+# attempt per candidate in rank order — atomic, so this is not a select-then-claim race
+# (`bd update --claim` refuses a bead already claimed); a lost race falls through to the next
+# ranked candidate exactly as the old resume loop did.
+ranked_ids="$(epic_rank_rows "$ready_json" "$epic_lookup" "$resume_csv" | cut -f6)"
 
 # claim_retry's own diagnostic on a failed attempt goes to ITS stderr, not a variable a
 # command substitution would just discard — so every call site here redirects that stderr to
@@ -394,39 +413,26 @@ done
 _claim_err="$SPIRA_RUN/.claim-err.$$"
 
 claimed=""
-for resume_id in "${resume_ids[@]:-}"; do
-    [ -n "$resume_id" ] || continue
-    claimed="$(claim_retry update "$resume_id" --claim 2>"$_claim_err")"
+while IFS= read -r cand_id; do
+    [ -n "$cand_id" ] || continue
+    claimed="$(claim_retry update "$cand_id" --claim 2>"$_claim_err")"
     claim_rc=$?
     claim_errmsg="$(cat "$_claim_err" 2>/dev/null)"
     if [ "$claim_rc" -ne 0 ]; then
-        log "$FAYTH/$AEON: claim query failed for resume candidate $resume_id: ${claim_errmsg:-bd gave no reason} — trying the next resumable candidate"
+        log "$FAYTH/$AEON: claim query failed for ranked candidate $cand_id: ${claim_errmsg:-bd gave no reason} — trying the next ranked candidate"
         claimed=""
         continue
     fi
     if [ -n "$claimed" ]; then
-        log "$FAYTH/$AEON: resuming $resume_id (P${RESUME_PRIO:-?}, the top ready priority) — it already has work on its branch"
+        case " ${resume_ids[*]:-} " in
+            *" $cand_id "*) log "$FAYTH/$AEON: resuming $cand_id (${RESUME_TIER:-top rank}) — it already has work on its branch" ;;
+            *)              log "$FAYTH/$AEON: claiming $cand_id (epic-first rank)" ;;
+        esac
         break
     fi
-    log "$FAYTH/$AEON: resume candidate $resume_id was claimed by another aeon between read and claim — trying the next resumable candidate"
-done
-
-# THE GENERAL CLAIM. Reached when no resume candidate existed or every one of them lost its
-# race. A bd ERROR here is not an empty queue — see claim_retry above — so only a query that
-# actually completed and returned zero rows may read as idle below.
-if [ -z "$claimed" ]; then
-    claimed="$(claim_retry "${claim_args[@]}" 2>"$_claim_err")"
-    claim_rc=$?
-    claim_errmsg="$(cat "$_claim_err" 2>/dev/null)"
-    rm -f "$_claim_err"
-    if [ "$claim_rc" -ne 0 ]; then
-        log "$FAYTH: claim-error ${claim_errmsg:-bd gave no reason} — retries exhausted, not reporting idle for a query that never completed"
-        ledger "awake $FAYTH claim-error ${claim_errmsg:-bd gave no reason}"
-        exit 1
-    fi
-else
-    rm -f "$_claim_err"
-fi
+    log "$FAYTH/$AEON: ranked candidate $cand_id was claimed by another aeon between read and claim — trying the next ranked candidate"
+done <<< "$ranked_ids"
+rm -f "$_claim_err"
 # THE ID AND THE REPOSITORY, FROM THE SAME PAYLOAD. `bd ready --claim` already handed us
 # the bead's labels, so asking the database again for the one it just gave us would be a
 # second, racier opinion of the same fact.
