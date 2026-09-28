@@ -40,7 +40,7 @@ mkdir -p "$FAKE_HOME"
 MAIL_LOG="$TMP/mail.log"
 cat > "$FAKE_HOME/mail.sh" <<'SH'
 #!/usr/bin/env bash
-{ printf 'mail:'; printf ' %q' "$@"; printf '\n'; } >> "$MAIL_LOG_PATH"
+{ printf 'mail:'; printf ' %s' "$@"; printf '\n'; } >> "$MAIL_LOG_PATH"
 exit 0
 SH
 chmod +x "$FAKE_HOME/mail.sh"

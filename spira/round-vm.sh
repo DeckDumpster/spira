@@ -411,8 +411,8 @@ _rvm_install_bins() {
             "$found" "$expected" >&2
         return 1
     fi
-    mkdir -p "$target_base/$expected"
-    rsync -a "$pulled/$found/release/" "$target_base/$expected/release/"
+    mkdir -p "$target_base/$expected/release"
+    cp -a "$pulled/$found/release/." "$target_base/$expected/release/"
 }
 
 # Sourceable as a library (test-round-vm.sh exercises internal functions like
