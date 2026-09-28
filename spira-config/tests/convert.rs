@@ -387,3 +387,113 @@ fn convert_write_is_atomic_no_leftover_temp_file() {
     assert!(leftovers.is_empty(), "leftover temp file(s): {leftovers:?}");
     fs::remove_dir_all(&dir).ok();
 }
+
+// ----------------------------------------------------------------------------------------
+// conf.sh's persona-only refresh (spira_toml_resolve, sp-zs04v.4) calls convert with just
+// --fayth and --out — no --conf, no --repo-map — to regenerate [persona.*] from the chamber
+// on top of a spira.toml that already exists. Before this fix that starved convert() of any
+// [spira]/[repo] input, so it built a document from defaults and silently wrote over every
+// configured scalar and repo table the omitted inputs didn't re-supply (shrink_reason only
+// counts [repo.*] tables and the fayths list, so it let the [spira] wipe straight through).
+// ----------------------------------------------------------------------------------------
+
+const EXISTING_SPIRA_SCALAR_AND_REPO: &str = "\
+[spira]\nfayths = [\"builder\"]\nbatch_mem_per_suite_mib = 256\nbd = \"/custom/bd\"\n\n\
+[repo.alpha]\npath = \"/tmp/alpha\"\nmode = \"push\"\n";
+
+// No [repo.*] table and an empty `fayths` list, so shrink_reason's two counters (the only
+// things it compares) read 0-vs-0 either way and cannot catch this one — a scalar-only wipe
+// is invisible to it and must fail SILENTLY (exit 0, wrong content) without this fix, exactly
+// the shape the bead's own regression (test-batch-maxpar, test-bd-resolve, test-conf-toml)
+// hit: SPIRA_BATCH_MEM_PER_SUITE_MIB and SPIRA_BD reverted to "unset"/PATH default with the
+// convert call reporting no error at all.
+const EXISTING_SPIRA_SCALAR_ONLY: &str =
+    "[spira]\nbatch_mem_per_suite_mib = 256\nbd = \"/custom/bd\"\n";
+
+#[test]
+fn fayth_only_convert_preserves_existing_spira_scalars_and_repo_tables() {
+    let dir = scratch_dir("fayth-only-preserve");
+    let out = dir.join("spira.toml");
+    fs::write(&out, EXISTING_SPIRA_SCALAR_AND_REPO).unwrap();
+    let fayth = write_tmp(
+        &dir,
+        "builder.fayth",
+        "FAYTH_NAME=builder\nFAYTH_MODEL=opus\n",
+    );
+
+    // POSITIVE CONTROL: prove the starting document really holds what this test claims is at
+    // risk, before the run that must preserve it.
+    let before = spira_config::validate(&fs::read_to_string(&out).unwrap()).unwrap();
+    assert_eq!(
+        before.spira.as_ref().unwrap().batch_mem_per_suite_mib,
+        Some(256)
+    );
+    assert_eq!(before.repo.len(), 1);
+
+    let result = run_convert(&[
+        "--home",
+        "/opt/fixture-home",
+        "--fayth",
+        fayth.to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert!(
+        result.status.success(),
+        "expected success, got: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let after = spira_config::validate(&fs::read_to_string(&out).unwrap()).unwrap();
+    let spira = after.spira.expect("[spira] survives a fayth-only refresh");
+    assert_eq!(
+        spira.batch_mem_per_suite_mib,
+        Some(256),
+        "a scalar [spira] key must survive a persona-only refresh"
+    );
+    assert_eq!(spira.bd, Some("/custom/bd".to_string()));
+    assert_eq!(after.repo.len(), 1, "[repo.*] tables must survive too");
+    assert!(after.repo.contains_key("alpha"));
+    assert_eq!(
+        after.persona.get("builder").map(|p| p.model.as_str()),
+        Some("opus"),
+        "the fayth-derived persona table must still be regenerated"
+    );
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn fayth_only_convert_does_not_silently_wipe_scalar_spira_keys() {
+    let dir = scratch_dir("fayth-only-scalar-only");
+    let out = dir.join("spira.toml");
+    fs::write(&out, EXISTING_SPIRA_SCALAR_ONLY).unwrap();
+    let fayth = write_tmp(
+        &dir,
+        "builder.fayth",
+        "FAYTH_NAME=builder\nFAYTH_MODEL=opus\n",
+    );
+
+    let result = run_convert(&[
+        "--home",
+        "/opt/fixture-home",
+        "--fayth",
+        fayth.to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert!(
+        result.status.success(),
+        "expected success, got: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let after = spira_config::validate(&fs::read_to_string(&out).unwrap()).unwrap();
+    let spira = after.spira.expect("[spira] survives a fayth-only refresh");
+    assert_eq!(
+        spira.batch_mem_per_suite_mib,
+        Some(256),
+        "shrink_reason cannot see this key, so a silent wipe would exit 0 with it gone"
+    );
+    assert_eq!(spira.bd, Some("/custom/bd".to_string()));
+    fs::remove_dir_all(&dir).ok();
+}

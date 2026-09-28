@@ -279,7 +279,8 @@ fn cmd_convert(args: &[String]) -> ExitCode {
         .map(|(p, t)| (p.as_str(), t.as_str()))
         .collect();
 
-    let (doc, warnings) = match convert::convert(&conf_text, &home, &repo_map_text, &fayth_refs) {
+    let (mut doc, warnings) = match convert::convert(&conf_text, &home, &repo_map_text, &fayth_refs)
+    {
         Ok(r) => r,
         Err(errors) => {
             for e in &errors {
@@ -290,6 +291,26 @@ fn cmd_convert(args: &[String]) -> ExitCode {
     };
     for w in &warnings.0 {
         eprintln!("spira-config convert: {w}");
+    }
+    // A CALLER THAT OMITS --conf OR --repo-map IS ASKING FOR A NARROWER REFRESH (conf.sh's
+    // persona-only regenerate passes just --fayth), not "this box has no [spira]/[repo]
+    // config" — read_conf/repo_sections against empty text return only defaults, and writing
+    // that over an --out file with real content would silently erase every scalar spira.toml
+    // key or [repo.*] table the omitted input didn't re-supply. Fall back to whatever the
+    // target already holds for the section this call had no source for.
+    if let Some(p) = &out_path {
+        if conf_path.is_none() || repo_map_path.is_none() {
+            if let Ok(existing_text) = fs::read_to_string(p) {
+                if let Ok(existing) = validate(&existing_text) {
+                    if conf_path.is_none() {
+                        doc.spira = existing.spira;
+                    }
+                    if repo_map_path.is_none() {
+                        doc.repo = existing.repo;
+                    }
+                }
+            }
+        }
     }
     let out = match toml::to_string_pretty(&doc) {
         Ok(s) => s,
