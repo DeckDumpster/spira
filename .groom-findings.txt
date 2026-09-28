@@ -385,3 +385,56 @@ CURRENT STATE:
 - No duplicates found
 - No splits needed
 - 1 groom-asked bead skipped (sp-he29a; operator answer pending)
+
+---
+
+GROOM PASS sp-pzboq
+===================
+
+TRIGGER: scheduled graph hygiene (groomer trigger bead)
+
+SWEEP: groomer.sh sweep found 0 livelocked beads; acted on 7 beads:
+  - CLOSED sp-kogm (landed-but-open: commit c36ebcbc names it on spira's base)
+  - DROPPED sp-h0pm6, sp-o9l6m, sp-yyzm3, sp-7hzpr, sp-0fl3v (closed-no-branch)
+  - REROUTED sp-bz7uh.5 (incident-is-code: 2 commits on spira/sp-bz7uh.5 ahead of local/main)
+
+LIVELOCK ROWS HANDLED: 0
+  detect_livelocked returned clean; sweep confirmed no livelocked beads.
+
+GROOM-ASKED (skipped per rules, operator answer pending):
+
+1. sp-n6r4e — LIVELOCK sp-rtgbv: repo:ephemeral-ci not in repo-map
+   - sp-rtgbv has groom-asked label; skip per Pass 3+ rule.
+
+GRAPH SCAN FINDINGS:
+
+1. CLOSED NOT LANDED tracker beads (sp-1zfpi, sp-gdo8v, sp-kztq1, sp-g6kgp,
+   sp-25ko8, sp-55kux, sp-mkoqk, sp-xie4f) — all correctly structured:
+   - sp-1zfpi/sp-bqmwn, sp-gdo8v/sp-9geby, sp-kztq1/sp-jfvoc: subjects
+     superseded by sp-pswer (no-commit-ever pattern, permanent until sp-pswer
+     lands + sp-ydazw fixes CHECK5 exemption)
+   - sp-g6kgp/sp-h0pm6: blocked on sp-3iezo (CHECK5 permanent exemption fix)
+   - sp-25ko8/sp-7youp: commits on origin/main; blocked on sp-2dvyh
+     (bead_close_on_land doesn't call land_mark)
+   - sp-55kux/sp-aeiv2, sp-mkoqk/sp-r66qd, sp-xie4f/sp-op2c2: blocked on
+     their subject beads; will auto-resolve when subjects land
+   No groomer action needed; all correctly structured.
+
+2. Duplicate/overlap scan: no duplicates found.
+   sp-q1rln/sp-vf9l9 (sop.sh heredoc hang): correctly structured (q1rln
+   blocks vf9l9). sp-wb7ip/sp-znoj6 (mail.sh operator timeout): correctly
+   structured (wb7ip depends on znoj6).
+
+3. Lane labels: no mislabelled lanes found. lane:ops query returned 0 results.
+
+4. Poison: no poisoned beads in queue.
+
+5. sp-por6p (sp-zs04v.4 escalation): already CLOSED by operator.
+
+CURRENT STATE:
+- 211 open beads examined
+- 0 LIVELOCK rows
+- 0 premise-gone closures (sweep handled structural issues)
+- 0 duplicates found
+- 0 splits needed
+- 1 groom-asked bead skipped (sp-n6r4e; operator answer pending)
