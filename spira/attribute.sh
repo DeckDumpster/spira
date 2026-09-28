@@ -33,11 +33,12 @@
 #                           core count, not SPIRA_AEON_CPU_QUOTA: attribution is a one-shot
 #                           local burst, not a share of an aeon's steady-state budget).
 #
-# covers: spira/attribute.sh
+# covers: spira/attribute.sh spira/escape-classify.sh
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/lib.sh"
+. "$HERE/escape-classify.sh"
 
 # ---------------------------------------------------------------------------
 # ARGS
@@ -313,6 +314,7 @@ done
 # OUTPUT
 # ---------------------------------------------------------------------------
 declare -A EJECT_SUITES=()
+GATE_LOG_PATH="${SPIRA_GATE_LOG:-${SPIRA_RUN:-}/gate.log}"
 for s in "${SUITES_ARR[@]}"; do
     [ -n "$s" ] || continue
     printf 'ATTR %s owner=%s method=%s wall=%ss fail=%s\n' \
@@ -322,6 +324,22 @@ for s in "${SUITES_ARR[@]}"; do
         for o in "${_owners[@]}"; do
             [ -n "$o" ] || continue
             EJECT_SUITES["$o"]="${EJECT_SUITES[$o]:-}${EJECT_SUITES[$o]:+,}$s"
+            # ESCAPE CLASSIFICATION (sp-6vd2s): attribution just settled this suite on
+            # a real member — every such settlement is an escape from that member's own
+            # gate, classified and fed back so the plan converges. Best-effort: a
+            # classification fault must never turn a successful attribution pass red.
+            _o_tip="$(_attr_member_tip "$o" 2>/dev/null || true)"
+            if [ -n "$_o_tip" ]; then
+                _esc_class="$(escape_classify "$REPO" "$BASE_SHA" "$_o_tip" \
+                    "$REPO/spira/$s" "$GATE_LOG_PATH" "spira/$o" 2>/dev/null || true)"
+                if [ -n "$_esc_class" ]; then
+                    _esc_paths="$(git -C "$REPO" diff --name-only "$BASE_SHA...$_o_tip" 2>/dev/null | tr '\n' ',' | sed 's/,$//')"
+                    escape_record --member "$o" --suite "$s" --class "$_esc_class" \
+                        --batch-id "$BATCH_ID" --paths "$_esc_paths" \
+                        --evidence "method=${METHOD[$s]:-unknown} fail=${FAIL[$s]:-}" \
+                        >/dev/null 2>&1 || true
+                fi
+            fi
         done
     fi
 done

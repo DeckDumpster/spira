@@ -8253,6 +8253,24 @@ _tsd_round_phase() {
         >/dev/null 2>&1 || true
 }
 
+# THE WHITELIST IS THE GUARANTEE, same reason as _TSD_ROUND_PHASES above: these four are
+# the classes sp-6vd2s defines and no others belong in this family.
+_TSD_ESCAPE_CLASSES=" mapping_gap gate_gap environment_gap flake "
+
+# _tsd_escape <member> <suite> <class> [batch_id] — appends one escape record (run/tsd/
+# escape): a round red attributed to <member> on <suite>, classified per sp-6vd2s
+# (escape-classify.sh). Best-effort, like every tsd producer here.
+_tsd_escape() {
+    local bin="${SPIRA_TSD_BIN:-}"
+    [ -n "$bin" ] && [ -x "$bin" ] || return 0
+    local member="$1" suite="$2" class="$3" batch_id="${4:-}"
+    case "$_TSD_ESCAPE_CLASSES" in *" $class "*) ;; *) return 0 ;; esac
+    "$bin" --family escape --root "${SPIRA_RUN:-}" \
+        --field-str "member=$member" --field-str "suite=$suite" --field-str "class=$class" \
+        --field-str "batch_id=$batch_id" \
+        >/dev/null 2>&1 || true
+}
+
 land_mark() {    # land_mark <id> <state> <tip> [reason] [extra]
     mkdir -p "$(dirname "$LANDSTATE/$1")" 2>/dev/null || return 0
     printf '%s %s %s %s' "$2" "${3:-none}" "$(date +%s)" "${4:-}" \
