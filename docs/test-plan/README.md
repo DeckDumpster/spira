@@ -115,8 +115,11 @@ coverage cannot land.
 `docs/test-plan/coverage.json` is the whole catalogue joined to suite
 coverage and measured runtime — every UC's tier, statement, covering
 suites, their p50 (when `spira/tsd-query.sh` has data), and an
-over-budget flag. It is regenerated whole by `spira/plan-matrix.sh`, never
-hand-edited; `docs/test-plan/COVERAGE.md` is the markdown rendering of the
-same document, also regenerated, also never hand-edited. The gate runs
-`spira/plan-matrix.sh --check` and fails when either file differs from a
-fresh regeneration.
+over-budget flag. `docs/test-plan/COVERAGE.md` is the markdown rendering of
+the same document. Both are regenerated whole by `spira/plan-matrix.sh`,
+never hand-edited, and neither is committed (`.gitignore`): a generated
+file two independently-regenerating branches would otherwise conflict over,
+or silently merge stale, is not a source of truth to keep in sync — run
+`spira/plan-matrix.sh` to write a fresh copy locally. The gate
+(`spira/plan-matrix-fence.sh`) regenerates both on every run and fails only
+if generation itself errors.

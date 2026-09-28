@@ -36,6 +36,15 @@ wiki/
 # $SPIRA_RUN/groom.log, never in a file every branch would share and conflict on.
 .groom-findings.txt
 
+# The test plan's coverage matrix is derived whole from the typed catalogues and every
+# suite's own header (spira/plan-matrix.sh) — never hand-edited, never authoritative. Two
+# branches that each add a covered suite regenerate it independently; a committed copy
+# conflicts or goes stale on their merge with nothing to detect it until the next hand
+# regeneration (law-test-selection-and-plan-are-one-source). Untracked, it cannot go stale:
+# `spira/plan-matrix.sh` writes it fresh whenever it's read.
+docs/test-plan/coverage.json
+docs/test-plan/COVERAGE.md
+
 # Editor and OS litter.
 *.swp
 *.swo
