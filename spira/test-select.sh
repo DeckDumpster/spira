@@ -841,10 +841,17 @@ echo "Part P: real tree — spira/new.sh (100644) addition selects test-script-e
 # Verify that the real test-script-exec.sh (# covers: spira/*.sh, # selects-on: added,mode)
 # is selected when a spira/*.sh file is added, using the --files mode with A-status.
 # This is the production scenario from the bead: a branch adds a new script without +x.
+# A verbatim COPY of the real file, in a suite-dir of its own, so its actual declaration
+# is what's under test without select.sh paying to scan the other 500+ real suites too.
+SD_P="$TMP/suites-p"
+mkdir -p "$SD_P"
+cp "$HERE/test-script-exec.sh" "$SD_P/test-script-exec.sh"
+chmod +x "$SD_P/test-script-exec.sh"
+
 FLIST_P="$TMP/flist-p"
 printf 'A\tspira/new-script.sh\n' > "$FLIST_P"
 
-out_p="$(bash "$SELECT" --files "$FLIST_P" --suite-dir "$HERE" 2>/dev/null)"
+out_p="$(bash "$SELECT" --files "$FLIST_P" --suite-dir "$SD_P" 2>/dev/null)"
 rc_p=$?
 iszero "P1: added spira script exits 0"                                          "$rc_p"
 want   "P1: test-script-exec.sh selected for added spira/new-script.sh"         "test-script-exec.sh" "$out_p"
@@ -854,7 +861,7 @@ FLIST_P_MD="$TMP/flist-p-md"
 printf 'README.md\n' > "$FLIST_P_MD"
 
 out_p_md="$(SPIRA_SELECT_INERT='*.md *.txt' bash "$SELECT" \
-    --files "$FLIST_P_MD" --suite-dir "$HERE" 2>/dev/null)"
+    --files "$FLIST_P_MD" --suite-dir "$SD_P" 2>/dev/null)"
 rc_p_md=$?
 iszero  "P2: .md-only diff exits 0"                                                  "$rc_p_md"
 nowant "P2: test-script-exec.sh NOT selected for .md edit"                         "test-script-exec.sh" "$out_p_md"
