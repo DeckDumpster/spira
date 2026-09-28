@@ -1564,6 +1564,10 @@ check8_should_judge() {
 # `bd ready`. In queue mode, CLOSED ≠ LANDED — the work is not yet on base. This label
 # keeps fayth_ready from counting those beads until the blocker's landstate reaches LANDED.
 #
+# Same-repo work-bead blockers release earlier (at CERTIFIED) under the stacked-dependents
+# rule (stack_max_depth) — see wiki/projects/spira/designs/stacked-dependents-2026-09-28.md.
+# This label still governs cross-repo and non-work blockers, which wait for LANDED.
+#
 # A closed blocker with tip="none" (design, diagnosis, superseded) has no commit and will
 # never reach LANDED via the queue path; it counts as satisfied regardless of landstate.
 #

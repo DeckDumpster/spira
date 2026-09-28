@@ -84,7 +84,7 @@ Tier key: T0 static · T1 unit · T2 component · T3 integration · T4 acceptanc
 
 ### Misplaced (verdict given; move them out)
 - **UC-landed-audit-reaping-26.** Handled by `test-check2-reclaim.sh`: CHECK 2 protects an in_progress bead whose only open dependency is an ask, and removes that protection when the ask closes. → dispatch.
-- **UC-landed-audit-reaping-27.** Handled by `test-dependents.sh`: dependents of a closed blocker with CERTIFIED or BATCHED landstate are labelled queue-waiting and excluded from summon, and the label clears in a single pass once the blocker is LANDED. → landing-merge-queue.
+- **UC-landed-audit-reaping-27.** Handled by `test-dependents.sh`: dependents of a closed blocker with CERTIFIED or BATCHED landstate are labelled queue-waiting and excluded from summon, and the label clears in a single pass once the blocker is LANDED. → landing-merge-queue. Superseded for same-repo work-bead blockers by the stacked-dependents rule (release at CERTIFIED, capped by `stack_max_depth`) — see `wiki/projects/spira/designs/stacked-dependents-2026-09-28.md`; cross-repo and non-work blockers still wait for LANDED.
 
 ## 3. Coverage map
 
