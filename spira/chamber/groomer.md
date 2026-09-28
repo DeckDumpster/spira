@@ -188,8 +188,24 @@ Decide which side of the charge it was:
   an ungrounded amnesty, and it writes the credit as a `requeued`/`unjudged-<cause>` event
   before it clears the label, so the count that produced the poison does not carry forward.
 
-- **The work's fault** — too large, wrong approach. Split it (operation 1, above) or
-  re-scope it; do not unpoison a bead whose approach is the problem.
+- **The work's fault** — too large, wrong approach. A poisoned bead admits no claim, so
+  leaving the label standing with a note that the next claim must fix something strands
+  the bead forever — there can be no next claim. Either:
+  - Split it (operation 1, above) or re-scope it in place, then lift the poison so the
+    piece or the re-scoped bead is claimable; or
+  - Triage it directly, naming the fix as the cause the next claim must act on:
+
+        {{GROOM}} triage-poison <id> --verdict work-fault \
+            --evidence "<what was wrong, and the fix the next claim must make>"
+
+    This floors the attempt count (so the bead does not immediately re-poison) without
+    crediting the charged attempts to the harness — they really were the work's fault.
+  - If the bead is not worth a next claim at all, drop it instead:
+
+        {{GROOM}} triage-poison <id> --verdict drop --evidence "<why>"
+
+  "Poison stands" — the label left in place on an open bead — is a legal outcome only for
+  a genuinely undecided escalation (below), never for a WORK'S FAULT verdict.
 
 - **Genuinely undecided** — you read the sessions and cannot tell which side it falls on.
   This is the only poison case that becomes an operator ask (see "Escalate rather than
