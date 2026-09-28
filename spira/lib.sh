@@ -4863,7 +4863,7 @@ env = {
     'BASH_DEFAULT_TIMEOUT_MS': '1800000',
     'BASH_MAX_TIMEOUT_MS': '3600000',
     'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS': '1',
-}
+    }
 print(json.dumps({'hooks': hooks, 'env': env}))
 " 2>/dev/null
 }
