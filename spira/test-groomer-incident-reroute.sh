@@ -127,7 +127,7 @@ is "real run: exits 0" 0 "$?"
 # ---- positive: sp-ir-code moved from incident to plan ----
 nowant "sp-ir-code: incident label removed" "incident" "$(labels_of sp-ir-code)"
 want   "sp-ir-code: plan label added"       "plan"      "$(labels_of sp-ir-code)"
-want   "sp-ir-code: note explains the move" "incident-is-code" "$(notes_of sp-ir-code)"
+want   "sp-ir-code: note explains the move" "incident -> plan" "$(notes_of sp-ir-code)"
 want   "sp-ir-code: note names the commit count" "1 commit" "$(notes_of sp-ir-code)"
 
 # ---- negative control 1: branch exists, no commit ahead — stays incident ----
