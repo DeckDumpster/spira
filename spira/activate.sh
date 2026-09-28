@@ -187,9 +187,10 @@ _restart_units=()
 while IFS= read -r _line; do
     _unit="$(printf '%s\n' "$_line" | awk '{print $1}')"
     [ -n "$_unit" ] || continue
-    case "$_unit" in
-        spira-aeon-*) continue ;;   # skip: aeons may be live when --force was used
-    esac
+    # A transient unit (systemd-run, e.g. spira-landing or spira-aeon-*) has no unit file
+    # of its own — restarting it re-execs whatever command line it was launched with,
+    # which named files in the release being replaced (sp-hvtdj).
+    [ "$("$SC" --user show "$_unit" -p UnitFileState --value 2>/dev/null)" = transient ] && continue
     _restart_units+=("$_unit")
 done < <("$SC" --user list-units --state=active --no-legend 'spira-*.service' 2>/dev/null || true)
 

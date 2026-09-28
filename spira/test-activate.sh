@@ -18,6 +18,8 @@
 # 9. --dry-run reports intended actions without touching the release directory.
 # 10. Rollback is re-activation of an already-unpacked release: unpack is skipped and
 #     current swings back (merged from test-rollback.sh; UC-instance-lifecycle-11).
+# 11. A live transient unit (spira-landing, systemd-run, no unit file of its own) is
+#     excluded from the restart, while an ordinary installed unit still restarts (sp-hvtdj).
 #
 # FAIL-FIRST: each property is verified against the UNFIXED tree (no activate.sh)
 # before any fix is applied, confirming the suite catches the absence.
@@ -75,11 +77,19 @@ cat > "$MOCK_SC" <<EOF
 #!/usr/bin/env bash
 printf 'SC: %s\n' "\$*" >> "${SC_LOG}"
 case "\$*" in
+    *"-p UnitFileState --value"*)
+        case "\$*" in
+            *spira-landing*|*spira-aeon-*) printf 'transient\n' ;;
+            *)                             printf 'enabled\n' ;;
+        esac
+        ;;
     *spira-aeon-*)
         printf '%s\n' "\${MOCK_AEONS:-}"
         ;;
     *list-units*)
         printf 'spira-sentinel-prod.service loaded active running Sentinel\n'
+        [ -n "\${MOCK_LANDING_ACTIVE:-}" ] && \
+            printf 'spira-landing.service loaded active running Landing pass\n'
         ;;
 esac
 exit "\${MOCK_SC_EXIT:-0}"
@@ -322,6 +332,27 @@ if [ -n "$_reload_at" ] && [ -n "$_restart_at" ] && [ "$_reload_at" -lt "$_resta
 else
     bad "restart: daemon-reload precedes restart (gap G5)" \
         "reload at line ${_reload_at:-none}, restart at line ${_restart_at:-none} in SC_LOG"
+fi
+
+# ==========================================================================
+echo
+echo "PROPERTY 11 (sp-hvtdj): a live transient unit (spira-landing) is not restarted"
+# ==========================================================================
+chmod -R u+w "$RELEASES" 2>/dev/null; rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+TB="$(make_tarball "spira-20260915T165000Z")"
+
+_out="$(run_activate "MOCK_LANDING_ACTIVE=1" -- "$TB")"
+_rc=$?
+is0 "transient: activation still exits 0" "$_rc"
+if grep 'restart' "$SC_LOG" | grep -q 'spira-landing'; then
+    bad "transient: spira-landing excluded from restart" "found in restart call: $(grep restart "$SC_LOG")"
+else
+    ok "transient: spira-landing excluded from restart"
+fi
+if grep 'restart' "$SC_LOG" | grep -q 'spira-sentinel-prod'; then
+    ok "transient: non-transient unit still restarted"
+else
+    bad "transient: non-transient unit still restarted" "not found in restart call"
 fi
 
 # ==========================================================================

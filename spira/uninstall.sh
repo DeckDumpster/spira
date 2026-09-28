@@ -230,6 +230,26 @@ _un_stopped=0
 _un_removed=0
 _un_removed_names=()   # for sweep exclusion
 
+# ---------------------------------------------------------------------------
+# 0. STOP LIVE TRANSIENT UNITS. spira-landing and spira-aeon-* are systemd-run
+#    transients, never in owned.sh's manifest, so the installed-unit pass below
+#    never touches one still running from an in-flight sentinel/landing pass.
+#    Left running, the next activate.sh's restart step can revive it under a
+#    release it was never launched against (sp-hvtdj).
+# ---------------------------------------------------------------------------
+_un_transient="$("${SPIRA_SYSTEMCTL:-systemctl}" --user list-units --state=active --no-legend --plain \
+    'spira-landing*' 'spira-aeon-*' 2>/dev/null || true)"
+if [ -n "$_un_transient" ]; then
+    printf '\nStopping live transient units...\n'
+    while IFS= read -r _un_tline; do
+        _un_tu="$(printf '%s\n' "$_un_tline" | awk '{print $1}')"
+        [ -n "$_un_tu" ] || continue
+        _un_act "stopping $_un_tu" "${SPIRA_SYSTEMCTL:-systemctl}" --user stop "$_un_tu"
+        _un_removed_names+=("$_un_tu")
+    done <<< "$_un_transient"
+fi
+unset _un_transient _un_tline _un_tu
+
 _un_stop_disable() {
     local u="$1"
     "${SPIRA_SYSTEMCTL:-systemctl}" --user stop "$u" 2>/dev/null && \
