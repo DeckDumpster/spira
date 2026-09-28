@@ -42,7 +42,7 @@ Tier key: T0 static · T1 unit · T2 component · T3 integration · T4 acceptanc
 | UC-operator-channel-12 | `bead.sh amend` on an in-progress bead mails its live aeon and sends nothing when no aeon is alive. The aeon's mailbox is removed when the aeon exits. | contract, recovery | T3 / CI |
 | UC-operator-channel-13 | Chamber briefs never tell an agent to pass a `send` option that `cmd_send` does not accept. No caller of the retired `cockpit/ask.sh` remains. | contract | T0 / cert |
 
-### B. Decisions and verdict flow-back (`mail.sh sendmail`, `lib.sh`, `answers.py`, `verify-asks.sh`)
+### B. Decisions and verdict flow-back (`mail.sh sendmail`, `lib.sh`, `verify-asks.sh`)
 
 | ID | Requirement | Dimensions | Tier / where |
 |---|---|---|---|
@@ -171,7 +171,6 @@ The "file::case" entries use the mapper's case names. The cost column shows ci_s
 | Tidy keep/archive decision | `mail.sh:cmd_tidy` (bd list `--label $SPIRA_ASK_LABEL`, `urgent_max_s=604800`) | embedded-Dolt testdb for two beads | a `SPIRA_BD` stub printing the open-ask JSON; separate the per-message verdict function from the `mv` |
 | Reply routing | `mail.sh:_reply_mailbox` (line 428) | real-bd testdb in two files | main guard; call it with a fixture original message |
 | Suit verdict words → close reason | `mail.sh:_sendmail_close_bead` (lines 448-490) | only "bead is closed" | extract `_suit_reason <body>` → table test |
-| Verdict / premise rendering, stamp, seeding | `spira/answers.py` (premise detection lines 268-269, 401) | bd create/close + `timeout 6` loops | answers.py already reads bead JSON; add a `--from-json <file>` input (or a stub bd on PATH) and a fixed `--now` |
 | VERIFY sweep | `cockpit/verify-asks.sh` (it reads rows through `cockpit_beads`) | 6 testdb reset/seed cycles, 31 s | a stub `cockpit_beads` / `BD` emitting rows; assert the SATISFIED / still open / MISLABELLED lines and the close calls recorded by the stub |
 | Statute tiering / budget / cache | `lib.sh:render_memories` | real bd as a key-value store, 12 `bash -c` sourcings of lib.sh | the cache file is already a seam: pre-write a fixture cache (or `SPIRA_MEMORIES_CMD`) and drive every case except one from it |
 | SOP validator | `sop.sh` lint/write field checks | ~20 bd round-trips | a `sop.sh validate` reading an SOP body on stdin (no shelf) |
@@ -190,7 +189,7 @@ The "file::case" entries use the mapper's case names. The cost column shows ci_s
 3. **G-03 Suit verdict effects.** uphold, retire and amend produce different close reasons (`mail.sh:454-460`, default `amended`), but test-mail-sendmail.sh only asserts `closed`. An unrecognised suit word has no test.
 4. **G-04 verify-asks safety.** `VERIFY:` runs unattended as `timeout 120 bash -c "$cmd"` (verify-asks.sh:57). Nothing covers the timeout (a hanging VERIFY), a VERIFY with side effects, or the unreachable-DB branch, which prints "checked nothing" and **exits 0**. Decide whether that exit is intended (fail-open) and pin it with a test.
 5. **G-05 Real senders pass lint.** test-migrate-ask.sh lints hand-copied bodies, so a regression in a real emitter (`land_escalate`, `skew.sh escalate`, `watchd _wd_ask`, `incident.sh`, `archivist.sh`) goes unseen. A T2 test should invoke each emitter with `mail.sh` pointed at a scratch Maildir and without the lint override.
-6. **G-06 Premise-rejected detection branches.** answers.py accepts the label OR the reason prefix (lines 268-269). The only test sets both on the same bead (test-answers-premise-rejected.sh:60-69), so neither branch is independently covered.
+6. **G-06 Premise-rejected detection branches.** RETIRED (sp-xsl8i): answers.py and test-answers-premise-rejected.sh are both deleted.
 7. **G-07 `rule.sh retire`, `list` and `show` behaviour.** Only `enact` is tested (test-statute-projection.sh). `list` appears only through the concierge brief, and `retire` is untested, although CLAUDE.md prescribes it for superseded statutes.
 8. **G-08 `render_memories` delivery fence.** CLAUDE.md records that a hand-started session receives no statutes, and `render_memories` is called only from aeon.sh and concierge.sh. No test asserts that each fayth-composed entry point includes the `# Memories in force` section.
 9. **G-09 health-ids exit 2.** The "unusable prefix" refusal (watchd.sh:1632) has no case, and the SKIP path of test-watchd-health-ids.sh exits 0, so a missing engine reads as green.
