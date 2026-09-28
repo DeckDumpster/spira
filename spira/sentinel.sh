@@ -2,8 +2,11 @@
 #
 # sentinel.sh — the outer harness: compare current state to goal state, close the gap.
 #
-#   sentinel.sh          one pass (this is what the timer runs)
-#   sentinel.sh --report print the gap, change nothing
+#   sentinel.sh                one pass (this is what the 2-minute timer runs)
+#   sentinel.sh --report       print the gap, change nothing
+#   sentinel.sh --summon-only  CHECK 7 alone, nothing else (the 15s timer, and every aeon
+#                              unit's own ExecStopPost — a freed slot should refill in
+#                              seconds, not wait for the next full pass; sp-0y2av)
 #
 # THE SHAPE (the operator's call)
 # --------------------------------
@@ -25,6 +28,7 @@ set -uo pipefail
 . "$(dirname "$0")/lc.sh"
 
 REPORT=0; [ "${1:-}" = "--report" ] && REPORT=1
+SUMMON_ONLY=0; [ "${1:-}" = "--summon-only" ] && SUMMON_ONLY=1
 POISON_AT="${SPIRA_POISON_AT:-3}"
 REQUEUE_AT="${SPIRA_REQUEUE_AT:-5}"
 RECLAIM_AT="${SPIRA_RECLAIM_AT:-5}"
@@ -63,6 +67,35 @@ acted=0        # a write happened
 progressed=0   # the DAG moved
 act()      { acted=$((acted+1)); log "ACT $*"; }
 progress() { progressed=$((progressed+1)); act "$@"; }
+
+# ======================================================================================
+# --summon-only — CHECK 7 alone. The full pass below costs a median 213s (max 537s, measured
+# 2026-09-28) because CHECK7 runs near its END, behind goal/plan state reads, the Sending and
+# CHECK7c/d; a slot an exiting aeon just freed sat empty for minutes waiting for the next full
+# pass. This path reaches the summon loop directly, paying only what CHECK 7 itself needs:
+# the world/capacity gate (files, no bd call), a live count for the pool arithmetic, and ONE
+# bd ready call bucketed per persona (bulk_ready_by_fayth) rather than fayth_ready's own
+# one-call-per-partition. ck7_summon_pass holds summon.lock either way, so this path and the
+# full pass below can never both summon into the same freed slot (sp-0y2av).
+# ======================================================================================
+if [ "$SUMMON_ONLY" = 1 ]; then
+    world_gate fleet summon-only || exit 0
+    if capacity_paused; then
+        log "summon-only: account out of capacity for another ${SPIRA_CAPACITY_LEFT}s — not summoning"
+        exit 0
+    fi
+    live=0; for f in $FAYTHS; do live=$((live + $(aeon_count "$f"))); done
+    log "summon-only: live=$live fayths=[$FAYTHS]"
+    SPIRA_READY_CACHE="$(mktemp "${SPIRA_RUN}/ready-cache.XXXXXX" 2>/dev/null)" || SPIRA_READY_CACHE=""
+    if [ -n "$SPIRA_READY_CACHE" ]; then
+        bulk_ready_by_fayth > "$SPIRA_READY_CACHE" 2>/dev/null
+        export SPIRA_READY_CACHE
+    fi
+    ck7_summon_pass
+    rm -f "$SPIRA_READY_CACHE"
+    log "summon-only pass complete — $acted action(s)"
+    exit 0
+fi
 
 # ======================================================================================
 # DATABASE CHECK. Verify bd can reach $SPIRA_DB before reading any state. When bd
@@ -1151,97 +1184,12 @@ close_landed_queue_waiters 2>/dev/null || true
 # backwards for an on-call role. A fayth carries FAYTH_LABELS precisely so its partition is
 # its own; the readiness question has to be asked through it.
 #
-# summon_fayth lives in lib.sh so the decision is one thing in one place — and so it can be
-# exercised by test-fayth.sh, which the version inlined here could not be: everything else
-# in a sentinel pass touches the real repository and the real database.
+# ck7_summon_pass lives in lib.sh, under one flock shared with sentinel.sh --summon-only
+# (sp-0y2av), so the two entry points can never both summon into the same freed slot — and
+# so it can be exercised by test-fayth.sh, which a version inlined here could not be:
+# everything else in a sentinel pass touches the real repository and the real database.
 # ======================================================================================
-# ONE POOL, DRAWN DOWN IN THE ORDER THE PERSONAS ARE NAMED. SPIRA_MAX_AEONS is that pool and
-# was, until 2026-09-07, a configuration key nothing read — so every persona had a private
-# cap and nothing coordinated them. The order is the priority: Ops is named first because an
-# on-call persona that has to wait behind feature work is not on call.
-#
-# A HOST THAT SETS NO POOL BEHAVES EXACTLY AS BEFORE — an empty pool is passed as empty, and
-# every cap below it is the persona's own.
-# THE POOL IS FOR AEONS, NOT FOR THE PARTY. Party members travel with you and are summoned by
-# their own units; only task personas are called for a fight and dismissed after it, and only
-# they draw on this. `live` is counted the same way, over the task roster alone, or a running
-# Ops would consume a slot it was never taking from.
-TASK_FAYTHS="$(spira_task_fayths)"
-if [ -n "${SPIRA_MAX_AEONS:-}" ]; then
-    task_live=0; for f in $TASK_FAYTHS; do task_live=$((task_live + $(aeon_count "$f"))); done
-    pool="$(ck7_pool "$SPIRA_MAX_AEONS" "$task_live")"
-    log "CHECK7 pool: ${SPIRA_MAX_AEONS} slot(s), $task_live live, $pool free — order: $TASK_FAYTHS"
-else
-    pool=""
-fi
-# LANE FAYTHS DRAW FIRST. A lane is a partition with work no builder will ever take, and
-# builders always have a queue — so whichever loop runs first takes every free slot, and
-# the one that runs second is told the fleet is full. Running lanes first is what makes a
-# starved ops or qa queue resolve on the next freed slot instead of waiting for the plan
-# queue to empty, which never happens.
-#
-# THE FLEET CEILING STILL BINDS THEM. Lanes pass no pool argument, so SPIRA_MAX_AEONS does
-# not apply — but SPIRA_MAX_LIVE_AEONS does, deliberately: every aeon draws on one shared
-# five-hour account window whoever scheduled it, and that window is shared with the
-# operator's own sessions. A lane takes the NEXT slot; it does not add one.
-LANE_FAYTHS="$(spira_lane_fayths)"
-[ -n "$LANE_FAYTHS" ] && log "CHECK7 lanes (${SPIRA_LANES:-none} declared): $LANE_FAYTHS"
-# LANE ROTATION: rotate the evaluation order so all lanes get equal access to the
-# collective cap over successive passes. State: the last summoned lane fayth name.
-_lane_rr="$SPIRA_RUN/lane-round-robin"
-_lane_last="$(cat "$_lane_rr" 2>/dev/null)"
-LANE_FAYTHS="$(lane_rotate "$_lane_last" $LANE_FAYTHS)"
-# WHEN INDIVIDUAL BD CALLS ARE SLOW, a partition the pass did not reach is absent from
-# the log — absent looks identical to "nothing ready" in strand.sh. Track elapsed time
-# and log remaining fayths as not-evaluated when the budget runs out so strand.sh can
-# prefer "pass-truncated" over "starved".
-_ck7_start="$(date +%s)"
-_ck7_budget="${SPIRA_SENTINEL_PASS_BUDGET_SECS:-90}"
-for f in $LANE_FAYTHS; do
-    if [ $(( $(date +%s) - _ck7_start )) -ge "$_ck7_budget" ]; then
-        log "CHECK7 $f: not evaluated (pass budget exhausted)"
-        continue
-    fi
-    if summon_fayth "$f"; then
-        act "summoned a $f lane aeon"
-        printf '%s' "$f" > "$_lane_rr"
-    fi
-done
-
-# THE POOL DRAWS ON WHAT IS LEFT. Recomputed after the lanes, because a lane summoned above
-# consumes a slot the fleet ceiling counts, and a pool figure read before that is stale.
-#
-# ADMISSION THROTTLE: if --throttle-check engaged the stamp, hold the task pool at 0.
-# Lane fayths are not affected — only builders draw from this pool, and the stamp says
-# the queue is over capacity, not that lane work is unneeded (sp-h7zzx).
-_tc_stamp_ck7="${SPIRA_THROTTLE_STAMP:-$SPIRA_RUN/queue-throttled}"
-_ck7_express_label=""
-_ck7_stamp_exists=0; [ -f "$_tc_stamp_ck7" ] && _ck7_stamp_exists=1
-if [ "$(ck7_throttled "$_ck7_stamp_exists" "${SPIRA_QUEUE_THROTTLE_OVERRIDE:-}")" = 1 ]; then
-    _ck7_express_ready=0
-    express_ready_in_task_pool "$TASK_FAYTHS" "${SPIRA_EXPRESS_LABEL:-express}" && _ck7_express_ready=1
-    pool="$(check7_pool_decision 1 "${pool:-0}" "$_ck7_express_ready")"
-    if [ "$_ck7_express_ready" = 1 ]; then
-        _ck7_express_label="${SPIRA_EXPRESS_LABEL:-express}"
-        log "CHECK7 pool: throttle active — express bead ready, granting pool=$pool (restricted to '$_ck7_express_label')"
-    else
-        log "CHECK7 pool: throttle active ($(head -1 "$_tc_stamp_ck7" 2>/dev/null)) — task pool held at $pool"
-    fi
-fi
-for f in $TASK_FAYTHS; do
-    if [ $(( $(date +%s) - _ck7_start )) -ge "$_ck7_budget" ]; then
-        log "CHECK7 $f: not evaluated (pass budget exhausted)"
-        continue
-    fi
-    _fill=0
-    while summon_fayth "$f" "$pool" "$_ck7_express_label"; do
-        act "summoned a $f aeon"
-        [ -n "$pool" ] && pool=$(( pool > 0 ? pool - 1 : 0 ))
-        _fill=$(( _fill + 1 ))
-        [ "$(ck7_fill_cap "$_fill" "$pool")" = stop ] && break
-        [ $(( $(date +%s) - _ck7_start )) -ge "$_ck7_budget" ] && break
-    done
-done
+ck7_summon_pass
 
 # CHECK 6b MOVED BELOW CHECK 7: the Sending walks branches with git and bd calls and took
 # 4-7 minutes a pass, and the summon decision waited behind it. Summon first; reap after.

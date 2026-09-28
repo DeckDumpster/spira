@@ -1,0 +1,20 @@
+[Unit]
+# The fast path: CHECK 7 alone, so a slot an exiting aeon just freed refills in seconds
+# rather than waiting for spira-sentinel's own 2-minute pass. Also fired directly by every
+# aeon unit's own ExecStopPost (sp-0y2av); this timer is the fallback cadence between exits.
+Description=Spira fast summon — refill a freed aeon slot without a full sentinel pass
+Documentation=file://@SPIRA_HOME@/sentinel.sh
+After=default.target
+
+[Service]
+Type=oneshot
+ExecStart=@SPIRA_PROD@/sentinel.sh --summon-only
+# Target ~1s; generous headroom for a summon.lock wait behind a concurrent full pass.
+TimeoutStartSec=60
+CPUQuota=20%
+Nice=10
+StandardOutput=append:@SPIRA_RUN@/sentinel.log
+StandardError=append:@SPIRA_RUN@/sentinel.log
+
+[Install]
+WantedBy=default.target

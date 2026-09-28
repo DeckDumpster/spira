@@ -1,0 +1,12 @@
+[Unit]
+Description=Refill a freed aeon slot on a fast path, between full sentinel passes
+
+[Timer]
+OnBootSec=15
+OnActiveSec=15
+OnUnitActiveSec=15s
+AccuracySec=1s
+Unit=spira-summon.service
+
+[Install]
+WantedBy=timers.target
