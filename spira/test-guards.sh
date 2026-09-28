@@ -274,6 +274,42 @@ nowant "UC-safety-fences-02/prose-tee-not-mistaken-for-tee" '"decision":"block"'
 
 # ===========================================================================
 echo
+echo "sp-ozym9 — \$SPIRA_RUN/landstate and /queue: write shapes refused, reads and prose allowed:"
+# ===========================================================================
+out="$(fence_run "rm ${FAKE_RUN}/landstate/x" SPIRA_AEON=test-aeon)"
+want "sp-ozym9/rm-landstate-blocked" '"decision":"block"' "$out"
+
+out="$(fence_run "mv a ${FAKE_RUN}/queue/b" SPIRA_AEON=test-aeon)"
+want "sp-ozym9/mv-queue-blocked" '"decision":"block"' "$out"
+
+out="$(fence_run "echo x | tee ${FAKE_RUN}/landstate/x" SPIRA_AEON=test-aeon)"
+want "sp-ozym9/tee-landstate-blocked" '"decision":"block"' "$out"
+
+out="$(fence_run "sed -i s/a/b/ ${FAKE_RUN}/landstate/x" SPIRA_AEON=test-aeon)"
+want "sp-ozym9/sed-i-landstate-blocked" '"decision":"block"' "$out"
+
+out="$(fence_run "cat ${FAKE_RUN}/landstate/sp-7youp" SPIRA_AEON=test-aeon)"
+nowant "sp-ozym9/cat-landstate-allowed" '"decision":"block"' "$out"
+
+out="$(fence_run "ls ${FAKE_RUN}/landstate | wc -l" SPIRA_AEON=test-aeon)"
+nowant "sp-ozym9/ls-landstate-allowed" '"decision":"block"' "$out"
+
+out="$(fence_run "grep -l '^LANDED' ${FAKE_RUN}/landstate/*" SPIRA_AEON=test-aeon)"
+nowant "sp-ozym9/grep-landstate-allowed" '"decision":"block"' "$out"
+
+_ldflag="--description"
+_ld_cmd="$(printf "bd -C /db create title %s - <<'DESC'\nsee %s/landstate/sp-7youp for evidence\nDESC" "$_ldflag" "${FAKE_RUN}")"
+out="$(fence_run "$_ld_cmd" SPIRA_AEON=test-aeon)"
+nowant "sp-ozym9/landstate-path-in-heredoc-allowed" '"decision":"block"' "$out"
+
+out="$(fence_run "echo '${FAKE_RUN}/landstate/x needs no write'" SPIRA_AEON=test-aeon)"
+nowant "sp-ozym9/landstate-path-in-single-quoted-prose-allowed" '"decision":"block"' "$out"
+
+out="$(fence_run "rm ${FAKE_RUN}/landstate/x" SPIRA_AEON=test-aeon SPIRA_AEON_OVERRIDE=1)"
+nowant "sp-ozym9/override-bypasses-landstate-write-block" '"decision":"block"' "$out"
+
+# ===========================================================================
+echo
 echo "UC-safety-fences-03 — bd create test-data / unmapped-repo heuristic (stub bd, no testdb):"
 # ===========================================================================
 BDCREATE_DB="$TMP/prod-db"
