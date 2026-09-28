@@ -5548,33 +5548,20 @@ detect_invalid_closed() {
     printf '%s\n' "$_closed_raw" | SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_ID_PREFIX="${SPIRA_ID_PREFIX:-sp}" SPIRA_RUN="${SPIRA_RUN:-}" python3 -c '
 import sys, json, re, os
 
-# Load detect_close_reason from the shared helper. The detector uses detect_close_reason
-# (raw scan, no masking) so all occurrences reach Maechen; check_close_reason (quote-masked)
-# belongs to the close-time fence in aeon.sh.
+# Load detect_close_reason and check_unfiled_follow from the shared helper. The detector
+# uses detect_close_reason (raw scan, no masking) so all occurrences reach Maechen;
+# check_close_reason (quote-masked) belongs to the close-time fence in aeon.sh.
 _flags_path = os.path.join(os.environ.get("SPIRA_HOME", ""), "close-reason-flags.py")
 try:
     _ns = {"re": re, "__name__": ""}
     exec(open(_flags_path).read(), _ns)
     check_close_reason = _ns.get("detect_close_reason") or _ns["check_close_reason"]
+    check_unfiled_follow = _ns["check_unfiled_follow"]
 except Exception:
     check_close_reason = lambda r: None
+    check_unfiled_follow = lambda r, id_prefix="sp": None
 
-# Phrases that imply a follow-on obligation. Only a violation when no tracking reference
-# is cited. "upstream" names a destination, not an unfinished remainder, so it is not here.
-FOLLOW_ON = [
-    "builders should",
-    "at scale",
-    "the real fix",
-    "follow-up",
-]
-
-_prefix = re.escape(os.environ.get("SPIRA_ID_PREFIX", "sp"))
-TRACKING_RE = re.compile(
-    r"(?:\b" + _prefix + r"-[a-z0-9]+"
-    r"|[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*#\d+"
-    r"|https?://\S+)",
-    re.IGNORECASE
-)
+_id_prefix = os.environ.get("SPIRA_ID_PREFIX", "sp")
 
 # ALLOWLIST. Beads whose id appears in $SPIRA_RUN/invalid-closed.allow are reported
 # as ALLOWED-IC (not counted) rather than as INVALID-CLOSED or UNFILED-FOLLOW. Each
@@ -5608,8 +5595,8 @@ for i in (d if isinstance(d, list) else [d]):
             bid, hit, reason_short, title))
         continue
 
-    follow_hit = next((f for f in FOLLOW_ON if f.lower() in reason.lower()), None)
-    if follow_hit and not TRACKING_RE.search(reason):
+    follow_hit = check_unfiled_follow(reason, _id_prefix)
+    if follow_hit:
         print("UNFILED-FOLLOW %s — follow-on phrase %r without a tracking reference: %s. title: %s" % (
             bid, follow_hit, reason_short, title))
 ' 2>/dev/null
