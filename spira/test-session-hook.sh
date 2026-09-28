@@ -56,6 +56,7 @@ SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)" || skip "no spira-config binary f
 CLONE="$TMP/clone"
 mkdir -p "$CLONE/spira/hooks"
 cp "$HERE/conf.sh" "$HERE/watchd.sh" "$HERE/install-session-hook.sh" "$HERE/mail.sh" "$CLONE/spira/"
+cp "$HERE/inbox-triage.sh" "$CLONE/spira/"
 cp "$HERE/hooks/session.sh" "$CLONE/spira/hooks/"
 
 # `status` asks systemd about every daemon row. A stub answers instead, so this suite says
@@ -474,6 +475,43 @@ is  "an aeon session gets no output at all"     "" "$aout"
 # (law-absence-needs-a-positive-control).
 pout="$(hook SessionStart startup)"
 has "an operator session still gets the status table" "$pout" "## Spira watchers"
+
+echo
+echo "the concierge's mandatory first action — only on the concierge socket, every source"
+# THE POSITIVE CONTROL FIRST: without SPIRA_CONCIERGE, no arm instruction at all, so the
+# presence asserted below is about the guard and not about the fixture
+# (law-absence-needs-a-positive-control).
+nout="$(hook SessionStart startup)"
+hasnt "a non-concierge session gets no arm instruction" "$nout" "MANDATORY FIRST ACTION"
+
+cout="$(hook SessionStart startup SPIRA_CONCIERGE=1)"
+has "the concierge session gets the arm instruction"    "$cout" "MANDATORY FIRST ACTION"
+has "naming inbox-triage.sh as the Monitor to arm"       "$cout" "inbox-triage.sh"
+has "naming the durable inbox path"                      "$cout" "$RUN/watchd/concierge-inbox.log"
+has "it still gets the ordinary watcher table too"       "$cout" "## Spira watchers"
+
+# EVERY SessionStart SOURCE, NOT JUST startup — a compaction is the case this exists for.
+for src in startup resume clear compact fork; do
+    got="$(hook SessionStart "$src" SPIRA_CONCIERGE=1)"
+    has "source '$src' also gets the arm instruction" "$got" "MANDATORY FIRST ACTION"
+done
+
+# SessionEnd HAS NOTHING TO SAY EVEN FOR THE CONCIERGE — the context it would print into is
+# the one going away.
+endout="$(hook SessionEnd clear SPIRA_CONCIERGE=1)"
+is "SessionEnd gives the concierge nothing either" "" "$endout"
+
+# THE UNREAD COUNT IS REAL, NOT A PLACEHOLDER. Plant lines in the durable inbox and confirm
+# the number in the arm instruction reflects them.
+printf 'one\ntwo\nthree\n' > "$RUN/watchd/concierge-inbox.log"
+n_out="$(hook SessionStart startup SPIRA_CONCIERGE=1)"
+has "the arm instruction carries the real unread count" "$n_out" "(3 lines)"
+rm -f "$RUN/watchd/concierge-inbox.log"
+
+# AN AEON IS NEVER A CONCIERGE, but the guard ordering matters: SPIRA_AEON must win even if
+# SPIRA_CONCIERGE were somehow also set.
+aeon_out="$(hook SessionStart startup SPIRA_AEON=mindy SPIRA_CONCIERGE=1)"
+is "an aeon session gets nothing, even with SPIRA_CONCIERGE set" "" "$aeon_out"
 
 echo
 tl_summary

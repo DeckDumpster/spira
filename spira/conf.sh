@@ -66,6 +66,7 @@ SPIRA_PATH SPIRA_WORKSPACES SPIRA_REPO_MAP SPIRA_PREFIX_MAP SPIRA_CHAMBER SPIRA_
 SPIRA_ACTIONABLE SPIRA_ID_PREFIX SPIRA_HEALTH_TIMEOUT SPIRA_NOTIFY_AGE SPIRA_WAKE
 SPIRA_CLIENT_SETTINGS SPIRA_CTRL
 SPIRA_MAIL SPIRA_MAIL_KINDS SPIRA_MAIL_READERS SPIRA_MAIL_UNREAD_AGE SPIRA_MAIL_SETTLE SPIRA_MAIL_SESSION_MAILBOX SPIRA_MAIL_REPEAT_WINDOW SPIRA_MAIL_TIDY_FRESH SPIRA_MAIL_WAKE_BACKOFF SPIRA_MAIL_INDEX
+SPIRA_CONCIERGE_INBOX SPIRA_CONCIERGE_INBOX_DEDUP SPIRA_CONCIERGE_INBOX_STALL SPIRA_CONCIERGE_INBOX_BACKOFF
 SPIRA_COCKPIT SPIRA_COCKPIT_TRACE_LINES SPIRA_SNAP_STALE_S SPIRA_NOTIFY SPIRA_PANEL SPIRA_OPERATOR SPIRA_OPERATOR_ACTOR SPIRA_TZ SPIRA_ASK_LABEL SPIRA_VERIFY_TIMEOUT SPIRA_RECLAIM_SKIP_LABEL SPIRA_OPERATED
 SPIRA_CI_LABEL SPIRA_CI_PARK_MAX SPIRA_WORLD_STOP_LABEL
 SPIRA_LAND_MAXSEC SPIRA_LAND_GATE_RESERVE SPIRA_CERTIFY_PAR SPIRA_CERTIFY_SUITES SPIRA_CERTIFY_ALWAYS_COVERS SPIRA_VERDICT_TTL SPIRA_REBASE_ESCALATE_AT SPIRA_EVICTION_ESCALATE_AT SPIRA_VERDICT_WINDOW SPIRA_CHECK5_MAX_FILE SPIRA_CHECK5_MAX_RESOLVE SPIRA_REMEDY_WINDOW SPIRA_PR_STALL_MINS SPIRA_DEFERRAL_ESCALATE_AT SPIRA_CUTOVER_ROUND_LABEL
@@ -465,7 +466,13 @@ spira_conf_defaults() {
     : "${SPIRA_MEMORIES_CACHE_AGE:=300}"
     : "${SPIRA_MAIL:=$SPIRA_RUN/mail}"
     : "${SPIRA_MAIL_KINDS:=$SPIRA_HOME/mail/kinds}"
-    : "${SPIRA_MAIL_READERS:=}"
+    # THE CONCIERGE READS ITS MAIL THROUGH THE DURABLE INBOX, NOT A KEYSTROKE. inbox-append.sh
+    # only ever appends a line to SPIRA_CONCIERGE_INBOX; the concierge's own inbox-triage.sh
+    # Monitor is what reaches the session, so a burst of mail can never land mid-keystroke in
+    # the operator's own half-written message the way a keystroke wake could. An operator who
+    # wants the old keystroke-wake reader back for another mailbox still sets
+    # SPIRA_MAIL_READERS themselves; this default covers `concierge` alone.
+    : "${SPIRA_MAIL_READERS:=concierge=$SPIRA_HOME/inbox-append.sh}"
     : "${SPIRA_MAIL_UNREAD_AGE:=1800}"
     : "${SPIRA_MAIL_SETTLE:=2}"
     # HOW LONG BETWEEN WAKE RETRIES while a mailbox stays unread, in seconds, one step per
@@ -476,6 +483,18 @@ spira_conf_defaults() {
     : "${SPIRA_MAIL_REPEAT_WINDOW:=14400}"
     : "${SPIRA_MAIL_TIDY_FRESH:=86400}"
     : "${SPIRA_MAIL_INDEX:=$SPIRA_MAIL/index}"
+    # THE CONCIERGE'S DURABLE INBOX. Every watcher and mail-deliver appends one line here
+    # (inbox-append.sh); the concierge's inbox-triage.sh Monitor tails it, drops echoes and
+    # duplicates, and passes what needs action — never a keystroke into the pane.
+    : "${SPIRA_CONCIERGE_INBOX:=$SPIRA_RUN/watchd/concierge-inbox.log}"
+    # DEDUP WINDOW, seconds: the same triaged line within this window is suppressed.
+    : "${SPIRA_CONCIERGE_INBOX_DEDUP:=600}"
+    # THE KEEPER'S THRESHOLDS. If no inbox-triage.sh Monitor has been running for
+    # SPIRA_CONCIERGE_INBOX_STALL seconds while the inbox holds lines it has not seen, the
+    # keeper re-arms with ONE wake (held by concierge.sh wake until the input line is empty),
+    # then waits SPIRA_CONCIERGE_INBOX_BACKOFF before it will wake again.
+    : "${SPIRA_CONCIERGE_INBOX_STALL:=600}"
+    : "${SPIRA_CONCIERGE_INBOX_BACKOFF:=3600}"
     : "${SPIRA_GOAL:=sp-spira}"
     : "${SPIRA_PATH:=}"
     # Git checkout: workspaces is the parent of SPIRA_REPO. Artifact deployment: SPIRA_REPO

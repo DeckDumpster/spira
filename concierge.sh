@@ -313,6 +313,24 @@ concierge_stray_holders() {
 case "${1:-status}" in
 
 start)
+    # THE SESSION HOOK IS ENSURED ON EVERY start, not only the first — this is also what the
+    # 10-minute re-ensure timer calls, so "start (and restart)" is the same code path. Runs
+    # before the already-running check below so a concierge already up still gets it repaired.
+    # install-session-hook.sh install is itself idempotent (writes the client's settings file
+    # only on change), so this costs nothing in the steady state. FAILS LOUDLY RATHER THAN
+    # START DEGRADED: a concierge up without this hook looks identical to one with it until
+    # the first compaction opens a context with no Monitor attached and nothing arms one.
+    #
+    # SPIRA_HOME IS OVERRIDDEN TO THIS FILE'S OWN LOCATION FOR THIS ONE CALL. SPIRA_HOME
+    # elsewhere in this script is configurable — compose_brief deliberately points it at a
+    # fixture chamber under test — but the session hook is a property of the CODE, not of
+    # whatever chamber a caller is composing a brief from, so registering it must never
+    # depend on that seam.
+    if ! env SPIRA_HOME="$HARNESS/spira" "$HARNESS/spira/install-session-hook.sh" install; then
+        echo "concierge: could not register the SessionStart hook — refusing to start without it" >&2
+        exit 1
+    fi
+
     if $TM has-session -t "$SESSION" 2>/dev/null; then
         echo "concierge: already running (tmux -L $SOCKET attach -t $SESSION)"
         exit 0
@@ -505,6 +523,26 @@ wake)
         printf '  tmux -L %s attach -t %s   # see what is left, then: %s start\n' "$SOCKET" "$SESSION" "$0" >&2
         exit 1
     fi
+    # NEVER TYPE INTO A NON-EMPTY INPUT LINE. A wake mid-keystroke lands inside the
+    # operator's own half-written message and their Enter sends both, splitting the
+    # instruction mid-sentence. Hold while the Claude Code input line — the `❯ ` line between
+    # the pane's two rules — holds text, and deliver the moment it is empty. This never drops
+    # a wake: it waits as long as the operator is typing. Serialised by a lock so two
+    # callers (the mail deliverer, the inbox-keeper watcher) never interleave keystrokes.
+    _wake_input_busy() {
+        local line
+        line="$($TM capture-pane -p -t "$SESSION" 2>/dev/null | grep -m1 -E '^❯' || true)"
+        [ -n "$line" ] || return 1
+        line="${line#❯}"; line="${line#"${line%%[![:space:]]*}"}"
+        [ -n "$line" ]
+    }
+    mkdir -p "$SPIRA_RUN" 2>/dev/null
+    exec 8>"$SPIRA_RUN/concierge-wake.lock"
+    flock 8
+    while _wake_input_busy; do sleep 2; done
+    # SETTLE: he may be between keystrokes; require a second quiet check before delivering.
+    sleep 1
+    while _wake_input_busy; do sleep 2; done
     # -l sends the text literally; Enter is a separate key so a prompt mid-turn is queued, not split.
     $TM send-keys -t "$SESSION" -l -- "$2" && $TM send-keys -t "$SESSION" Enter
     ;;

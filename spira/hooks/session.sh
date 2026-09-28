@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # session.sh — the coding agent's SessionStart hook: what is watching, what is unread,
-# and unread mail. Registered by `install-session-hook.sh`.
+# unread mail, and — on the concierge socket only — the mandatory first action to arm the
+# inbox-triage.sh Monitor. Registered by `install-session-hook.sh`.
 #
 # WHY A HOOK CAN ONLY PRINT. A command hook communicates with the client through stdout,
 # stderr and an exit code only — it cannot call a tool. The OUTER HARNESS owns the watcher
@@ -58,10 +59,6 @@ _prod="$(readlink -f "${SPIRA_PROD:-}" 2>/dev/null || printf '%s' "${SPIRA_PROD:
 _home="$(readlink -f "${SPIRA_HOME:-}" 2>/dev/null || printf '%s' "${SPIRA_HOME:-}")"
 [ -n "$_prod" ] && [ "$_home" != "$_prod" ] && exit 0
 
-WATCHD="$SPIRA_HOME/watchd.sh"
-[ -x "$WATCHD" ] || exit 0
-MAIL="$SPIRA_HOME/mail.sh"
-
 # THE PAYLOAD IS READ ONLY IF SOMETHING SENT ONE. The client pipes a JSON object in; a person
 # running this by hand has a terminal on stdin, and a bare `cat` there blocks forever, holding
 # the session start open until the hook's timeout expires.
@@ -74,8 +71,28 @@ except Exception: print("")' 2>/dev/null)"
 # SessionEnd has nothing to say and nowhere to say it — the context it would print into is
 # the one going away. It is handled rather than refused so that registering it is harmless,
 # but `install-session-hook.sh` deliberately does not register it: with systemd owning the
-# watchers there are no processes for a departing session to guarantee.
+# watchers there are no processes for a departing session to guarantee. Checked before the
+# concierge block below too — a departing session gets no arm instruction either.
 [ "$event" = SessionEnd ] && exit 0
+
+# THE CONCIERGE'S MANDATORY FIRST ACTION, ON EVERY SessionStart SOURCE — startup, resume,
+# clear, compact and fork all open a context with no Monitor attached, which is the only
+# condition this is about (same reasoning as the "no source is special" comment below). It
+# does not wait on WATCHD or a manifest: the inbox-triage.sh Monitor is how mail and watcher
+# events reach this session AT ALL now that a keystroke wake no longer does, so it must stay
+# constantly attached. SPIRA_CONCIERGE is exported only by concierge.sh's own launcher, so
+# every other session on the box gets none of this.
+if [ -n "${SPIRA_CONCIERGE:-}" ]; then
+    _cinbox="$SPIRA_CONCIERGE_INBOX"
+    _cunread="$(wc -l < "$_cinbox" 2>/dev/null || echo 0)"
+    case "$_cunread" in *[!0-9]*|'') _cunread=0 ;; esac
+    printf 'MANDATORY FIRST ACTION: arm the Concierge inbox monitor before anything else — Monitor command=%s, timeout_ms=1800000, description="concierge inbox (triaged)". Every watcher and mail event reaches you ONLY through %s (%s lines); nothing types into the pane. Re-arm it at every 30-minute expiry. Then read recent inbox lines: tail -20 %s\n' \
+        "$SPIRA_HOME/inbox-triage.sh" "$_cinbox" "$_cunread" "$_cinbox"
+fi
+
+WATCHD="$SPIRA_HOME/watchd.sh"
+[ -x "$WATCHD" ] || exit 0
+MAIL="$SPIRA_HOME/mail.sh"
 
 # FIRE THE ARCHIVIST ON CLEAR. A clear starts a new session while the previous transcript is
 # still on disk. The turns between the last drift sweep and now are uncovered; this catches
