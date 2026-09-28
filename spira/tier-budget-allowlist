@@ -67,7 +67,6 @@ test-batch-conflict.sh	T1	30.5
 test-batch-conflicting-pr.sh	T1	3.0
 test-batch-express.sh	T1	21.0
 test-batch-idle-cut.sh	T1	18.0
-test-batch-landed-false.sh	T1	9.0
 test-batch-maxpar.sh	T1	5.0
 test-batch-nocut-reason.sh	T1	8.0
 test-batch-owner.sh	T1	4.5

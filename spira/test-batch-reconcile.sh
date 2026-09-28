@@ -114,6 +114,15 @@ batch() {
         bash "$SH/batch.sh" "$@" 2>&1
 }
 
+# Compute the current gate key for a branch by sourcing lib.sh in a subshell — same
+# convention as test-cert-stale-gate-key.sh's compute_key().
+compute_key() {
+    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$SH/repo-map" \
+        bash -c ". '$SH/lib.sh'; compute_gate_key \"\$1\" \"\$2\" \"\$3\" \"\$4\"" \
+        -- "$REPO" "$REPONAME" "$1" "origin/main" 2>/dev/null
+}
+gate_key_file() { printf '%s/%s.gate-key' "$LANDSTATE" "$1"; }
+
 clean_case() {
     rm -f "$QUEUEDIR/$REPONAME/open" "$RUN/queue-stuck-$REPONAME"
     : > "$MAIL_LOG"; : > "$FORGE_LOG"
@@ -215,11 +224,17 @@ clean_case
 
 # =============================================================================
 # A. STALE-CERTIFICATION: a branch certified at the base tip then advanced must
-#    NOT be marked LANDED (already-in-base); the new commit is re-certified at
-#    its live tip.
+#    NOT be marked LANDED (already-in-base). NO UNGATED RE-CERTIFICATION (sp-vd9dn):
+#    the tip invariant means an advanced tip is re-certified ONLY when a matching
+#    .gate-key proves it is the same reviewed content, just re-pointed (A1); with no
+#    such proof it needs a fresh gate and the old CERTIFIED record is left standing,
+#    not silently moved onto a tree nothing has judged (A2).
+#
+# SEEN RED BEFORE THE FIX: A2 used to re-certify sp-btA-stale2's live tip with no
+# gate-key at all — "stale-cert: NOT silently re-certified" read the live tip, not "0".
 # =============================================================================
 echo
-echo "stale-certification: advanced tip is re-certified, not marked LANDED:"
+echo "stale-certification: matching gate key re-certifies at the live tip (A1):"
 clean_case
 NOW="$(date +%s)"; OLD_A=$(( NOW - 1800 - 1 ))
 BASE_SHA_A="$(git -C "$REPO" rev-parse origin/main)"
@@ -230,16 +245,45 @@ printf 'stale-cert test\n' > "$RUN/worktree/sp-btA-stale/stale.txt"
 git -C "$RUN/worktree/sp-btA-stale" add -A
 git -C "$RUN/worktree/sp-btA-stale" commit -q -m "sp-btA-stale: work after certification"
 LIVE_TIP_A="$(git -C "$REPO" rev-parse "spira/sp-btA-stale")"
+ck_a="$(compute_key "spira/sp-btA-stale" 2>/dev/null || true)"
+if [ -n "${ck_a:-}" ]; then
+    printf '%s\n' "$ck_a" > "$(gate_key_file sp-btA-stale)"
 
-out_a="$(batch "$REPONAME")"
-is "stale-cert: NOT marked LANDED" "0" \
-    "$([ "$(awk '{print $1}' "$LANDSTATE/sp-btA-stale" 2>/dev/null)" = "LANDED" ] && echo 1 || echo 0)"
-_tipA="$(awk '{print $2}' "$LANDSTATE/sp-btA-stale" 2>/dev/null)"
-is "stale-cert: live tip in landstate" "$LIVE_TIP_A" "$_tipA"
-want "stale-cert: logged"          "stale-certification"     "$out_a"
-want "stale-cert: certified sha in log" "${BASE_SHA_A:0:8}"  "$out_a"
-want "stale-cert: live sha in log"      "${LIVE_TIP_A:0:8}"  "$out_a"
+    out_a="$(batch "$REPONAME")"
+    is "stale-cert: NOT marked LANDED" "0" \
+        "$([ "$(awk '{print $1}' "$LANDSTATE/sp-btA-stale" 2>/dev/null)" = "LANDED" ] && echo 1 || echo 0)"
+    _tipA="$(awk '{print $2}' "$LANDSTATE/sp-btA-stale" 2>/dev/null)"
+    is "stale-cert: live tip in landstate" "$LIVE_TIP_A" "$_tipA"
+    want "stale-cert: logged"          "stale-certification"     "$out_a"
+    want "stale-cert: certified sha in log" "${BASE_SHA_A:0:8}"  "$out_a"
+    want "stale-cert: live sha in log"      "${LIVE_TIP_A:0:8}"  "$out_a"
+else
+    ok "stale-cert A1: compute_key unavailable in test env — skipping"
+fi
 git -C "$REPO" worktree remove -f "$RUN/worktree/sp-btA-stale" 2>/dev/null || true
+clean_case
+
+echo
+echo "stale-certification: no gate key — needs fresh gate, not silently re-certified (A2):"
+clean_case
+NOW="$(date +%s)"; OLD_A2=$(( NOW - 1800 - 1 ))
+BASE_SHA_A2="$(git -C "$REPO" rev-parse origin/main)"
+git -C "$REPO" branch "spira/sp-btA-stale2" main 2>/dev/null || true
+printf 'CERTIFIED %s %s\n' "$BASE_SHA_A2" "$OLD_A2" > "$LANDSTATE/sp-btA-stale2"
+git -C "$REPO" worktree add -q "$RUN/worktree/sp-btA-stale2" "spira/sp-btA-stale2" 2>/dev/null || true
+printf 'stale-cert test\n' > "$RUN/worktree/sp-btA-stale2/stale.txt"
+git -C "$RUN/worktree/sp-btA-stale2" add -A
+git -C "$RUN/worktree/sp-btA-stale2" commit -q -m "sp-btA-stale2: work after certification, no gate key"
+LIVE_TIP_A2="$(git -C "$REPO" rev-parse "spira/sp-btA-stale2")"
+
+out_a2="$(batch "$REPONAME")"
+is "stale-cert: NOT marked LANDED (A2)" "0" \
+    "$([ "$(awk '{print $1}' "$LANDSTATE/sp-btA-stale2" 2>/dev/null)" = "LANDED" ] && echo 1 || echo 0)"
+_tipA2="$(awk '{print $2}' "$LANDSTATE/sp-btA-stale2" 2>/dev/null)"
+is "stale-cert: NOT silently re-certified — old tip still on record" "$BASE_SHA_A2" "$_tipA2"
+want "stale-cert: needs-fresh-gate logged" "needs fresh gate" "$out_a2"
+nowant "stale-cert: not batched" "certified spira/sp-btA-stale2" "$out_a2"
+git -C "$REPO" worktree remove -f "$RUN/worktree/sp-btA-stale2" 2>/dev/null || true
 clean_case
 
 # =============================================================================

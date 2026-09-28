@@ -23,6 +23,11 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 }
 . "$_spira_lib_dir/conf.sh"
 . "$_spira_lib_dir/suite-covers.sh"
+# OPTIONAL, UNLIKE THE TWO ABOVE: a fixture that copies lib.sh+conf.sh to run out of its own
+# tree and has no reason to know about certification-onto-events should not have to also copy
+# this file, or see it fail loudly. Its absence just means lc_certify/lc_available/lc_resubmit
+# are undefined, which every caller already guards with `command -v` before use.
+[ -f "$_spira_lib_dir/lifecycle-cert.sh" ] && . "$_spira_lib_dir/lifecycle-cert.sh"
 unset _spira_lib_dir
 export BEADS_NO_AUTO_IMPORT=1
 mkdir -p "$SPIRA_RUN"
