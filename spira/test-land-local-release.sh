@@ -145,6 +145,13 @@ mk_bins() {
     chmod +x "$dir/fakebin"
 }
 
+# Sections 0-7 exercise the release-activation path itself: the state sp-tkds8's cutover
+# leaves production in, where $SPIRA_RELEASES/current already exists. A dangling symlink is
+# enough — nothing here reads its target, only whether it is a symlink at all — and gives
+# section 1 something to assert stays unchanged. Sections 8-9 (sp-zt0ae) below are what
+# exercises today's pre-cutover state, where it does not exist yet.
+ln -s spira-bootstrap "$RELEASES/current"
+
 # ============================================================================
 echo
 echo "0 — rollback with no landed round is refused"
@@ -168,7 +175,7 @@ out="$(run_q land-local fixq --head "$HEAD1" --members "sp-lrel1:$HEAD1")"; rc=$
     || bad "1: exit non-zero with no corpus for the round's tree" "got rc=$rc out=$out"
 want "1: names the missing corpus"       "no built binaries" "$out"
 is   "1: local/main is unchanged"        "$PRE_MAIN" "$(localmain)"
-is   "1: nothing is activated"           "" "$(current_name)"
+is   "1: current is unchanged"           "spira-bootstrap" "$(current_name)"
 is   "1: the bead is left open"          open "$(field sp-lrel1 status)"
 
 # ============================================================================
