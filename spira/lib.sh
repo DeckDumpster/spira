@@ -2118,21 +2118,26 @@ summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label]
             fi
         fi
         # INVERTED LAST-SLOT RESERVATION. A task fayth may not take the last fleet slot
-        # while any lane has ready work and lanes are below their collective cap. This
-        # inverts the old lane-last-slot rule: lanes are preferred when a slot is scarce,
-        # so ops and groomer are not starved by builders under a steady task backlog.
+        # while any lane has ready work IT CAN ACTUALLY TAKE and lanes are below their
+        # collective cap. This inverts the old lane-last-slot rule: lanes are preferred
+        # when a slot is scarce, so ops and groomer are not starved by builders under a
+        # steady task backlog. A lane already at its own FAYTH_MAX_CONCURRENT cannot use
+        # the slot regardless, so holding it back for that lane leaves it empty instead.
         # Requires SPIRA_LANES_MAX_LIVE; without it, no preference applies.
         if [ -n "${SPIRA_LANES_MAX_LIVE:-}" ] && [ -z "$(fayth_get "$f" FAYTH_LANE "")" ]; then
             local inv_slots_free; inv_slots_free=$(( SPIRA_MAX_LIVE_AEONS - ${live_all:-0} ))
             if [ "${inv_slots_free:-0}" -eq 1 ] 2>/dev/null; then
                 local live_lanes; live_lanes="$(aeons_live_lanes)"
                 if [ "${live_lanes:-0}" -lt "$SPIRA_LANES_MAX_LIVE" ] 2>/dev/null; then
-                    local lf lf_r
+                    local lf lf_r lf_free
                     for lf in $(spira_lane_fayths); do
                         lf_r="$(fayth_ready "$lf" 2>/dev/null)" || continue
                         if [ "${lf_r:-0}" -gt 0 ] 2>/dev/null; then
-                            log "CHECK7 $f: 1 fleet slot remaining, held back — $lf has $lf_r ready lane work"
-                            return 1
+                            lf_free="$(fayth_free "$lf")"
+                            if [ "${lf_free:-0}" -gt 0 ] 2>/dev/null; then
+                                log "CHECK7 $f: 1 fleet slot remaining, held back — $lf has $lf_r ready lane work"
+                                return 1
+                            fi
                         fi
                     done
                 fi

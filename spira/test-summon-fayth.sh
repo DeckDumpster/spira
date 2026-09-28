@@ -224,6 +224,19 @@ want   "log says 'held back'"              "held back"              "$log_out"
 nowant "log says 'at concurrency cap'"     "at concurrency cap"     "$log_out"
 
 echo
+echo "lane ceiling (a2) — tasker IS summoned when the only ready lane is at its own concurrency cap"
+# laner has FAYTH_MAX_CONCURRENT=1; MOCK_COUNT=1 means it already has one live, so it
+# cannot take the last slot even though it is ready. Holding the slot back for it would
+# leave the slot empty rather than give it to anyone.
+MOCK_LIVE=3; MOCK_LIVE_LANES=0; MOCK_COUNT=1
+MOCK_READY_laner=1; MOCK_READY_tasker=1
+rm -f "$SUMMONED"
+summon_fayth tasker >/dev/null 2>&1 || true
+is "(a2): tasker summoned when laner is ready but at its own concurrency cap" \
+   "SUMMONED:tasker" "$(cat "$SUMMONED" 2>/dev/null)"
+MOCK_COUNT=0
+
+echo
 echo "lane ceiling (b) — the task fayth is allowed when last slot and no lane has ready work"
 MOCK_LIVE=3; MOCK_LIVE_LANES=0
 MOCK_READY_laner=0; MOCK_READY_tasker=1
