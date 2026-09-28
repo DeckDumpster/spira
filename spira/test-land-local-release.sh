@@ -21,7 +21,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testdb.sh"
 testdb_require test-land-local-release
 TMP="$(mktemp -d)"
-trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+trap 'testdb_drop; chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT INT TERM
 testdb_up llocrel || { echo "test-land-local-release: could not build a fixture database"; exit 1; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 

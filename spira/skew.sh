@@ -432,14 +432,19 @@ _skew_repo_name_for_path() {
     return 1
 }
 
-# _refresh_check_only <repo> -> queue.local's refresh: compare what is running (the
+# _refresh_check_only <repo> <name> -> queue.local's refresh: compare what is running (the
 # activated release's MANIFEST commit, or HEAD in a plain checkout) against local/main's
 # head. Equal: nothing to report, exit 0. Unequal: print the finding, escalate once per
 # distinct running/expected pair, exit 1 — and, either way, NEVER touch the checkout, build
 # anything, or swing the current symlink. That is queue.sh land-local's job alone.
 _refresh_check_only() {
-    local repo="$1" base base_sha running
-    base="$(spira_landref "$repo" 2>/dev/null)" || {
+    local repo="$1" name="$2" base base_sha running
+    # BY NAME, NOT BY PATH. spira_landref given a path re-derives the name via
+    # repo_name_at, which prefers SPIRA_HOME_REPO for a path matching SPIRA_REPO — the
+    # caller already found the one true name for this path (_skew_repo_name_for_path,
+    # by object store); re-deriving it a second, weaker way here would only be able to
+    # get it wrong.
+    base="$(spira_landref "$name" 2>/dev/null)" || {
         echo "skew: refresh: queue.local — cannot resolve the ref $repo lands on"; return 1; }
     base_sha="$(git -C "$repo" rev-parse -q --verify "$base" 2>/dev/null)" || {
         echo "skew: refresh: queue.local — ref $base does not resolve"; return 1; }
@@ -496,7 +501,7 @@ refresh() {
     local repo="${1:-$SPIRA_REPO}" base base_branch remote behind dirty current
     local _qlref_name; _qlref_name="$(_skew_repo_name_for_path "$repo" 2>/dev/null)" || _qlref_name=""
     if [ -n "$_qlref_name" ] && [ "$(repo_land "$_qlref_name" 2>/dev/null)" = "queue.local" ]; then
-        _refresh_check_only "$repo"
+        _refresh_check_only "$repo" "$_qlref_name"
         return $?
     fi
     if [ -n "${SPIRA_RELEASES:-}" ] && [ -L "$SPIRA_RELEASES/current" ]; then
