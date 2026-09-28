@@ -2,13 +2,16 @@
 //! driven with recorded or synthetic inputs and checked against a recorded or reasoned
 //! outcome.
 //!
-//! The observed rounds of 2026-09-24/25 (rounds 1-15) live in the brain wiki, which this
-//! worktree cannot read (see the bead's own guardrails). The shapes below are instead built
-//! from what the bead's own description records about those rounds — the three E double-reds
-//! (sp-ui46l, sp-29g55, sp-q4swv) and the five stale members of 2026-09-25 — plus synthetic
-//! cases for everything the scope names that no incident happened to exercise: an
-//! all-conflict round, a flip on re-run, an express member, a stale stacked base, and a
-//! stale bisect record.
+//! The observed rounds of 2026-09-24/25 live in the brain wiki
+//! (`wiki/projects/spira/concierge-as-batcher-2026-09-24.md`), reachable from this worktree
+//! (sp-z3p8z). Only round 1 is reconstructed below, against that page's own account of it —
+//! the design's test strategy names it specifically ("given round 1's three double-reds, its
+//! actions must match what was done"). Rounds 2-15 remain unreconstructed: the page is a
+//! prose narrative log, not structured data, and each round's facts are told with a
+//! different level of detail rather than in a fixture-ready shape. A future aeon with the
+//! time to extract them should read that page round by round rather than trust a summary
+//! here. The rest of the cases below are synthetic: an all-conflict round, a flip on
+//! re-run, an express member, a stale stacked base, and a stale bisect record.
 
 use super::*;
 
@@ -245,14 +248,21 @@ fn a_red_suite_missing_from_the_rerun_fails_closed_to_double_red() {
 
 // -- E. A test ahead of its code (the commonest double-red shape) ---------------------------
 
-/// The three recorded double-reds of 2026-09-24/25 were this shape: a bead landing a test
-/// (or lint) asserting behaviour another, unlanded bead provides.
+/// The design's Section E paragraph names three E-shaped double-reds of 2026-09-24/25 — a
+/// bead landing a test (or lint) asserting behaviour another, unlanded bead provides:
+/// sp-ui46l, sp-29g55, sp-q4swv. Only two hold up against the wiki's own account. Round 1's
+/// `test-testlib-migrated` red was sp-29g55, sequenced behind sp-qvjzb once it landed
+/// (concierge-as-batcher-2026-09-24.md, "What the first two rounds actually found"); round
+/// 3's recurrence of the same suite was sp-q4swv, sequenced behind sp-29g55 in turn (same
+/// page, "Rounds 3 and after"). sp-ui46l is excluded: its real bead (`bd show sp-ui46l`) is
+/// a P3 fix for a `SPIRA_INCIDENT_LABELS` partition-label prefix, closed per standing
+/// operator instruction after bouncing from batch 327 — nothing like a test landing ahead
+/// of its code, so there is no real waits_on fact to give it here.
 #[test]
 fn each_recorded_test_ahead_of_code_shape_sequences_behind_its_dependency() {
     for (member, dep, assertion) in [
-        ("sp-ui46l", "sp-zc2a", "expected census.sh orphaned remedy from sp-zc2a, got nothing"),
-        ("sp-29g55", "sp-kc9v4", "probe defect fixed by sp-kc9v4 not yet on main"),
-        ("sp-q4swv", "sp-e19x2", "lint expects the guard landed in sp-e19x2"),
+        ("sp-29g55", "sp-qvjzb", "test-testlib-migrated: adds a lint that cannot pass until sp-qvjzb lands"),
+        ("sp-q4swv", "sp-29g55", "test-testlib-migrated: a lint ahead of the migration it checks, sequenced behind sp-29g55"),
     ] {
         let own = vec![suite("test-own", SuiteOutcome::Red, &[assertion])];
         let sa = test_ahead_of_code(&member.to_string(), &own).expect("should sequence behind the named dependency");
@@ -541,21 +551,33 @@ fn judgement_body_renders_no_members_explicitly() {
     assert!(body.contains("Round member(s): (none)"));
 }
 
-/// The recorded round 1 of 2026-09-24: three E-shaped double-reds (sp-ui46l, sp-29g55,
-/// sp-q4swv — see `each_recorded_test_ahead_of_code_shape_sequences_behind_its_dependency`
-/// above). What was actually done for each was sequencing behind its named dependency, never
-/// a persona summon — so `judgement_for` must flag exactly these three by name (the crate's
-/// half of the record), and `test_ahead_of_code` must still resolve each to the same
-/// dependency a person resolved it to by hand (the persona's half, exercised without a live
-/// aeon). Together they are round 1 replayed end to end through this bead's own additions.
+/// The recorded round 1 of 2026-09-24 (concierge-as-batcher-2026-09-24.md, "What the first
+/// two rounds actually found"): 481 suites against 17 certified branches, 21 minutes at
+/// width 8, **3 red, all red again on the re-run, so none were flip-floppers**:
+///
+/// - `test-skew-check-release` — `origin/main` itself was red (`sp-fghps` had fixed
+///   `run_skew` but left `run_skew_artifact` copying the bare template). No member's own
+///   suite named a dependency; what was actually done was a direct fix, `sp-4brh5`, never a
+///   sequencing.
+/// - `test-script-exec` — `sp-04yh0` left `gate-lib.sh` and `tap-jsonl.sh` with "sourced
+///   only" headers the lint could not recognise. Again no named dependency; fixed directly
+///   on `sp-04yh0`'s own branch.
+/// - `test-testlib-migrated` — `sp-29g55` adds a lint that cannot pass until `sp-qvjzb`
+///   lands. This is the one true test-ahead-of-code case: reopened and made to depend on
+///   `sp-qvjzb`.
+///
+/// So `judgement_for` must flag all three by name (the crate's half of the record: it
+/// cannot resolve any of them mechanically without a member's own suite run), and
+/// `test_ahead_of_code` must resolve only the third to a dependency — failing closed to
+/// `None` for the first two, exactly as no dependency was named for them either.
 #[test]
 fn round_1s_three_double_reds_are_flagged_for_judgement_and_resolve_like_what_was_done() {
     let round1 = [
-        ("test-census", "sp-ui46l", "sp-zc2a", "expected census.sh orphaned remedy from sp-zc2a, got nothing"),
-        ("test-probe", "sp-29g55", "sp-kc9v4", "probe defect fixed by sp-kc9v4 not yet on main"),
-        ("test-lint", "sp-q4swv", "sp-e19x2", "lint expects the guard landed in sp-e19x2"),
+        ("test-skew-check-release", None, "origin/main itself is red: run_skew_artifact still copies the bare template, no activated release"),
+        ("test-script-exec", None, "gate-lib.sh and tap-jsonl.sh sourced-only headers not recognised by the lint"),
+        ("test-testlib-migrated", Some("sp-qvjzb"), "adds a lint that cannot pass until sp-qvjzb lands"),
     ];
-    let first: Vec<SuiteRun> = round1.iter().map(|(suite_name, _, _, assertion)| suite(suite_name, SuiteOutcome::Red, &[assertion])).collect();
+    let first: Vec<SuiteRun> = round1.iter().map(|(suite_name, _, assertion)| suite(suite_name, SuiteOutcome::Red, &[assertion])).collect();
     let verdicts = classify(&first, &first); // re-run reproduces the same failure: still red both times
     for (suite_name, ..) in round1 {
         assert_eq!(verdicts.iter().find(|v| v.name == suite_name).unwrap().classification, Classification::DoubleRed);
@@ -565,9 +587,16 @@ fn round_1s_three_double_reds_are_flagged_for_judgement_and_resolve_like_what_wa
     assert_eq!(j.source, RedSource::Local);
     assert_eq!(j.suites.len(), 3);
 
-    for (suite_name, member, dep, assertion) in round1 {
+    for (suite_name, dep, assertion) in round1 {
         let own = vec![suite(suite_name, SuiteOutcome::Red, &[assertion])];
-        let sa = test_ahead_of_code(&member.to_string(), &own).expect("round 1's shape always names a dependency");
-        assert_eq!(sa.reason, SetAsideReason::TestAheadOfCode { waits_on: dep.into() }, "{member} must resolve exactly as it did on 2026-09-24");
+        let sa = test_ahead_of_code(&"member".to_string(), &own);
+        match dep {
+            Some(dep) => assert_eq!(
+                sa.expect("test-testlib-migrated names its dependency").reason,
+                SetAsideReason::TestAheadOfCode { waits_on: dep.into() },
+                "sp-29g55 must resolve exactly as it did on 2026-09-24"
+            ),
+            None => assert_eq!(sa, None, "{suite_name} named no dependency on 2026-09-24 either — it was fixed directly"),
+        }
     }
 }
