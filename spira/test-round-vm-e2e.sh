@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-round-vm-e2e.sh — round-vm.sh's `run` command, end to end, against a stub Proxmox
-# provider and a real, SSH-reachable process standing in for the VM.
+# provider and a real container standing in for the VM.
 #
 #   ./test-round-vm-e2e.sh
 #
@@ -10,92 +10,83 @@
 # results, tsd rows and a fake binary back over real ssh/rsync, and land the binary exactly
 # where queue.sh's land-local reads it from (cargo-target-bins/<tree-sha>/release).
 #
-# THE "VM" IS A SECOND SSHD, NOT A NESTED CONTAINER: testenv-batch.sh already provides the
-# container this suite runs in, and round-vm.sh's own host side (ssh, rsync, git daemon)
-# needs openssh/rsync installed in THIS process's environment regardless of what stands in
-# for the VM — a nested podman container would need the exact same packages installed a
-# second time, for no more fidelity than a second sshd on a second port. round-vm.sh only
-# ever addresses the VM by hostname:port, so it cannot tell the difference.
+# THE PROVIDER IS A STUB, NOT A MODEL OF PROXMOX: it hands back this container's own
+# address — the real Proxmox provider (round-vm-provider-pve.sh) is exercised for its
+# argument and credential checks in test-round-vm.sh; nothing here pretends to be
+# Proxmox's API. The container itself starts with none of round-vm.sh's own tooling
+# (no sshd) and has it installed fresh, inside the container, standing in for a freshly
+# cloned VM that has not been prepared yet.
 #
-# THE PROVIDER IS A STUB, NOT A MODEL OF PROXMOX: it hands back this sshd's own address —
-# the real Proxmox provider (round-vm-provider-pve.sh) is exercised for its argument and
-# credential checks in test-round-vm.sh; nothing here pretends to be Proxmox's API.
-#
-# NEEDS openssh-client, openssh-server, rsync and git (with git-daemon) on PATH. The
-# testenv image does not carry these by default — installed here, once, with network
-# egress; skip cleanly rather than fail if that is not available.
+# host-reason: needs podman, ssh, rsync and git on PATH, plus the network to install
+# openssh-server INSIDE the freshly started container (never the suite's own
+# environment) — testenv-batch.sh's own container runs suites as an unprivileged user
+# with none of podman/ssh/rsync on PATH, so this suite SKIPS there; it runs for real
+# wherever suites.sh's own cadence or an operator runs it directly, the same shape
+# test-batch-owner.sh's "host-reason: needs podman on PATH" already uses.
 #
 # defect: sp-7tw9h
 # tier: T2
 # covers: spira/round-vm.sh
-# timeout: 120
+# timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-printf 'test-round-vm-e2e.sh\n'
+echo "test-round-vm-e2e.sh"
 
-_have() { command -v "$1" >/dev/null 2>&1; }
-
-if ! { _have ssh && _have sshd && _have rsync && _have git && [ -x /usr/lib/git-core/git-daemon ]; }; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get -o Acquire::Retries=1 update -qq >/tmp/rvm-e2e-apt.log 2>&1 \
-        && apt-get -o Acquire::Retries=1 install -y -qq --no-install-recommends \
-               openssh-client openssh-server rsync >>/tmp/rvm-e2e-apt.log 2>&1
-fi
-if ! { _have ssh && _have sshd && _have rsync && _have git && [ -x /usr/lib/git-core/git-daemon ]; }; then
-    skip "openssh/rsync/git-daemon not available and could not be installed (no network egress?) — see /tmp/rvm-e2e-apt.log"
-fi
+for _bin in podman ssh rsync git; do
+    command -v "$_bin" >/dev/null 2>&1 || {
+        printf 'SKIP test-round-vm-e2e.sh: %s not found on PATH\n' "$_bin" >&2
+        exit 77
+    }
+done
 
 TMP="$(mktemp -d)"
-SSHD_PID="" GITD_PID=""
+VM_NAME="rvm-e2e-$$"
+GITD_PID=""
 cleanup() {
-    [ -n "$SSHD_PID" ] && kill "$SSHD_PID" >/dev/null 2>&1
+    podman rm -f "$VM_NAME" >/dev/null 2>&1
     [ -r "$TMP/state/git-daemon.pid" ] && kill "$(cat "$TMP/state/git-daemon.pid" 2>/dev/null)" >/dev/null 2>&1
     rm -rf "$TMP"
 }
 trap cleanup EXIT INT TERM
 
 # ---------------------------------------------------------------------------
-# The "VM": a real sshd, reachable only at 127.0.0.1:$VM_PORT — never touching the box's
-# own /etc/ssh, own users, or own authorized_keys.
+# The "VM": a fresh container with none of round-vm.sh's tooling — sshd is installed
+# INSIDE it, the same preparation step a real VM's provisioning would do, not baked into
+# an image ahead of time. --network=host: the round path reaches it only by address, the
+# same as a real VM's tailnet hostname; here that address is simply 127.0.0.1.
 # ---------------------------------------------------------------------------
-VM_PORT=$((20000 + (RANDOM % 10000)))
-mkdir -p "$TMP/vm/ssh" "$TMP/vm/priv"
-ssh-keygen -t ed25519 -N '' -q -f "$TMP/vm/ssh/host_key"
-ssh-keygen -t ed25519 -N '' -q -f "$TMP/client_key"
-cat > "$TMP/vm/authorized_keys" <<KEYS
-$(cat "$TMP/client_key.pub")
-KEYS
-mkdir -p /run/sshd 2>/dev/null || true
-cat > "$TMP/vm/sshd_config" <<CONF
-Port $VM_PORT
-ListenAddress 127.0.0.1
-HostKey $TMP/vm/ssh/host_key
-PidFile $TMP/vm/sshd.pid
-AuthorizedKeysFile $TMP/vm/authorized_keys
-PermitRootLogin yes
-PasswordAuthentication no
-KbdInteractiveAuthentication no
-UsePAM no
-StrictModes no
-PrintMotd no
-Subsystem sftp /usr/lib/openssh/sftp-server
-CONF
+IMG="docker.io/library/ubuntu:24.04"
+podman run -d --name "$VM_NAME" --network=host --rm "$IMG" sleep 600 >/dev/null || \
+    skip "podman could not start the stand-in container"
 
-/usr/sbin/sshd -f "$TMP/vm/sshd_config" -D -e >"$TMP/vm/sshd.log" 2>&1 &
-SSHD_PID=$!
-deadline=$(( $(date +%s) + 10 ))
+VM_PORT=$((20000 + (RANDOM % 10000)))
+if ! podman exec "$VM_NAME" bash -c '
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get -o Acquire::Retries=1 update -qq && \
+    apt-get -o Acquire::Retries=1 install -y -qq --no-install-recommends openssh-server rsync git
+' >"$TMP/apt.log" 2>&1; then
+    skip "could not install openssh-server/rsync/git in the stand-in container (no network egress?) — $(tail -3 "$TMP/apt.log")"
+fi
+
+ssh-keygen -t ed25519 -N '' -q -f "$TMP/client_key"
+podman exec "$VM_NAME" mkdir -p /root/.ssh /run/sshd
+podman cp "$TMP/client_key.pub" "$VM_NAME:/root/.ssh/authorized_keys"
+podman exec "$VM_NAME" bash -c 'chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys'
+podman exec -d "$VM_NAME" /usr/sbin/sshd -p "$VM_PORT" -D
+
+deadline=$(( $(date +%s) + 15 ))
 up=0
 while [ "$(date +%s)" -lt "$deadline" ]; do
     if ssh -i "$TMP/client_key" -p "$VM_PORT" -o StrictHostKeyChecking=no \
            -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=2 \
-           root@127.0.0.1 true 2>>"$TMP/vm/sshd.log"; then
+           root@127.0.0.1 true 2>"$TMP/ssh-probe.log"; then
         up=1; break
     fi
-    sleep 0.3
+    sleep 0.5
 done
-[ "$up" = 1 ] || skip "the stand-in sshd never came up ($(tail -3 "$TMP/vm/sshd.log" 2>/dev/null))"
+[ "$up" = 1 ] || skip "sshd never came up in the stand-in container ($(tail -3 "$TMP/ssh-probe.log" 2>/dev/null))"
 
 # ---------------------------------------------------------------------------
 # The fixture tree: a throwaway repo whose spira/testenv-batch.sh is a stand-in honoring
@@ -141,7 +132,7 @@ git -C "$TREE_DIR" -c user.email=t@example.com -c user.name=t commit --quiet -m 
 TREE_SHA="$(git -C "$TREE_DIR" rev-parse HEAD^{tree})"
 
 # ---------------------------------------------------------------------------
-# The stub provider: hands back the stand-in sshd's own address once.
+# The stub provider: hands back the stand-in container's own address once.
 # ---------------------------------------------------------------------------
 FAKE_HOME="$TMP/fake-home"
 mkdir -p "$FAKE_HOME"
@@ -154,7 +145,7 @@ chmod +x "$FAKE_HOME/mail.sh"
 FAKE_PROVIDER="$TMP/fake-provider.sh"
 cat > "$FAKE_PROVIDER" <<SH
 rvm_provider_provision() {
-    printf 'e2e-vm 127.0.0.1\n'
+    printf '${VM_NAME} 127.0.0.1\n'
 }
 rvm_provider_destroy() { :; }
 rvm_provider_alive() { return 1; }
@@ -182,10 +173,8 @@ env -i PATH="$PATH" HOME="$TMP" \
     bash "$HERE/round-vm.sh" run "$TREE_DIR" --suites e2e-a.sh,e2e-b.sh --maxpar 2 \
     >"$TMP/run.out" 2>"$TMP/run.err" || rc=$?
 
-[ -r "$STATE_DIR/git-daemon.pid" ] && GITD_PID="$(cat "$STATE_DIR/git-daemon.pid" 2>/dev/null)"
-
 is "run: exits 0" "0" "$rc"
-[ "$rc" -ne 0 ] && { cat "$TMP/run.out" "$TMP/run.err"; }
+[ "$rc" -ne 0 ] && cat "$TMP/run.out" "$TMP/run.err"
 
 want "run: batch results for both suites landed" "e2e-a.sh.result" "$(ls "$HOST_RUN/batch-results" 2>/dev/null)"
 want "run: batch results for both suites landed" "e2e-b.sh.result" "$(ls "$HOST_RUN/batch-results" 2>/dev/null)"
@@ -207,7 +196,7 @@ MANIFEST="$STATE_DIR/manifests/$TREE_SHA.json"
 [ -r "$MANIFEST" ] && ok "run: wrote a manifest for this tree sha" \
     || bad "run: wrote a manifest for this tree sha" "missing $MANIFEST"
 manifest_json="$(cat "$MANIFEST" 2>/dev/null)"
-want "run: manifest names the vm" "e2e-vm" "$manifest_json"
+want "run: manifest names the vm" "$VM_NAME" "$manifest_json"
 want "run: manifest names acquire=cold (the only VM there was)" '"acquire": "cold"' "$manifest_json"
 want "run: manifest names the configured vcpus" '"vcpus": 16' "$manifest_json"
 want "run: manifest names the requested maxpar" '"maxpar": 2' "$manifest_json"
@@ -215,7 +204,7 @@ want "run: manifest names the tree sha" "$TREE_SHA" "$manifest_json"
 
 tsd_line="$(cat "$HOST_RUN/tsd/suite-timing.jsonl" 2>/dev/null)"
 want "run: the VM's tsd row was merged into the host's run/tsd" "combined" "$tsd_line"
-want "run: the merged tsd row is tagged with ran_on" '"ran_on": "e2e-vm"' "$tsd_line"
+want "run: the merged tsd row is tagged with ran_on" "\"ran_on\": \"$VM_NAME\"" "$tsd_line"
 want "run: the merged tsd row is tagged with vcpus" '"vcpus": 16' "$tsd_line"
 want "run: the merged tsd row is tagged with maxpar" '"maxpar": 2' "$tsd_line"
 
