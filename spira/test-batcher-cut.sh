@@ -310,6 +310,15 @@ plant() {   # plant <id> [express]
         "$id" "$id" "$lbls" | testdb_seed
 }
 
+# plant_open <id> [express] — status=open, no spira-submitted: the shape a bead re-marked
+# CERTIFIED right after an eject (sp-pedat) is actually in, still waiting on its aeon.
+plant_open() {
+    local id="$1" lbls="\"spira\",\"plan\",\"repo:$REPONAME\""
+    [ "${2:-}" = express ] && lbls="$lbls,\"express\""
+    printf '{"id":"%s","title":"%s bead","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-25T00:00:00Z"}\n' \
+        "$id" "$id" "$lbls" | testdb_seed
+}
+
 certify() {   # certify <id> <tip-sha> [epoch]
     printf 'CERTIFIED %s %s\n' "$2" "${3:-$(date +%s)}" > "$LANDSTATE/$1"
 }
@@ -1002,5 +1011,35 @@ head_m="$(git -C "$LREPO" rev-parse local/main)"
 is     "M: merged in topological order A, B, C" \
        "$(printf 'sp-cmaa1\nsp-cmbb2\nsp-cmcc3')" \
        "$(git -C "$LREPO" log --first-parent --format=%s "$head_m" | sed -n 's/^spira: land \(sp-cm[a-z0-9]*\).*/\1/p' | tac)"
+
+# =============================================================================
+# CASE J — batcher parity (sp-7qk8u): landstate CERTIFIED alone is not enough to admit a
+# member. A bead re-marked CERTIFIED at the same tip right after an eject (sp-pedat) is open
+# again, not spira-submitted — the same admission batch.sh's own _certified_list already
+# refuses ("CERTIFIED landstate but bead status=open; refusing admission"). SEEN RED without
+# the fix: certified_pool admitted this member on landstate alone and the round cut it in.
+# =============================================================================
+echo
+echo "J. batcher parity: CERTIFIED landstate but bead status=open (not spira-submitted) is excluded:"
+rm -f "$(open_batch_file)"
+plant_open sp-ciiii express
+git -C "$REPO" worktree add -q -b spira/sp-ciiii "$RUN/worktree/sp-ciiii" main
+printf 'i\n' > "$RUN/worktree/sp-ciiii/i.txt"
+git -C "$RUN/worktree/sp-ciiii" add -A
+git -C "$RUN/worktree/sp-ciiii" commit -q -m "sp-ciiii: work"
+tip_j="$(git -C "$REPO" rev-parse spira/sp-ciiii)"
+git -C "$REPO" worktree remove -f "$RUN/worktree/sp-ciiii"
+certify sp-ciiii "$tip_j"
+
+prcreate_before_j="$(grep -c '^pr-create' "$FORGE_LOG")"
+out_j="$(STUB_RED_SUITES="" cut_repo)"
+want   "J: WARN names the excluded bead and its open status" "WARN not-closed sp-ciiii" "$out_j"
+want   "J: WARN names the reason" "refusing admission" "$out_j"
+nowant "J: never reports a PR opening for the excluded-only round" "PR " "$out_j"
+is     "J: forge pr-create not called" "$prcreate_before_j" "$(grep -c '^pr-create' "$FORGE_LOG")"
+is     "J: no open-batch file" "0" "$([ -f "$(open_batch_file)" ] && echo 1 || echo 0)"
+is     "J: sp-ciiii landstate stays CERTIFIED — untouched, not re-ejected" \
+       "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-ciiii")"
+is     "J: sp-ciiii bead status stays open" "open" "$(status_of sp-ciiii)"
 
 tl_summary
