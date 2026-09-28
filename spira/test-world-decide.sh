@@ -186,7 +186,7 @@ echo
 echo "_is_ci_watcher <timer> — which timers a plain halt spares:"
 # ============================================================================
 want   "bare gate-check name is a CI watcher"       "yes" "$(world_lib '_is_ci_watcher spira-gate-check.timer && echo yes || echo no')"
-want   "instance-qualified pr-notify is a CI watcher" "yes" "$(world_lib '_is_ci_watcher spira-pr-notify-prod.timer && echo yes || echo no')"
+want   "instance-qualified gate-check is a CI watcher" "yes" "$(world_lib '_is_ci_watcher spira-gate-check-prod.timer && echo yes || echo no')"
 want   "positive control — an unrelated timer is not a CI watcher" "no" "$(world_lib '_is_ci_watcher spira-sentinel-prod.timer && echo yes || echo no')"
 
 # ============================================================================

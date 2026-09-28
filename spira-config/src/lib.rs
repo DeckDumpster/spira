@@ -110,6 +110,7 @@ pub struct SpiraSection {
     pub mail_settle: Option<u64>,
     pub cockpit_clipboard: Option<String>,
     pub lc_bin: Option<String>,
+    pub mail_settle_event: Option<String>,
     pub queue_throttle_override: Option<String>,
     pub client_settings: Option<String>,
     pub mail: Option<String>,

@@ -77,7 +77,7 @@ paths_are_configured() {  # paths_are_configured <label> <unit-text>
 }
 
 for svc in spira-watch-notify-prod.service spira-watch-refresh-prod.service \
-           spira-pr-notify-prod.service spira-mail-tidy-prod.service; do
+           spira-mail-tidy-prod.service; do
     unit="$(block "$svc")"
     has   "$svc: it is CPU-fenced"                "$unit" "CPUQuota="
     has   "$svc: and niced"                       "$unit" "Nice="
@@ -86,7 +86,7 @@ for svc in spira-watch-notify-prod.service spira-watch-refresh-prod.service \
 done
 
 for tmr in spira-watch-notify-prod.timer spira-watch-refresh-prod.timer \
-           spira-pr-notify-prod.timer spira-mail-tidy-prod.timer; do
+           spira-mail-tidy-prod.timer; do
     unit="$(block "$tmr")"
     hasnt "$tmr: no placeholder survives into it" "$unit" "@"
     has   "$tmr: it fires periodically"           "$unit" "OnUnitActiveSec="
@@ -138,7 +138,7 @@ env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_CONF="$TMP/install.conf" \
 ilog="$(cat "$TMP/systemctl.log")"
 has "the install ran" "$ilog" "daemon-reload"
 for pair in "spira-watch-notify-prod" "spira-watch-refresh-prod" \
-            "spira-pr-notify-prod" "spira-mail-tidy-prod"; do
+            "spira-mail-tidy-prod"; do
     has   "$pair: install enabled its timer"        "$ilog" "enable --now $pair.timer"
     hasnt "$pair: but not the service behind it"    "$ilog" "enable --now $pair.service"
 done
