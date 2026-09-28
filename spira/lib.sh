@@ -81,6 +81,22 @@ bdq() {
     # query never ran and retrying it is exactly as safe as the first attempt. install.sh
     # already retries `bd init` once on this identical string; every other bd call goes
     # through here, so this is the one place that covers all of them (sp-ydog2).
+    #
+    # SOP_APPLIED_TRACE=1 logs wall-clock start/end around the whole retry loop below, which
+    # every bd subprocess call in the codebase goes through (including the three `sop.sh
+    # applied` makes: bdjson memories, and the bead-note write). Off by default — a `date`
+    # call and an append are cheap, but this runs on every bd invocation in the harness, so
+    # it stays gated rather than always-on. Follow-up to sp-ohnz7 (sop.sh applied()
+    # ledger/wiki-regen contention): the hangs it reproduced only appear under real
+    # concurrent dolt load and could not safely be forced (law-probe-a-fixture-not-
+    # production), so this turns "time it under load" into "read the trace from the next
+    # hang that happens naturally" (sp-h54i5).
+    local _sop_trace_file _sop_t0
+    if [ "${SOP_APPLIED_TRACE:-}" = 1 ]; then
+        _sop_trace_file="${SOP_APPLIED_TRACE_FILE:-${SPIRA_RUN:-/tmp}/sop/trace.log}"
+        mkdir -p "$(dirname "$_sop_trace_file")" 2>/dev/null || true
+        _sop_t0="$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ')"
+    fi
     local _bdq_try=1 _bdq_tries="${SPIRA_BDQ_CONN_RETRIES:-2}" _bdq_rc _bdq_err
     _bdq_err="$(mktemp)"
     while :; do
@@ -94,6 +110,11 @@ bdq() {
     done
     cat "$_bdq_err" >&2
     rm -f "$_bdq_err"
+    if [ -n "${_sop_trace_file:-}" ]; then
+        printf '%s start=%s end=%s rc=%s tries=%s argv=%s\n' "$$" "$_sop_t0" \
+            "$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ')" "$_bdq_rc" "$_bdq_try" "$*" \
+            >> "$_sop_trace_file" 2>/dev/null || true
+    fi
     return "$_bdq_rc"
 }
 
