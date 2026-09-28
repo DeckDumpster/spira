@@ -131,6 +131,38 @@ is "CERTIFIED reopen: reason is the cause" "holding-for-fix" "$_reason"
 is "CERTIFIED reopen: bead status is open" "open"            "$(field sp-wd-cert status)"
 
 # =============================================================================
+# A2. sp-eiatd: the CERTIFIED/submitted-label carve-out is now a declared set
+#     (lib.sh:_census_deliberate_reopen_causes), not a bare "work-close-converted"
+#     literal. eject must NOT join the exemption — an ejected CERTIFIED bead still
+#     needs WITHDRAWN and the label stripped (batch.sh's own comment: "every eject
+#     strips the label") or a genuinely-ejected bead stays admissible to the next
+#     cut. work-close-converted is the only cause that stays exempt.
+# =============================================================================
+echo
+echo "bead_reopen: eject is deliberate for census but NOT admission-exempt; work-close-converted still is:"
+
+labels_of() { "${TESTDB_BD:-bd}" -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
+    | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(",".join(d[0].get("labels") or []))'; }
+
+testdb_seed <<JSONL
+{"id":"sp-wd-eject","title":"wd-eject","status":"closed","issue_type":"task","labels":["${SPIRA_SUBMITTED_LABEL:-spira-submitted}"],"updated_at":"2026-09-25T00:00:00Z","closed_at":"2026-09-25T00:00:00Z"}
+{"id":"sp-wd-wcc","title":"wd-wcc","status":"closed","issue_type":"task","labels":["${SPIRA_SUBMITTED_LABEL:-spira-submitted}"],"updated_at":"2026-09-25T00:00:00Z","closed_at":"2026-09-25T00:00:00Z"}
+JSONL
+
+printf 'CERTIFIED %s %s\n' "$WDTIP" "$(date +%s)" > "$LANDSTATE/sp-wd-eject"
+printf 'CERTIFIED %s %s\n' "$WDTIP" "$(date +%s)" > "$LANDSTATE/sp-wd-wcc"
+
+bead_reopen sp-wd-eject eject >/dev/null 2>&1
+_st=""; { read -r _st _ < "$LANDSTATE/sp-wd-eject"; } 2>/dev/null || true
+is "eject: landstate WITHDRAWN (not admission-exempt)" "WITHDRAWN" "$_st"
+nowant "eject: submitted label stripped" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" "$(labels_of sp-wd-eject)"
+
+bead_reopen sp-wd-wcc work-close-converted >/dev/null 2>&1
+_st=""; { read -r _st _ < "$LANDSTATE/sp-wd-wcc"; } 2>/dev/null || true
+is "work-close-converted: landstate stays CERTIFIED (admission-exempt)" "CERTIFIED" "$_st"
+want "work-close-converted: submitted label kept" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" "$(labels_of sp-wd-wcc)"
+
+# =============================================================================
 # B. batch.sh: second line of defence — a CERTIFIED bead whose store status is
 #    not closed is refused admission whatever the landstate says.
 # =============================================================================

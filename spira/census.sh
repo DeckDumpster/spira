@@ -33,6 +33,12 @@
 # instead under a trailing "hand-written (not ranked):" line when --with-suppressed
 # is given (law-absence-needs-a-positive-control).
 #
+# DELIBERATE-CAUSE FILTER — a reopen whose cause is in lib.sh's
+# _census_deliberate_reopen_causes (queue.sh eject, the work-close-converted submitted
+# conversion) is the system working, not a fault (law-a-deliberate-state-is-not-a-fault):
+# excluded from the ranked block the same way, and listed instead under a trailing
+# "deliberate, not ranked:" line when --with-suppressed is given.
+#
 # WHY THE COVERS LABEL, NOT THE TITLE OR DESCRIPTION
 # A label is a machine-readable primary key. A title is human prose and may drift from
 # the class name over the bead's lifetime. Grepping a description field requires parsing
@@ -222,6 +228,11 @@ done <<< "$_RANKED"
 # must not compete for a Maechen selection, but it must not vanish either.
 if [ "$WITH_SUPPRESSED" -eq 1 ]; then
     census_handwritten_run_sql | python3 "$CENSUS_PY/handwritten.py"
+    if [ "$_watermark_ts" -gt 0 ] 2>/dev/null; then
+        census_deliberate_run_sql "$_watermark_ts" | python3 "$CENSUS_PY/deliberate.py"
+    else
+        census_deliberate_run_sql | python3 "$CENSUS_PY/deliberate.py"
+    fi
 fi
 
 exit 0
