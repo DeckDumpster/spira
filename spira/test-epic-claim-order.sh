@@ -221,6 +221,7 @@ chmod +x "$BIN/claude"
 ( SPIRA_HOME="$AEON_HOME" SPIRA_RUN="$AEON_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP" \
   SPIRA_CONF="$TMP/no-such2.conf" \
   "$AEON_HOME/aeon.sh" builder > "$TMP/aeon-out" 2>&1 )
+echo "=== DEBUG aeon-out ===" >&2; cat "$TMP/aeon-out" >&2; echo "=== /DEBUG ===" >&2
 
 # A task bead's close is converted to open + spira-submitted at teardown (sp-qsona): only
 # the landing pass closes a work bead directly, so "claimed and finished" reads as
