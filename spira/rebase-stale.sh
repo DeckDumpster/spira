@@ -109,8 +109,15 @@ while _rs_mid_rebase; do
         break
     fi
     mechanical=1
-    git -C "$scratch" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" \
-        rebase --continue -q >/dev/null 2>&1
+    if [ -n "${REBASE_STALE_DEBUG:-}" ]; then
+        git -C "$scratch" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" \
+            rebase --continue -q >/tmp/rs-continue-out.txt 2>&1
+        echo "DEBUG rebase --continue rc=$? ; output:" >&2
+        cat /tmp/rs-continue-out.txt >&2
+    else
+        git -C "$scratch" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" \
+            rebase --continue -q >/dev/null 2>&1
+    fi
 done
 if [ "$failed" = 0 ] && ! git -C "$scratch" merge-base --is-ancestor "$landref" HEAD 2>/dev/null; then
     failed=1   # git refused the rebase outright, with nothing left conflicted to name
