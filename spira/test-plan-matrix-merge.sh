@@ -15,7 +15,7 @@
 # host-reason: reads suite source and scratch git repos only; no database, no systemd
 #
 # tier: T1
-# covers: spira/plan-matrix.sh spira/plan-matrix-fence.sh spira/select.sh docs/test-plan/coverage.json docs/test-plan/COVERAGE.md
+# covers: spira/plan-matrix.sh spira/plan-matrix-fence.sh spira/select.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 REAL_ROOT="$(cd "$HERE/.." && pwd -P)"
