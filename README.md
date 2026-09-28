@@ -137,14 +137,28 @@ cut from and judged against, how it lands, a formatter, and the gate command it 
 
 **Never assume the base branch is `main`** — it is declared rather than derived, because every
 automatic source is a local cache that can be stale, absent, or answering whatever branch a
-human last looked at.
+human last looked at. Call it the **landing ref**: under `push`, `pr` and `hold` it is a
+remote-tracking branch such as `origin/main`; under `queue.local` it is a local branch such as
+`local/main`, and "landed" means a commit on that ref, never on the forge.
 
-Three landing modes, and the column also decides whether there is CI to wait for:
+Four landing modes, and the column also decides whether there is CI to wait for:
 
 - `push` — merge into base and push. The branch is the release.
 - `pr` — push, open a pull request, arm auto-merge, let the repository's own CI be the
   authority. Only `pr` has CI; a bead parked on CI under another mode waits forever, invisibly.
 - `hold` — gate it, note it once, leave the branch for a human.
+- `queue` (spelled out `queue.forge`, or its local ending `queue.local`) — certify the branch
+  by its gate, then land it as part of a round rather than alone. `queue.forge` batches
+  certified branches into one pull request and lets the forge's own CI fast-forward the base
+  on green. `queue.local` skips the forge on the critical path: a green round fast-forwards a
+  local landing ref, marks its members landed, closes their beads, and production picks it up
+  as a packaged release — no pull request, no remote round trip. A separate publish queue
+  (`queue.sh publish`) later pushes the local ref's unpublished commits to the forge as one
+  PR; that PR's CI confirms what already landed rather than gating it, and a red result there
+  is fixed forward, never rolled back locally. `queue.sh to-forge` / `to-local` moves a
+  repository between the two endings with nothing lost. Neither queue ending gives the
+  *individual* branch a CI run to wait for — only the batch or publish PR has one, and a bead
+  parked on that waits forever, invisibly, exactly like `push` and `hold`.
 
 **The gate is cheap and mechanical** — a gate that needs judgement is a review, not a gate. One
 layer is universal (a shell script that does not parse is the commonest way an unattended change
