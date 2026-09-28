@@ -22,6 +22,8 @@
 # 8. --purge-database (G1): removes the beads database and its Dolt data only when the
 #    operator types back the fake bd backend's bead count; a wrong count leaves it
 #    intact with a non-zero exit; plain --purge never touches it.
+# 9. TRANSIENT UNITS (sp-hvtdj): a live spira-landing / spira-aeon-* systemd-run
+#    transient — never in owned.sh's manifest — is stopped, not just reported.
 #
 # FAIL-FIRST: tested against the state BEFORE uninstall.sh existed to confirm
 # the suite is not trivially green.
@@ -102,6 +104,7 @@ cat > "$MOCK_BIN/systemctl" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${MOCK_LOG}"
 case "$*" in
+    *"spira-landing*"*"spira-aeon-*"*) printf '%s\n' "${MOCK_TRANSIENT_UNITS:-}" ;;
     *list-units*) printf '' ;;
     *is-active*)  printf 'inactive\n' ;;
     *daemon-reload*) ;;
@@ -152,6 +155,7 @@ un() {
         "LINGER_LOG=$LINGER_LOG" \
         "LAYOUT_LOG=$LAYOUT_LOG" \
         "MOCK_LINGER=${MOCK_LINGER:-yes}" \
+        "MOCK_TRANSIENT_UNITS=${MOCK_TRANSIENT_UNITS:-}" \
         bash "$FIXTURE/spira/uninstall.sh" test --yes "$@" 2>&1
 }
 
@@ -365,6 +369,39 @@ want   "sweep: stray unit name appears in report" "spira-legacy-shard-test.servi
 # The stray should NOT have been removed (report only, no silent deletion).
 isfile "sweep: stray unit file NOT removed (report only)" "$STRAY_UNIT"
 rm -f "$STRAY_UNIT"
+
+# ==========================================================================
+echo
+echo "TRANSIENT UNITS (sp-hvtdj) — a live spira-landing/spira-aeon-* transient is stopped:"
+# spira-landing and spira-aeon-* are systemd-run transients: never in owned.sh's manifest,
+# so the installed-unit stop/disable pass never sees them. Left running, the next
+# activate.sh's restart step can revive one under a release it was never launched against.
+# ==========================================================================
+
+_seed_units || { printf 'fixture: re-seed for transient-units failed\n'; exit 1; }
+
+# POSITIVE CONTROL: with no transient units reported as active, none are stopped —
+# proves the assertion below is not vacuously true because the mock always says "stop".
+MOCK_TRANSIENT_UNITS=""
+none_out="$(un)"
+nowant "transient: positive control — nothing stopped when none are active" \
+    "stopping spira-landing" "$none_out"
+
+MOCK_TRANSIENT_UNITS="spira-landing.service loaded active running Landing pass
+spira-aeon-abc123-test.service loaded active running Aeon abc123"
+trans_out="$(un)"
+trans_rc=$?
+iszero "transient: uninstall exits 0 with a live transient unit" "$trans_rc"
+want   "transient: reports stopping the landing transient"       "stopping spira-landing.service" "$trans_out"
+want   "transient: reports stopping the aeon transient"          "stopping spira-aeon-abc123-test.service" "$trans_out"
+want   "transient: systemctl stop was actually called on it"     "stop spira-landing.service" "$(cat "$MOCK_LOG")"
+want   "transient: systemctl stop was actually called on the aeon one" \
+    "stop spira-aeon-abc123-test.service" "$(cat "$MOCK_LOG")"
+# Stopped transients were never installed files, so the sweep must not report them
+# as strays — they are accounted for, not merely tolerated.
+nowant "transient: not reported as a stray (it was handled, not missed)" \
+    "STRAY  spira-landing" "$trans_out"
+MOCK_TRANSIENT_UNITS=""
 
 # ==========================================================================
 echo
