@@ -69,9 +69,9 @@ bdq() {
     fi
     # Refuse rather than fall through to bd's own auto-discovery: bd -C "" does not
     # error, it walks up from $PWD to find a store, which for anything run from
-    # inside the harness checkout resolves to production /home/ryan/spira/db.
-    # A silent SPIRA_DB propagation loss must become a loud failure here, not a
-    # write to the wrong database (sp-agdzk / sp-25b7s).
+    # inside an operator's harness checkout resolves to that operator's real,
+    # production database. A silent SPIRA_DB propagation loss must become a
+    # loud failure here, not a write to the wrong database (sp-agdzk / sp-25b7s).
     if [ -z "${SPIRA_DB:-}" ]; then
         echo "bdq: refusing - SPIRA_DB is empty/unset (would fall through to bd auto-discovery)" >&2
         return 1
