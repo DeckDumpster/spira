@@ -23,10 +23,11 @@
 #    classifier both ways over a real bead (case2, which only re-ran pc2's exact scenario,
 #    was deleted rather than merged — same assertion, no new fact).
 #
-# WHAT MOVED OUT (sp-fhzib.2, UC-ops-detection-remediation-07/07b): the backfill-recur-causes
-# scenario is now a T1 stub-bd row in test-incident-migrations.sh (that migration needs no
-# database to be true), and the Sin-escalation scenario duplicated test-sin-exempt.sh exactly
-# and is deleted rather than ported. What remains here is UC-operator-channel-36's own scope.
+# WHAT MOVED OUT (sp-fhzib.2, UC-ops-detection-remediation-07/07b): the bare-recur-label
+# backfill scenario was ported to a T1 stub-bd row in test-incident-migrations.sh, then
+# retired outright (sp-76ec4) once sp-lzt removed every writer of that label scheme. The
+# Sin-escalation scenario duplicated test-sin-exempt.sh exactly and is deleted rather than
+# ported. What remains here is UC-operator-channel-36's own scope.
 #
 # A REAL bd ON A FIXTURE DATABASE (law-prefer-the-real-dependency), except the classifier
 # itself (section 0 below), which is pure and needs no database at all — a T1 seam inside a

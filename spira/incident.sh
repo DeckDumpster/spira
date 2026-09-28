@@ -7,7 +7,6 @@
 #   incident.sh drain                    file everything the spool is holding
 #   incident.sh list                     open incidents
 #   incident.sh backfill-ref-labels      add ref:<hash> to older beads (one-time migration)
-#   incident.sh backfill-recur-causes    convert bare sp-recur-N to sp-recur-N-unrecorded
 #   incident.sh retire-unsatisfiable-delivers [--dry-run]
 #                                        drop delivers: labels naming a path this install
 #                                        can never write (one-time migration)
@@ -821,68 +820,6 @@ except Exception:
     else
         printf 'repaired %d label(s)\n' "$n"
     fi
-    ;;
-
-backfill-recur-causes)
-    # MIGRATION PASS — converts bare sp-recur-N labels to sp-recur-N-unrecorded.
-    # Every recurrence rung must carry a cause; older code wrote sp-recur-N without one.
-    # The cause cannot be recovered from the label alone, so each bare rung is promoted to
-    # sp-recur-N-unrecorded: explicitly unrecoverable rather than silently left blank.
-    # Safe to re-run: beads whose every sp-recur-N rung already carries a suffix are
-    # reported as skipped. Only open and recently-closed beads are processed — older
-    # closed beads carry bare labels that counter_causes already maps to "unrecorded",
-    # so the census query groups them correctly without backfill.
-    #
-    # EXCLUDE repo: FROM THE QUERY LABEL — a bead filed without a repo: label (or with a
-    # different one) would be missed if LABELS included repo:. The dedupe key is the
-    # non-repo labels; the same strip is applied in _dedup_incident for the same reason.
-    _bf_lq="$(printf '%s' "$LABELS" | tr ',' '\n' | grep -v '^repo:' | paste -sd, -)"
-    _since="$(date -u -d "-${DEDUP_LOOKBACK_DAYS} days" '+%Y-%m-%d' 2>/dev/null \
-           || date -u -v "-${DEDUP_LOOKBACK_DAYS}d" '+%Y-%m-%d' 2>/dev/null || true)"
-    n=0 e=0 s=0
-    _process_backfill() {
-        local bid="$1" rungs_csv="$2"
-        local ok=0 err=0
-        IFS=',' read -ra rungs <<< "$rungs_csv"
-        for rung in "${rungs[@]}"; do
-            [ -n "$rung" ] || continue
-            # Add the typed label first; only remove the bare one when it succeeded.
-            if bdq label add "$bid" "${rung}-unrecorded" >/dev/null 2>&1; then
-                bdq label remove "$bid" "$rung" >/dev/null 2>&1 || true
-                ok=$((ok+1))
-            else
-                err=$((err+1))
-            fi
-        done
-        if [ "$err" -gt 0 ]; then e=$((e+1))
-        elif [ "$ok" -gt 0 ]; then n=$((n+1))
-        else s=$((s+1)); fi
-    }
-    _bare_recur_beads() {
-        python3 -c '
-import sys, json, re
-try:
-    for b in json.load(sys.stdin):
-        bare = [l for l in (b.get("labels") or []) if re.match(r"^sp-recur-\d+$", l)]
-        if bare:
-            print(b["id"], ",".join(bare), sep="\t")
-except: pass
-'
-    }
-    while IFS=$'\t' read -r bid rungs_csv; do
-        [ -n "$bid" ] || continue
-        _process_backfill "$bid" "$rungs_csv"
-    done < <(
-        bdq list --status open,in_progress --limit 0 --label "$_bf_lq" --json 2>/dev/null \
-            | json_only \
-            | _bare_recur_beads
-        [ -n "$_since" ] && \
-        bdq list --status closed --closed-after "$_since" --limit 0 --label "$_bf_lq" --json 2>/dev/null \
-            | json_only \
-            | _bare_recur_beads || true
-    )
-    printf 'backfilled %d bead(s), errors %d, skipped %d (already typed)\n' "$n" "$e" "$s"
-    [ "$e" -eq 0 ]
     ;;
 
 *) sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
