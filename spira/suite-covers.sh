@@ -15,8 +15,22 @@ suite_covers_of() {  # suite_covers_of <file-path> -> the # covers: globs, or em
     # Empty return means "covers everything" — callers must treat it as "run always",
     # never as "no declaration means skip".
     # Malformed (prefix present but empty rest): also returns empty, same rule.
-    # || true: sed exits non-zero on SIGPIPE or missing file; callers check output only.
-    sed -n 's/^# *covers: *//p' "$1" 2>/dev/null | head -1 || true
+    # Folds continuation lines: a comment line right after # covers:, indented by 2+
+    # spaces and not itself a "# word:" directive (host-reason:, tier:, ...), is more
+    # globs wrapped for readability, not a new directive. Folding stops at the first
+    # line that doesn't fit that shape — a lone "#" or a "set -" ends the block either way.
+    awk '
+        state == 0 {
+            if (match($0, /^# *covers: */)) { out = substr($0, RLENGTH + 1); state = 1 }
+            next
+        }
+        state == 1 {
+            if ($0 ~ /^#[ \t]{2,}[^ \t#]/ && $0 !~ /^# [A-Za-z][A-Za-z_-]*:/) {
+                line = $0; sub(/^#[ \t]+/, "", line); out = out " " line
+            } else { state = 2 }
+        }
+        END { if (state >= 1) print out }
+    ' "$1" 2>/dev/null || true
 }
 
 suite_requires_of() {  # suite_requires_of <file-path> -> space-separated requirement tokens, or empty
