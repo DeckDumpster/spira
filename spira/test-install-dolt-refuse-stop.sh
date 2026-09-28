@@ -116,8 +116,9 @@ cat > "$MOCK_BIN/systemctl" <<MOCK
 STATE_DIR="$STATE_DIR"
 MOCK
 cat >> "$MOCK_BIN/systemctl" <<'MOCK'
-printf 'systemctl %s\n' "$*" >> "$CALL_LOG"
-_unit="${*##* }"
+_args="$*"
+printf 'systemctl %s\n' "$_args" >> "$CALL_LOG"
+_unit="${_args##* }"
 case "$*" in
     *is-active*)
         [ -f "$STATE_DIR/$_unit" ] && printf 'active\n' || printf 'inactive\n' ;;
