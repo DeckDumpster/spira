@@ -456,11 +456,22 @@ spira_bin() {
 # SPIRA_CONFIG_BIN IS RESOLVED HERE, NOT IN spira_conf_defaults, AND IS ABSENT FROM
 # SPIRA_CONF_KEYS — the same fence as SPIRA_HOME/SPIRA_REPO, for a sibling reason: this is
 # the binary that READS the config file, so it must exist before the config file can be
-# read, and a value the config file itself tried to set would never take effect. A missing
-# spira-config means conf.sh itself refuses (bare `return`, safe in a sourced file) rather
-# than resolving every other key against an unconverted spira.conf.
+# read, and a value the config file itself tried to set would never take effect.
+#
+# THE HARD REFUSAL IS SCOPED TO SPIRA_ARTIFACTS. A test run under testenv-batch.sh's own
+# contract has one: spira-config missing there is the harness's own build broken, not a
+# fixture that has no reason to care about the config binary at all, and conf.sh refuses
+# (bare `return`, safe in a sourced file) rather than resolving every other key against an
+# unconverted spira.conf. Without SPIRA_ARTIFACTS — production, or a fixture that never set
+# it — the old, lenient behavior stands: countless callers source conf.sh for keys that have
+# nothing to do with spira-config, and a hard refusal there would break every one of them
+# the moment the binary happens not to be built.
 if [ -z "${SPIRA_CONFIG_BIN:-}" ]; then
-    SPIRA_CONFIG_BIN="$(spira_bin spira-config)" || return 1
+    if [ -n "${SPIRA_ARTIFACTS:-}" ]; then
+        SPIRA_CONFIG_BIN="$(spira_bin spira-config)" || return 1
+    else
+        SPIRA_CONFIG_BIN="$(spira_bin spira-config 2>/dev/null)"
+    fi
 fi
 
 # One line, single-spaced, padded at both ends — because the membership test below is a
