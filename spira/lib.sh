@@ -1382,6 +1382,27 @@ fayth_ready() {
 # `FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}..."`), so the `inc <= L` test in
 # ready-bucket.py rejects an out-of-scope bead exactly as READY_ARGS's own --label would
 # have, and reading the broader snapshot changes no fayth's count.
+# ready_cache_populate <dir> -> path to a populated SPIRA_READY_CACHE file on stdout, or
+# nothing (rc 1) when bulk_ready_by_fayth could not produce one.
+#
+# NEVER HANDS BACK AN EMPTY-BUT-EXISTING FILE. fayth_ready trusts the cache unconditionally
+# once the file exists (`[ -f "$SPIRA_READY_CACHE" ]`), printing 0 for any fayth absent from
+# it — so an empty file left by a failed bulk query (a SPIRA_HOME missing ready-bucket.py, a
+# bd error) would silently answer every fayth_ready call with a false zero for the rest of
+# the pass, worse than having no cache at all. Every caller populates the cache through this
+# rather than writing bulk_ready_by_fayth's output straight to a file itself.
+ready_cache_populate() {
+    local dir="${1:-$SPIRA_RUN}" f
+    f="$(mktemp "$dir/ready-cache.XXXXXX" 2>/dev/null)" || return 1
+    bulk_ready_by_fayth > "$f" 2>/dev/null
+    if [ -s "$f" ] || [ -z "$(spira_fayths 2>/dev/null)" ]; then
+        printf '%s' "$f"
+        return 0
+    fi
+    rm -f "$f"
+    return 1
+}
+
 bulk_ready_by_fayth() {
     local raw parts f inc exc
     if [ -n "${SPIRA_READY_SNAPSHOT:-}" ] && [ -r "$SPIRA_READY_SNAPSHOT" ]; then

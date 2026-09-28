@@ -86,11 +86,8 @@ if [ "$SUMMON_ONLY" = 1 ]; then
     fi
     live=0; for f in $FAYTHS; do live=$((live + $(aeon_count "$f"))); done
     log "summon-only: live=$live fayths=[$FAYTHS]"
-    SPIRA_READY_CACHE="$(mktemp "${SPIRA_RUN}/ready-cache.XXXXXX" 2>/dev/null)" || SPIRA_READY_CACHE=""
-    if [ -n "$SPIRA_READY_CACHE" ]; then
-        bulk_ready_by_fayth > "$SPIRA_READY_CACHE" 2>/dev/null
-        export SPIRA_READY_CACHE
-    fi
+    SPIRA_READY_CACHE="$(ready_cache_populate "$SPIRA_RUN")" || SPIRA_READY_CACHE=""
+    [ -n "$SPIRA_READY_CACHE" ] && export SPIRA_READY_CACHE
     ck7_summon_pass
     rm -f "$SPIRA_READY_CACHE"
     log "summon-only pass complete — $acted action(s)"
@@ -206,11 +203,8 @@ if [ -n "$SPIRA_READY_SNAPSHOT" ]; then
     _snap_ready_args=(); while IFS= read -r _snap_arg; do _snap_ready_args+=("$_snap_arg"); done < <(ready_raw_args)
     bdjson "${_snap_ready_args[@]}" > "$SPIRA_READY_SNAPSHOT" 2>/dev/null
     export SPIRA_READY_SNAPSHOT
-    SPIRA_READY_CACHE="$(mktemp "$SPIRA_RUN/ready-cache.XXXXXX" 2>/dev/null)" || SPIRA_READY_CACHE=""
-    if [ -n "$SPIRA_READY_CACHE" ]; then
-        bulk_ready_by_fayth > "$SPIRA_READY_CACHE" 2>/dev/null
-        export SPIRA_READY_CACHE
-    fi
+    SPIRA_READY_CACHE="$(ready_cache_populate "$SPIRA_RUN")" || SPIRA_READY_CACHE=""
+    [ -n "$SPIRA_READY_CACHE" ] && export SPIRA_READY_CACHE
 fi
 trap 'rm -f "${SPIRA_LIST_SNAPSHOT:-}" "${SPIRA_READY_SNAPSHOT:-}" "${SPIRA_READY_CACHE:-}"' EXIT
 
