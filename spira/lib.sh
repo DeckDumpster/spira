@@ -5237,9 +5237,17 @@ sop_rule_verdict() {
 groom_claims_verified() {
     local log="${1:-}" ask_json="${2:-[]}" epoch="${3:-0}"
     [ -n "$log" ] || return 0
-    python3 -c '
-import sys, json, re, datetime
-log, ask_json, epoch = sys.argv[1], sys.argv[2], int(sys.argv[3])
+    # log AND ask_json ON STDIN / A TEMP FILE, NEVER ARGV (law-payloads-go-on-stdin): a
+    # session's log slice and the open-ask set are each unbounded by anything this function
+    # controls.
+    local _ajf; _ajf="$(mktemp)" || return 1
+    printf '%s' "$ask_json" > "$_ajf"
+    printf '%s' "$log" | ASK_FILE="$_ajf" python3 -c '
+import sys, json, re, datetime, os
+log = sys.stdin.read()
+with open(os.environ["ASK_FILE"]) as f:
+    ask_json = f.read()
+epoch = int(sys.argv[1])
 ids = []
 seen = set()
 for line in log.splitlines():
@@ -5271,7 +5279,10 @@ for i in d:
             found.add(cid)
 unproven = [i for i in ids if i not in found]
 print(", ".join(unproven))
-' "$log" "$ask_json" "$epoch" 2>/dev/null
+' "$epoch" 2>/dev/null
+    local _rc=$?
+    rm -f "$_ajf"
+    return $_rc
 }
 
 # aeon_settings -> the --settings JSON that wires aeon-fence.sh and the mail/unacked-comment
