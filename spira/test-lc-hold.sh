@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 #
-# test-lc-hold.sh — container-tier acceptance for lc.sh's lc_hold/lc_unhold/lc_holds
-# against a real spira-lc binary and a throwaway Dolt server (sp-ki12s).
+# test-lc-hold.sh — container-tier acceptance for lc.sh's event wrappers (lc_hold/lc_unhold/
+# lc_holds, and, sp-rlyl0: lc_release/lc_holderdead/lc_drop/lc_returned) against a real
+# spira-lc binary and a throwaway Dolt server.
 #
 # WHAT THIS PROVES:
 #   - lc_hold suspends a non-terminal bead without changing its state (design: "holds are
 #     a dimension, not states") — a §2.2 hazard class ("no terminal states forbids leaving")
 #     realized here as: a bead sentinel would have poisoned keeps its WORKING state.
 #   - lc_unhold releases it and restores exactly the suspended state — this bead's own
-#     acceptance criterion ("a hold released restores exactly the suspended state").
+#     acceptance criterion ("a hold released restores exactly the suspended state"). Same
+#     mechanism, HoldKind::Operator tag, for the manual hold sp-rlyl0's hold.sh/unhold.sh use.
 #   - lc_hold on a bead already in a terminal state is REFUSED (exit 3), and the row is
 #     left untouched — POSITIVE CONTROL: the same call on a non-terminal bead is checked
 #     to still apply, so the refusal above is the machine's own terminal-state rule, not a
@@ -16,6 +18,11 @@
 #   - lc_hold/lc_unhold against a bead spira_lifecycle has no row for at all (not yet
 #     classified — the pre-cutover reality for every real bead today) is CANNOT TELL (rc 2
 #     from lc_show, propagated), never a hard failure a sweeper would need to special-case.
+#   - lc_release/lc_holderdead (slay.sh) both return WORKING to READY, and are refused from
+#     READY itself (Claim is the only legal event there) — a positive control for the
+#     refusal. lc_drop (slay.sh --close) is orthogonal: legal from READY with no Claim ever
+#     applied, and refused a second time once the row is terminal. lc_returned (queue.sh
+#     eject) is the delivery-exit event from IN_DELIVERY, landing in REWORK.
 #
 # host-reason: starts its own disposable `dolt sql-server`, same shape as
 # test-lifecycle-container.sh (sp-uwv2s) — testenv-batch.sh already provides the container.
@@ -137,5 +144,46 @@ want "and its version did not move" '"version":"0"' "$row3"
 # never a crash — the pre-cutover reality for every real bead in production today ──────
 lc_hold sp-not-classified-yet poison "irrelevant" test-suite
 wantrc "lc_hold against an unclassified bead reports 'no such row', not applied and not a crash" 1 $?
+
+# ── the operator hold kind (sp-rlyl0: hold.sh/unhold.sh), same mechanism, different tag ────
+seed_bead sp-op-1 WORKING
+lc_hold sp-op-1 operator "manual hold via hold.sh (pid 1)" hold-sp-op-1
+wantrc "lc_hold applies the operator kind" 0 $?
+row="$(row_json sp-op-1)"
+want "the HoldKind::Operator tag is what the row records" 'operator' "$row"
+lc_unhold sp-op-1 operator hold-sp-op-1
+wantrc "lc_unhold releases the operator hold" 0 $?
+is "lc_holds reports nothing held after release" "" "$(lc_holds sp-op-1)"
+
+# ── lc_release / lc_holderdead (sp-rlyl0: slay.sh) — both return WORKING to READY ─────────
+seed_bead sp-rel-1 WORKING
+lc_release sp-rel-1 test-suite
+wantrc "lc_release applies from WORKING" 0 $?
+is "...landing in READY" "READY" "$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='sp-rel-1'" -r json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin)["rows"]; print(d[0]["state"] if d else "")')"
+
+seed_bead sp-hd-1 WORKING
+lc_holderdead sp-hd-1 test-suite
+wantrc "lc_holderdead applies from WORKING" 0 $?
+is "...also landing in READY" "READY" "$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='sp-hd-1'" -r json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin)["rows"]; print(d[0]["state"] if d else "")')"
+
+# POSITIVE CONTROL: neither is legal from READY (Claim is the only legal event there) —
+# proving the refusal above is the machine's own rule, not a broken connection.
+seed_bead sp-rel-refused READY
+lc_release sp-rel-refused test-suite
+wantrc "lc_release from READY is refused" 3 $?
+
+# ── lc_drop (sp-rlyl0: slay.sh --close) — orthogonal, legal even with no Claim ever applied ─
+seed_bead sp-drop-1 READY
+lc_drop sp-drop-1 "operator decided to drop this" test-suite
+wantrc "lc_drop applies from READY (orthogonal, no Claim needed)" 0 $?
+is "...landing in DROPPED" "DROPPED" "$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='sp-drop-1'" -r json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin)["rows"]; print(d[0]["state"] if d else "")')"
+lc_drop sp-drop-1 "a second drop" test-suite
+wantrc "lc_drop on an already-terminal row is refused, not re-applied" 3 $?
+
+# ── lc_returned (sp-rlyl0: queue.sh eject) — the delivery-exit event, legal from IN_DELIVERY ─
+seed_bead sp-ret-1 IN_DELIVERY
+lc_returned sp-ret-1 "ejected from open batch" test-suite
+wantrc "lc_returned applies from IN_DELIVERY" 0 $?
+is "...landing in REWORK" "REWORK" "$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='sp-ret-1'" -r json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin)["rows"]; print(d[0]["state"] if d else "")')"
 
 tl_summary

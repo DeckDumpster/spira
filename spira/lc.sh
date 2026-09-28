@@ -89,6 +89,66 @@ lc_unhold() {
     lc_event "$id" "$state" "$version" "$actor" "{\"Unhold\":{\"kind\":\"$tag\"}}"
 }
 
+# lc_release <bead-id> [actor] -> best-effort: read the row, apply Release (Working -> Ready,
+# clearing the holder). Same rc contract as lc_hold. A voluntary release — the holder is
+# done, not gone; lc_holderdead is the same destination for a holder that is simply no
+# longer there.
+lc_release() {
+    local id="${1:?lc_release needs a bead id}" actor="${2:-sentinel}"
+    local js; js="$(lc_show "$id")"; local rc=$?
+    [ "$rc" = 0 ] || return "$rc"
+    local state version
+    state="$(_lc_json_field "$js" 'd.get("bead",{}).get("state","")')"
+    version="$(_lc_json_field "$js" 'd.get("bead",{}).get("version","")')"
+    [ -n "$state" ] && [ -n "$version" ] || return 1
+    lc_event "$id" "$state" "$version" "$actor" '"Release"'
+}
+
+# lc_holderdead <bead-id> [actor] -> best-effort: read the row, apply HolderDead (Working ->
+# Ready, clearing the holder) — the same destination as lc_release, for the case where the
+# holder did not release itself (its process is gone, killed or crashed, not a clean exit).
+lc_holderdead() {
+    local id="${1:?lc_holderdead needs a bead id}" actor="${2:-sentinel}"
+    local js; js="$(lc_show "$id")"; local rc=$?
+    [ "$rc" = 0 ] || return "$rc"
+    local state version
+    state="$(_lc_json_field "$js" 'd.get("bead",{}).get("state","")')"
+    version="$(_lc_json_field "$js" 'd.get("bead",{}).get("version","")')"
+    [ -n "$state" ] && [ -n "$version" ] || return 1
+    lc_event "$id" "$state" "$version" "$actor" '"HolderDead"'
+}
+
+# lc_drop <bead-id> <reason> [actor] -> best-effort: read the row, apply Drop. ORTHOGONAL —
+# legal from any non-terminal state, so this applies whether or not a Claim/Submit ever
+# reached the row (design: "Terminal means terminal", but nothing upstream of terminal is
+# out of reach).
+lc_drop() {
+    local id="${1:?lc_drop needs a bead id}" reason="${2:?lc_drop needs a reason}" actor="${3:-sentinel}"
+    local js; js="$(lc_show "$id")"; local rc=$?
+    [ "$rc" = 0 ] || return "$rc"
+    local state version
+    state="$(_lc_json_field "$js" 'd.get("bead",{}).get("state","")')"
+    version="$(_lc_json_field "$js" 'd.get("bead",{}).get("version","")')"
+    [ -n "$state" ] && [ -n "$version" ] || return 1
+    local reasonj; reasonj="$(_lc_json_string "$reason")"
+    lc_event "$id" "$state" "$version" "$actor" "{\"Drop\":{\"reason\":$reasonj}}"
+}
+
+# lc_returned <bead-id> <reason> [actor] -> best-effort: read the row, apply Returned (the
+# delivery-exit event legal from IN_DELIVERY, landing the bead in REWORK) — a batch member
+# pulled back out of an open batch for a reason specific to it, not the whole batch.
+lc_returned() {
+    local id="${1:?lc_returned needs a bead id}" reason="${2:?lc_returned needs a reason}" actor="${3:-sentinel}"
+    local js; js="$(lc_show "$id")"; local rc=$?
+    [ "$rc" = 0 ] || return "$rc"
+    local state version
+    state="$(_lc_json_field "$js" 'd.get("bead",{}).get("state","")')"
+    version="$(_lc_json_field "$js" 'd.get("bead",{}).get("version","")')"
+    [ -n "$state" ] && [ -n "$version" ] || return 1
+    local reasonj; reasonj="$(_lc_json_string "$reason")"
+    lc_event "$id" "$state" "$version" "$actor" "{\"Returned\":{\"reason\":$reasonj}}"
+}
+
 # lc_holds <bead-id> -> the row's current hold kinds, one per line (empty if none, not
 # yet classified, or the binary/DB is unreachable — a caller that only wants to know
 # whether a specific kind is held should grep this, not treat an empty result as an error).

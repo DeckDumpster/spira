@@ -17,12 +17,24 @@
 # about what git says exists (law-prefer-the-real-dependency).
 #
 # defect: sp-ekio
-# covers: spira/slay.sh spira/lib.sh
+# covers: spira/slay.sh spira/lib.sh spira/lc.sh spira-lc/* lifecycle/*
 # scar: slay.sh left the bead in an inconsistent state after terminating the aeon and did not salvage uncommitted work from the worktree.
+# timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 SLAY="$HERE/slay.sh"
+
+# T2 below proves slay.sh's release against a real spira-lc, which needs a spira-lc binary
+# built from source and a throwaway dolt server. Checked here, before T1 runs any case, so
+# a missing dependency is a clean skip (testlib refuses skip once cases have already run).
+CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
+if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
+    CARGO_BIN="$HOME/.cargo/bin/cargo"
+fi
+[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
+DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
+[ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
 # ===========================================================================================
 echo "T1: argument parsing — before testdb/bd is ever touched, no store"
@@ -77,8 +89,64 @@ echo "T2: real bd, real git — the rest of slay.sh's behaviour"
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
 testdb_require test-slay
-TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+TMP="$(mktemp -d)"
 testdb_up slay || { echo "test-slay: could not build a fixture database"; exit 1; }
+
+# A REAL spira-lc against a throwaway Dolt server (sp-rlyl0): slay.sh's release now goes
+# through HolderDead/Drop on the lifecycle row, not bd reopen/close, and
+# spira_holder_witnesses (lib.sh) trusts the row over a stale bd in_progress once one
+# exists — so the destroy step below only proceeds when this fixture is real.
+#
+# conf.sh (sourced above by testdb.sh) rebuilds PATH from scratch, dropping whatever
+# CARGO_BIN/DOLT_BIN's own directory the top-of-file check found — re-added here, after
+# that reset, or cargo's own build below fails to find `rustc` on a box where neither
+# lives under $HOME.
+export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+unset SPIRA_LC_SOCKET
+
+LCREPO="$(cd "$HERE/.." && pwd)"
+LCPORT=$((SPIRA_LC_TESTDB_PORT + 1200 + (RANDOM % 300)))
+LC_SERVER_PID=""
+trap 'testdb_drop; [ -n "$LC_SERVER_PID" ] && kill "$LC_SERVER_PID" >/dev/null 2>&1; rm -rf "$TMP"' EXIT INT TERM
+
+mkdir -p "$TMP/lc-data"
+cat > "$TMP/lc-server.yaml" <<YAML
+log_level: warning
+listener:
+  port: $LCPORT
+  max_connections: 20
+  read_timeout_millis: 30000
+  write_timeout_millis: 30000
+data_dir: "$TMP/lc-data"
+behavior:
+  dolt_transaction_commit: false
+  event_scheduler: "OFF"
+YAML
+"$DOLT_BIN" sql-server --config "$TMP/lc-server.yaml" > "$TMP/lc-server.log" 2>&1 &
+LC_SERVER_PID=$!
+lc_up=0
+for _ in $(seq 1 50); do
+    if "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+        lc_up=1; break
+    fi
+    sleep 0.2
+done
+[ "$lc_up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/lc-server.log")"
+lc_root_sql() { "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls "$@"; }
+
+CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
+CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
+    "$CARGO_BIN" build --manifest-path "$LCREPO/spira-lc/Cargo.toml" --quiet 2>"$TMP/lc-build.log" \
+    || bail "spira-lc failed to build: $(cat "$TMP/lc-build.log")"
+export SPIRA_LC_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-lc"
+export SPIRA_LC_HOST=127.0.0.1
+export SPIRA_LC_PORT="$LCPORT"
+export SPIRA_LC_DB=spira_lifecycle
+export SPIRA_LC_DATA_DIR="$TMP/lc-data"
+export SPIRA_LC_USER=root
+export SPIRA_LC_PASSWORD=""
+"$SPIRA_LC_BIN" admin-apply-ddl "$LCREPO/lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1
+wantrc "spira-lc schema applies cleanly" 0 $?
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
@@ -100,6 +168,7 @@ git -C "$REPO" remote set-head origin main
 
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
+. "$HERE/lc.sh"
 SLAY="$HERE/slay.sh"
 
 # ---- helpers -----------------------------------------------------------------------
@@ -116,9 +185,16 @@ print(d[0].get("assignee","") or "" if d else "")' 2>/dev/null; }
 
 has_label() { local _all; _all="$(bdq label list "$1" 2>/dev/null)"; [[ "$_all" == *"$2"* ]]; }
 
+lc_state_of() { _lc_json_field "$(lc_show "$1")" 'd.get("bead",{}).get("state","")'; }
+lc_seed_working() {   # lc_seed_working <bead-id> — the lifecycle row a real Claim would leave
+    lc_root_sql --use-db spira_lifecycle sql -q \
+        "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('$1','WORKING','[]',0,0)" >/dev/null 2>&1
+}
+
 seed() {
     local id="$1" st="${2:-in_progress}" as="${3:-aeon-test}"
     testdb_reset
+    [ "$st" = in_progress ] && lc_seed_working "$id"
     local line; line="{\"id\":\"$id\",\"title\":\"test bead\",\"status\":\"$st\",\"issue_type\":\"task\",\"labels\":[\"spira\",\"plan\"]"
     [ -n "$as" ] && line="$line,\"assignee\":\"$as\""
     line="$line,\"updated_at\":\"2026-09-06T00:00:00Z\"}"
@@ -177,7 +253,11 @@ is "bead starts assigned"      aeon-test   "$(assignee_of sp-s1)"
 out="$(bash "$SLAY" --bead sp-s1 2>&1)"
 rc=$?
 is  "slay exits 0"             0    "$rc"
-is  "bead is now open"         open "$(status_of sp-s1)"
+# bd's own STATUS is no longer slay.sh's to flip (sp-rlyl0: HolderDead goes through
+# spira-lc, not bd reopen) — bd's field is left exactly where a live aeon left it; the
+# lifecycle row is the one this tool actually releases now, against a real spira-lc.
+is  "bd's own status field is unmoved by slay.sh now" in_progress "$(status_of sp-s1)"
+is  "the lifecycle row is released instead — WORKING to READY" READY "$(lc_state_of sp-s1)"
 is  "bead is unassigned"       ""   "$(assignee_of sp-s1)"
 is  "worktree is gone"         no   "$([ -d "$SPIRA_RUN/worktree/sp-s1" ] && echo yes || echo no)"
 is  "branch is gone"           1    "$(git -C "$REPO" show-ref --verify -q refs/heads/spira/sp-s1 2>/dev/null; echo $?)"
@@ -186,11 +266,11 @@ want "reports slain"            "slain: sp-s1" "$out"
 teardown sp-s1
 
 # ======================================================================================
-# SLAY --close — bead is closed with the reason and the spira-dropped label.
+# SLAY --close — the lifecycle row drops (Drop is orthogonal, sp-rlyl0), not bd close.
 #
-# The label is what keeps the sentinel from reopening it within two minutes: CHECK 5
-# reopens any closed bead whose id does not appear on the base branch, and slain work
-# has no commit naming it.
+# spira-dropped existed only to keep sentinel CHECK 5 from reopening an unlanded close
+# within two minutes; CHECK 5 is deleted in this same cutover round (sp-yyros), so there
+# is nothing left to protect the bd status from, and this tool no longer touches it.
 # ======================================================================================
 echo
 echo "slay --close:"
@@ -201,9 +281,8 @@ make_work sp-s2
 out="$(bash "$SLAY" --bead sp-s2 --close "operator decided to drop this" 2>&1)"
 rc=$?
 is "slay --close exits 0"   0      "$rc"
-is "bead is closed"          closed "$(status_of sp-s2)"
-if has_label sp-s2 spira-dropped; then ok "bead has spira-dropped label"
-else bad "bead has spira-dropped label" "label not found"; fi
+is "bd's own status is left unmoved by slay.sh now" in_progress "$(status_of sp-s2)"
+is "the lifecycle row drops instead" DROPPED "$(lc_state_of sp-s2)"
 teardown sp-s2
 
 # ======================================================================================
@@ -218,7 +297,7 @@ make_work sp-s3
 out="$(bash "$SLAY" --bead sp-s3 --keep-work 2>&1)"
 rc=$?
 is   "slay --keep-work exits 0"   0   "$rc"
-is   "bead is open"               open "$(status_of sp-s3)"
+is   "the lifecycle row is released — WORKING to READY" READY "$(lc_state_of sp-s3)"
 is   "worktree is kept"           yes  "$([ -d "$SPIRA_RUN/worktree/sp-s3" ] && echo yes || echo no)"
 is   "branch is kept"             0    "$(git -C "$REPO" show-ref --verify -q refs/heads/spira/sp-s3 2>/dev/null; echo $?)"
 want "reports work kept"           "kept" "$out"
@@ -262,7 +341,7 @@ echo "uncommitted work" > "$SPIRA_RUN/worktree/sp-wip1/dirty.txt"
 out="$(bash "$SLAY" --bead sp-wip1 --why "operator halted it" 2>&1)"
 rc=$?
 is  "dirty slay exits 0"               0    "$rc"
-is  "bead is open"                     open "$(status_of sp-wip1)"
+is  "the lifecycle row is released — WORKING to READY" READY "$(lc_state_of sp-wip1)"
 is  "branch stays in refs/heads"       0    \
     "$(git -C "$REPO" show-ref --verify -q refs/heads/spira/sp-wip1 2>/dev/null; echo $?)"
 is  "branch is NOT in refs/slain"      1    \
@@ -368,7 +447,7 @@ is   "the real bead was NOT touched"       in_progress "$(status_of sp-s8)"
 # Without this, a slay.sh that refused EVERYTHING would pass both cases above.
 out="$(bash "$SLAY" --bead sp-s8 --keep-work --why "positive control" 2>&1)"; rc=$?
 is   "a real id with a --why still slays"  0    "$rc"
-is   "and the bead is released"            open "$(status_of sp-s8)"
+is   "and the bead is released — WORKING to READY" READY "$(lc_state_of sp-s8)"
 teardown sp-s8
 
 # ======================================================================================

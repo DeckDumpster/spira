@@ -20,9 +20,16 @@
 # DO NOT USE THIS TO BYPASS THE LOOP. This is for work the operator ordered done by hand
 # — a landing that the loop cannot perform, a fix applied at the keyboard. If the loop
 # can do it, let the loop do it.
+#
+# THE CLAIM IS AN OPERATOR HOLD ON SPIRA-LC (sp-rlyl0), not a bd claim: HoldKind::Operator
+# suspends dispatch without pretending this is a genuine Working-state claim, which nothing
+# here actually is — the pidfile and heartbeat below are what stop the reaper regardless of
+# whether the row is classified yet, so the lifecycle write is best-effort by the same
+# construction every other lc.sh caller uses.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
+. "$HERE/lc.sh"
 
 ID=""; HOLD_PID=$$; MODE=hold
 while [ $# -gt 0 ]; do
@@ -63,9 +70,10 @@ if [ -f "$PIDFILE" ]; then
     rm -f "$PIDFILE" "$HBFILE"
 fi
 
-# Claim the bead in the database.
-bdq update "$ID" --claim >/dev/null 2>&1 \
-    || { echo "hold.sh: could not claim $ID — is it open and unassigned?" >&2; exit 1; }
+# Hold the bead on spira-lc — best-effort, like every other lc.sh caller (CANNOT_TELL until
+# the bead is classified; a refusal here is logged and does not block the hold, since the
+# pidfile below is what actually keeps the reaper off it).
+lc_hold "$ID" operator "manual hold via hold.sh (pid $HOLD_PID)" "hold-$ID" >/dev/null 2>&1 || true
 
 # Write the pidfile.
 echo "$HOLD_PID" > "$PIDFILE"
