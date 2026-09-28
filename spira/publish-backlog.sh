@@ -51,12 +51,35 @@ $line
 MAILEOF
 }
 
+# _pb_arrival_ts <repo> <base> <sha> -> the unix time <sha> first became reachable from
+# <base>, read from <base>'s own reflog (git log -g --date=unix). land-local's update-ref
+# writes that reflog entry itself, so its timestamp is when the commit ARRIVED on the
+# landing ref — not git log %at, which is the author date, hours earlier. Non-zero, never a
+# guess, when the reflog has nothing to say (law-a-control-that-cannot-check-must-refuse):
+# `-g` and `--reverse` cannot combine, so entries are read newest-first into an array and
+# walked backwards to find the earliest (oldest) one that already contains <sha>.
+_pb_arrival_ts() {
+    local repo="$1" base="$2" sha="$3" i entry_sha gd ts lines
+    mapfile -t lines < <(git -C "$repo" log -g --date=unix --format='%H %gd' "$base" 2>/dev/null)
+    for (( i=${#lines[@]}-1; i>=0; i-- )); do
+        read -r entry_sha gd <<< "${lines[$i]}"
+        [ -n "$entry_sha" ] || continue
+        ts="${gd##*\{}"; ts="${ts%\}}"
+        case "$ts" in ''|*[!0-9]*) continue ;; esac
+        git -C "$repo" merge-base --is-ancestor "$sha" "$entry_sha" 2>/dev/null || continue
+        printf '%s\n' "$ts"
+        return 0
+    done
+    return 1
+}
+
 # _pb_backlog <name> <repo> -> "<count> <age> <head>" for the unpublished range
 # (forge-tip, local-tip], or non-zero if it could not be computed — a tick that cannot
 # check skips the repo rather than reporting a zero backlog
-# (law-a-control-that-cannot-check-must-refuse).
+# (law-a-control-that-cannot-check-must-refuse). <age> is how long the oldest unpublished
+# commit has sat on the landing ref, from _pb_arrival_ts — not how long ago it was authored.
 _pb_backlog() {
-    local name="$1" repo="$2" base remote branch forge_sha head_sha count oldest_ts now
+    local name="$1" repo="$2" base remote branch forge_sha head_sha count oldest_sha arrival_ts now
     base="$(spira_landref "$repo" 2>/dev/null)" || return 1
     # queue.local's ref is a bare local branch (land-local and publish both refuse a
     # remote-tracking one) — same guard queue.sh's own land-local/publish apply.
@@ -71,10 +94,12 @@ _pb_backlog() {
     if [ "$count" -eq 0 ]; then
         printf '0 0 %s\n' "$head_sha"; return 0
     fi
-    oldest_ts="$(git -C "$repo" log --format=%at --reverse "$forge_sha..$head_sha" 2>/dev/null | head -1)"
-    case "$oldest_ts" in ''|*[!0-9]*) return 1 ;; esac
+    oldest_sha="$(git -C "$repo" log --format=%H --reverse "$forge_sha..$head_sha" 2>/dev/null | head -1)"
+    [ -n "$oldest_sha" ] || return 1
+    arrival_ts="$(_pb_arrival_ts "$repo" "$base" "$oldest_sha")" || return 1
+    case "$arrival_ts" in ''|*[!0-9]*) return 1 ;; esac
     now="$(date +%s)"
-    printf '%s %s %s\n' "$count" "$(( now - oldest_ts ))" "$head_sha"
+    printf '%s %s %s\n' "$count" "$(( now - arrival_ts ))" "$head_sha"
 }
 
 # _pb_tick_repo <name> — one repo's worth of the tick: skips anything not queue.local,
