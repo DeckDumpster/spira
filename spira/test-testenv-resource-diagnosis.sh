@@ -169,9 +169,16 @@ saw "inotify is still measured (host-wide, no exec needed)" \
 echo
 echo "E: concurrent-start admission queues, then proceeds once a slot frees"
 # ===========================================================================
+# E2's "queueing" message used to depend on winning a race against a background writer
+# that freed a slot 1s after `up` started: whether _testenv_admit's FIRST `podman ps`
+# read landed before or after that writer ran was a wall-clock guess, and it stopped
+# landing under load (sp-2usbl, law-a-test-that-flips-is-deleted). The stub below
+# removes the clock entirely: it counts its OWN invocations and reports the registry
+# full on the first (the pre-loop check _testenv_admit always makes) and freed on every
+# call after (the re-check after its one poll) — an injected state, not a timed one.
 : > "$LOG"
-COUNTER="$TMP/running-count"
-printf '3\n' > "$COUNTER"   # starts saturated at the limit
+CALLS="$TMP/ps-calls"
+: > "$CALLS"
 cat > "$TMP/bin/podman" <<STUB2
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "\$PODMAN_LOG"
@@ -179,8 +186,13 @@ case "\$1" in
     container) exit 1 ;;
     image)     exit 0 ;;
     ps)
-        n="\$(cat "$COUNTER" 2>/dev/null || echo 0)"
-        for i in \$(seq 1 "\$n" 2>/dev/null); do echo "cid\$i"; done
+        echo x >> "$CALLS"
+        calls="\$(wc -l < "$CALLS")"
+        if [ "\$calls" -le 1 ]; then
+            echo cid1; echo cid2; echo cid3   # first read: registry certainly full (3/3)
+        else
+            echo cid1; echo cid2               # every read after: a slot has freed (2/3)
+        fi
         exit 0 ;;
     run)  echo fakecid; exit 0 ;;
     stop|rm) exit 0 ;;
@@ -196,21 +208,18 @@ esac
 STUB2
 chmod +x "$TMP/bin/podman"
 
-# A slot frees 1s in — a background writer, independent of the `up` under test.
-( sleep 1; printf '2\n' > "$COUNTER" ) &
-BGPID=$!
-
 start_ts=$(date +%s)
 out="$(PATH="$TMP/bin:$PATH" PODMAN_LOG="$LOG" \
        SPIRA_TESTENV_BASIC_WAIT_TICKS=1 SPIRA_TESTENV_BASIC_RETRY_SLEEP=0 \
        SPIRA_TESTENV_MAX_CONCURRENT=3 SPIRA_TESTENV_QUEUE_TIMEOUT=10 SPIRA_TESTENV_QUEUE_POLL=1 \
            bash "$FIXTURE/testenv.sh" up --name admitted 2>&1)"
 rc=$?
-wait "$BGPID" 2>/dev/null
 end_ts=$(date +%s)
+outfile="$TMP/out-e"; printf '%s\n' "$out" > "$outfile"
 
 [ "$rc" -eq 0 ] && ok "E1: up succeeds once the slot frees" \
                 || bad "E1: up succeeds once the slot frees" "exited $rc: $out"
+saw "E2: up reported that it queued" "3 testenv containers already running \(limit 3\) — queueing" "$outfile"
 elapsed=$((end_ts - start_ts))
 if [ "$elapsed" -ge 1 ]; then
     ok "E3: up actually waited for the slot rather than racing ahead (${elapsed}s)"
@@ -220,9 +229,44 @@ fi
 
 # ===========================================================================
 echo
+echo "E2 negative control — no queueing message when the registry starts unsaturated"
+# ===========================================================================
+# SEEN RED FIRST for E2's own matcher: if the injected state never shows the registry
+# full, "queueing" must not appear — proving the assertion above is not vacuously true.
+: > "$LOG"
+cat > "$TMP/bin/podman" <<STUB3
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "\$PODMAN_LOG"
+case "\$1" in
+    container) exit 1 ;;
+    image)     exit 0 ;;
+    ps)        echo cid1; echo cid2; exit 0 ;;   # always 2/3 — never saturated
+    run)  echo fakecid; exit 0 ;;
+    stop|rm) exit 0 ;;
+    exec)
+        shift 2
+        case "\$*" in
+            "systemctl is-active basic.target") exit 0 ;;
+            "systemctl is-active user@"*.service) exit 0 ;;
+            *) exit 0 ;;
+        esac ;;
+    *) exit 0 ;;
+esac
+STUB3
+chmod +x "$TMP/bin/podman"
+out2="$(PATH="$TMP/bin:$PATH" PODMAN_LOG="$LOG" \
+       SPIRA_TESTENV_BASIC_WAIT_TICKS=1 SPIRA_TESTENV_BASIC_RETRY_SLEEP=0 \
+       SPIRA_TESTENV_MAX_CONCURRENT=3 SPIRA_TESTENV_QUEUE_TIMEOUT=10 SPIRA_TESTENV_QUEUE_POLL=1 \
+           bash "$FIXTURE/testenv.sh" up --name unsaturated 2>&1)"
+notsaw "E2 negative control: no queueing message when never saturated" "queueing" \
+    <(printf '%s' "$out2")
+
+# ===========================================================================
+echo
 echo "E4: SPIRA_TESTENV_MAX_CONCURRENT=0 disables the gate even when saturated"
 # ===========================================================================
-printf '99\n' > "$COUNTER"
+# MAX_CONCURRENT=0 returns before _testenv_admit ever calls `podman ps` (testenv.sh:324),
+# so the registry state left by the block above is irrelevant here by construction.
 : > "$LOG"
 out="$(PATH="$TMP/bin:$PATH" PODMAN_LOG="$LOG" \
        SPIRA_TESTENV_BASIC_WAIT_TICKS=1 SPIRA_TESTENV_BASIC_RETRY_SLEEP=0 \
