@@ -51,7 +51,7 @@ seed() { testdb_reset; testdb_seed; }   # seed <<JSONL ... JSONL, after a clean 
 epic()         { printf '{"id":"%s","title":"epic","status":"open","issue_type":"epic","priority":%s,"labels":[],"updated_at":"2026-09-04T00:00:00Z"}\n' "$1" "$2"; }
 closed_child() { printf '{"id":"%s","title":"done child","status":"closed","issue_type":"task","priority":2,"labels":[],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"%s","type":"parent-child"}]}\n' "$1" "$1" "$2"; }
 bead() {
-    local id="$1" parent="$2" prio="$3" deps="" labels="\"plan\""
+    local id="$1" parent="$2" prio="$3" deps="" labels="\"plan\",\"repo:fixture\""
     [ -n "$parent" ] && deps=",\"dependencies\":[{\"issue_id\":\"$id\",\"depends_on_id\":\"$parent\",\"type\":\"parent-child\"}]"
     [ -n "${SPIRA_SCOPE_LABEL:-}" ] && labels="\"$SPIRA_SCOPE_LABEL\",$labels"
     printf '{"id":"%s","title":"t","status":"open","issue_type":"task","priority":%s,"labels":[%s],"updated_at":"2026-09-04T00:00:00Z"%s}\n' "$id" "$prio" "$labels" "$deps"
@@ -221,7 +221,6 @@ chmod +x "$BIN/claude"
 ( SPIRA_HOME="$AEON_HOME" SPIRA_RUN="$AEON_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP" \
   SPIRA_CONF="$TMP/no-such2.conf" \
   "$AEON_HOME/aeon.sh" builder > "$TMP/aeon-out" 2>&1 )
-echo "=== DEBUG aeon-out ===" >&2; cat "$TMP/aeon-out" >&2; echo "=== /DEBUG ===" >&2
 
 # A task bead's close is converted to open + spira-submitted at teardown (sp-qsona): only
 # the landing pass closes a work bead directly, so "claimed and finished" reads as
