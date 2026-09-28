@@ -292,19 +292,23 @@ fn cmd_convert(args: &[String]) -> ExitCode {
     for w in &warnings.0 {
         eprintln!("spira-config convert: {w}");
     }
-    // A CALLER THAT OMITS --conf OR --repo-map IS ASKING FOR A NARROWER REFRESH (conf.sh's
+    // A CALLER THAT OMITS --conf ENTIRELY IS ASKING FOR A NARROWER REFRESH (conf.sh's
     // persona-only regenerate passes just --fayth), not "this box has no [spira]/[repo]
-    // config" — read_conf/repo_sections against empty text return only defaults, and writing
-    // that over an --out file with real content would silently erase every scalar spira.toml
-    // key or [repo.*] table the omitted input didn't re-supply. Fall back to whatever the
-    // target already holds for the section this call had no source for.
-    if let Some(p) = &out_path {
-        if conf_path.is_none() || repo_map_path.is_none() {
+    // config" — read_conf against empty text returns only defaults, and writing that over an
+    // --out file with real content would silently erase every scalar spira.toml key the
+    // omitted input didn't re-supply (shrink_reason only counts [repo.*] tables and the
+    // fayths list, so a scalar wipe like this passes it unnoticed). Fall back to whatever the
+    // target already holds for [spira]/[repo] when there is no --conf to derive them from.
+    //
+    // ONLY WHEN --conf ITSELF IS ABSENT, not merely --repo-map: a caller that passes --conf
+    // without --repo-map is doing a real (if incomplete) conversion, and shrink_reason's
+    // refusal is the intended backstop for that shape (sp-zs04v.2) — preserving [repo.*] out
+    // from under it here would silence the exact refusal that guard exists to raise.
+    if conf_path.is_none() {
+        if let Some(p) = &out_path {
             if let Ok(existing_text) = fs::read_to_string(p) {
                 if let Ok(existing) = validate(&existing_text) {
-                    if conf_path.is_none() {
-                        doc.spira = existing.spira;
-                    }
+                    doc.spira = existing.spira;
                     if repo_map_path.is_none() {
                         doc.repo = existing.repo;
                     }
