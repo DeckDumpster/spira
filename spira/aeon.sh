@@ -90,42 +90,6 @@ ledger() {
     printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LEDGER"
 }
 
-# rapid_recur_check — when the last SPIRA_RAPID_RECUR_THRESHOLD done lines for BEAD_ID
-# all show wall_s=? or wall_s<10, each summon is dying before doing real work: a setup loop
-# that recurs identically on every retry (law-a-retry-must-change-an-input), so a fourth
-# summon cannot learn anything the third did not. Park with $SPIRA_ASK_LABEL rather than
-# only annotating — an annotation left dispatch free to keep re-summoning into the same
-# fault, re-appending the same note forever.
-rapid_recur_check() {
-    local _threshold="${SPIRA_RAPID_RECUR_THRESHOLD:-3}"
-    [ -n "${BEAD_ID:-}" ] || return 0
-    [ -f "${LEDGER:-}" ] || return 0
-    local _count
-    _count=$(grep " done [^ ]* $BEAD_ID " "$LEDGER" | tail -"$_threshold" | python3 -c '
-import sys, re
-count = 0
-for line in sys.stdin:
-    m = re.search(r"wall_s=(\?|[0-9.]+)", line)
-    if m and (m.group(1) == "?" or float(m.group(1)) < 10.0):
-        count += 1
-    else:
-        count = 0
-print(count)' 2>/dev/null) || return 0
-    [ "${_count:-0}" -ge "$_threshold" ] || return 0
-    # Idempotent: once parked, a bead carrying SPIRA_ASK_LABEL is excluded from every fayth
-    # predicate, so it should not be summoned again — this also guards against re-noting if
-    # it somehow is.
-    case "$(bdq label list "$BEAD_ID" 2>/dev/null)" in *"${SPIRA_ASK_LABEL}"*) return 0 ;; esac
-    log "$FAYTH: $BEAD_ID RAPID-RECUR: $_count consecutive sub-10s runs — parking, a setup loop cannot be learned from a retry"
-    bdq label add "$BEAD_ID" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
-    bdq label add "$BEAD_ID" "overseer" >/dev/null 2>&1 || true
-    bdq note "$BEAD_ID" \
-        "RAPID-RECUR: $_count consecutive sub-10s aeon runs on $BEAD_ID. Each summon dies before meaningful work, suggesting a setup loop — the defect recurs identically on every retry. Parked with $SPIRA_ASK_LABEL and overseer instead of only annotated: a fourth summon cannot learn anything the third did not. Check: worktree path, conflicting branches, or box state. Details in aeon-ledger." \
-        >/dev/null 2>&1 || true
-    spira_event aeon.rapid "$BEAD_ID" \
-        "Rapid-recur: $BEAD_ID — $_count consecutive sub-10s aeon summons (setup loop) — parked" || true
-}
-
 # ledger_done <rc> <status> — an aeon's disposition line, with what its session SPENT.
 #
 # THE SPEND IS ON THIS LINE BECAUSE NOTHING ELSE KEEPS IT. The client writes duration, turns,
@@ -831,25 +795,7 @@ print(d[0].get("status","") if d else "")' 2>/dev/null)"
             rm -f "$SPIRA_RUN/$BEAD_ID.lapsed"
         elif gate_why="$(gate_unfinished)"; then
             _d_gate=yes; _d_gate_why="$gate_why"
-        elif ! bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
-import sys, json, os
-ask = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")  # literal-ok: Python fallback for direct invocation without conf.sh
-bead_id = sys.argv[1] if len(sys.argv) > 1 else ""
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-d = d if isinstance(d, list) else [d]
-if not d: sys.exit(0)
-deps = d[0].get("dependencies") or []
-close_sfx = " for bead " + bead_id if bead_id else None
-open_ask = [x for x in deps
-            if x.get("status") != "closed"
-            and ask in (x.get("labels") or [])
-            and (x.get("dependency_type") or x.get("type")) == "blocks"
-            and not (close_sfx
-                     and "Close GitHub issue " in (x.get("title") or "")
-                     and close_sfx in (x.get("title") or ""))]
-if open_ask: sys.exit(1)
-sys.exit(0)' "$BEAD_ID" 2>/dev/null; then
+        elif open_ask_blocker "$(bdjson show "$BEAD_ID" 2>/dev/null)" "$BEAD_ID"; then
             _d_decision=yes
         elif [ "${SESSION_RC:-0}" = 124 ] && [ "${committed:-}" != yes ]; then
             : # timeout — aeon_disposition reads SESSION_RC/committed directly, nothing to gather

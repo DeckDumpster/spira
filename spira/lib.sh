@@ -2894,6 +2894,39 @@ d = d if isinstance(d, list) else [d]
 sys.exit(0 if d and sys.argv[1] in (d[0].get("labels") or []) else 1)' "${2:-}" <<<"${1:-}"
 }
 
+# open_ask_blocker <bd-show-json> <bead-id> -> rc 0 if the bead carries an open,
+# ask-labelled `blocks` dependency (feeds aeon_disposition's decision_blocked input).
+# Pulled out of aeon.sh cleanup() (sp-eq8a4.2.1 precedent) so it is testable with crafted
+# JSON, no bd, no live session.
+#
+# A RELATES-TO EDGE IS NOT A BLOCKER (sp-dvsqc): mail.sh wires a non-decision cited bead's
+# ask via `dep relate`, which is dependency_type "relates-to", not "blocks" — treating every
+# open ask-labelled dep as a blocker released a work bead that should have been worked.
+#
+# THIS BEAD'S OWN gh-closeout ASK IS NOT ITS OWN BLOCKER (sp-2a4hd): a "Close GitHub issue
+# ... for bead <id>" ask targeting this same bead is excluded, or a reopened bead would
+# decision-block on the ask it is itself waiting to close.
+open_ask_blocker() {
+    python3 -c '
+import sys, json, os
+ask = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")  # literal-ok: Python fallback for direct invocation without conf.sh
+bead_id = sys.argv[1] if len(sys.argv) > 1 else ""
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(1)
+d = d if isinstance(d, list) else [d]
+if not d: sys.exit(1)
+deps = d[0].get("dependencies") or []
+close_sfx = " for bead " + bead_id if bead_id else None
+open_ask = [x for x in deps
+            if x.get("status") != "closed"
+            and ask in (x.get("labels") or [])
+            and (x.get("dependency_type") or x.get("type")) == "blocks"
+            and not (close_sfx
+                     and "Close GitHub issue " in (x.get("title") or "")
+                     and close_sfx in (x.get("title") or ""))]
+sys.exit(0 if open_ask else 1)' "${2:-}" <<<"${1:-}"
+}
+
 # aeon_disposition — the teardown decision for an OPEN bead at the end of one aeon.sh run,
 # pulled out of cleanup() so the precedence between its branches is a table, not read order
 # in a 300-line if-chain. cleanup() gathers every input below (each one is either a file the
@@ -3009,6 +3042,54 @@ for p in PATTERNS:
         sys.exit(0)
 sys.exit(1)
 ' 2>/dev/null
+}
+
+# rapid_recur_streak <threshold> -> the count of trailing `done` lines (already
+# grep/tail-limited by the caller to one bead's last <threshold>) whose wall_s reads `?`
+# or under 10 seconds, reset to 0 by any line that does not. Pure text over already-
+# selected lines, pulled out of rapid_recur_check so the arithmetic is testable with no
+# ledger file and no bd.
+rapid_recur_streak() {
+    python3 -c '
+import sys, re
+count = 0
+for line in sys.stdin:
+    m = re.search(r"wall_s=(\?|[0-9.]+)", line)
+    if m and (m.group(1) == "?" or float(m.group(1)) < 10.0):
+        count += 1
+    else:
+        count = 0
+print(count)'
+}
+
+# rapid_recur_check — when the last SPIRA_RAPID_RECUR_THRESHOLD done lines for BEAD_ID
+# all show wall_s=? or wall_s<10, each summon is dying before doing real work: a setup loop
+# that recurs identically on every retry (law-a-retry-must-change-an-input), so a fourth
+# summon cannot learn anything the third did not. Park with $SPIRA_ASK_LABEL rather than
+# only annotating — an annotation left dispatch free to keep re-summoning into the same
+# fault, re-appending the same note forever.
+#
+# Reads BEAD_ID, LEDGER and FAYTH from the caller's globals (aeon.sh's own, or a test's) —
+# pulled out of aeon.sh cleanup() so it is sourced, not re-implemented, wherever it runs.
+rapid_recur_check() {
+    local _threshold="${SPIRA_RAPID_RECUR_THRESHOLD:-3}"
+    [ -n "${BEAD_ID:-}" ] || return 0
+    [ -f "${LEDGER:-}" ] || return 0
+    local _count
+    _count=$(grep " done [^ ]* $BEAD_ID " "$LEDGER" | tail -"$_threshold" | rapid_recur_streak) || return 0
+    [ "${_count:-0}" -ge "$_threshold" ] || return 0
+    # Idempotent: once parked, a bead carrying SPIRA_ASK_LABEL is excluded from every fayth
+    # predicate, so it should not be summoned again — this also guards against re-noting if
+    # it somehow is.
+    case "$(bdq label list "$BEAD_ID" 2>/dev/null)" in *"${SPIRA_ASK_LABEL}"*) return 0 ;; esac
+    log "$FAYTH: $BEAD_ID RAPID-RECUR: $_count consecutive sub-10s runs — parking, a setup loop cannot be learned from a retry"
+    bdq label add "$BEAD_ID" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
+    bdq label add "$BEAD_ID" "overseer" >/dev/null 2>&1 || true
+    bdq note "$BEAD_ID" \
+        "RAPID-RECUR: $_count consecutive sub-10s aeon runs on $BEAD_ID. Each summon dies before meaningful work, suggesting a setup loop — the defect recurs identically on every retry. Parked with $SPIRA_ASK_LABEL and overseer instead of only annotated: a fourth summon cannot learn anything the third did not. Check: worktree path, conflicting branches, or box state. Details in aeon-ledger." \
+        >/dev/null 2>&1 || true
+    spira_event aeon.rapid "$BEAD_ID" \
+        "Rapid-recur: $BEAD_ID — $_count consecutive sub-10s aeon summons (setup loop) — parked" || true
 }
 
 # --------------------------------------------------------------------------------------

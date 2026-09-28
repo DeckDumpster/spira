@@ -148,12 +148,10 @@ want "note says no attempt charged" "No attempt charged" "$notes2"
 nowant "note does not say Unlanded" "Unlanded" "$notes2"
 want "ledger says decision-blocked" "decision-blocked" "$(fa_ledger_line sp-db-2)"
 
-# The sp-dvsqc defect (an ask-labelled dep via a relates-to edge treated as a blocker, even
-# though aeon.sh now filters on dependency_type == "blocks" only) is deferred to a follow-up
-# bead rather than given its own row here: it is a real, previously-defective path with no
-# T1 coverage, but every row in this file costs real wall-clock against the area's 60s cap,
-# and the discriminating "blocks vs relates-to" logic sits beside decision-blocked's own
-# dependency read, not inside the disposition table this suite otherwise wires. See sp-5t53s.
+# The sp-dvsqc defect (an ask-labelled dep via a relates-to edge treated as a blocker) does
+# not get a row here: open_ask_blocker (lib.sh), the dependency read this row's own
+# decision-blocked branch feeds on, was pulled out pure and is a table in
+# test-aeon-disposition.sh instead — no live session needed, no cost against this file's cap.
 
 # ==========================================================================================
 echo
@@ -353,11 +351,10 @@ want "second death also charges (ledger-based; the infinite loop is broken)" "st
 is   "two pre-session entries in the ledger" "2" "$_count"
 
 # The rapid-recur park (a third consecutive sub-10s death labels and parks the bead so a
-# fourth summon cannot repeat the same futile retry — SPIRA_RAPID_RECUR_THRESHOLD) is
-# deferred to a follow-up bead rather than given its own rows here: it is a real mechanism
-# that loses its only test with this file's deletion, but two more real aeon runs would push
-# this suite over the area's 60s cap for a park behaviour distinct from the FATAL/charge/loop
-# story UC-aeon-execution-02 itself names. See sp-5t53s.
+# fourth summon cannot repeat the same futile retry — SPIRA_RAPID_RECUR_THRESHOLD) does not
+# get rows here: rapid_recur_check needs only a ledger file and one bd bead, no live aeon.sh
+# session, so it is test-rapid-recur.sh's instead — two fewer real aeon runs against this
+# file's cap for a park behaviour distinct from the FATAL/charge/loop story this row proves.
 
 # RESTORE the shared repo-map — every row after this one uses FA_REPO again.
 export SPIRA_REPO_MAP="$FA_REPO_MAP"
@@ -474,8 +471,7 @@ printf 1 > "$FA_TMP/shim-rc"
 sweep_rc="$("$HERE/aeon.sh" sweeper --sweep --prompt "check pipeline" > "$FA_TMP/sweep-out" 2>&1; echo $?)"
 is "sweep with claude rc=1 but ran exits 0 (ops/qa sweep fix)" "0" "$sweep_rc"
 # The positive control for this UC (a refused sweep — no tool calls — exits non-zero so a
-# real ops failure stays visible) is deferred to a follow-up bead rather than a third sweep
-# run here: bead mode already carries this UC's positive control (the "session did not
-# close" row), and this file is at the area's 60s cap. See sp-5t53s.
+# real ops failure stays visible) is test-aeon-sweep.sh's instead, which already builds the
+# lighter sweep-only fixture this control needs and does not touch this file's 60s cap.
 
 tl_summary

@@ -10,13 +10,13 @@ Generated from docs/test-plan/*.toml, every suite's # tier:/# covers: header, an
 | UC-aeon-execution-02 | T3 | a worktree-creation failure is a pre-session death: FATAL, attempt charged, ledger `pre-session`, no free resummon loop | spira/test-aeon-teardown-e2e.sh | covered |
 | UC-aeon-execution-03 | T1 | a bead poisoned right after claim is released before workspace setup, ledger `poison-raced` | spira/test-aeon-disposition.sh | covered |
 | UC-aeon-execution-04 | T1 | the world-halt fence refuses a halt bead (one carrying the configured halt label) with a live aeon and releases the claim; with none it runs stop → session → start | — | **GAP** |
-| UC-aeon-execution-05 | T1 | sweep mode claims nothing, sets no `branch:` label, and refuses when capacity is paused or the world is draining | — | **GAP** |
+| UC-aeon-execution-05 | T1 | sweep mode claims nothing, sets no `branch:` label, and refuses when capacity is paused or the world is draining | spira/test-aeon-sweep.sh | covered |
 | UC-aeon-execution-06 | T1 | launch argv is a pure function of the fayth's system-prompt, project-instructions and settings knobs | — | **GAP** |
 | UC-aeon-execution-07 | T1 | brief rendering leaves no unrendered `{{placeholder}}`; RESUME/SLAIN/DEADLINE/ALREADY_DONE each render correctly | — | **GAP** |
 | UC-aeon-execution-08 | T1 | the lease renews on trace growth and lapses on silence past `FAYTH_LEASE_SECONDS`, killing `-$$` | spira/test-aeon-lease.sh | covered |
 | UC-aeon-execution-09 | T1 | the thrash wall trips only when the fuse and the session age both clear the wall | spira/test-aeon-lease.sh<br>spira/test-thrash.sh | covered |
 | UC-aeon-execution-10 | T1 | session outcome classification (refused/unknown/killed/unlanded/yield-headless) and its charge default-deny | — | **GAP** |
-| UC-aeon-execution-11 | T1 | open-bead teardown disposition runs its 13 branches in precedence order and charges only `unlanded`-family outcomes | spira/test-aeon-disposition.sh<br>spira/test-aeon-teardown-e2e.sh<br>spira/test-thrash-teardown.sh | covered |
+| UC-aeon-execution-11 | T1 | open-bead teardown disposition runs its 13 branches in precedence order and charges only `unlanded`-family outcomes | spira/test-aeon-disposition.sh<br>spira/test-aeon-teardown-e2e.sh<br>spira/test-rapid-recur.sh<br>spira/test-thrash-teardown.sh | covered |
 | UC-aeon-execution-12 | T3 | a harness reopen after a rebase conflict on a closed, committed bead is a requeue, not an attempt | spira/test-aeon-teardown-e2e.sh | covered |
 | UC-aeon-execution-13 | T1 | the close verdict (commit-naming keeps closed; no commit reopens) is decided identically by aeon and sentinel | spira/test-aeon-verdict.sh | covered |
 | UC-aeon-execution-14 | T1 | an eviction-race reopen fires only for a live eviction reason at the current tip, capped at 2/hour | — | **GAP** |
