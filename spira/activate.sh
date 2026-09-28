@@ -15,7 +15,8 @@
 #   matches what the filename promised.
 #
 # FLOW
-#   1. Refuse if aeons are live for this instance (unless SPIRA_ACTIVATE_FORCE=1).
+#   1. Refuse if aeons are live for this instance (unless SPIRA_ACTIVATE_FORCE=1, or
+#      SPIRA_ACTIVATE_LAND_LOCAL=1 — see LIVE-AEON GUARD below).
 #   2. Unpack the tarball into $SPIRA_RELEASES/<release-name>/ via a staging dir;
 #      the staging dir is cleaned on any failure so a partial unpack never appears
 #      as the release dir.
@@ -39,6 +40,12 @@
 #   33 reload entries coinciding with a worker death). The guard refuses while any
 #   spira-aeon-*-<instance> unit is active. Set SPIRA_ACTIVATE_FORCE=1 to override,
 #   e.g. after world.sh stop has confirmed all aeons are gone.
+#
+#   SPIRA_ACTIVATE_LAND_LOCAL=1 is a narrower override for queue.sh land-local, which runs
+#   with aeons routinely live (that is the loop, not an exception). It skips only this
+#   refusal; the restart step below already excludes spira-aeon-* units unconditionally, so
+#   no aeon unit is ever touched by either override — FORCE additionally asserts aeons are
+#   confirmed gone, which land-local cannot claim.
 #
 # EXIT
 #   0   success
@@ -97,7 +104,7 @@ CURRENT="$RELEASES/current"
 # ---------------------------------------------------------------------------
 # Live-aeon guard. Installing while aeons are active destroys their worktrees.
 # ---------------------------------------------------------------------------
-if [ -z "${SPIRA_ACTIVATE_FORCE:-}" ]; then
+if [ -z "${SPIRA_ACTIVATE_FORCE:-}" ] && [ -z "${SPIRA_ACTIVATE_LAND_LOCAL:-}" ]; then
     _live="$(spira_live_aeons)"
     if [ -n "$_live" ]; then
         printf 'activate: refusing — live aeons for instance %s would be disrupted:\n' \
