@@ -54,7 +54,9 @@ pub fn mode_str(m: LandMode) -> &'static str {
         LandMode::Push => "push",
         LandMode::Pr => "pr",
         LandMode::Hold => "hold",
-        LandMode::Queue => "queue",
+        // queue.forge is today's queue under its new name; queue.local rides the queue delivery
+        // machine until its own lands (sp-iwhgw).
+        LandMode::Queue | LandMode::QueueForge | LandMode::QueueLocal => "queue",
     }
 }
 
@@ -68,6 +70,12 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn queue_aliases_map_to_the_queue_delivery_machine() {
+        assert_eq!(mode_str(LandMode::QueueForge), "queue");
+        assert_eq!(mode_str(LandMode::QueueLocal), "queue");
     }
 
     #[test]
