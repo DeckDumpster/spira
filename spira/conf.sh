@@ -642,10 +642,18 @@ spira_toml_resolve() {
 
     local bin target out
     bin="$(spira_config_bin)" || { [ -n "$toml" ] && printf '%s' "$toml"; return 0; }
-    # spira_config_writeback: $toml may resolve to the operator's real spira.toml
-    # (spira_toml_file checks $HOME before regenerating anything from this worktree's own
-    # fayths).
-    target="$(spira_config_writeback "${toml:-$SPIRA_REPO/spira.toml}")"
+    if [ -n "${SPIRA_TOML+set}" ]; then
+        # SPIRA_TOML NAMES ITS OWN WRITE TARGET, same as the pinned-SPIRA_CONF case above:
+        # a caller (deploy.sh, a test fixture) that pinned this path on purpose must have the
+        # regenerated [persona.*] table land there, not redirected by spira_config_writeback's
+        # SPIRA_REPO fallback (the write-side twin of the pinned-conf fix, sp-zs04v.4).
+        target="$SPIRA_TOML"
+    else
+        # spira_config_writeback: $toml may resolve to the operator's real spira.toml
+        # (spira_toml_file checks $HOME before regenerating anything from this worktree's own
+        # fayths).
+        target="$(spira_config_writeback "${toml:-$SPIRA_REPO/spira.toml}")"
+    fi
     local -a args=(--home "$HOME" --out "$target")
     for f in "${fayth_files[@]}"; do args+=(--fayth "$f"); done
     if out="$("$bin" convert "${args[@]}" 2>&1)"; then
