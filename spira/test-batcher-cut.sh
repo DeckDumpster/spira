@@ -471,11 +471,12 @@ want   "H: the incident names the base-red reason" "local-round-red" "$(cat "$IN
 echo
 echo "C. stale member: base conflict reopens the bead at once:"
 is "C: positive control — requeue spy silent before this case" "0" "$(grep -c '^sp-cccc3 ' "$REQUEUE_SPY" 2>/dev/null)"
-# sp-cbbb2 (case B) is still CERTIFIED by design — a double-red leaves it be. Case C is
-# about a DIFFERENT member's base conflict in isolation, so retire sp-cbbb2 first the way
-# a builder eventually would (fix and re-certify elsewhere, or abandon); otherwise it would
-# merge cleanly into case C's round and open a PR neither case is testing for.
-rm -f "$LANDSTATE/sp-cbbb2"
+# sp-cbbb2 (case B), sp-cgflk (case G) and sp-chbas (case H) are all still CERTIFIED by
+# design — a double-red, a failed attribution, and a base fail all leave their member be.
+# Case C is about a DIFFERENT member's base conflict in isolation, so retire them first the
+# way a builder eventually would (fix and re-certify elsewhere, or abandon); otherwise they
+# would merge cleanly into case C's round and open a PR neither case is testing for.
+rm -f "$LANDSTATE/sp-cbbb2" "$LANDSTATE/sp-cgflk" "$LANDSTATE/sp-chbas"
 plant sp-cccc3 express
 git -C "$REPO" worktree add -q -b spira/sp-cccc3 "$RUN/worktree/sp-cccc3" main
 printf 'branch-version\n' > "$RUN/worktree/sp-cccc3/conflict.txt"
