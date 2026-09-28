@@ -810,13 +810,19 @@ spira_conf_defaults() {
     # differently sets their own, which is the whole reason this is a key and not a literal —
     # a literal in two commands is how those two commands come to disagree.
     #
+    # `⚠ BRANCH`, NOT A BARE `⚠`. A bare marker is a plea for attention any watcher can reach
+    # for whether or not one is warranted; pr-notify.sh's green-under-`pr` line reached for one
+    # it did not need, since that PR already lands itself (law-green-prs-merge-themselves).
+    # Naming the one kind that IS a stray branch keeps the marker from granting actionability
+    # on its own.
+    #
     # `=` AND NOT `:=`, WHICH IS THE ONE PLACE IN THIS FILE THAT DIFFERS. Every other default
     # fills an unset OR empty key, because empty means "not answered". Here empty is an answer:
     # an operator who blanks this key has edited it on purpose, and quietly substituting the
     # default would ignore the edit entirely. So the empty value survives to `watchd.sh`, which
     # refuses it and names `--all` — because as a regular expression an empty pattern matches
     # every line, and turning the filter off is a thing to ask for rather than to fall into.
-    : "${SPIRA_ACTIONABLE=ANSWERED|COMMENTED|ESCALAT|STRANDED|POISON|DEGRADED|BLOCKED|UNREACHABLE|FAIL|ERROR|LANDED|⚠}"
+    : "${SPIRA_ACTIONABLE=ANSWERED|COMMENTED|ESCALAT|STRANDED|POISON|DEGRADED|BLOCKED|UNREACHABLE|FAIL|ERROR|LANDED|⚠ BRANCH}"
     # THE ID PREFIX OF THIS INSTALLATION'S OWN BEADS, without the hyphen. It is what a health
     # assertion looks for to prove a watcher is reading THIS database and not one that was
     # retired underneath it.

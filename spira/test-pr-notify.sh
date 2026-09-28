@@ -14,8 +14,9 @@
 #      replaced): a fixture repo-map row with land=queue goes red, and pr-notify reports it.
 #      So do push and hold rows, alongside a pr row — "whatever its land mode".
 #   4. TRANSITIONS, NOT RE-LISTING. A second tick over an unchanged PR emits nothing; a third
-#      tick where its checks flip emits exactly one new line. GREEN reads differently under
-#      `pr` (hand-mergeable) than under any other mode (lands on its own).
+#      tick where its checks flip emits exactly one new line. GREEN reads the same whatever the
+#      land mode — auto-merge is already armed under `pr`, so nobody needs to hand-merge it
+#      either (law-green-prs-merge-themselves).
 #   5. MERGED AND CLOSED are reported once, from `gh pr view`, when a tracked PR leaves the
 #      open list — and a gh call that fails leaves the tracked PR in place for a retry rather
 #      than guessing it away.
@@ -219,10 +220,11 @@ for r in queue-repo pr-repo push-repo hold-repo; do
 done
 run --show
 out5="$(cat "$TMP/out")"
-has   "tick5: pr-repo green is hand-mergeable"   "$out5" "⚠ GREEN #1 Round batch [pr-repo]"
+has   "tick5: pr-repo green lands on its own (auto-merge is already armed)" \
+      "$out5" "GREEN #1 Round batch [pr-repo]: lands automatically"
 has   "tick5: queue-repo green lands on its own" "$out5" "GREEN #1 Round batch [queue-repo]: lands automatically"
-hasnt "tick5: queue-repo green is not flagged ⚠ (nobody should hand-merge a batch PR)" \
-      "$out5" "⚠ GREEN #1 Round batch [queue-repo]"
+hasnt "tick5: no green is flagged ⚠ (a hand-merge there fights auto-merge, law-green-prs-merge-themselves)" \
+      "$out5" "⚠ GREEN"
 
 # --- TICK 6: the PR merges — leaves the open list, gh pr view says MERGED ------------
 for r in queue-repo pr-repo push-repo hold-repo; do
@@ -333,5 +335,90 @@ manifest_line="$(grep '^pr-notify|' "$HERE/watchers")"
 has   "pr-notify is a daemon row"                 "$manifest_line" "pr-notify|daemon|"
 has   "its target is the watch loop"              "$manifest_line" "pr-notify.sh watch"
 hasnt "it is no longer a log row fed by a timer"   "$manifest_line" "pr-notify|log|"
+
+# ====================================================================================
+# 8. A REPO DROPPED FROM THE REPO-MAP GETS NO EVENTS, EVER — sp-iagac. A repository handed
+#    off elsewhere (ephemeral-ci -> prod/agent-swarm) has no row here any more; the scan is
+#    already built from `repo_names`, so proving a mapped repo's first RED still fires beside
+#    an unmapped one's silence is what would have caught the old backlog at the source.
+# ====================================================================================
+echo
+echo "a repo not in the repo-map produces no events; a mapped repo's first RED still does"
+
+# Section 6 above left $GH_BIN/gh as its own branch-test stub; restore the "read
+# .gh-pr-list.json from cwd" stub sections 3-5 relied on.
+cat > "$GH_BIN/gh" <<'GHEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${GH_LOG:-/dev/null}"
+case "$1 $2" in
+    "pr list")
+        case "$*" in
+            *"--head "*) printf '%s\n' "${GH_BRANCH_HAS_PR:-0}" ;;
+            *) cat "$(pwd)/.gh-pr-list.json" 2>/dev/null || printf '[]\n' ;;
+        esac
+        ;;
+    "pr view")
+        n="$3"
+        awk -v n="$n" '$1==n{print $2; exit}' "$(pwd)/.gh-pr-state" 2>/dev/null
+        ;;
+    *) printf '[]\n' ;;
+esac
+GHEOF
+chmod +x "$GH_BIN/gh"
+
+mkdir -p "$TMP/repos/gone-repo/.git"
+red_json 9 "Orphaned PR" suites > "$TMP/repos/gone-repo/.gh-pr-list.json"
+# gone-repo is a real, gated checkout that simply has no row in $REPO_MAP any more.
+GONE_MAP="$TMP/gone-repo-map"
+printf '%s|%s|queue\n' "queue-repo" "$TMP/repos/queue-repo" > "$GONE_MAP"
+red_json 1 "Round batch" suites > "$TMP/repos/queue-repo/.gh-pr-list.json"
+rm -f "$TMP/repos/queue-repo/.gh-pr-state"
+
+run_gone() {
+    env -i HOME="$TMP/home" PATH="$PATH" \
+        SPIRA_PATH="$GH_BIN" SPIRA_CONF="$CONF" SPIRA_REPO_MAP="$GONE_MAP" \
+        SPIRA_REPO="$TMP/empty-repo" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" GH_LOG="$GH_LOG" \
+        bash "$HERE/pr-notify.sh" --show > "$TMP/out" 2>"$TMP/err"
+}
+run_gone
+outg="$(cat "$TMP/out")"
+hasnt "an unmapped repo's own checkout is never scanned"     "$outg" "gone-repo"
+has   "a mapped repo's first RED still is, beside it"        "$outg" "FAIL RED #1 Round batch [queue-repo]: suites"
+rm -f "$RUN"/mail/concierge/new/*
+
+# ====================================================================================
+# 9. THE ACTIONABLE FILTER (`pr-notify.sh actionable FILE`) — the read-time cleanup for a
+#    backlog the producer already wrote: drop a line whose repo the map no longer carries
+#    (the log outlives the repo-map edit that orphaned it), drop a kind SPIRA_ACTIONABLE does
+#    not mark worth a look, and collapse repeats of the exact same line to one — the same
+#    bead's same RED reported every poll is one finding, not one per poll.
+# ====================================================================================
+echo
+echo "the actionable filter: unmapped repos dropped, kinds narrowed, repeats collapsed"
+
+FLOG="$TMP/fixture-pr-notify.log"
+cat > "$FLOG" <<EOF
+OPENED #1 Round batch [queue-repo]
+FAIL RED #1 Round batch [queue-repo]: suites
+FAIL RED #1 Round batch [queue-repo]: suites
+FAIL RED #1 Round batch [queue-repo]: suites
+FAIL RED #9 Orphaned PR [gone-repo]: suites
+GREEN #1 Round batch [queue-repo]: lands automatically
+EOF
+
+actionable() {
+    env -i HOME="$TMP/home" PATH="$PATH" \
+        SPIRA_CONF="$CONF" SPIRA_REPO_MAP="$GONE_MAP" SPIRA_REPO="$TMP/empty-repo" \
+        SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" SPIRA_ACTIONABLE="${SPIRA_ACTIONABLE_OVERRIDE:-}" \
+        bash "$HERE/pr-notify.sh" actionable "$FLOG"
+}
+
+out9="$(SPIRA_ACTIONABLE_OVERRIDE='ANSWERED|COMMENTED|ESCALAT|STRANDED|POISON|DEGRADED|BLOCKED|UNREACHABLE|FAIL|ERROR|LANDED|⚠ BRANCH' actionable)"
+line_count="$(printf '%s\n' "$out9" | grep -c . )"
+is   "actionable filter: exactly one surviving line (dup RED collapsed)" "1" "$line_count"
+has  "actionable filter: the mapped repo's RED survives"                "$out9" "FAIL RED #1 Round batch [queue-repo]: suites"
+hasnt "actionable filter: the unmapped repo's RED is dropped"            "$out9" "gone-repo"
+hasnt "actionable filter: OPENED is not actionable"                      "$out9" "OPENED"
+hasnt "actionable filter: GREEN is not actionable (it lands itself)"     "$out9" "GREEN"
 
 tl_summary

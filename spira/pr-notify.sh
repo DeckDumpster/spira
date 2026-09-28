@@ -7,6 +7,9 @@
 #   pr-notify.sh --show     one scan; prints to stdout
 #   pr-notify.sh watch [--interval S] [--ticks N]   loop forever (or N times); watchd daemon
 #   pr-notify.sh health      exit non-zero when the watch loop has stopped polling
+#   pr-notify.sh actionable [FILE]   FILE (default: this watcher's own log) filtered down to
+#                            what SPIRA_ACTIONABLE marks worth a look, for a repo still in the
+#                            repo-map, with repeats of the same line collapsed to one
 #
 # WHY THIS EXISTS. law-green-prs-merge-themselves required visibility into which managed-repo
 # PRs are ready to merge or have broken CI. That visibility was provided by gate-check; when
@@ -28,11 +31,12 @@
 # that fails leaves the state untouched and is retried next tick rather than guessed at
 # (law-a-control-that-cannot-check-must-refuse).
 #
-# GREEN'S WORDING DEPENDS ON LAND. Under `pr`, green means "ready to hand-merge" (⚠, so
-# `watchd.sh notify` escalates it). Under anything else — queue above all — a green branch
-# lands on its own; telling the operator to hand-merge a batch PR is not just noise, it is
-# wrong, since a hand-merge there fights the batch builder's own fast-forward. RED keeps `FAIL`
-# in every mode: a broken run is worth a look whatever gets it back to green.
+# GREEN NEVER NEEDS A HUMAN, WHATEVER THE LAND MODE. Every `pr`-mode PR has auto-merge armed
+# the moment it opens and a stalled arm is watchtower's own escalation, not this watcher's
+# (law-green-prs-merge-themselves); telling the operator to hand-merge one is not just noise,
+# it is wrong twice over — the merge is already going to happen, and doing it by hand races
+# the exact automation this watcher would be reporting on. RED keeps `FAIL` in every mode: a
+# broken run is worth a look whatever gets it back to green.
 #
 # A PASS THAT FINDS NOTHING EMITS NOTHING. Silence is the healthy state, not a finding.
 # A pass over repos with no gh access is silent, not an error: the check itself is running
@@ -45,6 +49,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 STATE_DIR="$SPIRA_RUN/watchd/pr-notify-state"
 HEALTH_FILE="$SPIRA_RUN/watchd/pr-notify.health"
+LOG_FILE="$SPIRA_RUN/watchd/pr-notify.log"
 
 _pr_state_file() { printf '%s/%s.tsv' "$STATE_DIR" "$1"; }
 
@@ -113,9 +118,9 @@ _open_prs() {
     printf '%s' "$json" | python3 -c "$_PR_STATUS_PY"
 }
 
-# _pr_transitions <repo-dir> <repo-name> <land> — the transition engine for one repo.
+# _pr_transitions <repo-dir> <repo-name> — the transition engine for one repo.
 _pr_transitions() {
-    local repo_dir="$1" repo_name="$2" land="$3"
+    local repo_dir="$1" repo_name="$2"
     local statefile snapshot rc
     statefile="$(_pr_state_file "$repo_name")"
     snapshot="$(_open_prs "$repo_dir")"; rc=$?
@@ -146,11 +151,7 @@ _pr_transitions() {
                     _report "FAIL RED #$n $title [$repo_name]${fail:+: $fail}"
                     ;;
                 green)
-                    if [ "$land" = pr ]; then
-                        _report "⚠ GREEN #$n $title [$repo_name]"
-                    else
-                        _report "GREEN #$n $title [$repo_name]: lands automatically"
-                    fi
+                    _report "GREEN #$n $title [$repo_name]: lands automatically"
                     ;;
             esac
         fi
@@ -208,7 +209,7 @@ _pr_notify_tick() {
         repo="$(repo_root "$name" 2>/dev/null)" || continue
         [ -d "$repo/.git" ] || continue
         land="$(repo_land "$name" 2>/dev/null)"
-        _pr_transitions "$repo" "$name" "$land"
+        _pr_transitions "$repo" "$name"
         if [ "$land" = pr ]; then
             base="$(repo_base "$name" 2>/dev/null)"; [ -n "$base" ] || base="main"
             _branchless_prs "$repo" "$name" "$base"
@@ -243,6 +244,38 @@ cmd_health() {
     return 0
 }
 
+# cmd_actionable [FILE] — the read-time filter for a pr-notify backlog. FILE defaults to this
+# watcher's own log. A line survives only if its repo (the trailing `[name]`) is still in the
+# repo-map — the log outlives a repo-map edit, so a name that was removed keeps its old lines
+# standing forever unless something checks them against the map AS IT IS NOW, not as it was
+# when the line was written — and only if SPIRA_ACTIONABLE still marks it worth a look.
+# Repeats of the exact same line collapse to one: the transition engine reports a state CHANGE,
+# so an identical line seen again means something upstream of it re-announced state that had
+# not changed, and the reader should see that once, not once per poll.
+cmd_actionable() {
+    local file="${1:-$LOG_FILE}"
+    [ -r "$file" ] || return 0
+    if [ -z "${SPIRA_ACTIONABLE:-}" ]; then
+        echo "pr-notify: SPIRA_ACTIONABLE is empty — that would match every line" >&2
+        return 1
+    fi
+    local mapped; mapped="$(repo_names 2>/dev/null)"
+    local line repo
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        # THE REPO TAG IS THE LAST BRACKETED, SPACE-FREE TOKEN — not necessarily the last
+        # thing on the line: a RED line's failing-check names trail after it. A PR title is
+        # free text and could coincidentally bracket something of its own, but never without
+        # a space inside, which every repo-map name is required to be.
+        repo="$(grep -oE '\[[^][[:space:]]+\]' <<< "$line" | tail -n1)"
+        if [ -n "$repo" ]; then
+            repo="${repo#[}"; repo="${repo%]}"
+            grep -qxF "$repo" <<< "$mapped" || continue
+        fi
+        printf '%s\n' "$line" | grep -E -- "$SPIRA_ACTIONABLE" || continue
+    done < "$file" | awk '!seen[$0]++'
+}
+
 # cmd_watch [--interval S] [--ticks N] — the watchd daemon body. Runs forever (or --ticks
 # times, for a test), scanning every repo and writing a health record each pass.
 cmd_watch() {
@@ -269,9 +302,10 @@ cmd_watch() {
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     case "${1:-}" in
         --show|-s|"") _pr_notify_tick ;;
-        watch)  shift; cmd_watch "$@" ;;
-        health) cmd_health; exit $? ;;
-        *) echo "usage: pr-notify.sh [--show] | watch [--interval S] [--ticks N] | health" >&2
+        watch)      shift; cmd_watch "$@" ;;
+        health)     cmd_health; exit $? ;;
+        actionable) shift; cmd_actionable "$@"; exit $? ;;
+        *) echo "usage: pr-notify.sh [--show] | watch [--interval S] [--ticks N] | health | actionable [FILE]" >&2
            exit 2 ;;
     esac
 fi
