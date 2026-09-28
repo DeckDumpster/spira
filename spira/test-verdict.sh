@@ -1517,6 +1517,11 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 # suite list down to the one this check actually found red. The genuine
 # offender (sp-vd-bl2) is red for test-real-offender.sh alone, once baseline
 # exclusion has narrowed what's left to attribute.
+#
+# sp-vd-bl2 must exist in testdb so bead_reopen returns 0 (open bead: bd
+# reopen is a no-op with exit 0); without it _attr_eject escalates instead.
+printf '{"id":"sp-vd-bl2","title":"t","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+    | testdb_seed
 printf 'red\ntest-base-broken.sh\n' > "$MEMBER_RC_DIR/base"
 printf 'red\ntest-real-offender.sh\n' > "$MEMBER_RC_DIR/sp-vd-bl2"
 printf 'green\n' > "$MEMBER_RC_DIR/sp-vd-bl1"
@@ -1673,58 +1678,37 @@ clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
 # =============================================================================
-# 44. FAILED REOPEN BLOCKS EJECTION.
-#     When bd refuses bead_reopen, _attr_eject must not write the EJECTED mark
-#     or send the "ejected" mail. It must log the refusal and send an escalation.
-#     POSITIVE CONTROL: if unfixed (bead_reopen always returns 0, 2>&1 on the
-#     call site), QUEUE ESCAPED would be written and the refusal diagnostic
-#     would not appear — both "nowant QUEUE ESCAPED" and "want bead_reopen"
-#     assertions would fail against the unfixed code.
+# 44. FAILED REOPEN BLOCKS EJECTION (sp-vjfv6). Same batch shape as case 20
+#     (single always-red member) but sp-vd-nr1 is deliberately NOT seeded in
+#     testdb, so bd refuses its reopen. _attr_eject must not write the EJECTED
+#     mark or send the "ejected" mail; it must log the refusal and escalate.
+#     POSITIVE CONTROL: case 20's identical shape, with the member seeded,
+#     proves the normal path ejects and reports "ejected" — so this case's
+#     silence on EJECTED/ejected-mail is the refusal path, not a fixture gap.
 # =============================================================================
-cat > "$SH/repro-batch-attr.sh" <<'REPRO'
-#!/usr/bin/env bash
-# Red if the test-ref tree contains guilty-marker.txt; green otherwise.
-ref="${@: -1}"
-git -C "$SPIRA_REPO" ls-tree "$ref" -- guilty-marker.txt 2>/dev/null | grep -q . && exit 1
-exit 0
-REPRO
-chmod +x "$SH/repro-batch-attr.sh"
 : > "$RUN/landing.log"
-: > "$MAIL_LOG"
 base_sha44="$(git -C "$REPO" rev-parse origin/main)"
-for id in sp-vd-nr1 sp-vd-nr2; do
-    bwt44="$RUN/worktree/$id"
-    git -C "$REPO" worktree add -q -b "spira/$id" "$bwt44" origin/main 2>/dev/null || true
-    printf '%s\n' "$id" > "$bwt44/$id.txt"
-done
-printf 'offender\n' > "$RUN/worktree/sp-vd-nr2/guilty-marker.txt"
-for id in sp-vd-nr1 sp-vd-nr2; do
-    bwt44="$RUN/worktree/$id"
-    git -C "$bwt44" add -A
-    git -C "$bwt44" commit -q -m "$id: work"
-    printf 'BATCHED %s %s\n' "$(git -C "$REPO" rev-parse "spira/$id")" "$(date +%s)" \
-        > "$LANDSTATE/$id"
-done
+bwt44="$RUN/worktree/sp-vd-nr1"
+git -C "$REPO" worktree add -q -b "spira/sp-vd-nr1" "$bwt44" origin/main 2>/dev/null || true
+printf 'sp-vd-nr1\n' > "$bwt44/sp-vd-nr1.txt"
+git -C "$bwt44" add -A
+git -C "$bwt44" commit -q -m "sp-vd-nr1: work"
 tip_nr1="$(git -C "$REPO" rev-parse "spira/sp-vd-nr1")"
-tip_nr2="$(git -C "$REPO" rev-parse "spira/sp-vd-nr2")"
-wt44="$RUN/worktree/.b44"
-git -C "$REPO" worktree add -q --detach "$wt44" "$base_sha44" 2>/dev/null || true
-git -C "$wt44" merge -q --no-edit --no-ff -m "spira: land sp-vd-nr1" "$tip_nr1" >/dev/null 2>&1
-git -C "$wt44" merge -q --no-edit --no-ff -m "spira: land sp-vd-nr2" "$tip_nr2" >/dev/null 2>&1
-batch_head44="$(git -C "$wt44" rev-parse HEAD)"
-git -C "$REPO" worktree remove -f "$wt44" 2>/dev/null || true
-{ printf 'pr=64\nhead=%s\nbase=%s\nmembers=sp-vd-nr1:%s sp-vd-nr2:%s\nopened=%s\n' \
-    "$batch_head44" "$base_sha44" "$tip_nr1" "$tip_nr2" "$(date +%s)"; } > "$(batch_file)"
+printf 'BATCHED %s %s\n' "$tip_nr1" "$(date +%s)" > "$LANDSTATE/sp-vd-nr1"
+{ printf 'pr=64\nhead=%s\nbase=%s\nmembers=sp-vd-nr1:%s\nopened=%s\n' \
+    "$tip_nr1" "$base_sha44" "$tip_nr1" "$(date +%s)"; } > "$(batch_file)"
 printf 'red\nred-suite: test-attr-suite.sh\n' > "$FORGE_STATUS_FILE"
-# sp-vd-nr2 is NOT seeded in testdb — bd refuses its reopen, exercising the fix.
-out44="$(SPIRA_QUEUE_REPRO_BATCH="$SH/repro-batch-attr.sh" verdict "$REPONAME")"
+MEMBER_RC_DEFAULT="red"
+out44="$(verdict "$REPONAME")"
 nowant "44. reopen-refused: no QUEUE ESCAPED"   "QUEUE ESCAPED"     "$(cat "$RUN/landing.log" 2>/dev/null)"
-want   "44. reopen-refused: refusal logged"      "bead_reopen: sp-vd-nr2" "$out44"
+want   "44. reopen-refused: refusal logged"      "bead_reopen: sp-vd-nr1" "$out44"
 nowant "44. reopen-refused: no ejected mail"     "ejected from"      "$(cat "$MAIL_LOG")"
 want   "44. reopen-refused: escalation mail"     "reopen refused"    "$(cat "$MAIL_LOG")"
+case "$(landstate sp-vd-nr1)" in
+    EJECTED*) bad "44. reopen-refused: no EJECTED landstate" "got: $(landstate sp-vd-nr1)" ;;
+    *) ok "44. reopen-refused: no EJECTED landstate" ;;
+esac
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
 tl_summary
-printf '\n%s passed, %s failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
