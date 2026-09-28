@@ -516,10 +516,13 @@ fn observe_fleet(cfg: &Config) -> Vec<Check> {
         Some(m) => m,
         None => {
             // Neither the Composite nor SPIRA_MAX_LIVE_AEONS declares a ceiling — there is
-            // no ceiling to diff against, so this is not a gap, it is unobservable.
-            for (labels, _, _, _) in rows {
+            // no ceiling to diff against, so this is not a gap, it is unobservable. Every
+            // partition shares the one missing ceiling, so this is one Check, not one per
+            // partition (sp-uqmg0): fanning N incident.sh filings out of a single pass can
+            // outrun the oneshot's own TimeoutStartSec.
+            if !rows.is_empty() {
                 checks.push(Check {
-                    key: format!("fleet:{}", labels),
+                    key: "fleet".into(),
                     raw: RawStatus::Unobservable { reason: "no Fleet ceiling declared".into() },
                     remedy: Remedy::Escalate,
                 });
