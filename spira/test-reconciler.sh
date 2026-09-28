@@ -52,6 +52,9 @@
 #      no-Composite default set is never consulted once one exists.
 #  31. Disk: a materialised Composite's DiskSpec.floor_pct replaces the bash/env default
 #      (SPIRA_DISK_FLOOR_PCT), so the same reading can gap under one and satisfy the other.
+#  32. Fleet: no ceiling declared, N partitions reported -> ONE escalation, not one per
+#      partition (an unobservable ceiling is one cause, not N; N incident.sh filings on a
+#      real fleet can outrun the reconciler oneshot's own timeout).
 #
 # 1-20 run with no Composite ever materialised — every invariant's fallback to its old
 # bash/env default, still the state of an install that has not adopted desired-state yet.
@@ -705,5 +708,15 @@ floor_pct = 25
 paths = ["/"]'
 bash "$RECONCILER_SH" --pass >/dev/null 2>&1
 want "20% free gaps against a Composite floor of 25%, though it would satisfy the default 15%" '"key":"disk:/","status":"gap"' "$(status_jsonl)"
+
+# ==========================================================================================
+printf '\n%s\n' "32. Fleet: no ceiling, N partitions -> one escalation, not one per partition"
+# ==========================================================================================
+reset_state
+printf 'spira,plan\t150\t0\nops\t10\t0\nqa\t5\t0\nTOTAL\t\t0\n' > "$FLEET_LINES"
+bash "$RECONCILER_SH" --pass >/dev/null 2>&1
+_n="$(grep -c 'cause=fleet' "$INC_LOG" || true)"
+is "an undeclared ceiling files one incident, not one per partition" "1" "$_n"
+printf 'TOTAL\t\t0\n' > "$FLEET_LINES"
 
 tl_summary
