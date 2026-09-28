@@ -75,14 +75,28 @@ SC=(podman exec --user spirauser
 # written into this source file (inventory.sh refuses shipped home-directory literals).
 UDIR="$("${CEXEC[@]}" "$CNAME" bash -c 'printf "%s/.config/systemd/user" "$HOME"')"
 
-# TODO (sp-bz7uh.5): install the real systemd/spira-watch-notify.timer + .service as user
-# units in the container (no reboot), systemctl --user daemon-reload, restart the timer.
+# TODO (sp-bz7uh.5), IN PROGRESS — two things confirmed manually against this harness's own
+# container, neither yet folded into the script:
 #
-# TODO (sp-bz7uh.5): POSITIVE CONTROL FIRST — run the same install/reload/restart sequence
-# against an OnActiveSec-stripped copy of the timer and confirm it IS seen going
-# "active (elapsed)" with NextElapseUSecRealtime and NextElapseUSecMonotonic both empty.
-# Only once that is SEEN RED does an assertion about the fixed unit mean anything
-# (law-a-regression-test-must-be-seen-to-fail, law-absence-needs-a-positive-control).
+#   (a) RAW UNIT FILES DO NOT LOAD. systemd/spira-watch-notify.service's ExecStart is a
+#       template (@SPIRA_PROD@/watchd.sh, see systemd/install.sh) — podman-cp'd verbatim,
+#       systemd refuses it: "Neither a valid executable name nor an absolute path", the
+#       service ends up "bad-setting", and the timer then refuses to start ("unit ... to
+#       trigger not loaded"). Render @SPIRA_HOME@/@SPIRA_PROD@ to any absolute dummy path
+#       (sed, or reuse install.sh's renderer) before installing either unit here.
+#
+#   (b) A FRESH INSTALL DOES NOT REPRODUCE sp-0djeb'S BUG. Rendering the templates, then
+#       daemon-reload + restart on a never-before-started OnActiveSec-stripped timer gives
+#       NextElapseUSecMonotonic populated (from OnBootSec/OnUnitActiveSec) and
+#       ActiveState=active/waiting — NOT the "active (elapsed)"-with-both-empty state
+#       sp-0djeb saw. That bug followed a daemon-reload + restart of a timer that had
+#       ALREADY been running for a while (its boot/active anchors already consumed) — a
+#       fresh install skips that history. Next attempt: install the UNSTRIPPED timer,
+#       start it, `systemctl --user stop`, THEN swap in the stripped copy, daemon-reload,
+#       restart, and check Next* again. Do not write the SEEN RED assertion until that
+#       sequence is confirmed to actually go red (law-a-regression-test-must-be-seen-to-fail).
+#
+# See sp-bz7uh.5's bead notes for the full transcript of both checks.
 #
 # TODO (sp-bz7uh.6): against the real (fixed) timer, assert
 #   systemctl --user show spira-watch-notify.timer \
