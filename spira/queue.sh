@@ -63,14 +63,19 @@
 # ref's current tip. Archives the head at refs/archive/rounds/<n>, land_marks every member
 # LANDED and closes its bead via bead_close_on_land. THE ONLY WRITER of that ref; runs
 # under the repo's queue lock, skipped via SPIRA_QUEUE_LOCK_HELD=1 for a caller (the
-# batcher) that already holds it, so it cannot deadlock on its own lock.
+# batcher) that already holds it, so it cannot deadlock on its own lock. Also runs row 4's
+# divergence check (queue_local_check_divergence) against the CACHED forge remote-tracking
+# ref before the round build — no fetch, so it never puts the forge on this round's critical
+# path — alarming, never refusing: only publish stops on a divergence, a round build does not.
 #
 # publish: the queue.local publish queue (row 3 of the local/main design). Pushes
 # local/main's commits since the forge target's own current tip to a new forge branch
 # (spira/publish/<stamp>) and opens ONE PR into it — the local round already fast-forwarded
 # sequentially, so this pushes the range as-is: no assembled merge commit, identical SHAs.
 # Refuses, writing nothing, if the forge target is not an ancestor of local/main (something
-# else moved it) or if there is nothing new to publish. The record lives at
+# else moved it, caught by row 4's queue_local_check_divergence — see lib.sh, which alarms
+# the concierge once per foreign tip naming the foreign commits) or if there is nothing new
+# to publish. The record lives at
 # queue/<repo>/publish, deliberately NOT queue/<repo>/open: `open` is the queue.forge batch
 # builder's own file, and a publish record there would make batch_open/merge_one treat a
 # publish-in-flight as a batch-in-flight, blocking every local cut behind a PR the local
@@ -1159,6 +1164,18 @@ cmd_land_local() {
         printf 'queue.sh land-local: cannot resolve %s\n' "$base_branch" >&2; return 1
     }
 
+    # Row 4 of the local/main design: check the forge for a foreign divergence before this
+    # round build, same as cmd_publish does before a publish. Reads the CACHED remote-
+    # tracking ref only — no fetch, so this never puts a forge round trip on the round-build
+    # critical path (the intent this whole mode exists for) — and never refuses the build:
+    # only cmd_publish's own check stops publishing, this one just alarms early.
+    local _dvg_remote _dvg_branch _dvg_sha
+    read -r _dvg_remote _dvg_branch < <(spira_publish_forge "$name" 2>/dev/null)
+    if [ -n "${_dvg_remote:-}" ] && [ -n "${_dvg_branch:-}" ]; then
+        _dvg_sha="$(git -C "$repo" rev-parse -q --verify "refs/remotes/$_dvg_remote/$_dvg_branch" 2>/dev/null)" || _dvg_sha=""
+        [ -n "$_dvg_sha" ] && queue_local_check_divergence "$name" "$repo" "$_dvg_sha" "$base_sha" >/dev/null 2>&1
+    fi
+
     if ! git -C "$repo" merge-base --is-ancestor "$base_sha" "$head" 2>/dev/null; then
         printf 'queue.sh land-local: %s does not fast-forward from %s (%s) — refused, nothing changed\n' \
             "$head" "$base" "$base_sha" >&2
@@ -1387,7 +1404,7 @@ cmd_publish() {
         return 1
     }
 
-    if ! git -C "$repo" merge-base --is-ancestor "$forge_sha" "$head_sha" 2>/dev/null; then
+    if ! queue_local_check_divergence "$name" "$repo" "$forge_sha" "$head_sha"; then
         printf 'queue.sh publish: %s/%s is not an ancestor of %s — refusing to publish (something else moved the forge)\n' \
             "$remote" "$forge_branch" "$base_branch" >&2
         return 1

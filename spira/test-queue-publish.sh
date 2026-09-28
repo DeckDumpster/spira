@@ -8,6 +8,10 @@
 # "nothing to publish" is a no-op. The record lives at queue/<repo>/publish, never
 # queue/<repo>/open, so it can never be mistaken for a queue.forge batch in flight.
 #
+# REAL MAIL, NOT A STUB, for the divergence alarm (row 4): mail.sh runs for real so cases 5
+# and 7 can assert the actual inbox line landed in $RUN/mail/concierge/new/*, naming the
+# foreign commit — the same seam test-publish-backlog.sh uses for its own alarm assertions.
+#
 # tier: T1
 # covers: spira/queue.sh spira/verdict.sh spira/lib.sh spira/conf.sh spira/attribute.sh
 set -uo pipefail
@@ -26,9 +30,9 @@ echo "test-queue-publish.sh"
 
 SH="$TMP/spira"; mkdir -p "$SH"
 cp -r "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null || true
+cp -r "$HERE/mail" "$SH/mail" 2>/dev/null || true
 chmod +x "$SH"/*.sh 2>/dev/null || true
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
-stub mail.sh 'exit 0'
 
 REMOTE="$TMP/remote.git"; REPO="$TMP/repo"
 git init -q --bare -b main "$REMOTE"
@@ -128,6 +132,9 @@ callcount()    { grep -c "^$1" "$CALL_LOG" 2>/dev/null; }
 clear_calls()  { : > "$CALL_LOG"; }
 landing_log()  { cat "$RUN/landing.log" 2>/dev/null; }
 clear_log()    { : > "$RUN/landing.log"; }
+mail_count()   { ls "$RUN/mail/concierge/new" 2>/dev/null | wc -l | tr -d ' '; }
+mail_body()    { cat "$RUN"/mail/concierge/new/* 2>/dev/null; }
+clear_mail()   { rm -f "$RUN"/mail/concierge/new/* 2>/dev/null; }
 
 # ============================================================================
 echo
@@ -219,7 +226,13 @@ fi
 
 # ============================================================================
 echo
-echo "5 — origin/main not an ancestor of local/main: publish refuses, nothing changes"
+echo "4b — row 4: healthy publishes never raise the divergence alarm (positive control for 5)"
+# ============================================================================
+is "4b: no divergence mail through four healthy/red publishes" "0" "$(mail_count)"
+
+# ============================================================================
+echo
+echo "5 — origin/main not an ancestor of local/main: publish refuses, alarms the concierge once, nothing changes"
 # ============================================================================
 clear_calls
 # Simulate a foreign write straight to the forge's main, bypassing the publish queue.
@@ -236,6 +249,14 @@ want "5: names the refusal" "not an ancestor" "$out"
 [ ! -f "$QDIR/$REPONAME/publish" ] && ok "5: no publish record written" \
     || bad "5: no publish record written" "got: $(publish_file)"
 is "5: the forge's main is unchanged (still the foreign commit)" "$FOREIGN" "$(remote_main)"
+is "5: the divergence alarm fired exactly once" "1" "$(mail_count)"
+want "5: the alarm names the foreign commit" "foreign: not from local/main" "$(mail_body)"
+want "5: the alarm says never to rebase silently" "Never rebase silently" "$(mail_body)"
+
+out="$(queue publish "$REPONAME")"; rc=$?
+[ "$rc" -ne 0 ] && ok "5b: a second publish attempt on the same divergence still refuses" \
+    || bad "5b: a second publish attempt on the same divergence still refuses" "got rc=$rc out=$out"
+is "5b: the repeated refusal does not re-alarm (one alarm per divergence)" "1" "$(mail_count)"
 
 # ============================================================================
 echo
@@ -267,5 +288,51 @@ out="$(queue land-local "$REPONAME" --head "$HEAD5" --members "sp-pub5:$HEAD5")"
     || bad "6: land-local succeeds with a publish PR open" "got rc=$rc out=$out"
 is "6: local/main advanced despite the open publish" "$HEAD5" "$(localmain)"
 is "6: the bead landed locally" closed "$(field sp-pub5 status)"
+is "6: the forge recovering did not raise a fresh alarm" "1" "$(mail_count)"
+
+# ============================================================================
+echo
+echo "7 — land-local's own pre-round-build check (row 4) alarms once on a cached divergence, and never blocks the round"
+# ============================================================================
+clear_calls
+clear_mail
+# A second foreign write straight to the forge — discovered here only by an explicit fetch,
+# never one land-local triggers itself (no forge round trip belongs on the round-build
+# critical path). This proves land-local's own check, independent of any publish attempt.
+CLONE2="$TMP/clone2"
+git clone -q "$REMOTE" "$CLONE2"
+git -C "$CLONE2" commit -q --allow-empty -m "foreign2: bypassed the publish queue again"
+git -C "$CLONE2" push -q origin main
+git -C "$REPO" fetch -q origin main
+
+seed sp-pub6
+git -C "$REPO" checkout -qb round-sp-pub6 local/main
+printf 'six\n' > "$REPO/six.txt"
+git -C "$REPO" add six.txt
+git -C "$REPO" commit -q -m "sp-pub6: the work"
+HEAD6="$(git -C "$REPO" rev-parse round-sp-pub6)"
+git -C "$REPO" checkout -q main
+git -C "$REPO" branch -D round-sp-pub6 >/dev/null 2>&1
+
+out="$(queue land-local "$REPONAME" --head "$HEAD6" --members "sp-pub6:$HEAD6")"; rc=$?
+[ "$rc" -eq 0 ] && ok "7: the round build itself is never blocked by the divergence" \
+    || bad "7: the round build itself is never blocked by the divergence" "got rc=$rc out=$out"
+is "7: local/main still advances" "$HEAD6" "$(localmain)"
+is "7: land-local's own check alarmed exactly once" "1" "$(mail_count)"
+want "7: the alarm names the second foreign commit" "foreign2: bypassed the publish queue again" "$(mail_body)"
+
+seed sp-pub7
+git -C "$REPO" checkout -qb round-sp-pub7 local/main
+printf 'seven\n' > "$REPO/seven.txt"
+git -C "$REPO" add seven.txt
+git -C "$REPO" commit -q -m "sp-pub7: the work"
+HEAD7="$(git -C "$REPO" rev-parse round-sp-pub7)"
+git -C "$REPO" checkout -q main
+git -C "$REPO" branch -D round-sp-pub7 >/dev/null 2>&1
+
+out="$(queue land-local "$REPONAME" --head "$HEAD7" --members "sp-pub7:$HEAD7")"; rc=$?
+[ "$rc" -eq 0 ] && ok "7b: a second round build on the same divergence still succeeds" \
+    || bad "7b: a second round build on the same divergence still succeeds" "got rc=$rc out=$out"
+is "7b: a second round build does not re-alarm (one alarm per divergence)" "1" "$(mail_count)"
 
 tl_summary

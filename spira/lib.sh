@@ -7078,6 +7078,38 @@ queue_notify_concierge() {
         >/dev/null 2>&1 || true
 }
 
+# queue_local_check_divergence <name> <repo> <forge-sha> <local-sha> -> 0 when forge-sha is
+# an ancestor of local-sha, 1 otherwise — row 4 of the local/main design. Under queue.local
+# the forge's main moves only by our own publishes; a forge-sha that is not an ancestor of
+# local-sha means something pushed to it outside the publish queue. Mails the concierge
+# naming the foreign commits (local-sha..forge-sha) the first time this exact forge-sha is
+# seen, tracked in queue/<name>/divergence-alarmed — a repeated call against the SAME
+# foreign tip (a retried publish, or a later round build before anyone has fixed it) is
+# silent, so ONE alarm covers one divergence, not one per call. The marker clears the moment
+# the check is healthy again, so a later, different divergence alarms anew. NEVER REBASES:
+# this only detects and alarms, exactly as the design says. Callers decide what "stop
+# publishing" means for them — cmd_publish refuses outright; cmd_land_local (no forge round
+# trip belongs on its critical path) only alarms and lets the round build proceed.
+queue_local_check_divergence() {
+    local name="$1" repo="$2" forge_sha="$3" local_sha="$4"
+    local statefile="${SPIRA_QUEUE_DIR:?}/$name/divergence-alarmed"
+    if git -C "$repo" merge-base --is-ancestor "$forge_sha" "$local_sha" 2>/dev/null; then
+        rm -f "$statefile" 2>/dev/null || true
+        return 0
+    fi
+    local already=""
+    [ -r "$statefile" ] && already="$(cat "$statefile" 2>/dev/null)"
+    if [ "$already" != "$forge_sha" ]; then
+        local foreign
+        foreign="$(git -C "$repo" log --format='%h %s' "${local_sha}..${forge_sha}" 2>/dev/null)"
+        mkdir -p "$(dirname "$statefile")" 2>/dev/null
+        printf '%s\n' "$forge_sha" > "$statefile"
+        queue_notify_concierge "$name" "divergence: forge is not an ancestor of local/main" \
+            "$name's forge target ($forge_sha) is not an ancestor of local/main ($local_sha) — something pushed to the forge outside the publish queue. Foreign commit(s):"$'\n'"${foreign:-<none found>}"$'\n\n'"Publishing is refused until this is reconciled by hand. Never rebase silently."
+    fi
+    return 1
+}
+
 # --------------------------------------------------------------------------------------
 # EVENTS — what the harness DID, in a form that survives the next repaint.
 #
