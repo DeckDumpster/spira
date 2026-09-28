@@ -1,7 +1,7 @@
 ---
 type: note
 created: 2026-09-05
-updated: 2026-09-27
+updated: 2026-09-28
 tags: [spira, ops, sop, runbook, generated]
 aliases: [SOPs, Standard operating procedures, The shelf]
 ---
@@ -16,7 +16,7 @@ spira/sop.sh write <slug> -   # text on stdin
 
 Statutes are how to behave; SOPs are how to fix. They share one mechanism, split by prefix — `law-` and `sop-` — so the [[spira]] Ops persona reads its runbooks exactly the way every agent already reads [[common-law]]. Ops is summoned by an incident bead filed from a failed systemd unit, matches the payload against the `MATCH:` lines below, and executes the first one that fires.
 
-**76 SOP(s)** on the shelf as of 2026-09-27.
+**76 SOP(s)** on the shelf as of 2026-09-28.
 
 ## The closing rule
 
@@ -86,15 +86,15 @@ no `local` remote present, or `git fetch local main` also fails — real
 
 `sop-applied-trace-instrumentation`
 
-**Symptom** — `sop.sh applied` (or any bd-backed subcommand) hangs or times out under real concurrent dolt load. sp-ohnz7 found the 3 subprocess calls applied() makes each cost well under 1s in isolation — the hang only reproduces under live contention, which cannot safely be forced (law-probe-a-fixture-not-production, law-fence-loops-on-shared-hardware).
+**Symptom** — `sop.sh applied` hangs/times out. sp-ohnz7: 3 subprocess calls each <1s in isolation — believed to hang only under live contention. UPDATE (sp-q1rln): reproduced a ~131s hang on ONE uncontended `applied --why -` heredoc call, no induced load. Not yet known whether host was secretly contended or `--why -` stdin path itself is costly — see sp-vf9l9.
 
 **Check** — grep -q 'SOP_APPLIED_TRACE' spira/lib.sh && echo pass || echo fail
 
-**Fix** — sp-h54i5 landed passive timing at the choke point every bd call goes through — `bdq()` in spira/lib.sh. Set SOP_APPLIED_TRACE=1 (optionally SOP_APPLIED_TRACE_FILE=<path>) and every bd call appends one line: `<pid> start=<ts> end=<ts> rc=<rc> tries=<n> argv=<args>`. Wraps the whole invalid-connection retry loop (sp-ydog2, reconciled here during rebase) — tries>1 means the window covers a reconnect retry, not one call. Off by default, verified zero-cost when unset and one line per call when set. Next hang: read the trace, the last line with no `end=` is the call in flight when the timeout fired.
+**Fix** — sp-h54i5 was to land timing in bdq() (spira/lib.sh) but per sp-lov93, reconfirmed here, it never landed — CHECK still fails, no trace exists yet. Next hang: launch explicitly backgrounded (`cmd & pid=$!`) and strace/lsof that pid live — do not rely on a wrapper's own foreground timeout, which backgrounds it for you but the process may finish before you attach (lost here).
 
-**Escalate** — if the trace shows the hang is NOT in a bd subprocess call (e.g. cockpit.sh's METRIC timeout, or wiki regen) — different mechanism, needs its own diagnosis.
+**Escalate** — trace shows hang outside bd subprocess calls -> different mechanism. Also escalate sp-h54i5 landing (sp-lov93) — it blocks ever diagnosing this class.
 
-**Reference** — sp-ohnz7, sp-h54i5
+**Reference** — sp-ohnz7, sp-h54i5, sp-lov93, sp-q1rln, sp-vf9l9
 
 **Matches** `(sop\.sh applied.*(hang|timeout|contention)|applied\(\).*ledger.*contention|SOP_APPLIED_TRACE)`
 
@@ -798,7 +798,10 @@ pinning which mechanism fired for a given bead needs the landing pass's own log
 mail.sh send <mailbox> --kind question --default X lints
   `section "Question" is empty` / `section "Default" is empty` even with
   --subject/--default set; guessed body flags (--body, --message,
-  --question, positional, "-" heredoc) are rejected as unknown option.
+  --question, positional, "-" heredoc) rejected as unknown option.
+  Reported (sp-hqq0q): "hard to satisfy" — three sequential lint
+  failures hit one at a time (missing X-Spira-Default, empty ##
+  Question, empty ## Default).
 ```
 
 **Check**
@@ -806,34 +809,38 @@ mail.sh send <mailbox> --kind question --default X lints
 ```
 printf 'Question: q?\nDefault: x\n' | timeout 8 mail.sh send operator \
     --from "Ops <ops@spira>" --subject test --kind question --default x
-  Reproduces the empty-section lint (plain "Label:" text does not satisfy
-  the parser). Confirmed 2026-09-27 on sp-wkonl.
+  Reproduces the empty-section lint. Confirmed 2026-09-27 (sp-wkonl),
+  re-confirmed 2026-09-28 (sp-hqq0q): question.md requires
+  X-Spira-Default (from --default) AND non-empty ## Question / ##
+  Default body — three independent checks, by design, not triplication.
+  --default sets a machine-readable header; body sections are the human
+  message. Nothing syncs the two, so the default's text is typed twice.
 ```
 
 **Fix**
 
 ```
-No body flag exists. Pipe markdown headers on stdin:
+No body flag exists. Supply all three in one attempt, avoid
+  iterating on lint errors:
     printf '## Question\n<q>\n\n## Default\n<d>\n' | mail.sh send <mailbox> \
-      --from "Ops <ops@spira>" --subject "<topic, no leading bead id>" \
+      --from "Ops <ops@spira>" --subject "<topic, no leading id>" \
       --kind question --default "<d>" --bead <id>
-  --default on the CLI is still required (checked separately from the
-  body's "## Default"). Subject must not lead with a bead id — use --bead
-  (relates_to edge; a bug-typed bead refuses a blocking edge unless
-  SPIRA_MAIL_ALLOW_BLOCKING=1, relates_to is fine). Verified twice
-  end-to-end, messages landed in run/mail/operator/cur, exit 0.
+  Subject must not lead with a bead id. A non-decision bead refuses a
+  blocking edge unless SPIRA_MAIL_ALLOW_BLOCKING=1 (relates_to is fine
+  without it). Verified end-to-end, exit 0.
 ```
 
 **Escalate**
 
 ```
-A hang with no lint error at all is sop-mail-send-loom-splice-hang
-  (different failure mode) — don't conflate the two.
+A hang with no lint error is sop-mail-send-loom-splice-hang,
+  don't conflate. Auto-syncing --default into ## Default is a
+  mail/kinds/*.md design change, not an Ops fix — escalate.
 ```
 
-**Reference** — sp-wkonl
+**Reference** — sp-wkonl, sp-hqq0q, sp-9by2e
 
-**Matches** `mail\.sh send.*(unknown option|--body|--message|--question)|section "Question" is empty|section "Default" is empty`
+**Matches** `mail\.sh send.*(unknown option|--body|--message|--question)|section "Question" is empty|section "Default" is empty|kind question is hard to satisfy|requires --default AND a body with both`
 
 ### Mail send loom splice hang
 
@@ -1176,11 +1183,11 @@ if another ref-walking instrument does the same no-bead-is-orphan classification
 
 `sop-sopsh-applied-ledger-contention`
 
-**Symptom** — `sop.sh applied` takes 60-120s+ or hits a caller's short `timeout` (124), possibly with NO entry appended. Heredoc/stdin not required (sp-ejjiv). Confirmed again sp-ovng3 2026-09-27: a live --why call exceeded 120s, was backgrounded (task bdpb97hgi), then finished on its own with rc=0 and a correct entry after ~365s. Slow under contention, not a deadlock. 3rd occurrence confirmed sp-oc2i6 2026-09-27 on the same sp-ld9j3-lineage incident.
+**Symptom** — `sop.sh applied` takes 60-120s+ or hits a caller's short `timeout` (124), possibly with NO entry appended. Slow under contention, not a deadlock. Recurred sp-ejjiv, sp-ovng3, sp-oc2i6, sp-q1rln, and sp-40yup 2026-09-28 (reproduced inside the Ops session's own `applied` call for that bead, task bccl5hjo0, rc=0 after backgrounding).
 
 **Check** — Two `applied` calls on the same bead, short timeouts back to back; diff applied.jsonl line count before/after. Both timing out with no line added confirms this (sp-ejjiv: 610/610).
 
-**Fix** — No lock or wiki-regen in `applied` (sp-ohnz7); cost is 3 bd/dolt subprocess calls, append is a cheap unlocked printf. Ops: background with `nohup ... </dev/null >out.log 2>&1 &`, never a short `timeout`. If your own wall forces you to move on, note the backgrounded PID/output path on the bead rather than waiting live -- it finishes on its own. Builder: sp-h54i5's per-call trace was closed as landed (commit 097f64cc0, amended 3c8a74fa4, branch spira/sp-h54i5) but as of sp-oc2i6 2026-09-27 that commit is NOT an ancestor of origin/main and spira/lib.sh at the origin/main tip has no SOP_APPLIED_TRACE -- a closed-not-landed gap, tracked at sp-lov93. Trace diagnosis stays blocked until sp-lov93's branch actually lands; check sp-lov93 (or its successor) before assuming the trace exists.
+**Fix** — No lock or wiki-regen in `applied` (sp-ohnz7); cost is 3 bd/dolt subprocess calls, append is a cheap unlocked printf. Ops: background with `nohup ... </dev/null >out.log 2>&1 &`, never a short `timeout`. If your wall forces you to move on, note the backgrounded PID/output path on the bead -- it finishes on its own. Builder: sp-h54i5's per-call trace instrumentation was closed as landed but is still NOT an ancestor of origin/main as of sp-40yup 2026-09-28 (closed-not-landed, outlived sp-lov93 too). Tracked at sp-oju37 -- check it lands before assuming the trace exists.
 
 **Escalate** — different mechanism than bd/dolt latency -> amend here. A hang that never returns even after minutes backgrounded is new -- escalate.
 
@@ -1624,13 +1631,13 @@ bd show <bead> | grep -E '\b(groom|incident|maechen-sweep|plan|spike|czar-trigge
 
 **Symptom** — Re-run refused: SPIRA_VERDICT_REPEAT_CONSIDERED not set/too short. Recurrence suggests environmental, not code defect.
 
-**Check** — Aeons cannot run testenv-batch.sh (no SSH). Instead verify the premise: the first refusal is SUPPOSED to mail Concierge (branch, tip, suite, verdict); later refusals add nothing. Confirm the mail actually exists: `mail.sh list concierge --all | grep -i <branch-or-suite>` and `grep -rli <branch-or-suite> $SPIRA_RUN/mail/concierge`. Confirmed ABSENT for spira/sp-argo3 + test-pr-notify.sh (sp-0dgzr) — mailer didn't fire; bug filed as sp-58zvx. Also check if branch is a round-assembly bead (e.g. sp-sa8pn) — if so the call is moot until the round assembles.
+**Check** — First: `bd -C $SPIRA_DB show <branch-bead>` — if CLOSED OUTCOME:landed, confirm the cited commit is an ancestor of origin/main (`git merge-base --is-ancestor <sha> origin/main`). If landed, the incident is stale/moot — close citing that commit. Otherwise: aeons can't run testenv-batch.sh (no SSH); verify the first refusal mailed Concierge: `mail.sh list concierge --all | grep -i <branch-or-suite>` and `grep -rli <branch-or-suite> $SPIRA_RUN/mail/concierge`. Confirmed ABSENT once (sp-0dgzr/sp-58zvx). Also check for a round-assembly bead — moot until the round assembles.
 
-**Fix** — Re-run with SPIRA_VERDICT_REPEAT_CONSIDERED="environmental: <reason>", or commit a code fix (new tree = new key). Round-assembly member: close citing the round bead. If the mail-existence check fails, that absence IS the finding — file/link a mailer-bug bead once, close citing it. Don't re-investigate the underlying suite red yourself; it belongs to the branch owner. Don't hunt indefinitely for a mail the SOP once assumed always exists.
+**Fix** — Landed already: close citing the commit, nothing else. Not landed: re-run with SPIRA_VERDICT_REPEAT_CONSIDERED="environmental: <reason>", or commit a code fix (new tree = new key). Round-assembly member: close citing the round bead. Mail absent: file/link the mailer bug once, close citing it. Don't re-investigate the suite red — it belongs to the branch owner.
 
 **Escalate** — Never needs-ryan — mechanical. Missing mail is a mailer bug (file it), not an escalation.
 
-**Reference** — spira/testenv-batch.sh mailer. sp-58zvx.
+**Reference** — spira/testenv-batch.sh mailer. sp-58zvx. sp-fq4r9 (spira/sp-91hb5 landed at 3e0975592, incident was stale).
 
 **Matches** `repeat.refused|repeat-refused`
 
