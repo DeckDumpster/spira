@@ -154,29 +154,17 @@ run_pass() {
 }
 
 _run="$TMP/run-pass"
-# WARM-UP, UNTIMED. conf.sh runs `bd migrate schema` once per $SPIRA_RUN and caches the
-# result there (keyed on the bd binary, not the database) — a real Dolt-opening subprocess
-# call the FIRST pass against a fresh instance directory pays and every later one does not.
-# In production $SPIRA_RUN is the timer's own persistent directory, so this is a once-ever
-# cost, not a per-pass one — paying it here, untimed, is what makes the timed pass below
-# measure the steady state the acceptance is actually about, not a cold start this suite
-# would otherwise manufacture by giving pass 1 a brand new $_run.
-run_pass "$_run" "" >/dev/null 2>&1 || true
 rm -f "$SUMMON_LOG" "$SENDING_LOG" "$LAUNCH_ARGV"
-_t0=$SECONDS
 pass1_out="$(run_pass "$_run" "")"
-_took=$(( SECONDS - _t0 ))
 is   "pass 1 fill: pool=3 + 5 ready beads -> 3 summons" \
      "3" "$(grep -c . "$SUMMON_LOG" 2>/dev/null || echo 0)"
 want "pass 1 order: CHECK7 line appears in log" "CHECK7" "$pass1_out"
 lack "pass 1: does NOT report DATABASE UNREADABLE (positive control: DB is readable)" \
      "DATABASE UNREADABLE" "$pass1_out"
 # THE REGRESSION (sp-994y9): sending.sh sleeps 2s; a pass that still called it inline (the
-# pre-fix shape) would take at least 2s. This is the assertion that must be seen to fail
-# on the code before this bead — it did, every pass, until CHECK 6b moved into --audit.
-[ "$_took" -lt 2 ] \
-    && ok "pass 1: returned in ${_took}s, well under sending.sh's 2s sleep — did not wait for it" \
-    || bad "pass 1 returned in under 2s" "took ${_took}s"
+# pre-fix shape) would take at least 2s. A wall-clock "<2s" assertion here flipped under
+# load (law-a-test-that-flips-is-deleted); the deterministic assertion below — sending.sh
+# never called inline — covers the same property without a timing race.
 is   "pass 1: sending.sh NOT called inline by a normal pass" \
      "0" "$(grep -c . "$SENDING_LOG" 2>/dev/null || echo 0)"
 want "pass 1: dispatches the audit worker (--unit=spira-audit line in launch argv)" \
