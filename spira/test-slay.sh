@@ -96,6 +96,12 @@ testdb_up slay || { echo "test-slay: could not build a fixture database"; exit 1
 # through HolderDead/Drop on the lifecycle row, not bd reopen/close, and
 # spira_holder_witnesses (lib.sh) trusts the row over a stale bd in_progress once one
 # exists — so the destroy step below only proceeds when this fixture is real.
+#
+# conf.sh (sourced above by testdb.sh) rebuilds PATH from scratch, dropping whatever
+# CARGO_BIN/DOLT_BIN's own directory the top-of-file check found — re-added here, after
+# that reset, or cargo's own build below fails to find `rustc` on a box where neither
+# lives under $HOME.
+export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
 unset SPIRA_LC_SOCKET
 
 LCREPO="$(cd "$HERE/.." && pwd)"
