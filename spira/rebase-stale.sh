@@ -98,6 +98,11 @@ _rs_mid_rebase() {
 mechanical=0
 failed=0
 while _rs_mid_rebase; do
+    if [ -n "${REBASE_STALE_DEBUG:-}" ]; then
+        echo "DEBUG mid-rebase status:" >&2
+        git -C "$scratch" status --short >&2
+        echo "DEBUG git-path rebase-merge: $(git -C "$scratch" rev-parse --git-path rebase-merge 2>&1)" >&2
+    fi
     conflicted="$(git -C "$scratch" diff --name-only --diff-filter=U 2>/dev/null)"
     if [ -z "$conflicted" ] || ! bash "$HERE/mech-resolve.sh" "$scratch"; then
         failed=1
