@@ -23,33 +23,109 @@
 # new here — test-sending-closed-reap.sh already documents the same shape for the
 # non-code-delivers and superseded-empty cases ("SENT, not REAPED, since the [...] arm is
 # never reached") — so this suite tests what ahead=0 branches actually do (SEND
-# content-landed, unlabelled) rather than asserting a verdict the code cannot produce.
+# content-landed, no event) rather than asserting a verdict the code cannot produce.
 #
 # THE SOURCE-GUARD THIS SUITE NEEDED. sending.sh ran a live sweep as a side effect of
 # being sourced. Two cases here — the mid-send HELD recheck and the FAILED/exit-status
 # path — call send_disposition and send_branch directly, so sending.sh gained the same
 # `BASH_SOURCE[0] != $0` guard landing.sh and pilgrimage.sh already carry.
 #
+# THE CONTENT-LANDED CASE AGAINST A REAL spira-lc (sp-i2m7y). The retired content-landed
+# bd label is gone; sp-cl1 (ahead=1, merge-tree equal to the base) now proves itself by a
+# real ContentOnBase event against a throwaway spira-lc/Dolt server, the same shape
+# test-lc-hold.sh uses. sp-cl0 (ahead=0) is the negative control: its row must stay exactly
+# where it was seeded, since the ahead-count guard means the call is never made for it.
+#
 # defect: sp-mqsl, sp-e5ow0, sp-796o, sp-kq8l, sp-bjzj, sp-3gih, sp-hl92, sp-1smg
 # tier: T2
-# covers: spira/sending.sh spira/lib.sh UC-landed-audit-reaping-14 UC-landed-audit-reaping-16 UC-landed-audit-reaping-17 UC-landed-audit-reaping-18 UC-landed-audit-reaping-19 UC-landed-audit-reaping-20 UC-landed-audit-reaping-21 UC-landed-audit-reaping-22
-# hermetic-ok: stub bd (a JSON-file-per-id fixture), a stub gh, and local git repos — no
-#   database, no systemd, no real network
+# covers: spira/sending.sh spira/lib.sh spira/lc.sh UC-landed-audit-reaping-14 UC-landed-audit-reaping-16 UC-landed-audit-reaping-17 UC-landed-audit-reaping-18 UC-landed-audit-reaping-19 UC-landed-audit-reaping-20 UC-landed-audit-reaping-21 UC-landed-audit-reaping-22
+# host-reason: starts its own disposable `dolt sql-server`, same shape as test-lc-hold.sh
+#   (sp-ki12s) — testenv-batch.sh already provides the container.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
+CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
+if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
+    CARGO_BIN="$HOME/.cargo/bin/cargo"
+fi
+[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
+DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
+[ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
+
+TMP="$(mktemp -d)"
+LC_SERVER_PID=""
+trap '[ -n "$LC_SERVER_PID" ] && kill "$LC_SERVER_PID" >/dev/null 2>&1; rm -rf "$TMP"' EXIT INT TERM
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 export SPIRA_CONF="$TMP/no-such-conf"
 
 # --------------------------------------------------------------------------------------
-# THE STUB BD. sending.sh's only bd seams are `bdjson show <id>` (read) and
-# `bdq label add/remove <id> <label>` (write). One JSON object per id, under
-# $STUB_BEADS_DIR/<id>.json; label add/remove mutate it in place, so the content-landed
-# and branch: label assertions read back what sending.sh actually wrote — a real seam
-# contract, not a canned answer (law-a-control-that-cannot-check-must-refuse's positive
-# twin: a stub that cannot be written to cannot prove a write happened).
+# A THROWAWAY spira-lc/Dolt SERVER, the same shape test-lc-hold.sh and
+# test-check2-reaper.sh use. Exported so the `bash "$HERE/sending.sh"` subprocess the
+# `sending()` helper below spawns inherits it too.
+# --------------------------------------------------------------------------------------
+LCREPO="$(cd "$HERE/.." && pwd)"
+# A literal base port, not SPIRA_LC_TESTDB_PORT's conf.sh default: conf.sh is not sourced
+# yet at this point in the suite (its own SPIRA_CONF points at a no-such-conf on purpose,
+# further down), so nothing has given that variable a value here.
+LC_PORT=$((23309 + (RANDOM % 400)))
+LC_TMP="$TMP/lc"; mkdir -p "$LC_TMP/data"
+cat > "$LC_TMP/server.yaml" <<YAML
+log_level: warning
+listener:
+  port: $LC_PORT
+  max_connections: 50
+  read_timeout_millis: 30000
+  write_timeout_millis: 30000
+data_dir: "$LC_TMP/data"
+behavior:
+  dolt_transaction_commit: false
+  event_scheduler: "OFF"
+YAML
+"$DOLT_BIN" sql-server --config "$LC_TMP/server.yaml" > "$LC_TMP/server.log" 2>&1 &
+LC_SERVER_PID=$!
+lc_up=0
+for _ in $(seq 1 50); do
+    if "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+        lc_up=1; break
+    fi
+    sleep 0.2
+done
+[ "$lc_up" = 1 ] || bail "dolt sql-server for spira_lifecycle never came up: $(cat "$LC_TMP/server.log")"
+lc_root_sql() { "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls "$@"; }
+
+LC_CARGO_TARGET="$LC_TMP/cargo-target"
+CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$LC_CARGO_TARGET" \
+    "$CARGO_BIN" build --manifest-path "$LCREPO/spira-lc/Cargo.toml" --quiet 2>"$LC_TMP/build.log" \
+    || bail "spira-lc failed to build: $(cat "$LC_TMP/build.log")"
+export SPIRA_LC_BIN="$LC_CARGO_TARGET/debug/spira-lc"
+export SPIRA_LC_HOST=127.0.0.1
+export SPIRA_LC_PORT="$LC_PORT"
+export SPIRA_LC_DB=spira_lifecycle
+export SPIRA_LC_DATA_DIR="$LC_TMP"
+export SPIRA_LC_USER=root
+export SPIRA_LC_PASSWORD=""
+unset SPIRA_LC_SOCKET
+"$SPIRA_LC_BIN" admin-apply-ddl "$LCREPO/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
+wantrc "spira_lifecycle schema applies cleanly" 0 $?
+
+# shellcheck disable=SC1090
+. "$HERE/lc.sh"
+seed_lc() {   # seed_lc <bead-id> <state>
+    lc_root_sql --use-db spira_lifecycle sql -q "DELETE FROM bead WHERE bead_id = '$1'" >/dev/null 2>&1
+    lc_root_sql --use-db spira_lifecycle sql -q \
+        "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('$1','$2','[]',0,0)" >/dev/null 2>&1
+}
+lc_row_state() { lc_root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='$1'" -r csv 2>/dev/null | tail -1; }
+
+# --------------------------------------------------------------------------------------
+# THE STUB BD. sending.sh's remaining bd seams are `bdjson show <id>` (read) and
+# `bdq label add/remove <id> <label>` (write, for branch: affinity only now — content-landed
+# is a real spira-lc event, above). One JSON object per id, under $STUB_BEADS_DIR/<id>.json;
+# label add/remove mutate it in place, so the branch: label assertions read back what
+# sending.sh actually wrote — a real seam contract, not a canned answer
+# (law-a-control-that-cannot-check-must-refuse's positive twin: a stub that cannot be
+# written to cannot prove a write happened).
 # --------------------------------------------------------------------------------------
 STUB_BEADS_DIR="$TMP/beads"; mkdir -p "$STUB_BEADS_DIR"
 STUB_BD="$TMP/bd-stub"
@@ -140,9 +216,11 @@ branch_exists() { git -C "$REPO" show-ref --verify -q "refs/heads/$1" 2>/dev/nul
 # ---- fixture branches ----------------------------------------------------------------
 
 # sp-cl0: content-landed via the ancestor shortcut, ahead=0 — the branch IS the base tip.
-# No commits of its own, so no content-landed label (UC-17).
+# No commits of its own, so no ContentOnBase event either (UC-17) — seeded WORKING here as
+# the negative control: the ahead-count guard means the call is never made for it.
 git -C "$REPO" branch spira/sp-cl0 main
 bead sp-cl0 open
+seed_lc sp-cl0 WORKING
 
 # sp-cl1: content-landed via merge-tree equality, ahead=1 — an empty commit that names the
 # bead but changes no files (sp-kq8l). Ancestry alone would refuse this (the branch is not
@@ -153,6 +231,7 @@ git -C "$REPO" checkout -q main
 bead sp-cl1 closed
 printf 'LANDED %s %s\n' "$(git -C "$REPO" rev-parse spira/sp-cl1)" "$(date +%s)" \
     > "$RUN/landstate/sp-cl1"
+seed_lc sp-cl1 WORKING
 
 # sp-clnoassert: same shape as sp-cl1, but with NO landstate record at all — CHECK 5 (the
 # sentinel), not this program, owns the closed-not-landed invariant now (sp-jci6o), so the
@@ -362,11 +441,13 @@ printf '%s\n' "$out" >&2
 # SEND / content-landed
 want   "sp-cl0 is SENT"                     "SENT sp-cl0"          "$out"
 is     "sp-cl0 branch is gone"              1 "$(branch_exists spira/sp-cl0; echo $?)"
-is     "sp-cl0 is NOT labelled content-landed (ahead=0)" no "$(has_label sp-cl0 content-landed && echo yes || echo no)"
+is     "sp-cl0's spira-lc row is untouched (ahead=0, no ContentOnBase call made)" "WORKING" \
+    "$(lc_row_state sp-cl0)"
 
 want   "sp-cl1 is SENT"                     "SENT sp-cl1"          "$out"
 is     "sp-cl1 branch is gone"              1 "$(branch_exists spira/sp-cl1; echo $?)"
-is     "sp-cl1 IS labelled content-landed (ahead=1)" yes "$(has_label sp-cl1 content-landed && echo yes || echo no)"
+is     "sp-cl1's spira-lc row moves to LANDED via a real ContentOnBase event (ahead=1)" "LANDED" \
+    "$(lc_row_state sp-cl1)"
 
 want   "sp-clnoassert is SENT"              "SENT sp-clnoassert"   "$out"
 is     "sp-clnoassert branch is gone despite no landstate record" 1 "$(branch_exists spira/sp-clnoassert; echo $?)"
@@ -471,6 +552,7 @@ git -C "$DREPO" checkout -q -b spira/sp-dry main
 git -C "$DREPO" commit -q --allow-empty -m "sp-dry: review only"
 git -C "$DREPO" checkout -q main
 bead sp-dry closed
+seed_lc sp-dry WORKING
 DHOME="$(basename "$DREPO")"
 printf '%s | %s | push | main | |\n' "$DHOME" "$DREPO" > "$TMP/dry-repo-map"
 
@@ -481,8 +563,7 @@ dry_out="$(SPIRA_HOME="$HERE" SPIRA_RUN="$DRUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$
 want "dry-run reports WOULD, not SENT"  "WOULD  sp-dry  send branch" "$dry_out"
 nowant "dry-run never reports SENT"     "SENT sp-dry"                "$dry_out"
 is "dry-run leaves the branch in place" 0 "$(git -C "$DREPO" show-ref --verify -q refs/heads/spira/sp-dry; echo $?)"
-is "dry-run does not write the content-landed label" no \
-    "$(has_label sp-dry content-landed && echo yes || echo no)"
+is "dry-run does not fire a ContentOnBase event" "WORKING" "$(lc_row_state sp-dry)"
 
 # ---- mid-send HELD — send_branch's own recheck, not the top-of-loop witness ------------
 #

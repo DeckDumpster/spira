@@ -258,3 +258,19 @@ lc_holder_dead() {
     [ -n "$state" ] && [ -n "$version" ] || return 1
     lc_event "$id" "$state" "$version" "$actor" '"HolderDead"'
 }
+
+# lc_content_on_base <bead-id> <proof> [actor] -> best-effort: any non-terminal state ->
+# LANDED, on merge-tree evidence rather than a delivery machine's own `delivered(sha)` — the
+# Sending's own case, a branch whose diff the base already carries with no batch/PR/push
+# ever recording it. Same rc contract as lc_hold.
+lc_content_on_base() {
+    local id="${1:?lc_content_on_base needs a bead id}" proof="${2:?lc_content_on_base needs a proof}" actor="${3:-sending}"
+    local js; js="$(lc_show "$id")"; local rc=$?
+    [ "$rc" = 0 ] || return "$rc"
+    local state version
+    state="$(_lc_json_field "$js" 'd.get("bead",{}).get("state","")')"
+    version="$(_lc_json_field "$js" 'd.get("bead",{}).get("version","")')"
+    [ -n "$state" ] && [ -n "$version" ] || return 1
+    local proofj; proofj="$(_lc_json_string "$proof")"
+    lc_event "$id" "$state" "$version" "$actor" "{\"ContentOnBase\":{\"proof\":$proofj}}"
+}
