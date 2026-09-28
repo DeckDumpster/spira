@@ -20,9 +20,10 @@
 # deferred-unescalated (sp-hg8q): a bead deferred behind a live blocking edge is the DAG
 #   doing its job, not a strand.
 # ghost / mid-teardown (sp-nc74): a bead whose aeon is still tearing down (pidfile present)
-#   must not be reclaimed out from under it even past GHOST_GRACE. ghost / ask+skip label
+#   must not be reclaimed out from under it even past GHOST_GRACE. ghost / ask+wait hold
 #   (sp-2k5a): a bead legitimately waiting on the operator, directly or via
-#   check2_protect_waiting's skip label, is exempt the same way.
+#   check2_protect_waiting's spira-lc "wait" hold (sp-i2m7y: this was a second bd label),
+#   is exempt the same way.
 # pass-truncated (sp-ow8n): a sentinel pass that ran out of budget before reaching a
 #   partition looks identical to "nothing ready" unless the classifier is told so.
 #
@@ -180,19 +181,19 @@ nowant "ask-labelled: deferred-unescalated NOT raised" "deferred-unescalated" "$
 
 # ======================================================================================
 echo
-echo "ghost (sp-nc74, sp-2k5a): mid-teardown, ask-label and skip-label are exempt:"
+echo "ghost (sp-nc74, sp-2k5a): mid-teardown, ask-label and a spira-lc wait hold are exempt:"
 # ======================================================================================
 # A lease_expires_at far enough in the past to exceed any GHOST_GRACE value.
 EXPIRED="2000-01-01T00:00:00Z"
 
-classify_ghost() {   # classify_ghost <beads-json> [holders]
+classify_ghost() {   # classify_ghost <beads-json> [holders] [wait-held-ids]
     printf '%s' "$1" > "$TMP/ghost-beads.json"
     printf '[]' > "$TMP/ghost-ready.json"
     BEADS_FILE="$TMP/ghost-beads.json" \
     READY_FILE="$TMP/ghost-ready.json" \
     HOLDERS="${2:-}" LIVE=1 GHOST_GRACE=300 \
     SPIRA_ASK_LABEL=needs-operator \
-    SPIRA_RECLAIM_SKIP_LABEL=spira-waiting-operator \
+    WAIT_HELD="${3:-}" \
         python3 "$HERE/strand-classify.py"
 }
 
@@ -224,17 +225,17 @@ out="$(classify_ghost '[
 nowant "ask-labelled: ghost NOT raised" "ghost"  "$out"
 nowant "ask-labelled: bead NOT named"   "sp-ask" "$out"
 
-# case 4 — skip-labelled: check2_protect_waiting labels a work bead with the skip label
-# when its only open dep carries the ask label, so CHECK 2's --exclude-label skips it. The
-# ghost check must honour the same exclusion, or it reclaims what CHECK 2 explicitly
-# protected.
+# case 4 — wait-held (sp-i2m7y: this was a second bd label, SPIRA_RECLAIM_SKIP_LABEL):
+# check2_protect_waiting holds a work bead (spira-lc "wait") when its only open dep carries
+# the ask label, so CHECK 2's own reclaim scan skips it. The ghost check must honour the
+# same exclusion, or it reclaims what CHECK 2 explicitly protected.
 out="$(classify_ghost '[
   {"id":"sp-protected","title":"waiting for the operator","status":"in_progress",
-   "labels":["spira-waiting-operator","spira","plan"],"assignee":"aeon-y",
+   "labels":["spira","plan"],"assignee":"aeon-y",
    "lease_expires_at":"'"$EXPIRED"'"}
-]')"
-nowant "skip-labelled: ghost NOT raised" "ghost"        "$out"
-nowant "skip-labelled: bead NOT named"   "sp-protected" "$out"
+]' "" "sp-protected")"
+nowant "wait-held: ghost NOT raised" "ghost"        "$out"
+nowant "wait-held: bead NOT named"   "sp-protected" "$out"
 
 # ======================================================================================
 echo

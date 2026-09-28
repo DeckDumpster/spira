@@ -34,9 +34,11 @@ import json, os
 # The escalation label is one configured key; a literal here would silently disagree
 # with the predicates and the panel the moment an operator changed it.
 ASK  = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")  # literal-ok: Python fallback for direct invocation without conf.sh
-# Beads CHECK 2 already exempted via check2_protect_waiting; the ghost check must honour
-# the same exemption so strand.sh does not reclaim what the sentinel explicitly protected.
-SKIP = os.environ.get("SPIRA_RECLAIM_SKIP_LABEL", "spira-waiting-operator")  # literal-ok: Python fallback for direct invocation without conf.sh
+# Beads CHECK 2 already exempted via check2_protect_waiting's spira-lc "wait" hold; the
+# ghost check must honour the same exemption so strand.sh does not reclaim what the
+# sentinel explicitly protected (sp-i2m7y: this was the SPIRA_RECLAIM_SKIP_LABEL bd label
+# until CHECK 2 stopped writing it).
+WAIT_HELD = set((os.environ.get("WAIT_HELD") or "").split())
 from datetime import datetime, timezone
 
 def load(name):
@@ -113,21 +115,22 @@ def ts(v):
 # -- ghost: in_progress, lease expired past the grace window, and no live aeon holds it.
 # Both halves are required. The lease alone is a heuristic about time; /proc alone races the
 # two windows where a bead is legitimately in_progress with no pidfile yet, or no longer.
-# EXEMPT: beads carrying ASK (an escalated decision awaiting the operator) or SKIP (explicitly
-# protected by check2_protect_waiting because their only open dep is an ask bead) are
-# legitimately waiting — reclaiming them re-summons an aeon that immediately re-derives the
-# same diagnosis and exits, producing a loop. The sentinel's CHECK 2 already excludes SKIP
-# via --exclude-label; the ghost check must honour the same exclusion (sp-2k5a, sp-qsa1).
+# EXEMPT: beads carrying ASK (an escalated decision awaiting the operator) or holding a
+# spira-lc "wait" (explicitly protected by check2_protect_waiting because their only open
+# dep is an ask bead) are legitimately waiting — reclaiming them re-summons an aeon that
+# immediately re-derives the same diagnosis and exits, producing a loop. The sentinel's
+# CHECK 2 already excludes wait-held beads from its own reclaim scan; the ghost check must
+# honour the same exclusion (sp-2k5a, sp-qsa1).
 for b in beads:
     if b.get("status") != "in_progress": continue
     if holders.get(b["id"]): continue
-    if ASK in lab(b) or SKIP in lab(b): continue
+    if ASK in lab(b) or b["id"] in WAIT_HELD: continue
     exp = ts(b.get("lease_expires_at"))
     if exp is None or now - exp < grace: continue
     mins = int((now - exp) // 60)
     row("ghost", b["id"], "act",
         "in_progress, lease expired %dm ago, holder %s is not running" % (mins, b.get("assignee") or "?"),
-        "bd reclaim --id %s" % b["id"])
+        "spira-lc HolderDead %s" % b["id"])
 
 # -- deferred without an escalation. law-filed-bead-queued-xor-escalated: a bead is worked in
 # topological order XOR escalated with a decision only the operator can resolve. Deferred with no

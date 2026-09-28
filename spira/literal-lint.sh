@@ -70,7 +70,7 @@ if [ -x "$_schema" ]; then
             case " ${CONFIGURED_NAMES[*]:-} " in *" $_v "*) continue ;; esac
             CONFIGURED_NAMES+=("$_v")
         done
-    done < <("$_schema" names 2>/dev/null || { printf 'literal-lint: WARNING — schema.sh names failed; using hardcoded fallback\n' >&2; printf 'ask\nci\nmaechen\nmaechen_remedy\nreview\nreclaim_skip\nworld_stop\n'; })
+    done < <("$_schema" names 2>/dev/null || { printf 'literal-lint: WARNING — schema.sh names failed; using hardcoded fallback\n' >&2; printf 'ask\nci\nmaechen\nmaechen_remedy\nreview\nworld_stop\n'; })
 fi
 # NEVER EMPTY. An empty pattern list makes every tree "clean" — the failure mode this whole
 # file exists to prevent, arriving through its own configuration. When schema.sh cannot be
@@ -81,7 +81,7 @@ if [ "${#CONFIGURED_NAMES[@]}" -eq 0 ]; then
     printf 'literal-lint: WARNING — could not read names from %s; using shipped defaults\n' "$_schema" >&2
     CONFIGURED_NAMES=(
         "needs-operator" "needs-ryan" "awaiting-ci" "maechen-sweep"
-        "maechen-remedy" "review-finding" "spira-waiting-operator" "world-stop"
+        "maechen-remedy" "review-finding" "world-stop"
     )
 fi
 

@@ -182,7 +182,6 @@ want "--names includes world-stop"            "world-stop"            "$out"
 want "--names includes maechen-sweep"         "maechen-sweep"         "$out"
 want "--names includes maechen-remedy"        "maechen-remedy"        "$out"
 want "--names includes review-finding"        "review-finding"        "$out"
-want "--names includes spira-waiting-operator" "spira-waiting-operator" "$out"
 
 # ---------------------------------------------------------------------------------------
 # EXPORTED LABELS DON'T MASK DEFAULTS. An aeon's environment may export SPIRA_ASK_LABEL

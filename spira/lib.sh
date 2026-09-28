@@ -1195,25 +1195,26 @@ claim_retry() {
 # The next aeon re-derives the same diagnosis and exits, and the 180m loop repeats. The
 # reclaim is wrong: sp-mfa4 hit it six times before this fix existed.
 #
-# The fix: mark qualifying beads with SPIRA_RECLAIM_SKIP_LABEL so the reaper's
-# --exclude-label flag skips them. Remove the label when the dep closes, which lets the
-# reaper reclaim the stale lease on that same pass — no latency, no polling.
+# The fix: apply a spira-lc "wait" hold to qualifying beads (sp-i2m7y: this was the
+# SPIRA_RECLAIM_SKIP_LABEL bd label, and check2_reclaim_stale's own reaper skips a wait-held
+# bead the same way it used to skip the label). Release the hold when the dep closes, which
+# lets the reaper reclaim the stale lease on that same pass — no latency, no polling.
 #
 # TWO STEPS, ONE PASS, BATCHED:
-# (a) Beads already carrying the skip label: re-check. If no open dep still carries the
-#     ask label, remove the skip label so the reaper can fire normally.
-# (b) IN_PROGRESS beads with deps but no skip label: if ALL open deps carry the ask label
-#     (and there is at least one), apply the skip label.
+# (a) Beads already wait-held: re-check. If no open dep still carries the ask label, release
+#     the hold so the reaper can fire normally.
+# (b) IN_PROGRESS beads with deps but no wait hold: if ALL open deps carry the ask label
+#     (and there is at least one), apply the hold.
 #
 # CONSERVATIVE: only marks when EVERY open dep carries the ask label. One open dep without
 # it means other blockers exist; the bead is handled by normal reclaim or claim paths, and
 # protecting it would mask a genuine dead-worker case.
 #
-# BATCHED: one `bd list` + one `bd show` regardless of how many IN_PROGRESS beads exist.
-# In practice there are only a few at a time, so this is cheap.
+# BATCHED: one `bd list` + one `bd show` + one `spira-lc list --hold wait` regardless of how
+# many IN_PROGRESS beads exist. In practice there are only a few at a time, so this is cheap.
 check2_protect_waiting() {
     local ask_label="$SPIRA_ASK_LABEL"
-    local skip_label="$SPIRA_RECLAIM_SKIP_LABEL"
+    local held_wait; held_wait="$(lc_list_held wait 2>/dev/null)"
 
     # Collect IN_PROGRESS beads that need dep inspection.
     # Output: one line per bead: "<id> <has_skip:0|1> <dep_count>"
@@ -1221,16 +1222,15 @@ check2_protect_waiting() {
     bead_lines="$(bdjson list --all --status in_progress --limit 0 2>/dev/null \
         | python3 -c '
 import sys, json
-skip = sys.argv[1]
+held = set(sys.argv[1].split())
 try: d = json.load(sys.stdin)
 except: sys.exit(0)
 for item in (d if isinstance(d, list) else [d]):
-    labels = item.get("labels") or []
     dep_count = item.get("dependency_count", 0)
-    has_skip = 1 if skip in labels else 0
+    has_skip = 1 if item["id"] in held else 0
     if has_skip or dep_count > 0:
         print(item["id"], has_skip, dep_count)
-' "$skip_label" 2>/dev/null)"
+' "$held_wait" 2>/dev/null)"
 
     [ -n "$bead_lines" ] || return 0
 
@@ -1254,14 +1254,14 @@ for item in (d if isinstance(d, list) else [d]):
     show_json="$(bdjson show "${all_ids[@]}" 2>/dev/null)"
     [ -n "$show_json" ] || return 0
 
-    # Decide: add or remove the skip label.
+    # Decide: hold or release the wait.
     local decisions
     decisions="$(python3 -c '
 import sys, json
-ask, skip = sys.argv[1], sys.argv[2]
-# Reconstruct the sets from newline-separated args 3 and 4.
-remove_set = set(filter(None, sys.argv[3].split(","))) if sys.argv[3] else set()
-add_set    = set(filter(None, sys.argv[4].split(","))) if sys.argv[4] else set()
+ask = sys.argv[1]
+# Reconstruct the sets from newline-separated args 2 and 3.
+remove_set = set(filter(None, sys.argv[2].split(","))) if sys.argv[2] else set()
+add_set    = set(filter(None, sys.argv[3].split(","))) if sys.argv[3] else set()
 try: d = json.load(sys.stdin)
 except: sys.exit(0)
 for item in (d if isinstance(d, list) else [d]):
@@ -1275,7 +1275,7 @@ for item in (d if isinstance(d, list) else [d]):
         print("remove", bid)
     elif bid in add_set and open_deps and ask_open and not non_ask_open:
         print("add", bid)
-' "$ask_label" "$skip_label" \
+' "$ask_label" \
     "$(IFS=,; printf '%s' "${remove_ids[*]}")" \
     "$(IFS=,; printf '%s' "${add_ids[*]}")" \
     <<< "$show_json")"
@@ -1285,13 +1285,13 @@ for item in (d if isinstance(d, list) else [d]):
         [ -n "$id" ] || continue
         case "$action" in
             add)
-                bdq label add "$id" "$skip_label" >/dev/null 2>&1 || true
-                log "CHECK2 $id: only open dep(s) carry $ask_label — labeled $skip_label, excluded from reclaim"
+                lc_hold "$id" wait "waiting on $ask_label dep(s), excluded from CHECK 2's reclaim" sentinel >/dev/null 2>&1 || true
+                log "CHECK2 $id: only open dep(s) carry $ask_label — wait-held, excluded from reclaim"
                 act "protected $id from reclaim: waiting on $ask_label dep"
                 ;;
             remove)
-                bdq label remove "$id" "$skip_label" >/dev/null 2>&1 || true
-                log "CHECK2 $id: $ask_label dep no longer blocking — removed $skip_label, re-enters the reaper"
+                lc_unhold "$id" wait sentinel >/dev/null 2>&1 || true
+                log "CHECK2 $id: $ask_label dep no longer blocking — wait released, re-enters the reaper"
                 act "unprotected $id: $ask_label dep closed"
                 ;;
         esac
@@ -2111,25 +2111,32 @@ release_orphan_claims_partitions() {
     return 0
 }
 
-# check2_reclaim_stale <partitions-tsv> -> CHECK 2's time-based dead-worker reaper: one
-# `bdq reclaim` per partition named in <partitions-tsv> (fayth_partitions' shape; only the
-# labels column is used), counting and charging every id parse_reclaimed finds through
-# bump_reclaim.
+# check2_reclaim_stale -> CHECK 2's time-based dead-worker reaper: every spira-lc bead row in
+# WORKING state whose lease has been expired for more than SPIRA_RECLAIM_GRACE_SECS gets a
+# HolderDead event, WORKING -> READY.
 #
-# A REAPER WITH NOTHING TO REAP OVER SAYS SO. With no partition declared this logs and
-# returns clean, which would otherwise read exactly like a harness with no dead leases.
+# ONE spira-lc list CALL FOR THE WHOLE GRAPH, NOT ONE bdq reclaim PER PARTITION (sp-i2m7y).
+# The old call needed a --label scope because bd has no other way to bound a bulk reclaim;
+# spira-lc has no partition dimension at all — every persona's WORKING beads are rows in the
+# same flat table, so one scan already covers every partition the chamber declares, including
+# ones nobody thought to loop over (the defect fayth_partitions fixed for the bd-label form).
+#
+# A WAIT-HELD BEAD (check2_protect_waiting, above) IS SKIPPED: its lease is stale because its
+# aeon exited on a legitimate contract, not because the worker died.
 check2_reclaim_stale() {
-    local partitions="${1:-}" part out n
-    local n_parts=0 n_reclaimed=0
-    while IFS=$'\t' read -r part _; do
-        [ -n "$part" ] || continue
-        n_parts=$((n_parts+1))
-        out="$(bdq reclaim --older-than 180m --label "$part" --exclude-label "$SPIRA_RECLAIM_SKIP_LABEL" 2>&1)"
-        grep -q 'No stale leases' <<< "$out" && continue
-        n="$(parse_reclaimed "$out")"
-        n_reclaimed=$(( n_reclaimed + ${n:-0} ))
-    done <<< "$partitions"
-    [ "$n_parts" -eq 0 ] && log "CHECK2 no persona in the chamber declares a partition — no lease is being reaped"
+    local grace="${SPIRA_RECLAIM_GRACE_SECS:-10800}" id lease_until holds now
+    local n_reclaimed=0
+    now="$(date +%s)"
+    while IFS=$'\t' read -r id lease_until holds; do
+        [ -n "$id" ] || continue
+        [ -n "$lease_until" ] || continue
+        case ",$holds," in *,wait,*) continue ;; esac
+        [ $(( now - lease_until )) -gt "$grace" ] || continue
+        lc_holder_dead "$id" sentinel || continue
+        bump_reclaim "$id" stale-lease >/dev/null 2>&1
+        bdq note "$id" "Reclaimed by CHECK 2: in_progress with a lease that expired $(( (now - lease_until) / 60 ))m ago and was never released." >/dev/null 2>&1
+        n_reclaimed=$((n_reclaimed+1))
+    done < <(lc_list_state WORKING)
     [ "$n_reclaimed" -gt 0 ] && progress "reclaimed $n_reclaimed stale lease(s)"
     return 0
 }
@@ -3100,22 +3107,6 @@ write_lapse_record() {  # write_lapse_record <bead> <quiet_s> <last_action> <tip
 # reads the unchanged count against a bare label and re-poisons within minutes.
 bump_poison_cleared() { _bump_write_event "${1:-}" 'poison.cleared' "${2:-unrecorded}"; }
 
-# parse_reclaimed <bd-reclaim-output> -> prints the number of reclaimed leases; charges
-# each one through bump_reclaim as it goes.
-#
-# Match the SUCCESS shape ("✓ ..." / "Reclaimed ..."), not the word "reclaim" — the idle
-# message ("No stale leases to reclaim in the filtered scope") contains the word too, so a
-# substring match would charge a reclaim that never happened. A line whose id cannot be
-# parsed still counts toward the total (the reclaim happened) but is not charged.
-parse_reclaimed() {
-    local out="${1:-}" line rid n=0
-    while IFS= read -r line; do
-        n=$((n+1))
-        rid="$(printf '%s' "$line" | grep -oE '[a-z]+-[a-z0-9]+' | head -1 || true)"
-        [ -n "$rid" ] && bump_reclaim "$rid" stale-lease >/dev/null 2>&1
-    done < <(grep -E '^(✓|Reclaimed)' <<< "$out")
-    printf '%d' "$n"
-}
 bump_reopen()  {
     # new_value is intentionally empty for reopened events — cannot use _bump_write_event
     # which defaults to 'unrecorded' when the cause argument is empty or absent.

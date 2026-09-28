@@ -1556,7 +1556,7 @@
             "null"
           ]
         },
-        "reclaim_skip_label": {
+        "reclaim_grace_secs": {
           "type": [
             "string",
             "null"

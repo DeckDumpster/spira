@@ -223,7 +223,7 @@ pub fn spira_section(
             "SPIRA_NOTIFY" => s.notify = Some(val.clone()),
             "SPIRA_PANEL" => s.panel = Some(val.clone()),
             "SPIRA_VERIFY_TIMEOUT" => s.verify_timeout = Some(val.clone()),
-            "SPIRA_RECLAIM_SKIP_LABEL" => s.reclaim_skip_label = Some(val.clone()),
+            "SPIRA_RECLAIM_GRACE_SECS" => s.reclaim_grace_secs = Some(val.clone()),
             "SPIRA_OPERATED" => s.operated = Some(val.clone()),
             "SPIRA_CI_PARK_MAX" => s.ci_park_max = Some(val.clone()),
             "SPIRA_WORLD_STOP_LABEL" => s.world_stop_label = Some(val.clone()),

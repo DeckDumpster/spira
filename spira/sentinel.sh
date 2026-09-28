@@ -286,23 +286,21 @@ fi
 # CHECK 2 — dead workers. A lease outlives the aeon that took it; reclaim is the reaper.
 # Grace window ~2x the TTL so a briefly paused worker is not robbed of live work.
 #
-# SPIRA_SKIP_RECLAIM=1 bypasses this check and CHECK 2c. Each bdq reclaim call costs
-# ~600ms and a fixture that creates no stale leases pays that on every pass with nothing
+# SPIRA_SKIP_RECLAIM=1 bypasses this check and CHECK 2c. Each spira-lc call costs real
+# wall time and a fixture that creates no stale leases pays that on every pass with nothing
 # to show for it. Test suites that cover CHECK 4 (the poison valve) rather than reclaim
-# behaviour set this to halve the per-pass wall time (16 passes × ~2s saved = ~32s).
+# behaviour set this to halve the per-pass wall time.
 #
-# ONE RECLAIM PER PARTITION, ASKED THROUGH THE CHAMBER. This named `spira,plan` — the
-# builder's partition standing in for every persona — so an ops or spike aeon that died left
-# its bead in_progress with a dead lease and no time-based reaper ever looked at it. The
-# /proc ghost sweep in CHECK 2b catches that case faster in practice, but the backstop for
-# everything /proc cannot see did not exist for those partitions at all.
-#
-# The loop is check2_reclaim_stale (lib.sh), which matches the SUCCESS shape via
-# parse_reclaimed rather than the word "reclaim" (which also appears in the idle message).
+# ONE spira-lc SCAN FOR EVERY PARTITION AT ONCE (sp-i2m7y). check2_reclaim_stale (lib.sh)
+# reads every WORKING row in spira_lifecycle in a single call — there is no partition
+# dimension to loop over, so an ops or spike aeon that died is reaped by the same pass that
+# reaps a builder's, with no per-persona label to remember to add. The /proc ghost sweep in
+# CHECK 2b catches the same case faster in practice; this is the time-based backstop for
+# whatever /proc cannot see.
 _phase "CHECK2"
 if [ "${SPIRA_SKIP_RECLAIM:-0}" != 1 ]; then
 check2_protect_waiting
-check2_reclaim_stale "$PARTITIONS"
+check2_reclaim_stale
 fi
 
 # ======================================================================================
