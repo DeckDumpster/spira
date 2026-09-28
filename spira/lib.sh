@@ -6233,6 +6233,51 @@ for i in (d if isinstance(d, list) else [d]):
 ' 2>/dev/null
 }
 
+# detect_incident_needs_builder -> "STATE <id> incident-is-code — <evidence>" for every open
+# or in_progress bead carrying SPIRA_INCIDENT_LABEL whose recorded branch: already has a
+# commit ahead of the repo's base.
+#
+# An incident-labelled bead sits in the partition no builder claims; when its remaining work
+# is actually a code change, the queue starves it until a human reads the bead and moves the
+# label by hand (sp-awm1q, sp-qlcvc, sp-c1ot2, sp-18v9k — the same misroute, caught by hand
+# every time). The signal has to be one that cannot fire on a genuinely operational incident:
+# ops.fayth gives Ops no Edit or Write tool, so a commit on an incident bead's own branch is
+# never Ops's own work. It exists only if code was already written for this bead under some
+# other persona — which is exactly "the remaining work is a code change", fully computable,
+# with nothing left to a model's judgment.
+detect_incident_needs_builder() {
+    local raw home inc
+    home="$(spira_home_repo)"
+    inc="${SPIRA_INCIDENT_LABEL:?SPIRA_INCIDENT_LABEL is unset — source conf.sh}"
+    raw="$(bdjson list --status open,in_progress --label "$inc" --limit 0 2>/dev/null)"
+    [ -n "$raw" ] || return 0
+    printf '%s\n' "$raw" | python3 -c '
+import json, sys
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+for i in (d if isinstance(d, list) else [d]):
+    L = i.get("labels") or []
+    br = next((l[7:] for l in L if l.startswith("branch:")), "")
+    if not br:
+        continue
+    repo = next((l[5:] for l in L if l.startswith("repo:")), "")
+    print("%s\t%s\t%s" % (i["id"], repo, br))
+' 2>/dev/null | while IFS=$'\t' read -r id repo br; do
+        [ -n "$id" ] || continue
+        local r_path refs base ahead
+        r_path="$(repo_root "${repo:-$home}" 2>/dev/null)" || continue
+        [ -n "$r_path" ] || continue
+        git -C "$r_path" show-ref --verify -q "refs/heads/$br" 2>/dev/null || continue
+        refs="$(spira_landrefs "$r_path" 2>/dev/null)" || continue
+        base="${refs%% *}"
+        [ -n "$base" ] || continue
+        ahead="$(git -C "$r_path" rev-list --count "$base..$br" 2>/dev/null)" || continue
+        [ "${ahead:-0}" -gt 0 ] 2>/dev/null || continue
+        printf 'STATE %s incident-is-code — %s commit(s) already on %s ahead of %s; remaining work is a code change, not operational\n' \
+            "$id" "$ahead" "$br" "$base"
+    done
+}
+
 # detect_invalid_closed -> INVALID-CLOSED and UNFILED-FOLLOW lines for closed beads whose
 # close reasons admit unfinished work or imply follow-on work that was never filed.
 #
