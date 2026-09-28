@@ -281,3 +281,9 @@ wiki_hook
 work_close_types
 workspaces
 world_stop_label
+summon_lock_wait
+concierge_inbox
+concierge_inbox_dedup
+concierge_inbox_stall
+concierge_inbox_backoff
+flow_unobservable_grace_secs

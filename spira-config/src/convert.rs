@@ -180,6 +180,17 @@ pub fn spira_section(
             }
             "SPIRA_LANES_MAX_LIVE" => s.lanes_max_live = parse_u32(warnings, "lanes_max_live", val),
             "SPIRA_THRASH_MINUTES" => s.thrash_minutes = parse_u32(warnings, "thrash_minutes", val),
+            "SPIRA_SUMMON_LOCK_WAIT" => s.summon_lock_wait = parse_u32(warnings, "summon_lock_wait", val),
+            "SPIRA_CONCIERGE_INBOX" => s.concierge_inbox = Some(val.clone()),
+            "SPIRA_CONCIERGE_INBOX_DEDUP" => {
+                s.concierge_inbox_dedup = parse_u32(warnings, "concierge_inbox_dedup", val)
+            }
+            "SPIRA_CONCIERGE_INBOX_STALL" => {
+                s.concierge_inbox_stall = parse_u32(warnings, "concierge_inbox_stall", val)
+            }
+            "SPIRA_CONCIERGE_INBOX_BACKOFF" => {
+                s.concierge_inbox_backoff = parse_u32(warnings, "concierge_inbox_backoff", val)
+            }
             "SPIRA_MAIL_SETTLE" => s.mail_settle = parse_u64(warnings, "mail_settle", val),
             "COCKPIT_CLIPBOARD" => s.cockpit_clipboard = Some(val.clone()),
             "SPIRA_LC_BIN" => s.lc_bin = Some(val.clone()),

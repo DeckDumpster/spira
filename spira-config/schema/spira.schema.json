@@ -635,6 +635,36 @@
             "null"
           ]
         },
+        "concierge_inbox": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "concierge_inbox_backoff": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "concierge_inbox_dedup": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "concierge_inbox_stall": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
         "ctrl": {
           "type": [
             "string",
@@ -821,6 +851,12 @@
           ]
         },
         "flow_grace_secs": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "flow_unobservable_grace_secs": {
           "type": [
             "string",
             "null"
@@ -1657,6 +1693,14 @@
             "string",
             "null"
           ]
+        },
+        "summon_lock_wait": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
         },
         "supervise_bin": {
           "type": [

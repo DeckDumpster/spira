@@ -60,6 +60,10 @@ fn typed_cases() -> BTreeMap<&'static str, (&'static str, &'static str)> {
         "SPIRA_SUITES_BUDGET",
         "SPIRA_LOOM_BUDGET_MS",
         "SPIRA_MAIL_SETTLE",
+        "SPIRA_SUMMON_LOCK_WAIT",
+        "SPIRA_CONCIERGE_INBOX_DEDUP",
+        "SPIRA_CONCIERGE_INBOX_STALL",
+        "SPIRA_CONCIERGE_INBOX_BACKOFF",
     ] {
         m.insert(k, ("700", "700"));
     }
