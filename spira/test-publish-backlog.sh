@@ -168,4 +168,53 @@ SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$RMAP" \
     bash "$SH/publish-backlog.sh" health >/dev/null 2>&1; rc=$?
 is "6b: health fails when never polled" "1" "$rc"
 
+# ============================================================================
+echo
+echo "7 — age reads the landing ref's own arrival (reflog), not the commit's author date"
+# ============================================================================
+clear_mail
+rm -rf "$RUN/watchd"
+git -C "$REPO" push -q origin local/main:main   # forge caught up: unpublished range starts empty
+BKCOUNT=1000 BKAGE=10800   # count never trips; isolates the age check
+
+now_epoch="$(date +%s)"
+author_12h="$(date -u -d "@$((now_epoch - 12*3600))" +%Y-%m-%dT%H:%M:%SZ)"
+land_1m="$(date -u -d "@$((now_epoch - 60))"         +%Y-%m-%dT%H:%M:%SZ)"
+land_4h="$(date -u -d "@$((now_epoch - 4*3600))"     +%Y-%m-%dT%H:%M:%SZ)"
+
+git -C "$REPO" checkout -q local/main
+printf 'authored-old-1\n' >> "$REPO/f.txt"
+git -C "$REPO" add f.txt
+GIT_AUTHOR_DATE="$author_12h" GIT_COMMITTER_DATE="$land_1m" \
+    git -C "$REPO" commit -q -m "authored 12h ago, landed 1m ago"
+
+out="$(pb --show)"; rc=$?
+is     "7a: exit 0"                                                   "0" "$rc"
+nowant "7a: authored 12h ago but landed 1 min ago stays under threshold" "OVER" "$out"
+is     "7a: no mail (age tracks the ref's arrival, not the author date)" "0" "$(mail_count)"
+
+clear_mail
+git -C "$REPO" push -q origin local/main:main   # forge catches up again before the next case
+printf 'authored-old-2\n' >> "$REPO/f.txt"
+git -C "$REPO" add f.txt
+GIT_AUTHOR_DATE="$author_12h" GIT_COMMITTER_DATE="$land_4h" \
+    git -C "$REPO" commit -q -m "authored 12h ago, landed 4h ago"
+
+out="$(pb --show)"; rc=$?
+is   "7b: exit 0"                                                "0" "$rc"
+want "7b: the same authoring, landed 4h ago, crosses the age threshold" "OVER fixlocal" "$out"
+is   "7b: mailed"                                                "1" "$(mail_count)"
+
+# ============================================================================
+echo
+echo "8 — an unreadable arrival record refuses (cannot-tell), never reports CLEAR or 0"
+# ============================================================================
+clear_mail
+rm -f "$REPO/.git/logs/refs/heads/local/main"   # the reflog _pb_arrival_ts reads is gone
+out="$(pb --show)"; rc=$?
+is     "8: exit 0 even though the arrival record is unreadable"  "0" "$rc"
+nowant "8: no spurious CLEAR — the check refuses, it does not default to fresh" "CLEAR" "$out"
+nowant "8: and no OVER either — nothing is reported at all"      "OVER" "$out"
+is     "8: no mail sent"                                          "0" "$(mail_count)"
+
 tl_summary
