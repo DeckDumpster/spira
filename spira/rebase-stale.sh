@@ -85,17 +85,19 @@ export GIT_EDITOR=true EDITOR=true
 git -C "$scratch" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" \
     rebase -q "$landref" >/dev/null 2>&1
 
-if [ -n "${REBASE_STALE_DEBUG:-}" ]; then
-    echo "DEBUG landref=$landref -> $(git -C "$scratch" rev-parse "$landref" 2>&1)" >&2
-    echo "DEBUG old_tip=$old_tip scratch HEAD=$(git -C "$scratch" rev-parse HEAD 2>&1)" >&2
-    echo "DEBUG rebase-merge dir: $( [ -d "$scratch/.git/rebase-merge" ] && echo yes || echo no )  rebase-apply dir: $( [ -d "$scratch/.git/rebase-apply" ] && echo yes || echo no )" >&2
-    git -C "$scratch" log --oneline --all >&2
-    git -C "$scratch" status --short >&2
-fi
+# `$scratch/.git` IS A GITFILE, NOT A DIRECTORY — a worktree's own rebase-merge/rebase-apply
+# state lives under the MAIN repo's git-dir (.git/worktrees/<name>/...), so it must be
+# resolved with `rev-parse --git-path` rather than assumed relative to $scratch/.git.
+_rs_mid_rebase() {
+    local d
+    d="$(git -C "$scratch" rev-parse --git-path rebase-merge 2>/dev/null)" && [ -n "$d" ] && [ -d "$d" ] && return 0
+    d="$(git -C "$scratch" rev-parse --git-path rebase-apply 2>/dev/null)" && [ -n "$d" ] && [ -d "$d" ] && return 0
+    return 1
+}
 
 mechanical=0
 failed=0
-while [ -d "$scratch/.git/rebase-merge" ] || [ -d "$scratch/.git/rebase-apply" ]; do
+while _rs_mid_rebase; do
     conflicted="$(git -C "$scratch" diff --name-only --diff-filter=U 2>/dev/null)"
     if [ -z "$conflicted" ] || ! bash "$HERE/mech-resolve.sh" "$scratch"; then
         failed=1
