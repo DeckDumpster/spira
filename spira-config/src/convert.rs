@@ -120,6 +120,7 @@ pub fn spira_section(
             "SPIRA_VERDICT_TTL" => s.verdict_ttl = parse_u64(warnings, "verdict_ttl", val),
             "SPIRA_MAX_AEONS" => s.max_aeons = parse_u32(warnings, "max_aeons", val),
             "SPIRA_MAX_LIVE_AEONS" => s.max_live_aeons = parse_u32(warnings, "max_live_aeons", val),
+            "SPIRA_STACK_MAX_DEPTH" => s.stack_max_depth = parse_u32(warnings, "stack_max_depth", val),
             "SPIRA_FAYTHS" => s.fayths = val.split_whitespace().map(str::to_string).collect(),
             "SPIRA_BATCH_MAXPAR" => s.batch_maxpar = parse_u32(warnings, "batch_maxpar", val),
             "SPIRA_CERTIFY_PAR" => s.certify_par = parse_u32(warnings, "certify_par", val),

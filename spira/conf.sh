@@ -83,7 +83,7 @@ SPIRA_TOWN SPIRA_MIRROR SPIRA_EXPORTER SPIRA_DESIGN SPIRA_WIKI SPIRA_WIKI_HOOK S
 SPIRA_VIEW SPIRA_VIEW_SESSION
 SPIRA_ALERT_GLOB
 SPIRA_BD SPIRA_BD_PIN SPIRA_BD_TAG
-SPIRA_FAYTHS SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LANES SPIRA_LANES_MAX_LIVE SPIRA_QA_DEPTH SPIRA_THRASH_MINUTES SPIRA_THRASH_STREAK_CAP SPIRA_RAPID_RECUR_THRESHOLD SPIRA_BRIEF_KEEP_RECURRENCES SPIRA_BRIEF_NOTES_MAX_CHARS SPIRA_SUMMON_LOCK_WAIT
+SPIRA_FAYTHS SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LANES SPIRA_LANES_MAX_LIVE SPIRA_QA_DEPTH SPIRA_THRASH_MINUTES SPIRA_THRASH_STREAK_CAP SPIRA_RAPID_RECUR_THRESHOLD SPIRA_BRIEF_KEEP_RECURRENCES SPIRA_BRIEF_NOTES_MAX_CHARS SPIRA_SUMMON_LOCK_WAIT SPIRA_STACK_MAX_DEPTH
 SPIRA_CLAIM_RETRIES SPIRA_CLAIM_RETRY_DELAY_S
 SPIRA_TOKEN_WINDOW_H SPIRA_TOKEN_PROJECTS SPIRA_CTX_WARN SPIRA_CTX_HIGH SPIRA_CTX_LIMIT
 SPIRA_ARCHIVE
@@ -1142,6 +1142,11 @@ spira_conf_defaults() {
     # Four is the sum of what the two shipped personas declared, so this default changes
     # nothing on a host that was already running them and starts enforcing an order.
     : "${SPIRA_MAX_AEONS:=4}"
+    # DEEPEST A DEPENDENT'S STACK MAY GO (stacked-dependents-2026-09-28 §1) BEFORE A CLAIM
+    # NAMING IT IS REFUSED. Hard ceiling 4 — spira-config's schema rejects a larger value,
+    # so raising it is a design change, not a config edit (per Ryan 2026-09-28: "4 is a good
+    # place to start, no higher"). 0 reproduces today's behaviour: no stacking at all.
+    : "${SPIRA_STACK_MAX_DEPTH:=4}"
     # HOW MANY TIMES A CLAIM QUERY IS RETRIED BEFORE BEING TREATED AS A REAL FAILURE. Aeons
     # summoned seconds apart contend for the same store; a claim that errors under that
     # contention is not the same fact as a claim that succeeded and returned zero rows, and

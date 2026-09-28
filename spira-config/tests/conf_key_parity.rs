@@ -41,6 +41,7 @@ fn typed_cases() -> BTreeMap<&'static str, (&'static str, &'static str)> {
         "SPIRA_VERDICT_TTL",
         "SPIRA_MAX_AEONS",
         "SPIRA_MAX_LIVE_AEONS",
+        "SPIRA_STACK_MAX_DEPTH",
         "SPIRA_BATCH_MAXPAR",
         "SPIRA_CERTIFY_PAR",
         "SPIRA_QUEUE_BATCH_MAX",
