@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 #
-# test-landing-cert-order-t1.sh — certify_order and certify_tier (landing-lib.sh), the
-# pure classifier land_repo calls to decide which closed branch is certified next in a
-# queue-mode pass. Every row here is a function call over synthetic rows — no git, no
-# testdb, no gate.sh trial, no landing pass. What test-landing-order.sh and
-# test-landing-phase2-order.sh need a full pass (worktrees, a stub gate, a bead per row)
-# to exercise one branch of, this asserts directly.
+# test-landing-cert-order-t1.sh — certify_order (landing-lib.sh), the pure classifier
+# land_repo calls to decide which closed branch is processed first in a pass. Every row
+# here is a function call over synthetic rows — no git, no testdb, no gate.sh trial, no
+# landing pass.
 #
 # host-reason: sources landing-lib.sh only; no database, no systemd, no git
 # tier: T1
-# covers: spira/landing-lib.sh UC-landing-merge-queue-02 UC-landing-merge-queue-04
+# covers: spira/landing-lib.sh UC-landing-merge-queue-04
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -60,54 +58,5 @@ out="$(rows \
     | certify_order fixture-repo)"
 is "certify_order(): a fix ref for a different repo does not jump the queue" \
     "$(printf 'spira/sp-other-repo\nspira/sp-plain')" "$out"
-
-# --- certify_tier: phase-2 classification of one closed branch --------------------------
-# UC-landing-merge-queue-02 ---------------------------------------------------------------
-
-# 1. Never-gated: no landstate record at all.
-out="$(certify_tier "" "" "" "" abc123 1000)"
-is "certify_tier(): no record -> tier 0, never-gated" "tier=0 reason=never-gated" "$out"
-
-# 2. RED, tip has moved since the record -> promoted to tier 0 (treated as never-gated).
-out="$(certify_tier RED oldtip 500 gate newtip 1000)"
-is "certify_tier(): RED with a stale tip -> tier 0, tip-stale" "tier=0 reason=tip-stale" "$out"
-
-# 3. RED, tip unchanged, reason is not base-red -> skip (re-gating would repeat itself).
-out="$(certify_tier RED sametip 500 gate sametip 1000)"
-is "certify_tier(): RED, current tip, non-base-red -> skip" "tier=skip reason=tip-current" "$out"
-
-# POSITIVE CONTROL for case 3: the same current-tip RED, but reason=base-red, is NOT
-# skipped — the base may have recovered, so it still gets a tier (last, tier 2).
-out="$(certify_tier RED sametip 500 base-red sametip 1000)"
-is "certify_tier(): RED, current tip, base-red -> tier 2, not skipped" "tier=2 reason=red" "$out"
-
-# 4. conflicts-with-base, base has advanced past the record -> promoted to tier 0.
-out="$(certify_tier RED sametip 500 conflicts-with-base sametip 1000)"
-is "certify_tier(): cwb record with an advanced base -> tier 0, cwb-stale-base" \
-    "tier=0 reason=cwb-stale-base" "$out"
-
-# 5. conflicts-with-base, base has NOT advanced, tip unchanged -> skip.
-out="$(certify_tier RED sametip 1000 conflicts-with-base sametip 500)"
-is "certify_tier(): cwb record with a current base and tip -> skip" \
-    "tier=skip reason=cwb-current" "$out"
-
-# 6. conflicts-with-base, base has NOT advanced, but the tip HAS moved -> tier 0
-#    (tip-stale takes the promotion even though the base side of the pair is current).
-out="$(certify_tier RED oldtip 1000 conflicts-with-base newtip 500)"
-is "certify_tier(): cwb record, current base but stale tip -> tier 0, tip-stale" \
-    "tier=0 reason=tip-stale" "$out"
-
-# 7. A non-RED record (e.g. GATED, CONTENT) -> tier 1, ordinary re-gate.
-out="$(certify_tier GATED sometip 500 gate-red sometip 1000)"
-is "certify_tier(): non-RED record -> tier 1, non-red" "tier=1 reason=non-red" "$out"
-
-# 8. GATING (sp-ob7uq/sp-ceemq): a dispatch in flight when a prior pass was killed or
-# restarted. The unit that runs a pass is its own mutex, so a GATING record read by a
-# later pass can only be one nothing ever overwrote — treat it like never-gated, not like
-# an ordinary non-RED record, so the kill costs only that one gate, not a wait behind
-# every other candidate.
-out="$(certify_tier GATING sometip 500 - sometip 1000)"
-is "certify_tier(): GATING record -> tier 0, inflight-restart" \
-    "tier=0 reason=inflight-restart" "$out"
 
 tl_summary

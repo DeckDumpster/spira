@@ -381,20 +381,18 @@ fi
 # HOST-WIDE GATE ADMISSION, ahead of the per-branch tree lock. The tree lock below only
 # serialises two gates on the SAME branch tree; it does nothing to stop N gates on N
 # DIFFERENT branches all running their trials at once, and that is exactly the gap
-# sp-083ux / sp-ld9j3 found: landing.sh's own certify loop honours SPIRA_CERTIFY_PAR by
-# limiting its own job count, but every OTHER caller — queue.sh submit's independent
-# gate.sh runs chief among them — starts a trial with no ceiling at all, so the host was
-# oversubscribed by however many aeons happened to submit at once. Enforcing the same
-# ceiling here, inside gate.sh itself, means every caller shares one admission pool
-# instead of each one pretending it is the only gate running.
+# sp-083ux / sp-ld9j3 found: every gate.sh caller — queue.sh submit's independent gate.sh
+# runs chief among them — started a trial with no ceiling at all, so the host was
+# oversubscribed by however many aeons happened to submit at once. Enforcing one ceiling
+# here, inside gate.sh itself, means every caller shares one admission pool instead of
+# each one pretending it is the only gate running.
 #
 # A COUNTING SEMAPHORE OF SPIRA_CERTIFY_PAR SLOTS, not a single lock: the whole point is to
-# allow that many trials concurrently, the same number landing.sh already budgets for, not
-# to serialise the host down to one gate at a time.
+# allow that many trials concurrently, not to serialise the host down to one gate at a time.
 #
-# THE DEFAULT MATCHES landing.sh's OWN FORMULA (spira/landing.sh:375) so a host with no
-# SPIRA_CERTIFY_PAR set gets the same ceiling everywhere rather than one number inside
-# landing.sh and an unbounded free-for-all everywhere else.
+# THE DEFAULT IS DERIVED FROM THE BOX (nproc/4, free-memory/400MiB, at least 1) so a host
+# with no SPIRA_CERTIFY_PAR set still gets a sane ceiling rather than an unbounded
+# free-for-all.
 _gate_admission_par() {
     if [ -n "${SPIRA_CERTIFY_PAR:-}" ]; then
         case "$SPIRA_CERTIFY_PAR" in *[!0-9]*|'') ;; *) printf '%s' "$SPIRA_CERTIFY_PAR"; return ;; esac

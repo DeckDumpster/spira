@@ -1,30 +1,26 @@
 #!/usr/bin/env bash
-# test-certify.sh — queue land mode: certify only after the gate passes.
+# test-certify.sh — queue land mode: a closed branch is CERTIFIED immediately, with no
+# local rebase and no local gate (law-a-round-takes-certified-tips). The round (batcher-cut)
+# and CI are the only judges of a SUBMITTED branch now; this pass is pure bookkeeping so the
+# round's own CERTIFIED-pool read finds a branch the moment its bead closes.
 #
-# Cases: a branch is CERTIFIED after the gate passes; a branch whose gate fails is
-# reopened; a branch whose rebase fails is reopened; moving the tip clears the
-# record so the next pass re-certifies; a push-mode fixture in the same repo-map
-# still pushes.
+# Cases: a branch is CERTIFIED with zero gate.sh calls; a second pass at the same tip is a
+# no-op; a tip move re-certifies the new tip, still with no gate call; ten branches in one
+# pass all reach CERTIFIED with zero gate.sh invocations total; a push-mode fixture in the
+# same repo-map still pushes and still calls the gate (positive control — proves the gate
+# stub counter works and that push mode is unaffected).
 #
-# The gate is a stub counter. Every silence below depends on the positive control
-# showing the counter works: the push-mode fixture must increment it.
+# The gate is a stub counter. Every "zero calls" assertion below depends on the positive
+# control showing the counter works: the push-mode fixture must increment it.
 #
 # confine.sh is a stub; the real db is testdb.sh with an embedded engine.
 # The bare remote is real git so ancestry checks are real.
 #
-# covers: spira/landing.sh spira/conf.sh spira/scratch-fence.sh
-# timeout: 300
+# covers: spira/landing.sh spira/conf.sh
+# timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
-before() {
-    local la lb
-    la=$(printf '%s\n' "$4" | grep -n "$2" | head -1 | cut -d: -f1)
-    lb=$(printf '%s\n' "$4" | grep -n "$3" | head -1 | cut -d: -f1)
-    [ -n "$la" ] && [ -n "$lb" ] && [ "$la" -lt "$lb" ] \
-        && ok "$1" \
-        || bad "$1" "[$2] (line ${la:--}) not before [$3] (line ${lb:--})"
-}
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -46,17 +42,16 @@ mkdir -p "$RUN/worktree" "$SH"
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
+stub queue.sh 'exit 0'
+stub gh 'exit 1'
 
-# THE GATE IS ALSO THE COUNTER. Each invocation appends the branch name and
-# SPIRA_GATE_ALL so the suite can assert it was (or was not) called, and with
-# what full-corpus setting (law-absence-needs-a-positive-control).
+# THE GATE IS ALSO THE COUNTER. Each invocation appends the branch name so the suite can
+# assert it was (or was not) called (law-absence-needs-a-positive-control).
 GATE_COUNT="$TMP/gate-count"
 stub gate.sh '
-printf "%s GATE_ALL=%s\n" "$1" "${SPIRA_GATE_ALL:-0}" >> "'"$GATE_COUNT"'"
+printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
 printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
 exit 0'
-
-stub gh 'exit 1'
 
 B() { bd -C "$SPIRA_DB" "$@"; }
 status_of() {
@@ -104,18 +99,16 @@ branch() {
 main_tip()     { git -C "$REMOTE" rev-parse main 2>/dev/null; }
 landstate()    { cat "$RUN/landstate/${1:-}" 2>/dev/null; }
 gate_n()       { [ -f "$GATE_COUNT" ] && wc -l < "$GATE_COUNT" || echo 0; }
-gate_all_of()  { grep "^spira/$1 " "$GATE_COUNT" 2>/dev/null | grep -o 'GATE_ALL=[^ ]*' | tail -1; }
-eject_count()  { cat "$RUN/eject-count/${1:-}" 2>/dev/null; }
 
 echo "test-certify.sh"
 
 # -----------------------------------------------------------------------------------------
-# QUEUE-MODE ENTRY: branch is CERTIFIED after the gate passes.
+# QUEUE-MODE ENTRY: a closed branch is CERTIFIED with zero gate calls.
 # -----------------------------------------------------------------------------------------
 seed; branch sp-cert-green
 before="$(main_tip)"
 out="$(landing)"
-is   "gate called at queue-mode entry"       "1"        "$(gate_n)"
+is   "gate NOT called at queue-mode entry"   "0"        "$(gate_n)"
 want "certify is reported"                   "certified spira/sp-cert-green" "$out"
 is   "remote main is unchanged"              "$before"  "$(main_tip)"
 case "$(landstate sp-cert-green)" in
@@ -125,177 +118,58 @@ esac
 is   "bead stays closed after certify"       "closed"   "$(status_of sp-cert-green)"
 
 # -----------------------------------------------------------------------------------------
-# SECOND PASS ON THE SAME TIP: gate not called again; the certification stands.
+# SECOND PASS ON THE SAME TIP: no-op — no gate call, no duplicate certify message.
 # -----------------------------------------------------------------------------------------
 out2="$(landing)"
-is   "gate not called again on second pass"  "0"        "$(gate_n)"
+is   "gate still not called on second pass"  "0"        "$(gate_n)"
 nowant "no second certify message"           "certified spira/sp-cert-green" "$out2"
 
 # -----------------------------------------------------------------------------------------
-# GATE FAILURE AT CERTIFICATION: a branch whose gate fails is reopened, not certified.
-# The gate stub is replaced with one that exits 1 (FAIL) for this branch, then restored.
-# This is the positive control for sp-hm2vw: a fence violation caught at certification
-# must reopen the bead and leave main unchanged.
-# -----------------------------------------------------------------------------------------
-seed; branch sp-cert-red
-stub gate.sh '
-printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
-if printf "%s" "$1" | grep -q "sp-cert-red"; then
-    printf "gate: VERDICT=FAIL reason=inventory branch=%s repo=%s\n" "$1" "${2:-?}" >&2
-    exit 1
-fi
-printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
-exit 0'
-before="$(main_tip)"
-out="$(landing)"
-is   "gate called for failing branch"        "1"        "$(gate_n)"
-want "failing branch is reopened"            "reopened sp-cert-red" "$out"
-is   "reopened bead is open"                 "open"     "$(status_of sp-cert-red)"
-is   "remote main is unchanged"              "$before"  "$(main_tip)"
-case "$(landstate sp-cert-red)" in
-    RED*) ok "landstate says RED for gate failure" ;;
-    *)    bad "landstate says RED for gate failure" "got: $(landstate sp-cert-red)" ;;
-esac
-# Restore the passing stub for subsequent tests.
-stub gate.sh '
-printf "%s GATE_ALL=%s\n" "$1" "${SPIRA_GATE_ALL:-0}" >> "'"$GATE_COUNT"'"
-printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
-exit 0'
-
-# -----------------------------------------------------------------------------------------
-# SCRATCH-FENCE AT CERTIFICATION: the gate stub below runs the real scratch-fence.sh against
-# the branch worktree instead of returning a canned verdict, so this exercises the actual
-# mechanism. A branch carrying a root-level aeon scratch file must be refused before a
-# CERTIFIED record is written, and the reopen note must name the offending file.
-#
-# SEEN RED FIRST (law-a-regression-test-must-be-seen-to-fail): before sp-hm2vw, queue-mode
-# certification ran no gate at all, so a branch like sp-scratch-drt below would have
-# certified silently (PR 59, run 35272201543).
-#
-# scratch-fence.sh locates the git root via its own script path ($0), so it is placed inside
-# the worktree at .test-spira/ — that subdir resolves to the worktree root via
-# `git rev-parse --show-toplevel`. It is untracked (created after the branch commit), so it
-# does not appear in `git ls-files`.
-# -----------------------------------------------------------------------------------------
-stub gate.sh '
-id="${1#spira/}"
-tree="'"$RUN"'/worktree/$id"
-printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
-scr_dir="$tree/.test-spira"
-mkdir -p "$scr_dir"
-cp "'"$SH"'/scratch-fence.sh" "$scr_dir/scratch-fence.sh"
-if ! fence_out="$(bash "$scr_dir/scratch-fence.sh" 2>&1)"; then
-    printf "%s\n" "$fence_out" >&2
-    printf "gate: VERDICT=FAIL reason=scratch-fence branch=%s repo=%s\n" "$1" "${2:-?}" >&2
-    exit 1
-fi
-printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
-exit 0'
-
-bead_for() {
-    local id="$1"
-    printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-goal","type":"parent-child"}]}\n' \
-        "$id" "$id" "$id" | testdb_seed
-}
-
-seed
-git -C "$REPO" worktree add -q -b "spira/sp-scratch-drt" "$RUN/worktree/sp-scratch-drt" main
-printf 'real work\n' > "$RUN/worktree/sp-scratch-drt/work.txt"
-printf 'aeon working note\n' > "$RUN/worktree/sp-scratch-drt/sp-scratch-drt.txt"
-git -C "$RUN/worktree/sp-scratch-drt" add -A
-git -C "$RUN/worktree/sp-scratch-drt" commit -q -m "sp-t8tmq sp-scratch-drt — adds scratch note at root"
-bead_for sp-scratch-drt
-
-before="$(main_tip)"
-out="$(landing)"
-is   "gate called for scratch-file branch"       "1"        "$(gate_n)"
-want "scratch branch is reopened"                "reopened sp-scratch-drt" "$out"
-is   "reopened bead status is open"              "open"     "$(status_of sp-scratch-drt)"
-is   "remote main unchanged after refusal"       "$before"  "$(main_tip)"
-case "$(landstate sp-scratch-drt)" in
-    RED*) ok "landstate is RED for scratch-fence failure" ;;
-    *)    bad "landstate is RED for scratch-fence failure" "got: $(landstate sp-scratch-drt)" ;;
-esac
-# The reopen note must name the scratch file so the next aeon knows what to remove.
-note_out="$(B show sp-scratch-drt --json 2>/dev/null \
-    | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-d = d if isinstance(d, list) else [d]
-print(d[0].get("notes", "") if d else "")' 2>/dev/null || true)"
-want "reopen note names the scratch file"        "sp-scratch-drt.txt" "$note_out"
-
-# POSITIVE CONTROL: under the same real scratch-fence gate, a clean branch still certifies —
-# proves the gate does not refuse everything.
-seed
-git -C "$REPO" worktree add -q -b "spira/sp-scratch-cln" "$RUN/worktree/sp-scratch-cln" main
-printf 'real work, no scratch file\n' > "$RUN/worktree/sp-scratch-cln/work.txt"
-git -C "$RUN/worktree/sp-scratch-cln" add -A
-git -C "$RUN/worktree/sp-scratch-cln" commit -q -m "sp-t8tmq sp-scratch-cln — clean branch"
-bead_for sp-scratch-cln
-
-out="$(landing)"
-is   "gate called for clean branch"              "1"        "$(gate_n)"
-want "clean branch is certified"                 "certified spira/sp-scratch-cln" "$out"
-case "$(landstate sp-scratch-cln)" in
-    CERTIFIED*) ok "landstate is CERTIFIED for clean branch" ;;
-    *)          bad "landstate is CERTIFIED for clean branch" "got: $(landstate sp-scratch-cln)" ;;
-esac
-
-# Restore the fast passing stub for subsequent tests.
-stub gate.sh '
-printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
-printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
-exit 0'
-
-# -----------------------------------------------------------------------------------------
-# CONFLICT AT ENTRY: a branch that does not rebase onto base is reopened and not
-# certified. This is the positive control: it proves landing.sh's rebase check is live.
-# -----------------------------------------------------------------------------------------
-seed; branch sp-cert-conflict
-# Advance the base so sp-cert-conflict's file conflicts.
-printf 'base-change\n' > "$REPO/sp-cert-conflict.txt"
-git -C "$REPO" add -A
-git -C "$REPO" commit -q -m "base: conflict with sp-cert-conflict"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
-out="$(landing)"
-want "conflicting branch is reopened"    "reopened sp-cert-conflict" "$out"
-is   "reopened bead is open"             "open"   "$(status_of sp-cert-conflict)"
-case "$(landstate sp-cert-conflict)" in
-    RED*) ok "landstate says RED for conflict" ;;
-    *)    bad "landstate says RED for conflict" "got: $(landstate sp-cert-conflict)" ;;
-esac
-
-# -----------------------------------------------------------------------------------------
-# TIP MOVE: moving the branch tip after certification clears the record. The next pass
-# must re-certify the new tip, calling the gate again.
+# TIP MOVE: moving the branch tip after certification re-certifies the new tip — still
+# with zero gate calls.
 # -----------------------------------------------------------------------------------------
 seed; branch sp-cert-move
 landing > /dev/null   # first pass: certify
-# Move the tip.
 printf 'v2\n' > "$RUN/worktree/sp-cert-move/sp-cert-move.txt"
 git -C "$RUN/worktree/sp-cert-move" add -A
 git -C "$RUN/worktree/sp-cert-move" commit -q -m "sp-cert-move sp-1fm88 — second commit"
 new_tip="$(git -C "$REPO" rev-parse spira/sp-cert-move 2>/dev/null)"
 out="$(landing)"   # second pass: re-certifies the new tip
-is   "gate called after tip move"  "1"  "$(gate_n)"
-want "second certify reported"     "certified spira/sp-cert-move" "$out"
+is   "gate not called after tip move"  "0"  "$(gate_n)"
+want "second certify reported"         "certified spira/sp-cert-move" "$out"
 case "$(landstate sp-cert-move)" in
     *"$new_tip"*) ok "landstate updated to new tip" ;;
     *)            bad "landstate updated to new tip" "expected [$new_tip] in [$(landstate sp-cert-move)]" ;;
 esac
 
 # -----------------------------------------------------------------------------------------
-# PUSH MODE STILL PUSHES: a push-mode repo in the same repo-map lands normally.
-# Queue-mode changes must not break the push path.
+# TEN BRANCHES, ONE PASS: every one reaches CERTIFIED and the gate is never invoked.
+# The acceptance fixture for law-a-round-takes-certified-tips — must be seen to fail
+# against a landing.sh that still gates queue-mode branches before certifying them.
+# -----------------------------------------------------------------------------------------
+seed
+for i in 1 2 3 4 5 6 7 8 9 10; do
+    branch "sp-ten-$i"
+done
+out="$(landing)"
+is "ten branches: zero gate.sh invocations" "0" "$(gate_n)"
+_certified_n=0
+for i in 1 2 3 4 5 6 7 8 9 10; do
+    case "$(landstate "sp-ten-$i")" in
+        CERTIFIED*) _certified_n=$(( _certified_n + 1 )) ;;
+        *) bad "sp-ten-$i reached CERTIFIED" "got: $(landstate "sp-ten-$i")" ;;
+    esac
+done
+is "ten branches: all ten reached CERTIFIED in one pass" "10" "$_certified_n"
+
+# -----------------------------------------------------------------------------------------
+# PUSH MODE STILL PUSHES, AND STILL GATES: a push-mode repo in the same repo-map lands
+# normally and still calls the gate — proves the counter is live and queue-mode's change
+# does not touch push mode.
 # -----------------------------------------------------------------------------------------
 PUSHREMOTE="$TMP/push-remote.git"
 git init -q --bare -b main "$PUSHREMOTE"
 
-# Reuse the same checked-out repo for the push fixture — a second remote, a second repo-map
-# entry. The landing worktree is keyed by repo basename, so two repos with the same path
-# would share it; use a separate push repo to keep them independent.
 PUSHREPO="$TMP/push-repo"
 git init -q -b main "$PUSHREPO"
 git -C "$PUSHREPO" commit -q --allow-empty -m base
@@ -324,233 +198,6 @@ out="$(landing)"
 push_after="$(git -C "$PUSHREMOTE" rev-parse main 2>/dev/null)"
 want "push-mode branch reports landed"  "landed spira/sp-push-a"  "$out"
 is   "push-mode remote actually moved"  "yes"  "$([ "$push_before" != "$push_after" ] && echo yes || echo no)"
-
-# -----------------------------------------------------------------------------------------
-# PARALLEL CERTIFY: with SPIRA_CERTIFY_PAR=2 and a gate that sleeps 3s, two branches are
-# certified in ~3s (parallel), not ~6s (serial). Both branches must reach CERTIFIED.
-# -----------------------------------------------------------------------------------------
-write_map  # restore queue-only map
-GATE_SLEEP=3
-stub gate.sh '
-printf "%s %s\n" "$(date +%s)" "$1" >> "'"$GATE_COUNT"'"
-sleep '"$GATE_SLEEP"'
-printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
-exit 0'
-
-stub queue.sh 'exit 0'
-rm -f "$GATE_COUNT"
-seed; branch sp-par-a; branch sp-par-b
-SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_CERTIFY_PAR=2 \
-        bash "$SH/landing.sh" > /dev/null 2>&1
-is "gate called for both branches with par=2" "2" "$(gate_n)"
-_t0=$(awk 'NR==1{print $1}' "$GATE_COUNT" 2>/dev/null || echo 0)
-_t1=$(awk 'END{print $1}' "$GATE_COUNT" 2>/dev/null || echo 0)
-_spread=$(( _t1 - _t0 ))
-# PARALLEL MEANS THE SECOND GATE STARTED WHILE THE FIRST WAS STILL RUNNING — not within a
-# second of it: under a 16-wide corpus the second dispatch lands 2s late and is still
-# parallel. Serial dispatch cannot start the second before the first's GATE_SLEEP ends.
-[ "$_spread" -lt "$GATE_SLEEP" ] \
-    && ok "both branches certified in parallel (start times ${_spread}s apart)" \
-    || bad "both branches certified in parallel" "gates started ${_spread}s apart — serial"
-case "$(landstate sp-par-a)" in CERTIFIED*) ok "sp-par-a certified" ;; *) bad "sp-par-a certified" "$(landstate sp-par-a)" ;; esac
-case "$(landstate sp-par-b)" in CERTIFIED*) ok "sp-par-b certified" ;; *) bad "sp-par-b certified" "$(landstate sp-par-b)" ;; esac
-
-# Restore the gate stub that logs GATE_ALL (required by the full-corpus assertions below).
-stub gate.sh '
-printf "%s GATE_ALL=%s\n" "$1" "${SPIRA_GATE_ALL:-0}" >> "'"$GATE_COUNT"'"
-printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
-exit 0'
-
-# -----------------------------------------------------------------------------------------
-# COMPLETION-ORDER: a gate dispatched second is certified as soon as it finishes, without
-# waiting for gates dispatched before it.
-#
-# Gate stub: "-fast" exits immediately; "-slow" waits until sp-co-fast's landstate reads
-# CERTIFIED (up to 15s), so under par=2 the order does not depend on how quickly the second
-# dispatch starts, or how long certification takes, on a loaded box. Under par=1 fast cannot
-# run while slow does, so slow times out its wait and certifies first.
-# sp-co-slow has an earlier closed_at, so it sorts first and is dispatched first.
-#
-# par=2: both gates start together; sp-co-fast finishes first and must be certified
-#        before sp-co-slow (which is still sleeping).
-# par=1: serial dispatch — sp-co-slow runs to completion before sp-co-fast starts,
-#        so sp-co-slow certifies first. This is the positive control proving the
-#        par=2 reversal is real, not an artefact of output order.
-# -----------------------------------------------------------------------------------------
-stub gate.sh '
-printf "%s %s\n" "$(date +%s)" "$1" >> "'"$GATE_COUNT"'"
-if printf "%s" "$1" | grep -q "\-slow"; then
-    i=0; until case "$(cat "'"$RUN"'/landstate/sp-co-fast" 2>/dev/null)" in CERTIFIED*) true;; *) false;; esac \
-        || [ $i -ge 150 ]; do sleep 0.1; i=$((i+1)); done
-fi
-printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
-exit 0'
-stub queue.sh 'exit 0'
-
-branch_with_date() {
-    local id="$1" cat="$2"
-    git -C "$REPO" worktree add -q -b "spira/$id" "$RUN/worktree/$id" main
-    printf '%s\n' "$id" > "$RUN/worktree/$id/$id.txt"
-    git -C "$RUN/worktree/$id" add -A
-    git -C "$RUN/worktree/$id" commit -q -m "feat: $id — work"
-    printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"%s","closed_at":"%s","dependencies":[{"issue_id":"%s","depends_on_id":"sp-goal","type":"parent-child"}]}\n' \
-        "$id" "$id" "$cat" "$cat" "$id" | testdb_seed
-}
-drop_branch() {
-    git -C "$REPO" worktree remove --force "$RUN/worktree/$1" >/dev/null 2>&1 || true
-    git -C "$REPO" branch -D "spira/$1" >/dev/null 2>&1 || true
-}
-
-# par=2: fast gate (dispatched second) is certified before slow gate (dispatched first)
-write_map
-testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-01T00:00:00Z"}
-JSONL
-rm -f "$GATE_COUNT" "$RUN"/landstate/sp-co-*
-branch_with_date sp-co-slow "2026-09-01T00:00:00Z"
-branch_with_date sp-co-fast "2026-09-02T00:00:00Z"
-co_out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_CERTIFY_PAR=2 bash "$SH/landing.sh" 2>&1)"
-want "par=2: sp-co-fast certified"                      "certified spira/sp-co-fast" "$co_out"
-want "par=2: sp-co-slow certified"                      "certified spira/sp-co-slow" "$co_out"
-before "par=2: fast certified before slow" \
-    "certified spira/sp-co-fast" "certified spira/sp-co-slow" "$co_out"
-
-# par=1 positive control: slow dispatched first, certifies first
-drop_branch sp-co-slow; drop_branch sp-co-fast
-testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-01T00:00:00Z"}
-JSONL
-rm -f "$GATE_COUNT" "$RUN"/landstate/sp-co-*
-branch_with_date sp-co-slow "2026-09-01T00:00:00Z"
-branch_with_date sp-co-fast "2026-09-02T00:00:00Z"
-co_out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_CERTIFY_PAR=1 bash "$SH/landing.sh" 2>&1)"
-want "par=1: sp-co-slow certified"                      "certified spira/sp-co-slow" "$co_out"
-want "par=1: sp-co-fast certified"                      "certified spira/sp-co-fast" "$co_out"
-before "par=1: slow certified before fast (serial)" \
-    "certified spira/sp-co-slow" "certified spira/sp-co-fast" "$co_out"
-
-# -----------------------------------------------------------------------------------------
-# IDLE-SKIP: when CI is idle (forge returns 0 for runs-active) and the cert queue is
-# empty, landing.sh certifies without calling gate.sh.
-#
-# TWO CASES:
-#   idle: forge returns 0 — gate must NOT be called; branch must be CERTIFIED.
-#   busy: forge returns 1 — gate IS called normally (positive control).
-#
-# SEEN RED WITHOUT THE FIX: removing the SPIRA_CERT_IDLE_SKIP block causes the gate
-# to be called even when CI is idle, so the "gate not called" assertion below fails.
-# -----------------------------------------------------------------------------------------
-
-# Restore normal (passing) gate and a counting queue stub.
-stub gate.sh '
-printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
-printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
-exit 0'
-stub queue.sh 'exit 0'
-
-# idle case: forge reports 0 active runs → gate bypassed, branch certified directly.
-stub forge.sh 'case "${1:-}" in runs-active) echo 0 ;; *) exit 0 ;; esac'
-
-# Clean landstate from previous test sections so queue_certified_list returns 0,
-# simulating an empty cert queue (the precondition for the idle-skip).
-rm -f "$RUN/landstate/"*
-
-write_map
-seed
-# AN EMPTY CERT QUEUE IS THE CASE'S PRECONDITION, so make it one. The par=1 case above leaves
-# sp-co-slow and sp-co-fast CERTIFIED; queue_certified_list counted them, the skip correctly
-# declined, and this case failed on every run once #283 put it on main (main gates
-# 35940444737, 35940777548). Clear the landstate and assert the precondition.
-rm -f "$RUN"/landstate/* "$RUN"/submitted/* 2>/dev/null || true
-is "idle precondition: no CERTIFIED landstate left over" "0" \
-    "$(grep -l '^CERTIFIED' "$RUN"/landstate/* 2>/dev/null | wc -l | tr -d ' ')"
-branch sp-idle-skip
-rm -f "$GATE_COUNT"
-idle_out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_FORGE="$SH/forge.sh" \
-        bash "$SH/landing.sh" 2>&1)"
-is   "idle: gate not called"    "0"        "$(gate_n)"
-want "idle: certify reported"   "certified spira/sp-idle-skip" "$idle_out"
-want "idle: says sole batch"    "sole batch member" "$idle_out"
-case "$(landstate sp-idle-skip)" in
-    CERTIFIED*) ok "idle: landstate says CERTIFIED" ;;
-    *)          bad "idle: landstate says CERTIFIED" "got: $(landstate sp-idle-skip)" ;;
-esac
-
-# busy case: forge reports 1 active run → gate IS called (positive control).
-stub forge.sh 'case "${1:-}" in runs-active) echo 1 ;; *) exit 0 ;; esac'
-
-# Clean previous landstate so the branch is re-evaluated.
-rm -f "$RUN/landstate/sp-idle-skip" "$RUN/submitted/sp-idle-skip" 2>/dev/null || true
-seed; branch sp-busy-gate
-rm -f "$GATE_COUNT"
-busy_out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_FORGE="$SH/forge.sh" \
-        bash "$SH/landing.sh" 2>&1)"
-is   "busy: gate called"        "1"        "$(gate_n)"
-want "busy: certify reported"   "certified spira/sp-busy-gate" "$busy_out"
-
-# Restore the gate stub that logs GATE_ALL (required by the full-corpus assertions below —
-# the busy/idle stubs above write only "%s\n", the same defect fixed for the earlier restore).
-stub gate.sh '
-printf "%s GATE_ALL=%s\n" "$1" "${SPIRA_GATE_ALL:-0}" >> "'"$GATE_COUNT"'"
-printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
-exit 0'
-
-# -----------------------------------------------------------------------------------------
-# CONSECUTIVE EJECTIONS: a member ejected twice requires a full-corpus gate.
-#
-# Plant eject-count=2 before the landing pass; verify the gate is called with
-# SPIRA_GATE_ALL=1 and CERTIFIED carries the "full-corpus" mode in its reason.
-# After a full-corpus pass the counter file must be cleared.
-#
-# POSITIVE CONTROL (law-absence-needs-a-positive-control): the same setup with
-# eject-count=1 must call the gate with SPIRA_GATE_ALL=0 — this case must be
-# seen before trusting the silence when count=2 (if GATE_ALL were always 1, both
-# branches would pass and the count=1 assertion would never distinguish them).
-# -----------------------------------------------------------------------------------------
-seed; branch sp-cert-fc
-# Plant count=2 (consecutive ejections).
-mkdir -p "$RUN/eject-count"
-printf '2\n' > "$RUN/eject-count/sp-cert-fc"
-out="$(landing)"
-is   "full-corpus: gate called with GATE_ALL=1"   "GATE_ALL=1"     "$(gate_all_of sp-cert-fc)"
-case "$(landstate sp-cert-fc)" in
-    CERTIFIED*full-corpus*) ok "full-corpus: landstate says CERTIFIED full-corpus" ;;
-    *) bad "full-corpus: landstate says CERTIFIED full-corpus" "got: $(landstate sp-cert-fc)" ;;
-esac
-is   "full-corpus: counter cleared after full-corpus pass" "" "$(eject_count sp-cert-fc)"
-
-seed; branch sp-cert-fc1
-# Plant count=1 (single ejection — diff-selected gate suffices).
-printf '1\n' > "$RUN/eject-count/sp-cert-fc1"
-out="$(landing)"
-is   "full-corpus-ctrl: gate called with GATE_ALL=0" "GATE_ALL=0" "$(gate_all_of sp-cert-fc1)"
-case "$(landstate sp-cert-fc1)" in
-    CERTIFIED*)
-        ls_reason="$(awk '{print $4}' "$RUN/landstate/sp-cert-fc1" 2>/dev/null)"
-        [ "$ls_reason" != "full-corpus" ] \
-            && ok "full-corpus-ctrl: landstate reason is not full-corpus" \
-            || bad "full-corpus-ctrl: landstate reason is not full-corpus" "got: $ls_reason" ;;
-    *) bad "full-corpus-ctrl: member CERTIFIED" "got: $(landstate sp-cert-fc1)" ;;
-esac
-# Counter not cleared (diff-selected pass does not reset it).
-is "full-corpus-ctrl: counter not cleared" "1" "$(eject_count sp-cert-fc1)"
+is   "push-mode positive control: gate was called" "1" "$(gate_n)"
 
 tl_summary
