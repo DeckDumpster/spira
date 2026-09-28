@@ -407,34 +407,49 @@ _gate_admission_par() {
     [ "$par_mem" -lt "$par" ] && par="$par_mem"
     printf '%s' "$par"
 }
+# FENCES-ONLY CERTIFICATION TAKES NO ADMISSION SLOT. The semaphore bounds how many SUITE
+# runs share the host's CPU and memory at once — that is the resource landing.sh's own
+# certify_pass_par formula sizes for. A SPIRA_GATE_SUITES=off run (landing.sh's queue-mode
+# fences pass) never reaches a suite: layer 1, skew.sh and the repository's fence commands
+# are the whole trial, cheap and already serialised only by the tree lock below. Charging it
+# a suite slot queued it behind real suite runs for a resource it never touched, which is
+# what stranded aeons in teardown while every slot was held by branches actually running
+# suites (sp-dv6ae).
 ADMISSION_DIR="$SPIRA_RUN/gate-admission"
-mkdir -p "$ADMISSION_DIR" 2>/dev/null || true
-ADMISSION_PAR="$(_gate_admission_par)"
-case "$ADMISSION_PAR" in ''|*[!0-9]*) ADMISSION_PAR=1 ;; esac
-ADMISSION_WAIT="${SPIRA_GATE_LOCK_WAIT:-$(( ${SPIRA_GATE_TIMEOUT:-2700} * 4 ))}"
-ADMISSION_WAIT0=$(date +%s)
 ADMISSION_HELD=""
-while :; do
-    slot=1
-    while [ "$slot" -le "$ADMISSION_PAR" ]; do
-        exec 8>"$ADMISSION_DIR/slot.$slot.lock"
-        if flock -n 8; then
-            ADMISSION_HELD="$slot"
-            break 2
-        fi
-        exec 8>&-
-        slot=$(( slot + 1 ))
-    done
-    if [ $(( $(date +%s) - ADMISSION_WAIT0 )) -ge "$ADMISSION_WAIT" ]; then
-        verdict "$NV" admission-timeout \
-            "gate: all $ADMISSION_PAR host-wide gate admission slots busy for ${ADMISSION_WAIT}s — no verdict on $BR
+if [ "${SPIRA_GATE_SUITES:-on}" != off ]; then
+    mkdir -p "$ADMISSION_DIR" 2>/dev/null || true
+    ADMISSION_WAIT="${SPIRA_GATE_LOCK_WAIT:-$(( ${SPIRA_GATE_TIMEOUT:-2700} * 4 ))}"
+    ADMISSION_WAIT0=$(date +%s)
+    while :; do
+        # RE-READ EACH PASS, NOT COMPUTED ONCE BEFORE THE LOOP. When SPIRA_CERTIFY_PAR is
+        # unset this recomputes from the host's own live nproc/MemAvailable, so a gate
+        # already waiting notices the box getting less busy rather than acting on a snapshot
+        # from whenever its own wait began. Cheap to redo every second: an int comparison, or
+        # one nproc/awk pair.
+        ADMISSION_PAR="$(_gate_admission_par)"
+        case "$ADMISSION_PAR" in ''|*[!0-9]*) ADMISSION_PAR=1 ;; esac
+        slot=1
+        while [ "$slot" -le "$ADMISSION_PAR" ]; do
+            exec 8>"$ADMISSION_DIR/slot.$slot.lock"
+            if flock -n 8; then
+                ADMISSION_HELD="$slot"
+                break 2
+            fi
+            exec 8>&-
+            slot=$(( slot + 1 ))
+        done
+        if [ $(( $(date +%s) - ADMISSION_WAIT0 )) -ge "$ADMISSION_WAIT" ]; then
+            verdict "$NV" admission-timeout \
+                "gate: all $ADMISSION_PAR host-wide gate admission slots busy for ${ADMISSION_WAIT}s — no verdict on $BR
 gate: this is host-wide gate concurrency (SPIRA_CERTIFY_PAR=$ADMISSION_PAR), not a fault in the branch."
-    fi
-    sleep 1
-done
-# fd 8 stays open (and the flock held) for the rest of this process's life; it is released
-# automatically when gate.sh exits, whichever way it exits — no explicit unlock needed, and
-# nothing here can leak the slot past this trial.
+        fi
+        sleep 1
+    done
+    # fd 8 stays open (and the flock held) for the rest of this process's life; it is released
+    # automatically when gate.sh exits, whichever way it exits — no explicit unlock needed, and
+    # nothing here can leak the slot past this trial.
+fi
 
 # THE TREE IS THE BRANCH, never the shared checkout. `cd "$REPO"` would run the copy of
 # these suites that is already installed on main — so a branch that breaks a guard would be

@@ -24,34 +24,31 @@
 #   2. gate status 1 (FAIL verdict already on record for this tree) — REOPENS the bead with
 #      the recorded evidence, rather than leaving it for a later pass to rediscover.
 #   3. gate status 3 (no gate ever ran), branch ahead of base, no existing CERTIFIED record —
-#      aeon.sh certifies the branch itself (queue.sh submit), landstate is CERTIFIED at its
-#      tip, and the bead ends open+spira-submitted (sp-qsona: certification proceeds from
-#      submitted; only the landing pass closes a work bead).
-#   4. gate status 3, self-certification comes back red — the bead is REOPENED with the
-#      queue.sh submit output as evidence.
-#   4a. gate status 3, self-certification comes back NO_VERDICT (exit 75) or BASE_FAIL
-#      (exit 76) — neither is the branch's fault (sp-77fq0), so the bead is NOT reopened
-#      as cert-gate-red: it converts to submitted exactly like a successful certification,
-#      and charges no attempt.
-#   5. gate status 3, but this exact tip is ALREADY CERTIFIED (the session submitted it
-#      itself) — aeon.sh does not re-certify.
-#   6. gate status 3, branch has no commits ahead of the base (a delivers-only close) —
+#      aeon.sh does NOT certify the branch itself (sp-dv6ae: queue.sh submit runs gate.sh,
+#      which can block this session on host-wide admission for as long as every slot is
+#      busy, holding its fleet slot the whole time). The note says certification is handed
+#      to the landing pass, no landstate is written, queue.sh is never called, and the bead
+#      still ends open+spira-submitted (sp-qsona: certification proceeds from submitted;
+#      only the landing pass closes a work bead).
+#   4. gate status 3, but this exact tip is ALREADY CERTIFIED (the session submitted it
+#      itself, or an earlier pass did) — aeon.sh does not defer and never calls queue.sh.
+#   5. gate status 3, branch has no commits ahead of the base (a delivers-only close) —
 #      nothing to certify, no queue.sh call is made.
-#   7. gate-run.sh ITSELF (not the stub): a verdict recorded for one tree, read back after
+#   6. gate-run.sh ITSELF (not the stub): a verdict recorded for one tree, read back after
 #      the base moved and the branch was rebased onto it, answers status 4 — never the
 #      same 3 it would answer for a branch that was never gated at all (sp-7uah8).
-#   8. gate status 4 through aeon.sh's own routing (the stub): self-certifies exactly as
-#      status 3 does, but the note names the stale verdict and never claims no gate ran.
-#   9. gate-run.sh ITSELF: a run that started and then died without ever recording a verdict
+#   7. gate status 4 through aeon.sh's own routing (the stub): defers exactly as status 3
+#      does, but the note names the stale verdict and never claims no gate ran.
+#   8. gate-run.sh ITSELF: a run that started and then died without ever recording a verdict
 #      answers 5, never 1 — 1 must mean a real recorded FAIL from gate.sh, not a corpse with
 #      no rc file (sp-k7klr: this collapse is what let sp-5dcpj be reopened as cert-gate-red
 #      20+ times against one dead run, with no code change in between).
-#   10. gate status 5 through aeon.sh's own routing (the stub): self-certifies exactly as
-#      status 3 does, and the note never claims a recorded FAIL verdict.
+#   9. gate status 5 through aeon.sh's own routing (the stub): defers exactly as status 3
+#      does, and the note never claims a recorded FAIL verdict.
 #
 # SUBMITTED, NOT CLOSED (sp-qsona). Every case whose close is not undone by a reopen ends
-# open carrying spira-submitted — the conversion runs AFTER the gate/self-certify branch, so
-# a reopen there (FAIL verdict, red self-certification) leaves the bead plain open and
+# open carrying spira-submitted — the conversion runs AFTER the gate/defer branch, so a
+# reopen there (a FAIL verdict already on record, st=1) leaves the bead plain open and
 # claimable instead. The delivers:action case is exempt from the conversion and stays closed.
 #
 # covers: spira/aeon.sh spira/gate-run.sh
@@ -258,62 +255,25 @@ nowant "st=1: and NOT marked submitted — it must be claimable again" "spira-su
 
 # ======================================================================================
 echo
-echo "st=3, branch ahead of base, nothing CERTIFIED yet — aeon.sh self-certifies (sp-u9f82):"
+echo "st=3, branch ahead of base, nothing CERTIFIED yet — aeon.sh defers to the landing pass"
+echo "instead of self-certifying (sp-dv6ae, replacing sp-u9f82's self-certify-here fix):"
 # ======================================================================================
 fresh; seed sp-cert-ok
 run_aeon 3 0
-want "self-cert PASS: note mentions 'Certified by aeon.sh'" "Certified by aeon.sh" "$(bead_notes sp-cert-ok)"
-want "self-cert PASS: log mentions certified" "certified by aeon.sh" "$(cat "$TMP/out" 2>/dev/null)"
-is   "self-cert PASS: bead is converted to submitted, not left closed" "open" "$(bead_status sp-cert-ok)"
-want "self-cert PASS: carrying the submitted label" "spira-submitted" "$(bead_labels sp-cert-ok)"
+want "defer: note hands certification to the landing pass" "handed to the landing pass" "$(bead_notes sp-cert-ok)"
+nowant "defer: note never claims aeon.sh certified it" "Certified by aeon.sh" "$(bead_notes sp-cert-ok)"
+want "defer: log mentions handing certification to the landing pass" "handed to the landing pass" "$(cat "$TMP/out" 2>/dev/null)"
+is   "defer: bead is converted to submitted, not left closed" "open" "$(bead_status sp-cert-ok)"
+want "defer: carrying the submitted label" "spira-submitted" "$(bead_labels sp-cert-ok)"
+nowant "defer: queue.sh submit was never called — no blocking self-cert" "spira/sp-cert-ok" \
+    "$(cat "$TMP/queue-calls.log" 2>/dev/null)"
 tip="$(git -C "$REPO" rev-parse spira/sp-cert-ok 2>/dev/null)"
-want "self-cert PASS: landstate is CERTIFIED at the branch tip" "CERTIFIED $tip" \
+nowant "defer: no landstate is written — certification is the landing pass's to run" "CERTIFIED $tip" \
     "$(cat "$SPIRA_RUN/landstate/sp-cert-ok" 2>/dev/null)"
 
 # ======================================================================================
 echo
-echo "st=3, self-certification comes back red — the bead is reopened with the evidence:"
-# ======================================================================================
-fresh; seed sp-cert-red
-run_aeon 3 1
-want "self-cert RED: note mentions self-certification failure" "queue.sh submit) and it failed" "$(bead_notes sp-cert-red)"
-want "self-cert RED: log mentions REOPENED" "REOPENED — self-certification failed" \
-    "$(cat "$TMP/out" 2>/dev/null)"
-want "self-cert RED: bead is reopened" "open" "$(bead_status sp-cert-red)"
-nowant "self-cert RED: and NOT marked submitted — it must be claimable again" "spira-submitted" "$(bead_labels sp-cert-red)"
-
-# ======================================================================================
-echo
-echo "st=3, self-certification comes back NO_VERDICT (exit 75) — a harness fault, not the"
-echo "branch's — no attempt charged, converted to submitted like any other non-reopened"
-echo "close, no cert-gate-red event:"
-# ======================================================================================
-fresh; seed sp-cert-noverdict
-run_aeon 3 75
-want "self-cert NO_VERDICT: note names the outcome" "NO_VERDICT" "$(bead_notes sp-cert-noverdict)"
-want "self-cert NO_VERDICT: note says not the branch's fault" "not the branch's fault" "$(bead_notes sp-cert-noverdict)"
-want "self-cert NO_VERDICT: log says left closed" "left closed" "$(cat "$TMP/out" 2>/dev/null)"
-nowant "self-cert NO_VERDICT: log must never say cert-gate-red REOPENED" "REOPENED — self-certification failed" "$(cat "$TMP/out" 2>/dev/null)"
-is   "self-cert NO_VERDICT: bead is converted to submitted, not left plain open" "open" "$(bead_status sp-cert-noverdict)"
-want "self-cert NO_VERDICT: carrying the submitted label — not reopened as cert-gate-red" "spira-submitted" "$(bead_labels sp-cert-noverdict)"
-
-# ======================================================================================
-echo
-echo "st=3, self-certification comes back BASE_FAIL (exit 76) — the base repository's"
-echo "problem, not the branch's — no attempt charged, converted to submitted like any"
-echo "other non-reopened close, no cert-gate-red event:"
-# ======================================================================================
-fresh; seed sp-cert-basefail
-run_aeon 3 76
-want "self-cert BASE_FAIL: note names the outcome" "BASE_FAIL" "$(bead_notes sp-cert-basefail)"
-want "self-cert BASE_FAIL: note says not the branch's fault" "not the branch's fault" "$(bead_notes sp-cert-basefail)"
-nowant "self-cert BASE_FAIL: log must never say cert-gate-red REOPENED" "REOPENED — self-certification failed" "$(cat "$TMP/out" 2>/dev/null)"
-is   "self-cert BASE_FAIL: bead is converted to submitted, not left plain open" "open" "$(bead_status sp-cert-basefail)"
-want "self-cert BASE_FAIL: carrying the submitted label — not reopened as cert-gate-red" "spira-submitted" "$(bead_labels sp-cert-basefail)"
-
-# ======================================================================================
-echo
-echo "st=3, this tip is already CERTIFIED — no re-certification:"
+echo "st=3, this tip is already CERTIFIED — no deferral needed, no re-certification:"
 # ======================================================================================
 fresh; seed sp-cert-already
 run_aeon 3 0
@@ -383,48 +343,37 @@ is "never gated: status still answers 3" "3" "$rc3"
 
 # ======================================================================================
 echo
-echo "st=4 through aeon.sh's own routing (the stub): self-certifies like st=3, but the"
-echo "note names the stale verdict and never claims no gate ran (sp-7uah8):"
+echo "st=4 through aeon.sh's own routing (the stub): defers like st=3, but the note names"
+echo "the stale verdict and never claims no gate ran (sp-7uah8):"
 # ======================================================================================
 fresh; seed sp-gcs-stale4
 run_aeon 4 0
 want "st=4: note names the stale verdict as the reason, not a missing gate" \
-    "stopped applying" "$(bead_notes sp-gcs-stale4)"
+    "no longer applies" "$(bead_notes sp-gcs-stale4)"
 nowant "st=4: note must never claim no gate ran" "no gate ran" "$(bead_notes sp-gcs-stale4)"
-want "st=4: log mentions certifying after a stale verdict" \
-    "certified by aeon.sh after a stale gate verdict" "$(cat "$TMP/out" 2>/dev/null)"
+want "st=4: log mentions handing certification to the landing pass" \
+    "handed to the landing pass" "$(cat "$TMP/out" 2>/dev/null)"
 is   "st=4: bead is not reopened — converted to submitted" "open" "$(bead_status sp-gcs-stale4)"
 want "st=4: carrying the submitted label" "spira-submitted" "$(bead_labels sp-gcs-stale4)"
+nowant "st=4: queue.sh submit was never called — no blocking self-cert" "spira/sp-gcs-stale4" \
+    "$(cat "$TMP/queue-calls.log" 2>/dev/null)"
 
 # ======================================================================================
 echo
 echo "st=5 (gate run died before recording a verdict) through aeon.sh's own routing (the"
-echo "stub): self-certifies exactly like st=3 — and the note never claims a FAIL verdict"
+echo "stub): defers exactly like st=3 — and the note never claims a FAIL verdict"
 echo "(sp-k7klr: that conflation is the exact bug that reopened sp-5dcpj 20+ times):"
 # ======================================================================================
 fresh; seed sp-gcs-died5
 run_aeon 5 0
-want "st=5: note mentions certification, not a FAIL verdict" "Certified by aeon.sh" "$(bead_notes sp-gcs-died5)"
+want "st=5: note hands certification to the landing pass" "handed to the landing pass" "$(bead_notes sp-gcs-died5)"
 nowant "st=5: note must never claim a recorded FAIL verdict" "FAIL gate verdict" "$(bead_notes sp-gcs-died5)"
-want "st=5: log mentions certifying after a died gate run" \
-    "certified by aeon.sh after a died gate run" "$(cat "$TMP/out" 2>/dev/null)"
+want "st=5: log mentions handing certification to the landing pass" \
+    "handed to the landing pass" "$(cat "$TMP/out" 2>/dev/null)"
 is   "st=5: bead is not reopened — converted to submitted" "open" "$(bead_status sp-gcs-died5)"
 want "st=5: carrying the submitted label" "spira-submitted" "$(bead_labels sp-gcs-died5)"
-
-# ======================================================================================
-echo
-echo "st=5, self-certification comes back red — reopened on the fresh evaluation, never on"
-echo "the died run itself being mistaken for a recorded FAIL:"
-# ======================================================================================
-fresh; seed sp-gcs-died5-red
-run_aeon 5 1
-want "st=5 red: note mentions self-certification failure" "queue.sh submit) and it failed" "$(bead_notes sp-gcs-died5-red)"
-nowant "st=5 red: note must never claim closed against a recorded FAIL verdict" \
-    "closed against a recorded FAIL gate verdict" "$(bead_notes sp-gcs-died5-red)"
-want "st=5 red: log mentions REOPENED" "REOPENED — self-certification failed after a died gate run" \
-    "$(cat "$TMP/out" 2>/dev/null)"
-want "st=5 red: bead is reopened" "open" "$(bead_status sp-gcs-died5-red)"
-nowant "st=5 red: and NOT marked submitted — it must be claimable again" "spira-submitted" "$(bead_labels sp-gcs-died5-red)"
+nowant "st=5: queue.sh submit was never called — no blocking self-cert" "spira/sp-gcs-died5" \
+    "$(cat "$TMP/queue-calls.log" 2>/dev/null)"
 
 # ======================================================================================
 echo

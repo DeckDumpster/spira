@@ -200,14 +200,25 @@ _n="$(grep -c 'select\.sh' "$HERE/gate-spira.sh" 2>/dev/null || true)"
     || bad "E4: gate-spira.sh calls select.sh" "no reference found"
 
 # E5: testenv-batch.sh calls select.sh with --no-all-fallback (keeps gate cheap;
-#     timed runner gate-spira.sh omits the flag and keeps the full fallback).
+#     the round's own scheduled run provides full-corpus coverage instead).
 _n="$(grep -c 'no-all-fallback' "$HERE/testenv-batch.sh" 2>/dev/null || true)"
 [ "${_n:-0}" -ge 1 ] && ok "E5: testenv-batch.sh uses --no-all-fallback" \
     || bad "E5: testenv-batch.sh uses --no-all-fallback" "no reference found"
 
-# E6: gate-spira.sh does NOT use --no-all-fallback (it keeps the full fallback).
+# E6: gate-spira.sh (the per-branch/aeon gate) ALSO uses --no-all-fallback —
+# sp-dv6ae: a branch touching a plumbing file (conf.sh) used to run the entire
+# non-gated corpus here for coverage the round's own scheduled run already
+# provides (law-local-gates-buy-latency-not-coverage). --report-file replaces
+# the fallback with a warning naming what it would have covered.
 _n="$(grep -c 'no-all-fallback' "$HERE/gate-spira.sh" 2>/dev/null || true)"
-iseq "E6: gate-spira.sh does not use --no-all-fallback (keeps full fallback)" "${_n:-0}" "0"
+[ "${_n:-0}" -ge 1 ] && ok "E6: gate-spira.sh uses --no-all-fallback" \
+    || bad "E6: gate-spira.sh uses --no-all-fallback" "no reference found"
+
+# E6b: gate-spira.sh reports what the fallback would have covered via --report-file,
+# rather than silently narrowing an unmapped file's coverage.
+_n="$(grep -c -- '--report-file' "$HERE/gate-spira.sh" 2>/dev/null || true)"
+[ "${_n:-0}" -ge 1 ] && ok "E6b: gate-spira.sh uses --report-file" \
+    || bad "E6b: gate-spira.sh uses --report-file" "no reference found"
 
 # E7: gate-spira.sh calls select.sh with --files (uses pre-computed list from gate.sh,
 #     not --base/--head). This keeps the interface compatible with test fixtures that
