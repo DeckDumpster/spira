@@ -26,7 +26,7 @@
 # the marker; only a successful prompt-file write does.
 #
 # tier: T1
-# covers: spira/watchtower.sh
+# covers: spira/watchtower.sh spira/lib.sh spira/aeon.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -73,13 +73,36 @@ wt_file() {  # wt_file [VAR=val ...] -> $TMP/ops-prompt written
 fresh() { rm -rf "$TMP/run"; mkdir -p "$TMP/run/landstate"; }
 
 # Plant a lapse record whose filename timestamp is $1 (YYYYMMDDTHHmmSSZ format)
-# and whose bead id is $2. Written in the same format aeon.sh uses.
+# and whose bead id is $2. Written in the same format aeon.sh uses. The marker-filtering
+# tests below need specific, controllable, out-of-order timestamps that the real writer
+# (which always stamps "now") cannot produce, so this hand-written fixture stays for those.
 plant_lapse() {
     local ts="$1" bead="$2"
     mkdir -p "$TMP/run/lapsed"
     printf 'bead: %s\nquiet: 600s\nlast: writing output file\nbranch: spira/%s\ntip: abc1234\n' \
         "$bead" "$bead" > "$TMP/run/lapsed/${bead}-${ts}"
 }
+
+# ======================================================================================
+echo
+echo "gap G8 — the real aeon.sh writer feeds the reader, not a hand-written fixture:"
+# ======================================================================================
+# THE WRITER ITSELF, not a copy of what it emits (mirrors test-watchtower.sh's land_mark
+# lift, law-prefer-the-real-dependency). Every assertion above and below this block is
+# checked through plant_lapse's hand-formatted record, which reproduces whichever half of
+# the aeon.sh/watchtower.sh format the test author remembered. This one proves the two
+# programs still agree on the format lib.sh's write_lapse_record actually writes.
+fresh
+eval "$(sed -n '/^write_lapse_record() *{/,/^}/p' "$HERE/lib.sh")" 2>/dev/null
+[ "$(type -t write_lapse_record 2>/dev/null)" = function ] \
+    && ok "lib.sh's write_lapse_record could be lifted out and run" \
+    || bad "lib.sh's write_lapse_record could be lifted out and run" "no such function — the record format has moved"
+if [ "$(type -t write_lapse_record 2>/dev/null)" = function ]; then
+    SPIRA_RUN="$TMP/run" write_lapse_record sp-real 600 "writing output file" cafe5 >/dev/null
+fi
+snap="$(wt)"
+want "a record from the real writer reaches the snapshot" "sp-real" "$snap"
+want "and carries the real writer's quiet field"          "quiet"   "$snap"
 
 # ======================================================================================
 echo
@@ -207,18 +230,10 @@ snap="$(wt)"
 nowant "after the marker advances, the old record is not shown" "sp-y" "$snap"
 want   "and the section renders none since last sweep"   "none since last sweep" "$snap"
 
-# ======================================================================================
-echo
-echo "the lapsed-aeons section is present in the rendered snapshot alongside other sections:"
-# ======================================================================================
-# The section must not displace any existing section. A set -u failure would truncate
-# the snapshot silently, making many assertions pass on an absent body.
-fresh
-plant_lapse 20260912T100000Z sp-whole
-snap="$(wt)"
-for section in 'The far end' 'The Sending' 'The workers' 'Lapsed aeons' 'The menu' 'Can this snapshot be believed'; do
-    want "snapshot still carries: $section" "$section" "$snap"
-done
+# D12: the "every section present alongside Lapsed aeons" loop that used to live here
+# merged into test-watchtower.sh's own whole-snapshot render test (the two differed only
+# in 'The graph' vs 'Lapsed aeons' — one snapshot now plants both fixtures and checks all
+# seven sections in one pass).
 
 # ======================================================================================
 echo

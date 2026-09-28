@@ -2642,6 +2642,14 @@ bump_timeout() { return 0; }
 bump_recur()   { _bump_write_event "${1:-}" recurred  "${2:-unrecorded}"; }
 bump_lapsed()  { _bump_write_event "${1:-}" lapsed    "${2:-unrecorded}"; }
 
+write_lapse_record() {  # write_lapse_record <bead> <quiet_s> <last_action> <tip> -> $SPIRA_RUN/lapsed/<bead>-<ts>
+    local bead="$1" quiet="$2" last="$3" tip="$4"
+    mkdir -p "$SPIRA_RUN/lapsed" 2>/dev/null || return 0
+    printf 'bead: %s\nquiet: %ss\nlast: %s\nbranch: spira/%s\ntip: %s\n' \
+        "$bead" "$quiet" "$last" "$bead" "$tip" \
+        > "$SPIRA_RUN/lapsed/$bead-$(date -u +%Y%m%dT%H%M%SZ)"
+}
+
 # bump_poison_cleared <id> <cause> — the event _attempts_sql_query/_check4_bulk_sql floor on
 # (sp-qd2ul). Written by attempts.sh clear, never by a bare label removal: a clear that leaves
 # no trace here is indistinguishable from one that was never judged, and the next CHECK 4 pass

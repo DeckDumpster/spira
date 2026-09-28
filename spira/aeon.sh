@@ -756,7 +756,7 @@ print(d[0].get("status","") if d else "")' 2>/dev/null)"
             _d_thrash_tip="" _d_thrash_charged=no _d_thrash_streak=0 _d_lapsed=no \
             _d_lapsed_quiet="" _d_lapsed_last="" _d_gate=no _d_gate_why="" _d_decision=no \
             _d_operator=no _d_submitted=no _d_yield=no _d_outcome="-" _d_line _d_status _d_charge \
-            _d_reqcause _d_notekey _lapsed_body _lapsed_ts _rq_count
+            _d_reqcause _d_notekey _lapsed_body _rq_count
 
         if reset_at="$(capacity_reset_at "$LOGF")"; then
             _d_cap_rc=0; _d_reset="$reset_at"
@@ -852,12 +852,8 @@ Requeued (thrash): the deliverable did not move for ${SPIRA_THRASH_MINUTES:-20}m
             # bead nothing can finish reaches the escalation threshold. Branch and worktree
             # are preserved (the kill left them intact) so attempt 2 can continue.
             bump_lapsed "$BEAD_ID" "${_d_lapsed_last:-?}"
-            mkdir -p "$SPIRA_RUN/lapsed"
-            _lapsed_ts="$(date -u +%Y%m%dT%H%M%SZ)"
-            printf 'bead: %s\nquiet: %ss\nlast: %s\nbranch: spira/%s\ntip: %s\n' \
-                "$BEAD_ID" "${_d_lapsed_quiet:-?}" "${_d_lapsed_last:-?}" \
-                "$BEAD_ID" "$(git -C "${WORK:-/dev/null}" rev-parse --short HEAD 2>/dev/null || echo ?)" \
-                > "$SPIRA_RUN/lapsed/$BEAD_ID-$_lapsed_ts"
+            write_lapse_record "$BEAD_ID" "${_d_lapsed_quiet:-?}" "${_d_lapsed_last:-?}" \
+                "$(git -C "${WORK:-/dev/null}" rev-parse --short HEAD 2>/dev/null || echo ?)"
             bdq note "$BEAD_ID" "Lease lapsed: the trace was silent for ${_d_lapsed_quiet:-?}s (limit $(fayth_lease_seconds "${FAYTH_LEASE_MINUTES:-}")s). Last: ${_d_lapsed_last:-?}. Branch spira/$BEAD_ID preserved. Attempt 2 should start from where attempt 1 wedged." >/dev/null 2>&1
             log "$FAYTH: $BEAD_ID lease lapsed — attempt charged (quiet ${_d_lapsed_quiet:-?}s)"
             release_own_claim "$BEAD_ID"
