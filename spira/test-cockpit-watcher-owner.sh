@@ -360,11 +360,9 @@ fi
 want "unit name passed to systemctl" "spira-watch-view-test.service" \
     "$(cat "$CALLS_LOG" 2>/dev/null)"
 
-if lock_free "$CR_LOCK"; then
-    bad "unit enabled → watcher running (lock held)" "lock is free after start"
-else
-    ok "unit enabled → watcher running (lock held)"
-fi
+# "unit enabled → watcher running (lock held)" was deleted in round 116: it flipped (red in
+# round 115's 24-wide corpus, green on rerun at the same head) — a lock-acquired-by-now race
+# with no bound. law-a-test-that-flips-is-deleted; deterministic re-add is sp-jacrs.
 
 lock_holder="$(lock_pid "$CR_LOCK" 2>/dev/null || true)"
 main_pid="$(cat "$UNIT_PID_FILE" 2>/dev/null || true)"
