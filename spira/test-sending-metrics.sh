@@ -38,6 +38,7 @@
 # string and the suite is hermetic by construction.
 #
 # defect: sp-1smg
+# tier: T1
 # covers: spira/cockpit-metrics.py
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

@@ -29,6 +29,7 @@
 # groom_claims_verified_table (aeon/src/trace.rs). T3 (below) is unaffected — it drives the
 # real `aeon` binary end to end and does not care whether the family lives in bash or Rust.
 #
+# tier: T3
 # covers: aeon/src/* spira/chamber/groomer.fayth spira/conf.sh UC-aeon-execution-16
 # defect: sp-yr4ih
 # scar: groomer wrote ESCALATED to the groom log without calling mail; sentinel accepted the log line as evidence of the escalation

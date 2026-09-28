@@ -23,6 +23,7 @@
 #   - Each test that mutates env runs in a subshell; stage vars cannot leak
 #   - The real SPIRA_DB (before stage eval) is never written to in any test
 #
+# tier: T3
 # covers: release/src/canary.rs release/src/stage.rs
 # scar: unrecorded
 set -uo pipefail

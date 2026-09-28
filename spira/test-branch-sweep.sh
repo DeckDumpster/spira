@@ -17,6 +17,7 @@
 # actual refs, which a stub cannot stand in for.
 #
 # defect: sp-6hjh3
+# tier: T2
 # covers: spira/branch-sweep.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

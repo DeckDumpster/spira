@@ -18,6 +18,7 @@
 #      more. `layout.sh up` now marks the WINDOW itself (`@cockpit_up`), which survives
 #      every dashboard pane dying.
 #
+# tier: T2
 # covers: cockpit/ops/src/health.rs cockpit/ops/src/layout.rs
 set -uo pipefail
 

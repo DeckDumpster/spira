@@ -20,7 +20,7 @@
 # remembered; the seam between writer and reader is what the test exists to cover.
 #
 # tier: T2
-# covers: watchtower/src/* spira/conf.sh
+# covers: watchtower/src/* spira/conf.sh UC-ops-detection-remediation-25
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testdb.sh"

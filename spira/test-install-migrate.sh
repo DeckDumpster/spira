@@ -31,7 +31,7 @@
 # the testenv container as spirauser) or user systemd is not responding.
 #
 # tier: T1
-# covers: install/src/bin/units_install.rs
+# covers: install/src/bin/units_install.rs UC-instance-lifecycle-28
 # requires: testenv
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"

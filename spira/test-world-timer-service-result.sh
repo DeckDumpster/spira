@@ -22,7 +22,7 @@
 #
 # defect: sp-2z9y
 # tier: T1
-# covers: spira-world/src/bin/world.rs
+# covers: spira-world/src/bin/world.rs UC-instance-lifecycle-44
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

@@ -29,6 +29,7 @@
 # QUEUE_WATCH_BIN may point at another binary; pointing it at a stub that prints nothing is
 # how every assertion below was seen to fail first.
 #
+# tier: T3
 # covers: queue-watch/* spira/watchers forge/src/*
 # timeout: 300
 set -uo pipefail

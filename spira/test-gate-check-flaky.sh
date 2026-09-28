@@ -22,7 +22,7 @@
 # No bd wrapper needed: the testdb has no gates, so `bd gate check` is a silent no-op.
 #
 # tier: T1
-# covers: spira/gate-check.sh spira/conf.sh
+# covers: spira/gate-check.sh spira/conf.sh UC-test-infrastructure-37
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

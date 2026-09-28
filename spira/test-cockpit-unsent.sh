@@ -28,7 +28,8 @@
 # and the branch-walking half of this probe is exactly what a mocked bd cannot exercise.
 #
 # defect: sp-884p sp-ctag9
-# covers: cockpit-collect/src/*
+# tier: T2
+# covers: cockpit-collect/src/* UC-cockpit-observability-12
 # scar: SP_BRANCH_DONE was overwritten per-repo so only the first repository's zero survived; SP_UNSENT counted every ref under refs/heads/spira/* regardless of whether the suffix resolved to a bead.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

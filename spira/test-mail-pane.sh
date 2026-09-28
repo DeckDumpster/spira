@@ -6,7 +6,7 @@
 # and asserts the three states appear. A failed probe renders ?, never 0.
 #
 # tier: T1
-# covers: cockpit-collect/src/* mail/src/* cockpit/ops/src/health.rs
+# covers: cockpit-collect/src/* mail/src/* cockpit/ops/src/health.rs UC-cockpit-observability-26
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

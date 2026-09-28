@@ -12,7 +12,8 @@
 # with them; T3 below still proves the wiring end to end through the real `aeon` binary.
 #
 # defect: sp-ynvd
-# covers: aeon/src/* spira-world/src/bin/world.rs spira/conf.sh spira/lib.sh
+# tier: T2
+# covers: aeon/src/* spira-world/src/bin/world.rs spira/conf.sh spira/lib.sh UC-aeon-execution-04
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

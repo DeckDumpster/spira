@@ -21,7 +21,7 @@
 #     ran cannot produce a false positive.
 #
 # tier: T1
-# covers: .github/workflows/gate.yml testenv/src/schedule.rs testenv/src/run.rs
+# covers: .github/workflows/gate.yml testenv/src/schedule.rs testenv/src/run.rs UC-test-infrastructure-38
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"

@@ -22,6 +22,7 @@
 #      remote-tracking commit, not the stray local one.
 #
 # defect: sp-dd785
+# tier: T1
 # covers: aeon/src/* landing-pass/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

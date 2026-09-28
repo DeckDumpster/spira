@@ -19,6 +19,7 @@
 # broken, so there is nothing left here to assert.
 #
 # defect: sp-onasx
+# tier: T1
 # covers: systemd/spira-cockpit.service cockpit-collect/src/supervisor.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

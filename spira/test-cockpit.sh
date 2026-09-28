@@ -15,7 +15,8 @@
 # spira-cockpit.service's — or SPIRA_COCKPIT_FORCE=1 names the override.
 #
 # defect: sp-20d
-# covers: cockpit-collect/src/*
+# tier: T1
+# covers: cockpit-collect/src/* UC-cockpit-observability-01
 # scar: cockpit.sh wrote the snapshot unconditionally; an aeon running a vendored copy or a manual invocation overwrote the live snapshot, and the pane read `?` for every key the interloper lacked.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

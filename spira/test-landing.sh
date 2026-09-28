@@ -37,6 +37,7 @@
 # sequence exactly rather than approximating it.
 #
 # defect: sp-q9i sp-9194o
+# tier: T3
 # covers: landing-pass/* spira/lib.sh
 # timeout: 300
 set -uo pipefail

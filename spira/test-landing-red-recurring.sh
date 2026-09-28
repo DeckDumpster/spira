@@ -20,6 +20,7 @@
 #    The coarser rule must not have swallowed the finer one.
 #
 # defect: sp-4rjxl
+# tier: T2
 # covers: landing-pass/* spira/lib.sh
 # timeout: 300
 set -uo pipefail

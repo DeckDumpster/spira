@@ -21,7 +21,7 @@
 # fixture database it never needed — case 5 below reproduces that env shape against the stub.
 #
 # tier: T1
-# covers: spira/incident.sh spira/incident-stub-bd.py testenv/src/* incident/*
+# covers: spira/incident.sh spira/incident-stub-bd.py testenv/src/* incident/* UC-ops-detection-remediation-08
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

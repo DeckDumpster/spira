@@ -22,6 +22,7 @@
 # (last section below) is not a safer redirect; it is removing the regenerate-on-read
 # entirely.
 #
+# tier: T1
 # covers: spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

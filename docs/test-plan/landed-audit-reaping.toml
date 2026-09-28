@@ -1,0 +1,192 @@
+api_version = "test-plan/v1"
+area = "landed-audit-reaping"
+
+[[use_case]]
+id = "UC-landed-audit-reaping-01"
+tier = "T2"
+statement = "`landed <id> <repo>` and CHECK 5's cached walk find a commit naming the bead anywhere in the base's full history. There is no depth window, and a match in the body counts as well as one in the subject."
+
+[[use_case]]
+id = "UC-landed-audit-reaping-02"
+tier = "T2"
+statement = "The search matches the bead id as a whole token. `sp-a9g` must not be satisfied by a commit naming `sp-a9gk`."
+
+[[use_case]]
+id = "UC-landed-audit-reaping-03"
+tier = "T1"
+statement = "When the land refs are unresolvable, the answer is \"cannot tell\": `landed` returns rc 2 and CHECK 5 logs \"not judging\". Neither may reopen."
+
+[[use_case]]
+id = "UC-landed-audit-reaping-04"
+tier = "T1"
+statement = "A closed, aeon-worked bead (with `$SPIRA_RUN/<id>.log`) that has no naming commit, no exemption and no branch ahead is reopened exactly once per pass. The reason is `closed-without-commit`, no `sp-attempt-*` label is written, and the note names `bd supersede` as the remedy."
+
+[use_case.uncovered]
+reason = "sp-pyowh's C3 landing reduced CHECK 5 to a single invariant (closed, aeon-worked, no commit/exemption/LANDED-tip evidence -> file an incident); this decision state from the original plan no longer exists in sentinel.sh"
+date = "2026-09-27"
+bead = "sp-pyowh"
+
+[[use_case]]
+id = "UC-landed-audit-reaping-05"
+tier = "T3"
+statement = "A bead whose work landed is never reopened, and a second pass changes nothing and charges no attempt."
+
+[use_case.uncovered]
+reason = "sp-pyowh's C3 landing reduced CHECK 5 to a single invariant (closed, aeon-worked, no commit/exemption/LANDED-tip evidence -> file an incident); this decision state from the original plan no longer exists in sentinel.sh"
+date = "2026-09-27"
+bead = "sp-pyowh"
+
+[[use_case]]
+id = "UC-landed-audit-reaping-06"
+tier = "T1"
+statement = "The exemptions: superseded (a `supersedes` dependency, under either JSON spelling), `spira-dropped`, `content-landed` and `spira-poison` are never reopened."
+
+[use_case.uncovered]
+reason = "sp-pyowh's C3 landing reduced CHECK 5 to a single invariant (closed, aeon-worked, no commit/exemption/LANDED-tip evidence -> file an incident); this decision state from the original plan no longer exists in sentinel.sh"
+date = "2026-09-27"
+bead = "sp-pyowh"
+
+[[use_case]]
+id = "UC-landed-audit-reaping-07"
+tier = "T1"
+statement = "delivers: typed evidence. `beads` needs at least one child. `note` and `report` need a path, an existing file, and an mtime after `started_at`. `check:<cmd>` needs a command that exits 0. `action` is accepted as is. An unknown type, or a missing path or command, fails. A failed delivers claim falls through to the commit check (commit OR evidence), and the reopen note names both reasons. The retired `no-payload` label exempts nothing."
+
+[use_case.uncovered]
+reason = "sp-pyowh's C3 landing reduced CHECK 5 to a single invariant (closed, aeon-worked, no commit/exemption/LANDED-tip evidence -> file an incident); this decision state from the original plan no longer exists in sentinel.sh"
+date = "2026-09-27"
+bead = "sp-pyowh"
+
+[[use_case]]
+id = "UC-landed-audit-reaping-08"
+tier = "T1"
+statement = "Landstate handling: BATCHED, GATED and REBASED are never reopened. LANDED with a tip that is an ancestor of the base is not reopened. A missing branch is restored from the landstate tip or from `origin/spira/<id>`, and the bead is left for CHECK 6. CERTIFIED with branch and tip both gone is not reopened, and says so."
+
+[use_case.uncovered]
+reason = "sp-pyowh's C3 landing reduced CHECK 5 to a single invariant (closed, aeon-worked, no commit/exemption/LANDED-tip evidence -> file an incident); this decision state from the original plan no longer exists in sentinel.sh"
+date = "2026-09-27"
+bead = "sp-pyowh"
+
+[[use_case]]
+id = "UC-landed-audit-reaping-09"
+tier = "T1"
+statement = "A repo in `land=hold` mode never reopens: a standing branch is its terminal state. A push-mode branch with at least one commit ahead is exempt (\"CHECK 6 lands it\"), and a zero-ahead branch is not."
+
+[use_case.uncovered]
+reason = "sp-pyowh's C3 landing reduced CHECK 5 to a single invariant (closed, aeon-worked, no commit/exemption/LANDED-tip evidence -> file an incident); this decision state from the original plan no longer exists in sentinel.sh"
+date = "2026-09-27"
+bead = "sp-pyowh"
+
+[[use_case]]
+id = "UC-landed-audit-reaping-10"
+tier = "T1"
+statement = "A closed bead whose `repo:` is absent from the repo-map is skipped, and the skip is logged once per repo per pass."
+
+[use_case.uncovered]
+reason = "sp-pyowh's C3 landing reduced CHECK 5 to a single invariant (closed, aeon-worked, no commit/exemption/LANDED-tip evidence -> file an incident); this decision state from the original plan no longer exists in sentinel.sh"
+date = "2026-09-27"
+bead = "sp-pyowh"
+
+[[use_case]]
+id = "UC-landed-audit-reaping-11"
+tier = "T3"
+statement = "CHECK 5 enumerates every persona partition, not only `spira,plan`. Hand-closed beads (no `<id>.log`) are skipped."
+
+[use_case.uncovered]
+reason = "sp-pyowh's C3 landing reduced CHECK 5 to a single invariant (closed, aeon-worked, no commit/exemption/LANDED-tip evidence -> file an incident); this decision state from the original plan no longer exists in sentinel.sh"
+date = "2026-09-27"
+bead = "sp-pyowh"
+
+[[use_case]]
+id = "UC-landed-audit-reaping-12"
+tier = "T1"
+statement = "The seam contract: `bd list --status closed --json` carries `labels`, the `supersedes` dependency type, the `delivers:` labels and `started_at`. The row reader keeps empty middle columns (`\\x1f`, not tab)."
+
+[use_case.uncovered]
+reason = "sp-pyowh's C3 landing reduced CHECK 5 to a single invariant (closed, aeon-worked, no commit/exemption/LANDED-tip evidence -> file an incident); this decision state from the original plan no longer exists in sentinel.sh"
+date = "2026-09-27"
+bead = "sp-pyowh"
+
+[[use_case]]
+id = "UC-landed-audit-reaping-13"
+tier = "T1"
+statement = "Sweep triggers (maechen, groom) file their beads with `delivers:note:${SPIRA_RUN}/<name>.log`."
+
+[use_case.uncovered]
+reason = "sp-pyowh's C3 landing reduced CHECK 5 to a single invariant (closed, aeon-worked, no commit/exemption/LANDED-tip evidence -> file an incident); this decision state from the original plan no longer exists in sentinel.sh"
+date = "2026-09-27"
+bead = "sp-pyowh"
+
+[[use_case]]
+id = "UC-landed-audit-reaping-14"
+tier = "T2"
+statement = "`content_landed repo br base` returns 0 only when the branch has commits ahead and merging them would leave the base tree unchanged. That covers squash, ancestor and empty-commit review branches. It returns 1 for zero-ahead, conflict or differing-tree branches."
+
+[[use_case]]
+id = "UC-landed-audit-reaping-15"
+tier = "T2"
+statement = "`spira_destroy_branch` refuses in these cases, returning rc 1 with a `REFUSED` reap-log line naming the reason: CERTIFIED/BATCHED landstate with no bypass; a live holder witness; the branch is checked out in a worktree; content is not on the base and no caller bypass was given. Otherwise it deletes and verifies the ref is gone, logging `FAILED` if it survived."
+
+[[use_case]]
+id = "UC-landed-audit-reaping-16"
+tier = "T2"
+statement = "The Sending gives each `spira/*` branch exactly one disposition: `HELD` when a holder is live; `KEEP` when unlanded; `UNADOPTED` when there is no bead; `SENT` for content-landed, and for zero-ahead plus a naming commit (ff); `REAPED` for a squash-merged PR at the same tip, and for a superseded bead whose branch adds nothing to the base; `SKIP` for CERTIFIED/BATCHED. It never hands an unlanded branch to the destroyer."
+
+[[use_case]]
+id = "UC-landed-audit-reaping-17"
+tier = "T2"
+statement = "When the Sending reaps by content, it labels the bead `content-landed`, but only when the branch had commits of its own. That lets CHECK 5 still catch a zero-commit branch, and CHECK 5 reads the label (writer to reader seam)."
+
+[[use_case]]
+id = "UC-landed-audit-reaping-18"
+tier = "T2"
+statement = "Reaping a content-landed branch that has no landstate logs `ASSERT <id>` but does not block the reap."
+
+[[use_case]]
+id = "UC-landed-audit-reaping-19"
+tier = "T2"
+statement = "Once a branch is sent, the Sending also deletes the remote branch when one exists and removes the `branch:` label. It keeps the aeon session log, because CHECK 5 depends on it."
+
+[[use_case]]
+id = "UC-landed-audit-reaping-20"
+tier = "T2"
+statement = "Sending pass 2 removes orphaned worktrees whose branch is gone, unless a holder is live, and never touches the shared checkout. `spira_destroy_worktree` prunes an absent out-of-root registration and refuses an existing out-of-root directory."
+
+[[use_case]]
+id = "UC-landed-audit-reaping-21"
+tier = "T2"
+statement = "The Sending skips loudly when a repo's land ref cannot be resolved, and exits non-zero when anything failed."
+
+[[use_case]]
+id = "UC-landed-audit-reaping-22"
+tier = "T1"
+statement = "The sending counters count distinct branches, not log lines. `SP_SENT_FAILED_AGE_M` renders `?` when there is no failure."
+
+[[use_case]]
+id = "UC-landed-audit-reaping-23"
+tier = "T2"
+statement = "`slay --bead` deletes a landed branch without parking it. An unlanded tip is parked at `refs/slain/<id>` (same SHA) and the command reports \"parked\"."
+
+[use_case.uncovered]
+reason = "the 2026-09-27 corpus audit (sp-5ayw5) tagged test-slay.sh's # covers: line with UC-aeon-execution-26 instead; nothing currently names this id"
+date = "2026-09-27"
+bead = "sp-ekio"
+
+[[use_case]]
+id = "UC-landed-audit-reaping-24"
+tier = "T2"
+statement = "`pilgrimage.sh check` announces a completed Spira-labelled epic once (a mail naming the epic, target and children) and then closes it. It skips epics that are unfinished or not Spira's. It defers the close while any live push-mode child branch lacks LANDED landstate, and pr-mode children are exempt."
+
+[use_case.uncovered]
+reason = "test-pilgrimage.sh exists and exercises this, but its # covers: line names no use case; the 2026-09-27 corpus audit flagged it ADD-USE-CASE rather than a tag onto this id"
+date = "2026-09-27"
+bead = "sp-qj8n"
+
+[[use_case]]
+id = "UC-landed-audit-reaping-25"
+tier = "T2"
+statement = "`held.sh` classifies branches in hold repos: HELD (ahead, bead exists), EMPTY (zero ahead) or ORPHAN (no bead). `--summary` stays silent when nothing is held. A repo argument restricts output to that repo and excludes the others. An unreadable bead store must not be reported as \"bead is gone\"."
+
+[use_case.uncovered]
+reason = "test-held.sh exists and exercises this, but its # covers: line names no use case; the 2026-09-27 corpus audit flagged it ADD-USE-CASE rather than a tag onto this id"
+date = "2026-09-27"
+bead = "sp-v4f42"

@@ -16,7 +16,7 @@
 #      pointed at the wrong directory.
 #
 # tier: T1
-# covers: cockpit/remote/cockpit cockpit/remote/cockpit-remote
+# covers: cockpit/remote/cockpit cockpit/remote/cockpit-remote UC-cockpit-observability-48
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

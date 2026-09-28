@@ -23,6 +23,7 @@
 # dependency): the assertion is about `git worktree list`'s actual output, not a model of it.
 #
 # defect: sp-lyglx sp-vcxmz
+# tier: T2
 # covers: spira/lib.sh sentinel/src/* aeon/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

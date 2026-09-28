@@ -27,7 +27,7 @@
 #
 # COVERS: cockpit-collect/src/* spira/incident.sh incident/* watchtower/src/*
 # tier: T2
-# covers: cockpit-collect/src/* spira/incident.sh incident/* watchtower/src/*
+# covers: cockpit-collect/src/* spira/incident.sh incident/* watchtower/src/* UC-cockpit-observability-13
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

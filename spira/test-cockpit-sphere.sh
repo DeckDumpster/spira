@@ -28,7 +28,7 @@
 #
 # defect: sp-b3ub
 # tier: T2
-# covers: cockpit-collect/src/*
+# covers: cockpit-collect/src/* UC-cockpit-observability-13
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

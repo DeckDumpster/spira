@@ -31,6 +31,7 @@
 # `podman container exists` / `podman ps` / `podman container inspect` says.
 #
 # host-reason: needs podman on PATH
+# tier: T2
 # covers: spira/batch-owner.sh testenv/src/*
 
 set -uo pipefail

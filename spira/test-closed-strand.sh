@@ -16,6 +16,7 @@
 #      and SP_CERT_N (within cert window). A bead closed 5 minutes ago counts as
 #      awaiting cert, not stranded.
 #
+# tier: T3
 # covers: landing-pass/* spira/lib.sh cockpit-collect/src/* cockpit/ops/src/health.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

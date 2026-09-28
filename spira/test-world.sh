@@ -35,7 +35,8 @@
 # not about what systemd reported.
 #
 # defect: sp-i96t
-# covers: spira-world/src/bin/world.rs
+# tier: T1
+# covers: spira-world/src/bin/world.rs UC-instance-lifecycle-41
 # hermetic-ok: stubs systemctl via SPIRA_SYSTEMCTL; /proc scan uses real background process
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

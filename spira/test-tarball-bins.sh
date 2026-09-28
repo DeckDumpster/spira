@@ -21,7 +21,7 @@
 #   been RED. Case 3 provides the structural claim for any future addition.
 #
 # tier: T1
-# covers: spira/build-tarball.sh .github/workflows/release.yml systemd/*.service install/src/manifest.rs
+# covers: spira/build-tarball.sh .github/workflows/release.yml systemd/*.service install/src/manifest.rs UC-instance-lifecycle-03
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

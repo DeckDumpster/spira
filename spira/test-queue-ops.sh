@@ -16,6 +16,7 @@
 # abandon's bead side effects were previously unread and unverified; nothing here would
 # have caught an accidental bdq call added to that path).
 #
+# tier: T3
 # covers: queue/src/* forge/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

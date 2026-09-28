@@ -11,7 +11,7 @@
 #
 # defect: sp-51j9b (the cockpit server forked by an archivist aeon on 2026-09-09)
 # tier: T1
-# covers: cockpit/tmux-env.sh
+# covers: cockpit/tmux-env.sh UC-cockpit-observability-47
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

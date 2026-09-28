@@ -19,6 +19,7 @@
 # .hooksPath not set" — this is the install-side sibling of GitHub #315 /
 # sp-bwaxb, which removed the same unconditional assumption from doctor.sh.
 #
+# tier: T1
 # covers: install/src/bin/install.rs install/src/bin/units_install.rs spira/exclude.sh spira-ctrl/src/main.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"

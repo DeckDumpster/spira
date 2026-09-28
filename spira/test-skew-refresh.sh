@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: skew/src/* landing-pass/* queue/src/* release/src/*
+# covers: skew/src/* landing-pass/* queue/src/* release/src/* UC-instance-lifecycle-37
 #
 # test-skew-refresh.sh — stage-and-swap refresh advances regardless of live aeon leases;
 # running processes keep their old inode; dirty tracked files are stashed; gap reports

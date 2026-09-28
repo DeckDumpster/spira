@@ -30,7 +30,7 @@
 #
 # tier: T2
 # defect: sp-lzt sp-f1m7f sp-6bop sp-qd2ul
-# covers: spira/lib.sh
+# covers: spira/lib.sh UC-aeon-execution-19
 # timeout: 90
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

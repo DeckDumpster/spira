@@ -17,6 +17,7 @@
 # nothing (seen green) and the exit-code contract the gate will read.
 #
 # defect: sp-ece5q
+# tier: T1
 # covers: lifecycle-guard/*
 # timeout: 120
 set -uo pipefail

@@ -27,6 +27,7 @@
 # check is live. Bead ids are pinned to non-default strings; allowlist state
 # is reset between sections.
 #
+# tier: T3
 # covers: spira/maechen-trigger.sh spira/lib.sh cockpit-collect/src/* maechen-trigger/* UC-ops-detection-remediation-30
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

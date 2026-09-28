@@ -19,7 +19,7 @@
 #
 # defect: sp-59ej
 # tier: T1
-# covers: spira/model-switch-report.sh
+# covers: spira/model-switch-report.sh UC-cockpit-observability-39
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

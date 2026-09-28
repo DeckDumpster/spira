@@ -15,6 +15,7 @@
 # A STUB gh. What is tested is tsd-ingest.sh's artifact handling and merge/idempotency, not
 # a real GitHub response.
 #
+# tier: T1
 # covers: spira/tsd-ingest.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

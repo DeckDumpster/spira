@@ -34,6 +34,7 @@
 # spira-poison so subsequent aeon runs do not claim it. Only the current case's bead is
 # available for the next aeon.
 #
+# tier: T2
 # covers: aeon/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

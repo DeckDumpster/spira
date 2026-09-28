@@ -22,7 +22,7 @@
 #
 # defect: sp-xfg4
 # tier: T1
-# covers: spira-world/src/bin/world.rs spira/conf.sh
+# covers: spira-world/src/bin/world.rs spira/conf.sh UC-instance-lifecycle-41
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

@@ -29,7 +29,7 @@
 #
 # defect: sp-v7ok
 # tier: T1
-# covers: cockpit/ops/src/health.rs spira-world/src/bin/world.rs
+# covers: cockpit/ops/src/health.rs spira-world/src/bin/world.rs UC-cockpit-observability-24
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

@@ -20,7 +20,7 @@
 # THE FIXTURE IS A REAL GIT REPO with real annotated tags so the check can resolve
 # commits from release tags. Timestamps are fixed strings for determinism.
 #
-# covers: skew/src/*
+# covers: skew/src/* UC-instance-lifecycle-35
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

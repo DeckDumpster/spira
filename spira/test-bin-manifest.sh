@@ -13,6 +13,7 @@
 # proves it can find one: an undeclared program probed through the same functions must come
 # back untiered and unpurposed, or the scan is not looking at anything.
 #
+# tier: T1
 # covers: spira/conf.sh spira/deps.toml
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

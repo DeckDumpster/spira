@@ -16,6 +16,7 @@
 #   the derivation to skip it — proving the isDraft filter actually fires
 #   before any other case's silence (no drafts present) is trusted.
 #
+# tier: T1
 # covers: spira/acceptance-prev-tag.sh .github/workflows/acceptance.yml
 # host-reason: fake gh script in an isolated PATH dir; no container or database dependency
 set -uo pipefail

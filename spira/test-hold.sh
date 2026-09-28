@@ -17,7 +17,7 @@
 #
 # defect: sp-oz0b
 # tier: T2
-# covers: spira/hold.sh spira/unhold.sh spira/lib.sh strand/src/*
+# covers: spira/hold.sh spira/unhold.sh spira/lib.sh strand/src/* UC-ops-detection-remediation-34
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

@@ -21,7 +21,8 @@
 # orphan, and startup must still clear it.
 #
 # defect: sp-2yd
-# covers: cockpit-collect/src/main.rs
+# tier: T1
+# covers: cockpit-collect/src/main.rs UC-cockpit-observability-06
 # shellcheck disable=SC2034
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

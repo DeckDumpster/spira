@@ -16,7 +16,7 @@
 #
 # defect: sp-6hdi
 # tier: T1
-# covers: spira/lib.sh
+# covers: spira/lib.sh UC-safety-fences-14
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

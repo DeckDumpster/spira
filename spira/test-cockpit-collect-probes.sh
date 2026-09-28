@@ -16,7 +16,8 @@
 # binary. The generic ok/never fragment cases are test-cockpit-tiered-collector.sh's job
 # (cluster 6, docs/test-plan/cockpit-observability.md).
 #
-# covers: cockpit-collect/src/supervisor.rs
+# tier: T1
+# covers: cockpit-collect/src/supervisor.rs UC-cockpit-observability-03
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

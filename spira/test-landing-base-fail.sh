@@ -7,6 +7,7 @@
 #
 # Extracted from test-landing.sh to reduce the critical-path suite time.
 #
+# tier: T2
 # covers: landing-pass/* spira/lib.sh spira/incident.sh incident/*
 # timeout: 180
 set -uo pipefail

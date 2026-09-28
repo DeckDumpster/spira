@@ -24,7 +24,8 @@
 # the same fixture this asserts on.
 #
 # defect: sp-wok.2
-# covers: loom/*
+# tier: T1
+# covers: loom/* UC-cockpit-observability-33
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LOOM="$HERE/../loom/static"

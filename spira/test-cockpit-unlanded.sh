@@ -18,7 +18,8 @@
 #           test-cockpit-landed.sh; coverage row 10)
 #
 # defect: sp-a5ga sp-884p
-# covers: cockpit-collect/src/* cockpit/ops/src/health.rs
+# tier: T2
+# covers: cockpit-collect/src/* cockpit/ops/src/health.rs UC-cockpit-observability-10
 # scar: closed beads with a branch but no landstate were invisible; UNLND is now QUEUE. The
 #       worked/landed row once counted all-time under a 24h header, producing nonsense
 #       against scoped counts, and a body mention was once enough to mark a bead landed.

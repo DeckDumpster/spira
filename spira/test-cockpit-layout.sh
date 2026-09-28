@@ -11,7 +11,8 @@
 # biggest client's height governs regardless of which client was most recently active.
 #
 # defect: sp-eq5
-# covers: cockpit/ops/src/layout.rs
+# tier: T2
+# covers: cockpit/ops/src/layout.rs UC-cockpit-observability-43
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

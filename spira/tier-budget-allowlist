@@ -189,7 +189,6 @@ test-forge-run-metadata.sh	T1	2.0
 test-forge-runs-active.sh	T1	3.0
 test-freshclone.sh	T1	11.5
 test-gate-base-evidence.sh	T1	5.5
-test-gate-base-selection.sh	T1	2.0
 test-gate-check-flaky.sh	T1	12.5
 test-gate-check-red-twice.sh	T1	18.5
 test-gate-check-stderr.sh	T1	3.0

@@ -21,7 +21,8 @@
 # unaffected and stay.
 #
 # defect: sp-2e4v
-# covers: aeon/src/* landing-pass/src/* spira/lib.sh
+# tier: T2
+# covers: aeon/src/* landing-pass/src/* spira/lib.sh UC-aeon-execution-07
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

@@ -22,7 +22,7 @@
 #
 # defect: sp-06hs
 # tier: T2
-# covers: spira/*.sh
+# covers: spira/*.sh UC-aeon-execution-25
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

@@ -38,7 +38,8 @@
 # SPIRA_CONF=/nonexistent, fixture git repo, fixture SPIRA_REPO_MAP, --graph fixture.
 #
 # defect: sp-gsmx.1
-# covers: spira/released-defects.sh
+# tier: T2
+# covers: spira/released-defects.sh UC-cockpit-observability-39
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

@@ -33,7 +33,8 @@
 #   9. POSITIVE CONTROL + release.yml passes --repo-name, derived from the tag, so an
 #      installed release's identity does not come from its own directory name.
 #
-# covers: .github/workflows/release.yml .github/workflows/gate.yml spira/build-tarball.sh rust-toolchain.toml
+# tier: T0
+# covers: .github/workflows/release.yml .github/workflows/gate.yml spira/build-tarball.sh rust-toolchain.toml UC-test-infrastructure-38
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 # $HERE is always the spira/ directory, one level below the repo root.

@@ -8,7 +8,7 @@
 # gate-diag.sh's own logic — that the workflow still calls it by name.
 #
 # tier: T0
-# covers: .github/workflows/gate.yml
+# covers: .github/workflows/gate.yml UC-test-infrastructure-36
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

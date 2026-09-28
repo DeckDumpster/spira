@@ -54,6 +54,7 @@
 # implementation of the thing in question (law-prefer-the-real-dependency).
 #
 # defect: sp-9pyr
+# tier: T3
 # covers: aeon/src/* sop/src/*.rs spira/close-reason-flags.py spira/chamber/ops.fayth spira/chamber/ops.md spira/test-ops-closing.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

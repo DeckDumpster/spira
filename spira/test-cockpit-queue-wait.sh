@@ -20,6 +20,7 @@
 #   4. SP_READY is 0 when the only bead has the wait label.
 #
 # defect: sp-rvoun
+# tier: T1
 # covers: cockpit-collect/src/*
 # hermetic-ok: mock bd binary, no systemd or database
 set -uo pipefail

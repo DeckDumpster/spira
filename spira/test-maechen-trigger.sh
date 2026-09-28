@@ -49,7 +49,7 @@
 # throwaway repos.
 #
 # tier: T2
-# covers: spira/maechen-trigger.sh spira/conf.sh maechen-trigger/*
+# covers: spira/maechen-trigger.sh spira/conf.sh maechen-trigger/* UC-ops-detection-remediation-16
 # hermetic-ok: stub bd, real git with throwaway repos
 # scar: unrecorded
 set -uo pipefail

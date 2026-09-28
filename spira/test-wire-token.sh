@@ -30,7 +30,8 @@
 #
 # defect: sp-dcfm
 # tier: T1
-# covers: sending/src/* sentinel/src/* spira/cockpit-metrics.py
+# tier: T0
+# covers: sending/src/* sentinel/src/* spira/cockpit-metrics.py UC-ops-detection-remediation-36
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

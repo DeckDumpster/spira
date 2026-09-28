@@ -40,7 +40,7 @@
 #
 # defect: sp-uq55c
 # tier: T1
-# covers: strand/src/*
+# covers: strand/src/* UC-ops-detection-remediation-21
 # hermetic-ok: no systemd, no gh; reads SPIRA_DB for conf.sh schema check only (read-only)
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

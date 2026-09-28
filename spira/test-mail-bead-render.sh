@@ -22,6 +22,7 @@
 # render step exists at all, so this assertion fails; verified by hand against the
 # pre-change mail.
 #
+# tier: T2
 # covers: mail/src/* spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

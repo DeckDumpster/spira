@@ -27,7 +27,7 @@
 # with .git pointing to paths the container cannot see).
 #
 # tier: T2
-# covers: spira/lib.sh spira/conf.sh
+# covers: spira/lib.sh spira/conf.sh UC-dispatch-16
 # defect: sp-b0j0s
 # hermetic-ok: fixture database; fresh git repo in TMP, no system git state
 set -uo pipefail

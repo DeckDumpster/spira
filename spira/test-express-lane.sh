@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # test-express-lane.sh — express label and sentinel admission bypass.
 #
+# tier: T3
 # covers: spira/bead.sh spira/conf.sh cockpit-collect/src/* sentinel/src/* spira/lib.sh watchtower/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

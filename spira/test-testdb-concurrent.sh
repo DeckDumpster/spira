@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: spira/testdb.sh
+# covers: spira/testdb.sh UC-test-infrastructure-21
 # Positive control: concurrent borrowers must get DISTINCT SPIRA_DBs. Old code gave each
 # borrower TESTDB_DIR; both equal → this assertion fails (law-absence-needs-a-positive-control).
 set -uo pipefail

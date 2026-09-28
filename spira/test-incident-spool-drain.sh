@@ -15,7 +15,7 @@
 # behaviour is real, not an artifact of a stub that happens to always succeed.
 #
 # tier: T2
-# covers: spira/incident.sh spira/incident-stub-bd.py incident/*
+# covers: spira/incident.sh spira/incident-stub-bd.py incident/* UC-ops-detection-remediation-10
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

@@ -28,6 +28,7 @@
 # any cutter — batch.sh before, the batcher now — draws from, since a WITHDRAWN
 # landstate simply drops out of it, no sweep required.)
 #
+# tier: T2
 # covers: spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

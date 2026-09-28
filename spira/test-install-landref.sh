@@ -27,7 +27,7 @@
 #
 # defect: sp-mlcd sp-y9zp
 # tier: T1
-# covers: install/src/bin/units_install.rs spira/lib.sh
+# covers: install/src/bin/units_install.rs spira/lib.sh UC-instance-lifecycle-19
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"

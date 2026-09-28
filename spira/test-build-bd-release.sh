@@ -11,7 +11,7 @@
 # serves the beads_... file.
 #
 # tier: T1
-# covers: spira/build-bd.sh
+# covers: spira/build-bd.sh UC-instance-lifecycle-05
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"

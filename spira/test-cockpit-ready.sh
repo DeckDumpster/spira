@@ -12,7 +12,7 @@
 #
 # defect: sp-vmh4
 # tier: T1
-# covers: cockpit-collect/src/*
+# covers: cockpit-collect/src/* UC-cockpit-observability-08
 # scar: bd exits 0 on a schema-version mismatch and emits the refusal to stdout; a probe counting output lines read the refusal as zero, and SP_READY showed 0 during a real outage.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

@@ -21,7 +21,8 @@
 # unsent_keys' SP_LANDED/SP_UNLANDED_N classification, not queue_keys, and cannot be
 # exercised through the `queue` subcommand at all once this suite stopped calling `once`.
 #
-# covers: cockpit-collect/src/* spira/lib.sh cockpit/ops/src/health.rs
+# tier: T2
+# covers: cockpit-collect/src/* spira/lib.sh cockpit/ops/src/health.rs UC-cockpit-observability-11
 # scar: UNLND read closed beads and commit bodies, so batched open beads were invisible
 #       and body mentions falsely marked beads as landed.
 #

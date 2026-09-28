@@ -21,7 +21,8 @@
 # PATH shim would reach the real model — SPIRA_AGENT is the only safe injection point.
 #
 # defect: sp-1f56o
-# covers: aeon/src/* spira/lib.sh archivist/src/* spira/chamber/ops.fayth
+# tier: T1
+# covers: aeon/src/* spira/lib.sh archivist/src/* spira/chamber/ops.fayth UC-aeon-execution-06
 #   spira/chamber/maechen.fayth spira/chamber/groomer.fayth spira/chamber/czar.fayth
 #   spira/chamber/builder.fayth spira/chamber/spike.fayth
 set -uo pipefail

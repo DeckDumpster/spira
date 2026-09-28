@@ -25,7 +25,8 @@
 # applies to a work bead, so an e2e run ends open+spira-submitted rather than closed.
 #
 # defect: sp-htw4r sp-ygvu0 sp-r1501
-# covers: aeon/src/* spira/lib.sh spira/conf.sh
+# tier: T2
+# covers: aeon/src/* spira/lib.sh spira/conf.sh UC-aeon-execution-14
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

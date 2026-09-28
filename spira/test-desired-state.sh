@@ -16,6 +16,7 @@
 # schema.
 #
 # defect: sp-xqhog
+# tier: T1
 # covers: desired-state/*
 # timeout: 120
 set -uo pipefail

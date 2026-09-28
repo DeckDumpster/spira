@@ -33,7 +33,7 @@
 #   FAIL — only event after watermark counted: expected [1] got [2]
 #
 # tier: T2
-# covers: spira/lib.sh
+# covers: spira/lib.sh UC-ops-detection-remediation-12
 # hermetic-ok: part-1 needs no db; part-2 uses a fixture database
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

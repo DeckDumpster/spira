@@ -26,7 +26,7 @@
 # A mock systemctl records calls without touching systemd.
 #
 # tier: T1
-# covers: install/src/bin/unit_ensure.rs install/src/bin/units_install.rs
+# covers: install/src/bin/unit_ensure.rs install/src/bin/units_install.rs UC-instance-lifecycle-30
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

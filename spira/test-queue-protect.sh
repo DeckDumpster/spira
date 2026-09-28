@@ -10,6 +10,7 @@
 # gaining a --section repositories selector — does not hold; doctor.sh has no
 # repositories section at all post sp-utt1i, let alone a selector for one.
 #
+# tier: T1
 # covers: queue/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

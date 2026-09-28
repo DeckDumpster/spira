@@ -11,6 +11,7 @@
 # assertion below is the one that was seen red before spira/lib.sh grew
 # queue_notify_concierge and queue.sh eject started calling it.
 #
+# tier: T3
 # covers: queue/src/* spira/lib.sh mail/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

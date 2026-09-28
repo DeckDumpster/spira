@@ -265,3 +265,43 @@ statement = "test-dummy.sh's own id (never a catalogued use case — a probe tok
 reason = "test-dummy.sh retired (wave 4.36, sp-bobsp: suite-covers.sh's bash accessors replaced by suite-select/src/header.rs, read through `suite-select header ...`); its parser coverage is cargo test -p suite-select now, not a spira/test-*.sh suite"
 date = "2026-10-01"
 bead = "sp-bobsp"
+
+[[use_case]]
+id = "UC-testlib-01"
+tier = "T1"
+statement = "`ok()` records a lone pass, printed as a TAP line, with no other side effect."
+
+[[use_case]]
+id = "UC-testlib-02"
+tier = "T1"
+statement = "`bad()` records a lone failure, both with and without an optional detail line."
+
+[[use_case]]
+id = "UC-testlib-03"
+tier = "T1"
+statement = "`is()` asserts exact-string equality and reports both the pass and the fail case."
+
+[[use_case]]
+id = "UC-testlib-04"
+tier = "T1"
+statement = "`want()`/`nowant()` assert substring presence and substring absence respectively, each reporting both its pass and its fail case."
+
+[[use_case]]
+id = "UC-testlib-05"
+tier = "T1"
+statement = "`wantrc()` asserts an exact exit-code match and reports both the pass and the fail case."
+
+[[use_case]]
+id = "UC-testlib-06"
+tier = "T1"
+statement = "`plan()` (an explicit count) is honoured against the trailing summary; `skip()` is never counted as a pass; `bail()` stops the suite immediately, distinct from both a pass and a skip."
+
+[[use_case]]
+id = "UC-testlib-07"
+tier = "T1"
+statement = "`tl_summary`'s optional JSONL sink (`SPIRA_TESTLIB_JSONL`) stays silent with no sink configured, and writes one row per case — with the same case name as the TAP view — when one is set."
+
+[[use_case]]
+id = "UC-gate-diag-01"
+tier = "T1"
+statement = "literal-lint.sh's offending file:line is the first line of its output; the gate's reopen note must carry it rather than dropping it under a trailing-window truncation (a 21-line report truncated to a `tail -20` would drop exactly this line)."
