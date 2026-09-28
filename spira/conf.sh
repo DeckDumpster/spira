@@ -430,19 +430,26 @@ SPIRA_REPO="${SPIRA_REPO:-$SPIRA_REPO_DERIVED}"
 # everywhere else. NOT exported, for the same reason SPIRA_HOME is not: it is a fact about
 # this copy of the harness, and whatever sources its own conf.sh resolves its own.
 
-# spira_bin <name> -> path to the compiled <name> binary, or names it missing and fails.
-# THE ONE RESOLVER (sp-zv7j4): a test run's only source of a binary is $SPIRA_ARTIFACTS
-# (testenv-batch's own in-place build of the tree under test); production's only source is
-# the installed release's bin/. Neither falls back to the other, and neither falls back to
-# a stray target/release left over from whatever tree happened to build there last.
+# spira_bin <name> -> path to the compiled <name> binary; names it missing and fails when
+# it is not actually there. THE ONE RESOLVER (sp-zv7j4): a test run's only source of a
+# binary is $SPIRA_ARTIFACTS (testenv-batch's own in-place build of the tree under test);
+# production's only source is the installed release's bin/. Neither falls back to the
+# other, and neither falls back to a stray target/release left over from whatever tree
+# happened to build there last.
+#
+# STDOUT ALWAYS CARRIES A PATH, even on failure — the resolved candidate, not empty — so a
+# caller that only needs "a placeholder to render into a template" (a systemd unit's
+# @KEY@ substitution, which already treats an EMPTY value, never a wrong one, as its own
+# distinct fault) is not handed a new failure mode by a binary this call was never the one
+# to gate on. A caller that must not proceed without the real thing checks the exit status,
+# same as any other command (SPIRA_CONFIG_BIN below is exactly that caller).
 spira_bin() {
-    local name="$1" dir
+    local name="$1" dir path
     dir="${SPIRA_ARTIFACTS:-$SPIRA_REPO/bin}"
-    if [ -x "$dir/$name" ]; then
-        printf '%s' "$dir/$name"
-        return 0
-    fi
-    printf 'spira_bin: %s not found in %s\n' "$name" "$dir" >&2
+    path="$dir/$name"
+    printf '%s' "$path"
+    [ -x "$path" ] && return 0
+    printf '\nspira_bin: %s not found in %s\n' "$name" "$dir" >&2
     return 1
 }
 
