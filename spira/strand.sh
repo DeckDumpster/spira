@@ -580,6 +580,9 @@ cmd_check() {
                     scope=(); [ "$part" != "-" ] && scope=(--label "$part")
                     bdq reclaim --id "$id" --older-than 1s "${scope[@]}" >/dev/null 2>&1
                     bump_reclaim "$id" ghost >/dev/null 2>&1
+                    # cmd_check's own reclaim count — cmd_report's $n is a different
+                    # number (report row count) and was never set here (sp-sa4mi).
+                    n="$(reclaims_of "$id")"; n="${n:-0}"
                     # THIS IS NOT AN ATTEMPT AND MUST NEVER FEED POISON. A hard-killed aeon
                     # never runs its teardown, so this is the only record that the death
                     # happened — but it is evidence about the WORKER. It used to bump the
