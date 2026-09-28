@@ -49,6 +49,7 @@ struct Config {
     spira_db: String,
     repo_map: Option<PathBuf>,
     pr_pass_branch_sh: String,
+    lc_bin: String,
     log_path: PathBuf,
     lock_path: PathBuf,
     landstate_dir: PathBuf,
@@ -62,10 +63,22 @@ impl Config {
             env::var("SPIRA_RUN").unwrap_or_else(|_| "/tmp/spira".to_string());
         let spira_run = PathBuf::from(&spira_run_str);
         let spira_home = env::var("SPIRA_HOME").unwrap_or_default();
+        // Mirrors conf.sh's own bin/-then-target/release/ resolution (spira/conf.sh), for
+        // the one binary this process calls that conf.sh does not hand it directly: this
+        // is a Rust process, not a shell script that could source conf.sh itself.
+        let spira_repo = Path::new(&spira_home).parent().map(|p| p.to_path_buf()).unwrap_or_default();
         let now = unix_now();
         Config {
             pr_pass_branch_sh: env::var("SPIRA_PR_PASS_BRANCH_SH")
                 .unwrap_or_else(|_| format!("{}/pr-pass-branch.sh", spira_home)),
+            lc_bin: env::var("SPIRA_LC_BIN").unwrap_or_else(|_| {
+                let in_bin = spira_repo.join("bin/spira-lc");
+                if in_bin.exists() {
+                    in_bin.to_string_lossy().to_string()
+                } else {
+                    spira_repo.join("target/release/spira-lc").to_string_lossy().to_string()
+                }
+            }),
             log_path: env::var("SPIRA_LANDING_PASS_LOG")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("landing-pass.log")),
@@ -320,6 +333,56 @@ fn content_landed(repo: &str, branch: &str, base: &str) -> bool {
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
     !basetree.is_empty() && merged.trim() == basetree
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Delivery machine (design §3.1.2, sp-n1ilm): observes pr mode's `merged` exit when this
+// pass's own content check finds the branch's changes already on base, offline and without
+// a `gh` round trip. pr-pass-branch.sh covers the case this cannot see — a squash merge
+// later amended on the base, where the merge-tree comparison here no longer matches — by
+// asking the forge directly. Best-effort throughout: `spira-lc` answering "cannot tell" (no
+// delivery row, because the bead machine that creates one has not landed yet) is the
+// ordinary case until the cutover round lands together, never a fault in this pass.
+fn lc_show_delivery(cfg: &Config, id: &str) -> Option<(String, String)> {
+    let out = Command::new(&cfg.lc_bin)
+        .args(["show", id])
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let v: Value = serde_json::from_slice(&out.stdout).ok()?;
+    let dv = v.get("delivery")?;
+    if dv.is_null() {
+        return None;
+    }
+    let state = dv.get("state")?.as_str()?.to_string();
+    let version = dv.get("version")?.as_str()?.to_string();
+    Some((state, version))
+}
+
+fn lc_deliver_pr_merged_by_content(cfg: &Config, id: &str, merge_sha: &str) {
+    let Some((state, version)) = lc_show_delivery(cfg, id) else {
+        return;
+    };
+    if state != "PR_OPEN" {
+        return;
+    }
+    let kind = format!(
+        r#"{{"Delivered":{{"merge_sha":"{}","proof":"merge-tree"}}}}"#,
+        merge_sha.replace('\\', "\\\\").replace('"', "\\\"")
+    );
+    let ok = Command::new(&cfg.lc_bin)
+        .args(["event", "delivery", id, "--expect", "PR_OPEN", "--version", &version, "--actor", "landing-pass", "--kind", &kind])
+        .stderr(Stdio::null())
+        .stdout(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok {
+        eprintln!("landing-pass: {}: delivery PR_OPEN -> delivered by content proof", id);
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -596,6 +659,17 @@ fn run_pass() -> Result<(), String> {
                     &format!("landing-pass {}: {} already contains every change on {} — nothing to land",
                         name, base, br));
                 write_landstate(&cfg.landstate_dir, id, "CONTENT", tip, "");
+                let merge_sha = Command::new("git")
+                    .args(["-C", repo_path, "rev-parse", &base])
+                    .stderr(Stdio::null())
+                    .output()
+                    .ok()
+                    .and_then(|o| String::from_utf8(o.stdout).ok())
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
+                if !merge_sha.is_empty() {
+                    lc_deliver_pr_merged_by_content(&cfg, id, &merge_sha);
+                }
                 continue;
             }
 
@@ -608,7 +682,9 @@ fn run_pass() -> Result<(), String> {
             // Delegate per-branch work to the shell helper
             let rc = run_branch_helper(&cfg, name, repo_path, br, id, &base, tip);
             match rc {
-                0 => {
+                0 | 7 | 8 => {
+                    // 0: PR opened/refreshed. 7: merged, recorded delivered. 8: closed
+                    // unmerged, recorded returned (lifecycle delivery machine, sp-n1ilm).
                     total_acted += 1;
                 }
                 4 => {

@@ -157,8 +157,9 @@ want "a pr-mode branch is pushed and a pull request is opened" "opened a pull re
 : > "$GH_LOG"
 out="$(landing_pr)"
 nowant "an open pull request is not reopened next run"  "opened a pull request" "$out"
-[ -s "$GH_LOG" ] && bad "and gh is not called again" "$(cat "$GH_LOG")" \
-                 || ok "and gh is not called again"
+nowant "and no second pull request is created for it" "pr create" "$(cat "$GH_LOG")"
+is "and it is only asked once whether it merged or closed (sp-n1ilm's delivery check)" \
+   "1" "$(grep -c '^pr view' "$GH_LOG")"
 is "and nothing reaches the mailbox" "" "$(mailbox_pr)"
 
 # --------------------------------------------------------------------------------------
@@ -203,16 +204,20 @@ nowant "a branch level with its base is not refreshed again" "refreshed spira/sp
 [ -s "$GH_LOG" ] && bad "and gh is not asked about it again" "$(cat "$GH_LOG")" \
                  || ok "and gh is not asked about it again"
 
-# A MERGED PULL REQUEST IS NOT A STALE ONE.
+# A MERGED PULL REQUEST IS DELIVERED, NOT LEFT STANDING (sp-n1ilm): landing-pass now
+# observes the merge, records it (best-effort — this fixture has no delivery row, so the
+# lifecycle call itself is a no-op logged as such) and leaves the branch exactly where it
+# was; it does not rebase or re-push a branch whose work already landed.
 printf '7 MERGED\n' > "$GH_STATE"
 before="$(git -C "$TMP/three" rev-parse spira/sp-pr)"
 advance_pr "$TMP/three"
 : > "$GH_LOG"
 out="$(landing_pr)"
-want "a merged pull request's branch is left alone" "its pull request is MERGED — nothing to refresh" "$out"
+want "a merged pull request is recorded delivered rather than refreshed" \
+     "pull request is merged in three — delivered" "$out"
 is   "and its tip is exactly where it was"          "$before" "$(git -C "$TMP/three" rev-parse spira/sp-pr)"
 out="$(landing_pr)"
-nowant "and it is not re-examined on every later pass" "nothing to refresh" "$out"
+nowant "and it is not re-examined on every later pass" "delivered" "$out"
 
 # A gh THAT CANNOT ANSWER IS NOT PERMISSION TO REWRITE THE BRANCH.
 rm -f "$GH_STATE"
