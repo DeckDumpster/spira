@@ -600,63 +600,32 @@ fn round_1s_three_double_reds_are_flagged_for_judgement_and_resolve_like_what_wa
 // -- terminal_ready (sp-828tp): the one gate both queue.forge and queue.local finish through --
 
 #[test]
-fn terminal_ready_passes_when_green_named_and_binned() {
+fn terminal_ready_passes_when_named_and_binned() {
     let members = vec![m("sp-a", 2, false, 0), m("sp-b", 2, false, 10)];
     let named = vec!["sp-a".to_string(), "sp-b".to_string()];
-    assert_eq!(terminal_ready(&members, "headsha", "headsha", &named, true), Ok(()));
+    assert_eq!(terminal_ready(&members, &named, true), Ok(()));
 }
 
 // POSITIVE CONTROL for the whole suite of refusals below: the same inputs, ok=true, prove
 // the fixture itself is capable of passing before each case flips exactly one input bad.
 
 #[test]
-fn terminal_ready_refuses_green_on_a_different_head() {
-    let members = vec![m("sp-a", 2, false, 0)];
-    let named = vec!["sp-a".to_string()];
-    assert_eq!(
-        terminal_ready(&members, "headsha", "stale-headsha", &named, true),
-        Err(Refusal::NotGreenOnHead { head: "headsha".into(), verdict_head: "stale-headsha".into() })
-    );
-}
-
-#[test]
-fn terminal_ready_refuses_when_no_verdict_was_ever_recorded() {
-    let members = vec![m("sp-a", 2, false, 0)];
-    let named = vec!["sp-a".to_string()];
-    assert_eq!(
-        terminal_ready(&members, "headsha", "", &named, true),
-        Err(Refusal::NotGreenOnHead { head: "headsha".into(), verdict_head: "".into() })
-    );
-}
-
-#[test]
-fn terminal_ready_never_infers_green_from_an_empty_suite_run() {
-    // exit 4 with zero suites run (--with-bins build failure) must never look like "green
-    // because nothing came back red" — modeled here as a verdict head that was never set.
-    let members = vec![m("sp-a", 2, false, 0)];
-    assert!(terminal_ready(&members, "headsha", "", &[], true).is_err());
-}
-
-#[test]
 fn terminal_ready_refuses_a_member_no_commit_names() {
     let members = vec![m("sp-a", 2, false, 0), m("sp-b", 2, false, 10)];
     let named = vec!["sp-a".to_string()]; // sp-b's own commit never merged, or its tip changed
-    assert_eq!(terminal_ready(&members, "headsha", "headsha", &named, true), Err(Refusal::MemberNotNamed { id: "sp-b".into() }));
+    assert_eq!(terminal_ready(&members, &named, true), Err(Refusal::MemberNotNamed { id: "sp-b".into() }));
 }
 
 #[test]
 fn terminal_ready_refuses_missing_with_bins_artifacts() {
     let members = vec![m("sp-a", 2, false, 0)];
     let named = vec!["sp-a".to_string()];
-    assert_eq!(terminal_ready(&members, "headsha", "headsha", &named, false), Err(Refusal::BinsMissing));
+    assert_eq!(terminal_ready(&members, &named, false), Err(Refusal::BinsMissing));
 }
 
 #[test]
-fn terminal_ready_checks_green_before_membership_before_bins() {
+fn terminal_ready_checks_membership_before_bins() {
     let members = vec![m("sp-a", 2, false, 0)];
-    // Every input is wrong at once; the head mismatch must be the one reported.
-    assert_eq!(
-        terminal_ready(&members, "headsha", "other", &[], false),
-        Err(Refusal::NotGreenOnHead { head: "headsha".into(), verdict_head: "other".into() })
-    );
+    // Every input is wrong at once; the membership refusal must be the one reported.
+    assert_eq!(terminal_ready(&members, &[], false), Err(Refusal::MemberNotNamed { id: "sp-a".into() }));
 }

@@ -329,8 +329,9 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
 }
 
 /// queue.local's terminal step (sp-828tp): `terminal_ready` (core) gates both land modes on
-/// the same GREEN-on-this-exact-head/every-member-named/bins-present contract before this box
-/// changes anything; only the action taken once it passes differs — here, `queue.sh
+/// the same every-member-named/bins-present contract before this box changes anything —
+/// green-at-head is stabilize_round's own control flow, already confirmed before this is ever
+/// called (sp-j21fv). Only the action taken once it passes differs — here, `queue.sh
 /// land-local` (fast-forward, package, activate, LANDED, bead close) in place of a push and a
 /// PR. Never rebuilds binaries (law-deploy-the-tested-artifacts): the corpus's own --with-bins
 /// run already built the tree `bins_present` looks for.
@@ -339,7 +340,7 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
     let named = io::named_ids(repo, base_sha, &head, &stable.members);
     let bins_ok = io::bins_present(env_, repo, &head);
 
-    if let Err(refusal) = batcher::core::terminal_ready(&stable.members, &head, &head, &named, bins_ok) {
+    if let Err(refusal) = batcher::core::terminal_ready(&stable.members, &named, bins_ok) {
         let msg = format!("batcher {}: refused to land locally at {head} — {refusal}", repo.name);
         println!("{msg}");
         io::write_local_verdict(env_, &repo.name, "red", &msg);
