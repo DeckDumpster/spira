@@ -301,13 +301,23 @@ log "CHECK4 examining $(printf '%s' "$dispatchable" | grep -c . || true) dispatc
 # the same numbers for the whole dispatchable set. On a 59-bead set: 177 calls / 29,731 ms
 # → 1 call / 178 ms.
 declare -A _c4_attempts _c4_reopens _c4_reclaims
+# CAPTURED, NOT PIPED INTO THE LOOP DIRECTLY, so its exit status survives to be checked below
+# — a process substitution's own exit status is invisible to the `while` that reads it, even
+# under `pipefail`. A nonzero exit means the bulk query failed (check4_bulk_data's own log
+# line already said why); the per-bead loop is skipped entirely rather than run against
+# associative arrays that came back empty, which would read as "zero attempts" for every bead
+# and silently poison/clear/requeue/reclaim off a false floor (sp-rp4g4).
+_c4_bulk_out="$(check4_bulk_data "$dispatchable")"; _c4_bulk_rc=$?
+if [ "$_c4_bulk_rc" -ne 0 ]; then
+    log "CHECK4 bulk attempts query failed (rc=$_c4_bulk_rc) — making no poison/requeue/reclaim decision this pass"
+fi
 while IFS=$'\t' read -r _bid _batt _brep _brcl; do
     [ -n "$_bid" ] || continue
     _c4_attempts["$_bid"]="${_batt:-0}"
     _c4_reopens["$_bid"]="${_brep:-0}"
     _c4_reclaims["$_bid"]="${_brcl:-0}"
-done < <(check4_bulk_data "$dispatchable")
-while IFS=$'\t' read -r id _labels; do
+done <<< "$_c4_bulk_out"
+[ "$_c4_bulk_rc" -eq 0 ] && while IFS=$'\t' read -r id _labels; do
     [ -n "$id" ] || continue
     # ATTEMPTS, REQUEUES AND RECLAIMS FROM THE EVENTS TRAIL; labels for poison, repo, and
     # partition exclusions. Counter labels (sp-attempt-N, sp-reclaim-N, sp-requeue-N) are
@@ -578,11 +588,15 @@ done <<< "$dispatchable"
 _c4_closed="$(check4_closed_branched)"
 if [ -n "$_c4_closed" ]; then
     declare -A _c4c_reopens
+    _c4c_bulk_out="$(check4_bulk_data "$_c4_closed")"; _c4c_bulk_rc=$?
+    if [ "$_c4c_bulk_rc" -ne 0 ]; then
+        log "CHECK4-closed bulk attempts query failed (rc=$_c4c_bulk_rc) — making no requeue decision this pass"
+    fi
     while IFS=$'\t' read -r _bid _batt _brep _brcl; do
         [ -n "$_bid" ] || continue
         _c4c_reopens["$_bid"]="${_brep:-0}"
-    done < <(check4_bulk_data "$_c4_closed")
-    while IFS=$'\t' read -r id _labels; do
+    done <<< "$_c4c_bulk_out"
+    [ "$_c4c_bulk_rc" -eq 0 ] && while IFS=$'\t' read -r id _labels; do
         [ -n "$id" ] || continue
         _requeues="${_c4c_reopens[$id]:-0}"; _requeues="${_requeues:-0}"
         # attempts and reclaims do not apply to a closed bead's requeue-mail decision; the

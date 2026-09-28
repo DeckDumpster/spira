@@ -2560,7 +2560,14 @@ _attempts_sql_query() {   # _attempts_sql_query <id> -> the SQL that counts atte
     # reads the same old count against a bare label on its very next pass (sp-qd2ul). COALESCE
     # to the epoch when no poison.cleared event exists, so an uncleared bead's count is
     # untouched.
-    printf "select greatest(sum(case when event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%') then 1 else 0 end) - sum(case when event_type='closed' then 1 else 0 end) - sum(case when event_type='requeued' and (new_value='thrash' or new_value like 'unjudged%%') then 1 else 0 end), 0) from events where issue_id='%s' and created_at > coalesce((select max(pc.created_at) from events pc where pc.issue_id=events.issue_id and pc.event_type='poison.cleared'), '1970-01-01')" "$1"
+    # THE FLOOR IS A SCALAR SUBQUERY, NOT A CORRELATED ONE. `pc.issue_id=events.issue_id`
+    # against an outer query already filtered to `issue_id='%s'` still asks Dolt to
+    # re-evaluate the inner subquery once per matched row rather than once per query — cheap
+    # for one bead's own handful of events, but the same shape that made the bulk form
+    # (_check4_bulk_sql) unusable at more than a few ids (sp-rp4g4). Filtering the inner
+    # subquery on the same literal id removes the correlation outright: it is now
+    # independent of the outer row and evaluated once.
+    printf "select greatest(sum(case when event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%') then 1 else 0 end) - sum(case when event_type='closed' then 1 else 0 end) - sum(case when event_type='requeued' and (new_value='thrash' or new_value like 'unjudged%%') then 1 else 0 end), 0) from events where issue_id='%s' and created_at > coalesce((select max(created_at) from events where issue_id='%s' and event_type='poison.cleared'), '1970-01-01')" "$1" "$1"
 }
 
 attempts_of() {          # attempts_of <id> -> count of in_progress status-change events
@@ -4852,22 +4859,40 @@ for i in (d if isinstance(d, list) else [d]):
 # spira-poison by design (check4_decide's own comment), and a clear that reset them too would
 # silently forgive a reclaim streak the operator never judged. See _attempts_sql_query for why
 # the floor exists at all.
+#
+# THE FLOOR IS A LEFT JOIN AGAINST ONE PER-ISSUE DERIVED TABLE, computed once per issue_id —
+# not a correlated subquery run per row per CASE branch, which made every id past the first
+# a full table scan (5 ids: 26.8s; 200 ids after this fix: 1.02s against 74,527 events;
+# sp-rp4g4). Same output as the old form — see test-attempts-sql.sh.
 _check4_bulk_sql() {
-    printf "select issue_id, greatest(sum(case when (event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%')) and created_at > coalesce((select max(pc.created_at) from events pc where pc.issue_id=events.issue_id and pc.event_type='poison.cleared'), '1970-01-01') then 1 else 0 end) - sum(case when event_type='closed' and created_at > coalesce((select max(pc.created_at) from events pc where pc.issue_id=events.issue_id and pc.event_type='poison.cleared'), '1970-01-01') then 1 else 0 end) - sum(case when event_type='requeued' and (new_value='thrash' or new_value like 'unjudged%%') and created_at > coalesce((select max(pc.created_at) from events pc where pc.issue_id=events.issue_id and pc.event_type='poison.cleared'), '1970-01-01') then 1 else 0 end), 0) as att, sum(case when event_type='reopened' then 1 else 0 end) as rep, sum(case when event_type='reclaimed' then 1 else 0 end) as rcl from events where issue_id in (%s) group by issue_id" "$1"
+    printf "select e.issue_id, greatest(sum(case when (e.event_type='claimed' or (e.event_type='status_changed' and e.new_value like '%%in_progress%%')) and e.created_at > coalesce(p.pc,'1970-01-01') then 1 else 0 end) - sum(case when e.event_type='closed' and e.created_at > coalesce(p.pc,'1970-01-01') then 1 else 0 end) - sum(case when e.event_type='requeued' and (e.new_value='thrash' or e.new_value like 'unjudged%%') and e.created_at > coalesce(p.pc,'1970-01-01') then 1 else 0 end), 0) as att, sum(case when e.event_type='reopened' then 1 else 0 end) as rep, sum(case when e.event_type='reclaimed' then 1 else 0 end) as rcl from events e left join (select issue_id, max(created_at) as pc from events where event_type='poison.cleared' and issue_id in (%s) group by issue_id) p on p.issue_id=e.issue_id where e.issue_id in (%s) group by e.issue_id" "$1" "$1"
 }
 
 # check4_bulk_data <dispatchable-output> -> id TAB attempts TAB reopens TAB reclaims, one per bead
 # One GROUP BY replaces attempts_of, reopens_of and reclaims_of called per bead in the CHECK 4
 # loop — the per-bead cost sp-f1m7f removed. Beads with no events are absent from the output;
 # callers default missing entries to 0.
+# FAIL CLOSED, NOT OPEN. A `bd sql` failure used to fall straight through to the parser
+# below, which found no rows and left every id defaulted to 0 attempts by the caller —
+# indistinguishable from a bead that never failed, so a poisoned bead's very next pass read
+# `clear` off a false zero (sp-rp4g4). A nonzero return here, with no rows printed, is the
+# caller's signal to make no poison/requeue/reclaim decision this pass at all. `bdq`, not a
+# bare bd call, so this gets BD_TIMEOUT and the invalid-connection retry like every other bd
+# call (see bdq's own comment) instead of blocking the pass on a runaway query indefinitely.
 check4_bulk_data() {
     local input="${1:-}"; [ -n "$input" ] || return 0
     local in_clause
     in_clause="$(printf '%s' "$input" | awk -F'\t' '{print $1}' | grep -v '^$' \
         | sed "s/.*/'&'/" | paste -sd,)"
     [ -n "$in_clause" ] || return 0
-    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$(_check4_bulk_sql "$in_clause")" 2>/dev/null \
-    | python3 -c '
+    local _raw _rc
+    _raw="$(bdq sql "$(_check4_bulk_sql "$in_clause")")"
+    _rc=$?
+    if [ "$_rc" -ne 0 ]; then
+        log "check4_bulk_data: bulk attempts query failed (rc=$_rc) — no rows returned, CHECK 4 makes no decision this pass" >&2
+        return "$_rc"
+    fi
+    printf '%s\n' "$_raw" | python3 -c '
 import sys
 for line in sys.stdin:
     s = line.rstrip("\n")

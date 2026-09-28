@@ -527,4 +527,46 @@ ispoisoned "a fresh run of failures after the clear poisons it again" sp-orphan
 want "and the ask cites the count since the clear, not the total ever charged" \
      "3 in_progress transition(s) without landing (3 attempts)" "$(cat "$MAIL_LOG")"
 
+# --------------------------------------------------------------------------------------
+# sp-rp4g4 — CHECK 4 FAILS CLOSED WHEN THE BULK QUERY FAILS. check4_bulk_data used to
+# discard bd sql's stderr and return no rows on any failure, which every caller then read as
+# "0 attempts" for every bead in the set — so the poison/requeue/reclaim caps were silently
+# unenforced on exactly the pass where the query broke, with nothing in the log saying why.
+# The seam is SPIRA_BD (same as the CHECK 5 case above): forward every call through to the
+# real engine except the one bulk query, which is failed on purpose by matching "as rcl", a
+# column alias unique to _check4_bulk_sql.
+# --------------------------------------------------------------------------------------
+echo
+seed; rm -rf "$RUN/poison-asked"
+testdb_seed <<JSONL
+{"id":"sp-failquery","title":"would poison this pass if the bulk query worked","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+JSONL
+cycle sp-failquery 3   # at POISON_AT=3 — this pass would poison it, if the query ran
+
+REAL_BD_PATH="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-bd}")"
+FAIL_SQL_BD="$TMP/fail-sql-bd"
+{
+    printf '#!/usr/bin/env bash\n'
+    printf 'case "$*" in\n'
+    printf '  *"as rcl"*) printf "fail-sql-bd: simulated dolt failure\\n" >&2; exit 1 ;;\n'
+    printf 'esac\n'
+    printf 'exec %q "$@"\n' "$REAL_BD_PATH"
+} > "$FAIL_SQL_BD"
+chmod +x "$FAIL_SQL_BD"
+
+: > "$MAIL_LOG"
+out="$(SPIRA_BD="$FAIL_SQL_BD" sentinel)"
+notpoisoned "a bead at the threshold is not poisoned off a query that never ran" sp-failquery
+want "the failure is logged by name, not swallowed" \
+     "CHECK4 bulk attempts query failed" "$out"
+want "and the pass says plainly that it decided nothing" \
+     "making no poison/requeue/reclaim decision this pass" "$out"
+nowant "no mail went out on the strength of a query that failed" "sp-failquery" "$(cat "$MAIL_LOG")"
+
+# RECOVERY: the failure was in the READ, not the events trail — a normal pass right after
+# must poison it exactly as if the failed pass had never happened.
+: > "$MAIL_LOG"; out="$(sentinel)"
+ispoisoned "the very next (working) pass poisons it as normal" sp-failquery
+want "and the operator is asked, same as any other poisoning" "sp-failquery" "$(cat "$MAIL_LOG")"
+
 tl_summary
