@@ -1148,11 +1148,20 @@ $gate_why"
     # claim. Forcing those through the submitted/landed pipeline would zombie every one of
     # them; the legacy commit-or-delivers audit (close_verdict, sp-dvlq) still judges them.
     #
+    # NOR IS A GRAPH-ONLY PERSONA'S CLOSE (FAYTH_GRAPH_ONLY=1), even absent a delivers:
+    # label. delivers: is stamped by the FILER (groom-trigger.sh et al.); a bead the groomer
+    # claims after being filed by hand — sp-yyzm3, filed by `overseer`, no delivers: label —
+    # gets no such stamp, and the groomer's own toolset (no Edit, no Write) cannot produce a
+    # commit regardless of who filed it. Converting that close to submitted zombies it the
+    # same way a missing delivers: label would (sp-wnsks): nothing will ever land to close it.
+    #
     # NOT WHEN THE MODEL RAN THROUGH THE SEMANTIC LAYER (design §3.7, LC_MODEL_RESTRICTED,
     # set where the session is launched below). That model had no `bd` on PATH at all — a
     # close here is structurally impossible, so there is nothing to reinterpret; `work
     # submit`/`work done` events are what the `_d_submitted` gathering above already reads.
-    if [ "${LC_MODEL_RESTRICTED:-0}" != 1 ] && [ "$st" = "closed" ] \
+    if [ "$st" = "closed" ] && [ "${FAYTH_GRAPH_ONLY:-0}" = 1 ]; then
+        log "$FAYTH: $BEAD_ID closed a work bead — graph-only persona, no commit expected, not converted"
+    elif [ "${LC_MODEL_RESTRICTED:-0}" != 1 ] && [ "$st" = "closed" ] \
        && read -r _wct_type _wct_sup _wct_delivers <<< "$(bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
@@ -1166,6 +1175,12 @@ print("%s\t%s\t%s" % (d[0].get("issue_type") or "", sup, deliv))' 2>/dev/null)" 
        && bead_is_work_type "${_wct_type:-}" && [ "${_wct_delivers:-0}" != 1 ]; then
         if [ "${_wct_sup:-0}" = 1 ]; then
             log "$FAYTH: $BEAD_ID closed a superseded work bead — not converted, close stands"
+        # AN EMPTY BRANCH IS THE SAME SHAPE AS A SUPERSEDED ONE (sp-iqb8n): converting it
+        # would mark it submitted for a commit that will never exist, and no round or
+        # landing pass ever certifies nothing. Checked the same way gate_st cases 3/4/5
+        # above decide "nothing to certify" — a commit naming this bead ahead of base.
+        elif ! grep -qF "$BEAD_ID" <<< "$(git -C "$REPO" log --format='%s%n%b' "$BASE_FQREF..$BRANCH" 2>/dev/null)"; then
+            log "$FAYTH: $BEAD_ID closed a work bead but $BRANCH carries no commit of its own ahead of $BASE_FQREF — not converted, close stands"
         else
             bead_reopen "$BEAD_ID" work-close-converted "Submitted: work committed on branch; marked submitted instead of closed. The landing pass closes this bead when it lands, citing the merge commit.${gate_why:+ Gate at close: $gate_why.}"
             bdq label add "$BEAD_ID" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1
@@ -2270,7 +2285,7 @@ if [ "${LC_MODEL_RESTRICTED:-0}" != 1 ] && [ "$st" = "closed" ] && [ "$committed
                 printf '%s %s' "$_evict_tip" "$_evict_reason" > "$_evict_seen_f" 2>/dev/null || true
                 ;;
             reopen)
-                bead_reopen "$BEAD_ID" eviction-race "Reopened by aeon.sh: bead closed while landstate is $_evict_state — the branch was evicted from the batch while this session was in flight. The close is valid but the work cannot re-enter the queue while the bead is closed. Recertify the branch to re-enter the merge queue."
+                bead_reopen "$BEAD_ID" eviction-race "Reopened by aeon.sh: bead closed while landstate is $_evict_state — the branch was evicted from the batch while this session was in flight. The close is valid but the work cannot re-enter the queue while the bead is closed. Recertify the branch to re-enter the merge queue." || true
                 log "$FAYTH: $BEAD_ID REOPENED — closed with landstate=$_evict_state (eviction race)"
                 st="open"
                 REQUEUE_CAUSE="eviction-race"
@@ -2667,7 +2682,7 @@ if [ "$st" = "closed" ] && [ "$committed" = "yes" ] && [ -z "$SOP_SILENT" ] && [
             else
                 _reopen_note="$_reopen_note A merge conflict is not an escalation — the next aeon is handed the rebase and must resolve it."
             fi
-            bead_reopen "$BEAD_ID" rebase-conflict "$_reopen_note"
+            bead_reopen "$BEAD_ID" rebase-conflict "$_reopen_note" || true
             # THE TEARDOWN MUST NOT READ THIS BACK AS A FAILURE OF THE WORK. The work is committed
             # and the session closed on it; what is missing is a rebase over commits that landed
             # while it ran, which is a fact about the queue. Charging it made the busiest branches
