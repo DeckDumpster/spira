@@ -2,12 +2,14 @@
 #
 # test-lc-hold.sh — container-tier acceptance for lc.sh's event wrappers (lc_hold/lc_unhold/
 # lc_holds, and, sp-rlyl0: lc_release/lc_holderdead/lc_drop/lc_returned) against a real
-# spira-lc binary and a throwaway Dolt server.
+# spira-lc binary and a throwaway Dolt server (sp-ki12s, extended for ask/wait/operator by
+# sp-mys5p).
 #
-# WHAT THIS PROVES:
+# WHAT THIS PROVES, for EVERY hold kind (poison, ask, wait, operator — sp-mys5p's
+# acceptance is "for each hold kind", not just the one sp-ki12s wired first):
 #   - lc_hold suspends a non-terminal bead without changing its state (design: "holds are
 #     a dimension, not states") — a §2.2 hazard class ("no terminal states forbids leaving")
-#     realized here as: a bead sentinel would have poisoned keeps its WORKING state.
+#     realized here as: a bead that would be held keeps its WORKING state.
 #   - lc_unhold releases it and restores exactly the suspended state — this bead's own
 #     acceptance criterion ("a hold released restores exactly the suspended state"). Same
 #     mechanism, HoldKind::Operator tag, for the manual hold sp-rlyl0's hold.sh/unhold.sh use.
@@ -27,9 +29,9 @@
 # host-reason: starts its own disposable `dolt sql-server`, same shape as
 # test-lifecycle-container.sh (sp-uwv2s) — testenv-batch.sh already provides the container.
 #
-# defect: sp-ki12s
+# defect: sp-ki12s, sp-mys5p
 # tier: T2
-# covers: spira/lc.sh spira-lc/* lifecycle/*
+# covers: spira/lc.sh spira/aeon.sh spira/lib.sh spira/hold.sh spira/unhold.sh spira/groomer.sh spira-lc/* lifecycle/*
 # timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -111,34 +113,43 @@ row_json() {    # row_json <bead-id>
 
 . "$HERE/lc.sh"
 
-# ── hold suspends without changing state, and unhold restores exactly that state ──────
-seed_bead sp-hold-1 WORKING
-lc_hold sp-hold-1 poison "attempts exceeded threshold" test-suite
-wantrc "lc_hold applies on a non-terminal bead" 0 $?
+# ── hold suspends without changing state, and unhold restores exactly that state —
+# for EVERY hold kind, not just poison. sp-mys5p wires lc_hold/lc_unhold at the ask, wait
+# and operator writers the same way sp-ki12s wired CHECK 4 for poison; this proves the
+# mechanism they all share, generically, per kind. ──────────────────────────────────────
+for kind in poison ask wait operator; do
+    bead="sp-hold-$kind"
+    seed_bead "$bead" WORKING
+    lc_hold "$bead" "$kind" "held for $kind" test-suite
+    wantrc "lc_hold($kind) applies on a non-terminal bead" 0 $?
 
-row="$(row_json sp-hold-1)"
-want "state is unchanged by the hold" '"state":"WORKING"' "$row"
-want "the poison hold is recorded" 'poison' "$row"
+    row="$(row_json "$bead")"
+    want "state is unchanged by the $kind hold" '"state":"WORKING"' "$row"
+    want "the $kind hold is recorded" "$kind" "$row"
 
-held="$(lc_holds sp-hold-1)"
-is "lc_holds reports exactly the one held kind" "poison" "$held"
+    held="$(lc_holds "$bead")"
+    is "lc_holds reports exactly the one held kind ($kind)" "$kind" "$held"
 
-lc_unhold sp-hold-1 poison test-suite
-wantrc "lc_unhold applies" 0 $?
+    lc_unhold "$bead" "$kind" test-suite
+    wantrc "lc_unhold($kind) applies" 0 $?
 
-row2="$(row_json sp-hold-1)"
-want "the state is exactly what it was before the hold" '"state":"WORKING"' "$row2"
-want "holds is empty again — nothing new suspended, nothing resurrected" '"holds":"[]"' "$row2"
-held2="$(lc_holds sp-hold-1)"
-is "lc_holds reports nothing held after release" "" "$held2"
+    row2="$(row_json "$bead")"
+    want "the state is exactly what it was before the $kind hold" '"state":"WORKING"' "$row2"
+    want "holds is empty again after $kind release — nothing new suspended, nothing resurrected" '"holds":"[]"' "$row2"
+    held2="$(lc_holds "$bead")"
+    is "lc_holds reports nothing held after $kind release" "" "$held2"
+done
 
-# ── POSITIVE CONTROL + refusal: a terminal bead cannot be held ─────────────────────────
-seed_bead sp-hold-term LANDED
-lc_hold sp-hold-term poison "should never apply" test-suite
-wantrc "lc_hold on a terminal (LANDED) bead is refused" 3 $?
-row3="$(row_json sp-hold-term)"
-want "the terminal bead's row is untouched by the refused hold" '"holds":"[]"' "$row3"
-want "and its version did not move" '"version":"0"' "$row3"
+# ── POSITIVE CONTROL + refusal: a terminal bead cannot be held, for every kind ─────────
+for kind in poison ask wait operator; do
+    bead="sp-hold-term-$kind"
+    seed_bead "$bead" LANDED
+    lc_hold "$bead" "$kind" "should never apply" test-suite
+    wantrc "lc_hold($kind) on a terminal (LANDED) bead is refused" 3 $?
+    row3="$(row_json "$bead")"
+    want "the terminal bead's row is untouched by the refused $kind hold" '"holds":"[]"' "$row3"
+    want "and its version did not move ($kind)" '"version":"0"' "$row3"
+done
 
 # ── a bead with no lifecycle row at all (not yet classified) is a clean non-fatal rc,
 # never a crash — the pre-cutover reality for every real bead in production today ──────

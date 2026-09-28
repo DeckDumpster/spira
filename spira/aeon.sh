@@ -18,6 +18,7 @@
 # the documented primitive; hand-rolling it would be the "read the manual first" mistake.
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/lc.sh"
 
 # WHEN THIS AEON STARTED, read once and here rather than wherever it is next wanted. A
 # persona with a wall (FAYTH_TIMEOUT_SECONDS) is killed a fixed number of seconds after the
@@ -2208,6 +2209,7 @@ if [ "$st" = "closed" ] && [ "$committed" = "yes" ] && [ "$superseded" != 1 ]; t
                 ;;
             cap)
                 bdq label add "$BEAD_ID" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
+                lc_hold "$BEAD_ID" ask "eviction-race guard capped: reopened $_evict_count time(s) already" "$FAYTH" || true
                 bdq note "$BEAD_ID" "Eviction-race guard capped: reopened $_evict_count time(s) already. Recertify the branch by hand and clear the $SPIRA_ASK_LABEL label; the guard will not reopen it again on its own." >/dev/null 2>&1 || true
                 log "$FAYTH: $BEAD_ID eviction-race escalated — $_evict_count prior requeue(s) ≥ ${SPIRA_EVICTION_ESCALATE_AT:-3}, labeled $SPIRA_ASK_LABEL instead of reopening"
                 printf '%s %s' "$_evict_tip" "$_evict_reason" > "$_evict_seen_f" 2>/dev/null || true

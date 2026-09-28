@@ -1670,10 +1670,14 @@ for bid in labeled:
         case "$action" in
             add)
                 bdq label add "$id" "$label" >/dev/null 2>&1 || true
+                # Dual-written, not a replace (sp-ki12s precedent): fayth_ready still reads
+                # the label, not this hold, until CHECK 3b's reader is cut over in the round.
+                lc_hold "$id" wait "blocker certified or batched, not yet landed" sentinel || true
                 log "mark_queue_waiters: $id — queue-wait applied"
                 ;;
             remove)
                 bdq label remove "$id" "$label" >/dev/null 2>&1 || true
+                lc_unhold "$id" wait sentinel || true
                 log "mark_queue_waiters: $id — blocker landed, cleared"
                 ;;
         esac
@@ -1700,6 +1704,7 @@ close_landed_queue_waiters() {
         { read -r _state _ < "$_ls"; } 2>/dev/null || continue
         if [ "$_state" = "LANDED" ]; then
             bdq label remove "$_id" "$label" >/dev/null 2>&1 || true
+            lc_unhold "$_id" wait sentinel || true
             bdq close "$_id" \
                 --reason "Content already on main (landstate=LANDED); no branch remained to land." \
                 >/dev/null 2>&1 || true
@@ -2056,6 +2061,9 @@ park_unmapped() {
     local id="$1" repo_name="$2"
     bdq label add "$id" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
     bdq label add "$id" "overseer"          >/dev/null 2>&1 || true
+    # Dual-written, not a replace (sp-ki12s precedent) — the label is still what every
+    # fayth's dispatch exclusion reads until that reader is cut over in the same round.
+    lc_hold "$id" ask "repo:$repo_name has no repo-map entry" aeon.sh || true
     bdq note "$id" "Parked by aeon.sh: this bead carries repo:$repo_name, and $SPIRA_REPO_MAP has no entry for it (or its path is not a git checkout). Labeled $SPIRA_ASK_LABEL and overseer — no aeon will claim it again until a human corrects the label or adds the repo to the map and removes that label. Refusing to work it in the home repo — a fix landed in the wrong repository passes every check downstream." >/dev/null 2>&1
     release_own_claim "$id"
 }
@@ -3619,6 +3627,10 @@ rapid_recur_check() {
     log "$FAYTH: $BEAD_ID RAPID-RECUR: $_count consecutive sub-10s runs — parking, a setup loop cannot be learned from a retry"
     bdq label add "$BEAD_ID" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
     bdq label add "$BEAD_ID" "overseer" >/dev/null 2>&1 || true
+    # Dual-written alongside the label, not a replace (sp-ki12s precedent): the fayth
+    # exclusion aeon.sh's own dispatch reads is still the label, not this hold, until the
+    # dispatch-predicate reader cutover lands in the same round.
+    lc_hold "$BEAD_ID" ask "rapid-recur: $_count consecutive sub-10s aeon summons" "$FAYTH" || true
     bdq note "$BEAD_ID" \
         "RAPID-RECUR: $_count consecutive sub-10s aeon runs on $BEAD_ID. Each summon dies before meaningful work, suggesting a setup loop — the defect recurs identically on every retry. Parked with $SPIRA_ASK_LABEL and overseer instead of only annotated: a fourth summon cannot learn anything the third did not. Check: worktree path, conflicting branches, or box state. Details in aeon-ledger." \
         >/dev/null 2>&1 || true
@@ -5771,6 +5783,9 @@ park_branch_collisions() {
 
         bdq label add "$id" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
         bdq label add "$id" "overseer" >/dev/null 2>&1 || true
+        # Dual-written, not a replace (sp-ki12s precedent) — the label is still what every
+        # fayth's dispatch exclusion reads until that reader is cut over in the same round.
+        lc_hold "$id" ask "branch $branch squatted by $holder_id's worktree at $holder_path" sentinel || true
         bdq note "$id" "Parked by detect_branch_collisions: recorded branch $branch is checked out in $holder_id's worktree at $holder_path, not this bead's own canonical path. Every summon reaches aeon.sh's law-one-aeon-one-worktree refusal (or a no-op self-correct, when this bead's own default branch is the squatted one) before a session can start, and nothing about the input changes on retry. Labeled $SPIRA_ASK_LABEL and overseer so dispatch stops spending a claim here — free $holder_path or correct the branch: label, then remove $SPIRA_ASK_LABEL." >/dev/null 2>&1 || true
     done <<< "$1"
 }
