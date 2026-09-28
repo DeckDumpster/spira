@@ -103,6 +103,9 @@ pub fn spira_section(
             "SPIRA_AEON_CPU_QUOTA" | "SPIRA_LAND_CPU_QUOTA" => warnings.push(format!(
                 "spira.conf: {key} is retired (sp-b4oct: no explicit CPU quotas) and ignored — remove it"
             )),
+            "SPIRA_QUARANTINE_CLEAN_RUNS" => warnings.push(format!(
+                "spira.conf: {key} is retired (sp-op2c2: flaky suites are deleted, not quarantined, so nothing reactivates) and ignored — remove it"
+            )),
             "SPIRA_BATCHER_BIN" => {
                 if crate::batcher_bin_means_off(val) && !raw.contains_key("SPIRA_BATCHER_ENABLE") {
                     s.batcher_enable = Some("0".into());
