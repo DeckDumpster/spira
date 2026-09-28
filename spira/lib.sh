@@ -5301,8 +5301,10 @@ file_unclaimable_incidents() {   # file_unclaimable_incidents <detect_unclaimabl
 }
 
 # detect_branch_collisions -> "COLLISION <id> <repo> <branch> <holder-id> <holder-path>" for
-# every open bead whose recorded branch (bead_branch) is checked out in a DIFFERENT bead's
-# canonical worktree ($SPIRA_RUN/worktree/<id>).
+# every open bead whose recorded branch is checked out in a DIFFERENT bead's canonical
+# worktree ($SPIRA_RUN/worktree/<id>). The branch label is read from the `bd list` JSON
+# already fetched above, not with a per-bead `bd state` call (sp-nsxhd) — bd stores state as
+# a `branch:<value>` label (`bd set-state`), so it is already sitting in `labels`.
 #
 # aeon.sh's worktree-attach guard (law-one-aeon-one-worktree) reacts correctly once a bead is
 # claimed — it self-corrects a mislabeled child onto a fresh branch of its own, or dies naming
@@ -5329,13 +5331,14 @@ for i in (d if isinstance(d, list) else [d]):
     if ask in labels:
         continue
     repo = next((l[5:] for l in labels if l.startswith("repo:")), "")
-    print("%s\t%s" % (i["id"], repo))
+    branch = next((l[7:] for l in labels if l.startswith("branch:")), "")
+    print("%s\t%s\t%s" % (i["id"], repo, branch))
 ' 2>/dev/null)"
     [ -n "$_bc_ids" ] || return 0
 
     local -A _bc_maps
-    local _bc_id _bc_repo _bc_root _bc_br _bc_holder _bc_holder_id
-    while IFS=$'\t' read -r _bc_id _bc_repo; do
+    local _bc_id _bc_repo _bc_branch _bc_root _bc_br _bc_holder _bc_holder_id
+    while IFS=$'\t' read -r _bc_id _bc_repo _bc_branch; do
         [ -n "$_bc_id" ] || continue
         _bc_repo="${_bc_repo:-$(spira_home_repo)}"
         if [ -z "${_bc_maps[$_bc_repo]+x}" ]; then
@@ -5348,7 +5351,7 @@ for i in (d if isinstance(d, list) else [d]):
             fi
         fi
         [ -n "${_bc_maps[$_bc_repo]}" ] || continue
-        _bc_br="$(bead_branch "$_bc_id")"
+        _bc_br="${_bc_branch:-spira/$_bc_id}"
         _bc_holder="$(awk -v b="refs/heads/$_bc_br" -F'\t' '$1==b{print $2; exit}' <<< "${_bc_maps[$_bc_repo]}")"
         [ -n "$_bc_holder" ] || continue
         case "$_bc_holder" in
