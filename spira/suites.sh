@@ -104,11 +104,11 @@ record_read() {          # record_read <basename> -> `<status> <epoch> <seconds>
 # ask before: which suites in this tree are executed by nothing.
 # --------------------------------------------------------------------------------------
 cmd_list() {
-    local s where rec st at secs age reach gated_ok=1 _sts_file _lifecycle
+    local s where rec st at secs age gated_ok=1 _sts_file _lifecycle
     GATED="$(gated_suites)" || gated_ok=0
     GATED=" $(echo ${GATED:-}) "
     _sts_file="$(suite_state_file "$(cd "$HERE/.." && pwd -P)")"
-    printf '%-26s %-12s %-7s %-9s %-8s %-7s %s\n' SUITE STATE RUNS LAST AGE REACH COVERS
+    printf '%-26s %-12s %-7s %-9s %-8s %s\n' SUITE STATE RUNS LAST AGE COVERS
     for s in $(all_suites); do
         if [ "$gated_ok" = 0 ]; then where='?'
         elif is_gated "$s"; then where=gate
@@ -121,16 +121,8 @@ cmd_list() {
         else
             st=-; age=-
         fi
-        if [ "$where" = gate ]; then
-            st=-; age=-; reach=-
-        elif [ -f "$STATE/$s.unreached" ]; then
-            reach="—"
-        elif [ -n "$rec" ]; then
-            reach=ok
-        else
-            reach=-
-        fi
-        printf '%-26s %-12s %-7s %-9s %-8s %-7s %s\n' "$s" "$_lifecycle" "$where" "$st" "$age" "$reach" \
+        if [ "$where" = gate ]; then st=-; age=-; fi
+        printf '%-26s %-12s %-7s %-9s %-8s %s\n' "$s" "$_lifecycle" "$where" "$st" "$age" \
             "$(suite_covers_of "$HERE/$s")"
     done
     [ "$gated_ok" = 1 ] || printf '\n%s is unreadable — which suites the gate runs is unknown\n' "$GATE_LIST"
@@ -144,7 +136,7 @@ cmd_list() {
 # EVERY FIELD RENDERS `?` WHEN IT COULD NOT BE READ, never 0.
 # --------------------------------------------------------------------------------------
 cmd_status() {
-    local s rec st at total=0 gate_n=0 timed_n=0 never=0 stale=0 red=0 skip=0 setup_fault=0 not_reached=0 oldest="" oldest_s="" now
+    local s rec st at total=0 gate_n=0 timed_n=0 never=0 stale=0 red=0 skip=0 setup_fault=0 oldest="" oldest_s="" now
     now="$(date +%s)"
     if ! GATED="$(gated_suites)"; then
         printf 'suites          ?   %s is unreadable — the gated set is unknown\n' "$GATE_LIST"
@@ -157,15 +149,12 @@ cmd_status() {
         timed_n=$(( timed_n + 1 ))
         rec="$(record_read "$s" || true)"
         if [ -z "$rec" ]; then never=$(( never + 1 )); fi
-        # A suite's last verdict survives an unreached pass — count red regardless of reach.
         if [ -n "$rec" ]; then
             read -r st at _ _ <<< "$rec"
             case "$st" in red|timeout|red-unconfirmed) red=$(( red + 1 )) ;; skip) skip=$(( skip + 1 )) ;; setup-fault|fixture-fault) setup_fault=$(( setup_fault + 1 )) ;; esac
             if [ "$(( now - at ))" -gt "$STALE" ]; then stale=$(( stale + 1 )); fi
             if [ -z "$oldest" ] || [ "$at" -lt "$oldest" ]; then oldest="$at"; oldest_s="$s"; fi
         fi
-        # The .unreached file is distinct from a missing record (law-absence-needs-a-positive-control).
-        [ -f "$STATE/$s.unreached" ] && not_reached=$(( not_reached + 1 ))
     done
     # Count suites without a # host-reason: or container calls — migration progress.
     # host-check.sh --count-undeclared does the walk; ? when it is unreadable or the glob
@@ -187,7 +176,6 @@ cmd_status() {
     printf '  %-36s%s\n' "timed suites red at last run" "$red"
     printf '  %-36s%s\n' "timed suites setup/fixture fault at last run" "$setup_fault"
     printf '  %-36s%s\n' "timed suites skipped at last run" "$skip"
-    printf '  %-36s%s\n' "timed suites not reached last pass" "$not_reached"
     if [ -n "$oldest" ]; then
         printf '  %-36s%sm   %s\n' "oldest timed result" "$(( (now - oldest) / 60 ))" "$oldest_s"
     else
