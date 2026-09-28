@@ -333,6 +333,7 @@ HEAD6="$(git -C "$REPO" rev-parse round-sp-pub6)"
 git -C "$REPO" checkout -q main
 git -C "$REPO" branch -D round-sp-pub6 >/dev/null 2>&1
 
+mk_bins "$HEAD6"
 out="$(queue land-local "$REPONAME" --head "$HEAD6" --members "sp-pub6:$HEAD6")"; rc=$?
 [ "$rc" -eq 0 ] && ok "7: the round build itself is never blocked by the divergence" \
     || bad "7: the round build itself is never blocked by the divergence" "got rc=$rc out=$out"
@@ -349,6 +350,7 @@ HEAD7="$(git -C "$REPO" rev-parse round-sp-pub7)"
 git -C "$REPO" checkout -q main
 git -C "$REPO" branch -D round-sp-pub7 >/dev/null 2>&1
 
+mk_bins "$HEAD7"
 out="$(queue land-local "$REPONAME" --head "$HEAD7" --members "sp-pub7:$HEAD7")"; rc=$?
 [ "$rc" -eq 0 ] && ok "7b: a second round build on the same divergence still succeeds" \
     || bad "7b: a second round build on the same divergence still succeeds" "got rc=$rc out=$out"
