@@ -4,10 +4,11 @@
 # MATRIX) and plan-matrix-fence.sh's gate-wiring confirmation.
 #
 # THE PROPERTY: docs/test-plan/coverage.json and COVERAGE.md are regenerated whole and never
-# hand-edited (law-regenerate-derived-summaries); `--check` is what the gate runs, so a copy
-# that no longer matches a fresh regeneration must fail it, and a freshly regenerated copy
-# must pass it. Proven over a scratch repository so this suite never touches the real,
-# 1400-line docs/test-plan/coverage.json.
+# hand-edited (law-regenerate-derived-summaries), and untracked — a hand edit or a stale copy
+# from a previous run is silently overwritten by the next regeneration rather than compared
+# against, so there is nothing for two independently-regenerating branches to conflict or go
+# stale over on merge (law-test-selection-and-plan-are-one-source). Proven over a scratch
+# repository so this suite never touches the real, 1400-line docs/test-plan/coverage.json.
 #
 # host-reason: reads suite source and scratch git repos only; no database, no systemd
 #
@@ -62,16 +63,17 @@ matrix() { env -i PATH="$PATH" HOME="$TMP" TERM=dumb SPIRA_TEST_PLAN_BIN="$SPIRA
     bash "$ROOT/spira/plan-matrix.sh" "$@" 2>&1; }
 
 # ==========================================================================
-# SEEN RED: no coverage.json/COVERAGE.md exist yet — --check must refuse,
-# never silently report clean over a matrix it has never written.
+# SEEN RED: a malformed catalogue must fail generation outright — plan-matrix.sh
+# has nothing else to fall back on to detect a bad input.
 # ==========================================================================
-out="$(matrix --check)"; rc=$?
-isnz "SEEN RED: --check refuses a missing coverage.json/COVERAGE.md" "$rc"
-want "and names the file" "coverage.json" "$out"
+cp "$ROOT/docs/test-plan/dispatch.toml" "$TMP/dispatch.toml.good"
+printf 'not valid toml{{{\n' > "$ROOT/docs/test-plan/dispatch.toml"
+out="$(matrix)"; rc=$?
+isnz "SEEN RED: a malformed catalogue fails matrix generation" "$rc"
+cp "$TMP/dispatch.toml.good" "$ROOT/docs/test-plan/dispatch.toml"
 
 # ==========================================================================
-# Regenerate for real, then SEEN GREEN: --check passes against its own
-# fresh output.
+# SEEN GREEN: regeneration against the fixed catalogue writes both files.
 # ==========================================================================
 out="$(matrix)"; rc=$?
 [ "$rc" = 0 ] && ok "plan-matrix.sh writes coverage.json and COVERAGE.md" \
@@ -83,27 +85,44 @@ out="$(matrix)"; rc=$?
 grep -q 'UC-dispatch-01' "$ROOT/docs/test-plan/COVERAGE.md" && \
     ok "COVERAGE.md names the use case" || bad "COVERAGE.md names the use case" "not found"
 
-out="$(matrix --check)"; rc=$?
-[ "$rc" = 0 ] && ok "SEEN GREEN: --check passes against a fresh regeneration" \
-    || bad "SEEN GREEN: --check passes against a fresh regeneration" "$out"
-
 # ==========================================================================
-# SEEN RED again: hand-editing coverage.json makes it stale.
+# UNTRACKED, NEVER COMPARED: a hand-edited (or merge-stale) coverage.json is
+# silently overwritten by the next regeneration, never diffed against — this
+# is what keeps two independently-regenerating branches from ever conflicting
+# or disagreeing on the file (law-test-selection-and-plan-are-one-source).
 # ==========================================================================
 printf '{"api_version":"stale","areas":[]}' > "$ROOT/docs/test-plan/coverage.json"
-out="$(matrix --check)"; rc=$?
-isnz "SEEN RED: a hand-edited coverage.json fails --check" "$rc"
+out="$(matrix)"; rc=$?
+[ "$rc" = 0 ] && ok "regeneration succeeds over a hand-edited coverage.json" \
+    || bad "regeneration succeeds over a hand-edited coverage.json" "$out"
+grep -q 'UC-dispatch-01' "$ROOT/docs/test-plan/coverage.json" && \
+    ok "the hand edit is gone — overwritten, not merged with" \
+    || bad "the hand edit is gone — overwritten, not merged with" "$(cat "$ROOT/docs/test-plan/coverage.json")"
+
+# ==========================================================================
+# UNTRACKED BY GIT: coverage.json/COVERAGE.md must never be a committed file
+# a merge of two branches could conflict over or leave stale.
+# ==========================================================================
+gi="$(cat "$REAL_ROOT/.gitignore" 2>/dev/null)"
+want ".gitignore excludes coverage.json" "docs/test-plan/coverage.json" "$gi"
+want ".gitignore excludes COVERAGE.md" "docs/test-plan/COVERAGE.md" "$gi"
 
 # ==========================================================================
 # GATE WIRING: gate-touched.sh calls plan-matrix-fence.sh, which calls both
-# plan-lint.sh --orphans and plan-matrix.sh --check — confirmed by source
-# reference, the same style test-build-fence.sh uses for build-fence.sh.
+# plan-lint.sh --orphans and plan-matrix.sh (no --check: nothing committed to
+# check against) — confirmed by source reference, the same style
+# test-build-fence.sh uses for build-fence.sh.
 # ==========================================================================
 gt="$(cat "$HERE/gate-touched.sh")"
 want "gate-touched.sh calls plan-matrix-fence.sh" "plan-matrix-fence.sh" "$gt"
 
 fence_src="$(cat "$HERE/plan-matrix-fence.sh")"
 want "plan-matrix-fence.sh calls plan-lint.sh --orphans" "plan-lint.sh" "$fence_src"
-want "plan-matrix-fence.sh calls plan-matrix.sh --check" "plan-matrix.sh" "$fence_src"
+want "plan-matrix-fence.sh calls plan-matrix.sh" "plan-matrix.sh" "$fence_src"
+case "$fence_src" in
+    *'plan-matrix.sh --check'*) bad "plan-matrix-fence.sh no longer runs plan-matrix.sh --check" \
+        "found --check in $HERE/plan-matrix-fence.sh" ;;
+    *) ok "plan-matrix-fence.sh no longer runs plan-matrix.sh --check" ;;
+esac
 
 tl_summary

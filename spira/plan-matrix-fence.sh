@@ -9,8 +9,10 @@
 # create. That flip is sp-94lbj's own scope, landing once the area pages are complete.
 #
 # WHAT THIS DOES FAIL, on every branch, regardless of what it touches:
-#   1. plan-lint.sh --orphans <base>   — "deletion writes the plan"
-#   2. plan-matrix.sh --check          — a stale docs/test-plan/coverage.json or COVERAGE.md
+#   1. plan-lint.sh --orphans <base>  — "deletion writes the plan"
+#   2. plan-matrix.sh                 — matrix generation itself failing (a malformed
+#      catalogue, a broken binary); coverage.json/COVERAGE.md are untracked and rewritten
+#      here, so there is no committed copy left to go stale on a merge.
 #
 # Called from gate-touched.sh right after build-fence.sh, the one place in the repo-map's
 # fence chain that runs regardless of SPIRA_GATE_SUITES — the same reasoning build-fence.sh
@@ -27,7 +29,7 @@ if ! bash "$HERE/plan-lint.sh" --orphans "$BASE"; then
     printf 'plan-matrix-fence: a use case lost its last covering suite with no uncovered marker\n' >&2
     rc=1
 fi
-if ! bash "$HERE/plan-matrix.sh" --check; then
+if ! bash "$HERE/plan-matrix.sh"; then
     rc=1
 fi
 exit "$rc"
