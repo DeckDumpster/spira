@@ -860,6 +860,12 @@
             "null"
           ]
         },
+        "gate_lock_wait": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "gate_select_cap": {
           "type": [
             "string",
@@ -1011,6 +1017,12 @@
           ]
         },
         "instance": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "land_cpu_quota": {
           "type": [
             "string",
             "null"

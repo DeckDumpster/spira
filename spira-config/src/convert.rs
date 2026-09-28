@@ -326,6 +326,8 @@ pub fn spira_section(
             "SPIRA_GATE_BUDGET" => s.gate_budget = Some(val.clone()),
             "SPIRA_GATE_SELECT_CAP" => s.gate_select_cap = Some(val.clone()),
             "SPIRA_AEON_CPU_QUOTA" => s.aeon_cpu_quota = Some(val.clone()),
+            "SPIRA_GATE_LOCK_WAIT" => s.gate_lock_wait = Some(val.clone()),
+            "SPIRA_LAND_CPU_QUOTA" => s.land_cpu_quota = Some(val.clone()),
             "SPIRA_GATE_SUITES" => s.gate_suites = Some(val.clone()),
             "SPIRA_SUITE_STATE_FILE" => s.suite_state_file = Some(val.clone()),
             "SPIRA_SUITES_STATE" => s.suites_state = Some(val.clone()),

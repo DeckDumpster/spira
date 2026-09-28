@@ -248,6 +248,8 @@ pub struct SpiraSection {
     pub gate_budget: Option<String>,
     pub gate_select_cap: Option<String>,
     pub aeon_cpu_quota: Option<String>,
+    pub gate_lock_wait: Option<String>,
+    pub land_cpu_quota: Option<String>,
     pub gate_suites: Option<String>,
     pub suite_state_file: Option<String>,
     pub suites_state: Option<String>,

@@ -105,6 +105,7 @@ flow_window_hours
 forge
 forge_repo
 gate_budget
+gate_lock_wait
 gate_select_cap
 gate_suites
 gate_timeout
@@ -132,6 +133,7 @@ id_prefix
 incident_label
 incident_priority
 instance
+land_cpu_quota
 land_gate_reserve
 land_maxsec
 landing_pass_bin
