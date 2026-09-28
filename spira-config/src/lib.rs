@@ -158,6 +158,7 @@ pub struct SpiraSection {
     pub land_gate_reserve: Option<String>,
     pub certify_always_covers: Option<String>,
     pub rebase_escalate_at: Option<String>,
+    pub rebase_stale_log: Option<String>,
     pub eviction_escalate_at: Option<String>,
     pub verdict_window: Option<String>,
     pub check5_max_file: Option<String>,

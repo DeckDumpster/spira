@@ -124,6 +124,27 @@ pub fn bump_requeue(env: &Env, id: &str, reason: &str) {
     let _ = lib_call(env, "bump_requeue", [id, reason]);
 }
 
+/// Tries the mechanical rebase before a member conflicting with the base is handed to an
+/// aeon (sp-oxwvc). Returns rebase-stale.sh's own exit code: 0 (rebased — mechanically or
+/// cleanly — and re-certified at the new tip) and 1/2 (a real content conflict or a red
+/// gate) all mean the script itself already did everything the caller would otherwise do —
+/// certify and note it, or reopen the bead with the conflicting hunk or gate output quoted
+/// and bump its requeue count. Only 3 (a branch it could not even attempt: busy, missing,
+/// or a scratch-worktree failure) leaves the caller's own fallback bookkeeping to run, the
+/// same as if this call had never been made. A code the script never documents (a crash, a
+/// missing binary) is folded into 3 for the same reason — silence must fail closed to "an
+/// aeon still sees this", never to "nobody did anything and the round moved on".
+pub fn rebase_stale(env: &Env, repo_name: &str, id: &str) -> i32 {
+    let mut cmd = Command::new("bash");
+    cmd.arg(env.home.join("rebase-stale.sh")).arg(id).arg(repo_name);
+    match cmd.status().ok().and_then(|s| s.code()) {
+        Some(0) => 0,
+        Some(1) => 1,
+        Some(2) => 2,
+        _ => 3,
+    }
+}
+
 // ---------------------------------------------------------------------------------------
 // spira-lc: the cutover round's own OPEN-batch lifecycle (sp-o7nbr.4, same contract as
 // sp-o7nbr.2's batch.sh _lc_cut_batch/lcq — best-effort and additive, never blocking the

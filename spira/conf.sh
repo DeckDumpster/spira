@@ -305,6 +305,7 @@ SPIRA_QUEUE_WAIT_LABEL
 SPIRA_QUEUE_WATCH_BIN
 SPIRA_RAPID_RECUR_THRESHOLD
 SPIRA_REBASE_ESCALATE_AT
+SPIRA_REBASE_STALE_LOG
 SPIRA_RECLAIM_GRACE_SECS
 SPIRA_RECONCILER_BIN
 SPIRA_RECONCILER_FLOW_BIN
@@ -1196,6 +1197,10 @@ spira_conf_defaults() {
     # landing pass sends the Concierge a machine event rather than reopening again — never
     # Ryan (law-a-rebase-loop-is-sequenced-not-split).
     : "${SPIRA_REBASE_ESCALATE_AT:=3}"
+    # WHERE rebase-stale.sh RECORDS EVERY ATTEMPT (mechanical / clean / conflict / gate-red),
+    # one line per call — the measure sp-oxwvc asks for: how much of the rework rate a
+    # mechanical resolver actually removes.
+    : "${SPIRA_REBASE_STALE_LOG:=$SPIRA_RUN/rebase-stale.log}"
     # HOW MANY EVICTION-RACE REOPENS BEFORE THE BEAD IS ESCALATED INSTEAD, mirroring
     # SPIRA_REBASE_ESCALATE_AT above: a bead whose eviction-race reopen keeps firing is not
     # recertifying itself, and nothing else names an actor who would.

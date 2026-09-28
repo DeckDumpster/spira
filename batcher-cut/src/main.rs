@@ -206,6 +206,13 @@ fn handle_base_conflicts(
         }
         deleted.insert(m.id.clone(), io::deleted_suites(repo, &m.tip, base_sha));
         if stale_retry_due(m.certified_at, base_moved_at) {
+            // 0/1/2: rebase-stale.sh ran and already did everything this branch would —
+            // certified a mechanical/clean rebase, or reopened the bead itself with the
+            // conflicting hunk or gate output quoted. Only 3 (it could not even attempt
+            // the branch) falls through to this call's own, coarser bookkeeping.
+            if io::rebase_stale(env_, &repo.name, &m.id) != 3 {
+                continue;
+            }
             io::bump_requeue(env_, &m.id, "merge-conflict");
             io::bead_reopen(
                 env_,
