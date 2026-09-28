@@ -214,8 +214,15 @@ except Exception: print("")
 # FAIL, not warn, so a blind detector shows up here first.
 # --------------------------------------------------------------------------------------
 doctor_check_duckdb() {
-    if command -v duckdb >/dev/null 2>&1; then
-        OK "duckdb — $(command -v duckdb)"
+    local duckdb_bin="${SPIRA_DUCKDB_BIN:-duckdb}"
+    local found
+    if [[ "$duckdb_bin" == */* ]]; then
+        [[ -x "$duckdb_bin" ]] && found="$duckdb_bin"
+    else
+        found="$(command -v "$duckdb_bin" 2>/dev/null || true)"
+    fi
+    if [[ -n "$found" ]]; then
+        OK "duckdb — $found"
     else
         FAIL "duckdb is not on PATH" \
              "tsd-query.sh refuses every query and every reconciler-flow invariant logs

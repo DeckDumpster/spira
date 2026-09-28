@@ -144,6 +144,14 @@ mail_count() {
     n="$(grep -c '^CALL send concierge' "$MAIL_LOG" 2>/dev/null)"
     printf '%s' "${n:-0}"
 }
+mail_count_for() {
+    # Alerts naming invariant $1 specifically — a plain reset_env leaves velocity, dwell
+    # and round-health unobservable together (none of them has a landing-event row yet),
+    # so a raw mail_count conflates three invariants' independent alerts into one number.
+    local n
+    n="$(grep -c "^invariant: $1\$" "$MAIL_LOG" 2>/dev/null)"
+    printf '%s' "${n:-0}"
+}
 
 epoch_iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 emit_event() {
@@ -381,7 +389,7 @@ sleep 3
 SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=999 run_pass
 is "still unobservable past the gap's own 2s grace" unobservable "$(status_of flow:velocity:queue status)"
 is "not confirmed — inside its own (999s) grace" False "$(status_of flow:velocity:queue is_gap)"
-is "no concierge alert while inside the unobservable grace" "0" "$(mail_count)"
+is "no concierge alert while inside the unobservable grace" "0" "$(mail_count_for flow:velocity:queue)"
 
 # ============================================================================
 echo
@@ -391,17 +399,17 @@ echo "    through the same deduplicated path a gap uses (sp-fufyb) — not once 
 reset_env
 SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=2 run_pass
 is "unobservable, first pass, inside grace" unobservable "$(status_of flow:velocity:queue status)"
-is "no alert yet" "0" "$(mail_count)"
+is "no alert yet" "0" "$(mail_count_for flow:velocity:queue)"
 sleep 3
 SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=2 run_pass
 is "confirmed past its own grace" True "$(status_of flow:velocity:queue is_gap)"
-is "exactly one alert fired for the first confirmed pass" "1" "$(mail_count)"
+is "exactly one alert fired for the first confirmed pass" "1" "$(mail_count_for flow:velocity:queue)"
 want "the alert names the invariant" "flow:velocity:queue" "$(cat "$MAIL_LOG")"
 
 echo "the same unresolved streak does not alert again on the next pass"
 SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS=2 run_pass
 is "still unobservable" unobservable "$(status_of flow:velocity:queue status)"
-is "no additional alert for the same streak" "1" "$(mail_count)"
+is "no additional alert for the same streak" "1" "$(mail_count_for flow:velocity:queue)"
 
 # ============================================================================
 tl_summary
