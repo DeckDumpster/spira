@@ -338,6 +338,8 @@ pub struct SpiraSection {
     pub gh_app_key: Option<String>,
     pub gh_app_private_key: Option<String>,
     pub pve_env: Option<String>,
+    pub workflow_only_paths: Option<String>,
+    pub gh_api: Option<String>,
 }
 
 /// How a landed branch reaches its base — see `repo-map.example`'s own `land` column.

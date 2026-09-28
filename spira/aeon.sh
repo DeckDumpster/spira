@@ -2486,6 +2486,75 @@ if [ "$GROOM_ESCALATION_CHECK" = 1 ] && [ "$st" = "closed" ] && [ "$superseded" 
     fi
 fi
 
+# ---- close-time workflow-run fence (law-a-workflow-lands-on-its-own-run) ----------------
+# A branch that touches .github/workflows/ or a workflow-only script must cite a dispatched
+# run URL in its close reason. The run must be on the bead's branch and its head_sha must be
+# an ancestor-or-equal of the branch tip; these verify the run tested the actual change, not
+# a prior commit or a different branch.
+#
+# Override: SPIRA_WORKFLOW_RUN_CONSIDERED=<reason> (operator-level; logged)
+#
+# A 403 or network failure fails closed — the bead is reopened until the operator provides
+# the override or the aeon includes a valid URL.
+if [ "$st" = "closed" ] && [ "$committed" = "yes" ] && [ -z "$SOP_SILENT" ]; then
+    if [ -z "${SPIRA_WORKFLOW_RUN_CONSIDERED:-}" ]; then
+        _wf_result="$(BEAD_ID="$BEAD_ID" SPIRA_BD="${SPIRA_BD:-bd}" SPIRA_DB="$DB" \
+            SPIRA_REPO="$REPO" BRANCH="$BRANCH" BASE="$BASE" \
+            SPIRA_GH_API="${SPIRA_GH_API:-https://api.github.com}" \
+            SPIRA_WORKFLOW_ONLY_PATHS="${SPIRA_WORKFLOW_ONLY_PATHS:-spira/acceptance-ci.sh spira/acceptance-run.sh spira/acceptance-agent.sh spira/build-tarball.sh}" \
+            python3 "$SPIRA_HOME/workflow-run-check.py" 2>/dev/null)" || _wf_result=""
+        case "${_wf_result:-}" in
+            ""| OK) ;;   # no workflow files changed, or valid
+            NO_URL)
+                bead_reopen "$BEAD_ID" workflow-run-missing \
+                    "Reopened by aeon.sh: branch touches CI workflow files but close reason has no GitHub Actions run URL (law-a-workflow-lands-on-its-own-run). Include https://github.com/.../actions/runs/<id> for a run on $BRANCH where the changed step executed. Override: SPIRA_WORKFLOW_RUN_CONSIDERED=<reason>; or: bd note $BEAD_ID \"WORKFLOW_RUN_CONSIDERED: <reason>\"."
+                log "$FAYTH: $BEAD_ID REOPENED — close reason has no workflow run URL (law-a-workflow-lands-on-its-own-run)"
+                st="open"
+                REQUEUE_CAUSE="workflow-run-missing"
+                REQUEUE_WHY="Close reason has no GitHub Actions run URL for the changed workflow. Include a run URL on branch $BRANCH where the changed step executed, then re-close."
+                ;;
+            WRONG_BRANCH:*)
+                _wf_run_branch="${_wf_result#WRONG_BRANCH:}"
+                bead_reopen "$BEAD_ID" workflow-run-wrong-branch \
+                    "Reopened by aeon.sh: cited run is on branch \"$_wf_run_branch\", not \"$BRANCH\" (law-a-workflow-lands-on-its-own-run). The run must be dispatched on the bead's branch. Override: SPIRA_WORKFLOW_RUN_CONSIDERED=<reason>."
+                log "$FAYTH: $BEAD_ID REOPENED — cited workflow run is on branch $_wf_run_branch, not $BRANCH"
+                st="open"
+                REQUEUE_CAUSE="workflow-run-wrong-branch"
+                REQUEUE_WHY="Cited run is on branch \"$_wf_run_branch\", not \"$BRANCH\". Dispatch on the bead branch, then re-close."
+                ;;
+            SHA_NOT_ANCESTOR:*)
+                _wf_sha="${_wf_result#SHA_NOT_ANCESTOR:}"
+                bead_reopen "$BEAD_ID" workflow-run-stale-sha \
+                    "Reopened by aeon.sh: cited run is at commit $_wf_sha which is not an ancestor of the current branch tip — the run tested a stale tree (law-a-workflow-lands-on-its-own-run). Ask the concierge to push the current tip and re-dispatch. Override: SPIRA_WORKFLOW_RUN_CONSIDERED=<reason>."
+                log "$FAYTH: $BEAD_ID REOPENED — cited workflow run SHA $_wf_sha is not an ancestor of $BRANCH"
+                st="open"
+                REQUEUE_CAUSE="workflow-run-stale-sha"
+                REQUEUE_WHY="Cited run is at stale commit $_wf_sha. Push the current tip and re-dispatch on $BRANCH, then re-close."
+                ;;
+            WRONG_WORKFLOW:*)
+                _wf_path="${_wf_result#WRONG_WORKFLOW:}"
+                bead_reopen "$BEAD_ID" workflow-run-wrong-file \
+                    "Reopened by aeon.sh: cited run is for workflow \"$_wf_path\" but the changed workflow files are different (law-a-workflow-lands-on-its-own-run). Override: SPIRA_WORKFLOW_RUN_CONSIDERED=<reason>."
+                log "$FAYTH: $BEAD_ID REOPENED — cited workflow run is for $_wf_path, not the changed workflow"
+                st="open"
+                REQUEUE_CAUSE="workflow-run-wrong-file"
+                REQUEUE_WHY="Cited run is for workflow \"$_wf_path\", not the changed workflow. Dispatch the correct workflow on $BRANCH, then re-close."
+                ;;
+            RUN_NOT_FOUND:*|API_FAIL:*)
+                bead_reopen "$BEAD_ID" workflow-run-unverifiable \
+                    "Reopened by aeon.sh: could not verify the cited workflow run URL ($_wf_result) (law-a-workflow-lands-on-its-own-run). Override: SPIRA_WORKFLOW_RUN_CONSIDERED=<reason>."
+                log "$FAYTH: $BEAD_ID REOPENED — workflow run URL could not be verified ($_wf_result)"
+                st="open"
+                REQUEUE_CAUSE="workflow-run-unverifiable"
+                REQUEUE_WHY="Cited workflow run URL could not be verified ($_wf_result). Use SPIRA_WORKFLOW_RUN_CONSIDERED=<reason> if this is a transient network issue."
+                ;;
+        esac
+        unset _wf_result _wf_run_branch _wf_sha _wf_path
+    else
+        log "$FAYTH: $BEAD_ID workflow-run fence skipped (SPIRA_WORKFLOW_RUN_CONSIDERED=${SPIRA_WORKFLOW_RUN_CONSIDERED})"
+    fi
+fi
+
 # CLOSED BEHIND THE BASE IS NOT FINISHED. The brief asked for a rebase as the last step; this
 # is the check that it happened, and the fallback when it did not. The session is over, the
 # claim is still this process's, so rewriting the branch here rewrites nothing beneath

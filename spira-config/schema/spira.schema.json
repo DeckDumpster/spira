@@ -922,6 +922,12 @@
             "null"
           ]
         },
+        "gh_api": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "gh_app_config": {
           "type": [
             "string",
@@ -1935,6 +1941,12 @@
           ]
         },
         "work_close_types": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workflow_only_paths": {
           "type": [
             "string",
             "null"

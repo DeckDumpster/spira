@@ -374,7 +374,7 @@ SPIRA_WIKI
 SPIRA_WIKI_HOOK
 SPIRA_WORK_CLOSE_TYPES
 SPIRA_WORKSPACES
-SPIRA_WORLD_STOP_LABEL
+SPIRA_WORLD_STOP_LABEL SPIRA_WORKFLOW_ONLY_PATHS SPIRA_GH_API
 "
 
 # --------------------------------------------------------------------------------------
@@ -1928,6 +1928,13 @@ spira_conf_defaults() {
     # THE LABEL APPLIED TO FINDING BEADS. The deployment controller (sp-gsmx.5) and the
     # groomer query on this label to find open findings for a release unit.
     : "${SPIRA_REVIEW_LABEL:=review-finding}"
+
+    # WORKFLOW-RUN FENCE — scripts that only a workflow executes. A branch that changes
+    # any of these, or any .github/workflows/ file, must cite a dispatched run URL
+    # (law-a-workflow-lands-on-its-own-run). SPIRA_GH_API is the GitHub REST API base; set
+    # it to a local stub in tests to avoid live network calls.
+    : "${SPIRA_WORKFLOW_ONLY_PATHS:=spira/acceptance-ci.sh spira/acceptance-run.sh spira/acceptance-agent.sh spira/build-tarball.sh}"
+    : "${SPIRA_GH_API:=https://api.github.com}"
 
     # CAPACITY PROBE — while a pause is in force and its horizon is far out, the harness
     # probes the account to detect early recovery. These keys gate that probe.

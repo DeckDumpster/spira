@@ -112,6 +112,7 @@ gate_select_cap
 gate_suites
 gate_timeout
 gh
+gh_api
 gh_app_config
 gh_app_id
 gh_app_installation_id
@@ -281,6 +282,7 @@ watchers_overlay
 wiki
 wiki_hook
 work_close_types
+workflow_only_paths
 workspaces
 world_stop_label
 summon_lock_wait
