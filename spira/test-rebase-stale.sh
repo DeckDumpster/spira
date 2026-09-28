@@ -110,14 +110,13 @@ commit_branch() {
     git -C "$wt" commit -q -m "$msg"
     git -C "$REPO" worktree remove --force "$wt"
 }
+# advance_main <fn...> — REPO's own checkout is already on main (queue-mode's own primary
+# checkout), so a second worktree there would collide; this runs directly in REPO.
 advance_main() {
-    local wt="$RUN/worktree/mk-main-$RANDOM"
-    git -C "$REPO" worktree add -q "$wt" main
-    "$@" "$wt"
-    git -C "$wt" add -A
-    git -C "$wt" commit -q -m "advance main"
-    git -C "$wt" push -q origin main
-    git -C "$REPO" worktree remove --force "$wt"
+    "$@" "$REPO"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m "advance main"
+    git -C "$REPO" push -q origin main
     git -C "$REPO" fetch -q origin
 }
 
