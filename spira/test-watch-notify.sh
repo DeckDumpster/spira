@@ -55,7 +55,7 @@ mkdir -p "$TMP/home"
 # conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2); the CLONE and
 # NOMAIL trees below carry none of this checkout's own target/, so without this every
 # configured value below is silently dropped instead of read.
-SPIRA_CONFIG_BIN="$(testlib_spira_config_bin "$TMP")" || skip "cargo not found — spira-config binary cannot be built"
+SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)" || skip "no spira-config binary found — cannot be built here"
 
 # A harness tree that is NOT this checkout, so nothing here can read the operator's own
 # configuration and report a pass it did not earn.

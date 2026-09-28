@@ -200,4 +200,42 @@ SPIRA_TESTLIB_JSONL="$JSONL_OUT2" bash "$f2" >/dev/null 2>&1 || true
 want "case ids: the same string names the case in TAP and in JSONL" \
     '"case":"the stable case id"' "$(cat "$JSONL_OUT2" 2>/dev/null)"
 
+# --- testlib_spira_config_bin(): bin/ before target/release, never builds ---------
+_SCB="$SCRATCH/scb"; mkdir -p "$_SCB/spira" "$_SCB/bin" "$_SCB/target/release"
+: > "$_SCB/bin/spira-config"; chmod +x "$_SCB/bin/spira-config"
+: > "$_SCB/target/release/spira-config"; chmod +x "$_SCB/target/release/spira-config"
+_scb_run() { HERE="$_SCB/spira" bash -c ". '$TESTLIB'; testlib_spira_config_bin"; }
+
+is "testlib_spira_config_bin(): picks bin/ when both bin/ and target/release exist" \
+    "$_SCB/bin/spira-config" "$(_scb_run)"
+
+rm -f "$_SCB/bin/spira-config"
+is "testlib_spira_config_bin(): falls back to target/release when bin/ is absent" \
+    "$_SCB/target/release/spira-config" "$(_scb_run)"
+
+rm -f "$_SCB/target/release/spira-config"
+_SCB_OUT="$(_scb_run)"; _SCB_RC=$?
+is     "testlib_spira_config_bin(): prints nothing when neither exists" "" "$_SCB_OUT"
+wantrc "testlib_spira_config_bin(): fails loudly (rc=1) rather than building one" 1 "$_SCB_RC"
+
+# A cargo reachable on PATH must never be invoked — the resolver fails rather than building.
+mkdir -p "$_SCB/fakebin"
+_SCB_CARGO_MARKER="$SCRATCH/cargo-was-called"
+cat > "$_SCB/fakebin/cargo" <<EOF
+#!/usr/bin/env bash
+touch "$_SCB_CARGO_MARKER"
+exit 1
+EOF
+chmod +x "$_SCB/fakebin/cargo"
+HERE="$_SCB/spira" PATH="$_SCB/fakebin:$PATH" bash -c ". '$TESTLIB'; testlib_spira_config_bin" >/dev/null 2>&1
+is "testlib_spira_config_bin(): never shells out to cargo" "0" \
+    "$([ -e "$_SCB_CARGO_MARKER" ] && echo 1 || echo 0)"
+
+# $SPIRA_CONFIG_BIN, when already set and executable, wins over both bin/ and target/.
+: > "$_SCB/bin/spira-config"; chmod +x "$_SCB/bin/spira-config"
+_SCB_ENV="$_SCB/env-provided-spira-config"; : > "$_SCB_ENV"; chmod +x "$_SCB_ENV"
+is "testlib_spira_config_bin(): \$SPIRA_CONFIG_BIN wins when already set and executable" \
+    "$_SCB_ENV" \
+    "$(HERE="$_SCB/spira" SPIRA_CONFIG_BIN="$_SCB_ENV" bash -c ". '$TESTLIB'; testlib_spira_config_bin")"
+
 tl_summary

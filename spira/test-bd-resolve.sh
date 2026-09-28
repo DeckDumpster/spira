@@ -47,7 +47,7 @@ printf '# empty\n' > "$HARNESS/spira/watchers"
 # conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2); HARNESS
 # carries none of this checkout's own target/, so without this the config-file case below
 # reads no configured value at all.
-SPIRA_CONFIG_BIN="$(testlib_spira_config_bin "$TMP")" || skip "cargo not found — spira-config binary cannot be built"
+SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)" || skip "no spira-config binary found — cannot be built here"
 
 # A fake database: just needs .beads to exist so the schema check fires.
 FAKEDB="$TMP/fakedb"

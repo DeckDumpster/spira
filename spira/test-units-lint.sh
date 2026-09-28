@@ -31,7 +31,7 @@ ln -s "$HERE"/*.sh "$CLONE/spira/"
 # conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2); CLONE carries
 # none of this checkout's own target/, so without this the render pass below reads no
 # configured value at all.
-SPIRA_CONFIG_BIN="$(testlib_spira_config_bin "$TMP")" || skip "cargo not found — spira-config binary cannot be built"
+SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)" || skip "no spira-config binary found — cannot be built here"
 cp -r "$ROOT/systemd" "$CLONE/systemd"
 ln -s "$ROOT/beads-push.sh" "$ROOT/concierge.sh" "$CLONE/"
 
