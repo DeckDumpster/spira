@@ -117,16 +117,38 @@ export LAUNCH_LOG="$TMP/launch.log"
 
 # Concurrency 0 in both fayths, so CHECK 7 never reaches systemd-run: a summon in a test
 # would put a real aeon on a real database.
+#
+# CHECK 4 (poison) NOW RUNS ONLY UNDER `--audit` (sp-994y9), decoupled from CHECK 7
+# (summon) so a slow poison/closed/sending walk cannot starve the fleet of a fast summon
+# cadence. This suite tests both from one call: run the audit half first (the poisoning
+# this whole file is about) so its labels are on the store before the normal half reads
+# them, then the normal half (summon, land-dispatch) — same order as production, where the
+# normal pass dispatches audit and moves on rather than waiting for it. Concatenated so
+# every existing assertion against "$out" still finds whichever half's line it wants.
 sentinel() {
     rm -f "$RUN/reflect.fired" "$RUN/inference.cooldown"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_REPO="$REPO" \
-    SPIRA_GOAL=sp-goal SPIRA_FAYTHS="${ROSTER:-t tinc}" SPIRA_INFERENCE_EVERY=0 \
-    SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
-    SPIRA_SUMMON="$TMP/launch" \
-    SPIRA_SKIP_RECLAIM=1 \
-    SPIRA_SKIP_CLOSED_CHECK=1 \
-        bash "$SH/sentinel.sh" 2>&1
+    local audit_out normal_out
+    audit_out="$(
+        SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+        SPIRA_REPO="$REPO" \
+        SPIRA_GOAL=sp-goal SPIRA_FAYTHS="${ROSTER:-t tinc}" SPIRA_INFERENCE_EVERY=0 \
+        SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
+        SPIRA_SUMMON="$TMP/launch" \
+        SPIRA_SKIP_RECLAIM=1 \
+        SPIRA_SKIP_CLOSED_CHECK=1 \
+            bash "$SH/sentinel.sh" --audit 2>&1
+    )"
+    normal_out="$(
+        SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+        SPIRA_REPO="$REPO" \
+        SPIRA_GOAL=sp-goal SPIRA_FAYTHS="${ROSTER:-t tinc}" SPIRA_INFERENCE_EVERY=0 \
+        SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
+        SPIRA_SUMMON="$TMP/launch" \
+        SPIRA_SKIP_RECLAIM=1 \
+        SPIRA_SKIP_CLOSED_CHECK=1 \
+            bash "$SH/sentinel.sh" 2>&1
+    )"
+    printf '%s\n%s\n' "$audit_out" "$normal_out"
 }
 
 # lib.sh under the same configuration, so the two set predicates can be asked directly

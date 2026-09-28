@@ -7,6 +7,12 @@
 #   sentinel.sh --summon-only  CHECK 7 alone, nothing else (the 15s timer, and every aeon
 #                              unit's own ExecStopPost — a freed slot should refill in
 #                              seconds, not wait for the next full pass; sp-0y2av)
+#   sentinel.sh --audit        the decoupled worker CHECK 4's dispatch starts (sp-994y9): the
+#                              per-bead/per-branch walks (poison, closed-not-landed, the
+#                              Sending, unclaimable-ready, branch collisions), run in their
+#                              own transient unit so a normal pass — reclaim, land-dispatch,
+#                              summon — finishes in seconds regardless of how long the walk
+#                              takes.
 #
 # THE SHAPE (the operator's call)
 # --------------------------------
@@ -29,6 +35,9 @@ set -uo pipefail
 
 REPORT=0; [ "${1:-}" = "--report" ] && REPORT=1
 SUMMON_ONLY=0; [ "${1:-}" = "--summon-only" ] && SUMMON_ONLY=1
+# AUDIT — this invocation is the decoupled worker (sp-994y9), not a normal pass. See the
+# "AUDIT PASS DECOUPLING" block below for why this exists and what it skips.
+AUDIT=0; [ "${1:-}" = "--audit" ] && AUDIT=1
 POISON_AT="${SPIRA_POISON_AT:-3}"
 REQUEUE_AT="${SPIRA_REQUEUE_AT:-5}"
 RECLAIM_AT="${SPIRA_RECLAIM_AT:-5}"
@@ -66,7 +75,16 @@ INFERENCE_EVERY="${SPIRA_INFERENCE_EVERY:-3600}"   # seconds; judgement is expen
 acted=0        # a write happened
 progressed=0   # the DAG moved
 act()      { acted=$((acted+1)); log "ACT $*"; }
-progress() { progressed=$((progressed+1)); act "$@"; }
+# AUDIT MAILBOX: the decoupled worker's `progress` also appends the raw line here, drained
+# and re-counted by the NEXT normal pass's own `progress` (audit_drain, below) — the exact
+# mailbox shape CHECK 6 already uses for landing, because `progressed` here is per-process
+# and CHECK 8 must see what an async worker did, not just this pass.
+AUDIT_MAILBOX="${SPIRA_AUDIT_MAILBOX:-$SPIRA_RUN/audit.progress}"
+if [ "$AUDIT" = 1 ]; then
+    progress() { progressed=$((progressed+1)); act "$@"; printf '%s\n' "$*" >> "$AUDIT_MAILBOX"; }
+else
+    progress() { progressed=$((progressed+1)); act "$@"; }
+fi
 
 # ======================================================================================
 # --summon-only — CHECK 7 alone. The full pass below costs a median 213s (max 537s, measured
@@ -140,6 +158,12 @@ if [ -z "$(bdjson show "$SPIRA_GOAL" | head -c 1)" ]; then
 fi
 fi
 
+# EVERYTHING FROM HERE THROUGH CHECK 3 IS THE NORMAL PASS ONLY. The audit worker (sp-994y9)
+# is a second process started from CHECK 4's dispatch, below — reclaim, pilgrimage-closing
+# and the goal-completion state this span computes are the normal pass's job already done
+# by the time the audit worker starts a moment later, and re-doing them here would race the
+# same reclaim against itself under two PIDs for nothing gained.
+if [ "$AUDIT" = 0 ]; then
 # ======================================================================================
 # STATE
 # ======================================================================================
@@ -309,7 +333,27 @@ if [ "${SPIRA_SKIP_RECLAIM:-0}" != 1 ] \
     log "recomputed is_blocked"
     [ "$plan_ready" != "$was" ] && progress "recompute-blocked freed $plan_ready bead(s)"
 fi
+fi  # AUDIT (STATE .. CHECK 3)
 
+# ======================================================================================
+# CHECK 4/5/6b/7c/7d — AUDIT PASS DECOUPLING (sp-994y9). Everything from here through
+# CHECK 7d is a walk over every dispatchable bead, every closed-unlanded bead, every
+# branch, or every ready bead — none of it is O(1), and their combined cost is why a pass
+# took 4-5 minutes against a 2-minute timer while CHECK 7 (summon) sat behind them: a
+# fleet slot that freed up mid-walk waited for the WHOLE pass to finish before anything
+# could refill it, exactly the shape CHECK 6 already solved for landing below. The fix is
+# the same one: dispatch this span as its own transient unit and let the normal pass —
+# reclaim, land-dispatch, summon — finish in seconds regardless of how long the walk
+# takes. `sentinel.sh --audit` (this same file, AUDIT=1) is that worker; the dispatch
+# block below it starts it and does not wait.
+#
+# NOTHING HERE DEPENDS ON STATE OR CHECK 1-3. dispatchable_open, check4_bulk_data and the
+# rest read the bead graph directly; they do not read $plan_ready, $n_open or
+# $GOAL_REACHED, which is what makes running them in a second process safe — the normal
+# pass has already done reclaim and pilgrimage-closing before this dispatches, and this
+# span needs nothing else from it.
+# ======================================================================================
+if [ "$AUDIT" = 1 ]; then
 # ======================================================================================
 # CHECK 4 — poison. A bead that has failed N times is not retried again; retrying it is
 # how one bad bead burns tokens forever. This is mountain's skip-after-N-failures, and it
@@ -968,7 +1012,95 @@ unset _c5_landed _c5_filed _c5_capped _c5_capped_ids _c5_graph _c5_max _c5_lid
 unset _c5_resolved _c5_resolve_capped _c5_resolve_capped_ids _c5_resolve_max
 unset _c5_start _c5_budget _c5_budget_hit
 fi  # SPIRA_SKIP_CLOSED_CHECK
+fi  # AUDIT (CHECK 4, CHECK 5)
 
+# ======================================================================================
+# CHECK 4/5/6b/7c/7d DISPATCH — start the audit worker and move on. Unit name is the
+# mutex (systemd will not start a second `spira-audit`), `--collect` keeps a FAILED unit
+# from blocking every later dispatch, and the mailbox/status files are drained the same
+# way CHECK 6 drains landing.progress: what an async worker did is only known from what
+# it wrote, read back on a LATER pass.
+# ======================================================================================
+if [ "$AUDIT" = 0 ]; then
+AUDIT_UNIT="${SPIRA_AUDIT_UNIT:-spira-audit}"
+AUDIT_MAXSEC="${SPIRA_AUDIT_MAXSEC:-1800}"
+AUDIT_STALE="${SPIRA_AUDIT_STALE:-1800}"
+AUDIT_STATUS="$SPIRA_RUN/audit.status"
+
+audit_active() {
+    [ "$("${SPIRA_SYSTEMCTL:-systemctl}" --user is-active "$AUDIT_UNIT.service" 2>/dev/null)" = active ]
+}
+
+# DRAIN BY RENAME — see land_drain for why: a line is counted exactly once even when a
+# worker dies mid-drain or between passes.
+audit_drain() {
+    local mine="$SPIRA_RUN/audit.progress.drain.$$" f line
+    [ -s "$AUDIT_MAILBOX" ] && mv -f "$AUDIT_MAILBOX" "$mine" 2>/dev/null
+    for f in "$SPIRA_RUN"/audit.progress.drain.*; do
+        [ -f "$f" ] || continue
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            progress "$line"
+        done < "$f"
+        rm -f "$f"
+    done
+}
+
+audit_drain
+
+audit_age=-1
+if [ -r "$AUDIT_STATUS" ]; then
+    # shellcheck disable=SC1090
+    eval "$(sed -n 's/^\(SP_AUDIT_[A-Z]*\)=\([0-9-]*\)$/\1=\2/p' "$AUDIT_STATUS" 2>/dev/null)"
+    audit_age=$(( $(date +%s) - ${SP_AUDIT_AT:-0} ))
+    log "CHECK4/5 audit: last run ${audit_age}s ago — rc=${SP_AUDIT_RC:-?}"
+fi
+
+if audit_active; then
+    log "CHECK4/5 audit: already running — this pass does not start another"
+elif "${SPIRA_LAUNCH:-systemd-run}" --user --collect --quiet \
+        --unit="$AUDIT_UNIT" \
+        --property=RuntimeMaxSec="$AUDIT_MAXSEC" \
+        --property=CPUQuota="${SPIRA_AUDIT_CPU_QUOTA:-40}%" --property=Nice=10 \
+        --property=StandardOutput="append:$SPIRA_RUN/audit.log" \
+        --property=StandardError="append:$SPIRA_RUN/audit.log" \
+        --setenv=PATH="$PATH" --setenv=HOME="$HOME" \
+        --setenv=SPIRA_HOME="$SPIRA_HOME" --setenv=SPIRA_RUN="$SPIRA_RUN" \
+        --setenv=SPIRA_DB="$SPIRA_DB" --setenv=SPIRA_REPO="${SPIRA_REPO:-}" \
+        --setenv=SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
+        --setenv=SPIRA_HOME_REPO="$(spira_home_repo)" \
+        --setenv=SPIRA_BD="${SPIRA_BD:-bd}" --setenv=SPIRA_GH="${SPIRA_GH:-gh}" \
+        --setenv=SPIRA_POISON_AT="$POISON_AT" --setenv=SPIRA_REQUEUE_AT="$REQUEUE_AT" \
+        --setenv=SPIRA_RECLAIM_AT="$RECLAIM_AT" \
+        --setenv=SPIRA_ASK_LABEL="${SPIRA_ASK_LABEL:-}" \
+        --setenv=SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
+        --setenv=SPIRA_WORK_CLOSE_TYPES="${SPIRA_WORK_CLOSE_TYPES:-}" \
+        "$SPIRA_HOME/sentinel.sh" --audit 2>/dev/null
+then
+    log "CHECK4/5 audit: dispatched as $AUDIT_UNIT"
+    [ -f "$SPIRA_RUN/audit.dispatched" ] || date +%s > "$SPIRA_RUN/audit.dispatched"
+elif audit_active; then
+    log "CHECK4/5 audit: started underneath this pass — not starting another"
+else
+    log "CHECK4/5 audit WARN: could not dispatch the audit worker; poison, closed-not-landed, sending and collision checks will not run until this is fixed"
+fi
+
+if [ "$audit_age" -lt 0 ] && [ -f "$SPIRA_RUN/audit.dispatched" ]; then
+    audit_age=$(( $(date +%s) - $(cat "$SPIRA_RUN/audit.dispatched" 2>/dev/null || date +%s) ))
+fi
+if ! audit_active && [ "$audit_age" -gt "$AUDIT_STALE" ]; then
+    log "CHECK4/5 audit WARN: no audit pass has completed in ${audit_age}s and none is running"
+fi
+
+# READ THE MAILBOX AGAIN — an audit run that finished while this dispatch was happening
+# has movements to report now rather than at the next tick.
+audit_drain
+fi  # AUDIT (dispatch)
+
+# EVERYTHING FROM HERE THROUGH CHECK 7's FILL LOOP IS THE NORMAL PASS ONLY — land-dispatch
+# and summon are its job; the audit worker (started above) must not also try to land
+# branches or summon aeons under its own PID.
+if [ "$AUDIT" = 0 ]; then
 # ======================================================================================
 # CHECK 6 — land finished branches. THE WORK IS NOT DONE HERE; it is dispatched to
 # landing.sh and this pass moves on. Landing fetches, rebases, runs a repository's whole
@@ -1190,9 +1322,14 @@ close_landed_queue_waiters 2>/dev/null || true
 # everything else in a sentinel pass touches the real repository and the real database.
 # ======================================================================================
 ck7_summon_pass
+fi  # AUDIT (CHECK 6, CHECK 7)
 
-# CHECK 6b MOVED BELOW CHECK 7: the Sending walks branches with git and bd calls and took
-# 4-7 minutes a pass, and the summon decision waited behind it. Summon first; reap after.
+# CHECK 6b, 7c AND 7d NOW RUN IN THE AUDIT WORKER (sp-994y9), not here — see the dispatch
+# above. They used to sit in this normal pass, after CHECK 7, for the same reason CHECK 6b
+# gives below: summon first, reap after. That reorder only ever saved the CURRENT pass's
+# summon; it could not stop the walk from making the WHOLE pass, and therefore the NEXT
+# tick's summon, wait behind it. Only running the walk in a separate process does that.
+if [ "$AUDIT" = 1 ]; then
 # CHECK 6b — the Sending. Send the branch and worktree of every bead whose work is now an
 # ancestor of its repository's base.
 #
@@ -1328,6 +1465,16 @@ if [ -n "$collision_out" ]; then
     fi
 fi
 fi  # SPIRA_SKIP_RECLAIM
+fi  # AUDIT (CHECK 6b, 7c, 7d)
+
+if [ "$AUDIT" = 1 ]; then
+    # THE STATUS FILE IS THE POSITIVE CONTROL the next normal pass reads (see the dispatch
+    # block above) — without it, "the audit worker has never once completed" and "it just
+    # finished" are indistinguishable from outside this process.
+    printf 'SP_AUDIT_AT=%s\nSP_AUDIT_RC=0\n' "$(date +%s)" > "$SPIRA_RUN/audit.status"
+    log "audit pass complete — $acted action(s), $progressed progress"
+    exit 0
+fi
 
 if [ "$GOAL_REACHED" = 1 ]; then
     log "pass complete — $acted action(s), $progressed progress, goal reached"
