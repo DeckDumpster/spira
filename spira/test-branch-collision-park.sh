@@ -98,6 +98,30 @@ nowant "unrelated bead with its own worktree is not flagged"        "COLLISION s
 
 # ==========================================================================================
 echo
+echo "case 1b — detect_branch_collisions reads branch: off the list it already fetched, not with a bd state call per bead (sp-nsxhd)"
+# ==========================================================================================
+REAL_BD="$(command -v bd)"
+STATE_LOG="$TMP/state-calls.log"
+BD_STUB="$TMP/bd-stub.sh"
+cat > "$BD_STUB" <<STUBEOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+    if [ "\$a" = state ]; then
+        printf '%s\n' "\$*" >> "$STATE_LOG"
+        break
+    fi
+done
+exec "$REAL_BD" "\$@"
+STUBEOF
+chmod +x "$BD_STUB"
+: > "$STATE_LOG"
+
+out1b="$(SPIRA_BD="$BD_STUB" detect_branch_collisions 2>/dev/null)"
+is   "case 1b: no bd state call while detecting a real collision" "0" "$(wc -l < "$STATE_LOG" | tr -d ' ')"
+want "case 1b: output is identical to the unstubbed pass" "COLLISION sp-root fixture spira/sp-root sp-hold" "$out1b"
+
+# ==========================================================================================
+echo
 echo "case 2 — park_branch_collisions parks a real collision, but cuts an inherited label (sp-ln4ke)"
 # ==========================================================================================
 park_out2="$(park_branch_collisions "$out")"
