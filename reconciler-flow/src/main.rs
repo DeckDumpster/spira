@@ -69,6 +69,7 @@ struct Config {
     window_hours: f64,
     baseline_hours: f64,
     grace_secs: u64,
+    unobservable_grace_secs: u64,
     now_secs: u64,
     now_iso: String,
 }
@@ -104,6 +105,14 @@ impl Config {
             window_hours: env::var("SPIRA_FLOW_WINDOW_HOURS").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5),
             baseline_hours: env::var("SPIRA_FLOW_BASELINE_HOURS").ok().and_then(|v| v.parse().ok()).unwrap_or(24.0),
             grace_secs: env::var("SPIRA_FLOW_GRACE_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(1800),
+            // Deliberately its own knob, not derived from grace_secs: a flow gap's 30-minute
+            // grace is tuned for real slowdowns, but a blind detector (the query layer
+            // itself unreachable) is a different failure and must always cross 1h before it
+            // alerts — tuning the gap window faster must never speed this one up too.
+            unobservable_grace_secs: env::var("SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(3600),
             now_secs: unix_now(),
             now_iso: compute_now_iso(),
             spira_run,
@@ -135,7 +144,11 @@ fn unobservable(reason: String) -> RawStatus {
 
 fn evaluate(cfg: &Config, state: &mut StateMap, key: &str, raw: RawStatus) -> Verdict {
     let prev = state.remove(key).unwrap_or_default();
-    let (verdict, next) = step(cfg.now_secs, raw, cfg.grace_secs, prev);
+    let grace = match raw {
+        RawStatus::Unobservable { .. } => cfg.unobservable_grace_secs,
+        _ => cfg.grace_secs,
+    };
+    let (verdict, next) = step(cfg.now_secs, raw, grace, prev);
     append_status(&cfg.status_log, &cfg.now_iso, key, &verdict);
     if next != HysteresisState::default() {
         state.insert(key.to_string(), next);

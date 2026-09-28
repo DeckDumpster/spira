@@ -239,6 +239,7 @@ pub fn spira_section(
             "SPIRA_FLOW_WINDOW_HOURS" => s.flow_window_hours = Some(val.clone()),
             "SPIRA_FLOW_BASELINE_HOURS" => s.flow_baseline_hours = Some(val.clone()),
             "SPIRA_FLOW_GRACE_SECS" => s.flow_grace_secs = Some(val.clone()),
+            "SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS" => s.flow_unobservable_grace_secs = Some(val.clone()),
             "SPIRA_DESIRED_DIR" => s.desired_dir = Some(val.clone()),
             "SPIRA_GH" => s.gh = Some(val.clone()),
             "SPIRA_GH_APP_CONFIG" => s.gh_app_config = Some(val.clone()),
