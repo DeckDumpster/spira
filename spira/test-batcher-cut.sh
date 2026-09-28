@@ -898,6 +898,8 @@ cut_local() {
     SPIRA_QUEUE_BATCH_WAIT=999999 \
     SPIRA_RELEASES="$LRELEASES" \
     SPIRA_TSD_BIN="$TSD_BIN" \
+    SPIRA_LC_BIN="${SPIRA_LC_BIN:-}" \
+    SPIRA_LC_STACKS_DIR="${SPIRA_LC_STACKS_DIR:-}" \
         "$BATCHER_BIN" cut locland --testenv-batch "$SH/testenv-batch-stub.sh" \
             --attribute "$SH/attribute-stub.sh" 2>&1
 }
@@ -958,5 +960,83 @@ if [ -x "$TSD_BIN" ]; then
     want "L2: TSD batch-round row records verdict=landed_local" '"verdict":"landed_local"' \
         "$(tail -1 "$RUN/tsd/batch-round.jsonl" 2>/dev/null)"
 fi
+
+# =============================================================================
+# CASE M — stacked dependents (sp-lno75, design stacked-dependents-2026-09-28): a round that
+# takes a bead takes every prerequisite named in its stack, merged in topological order
+# regardless of certification order — SEEN RED on today's code, which sorts the pool by
+# (express, priority, certified_at) alone (order_key, batcher/src/core.rs:28) and has no
+# notion of a stack: handing the pool certified in the order C, A, B (B stacked on A, C
+# stacked on B) merges C first, so A and B's tips are already ancestors of the round head
+# once their own turn comes, MergeResult::Empty sets each aside as "not a member" (sp-5xki9's
+# own rule, applied here to a bug it didn't anticipate), and only C ever reaches LANDED.
+# =============================================================================
+echo
+echo "M. stacked dependents: closure, topological order, every member reaches LANDED:"
+
+LC_STACKS="$TMP/lc-stacks"; mkdir -p "$LC_STACKS"
+cat > "$SH/spira-lc-stack-stub.sh" <<'LCSTACKSTUB'
+#!/usr/bin/env bash
+case "${1:-}" in
+    show)
+        f="${SPIRA_LC_STACKS_DIR:?}/${2:-}"
+        stack="{}"
+        [ -f "$f" ] && stack="$(cat "$f")"
+        printf '{"bead":{"stack":%s}}\n' "$stack"
+        exit 0
+        ;;
+    *) exit 0 ;;
+esac
+LCSTACKSTUB
+chmod +x "$SH/spira-lc-stack-stub.sh"
+
+# A -> B -> C: a straight chain, each bead's branch built on the previous bead's own tip, the
+# same shape a real stacked worktree gets once bead 3 (aeon base = landing ref + stack) lands.
+git -C "$LREPO" worktree add -q -b spira/sp-cmaa1 "$RUN/worktree/sp-cmaa1" local/main
+printf 'a\n' > "$RUN/worktree/sp-cmaa1/a.txt"
+git -C "$RUN/worktree/sp-cmaa1" add -A
+git -C "$RUN/worktree/sp-cmaa1" commit -q -m "sp-cmaa1: a"
+tip_ma="$(git -C "$LREPO" rev-parse spira/sp-cmaa1)"
+git -C "$LREPO" worktree remove -f "$RUN/worktree/sp-cmaa1"
+
+git -C "$LREPO" worktree add -q -b spira/sp-cmbb2 "$RUN/worktree/sp-cmbb2" spira/sp-cmaa1
+printf 'b\n' > "$RUN/worktree/sp-cmbb2/b.txt"
+git -C "$RUN/worktree/sp-cmbb2" add -A
+git -C "$RUN/worktree/sp-cmbb2" commit -q -m "sp-cmbb2: b"
+tip_mb="$(git -C "$LREPO" rev-parse spira/sp-cmbb2)"
+git -C "$LREPO" worktree remove -f "$RUN/worktree/sp-cmbb2"
+
+git -C "$LREPO" worktree add -q -b spira/sp-cmcc3 "$RUN/worktree/sp-cmcc3" spira/sp-cmbb2
+printf 'c\n' > "$RUN/worktree/sp-cmcc3/c.txt"
+git -C "$RUN/worktree/sp-cmcc3" add -A
+git -C "$RUN/worktree/sp-cmcc3" commit -q -m "sp-cmcc3: c"
+tip_mc="$(git -C "$LREPO" rev-parse spira/sp-cmcc3)"
+git -C "$LREPO" worktree remove -f "$RUN/worktree/sp-cmcc3"
+
+printf '{"sp-cmaa1":"%s"}\n' "$tip_ma" > "$LC_STACKS/sp-cmbb2"
+printf '{"sp-cmbb2":"%s"}\n' "$tip_mb" > "$LC_STACKS/sp-cmcc3"
+
+mk_local_bins "$tip_mc"
+
+# Certified in the order C, A, B — certified_at deliberately reversed against dependency
+# order, so a sort on order_key alone (no stack awareness) would try to merge C first.
+plant sp-cmcc3; plant sp-cmaa1; plant sp-cmbb2
+certify sp-cmcc3 "$tip_mc" 100
+certify sp-cmaa1 "$tip_ma" 200
+certify sp-cmbb2 "$tip_mb" 300
+
+out_m="$(SPIRA_LC_BIN="$SH/spira-lc-stack-stub.sh" SPIRA_LC_STACKS_DIR="$LC_STACKS" cut_local)"
+want   "M: reports landing locally"                             "landed locally"  "$out_m"
+want   "M: all three members landed in one round"                "3 member(s)"    "$out_m"
+is     "M: sp-cmaa1 landstate LANDED (the closed-over prerequisite, never dropped as EMPTY)" \
+       "LANDED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cmaa1")"
+is     "M: sp-cmbb2 landstate LANDED"                             "LANDED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cmbb2")"
+is     "M: sp-cmcc3 landstate LANDED"                             "LANDED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cmcc3")"
+head_m="$(git -C "$LREPO" rev-parse local/main)"
+# Merged prerequisite-first: the round's own land-subject merge commits appear in the order
+# A, B, C along local/main's first-parent history, not the certification order C, A, B.
+is     "M: merged in topological order A, B, C" \
+       "$(printf 'sp-cmaa1\nsp-cmbb2\nsp-cmcc3')" \
+       "$(git -C "$LREPO" log --first-parent --format=%s "$head_m" | grep -o 'sp-cm[a-z0-9]*' | tac)"
 
 tl_summary
