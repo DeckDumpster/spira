@@ -44,11 +44,13 @@ TMP="$(mktemp -d)"
 LC_SERVER_PID=""
 trap '[ -n "$LC_SERVER_PID" ] && kill "$LC_SERVER_PID" >/dev/null 2>&1; rm -rf "$TMP"' EXIT INT TERM
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
-unset SPIRA_LC_SOCKET
 log() { :; }
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
+# PATH is set AFTER lib.sh (which sources conf.sh transitively) — conf.sh can overwrite
+# PATH with the harness's own tool directories first (test-poison.sh's own note).
+export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+unset SPIRA_LC_SOCKET
 _real_bdq="$(declare -f bdq)"
 bdq() { :; }   # G9 exercises the spira-lc transition, not bd's own note/event writes; G10 restores the real one below
 
