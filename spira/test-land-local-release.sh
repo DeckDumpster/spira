@@ -234,4 +234,46 @@ is   "6: local/main resets to the first round's archived head" "$HEAD1" "$(local
 is   "6: the first round's bead is still landed (bead state is untouched)" \
      closed "$(field sp-lrel1 status)"
 
+# ============================================================================
+echo
+echo "7 — GitHub diverged in both directions never reaches refresh's verdict"
+# ============================================================================
+# This is the interim override's guarded scenario (skew-keep-local, tagged to retire when
+# this bead lands): the pre-fix refresh() fetched the land ref's remote and reset the
+# checkout onto it whenever that remote held a commit HEAD lacked. Once production runs
+# ahead of a round nothing has published yet, "GitHub holds a commit production lacks" is
+# routine, not an error — so that reset would drop every locally landed, unpublished round.
+# Build exactly that divergence and confirm the queue.local branch never gets near it: it
+# resolves purely from running vs local/main, and GitHub is never fetched or written to.
+GITHUB="$TMP/github.git"
+git clone -q --bare "$REPO" "$GITHUB"
+GHWORK="$TMP/ghwork"
+git clone -q "$GITHUB" "$GHWORK" >/dev/null 2>&1
+git -C "$GHWORK" checkout -q local/main
+echo github-only > "$GHWORK/github-only.txt"
+git -C "$GHWORK" add github-only.txt
+git -C "$GHWORK" commit -q -m "a commit GitHub has that production never landed"
+git -C "$GHWORK" push -q origin local/main
+git -C "$REPO" remote add origin "$GITHUB"
+
+# production lands a round of its own that it never publishes — holding a commit GitHub
+# lacks, on top of already lacking the one GitHub just gained above.
+STRAY2="$(mk_round round-stray2 stray2.txt strayed2)"
+git -C "$REPO" update-ref refs/heads/local/main "$STRAY2"
+
+PRE_CURRENT="$(current_name)"
+PRE_TRUNK="$(git -C "$REPO" rev-parse trunk)"
+PRE_GITHUB_MAIN="$(git -C "$GITHUB" rev-parse local/main)"
+
+out="$(run_skew refresh "$REPO")"; rc=$?
+[ "$rc" -ne 0 ] && ok "7: exit non-zero — running no longer matches local/main" \
+    || bad "7: exit non-zero — running no longer matches local/main" "got rc=$rc out=$out"
+want "7: names the local mismatch, not a GitHub one" "LOCAL-SKEW" "$out"
+is   "7: current is untouched — nothing was deployed" "$PRE_CURRENT" "$(current_name)"
+is   "7: local/main is left exactly as found" "$STRAY2" "$(localmain)"
+is   "7: the checkout's HEAD (trunk) is never moved" "$PRE_TRUNK" "$(git -C "$REPO" rev-parse trunk)"
+is   "7: GitHub's own ref is never written to" "$PRE_GITHUB_MAIN" "$(git -C "$GITHUB" rev-parse local/main)"
+[ ! -e "$REPO/.git/FETCH_HEAD" ] && ok "7: refresh never fetched GitHub" \
+    || bad "7: refresh never fetched GitHub" "FETCH_HEAD exists"
+
 tl_summary
