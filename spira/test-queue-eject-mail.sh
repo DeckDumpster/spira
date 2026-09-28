@@ -9,8 +9,10 @@
 #   1. bd show succeeds: rendered block carries title, status, priority.
 #      POSITIVE CONTROL: bead sp-ejm01 is seeded with known values; only they can
 #      cause the assertions to pass.
-#   2. bd show fails (bead not in db): rendered block is "unresolved: sp-ejm02";
-#      mail is still sent.
+#   2. bd cannot reopen the bead (not in db, sp-ejm02): _attr_eject blocks the
+#      ejection mail and sends a reopen-refused escalation instead (sp-vjfv6) —
+#      whose body still auto-renders "unresolved: sp-ejm02" for the id mail.sh
+#      finds named in the text.
 #
 # covers: spira/verdict.sh spira/mail.sh spira/conf.sh
 set -uo pipefail
@@ -157,12 +159,15 @@ git -C "$REPO" branch -D "spira/sp-ejm01" 2>/dev/null || true
 git -C "$REPO" worktree prune 2>/dev/null || true
 
 # ==========================================================================
-# 2. bd show fails (bead not in db): rendered block is "unresolved: <id>".
-#    POSITIVE CONTROL: sp-ejm01 (case 1) proves the bd-show path renders real
-#    values; sp-ejm02 is not seeded, so bd show fails, triggering "unresolved".
+# 2. bd cannot reopen the bead (not in db): ejection is blocked; a reopen-
+#    refused escalation is sent instead, and its body still renders
+#    "unresolved: sp-ejm02" for the id named in its own text.
+#    POSITIVE CONTROL: sp-ejm01 (case 1) proves the normal path sends an
+#    "ejected" mail with real values; sp-ejm02 is never seeded, so bd refuses
+#    the reopen (sp-vjfv6) and this must not look like case 1's mail.
 # ==========================================================================
 echo
-echo "ejection mail renders 'unresolved: <id>' when bd show fails, and still sends:"
+echo "ejection mail: bd refuses the reopen (bead not in db) — blocked, refusal mail sent instead:"
 
 base_sha="$(git -C "$REPO" rev-parse origin/main)"
 bwt2="$RUN/worktree/sp-ejm02"
@@ -180,8 +185,9 @@ rm -rf "$MAIL"
 verdict "$REPONAME" >/dev/null
 
 mail2="$(latest_operator_mail)"
-want "fallback: mail sent"                    "ejected from the merge queue" "$mail2"
-want "fallback: body renders unresolved bead" "unresolved: sp-ejm02"         "$mail2"
+nowant "reopen-refused: no ejected mail sent"     "ejected from the merge queue"      "$mail2"
+want   "reopen-refused: refusal mail sent"        "reopen refused for sp-ejm02"       "$mail2"
+want   "reopen-refused: body renders unresolved bead" "unresolved: sp-ejm02"          "$mail2"
 
 rm -f "$(batch_file)" "$LANDSTATE/sp-ejm02"
 git -C "$REPO" worktree remove -f "$bwt2" 2>/dev/null || true
