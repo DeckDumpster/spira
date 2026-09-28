@@ -132,8 +132,12 @@ callcount()    { grep -c "^$1" "$CALL_LOG" 2>/dev/null; }
 clear_calls()  { : > "$CALL_LOG"; }
 landing_log()  { cat "$RUN/landing.log" 2>/dev/null; }
 clear_log()    { : > "$RUN/landing.log"; }
-mail_count()   { ls "$RUN/mail/concierge/new" 2>/dev/null | wc -l | tr -d ' '; }
-mail_body()    { cat "$RUN"/mail/concierge/new/* 2>/dev/null; }
+# Scoped to the divergence alarm's own subject line: land-local's ordinary "local landing"
+# notice goes through the same real mailbox once mail.sh is no longer stubbed, and would
+# otherwise be indistinguishable from the alarm this suite is asserting on.
+divergence_files() { grep -l '^Subject:.*divergence:' "$RUN"/mail/concierge/new/* 2>/dev/null; }
+mail_count()   { divergence_files | wc -l | tr -d ' '; }
+mail_body()    { divergence_files | xargs -r cat; }
 clear_mail()   { rm -f "$RUN"/mail/concierge/new/* 2>/dev/null; }
 
 # ============================================================================
