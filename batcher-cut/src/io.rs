@@ -125,15 +125,24 @@ pub fn bump_requeue(env: &Env, id: &str, reason: &str) {
 }
 
 /// Tries the mechanical rebase before a member conflicting with the base is handed to an
-/// aeon (sp-oxwvc). On success rebase-stale.sh has already rebased `spira/<id>` onto the
-/// base, re-certified it and noted the bead — this round leaves the member for the next cut
-/// to pick up at its new, already-certified tip rather than reopening it. On failure the
-/// script has already reopened the bead itself (a real content conflict or a red gate), with
-/// the conflicting hunks or gate output quoted in the note.
-pub fn rebase_stale(env: &Env, repo_name: &str, id: &str) -> bool {
+/// aeon (sp-oxwvc). Returns rebase-stale.sh's own exit code: 0 (rebased — mechanically or
+/// cleanly — and re-certified at the new tip) and 1/2 (a real content conflict or a red
+/// gate) all mean the script itself already did everything the caller would otherwise do —
+/// certify and note it, or reopen the bead with the conflicting hunk or gate output quoted
+/// and bump its requeue count. Only 3 (a branch it could not even attempt: busy, missing,
+/// or a scratch-worktree failure) leaves the caller's own fallback bookkeeping to run, the
+/// same as if this call had never been made. A code the script never documents (a crash, a
+/// missing binary) is folded into 3 for the same reason — silence must fail closed to "an
+/// aeon still sees this", never to "nobody did anything and the round moved on".
+pub fn rebase_stale(env: &Env, repo_name: &str, id: &str) -> i32 {
     let mut cmd = Command::new("bash");
     cmd.arg(env.home.join("rebase-stale.sh")).arg(id).arg(repo_name);
-    run_status(&mut cmd)
+    match cmd.status().ok().and_then(|s| s.code()) {
+        Some(0) => 0,
+        Some(1) => 1,
+        Some(2) => 2,
+        _ => 3,
+    }
 }
 
 // ---------------------------------------------------------------------------------------
