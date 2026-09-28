@@ -485,18 +485,25 @@ _n="$(grep -c 'select\.sh' "$TOUCHED" 2>/dev/null || true)"
 # The new gate-touched.sh reads # covers: via select.sh and selects it.
 # test-aeon-world-stop.sh is tier T2, so SPIRA_GATE_TIERS must include it here — the default
 # T0,T1 cert-gate restriction (sp-qu948) is a separate concern from this covers: match.
+# SPIRA_GATE_REPO is pinned off the real tree (SPIRA_BATCH_SUITE_DIR is deliberately left
+# unset — this is the one case that must still scan the real corpus) so plan-matrix-fence
+# and the lockfile/build fences skip instead of building test-plan and re-scanning the same
+# corpus a second and third time; select.sh's own covers-matching is what's under test here.
 FLIST_CONF="$TMP/flist-conf"
 printf 'spira/conf.sh\n' > "$FLIST_CONF"
-out_k="$(SPIRA_GATE_FILES="$FLIST_CONF" SPIRA_GATE_TIERS="T0,T1,T2" \
+out_k="$(SPIRA_GATE_FILES="$FLIST_CONF" SPIRA_GATE_TIERS="T0,T1,T2" SPIRA_GATE_REPO="$TMP" \
     bash "$TOUCHED" dummy-base dummy-head 2>/dev/null)"
 want "K2: conf.sh change selects test-aeon-world-stop.sh (acceptance criterion)" \
     "test-aeon-world-stop.sh" "$out_k"
 
 # K3 (fixture): SPIRA_GATE_FILES with covered.sh selects the covering suite, using
-# the fixture SUITE_DIR from Part B. Isolates from real suite declarations.
+# the fixture SUITE_DIR from Part B. Isolates from real suite declarations — SPIRA_GATE_REPO
+# is pinned off the real tree too, so gate-touched.sh's plan-matrix-fence (gated on
+# SPIRA_GATE_REPO actually being this repo) skips instead of building test-plan and
+# scanning the real corpus for a call this fixture never asked it to check.
 FLIST_K="$TMP/flist-k"
 printf 'covered.sh\n' > "$FLIST_K"
-out_k3="$(SPIRA_GATE_FILES="$FLIST_K" SPIRA_BATCH_SUITE_DIR="$SD" \
+out_k3="$(SPIRA_GATE_FILES="$FLIST_K" SPIRA_BATCH_SUITE_DIR="$SD" SPIRA_GATE_REPO="$TMP" \
     bash "$TOUCHED" dummy-base dummy-head 2>/dev/null)"
 want    "K3: fixture: covered file selects its suite"    "test-fx-a.sh" "$out_k3"
 nowant "K3: fixture: uncovered suite not selected"      "test-fx-b.sh" "$out_k3"
@@ -834,10 +841,17 @@ echo "Part P: real tree — spira/new.sh (100644) addition selects test-script-e
 # Verify that the real test-script-exec.sh (# covers: spira/*.sh, # selects-on: added,mode)
 # is selected when a spira/*.sh file is added, using the --files mode with A-status.
 # This is the production scenario from the bead: a branch adds a new script without +x.
+# A verbatim COPY of the real file, in a suite-dir of its own, so its actual declaration
+# is what's under test without select.sh paying to scan the other 500+ real suites too.
+SD_P="$TMP/suites-p"
+mkdir -p "$SD_P"
+cp "$HERE/test-script-exec.sh" "$SD_P/test-script-exec.sh"
+chmod +x "$SD_P/test-script-exec.sh"
+
 FLIST_P="$TMP/flist-p"
 printf 'A\tspira/new-script.sh\n' > "$FLIST_P"
 
-out_p="$(bash "$SELECT" --files "$FLIST_P" --suite-dir "$HERE" 2>/dev/null)"
+out_p="$(bash "$SELECT" --files "$FLIST_P" --suite-dir "$SD_P" 2>/dev/null)"
 rc_p=$?
 iszero "P1: added spira script exits 0"                                          "$rc_p"
 want   "P1: test-script-exec.sh selected for added spira/new-script.sh"         "test-script-exec.sh" "$out_p"
@@ -847,7 +861,7 @@ FLIST_P_MD="$TMP/flist-p-md"
 printf 'README.md\n' > "$FLIST_P_MD"
 
 out_p_md="$(SPIRA_SELECT_INERT='*.md *.txt' bash "$SELECT" \
-    --files "$FLIST_P_MD" --suite-dir "$HERE" 2>/dev/null)"
+    --files "$FLIST_P_MD" --suite-dir "$SD_P" 2>/dev/null)"
 rc_p_md=$?
 iszero  "P2: .md-only diff exits 0"                                                  "$rc_p_md"
 nowant "P2: test-script-exec.sh NOT selected for .md edit"                         "test-script-exec.sh" "$out_p_md"

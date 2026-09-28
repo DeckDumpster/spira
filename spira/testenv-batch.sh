@@ -458,6 +458,33 @@ if [ ! -x "$BRANCH_WT/bin/spira-config" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# test-plan — gate-touched.sh's plan-matrix-fence (run on every real-repo call, sp-9uro3's
+# sibling fence) shells out to it via plan-bin.sh's resolve_test_plan_bin(), which builds it
+# from scratch whenever SPIRA_TEST_PLAN_BIN is unset. plan-lint.sh/plan-matrix.sh never source
+# conf.sh (gate-touched.sh's own callers can't either — see tier-budget.sh's --area note), so
+# conf.sh's own $SPIRA_REPO/bin/test-plan default never fires for them; only the env var does.
+# Built here, once per tree, and exported below so a self-test that calls the real
+# gate-touched.sh against this repo (test-select.sh's Part K, test-certify-suites-off.sh) pays
+# a corpus scan, not a fresh compile, on every one of its calls (sp-ajjba).
+if [ ! -x "$BRANCH_WT/bin/test-plan" ]; then
+    command -v cargo >/dev/null 2>&1 || {
+        printf 'batch: cargo is required on PATH to build test-plan\n' >&2
+        exit 3
+    }
+    _tpbin_tree="$(git -C "$REPO" rev-parse --verify -q "$BR^{tree}" 2>/dev/null)" || _tpbin_tree="pid-$$"
+    _tpbin_target_dir="${SPIRA_BATCH_BINS_TARGET_DIR:-$SPIRA_RUN/cargo-target-bins}/$_tpbin_tree"
+    mkdir -p "$_tpbin_target_dir" 2>/dev/null || true
+    log "batch: building test-plan for $BR (plan-matrix-fence needs it to avoid building its own)"
+    if ! ( cd "$BRANCH_WT" && CARGO_TARGET_DIR="$_tpbin_target_dir" cargo build --release -p test-plan ) >&2; then
+        printf 'batch: test-plan failed to build — harness fault\n' >&2
+        exit 3
+    fi
+    mkdir -p "$BRANCH_WT/bin"
+    cp -p "$_tpbin_target_dir/release/test-plan" "$BRANCH_WT/bin/test-plan"
+fi
+_CONTAINER_TEST_PLAN_BIN="${_CONTAINER_WORKSPACE}/bin/test-plan"
+
+# ---------------------------------------------------------------------------
 # IMAGE TAG — part of the verdict-cache key: a green against an old image
 # must not replay after a dependency is added to the image.
 # ---------------------------------------------------------------------------
@@ -1198,6 +1225,7 @@ if [ "$MODE" = serial ]; then
                 -e "CARGO_HOME=${_CONTAINER_CARGO}" \
                 -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
                 -e "SPIRA_IN_TESTENV=1" \
+                -e "SPIRA_TEST_PLAN_BIN=${_CONTAINER_TEST_PLAN_BIN}" \
                 "${_testdb_env[@]}" \
                 -e "TMUX=" \
                 -e "SPIRA_PATH=${_shim_spira_path}" \
@@ -1213,6 +1241,7 @@ if [ "$MODE" = serial ]; then
                 -e "CARGO_HOME=${_CONTAINER_CARGO}" \
                 -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
                 -e "SPIRA_IN_TESTENV=1" \
+                -e "SPIRA_TEST_PLAN_BIN=${_CONTAINER_TEST_PLAN_BIN}" \
                 "${_testdb_env[@]}" \
                 -e "TMUX=" \
                 -e "SPIRA_PATH=${_shim_spira_path}" \
@@ -1436,6 +1465,7 @@ else
                     -e "CARGO_HOME=${_CONTAINER_CARGO}" \
                     -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
                     -e "SPIRA_IN_TESTENV=1" \
+                    -e "SPIRA_TEST_PLAN_BIN=${_CONTAINER_TEST_PLAN_BIN}" \
                     "${_testdb_env[@]}" \
                     -e "TMUX=" \
                     -e "SPIRA_PATH=${_shim_spira_path}" \
@@ -1454,6 +1484,7 @@ else
                     -e "CARGO_HOME=${_CONTAINER_CARGO}" \
                     -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
                     -e "SPIRA_IN_TESTENV=1" \
+                    -e "SPIRA_TEST_PLAN_BIN=${_CONTAINER_TEST_PLAN_BIN}" \
                     "${_testdb_env[@]}" \
                     -e "TMUX=" \
                     -e "SPIRA_PATH=${_shim_spira_path}" \
