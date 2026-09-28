@@ -1486,6 +1486,57 @@ if [ "$_dup_refs" != "?" ] && [ "$_dup_refs" -gt 0 ] 2>/dev/null; then
 fi
 
 # ---------------------------------------------------------------------------------------
+# IDLE-WHILE-READY ESCALATION (sp-o4trx). A fayth with ready work whose last several
+# summons ALL came back "idle" is not a quiet fayth — that is exactly how a rank/lookup
+# failure (epic_parent_lookup/epic_rank_rows) rendered from the ledger's own point of view:
+# an empty ranked list read as "nothing ready to claim" for an hour, 572 idle summons
+# against 142 ready beads, and nothing compared "idle" against "ready > 0" to notice.
+#
+# ONE bd CALL (bulk_ready_by_fayth), the ledger read directly — no per-fayth query.
+#
+# ONLY WHEN BOTH SIDES ARE OBSERVED. A missing ledger or a failed ready count renders
+# nothing to alarm on, never a false all-clear OR a false alarm
+# (law-absence-needs-a-positive-control): absence of evidence is not evidence of a stall.
+# ---------------------------------------------------------------------------------------
+IDLE_WHILE_READY_N="${SPIRA_IDLE_WHILE_READY_N:-5}"
+_iwr_ledger="$SPIRA_RUN/aeon-ledger.log"
+# THE LEDGER IS CHECKED FIRST, CHEAPLY, BEFORE THE ONE bd CALL. No ledger means no aeon has
+# ever summoned here — the common case for a fresh or test environment — and bulk_ready_by_
+# fayth is skipped entirely rather than paying a real `bd ready` query nothing will use.
+_iwr_ready=""
+[ -r "$_iwr_ledger" ] && _iwr_ready="$(bulk_ready_by_fayth 2>/dev/null)"
+if [ -n "$_iwr_ready" ]; then
+    while IFS=' ' read -r _iwr_f _iwr_n; do
+        [ -n "$_iwr_f" ] || continue
+        [ "${_iwr_n:-0}" -gt 0 ] 2>/dev/null || continue
+        _iwr_last="$(awk -v f="$_iwr_f" '$2=="awake" && $3==f' "$_iwr_ledger" | tail -n "$IDLE_WHILE_READY_N")"
+        [ "$(printf '%s\n' "$_iwr_last" | grep -c .)" -eq "$IDLE_WHILE_READY_N" ] || continue
+        _iwr_all_idle=1 _iwr_reason=""
+        while IFS= read -r _iwr_line; do
+            _iwr_reason="$(printf '%s\n' "$_iwr_line" | cut -d' ' -f4-)"
+            [ "$_iwr_reason" = idle ] || _iwr_all_idle=0
+        done <<< "$_iwr_last"
+        [ "$_iwr_all_idle" = 1 ] || continue
+        if [ -x "$INC" ] || [ -r "$INC" ]; then
+            printf '%s has %s ready bead(s), but its last %s summons all came back idle.\n\nLast idle reason: %s\n\nA rank/lookup failure (epic_parent_lookup/epic_rank_rows in lib.sh) can render exactly this way: an empty ranked list reads as "nothing ready to claim" even though bd ready is non-empty. Check the ledger for claim-error lines before assuming the queue really is empty.\n' \
+                "$_iwr_f" "$_iwr_n" "$IDLE_WHILE_READY_N" "$_iwr_reason" | \
+            SPIRA_DB="$SPIRA_DB" \
+            SPIRA_INCIDENT_TYPE=task \
+            SPIRA_INCIDENT_PRIORITY=1 \
+            SPIRA_INCIDENT_ACTOR=watchtower \
+            SPIRA_SIN_EXEMPT=1 \
+            SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
+            SPIRA_INCIDENT_REF="incident:idle-while-ready:$_iwr_f" \
+            SPIRA_INCIDENT_CAUSE=idle-while-ready \
+            bash "$INC" file "IDLE-WHILE-READY: $_iwr_f has ready work but keeps reporting idle" - >/dev/null || true
+            log "watchtower: idle-while-ready escalation filed for $_iwr_f (ready=$_iwr_n, last $IDLE_WHILE_READY_N summons idle)"
+        else
+            log "watchtower: $INC is missing — idle-while-ready escalation not filed"
+        fi
+    done <<< "$_iwr_ready"
+fi
+
+# ---------------------------------------------------------------------------------------
 # MOOT-ASK SWEEP. Auto-filed asks record the condition that fired them as a MOOT-WHEN:
 # command in their description. When that command exits 0, the condition has cleared and
 # the ask is no longer actionable — resolve it so it does not consume the operator's

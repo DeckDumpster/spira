@@ -213,6 +213,16 @@ if ! icl="$(bash spira/incident-cause-lint.sh 2>&1)"; then
     exit 1
 fi
 
+# PAYLOAD-ARGV FENCE (sp-o4trx, law-payloads-go-on-stdin). A JSON payload that scales with
+# store size, handed to python3/jq/awk through argv or an environment variable, crosses
+# MAX_ARG_STRLEN (128 KiB) silently — the exec dies, the caller reads empty output, and
+# empty reads as "nothing to do". Five outages in seventeen days before this fence existed.
+[ -r spira/payload-argv-lint.sh ] || { say "spira/payload-argv-lint.sh is missing — refusing to land unchecked"; exit 1; }
+if ! pal="$(bash spira/payload-argv-lint.sh 2>&1)"; then
+    printf '%s\n' "$pal" >&2
+    exit 1
+fi
+
 # SUITE-STATE FENCE. A quarantine entry that names a CLOSED bead has no exit path —
 # suites.sh hygiene requires land_state:LANDED, which CLOSED never satisfies. The check
 # also applies suite_state_lint: unknown state, missing reason, bead-less quarantine,

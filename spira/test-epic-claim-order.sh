@@ -20,8 +20,11 @@
 # `bd children` and the labels/status/parent fields they return actually contain, which a
 # stub would be a second, driftable opinion of (law-prefer-the-real-dependency).
 #
-# defect: sp-ns46j
-# covers: spira/lib.sh spira/aeon.sh
+# T7/T8 (sp-o4trx): a ready set past MAX_ARG_STRLEN (128 KiB) still ranks every bead, and a
+# forced rank failure surfaces as a claim-error rather than an empty/idle result.
+#
+# defect: sp-ns46j sp-o4trx
+# covers: spira/lib.sh spira/aeon.sh spira/epic-rank.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -174,6 +177,49 @@ is "the 'started' check is one 'bd children' call per DISTINCT epic (2), not per
 
 # ==========================================================================================
 echo
+echo "T7: a ready set past MAX_ARG_STRLEN (128 KiB) still ranks every bead (sp-o4trx)"
+# ==========================================================================================
+# THE CLIFF THIS REPRODUCES. epic_parent_lookup/epic_rank_rows used to pass the whole
+# ready-set JSON to python3 -c as a single argv element. At 142 real ready beads that
+# argument exceeded the kernel's per-argument limit (MAX_ARG_STRLEN, 128 KiB): the exec died
+# "Argument list too long" (rc 126), both functions printed nothing, and every builder aeon
+# read the empty ranked list as "nothing ready to claim" for an hour (572 idle summons
+# against 142 ready beads). Every other fixture in this suite uses a handful of beads, so
+# none of them ever reached the threshold — this one must.
+big_desc="$(python3 -c 'print("x" * 900)')"
+N=300
+{
+    epic sp-ebig 0
+    closed_child sp-ebig-done sp-ebig
+    for i in $(seq 1 "$N"); do
+        printf '{"id":"sp-big%03d","title":"t","status":"open","issue_type":"task","priority":%d,"labels":["plan","repo:fixture"],"updated_at":"2026-09-04T00:00:00Z","description":"%s","dependencies":[{"issue_id":"sp-big%03d","depends_on_id":"sp-ebig","type":"parent-child"}]}\n' \
+            "$i" "$((i % 5))" "$big_desc" "$i"
+    done
+} > "$TMP/t7.jsonl"
+seed < "$TMP/t7.jsonl"
+
+t7_ready_json="$(bdjson ready --limit 0 --exclude-type epic,event -u --label plan)"
+t7_size=${#t7_ready_json}
+# 0. POSITIVE CONTROL. The case below is only meaningful if the payload is actually past
+#    the limit; a fixture that shrank under it would pass against the broken code.
+[ "$t7_size" -gt 131072 ] && ok "fixture ready-set JSON is past the 128 KiB limit ($t7_size bytes)" \
+                          || bad "fixture ready-set JSON is only $t7_size bytes — not testing the cliff"
+
+t7_order="$(ranked_ids)"
+t7_count="$(printf '%s\n' "$t7_order" | grep -c .)"
+is "every one of $N beads past the argv limit is ranked (none dropped by an E2BIG exec)" \
+    "$N" "$t7_count"
+
+t7_lookup_rc=0
+epic_lookup="$(epic_parent_lookup "$t7_ready_json")" || t7_lookup_rc=$?
+is "epic_parent_lookup succeeds (rc=0) against the oversized ready set" "0" "$t7_lookup_rc"
+
+t7_rank_rc=0
+epic_rank_rows "$t7_ready_json" "$epic_lookup" "" >/dev/null || t7_rank_rc=$?
+is "epic_rank_rows succeeds (rc=0) against the oversized ready set" "0" "$t7_rank_rc"
+
+# ==========================================================================================
+echo
 echo "T6a: epic-rank.sh (the round cutter) groups beads by epic, groups in rank order,"
 echo "     members within a group by their own priority"
 # ==========================================================================================
@@ -267,5 +313,49 @@ case ",$e1_labels," in
 esac
 is "the unrelated P0 bead was left alone, still ready and unclaimed" "open" "$unrelated_status"
 want "the log names the epic-first rank as the reason" "epic-first rank" "$(cat "$TMP/aeon-out")"
+
+# ==========================================================================================
+echo
+echo "T8: a forced epic_rank_rows failure surfaces as a claim-error, never as idle (sp-o4trx)"
+# ==========================================================================================
+# THE SECOND HALF OF THE OUTAGE. Fixing the argv size alone is not enough: any OTHER reason
+# epic_rank_rows might fail (a python crash, a corrupted temp file) must not read as "nothing
+# ready to claim" either — the ledger line and the exit code must say claim-error.
+seed <<JSONL
+$(epic sp-e1 0)
+$(closed_child sp-e1-done sp-e1)
+$(bead sp-e1-rework sp-e1 3)
+$(bead sp-unrelated-p0 "" 0)
+JSONL
+
+# A python3 SHIM that fails only the call epic_rank_rows itself makes — identified by the
+# LOOKUP_FILE env var epic_rank_rows sets and nothing earlier in aeon.sh's own wiring sets —
+# so every other python3 use in aeon.sh/lib.sh (band_lines, epic_parent_lookup, BEAD_ID
+# extraction) still runs for real.
+REAL_PY="$(command -v python3)"
+BIN2="$TMP/bin2"; mkdir -p "$BIN2"
+cat > "$BIN2/python3" <<STUB
+#!/usr/bin/env bash
+if [ -n "\${LOOKUP_FILE:-}" ]; then
+    echo "T8 shim: forced epic_rank_rows failure" >&2
+    exit 1
+fi
+exec "$REAL_PY" "\$@"
+STUB
+chmod +x "$BIN2/python3"
+
+AEON_RUN2="$TMP/aeonrun2"; mkdir -p "$AEON_RUN2"
+( SPIRA_PATH="$BIN2" SPIRA_HOME="$AEON_HOME" SPIRA_RUN="$AEON_RUN2" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP" \
+  SPIRA_CONF="$TMP/no-such3.conf" \
+  "$AEON_HOME/aeon.sh" builder > "$TMP/aeon-out2" 2>&1 )
+t8_rc=$?
+
+[ "$t8_rc" -ne 0 ] && ok "aeon.sh exits non-zero on a forced rank failure (never the 'idle' success exit)" \
+                   || bad "aeon.sh exits non-zero on a forced rank failure (never the 'idle' success exit)" "rc=0"
+want "the log names it a claim-error, not idle" "claim-error" "$(cat "$TMP/aeon-out2")"
+t8_ledger="$(cat "$AEON_RUN2/aeon-ledger.log" 2>/dev/null)"
+want "the ledger records claim-error" "claim-error" "$t8_ledger"
+is "the ledger never records this as an idle summons" "0" \
+    "$(printf '%s\n' "$t8_ledger" | grep -c ' idle$')"
 
 tl_summary

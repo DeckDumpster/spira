@@ -38,18 +38,30 @@ submitted_json="$(bdjson "${submitted_args[@]}")"
 
 # READY AND SUBMITTED CAN NEVER OVERLAP (a claimed bead is not ready), but a bead is kept
 # from whichever query named it first rather than trusted to appear in only one.
-all_json="$(python3 -c '
-import json, sys
-a = json.loads(sys.argv[1]); b = json.loads(sys.argv[2])
+#
+# BOTH PAYLOADS IN TEMP FILES, NEVER ARGV (law-payloads-go-on-stdin): each scales with the
+# ready/submitted set size, the same unbounded quantity that hit MAX_ARG_STRLEN in aeon.sh.
+_rjf="$(mktemp)"; _sjf="$(mktemp)"
+printf '%s' "$ready_json" > "$_rjf"
+printf '%s' "$submitted_json" > "$_sjf"
+all_json="$(READY_FILE="$_rjf" SUBMITTED_FILE="$_sjf" python3 -c '
+import json, os
+with open(os.environ["READY_FILE"]) as f: a = json.load(f)
+with open(os.environ["SUBMITTED_FILE"]) as f: b = json.load(f)
 a = a if isinstance(a, list) else [a]
 b = b if isinstance(b, list) else [b]
 seen = {r["id"] for r in a}
 print(json.dumps(a + [r for r in b if r["id"] not in seen]))
-' "$ready_json" "$submitted_json")"
+')"
+_rc=$?
+rm -f "$_rjf" "$_sjf"
+[ "$_rc" -eq 0 ] || die "epic-rank.sh: failed to merge ready+submitted sets (rc=$_rc)"
 
-epic_lookup="$(epic_parent_lookup "$all_json")"
+epic_lookup="$(epic_parent_lookup "$all_json")" || die "epic-rank.sh: epic_parent_lookup failed (rc=$?)"
 
-epic_rank_rows "$all_json" "$epic_lookup" "" | python3 -c '
+epic_ranked="$(epic_rank_rows "$all_json" "$epic_lookup" "")" || die "epic-rank.sh: epic_rank_rows failed (rc=$?)"
+
+printf '%s\n' "$epic_ranked" | python3 -c '
 import sys
 
 order = []

@@ -1,0 +1,9 @@
+# payload-argv-lint-allow — exceptions to payload-argv-lint.sh, one extended regex per line,
+# matched case-insensitively against "path/to/file.sh:LINE: <line text>".
+#
+# THIS FILE SHIPS EMPTY. Every JSON-named argv/env variable this fence has ever found in this
+# tree was the real defect (law-payloads-go-on-stdin) — add a line here only for a variable
+# the fence's heuristic cannot tell from one, never to silence a payload that is actually
+# unbounded. Prefer fixing the call site (stdin, or a temp file's path) over adding a line.
+#
+# Blank lines and lines starting with # are ignored.

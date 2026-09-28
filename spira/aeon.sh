@@ -346,7 +346,17 @@ if [ "$ready_rc" -ne 0 ]; then
 fi
 [ -n "$ready_json" ] || ready_json="[]"
 
+# A FAILED RANK OR LOOKUP IS A CLAIM-ERROR, NOT AN EMPTY QUEUE (law-payloads-go-on-stdin):
+# epic_parent_lookup/epic_rank_rows failing (E2BIG or otherwise) must not fall through to
+# ranked_ids being empty and reading as "nothing ready to claim" the way sp-o4trx's outage
+# did — 572 idle summons against 142 ready beads.
 epic_lookup="$(epic_parent_lookup "$ready_json")"
+epic_lookup_rc=$?
+if [ "$epic_lookup_rc" -ne 0 ]; then
+    log "$FAYTH: claim-error epic_parent_lookup failed (rc=$epic_lookup_rc) — not reporting idle for a lookup that never completed"
+    ledger "awake $FAYTH claim-error epic_parent_lookup failed rc=$epic_lookup_rc"
+    exit 1
+fi
 
 # RESUMABILITY (rank level 4) IS CHECKED ONLY IN THE TOP-RANKED TIER, never across the whole
 # ready set: `git rev-list` is one process per candidate per repo, and the decaying-branch
@@ -405,7 +415,18 @@ resume_csv="$(IFS=,; printf '%s' "${resume_ids[*]:-}")"
 # attempt per candidate in rank order — atomic, so this is not a select-then-claim race
 # (`bd update --claim` refuses a bead already claimed); a lost race falls through to the next
 # ranked candidate exactly as the old resume loop did.
-ranked_ids="$(epic_rank_rows "$ready_json" "$epic_lookup" "$resume_csv" | cut -f6)"
+#
+# rc CHECKED ON epic_rank_rows ITSELF, not on `cut` — a pipeline's exit status is its last
+# stage's, so `epic_rank_rows ... | cut -f6` would hide a rank failure behind cut's own
+# success (law-payloads-go-on-stdin: a rank failure is a claim-error, never an empty rank).
+_ranked_raw="$(epic_rank_rows "$ready_json" "$epic_lookup" "$resume_csv")"
+ranked_rc=$?
+if [ "$ranked_rc" -ne 0 ]; then
+    log "$FAYTH: claim-error epic_rank_rows failed (rc=$ranked_rc) — not reporting idle for a rank that never completed"
+    ledger "awake $FAYTH claim-error epic_rank_rows failed rc=$ranked_rc"
+    exit 1
+fi
+ranked_ids="$(printf '%s' "$_ranked_raw" | cut -f6)"
 
 # claim_retry's own diagnostic on a failed attempt goes to ITS stderr, not a variable a
 # command substitution would just discard — so every call site here redirects that stderr to
