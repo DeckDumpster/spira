@@ -592,9 +592,10 @@ _spira_toml_convert_from_conf() {
 # must never run in place of that conversion — only after a toml already exists, or when there
 # is no spira.conf to convert from at all.
 spira_toml_resolve() {
-    local toml conf
+    local toml conf conf_pinned=0
     conf="$(spira_conf_file)"
     if [ -n "${SPIRA_CONF+set}" ] && [ -z "${SPIRA_TOML+set}" ]; then
+        conf_pinned=1
         toml=""
         [ -n "$conf" ] && [ -f "$(dirname "$conf")/spira.toml" ] && toml="$(dirname "$conf")/spira.toml"
     else
@@ -602,8 +603,18 @@ spira_toml_resolve() {
     fi
 
     if [ -z "$toml" ] && [ -n "$conf" ]; then
-        _spira_toml_convert_from_conf "$conf" \
-            "$(spira_config_writeback "${SPIRA_TOML:-$(dirname "$conf")/spira.toml}")"
+        # A PINNED SPIRA_CONF NAMES ITS OWN WRITE TARGET, same as the search restriction
+        # above: spira_config_writeback's SPIRA_REPO redirect exists for the AMBIENT case,
+        # where nothing named a location on purpose. Applying it here sends the conversion
+        # to this checkout's own spira.toml instead of beside the pinned conf — which, when
+        # the checkout already has a real one, made `spira-config convert` refuse to shrink
+        # it (the write-side twin of the read-side sp-zs04v.2 scar cited above).
+        if [ "$conf_pinned" -eq 1 ]; then
+            _spira_toml_convert_from_conf "$conf" "$(dirname "$conf")/spira.toml"
+        else
+            _spira_toml_convert_from_conf "$conf" \
+                "$(spira_config_writeback "${SPIRA_TOML:-$(dirname "$conf")/spira.toml}")"
+        fi
         return 0
     fi
 
