@@ -493,10 +493,13 @@ want "K2: conf.sh change selects test-aeon-world-stop.sh (acceptance criterion)"
     "test-aeon-world-stop.sh" "$out_k"
 
 # K3 (fixture): SPIRA_GATE_FILES with covered.sh selects the covering suite, using
-# the fixture SUITE_DIR from Part B. Isolates from real suite declarations.
+# the fixture SUITE_DIR from Part B. Isolates from real suite declarations — SPIRA_GATE_REPO
+# is pinned off the real tree too, so gate-touched.sh's plan-matrix-fence (gated on
+# SPIRA_GATE_REPO actually being this repo) skips instead of building test-plan and
+# scanning the real corpus for a call this fixture never asked it to check.
 FLIST_K="$TMP/flist-k"
 printf 'covered.sh\n' > "$FLIST_K"
-out_k3="$(SPIRA_GATE_FILES="$FLIST_K" SPIRA_BATCH_SUITE_DIR="$SD" \
+out_k3="$(SPIRA_GATE_FILES="$FLIST_K" SPIRA_BATCH_SUITE_DIR="$SD" SPIRA_GATE_REPO="$TMP" \
     bash "$TOUCHED" dummy-base dummy-head 2>/dev/null)"
 want    "K3: fixture: covered file selects its suite"    "test-fx-a.sh" "$out_k3"
 nowant "K3: fixture: uncovered suite not selected"      "test-fx-b.sh" "$out_k3"

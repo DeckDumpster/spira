@@ -42,7 +42,7 @@ SPIRA_GATE_BASE="${SPIRA_GATE_BASE:-$BASE}" bash "$HERE/build-fence.sh" || exit 
 # inside testenv-batch.sh, against the suites this call actually selects.
 bash "$HERE/tier-budget.sh" lint-allowlist --base "$BASE" || exit 1
 bash "$HERE/tier-budget.sh" lint-allowlist --base "$BASE" --area || exit 1
-bash "$HERE/tier-budget.sh" check-areas --suite-dir "$HERE" || exit 1
+bash "$HERE/tier-budget.sh" check-areas --suite-dir "${SPIRA_BATCH_SUITE_DIR:-$HERE}" || exit 1
 
 # THE TEST PLAN'S OWN FENCE, for the same reason build-fence.sh sits here: a suite deletion
 # that silently drops a use case's last coverage, or a coverage matrix that no longer matches
