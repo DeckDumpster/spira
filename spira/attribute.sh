@@ -42,7 +42,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # ---------------------------------------------------------------------------
 # ARGS
 # ---------------------------------------------------------------------------
-ROUND="" BASE="" SUITES_CSV="" MEMBERS_CSV="" REPO_ARG=""
+ROUND="" BASE="" SUITES_CSV="" MEMBERS_CSV="" REPO_ARG="" BATCH_ID=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --round)   [ $# -ge 2 ] || { printf 'attribute: --round requires an argument\n' >&2; exit 2; }
@@ -55,6 +55,12 @@ while [ $# -gt 0 ]; do
                    MEMBERS_CSV="$2"; shift 2 ;;
         --repo)    [ $# -ge 2 ] || { printf 'attribute: --repo requires an argument\n' >&2; exit 2; }
                    REPO_ARG="$2"; shift 2 ;;
+        # --batch-id: the round's lifecycle batch id (queue.sh's `batch_id=` on its open
+        # record), so this pass's timing lands as one round row (run/tsd/, sp-69m85) keyed
+        # to the same batch every other phase uses. Optional — omitted, no row is written;
+        # attribution itself is unaffected either way.
+        --batch-id) [ $# -ge 2 ] || { printf 'attribute: --batch-id requires an argument\n' >&2; exit 2; }
+                   BATCH_ID="$2"; shift 2 ;;
         -*)        printf 'attribute: unknown option: %s\n' "$1" >&2; exit 2 ;;
         *)         printf 'attribute: unexpected argument: %s\n' "$1" >&2; exit 2 ;;
     esac
@@ -88,6 +94,7 @@ IFS=',' read -ra MEMBERS_ARR <<< "$MEMBERS_CSV"
 [ "${#MEMBERS_ARR[@]}" -gt 0 ] || { printf 'attribute: --members named nothing\n' >&2; exit 2; }
 
 MAXPAR="${SPIRA_ATTRIBUTE_MAXPAR:-32}"
+_ATTR_PASS_START=$EPOCHSECONDS
 
 _ATTR_WORK="$(mktemp -d "${SPIRA_RUN:-${TMPDIR:-/tmp}}/attribute.XXXXXX")"
 trap 'rm -rf "$_ATTR_WORK"' EXIT
@@ -321,5 +328,10 @@ done
 for m in "${MEMBERS_ARR[@]}"; do
     [ -n "${EJECT_SUITES[$m]:-}" ] && printf 'EJECT %s %s\n' "$m" "${EJECT_SUITES[$m]}"
 done
+
+# round: TIMINGS ONLY (run/tsd/, sp-69m85) — this pass's own wall time, never a verdict;
+# the round's state stays the lifecycle machine's alone (design non-goal, §2a).
+[ -n "$BATCH_ID" ] && _tsd_round_phase "$BATCH_ID" attribute \
+    "$(( EPOCHSECONDS - _ATTR_PASS_START ))" "${#MEMBERS_ARR[@]}" "${#SUITES_ARR[@]}"
 
 [ "${#BASE_RED[@]}" -eq 0 ] && exit 0 || exit 0

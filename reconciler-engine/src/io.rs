@@ -66,6 +66,10 @@ struct StatusRecord<'a> {
 
 /// Appends one line per invariant per pass to the time series — every resource's status is
 /// recorded every pass, not only when it changes, so a gap in the series itself is visible.
+///
+/// Creates its parent directory: the default path is now under run/tsd/ (design
+/// reconciler-time-series-2026-09-27 §2), a directory no other reconciler write already
+/// guarantees exists.
 pub fn append_status(path: &Path, now_iso: &str, key: &str, verdict: &Verdict) {
     let (status, desired, observed, reason) = match &verdict.status {
         RawStatus::Satisfied => ("satisfied", None, None, None),
@@ -88,6 +92,9 @@ pub fn append_status(path: &Path, now_iso: &str, key: &str, verdict: &Verdict) {
         Ok(l) => l,
         Err(_) => return,
     };
+    if let Some(dir) = path.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(f, "{}", line);
     }

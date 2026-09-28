@@ -104,7 +104,9 @@ ledger() {
 # it wrong, and the ones without a session render `?` — never 0, which would say the session
 # ran and cost nothing.
 ledger_done() {
-    ledger "done $FAYTH $BEAD_ID rc=$1 status=$2 $(session_result_fields "${LOGF:-}")"
+    local _fields; _fields="$(session_result_fields "${LOGF:-}")"
+    ledger "done $FAYTH $BEAD_ID rc=$1 status=$2 $_fields"
+    _tsd_aeon_session "$BEAD_ID" "$FAYTH" "$1" "$2" "$_fields"
     rapid_recur_check || true
 }
 

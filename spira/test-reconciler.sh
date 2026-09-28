@@ -269,14 +269,16 @@ mkdir -p "$T/repo"
 mkdir -p "$SPIRA_RUN/queue/testrepo"
 
 reset_state() {
-    rm -f "$SPIRA_RUN/reconciler-state.json" "$SPIRA_RUN/reconciler-status.jsonl" \
+    rm -f "$SPIRA_RUN/reconciler-state.json" "$SPIRA_RUN/tsd/reconciler-status.jsonl" \
           "$SPIRA_RUN/reconciler.log" "$SPIRA_RUN/cockpit.down"
     : > "$SYSTEMCTL_CALLS"; : > "$COCKPIT_CALLS"; : > "$QUEUE_CALLS"; : > "$INC_LOG"
     : > "$DISK_USAGE_CALLS"; : > "$DISK_REMEDY_CALLS"
     desired_state_clear
 }
 
-status_jsonl() { cat "$SPIRA_RUN/reconciler-status.jsonl" 2>/dev/null || true; }
+# under run/tsd/ (design reconciler-time-series-2026-09-27 §2, sp-69m85): moved from
+# $SPIRA_RUN directly.
+status_jsonl() { cat "$SPIRA_RUN/tsd/reconciler-status.jsonl" 2>/dev/null || true; }
 
 printf 'test-reconciler.sh\n'
 
