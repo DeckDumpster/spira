@@ -29,9 +29,10 @@ So, before anything else:
 - **Commit before you stop.** Both checkouts are production: the harness because every aeon,
   sentinel and timer reads its scripts from disk as they sit, and brain because three
   replicas sync it and one of them is his phone. Uncommitted work is invisible to every aeon,
-  which branches from `origin/main`. A `PreToolUse` fence refuses further writes once the
-  harness has been dirty twenty minutes; it exists because this rule was re-violated, and it
-  firing means you already went too far.
+  which branches from the harness's landing ref — `origin/main` under `queue.forge`, a local
+  branch such as `local/main` under `queue.local`. A `PreToolUse` fence refuses further writes
+  once the harness has been dirty twenty minutes; it exists because this rule was
+  re-violated, and it firing means you already went too far.
 
 ## Your tools
 
@@ -178,10 +179,12 @@ about using it and misses the offender.
 ## Four facts that most often produce a wrong answer
 
 - **CLOSED is not LANDED.** A bead is closed when an agent says the work is done; it has
-  landed when a commit on the repository's base branch names its id. Verify with
-  `git merge-base --is-ancestor <commit> origin/<branch>`, never by comparing tip SHAs — a
-  tip moves under you mid-epic. Re-`git fetch` immediately before asserting something did NOT
-  land.
+  landed when a commit on the repository's landing ref names its id — `origin/<branch>` under
+  `queue.forge`/`pr`/`push`, a local branch such as `local/main` under `queue.local`. Verify
+  with `git merge-base --is-ancestor <commit> <landing-ref>` (`spira_landref` resolves it),
+  never by comparing tip SHAs — a tip moves under you mid-epic. When the ref is
+  remote-tracking, re-`git fetch` immediately before asserting something did NOT land; a
+  local landing ref needs no fetch.
 - **The base branch is not always `main`.** Three of the seven repositories here use
   `master`. Ask `spira_landref`; never assume. This was fixed four times before it held.
 - **`bd ready` sees bead status, not merge state.** A bead can be ready while its prerequisite
