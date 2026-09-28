@@ -206,6 +206,9 @@ testdb_seed <<JSONL
 {"id":"tst-claim","title":"claim bead","description":"a case in spira/batch.sh needs one more branch","status":"open","issue_type":"task","labels":[$_t5_lbl,"repo:fixture"],"updated_at":"2026-09-20T00:00:00Z"}
 JSONL
 
+# Pinned so this fixture stays on the pre-cutover legacy paths even when a --with-bins run
+# has built work/spira-lc for other suites in the same batch (design §3.5, LC_MODEL_RESTRICTED).
+export SPIRA_WORK_BIN="$TMP/no-work-bin" SPIRA_LC_BIN="$TMP/no-lc-bin"
 rm -rf "$SPIRA_RUN/worktree"
 "$SPIRA_HOME/aeon.sh" builder > "$TMP/out" 2>&1
 
