@@ -371,6 +371,14 @@ done < "$SUITE_LIST"
 # is deliberate: an inner invocation that inherited the full non-gated set would
 # re-enter test-gate-budget.sh itself and exceed the 602s per-suite watchdog on
 # every timed pass.
+#
+# --no-all-fallback: THIS IS THE PER-BRANCH GATE, not the round. A branch
+# touching a plumbing file (spira/conf.sh, named by ~100 suites' own # covers:)
+# used to fall back to the entire non-gated corpus here — full coverage the
+# round's own scheduled run (suites.sh) already provides on every branch that
+# lands, regardless of what it touched (law-local-gates-buy-latency-not-coverage).
+# --report-file names what the fallback would have covered so an unmapped file
+# is still visible in the gate's own output rather than silently narrowed.
 extra_suites=""
 if [ -f "${SPIRA_GATE_FILES:-}" ]; then
     # select.sh owns the selection algorithm; this script owns which suites are
@@ -384,9 +392,12 @@ if [ -f "${SPIRA_GATE_FILES:-}" ]; then
     # environment when a suite exits non-zero — the background process holds open
     # file descriptors that delay gate-spira.sh's cleanup path.
     _cv_mode_file="$(mktemp)"
+    _cv_report_file="$(mktemp)"
     _cv_raw="$(bash "$HERE/select.sh" \
         --files "${SPIRA_GATE_FILES}" \
         --mode-file "$_cv_mode_file" \
+        --report-file "$_cv_report_file" \
+        --no-all-fallback \
         2>/dev/null || true)"
     _cv_mode="$(cat "$_cv_mode_file" 2>/dev/null || true)"; rm -f "$_cv_mode_file"
     while IFS= read -r _s || [ -n "$_s" ]; do
@@ -399,11 +410,14 @@ if [ -f "${SPIRA_GATE_FILES:-}" ]; then
         esac
     done <<< "$_cv_raw"
     _cv_n=0; for _cv_ts in $extra_suites; do _cv_n=$((_cv_n + 1)); done
-    if [ "$_cv_mode" = all ]; then
-        say "coverage: unmapped file(s) in diff — running all non-gated suites"
-    elif [ "$_cv_n" -gt 0 ]; then
-        say "coverage: selected $_cv_n non-gated suite(s)"
+    [ "$_cv_n" -gt 0 ] && say "coverage: selected $_cv_n non-gated suite(s)"
+    if [ -s "$_cv_report_file" ]; then
+        say "coverage: no all-suites fallback here — the round's own scheduled run covers:"
+        while IFS= read -r _cv_rl; do
+            [ -n "$_cv_rl" ] && say "coverage:   $_cv_rl"
+        done < "$_cv_report_file"
     fi
+    rm -f "$_cv_report_file"
 fi
 
 if [ "$INLINE" = 1 ]; then
