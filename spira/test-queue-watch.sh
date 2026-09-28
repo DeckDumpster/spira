@@ -64,7 +64,7 @@ command -v "$BIN" >/dev/null 2>&1 || bail "queue-watch is not on PATH"
 
 # --- fixtures --------------------------------------------------------------------------------
 RUN="$T/run"; FX="$T/fx"; Q="$RUN/queue/q"
-mkdir -p "$Q" "$RUN/landstate" "$FX"
+mkdir -p "$Q" "$FX"
 
 # A real base: an origin with main, and a checkout whose origin/main a tip can be an
 # ancestor of — "landed" is verified against the commit graph, never taken from the forge.
@@ -122,11 +122,22 @@ n=$(( $(cat "$FX/calls" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FX/calls"
 [ -f "$FX/step-$n.sh" ] && bash "$FX/step-$n.sh"
 exit 0
 EOF
-chmod +x "$FX/forge.sh" "$FX/bd"
+
+# Fake spira-lc: answers `list --state CERTIFIED` from certified.json — the CERTIFIED pool
+# now lives in spira_lifecycle, read through spira-lc, never a landstate directory scan.
+# lc-broken is a POSITIVE CONTROL toggle: with it present, spira-lc refuses to tell, and
+# read_certified must surface that as blind rather than reading zero certified beads.
+cat > "$FX/spira-lc" <<'EOF'
+#!/usr/bin/env bash
+[ -f "$FX/lc-broken" ] && { echo "cannot tell: db unreachable" >&2; exit 2; }
+[ "$1" = list ] && [ "$2" = --state ] && [ "$3" = CERTIFIED ] || { echo "unexpected args: $*" >&2; exit 2; }
+cat "$FX/certified.json" 2>/dev/null || echo '[]'
+EOF
+chmod +x "$FX/forge.sh" "$FX/bd" "$FX/spira-lc"
 
 # Poll 1 sees: batch 50 (sp-a, sp-b), sp-o certified in another repo.
 printf 'pr=50\nhead=h1\nmembers=sp-a:%s sp-b:bbbb\n' "$TIP_A" > "$Q/open"
-echo "CERTIFIED x 1" > "$RUN/landstate/sp-o"
+printf '[{"bead_id":"sp-o"}]' > "$FX/certified.json"
 # After poll 1: CI red, sp-b ejected, survivors re-pushed.
 cat > "$FX/step-1.sh" <<EOF
 echo red > "$FX/ci-50"
@@ -142,16 +153,16 @@ cat > "$FX/step-3.sh" <<EOF
 printf 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef sp-c:cccc\nsp-b:bbbb\n' > "$Q/bisect"
 touch -d '3 hours ago' "$Q/bisect"
 printf 'pr=51\nhead=h3\nmembers=sp-c:cccc\n' > "$Q/open"
-echo "CERTIFIED dddd 1" > "$RUN/landstate/sp-d"
+printf '[{"bead_id":"sp-o"},{"bead_id":"sp-d"}]' > "$FX/certified.json"
 EOF
 # After poll 4: PR 51 closed without merging; its member back in CERTIFIED.
 cat > "$FX/step-4.sh" <<EOF
 echo closed > "$FX/state-51"
 rm -f "$Q/open"
-echo "CERTIFIED cccc 1" > "$RUN/landstate/sp-c"
+printf '[{"bead_id":"sp-o"},{"bead_id":"sp-d"},{"bead_id":"sp-c"}]' > "$FX/certified.json"
 EOF
 
-export FX SPIRA_BD="$FX/bd" SPIRA_FORGE="$FX/forge.sh"
+export FX SPIRA_BD="$FX/bd" SPIRA_FORGE="$FX/forge.sh" SPIRA_LC_BIN="$FX/spira-lc"
 out="$("$BIN" watch --ticks 5 --interval 1 --run "$RUN" --home "$FX" --config "$FX/spira.toml" 2>&1)"
 printf '%s\n' "$out" | sed 's/^/    | /'
 
@@ -172,12 +183,13 @@ nowant "the push-mode repo is not watched"          " p watching" "$out"
 # --- 3. health -------------------------------------------------------------------------------
 "$BIN" health --run "$RUN" >/dev/null 2>&1 && ok "health passes after a good poll" || bad "health passes after a good poll"
 
-rm -rf "$RUN/landstate"
+touch "$FX/lc-broken"
 blind="$("$BIN" watch --ticks 2 --interval 1 --run "$RUN" --home "$FX" --config "$FX/spira.toml" 2>&1)"
 want "an unreadable queue is reported blind after two failed polls"      "q blind: cannot see the queue" "$blind"
 herr="$("$BIN" health --run "$RUN" 2>&1)"; hrc=$?
 [ "$hrc" -ne 0 ] && ok "health fails after a blind poll" || bad "health fails after a blind poll (rc=$hrc)"
 want "health says why"                            "blind" "$herr"
+rm -f "$FX/lc-broken"
 
 herr="$("$BIN" health --run "$T/never" 2>&1)"; hrc=$?
 [ "$hrc" -ne 0 ] && ok "health fails when it has never polled" || bad "health fails when it has never polled (rc=$hrc)"
@@ -202,7 +214,7 @@ bout="$("$BIN" watch --ticks 1 --run "$IRUN" --home "$FX" --config "$FX/broken.t
 APPEAR="$FX/appear.toml"
 printf '[repo.p]\npath = "%s"\nmode = "push"\n' "$T/repo" > "$APPEAR"
 ARUN="$T/appear-run"
-mkdir -p "$ARUN/queue/q" "$ARUN/landstate"
+mkdir -p "$ARUN/queue/q"
 (
     sleep 0.5
     printf '[repo.q]\npath = "%s"\nmode = "queue"\nbase = "origin/main"\n' "$T/repo" > "$APPEAR.tmp"
