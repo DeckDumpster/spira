@@ -1126,7 +1126,7 @@ _land_local_release() {
         printf 'queue.sh land-local: cannot create %s\n' "$retain" >&2; return 1; }
 
     local built
-    built="$(bash "$HERE/build-tarball.sh" build --workspace "$repo" --bin-dir "$bins_dir" \
+    built="$(bash "$HERE/build-tarball.sh" build --bin-dir "$bins_dir" \
         --repo-name "$name" --name "spira-$head" --output "$retain" "$head" "$repo")"
     if [ -z "$built" ] || [ ! -f "$built" ]; then
         printf 'queue.sh land-local: build-tarball.sh did not produce a tarball\n' >&2

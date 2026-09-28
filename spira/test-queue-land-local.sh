@@ -35,10 +35,22 @@ git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" branch local/main trunk
 
 # A NON-DEFAULT run dir and queue dir throughout (law-gates-run-in-a-clean-environment).
-RUN="$TMP/run"; QDIR="$RUN/queue"
-mkdir -p "$RUN/worktree" "$QDIR"
+RUN="$TMP/run"; QDIR="$RUN/queue"; RELEASES="$TMP/releases"
+mkdir -p "$RUN/worktree" "$QDIR" "$RELEASES"
 RMAP="$TMP/repo-map"
 printf 'fixq | %s | queue.local | local/main | | |\n' "$REPO" > "$RMAP"
+
+# sp-sf60f: a land now packages the round head with its own --with-bins corpus and
+# activates it (see test-land-local-release.sh for that mechanism in depth) — every head
+# this suite lands needs one, or the packaging refusal masks the ref-move assertions below.
+mk_bins() {   # mk_bins <head> <content>
+    local head="$1" content="$2" tree dir
+    tree="$(git -C "$REPO" rev-parse "${head}^{tree}")"
+    dir="$RUN/cargo-target-bins/$tree/release"
+    mkdir -p "$dir"
+    printf '%s' "$content" > "$dir/fakebin"
+    chmod +x "$dir/fakebin"
+}
 
 B() { bd -C "$SPIRA_DB" "$@"; }
 field() { B show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
@@ -59,6 +71,7 @@ run() {
     SPIRA_RUN="$RUN" \
     SPIRA_QUEUE_DIR="$QDIR" \
     SPIRA_REPO_MAP="$RMAP" \
+    SPIRA_RELEASES="$RELEASES" \
         bash "$SH/queue.sh" "$@" 2>&1
 }
 run_lockheld() {
@@ -69,6 +82,7 @@ run_lockheld() {
     SPIRA_RUN="$RUN" \
     SPIRA_QUEUE_DIR="$QDIR" \
     SPIRA_REPO_MAP="$RMAP" \
+    SPIRA_RELEASES="$RELEASES" \
     SPIRA_QUEUE_LOCK_HELD=1 \
         bash "$SH/queue.sh" "$@" 2>&1
 }
@@ -90,6 +104,7 @@ git -C "$REPO" commit -q -m "sp-lloc1: the work"
 HEAD1="$(git -C "$REPO" rev-parse round-1)"
 git -C "$REPO" checkout -q trunk
 git -C "$REPO" branch -D round-1 >/dev/null 2>&1
+mk_bins "$HEAD1" round-1-bin
 
 out="$(run land-local fixq --head "$HEAD1" --members "sp-lloc1:$HEAD1")"; rc=$?
 [ "$rc" -eq 0 ] && ok "1: exit 0 on a real fast-forward" || bad "1: exit 0 on a real fast-forward" "got rc=$rc out=$out"
@@ -159,6 +174,7 @@ git -C "$REPO" commit -q -m "sp-lloc4: the work"
 HEAD4="$(git -C "$REPO" rev-parse round-4)"
 git -C "$REPO" checkout -q trunk
 git -C "$REPO" branch -D round-4 >/dev/null 2>&1
+mk_bins "$HEAD4" round-4-bin
 
 mkdir -p "$QDIR/fixq"
 exec 8>"$QDIR/fixq/lock"
