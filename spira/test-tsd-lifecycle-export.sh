@@ -73,6 +73,11 @@ testdb_seed <<'JSONL'
 {"id":"sp-tle-a","title":"claimed then closed","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-16T00:00:00Z"}
 {"id":"sp-tle-b","title":"claimed only","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-16T00:00:00Z"}
 JSONL
+# testdb_seed's own bd create writes its own audit rows (create, label add x2 per bead) —
+# real bd behaviour, not noise to filter around at query time. Cleared for these two ids so
+# the fixture below controls its own event stream exactly, the same precedent
+# test-attempts-sql.sh's per-bead counting suite already relies on for its own seeded ids.
+bdq sql "DELETE FROM events WHERE issue_id IN ('sp-tle-a','sp-tle-b')" >/dev/null 2>&1
 
 seedt() {   # seedt <id> <event_type> <new_value> <created_at>
     local id="$1" et="$2" nv="$3" ts="$4" uuid
