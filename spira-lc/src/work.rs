@@ -9,6 +9,7 @@
 //! Deploys inert: nothing calls `work` over the socket yet.
 
 use lifecycle::bead::{BeadEventKind, HoldKind};
+use lifecycle::reason::HoldCause;
 
 use crate::db::Conn;
 use crate::{apply_bead_event, flag, CANNOT_TELL};
@@ -88,7 +89,7 @@ fn cmd_blocked(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let Some(default) = flag(args, "--default") else {
         return (CANNOT_TELL, "work blocked: --default <default> is required".into());
     };
-    let (code, out) = apply_bead_event(conn, bead_id, &actor, BeadEventKind::Hold { kind: HoldKind::Ask, cause: question.clone() });
+    let (code, out) = apply_bead_event(conn, bead_id, &actor, BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion });
     if code != 0 {
         return (code, out);
     }
@@ -132,8 +133,7 @@ fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, Strin
     // transition, reserved for the groomer or operator's own confirmation (design §3.5 —
     // "a supersede request, confirmed by the groomer or operator"). The aeon's own request
     // is a hold plus an ask; nothing here moves the bead to SUPERSEDED.
-    let cause = format!("supersede-request:{successor}");
-    let (code, out) = apply_bead_event(conn, bead_id, &actor, BeadEventKind::Hold { kind: HoldKind::Operator, cause: cause.clone() });
+    let (code, out) = apply_bead_event(conn, bead_id, &actor, BeadEventKind::Hold { kind: HoldKind::Operator, cause: HoldCause::SupersedeRequest });
     if code != 0 {
         return (code, out);
     }

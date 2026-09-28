@@ -7,6 +7,7 @@ pub mod batch;
 pub mod bead;
 pub mod classify;
 pub mod delivery;
+pub mod reason;
 pub mod replay;
 
 /// The row-version a compare-and-swap checks. Every applied transition increments it by

@@ -41,6 +41,7 @@ mod tests {
     use crate::bead::{BeadEventKind, BeadState};
     use crate::batch::{BatchEventKind, BatchState};
     use crate::delivery::{DeliveryEventKind, DeliveryState};
+    use crate::reason::GateRedReason;
 
     fn bead_ev(expect: BeadState, version: u64, kind: BeadEventKind) -> BeadEvent {
         BeadEvent { expect, version, kind, actor: "test".into() }
@@ -80,7 +81,7 @@ mod tests {
         let log = vec![
             bead_ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: "aeon-1".into(), lease_until: 10 }),
             bead_ev(BeadState::Working, 1, BeadEventKind::Submit { tip: "sha-a".into() }),
-            bead_ev(BeadState::Submitted, 2, BeadEventKind::GateRed { tip: "sha-a".into(), reason: "flaky".into() }),
+            bead_ev(BeadState::Submitted, 2, BeadEventKind::GateRed { tip: "sha-a".into(), reason: GateRedReason::SuitesFailed }),
             bead_ev(BeadState::Rework, 3, BeadEventKind::Claim { holder: "aeon-2".into(), lease_until: 20 }),
         ];
 

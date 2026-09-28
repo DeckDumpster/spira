@@ -3,6 +3,7 @@
 
 use std::collections::BTreeSet;
 
+use crate::reason::{DropReason, GateRedReason, HoldCause, ReturnedReason};
 use crate::{Outcome, Refusal, Version};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
@@ -130,16 +131,16 @@ pub enum BeadEventKind {
     Submit { tip: String },
     Done { delivers: String },
     GatePass { tip: String, gate_key: String },
-    GateRed { tip: String, reason: String },
+    GateRed { tip: String, reason: GateRedReason },
     GateInfra { tip: String },
     Deliver,
     Delivered { merge_sha: String, proof: String },
-    Returned { reason: String },
+    Returned { reason: ReturnedReason },
     Requeued { tip: String },
     ContentOnBase { proof: String },
     Supersede { by: String },
-    Drop { reason: String },
-    Hold { kind: HoldKind, cause: String },
+    Drop { reason: DropReason },
+    Hold { kind: HoldKind, cause: HoldCause },
     Unhold { kind: HoldKind },
 }
 
@@ -213,7 +214,7 @@ pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
             }
             let mut new = row.clone();
             new.state = BeadState::Dropped;
-            new.reason = Some(reason.clone());
+            new.reason = Some(reason.as_str().to_string());
             new.version += 1;
             Outcome::applied(new)
         }
@@ -223,7 +224,7 @@ pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
             }
             let mut new = row.clone();
             new.holds.insert(*kind);
-            new.reason = Some(cause.clone());
+            new.reason = Some(cause.as_str().to_string());
             new.version += 1;
             Outcome::applied(new)
         }
@@ -322,7 +323,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 }
                 let mut new = row.clone();
                 new.state = BeadState::Rework;
-                new.reason = Some(reason.clone());
+                new.reason = Some(reason.as_str().to_string());
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -367,7 +368,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             Returned { reason } => {
                 let mut new = row.clone();
                 new.state = BeadState::Rework;
-                new.reason = Some(reason.clone());
+                new.reason = Some(reason.as_str().to_string());
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -451,16 +452,16 @@ mod tests {
             BeadEventKind::Submit { tip: "t1".into() },
             BeadEventKind::Done { delivers: "d".into() },
             BeadEventKind::GatePass { tip: "t1".into(), gate_key: "k".into() },
-            BeadEventKind::GateRed { tip: "t1".into(), reason: "r".into() },
+            BeadEventKind::GateRed { tip: "t1".into(), reason: GateRedReason::SuitesFailed },
             BeadEventKind::GateInfra { tip: "t1".into() },
             BeadEventKind::Deliver,
             BeadEventKind::Delivered { merge_sha: "s".into(), proof: "p".into() },
-            BeadEventKind::Returned { reason: "r".into() },
+            BeadEventKind::Returned { reason: ReturnedReason::PushRejected },
             BeadEventKind::Requeued { tip: "t1".into() },
             BeadEventKind::ContentOnBase { proof: "p".into() },
             BeadEventKind::Supersede { by: "sp-2".into() },
-            BeadEventKind::Drop { reason: "r".into() },
-            BeadEventKind::Hold { kind: HoldKind::Poison, cause: "c".into() },
+            BeadEventKind::Drop { reason: DropReason::Unwanted },
+            BeadEventKind::Hold { kind: HoldKind::Poison, cause: HoldCause::AttemptsExhausted },
             BeadEventKind::Unhold { kind: HoldKind::Poison },
         ]
     }
@@ -597,7 +598,7 @@ mod tests {
     #[test]
     fn hold_and_unhold_suspend_without_losing_state() {
         let r = row(BeadState::Submitted);
-        let out = apply(&r, &ev(BeadState::Submitted, 0, BeadEventKind::Hold { kind: HoldKind::Ask, cause: "waiting on operator".into() }));
+        let out = apply(&r, &ev(BeadState::Submitted, 0, BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion }));
         assert!(out.applied);
         assert_eq!(out.row.state, BeadState::Submitted);
         assert!(out.row.holds.contains(&HoldKind::Ask));
@@ -611,7 +612,7 @@ mod tests {
     #[test]
     fn hold_is_refused_on_a_terminal_row() {
         let r = row(BeadState::Landed);
-        let out = apply(&r, &ev(BeadState::Landed, 0, BeadEventKind::Hold { kind: HoldKind::Poison, cause: "c".into() }));
+        let out = apply(&r, &ev(BeadState::Landed, 0, BeadEventKind::Hold { kind: HoldKind::Poison, cause: HoldCause::AttemptsExhausted }));
         assert!(!out.applied);
         assert!(matches!(out.refusal, Some(Refusal::Terminal { .. })));
     }
@@ -642,7 +643,7 @@ mod tests {
             assert_eq!(out.row.state, BeadState::Superseded);
 
             let r = row(state);
-            let out = apply(&r, &ev(state, 0, BeadEventKind::Drop { reason: "abandoned".into() }));
+            let out = apply(&r, &ev(state, 0, BeadEventKind::Drop { reason: DropReason::Unwanted }));
             assert!(out.applied);
             assert_eq!(out.row.state, BeadState::Dropped);
         }
@@ -658,13 +659,13 @@ mod tests {
         // the row in IN_DELIVERY or be refused outright (property test, design §7).
         let delivery_exits = [
             BeadEventKind::Delivered { merge_sha: "s".into(), proof: "p".into() },
-            BeadEventKind::Returned { reason: "r".into() },
+            BeadEventKind::Returned { reason: ReturnedReason::PushRejected },
             BeadEventKind::Requeued { tip: "t1".into() },
         ];
         let other_legal_exits = [
             BeadEventKind::ContentOnBase { proof: "p".into() },
             BeadEventKind::Supersede { by: "sp-2".into() },
-            BeadEventKind::Drop { reason: "r".into() },
+            BeadEventKind::Drop { reason: DropReason::Unwanted },
         ];
         for kind in sample_kinds() {
             let mut r = row(BeadState::InDelivery);
@@ -700,5 +701,98 @@ mod tests {
             r = out.row;
         }
         assert_eq!(r.state, BeadState::Landed);
+    }
+
+    // ── typed reasons (design reconciler-time-series-2026-09-27 §2a, row 2b) ──────────
+    // The reconciler's rework-by-cause query must not invent its own reason list, so the
+    // machine's own `returned`/`gate_red`/`hold`/`drop` reasons are closed enums, not free
+    // text. These tests enumerate every variant of each reason enum against the transition
+    // table, and prove an unrecognized reason is refused as evidence rather than silently
+    // accepted — which today's code (`reason: String`) cannot do at all: any string, known
+    // or not, applies.
+
+    const ALL_GATE_RED_REASONS: [GateRedReason; 6] = [
+        GateRedReason::SuitesFailed,
+        GateRedReason::Syntax,
+        GateRedReason::PolicyViolation,
+        GateRedReason::NoRebase,
+        GateRedReason::Timeout,
+        GateRedReason::Confine,
+    ];
+    const ALL_RETURNED_REASONS: [ReturnedReason; 4] = [
+        ReturnedReason::PrClosedUnmerged,
+        ReturnedReason::PrChangesRequested,
+        ReturnedReason::PushRejected,
+        ReturnedReason::BatchEjected,
+    ];
+    const ALL_DROP_REASONS: [DropReason; 2] = [DropReason::ClosedNoBranch, DropReason::Unwanted];
+    const ALL_HOLD_CAUSES: [HoldCause; 5] = [
+        HoldCause::AttemptsExhausted,
+        HoldCause::OperatorQuestion,
+        HoldCause::UnlandedBlocker,
+        HoldCause::SupersedeRequest,
+        HoldCause::ManualHold,
+    ];
+
+    #[test]
+    fn every_gate_red_reason_moves_submitted_to_rework_and_is_recorded() {
+        for reason in ALL_GATE_RED_REASONS {
+            let mut r = row(BeadState::Submitted);
+            r.tip = Some("t1".into());
+            let out = apply(&r, &ev(BeadState::Submitted, 0, BeadEventKind::GateRed { tip: "t1".into(), reason }));
+            assert!(out.applied, "{reason:?} should move SUBMITTED to REWORK");
+            assert_eq!(out.row.state, BeadState::Rework);
+            assert_eq!(out.row.reason.as_deref(), Some(reason.as_str()));
+        }
+    }
+
+    #[test]
+    fn every_returned_reason_moves_in_delivery_to_rework_and_is_recorded() {
+        for reason in ALL_RETURNED_REASONS {
+            let mut r = row(BeadState::InDelivery);
+            r.tip = Some("t1".into());
+            let out = apply(&r, &ev(BeadState::InDelivery, 0, BeadEventKind::Returned { reason }));
+            assert!(out.applied, "{reason:?} should move IN_DELIVERY to REWORK");
+            assert_eq!(out.row.state, BeadState::Rework);
+            assert_eq!(out.row.reason.as_deref(), Some(reason.as_str()));
+        }
+    }
+
+    #[test]
+    fn every_drop_reason_drops_a_ready_bead_and_is_recorded() {
+        for reason in ALL_DROP_REASONS {
+            let r = row(BeadState::Ready);
+            let out = apply(&r, &ev(BeadState::Ready, 0, BeadEventKind::Drop { reason }));
+            assert!(out.applied, "{reason:?} should drop a READY bead");
+            assert_eq!(out.row.state, BeadState::Dropped);
+            assert_eq!(out.row.reason.as_deref(), Some(reason.as_str()));
+        }
+    }
+
+    #[test]
+    fn every_hold_cause_holds_a_ready_bead_and_is_recorded() {
+        for cause in ALL_HOLD_CAUSES {
+            let r = row(BeadState::Ready);
+            let out = apply(&r, &ev(BeadState::Ready, 0, BeadEventKind::Hold { kind: HoldKind::Operator, cause }));
+            assert!(out.applied, "{cause:?} should hold a READY bead");
+            assert!(out.row.holds.contains(&HoldKind::Operator));
+            assert_eq!(out.row.reason.as_deref(), Some(cause.as_str()));
+        }
+    }
+
+    #[test]
+    fn an_unknown_reason_is_refused_as_evidence_before_it_ever_reaches_apply() {
+        // The evidence boundary (design §3.2: "evidence is what the producer already
+        // knows") is where this is caught — a reason tag none of the four enums name
+        // fails to deserialize into a `BeadEventKind` at all, so `apply` never sees it.
+        for bogus in [
+            r#"{"GateRed":{"tip":"t1","reason":"flaky"}}"#,
+            r#"{"Returned":{"reason":"merged"}}"#,
+            r#"{"Drop":{"reason":"stale"}}"#,
+            r#"{"Hold":{"kind":"Poison","cause":"just because"}}"#,
+        ] {
+            let parsed: Result<BeadEventKind, _> = serde_json::from_str(bogus);
+            assert!(parsed.is_err(), "{bogus} names a reason no enum has, and must be refused, got {parsed:?}");
+        }
     }
 }

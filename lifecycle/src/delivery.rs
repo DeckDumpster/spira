@@ -11,6 +11,7 @@
 //! has no further transitions — a new delivery is a new row, started fresh by the next
 //! `deliver` event on the bead.
 
+use crate::reason::ReturnedReason;
 use crate::{Outcome, Refusal, Version};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -144,7 +145,7 @@ pub enum DeliveryEventKind {
     /// queue mode only: the batcher cuts this member into a batch.
     Cut { batch_id: String },
     Delivered { merge_sha: String, proof: String },
-    Returned { reason: String },
+    Returned { reason: ReturnedReason },
     Requeued { tip: String },
 }
 
@@ -282,7 +283,7 @@ mod tests {
         vec![
             DeliveryEventKind::Cut { batch_id: "b1".into() },
             DeliveryEventKind::Delivered { merge_sha: "s".into(), proof: "p".into() },
-            DeliveryEventKind::Returned { reason: "r".into() },
+            DeliveryEventKind::Returned { reason: ReturnedReason::PushRejected },
             DeliveryEventKind::Requeued { tip: "t".into() },
         ]
     }
@@ -348,7 +349,7 @@ mod tests {
         assert_eq!(out.row.exit, Some(Exit::Requeued));
 
         let row = DeliveryRow::start_push("sp-y");
-        let out = apply(&row, &ev(DeliveryState::Pushing, 0, DeliveryEventKind::Returned { reason: "rejected".into() }));
+        let out = apply(&row, &ev(DeliveryState::Pushing, 0, DeliveryEventKind::Returned { reason: ReturnedReason::PushRejected }));
         assert!(out.applied);
         assert_eq!(out.row.exit, Some(Exit::Returned));
     }

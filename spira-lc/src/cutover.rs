@@ -598,7 +598,7 @@ pub fn cmd_settle(args: &[String], conn: &Conn) -> (i32, String) {
     }];
 
     for id in &eject_ids {
-        if let Err(e) = add_exit_steps(conn, &mut steps, id, delivery::DeliveryEventKind::Returned { reason: "batch-eject".into() }, &actor, at) { return cannot_tell(e); }
+        if let Err(e) = add_exit_steps(conn, &mut steps, id, delivery::DeliveryEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BatchEjected }, &actor, at) { return cannot_tell(e); }
     }
     for id in &requeue_ids {
         let tip = match fetch_members(conn, batch_id) {
