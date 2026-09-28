@@ -3,8 +3,9 @@
 # test-aeon-verdict.sh — the close verdict: a bead closed with nothing committed is
 #   reopened, UNLESS superseded or its delivers:TYPE evidence verifies. A WORK bead
 #   (task/bug/feature) an aeon closes directly never reaches that verdict's reopen: it is
-#   converted back to open carrying the submitted label (sp-qsona), UNLESS superseded or
-#   carrying a delivers: label.
+#   converted back to open carrying the submitted label (sp-qsona), UNLESS superseded,
+#   carrying a delivers: label, or its branch carries no commit of its own ahead of the
+#   base (sp-iqb8n — a report-only close has nothing for any round to ever certify).
 #
 #   ./test-aeon-verdict.sh
 #
@@ -28,13 +29,16 @@
 #   aeon.sh actually calls.
 #
 # ONLY THE QUEUE CLOSES A WORK BEAD (sp-qsona). bead_close_on_land (lib.sh) is the one place
-# that happens, called from the landing pass once a commit is actually on the base. TWO
+# that happens, called from the landing pass once a commit is actually on the base. THREE
 # EXEMPTIONS leave an aeon's close standing instead:
 #   - `bd supersede`: such a bead will NEVER have a commit naming it — its work was carried
 #     onto the successor's branch — so converting it would make a permanent zombie.
 #   - a delivers:TYPE label: groom-trigger.sh, maechen-trigger.sh and incident.sh file
 #     task/bug beads that close on a note, an action, or child beads — never a commit,
 #     never a repo:, never a queue claim. close_verdict still judges these.
+#   - an empty branch (sp-iqb8n): a report-only close (a diagnosis, an alignment check,
+#     work delivered in another repo) leaves spira/<id> with no commit of its own ahead of
+#     the base, so converting it would zombie it the same way a superseded bead would.
 #
 # THE BRIEF-RENDERING CASES BELOW (persona wall/no-wall, already-done mentions) are a
 # different use case (UC-aeon-execution-07, brief rendering) that happens to live in this
@@ -266,13 +270,17 @@ want   "and says it converted"                "converted to submitted" "$(cat "$
 nowant "with no evidence-based reopen"        "REOPENED"           "$(cat "$TMP/out")"
 
 echo
-echo "WORK bead closed with NOTHING committed — same conversion; commit status no longer decides it:"
+echo "WORK bead closed with an EMPTY branch (no commit of its own) — stays closed, not converted (sp-iqb8n):"
+# THE DEFECT THIS REPRODUCES. Before sp-iqb8n this was converted to submitted exactly like a
+# bead with a real commit, and stranded forever: no round or landing pass ever certifies a
+# branch with no commit naming the bead, so a report-only close (OUTCOME: delivered, a
+# diagnosis, work done in another repo) became a permanent zombie — open, labelled
+# spira-submitted, nothing ever lands to close it.
 testdb_reset; seed sp-vd-2; shim 0; run_aeon
-is     "the bead is converted back to open"   open "$(field sp-vd-2 status)"
-is     "and its claim is released"            ""   "$(field sp-vd-2 assignee)"
-want   "carrying the submitted label"         "spira-submitted" "$(field sp-vd-2 labels)"
-want   "and the bead carries the conversion reason" "marked submitted instead of closed" "$(notes sp-vd-2)"
-nowant "not the legacy closed-without-commit reopen" "REOPENED — closed with nothing committed" "$(cat "$TMP/out")"
+is     "the bead stays closed"                closed "$(field sp-vd-2 status)"
+want   "the verdict records the exemption"    "carries no commit of its own ahead of" "$(cat "$TMP/out")"
+nowant "so no submitted label is added"       "spira-submitted" "$(field sp-vd-2 labels)"
+nowant "and nothing is reopened"              "REOPENED" "$(cat "$TMP/out")"
 
 echo
 echo "NON-WORK type (spike) closed with NOTHING committed — reopened, because closed is not landed:"

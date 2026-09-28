@@ -1169,6 +1169,12 @@ print("%s\t%s\t%s" % (d[0].get("issue_type") or "", sup, deliv))' 2>/dev/null)" 
        && [ "${_wct_delivers:-0}" != 1 ]; then
         if [ "${_wct_sup:-0}" = 1 ]; then
             log "$FAYTH: $BEAD_ID closed a superseded work bead — not converted, close stands"
+        # AN EMPTY BRANCH IS THE SAME SHAPE AS A SUPERSEDED ONE (sp-iqb8n): converting it
+        # would mark it submitted for a commit that will never exist, and no round or
+        # landing pass ever certifies nothing. Checked the same way gate_st cases 3/4/5
+        # above decide "nothing to certify" — a commit naming this bead ahead of base.
+        elif ! grep -qF "$BEAD_ID" <<< "$(git -C "$REPO" log --format='%s%n%b' "$BASE_FQREF..$BRANCH" 2>/dev/null)"; then
+            log "$FAYTH: $BEAD_ID closed a work bead but $BRANCH carries no commit of its own ahead of $BASE_FQREF — not converted, close stands"
         else
             bead_reopen "$BEAD_ID" work-close-converted "Submitted: work committed on branch; marked submitted instead of closed. The landing pass closes this bead when it lands, citing the merge commit.${gate_why:+ Gate at close: $gate_why.}"
             bdq label add "$BEAD_ID" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1
