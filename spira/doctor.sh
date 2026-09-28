@@ -11,6 +11,8 @@
 # read-only, fast questions, each its own function so watchtower can call them directly:
 #
 #   doctor_check_chamber_overlays — which operator overlay, if any, is in force
+#   doctor_check_gate_compile_check — does every Rust repo's configured gate command still
+#                                     reach a compile check (sp-1hmrm)
 #   doctor_check_store            — is the store listener reachable
 #   doctor_check_events_probe     — does a write/read round trip on the events substrate
 #   doctor_check_failed_units     — are any spira-* systemd units in the failed state
@@ -93,6 +95,40 @@ doctor_check_overrides() {
         [ -n "$line" ] || continue
         FAIL "override: $line"
     done <<< "$out"
+}
+
+# --------------------------------------------------------------------------------------
+# GATE COMPILE CHECK (sp-1hmrm). A hand-cut of a repo-map row's gate command is live,
+# operator state — no committed tree carries it, so no container-run suite ever sees it.
+# sp-0inic certified green and broke the build for its whole round because the row's gate
+# had been cut to three fences with no compile check at all (build-fence.sh, wired into
+# gate-touched.sh, was reachable only when the row's gate command still named one of them).
+# This is the runtime check for that: read the same repo-map the gate itself reads, and for
+# every repo carrying Rust crates, fail unless its configured gate command still names
+# build-fence.sh or gate-touched.sh (which calls it unconditionally).
+# --------------------------------------------------------------------------------------
+doctor_check_gate_compile_check() {
+    . "$SPIRA_HOME/lib.sh"
+    local name path gate checked=0
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        path="$(repo_field "$name" path 2>/dev/null)"
+        [ -n "$path" ] && [ -d "$path" ] || continue
+        find "$path" -maxdepth 2 -name Cargo.toml 2>/dev/null | grep -q . || continue
+        checked=$((checked + 1))
+        gate="$(repo_gate "$name" 2>/dev/null)"
+        case "$gate" in
+            *build-fence.sh*|*gate-touched.sh*)
+                OK "$name: gate command reaches a compile check" ;;
+            *)
+                FAIL "$name: gate command has no reachable compile check" \
+                     "gate: ${gate:-<empty>}
+        A Rust compile break in $path certifies green. Add a call to spira/build-fence.sh
+        (or spira/gate-touched.sh, which already calls it) to this row's gate command." ;;
+        esac
+    done <<< "$(repo_names 2>/dev/null)"
+    [ "$checked" -gt 0 ] || \
+        OK "no repository in the map carries Rust crates (checked ${SPIRA_REPO_MAP:-<unset>})"
 }
 
 # --------------------------------------------------------------------------------------
@@ -446,6 +482,10 @@ doctor_check_chamber_overlays
 echo
 echo "operator overrides"
 doctor_check_overrides
+
+echo
+echo "gate compile check"
+doctor_check_gate_compile_check
 
 echo
 echo "store"
