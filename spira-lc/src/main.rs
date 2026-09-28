@@ -124,7 +124,7 @@ fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
         return (CANNOT_TELL, "show: missing <bead-id>".into());
     };
     let bead_rows = match conn.query(&format!(
-        "SELECT bead_id, state, tip, gate_key, holder, lease_until, holds, reason, version FROM bead WHERE bead_id = '{}'",
+        "SELECT bead_id, state, tip, gate_key, holder, lease_until, holds, reason, version, stack, stack_depth FROM bead WHERE bead_id = '{}'",
         rows::escape(bead_id)
     )) {
         Ok(r) => r,

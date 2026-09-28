@@ -13,7 +13,21 @@
 use super::*;
 
 fn m(id: &str, rank: u8, express: bool, at: u64) -> Member {
-    Member { id: id.into(), tip: format!("{id}-tip"), title: format!("{id}: does a thing"), priority: Some(rank), express, certified_at: at }
+    Member {
+        id: id.into(),
+        tip: format!("{id}-tip"),
+        title: format!("{id}: does a thing"),
+        priority: Some(rank),
+        express,
+        certified_at: at,
+        stack: BTreeMap::new(),
+    }
+}
+
+/// A member stacked on `prereqs` — `(prereq_id, prereq_id's tip in this pool)` pairs, matching
+/// the default tip `m()` gives that prereq (`"{id}-tip"`) unless the test wants a stale one.
+fn stacked(id: &str, rank: u8, at: u64, prereqs: &[(&str, &str)]) -> Member {
+    Member { stack: prereqs.iter().map(|(p, t)| (p.to_string(), t.to_string())).collect(), ..m(id, rank, false, at) }
 }
 
 fn suite(name: &str, outcome: SuiteOutcome, asserts: &[&str]) -> SuiteRun {
@@ -160,6 +174,77 @@ fn an_empty_member_is_set_aside_never_merged() {
     let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced });
     assert_eq!(combined.merged.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-a"]);
     assert_eq!(combined.set_aside, vec![SetAside { id: "sp-b".into(), reason: SetAsideReason::Empty }]);
+}
+
+// -- Stacked dependents: closure and topological order (design stacked-dependents-2026-09-28) --
+
+/// The acceptance scenario itself, at the pure-core layer: A, B stacked on A, C stacked on
+/// B, handed to topo_order in the wrong order (C, A, B) — SEEN RED first against `order_key`
+/// alone, which sorts by (express, priority, certified_at) and has no idea B depends on A.
+#[test]
+fn topo_order_sorts_a_stack_prerequisite_first_regardless_of_pool_order() {
+    let a = m("sp-a", 1, false, 0);
+    let b = stacked("sp-b", 1, 0, &[("sp-a", "sp-a-tip")]);
+    let c = stacked("sp-c", 1, 0, &[("sp-b", "sp-b-tip")]);
+    let pool = vec![c.clone(), a.clone(), b.clone()];
+    let ordered = topo_order(&pool);
+    assert_eq!(ordered.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-a", "sp-b", "sp-c"]);
+}
+
+#[test]
+fn topo_order_with_no_stacking_reduces_to_order_key() {
+    let pool = vec![m("sp-late", 1, false, 100), m("sp-early", 1, false, 10), m("sp-low", 3, false, 5), m("sp-x", 5, true, 50)];
+    let ordered = topo_order(&pool);
+    assert_eq!(ordered.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-x", "sp-early", "sp-late", "sp-low"]);
+}
+
+#[test]
+fn stack_sequencing_is_empty_when_every_stacked_prereq_is_in_the_pool_at_its_recorded_tip() {
+    let a = m("sp-a", 1, false, 0);
+    let b = stacked("sp-b", 1, 0, &[("sp-a", "sp-a-tip")]);
+    let sequenced = stack_sequencing(&[a, b]);
+    assert!(sequenced.is_empty());
+}
+
+/// The tip invariant, extended to round assembly (design §1, "Tip invariant, extended"): a
+/// member whose stack names a prerequisite tip that the pool does not currently certify at
+/// that exact tip is refused — member_added's stale-stack refusal.
+#[test]
+fn stack_sequencing_refuses_a_member_whose_prereq_tip_does_not_match_the_pool() {
+    let a = m("sp-a", 1, false, 0);
+    let b = stacked("sp-b", 1, 0, &[("sp-a", "some-other-sha")]);
+    let sequenced = stack_sequencing(&[a, b]);
+    assert_eq!(sequenced.get("sp-b"), Some(&"sp-a".to_string()));
+}
+
+/// A prerequisite absent from the pool entirely (reworked, ejected, or simply landed and
+/// already dropped from `stack` upstream) is the same refusal — no row to confirm the tip
+/// against.
+#[test]
+fn stack_sequencing_refuses_a_member_whose_prereq_is_not_in_the_pool_at_all() {
+    let b = stacked("sp-b", 1, 0, &[("sp-a", "sp-a-tip")]);
+    let sequenced = stack_sequencing(&[b]);
+    assert_eq!(sequenced.get("sp-b"), Some(&"sp-a".to_string()));
+}
+
+/// Bullet 3 of the bead: a member whose tip is already an ancestor of the round head because
+/// a dependent carrying it merged first is still a member — recorded, never dropped as
+/// Empty — while a genuinely-empty member unrelated to any stack keeps today's behaviour.
+#[test]
+fn combine_keeps_a_stacked_prerequisite_whose_tip_merged_empty() {
+    let a = m("sp-a", 1, false, 0);
+    let b = stacked("sp-b", 1, 0, &[("sp-a", "sp-a-tip")]);
+    let unrelated = m("sp-z", 1, false, 0);
+    let pool = vec![a, b, unrelated];
+    let mut merges = BTreeMap::new();
+    merges.insert("sp-a".to_string(), MergeResult::Empty); // already carried in by sp-b's own merge
+    merges.insert("sp-b".to_string(), MergeResult::Ok);
+    merges.insert("sp-z".to_string(), MergeResult::Empty); // genuinely no commits of its own
+    let deleted = BTreeMap::new();
+    let sequenced = BTreeMap::new();
+    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced });
+    assert_eq!(combined.merged.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-a", "sp-b"]);
+    assert_eq!(combined.set_aside, vec![SetAside { id: "sp-z".into(), reason: SetAsideReason::Empty }]);
 }
 
 #[test]
@@ -363,8 +448,8 @@ fn bisect_split_divides_evenly_rounding_up_the_first_half() {
 #[test]
 fn pr_record_lists_full_titles_with_foreign_prefixes_dropped_and_express_first() {
     let members = vec![
-        Member { id: "sp-a".into(), tip: "ta".into(), title: "sp-a: a fairly long descriptive title that must not be cut".into(), priority: Some(2), express: false, certified_at: 0 },
-        Member { id: "sp-x".into(), tip: "tx".into(), title: "an express fix".into(), priority: Some(9), express: true, certified_at: 0 },
+        Member { id: "sp-a".into(), tip: "ta".into(), title: "sp-a: a fairly long descriptive title that must not be cut".into(), priority: Some(2), express: false, certified_at: 0, stack: BTreeMap::new() },
+        Member { id: "sp-x".into(), tip: "tx".into(), title: "an express fix".into(), priority: Some(9), express: true, certified_at: 0, stack: BTreeMap::new() },
     ];
     let pr = pr_record(&members);
     assert_eq!(pr.members, vec!["sp-a".to_string(), "sp-x".to_string()]);

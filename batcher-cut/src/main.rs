@@ -31,8 +31,8 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use batcher::core::{
-    adaptive_n, combine, cut_event, ejected_event, opened_event, order_key, pr_record, should_cut, skipped_event,
-    stale_retry_due, CombineInput, Ejection, Member, MergeResult, TriggerInputs, TriggerReason,
+    adaptive_n, combine, cut_event, ejected_event, opened_event, pr_record, should_cut, skipped_event, stack_sequencing,
+    stacked_into, stale_retry_due, topo_order, CombineInput, Ejection, Member, MergeResult, TriggerInputs, TriggerReason,
 };
 use io::{Env, Land, Repo};
 
@@ -248,7 +248,18 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
 
     loop {
         io::worktree_reset(repo, wt, start_sha)?;
-        round_members.retain(|m| io::merge_member(env_, wt, &m.id, &m.tip) == MergeResult::Ok);
+        // Same closure rule as the initial cut (core::combine): a member whose tip merged
+        // Empty because a stacked dependent already carried it into this same rebuild is kept,
+        // never dropped — only a member Empty for any other reason (or a fresh conflict) drops
+        // out of the round here.
+        let merges: BTreeMap<String, MergeResult> =
+            round_members.iter().map(|m| (m.id.clone(), io::merge_member(env_, wt, &m.id, &m.tip))).collect();
+        let before = round_members.clone();
+        round_members.retain(|m| match merges.get(&m.id) {
+            Some(MergeResult::Ok) => true,
+            Some(MergeResult::Empty) => stacked_into(&before, &m.id),
+            _ => false,
+        });
         if round_members.is_empty() {
             println!("{}", skipped_event("round emptied rebuilding the tree after ejection").text);
             return Ok(None);
@@ -396,8 +407,13 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
     let base_sha = io::resolve_base_sha(repo)?;
     let base_moved_at = io::base_moved_at(env_, &repo.name, &base_sha);
 
-    let mut sorted = pool.to_vec();
-    sorted.sort_by_key(order_key);
+    // Prerequisite-first (design stacked-dependents-2026-09-28 §3, "Order"): sorting
+    // topologically before order_key's own express/priority/arrival keys is what keeps a
+    // stacked prerequisite's merge from landing after its dependent's, which is exactly what
+    // used to make it look Empty and get dropped (sequenced below refuses a member whose
+    // stack is stale before any of this ever reaches git).
+    let sorted = topo_order(pool);
+    let sequenced = stack_sequencing(&sorted);
 
     let wt = env_.run.join("worktree").join(format!(".batcher-{}", repo.name));
     io::worktree_reset(repo, &wt, &base_sha)?;
@@ -408,7 +424,7 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
     }
     let deleted = handle_base_conflicts(env_, repo, &sorted, &merges, &base_sha, base_moved_at);
 
-    let combined = combine(&CombineInput { pool: &sorted, merges: &merges, deleted_suites: &deleted, sequenced: &BTreeMap::new() });
+    let combined = combine(&CombineInput { pool: &sorted, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced });
     for sa in &combined.set_aside {
         println!("{}", batcher::core::evicted_event(sa).text);
     }
@@ -516,7 +532,7 @@ fn stack_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason,
         return Ok(());
     }
     let round_start = now();
-    let new_members: Vec<Member> = match reason {
+    let mut new_members: Vec<Member> = match reason {
         TriggerReason::Express(id) => pool.iter().filter(|m| &m.id == id).cloned().collect(),
         TriggerReason::MainRed => pool.iter().filter(|m| m.express).cloned().collect(),
         _ => vec![],
@@ -526,6 +542,27 @@ fn stack_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason,
         return Ok(());
     }
 
+    // Closure (design §3): pipelining onto an open batch takes a member's own unlanded
+    // stacked prerequisites with it too, the same rule a fresh cut applies — a prerequisite
+    // still in this repo's certified pool but not itself express/main-red would otherwise
+    // pipeline its commits in unnamed and never get its own LANDED record.
+    let mut closure_ids: std::collections::BTreeSet<String> = new_members.iter().map(|m| m.id.clone()).collect();
+    let mut frontier = new_members.clone();
+    while let Some(next) = frontier.pop() {
+        for prereq_id in next.stack.keys() {
+            if closure_ids.contains(prereq_id) {
+                continue;
+            }
+            if let Some(p) = pool.iter().find(|m| &m.id == prereq_id) {
+                closure_ids.insert(prereq_id.clone());
+                new_members.push(p.clone());
+                frontier.push(p.clone());
+            }
+        }
+    }
+    let new_members = topo_order(&new_members);
+    let sequenced = stack_sequencing(&new_members);
+
     let wt = env_.run.join("worktree").join(format!(".batcher-{}", repo.name));
     io::worktree_reset(repo, &wt, &ob.head)?;
 
@@ -533,7 +570,7 @@ fn stack_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason,
     for m in &new_members {
         merges.insert(m.id.clone(), io::merge_member(env_, &wt, &m.id, &m.tip));
     }
-    let combined = combine(&CombineInput { pool: &new_members, merges: &merges, deleted_suites: &BTreeMap::new(), sequenced: &BTreeMap::new() });
+    let combined = combine(&CombineInput { pool: &new_members, merges: &merges, deleted_suites: &BTreeMap::new(), sequenced: &sequenced });
     for sa in &combined.set_aside {
         println!("{}", batcher::core::evicted_event(sa).text);
     }
