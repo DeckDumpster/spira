@@ -115,34 +115,24 @@ got="$(. "$RUN/cockpit.env" 2>/dev/null; printf '%s' "${SP_MARKER:-}")"
 
 echo
 echo "sweep_stale_tmps clears pre-existing orphaned temps at startup"
-# The sweep runs at the top of 'once' before probe is called, so once the orphans are gone
-# the probe is still slow enough to safely interrupt.
+# Called synchronously as its own subcommand (cockpit.sh sweep-temps) rather than through a
+# backgrounded 'once' — sweep_stale_tmps runs to completion before that call returns, so the
+# property is asserted directly with no poll and no kill.
 touch "$RUN/.cockpit.99999" "$RUN/.cockpit.orphan"
-# Use the same python3 shim as spawn so cockpit.sh runs in its own process group — kill
-# -TERM -$sweep_pid then reaches probe's children too, not just bash.
+[ "$(temps)" -eq 2 ] && ok "two orphaned temps present before the sweep (control)" \
+                      || bad "expected 2 orphaned temps staged, found $(temps)"
+
 env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
     SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
     SPIRA_COCKPIT="$TMP" \
-    SPIRA_COCKPIT_FORCE=1 SPIRA_COCKPIT_TEST_SLEEP=1 \
-    python3 -c '
-import os, signal, sys
-signal.signal(signal.SIGINT, signal.SIG_DFL)
-os.setpgrp()
-os.execvp("bash", ["bash", sys.argv[1], "once"])
-' "$COCKPIT" >/dev/null 2>&1 &
-sweep_pid=$!
-# Wait for the sweep to have run: the orphan count drops from 2 once they are removed.
-# A fixed sleep is unreliable because sourcing lib.sh and conf.sh can take longer than any
-# constant; the probe that follows sweep is slow enough that killing after the count drops is safe.
-for _ in $(seq 1 200); do
-    [ "$(temps)" -lt 1 ] && break
-    kill -0 "$sweep_pid" 2>/dev/null || break
-    sleep 0.1
-done
-kill -TERM "-$sweep_pid" 2>/dev/null; wait "$sweep_pid" 2>/dev/null || true
+    "$COCKPIT" sweep-temps >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && ok "sweep-temps exited 0" || bad "sweep-temps exited $rc"
+
 n="$(temps)"
+[ "$n" -eq 0 ] && ok "sweep-temps removed both orphans" || bad "sweep-temps: $n orphan(s) left behind"
 
 echo
 tl_summary
