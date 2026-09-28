@@ -63,7 +63,7 @@ scratch="$SPIRA_RUN/worktree/.rebase-stale.$(basename "$repo")"
 lockfile="$SPIRA_RUN/rebase-stale.$(basename "$repo").lock"
 mkdir -p "$(dirname "$scratch")" 2>/dev/null
 exec 9>"$lockfile" || { echo "rebase-stale.sh: cannot open $lockfile" >&2; exit 3; }
-flock -w "${SPIRA_REBASE_LOCK_WAIT:-60}" 9 || {
+flock -w 60 9 || {
     echo "rebase-stale.sh: another rebase-stale.sh holds $lockfile" >&2; exit 3
 }
 
