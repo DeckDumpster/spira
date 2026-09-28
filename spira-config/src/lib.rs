@@ -362,6 +362,18 @@ pub struct SpiraSection {
     pub pve_env: Option<String>,
     pub workflow_only_paths: Option<String>,
     pub gh_api: Option<String>,
+    pub round_vm_state_dir: Option<String>,
+    pub round_vm_provider: Option<String>,
+    pub round_vm_ssh_user: Option<String>,
+    pub round_vm_ssh_port: Option<String>,
+    pub round_vm_host_key: Option<String>,
+    pub round_vm_host_pubkey: Option<String>,
+    pub round_vm_host_addr: Option<String>,
+    pub round_vm_vcpus: Option<String>,
+    pub round_vm_maxpar: Option<String>,
+    pub round_vm_max_retries: Option<String>,
+    pub round_vm_retry_interval: Option<String>,
+    pub round_vm_mirror_port: Option<String>,
 }
 
 /// How a landed branch reaches its base — see `repo-map.example`'s own `land` column.
