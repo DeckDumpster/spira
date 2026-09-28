@@ -17,10 +17,9 @@
 #
 # QUEUE MODE HAS NO STEP HERE (law-a-round-takes-certified-tips). This pass neither
 # rebases nor gates a queue-mode branch — the round (batcher-cut: merge, full corpus,
-# attribute.sh, eject) and CI are the only judges of a SUBMITTED branch. The one thing
-# this loop still does for a queue-mode branch is the bookkeeping every mode shares:
-# reopen it if EJECTED-not-requeued, skip it if superseded or already landed, and leave
-# it to a live aeon. A branch that conflicts with the base is caught and returned for
+# attribute.sh, eject) and CI are the only judges of a SUBMITTED branch. It marks a
+# closed branch CERTIFIED without running anything, so the round's own CERTIFIED-pool
+# read finds it; a branch that conflicts with the base is caught and returned for
 # rebase by the round builder itself, not by this pass.
 #
 # land-modes: push hold queue
