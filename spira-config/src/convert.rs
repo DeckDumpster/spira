@@ -423,6 +423,8 @@ pub fn spira_section(
             "SPIRA_CAPACITY_PROBE_INTERVAL" => s.capacity_probe_interval = Some(val.clone()),
             "SPIRA_CAPACITY_PROBE_WINDOW" => s.capacity_probe_window = Some(val.clone()),
             "SPIRA_CAPACITY_PROBE_TIMEOUT" => s.capacity_probe_timeout = Some(val.clone()),
+            "SPIRA_LIVENESS_MODEL" => s.liveness_model = Some(val.clone()),
+            "SPIRA_REFLECT_MODEL" => s.reflect_model = Some(val.clone()),
             "SPIRA_SELF_WINDOW" => s.self_window = Some(val.clone()),
             "SPIRA_DELIVERS_CHECK_TIMEOUT" => s.delivers_check_timeout = Some(val.clone()),
             "SPIRA_CERT_WINDOW_MINS" => s.cert_window_mins = Some(val.clone()),

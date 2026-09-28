@@ -1117,6 +1117,12 @@
             "null"
           ]
         },
+        "liveness_model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "local_backlog_age": {
           "type": [
             "integer",
@@ -1594,6 +1600,12 @@
           ]
         },
         "reconciler_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reflect_model": {
           "type": [
             "string",
             "null"

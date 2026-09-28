@@ -345,6 +345,8 @@ pub struct SpiraSection {
     pub capacity_probe_interval: Option<String>,
     pub capacity_probe_window: Option<String>,
     pub capacity_probe_timeout: Option<String>,
+    pub liveness_model: Option<String>,
+    pub reflect_model: Option<String>,
     pub self_window: Option<String>,
     pub delivers_check_timeout: Option<String>,
     pub cert_window_mins: Option<String>,
