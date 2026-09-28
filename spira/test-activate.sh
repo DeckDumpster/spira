@@ -220,6 +220,72 @@ fi
 
 # ==========================================================================
 echo
+echo "PROPERTY 4c (sp-xb0ry): a mid-loop prune failure is still reported"
+# POSITIVE CONTROL: a stubbed rm fails on the candidate processed FIRST
+# (_prune_candidates yields newest-first) while the LAST candidate still
+# succeeds — the shape a last-iteration-only exit-status check cannot see.
+# ==========================================================================
+chmod -R u+w "$RELEASES" 2>/dev/null; rm -rf "$RELEASES"
+mkdir -p "$RELEASES"
+
+for i in 1 2 3 4 5; do
+    local_name="spira-2026090${i}T000000Z"
+    mkdir -p "$RELEASES/$local_name/spira"
+done
+ln -s "spira-20260901T000000Z" "$RELEASES/current"
+
+TB="$(make_tarball "spira-20260915T140000Z")"
+
+POISON="spira-20260902T000000Z"
+STUBDIR="$TMP/stub-bin"; mkdir -p "$STUBDIR"
+cat > "$STUBDIR/rm" <<STUBEOF
+#!/usr/bin/env bash
+for _a in "\$@"; do
+    case "\$_a" in
+        */$POISON) printf "rm: cannot remove '%s': Permission denied\n" "\$_a" >&2; exit 1 ;;
+    esac
+done
+exec /bin/rm "\$@"
+STUBEOF
+chmod +x "$STUBDIR/rm"
+
+# SPIRA_PATH, not PATH: conf.sh (sourced via lib.sh) rebuilds PATH deterministically
+# and only honors SPIRA_PATH as its prepend (conf.sh:2168) — a plain PATH override
+# here is discarded before activate.sh ever calls rm.
+_out="$(run_activate "SPIRA_PATH=$STUBDIR" "SPIRA_RELEASES_KEEP=3" -- "$TB")"
+
+if printf '%s\n' "$_out" | grep -q "prune left entries behind under $POISON"; then
+    ok "prune: mid-loop failure is diagnosed, not just the last candidate"
+else
+    bad "prune: mid-loop failure is diagnosed, not just the last candidate" \
+        "no per-release WARN for $POISON in output:
+$_out"
+fi
+
+if printf '%s\n' "$_out" | grep -q "prune encountered an error"; then
+    ok "prune: overall WARN fires even though the failure was not the last candidate"
+else
+    bad "prune: overall WARN fires even though the failure was not the last candidate" \
+        "no overall WARN in output:
+$_out"
+fi
+
+if [ -d "$RELEASES/$POISON" ]; then
+    ok "prune: the un-removable release is still on disk (stub did not delete it)"
+else
+    bad "prune: the un-removable release is still on disk (stub did not delete it)" \
+        "$POISON is gone — stub rm did not behave as configured"
+fi
+
+if [ ! -d "$RELEASES/spira-20260901T000000Z" ]; then
+    ok "prune: processing continues past a mid-loop failure (oldest candidate still removed)"
+else
+    bad "prune: processing continues past a mid-loop failure (oldest candidate still removed)" \
+        "spira-20260901T000000Z survived — loop aborted after the earlier failure"
+fi
+
+# ==========================================================================
+echo
 echo "PROPERTY 5 (T1, gap G4): _prune_candidates never names the current release"
 # activate.sh swings current to the just-unpacked release BEFORE pruning, so the
 # integration path above can never present a current target outside the keep

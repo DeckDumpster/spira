@@ -205,16 +205,31 @@ fi
 # Prune old releases — best-effort: a failure here must not fail the activation.
 # Selection is _prune_candidates (lib.sh): reverse-sorted by name, beyond $KEEP,
 # excluding whatever current points at (defence in depth).
+#
+# _prune_failed tracks every candidate: the loop's own exit status is only the
+# LAST one's, so an earlier rm -rf that leaves files behind went unreported
+# (sp-xb0ry). A survivor is logged with its owning uid — chmod -R u+w already
+# ran, so anything rm still can't remove is owned by a different uid than this
+# process, not merely left read-only.
 # ---------------------------------------------------------------------------
 {
     _cur_target="$(readlink "$CURRENT" 2>/dev/null || true)"
+    _prune_failed=0
     while IFS= read -r _rname; do
         [ -n "$_rname" ] || continue
         log "activate: prune: removing $_rname"
         _rdir="$RELEASES/$_rname"
         chmod -R u+w "$_rdir" 2>/dev/null || true   # un-read-only before removal
         rm -rf "$_rdir"
+        if [ -e "$_rdir" ]; then
+            _prune_failed=1
+            log "activate: WARN: prune left entries behind under $_rname (this process runs as uid $(id -u)):"
+            find "$_rdir" -mindepth 1 2>/dev/null | while IFS= read -r _survivor; do
+                log "activate:   $(stat -c 'uid %u (%U)' "$_survivor" 2>/dev/null || echo '(stat failed)') owns $_survivor"
+            done
+        fi
     done < <(_prune_candidates "$RELEASES" "$KEEP" "$_cur_target")
+    [ "$_prune_failed" = 0 ]
 } || log "activate: WARN: prune encountered an error — release count may exceed $KEEP"
 
 log "activate: done — $RELEASE_NAME is now current"
