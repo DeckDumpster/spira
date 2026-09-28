@@ -38,8 +38,8 @@ git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin main
 git -C "$REPO" branch local/main main
 
-RUN="$TMP/run"; QDIR="$RUN/queue"; REPONAME=fixpub
-mkdir -p "$RUN/worktree" "$QDIR"
+RUN="$TMP/run"; QDIR="$RUN/queue"; REPONAME=fixpub; RELEASES="$TMP/releases"
+mkdir -p "$RUN/worktree" "$QDIR" "$RELEASES"
 RMAP="$TMP/repo-map"
 printf '%s | %s | queue.local | local/main | | |\n' "$REPONAME" "$REPO" > "$RMAP"
 
@@ -84,6 +84,7 @@ queue() {
     SPIRA_QUEUE_DIR="$QDIR" \
     SPIRA_REPO_MAP="$RMAP" \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
+    SPIRA_RELEASES="$RELEASES" \
         bash "$SH/queue.sh" "$@" 2>&1
 }
 verdict() {
@@ -99,6 +100,18 @@ verdict() {
     FIXTURE_RED_SUITES="${RED_SUITES:-}" \
         bash "$SH/verdict.sh" "$REPONAME" 2>&1
 }
+# mk_bins <head> — land-local now refuses without a --with-bins corpus for the tree it is
+# landing; every head this suite lands needs one (see test-land-local-release.sh for the
+# mechanism in depth).
+mk_bins() {
+    local head="$1" tree dir
+    tree="$(git -C "$REPO" rev-parse "${head}^{tree}")"
+    dir="$RUN/cargo-target-bins/$tree/release"
+    mkdir -p "$dir"
+    printf 'fake\n' > "$dir/fakebin"
+    chmod +x "$dir/fakebin"
+}
+
 land() {   # land <id> <file> <content> — one round: one commit, land-local'd onto local/main
     local id="$1" file="$2" content="$3"
     git -C "$REPO" checkout -qb "round-$id" local/main
@@ -108,6 +121,7 @@ land() {   # land <id> <file> <content> — one round: one commit, land-local'd 
     local tip; tip="$(git -C "$REPO" rev-parse "round-$id")"
     git -C "$REPO" checkout -q main
     git -C "$REPO" branch -D "round-$id" >/dev/null 2>&1
+    mk_bins "$tip"
     queue land-local "$REPONAME" --head "$tip" --members "$id:$tip" >/dev/null
 }
 
@@ -261,6 +275,7 @@ git -C "$REPO" commit -q -m "sp-pub5: the work"
 HEAD5="$(git -C "$REPO" rev-parse round-sp-pub5)"
 git -C "$REPO" checkout -q main
 git -C "$REPO" branch -D round-sp-pub5 >/dev/null 2>&1
+mk_bins "$HEAD5"
 
 out="$(queue land-local "$REPONAME" --head "$HEAD5" --members "sp-pub5:$HEAD5")"; rc=$?
 [ "$rc" -eq 0 ] && ok "6: land-local succeeds with a publish PR open" \

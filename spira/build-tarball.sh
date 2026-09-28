@@ -7,7 +7,10 @@
 #   build-tarball.sh verify <release-dir> --repo <git-repo>
 #
 #   The 'build' subcommand is the default: omitting it is equivalent.
-#   --workspace <path>: auto-discover all [[bin]] targets via cargo metadata.
+#   --workspace <path>: auto-discover all [[bin]] targets via cargo metadata, then look
+#     each up under <path>/target/release. Requires cargo on PATH.
+#   --bin-dir <dir>: ship every executable file found directly under <dir>, named for
+#     itself — no cargo call, no workspace needed. Takes priority over --workspace.
 #   --repo-name <name>: the identity stamped into MANIFEST's `repo` line (see below).
 #   --release-repo <owner/repo>: the forge repository that publishes this release, stamped
 #     into MANIFEST's `release-repo` line; conf.sh reads it back as SPIRA_RELEASE_REPO when
@@ -66,11 +69,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # ---------------------------------------------------------------------------
 do_build() {
     local outdir="." loom_bin="" panel_bin="" broker_bin="" supervise_bin="" landing_pass_bin="" reconciler_flow_bin="" commit="" repo="" name_override="" repo_name="" release_repo=""
-    local workspace=""  # workspace root for auto-discovery via cargo metadata
+    local workspace="" bin_dir=""  # workspace root for auto-discovery via cargo metadata; bin_dir overrides where the discovered names are looked up
 
     while [ $# -gt 0 ]; do
         case "$1" in
             --output)            outdir="$2";            shift 2 ;;
+            --bin-dir)           bin_dir="$2";            shift 2 ;;
             --loom-bin)          loom_bin="$2";          shift 2 ;;
             --panel-bin)         panel_bin="$2";         shift 2 ;;
             --broker-bin)        broker_bin="$2";        shift 2 ;;
@@ -127,12 +131,30 @@ do_build() {
             printf 'build-tarball.sh: cannot resolve HEAD in %s\n' "$repo" >&2; exit 1; }
     fi
 
-    # Binary resolution: --workspace auto-discovers from cargo metadata;
-    # explicit --*-bin flags are the legacy path kept for backwards compat.
+    # Binary resolution: --bin-dir enumerates a directory directly (every executable file
+    # ships, named for itself); --workspace auto-discovers names via cargo metadata, then
+    # looks them up under target/release; explicit --*-bin flags are the legacy path.
+    #
+    # --BIN-DIR NEVER CALLS CARGO, EVEN COMBINED WITH --WORKSPACE. Its caller (queue.sh
+    # land-local) already knows exactly what a --with-bins corpus built — that corpus IS
+    # the tree's own workspace, built earlier by a step that already had cargo on PATH —
+    # so asking cargo to rediscover the same names here would make packaging depend on an
+    # interpreter this step does not otherwise need.
     local -a _bin_names=()
     local -a _bin_paths=()
 
-    if [ -n "$workspace" ]; then
+    if [ -n "$bin_dir" ]; then
+        local _binpath
+        while IFS= read -r _binpath; do
+            [ -n "$_binpath" ] || continue
+            _bin_names+=("$(basename "$_binpath")")
+            _bin_paths+=("$_binpath")
+        done < <(find "$bin_dir" -maxdepth 1 -type f -executable 2>/dev/null | sort)
+        if [ "${#_bin_names[@]}" -eq 0 ]; then
+            printf 'build-tarball.sh: no executables found in %s\n' "$bin_dir" >&2
+            exit 1
+        fi
+    elif [ -n "$workspace" ]; then
         command -v cargo >/dev/null 2>&1 || {
             printf 'build-tarball.sh: cargo not on PATH (required for --workspace)\n' >&2; exit 1; }
         local _meta
