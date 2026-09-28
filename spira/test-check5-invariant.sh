@@ -120,6 +120,8 @@ import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(d[0].get("status") or "")'; }
 
+ref_hash() { printf '%s' "$1" | sha256sum | cut -c1-8; }
+
 echo "test-check5-invariant.sh"
 
 # ======================================================================================
@@ -414,7 +416,33 @@ out="$(sentinel)"
 is "sp-nosubj stays closed" closed "$(status_of sp-nosubj)"
 inc_out="$(cat "$INC_LOG")"
 nowant "no incident for a bead resolved by its branch's ancestry alone" "sp-nosubj" "$inc_out"
-want "the resolve is logged, naming the branch as the evidence" "recorded branch (spira/sp-nosubj)" "$out"
+
+# ======================================================================================
+echo
+echo "RESOLVER 3 RESOLVE — the same, but an incident was already filed for it:"
+# ======================================================================================
+testdb_reset
+INC_HASH="$(ref_hash "closed-not-landed:sp-brold")"
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-brold","title":"landed under an unrecognised subject, incident already open","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO","branch:spira/sp-brold"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-brold","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-broldinc","title":"CLOSED NOT LANDED: sp-brold has no LANDED record on $HOME_REPO","status":"open","issue_type":"bug","labels":["spira","incident","ref:$INC_HASH"],"updated_at":"2026-09-04T00:00:00Z"}
+JSONL
+touch "$RUN/sp-brold.log"
+rm -f "$RUN/landstate/sp-brold"
+git -C "$REPO" checkout -q -b spira/sp-brold
+git -C "$REPO" commit -q --allow-empty -m "improve substrate connectivity further"
+git -C "$REPO" checkout -q main
+git -C "$REPO" merge -q --ff-only spira/sp-brold
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+: > "$INC_LOG"
+
+is "the incident starts open" open "$(status_of sp-broldinc)"
+out="$(sentinel)"
+is "sp-brold stays closed" closed "$(status_of sp-brold)"
+is "the incident this check filed is now closed" closed "$(status_of sp-broldinc)"
+want "the resolve is logged, naming the branch as the evidence" "recorded branch (spira/sp-brold)" "$out"
 
 # ======================================================================================
 echo
@@ -481,8 +509,6 @@ is   "(f) the budget alone stops every filing, not just the count cap" 0 "$(grep
 want "(f) the pass logs the budget, not the count cap, as the reason" \
     "pass budget exhausted (SPIRA_CHECK5_BUDGET_SECS=0)" "$out"
 is   "(f) sp-tb1 stays closed — reported, not reopened" closed "$(status_of sp-tb1)"
-
-ref_hash() { printf '%s' "$1" | sha256sum | cut -c1-8; }
 
 # ======================================================================================
 echo
