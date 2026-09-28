@@ -277,6 +277,64 @@ cmd_step() {
     _batch_cut "$name"
 }
 
+# spira-lc's own OPEN-batch lifecycle (sp-o7nbr.5, same shape as batch.sh's own
+# _lc_cut_batch/_abandon_open_batch, sp-o7nbr.2): every member needs a bead row before
+# `cut` will look at it — create-bead-if-absent, never a shortcut to CERTIFIED (that
+# transition belongs to the CERTIFIED-producing call sites, siblings' turf) — then cut.
+# A refusal (a member not CERTIFIED at this exact tip on spira-lc — expected while those
+# call sites are still being cut over) is not unwound: the caller's own open-batch record
+# simply carries no batch_id/version afterward, so a later abandon/eject on this record
+# skips the new-system call, same as a pre-cutover record does.
+_lc_cut_batch() {   # _lc_cut_batch <batch-id> <repo> <head> <base> <actor> <id:tip> [<id:tip>...]
+    local batch_id="$1" repo="$2" head="$3" base="$4" actor="$5"; shift 5
+    local _m members_csv=""
+    for _m in "$@"; do
+        lcq create-bead "${_m%%:*}" >/dev/null 2>&1 || true
+        members_csv="${members_csv:+$members_csv,}$_m"
+    done
+    lcq cut "$batch_id" --repo "$repo" --head "$head" --base "$base" --members "$members_csv" --actor "$actor"
+}
+
+# _lc_batch_state_version <batch-id> -> "STATE VERSION" on spira-lc, or nothing (rc=1) when
+# the batch row does not exist there (a pre-cutover batch, or a cut that never applied).
+# Queried fresh rather than cached: the state a caller's own record last saw goes stale the
+# moment CI or another operator action moves it.
+_lc_batch_state_version() {
+    local out; out="$(lcq show-batch "$1" 2>/dev/null)" || return 1
+    printf '%s' "$out" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+state, version = d.get('state'), d.get('version')
+if state is None or version is None:
+    sys.exit(1)
+print(state, version)
+" 2>/dev/null
+}
+
+# _lc_abandon_batch <batch-id> <actor> <reason> — abandon-batch accepts from any
+# non-terminal state, so the only thing fetched fresh is what CAS needs: state and version.
+_lc_abandon_batch() {
+    local batch_id="$1" actor="$2" reason="$3" sv state version
+    sv="$(_lc_batch_state_version "$batch_id")" || return 1
+    read -r state version <<< "$sv"
+    [ -n "$state" ] || return 1
+    lcq abandon-batch "$batch_id" --expect "$state" --version "$version" --actor "$actor" --reason "$reason"
+}
+
+# _lc_eject_member <batch-id> <bead-id> <actor> <reason> — legal only from OPEN/CI_RUNNING;
+# ejecting once the batch has moved past CI (GREEN/ATTRIBUTING/REBUILDING) is refused like
+# any other illegal transition, same as calling this after the batch already landed/settled.
+_lc_eject_member() {
+    local batch_id="$1" bead_id="$2" actor="$3" reason="$4" sv state version
+    sv="$(_lc_batch_state_version "$batch_id")" || return 1
+    read -r state version <<< "$sv"
+    [ -n "$state" ] || return 1
+    lcq eject-member "$batch_id" --bead-id "$bead_id" --expect "$state" --version "$version" --actor "$actor" --reason "$reason"
+}
+
 cmd_eject() {
     local id="${1:-}" reason="" dry_run=0 name="" suites=""
     [ -n "$id" ] || { printf 'queue.sh eject: bead id required\n' >&2; return 2; }
@@ -319,11 +377,12 @@ cmd_eject() {
     fi
 
     local open_file="${SPIRA_QUEUE_DIR:?}/$name/open"
-    local members_val="" pr_n="" tip="" found=0 new_members=""
+    local members_val="" pr_n="" tip="" found=0 new_members="" lc_batch_id=""
     if [ -f "$open_file" ]; then
         members_val="$(grep '^members=' "$open_file" | head -1)"
         members_val="${members_val#members=}"
         pr_n="$(grep '^pr=' "$open_file" | head -1)"; pr_n="${pr_n#pr=}"
+        lc_batch_id="$(grep '^batch_id=' "$open_file" | head -1)"; lc_batch_id="${lc_batch_id#batch_id=}"
 
         local _m mid mtip
         for _m in $members_val; do
@@ -410,6 +469,22 @@ cmd_eject() {
     # a dead actor's name should not survive an eject any more than a reopen.
     release_claim "$id"
 
+    # spira-lc's own manual eject (sp-o7nbr.5): batch_id is present only on a record this
+    # session's own open-batch wrote and cut applied there — a pre-cutover record, or one
+    # whose cut refused, has none, and the call is skipped rather than CASing against a
+    # batch spira-lc never wrote. Legal only while OPEN/CI_RUNNING, same as the shell path
+    # above it mirrors; a batch already past CI refuses here too.
+    if [ -n "$lc_batch_id" ]; then
+        local _lc_out _lc_rc
+        _lc_out="$(_lc_eject_member "$lc_batch_id" "$id" "queue.sh" "${reason:-ejected}")"
+        _lc_rc=$?
+        if [ "$_lc_rc" -eq 0 ]; then
+            printf 'queue.sh eject: %s ejected on spira-lc (returned to CERTIFIED there)\n' "$id"
+        else
+            printf 'queue.sh eject: spira-lc eject-member refused for %s (rc=%d): %s\n' "$id" "$_lc_rc" "$_lc_out" >&2
+        fi
+    fi
+
     local _comment
     _comment="Ejected from open batch in $name.${reason:+$'\n\n'${reason}}"$'\n\n'"Landstate written as RED. Fix the failing issue and re-certify before rejoining the queue."
     printf '%s' "$_comment" | bdq comment "$id" --stdin >/dev/null 2>&1 || true
@@ -483,10 +558,11 @@ cmd_abandon() {
 
     queue_owner_refused "$(queue_batch_owner "$open_file")" "$actor" "queue.sh abandon" && return 1
 
-    local pr_n members_val branch_val
+    local pr_n members_val branch_val lc_batch_id
     pr_n="$(grep '^pr=' "$open_file" | head -1)"; pr_n="${pr_n#pr=}"
     members_val="$(grep '^members=' "$open_file" | head -1)"; members_val="${members_val#members=}"
     branch_val="$(grep '^branch=' "$open_file" | head -1)"; branch_val="${branch_val#branch=}"
+    lc_batch_id="$(grep '^batch_id=' "$open_file" | head -1)"; lc_batch_id="${lc_batch_id#batch_id=}"
 
     local stamp; stamp="$(date -u +%Y%m%dT%H%M%SZ)"
     local archive_name="closed-pr${pr_n}-${stamp}"
@@ -515,6 +591,22 @@ cmd_abandon() {
         printf 'dry-run: audit line (landing.log): QUEUE ABANDON %s repo=%s pr=%s actor=%s members=%s reason=%s\n' \
             "$(date +%s)" "$name" "$pr_n" "$actor" "${member_audit:-<none>}" "${reason//$'\n'/ }"
         return 0
+    fi
+
+    # spira-lc's own whole-batch abandon (sp-o7nbr.5, same guard shape as cmd_eject's
+    # eject-member call): batch_id is present only on a record whose cut applied there.
+    # abandon-batch accepts from any non-terminal state, one cascade returning every
+    # member to CERTIFIED/SUBMITTED — the same outcome the LANDSTATE loop below produces
+    # by hand, on the machine that is cutting over to replace it.
+    if [ -n "$lc_batch_id" ]; then
+        local _lc_out _lc_rc
+        _lc_out="$(_lc_abandon_batch "$lc_batch_id" "queue.sh" "$reason")"
+        _lc_rc=$?
+        if [ "$_lc_rc" -eq 0 ]; then
+            printf 'queue.sh abandon: %s abandoned on spira-lc\n' "$lc_batch_id"
+        else
+            printf 'queue.sh abandon: spira-lc abandon-batch refused for %s (rc=%d): %s\n' "$lc_batch_id" "$_lc_rc" "$_lc_out" >&2
+        fi
     fi
 
     local forge="${SPIRA_FORGE:-$HERE/forge.sh}"
@@ -819,6 +911,31 @@ print((t[:120] if t else '(title unavailable)') or '(title unavailable)')
         printf 'owner=%s\n'   "$actor"
     } > "$(_batch_open_file "$name")"
 
+    # spira-lc's own OPEN-batch lifecycle (sp-o7nbr.5): one cut cascade creates the batch
+    # row and every batch_member row there, keyed by this same stamp so the batch_id
+    # correlates with the PR branch. Refusing (a member not yet CERTIFIED at this tip on
+    # spira-lc — expected while the CERTIFIED-producing call sites are still being cut
+    # over) does not unwind the PR already opened above; it just leaves batch_id/version
+    # unset on this open record, so a later abandon/eject on it skips the new-system call,
+    # same as a pre-cutover record does.
+    local _lc_batch_id="${name}-${stamp}"
+    local _lc_out _lc_rc
+    _lc_out="$(_lc_cut_batch "$_lc_batch_id" "$name" "$batch_head" "$base_sha" "queue.sh" "${members[@]}")"
+    _lc_rc=$?
+    if [ "$_lc_rc" -eq 0 ]; then
+        local _lc_version
+        _lc_version="$(printf '%s' "$_lc_out" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null)"
+        if [ -n "$_lc_version" ]; then
+            {
+                printf 'batch_id=%s\n' "$_lc_batch_id"
+                printf 'version=%s\n'  "$_lc_version"
+            } >> "$(_batch_open_file "$name")"
+            printf 'queue.sh open-batch: %s cut on spira-lc (version=%s)\n' "$_lc_batch_id" "$_lc_version"
+        fi
+    else
+        printf 'queue.sh open-batch: spira-lc cut refused for %s (rc=%d): %s\n' "$_lc_batch_id" "$_lc_rc" "$_lc_out" >&2
+    fi
+
     local _mm _mid2 _mtip2
     for _mm in "${members[@]}"; do
         _mid2="${_mm%%:*}"; _mtip2="${_mm##*:}"
@@ -931,16 +1048,25 @@ cmd_release() {
     printf 'queue.sh release: %s released back to %s\n' "$name" "${restore:-<none>}"
 }
 
-case "${1:-}" in
-    submit)  shift; cmd_submit "$@" ;;
-    protect) shift; cmd_protect "$@" ;;
-    stats)   cmd_stats ;;
-    flush)   shift; cmd_flush "$@" ;;
-    step)    shift; cmd_step "$@" ;;
-    eject)   shift; cmd_eject "$@" ;;
-    abandon) shift; cmd_abandon "$@" ;;
-    open-batch) shift; cmd_open_batch "$@" ;;
-    claim)   shift; cmd_claim "$@" ;;
-    release) shift; cmd_release "$@" ;;
-    *) printf 'usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>]\n' >&2; exit 2 ;;
-esac
+main() {
+    case "${1:-}" in
+        submit)  shift; cmd_submit "$@" ;;
+        protect) shift; cmd_protect "$@" ;;
+        stats)   cmd_stats ;;
+        flush)   shift; cmd_flush "$@" ;;
+        step)    shift; cmd_step "$@" ;;
+        eject)   shift; cmd_eject "$@" ;;
+        abandon) shift; cmd_abandon "$@" ;;
+        open-batch) shift; cmd_open_batch "$@" ;;
+        claim)   shift; cmd_claim "$@" ;;
+        release) shift; cmd_release "$@" ;;
+        *) printf 'usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>]\n' >&2; return 2 ;;
+    esac
+}
+
+# Sourced (a suite wants _lc_cut_batch/_lc_abandon_batch/_lc_eject_member without a real
+# dispatch) vs executed: matches batch.sh's own guard, and for the same reason.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    main "$@"
+    exit $?
+fi

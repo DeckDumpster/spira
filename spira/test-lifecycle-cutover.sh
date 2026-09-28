@@ -21,6 +21,12 @@
 #     — a member not CERTIFIED there, or a batch that already left OPEN — exactly as `cut`
 #     does for a fresh batch.
 #
+# Also covers sp-o7nbr.5's own deliverable: queue.sh's cmd_open_batch/cmd_eject/cmd_abandon
+# onto this same machine via their own _lc_cut_batch/_lc_eject_member/_lc_abandon_batch
+# helpers — cut refusing a not-yet-CERTIFIED member, a manual eject-member leaving the batch
+# open and survivors untouched, eject-member refused once CI has moved the batch past OPEN/
+# CI_RUNNING, and abandon-batch returning every member.
+#
 # host-reason: starts its own disposable `dolt sql-server`, the same shape every
 # testdb.sh server-mode suite already uses without a container call — testenv-batch.sh
 # already provides the container this suite executes in.
@@ -470,5 +476,81 @@ out="$(lc stack batch-stack --members "sp-lc-s4:tipS4" --actor test)"
 rc=$?
 wantrc "PLANTED VIOLATION: stack refuses a batch that is SETTLED, not OPEN" 3 $rc
 is "the refused stack did not touch the settled batch's state" "SETTLED" "$(batch_field batch-stack state)"
+
+# ── sp-o7nbr.5: queue.sh's own cmd_open_batch/cmd_eject/cmd_abandon onto this same
+# machine, on this same fixture — cutting for a queue-mode repo is queue.sh's own turf
+# now (batch.sh no longer opens a batch itself, sp-vsob2). Sourcing the real spira/queue.sh
+# (not a reimplementation) exercises its own _lc_cut_batch/_lc_eject_member/
+# _lc_abandon_batch helpers — the functions cmd_open_batch/cmd_eject/cmd_abandon call —
+# directly against this suite's already-running server. queue.sh guards its own top-level
+# dispatch the same way batch.sh does (BASH_SOURCE vs $0), so sourcing it here runs no
+# command of its own.
+export SPIRA_HOME="$REPO/spira"
+export SPIRA_RUN="$TMP/queue-shell-run"
+mkdir -p "$SPIRA_RUN/landstate" "$SPIRA_RUN/queue/fixture-repo"
+export SPIRA_QUEUE_DIR="$SPIRA_RUN/queue"
+export SPIRA_LC_BIN="$BIN"
+# shellcheck disable=SC1091
+. "$REPO/spira/queue.sh"
+
+# _lc_cut_batch: every member needs a bead row, but cut itself still only accepts a
+# CERTIFIED row at the given tip — create-bead-if-absent never shortcuts that.
+certify sp-lc-q-cut1 tipQC1
+lc create-bead sp-lc-q-cut2 >/dev/null   # a bead row exists, but is never certified below
+
+out="$(_lc_cut_batch batch-q-cut fixture-repo headQ baseQ queue.sh "sp-lc-q-cut1:tipQC1")"
+wantrc "_lc_cut_batch applies for a certified member" 0 $?
+is "cut batch is OPEN" "OPEN" "$(batch_field batch-q-cut state)"
+is "member's bead moves to IN_DELIVERY" "IN_DELIVERY" "$(member_field sp-lc-q-cut1 bead state)"
+
+# POSITIVE CONTROL: a not-yet-CERTIFIED member refuses cleanly and leaves no batch row —
+# the shape cmd_open_batch relies on to leave batch_id/version unset on its own record.
+out="$(_lc_cut_batch batch-q-refuse fixture-repo headQ baseQ queue.sh "sp-lc-q-cut2:tipQC2")"
+rc=$?
+wantrc "_lc_cut_batch refuses a member that is not CERTIFIED there" 3 $rc
+is "a refused cut leaves no batch row behind" "" "$(batch_field batch-q-refuse state)"
+
+# _lc_eject_member: legal from OPEN/CI_RUNNING, returns only the named member to
+# CERTIFIED, and does not move the batch or touch survivors — distinct from settle's own
+# CI-driven eject, which only runs after a real Red (design: the event log is the record
+# of what happened, and no Red ever fired here).
+certify sp-lc-q-e1 tipQE1
+certify sp-lc-q-e2 tipQE2
+lc cut batch-q-eject --repo fixture-repo --head headE --base baseE \
+    --members "sp-lc-q-e1:tipQE1,sp-lc-q-e2:tipQE2" --actor test >/dev/null
+
+out="$(_lc_eject_member batch-q-eject sp-lc-q-e1 queue.sh "manual eject")"
+wantrc "_lc_eject_member applies from OPEN" 0 $?
+is "batch stays OPEN — eject does not move it" "OPEN" "$(batch_field batch-q-eject state)"
+is "ejected member returns to CERTIFIED" "CERTIFIED" "$(member_field sp-lc-q-e1 bead state)"
+is "survivor is left alone in the batch" "IN_DELIVERY" "$(member_field sp-lc-q-e2 bead state)"
+
+# POSITIVE CONTROL: eject-member refuses once CI has moved the batch past OPEN/CI_RUNNING.
+v="$(batch_field batch-q-eject version)"
+lc event batch batch-q-eject --expect OPEN --version "$v" --actor test --kind '{"CiStarted":{"run":"r1"}}' >/dev/null
+v="$(batch_field batch-q-eject version)"
+lc event batch batch-q-eject --expect CI_RUNNING --version "$v" --actor test --kind '"Green"' >/dev/null
+out="$(_lc_eject_member batch-q-eject sp-lc-q-e2 queue.sh "too late")"
+rc=$?
+wantrc "_lc_eject_member refuses once the batch has moved past CI (GREEN)" 3 $rc
+
+# _lc_abandon_batch: accepts from any non-terminal state, returns every member.
+certify sp-lc-q-a1 tipQA1
+certify sp-lc-q-a2 tipQA2
+lc cut batch-q-abandon --repo fixture-repo --head headA --base baseA \
+    --members "sp-lc-q-a1:tipQA1,sp-lc-q-a2:tipQA2" --actor test >/dev/null
+
+out="$(_lc_abandon_batch batch-q-abandon queue.sh "test abandon")"
+wantrc "_lc_abandon_batch applies from OPEN" 0 $?
+is "abandoned batch reaches ABANDONED" "ABANDONED" "$(batch_field batch-q-abandon state)"
+is "member 1 returns to CERTIFIED" "CERTIFIED" "$(member_field sp-lc-q-a1 bead state)"
+is "member 2 returns to CERTIFIED" "CERTIFIED" "$(member_field sp-lc-q-a2 bead state)"
+
+# POSITIVE CONTROL: the guard shape queue.sh's own call sites rely on (batch_id present
+# only on a record whose cut applied) — a batch that was never cut fails closed instead of
+# CASing against a row that does not exist.
+out="$(_lc_abandon_batch batch-q-never-cut queue.sh "no such batch")"
+rc=$?
+wantrc "_lc_abandon_batch fails closed when the batch row does not exist" 1 $rc
 
 tl_summary
