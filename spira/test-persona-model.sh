@@ -26,12 +26,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 HARNESS="$(cd "$HERE/.." && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-persona-model.sh"
 
@@ -97,29 +92,19 @@ want "capacity_probe falls back to persona_model builder" \
 echo
 echo "resolving/building spira-config:"
 # ==========================================================================
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-persona-model: cargo not found — spira-config binary cannot be built"
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"
-    exit 77
-fi
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
-CRATE="$HARNESS/spira-config"
-SPIRA_CONFIG_BIN="$HARNESS/target/release/spira-config"
-if [ ! -x "$SPIRA_CONFIG_BIN" ]; then
+SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)"
+if [ -z "$SPIRA_CONFIG_BIN" ]; then
+    CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
+    [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
+    [ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin — install Rust: https://rustup.rs/"
     printf '  (building spira-config into %s)\n' "$T/target"
     CARGO_TARGET_DIR="$T/target" "$CARGO_BIN" build --release \
-        --manifest-path "$CRATE/Cargo.toml" >/dev/null 2>&1
+        --manifest-path "$HARNESS/spira-config/Cargo.toml" >/dev/null 2>&1
     SPIRA_CONFIG_BIN="$T/target/release/spira-config"
+    [ -x "$SPIRA_CONFIG_BIN" ] || bail "spira-config binary not found/built at $SPIRA_CONFIG_BIN"
 fi
-if [ -x "$SPIRA_CONFIG_BIN" ]; then
-    ok "spira-config binary is present and executable"
-else
-    bad "spira-config binary" "not found/built at $SPIRA_CONFIG_BIN"
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"
-    exit 1
-fi
+ok "spira-config binary is present and executable"
 
 # ==========================================================================
 echo
@@ -273,6 +258,4 @@ want "bead-claim launch path's --model came from persona.builder.model" \
 nowant "bead-claim launch path did not use the fayth's own FAYTH_MODEL" \
      "fayth-declared-model-should-not-be-used" "$(cat "$T/claude-argv" 2>/dev/null || true)"
 
-echo
-printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
