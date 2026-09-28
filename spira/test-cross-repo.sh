@@ -130,6 +130,9 @@ chmod +x "$BIN/claude"
 # SPIRA_HOME_REPO names the home repo in the map. Without it, lib.sh derives the home from
 # the basename of SPIRA_REPO, and that must match a key in the repo-map.
 export SPIRA_HOME_REPO=home SPIRA_SCOPE_LABEL=home
+# Pinned so this fixture stays on the pre-cutover legacy paths even when a --with-bins run
+# has built work/spira-lc for other suites in the same batch (design §3.5, LC_MODEL_RESTRICTED).
+export SPIRA_WORK_BIN="$TMP/no-work-bin" SPIRA_LC_BIN="$TMP/no-lc-bin"
 
 B() { bd -C "$SPIRA_DB" "$@"; }
 status_of() { B show "$1" --json 2>/dev/null | python3 -c '
