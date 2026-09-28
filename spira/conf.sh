@@ -101,7 +101,7 @@ SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE SPIRA_SELF_TEST SPIRA_INCIDENT_PRIORITY
 SPIRA_FLAKE_QUARANTINE_AT SPIRA_FLAKE_WINDOW SPIRA_QUARANTINE_CLEAN_RUNS SPIRA_QUARANTINE_MAX_AGE
 SPIRA_QUEUE_BATCH_MAX SPIRA_QUEUE_BATCH_WAIT SPIRA_QUEUE_CI_MAXSEC SPIRA_QUEUE_CI_IDLE_SEC SPIRA_CI_QUEUED_MAX_SECS SPIRA_LOOP_STALL_SECS SPIRA_CI_RED_MAX_SECS SPIRA_BASE_CI_UNREADABLE_GRACE_SECS SPIRA_PREFLIGHT_WALL_SECS SPIRA_PREFLIGHT_SUITE_MAX_SECS SPIRA_QUEUE_INFRA_RETRIES SPIRA_QUEUE_STUCK_AGE SPIRA_QUEUE_DIR SPIRA_FORGE SPIRA_FORGE_REPO SPIRA_QUEUE_WAIT_LABEL SPIRA_QUEUE_ACTIONS_APP_ID SPIRA_EXPRESS_LABEL SPIRA_CERT_IDLE_SKIP SPIRA_BATCHER_BIN SPIRA_BATCH_JUDGEMENT_LABEL SPIRA_QUEUE_LOCK_WAIT SPIRA_QUEUE_LOCK_STARVE_MAX
 SPIRA_QUEUE_REPRO_CI_POLLSEC SPIRA_QUEUE_REPRO_CI_MAXSEC
-SPIRA_SUBMITTED_LABEL SPIRA_WORK_CLOSE_TYPES
+SPIRA_SUBMITTED_LABEL SPIRA_WORK_CLOSE_TYPES SPIRA_OPEN_CHILDREN_LABEL
 SPIRA_QUEUE_THROTTLE_DEPTH_AT SPIRA_QUEUE_THROTTLE_RELEASE_AT SPIRA_QUEUE_THROTTLE_STALL_MINS SPIRA_QUEUE_THROTTLE_OVERRIDE
 SPIRA_AURON_RESTARTS SPIRA_AURON_RESTART_WINDOW
 SPIRA_PROD SPIRA_INSTANCE
@@ -1837,6 +1837,13 @@ spira_conf_defaults() {
     # Carried in fayth_exclude so a submitted bead is not reclaimed while it is mid-flight
     # through certification.
     : "${SPIRA_SUBMITTED_LABEL:=spira-submitted}"
+    # LABEL APPLIED TO A BEAD THAT HAS AN OPEN PARENT-CHILD-LINKED CHILD. bd refuses a
+    # parent-blocks-child dependency (it would cascade the block to every descendant, and
+    # they would never close), so a coordination bead whose deliverable lives entirely in
+    # its children would otherwise read as ready with none of that work done. mark_open_children
+    # (lib.sh) applies and clears this via ready_shared_exclude, the same seam
+    # SPIRA_QUEUE_WAIT_LABEL uses for a predicate bd itself cannot express as a dependency.
+    : "${SPIRA_OPEN_CHILDREN_LABEL:=spira-open-children}"
     # ISSUE TYPES WHOSE CLOSE ROUTES THROUGH SPIRA_SUBMITTED_LABEL rather than a direct bd
     # close. Everything else (spike, ask, insight, investigation, event, chore, epic) still
     # closes by the agent's own hand — its deliverable is not a landed commit.

@@ -1321,16 +1321,17 @@ for item in (d if isinstance(d, list) else [d]):
 # `--exclude-label` is OR (verified against bd: adding an unused label to the list does not
 # change the count), so appending is exactly the semantics wanted here.
 #
-# ready_shared_exclude -> the two labels every "is this claimable" predicate excludes
-# regardless of caller: SPIRA_QUEUE_WAIT_LABEL and SPIRA_SUBMITTED_LABEL, neither of which
-# marks a bead an aeon can take. fayth_exclude and strand.sh's classify_one both call this
-# rather than each carrying its own copy, because a copy is how one of them drifts
-# (sp-wnsks: strand.sh's counted a spira-submitted bead as ready and reported starvation on
-# a partition the sentinel correctly saw as empty).
+# ready_shared_exclude -> the labels every "is this claimable" predicate excludes regardless
+# of caller: SPIRA_QUEUE_WAIT_LABEL, SPIRA_SUBMITTED_LABEL and SPIRA_OPEN_CHILDREN_LABEL,
+# none of which marks a bead an aeon can take. fayth_exclude and strand.sh's classify_one
+# both call this rather than each carrying its own copy, because a copy is how one of them
+# drifts (sp-wnsks: strand.sh's counted a spira-submitted bead as ready and reported
+# starvation on a partition the sentinel correctly saw as empty).
 ready_shared_exclude() {
     local out=""
     [ -n "${SPIRA_QUEUE_WAIT_LABEL:-}" ] && out="${out:+$out,}${SPIRA_QUEUE_WAIT_LABEL}"
     [ -n "${SPIRA_SUBMITTED_LABEL:-}" ] && out="${out:+$out,}${SPIRA_SUBMITTED_LABEL}"
+    [ -n "${SPIRA_OPEN_CHILDREN_LABEL:-}" ] && out="${out:+$out,}${SPIRA_OPEN_CHILDREN_LABEL}"
     printf '%s' "$out"
 }
 
@@ -1715,6 +1716,95 @@ try:
 except Exception:
     pass
 ' 2>/dev/null)
+}
+
+# bead_has_open_children <id> -> exit 0 if the bead has any parent-child-linked child that
+# is not closed, exit 1 if it has none or every child is closed.
+bead_has_open_children() {
+    local id="$1" kids
+    kids="$(bdjson children "$id" 2>/dev/null)" || return 1
+    printf '%s' "$kids" | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(1)
+rows = d if isinstance(d, list) else [d]
+sys.exit(0 if any(r.get("status") != "closed" for r in rows) else 1)
+'
+}
+
+# mark_open_children — apply/remove SPIRA_OPEN_CHILDREN_LABEL on a bead that has an open
+# parent-child-linked child. bd refuses a parent-blocks-child dependency (it would cascade
+# the block to every descendant, and they would never close), so a coordination bead whose
+# deliverable lives entirely in its children otherwise reads as ready while none of that work
+# is done — the label is the same out-of-band signal mark_queue_waiters uses for a predicate
+# bd itself cannot express as a dependency, checked here at dispatch time instead.
+#
+# CANDIDATES ARE THE UNION OF THE UNFILTERED READY SET AND THE CURRENTLY LABELED SET: a bead
+# needs checking the moment it becomes ready, to gain the label before anything can claim it,
+# and for as long as it stays labeled, to lose the label the pass its children finish closing
+# even if it has since left ready for some unrelated reason.
+mark_open_children() {
+    local label="${SPIRA_OPEN_CHILDREN_LABEL:-}"
+    [ -n "$label" ] || return 0
+    local ready_json labeled_json
+    ready_json="$(bdjson "${READY_ARGS[@]}" 2>/dev/null)" || ready_json=""
+    labeled_json="$(bdjson list --status open --label "$label" --limit 0 2>/dev/null)" \
+        || labeled_json=""
+    [ -n "$ready_json$labeled_json" ] || return 0
+
+    # THE TWO PAYLOADS GO THROUGH FILES, NOT A STDIN CONCATENATION: `bd ... --json` is
+    # pretty-printed, one field per line, so joining the two documents with a newline and
+    # splitting the joined stream back into lines (as if each line were its own JSON value)
+    # silently parses nothing — every line fails json.loads on its own and the loop below
+    # never runs. Reading each file whole with json.load sidesteps that.
+    local tmp; tmp="$(mktemp -d)" || return 1
+    printf '%s' "$ready_json"   > "$tmp/ready.json"
+    printf '%s' "$labeled_json" > "$tmp/labeled.json"
+
+    local ids labeled_ids
+    ids="$(python3 -c '
+import json, sys
+def parse(path):
+    try:
+        with open(path) as f: d = json.load(f)
+    except Exception:
+        return []
+    return d if isinstance(d, list) else [d]
+seen = []
+for r in parse(sys.argv[1]) + parse(sys.argv[2]):
+    rid = r.get("id")
+    if rid: seen.append(rid)
+print("\n".join(dict.fromkeys(seen)))
+' "$tmp/ready.json" "$tmp/labeled.json" 2>/dev/null)"
+    labeled_ids="$(python3 -c '
+import json, sys
+try:
+    with open(sys.argv[1]) as f: d = json.load(f)
+except Exception:
+    d = []
+for r in (d if isinstance(d, list) else [d]):
+    if r.get("id"): print(r["id"])
+' "$tmp/labeled.json" 2>/dev/null)"
+    rm -rf "$tmp"
+    [ -n "$ids" ] || return 0
+
+    local id currently
+    while IFS= read -r id; do
+        [ -n "$id" ] || continue
+        currently=0
+        case $'\n'"$labeled_ids"$'\n' in *$'\n'"$id"$'\n'*) currently=1 ;; esac
+        if bead_has_open_children "$id"; then
+            if [ "$currently" = 0 ]; then
+                bdq label add "$id" "$label" >/dev/null 2>&1 || true
+                log "mark_open_children: $id — has an open child, excluded from dispatch"
+            fi
+        else
+            if [ "$currently" = 1 ]; then
+                bdq label remove "$id" "$label" >/dev/null 2>&1 || true
+                log "mark_open_children: $id — children all closed, re-enters dispatch"
+            fi
+        fi
+    done <<< "$ids"
 }
 
 # bead_reopen <id> <cause> [note] [suites] — hand a bead back to the graph so the NEXT aeon can claim it.
