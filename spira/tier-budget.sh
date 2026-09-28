@@ -55,14 +55,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SUITE_RE='^[A-Za-z0-9][A-Za-z0-9._-]*$'
 TIER_RE='^T[0-3]$'
 
-_tier_budget_ms() {  # _tier_budget_ms <tier> -> budget in ms
-    case "$1" in
-        T0) printf '%s' "${SPIRA_TIER_BUDGET_T0_MS:-1000}" ;;
-        T1) printf '%s' "${SPIRA_TIER_BUDGET_T1_MS:-1000}" ;;
-        T2) printf '%s' "${SPIRA_TIER_BUDGET_T2_MS:-10000}" ;;
-        T3) printf '%s' "${SPIRA_TIER_BUDGET_T3_MS:-60000}" ;;
-        *)  printf '%s' "${SPIRA_TIER_BUDGET_T1_MS:-1000}" ;;
-    esac
+_tier_budget_ms() {  # _tier_budget_ms <tier> -> budget in ms; suite-covers.sh owns the table
+    suite_tier_budget_ms "$1"
 }
 
 # _suite_tier <suite-dir> <suite> -> "T0".."T3"; untagged or unknown counts as T1.

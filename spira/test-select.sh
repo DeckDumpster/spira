@@ -500,9 +500,14 @@ _n="$(grep -c 'select\.sh' "$TOUCHED" 2>/dev/null || true)"
 # unset — this is the one case that must still scan the real corpus) so plan-matrix-fence
 # and the lockfile/build fences skip instead of building test-plan and re-scanning the same
 # corpus a second and third time; select.sh's own covers-matching is what's under test here.
+# SPIRA_GATE_BUDGET is pinned huge and SPIRA_RUN to a path that cannot exist: this is a
+# coverage-matching acceptance test (sp-vq2za's own budget trimming is test-gate-budget-
+# select.sh's job), and without both an ambient real SPIRA_RUN or a corpus that has grown
+# past 300s of tier caps would make this test's verdict depend on the box it runs on.
 FLIST_CONF="$TMP/flist-conf"
 printf 'spira/conf.sh\n' > "$FLIST_CONF"
 out_k="$(SPIRA_GATE_FILES="$FLIST_CONF" SPIRA_GATE_TIERS="T0,T1,T2" SPIRA_GATE_REPO="$TMP" \
+    SPIRA_GATE_BUDGET=999999 SPIRA_RUN="$TMP/nonexistent-run" \
     bash "$TOUCHED" dummy-base dummy-head 2>/dev/null)"
 want "K2: conf.sh change selects test-aeon-world-stop.sh (acceptance criterion)" \
     "test-aeon-world-stop.sh" "$out_k"

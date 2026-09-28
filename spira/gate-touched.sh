@@ -184,6 +184,21 @@ if [ -n "${SPIRA_GATE_EJECTED_SUITES:-}" ]; then
           done)"
 fi
 
+# BUDGETED SELECTION (sp-vq2za). $_covered is trimmed to SPIRA_GATE_BUDGET seconds of
+# predicted wall, most-specific-first, before $_ejected is unioned in below — an ejected
+# suite is added back unconditionally and is never ranked or dropped for budget
+# (law-a-retry-must-change-an-input). This is the per-bead gate's own budget; the round
+# (testenv-batch.sh's default diff-derived selection) never calls gate-budget-select.sh and
+# keeps the full corpus. SPIRA_GATE_HOST_CORES/SPIRA_BATCH_MAXPAR are the gate's own idea of
+# parallel width, both already exported into this environment by gate.sh's run_gate().
+if [ -n "$_covered" ]; then
+    _gb_budget="${SPIRA_GATE_BUDGET:-300}"
+    _gb_width="${SPIRA_BATCH_MAXPAR:-${SPIRA_GATE_HOST_CORES:-1}}"
+    _covered="$(printf '%s\n' "$_covered" | grep -v '^$' \
+        | bash "$HERE/gate-budget-select.sh" --budget-secs "$_gb_budget" \
+            --parallel-width "$_gb_width" --suite-dir "${SPIRA_BATCH_SUITE_DIR:-$HERE}")"
+fi
+
 _all="$(
     { printf '%s\n' "$_covered"; printf '%s\n' "$_ejected"; } \
     | grep -v '^$' | sort -u
