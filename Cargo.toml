@@ -33,6 +33,7 @@ members = [
     "queue",
     "aeon",
     "gate",
+    "intent-report",
 ]
 resolver = "2"
 

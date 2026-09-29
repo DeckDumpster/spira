@@ -37,6 +37,8 @@ struct Fake {
     checkouts: RefCell<Vec<String>>,
     written: RefCell<Vec<(PathBuf, String)>>,
     appended: RefCell<Vec<String>>,
+    /// run/tsd rows (telemetry.rs), kept apart from the gate.log meter.
+    tsd: RefCell<Vec<String>>,
     yields: RefCell<Vec<Vec<String>>>,
     lc: RefCell<Vec<Vec<String>>>,
     removed_trees: Cell<u32>,
@@ -117,6 +119,7 @@ impl Fake {
             checkouts: RefCell::new(Vec::new()),
             written: RefCell::new(Vec::new()),
             appended: RefCell::new(Vec::new()),
+            tsd: RefCell::new(Vec::new()),
             yields: RefCell::new(Vec::new()),
             lc: RefCell::new(Vec::new()),
             removed_trees: Cell::new(0),
@@ -187,7 +190,11 @@ impl World for Fake {
             .borrow_mut()
             .push((dir.join(name), content.to_string()));
     }
-    fn append(&self, _: &Path, line: &str) {
+    fn append(&self, p: &Path, line: &str) {
+        if p.extension().is_some_and(|e| e == "jsonl") {
+            self.tsd.borrow_mut().push(line.to_string());
+            return;
+        }
         self.appended.borrow_mut().push(line.to_string());
     }
     fn remove(&self, _: &Path) {}
@@ -1240,4 +1247,61 @@ fn no_verdict_other_than_pass_certifies() {
     f.set_var("SPIRA_GATE_LOCK_WAIT", "1");
     assert_eq!(f.run(), NOVERDICT);
     assert!(cert_written(&f).is_none());
+}
+
+// ------------------------------------------------------------- the gate-run row (sp-cln99)
+
+fn tsd_row(f: &Fake) -> serde_json::Value {
+    let rows = f.tsd.borrow();
+    assert_eq!(rows.len(), 1, "one gate-run row per trial: {rows:?}");
+    serde_json::from_str(rows[0].trim_end()).unwrap()
+}
+
+#[test]
+fn a_rust_only_unit_pass_records_its_branch_type_mode_and_wall() {
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    assert_eq!(f.run(), PASS);
+    let v = tsd_row(&f);
+    assert_eq!(v["family"], "gate-run");
+    assert_eq!(v["status"], "PASS");
+    assert_eq!(v["rc"], 0);
+    assert_eq!(v["gate_mode"], "unit");
+    assert_eq!(v["compose"], "unit");
+    assert_eq!(v["branch_type"], "rust-only");
+    assert_eq!(v["phases"], "fences:7,build:7,test:7");
+    assert_eq!(v["wall_secs"], v["ran_secs"]);
+    assert_eq!(v["repo"], "spira");
+    assert_eq!(v["branch"], BR);
+}
+
+#[test]
+fn suites_mode_still_records_what_the_branch_touches() {
+    // Under gate_mode = suites every composition is suites(mode); the row classifies the
+    // branch as unit mode would, so the Intent's by-type measure exists before the switch.
+    for (paths, want) in [
+        (&["spira/lib.sh"][..], "bash-touching"),
+        (&["gate/src/engine.rs"][..], "rust-only"),
+        (&["docs/x.md"][..], "nothing-buildable"),
+    ] {
+        let f = unit_fake(paths);
+        *f.mode.borrow_mut() = Ok(GateMode::Suites);
+        assert_eq!(f.run(), PASS);
+        let v = tsd_row(&f);
+        assert_eq!(v["compose"], "suites(mode)", "{paths:?}");
+        assert_eq!(v["gate_mode"], "suites");
+        assert_eq!(v["branch_type"], want, "{paths:?}");
+    }
+}
+
+#[test]
+fn a_no_verdict_trial_is_recorded_as_one() {
+    let f = Fake::new();
+    f.lock_free.set(false);
+    f.set_var("SPIRA_GATE_LOCK_WAIT", "3");
+    assert_eq!(f.run(), NOVERDICT);
+    let v = tsd_row(&f);
+    assert_eq!(v["status"], "NO_VERDICT");
+    assert_eq!(v["reason"], "lock-timeout");
+    assert_eq!(v["waited_secs"], 3);
+    assert_eq!(v["branch_type"], "unknown", "it ended before a composition");
 }

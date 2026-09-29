@@ -289,6 +289,17 @@ and its absence is not a red. With none left the base runs its fences only.
   `yield.sh` takes the note's first word as the reason, so the trailing fields are compatible.
 * the verdict file: a `compose=<label>` line.
 * stderr, before the trial: `gate: composition=<…>` naming the crates and the touched ones.
+* **run/tsd `gate-run`** (sp-cln99, `src/telemetry.rs`): one row per verdict, beside the
+  gate.log line and under the same condition (the repository resolved). Envelope `ts`, `host`,
+  `family` (tsd's), then `repo`, `branch`, `bead`, `caller`, `status` (PASS / FAIL / NO_VERDICT
+  / BASE_FAIL), `rc`, `reason`, `waited_secs`, `ran_secs`, `wall_secs` (= waited + ran),
+  `gate_mode`, `compose`, `branch_type`, `phases`. `branch_type` is what the branch touches as
+  *unit* mode would compose it, whatever mode is in force: `rust-only` (unit),
+  `nothing-buildable` (fences), `bash-touching` (a script), `unknown` (the trial ended before a
+  composition, or the touched set or workspace graph could not be read). Under
+  `gate_mode = suites` that costs one `git diff --raw` and one `cargo metadata --no-deps`; under
+  unit mode it reuses the composition. Best-effort: a failed append never changes a verdict.
+  `intent-report` (its own crate) reads it.
 
 ## Boundaries (ports)
 

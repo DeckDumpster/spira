@@ -85,6 +85,9 @@ struct State {
     harness_h: String,
     pass_suites: String,
     caller: String,
+    /// The gate-run TSD row's (telemetry.rs): the mode in force and the branch's shape.
+    gate_mode: String,
+    branch_type: String,
 }
 
 pub struct Trial<'w, W: World> {
@@ -287,6 +290,7 @@ impl<'w, W: World> Trial<'w, W> {
                 GateMode::Suites
             }
         };
+        self.s.gate_mode = mode.as_str().into();
         // A unit-mode PASS is not a suites-mode PASS: the mode is part of what was judged.
         // Suites mode hashes the command alone, so today's keys are unchanged.
         let key_cmd = match mode {
@@ -437,6 +441,10 @@ impl<'w, W: World> Trial<'w, W> {
         // THE COMPOSITION: what the branch touches decides what runs.
         let comp = self.composition(mode, &ctx, &repo, &base, &rev, &tree, &ejected);
         self.s.compose = comp.label();
+        self.s.branch_type = crate::telemetry::branch_type(&crate::telemetry::shape(
+            w, mode, &comp, &ctx, &repo, &base, &rev, &tree,
+        ))
+        .into();
         w.eprint(&describe(&comp));
         let jobs = compose::jobs(
             key::digits(&ctx.host_cores).unwrap_or(1),
@@ -824,6 +832,25 @@ impl<'w, W: World> Trial<'w, W> {
                     meter_suffix(&self.s.compose, &self.s.phases)
                 ),
             );
+            let run = crate::telemetry::GateRun {
+                repo: self.s.repo_name.clone(),
+                branch: self.a.branch.clone(),
+                bead: self.s.bead.clone(),
+                caller: self.s.caller.clone(),
+                status: outcome(vd.status).into(),
+                rc: vd.status,
+                reason: vd.reason.clone(),
+                waited_secs: self.s.waited,
+                ran_secs: ran,
+                gate_mode: self.s.gate_mode.clone(),
+                compose: self.s.compose.clone(),
+                branch_type: self.s.branch_type.clone(),
+                phases: meter_suffix(&self.s.compose, &self.s.phases)
+                    .split_once(" phases=")
+                    .map(|(_, p)| p.to_string())
+                    .unwrap_or_default(),
+            };
+            crate::telemetry::append(w, &self.s.run, &w.utc(), &run);
             let y = self.home("yield.sh");
             if w.readable(&y) {
                 if vd.status == PASS {

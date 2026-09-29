@@ -390,12 +390,22 @@ impl<'a> Session<'a> {
         self.as_user(&["bash", &path], env)
     }
 
-    /// The private HOME a parallel suite gets, created before it starts.
+    /// The private HOME a parallel suite gets, created before it starts. The bd meter
+    /// (bdmeter.rs) makes it and links itself in as the suite's `bd`, so `bd_ms` is measured;
+    /// an artifact set without the meter falls back to the bare directory, unmetered.
     pub fn make_home(&self, n: usize) {
-        let dir = format!("{}/.config/systemd/user", self.suite_home(n));
-        let _ = self
+        let home = self.suite_home(n);
+        let meter = format!("{}/bd-meter", self.artifacts);
+        let installed = self
             .rt
-            .exec(&ExecRequest::new(&self.name, &["mkdir", "-p", &dir]).user(SPIRA_USER));
+            .exec(&ExecRequest::new(&self.name, &[&meter, "--install", &home]).user(SPIRA_USER))
+            .ok();
+        if !installed {
+            let dir = format!("{home}/.config/systemd/user");
+            let _ = self
+                .rt
+                .exec(&ExecRequest::new(&self.name, &["mkdir", "-p", &dir]).user(SPIRA_USER));
+        }
     }
 
     /// Contents of a file inside the container, or empty.
@@ -619,6 +629,36 @@ mod tests {
         let mut s = Session::new(rt, "abc123", "aeon");
         s.liveness_sleep = Duration::from_millis(1);
         s
+    }
+
+    #[test]
+    fn a_suite_home_is_made_by_the_bd_meter_and_falls_back_to_mkdir_without_it() {
+        let rt = FakeRuntime::new();
+        let s = session(&rt);
+        s.make_home(3);
+        let argv = rt.exec_argv();
+        assert_eq!(argv.len(), 1, "one exec when the meter is in the artifact set");
+        assert_eq!(
+            argv[0],
+            vec![
+                format!("{}/bd-meter", s.artifacts),
+                "--install".into(),
+                s.suite_home(3)
+            ]
+        );
+        let rt = FakeRuntime::new();
+        rt.on(
+            |r| r.argv[0].ends_with("/bd-meter"),
+            |_| ExecOutcome { rc: 127, output: "not found".into() },
+        );
+        let s = session(&rt);
+        s.make_home(1);
+        let argv = rt.exec_argv();
+        assert_eq!(argv.len(), 2);
+        assert_eq!(
+            argv[1],
+            vec!["mkdir".to_string(), "-p".into(), format!("{}/.config/systemd/user", s.suite_home(1))]
+        );
     }
 
     #[test]
