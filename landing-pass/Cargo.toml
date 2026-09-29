@@ -6,6 +6,7 @@ description = "Landing pass — pr-mode repository landing on a short timer, no 
 
 [dependencies]
 serde_json = "1"
+spira-config = { path = "../spira-config" }
 
 [profile.release]
 opt-level = "z"

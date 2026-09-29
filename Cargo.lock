@@ -396,6 +396,7 @@ name = "landing-pass"
 version = "1.0.0"
 dependencies = [
  "serde_json",
+ "spira-config",
 ]
 
 [[package]]

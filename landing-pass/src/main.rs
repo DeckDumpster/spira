@@ -50,6 +50,8 @@ struct Config {
     repo_map: Option<PathBuf>,
     pr_pass_branch_sh: String,
     lc_bin: String,
+    /// THE lifecycle switch (DESIGN.md §3). Off: `lc_bin` is never run.
+    lc_enforce: bool,
     log_path: PathBuf,
     lock_path: PathBuf,
     landstate_dir: PathBuf,
@@ -79,6 +81,7 @@ impl Config {
                     spira_repo.join("target/release/spira-lc").to_string_lossy().to_string()
                 }
             }),
+            lc_enforce: spira_config::lifecycle_enforce(None),
             log_path: env::var("SPIRA_LANDING_PASS_LOG")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("landing-pass.log")),
@@ -340,48 +343,65 @@ fn content_landed(repo: &str, branch: &str, base: &str) -> bool {
 // pass's own content check finds the branch's changes already on base, offline and without
 // a `gh` round trip. pr-pass-branch.sh covers the case this cannot see — a squash merge
 // later amended on the base, where the merge-tree comparison here no longer matches — by
-// asking the forge directly. Best-effort throughout: `spira-lc` answering "cannot tell" (no
-// delivery row, because the bead machine that creates one has not landed yet) is the
-// ordinary case until the cutover round lands together, never a fault in this pass.
-fn lc_show_delivery(cfg: &Config, id: &str) -> Option<(String, String)> {
+// asking the forge directly.
+//
+// Behind THE switch, `lifecycle_enforce` (DESIGN.md §3). Off: nothing here runs spira-lc;
+// the CONTENT landstate record written by the caller is the whole of it, as before
+// sp-n1ilm. On: best-effort additive, as designed — a bead with no delivery row, or one not
+// in PR_OPEN, is the ordinary case and silent; but a spira-lc that cannot be started, exits
+// non-zero, answers unparseably or refuses the event is said loudly on stderr.
+fn lc_show_delivery(cfg: &Config, id: &str) -> Result<Option<(String, String)>, String> {
     let out = Command::new(&cfg.lc_bin)
         .args(["show", id])
-        .stderr(Stdio::null())
         .output()
-        .ok()?;
+        .map_err(|e| format!("{}: {e}", cfg.lc_bin))?;
     if !out.status.success() {
-        return None;
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("show exited {}: {}", out.status.code().unwrap_or(-1), err.lines().last().unwrap_or("").trim()));
     }
-    let v: Value = serde_json::from_slice(&out.stdout).ok()?;
-    let dv = v.get("delivery")?;
-    if dv.is_null() {
-        return None;
+    let v: Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("show: unparsed reply: {e}"))?;
+    let Some(dv) = v.get("delivery").filter(|d| !d.is_null()) else { return Ok(None) };
+    let state = dv.get("state").and_then(Value::as_str).unwrap_or("").to_string();
+    let version = dv.get("version").and_then(Value::as_str).unwrap_or("").to_string();
+    if state.is_empty() || version.is_empty() {
+        return Ok(None);
     }
-    let state = dv.get("state")?.as_str()?.to_string();
-    let version = dv.get("version")?.as_str()?.to_string();
-    Some((state, version))
+    Ok(Some((state, version)))
 }
 
-fn lc_deliver_pr_merged_by_content(cfg: &Config, id: &str, merge_sha: &str) {
-    let Some((state, version)) = lc_show_delivery(cfg, id) else {
-        return;
+/// Returns what happened, for tests: `"off"`, `"no-delivery"`, `"not-pr-open"`,
+/// `"delivered"`, or `"failed"` (already reported on stderr).
+fn lc_deliver_pr_merged_by_content(cfg: &Config, id: &str, merge_sha: &str) -> &'static str {
+    if !cfg.lc_enforce {
+        return "off";
+    }
+    let loud = |why: &str| {
+        eprintln!("landing-pass: {id}: LIFECYCLE: lifecycle_enforce is on and the Delivered event did not happen ({why}) — the delivery row stays PR_OPEN");
+        "failed"
+    };
+    let (state, version) = match lc_show_delivery(cfg, id) {
+        Ok(Some(sv)) => sv,
+        Ok(None) => return "no-delivery",
+        Err(e) => return loud(&e),
     };
     if state != "PR_OPEN" {
-        return;
+        return "not-pr-open";
     }
     let kind = format!(
         r#"{{"Delivered":{{"merge_sha":"{}","proof":"merge-tree"}}}}"#,
         merge_sha.replace('\\', "\\\\").replace('"', "\\\"")
     );
-    let ok = Command::new(&cfg.lc_bin)
+    let out = Command::new(&cfg.lc_bin)
         .args(["event", "delivery", id, "--expect", "PR_OPEN", "--version", &version, "--actor", "landing-pass", "--kind", &kind])
-        .stderr(Stdio::null())
         .stdout(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if ok {
-        eprintln!("landing-pass: {}: delivery PR_OPEN -> delivered by content proof", id);
+        .output();
+    match out {
+        Ok(o) if o.status.success() => {
+            eprintln!("landing-pass: {}: delivery PR_OPEN -> delivered by content proof", id);
+            "delivered"
+        }
+        Ok(o) => loud(&format!("event exited {}: {}", o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or("").trim())),
+        Err(e) => loud(&format!("{}: {e}", cfg.lc_bin)),
     }
 }
 
@@ -430,10 +450,8 @@ fn holder_alive(spira_run: &Path, id: &str) -> bool {
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
-        if name_str.starts_with("aeon-") && name_str.ends_with(&pattern) {
-            if aeon_alive(&entry.path()) {
-                return true;
-            }
+        if name_str.starts_with("aeon-") && name_str.ends_with(&pattern) && aeon_alive(&entry.path()) {
+            return true;
         }
     }
     false
@@ -467,7 +485,7 @@ fn query_beads_json_array(spira_db: &str, spira_home: &str, ids: &[String], home
             .and_then(|o| String::from_utf8(o.stdout).ok())
     };
     let raw = raw_opt.unwrap_or_default();
-    let json_str = match raw.find(|c: char| c == '[' || c == '{') {
+    let json_str = match raw.find(['[', '{']) {
         Some(i) => &raw[i..],
         None => return Vec::new(),
     };
@@ -530,6 +548,7 @@ fn run_pass() -> Result<(), String> {
     // Non-blocking flock: skip if another pass is already running
     let lock_file = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .write(true)
         .open(&cfg.lock_path)
         .map_err(|e| format!("open lock {}: {}", cfg.lock_path.display(), e))?;
@@ -747,5 +766,90 @@ fn write_landstate(landstate_dir: &Path, id: &str, state: &str, tip: &str, reaso
     };
     if fs::write(&tmp, &content).is_ok() {
         let _ = fs::rename(&tmp, landstate_dir.join(id));
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    //! The lifecycle switch (DESIGN.md §3): off never runs spira-lc.
+    use super::*;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let d = env::temp_dir().join(format!("landing-pass-lc-{}-{tag}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// A spira-lc stand-in: logs argv; `show` prints `show_reply`, `event` exits `event_rc`.
+    fn fake_lc(d: &Path, show_reply: &str, event_rc: i32) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let p = d.join("spira-lc");
+        fs::write(
+            &p,
+            format!(
+                "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$1\" in show) printf '%s' '{show_reply}';; event) exit {event_rc};; esac\n",
+                d.join("lc.log").display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+        p.to_string_lossy().into_owned()
+    }
+
+    fn cfg(d: &Path, lc_bin: String, lc_enforce: bool) -> Config {
+        Config {
+            spira_home: String::new(),
+            spira_run: d.to_path_buf(),
+            spira_db: String::new(),
+            repo_map: None,
+            pr_pass_branch_sh: String::new(),
+            lc_bin,
+            lc_enforce,
+            log_path: d.join("log"),
+            lock_path: d.join("lock"),
+            landstate_dir: d.join("landstate"),
+            id_prefix: "sp".into(),
+            now_secs: 0,
+        }
+    }
+
+    const PR_OPEN: &str = r#"{"delivery":{"state":"PR_OPEN","version":"3"}}"#;
+
+    #[test]
+    fn off_never_runs_spira_lc() {
+        let d = scratch("off");
+        let c = cfg(&d, fake_lc(&d, PR_OPEN, 0), false);
+        assert_eq!(lc_deliver_pr_merged_by_content(&c, "sp-a", "abc"), "off");
+        assert!(!d.join("lc.log").exists(), "spira-lc must never run with lifecycle_enforce off");
+    }
+
+    #[test]
+    fn on_delivers_a_pr_open_row() {
+        let d = scratch("on");
+        let c = cfg(&d, fake_lc(&d, PR_OPEN, 0), true);
+        assert_eq!(lc_deliver_pr_merged_by_content(&c, "sp-a", "abc"), "delivered");
+        let log = fs::read_to_string(d.join("lc.log")).unwrap();
+        assert!(log.contains("show sp-a") && log.contains("event delivery sp-a --expect PR_OPEN --version 3"), "{log}");
+    }
+
+    #[test]
+    fn on_no_delivery_row_is_the_ordinary_quiet_case() {
+        let d = scratch("on-none");
+        let c = cfg(&d, fake_lc(&d, r#"{"delivery":null}"#, 0), true);
+        assert_eq!(lc_deliver_pr_merged_by_content(&c, "sp-a", "abc"), "no-delivery");
+        let c = cfg(&d, fake_lc(&d, r#"{"delivery":{"state":"MERGED","version":"4"}}"#, 0), true);
+        assert_eq!(lc_deliver_pr_merged_by_content(&c, "sp-a", "abc"), "not-pr-open");
+    }
+
+    #[test]
+    fn on_unreachable_or_refusing_machine_is_loud() {
+        let d = scratch("on-gone");
+        let c = cfg(&d, d.join("nonexistent-spira-lc").to_string_lossy().into_owned(), true);
+        assert_eq!(lc_deliver_pr_merged_by_content(&c, "sp-a", "abc"), "failed");
+        let c = cfg(&d, fake_lc(&d, "not json", 0), true);
+        assert_eq!(lc_deliver_pr_merged_by_content(&c, "sp-a", "abc"), "failed");
+        let c = cfg(&d, fake_lc(&d, PR_OPEN, 1), true);
+        assert_eq!(lc_deliver_pr_merged_by_content(&c, "sp-a", "abc"), "failed");
     }
 }
