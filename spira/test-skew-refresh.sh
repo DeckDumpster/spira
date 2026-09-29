@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: spira/skew.sh spira/landing.sh
+# covers: spira/skew.sh spira/landing.sh spira/queue.sh spira/activate.sh spira/build-tarball.sh
 #
 # test-skew-refresh.sh — stage-and-swap refresh advances regardless of live aeon leases;
 # running processes keep their old inode; dirty tracked files are stashed; gap reports
 # commits behind with a positive control that verifies the ref is resolvable; a queue-mode
-# repo's checkout is advanced by the landing pass's own refresh loop.
+# repo's checkout is advanced by the landing pass's own refresh loop; and, under queue.local,
+# a round landed through queue.sh land-local is picked up by skew.sh refresh as check-only
+# (never a reset), and queue.sh rollback-local re-activates the previous release and moves
+# local/main back to its archived head — the container-tier design's own three cases
+# (wiki/projects/spira/designs/local-main-2026-09-27.md, "Test strategy"), run here against
+# the real queue.sh/activate.sh/build-tarball.sh/skew.sh, not fixture stand-ins for them.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -287,6 +292,130 @@ QUEUE_AFTER="$(git -C "$QREPO" rev-parse HEAD)"
     && ok  "a queue-mode repo's checkout is advanced to origin/main by the landing pass" \
     || bad "queue-mode refresh" "checkout at $(git -C "$QREPO" rev-parse --short HEAD), expected $(printf '%.7s' "$QUEUE_NEW")"
 want "and the pass reports the refresh" "skew: refreshed to" "$q_out"
+
+# ===========================================================================
+echo
+echo "queue.local — land then refresh, then rollback by ref move:"
+# ===========================================================================
+# The container tier's own three cases: skew refresh following local/main in a real
+# harness checkout; land then refresh; rollback by ref move. Every assertion below runs
+# against the real queue.sh/activate.sh/build-tarball.sh/skew.sh copied verbatim into a
+# scratch SPIRA_HOME — no stand-in for any of the four.
+LSH="$TMP/local-spira"; mkdir -p "$LSH"
+cp "$HERE"/queue.sh "$HERE"/skew.sh "$HERE"/activate.sh "$HERE"/build-tarball.sh \
+   "$HERE"/lib.sh "$HERE"/conf.sh "$HERE"/mail.sh "$LSH/" 2>/dev/null
+
+LREPO="$TMP/local-repo"
+git init -q -b trunk "$LREPO"
+git -C "$LREPO" config user.email "test@test"
+git -C "$LREPO" config user.name "test"
+mkdir -p "$LREPO/src"
+cat > "$LREPO/Cargo.toml" <<'EOF'
+[package]
+name = "fakebin"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "fakebin"
+path = "src/main.rs"
+EOF
+echo 'fn main() {}' > "$LREPO/src/main.rs"
+git -C "$LREPO" add Cargo.toml src
+git -C "$LREPO" commit -q -m base
+git -C "$LREPO" branch local/main trunk
+
+LRUN="$TMP/local-run"; LQDIR="$LRUN/queue"; LRELEASES="$TMP/local-releases"
+mkdir -p "$LRUN/worktree" "$LQDIR" "$LRELEASES"
+LRMAP="$TMP/local-repo-map"
+printf 'lfixq | %s | queue.local | local/main | | |\n' "$LREPO" > "$LRMAP"
+ln -s spira-bootstrap "$LRELEASES/current"   # production runs a release, not a checkout
+
+run_lq() {
+    env -i PATH="$PATH" \
+        HOME="$TMP/home" \
+        SPIRA_CONF=/nonexistent \
+        SPIRA_HOME="$LSH" \
+        SPIRA_HOME_REPO=lfixq \
+        SPIRA_REPO="$LREPO" \
+        SPIRA_RUN="$LRUN" \
+        SPIRA_QUEUE_DIR="$LQDIR" \
+        SPIRA_REPO_MAP="$LRMAP" \
+        SPIRA_RELEASES="$LRELEASES" \
+        SPIRA_DB="$TMP/local-no-db" \
+        bash "$LSH/queue.sh" "$@" 2>&1
+}
+run_lskew() {
+    env -i PATH="$PATH" \
+        HOME="$TMP/home" \
+        SPIRA_CONF=/nonexistent \
+        SPIRA_HOME="$LSH" \
+        SPIRA_REPO="$LREPO" \
+        SPIRA_RUN="$LRUN" \
+        SPIRA_REPO_MAP="$LRMAP" \
+        SPIRA_RELEASES="$LRELEASES" \
+        bash "$LSH/skew.sh" "$@" 2>&1
+}
+lround() {  # lround <branch> <file> <content> -> commit on local/main's tip, print the head sha
+    local br="$1" file="$2" content="$3"
+    git -C "$LREPO" checkout -qb "$br" local/main
+    printf '%s\n' "$content" > "$LREPO/$file"
+    git -C "$LREPO" add "$file"
+    git -C "$LREPO" commit -q -m "round: $file"
+    local head; head="$(git -C "$LREPO" rev-parse "$br")"
+    git -C "$LREPO" checkout -q trunk
+    git -C "$LREPO" branch -D "$br" >/dev/null 2>&1
+    printf '%s' "$head"
+}
+lbins() {   # lbins <head> <content> -> populate the --with-bins corpus for <head>'s own tree
+    local head="$1" content="$2" tree dir
+    tree="$(git -C "$LREPO" rev-parse "${head}^{tree}")"
+    dir="$LRUN/cargo-target-bins/$tree/release"
+    mkdir -p "$dir"
+    printf '%s' "$content" > "$dir/fakebin"
+    chmod +x "$dir/fakebin"
+}
+
+LHEAD1="$(lround r1 f1.txt round1)"
+lbins "$LHEAD1" bin1
+lout1="$(run_lq land-local lfixq --head "$LHEAD1" --members "sp-lskw1:$LHEAD1")"; lrc1=$?
+is   "land 1: exits 0"                    "0"      "$lrc1"
+want "land 1: activates the round's release" "activated spira-$LHEAD1" "$lout1"
+is   "land 1: local/main fast-forwards to the round head" "$LHEAD1" "$(git -C "$LREPO" rev-parse local/main)"
+
+echo
+echo "queue.local refresh — matched: checks, deploys nothing:"
+rout1="$(run_lskew refresh "$LREPO")"; rrc1=$?
+is   "refresh (matched): exits 0"          "0"                "$rrc1"
+want "refresh (matched): nothing to deploy" "nothing to deploy" "$rout1"
+
+echo
+echo "queue.local refresh — stray write to local/main: alarms, never resets it:"
+LHEAD2="$(lround r2 f2.txt round2)"
+lbins "$LHEAD2" bin2
+lout2="$(run_lq land-local lfixq --head "$LHEAD2" --members "sp-lskw2:$LHEAD2")"; lrc2=$?
+is   "land 2: exits 0"                     "0"      "$lrc2"
+is   "land 2: local/main fast-forwards to the second round head" "$LHEAD2" "$(git -C "$LREPO" rev-parse local/main)"
+
+# Simulate a stray write to local/main that bypassed queue.sh land-local (the one writer):
+git -C "$LREPO" update-ref refs/heads/local/main "$LHEAD1"
+rout2="$(run_lskew refresh "$LREPO")"; rrc2=$?
+is     "refresh (stray write): exits 1"        "1"          "$rrc2"
+want   "refresh (stray write): reports LOCAL-SKEW" "LOCAL-SKEW" "$rout2"
+is     "refresh (stray write): local/main is left exactly as found — refresh never resets it" \
+       "$LHEAD1" "$(git -C "$LREPO" rev-parse local/main)"
+# Restore for the rollback case below — a real skew refresh never touches this ref either way.
+git -C "$LREPO" update-ref refs/heads/local/main "$LHEAD2"
+
+echo
+echo "queue.local rollback-local — re-activates the previous release, resets by ref move:"
+lout3="$(run_lq rollback-local lfixq)"; lrc3=$?
+is   "rollback: exits 0"                       "0"           "$lrc3"
+want "rollback: re-activates the first round's release" "activated spira-$LHEAD1" "$lout3"
+is   "rollback: local/main resets to the archived first-round head" \
+     "$LHEAD1" "$(git -C "$LREPO" rev-parse local/main)"
+is   "rollback: current symlink points at the first round's release" \
+     "spira-$LHEAD1" "$(readlink "$LRELEASES/current")"
 
 echo
 tl_summary
