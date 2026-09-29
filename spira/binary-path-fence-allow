@@ -8,7 +8,6 @@ Makefile
 spira/build-tarball.sh
 spira/pre-activate.sh
 spira/acceptance-lib.sh
-spira/testenv-batch.sh
 
 # conf.sh's spira_config_bin(): a pre-cutover, memoized ad-hoc build kept for the one
 # caller (lib.sh persona_model) that may run before conf.sh's own SPIRA_CONFIG_BIN
@@ -60,7 +59,6 @@ spira/test-reconciler-alert.sh
 spira/test-reconciler-flow.sh
 spira/test-reconciler.sh
 spira/test-tarball-bins.sh
-spira/test-testenv-batch.sh
 spira/test-testlib.sh
 spira/test-tier-budget.sh
 spira/test-timer-templates.sh

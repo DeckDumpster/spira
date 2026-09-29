@@ -321,6 +321,32 @@ pub fn claimable(
     Verdict::Claimable { depth }
 }
 
+/// The legacy poison record: the bd label CHECK 4 puts on a bead when `lifecycle_enforce`
+/// is off (DESIGN.md §6a; unpoison's §8.7 clears the same label).
+pub const POISON_LABEL: &str = "spira-poison"; // literal-ok: the label is the contract
+
+/// `lifecycle_enforce` off: a bead labelled [`POISON_LABEL`] is not claimable.
+pub fn poisoned_by_label(r: &ReadyRow) -> bool {
+    r.labels.iter().any(|l| l == POISON_LABEL)
+}
+
+/// `--blockers machine` with `lifecycle_enforce` off (DESIGN.md §6a): the same question as
+/// [`claimable`], answered from legacy records only — no lifecycle row exists to read. The
+/// poison is the label; every `blocks` target must be bd-`closed` (the "no lifecycle row"
+/// row of the §2 table, which is also what `bd ready` applies); nothing stacks, so depth
+/// is 0.
+pub fn claimable_legacy(cand: &ReadyRow, bd: &HashMap<String, ReadyRow>) -> Verdict {
+    if poisoned_by_label(cand) {
+        return Verdict::Held(HoldKind::Poison);
+    }
+    for bid in blockers(cand) {
+        if bd.get(&bid).and_then(|r| r.status.as_deref()) != Some("closed") {
+            return Verdict::Blocked(bid);
+        }
+    }
+    Verdict::Claimable { depth: 0 }
+}
+
 /// The hard ceiling the spira-config schema enforces (stacked-dependents §1).
 pub const STACK_CEILING: u32 = 4;
 

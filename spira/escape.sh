@@ -48,9 +48,10 @@ if [ "${r:-0}" -eq 0 ]; then
     exit 0
 fi
 
+[ -x "${SPIRA_AEON_BIN:-}" ] || die "escape.sh $FAYTH: aeon binary not built (SPIRA_AEON_BIN)"
 log "escape.sh $FAYTH: $r ready — summoning directly (pool and lane checks bypassed)"
 mapfile -t _sargv < <(summon_argv "$FAYTH")
 "${SPIRA_SUMMON:-systemd-run}" --user --collect --quiet \
     --unit="spira-aeon-$FAYTH-escape-$(date +%s)" \
     "${_sargv[@]}" \
-    "$SPIRA_HOME/aeon.sh" "$FAYTH" ${DRY_FLAG} 2>/dev/null
+    "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$FAYTH" ${DRY_FLAG} 2>/dev/null

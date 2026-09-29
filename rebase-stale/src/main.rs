@@ -46,7 +46,7 @@ fn main() -> ExitCode {
 
     let keys = Keys::load();
     let Some(home) = env::var_os("SPIRA_HOME").map(PathBuf::from) else {
-        eprintln!("rebase-stale: SPIRA_HOME is not set (lib.sh and queue.sh live there)");
+        eprintln!("rebase-stale: SPIRA_HOME is not set (lib.sh lives there)");
         return ExitCode::from(3);
     };
     let Some(run) = keys.get("SPIRA_RUN", |s| s.run.clone()).map(PathBuf::from) else {

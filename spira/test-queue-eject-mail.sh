@@ -80,11 +80,13 @@ chmod +x "$SH/forge-fixture.sh"
 
 cp -r "$HERE/mail" "$SH/mail"
 
-cat > "$SH/suites.sh" <<'SUITES'
+cat > "$SH/testenv-stub" <<'SUITES'
 #!/usr/bin/env bash
 true
 SUITES
-chmod +x "$SH/suites.sh"
+chmod +x "$SH/testenv-stub"
+# testenv suites observe-flake is the binary now (testenv/DESIGN-suites.md §9 rows 3-4).
+export SPIRA_TESTENV_BIN="$SH/testenv-stub"
 
 cat > "$SH/repro-always-red.sh" <<'REPRO'
 #!/usr/bin/env bash

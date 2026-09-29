@@ -87,7 +87,6 @@ pub struct Config {
     pub boot_tries: u32,
     pub boot_poll: Duration,
     pub ssh_tries: u32,
-    pub bins_target_dir: PathBuf,
     pub wait_poll: Duration,
 }
 
@@ -133,10 +132,6 @@ impl Config {
             boot_tries: num(src, "SPIRA_ROUND_VM_BOOT_TRIES", 60)?,
             boot_poll: Duration::from_secs(num(src, "SPIRA_ROUND_VM_BOOT_POLL", 2)?),
             ssh_tries: num(src, "SPIRA_ROUND_VM_SSH_TRIES", 30)?,
-            bins_target_dir: src
-                .get("SPIRA_BATCH_BINS_TARGET_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| run_dir.join("cargo-target-bins")),
             wait_poll: Duration::from_secs(1),
             host_key,
             host_pubkey,
@@ -251,7 +246,6 @@ mod tests {
         assert_eq!(c.state_dir, PathBuf::from("/r/round-vm"));
         assert_eq!(c.host_key, PathBuf::from("/r/round-vm/host_key"));
         assert_eq!(c.host_pubkey, PathBuf::from("/r/round-vm/host_key.pub"));
-        assert_eq!(c.bins_target_dir, PathBuf::from("/r/cargo-target-bins"));
         assert_eq!(c.ssh_user, "root");
         assert_eq!((c.vcpus, c.maxpar, c.mirror_port, c.max_retries), (16, 16, 9430, 0));
         assert_eq!(c.retry_interval, Duration::from_secs(60));

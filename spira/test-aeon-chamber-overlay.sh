@@ -51,7 +51,7 @@ git -C "$REPO" add f; git -C "$REPO" commit -qm seed
 git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/aeon.sh" "$HERE/suite-covers.sh" "$SPIRA_HOME/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 # THE REAL BUILDER PERSONA, not a synthetic stand-in — the golden check means nothing
 # against a brief this suite invented.
@@ -61,8 +61,8 @@ export SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 export SPIRA_CHAMBER_OVERLAY="$TMP/overlay-empty"   # deliberately absent for the golden check
 
-grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
-    || { printf 'test-aeon-chamber-overlay: aeon.sh has no SPIRA_AGENT injection point\n' >&2; exit 1; }
+[ -x "${SPIRA_AEON_BIN:-}" ] \
+    || { printf 'test-aeon-chamber-overlay: the aeon binary is not built (SPIRA_AEON_BIN)\n' >&2; exit 1; }
 
 BIN="$TMP/bin"; mkdir -p "$BIN"
 export SPIRA_AGENT="$BIN/claude" TMP
@@ -75,7 +75,7 @@ exit 0
 SHIM
 chmod +x "$BIN/claude"
 
-aeon() { bash "$SPIRA_HOME/aeon.sh" "$@" 2>/dev/null; }
+aeon() { "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$@" 2>/dev/null; }
 
 T_LABEL="test-chamber-overlay-bead"
 make_bead() {
@@ -111,7 +111,7 @@ task_g="$(cat "$SPIRA_RUN/$BID_G.system.md" "$SPIRA_RUN/$BID_G.task.md" 2>/dev/n
 nowant "SEEN RED CONTROL: no gate-run.sh anywhere in the rendered brief" "gate-run.sh" "$task_g"
 nowant "and no stray {{GATE}} placeholder"                                "{{GATE}}"    "$task_g"
 want   "the Tests section's own instruction is still there"       "DO NOT run the full landing" "$task_g"
-want   "and testenv-batch.sh is the verification path"            "testenv-batch.sh"            "$task_g"
+want   "and testenv is the verification path"                     "testenv"                     "$task_g"
 close_bead "$BID_G"
 
 # ==========================================================================================

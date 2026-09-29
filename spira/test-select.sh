@@ -16,7 +16,7 @@
 #   • C: all three suites are the planted offenders for unmapped fallback
 #
 # tier: T1
-# covers: spira/select.sh spira/select-globs.sh spira/gate-spira.sh spira/testenv-batch.sh spira/gate-touched.sh
+# covers: spira/select.sh spira/select-globs.sh spira/gate-spira.sh testenv/src/run.rs spira/gate-touched.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -185,25 +185,25 @@ echo "Part E: caller contract — no inline loop in either caller"
 _n="$(grep -c 'suite_covers_of' "$HERE/gate-spira.sh" 2>/dev/null || true)"
 iseq "E1: gate-spira.sh has no suite_covers_of" "${_n:-0}" "0"
 
-# E2: testenv-batch.sh does not contain the old _cv_all corpus-build variable.
-_n="$(grep -c '_cv_all' "$HERE/testenv-batch.sh" 2>/dev/null || true)"
-iseq "E2: testenv-batch.sh has no _cv_all (inline loop removed)" "${_n:-0}" "0"
-
-# E3: testenv-batch.sh calls select.sh.
-_n="$(grep -c 'select\.sh' "$HERE/testenv-batch.sh" 2>/dev/null || true)"
-[ "${_n:-0}" -ge 1 ] && ok "E3: testenv-batch.sh calls select.sh" \
-    || bad "E3: testenv-batch.sh calls select.sh" "no reference found"
+# E2/E3: the testenv runner (testenv/src/run.rs, which replaced testenv-batch.sh) calls
+# select.sh rather than carrying its own corpus loop.
+TESTENV_RUN="$HERE/../testenv/src/run.rs"
+_n="$(grep -c '_cv_all' "$TESTENV_RUN" 2>/dev/null || true)"
+iseq "E2: testenv runner has no _cv_all (inline loop removed)" "${_n:-0}" "0"
+_n="$(grep -c 'select\.sh' "$TESTENV_RUN" 2>/dev/null || true)"
+[ "${_n:-0}" -ge 1 ] && ok "E3: testenv runner calls select.sh" \
+    || bad "E3: testenv runner calls select.sh" "no reference found"
 
 # E4: gate-spira.sh calls select.sh.
 _n="$(grep -c 'select\.sh' "$HERE/gate-spira.sh" 2>/dev/null || true)"
 [ "${_n:-0}" -ge 1 ] && ok "E4: gate-spira.sh calls select.sh" \
     || bad "E4: gate-spira.sh calls select.sh" "no reference found"
 
-# E5: testenv-batch.sh calls select.sh with --no-all-fallback (keeps gate cheap;
+# E5: the testenv runner calls select.sh with --no-all-fallback (keeps gate cheap;
 #     the round's own scheduled run provides full-corpus coverage instead).
-_n="$(grep -c 'no-all-fallback' "$HERE/testenv-batch.sh" 2>/dev/null || true)"
-[ "${_n:-0}" -ge 1 ] && ok "E5: testenv-batch.sh uses --no-all-fallback" \
-    || bad "E5: testenv-batch.sh uses --no-all-fallback" "no reference found"
+_n="$(grep -c 'no-all-fallback' "$TESTENV_RUN" 2>/dev/null || true)"
+[ "${_n:-0}" -ge 1 ] && ok "E5: testenv runner uses --no-all-fallback" \
+    || bad "E5: testenv runner uses --no-all-fallback" "no reference found"
 
 # E6: gate-spira.sh (the per-branch/aeon gate) ALSO uses --no-all-fallback —
 # sp-dv6ae: a branch touching a plumbing file (conf.sh) used to run the entire

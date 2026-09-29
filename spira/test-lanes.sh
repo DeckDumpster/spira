@@ -35,8 +35,8 @@ want "SPIRA_LANES is a recognised conf key" "SPIRA_LANES" "$(cat "$HERE/conf.sh"
 want "ops is in the SPIRA_LANES default"    "ops"          "$(grep 'SPIRA_LANES:=' "$HERE/conf.sh")"
 
 # The sentinel handles lane fayths in a separate loop, inside the summon pass it shares with
-# --summon-only (sp-0y2av): sentinel.sh calls ck7_summon_pass; the loop is in its body.
-want "sentinel.sh runs the shared summon pass" "ck7_summon_pass" "$(cat "$HERE/sentinel.sh")"
+# --summon-only (sp-0y2av): the sentinel binary calls ck7_summon_pass through its seam S2.
+want "the sentinel runs the shared summon pass" "ck7_summon_pass" "$(cat "$HERE"/../sentinel/src/seams.rs)"
 want "the summon pass references spira_lane_fayths" "spira_lane_fayths" \
     "$(awk '/^_ck7_summon_body\(\)/,/^}/' "$HERE/lib.sh")"
 want "the summon pass handles LANE_FAYTHS" "LANE_FAYTHS" \

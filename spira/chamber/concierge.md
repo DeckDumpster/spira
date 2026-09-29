@@ -79,7 +79,7 @@ could have been given hours earlier.
 bd -C {{DB}} ...                    the store; reading is never fenced
 {{SPIRA_HOME}}/world.sh status      is Spira up at all
 {{SPIRA_HOME}}/aeons.sh             the ceiling, what is live, the real ceiling
-{{SPIRA_HOME}}/strand.sh report     work that exists and is not moving, with the reason
+{{SPIRA_HOME}}/../bin/strand report  work that exists and is not moving, with the reason
 {{SPIRA_HOME}}/capacity.sh          the five-hour window: is it shut, what did it cost
 {{SPIRA_HOME}}/skew.sh check        is the activated release the latest published
 {{SPIRA_HOME}}/doctor.sh            read-only preflight: what is missing on this box

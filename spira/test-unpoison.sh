@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-unpoison.sh — unpoison.sh clears spira-poison so that CHECK 4 will not put it back.
+# test-unpoison.sh — spira-claim unpoison clears spira-poison so that CHECK 4 will not put it back.
 #
 # The failure this guards: clearing a poison by removing the label left the attempt count at
 # the threshold, so the very next sentinel pass re-poisoned the bead (2026-09-26, six beads).
@@ -8,7 +8,7 @@
 # come out the other way, judged by check4_decide — the function CHECK 4 itself calls.
 #
 # tier: T2
-# covers: spira/unpoison.sh spira/lib.sh spira/lc.sh spira-lc/* lifecycle/*
+# covers: spira-claim/* spira-lc/* lifecycle/*
 # timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -38,7 +38,7 @@ export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
 export SPIRA_POISON_ASKED="$TMP/poison-asked"; mkdir -p "$SPIRA_POISON_ASKED"
 
 # A REAL spira-lc against a throwaway Dolt server (sp-rlyl0), so the poison hold this bead
-# makes unpoison.sh release is proven against the actual machine, not assumed from lc.sh's
+# makes spira-claim unpoison release is proven against the actual machine, not assumed from lc.sh's
 # own exit code. Same shape as test-lc-hold.sh.
 unset SPIRA_LC_SOCKET
 
@@ -76,7 +76,15 @@ CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
 CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
     "$CARGO_BIN" build --manifest-path "$REPO/spira-lc/Cargo.toml" --quiet 2>"$TMP/lc-build.log" \
     || bail "spira-lc failed to build: $(cat "$TMP/lc-build.log")"
+CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
+    "$CARGO_BIN" build --manifest-path "$REPO/spira-claim/Cargo.toml" --quiet 2>"$TMP/claim-build.log" \
+    || bail "spira-claim failed to build: $(cat "$TMP/claim-build.log")"
 export SPIRA_LC_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-lc"
+export SPIRA_CLAIM_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-claim"
+export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+# The machine is seeded and asserted on below, so the switch is on (spira-claim/DESIGN.md
+# §8.7); off never calls spira-lc and the hold assertions would be meaningless.
+export SPIRA_LIFECYCLE_ENFORCE=1
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LCPORT"
 export SPIRA_LC_DB=spira_lifecycle
@@ -101,17 +109,18 @@ d=json.load(sys.stdin); b=(d if isinstance(d,list) else [d])[0]; print(",".join(
 status_of() { bdjson show "$1" | python3 -c 'import sys,json
 d=json.load(sys.stdin); b=(d if isinstance(d,list) else [d])[0]; print(b.get("status",""))'; }
 decide() { check4_decide "$(attempts_of "$1")" "$(requeues_of "$1")" "$(reclaims_of "$1")" "$(labels_of "$1")"; }
-UNPOISON="$HERE/unpoison.sh"
+UNPOISON="$SPIRA_CLAIM_BIN"
 
 testdb_reset
 testdb_seed <<JSONL
 {"id":"pz1","title":"poisoned by three failed claims","status":"open","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-01T00:00:00Z"}
 {"id":"pz2","title":"control: label-only clear","status":"open","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-01T00:00:00Z"}
 {"id":"pz3","title":"held by a live aeon","status":"in_progress","assignee":"aeon-test","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-01T00:00:00Z"}
+{"id":"pz5","title":"poisoned, cleared with lifecycle_enforce off","status":"open","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-01T00:00:00Z"}
 {"id":"pz4","title":"healthy","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-01T00:00:00Z"}
 {"id":"pzask","title":"Spira bead pz1 — 3 in_progress transition(s) without landing (3 attempts) — change the approach or drop it?","status":"open","issue_type":"decision","labels":["$SPIRA_ASK_LABEL","overseer"],"updated_at":"2026-09-01T00:00:00Z"}
 JSONL
-for id in pz1 pz2 pz3; do
+for id in pz1 pz2 pz3 pz5; do
     for t in '2026-09-01 01:00:00' '2026-09-01 02:00:00' '2026-09-01 03:00:00'; do seedt "$id" claimed '' "$t"; done
 done
 lc_seed_working_poisoned pz1
@@ -123,13 +132,13 @@ bdq label remove pz2 spira-poison >/dev/null 2>&1
 want "label-only clear: check4 still decides poison" "poison" "$(decide pz2)"
 
 echo
-echo "unpoison.sh clears so it sticks:"
-out="$(bash "$UNPOISON" --bead pz1 --cause "every session ended its turn 'waiting for' a background batch" 2>&1)"; rc=$?
+echo "spira-claim unpoison clears so it sticks:"
+out="$("$UNPOISON" unpoison --bead pz1 --cause "every session ended its turn 'waiting for' a background batch" 2>&1)"; rc=$?
 is   "exit 0" "0" "$rc"
 want "reports OK" "OK   pz1" "$out"
 # THE LABEL IS VESTIGIAL, NOT CHECK 4's TO MANAGE (sp-i2m7y): CHECK 4 no longer writes or
 # clears spira-poison at all once its poison hold lives entirely in spira-lc, so nothing
-# would ever take a stale label off if unpoison.sh left it — it removes it itself,
+# would ever take a stale label off if unpoison left it — it removes it itself,
 # best-effort, alongside the hold that actually matters.
 nowant "the vestigial label is removed too" "spira-poison" "$(labels_of pz1)"
 is   "attempt count floored to 0" "0" "$(attempts_of pz1)"
@@ -142,16 +151,24 @@ want "the cause is recorded on the bead" "every session ended its turn" "$(bdjso
 d=json.load(sys.stdin); b=(d if isinstance(d,list) else [d])[0]; print(b.get("notes") or "")')"
 
 echo
+echo "lifecycle_enforce off: the label is the poison, and spira-lc is never needed:"
+out="$(SPIRA_LIFECYCLE_ENFORCE=0 SPIRA_LC_BIN=/nonexistent/spira-lc "$UNPOISON" unpoison --bead pz5 --cause "off-mode clear" 2>&1)"; rc=$?
+is   "off: exit 0" "0" "$rc"
+want "off: reports OK" "OK   pz5" "$out"
+nowant "off: the spira-poison label is removed" "spira-poison" "$(labels_of pz5)"
+is   "off: attempt count floored to 0" "0" "$(attempts_of pz5)"
+
+echo
 echo "refusals:"
-out="$(bash "$UNPOISON" --bead pz1 2>&1)"; is "no --cause is a usage error" "2" "$?"
-out="$(bash "$UNPOISON" --bead pz3 --cause x 2>&1)"; rc=$?
-is   "a bead a live aeon holds is refused" "1" "$rc"
+out="$("$UNPOISON" unpoison --bead pz1 2>&1)"; is "no --cause is a usage error" "1" "$?"
+out="$("$UNPOISON" unpoison --bead pz3 --cause x 2>&1)"; rc=$?
+is   "a bead a live aeon holds is refused" "3" "$rc"
 want "and says who holds it" "held by aeon-test" "$out"
 want "and leaves its poison" "spira-poison" "$(labels_of pz3)"
 want "and leaves its lifecycle poison hold too, against a real spira-lc" "poison" "$(lc_holds pz3)"
-out="$(bash "$UNPOISON" --bead pz4 --cause x 2>&1)"; rc=$?
+out="$("$UNPOISON" unpoison --bead pz4 --cause x 2>&1)"; rc=$?
 is   "a healthy bead is skipped, not an error" "0" "$rc"
 want "and says so" "SKIP pz4" "$out"
-out="$(bash "$UNPOISON" pz1 --cause x 2>&1)"; is "a positional bead id is refused" "2" "$?"
+out="$("$UNPOISON" unpoison pz1 --cause x 2>&1)"; is "a positional bead id is refused" "1" "$?"
 
 tl_summary

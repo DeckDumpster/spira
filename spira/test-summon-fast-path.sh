@@ -242,7 +242,7 @@ ops 1" "$out"
 
 # ============================================================================
 echo
-echo "D — sentinel.sh --summon-only against a real fixture: one bd ready call, no full pass:"
+echo "D — sentinel --summon-only against a real fixture: one bd ready call, no full pass:"
 # ============================================================================
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -259,6 +259,9 @@ DSTUBS="$T/dstubs"
 mkdir -p "$DSTUBS"
 ln -s "$HERE/chamber" "$DSTUBS/chamber"
 ln -s "$HERE/ready-bucket.py" "$DSTUBS/ready-bucket.py"
+# THE SENTINEL IS A BINARY (sentinel.sh is gone): it sources lib.sh from SPIRA_HOME.
+for _s in lib.sh conf.sh lc.sh suite-covers.sh lifecycle-cert.sh; do ln -s "$HERE/$_s" "$DSTUBS/$_s"; done
+SENTINEL_BIN="${SPIRA_SENTINEL_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; printf %s "${SPIRA_SENTINEL_BIN:-}"' _ "$HERE")}"
 SUMMON_LOG="$T/d-summoned.log"
 printf '#!/bin/sh\necho summoned >> "%s"\n' "$SUMMON_LOG" > "$DSTUBS/mock-summon"; chmod +x "$DSTUBS/mock-summon"
 # SPIRA_SUMMON below is this mock, not systemd-run, so aeon_count takes its pidfile
@@ -290,7 +293,7 @@ run_summon_only() {   # run_summon_only <run-dir> [KEY=VAL ...]
         SPIRA_SUMMON="$DSTUBS/mock-summon" \
         SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL= SPIRA_MAX_AEONS=2 \
         "$@" \
-        bash "$HERE/sentinel.sh" --summon-only 2>&1
+        "$SENTINEL_BIN" --summon-only 2>&1
 }
 
 # builder is elastic (FAYTH_ELASTIC=1, builder.fayth): its fill loop is bound by the POOL,
@@ -337,9 +340,12 @@ echo "E — every aeon carries its own fast-path refill hook (ExecStopPost):"
 # know it exited) — the refill it wires must reach --summon-only, never the full pass, or
 # an aeon exiting is right back to waiting out the 2-minute cadence this bead exists to cut.
 export SPIRA_SUMMON="$T/bin/mock-summon-noop"   # already an absolute path; created in section A
+# The refill runs the sentinel BINARY (sentinel.sh is gone), named by SPIRA_SENTINEL_BIN.
+_prev_sentinel_bin="${SPIRA_SENTINEL_BIN-}"; export SPIRA_SENTINEL_BIN="$T/bin/sentinel"
 argv="$(summon_argv racer | tr '\n' ' ')"
+if [ -n "$_prev_sentinel_bin" ]; then SPIRA_SENTINEL_BIN="$_prev_sentinel_bin"; else unset SPIRA_SENTINEL_BIN; fi
 case "$argv" in
-    *"--property=ExecStopPost=$T/bin/mock-summon-noop --user --collect --quiet $T/sentinel.sh --summon-only"*)
+    *"--property=ExecStopPost=$T/bin/mock-summon-noop --user --collect --quiet $T/bin/sentinel --summon-only"*)
         ok "summon_argv: ExecStopPost refills via --summon-only, not a full pass" ;;
     *) bad "summon_argv: ExecStopPost refills via --summon-only" "got: $argv" ;;
 esac

@@ -659,6 +659,8 @@ run_gate() {             # run_gate <ref-being-tested> -> the command's own stat
         SPIRA_VERDICT_REPEAT_CONSIDERED="${SPIRA_VERDICT_REPEAT_CONSIDERED:-}" \
         SPIRA_GATE_BUDGET="${SPIRA_GATE_BUDGET:-300}" \
         SPIRA_RUN="$SPIRA_RUN" \
+        SPIRA_LINT_BIN="${SPIRA_LINT_BIN:-}" \
+        SPIRA_TESTENV_BIN="${SPIRA_TESTENV_BIN:-}" \
         timeout "${SPIRA_GATE_TIMEOUT:-2700}" bash -c "$CMD" 9>&- ) 2>&1
     return $?
 }

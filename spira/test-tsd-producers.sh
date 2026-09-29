@@ -58,60 +58,9 @@ print(eval(sys.argv[2]))
 }
 
 # ============================================================================================
-printf '\n%s\n' "1. aeon-session: ledger_done (aeon.sh) appends a row, best-effort"
-# ============================================================================================
-FUNCS1="$T/funcs1.sh"
-sed -n '/^ledger_done() {/,/^}/p' "$HERE/aeon.sh" > "$FUNCS1"
-[ -s "$FUNCS1" ] || bad "could not extract ledger_done from aeon.sh"
-
-RUN1="$T/run1"; mkdir -p "$RUN1"
-(
-    export SPIRA_HOME="$T" SPIRA_RUN="$RUN1" SPIRA_DB="$T/db1" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent
-    export SPIRA_TSD_BIN="$TSD_BIN"
-    set -uo pipefail
-    . "$HERE/lib.sh"
-    rapid_recur_check() { return 0; }   # no bd calls in this fixture
-    FAYTH=builder; BEAD_ID=sp-aeontest; LOGF=""; DRY=0; LEDGER="$RUN1/aeon-ledger.log"
-    ledger() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LEDGER"; }
-    . "$FUNCS1"
-    ledger_done 0 done
-    echo "ledger_done_rc=$?"
-) > "$T/ledger_done.out" 2>&1
-ld_out="$(cat "$T/ledger_done.out")"
-want "ledger_done still succeeds" "ledger_done_rc=0" "$ld_out"
-
-FAM1="$RUN1/tsd/aeon-session.jsonl"
-[ -f "$FAM1" ] && ok "aeon-session row appended" \
-                || bad "MUST-FAIL CHECK: no aeon-session row (old aeon.sh behaviour)"
-if [ -f "$FAM1" ]; then
-    is "aeon-session: bead"   "sp-aeontest" "$(jpy "$FAM1" 'rows[0]["bead"]')"
-    is "aeon-session: fayth"  "builder"     "$(jpy "$FAM1" 'rows[0]["fayth"]')"
-    is "aeon-session: rc"     "0"           "$(jpy "$FAM1" 'rows[0]["rc"]')"
-    is "aeon-session: status" "done"        "$(jpy "$FAM1" 'rows[0]["status"]')"
-    # No trace file (LOGF="") -> session_result_fields renders every figure "?".
-    is "aeon-session: wall_s is '?' with no trace" "?" "$(jpy "$FAM1" 'rows[0]["wall_s"]')"
-fi
-
-# Best-effort: an unbuilt/absent SPIRA_TSD_BIN must not break ledger_done's own job.
-RUN2="$T/run2"; mkdir -p "$RUN2"
-(
-    export SPIRA_HOME="$T" SPIRA_RUN="$RUN2" SPIRA_DB="$T/db1" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent
-    export SPIRA_TSD_BIN="$T/no-such-binary"
-    set -uo pipefail
-    . "$HERE/lib.sh"
-    rapid_recur_check() { return 0; }
-    FAYTH=builder; BEAD_ID=sp-aeontest2; LOGF=""; DRY=0; LEDGER="$RUN2/aeon-ledger.log"
-    ledger() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LEDGER"; }
-    . "$FUNCS1"
-    ledger_done 1 refused
-    echo "ledger_done_rc=$?"
-) > "$T/ledger_done2.out" 2>&1
-ld_out2="$(cat "$T/ledger_done2.out")"
-want "ledger_done succeeds even when SPIRA_TSD_BIN is not executable" "ledger_done_rc=0" "$ld_out2"
-[ -s "$RUN2/aeon-ledger.log" ] && ok "ledger line still written with tsd-write absent" \
-                                || bad "ledger line missing — ledger_done's own job regressed"
-[ -f "$RUN2/tsd/aeon-session.jsonl" ] && bad "a tsd row appeared despite no usable tsd-write" \
-                                       || ok "no tsd row written when tsd-write is not executable"
+printf '\n%s\n' "1. aeon-session: RETIRED with aeon.sh"
+# ledger_done was extracted from aeon.sh's source; aeon.sh is gone (the Rust cutover) and the
+# aeon binary's ledger and tsd rows are covered by `cargo test -p aeon`.
 
 # ============================================================================================
 printf '\n%s\n' "2. slots: _tsd_slots_sample (lib.sh) and slots_keys' config-only ceiling"
@@ -232,32 +181,8 @@ RUN5B="$T/run5b"; mkdir -p "$RUN5B"
 [ -f "$RUN5B/tsd/round.jsonl" ] && bad "a round row appeared despite no --batch-id" \
                                  || ok "no round row written when --batch-id is omitted"
 
-# testenv-batch.sh's own call site: SPIRA_ROUND_BATCH_ID opts a batch run into the "build"
-# phase, counting the .result files its own RESULTS dir already carries.
-TB_TAIL="$T/tb_tail.sh"
-sed -n '/^if \[ -n "\${SPIRA_ROUND_BATCH_ID:-}" \]; then$/,/^fi$/p' "$HERE/testenv-batch.sh" > "$TB_TAIL"
-[ -s "$TB_TAIL" ] || bad "could not extract testenv-batch.sh's round-phase block"
-RUN6="$T/run6"; RESULTS6="$T/results6"; mkdir -p "$RUN6" "$RESULTS6"
-printf 'ok x x x\n'  > "$RESULTS6/s1.result"
-printf 'red x x x\n' > "$RESULTS6/s2.result"
-printf 'ok x x x\n'  > "$RESULTS6/s3.result"
-(
-    export SPIRA_RUN="$RUN6" SPIRA_TSD_BIN="$TSD_BIN"
-    . "$HERE/lib.sh"
-    RESULTS="$RESULTS6"; _BATCH_WALL=42
-    SPIRA_ROUND_BATCH_ID="batch-build-1"; SPIRA_ROUND_MEMBERS=4
-    . "$TB_TAIL"
-)
-FAM6="$RUN6/tsd/round.jsonl"
-[ -f "$FAM6" ] && ok "testenv-batch.sh's own call site wrote a round row" \
-                || bad "MUST-FAIL CHECK: testenv-batch.sh's round-phase block wrote nothing"
-if [ -f "$FAM6" ]; then
-    is "testenv-batch.sh round row: phase"   "build" "$(jpy "$FAM6" 'rows[0]["phase"]')"
-    is "testenv-batch.sh round row: secs"    "42"    "$(jpy "$FAM6" 'rows[0]["secs"]')"
-    is "testenv-batch.sh round row: members" "4"     "$(jpy "$FAM6" 'rows[0]["members"]')"
-    is "testenv-batch.sh round row: reds (one red .result of three)" \
-       "1" "$(jpy "$FAM6" 'rows[0]["reds"]')"
-fi
+# testenv-batch.sh's round-phase block was extracted from its source; testenv-batch.sh is gone
+# (the Rust cutover) and testenv's `build` round row is `cargo test -p testenv` (testenv/src/run.rs).
 
 # ============================================================================================
 printf '\n%s\n' "4. sentinel-phase: a real pass's summed CHECK rows are within 5% of its wall time"
@@ -275,9 +200,12 @@ JSONL
 
 SP_STUBS="$T/sp-stubs"
 mkdir -p "$SP_STUBS"
-for _s in pilgrimage.sh strand.sh reflect.sh; do
+for _s in pilgrimage.sh strand reflect.sh; do
     printf '#!/bin/sh\n' > "$SP_STUBS/$_s"; chmod +x "$SP_STUBS/$_s"
 done
+# THE SENTINEL IS A BINARY (sentinel.sh is gone): it sources lib.sh from SPIRA_HOME.
+for _s in lib.sh conf.sh lc.sh suite-covers.sh lifecycle-cert.sh; do ln -s "$HERE/$_s" "$SP_STUBS/$_s"; done
+SENTINEL_BIN="${SPIRA_SENTINEL_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; printf %s "${SPIRA_SENTINEL_BIN:-}"' _ "$HERE")}"
 printf '#!/bin/sh\necho inactive\n' > "$SP_STUBS/mock-systemctl"; chmod +x "$SP_STUBS/mock-systemctl"
 printf '#!/bin/sh\nexit 0\n'        > "$SP_STUBS/mock-launch";    chmod +x "$SP_STUBS/mock-launch"
 printf '#!/bin/sh\nexit 0\n'        > "$SP_STUBS/mock-notify";    chmod +x "$SP_STUBS/mock-notify"
@@ -304,7 +232,8 @@ out_pass="$(env -i \
     SPIRA_NOTIFY="$SP_STUBS/mock-notify" \
     SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL= SPIRA_MAX_AEONS=2 \
     SPIRA_TSD_BIN="$TSD_BIN" \
-    bash "$HERE/sentinel.sh" 2>&1)"
+    SPIRA_STRAND_BIN="$SP_STUBS/strand" \
+    "$SENTINEL_BIN" 2>&1)"
 rc=$?
 _pass_wall=$(( $(date +%s) - _pass_t0 ))
 is   "sentinel pass exits 0"                       "0"            "$rc"

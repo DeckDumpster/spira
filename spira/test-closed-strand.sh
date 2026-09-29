@@ -39,11 +39,17 @@ git -C "$REPO" fetch -q origin
 git -C "$REPO" remote set-head origin main
 mkdir -p "$RUN/worktree" "$RUN/landstate" "$SH/chamber"
 
-cp "$HERE/landing.sh" "$HERE/landing-lib.sh" "$HERE/sentinel.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
+cp "$HERE/landing.sh" "$HERE/landing-lib.sh" "$HERE/lc.sh" "$HERE/lifecycle-cert.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
    "$HERE/incident.sh" "$HERE/skew.sh" "$HERE/sending.sh" "$HERE/suite-covers.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub pilgrimage.sh 'exit 0'
-stub strand.sh     'exit 0'
+stub strand        'exit 0'
+# THE RUST SENTINEL (sentinel.sh is gone): the binaries are resolved as conf.sh's spira_bin
+# resolves them for THIS tree, and passed explicitly, because the fixture's own SPIRA_REPO is
+# not the tree that built them.
+_rbin() { SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin "$2" 2>/dev/null' _ "$HERE" "$1"; }
+SENTINEL_BIN="${SPIRA_SENTINEL_BIN:-$(_rbin sentinel)}"
+export SPIRA_CLAIM_BIN="${SPIRA_CLAIM_BIN:-$(_rbin spira-claim)}"
 stub sending.sh    'exit 0'
 stub reflect.sh    'exit 0'
 stub gate.sh       'echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2; exit 0'
@@ -70,8 +76,8 @@ sentinel() {
     SPIRA_GOAL=sp-goal SPIRA_FAYTHS="t" SPIRA_INFERENCE_EVERY=999999 \
     SPIRA_NOTIFY="$SH/ask.sh" SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
-    SPIRA_CONF="$TMP/no.conf" \
-        bash "$SH/sentinel.sh" 2>&1
+    SPIRA_CONF="$TMP/no.conf" SPIRA_STRAND_BIN="$SH/strand" \
+        "$SENTINEL_BIN" 2>&1
 }
 
 landing() {

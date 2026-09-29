@@ -20,6 +20,10 @@ pub struct Config {
     pub max_live_aeons: u32,
     pub throttle_release_at: String,
     pub lc_bin: Option<String>,
+    /// THE lifecycle switch (DESIGN.md §9): `SPIRA_LIFECYCLE_ENFORCE`, else
+    /// `spira.lifecycle_enforce`, else off. Off, strand never runs `lc_bin`; `lc_bin`'s
+    /// presence or absence is never consulted to decide this.
+    pub lifecycle_enforce: bool,
     pub instance: Option<String>,
     pub labels: Option<String>,
     pub exclude_labels: Option<String>,
@@ -102,6 +106,10 @@ impl Config {
             throttle_release_at: nonempty(get("SPIRA_QUEUE_THROTTLE_RELEASE_AT", "queue_throttle_release_at"))
                 .unwrap_or_else(|| "8".into()),
             lc_bin: nonempty(get("SPIRA_LC_BIN", "lc_bin")),
+            lifecycle_enforce: spira_config::resolve_lifecycle_enforce(
+                src.env(spira_config::LIFECYCLE_ENFORCE_ENV).as_deref(),
+                src.toml("lifecycle_enforce").map(|v| v == "true"),
+            ),
             // conf.sh: an unset SPIRA_INSTANCE is identical to SPIRA_INSTANCE=prod.
             instance: Some(nonempty(get("SPIRA_INSTANCE", "instance")).unwrap_or_else(|| "prod".into())),
             labels: nonempty(src.env("SPIRA_LABELS")),
@@ -192,5 +200,19 @@ mod tests {
         let f = Fake { env: HashMap::new(), toml: HashMap::from([("home_repo", "spira")]) };
         assert_eq!(Config::resolve(&f).scope_label, "spira");
         assert_eq!(Config::resolve(&f).max_aeons, None);
+    }
+
+    #[test]
+    fn lifecycle_switch_env_then_toml_then_off() {
+        let r = |env: &[(&'static str, &'static str)], toml: &[(&'static str, &'static str)]| {
+            Config::resolve(&Fake { env: env.iter().copied().collect(), toml: toml.iter().copied().collect() }).lifecycle_enforce
+        };
+        assert!(!r(&[], &[]), "default off");
+        assert!(!r(&[("SPIRA_LC_BIN", "/usr/bin/true")], &[("lc_bin", "/usr/bin/true")]), "a binary never turns it on");
+        assert!(r(&[], &[("lifecycle_enforce", "true")]));
+        assert!(!r(&[("SPIRA_LIFECYCLE_ENFORCE", "0")], &[("lifecycle_enforce", "true")]), "the environment wins");
+        assert!(!r(&[("SPIRA_LIFECYCLE_ENFORCE", "")], &[("lifecycle_enforce", "true")]), "set-but-empty is off");
+        assert!(r(&[("SPIRA_LIFECYCLE_ENFORCE", "1")], &[]));
+        assert!(r(&[("SPIRA_LIFECYCLE_ENFORCE", "true")], &[("lifecycle_enforce", "false")]));
     }
 }

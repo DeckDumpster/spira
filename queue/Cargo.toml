@@ -1,0 +1,21 @@
+[package]
+name = "queue"
+version = "1.0.0"
+edition = "2021"
+description = "queue — the merge queue's operator and landing tool (submit, eject, abandon, open-batch, claim/release, land-local, publish, to-forge/to-local, rollback-local, stats). Replaces spira/queue.sh."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+spira-config = { path = "../spira-config" }
+
+[[bin]]
+name = "queue"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

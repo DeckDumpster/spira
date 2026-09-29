@@ -224,12 +224,18 @@ fn hold_alive(pf: &Path) -> bool {
     pid_in(pf).is_some_and(|pid| Path::new(&format!("/proc/{pid}")).is_dir())
 }
 
-/// A recorded pid that is still an aeon: alive AND its argv names aeon.sh (a recycled pid
-/// must not resurrect a dead aeon's claim).
+/// A recorded pid that is still an aeon: alive AND its argv is the aeon runner — aeon.sh, or
+/// the Rust binary whose argv[0] is `…/aeon` (a recycled pid must not resurrect a dead
+/// aeon's claim).
 pub fn aeon_alive(pf: &Path) -> bool {
     let Some(pid) = pid_in(pf) else { return false };
     let Ok(cmd) = fs::read(format!("/proc/{pid}/cmdline")) else { return false };
-    String::from_utf8_lossy(&cmd).contains("aeon.sh")
+    is_aeon_cmdline(&cmd)
+}
+
+pub fn is_aeon_cmdline(c: &[u8]) -> bool {
+    let argv0 = String::from_utf8_lossy(c.split(|b| *b == 0).next().unwrap_or(&[])).into_owned();
+    String::from_utf8_lossy(c).contains("aeon.sh") || argv0 == "aeon" || argv0.ends_with("/aeon")
 }
 
 fn pidfiles(run: &Path, prefix: &str, suffix: &str) -> Vec<PathBuf> {
@@ -276,24 +282,40 @@ pub fn aeons_live_total(cfg: &Config) -> u32 {
     pidfiles(run_dir, "aeon-", ".pid").iter().filter(|p| aeon_alive(p)).count() as u32
 }
 
-/// Beads under a spira-lc "wait" hold. No binary, or an unreadable reply, is no holds —
-/// the same answer lc_list_held gave.
-pub fn wait_held(cfg: &Config) -> HashSet<String> {
-    let Some(bin) = cfg.lc_bin.as_deref().filter(|b| is_executable(Path::new(b))) else {
-        return HashSet::new();
+/// The legacy wait exemption: the label CHECK 2 put on a bead waiting on the operator before
+/// sp-i2m7y moved it onto a spira-lc `wait` hold (`SPIRA_RECLAIM_SKIP_LABEL`'s default; the
+/// key itself is retired, so the literal is the contract).
+pub const WAIT_LABEL: &str = "spira-waiting-operator"; // literal-ok: retired key's default
+
+/// Beads the ghost check must not reclaim because they are legitimately waiting.
+///
+/// `lifecycle_enforce` off: the beads carrying [`WAIT_LABEL`], read off the store the pass
+/// already loaded — spira-lc is never run. On: the spira-lc `wait` holds, and an absent or
+/// non-executable binary, a failed call or an unparseable reply is an `Err` (the caller's
+/// "cannot tell"), never an empty set that would let the ghost check reclaim a held bead.
+pub fn wait_held(cfg: &Config, beads: &[Bead]) -> Result<HashSet<String>, String> {
+    if !cfg.lifecycle_enforce {
+        return Ok(beads.iter().filter(|b| b.has(WAIT_LABEL)).map(|b| b.id.clone()).collect());
+    }
+    let unreachable = |why: String| {
+        format!("lifecycle_enforce is on and spira-lc is unreachable ({why}) — cannot read the wait holds")
     };
+    let bin = cfg.lc_bin.as_deref().ok_or_else(|| unreachable("SPIRA_LC_BIN unset".into()))?;
+    if !is_executable(Path::new(bin)) {
+        return Err(unreachable(format!("{bin} is not executable")));
+    }
     let o = run("timeout", &["30", bin, "list", "--hold", "wait"], None, &[]);
     if !o.ok {
-        return HashSet::new();
+        return Err(unreachable(format!("list --hold wait: {}", o.stderr.trim())));
     }
-    serde_json::from_str::<serde_json::Value>(&o.stdout)
-        .ok()
-        .and_then(|v| v.as_array().cloned())
+    let v: serde_json::Value = serde_json::from_str(&o.stdout).map_err(|e| unreachable(format!("unparseable reply: {e}")))?;
+    Ok(v.as_array()
+        .cloned()
         .unwrap_or_default()
         .iter()
         .filter_map(|r| r.get("bead_id").and_then(|x| x.as_str()).map(str::to_string))
         .filter(|s| !s.is_empty())
-        .collect()
+        .collect())
 }
 
 pub fn is_executable(p: &Path) -> bool {
@@ -413,6 +435,14 @@ pub fn harness_state(cfg: &Config, now: i64) -> (String, i64) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn aeon_cmdline_matches_the_script_and_the_binary_only() {
+        assert!(super::is_aeon_cmdline(b"bash\0/h/spira/aeon.sh\0builder\0"));
+        assert!(super::is_aeon_cmdline(b"/r/current/bin/aeon\0--home\0/r/current/spira\0builder\0"));
+        assert!(!super::is_aeon_cmdline(b"/usr/bin/sleep\0aeon\0"));
+        assert!(!super::is_aeon_cmdline(b"/r/bin/aeonic\0"));
+    }
+
     use super::*;
 
     #[test]

@@ -258,7 +258,7 @@ printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
 
 AEON_HOME="$TMP/aeonhome"; mkdir -p "$AEON_HOME/chamber"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/aeon.sh" "$HERE/suite-covers.sh" "$AEON_HOME/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$AEON_HOME/"
 cp -r "$HERE/actors" "$AEON_HOME/" 2>/dev/null || true
 AEON_RUN="$TMP/aeonrun"; mkdir -p "$AEON_RUN"
 AEON_REPO_MAP="$TMP/repo-map"
@@ -288,7 +288,7 @@ chmod +x "$BIN/claude"
 
 ( SPIRA_HOME="$AEON_HOME" SPIRA_RUN="$AEON_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP" \
   SPIRA_CONF="$TMP/no-such2.conf" \
-  "$AEON_HOME/aeon.sh" builder > "$TMP/aeon-out" 2>&1 )
+  "$SPIRA_AEON_BIN" --home "$AEON_HOME" builder > "$TMP/aeon-out" 2>&1 )
 
 # A task bead's close is converted to open + spira-submitted at teardown (sp-qsona): only
 # the landing pass closes a work bead directly, so "claimed and finished" reads as
@@ -347,7 +347,7 @@ chmod +x "$BIN2/python3"
 AEON_RUN2="$TMP/aeonrun2"; mkdir -p "$AEON_RUN2"
 ( SPIRA_PATH="$BIN2" SPIRA_HOME="$AEON_HOME" SPIRA_RUN="$AEON_RUN2" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP" \
   SPIRA_CONF="$TMP/no-such3.conf" \
-  "$AEON_HOME/aeon.sh" builder > "$TMP/aeon-out2" 2>&1 )
+  "$SPIRA_AEON_BIN" --home "$AEON_HOME" builder > "$TMP/aeon-out2" 2>&1 )
 t8_rc=$?
 
 [ "$t8_rc" -ne 0 ] && ok "aeon.sh exits non-zero on a forced rank failure (never the 'idle' success exit)" \

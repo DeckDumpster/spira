@@ -180,7 +180,7 @@ git -C "$REPO" push -q origin main 2>/dev/null
 # builder.fayth still declares its OWN (now unused) FAYTH_MODEL — proving spira.toml wins
 # over a fayth declaration rather than merely over an absent one.
 SH="$T/home"; mkdir -p "$SH/chamber"
-cp "$HARNESS/spira/lib.sh" "$HARNESS/spira/conf.sh" "$HARNESS/spira/aeon.sh" \
+cp "$HARNESS/spira/lib.sh" "$HARNESS/spira/conf.sh" \
    "$HARNESS/spira/suite-covers.sh" "$SH/" 2>/dev/null
 cp -r "$HARNESS/spira/actors" "$SH/" 2>/dev/null || true
 cat > "$SH/chamber/builder.fayth" <<'FAYTH'
@@ -230,7 +230,7 @@ SHIM
 chmod +x "$BIN/claude"
 export SPIRA_AGENT="$BIN/claude"
 
-aeon() { bash "$SH/aeon.sh" "$@" 2>/dev/null; }
+aeon() { "$SPIRA_AEON_BIN" --home "$SH" "$@" 2>/dev/null; }
 
 # --sweep: no bead needed.
 rm -f "$T/claude-argv"

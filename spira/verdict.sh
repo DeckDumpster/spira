@@ -12,12 +12,12 @@
 # ejected, together-only reds halve the batch, and unreproduced reds requeue
 # without flake quarantine.
 #
-# A batch record claimed by the concierge (owner=concierge, queue.sh claim) is refused
+# A batch record claimed by the concierge (owner=concierge, queue claim) is refused
 # outright — the whole pass, not just judgement — so a hand edit to the round branch never
 # races a fast-forward merge or a rebuild (sp-91hb5). Every mutation this file does make
 # mails the concierge mailbox as a machine event (queue_notify_concierge).
 #
-# For a queue.local repository this instead settles queue.sh publish's own record
+# For a queue.local repository this instead settles queue publish's own record
 # (queue/<repo>/publish, never the queue.forge `open` file above): green fast-forwards the
 # forge target to identical SHAs with no land_mark and no bead close; red runs local
 # attribution (attribute.sh) against the published range and files one fix-forward bead,
@@ -1312,9 +1312,9 @@ verdict_action() {
 
 # ---------------------------------------------------------------------------
 # PUBLISH SETTLEMENT — queue.local's publish queue (row 3 of the local/main design,
-# queue.sh's own `publish:`). Distinct from the queue.forge batch machinery above: no
+# queue's own `publish:`). Distinct from the queue.forge batch machinery above: no
 # land_mark, no bead close, no judgement-ci, no reopening a member. The member beads
-# already closed when local/main landed them (queue.sh land-local); the forge here is
+# already closed when local/main landed them (queue land-local); the forge here is
 # confirmation of a publish, not a gate, and a red one is fixed forward, never rolled back.
 # ---------------------------------------------------------------------------
 
@@ -1716,7 +1716,7 @@ _verdict_process() {
                     while IFS= read -r _line; do
                         case "$_line" in
                             "flaky: "*)
-                                bash "$HERE/suites.sh" observe-flake "${_line#flaky: }" "$batch_head" \
+                                "$SPIRA_TESTENV_BIN" suites observe-flake "${_line#flaky: }" "$batch_head" \
                                     2>/dev/null || true
                                 ;;
                         esac

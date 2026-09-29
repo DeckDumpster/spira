@@ -1226,14 +1226,19 @@ struct FakePr {
     helper: RefCell<Vec<String>>,
     delivered: RefCell<Vec<String>>,
     rc: Cell<i32>,
+    fail: RefCell<Option<String>>,
 }
 impl PrTools for FakePr {
     fn branch_helper(&self, _: &Path, br: &str, id: &str, base: &str, name: &str, tip: &str) -> i32 {
         self.helper.borrow_mut().push(format!("{br} {id} {base} {name} {tip}"));
         self.rc.get()
     }
-    fn deliver_by_content(&self, id: &str, sha: &str) {
+    fn deliver_by_content(&self, id: &str, sha: &str) -> Result<(), String> {
         self.delivered.borrow_mut().push(format!("{id} {sha}"));
+        match self.fail.borrow().clone() {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 }
 
@@ -1258,18 +1263,16 @@ fn the_pr_pass_hands_done_branches_to_the_helper_and_proves_content_landings() {
         git: &h.git,
         procs: &h.procs,
         tools: &tools,
-        lc: &h.lc,
-        lc_state: std::cell::OnceCell::new(),
         out: &h.out,
+        loud: Default::default(),
     };
     let (seen, acted) = p.run();
     assert_eq!((seen, acted), (4, 2));
     let hl = tools.helper.borrow().clone();
     assert!(hl.contains(&"spira/sp-done sp-done origin/main spira t1".to_string()));
     assert!(hl.contains(&"spira/sp-sub sp-sub origin/main spira t2".to_string()), "submitted reads as done");
-    // lifecycle_enforce is OFF (the default): spira-lc is never invoked, not even probed.
+    // lifecycle_enforce is OFF (the default): the CONTENT record only; spira-lc never runs.
     assert!(tools.delivered.borrow().is_empty());
-    assert_eq!(h.lc.probes.get(), 0);
     assert!(fs::read_to_string(h.s.run.join("landstate/sp-merged")).unwrap().starts_with("CONTENT t3 "));
     assert!(h.logged("landing-pass spira: sp-wip not landed — its bead is in_progress"));
 }
@@ -1328,7 +1331,7 @@ repo=other\u{1d}\u{1d}\u{1d}\u{1d}\u{1d}\u{1d}\u{1d}\0";
 // The lifecycle switch (§9)
 // ──────────────────────────────────────────────────────────────────────────────
 
-fn pr_run(h: &H, tools: &FakePr) {
+fn pr_run(h: &H, tools: &FakePr) -> Vec<String> {
     let p = PrPass {
         s: &h.s,
         repos: &h.repos,
@@ -1336,11 +1339,11 @@ fn pr_run(h: &H, tools: &FakePr) {
         git: &h.git,
         procs: &h.procs,
         tools,
-        lc: &h.lc,
-        lc_state: std::cell::OnceCell::new(),
         out: &h.out,
+        loud: Default::default(),
     };
     p.run();
+    p.loud.into_inner()
 }
 
 fn push_fixture(on: bool) -> H {
@@ -1391,19 +1394,22 @@ fn off_queue_certification_never_invokes_spira_lc() {
 }
 
 #[test]
-fn on_the_pr_pass_proves_content_deliveries_and_says_so_when_it_cannot() {
+fn on_the_pr_pass_proves_content_deliveries_and_is_loud_when_the_machine_fails() {
     let mut h = H::new(LandMode::Pr);
     h.s.lifecycle_enforce = true;
     h.closed("sp-merged", "t3");
     h.git.content.borrow_mut().insert("spira/sp-merged".into());
     h.git.shas.borrow_mut().insert("refs/remotes/origin/main".into(), "M".into());
     let tools = FakePr::default();
-    pr_run(&h, &tools);
+    assert!(pr_run(&h, &tools).is_empty());
     assert_eq!(*tools.delivered.borrow(), vec!["sp-merged M"]);
 
-    *h.lc.down.borrow_mut() = Some("no socket".into());
     let tools = FakePr::default();
-    pr_run(&h, &tools);
-    assert!(tools.delivered.borrow().is_empty());
-    assert!(h.logged("spira-lc is unreachable (no socket) — sp-merged's content-proven delivery is not recorded"));
+    *tools.fail.borrow_mut() = Some("show exited 1: Access denied".into());
+    let loud = pr_run(&h, &tools);
+    assert_eq!(
+        loud,
+        vec!["landing-pass: sp-merged: LIFECYCLE: lifecycle_enforce is on and the Delivered event did not happen (show exited 1: Access denied) — the delivery row stays PR_OPEN"]
+    );
+    assert!(fs::read_to_string(h.s.run.join("landstate/sp-merged")).unwrap().starts_with("CONTENT t3 "), "the pass goes on");
 }

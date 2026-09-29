@@ -121,11 +121,13 @@ esac
 FORGE
 chmod +x "$SH/forge-fixture.sh"
 
-cat > "$SH/suites.sh" <<'SUITES'
+cat > "$SH/testenv-stub" <<'SUITES'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$SUITES_LOG"
 SUITES
-chmod +x "$SH/suites.sh"
+chmod +x "$SH/testenv-stub"
+# testenv suites observe-flake is the binary now (testenv/DESIGN-suites.md §9 rows 3-4).
+export SPIRA_TESTENV_BIN="$SH/testenv-stub"
 
 cat > "$SH/mail.sh" <<'MAIL'
 #!/usr/bin/env bash

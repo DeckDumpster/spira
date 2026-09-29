@@ -175,10 +175,16 @@ mkdir -p "$RUN/worktree" "$SH/chamber"
 
 # The program under test, run out of its own directory so it sources the real lib.sh but
 # finds stubbed sub-programs beside it.
-cp "$HERE/sentinel.sh" "$HERE/lib.sh" "$HERE/lc.sh" "$HERE/landing.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HERE/attempts.sh" "$SH/"
+cp "$HERE/lib.sh" "$HERE/lc.sh" "$HERE/lifecycle-cert.sh" "$HERE/landing.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HERE/attempts.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub pilgrimage.sh 'printf "%s" "${PILGRIMAGE_OUT:-}"'
-stub strand.sh     'printf "%s" "${STRAND_OUT:-}"'
+stub strand        'printf "%s" "${STRAND_OUT:-}"'
+# THE RUST SENTINEL (sentinel.sh is gone): the binaries are resolved as conf.sh's spira_bin
+# resolves them for THIS tree, and passed explicitly, because the fixture's own SPIRA_REPO is
+# not the tree that built them.
+_rbin() { SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin "$2" 2>/dev/null' _ "$HERE" "$1"; }
+SENTINEL_BIN="${SPIRA_SENTINEL_BIN:-$(_rbin sentinel)}"
+export SPIRA_CLAIM_BIN="${SPIRA_CLAIM_BIN:-$(_rbin spira-claim)}"
 stub sending.sh    'printf "%s" "${SENDING_OUT:-}"'
 stub gate.sh       'exit ${GATE_RC:-0}'
 stub reflect.sh    'touch "$SPIRA_RUN/reflect.fired"'
@@ -239,8 +245,8 @@ sentinel() {
         SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
         SPIRA_SUMMON="$TMP/launch" \
         SPIRA_SKIP_RECLAIM=1 \
-        SPIRA_SKIP_CLOSED_CHECK=1 \
-            bash "$SH/sentinel.sh" --audit 2>&1
+        SPIRA_SKIP_CLOSED_CHECK=1 SPIRA_STRAND_BIN="$SH/strand" \
+            "$SENTINEL_BIN" --audit 2>&1
     )"
     normal_out="$(
         SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
@@ -249,8 +255,8 @@ sentinel() {
         SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
         SPIRA_SUMMON="$TMP/launch" \
         SPIRA_SKIP_RECLAIM=1 \
-        SPIRA_SKIP_CLOSED_CHECK=1 \
-            bash "$SH/sentinel.sh" 2>&1
+        SPIRA_SKIP_CLOSED_CHECK=1 SPIRA_STRAND_BIN="$SH/strand" \
+            "$SENTINEL_BIN" 2>&1
     )"
     printf '%s\n%s\n' "$audit_out" "$normal_out"
 }

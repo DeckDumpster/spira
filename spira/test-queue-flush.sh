@@ -10,6 +10,10 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
+# test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
+QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
+[ -x "$QUEUE_BIN" ] || { echo "FAIL: the queue binary is not built at $QUEUE_BIN"; exit 1; }
 
 echo "test-queue-flush.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -32,7 +36,7 @@ run() {
     env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_PATH="$TMP/bin" SPIRA_RUN="$TMP/run" \
         SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_BATCH_WAIT=1800 \
-        bash "$TMP/spira/queue.sh" "$@" 2>&1
+        SPIRA_HOME="$TMP/spira" "$QUEUE_BIN" "$@" 2>&1
 }
 
 echo

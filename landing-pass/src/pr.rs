@@ -18,7 +18,9 @@ pub trait PrTools {
     /// pr-pass-branch.sh <repo> <br> <id> <base> <name> <tip> → its exit status.
     fn branch_helper(&self, repo: &Path, br: &str, id: &str, base: &str, name: &str, tip: &str) -> i32;
     /// Record pr mode's `merged` exit by content proof when the delivery row is PR_OPEN.
-    fn deliver_by_content(&self, id: &str, merge_sha: &str);
+    /// Ok covers the quiet cases (delivered, no row, a row not in PR_OPEN); Err is a machine
+    /// that could not be asked or refused the event. Called only with the switch ON.
+    fn deliver_by_content(&self, id: &str, merge_sha: &str) -> Result<(), String>;
 }
 
 pub struct PrPass<'a> {
@@ -28,15 +30,22 @@ pub struct PrPass<'a> {
     pub git: &'a dyn Git,
     pub procs: &'a dyn Procs,
     pub tools: &'a dyn PrTools,
-    /// Consulted only with the lifecycle switch ON (DESIGN.md §9).
-    pub lc: &'a dyn crate::lifecycle::Lc,
-    pub lc_state: std::cell::OnceCell<Result<(), String>>,
     pub out: &'a Reporter,
+    /// The LIFECYCLE: lines this pass printed on stderr (kept for tests).
+    pub loud: std::cell::RefCell<Vec<String>>,
 }
 
 impl<'a> PrPass<'a> {
     fn log(&self, m: &str) {
         self.out.log(m);
+    }
+
+    fn lifecycle_loud(&self, id: &str, why: &str) {
+        let line = format!(
+            "landing-pass: {id}: LIFECYCLE: lifecycle_enforce is on and the Delivered event did not happen ({why}) — the delivery row stays PR_OPEN"
+        );
+        self.loud.borrow_mut().push(line.clone());
+        eprintln!("{line}");
     }
 
     /// Returns (branches seen, branches acted on).
@@ -117,18 +126,14 @@ impl<'a> PrPass<'a> {
             if self.git.content_landed(&r.path, br, &base_fq) {
                 self.log(&format!("landing-pass {name}: {base} already contains every change on {br} — nothing to land"));
                 write_content_mark(&self.s.landstate(), id, tip);
-                // OFF: spira-lc is never invoked. ON: it is authoritative, and unreachable is loud.
+                // OFF (production): the CONTENT record and nothing else — spira-lc is never run
+                // (f031f6dee). ON: the Delivered event, best-effort additive; a machine that
+                // cannot be asked or refuses is a loud LIFECYCLE: line and the pass goes on.
                 if self.s.lifecycle_enforce {
-                    match self.lc_state.get_or_init(|| self.lc.probe()) {
-                        Ok(()) => {
-                            if let Some(sha) = self.git.rev_parse(&r.path, &base_fq) {
-                                self.tools.deliver_by_content(id, &sha);
-                            }
+                    if let Some(sha) = self.git.rev_parse(&r.path, &base_fq) {
+                        if let Err(why) = self.tools.deliver_by_content(id, &sha) {
+                            self.lifecycle_loud(id, &why);
                         }
-                        Err(why) => self.log(&crate::lifecycle::unreachable_line(
-                            why,
-                            &format!("{id}'s content-proven delivery is not recorded"),
-                        )),
                     }
                 }
                 continue;
@@ -173,25 +178,32 @@ impl<'a> PrTools for RealPrTools<'a> {
         }
     }
 
-    fn deliver_by_content(&self, id: &str, merge_sha: &str) {
-        let Some(lc) = &self.s.lc_bin else { return };
+    fn deliver_by_content(&self, id: &str, merge_sha: &str) -> Result<(), String> {
+        let lc = self.s.lc_bin.as_ref().filter(|b| crate::real::executable(b)).ok_or("SPIRA_LC_BIN is not an executable")?;
         let mut c = command(lc);
         c.arg("show").arg(id).stdin(Stdio::null());
-        let (rc, so, _) = run_capture(c);
+        let (rc, so, se) = run_capture(c);
         if rc != 0 {
-            return;
+            let e = String::from_utf8_lossy(&se);
+            return Err(format!("show exited {rc}: {}", e.lines().last().unwrap_or("").trim()));
         }
-        let Some((state, version)) = delivery_of(&so) else { return };
+        let v: serde_json::Value = serde_json::from_slice(&so).map_err(|e| format!("show: unparsed reply: {e}"))?;
+        // No delivery row, or one not in PR_OPEN: the ordinary, quiet case.
+        let Some((state, version)) = delivery_of(v.to_string().as_bytes()) else { return Ok(()) };
         if state != "PR_OPEN" {
-            return;
+            return Ok(());
         }
         let kind = serde_json::json!({"Delivered": {"merge_sha": merge_sha, "proof": "merge-tree"}}).to_string();
         let mut e = command(lc);
         e.args(["event", "delivery", id, "--expect", "PR_OPEN", "--version", &version, "--actor", "landing-pass", "--kind", &kind]);
         e.stdin(Stdio::null());
-        if run_capture(e).0 == 0 {
-            eprintln!("landing-pass: {id}: delivery PR_OPEN -> delivered by content proof");
+        let (rc, _, se) = run_capture(e);
+        if rc != 0 {
+            let err = String::from_utf8_lossy(&se);
+            return Err(format!("event exited {rc}: {}", err.lines().last().unwrap_or("").trim()));
         }
+        eprintln!("landing-pass: {id}: delivery PR_OPEN -> delivered by content proof");
+        Ok(())
     }
 }
 

@@ -1,0 +1,356 @@
+//! The model session and what watches it: the launch (its own process group, stdin from the
+//! task file, stdout+stderr appended to the trace), the liveness lease / thrash heartbeat,
+//! and the aeon's own TERM/INT.
+//!
+//! PROCESS MODEL (DESIGN.md §8.3). aeon.sh's heartbeat killed its own process group
+//! (`kill -TERM -$$`), which also delivered TERM to aeon.sh and ran its EXIT trap. Here the
+//! session runs in a group of its own; a trip signals THAT group and records the signal on
+//! `Stop`, and the main thread goes straight to teardown with rc 143 — the same outcome.
+
+use std::collections::BTreeMap;
+use std::fs::OpenOptions;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use crate::decide::{hb_tick, HbTick};
+use crate::util;
+
+/// Shared between the main thread, the heartbeat and the signal watcher.
+#[derive(Default)]
+pub struct Stop {
+    /// The signal that ended this aeon (0: none). 15 for a heartbeat trip.
+    pub sig: AtomicI32,
+    /// The running session's process group (0: none running).
+    pub pgid: AtomicI32,
+}
+
+impl Stop {
+    pub fn trip(&self, sig: i32) {
+        let _ = self.sig.compare_exchange(0, sig, Ordering::SeqCst, Ordering::SeqCst);
+        self.kill_session();
+    }
+    pub fn kill_session(&self) {
+        let g = self.pgid.load(Ordering::SeqCst);
+        if g > 0 {
+            // SAFETY: signalling a process group we created; never 0 (our own group).
+            unsafe {
+                libc::kill(-g, libc::SIGTERM);
+            }
+        }
+    }
+    pub fn signalled(&self) -> Option<i32> {
+        match self.sig.load(Ordering::SeqCst) {
+            0 => None,
+            s => Some(s),
+        }
+    }
+}
+
+/// Everything one session launch needs.
+#[derive(Debug, Clone)]
+pub struct SessionSpec {
+    pub prog: String,
+    pub args: Vec<String>,
+    pub stdin_file: PathBuf,
+    pub log: PathBuf,
+    pub cwd: PathBuf,
+    pub env: BTreeMap<String, String>,
+    /// FAYTH_TIMEOUT_SECONDS: killed after this, rc 124 (`timeout`'s code).
+    pub timeout: Option<u64>,
+}
+
+pub trait Launcher: Send + Sync {
+    /// Runs the session to its end; its exit code (124 on timeout, 128+sig when signalled).
+    fn run(&self, spec: &SessionSpec, stop: &Stop) -> i32;
+}
+
+pub struct RealLauncher;
+
+impl Launcher for RealLauncher {
+    fn run(&self, spec: &SessionSpec, stop: &Stop) -> i32 {
+        use std::os::unix::process::CommandExt;
+        let Ok(stdin) = std::fs::File::open(&spec.stdin_file) else { return 1 };
+        let Ok(out) = OpenOptions::new().create(true).append(true).open(&spec.log) else { return 1 };
+        let Ok(err) = out.try_clone() else { return 1 };
+        let mut cmd = std::process::Command::new(&spec.prog);
+        cmd.args(&spec.args).env_clear().envs(spec.env.iter()).current_dir(&spec.cwd).stdin(stdin).stdout(out).stderr(err).process_group(0);
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                if let Ok(mut f) = OpenOptions::new().append(true).open(&spec.log) {
+                    use std::io::Write;
+                    let _ = writeln!(f, "aeon: cannot start {}: {e}", spec.prog);
+                }
+                return 127;
+            }
+        };
+        stop.pgid.store(child.id() as i32, Ordering::SeqCst);
+        if stop.signalled().is_some() {
+            stop.kill_session();
+        }
+        let start = Instant::now();
+        let mut timed_out = false;
+        let mut forwarded = false;
+        let code = loop {
+            match child.try_wait() {
+                Ok(Some(s)) => break util::exit_code(s),
+                Ok(None) => {}
+                Err(_) => break 1,
+            }
+            if !timed_out && spec.timeout.is_some_and(|t| start.elapsed() >= Duration::from_secs(t)) {
+                timed_out = true;
+                stop.kill_session();
+            }
+            if !forwarded && stop.signalled().is_some() {
+                forwarded = true;
+                stop.kill_session();
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        stop.pgid.store(0, Ordering::SeqCst);
+        if timed_out {
+            124
+        } else {
+            code
+        }
+    }
+}
+
+/// Watch TERM and INT on the aeon itself: record the signal and pass TERM to the session.
+pub fn watch_signals(stop: Arc<Stop>) {
+    let term = Arc::new(AtomicBool::new(false));
+    let int = Arc::new(AtomicBool::new(false));
+    let _ = signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&term));
+    let _ = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&int));
+    std::thread::spawn(move || loop {
+        if term.swap(false, Ordering::SeqCst) {
+            stop.trip(libc::SIGTERM);
+        }
+        if int.swap(false, Ordering::SeqCst) {
+            stop.trip(libc::SIGINT);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    });
+}
+
+// ---- the heartbeat -------------------------------------------------------------------
+
+/// What one beat needs from outside (so a test can drive it).
+pub trait Beat: Send + Sync {
+    fn now(&self) -> i64;
+    fn trace_mtime(&self) -> i64;
+    /// `aeon_fuse_minutes` (an integer, or `?`/`gate`).
+    fn fuse(&self) -> String;
+    /// `trace_last`, first `n` bytes.
+    fn trace_last(&self, n: usize) -> String;
+    /// `bd heartbeat <id>`; false ends the heartbeat.
+    fn bd_heartbeat(&self) -> bool;
+    fn log(&self, msg: &str);
+}
+
+pub struct Heartbeat {
+    pub bead: String,
+    pub fayth: String,
+    pub run: PathBuf,
+    pub lease_s: i64,
+    pub every: Duration,
+    pub wall_min: i64,
+}
+
+impl Heartbeat {
+    fn lease_file(&self) -> PathBuf {
+        self.run.join("aeon").join(format!("{}.lease", self.bead))
+    }
+
+    fn write_lease(&self, deadline: i64) {
+        let f = self.lease_file();
+        if let Some(p) = f.parent() {
+            let _ = std::fs::create_dir_all(p);
+        }
+        let _ = util::write_atomic(&f, deadline.to_string().as_bytes());
+    }
+
+    /// The loop. Returns when told to shut down, when `bd heartbeat` fails, or after a trip.
+    pub fn run(&self, b: &dyn Beat, stop: &Stop, shutdown: &AtomicBool) -> Option<HbTick> {
+        let mut prev = b.trace_mtime();
+        let session_start = b.now();
+        let mut deadline = session_start + self.lease_s;
+        self.write_lease(deadline);
+        loop {
+            let t = Instant::now();
+            while t.elapsed() < self.every {
+                if shutdown.load(Ordering::SeqCst) {
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(20).min(self.every));
+            }
+            if shutdown.load(Ordering::SeqCst) {
+                return None;
+            }
+            let cur = b.trace_mtime();
+            let now = b.now();
+            let fuse = b.fuse();
+            match hb_tick(prev, cur, now, deadline, if fuse.is_empty() { "?" } else { &fuse }, self.wall_min, session_start) {
+                HbTick::Renew => {
+                    prev = cur;
+                    deadline = now + self.lease_s;
+                    self.write_lease(deadline);
+                }
+                HbTick::Lapse => {
+                    let last = b.trace_last(200);
+                    let quiet = now - cur;
+                    let last = if last.is_empty() { "?".to_string() } else { last };
+                    let _ = std::fs::write(self.run.join(format!("{}.lapsed", self.bead)), format!("{quiet}\t{last}\n"));
+                    b.log(&format!("{}: {} lease lapsed (trace quiet {quiet}s, last: {last}) — killing", self.fayth, self.bead));
+                    stop.trip(libc::SIGTERM);
+                    return Some(HbTick::Lapse);
+                }
+                HbTick::Thrash => {
+                    let dsess = (now - session_start) / 60;
+                    let last = b.trace_last(300);
+                    let last = if last.is_empty() { "no last action".to_string() } else { last };
+                    let _ = std::fs::write(self.run.join(format!("{}.thrash", self.bead)), format!("{last}\n"));
+                    b.log(&format!(
+                        "{}: {} deliverable stalled {fuse}m session {dsess}m (wall {}m) — requeueing for thrash",
+                        self.fayth, self.bead, self.wall_min
+                    ));
+                    stop.trip(libc::SIGTERM);
+                    return Some(HbTick::Thrash);
+                }
+                HbTick::Ok => {}
+            }
+            if !b.bd_heartbeat() {
+                return None;
+            }
+        }
+    }
+}
+
+pub fn mtime(p: &Path) -> i64 {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(p).map(|m| m.mtime()).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    struct FakeBeat {
+        now: Mutex<i64>,
+        mtimes: Mutex<Vec<i64>>,
+        fuse: String,
+        logs: Mutex<Vec<String>>,
+        beats: Mutex<u32>,
+    }
+    impl Beat for FakeBeat {
+        fn now(&self) -> i64 {
+            let mut n = self.now.lock().unwrap();
+            *n += 60;
+            *n
+        }
+        fn trace_mtime(&self) -> i64 {
+            let mut m = self.mtimes.lock().unwrap();
+            if m.len() > 1 {
+                m.remove(0)
+            } else {
+                m[0]
+            }
+        }
+        fn fuse(&self) -> String {
+            self.fuse.clone()
+        }
+        fn trace_last(&self, _n: usize) -> String {
+            "{\"type\":\"assistant\"}".into()
+        }
+        fn bd_heartbeat(&self) -> bool {
+            *self.beats.lock().unwrap() += 1;
+            true
+        }
+        fn log(&self, m: &str) {
+            self.logs.lock().unwrap().push(m.into());
+        }
+    }
+
+    fn tmp(n: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("aeon-hb-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    // test-aeon-lease.sh: a silent trace lapses the lease, writes .lapsed, trips the stop.
+    #[test]
+    fn silent_trace_lapses_and_trips() {
+        let d = tmp("lapse");
+        let hb = Heartbeat { bead: "sp-a".into(), fayth: "builder".into(), run: d.clone(), lease_s: 120, every: Duration::from_millis(1), wall_min: 20 };
+        let b = FakeBeat { now: Mutex::new(0), mtimes: Mutex::new(vec![5]), fuse: "0".into(), logs: Mutex::new(vec![]), beats: Mutex::new(0) };
+        let stop = Stop::default();
+        let r = hb.run(&b, &stop, &AtomicBool::new(false));
+        assert_eq!(r, Some(HbTick::Lapse));
+        assert_eq!(stop.signalled(), Some(15));
+        let lapsed = std::fs::read_to_string(d.join("sp-a.lapsed")).unwrap();
+        assert!(lapsed.contains("\t{\"type\":\"assistant\"}"));
+        assert!(b.logs.lock().unwrap()[0].contains("sp-a lease lapsed (trace quiet"));
+        assert!(d.join("aeon/sp-a.lease").is_file());
+    }
+
+    // test-thrash-teardown.sh: turns advance, the deliverable does not → thrash.
+    #[test]
+    fn growing_trace_with_a_stale_fuse_thrashes() {
+        let d = tmp("thrash");
+        let hb = Heartbeat { bead: "sp-a".into(), fayth: "builder".into(), run: d.clone(), lease_s: 600, every: Duration::from_millis(1), wall_min: 2 };
+        let b = FakeBeat { now: Mutex::new(0), mtimes: Mutex::new(vec![1, 2, 2, 2, 2, 2]), fuse: "30".into(), logs: Mutex::new(vec![]), beats: Mutex::new(0) };
+        let stop = Stop::default();
+        let r = hb.run(&b, &stop, &AtomicBool::new(false));
+        assert_eq!(r, Some(HbTick::Thrash));
+        assert!(std::fs::read_to_string(d.join("sp-a.thrash")).unwrap().starts_with("{\"type\""));
+        assert!(b.logs.lock().unwrap()[0].contains("deliverable stalled 30m session"));
+        assert!(*b.beats.lock().unwrap() >= 1, "bd heartbeat ran on the renewing beats");
+    }
+
+    #[test]
+    fn shutdown_ends_quietly() {
+        let d = tmp("down");
+        let hb = Heartbeat { bead: "sp-a".into(), fayth: "b".into(), run: d, lease_s: 600, every: Duration::from_secs(60), wall_min: 20 };
+        let b = FakeBeat { now: Mutex::new(0), mtimes: Mutex::new(vec![1]), fuse: "?".into(), logs: Mutex::new(vec![]), beats: Mutex::new(0) };
+        let stop = Stop::default();
+        assert_eq!(hb.run(&b, &stop, &AtomicBool::new(true)), None);
+        assert_eq!(stop.signalled(), None);
+    }
+
+    /// The trip signals the SESSION's group, never pgid 0 (the aeon's own).
+    #[test]
+    fn trip_signals_session_group() {
+        let stop = Stop::default();
+        stop.trip(15); // no session: must not signal ourselves (we are still here)
+        assert_eq!(stop.signalled(), Some(15));
+        let d = tmp("launch");
+        let task = d.join("task.md");
+        std::fs::write(&task, "hi").unwrap();
+        let mut env = BTreeMap::new();
+        env.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
+        let spec = SessionSpec { prog: "sh".into(), args: vec!["-c".into(), "cat; sleep 30".into()], stdin_file: task, log: d.join("log"), cwd: d.clone(), env, timeout: None };
+        let t0 = Instant::now();
+        let rc = RealLauncher.run(&spec, &stop);
+        assert!(t0.elapsed() < Duration::from_secs(10), "a stop already recorded kills the session at once");
+        assert_eq!(rc, 143);
+        // Without a stop the same launch reads the task on stdin into the trace.
+        let spec2 = SessionSpec { args: vec!["-c".into(), "cat".into()], ..spec };
+        assert_eq!(RealLauncher.run(&spec2, &Stop::default()), 0);
+        assert_eq!(std::fs::read_to_string(d.join("log")).unwrap(), "hi");
+    }
+
+    #[test]
+    fn timeout_is_124() {
+        let d = tmp("timeout");
+        let task = d.join("task.md");
+        std::fs::write(&task, "").unwrap();
+        let mut env = BTreeMap::new();
+        env.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
+        let spec = SessionSpec { prog: "sleep".into(), args: vec!["30".into()], stdin_file: task, log: d.join("log"), cwd: d.clone(), env, timeout: Some(0) };
+        assert_eq!(RealLauncher.run(&spec, &Stop::default()), 124);
+    }
+}

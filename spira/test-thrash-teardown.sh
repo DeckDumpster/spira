@@ -46,6 +46,7 @@ printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
+printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the aeon binary sources <home>/lib.sh; this is the real one, as aeon.sh sourced it
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
@@ -59,8 +60,8 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
-    || bail "aeon.sh has no SPIRA_AGENT injection — refusing to run the real model"
+[ -x "${SPIRA_AEON_BIN:-}" ] \
+    || bail "the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model"
 
 # Shim A (positive control): exits with the bead open and no marker — attempt IS charged.
 cat > "$BIN/claude-no-thrash" <<'SHIM'
@@ -107,7 +108,7 @@ seed() {
 }
 run_aeon() {
     rm -rf "$SPIRA_RUN/worktree"
-    "$HERE/aeon.sh" builder > "$TMP/out" 2>&1
+    "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1
     echo $?
 }
 bead_status() {
@@ -189,7 +190,7 @@ fresh; seed sp-tt-3
 rm -rf "$SPIRA_RUN/worktree"
 marker="$SPIRA_RUN/sp-tt-3.thrash"
 rm -f "$marker"
-setsid "$HERE/aeon.sh" builder > "$TMP/out3" 2>&1 &
+setsid "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out3" 2>&1 &
 aeon_pid=$!
 
 _waited=0
@@ -217,15 +218,8 @@ nowant "note is NOT ALSO contaminated by the fallthrough's Not judged" "Not judg
 # waiting on a foreground process), so the trip would not actually stop it in time.
 # ======================================================================================
 echo
-echo "aeon.sh structural: thrash trip uses process-group kill (-\$\$)"
-
-AEON="$HERE/aeon.sh"
-write_line="$(grep -n 'printf.*BEAD_ID\.thrash' "$AEON" | head -1 | cut -d: -f1)"
-if [ -z "$write_line" ]; then
-    bad "thrash marker write (printf > BEAD_ID.thrash)" "not found in aeon.sh"
-else
-    kill_cmd="$(awk "NR>$write_line && NR<=$((write_line+5))" "$AEON" | grep 'kill')"
-    want "thrash trip kills the process group" "kill -TERM -\$\$" "$kill_cmd"
-fi
+# RETIRED with aeon.sh: the process-group kill is now the Rust aeon's, pinned by
+# `cargo test -p aeon session::tests::trip_signals_session_group`.
+echo "(structural thrash-kill check retired — cargo test -p aeon session::tests::trip_signals_session_group)"
 
 tl_summary

@@ -41,6 +41,7 @@ fa_setup() {   # fa_setup <tag> — build the fixture once
     git -C "$FA_REPO" push -q origin main 2>/dev/null
 
     FA_HOME="$FA_TMP/home"; mkdir -p "$FA_HOME/chamber"
+    printf '. "%s/lib.sh"\n' "$HERE" > "$FA_HOME/lib.sh"   # the aeon binary sources <home>/lib.sh; the real one, as aeon.sh did
     FA_RUN="$FA_TMP/run"; mkdir -p "$FA_RUN"
     FA_REPO_MAP="$FA_TMP/repo-map"
     export SPIRA_HOME="$FA_HOME" SPIRA_RUN="$FA_RUN" SPIRA_REPO_MAP="$FA_REPO_MAP"
@@ -58,8 +59,8 @@ FAYTH
 
     FA_BIN="$FA_TMP/bin"; mkdir -p "$FA_BIN"
     export SPIRA_AGENT="$FA_BIN/claude" TMP="$FA_TMP"
-    grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
-        || { printf 'full-aeon-fixture: aeon.sh has no SPIRA_AGENT injection — refusing to run the real model\n' >&2; exit 1; }
+    [ -x "${SPIRA_AEON_BIN:-}" ] \
+        || { printf 'full-aeon-fixture: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run\n' >&2; exit 1; }
 }
 
 # fa_teardown — call from the caller's own `trap ... EXIT INT TERM`; not registered here
@@ -75,9 +76,9 @@ fa_seed() {   # fa_seed <id> [updated_at]
         "$id" "$lbl" "$updated" | testdb_seed
 }
 
-fa_run_aeon() {   # fa_run_aeon [fayth] -> prints aeon.sh's rc; output captured to $FA_TMP/out
+fa_run_aeon() {   # fa_run_aeon [fayth] -> prints the aeon binary's rc; output captured to $FA_TMP/out
     rm -rf "$SPIRA_RUN/worktree"
-    "$HERE/aeon.sh" "${1:-builder}" > "$FA_TMP/out" 2>&1
+    "$SPIRA_AEON_BIN" --home "$FA_HOME" "${1:-builder}" > "$FA_TMP/out" 2>&1
     printf '%s' "$?"
 }
 

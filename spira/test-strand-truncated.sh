@@ -42,16 +42,25 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/run"
 
+# THE STRAND AND SENTINEL ARE BINARIES (strand.sh, sentinel.sh are gone), resolved as conf.sh's
+# spira_bin resolves them for this tree. Both source lib.sh from SPIRA_HOME, so each stub
+# home carries the real lib.sh and what it sources.
+_rbin() { SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin "$2" 2>/dev/null' _ "$HERE" "$1"; }
+STRAND_BIN="${SPIRA_STRAND_BIN:-$(_rbin strand)}"
+SENTINEL_BIN="${SPIRA_SENTINEL_BIN:-$(_rbin sentinel)}"
+_libs() { local _s; for _s in lib.sh conf.sh lc.sh suite-covers.sh lifecycle-cert.sh; do ln -sf "$HERE/$_s" "$1/$_s"; done; }
+
 echo "test-strand-truncated.sh"
 
 # ======================================================================================
 echo
-echo "case 2 — strand.sh detection: sentinel log 'not evaluated' → pass-truncated:"
+echo "case 2 — strand detection: sentinel log 'not evaluated' → pass-truncated:"
 # ======================================================================================
 # Build a stub chamber with a fayth whose partition is "spira,test-plan". The sentinel
 # log records that this fayth was not evaluated. Strand.sh detects it and passes
 # PASS_TRUNCATED=1 to the classifier.
 mkdir -p "$TMP/stubs/chamber"
+_libs "$TMP/stubs"
 cat > "$TMP/stubs/chamber/test-watcher.fayth" <<'FAYTH'
 FAYTH_NAME=test-watcher
 FAYTH_LABELS=spira,test-plan
@@ -85,15 +94,16 @@ out="$(
     SPIRA_RUN="$TMP/run" \
     SPIRA_BD="$TMP/mock-bd" \
     SPIRA_SUMMON=stub \
+    SPIRA_DB="$TMP/no-db" \
     SPIRA_LABELS="spira,test-plan" \
-        bash "$HERE/strand.sh" report 2>/dev/null
+        "$STRAND_BIN" report 2>/dev/null
 )"
 want   "detection: pass-truncated IS reported" "pass-truncated" "$out"
 nowant "detection: starved IS NOT reported"    "starved"        "$out"
 
 # ======================================================================================
 echo
-echo "case 3 — no truncation in log: strand.sh still reports starved:"
+echo "case 3 — no truncation in log: strand still reports starved:"
 # ======================================================================================
 # Same setup but sentinel log has no "not evaluated" line for test-watcher.
 cat > "$TMP/run/sentinel.log" <<'LOG'
@@ -106,8 +116,9 @@ out="$(
     SPIRA_RUN="$TMP/run" \
     SPIRA_BD="$TMP/mock-bd" \
     SPIRA_SUMMON=stub \
+    SPIRA_DB="$TMP/no-db" \
     SPIRA_LABELS="spira,test-plan" \
-        bash "$HERE/strand.sh" report 2>/dev/null
+        "$STRAND_BIN" report 2>/dev/null
 )"
 want   "no truncation: starved IS raised"         "starved"        "$out"
 nowant "no truncation: pass-truncated not raised" "pass-truncated" "$out"
@@ -129,9 +140,10 @@ FAYTH_TIMEOUT_SECONDS=3600
 FAYTH2
 done
 # Stubs: pilgrimage, strand, sending, reflect all exit 0 with no output.
-for _s in pilgrimage.sh strand.sh sending.sh reflect.sh; do
+for _s in pilgrimage.sh strand sending.sh reflect.sh; do
     printf '#!/bin/sh\n' > "$TMP/stubs2/$_s"; chmod +x "$TMP/stubs2/$_s"
 done
+_libs "$TMP/stubs2"
 # systemctl stub: says unit is inactive so the landing dispatch path runs cleanly.
 printf '#!/bin/sh\necho inactive\n' > "$TMP/stubs2/mock-systemctl"; chmod +x "$TMP/stubs2/mock-systemctl"
 # launch/summon/notify stubs.
@@ -157,7 +169,8 @@ out="$(env -i \
     SPIRA_LAUNCH="$TMP/stubs2/mock-launch" \
     SPIRA_SUMMON="$TMP/stubs2/mock-summon" \
     SPIRA_NOTIFY="$TMP/stubs2/mock-notify" \
-        bash "$HERE/sentinel.sh" 2>&1)"
+    SPIRA_STRAND_BIN="$TMP/stubs2/strand" \
+        "$SENTINEL_BIN" 2>&1)"
 
 want   "alpha logged as not evaluated" "CHECK7 alpha: not evaluated (pass budget exhausted)" "$out"
 want   "beta logged as not evaluated"  "CHECK7 beta: not evaluated (pass budget exhausted)"  "$out"

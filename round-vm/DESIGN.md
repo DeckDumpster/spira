@@ -48,15 +48,18 @@ wait for a VM, whether it provisioned one itself or waited on the provision in f
    serves `<state>` on `SPIRA_ROUND_VM_MIRROR_PORT`.
 3. `acquire`. The VM is **leased to this process** from this point on.
 4. Wait until ssh reaches the VM. On the VM: clone `git://<host-addr>:<port>/mirror.git`,
-   then `testenv-batch.sh --mode parallel --with-bins [--suites CSV] round` with
-   `SPIRA_BATCH_MAXPAR` and, if given, `RUSTUP_TOOLCHAIN`.
+   then `cargo run -q --profile release -p testenv -- --mode parallel --profile release
+   [--suites CSV] round` with `SPIRA_BATCH_MAXPAR` and, if given, `RUSTUP_TOOLCHAIN`
+   (the cutover from testenv-batch.sh); then stage `target/release`'s executables into
+   `~/round-bins/`.
 5. rsync back `batch-results/` (flattened out of any one-level `BATCH_KEY` nesting into the
    results dir, default `$SPIRA_RUN/batch-results`), `tsd/*.jsonl` (merged into
-   `$SPIRA_RUN/tsd`, tagged `ran_on`, `vcpus`, `maxpar`) and `cargo-target-bins/`.
+   `$SPIRA_RUN/tsd`, tagged `ran_on`, `vcpus`, `maxpar`) and `round-bins/`.
 6. Write `<state>/manifests/<tree-sha>.json` (schema 3.4).
-7. Install `cargo-target-bins/<tree-sha>/release` under `SPIRA_BATCH_BINS_TARGET_DIR`
-   (default `$SPIRA_RUN/cargo-target-bins`) **only if** the directory the VM produced is
-   named with this tree's own sha. A mismatch installs nothing and names both shas.
+7. Install the pulled executables into `<tree-dir>/target/release` — where `queue
+   land-local --worktree <tree-dir>` reads them — **only if** the VM's `batch.meta`
+   reports (`tree=`) this tree's own sha. A mismatch, or no report, installs nothing and
+   names both shas.
 8. Release the VM (destroy, verify gone).
 
 Exit code: the remote `testenv-batch.sh`'s own code when it ran and was non-zero (1 red,
@@ -150,7 +153,6 @@ pub struct Config {
     pub boot_tries: u32,             // SPIRA_ROUND_VM_BOOT_TRIES  / 60
     pub boot_poll: Duration,         // SPIRA_ROUND_VM_BOOT_POLL   / 2 s
     pub ssh_tries: u32,              // SPIRA_ROUND_VM_SSH_TRIES   / 30 (x boot_poll)
-    pub bins_target_dir: PathBuf,    // SPIRA_BATCH_BINS_TARGET_DIR / $SPIRA_RUN/cargo-target-bins
     pub wait_poll: Duration,         // how often acquire re-checks a provision in flight: 1 s
 }
 
@@ -225,7 +227,7 @@ insecure fallback. Responses it reads, each wrapped in `{"data": ...}`:
 ```rust
 pub struct Manifest {
     pub tree_sha: String,
-    pub tree_sha_found: Option<String>, // the directory name the VM produced under cargo-target-bins/
+    pub tree_sha_found: Option<String>, // batch.meta `tree=` the VM's testenv reported
     pub commit_sha: String,
     pub vm: String,
     pub acquire: AcquireMode,           // "warm" | "cold"

@@ -10,6 +10,12 @@ use testenv::runtime::{self, Podman};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // `testenv suites …` — the suite-state tooling (DESIGN-suites.md). A branch literally
+    // named `suites` is `testenv -- suites`.
+    if args.first().map(String::as_str) == Some("suites") {
+        let rc = testenv::suites::main(&args[1..]);
+        return ExitCode::from(rc.clamp(0, 255) as u8);
+    }
     let inv = match cli::parse(&args) {
         Ok(i) => i,
         Err(cli::UsageError(lines)) => {

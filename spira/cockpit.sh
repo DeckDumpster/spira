@@ -623,8 +623,9 @@ else:
     # a thing had changed hands. Merging the aeon ledger in makes this a lifecycle, so a
     # switch explains itself instead of having to be inferred from a clock.
     {
-        grep -E 'ACT (landed|reopened|poisoned|reclaimed [0-9]|announced|reaped)' \
-             "$SPIRA_RUN/sentinel.log" 2>/dev/null | tail -80 \
+        # audit.log too: CHECK 4 (poisoned) runs in the sentinel's audit worker, which logs there.
+        grep -hE 'ACT (landed|reopened|poisoned|reclaimed [0-9]|announced|reaped)' \
+             "$SPIRA_RUN/sentinel.log" "$SPIRA_RUN/audit.log" 2>/dev/null | tail -80 \
           | sed -E 's/^([^ ]+) spira: ACT /\1 sentinel /'
         # strand.sh's output carries NO timestamp of its own — it is printed inside a pass.
         # Stamping it with now() made a half-hour-old reclaim read "0s ago", which is the

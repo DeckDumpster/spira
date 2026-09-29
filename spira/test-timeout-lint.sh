@@ -11,7 +11,7 @@
 #
 # defect: sp-eibeu
 # tier: T1
-# covers: spira/timeout-lint.sh spira/aeon.sh spira/sentinel.sh spira/landing.sh
+# covers: spira/timeout-lint.sh spira/landing.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -55,7 +55,7 @@ rm -f "$PLANT"
 # THE SHIPPED TREE. Read through the control above, this now means something.
 # ---------------------------------------------------------------------------------------
 out="$(lint)"; rc=$?
-is   "GREEN AFTER: aeon.sh, sentinel.sh and landing.sh pass by default" "0" "$rc"
+is   "GREEN AFTER: landing.sh passes by default" "0" "$rc"
 [ "$rc" = 0 ] || printf '%s\n' "$out"
 
 tl_summary

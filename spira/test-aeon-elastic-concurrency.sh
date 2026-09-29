@@ -46,17 +46,15 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 echo "test-aeon-elastic-concurrency.sh"
 
-# aeon.sh must still call fayth_free rather than a private comparison — a refusal to run at
-# all here is louder than a suite that would otherwise pass against a reverted fix by
-# accident (mirrors the SPIRA_AGENT injection-point guard other aeon.sh suites carry).
-grep -q 'fayth_free "$FAYTH"' "$HERE/aeon.sh" \
-    || { echo "test-aeon-elastic-concurrency.sh: aeon.sh no longer calls fayth_free for its own concurrency check — refusing to run" >&2; exit 1; }
+# The aeon binary (aeon/, which replaced aeon.sh) must be built — a refusal to run at all
+# here is louder than a suite that silently runs nothing.
+[ -x "${SPIRA_AEON_BIN:-}" ] \
+    || { echo "test-aeon-elastic-concurrency.sh: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run" >&2; exit 1; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
-# Minimal harness tree: only aeon.sh is copied (and instrumented via a stub lib.sh beside
-# it); everything else is read from the real checkout so fayth_free itself is exercised
-# unmodified.
+# Minimal harness tree: the aeon binary runs with --home here, against a stub lib.sh that
+# sources the real one; everything else is read from the real checkout.
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such.conf"
@@ -65,7 +63,6 @@ export SPIRA_DB="$TMP/no-db"
 # is set, requires the label naming this scope. Neither is what this suite is testing, so
 # disable scope restriction the same way an operator would to allow an unrestricted predicate.
 export SPIRA_SCOPE_LABEL=""
-cp "$HERE/aeon.sh" "$SPIRA_HOME/"
 
 # The stub: source the REAL lib.sh (so fayth_free is the genuine article), then override
 # aeon_count so "have" is a controlled number rather than a real /proc scan.
@@ -76,7 +73,7 @@ aeon_count() { printf '%s' "\${MOCK_AEON_COUNT:-0}"; }
 STUB
 
 run_aeon() {   # run_aeon <fayth> -> stdout+stderr captured
-    "$SPIRA_HOME/aeon.sh" "$1" 2>&1
+    "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$1" 2>&1
 }
 refused() { [[ "$1" == *"at capacity"* ]]; }
 

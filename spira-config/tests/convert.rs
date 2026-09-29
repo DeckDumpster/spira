@@ -72,7 +72,7 @@ fn converts_conf_repo_map_and_fayths() {
     assert_eq!(
         home.gate,
         Some(
-            "bash spira/inventory.sh && bash spira/testenv-batch.sh \"$SPIRA_GATE_BRANCH\""
+            "bash spira/inventory.sh && \"$SPIRA_TESTENV_BIN\" \"$SPIRA_GATE_BRANCH\""
                 .to_string()
         )
     );

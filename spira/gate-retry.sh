@@ -11,7 +11,7 @@
 # always re-run with a longer cap (GATE_RETRY_RERUN_TIMEOUT, default 1200 s).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-BATCH="${GATE_RETRY_BATCH:-$HERE/testenv-batch.sh}"
+BATCH="${GATE_RETRY_BATCH:-${SPIRA_TESTENV_BIN:-$HERE/../bin/testenv}}"
 ROOT="${1:?usage: gate-retry.sh <results-root> <rev>}"
 REV="${2:?usage: gate-retry.sh <results-root> <rev>}"
 
@@ -61,9 +61,9 @@ printf 'gate-retry: re-running serially: %s\n' "$reds"
 rc=0
 if [ "$_timeout_count" -gt 0 ]; then
     printf '%s\n' $reds | SPIRA_SUITE_TIMEOUT="${GATE_RETRY_RERUN_TIMEOUT:-1200}" \
-        SPIRA_BATCH_RESULTS="$ROOT-retry" bash "$BATCH" --mode serial --suites - "$REV" || rc=$?
+        SPIRA_BATCH_RESULTS="$ROOT-retry" "$BATCH" --mode serial --suites - "$REV" || rc=$?
 else
-    printf '%s\n' $reds | SPIRA_BATCH_RESULTS="$ROOT-retry" bash "$BATCH" --mode serial --suites - "$REV" || rc=$?
+    printf '%s\n' $reds | SPIRA_BATCH_RESULTS="$ROOT-retry" "$BATCH" --mode serial --suites - "$REV" || rc=$?
 fi
 case "$rc" in
     0)  for s in $reds; do printf '::warning title=flaky suite::%s was red, then green on a serial re-run\n' "$s"; done

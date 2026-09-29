@@ -136,7 +136,8 @@ live_aeons() {
         # every aeon runs $SPIRA_PROD/aeon.sh while SPIRA_HOME is the development checkout, so
         # matching SPIRA_HOME alone made this blind to every real aeon: on 2026-09-11 `stop`
         # printed "no live aeons" with four running. law-verify-through-the-executing-copy.
-        argv_has "$p" "$SPIRA_HOME/aeon.sh" "${SPIRA_PROD:-$SPIRA_HOME}/aeon.sh" || continue
+        argv_has "$p" "$SPIRA_HOME/aeon.sh" "${SPIRA_PROD:-$SPIRA_HOME}/aeon.sh" \
+            "$(dirname "${SPIRA_PROD:-$SPIRA_HOME}")/bin/aeon" ${SPIRA_AEON_BIN:+"$SPIRA_AEON_BIN"} || continue
         pid="${p#/proc/}"
         printf '%s %s\n' "$pid" "$("$SC" --user status "$pid" 2>/dev/null | head -1 | awk '{print $2}')"
     done

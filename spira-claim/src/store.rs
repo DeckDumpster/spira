@@ -27,6 +27,12 @@ pub struct Config {
     pub db: Option<String>,
     pub stack_max_depth: Option<u32>,
     pub submitted_label: Option<String>,
+    /// `spira.run` — the runtime directory (`unpoison`: ask history, audit log).
+    pub run: Option<String>,
+    /// `spira.ask_label` — the operator-ask label (`unpoison`: the ask it closes).
+    pub ask_label: Option<String>,
+    /// `spira.lifecycle_enforce` — whether the lifecycle machine is the poison's record.
+    pub lifecycle_enforce: Option<bool>,
 }
 
 pub fn load_config() -> Config {
@@ -34,7 +40,14 @@ pub fn load_config() -> Config {
     match spira_config::load(&path) {
         Ok(doc) => {
             let s = doc.spira.unwrap_or_default();
-            Config { db: s.db, stack_max_depth: s.stack_max_depth, submitted_label: s.submitted_label }
+            Config {
+                db: s.db,
+                stack_max_depth: s.stack_max_depth,
+                submitted_label: s.submitted_label,
+                run: s.run,
+                ask_label: s.ask_label,
+                lifecycle_enforce: s.lifecycle_enforce,
+            }
         }
         Err(e) => {
             eprintln!("spira-claim: config {}: {e} — using defaults", path.display());
@@ -55,7 +68,7 @@ impl Store {
         }
     }
 
-    fn bd_cmd(&self, args: &[&str]) -> Command {
+    pub fn bd_cmd(&self, args: &[&str]) -> Command {
         let mut c = Command::new(&self.bd);
         if let Some(db) = &self.db {
             c.args(["-C", db]);
@@ -105,7 +118,7 @@ impl Store {
     }
 }
 
-fn sql_quote(s: &str) -> String {
+pub fn sql_quote(s: &str) -> String {
     format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
 }
 
@@ -122,9 +135,38 @@ pub fn events_sql(ids: &[String]) -> String {
 
 /// Run a command to completion within `timeout`; stdout on exit 0, else an error naming
 /// the first stderr line. A timed-out child is killed.
-pub fn run(mut cmd: Command, timeout: Duration) -> Result<String, String> {
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+pub fn run(cmd: Command, timeout: Duration) -> Result<String, String> {
+    let r = run_full(cmd, timeout, None)?;
+    if r.code != 0 {
+        let first = r.stderr.lines().next().unwrap_or("no stderr").to_string();
+        return Err(format!("exit {}: {first}", r.code));
+    }
+    Ok(r.stdout)
+}
+
+/// What a finished child said: its exit code (-1 when killed by a signal) and both streams.
+#[derive(Debug, Clone, Default)]
+pub struct Ran {
+    pub code: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// Run a command within `timeout`, feeding `input` on stdin (law-payloads-go-on-stdin) or
+/// /dev/null when there is none. Err only when it could not start, or timed out (killed).
+pub fn run_full(mut cmd: Command, timeout: Duration, input: Option<&[u8]>) -> Result<Ran, String> {
+    cmd.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("cannot start: {e}"))?;
+    let t_in = input.map(|b| {
+        let mut sin = child.stdin.take().unwrap();
+        let b = b.to_vec();
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let _ = sin.write_all(&b);
+        })
+    });
     let mut so = child.stdout.take().unwrap();
     let mut se = child.stderr.take().unwrap();
     let t_out = std::thread::spawn(move || {
@@ -150,13 +192,14 @@ pub fn run(mut cmd: Command, timeout: Duration) -> Result<String, String> {
             Err(e) => return Err(format!("wait: {e}")),
         }
     };
-    let out = String::from_utf8_lossy(&t_out.join().unwrap_or_default()).into_owned();
-    let err = String::from_utf8_lossy(&t_err.join().unwrap_or_default()).into_owned();
-    if !status.success() {
-        let first = err.lines().next().unwrap_or("no stderr").to_string();
-        return Err(format!("exit {}: {first}", status.code().unwrap_or(-1)));
+    if let Some(t) = t_in {
+        let _ = t.join();
     }
-    Ok(out)
+    Ok(Ran {
+        code: status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&t_out.join().unwrap_or_default()).into_owned(),
+        stderr: String::from_utf8_lossy(&t_err.join().unwrap_or_default()).into_owned(),
+    })
 }
 
 #[cfg(test)]
@@ -183,6 +226,17 @@ mod tests {
         let e = run(sl, Duration::from_millis(1100)).unwrap_err();
         assert!(e.contains("timed out"), "{e}");
         assert!(run(Command::new("/nonexistent/binary"), Duration::from_secs(1)).is_err());
+    }
+
+    #[test]
+    fn run_full_feeds_stdin_and_reports_the_code() {
+        let mut c = Command::new("sh");
+        c.args(["-c", "cat; exit 3"]);
+        let r = run_full(c, Duration::from_secs(5), Some(b"it's \"quoted\" text")).unwrap();
+        assert_eq!(r.code, 3);
+        assert_eq!(r.stdout, "it's \"quoted\" text");
+        let r = run_full(Command::new("cat"), Duration::from_secs(5), None).unwrap();
+        assert_eq!((r.code, r.stdout.as_str()), (0, ""));
     }
 
     #[test]

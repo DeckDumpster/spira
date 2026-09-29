@@ -1,25 +1,17 @@
 //! The lifecycle switch (DESIGN.md §9). `lifecycle_enforce` is THE switch for everything
-//! that touches the lifecycle machine, resolved as the aeon, queue and spira-claim crates
-//! resolve it: the process environment's `SPIRA_LIFECYCLE_ENFORCE` wins (`1`/`true` = on,
-//! anything else = off); else the typed `spira.lifecycle_enforce` in the document conf.sh
-//! resolved, read through the spira-config library; else OFF. Binary presence is never
-//! consulted — a spira-lc on disk does not turn anything on.
+//! that touches the lifecycle machine, resolved by the shared spira-config rule: the process
+//! environment's `SPIRA_LIFECYCLE_ENFORCE` wins (`1`/`true` = on, anything else = off); else
+//! the typed `spira.lifecycle_enforce`; else OFF. Binary presence is never consulted — a
+//! spira-lc on disk does not turn anything on.
 //!
 //! OFF (production today): this binary never invokes spira-lc, not even to probe it.
 //! ON: spira-lc is authoritative; one that cannot be reached is a loud refusal of the step
 //! that needed it.
 
-use std::path::Path;
-
-pub fn lifecycle_on(env_value: Option<&str>, doc: Option<&Path>) -> bool {
-    if let Some(v) = env_value {
-        return v == "1" || v == "true";
-    }
-    let Some(p) = doc.filter(|p| p.is_file()) else { return false };
-    match spira_config::load(p) {
-        Ok(d) => d.spira.and_then(|s| s.lifecycle_enforce).unwrap_or(false),
-        Err(_) => false,
-    }
+/// This invocation's switch: `spira_config::lifecycle_enforce` — the one resolution rule the
+/// harness's crates share — over the document conf.sh resolved (`SPIRA_TOML_FILE`).
+pub fn lifecycle_on(doc: Option<&std::path::Path>) -> bool {
+    spira_config::lifecycle_enforce(doc)
 }
 
 /// The lifecycle machine, as far as this pass needs it: is it there?
@@ -50,24 +42,4 @@ impl Lc for RealLc {
 
 pub fn unreachable_line(why: &str, what: &str) -> String {
     format!("landing: lifecycle_enforce is on and spira-lc is unreachable ({why}) — {what}; fix the lifecycle machine or turn lifecycle_enforce off")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_environment_wins_then_the_document_then_off() {
-        let dir = crate::testutil::tmpdir("lc");
-        let doc = dir.join("doc");
-        std::fs::write(&doc, "[spira]\nlifecycle_enforce = true\n").unwrap();
-        assert!(lifecycle_on(None, Some(&doc)));
-        assert!(!lifecycle_on(Some("0"), Some(&doc)));
-        assert!(lifecycle_on(Some("true"), None));
-        assert!(!lifecycle_on(Some("yes"), None));
-        assert!(!lifecycle_on(None, None));
-        assert!(!lifecycle_on(None, Some(&dir.join("missing"))));
-        std::fs::write(&doc, "[spira]\nlifecycle_enforce = false\n").unwrap();
-        assert!(!lifecycle_on(None, Some(&doc)));
-    }
 }

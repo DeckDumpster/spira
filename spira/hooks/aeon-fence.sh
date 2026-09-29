@@ -114,12 +114,15 @@ done
 
 if [ -z "$reason" ]; then
     case "$cmd" in
-        *"/queue.sh"*)
+        # queue.sh is the queue binary now (queue/DESIGN.md §7.2 row 18): match the old script,
+        # the installed binary and its conf.sh variable; `stats` stays the one allowed verb.
+        *"/queue.sh"*|*"/bin/queue "*|*'$SPIRA_QUEUE_BIN'*|*'${SPIRA_QUEUE_BIN}'*)
             case "$cmd" in
-                *"/queue.sh stats"*) ;;
+                *"/queue.sh stats"*|*"/bin/queue stats"*|*'QUEUE_BIN" stats'*|*'QUEUE_BIN stats'*|*'QUEUE_BIN} stats'*) ;;
                 *)
-                    [ "$(_exec_ctx "queue.sh" "$cmd")" = "1" ] && \
-                        reason="aeons may not operate the queue (sp-kz8ob: queue.sh stats is the only read-only subcommand; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
+                    { [ "$(_exec_ctx "queue.sh" "$cmd")" = "1" ] || [ "$(_exec_ctx "bin/queue" "$cmd")" = "1" ] \
+                        || case "$cmd" in *'SPIRA_QUEUE_BIN'*) true ;; *) false ;; esac; } && \
+                        reason="aeons may not operate the queue (sp-kz8ob: queue stats is the only read-only subcommand; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
             esac ;;
     esac
 fi

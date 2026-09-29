@@ -98,7 +98,7 @@ printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
 
 HOMEDIR="$TMP/home"; mkdir -p "$HOMEDIR/chamber"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/aeon.sh" "$HERE/suite-covers.sh" "$HOMEDIR/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HOMEDIR/"
 cp -r "$HERE/actors" "$HOMEDIR/" 2>/dev/null || true
 RUN="$TMP/run"; mkdir -p "$RUN"
 GROOM_LOG="$RUN/groom.log"
@@ -129,8 +129,8 @@ printf 'FAYTH_GROOM_ESCALATION_CHECK=1\n' >> "$HOMEDIR/chamber/scrubber.fayth"
 # The guard against the real model: conf.sh REPLACES $PATH, so shimming by PATH alone
 # would invoke the real model.
 BIN="$TMP/bin"; mkdir -p "$BIN"
-grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
-    || { echo "test-groom-escalation-check: aeon.sh has no SPIRA_AGENT injection point — refusing to run the real model" >&2; exit 1; }
+[ -x "${SPIRA_AEON_BIN:-}" ] \
+    || { echo "test-groom-escalation-check: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model" >&2; exit 1; }
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
@@ -180,7 +180,7 @@ run_aeon() {    # run_aeon <fayth> <act>
         SPIRA_REPO_MAP="$REPO_MAP" SPIRA_AGENT="$BIN/claude" \
         SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
         BEADS_NO_AUTO_IMPORT=1 \
-        timeout 240 bash "$HOMEDIR/aeon.sh" "$1" > "$TMP/out" 2>&1
+        timeout 240 "$SPIRA_AEON_BIN" --home "$HOMEDIR" "$1" > "$TMP/out" 2>&1
 }
 field()  { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json

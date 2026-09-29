@@ -60,7 +60,7 @@ state; see §4 R7).
 | the bead store | `$SPIRA_LIST_SNAPSHOT` when readable (sentinel's `bd list --all --limit 0` of this pass), else **one** `bd -C $SPIRA_DB list --all --limit 0 --brief --json` | the WHOLE store, closed beads included. One read per run, not per partition. |
 | the claimable set | `$SPIRA_READY_SNAPSHOT` when readable (filtered in-process by scope label, partition labels, exclusions), else per partition `bd ready --limit 0 --exclude-type epic,event -u [--label <scope>] [--exclude-label <no_loop label>] --label <labels> [--exclude-label <excl>] --json` | `bd ready` stays the authority on claimability |
 | partitions | `SPIRA_LABELS` (+ `SPIRA_EXCLUDE_LABELS`) narrows to one; otherwise the **roster probe** (§2.5) | exclusions: `SPIRA_EXCLUDE_LABELS` overrides all, else the fayth's own, else `spira-poison,<ask>,<ci>` |
-| wait holds | `$SPIRA_LC_BIN list --hold wait` → `[{bead_id}]` | absent binary ⇒ no holds |
+| wait holds | `lifecycle_enforce` off: beads labelled `spira-waiting-operator` in the store already read; on: `$SPIRA_LC_BIN list --hold wait` → `[{bead_id}]` | §9: off never runs spira-lc; on, unreachable ⇒ cannot tell |
 | aeon liveness | `$SPIRA_RUN/hold-<id>.pid` (pid alive) and `$SPIRA_RUN/aeon-*-<id>.pid` (pid alive AND `/proc/<pid>/cmdline` contains `aeon.sh`) | never `pgrep -f` |
 | aeons per partition / fleet | `systemctl --user list-units 'spira-aeon-<fayth>-*' --no-legend` (and `'spira-aeon-*'`) when `SPIRA_SUMMON` is `systemd-run` (default); else live pidfiles | read-only: dead pidfiles are no longer deleted here |
 | capacity pause | first field of `$SPIRA_CAPACITY_PAUSE` (default `$SPIRA_RUN/capacity-pause`), an epoch | read-only: the probe/lift side effects of `capacity_paused` belong to the summon path |
@@ -135,7 +135,8 @@ the `conf.sh` default. strand never parses `spira.toml` itself.
 | pool | `SPIRA_MAX_AEONS` | `max_aeons` | unset (explicit 0 ⇒ pool-paused) |
 | fleet cap | `SPIRA_MAX_LIVE_AEONS` | `max_live_aeons` | 0 (unconfigured) |
 | throttle release | `SPIRA_QUEUE_THROTTLE_RELEASE_AT` | `queue_throttle_release_at` | 8 |
-| lc binary | `SPIRA_LC_BIN` | `lc_bin` | none |
+| lc binary | `SPIRA_LC_BIN` | `lc_bin` | none (read only when the switch is on) |
+| lifecycle switch | `SPIRA_LIFECYCLE_ENFORCE` (`1`/`true` on, anything else off) | `lifecycle_enforce` | off (§9) |
 | instance | `SPIRA_INSTANCE` | `instance` | `prod` |
 | grace windows | `SPIRA_GHOST_GRACE` (300), `SPIRA_STRAND_GRACE` (900), `SPIRA_RECLAIM_AT` (5), `SPIRA_EVENT_COOLDOWN` (3600), `BD_TIMEOUT` (180) | — | as shown |
 | snapshots | `SPIRA_LIST_SNAPSHOT`, `SPIRA_READY_SNAPSHOT` | — | none |
@@ -297,3 +298,34 @@ throttle-state parsing; `--from` parsing.
 This branch also carries `a21b071a1` (an aeon's earlier bash fix of the same defect in
 strand.sh/strand-classify.py/test-strand-classify.sh). It is superseded by this crate and
 dies with row 4; the operator may keep it as the interim fix until the cutover lands.
+
+## 9. Lifecycle switch
+
+**Finding (operator, 2026-09-28):** the lifecycle machine was never deployed on this host:
+no `spira_lifecycle` database, no `spira_lc` grant, no service or socket. **Decision:**
+`lifecycle_enforce` is THE switch for everything that touches the lifecycle machine.
+
+**Resolution** (`Config::resolve` → `spira_config::resolve_lifecycle_enforce`, the aeon
+crate's rule): `SPIRA_LIFECYCLE_ENFORCE` in the environment wins (`1`/`true` on, anything
+else, including empty, off); else the typed `spira.lifecycle_enforce`; else **off**. Whether
+`SPIRA_LC_BIN` exists or is executable is never an input: the sentinel points it at a
+never-executable path in off mode, and a real binary on disk does not turn anything on.
+
+| | **off** (production today) | **on** |
+|---|---|---|
+| spira-lc | **never run** | `list --hold wait`, `show`, `event … HolderDead` |
+| ghost wait exemption | beads labelled `spira-waiting-operator` (pre-sp-i2m7y `SPIRA_RECLAIM_SKIP_LABEL` default), read off the store this pass already loaded | the spira-lc `wait` holds; an unset/non-executable binary, a failed call or an unparseable reply is an `Err` — the pass is "cannot tell" (R7), never an empty set that would reclaim a held bead |
+| ghost fix, first step | `bd reclaim --id <id> --older-than 1s [--label <partition>]` (pre-sp-i2m7y strand.sh; no `--label` for partition `-`); a failure is a `WARN` | `spira-lc HolderDead` (show, then the CAS event). Stays best-effort so the counter/note/event still run, but every miss — unset or non-executable binary, a failed show or event, no row — is a loud `WARN … lifecycle_enforce is on and spira-lc HolderDead did not happen` |
+| ghost row's action text | `bd reclaim --id <id>` | `spira-lc HolderDead <id>` |
+| rest of the ghost fix (reclaim counter, note, event, ceiling escalation) | unchanged | unchanged |
+
+**Tests:** `config::lifecycle_switch_env_then_toml_then_off`,
+`check::off_ghost_fix_is_bd_reclaim_and_never_runs_spira_lc` and
+`check::off_wait_exemption_is_the_legacy_label_and_never_runs_spira_lc` (an executable
+recorder stands in for spira-lc and must never be called),
+`check::on_runs_spira_lc_and_unreachable_is_an_error_not_an_empty_set`,
+`classify::ghost_needs_an_expired_lease_and_no_holder` (both action texts).
+
+**Cutover addition:** the sentinel passes `SPIRA_LIFECYCLE_ENFORCE=0|1` to strand; nothing
+else is needed. If strand is ever run outside conf.sh with no environment value, it reads
+`spira.lifecycle_enforce`, default off.

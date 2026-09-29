@@ -34,6 +34,10 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 . "$HERE/testlib.sh"
+# The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
+# test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
+QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
+[ -x "$QUEUE_BIN" ] || { echo "FAIL: the queue binary is not built at $QUEUE_BIN"; exit 1; }
 lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1: did not want [$2] in [$3]"; }
 
 FENCE="$HERE/czar-fence.sh"
@@ -71,7 +75,7 @@ TQ="$(mktemp -d)"; mkdir -p "$TQ/run"
 # SEEN RED: czar in shadow — queue.sh eject refused with czar-fence message.
 out="$(SPIRA_FAYTH=czar SPIRA_CZAR_CLASS=deadlock \
        SPIRA_CONF=/nonexistent SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb" \
-       bash "$HERE/queue.sh" eject sp-fake 2>&1 || true)"
+       SPIRA_HOME="$HERE" "$QUEUE_BIN" eject sp-fake 2>&1 || true)"
 [[ "$out" == *"czar-fence"* && "$out" == *"shadow"* ]] \
     && ok "czar eject in shadow: fence fires inside queue.sh" \
     || bad "czar eject in shadow: expected czar-fence shadow message, got: $out"
@@ -79,14 +83,14 @@ out="$(SPIRA_FAYTH=czar SPIRA_CZAR_CLASS=deadlock \
 # SEEN GREEN: czar in act — no shadow refusal (may fail for other reasons; that is expected).
 out2="$(SPIRA_FAYTH=czar SPIRA_CZAR_CLASS=deadlock SPIRA_CZAR_STAGE_DEADLOCK=act \
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb" \
-        bash "$HERE/queue.sh" eject sp-fake 2>&1 || true)"
+        SPIRA_HOME="$HERE" "$QUEUE_BIN" eject sp-fake 2>&1 || true)"
 [[ "$out2" != *"czar-fence"*shadow* ]] \
     && ok "czar eject in act: no shadow refusal" \
     || bad "czar eject in act: unexpected shadow refusal: $out2"
 
 # NON-CZAR: unaffected — no czar-fence message regardless of queue outcome.
 out3="$(SPIRA_CONF=/nonexistent SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb" \
-        bash "$HERE/queue.sh" eject sp-fake 2>&1 || true)"
+        SPIRA_HOME="$HERE" "$QUEUE_BIN" eject sp-fake 2>&1 || true)"
 [[ "$out3" != *"czar-fence"* ]] \
     && ok "non-czar eject: fence not triggered" \
     || bad "non-czar eject: unexpected czar-fence message: $out3"

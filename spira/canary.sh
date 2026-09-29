@@ -133,7 +133,7 @@ SPIRA_FAYTHS="$SPIRA_FAYTHS" SPIRA_MAX_AEONS="$SPIRA_MAX_AEONS" \
 SPIRA_GOAL="$SPIRA_GOAL" \
 SPIRA_SUMMON="$SPIRA_SUMMON" SPIRA_LAUNCH="$SPIRA_LAUNCH" \
 SPIRA_NOTIFY="$SPIRA_NOTIFY" SPIRA_BD="$SPIRA_BD" \
-    bash "$SPIRA_HOME/sentinel.sh" 2>&1 | sed 's/^/  sentinel: /' || true
+    "$SPIRA_SENTINEL_BIN" 2>&1 | sed 's/^/  sentinel: /' || true
 
 # Verify the worker closed the bead.
 _bead_st="$(bd -C "$SPIRA_DB" show "$_bead_id" --json 2>/dev/null \

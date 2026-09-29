@@ -89,8 +89,7 @@ fn pr() -> i32 {
             return 1;
         }
     };
-    s.lifecycle_enforce = lifecycle_on(std::env::var("SPIRA_LIFECYCLE_ENFORCE").ok().as_deref(), s.toml.as_deref());
-    let lc = RealLc { bin: s.lc_bin.clone() };
+    s.lifecycle_enforce = lifecycle_on(s.toml.as_deref());
     let beads = RealBeads {
         home: s.home.clone(),
         db: s.db.clone(),
@@ -109,9 +108,8 @@ fn pr() -> i32 {
         git: &RealGit,
         procs: &procs,
         tools: &tools,
-        lc: &lc,
-        lc_state: std::cell::OnceCell::new(),
         out: &out,
+        loud: Default::default(),
     };
     p.run();
     0
@@ -135,7 +133,7 @@ fn land() -> i32 {
             return 1;
         }
     };
-    s.lifecycle_enforce = lifecycle_on(std::env::var("SPIRA_LIFECYCLE_ENFORCE").ok().as_deref(), s.toml.as_deref());
+    s.lifecycle_enforce = lifecycle_on(s.toml.as_deref());
     let files = Files::new(&s.run);
     let _lock = match try_lock(&files.lock()) {
         Ok(Some(l)) => l,

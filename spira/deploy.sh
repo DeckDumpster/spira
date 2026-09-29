@@ -284,7 +284,7 @@ if [ "$dry_run" = 1 ]; then
     # When a current release is active, verify the ExecStart target that install.sh would
     # render is executable. This catches a wrong SPIRA_PROD before any disruptive action.
     if [ -L "$SPIRA_RELEASES/current" ]; then
-        _dry_exec="$SPIRA_RELEASES/current/spira/sentinel.sh"
+        _dry_exec="$SPIRA_RELEASES/current/bin/sentinel"
         printf 'deploy: ExecStart=%s\n' "$_dry_exec"
         if [ ! -x "$_dry_exec" ]; then
             printf 'deploy: dry-run: ExecStart target is not executable: %s\n' \

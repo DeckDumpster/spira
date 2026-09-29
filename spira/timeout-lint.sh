@@ -38,7 +38,7 @@ fi
 if [ "$#" -gt 0 ]; then
     files=("$@")
 else
-    files=("$HERE/aeon.sh" "$HERE/sentinel.sh" "$HERE/landing.sh")
+    files=("$HERE/landing.sh")   # aeon.sh and sentinel.sh are Rust now; each bounds its own bd calls
 fi
 
 out=""

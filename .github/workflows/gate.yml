@@ -505,7 +505,7 @@ jobs:
             printf 'gate: %s on %s — running the whole corpus\n' \
               "${{ github.event_name }}" "${{ github.ref_name }}"
           fi
-          printf '%s\n' "$_s" | bash spira/testenv-batch.sh --suites - "${{ github.sha }}" || _b=$?
+          printf '%s\n' "$_s" | bin/testenv --suites - "${{ github.sha }}" || _b=$?
           # A red suite gets one serial re-run; red then green is a flake, not a failure.
           if [ "$_b" = 1 ]; then
             _b=0

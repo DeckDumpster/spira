@@ -72,7 +72,7 @@ pub struct BatchJob {
 /// The VM side, reached only by address.
 pub trait Remote {
     fn reachable(&self, addr: &str) -> bool;
-    /// Runs the batch on the VM; the remote testenv-batch.sh's exit code (255: ssh itself).
+    /// Runs the batch on the VM; the remote testenv runner's exit code (255: ssh itself).
     fn run_batch(&self, addr: &str, job: &BatchJob) -> Result<i32, String>;
     /// Copies the remote directory `remote_path` into `local`.
     fn pull(&self, addr: &str, remote_path: &str, local: &Path) -> Result<(), String>;
@@ -84,19 +84,32 @@ pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+/// The VM side of a round: clone the mirror, run the round's own `testenv` (built from the
+/// round's own tree, release profile — its binaries ship), then stage the round's
+/// executables from `target/release` into `~/round-bins/` so the host pulls the binaries and
+/// not cargo's whole target directory. testenv builds the clone in place (its HEAD is the
+/// round's commit), so `~/round-work/target/release` is the round's build.
 pub const REMOTE_SCRIPT: &str = r#"set -euo pipefail
 host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5"
-rm -rf ~/round-work
+rm -rf ~/round-work ~/round-bins
 git clone --quiet "git://${host_addr}:${port}/mirror.git" ~/round-work
 cd ~/round-work
 export SPIRA_BATCH_MAXPAR="$maxpar"
 if [ -n "$toolchain" ]; then export RUSTUP_TOOLCHAIN="$toolchain"; fi
+set +e
 if [ -n "$suites" ]; then
-    exec bash spira/testenv-batch.sh --mode parallel --with-bins --suites "$suites" round
+    cargo run -q --profile release -p testenv -- --mode parallel --profile release --suites "$suites" round
 else
-    exec bash spira/testenv-batch.sh --mode parallel --with-bins round
+    cargo run -q --profile release -p testenv -- --mode parallel --profile release round
 fi
+rc=$?
+mkdir -p ~/round-bins
+find target/release -maxdepth 1 -type f -executable -exec cp {} ~/round-bins/ \; 2>/dev/null
+exit "$rc"
 "#;
+
+/// Where REMOTE_SCRIPT stages the round's executables, relative to the VM user's home.
+pub const REMOTE_BINS: &str = "round-bins/";
 
 pub fn remote_command(job: &BatchJob) -> String {
     let args = [
@@ -248,7 +261,7 @@ impl Host for GitHost {
 }
 
 /// The directory that holds the pulled `.result` files: `dir` itself, or the one
-/// BATCH_KEY subdirectory testenv-batch.sh's caching nests them under.
+/// BATCH_KEY subdirectory the testenv runner nests them under.
 pub fn results_leaf(dir: &Path) -> Option<PathBuf> {
     let has_result = |d: &Path| {
         fs::read_dir(d)
@@ -273,17 +286,31 @@ pub fn suite_wall_sum(dir: &Path) -> u64 {
         .sum()
 }
 
-/// testenv-batch.sh's `build_wall_s` from `runner.meta`, present only when it built.
+/// testenv's `build_wall_s` from `runner.meta`, present only when it built.
 pub fn build_wall(dir: &Path) -> Option<u64> {
     let t = fs::read_to_string(dir.join("runner.meta")).ok()?;
     t.lines().find_map(|l| l.strip_prefix("build_wall_s=")).and_then(|v| v.trim().parse().ok())
 }
 
-/// The tree-sha directory the VM's --with-bins produced, if any.
-pub fn found_tree(pulled_bins: &Path) -> Option<String> {
-    let mut names: Vec<String> = fs::read_dir(pulled_bins).ok()?.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
-    names.sort();
-    names.into_iter().next()
+/// The tree the VM's testenv run built and tested: `tree=` in the pulled `batch.meta`.
+pub fn reported_tree(results: &Path) -> Option<String> {
+    let t = fs::read_to_string(results.join("batch.meta")).ok()?;
+    t.lines().find_map(|l| l.strip_prefix("tree=")).map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+/// The executables directly in `dir` (the pulled `round-bins/`).
+fn executables(dir: &Path) -> Vec<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut v: Vec<PathBuf> = fs::read_dir(dir)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false))
+                .collect()
+        })
+        .unwrap_or_default();
+    v.sort();
+    v
 }
 
 pub fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
@@ -304,17 +331,29 @@ pub fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Installs `<pulled>/<expected>/release` under `<target>/<expected>/release` (G8). A
-/// directory named for any other tree installs nothing and is an error naming both shas;
-/// no directory at all (the batch never reached --with-bins) is not a refusal.
-pub fn install_bins(pulled: &Path, expected: &str, target: &Path) -> Result<(), String> {
-    let Some(found) = found_tree(pulled) else { return Ok(()) };
-    if found != expected || !pulled.join(&found).join("release").is_dir() {
+/// Installs the pulled executables into `<target>` — the round worktree's own
+/// `target/release`, where `queue land-local --worktree` reads them (G8). The VM's testenv
+/// must report (batch.meta `tree=`) exactly the tree the host sent; any other tree, or none,
+/// installs nothing and is an error naming both. No executables at all (the batch never
+/// reached its build) is not a refusal.
+pub fn install_bins(pulled: &Path, expected: &str, reported: Option<&str>, target: &Path) -> Result<(), String> {
+    let exes = executables(pulled);
+    if exes.is_empty() {
+        return Ok(());
+    }
+    if reported != Some(expected) {
         return Err(format!(
-            "round-vm run: refusing binaries: tree sha {found} does not match expected {expected} — nothing installed"
+            "round-vm run: refusing binaries: tree sha {} does not match expected {expected} — nothing installed",
+            reported.unwrap_or("<none reported>")
         ));
     }
-    copy_tree(&pulled.join(&found).join("release"), &target.join(expected).join("release"))
+    fs::create_dir_all(target).map_err(|e| format!("{}: {e}", target.display()))?;
+    for exe in exes {
+        let to = target.join(exe.file_name().unwrap());
+        let _ = fs::remove_file(&to);
+        fs::copy(&exe, &to).map_err(|e| format!("{}: {e}", to.display()))?;
+    }
+    Ok(())
 }
 
 /// Appends the VM's tsd rows to the host's `<run>/tsd/<family>.jsonl`, each tagged with
@@ -462,10 +501,11 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
 
     let bins = scratch("bins");
     let _ = fs::remove_dir_all(&bins);
-    let _ = env.remote.pull(&vm.addr, "round-work/.runtime/spira/cargo-target-bins/", &bins);
+    let _ = env.remote.pull(&vm.addr, REMOTE_BINS, &bins);
+    let reported = reported_tree(&results_dir);
     let manifest = Manifest {
         tree_sha: tree_sha.to_string(),
-        tree_sha_found: found_tree(&bins),
+        tree_sha_found: reported.clone(),
         commit_sha: commit_sha.to_string(),
         vm: vm.handle.clone(),
         acquire: mode,
@@ -484,7 +524,8 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
         eprintln!("round-vm run: manifest: {e}");
         own_fault = true;
     }
-    if let Err(e) = install_bins(&bins, tree_sha, &cfg.bins_target_dir) {
+    let target = args.tree_dir.join("target").join("release");
+    if let Err(e) = install_bins(&bins, tree_sha, reported.as_deref(), &target) {
         eprintln!("{e}");
         own_fault = true;
     }
@@ -561,26 +602,34 @@ mod tests {
         assert_eq!(build_wall(&empty), None);
     }
 
+    fn exe(p: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, "x").unwrap();
+        fs::set_permissions(p, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
     #[test]
     fn binaries_of_another_tree_are_refused_and_nothing_installed() {
         let d = TempDir::new();
-        let (pulled, target) = (d.path().join("pulled"), d.path().join("target"));
-        fs::create_dir_all(pulled.join("wrongsha/release")).unwrap();
-        fs::write(pulled.join("wrongsha/release/fakebin"), "x").unwrap();
-        let e = install_bins(&pulled, "expectedsha", &target).unwrap_err();
+        let (pulled, target) = (d.path().join("pulled"), d.path().join("wt/target/release"));
+        exe(&pulled.join("fakebin"));
+        let e = install_bins(&pulled, "expectedsha", Some("wrongsha"), &target).unwrap_err();
         assert!(e.contains("wrongsha") && e.contains("expectedsha"), "{e}");
-        assert!(!target.join("expectedsha").exists());
+        assert!(install_bins(&pulled, "expectedsha", None, &target).is_err(), "no reported tree is not a match");
+        assert!(!target.exists());
     }
 
     #[test]
     fn binaries_of_this_tree_land_where_land_local_reads_them() {
         let d = TempDir::new();
-        let (pulled, target) = (d.path().join("pulled"), d.path().join("target"));
-        fs::create_dir_all(pulled.join("expectedsha/release")).unwrap();
-        fs::write(pulled.join("expectedsha/release/fakebin"), "x").unwrap();
-        install_bins(&pulled, "expectedsha", &target).unwrap();
-        assert!(target.join("expectedsha/release/fakebin").is_file());
-        install_bins(&d.path().join("absent"), "expectedsha", &target).unwrap();
+        let (pulled, target) = (d.path().join("pulled"), d.path().join("wt/target/release"));
+        exe(&pulled.join("fakebin"));
+        fs::write(pulled.join("not-executable"), "x").unwrap();
+        install_bins(&pulled, "expectedsha", Some("expectedsha"), &target).unwrap();
+        assert!(target.join("fakebin").is_file());
+        assert!(!target.join("not-executable").exists());
+        install_bins(&d.path().join("absent"), "expectedsha", None, &target).unwrap();
     }
 
     #[test]
@@ -629,9 +678,10 @@ mod tests {
                 ("KEY/test-a.sh.result", "ok 1 30 - p e 0\n"),
                 ("KEY/test-b.sh.result", "ok 1 12 - p e 0\n"),
                 ("KEY/runner.meta", "build_wall_s=90\n"),
+                ("KEY/batch.meta", "key=KEY\ntree=treesha\n"),
             ]);
             files.insert("round-work/.runtime/spira/tsd/", vec![("suite.jsonl", "{\"suite\":\"a\"}\n")]);
-            files.insert("round-work/.runtime/spira/cargo-target-bins/", vec![("treesha/release/batcher", "bin")]);
+            files.insert(REMOTE_BINS, vec![("batcher", "bin")]);
             FakeRemote { reachable: true, rc: Ok(0), files, jobs: RefCell::new(vec![]) }
         }
     }
@@ -648,7 +698,11 @@ mod tests {
             for (rel, body) in files {
                 let p = local.join(rel);
                 fs::create_dir_all(p.parent().unwrap()).unwrap();
-                fs::write(p, body).unwrap();
+                fs::write(&p, body).unwrap();
+                if remote_path == REMOTE_BINS {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+                }
             }
             Ok(())
         }
@@ -716,7 +770,8 @@ mod tests {
         assert_eq!((m.build_wall_secs, m.suite_wall_secs_sum), (Some(90), 42));
         assert_eq!(m.tree_sha_found.as_deref(), Some("treesha"));
         assert_eq!(m.commit_sha, "commitsha");
-        assert!(fx.cfg.bins_target_dir.join("treesha/release/batcher").is_file());
+        // path-ok: a test asserting where round-vm installs a fixture binary in a temp worktree
+        assert!(tree(&fx).tree_dir.join("target/release/batcher").is_file(), "installed into the round worktree");
         assert!(fs::read_to_string(fx.cfg.run_dir.join("tsd/suite.jsonl")).unwrap().contains("\"ran_on\":\"100\""));
         assert!(remote.jobs.borrow()[0].ends_with("'' '24' ''"), "{:?}", remote.jobs.borrow());
     }
@@ -750,10 +805,13 @@ mod tests {
     fn a_green_run_with_another_tree_s_binaries_is_exit_2_and_installs_nothing() {
         let fx = fixture();
         let mut remote = FakeRemote::green();
-        remote.files.insert("round-work/.runtime/spira/cargo-target-bins/", vec![("othersha/release/batcher", "bin")]);
+        remote.files.insert("round-work/.runtime/spira/batch-results/", vec![
+            ("KEY/test-a.sh.result", "ok 1 30 - p e 0\n"),
+            ("KEY/batch.meta", "key=KEY\ntree=othersha\n"),
+        ]);
         assert_eq!(go(&fx, &remote, &tree(&fx)), 2);
-        assert!(!fx.cfg.bins_target_dir.join("treesha").exists());
-        assert!(!fx.cfg.bins_target_dir.join("othersha").exists());
+        // path-ok: a test asserting where round-vm installs a fixture binary in a temp worktree
+        assert!(!tree(&fx).tree_dir.join("target/release/batcher").exists());
         assert!(fx.fp.live_vms().is_empty());
     }
 

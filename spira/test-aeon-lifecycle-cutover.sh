@@ -203,7 +203,7 @@ printf 'seed\n' > "$FREPO/f"
 git -C "$FREPO" add f; git -C "$FREPO" commit -qm seed; git -C "$FREPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/spira-home"; mkdir -p "$SPIRA_HOME/chamber"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/aeon.sh" "$HERE/work-env.sh" "$SPIRA_HOME/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/work-env.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
@@ -222,8 +222,8 @@ BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
 # these binaries existing — without this, aeon.sh takes the legacy path even though
 # SPIRA_LC_BIN/SPIRA_WORK_BIN are both built and executable above.
 export SPIRA_LIFECYCLE_ENFORCE=1
-grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
-    || bail "aeon.sh has no SPIRA_AGENT injection point — refusing to run the real model"
+[ -x "${SPIRA_AEON_BIN:-}" ] \
+    || bail "the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model"
 
 # The shim IS the model: it proves what its own environment actually grants it, then does
 # the one thing this bead's brief tells a real builder to do — `work submit`.
@@ -250,7 +250,7 @@ BID="$(bash "$HERE/bead.sh" file "aeon lifecycle cutover container fixture" --fo
 [ -n "$BID" ] || bail "bead.sh file did not return an id"
 seed_bead "$BID" READY
 
-bash "$SPIRA_HOME/aeon.sh" builder >"$TMP/aeon.log" 2>&1
+"$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder >"$TMP/aeon.log" 2>&1
 is "aeon.sh: exits 0 on a submitted work bead" "0" "$?"
 
 is "model session ran (bead id captured)" "$BID" "$(cat "$TMP/last-bead" 2>/dev/null)"

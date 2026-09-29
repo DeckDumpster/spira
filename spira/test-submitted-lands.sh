@@ -77,8 +77,8 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/c
 # THE SHIM IS THE SESSION: commit, then close the bead the way a builder does. conf.sh
 # replaces PATH, so the model is injected through SPIRA_AGENT and nothing else.
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
-    || { echo "test-submitted-lands: aeon.sh has no SPIRA_AGENT injection point" >&2; exit 1; }
+[ -x "${SPIRA_AEON_BIN:-}" ] \
+    || { echo "test-submitted-lands: the aeon binary is not built (SPIRA_AEON_BIN)" >&2; exit 1; }
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
@@ -102,7 +102,7 @@ seed() {   # seed <id> [status] [extra-label]
     printf '{"id":"%s","title":"t","status":"%s","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "${2:-open}" "$_lbl" | testdb_seed
 }
-run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_HOME/aeon.sh" builder > "$TMP/aeon.out" 2>&1; }
+run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/aeon.out" 2>&1; }
 landing() {
     rm -f "$SPIRA_RUN/landing.progress"
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO=fixture SPIRA_ID_PREFIX=sp SPIRA_GH="$SPIRA_HOME/gh" \
