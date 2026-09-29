@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # config-fence.sh — nothing outside spira-config/ names spira.toml or repo-map, parses TOML
-# config, or writes the config path (per Ryan, 2026-09-28).
+# config, or writes the config path.
 #
 #   config-fence.sh                 scan the tree; exit 1 naming each offender
 #   config-fence.sh --scan FILE     scan one file; print the violation kind(s), one per line
