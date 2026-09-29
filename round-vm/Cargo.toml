@@ -1,0 +1,25 @@
+[package]
+name = "round-vm"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+description = "round-vm — a pool of one ephemeral round VM from the hypervisor: acquire / release / run / status (sp-o3o6z; replaces spira/round-vm.sh and round-vm-provider-pve.sh)."
+
+[[bin]]
+name = "round-vm"
+path = "src/main.rs"
+
+[dependencies]
+spira-config = { path = "../spira-config" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+ureq = { version = "2", default-features = false, features = ["tls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-pemfile = "2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

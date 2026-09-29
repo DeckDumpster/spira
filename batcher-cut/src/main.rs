@@ -121,6 +121,16 @@ fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
+/// The `round-vm` binary installed next to this one (both resolve through the same
+/// artifacts directory, conf.sh's spira_bin), unless --round-vm/SPIRA_BATCHER_ROUND_VM names
+/// another.
+fn default_round_vm() -> PathBuf {
+    env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("round-vm")))
+        .unwrap_or_else(|| PathBuf::from("round-vm"))
+}
+
 fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
     Env {
         home: home.clone(),
@@ -131,7 +141,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
         bd: env::var("SPIRA_BD").unwrap_or_else(|_| "bd".into()),
         express_label: env::var("SPIRA_EXPRESS_LABEL").unwrap_or_else(|_| "express".into()),
         tsd_bin: env::var_os("SPIRA_TSD_BIN").map(PathBuf::from),
-        round_vm: o.round_vm.clone().unwrap_or_else(|| home.join("round-vm.sh")),
+        round_vm: o.round_vm.clone().unwrap_or_else(default_round_vm),
         attribute: o.attribute.clone().unwrap_or_else(|| home.join("attribute.sh")),
         // Batcher-parity (sp-myi6w): the Concierge's own proven values, not testenv-batch.sh's
         // own hardware-derived or unpinned defaults — see io::run_suites.
