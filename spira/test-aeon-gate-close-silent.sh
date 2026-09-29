@@ -72,6 +72,7 @@ git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q ori
 export REPO
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
+printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the aeon binary sources <home>/lib.sh; this is the real one, as aeon.sh sourced it
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | queue | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
@@ -85,8 +86,8 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
-    || { echo "test-aeon-gate-close-silent: aeon.sh has no SPIRA_AGENT injection point — refusing to run the real model" >&2; exit 1; }
+[ -x "${SPIRA_AEON_BIN:-}" ] \
+    || { echo "test-aeon-gate-close-silent: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model" >&2; exit 1; }
 
 # gate-run.sh stub: exits with the code written to $TMP/gate-status-code
 cat > "$SPIRA_HOME/gate-run.sh" <<'STUB'
@@ -134,6 +135,7 @@ case "${1:-}" in
 esac
 STUB
 chmod +x "$SPIRA_HOME/queue.sh"
+export SPIRA_QUEUE_BIN="$SPIRA_HOME/queue.sh"   # the queue binary replaced queue.sh; this stub stands in for both
 
 seed() {
     local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
@@ -181,7 +183,7 @@ run_aeon() {
     rm -rf "$SPIRA_RUN/worktree"
     printf '%s\n' "$gate_code" > "$TMP/gate-status-code"
     printf '%s\n' "$queue_code" > "$TMP/queue-submit-code"
-    "$HERE/aeon.sh" builder > "$TMP/out" 2>&1
+    "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1
 }
 
 bead_notes() {

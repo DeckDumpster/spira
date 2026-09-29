@@ -207,7 +207,7 @@ testdb_seed <<JSONL
 JSONL
 
 rm -rf "$SPIRA_RUN/worktree"
-"$SPIRA_HOME/aeon.sh" builder > "$TMP/out" 2>&1
+"$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1
 
 want "the claiming aeon's prompt names the holds section" "Files already in flight" "$(cat "$TMP/prompt" 2>/dev/null)"
 want "and names the open bead already touching the file"  "tst-holder"              "$(cat "$TMP/prompt" 2>/dev/null)"

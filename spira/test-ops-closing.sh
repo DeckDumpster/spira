@@ -79,7 +79,7 @@ HOMEDIR="$TMP/home"; mkdir -p "$HOMEDIR/chamber"
 # SCAR: the fixture's cp list omitted suite-covers.sh after sp-dt8u added it to lib.sh.
 # lib.sh sources suite-covers.sh at boot; without it a "No such file" error goes to stderr,
 # which 2>&1 in the sop helper merges into stdout, inflating sop digest | grep -c . by 1.
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/aeon.sh" "$HERE/sop.sh" "$HERE/suite-covers.sh" "$HERE/close-reason-flags.py" "$HOMEDIR/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/sop.sh" "$HERE/suite-covers.sh" "$HERE/close-reason-flags.py" "$HOMEDIR/"
 cp -r "$HERE/actors" "$HOMEDIR/" 2>/dev/null || true
 RUN="$TMP/run"; mkdir -p "$RUN"
 REPO_MAP="$TMP/repo-map"
@@ -112,8 +112,8 @@ printf 'FAYTH_SOP_REQUIRED=1\n' >> "$HOMEDIR/chamber/healer.fayth"
 # recorded. The guard is not decoration: conf.sh REPLACES $PATH, so a suite shimming `claude`
 # by PATH alone would run the real model against a real account.
 BIN="$TMP/bin"; mkdir -p "$BIN"
-grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
-    || { echo "test-ops-closing: aeon.sh has no SPIRA_AGENT injection point — refusing to run the real model" >&2; exit 1; }
+[ -x "${SPIRA_AEON_BIN:-}" ] \
+    || { echo "test-ops-closing: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model" >&2; exit 1; }
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
@@ -174,7 +174,7 @@ run_aeon() {             # run_aeon <fayth> <act>
         SPIRA_SOP_LEDGER="${LEDGER_OVERRIDE:-$LEDGER}" \
         SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
         BEADS_NO_AUTO_IMPORT=1 \
-        timeout 300 bash "$HOMEDIR/aeon.sh" "$1" > "$TMP/out" 2>&1
+        timeout 300 "$SPIRA_AEON_BIN" --home "$HOMEDIR" "$1" > "$TMP/out" 2>&1
 }
 sop() {                  # the same program the aeon runs, in the same environment
     env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" \
@@ -346,8 +346,8 @@ echo "the mechanism is declared, and Ops deliberately does not opt into it:"
 # who finds a persona that plainly ought to produce runbooks would set it back to 1 without
 # ever learning what that cost. This pins the choice and names the scar.
 want "ops.fayth declares the rule OFF" "FAYTH_SOP_REQUIRED=0" "$(cat "$HERE/chamber/ops.fayth")"
-want "aeon.sh binds the check to that key"   "FAYTH_SOP_REQUIRED"   "$(cat "$HERE/aeon.sh")"
-nowant "and not to the persona's name"       "FAYTH\" = \"ops"      "$(cat "$HERE/aeon.sh")"
+want "the aeon binary binds the check to that key" "FAYTH_SOP_REQUIRED" "$(cat "$HERE/../aeon/src/conf.rs")"
+nowant "and not to the persona's name"       "name == \"ops\""       "$(cat "$HERE/../aeon/src/"*.rs)"
 
 echo
 echo "T1: close-reason-flags.py, unit directly — no aeon run, no bd"
