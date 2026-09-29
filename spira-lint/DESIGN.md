@@ -250,6 +250,173 @@ pub struct FenceScriptAllow(Vec<(usize /* line */, String)>);
 
 ---
 
+# Rules for the lint-shaped suites (sp-l8gl3)
+
+**Intent.** Each suite below was a `test-*.sh` that read files and grepped them: no process,
+no database, no clock. As suites they ran inside the gate's container and inside every
+round, paid its setup, and were selected only when the diff touched their `# covers:`. As
+rules they run on every branch in the gate's lint step, in one walk, in milliseconds, with
+no container. Each suite was deleted in the change that added its rule. What needs a
+process stays a suite and is named below.
+
+Every rule here reports a missing target file as a finding and an empty scope as a refusal,
+never as clean (law-absence-needs-a-positive-control).
+
+## Rule `testlib-migrated`
+
+Ported from `spira/test-testlib-migrated.sh`.
+
+**Intent.** Suites share testlib.sh's assertion primitives. A suite with its own `ok()` or
+`want()` counts passes its own way and drifts from the runner's summary.
+
+**Scope.** `spira/test-*.sh` directly in `spira/`.
+
+**Violation.** A line starting `ok()`, `bad()`, `fail()`, `is()`, `want()`, `nowant()`,
+`notwant()` or `wantrc()`: one finding per file.
+
+**Allow list.** `spira-lint/testlib-migrated-allow`, exact paths, shrink-only. An entry
+naming a suite that no longer redefines a primitive is itself a finding, so the list stays
+exact (the suite's "every declared exception still needs one").
+
+## Rule `script-exec`
+
+Ported from `spira/test-script-exec.sh`.
+
+**Intent.** An operator command without the execute bit ships silent.
+
+**Scope.** `spira/*.sh` directly in `spira/`, minus `test-*`.
+
+**Violation.** The file's mode has no execute bit and its first 10 lines do not contain
+`Sourced, never executed`. The header is the declaration, so there is no list to drift.
+The mode is read from the work tree, as the suite's `[ -x ]` did.
+
+## Rule `event-taxonomy`
+
+Ported from `spira/test-event-taxonomy.sh`.
+
+**Intent.** A typo'd event kind is refused at send time. Declaring the vocabulary and checking
+every call site against it at the gate is the difference between a taxonomy and free text.
+
+**Scope.** `spira/*.sh` directly in `spira/` (suites included, as before).
+
+**Violations.**
+- `spira_event <kind>` on a non-comment line, where `<kind>` is not declared. The suite's
+  `[^#]spira_event` needed a character before the call; a call at the start of a line now
+  counts too.
+- A declared kind that is not lowercase dotted segments of `[a-z0-9]` or is over 32
+  characters (the events table's column).
+- A wired call site that no suite can drive and has gone: `spira/gate-check.sh` must contain
+  `spira_event ci.failed `; `sentinel/src/check4.rs`, `strand/src/check.rs` and
+  `landing-pass/src/push.rs` must contain their kinds as string literals.
+
+**Declared kinds.** `spira-lint/event-kinds`, one per line, allow-file syntax. It moved out
+of the suite's `KINDS=` so that adding a kind is an edit to one data file. An empty file, or
+no call site found at all, is a refusal.
+
+## Rule `deps-lint`
+
+Ported from `spira/deps-lint.sh` (and its suite `spira/test-deps-lint.sh`); both deleted.
+
+**Intent.** Every external program the harness invokes is declared in `spira/deps.toml`,
+which doctor.sh reads. An undeclared program is a dependency nobody installs.
+
+**Scope.** `spira/*.sh` directly in `spira/`, and every `*.rs` in the walk. The script used
+`rglob` and skipped `target/`; the walk never holds ignored files, so nothing needs skipping.
+
+**Violations.** In shell, `command -v <prog>` on a non-comment line, unless the match sits
+inside an open quote on its line (an odd count of `"` or `'` before it). In Rust, a literal
+`Command::new("<prog>")`. `<prog>` matches `[a-z][a-z0-9_-]+`. A program is declared when
+`spira/deps.toml` has a `[[dep]]` with that `name`, or it is on the rule's `SYSTEM_ALLOW`
+(standard utilities and shell functions, unchanged from the script).
+
+**Refusal.** A missing, unparseable or empty `spira/deps.toml` is `LintError::BadAllow`.
+
+## Rule `covers-entries`
+
+Ported from `spira/test-covers-entries.sh`.
+
+**Intent.** A `# covers:` glob that matches nothing selects its suite for nothing. The suite
+can never be chosen for the change it was written to guard.
+
+**Scope.** `spira/test-*.sh` directly in `spira/`.
+
+**The declaration.** Parsed exactly as `suite_covers_of` in `spira/suite-covers.sh` does: the
+first `# covers:` line, folded with continuation lines (a comment indented by two or more
+blanks that is not a `# word:` directive). `UC-<area>-NN` and `G-NN` tokens are catalogue ids,
+not paths, and are skipped.
+
+**Violation.** A path token that resolves to nothing. Resolution is the shell's: `*` and `?`
+do not cross `/` or match a leading `.`, and `[…]` is a bracket expression. A token resolves
+when it names a file in the walk or a directory holding one. The suite used `[ -e ]`, which
+also saw ignored files. A token naming only an ignored file now fails, and that is the
+intent: a build output is not something a suite covers.
+
+A suite with no declaration is skipped. If no suite declares anything, that is a refusal.
+
+## Rule `acceptance-run`
+
+Moved from the grep checks of `spira/test-acceptance-run.sh` (the "pattern not found" reds).
+
+**Intent.** `spira/acceptance-run.sh` runs for real only in acceptance, on a clean machine.
+Its textual invariants are what the gate can hold it to on every branch.
+
+**Checks.** `acceptance-run.sh` and `acceptance-agent.sh` exist and are executable. Each
+fixed string and regex the suite asserted is present or absent, from the rule's `SCRIPT_WANTS`
+and `AGENT_WANTS` tables, which name each invariant. The checks that relate lines:
+- every `systemctl --user start` has a matching `list-unit-files 'spira-sentinel*.service'`
+- no non-comment `sentinel --report`
+- no `SPIRA_HOME_REPO` within the scope-label read
+- the phase-D override key appended to `$_aged_conf` is in conf.sh's `SPIRA_CONF_KEYS`,
+  read statically with `conf-key-registry`'s parser where the suite sourced conf.sh
+- every `deploy.sh … "$tag"` passes `--allow-draft`
+- every `deploy|uninstall|world|doctor.sh` call and every `. "$1/conf.sh"` read runs under
+  `_ci_deploy_env`, with at least 11 wired call sites
+
+**Stays a suite.** `test-acceptance-run.sh` keeps what needs a process: the script's usage
+errors, the phase-B output and guard fixtures, and `acceptance-agent.sh` driven twice
+against a scratch repository, plus the sweep session with no bead.
+
+## Rule `gate-workflow`
+
+Ported from `spira/test-gate-workflow.sh`, whose header gives the six properties and why each
+one cannot be allowed to drift.
+
+**Scope.** `.github/workflows/{gate,release,acceptance,testenv-image}.yml` and the pinned
+action fixtures `spira/test-fixtures/ephemeral-ci-v1/{provision,teardown}-action.yml`.
+
+**Checks.** Every assertion of the suite, over the same scopes. Block extraction mirrors the
+suite's awk line for line (`block`, `job_if`, `step`, `concurrency`), so a check that read
+one job's block still reads only that block. A block that comes back empty is its own
+finding, because the checks on it would be vacuous. The suite's section 16a asserted that
+`find` counts files in an empty directory, which tests `find` and not the workflow, so it
+was dropped, as `docs/test-plan/test-infrastructure.md` row 38 already proposed.
+
+**Tests.** The shipped workflow files are the passing fixture, via `include_str!`. Each
+planted violation is a one-line edit of a copy. The test asserts that the edit applied, so
+a workflow change that removes the planted text fails the test and does not pass vacuously.
+
+## Rule `conf-key-registry`
+
+Moved from spira-config's `every_conf_sh_key_survives_convert_and_export` (sp-9nljd), which
+was red in 13 rounds. It read `spira/conf.sh`, so it was a property of the tree tested as a
+property of one crate. A branch that added a key to conf.sh touched no crate and never ran
+it at the gate.
+
+**Intent.** Every key conf.sh's `SPIRA_CONF_KEYS` accepts survives spira-config's `convert`
+and then `export --sh` unchanged. Otherwise it is dropped on the way to the typed config.
+
+**Check.** Parse the `SPIRA_CONF_KEYS="\n … "\n` block and write each key into a synthetic
+spira.conf (the typed keys get typed values, from the rule's `typed_cases`). Then `convert`,
+`export_sh`, and undo conf.sh's prefix renaming. One finding per refusal, warning, dropped
+key or changed value. The rule links `spira-config` as a library, so the schema it judges
+against is the one being built. Fewer than 200 parsed keys is a refusal: that means the
+parser is reading the wrong block.
+
+**Stays in spira-config.** The positive control (a planted unknown key is refused by
+`convert`) is a property of the crate and stays its unit test.
+
+---
+
 ## Tests
 
 Each rule has, in its own module:

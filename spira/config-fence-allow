@@ -142,7 +142,6 @@ spira/test-gate-metering.sh
 spira/test-gate-preflight.sh
 spira/test-gate-tree.sh
 spira/test-gate-verdict.sh
-spira/test-gate-workflow.sh
 spira/test-gh-intake.sh
 spira/test-gh-issue-closeout.sh
 spira/test-gh-run-gate.sh

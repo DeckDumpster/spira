@@ -1,0 +1,10 @@
+# testlib-migrated-allow — suites still defining their own ok()/bad()/is()/want()/nowant()/
+# wantrc() instead of sourcing testlib.sh's, one repo-relative path per line. Blank lines and
+# `#` comments are ignored. Read by spira-lint's testlib-migrated rule.
+#
+# SHRINK-ONLY. A line leaves in the change that migrates its suite; a line naming a suite
+# that no longer redefines a primitive is itself a finding, so the list stays exact.
+#
+# Custom assertion helpers beyond ok/bad/want/is (is1/absent/present) that testlib.sh cannot
+# yet express: sp-u1b.
+spira/test-install-refusal.sh

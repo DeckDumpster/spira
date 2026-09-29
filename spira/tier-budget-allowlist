@@ -176,7 +176,6 @@ test-containment.sh	T1	21.5
 test-content-landed-empty-branch.sh	T1	17.5
 test-content-landed-no-reopen.sh	T1	29.5
 test-counter-events-sentinel.sh	T1	22.0
-test-covers-entries.sh	T1	5.0
 test-cross-repo.sh	T1	35.5
 test-ctrl.sh	T1	55.5
 test-ctx-pointer.sh	T1	5.0
@@ -186,7 +185,6 @@ test-czar-shadow.sh	T1	23.0
 test-dependents.sh	T1	18.0
 test-deploy-preflight-new-unit.sh	T1	12.0
 test-deploy.sh	T1	17.5
-test-deps-lint.sh	T1	2.0
 test-destroy-branch.sh	T2	18.5
 test-destructive-bead.sh	T1	8.0
 test-doctor-concierge-singleton.sh	T1	2.5
@@ -196,7 +194,6 @@ test-doctor-operator-channel.sh	T1	7.0
 test-doctor-snap-fresh.sh	T1	4.0
 test-doctor-store.sh	T1	12.0
 test-drain-banner.sh	T1	2.5
-test-event-taxonomy.sh	T0	4.0
 test-event.sh	T1	10.5
 test-express-lane.sh	T1	25.5
 test-fayth-project-instructions.sh	T1	4.5
@@ -340,7 +337,6 @@ test-schema-apply.sh	T1	223.0
 test-schema.sh	T1	7.0
 test-scope-label.sh	T1	3.5
 test-scratch-fence.sh	T1	2.0
-test-script-exec.sh	T1	4.0
 test-select.sh	T1	29.0
 test-sending-certified-guard.sh	T1	7.5
 test-sending-closed-reap.sh	T1	13.0

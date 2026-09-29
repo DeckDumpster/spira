@@ -133,13 +133,6 @@ spira/test-gate-preflight.sh
 # to the timed set because the mechanisms it covers are still critical-path.
 spira/test-landing-rebase.sh
 
-# THE DEPS-LINT FENCE'S OWN POSITIVE CONTROL. deps-lint.sh refuses any external program
-# invoked in spira/*.sh or Rust sources that is not declared in deps.toml; this suite
-# plants an undeclared program (SEEN RED), withdraws it (SEEN GREEN), and confirms the
-# lint finds the shipped tree clean. Without a positive control, a lint that never fires
-# is indistinguishable from one that passes a clean tree.
-spira/test-deps-lint.sh
-
 # THE BUILD FENCE'S OWN POSITIVE CONTROL. build-fence.sh runs `make build` under the
 # pinned toolchain whenever a diff touches Cargo.toml, Cargo.lock, a crate's src/,
 # rust-toolchain, or the Makefile — the check fences-only certification (SPIRA_GATE_SUITES=off)

@@ -5,7 +5,7 @@
 #
 # dispatch triggers a Gate workflow_dispatch run on a throwaway branch, scoped to
 # the suite(s) verdict.sh wants re-checked, via the same `suites` input
-# test-gate-workflow.sh proves gate.yml accepts. fail-lines reads an ejected
+# spira-lint's gate-workflow rule holds gate.yml to. fail-lines reads an ejected
 # member's evidence lines back out of that run's own batch-results artifact,
 # rather than capturing them from a local rerun's stdout.
 #

@@ -1,0 +1,16 @@
+# event-kinds — the event taxonomy: every kind a spira_event call site may emit, one per
+# line. Blank lines and `#` comments are ignored. Read by spira-lint's event-taxonomy rule.
+#
+# A typo'd kind is refused at send time; catching it at the gate is the difference between
+# a taxonomy and free text. Adding a kind is a deliberate act: add it here. Each kind is
+# lowercase dotted segments of [a-z0-9], at most 32 characters (the events table column).
+aeon.claimed
+bead.landed
+bead.poisoned
+bead.reopened
+branch.reclaimed
+ci.failed
+pilgrimage.complete
+note
+aeon.rapid
+queue.abandoned

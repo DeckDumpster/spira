@@ -114,6 +114,18 @@ impl Tree {
             .as_deref()
     }
 
+    /// The walk's entry for `rel`, if the walk has one.
+    pub fn entry(&self, rel: &str) -> Option<&Entry> {
+        self.entries.binary_search_by(|e| e.path.as_str().cmp(rel)).ok().map(|i| &self.entries[i])
+    }
+
+    /// The text of a file in the walk (lossy UTF-8), or `None` when the walk has no such
+    /// regular file.
+    pub fn text_of(&self, rel: &str) -> Option<String> {
+        let e = self.entry(rel)?;
+        self.content(e).map(|b| String::from_utf8_lossy(b).into_owned())
+    }
+
     /// A repo-relative file's text, for allow files. Missing reads as empty — the bash
     /// fences' `2>/dev/null`.
     pub fn read_text(&self, rel: &str) -> String {
@@ -218,6 +230,12 @@ pub fn pathspec_match(pat: &str, path: &str) -> bool {
     go(pat.as_bytes(), path.as_bytes())
 }
 
+/// The basename of `path` when it sits directly in `dir` (no deeper `/`) — a shell's
+/// `"$dir"/*` glob.
+pub fn direct_child<'a>(path: &'a str, dir: &str) -> Option<&'a str> {
+    path.strip_prefix(dir)?.strip_prefix('/').filter(|rest| !rest.is_empty() && !rest.contains('/'))
+}
+
 /// A line with its leading whitespace stripped (`sed 's/^[[:space:]]*//'`), for messages.
 pub fn trim_lead(line: &[u8]) -> String {
     let start = line.iter().position(|b| !b.is_ascii_whitespace()).unwrap_or(line.len());
@@ -240,6 +258,14 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(rules::binary_path_fence::BinaryPathFence),
         Box::new(rules::payload_argv::PayloadArgv),
         Box::new(rules::fence_scripts::FenceScripts),
+        Box::new(rules::testlib_migrated::TestlibMigrated),
+        Box::new(rules::script_exec::ScriptExec),
+        Box::new(rules::event_taxonomy::EventTaxonomy),
+        Box::new(rules::deps_lint::DepsLint),
+        Box::new(rules::covers_entries::CoversEntries),
+        Box::new(rules::acceptance_run::AcceptanceRun),
+        Box::new(rules::gate_workflow::GateWorkflow),
+        Box::new(rules::conf_key_registry::ConfKeyRegistry),
     ]
 }
 
@@ -355,30 +381,45 @@ mod tests {
         assert_eq!(got, vec![(".gitignore", true), ("a.sh", true), ("new.sh", false)]);
     }
 
-    /// Every rule over one small fixture tree: one planted violation per rule is found,
-    /// named by its rule, and nothing else is.
+    /// The tree-walking rules over one small fixture tree: one planted violation per rule is
+    /// found, named by its rule, and nothing else is. The rules that hold named files to a
+    /// contract (event-taxonomy, acceptance-run, gate-workflow, conf-key-registry) are
+    /// fixtured in their own modules.
     #[test]
     fn all_rules_over_a_fixture_tree() {
+        use std::os::unix::fs::PermissionsExt;
         let t = TempDir::new("fixture");
         t.git_init();
         // The planted strings are assembled with concat! so this source file itself carries
-        // none of them — config-fence and binary-path-fence both scan *.rs.
+        // none of them — config-fence, binary-path-fence and deps-lint all scan *.rs.
         let cfg_name = concat!("spira", ".toml");
         let bin_path = concat!("target", "/release/", "reconciler");
+        let prog = concat!("no-such", "-prog");
         t.write("spira/clean.sh", "#!/bin/sh\necho ok\n");
         t.write("spira/cfg.sh", &format!("#!/bin/sh\n# see {cfg_name}\n"));
         t.write("spira/bin.sh", &format!("#!/bin/sh\nBIN=\"$R/{bin_path}\"\n"));
         t.write("spira/payload.sh", "#!/bin/sh\nX_JSON=\"$y\" python3 -c 'print(1)'\n");
         t.write("spira/new-fence.sh", "#!/bin/sh\n");
+        t.write("spira/probe.sh", &format!("#!/bin/sh\ncommand -v {prog}\n"));
+        t.write("spira/noexec.sh", "#!/bin/sh\n");
+        t.write("spira/test-own.sh", "#!/bin/sh\n# covers: spira/clean.sh spira/gone.sh\nok() { :; }\n");
+        t.write("spira/deps.toml", "[[dep]]\nname = \"git\"\n");
         t.write("spira/config-fence-allow", "");
         t.write("spira/binary-path-fence-allow", "");
         t.write("spira/payload-argv-lint-allow", "");
         t.write("spira-lint/fence-scripts-allow", "");
+        t.write("spira-lint/testlib-migrated-allow", "");
+        for f in ["clean", "cfg", "bin", "payload", "new-fence", "probe"] {
+            let p = t.path().join(format!("spira/{f}.sh"));
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         t.git(&["add", "."]);
         let tree = Tree::from_git(t.path()).unwrap();
-        let results = run(&tree, &all_rules());
+        let contract = ["event-taxonomy", "acceptance-run", "gate-workflow", "conf-key-registry"];
+        let mut rules = all_rules();
+        rules.retain(|r| !contract.contains(&r.name()));
         let mut lines = Vec::new();
-        for r in &results {
+        for r in &run(&tree, &rules) {
             for f in r.outcome.as_ref().unwrap() {
                 lines.push(f.to_string());
             }
@@ -390,6 +431,10 @@ mod tests {
                 format!("binary-path-fence: spira/bin.sh:2: BIN=\"$R/{bin_path}\""),
                 "payload-argv-lint: spira/payload.sh:2: env: $X_JSON handed to python3".to_string(),
                 "fence-scripts: spira/new-fence.sh: a new bash fence/lint script — write it as a spira-lint rule instead".to_string(),
+                "testlib-migrated: spira/test-own.sh: defines its own ok()/bad()/is()/want()/nowant()/wantrc() — source testlib.sh instead".to_string(),
+                "script-exec: spira/noexec.sh: not executable — chmod +x it, or declare \"Sourced, never executed\" in its header".to_string(),
+                format!("deps-lint: spira/probe.sh:2: {prog}: command -v of a program spira/deps.toml does not declare"),
+                "covers-entries: spira/test-own.sh: # covers: token 'spira/gone.sh' matches no file in the tree".to_string(),
             ]
         );
     }

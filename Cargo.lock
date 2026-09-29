@@ -1003,6 +1003,9 @@ name = "spira-lint"
 version = "0.1.0"
 dependencies = [
  "regex",
+ "serde",
+ "spira-config",
+ "toml",
 ]
 
 [[package]]

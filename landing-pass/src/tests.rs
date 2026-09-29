@@ -1838,7 +1838,7 @@ fn on_the_pr_pass_proves_content_deliveries_and_is_loud_when_the_machine_fails()
 #[test]
 fn halt_children_run_under_conf_path_then_spira_path_then_inherit() {
     use crate::halt::child_path;
-    // conf.sh's answer wins: it already put SPIRA_PATH (from env or spira.toml) first.
+    // conf.sh's answer wins: it already put SPIRA_PATH (from env or the typed config) first.
     assert_eq!(child_path(Some("/conf:/bin"), Some("/sp"), Some("/usr/bin")).as_deref(), Some("/conf:/bin"));
     // No context (unloadable conf): SPIRA_PATH is prepended, as conf.sh would have.
     assert_eq!(child_path(None, Some("/sp"), Some("/usr/bin")).as_deref(), Some("/sp:/usr/bin"));
