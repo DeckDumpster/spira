@@ -968,6 +968,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "strand"
+version = "1.0.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "spira-config",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1010,6 +1020,19 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "toml",
+]
+
+[[package]]
+name = "testenv"
+version = "1.0.0"
+dependencies = [
+ "libc",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "spira-config",
+ "tsd",
 ]
 
 [[package]]
