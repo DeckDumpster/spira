@@ -301,3 +301,28 @@ fn dispatch_refuses_without_a_ref() {
     let out = dispatch(&gh, repo(), "", "some-suite");
     assert_eq!(out.code, 1);
 }
+
+// ── force-cancel names the VM it orphans ─────────────────────────────────────────────────
+
+#[test]
+fn force_cancel_posts_the_force_cancel_endpoint_after_reading_the_jobs() {
+    let gh = FakeGh::default();
+    gh.on(&["api", "repos/{owner}/{repo}/actions/runs/9/jobs"], 0, r#"{"jobs":[{"labels":["self-hosted","runner-a"]},{"labels":["runner-a"]}]}"#);
+    gh.on(&["api", "--method", "POST", "repos/{owner}/{repo}/actions/runs/9/force-cancel"], 0, "");
+    let out = force_cancel(&gh, repo(), "9");
+    assert_eq!(out.code, 0);
+    let calls = gh.calls.borrow();
+    assert_eq!(calls.len(), 2);
+    assert!(calls[0].last().unwrap().ends_with("/jobs"), "jobs are read before the cancel: {calls:?}");
+    assert!(calls[1].last().unwrap().ends_with("/force-cancel"));
+}
+
+#[test]
+fn force_cancel_still_cancels_when_the_jobs_are_unreadable_and_refuses_without_a_run() {
+    let gh = FakeGh::default();
+    gh.on(&["api", "--method", "POST", "repos/{owner}/{repo}/actions/runs/9/force-cancel"], 0, "");
+    assert_eq!(force_cancel(&gh, repo(), "9").code, 0);
+    let gh = FakeGh::default();
+    assert_eq!(force_cancel(&gh, repo(), "").code, 1);
+    assert!(gh.calls.borrow().is_empty());
+}

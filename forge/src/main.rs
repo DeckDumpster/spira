@@ -56,6 +56,7 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
         "runs-active" => runs_active(gh, repo),
         "run-metadata" => run_metadata(gh, repo, arg(args, 0)),
         "run-cancel" => run_cancel(gh, repo, arg(args, 0)),
+        "force-cancel" => force_cancel(gh, repo, arg(args, 0)),
         "workflow-rerun" => workflow_rerun(gh, repo, arg(args, 0)),
         "pr-close" => pr_close(gh, repo, arg(args, 0)),
         "pr-comment" => pr_comment(gh, repo, arg(args, 0), arg(args, 1)),

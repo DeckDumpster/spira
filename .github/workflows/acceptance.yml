@@ -343,10 +343,10 @@ jobs:
 
       - name: Retract release and tag on FAIL
         # Delete the draft release and the tag so no broken release is left visible.
-        # NEVER an already-published one: a re-triggered run against a published
-        # tag (e.g. correcting the tag by hand re-fires the push trigger) must not
-        # retract the release every later acceptance run depends on (sp-j7t1e).
-        if: failure()
+        # cancelled() as well as failure(): a cancelled run produced no PASS either.
+        # NEVER an already-published release: a re-triggered run against a published
+        # tag must not retract the release every later acceptance run depends on.
+        if: ${{ failure() || cancelled() }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
