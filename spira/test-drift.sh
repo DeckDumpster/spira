@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tier: T1
 # covers: spira/drift.sh spira/owned.sh spira/cockpit.sh spira/watchtower.sh spira/collect.sh
-#         spira/sentinel.sh
+#         sentinel/src/dispatch.rs
 #
 # test-drift.sh — drift.sh finds an untracked file in a production checkout and an unshipped
 # drop-in in the installed unit directory; a clean checkout and unit dir report nothing.
