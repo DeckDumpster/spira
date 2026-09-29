@@ -177,19 +177,33 @@ impl<'w, W: World> Trial<'w, W> {
             return v(NOVERDICT, "no-base", format!(
                 "gate: cannot resolve the ref '{name}' lands on — refusing to guess a base\ngate: give it a `base` column in {map}"));
         };
-        let range = format!("{base}...{br}");
+        // THE BASE IS PINNED (sp-hh5h0): the landing ref is resolved to a commit once, here,
+        // and every later read — the merge, the touched set, the gate string's
+        // SPIRA_GATE_BASE, the base trial — uses that commit. The ref moves while a trial
+        // runs (a landing lands); re-reading it by name made the base trial judge a
+        // different base than the merge was cut from, and a red the old base shared was
+        // charged to the branch because the new base had fixed it. `base` stays the name,
+        // for the messages.
+        let Some(base_rev) = w
+            .rev_parse(&repo, &format!("{base}^{{commit}}"))
+            .filter(|r| !r.is_empty())
+        else {
+            return v(NOVERDICT, "no-base", format!(
+                "gate: the ref '{base}' that {name} lands on does not resolve to a commit — refusing to guess a base\ngate: give it a `base` column in {map}"));
+        };
+        let range = format!("{base_rev}...{br}");
         let files = match w.diff_names(&repo, &range) {
             Ok(f) => f,
             Err(out) => {
                 return v(NOVERDICT, "no-diff", format!(
-                    "gate: cannot diff {range} in {name} — one of them does not resolve in this checkout\n{out}"))
+                    "gate: cannot diff {base}...{br} in {name} — one of them does not resolve in this checkout\n{out}"))
             }
         };
         let status_list = w.diff_name_status(&repo, &range);
         let ejected = self.ejected(&ctx);
 
         // THE MERGE (DESIGN.md "The merge"): what would land is what is judged.
-        let merged_tree = match w.merge_tree(&repo, &base, &br) {
+        let merged_tree = match w.merge_tree(&repo, &base_rev, &br) {
             Merge::Clean(t) => t,
             Merge::Conflict(paths) => {
                 let list: String = paths
@@ -202,10 +216,10 @@ impl<'w, W: World> Trial<'w, W> {
                 return v(NOVERDICT, "merge-failed", format!("gate: cannot merge {br} onto {base} in {name} to judge it — refusing to judge the branch alone.\n{e}"));
             }
         };
-        let (rev, label) = if w.is_ancestor(&repo, &base, &br) {
+        let (rev, label) = if w.is_ancestor(&repo, &base_rev, &br) {
             (br.clone(), br.clone())
         } else {
-            match w.commit_merge(&repo, &merged_tree, &base, &br) {
+            match w.commit_merge(&repo, &merged_tree, &base_rev, &br) {
                 Some(c) => (c.clone(), c),
                 None => {
                     return v(NOVERDICT, "merge-failed", format!("gate: cannot record the merge of {br} onto {base} in {name} — refusing to judge the branch alone."));
@@ -255,7 +269,7 @@ impl<'w, W: World> Trial<'w, W> {
                 ),
             );
         }
-        let (skew_rc, skew_out) = w.skew_foreign(&skew, &repo, &base, &br);
+        let (skew_rc, skew_out) = w.skew_foreign(&skew, &repo, &base_rev, &br);
         if skew_rc == 3 {
             return v(NOVERDICT, "skew-init-fault", format!(
                 "gate: skew.sh could not initialize — conf.sh or the database may be unavailable.\ngate: the foreign-harness check did not run; this is a machinery fault, not a branch fault.\n{skew_out}"));
@@ -276,7 +290,7 @@ impl<'w, W: World> Trial<'w, W> {
             return v(PASS, "syntax-only", "");
         }
         for p in parse::bash_paths(&cmd) {
-            if !w.ls_tree_has(&repo, &base, &p) {
+            if !w.ls_tree_has(&repo, &base_rev, &p) {
                 return v(NOVERDICT, "cmd-missing-file", format!(
                     "gate: {name}'s gate command names 'bash {p}' but {p} is absent from {base}.\ngate: command: {cmd}\ngate: this is a gate configuration error, not a fault in any branch.\ngate: land {p} on the base before wiring it into the gate command, or remove it."));
             }
@@ -440,12 +454,12 @@ impl<'w, W: World> Trial<'w, W> {
         self.s.filelist = w.temp_file(&format!("{list}\n"));
 
         // THE COMPOSITION: what the branch touches decides what runs.
-        let comp = self.composition(mode, &ctx, &repo, &base, &rev, &tree);
+        let comp = self.composition(mode, &ctx, &repo, &base_rev, &rev, &tree);
         // THE RE-ENTRY CHECK: the suites the round named, against the tree under test.
         let re = compose::reentry(&ejected, |s| w.exists(&tree.join("spira").join(s)));
         self.s.compose = comp.label();
         self.s.branch_type = crate::telemetry::branch_type(&crate::telemetry::shape(
-            w, mode, &comp, &ctx, &repo, &base, &rev, &tree,
+            w, mode, &comp, &ctx, &repo, &base_rev, &rev, &tree,
         ))
         .into();
         if !re.required.is_empty() {
@@ -472,7 +486,7 @@ impl<'w, W: World> Trial<'w, W> {
                 e("SPIRA_GATE_REPO", &repo.to_string_lossy()),
                 e("SPIRA_GATE_REPO_NAME", &name),
                 e("SPIRA_GATE_BRANCH", branch),
-                e("SPIRA_GATE_BASE", &base),
+                e("SPIRA_GATE_BASE", &base_rev),
                 e("SPIRA_GATE_SELECT_HEAD", &br),
                 e(
                     "SPIRA_GATE_FILES",
@@ -586,20 +600,18 @@ impl<'w, W: World> Trial<'w, W> {
                 "gate: {name}'s own gate reported a harness fault (exit {NOVERDICT}) — container or install failed.\ngate: command: {cmd}\n{out}"));
         }
 
-        // WHOSE FAULT: the same command on the landing ref itself.
+        // WHOSE FAULT: the same command on the landing ref itself — the pinned commit the
+        // merge was cut from, never the ref re-read by name (sp-hh5h0).
         let mut base_ran = false;
         let (mut base_rc, mut base_out) = (1, String::new());
-        let base_want = w
-            .rev_parse(&repo, &format!("{base}^{{commit}}"))
-            .unwrap_or_default();
-        if self.gate_at(&repo, &tree, &base, &base_want).is_ok() {
+        if self.gate_at(&repo, &tree, &base_rev, &base_rev).is_ok() {
             let base_comp = self.base_composition(&comp, &ctx, &tree);
             let (r, o, ph) = run_composed(
                 w,
                 &tree,
                 &base_comp,
                 &env(
-                    &base,
+                    &base_rev,
                     "base trial — confirming whether base is independently red",
                     &base_comp,
                 ),
@@ -621,8 +633,64 @@ impl<'w, W: World> Trial<'w, W> {
                 format!("gate: signalled during the base trial for {br}"),
             );
         }
+
+        // EACH RED IS JUDGED ON THE BASE ON THAT SUITE (sp-hh5h0). A branch red the base
+        // trial did not run — its selection differed, or --deadline deferred it — is run on
+        // the base now, by name, before anyone is blamed. A suite the base does not have is
+        // the branch's own and needs no run.
+        let mut absent: Vec<String> = Vec::new();
+        if base_ran {
+            let base_ran_set = parse::ran_suites(&base_out);
+            let mut unrun: Vec<String> = Vec::new();
+            for s in parse::red_suites(&out) {
+                if base_ran_set.contains(&s) {
+                    continue;
+                }
+                if w.ls_tree_has(&repo, &base_rev, &format!("spira/{s}")) {
+                    unrun.push(s);
+                } else {
+                    absent.push(s);
+                }
+            }
+            if !unrun.is_empty() && !ctx.var("SPIRA_TESTENV_BIN").is_empty() {
+                let rerun = base_rerun_cmd(&unrun);
+                let t = w.now();
+                let (r, o) = w.run_gate(
+                    &tree,
+                    &env(
+                        &base_rev,
+                        "base trial — the branch's red suites the base trial did not run",
+                        &Composition::Suites {
+                            why: "base-rerun".into(),
+                        },
+                    ),
+                    &timeout,
+                    &rerun,
+                );
+                self.s
+                    .phases
+                    .push(("base-rerun".into(), w.now().saturating_sub(t)));
+                if w.signalled() {
+                    return v(
+                        NOVERDICT,
+                        "died",
+                        format!("gate: signalled during the base trial for {br}"),
+                    );
+                }
+                if !o.is_empty() {
+                    base_out.push_str(&format!(
+                        "\ngate: re-ran on {base} ({}): {}\n{o}",
+                        short(&base_rev),
+                        unrun.join(" ")
+                    ));
+                }
+                if r != 0 && base_rc == 0 {
+                    base_rc = r;
+                }
+            }
+        }
         let spaced = |v: &[String]| v.join(" ");
-        match parse::attribute(&out, base_ran, base_rc, &base_out) {
+        match parse::attribute(&out, base_ran, base_rc, &base_out, &absent) {
             Attribution::BranchRed(s) => {
                 self.s.suite = s;
                 if base_ran && base_rc != 0 {
@@ -973,6 +1041,33 @@ pub fn describe_reentry(bead: &str, r: &compose::Reentry) -> Option<String> {
 
 /// Run a composition's phases in order, each under what is left of `timeout`, stopping at
 /// the first non-zero status. Returns (status, the phases' output joined, the phase walls).
+/// The base re-run: the named suites through testenv, on the revision in
+/// `SPIRA_GATE_BRANCH` (the pinned base), no deadline — the gate timeout bounds it. testenv's
+/// 2 and 3 are its own faults, NO_VERDICT, as the gate string maps them. Names are
+/// `red_suites` words; anything outside `[A-Za-z0-9._-]` is dropped, never quoted into a shell.
+/// The base re-run's first words: a no-op that names it in a process listing and a trace.
+pub const BASE_RERUN_MARK: &str = ": base-rerun; ";
+
+pub fn base_rerun_cmd(suites: &[String]) -> String {
+    let list: Vec<&str> = suites
+        .iter()
+        .map(String::as_str)
+        .filter(|s| {
+            !s.is_empty()
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+        })
+        .collect();
+    format!(
+        "{BASE_RERUN_MARK}_b=0; \"$SPIRA_TESTENV_BIN\" --suites {} \"$SPIRA_GATE_BRANCH\" || _b=$?; case \"$_b\" in 2|3) exit 75;; *) exit \"$_b\";; esac",
+        list.join(",")
+    )
+}
+
+fn short(rev: &str) -> &str {
+    rev.get(..12).unwrap_or(rev)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run_composed<W: World>(
     w: &W,

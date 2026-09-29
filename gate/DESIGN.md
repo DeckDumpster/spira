@@ -99,11 +99,23 @@ test. When the landing ref is already an ancestor of the branch that is the bran
 before. Otherwise it is the **merge commit's id** (below), because the repository's gate string
 hands it to `testenv`, which builds its own worktree from it. `SPIRA_GATE_SELECT_HEAD` stays
 the branch, so suite selection still reads what the branch changed. In the base trial it is the
-landing ref, as before.
+landing ref, as before, but pinned: the commit it resolved to when the gate started.
+
+**`SPIRA_GATE_BASE` is that pinned commit's id, not the ref's name** (sp-hh5h0). The ref moves
+while the gate runs, and both trials must select against the same base.
 
 ### The merge (the change)
 
-After the landing ref `BASE` (`spira_landref`) and the branch both resolve:
+After the landing ref (`spira_landref`) and the branch both resolve:
+
+0. **The base is pinned** (sp-hh5h0). The landing ref is resolved to a commit `BASE` once,
+   here; one that does not resolve is NO_VERDICT `no-base`. Every later read uses that
+   commit, never the ref's name again: the changed-file list, the merge, `skew.sh`, the
+   preflight, the touched set, the gate command's `SPIRA_GATE_BASE`, and the base trial's
+   checkout and `SPIRA_GATE_BRANCH`. The name appears only in messages. The ref moves while
+   a trial runs, because a landing lands. On 2026-09-29 the gate re-read it by name for the
+   base trial, judged a newer base that had fixed `test-gate-verdict.sh`, and charged a red
+   the merge's own base shared to `concierge/sp-b4oct` as branch-red.
 
 1. `git merge-tree --write-tree --name-only --no-messages BASE BR`.
    * exit 0: the merged tree `T`.
@@ -193,8 +205,9 @@ repo map → repository → yield/meter armed → landing ref → changed files 
 `syntax-only`) → preflight (`bash <path>` words exist on the base) → key → cache → admission →
 sweep → tree lock → checkout the gate revision (proved by `rev-parse HEAD`) → **composition**
 and **re-entry** → branch trial (its phases, then the re-entry phase) → the re-entry proof →
-PASS, or: harness-fault line / 124 / 75 → base trial on the landing
-ref (the same composition, over the crates the base has) → attribution.
+PASS, or: harness-fault line / 124 / 75 → base trial on the pinned landing commit (the same
+composition, over the crates the base has) → base re-run of the branch's red suites the base
+trial did not run → attribution.
 
 The mode (`gate_mode`) is read just before the key, since it is part of it.
 
@@ -202,15 +215,34 @@ The meter is armed as soon as the repository resolves, so the early refusals (co
 them) now write a gate.log row. The bash armed it later and those refusals were invisible in
 the log (law-absence-needs-a-positive-control).
 
-### Attribution (unchanged; `gate_attribute`)
+### Attribution (`parse::attribute`; per suite since sp-hh5h0)
 
-Given the branch trial failed with an ordinary red:
+**Each red is judged against the base on that suite.** A base trial that exited 0 is not
+evidence about a suite it did not run. It may not have run it because its selection differed
+or because `testenv --deadline` deferred it (`DEFERRED deadline`, exit 0).
+
+**The base re-run.** After the base trial, when it ran (not 124 or 75), each suite that is red
+on the branch and absent from the base trial's ran-set is checked in this order:
+
+* the base has no `spira/<suite>` → the branch's own, with nothing to run;
+* otherwise it is re-run on the pinned base, by name, in one call:
+  `"$SPIRA_TESTENV_BIN" --suites <a,b> "$SPIRA_GATE_BRANCH"` in the gate tree, under the
+  base trial's environment. It has no `--deadline`, so only the gate timeout bounds it.
+  Exits 2 and 3 map to 75, as in the gate string. Names outside `[A-Za-z0-9._-]` are dropped.
+  Its output is appended to the base's output, and its wall time is metered as the
+  `base-rerun` phase. With `SPIRA_TESTENV_BIN` unset there is no re-run.
+
+Then, given the branch trial failed with an ordinary red:
 
 * base trial not run, or it exited 124 or 75 → NO_VERDICT `base-untestable`
-* base passed → FAIL `branch-red` (suite = first red)
-* base red, and some suite red on the branch only → FAIL `branch-red` (first such suite), the
-  message lists both sets
-* base's reds are all timeouts → NO_VERDICT `base-timeout`
+* the red names no suite (a fence, a unit phase): base passed → FAIL `branch-red`, suite `-`
+* some branch red that the base ran and that was not red there, or that the base lacks →
+  FAIL `branch-red` (the first such suite). When the base is red too, the message lists both
+  sets
+* some branch red still not run on the base (the re-run faulted, or there was no testenv) →
+  NO_VERDICT `base-untestable`: never branch-red on a base that did not look
+* every branch red is red on the base, and the base's reds are all timeouts → NO_VERDICT
+  `base-timeout`
 * else → BASE_FAIL `base-red`
 
 Suite names come from the batch runner's lines: a `*.sh` word followed by `RED`, `TIMEOUT`,
@@ -286,7 +318,8 @@ and its absence is not a red. With none left the base runs its fences only.
 ### What it records (for item 7)
 
 * gate.log: ` compose=<label> phases=<phase>:<secs>,…` after the reason, e.g.
-  `rc=0 pass compose=unit phases=fences:41,build:63,test:4`; base-trial phases carry `base-`.
+  `rc=0 pass compose=unit phases=fences:41,build:63,test:4`; base-trial phases carry `base-`,
+  and the per-suite re-run is `base-rerun`.
   `yield.sh` takes the note's first word as the reason, so the trailing fields are compatible.
 * the verdict file: a `compose=<label>` line.
 * stderr, before the trial: `gate: composition=<…>` naming the crates and the touched ones.
@@ -400,5 +433,10 @@ lib.sh seam is one `bash -c '. lib.sh; …'` at start (NUL-separated `key=value`
 * **Everything the switch cannot judge falls back to `suites`** (an invalid config, an
   unreadable diff or graph, `SPIRA_GATE_ALL`) — the stronger check, never a cheaper one on a
   guess. Ejected suites were on this list until sp-p3srm; they are the re-entry check now.
+* **A red is the base's when the base is red on that suite; the gate never infers it from
+  the base's exit status** (sp-hh5h0). The re-run costs one testenv call over the unjudged
+  suites, and only on a branch that is already red. That cost buys never ejecting a correct
+  branch for a base red: an ejection of every branch whose selection includes the suite,
+  as FAIL, is what throttled certification.
 * **`gate-lib.sh` is retired.** Its functions are ported (`src/parse.rs`, `src/key.rs`) with
   unit tests; `test-gate-unit.sh`, which only exercised them, is retired with it.
