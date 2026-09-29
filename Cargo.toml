@@ -29,6 +29,7 @@ members = [
     "spira-claim",
     "strand",
     "testenv",
+    "sentinel",
 ]
 resolver = "2"
 

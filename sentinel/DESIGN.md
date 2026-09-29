@@ -116,8 +116,8 @@ The format is `<YYYY-MM-DDTHH:MM:SSZ> spira: <msg>` (lib.sh `log`), in UTC.
 | `CHECK5: …` summary lines | unpoison.sh:145 (reads sentinel.log, but CHECK 5 logs to audit.log; pre-existing, §9) |
 
 Every other message is kept word for word as well, because the bash suites and the operator
-grep them. The exact strings are consts in `src/msg.rs` (the list in §4) and are pinned by
-unit tests.
+grep them. The exact strings are the ones §4 quotes; `src/tests.rs` pins the parsed ones
+(`state:`, `ACT`, `pass complete`, the CHECK 4/5/6 lines).
 
 ### 2.3 Files
 
@@ -138,6 +138,7 @@ unit tests.
 | `roster-warn` stamp (`$SPIRA_ROSTER_WARN_STAMP`) | r/w | sorted excluded fayths | lib.sh |
 | `reflect.log` | append (reflect.sh output) | — | — |
 | `summon.lock` | flock (inside the CHECK 7 seam) | — | escape.sh |
+| `.sentinel-tally.<pid>` | w/r/removed around each seam | `act\|progress<TAB>msg` lines (§6) | — |
 
 The directory paths come from the probe's variables (§6, S0): `SPIRA_POISON_ASKED`,
 `SPIRA_REQUEUE_ASKED`, `SPIRA_RECLAIM_ASKED`, `SPIRA_POISON_LIFTED` and
@@ -794,7 +795,7 @@ named unit tests.
 
 | # | test | action |
 |---|---|---|
-| 21 | `test-sentinel-pass.sh` | repoint. The `--unit=spira-audit … sentinel.sh --audit` assertion becomes `… <binary> --audit`. The rest are `pass::tests` / `dispatch::tests` |
+| 21 | `test-sentinel-pass.sh` | repoint. The `--unit=spira-audit … sentinel.sh --audit` assertion becomes `… <binary> --audit`. The rest are `tests::*` (whole passes against the fake runner) |
 | 22 | `test-summon-fast-path.sh:342` | `*"--property=ExecStopPost=$T/bin/mock-summon-noop --user --collect --quiet $T/sentinel.sh --summon-only"*)` → `… --quiet $SPIRA_SENTINEL_BIN --summon-only"*)` |
 | 23 | `test-poison.sh` | reduce to the "stays end-to-end" rows of spira-claim/DESIGN.md §4, run against the binary |
 | 24 | `test-check5-invariant.sh` | repoint `--audit` |
@@ -806,12 +807,12 @@ named unit tests.
 | 30 | `test-tsd-producers.sh` | repoint; the phase names are unchanged |
 | 31 | `test-sentinel-store-reads.sh` case 8 | repoint. The bd-call counter should now see exactly 1 `list` + 1 `ready` from the sentinel itself (the audit worker makes the same two) |
 | 32 | `test-check4-unit.sh` | drives lib.sh `check4_decide`; it follows spira-claim's cutover item 7, not this one |
-| 33 | `test-check8-progressed.sh` | drives lib.sh `check8_should_judge`, which has no caller once sentinel.sh is gone; retire together with the function (row 38). Its table is `check8::tests` |
+| 33 | `test-check8-progressed.sh` | drives lib.sh `check8_should_judge`, which has no caller once sentinel.sh is gone; retire together with the function (row 38). Its table is `audit::tests::judgement_table` |
 | 34 | `test-ready-timers.sh:88` | mocks `sentinel.sh --report`; mock `SPIRA_SENTINEL_BIN` instead |
 | 35 | `test-install-exec.sh:146,207` | drop `sentinel.sh` from the executable list; the render-fallback assertion becomes `ExecStart=$(dirname "$HERE")/bin/sentinel` |
 | 36 | `test-install-conflicts.sh:57` | the fake foreign unit becomes `ExecStart=$FOREIGN_HOME/../bin/sentinel` |
 | 37 | `test-deploy.sh:140,433` | the stub moves to `current/bin/sentinel` |
-| 38 | lib.sh functions left with no production caller | `check2_protect_waiting` (1363), `check2c_lc_consistency` (2335), `check2_reclaim_stale` (2348) — ported to `lifecycle.rs`; `check8_should_judge` (1697); `check4_closed_branched` (5600); `goal_open_children` (5528); `ready_cache_populate` (1563); `roster_warnings` (1051) | delete **after** the suites that drive them are retired: `test-check2-reclaim.sh`, `test-check2-reaper.sh`, `test-reclaim-escalated.sh` (→ `lifecycle::tests`), `test-check8-progressed.sh`, `test-roster-warn.sh` (→ `pass::tests`), `test-poison.sh`/`test-sentinel-store-reads.sh` references. Not required for the cutover to work; `dispatchable_open` stays (attempts.sh). |
+| 38 | lib.sh functions left with no production caller | `check2_protect_waiting` (1363), `check2c_lc_consistency` (2335), `check2_reclaim_stale` (2348) — ported to `lifecycle.rs`; `check8_should_judge` (1697); `check4_closed_branched` (5600); `goal_open_children` (5528); `ready_cache_populate` (1563); `roster_warnings` (1051) | delete **after** the suites that drive them are retired: `test-check2-reclaim.sh`, `test-check2-reaper.sh`, `test-reclaim-escalated.sh` (→ `lifecycle::tests`), `test-check8-progressed.sh`, `test-roster-warn.sh` (→ `tests::roster_warnings_name_each_left_out_persona_once`), `test-poison.sh`/`test-sentinel-store-reads.sh` references. Not required for the cutover to work; `dispatchable_open` stays (attempts.sh). |
 
 **Source greps that break when the file goes.** Each greps sentinel.sh's text; point it at
 `sentinel/src/*.rs`, or at lib.sh where the text now lives:
@@ -860,6 +861,13 @@ About 30 suites carry `# covers: … spira/sentinel.sh`. That changes to
   the positive control on §5's budget.
 - **B8. `FATAL` exit 1 when lib.sh or the probe cannot be found or fails.** The bash script
   could not start without lib.sh either. This names the reason.
+- **B9. A ready read that failed renders `plan_ready=?` in the `state:` line**, never `0`
+  (a failed probe renders `?`). The bash `ready_count` printed `0` on failure. auron-classify
+  and cockpit-metrics match `plan_ready=(\d+)`, so they skip that one pass's line rather than
+  read a false zero, and CHECK 3 and CHECK 8 do not fire on it (G3).
+- **B10. The Sending's "every swept repo is stamped" test matches `<name>=` at the start of
+  a stamp line.** The bash `grep -qF "<name>="` matched it anywhere, so `a=` was satisfied
+  by `ba=…`.
 
 **Pre-existing defects, not fixed here and not caused by the split:**
 
