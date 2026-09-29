@@ -206,6 +206,21 @@ mod spira_section {
         let err = validate("[spira]\nid_prefix = \"sp\"\nmail_mute = \"yes\"\n").unwrap_err();
         assert!(err.starts_with("spira.mail_mute"), "{err}");
     }
+
+    #[test]
+    fn stack_max_depth_above_the_hard_ceiling_is_refused_by_validate_itself() {
+        // The shipped schema's `maximum` is never run against the document — validate()
+        // deserializes TOML directly — so the ceiling must be enforced here too, not only
+        // by the lifecycle crate's own claim-time check.
+        let err = validate("[spira]\nid_prefix = \"sp\"\nstack_max_depth = 5\n").unwrap_err();
+        assert!(err.starts_with("spira.stack_max_depth"), "{err}");
+    }
+
+    #[test]
+    fn stack_max_depth_at_the_hard_ceiling_is_valid() {
+        let doc = validate("[spira]\nid_prefix = \"sp\"\nstack_max_depth = 4\n").expect("valid");
+        assert_eq!(doc.spira.unwrap().stack_max_depth, Some(4));
+    }
 }
 
 mod retired_keys {

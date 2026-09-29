@@ -657,6 +657,9 @@ pub fn require_id_prefix(doc: &SpiraToml) -> Result<(), String> {
 /// `[spira]` — naming the key and the bead that retired it — instead of silently dropping
 /// them. A key `SPIRA_CONF_KEYS`/`SpiraSection` never accepted still hard-errors: only
 /// listed retirements are stripped before the deserialize that would otherwise refuse them.
+///
+/// A `[spira]` key's registry `MAX=` is enforced here too: this function deserializes the
+/// TOML directly and never runs the shipped schema against the document.
 pub fn validate_with_warnings(text: &str) -> Result<(SpiraToml, Vec<String>), String> {
     let mut root: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
     let mut warnings = Vec::new();
@@ -692,7 +695,16 @@ pub fn validate_with_warnings(text: &str) -> Result<(SpiraToml, Vec<String>), St
             }
         }
     }
-    let doc = serde_path_to_error::deserialize(root).map_err(|e| {
+    if let Some(spira) = root.get("spira").and_then(|v| v.as_table()) {
+        for (field, max) in SPIRA_FIELD_MAX {
+            if let Some(n) = spira.get(*field).and_then(|v| v.as_integer()) {
+                if n as f64 > *max {
+                    return Err(format!("spira.{field}: {n} exceeds hard ceiling {max}"));
+                }
+            }
+        }
+    }
+    let doc: SpiraToml = serde_path_to_error::deserialize(root).map_err(|e| {
         let path = e.path().to_string();
         if path.is_empty() {
             e.inner().to_string()
