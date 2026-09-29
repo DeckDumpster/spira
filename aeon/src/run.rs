@@ -599,7 +599,7 @@ impl<'a> Run<'a> {
             let body: String = dirty.iter().map(|l| format!("{l}\n")).collect();
             let _ = std::fs::write(gitdir.join("spira-dirty-before"), body);
             let hooks = self.home().join("worktree-hooks.sh").display().to_string();
-            let _ = self.d.exec.exec("bash", &s(&[&hooks, "install", &wdisp]), None, None);
+            let _ = self.d.exec.exec("env", &s(&[&format!("SPIRA_HOME={}", self.home().display()), "bash", &hooks, "install", &wdisp]), None, None);
         }
 
         // ---- one test fixture for the whole session ----
