@@ -421,6 +421,18 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
     let round = now().to_string();
     let round_branch = format!("spira/batcher-attr/{}-{round}", repo.name);
     io::set_branch(repo, &round_branch, &io::head_of(wt)?);
+
+    // The corpus selects `test-*.sh` and never runs the fences a single branch's gate chains
+    // ahead of it. Held, not attributed: a fence reads the whole merged tree, not one member's diff.
+    if let Err(evidence) = io::run_fences(env_, repo, &round_branch) {
+        println!("batcher {}: local round red (fences) — held before reaching CI", repo.name);
+        match io::file_local_red_incident(env_, repo, &[io::GATE_FENCES.to_string()], &round_branch, &evidence, "fences") {
+            Ok(id) => println!("batcher {}: filed {id} for Ops", repo.name),
+            Err(e) => println!("batcher {}: could not file for Ops: {e}", repo.name),
+        }
+        return Ok(None);
+    }
+
     let suites = io::all_suites(repo, &round_branch);
     let changed: BTreeMap<String, Vec<String>> = members.iter().map(|m| (m.id.clone(), io::changed_paths(repo, start_sha, &m.tip))).collect();
 

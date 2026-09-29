@@ -767,6 +767,34 @@ pub fn all_suites(repo: &Repo, branch: &str) -> Vec<String> {
 /// never a real `test-*.sh` file, so it can't collide with one all_suites() would select.
 pub const WORKSPACE_BUILD: &str = "workspace-build";
 
+/// Same convention as WORKSPACE_BUILD, for a fence red (run_fences).
+pub const GATE_FENCES: &str = "gate-fences";
+
+/// Runs the repo-map's own gate command against `branch`, fences only (`SPIRA_GATE_SUITES=off`
+/// — the same switch landing.sh's queue-mode certification already uses). Reuses gate.sh
+/// itself rather than naming individual fence scripts here, so a fence added to the repo-map
+/// is covered with nothing to keep in sync. On a non-zero exit, writes the combined output to
+/// a file under `env.run` and returns its path as the error, for the incident this files.
+pub fn run_fences(env: &Env, repo: &Repo, branch: &str) -> Result<(), String> {
+    let out = Command::new("bash")
+        .arg(env.home.join("gate.sh"))
+        .arg(branch)
+        .arg(&repo.name)
+        .env("SPIRA_GATE_SUITES", "off")
+        .output()
+        .map_err(|e| format!("gate.sh (fences): {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    let dir = env.run.join("batch-results");
+    let _ = fs::create_dir_all(&dir);
+    let path = dir.join(format!("{}-{}-fences.log", repo.name, now()));
+    let _ = fs::write(&path, &text);
+    Err(path.display().to_string())
+}
+
 /// The runner writes `<results>/<batch-key>/<suite>.<ext>` (testenv DESIGN.md §9 F1); older
 /// callers expected `<results>/<suite>.<ext>`. Look at the top level first, then in the
 /// newest batch-key subdirectory that holds the file. `None` when neither exists — the caller

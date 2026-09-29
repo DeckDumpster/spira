@@ -176,8 +176,15 @@ a polite refusal, not a wall, so every guard names its own override. Bind the gu
 actor who violated the rule — a guard on a shared path binds whoever is most disciplined
 about using it and misses the offender.
 
-## Four facts that most often produce a wrong answer
+## Five facts that most often produce a wrong answer
 
+- **A stale gate-key is not a reason to exclude a member from a round.** It hashes the
+  harness's own files alongside the branch's tree, so a harness change alone can go stale a
+  key whose branch never moved — and the round runs every suite on the merged tree anyway,
+  a stronger trial than the diff-selected gate the key stood in for. What a harness change
+  can alter that the round's own corpus does not cover is the gate's fences (inventory.sh,
+  literal-lint.sh, scratch-fence.sh, ...); those run on the round's own merged tree before
+  its corpus, which is where that risk is actually caught.
 - **CLOSED is not LANDED.** A bead is closed when an agent says the work is done; it has
   landed when a commit on the repository's landing ref names its id — `origin/<branch>` under
   `queue.forge`/`pr`/`push`, a local branch such as `local/main` under `queue.local`. Verify
