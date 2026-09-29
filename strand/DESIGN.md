@@ -280,21 +280,20 @@ throttle-state parsing; `--from` parsing.
 
 ## 7. Cutover (operator's edits — not made by this bead)
 
-See the final report on sp-c7h4b for the exact list; summarised:
+| # | file:line | today | becomes |
+|---|---|---|---|
+| 1 | `spira/conf.sh:1096` (beside `SPIRA_LC_BIN`) | — | `: "${SPIRA_STRAND_BIN:=$(spira_bin strand 2>/dev/null)}"`, and `SPIRA_STRAND_BIN` added to the export list (conf.sh:2483 block) |
+| 2 | `spira/sentinel.sh:317` | `stranded="$("$SPIRA_HOME/strand.sh" check 2>&1)"` | `stranded="$("$SPIRA_STRAND_BIN" check 2>&1)"` — lines 318–321 (the `^RECLAIMED/RECOMPUTED/STRANDED` counts) unchanged |
+| 3 | `Makefile:46` and `Makefile:53` | `for _b in loom broker … reconciler-flow; do` / `… reconciler-flow panel; do` | add `strand` to both lists |
+| 4 | `spira/strand.sh`, `spira/strand-classify.py` | the component | delete |
+| 5 | `spira/test-strand-lock.sh:85,126,135,165,190,215`, `spira/test-strand-reclaim-n.sh:58` | `bash "$HERE/strand.sh" check --from …` | `"$SPIRA_STRAND_BIN" check --from …` (same env: `SPIRA_RUN`, `SPIRA_HOME`, `SPIRA_LABELS`, `SPIRA_STRAND_GRACE`) — or retire in favour of `state::tests` / `check::tests` |
+| 6 | `spira/test-strand-classify.sh` | runs strand-classify.py on fixtures | retire; its cases are `classify::tests` |
+| 7 | `spira/test-sentinel-store-reads.sh:255,266` (case 7) | `bash "$HERE/strand.sh" report` counting bd calls | point at the binary; 7b holds (0 bd calls with both snapshots); 7a's positive control still holds (1 `bd list` + 1 `bd ready` per partition) |
+| 8 | `spira/test-unit-name.sh:49,88–91` | awk-extracts `harness_state` from strand.sh | drop the strand.sh case; `probe::spira_unit`/`harness_state` carry it (a unit test there needs a stub systemctl) |
+| 9 | `spira/test-closed-strand.sh:46` | `stub strand.sh 'exit 0'` | stub the binary via `SPIRA_STRAND_BIN` |
+| 10 | `spira/auron.sh:92` (comment) | names strand-classify.py | reword |
+| 11 | later | roster probe (§2.5) | retire when `[persona.<name>]` carries labels and exclusions |
 
-1. `spira/sentinel.sh:317` — `stranded="$("$SPIRA_HOME/strand.sh" check 2>&1)"` →
-   `stranded="$("$(spira_bin strand)" check 2>&1)"` (or `$SPIRA_STRAND_BIN`, once conf.sh
-   resolves it the way it resolves `SPIRA_LC_BIN`).
-2. `conf.sh` — add `: "${SPIRA_STRAND_BIN:=$(spira_bin strand 2>/dev/null)}"` beside
-   `SPIRA_LC_BIN` (conf.sh:1096) and to the export list.
-3. `Makefile` `install` target — add `strand` to both binary loops (the copy into
-   `$_rel/bin` and the MANIFEST hash loop), so `spira_bin strand` resolves in a release.
-4. Delete `spira/strand.sh` and `spira/strand-classify.py`; retarget
-   `test-strand-lock.sh`, `test-strand-reclaim-n.sh`, `test-sentinel-store-reads.sh` case 7,
-   `test-unit-name.sh` (it awk-extracts `harness_state` from strand.sh) and
-   `test-strand-classify.sh` at the binary or retire them in favour of the unit tests;
-   drop `spira/test-closed-strand.sh`'s `stub strand.sh` for a stub of the binary; remove
-   `spira/test-closed-strand.sh` from `spira/config-fence-allow:112` only if the suite goes.
-5. Comments only: `spira/auron.sh:92` names strand-classify.py.
-6. Later: retire the roster probe (§2.5) when `[persona.<name>]` carries labels and
-   exclusions.
+This branch also carries `a21b071a1` (an aeon's earlier bash fix of the same defect in
+strand.sh/strand-classify.py/test-strand-classify.sh). It is superseded by this crate and
+dies with row 4; the operator may keep it as the interim fix until the cutover lands.
