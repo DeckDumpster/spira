@@ -79,5 +79,67 @@ else
     bad "pass log: format wrong" "$log_msg"
 fi
 
+# ============================================================
+echo
+echo "3. Probe body's EXIT trap survives function return (sp-2575x)"
+# ============================================================
+# _run_probe_body sets its cleanup trap while "name" is still a local
+# variable. A trap deferred with single quotes re-reads that name when the
+# (sub)shell actually exits, which is after the function has returned and its
+# `local` scope has popped — under set -u that reads as unbound. "line 1" in
+# the wild pointed at the trap string's own line count, not the script.
+
+# Positive control: prove this exact shape — a trap set on a `local` inside a
+# function, fired after the function returns in its own subshell — really
+# does raise "unbound variable" under set -u, so a silent real check below is
+# believable.
+CONTROL="$TMP/control.sh"
+cat > "$CONTROL" <<'EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+f() {
+    local name="probe"
+    trap 'rm -f "/tmp/sp-2575x-control-$name"' EXIT
+}
+( f ) &
+wait
+EOF
+chmod +x "$CONTROL"
+control_out="$(bash "$CONTROL" 2>&1)"
+if printf '%s\n' "$control_out" | grep -qi 'unbound variable'; then
+    ok "positive control: deferred local-var EXIT trap reproduces unbound variable"
+else
+    bad "positive control: deferred local-var EXIT trap did not reproduce the defect" "$control_out"
+fi
+
+# Real check: collect.sh's own probe-body trap must not repeat that mistake,
+# on both the success path (this section) and the failure path (a probe that
+# exits non-zero, which also sets the trap before returning).
+run_out="$(env -i PATH="$PATH" HOME="$TMP/home" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
+    SPIRA_REPO_MAP="$TMP/no-map" \
+    FRAG_DIR="$FRAG_DIR" COCK="$MOCK_COCK" \
+    bash "$HERE/collect.sh" _probe_body_test testprobe 30 quick 2>&1)"
+if printf '%s\n' "$run_out" | grep -qi 'unbound variable'; then
+    bad "collect.sh probe body (success path): EXIT trap raised unbound variable" "$run_out"
+else
+    ok "collect.sh probe body (success path): EXIT trap did not raise unbound variable"
+fi
+
+FAIL_COCK="$TMP/fail-cockpit.sh"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$FAIL_COCK" && chmod +x "$FAIL_COCK"
+fail_out="$(env -i PATH="$PATH" HOME="$TMP/home" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
+    SPIRA_REPO_MAP="$TMP/no-map" \
+    FRAG_DIR="$FRAG_DIR" COCK="$FAIL_COCK" \
+    bash "$HERE/collect.sh" _probe_body_test testprobe 30 quick 2>&1)"
+if printf '%s\n' "$fail_out" | grep -qi 'unbound variable'; then
+    bad "collect.sh probe body (failure path): EXIT trap raised unbound variable" "$fail_out"
+else
+    ok "collect.sh probe body (failure path): EXIT trap did not raise unbound variable"
+fi
+
 echo
 tl_summary
