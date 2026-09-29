@@ -24,8 +24,6 @@ Environment=SPIRA_LC_DATA_DIR=/tmp
 Environment=SPIRA_REPO=@SPIRA_REPO@
 Restart=on-failure
 RestartSec=5
-# Nice=10 is the fence (law-fence-loops-on-shared-hardware).
-Nice=10
 StandardOutput=append:@SPIRA_RUN@/spira-lc.log
 StandardError=append:@SPIRA_RUN@/spira-lc.log
 

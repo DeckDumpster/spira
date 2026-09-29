@@ -10,11 +10,6 @@ After=default.target
 Type=oneshot
 ExecStart=@SPIRA_PROD@/sending.sh --queue-only
 TimeoutStartSec=600
-# Janitorial — must not compete with production or CI on shared hardware
-# (law-fence-loops-on-shared-hardware).
-CPUQuota=20%
-Nice=15
-IOSchedulingClass=idle
 StandardOutput=append:@SPIRA_RUN@/straggler-sweep.log
 StandardError=append:@SPIRA_RUN@/straggler-sweep.log
 

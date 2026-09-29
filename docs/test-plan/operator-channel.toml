@@ -204,7 +204,7 @@ statement = "A watcher-filed incident refiled while blocked by an open dependenc
 [[use_case]]
 id = "UC-operator-channel-37"
 tier = "T0"
-statement = "Watcher and notifier units (spira-watch@, -notify, -refresh, -pr-notify, -mail-tidy) render with CPUQuota, Nice, reachable restart limits, no @ placeholders…"
+statement = "Watcher and notifier units (spira-watch@, -notify, -refresh, -pr-notify, -mail-tidy) render with no CPUQuota and no Nice (sp-b4oct), reachable restart limits, no @ placeholders…"
 
 [[use_case]]
 id = "UC-operator-channel-38"

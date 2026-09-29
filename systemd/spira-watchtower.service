@@ -5,9 +5,6 @@ Documentation=file://@SPIRA_HOME@/watchtower.sh
 [Service]
 Type=oneshot
 ExecStart=@SPIRA_PROD@/watchtower.sh
-# No CPUQuota: lock-wait is idle (0% CPU) but burns wall clock; quota multiplies the deadline.
-# Nice=10 is the fence (law-fence-loops-on-shared-hardware).
-Nice=10
 TimeoutStartSec=120
 Environment=SPIRA_HOME=@SPIRA_PROD@
 Environment=SPIRA_RUN=@SPIRA_RUN@

@@ -2584,7 +2584,6 @@ summon_refill_argv() {
 summon_argv() {
     local f="$1"
     printf '%s\n' \
-        --property=CPUQuota="${SPIRA_AEON_CPU_QUOTA:-70}%" --property=Nice=10 \
         --property=TimeoutStartSec="$(fayth_get "$f" FAYTH_TIMEOUT_SECONDS 3600)" \
         "$(summon_refill_argv)" \
         --setenv=PATH="$PATH" --setenv=HOME="$HOME"

@@ -13,10 +13,6 @@ ExecStart=@SPIRA_PROD_COCK@/verify-asks.sh --apply
 # 120s per verify command (script default). 600s covers up to five parallel checks
 # plus the mislabelled-epic scan on a queue with some depth.
 TimeoutStartSec=600
-# Janitorial — must not compete with production or CI on shared hardware
-# (law-fence-loops-on-shared-hardware).
-CPUQuota=10%
-Nice=10
 StandardOutput=append:@SPIRA_RUN@/verify-asks.log
 StandardError=append:@SPIRA_RUN@/verify-asks.log
 

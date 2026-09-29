@@ -414,7 +414,7 @@ fn audit_dispatch_argv_and_b1_skip_switches() {
         .expect("audit dispatched");
     let l = a.line();
     for want in [
-        "--user --collect --quiet --unit=spira-audit --property=RuntimeMaxSec=1800 --property=CPUQuota=40% --property=Nice=10",
+        "--user --collect --quiet --unit=spira-audit --property=RuntimeMaxSec=1800 --property=StandardOutput=",
         &format!("--property=StandardOutput=append:{}/audit.log", w.run.display()),
         "--setenv=SPIRA_DB=/db --setenv=SPIRA_REPO= --setenv=SPIRA_REPO_MAP= --setenv=SPIRA_HOME_REPO=spira --setenv=SPIRA_BD=bd --setenv=SPIRA_GH=gh",
         "--setenv=SPIRA_POISON_AT=3 --setenv=SPIRA_REQUEUE_AT=5 --setenv=SPIRA_RECLAIM_AT=5 --setenv=SPIRA_ASK_LABEL=needs-operator --setenv=SPIRA_SCOPE_LABEL=spira --setenv=SPIRA_WORK_CLOSE_TYPES=", // literal-ok: asserts argv built from the fixture
@@ -433,7 +433,14 @@ fn audit_dispatch_argv_and_b1_skip_switches() {
         .expect("landing dispatched");
     assert!(land
         .line()
-        .contains("--unit=spira-landing --property=RuntimeMaxSec=3600 --property=CPUQuota=70%"));
+        .contains("--unit=spira-landing --property=RuntimeMaxSec=3600 --property=StandardOutput="));
+    // No explicit CPU quota or niceness on either dispatched worker (sp-b4oct,
+    // law-isolate-greedy-work-in-vms): the OS schedules them.
+    for (what, line) in [("audit", a.line()), ("land", land.line())] {
+        for fence in ["CPUQuota", "Nice="] {
+            assert!(!line.contains(fence), "{what} dispatch carries {fence}: {line}");
+        }
+    }
     assert!(land
         .line()
         .contains("--setenv=SPIRA_BATCH_MAXPAR= --setenv=SPIRA_LAND_MAXSEC=3600"));

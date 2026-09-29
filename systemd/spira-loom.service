@@ -19,10 +19,6 @@ Restart=always
 # The MINIMUM time between restarts. A crash loop is visible in the log; a 5-second floor
 # keeps it from chewing CPU while remaining fast to recover from a transient.
 RestartSec=5
-# Loom answers queries, not sends them. A quota exists because it shares hardware with the
-# loop and CI (law-fence-loops-on-shared-hardware); 20% is enough for a query every 15s.
-CPUQuota=20%
-Nice=10
 StandardOutput=append:@SPIRA_RUN@/loom.log
 StandardError=append:@SPIRA_RUN@/loom.log
 
