@@ -20,6 +20,8 @@ struct World {
     status: BTreeMap<String, String>,
     labels: BTreeMap<String, BTreeSet<String>>,
     issue_type: BTreeMap<String, String>,
+    /// Beads whose row carries a `supersedes` dependency (the aeon recorded a successor).
+    supersedes: BTreeSet<String>,
     states: BTreeMap<String, String>,
     notes: Vec<(String, String)>,
     ready: Vec<String>,
@@ -44,7 +46,11 @@ fn row_json(w: &World, id: &str) -> String {
         "status": w.status.get(id).cloned().unwrap_or_else(|| "open".into()),
         "labels": labels,
         "issue_type": w.issue_type.get(id).cloned().unwrap_or_else(|| "task".into()),
-        "dependencies": [],
+        "dependencies": if w.supersedes.contains(id) {
+            serde_json::json!([{"depends_on_id": "sp-successor", "dependency_type": "supersedes"}])
+        } else {
+            serde_json::json!([])
+        },
     }])
     .to_string()
 }
@@ -729,6 +735,32 @@ fn the_verdict_reopens_a_close_behind_a_rebase_conflict_as_a_free_requeue() {
     let w = o.w.lock().unwrap();
     assert!(w.seam_calls.iter().any(|c| c.0 == "bead_reopen" && c.1[1] == "rebase-conflict"));
     assert!(w.notes.iter().any(|(_, n)| n.starts_with("Requeue 1 (rebase-conflict):")));
+}
+
+#[test]
+fn a_superseded_close_behind_a_conflicting_base_is_not_reopened() {
+    // sp-dz39p: the session found its work superseded and closed with a successor recorded;
+    // its stale branch no longer replays on the base. That is the expected state of
+    // superseded work, not an unfinished rebase — the close stands.
+    let f = fx("superseded");
+    seed(&f, "sp-s");
+    let mut a = BTreeMap::new();
+    a.insert("_aeon_rebase", Out { code: 1, stdout: "f ".into(), stderr: String::new() });
+    let repo = f.repo.clone();
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, w, _| {
+        std::fs::write(spec.cwd.join("f"), "mine\n").unwrap();
+        git(&spec.cwd, &["commit", "-qam", "sp-s — superseded"]);
+        std::fs::write(repo.join("f"), "theirs\n").unwrap();
+        git(&repo, &["commit", "-qam", "someone else"]);
+        let mut w = w.lock().unwrap();
+        w.status.insert("sp-s".into(), "closed".into());
+        w.supersedes.insert("sp-s".into());
+        0
+    });
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, a, act);
+    let w = o.w.lock().unwrap();
+    assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen"), "{:?}\n{}", w.seam_calls, o.log);
+    assert!(!o.log.contains("REOPENED"), "{}", o.log);
 }
 
 #[test]

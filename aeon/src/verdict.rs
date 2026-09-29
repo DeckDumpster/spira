@@ -311,7 +311,9 @@ impl Run<'_> {
         }
 
         // ---- closed behind the base is not finished ----
-        if st == "closed" && committed && !sop_silent && !groom_silent {
+        // A superseded close is not judged by whether its stale branch still replays: its
+        // work landed under the successor's id, so a conflict is expected (sp-dz39p).
+        if st == "closed" && committed && !superseded && !sop_silent && !groom_silent {
             if !self.s.base_remote.is_empty() && !self.d.git.git(&self.s.repo, &["fetch", "-q", &self.s.base_remote]).success() {
                 self.log(&format!("{f}: fetch of {} failed — judging currency against a possibly stale {base}", self.s.base_remote));
             }
