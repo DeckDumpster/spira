@@ -91,8 +91,17 @@ STUB
 chmod +x "$BIN/bd"
 
 run_push() {
+    # SPIRA_ARTIFACTS PASSES THROUGH, NEVER SET HERE (sp-sghmt). beads-push.sh's pre-push
+    # commit now resolves through the compiled beads-store binary via spira_bin, which
+    # looks under SPIRA_ARTIFACTS when the caller has one (a gate/batch container, which
+    # builds it there) and under SPIRA_REPO/bin otherwise. env -i clears everything not
+    # named here, so without this the container's own build is invisible to this
+    # subprocess and every case below fails on "beads-store not found" instead of
+    # exercising what this suite actually tests. Ambient and unset are both fine: unset
+    # falls back to SPIRA_REPO/bin exactly as it always did.
     env -i PATH="$BIN:/usr/local/bin:/usr/bin:/bin" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent SPIRA_PATH="$BIN" \
+        SPIRA_ARTIFACTS="${SPIRA_ARTIFACTS:-}" \
         SPIRA_DB="$DB" SPIRA_RUN="$TMP/run" SPIRA_DOLT_DATA="$DD" \
         SPIRA_REPO_MAP=/nonexistent SPIRA_INSTANCE=prod \
         bash "$REPO/beads-push.sh" 2>&1
