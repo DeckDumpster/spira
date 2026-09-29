@@ -60,6 +60,45 @@ branch reaches `{base_branch}` from there is described above, and none of it nee
     }
 }
 
+/// `{{TESTENV}}`: the testenv runner, ABSOLUTE. `SPIRA_TESTENV_BIN` as the aeon resolved it
+/// wins; without one, the harness's `bin/testenv` beside `SPIRA_HOME`, joined lexically so
+/// no `..` survives. Never a path relative to the aeon's worktree, which has no `bin/` — an
+/// aeon told `{{SPIRA_HOME}}/../bin/testenv` ran `./spira/testenv.sh`, the container helper,
+/// instead (sp-4vq2q).
+pub fn testenv_runner(testenv_bin: &str, home: &str) -> String {
+    if !testenv_bin.is_empty() {
+        return testenv_bin.to_string();
+    }
+    let h = Path::new(home);
+    h.parent().unwrap_or(h).join("bin").join("testenv").display().to_string()
+}
+
+/// `{{FOLLOWUP}}`: how to file work discovered rather than done, selected by
+/// `lifecycle_enforce` exactly as `{{FINISH}}` is. With it OFF every `work` verb refuses
+/// (exit 3), and an aeon that fell back to raw `bd create --parent` gave all six children
+/// the parent's `branch:` label (sp-o4co5).
+pub fn followup_brief(lifecycle_enforce: bool, home: &str, bead_id: &str, repo_name: &str) -> String {
+    if lifecycle_enforce {
+        format!(
+            "**File it as a bead** — `work file-followup \"<title>\"` for work that follows from
+  this one, `work split \"<title>\"` for a piece of this bead's own scope. Both are parented
+  to `{bead_id}` for you and never carry its `branch:` label."
+        )
+    } else {
+        format!(
+            "**File it as a bead** through the contract, never with raw `bd create`:
+
+      {home}/bead.sh file \"<title>\" --for <persona> --repo {repo_name} [--priority N] [--body-file F] [--parent {bead_id}]
+
+  `--for` names the persona that should claim it (`{home}/bead.sh contract` lists the legal
+  personas, repos and types). A follow-up must never carry this bead's `branch:` label —
+  `branch:` names one bead's own worktree, and raw `bd create --parent` copies it onto every
+  child. `bead.sh file` does not. (The `work` verbs refuse while lifecycle enforcement is
+  off; do not use them.)"
+        )
+    }
+}
+
 /// `{{FINISH}}`: selected by `lifecycle_enforce` and nothing else.
 pub fn finish_brief(lifecycle_enforce: bool, bead_id: &str, db: &str) -> String {
     if lifecycle_enforce {
@@ -627,6 +666,57 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    // sp-4vq2q: the runner is absolute — the resolved bin, else bin/testenv beside SPIRA_HOME.
+    #[test]
+    fn testenv_runner_is_absolute_never_relative_to_home() {
+        assert_eq!(testenv_runner("/opt/art/testenv", "/srv/harness/spira"), "/opt/art/testenv");
+        let r = testenv_runner("", "/srv/harness/spira");
+        assert_eq!(r, "/srv/harness/bin/testenv");
+        assert!(!r.contains(".."));
+    }
+
+    // sp-o4co5: {{FOLLOWUP}} follows lifecycle_enforce exactly as {{FINISH}} does.
+    #[test]
+    fn followup_follows_lifecycle_enforce() {
+        let off = followup_brief(false, "/h/spira", "sp-a", "spira");
+        assert!(off.contains("/h/spira/bead.sh file \"<title>\" --for <persona> --repo spira"));
+        assert!(off.contains("never with raw `bd create`"));
+        assert!(off.contains("`branch:` label"));
+        assert!(!off.contains("work file-followup"));
+        let on = followup_brief(true, "/h/spira", "sp-a", "spira");
+        assert!(on.contains("work file-followup"));
+        assert!(on.contains("work split"));
+        assert!(!on.contains("bead.sh file"));
+    }
+
+    // The shipped builder chamber renders both tokens, and leaves no relative runner path.
+    #[test]
+    fn builder_chamber_renders_runner_and_followup() {
+        let chamber = include_str!("../../spira/chamber/builder.md");
+        for enforce in [false, true] {
+            let t = Tokens {
+                single: vec![
+                    ("TESTENV", testenv_runner("", "/srv/h/spira")),
+                    ("FOLLOWUP", followup_brief(enforce, "/srv/h/spira", "sp-a", "spira")),
+                    ("BRANCH", "spira/sp-a".into()),
+                    ("REPO_NAME", "spira".into()),
+                    ("SPIRA_HOME", "/srv/h/spira".into()),
+                ],
+                ..Default::default()
+            };
+            let p = render_prompt(chamber, &t, None);
+            assert!(p.contains("    /srv/h/bin/testenv spira/sp-a spira\n"), "{p}");
+            assert!(!p.contains("{{TESTENV}}") && !p.contains("{{FOLLOWUP}}"));
+            assert!(!p.contains("/../bin/testenv"));
+            assert!(!p.contains("--suites test-"));
+            assert_eq!(p.contains("/srv/h/spira/bead.sh file"), !enforce);
+            assert_eq!(p.contains("work file-followup"), enforce);
+            if std::env::var_os("AEON_PRINT_BRIEF").is_some() {
+                println!("==== lifecycle_enforce={enforce} ====\n{p}");
+            }
+        }
     }
 
     // test-aeon-chamber-overlay.sh GOLDEN (sp-wmcvb): {{FINISH}} follows lifecycle_enforce.

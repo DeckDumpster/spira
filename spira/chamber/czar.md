@@ -96,7 +96,12 @@ longer than `${SPIRA_QUEUE_CI_IDLE_SEC:-600}` seconds, re-queue.
 **Case 3 — Red with a reproducible culprit**: merge the suspected member's diff onto the
 current base in a throwaway tree, run the failing suite, and eject if it fails:
 
-    {{SPIRA_HOME}}/../bin/testenv --suites <failing-suite> <member-branch>
+    {{TESTENV}} --suites <failing-suite> <member-branch>
+
+`{{TESTENV}}` is the testenv runner, an absolute path (law-tests-run-only-through-testenv).
+Naming the failing suite is right here — you are reproducing one known red, not certifying a
+diff. Never run a `test-*.sh` suite directly; `spira/testenv.sh` is the container helper, not
+the runner; `spira/testenv-batch.sh` no longer exists.
 
 Eject the member whose own diff (not the batch diff) turns the suite red. Rebuild
 survivors in the same PR number (head= resealed). Reopen the ejected bead with the

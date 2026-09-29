@@ -829,10 +829,9 @@ impl<'a> Run<'a> {
                 ("SOP", format!("{home}/sop.sh")),
                 ("INCIDENT", format!("{home}/incident.sh")),
                 ("ASK", format!("{home}/mail.sh")),
-                ("SUITES", {
-                    let tb = self.conf.s("SPIRA_TESTENV_BIN");
-                    if tb.is_empty() { format!("{home}/../bin/testenv suites") } else { format!("{tb} suites") }
-                }),
+                ("SUITES", format!("{} suites", brief::testenv_runner(&self.conf.s("SPIRA_TESTENV_BIN"), &home))),
+                ("TESTENV", brief::testenv_runner(&self.conf.s("SPIRA_TESTENV_BIN"), &home)),
+                ("FOLLOWUP", brief::followup_brief(self.enforce, &home, &bead, &self.s.repo_name)),
                 ("GROOM", format!("{home}/groomer.sh")),
                 ("DEP", format!("{home}/bead.sh dep add")),
                 ("SPIRA_HOME", home.clone()),
