@@ -1089,8 +1089,7 @@ mod tests {
     // test-aeon-settings-guard-allowlist.sh / test-aeon-launch-grammar.sh.
     #[test]
     fn settings_json_matches_python_dumps() {
-        let d = std::env::temp_dir().join(format!("aeon-settings-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = testkit::TempDir::new("aeon-settings");
         std::fs::create_dir_all(d.join("hooks")).unwrap();
         let s0 = aeon_settings(&d);
         assert_eq!(

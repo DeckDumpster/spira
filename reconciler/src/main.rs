@@ -1019,15 +1019,8 @@ fn run_pass() -> Result<(), String> {
 mod tests {
     use super::*;
 
-    fn scratch_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "reconciler-test-{}-{}-{}",
-            name,
-            std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
-        ));
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    fn scratch_dir(name: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("reconciler-test-{}-{}", name, SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()))
     }
 
     #[test]

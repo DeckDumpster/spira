@@ -331,28 +331,8 @@ mod tests {
         assert_eq!(store.latest().unwrap().unwrap().version, 2);
     }
 
-    // A minimal tempdir helper — no external crate, cleaned up on drop.
-    struct TempDir(PathBuf);
-    impl TempDir {
-        fn path(&self) -> &std::path::Path {
-            &self.0
-        }
-    }
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-    fn tempdir() -> TempDir {
-        let dir = std::env::temp_dir().join(format!(
-            "spira-desired-state-test-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&dir).unwrap();
-        TempDir(dir)
+    // testkit's scratch dir: cleaned up on drop.
+    fn tempdir() -> testkit::TempDir {
+        testkit::TempDir::new("spira-desired-state-test")
     }
 }

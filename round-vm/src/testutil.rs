@@ -1,35 +1,23 @@
 //! Test doubles: a temp dir, a fake provider with a VM table, and a fake alarm.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::provider::Provider;
 
-pub struct TempDir(PathBuf);
+pub struct TempDir(testkit::TempDir);
 
 #[allow(clippy::new_without_default)]
 impl TempDir {
     pub fn new() -> TempDir {
         static N: AtomicU32 = AtomicU32::new(0);
-        let p = std::env::temp_dir().join(format!(
-            "round-vm-test-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::SeqCst)
-        ));
-        let _ = std::fs::remove_dir_all(&p);
-        std::fs::create_dir_all(&p).unwrap();
+        let p = testkit::TempDir::new(&format!("round-vm-test-{}", N.fetch_add(1, Ordering::SeqCst)));
         TempDir(p)
     }
     pub fn path(&self) -> &Path {
         &self.0
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 

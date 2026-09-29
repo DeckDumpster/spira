@@ -135,7 +135,7 @@ impl Emit for Cap {
 const NOW: u64 = 1_790_000_000; // 2026-09-21T14:13:20Z
 
 struct T {
-    dir: PathBuf,
+    _dir: testkit::TempDir,
     s: Settings,
     clock: FClock,
     lib: FLib,
@@ -148,11 +148,10 @@ struct T {
     input: RefCell<BTreeMap<String, String>>,
 }
 
-fn scratch(tag: &str) -> PathBuf {
+fn scratch(tag: &str) -> testkit::TempDir {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
-    let d = std::env::temp_dir().join(format!("suites-t-{tag}-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
-    let _ = fs::remove_dir_all(&d);
+    let d = testkit::TempDir::new(&format!("suites-t-{tag}-{}", N.fetch_add(1, Ordering::Relaxed)));
     fs::create_dir_all(d.join("root/spira")).unwrap();
     d
 }
@@ -179,7 +178,7 @@ impl T {
             landref: Some("local/main".into()),
         };
         T {
-            dir,
+            _dir: dir,
             s,
             clock: FClock(Cell::new(NOW)),
             lib: FLib(RefCell::new(Ok(conf)), Cell::new(0)),
@@ -245,12 +244,6 @@ impl T {
     fn clear(&self) {
         self.io.out.borrow_mut().clear();
         self.io.err.borrow_mut().clear();
-    }
-}
-
-impl Drop for T {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.dir);
     }
 }
 

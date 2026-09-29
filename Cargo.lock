@@ -118,6 +118,7 @@ name = "broker"
 version = "1.0.0"
 dependencies = [
  "serde_json",
+ "testkit",
 ]
 
 [[package]]
@@ -192,6 +193,7 @@ version = "1.0.0"
 dependencies = [
  "reconciler-engine",
  "serde_json",
+ "testkit",
 ]
 
 [[package]]
@@ -282,6 +284,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "spira-config",
+ "testkit",
  "tsd",
 ]
 
@@ -535,6 +538,7 @@ version = "1.0.0"
 dependencies = [
  "crossterm",
  "serde_json",
+ "testkit",
 ]
 
 [[package]]
@@ -600,6 +604,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "testkit",
 ]
 
 [[package]]
@@ -647,6 +652,7 @@ version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
+ "testkit",
 ]
 
 [[package]]
@@ -997,6 +1003,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "testkit",
  "toml",
 ]
 
@@ -1009,6 +1016,7 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "sha2",
+ "testkit",
  "toml",
 ]
 
@@ -1020,6 +1028,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "testkit",
 ]
 
 [[package]]
@@ -1029,6 +1038,7 @@ dependencies = [
  "regex",
  "serde",
  "spira-config",
+ "testkit",
  "toml",
 ]
 
@@ -1037,6 +1047,7 @@ name = "spira-supervise"
 version = "1.0.0"
 dependencies = [
  "libc",
+ "testkit",
 ]
 
 [[package]]
@@ -1092,6 +1103,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "testkit",
  "toml",
 ]
 
@@ -1492,6 +1504,7 @@ version = "1.0.0"
 dependencies = [
  "serde_json",
  "spira-config",
+ "testkit",
 ]
 
 [[package]]

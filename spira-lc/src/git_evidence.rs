@@ -63,14 +63,12 @@ mod tests {
     use std::fs;
 
     struct ScratchRepo {
-        dir: std::path::PathBuf,
+        dir: testkit::TempDir,
     }
 
     impl ScratchRepo {
         fn new(tag: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!("spira-lc-git-evidence-test-{tag}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(&dir).unwrap();
+            let dir = testkit::TempDir::new(&format!("spira-lc-git-evidence-test-{tag}"));
             run(&dir, &["init", "-q", "-b", "main"]);
             run(&dir, &["config", "user.email", "test@example.invalid"]);
             run(&dir, &["config", "user.name", "test"]);
@@ -82,12 +80,6 @@ mod tests {
             run(&self.dir, &["add", file]);
             run(&self.dir, &["commit", "-q", "-m", message]);
             git_output(&self.dir, &["rev-parse", "HEAD"]).unwrap().trim().to_string()
-        }
-    }
-
-    impl Drop for ScratchRepo {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.dir);
         }
     }
 

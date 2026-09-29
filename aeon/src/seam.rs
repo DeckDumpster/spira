@@ -240,8 +240,7 @@ mod tests {
     /// intact (spaces, newlines, empty), the fayth is sourced and SPIRA_REQUIRE_LABEL folded.
     #[test]
     fn fixed_script_sources_lib_and_fayth_and_passes_args_on_stdin() {
-        let dir = std::env::temp_dir().join(format!("aeon-seam-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = testkit::TempDir::new("aeon-seam");
         let lib = dir.join("lib.sh");
         let mut f = std::fs::File::create(&lib).unwrap();
         writeln!(f, "READY_ARGS=(ready --limit 0)\nfayth_exclude() {{ printf 'x:%s:%s' \"$1\" \"$2\"; }}\naeon_count() {{ printf '%s|' \"$@\"; printf '%s' \"$FAYTH_LABELS\"; }}").unwrap();

@@ -274,8 +274,7 @@ mod tests {
 
     #[test]
     fn slots_are_reused_warm_and_ephemeral_is_removed() {
-        let root = std::env::temp_dir().join(format!("testenv-wt-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+        let root = testkit::TempDir::new("testenv-wt");
         let repo = root.join("repo");
         fs::create_dir_all(&repo).unwrap();
         sh(&repo, "git init -q -b main && printf 'target/\\n' > .gitignore && echo a > f && git add . && git commit -qm one && echo b > f && git commit -qam two");

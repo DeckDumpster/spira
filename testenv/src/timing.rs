@@ -219,8 +219,7 @@ mod tests {
 
     #[test]
     fn append_writes_jsonl_under_run_tsd() {
-        let dir = std::env::temp_dir().join(format!("testenv-timing-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = testkit::TempDir::new("testenv-timing");
         append(&dir, SUITE_TIMING, "t", "h", &row("a", 1)).unwrap();
         append(&dir, SUITE_TIMING, "t", "h", &row("b", 2)).unwrap();
         let text = fs::read_to_string(dir.join("tsd/suite-timing.jsonl")).unwrap();

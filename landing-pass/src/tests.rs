@@ -1858,7 +1858,7 @@ fn halt_children_run_under_conf_path_then_spira_path_then_inherit() {
 #[test]
 fn real_halt_finds_podman_and_testenv_on_its_path() {
     use crate::halt::{HaltPorts, RealHalt};
-    let dir = std::env::temp_dir().join(format!("lp-halt-path-{}", std::process::id()));
+    let dir = testkit::TempDir::new("lp-halt-path");
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let log = dir.join("log");
@@ -1866,7 +1866,7 @@ fn real_halt_finds_podman_and_testenv_on_its_path() {
     testkit::write_exe(&podman, "#!/bin/sh\n[ \"$1\" = ps ] && echo spira-batch-stubbed\nexit 0\n");
     std::fs::write(dir.join("testenv.sh"), format!("echo \"$*\" >> {}\ncommand -v podman >> {}\n", log.display(), log.display())).unwrap();
     let path = format!("{}:/usr/bin:/bin", bin.display());
-    let h = RealHalt { prod: dir.clone(), path: Some(path) };
+    let h = RealHalt { prod: dir.to_path_buf(), path: Some(path) };
     assert_eq!(h.running_containers(), vec!["spira-batch-stubbed".to_string()]);
     assert!(h.teardown("spira-batch-stubbed"));
     let got = std::fs::read_to_string(&log).unwrap();

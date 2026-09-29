@@ -129,8 +129,7 @@ mod tests {
     /// records act/progress, and nothing travels in argv.
     #[test]
     fn seam_protocol_against_a_stub_lib() {
-        let d = std::env::temp_dir().join(format!("sentinel-seam-{}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
+        let d = testkit::TempDir::new("sentinel-seam");
         std::fs::write(
             d.join("lib.sh"),
             "log() { printf 'LOG %s\\n' \"$*\"; }\nland_escalate() { printf 'why=%s ev=%s\\n' \"$1\" \"$2\"; act escalated; progress moved; }\n",
@@ -171,8 +170,7 @@ mod tests {
     /// dropped SPIRA_REPO and SPIRA_LANDING_PASS_BIN, and CHECK 6 dispatched a bare name.
     #[test]
     fn probe_reports_unexported_spira_variables() {
-        let d = std::env::temp_dir().join(format!("sentinel-probe-{}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
+        let d = testkit::TempDir::new("sentinel-probe");
         std::fs::write(
             d.join("lib.sh"),
             "SPIRA_REPO=/the/repo\nSPIRA_LANDING_PASS_BIN=/the/repo/bin/landing-pass\nspira_home_repo() { echo spira; }\nspira_fayths() { :; }\nfayth_partitions() { :; }\nfayth_names() { :; }\n",

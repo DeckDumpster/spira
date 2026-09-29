@@ -906,8 +906,7 @@ mod tests {
         if std::env::var_os(LIFECYCLE_ENFORCE_ENV).is_some() {
             return;
         }
-        let dir = std::env::temp_dir().join(format!("spira-config-lce-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = testkit::TempDir::new("spira-config-lce");
         let p = dir.join("spira.toml");
         std::fs::write(&p, "[spira]\nlifecycle_enforce = true\n").unwrap();
         assert!(lifecycle_enforce(Some(&p)));
@@ -1081,12 +1080,9 @@ mod tests {
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     static SCRATCH_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-    fn scratch_dir(tag: &str) -> PathBuf {
+    fn scratch_dir(tag: &str) -> testkit::TempDir {
         let n = SCRATCH_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let dir = std::env::temp_dir()
-            .join(format!("spira-config-lib-test-{tag}-{}-{n}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+        testkit::TempDir::new(&format!("spira-config-lib-test-{tag}-{n}"))
     }
 
     #[test]
@@ -1157,8 +1153,7 @@ mod tests {
 
     #[test]
     fn set_paths_in_file_writes_both_or_neither() {
-        let dir = std::env::temp_dir().join(format!("spira-config-setpaths-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = testkit::TempDir::new("spira-config-setpaths");
         let path = dir.join("spira.toml");
         std::fs::write(&path, "[repo.r]\npath = \"/x\"\nmode = \"queue.local\"\nbase = \"local/main\"\n").unwrap();
         set_paths_in_file(&path, &[("repo.r.mode", "queue.forge"), ("repo.r.base", "origin/main")]).unwrap();

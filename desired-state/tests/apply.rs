@@ -14,14 +14,8 @@ fn manifest_path(rel: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
 }
 
-fn tempdir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "spira-desired-state-apply-test-{}-{}",
-        std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
-    ));
-    fs::create_dir_all(&dir).unwrap();
-    dir
+fn tempdir() -> testkit::TempDir {
+    testkit::TempDir::new(&format!("spira-desired-state-apply-test-{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()))
 }
 
 #[test]

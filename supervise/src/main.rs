@@ -98,26 +98,24 @@ fn snapshot_age_secs(snap: &PathBuf) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::SystemTime;
 
-    fn scratch_path(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "supervise-test-{}-{}-{}",
-            name,
-            std::process::id(),
-            SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-        ))
+    /// A scratch dir (hold it: dropping it removes everything in it) and a file path in it
+    /// that does not exist yet.
+    fn scratch_path(name: &str) -> (testkit::TempDir, PathBuf) {
+        let d = testkit::TempDir::new(&format!("supervise-test-{name}"));
+        let p = d.join("snapshot");
+        (d, p)
     }
 
     #[test]
     fn missing_snapshot_has_no_age() {
-        let p = scratch_path("missing");
+        let (_d, p) = scratch_path("missing");
         assert_eq!(snapshot_age_secs(&p), None);
     }
 
     #[test]
     fn freshly_written_snapshot_is_a_few_seconds_old_at_most() {
-        let p = scratch_path("fresh");
+        let (_d, p) = scratch_path("fresh");
         fs::write(&p, "x").unwrap();
         let age = snapshot_age_secs(&p).expect("freshly written file must have an age");
         assert!(age < 5, "age was {age}s");

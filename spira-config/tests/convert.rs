@@ -207,15 +207,11 @@ fn unknown_lane_label_is_refused_not_warned() {
 // `--out` handling, not in the converter itself.
 // ----------------------------------------------------------------------------------------
 
-fn scratch_dir(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "spira-config-test-{tag}-{}-{:?}",
-        std::process::id(),
-        std::time::SystemTime::now()
+fn scratch_dir(tag: &str) -> testkit::TempDir {
+    let dir = testkit::TempDir::new(&format!("spira-config-test-{tag}-{:?}", std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
-    ));
+            .as_nanos()));
     fs::create_dir_all(&dir).expect("scratch dir");
     dir
 }

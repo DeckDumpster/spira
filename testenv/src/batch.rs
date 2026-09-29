@@ -468,11 +468,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    fn tmpdir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("testenv-batch-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
-        fs::create_dir_all(&d).unwrap();
-        d
+    fn tmpdir(tag: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("testenv-batch-{tag}"))
     }
 
     fn cfg(mode: Mode, results: &Path, maxpar: u32) -> BatchCfg {

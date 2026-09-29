@@ -153,8 +153,7 @@ mod tests {
 
     #[test]
     fn save_load_mark_and_lock() {
-        let dir = std::env::temp_dir().join(format!("strand-state-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = testkit::TempDir::new("strand-state");
         let p = dir.join("strands.json");
         let mut st = State::new();
         mark(&mut st, "p", "ghost", "g", Mark::Acted, 42);

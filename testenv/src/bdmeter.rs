@@ -85,11 +85,8 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
-    fn tmp(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("bdmeter-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
-        fs::create_dir_all(&d).unwrap();
-        d
+    fn tmp(tag: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("bdmeter-{tag}"))
     }
 
     fn exe(p: &Path) {

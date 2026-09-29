@@ -131,8 +131,7 @@ impl RoundOps for ProofOps {
 #[test]
 #[ignore]
 fn e2e_three_members_one_breaks_a_fast_suite() {
-    let root = std::env::temp_dir().join(format!("batcher-e2e-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root = testkit::TempDir::new("batcher-e2e");
     let repo_dir = root.join("repo");
     fs::create_dir_all(&repo_dir).unwrap();
     git(&repo_dir, &["init", "-q", "-b", "main"]);

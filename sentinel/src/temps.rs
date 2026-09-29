@@ -85,8 +85,7 @@ mod tests {
 
     #[test]
     fn created_files_are_unique_and_cleaned() {
-        let d = std::env::temp_dir().join(format!("sentinel-temps-{}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
+        let d = testkit::TempDir::new("sentinel-temps");
         let a = create(&d, "list-snapshot").unwrap();
         let b = create(&d, "list-snapshot").unwrap();
         assert_ne!(a, b);
