@@ -196,6 +196,7 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         noverdict_class_window: num("noverdict_class_window", 86_400).max(0),
         rebase_decompose_files: num("rebase_decompose_files", 4).max(1) as u32,
         rebase_generated_files: g("rebase_generated_files"),
+        repo_map_ok: g("repo_map_ok") == "1",
     };
     Ok((s, repos))
 }

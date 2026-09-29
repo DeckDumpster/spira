@@ -128,6 +128,7 @@ __kv noverdict_max "${SPIRA_NOVERDICT_MAX:-3}"
 __kv noverdict_class_window "${SPIRA_NOVERDICT_CLASS_WINDOW:-86400}"
 __kv rebase_decompose_files "${SPIRA_REBASE_DECOMPOSE_FILES:-4}"
 __kv rebase_generated_files "${SPIRA_REBASE_GENERATED_FILES:-}"
+__kv repo_map_ok "$([ -r "${SPIRA_REPO_MAP:-}" ] && printf 1 || printf 0)"
 exit 0
 "#;
 

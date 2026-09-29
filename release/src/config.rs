@@ -157,6 +157,7 @@ impl Config {
         // bootstrap an activation by exporting the variable, exactly as every other
         // not-yet-in-the-schema key here has always let them.
         m.insert(crate::units::SCCACHE_DAV_ADDR_KEY.into(), pick(crate::units::SCCACHE_DAV_ADDR_KEY, s.sccache_dav_addr.as_ref(), None));
+        m.insert("SPIRA_REPO_MAP".into(), pick("SPIRA_REPO_MAP", s.repo_map.as_ref(), None));
         let tail = self.path_tail()?;
         m.insert("SPIRA_PATH_TAIL".into(), if tail.is_empty() { String::new() } else { format!(":{tail}") });
         Ok(m)

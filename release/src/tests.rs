@@ -669,7 +669,7 @@ fn every_shipped_service_carries_path(tail: &str, want_tail: &str) {
     let r = rel.display().to_string();
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
     let mut host = BTreeMap::new();
-    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "SPIRA_TESTDB_PORT", "SPIRA_SNAP_STALE_S", "SPIRA_WATCHTOWER_START_TIMEOUT_S", "DOLT", "SPIRA_INSTANCE", "SPIRA_SCCACHE_DAV_ADDR"] {
+    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "SPIRA_TESTDB_PORT", "SPIRA_SNAP_STALE_S", "SPIRA_WATCHTOWER_START_TIMEOUT_S", "DOLT", "SPIRA_INSTANCE", "SPIRA_SCCACHE_DAV_ADDR", "SPIRA_REPO_MAP"] {
         host.insert(k.to_string(), format!("/host/{k}"));
     }
     host.insert("SPIRA_PATH_TAIL".to_string(), tail.to_string());
@@ -682,6 +682,9 @@ fn every_shipped_service_carries_path(tail: &str, want_tail: &str) {
         let text = std::fs::read_to_string(e.path()).unwrap();
         let watcher = name.contains('@').then_some("w");
         let out = units::render(&name, &text, &rel, &host, watcher, "prod").unwrap_or_else(|e| panic!("{name}: {e}"));
+        if name == "spira-landing-pass.service" {
+            assert!(out.lines().any(|l| l == "Environment=SPIRA_REPO_MAP=/host/SPIRA_REPO_MAP"), "{name} must carry the configured repository map");
+        }
         let path_lines: Vec<&str> = out.lines().filter(|l| l.starts_with("Environment=PATH=")).collect();
         assert_eq!(
             path_lines,

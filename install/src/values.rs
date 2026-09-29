@@ -38,6 +38,7 @@ pub struct HostValues {
     /// `SPIRA_DOLT_DATA` rather than refused, in case a caller ever renders the template
     /// directly (`--render`) without going through the manifest's own gate.
     pub sccache_dav_addr: String,
+    pub repo_map: String,
 }
 
 impl HostValues {
@@ -51,6 +52,7 @@ impl HostValues {
         m.insert("SPIRA_REPO".into(), self.repo.clone());
         m.insert("SPIRA_RUN".into(), self.run.clone());
         m.insert("SPIRA_DB".into(), self.db.clone());
+        m.insert("SPIRA_REPO_MAP".into(), self.repo_map.clone());
         m.insert("SPIRA_COCKPIT".into(), self.cockpit.clone());
         m.insert("SPIRA_DOLT_DATA".into(), self.dolt_data.clone());
         m.insert("SPIRA_SCCACHE_DAV_ADDR".into(), self.sccache_dav_addr.clone());
@@ -145,6 +147,7 @@ mod tests {
             watchtower_start_timeout_s: "360".into(),
             path_tail: "".into(),
             sccache_dav_addr: "".into(),
+            repo_map: "".into(),
         }
     }
 
