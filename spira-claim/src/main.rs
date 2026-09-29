@@ -45,11 +45,13 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim epics [--ready F] [--submitted-label L]  (ready JSON on stdin by default)
        spira-claim select --fayth NAME [--ready F] [--epics F] [--resumable F] [--top-tier|--count|--json]
                           [--blockers bd|machine] [--lifecycle F] [--blocker-records F] [--stack-max-depth N]
+       spira-claim stack <bead> [--lifecycle F] [--blocker-records F] [--stack-max-depth N]
        spira-claim unpoison --bead ID [--bead ID...] --cause TEXT [--watch] [--watch-timeout-s N] [--dry-run]
                             [--credit SLUG] [--actor NAME] [--poison-at N]   (the one writer: DESIGN.md §8)
   thresholds: --poison-at N (3) --requeue-at N (5) --reclaim-at N (5)
   common:     --db PATH  --timeout-s N (60)
-  exit: 0 answered, 1 usage, 2 cannot tell (stdout empty); unpoison also 3 = a bead failed";
+  exit: 0 answered, 1 usage, 2 cannot tell (stdout empty); unpoison also 3 = a bead failed;
+        stack also 3 = not claimable (its own JSON still names the reason)";
 
 /// Parsed flags and positionals. Flags listed in `BOOL_FLAGS` take no value.
 struct Args {
@@ -173,6 +175,7 @@ pub fn dispatch(raw: &[String], stdin: &mut dyn Read) -> Outcome {
         "poison-decide" => cmd_poison_decide(&a, &mut env),
         "epics" => cmd_epics(&a, &mut env),
         "select" => cmd_select(&a, &mut env),
+        "stack" => cmd_stack(&a, &mut env),
         "unpoison" => cmd_unpoison(&a, &env),
         "-h" | "--help" | "help" => Outcome::ok(format!("{USAGE_TEXT}\n")),
         other => Outcome::usage(format!("unknown verb {other}")),
@@ -488,6 +491,71 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
         s.push('\n');
         s
     }))
+}
+
+/// `stack <bead>`: the same claimability rule `select --blockers machine` applies, but for
+/// one already-known candidate and reporting the stack proposal — `{prereq: certified_tip}`
+/// — a claim of it would carry, rather than a yes/no filtered out of a ready set. The one
+/// caller is the aeon crate, right after it wins the bd claim: the Claim event and the
+/// worktree's own merged base both need the same map, so this is where it is computed once.
+fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
+    if let Err(e) = a.check_known(&["--lifecycle", "--blocker-records", "--stack-max-depth"]) {
+        return Outcome::usage(e);
+    }
+    let bead = match one_bead(a) {
+        Ok(b) => b,
+        Err(o) => return o,
+    };
+    let stack_max = match a.num("--stack-max-depth", env.config.stack_max_depth.unwrap_or(rank::STACK_CEILING)) {
+        Ok(n) => n.min(rank::STACK_CEILING),
+        Err(e) => return Outcome::usage(e),
+    };
+    let st = match store(a, &env.config) {
+        Ok(s) => s,
+        Err(e) => return Outcome::usage(e),
+    };
+    let cand = match st.list_by_ids(std::slice::from_ref(&bead)) {
+        Ok(rows) => match rows.into_iter().find(|r| r.id == bead) {
+            Some(r) => r,
+            None => return Outcome::cannot_tell(format!("{bead}: bd has no record")),
+        },
+        Err(e) => return Outcome::cannot_tell(format!("{bead}: {e}")),
+    };
+    let lc = {
+        let lc_text = match a.get("--lifecycle") {
+            Some(p) => read_source(p, env.stdin),
+            None => st.lifecycle_snapshot(),
+        };
+        match lc_text.and_then(|t| rank::parse_lifecycle(&t)) {
+            Ok(m) => m,
+            Err(e) => return Outcome::cannot_tell(format!("{bead}: lifecycle snapshot: {e}")),
+        }
+    };
+    let wanted = rank::blockers(&cand);
+    let recs = match a.get("--blocker-records") {
+        Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_ready(&t)),
+        None if wanted.is_empty() => Ok(Vec::new()),
+        None => st.list_by_ids(&wanted),
+    };
+    let bd = match recs {
+        Ok(r) => rank::index_rows(r),
+        Err(e) => return Outcome::cannot_tell(format!("{bead}: blocker records: {e}")),
+    };
+    match rank::stack_plan(&cand, &lc, &bd, stack_max) {
+        Ok((stack, depth)) => {
+            let v = serde_json::json!({"claimable": true, "stack": stack, "stack_depth": depth, "stack_max_depth": stack_max});
+            Outcome::ok(format!("{}\n", v))
+        }
+        Err(rank::Verdict::TooDeep { depth, max }) => {
+            let v = serde_json::json!({"claimable": false, "reason": "TooDeep", "stack": {}, "stack_depth": depth, "stack_max_depth": max});
+            Outcome { code: 3, out: format!("{v}\n"), err: String::new() }
+        }
+        Err(v) => Outcome {
+            code: 3,
+            out: format!("{}\n", serde_json::json!({"claimable": false, "reason": format!("{v:?}")})),
+            err: String::new(),
+        },
+    }
 }
 
 /// `unpoison`'s arguments, validated, before anything is read (DESIGN.md §8.2).

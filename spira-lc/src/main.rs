@@ -240,7 +240,25 @@ fn run_bead_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &st
         return (REFUSED, format!("refused: {:?}", outcome.refusal));
     }
     let set = rows::bead_set_clause(&outcome.row);
-    match conn.cas_update_and_log("bead", "bead_id", key, version, &set, &rec, outcome.row.state.as_str()) {
+    let result = conn.cas_update_and_log("bead", "bead_id", key, version, &set, &rec, outcome.row.state.as_str());
+    // A base_withdrawn that leaves the row WORKING does not itself unblock the holder — its
+    // eventual submit is refused (work.rs's own stale-stack check) until it rebases. Nothing
+    // else surfaces that mid-session, so the holder is told here, once, on the same
+    // transaction that recorded the cascade (design §1: "WORKING stays WORKING, holder
+    // told"). Best-effort: a note that fails to post is not a reason to undo an applied
+    // machine transition.
+    if matches!(result, Ok(true)) && matches!(kind, bead::BeadEventKind::BaseWithdrawn { .. }) && outcome.row.state == bead::BeadState::Working {
+        if let bead::BeadEventKind::BaseWithdrawn { prereq, tip } = &kind {
+            let holder = outcome.row.holder.as_deref().unwrap_or("its holder");
+            let _ = crate::bd::note(
+                key,
+                &format!(
+                    "Base withdrawn: {prereq}'s certified tip {tip} — the one this claim's stack was built on — no longer stands. {holder} is still WORKING, but its eventual submit is refused until it rebases onto the current stack."
+                ),
+            );
+        }
+    }
+    match result {
         Ok(true) => (0, String::new()),
         Ok(false) => (REFUSED, "refused: lost the race to another writer".into()),
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),

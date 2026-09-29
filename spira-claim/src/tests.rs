@@ -414,6 +414,48 @@ fn on_machine_mode_unreachable_machine_is_cannot_tell() {
     assert!(o.err.contains("lifecycle_enforce is on"), "{}", o.err);
 }
 
+// ---- stack: the aeon's own claim-time proposal ----------------------------------------
+
+fn b_stacked_on_a() -> String {
+    serde_json::json!([{"id":"B","labels":["repo:spira"],"dependencies":[{"issue_id":"B","depends_on_id":"A","type":"blocks"}]}]).to_string()
+}
+
+#[test]
+fn cli_stack_reports_the_certified_prerequisites_tip() {
+    std::env::set_var("SPIRA_BD", tmp(&format!("#!/bin/sh\necho '{}'\n", b_stacked_on_a())));
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(std::env::var("SPIRA_BD").unwrap(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let lc = tmp(&serde_json::json!([
+        {"bead_id":"B","state":"READY","holds":"[]"},
+        {"bead_id":"A","state":"CERTIFIED","holds":"[]","stack_depth":"0","tip":"abc123"},
+    ]).to_string());
+    let recs = tmp(&serde_json::json!([{"id":"A","status":"open","issue_type":"task","labels":["repo:spira"]}]).to_string());
+    let o = run(&["stack", "B", "--lifecycle", &lc, "--blocker-records", &recs], "");
+    assert_eq!(o.code, 0, "{}", o.err);
+    let v: serde_json::Value = serde_json::from_str(&o.out).unwrap();
+    assert_eq!(v["claimable"], true);
+    assert_eq!(v["stack"]["A"], "abc123");
+    assert_eq!(v["stack_depth"], 1);
+}
+
+#[test]
+fn cli_stack_past_the_ceiling_is_refused_but_still_names_the_attempted_depth() {
+    std::env::set_var("SPIRA_BD", tmp(&format!("#!/bin/sh\necho '{}'\n", b_stacked_on_a())));
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(std::env::var("SPIRA_BD").unwrap(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let lc = tmp(&serde_json::json!([
+        {"bead_id":"B","state":"READY","holds":"[]"},
+        {"bead_id":"A","state":"CERTIFIED","holds":"[]","stack_depth":"4","tip":"abc123"},
+    ]).to_string());
+    let recs = tmp(&serde_json::json!([{"id":"A","status":"open","issue_type":"task","labels":["repo:spira"]}]).to_string());
+    let o = run(&["stack", "B", "--lifecycle", &lc, "--blocker-records", &recs], "");
+    assert_eq!(o.code, 3, "{}", o.err);
+    let v: serde_json::Value = serde_json::from_str(&o.out).unwrap();
+    assert_eq!(v["claimable"], false);
+    assert_eq!(v["reason"], "TooDeep");
+    assert_eq!(v["stack_depth"], 5);
+}
+
 // ---- the store, through a fake bd -----------------------------------------------------
 
 fn fake_bd(script: &str) -> Store {

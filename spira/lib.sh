@@ -2214,15 +2214,20 @@ lc_event_bead() {
     "$SPIRA_LC_BIN" event bead "$1" --expect "$2" --version "$3" --actor "$4" --kind "$5" >/dev/null 2>&1
 }
 
-# lc_claim_bead <id> <holder> <lease-until-epoch> -> 0 applied, 3 refused (the sp-zw9ot
-# fixture: a bead already IN_DELIVERY, or genuinely held by a live holder), 2 cannot tell.
+# lc_claim_bead <id> <holder> <lease-until-epoch> [<stack-json> <stack-depth>
+# <stack-max-depth>] -> 0 applied, 3 refused (the sp-zw9ot fixture: a bead already
+# IN_DELIVERY, or genuinely held by a live holder; also DepthExceeded when stack-depth
+# exceeds stack-max-depth), 2 cannot tell. The trailing three args are the caller's own
+# already-computed stack proposal (aeon.sh's `stack_proposal`, design stacked-dependents-
+# 2026-09-28 §1) — this function only forwards them, exactly like `lease_until`; omitted,
+# they default to `{}`/0/0, which is today's unstacked claim.
 #
 # HOLDERDEAD BEFORE CLAIM. A row this aeon can see is WORKING only because a prior holder
 # died without releasing — the fayth predicate already excludes any bead bd itself shows
 # as claimed, so a live holder never reaches here. A CAS HolderDead(WORKING->READY) clears
 # it; Claim is illegal from WORKING (lifecycle/src/bead.rs), so this is the only path back.
 lc_claim_bead() {
-    local id="$1" holder="$2" lease_until="$3" row state version rc
+    local id="$1" holder="$2" lease_until="$3" stack="${4:-{\}}" stack_depth="${5:-0}" stack_max_depth="${6:-0}" row state version rc
     row="$(lc_bead_row "$id")" || return 2
     IFS=$'\t' read -r state version _ _ <<< "$row"
     [ -n "$state" ] || return 2
@@ -2234,7 +2239,7 @@ lc_claim_bead() {
         IFS=$'\t' read -r state version _ _ <<< "$row"
     fi
     lc_event_bead "$id" "$state" "$version" "$holder" \
-        "{\"Claim\":{\"holder\":\"$holder\",\"lease_until\":$lease_until}}"
+        "{\"Claim\":{\"holder\":\"$holder\",\"lease_until\":$lease_until,\"stack\":$stack,\"stack_depth\":$stack_depth,\"stack_max_depth\":$stack_max_depth}}"
 }
 
 # lc_release_bead <id> <actor> — best-effort Release. Called on every release_own_claim, so

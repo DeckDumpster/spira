@@ -8,11 +8,11 @@
 //!
 //! Deploys inert: nothing calls `work` over the socket yet.
 
-use lifecycle::bead::{BeadEventKind, HoldKind};
+use lifecycle::bead::{self, BeadEventKind, HoldKind};
 use lifecycle::reason::HoldCause;
 
 use crate::db::Conn;
-use crate::{apply_bead_event, flag, CANNOT_TELL};
+use crate::{apply_bead_event, flag, rows, CANNOT_TELL, REFUSED};
 
 pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(bead_id) = args.first() else {
@@ -64,6 +64,28 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let Some(tip) = flag(args, "--tip") else {
         return (CANNOT_TELL, "work submit: --tip is required (the client reads it from the worktree; the verb itself never takes one)".into());
     };
+    let row = match rows::fetch_bead(conn, bead_id) {
+        Ok(Some(r)) => r,
+        Ok(None) => return (CANNOT_TELL, format!("work submit: no bead row for {bead_id}")),
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+    };
+    if !row.stack.is_empty() {
+        let ids: Vec<&String> = row.stack.keys().collect();
+        let prereqs = match ids.iter().map(|id| rows::fetch_bead(conn, id)).collect::<Result<Vec<_>, _>>() {
+            Ok(rs) => rs.into_iter().flatten().collect::<Vec<_>>(),
+            Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+        };
+        if let Some(refusal) = bead::submit_refusal_for_stale_stack(&row, &prereqs) {
+            let lifecycle::Refusal::StackStale { prereqs: stale } = &refusal else { unreachable!() };
+            return (
+                REFUSED,
+                format!(
+                    "refused: base withdrawn on {} — rebase {bead_id} onto its current stack before resubmitting",
+                    stale.join(", ")
+                ),
+            );
+        }
+    }
     apply_bead_event(conn, bead_id, &actor, BeadEventKind::Submit { tip })
 }
 

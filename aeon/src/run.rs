@@ -15,6 +15,7 @@ use crate::ledger::{self, Ledger};
 use crate::ports::{s, Bd, Env, Exec, Git, Seam};
 use crate::seam::Snapshot;
 use crate::session::{self, Beat, Heartbeat, Launcher, SessionSpec, Stop};
+use crate::stack;
 use crate::util::{self, Out, Sink};
 use crate::worktree;
 
@@ -78,6 +79,10 @@ pub struct State {
     pub rebase_conflicts: String,
     pub sop_before: Option<String>,
     pub groom_lines_before: usize,
+    /// The claim's stack proposal (design stacked-dependents-2026-09-28 §1): the certified
+    /// tip of every prerequisite this claim was built on, keyed by prerequisite bead id.
+    /// Empty for a claim that is not stacked on anything.
+    pub stack: std::collections::BTreeMap<String, String>,
 }
 
 pub struct Run<'a> {
@@ -276,6 +281,22 @@ impl<'a> Run<'a> {
         a
     }
 
+    /// `spira-claim stack <id>` — the stack this claim would carry, or an empty, unstacked
+    /// proposal when the binary is missing or its answer does not parse: a claim never
+    /// blocks on this the way it blocks on `lc_claim_bead` itself, since the worst case is
+    /// only that this round misses the speed the stack would have bought it.
+    fn stack_proposal(&self, id: &str, who: &str) -> stack::Proposal {
+        let Some(claim_bin) = self.claim_bin.clone() else { return stack::Proposal::default() };
+        let o = self.d.exec.exec(&claim_bin, &s(&["stack", id]), None, None);
+        match stack::parse_proposal(&o.stdout) {
+            Some(p) => p,
+            None => {
+                self.log(&format!("{who}: {id} — spira-claim stack did not answer ({}) — proceeding unstacked", o.first_err_line()));
+                stack::Proposal::default()
+            }
+        }
+    }
+
     fn dry_run(&self) -> i32 {
         self.log(&format!("{}: dry run — candidates:", self.f()));
         let o = self.d.bd.bd(&self.ready_args());
@@ -354,11 +375,26 @@ impl<'a> Run<'a> {
             }
             let holder = format!("aeon-{}", self.s.aeon);
             let until = self.now() + self.fayth.lease_seconds();
-            let rc = self.sdo("lc_claim_bead", &s(&[&c.id, &holder, &until.to_string()]));
+            let proposal = self.stack_proposal(&c.id, &who);
+            self.s.stack = proposal.stack.clone();
+            let rc = self.sdo(
+                "lc_claim_bead",
+                &s(&[
+                    &c.id,
+                    &holder,
+                    &until.to_string(),
+                    &stack::stack_json(&proposal.stack),
+                    &proposal.stack_depth.to_string(),
+                    &proposal.stack_max_depth.to_string(),
+                ]),
+            );
             if rc != 0 {
                 self.release();
                 if rc == 3 {
-                    self.log(&format!("{who}: {} — the lifecycle machine refused this claim (not READY/REWORK) — released", c.id));
+                    self.log(&format!(
+                        "{who}: {} — the lifecycle machine refused this claim (not READY/REWORK, or its stack exceeds stack_max_depth) — released",
+                        c.id
+                    ));
                     self.ledger_done(0, "lc-claim-refused");
                 } else {
                     self.log(&format!("{who}: {} — the lifecycle machine could not be reached for this claim — released", c.id));
@@ -409,6 +445,44 @@ impl<'a> Run<'a> {
         self.s.repo_land = self.sv("repo_land", &s(&[&self.s.repo_name])).text();
         self.d.env.set("SPIRA_INCIDENT_REPO", &self.s.repo_name);
         self.log(&format!("{}: {} works repo:{} at {} (land={})", self.f(), c.id, self.s.repo_name, self.s.repo.display(), self.s.repo_land));
+
+        // ---- the stacked base: a conflict here is a claim refusal, not a work-session
+        // failure, so it is decided now, before work() ever arms the session (an unresolvable
+        // base ref itself is left to work()'s own base block below, which refuses it exactly
+        // as it always has — this check only ever fires when there is a stack to merge).
+        if !self.s.stack.is_empty() {
+            let b = self.sv("_aeon_base", &s(&[&self.s.repo.display().to_string()]));
+            let base = b.stdout.lines().next().unwrap_or("").to_string();
+            if b.success() && !base.is_empty() {
+                let mut base_fq = self.sv("qualify_base_ref", &s(&[&base, &self.s.repo.display().to_string()])).text();
+                if base_fq.is_empty() {
+                    base_fq = base.clone();
+                }
+                match stack::build_stacked_base(self.d.git, &self.s.repo, &base_fq, &self.s.stack) {
+                    Ok(merged) => self.s.base_fq = merged,
+                    Err(conflict) => {
+                        self.release();
+                        let note = conflict.note();
+                        for prereq in [&conflict.a, &conflict.b] {
+                            if self.s.stack.contains_key(prereq) {
+                                bd::note(
+                                    self.d.bd,
+                                    prereq,
+                                    &format!(
+                                        "{note} — a dependent's claim of {} could not merge this prerequisite's tip with another's cleanly, and was refused. The stack stays held until one of the two conflicting prerequisites changes.",
+                                        c.id
+                                    ),
+                                );
+                            }
+                        }
+                        self.log(&format!("{who}: {} — {note} — claim refused, stack stays held", c.id));
+                        self.note(&format!("Released by aeon.sh: {note} while building this claim's stacked base. The stack stays held; it becomes claimable again once one of the conflicting prerequisites changes."));
+                        self.ledger_done(0, "stack-conflict");
+                        return Err(0);
+                    }
+                }
+            }
+        }
 
         // ---- the branch is recorded on the bead ----
         let st = self.d.bd.bd(&s(&["state", &c.id, "branch"]));
@@ -503,10 +577,14 @@ impl<'a> Run<'a> {
         if !self.s.base_remote.is_empty() && !self.d.git.git(&self.s.repo, &["fetch", "-q", &self.s.base_remote]).success() {
             self.log(&format!("{}: fetch of {} failed — basing on a possibly stale {}", self.f(), self.s.base_remote, self.s.base));
         }
-        self.s.base_fq = self.sv("qualify_base_ref", &s(&[&self.s.base, &self.s.repo.display().to_string()])).text();
-        if self.s.base_fq.is_empty() {
-            self.s.base_fq = self.s.base.clone();
+        if self.s.stack.is_empty() {
+            self.s.base_fq = self.sv("qualify_base_ref", &s(&[&self.s.base, &self.s.repo.display().to_string()])).text();
+            if self.s.base_fq.is_empty() {
+                self.s.base_fq = self.s.base.clone();
+            }
         }
+        // else: claim() already built base_fq as the landing ref merged with this claim's
+        // stack (stacked-dependents-2026-09-28 §1) — every read site below inherits it.
 
         // ---- one aeon, one worktree, under the sanctioned root ----
         let root = self.run_dir().join("worktree");
