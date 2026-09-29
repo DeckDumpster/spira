@@ -134,4 +134,23 @@ want "both: WARN fires"           "warn  both $CONF and $TOML exist" "$both_out"
 want "both: names the fix"        "remove $CONF"                     "$both_out"
 nowant "both: no neither-OK line" "no config file found"             "$both_out"
 
+# ==========================================================================
+echo
+echo "spira.toml in force validates — doctor calls spira-config, not its own parser:"
+# ==========================================================================
+rm -f "$CONF"
+printf '[spira]\nmax_aeons = 4\n' > "$TOML"
+valid_out="$(run_doctor "$CONF" "$TOML")"
+want "valid: OK validates"       "ok    spira.toml validates"  "$valid_out"
+nowant "valid: no FAIL"          "FAIL  spira.toml fails"      "$valid_out"
+
+# ==========================================================================
+echo
+echo "spira.toml in force is malformed — PLANTED OFFENDER: unknown key must FAIL, not pass silently:"
+# ==========================================================================
+printf '[spira]\nnot_a_real_key = 4\n' > "$TOML"
+invalid_out="$(run_doctor "$CONF" "$TOML")"
+want "invalid: FAIL fires"       "FAIL  spira.toml fails validation" "$invalid_out"
+nowant "invalid: no validates OK" "ok    spira.toml validates"       "$invalid_out"
+
 tl_summary
