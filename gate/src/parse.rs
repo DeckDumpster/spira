@@ -114,25 +114,41 @@ pub enum Attribution {
     BaseUntestable,
 }
 
-/// `base_rc` is only read when `base_ran`.
-pub fn attribute(branch_out: &str, base_ran: bool, base_rc: i32, base_out: &str) -> Attribution {
+/// `base_rc` is only read when `base_ran`. `absent_on_base`: branch reds whose suite file
+/// the base does not have — the branch's own by construction.
+///
+/// EACH RED IS JUDGED AGAINST THE BASE ON THAT SUITE (sp-hh5h0). A branch red is the
+/// branch's when the base ran that suite and it was not red there, or the base lacks it. A
+/// branch red the base never ran is not evidence either way: base-untestable, never
+/// branch-red on a base that merely did not look. Only when every branch red is red on the
+/// base too does the base's own rule apply (all timeouts → base-timeout, else base-red).
+pub fn attribute(
+    branch_out: &str,
+    base_ran: bool,
+    base_rc: i32,
+    base_out: &str,
+    absent_on_base: &[String],
+) -> Attribution {
     if !base_ran {
         return Attribution::BaseUntestable;
     }
-    if base_rc == 0 {
-        let s = red_suites(branch_out)
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| "-".into());
-        return Attribution::BranchRed(s);
-    }
+    let branch_reds = red_suites(branch_out);
     let base_reds = red_suites(base_out);
-    let branch_only: Vec<String> = red_suites(branch_out)
-        .into_iter()
-        .filter(|s| !base_reds.contains(s))
-        .collect();
-    if !base_reds.is_empty() && !branch_only.is_empty() {
-        return Attribution::BranchRed(branch_only[0].clone());
+    if branch_reds.is_empty() {
+        // A red that names no suite (a fence, a unit phase): judged on the command whole.
+        if base_rc == 0 {
+            return Attribution::BranchRed("-".into());
+        }
+    } else {
+        let base_ran_set = ran_suites(base_out);
+        if let Some(s) = branch_reds.iter().find(|s| {
+            absent_on_base.contains(s) || (base_ran_set.contains(s) && !base_reds.contains(s))
+        }) {
+            return Attribution::BranchRed(s.clone());
+        }
+        if branch_reds.iter().any(|s| !base_reds.contains(s)) {
+            return Attribution::BaseUntestable;
+        }
     }
     let timeouts = timed_out_suites(base_out);
     let genuine = base_reds.iter().filter(|s| !timeouts.contains(s)).count();
@@ -208,39 +224,103 @@ mod tests {
         assert_eq!(harness_fault_detail("nothing"), None);
     }
 
+    const NONE: &[String] = &[];
+
     #[test]
     fn attribution_base_untestable_when_the_base_did_not_run() {
         assert_eq!(
-            attribute("test-a.sh RED", false, 1, ""),
+            attribute("test-a.sh RED", false, 1, "", NONE),
             Attribution::BaseUntestable
         );
     }
 
     #[test]
-    fn attribution_branch_red_when_the_base_passes() {
+    fn attribution_branch_red_when_the_base_ran_the_suite_green() {
         assert_eq!(
-            attribute("test-a.sh RED", true, 0, ""),
+            attribute("test-a.sh RED", true, 0, "test-a.sh ok", NONE),
             Attribution::BranchRed("test-a.sh".into())
         );
         assert_eq!(
-            attribute("silent", true, 0, ""),
+            attribute("silent", true, 0, "", NONE),
             Attribution::BranchRed("-".into())
         );
     }
 
     #[test]
     fn attribution_branch_red_on_a_suite_red_only_on_the_branch() {
-        let a = attribute("test-a.sh RED\ntest-b.sh RED", true, 1, "test-a.sh RED");
+        let a = attribute(
+            "test-a.sh RED\ntest-b.sh RED",
+            true,
+            1,
+            "test-a.sh RED\ntest-b.sh ok",
+            NONE,
+        );
         assert_eq!(a, Attribution::BranchRed("test-b.sh".into()));
     }
 
     #[test]
     fn attribution_base_red_when_the_base_has_the_same_reds() {
-        let a = attribute("test-a.sh RED", true, 1, "test-a.sh RED\ntest-z.sh RED");
+        let a = attribute(
+            "test-a.sh RED",
+            true,
+            1,
+            "test-a.sh RED\ntest-z.sh RED",
+            NONE,
+        );
         assert_eq!(a, Attribution::BaseRed("test-a.sh".into()));
         assert_eq!(
-            attribute("x", true, 1, "no suite named"),
+            attribute("x", true, 1, "no suite named", NONE),
             Attribution::BaseRed("-".into())
+        );
+    }
+
+    /// sp-hh5h0: the branch and the base are both red on the same suite. Base-red, whatever
+    /// else the base did — never branch-red.
+    #[test]
+    fn attribution_the_same_suite_red_on_both_is_the_bases() {
+        let a = attribute(
+            "  test-gate-verdict.sh           RED     rc=1 after 31s",
+            true,
+            1,
+            "  test-other.sh ok\n  test-gate-verdict.sh           RED     rc=1 after 30s",
+            NONE,
+        );
+        assert_eq!(a, Attribution::BaseRed("test-gate-verdict.sh".into()));
+    }
+
+    /// sp-hh5h0: a base that exited 0 without running the branch's red suite (a different
+    /// selection, or --deadline deferred it) proves nothing about that suite.
+    #[test]
+    fn attribution_a_red_the_base_never_ran_is_untestable_not_branch_red() {
+        for base in [
+            "test-other.sh ok",
+            "  test-a.sh                        DEFERRED deadline",
+            "",
+        ] {
+            assert_eq!(
+                attribute("test-a.sh RED", true, 0, base, NONE),
+                Attribution::BaseUntestable,
+                "{base:?}"
+            );
+        }
+        // One red judged green on the base is enough to name the branch.
+        assert_eq!(
+            attribute(
+                "test-a.sh RED\ntest-b.sh RED",
+                true,
+                0,
+                "test-b.sh ok",
+                NONE
+            ),
+            Attribution::BranchRed("test-b.sh".into())
+        );
+    }
+
+    #[test]
+    fn attribution_a_red_suite_the_base_lacks_is_the_branchs() {
+        assert_eq!(
+            attribute("test-new.sh RED", true, 0, "", &["test-new.sh".to_string()]),
+            Attribution::BranchRed("test-new.sh".into())
         );
     }
 
@@ -251,6 +331,7 @@ mod tests {
             true,
             1,
             "test-a.sh TIMEOUT\ntest-b.sh was killed",
+            NONE,
         );
         assert_eq!(a, Attribution::BaseTimeout("test-a.sh".into()));
         let mixed = attribute(
@@ -258,6 +339,7 @@ mod tests {
             true,
             1,
             "test-a.sh TIMEOUT\ntest-b.sh RED",
+            NONE,
         );
         assert_eq!(mixed, Attribution::BaseRed("test-a.sh".into()));
     }

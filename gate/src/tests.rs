@@ -55,6 +55,15 @@ struct Fake {
     cmds: RefCell<Vec<String>>,
     /// Seconds each run_gate advances the clock by, per command kind.
     phase_secs: Cell<u64>,
+    // ---- per-suite base judgement (sp-hh5h0)
+    /// What `<landing ref>^{commit}` resolves to on each successive read; the last repeats.
+    /// Empty: the ref is its own commit (the name).
+    landref_tips: RefCell<Vec<String>>,
+    /// (status, output) of the base re-run by (the revision, the `--suites` list); absent,
+    /// every named suite passes.
+    reruns: RefCell<HashMap<(String, String), (i32, String)>>,
+    /// Suites the base does not have (`ls_tree_has spira/<suite>` is false).
+    base_lacks: RefCell<HashSet<String>>,
 }
 
 fn ctx() -> Ctx {
@@ -67,6 +76,7 @@ fn ctx() -> Ctx {
         ("HOME", "/home/u"),
         ("PATH", "/usr/bin"),
         ("LANDSTATE", "/run/landstate"),
+        ("SPIRA_TESTENV_BIN", "/bin/testenv"),
     ] {
         vars.insert(k.to_string(), v.to_string());
     }
@@ -129,6 +139,9 @@ impl Fake {
             unit_runs: RefCell::new(HashMap::new()),
             cmds: RefCell::new(Vec::new()),
             phase_secs: Cell::new(7),
+            landref_tips: RefCell::new(Vec::new()),
+            reruns: RefCell::new(HashMap::new()),
+            base_lacks: RefCell::new(HashSet::new()),
         }
     }
     fn set_var(&self, k: &str, v: &str) {
@@ -198,6 +211,15 @@ impl World for Fake {
         if rev.ends_with("^{tree}") {
             return Some(format!("tree-of-{}", rev.trim_end_matches("^{tree}")));
         }
+        if rev == format!("{BASE}^{{commit}}") {
+            let mut tips = self.landref_tips.borrow_mut();
+            if let Some(t) = tips.first().cloned() {
+                if tips.len() > 1 {
+                    tips.remove(0);
+                }
+                return Some(t);
+            }
+        }
         Some(rev.trim_end_matches("^{commit}").to_string())
     }
     fn diff_names(&self, _: &Path, _: &str) -> Result<String, String> {
@@ -223,6 +245,9 @@ impl World for Fake {
     }
     fn ls_tree_has(&self, _: &Path, _: &str, path: &str) -> bool {
         path != "spira/missing.sh"
+            && !path
+                .strip_prefix("spira/")
+                .is_some_and(|s| self.base_lacks.borrow().contains(s))
     }
     fn bash_n(&self, content: &[u8]) -> Result<(), String> {
         if self.bash_n_bad.borrow().contains(content) {
@@ -285,6 +310,17 @@ impl World for Fake {
             .map(|(_, v)| v.clone())
             .unwrap_or_default();
         self.clock.set(self.clock.get() + self.phase_secs.get());
+        if let Some(rest) = cmd.split("--suites ").nth(1) {
+            let list = rest.split_whitespace().next().unwrap_or("").to_string();
+            if let Some(r) = self.reruns.borrow().get(&(br.clone(), list.clone())) {
+                return r.clone();
+            }
+            let lines: Vec<String> = list
+                .split(',')
+                .map(|s| format!("  {s:<32} ok      1s"))
+                .collect();
+            return (0, lines.join("\n"));
+        }
         if cmd.starts_with("cargo test") {
             let kind = if cmd.contains("--no-run") {
                 "build"
@@ -501,6 +537,215 @@ fn a_red_only_on_the_branch_is_the_branchs_even_on_a_red_base() {
     let e = f.stderr();
     assert!(e.contains("red on this branch and not on local/main: test-d.sh\ngate: local/main is red too, on: test-b.sh"), "{e}");
     assert!(f.verdict_line().ends_with("suite=test-d.sh"));
+}
+
+// ------------------------------------------- each red judged on the base on that suite (sp-hh5h0)
+
+const SUITE: &str = "test-gate-verdict.sh";
+
+fn red(suite: &str) -> String {
+    format!("  {suite:<32} RED     rc=1 after 31s")
+}
+
+fn meter_row(f: &Fake) -> String {
+    f.appended.borrow().last().cloned().unwrap_or_default()
+}
+
+/// The incident (gate.log 2026-09-29T19:45:58Z, concierge/sp-b4oct): the landing ref moved
+/// between the branch trial and the base trial. The base trial must judge the commit the
+/// merge was cut from, where the suite is red too — not the ref's new tip, which fixed it.
+#[test]
+fn the_base_trial_judges_the_base_the_merge_was_cut_from() {
+    let f = Fake::new();
+    *f.landref_tips.borrow_mut() = vec!["old-base".into(), "new-base".into()];
+    f.runs.borrow_mut().insert(
+        MERGE_SHA.into(),
+        (1, format!("  test-a.sh ok\n{}", red(SUITE))),
+    );
+    f.runs.borrow_mut().insert(
+        "old-base".into(),
+        (1, format!("  test-a.sh ok\n{}", red(SUITE))),
+    );
+    f.runs.borrow_mut().insert(
+        "new-base".into(),
+        (0, format!("  test-a.sh ok\n  {SUITE} ok")),
+    );
+    assert_eq!(f.run(), BASEFAIL);
+    assert_eq!(
+        f.verdict_line(),
+        format!(
+            "gate: VERDICT=BASE_FAIL reason=base-red branch=spira/sp-a repo=spira suite={SUITE}"
+        )
+    );
+    assert_eq!(
+        f.checkouts.borrow()[..],
+        [MERGE_SHA.to_string(), "old-base".to_string()],
+        "the base trial checks out the pinned commit"
+    );
+    assert_eq!(f.env_of(0, "SPIRA_GATE_BASE"), "old-base");
+    assert_eq!(f.env_of(1, "SPIRA_GATE_BASE"), "old-base");
+    assert_eq!(f.env_of(1, "SPIRA_GATE_BRANCH"), "old-base");
+}
+
+/// Acceptance 1: the branch trial and the base trial are both red on the same suite.
+#[test]
+fn the_same_suite_red_on_the_branch_and_the_base_is_base_red() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(
+        MERGE_SHA.into(),
+        (1, format!("  test-a.sh ok\n{}", red(SUITE))),
+    );
+    f.runs
+        .borrow_mut()
+        .insert(BASE.into(), (1, format!("  test-a.sh ok\n{}", red(SUITE))));
+    assert_eq!(f.run(), BASEFAIL);
+    assert!(
+        f.verdict_line().contains("reason=base-red"),
+        "{}",
+        f.verdict_line()
+    );
+    assert!(f.verdict_line().ends_with(&format!("suite={SUITE}")));
+    assert_eq!(f.ran.borrow().len(), 2, "the base ran it: no re-run");
+}
+
+/// Acceptance 2: the base trial did not select the branch's red suite. It is run on the
+/// base by name before judging; red there too → base-red, not branch-red.
+#[test]
+fn a_red_the_base_trial_did_not_run_is_run_on_the_base_first() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(
+        MERGE_SHA.into(),
+        (1, format!("  test-a.sh ok\n{}", red(SUITE))),
+    );
+    f.runs
+        .borrow_mut()
+        .insert(BASE.into(), (0, "  test-a.sh ok".into()));
+    f.reruns
+        .borrow_mut()
+        .insert((BASE.into(), SUITE.into()), (1, red(SUITE)));
+    assert_eq!(f.run(), BASEFAIL);
+    assert!(
+        f.verdict_line().contains("reason=base-red"),
+        "{}",
+        f.verdict_line()
+    );
+    let cmds = f.cmds.borrow();
+    assert_eq!(
+        cmds.len(),
+        3,
+        "branch trial, base trial, base re-run: {cmds:?}"
+    );
+    assert!(
+        cmds[2].contains(&format!(
+            "\"$SPIRA_TESTENV_BIN\" --suites {SUITE} \"$SPIRA_GATE_BRANCH\""
+        )),
+        "{}",
+        cmds[2]
+    );
+    assert!(
+        !cmds[2].contains("--deadline"),
+        "the re-run is not cut by a deadline"
+    );
+    assert_eq!(f.env_of(2, "SPIRA_GATE_BRANCH"), BASE, "re-run on the base");
+    assert!(f
+        .stderr()
+        .contains(&format!("gate: re-ran on local/main (local/main): {SUITE}")));
+    assert!(meter_row(&f).contains(",base-rerun:7"), "{}", meter_row(&f));
+}
+
+/// The re-run finds the suite green on the base: now, and only now, it is the branch's.
+#[test]
+fn a_red_the_base_re_run_passes_is_the_branchs() {
+    let f = Fake::new();
+    f.runs
+        .borrow_mut()
+        .insert(MERGE_SHA.into(), (1, red(SUITE)));
+    f.runs
+        .borrow_mut()
+        .insert(BASE.into(), (0, "  test-a.sh ok".into()));
+    assert_eq!(f.run(), FAIL);
+    assert!(f.verdict_line().ends_with(&format!("suite={SUITE}")));
+    assert_eq!(f.cmds.borrow().len(), 3);
+}
+
+/// testenv's --deadline deferred the suite on the base: not run, so re-run.
+#[test]
+fn a_red_the_base_deferred_by_deadline_is_re_run() {
+    let f = Fake::new();
+    f.runs
+        .borrow_mut()
+        .insert(MERGE_SHA.into(), (1, red(SUITE)));
+    f.runs.borrow_mut().insert(
+        BASE.into(),
+        (
+            0,
+            format!(
+                "  {SUITE:<32} DEFERRED deadline\nVERDICT GREEN ran=0 deferred=1 (deadline 300s)"
+            ),
+        ),
+    );
+    f.reruns
+        .borrow_mut()
+        .insert((BASE.into(), SUITE.into()), (1, red(SUITE)));
+    assert_eq!(f.run(), BASEFAIL);
+}
+
+/// A re-run that could not judge (testenv fault, no testenv) leaves it untestable.
+#[test]
+fn a_base_re_run_that_cannot_judge_is_untestable() {
+    let f = Fake::new();
+    f.runs
+        .borrow_mut()
+        .insert(MERGE_SHA.into(), (1, red(SUITE)));
+    f.runs
+        .borrow_mut()
+        .insert(BASE.into(), (0, "  test-a.sh ok".into()));
+    f.reruns
+        .borrow_mut()
+        .insert((BASE.into(), SUITE.into()), (75, "batch: no image".into()));
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=base-untestable"));
+
+    let g = Fake::new();
+    g.set_var("SPIRA_TESTENV_BIN", "");
+    g.runs
+        .borrow_mut()
+        .insert(MERGE_SHA.into(), (1, red(SUITE)));
+    g.runs
+        .borrow_mut()
+        .insert(BASE.into(), (0, "  test-a.sh ok".into()));
+    assert_eq!(g.run(), NOVERDICT);
+    assert!(g.verdict_line().contains("reason=base-untestable"));
+    assert_eq!(g.cmds.borrow().len(), 2, "no re-run without testenv");
+}
+
+/// A red suite the base does not have is the branch's own; nothing to run on the base.
+#[test]
+fn a_red_suite_the_base_lacks_is_the_branchs_without_a_re_run() {
+    let f = Fake::new();
+    f.base_lacks.borrow_mut().insert("test-new.sh".into());
+    f.runs
+        .borrow_mut()
+        .insert(MERGE_SHA.into(), (1, red("test-new.sh")));
+    f.runs
+        .borrow_mut()
+        .insert(BASE.into(), (0, "  test-a.sh ok".into()));
+    assert_eq!(f.run(), FAIL);
+    assert!(f.verdict_line().ends_with("suite=test-new.sh"));
+    assert_eq!(f.cmds.borrow().len(), 2);
+}
+
+#[test]
+fn the_re_run_names_only_shell_safe_suites() {
+    let c = crate::engine::base_rerun_cmd(&[
+        "test-a.sh".into(),
+        "x;rm -rf /.sh".into(),
+        "test-b.sh".into(),
+    ]);
+    assert!(
+        c.contains("--suites test-a.sh,test-b.sh \"$SPIRA_GATE_BRANCH\""),
+        "{c}"
+    );
 }
 
 #[test]
