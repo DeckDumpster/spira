@@ -194,10 +194,9 @@ impl Drop for World {
     }
 }
 
+/// testkit::write_exe, never write + chmod: see testkit/DESIGN.md (ETXTBSY).
 pub fn exe(p: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::write(p, "#!/bin/sh\n").unwrap();
-    std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    testkit::write_exe(p, "#!/bin/sh\n");
 }
 
 pub const NOW: i64 = 1_790_000_000;

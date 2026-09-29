@@ -33,6 +33,7 @@ members = [
     "queue",
     "aeon",
     "gate",
+    "testkit",
 ]
 resolver = "2"
 

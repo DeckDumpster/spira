@@ -1146,10 +1146,8 @@ mod lifecycle_tests {
 
     /// An executable spira-lc stand-in that logs its argv and answers `reply`.
     fn fake_lc(dir: &Path, reply: &str) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
         let p = dir.join("spira-lc");
-        fs::write(&p, format!("#!/bin/sh\necho \"$@\" >> '{}'\nprintf '%s' '{reply}'\n", dir.join("lc.log").display())).unwrap();
-        fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+        testkit::write_exe(&p, &format!("#!/bin/sh\necho \"$@\" >> '{}'\nprintf '%s' '{reply}'\n", dir.join("lc.log").display()));
         p
     }
 

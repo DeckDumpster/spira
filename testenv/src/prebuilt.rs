@@ -260,9 +260,7 @@ mod tests {
     }
 
     fn exe(dir: &Path, name: &str, body: &str) {
-        let p = dir.join(name);
-        fs::write(&p, body).unwrap();
-        fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+        testkit::write_exe(dir.join(name), body);
     }
 
     fn strings(v: &[&str]) -> Vec<String> {

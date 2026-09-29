@@ -59,23 +59,10 @@ fn scratch(kind: &str) -> PathBuf {
     dir
 }
 
-/// Write an executable these tests will exec, WITHOUT THIS PROCESS EVER HOLDING A WRITE
-/// DESCRIPTOR ON IT. `fs::write` then exec fails with ETXTBSY whenever another test thread
-/// spawns a child while the write descriptor is open — the child carries a copy until it
-/// execs — so a child process writes the file, and nothing a fork here can inherit ever
-/// points at it (the same fix as landing-pass's testutil::write_exe).
+/// testkit::write_exe, never `fs::write` then exec: a write descriptor held while another
+/// test thread spawns a child makes the exec fail with ETXTBSY (testkit/DESIGN.md).
 fn script(path: &PathBuf, body: &str) {
-    use std::io::Write;
-    let mut c = std::process::Command::new("sh")
-        .arg("-c")
-        .arg("cat > \"$1\" && chmod 755 \"$1\"")
-        .arg("sh")
-        .arg(path)
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .expect("sh to write a script");
-    c.stdin.take().expect("its stdin").write_all(body.as_bytes()).expect("the script body");
-    assert!(c.wait().expect("the writer").success(), "could not write {}", path.display());
+    testkit::write_exe(path, body);
 }
 
 /// The hermetic fixture: a "database" directory holding bd's canned answer, and a fake `bd`

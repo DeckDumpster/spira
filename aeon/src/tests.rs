@@ -439,9 +439,7 @@ fn binary_presence_alone_never_selects_the_restricted_path() {
     std::fs::create_dir_all(&bin).unwrap();
     for b in ["spira-lc", "work"] {
         let p = bin.join(b);
-        std::fs::write(&p, "#!/bin/sh\n").unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        testkit::write_exe(&p, "#!/bin/sh\n");
     }
     let extra = [("SPIRA_LC_BIN", bin.join("spira-lc").display().to_string()), ("SPIRA_WORK_BIN", bin.join("work").display().to_string())];
     let extra: Vec<(&str, &str)> = extra.iter().map(|(k, v)| (*k, v.as_str())).collect();
@@ -461,9 +459,7 @@ fn enforce_claims_through_the_machine_and_restricts_the_model() {
     std::fs::create_dir_all(&bin).unwrap();
     for b in ["spira-lc", "work"] {
         let p = bin.join(b);
-        std::fs::write(&p, "#!/bin/sh\n").unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        testkit::write_exe(&p, "#!/bin/sh\n");
     }
     let extra = [("SPIRA_LC_BIN", bin.join("spira-lc").display().to_string()), ("SPIRA_WORK_BIN", bin.join("work").display().to_string())];
     let extra: Vec<(&str, &str)> = extra.iter().map(|(k, v)| (*k, v.as_str())).collect();
@@ -496,9 +492,7 @@ fn a_refused_lifecycle_claim_releases() {
     std::fs::create_dir_all(&bin).unwrap();
     for b in ["spira-lc", "work"] {
         let p = bin.join(b);
-        std::fs::write(&p, "#!/bin/sh\n").unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        testkit::write_exe(&p, "#!/bin/sh\n");
     }
     let extra = [("SPIRA_LC_BIN", bin.join("spira-lc").display().to_string()), ("SPIRA_WORK_BIN", bin.join("work").display().to_string())];
     let extra: Vec<(&str, &str)> = extra.iter().map(|(k, v)| (*k, v.as_str())).collect();
@@ -514,9 +508,7 @@ fn lc_bin_extra(f: &Fx) -> Vec<(String, String)> {
     std::fs::create_dir_all(&bin).unwrap();
     for b in ["spira-lc", "work"] {
         let p = bin.join(b);
-        std::fs::write(&p, "#!/bin/sh\n").unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        testkit::write_exe(&p, "#!/bin/sh\n");
     }
     vec![("SPIRA_LC_BIN".to_string(), bin.join("spira-lc").display().to_string()), ("SPIRA_WORK_BIN".to_string(), bin.join("work").display().to_string())]
 }

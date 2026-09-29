@@ -15,6 +15,10 @@ gate = { path = "../gate" }
 name = "queue"
 path = "src/main.rs"
 
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
 [profile.release]
 opt-level = "z"
 lto = true

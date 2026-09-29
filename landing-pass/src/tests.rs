@@ -1863,7 +1863,7 @@ fn real_halt_finds_podman_and_testenv_on_its_path() {
     std::fs::create_dir_all(&bin).unwrap();
     let log = dir.join("log");
     let podman = bin.join("podman");
-    crate::testutil::write_exe(&podman, "#!/bin/sh\n[ \"$1\" = ps ] && echo spira-batch-stubbed\nexit 0\n");
+    testkit::write_exe(&podman, "#!/bin/sh\n[ \"$1\" = ps ] && echo spira-batch-stubbed\nexit 0\n");
     std::fs::write(dir.join("testenv.sh"), format!("echo \"$*\" >> {}\ncommand -v podman >> {}\n", log.display(), log.display())).unwrap();
     let path = format!("{}:/usr/bin:/bin", bin.display());
     let h = RealHalt { prod: dir.clone(), path: Some(path) };

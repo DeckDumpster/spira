@@ -57,15 +57,13 @@ impl Alarm for MailAlarm {
 mod tests {
     use super::*;
     use crate::testutil::TempDir;
-    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn mails_through_mail_sh_send_with_the_reason() {
         let d = TempDir::new();
         let log = d.path().join("log");
         let mail = d.path().join("mail.sh");
-        std::fs::write(&mail, format!("#!/bin/sh\necho \"$@\" > {0}\ncat >> {0}\n", log.display())).unwrap();
-        std::fs::set_permissions(&mail, std::fs::Permissions::from_mode(0o755)).unwrap();
+        testkit::write_exe(&mail, &format!("#!/bin/sh\necho \"$@\" > {0}\ncat >> {0}\n", log.display()));
         MailAlarm { spira_home: Some(d.path().into()), mailbox: "operator".into(), retry_secs: 60 }
             .raise("API unreachable (nextid)");
         let got = std::fs::read_to_string(&log).unwrap();
