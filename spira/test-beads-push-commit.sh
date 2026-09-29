@@ -50,10 +50,17 @@ TMP="$(mktemp -d)"
 # Opt out of the shared fixture so testdb_up builds a private one.
 TESTDB_SHARED=0
 export TESTDB_SHARED
-# Embedded, by construction: the remote is written and read back through the embedded
-# library (see HOW CLONING IS VERIFIED), so this suite opts out of the server fixture testenv
-# gives every other suite (DESIGN-testdb.md §2.4).
-unset SPIRA_TESTDB_MODE
+#
+# RUNS IN WHATEVER FIXTURE MODE THE BATCH GIVES IT (server, by default —
+# DESIGN-testdb.md §2.4), no longer pinned to embedded (sp-sghmt). It used to be: the
+# real assertion here is exactly the one beads-push.sh got wrong in server mode — `bd
+# dolt commit` returned 0 and "Nothing to commit." for a working set the real dolt
+# engine could see (sp-e1l1) — and pinning to embedded made the suite blind to it. Once
+# beads-push.sh's pre-push commit moved to the beads-store binary, which resolves a
+# server-mode store's real dolt engine instead of asking bd, this suite started passing
+# in server mode too (see beads-store/DESIGN.md). `bd bootstrap` still reads the pushed
+# remote back through the embedded library regardless of which mode SPIRA_DB itself
+# ran in (see HOW CLONING IS VERIFIED) — that compatibility was never mode-dependent.
 
 . "$HERE/testdb.sh"
 testdb_require beads-push-commit
