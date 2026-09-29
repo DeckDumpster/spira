@@ -35,9 +35,9 @@
 #
 # POSITIVE CONTROL
 # ----------------
-# After removing the inventory, sweeps for spira-* units and the four shared
-# names (cockpit-ensure, concierge, beads-push, dolt-beads). Reports anything
-# found that the owned.sh manifest did not predict — these are "stray" artifacts
+# After removing the inventory, sweeps for spira-* units and the shared
+# names (cockpit-ensure, concierge, beads-push, dolt-beads, dolt-tmp-prune). Reports
+# anything found that the owned.sh manifest did not predict — these are "stray" artifacts
 # from an older harness version or a different install that the manifest-driven
 # pass misses by design.
 #
@@ -412,21 +412,21 @@ fi
 
 # ---------------------------------------------------------------------------
 # 9. POSITIVE CONTROL SWEEP. After removing the inventory, look for anything
-#    that matches spira-* or the four shared names but was NOT in the manifest.
+#    that matches spira-* or the shared names but was NOT in the manifest.
 #    A unit from a harness older than owned.sh is exactly what a manifest-driven
 #    uninstaller misses; this sweep is the alarm that catches it.
 # ---------------------------------------------------------------------------
 printf '\nSweeping for unlisted Spira units...\n'
-_FOUR_SHARED="cockpit-ensure concierge beads-push dolt-beads"
+_SHARED_UNITS="cockpit-ensure concierge beads-push dolt-beads dolt-tmp-prune"
 
 # Build a set of names the manifest predicted (already removed or never there).
 _un_known=" "
 for _un_n in "${_un_removed_names[@]+"${_un_removed_names[@]}"}"; do
     _un_known="$_un_known$_un_n "
 done
-# Add the four shared names even if they were absent from this instance's manifest —
+# Add the shared names even if they were absent from this instance's manifest —
 # the sweep should not report them if this install simply did not include them.
-for _f4 in $_FOUR_SHARED; do
+for _f4 in $_SHARED_UNITS; do
     _un_known="$_un_known$_f4 "
     _un_known="$_un_known$_f4.service "
     _un_known="$_un_known$_f4.timer "
@@ -440,7 +440,8 @@ for _un_uf in "$UNITDIR"/spira-*.service "$UNITDIR"/spira-*.timer \
               "$UNITDIR"/cockpit-ensure.service "$UNITDIR"/cockpit-ensure.timer \
               "$UNITDIR"/concierge.service "$UNITDIR"/concierge.timer \
               "$UNITDIR"/beads-push.service "$UNITDIR"/beads-push.timer \
-              "$UNITDIR"/dolt-beads.service "$UNITDIR"/dolt-beads.timer; do
+              "$UNITDIR"/dolt-beads.service "$UNITDIR"/dolt-beads.timer \
+              "$UNITDIR"/dolt-tmp-prune.service "$UNITDIR"/dolt-tmp-prune.timer; do
     [ -e "$_un_uf" ] || continue
     _un_bn="$(basename "$_un_uf")"
     case "$_un_known" in *" $_un_bn "*) ;; *)
@@ -451,7 +452,7 @@ unset _un_uf _un_bn
 
 # Units loaded in systemd but not backed by a file we just removed.
 _un_loaded="$("${SPIRA_SYSTEMCTL:-systemctl}" --user list-units --all --no-legend \
-    --plain 'spira-*' 'cockpit-ensure.*' 'concierge.*' 'beads-push.*' 'dolt-beads.*' 2>/dev/null \
+    --plain 'spira-*' 'cockpit-ensure.*' 'concierge.*' 'beads-push.*' 'dolt-beads.*' 'dolt-tmp-prune.*' 2>/dev/null \
     | awk '{print $1}' | sort -u || true)"
 while IFS= read -r _un_ln; do
     [ -n "$_un_ln" ] || continue
