@@ -844,3 +844,78 @@ fn a_fail_with_no_message_is_downgraded() {
         ["PASS", "FAIL", "FAIL", "NO_VERDICT", "BASE_FAIL"]
     );
 }
+
+// ---------------------------------------------------------------------- the tree certificate
+
+const HEX_TREE: &str = "0123456789abcdef0123456789abcdef01234567";
+
+fn hex_fake() -> Fake {
+    let f = Fake::new();
+    *f.merge.borrow_mut() = Merge::Clean(HEX_TREE.into());
+    f
+}
+
+fn cert_written(f: &Fake) -> Option<String> {
+    let want = PathBuf::from(format!("{RUN}/verdicts/trees/spira/{HEX_TREE}"));
+    f.written
+        .borrow()
+        .iter()
+        .find(|(p, _)| *p == want)
+        .map(|(_, c)| c.clone())
+}
+
+#[test]
+fn a_pass_certifies_the_merged_tree_it_judged() {
+    let f = hex_fake();
+    assert_eq!(f.run(), PASS);
+    let c = cert_written(&f).expect("a PASS writes the tree certificate");
+    let parsed = crate::cert::certifies(&c, "spira", HEX_TREE).expect("it certifies (spira, T)");
+    assert_eq!(parsed.source, crate::cert::Source::Gate);
+    assert_eq!(parsed.rev, MERGE_SHA, "the revision that carries the merged tree");
+    assert_eq!(parsed.branch, BR);
+    assert_eq!(parsed.harness, "harness", "recorded for the reader, never matched");
+    assert_eq!(parsed.suites, "test-a.sh,test-b.sh");
+}
+
+#[test]
+fn a_cached_pass_and_a_syntax_only_pass_certify_too() {
+    let f = hex_fake();
+    let k = key::gate_key(&key::KeyInputs {
+        repo: "spira",
+        tree: HEX_TREE,
+        files: &f.diff.borrow().clone().unwrap(),
+        cmd: "bash spira/fence.sh && run-suites",
+        harness_h: "harness",
+        suites: "on",
+        bead: "none",
+        ejected: "",
+    });
+    f.files.borrow_mut().insert(
+        PathBuf::from(format!("{RUN}/verdicts/{k}")),
+        key::render_entry("w", 999_000, "aeon", "spira", BR, "test-a.sh"),
+    );
+    assert_eq!(f.run(), PASS);
+    assert!(f.verdict_line().contains("reason=cached"));
+    let c = cert_written(&f).expect("a cached PASS re-certifies");
+    assert!(c.contains("suites=test-a.sh\n"), "{c}");
+
+    let f = hex_fake();
+    f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = String::new();
+    assert_eq!(f.run(), PASS);
+    assert!(cert_written(&f).is_some(), "syntax-only is the repository's whole gate");
+}
+
+#[test]
+fn no_verdict_other_than_pass_certifies() {
+    let f = hex_fake();
+    f.runs
+        .borrow_mut()
+        .insert(MERGE_SHA.into(), (1, "test-b.sh RED".into()));
+    assert_ne!(f.run(), PASS);
+    assert!(cert_written(&f).is_none());
+    let f = hex_fake();
+    f.admission_free.set(false);
+    f.set_var("SPIRA_GATE_LOCK_WAIT", "1");
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(cert_written(&f).is_none());
+}

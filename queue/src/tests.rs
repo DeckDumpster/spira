@@ -1251,10 +1251,136 @@ fn open_batch_red_pregate_deletes_the_branch() {
 
 // -------------------------------------------------------------------------- land-local
 
+/// h1's tree, and a tree nothing certified (the pre-merge branch's, in the incident).
+const T1: &str = "1111111111111111111111111111111111111111";
+const T_BRANCH: &str = "2222222222222222222222222222222222222222";
+
 fn local_repo(t: &T) {
+    uncertified_local_repo(t);
+    t.certify("spira", T1, gate::cert::Source::Gate, "harness-now");
+}
+
+/// local/main at b0, h1 fast-forwards from it with tree T1 — and no certificate anywhere.
+fn uncertified_local_repo(t: &T) {
     t.git.set("refs/heads/local/main", "b0");
     t.git.ancestor("b0", "h1");
     t.git.set("refs/remotes/origin/main", "f0");
+    t.git.trees.borrow_mut().insert("h1".into(), T1.into());
+}
+
+impl T {
+    /// A tree certificate as the gate or batcher-cut writes it (gate::cert, §8 D12).
+    fn certify(&self, repo: &str, tree: &str, source: gate::cert::Source, harness: &str) {
+        let c = gate::cert::Cert {
+            source,
+            tree: tree.into(),
+            repo: repo.into(),
+            rev: "judged-rev".into(),
+            branch: "spira/sp-a".into(),
+            by: "test".into(),
+            when: "2026-09-29T18:00:00Z".into(),
+            at: 1,
+            harness: harness.into(),
+            suites: "-".into(),
+        };
+        gate::cert::write(&self.s().run.join("verdicts"), &c).unwrap();
+    }
+    fn landed_ref(&self) -> Option<String> {
+        self.git.get("refs/heads/local/main")
+    }
+}
+
+#[test]
+fn land_local_refuses_a_tree_no_gate_or_round_certified() {
+    let t = T::new(LandMode::QueueLocal);
+    uncertified_local_repo(&t);
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1);
+    let e = t.err();
+    assert!(e.contains(&format!("no gate PASS or round GREEN for h1's tree {T1} in spira")), "{e}");
+    assert!(e.contains(&format!("run: bash {}/gate.sh h1 spira", t.s().home.display())), "names the exact gate command: {e}");
+    assert!(e.contains("SPIRA_LAND_UNGATED=<reason>") && e.contains("refused, nothing changed"), "{e}");
+    assert_eq!(t.landed_ref().as_deref(), Some("b0"), "nothing moved");
+    assert!(!t.lib.has("land_mark"));
+    assert!(!t.qfile("round-seq").exists());
+    assert!(t.git.get("refs/archive/rounds/1").is_none());
+}
+
+#[test]
+fn land_local_accepts_a_gate_pass_for_the_head_tree() {
+    let t = T::new(LandMode::QueueLocal);
+    local_repo(&t);
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("h1"));
+    assert!(t.err().contains(&format!("tree {T1} certified by gate PASS")), "{}", t.err());
+    assert!(t.lib.has("land_mark sp-a LANDED ta"));
+    assert!(!t.err().contains("UNGATED"));
+}
+
+#[test]
+fn land_local_accepts_a_round_green_for_the_head_tree() {
+    let t = T::new(LandMode::QueueLocal);
+    uncertified_local_repo(&t);
+    t.certify("spira", T1, gate::cert::Source::Round, "-");
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("h1"));
+    assert!(t.err().contains(&format!("tree {T1} certified by round GREEN")), "{}", t.err());
+}
+
+#[test]
+fn land_local_ignores_a_pass_for_another_tree_or_repo() {
+    // The incident: the branch passed alone (its own tree); the merge that landed is h1.
+    let t = T::new(LandMode::QueueLocal);
+    uncertified_local_repo(&t);
+    t.certify("spira", T_BRANCH, gate::cert::Source::Gate, "harness-now");
+    t.certify("other", T1, gate::cert::Source::Gate, "harness-now");
+    // A file at the right path that claims another tree is not a certificate for this one.
+    let p = gate::cert::path(&t.s().run.join("verdicts"), "spira", T1).unwrap();
+    fs::create_dir_all(p.parent().unwrap()).unwrap();
+    let forged = fs::read_to_string(gate::cert::path(&t.s().run.join("verdicts"), "spira", T_BRANCH).unwrap()).unwrap();
+    fs::write(&p, forged).unwrap();
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1);
+    assert!(t.err().contains("no gate PASS or round GREEN"), "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("b0"));
+    // A red verdict is not a certificate either.
+    fs::write(&p, fs::read_to_string(&p).unwrap().replace(T_BRANCH, T1).replace("verdict=PASS", "verdict=FAIL")).unwrap();
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1);
+    assert_eq!(t.landed_ref().as_deref(), Some("b0"));
+}
+
+#[test]
+fn land_local_a_pass_from_an_older_gate_binary_still_counts() {
+    let t = T::new(LandMode::QueueLocal);
+    uncertified_local_repo(&t);
+    t.certify("spira", T1, gate::cert::Source::Gate, "a-harness-hash-from-an-older-gate");
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
+}
+
+#[test]
+fn land_local_honours_spira_verdicts_as_the_gate_does() {
+    let t = T::new(LandMode::QueueLocal);
+    uncertified_local_repo(&t);
+    let v = t.dir.join("elsewhere");
+    t.var("SPIRA_VERDICTS", &v.display().to_string());
+    let c = gate::cert::Cert { source: gate::cert::Source::Gate, tree: T1.into(), repo: "spira".into(), rev: "r".into(), branch: "b".into(), by: "x".into(), when: "w".into(), at: 1, harness: "h".into(), suites: "-".into() };
+    gate::cert::write(&v, &c).unwrap();
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
+}
+
+#[test]
+fn land_local_ungated_override_lands_and_records_the_reason() {
+    let t = T::new(LandMode::QueueLocal);
+    uncertified_local_repo(&t);
+    t.var("SPIRA_LAND_UNGATED", "");
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1, "an empty reason is no override");
+    t.var("SPIRA_LAND_UNGATED", "operator: gate host down\nsecond line");
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta,sp-b"]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("h1"));
+    let reason = "operator: gate host down second line";
+    assert!(t.err().contains(&format!("UNGATED LANDING of h1 (tree {T1}) onto local/main")), "{}", t.err());
+    assert!(t.err().contains(&format!("SPIRA_LAND_UNGATED={reason}")), "{}", t.err());
+    assert!(t.lib.has(&format!("land_mark sp-a LANDED ta ungated: {reason}")), "the landstate record carries it");
+    assert!(t.lib.has(&format!("land_mark sp-b LANDED h1 ungated: {reason}")));
+    assert!(t.landing_log().contains(&format!("QUEUE UNGATED 1000 repo=spira head=h1 tree={T1} reason={reason}")), "{}", t.landing_log());
 }
 
 #[test]
@@ -1312,7 +1438,7 @@ fn round_worktree(t: &T, tree: &str) -> PathBuf {
     fs::set_permissions(&exe, fs::Permissions::from_mode(0o755)).unwrap();
     t.git.refs.borrow_mut().insert("HEAD".into(), "wt-head".into());
     t.git.trees.borrow_mut().insert("wt-head".into(), tree.into());
-    t.git.trees.borrow_mut().insert("h1".into(), "T1".into());
+    t.git.trees.borrow_mut().insert("h1".into(), T1.into());
     wt
 }
 
@@ -1331,7 +1457,7 @@ fn land_local_packages_the_round_worktrees_own_target_release() {
     let t = T::new(LandMode::QueueLocal);
     local_repo(&t);
     release_in_force(&t);
-    let wt = round_worktree(&t, "T1");
+    let wt = round_worktree(&t, T1);
     let wts = wt.display().to_string();
     assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta", "--worktree", &wts]), 0, "{}", t.err());
     let calls = t.scripts.calls.borrow().clone();
@@ -1355,7 +1481,7 @@ fn land_local_activation_failure_reverts_the_ref() {
     let t = T::new(LandMode::QueueLocal);
     local_repo(&t);
     release_in_force(&t);
-    let wt = round_worktree(&t, "T1");
+    let wt = round_worktree(&t, T1);
     t.scripts.activate_rc.set(1);
     assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta", "--worktree", &wt.display().to_string()]), 1);
     assert!(t.err().contains("packaging/activation failed for h1 — reverted, nothing changed"));
@@ -1438,7 +1564,7 @@ fn checkout_world(mut t: T) -> (T, PathBuf, String) {
     for (sha, body) in [("m2", "new mod"), ("t1", "tool"), ("a1", "added"), ("l1", "keep.sh")] {
         t.git.blobs.borrow_mut().insert(sha.into(), body.as_bytes().to_vec());
     }
-    let wt = round_worktree(&t, "T1");
+    let wt = round_worktree(&t, T1);
     let lc = wt.join("target/release/spira-lc");
     fs::write(&lc, "#!/bin/sh\n").unwrap();
     fs::set_permissions(&lc, fs::Permissions::from_mode(0o755)).unwrap();

@@ -42,6 +42,36 @@ pub fn round_bins(w: &World, repo: &Path, head: &str, worktree: &Path) -> Result
     Ok(dir)
 }
 
+/// §8 D12: Ok when a gate PASS or a round GREEN certifies exactly `head`'s tree in `repo`
+/// (`gate::cert`, matched by (repo, tree) alone), naming it on stderr; Err is the refusal
+/// text, which names the tree and the gate command that would certify it.
+pub fn certified(w: &World, path: &Path, repo: &str, s: &crate::ports::Settings, head: &str, head_arg: &str) -> Result<(), String> {
+    let Some(tree) = w.git.rev_parse(path, &format!("{head}^{{tree}}")) else {
+        return Err(format!("cannot resolve {head}^{{tree}} — nothing can say what would land"));
+    };
+    let verdicts = gate::cert::verdicts_dir(w.var("SPIRA_VERDICTS").as_deref(), &s.run);
+    let found = gate::cert::path(&verdicts, repo, &tree)
+        .and_then(|p| w.env.read_file(&p).ok())
+        .and_then(|text| gate::cert::certifies(&text, repo, &tree));
+    match found {
+        Some(c) => {
+            w.err(format!(
+                "queue.sh land-local: tree {tree} certified by {} {} ({}, {} at {})",
+                c.source.word(),
+                c.source.verdict(),
+                c.rev,
+                c.branch,
+                c.when
+            ));
+            Ok(())
+        }
+        None => Err(format!(
+            "no gate PASS or round GREEN for {head}'s tree {tree} in {repo} — nothing certified what would land; run: bash {}/gate.sh {head_arg} {repo}, then retry (or SPIRA_LAND_UNGATED=<reason> to land it ungated, logged)",
+            s.home.display()
+        )),
+    }
+}
+
 /// Members from `--members`: `id:tip` tokens, comma or space separated; a token with no
 /// tip (or an empty one) landed at the head.
 pub fn land_members(text: &str, head: &str) -> Vec<Member> {
@@ -127,6 +157,19 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
         return FAIL;
     }
 
+    // Only a certified tree lands (§8 D12): a gate PASS or a round GREEN for exactly this
+    // head's tree, or the named, logged override.
+    let ungated = match certified(w, &path, &name, &c.s, &head, head_arg) {
+        Ok(()) => None,
+        Err(refusal) => match w.var("SPIRA_LAND_UNGATED").map(|r| crate::ident::bounded_text(&r)).filter(|r| !r.is_empty()) {
+            Some(reason) => Some(reason),
+            None => {
+                w.err(format!("queue.sh land-local: {refusal}; refused, nothing changed"));
+                return FAIL;
+            }
+        },
+    };
+
     // What ships is the round's own build (§8 D2). Needed only when a release is in force
     // (§8 D3); checked whenever a worktree is named, so a wrong worktree never passes.
     let releases = c.s.releases.clone();
@@ -168,6 +211,13 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
         w.err(format!("queue.sh land-local: {base} moved concurrently — refused, nothing changed"));
         return FAIL;
     }
+    if let Some(reason) = &ungated {
+        let tree = w.git.rev_parse(&path, &format!("{head}^{{tree}}")).unwrap_or_else(|| "-".into());
+        w.err(format!(
+            "queue.sh land-local: UNGATED LANDING of {head} (tree {tree}) onto {base} — no gate PASS or round GREEN certified it; SPIRA_LAND_UNGATED={reason}"
+        ));
+        super::landing_log(&c.s.run, &format!("QUEUE UNGATED {} repo={name} head={head} tree={tree} reason={reason}", w.clock.now()));
+    }
 
     // Package and activate before anything else observes the land; a failure reverts.
     if release_needed {
@@ -202,8 +252,9 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
     let _ = w.git.update_ref(&path, &archive, &head, None);
     let _ = write_atomic(&seqfile, &format!("{n}\n"));
 
+    let landed_reason = ungated.as_ref().map(|r| format!("ungated: {r}")).unwrap_or_default();
     for m in &ms {
-        w.lib.land_mark(&m.id, "LANDED", &m.tip, "");
+        w.lib.land_mark(&m.id, "LANDED", &m.tip, &landed_reason);
         w.lib.gh_issue_closeout(&m.id, &head, &path);
         w.lib.bead_close_on_land(&m.id, &head);
         w.out(format!("queue.sh land-local: {} landed at {head}", m.id));
@@ -212,7 +263,10 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
     w.lib.notify(
         &name,
         &format!("local landing (round {n})"),
-        &format!("{base} fast-forwarded to {head} (round {n}, archived at {archive}). Members: {listed}"),
+        &format!(
+            "{base} fast-forwarded to {head} (round {n}, archived at {archive}). Members: {listed}{}",
+            ungated.as_ref().map(|r| format!(". UNGATED — no gate PASS or round GREEN for this tree; SPIRA_LAND_UNGATED={r}")).unwrap_or_default()
+        ),
     );
     w.out(format!("queue.sh land-local: {base} fast-forwarded to {head} (round {n}, archived at {archive})"));
     if !deployed {

@@ -89,7 +89,7 @@ publish, rollback-local skip their own flock — the caller holds it), `SPIRA_QU
 `SPIRA_FAYTH`/`SPIRA_CZAR_CLASS` (czar fence), `SPIRA_CERTIFY_SUITES` (submit),
 `SPIRA_QUEUE_BATCH_WAIT` (flush forces 0 for the batcher), `SPIRA_PREFLIGHT_WALL_SECS`,
 `SPIRA_QUEUE_TRANSITION_POLLSEC`/`_MAXSEC`, `SPIRA_PUBLISH_REMOTE[_<NAME>]`,
-`SPIRA_PUBLISH_BRANCH_<NAME>`, `SPIRA_ACTIVATE_LAND_LOCAL` (set for activate.sh),
+`SPIRA_PUBLISH_BRANCH_<NAME>`, `SPIRA_ACTIVATE_LAND_LOCAL` (set for activate.sh), `SPIRA_LAND_UNGATED` and `SPIRA_VERDICTS` (land-local, §8 D12),
 `SPIRA_HOME` (where lib.sh and the scripts live; else spira-config `spira.prod`; else
 `<exe>/../spira`).
 
@@ -110,7 +110,7 @@ nothing changed), then effects in order.
 | `open-batch` | queue | queue lock | refuse if a batch is open. Candidates from `--members` or ranked CERTIFIED (`queue_sort_rows`); admission (closed or submitted); assemble in `$SPIRA_RUN/worktree/.open-batch-<repo>-<pid>` with `land_subject` merges; `format_batch`; branch `spira/queue/<stamp>`; pre-flight gate unless `--skip-pregate` (wall 124 → open anyway); push; `pr-create` (body on stdin); open record; **switch ON only**: spira-lc cut → `batch_id`/`version` (§10); members `BATCHED`; clear `queue-stuck-<repo>`; `QUEUE BATCH … source=open-batch`. |
 | `claim` | any | queue lock | `--reason` required (exit 2); open batch required; already concierge-owned without `--force` → refuse. Rewrite record: `owner=concierge`, `pre_claim_owner=<prev>`, `claim_reason=<one line>`. Mail. |
 | `release` | any | queue lock | open batch, owned by concierge, else refuse. `owner=<pre_claim_owner>`, drop claim keys. |
-| `land-local` | queue.local | queue lock unless LOCK_HELD | base must be a local branch; resolve head; divergence alarm (cached forge ref, never refuses); `base` ancestor of head, else refuse; binaries (§8 D2); CAS `update-ref`; release step (§8 D3), reverting the ref on failure — or, in checkout mode with the landing repo being the running harness checkout, its preconditions before the CAS and the checkout deploy after it (§8 D11); round-seq+1, `refs/archive/rounds/<n>`; per member `land_mark LANDED`, `gh_issue_closeout`, `bead_close_on_land`, a line; mail; summary line. |
+| `land-local` | queue.local | queue lock unless LOCK_HELD | base must be a local branch; resolve head; divergence alarm (cached forge ref, never refuses); `base` ancestor of head, else refuse; **the head's tree carries a gate PASS or round GREEN certificate, else refuse (§8 D12; `SPIRA_LAND_UNGATED=<reason>` overrides, logged)**; binaries (§8 D2); CAS `update-ref`; release step (§8 D3), reverting the ref on failure — or, in checkout mode with the landing repo being the running harness checkout, its preconditions before the CAS and the checkout deploy after it (§8 D11); round-seq+1, `refs/archive/rounds/<n>`; per member `land_mark LANDED`, `gh_issue_closeout`, `bead_close_on_land`, a line; mail; summary line. |
 | `publish` | queue.local | queue lock unless LOCK_HELD | local base; forge target; refuse if a `publish` record exists; fetch; divergence check refuses; equal → "nothing to publish", exit 0; members from land commits (§8 D4), none → refuse; push `spira/publish/<stamp>`; pr-create; `publish` record; `QUEUE PUBLISH` line. |
 | `to-forge` | queue.local | queue lock, whole move | agreement check (§6 R1); **in-delivery refusal** (§8 D5); local base exists, not checked out; re-read mode under lock; final publish (lock held); poll `_verdict_settle_publish` until the record is gone (3 → refuse; deadline → refuse); fetch, forge tip == local tip; write mode `queue.forge`, base `<remote>/<branch>` (§8 D6); verify; archive `refs/archive/<local-base>`, delete local branch; mail. |
 | `to-local` | queue (forge) | queue lock | agreement check; in-delivery refusal; base remote-tracking; `local/<branch>` absent and not checked out; re-read mode; fetch; an archived `refs/archive/local/<branch>` must be an ancestor of the forge tip; create `local/<branch>` at the forge tip; write mode `queue.local`, base `local/<branch>` (branch deleted if that fails); verify; mail. |
@@ -259,12 +259,14 @@ cost / members; percentage integer.
 | `…/<repo>/divergence-alarmed` | lib.sh | lib.sh (via seam) |
 | `$SPIRA_QUEUE_DIR/<id>` | — | submit (`CERTIFIED <tip> <epoch>`) |
 | `$SPIRA_RUN/landstate/<id>` | eject, abandon, publish (tips), in-delivery | lib.sh `land_mark` / `bead_reopen` only |
-| `$SPIRA_RUN/landing.log` | stats | submit, abandon, open-batch, publish (append) |
+| `$SPIRA_RUN/landing.log` | stats | submit, abandon, open-batch, publish, land-local `QUEUE UNGATED` (append) |
 | `$SPIRA_RUN/queue-protected-<repo>` | — | protect |
 | `$SPIRA_RUN/queue-stuck-<repo>` | — | open-batch (removed) |
 | `$SPIRA_RELEASES/current`, `.tarballs/` | land-local, rollback-local | build-tarball.sh / activate.sh |
 | the running harness checkout's files, index, `HEAD`, `target/release/*` | land-local (D11) | land-local (D11, checkout mode only) |
 | `SPIRA_LAND_DEPLOY_ALLOW` (env) | land-local (D11) | — |
+| `${SPIRA_VERDICTS:-$SPIRA_RUN/verdicts}/trees/<repo>/<tree>` (tree certificate, `gate::cert`) | land-local (D12) | the gate (PASS), batcher-cut (round GREEN) |
+| `SPIRA_LAND_UNGATED` (env) | land-local (D12) | — |
 | `refs/heads/<local-base>` | | land-local, rollback-local (CAS), to-local (create), to-forge (delete) |
 | `refs/archive/rounds/<n>`, `refs/archive/<local-base>` | rollback-local, to-local | land-local, to-forge |
 | spira.toml `[repo.<name>] mode/base` | agreement check (spira-config lib) | to-forge, to-local (spira-config lib) |
@@ -538,6 +540,61 @@ data, not the code; the refusal is the contract).
   files already swapped, and would leave a checkout ahead of its own landing ref); a
   `git checkout`/`reset --hard` move (writes in place — a reader can see half a script);
   reading the allow-list from the override specs (they declare no paths).
+- **D12 — land-local lands only a tree something certified (incident 2026-09-29 17:52Z).**
+  Two branches each passed the gate alone; the Concierge merged local/main into one of them
+  and landed that merge with `queue land-local` after only unit tests. No gate ever judged the
+  merged tree, and local/main went base-red. A promise not to do that again is not a
+  mechanism, so land-local now refuses it.
+  1. **The certificate.** A certificate is a small key=value file,
+     `${SPIRA_VERDICTS:-$SPIRA_RUN/verdicts}/trees/<repo>/<tree>`. It has one writer per
+     source, and the format lives in `gate::cert`:
+     - **the gate** writes `verdict=PASS source=gate` on every PASS (`pass`, `cached`,
+       `syntax-only`) for **the merged tree `T` it judged** (gate/DESIGN.md "The merge"). When
+       the landing ref is an ancestor of the branch, `T` is the branch's own tree, so it is
+       also the tree a fast-forward lands. Otherwise `T` is the tree of
+       `merge(landing ref, branch)`, which is the tree any clean merge of the same pair
+       lands.
+     - **the round** (batcher-cut `finish_local_round`) writes `verdict=GREEN source=round`
+       for the tree of the head its full corpus just ran green on (`stabilize_round`). This is
+       done immediately before it calls land-local. A round head is a merge of many members
+       that no per-branch gate ever judged. The round's own full-corpus green is its
+       certification (law-a-round-takes-certified-tips), and a certificate makes that green
+       durable. A flag on the call would only be the caller's word.
+  2. **The check, before the CAS** (after the fast-forward check and before the D2 binaries):
+     resolve `<head>^{tree}` and read the certificate for `(repo, tree)`. It counts only
+     when its own `tree=` and `repo=` equal the head's tree and repository, and it says
+     either `verdict=PASS source=gate` or `verdict=GREEN source=round`. Anything else
+     refuses, changes nothing and exits 1:
+     `queue.sh land-local: no gate PASS or round GREEN for <head>'s tree <T> in <repo> —
+     nothing certified what would land; run: bash $SPIRA_HOME/gate.sh <head-arg> <repo>, then
+     retry (or SPIRA_LAND_UNGATED=<reason> to land it ungated, logged); refused, nothing
+     changed`. "Anything else" covers no file, an unreadable file, a mismatched tree or repo,
+     and any other verdict. An accepted certificate is named on stderr with its source, the
+     branch or head it judged, and when.
+  3. **Matching is by tree alone. The gate binary and harness hash are not part of it.** The
+     verdict cache key (gate/DESIGN.md) hashes the gate binary, so a gate upgrade retires
+     every cached key. A certificate records the `harness=` hash for the reader and is
+     matched without it. The content is what was certified, and a newer gate does not make
+     an old PASS of the same tree false. The certificate also carries no TTL: a tree is
+     immutable. A cache entry written before the certificate existed has no `tree=` and
+     cannot be matched, so such a tree is re-gated once (a cached PASS rewrites its
+     certificate).
+  4. **What does not count:** a PASS for any other tree. The pre-merge branch tree is the
+     incident's exact case: sp-0tpcs's PASS was for its own tree, and the landed head was
+     `merge(local/main, sp-0tpcs)`, a different tree. The same goes for a certificate for
+     the tree in another repository, and for a round's `local-verdict` file (it records no
+     tree).
+  5. **The exit (law-a-refusal-names-its-exit):** `SPIRA_LAND_UNGATED=<reason>` lands without
+     a certificate. The reason is bounded to one line and must not be empty; an empty value
+     is the same as unset. The override is loud in four places: a `queue.sh land-local:
+     UNGATED LANDING …` line on stderr; `ungated: <reason>` as every member's LANDED
+     landstate reason (the record read later); a `QUEUE UNGATED <at> repo=… head=… tree=…
+     reason=…` line in `landing.log`; and the reason in the landing mail.
+  **Rejected:** accepting a PASS for a commit instead of a tree. A merge of the same pair
+  with a different message or date is the same content under another id. **Rejected:**
+  scanning `verdicts/` for a key; the key is a hash that includes inputs land-local cannot
+  know (the changed-file list, the bead, the ejected suites). **Rejected:** a
+  `--certified-by-round` flag, for the reason in (1).
 - **Kept deliberately:** every message's `queue.sh <cmd>:` prefix and text (operators and
   one override grep them); `step`'s status 0 on a non-queue.local repo whatever the cut
   returned (a bash `if` without `else`); `submit` falling back to `$SPIRA_REPO` when the map
@@ -552,7 +609,7 @@ data, not the code; the refusal is the contract).
 
 ## 9. Tests
 
-`cargo test -p queue` — 122 unit tests; `cargo test -p spira-config` covers the two library
+`cargo test -p queue` — 129 unit tests; `cargo test -p spira-config` covers the two library
 additions (`set_paths_in_file_writes_both_or_neither`, `legacy_map` row rewrite). Derived
 from §2.2/§8:
 
@@ -565,7 +622,8 @@ from §2.2/§8:
 | abandon | `abandon_with_lifecycle_on_abandons_the_batch_on_spira_lc`, `abandon_requires_a_reason`, `abandon_keeps_red_members_archives_and_audits`, `abandon_dry_run_prints_the_audit_line_and_changes_nothing` |
 | claim/release | `claim_and_release_hand_the_batch_back`, `claim_without_reason_is_usage`; `records::tests::claim_then_release_restores_the_owner` |
 | open-batch | `open_batch_*` (5) |
-| land-local: land + archive + members + cached divergence; ff refusal; base/mode; D2/D3; revert; lock-held; stdin members | `land_local_*` (9) |
+| land-local: land + archive + members + cached divergence; ff refusal; base/mode; D2/D3; revert; lock-held; stdin members | `land_local_*` (9, each on a certified tree — `local_repo` writes the gate PASS) |
+| land-local certification (D12): refuses an ungated tree; a gate PASS for the tree; a round GREEN for the tree; a PASS for another tree (the pre-merge branch) or another repo does not count; the override lands and records its reason (landstate, landing.log, stderr) | `land_local_refuses_a_tree_no_gate_or_round_certified`, `land_local_accepts_a_gate_pass_for_the_head_tree`, `land_local_accepts_a_round_green_for_the_head_tree`, `land_local_ignores_a_pass_for_another_tree_or_repo`, `land_local_ungated_override_lands_and_records_the_reason`, `land_local_a_pass_from_an_older_gate_binary_still_counts`; `gate::cert::tests` |
 | land-local checkout deploy (D11): swap modify/mode-only/add/symlink/delete + emptied dir, reset + HEAD re-read, binaries (spira-lc only with the switch ON), smoke; refusals off-branch, HEAD not an ancestor, tracked edits outside the allow-list, no `--worktree`, gitlink; write failure stops before the reset; verify mismatch; smoke failure exits 1 without reverting; another repository or a release in force untouched | `land_local_deploy*` (10), `land_local_leaves_a_checkout_alone_unless_it_is_the_running_harness_in_checkout_mode`; `real::tests::conf_smoke_sources_the_checkouts_conf_sh_without_the_inherited_spira_values`, `real::tests::real_git_lists_trees_reads_blobs_status_and_resets_for_the_checkout_deploy`, `real::tests::status_and_ls_tree_parse_their_z_formats` |
 | publish: D4 (reaped landstate), landstate tip, nothing-to-publish, refusals | `publish_*` (4); `publish_range::tests` (6) |
 | transitions: wait/verify refusal, happy path, red, timeout, D5 (4 sources + other repo), agreement, D6 restore, archive ancestry | `to_forge_*` (4), `to_local_*` (2), `transitions_*` (2) |
