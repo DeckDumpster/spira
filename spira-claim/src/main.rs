@@ -488,7 +488,18 @@ fn unpoison_opts(a: &Args) -> Result<unpoison::Opts, String> {
         credit,
         actor,
         poison_at: a.num("--poison-at", env_p.unwrap_or(Thresholds::default().poison_at))?,
+        enforce: false, // resolved by cmd_unpoison from env and config
     })
+}
+
+/// `lifecycle_enforce`, resolved as the aeon crate resolves it (aeon/src/conf.rs): the
+/// environment's `SPIRA_LIFECYCLE_ENFORCE` wins ("1"/"true" on, anything else off), else
+/// `spira.lifecycle_enforce` through spira-config, else off.
+fn lifecycle_enforce(env_value: Option<&str>, cfg: &Config) -> bool {
+    match env_value {
+        Some(v) => v == "1" || v == "true",
+        None => cfg.lifecycle_enforce.unwrap_or(false),
+    }
 }
 
 fn env_nonempty(k: &str) -> Option<String> {
@@ -496,10 +507,11 @@ fn env_nonempty(k: &str) -> Option<String> {
 }
 
 fn cmd_unpoison(a: &Args, env: &Env) -> Outcome {
-    let o = match unpoison_opts(a) {
+    let mut o = match unpoison_opts(a) {
         Ok(o) => o,
         Err(e) => return Outcome::usage(e),
     };
+    o.enforce = lifecycle_enforce(std::env::var("SPIRA_LIFECYCLE_ENFORCE").ok().as_deref(), &env.config);
     let st = match store(a, &env.config) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),

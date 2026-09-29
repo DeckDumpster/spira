@@ -410,3 +410,16 @@ fn unpoison_usage_errors() {
     assert!(o.err.contains("--cause is required"), "{}", o.err);
     assert!(o.out.is_empty());
 }
+
+#[test]
+fn lifecycle_enforce_resolution_matches_aeon() {
+    let on = Config { lifecycle_enforce: Some(true), ..Config::default() };
+    let unset = Config::default();
+    assert!(lifecycle_enforce(None, &on));
+    assert!(!lifecycle_enforce(Some("0"), &on), "the environment wins");
+    assert!(!lifecycle_enforce(Some(""), &on), "set-but-empty is off, as aeon");
+    assert!(lifecycle_enforce(Some("1"), &unset));
+    assert!(lifecycle_enforce(Some("true"), &unset));
+    assert!(!lifecycle_enforce(Some("yes"), &unset));
+    assert!(!lifecycle_enforce(None, &unset), "default off");
+}

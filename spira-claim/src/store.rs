@@ -31,6 +31,8 @@ pub struct Config {
     pub run: Option<String>,
     /// `spira.ask_label` — the operator-ask label (`unpoison`: the ask it closes).
     pub ask_label: Option<String>,
+    /// `spira.lifecycle_enforce` — whether the lifecycle machine is the poison's record.
+    pub lifecycle_enforce: Option<bool>,
 }
 
 pub fn load_config() -> Config {
@@ -44,6 +46,7 @@ pub fn load_config() -> Config {
                 submitted_label: s.submitted_label,
                 run: s.run,
                 ask_label: s.ask_label,
+                lifecycle_enforce: s.lifecycle_enforce,
             }
         }
         Err(e) => {
