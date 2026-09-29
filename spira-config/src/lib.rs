@@ -508,6 +508,50 @@ pub struct RepoSection {
     /// Overrides the host's default forge script for this one repository. Absent means
     /// "use `[spira]`'s own", which is every repository today.
     pub forge: Option<String>,
+    /// What the certification gate runs for this repository (design
+    /// gate-unit-round-integration-2026-09-29, item 4, sp-2ghui). Absent means
+    /// [`GateMode::Suites`], today's behaviour exactly. Read it with [`RepoSection::gate_mode`].
+    pub gate_mode: Option<GateMode>,
+}
+
+impl RepoSection {
+    /// The gate mode in force: the typed key, else [`GateMode::Suites`].
+    pub fn gate_mode(&self) -> GateMode {
+        self.gate_mode.unwrap_or_default()
+    }
+}
+
+/// `[repo.<name>] gate_mode` — how the gate composes a trial (gate/DESIGN.md "Composition").
+///
+/// * `suites` (the default): the repository's gate string, whole — fences, build, and the
+///   budgeted suite selection.
+/// * `unit`: the composition follows what the branch touches. A branch that touches any
+///   bash (or other script) component still runs the gate string whole; one that touches
+///   only Rust crates (plus docs, config, suites) runs the fences with suites off, then
+///   `cargo test -p` for each touched crate and its reverse dependents on the host; one
+///   that touches nothing buildable runs the fences only.
+///
+/// One command reverts it: `spira-config set repo.<name>.gate_mode suites <file>`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum GateMode {
+    Unit,
+    #[default]
+    Suites,
+}
+
+impl GateMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            GateMode::Unit => "unit",
+            GateMode::Suites => "suites",
+        }
+    }
+}
+
+/// `[repo.<name>] gate_mode` of `doc`, the default when the repository or the key is absent.
+pub fn repo_gate_mode(doc: &SpiraToml, repo: &str) -> GateMode {
+    doc.repo.get(repo).map(RepoSection::gate_mode).unwrap_or_default()
 }
 
 /// `append` keeps Claude Code's own coding guidance underneath the persona layer;
@@ -1125,5 +1169,49 @@ mod tests {
         assert!(set_paths_in_file(&path, &[("repo.r.base", "local/main"), ("repo.r.mode", "bogus")]).is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ------------------------------------------------------------ gate_mode (sp-2ghui)
+
+    const REPO_R: &str = "[repo.r]\npath = \"/x\"\nmode = \"queue.local\"\n";
+
+    #[test]
+    fn gate_mode_defaults_to_suites_when_absent() {
+        let doc = validate(REPO_R).unwrap();
+        assert_eq!(repo_gate_mode(&doc, "r"), GateMode::Suites);
+        assert_eq!(repo_gate_mode(&doc, "no-such-repo"), GateMode::Suites);
+        assert_eq!(get_path(&doc, "repo.r.gate_mode"), None);
+    }
+
+    #[test]
+    fn gate_mode_reads_both_values() {
+        for (v, want) in [("unit", GateMode::Unit), ("suites", GateMode::Suites)] {
+            let doc = validate(&format!("{REPO_R}gate_mode = \"{v}\"\n")).unwrap();
+            assert_eq!(repo_gate_mode(&doc, "r"), want);
+            assert_eq!(want.as_str(), v);
+            assert_eq!(get_path(&doc, "repo.r.gate_mode").as_deref(), Some(v));
+        }
+    }
+
+    #[test]
+    fn gate_mode_refuses_anything_else() {
+        for bad in ["\"Unit\"", "\"fast\"", "\"\"", "true", "1"] {
+            let err = validate(&format!("{REPO_R}gate_mode = {bad}\n")).unwrap_err();
+            assert!(err.contains("repo.r.gate_mode"), "{bad}: {err}");
+        }
+    }
+
+    #[test]
+    fn gate_mode_is_set_and_reverted_through_set_path() {
+        let doc = validate(REPO_R).unwrap();
+        let on = set_path(&doc, "repo.r.gate_mode", "unit").unwrap();
+        assert_eq!(repo_gate_mode(&on, "r"), GateMode::Unit);
+        let text = toml::to_string_pretty(&on).unwrap();
+        assert!(text.contains("gate_mode = \"unit\""), "{text}");
+        assert!(set_path(&doc, "repo.r.gate_mode", "fast").is_err());
+        let off = set_path(&on, "repo.r.gate_mode", "suites").unwrap();
+        assert_eq!(repo_gate_mode(&off, "r"), GateMode::Suites);
+        let gone = unset_path(&on, "repo.r.gate_mode").unwrap();
+        assert_eq!(repo_gate_mode(&gone, "r"), GateMode::Suites);
     }
 }

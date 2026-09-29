@@ -1,6 +1,8 @@
 //! The production [`World`]: git, the helper scripts, lib.sh, flock, the filesystem.
 
+use crate::compose::{self, Changed};
 use crate::ports::{Ctx, Merge, World};
+use spira_config::GateMode;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -224,6 +226,55 @@ impl World for Real {
         Self::out(self.git(repo).args(["diff", "--name-status", range]))
             .map(trim_nl)
             .unwrap_or_default()
+    }
+    fn diff_raw(&self, repo: &Path, base: &str, rev: &str) -> Result<Vec<Changed>, String> {
+        let o = self
+            .git(repo)
+            .args([
+                "diff",
+                "--raw",
+                "-z",
+                "--no-renames",
+                "--no-abbrev",
+                base,
+                rev,
+            ])
+            .output()
+            .map_err(|e| format!("git: {e}"))?;
+        if !o.status.success() {
+            return Err(String::from_utf8_lossy(&o.stderr).into_owned());
+        }
+        Ok(compose::parse_diff_raw(&o.stdout))
+    }
+    fn gate_mode(&self, repo_name: &str) -> Result<GateMode, String> {
+        // law-config-through-the-cli-only: the library finds and validates the document.
+        match spira_config::discover(None) {
+            None => Ok(GateMode::Suites),
+            Some(p) => {
+                spira_config::load(&p).map(|doc| spira_config::repo_gate_mode(&doc, repo_name))
+            }
+        }
+    }
+    fn cargo_metadata(&self, tree: &Path, path: &str, home: &str) -> Result<String, String> {
+        let o = Command::new("cargo")
+            .args([
+                "metadata",
+                "--format-version",
+                "1",
+                "--no-deps",
+                "--offline",
+            ])
+            .current_dir(tree)
+            .env_clear()
+            .env("PATH", path)
+            .env("HOME", home)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("cargo: {e}"))?;
+        if !o.status.success() {
+            return Err(String::from_utf8_lossy(&o.stderr).into_owned());
+        }
+        Ok(String::from_utf8_lossy(&o.stdout).into_owned())
     }
     fn merge_tree(&self, repo: &Path, base: &str, branch: &str) -> Merge {
         let o = self

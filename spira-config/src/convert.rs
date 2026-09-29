@@ -663,6 +663,7 @@ pub fn repo_sections(
                 },
                 lanes,
                 forge: None,
+                gate_mode: None,
             },
         );
     }
