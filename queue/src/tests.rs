@@ -935,6 +935,21 @@ fn eject_of_a_certified_unbatched_bead_reopens_with_the_cause() {
 }
 
 #[test]
+fn eject_takes_a_comma_separated_suites_list_and_still_refuses_a_bad_name_in_it() {
+    let t = T::new(LandMode::Queue);
+    t.landstate("sp-c", "CERTIFIED tc 5 ");
+    assert_eq!(t.run(&["eject", "sp-c", "--suites", "test-x.sh,test-y.sh"]), 0);
+    assert!(t.lib.has("bead_reopen sp-c eject-red test-x.sh,test-y.sh"));
+    let t = T::new(LandMode::Queue);
+    t.landstate("sp-c", "CERTIFIED tc 5 ");
+    assert_ne!(t.run(&["eject", "sp-c", "--suites", "test-x.sh,bad name.sh"]), 0);
+    assert!(!t.lib.has("bead_reopen"));
+    let t = T::new(LandMode::Queue);
+    t.landstate("sp-c", "CERTIFIED tc 5 ");
+    assert_ne!(t.run(&["eject", "sp-c", "--suites", "test-x.sh,"]), 0, "an empty name in the list is refused");
+}
+
+#[test]
 fn eject_of_a_stranger_names_the_members_and_changes_nothing() {
     let t = T::new(LandMode::Queue);
     open_batch_record(&t);
