@@ -30,6 +30,7 @@ members = [
     "strand",
     "testenv",
     "sentinel",
+    "queue",
 ]
 resolver = "2"
 

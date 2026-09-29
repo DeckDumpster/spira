@@ -19,6 +19,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub mod convert;
+pub mod legacy_map;
 
 /// The one filename this schema's document is ever named on disk — every path-resolution
 /// function below builds on this instead of a caller spelling `"spira.toml"` itself.
@@ -820,6 +821,22 @@ pub fn unset_path(doc: &SpiraToml, path: &str) -> Result<SpiraToml, String> {
     set_path_leaf(doc, path, serde_json::Value::Null)
 }
 
+/// `spira-config set` for several paths at once, as a library call: read and validate
+/// `file`, apply every `(path, value)` with [`set_path`], re-validate the result, and write
+/// it with [`write_atomic`] — all or nothing. For a Rust caller that must change two keys
+/// together (queue's land-mode transition writes `mode` and `base` as one fact), so the
+/// document is never observed with one written and not the other.
+pub fn set_paths_in_file(file: &std::path::Path, pairs: &[(&str, &str)]) -> Result<(), String> {
+    let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let mut doc = if text.trim().is_empty() { SpiraToml::default() } else { validate(&text)? };
+    for (path, value) in pairs {
+        doc = set_path(&doc, path, value)?;
+    }
+    let out = toml::to_string_pretty(&doc).map_err(|e| format!("{}: {e}", file.display()))?;
+    validate(&out)?;
+    write_atomic(file, &out).map_err(|e| format!("{}: {e}", file.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1092,5 +1109,21 @@ mod tests {
         std::fs::write(&path, "[spira]\nbogus = 1\n").unwrap();
         let err = load(&path).unwrap_err();
         assert!(err.contains(&path.display().to_string()), "{err}");
+    }
+
+    #[test]
+    fn set_paths_in_file_writes_both_or_neither() {
+        let dir = std::env::temp_dir().join(format!("spira-config-setpaths-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("spira.toml");
+        std::fs::write(&path, "[repo.r]\npath = \"/x\"\nmode = \"queue.local\"\nbase = \"local/main\"\n").unwrap();
+        set_paths_in_file(&path, &[("repo.r.mode", "queue.forge"), ("repo.r.base", "origin/main")]).unwrap();
+        let doc = load(&path).unwrap();
+        assert_eq!(get_path(&doc, "repo.r.mode").as_deref(), Some("queue.forge"));
+        assert_eq!(get_path(&doc, "repo.r.base").as_deref(), Some("origin/main"));
+        let before = std::fs::read_to_string(&path).unwrap();
+        assert!(set_paths_in_file(&path, &[("repo.r.base", "local/main"), ("repo.r.mode", "bogus")]).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
