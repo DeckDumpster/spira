@@ -131,6 +131,14 @@ fn default_round_vm() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("round-vm"))
 }
 
+/// A harness binary: the path its SPIRA_*_BIN names (conf.sh exports each), else the one
+/// installed next to this binary, the same way `default_round_vm` resolves round-vm.
+fn sibling_bin(var: &str, name: &str) -> PathBuf {
+    env::var_os(var).filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| {
+        env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join(name))).unwrap_or_else(|| PathBuf::from(name))
+    })
+}
+
 fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
     Env {
         home: home.clone(),
@@ -142,6 +150,8 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
         express_label: env::var("SPIRA_EXPRESS_LABEL").unwrap_or_else(|_| "express".into()),
         tsd_bin: env::var_os("SPIRA_TSD_BIN").map(PathBuf::from),
         round_vm: o.round_vm.clone().unwrap_or_else(default_round_vm),
+        queue_bin: sibling_bin("SPIRA_QUEUE_BIN", "queue"),
+        rebase_stale_bin: sibling_bin("SPIRA_REBASE_STALE_BIN", "rebase-stale"),
         attribute: o.attribute.clone().unwrap_or_else(|| home.join("attribute.sh")),
         // Batcher-parity (sp-myi6w): the Concierge's own proven values, not testenv-batch.sh's
         // own hardware-derived or unpinned defaults — see io::run_suites.
@@ -226,7 +236,7 @@ fn handle_base_conflicts(
         }
         deleted.insert(m.id.clone(), io::deleted_suites(repo, &m.tip, base_sha));
         if stale_retry_due(m.certified_at, base_moved_at) {
-            // 0/1/2: rebase-stale.sh ran and already did everything this branch would —
+            // 0/1/2: rebase-stale ran and already did everything this branch would —
             // certified a mechanical/clean rebase, or reopened the bead itself with the
             // conflicting hunk or gate output quoted. Only 3 (it could not even attempt
             // the branch) falls through to this call's own, coarser bookkeeping.
@@ -369,14 +379,14 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
 /// queue.local's terminal step (sp-828tp): `terminal_ready` (core) gates both land modes on
 /// the same every-member-named/bins-present contract before this box changes anything —
 /// green-at-head is stabilize_round's own control flow, already confirmed before this is ever
-/// called (sp-j21fv). Only the action taken once it passes differs — here, `queue.sh
+/// called (sp-j21fv). Only the action taken once it passes differs — here, `queue
 /// land-local` (fast-forward, package, activate, LANDED, bead close) in place of a push and a
 /// PR. Never rebuilds binaries (law-deploy-the-tested-artifacts): the corpus's own --with-bins
 /// run already built the tree `bins_present` looks for.
 fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_start: u64, stable: &StableRound) -> Result<(), String> {
     let head = io::head_of(wt)?;
     let named = io::named_ids(repo, base_sha, &head, &stable.members);
-    let bins_ok = io::bins_present(env_, repo, &head);
+    let bins_ok = io::bins_present(repo, wt, &head);
 
     if let Err(refusal) = batcher::core::terminal_ready(&stable.members, &named, bins_ok) {
         let msg = format!("batcher {}: refused to land locally at {head} — {refusal}", repo.name);
@@ -395,9 +405,9 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
     }
 
     let member_pairs: Vec<(String, String)> = stable.members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
-    let landed = io::land_local(env_, repo, &head, &member_pairs)?;
+    let landed = io::land_local(env_, repo, wt, &head, &member_pairs)?;
     if !landed {
-        io::write_local_verdict(env_, &repo.name, "red", "queue.sh land-local refused — see its own stderr above");
+        io::write_local_verdict(env_, &repo.name, "red", "queue land-local refused — see its own stderr above");
         io::tsd_append_round(
             env_,
             &[

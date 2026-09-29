@@ -8,7 +8,6 @@
 //! same bd/landstate/event-log side effects a second time in Rust.
 
 use std::collections::BTreeMap;
-use std::env;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::ErrorKind;
@@ -49,6 +48,10 @@ pub struct Env {
     pub express_label: String,
     pub tsd_bin: Option<PathBuf>,
     pub round_vm: PathBuf,
+    /// The `queue` binary (SPIRA_QUEUE_BIN, else the one beside this binary): land-local.
+    pub queue_bin: PathBuf,
+    /// The `rebase-stale` binary (SPIRA_REBASE_STALE_BIN, else the one beside this binary).
+    pub rebase_stale_bin: PathBuf,
     pub attribute: PathBuf,
     /// The Concierge's own proven parallelism (round.sh: SPIRA_BATCH_MAXPAR=16) — set
     /// explicitly on every corpus invocation rather than left for testenv-batch.sh's own
@@ -128,7 +131,7 @@ pub fn bump_requeue(env: &Env, id: &str, reason: &str) {
 }
 
 /// Tries the mechanical rebase before a member conflicting with the base is handed to an
-/// aeon (sp-oxwvc). Returns rebase-stale.sh's own exit code: 0 (rebased — mechanically or
+/// aeon (sp-oxwvc). Returns the rebase-stale binary's own exit code: 0 (rebased — mechanically or
 /// cleanly — and re-certified at the new tip) and 1/2 (a real content conflict or a red
 /// gate) all mean the script itself already did everything the caller would otherwise do —
 /// certify and note it, or reopen the bead with the conflicting hunk or gate output quoted
@@ -138,8 +141,8 @@ pub fn bump_requeue(env: &Env, id: &str, reason: &str) {
 /// missing binary) is folded into 3 for the same reason — silence must fail closed to "an
 /// aeon still sees this", never to "nobody did anything and the round moved on".
 pub fn rebase_stale(env: &Env, repo_name: &str, id: &str) -> i32 {
-    let mut cmd = Command::new("bash");
-    cmd.arg(env.home.join("rebase-stale.sh")).arg(id).arg(repo_name);
+    let mut cmd = Command::new(&env.rebase_stale_bin);
+    cmd.arg(id).arg(repo_name);
     match cmd.status().ok().and_then(|s| s.code()) {
         Some(0) => 0,
         Some(1) => 1,
@@ -599,7 +602,7 @@ pub fn deleted_suites(repo: &Repo, member_tip: &str, base_sha: &str) -> Vec<Stri
 }
 
 pub fn push_branch(repo: &Repo, sha: &str, branch: &str) -> Result<(), String> {
-    assert_eq!(repo.land, Land::Forge, "push_branch: unreachable under queue.local — it lands via queue.sh land-local (sp-828tp), never a push");
+    assert_eq!(repo.land, Land::Forge, "push_branch: unreachable under queue.local — it lands via queue land-local (sp-828tp), never a push");
     let remote = repo.base.split_once('/').map(|(r, _)| r).unwrap_or("origin");
     run(
         Command::new("git").arg("-C").arg(&repo.path).args(["push", "-q", remote]).arg(format!("{sha}:refs/heads/{branch}")),
@@ -609,7 +612,7 @@ pub fn push_branch(repo: &Repo, sha: &str, branch: &str) -> Result<(), String> {
 }
 
 pub fn force_push_branch(repo: &Repo, sha: &str, branch: &str) -> Result<(), String> {
-    assert_eq!(repo.land, Land::Forge, "force_push_branch: unreachable under queue.local — it lands via queue.sh land-local (sp-828tp), never a push");
+    assert_eq!(repo.land, Land::Forge, "force_push_branch: unreachable under queue.local — it lands via queue land-local (sp-828tp), never a push");
     let remote = repo.base.split_once('/').map(|(r, _)| r).unwrap_or("origin");
     run(
         Command::new("git").arg("-C").arg(&repo.path).args(["push", "-q", "-f", remote]).arg(format!("{sha}:refs/heads/{branch}")),
@@ -641,17 +644,22 @@ pub fn named_ids(repo: &Repo, base_sha: &str, head: &str, members: &[Member]) ->
     members.iter().filter(|m| parents.contains(m.tip.as_str())).map(|m| m.id.clone()).collect()
 }
 
-/// Whether `head`'s own tree has a --with-bins corpus already built for it — the exact
-/// directory `queue.sh land-local`'s own `_land_local_bins_dir` reads (keyed by TREE, not
-/// commit, so any head sharing that tree finds the corpus run_suites' own --with-bins call
-/// already produced for it).
-pub fn bins_present(env: &Env, repo: &Repo, head: &str) -> bool {
-    let Ok(tree) = run(Command::new("git").arg("-C").arg(&repo.path).args(["rev-parse", &format!("{head}^{{tree}}")]), "git rev-parse tree")
+/// Whether the round worktree `wt` holds the release binaries of `head`'s own tree — the
+/// same rule `queue land-local --worktree` applies (queue::ops::land::round_bins): the
+/// worktree's HEAD tree is `head`'s tree, and its target/release holds an executable.
+/// round-vm installs the VM's release build there after checking the VM built this tree.
+pub fn bins_present(repo: &Repo, wt: &Path, head: &str) -> bool {
+    let Ok(want) = run(Command::new("git").arg("-C").arg(&repo.path).args(["rev-parse", &format!("{head}^{{tree}}")]), "git rev-parse tree")
     else {
         return false;
     };
-    let base = env::var_os("SPIRA_BATCH_BINS_TARGET_DIR").map(PathBuf::from).unwrap_or_else(|| env.run.join("cargo-target-bins"));
-    let dir = base.join(tree.trim()).join("release");
+    let Ok(have) = run(Command::new("git").arg("-C").arg(wt).args(["rev-parse", "HEAD^{tree}"]), "git rev-parse worktree tree") else {
+        return false;
+    };
+    if want.trim() != have.trim() {
+        return false;
+    }
+    let dir = wt.join("target").join("release");
     let Ok(rd) = fs::read_dir(&dir) else { return false };
     rd.flatten().any(|e| {
         let path = e.path();
@@ -934,7 +942,7 @@ pub fn file_local_red_incident(
     Ok(id)
 }
 
-/// The last local corpus verdict for this repo's round — read by queue.sh's own open-batch so
+/// The last local corpus verdict for this repo's round — read by queue's own open-batch so
 /// a hand-invoked cut never sends a round CI would only reject (law-a-round-takes-certified-
 /// tips). Best-effort like every other queue-dir write here: a failure to record it leaves
 /// open-batch with nothing to refuse on, never blocks the round itself.
@@ -981,23 +989,30 @@ pub fn forge_pr_create(repo: &Repo, head: &str, base: &str, title: &str, body: &
 // ---------------------------------------------------------------------------------------
 // queue.local's own terminal step (sp-828tp): fast-forward the local landing ref, package and
 // activate the round's own --with-bins corpus, mark every member LANDED and close its bead —
-// all of it queue.sh land-local's own contract (queue.sh:1148), never re-derived here.
+// all of it queue land-local's own contract, never re-derived here.
 // ---------------------------------------------------------------------------------------
 
-/// Land `head` locally via `queue.sh land-local`, under the round lock this crate's own
+/// Land `head` locally via `queue land-local`, under the round lock this crate's own
 /// `try_lock` already holds — SPIRA_QUEUE_LOCK_HELD=1 tells land-local to skip its own flock
-/// rather than block forever on a lock this same process already owns (queue.sh:1202).
+/// rather than block forever on a lock this same process already owns.
 /// A non-zero exit is land-local's own refusal (non-fast-forward, no --with-bins corpus, a
 /// concurrent mover) — reported, not an error, since "refused, nothing changed" is exactly the
 /// same benign outcome `try_lock`'s own None already models for this crate's other refusals.
-pub fn land_local(env: &Env, repo: &Repo, head: &str, members: &[(String, String)]) -> Result<bool, String> {
-    let members_arg = members.iter().map(|(id, tip)| format!("{id}:{tip}")).collect::<Vec<_>>().join(",");
-    let mut cmd = Command::new("bash");
-    cmd.arg(env.home.join("queue.sh")).arg("land-local").arg(&repo.name);
+pub fn land_local(env: &Env, repo: &Repo, wt: &Path, head: &str, members: &[(String, String)]) -> Result<bool, String> {
+    use std::io::Write;
+    let members_text: String = members.iter().map(|(id, tip)| format!("{id}:{tip}\n")).collect();
+    let mut cmd = Command::new(&env.queue_bin);
+    cmd.arg("land-local").arg(&repo.name);
     cmd.arg("--head").arg(head);
-    cmd.arg("--members").arg(&members_arg);
+    cmd.arg("--members-file").arg("-");
+    cmd.arg("--worktree").arg(wt);
     cmd.env("SPIRA_QUEUE_LOCK_HELD", "1");
-    let o = cmd.output().map_err(|e| format!("queue.sh land-local: {e}"))?;
+    cmd.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| format!("queue land-local: {e}"))?;
+    if let Some(mut si) = child.stdin.take() {
+        si.write_all(members_text.as_bytes()).map_err(|e| format!("queue land-local: members on stdin: {e}"))?;
+    }
+    let o = child.wait_with_output().map_err(|e| format!("queue land-local: {e}"))?;
     let out = String::from_utf8_lossy(&o.stdout);
     let err = String::from_utf8_lossy(&o.stderr);
     if !out.is_empty() {
@@ -1209,6 +1224,8 @@ mod lifecycle_tests {
             express_label: "express".into(),
             tsd_bin: None,
             round_vm: dir.join("round-vm"),
+            queue_bin: dir.join("queue"),
+            rebase_stale_bin: dir.join("rebase-stale"),
             attribute: dir.join("attribute.sh"),
             maxpar: 1,
             wall_secs: 1,
