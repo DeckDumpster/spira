@@ -155,6 +155,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
         git_email: env::var("SPIRA_GIT_EMAIL").unwrap_or_else(|_| "spira@spira.invalid".into()),
         lc_bin: env::var_os("SPIRA_LC_BIN").map(PathBuf::from),
         lc_timeout: env::var("SPIRA_LC_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(30),
+        lc_enforce: spira_config::lifecycle_enforce(None),
     }
 }
 
@@ -166,6 +167,15 @@ fn cut(o: &Opts) -> Result<(), String> {
     }
     let env_ = env_for(o, home, run);
     let repo = find_repo(&env_, &o.repo)?;
+
+    // lifecycle_enforce on: the machine must answer before anything changes (DESIGN.md
+    // "Lifecycle switch"). Off: returns at once, runs nothing.
+    if let Err(e) = io::lc_probe(&env_) {
+        return Err(format!(
+            "batcher cut {}: lifecycle_enforce is on and spira-lc is unreachable ({e}) — refused, nothing changed; fix the lifecycle machine or turn lifecycle_enforce off",
+            repo.name
+        ));
+    }
 
     let Some(_lock) = io::try_lock(&env_, &repo.name)? else {
         println!("batcher cut {}: another operation holds the lock", repo.name);
@@ -491,8 +501,9 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
     let pr_n = io::forge_pr_create(repo, &batch_br, &base_branch, &title, &body)?;
 
     // spira-lc's own OPEN-batch lifecycle (sp-o7nbr.4, same contract as sp-o7nbr.2's
-    // _lc_cut_batch for batch.sh): best-effort and additive, never blocking the PR or
-    // the land_mark loop below. A refusal leaves batch_id/version unset on the record,
+    // _lc_cut_batch for batch.sh), only when lifecycle_enforce is on — off returns None
+    // without running anything, the pre-sp-o7nbr.4 record. Best-effort and additive,
+    // never blocking the PR or the land_mark loop below. A refusal leaves batch_id/version unset on the record,
     // so verdict.sh's own land/settle wiring finds nothing to CAS against later.
     let member_pairs: Vec<(String, String)> = merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
     let lc_version = io::lc_cut_batch(env_, &repo.name, &batch_br, &batch_head, &base_sha, &member_pairs);
@@ -624,8 +635,9 @@ fn stack_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason,
     let new_pairs: Vec<(String, String)> = merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
     members.extend(new_pairs.iter().cloned());
 
-    // spira-lc's own pipelining onto the already-cut batch (sp-o7nbr.4): only when the
-    // original cut recorded a batch_id/version — a legacy or refused-cut record has
+    // spira-lc's own pipelining onto the already-cut batch (sp-o7nbr.4): only with
+    // lifecycle_enforce on (off, lc_stack_batch runs nothing and the record is rewritten
+    // without batch_id/version), and only when the original cut recorded a batch_id/version — a legacy or refused-cut record has
     // neither, and there is nothing to CAS the new members against.
     let (lc_batch_id, lc_version) = match (!ob.batch_id.is_empty(), ob.version.parse::<u64>()) {
         (true, Ok(prior)) => match io::lc_stack_batch(env_, &repo.name, &ob.batch_id, prior, &new_pairs) {
