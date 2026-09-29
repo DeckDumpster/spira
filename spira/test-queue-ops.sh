@@ -19,6 +19,10 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
+# test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
+QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
+[ -x "$QUEUE_BIN" ] || { echo "FAIL: the queue binary is not built at $QUEUE_BIN"; exit 1; }
 
 echo "test-queue-ops.sh"
 
@@ -93,7 +97,7 @@ run() {
         CANCEL_FAIL="$CANCEL_FAIL" \
         BEADS_ACTOR="aeon-abandontest" \
         SPIRA_EVENT_COOLDOWN=0 \
-        bash "$SH/queue.sh" "$@" 2>&1
+        SPIRA_HOME="$SH" "$QUEUE_BIN" "$@" 2>&1
 }
 
 TIP01="aabbcc1100000000000000000000000000000001"
@@ -557,7 +561,7 @@ real_run() {
         SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD:-bd}" \
         SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$QUEUEDIR" \
         SPIRA_FORGE="$SH/forge-fake.sh" FORGE_LOG="$FORGE_LOG" \
-        bash "$SH/queue.sh" "$@" 2>&1
+        SPIRA_HOME="$SH" "$QUEUE_BIN" "$@" 2>&1
 }
 
 testdb_reset

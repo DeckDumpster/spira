@@ -2,7 +2,7 @@
 #
 # test-batcher-cut.sh — ONE end-to-end suite for the batcher crate's IO seam (sp-jzfog): a
 # whole round through a real fixture repo, a stub round-vm.sh and a fake forge, invoking the
-# built binary directly the way queue.sh's _batch_cut does (sp-vsob2: unconditionally, batch.sh's
+# built binary directly the way the queue binary's _batch_cut does (sp-vsob2: unconditionally, batch.sh's
 # own cut retired). This checks WIRING, not behaviour — the pure core's replay tests
 # (test-batcher.sh) already cover triggers, membership, set-asides and classification as
 # fixtures with no IO at all. round-vm.sh's OWN contract (a real VM, a real testenv-batch.sh)
@@ -43,6 +43,9 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
 . "$HERE/testlib.sh"
+# The queue binary case L lands through (queue/DESIGN.md §7.4): the one conf.sh exports,
+# else the tree under test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
+QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -136,16 +139,23 @@ cat > "$SH/round-vm-stub.sh" <<'STUB'
 #!/usr/bin/env bash
 [ "${1:-}" = run ] || { printf 'round-vm-stub: unexpected verb: %s\n' "${1:-}" >&2; exit 2; }
 shift
-suites_csv="" maxpar="" toolchain="" results=""
+suites_csv="" maxpar="" toolchain="" results="" wt=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --suites) suites_csv="${2:-}"; shift 2 ;;
         --maxpar) maxpar="${2:-}"; shift 2 ;;
         --toolchain) toolchain="${2:-}"; shift 2 ;;
         --results-dir) results="${2:-}"; shift 2 ;;
-        *) shift ;;  # the tree-dir positional — the stub has no use for it
+        *) wt="$1"; shift ;;  # the round worktree positional
     esac
 done
+# STUB_INSTALL_BINS: stand in for round-vm installing the VM's release build into the round
+# worktree's target/release — where batcher-cut's bins_present and queue land-local look.
+if [ -n "${STUB_INSTALL_BINS:-}" ] && [ -n "$wt" ]; then
+    mkdir -p "$wt/target/release"
+    printf 'fakebin\n' > "$wt/target/release/fakebin"
+    chmod +x "$wt/target/release/fakebin"
+fi
 if [ -n "${STUB_ARGV_LOG:-}" ]; then
     {
         printf 'argv: run --suites %s\n' "$suites_csv"
@@ -880,13 +890,13 @@ want "K4: reports the wall bound as the cause" "wall bound" "$out_g4"
 
 # =============================================================================
 # CASE L — queue.local's terminal step (sp-828tp, epic sp-hq9x8): a round lands locally via
-# queue.sh land-local — no push, no forge call, no open-batch record — and terminal_ready
+# queue land-local — no push, no forge call, no open-batch record — and terminal_ready
 # (core) refuses before land-local is even invoked when the round's own --with-bins corpus is
 # missing. SEEN RED on today's code: Land::Local reaches push_branch, whose own assert fires
 # ("unreachable under queue.local"), so the batcher process panics instead of landing.
 # =============================================================================
 echo
-echo "L. queue.local: a round lands locally via queue.sh land-local — no push, no PR:"
+echo "L. queue.local: a round lands locally via queue land-local — no push, no PR:"
 
 LREPO="$TMP/local-land-repo"
 git init -q -b trunk "$LREPO"
@@ -909,16 +919,10 @@ cut_local() {
     SPIRA_TSD_BIN="$TSD_BIN" \
     SPIRA_LC_BIN="${SPIRA_LC_BIN:-}" \
     SPIRA_LC_STACKS_DIR="${SPIRA_LC_STACKS_DIR:-}" \
+    SPIRA_QUEUE_BIN="$QUEUE_BIN" \
+    STUB_INSTALL_BINS="${STUB_INSTALL_BINS:-}" \
         "$BATCHER_BIN" cut locland --round-vm "$SH/round-vm-stub.sh" \
             --attribute "$SH/attribute-stub.sh" 2>&1
-}
-mk_local_bins() {   # mk_local_bins <tip> — the --with-bins corpus for <tip>'s own tree
-    local tip="$1" tree dir
-    tree="$(git -C "$LREPO" rev-parse "${tip}^{tree}")"
-    dir="$RUN/cargo-target-bins/$tree/release"
-    mkdir -p "$dir"
-    printf 'fakebin\n' > "$dir/fakebin"
-    chmod +x "$dir/fakebin"
 }
 
 # L1 — missing --with-bins corpus: terminal_ready refuses before land-local is ever called,
@@ -950,10 +954,9 @@ git -C "$RUN/worktree/sp-clbb2" commit -q -m "sp-clbb2: work"
 tip_l2="$(git -C "$LREPO" rev-parse spira/sp-clbb2)"
 git -C "$LREPO" worktree remove -f "$RUN/worktree/sp-clbb2"
 certify sp-clbb2 "$tip_l2"
-mk_local_bins "$tip_l2"
 
 prcreate_before_l2="$(grep -c '^pr-create' "$FORGE_LOG")"
-out_l2="$(cut_local)"
+out_l2="$(STUB_INSTALL_BINS=1 cut_local)"
 want   "L2: reports landing locally"      "landed locally" "$out_l2"
 nowant "L2: never reports a PR opening"   "PR "            "$out_l2"
 is     "L2: forge pr-create never called" "$prcreate_before_l2" "$(grep -c '^pr-create' "$FORGE_LOG")"
@@ -1025,8 +1028,6 @@ git -C "$LREPO" worktree remove -f "$RUN/worktree/sp-cmcc3"
 printf '{"sp-cmaa1":"%s"}\n' "$tip_ma" > "$LC_STACKS/sp-cmbb2"
 printf '{"sp-cmbb2":"%s"}\n' "$tip_mb" > "$LC_STACKS/sp-cmcc3"
 
-mk_local_bins "$tip_mc"
-
 # Certified in the order C, A, B — certified_at deliberately reversed against dependency
 # order, so a sort on order_key alone (no stack awareness) would try to merge C first.
 plant sp-cmcc3; plant sp-cmaa1; plant sp-cmbb2
@@ -1034,7 +1035,7 @@ certify sp-cmcc3 "$tip_mc" 100
 certify sp-cmaa1 "$tip_ma" 200
 certify sp-cmbb2 "$tip_mb" 300
 
-out_m="$(SPIRA_LC_BIN="$SH/spira-lc-stack-stub.sh" SPIRA_LC_STACKS_DIR="$LC_STACKS" cut_local)"
+out_m="$(STUB_INSTALL_BINS=1 SPIRA_LC_BIN="$SH/spira-lc-stack-stub.sh" SPIRA_LC_STACKS_DIR="$LC_STACKS" cut_local)"
 want   "M: reports landing locally"                             "landed locally"  "$out_m"
 want   "M: all three members landed in one round"                "3 member(s)"    "$out_m"
 is     "M: sp-cmaa1 landstate LANDED (the closed-over prerequisite, never dropped as EMPTY)" \

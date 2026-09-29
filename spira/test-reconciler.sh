@@ -250,10 +250,10 @@ export SPIRA_DISK_REMEDY_SH="$STUB_DISK_REMEDY"
 
 QUEUE_CALLS="$T/queue-calls.log"
 : > "$QUEUE_CALLS"
-STUB_QUEUE_SH="$T/queue.sh"
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$QUEUE_CALLS" > "$STUB_QUEUE_SH"
-chmod +x "$STUB_QUEUE_SH"
-export SPIRA_QUEUE_SH="$STUB_QUEUE_SH"
+STUB_QUEUE_BIN="$T/queue"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$QUEUE_CALLS" > "$STUB_QUEUE_BIN"
+chmod +x "$STUB_QUEUE_BIN"
+export SPIRA_QUEUE_BIN="$STUB_QUEUE_BIN"
 
 INC_LOG="$T/incident-calls.log"
 : > "$INC_LOG"
@@ -447,7 +447,7 @@ reset_state
 echo "sp-abc123 spira/sp-abc123 origin/main" > "$CERTIFIED_LINES"
 echo "conflict" > "$MERGE_STATE"
 bash "$RECONCILER_SH" --pass >/dev/null 2>&1
-want "queue.sh eject is run for the unmergeable branch" "eject sp-abc123" "$(cat "$QUEUE_CALLS")"
+want "queue eject is run for the unmergeable branch" "eject sp-abc123" "$(cat "$QUEUE_CALLS")"
 
 # ==========================================================================================
 printf '\n%s\n' "16. Queue: a certified branch that still merges cleanly -> satisfied"

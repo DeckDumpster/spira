@@ -27,6 +27,10 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
+# test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
+QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
+[ -x "$QUEUE_BIN" ] || { echo "FAIL: the queue binary is not built at $QUEUE_BIN"; exit 1; }
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -98,7 +102,7 @@ export SPIRA_QUEUE_TRANSITION_MAXSEC=5
 
 queue() {
     FIXTURE_CHECK_STATUS="${CHECK_STATUS:-green}" \
-        bash "$SH/queue.sh" "$@" 2>&1
+        SPIRA_HOME="$SH" "$QUEUE_BIN" "$@" 2>&1
 }
 verdict() {
     FIXTURE_CHECK_STATUS="${CHECK_STATUS:-green}" \
