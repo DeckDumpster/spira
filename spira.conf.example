@@ -195,9 +195,8 @@
 # Default: SPIRA_WIKI if you set one, otherwise the harness checkout.
 # COCKPIT_CWD = $HOME/notes
 
-# The attention panel binary. Build it with `cargo build --release` in cockpit/panel.
-# Default: <cockpit>/panel/target/release/panel
-# SPIRA_PANEL = $HOME/.local/bin/spira-panel
+# The attention panel binary. Default: bin/panel beside the installed release.
+# SPIRA_PANEL = $HOME/.local/bin/panel
 
 # The script an escalation is delivered through. Anything that takes the same arguments as
 # `cockpit/ask.sh add` will do, which is the seam for delivering somewhere else entirely.
@@ -329,9 +328,8 @@
 # makes every request pay for its own query.
 # SPIRA_LOOM_CACHE_S = 15
 
-# The compiled Loom binary. The default is `loom/target/release/loom` inside the harness
-# checkout; set this if you install it elsewhere or manage the build separately.
-# Default: <harness checkout>/loom/target/release/loom
+# The compiled Loom binary. The default is `bin/loom` beside the installed release;
+# set this if you install it elsewhere.
 # SPIRA_LOOM_BIN = $HOME/.local/bin/loom
 
 # THE SPIKE PARTITION. A spike is a persona that researches one question to a costed document

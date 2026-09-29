@@ -279,7 +279,7 @@ echo
 # runs with GIT_DIR exported, and with it set `git -C <dir> rev-parse --show-toplevel`
 # answers <dir> itself, not the checkout's top: conf.sh sourced from a hook (pre-commit ->
 # branch-guard.sh -> lib.sh) resolved SPIRA_REPO to <repo>/spira. Seen 2026-09-26 in a
-# merge's hook output looking for <repo>/spira/target/release/spira-config.
+# merge's hook output looking for spira-config one directory too deep.
 GH="$TMP/git-harness"
 mkdir -p "$GH/spira"
 ln -s "$HERE/conf.sh" "$GH/spira/conf.sh"

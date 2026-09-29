@@ -28,6 +28,7 @@ echo "test-gate-fences.sh"
 
 EXPECTED="spira/exclude.sh
 spira/inventory.sh
+spira/binary-path-fence.sh
 spira/scratch-fence.sh
 spira/wiki-add-fence.sh
 spira/sop.sh

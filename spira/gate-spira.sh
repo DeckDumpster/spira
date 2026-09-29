@@ -129,6 +129,14 @@ if ! inv="$(bash spira/inventory.sh 2>&1)"; then
     exit 1
 fi
 
+# BINARY-PATH FENCE (sp-zv7j4). conf.sh's spira_bin is the one resolver a binary path
+# is meant to go through; a hardcoded build-output path is a second one, invisible until
+# the tree it assumes is not the one in front of it.
+if ! bpf="$(bash spira/binary-path-fence.sh 2>&1)"; then
+    printf '%s\n' "$bpf" >&2
+    exit 1
+fi
+
 # SCRATCH-FILE FENCE. Aeon working notes committed to the harness root ship to every
 # consumer and trigger the all-suites fallback in coverage selection (a file no suite
 # declares widens the diff to the full corpus, ~65 min). The class of defect is repeatable:

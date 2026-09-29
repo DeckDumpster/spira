@@ -67,7 +67,7 @@ PATH="$(dirname "$CARGO_BIN"):$PATH"; export PATH
 # which sets its own CARGO_TARGET_DIR for the suites that build Rust under test — trusting
 # $ROOT/target here would silently build into that redirected directory instead, and this
 # suite's own binary lookup would find nothing there (SEEN RED without this: the build
-# reported "Finished" while $ROOT/target/release/batcher stayed absent).
+# reported "Finished" while this suite's own expected output path stayed absent).
 CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
 BATCHER_BIN="$CARGO_TARGET_DIR_FOR_BUILD/release/batcher"
 if [ ! -x "$BATCHER_BIN" ]; then

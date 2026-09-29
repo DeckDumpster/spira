@@ -430,17 +430,47 @@ SPIRA_REPO="${SPIRA_REPO:-$SPIRA_REPO_DERIVED}"
 # everywhere else. NOT exported, for the same reason SPIRA_HOME is not: it is a fact about
 # this copy of the harness, and whatever sources its own conf.sh resolves its own.
 
+# spira_bin <name> -> path to the compiled <name> binary; names it missing and fails when
+# it is not actually there. THE ONE RESOLVER (sp-zv7j4): a test run's only source of a
+# binary is $SPIRA_ARTIFACTS (testenv-batch's own in-place build of the tree under test);
+# production's only source is the installed release's bin/. Neither falls back to the
+# other, and neither falls back to a stray target/release left over from whatever tree
+# happened to build there last.
+#
+# STDOUT ALWAYS CARRIES A PATH, even on failure — the resolved candidate, not empty — so a
+# caller that only needs "a placeholder to render into a template" (a systemd unit's
+# @KEY@ substitution, which already treats an EMPTY value, never a wrong one, as its own
+# distinct fault) is not handed a new failure mode by a binary this call was never the one
+# to gate on. A caller that must not proceed without the real thing checks the exit status,
+# same as any other command (SPIRA_CONFIG_BIN below is exactly that caller).
+spira_bin() {
+    local name="$1" dir path
+    dir="${SPIRA_ARTIFACTS:-$SPIRA_REPO/bin}"
+    path="$dir/$name"
+    printf '%s' "$path"
+    [ -x "$path" ] && return 0
+    printf '\nspira_bin: %s not found in %s\n' "$name" "$dir" >&2
+    return 1
+}
+
 # SPIRA_CONFIG_BIN IS RESOLVED HERE, NOT IN spira_conf_defaults, AND IS ABSENT FROM
 # SPIRA_CONF_KEYS — the same fence as SPIRA_HOME/SPIRA_REPO, for a sibling reason: this is
 # the binary that READS the config file, so it must exist before the config file can be
-# read, and a value the config file itself tried to set would never take effect. A release
-# tarball places it at bin/spira-config; a source checkout places it at
-# target/release/spira-config after a workspace cargo build.
+# read, and a value the config file itself tried to set would never take effect.
+#
+# THE HARD REFUSAL IS SCOPED TO SPIRA_ARTIFACTS. A test run under testenv-batch.sh's own
+# contract has one: spira-config missing there is the harness's own build broken, not a
+# fixture that has no reason to care about the config binary at all, and conf.sh refuses
+# (bare `return`, safe in a sourced file) rather than resolving every other key against an
+# unconverted spira.conf. Without SPIRA_ARTIFACTS — production, or a fixture that never set
+# it — the old, lenient behavior stands: countless callers source conf.sh for keys that have
+# nothing to do with spira-config, and a hard refusal there would break every one of them
+# the moment the binary happens not to be built.
 if [ -z "${SPIRA_CONFIG_BIN:-}" ]; then
-    if [ -f "$SPIRA_REPO/bin/spira-config" ]; then
-        SPIRA_CONFIG_BIN="$SPIRA_REPO/bin/spira-config"
+    if [ -n "${SPIRA_ARTIFACTS:-}" ]; then
+        SPIRA_CONFIG_BIN="$(spira_bin spira-config)" || return 1
     else
-        SPIRA_CONFIG_BIN="$SPIRA_REPO/target/release/spira-config"
+        SPIRA_CONFIG_BIN="$(spira_bin spira-config 2>/dev/null)"
     fi
 fi
 
@@ -1043,26 +1073,14 @@ spira_conf_defaults() {
     # gates read this; it does not change binary resolution (sp-74gzo).
     : "${SPIRA_LIFECYCLE_ENFORCE:=0}"
     # The compiled `work` client (design §3.5): the aeon semantic layer's only binary, and
-    # the only one work-env.sh's restricted PATH grants. Same tarball-vs-source-checkout
-    # resolution as SPIRA_LOOM_BIN above.
-    if [ -z "${SPIRA_WORK_BIN:-}" ]; then
-        if [ -f "$SPIRA_REPO/bin/work" ]; then
-            SPIRA_WORK_BIN="$SPIRA_REPO/bin/work"
-        else
-            SPIRA_WORK_BIN="$SPIRA_REPO/target/release/work"
-        fi
-    fi
+    # the only one work-env.sh's restricted PATH grants.
+    : "${SPIRA_WORK_BIN:=$(spira_bin work 2>/dev/null)}"
     # The compiled `spira-lc` CLI, called directly by aeon.sh itself (the trusted driver,
     # never the sandboxed model) to CAS the bead machine's Claim/Release/HolderDead events —
     # the one thing the `work` client's bound-to-one-bead surface deliberately has no verb
-    # for (design §3.5's table has no "claim").
-    if [ -z "${SPIRA_LC_BIN:-}" ]; then
-        if [ -f "$SPIRA_REPO/bin/spira-lc" ]; then
-            SPIRA_LC_BIN="$SPIRA_REPO/bin/spira-lc"
-        else
-            SPIRA_LC_BIN="$SPIRA_REPO/target/release/spira-lc"
-        fi
-    fi
+    # for (design §3.5's table has no "claim"). Also read by lc-delivery.sh (sourced from
+    # pr-pass-branch.sh and landing.sh's push mode) for show/list/history/event.
+    : "${SPIRA_LC_BIN:=$(spira_bin spira-lc 2>/dev/null)}"
     # WHERE THE TEST IMAGE IS PUBLISHED, if anywhere. Empty means build it locally and
     # never reach the network, which is the right default: the registry is somebody's
     # account, and a harness that reached for one by default would fail on every machine
@@ -1364,17 +1382,8 @@ spira_conf_defaults() {
     # ready.sh retries an unanswered probe for this many seconds before failing it. A slow
     # ANSWER is still judged against SPIRA_LOOM_BUDGET_MS above, not this grace.
     : "${SPIRA_LOOM_READY_GRACE:=20}"
-    # The compiled Loom binary. A release tarball places it at bin/loom inside the release
-    # directory; a source checkout places it at loom/target/release/loom after a cargo build.
-    # Check the tarball layout first so an operator who activates a tarball does not need to
-    # set this key explicitly and does not need cargo on PATH.
-    if [ -z "${SPIRA_LOOM_BIN:-}" ]; then
-        if [ -f "$SPIRA_REPO/bin/loom" ]; then
-            SPIRA_LOOM_BIN="$SPIRA_REPO/bin/loom"
-        else
-            SPIRA_LOOM_BIN="$SPIRA_REPO/target/release/loom"
-        fi
-    fi
+    # The compiled Loom binary.
+    : "${SPIRA_LOOM_BIN:=$(spira_bin loom 2>/dev/null)}"
     # THE SPIKE PARTITION, in one place because it is read in four: the spike fayth's
     # predicate, the brief handed to a spike aeon, the confinement check the landing worker
     # runs, and whatever files the bead. A literal in four files is how four programs come to
@@ -1499,117 +1508,29 @@ spira_conf_defaults() {
     # a reply of theirs from a reply of the agent's. Both write into the same thread, and a
     # panel that cannot separate them announces the agent's own comment back to it as an answer.
     : "${SPIRA_OPERATOR_ACTOR:=operator}"
-    if [ -z "${SPIRA_PANEL:-}" ]; then
-        if [ -f "$SPIRA_REPO/bin/panel" ]; then
-            SPIRA_PANEL="$SPIRA_REPO/bin/panel"
-        else
-            SPIRA_PANEL="$SPIRA_REPO/target/release/panel"
-        fi
-    fi
-    if [ -z "${SPIRA_BROKER_BIN:-}" ]; then
-        if [ -f "$SPIRA_REPO/bin/broker" ]; then
-            SPIRA_BROKER_BIN="$SPIRA_REPO/bin/broker"
-        else
-            SPIRA_BROKER_BIN="$SPIRA_REPO/target/release/broker"
-        fi
-    fi
+    : "${SPIRA_PANEL:=$(spira_bin panel 2>/dev/null)}"
+    : "${SPIRA_BROKER_BIN:=$(spira_bin broker 2>/dev/null)}"
     : "${SPIRA_BROKER_ENABLE:=0}"
-    if [ -z "${SPIRA_CZAR_PASS_BIN:-}" ]; then
-        if [ -f "$SPIRA_REPO/bin/czar-pass" ]; then
-            SPIRA_CZAR_PASS_BIN="$SPIRA_REPO/bin/czar-pass"
-        else
-            SPIRA_CZAR_PASS_BIN="$SPIRA_REPO/target/release/czar-pass"
-        fi
-    fi
-    if [ -z "${SPIRA_QUEUE_WATCH_BIN:-}" ]; then
-        if [ -f "$SPIRA_REPO/bin/queue-watch" ]; then
-            SPIRA_QUEUE_WATCH_BIN="$SPIRA_REPO/bin/queue-watch"
-        else
-            SPIRA_QUEUE_WATCH_BIN="$SPIRA_REPO/target/release/queue-watch"
-        fi
-    fi
-    if [ -z "${SPIRA_RECONCILER_BIN:-}" ]; then
-        if [ -f "$SPIRA_REPO/bin/reconciler" ]; then
-            SPIRA_RECONCILER_BIN="$SPIRA_REPO/bin/reconciler"
-        else
-            SPIRA_RECONCILER_BIN="$SPIRA_REPO/target/release/reconciler"
-        fi
-    fi
-    if [ -z "${SPIRA_LC_BIN:-}" ]; then
-        if [ -f "$SPIRA_REPO/bin/spira-lc" ]; then
-            SPIRA_LC_BIN="$SPIRA_REPO/bin/spira-lc"
-        else
-            SPIRA_LC_BIN="$SPIRA_REPO/target/release/spira-lc"
-        fi
-    fi
-    if [ -z "${SPIRA_SUPERVISE_BIN:-}" ]; then
-        if [ -f "$SPIRA_REPO/bin/spira-supervise" ]; then
-            SPIRA_SUPERVISE_BIN="$SPIRA_REPO/bin/spira-supervise"
-        else
-            SPIRA_SUPERVISE_BIN="$SPIRA_REPO/target/release/spira-supervise"
-        fi
-    fi
-    if [ -z "${SPIRA_LANDING_PASS_BIN:-}" ]; then
-        if [ -f "$SPIRA_REPO/bin/landing-pass" ]; then
-            SPIRA_LANDING_PASS_BIN="$SPIRA_REPO/bin/landing-pass"
-        else
-            SPIRA_LANDING_PASS_BIN="$SPIRA_REPO/target/release/landing-pass"
-        fi
-    fi
-    # spira-lc — show/list/history/event against spira_lifecycle (design §3.1, sp-uwv2s).
-    # Read by lc-delivery.sh, sourced from pr-pass-branch.sh and landing.sh's push mode.
-    if [ -z "${SPIRA_LC_BIN:-}" ]; then
-        if [ -f "$SPIRA_REPO/bin/spira-lc" ]; then
-            SPIRA_LC_BIN="$SPIRA_REPO/bin/spira-lc"
-        else
-            SPIRA_LC_BIN="$SPIRA_REPO/target/release/spira-lc"
-        fi
-    fi
+    : "${SPIRA_CZAR_PASS_BIN:=$(spira_bin czar-pass 2>/dev/null)}"
+    : "${SPIRA_QUEUE_WATCH_BIN:=$(spira_bin queue-watch 2>/dev/null)}"
+    : "${SPIRA_RECONCILER_BIN:=$(spira_bin reconciler 2>/dev/null)}"
+    : "${SPIRA_SUPERVISE_BIN:=$(spira_bin spira-supervise 2>/dev/null)}"
+    : "${SPIRA_LANDING_PASS_BIN:=$(spira_bin landing-pass 2>/dev/null)}"
     # The run/tsd/ writer (sp-sbc6o). Every producer of an observation — land_mark's landing
     # events, a suite's timing, and whatever the reconciler and batcher crate write once they
     # exist — shells out to this one binary rather than each formatting its own JSONL line.
-    if [ -z "${SPIRA_TSD_BIN:-}" ]; then
-        if [ -f "$SPIRA_REPO/bin/tsd-write" ]; then
-            SPIRA_TSD_BIN="$SPIRA_REPO/bin/tsd-write"
-        else
-            SPIRA_TSD_BIN="$SPIRA_REPO/target/release/tsd-write"
-        fi
-    fi
+    : "${SPIRA_TSD_BIN:=$(spira_bin tsd-write 2>/dev/null)}"
     # The one writer of run/tsd/'s bead-stage family (sp-qz2yj): projects the lifecycle
     # event log (bd events + landstate/ before cutover, spira_lifecycle.event after).
-    if [ -z "${SPIRA_TSD_LIFECYCLE_EXPORT_BIN:-}" ]; then
-        if [ -f "$SPIRA_REPO/bin/tsd-lifecycle-export" ]; then
-            SPIRA_TSD_LIFECYCLE_EXPORT_BIN="$SPIRA_REPO/bin/tsd-lifecycle-export"
-        else
-            SPIRA_TSD_LIFECYCLE_EXPORT_BIN="$SPIRA_REPO/target/release/tsd-lifecycle-export"
-        fi
-    fi
+    : "${SPIRA_TSD_LIFECYCLE_EXPORT_BIN:=$(spira_bin tsd-lifecycle-export 2>/dev/null)}"
     # THE BATCHER'S CUT (sp-jzfog): the batcher-cut crate's `batcher` binary, called by
     # queue.sh unconditionally in place of batch.sh's own cut (sp-vsob2).
-    if [ -z "${SPIRA_BATCHER_BIN:-}" ]; then
-        if [ -f "$SPIRA_REPO/bin/batcher" ]; then
-            SPIRA_BATCHER_BIN="$SPIRA_REPO/bin/batcher"
-        else
-            SPIRA_BATCHER_BIN="$SPIRA_REPO/target/release/batcher"
-        fi
-    fi
+    : "${SPIRA_BATCHER_BIN:=$(spira_bin batcher 2>/dev/null)}"
     # test-plan — validates docs/test-plan/*.toml, builds the derived coverage matrix.
-    if [ -z "${SPIRA_TEST_PLAN_BIN:-}" ]; then
-        if [ -f "$SPIRA_REPO/bin/test-plan" ]; then
-            SPIRA_TEST_PLAN_BIN="$SPIRA_REPO/bin/test-plan"
-        else
-            SPIRA_TEST_PLAN_BIN="$SPIRA_REPO/target/release/test-plan"
-        fi
-    fi
+    : "${SPIRA_TEST_PLAN_BIN:=$(spira_bin test-plan 2>/dev/null)}"
     # reconciler-flow (sp-rh0x3): backlog trend, stage velocity, stage dwell and round health
     # over the run/tsd/ series, on its own 30-minute pass — see spira-reconciler-flow.timer.
-    if [ -z "${SPIRA_RECONCILER_FLOW_BIN:-}" ]; then
-        if [ -f "$SPIRA_REPO/bin/reconciler-flow" ]; then
-            SPIRA_RECONCILER_FLOW_BIN="$SPIRA_REPO/bin/reconciler-flow"
-        else
-            SPIRA_RECONCILER_FLOW_BIN="$SPIRA_REPO/target/release/reconciler-flow"
-        fi
-    fi
+    : "${SPIRA_RECONCILER_FLOW_BIN:=$(spira_bin reconciler-flow 2>/dev/null)}"
     # SPIRA_GH: which gh-like binary ghq() calls. Empty means the system gh.
     # Set to <spira>/spira/gh-app.sh to have all harness gh calls act as the
     # GitHub App rather than as the operator's personal account.
@@ -2368,10 +2289,10 @@ export SPIRA_BD
 
 # SPIRA_LC_BIN — same resolution and the same reason as SPIRA_BD above: PATH order
 # differs between calling contexts, so resolve once, after SPIRA_PATH is applied, rather
-# than at call time. Falls back to the workspace release build install.sh's own systemd
-# unit render points at, for a checkout where `spira-lc` is not yet on PATH.
+# than at call time. Falls back to spira_bin, for a checkout where `spira-lc` is not yet
+# on PATH.
 if [ -z "${SPIRA_LC_BIN:-}" ]; then
-    SPIRA_LC_BIN="$(command -v spira-lc 2>/dev/null || printf '%s' "$SPIRA_HOME/target/release/spira-lc")"
+    SPIRA_LC_BIN="$(command -v spira-lc 2>/dev/null)" || SPIRA_LC_BIN="$(spira_bin spira-lc 2>/dev/null)"
 fi
 export SPIRA_LC_BIN
 

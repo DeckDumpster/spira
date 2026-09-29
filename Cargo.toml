@@ -31,3 +31,11 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
+
+# aeon and gate runs (sp-zv7j4): fast, incremental builds of a worktree that is thrown
+# away after its suites run — none of release's link-time cost buys anything here.
+[profile.aeon]
+inherits = "dev"
+opt-level = 0
+incremental = true
+debug = "line-tables-only"

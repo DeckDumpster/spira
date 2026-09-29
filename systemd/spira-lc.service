@@ -15,7 +15,7 @@ StartLimitBurst=5
 Type=simple
 User=spira-lc
 Group=spira
-ExecStart=@SPIRA_REPO@/target/release/spira-lc serve
+ExecStart=@SPIRA_REPO@/bin/spira-lc serve
 Environment=SPIRA_LC_PASSWORD_FILE=/etc/spira-lc/credential
 Environment=SPIRA_LC_USER=spira_lc
 Environment=SPIRA_LC_DATA_DIR=/tmp

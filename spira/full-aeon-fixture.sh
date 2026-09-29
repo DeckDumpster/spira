@@ -60,10 +60,6 @@ FAYTH
     export SPIRA_AGENT="$FA_BIN/claude" TMP="$FA_TMP"
     grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
         || { printf 'full-aeon-fixture: aeon.sh has no SPIRA_AGENT injection — refusing to run the real model\n' >&2; exit 1; }
-    # Pinned so this fixture stays on the pre-cutover legacy paths even when a --with-bins
-    # run has built work/spira-lc for other suites in the same batch (design §3.5,
-    # LC_MODEL_RESTRICTED) — conf.sh only auto-resolves either when unset.
-    export SPIRA_WORK_BIN="$FA_TMP/no-work-bin" SPIRA_LC_BIN="$FA_TMP/no-lc-bin"
 }
 
 # fa_teardown — call from the caller's own `trap ... EXIT INT TERM`; not registered here
