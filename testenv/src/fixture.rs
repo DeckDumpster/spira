@@ -626,10 +626,8 @@ mod tests {
         let rt = FakeRuntime::new();
         let s = session(&rt);
         let r = s.testdb_template_request();
-        assert_eq!(
-            r.argv,
-            vec!["/workspace/target/aeon/testenv", "testdb", "template", "--bd", "bd", "--dolt", "dolt"]
-        );
+        assert_eq!(r.argv[0], format!("{}/testenv", s.artifacts));
+        assert_eq!(r.argv[1..], ["testdb", "template", "--bd", "bd", "--dolt", "dolt"]);
         assert_eq!(r.user.as_deref(), Some(SPIRA_USER));
         assert_eq!(r.env_value("SPIRA_ARTIFACTS"), Some("/workspace/target/aeon"));
     }
