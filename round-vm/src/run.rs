@@ -81,6 +81,7 @@ pub struct BatchJob {
     /// everyone who clones it). Empty: the VM's own ambient default applies, no cache
     /// sharing with the host.
     pub cache_home: Option<String>,
+    pub testenv_registry: Option<String>,
 }
 
 /// The VM side, reached only by address.
@@ -110,7 +111,7 @@ pub fn shell_quote(s: &str) -> String {
 /// build is incremental on the one just made) and stages `target/release`'s executables
 /// into `~/round-bins/` so the host pulls the binaries and not cargo's target directory.
 pub const REMOTE_SCRIPT: &str = r#"set -euo pipefail
-host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6"
+host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7"
 rm -rf ~/round-work ~/round-bins ~/round-launcher.env
 git clone --quiet "git://${host_addr}:${port}/mirror.git" ~/round-work
 cd ~/round-work
@@ -172,6 +173,7 @@ elif [ -n "$tag" ]; then
     echo "round-vm: template image: localhost/spira-testenv:$tag absent — this round builds it; refresh the template with round-vm template" >&2
 fi
 export SPIRA_BATCH_MAXPAR="$maxpar"
+if [ -n "$registry" ]; then export SPIRA_TESTENV_REGISTRY="$registry"; fi
 set +e
 if [ -n "$suites" ]; then
     testenv --mode parallel --profile release --suites "$suites" round
@@ -199,6 +201,7 @@ pub fn remote_command(job: &BatchJob) -> String {
         job.maxpar.to_string(),
         job.toolchain.clone().unwrap_or_default(),
         job.cache_home.clone().unwrap_or_default(),
+        job.testenv_registry.clone().unwrap_or_default(),
     ];
     let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
     format!("bash -s -- {}", quoted.join(" "))
@@ -566,6 +569,7 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
         maxpar,
         toolchain: args.toolchain.clone(),
         cache_home: cfg.cache_home.clone(),
+        testenv_registry: cfg.testenv_registry.clone(),
     };
     let t0 = Instant::now();
     let Some(spool_dir) = args.attr_spool.clone() else {
@@ -850,8 +854,9 @@ mod tests {
             maxpar: 16,
             toolchain: Some("1.82.0".into()),
             cache_home: Some("/opt/spira/cargo".into()),
+            testenv_registry: Some("registry.example/spira".into()),
         });
-        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo'");
+        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira'");
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -1074,7 +1079,16 @@ mod tests {
         // path-ok: a test asserting where round-vm installs a fixture binary in a temp worktree
         assert!(tree(&fx).tree_dir.join("target/release/batcher").is_file(), "installed into the round worktree");
         assert!(fs::read_to_string(fx.cfg.run_dir.join("tsd/suite.jsonl")).unwrap().contains("\"ran_on\":\"100\""));
-        assert!(remote.jobs.lock().unwrap()[0].ends_with("'' '24' '' '/opt/spira/cargo'"), "{:?}", remote.jobs.lock().unwrap());
+        assert!(remote.jobs.lock().unwrap()[0].ends_with("'' '24' '' '/opt/spira/cargo' ''"), "{:?}", remote.jobs.lock().unwrap());
+    }
+
+    #[test]
+    fn the_configured_testenv_registry_is_forwarded_to_the_vm() {
+        let mut fx = fixture();
+        fx.cfg.testenv_registry = Some("registry.example/spira".into());
+        let remote = FakeRemote::green();
+        assert_eq!(go(&fx, &remote, &tree(&fx)), 0);
+        assert!(remote.jobs.lock().unwrap()[0].ends_with("'registry.example/spira'"), "{:?}", remote.jobs.lock().unwrap());
     }
 
     #[test]
