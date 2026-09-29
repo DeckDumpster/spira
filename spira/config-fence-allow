@@ -260,3 +260,8 @@ spira/test-withdrawn-suites-recert.sh
 spira/test-work-container.sh
 spira/tsd-ingest.sh
 spira/verdict.sh
+
+# NAMED EXCEPTION CLASS (not cutover debt): a test whose job is to police the spira-config
+# door must name the file it polices. sp-a8gna's brief allows "a short named exception list,
+# e.g. spira-config's own tests"; this is that class. Round 122 (Concierge), sp-cx0mj x sp-a8gna.
+spira/test-spira-config-only-door.sh
