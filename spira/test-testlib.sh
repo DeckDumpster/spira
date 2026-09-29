@@ -28,7 +28,7 @@ tl_summary
 EOF
 want   "ok(): emits a TAP ok line numbered 1" "ok 1 - case one" "$_RUN_OUT"
 want   "ok(): tl_summary reports the pass" "1 passed, 0 failed, 0 skipped" "$_RUN_OUT"
-want   "ok(): tl_summary emits the ASSERTIONS trailer suites.sh greps for" "ASSERTIONS 1" "$_RUN_OUT"
+want   "ok(): tl_summary emits the ASSERTIONS trailer the testenv runner reads" "ASSERTIONS 1" "$_RUN_OUT"
 wantrc "ok(): suite exits 0 when every case passes" 0 "$_RUN_RC"
 
 # --- bad(): a lone failure, with and without a detail -----------------------------

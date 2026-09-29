@@ -218,36 +218,12 @@ out="$(SPIRA_TIER_ALLOWLIST="$CUR_D" TBS lint-allowlist --prior "$T/no-such-prio
 is "no prior found at all passes as an introducing commit" "0" "$rc"
 
 # ============================================================================================
-printf '\n%s\n' "E. testenv-batch.sh wiring"
+printf '\n%s\n' "E. runner wiring"
 # ============================================================================================
-# E1: _tsd_suite_timing (extracted verbatim) now writes a tier field — MUST FAIL against the
-# pre-sp-5m133 function, which had no --field-str tier=.
-FUNCS="$T/funcs.sh"
-sed -n '/^_tsd_suite_timing() {/,/^}/p' "$HERE/testenv-batch.sh" > "$FUNCS"
-[ -s "$FUNCS" ] || bad "could not extract _tsd_suite_timing from testenv-batch.sh"
-RUNE="$T/runE"; mkdir -p "$RUNE"
-(
-    export SPIRA_RUN="$RUNE" SPIRA_TSD_BIN="$TSD_BIN" SUITE_DIR="$SUITE_DIR"
-    BR="spira/sp-test"; _BATCH_RUN_ID="runE"
-    . "$HERE/suite-covers.sh"
-    . "$FUNCS"
-    _tsd_suite_timing "fixture-t1.sh" "0" "1" "0" "0" "parallel"
-)
-FAME="$RUNE/tsd/suite-timing.jsonl"
-[ -f "$FAME" ] && ok "suite-timing row appended by the extracted function" \
-                || bad "MUST-FAIL CHECK: no suite-timing row"
-if [ -f "$FAME" ]; then
-    tier_written="$(python3 -c '
-import json
-print(json.loads(open("'"$FAME"'").readlines()[0]).get("tier"))
-')"
-    is "MUST-FAIL CHECK: the row carries tier=T1 (absent in the pre-sp-5m133 function)" \
-       "T1" "$tier_written"
-fi
-
-# E2: testenv-batch.sh is wired to invoke tier-budget.sh check-batch (structural).
-want "testenv-batch.sh calls tier-budget.sh check-batch" \
-     "tier-budget.sh\" check-batch" "$(cat "$HERE/testenv-batch.sh")"
+# E1/E2 RETIRED with spira/testenv-batch.sh. The testenv crate writes the suite-timing row
+# with its tier (testenv/src/timing.rs: rows_carry_the_envelope_and_typed_fields), and it
+# drops the tier-budget check-batch step, which only ever logged "skipped" (testenv/DESIGN.md
+# §7 D4).
 
 # E3: gate-touched.sh runs both allowlist ratchets and check-areas regardless of
 # SPIRA_GATE_SUITES mode (structural — same wiring point and same reason as build-fence.sh,

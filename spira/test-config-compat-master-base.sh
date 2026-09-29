@@ -179,7 +179,8 @@ esac
 FORGE
 chmod +x "$V_SH/forge-fixture.sh"
 printf '#!/usr/bin/env bash\ntrue\n' > "$V_SH/mail.sh"; chmod +x "$V_SH/mail.sh"
-printf '#!/usr/bin/env bash\ntrue\n' > "$V_SH/suites.sh"; chmod +x "$V_SH/suites.sh"
+printf '#!/usr/bin/env bash\ntrue\n' > "$V_SH/testenv-stub"; chmod +x "$V_SH/testenv-stub"
+export SPIRA_TESTENV_BIN="$V_SH/testenv-stub"
 printf '%s | %s | queue | origin/master | | |\n' "$V_REPONAME" "$V_REPO" > "$V_SH/repo-map"
 
 # Build one member branch and an open batch record whose local merge commit sits

@@ -3,9 +3,10 @@
 #
 # WHAT THIS PROVES
 #   1. The Suites step env block does NOT set SPIRA_BATCH_MAXPAR (sp-4lakz:
-#      maxpar is now derived from the guest's own hardware inside testenv-batch.sh
+#      maxpar is now derived from the guest's own hardware inside the testenv runner
 #      rather than capped by a repo variable that lagged behind the template).
-#   2. The maxpar derivation block is present in testenv-batch.sh.
+#   2. The maxpar derivation is present in the testenv crate (schedule.rs, reading
+#      MemAvailable through run.rs/util.rs).
 #   3. The vitals sampler loop body produces a line in the documented shape
 #      (timestamp, mem used/total, avail, pressure, container count), and a
 #      background process running it is stopped by kill — the mechanism the
@@ -20,7 +21,7 @@
 #     ran cannot produce a false positive.
 #
 # tier: T1
-# covers: .github/workflows/gate.yml spira/testenv-batch.sh
+# covers: .github/workflows/gate.yml testenv/src/schedule.rs testenv/src/run.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -31,7 +32,7 @@ grepno() { printf '%s\n' "$3" | grep -qE "$2" && bad "$1" "must not match [$2]" 
 echo "test-gate-vitals.sh"
 
 GATE_YML="$ROOT/.github/workflows/gate.yml"
-BATCH="$HERE/testenv-batch.sh"
+TESTENV_SRC="$ROOT/testenv/src"
 if [ ! -r "$GATE_YML" ]; then
     bad "gate.yml exists (prerequisite)" "not found at $GATE_YML"
     tl_summary; exit
@@ -64,10 +65,12 @@ want "A0-pos: SPIRA_TESTENV_REGISTRY in env block (positive control)" \
 nowant "A1: SPIRA_BATCH_MAXPAR absent from Suites env (derived in guest)" \
        "SPIRA_BATCH_MAXPAR" "$_suites_env"
 
-# The derivation block must exist in testenv-batch.sh.
-_block="$(sed -n '/#!maxpar-begin/,/#!maxpar-end/{/#!maxpar-/d; p}' "$BATCH" 2>/dev/null || true)"
-[ -n "$_block" ] && ok "A2: maxpar derivation block present in testenv-batch.sh" \
-                  || bad "A2: maxpar derivation block present in testenv-batch.sh" "not found"
+# The derivation must exist in the testenv crate (it replaced testenv-batch.sh's block).
+_block="$(cat "$TESTENV_SRC/schedule.rs" "$TESTENV_SRC/run.rs" "$TESTENV_SRC/util.rs" 2>/dev/null || true)"
+case "$_block" in
+    *"pub fn maxpar("*) ok "A2: maxpar derivation present in testenv/src/schedule.rs" ;;
+    *) bad "A2: maxpar derivation present in testenv/src/schedule.rs" "not found" ;;
+esac
 
 # The formula must reference MemAvailable so the binding resource is memory, not CPU alone.
 case "$_block" in
