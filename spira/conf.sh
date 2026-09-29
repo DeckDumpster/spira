@@ -1237,7 +1237,7 @@ spira_conf_defaults() {
     # landing pass sends the Concierge a machine event rather than reopening again — never
     # Ryan (law-a-rebase-loop-is-sequenced-not-split).
     : "${SPIRA_REBASE_ESCALATE_AT:=3}"
-    # WHERE rebase-stale.sh RECORDS EVERY ATTEMPT (mechanical / clean / conflict / gate-red),
+    # WHERE the rebase-stale binary RECORDS EVERY ATTEMPT (mechanical / clean / conflict / gate-red),
     # one line per call — the measure sp-oxwvc asks for: how much of the rework rate a
     # mechanical resolver actually removes.
     : "${SPIRA_REBASE_STALE_LOG:=$SPIRA_RUN/rebase-stale.log}"
