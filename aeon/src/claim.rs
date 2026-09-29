@@ -74,11 +74,22 @@ pub struct Selector<'a> {
     /// spira_config::repos (sp-o88bx, "wave 4.12") in-process, instead of the
     /// `_aeon_repo_info` bash seam this used to shell into.
     pub repos: &'a spira_config::repos::Registry,
+    /// `lifecycle_enforce`: the ready set already came from `MACHINE_READY_ARGS` (run.rs), so
+    /// `select` must judge blockers the same way — `--blockers machine`.
+    pub machine: bool,
 }
 
 impl Selector<'_> {
     fn file(&self, stem: &str) -> PathBuf {
         self.scratch.join(format!(".{stem}.{}", self.pid))
+    }
+
+    fn select_args<'b>(&self, base: &[&'b str]) -> Vec<String> {
+        let mut a = crate::ports::s(base);
+        if self.machine {
+            a.extend(crate::ports::s(&["--blockers", "machine"]));
+        }
+        a
     }
 
     pub fn select(&self, ready_json: &str) -> Selection {
@@ -99,13 +110,13 @@ impl Selector<'_> {
         let lkf = lk_file.display().to_string();
 
         // The top tier only: resumability costs one git process per candidate.
-        let tier = self.exec.exec(self.claim_bin, &crate::ports::s(&["select", "--fayth", self.fayth, "--epics", &lkf, "--top-tier"]), Some(ready.clone()), None);
+        let tier = self.exec.exec(self.claim_bin, &self.select_args(&["select", "--fayth", self.fayth, "--epics", &lkf, "--top-tier"]), Some(ready.clone()), None);
         let band = if tier.success() { parse_tier(&tier.stdout) } else { Vec::new() };
         let (resumable, tier_label) = self.resumable(&band);
 
         let _ = std::fs::write(&rs_file, resumable.join(","));
         let rsf = rs_file.display().to_string();
-        let ranked = self.exec.exec(self.claim_bin, &crate::ports::s(&["select", "--fayth", self.fayth, "--epics", &lkf, "--resumable", &rsf]), Some(ready), None);
+        let ranked = self.exec.exec(self.claim_bin, &self.select_args(&["select", "--fayth", self.fayth, "--epics", &lkf, "--resumable", &rsf]), Some(ready), None);
         let _ = std::fs::remove_file(&lk_file);
         let _ = std::fs::remove_file(&rs_file);
         if !ranked.success() {
@@ -284,7 +295,7 @@ mod tests {
     }
 
     fn sel<'a>(e: &'a FakeExec, repos: &'a spira_config::repos::Registry, g: &'a FakeGit, dir: &'a Path) -> Selector<'a> {
-        Selector { exec: e, git: g, claim_bin: "spira-claim", fayth: "builder", scratch: dir, pid: 7, repos }
+        Selector { exec: e, git: g, claim_bin: "spira-claim", fayth: "builder", scratch: dir, pid: 7, repos, machine: false }
     }
 
     const READY: &str = r#"[{"id":"sp-a","priority":1,"labels":["repo:svc"]},{"id":"sp-b","priority":1,"labels":["repo:svc","branch:spira/x"]}]"#;
@@ -310,6 +321,32 @@ mod tests {
             assert!(args.iter().all(|a| !a.contains("sp-a")), "no bead payload in argv: {args:?}");
         }
         assert!(calls[2].1.contains(&"--resumable".to_string()));
+    }
+
+    // sp-s9675.2: lifecycle_enforce on means the ready set already came from
+    // MACHINE_READY_ARGS (bd list, unfiltered by blockers) — select must be told to judge
+    // blockers itself, on both calls, or the widened set is never actually filtered.
+    #[test]
+    fn machine_flag_adds_blockers_machine_to_both_select_calls() {
+        let dir = scratch("t-machine");
+        let e = FakeExec {
+            calls: Mutex::new(vec![]),
+            epics: Out::ok("{\"prio\":{},\"started\":[]}"),
+            tier: Out::ok("sp-a||svc|1|1|1\n"),
+            rank: Out::ok("1\t1\t1\t0\tt\tsp-a\t\n"),
+        };
+        let repos = svc_registry(&dir);
+        let g = FakeGit(0);
+        let sel = Selector { exec: &e, git: &g, claim_bin: "spira-claim", fayth: "builder", scratch: &dir, pid: 7, repos: &repos, machine: true };
+        let _ = sel.select(READY);
+        let calls = e.calls.lock().unwrap();
+        // epics, --top-tier, --resumable — --blockers machine on both select calls only.
+        assert_eq!(calls.len(), 3);
+        assert!(!calls[0].1.contains(&"--blockers".to_string()), "epics takes no --blockers flag");
+        for (_, args, _) in calls.iter().skip(1) {
+            assert!(args.iter().any(|a| a == "--top-tier") || args.iter().any(|a| a == "--resumable"));
+            assert!(args.windows(2).any(|w| w == ["--blockers", "machine"]), "{args:?}");
+        }
     }
 
     #[test]

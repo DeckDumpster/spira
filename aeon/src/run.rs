@@ -340,8 +340,13 @@ impl<'a> Run<'a> {
         None
     }
 
+    /// `lifecycle_enforce` off: `bd ready` — bd's own blocker-open/closed judgment. On: `bd
+    /// list` (`MACHINE_READY_ARGS`), widened past that judgment, because bd has no notion of
+    /// a blocker that is CERTIFIED but not LANDED — `select`'s `--blockers machine` (below)
+    /// is what actually decides claimability then (design stacked-dependents-2026-09-28 §1).
     fn ready_args(&self) -> Vec<String> {
-        let mut a = self.snap.ready_args.clone();
+        let base = if self.enforce { &self.snap.machine_ready_args } else { &self.snap.ready_args };
+        let mut a = base.clone();
         a.extend(s(&["--label", &self.fayth.labels, "--exclude-label", &self.snap.claim_exclude]));
         a
     }
@@ -387,7 +392,7 @@ impl<'a> Run<'a> {
         let ready = if ready.trim().is_empty() { "[]".to_string() } else { ready };
         let claim_bin = self.claim_bin.clone();
         let who = format!("{}/{}", self.f(), self.s.aeon);
-        let sel = Selector { exec: self.d.exec, git: self.d.git, claim_bin: &claim_bin, fayth: &self.fayth.name, scratch: &self.conf.run, pid: self.pid, repos: &self.conf.repos };
+        let sel = Selector { exec: self.d.exec, git: self.d.git, claim_bin: &claim_bin, fayth: &self.fayth.name, scratch: &self.conf.run, pid: self.pid, repos: &self.conf.repos, machine: self.enforce };
         let (ids, resumable, tier) = match sel.select(&ready) {
             Selection::ClaimError { log, ledger } => {
                 self.log(&log);

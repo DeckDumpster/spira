@@ -65,7 +65,7 @@ impl Bd for FakeBd {
         let mut w = self.0.lock().unwrap();
         let a: Vec<&str> = a.iter().map(|s| s.as_str()).collect();
         match a.as_slice() {
-            ["ready", ..] => {
+            ["ready", ..] | ["list", ..] => {
                 if w.ready_fails {
                     return Out::fail(1, "dolt: connection refused\n");
                 }
@@ -284,7 +284,13 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, s
     for (k, v) in [("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")] {
         base.insert(k.into(), v.into());
     }
-    let snap = Snapshot { env: base.clone(), vars: vars.clone(), ready_args: vec!["ready".into(), "--limit".into(), "0".into()], claim_exclude: "spira-poison".into() };
+    let snap = Snapshot {
+        env: base.clone(),
+        vars: vars.clone(),
+        ready_args: vec!["ready".into(), "--limit".into(), "0".into()],
+        machine_ready_args: vec!["list".into(), "--status".into(), "open".into()],
+        claim_exclude: "spira-poison".into(),
+    };
     let env = Env::new(base.clone(), base);
     let conf = Conf::new(&snap, &f.home);
     let fayth = Fayth::from_vars("builder", &vars);

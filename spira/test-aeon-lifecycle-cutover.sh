@@ -15,13 +15,18 @@
 #   - End to end through the real aeon.sh: a claimed bead reads WORKING right up until the
 #     model's own `work submit` applies — never "closed" — and the model that submitted it
 #     had no `bd` on its PATH at all.
+#   - Stacked dependents (design stacked-dependents-2026-09-28 §1, sp-s9675.2): a bead
+#     blocked only on a CERTIFIED-but-not-LANDED prerequisite is invisible to bd's own
+#     `ready` (bd has no concept of CERTIFIED, so an open blocker hides it) but is claimed
+#     end to end through aeon's widened `MACHINE_READY_ARGS` + `spira-claim select
+#     --blockers machine` path once `lifecycle_enforce` is on.
 #
 # host-reason: starts its own disposable `dolt sql-server`, same shape as
 # test-lifecycle-container.sh / test-work-container.sh; testenv-batch.sh already provides
 # the container this suite executes in.
 #
 # tier: T2
-# covers: aeon/src/* spira/lib.sh spira/conf.sh spira/chamber/builder.md work/* spira-lc/*
+# covers: aeon/src/* spira/lib.sh spira/conf.sh spira/chamber/builder.md work/* spira-lc/* spira-claim/src/*
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -100,6 +105,35 @@ wantrc "schema applies cleanly" 0 $?
 # and grants.sql needs its @SPIRA_LC_PASSWORD@ placeholder filled first) — the grant
 # boundary is test-lifecycle-container.sh's job, this suite exercises the verbs and aeon.sh's
 # own wiring.
+
+# ===========================================================================
+echo
+echo "spira-lc list carries stack/stack_depth (sp-s9675.2, DESIGN.md §5 item 14):"
+# ===========================================================================
+root_sql --use-db spira_lifecycle sql -q \
+    "INSERT INTO bead (bead_id, state, holds, version, updated_at, stack, stack_depth) VALUES ('sp-lc-unstacked','READY','[]',0,0,JSON_OBJECT(),0)" >/dev/null 2>&1
+root_sql --use-db spira_lifecycle sql -q \
+    "INSERT INTO bead (bead_id, state, holds, version, updated_at, stack, stack_depth) VALUES ('sp-lc-stacked','CERTIFIED','[]',0,0,JSON_OBJECT('sp-lc-below','tip-below'),2)" >/dev/null 2>&1
+list_json="$("$SPIRA_LC_BIN" list 2>/dev/null)"
+# POSITIVE CONTROL: the unstacked row must read depth 0, so the stacked row's depth 2 below
+# is the SELECT actually returning the column, not every row defaulting to a fixed value.
+stacked_row="$(printf '%s' "$list_json" | python3 -c '
+import json, sys
+rows = json.load(sys.stdin)
+for r in rows:
+    if r.get("bead_id") == "sp-lc-stacked":
+        print(json.dumps(r, separators=(",", ":")))
+')"
+unstacked_row="$(printf '%s' "$list_json" | python3 -c '
+import json, sys
+rows = json.load(sys.stdin)
+for r in rows:
+    if r.get("bead_id") == "sp-lc-unstacked":
+        print(json.dumps(r, separators=(",", ":")))
+')"
+want "an unstacked row reads stack_depth 0 (positive control)" '"stack_depth":"0"' "$unstacked_row"
+want "spira-lc list carries a stacked row's real stack_depth, not the column-missing default" '"stack_depth":"2"' "$stacked_row"
+want "spira-lc list carries the stacked row's own stack map" 'sp-lc-below' "$stacked_row"
 
 SOCK="$TMP/spira-lc.sock"
 SPIRA_LC_SOCKET="$SOCK" spira-lc serve "$SOCK" >"$TMP/serve.log" 2>&1 &
@@ -263,5 +297,60 @@ import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
 print(d[0].get("status","") if d else "")' 2>/dev/null)"
 nowant "bd's own status never reads closed — there is no bd close to reinterpret" "closed" "$bstatus"
+
+# ===========================================================================
+echo
+echo "Stacked dependents (sp-s9675.2): a dependent blocked only on a CERTIFIED-not-LANDED"
+echo "prerequisite is invisible to bd ready, but claimable through the widened path:"
+# ===========================================================================
+# SPIRA_LIFECYCLE_ENFORCE is already 1 (set above, for $BID's own restricted-path run).
+
+bead_id_lines() {   # bead_id_lines <bd-json-on-stdin> -> one id per line
+    python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    d = []
+d = d if isinstance(d, list) else [d]
+for r in d:
+    print(r.get("id", ""))
+'
+}
+
+PREREQ="$(bash "$HERE/bead.sh" file "stack fixture: prerequisite" --for builder --repo fixture 2>/dev/null | tail -1)"
+[ -n "$PREREQ" ] || bail "bead.sh file did not return an id for the prerequisite"
+DEP="$(bash "$HERE/bead.sh" file "stack fixture: dependent" --for builder --repo fixture 2>/dev/null | tail -1)"
+[ -n "$DEP" ] || bail "bead.sh file did not return an id for the dependent"
+
+bash "$HERE/bead.sh" dep add "$DEP" "$PREREQ" >/dev/null 2>&1
+wantrc "dep add wires the dependent's blocks edge onto the prerequisite" 0 $?
+
+# The prerequisite is CERTIFIED in the lifecycle machine but bd never closes it — bd's own
+# ready/blocker semantics know only open/closed, so it stays a real, open blocker in bd's
+# eyes even once the lifecycle machine has moved past it. Giving it an assignee takes it out
+# of -u/--no-assignee's own candidate set, isolating this scenario to the dependent's claim.
+bd -C "$SPIRA_DB" update "$PREREQ" --status in_progress --assignee aeon-other-actor >/dev/null 2>&1
+seed_bead "$PREREQ" CERTIFIED
+seed_bead "$DEP" READY
+
+# POSITIVE CONTROL: bd's own ready hides the dependent while its blocker is only CERTIFIED —
+# the exact defect sp-s9675.2 found. If this ever stops failing, the fixture stopped
+# reproducing it and the assertions below prove nothing.
+ready_ids=" $(bdq "${READY_ARGS[@]}" --json 2>/dev/null | bead_id_lines | tr '\n' ' ') "
+nowant "bd ready hides the dependent behind its bd-open, CERTIFIED blocker" " $DEP " "$ready_ids"
+
+wide_ids=" $(bdq "${MACHINE_READY_ARGS[@]}" --json 2>/dev/null | bead_id_lines | tr '\n' ' ') "
+want "MACHINE_READY_ARGS (bd list, no blocker filter) carries the dependent through" " $DEP " "$wide_ids"
+
+"$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder >"$TMP/aeon-stack.log" 2>&1
+is "aeon.sh: exits 0 claiming the stacked dependent" "0" "$?"
+is "the dependent, not the prerequisite, was claimed (widened ready + --blockers machine)" "$DEP" "$(cat "$TMP/last-bead" 2>/dev/null)"
+
+depstatus="$(bd -C "$SPIRA_DB" show "$DEP" --json 2>/dev/null | python3 -c '
+import sys,json
+d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
+print(d[0].get("status","") if d else "")' 2>/dev/null)"
+is "the dependent's bd status shows it was actually claimed" "in_progress" "$depstatus"
 
 tl_summary
