@@ -16,6 +16,9 @@ use std::io::Write;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
+/// The meter's own executable name in an artifact set (what its links resolve to).
+pub const METER_EXE: &str = "bd-meter";
+
 /// The names the meter answers to: the standard binary and the embedded one testdb.sh uses.
 pub const SHIMMED: [&str; 2] = ["bd", "bd-embedded"];
 

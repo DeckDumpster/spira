@@ -221,6 +221,50 @@ fn resolve_exe_searches_path_and_takes_paths_as_given() {
     );
 }
 
+#[test]
+fn a_bd_that_is_the_meter_resolves_to_the_real_bd_behind_it() {
+    // A parallel suite's PATH: $HOME/.local/bin/bd -> <artifacts>/bd-meter, then the real bd.
+    let d = tmpdir("meter");
+    let art = d.join("artifacts");
+    let home_bin = d.join("home-bin");
+    let sys = d.join("sys");
+    for p in [&art, &home_bin, &sys] {
+        fs::create_dir_all(p).unwrap();
+    }
+    exe(&art.join("bd-meter"), "#!/bin/sh\n");
+    std::os::unix::fs::symlink(art.join("bd-meter"), home_bin.join("bd")).unwrap();
+    exe(&sys.join("bd"), "#!/bin/sh\n");
+    let pv = format!("{}:{}", home_bin.display(), sys.display());
+    let real = fs::canonicalize(sys.join("bd")).unwrap();
+
+    let metered = resolve_exe("bd", &pv).unwrap();
+    assert!(
+        metered.ends_with("bd-meter"),
+        "plant: bd resolves to the meter first"
+    );
+    assert_eq!(see_through_meter(metered.clone(), "bd", &pv), real);
+    assert_eq!(
+        see_through_meter(
+            metered.clone(),
+            &home_bin.join("bd").display().to_string(),
+            &pv
+        ),
+        real,
+        "a path spelling of bd sees through the meter too"
+    );
+    // The key a suite computes is the key setup computed without the meter on PATH.
+    let key = |pv: &str| {
+        let bd = see_through_meter(resolve_exe("bd", pv).unwrap(), "bd", pv);
+        template_key(&exe_identity(&bd).unwrap(), "dolt")
+    };
+    assert_eq!(key(&pv), key(&sys.display().to_string()));
+    // Not the meter, or a meter with nothing behind it: kept as resolved.
+    assert_eq!(see_through_meter(real.clone(), "bd", &pv), real);
+    let alone = home_bin.display().to_string();
+    assert_eq!(see_through_meter(metered.clone(), "bd", &alone), metered);
+    let _ = fs::remove_dir_all(&d);
+}
+
 // ---- orchestration against stand-ins -------------------------------------------------
 
 #[test]

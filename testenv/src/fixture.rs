@@ -117,6 +117,46 @@ impl TestDb {
     }
 }
 
+/// The test database each suite's `testdb_up` builds (DESIGN-testdb.md §2.4, sp-34ru2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Fixtures {
+    /// The server template built: every suite gets a private server fixture from it, so a
+    /// `bd` call never opens the store (the embedded per-call open is what cost 61 % of wall).
+    Server,
+    /// Fallback when the template did not build: copies of the embedded baseline.
+    Shared(TestDb),
+    /// Neither: each suite initialises its own embedded store.
+    PerSuite,
+}
+
+impl Fixtures {
+    /// The suite environment that selects this tier in `testdb.sh`'s `testdb_up`.
+    pub fn env(&self) -> Vec<(String, String)> {
+        match self {
+            Fixtures::Server => {
+                let mut env = TestDb::env(None);
+                env.push(("SPIRA_TESTDB_MODE".into(), "server".into()));
+                env
+            }
+            Fixtures::Shared(t) => TestDb::env(Some(t)),
+            Fixtures::PerSuite => TestDb::env(None),
+        }
+    }
+
+    /// The word the batch log uses.
+    pub fn describe(&self) -> String {
+        match self {
+            Fixtures::Server => "server (a private sql-server per suite)".into(),
+            Fixtures::Shared(t) => format!(
+                "shared baseline (mode: {}, name: {})",
+                if t.mode.is_empty() { "?" } else { &t.mode },
+                t.name
+            ),
+            Fixtures::PerSuite => "per-suite databases".into(),
+        }
+    }
+}
+
 /// podman's own pre-exec refusal: the `--user` account vanished from the container.
 pub fn is_user_account_fault(output: &str) -> bool {
     match output.find("unable to find user") {
@@ -378,7 +418,7 @@ impl<'a> Session<'a> {
         mode: Mode,
         n: usize,
         suite: &str,
-        testdb: Option<&TestDb>,
+        fixtures: &Fixtures,
     ) -> ExecRequest {
         let mut env = Vec::new();
         if mode == Mode::Parallel {
@@ -387,7 +427,7 @@ impl<'a> Session<'a> {
         env.extend(self.user_env());
         env.push(kv("SPIRA_IN_TESTENV", "1"));
         env.extend(self.artifact_env());
-        env.extend(TestDb::env(testdb));
+        env.extend(fixtures.env());
         env.push(kv("TMUX", ""));
         env.push(kv("SPIRA_PATH", ""));
         env.push(kv("SPIRA_BD_LOG", self.bd_log(mode, n, suite)));
@@ -801,10 +841,37 @@ mod tests {
     }
 
     #[test]
+    fn a_server_tier_sends_every_suite_to_a_private_server() {
+        let rt = FakeRuntime::new();
+        let s = session(&rt);
+        let r = s.suite_request(Mode::Parallel, 2, "test-a.sh", &Fixtures::Server);
+        assert_eq!(r.env_value("SPIRA_TESTDB_MODE"), Some("server"));
+        assert_eq!(
+            r.env_value("TESTDB_SHARED"),
+            Some("0"),
+            "no suite takes the embedded shared-baseline branch"
+        );
+        assert_eq!(r.env_value("TESTDB_BASELINE"), None);
+        // The fallback tiers never set the mode: testdb_up keeps its embedded default.
+        let t = TestDb::parse("TESTDB_NAME=b\nTESTDB_BASELINE=/b\nTESTDB_MODE=embedded\n").unwrap();
+        for f in [Fixtures::Shared(t), Fixtures::PerSuite] {
+            let r = s.suite_request(Mode::Parallel, 2, "test-a.sh", &f);
+            assert_eq!(r.env_value("SPIRA_TESTDB_MODE"), None, "{f:?}");
+        }
+        let r = s.suite_request(
+            Mode::Parallel,
+            2,
+            "test-a.sh",
+            &Fixtures::Shared(TestDb::parse("TESTDB_NAME=b\nTESTDB_BASELINE=/b\n").unwrap()),
+        );
+        assert_eq!(r.env_value("TESTDB_SHARED"), Some("1"));
+    }
+
+    #[test]
     fn parallel_suites_get_private_home_instance_and_run() {
         let rt = FakeRuntime::new();
         let s = session(&rt);
-        let r = s.suite_request(Mode::Parallel, 3, "test-a.sh", None);
+        let r = s.suite_request(Mode::Parallel, 3, "test-a.sh", &Fixtures::PerSuite);
         assert_eq!(r.argv, vec!["bash", "/workspace/spira/test-a.sh"]);
         assert_eq!(
             r.env[0],
@@ -823,7 +890,7 @@ mod tests {
             Some("/workspace/target/aeon/test-plan") // path-ok: the container-side path suites get
         );
         assert_eq!(r.env_value("SPIRA_ARTIFACTS_ROOT"), Some("/workspace"));
-        let r = s.suite_request(Mode::Serial, 1, "test-a.sh", None);
+        let r = s.suite_request(Mode::Serial, 1, "test-a.sh", &Fixtures::PerSuite);
         assert_eq!(r.env_value("HOME"), None);
         assert_eq!(r.env_value("SPIRA_INSTANCE"), None);
         assert_eq!(r.env_value("SPIRA_RUN"), Some("/tmp/spira-batch-abc123"));

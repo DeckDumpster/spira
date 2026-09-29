@@ -122,9 +122,52 @@ fixture in ~0.2 s instead of resetting one database that other borrowers were us
 `dolt-beads-test.service` is no longer started by `testdb.sh`; its unit is left installed
 for the operator's own use and is not changed here.
 
+### 2.4 Every suite gets a server fixture (sp-34ru2)
+
+**Intent.** A suite's `bd` call costs what the call does, not what opening the store
+costs. The store is opened **once per fixture** (by its private server), never once per
+`bd` call.
+
+**The misuse this removes (evidence, 2026-09-29).** 120 of the 140 suites that call
+`testdb_up` ran **embedded** Dolt: every `bd` invocation opened the Dolt engine in-process,
+replayed the store's chunk journal and released it. Measured on a throwaway store (bd 1.2.1,
+32-core host):
+
+* `bd --version` (Go runtime start of the 200 MB binary, no store): ~85 ms.
+* embedded `bd list` on a fresh store: 330–450 ms; `create` 500–550 ms. A CPU profile
+  (`bd --cpu-profile`, 7 runs aggregated) puts 46 % of the process's CPU in
+  `embeddeddolt.OpenSQL` → `nbs.newChunkJournal` → `processJournalRecords` plus the GC it
+  drives; strace shows the store's `LOCK` taken and its manifest rewritten 6 times per
+  `list`. The replay is O(journal): the fresh store's journal is 2.2 MB, and 60 creates
+  grow it to 4.3 MB and `list` from 391 to 504 ms — a suite's calls get slower as it runs.
+* the same calls against a private server fixture (§2.2): `list` 125–190 ms, `create`
+  260–320 ms.
+* bd-meter in testenv (six bd-heavy suites, parallel): 516 calls, 181.8 s of 298 s suite
+  wall (61 %), 262–401 ms per call.
+
+**Contract.** When the template for the artifact under test builds, testenv builds **no**
+embedded baseline and every suite runs with `SPIRA_TESTDB_MODE=server` (and
+`TESTDB_SHARED=0`), so each `testdb_up` takes the §2.3 server path: a private server from the
+template in ~0.1 s. A suite's own settings still win (a suite that unsets or overrides the
+variable, or a sub-run under `env -i`, is untouched). When the template does not build,
+testenv logs it and falls back to the embedded shared baseline exactly as before — the
+fixture tier degrades, it never fails a batch.
+
+**The template key sees through the bd meter.** Inside a parallel suite `bd` resolves to
+the bd meter (bdmeter.rs), whose canonical path is `bd-meter`; `Tools::resolve` resolves a
+`bd` that is the meter to the real `bd` behind it on PATH, so the template a suite asks for
+is the one testenv built during setup (not a second 4 s build under the template lock, keyed
+on the meter's mtime).
+
+**Floor.** What remains per call is the `bd` process itself: Go start (~85 ms CPU) and the
+six `git` children bd runs to discover a repository and its role (~7 ms each), plus the
+query. That is the floor for any suite that drives `bd` as a CLI; the remaining lever is the
+number of calls (the harness binaries under test call `bd` per bead per pass), not the store.
+
 ## 3. Non-goals
 
-* Embedded mode is untouched: it was never shared (a private directory per fixture).
+* ~~Embedded mode is untouched~~ — superseded by §2.4: embedded remains the fallback when
+  the template cannot build, and outside testenv.
 * Porting `testdb_seed` or the embedded path to Rust.
 * Changing any suite. The 19 server-mode suites keep `SPIRA_TESTDB_MODE=server`.
 
@@ -139,6 +182,11 @@ for the operator's own use and is not changed here.
   tables Dolt versions.
 * **D4 — the owner watchdog, not a trap.** Suites are killed by `timeout`, and a killed
   shell runs no trap.
+* **D6 — server fixtures for every suite, not a faster embedded store (sp-34ru2).**
+  Compacting the embedded store (`dolt gc`: 2.2 MB journal → 0.4 MB archive) cuts `list` by
+  a third at best and a suite's own writes regrow the journal; `--dolt-auto-commit off` saves
+  ~10 % of a write and changes what a suite observes. Only a store opened once per fixture
+  removes the per-call open. Production runs server mode too, so the fixtures now match it.
 * **D5 — a subcommand of testenv, not a new crate:** testenv owns the fixture tier and is
   already resolved in every place a suite runs (`FLOOR` of `--artifacts`, `make install`).
 

@@ -3,7 +3,7 @@
 //! red suite (container death, exec storm, lost `--user` account). DESIGN.md §4.3. With
 //! `BatchCfg::deadline`, a hard cut of the whole suite phase (DESIGN.md D7).
 
-use crate::fixture::{is_user_account_fault, Liveness, Session, TestDb};
+use crate::fixture::{is_user_account_fault, Fixtures, Liveness, Session};
 use crate::record::{self, Mode, Producer, ResultRecord, Status};
 use crate::runtime::cancelled;
 use crate::schedule::Job;
@@ -139,7 +139,7 @@ struct Shared<'a> {
     session: &'a Session<'a>,
     cfg: &'a BatchCfg,
     hooks: &'a Hooks<'a>,
-    testdb: Option<&'a TestDb>,
+    fixtures: &'a Fixtures,
     records: Mutex<BTreeMap<String, ResultRecord>>,
     empty_output: Mutex<BTreeMap<String, bool>>,
     account_fault: Mutex<Option<String>>,
@@ -174,7 +174,7 @@ impl Shared<'_> {
     fn exec_suite(&self, n: usize, suite: &str) -> (i32, u64, String) {
         let mut req = self
             .session
-            .suite_request(self.cfg.mode, n, suite, self.testdb);
+            .suite_request(self.cfg.mode, n, suite, self.fixtures);
         req.timeout = self.cfg.timeout;
         req.deadline = self.deadline_at;
         let raw = self.raw_path(suite);
@@ -260,14 +260,14 @@ pub fn run(
     session: &Session,
     cfg: &BatchCfg,
     hooks: &Hooks,
-    testdb: Option<&TestDb>,
+    fixtures: &Fixtures,
     jobs: &[Job],
 ) -> BatchOutcome {
     let sh = Shared {
         session,
         cfg,
         hooks,
-        testdb,
+        fixtures,
         records: Mutex::new(BTreeMap::new()),
         empty_output: Mutex::new(BTreeMap::new()),
         account_fault: Mutex::new(None),
@@ -547,7 +547,7 @@ mod tests {
                 &s,
                 &c,
                 h,
-                None,
+                &Fixtures::PerSuite,
                 &jobs(&["test-a.sh", "test-b.sh", "test-c.sh", "test-d.sh"]),
             );
             assert_eq!(seen.timings.lock().unwrap().len(), 4);
@@ -595,7 +595,7 @@ mod tests {
         let s = session(&rt);
         let mut c = cfg(Mode::Serial, &dir, 0);
         c.quarantined.insert("test-q.sh".into());
-        let out = with_hooks(|h, _| run(&s, &c, h, None, &jobs(&["test-q.sh"])));
+        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-q.sh"])));
         assert_eq!(out.records["test-q.sh"].status, Status::QuarantinedRed);
         assert!(out.blocking_reds().is_empty());
         assert_eq!(out.quarantined_reds(), vec!["test-q.sh"]);
@@ -629,7 +629,7 @@ mod tests {
         let c = cfg(Mode::Parallel, &dir, 2);
         let names: Vec<String> = (0..8).map(|i| format!("test-{i}.sh")).collect();
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        let out = with_hooks(|h, _| run(&s, &c, h, None, &jobs(&refs)));
+        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&refs)));
         assert_eq!(out.records.len(), 8);
         assert!(peak.load(Ordering::SeqCst) <= 2);
         assert!(peak.load(Ordering::SeqCst) >= 1);
@@ -666,7 +666,7 @@ mod tests {
         let mut js = jobs(&["test-a.sh", "test-b.sh", "test-x.sh", "test-c.sh"]);
         js[2].exclusive = Some("heavy".into());
         let out = with_hooks(|h, seen| {
-            let o = run(&s, &c, h, None, &js);
+            let o = run(&s, &c, h, &Fixtures::PerSuite, &js);
             assert!(seen
                 .logs
                 .lock()
@@ -693,7 +693,7 @@ mod tests {
                 &s,
                 &c,
                 h,
-                None,
+                &Fixtures::PerSuite,
                 &jobs(&["test-a.sh", "test-b.sh", "test-c.sh"]),
             )
         });
@@ -722,7 +722,7 @@ mod tests {
         let c = cfg(Mode::Parallel, &dir, 0);
         let names: Vec<String> = (0..6).map(|i| format!("test-{i}.sh")).collect();
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        let out = with_hooks(|h, _| run(&s, &c, h, None, &jobs(&refs)));
+        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&refs)));
         assert_eq!(out.exec_fault, Some(6));
         assert!(out.records.values().all(|r| r.status == Status::Unreached));
         assert_eq!(
@@ -753,7 +753,7 @@ mod tests {
         c.exec_fault_threshold = 3;
         let names: Vec<String> = (0..6).map(|i| format!("test-{i}.sh")).collect();
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        let out = with_hooks(|h, _| run(&s, &c, h, None, &jobs(&refs)));
+        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&refs)));
         assert_eq!(out.exec_fault, Some(3));
         assert_eq!(rt.suite_execs().len(), 3);
         assert_eq!(out.records.len(), 2);
@@ -777,7 +777,7 @@ mod tests {
                 &s,
                 &c,
                 h,
-                None,
+                &Fixtures::PerSuite,
                 &jobs(&["test-a.sh", "test-b.sh", "test-c.sh"]),
             )
         });
@@ -798,7 +798,7 @@ mod tests {
         let dir = tmpdir("pacct");
         let s = session(&rt);
         let c = cfg(Mode::Parallel, &dir, 1);
-        let out = with_hooks(|h, _| run(&s, &c, h, None, &jobs(&["test-b.sh", "test-a.sh"])));
+        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-b.sh", "test-a.sh"])));
         assert!(out.account_fault.is_some());
         assert_eq!(out.records["test-b.sh"].status, Status::Unreached);
         assert!(!out.records.contains_key("test-a.sh"));
@@ -818,7 +818,7 @@ mod tests {
                 &s,
                 &c,
                 h,
-                None,
+                &Fixtures::PerSuite,
                 &jobs(&["test-a.sh", "test-b.sh", "test-c.sh"]),
             )
         });
@@ -839,7 +839,7 @@ mod tests {
         let s = session(&rt);
         let mut c = cfg(Mode::Serial, &dir, 0);
         c.timeout = Some(Duration::from_secs(600));
-        with_hooks(|h, _| run(&s, &c, h, None, &jobs(&["test-a.sh"])));
+        with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
         assert_eq!(rt.suite_execs()[0].timeout, Some(Duration::from_secs(600)));
     }
 
@@ -906,7 +906,7 @@ mod tests {
                 &s,
                 &c,
                 h,
-                None,
+                &Fixtures::PerSuite,
                 &jobs(&["test-a.sh", "test-b.sh", "test-c.sh"]),
             );
             assert!(seen
@@ -964,7 +964,7 @@ mod tests {
                 &s,
                 &c,
                 h,
-                None,
+                &Fixtures::PerSuite,
                 &jobs(&[
                     "test-long.sh",
                     "test-s1.sh",
@@ -1013,7 +1013,7 @@ mod tests {
         let s = session(&rt);
         let mut c = cfg(Mode::Serial, &dir, 0);
         c.deadline = Some(Duration::from_secs(60));
-        let out = with_hooks(|h, _| run(&s, &c, h, None, &jobs(&["test-a.sh"])));
+        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
         assert_eq!(out.records["test-a.sh"].status, Status::Timeout);
         assert!(!out.deadline_hit);
         assert!(out.deferred().is_empty());
@@ -1026,7 +1026,7 @@ mod tests {
         let dir = tmpdir("dl-none");
         let s = session(&rt);
         let c = cfg(Mode::Parallel, &dir, 1);
-        let out = with_hooks(|h, _| run(&s, &c, h, None, &jobs(&["test-a.sh", "test-b.sh"])));
+        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh", "test-b.sh"])));
         assert!(!out.deadline_hit);
         assert!(out.deferred().is_empty());
         assert!(out.records.values().all(|r| r.status == Status::Ok));
