@@ -243,18 +243,18 @@ want "resume on a world that was not draining says so" "not draining" "$out"
 # later fails here rather than in production.
 HARNESS="$(cd "$HERE/.." && pwd)"
 if [ -d "$HARNESS/systemd" ]; then
-    doors="$(grep -l 'ExecStart=.*aeon\.sh' "$HARNESS/systemd"/*.service 2>/dev/null | wc -l)"
-    [ "${doors:-0}" -ge 1 ] && ok "units that ExecStart aeon.sh directly exist ($doors) — the gate must cover them" \
+    doors="$(grep -lE 'ExecStart=.*(aeon\.sh|/bin/aeon )' "$HARNESS/systemd"/*.service 2>/dev/null | wc -l)"
+    [ "${doors:-0}" -ge 1 ] && ok "units that ExecStart the aeon directly exist ($doors) — the gate must cover them" \
                             || bad "direct-ExecStart doors" "expected at least one, found ${doors:-0}"
-    grep -q 'world.draining' "$HARNESS/spira/aeon.sh" \
-        && ok "aeon.sh itself carries the drain gate" \
-        || bad "aeon.sh carries the drain gate" "no world.draining check in aeon.sh"
+    grep -q 'world.draining' "$HARNESS/aeon/src/run.rs" \
+        && ok "the aeon binary itself carries the drain gate" \
+        || bad "the aeon binary carries the drain gate" "no world.draining check in aeon/src/run.rs"
     grep -q 'world.draining' "$HARNESS/spira/lib.sh" \
         && ok "summon_fayth also carries it (cheaper: never starts the unit)" \
         || bad "summon_fayth carries the drain gate" "no world.draining check in lib.sh"
-    grep -q 'world.halted' "$HARNESS/spira/aeon.sh" \
-        && ok "aeon.sh carries the halt gate" \
-        || bad "aeon.sh carries the halt gate" "no world.halted check in aeon.sh"
+    grep -q 'world.halted' "$HARNESS/aeon/src/run.rs" \
+        && ok "the aeon binary carries the halt gate" \
+        || bad "the aeon binary carries the halt gate" "no world.halted check in aeon/src/run.rs"
     grep -q 'world.halted' "$HARNESS/spira/lib.sh" \
         && ok "summon_fayth carries the halt gate" \
         || bad "summon_fayth carries the halt gate" "no world.halted check in lib.sh"

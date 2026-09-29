@@ -29,46 +29,20 @@ echo "test-timeout.sh"
 echo
 echo "structural:"
 
-# THE TIMEOUT PATH IS BEFORE REQUEUE_CAUSE AND BEFORE session_outcome.
-# session_outcome classifies a timed-out trace as `unlanded` (the claude SDK emits a result
-# record on SIGTERM), which would charge an attempt if it ran first.
-timeout_line="$(grep -n 'SESSION_RC:-0.*124' "$HERE/aeon.sh" | grep -v '^\s*#' | sed -n 1p | cut -d: -f1)"
-requeue_line="$(grep -n 'REQUEUE_CAUSE" \]; then' "$HERE/aeon.sh" | sed -n 1p | cut -d: -f1)"
-outcome_line="$(grep -n '_d_outcome="\$(session_outcome' "$HERE/aeon.sh" | sed -n 1p | cut -d: -f1)"
-is "timeout check appears before REQUEUE_CAUSE check" yes \
-   "$( [ -n "$timeout_line" ] && [ -n "$requeue_line" ] && [ "$timeout_line" -lt "$requeue_line" ] && echo yes || echo no)"
-is "timeout check appears before session_outcome" yes \
-   "$( [ -n "$timeout_line" ] && [ -n "$outcome_line" ] && [ "$timeout_line" -lt "$outcome_line" ] && echo yes || echo no)"
-
-# THE TIMEOUT PATH CHARGES NO ATTEMPT. Counter labels (sp-timeout-N) are no longer
-# written (sp-lzt); bump_timeout is a no-op and the timeout path does not call it.
-# The invariant is: the timeout block does not call bump_attempt.
-timeout_block="$(sed -n '/SESSION_RC.*124.*!=.*yes/,/^        fi$/p' "$HERE/aeon.sh")"
-is "the timeout path does not call bump_attempt" 0 \
-   "$(printf '%s' "$timeout_block" | grep -c 'bump_attempt')"
+# RETIRED WITH aeon.sh: the timeout-before-requeue-before-outcome order and "the timeout
+# path charges no attempt" are the Rust aeon's disposition table — `cargo test -p aeon
+# decide::tests::disposition_table` and `session::tests::timeout_is_124`.
 
 # bump_timeout is a no-op — no harness script outside lib.sh needs to call it.
 timeout_sites="$(grep -rl 'bump_timeout' "$HERE"/*.sh 2>/dev/null | grep -v '/lib\.sh$' | grep -v '/test-' \
     | xargs -r -n1 basename | sort | tr '\n' ' ' | sed 's/ $//')"
 is "no harness script outside lib.sh calls bump_timeout" "" "$timeout_sites"
 
-# THE POISON-AFTER-CLAIM GUARD EXISTS AND PRECEDES WORKSPACE SETUP.
-# The claim and the predicate check are not atomic; spira-poison can land in the gap.
-poison_check="$(grep -n 'spira-poison' "$HERE/aeon.sh" | grep -v '^\s*#' | sed -n 1p | cut -d: -f1)"
-workspace_setup="$(grep -Fn 'the workspace' "$HERE/aeon.sh" | sed -n 1p | cut -d: -f1)"
-is "poison-after-claim guard precedes workspace setup" yes \
-   "$( [ -n "$poison_check" ] && [ -n "$workspace_setup" ] && [ "$poison_check" -lt "$workspace_setup" ] && echo yes || echo no)"
+# RETIRED WITH aeon.sh: the poison-after-claim guard (before any workspace setup) and the
+# session-rc capture are the Rust aeon's — `cargo test -p aeon tests::poison_raced_releases_and_records`
+# and `session::tests::timeout_is_124`.
 
-# SESSION_RC IS SET RIGHT AFTER rc=$? AND BEFORE set -e.
-rc_capture="$(grep -n '^rc=\$?' "$HERE/aeon.sh" | sed -n 1p | cut -d: -f1)"
-session_rc_set="$(grep -n '^SESSION_RC=\$rc' "$HERE/aeon.sh" | sed -n 1p | cut -d: -f1)"
-set_e="$(grep -n '^set -e' "$HERE/aeon.sh" | sed -n 1p | cut -d: -f1)"
-is "SESSION_RC is set after rc=\$?" yes \
-   "$( [ -n "$rc_capture" ] && [ -n "$session_rc_set" ] && [ "$rc_capture" -lt "$session_rc_set" ] && echo yes || echo no)"
-is "SESSION_RC is set before set -e" yes \
-   "$( [ -n "$session_rc_set" ] && [ -n "$set_e" ] && [ "$session_rc_set" -lt "$set_e" ] && echo yes || echo no)"
-
-# The "cleanup disarms errexit first" check (D7) lives once, in test-attempts.sh, with the
+# The "cleanup disarms errexit first" check (D7) lived in test-attempts.sh (retired with aeon.sh), with the
 # hazard demonstration that shows why; this file only used a bare copy of the assertion.
 
 # ======================================================================================
