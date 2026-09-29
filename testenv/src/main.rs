@@ -16,6 +16,11 @@ fn main() -> ExitCode {
         let rc = testenv::suites::main(&args[1..]);
         return ExitCode::from(rc.clamp(0, 255) as u8);
     }
+    // `testenv testdb …` — server-mode test databases (DESIGN-testdb.md).
+    if args.first().map(String::as_str) == Some("testdb") {
+        let rc = testenv::testdb::main(&args[1..]);
+        return ExitCode::from(rc.clamp(0, 255) as u8);
+    }
     let inv = match cli::parse(&args) {
         Ok(i) => i,
         Err(cli::UsageError(lines)) => {

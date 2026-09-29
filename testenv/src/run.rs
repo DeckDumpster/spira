@@ -880,6 +880,24 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         }
     }
 
+    // ---- server-mode test-DB template (DESIGN-testdb.md) -----------------------------
+    if runnable.iter().any(|n| headers[n].testdb_server) {
+        let t0 = std::time::Instant::now();
+        let out = session.rt.exec(&session.testdb_template_request());
+        if out.ok() {
+            deps.log(&format!(
+                "server-mode testdb template ready in {} ms",
+                t0.elapsed().as_millis()
+            ));
+        } else {
+            deps.log(&format!(
+                "server-mode testdb template build failed (rc={}) — suites will report it:\n{}",
+                out.rc,
+                out.tail(20)
+            ));
+        }
+    }
+
     // ---- schedule ------------------------------------------------------------------
     let meminfo = util::read("/proc/meminfo");
     let mx = schedule::maxpar(&MaxparInputs {
