@@ -278,7 +278,7 @@ if [ -r "$_vd_svc" ]; then
     _vd_execstart="$(grep '^ExecStart=' "$_vd_svc" 2>/dev/null | head -1)"
     if [ -n "$_vd_execstart" ]; then
         want "spira-verdict.service ExecStart runs the queue binary's step --all" \
-             "ExecStart=@SPIRA_PROD_ROOT@/bin/queue step --all" "$_vd_execstart"
+             "ExecStart=@SPIRA_QUEUE_BIN@ step --all" "$_vd_execstart"
         want "spira-verdict.service hands the binary its harness (SPIRA_HOME)" \
              "Environment=SPIRA_HOME=" "$(grep '^Environment=' "$_vd_svc" 2>/dev/null)"
     else
