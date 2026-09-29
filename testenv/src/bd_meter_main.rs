@@ -37,7 +37,9 @@ fn main() -> ExitCode {
     }
 
     let path = std::env::var_os("PATH").unwrap_or_default();
-    let Some(real) = bdmeter::find_real(&name, &path, &me) else {
+    // Invoked by path (a caller holding `$SPIRA_BD`), look only past that directory on PATH.
+    let invoked_from = arg0.parent().filter(|p| !p.as_os_str().is_empty());
+    let Some(real) = bdmeter::find_real_after(&name, &path, &me, invoked_from) else {
         eprintln!("{name}: command not found (bd-meter: no {name} on PATH past the meter)");
         return ExitCode::from(127);
     };

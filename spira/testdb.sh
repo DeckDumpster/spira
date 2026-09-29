@@ -273,7 +273,10 @@ testdb_up() {            # testdb_up <tag>
     TESTDB_BASELINE=""
     TESTDB_BIN=""
     TESTDB_OWNS_SERVER_FIXTURE=1; export TESTDB_OWNS_SERVER_FIXTURE
-    export SPIRA_DB="$TESTDB_DIR" SPIRA_BD="$TESTDB_SERVER_BD"
+    # TESTDB_BD: the absolute bd path testenv resolved (DESIGN-testdb.md §2.4) — a bare name
+    # defeats conf.sh's schema-check cache, and every conf.sh source re-ran bd migrate.
+    export SPIRA_DB="$TESTDB_DIR" SPIRA_BD="$(_testdb_kv TESTDB_BD "$_out")"
+    [ -n "$SPIRA_BD" ] || SPIRA_BD="$TESTDB_SERVER_BD"
     return 0
 }
 

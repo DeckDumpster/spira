@@ -5,7 +5,7 @@
 use crate::batch::{self, now_epoch, BatchCfg, Hooks};
 use crate::build::{artifacts_dir, profile_dir, BuildError, Builder};
 use crate::cli::{Invocation, RunArgs, SuitesArg};
-use crate::fixture::Session;
+use crate::fixture::{Fixtures, Session};
 use crate::prebuilt::{self, Prebuilt};
 use crate::record::{suite_line, Mode, Producer, ResultRecord, Status};
 use crate::runtime::{cancelled, ContainerRuntime};
@@ -862,41 +862,38 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         return Finish::green(0);
     }
 
-    // ---- shared test-DB baseline ---------------------------------------------------
-    deps.log(&format!(
-        "building shared testdb baseline in {}",
-        session.name
-    ));
-    let (testdb, bl_out) = session.baseline();
-    match &testdb {
-        Some(t) => deps.log(&format!(
-            "shared testdb baseline ready (mode: {}, name: {})",
-            if t.mode.is_empty() { "?" } else { &t.mode },
-            t.name
-        )),
-        None => {
-            deps.log("shared testdb baseline unavailable — falling back to per-suite databases");
-            eprint!("{}", bl_out.output);
+    // ---- test databases (DESIGN-testdb.md §2.4) -----------------------------------------
+    // The server template first: when it builds, every suite gets a private sql-server
+    // fixture and no embedded baseline is built. A `bd` call against an embedded store opens
+    // the Dolt engine and replays its journal every time (sp-34ru2: 61 % of suite wall).
+    let t0 = std::time::Instant::now();
+    let tpl = session.rt.exec(&session.testdb_template_request());
+    let fixtures = if tpl.ok() {
+        deps.log(&format!(
+            "testdb template ready in {} ms — every suite gets a private server fixture",
+            t0.elapsed().as_millis()
+        ));
+        Fixtures::Server
+    } else {
+        deps.log(&format!(
+            "testdb template build failed (rc={}) — falling back to the embedded baseline; server-mode suites will report it:\n{}",
+            tpl.rc,
+            tpl.tail(20)
+        ));
+        deps.log(&format!(
+            "building shared testdb baseline in {}",
+            session.name
+        ));
+        let (testdb, bl_out) = session.baseline();
+        match testdb {
+            Some(t) => Fixtures::Shared(t),
+            None => {
+                eprint!("{}", bl_out.output);
+                Fixtures::PerSuite
+            }
         }
-    }
-
-    // ---- server-mode test-DB template (DESIGN-testdb.md) -----------------------------
-    if runnable.iter().any(|n| headers[n].testdb_server) {
-        let t0 = std::time::Instant::now();
-        let out = session.rt.exec(&session.testdb_template_request());
-        if out.ok() {
-            deps.log(&format!(
-                "server-mode testdb template ready in {} ms",
-                t0.elapsed().as_millis()
-            ));
-        } else {
-            deps.log(&format!(
-                "server-mode testdb template build failed (rc={}) — suites will report it:\n{}",
-                out.rc,
-                out.tail(20)
-            ));
-        }
-    }
+    };
+    deps.log(&format!("testdb: {}", fixtures.describe()));
 
     // ---- schedule ------------------------------------------------------------------
     let meminfo = util::read("/proc/meminfo");
@@ -996,7 +993,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     }
     let cpu0 = util::cpu_jiffies(&util::read("/proc/stat"));
     let t_suites = Instant::now();
-    let outcome = batch::run(&session, &cfg, &hooks, testdb.as_ref(), &jobs);
+    let outcome = batch::run(&session, &cfg, &hooks, &fixtures, &jobs);
     let suites_wall = t_suites.elapsed().as_secs();
     let cpu1 = util::cpu_jiffies(&util::read("/proc/stat"));
 
@@ -1157,13 +1154,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         })
         .collect();
     let _ = fs::write(results.join("timing.tsv"), tsv);
-    if let Some(t) = &testdb {
-        deps.log(&format!(
-            "testdb: shared baseline used (mode: {}, name: {})",
-            if t.mode.is_empty() { "?" } else { &t.mode },
-            t.name
-        ));
-    }
+    deps.log(&format!("testdb: {} used", fixtures.describe()));
     drop(guard);
 
     // ---- judge ---------------------------------------------------------------------

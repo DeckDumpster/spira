@@ -252,6 +252,11 @@ binary of that name on PATH, and appends `<wall_ms> <rc> <subcommand>` to `SPIRA
 An artifact set without the meter falls back to `mkdir -p` (unmetered: `bd_calls` 0). Serial
 mode is unmetered. `bd_calls = 0` therefore means "no metered call", not "no wait"; readers
 report the metered share. Before sp-cln99 nothing wrote the log and every row read 0/0 (D3).
+Invoked **by path** through a directory on PATH (a caller holding `$SPIRA_BD`, which
+`testdb_up` exports as the absolute path of the meter's link since sp-34ru2), the meter
+searches only the PATH entries after that directory, so a `bd` wrapper ahead of it that execs
+`$SPIRA_BD` (loom's counting shim) is never taken for the real one — the two would exec each
+other until fork failed with EAGAIN.
 
 `round` family (only with `SPIRA_ROUND_BATCH_ID`): `batch_id`, `phase="build"`, `secs`,
 `members`, `reds` (red + timeout count).
@@ -282,7 +287,7 @@ parse args ─ resolve repo, landref, tree ─ acquire worktree (in place | scra
         staged to <wt>/target/prebuilt here instead of building  ─ SPIRA_ARTIFACTS=…/prebuilt
   ─ orphan sweeps ─ claim owner file ─ testenv.sh up / probe
   ─ configure, suspend loom+cockpit+queue-watch units, install  (skippable)
-  ─ requirements check (skip-req records) ─ shared testdb baseline
+  ─ requirements check (skip-req records) ─ testdb template (else shared baseline)
   ─ schedule: exclusive first, then LPT; maxpar; PSI pause; per-suite timeout
   ─ faults: container death, exec storm, user-account loss → reclassify, rc 2
   ─ unreached records ─ batch.meta, runner.meta, timing.tsv, tsd rows
@@ -331,11 +336,16 @@ uid 1001, `XDG_RUNTIME_DIR=/run/user/1001`, `CARGO_HOME=/var/spira/cargo`,
   SPIRA_TESTDB_DATA=/tmp/spira-batch-<i>/testdb`. Any failure → rc 3.
 * **Requirements**: each distinct `# requires:` token (bar `testenv`) is checked once with
   `command -v` inside the container.
-* **Test-DB baseline**: `. /workspace/spira/testdb.sh && testdb_up batch_baseline`, which
+* **Test databases (sp-34ru2, DESIGN-testdb.md §2.4)**: the server-mode template is built
+  first, for every batch. When it builds, every suite gets `SPIRA_TESTDB_MODE=server
+  TESTDB_SHARED=0 TESTDB_NAME= TESTDB_DIR=` — a private sql-server fixture per suite, so no
+  `bd` call opens an embedded store — and the embedded baseline below is not built. Only
+  when the template fails is the baseline built, as follows.
+* **Test-DB baseline** (fallback): `. /workspace/spira/testdb.sh && testdb_up batch_baseline`, which
   prints `TESTDB_NAME/DIR/BASELINE/BD/BIN/MODE=`. Complete → every suite gets
   `TESTDB_SHARED=1` and those six values (a ~26 ms copy each); otherwise
   `TESTDB_SHARED=0 TESTDB_NAME= TESTDB_DIR=` (a ~6 s `bd init` each).
-* **Server-mode template** (sp-v2lqd): when any runnable suite carries `# testdb-mode:
+* **Server-mode template** (sp-v2lqd; built for every batch since sp-34ru2): formerly only when a runnable suite carried `# testdb-mode:
   server`, `$SPIRA_ARTIFACTS/testenv testdb template --bd bd --dolt dolt` builds the
   pre-initialised store once; each such suite then gets a private Dolt sql-server copied
   from it (~0.1 s) instead of sharing `dolt-beads-test.service`. See DESIGN-testdb.md.

@@ -43,7 +43,7 @@ diagnostics on stderr; exit 0 success, 1 failure, 2 usage.
 | command | does |
 |---|---|
 | `template --bd B --dolt D [--root R]` | ensure the template for (B, D) exists; print `TESTDB_TEMPLATE=` |
-| `up --tag T --bd B --dolt D [--root R] [--owner PID]` | a fresh fixture from the template; print `TESTDB_NAME TESTDB_DIR TESTDB_FIXTURE TESTDB_SERVER_PORT TESTDB_SERVER_PID TESTDB_UP_MS` |
+| `up --tag T --bd B --dolt D [--root R] [--owner PID]` | a fresh fixture from the template; print `TESTDB_NAME TESTDB_DIR TESTDB_FIXTURE TESTDB_SERVER_PORT TESTDB_SERVER_PID TESTDB_UP_MS TESTDB_BD` (`TESTDB_BD`: B as an absolute path, the first on PATH, links not resolved — §2.4) |
 | `reset --fixture F` | back to exactly the template state; print `TESTDB_SERVER_PORT TESTDB_SERVER_PID TESTDB_RESET_MS` |
 | `down --fixture F` | stop the server, remove the fixture; print `TESTDB_SERVER_CPU_MS TESTDB_LIFE_MS TESTDB_RESETS` |
 | `reap --fixture F --owner PID` | internal: the watchdog `up` detaches |
@@ -122,9 +122,82 @@ fixture in ~0.2 s instead of resetting one database that other borrowers were us
 `dolt-beads-test.service` is no longer started by `testdb.sh`; its unit is left installed
 for the operator's own use and is not changed here.
 
+### 2.4 Every suite gets a server fixture (sp-34ru2)
+
+**Intent.** A suite's `bd` call costs what the call does, not what opening the store
+costs. The store is opened **once per fixture** (by its private server), never once per
+`bd` call.
+
+**The misuse this removes (evidence, 2026-09-29).** 120 of the 140 suites that call
+`testdb_up` ran **embedded** Dolt: every `bd` invocation opened the Dolt engine in-process,
+replayed the store's chunk journal and released it. Measured on a throwaway store (bd 1.2.1,
+32-core host):
+
+* `bd --version` (Go runtime start of the 200 MB binary, no store): ~85 ms.
+* embedded `bd list` on a fresh store: 330–450 ms; `create` 500–550 ms. A CPU profile
+  (`bd --cpu-profile`, 7 runs aggregated) puts 46 % of the process's CPU in
+  `embeddeddolt.OpenSQL` → `nbs.newChunkJournal` → `processJournalRecords` plus the GC it
+  drives; strace shows the store's `LOCK` taken and its manifest rewritten 6 times per
+  `list`. The replay is O(journal): the fresh store's journal is 2.2 MB, and 60 creates
+  grow it to 4.3 MB and `list` from 391 to 504 ms — a suite's calls get slower as it runs.
+* the same calls against a private server fixture (§2.2): `list` 125–190 ms, `create`
+  260–320 ms.
+* bd-meter in testenv (six bd-heavy suites, parallel): 516 calls, 181.8 s of 298 s suite
+  wall (61 %), 262–401 ms per call.
+
+**Contract.** When the template for the artifact under test builds, testenv builds **no**
+embedded baseline and every suite runs with `SPIRA_TESTDB_MODE=server` (and
+`TESTDB_SHARED=0`), so each `testdb_up` takes the §2.3 server path: a private server from the
+template in ~0.1 s. A suite's own settings still win (a suite that unsets or overrides the
+variable, or a sub-run under `env -i`, is untouched). When the template does not build,
+testenv logs it and falls back to the embedded shared baseline exactly as before — the
+fixture tier degrades, it never fails a batch.
+
+**The template key sees through the bd meter.** Inside a parallel suite `bd` resolves to
+the bd meter (bdmeter.rs), whose canonical path is `bd-meter`; `Tools::resolve` resolves a
+`bd` that is the meter to the real `bd` behind it on PATH, so the template a suite asks for
+is the one testenv built during setup (not a second 4 s build under the template lock, keyed
+on the meter's mtime).
+
+**The bd path is absolute.** conf.sh caches its `bd migrate schema` check in
+`$SPIRA_RUN/bd-schema-stamp`, keyed on `stat "$SPIRA_BD"`. `testdb_up` exported a bare
+`SPIRA_BD=bd` (server) or `bd-embedded` (shared baseline), which never stats, so **every**
+conf.sh source by a script the code under test spawns (landing-pass → `skew.sh refresh`,
+`systemd/unit-ensure.sh`, `watchd.sh manifest|units`, …) re-ran the check: 123 of
+test-certify's 231 bd calls were `migrate schema`. `up` now prints `TESTDB_BD`, the absolute
+path of B as found on the caller's PATH **without** resolving links (inside a metered suite
+it is the meter's link, so calls stay metered), and `testdb.sh` exports it as `SPIRA_BD`
+(call-site: it reads the value, as it reads `TESTDB_DIR`).
+
+**The server path finds testenv however a suite repoints.** `testdb.sh` resolves the binary
+with `spira_bin testenv`, which a suite that points `SPIRA_REPO`/`SPIRA_HOME` at a fixture
+tree cannot satisfy; the server tier therefore exports `TESTDB_TESTENV=<artifacts>/testenv`,
+which `_testdb_testenv` already prefers. Three suites that test the embedded path itself
+(`test-testdb-failsafe`, `test-testdb-concurrent`, and `test-beads-push-commit`, whose remote
+is written and read through the embedded library) unset `SPIRA_TESTDB_MODE`.
+
+**Measured (testenv, maxpar 8, same host, 2026-09-29).** The six bd-heavy suites (certify,
+auron, landing-red-recurring, closed-strand, bead-dep-add, cockpit-funnel), three runs of
+`local/main` against three of this branch: bd calls 516 → 346; bd wait 138–182 s → 74–81 s;
+per call 267–352 ms → 213–235 ms; share of suite wall 52–61 % → 35–41 %. The 146 suites that
+use testdb: 6,761 → 5,251 calls, 1,996 s → 1,107 s of bd, share 41.6 % → 24.2 %, batch wall
+664 s → 612 s, cgroup peak 3,659 → 3,725 MiB — and 13 server-mode suites that `local/main`
+SKIPPED run again (their template key was the meter's, and the meter cannot `init`).
+
+**Floor.** What remains per call is the `bd` process itself: Go start (~85 ms CPU) and the
+six `git` children bd runs to discover a repository and its role (~7 ms each), plus the
+query. That is the floor for any suite that drives `bd` as a CLI; the remaining lever is the
+number of calls (the harness binaries under test call `bd` per bead per pass), not the store.
+Measured inside the testenv image, idle: `bd --version` 81 ms (Go package init alone is
+63 ms over 689 packages, `GODEBUG=inittrace=1`), a server read 125 ms, a server write
+206 ms, against embedded 254–287 ms and 408 ms. For the six suites (346 calls, ~106 s of
+non-bd wall) the idle floor is ~48 s of bd, a share of ~31 %; 20 % would need ≤ 75 ms per
+call, below `bd --version` itself.
+
 ## 3. Non-goals
 
-* Embedded mode is untouched: it was never shared (a private directory per fixture).
+* ~~Embedded mode is untouched~~ — superseded by §2.4: embedded remains the fallback when
+  the template cannot build, and outside testenv.
 * Porting `testdb_seed` or the embedded path to Rust.
 * Changing any suite. The 19 server-mode suites keep `SPIRA_TESTDB_MODE=server`.
 
@@ -139,6 +212,11 @@ for the operator's own use and is not changed here.
   tables Dolt versions.
 * **D4 — the owner watchdog, not a trap.** Suites are killed by `timeout`, and a killed
   shell runs no trap.
+* **D6 — server fixtures for every suite, not a faster embedded store (sp-34ru2).**
+  Compacting the embedded store (`dolt gc`: 2.2 MB journal → 0.4 MB archive) cuts `list` by
+  a third at best and a suite's own writes regrow the journal; `--dolt-auto-commit off` saves
+  ~10 % of a write and changes what a suite observes. Only a store opened once per fixture
+  removes the per-call open. Production runs server mode too, so the fixtures now match it.
 * **D5 — a subcommand of testenv, not a new crate:** testenv owns the fixture tier and is
   already resolved in every place a suite runs (`FLOOR` of `--artifacts`, `make install`).
 
