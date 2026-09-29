@@ -1683,6 +1683,78 @@
             "null"
           ]
         },
+        "round_vm_host_addr": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "round_vm_host_key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "round_vm_host_pubkey": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "round_vm_max_retries": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "round_vm_maxpar": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "round_vm_mirror_port": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "round_vm_provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "round_vm_retry_interval": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "round_vm_ssh_port": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "round_vm_ssh_user": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "round_vm_state_dir": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "round_vm_vcpus": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "run": {
           "type": [
             "string",

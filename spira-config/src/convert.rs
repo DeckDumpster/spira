@@ -440,6 +440,18 @@ pub fn spira_section(
             "SPIRA_PVE_ENV" => s.pve_env = Some(val.clone()),
             "SPIRA_WORKFLOW_ONLY_PATHS" => s.workflow_only_paths = Some(val.clone()),
             "SPIRA_GH_API" => s.gh_api = Some(val.clone()),
+            "SPIRA_ROUND_VM_STATE_DIR" => s.round_vm_state_dir = Some(val.clone()),
+            "SPIRA_ROUND_VM_PROVIDER" => s.round_vm_provider = Some(val.clone()),
+            "SPIRA_ROUND_VM_SSH_USER" => s.round_vm_ssh_user = Some(val.clone()),
+            "SPIRA_ROUND_VM_SSH_PORT" => s.round_vm_ssh_port = Some(val.clone()),
+            "SPIRA_ROUND_VM_HOST_KEY" => s.round_vm_host_key = Some(val.clone()),
+            "SPIRA_ROUND_VM_HOST_PUBKEY" => s.round_vm_host_pubkey = Some(val.clone()),
+            "SPIRA_ROUND_VM_HOST_ADDR" => s.round_vm_host_addr = Some(val.clone()),
+            "SPIRA_ROUND_VM_VCPUS" => s.round_vm_vcpus = Some(val.clone()),
+            "SPIRA_ROUND_VM_MAXPAR" => s.round_vm_maxpar = Some(val.clone()),
+            "SPIRA_ROUND_VM_MAX_RETRIES" => s.round_vm_max_retries = Some(val.clone()),
+            "SPIRA_ROUND_VM_RETRY_INTERVAL" => s.round_vm_retry_interval = Some(val.clone()),
+            "SPIRA_ROUND_VM_MIRROR_PORT" => s.round_vm_mirror_port = Some(val.clone()),
             other => errors.push(format!(
                 "spira.conf: unknown key {other}, refused (not in conf.sh's SPIRA_CONF_KEYS \
                  or a typo — widen the schema in spira-config/src/convert.rs if this key is real)"
