@@ -37,6 +37,28 @@ pub fn resolve_exe(name: &str, path_var: &str) -> Option<PathBuf> {
         .and_then(|p| fs::canonicalize(p).ok())
 }
 
+/// The `bd` a fixture's callers should run, as an absolute path **without** resolving links:
+/// the first `name` on `path_var` (a name with `/` is made absolute). Not canonicalised, so
+/// inside a metered suite it stays the meter's link and the calls stay metered. conf.sh keys
+/// its `bd migrate schema` cache on `stat "$SPIRA_BD"`; a bare `bd` never stats, so every
+/// conf.sh source re-ran the check (DESIGN-testdb.md §2.4, sp-34ru2).
+pub fn locate_exe(name: &str, path_var: &str) -> Option<PathBuf> {
+    if name.contains('/') {
+        let p = Path::new(name);
+        let abs = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            std::env::current_dir().ok()?.join(p)
+        };
+        return abs.is_file().then_some(abs);
+    }
+    path_var
+        .split(':')
+        .filter(|d| !d.is_empty() && Path::new(d).is_absolute())
+        .map(|d| Path::new(d).join(name))
+        .find(|p| p.is_file())
+}
+
 /// `bd` inside a parallel suite is the bd meter (bdmeter.rs): a resolved executable that is
 /// the meter stands for the real `name` behind it on `path_var`, so the template is keyed on
 /// and built with the real binary, and a suite finds the template setup built
@@ -753,6 +775,11 @@ pub fn main(args: &[String]) -> i32 {
                 exe.as_deref(),
             ) {
                 Ok(u) => {
+                    let bd_name = a.bd.as_deref().unwrap_or("bd");
+                    let path = std::env::var("PATH").unwrap_or_default();
+                    let bd = locate_exe(bd_name, &path)
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| bd_name.to_string());
                     emit(&report(&[
                         ("TESTDB_NAME", u.name),
                         ("TESTDB_DIR", u.ws.display().to_string()),
@@ -760,6 +787,7 @@ pub fn main(args: &[String]) -> i32 {
                         ("TESTDB_SERVER_PORT", u.port.to_string()),
                         ("TESTDB_SERVER_PID", u.pid.to_string()),
                         ("TESTDB_UP_MS", u.ms.to_string()),
+                        ("TESTDB_BD", bd),
                     ]));
                     0
                 }

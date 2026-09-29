@@ -43,7 +43,7 @@ diagnostics on stderr; exit 0 success, 1 failure, 2 usage.
 | command | does |
 |---|---|
 | `template --bd B --dolt D [--root R]` | ensure the template for (B, D) exists; print `TESTDB_TEMPLATE=` |
-| `up --tag T --bd B --dolt D [--root R] [--owner PID]` | a fresh fixture from the template; print `TESTDB_NAME TESTDB_DIR TESTDB_FIXTURE TESTDB_SERVER_PORT TESTDB_SERVER_PID TESTDB_UP_MS` |
+| `up --tag T --bd B --dolt D [--root R] [--owner PID]` | a fresh fixture from the template; print `TESTDB_NAME TESTDB_DIR TESTDB_FIXTURE TESTDB_SERVER_PORT TESTDB_SERVER_PID TESTDB_UP_MS TESTDB_BD` (`TESTDB_BD`: B as an absolute path, the first on PATH, links not resolved — §2.4) |
 | `reset --fixture F` | back to exactly the template state; print `TESTDB_SERVER_PORT TESTDB_SERVER_PID TESTDB_RESET_MS` |
 | `down --fixture F` | stop the server, remove the fixture; print `TESTDB_SERVER_CPU_MS TESTDB_LIFE_MS TESTDB_RESETS` |
 | `reap --fixture F --owner PID` | internal: the watchdog `up` detaches |
@@ -158,6 +158,16 @@ the bd meter (bdmeter.rs), whose canonical path is `bd-meter`; `Tools::resolve` 
 `bd` that is the meter to the real `bd` behind it on PATH, so the template a suite asks for
 is the one testenv built during setup (not a second 4 s build under the template lock, keyed
 on the meter's mtime).
+
+**The bd path is absolute.** conf.sh caches its `bd migrate schema` check in
+`$SPIRA_RUN/bd-schema-stamp`, keyed on `stat "$SPIRA_BD"`. `testdb_up` exported a bare
+`SPIRA_BD=bd` (server) or `bd-embedded` (shared baseline), which never stats, so **every**
+conf.sh source by a script the code under test spawns (landing-pass → `skew.sh refresh`,
+`systemd/unit-ensure.sh`, `watchd.sh manifest|units`, …) re-ran the check: 123 of
+test-certify's 231 bd calls were `migrate schema`. `up` now prints `TESTDB_BD`, the absolute
+path of B as found on the caller's PATH **without** resolving links (inside a metered suite
+it is the meter's link, so calls stay metered), and `testdb.sh` exports it as `SPIRA_BD`
+(call-site: it reads the value, as it reads `TESTDB_DIR`).
 
 **Floor.** What remains per call is the `bd` process itself: Go start (~85 ms CPU) and the
 six `git` children bd runs to discover a repository and its role (~7 ms each), plus the

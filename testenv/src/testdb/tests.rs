@@ -265,6 +265,30 @@ fn a_bd_that_is_the_meter_resolves_to_the_real_bd_behind_it() {
     let _ = fs::remove_dir_all(&d);
 }
 
+#[test]
+fn locate_exe_is_absolute_and_keeps_the_link() {
+    let d = tmpdir("locate");
+    let art = d.join("art");
+    let bin = d.join("bin");
+    fs::create_dir_all(&art).unwrap();
+    fs::create_dir_all(&bin).unwrap();
+    exe(&art.join("bd-meter"), "#!/bin/sh\n");
+    std::os::unix::fs::symlink(art.join("bd-meter"), bin.join("bd")).unwrap();
+    let pv = format!("relative-dir:/nonexistent:{}", bin.display());
+    assert_eq!(
+        locate_exe("bd", &pv),
+        Some(bin.join("bd")),
+        "the link, not the meter it points at, so calls stay metered"
+    );
+    assert!(locate_exe("bd", &pv).unwrap().is_absolute());
+    assert_eq!(locate_exe("missing", &pv), None);
+    assert_eq!(
+        locate_exe(&bin.join("bd").display().to_string(), ""),
+        Some(bin.join("bd"))
+    );
+    let _ = fs::remove_dir_all(&d);
+}
+
 // ---- orchestration against stand-ins -------------------------------------------------
 
 #[test]
