@@ -348,7 +348,10 @@ sp-j1q6o commit).
 13. **spira/test-poison.sh** — reduce to the "stays end-to-end" rows of §4; the unit cases
     are `cargo test -p spira-claim`. Lift its quarantine (`suites.sh activate
     test-poison.sh`) in the same landing (sp-ytbma's obligation 1).
-14. Build: add `spira-claim` to the workspace (done here) and to whatever copies built
+14. **spira-lc/src/main.rs `cmd_list`**: add `stack, stack_depth` to its SELECT (as `cmd_show`
+    has). Until then `spira-lc list` rows carry no `stack_depth` and machine mode reads every
+    stacked blocker as depth 0, so the depth cap cannot bite past depth 1.
+15. Build: add `spira-claim` to the workspace (done here) and to whatever copies built
     binaries into `$SPIRA_ARTIFACTS` (same list `spira-lc` is on).
 
 ## 6. Verification against the live store (read-only, 2026-09-28)
