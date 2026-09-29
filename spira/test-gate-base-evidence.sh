@@ -96,7 +96,9 @@ gate_fixture_run "$BR" repo >/dev/null 2>&1
 real_cores="$(getconf _NPROCESSORS_ONLN 2>/dev/null)"
 branch_env="$(cat "$ENV_BR" 2>/dev/null)"; base_env="$(cat "$ENV_BASE" 2>/dev/null)"
 want "branch trial sees its own branch"           "BRANCH=$BR"           "$branch_env"
-want "base trial sees the base"                   "BASE=origin/main"     "$base_env"
+# SPIRA_GATE_BASE is the landing ref pinned to its commit when the gate starts (sp-hh5h0):
+# the ref moves while a trial runs, and both trials must judge against the same base.
+want "base trial sees the base"                   "BASE=$(git -C "$REPO" rev-parse origin/main)" "$base_env"
 want "SELECT_HEAD names the branch on the branch trial" "SELECT_HEAD=$BR" "$branch_env"
 want "SELECT_HEAD names the branch on the base trial too" "SELECT_HEAD=$BR" "$base_env"
 want "the branch trial sees the changed file"      "f1.txt"               "$branch_env"

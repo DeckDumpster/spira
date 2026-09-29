@@ -99,7 +99,10 @@ test. When the landing ref is already an ancestor of the branch that is the bran
 before. Otherwise it is the **merge commit's id** (below), because the repository's gate string
 hands it to `testenv`, which builds its own worktree from it. `SPIRA_GATE_SELECT_HEAD` stays
 the branch, so suite selection still reads what the branch changed. In the base trial it is the
-landing ref, as before.
+landing ref, as before, but pinned: the commit it resolved to when the gate started.
+
+**`SPIRA_GATE_BASE` is that pinned commit's id, not the ref's name** (sp-hh5h0). The ref moves
+while the gate runs, and both trials must select against the same base.
 
 ### The merge (the change)
 

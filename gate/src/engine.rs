@@ -193,7 +193,7 @@ impl<'w, W: World> Trial<'w, W> {
             Ok(f) => f,
             Err(out) => {
                 return v(NOVERDICT, "no-diff", format!(
-                    "gate: cannot diff {range} in {name} — one of them does not resolve in this checkout\n{out}"))
+                    "gate: cannot diff {base}...{br} in {name} — one of them does not resolve in this checkout\n{out}"))
             }
         };
         let status_list = w.diff_name_status(&repo, &range);
