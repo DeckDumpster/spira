@@ -1,0 +1,102 @@
+//! The pass's boundaries, as traits: the bead store (read only), git, the lib.sh seam, the
+//! harness programs it runs, process liveness, and the clock. Production implementations are
+//! in `real`; the unit tests use recording fakes (`tests`).
+
+use crate::model::{BeadRow, Rebase, Recut};
+use std::path::Path;
+
+/// The bead store, read only. Writes go through [`Lib`].
+pub trait Beads {
+    /// `bd show <ids…> --json`, every row that came back. Err when the store could not be
+    /// read at all — never an empty Ok.
+    fn show(&self, ids: &[String]) -> Result<Vec<BeadRow>, String>;
+    /// lib.sh `bead_land_status`: `closed` (or submitted-labelled), another status, or `-`
+    /// when it cannot be read.
+    fn land_status(&self, id: &str) -> String;
+}
+
+pub trait Git {
+    /// `for-each-ref refs/heads/spira/*` → (short name, tip).
+    fn spira_refs(&self, repo: &Path) -> Vec<(String, String)>;
+    /// `show-ref --verify refs/heads/<branch>`.
+    fn branch_exists(&self, repo: &Path, branch: &str) -> bool;
+    fn rev_parse(&self, repo: &Path, rev: &str) -> Option<String>;
+    fn is_ancestor(&self, repo: &Path, a: &str, b: &str) -> bool;
+    /// lib.sh `content_landed`: the base already holds every change on the branch.
+    fn content_landed(&self, repo: &Path, branch: &str, base: &str) -> bool;
+    /// `rev-list --count <range>`; None when it cannot be taken.
+    fn count(&self, repo: &Path, range: &str) -> Option<u64>;
+    fn fetch(&self, repo: &Path, remote: &str);
+    /// A private landing worktree (push mode): exists?
+    fn tree_ok(&self, tree: &Path) -> bool;
+    fn tree_add_detached(&self, repo: &Path, tree: &Path, at: &str);
+    /// `checkout -q -B landing <base>` in the landing tree.
+    fn tree_checkout_landing(&self, tree: &Path, base: &str) -> bool;
+    /// `merge --no-edit -q -m <subject> <branch>`; Err(conflicted paths) after aborting.
+    fn tree_merge(&self, tree: &Path, subject: &str, branch: &str, name: &str, email: &str) -> Result<(), String>;
+    fn tree_head(&self, tree: &Path) -> Option<String>;
+    fn tree_reset_hard(&self, tree: &Path, to: &str);
+    fn tree_merge_abort(&self, tree: &Path);
+    /// `git branch -D` with SPIRA_REF_SANCTIONED=1 (halt's orphaned batch branches).
+    fn delete_branch(&self, repo: &Path, branch: &str) -> bool;
+    /// short names of refs matching a pattern (`for-each-ref --format=%(refname:short)`).
+    fn refs_matching(&self, repo: &Path, pattern: &str) -> Vec<String>;
+}
+
+/// The lib.sh seam (DESIGN.md §6). Every call is one fixed script; every value on stdin.
+pub trait Lib {
+    fn land_mark(&self, id: &str, state: &str, tip: &str, reason: &str);
+    fn reopen(&self, id: &str, cause: &str, note: &str);
+    fn event(&self, kind: &str, id: &str, title: &str, detail: &str);
+    fn noverdict(&self, id: &str, branch: &str, repo: &str, reason: &str, outcome: &str, out: &str);
+    /// incident.sh file; Ok(the printed output, whose last line is the id).
+    fn incident(&self, labels: &str, repo: &str, ext_ref: &str, title: &str, payload: &str) -> Result<String, i32>;
+    fn ask_rebase_loop(&self, args: &[&str]);
+    fn ask_red_recurring(&self, id: &str, branch: &str, repo: &str, class: &str, first_at: &str);
+    fn ask_rebase_refused(&self, id: &str, branch: &str, repo: &str, reason: &str);
+    fn ask_budget_deferred(&self, branch: &str, repo: &str, n: u32);
+    fn rebase(&self, branch: &str, onto: &str, repo: &Path, name: &str) -> Rebase;
+    fn recut(&self, branch: &str, onto: &str, repo: &Path, name: &str) -> Recut;
+    fn bump_requeue(&self, id: &str, reason: &str);
+    fn requeues_of(&self, id: &str) -> u32;
+    fn conflict_note(&self, args: &[&str]) -> String;
+    fn other_beads(&self, repo: &Path, branch: &str, base: &str, files: &str) -> String;
+    fn pr_merged(&self, repo: &Path, branch: &str) -> bool;
+    fn note(&self, id: &str, text: &str);
+    /// spira_git_push; Err(its stderr).
+    fn push(&self, tree: &Path, remote: &str, refspec: &str) -> Result<(), String>;
+    fn land_subject(&self, id: &str) -> String;
+    fn deliver_delivered(&self, id: &str, sha: &str);
+    fn deliver_requeued(&self, id: &str, tip: &str);
+    fn deliver_returned(&self, id: &str, reason: &str);
+    fn closeout(&self, id: &str, sha: &str, repo: &Path);
+    fn close_on_land(&self, id: &str, sha: &str);
+    fn prune_worktrees(&self, repo: &Path);
+    fn gh_unlanded_scan(&self);
+}
+
+/// The harness programs the pass runs as subprocesses (DESIGN.md §2.5).
+pub trait Tools {
+    /// gate.sh <branch> <repo> with SPIRA_GATE_LOCK_WAIT / SPIRA_GATE_BEAD → (status, transcript).
+    fn gate(&self, branch: &str, repo: &str, lock_wait: &str, bead: &str) -> (i32, String);
+    /// gate-run.sh --status <branch> <repo>: Some(output) when it exits 0.
+    fn gate_status(&self, branch: &str, repo: &str) -> Option<String>;
+    /// confine.sh <id> <branch> <repo-path> <base> <labels> → (status, output).
+    fn confine(&self, id: &str, branch: &str, repo: &Path, base: &str, labels: &str) -> (i32, String);
+    /// `queue step <repo>` → its output lines; Err when there is no queue binary to run.
+    fn queue_step(&self, repo: &str) -> Result<Vec<String>, String>;
+    fn skew_refresh(&self, repo: &Path) -> String;
+    /// An ensure script (unit-ensure.sh / land-build-ensure.sh), when executable → its lines.
+    fn ensure(&self, script: &Path) -> Vec<String>;
+}
+
+pub trait Procs {
+    /// lib.sh `holder_alive`: a live hold pidfile, or a live aeon pidfile whose process is
+    /// aeon.sh.
+    fn holder_alive(&self, id: &str) -> bool;
+}
+
+pub trait Clock {
+    fn now(&self) -> u64;
+    fn sleep(&self, secs: u64);
+}

@@ -1,0 +1,646 @@
+//! The gated pass (`landing-pass land`, DESIGN.md §4): push, hold, queue and queue.local.
+//! pr-mode branches are counted and left to the pr pass.
+
+use crate::budget::{gate_fits, gate_lock_wait};
+use crate::model::{BeadRow, GateOutcome, GateRun, LandMode, RepoRow, RunRecord, Settings};
+use crate::order::{basefail_fix_decision, certify_order, is_base_fix, prior_pass_suites, OrderRow};
+use crate::ports::{Beads, Clock, Git, Lib, Procs, Tools};
+use crate::records::Files;
+use crate::report::Reporter;
+use crate::util::{first_line, tail_bytes, tail_lines};
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+pub struct Pass<'a> {
+    pub s: &'a Settings,
+    pub repos: &'a [RepoRow],
+    pub beads: &'a dyn Beads,
+    pub git: &'a dyn Git,
+    pub lib: &'a dyn Lib,
+    pub tools: &'a dyn Tools,
+    pub procs: &'a dyn Procs,
+    pub clock: &'a dyn Clock,
+    /// Consulted only with the lifecycle switch ON (DESIGN.md §9).
+    pub lc: &'a dyn crate::lifecycle::Lc,
+    pub lc_state: std::cell::OnceCell<Result<(), String>>,
+    pub out: &'a Reporter,
+    pub files: Files,
+    pub start: u64,
+    pub pid: u32,
+    /// The sweep's own meter (law-take-the-simple-fix-with-a-meter).
+    pub swept: Cell<u64>,
+    pub swept_conflict: Cell<u64>,
+}
+
+/// Why the walk stopped at a branch.
+pub(crate) enum Flow {
+    Next,
+    BudgetCut,
+}
+
+/// Per-repository walk state.
+pub(crate) struct Walk<'r> {
+    pub repo: &'r RepoRow,
+    pub base: String,
+    pub base_fq: String,
+    pub land: PathBuf,
+    pub beads: HashMap<String, BeadRow>,
+    pub enum_tip: HashMap<String, String>,
+    /// Closed, rebased and still unlanded this pass (push/hold), in the order judged.
+    pub judged: RefCell<Vec<String>>,
+    pub basefail_filed: Cell<bool>,
+    pub landed_any: Cell<bool>,
+}
+
+impl<'r> Walk<'r> {
+    pub fn judge(&self, br: &str) {
+        let mut j = self.judged.borrow_mut();
+        if !j.iter().any(|b| b == br) {
+            j.push(br.to_string());
+        }
+    }
+    pub fn unjudge(&self, br: &str) {
+        self.judged.borrow_mut().retain(|b| b != br);
+    }
+}
+
+impl<'a> Pass<'a> {
+    fn log(&self, m: &str) {
+        self.out.log(m);
+    }
+
+    fn set_run(&self, repo: &str, branch: &str, phase: &str) {
+        self.files.write_run(&RunRecord {
+            pid: self.pid.to_string(),
+            started: self.start.to_string(),
+            repo: repo.into(),
+            branch: branch.into(),
+            phase: phase.into(),
+        });
+    }
+
+    /// With the switch ON, is spira-lc reachable? Probed once per pass, never with it OFF.
+    pub(crate) fn lc_ready(&self) -> Result<(), String> {
+        debug_assert!(self.s.lifecycle_enforce);
+        self.lc_state.get_or_init(|| self.lc.probe()).clone()
+    }
+
+    fn status_closed(&self, id: &str) -> (bool, String) {
+        let st = self.beads.land_status(id);
+        (st == "closed", st)
+    }
+
+    /// The whole pass after the lock and the run record (DESIGN.md §4 steps 3–10). Returns
+    /// nothing: every outcome is in the log, the mailbox and the records.
+    pub fn run(&self) {
+        let names: Vec<&str> = self.repos.iter().map(|r| r.name.as_str()).collect();
+        let listing: String = names.iter().fold(String::new(), |mut acc, n| {
+            acc.push_str(n);
+            acc.push(' ');
+            acc
+        });
+        self.log(&format!("landing: starting a pass over [{listing}]"));
+        Files::prune_verdicts(&self.s.verdicts, self.s.verdict_ttl, self.clock.now());
+
+        self.queue_step("queue early: ");
+
+        for repo in self.rotated() {
+            self.walk_repo(repo);
+        }
+
+        crate::prune::prune_landstate(self);
+
+        self.queue_step("queue late: ");
+
+        for r in self.repos {
+            if !matches!(r.mode, LandMode::Push | LandMode::Queue) || r.path.as_os_str().is_empty() {
+                continue;
+            }
+            if !r.path.join(".git").exists() {
+                continue;
+            }
+            let o = self.tools.skew_refresh(&r.path);
+            if !o.is_empty() {
+                self.log(&o);
+            }
+        }
+
+        self.lib.gh_unlanded_scan();
+        let sweep = if self.swept.get() + self.swept_conflict.get() > 0 {
+            format!(
+                ", {} survivor(s) rebased after a landing, {} conflicted",
+                self.swept.get(),
+                self.swept_conflict.get()
+            )
+        } else {
+            String::new()
+        };
+        for script in [self.s.repo.join("systemd/unit-ensure.sh"), self.s.repo.join("spira/land-build-ensure.sh")] {
+            for l in self.tools.ensure(&script) {
+                self.log(&l);
+            }
+        }
+        self.log(&format!(
+            "landing: pass complete — {} branch(es) seen, {} movement(s){sweep}",
+            self.out.branches(),
+            self.out.moved()
+        ));
+    }
+
+    /// `queue step` for every queued repository, its lines relabelled into this log.
+    fn queue_step(&self, prefix: &str) {
+        for r in self.repos.iter().filter(|r| r.mode.queued()) {
+            match self.tools.queue_step(&r.name) {
+                Ok(lines) => {
+                    for l in lines {
+                        self.log(&format!("{prefix}{l}"));
+                    }
+                }
+                Err(e) => self.log(&format!("{prefix}{}: {e}", r.name)),
+            }
+        }
+    }
+
+    /// Start from the repository where the last pass cut its budget, so none is always last.
+    pub fn rotated(&self) -> Vec<&'a RepoRow> {
+        let all: Vec<&RepoRow> = self.repos.iter().collect();
+        let Some(c) = self.files.cursor_repo() else { return all };
+        match all.iter().position(|r| r.name == c) {
+            Some(i) => all[i..].iter().chain(all[..i].iter()).copied().collect(),
+            None => all,
+        }
+    }
+
+    pub fn walk_repo(&self, repo: &RepoRow) {
+        let name = &repo.name;
+        if repo.path.as_os_str().is_empty() {
+            self.log(&format!("CHECK6 {name}: no repository map entry — skipped"));
+            return;
+        }
+        if !repo.path.join(".git").exists() {
+            self.log(&format!("CHECK6 {name}: {} is not a git checkout — skipped", repo.path.display()));
+            return;
+        }
+        let refs = self.git.spira_refs(&repo.path);
+        if refs.is_empty() {
+            return;
+        }
+        self.out.add_branches(refs.len() as u64);
+        if repo.mode == LandMode::Pr {
+            return;
+        }
+        let (Some(base), Some(base_fq)) = (repo.landref.clone(), repo.base_fq.clone()) else {
+            self.log(&format!(
+                "CHECK6 {name}: cannot resolve the ref its branches land on — skipped. Give it a `base` in the repository map."
+            ));
+            return;
+        };
+        if let Some(rem) = &repo.base_remote {
+            self.git.fetch(&repo.path, rem);
+        }
+        let basename = repo.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let land = self.s.run.join("worktree").join(format!(".landing.{basename}"));
+        if repo.mode == LandMode::Push {
+            if !self.git.tree_ok(&land) {
+                self.lib.prune_worktrees(&repo.path);
+                self.git.tree_add_detached(&repo.path, &land, &base_fq);
+            }
+            if self.git.tree_ok(&land) {
+                self.git.tree_checkout_landing(&land, &base_fq);
+            }
+        }
+
+        let ids: Vec<String> = refs.iter().map(|(b, _)| b.trim_start_matches("spira/").to_string()).collect();
+        let beads: HashMap<String, BeadRow> = match self.beads.show(&ids) {
+            Ok(rows) => rows.into_iter().map(|b| (b.id.clone(), b)).collect(),
+            Err(e) => {
+                self.log(&format!("CHECK6 {name}: the bead store could not be read ({e}) — every branch reads as not closed this pass"));
+                HashMap::new()
+            }
+        };
+        let rows: Vec<OrderRow> =
+            refs.iter().map(|(b, _)| OrderRow::of(b, beads.get(b.trim_start_matches("spira/")), &self.s.express_label)).collect();
+        let order = certify_order(name, &rows);
+        let by_branch: HashMap<&str, &OrderRow> = rows.iter().map(|r| (r.branch.as_str(), r)).collect();
+        let fix_front: Vec<&str> =
+            order.iter().take_while(|b| is_base_fix(by_branch[b.as_str()].external_ref.as_deref(), name)).map(|s| s.as_str()).collect();
+        if !fix_front.is_empty() {
+            self.log(&format!("CHECK6 {name}: base-fix branch(es) at front of queue: {}", fix_front.join(" ")));
+        }
+        let express: Vec<&str> = order
+            .iter()
+            .skip(fix_front.len())
+            .take_while(|b| by_branch[b.as_str()].express)
+            .map(|s| s.as_str())
+            .collect();
+        if !express.is_empty() {
+            let list: String = express.iter().fold(String::new(), |mut acc, b| {
+                acc.push(' ');
+                acc.push_str(b);
+                acc
+            });
+            self.log(&format!("CHECK6 {name}: express branch(es) certified first:{list}"));
+        }
+
+        let w = Walk {
+            repo,
+            base,
+            base_fq,
+            land,
+            beads,
+            enum_tip: refs.into_iter().collect(),
+            judged: RefCell::new(Vec::new()),
+            basefail_filed: Cell::new(false),
+            landed_any: Cell::new(false),
+        };
+
+        let mut cut_at: Option<usize> = None;
+        for (i, br) in order.iter().enumerate() {
+            self.set_run(name, br, "");
+            if let Flow::BudgetCut = self.branch(&w, br) {
+                cut_at = Some(i);
+                break;
+            }
+        }
+
+        match cut_at {
+            Some(k) => {
+                let left = self.s.land_maxsec - (self.clock.now() as i64 - self.start as i64);
+                self.log(&format!(
+                    "landing: budget cut at {} — {left}s left, {} branch(es) deferred in {name}",
+                    order[k],
+                    order.len() - k
+                ));
+                self.files.set_cursor(name);
+                for (i, br) in order.iter().enumerate() {
+                    if i >= k {
+                        let n = self.files.bump_deferred(br);
+                        if n >= self.s.deferral_escalate_at {
+                            self.lib.ask_budget_deferred(br, name, n);
+                        }
+                    } else {
+                        self.files.clear_deferred(br);
+                    }
+                }
+            }
+            None => {
+                for br in &order {
+                    self.files.clear_deferred(br);
+                }
+            }
+        }
+
+        // THE SURVIVORS ARE REBASED ONCE PER PASS (sp-4hs0i): after the whole walk, and only
+        // if the base moved under them here. Per-landing sweeps replayed every survivor after
+        // every landing — k landings × n survivors.
+        if w.landed_any.get() && !w.judged.borrow().is_empty() {
+            let survivors = w.judged.borrow().clone();
+            self.rebase_survivors(&w, &survivors);
+        }
+    }
+
+    /// One branch (DESIGN.md §4.1 steps 1–7).
+    fn branch(&self, w: &Walk, br: &str) -> Flow {
+        let repo = w.repo;
+        let name = &repo.name;
+        let id = br.trim_start_matches("spira/");
+
+        if !self.git.branch_exists(&repo.path, br) {
+            match w.enum_tip.get(br) {
+                Some(was) if self.git.is_ancestor(&repo.path, was, &w.base_fq) => self.log(&format!(
+                    "CHECK6 {id}: {br} is gone since this pass began and {was} is on {} — landed and reaped, not reopening",
+                    w.base
+                )),
+                Some(was) => self.log(&format!(
+                    "CHECK6 {id}: {br} is gone since this pass began and {was} is NOT on {} — reaped or slain, not reopening",
+                    w.base
+                )),
+                None => self.log(&format!("CHECK6 {id}: {br} is gone since this pass began — landed or reaped elsewhere, not reopening")),
+            }
+            return Flow::Next;
+        }
+        let bead = w.beads.get(id);
+        let st = bead.map(|b| b.status.as_str()).unwrap_or("");
+        if st != "closed" {
+            let shown = if st.is_empty() { "-" } else { st };
+            if self.procs.holder_alive(id) {
+                self.log(&format!("CHECK6 {id}: {br} not landed — its bead is {shown}, held by a live aeon"));
+            } else {
+                self.log(&format!("CHECK6 {id}: {br} not landed — its bead is {shown} and no aeon holds it"));
+            }
+            return Flow::Next;
+        }
+        let bead = bead.expect("closed implies present");
+
+        // A branch lands only in the repository its BEAD names.
+        let bead_path = self.repos.iter().find(|r| r.name == bead.repo).map(|r| r.path.clone());
+        if bead_path.as_deref() != Some(repo.path.as_path()) {
+            self.log(&format!("CHECK6 {id}: {br} is in {name} but the bead names repo:{} — not landing it here", bead.repo));
+            return Flow::Next;
+        }
+        if bead.superseded {
+            self.log(&format!(
+                "CHECK6 {id}: {br} is superseded — its work landed under the successor's id; leaving it for the Sending to reap"
+            ));
+            return Flow::Next;
+        }
+        if bead.has_label(&self.s.cutover_label) {
+            self.log(&format!("CHECK6 {id}: {br} is labelled {} — leaving it for the cutover round", self.s.cutover_label));
+            return Flow::Next;
+        }
+        if let Some(ls) = self.files.land_state(id) {
+            if ls.state == "EJECTED" {
+                self.log(&format!("CHECK6 {id}: closed but landstate is EJECTED — reopening so the aeon can fix the batch gate failure"));
+                let tip = if ls.tip.is_empty() { "none".to_string() } else { ls.tip.clone() };
+                self.lib.land_mark(id, "RED", &tip, "ejected-not-requeued");
+                self.lib.reopen(id, "batch-eject", "Reopened by sentinel: batch gate failure recorded but bead closed before aeon could fix it.");
+                self.out.progress(&format!("reopened {id} — ejected-not-requeued"));
+                return Flow::Next;
+            }
+        }
+        if self.git.content_landed(&repo.path, br, &w.base_fq) {
+            self.log(&format!("{} already contains every change on {br} — nothing to land", w.base));
+            let tip = self.git.rev_parse(&repo.path, br).unwrap_or_else(|| "none".into());
+            self.lib.land_mark(id, "CONTENT", &tip, "");
+            self.files.drop_ejected(id);
+            return Flow::Next;
+        }
+        if self.procs.holder_alive(id) {
+            self.log(&format!("CHECK6 {id}: a live aeon still holds {br} — deferring the land"));
+            return Flow::Next;
+        }
+        if repo.mode.queued() {
+            return self.certify(w, br, id, bead);
+        }
+        crate::push::push_or_hold(self, w, br, id, bead)
+    }
+
+    /// Queue-mode certification (DESIGN.md §4.2).
+    fn certify(&self, w: &Walk, br: &str, id: &str, bead: &BeadRow) -> Flow {
+        let repo = w.repo;
+        let name = &repo.name;
+        let tip = self.git.rev_parse(&repo.path, br).unwrap_or_default();
+        if let Some(ls) = self.files.land_state(id) {
+            if ls.state == "WITHDRAWN" && ls.tip == tip {
+                self.log(&format!("CHECK6 {id}: withdrawn at {tip} — staying WITHDRAWN until the tip changes"));
+                return Flow::Next;
+            }
+            if ls.state == "CERTIFIED" && ls.tip == tip {
+                return Flow::Next;
+            }
+        }
+        if !self.budget_allows(bead, name, id) {
+            return Flow::BudgetCut;
+        }
+        let g = self.run_gate(name, br, id, true, &tip);
+        if g.outcome != GateOutcome::Pass {
+            let reason = g.reason_or("unspecified");
+            self.log(&format!("CHECK6 {id}: certification gate {} on {br} in {name} ({reason})", g.outcome.word()));
+            self.lib.land_mark(id, "GATED", &tip, &format!("{}:{reason}", g.outcome.word()));
+            match g.outcome {
+                GateOutcome::BaseFail => {
+                    self.log(&format!("CHECK6 {id}: held — the base fails its own gate (suite {})", g.suite));
+                    self.base_fail(w, br, id, bead, &tip, &g);
+                }
+                GateOutcome::NoVerdict => {
+                    self.lib.noverdict(id, br, name, &reason, g.outcome.word(), &g.out);
+                }
+                _ => {
+                    let (closed, st) = self.status_closed(id);
+                    if !closed {
+                        self.log(&format!("CHECK6 {id}: bead is now {st} (was closed at scan time) — not reopening {br}"));
+                        return Flow::Next;
+                    }
+                    let n = self.count_or_q(&repo.path, &format!("{}..{br}", w.base));
+                    let scope = self.scope_note(name, br, &g.suite);
+                    let scope_part = if scope.is_empty() { String::new() } else { format!("\n{scope}") };
+                    let note = format!(
+                        "Reopened by sentinel: branch {br} failed {name}'s certification gate. The branch carries {n} commit(s) from the previous session — the next aeon should resume from the existing work, not restart.\n{scope_part}\n\n{}",
+                        tail_lines(&g.out, 20)
+                    );
+                    self.lib.reopen(id, "cert-gate-red", &note);
+                    self.out.progress(&format!("reopened {id} — failed the certification gate"));
+                    self.lib.event(
+                        "bead.reopened",
+                        id,
+                        &format!("reopened {id} — {br} failed {name}'s certification gate"),
+                        &tail_lines(&g.out, 3),
+                    );
+                    self.lib.land_mark(id, "RED", &tip, "gate");
+                }
+            }
+            return Flow::Next;
+        }
+        if g.reason.as_deref() == Some("cached") {
+            self.log(&format!("CHECK6 {id}: certification PASS on {br} in {name} — this tree had already passed"));
+        }
+        self.files.clear_noverdict(br);
+        let (closed, st) = self.status_closed(id);
+        if !closed {
+            self.log(&format!("CHECK6 {id}: bead is now {st} (was closed at scan time) — not certifying {br}"));
+            return Flow::Next;
+        }
+        self.lib.land_mark(id, "CERTIFIED", &tip, "");
+        self.files.mark_submitted(id, &tip, "certified", self.clock.now());
+        self.out.progress(&format!("certified {br} in {name} — gate passed, round and CI are the remaining judges"));
+        Flow::Next
+    }
+
+    /// The gate may start only if the pass can finish it; a base-fix branch is exempt.
+    pub(crate) fn budget_allows(&self, bead: &BeadRow, name: &str, id: &str) -> bool {
+        if gate_fits(self.s.land_maxsec, self.start, self.s.gate_reserve, self.clock.now()) {
+            return true;
+        }
+        if is_base_fix(bead.external_ref.as_deref(), name) {
+            self.log(&format!("CHECK6 {id}: base-fix branch — gating despite budget exhaustion"));
+            return true;
+        }
+        false
+    }
+
+    pub(crate) fn run_gate(&self, name: &str, br: &str, id: &str, mark_gating: bool, tip: &str) -> GateRun {
+        self.set_run(name, br, "gate");
+        let (wait, note) = gate_lock_wait(self.s.land_maxsec, self.start, self.s.gate_lock_wait.as_deref(), self.clock.now());
+        if let Some(n) = note {
+            self.log(&n);
+        }
+        if mark_gating {
+            self.lib.land_mark(id, "GATING", tip, "");
+        }
+        let (rc, out) = self.tools.gate(br, name, &wait, id);
+        self.set_run(name, br, "");
+        GateRun::parse(rc, out)
+    }
+
+    /// BASE_FAIL: a green base-fix is certified; anything else files the base's own red,
+    /// once per repository per pass.
+    pub(crate) fn base_fail(&self, w: &Walk<'_>, br: &str, id: &str, bead: &BeadRow, tip: &str, g: &GateRun) {
+        let name = &w.repo.name;
+        if basefail_fix_decision(bead.external_ref.as_deref(), name, &g.out) {
+            let suite = bead.external_ref.as_deref().unwrap_or("").trim_start_matches(&format!("basefail:{name}:")).to_string();
+            let (closed, _) = self.status_closed(id);
+            if closed {
+                self.log(&format!("CHECK6 {id}: base-fix: {br} is green on {name}'s red suite {suite} — certifying"));
+                self.lib.land_mark(id, "CERTIFIED", tip, "");
+                self.files.mark_submitted(id, tip, "certified", self.clock.now());
+                self.out.progress(&format!("certified {br} in {name} — base-fix (suite {suite})"));
+            }
+            return;
+        }
+        if !w.basefail_filed.get() {
+            w.basefail_filed.set(true);
+            self.base_incident(name, &g.suite, &g.reason_or("base-red"), br, &w.base, &g.out);
+        }
+    }
+
+    /// File the base's own red through incident.sh (deduped on repository + suite).
+    fn base_incident(&self, name: &str, suite: &str, reason: &str, br: &str, base: &str, out: &str) {
+        if std::fs::metadata(&self.s.incident).is_err() {
+            self.log(&format!("CHECK6 {name}: no intake at {} — the base's own red reaches nobody", self.s.incident.display()));
+            return;
+        }
+        let named = if suite == "-" { "- (the gate named none; read its output below)".to_string() } else { suite.to_string() };
+        let labels = if self.s.scope_label.is_empty() { "plan".to_string() } else { format!("{},plan", self.s.scope_label) };
+        let title = format!("{name}'s own gate fails against {base} — nothing can land");
+        let payload = [
+            format!("{name}'s landing gate was run against {base} itself and failed there, so every branch of"),
+            "this repository is refused for a condition no branch caused. No bead has been reopened and".into(),
+            "no attempt charged: the branches are held, and they land on the pass after this is fixed.".into(),
+            String::new(),
+            format!("  repository       {name}"),
+            format!("  base             {base}"),
+            format!("  failing suite    {named}"),
+            format!("  gate verdict     BASE_FAIL ({reason})"),
+            format!("  first noticed by {br}, which is not at fault"),
+            format!("  reproduce        {}/gate.sh {base} {name}", self.s.home.display()),
+            String::new(),
+            "The dedupe key is the repository and the suite, so every other branch blocked by this same".into(),
+            "red bumps a recurrence on this bead rather than filing another one.".into(),
+            String::new(),
+            "--- the gate's own output -------------------------------------------------------------".into(),
+            tail_bytes(out, 6000),
+        ]
+        .join("\n");
+        match self.lib.incident(&labels, name, &format!("basefail:{name}:{suite}"), &title, &payload) {
+            Err(_) => self.log(&format!("CHECK6 {name}: the intake could not file the base's red — it stays spooled and drain will retry")),
+            Ok(printed) => {
+                let id: String = printed.trim_end().rsplit('\n').next().unwrap_or("").chars().filter(|c| !c.is_whitespace()).collect();
+                if !self.s.id_prefix.is_empty() && id.starts_with(&self.s.id_prefix) {
+                    self.log(&format!("CHECK6 {name}: the base's own red is {id} (suite {suite})"));
+                } else {
+                    self.log(&format!(
+                        "CHECK6 {name}: the intake returned no bead id for the base's red — check {}",
+                        self.s.incident.display()
+                    ));
+                }
+            }
+        }
+    }
+
+    /// The suite set the branch's own recorded PASS covered, beside the one that just failed.
+    fn scope_note(&self, name: &str, br: &str, failing: &str) -> String {
+        let Some(status) = self.tools.gate_status(br, name) else { return String::new() };
+        let suites = prior_pass_suites(&status);
+        if suites.is_empty() {
+            return String::new();
+        }
+        format!("The branch held a recorded gate PASS covering: {suites}\nCertification just failed on: {failing}")
+    }
+
+    pub(crate) fn count_or_q(&self, repo: &Path, range: &str) -> String {
+        self.git.count(repo, range).map(|n| n.to_string()).unwrap_or_else(|| "?".into())
+    }
+
+    /// Rebase every judged, still-unlanded branch onto the moved base — once.
+    fn rebase_survivors(&self, w: &Walk, survivors: &[String]) {
+        let repo = w.repo;
+        let name = &repo.name;
+        for br in survivors {
+            let id = br.trim_start_matches("spira/");
+            if self.git.is_ancestor(&repo.path, &w.base_fq, &format!("refs/heads/{br}")) {
+                continue;
+            }
+            if !self.git.branch_exists(&repo.path, br) {
+                self.log(&format!("CHECK6 {id}: {br} is gone since this pass judged it — not rebasing it onto {}", w.base));
+                continue;
+            }
+            if self.procs.holder_alive(id) {
+                self.log(&format!("CHECK6 {id}: an aeon took {br} while this pass ran — leaving its rebase to it"));
+                continue;
+            }
+            if self.git.content_landed(&repo.path, br, &w.base_fq) {
+                self.log(&format!("CHECK6 {id}: {} now contains every change on {br} — nothing left to rebase", w.base));
+                continue;
+            }
+            let rb = self.lib.rebase(br, &w.base_fq, &repo.path, name);
+            if rb.ok {
+                self.swept.set(self.swept.get() + 1);
+                let tip = self.git.rev_parse(&repo.path, br).unwrap_or_default();
+                self.lib.land_mark(id, "REBASED", &tip, "swept");
+                self.log(&format!("CHECK6 {id}: rebased {br} onto {} after this pass's landings — still landable", w.base));
+                continue;
+            }
+            if rb.failure != "conflict" {
+                self.log(&format!(
+                    "CHECK6 {id}: could not attempt a rebase of {br} onto {} after this pass's landings ({}) — not a conflict, leaving the bead closed",
+                    w.base, rb.failure
+                ));
+                if rb.failure == "rebase-refused" {
+                    self.lib.ask_rebase_refused(id, br, name, or(&rb.refused_reason, "unknown"));
+                }
+                continue;
+            }
+            if self.lib.pr_merged(&repo.path, br) {
+                self.log(&format!("CHECK6 {id}: {br} does not rebase onto {}, but its pull request is merged — landed, not stuck", w.base));
+                continue;
+            }
+            let cur_tip = self.git.rev_parse(&repo.path, br).unwrap_or_default();
+            let cur_base = self.git.rev_parse(&repo.path, &w.base_fq).unwrap_or_default();
+            if let Some(ls) = self.files.land_state(id) {
+                if ls.state == "RED" && ls.tip == cur_tip {
+                    self.log(&format!("CHECK6 {id}: tip unchanged since last RED mark — skipping duplicate bump"));
+                    continue;
+                }
+            }
+            self.lib.bump_requeue(id, "merge-conflict");
+            let n = self.lib.requeues_of(id).max(1);
+            let rc = self.lib.recut(br, &w.base_fq, &repo.path, name);
+            if rc.ok {
+                self.swept.set(self.swept.get() + 1);
+                let t = self.git.rev_parse(&repo.path, br).unwrap_or_default();
+                self.lib.land_mark(id, "REBASED", &t, "recut-swept");
+                self.log(&format!(
+                    "CHECK6 {id}: re-cut {br} onto {} after this pass's landings ({} commit(s)) — still landable",
+                    w.base, rc.applied
+                ));
+                continue;
+            }
+            self.swept_conflict.set(self.swept_conflict.get() + 1);
+            let t = self.git.rev_parse(&repo.path, br).unwrap_or_default();
+            let conflicts = first_nonempty(&[&rc.conflicts, &rb.conflicts, "unknown"]);
+            let others = self.lib.other_beads(&repo.path, br, &w.base_fq, first_nonempty(&[&rc.conflicts, &rb.conflicts]));
+            let n_s = n.to_string();
+            let path_s = repo.path.to_string_lossy().into_owned();
+            self.lib.ask_rebase_loop(&[id, br, name, &n_s, conflicts, &others, &path_s, &w.base_fq]);
+            self.out.progress(&format!(
+                "escalated {id} — re-cut conflicted on {br} after {n} attempt(s); {} commit(s) moved to {}",
+                rc.applied, w.base
+            ));
+            self.lib.land_mark(id, "RED", &t, &format!("no-rebase@{cur_base}"));
+        }
+    }
+}
+
+pub(crate) fn or<'s>(s: &'s str, d: &'s str) -> &'s str {
+    if s.is_empty() { d } else { s }
+}
+
+pub(crate) fn first_nonempty<'s>(xs: &[&'s str]) -> &'s str {
+    xs.iter().copied().find(|s| !s.is_empty()).unwrap_or("")
+}
+
+/// Log the first line of a multi-line text (confine.sh's verdict).
+pub(crate) fn head1(s: &str) -> &str {
+    first_line(s)
+}
