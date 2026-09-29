@@ -32,6 +32,7 @@ for _v in SPIRA_POISON_ASKED SPIRA_REQUEUE_ASKED SPIRA_RECLAIM_ASKED SPIRA_POISO
     printf '%s=%s\0' "$_v" "${!_v:-}"
 done
 printf 'SPIRA_HOME_REPO_RESOLVED=%s\0' "$(spira_home_repo)"
+printf 'SPIRA_TOML_FILE=%s\0' "${SPIRA_TOML_FILE:-}"
 printf '@fayths\0'
 for _f in $(spira_fayths); do
     printf '%s\t%s\t%s\0' "$_f" "$(fayth_get "$_f" FAYTH_LABELS)" "$(fayth_get "$_f" FAYTH_EXCLUDE_LABELS)"

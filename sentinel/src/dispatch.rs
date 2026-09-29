@@ -78,6 +78,24 @@ impl<'a> Sentinel<'a> {
             .collect()
     }
 
+    /// The switch this pass resolved, handed to a worker systemd-run starts with a clean
+    /// environment — so the audit worker resolves the same mode, and (OFF) landing.sh is
+    /// handed no live path to spira-lc. The audit worker disables its own children itself.
+    fn lifecycle_setenv(&self, landing: bool) -> Vec<String> {
+        let mut v = vec![format!(
+            "--setenv=SPIRA_LIFECYCLE_ENFORCE={}",
+            if self.lc == crate::cfg::Lifecycle::On {
+                "1"
+            } else {
+                "0"
+            }
+        )];
+        if landing && self.lc == crate::cfg::Lifecycle::Off {
+            v.push(format!("--setenv=SPIRA_LC_BIN={}", crate::cfg::LC_DISABLED));
+        }
+        v
+    }
+
     fn drain_into_progress(&self, mailbox: &Path, stem: &str) {
         for line in drain(&self.cfg.run, mailbox, stem) {
             self.progress(&line);
@@ -178,6 +196,7 @@ impl<'a> Sentinel<'a> {
             ]));
             // B1: the switches the operator sets on the sentinel's unit reach the worker
             // that actually runs the checks they switch off.
+            a.extend(self.lifecycle_setenv(false));
             for k in ["SPIRA_SKIP_CLOSED_CHECK", "SPIRA_SKIP_RECLAIM"] {
                 if !self.cfg.raw(k).is_empty() {
                     a.push(format!("--setenv={k}={}", self.cfg.raw(k)));
@@ -342,6 +361,7 @@ impl<'a> Sentinel<'a> {
                 "--setenv=SPIRA_LAND_MAXSEC={}",
                 self.cfg.land_maxsec
             ));
+            a.extend(self.lifecycle_setenv(true));
             a.push(self.script("landing.sh").to_string_lossy().into_owned());
             let o = self.h.run(
                 Spec::args_owned(self.cfg.launch.clone(), a)

@@ -5,6 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use crate::cfg::Lifecycle;
 use crate::host::{Io, Spec};
 use crate::lifecycle::{hold_event, unhold_event};
 use crate::model::{parse_beads, Bead, LandState};
@@ -94,7 +95,10 @@ pub fn mark(dir: &Path, id: &str, n: u32) {
     crate::pass::append_line(&dir.join(id), &n.to_string());
 }
 
-pub const POISON_NOTE: &str = "Triaged by the groomer, not a human: it reads the charged sessions' final results and either credits the harness-caused attempts and lifts the poison (groomer.sh unpoison) or splits/re-scopes the work. Any live holder keeps its claim and releases on its own exit path; no persona can claim it again while the hold stands.";
+/// The bd label the legacy poison valve writes and every partition excludes.
+pub const POISON_LABEL: &str = "spira-poison";
+
+pub const POISON_NOTE: &str = "Triaged by the groomer, not a human: it reads the charged sessions' final results and either credits the harness-caused attempts and lifts the poison (groomer.sh unpoison) or splits/re-scopes the work. Any live holder keeps its claim and releases on its own exit path; no persona can claim it again while the ";
 
 pub const REQUEUE_DEFAULT: &str = "close the bead if its work has already landed under a different id or is no longer needed; file a harness-defect bead if the deliverable was not a commit; otherwise label it needs-rebase so an aeon can resolve the conflict";
 pub const RECLAIM_DEFAULT: &str = "close the bead if the work is no longer relevant; move it to a healthier lane if this box consistently kills workers; otherwise check infrastructure and re-queue when the box is stable";
@@ -200,15 +204,66 @@ impl<'a> Sentinel<'a> {
     /// One lifecycle read serves the main loop and the stale clear. A hold this pass applies
     /// is on a bead at or over the threshold, which the clear would never release anyway.
     pub fn check4(&self, snap: &Snapshot) {
-        let lc = self.lc_rows();
-        self.check4_main(snap, lc.as_deref());
+        let poisoned = self.poisoned_set(snap);
+        self.check4_main(snap, poisoned.as_ref());
         self.check4_closed(snap);
-        if let Some(rows) = lc.as_deref() {
-            self.check4_stale_clear(snap, rows);
+        if let Some(p) = &poisoned {
+            self.check4_stale_clear(snap, p);
         }
     }
 
-    fn check4_main(&self, snap: &Snapshot, lc: Option<&[crate::model::LcRow]>) {
+    /// Which beads are poisoned. OFF: the `spira-poison` bd label (pre-sp-ki12s). ON: the
+    /// lifecycle poison hold; None when the machine cannot answer (decide nothing).
+    fn poisoned_set(&self, snap: &Snapshot) -> Option<HashSet<String>> {
+        match self.lc {
+            Lifecycle::Off => Some(
+                snap.list
+                    .iter()
+                    .filter(|b| b.has(POISON_LABEL))
+                    .map(|b| b.id.clone())
+                    .collect(),
+            ),
+            Lifecycle::On => self.lc_rows().map(|rows| {
+                rows.into_iter()
+                    .filter(|r| r.holds.iter().any(|h| h == "poison"))
+                    .map(|r| r.bead_id)
+                    .collect()
+            }),
+        }
+    }
+
+    /// Apply the poison. OFF: the label. ON: the lifecycle hold.
+    fn poison_write(&self, id: &str, n: u32) {
+        match self.lc {
+            Lifecycle::Off => {
+                self.bd()
+                    .quiet(self.h, &["label", "add", id, POISON_LABEL], None);
+            }
+            Lifecycle::On => {
+                let ev = hold_event(
+                    "poison",
+                    &format!("poisoned after {n} in_progress transition(s) without landing"),
+                )
+                .unwrap_or_default();
+                self.lc_apply(id, &ev);
+            }
+        }
+    }
+
+    /// Lift a stale poison. OFF: remove the label. ON: the lifecycle unhold.
+    fn poison_lift(&self, id: &str) {
+        match self.lc {
+            Lifecycle::Off => {
+                self.bd()
+                    .quiet(self.h, &["label", "remove", id, POISON_LABEL], None);
+            }
+            Lifecycle::On => {
+                self.lc_apply(id, &unhold_event("poison").unwrap_or_default());
+            }
+        }
+    }
+
+    fn check4_main(&self, snap: &Snapshot, poisoned: Option<&HashSet<String>>) {
         let parts = &self.ctx.partitions;
         if parts.is_empty() {
             self.h.log_err("WARN no persona in the chamber declares a partition — no bead is dispatchable, and none is being examined");
@@ -229,15 +284,10 @@ impl<'a> Sentinel<'a> {
                 return;
             }
         };
-        let Some(lc) = lc else {
+        let Some(poisoned) = poisoned else {
             self.log("CHECK4 lifecycle read failed — making no poison/requeue/reclaim decision this pass");
             return;
         };
-        let poisoned: HashSet<&str> = lc
-            .iter()
-            .filter(|r| r.holds.iter().any(|h| h == "poison"))
-            .map(|r| r.bead_id.as_str())
-            .collect();
         let st = self.stamps();
         for (id, labels) in &disp {
             let c = counts.get(id).copied().unwrap_or_default();
@@ -249,7 +299,7 @@ impl<'a> Sentinel<'a> {
                 c.reclaims,
                 labels,
                 &stamp,
-                Some(poisoned.contains(id.as_str())),
+                Some(poisoned.contains(id)),
             ) else {
                 continue;
             };
@@ -322,13 +372,11 @@ impl<'a> Sentinel<'a> {
                     continue;
                 }
                 if tok.contains("poison") {
-                    let ev = hold_event(
-                        "poison",
-                        &format!("poisoned after {n} in_progress transition(s) without landing"),
-                    )
-                    .unwrap_or_default();
-                    let _ = self.lc_event(id, &ev, "sentinel");
-                    let note = format!("Poisoned after {n} in_progress transition(s) without landing. {POISON_NOTE}");
+                    self.poison_write(id, n);
+                    let note = format!(
+                        "Poisoned after {n} in_progress transition(s) without landing. {POISON_NOTE}{}",
+                        if self.lc == Lifecycle::On { "hold stands." } else { "label stands." }
+                    );
                     self.bd()
                         .quiet(self.h, &["note", id, "--stdin"], Some(&note));
                     self.progress(&format!("poisoned {id} after {n} attempts"));
@@ -532,16 +580,18 @@ impl<'a> Sentinel<'a> {
     }
 
     /// A poison hold whose count has fallen below the threshold is released.
-    fn check4_stale_clear(&self, snap: &Snapshot, lc: &[crate::model::LcRow]) {
-        let held: Vec<&str> = lc
+    /// A poison whose count has fallen below the threshold is lifted — found independently
+    /// of the dispatchable set, which excludes a poisoned bead (sp-9szt).
+    fn check4_stale_clear(&self, snap: &Snapshot, poisoned: &HashSet<String>) {
+        let mut held: Vec<&str> = poisoned
             .iter()
-            .filter(|r| r.holds.iter().any(|h| h == "poison"))
-            .map(|r| r.bead_id.as_str())
+            .map(String::as_str)
             .filter(|id| match snap.get(id) {
                 Some(b) => b.status != "closed" && !matches!(b.typ(), "epic" | "event"),
-                None => true,
+                None => self.lc == Lifecycle::On,
             })
             .collect();
+        held.sort_unstable();
         if held.is_empty() {
             return;
         }
@@ -560,7 +610,7 @@ impl<'a> Sentinel<'a> {
             if !tok.contains("clear") {
                 continue;
             }
-            let _ = self.lc_event(id, &unhold_event("poison").unwrap_or_default(), "sentinel");
+            self.poison_lift(id);
             self.progress(&format!(
                 "CHECK4 {id}: stale poison cleared — {n} attempt(s), below threshold {}",
                 self.cfg.poison_at

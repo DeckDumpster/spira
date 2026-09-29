@@ -43,6 +43,52 @@ pub struct Context {
     pub repos: Vec<Repo>,
 }
 
+/// Where the lifecycle machine's records are the truth, or the legacy ones are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lifecycle {
+    /// `lifecycle_enforce` off (production today): bd status/labels, landstate files and the
+    /// bd events trail. The sentinel never calls spira-lc, and nothing it starts can.
+    Off,
+    /// `lifecycle_enforce` on: spira-lc is authoritative; an unreachable machine is an error.
+    On,
+}
+
+/// The path handed to children in OFF mode as `SPIRA_LC_BIN`: non-empty (so conf.sh's
+/// `: "${SPIRA_LC_BIN:=…}"` and `[ -z … ]` resolvers keep it) and never executable (so every
+/// lc.sh function's `[ -x "$SPIRA_LC_BIN" ]` guard turns it into a no-op).
+pub const LC_DISABLED: &str = "/nonexistent/spira-lc-disabled-by-lifecycle_enforce=0";
+
+/// `lifecycle_enforce`, resolved as the aeon crate resolves it (concierge/rw-aeon
+/// aeon/src/conf.rs): the unit's own environment wins (`SPIRA_LIFECYCLE_ENFORCE`, 1/true =
+/// on, anything else = off) — read from this process's ORIGINAL environment, because
+/// conf.sh defaults it to 0 and would mask the toml; else `spira.lifecycle_enforce` in the
+/// spira.toml conf.sh resolved (`SPIRA_TOML_FILE`), read through the spira-config library;
+/// else off. Whether spira-lc happens to be installed is never consulted.
+pub fn lifecycle_enforce(original: Option<&str>, toml_file: Option<&Path>) -> Lifecycle {
+    if let Some(v) = original {
+        return if v == "1" || v == "true" {
+            Lifecycle::On
+        } else {
+            Lifecycle::Off
+        };
+    }
+    let Some(p) = toml_file.filter(|p| p.is_file()) else {
+        return Lifecycle::Off;
+    };
+    match spira_config::load(p) {
+        Ok(doc)
+            if doc
+                .spira
+                .as_ref()
+                .and_then(|s| s.lifecycle_enforce)
+                .unwrap_or(false) =>
+        {
+            Lifecycle::On
+        }
+        _ => Lifecycle::Off,
+    }
+}
+
 pub fn csv(s: &str) -> Vec<String> {
     s.split(',')
         .filter(|x| !x.is_empty())
@@ -215,6 +261,8 @@ pub struct Cfg {
     pub reclaim_asked: PathBuf,
     pub poison_lifted: PathBuf,
     pub roster_stamp: PathBuf,
+    /// OFF mode's CHECK 2 protection label (the retired SPIRA_RECLAIM_SKIP_LABEL).
+    pub reclaim_skip_label: String,
     /// For the systemd-run --setenv lists: the raw values, "" when unset.
     pub raw: BTreeMap<String, String>,
 }
@@ -364,6 +412,8 @@ impl Cfg {
             reclaim_asked: dir("SPIRA_RECLAIM_ASKED", "reclaim-asked"),
             poison_lifted: dir("SPIRA_POISON_LIFTED", "poison-lifted"),
             roster_stamp: dir("SPIRA_ROSTER_WARN_STAMP", "roster-warn.stamp"),
+            // literal-ok: conf.sh's default before sp-i2m7y retired the key
+            reclaim_skip_label: or("SPIRA_RECLAIM_SKIP_LABEL", "spira-waiting-operator"),
             raw,
             home,
         }
@@ -464,6 +514,31 @@ pub mod tests {
         let mut cut = b.clone();
         cut.truncate(b.len() - 5);
         assert!(Context::parse(&cut).is_err());
+    }
+
+    #[test]
+    fn the_switch_resolves_like_the_aeon_crate() {
+        let dir = std::env::temp_dir().join(format!("sentinel-enforce-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let toml = dir.join("spira.toml");
+        std::fs::write(&toml, "[spira]\nlifecycle_enforce = true\n").unwrap();
+        assert_eq!(lifecycle_enforce(None, Some(&toml)), Lifecycle::On);
+        assert_eq!(
+            lifecycle_enforce(Some("0"), Some(&toml)),
+            Lifecycle::Off,
+            "the unit env wins"
+        );
+        std::fs::write(&toml, "[spira]\n").unwrap();
+        assert_eq!(lifecycle_enforce(None, Some(&toml)), Lifecycle::Off);
+        assert_eq!(lifecycle_enforce(Some("1"), Some(&toml)), Lifecycle::On);
+        assert_eq!(lifecycle_enforce(Some("true"), None), Lifecycle::On);
+        assert_eq!(lifecycle_enforce(Some("yes"), None), Lifecycle::Off);
+        assert_eq!(lifecycle_enforce(None, None), Lifecycle::Off);
+        assert_eq!(
+            lifecycle_enforce(None, Some(&dir.join("absent.toml"))),
+            Lifecycle::Off
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

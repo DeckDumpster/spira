@@ -124,32 +124,72 @@ pub fn inconsistent(rows: &[LcRow]) -> Vec<String> {
 }
 
 impl<'a> Sentinel<'a> {
-    /// The one lifecycle read. None when the binary exists and the read failed (cannot
-    /// tell); Some(empty) when there is no binary (lc.sh's contract: nothing is held).
+    /// ON mode's one lifecycle read. The machine is authoritative, so an absent binary or a
+    /// failed read is LOUD: one `LIFECYCLE UNREACHABLE` line naming why, no lifecycle
+    /// decision this pass, and the unit exits 1 once the rest of the pass has run.
+    /// Never called in OFF mode.
     pub fn lc_rows(&self) -> Option<Vec<LcRow>> {
+        debug_assert_eq!(
+            self.lc,
+            crate::cfg::Lifecycle::On,
+            "OFF must never read spira-lc"
+        );
+        let raw = self.ctx.get("SPIRA_LC_BIN").unwrap_or("").to_string();
         let Some(bin) = self
             .cfg
             .lc_bin
             .clone()
             .filter(|b| crate::pass::is_exec(std::path::Path::new(b)))
         else {
-            return Some(Vec::new());
-        };
-        let o = self
-            .h
-            .run(Spec::args_owned(bin, vec!["list".into()]).err(Io::Null));
-        if !o.ok() {
-            self.log(&format!(
-                "WARN spira-lc list failed (rc={}) — lifecycle state is unknown this pass",
-                o.rc
+            self.lc_unreachable(&format!(
+                "spira-lc is not installed (SPIRA_LC_BIN={})",
+                if raw.is_empty() { "<unset>" } else { &raw }
             ));
+            return None;
+        };
+        let o = self.h.run(Spec::args_owned(bin, vec!["list".into()]));
+        if !o.ok() {
+            let why = o
+                .stderr
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("no message");
+            self.lc_unreachable(&format!("`spira-lc list` failed (rc={}: {why})", o.rc));
             return None;
         }
         match parse_lc_rows(&o.stdout) {
             Ok(r) => Some(r),
             Err(e) => {
-                self.log(&format!("WARN {e} — lifecycle state is unknown this pass"));
+                self.lc_unreachable(&e);
                 None
+            }
+        }
+    }
+
+    pub fn lc_unreachable(&self, why: &str) {
+        if !self.lc_failed.replace(true) {
+            self.log(&format!(
+                "LIFECYCLE UNREACHABLE — lifecycle_enforce=1 but {why}; CHECK 2/2c/4 make no lifecycle decision this pass and the unit exits 1 (set lifecycle_enforce=0 to run on the legacy records)"
+            ));
+        }
+    }
+
+    /// ON mode: apply one lifecycle event; a machine that cannot answer (rc 2, or no binary)
+    /// is loud, a CAS refusal (rc 3: someone moved the row first) is the normal race.
+    pub fn lc_apply(&self, id: &str, kind: &str) -> bool {
+        match self.lc_event(id, kind, "sentinel") {
+            Ok(()) => true,
+            Err(rc) => {
+                if rc == 2 || rc == 127 {
+                    self.lc_unreachable(&format!(
+                        "spira-lc could not apply an event to {id} (rc={rc})"
+                    ));
+                } else {
+                    self.log(&format!(
+                        "WARN lifecycle event on {id} refused (rc={rc}) — retried next pass"
+                    ));
+                }
+                false
             }
         }
     }
@@ -229,7 +269,7 @@ impl<'a> Sentinel<'a> {
                     &format!("waiting on {ask} dep(s), excluded from CHECK 2's reclaim"),
                 )
                 .unwrap_or_default();
-                if self.lc_event(&id, &ev, "sentinel").is_ok() {
+                if self.lc_apply(&id, &ev) {
                     now_held.insert(id.clone());
                 }
                 self.log(&format!(
@@ -239,10 +279,7 @@ impl<'a> Sentinel<'a> {
                     "protected {id} from reclaim: waiting on {ask} dep"
                 ));
             } else {
-                if self
-                    .lc_event(&id, &unhold_event("wait").unwrap_or_default(), "sentinel")
-                    .is_ok()
-                {
+                if self.lc_apply(&id, &unhold_event("wait").unwrap_or_default()) {
                     now_held.remove(&id);
                 }
                 self.log(&format!("CHECK2 {id}: {ask} dep no longer blocking — wait released, re-enters the reaper"));
@@ -263,7 +300,7 @@ impl<'a> Sentinel<'a> {
         let now = self.h.now();
         let mut n = 0;
         for (id, ago) in stale_leases(&rows, now, self.cfg.reclaim_grace) {
-            if self.lc_event(&id, HOLDER_DEAD, "sentinel").is_err() {
+            if !self.lc_apply(&id, HOLDER_DEAD) {
                 continue;
             }
             self.write_event_row(&id, "reclaimed", "stale-lease");

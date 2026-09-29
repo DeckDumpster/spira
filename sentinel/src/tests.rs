@@ -5,7 +5,7 @@
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 
-use crate::cfg::Context;
+use crate::cfg::{Context, Lifecycle};
 use crate::host::{Clock, Host, Out, Runner, Sink, Spec};
 use crate::pass::{Mode, Sentinel};
 
@@ -239,6 +239,14 @@ pub fn run_mode<'a>(
     repos: Option<&[&str]>,
 ) -> i32 {
     let h: &'a Host<'a> = Box::leak(Box::new(Host::new(r, clock, sink)));
+    // The switch, as the unit's own environment would set it (default: off, production).
+    let lc = crate::cfg::lifecycle_enforce(
+        extra
+            .iter()
+            .find(|(k, _)| *k == "SPIRA_LIFECYCLE_ENFORCE")
+            .map(|(_, v)| *v),
+        None,
+    );
     let s = Sentinel::new(
         h,
         w.ctx(extra, repos),
@@ -246,8 +254,37 @@ pub fn run_mode<'a>(
         mode,
         "/opt/bin/sentinel".into(),
         "host-1-1".into(),
+        lc,
     );
-    s.run()
+    let rc = s.run();
+    if lc == Lifecycle::Off {
+        // OFF never invokes spira-lc — not directly, and no child is handed a path to it.
+        assert_eq!(
+            r.count(|s| s.prog.ends_with("/lc")),
+            0,
+            "OFF called spira-lc: {:#?}",
+            r.lines()
+        );
+        for s in r.calls.borrow().iter() {
+            if let Some(v) = env_of(s, "SPIRA_LC_BIN") {
+                assert_eq!(
+                    v,
+                    crate::cfg::LC_DISABLED,
+                    "{} was handed a live SPIRA_LC_BIN",
+                    s.line()
+                );
+            }
+            if seam_name(s).is_some() || s.prog.ends_with("/strand") {
+                assert_eq!(
+                    env_of(s, "SPIRA_LC_BIN"),
+                    Some(crate::cfg::LC_DISABLED),
+                    "{}",
+                    s.line()
+                );
+            }
+        }
+    }
+    rc
 }
 
 fn setup(tag: &str) -> (World, FakeRunner, FakeSink, FakeClock) {
@@ -338,10 +375,9 @@ fn full_pass_reads_the_store_once_and_exports_it() {
     assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None), 0);
     assert_eq!(r.count(|s| is_bd(s, "list")), 1, "{:#?}", r.lines());
     assert_eq!(r.count(|s| is_bd(s, "ready")), 1);
-    assert_eq!(
-        r.count(|s| s.prog.ends_with("/lc") && s.args[0] == "list"),
-        1
-    );
+    // lifecycle_enforce OFF (the default here): no lifecycle read at all — run_mode asserts
+    // that for every OFF test. ON's one read is pinned in on_check2_reaps_….
+    assert_eq!(r.count(|s| s.prog.ends_with("/lc")), 0);
     assert!(sink.has("spira: state: goal=sp-goal open=2 plan_ready=1 in_progress=1 aeons=0 fayths=[builder ops]"), "{}", sink.text());
     assert!(sink.has("RECLAIMED sp-x — ghost"));
     assert!(sink.has("ACT handled 1 stranded item(s)"));
@@ -607,7 +643,7 @@ fn summon_only_gates_then_reads_ready_once() {
 // CHECK 2 / 2c (lifecycle)
 
 #[test]
-fn check2_reaps_stale_leases_and_2c_reports_desync() {
+fn on_check2_reaps_stale_leases_and_2c_reports_desync() {
     let (w, r, sink, clock) = setup("check2");
     let lease = NOW - 20_000;
     r.on(move |s| {
@@ -622,7 +658,20 @@ fn check2_reaps_stale_leases_and_2c_reports_desync() {
         }
         None
     });
-    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
+    run_mode(
+        &w,
+        &r,
+        &sink,
+        &clock,
+        Mode::Pass,
+        &[("SPIRA_LIFECYCLE_ENFORCE", "1")],
+        None,
+    );
+    assert_eq!(
+        r.count(|s| s.prog.ends_with("/lc") && s.args[0] == "list"),
+        1,
+        "ON: one lifecycle read per pass"
+    );
     let ev = r
         .find(|s| s.prog.ends_with("/lc") && s.args[0] == "event")
         .unwrap();
@@ -743,7 +792,8 @@ fn check4_poisons_asks_mails_and_clears() {
             Mode::Audit,
             &[
                 ("SPIRA_SKIP_CLOSED_CHECK", "1"),
-                ("SPIRA_SKIP_RECLAIM", "1")
+                ("SPIRA_SKIP_RECLAIM", "1"),
+                ("SPIRA_LIFECYCLE_ENFORCE", "1"),
             ],
             Some(repos)
         ),
@@ -878,6 +928,7 @@ fn check4_decides_nothing_when_counts_fail_and_skips_a_bead_closed_mid_pass() {
         &[
             ("SPIRA_SKIP_CLOSED_CHECK", "1"),
             ("SPIRA_SKIP_RECLAIM", "1"),
+            ("SPIRA_LIFECYCLE_ENFORCE", "1"),
         ],
         Some(&[]),
     );
@@ -907,6 +958,7 @@ fn check4_decides_nothing_when_counts_fail_and_skips_a_bead_closed_mid_pass() {
         &[
             ("SPIRA_SKIP_CLOSED_CHECK", "1"),
             ("SPIRA_SKIP_RECLAIM", "1"),
+            ("SPIRA_LIFECYCLE_ENFORCE", "1"),
         ],
         Some(&[]),
     );
@@ -1150,7 +1202,16 @@ fn roster_warnings_name_each_left_out_persona_once() {
     );
     let ctx = || Context::parse(&b).unwrap();
     let h = Host::new(&r, &clock, &sink);
-    Sentinel::new(&h, ctx(), &w.home, Mode::Report, "x".into(), "p".into()).run();
+    Sentinel::new(
+        &h,
+        ctx(),
+        &w.home,
+        Mode::Report,
+        "x".into(),
+        "p".into(),
+        Lifecycle::Off,
+    )
+    .run();
     assert!(sink.has("WARN ops.fayth is in the chamber but not in SPIRA_FAYTHS — that persona will never be summoned here"));
     assert!(sink.has("WARN spike.fayth is in the chamber"));
     assert_eq!(
@@ -1159,7 +1220,16 @@ fn roster_warnings_name_each_left_out_persona_once() {
     );
     let sink2 = FakeSink::default();
     let h2 = Host::new(&r, &clock, &sink2);
-    Sentinel::new(&h2, ctx(), &w.home, Mode::Report, "x".into(), "p".into()).run();
+    Sentinel::new(
+        &h2,
+        ctx(),
+        &w.home,
+        Mode::Report,
+        "x".into(),
+        "p".into(),
+        Lifecycle::Off,
+    )
+    .run();
     assert!(!sink2.has("WARN"), "the same roster is not re-announced");
 }
 
@@ -1211,4 +1281,304 @@ fn phases_are_tsd_rows_for_the_full_pass_only() {
             "pass=host-1-1"
         ]
     );
+}
+
+// ---------------------------------------------------------------------------------------
+// §2.9 the lifecycle switch: both modes of every affected CHECK.
+
+const LEGACY_LIST: &str = r#"[
+  {"id":"sp-goal","status":"open","issue_type":"epic"},
+  {"id":"w1","status":"in_progress","parent":"sp-goal","labels":["spira","plan"],"dependency_count":1,"dependencies":[{"depends_on_id":"q1","type":"blocks"}]},
+  {"id":"w2","status":"in_progress","labels":["spira","plan","spira-waiting-operator"],"dependency_count":0},
+  {"id":"q1","status":"open","labels":["needs-operator"]},
+  {"id":"o1","status":"open","assignee":"aeon-dead","labels":["spira","plan"]},
+  {"id":"o2","status":"open","assignee":"aeon-live","lease_expires_at":"2099-01-01T00:00:00Z","labels":["spira","plan"]}
+]"#;
+
+#[test]
+fn off_check2_protects_by_label_and_reclaims_through_bd() {
+    let (w, r, sink, clock) = setup("off2");
+    r.on(|s| {
+        if is_bd(s, "list") {
+            ok(LEGACY_LIST)
+        } else {
+            None
+        }
+    });
+    r.on(|s| {
+        if is_bd(s, "reclaim") && s.args.iter().any(|a| a == "spira,plan") {
+            return ok("✓ Reclaimed sp-dead (lease expired 200m ago)\n");
+        }
+        if is_bd(s, "reclaim") {
+            return ok("No stale leases\n");
+        }
+        None
+    });
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
+    assert!(
+        r.find(|s| s.prog == "bd"
+            && s.args.len() > 2
+            && s.args[2..] == ["label", "add", "w1", "spira-waiting-operator"])
+            .is_some(),
+        "{:#?}",
+        r.lines()
+    );
+    assert!(r
+        .find(|s| s.prog == "bd"
+            && s.args.len() > 2
+            && s.args[2..] == ["label", "remove", "w2", "spira-waiting-operator"])
+        .is_some());
+    assert!(sink.has("CHECK2 w1: only open dep(s) carry needs-operator — labeled spira-waiting-operator, excluded from reclaim"));
+    assert!(sink.has("CHECK2 w2: needs-operator dep no longer blocking — removed spira-waiting-operator, re-enters the reaper"));
+    let reclaims: Vec<String> = r
+        .calls
+        .borrow()
+        .iter()
+        .filter(|s| is_bd(s, "reclaim"))
+        .map(|s| s.line())
+        .collect();
+    assert_eq!(
+        reclaims,
+        vec![
+            "bd -C /db reclaim --older-than 180m --label spira,plan --exclude-label spira-waiting-operator",
+            "bd -C /db reclaim --older-than 180m --label spira,incident --exclude-label spira-waiting-operator",
+        ]
+    );
+    assert!(r
+        .find(|s| is_bd(s, "sql")
+            && s.args[3].contains("'sp-dead', 'reclaimed', 'harness', 'stale-lease'"))
+        .is_some());
+    assert!(sink.has("ACT reclaimed 1 stale lease(s)"));
+}
+
+#[test]
+fn off_check2c_releases_orphaned_claims_and_recounts_the_plan() {
+    let (w, r, sink, clock) = setup("off2c");
+    r.on(|s| {
+        if is_bd(s, "list") {
+            ok(LEGACY_LIST)
+        } else {
+            None
+        }
+    });
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
+    let assigns: Vec<Vec<String>> = r
+        .calls
+        .borrow()
+        .iter()
+        .filter(|s| is_bd(s, "assign"))
+        .map(|s| s.args[2..].to_vec())
+        .collect();
+    assert_eq!(
+        assigns,
+        vec![vec!["assign".to_string(), "o1".into(), "".into()]],
+        "o2's lease is live"
+    );
+    assert!(sink.has("RELEASED\to1\taeon-dead"));
+    assert!(sink.has("ACT released 1 orphaned claim(s)"));
+    assert_eq!(
+        r.count(|s| is_bd(s, "ready")),
+        2,
+        "the snapshot's ready read + the recount"
+    );
+    assert!(
+        !sink.has("INCONSISTENT"),
+        "2c's lifecycle half never runs OFF"
+    );
+}
+
+#[test]
+fn off_check4_poisons_and_clears_by_label() {
+    let (w, r, sink, clock) = audit_world("off4");
+    r.on(|s| {
+        if is_bd(s, "list") {
+            return ok(r#"[{"id":"sp-goal","status":"open"},
+              {"id":"sp-p","status":"open","labels":["spira","plan"],"issue_type":"task"},
+              {"id":"sp-h","status":"open","labels":["spira","plan","spira-poison"],"issue_type":"task"},
+              {"id":"sp-x","status":"closed","labels":["spira","plan","spira-poison"],"issue_type":"task"}]"#);
+        }
+        None
+    });
+    run_mode(
+        &w,
+        &r,
+        &sink,
+        &clock,
+        Mode::Audit,
+        &[
+            ("SPIRA_SKIP_CLOSED_CHECK", "1"),
+            ("SPIRA_SKIP_RECLAIM", "1"),
+        ],
+        Some(&[]),
+    );
+    // the labelled bead is outside every partition (they exclude spira-poison), as before sp-i2m7y
+    assert!(
+        sink.has("CHECK4 examining 1 dispatchable bead(s)"),
+        "{}",
+        sink.text()
+    );
+    let d = r
+        .find(|s| s.prog.ends_with("/claim") && s.args[0] == "decide" && s.args[8] == "3")
+        .unwrap();
+    assert_eq!(
+        d.args.last().unwrap(),
+        "0",
+        "poisoned comes from the label, not a hold"
+    );
+    assert!(r
+        .find(|s| s.prog == "bd"
+            && s.args.len() > 2
+            && s.args[2..] == ["label", "add", "sp-p", "spira-poison"])
+        .is_some());
+    let note = r.find(|s| is_bd(s, "note")).unwrap();
+    assert!(String::from_utf8(note.stdin.unwrap())
+        .unwrap()
+        .ends_with("no persona can claim it again while the label stands."));
+    assert!(sink.has("ACT poisoned sp-p after 3 attempts"));
+    // stale clear: the label set, closed beads skipped
+    let counts = r
+        .calls
+        .borrow()
+        .iter()
+        .filter(|s| s.prog.ends_with("/claim") && s.args[0] == "counts")
+        .map(|s| String::from_utf8(s.stdin.clone().unwrap()).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(counts.last().unwrap(), "sp-h\n");
+    assert!(r
+        .find(|s| s.prog == "bd"
+            && s.args.len() > 2
+            && s.args[2..] == ["label", "remove", "sp-h", "spira-poison"])
+        .is_some());
+    assert!(sink.has("ACT CHECK4 sp-h: stale poison cleared — 1 attempt(s), below threshold 3"));
+}
+
+#[test]
+fn on_check4_note_names_the_hold() {
+    let (w, r, sink, clock) = audit_world("on4note");
+    run_mode(
+        &w,
+        &r,
+        &sink,
+        &clock,
+        Mode::Audit,
+        &[
+            ("SPIRA_SKIP_CLOSED_CHECK", "1"),
+            ("SPIRA_SKIP_RECLAIM", "1"),
+            ("SPIRA_LIFECYCLE_ENFORCE", "1"),
+        ],
+        Some(&[]),
+    );
+    let note = r.find(|s| is_bd(s, "note")).unwrap();
+    assert!(String::from_utf8(note.stdin.unwrap())
+        .unwrap()
+        .ends_with("while the hold stands."));
+    assert_eq!(r.count(|s| is_bd(s, "label")), 0, "ON writes no bd label");
+}
+
+#[test]
+fn on_an_unreachable_machine_is_loud_and_fails_the_unit() {
+    let (w, r, sink, clock) = setup("onfail");
+    r.on(|s| {
+        if s.prog.ends_with("/lc") {
+            return Some(Out {
+                rc: 2,
+                stdout: String::new(),
+                stderr: "cannot tell: Access denied for user 'spira_lc'\n".into(),
+            });
+        }
+        None
+    });
+    let rc = run_mode(
+        &w,
+        &r,
+        &sink,
+        &clock,
+        Mode::Pass,
+        &[("SPIRA_LIFECYCLE_ENFORCE", "1")],
+        None,
+    );
+    assert_eq!(
+        rc, 1,
+        "the unit goes red every pass until the machine answers"
+    );
+    assert!(sink.has("LIFECYCLE UNREACHABLE — lifecycle_enforce=1 but `spira-lc list` failed (rc=2: cannot tell: Access denied for user 'spira_lc')"), "{}", sink.text());
+    assert_eq!(
+        sink.0
+            .borrow()
+            .iter()
+            .filter(|l| l.contains("LIFECYCLE UNREACHABLE"))
+            .count(),
+        1,
+        "said once per pass"
+    );
+    // the rest of the pass still ran: landing and summoning do not wait on the machine
+    assert_eq!(
+        r.count(|s| seam_name(s).as_deref() == Some("sentinel-ck7")),
+        1
+    );
+    assert!(sink.has("pass complete"));
+    // no legacy fallback either
+    assert_eq!(r.count(|s| is_bd(s, "reclaim") || is_bd(s, "assign")), 0);
+
+    let (w, r, sink, clock) = setup("onmissing");
+    std::fs::remove_file(w.home.join("lc")).unwrap();
+    let rc = run_mode(
+        &w,
+        &r,
+        &sink,
+        &clock,
+        Mode::Audit,
+        &[
+            ("SPIRA_LIFECYCLE_ENFORCE", "1"),
+            ("SPIRA_SKIP_CLOSED_CHECK", "1"),
+        ],
+        Some(&[]),
+    );
+    assert_eq!(rc, 1);
+    assert!(sink.has("LIFECYCLE UNREACHABLE — lifecycle_enforce=1 but spira-lc is not installed"));
+    assert!(sink
+        .has("CHECK4 lifecycle read failed — making no poison/requeue/reclaim decision this pass"));
+    assert_eq!(
+        r.count(|s| is_bd(s, "label")),
+        0,
+        "ON never falls back to labels"
+    );
+}
+
+#[test]
+fn the_switch_reaches_every_child_and_both_workers() {
+    for (on, tag) in [(false, "swoff"), (true, "swon")] {
+        let (w, r, sink, clock) = setup(tag);
+        let mut extra = vec![("SPIRA_LAUNCH", "/stub/launch")];
+        if on {
+            extra.push(("SPIRA_LIFECYCLE_ENFORCE", "1"));
+        }
+        run_mode(&w, &r, &sink, &clock, Mode::Pass, &extra, None);
+        let want = if on { "1" } else { "0" };
+        let ck7 = r
+            .find(|s| seam_name(s).as_deref() == Some("sentinel-ck7"))
+            .unwrap();
+        assert_eq!(env_of(&ck7, "SPIRA_LIFECYCLE_ENFORCE"), Some(want));
+        let audit = r
+            .find(|s| s.prog == "/stub/launch" && s.args.iter().any(|a| a == "--audit"))
+            .unwrap();
+        assert!(audit
+            .args
+            .contains(&format!("--setenv=SPIRA_LIFECYCLE_ENFORCE={want}")));
+        let land = r
+            .find(|s| s.prog == "/stub/launch" && s.args.iter().any(|a| a.ends_with("/landing.sh")))
+            .unwrap();
+        assert!(land
+            .args
+            .contains(&format!("--setenv=SPIRA_LIFECYCLE_ENFORCE={want}")));
+        let disabled = format!("--setenv=SPIRA_LC_BIN={}", crate::cfg::LC_DISABLED);
+        assert_eq!(land.args.contains(&disabled), !on);
+        if on {
+            assert_eq!(
+                env_of(&ck7, "SPIRA_LC_BIN"),
+                None,
+                "ON: children keep conf.sh's own SPIRA_LC_BIN"
+            );
+        }
+    }
 }

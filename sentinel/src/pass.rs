@@ -5,7 +5,7 @@ use std::cell::{Cell, RefCell};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::cfg::{Cfg, Context};
+use crate::cfg::{Cfg, Context, Lifecycle, LC_DISABLED};
 use crate::host::{Host, Io, Out, Spec};
 use crate::seams;
 use crate::store::{self, Bd, Snapshot};
@@ -46,6 +46,10 @@ pub struct Sentinel<'a> {
     pub pass_id: String,
     phase: RefCell<Option<(String, i64)>>,
     pub started: i64,
+    /// The one switch for everything that touches the lifecycle machine (DESIGN.md §2.9).
+    pub lc: Lifecycle,
+    /// ON mode only: the machine could not be read or written this pass → exit 1.
+    pub lc_failed: Cell<bool>,
 }
 
 impl<'a> Sentinel<'a> {
@@ -56,8 +60,19 @@ impl<'a> Sentinel<'a> {
         mode: Mode,
         exe: String,
         pass_id: String,
+        lc: Lifecycle,
     ) -> Sentinel<'a> {
-        let cfg = Cfg::from_context(&ctx, home);
+        let mut cfg = Cfg::from_context(&ctx, home);
+        // Every child sees the same switch this process resolved. OFF: no path to spira-lc
+        // reaches anything this process runs (lc.sh's -x guards make each call a no-op).
+        h.set_env(
+            "SPIRA_LIFECYCLE_ENFORCE",
+            if lc == Lifecycle::On { "1" } else { "0" },
+        );
+        if lc == Lifecycle::Off {
+            cfg.lc_bin = None;
+            h.set_env("SPIRA_LC_BIN", LC_DISABLED);
+        }
         let tally_file = cfg
             .run
             .join(format!(".sentinel-tally.{}", std::process::id()));
@@ -76,6 +91,8 @@ impl<'a> Sentinel<'a> {
             pass_id,
             phase: RefCell::new(None),
             started,
+            lc,
+            lc_failed: Cell::new(false),
         }
     }
 
@@ -363,22 +380,37 @@ impl<'a> Sentinel<'a> {
         }
 
         self.phase("CHECK2");
-        let lc_rows = if self.cfg.skip_reclaim {
-            None
-        } else {
-            self.lc_rows()
+        let lc_rows = match (self.cfg.skip_reclaim, self.lc) {
+            (false, Lifecycle::On) => self.lc_rows(),
+            _ => None,
         };
         if !self.cfg.skip_reclaim {
-            if let Some(rows) = &lc_rows {
-                self.check2(&snap, rows);
+            match self.lc {
+                Lifecycle::On => {
+                    if let Some(rows) = &lc_rows {
+                        self.check2(&snap, rows);
+                    }
+                }
+                Lifecycle::Off => self.check2_legacy(&snap),
             }
         }
         self.phase("CHECK2b");
         self.check2b();
         self.phase("CHECK2c");
+        let mut plan_ready = plan_ready;
         if !self.cfg.skip_reclaim {
-            if let Some(rows) = &lc_rows {
-                self.check2c(rows);
+            match self.lc {
+                Lifecycle::On => {
+                    if let Some(rows) = &lc_rows {
+                        self.check2c(rows);
+                    }
+                }
+                Lifecycle::Off => {
+                    if self.check2c_legacy(&snap) > 0 {
+                        // Every freed bead is claimable now; CHECK 3 and 8 reason about it.
+                        plan_ready = self.plan_ready_live();
+                    }
+                }
             }
         }
         self.phase("CHECK3");
@@ -408,7 +440,7 @@ impl<'a> Sentinel<'a> {
                 self.progressed.get()
             ));
             self.budget_check();
-            return 0;
+            return self.exit_code();
         }
 
         self.phase("CHECK8");
@@ -420,7 +452,13 @@ impl<'a> Sentinel<'a> {
             self.progressed.get()
         ));
         self.budget_check();
-        0
+        self.exit_code()
+    }
+
+    /// ON mode: a machine that could not be read or written fails the unit, every pass,
+    /// until it is fixed — after the rest of the pass (landing, summoning) has run.
+    fn exit_code(&self) -> i32 {
+        i32::from(self.lc_failed.get())
     }
 
     fn audit(&self, snap: &Snapshot) -> i32 {
@@ -442,7 +480,7 @@ impl<'a> Sentinel<'a> {
             self.acted.get(),
             self.progressed.get()
         ));
-        0
+        self.exit_code()
     }
 
     /// B7: the positive control on the pass-time budget (DESIGN.md §5).
@@ -508,22 +546,25 @@ impl<'a> Sentinel<'a> {
         if self.cfg.skip_reclaim || plan_ready != Some(0) || plan_inprog != 0 || n_open == 0 {
             return plan_ready;
         }
-        let bd = self.bd();
-        bd.quiet(self.h, &["recompute-blocked"], None);
-        let mut a = store::ready_args(&self.cfg);
-        a.push("--label".into());
-        a.push(self.cfg.plan_labels().join(","));
-        a.push("--exclude-label".into());
-        a.push(format!("spira-poison,{}", self.cfg.ask));
-        let now = match store::read_json(&bd, self.h, &a) {
-            Ok((_, v)) => v.len(),
-            Err(_) => 0,
-        };
+        self.bd().quiet(self.h, &["recompute-blocked"], None);
+        let now = self.plan_ready_live().unwrap_or(0);
         self.log("recomputed is_blocked");
         if now != 0 {
             self.progress(&format!("recompute-blocked freed {now} bead(s)"));
         }
         Some(now)
+    }
+
+    /// `ready_count "<scope,>plan" "spira-poison,<ask>"`, asked live.
+    pub fn plan_ready_live(&self) -> Option<usize> {
+        let mut a = store::ready_args(&self.cfg);
+        a.push("--label".into());
+        a.push(self.cfg.plan_labels().join(","));
+        a.push("--exclude-label".into());
+        a.push(format!("spira-poison,{}", self.cfg.ask));
+        store::read_json(&self.bd(), self.h, &a)
+            .ok()
+            .map(|(_, v)| v.len())
     }
 
     /// The fleet: `aeon_count` summed over the roster, from one unit listing.
