@@ -99,7 +99,7 @@ stderr; `attribute.sh` treats `>= 2` as a run fault; `gate-retry.sh` retries onl
 | `<suite>.result` | one line, `ResultRecord` (§3.1). Written **after** `<suite>.out`: its presence means complete. |
 | `<suite>.out` | the suite's combined stdout+stderr, trailing newlines stripped, one `\n` added (bash `$(cat)` + `printf '%s\n'`). |
 | `<suite>.tap.json` | new: `TapSummary` (§3.5) for the suite's output. |
-| `batch.meta` | `image_tag= branch= base= key= mode= selection=` then new `profile= artifacts= worktree=` — `key=value` lines; gate-timing.sh reads `key`, `branch`, `base`. |
+| `batch.meta` | `image_tag= branch= base= key= mode= selection=` then new `profile= artifacts= worktree= tree=` — `key=value` lines; gate-timing.sh reads `key`, `branch`, `base`. |
 | `runner.meta` | `nproc= memtotal_kb= maxpar= cpu_busy_pct= suites_wall_s=` |
 | `timing.tsv` | `<suite>\t<wall_s>\t<status>\t<bd_ms or ->` per suite with a result |
 | `$SPIRA_VERDICTS/batch-<key>` | `VerdictFile` (§3.3), shared with gate.sh's directory |
@@ -370,7 +370,7 @@ Measured in this worktree, 2026-09-28, full workspace (`cargo build --profile ae
 
 | case | wall | what cargo compiled |
 |---|---|---|
-| cold, fresh target dir | 18.3 s | all 24 crates |
+| cold, fresh target dir | 18.3 s | every workspace crate |
 | warm, no change | 0.10 s | nothing |
 | warm, one-line edit to `spira/lib.sh` | 0.12 s | **nothing** |
 | warm, one-line edit to a leaf crate (`tsd-lifecycle-export/src/main.rs`) | 0.62 s | that crate only |
