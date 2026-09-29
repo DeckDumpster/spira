@@ -50,7 +50,8 @@ printf '\nT1: stage up creates expected structure\n'
     isexec "canary-worker.sh"      "$SPIRA_HOME/canary-worker.sh"
     exists "lib.sh symlink"        "$SPIRA_HOME/lib.sh"
     # sentinel.sh is gone: the stage runs the sentinel binary (canary.sh: "$SPIRA_SENTINEL_BIN").
-    exists "landing.sh symlink"    "$SPIRA_HOME/landing.sh"
+    # landing.sh is gone: canary.sh runs "$SPIRA_LANDING_PASS_BIN" land (landing-pass/DESIGN.md §7.2).
+    exists "landing-pass"          "${SPIRA_LANDING_PASS_BIN:-}"
     exists "bare remote"           "$STAGE_ROOT/remote.git/HEAD"
     exists "repo checkout"         "$STAGE_ROOT/repo/.git"
     exists "SPIRA_RUN/worktree"    "$SPIRA_RUN/worktree"

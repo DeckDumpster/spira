@@ -175,7 +175,7 @@ mkdir -p "$RUN/worktree" "$SH/chamber"
 
 # The program under test, run out of its own directory so it sources the real lib.sh but
 # finds stubbed sub-programs beside it.
-cp "$HERE/lib.sh" "$HERE/lc.sh" "$HERE/lifecycle-cert.sh" "$HERE/landing.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HERE/attempts.sh" "$SH/"
+cp "$HERE/lib.sh" "$HERE/lc.sh" "$HERE/lifecycle-cert.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HERE/attempts.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub pilgrimage.sh 'printf "%s" "${PILGRIMAGE_OUT:-}"'
 stub strand        'printf "%s" "${STRAND_OUT:-}"'

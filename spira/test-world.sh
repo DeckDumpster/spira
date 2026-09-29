@@ -168,15 +168,16 @@ STOP_FAILS=""
 #
 # A REAL background process, because /proc is the real thing and cannot be stubbed. The
 # process is started under $SPIRA_HOME so world.sh's own live_workers() scan finds it —
-# the scan is keyed on $SPIRA_HOME/gate.sh and $SPIRA_HOME/landing.sh in the cmdline.
+# the scan is keyed on $SPIRA_HOME/gate.sh and <release>/bin/landing-pass in the cmdline.
 # --------------------------------------------------------------------------------------
 echo
 echo "live workers (/proc) scan:"
 
 # The positive control: a process that IS running must appear in the count.
-# We start a background bash that names $SH/landing.sh as its argv[0] equivalent:
-# argv: bash <path>/landing.sh
-FAKE_LANDING="$SH/landing.sh"
+# We start a background bash that names the landing-pass binary's path (the sibling bin/ of
+# the harness dir, what live_workers matches since landing.sh retired): bash <root>/bin/landing-pass
+mkdir -p "$(dirname "$SH")/bin"
+FAKE_LANDING="$(dirname "$SH")/bin/landing-pass"
 printf '#!/usr/bin/env bash\nsleep 30\n' > "$FAKE_LANDING"; chmod +x "$FAKE_LANDING"
 
 ACTIVE_SVC=""; write_sc

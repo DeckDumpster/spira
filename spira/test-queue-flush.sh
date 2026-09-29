@@ -74,12 +74,9 @@ first="$(printf '%s\n' "$out" | grep -m1 -oE '^(verdict|batch)-called')"
 is_first="${first:-none}"
 want "verdict runs before batch"   "verdict-called" "$is_first"
 
-echo
-echo "landing's queue pass runs step, not the batch builder alone:"
-# The queue-pass loop is gated by repo_land_queued (queue and queue.local) since sp-xe12f.
-lq="$(grep -E -A3 '= queue \] \|\| continue|repo_land_queued "\$repo_name" \|\| continue' "$HERE/landing.sh" | grep -E 'queue\.sh|batch\.sh' | head -1)"
-want   "landing calls queue.sh step" 'queue.sh" step' "$lq"
-nowant "landing does not call batch.sh directly" 'batch.sh' "$lq"
+# RETIRED with landing.sh: the landing pass's queue step is landing-pass's Tools::queue_step
+# ("$SPIRA_QUEUE_BIN" step <repo>), pinned by cargo test -p landing-pass
+# the_queue_step_runs_before_and_after_the_walk_and_a_missing_binary_is_said.
 
 echo
 tl_summary

@@ -56,14 +56,14 @@ echo "the call sites — every outcome the harness has is wired to one"
 # are the aeon binary's (aeon/src/run.rs), covered by `cargo test -p aeon`.
 
 for site in \
-    "landing.sh:bead.landed"    "landing.sh:bead.reopened" \
     "gate-check.sh:ci.failed"; do
     f="${site%%:*}"; k="${site##*:}"
     grep -q "spira_event $k " "$HERE/$f" \
         && ok "$f emits $k" || bad "$f emits $k" "no call site"
 done
 # The sentinel and strand are Rust now: the event kinds are literals in their sources.
-for site in "sentinel/src/check4.rs:bead.poisoned" "strand/src/check.rs:branch.reclaimed"; do
+for site in "sentinel/src/check4.rs:bead.poisoned" "strand/src/check.rs:branch.reclaimed" \
+            "landing-pass/src/push.rs:bead.landed" "landing-pass/src/push.rs:bead.reopened"; do
     f="${site%%:*}"; k="${site##*:}"
     grep -qF "\"$k\"" "$HERE/../$f" \
         && ok "$f emits $k" || bad "$f emits $k" "no call site"

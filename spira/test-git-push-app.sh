@@ -174,7 +174,9 @@ done
 echo
 echo "8. STATIC CHECK — covered scripts use spira_git_push"
 # =========================================================================
-for f in landing.sh batch.sh sending.sh verdict.sh; do
+# landing.sh is the landing-pass binary now: it pushes through lib.sh's spira_git_push via its
+# seam (landing-pass/src/seam.rs Op::Push), which this source grep cannot see.
+for f in batch.sh sending.sh verdict.sh; do
     # sending.sh's own remote-branch delete moved into lib.sh's spira_reap_landed_branch
     # (sp-jci6o), shared with bead_close_on_land's landing-time reap — spira_git_push is
     # still what it calls, just one hop further away than a literal grep on this file sees.
