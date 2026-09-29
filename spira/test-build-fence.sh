@@ -126,20 +126,17 @@ is "GREEN AFTER: a compiling crate passes" "0" "$rc"
 want "and the fence says so" "make build ok" "$out"
 
 # =========================================================================================
-# GATE INTEGRATION. A fence nothing invokes is a file. build-fence.sh must run whether or
-# not SPIRA_GATE_SUITES is on — it is wired into gate-touched.sh, the one point in the
-# repo-map's fence chain that every certification call reaches regardless of mode, so this
-# needs no change to any installation's own repo-map.
+# GATE INTEGRATION. A fence nothing invokes is a file. The repository's gate string names
+# build-fence.sh itself (doctor.sh fails a row that does not); gate-touched.sh no longer calls
+# it (sp-aprxm), because under gate_mode=unit the Rust gate drops the step from the string and
+# a second call there would be the very cold release build that change removes. The gate
+# crate's own tests (`cargo test -p gate`, compose.rs and tests.rs) cover the drop.
 # =========================================================================================
 echo "6. gate integration:"
 gt="$(cat "$HERE/gate-touched.sh")"
-want "gate-touched.sh calls build-fence.sh" "build-fence.sh" "$gt"
-case "$gt" in
-    *'bash "$HERE/build-fence.sh" || exit 1'*'SPIRA_GATE_SUITES:-on'*)
-        ok "build-fence.sh runs before the SPIRA_GATE_SUITES=off early return" ;;
-    *) bad "build-fence.sh runs before the SPIRA_GATE_SUITES=off early return" \
-        "call site is not ahead of the off-mode exit" ;;
-esac
+nowant "gate-touched.sh does not call build-fence.sh (one build per unit gate)" 'bash "$HERE/build-fence.sh"' "$gt"
+dr="$(cat "$HERE/doctor.sh")"
+want "doctor.sh requires the gate string to name build-fence.sh" '*build-fence.sh*)' "$dr"
 is "build-fence.sh is executable" "0" "$([ -x "$HERE/build-fence.sh" ]; echo $?)"
 
 tl_summary

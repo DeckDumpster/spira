@@ -122,7 +122,8 @@ doctor_check_overrides() {
 # gate-touched.sh, was reachable only when the row's gate command still named one of them).
 # This is the runtime check for that: read the same repo-map the gate itself reads, and for
 # every repo carrying Rust crates, fail unless its configured gate command still names
-# build-fence.sh or gate-touched.sh (which calls it unconditionally).
+# build-fence.sh. (gate-touched.sh no longer calls it, sp-aprxm, so naming only that is not
+# enough; under gate_mode=unit the gate drops the step and its build phase is the check.)
 # --------------------------------------------------------------------------------------
 doctor_check_gate_compile_check() {
     . "$SPIRA_HOME/lib.sh"
@@ -135,13 +136,13 @@ doctor_check_gate_compile_check() {
         checked=$((checked + 1))
         gate="$(repo_gate "$name" 2>/dev/null)"
         case "$gate" in
-            *build-fence.sh*|*gate-touched.sh*)
+            *build-fence.sh*)
                 OK "$name: gate command reaches a compile check" ;;
             *)
                 FAIL "$name: gate command has no reachable compile check" \
                      "gate: ${gate:-<empty>}
         A Rust compile break in $path certifies green. Add a call to spira/build-fence.sh
-        (or spira/gate-touched.sh, which already calls it) to this row's gate command." ;;
+        to this row's gate command." ;;
         esac
     done <<< "$(repo_names 2>/dev/null)"
     [ "$checked" -gt 0 ] || \

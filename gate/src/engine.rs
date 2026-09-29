@@ -501,7 +501,8 @@ impl<'w, W: World> Trial<'w, W> {
                 e("SPIRA_GATE_EJECTED_SUITES", &ejected),
                 e("SPIRA_GATE_ALL", ctx.var_or("SPIRA_GATE_ALL", "0")),
                 // Suites off for a unit or fences composition: the gate string runs its
-                // fences and build fence and selects nothing (gate-touched.sh). The always-
+                // fences (a unit composition without the build fence, sp-aprxm) and
+                // selects nothing (gate-touched.sh). The always-
                 // covers carve-out is cleared with it; its default, spira/lib.sh, is a
                 // script, and a script composes as suites, so no carve-out can apply here.
                 e(
@@ -1006,7 +1007,7 @@ pub fn describe(c: &Composition) -> String {
             "gate: composition=fences — nothing buildable touched; fences only, suites off".into()
         }
         Composition::Unit { touched, crates } => format!(
-            "gate: composition=unit — fences (suites off), then cargo test on the host for: {} (touched: {})",
+            "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for: {} (touched: {})",
             crates.join(" "),
             touched.join(" ")
         ),
@@ -1091,8 +1092,10 @@ pub fn run_composed<W: World>(
     };
     let mut phases = Vec::new();
     let first = if comp.suites_off() { "fences" } else { "gate" };
+    // A unit composition builds once (sp-aprxm): its build phase, not the build fence.
+    let (cmd, _) = compose::gate_string(comp, cmd);
     let t = w.now();
-    let (rc, mut out) = w.run_gate(tree, env, &left(), cmd);
+    let (rc, mut out) = w.run_gate(tree, env, &left(), &cmd);
     phases.push((format!("{prefix}{first}"), w.now().saturating_sub(t)));
     if rc != 0 || w.signalled() {
         return (rc, out, phases);
