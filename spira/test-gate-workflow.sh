@@ -72,7 +72,8 @@ echo "1. it runs the real gate, not a cheaper subset:"
 want "inventory.sh"      "spira/inventory.sh"    "$G"
 want "literal-lint.sh"   "spira/literal-lint.sh" "$G"
 want "scratch-fence.sh"  "spira/scratch-fence.sh" "$G"
-want "testenv runner"    "bin/testenv --suites -" "$G"
+want "testenv runner"    "bin/testenv --artifacts bin --suites -" "$G"
+want "its retry tests the same prebuilt bin/" "GATE_RETRY_ARTIFACTS=bin bash spira/gate-retry.sh" "$G"
 
 echo
 echo "2. queue PRs use diff-selected suites via select.sh (law-a-runner-takes-a-list):"

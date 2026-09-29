@@ -505,11 +505,14 @@ jobs:
             printf 'gate: %s on %s — running the whole corpus\n' \
               "${{ github.event_name }}" "${{ github.ref_name }}"
           fi
-          printf '%s\n' "$_s" | bin/testenv --suites - "${{ github.sha }}" || _b=$?
+          # --artifacts bin: this runner has no Rust toolchain. The build job compiled this
+          # SHA and bin/ holds its executables; testenv tests those and runs no cargo
+          # (testenv/DESIGN.md D8). Without it every run faulted reason=no-cargo.
+          printf '%s\n' "$_s" | bin/testenv --artifacts bin --suites - "${{ github.sha }}" || _b=$?
           # A red suite gets one serial re-run; red then green is a flake, not a failure.
           if [ "$_b" = 1 ]; then
             _b=0
-            bash spira/gate-retry.sh "$SPIRA_BATCH_RESULTS" "${{ github.sha }}" || _b=$?
+            GATE_RETRY_ARTIFACTS=bin bash spira/gate-retry.sh "$SPIRA_BATCH_RESULTS" "${{ github.sha }}" || _b=$?
           fi
           case "$_b" in
             0) printf 'gate: pass\n' ;;
