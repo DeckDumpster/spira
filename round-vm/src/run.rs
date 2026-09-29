@@ -1,7 +1,10 @@
 //! `round-vm run` (DESIGN.md §2.2): mirror → acquire → batch on the VM → pull results,
 //! telemetry and binaries → manifest → install by tree sha → release.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
+use std::sync::atomic::AtomicUsize;
+use std::sync::Mutex;
+use std::time::Duration;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -14,9 +17,10 @@ use crate::config::Config;
 use crate::pool::{Deps, Pool};
 use crate::procs::{command, FileLock};
 use crate::schema::{AcquireMode, Manifest, ProcId, Vm};
+use crate::spool::{linger, stream_into, Server, Spool};
 
 pub const RUN_USAGE: &str =
-    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>]";
+    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>]";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RunArgs {
@@ -25,6 +29,8 @@ pub struct RunArgs {
     pub maxpar: Option<u32>,
     pub toolchain: Option<String>,
     pub results_dir: Option<PathBuf>,
+    /// DESIGN.md §2.2a: stream results while the corpus runs, and serve attribution reruns.
+    pub attr_spool: Option<PathBuf>,
 }
 
 /// Parses `run`'s arguments; `--opt value` and `--opt=value` both work.
@@ -46,6 +52,7 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
             }
             "--toolchain" => r.toolchain = Some(val()?).filter(|v| !v.is_empty()),
             "--results-dir" => r.results_dir = Some(PathBuf::from(val()?)),
+            "--attr-spool" => r.attr_spool = Some(PathBuf::from(val()?)),
             other => return Err(format!("round-vm run: unknown option: {other}")),
         }
     }
@@ -53,12 +60,14 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
 }
 
 /// The host side: the tree's identity and the mirror the VM clones from.
-pub trait Host {
+pub trait Host: Sync {
     fn is_checkout(&self, tree: &Path) -> bool;
     /// (commit sha, tree sha) of `tree`'s HEAD.
     fn head(&self, tree: &Path) -> Result<(String, String), String>;
     /// Points the mirror at `tree`'s HEAD and makes sure the daemon serving it is up.
     fn prepare_mirror(&self, tree: &Path) -> Result<(), String>;
+    /// Fetches `branch` of `tree`'s repository into the mirror as `refs/heads/<as_ref>`.
+    fn mirror_ref(&self, tree: &Path, branch: &str, as_ref: &str) -> Result<(), String>;
 }
 
 pub struct BatchJob {
@@ -70,12 +79,14 @@ pub struct BatchJob {
 }
 
 /// The VM side, reached only by address.
-pub trait Remote {
+pub trait Remote: Sync {
     fn reachable(&self, addr: &str) -> bool;
     /// Runs the batch on the VM; the remote testenv runner's exit code (255: ssh itself).
     fn run_batch(&self, addr: &str, job: &BatchJob) -> Result<i32, String>;
     /// Copies the remote directory `remote_path` into `local`.
     fn pull(&self, addr: &str, remote_path: &str, local: &Path) -> Result<(), String>;
+    /// Runs one attribution rerun (DESIGN.md §2.2a); its testenv exit code (255: ssh).
+    fn run_attr(&self, addr: &str, job: &crate::spool::AttrJob) -> Result<i32, String>;
 }
 
 /// Single-quotes `s` for a POSIX shell, so an empty argument survives ssh's re-joining of
@@ -171,6 +182,22 @@ impl Remote for SshRemote {
         Ok(st.code().unwrap_or(255))
     }
 
+    fn run_attr(&self, addr: &str, job: &crate::spool::AttrJob) -> Result<i32, String> {
+        let mut child = command("ssh")
+            .args(self.ssh_opts())
+            .arg(format!("{}@{addr}", self.user))
+            .arg(crate::spool::attr_command(job))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("ssh: {e}"))?;
+        if let Some(mut si) = child.stdin.take() {
+            si.write_all(crate::spool::REMOTE_ATTR_SCRIPT.as_bytes()).map_err(|e| format!("ssh stdin: {e}"))?;
+        }
+        let st = child.wait().map_err(|e| format!("ssh: {e}"))?;
+        Ok(st.code().unwrap_or(255))
+    }
+
     fn pull(&self, addr: &str, remote_path: &str, local: &Path) -> Result<(), String> {
         fs::create_dir_all(local).map_err(|e| format!("{}: {e}", local.display()))?;
         let st = command("rsync")
@@ -257,6 +284,11 @@ impl Host for GitHost {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
         Err(format!("git daemon did not start on port {} (exit {:?})", self.mirror_port, st.code()))
+    }
+
+    fn mirror_ref(&self, tree: &Path, branch: &str, as_ref: &str) -> Result<(), String> {
+        let m = self.state_dir.join("mirror.git").to_string_lossy().to_string();
+        git(&["--git-dir", &m, "fetch", "--quiet", &tree.to_string_lossy(), &format!("+refs/heads/{branch}:refs/heads/{as_ref}")]).map(|_| ())
     }
 }
 
@@ -455,19 +487,101 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
         toolchain: args.toolchain.clone(),
     };
     let t0 = Instant::now();
-    let remote_rc = match env.remote.run_batch(&vm.addr, &job) {
-        Ok(255) => {
-            eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
-            return 2;
-        }
-        Ok(rc) => rc,
-        Err(e) => {
-            eprintln!("round-vm run: {e}");
-            return 2;
-        }
+    let Some(spool_dir) = args.attr_spool.clone() else {
+        let remote_rc = match env.remote.run_batch(&vm.addr, &job) {
+            Ok(255) => {
+                eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
+                return 2;
+            }
+            Ok(rc) => rc,
+            Err(e) => {
+                eprintln!("round-vm run: {e}");
+                return 2;
+            }
+        };
+        return after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, remote_rc, t0.elapsed().as_secs());
     };
-    let wall = t0.elapsed().as_secs();
 
+    // DESIGN.md §2.2a: stream results while the corpus runs; serve attribution reruns on this
+    // VM until the batcher closes the spool.
+    let pid = std::process::id();
+    let in_flight = AtomicUsize::new(0);
+    let mirror_lock = Mutex::new(());
+    let results_dir = args.results_dir.clone().unwrap_or_else(|| cfg.run_dir.join("batch-results"));
+    let stream_scratch = cfg.state_dir.join(format!(".pulled-stream.{pid}"));
+    std::thread::scope(|sc| {
+        let mut server = Server {
+            spool: Spool { dir: spool_dir },
+            host: env.host,
+            remote: env.remote,
+            tree_dir: &args.tree_dir,
+            addr: &vm.addr,
+            host_addr,
+            mirror_port: cfg.mirror_port,
+            toolchain: args.toolchain.clone(),
+            scratch: cfg.state_dir.join(format!(".spool.{pid}")),
+            taken: BTreeSet::new(),
+            in_flight: &in_flight,
+            mirror_lock: &mirror_lock,
+        };
+        let batch = sc.spawn(|| env.remote.run_batch(&vm.addr, &job));
+        let mut last: Option<Instant> = None;
+        while !batch.is_finished() {
+            if last.map_or(true, |l| l.elapsed() >= cfg.stream_every) {
+                if env.remote.pull(&vm.addr, REMOTE_RESULTS, &stream_scratch).is_ok() {
+                    if let Err(e) = stream_into(&stream_scratch, &results_dir) {
+                        eprintln!("round-vm run: streaming results: {e}");
+                    }
+                }
+                last = Some(Instant::now());
+            }
+            server.serve(sc, false);
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = fs::remove_dir_all(&stream_scratch);
+        let (code, usable) = match batch.join() {
+            Ok(Ok(255)) => {
+                eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
+                (2, false)
+            }
+            Ok(Ok(rc)) => (after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, rc, t0.elapsed().as_secs()), true),
+            Ok(Err(e)) => {
+                eprintln!("round-vm run: {e}");
+                (2, false)
+            }
+            Err(_) => {
+                eprintln!("round-vm run: the batch thread panicked");
+                (2, false)
+            }
+        };
+        if let Err(e) = server.spool.corpus_done(code) {
+            eprintln!("round-vm run: {e}");
+        }
+        if usable {
+            linger(&mut server, sc, cfg.attr_linger, Duration::from_millis(200));
+        }
+        code
+    })
+}
+
+/// Where the VM's testenv writes the corpus's results.
+pub const REMOTE_RESULTS: &str = "round-work/.runtime/spira/batch-results/";
+
+/// Everything after the remote corpus returned `remote_rc`: pull results, tsd and binaries,
+/// write the manifest, install by tree sha. Returns `run`'s exit code.
+#[allow(clippy::too_many_arguments)]
+fn after_batch(
+    env: &RunEnv,
+    args: &RunArgs,
+    vm: &Vm,
+    mode: AcquireMode,
+    commit_sha: &str,
+    tree_sha: &str,
+    maxpar: u32,
+    remote_rc: i32,
+    wall: u64,
+) -> i32 {
+    let cfg = env.cfg;
     let pid = std::process::id();
     let scratch = |name: &str| cfg.state_dir.join(format!(".pulled-{name}.{pid}"));
     let results_dir = args.results_dir.clone().unwrap_or_else(|| cfg.run_dir.join("batch-results"));
@@ -475,7 +589,7 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
 
     let pulled = scratch("results");
     let _ = fs::remove_dir_all(&pulled);
-    let pulled_ok = env.remote.pull(&vm.addr, "round-work/.runtime/spira/batch-results/", &pulled).is_ok();
+    let pulled_ok = env.remote.pull(&vm.addr, REMOTE_RESULTS, &pulled).is_ok();
     let leaf = results_leaf(&pulled);
     if let Some(leaf) = &leaf {
         if let Err(e) = copy_tree(leaf, &results_dir) {
@@ -547,7 +661,6 @@ mod tests {
     use crate::pool::{Attempt, Spawner};
     use crate::provider::Timing;
     use crate::testutil::{FakeAlarm, FakeProvider, TempDir};
-    use std::cell::RefCell;
     use std::collections::BTreeMap;
     use std::time::Duration;
 
@@ -662,6 +775,9 @@ mod tests {
         fn prepare_mirror(&self, _: &Path) -> Result<(), String> {
             Ok(())
         }
+        fn mirror_ref(&self, _: &Path, branch: &str, _: &str) -> Result<(), String> {
+            if branch == "missing" { Err("no such branch".into()) } else { Ok(()) }
+        }
     }
 
     /// A VM whose remote tree is a map of remote path → files it holds.
@@ -669,7 +785,11 @@ mod tests {
         reachable: bool,
         rc: Result<i32, String>,
         files: BTreeMap<&'static str, Vec<(&'static str, &'static str)>>,
-        jobs: RefCell<Vec<String>>,
+        jobs: Mutex<Vec<String>>,
+        batch_secs: u64,
+        /// (job id, whether the batch was still running when the job started)
+        attrs: Mutex<Vec<(String, bool)>>,
+        batch_running: std::sync::atomic::AtomicBool,
     }
     impl FakeRemote {
         fn green() -> FakeRemote {
@@ -682,7 +802,17 @@ mod tests {
             ]);
             files.insert("round-work/.runtime/spira/tsd/", vec![("suite.jsonl", "{\"suite\":\"a\"}\n")]);
             files.insert(REMOTE_BINS, vec![("batcher", "bin")]);
-            FakeRemote { reachable: true, rc: Ok(0), files, jobs: RefCell::new(vec![]) }
+            files.insert("attr-results/j1/", vec![("K2/test-a.sh.result", "ok 1 2 - p e 0\n")]);
+            files.insert("attr-results/j2/", vec![("K3/test-a.sh.result", "red 1 2 fp p e 1\n"), ("K3/batch.meta", "tree=t2\n")]);
+            FakeRemote {
+                reachable: true,
+                rc: Ok(0),
+                files,
+                jobs: Mutex::new(vec![]),
+                batch_secs: 0,
+                attrs: Mutex::new(vec![]),
+                batch_running: std::sync::atomic::AtomicBool::new(false),
+            }
         }
     }
     impl Remote for FakeRemote {
@@ -690,8 +820,16 @@ mod tests {
             self.reachable
         }
         fn run_batch(&self, _: &str, job: &BatchJob) -> Result<i32, String> {
-            self.jobs.borrow_mut().push(remote_command(job));
+            self.jobs.lock().unwrap().push(remote_command(job));
+            self.batch_running.store(true, std::sync::atomic::Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(self.batch_secs));
+            self.batch_running.store(false, std::sync::atomic::Ordering::SeqCst);
             self.rc.clone()
+        }
+        fn run_attr(&self, _: &str, job: &crate::spool::AttrJob) -> Result<i32, String> {
+            let running = self.batch_running.load(std::sync::atomic::Ordering::SeqCst);
+            self.attrs.lock().unwrap().push((job.job.clone(), running));
+            Ok(if job.job == "j2" { 1 } else { 0 })
         }
         fn pull(&self, _: &str, remote_path: &str, local: &Path) -> Result<(), String> {
             let files = self.files.get(remote_path).ok_or("no such remote dir")?;
@@ -773,7 +911,7 @@ mod tests {
         // path-ok: a test asserting where round-vm installs a fixture binary in a temp worktree
         assert!(tree(&fx).tree_dir.join("target/release/batcher").is_file(), "installed into the round worktree");
         assert!(fs::read_to_string(fx.cfg.run_dir.join("tsd/suite.jsonl")).unwrap().contains("\"ran_on\":\"100\""));
-        assert!(remote.jobs.borrow()[0].ends_with("'' '24' ''"), "{:?}", remote.jobs.borrow());
+        assert!(remote.jobs.lock().unwrap()[0].ends_with("'' '24' ''"), "{:?}", remote.jobs.lock().unwrap());
     }
 
     #[test]
@@ -839,6 +977,65 @@ mod tests {
         fx.fp.fail(crate::testutil::Step::NextId);
         let remote = FakeRemote::green();
         assert_eq!(go(&fx, &remote, &tree(&fx)), 2);
-        assert!(remote.jobs.borrow().is_empty(), "no local mode, no batch without a VM");
+        assert!(remote.jobs.lock().unwrap().is_empty(), "no local mode, no batch without a VM");
+    }
+
+    // ── --attr-spool (DESIGN.md §2.2a) ───────────────────────────────────────────────
+
+    fn spool_fixture(fx: &Fixture) -> (RunArgs, Spool) {
+        let dir = fx.d.path().join("spool");
+        let req = dir.join("req");
+        fs::create_dir_all(&req).unwrap();
+        fs::write(req.join("j1.req"), "branch=spira/batcher-attr/r-j1\nsuites=test-a.sh\nbuild=aeon\n").unwrap();
+        fs::write(req.join("j2.req"), "branch=spira/batcher-attr/r-j2\nsuites=test-a.sh\nbuild=round\n").unwrap();
+        fs::write(req.join("j3.req"), "branch=missing\nsuites=test-a.sh\nbuild=artifacts\n").unwrap();
+        fs::write(dir.join("close"), "").unwrap();
+        let a = RunArgs { attr_spool: Some(dir.clone()), results_dir: Some(fx.d.path().join("results")), ..tree(fx) };
+        (a, Spool { dir })
+    }
+
+    #[test]
+    fn the_spool_serves_reruns_while_the_corpus_runs_and_a_round_build_after_it() {
+        let fx = fixture();
+        let mut remote = FakeRemote::green();
+        remote.batch_secs = 300;
+        let (a, sp) = spool_fixture(&fx);
+        assert_eq!(go(&fx, &remote, &a), 0, "the exit code is the corpus's");
+        let attrs = remote.attrs.lock().unwrap().clone();
+        assert!(attrs.contains(&("j1".to_string(), true)), "j1 ran while the corpus did: {attrs:?}");
+        assert!(attrs.contains(&("j2".to_string(), false)), "the round build waited for the corpus: {attrs:?}");
+        let res = sp.res_dir();
+        assert_eq!(fs::read_to_string(res.join("j1.done")).unwrap(), "rc=0\n");
+        assert!(res.join("j1/test-a.sh.result").is_file(), "flattened out of the key dir");
+        assert_eq!(fs::read_to_string(res.join("j2.done")).unwrap(), "rc=1\n");
+        assert!(res.join("j2/bins/batcher").is_file(), "a round build brings its binaries back");
+        assert_eq!(fs::read_to_string(res.join("j3.done")).unwrap(), "rc=2\n", "a branch that cannot be mirrored is a fault");
+        assert_eq!(fs::read_to_string(sp.dir.join("corpus.done")).unwrap(), "rc=0\n");
+        assert!(fs::read_to_string(fx.d.path().join("results/test-b.sh.result")).is_ok(), "the corpus's results streamed in");
+        assert!(fx.fp.live_vms().is_empty(), "released once the spool closed");
+    }
+
+    #[test]
+    fn a_spool_run_whose_ssh_fails_writes_corpus_done_and_does_not_linger() {
+        let fx = fixture();
+        let remote = FakeRemote { rc: Ok(255), ..FakeRemote::green() };
+        let (a, sp) = spool_fixture(&fx);
+        fs::remove_file(sp.dir.join("close")).unwrap();
+        assert_eq!(go(&fx, &remote, &a), 2);
+        assert_eq!(fs::read_to_string(sp.dir.join("corpus.done")).unwrap(), "rc=2\n");
+        assert!(fx.fp.live_vms().is_empty());
+    }
+
+    #[test]
+    fn an_unclosed_spool_releases_the_vm_after_the_linger() {
+        let mut fx = fixture();
+        fx.cfg.attr_linger = Duration::from_millis(300);
+        let remote = FakeRemote::green();
+        let (a, sp) = spool_fixture(&fx);
+        fs::remove_file(sp.dir.join("close")).unwrap();
+        let t0 = Instant::now();
+        assert_eq!(go(&fx, &remote, &a), 0);
+        assert!(t0.elapsed() >= Duration::from_millis(300));
+        assert!(fx.fp.live_vms().is_empty());
     }
 }

@@ -93,6 +93,7 @@ dependencies = [
  "gate",
  "serde_json",
  "spira-config",
+ "spira-lint",
 ]
 
 [[package]]
