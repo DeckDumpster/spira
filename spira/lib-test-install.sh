@@ -27,6 +27,15 @@
 # install_fixture_seed_dest <dest-dir> <rendered-text>
 #   Splits <rendered-text> on "===== <unit> =====" markers into <dest-dir>/<unit> files —
 #   the "nothing changed" baseline every suite starts from.
+#
+# mk_install_fixture <fixture-root> <tmp-root>
+#   The root install.sh fixture (not systemd/install.sh's — see install_fixture_build above):
+#   <fixture-root>/{systemd,spira,cockpit} symlinked to the real sources, spira/statutes/,
+#   and a fake git origin+repo under <tmp-root> with origin/HEAD set, so the landref check
+#   passes. Sets FAKE_ORIGIN and FAKE_REPO for the caller. Callers still write their own
+#   doctor.sh/configure.sh/build.sh/seed.sh/ready.sh/install-session-hook.sh/install-intake.sh/
+#   cockpit/layout.sh and mock systemctl/loginctl/tmux/bd — those differ suite to suite (a
+#   passing doctor.sh here, a DOCTOR_FAIL_FLAG-gated one there) and are each suite's own.
 
 _LIB_INSTALL_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
@@ -89,6 +98,37 @@ install_fixture_render() {
     printf '%s' "$rc" > "$entry.rc.tmp" && mv "$entry.rc.tmp" "$entry.rc"
     printf '%s' "$out"
     return "$rc"
+}
+
+mk_install_fixture() {
+    local fixture="$1" tmp="$2" spira="$1/spira" systemd="$1/systemd" cockpit="$1/cockpit" f
+    mkdir -p "$spira" "$systemd" "$cockpit" "$spira/statutes"
+    for f in "$_LIB_INSTALL_SELF/../systemd/"*.service "$_LIB_INSTALL_SELF/../systemd/"*.timer \
+             "$_LIB_INSTALL_SELF/../systemd/"*.yaml; do
+        [ -e "$f" ] || continue
+        ln -sf "$f" "$systemd/$(basename "$f")"
+    done
+    ln -sf "$_LIB_INSTALL_SELF/../systemd/install.sh" "$systemd/install.sh"
+    ln -sf "$_LIB_INSTALL_SELF/../systemd/units.sh"   "$systemd/units.sh"
+    for f in conf.sh lib.sh watchd.sh suite-covers.sh lifecycle-cert.sh; do
+        [ -e "$_LIB_INSTALL_SELF/$f" ] && ln -sf "$_LIB_INSTALL_SELF/$f" "$spira/$f"
+    done
+    printf '# empty\n' > "$spira/watchers"
+    printf '# empty\n' > "$spira/repo-map.example"
+
+    FAKE_ORIGIN="$tmp/origin.git"
+    FAKE_REPO="$tmp/fakerepo"
+    git init -q --bare -b main "$FAKE_ORIGIN" 2>/dev/null
+    git init -q -b main "$FAKE_REPO" 2>/dev/null
+    git -C "$FAKE_REPO" config user.email t@t
+    git -C "$FAKE_REPO" config user.name test
+    printf 'seed\n' > "$FAKE_REPO/f"
+    git -C "$FAKE_REPO" add f
+    git -C "$FAKE_REPO" commit -qm "seed" 2>/dev/null
+    git -C "$FAKE_REPO" remote add origin "$FAKE_ORIGIN"
+    git -C "$FAKE_REPO" push -q origin main 2>/dev/null
+    git -C "$FAKE_REPO" fetch -q origin 2>/dev/null
+    git -C "$FAKE_REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 }
 
 install_fixture_seed_dest() {

@@ -36,26 +36,12 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 # ---------------------------------------------------------------------------
 # Fixture — same structure as test-install-conflicts.sh.
 # ---------------------------------------------------------------------------
+. "$HERE/lib-test-install.sh"
 FIXTURE="$TMP/harness"
 SPIRA_DIR="$FIXTURE/spira"
 SYSTEMD_DIR="$FIXTURE/systemd"
 COCKPIT_DIR="$FIXTURE/cockpit"
-mkdir -p "$SPIRA_DIR" "$SYSTEMD_DIR" "$COCKPIT_DIR"
-
-for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer; do
-    [ -e "$f" ] || continue
-    ln -s "$f" "$SYSTEMD_DIR/$(basename "$f")" 2>/dev/null || true
-done
-ln -s "$HERE/../systemd/install.sh" "$SYSTEMD_DIR/install.sh"
-ln -s "$HERE/../systemd/units.sh"   "$SYSTEMD_DIR/units.sh"
-
-ln -s "$HERE/conf.sh"   "$SPIRA_DIR/conf.sh"
-ln -s "$HERE/lib.sh"    "$SPIRA_DIR/lib.sh"
-ln -s "$HERE/watchd.sh" "$SPIRA_DIR/watchd.sh"
-
-printf '# empty\n' > "$SPIRA_DIR/watchers"
-printf '# empty\n' > "$SPIRA_DIR/repo-map.example"
-mkdir -p "$SPIRA_DIR/statutes"
+mk_install_fixture "$FIXTURE" "$TMP"
 
 # doctor.sh: fails iff DOCTOR_FAIL_FLAG names an existing file — the one knob this suite
 # turns between the positive control and the refusal case.
@@ -164,20 +150,6 @@ case "$*" in
 esac
 EOF
 chmod +x "$MOCK_BIN/bd"
-
-FAKE_ORIGIN="$TMP/origin.git"
-FAKE_REPO="$TMP/fakerepo"
-git init -q --bare -b main "$FAKE_ORIGIN" 2>/dev/null
-git init -q -b main "$FAKE_REPO" 2>/dev/null
-git -C "$FAKE_REPO" config user.email t@t
-git -C "$FAKE_REPO" config user.name test
-printf 'seed\n' > "$FAKE_REPO/f"
-git -C "$FAKE_REPO" add f
-git -C "$FAKE_REPO" commit -qm "seed" 2>/dev/null
-git -C "$FAKE_REPO" remote add origin "$FAKE_ORIGIN"
-git -C "$FAKE_REPO" push -q origin main 2>/dev/null
-git -C "$FAKE_REPO" fetch -q origin 2>/dev/null
-git -C "$FAKE_REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 
 FAKE_HOME="$TMP/home"
 FAKE_UNITDIR="$FAKE_HOME/.config/systemd/user"
