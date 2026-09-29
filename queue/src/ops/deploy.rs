@@ -3,7 +3,7 @@
 //! head — stage-and-swap, `reset --mixed`, a HEAD re-read — install the round's own
 //! binaries, and smoke the checkout's conf.sh.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -196,15 +196,27 @@ pub fn run(w: &World, plan: &Plan, head: &str, home: &Path, lifecycle_on: bool) 
         return false;
     }
 
-    let (installed, bins_ok) = install_bins(w, &plan.bins, &checkout.join("target").join("release"), lifecycle_on);
+    let (installed, bins_ok) = install_bins(w, &plan.bins, checkout, lifecycle_on);
     let smoke_ok = smoke(w, home, head);
     w.out(format!("queue.sh land-local: production checkout {} -> {}, {total} files, {installed} binaries", short(&plan.old), short(head)));
     bins_ok && smoke_ok
 }
 
 /// D11 step 3: every regular executable directly in the round's `target/release`, copied
-/// beside its target and renamed over it. spira-lc only with lifecycle_enforce on.
-fn install_bins(w: &World, from: &Path, to: &Path, lifecycle_on: bool) -> (usize, bool) {
+/// beside its target in `<checkout>/target/release` and renamed over it, and linked (or
+/// re-linked) at `<checkout>/bin/<name>` — the path `spira_bin` actually resolves
+/// (conf.sh: `$SPIRA_REPO/bin/$name`). Before this, only the copy happened: an existing
+/// `bin/<name>` symlink kept working because the file its target already named was
+/// overwritten in place, but a binary landing for the first time had no symlink to update
+/// and `spira_bin` could never find it (sp-cln99, sp-sghmt). spira-lc only with
+/// lifecycle_enforce on.
+///
+/// Fail closed: every binary the workspace's own `[[bin]]` targets declare
+/// ([`expected_bins`]) must be among what the round actually built, or the deploy refuses
+/// rather than link whatever happened to be there.
+fn install_bins(w: &World, from: &Path, checkout: &Path, lifecycle_on: bool) -> (usize, bool) {
+    let to = checkout.join("target").join("release");
+    let bin_dir = checkout.join("bin");
     let mut entries: Vec<PathBuf> = match fs::read_dir(from) {
         Ok(rd) => rd.flatten().map(|e| e.path()).filter(|p| super::simple::is_executable(p)).collect(),
         Err(e) => {
@@ -213,10 +225,11 @@ fn install_bins(w: &World, from: &Path, to: &Path, lifecycle_on: bool) -> (usize
         }
     };
     entries.sort();
-    if let Err(e) = fs::create_dir_all(to) {
+    if let Err(e) = fs::create_dir_all(&to) {
         w.err(format!("LAND DEPLOY FAILED: cannot create {}: {e}", to.display()));
         return (0, false);
     }
+    let mut got: BTreeSet<String> = BTreeSet::new();
     let (mut n, mut ok) = (0, true);
     for src in entries {
         let Some(name) = src.file_name().map(|n| n.to_string_lossy().to_string()) else { continue };
@@ -227,7 +240,14 @@ fn install_bins(w: &World, from: &Path, to: &Path, lifecycle_on: bool) -> (usize
         let tmp = beside(&dst, "land-new");
         let r = fs::copy(&src, &tmp).and_then(|_| fs::rename(&tmp, &dst));
         match r {
-            Ok(()) => n += 1,
+            Ok(()) => {
+                n += 1;
+                got.insert(name.clone());
+                if let Err(e) = link_bin(&bin_dir, &name, &dst) {
+                    w.err(format!("LAND DEPLOY FAILED: cannot link bin/{name} -> {}: {e}", dst.display()));
+                    ok = false;
+                }
+            }
             Err(e) => {
                 let _ = fs::remove_file(&tmp);
                 w.err(format!("LAND DEPLOY FAILED: cannot install {name} into {}: {e}", to.display()));
@@ -235,7 +255,105 @@ fn install_bins(w: &World, from: &Path, to: &Path, lifecycle_on: bool) -> (usize
             }
         }
     }
+
+    if let Some(worktree) = from.parent().and_then(Path::parent) {
+        match expected_bins(worktree) {
+            Ok(expected) => {
+                let missing: Vec<&String> = expected
+                    .iter()
+                    .filter(|name| name.as_str() != "spira-lc" || lifecycle_on)
+                    .filter(|name| !got.contains(name.as_str()))
+                    .collect();
+                if !missing.is_empty() {
+                    let names: Vec<&str> = missing.iter().map(|s| s.as_str()).collect();
+                    w.err(format!(
+                        "LAND DEPLOY FAILED: the workspace's [[bin]] targets declare {} but the round's build at {} does not have {}: refusing a partial binary set",
+                        names.join(", "),
+                        from.display(),
+                        if missing.len() == 1 { "it" } else { "them" }
+                    ));
+                    ok = false;
+                }
+            }
+            Err(e) => {
+                w.err(format!("LAND DEPLOY FAILED: cannot determine the workspace's [[bin]] targets from {}: {e}", worktree.display()));
+                ok = false;
+            }
+        }
+    }
+
     (n, ok)
+}
+
+/// Every binary name the workspace's own `[[bin]]` targets declare, read from
+/// `<worktree>/Cargo.toml`'s `[workspace] members` and each member's own `Cargo.toml`:
+/// its explicit `[[bin]]` tables, or (when it has none) the package name when
+/// `src/main.rs` exists (cargo's own default). THE SOURCE OF TRUTH, not the Makefile's
+/// `install` list — that list is hand-maintained prose and had already drifted as of
+/// 2026-09-29 (missing reconciler-alert, lifecycle-guard, spira-lc and test-plan, all
+/// already built and already running). A list that must be remembered and edited by hand
+/// for every new binary crate is exactly the failure mode this bead exists to close: the
+/// workspace's own manifests cannot go stale relative to what cargo actually builds.
+fn expected_bins(worktree: &Path) -> Result<Vec<String>, String> {
+    let root_toml = worktree.join("Cargo.toml");
+    let root = read_toml(&root_toml)?;
+    let members = root
+        .get("workspace")
+        .and_then(|v| v.get("members"))
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| format!("{} has no [workspace].members array", root_toml.display()))?;
+    let mut names = Vec::new();
+    for m in members {
+        let rel = m.as_str().ok_or_else(|| format!("{} has a non-string workspace member", root_toml.display()))?;
+        let dir = worktree.join(rel);
+        let manifest = dir.join("Cargo.toml");
+        let doc = read_toml(&manifest)?;
+        let bins = doc.get("bin").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        if bins.is_empty() {
+            if dir.join("src").join("main.rs").is_file() {
+                let name = doc
+                    .get("package")
+                    .and_then(|p| p.get("name"))
+                    .and_then(|n| n.as_str())
+                    .ok_or_else(|| format!("{} has src/main.rs but no [package].name", manifest.display()))?;
+                names.push(name.to_string());
+            }
+        } else {
+            for b in &bins {
+                let name = b.get("name").and_then(|n| n.as_str()).ok_or_else(|| format!("{} has a [[bin]] with no name", manifest.display()))?;
+                names.push(name.to_string());
+            }
+        }
+    }
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+fn read_toml(path: &Path) -> Result<toml::Value, String> {
+    let src = fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    src.parse::<toml::Value>().map_err(|e| format!("cannot parse {}: {e}", path.display()))
+}
+
+/// Atomically make `<bin_dir>/<name>` a symlink to `target` (the checkout's own
+/// target/release, joined with `<name>` — the path `spira_bin` resolves in production).
+/// Idempotent: a link already pointing there is left alone.
+fn link_bin(bin_dir: &Path, name: &str, target: &Path) -> Result<(), String> {
+    fs::create_dir_all(bin_dir).map_err(|e| format!("cannot create {}: {e}", bin_dir.display()))?;
+    let link = bin_dir.join(name);
+    if fs::read_link(&link).ok().as_deref() == Some(target) {
+        return Ok(());
+    }
+    let tmp = beside(&link, "land-bin");
+    let _ = fs::remove_file(&tmp);
+    if let Err(e) = std::os::unix::fs::symlink(target, &tmp) {
+        return Err(e.to_string());
+    }
+    if let Err(e) = fs::rename(&tmp, &link) {
+        let _ = fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+    Ok(())
 }
 
 /// D11 step 4: the checkout's own conf.sh must still resolve SPIRA_DB to a directory.

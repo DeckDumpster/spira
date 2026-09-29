@@ -1443,10 +1443,26 @@ fn round_worktree(t: &T, tree: &str) -> PathBuf {
     fs::write(&exe, "#!/bin/sh\n").unwrap();
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(&exe, fs::Permissions::from_mode(0o755)).unwrap();
+    workspace_manifest(&wt, &["spira-config", "spira-lc"]);
     t.git.refs.borrow_mut().insert("HEAD".into(), "wt-head".into());
     t.git.trees.borrow_mut().insert("wt-head".into(), tree.into());
     t.git.trees.borrow_mut().insert("h1".into(), T1.into());
     wt
+}
+
+/// A real (if minimal) workspace manifest at `wt`, one member per name in `bins` — each an
+/// implicit binary crate (`[package] name = "<name>"` plus `src/main.rs`, cargo's own
+/// default with no `[[bin]]` table). `install_bins`/`expected_bins` only ever read this
+/// text; they never invoke cargo, so nothing here needs to actually build.
+fn workspace_manifest(wt: &Path, bins: &[&str]) {
+    let members: Vec<String> = bins.iter().map(|b| format!("\"{b}\"")).collect();
+    fs::write(wt.join("Cargo.toml"), format!("[workspace]\nmembers = [{}]\n", members.join(", "))).unwrap();
+    for b in bins {
+        let dir = wt.join(b);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+        fs::write(dir.join("Cargo.toml"), format!("[package]\nname = \"{b}\"\nversion = \"0.0.0\"\n")).unwrap();
+    }
 }
 
 #[test]
@@ -1610,6 +1626,8 @@ fn land_local_deploys_the_running_checkout_by_stage_and_swap() {
     assert_eq!(mode_of(&rel.join("spira-config")), 0o755);
     assert!(!rel.join("spira-lc").exists(), "spira-lc is never installed with lifecycle_enforce off");
     assert!(!rel.join("spira-config.d").exists(), "only executables are installed");
+    // bin/<name> — what spira_bin actually resolves — is linked to the fresh binary
+    assert_eq!(fs::read_link(co.join("bin/spira-config")).unwrap(), rel.join("spira-config"));
     // smoke against the checkout's own spira dir; the summary line
     assert!(t.lib.has(&format!("conf_smoke {}", co.join("spira").display())));
     assert!(t.out().contains("queue.sh land-local: production checkout b0 -> h1, 6 files, 1 binaries"), "{}", t.out());
@@ -1624,6 +1642,50 @@ fn land_local_deploy_installs_spira_lc_only_with_lifecycle_on() {
     assert_eq!(land_to_checkout(&t, &wts), 0, "{}", t.err());
     assert!(co.join("target/release/spira-lc").exists());
     assert!(t.out().contains("6 files, 2 binaries"), "{}", t.out());
+    assert_eq!(fs::read_link(co.join("bin/spira-lc")).unwrap(), co.join("target/release/spira-lc"));
+}
+
+#[test]
+fn land_local_deploy_links_a_new_binary_into_bin() {
+    // sp-ma9uh: land-local's checkout deploy used to only copy into target/release, never
+    // link bin/<name> — the path spira_bin actually resolves — so a binary landing for the
+    // first time (a brand new binary crate) was invisible to every caller until someone
+    // linked it by hand (sp-cln99, sp-sghmt).
+    let (t, co, wts) = checkout_world(T::new(LandMode::QueueLocal));
+    let wt = PathBuf::from(&wts);
+    workspace_manifest(&wt, &["spira-config", "spira-lc", "newbin"]);
+    let exe = wt.join("target/release/newbin");
+    fs::write(&exe, "#!/bin/sh\necho new\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&exe, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(land_to_checkout(&t, &wts), 0, "{}", t.err());
+    let target = co.join("target/release/newbin");
+    assert_eq!(fs::read_to_string(&target).unwrap(), "#!/bin/sh\necho new\n");
+    assert_eq!(
+        fs::read_link(co.join("bin/newbin")).unwrap(),
+        target,
+        "a binary landing for the first time still gets a bin/ symlink"
+    );
+    // relanding the same binary is idempotent: the symlink is left alone, not rewritten
+    use std::os::unix::fs::MetadataExt;
+    let before = fs::symlink_metadata(co.join("bin/newbin")).unwrap().ino();
+    assert_eq!(land_to_checkout(&t, &wts), 0, "{}", t.err());
+    assert_eq!(fs::symlink_metadata(co.join("bin/newbin")).unwrap().ino(), before);
+}
+
+#[test]
+fn land_local_deploy_refuses_a_workspace_bin_target_the_round_did_not_build() {
+    let (t, co, wts) = checkout_world(T::new(LandMode::QueueLocal));
+    let wt = PathBuf::from(&wts);
+    // the workspace declares a binary crate the round's own build never produced
+    workspace_manifest(&wt, &["spira-config", "spira-lc", "ghost"]);
+    assert_eq!(land_to_checkout(&t, &wts), 1);
+    assert!(t.err().contains("LAND DEPLOY FAILED"), "{}", t.err());
+    assert!(t.err().contains("ghost"), "{}", t.err());
+    assert!(!co.join("bin/ghost").exists());
+    // fail closed, not skip: the binaries that DID build are still installed and linked
+    assert!(co.join("target/release/spira-config").exists());
+    assert_eq!(fs::read_link(co.join("bin/spira-config")).unwrap(), co.join("target/release/spira-config"));
 }
 
 fn assert_refused_untouched(t: &T, co: &Path, why: &str) {
