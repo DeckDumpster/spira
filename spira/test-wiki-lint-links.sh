@@ -30,7 +30,7 @@ printf '# index\n' > "$WIKI/index.md"
 git -C "$WIKI" add index.md
 git -C "$WIKI" commit -q -m init
 
-lint() { bash "$HERE/wiki-lint-links.sh" "$WIKI"; }
+lint() { bash "$HERE/wiki-lint-links.sh" "$WIKI" 2>&1; }
 
 # ---------------------------------------------------------------------------------------
 # SEEN RED: a link added to index.md names a page this commit does not track.
