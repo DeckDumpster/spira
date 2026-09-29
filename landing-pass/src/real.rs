@@ -127,6 +127,7 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         lc_bin: path_opt("lc_bin"),
         prod: path_opt("prod").unwrap_or_else(|| home.to_path_buf()),
         halt_grace: num("halt_grace", 30).max(0) as u64,
+        path: kv.get("path").filter(|v| !v.is_empty()).cloned(),
         bdjson_fixture: path_opt("bdjson_fixture"),
         pr_pass_branch_sh: path_opt("pr_pass_branch_sh").unwrap_or_else(|| home.join("pr-pass-branch.sh")),
         toml: path_opt("toml"),
