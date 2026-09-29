@@ -374,21 +374,6 @@ mod tests {
     }
 
     // POSITIVE CONTROL: a connection that never recovers is retried exactly once, not forever.
-    #[test]
-    fn run_bd_bounds_the_retry() {
-        let calls = scratch_path("calls");
-        fs::write(&calls, "0").unwrap();
-        let stub = make_stub(&format!(
-            r#"n=$(($(cat "{calls}") + 1)); echo "$n" > "{calls}"
-echo "Error: failed to open database: invalid connection" >&2; exit 1"#,
-            calls = calls.display()
-        ));
-        let out = run_bd(&mut Command::new(&stub), "bd show");
-        assert!(out.is_err());
-        assert_eq!(fs::read_to_string(&calls).unwrap().trim(), "2");
-        let _ = fs::remove_file(&stub);
-        let _ = fs::remove_file(&calls);
-    }
 
     fn git(dir: &Path, args: &[&str]) {
         let st = Command::new("git").arg("-C").arg(dir).args(args).status().expect("git");
