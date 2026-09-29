@@ -276,6 +276,18 @@ if ! tsf="$(bash spira/tmux-scope-fence.sh 2>&1)"; then
 fi
 printf '%s\n' "$tsf" >&2
 
+# CONFIG FENCE (sp-a8gna, per Ryan 2026-09-28). spira.toml is a multi-tenant config store
+# and repo-map duplicates part of it by hand; spira-config is the only thing that may find,
+# parse or write either. config-fence-allow grandfathers today's real offenders — the
+# sp-zs04v cutover has not reached them yet — and shrinks as each one migrates; nothing is
+# added to it for a newly written file.
+[ -r spira/config-fence.sh ] || { say "spira/config-fence.sh is missing — refusing to land unchecked"; exit 1; }
+if ! cfg_fence="$(bash spira/config-fence.sh 2>&1)"; then
+    printf '%s\n' "$cfg_fence" >&2
+    exit 1
+fi
+printf '%s\n' "$cfg_fence" >&2
+
 # ---------------------------------------------------------------------------------------
 # 2 AND 3 — the pipeline. Both are real programs run against each other; neither models
 # anything (law-prefer-the-real-dependency).

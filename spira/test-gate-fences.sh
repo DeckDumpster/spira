@@ -40,7 +40,8 @@ spira/incident-cause-lint.sh
 spira/payload-argv-lint.sh
 spira/suite-state-fence.sh
 spira/orphan-test.sh
-spira/tmux-scope-fence.sh"
+spira/tmux-scope-fence.sh
+spira/config-fence.sh"
 
 is "gate_fence_list is exactly the expected set" "$EXPECTED" "$(gate_fence_list)"
 

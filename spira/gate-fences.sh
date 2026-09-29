@@ -36,5 +36,6 @@ gate_fence_list() {    # gate_fence_list -> one repo-relative fence path per lin
         spira/payload-argv-lint.sh \
         spira/suite-state-fence.sh \
         spira/orphan-test.sh \
-        spira/tmux-scope-fence.sh
+        spira/tmux-scope-fence.sh \
+        spira/config-fence.sh
 }
