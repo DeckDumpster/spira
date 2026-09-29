@@ -255,25 +255,25 @@ impl<'a> RealLib<'a> {
     /// lib.sh `spira_ask_machinery` — a per-branch machinery-fault ask, deduped on
     /// "<branch> cannot be judged".
     #[allow(clippy::too_many_arguments)]
-    fn ask_machinery(&self, id: &str, branch: &str, repo: &str, outcome: &str, reason: &str, n: u32, out: &str) {
+    fn ask_machinery(&self, id: &str, branch: &str, repo: &str, outcome: &str, reason: &str, n: u32, out: &str) -> bool {
         if self.ask_already_open(&crate::ask::machinery_subject(branch)) {
-            return;
+            return true;
         }
         let ev = crate::util::tail_lines(out, 20);
         let (subj, dflt, body) = crate::ask::machinery_mail(id, branch, repo, outcome, reason, n, &ev);
-        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), id, &body);
+        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), id, &body)
     }
 
     /// lib.sh `spira_ask_machinery_class` — one ask per (repo, reason) class, naming every
     /// branch it touched, deduped on "<repo> cannot be judged: <outcome> (<reason>)".
-    fn ask_machinery_class(&self, repo: &str, reason: &str, branches: &str, outcome: &str, n: u32, out: &str) {
+    fn ask_machinery_class(&self, repo: &str, reason: &str, branches: &str, outcome: &str, n: u32, out: &str) -> bool {
         if self.ask_already_open(&crate::ask::machinery_class_subject(repo, outcome, reason)) {
-            return;
+            return true;
         }
         let ev = crate::util::tail_lines(out, 20);
         let lead_bead = branches.split(',').next().unwrap_or("").rsplit('/').next().unwrap_or("");
         let (subj, dflt, body) = crate::ask::machinery_class_mail(repo, reason, branches, outcome, n, &ev);
-        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), lead_bead, &body);
+        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), lead_bead, &body)
     }
 }
 
@@ -323,7 +323,6 @@ impl<'a> Lib for RealLib<'a> {
                 let _ = crate::util::atomic_write(&branches_file, &f);
             }
             if n >= max && !asked.exists() {
-                let _ = std::fs::write(&asked, "");
                 let branches_csv = std::fs::read_to_string(&branches_file)
                     .unwrap_or_default()
                     .lines()
@@ -331,8 +330,12 @@ impl<'a> Lib for RealLib<'a> {
                     .collect::<Vec<_>>()
                     .join(",");
                 let branches = if branches_csv.is_empty() { branch } else { &branches_csv };
-                self.ask_machinery_class(repo, reason, branches, outcome, n as u32, out);
-                self.seam.out.progress(&format!("escalated {repo} — {outcome} x{n} in a day ({reason}) across {branches}"));
+                if self.ask_machinery_class(repo, reason, branches, outcome, n as u32, out) {
+                    let _ = std::fs::write(&asked, "");
+                    self.seam.out.progress(&format!("escalated {repo} — {outcome} x{n} in a day ({reason}) across {branches}"));
+                } else {
+                    self.seam.out.progress(&format!("escalation refused, will retry — {repo} {outcome} x{n} in a day ({reason}) across {branches}"));
+                }
             }
             return;
         }
@@ -343,9 +346,12 @@ impl<'a> Lib for RealLib<'a> {
         let n = std::fs::read_to_string(&file).ok().and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(0) + 1;
         let _ = crate::util::atomic_write(&file, &n.to_string());
         if n >= max && !asked.exists() {
-            let _ = std::fs::write(&asked, "");
-            self.ask_machinery(id, branch, repo, outcome, reason, n as u32, out);
-            self.seam.out.progress(&format!("escalated {id} — {outcome} x{n} on {branch}"));
+            if self.ask_machinery(id, branch, repo, outcome, reason, n as u32, out) {
+                let _ = std::fs::write(&asked, "");
+                self.seam.out.progress(&format!("escalated {id} — {outcome} x{n} on {branch}"));
+            } else {
+                self.seam.out.progress(&format!("escalation refused, will retry — {id} {outcome} x{n} on {branch}"));
+            }
         }
     }
     fn incident(&self, labels: &str, repo: &str, ext_ref: &str, title: &str, payload: &str) -> Result<String, i32> {
