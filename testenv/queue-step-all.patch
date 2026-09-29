@@ -1,0 +1,475 @@
+diff --git a/queue/src/cli.rs b/queue/src/cli.rs
+index 9eac068..d515219 100644
+--- a/queue/src/cli.rs
++++ b/queue/src/cli.rs
+@@ -24,6 +24,8 @@ pub enum Cmd {
+     Stats,
+     Flush { repo: Option<String> },
+     Step { repo: String },
++    /// `step --all`: every queue-mode repository (queue-step-all.md).
++    StepAll,
+     Eject { id: String, repo: Option<String>, reason: Text, suites: String, red: bool, dry_run: bool },
+     Abandon { repo: Option<String>, reason: Text, dry_run: bool },
+     OpenBatch { repo: Option<String>, members: Text, skip_pregate: bool, dry_run: bool },
+@@ -37,7 +39,7 @@ pub enum Cmd {
+     Help,
+ }
+ 
+-pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>]";
++pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>]";
+ 
+ /// A usage error: the message queue.sh printed (without trailing newline) and exit 2.
+ #[derive(Debug, PartialEq, Eq)]
+@@ -153,6 +155,15 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
+         "flush" => Ok(Cmd::Flush { repo: pos(0) }),
+         "step" => {
+             let repo = pos(0).ok_or_else(|| Usage("queue.sh step: repo required".into()))?;
++            if repo == "--all" {
++                if args.len() > 1 {
++                    return Err(Usage("queue.sh step: --all takes no repository".into()));
++                }
++                return Ok(Cmd::StepAll);
++            }
++            if repo.starts_with("--") {
++                return Err(Usage(format!("queue.sh step: unknown option: {repo}")));
++            }
+             Ok(Cmd::Step { repo })
+         }
+         "eject" => {
+diff --git a/queue/src/lib.rs b/queue/src/lib.rs
+index a3dbf06..454d33a 100644
+--- a/queue/src/lib.rs
++++ b/queue/src/lib.rs
+@@ -33,6 +33,7 @@ pub fn dispatch(w: &World, cmd: &Cmd) -> i32 {
+         Cmd::Stats => simple::stats(w),
+         Cmd::Flush { repo } => simple::flush(w, repo.as_deref()),
+         Cmd::Step { repo } => simple::step(w, repo),
++        Cmd::StepAll => simple::step_all(w),
+         Cmd::Eject { id, repo, reason, suites, red, dry_run } => batch::eject(w, id, repo.as_deref(), reason, suites, *red, *dry_run),
+         Cmd::Abandon { repo, reason, dry_run } => batch::abandon(w, repo.as_deref(), reason, *dry_run),
+         Cmd::OpenBatch { repo, members, skip_pregate, dry_run } => batch::open_batch(w, repo.as_deref(), members, *skip_pregate, *dry_run),
+diff --git a/queue/src/lock.rs b/queue/src/lock.rs
+index 203248c..3c4a014 100644
+--- a/queue/src/lock.rs
++++ b/queue/src/lock.rs
+@@ -19,9 +19,19 @@ pub enum Acquire {
+ }
+ 
+ pub fn try_lock(queue_dir: &Path, repo: &str) -> Acquire {
++    try_lock_file(queue_dir, repo, "lock")
++}
++
++/// The step lock (`<repo>/step.lock`): one stepper per repository. Deliberately NOT the
++/// queue lock — verdict.sh and batch.sh take that one themselves inside a step.
++pub fn try_step_lock(queue_dir: &Path, repo: &str) -> Acquire {
++    try_lock_file(queue_dir, repo, "step.lock")
++}
++
++fn try_lock_file(queue_dir: &Path, repo: &str, file: &str) -> Acquire {
+     let dir = queue_dir.join(repo);
+     let _ = fs::create_dir_all(&dir);
+-    let f = match OpenOptions::new().create(true).write(true).truncate(false).open(dir.join("lock")) {
++    let f = match OpenOptions::new().create(true).write(true).truncate(false).open(dir.join(file)) {
+         Ok(f) => f,
+         Err(_) => return Acquire::Unopenable,
+     };
+@@ -47,4 +57,18 @@ mod tests {
+         drop(a);
+         assert!(matches!(try_lock(&d, "spira"), Acquire::Held(_)));
+     }
++
++    #[test]
++    fn the_step_lock_is_a_different_file_from_the_queue_lock() {
++        let d = tmpdir("steplock");
++        let s = try_step_lock(&d, "spira");
++        assert!(matches!(s, Acquire::Held(_)));
++        // a step holding its lock never blocks the queue lock verdict.sh/batch.sh take
++        assert!(matches!(try_lock(&d, "spira"), Acquire::Held(_)));
++        assert!(matches!(try_step_lock(&d, "spira"), Acquire::Busy));
++        assert!(matches!(try_step_lock(&d, "other"), Acquire::Held(_)));
++        drop(s);
++        assert!(matches!(try_step_lock(&d, "spira"), Acquire::Held(_)));
++        assert!(d.join("spira/step.lock").is_file());
++    }
+ }
+diff --git a/queue/src/ops/simple.rs b/queue/src/ops/simple.rs
+index 5c3c167..659061f 100644
+--- a/queue/src/ops/simple.rs
++++ b/queue/src/ops/simple.rs
+@@ -174,13 +174,99 @@ impl Emit for Merged<'_> {
+     }
+ }
+ 
++/// One stepper per repository (queue-step-all.md): the step lock, never the queue lock —
++/// verdict.sh and batch.sh take the queue lock themselves inside the step.
++enum StepLock {
++    Held(crate::lock::Guard),
++    Busy,
++    Unopenable,
++}
++
++fn step_lock(w: &World, c: &Ctx) -> StepLock {
++    use crate::lock::{try_step_lock, Acquire};
++    match try_step_lock(&c.s.queue_dir, &c.r.name) {
++        Acquire::Held(g) => StepLock::Held(g),
++        Acquire::Busy => {
++            w.err(format!("queue.sh step: another step holds the step lock for {} — skipped", c.r.name));
++            StepLock::Busy
++        }
++        Acquire::Unopenable => {
++            w.err(format!("queue.sh step: cannot open the step lock for {}", c.r.name));
++            StepLock::Unopenable
++        }
++    }
++}
++
+ pub fn step(w: &World, repo: &str) -> i32 {
+     let Ok(c) = resolve(w, "step", Some(repo)) else { return FAIL };
+     if idents(w, "step", &[("repo", &c.r.name)]).is_err() {
+         return FAIL;
+     }
++    match step_lock(w, &c) {
++        // The other stepper is doing this work; a skipped step is not a failure.
++        StepLock::Busy => OK,
++        StepLock::Unopenable => FAIL,
++        StepLock::Held(_g) => step_locked(w, &c),
++    }
++}
++
++/// `step --all`: every queue-mode repository in spira_repos order, each under its own step
++/// lock; a repository's own step status is not propagated (spira-verdict.sh's `|| true`).
++/// Exit 1 only when the repository list cannot be read — absence is not success.
++pub fn step_all(w: &World) -> i32 {
++    let names = match w.lib.repos() {
++        Ok(n) => n,
++        Err(e) => {
++            w.err(format!("queue.sh step --all: cannot list repositories: {e}"));
++            return FAIL;
++        }
++    };
++    let (mut stepped, mut busy, mut unresolved) = (Vec::new(), Vec::new(), Vec::new());
++    for name in names {
++        let c = match w.lib.context(Some(&name)) {
++            Ok((s, r)) => Ctx { s, r },
++            Err(e) => {
++                w.err(format!("queue.sh step: cannot resolve the harness configuration: {e}"));
++                unresolved.push(name);
++                continue;
++            }
++        };
++        if !c.r.mode.is_queued() {
++            continue;
++        }
++        if idents(w, "step", &[("repo", &c.r.name)]).is_err() {
++            unresolved.push(name);
++            continue;
++        }
++        w.out(format!("queue.sh step --all: {}", c.r.name));
++        match step_lock(w, &c) {
++            StepLock::Held(g) => {
++                let _ = step_locked(w, &c);
++                drop(g);
++                stepped.push(name);
++            }
++            StepLock::Busy => busy.push(name),
++            StepLock::Unopenable => unresolved.push(name),
++        }
++    }
++    let mut line = format!(
++        "queue.sh step --all: stepped={} busy={} unresolved={}",
++        stepped.len(),
++        busy.len(),
++        unresolved.len()
++    );
++    for (label, v) in [("stepped", &stepped), ("busy", &busy), ("unresolved", &unresolved)] {
++        if !v.is_empty() {
++            line.push_str(&format!(" {label}:{}", v.join(",")));
++        }
++    }
++    w.out(line);
++    OK
++}
++
++fn step_locked(w: &World, c: &Ctx) -> i32 {
+     w.scripts.verdict(&c.r.name);
+-    batch_cut(w, &c, false);
++    batch_cut(w, c, false);
+     if c.r.mode == LandMode::QueueLocal {
+         let merged = Merged(w.io);
+         let w2 = World { io: &merged, ..*w };
+diff --git a/queue/src/ports.rs b/queue/src/ports.rs
+index ba83227..eca12cb 100644
+--- a/queue/src/ports.rs
++++ b/queue/src/ports.rs
+@@ -101,6 +101,9 @@ pub trait Bd {
+ pub trait Lib {
+     /// R1: settings and, when `repo` is Some (or the home repo), that repository.
+     fn context(&self, repo: Option<&str>) -> Result<(Settings, RepoCtx), String>;
++    /// R22: `spira_repos` — the home repository first, then every other registered name.
++    /// Err when the seam fails or answers nothing.
++    fn repos(&self) -> Result<Vec<String>, String>;
+     /// `spira_toml_resolve` (only the transitions ask).
+     fn toml_path(&self) -> Option<PathBuf>;
+     /// R20: `repo_land` and `spira_landref` read back after a transition's write.
+diff --git a/queue/src/real.rs b/queue/src/real.rs
+index 3d65988..42adb37 100644
+--- a/queue/src/real.rs
++++ b/queue/src/real.rs
+@@ -287,6 +287,14 @@ impl Lib for RealLib {
+         };
+         Ok((s, r))
+     }
++    fn repos(&self) -> Result<Vec<String>, String> {
++        let (rc, ans) = self.answer(Op::Repos, &[]);
++        let names = seam::parse_names0(&ans);
++        if rc != 0 || names.is_empty() {
++            return Err(format!("lib.sh repos seam exited {rc} with {} name(s)", names.len()));
++        }
++        Ok(names)
++    }
+     fn toml_path(&self) -> Option<PathBuf> {
+         let (_, ans) = self.answer(Op::TomlPath, &[]);
+         pb(ans.trim())
+@@ -683,6 +691,7 @@ mod tests {
+             d.join("lib.sh"),
+             r#"SPIRA_RUN=/run/x; LANDSTATE=/run/x/landstate; SPIRA_RELEASES=; SPIRA_DB=/db
+ spira_home_repo() { printf spira; }
++spira_repos() { printf 'spira\nsvc\n\nspira\n'; }
+ repo_root() { [ "$1" = spira ] && printf /repo || return 1; }
+ repo_land() { printf queue.local; }
+ repo_field() { case "$2" in land) echo queue.local;; base) echo local/main;; esac; }
+@@ -717,6 +726,27 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1
+         assert_eq!(other.path, None);
+     }
+ 
++    #[test]
++    fn repos_seam_lists_home_first_once_each_and_ignores_log_lines() {
++        let lib = RealLib { home: stub_home() };
++        assert_eq!(lib.repos().unwrap(), vec!["spira".to_string(), "svc".to_string()]);
++        // a lib.sh that logs while it is sourced: the log precedes the mark, never a name
++        let d = crate::testutil::tmpdir("reallib-noisy");
++        fs::write(d.join("lib.sh"), "echo 'spira: noise while sourcing' >&1\nspira_repos() { printf 'a\\nb\\n'; }\n").unwrap();
++        fs::write(d.join("lc.sh"), "").unwrap();
++        assert_eq!(RealLib { home: d }.repos().unwrap(), vec!["a".to_string(), "b".to_string()]);
++    }
++
++    #[test]
++    fn repos_seam_that_answers_nothing_is_an_error_not_an_empty_list() {
++        let d = crate::testutil::tmpdir("reallib-norepos");
++        fs::write(d.join("lib.sh"), "spira_repos() { return 0; }\n").unwrap();
++        fs::write(d.join("lc.sh"), "").unwrap();
++        assert!(RealLib { home: d.clone() }.repos().is_err());
++        fs::write(d.join("lib.sh"), "exit 9\n").unwrap();
++        assert!(RealLib { home: d }.repos().is_err());
++    }
++
+     #[test]
+     fn answer_seams_ignore_log_lines_and_carry_failures() {
+         let lib = RealLib { home: stub_home() };
+diff --git a/queue/src/seam.rs b/queue/src/seam.rs
+index 3bdcf84..1980788 100644
+--- a/queue/src/seam.rs
++++ b/queue/src/seam.rs
+@@ -13,6 +13,7 @@
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub enum Op {
+     Context,
++    Repos,
+     TomlPath,
+     Readback,
+     LandMark,
+@@ -91,6 +92,7 @@ exit 0
+ fn body(op: Op) -> &'static str {
+     match op {
+         Op::Context => CONTEXT,
++        Op::Repos => "printf '\\036'\nspira_repos | while IFS= read -r __r; do [ -n \"$__r\" ] && printf '%s\\0' \"$__r\"; done\nexit \"${PIPESTATUS[0]}\"\n",
+         Op::TomlPath => "printf '\\036%s' \"$(spira_toml_resolve 2>/dev/null)\"\nexit 0\n",
+         Op::Readback => "printf '\\036%s\\0%s\\0' \"$(repo_land \"$1\")\" \"$(spira_landref \"$1\" 2>/dev/null)\"\nexit 0\n",
+         Op::LandMark => "land_mark \"$1\" \"$2\" \"$3\" \"$4\"\nexit $?\n",
+@@ -140,6 +142,17 @@ pub fn split_answer(stdout: &str) -> (&str, &str) {
+     }
+ }
+ 
++/// Parse a `name\0` list (the Repos answer): empty names dropped, first occurrence kept.
++pub fn parse_names0(answer: &str) -> Vec<String> {
++    let mut out: Vec<String> = Vec::new();
++    for n in answer.split('\0').map(str::trim).filter(|n| !n.is_empty()) {
++        if !out.iter().any(|o| o == n) {
++            out.push(n.to_string());
++        }
++    }
++    out
++}
++
+ /// Parse the Context answer: `key=value\0` records.
+ pub fn parse_kv0(answer: &str) -> std::collections::BTreeMap<String, String> {
+     answer
+diff --git a/queue/src/tests.rs b/queue/src/tests.rs
+index 5810fba..de4be4b 100644
+--- a/queue/src/tests.rs
++++ b/queue/src/tests.rs
+@@ -144,6 +144,10 @@ struct FLib {
+     settle: RefCell<Vec<(i32, bool)>>,
+     pf_rc: Cell<i32>,
+     conflict_with_base: RefCell<BTreeSet<String>>,
++    /// R22's answer (step --all).
++    repos: RefCell<Result<Vec<String>, String>>,
++    /// Per-name contexts; a name not here resolves to `r`.
++    by_name: RefCell<BTreeMap<String, Result<RepoCtx, String>>>,
+ }
+ 
+ impl FLib {
+@@ -156,9 +160,15 @@ impl FLib {
+ }
+ 
+ impl Lib for FLib {
+-    fn context(&self, _repo: Option<&str>) -> Result<(Settings, RepoCtx), String> {
++    fn context(&self, repo: Option<&str>) -> Result<(Settings, RepoCtx), String> {
++        if let Some(r) = repo.and_then(|n| self.by_name.borrow().get(n).cloned()) {
++            return r.map(|r| (self.s.clone(), r));
++        }
+         Ok((self.s.clone(), self.r.borrow().clone()))
+     }
++    fn repos(&self) -> Result<Vec<String>, String> {
++        self.repos.borrow().clone()
++    }
+     fn toml_path(&self) -> Option<PathBuf> {
+         self.toml.clone()
+     }
+@@ -486,6 +496,8 @@ impl T {
+             settle: RefCell::default(),
+             pf_rc: Cell::new(0),
+             conflict_with_base: RefCell::default(),
++            repos: RefCell::new(Ok(vec!["spira".into()])),
++            by_name: RefCell::default(),
+         };
+         let scripts = FScripts::default();
+         scripts.fence_ok.set(true);
+@@ -667,6 +679,127 @@ fn step_on_queue_forge_is_status_zero_whatever_the_cut_did() {
+     assert_eq!(t.run(&["step", "spira"]), 0);
+ }
+ 
++// ------------------------------------------------------------------------ step --all
++
++impl T {
++    /// Register a repository `name` in `mode` for step --all.
++    fn repo(&self, name: &str, mode: LandMode) {
++        let mut r = self.lib.r.borrow().clone();
++        r.name = name.into();
++        r.mode = mode;
++        if mode == LandMode::QueueLocal {
++            r.landref = Some("local/main".into());
++            r.map_base = "local/main".into();
++        }
++        self.lib.by_name.borrow_mut().insert(name.into(), Ok(r));
++    }
++    fn verdicts(&self) -> Vec<String> {
++        self.scripts.calls.borrow().iter().filter(|c| c.starts_with("verdict ")).cloned().collect()
++    }
++}
++
++#[test]
++fn step_all_parses_and_refuses_a_repository_beside_it() {
++    let p = |a: &[&str]| cli::parse(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>());
++    assert_eq!(p(&["step", "--all"]), Ok(Cmd::StepAll));
++    assert_eq!(p(&["step", "spira"]), Ok(Cmd::Step { repo: "spira".into() }));
++    assert_eq!(p(&["step", "--all", "spira"]), Err(cli::Usage("queue.sh step: --all takes no repository".into())));
++    assert_eq!(p(&["step", "--bogus"]), Err(cli::Usage("queue.sh step: unknown option: --bogus".into())));
++    assert_eq!(p(&["step"]), Err(cli::Usage("queue.sh step: repo required".into())));
++    assert!(cli::USAGE.contains("queue.sh step --all"));
++}
++
++#[test]
++fn step_all_steps_every_queue_mode_repo_in_order_and_skips_the_rest() {
++    let t = T::new(LandMode::Queue);
++    t.repo("spira", LandMode::QueueLocal);
++    t.repo("svc", LandMode::Queue);
++    t.repo("pushy", LandMode::Push);
++    t.repo("held", LandMode::Hold);
++    t.lib.by_name.borrow_mut().insert("broken".into(), Err("seam exited 1".into()));
++    *t.lib.repos.borrow_mut() = Ok(vec!["spira".into(), "pushy".into(), "broken".into(), "svc".into(), "held".into()]);
++    t.git.set("refs/remotes/origin/main", "f0");
++    t.git.set("refs/heads/local/main", "f0");
++    assert_eq!(t.run(&["step", "--all"]), 0);
++    assert_eq!(t.verdicts(), vec!["verdict spira", "verdict svc"]);
++    let out = t.out();
++    assert!(out.contains("queue.sh step --all: spira\n") && out.contains("queue.sh step --all: svc\n"));
++    assert!(!out.contains("step --all: pushy") && !out.contains("step --all: held"));
++    // queue.local still publishes inside the step
++    assert!(out.contains("nothing to publish for spira"));
++    assert!(t.err().contains("cannot resolve the harness configuration: seam exited 1"));
++    assert!(out.ends_with("queue.sh step --all: stepped=2 busy=0 unresolved=1 stepped:spira,svc unresolved:broken\n"), "{out}");
++}
++
++#[test]
++fn step_all_does_not_propagate_one_repos_failed_step() {
++    let t = T::new(LandMode::Queue);
++    // queue.local with no local base: the publish inside the step refuses (status 1)
++    t.repo("spira", LandMode::QueueLocal);
++    t.repo("svc", LandMode::Queue);
++    *t.lib.repos.borrow_mut() = Ok(vec!["spira".into(), "svc".into()]);
++    // positive control in its own world (its own lock files): the single step does fail
++    let c = T::new(LandMode::Queue);
++    c.repo("spira", LandMode::QueueLocal);
++    assert_ne!(c.run(&["step", "spira"]), 0);
++    assert_eq!(t.run(&["step", "--all"]), 0);
++    assert_eq!(t.verdicts(), vec!["verdict spira", "verdict svc"]);
++}
++
++#[test]
++fn step_all_without_a_repository_list_is_a_failure_not_an_empty_pass() {
++    let t = T::new(LandMode::Queue);
++    *t.lib.repos.borrow_mut() = Err("lib.sh repos seam exited 1 with 0 name(s)".into());
++    assert_eq!(t.run(&["step", "--all"]), 1);
++    assert!(t.err().contains("queue.sh step --all: cannot list repositories: lib.sh repos seam exited 1"));
++    assert!(t.verdicts().is_empty());
++}
++
++#[test]
++fn step_all_skips_a_repo_another_stepper_holds_and_steps_the_others() {
++    let t = T::new(LandMode::Queue);
++    t.repo("spira", LandMode::Queue);
++    t.repo("svc", LandMode::Queue);
++    *t.lib.repos.borrow_mut() = Ok(vec!["spira".into(), "svc".into()]);
++    let held = crate::lock::try_step_lock(&t.lib.s.queue_dir, "svc");
++    assert!(matches!(held, crate::lock::Acquire::Held(_)));
++    assert_eq!(t.run(&["step", "--all"]), 0);
++    assert_eq!(t.verdicts(), vec!["verdict spira"]);
++    assert!(t.err().contains("queue.sh step: another step holds the step lock for svc — skipped"));
++    assert!(t.out().ends_with("stepped=1 busy=1 unresolved=0 stepped:spira busy:svc\n"));
++    drop(held);
++    // flock belongs to the open file description, and a sibling test thread that forks a
++    // child (the bash seam tests) shares it until that child execs: wait out the window.
++    for _ in 0..200 {
++        if matches!(crate::lock::try_step_lock(&t.lib.s.queue_dir, "svc"), crate::lock::Acquire::Held(_)) {
++            break;
++        }
++        std::thread::sleep(std::time::Duration::from_millis(10));
++    }
++    t.scripts.calls.borrow_mut().clear();
++    assert_eq!(t.run(&["step", "--all"]), 0);
++    assert_eq!(t.verdicts(), vec!["verdict spira", "verdict svc"], "{}", t.err());
++}
++
++#[test]
++fn a_single_step_under_a_held_step_lock_is_skipped_with_status_zero() {
++    let t = T::new(LandMode::Queue);
++    let _held = crate::lock::try_step_lock(&t.lib.s.queue_dir, "spira");
++    assert_eq!(t.run(&["step", "spira"]), 0);
++    assert!(t.verdicts().is_empty());
++    assert!(t.err().contains("another step holds the step lock for spira — skipped"));
++}
++
++#[test]
++fn a_step_never_holds_the_queue_lock_verdict_and_batch_take() {
++    let t = T::new(LandMode::Queue);
++    // verdict.sh/batch.sh take <repo>/lock themselves; the step must leave it free
++    let _q = crate::lock::try_lock(&t.lib.s.queue_dir, "spira");
++    assert!(matches!(_q, crate::lock::Acquire::Held(_)));
++    assert_eq!(t.run(&["step", "spira"]), 0);
++    assert_eq!(t.verdicts(), vec!["verdict spira"]);
++}
++
+ // ------------------------------------------------------------------------------- eject
+ 
+ fn open_batch_record(t: &T) {

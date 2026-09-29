@@ -61,7 +61,10 @@ spira-verdict.sh turned a failing `spira_repos` into an empty loop and a green u
 is absence reading as success. The unit then goes `failed`, which the watchtower's
 failed-units check reports.
 
-**Last line** (stdout): `queue.sh step --all: stepped <n> [<names…>]; skipped <k> [busy: <names…>] [unresolved: <names…>]`.
+**Last line** (stdout):
+`queue.sh step --all: stepped=<n> busy=<k> unresolved=<j>[ stepped:<a,b>][ busy:<c>][ unresolved:<d>]`
+— counts always, each name list only when non-empty. A repository not in a queue mode is
+in none of them (it was never a candidate).
 
 ## Schema
 
@@ -70,6 +73,30 @@ enum Cmd { …, Step { repo: String }, StepAll }
 trait Lib { …; fn repos(&self) -> Result<Vec<String>, String>; }   // seam R22
 // lock.rs: try_lock_file(queue_dir, repo, "step.lock") — same flock as try_lock.
 ```
+
+## Tests (in the patch; `cargo test -p queue`)
+
+| test | pins |
+|---|---|
+| `step_all_parses_and_refuses_a_repository_beside_it` | CLI grammar, exit-2 messages, usage line |
+| `step_all_steps_every_queue_mode_repo_in_order_and_skips_the_rest` | order, queue/queue.local only, push/hold skipped silently, unresolved reported and skipped, per-repo header, queue.local publish still inside the step, summary line |
+| `step_all_does_not_propagate_one_repos_failed_step` | a failing step (positive control) does not fail `--all`, nor stop the next repository |
+| `step_all_without_a_repository_list_is_a_failure_not_an_empty_pass` | exit 1, nothing stepped |
+| `step_all_skips_a_repo_another_stepper_holds_and_steps_the_others` | busy → skipped with the message; freed → stepped |
+| `a_single_step_under_a_held_step_lock_is_skipped_with_status_zero` | `step <repo>` honours the step lock |
+| `a_step_never_holds_the_queue_lock_verdict_and_batch_take` | the step runs with `<repo>/lock` held elsewhere |
+| `lock::the_step_lock_is_a_different_file_from_the_queue_lock` | step.lock ≠ lock |
+| `real::repos_seam_lists_home_first_once_each_and_ignores_log_lines`, `real::repos_seam_that_answers_nothing_is_an_error_not_an_empty_list` | seam R22 through real bash: order, dedupe, blank names dropped, logs before the mark ignored, empty/failed answer = Err |
+
+Result on concierge/rw-queue + patch: 98 tests, all pass, except a **pre-existing** flake
+in the base crate (`to_local_derives_the_local_branch_and_restores_the_config_if_the_legacy_map_fails`,
+2 of 12 runs on the unpatched base; `claim_and_release_hand_the_batch_back` seen once): the
+queue lock is an `flock` on an open file description, and a sibling test thread that
+forks a child for a bash-seam test shares that description until the child execs, so a
+test that drops a lock and immediately retakes it can find it held. Test-only (production
+`queue` is single-threaded); the new tests avoid the pattern (own world per lock holder, or
+wait out the window). Worth a serialising mutex around the bash-seam tests in the queue
+crate.
 
 ## Cutover (for the Concierge)
 
