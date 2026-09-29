@@ -82,6 +82,9 @@ chmod +x "$MOCK_BIN/spira-supervise"
 PRODROOT="$TMP/prodroot"
 mkdir -p "$PRODROOT/bin"
 ln -s "$HERE" "$PRODROOT/spira"
+# cockpit-ensure.service ExecStarts dirname(SPIRA_PROD)/cockpit/layout.sh (the COCKPIT PATH
+# case below): a release ships cockpit/ beside spira/, so the clean fixture release does too.
+ln -s "$REAL_COCKPIT" "$PRODROOT/cockpit"
 stub_release_bins() {   # stub_release_bins <release-root> [mode]
     local b; mkdir -p "$1/bin"
     for b in sentinel queue aeon; do
