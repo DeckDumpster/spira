@@ -372,7 +372,7 @@ impl Clock for FakeClock {
 // ──────────────────────────────────────────────────────────────────────────────
 
 struct H {
-    dir: PathBuf,
+    dir: crate::testutil::TmpDir,
     s: Settings,
     repos: Vec<RepoRow>,
     beads: FakeBeads,
@@ -1228,7 +1228,7 @@ impl HaltPorts for FakeHalt {
     }
 }
 
-fn halt_setup(ignores_term: bool) -> (PathBuf, FakeHalt) {
+fn halt_setup(ignores_term: bool) -> (crate::testutil::TmpDir, FakeHalt) {
     let dir = tmpdir("halt");
     let f = Files::new(&dir);
     f.write_run(&halt::run_record_for_tests("777", "1000", "spira", "spira/sp-a", "gate"));
@@ -1734,8 +1734,15 @@ fn the_admission_probe_counts_free_slots_and_releases_them() {
     let held = fs::OpenOptions::new().create(true).write(true).truncate(false).open(d.join("slot.2.lock")).unwrap();
     assert_eq!(unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
     assert_eq!(crate::real::admission_free(&d, 3), 2);
+    // Released with LOCK_UN, not by drop: a child forked by another test thread while `held`
+    // is open keeps a copy of its description until it execs, and a close releases the lock
+    // only once every copy is gone — this assertion flipped on exactly that (1 in 5 runs).
+    assert_eq!(unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_UN) }, 0);
     drop(held);
     assert_eq!(crate::real::admission_free(&d, 3), 3, "the probe itself holds nothing afterwards");
+    // Run again: a probe that released by close would leave a lock behind in any child forked
+    // during it, and this second count would read one short.
+    assert_eq!(crate::real::admission_free(&d, 3), 3);
 }
 
 #[test]
@@ -1856,10 +1863,8 @@ fn real_halt_finds_podman_and_testenv_on_its_path() {
     std::fs::create_dir_all(&bin).unwrap();
     let log = dir.join("log");
     let podman = bin.join("podman");
-    std::fs::write(&podman, "#!/bin/sh\n[ \"$1\" = ps ] && echo spira-batch-stubbed\nexit 0\n").unwrap();
+    crate::testutil::write_exe(&podman, "#!/bin/sh\n[ \"$1\" = ps ] && echo spira-batch-stubbed\nexit 0\n");
     std::fs::write(dir.join("testenv.sh"), format!("echo \"$*\" >> {}\ncommand -v podman >> {}\n", log.display(), log.display())).unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&podman, std::fs::Permissions::from_mode(0o755)).unwrap();
     let path = format!("{}:/usr/bin:/bin", bin.display());
     let h = RealHalt { prod: dir.clone(), path: Some(path) };
     assert_eq!(h.running_containers(), vec!["spira-batch-stubbed".to_string()]);
