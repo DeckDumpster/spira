@@ -49,10 +49,16 @@ git -C "$REPO" fetch -q origin
 git -C "$REPO" remote set-head origin main
 mkdir -p "$RUN/worktree" "$RUN/landstate" "$SH/chamber"
 
-cp "$HERE/sentinel.sh" "$HERE/lib.sh" "$HERE/landing.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SH/"
+cp "$HERE/lib.sh" "$HERE/lc.sh" "$HERE/lifecycle-cert.sh" "$HERE/landing.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SH/"
+# THE RUST SENTINEL (sentinel.sh is gone): the binaries are resolved as conf.sh's spira_bin
+# resolves them for THIS tree, and passed explicitly, because the fixture's own SPIRA_REPO is
+# not the tree that built them.
+_rbin() { SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin "$2" 2>/dev/null' _ "$HERE" "$1"; }
+SENTINEL_BIN="${SPIRA_SENTINEL_BIN:-$(_rbin sentinel)}"
+export SPIRA_CLAIM_BIN="${SPIRA_CLAIM_BIN:-$(_rbin spira-claim)}"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub pilgrimage.sh 'exit 0'
-stub strand.sh     'exit 0'
+stub strand        'exit 0'
 stub sending.sh    'exit 0'
 stub governor.sh   'exit 0'
 stub reflect.sh    'exit 0'
@@ -85,8 +91,8 @@ sentinel() {
     SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
     SPIRA_CONF="$TMP/no-such-conf" \
     SPIRA_INCIDENT_SH="$TMP/mock-incident.sh" \
-    SPIRA_SKIP_RECLAIM=1 \
-        bash "$SH/sentinel.sh" --audit 2>&1
+    SPIRA_SKIP_RECLAIM=1 SPIRA_STRAND_BIN="$SH/strand" \
+        "$SENTINEL_BIN" --audit 2>&1
 }
 
 status_of() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | python3 -c '

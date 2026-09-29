@@ -85,7 +85,8 @@ exit 0
 MOCK
 chmod +x "$FAKE_SPIRA_HOME/seed.sh"
 
-cat > "$FAKE_SPIRA_HOME/sentinel.sh" <<'MOCK'
+# The sentinel is a binary now: ready.sh runs "$SPIRA_SENTINEL_BIN" --report.
+cat > "$BIN/sentinel" <<'MOCK'
 #!/usr/bin/env bash
 if [ "${1:-}" = "--report" ]; then
     printf '\nOpen beads under sp-test:\n  sp-abc\n'
@@ -93,7 +94,7 @@ if [ "${1:-}" = "--report" ]; then
 fi
 exit 1
 MOCK
-chmod +x "$FAKE_SPIRA_HOME/sentinel.sh"
+chmod +x "$BIN/sentinel"
 
 # Loom probe stub — always answers 200, so ready.sh never reaches its real HTTP probe
 # loop (that loop, not this check, is what flaked test-ready.sh in round 96).
@@ -143,6 +144,7 @@ run_ready() {
         SPIRA_GOAL="sp-test" \
         SPIRA_INSTANCE="prod" \
         SPIRA_LOOM_BIN="$BIN/fake-loom" \
+        SPIRA_SENTINEL_BIN="$BIN/sentinel" \
         SPIRA_LOOM_ADDR="127.0.0.1:8788" \
         SPIRA_LOOM_BUDGET_MS="1500" \
         SPIRA_LOOM_PROBE="$BIN/loom-probe" \

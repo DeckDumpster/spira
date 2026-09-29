@@ -75,6 +75,14 @@ mkdir -p "$_stage/bin"
 for _d in spira systemd cockpit; do
     [ -d "$WORKSPACE/$_d" ] && cp -rp "$WORKSPACE/$_d" "$_stage/" || true
 done
+# The sentinel is a binary now (sentinel.sh is gone): the release ships it, and the ones it
+# runs, under bin/ — resolved exactly as conf.sh's spira_bin resolves them for this tree.
+while IFS= read -r _p; do
+    [ -x "$_p" ] && cp -p "$_p" "$_stage/bin/"
+done < <(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1
+         for b in sentinel strand spira-claim spira-config; do spira_bin "$b" 2>/dev/null; echo; done' _ "$HERE")
+[ -x "$_stage/bin/sentinel" ] && ok "release ships bin/sentinel" \
+    || bad "release ships bin/sentinel" "the sentinel binary was not found through spira_bin"
 printf 'commit 0000000000000000000000000000000000000000\ntimestamp %s\n' "$_ts" \
     > "$_stage/MANIFEST"
 TARBALL="$SCRATCH/$_name.tar.gz"
@@ -121,7 +129,7 @@ want "fixture: sp-lr-work is ready" "sp-lr-work" "$_ready"
 
 # ===========================================================================
 echo ""
-echo "phase 3: sentinel.sh from read-only release claims the bead"
+echo "phase 3: the sentinel binary from read-only release claims the bead"
 # ===========================================================================
 # SPIRA_SUMMON stub: records the call and claims the ready bead.
 SUMMON_LOG="$SCRATCH/summon.log"
@@ -172,10 +180,10 @@ SENTINEL_OUT="$(
     SPIRA_SKIP_RECLAIM=1 \
     SPIRA_SKIP_CLOSED_CHECK=1 \
     SPIRA_INFERENCE_EVERY=99999 \
-        bash "$CURRENT/spira/sentinel.sh" 2>&1
+        "$CURRENT/bin/sentinel" 2>&1
 )"
 SENTINEL_RC=$?
-iszero "sentinel.sh exits 0 from read-only release" "$SENTINEL_RC"
+iszero "sentinel exits 0 from read-only release" "$SENTINEL_RC"
 nowant "no permission denied from release dir" "Permission denied" "$SENTINEL_OUT"
 nowant "no read-only filesystem error"         "Read-only file system" "$SENTINEL_OUT"
 

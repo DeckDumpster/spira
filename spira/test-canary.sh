@@ -49,7 +49,7 @@ printf '\nT1: stage up creates expected structure\n'
     isexec "fake-launch.sh"        "$SPIRA_HOME/fake-launch.sh"
     isexec "canary-worker.sh"      "$SPIRA_HOME/canary-worker.sh"
     exists "lib.sh symlink"        "$SPIRA_HOME/lib.sh"
-    exists "sentinel.sh symlink"   "$SPIRA_HOME/sentinel.sh"
+    # sentinel.sh is gone: the stage runs the sentinel binary (canary.sh: "$SPIRA_SENTINEL_BIN").
     exists "landing.sh symlink"    "$SPIRA_HOME/landing.sh"
     exists "bare remote"           "$STAGE_ROOT/remote.git/HEAD"
     exists "repo checkout"         "$STAGE_ROOT/repo/.git"
@@ -204,6 +204,8 @@ printf '\nT6: canary-worker claims and closes a bead\n'
 # ─── T7: full end-to-end canary ───────────────────────────────────────────────
 printf '\nT7: full canary (sentinel + landing)\n'
 (
+    # canary.sh runs "$SPIRA_SENTINEL_BIN"; resolve it as conf.sh does (spira_bin).
+    export SPIRA_SENTINEL_BIN="${SPIRA_SENTINEL_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; printf %s "${SPIRA_SENTINEL_BIN:-}"' _ "$HERE")}"
     # Capture what canary prints; exit code is what matters.
     out="$(bash "$HERE/canary.sh" 2>&1)"
     rc=$?

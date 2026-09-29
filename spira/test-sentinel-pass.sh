@@ -48,9 +48,15 @@ TMP="$(mktemp -d)"; trap 'testdb_drop 2>/dev/null; rm -rf "$TMP"' EXIT INT TERM
 
 STUBS="$TMP/stubs"
 mkdir -p "$STUBS"
-for _s in pilgrimage.sh strand.sh reflect.sh; do
+for _s in pilgrimage.sh strand reflect.sh; do
     printf '#!/bin/sh\n' > "$STUBS/$_s"; chmod +x "$STUBS/$_s"
 done
+# THE SENTINEL IS A BINARY (sentinel.sh is gone). It sources lib.sh from SPIRA_HOME, so the
+# stub home carries the real lib.sh and what it sources; strand is SPIRA_STRAND_BIN.
+for _s in lib.sh conf.sh lc.sh suite-covers.sh lifecycle-cert.sh; do
+    ln -s "$HERE/$_s" "$STUBS/$_s"
+done
+SENTINEL_BIN="${SPIRA_SENTINEL_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; printf %s "${SPIRA_SENTINEL_BIN:-}"' _ "$HERE")}"
 printf '#!/bin/sh\necho inactive\n'  > "$STUBS/mock-systemctl"; chmod +x "$STUBS/mock-systemctl"
 LAUNCH_ARGV="$TMP/launch-argv"
 # mock-launch stands in for systemd-run: it records every dispatch's own argv (CHECK 6's
@@ -88,7 +94,9 @@ out_unreadable="$(env -i \
     SPIRA_SYSTEMCTL="$STUBS/mock-systemctl" \
     SPIRA_LAUNCH="$STUBS/mock-launch" \
     SPIRA_NOTIFY="$STUBS/mock-notify" \
-    bash "$HERE/sentinel.sh" 2>&1)"
+    SPIRA_STRAND_BIN="$STUBS/strand" \
+    ${SPIRA_ARTIFACTS:+SPIRA_ARTIFACTS=$SPIRA_ARTIFACTS} \
+    "$SENTINEL_BIN" 2>&1)"
 rc=$?
 is   "exits 1 when bd cannot reach the database"  "1" "$rc"
 want "reports DATABASE UNREADABLE"                 "DATABASE UNREADABLE" "$out_unreadable"
@@ -149,8 +157,10 @@ run_pass() {
         SUMMON_LOG="$SUMMON_LOG" \
         SENDING_LOG="$SENDING_LOG" \
         SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL= SPIRA_MAX_AEONS=3 \
+        SPIRA_STRAND_BIN="$STUBS/strand" \
+        ${SPIRA_ARTIFACTS:+SPIRA_ARTIFACTS=$SPIRA_ARTIFACTS} \
         "$@" \
-        bash "$HERE/sentinel.sh" "${sarg[@]}" 2>&1
+        "$SENTINEL_BIN" "${sarg[@]}" 2>&1
 }
 
 _run="$TMP/run-pass"
@@ -169,8 +179,8 @@ is   "pass 1: sending.sh NOT called inline by a normal pass" \
      "0" "$(grep -c . "$SENDING_LOG" 2>/dev/null || echo 0)"
 want "pass 1: dispatches the audit worker (--unit=spira-audit line in launch argv)" \
      "--unit=spira-audit" "$(cat "$LAUNCH_ARGV" 2>/dev/null)"
-want "pass 1: audit dispatch's own argv names sentinel.sh --audit" \
-     "sentinel.sh --audit" "$(cat "$LAUNCH_ARGV" 2>/dev/null)"
+want "pass 1: audit dispatch's own argv names the sentinel binary --audit" \
+     "/sentinel --audit" "$(cat "$LAUNCH_ARGV" 2>/dev/null)"
 
 # ======================================================================================
 echo
