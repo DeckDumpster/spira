@@ -396,6 +396,13 @@ impl<'a> Pass<'a> {
                 self.out.progress(&format!("reopened {id} — ejected-not-requeued"));
                 return Screen::Done(Flow::Next);
             }
+            if ls.state == "LANDED" {
+                self.log(&format!(
+                    "CHECK6 {id}: closed with landstate LANDED but {br} is not on {} (landed by another route, e.g. cherry-pick) — leaving the record for the Sending to reap, not gating",
+                    w.base
+                ));
+                return Screen::Done(Flow::Next);
+            }
         }
         if self.git.content_landed(&repo.path, br, &w.base_fq) {
             self.log(&format!("{} already contains every change on {br} — nothing to land", w.base));

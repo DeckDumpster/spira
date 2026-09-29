@@ -278,6 +278,7 @@ impl Run<'_> {
             }
         } else if let Some((gate_st, why)) = self.gate_status() {
             gate_why = why.clone();
+            let superseded = bd::show(self.d.bd, &id).is_some_and(|r| r.superseded());
             let queued = self.sv("repo_land_queued", &s(&[&self.s.repo_name])).success();
             let hasown = queued && self.has_own_commit();
             let br = self.s.branch.clone();
@@ -340,6 +341,8 @@ impl Run<'_> {
                         self.log(&none_log);
                     } else if let Some(tip) = self.already_certified() {
                         self.log(&format!("{f}: {id} {cert_log}, but {tip} is already CERTIFIED — the session submitted it itself"));
+                    } else if superseded {
+                        self.log(&format!("{f}: {id} {cert_log}, but the bead is superseded — not handing {br} to certification, leaving it for the Sending to reap"));
                     } else {
                         self.defer_self_cert(&defer_why);
                     }
