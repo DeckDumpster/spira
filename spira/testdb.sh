@@ -60,10 +60,12 @@ TESTDB_MODE="${TESTDB_MODE:-}"
 TESTDB_FIXTURE="${TESTDB_FIXTURE:-}"
 
 # _testdb_testenv — the testenv binary that owns server-mode fixtures: the artifact under
-# test inside testenv, $SPIRA_REPO/bin otherwise (spira_bin). TESTDB_TESTENV overrides.
+# test inside testenv, $SPIRA_REPO/bin otherwise (spira_bin), else PATH. TESTDB_TESTENV
+# overrides.
 _testdb_testenv() {
     if [ -n "${TESTDB_TESTENV:-}" ]; then printf '%s\n' "$TESTDB_TESTENV"; return 0; fi
-    spira_bin testenv
+    spira_bin testenv 2>/dev/null && return 0
+    command -v testenv
 }
 
 # _testdb_kv <KEY> <text> — the value of KEY=value in testenv's report.
