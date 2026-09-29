@@ -18,6 +18,9 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
+# THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
+# pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
+LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -225,7 +228,7 @@ esac
 
 # ============================================================================
 echo
-echo "landing.sh: a closed bead's branch lands (push mode) onto a MASTER base:"
+echo "landing-pass land: a closed bead's branch lands (push mode) onto a MASTER base:"
 # ============================================================================
 L_REPO="$TMP/landing-repo"; L_REMOTE="$TMP/landing-remote.git"
 L_RUN="$TMP/landing-run"; L_SH="$TMP/landing-spira"
@@ -236,7 +239,7 @@ git -C "$L_REPO" remote add origin "$L_REMOTE"
 git -C "$L_REPO" push -q origin master
 git -C "$L_REPO" fetch -q origin
 mkdir -p "$L_RUN/worktree" "$L_SH"
-cp "$HERE/landing.sh" "$HERE/landing-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$L_SH/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$L_SH/"
 printf '#!/usr/bin/env bash\necho "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2\nexit 0\n' \
     > "$L_SH/gate.sh"; chmod +x "$L_SH/gate.sh"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$L_SH/confine.sh"; chmod +x "$L_SH/confine.sh"
@@ -255,7 +258,7 @@ git -C "$L_RUN/worktree/sp-lbase" commit -q -m "feat: sp-lbase — work"
 
 out="$(SPIRA_HOME="$L_SH" SPIRA_RUN="$L_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$L_REPO" \
     SPIRA_REPO_MAP="$L_SH/repo-map-does-not-exist" \
-        bash "$L_SH/landing.sh" 2>&1)"
+        "$LANDING_PASS_BIN" land 2>&1)"
 
 want "landing: reports landing the master-base branch" "landed spira/sp-lbase" "$out"
 git -C "$L_REPO" fetch -q origin

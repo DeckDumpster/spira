@@ -16,10 +16,13 @@
 #      and SP_CERT_N (within cert window). A bead closed 5 minutes ago counts as
 #      awaiting cert, not stranded.
 #
-# covers: spira/landing.sh spira/lib.sh spira/cockpit.sh cockpit/health.sh
+# covers: landing-pass/* spira/lib.sh spira/cockpit.sh cockpit/health.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+# THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
+# pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
+LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -39,7 +42,7 @@ git -C "$REPO" fetch -q origin
 git -C "$REPO" remote set-head origin main
 mkdir -p "$RUN/worktree" "$RUN/landstate" "$SH/chamber"
 
-cp "$HERE/landing.sh" "$HERE/landing-lib.sh" "$HERE/lc.sh" "$HERE/lifecycle-cert.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
+cp "$HERE/lc.sh" "$HERE/lifecycle-cert.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
    "$HERE/incident.sh" "$HERE/skew.sh" "$HERE/sending.sh" "$HERE/suite-covers.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub pilgrimage.sh 'exit 0'
@@ -86,7 +89,7 @@ landing() {
     SPIRA_HOME_REPO="$REPONAME" \
     SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
     SPIRA_CONF="$TMP/no.conf" \
-        bash "$SH/landing.sh" 2>&1
+        "$LANDING_PASS_BIN" land 2>&1
 }
 
 PAST="2026-09-01T00:00:00Z"

@@ -25,12 +25,15 @@
 #
 # defect: sp-qsona (acceptance phase A stage 5)
 # tier: T3
-# covers: spira/landing.sh spira/sending.sh spira/pr-pass-branch.sh spira/lib.sh spira/aeon.sh
+# covers: landing-pass/* spira/sending.sh spira/pr-pass-branch.sh spira/lib.sh spira/aeon.sh
 # hermetic-ok: uses a fixture database and local git repos, no systemd or gh
 # timeout: 240
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
+# pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
+LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -106,7 +109,7 @@ run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_AEON_BIN" --home "$SPIRA_HOME
 landing() {
     rm -f "$SPIRA_RUN/landing.progress"
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO=fixture SPIRA_ID_PREFIX=sp SPIRA_GH="$SPIRA_HOME/gh" \
-        bash "$SPIRA_HOME/landing.sh" 2>&1
+        "$LANDING_PASS_BIN" land 2>&1
 }
 sending() {
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO=fixture SPIRA_GH="$SPIRA_HOME/gh" \

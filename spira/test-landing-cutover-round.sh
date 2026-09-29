@@ -18,11 +18,14 @@
 #
 #
 # defect: sp-umcjk
-# covers: spira/landing.sh spira/conf.sh spira/lib.sh
+# covers: landing-pass/* spira/conf.sh spira/lib.sh
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+# THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
+# pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
+LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -51,7 +54,7 @@ stub mail.sh '[ "${1:-}" = send ] || exit 0; printf "%s\n" "$*" >> "$EMITTED"; c
 export EMITTED="$TMP/events"; : > "$EMITTED"
 stub gh 'exit 1'
 stub gate.sh 'echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2; exit 0'
-stub queue.sh 'exit 0'
+stub queue-bin 'exit 0'   # the queue binary's stand-in (SPIRA_QUEUE_BIN)
 
 # A NON-DEFAULT LABEL, PINNED. Asserting against the shipped default ("cutover-round") would
 # pass just as well if landing.sh had that string written in literally rather than reading
@@ -73,8 +76,8 @@ landing() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
     SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
-    SPIRA_CERT_IDLE_SKIP=0 SPIRA_CUTOVER_ROUND_LABEL="$CUTOVER_LABEL" \
-        bash "$SH/landing.sh" 2>&1
+    SPIRA_CERT_IDLE_SKIP=0 SPIRA_CUTOVER_ROUND_LABEL="$CUTOVER_LABEL" SPIRA_QUEUE_BIN="$SH/queue-bin" \
+        "$LANDING_PASS_BIN" land 2>&1
 }
 
 # branch <id> <file> <content> [labels-json] — a closed bead with a clean git branch.

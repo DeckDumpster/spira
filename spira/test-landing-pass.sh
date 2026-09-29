@@ -8,11 +8,14 @@
 #      on the branch (positive control shows ghq pr create IS called when no dup exists).
 #
 # defect: sp-n971b
-# covers: landing-pass spira/pr-pass-branch.sh spira/lib.sh spira/landing.sh
+# covers: landing-pass spira/pr-pass-branch.sh spira/lib.sh landing-pass/*
 # timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+# THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
+# pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
+LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 
 . "$HERE/testdb.sh"
 testdb_require test-landing-pass
@@ -98,7 +101,7 @@ SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
 SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$PUSH_REPO" \
 SPIRA_HOME_REPO="push-repo" SPIRA_ID_PREFIX=sp \
 SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
-    bash "$SH/landing.sh" 2>/dev/null >/dev/null || true
+    "$LANDING_PASS_BIN" land 2>/dev/null >/dev/null || true
 
 want   "gate called for push-mode repo (positive control)" "push-repo" \
     "$(cat "$RUN/gate-calls" 2>/dev/null)"

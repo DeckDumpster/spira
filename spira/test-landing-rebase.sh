@@ -11,11 +11,14 @@
 #
 # Extracted from test-landing.sh to reduce the critical-path suite time.
 #
-# covers: spira/landing.sh spira/lib.sh spira/skew.sh
+# covers: landing-pass/* spira/lib.sh spira/skew.sh
 # timeout: 240
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+# THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
+# pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
+LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -92,7 +95,7 @@ landing() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
     SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
-        bash "$SH/landing.sh" 2>&1
+        "$LANDING_PASS_BIN" land 2>&1
 }
 
 seed() {
@@ -141,7 +144,7 @@ out="$(landing)"
 want "the branch whose gate was withheld is not landed" "gate NO_VERDICT on spira/sp-held" "$out"
 want "and the branch behind it lands"                   "landed spira/sp-lands" "$out"
 want "the survivor is rebased onto the new base at once" \
-     "rebased spira/sp-held onto origin/main after landing spira/sp-lands" "$out"
+     "rebased spira/sp-held onto origin/main after this pass's landings" "$out"   # landing-pass §8 D3: one sweep per pass
 is   "and its tip moved after the loop had walked past it" \
      moved "$([ "$(tip_at_gate sp-held)" != "$(tip_of sp-held)" ] && echo moved || echo "same as at gate time")"
 is   "so it now carries the commit that landed"         yes "$(on_base sp-held)"

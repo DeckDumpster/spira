@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: spira/skew.sh spira/landing.sh spira/queue.sh spira/activate.sh spira/build-tarball.sh
+# covers: spira/skew.sh landing-pass/* spira/queue.sh spira/activate.sh spira/build-tarball.sh
 #
 # test-skew-refresh.sh — stage-and-swap refresh advances regardless of live aeon leases;
 # running processes keep their old inode; dirty tracked files are stashed; gap reports
@@ -14,6 +14,9 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
+# pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
+LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 # The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
 # test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
 QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
@@ -273,7 +276,7 @@ QUEUE_NEW="$(git -C "$QREPO" rev-parse origin/main)"
     || bad "queue-mode refresh setup" "checkout is already at origin/main before the pass"
 
 mkdir -p "$QSH" "$QRUN"
-cp "$HERE/landing.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/skew.sh" "$QSH/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/skew.sh" "$QSH/"
 cat > "$QSH/repo-map" <<MAP
 qfixture | $QREPO | queue | |
 MAP
@@ -289,7 +292,7 @@ q_out="$(env -i PATH="$PATH" \
     SPIRA_REPO_MAP="$QSH/repo-map" \
     SPIRA_DOLT_DATA="" \
     SPIRA_TESTDB_DATA="" \
-    bash "$QSH/landing.sh" 2>&1)"
+    "$LANDING_PASS_BIN" land 2>&1)"
 
 QUEUE_AFTER="$(git -C "$QREPO" rev-parse HEAD)"
 [ "$QUEUE_AFTER" = "$QUEUE_NEW" ] \

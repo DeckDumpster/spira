@@ -20,11 +20,14 @@
 # the "certified spira/<id>" line is land_repo's own marker that the branch loop reached
 # this branch. verdict.sh and batch.sh are stubbed to control what the forge reports.
 #
-# covers: spira/landing.sh
+# covers: landing-pass/*
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+# THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
+# pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
+LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 before_in_output() {
     # before_in_output <label> <first> <second> <output>
     # passes if <first> appears before <second> in <output>
@@ -72,6 +75,10 @@ stub gh         'exit 1'
 # disappears after a fast-forward). After the first call the batch is gone; subsequent calls
 # are silent. batch.sh is a no-op (no new batch to open in this fixture).
 stub batch.sh 'exit 0'
+# THE QUEUE STEP IS "$SPIRA_QUEUE_BIN" step <repo> now (landing-pass/DESIGN.md §8 D5): the
+# stub stands in for the queue binary and runs the stubbed verdict.sh, which is all this
+# suite's ordering assertions read.
+stub queue-bin 'if [ "${1:-}" = step ]; then bash "$SPIRA_HOME/verdict.sh" "${2:-}"; fi; exit 0'
 
 B() { bd -C "$SPIRA_DB" "$@"; }
 
@@ -79,8 +86,8 @@ landing() {
     rm -f "$RUN/landing.progress"
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
-    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
-        bash "$SH/landing.sh" 2>&1
+    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" SPIRA_QUEUE_BIN="$SH/queue-bin" \
+        "$LANDING_PASS_BIN" land 2>&1
 }
 
 seed() {
@@ -107,15 +114,15 @@ MAP
 
 echo "test-landing-queue-early.sh"
 
-# POSITIVE CONTROL: prove that a landing.sh crash is caught, not a silent non-zero exit.
-# Temporarily swap in a stub that exits 255, run it, then restore the real script.
-cp "$SH/landing.sh" "$SH/landing.sh.bak"
-printf '#!/usr/bin/env bash\nexit 255\n' > "$SH/landing.sh"; chmod +x "$SH/landing.sh"
+# POSITIVE CONTROL: prove that a landing-pass crash is caught, not a silent non-zero exit.
+# Temporarily point LANDING_PASS_BIN at a stub that exits 255, run it, then restore it.
+stub landing-pass-crash 'exit 255'
+_real_lp="$LANDING_PASS_BIN"; LANDING_PASS_BIN="$SH/landing-pass-crash"
 _ctrl_out="$(landing)"; _ctrl_rc=$?
-cp "$SH/landing.sh.bak" "$SH/landing.sh"; rm -f "$SH/landing.sh.bak"
+LANDING_PASS_BIN="$_real_lp"
 [ "$_ctrl_rc" -ne 0 ] \
     && ok "positive-control: landing crash detected (rc=$_ctrl_rc)" \
-    || bad "positive-control" "expected non-zero from a landing.sh that exits 255; got rc=0"
+    || bad "positive-control" "expected non-zero from a landing-pass that exits 255; got rc=0"
 
 # --------------------------------------------------------------------------------------
 # CASE 1 (early): forge is green before the pass starts.
@@ -134,7 +141,7 @@ seed
 branch sp-earlyq
 rm -f "$RUN/batch-landed"
 out="$(landing)"; _landing_rc=$?
-[ "$_landing_rc" -eq 0 ] || bad "1. landing-crashed" "landing.sh exited $_landing_rc (a stub or subprocess died)"
+[ "$_landing_rc" -eq 0 ] || bad "1. landing-crashed" "landing-pass land exited $_landing_rc (a stub or subprocess died)"
 
 want "1. early green: early check logs a landing" "queue early: verdict fixture: PR 1 landed by fast-forward" "$out"
 nowant "1. early green: late check is not where it landed" "queue late: verdict fixture: PR 1 landed by fast-forward" "$out"
@@ -163,7 +170,7 @@ seed
 branch sp-lateq
 rm -f "$RUN/landstate/sp-lateq"
 out="$(landing)"; _landing_rc=$?
-[ "$_landing_rc" -eq 0 ] || bad "2. landing-crashed" "landing.sh exited $_landing_rc (a stub or subprocess died)"
+[ "$_landing_rc" -eq 0 ] || bad "2. landing-crashed" "landing-pass land exited $_landing_rc (a stub or subprocess died)"
 
 nowant "2. late green: early check does not show a landing" "queue early: verdict fixture: PR 1 landed by fast-forward" "$out"
 want   "2. late green: late check logs a landing"           "queue late: verdict fixture: PR 1 landed by fast-forward" "$out"

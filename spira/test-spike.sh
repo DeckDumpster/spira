@@ -41,10 +41,13 @@
 #
 # defect: sp-qkf
 # tier: T3
-# covers: spira/confine.sh spira/landing.sh spira/chamber/* UC-safety-fences-32
+# covers: spira/confine.sh landing-pass/* spira/chamber/* UC-safety-fences-32
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+# THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
+# pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
+LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 
 echo "test-spike.sh"
 
@@ -220,7 +223,7 @@ git -C "$LREPO" remote add origin "$REMOTE"
 git -C "$LREPO" push -q origin main
 git -C "$LREPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
-cp "$HERE/landing.sh" "$HERE/landing-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/confine.sh" "$SH/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/confine.sh" "$SH/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/gate.sh"; chmod +x "$SH/gate.sh"
 printf 'home | %s | push | origin/main | |\n' "$LREPO" > "$SH/repo-map"
 
@@ -230,7 +233,7 @@ land() {
     SPIRA_HOME_REPO=home SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_SPIKE_LABEL="$SPIRA_SPIKE_LABEL" SPIRA_SPIKE_DIR="$SPIRA_SPIKE_DIR" \
     SPIRA_SPIKE_PATHS="$SPIRA_SPIKE_PATHS" \
-        bash "$SH/landing.sh" 2>&1
+        "$LANDING_PASS_BIN" land 2>&1
 }
 status_of() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import json, sys
