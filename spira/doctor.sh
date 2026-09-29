@@ -56,6 +56,22 @@ doctor_check_config_files() {
     else
         OK "no config file found — running on derived defaults"
     fi
+
+    # PARSING IS spira-config's JOB, NOT DOCTOR'S OWN: a hand-rolled well-formedness check
+    # here would be a second parser of spira.toml, exactly the duplication this file exists
+    # to retire (sp-4bw2i). validate is the one authority on whether the document in force
+    # is well-formed.
+    if [ -n "$toml" ]; then
+        local bin out
+        bin="$(spira_config_bin 2>/dev/null || true)"
+        if [ -z "$bin" ]; then
+            WARN "cannot validate $toml — no spira-config binary found"
+        elif out="$("$bin" validate "$toml" 2>&1)"; then
+            OK "spira.toml validates — $toml"
+        else
+            FAIL "spira.toml fails validation — $toml" "$out"
+        fi
+    fi
 }
 
 # --------------------------------------------------------------------------------------
