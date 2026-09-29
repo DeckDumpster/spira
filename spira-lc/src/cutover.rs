@@ -597,8 +597,24 @@ pub fn cmd_settle(args: &[String], conn: &Conn) -> (i32, String) {
         },
     }];
 
+    // Closure (design stacked-dependents-2026-09-28 §3): ejecting a member ejects every
+    // member of this same round stacked on it, transitively. Attribution names only the
+    // red member(s) in `--eject`; this is what makes its dependents follow automatically,
+    // regardless of which member attribution blamed.
+    let cascade_ids: Vec<String> = match stacked_dependents_in_batch(conn, batch_id, &eject_ids) {
+        Ok(ids) => ids.into_iter().filter(|id| !eject_ids.contains(id)).collect(),
+        Err(e) => return cannot_tell(e),
+    };
+    let requeue_ids: Vec<String> =
+        requeue_ids.into_iter().filter(|id| !cascade_ids.contains(id) && !eject_ids.contains(id)).collect();
+
     for id in &eject_ids {
         if let Err(e) = add_exit_steps(conn, &mut steps, id, delivery::DeliveryEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BatchEjected }, &actor, at) { return cannot_tell(e); }
+    }
+    // A stacked dependent is collateral, not itself red: `base-withdrawn`, not
+    // `batch-ejected`, so the reconciler's rework-by-cause query can tell them apart.
+    for id in &cascade_ids {
+        if let Err(e) = add_exit_steps(conn, &mut steps, id, delivery::DeliveryEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BaseWithdrawn }, &actor, at) { return cannot_tell(e); }
     }
     for id in &requeue_ids {
         let tip = match fetch_members(conn, batch_id) {
@@ -612,7 +628,22 @@ pub fn cmd_settle(args: &[String], conn: &Conn) -> (i32, String) {
     match conn.cascade("", &steps) {
         Ok(applied) => {
             let all_ok = applied.iter().all(|a| *a);
-            let summary = serde_json::json!({"batch_id": batch_id, "steps": steps.len(), "applied": applied});
+            // The meter (design §3: "a stack_depth and base_withdrawn count per round"):
+            // how many members this settle carried down as collateral, and how deep each
+            // ejected/cascaded member's own stack was.
+            let mut stack_depth = serde_json::Map::new();
+            for id in eject_ids.iter().chain(cascade_ids.iter()) {
+                if let Ok(Some(row)) = rows::fetch_bead(conn, id) {
+                    stack_depth.insert(id.clone(), serde_json::json!(row.stack_depth));
+                }
+            }
+            let summary = serde_json::json!({
+                "batch_id": batch_id,
+                "steps": steps.len(),
+                "applied": applied,
+                "base_withdrawn": cascade_ids.len(),
+                "stack_depth": stack_depth,
+            });
             if all_ok {
                 (0, serde_json::to_string(&summary).unwrap())
             } else {
@@ -810,10 +841,30 @@ pub fn cmd_eject_member(args: &[String], conn: &Conn) -> (i32, String) {
         return cannot_tell(e);
     }
 
+    // A hand eject cascades exactly like a settle's own attribution does (design §3): every
+    // member of this round stacked on `bead_id`, transitively, follows it out as collateral
+    // rework — `base-withdrawn`, never `batch-ejected`, since this member's own content was
+    // never accused of anything.
+    let cascade_ids: Vec<String> = match stacked_dependents_in_batch(conn, batch_id, std::slice::from_ref(&bead_id)) {
+        Ok(ids) => ids,
+        Err(e) => return cannot_tell(e),
+    };
+    for id in &cascade_ids {
+        if let Err(e) = add_exit_steps(conn, &mut steps, id, delivery::DeliveryEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BaseWithdrawn }, &actor, at) {
+            return cannot_tell(e);
+        }
+    }
+
     match conn.cascade("", &steps) {
         Ok(applied) => {
             let all_ok = applied.iter().all(|a| *a);
-            let summary = serde_json::json!({"batch_id": batch_id, "bead_id": bead_id, "steps": steps.len(), "applied": applied});
+            let summary = serde_json::json!({
+                "batch_id": batch_id,
+                "bead_id": bead_id,
+                "steps": steps.len(),
+                "applied": applied,
+                "base_withdrawn": cascade_ids.len(),
+            });
             if all_ok {
                 (0, serde_json::to_string(&summary).unwrap())
             } else {
@@ -835,6 +886,43 @@ fn fetch_members(conn: &Conn, batch_id: &str) -> Result<Vec<(String, String)>, D
             Some((id, tip))
         })
         .collect())
+}
+
+/// The transitive closure of this batch's own members stacked on any of `roots` (design
+/// stacked-dependents-2026-09-28 §3: "ejecting a member ejects every member stacked on it,
+/// transitively"). A member `M` is stacked on prerequisite `P` when `M`'s own bead row's
+/// `stack` still names `P` at exactly the tip this batch recorded for `P` — the tip
+/// invariant round assembly already checked at `member_added` time, re-checked here rather
+/// than trusted, since a prerequisite can move between assembly and settle. `roots`
+/// themselves are never returned, even if one names another as a prerequisite: they are the
+/// caller's own ejection, not cascade.
+fn stacked_dependents_in_batch(conn: &Conn, batch_id: &str, roots: &[String]) -> Result<Vec<String>, DbError> {
+    let members = fetch_members(conn, batch_id)?;
+    let tips: std::collections::BTreeMap<String, String> = members.iter().cloned().collect();
+
+    let mut member_stacks = Vec::new();
+    for (id, _) in &members {
+        if let Some(row) = rows::fetch_bead(conn, id)? {
+            member_stacks.push((id.clone(), row));
+        }
+    }
+
+    let mut visited: std::collections::BTreeSet<String> = roots.iter().cloned().collect();
+    let mut frontier: Vec<String> = roots.to_vec();
+    let mut dependents = Vec::new();
+    while let Some(prereq) = frontier.pop() {
+        for (id, row) in &member_stacks {
+            if visited.contains(id) {
+                continue;
+            }
+            if row.stack.get(&prereq).is_some_and(|given_tip| tips.get(&prereq) == Some(given_tip)) {
+                visited.insert(id.clone());
+                dependents.push(id.clone());
+                frontier.push(id.clone());
+            }
+        }
+    }
+    Ok(dependents)
 }
 
 /// The delivery exit + matching bead exit for one member, appended to `steps`. `Delivered`

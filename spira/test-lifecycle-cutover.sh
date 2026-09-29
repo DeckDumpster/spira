@@ -20,6 +20,10 @@
 #     members join the same batch_id, its version advances once per member, and it refuses
 #     — a member not CERTIFIED there, or a batch that already left OPEN — exactly as `cut`
 #     does for a fresh batch.
+#   - eject cascade (sp-f3af9, design stacked-dependents-2026-09-28 §3): settling a batch
+#     that ejects a prerequisite also returns every member stacked on it as base-withdrawn,
+#     even when the caller's own --requeue still names it; a hand eject (queue.sh's own
+#     _lc_eject_member) cascades to the same dependent identically.
 #
 # Also covers sp-o7nbr.5's own deliverable: queue.sh's cmd_open_batch/cmd_eject/cmd_abandon
 # onto this same machine via their own _lc_cut_batch/_lc_eject_member/_lc_abandon_batch
@@ -139,6 +143,18 @@ certify() {
     local id="$1" tip="$2"
     lc create-bead "$id" >/dev/null
     lc event bead "$id" --expect READY --version 0 --actor test --kind '{"Claim":{"holder":"aeon-1","lease_until":1}}' >/dev/null
+    lc event bead "$id" --expect WORKING --version 1 --actor test --kind "{\"Submit\":{\"tip\":\"$tip\"}}" >/dev/null
+    lc event bead "$id" --expect SUBMITTED --version 2 --actor test --kind '{"GatePass":{"tip":"'"$tip"'","gate_key":"k1"}}' >/dev/null
+}
+
+# certify_stacked <id> <tip> <prereq-id> <prereq-tip> — same walk as certify, but claims
+# with a stack naming one prerequisite (design stacked-dependents-2026-09-28 §1), the shape
+# a dependent's own real claim proposes once its prerequisite is CERTIFIED.
+certify_stacked() {
+    local id="$1" tip="$2" prereq="$3" prereq_tip="$4"
+    lc create-bead "$id" >/dev/null
+    lc event bead "$id" --expect READY --version 0 --actor test \
+        --kind "{\"Claim\":{\"holder\":\"aeon-1\",\"lease_until\":1,\"stack\":{\"$prereq\":\"$prereq_tip\"},\"stack_depth\":1,\"stack_max_depth\":4}}" >/dev/null
     lc event bead "$id" --expect WORKING --version 1 --actor test --kind "{\"Submit\":{\"tip\":\"$tip\"}}" >/dev/null
     lc event bead "$id" --expect SUBMITTED --version 2 --actor test --kind '{"GatePass":{"tip":"'"$tip"'","gate_key":"k1"}}' >/dev/null
 }
@@ -477,6 +493,36 @@ rc=$?
 wantrc "PLANTED VIOLATION: stack refuses a batch that is SETTLED, not OPEN" 3 $rc
 is "the refused stack did not touch the settled batch's state" "SETTLED" "$(batch_field batch-stack state)"
 
+# ── criterion 6 (sp-f3af9): eject cascade through the batch machine ──────────────────────
+# A red in a round with B stacked on A and unrelated X: settling with A named the only
+# `--eject` must also return B — collateral, not itself red — and requeue only the truly
+# unrelated X, even though the caller (unaware of the stack) named both B and X in
+# `--requeue` (design stacked-dependents-2026-09-28 §3: "ejecting a member ejects every
+# member stacked on it, transitively... the batch machine's SETTLED emits returned for the
+# ejected prerequisite and returned(base_withdrawn) for its dependents").
+certify sp-f-a tipFA
+certify_stacked sp-f-b tipFB sp-f-a tipFA
+certify sp-f-x tipFX
+lc cut batch-stacked-red --repo spira --head H7 --base B7 \
+    --members "sp-f-a:tipFA,sp-f-b:tipFB,sp-f-x:tipFX" --actor test >/dev/null
+v="$(batch_field batch-stacked-red version)"
+lc event batch batch-stacked-red --expect OPEN --version "$v" --actor test --kind '{"CiStarted":{"run":"r1"}}' >/dev/null
+v="$(batch_field batch-stacked-red version)"
+lc event batch batch-stacked-red --expect CI_RUNNING --version "$v" --actor test --kind '"Red"' >/dev/null
+
+v="$(batch_field batch-stacked-red version)"
+out="$(lc settle batch-stacked-red --expect ATTRIBUTING --version "$v" --actor test --eject sp-f-a --requeue sp-f-b,sp-f-x)"
+wantrc "settle applies even though the caller's own --requeue still names the stacked dependent" 0 $?
+
+is "batch settles" "SETTLED" "$(batch_field batch-stacked-red state)"
+is "ejected prerequisite A needs rework" "REWORK" "$(member_field sp-f-a bead state)"
+is "A's reason names the direct eject" "batch-ejected" "$(member_field sp-f-a bead reason)"
+is "SEEN RED FIRST: B follows A into REWORK rather than the caller's own --requeue leaving it CERTIFIED" \
+    "REWORK" "$(member_field sp-f-b bead state)"
+is "B's reason names base-withdrawn — collateral, not itself accused" "base-withdrawn" "$(member_field sp-f-b bead reason)"
+is "unrelated X is merely requeued, unaffected by the cascade" "CERTIFIED" "$(member_field sp-f-x bead state)"
+want "the settle summary meters the one cascaded base_withdrawn" '"base_withdrawn":1' "$out"
+
 # ── sp-o7nbr.5: queue.sh's own cmd_open_batch/cmd_eject/cmd_abandon onto this same
 # machine, on this same fixture — cutting for a queue-mode repo is queue.sh's own turf
 # now (batch.sh no longer opens a batch itself, sp-vsob2). Sourcing the real spira/queue.sh
@@ -552,5 +598,24 @@ is "member 2 returns to CERTIFIED" "CERTIFIED" "$(member_field sp-lc-q-a2 bead s
 out="$(_lc_abandon_batch batch-q-never-cut queue.sh "no such batch")"
 rc=$?
 wantrc "_lc_abandon_batch fails closed when the batch row does not exist" 1 $rc
+
+# ── criterion 6, hand half (sp-f3af9): queue.sh's own eject cascades identically ─────────
+# A hand eject through _lc_eject_member (the same call queue.sh's cmd_eject makes) must
+# cascade to a stacked dependent exactly as settle's own CI-driven eject does above: the
+# dependent follows into REWORK with base-withdrawn, even though the manual path returns
+# the ejected prerequisite itself to CERTIFIED (unchanged tip, no rework of its own).
+certify sp-f-ha tipHA
+certify_stacked sp-f-hb tipHB sp-f-ha tipHA
+lc cut batch-stacked-hand --repo fixture-repo --head H8 --base B8 \
+    --members "sp-f-ha:tipHA,sp-f-hb:tipHB" --actor test >/dev/null
+
+out="$(_lc_eject_member batch-stacked-hand sp-f-ha queue.sh "hand eject")"
+wantrc "_lc_eject_member applies from OPEN" 0 $?
+is "batch stays OPEN — a hand eject does not move it" "OPEN" "$(batch_field batch-stacked-hand state)"
+is "hand-ejected A returns to CERTIFIED (tip unchanged, no rework of its own)" "CERTIFIED" "$(member_field sp-f-ha bead state)"
+is "SEEN RED FIRST: B follows A out of the batch identically to the settle-red case — REWORK" \
+    "REWORK" "$(member_field sp-f-hb bead state)"
+is "B's reason is base-withdrawn here too" "base-withdrawn" "$(member_field sp-f-hb bead reason)"
+want "the eject-member summary meters the one cascaded base_withdrawn" '"base_withdrawn":1' "$out"
 
 tl_summary
