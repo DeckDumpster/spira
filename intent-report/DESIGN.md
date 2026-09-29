@@ -66,7 +66,7 @@ row exists). Status comes from `rc` (0 PASS, 75 NO_VERDICT, 76 BASE_FAIL, else F
   `outcome=owner`, against 900 s (median and max). Flaky, base, unattributed and unsettled
   reds are counted beside it.
 * **bd wait**: over `suite-timing` rows except `__batch__`: the metered share (rows with
-  `bd_calls > 0`), total `bd_ms` against total suite wall, and the suites with the most
+  `bd_calls > 0`), total `bd_ms` against the metered runs' suite wall, and the suites with the most
   `bd_ms`. The Intent's "zero suites waiting on a shared test database" is read here.
 * **Certified → landed**: for each bead's first `LANDED` in the window, its latest
   `CERTIFIED` at or before it; median and p90.

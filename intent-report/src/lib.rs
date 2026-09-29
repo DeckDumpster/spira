@@ -228,6 +228,8 @@ pub struct SuiteBd {
     pub rows: usize,
     pub metered: usize,
     pub wall_secs: f64,
+    /// Wall of the metered runs only: the denominator bd time is a share of.
+    pub metered_wall_secs: f64,
     pub bd_ms: f64,
     pub bd_calls: f64,
 }
@@ -248,7 +250,11 @@ pub fn bd_wait(textual: &str, w: Window) -> BTreeMap<String, SuiteBd> {
         e.metered += usize::from(calls > 0.0);
         e.bd_calls += calls;
         e.bd_ms += num(v.get("bd_ms")).unwrap_or(0.0);
-        e.wall_secs += num(v.get("wall_secs")).unwrap_or(0.0);
+        let wall = num(v.get("wall_secs")).unwrap_or(0.0);
+        e.wall_secs += wall;
+        if calls > 0.0 {
+            e.metered_wall_secs += wall;
+        }
     }
     by
 }
@@ -430,7 +436,7 @@ pub fn render(inp: &Inputs, w: Window) -> String {
     let rows: usize = bd.values().map(|s| s.rows).sum();
     let metered: usize = bd.values().map(|s| s.metered).sum();
     let bd_ms: f64 = bd.values().map(|s| s.bd_ms).sum();
-    let wall: f64 = bd.values().map(|s| s.wall_secs).sum();
+    let wall: f64 = bd.values().map(|s| s.metered_wall_secs).sum();
     let waiting = bd.values().filter(|s| s.bd_ms > 0.0).count();
     let _ = writeln!(
         o,
@@ -448,7 +454,7 @@ pub fn render(inp: &Inputs, w: Window) -> String {
     } else {
         let _ = writeln!(
             o,
-            "   bd wall {:.0} s of {:.0} s suite wall ({}); suites with any bd wait: {}",
+            "   bd wall {:.0} s of {:.0} s metered suite wall ({}); suites with any bd wait: {}",
             bd_ms / 1000.0,
             wall,
             if wall > 0.0 {
@@ -470,7 +476,7 @@ pub fn render(inp: &Inputs, w: Window) -> String {
                 "   {:>8.1} s bd  {:>6.0} calls  {:>7.0} s wall  {}",
                 s.bd_ms / 1000.0,
                 s.bd_calls,
-                s.wall_secs,
+                s.metered_wall_secs,
                 name
             );
         }

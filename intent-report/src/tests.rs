@@ -192,7 +192,7 @@ fn the_report_prints_every_intent_measure_against_its_target() {
         "{out}"
     );
     assert!(
-        out.contains("bd wall 20 s of 200 s suite wall (10.0%)"),
+        out.contains("bd wall 20 s of 100 s metered suite wall (20.0%)"),
         "{out}"
     );
     assert!(out.contains("test-a.sh"), "{out}");
