@@ -77,8 +77,16 @@ _boot_out="$(_bootstrap_decision "$UNDER_PROD" "$RELEASES_B" 2>&1)"; _boot_rc=$?
 wantrc "bootstrap: exits 0"                             "0" "$_boot_rc"
 nowant "bootstrap: does not mention 'activate.sh'"      "activate.sh" "$_boot_out"
 
+# The installing clone is a small stand-in, not the real checkout ($HERE, rebound to the repo
+# root by sourcing install.sh): under testenv the real checkout carries target/, the in-place
+# build whose lock files this user cannot read, and copying it measures the build tree, not
+# _bootstrap_release. What is copied is not the property; that it is copied, and current set.
+CLONE_B="$TMP/clone-b"
+mkdir -p "$CLONE_B/spira"
+cp "$HERE/install.sh" "$CLONE_B/install.sh"
+cp "$HERE/spira/conf.sh" "$CLONE_B/spira/conf.sh"
 _release_rc=0
-_bootstrap_release "$RELEASES_B/bootstrap" "$RELEASES_B" "$HERE" || _release_rc=$?
+_bootstrap_release "$RELEASES_B/bootstrap" "$RELEASES_B" "$CLONE_B" || _release_rc=$?
 wantrc "bootstrap: _bootstrap_release exits 0"          "0" "$_release_rc"
 [ -L "$RELEASES_B/current" ] && [ "$(readlink "$RELEASES_B/current")" = "bootstrap" ] \
     && ok  "bootstrap: current symlink points at bootstrap" \

@@ -76,6 +76,7 @@ DEST="$TMP/home/.config/systemd/user"
 SPIRA_RUN_DIR="$TMP/run"
 MOCK_BIN="$TMP/mock-bin"
 mkdir -p "$DEST" "$SPIRA_RUN_DIR" "$MOCK_BIN"
+install_fixture_stub_bins "$MOCK_BIN"   # sentinel/queue/aeon: the units' @SPIRA_*_BIN@
 MOCK_LOG="$TMP/systemctl.log"
 # DRAIN_STATE is read by the oneshot-drain mock to simulate a transitioning service.
 DRAIN_STATE="$TMP/drain_state"
@@ -148,6 +149,8 @@ inst() {
         "SPIRA_REPO=$FAKE_REPO" \
         "SPIRA_COCKPIT=$REAL_COCKPIT" \
         "SPIRA_SUPERVISE_BIN=$MOCK_BIN/spira-supervise" \
+        "SPIRA_SENTINEL_BIN=$MOCK_BIN/sentinel" "SPIRA_QUEUE_BIN=$MOCK_BIN/queue" \
+        "SPIRA_AEON_BIN=$MOCK_BIN/aeon" \
         "MOCK_LOG=$MOCK_LOG" \
         "MOCK_AEONS=${MOCK_AEONS:-}" \
         "MOCK_IS_ACTIVE=${MOCK_IS_ACTIVE:-active}" \

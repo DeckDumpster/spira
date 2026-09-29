@@ -35,12 +35,13 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FIXTURE="$TMP/harness"
 mkdir -p "$FIXTURE/systemd" "$FIXTURE/spira"
 
-for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer; do
+for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer "$HERE/../systemd/"*.yaml; do
     [ -e "$f" ] || continue
     ln -s "$f" "$FIXTURE/systemd/$(basename "$f")"
 done
 ln -s "$HERE/../systemd/install.sh" "$FIXTURE/systemd/install.sh"
-for f in conf.sh watchd.sh lib.sh; do
+# lib.sh sources suite-covers.sh unconditionally; lifecycle-cert.sh is optional but real.
+for f in conf.sh watchd.sh lib.sh suite-covers.sh lifecycle-cert.sh; do
     [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
 done
 printf '# empty\n' > "$FIXTURE/spira/watchers"
@@ -90,9 +91,17 @@ stub_release_bins() {   # stub_release_bins <release-root> [mode]
 }
 stub_release_bins "$PRODROOT"
 
+# The sentinel, queue and aeon units ExecStart @SPIRA_*_BIN@ (8e220de40), which conf.sh
+# resolves from SPIRA_REPO's bin/. A release keeps bin/ beside its spira/ (= SPIRA_PROD), so
+# the fixture pins each binary to dirname(SPIRA_PROD)/bin — the stubs stub_release_bins
+# writes — and every scenario below still varies the whole release through TEST_PROD alone.
 inst() {
     > "$MOCK_LOG"
+    local _rel; _rel="$(dirname "${TEST_PROD:-$PRODROOT/spira}")"
     env -i \
+        "SPIRA_SENTINEL_BIN=$_rel/bin/sentinel" \
+        "SPIRA_QUEUE_BIN=$_rel/bin/queue" \
+        "SPIRA_AEON_BIN=$_rel/bin/aeon" \
         "PATH=$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
@@ -240,7 +249,9 @@ _tarball_tmp="$TMP/tarball-unpack"
 _tarball_stem="spira-20260901T000000Z"
 _tarball_root="$_tarball_tmp/$_tarball_stem"
 mkdir -p "$_tarball_root"
-if tar -C "$REAL_REPO" --exclude='.git' -cf - . 2>/dev/null | tar -x -C "$_tarball_root" 2>/dev/null; then
+# target/ is the build tree testenv compiles in place (with lock files this user cannot
+# read); it is never part of a release, so it is not part of this one either.
+if tar -C "$REAL_REPO" --exclude='.git' --exclude='./target' -cf - . 2>/dev/null | tar -x -C "$_tarball_root" 2>/dev/null; then
     # FAIL-FIRST: wrong SPIRA_PROD (the release root, without /spira).
     # install.sh looks for sentinel.sh in the wrong place and refuses.
     _tb_fail="$(TEST_PROD="$_tarball_root" inst)"

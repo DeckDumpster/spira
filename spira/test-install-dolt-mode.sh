@@ -35,7 +35,7 @@ SYSTEMD_DIR="$FIXTURE/systemd"
 COCKPIT_DIR="$FIXTURE/cockpit"
 mkdir -p "$SPIRA_DIR" "$SYSTEMD_DIR" "$COCKPIT_DIR"
 
-for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer; do
+for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer "$HERE/../systemd/"*.yaml; do
     [ -e "$f" ] || continue
     ln -s "$f" "$SYSTEMD_DIR/$(basename "$f")" 2>/dev/null || true
 done
@@ -45,6 +45,7 @@ ln -s "$HERE/../systemd/units.sh"   "$SYSTEMD_DIR/units.sh"
 ln -s "$HERE/conf.sh"   "$SPIRA_DIR/conf.sh"
 ln -s "$HERE/lib.sh"    "$SPIRA_DIR/lib.sh"
 ln -s "$HERE/watchd.sh" "$SPIRA_DIR/watchd.sh"
+ln -s "$HERE/suite-covers.sh" "$SPIRA_DIR/suite-covers.sh"   # lib.sh sources it unconditionally
 
 printf '# empty\n' > "$SPIRA_DIR/watchers"
 printf '# empty\n' > "$SPIRA_DIR/repo-map.example"
@@ -117,6 +118,11 @@ ln -s "$REAL_REPO/install.sh" "$FIXTURE/install.sh"
 # ---------------------------------------------------------------------------
 MOCK_BIN="$TMP/mock-bin"
 mkdir -p "$MOCK_BIN"
+# The sentinel, queue and aeon units ExecStart @SPIRA_*_BIN@ (8e220de40); install refuses a
+# unit whose target is not executable, and FAKE_REPO has no bin/. No-op stubs, pinned below.
+for _b in sentinel queue aeon; do
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/$_b"; chmod +x "$MOCK_BIN/$_b"
+done; unset _b
 
 cat > "$MOCK_BIN/systemctl" <<'EOF'
 #!/usr/bin/env bash
@@ -189,6 +195,7 @@ _rendered="$(env -i \
     "SPIRA_HOME=$SPIRA_DIR" \
     "SPIRA_PROD=$SPIRA_DIR" \
     "SPIRA_REPO=$FAKE_REPO" \
+    "SPIRA_SENTINEL_BIN=$MOCK_BIN/sentinel" "SPIRA_QUEUE_BIN=$MOCK_BIN/queue" "SPIRA_AEON_BIN=$MOCK_BIN/aeon" \
     "SPIRA_COCKPIT=$COCKPIT_DIR" \
     SPIRA_INSTALL_FORCE=1 \
     "SPIRA_BD=$MOCK_BIN/bd" \
@@ -230,6 +237,7 @@ run_install() {
         "SPIRA_HOME=$SPIRA_DIR" \
         "SPIRA_PROD=$SPIRA_DIR" \
         "SPIRA_REPO=$FAKE_REPO" \
+        "SPIRA_SENTINEL_BIN=$MOCK_BIN/sentinel" "SPIRA_QUEUE_BIN=$MOCK_BIN/queue" "SPIRA_AEON_BIN=$MOCK_BIN/aeon" \
         "SPIRA_COCKPIT=$COCKPIT_DIR" \
         SPIRA_INSTALL_FORCE=1 \
         "SPIRA_BD=$MOCK_BIN/bd" \
