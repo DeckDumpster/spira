@@ -37,7 +37,7 @@ Pattern for every queue-mutating call:
     REASON
         exit 0
     }
-    # proceed with queue.sh eject / abandon / etc.
+    # proceed with queue eject / abandon / etc. — the queue binary is {{SPIRA_HOME}}/../bin/queue
 
 ## Your authority
 
@@ -87,7 +87,7 @@ These are every hand intervention on 2026-09-18/19 that the czar must reproduce 
 anyone asking.
 
 **Case 1 — CI red naming no suite** (runner died, base ref unresolvable): full re-run via
-`queue.sh step`. Never `--rerun-failed` — that strands the run on the torn-down VM label.
+`queue step`. Never `--rerun-failed` — that strands the run on the torn-down VM label.
 
 **Case 2 — CI job queued >10 min with no runner**: full re-run. A job that cannot start
 will never finish. Check `gh run view` for job status; if queued with no runner assigned
@@ -96,7 +96,7 @@ longer than `${SPIRA_QUEUE_CI_IDLE_SEC:-600}` seconds, re-queue.
 **Case 3 — Red with a reproducible culprit**: merge the suspected member's diff onto the
 current base in a throwaway tree, run the failing suite, and eject if it fails:
 
-    bash {{SPIRA_HOME}}/testenv-batch.sh --suites <failing-suite> <member-branch>
+    {{SPIRA_HOME}}/../bin/testenv --suites <failing-suite> <member-branch>
 
 Eject the member whose own diff (not the batch diff) turns the suite red. Rebuild
 survivors in the same PR number (head= resealed). Reopen the ejected bead with the
@@ -104,7 +104,7 @@ failing output.
 
 **Case 4 — Attribution ejected all members** (PR 87: all six innocent): recertify each
 member whose own change does not touch any file the failing suite names. The
-`queue.sh eject` already wrote landstate=RED; call `land_mark <id> CERTIFIED <tip>` for
+`queue eject` already wrote landstate=RED (it also records the cause: pass `--red` when the member broke a test); call `land_mark <id> CERTIFIED <tip>` for
 each innocent member and re-add them to a new batch.
 
 **Case 5 — Duplicate in the batch** (a member identical to one already batched): do not
@@ -129,7 +129,7 @@ branch has diverged from what was batched.
 failed is not in the member's file list. Merge each member touching the flagged file onto
 the base in a throwaway tree, run the red suite, and eject the one that fails.
 
-**Case 11 — Starved partition** (czar-trigger cause: `starved`): strand.sh found ready
+**Case 11 — Starved partition** (czar-trigger cause: `starved`): strand found ready
 work in a partition with no serving aeons for longer than `${SPIRA_STRAND_GRACE:-900}`
 seconds. Read the last sentinel pass in `{{RUN}}/sentinel.log` (the lines from the most
 recent `state: goal=` entry onward) to find CHECK7's stated reason, then act:
@@ -144,14 +144,14 @@ recent `state: goal=` entry onward) to find CHECK7's stated reason, then act:
 - **poison/needs-operator** (every ready bead is poisoned or `needs-operator`): list the
   beads and close the czar bead with their IDs. Each has its own escalation path.
 - **reason unknown** (CHECK7 logged no explanation): escalate once with the last 20 lines
-  of `sentinel.log` and the strand state from `strand.sh report`.
+  of `sentinel.log` and the strand state from `{{SPIRA_HOME}}/../bin/strand report`.
 
 **Case 12 — Drill** (czar-trigger cause: `drill`): this is a synthetic bead filed to
 verify the czar end-to-end path. Take no action on the queue. Instead:
 
 1. Log one line to `{{RUN}}/czar-actions.log`:
    `printf '%s ACTION=drill-verify TARGET=none EXPECTED=closed-by-czar\n' "$(date +%s)" >> "{{RUN}}/czar-actions.log"`
-2. Verify that `gh` and `queue.sh` are reachable (one read-only call each is enough).
+2. Verify that `gh` and `queue` are reachable (`queue stats`) (one read-only call each is enough).
 3. Close the bead immediately with evidence: what you verified and the result.
 
 ## How you know you were wrong
