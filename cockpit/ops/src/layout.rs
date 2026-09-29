@@ -381,6 +381,51 @@ mod tests {
         assert!(p.contains("SPIRA_RELEASE='/rel'"));
         assert!(p.contains("PATH='/rel/bin:/rel/spira:/usr/local/bin:/usr/bin:/bin'"));
     }
+
+    #[test]
+    fn apply_mouse_mode_binds_drag_without_alternate_on() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Command;
+        if Command::new("tmux").arg("-V").output().is_err() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("sp-ihxxy-drag-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let sock = format!("sp-ihxxy-{}", std::process::id());
+        let wrap = dir.join("tmux-scratch");
+        fs::write(
+            &wrap,
+            format!("#!/bin/sh\nTMUX_TMPDIR='{}' exec tmux -L {sock} \"$@\"\n", dir.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&wrap, fs::Permissions::from_mode(0o755)).unwrap();
+        let tmux = Tmux::with_bin(wrap.to_string_lossy().to_string());
+        assert!(tmux.run_ok(&["new-session", "-d", "-s", "x"]));
+        let conf = Conf {
+            spira_release: String::new(),
+            cock: PathBuf::new(),
+            run: PathBuf::new(),
+            cwd: String::new(),
+            right_pct: 33,
+            bottom_pct: 28,
+            mail_cmd: None,
+            heal_cooldown_secs: 60,
+            idle_secs: 0,
+            mouse_on: true,
+            clipboard_on: false,
+            spira_repo: String::new(),
+            spira_conf: None,
+        };
+        let before = tmux.stdout(&["list-keys", "-T", "root", "MouseDrag1Pane"]).unwrap_or_default();
+        assert!(before.contains("alternate_on"), "control: default binding must test alternate_on: {before}");
+        Layout { tmux, conf }.apply_mouse_mode();
+        let t = Tmux::with_bin(wrap.to_string_lossy().to_string());
+        let after = t.stdout(&["list-keys", "-T", "root", "MouseDrag1Pane"]).unwrap_or_default();
+        t.run_ok(&["kill-server"]);
+        let _ = fs::remove_dir_all(&dir);
+        assert!(after.contains("mouse_any_flag"), "{after}");
+        assert!(!after.contains("alternate_on"), "{after}");
+    }
 }
 
 /// Wall-clock seconds since the Unix epoch, saturating to 0 on a clock error — used only
@@ -709,6 +754,19 @@ impl Layout {
     fn apply_mouse_mode(&self) {
         if self.conf.mouse_on {
             self.tmux.run_ok(&["set-option", "-g", "mouse", "on"]);
+            // tmux's default also tests alternate_on, which forwards a drag to any
+            // full-screen app that never asked for the mouse; only mouse_any_flag may.
+            self.tmux.run_ok(&[
+                "bind-key",
+                "-T",
+                "root",
+                "MouseDrag1Pane",
+                "if-shell",
+                "-F",
+                "#{||:#{pane_in_mode},#{mouse_any_flag}}",
+                "send-keys -M",
+                "copy-mode -M",
+            ]);
         }
     }
 
