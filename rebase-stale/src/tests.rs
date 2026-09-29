@@ -693,7 +693,7 @@ fn lib_seam_passes_payloads_on_stdin_and_reads_status_with_a_positive_control() 
     write(&queue, "#!/bin/sh\necho \"out:$1 $2 $3\"; echo err >&2; exit 1\n");
     make_executable(&queue);
     let bd = fx.root.join("bd");
-    write(&bd, "#!/bin/sh\ncase \"$4\" in sp-goal) echo '[{\"status\":\"open\"}]';; sp-ip) echo '{\"status\":\"in_progress\"}';; *) exit 1;; esac\n");
+    write(&bd, "#!/bin/sh\n[ \"$3\" = list ] && { echo '[{\"id\":\"sp-any\"}]'; exit 0; }\ncase \"$4\" in sp-goal) echo '[{\"status\":\"open\"}]';; sp-ip) echo '{\"status\":\"in_progress\"}';; *) exit 1;; esac\n");
     make_executable(&bd);
 
     let mut s = LibSeam::new(home.clone(), Some(fx.root.clone()), bd.to_string_lossy().into(), "sp-goal".into());

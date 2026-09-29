@@ -142,7 +142,9 @@ pub fn bump_requeue(env: &Env, id: &str, reason: &str) {
 /// aeon still sees this", never to "nobody did anything and the round moved on".
 pub fn rebase_stale(env: &Env, repo_name: &str, id: &str) -> i32 {
     let mut cmd = Command::new(&env.rebase_stale_bin);
-    cmd.arg(id).arg(repo_name);
+    // rebase-stale finds lib.sh through SPIRA_HOME and refuses without it; this pass may have
+    // been given --home rather than an exported SPIRA_HOME (conf.sh sets it unexported).
+    cmd.arg(id).arg(repo_name).env("SPIRA_HOME", &env.home);
     match cmd.status().ok().and_then(|s| s.code()) {
         Some(0) => 0,
         Some(1) => 1,

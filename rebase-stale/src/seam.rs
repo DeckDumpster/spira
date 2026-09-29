@@ -102,6 +102,28 @@ impl LibSeam {
         Ok(String::from_utf8_lossy(&o.stdout).trim().to_string())
     }
 
+    /// THE POSITIVE CONTROL: the store answered with at least one bead. It used to show the
+    /// goal bead, "the one row this harness cannot run without" — but the configured goal
+    /// (sp-spira) never existed, so the control never passed and every live-worktree check
+    /// read "the bead database did not answer" (2026-09-29 walkthrough). Any row proves the
+    /// store can say "in_progress"; no particular row is needed.
+    fn bd_answers(&self) -> bool {
+        let Some(db) = self.db.as_ref() else { return false };
+        let Ok(o) = Command::new(&self.bd)
+            .arg("-C")
+            .arg(db)
+            .args(["list", "--limit", "1", "--json"])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+        else {
+            return false;
+        };
+        o.status.success()
+            && matches!(serde_json::from_slice::<serde_json::Value>(&o.stdout),
+                        Ok(serde_json::Value::Array(a)) if !a.is_empty())
+    }
+
     fn bd_show_status(&self, id: &str) -> Option<String> {
         let db = self.db.as_ref()?;
         let o = Command::new(&self.bd)
@@ -165,7 +187,7 @@ impl Seam for LibSeam {
     fn bead_status(&self, id: &str) -> BeadStatus {
         let reachable = *self
             .db_ok
-            .get_or_init(|| self.bd_show_status(&self.goal).is_some());
+            .get_or_init(|| self.bd_answers());
         if !reachable {
             return BeadStatus::Unreachable;
         }
@@ -207,5 +229,43 @@ impl Seam for LibSeam {
             ),
             Err(e) => (false, format!("queue submit could not run: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod probe_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// A stub bd: `list` answers with `list_json`; `show sp-held` is in_progress; any other
+    /// `show` (the missing goal among them) fails, as bd does for an unknown id.
+    fn stub(name: &str, list_json: &str) -> (PathBuf, LibSeam) {
+        let d = std::env::temp_dir().join(format!("rs-probe-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let bd = d.join("bd");
+        std::fs::write(
+            &bd,
+            format!(
+                "#!/bin/sh\ncase \"$3\" in\n list) printf '%s' '{list_json}' ;;\n show) [ \"$4\" = sp-held ] && printf '[{{\"id\":\"sp-held\",\"status\":\"in_progress\"}}]' && exit 0; exit 1 ;;\nesac\n"
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&bd, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let seam = LibSeam::new(d.clone(), Some(d.clone()), bd.to_string_lossy().into(), "sp-spira".into());
+        (d, seam)
+    }
+
+    #[test]
+    fn a_missing_goal_bead_does_not_make_the_store_unreachable() {
+        let (d, seam) = stub("goal", r#"[{"id":"sp-any"}]"#);
+        assert_eq!(seam.bead_status("sp-held"), BeadStatus::Known("in_progress".into()));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_store_that_lists_nothing_is_unreachable() {
+        let (d, seam) = stub("empty", "[]");
+        assert_eq!(seam.bead_status("sp-held"), BeadStatus::Unreachable);
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
