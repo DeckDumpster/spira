@@ -57,6 +57,9 @@ struct Fake {
     cmds: RefCell<Vec<String>>,
     /// Seconds each run_gate advances the clock by, per command kind.
     phase_secs: Cell<u64>,
+    /// (status, output) of the re-entry phase by the tree revision (sp-p3srm); absent, every
+    /// suite it names reports `ok`.
+    reentry_runs: RefCell<HashMap<String, (i32, String)>>,
 }
 
 fn ctx() -> Ctx {
@@ -132,6 +135,7 @@ impl Fake {
             unit_runs: RefCell::new(HashMap::new()),
             cmds: RefCell::new(Vec::new()),
             phase_secs: Cell::new(7),
+            reentry_runs: RefCell::new(HashMap::new()),
         }
     }
     fn set_var(&self, k: &str, v: &str) {
@@ -292,6 +296,20 @@ impl World for Fake {
             .map(|(_, v)| v.clone())
             .unwrap_or_default();
         self.clock.set(self.clock.get() + self.phase_secs.get());
+        if let Some(list) = cmd
+            .split_once("--suites ")
+            .and_then(|(_, r)| r.split_whitespace().next())
+        {
+            let at = self.checkouts.borrow().last().cloned().unwrap_or_default();
+            if let Some(r) = self.reentry_runs.borrow().get(&at) {
+                return r.clone();
+            }
+            let out: Vec<String> = list
+                .split(',')
+                .map(|s| format!("  {s:<32} ok      3s"))
+                .collect();
+            return (0, out.join("\n") + "\nVERDICT GREEN");
+        }
         if cmd.starts_with("cargo test") {
             let kind = if cmd.contains("--no-run") {
                 "build"
@@ -1051,18 +1069,233 @@ fn an_unreadable_config_composes_as_suites() {
     assert!(meter(&f).contains("compose=suites(mode)"));
 }
 
+// ---------------------------------------------------------------------------- re-entry (sp-p3srm)
+
+const GATE_TREE: &str = "/run/worktree/.gate.spira.spira-sp-a";
+
+/// A fake whose bead the round returned with `suites` (the `.ejected` sidecar), each of which
+/// exists on the gate tree. Its gate string runs fences only (prints no suite line) on both
+/// the merge and the base.
+fn returned(f: Fake, suites: &str) -> Fake {
+    for at in [MERGE_SHA, BASE] {
+        f.runs
+            .borrow_mut()
+            .insert(at.into(), (0, "fences ok".into()));
+    }
+    f.set_var("SPIRA_GATE_BEAD", "sp-a");
+    f.files.borrow_mut().insert(
+        PathBuf::from("/run/landstate/sp-a.ejected"),
+        format!("{suites}\n"),
+    );
+    for s in suites.split(',') {
+        f.files
+            .borrow_mut()
+            .insert(PathBuf::from(format!("{GATE_TREE}/spira/{s}")), "#!".into());
+    }
+    f
+}
+
 #[test]
-fn unit_mode_ejected_suites_keep_the_whole_sequence() {
+fn unit_mode_rust_only_returned_bead_runs_its_unit_gate_then_exactly_the_named_suites() {
+    let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh,test-c.sh");
+    f.runs
+        .borrow_mut()
+        .insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
+    assert_eq!(f.run(), PASS);
+    let cmds = f.cmds.borrow().clone();
+    assert_eq!(cmds.len(), 4, "fences, build, test, reentry: {cmds:?}");
+    assert_eq!(
+        f.env_of(0, "SPIRA_GATE_SUITES"),
+        "off",
+        "the gate string selects nothing"
+    );
+    assert!(cmds[1].contains("--no-run -p gate"));
+    assert!(
+        cmds[3].contains("--suites test-b.sh,test-c.sh \"$SPIRA_GATE_BRANCH\""),
+        "{}",
+        cmds[3]
+    );
+    assert!(
+        !cmds[3].contains("--deadline"),
+        "the round named them: no budget cuts them"
+    );
+    assert!(meter(&f).contains("compose=unit+reentry phases=fences:7,build:7,test:7,reentry:7"));
+    assert!(f.stderr().contains(
+        "gate: re-entry — the round named suites against sp-a; each must pass in this gate: test-b.sh test-c.sh"
+    ));
+    assert!(f
+        .stderr()
+        .contains("gate PASS covered suites: test-b.sh,test-c.sh"));
+}
+
+#[test]
+fn a_named_suite_red_again_on_a_green_base_fails_the_branch() {
+    let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
+    f.reentry_runs.borrow_mut().insert(
+        MERGE_SHA.into(),
+        (
+            1,
+            "  test-b.sh   RED     rc=1 after 4s\nVERDICT RED ran=1 red=1".into(),
+        ),
+    );
+    assert_eq!(f.run(), FAIL);
+    assert!(f.verdict_line().contains("reason=branch-red"));
+    assert!(f.verdict_line().contains("suite=test-b.sh"));
+    assert!(meter(&f).contains(
+        "phases=fences:7,build:7,test:7,reentry:7,base-fences:7,base-build:7,base-test:7,base-reentry:7"
+    ));
+    assert!(f
+        .written
+        .borrow()
+        .iter()
+        .all(|(p, _)| !p.starts_with("/run/verdicts/trees")));
+}
+
+#[test]
+fn a_named_suite_red_on_the_base_too_is_the_bases() {
+    let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
+    for at in [MERGE_SHA, BASE] {
+        f.reentry_runs
+            .borrow_mut()
+            .insert(at.into(), (1, "  test-b.sh   RED     rc=1 after 4s".into()));
+    }
+    assert_eq!(f.run(), BASEFAIL);
+    assert!(f.verdict_line().contains("reason=base-red"));
+}
+
+#[test]
+fn a_named_suite_that_only_skips_proves_nothing() {
+    let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
+    f.reentry_runs.borrow_mut().insert(
+        MERGE_SHA.into(),
+        (
+            0,
+            "  test-b.sh   SKIP-REQ requires:docker\nVERDICT GREEN ran=1".into(),
+        ),
+    );
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(
+        f.verdict_line().contains("reason=reentry-unproven"),
+        "{}",
+        f.verdict_line()
+    );
+    assert!(f.verdict_line().contains("suite=test-b.sh"));
+    assert!(
+        f.written.borrow().is_empty(),
+        "no PASS cached, no certificate"
+    );
+}
+
+#[test]
+fn a_fences_only_branch_still_reruns_the_named_suites() {
+    let f = returned(unit_fake(&["docs/x.md"]), "test-b.sh");
+    assert_eq!(f.run(), PASS);
+    let cmds = f.cmds.borrow().clone();
+    assert_eq!(cmds.len(), 2, "{cmds:?}");
+    assert!(meter(&f).contains("compose=fences+reentry phases=fences:7,reentry:7"));
+}
+
+#[test]
+fn a_script_branch_in_unit_mode_with_certify_suites_off_still_reruns_them() {
+    // Production today: certify_suites = "off". gate-touched.sh then exits before it ever
+    // unions SPIRA_GATE_EJECTED_SUITES in, so the promise "recertification will force these
+    // suites" was never kept. The re-entry phase keeps it.
+    let f = returned(unit_fake(&["spira/lib.sh"]), "test-b.sh");
+    f.set_var("SPIRA_GATE_SUITES", "off");
+    f.runs
+        .borrow_mut()
+        .insert(MERGE_SHA.into(), (0, String::new()));
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.cmds.borrow().len(), 2);
+    assert!(meter(&f).contains("compose=suites(script)+reentry phases=gate:7,reentry:7"));
+}
+
+#[test]
+fn suites_off_with_named_suites_takes_an_admission_slot() {
+    let f = returned(Fake::new(), "test-b.sh");
+    f.set_var("SPIRA_GATE_SUITES", "off");
+    f.admission_free.set(false);
+    f.set_var("SPIRA_GATE_LOCK_WAIT", "5");
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=admission-timeout"));
+
+    let f = Fake::new();
+    f.set_var("SPIRA_GATE_SUITES", "off");
+    f.admission_free.set(false);
+    assert_eq!(
+        f.run(),
+        PASS,
+        "fences-only certification with nothing named takes no slot"
+    );
+}
+
+#[test]
+fn suites_mode_that_already_ran_the_named_suites_adds_no_phase() {
+    let f = returned(Fake::new(), "test-b.sh");
+    f.runs.borrow_mut().insert(
+        MERGE_SHA.into(),
+        (
+            0,
+            "  test-a.sh   ok 2s\n  test-b.sh   ok 3s\nVERDICT GREEN ran=2".into(),
+        ),
+    );
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.cmds.borrow().len(), 1);
+    assert_eq!(f.env_of(0, "SPIRA_GATE_EJECTED_SUITES"), "test-b.sh");
+    assert!(meter(&f).contains("compose=suites(mode)+reentry phases=gate:7"));
+}
+
+#[test]
+fn a_named_suite_the_gate_strings_budget_deferred_is_rerun_alone() {
+    let f = returned(Fake::new(), "test-b.sh,test-c.sh");
+    f.runs.borrow_mut().insert(
+        MERGE_SHA.into(),
+        (0, "  test-b.sh   ok 3s\n  test-c.sh   DEFERRED deadline\nVERDICT GREEN ran=1 deferred=1 (deadline 300s)".into()),
+    );
+    assert_eq!(f.run(), PASS);
+    let cmds = f.cmds.borrow().clone();
+    assert_eq!(cmds.len(), 2, "{cmds:?}");
+    assert!(cmds[1].contains("--suites test-c.sh "), "{}", cmds[1]);
+}
+
+#[test]
+fn a_named_suite_no_longer_on_the_tree_is_said_and_not_run() {
     let f = unit_fake(&["gate/src/x.rs"]);
     f.set_var("SPIRA_GATE_BEAD", "sp-a");
     f.files.borrow_mut().insert(
         PathBuf::from("/run/landstate/sp-a.ejected"),
-        "test-b.sh\n".into(),
+        "test-gone.sh,../evil.sh\n".into(),
     );
     assert_eq!(f.run(), PASS);
-    assert_eq!(f.cmds.borrow().len(), 1);
-    assert_eq!(f.env_of(0, "SPIRA_GATE_SUITES"), "on");
-    assert!(meter(&f).contains("compose=suites(ejected)"));
+    assert_eq!(f.cmds.borrow().len(), 3);
+    assert!(meter(&f).contains("compose=unit phases="));
+    assert!(f
+        .stderr()
+        .contains("(no longer on the tree, nothing to run: test-gone.sh)"));
+    assert!(f
+        .stderr()
+        .contains("(not suite names, ignored: ../evil.sh)"));
+}
+
+#[test]
+fn an_ejected_landstate_row_from_the_batcher_drives_the_rerun() {
+    // batcher-cut's concurrent attribution (sp-hvtgs) records `EJECTED <tip> <reason>` via
+    // land_mark with the suites as the reason field.
+    let f = unit_fake(&["gate/src/x.rs"]);
+    f.runs
+        .borrow_mut()
+        .insert(MERGE_SHA.into(), (0, "fences ok".into()));
+    f.set_var("SPIRA_GATE_BEAD", "sp-a");
+    f.files.borrow_mut().insert(
+        PathBuf::from("/run/landstate/sp-a"),
+        "EJECTED abc123 1790000000 test-b.sh\n".into(),
+    );
+    f.files.borrow_mut().insert(
+        PathBuf::from(format!("{GATE_TREE}/spira/test-b.sh")),
+        "#!".into(),
+    );
+    assert_eq!(f.run(), PASS);
+    assert!(f.cmds.borrow()[3].contains("--suites test-b.sh "));
 }
 
 #[test]
@@ -1096,7 +1329,7 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
     assert!(meter(&f).contains(
         "compose=unit phases=fences:7,build:7,test:7,base-fences:7,base-build:7,base-test:7"
     ));
-    assert!(f.stderr().contains("unit phase 'test' failed (exit 101)"));
+    assert!(f.stderr().contains("phase 'test' failed (exit 101)"));
 }
 
 #[test]

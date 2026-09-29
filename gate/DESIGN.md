@@ -77,8 +77,8 @@ reached the bash.
 | `SPIRA_GATE_TIMEOUT` | `timeout` on the gate command | 2700 |
 | `SPIRA_GATE_LOCK_WAIT` | wait for an admission slot and for the tree lock | `4 × SPIRA_GATE_TIMEOUT` |
 | `SPIRA_CERTIFY_PAR` | admission pool size; unset or non-numeric derives `min(nproc/4, MemAvailable/400MiB)`, at least 1, re-read every second | derived |
-| `SPIRA_GATE_SUITES` | `off` skips admission; in the key; passed through | `on` |
-| `SPIRA_GATE_BEAD` | ejected-suites lookup, the key, `lc_certify` | — |
+| `SPIRA_GATE_SUITES` | `off` skips admission unless the round named suites against the bead; in the key; passed through | `on` |
+| `SPIRA_GATE_BEAD` | ejected-suites lookup (the re-entry check), the key, `lc_certify` | — |
 | `SPIRA_GATE_CALLER` | `by=` in the cache entry | the branch |
 | `LANDSTATE` (lib.sh) | `<bead>.ejected`, else an `EJECTED` landstate row | `$SPIRA_RUN/landstate` |
 | `SPIRA_GATE_BUDGET`, `SPIRA_GATE_ALL`, `SPIRA_CERTIFY_ALWAYS_COVERS`, `SPIRA_BATCH_MAXPAR`, `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_LINT_BIN`, `SPIRA_TESTENV_BIN`, `PATH`, `HOME` | passed through to the gate command | as bash |
@@ -145,7 +145,8 @@ Reasons: PASS `syntax-only | cached | pass`; FAIL `syntax | beads-data | foreign
 branch-red`; BASE_FAIL `base-red`; NO_VERDICT `no-repo-map-file | no-repo-map | no-base |
 no-diff | conflict | merge-failed | missing-exclude | missing-skew | skew-init-fault |
 cmd-missing-file | admission-timeout | no-lockfile | lock-timeout | tree-unidentified |
-harness-fault | timeout | base-timeout | base-untestable | lib-unavailable | died`, and
+harness-fault | timeout | base-timeout | base-untestable | lib-unavailable | died |
+reentry-unproven`, and
 `no-evidence:<reason>` when a FAIL carried no message (downgraded to NO_VERDICT).
 
 The message before the VERDICT line is the bash's, word for word, except the conflict and
@@ -158,7 +159,7 @@ merge-failed messages, which are new.
 | `$SPIRA_GATE_LOG` | `<UTC %Y-%m-%dT%H:%M:%SZ> <repo> <branch> waited=<n>s ran=<n>s rc=<status>[ <reason>][ compose=<label> phases=<phase>:<secs>,…]\n`, appended | every verdict once the repository resolved; the composition fields once one was chosen |
 | `$SPIRA_VERDICTS/<key>` | `when=<UTC>\nat=<epoch>\nby=<caller>\nrepo=<name>\nbranch=<br>\nsuites=<csv or ->\ncompose=<label>\n`, written to `.<key>.<pid>` and renamed | PASS from a trial only |
 | `$SPIRA_VERDICTS/trees/<repo>/<T>` (the tree certificate, `src/cert.rs`) | `verdict=PASS\nsource=gate\ntree=<T>\nrepo=<name>\nrev=<gate revision>\nbranch=<br>\nby=<caller>\nwhen=<UTC>\nat=<epoch>\nharness=<harness_h or ->\nsuites=<csv or ->\n`, temp + rename | every PASS (`pass`, `cached`, `syntax-only`) once the merged tree `T` is known |
-| `$SPIRA_RUN/gate-admission/slot.<n>.lock` | empty; `flock` held for the trial | unless `SPIRA_GATE_SUITES=off` |
+| `$SPIRA_RUN/gate-admission/slot.<n>.lock` | empty; `flock` held for the trial | unless `SPIRA_GATE_SUITES=off` and no suites were named against the bead |
 | `$SPIRA_RUN/worktree/.gate.<repo-basename>.<tree-key>` | the gate worktree (detached) | removed on every non-PASS verdict; kept on PASS for cargo's fingerprints |
 | `<tree>.lock`, `<tree>.lock.holder` | lock; `<pid> <pgid>\n` | holder removed at exit |
 | a temp file (`SPIRA_GATE_FILES`) | `git diff --name-status BASE...BR` | removed at exit |
@@ -190,8 +191,9 @@ tree and the key is what it was.
 repo map → repository → yield/meter armed → landing ref → changed files → ejected suites →
 **merge** → `bash -n` → beads data → foreign harness → empty gate string (PASS
 `syntax-only`) → preflight (`bash <path>` words exist on the base) → key → cache → admission →
-sweep → tree lock → checkout the gate revision (proved by `rev-parse HEAD`) → **composition** →
-branch trial (its phases) → PASS, or: harness-fault line / 124 / 75 → base trial on the landing
+sweep → tree lock → checkout the gate revision (proved by `rev-parse HEAD`) → **composition**
+and **re-entry** → branch trial (its phases, then the re-entry phase) → the re-entry proof →
+PASS, or: harness-fault line / 124 / 75 → base trial on the landing
 ref (the same composition, over the crates the base has) → attribution.
 
 The mode (`gate_mode`) is read just before the key, since it is part of it.
@@ -261,7 +263,6 @@ spira-config set repo.spira.gate_mode suites <spira.toml>   # off (or: unset rep
 | `suites` (any branch) | `suites(mode)` | the gate string, whole — today, byte for byte (no touched set, no metadata read) |
 | `unit`, any **script** touched | `suites(script)` | the same |
 | `unit`, `SPIRA_GATE_ALL=1` | `suites(gate-all)` | the same — the caller asked for the corpus |
-| `unit`, ejected suites present | `suites(ejected)` | the same — a returned bead re-runs what the round named (item 6 narrows this) |
 | `unit`, the touched set or the graph unreadable | `suites(no-diff)` / `suites(no-metadata)` | the same — no guessing a cheaper gate |
 | `unit`, crates (± docs, config, suites) | `unit` | the gate string with **suites off**, then on the host: `cargo test --profile aeon -j J --no-run -p …` (build) and `cargo test --profile aeon -j J -p … -- --test-threads=J` (test) |
 | `unit`, nothing buildable | `fences` | the gate string with **suites off** |
@@ -301,6 +302,67 @@ and its absence is not a red. With none left the base runs its fences only.
   unit mode it reuses the composition. Best-effort: a failed append never changes a verdict.
   `intent-report` (its own crate) reads it.
 
+## Re-entry check (sp-p3srm)
+
+Design item 6. **Intent:** a bead the round returned must pass the suites the round named
+against it, in its next gate, before it re-certifies — whatever `gate_mode`, the touched set
+or `SPIRA_GATE_SUITES` selects. A Rust-only branch keeps its cheap unit gate *and* passes
+those suites; nothing else about its composition changes.
+
+**Why it was not already true.** The key carried the ejected suites (sp-px6ng, sp-hkfdp) and
+`gate-touched.sh` unions them into its selection — but only when suites are on. Production
+certifies with `certify_suites = "off"`, and `gate-touched.sh` exits before the union, so the
+named suites never ran at certification (the queue's "recertification will force these suites
+regardless of SPIRA_CERTIFY_SUITES" was not kept). Under sp-2ghui's unit mode the ejected
+suites forced the whole `suites` sequence, which with suites off is fences only. And with
+suites on, the gate string's `--deadline` budget can defer a named suite while testenv still
+exits 0.
+
+### Contract
+
+* **The named suites** (`compose::reentry`): the ejected list (`<bead>.ejected`, else an
+  `EJECTED` landstate row's fourth field — what batcher-cut's concurrent attribution writes
+  through `land_mark`, sp-hvtgs; comma or space separated), split three ways against the gate
+  tree: **required** (`spira/<name>` exists on the tree under test, first-named order, each
+  once), **gone** (a suite name the tree no longer has: nothing to run, said on stderr), and
+  **invalid** (not `test-<x>.sh` with `[A-Za-z0-9._-]` only: ignored, said on stderr; the name
+  is interpolated into a command).
+* **The phase** (`run_composed`): after the composition's own phases pass, the suites of
+  *required* that the output so far does not show satisfied run as one more phase,
+  `reentry`:
+  `"$SPIRA_TESTENV_BIN" --suites <a,b> "$SPIRA_GATE_BRANCH"`, the runner's 2/3 mapped to 75
+  as the gate string maps them, **no `--deadline`** (the round named them; the phase is bounded
+  by what is left of `SPIRA_GATE_TIMEOUT`), through the same `run_gate` port, environment and
+  tree. After a unit or fences composition, or suites off, that is all of *required*; after a
+  suites gate that already ran them, nothing (no second container); after one whose budget
+  deferred some, just those. An unset `SPIRA_TESTENV_BIN` exits 75 (NO_VERDICT).
+* **The proof** (`compose::unproven`): the branch trial's output must show every required
+  suite's **last** runner line as `ok`, `DISABLED` or `QUARANTINED-RED` (the last two do not
+  block a round either, so a round never ejects on them). `SKIPPED`, `SKIP-REQ`, `UNREACHED`,
+  `DEFERRED` or no line proves nothing: NO_VERDICT `reason=reentry-unproven suite=<first>`,
+  no cache entry, no certificate. A red is an ordinary red (exit 1) and goes to attribution.
+* **The base trial** runs the same re-entry phase on the landing ref, so a named suite that is
+  red on the base too is `base-red`, not the branch's, as for any other red.
+* **Admission**: a gate with named suites takes a slot even when `SPIRA_GATE_SUITES=off`,
+  because it will run suites.
+* **Records**: the composition label gains `+reentry` whenever *required* is non-empty
+  (`compose=unit+reentry`, `compose=suites(mode)+reentry`) in gate.log and the verdict file;
+  the phase is `reentry:<secs>` / `base-reentry:<secs>`; stderr before the trial says
+  `gate: re-entry — the round named suites against <bead>; each must pass in this gate: …`.
+  The PASS's `suites=` line (verdict file and tree certificate) lists them, since they ran.
+* **The key is unchanged**: it already carries the ejected list.
+
+### Decisions
+
+* **A phase, not a force.** sp-2ghui forced `suites(ejected)`, the whole gate string with
+  suites on — a container and a budgeted corpus for a Rust-only branch, and (with suites off)
+  no named suite at all. The re-entry phase runs exactly the named set, after whatever the
+  composition is.
+* **Proved from the runner's lines, not assumed from its exit status.** testenv exits 0 for a
+  deferred, skipped or unreached suite; absence is never green.
+* **Gone suites are said, not enforced.** A suite the tree no longer has cannot be run; the
+  plan-matrix fence is what guards a suite deletion that drops coverage.
+
 ## Boundaries (ports)
 
 `World` in `src/ports.rs`: git reads and the merge, the touched set (`diff_raw`), the mode
@@ -336,7 +398,7 @@ lib.sh seam is one `bash -c '. lib.sh; …'` at start (NUL-separated `key=value`
   component moves to Rust (the operator's default, 2026-09-29). Executables with no extension
   count as scripts, by their mode.
 * **Everything the switch cannot judge falls back to `suites`** (an invalid config, an
-  unreadable diff or graph, ejected suites, `SPIRA_GATE_ALL`) — the stronger check, never a
-  cheaper one on a guess.
+  unreadable diff or graph, `SPIRA_GATE_ALL`) — the stronger check, never a cheaper one on a
+  guess. Ejected suites were on this list until sp-p3srm; they are the re-entry check now.
 * **`gate-lib.sh` is retired.** Its functions are ported (`src/parse.rs`, `src/key.rs`) with
   unit tests; `test-gate-unit.sh`, which only exercised them, is retired with it.
