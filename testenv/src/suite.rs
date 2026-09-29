@@ -16,6 +16,14 @@ pub struct SuiteHeaders {
     /// of every server-mode suite): testenv pre-builds the server template (DESIGN-testdb.md).
     #[serde(default)]
     pub testdb_server: bool,
+    /// A `# testdb-mode: embedded — <reason>` line: the suite needs the embedded engine
+    /// specifically (e.g. a local directory it can break the permissions of — server mode's
+    /// unreachability is a TCP port, not a local directory) and must be exempted from the
+    /// batch-wide server fixture (sp-gjx1b; DESIGN-testdb.md §2.4 note). testenv strips
+    /// `SPIRA_TESTDB_MODE=server` from just this suite's environment so its own
+    /// `_testdb_embedded_check` runs as it would with no server template built at all.
+    #[serde(default)]
+    pub testdb_embedded: bool,
 }
 
 fn header_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
@@ -58,11 +66,12 @@ impl SuiteHeaders {
                 }
             }
         }
-        h.testdb_server = text.lines().any(|l| {
-            header_value(l, "testdb-mode").is_some_and(|v| {
-                v.split(|c: char| !c.is_ascii_alphanumeric()).next() == Some("server")
-            })
-        });
+        fn mode_word(l: &str) -> Option<&str> {
+            let v = header_value(l, "testdb-mode")?;
+            v.split(|c: char| !c.is_ascii_alphanumeric()).next()
+        }
+        h.testdb_server = text.lines().any(|l| mode_word(l) == Some("server"));
+        h.testdb_embedded = text.lines().any(|l| mode_word(l) == Some("embedded"));
         h
     }
 
@@ -189,6 +198,16 @@ mod tests {
         assert!(!SuiteHeaders::parse("# testdb-mode: default (embedded).\n").testdb_server);
         assert!(!SuiteHeaders::parse("# testdb-mode: servers\n").testdb_server);
         assert!(!SuiteHeaders::parse("export SPIRA_TESTDB_MODE=server\n").testdb_server, "the lint's header is the signal");
+    }
+
+    #[test]
+    fn testdb_embedded_mode_opts_a_suite_out_of_the_batch_wide_server_fixture() {
+        let t = "# testdb-mode: embedded — needs a local store it can make unreadable\n";
+        let h = SuiteHeaders::parse(t);
+        assert!(h.testdb_embedded);
+        assert!(!h.testdb_server);
+        assert!(!SuiteHeaders::parse("# testdb-mode: server — x\n").testdb_embedded);
+        assert!(!SuiteHeaders::parse("").testdb_embedded);
     }
 
     #[test]

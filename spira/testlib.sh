@@ -195,19 +195,24 @@ wantrc() {  # wantrc <name> <expected-rc> <actual-rc>
 # this checkout's own target/ (a scratch clone, a fixture harness tree with no Cargo build
 # of its own): conf.sh's spira.toml auto-convert shells out to this binary (sp-zs04v.2).
 # Resolution order: $SPIRA_CONFIG_BIN if already set and executable (a caller, e.g. a
-# release's own suite run, that has already resolved one), then $HERE/../bin/spira-config
-# (what testenv-batch.sh builds once per batch, sp-w56nr), then $HERE/../target/release —
-# a bare `cargo build --release` checkout. Never builds one: a suite that cold-builds
-# spira-config on every run of its own cost ~950 suite-seconds across a corpus (sp-w56nr).
-# Prints the resolved path on success; prints nothing and returns 1 when none exists — the
-# caller decides whether that is its own skip or its own bail.
+# release's own suite run, that has already resolved one), then $SPIRA_ARTIFACTS/spira-config
+# — testenv's own artifact set, which every profile (aeon or release) guarantees holds this
+# binary (testenv/DESIGN.md §2.1 D8, sp-gjx1b: an aeon-profile gate was reading only the
+# release-profile fallback below and skipping "no spira-config binary found" on every one of
+# these suites), then $HERE/../bin/spira-config (what testenv-batch.sh builds once per batch,
+# sp-w56nr), then $HERE/../target/release — a bare `cargo build --release` checkout. Never
+# builds one: a suite that cold-builds spira-config on every run of its own cost ~950
+# suite-seconds across a corpus (sp-w56nr). Prints the resolved path on success; prints
+# nothing and returns 1 when none exists — the caller decides whether that is its own skip
+# or its own bail.
 testlib_spira_config_bin() {
     local bin
     if [ -n "${SPIRA_CONFIG_BIN:-}" ] && [ -x "$SPIRA_CONFIG_BIN" ]; then
         printf '%s' "$SPIRA_CONFIG_BIN"
         return 0
     fi
-    bin="$HERE/../bin/spira-config"
+    bin="${SPIRA_ARTIFACTS:-}/spira-config"
+    [ -x "$bin" ] || bin="$HERE/../bin/spira-config"
     [ -x "$bin" ] || bin="$HERE/../target/release/spira-config"
     [ -x "$bin" ] || return 1
     printf '%s' "$bin"

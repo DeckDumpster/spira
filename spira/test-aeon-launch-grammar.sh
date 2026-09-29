@@ -30,18 +30,12 @@ echo "test-aeon-launch-grammar.sh"
 
 AGENT="${SPIRA_AGENT:-claude}"
 AGENT_BIN="$(command -v "$AGENT" 2>/dev/null || true)"
-if [ -z "$AGENT_BIN" ]; then
-    printf 'SKIP test-aeon-launch-grammar: %s not found on PATH\n' "$AGENT"
-    exit 77
-fi
+[ -n "$AGENT_BIN" ] || skip "$AGENT not on PATH"
 # Verify the binary can actually execute — in a test container the host's claude may
 # appear on PATH but fail immediately (wrong arch, missing libraries, no session).
 "$AGENT_BIN" --version >/dev/null 2>&1; _agent_ver_rc=$?
-if [ "$_agent_ver_rc" -ne 0 ]; then
-    printf 'SKIP test-aeon-launch-grammar: %s is on PATH but --version exits %d — cannot test grammar\n' \
-        "$AGENT" "$_agent_ver_rc"
-    exit 77
-fi
+[ "$_agent_ver_rc" -eq 0 ] || \
+    skip "$AGENT is on PATH but --version exits $_agent_ver_rc — cannot test grammar"
 unset _agent_ver_rc
 
 echo

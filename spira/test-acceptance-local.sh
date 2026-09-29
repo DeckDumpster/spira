@@ -20,10 +20,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
 SCRIPT="$HERE/acceptance-local.sh"
 
-command -v podman >/dev/null 2>&1 || {
-    printf 'SKIP test-acceptance-local.sh: podman not found on PATH\n' >&2
-    exit 77
-}
+command -v podman >/dev/null 2>&1 || skip "podman not on PATH"
 
 echo "test-acceptance-local.sh"
 

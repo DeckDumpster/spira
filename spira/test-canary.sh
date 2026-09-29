@@ -37,7 +37,7 @@ tl_subshell_safe
 # stage inherits them (conf.sh keeps an inherited SPIRA_*_BIN).
 eval "$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1
     for v in SPIRA_CONFIG_BIN SPIRA_SENTINEL_BIN SPIRA_STRAND_BIN SPIRA_AEON_BIN \
-             SPIRA_LANDING_PASS_BIN SPIRA_CLAIM_BIN; do
+             SPIRA_LANDING_PASS_BIN SPIRA_CLAIM_BIN SPIRA_GATE_BIN; do
         [ -n "${!v:-}" ] && [ -x "${!v}" ] && printf "export %s=%q\n" "$v" "${!v}"
     done' _ "$HERE")"
 

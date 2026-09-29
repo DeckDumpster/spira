@@ -28,10 +28,7 @@ iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "wanted exit 0, got $2"; }
 
 echo "test-testenv.sh"
 
-command -v podman >/dev/null 2>&1 || {
-    printf 'SKIP test-testenv.sh: podman not found on PATH\n' >&2
-    exit 77
-}
+command -v podman >/dev/null 2>&1 || skip "podman not on PATH"
 
 TESTENV="$HERE/testenv.sh"
 CNAME="spira-testenv-te-$$"

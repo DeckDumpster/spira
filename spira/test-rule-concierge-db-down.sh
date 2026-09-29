@@ -25,6 +25,10 @@
 # exit code, this suite fixes an embedded fixture's own Dolt directory to 000 permissions,
 # so `bd` genuinely cannot open it and produces its own, real error text.
 #
+# testdb-mode: embedded — breaks a local directory's permissions to make it unreachable;
+#   server mode's unreachability is a TCP port, not a directory, so this suite is exempted
+#   from the batch-wide server fixture (testenv/fixture.rs's `embedded_only`, sp-gjx1b) —
+#   without this, sp-34ru2's default made $EMBDIR never exist and this suite always skipped.
 # tier: T2
 # covers: rule.sh concierge.sh spira/lib.sh
 set -uo pipefail

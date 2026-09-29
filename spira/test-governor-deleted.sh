@@ -39,9 +39,9 @@ ROOT="$(cd "$HERE/.." && pwd -P)"
 
 echo "test-governor-deleted.sh"
 
-command -v git >/dev/null 2>&1 || { echo "  SKIP  git is not on PATH"; exit 77; }
+command -v git >/dev/null 2>&1 || skip "git not on PATH"
 git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
-    || { echo "  SKIP  $ROOT is not a git worktree"; exit 77; }
+    || skip "$ROOT is not a git worktree here — a linked worktree's .git points outside what the test container mounts"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 

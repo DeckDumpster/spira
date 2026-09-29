@@ -1082,6 +1082,11 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         psi_pause: Duration::from_secs(5),
         deadline: args.deadline.map(Duration::from_secs),
         skip_gate,
+        embedded_only: active
+            .iter()
+            .filter(|n| headers[*n].testdb_embedded)
+            .cloned()
+            .collect(),
     };
     if let Some(d) = args.deadline {
         deps.log(&format!(

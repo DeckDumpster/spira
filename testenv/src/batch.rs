@@ -39,6 +39,10 @@ pub struct BatchCfg {
     /// The skip contract (DESIGN.md §3.7): an undeclared SKIP is reclassified red here, at
     /// the point the record is built, so the printed line and the written `.result` agree.
     pub skip_gate: SkipGate,
+    /// `# testdb-mode: embedded` suites (suite.rs): exempted from the batch-wide server
+    /// fixture (DESIGN-testdb.md §2.4) by stripping `SPIRA_TESTDB_MODE=server` from just
+    /// their own environment (sp-gjx1b).
+    pub embedded_only: BTreeSet<String>,
 }
 
 /// Side effects the executor reports through, so tests can observe them.
@@ -179,6 +183,13 @@ impl Shared<'_> {
         let mut req = self
             .session
             .suite_request(self.cfg.mode, n, suite, self.fixtures);
+        if self.cfg.embedded_only.contains(suite) {
+            // This suite declared `# testdb-mode: embedded`: undo the batch-wide server
+            // fixture's env for it alone, so its own _testdb_embedded_check runs as it would
+            // with no server template built at all (DESIGN-testdb.md §2.4, sp-gjx1b).
+            req.env
+                .retain(|(k, _)| k != "SPIRA_TESTDB_MODE" && k != "TESTDB_TESTENV");
+        }
         req.timeout = self.cfg.timeout;
         req.deadline = self.deadline_at;
         let raw = self.raw_path(suite);
@@ -494,6 +505,7 @@ mod tests {
             psi_pause: Duration::from_millis(1),
             deadline: None,
             skip_gate: SkipGate::load("").unwrap(),
+            embedded_only: BTreeSet::new(),
         }
     }
 
@@ -613,6 +625,41 @@ mod tests {
         assert_eq!(out.records["test-q.sh"].status, Status::QuarantinedRed);
         assert!(out.blocking_reds().is_empty());
         assert_eq!(out.quarantined_reds(), vec!["test-q.sh"]);
+    }
+
+    /// `# testdb-mode: embedded` (sp-gjx1b): a suite named in `embedded_only` never sees the
+    /// batch-wide server fixture's env, even though every other suite does.
+    #[test]
+    fn embedded_only_suites_do_not_see_the_batch_wide_server_fixture_env() {
+        let rt = FakeRuntime::new();
+        rt.suite("test-emb.sh", 0, "ok\n");
+        rt.suite("test-srv.sh", 0, "ok\n");
+        let dir = tmpdir("embedded-only");
+        let s = session(&rt);
+        let mut c = cfg(Mode::Serial, &dir, 0);
+        c.embedded_only.insert("test-emb.sh".into());
+        with_hooks(|h, _| {
+            run(
+                &s,
+                &c,
+                h,
+                &Fixtures::Server,
+                &jobs(&["test-emb.sh", "test-srv.sh"]),
+            )
+        });
+        let execs = rt.suite_execs();
+        let emb = execs
+            .iter()
+            .find(|r| r.argv[1].ends_with("test-emb.sh"))
+            .unwrap();
+        let srv = execs
+            .iter()
+            .find(|r| r.argv[1].ends_with("test-srv.sh"))
+            .unwrap();
+        assert_eq!(emb.env_value("SPIRA_TESTDB_MODE"), None);
+        assert_eq!(emb.env_value("TESTDB_TESTENV"), None);
+        assert_eq!(srv.env_value("SPIRA_TESTDB_MODE"), Some("server"));
+        assert!(srv.env_value("TESTDB_TESTENV").is_some());
     }
 
     #[test]
