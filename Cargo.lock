@@ -12,6 +12,7 @@ dependencies = [
  "serde_json",
  "signal-hook",
  "spira-config",
+ "testkit",
 ]
 
 [[package]]
@@ -94,6 +95,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-lint",
+ "testkit",
 ]
 
 [[package]]
@@ -432,6 +434,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "testkit",
 ]
 
 [[package]]
@@ -486,6 +489,7 @@ version = "1.0.0"
 dependencies = [
  "axum",
  "serde_json",
+ "testkit",
  "tokio",
 ]
 
@@ -586,6 +590,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "testkit",
 ]
 
 [[package]]
@@ -614,6 +619,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "testkit",
 ]
 
 [[package]]
@@ -623,6 +629,7 @@ dependencies = [
  "reconciler-engine",
  "serde_json",
  "spira-desired-state",
+ "testkit",
 ]
 
 [[package]]
@@ -715,6 +722,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "testkit",
  "ureq",
 ]
 
@@ -823,6 +831,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "spira-config",
+ "testkit",
 ]
 
 [[package]]
@@ -977,6 +986,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "testkit",
 ]
 
 [[package]]
@@ -1037,6 +1047,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "testkit",
 ]
 
 [[package]]
@@ -1094,8 +1105,13 @@ dependencies = [
  "serde_json",
  "sha2",
  "spira-config",
+ "testkit",
  "tsd",
 ]
+
+[[package]]
+name = "testkit"
+version = "0.1.0"
 
 [[package]]
 name = "tinyvec"

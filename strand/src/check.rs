@@ -690,10 +690,8 @@ mod tests {
 
     /// An executable that appends its argv to `log` — the fake bd and the fake spira-lc.
     fn recorder(dir: &std::path::Path, name: &str, log: &std::path::Path, reply: &str) -> String {
-        use std::os::unix::fs::PermissionsExt;
         let p = dir.join(name);
-        fs::write(&p, format!("#!/bin/sh\necho \"$@\" >> '{}'\nprintf '%s' '{}'\n", log.display(), reply)).unwrap();
-        fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+        testkit::write_exe(&p, &format!("#!/bin/sh\necho \"$@\" >> '{}'\nprintf '%s' '{}'\n", log.display(), reply));
         p.to_string_lossy().into_owned()
     }
 

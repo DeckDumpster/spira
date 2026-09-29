@@ -14,3 +14,6 @@ spira-config = { path = "../spira-config" }
 [[bin]]
 name = "sentinel"
 path = "src/main.rs"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

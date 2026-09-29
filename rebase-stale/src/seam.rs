@@ -235,7 +235,6 @@ impl Seam for LibSeam {
 #[cfg(test)]
 mod probe_tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
     /// A stub bd: `list` answers with `list_json`; `show sp-held` is in_progress; any other
     /// `show` (the missing goal among them) fails, as bd does for an unknown id.
@@ -243,14 +242,12 @@ mod probe_tests {
         let d = std::env::temp_dir().join(format!("rs-probe-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
         let bd = d.join("bd");
-        std::fs::write(
+        testkit::write_exe(
             &bd,
-            format!(
+            &format!(
                 "#!/bin/sh\ncase \"$3\" in\n list) printf '%s' '{list_json}' ;;\n show) [ \"$4\" = sp-held ] && printf '[{{\"id\":\"sp-held\",\"status\":\"in_progress\"}}]' && exit 0; exit 1 ;;\nesac\n"
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&bd, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         let seam = LibSeam::new(d.clone(), Some(d.clone()), bd.to_string_lossy().into(), "sp-spira".into());
         (d, seam)
     }

@@ -15,6 +15,10 @@ spira-lint = { path = "../spira-lint" }
 gate = { path = "../gate" }
 serde_json = "1"
 
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
 [profile.release]
 opt-level = "z"
 lto = true
