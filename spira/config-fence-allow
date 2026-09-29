@@ -272,3 +272,5 @@ strand/src/config.rs
 testenv/src/run.rs
 testenv/src/settings.rs
 testenv/src/suites/ports.rs
+gate/src/engine.rs
+gate/src/tests.rs
