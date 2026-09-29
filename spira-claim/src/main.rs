@@ -345,6 +345,21 @@ fn cmd_epics(a: &Args, env: &mut Env) -> Outcome {
     }
 }
 
+/// `lifecycle_enforce` for `select` (DESIGN.md §6a): `spira_config::lifecycle_enforce` —
+/// `SPIRA_LIFECYCLE_ENFORCE` wins, else `spira.lifecycle_enforce`, else off; the same rule
+/// as the aeon crate and as `unpoison` (§8.7). Tests pin it per thread instead of reading
+/// the host's environment or spira.toml, and default to off.
+fn lifecycle_on() -> bool {
+    #[cfg(test)]
+    {
+        tests::ENFORCE.with(|c| c.get())
+    }
+    #[cfg(not(test))]
+    {
+        spira_config::lifecycle_enforce(None)
+    }
+}
+
 fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
     let known = [
         "--fayth", "--ready", "--epics", "--resumable", "--top-tier", "--count", "--json", "--blockers",
@@ -462,21 +477,6 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
         s.push('\n');
         s
     }))
-}
-
-/// `lifecycle_enforce` for `select` (DESIGN.md §6a): `spira_config::lifecycle_enforce` —
-/// `SPIRA_LIFECYCLE_ENFORCE` wins, else `spira.lifecycle_enforce`, else off; the same rule
-/// as the aeon crate and as `unpoison` (§8.7). Tests pin it per thread instead of reading
-/// the host's environment or spira.toml, and default to off.
-fn lifecycle_on() -> bool {
-    #[cfg(test)]
-    {
-        tests::ENFORCE.with(|c| c.get())
-    }
-    #[cfg(not(test))]
-    {
-        spira_config::lifecycle_enforce(None)
-    }
 }
 
 fn main() {
