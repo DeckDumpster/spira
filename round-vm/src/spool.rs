@@ -87,6 +87,7 @@ host_addr="$1" port="$2" job="$3" ref="$4" suites="$5" build="$6" toolchain="$7"
 if [ -n "$toolchain" ]; then export RUSTUP_TOOLCHAIN="$toolchain"; fi
 export SPIRA_VERDICT_TTL=0 SPIRA_BATCH_MAXPAR=1 SPIRA_BATCH_RESULTS="$HOME/attr-results/$job"
 rm -rf "$SPIRA_BATCH_RESULTS"; mkdir -p "$SPIRA_BATCH_RESULTS"
+# path-ok: the round's own testenv, built on this VM from the round tree by the corpus run
 tenv="$HOME/round-work/target/release/testenv"
 set +e
 case "$build" in

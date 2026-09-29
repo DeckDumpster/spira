@@ -160,7 +160,10 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
 
     let stub = root.join("round-vm-stub");
     write(&stub, STUB);
-    Command::new("chmod").arg("+x").arg(&stub).status().unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
+    }
     let run = root.join("run");
     let env = Env {
         home: root.join("no-home"),
@@ -228,6 +231,7 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
         RoundEnd::Land { members, .. } => assert_eq!(members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["sp-m1", "sp-m3"]),
         other => panic!("expected to land, got {other:?}"),
     }
+    // path-ok: a test asserting where the survivors' fixture binary is installed in a temp worktree
     assert!(wt.join("target/release/fakebin").is_file(), "the survivors' binaries were installed");
     let _ = fs::remove_dir_all(&root);
 }
