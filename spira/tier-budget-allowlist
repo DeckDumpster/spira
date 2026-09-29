@@ -398,7 +398,6 @@ test-thrash-streak.sh	T1	28.5
 test-thrash-wall.sh	T1	2.0
 test-thrash.sh	T1	4.0
 test-tier-budget.sh	T2	40.0
-test-timeout-lint.sh	T1	2.0
 test-timeout.sh	T1	17.5
 test-timer-templates.sh	T1	2.0
 test-tmux-env.sh	T1	2.0

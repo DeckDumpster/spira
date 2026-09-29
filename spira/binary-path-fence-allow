@@ -19,12 +19,6 @@ spira/conf.sh
 # itself go through spira_bin.
 spira/testlib.sh
 
-# A THIRD LANGUAGE'S COPY OF THE RESOLVER — landing-pass is a compiled Rust process, not a
-# shell script that could source conf.sh, so it carries its own fallback for the one
-# binary (spira-lc) it calls when SPIRA_LC_BIN is not already exported. Migrating it onto
-# SPIRA_ARTIFACTS is follow-up work, not part of this fence.
-landing-pass/src/main.rs
-
 # spira-loom.service deliberately runs from the dev checkout, never a release (its own
 # comment explains why) — its ExecStart path is that deliberate exception, not a bug.
 systemd/spira-loom.service

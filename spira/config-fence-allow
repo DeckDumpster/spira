@@ -15,7 +15,6 @@ broker/src/execute.rs
 broker/src/read.rs
 broker/src/repo_map.rs
 czar-pass/src/main.rs
-landing-pass/src/main.rs
 queue-watch/src/io.rs
 queue-watch/src/main.rs
 reconciler/src/main.rs
@@ -52,7 +51,6 @@ spira/gate-touched.sh
 spira/gh-intake.sh
 spira/hooks/aeon-fence.sh
 spira/incident.sh
-spira/landing.sh
 spira-lc/src/repo_config.rs
 spira/lib.sh
 spira/lib-test-install.sh
