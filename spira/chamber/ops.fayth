@@ -94,14 +94,14 @@ FAYTH_SOP_REQUIRED=0
 # than an instruction: an Ops session that learns something must leave an SOP behind, so
 # what one session works out is on the shelf for every session after it.
 #
-# VERIFIED, NOT ASSUMED: `claude --model claude-sonnet-5 -p ...` answers on this box. An id
+# VERIFIED, NOT ASSUMED: `claude --model claude-sonnet-5-5 -p ...` answers on this box. An id
 # the CLI rejects does not fail loudly: every summon dies and the role looks merely quiet,
 # which is the shape of outage this harness is worst at noticing. Probe a candidate id
 # before writing it here.
 # SEED ONLY (sp-zs04v.4): the live value is persona.ops.model in spira.toml,
 # resolved by lib.sh's persona_model — this line only seeds that table on first
 # convert and is no longer read at launch.
-FAYTH_MODEL=claude-sonnet-5
+FAYTH_MODEL=claude-sonnet-5-5
 FAYTH_MAX_CONCURRENT=1
 
 # THE OPS LANE — the declared configuration for what FAYTH_ROLE=party expressed implicitly.

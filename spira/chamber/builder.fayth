@@ -47,14 +47,14 @@ FAYTH_STATUTE_CORE="law-tests-run-only-through-testenv"
 # more finished beads per window than a wider pool did: four slots was tried and returned to
 # three ninety minutes later because a slot is only throughput if the aeon in it can finish.
 #
-# VERIFIED, NOT ASSUMED: `claude -p --model claude-sonnet-5` answered on the production box.
+# VERIFIED, NOT ASSUMED: `claude -p --model claude-sonnet-5-5` answered on the production box.
 # An id the CLI rejects does not fail loudly here —
 # every summon dies and the pool looks merely idle, which is the shape of outage this harness
 # is worst at noticing. Probe a candidate id before writing it.
 # SEED ONLY (sp-zs04v.4): the live value is persona.builder.model in spira.toml,
 # resolved by lib.sh's persona_model — this line only seeds that table on first
 # convert and is no longer read at launch.
-FAYTH_MODEL=claude-sonnet-5
+FAYTH_MODEL=claude-sonnet-5-5
 # Three. Raised to four on 2026-09-07 and returned to three ninety minutes later, by the
 # operator, with the measurement that settles it: a slot is only throughput if the aeon in it
 # can finish, and right now it cannot. In the 46 minutes at four, twenty-two aeons were
