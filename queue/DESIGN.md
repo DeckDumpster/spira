@@ -263,7 +263,7 @@ cost / members; percentage integer.
 | `$SPIRA_RUN/queue-protected-<repo>` | — | protect |
 | `$SPIRA_RUN/queue-stuck-<repo>` | — | open-batch (removed) |
 | `$SPIRA_RELEASES/current`, `.tarballs/` | land-local, rollback-local | build-tarball.sh / activate.sh |
-| the running harness checkout's files, index, `HEAD`, `target/release/*` | land-local (D11) | land-local (D11, checkout mode only) |
+| the running harness checkout's files, index, `HEAD`, `target/release/*`, `bin/*` | land-local (D11) | land-local (D11, checkout mode only) |
 | `SPIRA_LAND_DEPLOY_ALLOW` (env) | land-local (D11) | — |
 | `${SPIRA_VERDICTS:-$SPIRA_RUN/verdicts}/trees/<repo>/<tree>` (tree certificate, `gate::cert`) | land-local (D12) | the gate (PASS), batcher-cut (round GREEN) |
 | `SPIRA_LAND_UNGATED` (env) | land-local (D12) | — |
@@ -521,9 +521,25 @@ data, not the code; the refusal is the contract).
      `LAND DEPLOY FAILED: …` with how many files were swapped, the checkout is **not** reset,
      and binaries and smoke are skipped.
   3. **Binaries**: every regular executable file directly in `<worktree>/target/release` is
-     copied beside its target in `<checkout>/target/release` and renamed over it. `spira-lc`
-     is never installed while `lifecycle_enforce` is off (§10). A failed install is reported
-     as `LAND DEPLOY FAILED: cannot install <bin> …`.
+     copied beside its target in `<checkout>/target/release` and renamed over it, then
+     linked (or re-linked) at `<checkout>/bin/<name>` — the path `spira_bin` actually
+     resolves (`conf.sh`: `$SPIRA_REPO/bin/$name`), atomically (a temp symlink, renamed
+     over), and left alone when it already points there. `spira-lc` is never installed
+     while `lifecycle_enforce` is off (§10). A failed install or link is reported as
+     `LAND DEPLOY FAILED: cannot install/link <bin> …`.
+     **Fail closed** (sp-ma9uh, incident 2026-09-29: a landed crate's binary — twice —
+     never reached `bin/`, because only the `target/release` copy existed and nothing
+     had ever linked a name that was new): every binary the workspace's own `[[bin]]`
+     targets declare must be among what the round actually built, or the deploy refuses
+     — `LAND DEPLOY FAILED: … refusing a partial binary set` — rather than land a
+     checkout the workspace itself no longer matches. The source of truth is the
+     workspace's manifests (`<worktree>/Cargo.toml`'s `[workspace] members`, each
+     member's `[[bin]]` tables or its implicit `src/main.rs` default), read directly,
+     never the Makefile's `install` list: that list is hand-maintained prose and had
+     already drifted as of 2026-09-29 (missing `reconciler-alert`, `lifecycle-guard`,
+     `spira-lc` and `test-plan`, all already built and already running) — a list that
+     must be remembered and edited by hand for every new binary crate is exactly the
+     failure mode this closes.
   4. **Smoke**: the checkout's own `conf.sh` is sourced by a fixed bash script read from
      stdin (seam R23, law-payloads-go-on-stdin), in queue's environment with every `SPIRA_*`
      variable removed except `SPIRA_CONF` and `SPIRA_TOML` (which name the document in force)
@@ -625,7 +641,7 @@ from §2.2/§8:
 | open-batch | `open_batch_*` (5) |
 | land-local: land + archive + members + cached divergence; ff refusal; base/mode; D2/D3; revert; lock-held; stdin members | `land_local_*` (9, each on a certified tree — `local_repo` writes the gate PASS) |
 | land-local certification (D12): refuses an ungated tree; a gate PASS for the tree; a round GREEN for the tree; a PASS for another tree (the pre-merge branch) or another repo does not count; the override lands and records its reason (landstate, landing.log, stderr) | `land_local_refuses_a_tree_no_gate_or_round_certified`, `land_local_accepts_a_gate_pass_for_the_head_tree`, `land_local_accepts_a_round_green_for_the_head_tree`, `land_local_ignores_a_pass_for_another_tree_or_repo`, `land_local_ungated_override_lands_and_records_the_reason`, `land_local_a_pass_from_an_older_gate_binary_still_counts`; `gate::cert::tests` |
-| land-local checkout deploy (D11): swap modify/mode-only/add/symlink/delete + emptied dir, reset + HEAD re-read, binaries (spira-lc only with the switch ON), smoke; refusals off-branch, HEAD not an ancestor, tracked edits outside the allow-list, no `--worktree`, gitlink; write failure stops before the reset; verify mismatch; smoke failure exits 1 without reverting; another repository or a release in force untouched | `land_local_deploy*` (10), `land_local_leaves_a_checkout_alone_unless_it_is_the_running_harness_in_checkout_mode`; `real::tests::conf_smoke_sources_the_checkouts_conf_sh_without_the_inherited_spira_values`, `real::tests::real_git_lists_trees_reads_blobs_status_and_resets_for_the_checkout_deploy`, `real::tests::status_and_ls_tree_parse_their_z_formats` |
+| land-local checkout deploy (D11): swap modify/mode-only/add/symlink/delete + emptied dir, reset + HEAD re-read, binaries (spira-lc only with the switch ON) linked into `bin/` (a new binary gets a symlink for the first time, an existing one is idempotent, a workspace `[[bin]]` target the round did not build refuses), smoke; refusals off-branch, HEAD not an ancestor, tracked edits outside the allow-list, no `--worktree`, gitlink; write failure stops before the reset; verify mismatch; smoke failure exits 1 without reverting; another repository or a release in force untouched | `land_local_deploy*` (12), `land_local_leaves_a_checkout_alone_unless_it_is_the_running_harness_in_checkout_mode`; `real::tests::conf_smoke_sources_the_checkouts_conf_sh_without_the_inherited_spira_values`, `real::tests::real_git_lists_trees_reads_blobs_status_and_resets_for_the_checkout_deploy`, `real::tests::status_and_ls_tree_parse_their_z_formats` |
 | publish: D4 (reaped landstate), landstate tip, nothing-to-publish, refusals | `publish_*` (4); `publish_range::tests` (6) |
 | transitions: wait/verify refusal, happy path, red, timeout, D5 (4 sources + other repo), agreement, D6 restore, archive ancestry | `to_forge_*` (4), `to_local_*` (2), `transitions_*` (2) |
 | rollback-local | `rollback_local_needs_two_rounds_and_a_retained_tarball` |

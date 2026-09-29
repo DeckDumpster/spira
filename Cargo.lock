@@ -604,6 +604,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "testkit",
+ "toml",
 ]
 
 [[package]]
