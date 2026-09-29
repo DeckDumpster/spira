@@ -2,7 +2,7 @@
 name = "spira-claim"
 version = "1.0.0"
 edition = "2021"
-description = "spira-claim — bead attempt accounting, the CHECK 4 poison decision, and epic-first claim selection (stacked-dependents aware). Reads only; never writes a store."
+description = "spira-claim — bead attempt accounting, the CHECK 4 poison decision, and epic-first claim selection (stacked-dependents aware), and `unpoison` — the one verb that writes (DESIGN.md §8)."
 
 [dependencies]
 lifecycle = { path = "../lifecycle" }

@@ -5,6 +5,7 @@ mod decide;
 mod events;
 mod rank;
 mod store;
+mod unpoison;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Read;
@@ -44,22 +45,27 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim epics [--ready F] [--submitted-label L]  (ready JSON on stdin by default)
        spira-claim select --fayth NAME [--ready F] [--epics F] [--resumable F] [--top-tier|--count|--json]
                           [--blockers bd|machine] [--lifecycle F] [--blocker-records F] [--stack-max-depth N]
+       spira-claim unpoison --bead ID [--bead ID...] --cause TEXT [--watch] [--watch-timeout-s N] [--dry-run]
+                            [--credit SLUG] [--actor NAME] [--poison-at N]   (the one writer: DESIGN.md §8)
   thresholds: --poison-at N (3) --requeue-at N (5) --reclaim-at N (5)
   common:     --db PATH  --timeout-s N (60)
-  exit: 0 answered, 1 usage, 2 cannot tell (stdout empty)";
+  exit: 0 answered, 1 usage, 2 cannot tell (stdout empty); unpoison also 3 = a bead failed";
 
 /// Parsed flags and positionals. Flags listed in `BOOL_FLAGS` take no value.
 struct Args {
     pos: Vec<String>,
     flags: BTreeMap<String, String>,
+    /// Every (flag, value) in order, for the repeatable ones (`unpoison --bead`).
+    all: Vec<(String, String)>,
 }
 
-const BOOL_FLAGS: &[&str] = &["--json", "--top-tier", "--count"];
+const BOOL_FLAGS: &[&str] = &["--json", "--top-tier", "--count", "--watch", "--dry-run"];
 
 impl Args {
     fn parse(raw: &[String]) -> Result<Args, String> {
         let mut pos = Vec::new();
         let mut flags = BTreeMap::new();
+        let mut all = Vec::new();
         let mut i = 0;
         let mut only_pos = false;
         while i < raw.len() {
@@ -73,11 +79,12 @@ impl Args {
             } else {
                 let v = raw.get(i + 1).ok_or_else(|| format!("{a} needs a value"))?;
                 flags.insert(a.clone(), v.clone());
+                all.push((a.clone(), v.clone()));
                 i += 1;
             }
             i += 1;
         }
-        Ok(Args { pos, flags })
+        Ok(Args { pos, flags, all })
     }
     fn get(&self, k: &str) -> Option<&str> {
         self.flags.get(k).map(String::as_str)
@@ -90,6 +97,9 @@ impl Args {
             None => Ok(default),
             Some(v) => v.trim().parse().map_err(|_| format!("{k}: not a non-negative integer: {v:?}")),
         }
+    }
+    fn every(&self, k: &str) -> Vec<String> {
+        self.all.iter().filter(|(f, _)| f == k).map(|(_, v)| v.clone()).collect()
     }
     fn check_known(&self, known: &[&str]) -> Result<(), String> {
         for k in self.flags.keys() {
@@ -163,6 +173,7 @@ pub fn dispatch(raw: &[String], stdin: &mut dyn Read) -> Outcome {
         "poison-decide" => cmd_poison_decide(&a, &mut env),
         "epics" => cmd_epics(&a, &mut env),
         "select" => cmd_select(&a, &mut env),
+        "unpoison" => cmd_unpoison(&a, &env),
         "-h" | "--help" | "help" => Outcome::ok(format!("{USAGE_TEXT}\n")),
         other => Outcome::usage(format!("unknown verb {other}")),
     }
@@ -439,6 +450,80 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
         s.push('\n');
         s
     }))
+}
+
+/// `unpoison`'s arguments, validated, before anything is read (DESIGN.md §8.2).
+fn unpoison_opts(a: &Args) -> Result<unpoison::Opts, String> {
+    let known = ["--bead", "--cause", "--watch", "--watch-timeout-s", "--dry-run", "--credit", "--actor", "--poison-at"];
+    a.check_known(&known)?;
+    if let Some(p) = a.pos.first() {
+        return Err(format!("unexpected argument {p:?} — named arguments only (--bead, --cause)"));
+    }
+    let beads = a.every("--bead");
+    if beads.is_empty() {
+        return Err("--bead is required".into());
+    }
+    if let Some(b) = beads.iter().find(|b| !unpoison::valid_id(b)) {
+        return Err(format!("--bead {b:?} is not a bead id"));
+    }
+    let cause = a.get("--cause").unwrap_or("").trim().to_string();
+    if cause.is_empty() {
+        return Err("--cause is required — say why the poison was wrong".into());
+    }
+    let credit = a.get("--credit").map(str::to_string);
+    if let Some(c) = credit.as_deref().filter(|c| !unpoison::valid_slug(c)) {
+        return Err(format!("--credit {c:?} must match [a-z0-9-]{{1,64}}"));
+    }
+    let actor = a.get("--actor").unwrap_or("unpoison").to_string();
+    if !unpoison::valid_id(&actor) {
+        return Err(format!("--actor {actor:?} must match [A-Za-z0-9._-]+"));
+    }
+    let env_p = std::env::var("SPIRA_POISON_AT").ok().and_then(|v| v.trim().parse().ok());
+    Ok(unpoison::Opts {
+        beads,
+        cause,
+        watch: a.has("--watch"),
+        watch_timeout_s: a.num("--watch-timeout-s", unpoison::WATCH_TIMEOUT_S as u32)? as u64,
+        dry_run: a.has("--dry-run"),
+        credit,
+        actor,
+        poison_at: a.num("--poison-at", env_p.unwrap_or(Thresholds::default().poison_at))?,
+    })
+}
+
+fn env_nonempty(k: &str) -> Option<String> {
+    std::env::var(k).ok().filter(|s| !s.trim().is_empty())
+}
+
+fn cmd_unpoison(a: &Args, env: &Env) -> Outcome {
+    let o = match unpoison_opts(a) {
+        Ok(o) => o,
+        Err(e) => return Outcome::usage(e),
+    };
+    let st = match store(a, &env.config) {
+        Ok(s) => s,
+        Err(e) => return Outcome::usage(e),
+    };
+    if st.db.is_none() {
+        return Outcome::cannot_tell("no bead store: --db, $SPIRA_DB and spira.db are all unset — nothing was written");
+    }
+    let Some(run_dir) = env_nonempty("SPIRA_RUN").or_else(|| env.config.run.clone()) else {
+        return Outcome::cannot_tell("SPIRA_RUN is unset and spira.run is not configured — nothing was written");
+    };
+    let run_dir = std::path::PathBuf::from(run_dir);
+    let asked_dir = env_nonempty("SPIRA_POISON_ASKED").map(Into::into).unwrap_or_else(|| run_dir.join("poison-asked"));
+    let ask_label = env_nonempty("SPIRA_ASK_LABEL")
+        .or_else(|| env.config.ask_label.clone())
+        .unwrap_or_else(|| "needs-operator".into());
+    let mut live = unpoison::Live {
+        store: st,
+        run_dir,
+        asked_dir,
+        ask_label,
+        beads_actor: env_nonempty("BEADS_ACTOR").unwrap_or_else(|| "harness".into()),
+    };
+    let (code, out) = unpoison::run(&o, &mut live);
+    Outcome { code, out, err: String::new() }
 }
 
 fn main() {

@@ -490,8 +490,8 @@ reads the `OK` line, §8.6).
 1. `bd show <id>`: absent → `FAIL no such bead`; the read failing → `FAIL cannot tell`.
 2. The events (`Store::events`, the same chunked `bd sql --json` as `counts`): failing →
    `FAIL cannot tell`.
-3. `spira-lc show <id>`: exit 0 → the row; exit 1 → no row (not classified: not poisoned);
-   anything else → `FAIL cannot tell` (unpoison.sh read a failed lc read as "not
+3. `spira-lc show <id>`: exit 0 → the row; exit 1 with `{}` → no row (not classified: not
+   poisoned); anything else → `FAIL cannot tell` (unpoison.sh read a failed lc read as "not
    poisoned" and would SKIP or falsely verify).
 4. **Live work.** bd `status == in_progress` with an assignee, **or** a lifecycle row in
    `WORKING` with a holder → `FAIL held by …`. Nothing is written.
@@ -607,8 +607,19 @@ ask-history file, the audit log, clock, sleep); the tests implement it in memory
 | `--credit` precedes the floor and is floored away | `credit_written_before_floor_and_not_counted` |
 | watch reads the audit log line; noise ignored; a pass that started before the clear or whose counts failed does not count | `watch_reads_audit_log_line`, `watch_ignores_pass_started_before_clear`, `watch_disqualifies_failed_counts_pass` |
 | watch fails on re-poison / timeout | `watch_fails_when_repoisoned`, `watch_times_out` |
-| usage: positional, missing cause, bad id | `usage_errors` |
-| event value is bounded and quote-free | `bounded_cause` |
+| usage: positional, missing cause, bad id, bad slug (dispatch level) | `tests::unpoison_usage_errors` |
+| event value is bounded and quote-free | `bounded_cause_strips_quotes_and_bounds` |
+| no events at all; at threshold with no hold; count that did not drop; one bead of several failing | `clear_a_bead_that_never_had_events`, `at_threshold_without_hold_is_cleared`, `verify_fails_when_count_does_not_drop`, `several_beads_one_failure_fails_the_run` |
+| watch survives log rotation; is not started after a failure; line parsing | `watch_survives_rotation`, `watch_not_started_when_a_bead_failed`, `audit_line_parsing` |
+| the live seams: note/close text on stdin and never in argv; the INSERT's bounded argv; bd "no such bead"; spira-lc show exit 0/1/2 and `event` 0/3/other with the exact Unhold argv; ask-history file; audit log length/offset read | `live_bd_writes_pass_text_on_stdin`, `live_event_insert_is_bounded`, `live_bead_and_asks`, `live_lifecycle_show_and_unhold`, `live_ask_history_and_audit_log` (fake `bd`/`spira-lc` scripts) |
+| store JSON shapes (bd warnings before JSON, dolt string-encoded columns) | `parse_store_outputs` |
+
+Smoke, read-only, 2026-09-28 (the loop shut down): `spira-claim unpoison --bead sp-n9z --cause … --dry-run`
+under conf.sh read the live events (attempts 26 by the fold) and refused with
+`FAIL sp-n9z: cannot tell (spira-lc show: exit 2: … Access denied for user 'spira_lc' …) — nothing was written`
+— the spira-lc socket service is down with the loop, and the fallback connection has no
+grant. That is the fail-closed path working: unpoison cannot run while the lifecycle store is
+unreachable, which is correct (it cannot know whether it released the hold).
 
 ### 8.5 Behaviour deliberately changed from unpoison.sh
 

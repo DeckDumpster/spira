@@ -395,3 +395,18 @@ esac"#,
     assert!(rank::epic_started(&st.children("sp-E").unwrap(), "spira-submitted"));
     assert!(!rank::epic_started(&st.children("sp-F").unwrap(), "spira-submitted"));
 }
+
+#[test]
+fn unpoison_usage_errors() {
+    // Named arguments only; every refusal here happens before any store is read.
+    assert_eq!(run(&["unpoison", "--cause", "x"], "").code, USAGE, "--bead is required");
+    assert_eq!(run(&["unpoison", "--bead", "sp-a"], "").code, USAGE, "--cause is required");
+    assert_eq!(run(&["unpoison", "--bead", "sp-a", "--cause", "  "], "").code, USAGE, "blank cause");
+    assert_eq!(run(&["unpoison", "sp-a", "--cause", "x"], "").code, USAGE, "positional bead");
+    assert_eq!(run(&["unpoison", "--bead", "sp a", "--cause", "x"], "").code, USAGE, "bad id");
+    assert_eq!(run(&["unpoison", "--bead", "sp-a", "--cause", "x", "--credit", "Bad Slug"], "").code, USAGE);
+    assert_eq!(run(&["unpoison", "--bead", "sp-a", "--cause", "x", "--frob", "1"], "").code, USAGE);
+    let o = run(&["unpoison", "--bead", "sp-a"], "");
+    assert!(o.err.contains("--cause is required"), "{}", o.err);
+    assert!(o.out.is_empty());
+}
