@@ -69,6 +69,12 @@ struct Fake {
     /// (status, output) of the re-entry phase by the tree revision (sp-p3srm); absent, every
     /// suite it names reports `ok`.
     reentry_runs: RefCell<HashMap<String, (i32, String)>>,
+    // ---- positive controls (sp-ufbkh)
+    /// Fences that exit 0 without their `fence: <name> checked` line. Every other fence the
+    /// gate string names prints `checked 1` when the string exits 0, as a real one does.
+    silent_fences: RefCell<HashSet<String>>,
+    /// The tree each gate-string run happened in.
+    trees: RefCell<Vec<PathBuf>>,
 }
 
 fn ctx() -> Ctx {
@@ -149,6 +155,8 @@ impl Fake {
             reruns: RefCell::new(HashMap::new()),
             base_lacks: RefCell::new(HashSet::new()),
             reentry_runs: RefCell::new(HashMap::new()),
+            silent_fences: RefCell::new(HashSet::new()),
+            trees: RefCell::new(Vec::new()),
         }
     }
     fn set_var(&self, k: &str, v: &str) {
@@ -312,7 +320,7 @@ impl World for Fake {
     fn remove_worktree(&self, _: &Path, _: &Path) {
         self.removed_trees.set(self.removed_trees.get() + 1);
     }
-    fn run_gate(&self, _: &Path, env: &[(String, String)], _: &str, cmd: &str) -> (i32, String) {
+    fn run_gate(&self, tree: &Path, env: &[(String, String)], _: &str, cmd: &str) -> (i32, String) {
         self.ran.borrow_mut().push(env.to_vec());
         self.cmds.borrow_mut().push(cmd.to_string());
         let br = env
@@ -360,11 +368,27 @@ impl World for Fake {
                 .cloned()
                 .unwrap_or((0, format!("{kind} ok")));
         }
-        self.runs
+        self.trees.borrow_mut().push(tree.to_path_buf());
+        let (rc, out) = self
+            .runs
             .borrow()
             .get(&br)
             .cloned()
-            .unwrap_or((0, String::new()))
+            .unwrap_or((0, String::new()));
+        if rc != 0 {
+            return (rc, out);
+        }
+        // The fences ran and passed: each prints its positive control, unless told not to.
+        let silent = self.silent_fences.borrow();
+        let mut lines: Vec<String> = crate::fence::expected(cmd)
+            .into_iter()
+            .filter(|f| !silent.contains(f))
+            .map(|f| format!("fence: {f} checked 1 files"))
+            .collect();
+        if !out.is_empty() {
+            lines.push(out);
+        }
+        (0, lines.join("\n"))
     }
     fn diff_raw(&self, _: &Path, _: &str, _: &str) -> Result<Vec<Changed>, String> {
         self.touched.borrow().clone()
@@ -1832,4 +1856,113 @@ fn a_no_verdict_trial_is_recorded_as_one() {
     assert_eq!(v["reason"], "lock-timeout");
     assert_eq!(v["waited_secs"], 3);
     assert_eq!(v["branch_type"], "unknown", "it ended before a composition");
+}
+
+// ------------------------------------------------ positive controls (sp-ufbkh)
+
+/// The production gate string's shape: bash fences, spira-lint, the selector.
+const FENCED: &str = r#"bash spira/inventory.sh && "$SPIRA_LINT_BIN" && bash spira/build-fence.sh && { _s="$(bash spira/gate-touched.sh "$SPIRA_GATE_BASE" x)"; [ -n "$_s" ] || exit 0; }"#;
+
+fn fenced() -> Fake {
+    let f = Fake::new();
+    f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = FENCED.into();
+    for p in ["spira/inventory.sh", "spira/build-fence.sh", "spira/gate-touched.sh"] {
+        f.blobs.borrow_mut().insert(format!("{BASE}:{p}"), b"x".to_vec());
+    }
+    f
+}
+
+#[test]
+fn a_fence_that_exits_0_without_its_line_is_no_verdict_fence_silent() {
+    let f = fenced();
+    f.silent_fences.borrow_mut().insert("lockfile-lint".into());
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    let vl = f.verdict_line();
+    assert!(vl.contains("reason=fence-silent"), "{vl}");
+    assert!(vl.contains("suite=lockfile-lint"), "the fence is named: {vl}");
+    assert!(f.stderr().contains("printed no `fence: <name> checked"), "{}", f.stderr());
+    // No cache entry, no certificate: nothing was judged.
+    assert!(
+        f.written.borrow().iter().all(|(d, _)| !d.to_string_lossy().contains("verdicts")),
+        "{:?}",
+        f.written.borrow()
+    );
+}
+
+#[test]
+fn a_plan_matrix_that_is_skipped_is_fence_silent_even_when_spira_lint_passes() {
+    let f = fenced();
+    f.silent_fences.borrow_mut().insert("plan-matrix".into());
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=fence-silent"));
+    assert!(f.verdict_line().contains("suite=plan-matrix"));
+}
+
+#[test]
+fn a_fence_that_reports_checked_0_is_silent() {
+    let f = fenced();
+    f.silent_fences.borrow_mut().insert("inventory".into());
+    f.runs
+        .borrow_mut()
+        .insert(MERGE_SHA.into(), (0, "fence: inventory checked 0 files".into()));
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("suite=inventory"));
+}
+
+#[test]
+fn every_fence_with_its_line_passes_and_the_counts_are_reported() {
+    let f = fenced();
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let e = f.stderr();
+    for n in [
+        "inventory=1 files",
+        "spira-lint=1 files",
+        "plan-matrix=1 files",
+        "build-fence=1 files",
+        "tier-budget-allowlist=1 files",
+        "tier-budget-area-allowlist=1 files",
+        "tier-budget-areas=1 files",
+        "lockfile-lint=1 files",
+    ] {
+        assert!(e.contains(n), "{n} missing from: {e}");
+    }
+}
+
+#[test]
+fn a_failing_trial_is_judged_as_before_not_as_silent() {
+    let f = fenced();
+    f.runs
+        .borrow_mut()
+        .insert(MERGE_SHA.into(), (1, "lockfile-lint: serde bumped".into()));
+    assert_eq!(f.run(), FAIL);
+    assert!(f.verdict_line().contains("reason=branch-red"));
+}
+
+#[test]
+fn the_fences_run_in_the_gate_tree_not_the_repository() {
+    let f = fenced();
+    assert_eq!(f.run(), PASS);
+    let trees = f.trees.borrow();
+    assert!(!trees.is_empty());
+    for t in trees.iter() {
+        let t = t.to_string_lossy();
+        assert!(
+            t.starts_with(&format!("{RUN}/worktree/.gate.")) && t != REPO,
+            "a gate-string run outside the gate tree: {t}"
+        );
+    }
+    // …while SPIRA_GATE_REPO stays the repository: the fences must not read it for their tree.
+    assert_eq!(f.env_of(0, "SPIRA_GATE_REPO"), REPO);
+}
+
+#[test]
+fn a_unit_composition_does_not_expect_the_build_fence_it_dropped() {
+    let f = fenced();
+    *f.mode.borrow_mut() = Ok(GateMode::Unit);
+    *f.touched.borrow_mut() = Ok(vec![Changed {
+        path: "gate/src/x.rs".into(),
+        exec: false,
+    }]);
+    f.silent_fences.borrow_mut().insert("build-fence".into());
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
 }

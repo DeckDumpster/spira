@@ -4,6 +4,7 @@
 pub mod cert;
 pub mod compose;
 pub mod engine;
+pub mod fence;
 pub mod key;
 pub mod parse;
 pub mod ports;

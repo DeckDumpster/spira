@@ -1,6 +1,7 @@
 //! The trial, in the order DESIGN.md "Order of the trial" gives. One way out: [`Trial::finish`].
 
 use crate::cert;
+use crate::fence;
 use crate::compose::{self, Composition, Forces};
 use crate::key::{self, KeyInputs};
 use crate::parse::{self, Attribution};
@@ -545,7 +546,20 @@ impl<'w, W: World> Trial<'w, W> {
                 format!("gate: signalled during the trial of {br}"),
             );
         }
+        // EVERY FENCE PROVES IT CHECKED (sp-ufbkh). The fences the string that ran names must
+        // each have printed `fence: <name> checked <n> <unit>` with n > 0; a fence that exited
+        // 0 without it (skipped, a precondition unmet, empty input) judged nothing, and a
+        // trial that judged nothing is never a PASS.
+        let fences = fence::expected(&compose::gate_string(&comp, &cmd).0);
         if rc == 0 {
+            let quiet = fence::silent(&fences, &out);
+            if !quiet.is_empty() {
+                self.s.suite = quiet[0].clone();
+                return v(NOVERDICT, "fence-silent", format!(
+                    "gate: fence-silent — the gate exited 0, but these fences printed no `fence: <name> checked <n> <unit>` line (or checked 0): {}\ngate: a fence that checked nothing proves nothing; a fence that cannot check must exit non-zero naming what is missing.\n{}",
+                    quiet.join(" "),
+                    parse::tail_bytes(&out, 4000)));
+            }
             let missing = compose::unproven(&out, &re.required);
             if !missing.is_empty() {
                 self.s.suite = missing[0].clone();
@@ -572,10 +586,15 @@ impl<'w, W: World> Trial<'w, W> {
                     &format!("{entry}compose={}\n", self.s.compose),
                 );
             }
+            let checked = fence::summary(&fences, &out);
             return v(
                 PASS,
                 "pass",
-                format!("gate: gate PASS covered suites: {pass_suites}"),
+                if checked.is_empty() {
+                    format!("gate: gate PASS covered suites: {pass_suites}")
+                } else {
+                    format!("gate: fences checked: {checked}\ngate: gate PASS covered suites: {pass_suites}")
+                },
             );
         }
         let out = if out.trim().is_empty() {

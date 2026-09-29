@@ -106,9 +106,10 @@ codes.
 `spira/plan-lint.sh --orphans <base-ref>` is the other hard failure: a
 commit that deletes a suite which was the last cover of a use case fails
 unless that same commit also marks the use case `uncovered` or names its
-replacement. This is what the landing gate runs (`spira/plan-matrix-fence.sh`,
-wired into `spira/gate-touched.sh`), so a suite deletion that silently drops
-coverage cannot land.
+replacement. The landing gate runs the same check as spira-lint's `plan-matrix`
+rule (sp-ufbkh), in the gate tree against `SPIRA_GATE_BASE`, and requires its
+`fence: plan-matrix checked <n> use-cases` line, so a suite deletion that
+silently drops coverage cannot land.
 
 ## The coverage matrix
 
@@ -120,6 +121,6 @@ the same document. Both are regenerated whole by `spira/plan-matrix.sh`,
 never hand-edited, and neither is committed (`.gitignore`): a generated
 file two independently-regenerating branches would otherwise conflict over,
 or silently merge stale, is not a source of truth to keep in sync — run
-`spira/plan-matrix.sh` to write a fresh copy locally. The gate
-(`spira/plan-matrix-fence.sh`) regenerates both on every run and fails only
-if generation itself errors.
+`spira/plan-matrix.sh` to write a fresh copy locally. The gate (spira-lint's
+`plan-matrix` rule) builds and renders the matrix in memory on every run and
+fails only if that errors; it writes neither file.

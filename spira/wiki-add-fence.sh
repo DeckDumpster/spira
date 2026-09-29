@@ -43,6 +43,7 @@ done < <(git -C "$ROOT" ls-files -- '*.sh' 2>/dev/null)
 
 if [ -z "$offenders" ]; then
     printf 'wiki-add-fence: no blanket-add forms targeting SPIRA_WIKI\n'
+    printf 'fence: wiki-add-fence checked %d files\n' "$count" >&2
     exit 0
 fi
 

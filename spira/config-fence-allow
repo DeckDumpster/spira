@@ -55,7 +55,6 @@ spira-lc/src/repo_config.rs
 spira/lib.sh
 spira/lib-test-install.sh
 spira/maechen-trigger.sh
-spira/plan-matrix-fence.sh
 spira/pre-activate.sh
 spira/pr-notify.sh
 spira/publish-backlog.sh

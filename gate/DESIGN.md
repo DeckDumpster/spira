@@ -158,7 +158,7 @@ branch-red`; BASE_FAIL `base-red`; NO_VERDICT `no-repo-map-file | no-repo-map | 
 no-diff | conflict | merge-failed | missing-exclude | missing-skew | skew-init-fault |
 cmd-missing-file | admission-timeout | no-lockfile | lock-timeout | tree-unidentified |
 harness-fault | timeout | base-timeout | base-untestable | lib-unavailable | died |
-reentry-unproven`, and
+reentry-unproven | fence-silent`, and
 `no-evidence:<reason>` when a FAIL carried no message (downgraded to NO_VERDICT).
 
 The message before the VERDICT line is the bash's, word for word, except the conflict and
@@ -430,6 +430,52 @@ exits 0.
   deferred, skipped or unreached suite; absence is never green.
 * **Gone suites are said, not enforced.** A suite the tree no longer has cannot be run; the
   plan-matrix fence is what guards a suite deletion that drops coverage.
+
+## Every fence proves it checked (sp-ufbkh)
+
+**Intent.** A fence that exits 0 having checked nothing is indistinguishable from one that
+checked everything. On 2026-09-29 the test plan's fence was found skipped at every gate since
+it was wired: `gate-touched.sh` ran it only when `SPIRA_GATE_REPO` resolved to its own tree,
+and the gate sets that to the repository while running in its worktree. The rule was already
+law (law-a-control-that-cannot-check-must-refuse); it was re-violated, so it becomes
+structure: **the gate cannot PASS a trial in which a fence it ran was silent.**
+
+### Contract
+
+* **The line.** Every fence, on success, prints one line (stdout or stderr; the trial's
+  output is one pipe): `fence: <name> checked <n> <unit>[ anything]`, `n` an integer > 0.
+  A fence that cannot check exits non-zero naming what is missing; it never exits 0 silent.
+* **Which fences** (`fence::expected`, over the gate string the composition actually runs —
+  under `gate_mode = unit` without the build fence, `compose::gate_string`): each
+  `bash <dir>/<x>.sh` word (the preflight's scan) is the fence `<x>`; the suite selector
+  `gate-touched.sh` is not a fence and runs none; the `$SPIRA_LINT_BIN` word is `spira-lint`
+  plus each rule in `LINT_RULE_FENCES` that the word's `--only` (if any) includes:
+  `plan-matrix`, `lockfile-lint`, `tier-budget-allowlist`, `tier-budget-area-allowlist`,
+  `tier-budget-areas`.
+* **The check** (`fence::silent`), after the branch trial exits 0 and before the re-entry
+  proof: any expected fence with no line, or whose largest reported `n` is 0, makes the
+  verdict **NO_VERDICT `reason=fence-silent` `suite=<the first such fence>`**, the message
+  naming all of them, with no cache entry and no certificate. A trial that exits non-zero is
+  judged as before: a fence that failed is a red.
+* **The PASS** message carries `gate: fences checked: <name>=<n> <unit>, …`.
+
+### Decisions
+
+* **The selector runs no fence.** The gate string captures it as `_s="$(bash
+  spira/gate-touched.sh …)";` — the assignment's status is ignored, so a fence failing inside
+  it emptied the selection and the string exited 0. Its fences (the test plan's, the lockfile
+  lint, the three tier-budget ratchets) moved into spira-lint, which the string runs in its
+  `&&` chain, in the gate tree, against `SPIRA_GATE_BASE`.
+* **Read from the string, not configured beside it.** A second list of fences in
+  configuration is a second thing to forget; the gate string is the one list (as in
+  "Composition"). The two names the string cannot show — the selector, and which spira-lint
+  rules print their own line — are constants here, and `fence.rs`'s tests fail when
+  `gate-touched.sh` calls a script again or spira-lint loses one of those rules.
+* **`checked 0` is silence.** A count of zero is a fence reporting that it looked at
+  nothing. A fence whose input may legitimately empty counts what it compared instead (the
+  tier-budget ledgers report `1 ledger`).
+* **NO_VERDICT, not FAIL.** A silent fence judged nothing; the branch is not shown to be at
+  fault, and nothing is certified.
 
 ## Boundaries (ports)
 

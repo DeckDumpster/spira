@@ -142,15 +142,6 @@ spira/test-landing-rebase.sh
 # regardless of SPIRA_GATE_SUITES.
 spira/test-build-fence.sh
 
-# THE LOCKFILE LINT'S OWN POSITIVE CONTROL. lockfile-lint.sh refuses a Cargo.lock version
-# bump with no matching Cargo.toml change — the local host's newer cargo can re-resolve a
-# registry package to a version the gate's pinned toolchain cannot parse with nothing to
-# review in the diff. This suite plants such a bump in a scratch git repository (SEEN
-# RED), gives it a matching Cargo.toml change (SEEN GREEN), and confirms lockfile-lint.sh
-# is wired into gate-touched.sh alongside build-fence.sh so it runs regardless of
-# SPIRA_GATE_SUITES.
-spira/test-lockfile-lint.sh
-
 # THE TMUX-SCOPE FENCE'S OWN POSITIVE CONTROL. tmux-scope-fence.sh refuses a suite that
 # calls a tmux session command, or runs concierge.sh start/wake/here/stop, without scoping
 # it to a socket of its own — the class that reached the operator's real tmux server twice

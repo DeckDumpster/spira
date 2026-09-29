@@ -23,3 +23,4 @@ strip = true
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+spira-lint = { path = "../spira-lint" }

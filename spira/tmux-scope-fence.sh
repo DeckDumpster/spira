@@ -68,6 +68,7 @@ done
 
 if [ -z "$offenders" ]; then
     printf 'tmux-scope-fence: no unscoped tmux/concierge.sh invocation in %d suite(s)\n' "${#suites[@]}"
+    printf 'fence: tmux-scope-fence checked %d suites\n' "${#suites[@]}" >&2
     exit 0
 fi
 

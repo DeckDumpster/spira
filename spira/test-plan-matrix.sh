@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-plan-matrix.sh — plan-matrix.sh's own positive control (item 3: A DERIVED COVERAGE
-# MATRIX) and plan-matrix-fence.sh's gate-wiring confirmation.
+# MATRIX) and the gate-wiring confirmation (spira-lint's plan-matrix rule, sp-ufbkh).
 #
 # THE PROPERTY: docs/test-plan/coverage.json and COVERAGE.md are regenerated whole and never
 # hand-edited (law-regenerate-derived-summaries), and untracked — a hand edit or a stale copy
@@ -13,7 +13,7 @@
 # host-reason: reads suite source and scratch git repos only; no database, no systemd
 #
 # tier: T1
-# covers: spira/plan-matrix.sh spira/plan-matrix-fence.sh spira/gate-touched.sh
+# covers: spira/plan-matrix.sh spira/gate-touched.sh spira-lint/src/rules/plan_matrix.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 REAL_ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -108,21 +108,16 @@ want ".gitignore excludes coverage.json" "docs/test-plan/coverage.json" "$gi"
 want ".gitignore excludes COVERAGE.md" "docs/test-plan/COVERAGE.md" "$gi"
 
 # ==========================================================================
-# GATE WIRING: gate-touched.sh calls plan-matrix-fence.sh, which calls both
-# plan-lint.sh --orphans and plan-matrix.sh (no --check: nothing committed to
-# check against) — confirmed by source reference, the same style
-# test-build-fence.sh uses for build-fence.sh.
+# GATE WIRING (sp-ufbkh): the gate runs the test plan's fence as spira-lint's plan-matrix
+# rule, in the gate tree against SPIRA_GATE_BASE. gate-touched.sh ran plan-matrix-fence.sh
+# behind a SPIRA_GATE_REPO check that never matched at the gate, so it never ran there;
+# the script is gone. Confirmed by source reference.
 # ==========================================================================
 gt="$(cat "$HERE/gate-touched.sh")"
-want "gate-touched.sh calls plan-matrix-fence.sh" "plan-matrix-fence.sh" "$gt"
-
-fence_src="$(cat "$HERE/plan-matrix-fence.sh")"
-want "plan-matrix-fence.sh calls plan-lint.sh --orphans" "plan-lint.sh" "$fence_src"
-want "plan-matrix-fence.sh calls plan-matrix.sh" "plan-matrix.sh" "$fence_src"
-case "$fence_src" in
-    *'plan-matrix.sh --check'*) bad "plan-matrix-fence.sh no longer runs plan-matrix.sh --check" \
-        "found --check in $HERE/plan-matrix-fence.sh" ;;
-    *) ok "plan-matrix-fence.sh no longer runs plan-matrix.sh --check" ;;
-esac
+nowant "gate-touched.sh no longer calls a plan-matrix fence script" 'bash "$HERE/plan-matrix-fence.sh"' "$gt"
+rule_src="$(cat "$HERE/../spira-lint/src/rules/plan_matrix.rs" 2>/dev/null)"
+want "spira-lint carries the plan-matrix rule" 'const NAME: &str = "plan-matrix"' "$rule_src"
+want "the rule judges orphans against the base" "orphan_violations" "$rule_src"
+want "the rule builds the matrix" "build_matrix" "$rule_src"
 
 tl_summary

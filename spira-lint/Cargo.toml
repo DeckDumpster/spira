@@ -9,6 +9,7 @@ regex = "1"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 spira-config = { path = "../spira-config" }
+test-plan = { path = "../test-plan" }
 
 [[bin]]
 name = "spira-lint"

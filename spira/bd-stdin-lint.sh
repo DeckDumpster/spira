@@ -68,6 +68,7 @@ done
 
 if [ "$bad" = 0 ]; then
     printf 'bd-stdin-lint: clean — %d file(s) checked\n' "${#files[@]}"
+    printf 'fence: bd-stdin-lint checked %d files\n' "${#files[@]}" >&2
     exit 0
 fi
 cat >&2 <<'WHY'

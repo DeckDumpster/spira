@@ -41,7 +41,7 @@ if ! grep -q '^sync.remote:' "$DB/.beads/config.yaml" 2>/dev/null; then
     exit 0
 fi
 
-# ── WHICH ENGINE TELLS THE TRUTH ──────────────────────────────────────────────
+# ── WHICH ENGINE TELLS THE TRUTH (for push verification below) ────────────────
 # Two engines can read this store and they do not always agree. On 2026-09-15 the
 # config table held 144 uncommitted rows — the whole statute book — and `bd sql
 # "SELECT COUNT(*) FROM dolt_status"` answered 0 while the dolt CLI reading the same
@@ -49,9 +49,11 @@ fi
 # working set. The CLI was right: committing through it cleared the rows and the push
 # that followed moved the remote four and a half hours forward.
 #
-# So the CLI is preferred wherever a data directory is configured, and whichever engine
-# answers the dirty probe is the engine that must also commit and verify. Mixing them is
-# how the working set one engine cannot see gets left behind by the other.
+# THE PRE-PUSH COMMIT ITSELF NO LONGER USES THIS RESOLUTION (sp-sghmt): the commit step
+# below calls the beads-store binary, which never falls back to bd — see its comment.
+# What stays here is branch detection and the post-push head comparison, which read
+# already-committed history (dolt_log), not working-set state; that is the half of the
+# 2026-09-15 disagreement that has never been shown to affect bd, so it is unchanged.
 _BP_ENGINE=""          # "dolt" or "bd" — set by _bp_probe_engine
 _BP_DATADIR=""         # dolt --data-dir for the "dolt" engine
 _BP_DBNAME=""
@@ -139,8 +141,6 @@ except Exception:
 ' 2>/dev/null || echo "?"
 }
 
-_bp_dirty_count() { _bp_number "$1" "select count(*) as n from dolt_status;"; }
-
 _bp_head() {   # _bp_head <db> <revision>
     local out
     out="$(_bp_sql "$1" "select commit_hash from dolt_log('$2') limit 1;")" || return 1
@@ -154,30 +154,25 @@ fail_out() { echo "beads-push: $stamp — $1" >&2; exit 1; }
 # bd never creates a Dolt commit for config writes (statutes, memories), so a bare
 # push leaves those changes behind and a fresh clone is short however many statutes
 # were enacted since the last issue write.
-_bp_probe_engine "$DB" \
-    || fail_out "cannot determine whether the store has uncommitted changes — no engine could count dolt_status. Refusing to report a push that may leave the statute book behind."
-
-dirty="$(_bp_dirty_count "$DB")" \
-    || fail_out "cannot determine whether the store has uncommitted changes (engine: ${_BP_ENGINE:-none})."
-
-if [ "$dirty" -gt 0 ]; then
-    if [ "$_BP_ENGINE" = "dolt" ]; then
-        commit_out="$(_bp_sql "$DB" \
-            "CALL DOLT_COMMIT('-Am', 'beads-push: $stamp');" 2>&1)"; commit_rc=$?
-    else
-        commit_out="$(bd -C "$DB" dolt commit -m "beads-push: $stamp" 2>&1)"; commit_rc=$?
-    fi
-    [ "$commit_rc" -eq 0 ] \
-        || fail_out "pre-push commit failed: $(tail -2 <<<"$commit_out" | tr '\n' ' ')"
-
-    # A COMMIT THAT CLEARS NOTHING IS A FAILED COMMIT. `bd dolt commit` returned 0 and
-    # the words "Nothing to commit." for a working set the other engine could see; taking
-    # its exit status alone is what let the statute book sit uncommitted for weeks.
-    after="$(_bp_dirty_count "$DB")" \
-        || fail_out "committed, but could not re-read the working set to confirm it cleared."
-    [ "$after" -eq 0 ] \
-        || fail_out "pre-push commit did not clear the working set: $dirty dirty table(s) before, $after after (engine: $_BP_ENGINE)."
-    echo "beads-push: $stamp — committed ${dirty} dirty table(s) ($(_bp_statute_count "$DB") statutes)"
+#
+# WHY A RUST BINARY, NEVER bd. `bd dolt commit` returned exit 0 and "Nothing to commit."
+# for a working set the real dolt engine could see (2026-09-15 scar, sp-e1l1) — bd's own
+# view of dolt_status can disagree with dolt's. That defect resurfaces on every server-mode
+# store that has no local SPIRA_DOLT_DATA configured — which is what every testdb.sh
+# server-mode fixture is, and reproduced the failure directly (sp-sghmt): with no data
+# directory to resolve, the bash engine resolution above fell back to bd anyway, and
+# `bd dolt commit` left the working set dirty while reporting success. beads-store never
+# asks bd — it resolves the store's real dolt engine (a local data directory, or a direct
+# connection to the live sql-server named in .beads/metadata.json) and commits and
+# verifies through that alone (beads-store/DESIGN.md). Production is unaffected: it has
+# SPIRA_DOLT_DATA configured, which beads-store resolves the same way the bash above did.
+BEADS_STORE_BIN="$(spira_bin beads-store)" \
+    || fail_out "beads-store binary not found (spira_bin beads-store) — cannot commit before push."
+commit_out="$("$BEADS_STORE_BIN" commit --db "$DB" --message "beads-push: $stamp" 2>&1)"
+commit_rc=$?
+[ "$commit_rc" -eq 0 ] || fail_out "$commit_out"
+if [ "$commit_out" -gt 0 ] 2>/dev/null; then
+    echo "beads-push: $stamp — committed ${commit_out} dirty table(s) ($(_bp_statute_count "$DB") statutes)"
 fi
 
 # ── PUSH, THEN VERIFY IT BY ITS EFFECT ────────────────────────────────────────
@@ -186,6 +181,9 @@ fi
 # a push that reports success without moving the remote is the same lie with an extra
 # step. So the remote's head is re-read and compared with the local one, and only that
 # comparison is allowed to produce the OK line.
+_bp_probe_engine "$DB" \
+    || fail_out "cannot determine the store's dolt engine to verify the push — no engine could count dolt_status."
+
 # THE BRANCH IS ASKED FOR, NEVER ASSUMED. A store checked out on anything but main
 # would otherwise be verified against a ref that does not move.
 branch="$(_bp_sql "$DB" "select active_branch() as b;" 2>/dev/null \

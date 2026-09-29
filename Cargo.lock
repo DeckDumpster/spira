@@ -99,6 +99,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "beads-store"
+version = "1.0.0"
+dependencies = [
+ "serde_json",
+ "testkit",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -284,6 +292,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "spira-config",
+ "spira-lint",
  "testkit",
  "tsd",
 ]
@@ -1038,6 +1047,7 @@ dependencies = [
  "regex",
  "serde",
  "spira-config",
+ "test-plan",
  "testkit",
  "toml",
 ]
