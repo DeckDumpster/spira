@@ -596,11 +596,30 @@ impl Procs for RealProcs {
             }
             // argv must be our runner, not a recycled pid.
             let cmd = fs::read(format!("/proc/{}/cmdline", pid.trim())).unwrap_or_default();
-            if String::from_utf8_lossy(&cmd).replace('\0', " ").contains("aeon.sh") {
+            if is_aeon_cmdline(&String::from_utf8_lossy(&cmd).replace('\0', " ")) {
                 return true;
             }
         }
         false
+    }
+}
+
+/// Whether a space-joined cmdline is an aeon: the Rust binary (argv[0] `aeon` or `…/aeon`)
+/// or the retired `aeon.sh` — the rule lib.sh aeon_alive, the sentinel, strand and
+/// rebase-stale share.
+pub fn is_aeon_cmdline(cmd: &str) -> bool {
+    let argv0 = cmd.split(' ').next().unwrap_or("");
+    cmd.contains("aeon.sh") || argv0 == "aeon" || argv0.ends_with("/aeon")
+}
+
+#[cfg(test)]
+mod aeon_cmdline_tests {
+    #[test]
+    fn the_binary_and_the_retired_script_are_both_aeons() {
+        assert!(super::is_aeon_cmdline("/r/current/bin/aeon --home /r/current/spira builder "));
+        assert!(super::is_aeon_cmdline("bash /h/spira/aeon.sh builder "));
+        assert!(!super::is_aeon_cmdline("sleep 30 "));
+        assert!(!super::is_aeon_cmdline("/usr/bin/aeonic --x "));
     }
 }
 
