@@ -1,5 +1,6 @@
 //! The trial, in the order DESIGN.md "Order of the trial" gives. One way out: [`Trial::finish`].
 
+use crate::cert;
 use crate::compose::{self, Composition, Forces};
 use crate::key::{self, KeyInputs};
 use crate::parse::{self, Attribution};
@@ -76,6 +77,14 @@ struct State {
     compose: String,
     /// (phase, wall seconds), in the order they ran; the base trial's carry a `base-` prefix.
     phases: Vec<(String, u64)>,
+    /// The tree certificate (cert.rs) a PASS writes: the merged tree judged, the revision
+    /// that carries it, where verdicts live, the harness hash and the suites covered.
+    merged_tree: String,
+    rev: String,
+    verdict_dir: PathBuf,
+    harness_h: String,
+    pass_suites: String,
+    caller: String,
 }
 
 pub struct Trial<'w, W: World> {
@@ -155,6 +164,11 @@ impl<'w, W: World> Trial<'w, W> {
             .unwrap_or_else(|| "-".into());
         self.s.armed = true;
         self.s.start = w.now();
+        self.s.verdict_dir = PathBuf::from(
+            ctx.var_or("SPIRA_VERDICTS", &format!("{}/verdicts", self.s.run))
+                .to_string(),
+        );
+        self.s.caller = ctx.var_or("SPIRA_GATE_CALLER", &br).to_string();
 
         let Some(base) = ctx.landref.clone() else {
             return v(NOVERDICT, "no-base", format!(
@@ -195,6 +209,9 @@ impl<'w, W: World> Trial<'w, W> {
                 }
             }
         };
+
+        self.s.merged_tree = merged_tree.clone();
+        self.s.rev = rev.clone();
 
         // LAYER 1 — every changed shell script parses, as it would land.
         for f in files.lines().filter(|f| f.ends_with(".sh")) {
@@ -279,11 +296,9 @@ impl<'w, W: World> Trial<'w, W> {
 
         // THE VERDICT CACHE.
         let suites_mode = ctx.var_or("SPIRA_GATE_SUITES", "on").to_string();
-        let verdict_dir = PathBuf::from(
-            ctx.var_or("SPIRA_VERDICTS", &format!("{}/verdicts", self.s.run))
-                .to_string(),
-        );
+        let verdict_dir = self.s.verdict_dir.clone();
         if let Some(h) = w.harness_hash() {
+            self.s.harness_h = h.clone();
             self.s.key = key::gate_key(&KeyInputs {
                 repo: &name,
                 tree: &merged_tree,
@@ -304,6 +319,7 @@ impl<'w, W: World> Trial<'w, W> {
                 if let Some((when, by)) =
                     key::cache_fresh(&entry, ctx.var_or("SPIRA_VERDICT_TTL", "0"), w.now())
                 {
+                    self.s.pass_suites = key::cached_suites(&entry);
                     return v(PASS, "cached", format!(
                         "gate: this exact tree already passed {name}'s gate at {when} ({by})\ngate: key {} — same tree, same changed files, same command, same harness.\ngate: gate PASS covered suites: {}",
                         self.s.key, key::cached_suites(&entry)));
@@ -503,6 +519,7 @@ impl<'w, W: World> Trial<'w, W> {
             } else {
                 ran.join(",")
             };
+            self.s.pass_suites = pass_suites.clone();
             if !self.s.key.is_empty() {
                 w.mkdir_p(&verdict_dir);
                 let by = ctx.var_or("SPIRA_GATE_CALLER", &br).to_string();
@@ -730,6 +747,34 @@ impl<'w, W: World> Trial<'w, W> {
         par.min(par_mem)
     }
 
+    /// Every PASS certifies the merged tree it judged (cert.rs; queue/DESIGN.md §8 D12): the
+    /// record `queue land-local` requires before it lands a head with that tree. Keyed by
+    /// `(repo, tree)` only; a PASS that never reached the merge certifies nothing.
+    fn certify(&self) {
+        let w = self.w;
+        let Some(dir) = cert::path(&self.s.verdict_dir, &self.s.repo_name, &self.s.merged_tree)
+            .as_deref()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+        else {
+            return;
+        };
+        let c = cert::Cert {
+            source: cert::Source::Gate,
+            tree: self.s.merged_tree.clone(),
+            repo: self.s.repo_name.clone(),
+            rev: self.s.rev.clone(),
+            branch: self.a.branch.clone(),
+            by: self.s.caller.clone(),
+            when: w.utc(),
+            at: w.now(),
+            harness: self.s.harness_h.clone(),
+            suites: self.s.pass_suites.clone(),
+        };
+        w.mkdir_p(&dir);
+        w.write_atomic(&dir, &self.s.merged_tree, &cert::render(&c));
+    }
+
     /// The one way out: meters, records, certifies and cleans up.
     fn finish(&mut self, vd: Verdict) -> i32 {
         let mut vd = vd;
@@ -751,6 +796,9 @@ impl<'w, W: World> Trial<'w, W> {
             repo_name,
             self.s.suite
         ));
+        if vd.status == PASS {
+            self.certify();
+        }
         if let Some(f) = self.s.filelist.take() {
             w.remove(&f);
         }

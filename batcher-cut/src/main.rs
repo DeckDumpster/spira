@@ -166,6 +166,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
         lc_bin: env::var_os("SPIRA_LC_BIN").map(PathBuf::from),
         lc_timeout: env::var("SPIRA_LC_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(30),
         lc_enforce: spira_config::lifecycle_enforce(None),
+        verdicts: gate::cert::verdicts_dir(env::var("SPIRA_VERDICTS").ok().as_deref(), &run),
     }
 }
 
@@ -261,6 +262,10 @@ fn handle_base_conflicts(
 /// caller can record both without a second pass over the same data.
 struct StableRound {
     members: Vec<Member>,
+    /// The head the full corpus ran green on, and the attribution branch that named it — the
+    /// one tree this round may certify (queue/DESIGN.md §8 D12).
+    head: String,
+    green_branch: String,
     /// Wall time of the (first) attribute.sh call that named a culprit — None when the round
     /// was green from its very first corpus run and attribution never ran.
     attribution_seconds: Option<u64>,
@@ -312,7 +317,7 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
         let reds = io::red_names(&first);
         if reds.is_empty() {
             let regreen_seconds = red_detected_at.map(|at| now().saturating_sub(at));
-            return Ok(Some(StableRound { members: round_members, attribution_seconds, regreen_seconds }));
+            return Ok(Some(StableRound { members: round_members, head, green_branch: iter_branch, attribution_seconds, regreen_seconds }));
         }
         if red_detected_at.is_none() {
             red_detected_at = Some(now());
@@ -402,6 +407,28 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
             ],
         );
         return Ok(());
+    }
+
+    // The round's own certification (queue/DESIGN.md §8 D12): its full corpus ran green on
+    // stable.head, so that tree — and only that one — carries a round GREEN. land-local
+    // refuses any other head, so a worktree that moved since the corpus run cannot land.
+    match io::certify_round(env_, repo, &stable.head, &stable.green_branch) {
+        Ok(p) => println!("batcher {}: certified the round's tree (round GREEN at {}) — {}", repo.name, stable.head, p.display()),
+        Err(e) => {
+            let msg = format!("batcher {}: refused to land locally at {head} — cannot record the round's certificate: {e}", repo.name);
+            println!("{msg}");
+            io::write_local_verdict(env_, &repo.name, "red", &msg);
+            io::tsd_append_round(
+                env_,
+                &[
+                    ("repo", repo.name.clone()),
+                    ("verdict", "refused".to_string()),
+                    ("duration_ms", ((now() - round_start) * 1000).to_string()),
+                    ("base", base_sha.to_string()),
+                ],
+            );
+            return Ok(());
+        }
     }
 
     let member_pairs: Vec<(String, String)> = stable.members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();

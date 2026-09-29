@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 batcher = { path = "../batcher" }
 spira-config = { path = "../spira-config" }
+gate = { path = "../gate" }
 serde_json = "1"
 
 [profile.release]
