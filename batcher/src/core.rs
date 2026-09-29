@@ -116,14 +116,16 @@ pub struct PoolHistory {
     pub round_duration_mins: f64,
 }
 
-/// N ≈ certify rate × round duration, clamped to [4, 30]. The pool that fills during one
-/// round is the next round.
+/// N ≈ certify rate × round duration, clamped to [1, 30]. The pool that fills during one
+/// round is the next round. Floor of 1, not a larger bootstrap number: no history yet means
+/// `h` is `PoolHistory::default()`, and law-batcher-earns-the-round-by-parity's own rule is
+/// to cut on the first certified member until there is real history to adapt from.
 pub fn adaptive_n(h: PoolHistory) -> u32 {
     let raw = (h.certify_rate_per_min * h.round_duration_mins).round();
     if raw.is_nan() {
-        return 4;
+        return 1;
     }
-    raw.clamp(4.0, 30.0) as u32
+    raw.clamp(1.0, 30.0) as u32
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

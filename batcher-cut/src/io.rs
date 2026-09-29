@@ -393,55 +393,29 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
 }
 
 // ---------------------------------------------------------------------------------------
-// Pool history: this repo's own batch-round TSD rows, so adaptive_n has something to work
-// from once at least one round has landed. No prior round: PoolHistory::default(), which
-// adaptive_n reads as N=4 — the same bootstrap floor a fresh install starts from anyway.
+// Pool history: this repo's own batch-round TSD rows (`tsd_append_round`'s "members"/
+// "duration_ms"), never the live pool — that was the tautology, certify_rate and duration
+// both derived from the pool being judged. No completed round yet: PoolHistory::default(),
+// which adaptive_n reads as N=1 (law-batcher-earns-the-round-by-parity's own floor).
 // ---------------------------------------------------------------------------------------
 
-pub fn pool_history(run_dir: &Path, repo_name: &str, pool_len: usize) -> PoolHistory {
+/// `_pool_len` stays in the signature so callers don't have to change; the answer no longer
+/// depends on it.
+pub fn pool_history(run_dir: &Path, repo_name: &str, _pool_len: usize) -> PoolHistory {
     let path = run_dir.join("tsd").join("batch-round.jsonl");
     let Ok(text) = fs::read_to_string(&path) else { return PoolHistory::default() };
-    let mut last_ts: Option<String> = None;
     for line in text.lines().rev() {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
         if v.get("repo").and_then(|r| r.as_str()) != Some(repo_name) {
             continue;
         }
-        last_ts = v.get("ts").and_then(|t| t.as_str()).map(|s| s.to_string());
-        break;
+        let members = v.get("members").and_then(|m| m.as_str()).and_then(|s| s.parse::<f64>().ok());
+        let duration_ms = v.get("duration_ms").and_then(|m| m.as_str()).and_then(|s| s.parse::<f64>().ok());
+        let (Some(members), Some(duration_ms)) = (members, duration_ms) else { continue };
+        let round_duration_mins = (duration_ms / 1000.0 / 60.0).max(1.0 / 60.0);
+        return PoolHistory { certify_rate_per_min: members / round_duration_mins, round_duration_mins };
     }
-    let Some(ts) = last_ts else { return PoolHistory::default() };
-    let Some(then) = parse_iso(&ts) else { return PoolHistory::default() };
-    let mins = (now().saturating_sub(then) as f64 / 60.0).max(1.0);
-    PoolHistory { certify_rate_per_min: pool_len as f64 / mins, round_duration_mins: mins }
-}
-
-fn parse_iso(s: &str) -> Option<u64> {
-    // "YYYY-MM-DDTHH:MM:SSZ" -> epoch seconds (Howard Hinnant's civil-to-days, inverse of
-    // queue-watch's iso()).
-    let b = s.as_bytes();
-    if b.len() < 19 {
-        return None;
-    }
-    let y: i64 = s.get(0..4)?.parse().ok()?;
-    let m: i64 = s.get(5..7)?.parse().ok()?;
-    let d: i64 = s.get(8..10)?.parse().ok()?;
-    let hh: i64 = s.get(11..13)?.parse().ok()?;
-    let mm: i64 = s.get(14..16)?.parse().ok()?;
-    let ss: i64 = s.get(17..19)?.parse().ok()?;
-    let y2 = if m <= 2 { y - 1 } else { y };
-    let era = if y2 >= 0 { y2 } else { y2 - 399 } / 400;
-    let yoe = y2 - era * 400;
-    let mp = (m + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146_097 + doe - 719_468;
-    let secs = days * 86_400 + hh * 3600 + mm * 60 + ss;
-    if secs < 0 {
-        None
-    } else {
-        Some(secs as u64)
-    }
+    PoolHistory::default()
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1119,6 +1093,58 @@ mod land_tests {
     }
 }
 // Deleted by sp-xbe3u (law-a-test-that-flips-is-deleted): it failed under the full-workspace unit gate and passed in isolation; sp-ajonc fixes the race and re-adds it.
+#[cfg(test)]
+mod pool_history_tests {
+    use super::*;
+    use batcher::core::adaptive_n;
+
+    fn tmpdir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("batcher-cut-poolhist-{}-{tag}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn write_round(dir: &Path, repo: &str, members: &str, duration_ms: &str) {
+        let tsd = dir.join("tsd");
+        fs::create_dir_all(&tsd).unwrap();
+        let line = format!(
+            r#"{{"ts":"2026-09-27T00:00:00Z","host":"h","family":"batch-round","repo":"{repo}","verdict":"green","members":"{members}","duration_ms":"{duration_ms}","base":"deadbeef"}}"#
+        );
+        fs::write(tsd.join("batch-round.jsonl"), format!("{line}\n")).unwrap();
+    }
+
+    #[test]
+    fn no_history_defaults_and_adaptive_n_is_one_not_four() {
+        let d = tmpdir("none");
+        let hist = pool_history(&d, "spira", 30);
+        assert_eq!(hist, PoolHistory::default());
+        assert_eq!(adaptive_n(hist), 1);
+    }
+
+    // SEEN RED on today's code: adaptive_n(pool_history(..., n)) always came back as n
+    // itself, clamped — this asserted 7 with pool_len=30 and got 30.
+    #[test]
+    fn rate_comes_from_the_last_rounds_own_record_not_the_live_pool() {
+        let d = tmpdir("real");
+        write_round(&d, "spira", "7", "600000"); // 7 members landed over 10 minutes
+        let hist = pool_history(&d, "spira", 30);
+        assert_eq!(adaptive_n(hist), 7);
+        assert_ne!(adaptive_n(hist), 30_u32.clamp(4, 30), "must not equal clamp(pool_len, 4, 30)");
+
+        // Same history, a different live pool passed in: the answer does not move.
+        let hist_other = pool_history(&d, "spira", 2);
+        assert_eq!(adaptive_n(hist_other), adaptive_n(hist));
+    }
+
+    #[test]
+    fn only_this_repos_own_rows_count() {
+        let d = tmpdir("otherrepo");
+        write_round(&d, "other", "20", "60000");
+        assert_eq!(pool_history(&d, "spira", 5), PoolHistory::default());
+    }
+}
+
 #[cfg(test)]
 mod result_path_tests {
     #[test]

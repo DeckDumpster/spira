@@ -868,7 +868,7 @@ cut_local() {
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
-    SPIRA_QUEUE_BATCH_WAIT=999999 \
+    SPIRA_QUEUE_BATCH_WAIT="${SPIRA_QUEUE_BATCH_WAIT_OVERRIDE:-999999}" \
     SPIRA_RELEASES="$LRELEASES" \
     SPIRA_LC_STACKS_DIR="${SPIRA_LC_STACKS_DIR:-}" \
     STUB_INSTALL_BINS="${STUB_INSTALL_BINS:-}" \
@@ -922,6 +922,30 @@ if command -v tsd-write >/dev/null 2>&1; then
     want "L2: TSD batch-round row records verdict=landed_local" '"verdict":"landed_local"' \
         "$(tail -1 "$RUN/tsd/batch-round.jsonl" 2>/dev/null)"
 fi
+
+# =============================================================================
+# CASE N — pacing parity (sp-ffezo, law-batcher-earns-the-round-by-parity): a pool of ONE
+# non-express certified member, no batch open, cuts even though queue_batch_wait is a year —
+# the Concierge's own hand rule, not an adaptive N that reduced to the live pool itself.
+# SEEN RED on today's code: sp-cnaa1 alone never reached N=4, and the year-long wait keeps
+# the idle path from firing either, so cut reports "no round cut: no trigger".
+# =============================================================================
+echo
+echo "N. pacing parity: pool of one, no batch open, cuts despite a year-long queue_batch_wait:"
+
+plant sp-cnaa1
+git -C "$LREPO" worktree add -q -b spira/sp-cnaa1 "$RUN/worktree/sp-cnaa1" trunk
+printf 'n\n' > "$RUN/worktree/sp-cnaa1/n.txt"
+git -C "$RUN/worktree/sp-cnaa1" add -A
+git -C "$RUN/worktree/sp-cnaa1" commit -q -m "sp-cnaa1: work"
+tip_n="$(git -C "$LREPO" rev-parse spira/sp-cnaa1)"
+git -C "$LREPO" worktree remove -f "$RUN/worktree/sp-cnaa1"
+certify sp-cnaa1 "$tip_n"
+
+out_n="$(SPIRA_QUEUE_BATCH_WAIT_OVERRIDE=31536000 STUB_INSTALL_BINS=1 cut_local)"
+nowant "N: never reports no-trigger — a pool of one is enough" "no round cut: no trigger" "$out_n"
+want   "N: reports landing locally"                             "landed locally"          "$out_n"
+is     "N: sp-cnaa1 landstate LANDED"                            "LANDED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cnaa1")"
 
 # =============================================================================
 # CASE M — stacked dependents (sp-lno75, design stacked-dependents-2026-09-28): a round that
