@@ -253,7 +253,9 @@ impl<'a> Session<'a> {
     /// configure, suspend the Rust-backed units the image cannot build, install.
     pub fn install(&self, log: &dyn Fn(&str)) -> Result<(), Fault> {
         log(&format!("configure inside {}", self.name));
-        if !self.rt.exec(&self.configure_request()).ok() {
+        let out = self.rt.exec(&self.configure_request());
+        if !out.ok() {
+            log(&format!("configure rc={} output tail:\n{}", out.rc, out.tail(40)));
             return Err(Fault::Install("configure failed — harness fault".into()));
         }
         log(&format!(
@@ -271,7 +273,9 @@ impl<'a> Session<'a> {
             "install instance {} inside {}",
             self.instance, self.name
         ));
-        if !self.rt.exec(&self.install_request()).ok() {
+        let out = self.rt.exec(&self.install_request());
+        if !out.ok() {
+            log(&format!("install rc={} output tail:\n{}", out.rc, out.tail(40)));
             return Err(Fault::Install("install failed — harness fault".into()));
         }
         Ok(())

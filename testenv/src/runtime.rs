@@ -82,6 +82,12 @@ impl ExecOutcome {
     pub fn ok(&self) -> bool {
         self.rc == 0
     }
+
+    /// The last `n` lines of the captured output, so a fault carries its evidence.
+    pub fn tail(&self, n: usize) -> String {
+        let lines: Vec<&str> = self.output.lines().collect();
+        lines[lines.len().saturating_sub(n)..].join("\n")
+    }
 }
 
 pub trait ContainerRuntime: Send + Sync {
@@ -286,6 +292,14 @@ impl ContainerRuntime for Podman {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tail_keeps_only_the_last_lines_of_the_output() {
+        let o = ExecOutcome { rc: 5, output: "a\nb\nc\nd".into() };
+        assert_eq!(o.tail(2), "c\nd");
+        assert_eq!(o.tail(10), "a\nb\nc\nd");
+        assert_eq!(ExecOutcome { rc: 1, output: String::new() }.tail(3), "");
+    }
 
     #[test]
     fn exec_args_put_user_and_env_before_the_container() {
