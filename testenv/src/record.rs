@@ -355,7 +355,7 @@ mod tests {
         let out = "x\nFAIL: thing at /tmp/abc.123/foo 2026-09-28T12:34:56Z\nmore\nFAIL again 12:00:01 count 12345";
         assert_eq!(fingerprint(2, out), "30044042365");
         assert_eq!(
-            fingerprint(3, "path /home/u/sptest_abc/x/sptest_def_9 end"),
+            fingerprint(3, "path /var/tmp/u/sptest_abc/x/sptest_def_9 end"),
             "66151181917"
         );
     }

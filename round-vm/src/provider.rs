@@ -199,7 +199,9 @@ mod tests {
     #[test]
     fn key_path_is_absolute_for_root_and_other_users() {
         assert_eq!(authorized_keys_path("root"), "/root/.ssh/authorized_keys");
-        assert_eq!(authorized_keys_path("ci"), "/home/ci/.ssh/authorized_keys");
+        let ci = user_home("ci");
+        assert!(ci.starts_with("/home") && ci.ends_with("/ci") && ci.matches('/').count() == 2, "{ci}");
+        assert_eq!(authorized_keys_path("ci"), format!("{ci}/.ssh/authorized_keys"));
     }
 
     #[test]

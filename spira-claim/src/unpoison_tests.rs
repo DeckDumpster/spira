@@ -424,7 +424,7 @@ fn watching() -> (Fake, Opts) {
     let mut f = poisoned_a();
     // History from before the clear: a whole pass, plus bash noise.
     f.log(T0 - 600, "CHECK4 examining 205 dispatchable bead(s), poison=3 requeue=5 reclaim=5");
-    f.audit.extend_from_slice(b"/home/ryan/spira/harness/spira/sentinel.sh: line 705: _phase: command not found\n");
+    f.audit.extend_from_slice(b"/srv/harness/spira/sentinel.sh: line 705: _phase: command not found\n");
     f.log(T0 - 500, "audit pass complete — 2 action(s), 2 progress");
     let mut o = opts(&["sp-a"]);
     o.watch = true;
@@ -438,7 +438,7 @@ fn watch_reads_audit_log_line() {
         2 => {
             let t = f.now;
             f.log(t, "CHECK4 examining 205 dispatchable bead(s), poison=3 requeue=5 reclaim=5");
-            f.audit.extend_from_slice(b"/home/ryan/spira/harness/spira/sentinel.sh: line 894: _phase: command not found\n");
+            f.audit.extend_from_slice(b"/srv/harness/spira/sentinel.sh: line 894: _phase: command not found\n");
         }
         4 => {
             let t = f.now;
@@ -558,7 +558,7 @@ fn audit_line_parsing() {
         parse_audit_line("2026-09-29T03:52:00Z spira: CHECK4 bulk attempts query failed (rc=2) — making no poison/requeue/reclaim decision this pass"),
         AuditLine::CountsFailed { .. }
     ));
-    assert_eq!(parse_audit_line("/home/ryan/spira/harness/spira/sentinel.sh: line 705: _phase: command not found"), AuditLine::Other);
+    assert_eq!(parse_audit_line("/srv/harness/spira/sentinel.sh: line 705: _phase: command not found"), AuditLine::Other);
     assert_eq!(parse_audit_line("2026-09-29T03:52:00Z spira: CHECK5: resolved 1 incident(s)"), AuditLine::Other);
     assert_eq!(parse_audit_line(""), AuditLine::Other);
     assert_eq!(fmt_utc(T0), "2026-09-28T12:00:00Z");
