@@ -66,3 +66,4 @@ spira/test-workspace-dist.sh
 # the check is FOR, not a call site of spira_bin (there is no running cockpit under
 # SPIRA_ARTIFACTS).
 cockpit/layout.sh
+queue/src/tests.rs    # land-local's checkout deploy (queue DESIGN D11) installs round binaries; its tests name target/release by design
