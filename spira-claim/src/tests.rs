@@ -465,3 +465,31 @@ esac"#,
     assert!(rank::epic_started(&st.children("sp-E").unwrap(), "spira-submitted"));
     assert!(!rank::epic_started(&st.children("sp-F").unwrap(), "spira-submitted"));
 }
+
+#[test]
+fn unpoison_usage_errors() {
+    // Named arguments only; every refusal here happens before any store is read.
+    assert_eq!(run(&["unpoison", "--cause", "x"], "").code, USAGE, "--bead is required");
+    assert_eq!(run(&["unpoison", "--bead", "sp-a"], "").code, USAGE, "--cause is required");
+    assert_eq!(run(&["unpoison", "--bead", "sp-a", "--cause", "  "], "").code, USAGE, "blank cause");
+    assert_eq!(run(&["unpoison", "sp-a", "--cause", "x"], "").code, USAGE, "positional bead");
+    assert_eq!(run(&["unpoison", "--bead", "sp a", "--cause", "x"], "").code, USAGE, "bad id");
+    assert_eq!(run(&["unpoison", "--bead", "sp-a", "--cause", "x", "--credit", "Bad Slug"], "").code, USAGE);
+    assert_eq!(run(&["unpoison", "--bead", "sp-a", "--cause", "x", "--frob", "1"], "").code, USAGE);
+    let o = run(&["unpoison", "--bead", "sp-a"], "");
+    assert!(o.err.contains("--cause is required"), "{}", o.err);
+    assert!(o.out.is_empty());
+}
+
+#[test]
+fn lifecycle_enforce_resolution_matches_aeon() {
+    let on = Config { lifecycle_enforce: Some(true), ..Config::default() };
+    let unset = Config::default();
+    assert!(lifecycle_enforce(None, &on));
+    assert!(!lifecycle_enforce(Some("0"), &on), "the environment wins");
+    assert!(!lifecycle_enforce(Some(""), &on), "set-but-empty is off, as aeon");
+    assert!(lifecycle_enforce(Some("1"), &unset));
+    assert!(lifecycle_enforce(Some("true"), &unset));
+    assert!(!lifecycle_enforce(Some("yes"), &unset));
+    assert!(!lifecycle_enforce(None, &unset), "default off");
+}
