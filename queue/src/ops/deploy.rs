@@ -335,9 +335,9 @@ fn read_toml(path: &Path) -> Result<toml::Value, String> {
     src.parse::<toml::Value>().map_err(|e| format!("cannot parse {}: {e}", path.display()))
 }
 
-/// Atomically make `<bin_dir>/<name>` a symlink to `target` (`<checkout>/target/release/<name>`,
-/// the path `spira_bin` resolves in production). Idempotent: a link already pointing there
-/// is left alone.
+/// Atomically make `<bin_dir>/<name>` a symlink to `target` (the checkout's own
+/// target/release, joined with `<name>` — the path `spira_bin` resolves in production).
+/// Idempotent: a link already pointing there is left alone.
 fn link_bin(bin_dir: &Path, name: &str, target: &Path) -> Result<(), String> {
     fs::create_dir_all(bin_dir).map_err(|e| format!("cannot create {}: {e}", bin_dir.display()))?;
     let link = bin_dir.join(name);
