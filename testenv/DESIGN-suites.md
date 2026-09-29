@@ -349,11 +349,31 @@ incident.sh, mail.sh, host-check.sh and the queue (whole programs, §5).
   in a reason silently truncated the row on read; `|` in a suite or bead shifted fields.
   Refused with exit 2. `--reason-file F|-` added (law-payloads-go-on-stdin).
 * **D7 — a suite name is a basename.** `observe-flake` and transitions refuse a name with
-  `/` or a leading `.`, since it is joined into STATE paths and a tree path.
+  `/` or a leading `.`, since it is joined into STATE paths and a tree path. A run id's
+  internal whitespace is folded to `_` so one observation stays one line.
 * **D8 — suite existence for a transition is checked in `<base>`'s tree** (`spira/<suite>`),
   the tree the commit is made on, rather than in whatever checkout the tool runs from.
 * **D9 — filing diagnostics are visible.** file_flake's `log` lines went into the
   `$(...)` that captured the bead id and were discarded; they go to stderr.
+* **D10 — the population is sorted bytewise.** suites.sh piped the glob through `sort`,
+  which collates by the caller's locale (en_US puts `test-acceptance-local-stop.sh` before
+  `test-acceptance-local.sh`; C does the reverse), so `list`/`names`/`corpus` order changed
+  with whoever ran it. Byte order is deterministic. The sets are identical (verified, §8).
+
+## 6a. lifecycle_enforce (operator decision, 2026-09-28)
+
+`lifecycle_enforce` is the single switch for everything touching spira-lc (env
+`SPIRA_LIFECYCLE_ENFORCE` `1`/`true`, else `spira.lifecycle_enforce`, else OFF).
+**`testenv suites` never touches spira-lc in either mode**: no subcommand runs it, reads
+`SPIRA_LC_BIN`, sources lc.sh, or reads the switch, so OFF and ON behave identically here.
+The one lifecycle fact it reads — whether a quarantine's bead LANDED (hygiene, D4) — comes
+from `$LANDSTATE/<id>`, which lib.sh `land_mark` writes whichever way the switch is set
+(queue land-local calls it in both modes). A transition's `queue submit` is the queue
+binary's own business, and the queue crate applies the switch there. Pinned by the unit
+test `suites::tests::suites_never_touches_spira_lc_in_either_lifecycle_mode` (the module
+sources name none of spira-lc / SPIRA_LC_BIN / lc.sh / the switch; settings resolve
+identically with the switch at 0 and 1; hygiene's LANDED decision is the landstate
+file's).
 
 ## 7. Findings (not fixed here)
 
@@ -374,7 +394,21 @@ incident.sh, mail.sh, host-check.sh and the queue (whole programs, §5).
   Ops aeon to run `{{SUITES}} run` "before you start diagnosing"; it exits 2 with a usage
   line. The Cutover drops that step.
 
-## 8. Cutover (for the Concierge — no bash, unit or workflow edited here)
+## 8. Verification
+
+* `cargo test -p testenv`: 133 passed (45 in `suites::`), `cargo clippy -p testenv
+  --all-targets` clean, `cargo build --workspace` clean.
+* Read-only parity against `bash spira/suites.sh` on this worktree (same
+  `SPIRA_SUITES_STATE`): `status` byte-identical (559 suites, 20 gated, host-check counts
+  497/150); `names` (539), `corpus` (559) and `list` identical as sets, differing only in
+  order (D10).
+* `testenv suites run` → usage, exit 2; `observe-flake` with no suite → exit 2;
+  `SPIRA_AEON=x … quarantine` → the aeon refusal, exit 1.
+* Transitions were exercised only against a scratch git repository (real git plumbing,
+  `suites::real::tests::commit_file_builds_a_branch_without_touching_the_checkout`) and
+  fakes; no queue submit was run.
+
+## 9. Cutover (for the Concierge — no bash, unit or workflow edited here)
 
 Line numbers against 4764d03ec. `SPIRA_TESTENV_BIN` is new, resolved like its neighbours.
 

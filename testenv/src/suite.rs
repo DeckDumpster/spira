@@ -74,6 +74,17 @@ pub enum SuiteState {
     Disabled,
 }
 
+impl SuiteState {
+    /// The word the state file and suites' messages use.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SuiteState::Active => "active",
+            SuiteState::Quarantined => "quarantined",
+            SuiteState::Disabled => "disabled",
+        }
+    }
+}
+
 /// One row of `spira/suite-state`: `<suite> | <state> | <since> | <bead> | <reason>`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SuiteStateRow {
@@ -122,6 +133,11 @@ impl SuiteStates {
             });
         }
         SuiteStates { rows }
+    }
+
+    /// Every row, one per suite (the first a file names), sorted by suite.
+    pub fn rows(&self) -> impl Iterator<Item = &SuiteStateRow> {
+        self.rows.values()
     }
 
     pub fn state_of(&self, suite: &str) -> SuiteState {
