@@ -1,11 +1,13 @@
 [Unit]
 Description=Spira verdict — settle open merge-queue batches
-Documentation=file://@SPIRA_HOME@/spira-verdict.sh
+Documentation=file://@SPIRA_PROD_ROOT@/queue/DESIGN.md
 After=default.target
 
 [Service]
 Type=oneshot
-ExecStart=@SPIRA_PROD@/spira-verdict.sh
+ExecStart=@SPIRA_PROD_ROOT@/bin/queue step --all
+# The binary finds lib.sh through SPIRA_HOME; the script it replaced found it beside itself.
+Environment=SPIRA_HOME=@SPIRA_PROD@
 # TimeoutStartSec covers the longest legitimate job: a red batch replays each member
 # in a container, which takes several minutes per member at full CPU. 3600s matches
 # the CI-run ceiling (SPIRA_QUEUE_CI_MAXSEC). CPUQuota is absent: throttling the

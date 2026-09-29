@@ -428,7 +428,7 @@ _place_dolt_yaml() {  # args: <template-name> <data-dir>
 [ -n "${SPIRA_DOLT_DATA:-}" ]   && _place_dolt_yaml dolt-server.yaml      "$SPIRA_DOLT_DATA"
 [ -n "${SPIRA_TESTDB_DATA:-}" ] && _place_dolt_yaml dolt-server-test.yaml "$SPIRA_TESTDB_DATA"
 
-# SEED THE TEST PROD CHECKOUT'S CONFIG. A non-prod sentinel runs from $SPIRA_PROD/sentinel.sh.
+# SEED THE TEST PROD CHECKOUT'S CONFIG. A non-prod sentinel runs from $SPIRA_PROD/../bin/sentinel.
 # That conf.sh resolves SPIRA_REPO as the git root of $SPIRA_PROD, then looks for
 # $SPIRA_REPO/spira.conf BEFORE ~/.config/spira/spira.conf. Without that file the sentinel
 # falls through to the prod config — using the prod database, prod runtime tree, and
