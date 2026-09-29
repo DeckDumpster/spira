@@ -692,3 +692,212 @@ fn a_deadline_run_that_finishes_everything_is_a_full_green() {
         w.last()
     );
 }
+
+// ---- --artifacts: prebuilt executables, no cargo (DESIGN.md D8) ------------------------
+
+fn prebuilt_dir(w: &World, names: &[&str], body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let d = w.root.join("bin");
+    let _ = fs::remove_dir_all(&d);
+    fs::create_dir_all(&d).unwrap();
+    for n in names {
+        let p = d.join(n);
+        fs::write(&p, format!("{n} {body}")).unwrap();
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    d
+}
+
+fn meta(res: &Path) -> String {
+    fs::read_to_string(res.join("batch.meta")).unwrap()
+}
+
+#[test]
+fn prebuilt_artifacts_are_staged_and_tested_without_cargo() {
+    let w = World::new("prebuilt");
+    let rt = runtime();
+    let b = FakeBuilder::new(Some(101)); // would be a candidate fault if it were ever called
+    let dir = prebuilt_dir(&w, &["spira-config", "test-plan", "testenv", "loom"], "v1");
+    // relative to the caller's directory, as gate.yml passes `bin`
+    let rc = w.run(
+        &rt,
+        &b,
+        &["--artifacts", "bin", "--suites", "test-a.sh", "topic"],
+        "",
+        &w.root,
+    );
+    assert_eq!(rc, 0, "{:?}", w.lines.lock().unwrap());
+    assert_eq!(w.last(), "VERDICT GREEN ran=1");
+    assert_eq!(
+        b.calls.load(Ordering::SeqCst),
+        0,
+        "cargo must not be invoked"
+    );
+    assert!(w.has_line(|l| l.contains("--artifacts: 4 prebuilt executable(s)")));
+    for r in rt.suite_execs() {
+        assert_eq!(
+            r.env_value("SPIRA_ARTIFACTS"),
+            Some("/workspace/target/prebuilt")
+        );
+    }
+    let m = meta(&w.results_dir());
+    let canon = fs::canonicalize(&dir).unwrap();
+    assert!(m.contains(&format!(
+        "profile=prebuilt\nartifacts={}\n",
+        canon.display()
+    )));
+    assert!(m.contains("\nbuild=prebuilt\nartifacts_id="));
+    let staged = m
+        .lines()
+        .find_map(|l| l.strip_prefix("staged="))
+        .map(PathBuf::from)
+        .unwrap();
+    assert!(staged.ends_with("target/prebuilt"));
+    assert_eq!(
+        fs::read_to_string(staged.join("loom")).unwrap(),
+        "loom v1",
+        "every executable is staged into the worktree the container sees"
+    );
+}
+
+#[test]
+fn an_invalid_artifacts_directory_is_a_fault_that_builds_nothing() {
+    let w = World::new("prebuilt-bad");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    // absent directory
+    assert_eq!(
+        w.run(
+            &rt,
+            &b,
+            &["--artifacts", "nowhere", "--suites", "test-a.sh", "topic"],
+            "",
+            &w.root
+        ),
+        2
+    );
+    assert_eq!(
+        w.last(),
+        "VERDICT FAULT rc=2 ran=0 reason=artifacts-invalid"
+    );
+    // a partial set: test-plan missing
+    prebuilt_dir(&w, &["spira-config", "testenv"], "v1");
+    assert_eq!(
+        w.run(
+            &rt,
+            &b,
+            &["--artifacts", "bin", "--suites", "test-a.sh", "topic"],
+            "",
+            &w.root
+        ),
+        2
+    );
+    assert_eq!(
+        w.last(),
+        "VERDICT FAULT rc=2 ran=0 reason=artifacts-invalid"
+    );
+    assert_eq!(
+        b.calls.load(Ordering::SeqCst),
+        0,
+        "never a build in its place"
+    );
+    assert!(rt.testenv_calls.lock().unwrap().is_empty(), "no container");
+    // the workspace's own binary targets are required too, not just the floor
+    let ws = w.repo.join("Cargo.toml");
+    fs::write(&ws, "[workspace]\nmembers = [\"tool\"]\n").unwrap();
+    fs::create_dir_all(w.repo.join("tool/src")).unwrap();
+    fs::write(
+        w.repo.join("tool/Cargo.toml"),
+        "[package]\nname = \"tool\"\n",
+    )
+    .unwrap();
+    fs::write(w.repo.join("tool/src/main.rs"), "fn main(){}").unwrap();
+    sh(
+        &w.repo,
+        "git checkout -q topic && git add -A && git commit -qm ws && git checkout -q main",
+    );
+    prebuilt_dir(&w, &["spira-config", "test-plan", "testenv"], "v1");
+    assert_eq!(
+        w.run(
+            &rt,
+            &b,
+            &["--artifacts", "bin", "--suites", "test-a.sh", "topic"],
+            "",
+            &w.root
+        ),
+        2
+    );
+    assert_eq!(
+        w.last(),
+        "VERDICT FAULT rc=2 ran=0 reason=artifacts-invalid"
+    );
+    prebuilt_dir(&w, &["spira-config", "test-plan", "testenv", "tool"], "v1");
+    assert_eq!(
+        w.run(
+            &rt,
+            &b,
+            &["--artifacts", "bin", "--suites", "test-a.sh", "topic"],
+            "",
+            &w.root
+        ),
+        0,
+        "the same set plus the workspace's `tool` is complete"
+    );
+    assert_eq!(b.calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn without_artifacts_the_build_and_batch_meta_are_unchanged() {
+    let w = World::new("prebuilt-default");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(
+        w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root),
+        0
+    );
+    assert_eq!(b.calls.load(Ordering::SeqCst), 1);
+    let m = meta(&w.results_dir());
+    assert!(m.contains("profile=aeon\nartifacts="));
+    assert!(m.contains("/target/aeon\n"));
+    assert!(!m.contains("build=") && !m.contains("artifacts_id=") && !m.contains("staged="));
+    for r in rt.suite_execs() {
+        assert_eq!(
+            r.env_value("SPIRA_ARTIFACTS"),
+            Some("/workspace/target/aeon")
+        );
+    }
+}
+
+#[test]
+fn a_prebuilt_green_is_keyed_by_the_binaries_it_tested() {
+    let w = World::new("prebuilt-key");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let args = ["--artifacts", "bin", "--suites", "test-a.sh", "topic"];
+    // a cargo green does not replay for a prebuilt run
+    assert_eq!(
+        w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root),
+        0
+    );
+    prebuilt_dir(&w, &["spira-config", "test-plan", "testenv"], "v1");
+    assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
+    assert_eq!(w.last(), "VERDICT GREEN ran=1");
+    let k1 = w.results_dir();
+    // the same bytes do replay
+    assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
+    assert!(
+        w.last().starts_with("VERDICT GREEN ran=0 cached="),
+        "{}",
+        w.last()
+    );
+    // a different build of the same tree does not
+    prebuilt_dir(&w, &["spira-config", "test-plan", "testenv"], "v2");
+    assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
+    assert_eq!(w.last(), "VERDICT GREEN ran=1");
+    assert_ne!(k1, w.results_dir());
+    assert_eq!(
+        b.calls.load(Ordering::SeqCst),
+        1,
+        "only the cargo run built"
+    );
+}

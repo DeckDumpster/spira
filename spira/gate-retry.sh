@@ -9,11 +9,16 @@
 # are genuinely red (non-timeout), or when they exceed half of all recorded results — whichever
 # fires first. Timed-out suites (rc=124) never count toward the structural threshold; they are
 # always re-run with a longer cap (GATE_RETRY_RERUN_TIMEOUT, default 1200 s).
+#
+# GATE_RETRY_ARTIFACTS: when set, the re-run passes `--artifacts <dir>` so it tests the same
+# prebuilt executables the first batch did, on a runner with no cargo (testenv DESIGN D8).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 BATCH="${GATE_RETRY_BATCH:-${SPIRA_TESTENV_BIN:-$HERE/../bin/testenv}}"
 ROOT="${1:?usage: gate-retry.sh <results-root> <rev>}"
 REV="${2:?usage: gate-retry.sh <results-root> <rev>}"
+_art=()
+[ -n "${GATE_RETRY_ARTIFACTS:-}" ] && _art=(--artifacts "$GATE_RETRY_ARTIFACTS")
 
 red_in() {
     local f status out=""
@@ -61,9 +66,9 @@ printf 'gate-retry: re-running serially: %s\n' "$reds"
 rc=0
 if [ "$_timeout_count" -gt 0 ]; then
     printf '%s\n' $reds | SPIRA_SUITE_TIMEOUT="${GATE_RETRY_RERUN_TIMEOUT:-1200}" \
-        SPIRA_BATCH_RESULTS="$ROOT-retry" "$BATCH" --mode serial --suites - "$REV" || rc=$?
+        SPIRA_BATCH_RESULTS="$ROOT-retry" "$BATCH" ${_art[@]+"${_art[@]}"} --mode serial --suites - "$REV" || rc=$?
 else
-    printf '%s\n' $reds | SPIRA_BATCH_RESULTS="$ROOT-retry" "$BATCH" --mode serial --suites - "$REV" || rc=$?
+    printf '%s\n' $reds | SPIRA_BATCH_RESULTS="$ROOT-retry" "$BATCH" ${_art[@]+"${_art[@]}"} --mode serial --suites - "$REV" || rc=$?
 fi
 case "$rc" in
     0)  for s in $reds; do printf '::warning title=flaky suite::%s was red, then green on a serial re-run\n' "$s"; done

@@ -25,6 +25,10 @@ pub struct KeyInputs {
     pub mode: Mode,
     pub producer: Producer,
     pub profile: String,
+    /// `--artifacts` only: the prebuilt set's content hash (DESIGN.md D8). None leaves the
+    /// key line exactly as it was before the flag existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifacts_id: Option<String>,
 }
 
 impl KeyInputs {
@@ -37,8 +41,13 @@ impl KeyInputs {
     }
 
     pub fn key(&self) -> String {
+        let prebuilt = self
+            .artifacts_id
+            .as_deref()
+            .map(|id| format!(" prebuilt={id}"))
+            .unwrap_or_default();
         let line = format!(
-            "{} {} {} {} {} {} {} {}\n",
+            "{} {} {} {} {} {} {} {}{prebuilt}\n",
             self.repo_name,
             self.tree,
             self.image_tag,
@@ -232,6 +241,7 @@ mod tests {
             mode: Mode::Parallel,
             producer: Producer::Explicit,
             profile: "aeon".into(),
+            artifacts_id: None,
         }
     }
 
@@ -262,6 +272,23 @@ mod tests {
         let mut v = inputs();
         v.image_tag = "t2".into();
         assert_ne!(base, v.key());
+    }
+
+    #[test]
+    fn a_prebuilt_set_moves_the_key_and_its_absence_does_not() {
+        // the default key is the pre-D8 line, byte for byte
+        let v = inputs();
+        let line = format!(
+            "spira abc t1 {} h parallel explicit aeon\n",
+            v.selection_hash()
+        );
+        assert_eq!(v.key(), sha256_hex(line.as_bytes()));
+        let mut p = inputs();
+        p.artifacts_id = Some("id1".into());
+        assert_ne!(v.key(), p.key());
+        let mut q = inputs();
+        q.artifacts_id = Some("id2".into());
+        assert_ne!(p.key(), q.key());
     }
 
     #[test]

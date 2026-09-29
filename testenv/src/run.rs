@@ -6,6 +6,7 @@ use crate::batch::{self, now_epoch, BatchCfg, Hooks};
 use crate::build::{artifacts_dir, profile_dir, BuildError, Builder};
 use crate::cli::{Invocation, RunArgs, SuitesArg};
 use crate::fixture::Session;
+use crate::prebuilt::{self, Prebuilt};
 use crate::record::{suite_line, Mode, Producer, ResultRecord, Status};
 use crate::runtime::{cancelled, ContainerRuntime};
 use crate::schedule::{self, Job, MaxparInputs};
@@ -514,6 +515,36 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         wt.describe(),
         wt.path.display()
     ));
+
+    // ---- --artifacts: validate the prebuilt set before anything else (DESIGN.md D8) ----
+    let prebuilt: Option<Prebuilt> = match &args.artifacts {
+        None => None,
+        Some(a) => {
+            let dir = deps.cwd.join(a);
+            let dir = fs::canonicalize(&dir).unwrap_or(dir);
+            match prebuilt::inspect(&dir, &prebuilt::required(&wt.path)) {
+                Ok(p) => {
+                    deps.log(&format!(
+                        "--artifacts: {} prebuilt executable(s) in {} (id {}) — cargo is not run",
+                        p.names.len(),
+                        p.dir.display(),
+                        &p.id[..12]
+                    ));
+                    Some(p)
+                }
+                Err(e) => {
+                    stderr(&e.message());
+                    return Finish::fault(2, "artifacts-invalid", 0);
+                }
+            }
+        }
+    };
+    let key_profile = if prebuilt.is_some() {
+        prebuilt::STAGE_DIR.to_string()
+    } else {
+        args.profile.clone()
+    };
+
     let suite_dir = s.suite_dir.clone().unwrap_or_else(|| wt.path.join("spira"));
     let exists = |n: &str| selection::plausible_name(n) && suite_dir.join(n).is_file();
 
@@ -625,7 +656,8 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         harness_hash: verdict::sha256_hex(&identity),
         mode: args.mode,
         producer,
-        profile: args.profile.clone(),
+        profile: key_profile.clone(),
+        artifacts_id: prebuilt.as_ref().map(|p| p.id.clone()),
     };
     let key = key_inputs.key();
     let results = s.results_root.join(&key);
@@ -721,40 +753,33 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         }
     }
 
-    // ---- build in place ------------------------------------------------------------
-    let pdir = profile_dir(&args.profile).to_string();
-    let artifacts = artifacts_dir(&wt.path, &args.profile);
-    if args.with_bins {
-        deps.log("--with-bins: accepted as an alias (the workspace is always built); profile release unless --profile says otherwise");
-    }
-    deps.log(&format!(
-        "building {br} in place: cargo build --profile {} --workspace ({})",
-        args.profile,
-        artifacts.display()
-    ));
-    match deps.builder.build(&wt.path, &args.profile) {
-        Ok(d) => deps.log(&format!(
-            "build {:.1}s — SPIRA_ARTIFACTS={}",
-            d.as_secs_f64(),
+    // ---- build in place (or stage the prebuilt set: D8) -----------------------------
+    let (pdir, artifacts) = match &prebuilt {
+        Some(_) => (
+            prebuilt::STAGE_DIR.to_string(),
+            wt.path.join("target").join(prebuilt::STAGE_DIR),
+        ),
+        None => (
+            profile_dir(&args.profile).to_string(),
+            artifacts_dir(&wt.path, &args.profile),
+        ),
+    };
+    if let Some(p) = &prebuilt {
+        if let Err(e) = prebuilt::stage(p, &artifacts) {
+            stderr(&format!(
+                "batch: --artifacts: cannot stage {} into {}: {e}",
+                p.dir.display(),
+                artifacts.display()
+            ));
+            return Finish::fault(2, "artifacts-stage", 0);
+        }
+        deps.log(&format!(
+            "staged prebuilt {} — SPIRA_ARTIFACTS={}",
+            p.dir.display(),
             artifacts.display()
-        )),
-        Err(BuildError::NoCargo) => {
-            stderr("batch: cargo is required on PATH to build the workspace — harness fault");
-            return Finish::fault(3, "no-cargo", 0);
-        }
-        Err(BuildError::NoArtifacts(p)) => {
-            stderr(&format!(
-                "batch: cargo built, but not into {} (a target-dir override?) — harness fault",
-                p.display()
-            ));
-            return Finish::fault(3, "artifacts-missing", 0);
-        }
-        Err(BuildError::Failed(rc)) => {
-            stderr(&format!(
-                "batch: workspace failed to build (cargo rc={rc}) — candidate fault"
-            ));
-            return Finish::fault(4, "build", 0);
-        }
+        ));
+    } else if let Some(fin) = build(args, deps, &wt.path, br, &artifacts) {
+        return fin;
     }
     if cancelled() {
         return Finish::fault(2, "interrupted", 0);
@@ -1000,12 +1025,33 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             ("key", key.clone()),
             ("mode", args.mode.as_str().into()),
             ("selection", producer.as_str().into()),
-            ("profile", args.profile.clone()),
-            ("artifacts", artifacts.display().to_string()),
+            ("profile", key_profile.clone()),
+            (
+                "artifacts",
+                prebuilt
+                    .as_ref()
+                    .map(|p| p.dir.clone())
+                    .unwrap_or_else(|| artifacts.clone())
+                    .display()
+                    .to_string(),
+            ),
             ("worktree", wt.path.display().to_string()),
             ("tree", tree.clone()),
         ]
         .into_iter()
+        .chain(
+            prebuilt
+                .as_ref()
+                .map(|p| {
+                    [
+                        ("build", "prebuilt".to_string()),
+                        ("artifacts_id", p.id.clone()),
+                        ("staged", artifacts.display().to_string()),
+                    ]
+                })
+                .into_iter()
+                .flatten(),
+        )
         .chain(
             args.deadline
                 .map(|d| {
@@ -1228,6 +1274,43 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         deferred: deferred_count,
         ..Finish::green(ran)
     }
+}
+
+/// `cargo build` in place; `Some` is the fault that ends the run.
+fn build(args: &RunArgs, deps: &Deps, wt: &Path, br: &str, artifacts: &Path) -> Option<Finish> {
+    if args.with_bins {
+        deps.log("--with-bins: accepted as an alias (the workspace is always built); profile release unless --profile says otherwise");
+    }
+    deps.log(&format!(
+        "building {br} in place: cargo build --profile {} --workspace ({})",
+        args.profile,
+        artifacts.display()
+    ));
+    match deps.builder.build(wt, &args.profile) {
+        Ok(d) => deps.log(&format!(
+            "build {:.1}s — SPIRA_ARTIFACTS={}",
+            d.as_secs_f64(),
+            artifacts.display()
+        )),
+        Err(BuildError::NoCargo) => {
+            stderr("batch: cargo is required on PATH to build the workspace — harness fault (or pass --artifacts <dir> of prebuilt executables)");
+            return Some(Finish::fault(3, "no-cargo", 0));
+        }
+        Err(BuildError::NoArtifacts(p)) => {
+            stderr(&format!(
+                "batch: cargo built, but not into {} (a target-dir override?) — harness fault",
+                p.display()
+            ));
+            return Some(Finish::fault(3, "artifacts-missing", 0));
+        }
+        Err(BuildError::Failed(rc)) => {
+            stderr(&format!(
+                "batch: workspace failed to build (cargo rc={rc}) — candidate fault"
+            ));
+            return Some(Finish::fault(4, "build", 0));
+        }
+    }
+    None
 }
 
 #[allow(clippy::too_many_arguments)]

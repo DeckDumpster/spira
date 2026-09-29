@@ -4,6 +4,7 @@ pub mod batch;
 pub mod build;
 pub mod cli;
 pub mod fixture;
+pub mod prebuilt;
 pub mod record;
 pub mod run;
 pub mod runtime;

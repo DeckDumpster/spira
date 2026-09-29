@@ -36,6 +36,13 @@ is  "only the red and timed-out suites are re-run" "b.sh c.sh" "$(tr '\n' ' ' < 
 has "serially"                                    "$(cat "$TMP/log.args")" "--mode serial"
 has "against the same revision"                   "$(cat "$TMP/log.args")" "deadbeef"
 has "each flake is announced to CI"               "$(cat "$TMP/out")" "::warning title=flaky suite::b.sh"
+case "$(cat "$TMP/log.args")" in *--artifacts*) bad "no --artifacts unless asked" "$(cat "$TMP/log.args")" ;; *) ok "no --artifacts unless asked" ;; esac
+
+# CI's runner has no cargo: the re-run must test the same prebuilt bin/ the first batch did.
+first "$TMP/r" a.sh=ok b.sh=red
+GATE_RETRY_ARTIFACTS=bin run ok 0; rc=$?
+is  "prebuilt: red then green passes"             "0" "$rc"
+has "prebuilt: the re-run passes --artifacts"     "$(cat "$TMP/log.args")" "--artifacts bin --mode serial"
 
 first "$TMP/r" a.sh=ok b.sh=red
 run red 1; rc=$?

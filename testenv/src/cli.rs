@@ -3,7 +3,7 @@
 
 use crate::record::Mode;
 
-pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--deadline <secs>] [--report [N]] <branch> [<repo-name>]";
+pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--artifacts <dir>] [--deadline <secs>] [--report [N]] <branch> [<repo-name>]";
 
 /// Where the explicit suite list comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,6 +21,9 @@ pub struct RunArgs {
     pub with_bins: bool,
     /// `--deadline S`: hard wall-clock budget for the suite phase (DESIGN.md D7).
     pub deadline: Option<u64>,
+    /// `--artifacts DIR`: test these prebuilt executables, build nothing (DESIGN.md D8).
+    /// As given; relative paths resolve against the caller's directory.
+    pub artifacts: Option<String>,
     pub branch: String,
     pub repo: Option<String>,
 }
@@ -46,6 +49,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     let mut with_bins = false;
     let mut report: Option<usize> = None;
     let mut deadline: Option<u64> = None;
+    let mut artifacts: Option<String> = None;
     let mut i = 0;
     let parse_deadline = |v: &str| -> Result<u64, UsageError> {
         v.parse::<u64>()
@@ -67,7 +71,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     while i < args.len() {
         let a = args[i].as_str();
         match a {
-            "--mode" | "--suites" | "--profile" | "--deadline" => {
+            "--mode" | "--suites" | "--profile" | "--deadline" | "--artifacts" => {
                 let v = args
                     .get(i + 1)
                     .cloned()
@@ -76,6 +80,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                     "--mode" => mode = v,
                     "--suites" => set_suites(&mut suites, v)?,
                     "--deadline" => deadline = Some(parse_deadline(&v)?),
+                    "--artifacts" => artifacts = Some(v),
                     _ => profile = Some(v),
                 }
                 i += 2;
@@ -116,6 +121,10 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                 profile = Some(a["--profile=".len()..].to_string());
                 i += 1;
             }
+            _ if a.starts_with("--artifacts=") => {
+                artifacts = Some(a["--artifacts=".len()..].to_string());
+                i += 1;
+            }
             _ if a.starts_with("--deadline=") => {
                 deadline = Some(parse_deadline(&a["--deadline=".len()..])?);
                 i += 1;
@@ -150,6 +159,16 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         .cloned()
         .ok_or_else(|| err(&[USAGE]))?;
     let repo = rest.get(1).filter(|r| !r.is_empty()).cloned();
+    if let Some(a) = &artifacts {
+        if a.is_empty() {
+            return Err(err(&["batch: --artifacts needs a directory"]));
+        }
+        if profile.is_some() || with_bins {
+            return Err(err(&[
+                "batch: --artifacts tests prebuilt executables and builds nothing; it cannot be combined with --profile or --with-bins",
+            ]));
+        }
+    }
     let profile = profile.unwrap_or_else(|| {
         if with_bins {
             "release".into()
@@ -179,6 +198,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         profile,
         with_bins,
         deadline,
+        artifacts,
         branch,
         repo,
     }))
@@ -292,6 +312,29 @@ mod tests {
             );
         }
         assert!(p(&["--deadline"]).is_err());
+    }
+
+    #[test]
+    fn artifacts_is_optional_and_excludes_a_build_profile() {
+        assert_eq!(run(&["b"]).artifacts, None);
+        assert_eq!(
+            run(&["--artifacts", "bin", "--suites", "-", "sha"])
+                .artifacts
+                .as_deref(),
+            Some("bin")
+        );
+        assert_eq!(
+            run(&["--artifacts=/x/y", "b"]).artifacts.as_deref(),
+            Some("/x/y")
+        );
+        for bad in [
+            &["--artifacts", "bin", "--profile", "release", "b"][..],
+            &["--with-bins", "--artifacts", "bin", "b"][..],
+            &["--artifacts=", "b"][..],
+        ] {
+            assert!(p(bad).unwrap_err().0[0].contains("--artifacts"), "{bad:?}");
+        }
+        assert!(p(&["--artifacts"]).is_err());
     }
 
     #[test]

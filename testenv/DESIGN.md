@@ -490,6 +490,9 @@ into a fresh `cargo-target-bins/<tree>` on every new tree (95-116 s, sp-zv7j4).
     testenv.sh's contract (D2).
   * **Keyed by content** (§3.3), so a prebuilt green is a claim about those bytes.
   * **Unchanged without the flag**: same key, same batch.meta, same build.
+  * **CI passes it twice**: gate.yml's suites step runs `bin/testenv --artifacts bin`, and its
+    serial re-run of reds, `gate-retry.sh`, takes `GATE_RETRY_ARTIFACTS=bin` and passes the
+    same flag — otherwise the first red would turn into a `no-cargo` fault on the retry.
 
 ## 8. Cutover (bash and workflow edits for the operator — none made here)
 
