@@ -23,10 +23,8 @@ pub struct RepoConfig {
 /// beside it, exactly `conf.sh`'s own fallback for a clean clone with no repo-map written
 /// yet).
 pub fn detect(home: &Path) -> Result<RepoConfig, String> {
-    let toml_path = home.join("spira.toml");
-    if toml_path.is_file() {
-        let text = std::fs::read_to_string(&toml_path).map_err(|e| format!("{}: {e}", toml_path.display()))?;
-        let doc = spira_config::validate(&text)?;
+    if let Some(toml_path) = spira_config::find_under(home) {
+        let doc = spira_config::load(&toml_path)?;
         return Ok(RepoConfig { source: "spira.toml", repos: doc.repo });
     }
 

@@ -56,7 +56,7 @@ fn parse() -> Result<Opts, String> {
         run: env::var_os("SPIRA_RUN").map(PathBuf::from),
         db: env::var_os("SPIRA_DB").map(PathBuf::from),
         home: env::var_os("SPIRA_HOME").map(PathBuf::from),
-        config: env::var_os("SPIRA_TOML").map(PathBuf::from),
+        config: None,
     };
     while let Some(f) = a.next() {
         let mut val = || a.next().ok_or(format!("{f} needs a value"));
@@ -77,24 +77,6 @@ fn parse() -> Result<Opts, String> {
     Ok(o)
 }
 
-fn find_config(o: &Opts) -> Option<PathBuf> {
-    if let Some(c) = &o.config {
-        return Some(c.clone());
-    }
-    let mut cands = Vec::new();
-    if let Some(r) = env::var_os("SPIRA_REPO") {
-        cands.push(PathBuf::from(r).join("spira.toml"));
-    }
-    let xdg = env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
-    if let Some(x) = xdg {
-        cands.push(x.join("spira/spira.toml"));
-    }
-    cands.push(PathBuf::from("/etc/spira/spira.toml"));
-    cands.into_iter().find(|p| p.is_file())
-}
-
 /// Why there is nothing to watch, as opposed to something being wrong.
 enum NoRepos {
     Idle(String),
@@ -107,9 +89,7 @@ enum NoRepos {
 /// a fault someone must fix.
 fn queue_repos(cfg: Option<PathBuf>, home: &Path) -> Result<Vec<Repo>, NoRepos> {
     let Some(cfg) = cfg else { return Err(NoRepos::Idle("no spira.toml found".into())) };
-    let cfg = cfg.as_path();
-    let text = fs::read_to_string(cfg).map_err(|e| NoRepos::Fatal(format!("{}: {e}", cfg.display())))?;
-    let doc = spira_config::validate(&text).map_err(|e| NoRepos::Fatal(format!("{}: {e}", cfg.display())))?;
+    let doc = spira_config::load(&cfg).map_err(NoRepos::Fatal)?;
     // A repo may name its own forge script; otherwise the harness's own (SPIRA_FORGE, which
     // conf.sh defaults to forge.sh beside the rest of the harness).
     let default_forge = env::var_os("SPIRA_FORGE").map(PathBuf::from).unwrap_or_else(|| home.join("forge.sh"));
@@ -215,7 +195,7 @@ fn watch(o: &Opts) -> Result<(), String> {
     loop {
         let t = now();
         if repos.is_empty() {
-            match queue_repos(find_config(o), &home) {
+            match queue_repos(spira_config::discover(o.config.clone()), &home) {
                 Ok(r) => {
                     println!("{} - watching resumed: {} queue-mode repo(s) found", iso(t), r.len());
                     repos = r;
