@@ -19,7 +19,12 @@
 #   4b. An idle watcher re-reads its config every tick rather than latching idle forever: a
 #       config gutted down to no queue-mode repo, then restored, is noticed and watching
 #       resumes with no restart.
-#   5. The watchd manifest row expands, and names queue-watch bare.
+#   5. A job stuck in the forge's own "queued" state with no runner ever assigned is named
+#      distinctly from a job that is actually running, judged on its own queue time
+#      (SPIRA_CI_QUEUED_MAX_SECS) rather than the much longer head-stall window — and the
+#      finding is handed to a fake incident.sh, not left in the log for a reader who has to be
+#      tailing it.
+#   6. The watchd manifest row expands, and names queue-watch bare.
 #
 # QUEUE_WATCH_BIN may point at another binary; pointing it at a stub that prints nothing is
 # how every assertion below was seen to fail first.
@@ -211,7 +216,70 @@ want "notices the restored repo and resumes"       "watching resumed: 1 queue-mo
 hout2="$("$BIN" health --run "$ARUN" 2>&1)"; hrc2=$?
 [ "$hrc2" -eq 0 ] && ok "health is healthy again once watching resumed" || bad "health is healthy again once watching resumed (rc=$hrc2)"
 
-# --- 5. wiring -------------------------------------------------------------------------------
+# --- 5. a queued job with no runner is named distinctly and gets a durable delivery path -----
+# The incident this fixture reproduces: a batch's CI job sits in "queued" with no runner ever
+# assigned, and the queue's log is the only place that says so — read by nobody once the
+# session watching it is gone.
+SRUN="$T/stall-run"; SQ="$SRUN/queue/qs"
+mkdir -p "$SQ" "$SRUN/landstate"
+STALL_BRANCH="spira/queue/20260927T150304Z"
+printf 'pr=419\nhead=deadbeef\nmembers=sp-a:%s\nbranch=%s\n' "$TIP_A" "$STALL_BRANCH" > "$SQ/open"
+
+cat > "$FX/stall.toml" <<EOF
+[repo.qs]
+path = "$T/repo"
+mode = "queue"
+base = "origin/main"
+EOF
+
+# Never resolves past "pending" (no run has completed) and reports the sole job queued since
+# the epoch — arbitrarily far in the past, so the queued threshold fires on the first poll
+# regardless of wall-clock skew between the fixture's setup and the binary's first tick.
+cat > "$FX/stall-forge.sh" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+    check-status) echo pending ;;
+    queued-since) echo 0 ;;
+    pr-state)     echo open ;;
+    *) exit 2 ;;
+esac
+EOF
+chmod +x "$FX/stall-forge.sh"
+
+# Fake incident.sh: records what it was filed with rather than touching a real bead store.
+cat > "$FX/incident.sh" <<EOF
+#!/usr/bin/env bash
+[ "\$1" = file ] || exit 2
+title="\$2"
+body="\$(cat)"
+{
+    printf 'title=%s\n' "\$title"
+    printf 'ref=%s\n' "\${SPIRA_INCIDENT_REF:-}"
+    printf 'repo=%s\n' "\${SPIRA_INCIDENT_REPO:-}"
+    printf 'cause=%s\n' "\${SPIRA_INCIDENT_CAUSE:-}"
+    printf 'body=%s\n' "\$body"
+} >> "$FX/incidents.log"
+EOF
+chmod +x "$FX/incident.sh"
+
+# QUEUE_WATCH_HEAD_STALL_SECS is set absurdly high so a "stall" firing here can only be the
+# queued-threshold path — proof the two are judged separately, not that the smaller number
+# always wins.
+sout="$(SPIRA_BD="$FX/bd" SPIRA_FORGE="$FX/stall-forge.sh" SPIRA_CI_QUEUED_MAX_SECS=1 QUEUE_WATCH_HEAD_STALL_SECS=100000000 \
+    "$BIN" watch --ticks 2 --interval 1 --run "$SRUN" --home "$FX" --config "$FX/stall.toml" 2>&1)"
+printf '%s\n' "$sout" | sed 's/^/    | /'
+
+want "a queued job with no runner is named distinctly"        "qs stall: PR 419 CI queued" "$sout"
+want "the queued wording names the absent runner"              "with no runner ever assigned" "$sout"
+nowant "it is not judged against the much larger head-stall window" "unchanged for" "$sout"
+
+[ -f "$FX/incidents.log" ] && ok "the head-stall filed an incident" || bad "the head-stall filed an incident (no $FX/incidents.log written)"
+ilog="$(cat "$FX/incidents.log" 2>/dev/null)"
+want "the incident is keyed to this repo and PR"          "ref=incident:queue-watch-stall-qs-419" "$ilog"
+want "the incident names the repo"                        "repo=qs" "$ilog"
+want "the incident carries the queued wording, not just the log line" "with no runner ever assigned" "$ilog"
+
+# --- 6. wiring -------------------------------------------------------------------------------
 row="$(command grep -E '^queue-watch\|daemon\|' "$HERE/watchers" || true)"
 want "watchd row runs the binary by name"         "|queue-watch watch --run @SPIRA_RUN@" "$row"
 want "watchd row carries a health probe"          "|queue-watch health --run @SPIRA_RUN@" "$row"

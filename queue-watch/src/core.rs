@@ -19,6 +19,11 @@ pub struct Batch {
     pub pr: String,
     pub head: String,
     pub members: Vec<Member>,
+    /// The queue's own head branch (`spira/queue/...`), scoping a run to this batch alone —
+    /// two batches can share a head commit, but never a branch. Empty for a fixture or an
+    /// `open` record predating this field; a reader with no branch cannot ask the forge which
+    /// job is queued and must fall back to `head_stall_secs` alone.
+    pub branch: String,
 }
 
 impl Batch {
@@ -87,6 +92,11 @@ pub struct Snapshot {
     pub certified: Vec<String>,
     pub beads: BTreeMap<String, Bead>,
     pub outcome: Option<Outcome>,
+    /// Epoch a job of the open batch's CI run entered "queued" with no runner yet assigned,
+    /// from the forge's own job record — never derived from `now` or from `head_since`, so a
+    /// release cut's fresh PR is not judged against the age of a batch it has nothing to do
+    /// with. `None` once a runner picks the job up, even if `ci` is still `Pending`.
+    pub queued_since: Option<u64>,
     /// queue.local's async publish: same shape of question as `batch`/`ci`/`outcome`, but a
     /// wholly separate pipeline (no members, no bisect, no ejection).
     pub publish: Option<Publish>,
@@ -101,11 +111,14 @@ pub struct Snapshot {
 pub struct Limits {
     pub idle_stall_secs: u64,
     pub head_stall_secs: u64,
+    /// A job queued with no runner assigned will never start on its own; this is judged on
+    /// its own queue time, not on `head_stall_secs`, which exists for a job that IS running.
+    pub ci_queued_max_secs: u64,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Limits { idle_stall_secs: 600, head_stall_secs: 2700 }
+        Limits { idle_stall_secs: 600, head_stall_secs: 2700, ci_queued_max_secs: 600 }
     }
 }
 
@@ -296,13 +309,23 @@ pub fn step(prev: &RepoState, snap: &Snapshot, lim: Limits) -> (RepoState, Vec<E
 
     if let Some(cb) = &snap.batch {
         let age = snap.now.saturating_sub(st.head_since);
-        if !st.head_warned && age >= lim.head_stall_secs {
-            out.push(ev(
-                "stall",
-                Some(&cb.pr),
-                vec![],
+        // A job stuck in "queued" has no runner and will never start on its own; that is
+        // judged on its own queue time against ci_queued_max_secs, not on head_stall_secs,
+        // which is for a job that IS running. Falling through to the generic check keeps
+        // every other CI word — running, red, green, faulted — unchanged.
+        let queued_for = snap.queued_since.map(|qs| snap.now.saturating_sub(qs));
+        let (fires, text) = match queued_for {
+            Some(qf) if qf >= lim.ci_queued_max_secs => (
+                true,
+                format!("PR {} CI queued {}m with no runner ever assigned (threshold {}m)", cb.pr, mins(qf), mins(lim.ci_queued_max_secs)),
+            ),
+            _ => (
+                age >= lim.head_stall_secs,
                 format!("PR {} unchanged for {}m (CI {})", cb.pr, mins(age), ci_word(st.ci.as_ref())),
-            ));
+            ),
+        };
+        if !st.head_warned && fires {
+            out.push(ev("stall", Some(&cb.pr), vec![], text));
             st.head_warned = true;
         }
     }

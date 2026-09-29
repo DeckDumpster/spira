@@ -65,6 +65,7 @@ pub fn read_batch(dir: &Path) -> Result<Option<Batch>, String> {
         pr,
         head: kv.get("head").cloned().unwrap_or_default(),
         members: members(kv.get("members").map(String::as_str).unwrap_or("")),
+        branch: kv.get("branch").cloned().unwrap_or_default(),
     }))
 }
 
@@ -213,6 +214,22 @@ pub fn read_ci(repo: &Repo, pr: &str) -> Result<Ci, String> {
     }
 }
 
+/// Epoch the earliest still-queued job of `branch`'s latest run was created, or `None` when
+/// nothing is queued (already picked up, or no run at all). Best-effort: this only sharpens
+/// an existing stall judgement, so a forge hiccup here must not blind the rest of the poll —
+/// the caller falls back to the coarser head-stall check instead.
+pub fn read_queued_since(repo: &Repo, branch: &str) -> Option<u64> {
+    if branch.is_empty() {
+        return None;
+    }
+    let out = run(
+        Command::new("bash").arg(&repo.forge).arg("queued-since").arg(&repo.path).arg(branch),
+        "forge queued-since",
+    )
+    .ok()?;
+    out.lines().next().unwrap_or("").trim().parse().ok()
+}
+
 pub fn read_pr_state(repo: &Repo, pr: &str) -> PrState {
     match forge(repo, "pr-state", pr).as_deref() {
         Ok("open") => PrState::Open,
@@ -331,7 +348,12 @@ pub fn snapshot(env: &Env, repo: &Repo, prev: &RepoState, now: u64) -> Snapshot 
 
     if let Some(b) = &s.batch {
         match read_ci(repo, &b.pr) {
-            Ok(c) => s.ci = Some(c),
+            Ok(c) => {
+                if c == Ci::Pending {
+                    s.queued_since = read_queued_since(repo, &b.branch);
+                }
+                s.ci = Some(c);
+            }
             Err(e) => s.errors.push(e),
         }
     }
