@@ -13,11 +13,57 @@
 //! which of the rest still need a home.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub mod convert;
+
+/// The one filename this schema's document is ever named on disk — every path-resolution
+/// function below builds on this instead of a caller spelling `"spira.toml"` itself.
+pub const FILE_NAME: &str = "spira.toml";
+
+/// `dir/spira.toml`, if it is a file — the check a per-checkout caller (`spira-lc`'s
+/// migration detector) uses instead of naming the file itself.
+pub fn find_under(dir: &Path) -> Option<PathBuf> {
+    let p = dir.join(FILE_NAME);
+    p.is_file().then_some(p)
+}
+
+/// The search a host-wide reader with no explicit path resolves one from: `explicit` if
+/// given (a caller's own `--config`/`$SPIRA_TOML` precedence), else `$SPIRA_TOML`, else
+/// `$SPIRA_REPO/spira.toml`, else `$XDG_CONFIG_HOME/spira/spira.toml` (`$HOME/.config` when
+/// `XDG_CONFIG_HOME` is unset), else `/etc/spira/spira.toml` — first of these that exists.
+/// The one search order every host-wide reader (`queue-watch`) shares, so two daemons can
+/// never disagree about which file is in force on the same host.
+pub fn discover(explicit: Option<PathBuf>) -> Option<PathBuf> {
+    if explicit.is_some() {
+        return explicit;
+    }
+    if let Ok(p) = std::env::var("SPIRA_TOML") {
+        return Some(PathBuf::from(p));
+    }
+    let mut cands = Vec::new();
+    if let Ok(r) = std::env::var("SPIRA_REPO") {
+        cands.push(PathBuf::from(r).join(FILE_NAME));
+    }
+    let xdg = std::env::var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|_| std::env::var("HOME").map(|h| PathBuf::from(h).join(".config")));
+    if let Ok(x) = xdg {
+        cands.push(x.join("spira").join(FILE_NAME));
+    }
+    cands.push(PathBuf::from("/etc/spira").join(FILE_NAME));
+    cands.into_iter().find(|p| p.is_file())
+}
+
+/// Reads and [`validate`]s the document at `path` — the one place a caller turns a resolved
+/// path into a [`SpiraToml`], instead of pairing its own `fs::read_to_string` with `validate`.
+pub fn load(path: &Path) -> Result<SpiraToml, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    validate(&text).map_err(|e| format!("{}: {e}", path.display()))
+}
 
 /// The root of `spira.toml`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -899,5 +945,84 @@ mod tests {
         let spira = doc.spira.unwrap();
         assert_eq!(spira.max_live_aeons, None);
         assert_eq!(spira.max_aeons, Some(4));
+    }
+
+    // ENV VARS ARE PROCESS-GLOBAL: every `discover` test holding one of these keys takes
+    // `ENV_LOCK` for its whole body, so two tests never observe each other's value mid-run.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static SCRATCH_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    fn scratch_dir(tag: &str) -> PathBuf {
+        let n = SCRATCH_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let dir = std::env::temp_dir()
+            .join(format!("spira-config-lib-test-{tag}-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn find_under_locates_the_file() {
+        let dir = scratch_dir("find-under-present");
+        std::fs::write(dir.join(FILE_NAME), "[spira]\n").unwrap();
+        assert_eq!(find_under(&dir), Some(dir.join(FILE_NAME)));
+    }
+
+    #[test]
+    fn find_under_is_none_when_absent() {
+        // POSITIVE CONTROL for find_under_locates_the_file: an empty scratch dir must not
+        // report a file that was never written.
+        let dir = scratch_dir("find-under-absent");
+        assert_eq!(find_under(&dir), None);
+    }
+
+    #[test]
+    fn discover_prefers_the_explicit_path_over_the_environment() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let saved = std::env::var("SPIRA_TOML").ok();
+        std::env::set_var("SPIRA_TOML", "/should-not-be-used/spira.toml");
+        let explicit = PathBuf::from("/explicit/spira.toml");
+        assert_eq!(discover(Some(explicit.clone())), Some(explicit));
+        match saved {
+            Some(v) => std::env::set_var("SPIRA_TOML", v),
+            None => std::env::remove_var("SPIRA_TOML"),
+        }
+    }
+
+    #[test]
+    fn discover_falls_back_through_spira_toml_then_spira_repo() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let saved_toml = std::env::var("SPIRA_TOML").ok();
+        let saved_repo = std::env::var("SPIRA_REPO").ok();
+        std::env::remove_var("SPIRA_TOML");
+        let repo_dir = scratch_dir("discover-repo");
+        std::fs::write(repo_dir.join(FILE_NAME), "[spira]\n").unwrap();
+        std::env::set_var("SPIRA_REPO", &repo_dir);
+        assert_eq!(discover(None), Some(repo_dir.join(FILE_NAME)));
+        match saved_toml {
+            Some(v) => std::env::set_var("SPIRA_TOML", v),
+            None => std::env::remove_var("SPIRA_TOML"),
+        }
+        match saved_repo {
+            Some(v) => std::env::set_var("SPIRA_REPO", v),
+            None => std::env::remove_var("SPIRA_REPO"),
+        }
+    }
+
+    #[test]
+    fn load_reads_and_validates() {
+        let dir = scratch_dir("load-ok");
+        let path = dir.join(FILE_NAME);
+        std::fs::write(&path, "[spira]\nmax_aeons = 4\n").unwrap();
+        let doc = load(&path).expect("valid document");
+        assert_eq!(doc.spira.unwrap().max_aeons, Some(4));
+    }
+
+    #[test]
+    fn load_names_the_path_on_a_parse_error() {
+        let dir = scratch_dir("load-bad");
+        let path = dir.join(FILE_NAME);
+        std::fs::write(&path, "[spira]\nbogus = 1\n").unwrap();
+        let err = load(&path).unwrap_err();
+        assert!(err.contains(&path.display().to_string()), "{err}");
     }
 }
