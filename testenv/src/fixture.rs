@@ -312,6 +312,18 @@ impl<'a> Session<'a> {
         self.as_user(&["bash", "-c", BASELINE_SCRIPT], env)
     }
 
+    /// `testenv testdb template` with the artifact under test: the server-mode template is
+    /// built once here, so no server-mode suite waits on it (DESIGN-testdb.md §2.1).
+    pub fn testdb_template_request(&self) -> ExecRequest {
+        let mut env = vec![kv("XDG_RUNTIME_DIR", USER_RUNTIME)];
+        env.extend(self.artifact_env());
+        let exe = format!("{}/testenv", self.artifacts);
+        self.as_user(
+            &[&exe, "testdb", "template", "--bd", "bd", "--dolt", "dolt"],
+            env,
+        )
+    }
+
     /// Build the shared baseline once; None falls back to per-suite databases.
     pub fn baseline(&self) -> (Option<TestDb>, ExecOutcome) {
         let out = self.rt.exec(&self.baseline_request());
@@ -607,6 +619,19 @@ mod tests {
         let mut s = Session::new(rt, "abc123", "aeon");
         s.liveness_sleep = Duration::from_millis(1);
         s
+    }
+
+    #[test]
+    fn testdb_template_runs_the_artifact_under_test_as_the_suite_user() {
+        let rt = FakeRuntime::new();
+        let s = session(&rt);
+        let r = s.testdb_template_request();
+        assert_eq!(
+            r.argv,
+            vec!["/workspace/target/aeon/testenv", "testdb", "template", "--bd", "bd", "--dolt", "dolt"]
+        );
+        assert_eq!(r.user.as_deref(), Some(SPIRA_USER));
+        assert_eq!(r.env_value("SPIRA_ARTIFACTS"), Some("/workspace/target/aeon"));
     }
 
     #[test]

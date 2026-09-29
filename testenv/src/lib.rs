@@ -13,6 +13,7 @@ pub mod selection;
 pub mod settings;
 pub mod suite;
 pub mod suites;
+pub mod testdb;
 pub mod tap;
 pub mod timing;
 pub mod util;

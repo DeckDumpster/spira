@@ -18,8 +18,9 @@
 #
 # TWO MODES. The embedded mode is preferred: each fixture is a private tmpdir directory,
 # cleanup is rm -rf, and six concurrent builds complete in ~25s with 0 failures. Server
-# mode is the fallback for boxes where bd-embedded is not available; it uses
-# dolt-beads-test.service on SPIRA_TESTDB_PORT, which testdb.sh starts on demand.
+# mode (a suite that needs `bd sql`, or a box without bd-embedded) gives each fixture a
+# PRIVATE Dolt sql-server started from a pre-initialised template by `testenv testdb`
+# (testenv/DESIGN-testdb.md, sp-v2lqd): ~0.1s up, ~0.3s reset, nothing shared.
 #
 # WHY EMBEDDED IS PREFERRED OVER SERVER. testdb_up against a shared Dolt server cost 84s
 # solo and 610s for six concurrent builds (5 of 6 failing), because schema migrations hold
@@ -29,8 +30,11 @@
 # --proxied-server was also tested and rejected: 'bd import' fails in that mode, and import
 # is how fixture-using suites seed their data.
 #
-# Server mode is the fallback, not the primary path. On any box where bd-embedded is
-# available, this file never touches dolt-beads-test.service.
+# ONE SERVER PER FIXTURE, NEVER A SHARED ONE. Server mode used to put every fixture on
+# dolt-beads-test.service (CPUQuota=50%, Nice=10) behind one init flock: in every full run
+# on 2026-09-29, 5-9 of the 19 server-mode suites timed out at 600s while the server's
+# cgroup was throttled in 99.8% of CFS periods and the host sat at load 11 of 32. This
+# file no longer starts that unit; the fixture lifecycle lives in testenv (Rust).
 #
 # REQUIRES bd-embedded FOR EMBEDDED MODE. The standard binary is built CGO_ENABLED=0 and
 # refuses embedded mode. Install: npm install -g @beads/bd (or the project's install.sh).
@@ -51,24 +55,19 @@ TESTDB_PRIVATE_DIR="${TESTDB_PRIVATE_DIR:-}"
 # TESTDB_MODE: "embedded" when using the embedded engine, "server" when using
 # dolt-beads-test.service. Empty before testdb_up is first called.
 TESTDB_MODE="${TESTDB_MODE:-}"
-# TESTDB_STARTED_SERVICE: 1 if THIS process started dolt-beads-test.service; 0 otherwise.
-# Used in testdb_drop to know whether to stop the service. Exported so fixture_drop in
-# aeon.sh (which runs testdb_drop in a subshell) sees the correct value.
-export TESTDB_STARTED_SERVICE="${TESTDB_STARTED_SERVICE:-0}"
-# TESTDB_SERVER_INIT_HASH: the Dolt commit hash captured right after bd init in server mode.
-# testdb_reset uses CALL DOLT_RESET('--hard', hash) to restore version-controlled tables to
-# their post-init state without stopping or restarting the dolt service (sp-f342).
-TESTDB_SERVER_INIT_HASH="${TESTDB_SERVER_INIT_HASH:-}"
+# TESTDB_FIXTURE: server mode only — the fixture directory `testenv testdb` owns (its
+# private server, data and workspace). Reset and drop hand it back to testenv.
+TESTDB_FIXTURE="${TESTDB_FIXTURE:-}"
 
-# _testdb_sc <subcommand> [args...] — run "systemctl --user" with XDG_RUNTIME_DIR fallback.
-# gate.sh runs suites under env -i without XDG_RUNTIME_DIR; without it, systemctl --user
-# cannot connect to the session bus. Setting XDG_RUNTIME_DIR=/run/user/$(id -u) gives the
-# single-user fallback path that works from the gate environment (sp-f342).
-_testdb_sc() {
-    local sc="${SPIRA_SYSTEMCTL:-systemctl}"
-    "$sc" --user "$@" 2>/dev/null && return 0
-    XDG_RUNTIME_DIR="/run/user/$(id -u)" "$sc" --user "$@"
+# _testdb_testenv — the testenv binary that owns server-mode fixtures: the artifact under
+# test inside testenv, $SPIRA_REPO/bin otherwise (spira_bin). TESTDB_TESTENV overrides.
+_testdb_testenv() {
+    if [ -n "${TESTDB_TESTENV:-}" ]; then printf '%s\n' "$TESTDB_TESTENV"; return 0; fi
+    spira_bin testenv
 }
+
+# _testdb_kv <KEY> <text> — the value of KEY=value in testenv's report.
+_testdb_kv() { printf '%s\n' "$2" | sed -n "s/^$1=//p" | head -1; }
 
 
 # Cached result of the embedded-engine check: "yes", "no", or "" (not yet checked).
@@ -101,8 +100,8 @@ testdb_available() {     # 0 if embedded or server mode is usable on this box
     [ "${TESTDB_SHARED:-0}" = 1 ] && [ -d "${TESTDB_DIR:-}" ] && return 0
     # Embedded path: preferred, works without any running service.
     _testdb_embedded_check && return 0
-    # Server path: usable if the test server data directory is configured.
-    [ -n "${SPIRA_TESTDB_DATA:-}" ] && return 0
+    # Server path: a private dolt sql-server per fixture needs only dolt on PATH.
+    command -v "${TESTDB_DOLT:-dolt}" >/dev/null 2>&1 && return 0
     return 1
 }
 
@@ -114,33 +113,8 @@ testdb_require() {       # testdb_require <suite-name>
     testdb_available && return 0
     printf 'SKIP %s: no bd engine is available.\n' "$1" >&2
     printf '  embedded: install bd-embedded (npm install -g @beads/bd)\n' >&2
-    printf '  server: set SPIRA_TESTDB_DATA in spira.conf\n' >&2
+    printf '  server: install dolt\n' >&2
     exit 77
-}
-
-# testdb_server_ensure — start dolt-beads-test.service if not already running.
-# Sets TESTDB_STARTED_SERVICE=1 if this call started the service (so testdb_drop
-# can stop it). Waits for the port to be ready before returning.
-testdb_server_ensure() {
-    [ -n "${SPIRA_TESTDB_DATA:-}" ] || return 1
-    # Already running: do not start, do not take ownership of the lifecycle.
-    _testdb_sc is-active dolt-beads-test.service >/dev/null 2>&1 && return 0
-    _testdb_sc start dolt-beads-test.service 2>/dev/null || {
-        printf 'testdb: systemctl start dolt-beads-test.service failed\n' >&2
-        return 1
-    }
-    TESTDB_STARTED_SERVICE=1
-    export TESTDB_STARTED_SERVICE
-    # Wait for the port to accept connections (dolt starts in ~1s; allow up to 15s).
-    local port="${SPIRA_TESTDB_PORT:-3308}"
-    local i=0
-    while [ $i -lt 30 ]; do
-        echo -n "" >/dev/tcp/127.0.0.1/"$port" 2>/dev/null && return 0
-        sleep 0.5
-        i=$((i+1))
-    done
-    printf 'testdb: dolt-beads-test.service did not become ready on port %s\n' "$port" >&2
-    return 1
 }
 
 # testdb_up <tag> — a fixture workspace with a throwaway database. Exports SPIRA_DB
@@ -154,10 +128,9 @@ testdb_server_ensure() {
 # that each build the same thing. When a caller has already built one and exported
 # TESTDB_SHARED=1, reset to its baseline instead.
 #
-# SERVER-MODE SHARING. With TESTDB_MODE=server and TESTDB_SHARED=1, the shared fixture
-# is on the dolt-beads-test server. A reset drops and reinitialises the database (~6s).
-# There is no copy-swap shortcut for server databases, but the cost is still paid once
-# per suite run, not once per suite.
+# SERVER MODE IS NEVER SHARED. A borrower that needs a server builds its own fixture from
+# the template (~0.1s); resetting one database other borrowers were reading is the misuse
+# sp-v2lqd removed.
 testdb_up() {            # testdb_up <tag>
     local tag="$1"
 
@@ -203,17 +176,6 @@ testdb_up() {            # testdb_up <tag>
         return 0
     fi
 
-    # ---- SHARED FIXTURE: SERVER (TESTDB_MODE=server, no TESTDB_BASELINE) ----
-    if [ "${TESTDB_SHARED:-0}" = 1 ] && [ -n "${TESTDB_NAME:-}" ] && \
-       [ "${TESTDB_MODE:-}" = server ] && [ -d "${TESTDB_DIR:-}" ]; then
-        testdb_reset || {
-            printf 'testdb: could not reset shared server fixture %s\n' "$TESTDB_NAME" >&2
-            exit "${TESTDB_FAULT_EXIT:-75}"
-        }
-        export SPIRA_DB="$TESTDB_DIR" SPIRA_BD="$TESTDB_SERVER_BD"
-        return 0
-    fi
-
     # ---- FRESH FIXTURE: CHOOSE MODE ----
     # SPIRA_TESTDB_MODE IS THE REQUEST; TESTDB_MODE IS THE REPORT. They are deliberately two
     # names. TESTDB_MODE is assigned by this function to say which engine it ended up on, so
@@ -229,10 +191,7 @@ testdb_up() {            # testdb_up <tag>
     # drift. An unsatisfiable request fails rather than silently downgrading, because a
     # silent downgrade is how that read as drift in the first place.
     if [ "${SPIRA_TESTDB_MODE:-}" = server ]; then
-        if [ -z "${SPIRA_TESTDB_DATA:-}" ]; then
-            printf 'testdb: SPIRA_TESTDB_MODE=server but SPIRA_TESTDB_DATA is not set\n' >&2
-            return 1
-        fi
+        :
     elif _testdb_embedded_check; then
         # EMBEDDED MODE: private tmpdir, cleanup is rm -rf.
         TESTDB_MODE=embedded
@@ -294,110 +253,24 @@ testdb_up() {            # testdb_up <tag>
         return 0
     fi
 
-    # SERVER MODE: fallback for boxes without bd-embedded.
-    printf 'testdb: TRACE: entering server mode initialization for tag=%s\n' "$tag" >&2
-    [ -n "${SPIRA_TESTDB_DATA:-}" ] || {
-        printf 'testdb: no embedded bd and SPIRA_TESTDB_DATA is not set\n' >&2
-        return 1
-    }
-    printf 'testdb: TRACE: calling testdb_server_ensure\n' >&2
-    testdb_server_ensure || {
-        printf 'testdb: could not start dolt-beads-test.service\n' >&2
-        return 1
-    }
-    printf 'testdb: TRACE: testdb_server_ensure returned\n' >&2
+    # SERVER MODE: a private dolt sql-server for this fixture alone (testenv/DESIGN-testdb.md).
+    # --owner is this shell: if the suite is killed and never runs its trap, testenv's
+    # watchdog takes the server down. TESTDB_OWNER_PID=0 keeps it (testenv.sh scratch).
+    local _te _out
+    _te="$(_testdb_testenv)" || {
+        printf 'testdb: no testenv binary for a server-mode fixture\n' >&2; return 1; }
+    _out="$("$_te" testdb up --tag "$tag" --bd "$TESTDB_SERVER_BD" \
+        --dolt "${TESTDB_DOLT:-dolt}" --owner "${TESTDB_OWNER_PID:-$$}")" || {
+        printf 'testdb: server fixture failed for %s\n' "$tag" >&2; return 1; }
     TESTDB_MODE=server
-    TESTDB_NAME="sptest_${tag}_$(date +%s)_$$"
-    # THE SERVER-SIDE DATABASE IS NAMED PER FIXTURE, AND THE WORKSPACE LIVES OUTSIDE THE
-    # SERVER'S DATA ROOT. Both halves matter, and getting either wrong destroys other
-    # people's fixtures:
-    #
-    #   1. `bd init --server` with no --database creates a database literally called `sp`.
-    #      EVERY server-mode fixture therefore shared ONE database no matter how unique its
-    #      directory name was, so a second testdb_up silently emptied the first: the earlier
-    #      fixture's reads started returning [] mid-suite. Worse, the old cleanup below
-    #      stopped dolt-beads-test.service and rm -rf'd that shared `sp` on every build, so
-    #      a concurrent borrower lost the server under its feet as well as its data. This is
-    #      the "shared fixture collapsed" fault: one timed run had 85 of ~150 suites unable
-    #      to start because an aeon built its own fixture while the run was borrowing one.
-    #      --database gives each fixture its own server-side database and they stop colliding.
-    #
-    #   2. The workspace goes in /var/tmp, not under $SPIRA_TESTDB_DATA. bd init --server
-    #      walks UP from its working directory for a Dolt workspace and refuses when it finds
-    #      one; $SPIRA_TESTDB_DATA is itself a Dolt repo (.dolt), so any subdirectory fails
-    #      init with "already initialized". /var/tmp has no .dolt ancestor.
-    TESTDB_DIR="/var/tmp/$TESTDB_NAME"
-    mkdir -p "$TESTDB_DIR" || { printf 'testdb: mkdir %s failed\n' "$TESTDB_DIR" >&2; return 1; }
-    printf 'testdb: TRACE: TESTDB_DIR created: %s\n' "$TESTDB_DIR" >&2
-    # Serialize bd init: schema migrations hold a global Dolt lock (see testdb.sh header).
-    # Concurrent inits queue behind it and each takes N×6s instead of 6s — enough to push
-    # suites past the 600s timeout when more than ~6 server-mode suites run in parallel.
-    local init_out init_rc _init_fd
-    _init_fd=""
-    printf 'testdb: TRACE: acquiring lock on %s/.server-init.lock\n' "$SPIRA_TESTDB_DATA" >&2
-    # `exec … 2>/dev/null` with no command would point THIS SHELL's stderr at /dev/null for
-    # good — every later line of the suite's diagnostics silently lost. The group scopes the
-    # 2>/dev/null to the open alone; the fd itself stays open past it.
-    if { exec {_init_fd}>>"${SPIRA_TESTDB_DATA}/.server-init.lock"; } 2>/dev/null; then
-        printf 'testdb: TRACE: lock file opened, calling flock\n' >&2
-        flock -x "$_init_fd" 2>/dev/null || true
-        printf 'testdb: TRACE: flock returned\n' >&2
-    else
-        printf 'testdb: TRACE: could not open lock file\n' >&2
-    fi
-    printf 'testdb: TRACE: calling bd init --server with database=%s\n' "$TESTDB_NAME" >&2
-    # CLOSE FD IN SUBSHELL BEFORE BD INIT. The subshell $(…) inherits all open fds from the
-    # parent, including _init_fd. If flock held the lock via an inherited fd while the parent
-    # still had it open, flock blocks indefinitely because both parent and child hold the same
-    # fd. Close _init_fd at the start of the subshell so bd init does not inherit it.
-    # This prevents the hang without releasing the lock (which is held by the kernel against
-    # the file name, not the fd). The flock in the parent has already serialized: by the time
-    # the subshell runs, the lock is ours (sp-kz1lr).
-    init_out="$( eval "exec $_init_fd>&-" 2>/dev/null ; cd "$TESTDB_DIR" && env -i PATH="$PATH" HOME="$HOME" TERM=dumb \
-        BD_NON_INTERACTIVE=1 \
-        "$TESTDB_SERVER_BD" init --non-interactive --prefix sp --skip-agents --skip-hooks \
-        --server --server-host 127.0.0.1 --server-port "${SPIRA_TESTDB_PORT:-3308}" \
-        --database "$TESTDB_NAME" --external -q 2>&1 )"
-    init_rc=$?
-    printf 'testdb: TRACE: bd init returned with rc=%s\n' "$init_rc" >&2
-    [ -n "$_init_fd" ] && { { exec {_init_fd}>&-; } 2>/dev/null; } || true
-    [ $init_rc -eq 0 ] || {
-        printf 'testdb: bd init (server) failed (rc=%s) for %s\n' \
-            "$init_rc" "$TESTDB_NAME" >&2
-        printf '%s\n' "$init_out" | sed 's/^/testdb:   /' >&2
-        rm -rf "$TESTDB_DIR"; TESTDB_DIR=""; TESTDB_NAME=""; return 1
-    }
-    # PURGE WHAT EARLIER FIXTURES DROPPED. Dolt's DROP DATABASE is a MOVE: the data goes to
-    # .dolt_dropped_databases under the server's data root so it can be restored, and nothing
-    # removes it. One day of fixtures left 26MB on a data root the unit file itself calls
-    # "disposable; never holds real data", and a fixture is never worth restoring.
-    #
-    # PURGING HERE AND NOT IN testdb_drop, WHICH IS WHERE IT BELONGS BY SYMMETRY. Measured:
-    # a purge issued immediately after DROP DATABASE in the same session reclaims nothing —
-    # the drop has not materialised yet — and three build/drop cycles still grew the
-    # directory from 2MB to 8MB. By the time the NEXT fixture is built, every earlier drop
-    # has settled, so one statement here reclaims all of them. Best-effort: an older Dolt
-    # without the procedure fails and the fixture is unaffected.
-    "$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
-        "CALL DOLT_PURGE_DROPPED_DATABASES()" >/dev/null 2>&1 || true
-
-    # Save baseline and the init commit hash for SQL-based reset (sp-f342). Unlike embedded
-    # mode, copy-swap does not apply to the server-side database, but .beads is still local
-    # and can be restored. The init hash lets testdb_reset use CALL DOLT_RESET('--hard',
-    # hash) to restore version-controlled tables without stopping the dolt service.
-    TESTDB_BASELINE="$(mktemp -d)"
-    cp -rp "$TESTDB_DIR/.beads" "$TESTDB_BASELINE/.beads" 2>/dev/null || {
-        rm -rf "$TESTDB_BASELINE"; TESTDB_BASELINE=""
-    }
-    # Strip all whitespace from each line before matching: handles trailing-space padding in
-    # some bd sql output formats without changing the NF==1 invariant after strip. Dashes in
-    # the separator line and pipes in MySQL-style table format do not match /^[a-z0-9]+$/.
-    TESTDB_SERVER_INIT_HASH="$("$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
-        "SELECT commit_hash FROM dolt_log LIMIT 1" 2>/dev/null \
-        | awk '{ gsub(/[[:space:]]/, ""); } length($0)==32 && /^[a-z0-9]+$/' | head -1)"
-    [ -n "$TESTDB_SERVER_INIT_HASH" ] || \
-        printf 'testdb: warning: could not capture init hash for %s; reset will be slow\n' \
-            "$TESTDB_NAME" >&2
+    TESTDB_NAME="$(_testdb_kv TESTDB_NAME "$_out")"
+    TESTDB_DIR="$(_testdb_kv TESTDB_DIR "$_out")"
+    TESTDB_FIXTURE="$(_testdb_kv TESTDB_FIXTURE "$_out")"
+    [ -n "$TESTDB_NAME" ] && [ -d "$TESTDB_DIR" ] || {
+        printf 'testdb: testenv testdb up reported no fixture:\n%s\n' "$_out" >&2; return 1; }
+    printf 'testdb: server fixture %s port=%s up_ms=%s\n' "$TESTDB_NAME" \
+        "$(_testdb_kv TESTDB_SERVER_PORT "$_out")" "$(_testdb_kv TESTDB_UP_MS "$_out")" >&2
+    TESTDB_BASELINE=""
     TESTDB_BIN=""
     TESTDB_OWNS_SERVER_FIXTURE=1; export TESTDB_OWNS_SERVER_FIXTURE
     export SPIRA_DB="$TESTDB_DIR" SPIRA_BD="$TESTDB_SERVER_BD"
@@ -407,80 +280,16 @@ testdb_up() {            # testdb_up <tag>
 # Back to an empty database. For embedded mode: a directory swap rather than a table wipe.
 # bd writes across multiple tables and a wipe that misses one leaves state no test asked for.
 # The swap is 6ms and is guaranteed complete.
-# For server mode: CALL DOLT_RESET to the init hash (clears version-controlled tables) plus
-# DELETE from dolt_ignored tables; no service stop/restart (~2s instead of ~6s, sp-f342).
+# For server mode: testenv restarts the fixture's private server on a fresh copy of the
+# template (~0.3s) — exactly a new fixture, including the dolt-ignored tables.
 testdb_reset() {
     [ -n "$TESTDB_NAME" ] || return 1
     if [ "${TESTDB_MODE:-embedded}" = server ]; then
-        [ -d "${TESTDB_DIR:-}" ] || return 1
-        # SQL-based reset: no service stop/restart needed. CALL DOLT_RESET('--hard', hash)
-        # restores all version-controlled tables (issues, dependencies, labels, …) to their
-        # state at init time. Tables in dolt_ignore (events, bd_events_journal, leases, …)
-        # are unaffected by DOLT_RESET and must be cleared with DELETE (sp-f342).
-        #
-        # Fallback: if TESTDB_SERVER_INIT_HASH is empty (shared fixture from a pre-sp-f342
-        # caller), drop and recreate via stop+restart as before.
-        if [ -z "${TESTDB_SERVER_INIT_HASH:-}" ]; then
-            # DROP ONLY THIS FIXTURE'S DATABASE. This used to stop the whole dolt service
-            # and delete the shared `sp` database — taking every other borrower's fixture
-            # with it, and bouncing the server under their open connections. Scoping the
-            # drop to TESTDB_NAME leaves concurrent fixtures untouched and needs no restart.
-            "$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
-                "DROP DATABASE IF EXISTS \`$TESTDB_NAME\`" >/dev/null 2>&1 || true
-
-            rm -rf "$TESTDB_DIR/.beads"
-            local init_out init_rc
-            init_out="$( cd "$TESTDB_DIR" && env -i PATH="$PATH" HOME="$HOME" TERM=dumb \
-                BD_NON_INTERACTIVE=1 \
-                "$TESTDB_SERVER_BD" init --non-interactive --prefix sp --skip-agents \
-                --skip-hooks --server --server-host 127.0.0.1 \
-                --server-port "${SPIRA_TESTDB_PORT:-3308}" \
-                --database "$TESTDB_NAME" --external -q 2>&1 )"
-            init_rc=$?
-            if [ $init_rc -ne 0 ]; then
-                printf 'testdb: server reset (fallback) failed (rc=%s) for %s\n' \
-                    "$init_rc" "$TESTDB_NAME" >&2
-                printf '%s\n' "$init_out" | sed 's/^/testdb:   /' >&2
-                return 1
-            fi
-            # Capture the new init hash and update TESTDB_BASELINE so subsequent resets
-            # can use the fast SQL path instead of stop/restart again (sp-f342).
-            if [ -d "${TESTDB_BASELINE:-}" ]; then
-                rm -rf "$TESTDB_BASELINE/.beads"
-                cp -rp "$TESTDB_DIR/.beads" "$TESTDB_BASELINE/.beads" 2>/dev/null || true
-            fi
-            TESTDB_SERVER_INIT_HASH="$("$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
-                "SELECT commit_hash FROM dolt_log LIMIT 1" 2>/dev/null \
-                | awk '{ gsub(/[[:space:]]/, ""); } length($0)==32 && /^[a-z0-9]+$/' \
-                | head -1)"
-            return 0
-        fi
-        local reset_out reset_rc
-        reset_out="$("$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
-            "CALL DOLT_RESET('--hard', '$TESTDB_SERVER_INIT_HASH')" 2>&1)"
-        reset_rc=$?
-        if [ $reset_rc -ne 0 ]; then
-            printf 'testdb: server dolt_reset failed (rc=%s) for %s: %s\n' \
-                "$reset_rc" "$TESTDB_NAME" "$reset_out" >&2
-            return 1
-        fi
-        # Clear dolt_ignored tables that accumulate test data. ignored_schema_migrations
-        # and local_metadata are excluded (migration state and project_id linkage).
-        "$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
-            "DELETE FROM events" 2>/dev/null || true
-        "$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
-            "DELETE FROM bd_events_journal" 2>/dev/null || true
-        "$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
-            "DELETE FROM leases" 2>/dev/null || true
-        # Restore local .beads (project_id, sequence counters) from the init baseline.
-        [ -d "${TESTDB_BASELINE:-}/.beads" ] || return 1
-        local _new; _new="$TESTDB_DIR/.beads.new"
-        local _old; _old="$TESTDB_DIR/.beads.old"
-        rm -rf "$_new" "$_old"
-        cp -rp "$TESTDB_BASELINE/.beads" "$_new" || { rm -rf "$_new"; return 1; }
-        mv "$TESTDB_DIR/.beads" "$_old" 2>/dev/null || true
-        mv "$_new" "$TESTDB_DIR/.beads"            || return 1
-        rm -rf "$_old" 2>/dev/null || true
+        [ -n "${TESTDB_FIXTURE:-}" ] && [ -d "${TESTDB_DIR:-}" ] || return 1
+        local _te _out
+        _te="$(_testdb_testenv)" || return 1
+        _out="$("$_te" testdb reset --fixture "$TESTDB_FIXTURE")" || {
+            printf 'testdb: server reset failed for %s\n' "$TESTDB_NAME" >&2; return 1; }
         return 0
     fi
     # Embedded mode: directory swap using rename rather than rm-then-cp.
@@ -531,28 +340,16 @@ testdb_drop() {
         [ "${TESTDB_OWNS_SERVER_FIXTURE:-0}" != 1 ] && return 0
     fi
     [ -n "${TESTDB_NAME:-}" ] || return 0
-    # Server mode: drop THIS fixture's own database and nothing else.
-    #
-    # This used to stop dolt-beads-test.service, rm -rf the shared `sp` directory and
-    # restart the service. Because every server
-    # fixture used to share that one `sp`, a suite finishing its run destroyed the fixture
-    # any concurrently running suite or aeon was still borrowing — and bounced the server
-    # under its open connections for good measure. Each fixture now owns a database named
-    # after it, so a scoped DROP is both sufficient and safe to run while others are live.
-    #
-    # The drop runs BEFORE the workspace is removed: it needs .beads to find the server.
-    if [ "${TESTDB_MODE:-}" = server ] && [ -n "${TESTDB_NAME:-}" ]; then
-        "$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
-            "DROP DATABASE IF EXISTS \`$TESTDB_NAME\`" >/dev/null 2>&1 || true
-        # Only stop the service if THIS process started it; never restart one we found
-        # running, because a restart is what used to break other borrowers.
-        # In testenv the container is ephemeral; stopping here races any concurrent
-        # suite still using the server, so skip the stop and let the container die.
-        if [ "${TESTDB_STARTED_SERVICE:-0}" = 1 ] && [ "${SPIRA_IN_TESTENV:-}" != 1 ]; then
-            _testdb_sc stop dolt-beads-test.service 2>/dev/null || true
+    # Server mode: testenv stops this fixture's private server and removes the fixture.
+    if [ "${TESTDB_MODE:-}" = server ] && [ -n "${TESTDB_FIXTURE:-}" ]; then
+        local _te _out
+        if _te="$(_testdb_testenv 2>/dev/null)"; then
+            _out="$("$_te" testdb down --fixture "$TESTDB_FIXTURE" 2>&1)" && \
+                printf 'testdb: server fixture %s down cpu_ms=%s life_ms=%s resets=%s\n' \
+                    "$TESTDB_NAME" "$(_testdb_kv TESTDB_SERVER_CPU_MS "$_out")" \
+                    "$(_testdb_kv TESTDB_LIFE_MS "$_out")" "$(_testdb_kv TESTDB_RESETS "$_out")" >&2
         fi
-        TESTDB_STARTED_SERVICE=0
-        export TESTDB_STARTED_SERVICE
+        TESTDB_DIR=""
     fi
     # Rename first; rm -rf on overlay2 whiteouts blocks ~19s and pushes past Podman's exec timeout.
     local _d _gone
@@ -567,6 +364,6 @@ testdb_drop() {
         fi
     done
     TESTDB_NAME=""; TESTDB_DIR=""; TESTDB_BASELINE=""; TESTDB_BIN=""
-    TESTDB_MODE=""; TESTDB_PRIVATE_DIR=""; TESTDB_OWNS_SERVER_FIXTURE=0
+    TESTDB_MODE=""; TESTDB_PRIVATE_DIR=""; TESTDB_OWNS_SERVER_FIXTURE=0; TESTDB_FIXTURE=""
     return 0
 }

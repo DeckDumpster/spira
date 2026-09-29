@@ -664,7 +664,8 @@ cmd_scratch() {
         return 1
     }
 
-    testdb_up scratch || {
+    # A server-mode scratch fixture must outlive this process (the caller cleans up).
+    TESTDB_OWNER_PID=0 testdb_up scratch || {
         printf 'testenv scratch: database build failed\n' >&2
         return 1
     }

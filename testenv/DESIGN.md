@@ -322,6 +322,10 @@ uid 1001, `XDG_RUNTIME_DIR=/run/user/1001`, `CARGO_HOME=/var/spira/cargo`,
   prints `TESTDB_NAME/DIR/BASELINE/BD/BIN/MODE=`. Complete → every suite gets
   `TESTDB_SHARED=1` and those six values (a ~26 ms copy each); otherwise
   `TESTDB_SHARED=0 TESTDB_NAME= TESTDB_DIR=` (a ~6 s `bd init` each).
+* **Server-mode template** (sp-v2lqd): when any runnable suite carries `# testdb-mode:
+  server`, `$SPIRA_ARTIFACTS/testenv testdb template --bd bd --dolt dolt` builds the
+  pre-initialised store once; each such suite then gets a private Dolt sql-server copied
+  from it (~0.1 s) instead of sharing `dolt-beads-test.service`. See DESIGN-testdb.md.
 * **Per-suite exec**: `podman exec --user spirauser -e ... <name> bash
   /workspace/spira/<suite>`, output captured to a file, wrapped in the per-suite timeout
   (rc 124). Parallel mode adds a private `HOME=/tmp/spira-batch-<i>-<n>/home` (created

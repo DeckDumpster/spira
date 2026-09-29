@@ -12,6 +12,10 @@ pub struct SuiteHeaders {
     pub exclusive: Option<String>,
     /// `# tier: T0..T4`, empty when undeclared.
     pub tier: String,
+    /// A `# testdb-mode: server` line anywhere in the suite (testdb-mode-lint.sh requires it
+    /// of every server-mode suite): testenv pre-builds the server template (DESIGN-testdb.md).
+    #[serde(default)]
+    pub testdb_server: bool,
 }
 
 fn header_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
@@ -54,6 +58,11 @@ impl SuiteHeaders {
                 }
             }
         }
+        h.testdb_server = text.lines().any(|l| {
+            header_value(l, "testdb-mode").is_some_and(|v| {
+                v.split(|c: char| !c.is_ascii_alphanumeric()).next() == Some("server")
+            })
+        });
         h
     }
 
@@ -171,6 +180,15 @@ mod tests {
         assert!(h.requires.is_empty());
         let h = SuiteHeaders::parse("#requires: a\n# requires: b\n");
         assert_eq!(h.requires, vec!["a"]);
+    }
+
+    #[test]
+    fn testdb_server_mode_is_read_from_anywhere_in_the_suite() {
+        let t = "#!/usr/bin/env bash\nset -uo pipefail\n# testdb-mode: server — needs bd sql\nexport SPIRA_TESTDB_MODE=server\n";
+        assert!(SuiteHeaders::parse(t).testdb_server);
+        assert!(!SuiteHeaders::parse("# testdb-mode: default (embedded).\n").testdb_server);
+        assert!(!SuiteHeaders::parse("# testdb-mode: servers\n").testdb_server);
+        assert!(!SuiteHeaders::parse("export SPIRA_TESTDB_MODE=server\n").testdb_server, "the lint's header is the signal");
     }
 
     #[test]
