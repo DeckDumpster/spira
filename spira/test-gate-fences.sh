@@ -28,7 +28,6 @@ echo "test-gate-fences.sh"
 
 EXPECTED="spira/exclude.sh
 spira/inventory.sh
-spira/binary-path-fence.sh
 spira/scratch-fence.sh
 spira/wiki-add-fence.sh
 spira/sop.sh
@@ -37,11 +36,9 @@ spira/testdb-mode-lint.sh
 spira/bd-stdin-lint.sh
 spira/gh-intake-lint.sh
 spira/incident-cause-lint.sh
-spira/payload-argv-lint.sh
 spira/suite-state-fence.sh
 spira/orphan-test.sh
-spira/tmux-scope-fence.sh
-spira/config-fence.sh"
+spira/tmux-scope-fence.sh"
 
 is "gate_fence_list is exactly the expected set" "$EXPECTED" "$(gate_fence_list)"
 
@@ -54,6 +51,13 @@ gate_src="$(cat "$HERE/gate-spira.sh")"
 want "gate-spira.sh sources gate-fences.sh" "gate-fences.sh" "$gate_src"
 want "and reads its fence list from gate_fence_list, not a second literal" \
      "for fence in \$(gate_fence_list)" "$gate_src"
+
+# THE THREE FENCES PORTED TO spira-lint are no longer files on the list above; the gate runs
+# each rule through the binary instead. Their behaviour is `cargo test -p spira-lint`.
+for _rule in binary-path-fence payload-argv-lint config-fence fence-scripts; do
+    want "gate-spira.sh runs spira-lint's $_rule rule" \
+         "\"\$SPIRA_LINT_BIN\" --only $_rule" "$gate_src"
+done
 
 # Every path gate_fence_list names must be a real, readable file — a stale entry (a fence
 # renamed or deleted on one side only) is exactly the drift this module exists to close.

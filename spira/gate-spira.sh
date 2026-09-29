@@ -63,6 +63,12 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # checks below are the identity check on the result, and they fail closed.
 cd "$HERE/.." 2>/dev/null || { printf 'gate: cannot reach the tree holding %s\n' "$0" >&2; exit 1; }
 
+# THE RUST TOOLS THIS GATE RUNS (spira-lint for the ported fences, testenv for the suites):
+# the caller's SPIRA_*_BIN when it passed one (gate.sh does), else conf.sh's spira_bin,
+# resolved in a subshell so sourcing conf.sh leaves this script's stripped environment as is.
+: "${SPIRA_LINT_BIN:=$( . "$HERE/conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_LINT_BIN:-}")}"
+: "${SPIRA_TESTENV_BIN:=$( . "$HERE/conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_TESTENV_BIN:-}")}"
+
 rc=0
 gate_total=0      # wall-clock seconds summed across all suites
 gate_unmeasurable=0  # set to 1 if any suite's cost cannot be measured
@@ -132,7 +138,8 @@ fi
 # BINARY-PATH FENCE (sp-zv7j4). conf.sh's spira_bin is the one resolver a binary path
 # is meant to go through; a hardcoded build-output path is a second one, invisible until
 # the tree it assumes is not the one in front of it.
-if ! bpf="$(bash spira/binary-path-fence.sh 2>&1)"; then
+[ -x "${SPIRA_LINT_BIN:-}" ] || { say "spira-lint is not built (SPIRA_LINT_BIN) — refusing to land unchecked"; exit 1; }
+if ! bpf="$("$SPIRA_LINT_BIN" --only binary-path-fence 2>&1)"; then
     printf '%s\n' "$bpf" >&2
     exit 1
 fi
@@ -225,8 +232,7 @@ fi
 # store size, handed to python3/jq/awk through argv or an environment variable, crosses
 # MAX_ARG_STRLEN (128 KiB) silently — the exec dies, the caller reads empty output, and
 # empty reads as "nothing to do". Five outages in seventeen days before this fence existed.
-[ -r spira/payload-argv-lint.sh ] || { say "spira/payload-argv-lint.sh is missing — refusing to land unchecked"; exit 1; }
-if ! pal="$(bash spira/payload-argv-lint.sh 2>&1)"; then
+if ! pal="$("$SPIRA_LINT_BIN" --only payload-argv-lint 2>&1)"; then
     printf '%s\n' "$pal" >&2
     exit 1
 fi
@@ -281,12 +287,18 @@ printf '%s\n' "$tsf" >&2
 # parse or write either. config-fence-allow grandfathers today's real offenders — the
 # sp-zs04v cutover has not reached them yet — and shrinks as each one migrates; nothing is
 # added to it for a newly written file.
-[ -r spira/config-fence.sh ] || { say "spira/config-fence.sh is missing — refusing to land unchecked"; exit 1; }
-if ! cfg_fence="$(bash spira/config-fence.sh 2>&1)"; then
+if ! cfg_fence="$("$SPIRA_LINT_BIN" --only config-fence 2>&1)"; then
     printf '%s\n' "$cfg_fence" >&2
     exit 1
 fi
 printf '%s\n' "$cfg_fence" >&2
+
+# FENCE-SCRIPTS (spira-lint, sp-tvor6). A new fence is a spira-lint rule, never a new bash
+# script; spira-lint/fence-scripts-allow only shrinks.
+if ! fsc="$("$SPIRA_LINT_BIN" --only fence-scripts 2>&1)"; then
+    printf '%s\n' "$fsc" >&2
+    exit 1
+fi
 
 # ---------------------------------------------------------------------------------------
 # 2 AND 3 — the pipeline. Both are real programs run against each other; neither models
@@ -455,13 +467,13 @@ if [ "$INLINE" = 1 ]; then
         run "$s"
     done
 else
-    # Route through testenv-batch.sh: one container, suites as basenames on stdin.
+    # Route through testenv: one container, suites as basenames on stdin.
     _tb_t0=$(date +%s 2>/dev/null) || _tb_t0=""
     {
         for s in $suites $extra_suites; do
             printf '%s\n' "$(basename "$s")"
         done
-    } | bash "$HERE/testenv-batch.sh" --suites - "${SPIRA_GATE_SELECT_HEAD:-HEAD}" >&2
+    } | "${SPIRA_TESTENV_BIN:-testenv}" --suites - "${SPIRA_GATE_SELECT_HEAD:-HEAD}" >&2
     _tb_rc=${PIPESTATUS[1]}
     _tb_t1=$(date +%s 2>/dev/null) || _tb_t1=""
     if [ -n "$_tb_t0" ] && [ -n "$_tb_t1" ]; then
@@ -472,9 +484,9 @@ else
     case "$_tb_rc" in
         0) ;;
         1) rc=1 ;;
-        2) say "testenv-batch: container failed to start — suites did not run (harness fault)"; rc=1 ;;
-        3) say "testenv-batch: install failed in container — suites did not run (harness fault)"; rc=1 ;;
-        *) say "testenv-batch exited $_tb_rc — suites did not run"; rc=1 ;;
+        2) say "testenv: container failed to start — suites did not run (harness fault)"; rc=1 ;;
+        3) say "testenv: install failed in container — suites did not run (harness fault)"; rc=1 ;;
+        *) say "testenv exited $_tb_rc — suites did not run"; rc=1 ;;
     esac
 fi
 
