@@ -23,6 +23,7 @@ members = [
     "spira-lc",
     "tsd-lifecycle-export",
     "work",
+    "spira-lint",
 ]
 resolver = "2"
 

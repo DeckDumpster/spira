@@ -1,0 +1,42 @@
+# fence-scripts-allow — the bash fences and lints that exist today, one repo-relative path
+# per line (spira/*-fence.sh and spira/*-lint.sh directly in spira/, their test-* suites
+# included). Blank lines and `#` comments are ignored.
+#
+# SHRINK-ONLY. A new fence is a spira-lint rule, never a new bash script. A line leaves this
+# list in the same change that ports its fence into spira-lint and deletes the script; a
+# line naming a file that no longer exists is itself a finding, so the list stays exact.
+#
+# Generated at authorship (sp-tvor6) from the tree, without the three fences that bead
+# ported (config-fence, binary-path-fence, payload-argv-lint) and their suites.
+spira/bd-stdin-lint.sh
+spira/broker-allowlist-lint.sh
+spira/build-fence.sh
+spira/czar-fence.sh
+spira/deps-lint.sh
+spira/gh-intake-lint.sh
+spira/incident-cause-lint.sh
+spira/literal-lint.sh
+spira/lockfile-lint.sh
+spira/plan-lint.sh
+spira/plan-matrix-fence.sh
+spira/scratch-fence.sh
+spira/suite-state-fence.sh
+spira/test-bead-lint.sh
+spira/test-broker-allowlist-lint.sh
+spira/test-build-fence.sh
+spira/test-czar-lint.sh
+spira/testdb-mode-lint.sh
+spira/test-deps-lint.sh
+spira/test-gh-intake-lint.sh
+spira/test-literal-lint.sh
+spira/test-lockfile-lint.sh
+spira/test-plan-lint.sh
+spira/test-scratch-fence.sh
+spira/test-testdb-mode-lint.sh
+spira/test-timeout-lint.sh
+spira/test-tmux-scope-fence.sh
+spira/test-units-lint.sh
+spira/test-wiki-add-fence.sh
+spira/timeout-lint.sh
+spira/tmux-scope-fence.sh
+spira/wiki-add-fence.sh

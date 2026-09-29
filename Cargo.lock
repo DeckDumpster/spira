@@ -821,6 +821,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "spira-lint"
+version = "0.1.0"
+dependencies = [
+ "regex",
+]
+
+[[package]]
 name = "spira-supervise"
 version = "1.0.0"
 dependencies = [
