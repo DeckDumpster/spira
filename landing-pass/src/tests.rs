@@ -1324,6 +1324,9 @@ repo=other\u{1d}\u{1d}\u{1d}\u{1d}\u{1d}\u{1d}\u{1d}\0";
     assert_eq!(repos[0].forge_ref.as_deref(), Some("refs/remotes/origin/main"));
     assert_eq!((repos[1].path.as_os_str().is_empty(), repos[1].landref.clone(), &repos[1].mode), (true, None, &LandMode::Push));
     assert!(crate::real::parse_context("db=x\0", Path::new("/h")).is_err());
+    assert_eq!(s.path, None, "no path key: halt inherits the caller's PATH");
+    let (s2, _) = crate::real::parse_context("run=/r\0path=/stub:/usr/bin\0", Path::new("/h")).unwrap();
+    assert_eq!(s2.path.as_deref(), Some("/stub:/usr/bin"));
     assert_eq!(crate::real::json_only("warn: x\n[{\"id\":1}]"), "[{\"id\":1}]");
 }
 
@@ -1412,4 +1415,39 @@ fn on_the_pr_pass_proves_content_deliveries_and_is_loud_when_the_machine_fails()
         vec!["landing-pass: sp-merged: LIFECYCLE: lifecycle_enforce is on and the Delivered event did not happen (show exited 1: Access denied) — the delivery row stays PR_OPEN"]
     );
     assert!(fs::read_to_string(h.s.run.join("landstate/sp-merged")).unwrap().starts_with("CONTENT t3 "), "the pass goes on");
+}
+
+#[test]
+fn halt_children_run_under_conf_path_then_spira_path_then_inherit() {
+    use crate::halt::child_path;
+    // conf.sh's answer wins: it already put SPIRA_PATH (from env or spira.toml) first.
+    assert_eq!(child_path(Some("/conf:/bin"), Some("/sp"), Some("/usr/bin")).as_deref(), Some("/conf:/bin"));
+    // No context (unloadable conf): SPIRA_PATH is prepended, as conf.sh would have.
+    assert_eq!(child_path(None, Some("/sp"), Some("/usr/bin")).as_deref(), Some("/sp:/usr/bin"));
+    assert_eq!(child_path(Some(""), Some("/sp"), None).as_deref(), Some("/sp"));
+    // Neither: inherit (None leaves the Command's PATH alone).
+    assert_eq!(child_path(None, None, Some("/usr/bin")), None);
+    assert_eq!(child_path(None, Some(""), Some("/usr/bin")), None);
+}
+
+#[test]
+fn real_halt_finds_podman_and_testenv_on_its_path() {
+    use crate::halt::{HaltPorts, RealHalt};
+    let dir = std::env::temp_dir().join(format!("lp-halt-path-{}", std::process::id()));
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let log = dir.join("log");
+    let podman = bin.join("podman");
+    std::fs::write(&podman, "#!/bin/sh\n[ \"$1\" = ps ] && echo spira-batch-stubbed\nexit 0\n").unwrap();
+    std::fs::write(dir.join("testenv.sh"), format!("echo \"$*\" >> {}\ncommand -v podman >> {}\n", log.display(), log.display())).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&podman, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    let h = RealHalt { prod: dir.clone(), path: Some(path) };
+    assert_eq!(h.running_containers(), vec!["spira-batch-stubbed".to_string()]);
+    assert!(h.teardown("spira-batch-stubbed"));
+    let got = std::fs::read_to_string(&log).unwrap();
+    assert!(got.contains("down --name spira-batch-stubbed --volumes --force-foreign"), "{got}");
+    assert!(got.contains(&podman.display().to_string()), "testenv.sh inherits the path: {got}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

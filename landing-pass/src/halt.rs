@@ -178,6 +178,24 @@ fn first_line_state(t: &str) -> Option<LandState> {
 
 pub struct RealHalt {
     pub prod: PathBuf,
+    /// PATH for podman and testenv.sh (see [`child_path`]); None inherits the caller's.
+    pub path: Option<String>,
+}
+
+/// The PATH halt's podman and testenv.sh run under. landing.sh halt sourced conf.sh, which
+/// rebuilt PATH with `SPIRA_PATH` first; the binary is exec'd directly (by the czar, by an
+/// operator), so it must apply the same seam or a podman on `SPIRA_PATH` is never found.
+/// conf.sh's own answer (the context seam's `path`) wins; without a context, `SPIRA_PATH`
+/// is prepended to the inherited PATH; with neither, None (inherit).
+pub fn child_path(ctx_path: Option<&str>, spira_path: Option<&str>, inherited: Option<&str>) -> Option<String> {
+    if let Some(p) = ctx_path.filter(|p| !p.is_empty()) {
+        return Some(p.to_string());
+    }
+    let sp = spira_path.filter(|p| !p.is_empty())?;
+    Some(match inherited.filter(|p| !p.is_empty()) {
+        Some(i) => format!("{sp}:{i}"),
+        None => sp.to_string(),
+    })
 }
 
 impl HaltPorts for RealHalt {
@@ -201,6 +219,9 @@ impl HaltPorts for RealHalt {
     }
     fn running_containers(&self) -> Vec<String> {
         let mut c = crate::util::command("podman");
+        if let Some(p) = &self.path {
+            c.env("PATH", p);
+        }
         c.args(["ps", "--format", "{{.Names}}"]);
         let (_, so, _) = crate::util::run_capture(c);
         String::from_utf8_lossy(&so).lines().map(String::from).collect()
@@ -209,6 +230,9 @@ impl HaltPorts for RealHalt {
         // --force-foreign: the pass that owned this container was just signalled to death,
         // so its owner may be an orphan with no ancestor relation to this process.
         let mut c = crate::util::command("bash");
+        if let Some(p) = &self.path {
+            c.env("PATH", p);
+        }
         c.arg(self.prod.join("testenv.sh")).args(["down", "--name", name, "--volumes", "--force-foreign"]);
         crate::util::run_capture(c).0 == 0
     }

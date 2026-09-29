@@ -237,7 +237,12 @@ fn halt_cmd(reason: Reason, dry_run: bool) -> i32 {
         repos: ctx.as_ref().map(|(_, r)| r.as_slice()),
         queue_dir,
     };
-    let (rc, out, err) = halt::halt(&hc, &HaltArgs { reason, dry_run }, &RealHalt { prod }, &RealGit);
+    let path = halt::child_path(
+        ctx.as_ref().and_then(|(s, _)| s.path.as_deref()),
+        std::env::var("SPIRA_PATH").ok().as_deref(),
+        std::env::var("PATH").ok().as_deref(),
+    );
+    let (rc, out, err) = halt::halt(&hc, &HaltArgs { reason, dry_run }, &RealHalt { prod, path }, &RealGit);
     for l in out {
         println!("{l}");
     }

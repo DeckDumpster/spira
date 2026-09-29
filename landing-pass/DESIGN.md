@@ -96,6 +96,10 @@ read from the context seam's answer: `SPIRA_RUN`, `SPIRA_REPO`, `SPIRA_DB`, `SPI
 `SPIRA_BDJSON_FIXTURE` (tests only). The pr pass also honours
 `SPIRA_PR_PASS_BRANCH_SH`, `SPIRA_LANDING_PASS_LOG` as before.
 
+`halt` runs podman and `$SPIRA_PROD/testenv.sh` under conf.sh's PATH (the context seam's
+`path`: `SPIRA_PATH` first), as `landing.sh halt` did by sourcing conf.sh; with no loadable
+context it prepends `SPIRA_PATH` to the inherited PATH itself (`halt::child_path`).
+
 ### 2.3 Output
 
 stdout carries lines `<UTC %Y-%m-%dT%H:%M:%SZ> spira: <message>` (lib.sh `log`'s shape);

@@ -88,6 +88,9 @@ pub struct Settings {
     pub lc_bin: Option<PathBuf>,
     pub prod: PathBuf,
     pub halt_grace: u64,
+    /// conf.sh's PATH (`SPIRA_PATH` prepended to the box's tail) — what every command
+    /// landing.sh ran was looked up in. `halt` runs podman and testenv.sh under it.
+    pub path: Option<String>,
     pub bdjson_fixture: Option<PathBuf>,
     pub pr_pass_branch_sh: PathBuf,
     /// The config document conf.sh resolved (`SPIRA_TOML_FILE`), for the lifecycle switch.
@@ -131,6 +134,7 @@ impl Settings {
             lc_bin: None,
             prod: run.join("home"),
             halt_grace: 30,
+            path: None,
             bdjson_fixture: None,
             pr_pass_branch_sh: run.join("home/pr-pass-branch.sh"),
             toml: None,
