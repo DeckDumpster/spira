@@ -351,6 +351,7 @@ run_lq() {
         SPIRA_REPO_MAP="$LRMAP" \
         SPIRA_RELEASES="$LRELEASES" \
         SPIRA_DB="$TMP/local-no-db" \
+        SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged (queue/DESIGN.md §8 D12)" \
         SPIRA_HOME="$LSH" "$QUEUE_BIN" "$@" 2>&1
 }
 run_lskew() {

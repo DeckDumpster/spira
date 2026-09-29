@@ -92,6 +92,7 @@ queue() {
     SPIRA_QUEUE_DIR="$QDIR" \
     SPIRA_REPO_MAP="$RMAP" \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
+    SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged (queue/DESIGN.md §8 D12)" \
     SPIRA_RELEASES="$RELEASES" \
         SPIRA_HOME="$SH" "$QUEUE_BIN" "$@" 2>&1
 }
