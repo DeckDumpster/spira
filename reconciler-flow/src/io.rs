@@ -77,48 +77,62 @@ pub fn backlog_count(bd_bin: &str, spira_db: &str, scope_label: &str) -> Result<
     Ok(rows.len() as u64)
 }
 
-/// How many beads are landstate CERTIFIED right now — done, waiting only on the queue to
-/// land them. A landstate directory that does not exist yet is a fresh install with nothing
-/// certified, not a failure; a directory that exists but cannot be listed is.
-pub fn certified_waiting(landstate_dir: &Path) -> Result<u64, String> {
-    let entries = match fs::read_dir(landstate_dir) {
-        Ok(e) => e,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(e) => return Err(format!("{}: {e}", landstate_dir.display())),
-    };
-    let mut n = 0u64;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        if let Ok(content) = fs::read_to_string(&path) {
-            if content.split_whitespace().next() == Some("CERTIFIED") {
-                n += 1;
-            }
-        }
+/// The bead-machine states a bead is still in flight in — after these, it has either landed
+/// or left the pipeline some other terminal way. CERTIFIED and the terminal states are
+/// deliberately excluded (design reconciler-time-series-2026-09-27 §3: the dwell invariant
+/// names exactly READY, WORKING, SUBMITTED, IN_DELIVERY, REWORK).
+const BEAD_DWELL_STATES: [&str; 5] = ["READY", "WORKING", "SUBMITTED", "IN_DELIVERY", "REWORK"];
+
+/// The batch-machine states a round is still in flight in — LANDED, SETTLED and ABANDONED are
+/// terminal, so nothing dwells in them.
+const BATCH_DWELL_STATES: [&str; 5] = ["OPEN", "CI_RUNNING", "GREEN", "ATTRIBUTING", "REBUILDING"];
+
+fn quoted_in_list(states: &[&str]) -> String {
+    states.iter().map(|s| format!("'{s}'")).collect::<Vec<_>>().join(", ")
+}
+
+/// How many beads are in a state that still needs to land — submitted, certified or already
+/// handed to delivery, but not there yet — read from each bead's latest `bead-stage` row. A
+/// family that does not exist yet is a fresh install with nothing in flight, not a failure.
+pub fn waiting_to_land(duckdb_bin: &str, root: &Path) -> Result<u64, String> {
+    let path = family_path(root, "bead-stage");
+    if !path.exists() {
+        return Ok(0);
     }
-    Ok(n)
+    let path_str = path.to_string_lossy();
+    let sql = format!(
+        "WITH latest AS (
+            SELECT to_state,
+                   row_number() OVER (PARTITION BY key ORDER BY seq DESC) AS rn
+            FROM read_ndjson_auto('{path_str}')
+            WHERE machine = 'bead' AND applied
+         )
+         SELECT count(*) AS n FROM latest WHERE rn = 1 AND to_state IN ('SUBMITTED', 'CERTIFIED', 'IN_DELIVERY');"
+    );
+    let rows = duckdb_json(duckdb_bin, &sql)?;
+    Ok(rows.first().map(|r| u64_field(r, "n")).unwrap_or(0))
 }
 
 /// Current-window and trailing-baseline land rate (events/hour), both read from the
-/// `landing-event` family in one query. `Err` when the family has no rows yet at all — a
-/// fresh install with nothing ever landed cannot say whether landing has stalled.
+/// `bead-stage` family in one query — a bead reaching LANDED, the lifecycle machine's own
+/// terminal state (design §2a: states are the machine's). `Err` when the family has no rows
+/// yet at all — a fresh install with nothing ever landed cannot say whether landing has
+/// stalled.
 pub fn velocity_metrics(
     duckdb_bin: &str,
     root: &Path,
     window_hours: f64,
     baseline_hours: f64,
 ) -> Result<(f64, f64), String> {
-    let path = family_path(root, "landing-event");
+    let path = family_path(root, "bead-stage");
     if !path.exists() {
         return Err(format!("{}: no rows yet", path.display()));
     }
     let path_str = path.to_string_lossy();
     let sql = format!(
         "SELECT
-            count(*) FILTER (WHERE state = 'LANDED' AND CAST(ts AS TIMESTAMP) >= now() - INTERVAL '{window_hours} hours') AS cur_n,
-            count(*) FILTER (WHERE state = 'LANDED' AND CAST(ts AS TIMESTAMP) >= now() - INTERVAL '{baseline_hours} hours') AS base_n
+            count(*) FILTER (WHERE machine = 'bead' AND applied AND to_state = 'LANDED' AND CAST(ts AS TIMESTAMP) >= now() - INTERVAL '{window_hours} hours') AS cur_n,
+            count(*) FILTER (WHERE machine = 'bead' AND applied AND to_state = 'LANDED' AND CAST(ts AS TIMESTAMP) >= now() - INTERVAL '{baseline_hours} hours') AS base_n
          FROM read_ndjson_auto('{path_str}');"
     );
     let rows = duckdb_json(duckdb_bin, &sql)?;
@@ -128,30 +142,35 @@ pub fn velocity_metrics(
     Ok((cur_n / window_hours.max(1e-9), base_n / baseline_hours.max(1e-9)))
 }
 
-/// p95 dwell (seconds) between a bead reaching CERTIFIED and then LANDED — the "review"
-/// stage, named to match the desired-state document's own example (sp-xqhog) — for the
-/// current window and the trailing baseline, plus how many transitions each is drawn from.
+/// p95 dwell (seconds) across every in-flight bead state (READY, WORKING, SUBMITTED,
+/// IN_DELIVERY, REWORK) and every in-flight batch state (OPEN, CI_RUNNING, GREEN,
+/// ATTRIBUTING, REBUILDING), pooled into one series — for the current window and the
+/// trailing baseline, plus how many transitions each is drawn from. `bead` and `batch` rows
+/// share one `bead-stage` file, so dwell is windowed `PARTITION BY (machine, key)` to keep a
+/// bead's own timeline from a batch's.
 pub fn dwell_metrics(
     duckdb_bin: &str,
     root: &Path,
     window_hours: f64,
     baseline_hours: f64,
 ) -> Result<(f64, u64, f64, u64), String> {
-    let path = family_path(root, "landing-event");
+    let path = family_path(root, "bead-stage");
     if !path.exists() {
         return Err(format!("{}: no rows yet", path.display()));
     }
     let path_str = path.to_string_lossy();
+    let dwell_states = quoted_in_list(&[BEAD_DWELL_STATES.as_slice(), BATCH_DWELL_STATES.as_slice()].concat());
     let sql = format!(
         "WITH ordered AS (
-            SELECT bead, state, CAST(ts AS TIMESTAMP) AS ts,
-                   LAG(state) OVER (PARTITION BY bead ORDER BY ts) AS prev_state,
-                   LAG(CAST(ts AS TIMESTAMP)) OVER (PARTITION BY bead ORDER BY ts) AS prev_ts
+            SELECT machine, key, to_state, CAST(ts AS TIMESTAMP) AS ts,
+                   LAG(to_state) OVER (PARTITION BY machine, key ORDER BY seq) AS prev_state,
+                   LAG(CAST(ts AS TIMESTAMP)) OVER (PARTITION BY machine, key ORDER BY seq) AS prev_ts
             FROM read_ndjson_auto('{path_str}')
+            WHERE applied
          ), dwells AS (
             SELECT ts, epoch(ts) - epoch(prev_ts) AS dwell_s
             FROM ordered
-            WHERE state = 'LANDED' AND prev_state = 'CERTIFIED'
+            WHERE prev_state IN ({dwell_states})
          )
          SELECT
             quantile_cont(dwell_s, 0.95) FILTER (WHERE ts >= now() - INTERVAL '{window_hours} hours') AS cur_p95,
@@ -165,30 +184,32 @@ pub fn dwell_metrics(
     Ok((f64_field(row, "cur_p95"), u64_field(row, "cur_n"), f64_field(row, "base_p95"), u64_field(row, "base_n")))
 }
 
-/// Flips (a bead reaching RED after having reached CERTIFIED or LANDED) and total
-/// transitions, for the current window and the trailing baseline.
+/// Flips (a round reaching ATTRIBUTING — the batch machine's own Red transition, legal only
+/// from CI_RUNNING) and total batch transitions, for the current window and the trailing
+/// baseline, both read from the `bead-stage` family's `machine = 'batch'` rows.
 pub fn round_health_metrics(
     duckdb_bin: &str,
     root: &Path,
     window_hours: f64,
     baseline_hours: f64,
 ) -> Result<(u64, u64, u64, u64), String> {
-    let path = family_path(root, "landing-event");
+    let path = family_path(root, "bead-stage");
     if !path.exists() {
         return Err(format!("{}: no rows yet", path.display()));
     }
     let path_str = path.to_string_lossy();
     let sql = format!(
         "WITH ordered AS (
-            SELECT bead, state, CAST(ts AS TIMESTAMP) AS ts,
-                   LAG(state) OVER (PARTITION BY bead ORDER BY ts) AS prev_state
+            SELECT key, to_state, CAST(ts AS TIMESTAMP) AS ts,
+                   LAG(to_state) OVER (PARTITION BY key ORDER BY seq) AS prev_state
             FROM read_ndjson_auto('{path_str}')
+            WHERE machine = 'batch' AND applied
          )
          SELECT
-            count(*) FILTER (WHERE prev_state IS NOT NULL AND state = 'RED' AND prev_state IN ('CERTIFIED', 'LANDED')
+            count(*) FILTER (WHERE prev_state IS NOT NULL AND to_state = 'ATTRIBUTING' AND prev_state = 'CI_RUNNING'
                               AND ts >= now() - INTERVAL '{window_hours} hours') AS cur_flips,
             count(*) FILTER (WHERE prev_state IS NOT NULL AND ts >= now() - INTERVAL '{window_hours} hours') AS cur_transitions,
-            count(*) FILTER (WHERE prev_state IS NOT NULL AND state = 'RED' AND prev_state IN ('CERTIFIED', 'LANDED')
+            count(*) FILTER (WHERE prev_state IS NOT NULL AND to_state = 'ATTRIBUTING' AND prev_state = 'CI_RUNNING'
                               AND ts >= now() - INTERVAL '{baseline_hours} hours') AS base_flips,
             count(*) FILTER (WHERE prev_state IS NOT NULL AND ts >= now() - INTERVAL '{baseline_hours} hours') AS base_transitions
          FROM ordered;"

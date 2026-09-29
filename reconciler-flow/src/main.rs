@@ -27,8 +27,8 @@ use reconciler_flow::core::{
     RoundHealthObserved, VelocityObserved,
 };
 use reconciler_flow::io::{
-    append_backlog_sample, backlog_baseline, backlog_count, certified_waiting, dwell_metrics,
-    flow_floors, mail_concierge, round_health_metrics, velocity_metrics,
+    append_backlog_sample, backlog_baseline, backlog_count, dwell_metrics, flow_floors,
+    mail_concierge, round_health_metrics, velocity_metrics, waiting_to_land,
 };
 
 extern "C" {
@@ -63,7 +63,6 @@ struct Config {
     bd_bin: String,
     spira_db: String,
     scope_label: String,
-    landstate_dir: PathBuf,
     desired_dir: PathBuf,
     mail_sh: String,
     window_hours: f64,
@@ -96,7 +95,6 @@ impl Config {
             bd_bin: env::var("SPIRA_BD").unwrap_or_else(|_| "bd".to_string()),
             spira_db: env::var("SPIRA_DB").unwrap_or_default(),
             scope_label: env::var("SPIRA_SCOPE_LABEL").unwrap_or_default(),
-            landstate_dir: spira_run.join("landstate"),
             desired_dir: env::var("SPIRA_DESIRED_DIR").map(PathBuf::from).unwrap_or_else(|_| {
                 let config_home = env::var("XDG_CONFIG_HOME")
                     .map(PathBuf::from)
@@ -238,7 +236,7 @@ fn run_pass() -> Result<(), String> {
     }
 
     // ── stage velocity ("queue") ─────────────────────────────────────────────────────────
-    let waiting = certified_waiting(&cfg.landstate_dir);
+    let waiting = waiting_to_land(&cfg.duckdb_bin, &cfg.spira_run);
     let velocity = velocity_metrics(&cfg.duckdb_bin, &cfg.spira_run, cfg.window_hours, cfg.baseline_hours);
     let velocity_raw_status = match (&waiting, &velocity) {
         (Ok(w), Ok((cur, base))) => velocity_raw(

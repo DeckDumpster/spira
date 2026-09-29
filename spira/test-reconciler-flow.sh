@@ -2,15 +2,17 @@
 #
 # test-reconciler-flow.sh — reconciler-flow: backlog trend, stage velocity against a
 # trailing 24h baseline (with optional per-stage floors), stage dwell, and round health
-# (flip rate), over the run/tsd/ time series.
+# (flip rate), over the run/tsd/ time series. Reads the `bead-stage` family (design
+# reconciler-time-series-2026-09-27 §3) — the lifecycle machine's own projected states —
+# never `landing-event`, which belongs to the abolished landing-certification stage.
 #
 # WHAT THIS SUITE CHECKS
-#   1. A fresh environment (no landing-event rows yet) reports UNOBSERVABLE for velocity,
+#   1. A fresh environment (no bead-stage rows yet) reports UNOBSERVABLE for velocity,
 #      dwell and round-health — never SATISFIED (law-a-control-that-cannot-check-must-refuse).
 #      Backlog trend is SATISFIED with no history: there is nothing yet to have grown past.
 #   2. POSITIVE CONTROL, then the design's own literal test case: with a healthy baseline and
-#      certified work waiting, a healthy current rate is SATISFIED; a current rate of zero
-#      with certified work still waiting is a GAP — but not yet inside its grace period.
+#      work waiting to land, a healthy current rate is SATISFIED; a current rate of zero
+#      with work still waiting is a GAP — but not yet inside its grace period.
 #   3. The same gap, still open on the next pass past its grace period, is confirmed
 #      (is_gap) and alerts the Concierge mailbox — the only action a flow gap ever gets,
 #      since it has no deterministic remedy. Once confirmed, the same unresolved streak
@@ -20,9 +22,10 @@
 #      baseline ratio alone would not.
 #   5. Backlog trend: growth well past the trailing baseline is a gap; ordinary variance
 #      is not.
-#   6. Stage dwell: a p95 past its configured limit is a gap; short dwell is not.
-#   7. Round health: a bead reverting from CERTIFIED to RED repeatedly is a gap; a quiet
-#      window is not.
+#   6. Stage dwell: a p95 past its configured limit, pooled over every in-flight bead and
+#      batch state, is a gap; short dwell is not.
+#   7. Round health: a round reverting from CI_RUNNING to ATTRIBUTING (the batch machine's
+#      own Red transition) repeatedly is a gap; a quiet window is not.
 #   8. A duckdb that cannot run at all (not the file — the query engine) is UNOBSERVABLE
 #      too, distinct from a missing family file.
 #   10. Unobservable has its own grace period (SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS, default
@@ -147,7 +150,7 @@ mail_count() {
 }
 mail_count_for() {
     # Alerts naming invariant $1 specifically — a plain reset_env leaves velocity, dwell
-    # and round-health unobservable together (none of them has a landing-event row yet),
+    # and round-health unobservable together (none of them has a bead-stage row yet),
     # so a raw mail_count conflates three invariants' independent alerts into one number.
     local n
     n="$(grep -c "^invariant: $1\$" "$MAIL_LOG" 2>/dev/null)"
@@ -155,15 +158,26 @@ mail_count_for() {
 }
 
 epoch_iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
-emit_event() {
-    # emit_event <bead> <state> <age_seconds_ago>
-    local bead="$1" state="$2" age="$3" ts now
+SEQ_COUNTER=0
+emit_stage() {
+    # emit_stage <machine> <key> <from_state> <to_state> <age_seconds_ago> — one bead-stage
+    # row (tsd-lifecycle-export's own shape, sp-qz2yj). seq is assigned in call order, so a
+    # caller emitting a key's rows oldest-first gets them ordered the way the real exporter
+    # would have numbered them.
+    local machine="$1" key="$2" from="$3" to="$4" age="$5" ts now
     now="$(date +%s)"
     ts="$(epoch_iso "$((now - age))")"
+    SEQ_COUNTER=$((SEQ_COUNTER + 1))
     mkdir -p "$SPIRA_RUN/tsd"
-    printf '{"ts":"%s","host":"t","family":"landing-event","bead":"%s","state":"%s","tip":"none"}\n' \
-        "$ts" "$bead" "$state" >> "$SPIRA_RUN/tsd/landing-event.jsonl"
+    printf '{"ts":"%s","host":"t","family":"bead-stage","seq":%s,"machine":"%s","key":"%s","event":"e","from_state":"%s","to_state":"%s","applied":true,"actor":"a","source":"legacy"}\n' \
+        "$ts" "$SEQ_COUNTER" "$machine" "$key" "$from" "$to" >> "$SPIRA_RUN/tsd/bead-stage.jsonl"
 }
+# emit_landed <bead> <age_seconds_ago> — a bead's transition into LANDED, the only shape
+# velocity_metrics reads; the from_state does not matter to it.
+emit_landed() { emit_stage bead "$1" IN_DELIVERY LANDED "$2"; }
+# emit_waiting <bead> <age_seconds_ago> — makes <bead>'s latest bead-stage row SUBMITTED, one
+# of the states waiting_to_land counts as still needing to land.
+emit_waiting() { emit_stage bead "$1" WORKING SUBMITTED "$2"; }
 write_flow_doc() {
     # write_flow_doc <velocity_floor_queue> <dwell_limit_review>
     mkdir -p "$SPIRA_DESIRED_DIR/versions"
@@ -206,37 +220,35 @@ echo "   nothing to compare against yet"
 # ============================================================================
 reset_env
 run_pass
-is  "flow:velocity:queue is unobservable with no landing-event rows" unobservable "$(status_of flow:velocity:queue status)"
-is  "flow:dwell:review is unobservable with no landing-event rows"   unobservable "$(status_of flow:dwell:review status)"
-is  "flow:round-health is unobservable with no landing-event rows"   unobservable "$(status_of flow:round-health status)"
+is  "flow:velocity:queue is unobservable with no bead-stage rows" unobservable "$(status_of flow:velocity:queue status)"
+is  "flow:dwell:review is unobservable with no bead-stage rows"   unobservable "$(status_of flow:dwell:review status)"
+is  "flow:round-health is unobservable with no bead-stage rows"   unobservable "$(status_of flow:round-health status)"
 is  "flow:backlog is satisfied with no baseline history"             satisfied    "$(status_of flow:backlog status)"
 is  "no concierge alert on an all-unobservable/satisfied pass" "0" "$(mail_count)"
 
 # ============================================================================
 echo
 echo "2. Velocity: positive control (healthy), then the design's own case — zero rate"
-echo "   with certified work waiting"
+echo "   with work waiting to land"
 # ============================================================================
 reset_env
 # Baseline: a landing every ~2h for the last 24h (12 events -> 0.5/h baseline).
-for h in 2 4 6 8 10 12 14 16 18 20 22 24; do emit_event "rcf-base-$h" LANDED $((h*3600)); done
-mkdir -p "$SPIRA_RUN/landstate"
+for h in 2 4 6 8 10 12 14 16 18 20 22 24; do emit_landed "rcf-base-$h" $((h*3600)); done
 
 echo "flow:velocity:queue — no work waiting: a zero current rate is fine"
 run_pass
 is "no work waiting -> satisfied even at zero current rate" satisfied "$(status_of flow:velocity:queue status)"
 
-echo "flow:velocity:queue — certified work waiting, healthy current rate -> satisfied"
-printf 'CERTIFIED none %s\n' "$(date +%s)" > "$SPIRA_RUN/landstate/rcf-c1"
-emit_event rcf-recent LANDED 60   # one LANDED a minute ago: current window is healthy
+echo "flow:velocity:queue — work waiting to land, healthy current rate -> satisfied"
+emit_waiting rcf-c1 60
+emit_landed rcf-recent 60   # one LANDED a minute ago: current window is healthy
 run_pass
-is "certified work waiting with a healthy current rate -> satisfied" satisfied "$(status_of flow:velocity:queue status)"
+is "work waiting to land with a healthy current rate -> satisfied" satisfied "$(status_of flow:velocity:queue status)"
 
-echo "flow:velocity:queue — certified work waiting, zero current rate -> gap, inside grace"
+echo "flow:velocity:queue — work waiting to land, zero current rate -> gap, inside grace"
 reset_env
-for h in 2 4 6 8 10 12 14 16 18 20 22 24; do emit_event "rcf-base-$h" LANDED $((h*3600)); done
-mkdir -p "$SPIRA_RUN/landstate"
-printf 'CERTIFIED none %s\n' "$(date +%s)" > "$SPIRA_RUN/landstate/rcf-c1"
+for h in 2 4 6 8 10 12 14 16 18 20 22 24; do emit_landed "rcf-base-$h" $((h*3600)); done
+emit_waiting rcf-c1 60
 run_pass
 is  "zero rate with work waiting is a gap"        gap   "$(status_of flow:velocity:queue status)"
 is  "but not yet confirmed — inside its grace period" False "$(status_of flow:velocity:queue is_gap)"
@@ -266,11 +278,10 @@ reset_env
 # Trailing baseline (2h window, overridden below): 3 events -> 1.5/h -> a baseline-ratio
 # threshold of 0.75/h. Current window: 1 event in the last 30 minutes -> 2.0/h, which
 # clears that threshold — but not a document floor of 3.0/h.
-emit_event rcf-base-1 LANDED 3600
-emit_event rcf-base-2 LANDED 7000
-emit_event rcf-recent LANDED 300
-mkdir -p "$SPIRA_RUN/landstate"
-printf 'CERTIFIED none %s\n' "$(date +%s)" > "$SPIRA_RUN/landstate/rcf-c1"
+emit_landed rcf-base-1 3600
+emit_landed rcf-base-2 7000
+emit_landed rcf-recent 300
+emit_waiting rcf-c1 60
 write_flow_doc 3.0 999999
 SPIRA_FLOW_BASELINE_HOURS=2 run_pass
 is "a configured floor fires even when the baseline ratio alone would not" gap "$(status_of flow:velocity:queue status)"
@@ -302,13 +313,14 @@ is "growth well past the baseline (20 vs 10) is a gap" gap "$(status_of flow:bac
 
 # ============================================================================
 echo
-echo "6. Stage dwell: p95 past its configured limit is a gap; short dwell is not"
+echo "6. Stage dwell: p95 past its configured limit, pooled over every in-flight bead and"
+echo "   batch state, is a gap; short dwell is not"
 # ============================================================================
 reset_env
 write_flow_doc 0 3600
 for i in 1 2 3 4 5; do
-    emit_event "rcf-dw-$i" CERTIFIED $((300 + i*60 + 1000))
-    emit_event "rcf-dw-$i" LANDED    $((300 + i*60))          # ~1000s dwell: under the limit
+    emit_stage bead "rcf-dw-$i" READY   WORKING   $((300 + i*60 + 1000))  # entering WORKING
+    emit_stage bead "rcf-dw-$i" WORKING SUBMITTED $((300 + i*60))         # leaving WORKING: ~1000s dwell, under the limit
 done
 run_pass
 is "dwell well under its configured limit is satisfied" satisfied "$(status_of flow:dwell:review status)"
@@ -316,21 +328,21 @@ is "dwell well under its configured limit is satisfied" satisfied "$(status_of f
 reset_env
 write_flow_doc 0 3600
 for i in 1 2 3 4 5; do
-    emit_event "rcf-dw-$i" CERTIFIED $((300 + i*60 + 9000))
-    emit_event "rcf-dw-$i" LANDED    $((300 + i*60))          # ~9000s dwell: over the limit
+    emit_stage bead "rcf-dw-$i" READY   WORKING   $((300 + i*60 + 9000))  # entering WORKING
+    emit_stage bead "rcf-dw-$i" WORKING SUBMITTED $((300 + i*60))         # leaving WORKING: ~9000s dwell, over the limit
 done
 run_pass
 is "dwell past its configured limit is a gap" gap "$(status_of flow:dwell:review status)"
 
 # ============================================================================
 echo
-echo "7. Round health: reverting from CERTIFIED to RED repeatedly is a gap; a quiet"
-echo "   window is not"
+echo "7. Round health: a round reverting from CI_RUNNING to ATTRIBUTING (the batch machine's"
+echo "   own Red transition) repeatedly is a gap; a quiet window is not"
 # ============================================================================
 reset_env
 for i in 1 2 3 4 5 6 7 8; do
-    emit_event "rcf-rh-$i" CERTIFIED $((600 + i*30 + 60))
-    emit_event "rcf-rh-$i" LANDED    $((600 + i*30))
+    emit_stage batch "rcf-rh-$i" OPEN       CI_RUNNING $((600 + i*30 + 60))
+    emit_stage batch "rcf-rh-$i" CI_RUNNING GREEN      $((600 + i*30))
 done
 run_pass
 is "a quiet window with no flips is satisfied" satisfied "$(status_of flow:round-health status)"
@@ -342,15 +354,15 @@ reset_env
 # against, and a first-ever thrash would never clear a ratio-based threshold.
 for i in $(seq 1 40); do
     age=$((3600 + i*300))
-    emit_event "rcf-rh-healthy-$i" CERTIFIED $((age + 60))
-    emit_event "rcf-rh-healthy-$i" LANDED    "$age"
+    emit_stage batch "rcf-rh-healthy-$i" OPEN       CI_RUNNING $((age + 60))
+    emit_stage batch "rcf-rh-healthy-$i" CI_RUNNING GREEN      "$age"
 done
 for i in 1 2 3 4 5 6 7 8; do
-    emit_event "rcf-rh-$i" CERTIFIED $((600 + i*30 + 60))
-    emit_event "rcf-rh-$i" RED       $((600 + i*30))          # every one flips back to red
+    emit_stage batch "rcf-rh-$i" OPEN       CI_RUNNING $((600 + i*30 + 60))
+    emit_stage batch "rcf-rh-$i" CI_RUNNING ATTRIBUTING $((600 + i*30))   # every one flips red
 done
 run_pass
-is "thrashing (every certified bead reverting to red) is a gap" gap "$(status_of flow:round-health status)"
+is "thrashing (every round reverting to red) is a gap" gap "$(status_of flow:round-health status)"
 
 # ============================================================================
 echo
@@ -358,7 +370,7 @@ echo "8. An unreadable duckdb (the engine itself, not the file) is unobservable 
 echo "   satisfied and never mistaken for the missing-family case"
 # ============================================================================
 reset_env
-emit_event rcf-any LANDED 60
+emit_landed rcf-any 60
 SPIRA_DUCKDB_BIN="$T/no-such-duckdb-binary" run_pass
 is "a broken duckdb binary is unobservable, not satisfied" unobservable "$(status_of flow:velocity:queue status)"
 
