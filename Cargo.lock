@@ -90,6 +90,7 @@ name = "batcher-cut"
 version = "0.1.0"
 dependencies = [
  "batcher",
+ "gate",
  "serde_json",
  "spira-config",
  "spira-lint",
@@ -569,6 +570,7 @@ dependencies = [
 name = "queue"
 version = "1.0.0"
 dependencies = [
+ "gate",
  "libc",
  "serde",
  "serde_json",

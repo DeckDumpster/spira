@@ -166,6 +166,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
         lc_bin: env::var_os("SPIRA_LC_BIN").map(PathBuf::from),
         lc_timeout: env::var("SPIRA_LC_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(30),
         lc_enforce: spira_config::lifecycle_enforce(None),
+        verdicts: gate::cert::verdicts_dir(env::var("SPIRA_VERDICTS").ok().as_deref(), &run),
     }
 }
 
@@ -261,6 +262,11 @@ fn handle_base_conflicts(
 /// caller can record both without a second pass over the same data.
 struct StableRound {
     members: Vec<Member>,
+    /// The head the round judged green — the corpus's own head, or the survivors' head whose
+    /// owned suites re-ran green — and a branch naming it: the one tree this round may
+    /// certify (queue/DESIGN.md §8 D12).
+    head: String,
+    green_branch: String,
     /// The longest per-red attribution wall of the round (red streamed → settled) — None
     /// when the corpus was green and attribution never ran.
     attribution_seconds: Option<u64>,
@@ -333,6 +339,12 @@ impl drive::RoundOps for LiveOps<'_> {
     }
 }
 
+/// The commit `rev` names in `repo`, if any.
+fn git_rev(repo: &Repo, rev: &str) -> Option<String> {
+    let o = std::process::Command::new("git").arg("-C").arg(&repo.path).args(["rev-parse", "--verify", "-q", rev]).output().ok()?;
+    o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
 /// S's suspects: `# covers:` read from the round tree's own copy of the suite (spira-lint's
 /// parser, the one select.sh's accessor agrees with), members ordered by attrib::suspect_order.
 fn suspects_in(wt: &Path, changed: &BTreeMap<String, Vec<String>>, suite: &str, members: &[String]) -> Vec<String> {
@@ -392,11 +404,23 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
     let end = drive::attribute_round(&mut runner, &mut ops, &suites, members, budget);
     runner.close();
     match end? {
-        drive::RoundEnd::Land { members, attribution_secs } => Ok(Some(StableRound {
-            members,
-            attribution_seconds: attribution_secs,
-            regreen_seconds: ops.first_red.map(|f| now().saturating_sub(f)),
-        })),
+        drive::RoundEnd::Land { members, attribution_secs } => {
+            let head = io::head_of(wt)?;
+            let green_branch = if git_rev(repo, &round_branch).as_deref() == Some(head.as_str()) {
+                round_branch
+            } else {
+                let b = format!("{round_branch}-survivors");
+                io::set_branch(repo, &b, &head);
+                b
+            };
+            Ok(Some(StableRound {
+                members,
+                head,
+                green_branch,
+                attribution_seconds: attribution_secs,
+                regreen_seconds: ops.first_red.map(|f| now().saturating_sub(f)),
+            }))
+        }
         drive::RoundEnd::Blocked(why) => {
             println!("batcher {}: round blocked — {why}", repo.name);
             Ok(None)
@@ -430,6 +454,28 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
             ],
         );
         return Ok(());
+    }
+
+    // The round's own certification (queue/DESIGN.md §8 D12): its full corpus ran green on
+    // stable.head, so that tree — and only that one — carries a round GREEN. land-local
+    // refuses any other head, so a worktree that moved since the corpus run cannot land.
+    match io::certify_round(env_, repo, &stable.head, &stable.green_branch) {
+        Ok(p) => println!("batcher {}: certified the round's tree (round GREEN at {}) — {}", repo.name, stable.head, p.display()),
+        Err(e) => {
+            let msg = format!("batcher {}: refused to land locally at {head} — cannot record the round's certificate: {e}", repo.name);
+            println!("{msg}");
+            io::write_local_verdict(env_, &repo.name, "red", &msg);
+            io::tsd_append_round(
+                env_,
+                &[
+                    ("repo", repo.name.clone()),
+                    ("verdict", "refused".to_string()),
+                    ("duration_ms", ((now() - round_start) * 1000).to_string()),
+                    ("base", base_sha.to_string()),
+                ],
+            );
+            return Ok(());
+        }
     }
 
     let member_pairs: Vec<(String, String)> = stable.members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();

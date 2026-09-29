@@ -156,6 +156,7 @@ merge-failed messages, which are new.
 |---|---|---|
 | `$SPIRA_GATE_LOG` | `<UTC %Y-%m-%dT%H:%M:%SZ> <repo> <branch> waited=<n>s ran=<n>s rc=<status>[ <reason>]\n`, appended | every verdict once the repository resolved |
 | `$SPIRA_VERDICTS/<key>` | `when=<UTC>\nat=<epoch>\nby=<caller>\nrepo=<name>\nbranch=<br>\nsuites=<csv or ->\n`, written to `.<key>.<pid>` and renamed | PASS from a trial only |
+| `$SPIRA_VERDICTS/trees/<repo>/<T>` (the tree certificate, `src/cert.rs`) | `verdict=PASS\nsource=gate\ntree=<T>\nrepo=<name>\nrev=<gate revision>\nbranch=<br>\nby=<caller>\nwhen=<UTC>\nat=<epoch>\nharness=<harness_h or ->\nsuites=<csv or ->\n`, temp + rename | every PASS (`pass`, `cached`, `syntax-only`) once the merged tree `T` is known |
 | `$SPIRA_RUN/gate-admission/slot.<n>.lock` | empty; `flock` held for the trial | unless `SPIRA_GATE_SUITES=off` |
 | `$SPIRA_RUN/worktree/.gate.<repo-basename>.<tree-key>` | the gate worktree (detached) | removed on every non-PASS verdict; kept on PASS for cargo's fingerprints |
 | `<tree>.lock`, `<tree>.lock.holder` | lock; `<pid> <pgid>\n` | holder removed at exit |
@@ -217,6 +218,14 @@ lib.sh seam is one `bash -c '. lib.sh; …'` at start (NUL-separated `key=value`
 `lc_certify` / `spira_prune_worktrees`, payloads never on argv.
 
 ## Decisions
+
+* **Every PASS certifies the merged tree it judged (queue/DESIGN.md §8 D12).**
+  `queue land-local` refuses a head whose tree has no certificate. The certificate is keyed
+  by `(repo, T)` alone, unlike the verdict cache key, so that a gate upgrade does not make
+  an earlier PASS of the same content stop counting. The harness hash is recorded, not
+  matched. `src/cert.rs` owns the format for all three crates that touch it: this one and
+  batcher-cut write it, and queue reads it. A cached PASS rewrites the certificate, so a
+  tree whose PASS predates certificates is certified the next time it is gated.
 
 * **A conflict is NO_VERDICT `reason=conflict`**, not a new exit status (see above).
 * **The landing pass routes it.** `certify_judge` runs `rebase-stale <id> <repo>` on

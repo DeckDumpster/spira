@@ -18,6 +18,15 @@ Carrying it out means merges, the round's suites, the PR, the open-batch record 
   open one). Also the open-batch record `$SPIRA_QUEUE_DIR/<repo>/open` (key=value, read by
   verdict.sh and queue-watch), `land_mark BATCHED|RED`, and the local verdict. Events go to
   stdout.
+- **Round certificate (queue/DESIGN.md §8 D12):** under queue.local, `finish_local_round`
+  writes `verdict=GREEN source=round` (`gate::cert`) to
+  `${SPIRA_VERDICTS:-$SPIRA_RUN/verdicts}/trees/<repo>/<tree>` for the tree of the head whose
+  full corpus `stabilize_round` just ran green. It does this immediately before `queue
+  land-local`, which lands only a certified tree. The head the corpus judged is carried in
+  `StableRound.head`, so if the worktree has moved since, the certificate names the green
+  tree and land-local refuses the other one. If the certificate cannot be written, the
+  round is refused (`verdict=refused`, local verdict red). That is louder than landing on a
+  certificate nobody can read back.
 - **Exit:** 0 when the cut ran or had nothing to do; non-zero with a one-line reason on
   stderr.
 

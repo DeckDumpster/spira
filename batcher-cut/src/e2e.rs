@@ -184,6 +184,7 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
         lc_bin: None,
         lc_timeout: 5,
         lc_enforce: false,
+        verdicts: run.join("verdicts"),
     };
     let repo = Repo { name: "fx".into(), path: repo_dir.clone(), base: "main".into(), forge: PathBuf::new(), land: Land::Local };
     let wt = run.join("worktree/.batcher-fx");

@@ -76,6 +76,9 @@ pub struct Env {
     /// THE lifecycle switch (DESIGN.md "Lifecycle switch"): off, nothing in this crate runs
     /// spira-lc — not even a probe; `lc_bin` is never consulted to decide it.
     pub lc_enforce: bool,
+    /// `${SPIRA_VERDICTS:-$SPIRA_RUN/verdicts}` — where the round's tree certificate goes
+    /// (gate::cert, queue/DESIGN.md §8 D12), resolved exactly as the gate resolves it.
+    pub verdicts: PathBuf,
 }
 
 fn now() -> u64 {
@@ -876,6 +879,35 @@ pub fn forge_pr_create(repo: &Repo, head: &str, base: &str, title: &str, body: &
 // all of it queue land-local's own contract, never re-derived here.
 // ---------------------------------------------------------------------------------------
 
+/// Certify the round: the full corpus just ran green on `head`, so record `verdict=GREEN
+/// source=round` for `head`'s tree (gate::cert; queue/DESIGN.md §8 D12). `queue land-local`
+/// lands only a tree a gate PASS or a round GREEN certified, and a round head is a merge of
+/// many members that no per-branch gate ever judged. Err when the tree cannot be resolved or
+/// the certificate cannot be written; the caller refuses the round rather than land on a
+/// certificate that is not there.
+pub fn certify_round(env: &Env, repo: &Repo, head: &str, round_branch: &str) -> Result<PathBuf, String> {
+    let tree = run(
+        Command::new("git").arg("-C").arg(&repo.path).args(["rev-parse", "--verify", "-q"]).arg(format!("{head}^{{tree}}")),
+        "git rev-parse <head>^{tree}",
+    )?
+    .trim()
+    .to_string();
+    let when = run(Command::new("date").args(["-u", "+%Y-%m-%dT%H:%M:%SZ"]), "date").map(|s| s.trim().to_string()).unwrap_or_else(|_| "-".into());
+    let c = gate::cert::Cert {
+        source: gate::cert::Source::Round,
+        tree,
+        repo: repo.name.clone(),
+        rev: head.to_string(),
+        branch: round_branch.to_string(),
+        by: "batcher".into(),
+        when,
+        at: now(),
+        harness: "-".into(),
+        suites: "full-corpus".into(),
+    };
+    gate::cert::write(&env.verdicts, &c).map_err(|e| format!("round certificate for {head}: {e}"))
+}
+
 /// Land `head` locally via `queue land-local`, under the round lock this crate's own
 /// `try_lock` already holds — SPIRA_QUEUE_LOCK_HELD=1 tells land-local to skip its own flock
 /// rather than block forever on a lock this same process already owns.
@@ -884,7 +916,11 @@ pub fn forge_pr_create(repo: &Repo, head: &str, base: &str, title: &str, body: &
 /// same benign outcome `try_lock`'s own None already models for this crate's other refusals.
 pub fn land_local(env: &Env, repo: &Repo, wt: &Path, head: &str, members: &[(String, String)]) -> Result<bool, String> {
     use std::io::Write;
-    let members_text: String = members.iter().map(|(id, tip)| format!("{id}:{tip}\n")).collect();
+    let members_text = members.iter().fold(String::new(), |mut acc, (id, tip)| {
+        use std::fmt::Write as _;
+        let _ = writeln!(acc, "{id}:{tip}");
+        acc
+    });
     let mut cmd = Command::new(&env.queue_bin);
     cmd.arg("land-local").arg(&repo.name);
     cmd.arg("--head").arg(head);
@@ -1118,29 +1154,7 @@ mod lifecycle_tests {
     }
 
     fn env(dir: &Path, lc_bin: Option<PathBuf>, lc_enforce: bool) -> Env {
-        Env {
-            home: dir.to_path_buf(),
-            run: dir.to_path_buf(),
-            queue_dir: dir.join("queue"),
-            landstate: dir.join("landstate"),
-            db: None,
-            bd: "bd".into(),
-            express_label: "express".into(),
-            tsd_bin: None,
-            round_vm: dir.join("round-vm"),
-            queue_bin: dir.join("queue"),
-            rebase_stale_bin: dir.join("rebase-stale"),
-            round_slots: None,
-            poll_secs: 1,
-            maxpar: 1,
-            wall_secs: 1,
-            rust_toolchain: "1.82.0".into(),
-            git_name: "t".into(),
-            git_email: "t@t".into(),
-            lc_bin,
-            lc_timeout: 5,
-            lc_enforce,
-        }
+        Env { lc_bin, lc_enforce, ..super::lifecycle_tests_env(dir) }
     }
 
     fn members() -> Vec<(String, String)> {
@@ -1197,5 +1211,74 @@ mod lifecycle_tests {
         // A reachable binary with a non-JSON reply is not an answer either.
         let e = env(&d, Some(fake_lc(&d, "not json")), true);
         assert!(lc_probe(&e).unwrap_err().contains("unparsed"));
+    }
+}
+
+#[cfg(test)]
+mod certify_tests {
+    //! The round certificate (DESIGN.md "Round certificate"; queue/DESIGN.md §8 D12).
+    use super::*;
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let o = Command::new("git").arg("-C").arg(dir).args(args).env("GIT_CONFIG_GLOBAL", "/dev/null").output().unwrap();
+        assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn a_green_round_certifies_exactly_its_heads_tree() {
+        let d = std::env::temp_dir().join(format!("batcher-cut-cert-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        git(&d, &["init", "-q"]);
+        for (f, body) in [("a", "1"), ("b", "2")] {
+            fs::write(d.join(f), body).unwrap();
+            git(&d, &["add", f]);
+            git(&d, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", f]);
+        }
+        let head = git(&d, &["rev-parse", "HEAD"]);
+        let tree = git(&d, &["rev-parse", "HEAD^{tree}"]);
+        let older = git(&d, &["rev-parse", "HEAD~1^{tree}"]);
+        let repo = Repo { name: "spira".into(), path: d.clone(), base: "local/main".into(), forge: PathBuf::new(), land: Land::Local };
+        let mut e = super::lifecycle_tests_env(&d);
+        e.verdicts = d.join("verdicts");
+        let p = certify_round(&e, &repo, &head, "spira/batcher-attr/x").unwrap();
+        let text = fs::read_to_string(&p).unwrap();
+        let c = gate::cert::certifies(&text, "spira", &tree).expect("certifies the head's tree");
+        assert_eq!(c.source, gate::cert::Source::Round);
+        assert_eq!(c.rev, head);
+        assert!(gate::cert::certifies(&text, "spira", &older).is_none());
+        assert!(gate::cert::path(&e.verdicts, "spira", &older).map(|p| !p.exists()).unwrap_or(true));
+        assert!(certify_round(&e, &repo, "no-such-rev", "x").is_err(), "an unresolvable head certifies nothing");
+        let _ = fs::remove_dir_all(&d);
+    }
+}
+
+/// A scratch Env for the unit tests: nothing points anywhere real.
+#[cfg(test)]
+fn lifecycle_tests_env(dir: &Path) -> Env {
+    Env {
+        home: dir.to_path_buf(),
+        run: dir.to_path_buf(),
+        queue_dir: dir.join("queue"),
+        landstate: dir.join("landstate"),
+        db: None,
+        bd: "bd".into(),
+        express_label: "express".into(),
+        tsd_bin: None,
+        round_vm: dir.join("round-vm"),
+        queue_bin: dir.join("queue"),
+        rebase_stale_bin: dir.join("rebase-stale"),
+        round_slots: None,
+        poll_secs: 1,
+        maxpar: 1,
+        wall_secs: 1,
+        rust_toolchain: "1.82.0".into(),
+        git_name: "t".into(),
+        git_email: "t@t".into(),
+        lc_bin: None,
+        lc_timeout: 5,
+        lc_enforce: false,
+        verdicts: dir.join("verdicts"),
     }
 }
