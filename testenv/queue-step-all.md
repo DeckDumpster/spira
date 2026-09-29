@@ -6,7 +6,7 @@ queue-mode repository run `queue.sh step`". It belongs in the queue binary: it i
 repeated over the repositories whose land mode makes `step` meaningful.
 
 The implementation is `queue-step-all.patch` beside this file, against
-`concierge/rw-queue` (628a72dfe), with unit tests. It is not applied on this branch because
+`concierge/rw-queue` at eebfaf7f6 (its lifecycle_enforce commit), with unit tests. It is not applied on this branch because
 the queue crate does not exist here; the Concierge applies it (`git apply
 testenv/queue-step-all.patch` on a checkout of concierge/rw-queue, then
 `cargo test -p queue`).
@@ -50,6 +50,33 @@ continue` did).
    same time; the one that holds it is doing the same work.
 3. Exactly `step(<repo>)` — the same function `queue step <repo>` runs, same output.
 
+## The lifecycle switch (operator decision, 2026-09-28)
+
+`lifecycle_enforce` is the single switch for everything touching spira-lc, resolved by the
+queue crate's own `lifecycle_on` (DESIGN.md §10 on rw-queue): `SPIRA_LIFECYCLE_ENFORCE`
+(`1`/`true` = on, anything else = off) wins; else `spira.lifecycle_enforce` through the
+spira-config library; else **OFF**. Binary presence is never consulted.
+
+A step's own Rust code never calls spira-lc; its **children** do — verdict.sh and batch.sh
+through lc.sh (which gates only on `[ -x "$SPIRA_LC_BIN" ]`, i.e. on binary presence), and
+batcher-cut through `SPIRA_LC_BIN`. So the switch is enforced structurally at the one place
+the step starts them:
+
+* **OFF** — every child (`verdict.sh`, `batch.sh`, the batcher's `cut`) runs with
+  `SPIRA_LIFECYCLE_ENFORCE=0` and `SPIRA_LC_BIN=/dev/null/spira-lc-lifecycle-enforce-off`, a
+  path that can never be executed: lc.sh's `-x` test fails (conf.sh's `:=` keeps a non-empty
+  value), so no land/settle/verdict event reaches spira-lc; batcher-cut's attempt fails to
+  spawn and it takes its land_mark path. spira-lc is not probed either. Legacy
+  landstate/labels only.
+* **ON** — spira-lc is authoritative: `require_lc` probes it **before** anything runs; an
+  unreachable machine is the crate's loud refusal
+  (`queue.sh step --all: lifecycle_enforce is on and spira-lc is unreachable (<why>) — refused, nothing changed; …`),
+  exit 1, no repository stepped. Reachable → children run with `SPIRA_LIFECYCLE_ENFORCE=1`
+  and the caller's `SPIRA_LC_BIN`.
+
+`step --all` resolves the switch once for the pass. `step <repo>` and `flush` (which share
+the sweep-and-cut) resolve it the same way.
+
 `queue step <repo>` takes the same step lock (same refusal line, **exit 0** — a skipped
 step is not a failure; landing.sh ignores the status either way).
 
@@ -71,6 +98,9 @@ in none of them (it was never a candidate).
 ```rust
 enum Cmd { …, Step { repo: String }, StepAll }
 trait Lib { …; fn repos(&self) -> Result<Vec<String>, String>; }   // seam R22
+trait Scripts { fn verdict(&self, repo, lc_off: bool); fn batch_sweep(&self, repo, wait_zero, lc_off);
+                fn batcher_cut(&self, bin, repo, wait_zero, lc_off); … }
+// real.rs: LC_OFF_BIN = "/dev/null/spira-lc-lifecycle-enforce-off"; lifecycle_env(cmd, lc_off)
 // lock.rs: try_lock_file(queue_dir, repo, "step.lock") — same flock as try_lock.
 ```
 
@@ -88,15 +118,15 @@ trait Lib { …; fn repos(&self) -> Result<Vec<String>, String>; }   // seam R22
 | `lock::the_step_lock_is_a_different_file_from_the_queue_lock` | step.lock ≠ lock |
 | `real::repos_seam_lists_home_first_once_each_and_ignores_log_lines`, `real::repos_seam_that_answers_nothing_is_an_error_not_an_empty_list` | seam R22 through real bash: order, dedupe, blank names dropped, logs before the mark ignored, empty/failed answer = Err |
 
-Result on concierge/rw-queue + patch: 98 tests, all pass, except a **pre-existing** flake
-in the base crate (`to_local_derives_the_local_branch_and_restores_the_config_if_the_legacy_map_fails`,
-2 of 12 runs on the unpatched base; `claim_and_release_hand_the_batch_back` seen once): the
-queue lock is an `flock` on an open file description, and a sibling test thread that
-forks a child for a bash-seam test shares that description until the child execs, so a
-test that drops a lock and immediately retakes it can find it held. Test-only (production
-`queue` is single-threaded); the new tests avoid the pattern (own world per lock holder, or
-wait out the window). Worth a serialising mutex around the bash-seam tests in the queue
-crate.
+| `step_all_with_lifecycle_off_pins_every_child_off_and_never_touches_spira_lc` | OFF (the default) with a spira-lc binary present: every child lc_off, spira-lc never called nor probed |
+| `lifecycle_env_switch_wins_over_the_config_both_ways` | env `0` beats config ON; env `true` beats config OFF |
+| `step_all_with_lifecycle_on_runs_children_on_and_refuses_loudly_when_unreachable` | ON reachable: probed, children on; ON unreachable: `step --all`, `step <repo>` and `flush` refuse loudly, exit 1, no child run |
+| `real::step_children_carry_the_lifecycle_switch_and_never_see_spira_lc_when_it_is_off` | through real processes: verdict.sh, batch.sh and a batcher see `0` and the unexecutable pin when OFF, `1` when ON |
+
+Result on concierge/rw-queue (eebfaf7f6) + patch: `cargo test -p queue` 107 passed, 0
+failed, 12 consecutive runs; `cargo clippy -p queue --all-targets` clean. (The flock/fork
+test race noted against 628a72dfe is fixed upstream by eebfaf7f6's `testutil::serial()`,
+which these tests use through `T`.)
 
 ## Cutover (for the Concierge)
 

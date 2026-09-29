@@ -49,7 +49,7 @@ index a3dbf06..454d33a 100644
          Cmd::Abandon { repo, reason, dry_run } => batch::abandon(w, repo.as_deref(), reason, *dry_run),
          Cmd::OpenBatch { repo, members, skip_pregate, dry_run } => batch::open_batch(w, repo.as_deref(), members, *skip_pregate, *dry_run),
 diff --git a/queue/src/lock.rs b/queue/src/lock.rs
-index 203248c..3c4a014 100644
+index 5f76bc9..e4184cf 100644
 --- a/queue/src/lock.rs
 +++ b/queue/src/lock.rs
 @@ -19,9 +19,19 @@ pub enum Acquire {
@@ -73,7 +73,7 @@ index 203248c..3c4a014 100644
          Ok(f) => f,
          Err(_) => return Acquire::Unopenable,
      };
-@@ -47,4 +57,18 @@ mod tests {
+@@ -48,4 +58,18 @@ mod tests {
          drop(a);
          assert!(matches!(try_lock(&d, "spira"), Acquire::Held(_)));
      }
@@ -93,10 +93,51 @@ index 203248c..3c4a014 100644
 +    }
  }
 diff --git a/queue/src/ops/simple.rs b/queue/src/ops/simple.rs
-index 5c3c167..659061f 100644
+index 5c3c167..b1471f0 100644
 --- a/queue/src/ops/simple.rs
 +++ b/queue/src/ops/simple.rs
-@@ -174,13 +174,99 @@ impl Emit for Merged<'_> {
+@@ -132,15 +132,27 @@ pub fn stats(w: &World) -> i32 {
+     OK
+ }
+ 
++/// The lifecycle switch for a step or flush (queue-step-all.md, DESIGN.md §10): OFF →
++/// `lc_off = true` and spira-lc is never touched, not even probed; ON → the machine must
++/// answer before anything runs, else a loud refusal (exit 1).
++fn lc_mode(w: &World, label: &str) -> Result<bool, i32> {
++    if super::lifecycle_on(w) {
++        super::require_lc(w, label)?;
++        Ok(false)
++    } else {
++        Ok(true)
++    }
++}
++
+ /// batch.sh's sweep, then the batcher's cut (queue.sh _batch_cut).
+-fn batch_cut(w: &World, c: &Ctx, wait_zero: bool) -> i32 {
+-    w.scripts.batch_sweep(&c.r.name, wait_zero);
++fn batch_cut(w: &World, c: &Ctx, wait_zero: bool, lc_off: bool) -> i32 {
++    w.scripts.batch_sweep(&c.r.name, wait_zero, lc_off);
+     let bin = c.s.batcher_bin.as_ref().filter(|b| is_executable(b));
+     let Some(bin) = bin else {
+         w.err(format!("queue.sh: SPIRA_BATCHER_BIN not available — cannot cut a round for {}", c.r.name));
+         return FAIL;
+     };
+-    w.scripts.batcher_cut(bin, &c.r.name, wait_zero)
++    w.scripts.batcher_cut(bin, &c.r.name, wait_zero, lc_off)
+ }
+ 
+ pub fn is_executable(p: &std::path::Path) -> bool {
+@@ -160,7 +172,8 @@ pub fn flush(w: &World, repo: Option<&str>) -> i32 {
+     if idents(w, "flush", &[("repo", &c.r.name)]).is_err() {
+         return FAIL;
+     }
+-    batch_cut(w, &c, true)
++    let Ok(lc_off) = lc_mode(w, "flush") else { return FAIL };
++    batch_cut(w, &c, true, lc_off)
+ }
+ 
+ /// Routes stderr to stdout (`cmd_publish "$name" 2>&1`).
+@@ -174,13 +187,102 @@ impl Emit for Merged<'_> {
      }
  }
  
@@ -128,11 +169,14 @@ index 5c3c167..659061f 100644
      if idents(w, "step", &[("repo", &c.r.name)]).is_err() {
          return FAIL;
      }
+-    w.scripts.verdict(&c.r.name);
+-    batch_cut(w, &c, false);
++    let Ok(lc_off) = lc_mode(w, "step") else { return FAIL };
 +    match step_lock(w, &c) {
 +        // The other stepper is doing this work; a skipped step is not a failure.
 +        StepLock::Busy => OK,
 +        StepLock::Unopenable => FAIL,
-+        StepLock::Held(_g) => step_locked(w, &c),
++        StepLock::Held(_g) => step_locked(w, &c, lc_off),
 +    }
 +}
 +
@@ -147,6 +191,8 @@ index 5c3c167..659061f 100644
 +            return FAIL;
 +        }
 +    };
++    // One switch for the whole pass: ON and unreachable refuses before any repo is stepped.
++    let Ok(lc_off) = lc_mode(w, "step --all") else { return FAIL };
 +    let (mut stepped, mut busy, mut unresolved) = (Vec::new(), Vec::new(), Vec::new());
 +    for name in names {
 +        let c = match w.lib.context(Some(&name)) {
@@ -167,7 +213,7 @@ index 5c3c167..659061f 100644
 +        w.out(format!("queue.sh step --all: {}", c.r.name));
 +        match step_lock(w, &c) {
 +            StepLock::Held(g) => {
-+                let _ = step_locked(w, &c);
++                let _ = step_locked(w, &c, lc_off);
 +                drop(g);
 +                stepped.push(name);
 +            }
@@ -190,15 +236,14 @@ index 5c3c167..659061f 100644
 +    OK
 +}
 +
-+fn step_locked(w: &World, c: &Ctx) -> i32 {
-     w.scripts.verdict(&c.r.name);
--    batch_cut(w, &c, false);
-+    batch_cut(w, c, false);
++fn step_locked(w: &World, c: &Ctx, lc_off: bool) -> i32 {
++    w.scripts.verdict(&c.r.name, lc_off);
++    batch_cut(w, c, false, lc_off);
      if c.r.mode == LandMode::QueueLocal {
          let merged = Merged(w.io);
          let w2 = World { io: &merged, ..*w };
 diff --git a/queue/src/ports.rs b/queue/src/ports.rs
-index ba83227..eca12cb 100644
+index 9d6c1d1..5f996ce 100644
 --- a/queue/src/ports.rs
 +++ b/queue/src/ports.rs
 @@ -101,6 +101,9 @@ pub trait Bd {
@@ -211,11 +256,49 @@ index ba83227..eca12cb 100644
      /// `spira_toml_resolve` (only the transitions ask).
      fn toml_path(&self) -> Option<PathBuf>;
      /// R20: `repo_land` and `spira_landref` read back after a transition's write.
+@@ -138,9 +141,11 @@ pub trait Lib {
+ pub trait Scripts {
+     /// `gate.sh <branch> <repo>` with SPIRA_GATE_BEAD / SPIRA_GATE_SUITES: (rc, output).
+     fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String);
+-    fn batch_sweep(&self, repo: &str, wait_zero: bool) -> i32;
+-    fn verdict(&self, repo: &str) -> i32;
+-    fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool) -> i32;
++    /// `lc_off`: lifecycle_enforce is OFF — the child must not reach spira-lc (real.rs pins
++    /// `SPIRA_LC_BIN` to [`crate::real::LC_OFF_BIN`] and `SPIRA_LIFECYCLE_ENFORCE=0`).
++    fn batch_sweep(&self, repo: &str, wait_zero: bool, lc_off: bool) -> i32;
++    fn verdict(&self, repo: &str, lc_off: bool) -> i32;
++    fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool, lc_off: bool) -> i32;
+     fn czar_fence(&self, class: &str) -> bool;
+     /// `build-tarball.sh build --bin-dir … <head> <repo>` → the tarball path it printed.
+     fn build_tarball(&self, bins: &Path, repo_name: &str, name: &str, out: &Path, head: &str, repo: &Path) -> Option<PathBuf>;
 diff --git a/queue/src/real.rs b/queue/src/real.rs
-index 3d65988..42adb37 100644
+index d4ffcc1..2fc8201 100644
 --- a/queue/src/real.rs
 +++ b/queue/src/real.rs
-@@ -287,6 +287,14 @@ impl Lib for RealLib {
+@@ -195,6 +195,22 @@ pub fn parse_bd_json(text: &str) -> Result<Vec<BeadRow>, String> {
+     Ok(items.into_iter().filter_map(|i| serde_json::from_value(i).ok()).collect())
+ }
+ 
++/// What `SPIRA_LC_BIN` is pinned to in a step's children while lifecycle_enforce is OFF: a
++/// path that can never be executed (a file "inside" /dev/null). lc.sh gates every spira-lc
++/// call on `[ -x "$SPIRA_LC_BIN" ]` and conf.sh's `:=` keeps a non-empty value, so verdict.sh
++/// and batch.sh never reach the lifecycle machine; batcher-cut's attempt fails to spawn and
++/// takes its land_mark path. Binary presence is never the switch.
++pub const LC_OFF_BIN: &str = "/dev/null/spira-lc-lifecycle-enforce-off";
++
++/// Pin the lifecycle switch into a step child's environment (queue-step-all.md).
++fn lifecycle_env(c: &mut Command, lc_off: bool) {
++    if lc_off {
++        c.env("SPIRA_LIFECYCLE_ENFORCE", "0").env("SPIRA_LC_BIN", LC_OFF_BIN);
++    } else {
++        c.env("SPIRA_LIFECYCLE_ENFORCE", "1");
++    }
++}
++
+ // ------------------------------------------------------------------------------- lib seam
+ 
+ pub struct RealLib {
+@@ -287,6 +303,14 @@ impl Lib for RealLib {
          };
          Ok((s, r))
      }
@@ -230,7 +313,40 @@ index 3d65988..42adb37 100644
      fn toml_path(&self) -> Option<PathBuf> {
          let (_, ans) = self.answer(Op::TomlPath, &[]);
          pb(ans.trim())
-@@ -683,6 +691,7 @@ mod tests {
+@@ -389,23 +413,28 @@ impl Scripts for RealScripts {
+                 .env("SPIRA_GATE_SUITES", suites),
+         )
+     }
+-    fn batch_sweep(&self, repo: &str, wait_zero: bool) -> i32 {
++    fn batch_sweep(&self, repo: &str, wait_zero: bool, lc_off: bool) -> i32 {
+         let mut c = Command::new("bash");
+         c.arg(self.home.join("batch.sh")).arg(repo);
+         if wait_zero {
+             c.env("SPIRA_QUEUE_BATCH_WAIT", "0");
+         }
++        lifecycle_env(&mut c, lc_off);
+         c.stdin(Stdio::null()).status().ok().and_then(|s| s.code()).unwrap_or(127)
+     }
+-    fn verdict(&self, repo: &str) -> i32 {
+-        Command::new("bash").arg(self.home.join("verdict.sh")).arg(repo).stdin(Stdio::null()).status().ok().and_then(|s| s.code()).unwrap_or(127)
++    fn verdict(&self, repo: &str, lc_off: bool) -> i32 {
++        let mut c = Command::new("bash");
++        c.arg(self.home.join("verdict.sh")).arg(repo);
++        lifecycle_env(&mut c, lc_off);
++        c.stdin(Stdio::null()).status().ok().and_then(|s| s.code()).unwrap_or(127)
+     }
+-    fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool) -> i32 {
++    fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool, lc_off: bool) -> i32 {
+         let mut c = Command::new(bin);
+         c.arg("cut").arg(repo);
+         if wait_zero {
+             c.env("SPIRA_QUEUE_BATCH_WAIT", "0");
+         }
++        lifecycle_env(&mut c, lc_off);
+         c.stdin(Stdio::null()).status().ok().and_then(|s| s.code()).unwrap_or(127)
+     }
+     fn czar_fence(&self, class: &str) -> bool {
+@@ -691,6 +720,7 @@ mod tests {
              d.join("lib.sh"),
              r#"SPIRA_RUN=/run/x; LANDSTATE=/run/x/landstate; SPIRA_RELEASES=; SPIRA_DB=/db
  spira_home_repo() { printf spira; }
@@ -238,12 +354,13 @@ index 3d65988..42adb37 100644
  repo_root() { [ "$1" = spira ] && printf /repo || return 1; }
  repo_land() { printf queue.local; }
  repo_field() { case "$2" in land) echo queue.local;; base) echo local/main;; esac; }
-@@ -717,6 +726,27 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1
+@@ -726,6 +756,56 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1
          assert_eq!(other.path, None);
      }
  
 +    #[test]
 +    fn repos_seam_lists_home_first_once_each_and_ignores_log_lines() {
++        let _serial = crate::testutil::serial();
 +        let lib = RealLib { home: stub_home() };
 +        assert_eq!(lib.repos().unwrap(), vec!["spira".to_string(), "svc".to_string()]);
 +        // a lib.sh that logs while it is sourced: the log precedes the mark, never a name
@@ -254,7 +371,35 @@ index 3d65988..42adb37 100644
 +    }
 +
 +    #[test]
++    fn step_children_carry_the_lifecycle_switch_and_never_see_spira_lc_when_it_is_off() {
++        let _serial = crate::testutil::serial();
++        let d = crate::testutil::tmpdir("lc-env");
++        let rec = d.join("seen");
++        for s in ["verdict.sh", "batch.sh"] {
++            fs::write(d.join(s), format!("printf '%s %s %s|%s\\n' {s} \"$1\" \"${{SPIRA_LIFECYCLE_ENFORCE:-unset}}\" \"${{SPIRA_LC_BIN:-unset}}\" >> {}\n", rec.display())).unwrap();
++        }
++        let bin = d.join("batcher");
++        fs::write(&bin, format!("#!/bin/sh\nprintf 'batcher %s %s|%s\\n' \"$2\" \"${{SPIRA_LIFECYCLE_ENFORCE:-unset}}\" \"${{SPIRA_LC_BIN:-unset}}\" >> {}\n", rec.display())).unwrap();
++        use std::os::unix::fs::PermissionsExt;
++        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
++        let s = RealScripts { home: d.clone() };
++        s.verdict("spira", true);
++        s.batch_sweep("spira", false, true);
++        s.batcher_cut(&bin, "spira", false, true);
++        s.verdict("svc", false);
++        let seen = fs::read_to_string(&rec).unwrap();
++        let off = format!("0|{LC_OFF_BIN}");
++        let lines: Vec<&str> = seen.lines().collect();
++        assert_eq!(lines[0], format!("verdict.sh spira {off}"));
++        assert_eq!(lines[1], format!("batch.sh spira {off}"));
++        assert_eq!(lines[2], format!("batcher spira {off}"));
++        assert!(lines[3].starts_with("verdict.sh svc 1|"), "{}", lines[3]);
++        assert!(!Path::new(LC_OFF_BIN).exists(), "the OFF pin can never be executed");
++    }
++
++    #[test]
 +    fn repos_seam_that_answers_nothing_is_an_error_not_an_empty_list() {
++        let _serial = crate::testutil::serial();
 +        let d = crate::testutil::tmpdir("reallib-norepos");
 +        fs::write(d.join("lib.sh"), "spira_repos() { return 0; }\n").unwrap();
 +        fs::write(d.join("lc.sh"), "").unwrap();
@@ -265,9 +410,9 @@ index 3d65988..42adb37 100644
 +
      #[test]
      fn answer_seams_ignore_log_lines_and_carry_failures() {
-         let lib = RealLib { home: stub_home() };
+         let _serial = crate::testutil::serial();
 diff --git a/queue/src/seam.rs b/queue/src/seam.rs
-index 3bdcf84..1980788 100644
+index bc042f3..9f500e6 100644
 --- a/queue/src/seam.rs
 +++ b/queue/src/seam.rs
 @@ -13,6 +13,7 @@
@@ -305,7 +450,7 @@ index 3bdcf84..1980788 100644
  pub fn parse_kv0(answer: &str) -> std::collections::BTreeMap<String, String> {
      answer
 diff --git a/queue/src/tests.rs b/queue/src/tests.rs
-index 5810fba..de4be4b 100644
+index de0eb06..cb5b5e1 100644
 --- a/queue/src/tests.rs
 +++ b/queue/src/tests.rs
 @@ -144,6 +144,10 @@ struct FLib {
@@ -336,7 +481,39 @@ index 5810fba..de4be4b 100644
      fn toml_path(&self) -> Option<PathBuf> {
          self.toml.clone()
      }
-@@ -486,6 +496,8 @@ impl T {
+@@ -247,6 +257,8 @@ struct FScripts {
+     activate_rc: Cell<i32>,
+     fence_ok: Cell<bool>,
+     calls: RefCell<Vec<String>>,
++    /// The lc_off each step child was run with.
++    lc_off: RefCell<Vec<bool>>,
+ }
+ 
+ impl Scripts for FScripts {
+@@ -254,16 +266,19 @@ impl Scripts for FScripts {
+         self.calls.borrow_mut().push(format!("gate {br} {repo} bead={bead} suites={suites}"));
+         (self.gate_rc.get(), "gate says".into())
+     }
+-    fn batch_sweep(&self, repo: &str, wz: bool) -> i32 {
++    fn batch_sweep(&self, repo: &str, wz: bool, lc_off: bool) -> i32 {
+         self.calls.borrow_mut().push(format!("sweep {repo} wait0={wz}"));
++        self.lc_off.borrow_mut().push(lc_off);
+         0
+     }
+-    fn verdict(&self, repo: &str) -> i32 {
++    fn verdict(&self, repo: &str, lc_off: bool) -> i32 {
+         self.calls.borrow_mut().push(format!("verdict {repo}"));
++        self.lc_off.borrow_mut().push(lc_off);
+         0
+     }
+-    fn batcher_cut(&self, _: &Path, repo: &str, wz: bool) -> i32 {
++    fn batcher_cut(&self, _: &Path, repo: &str, wz: bool, lc_off: bool) -> i32 {
+         self.calls.borrow_mut().push(format!("cut {repo} wait0={wz}"));
++        self.lc_off.borrow_mut().push(lc_off);
+         0
+     }
+     fn czar_fence(&self, class: &str) -> bool {
+@@ -499,6 +514,8 @@ impl T {
              settle: RefCell::default(),
              pf_rc: Cell::new(0),
              conflict_with_base: RefCell::default(),
@@ -345,7 +522,7 @@ index 5810fba..de4be4b 100644
          };
          let scripts = FScripts::default();
          scripts.fence_ok.set(true);
-@@ -667,6 +679,127 @@ fn step_on_queue_forge_is_status_zero_whatever_the_cut_did() {
+@@ -691,6 +708,169 @@ fn step_on_queue_forge_is_status_zero_whatever_the_cut_did() {
      assert_eq!(t.run(&["step", "spira"]), 0);
  }
  
@@ -438,14 +615,6 @@ index 5810fba..de4be4b 100644
 +    assert!(t.err().contains("queue.sh step: another step holds the step lock for svc — skipped"));
 +    assert!(t.out().ends_with("stepped=1 busy=1 unresolved=0 stepped:spira busy:svc\n"));
 +    drop(held);
-+    // flock belongs to the open file description, and a sibling test thread that forks a
-+    // child (the bash seam tests) shares it until that child execs: wait out the window.
-+    for _ in 0..200 {
-+        if matches!(crate::lock::try_step_lock(&t.lib.s.queue_dir, "svc"), crate::lock::Acquire::Held(_)) {
-+            break;
-+        }
-+        std::thread::sleep(std::time::Duration::from_millis(10));
-+    }
 +    t.scripts.calls.borrow_mut().clear();
 +    assert_eq!(t.run(&["step", "--all"]), 0);
 +    assert_eq!(t.verdicts(), vec!["verdict spira", "verdict svc"], "{}", t.err());
@@ -458,6 +627,56 @@ index 5810fba..de4be4b 100644
 +    assert_eq!(t.run(&["step", "spira"]), 0);
 +    assert!(t.verdicts().is_empty());
 +    assert!(t.err().contains("another step holds the step lock for spira — skipped"));
++}
++
++#[test]
++fn step_all_with_lifecycle_off_pins_every_child_off_and_never_touches_spira_lc() {
++    let t = T::new(LandMode::Queue);
++    t.repo("spira", LandMode::Queue);
++    t.repo("svc", LandMode::Queue);
++    *t.lib.repos.borrow_mut() = Ok(vec!["spira".into(), "svc".into()]);
++    t.lc.available.set(true); // a binary is present: presence is never the switch
++    assert_eq!(t.run(&["step", "--all"]), 0);
++    assert_eq!(t.verdicts(), vec!["verdict spira", "verdict svc"]);
++    let modes = t.scripts.lc_off.borrow().clone();
++    assert!(!modes.is_empty() && modes.iter().all(|off| *off), "{modes:?}");
++    t.assert_lc_untouched();
++}
++
++#[test]
++fn lifecycle_env_switch_wins_over_the_config_both_ways() {
++    let t = T::new(LandMode::Queue);
++    t.lifecycle_on();
++    t.var("SPIRA_LIFECYCLE_ENFORCE", "0");
++    assert_eq!(t.run(&["step", "spira"]), 0);
++    assert!(t.scripts.lc_off.borrow().iter().all(|off| *off));
++    t.assert_lc_untouched();
++    let t = T::new(LandMode::Queue);
++    t.lc.available.set(true);
++    t.var("SPIRA_LIFECYCLE_ENFORCE", "true");
++    assert_eq!(t.run(&["step", "spira"]), 0);
++    assert!(t.scripts.lc_off.borrow().iter().all(|off| !*off));
++}
++
++#[test]
++fn step_all_with_lifecycle_on_runs_children_on_and_refuses_loudly_when_unreachable() {
++    let t = T::new(LandMode::Queue);
++    t.lifecycle_on();
++    t.repo("spira", LandMode::Queue);
++    *t.lib.repos.borrow_mut() = Ok(vec!["spira".into()]);
++    assert_eq!(t.run(&["step", "--all"]), 0);
++    assert!(t.scripts.lc_off.borrow().iter().all(|off| !*off));
++    assert!(t.lc.calls.borrow().contains(&"probe".to_string()));
++    for args in [&["step", "--all"][..], &["step", "spira"][..], &["flush"][..]] {
++        let t = T::new(LandMode::Queue);
++        t.lifecycle_on();
++        *t.lc.in_delivery.borrow_mut() = Err("dolt down".into());
++        t.repo("spira", LandMode::Queue);
++        *t.lib.repos.borrow_mut() = Ok(vec!["spira".into()]);
++        assert_eq!(t.run(args), 1, "{args:?}");
++        assert!(t.err().contains("lifecycle_enforce is on and spira-lc is unreachable (dolt down) — refused, nothing changed"), "{}", t.err());
++        assert!(t.scripts.calls.borrow().is_empty(), "{args:?} ran a child");
++    }
 +}
 +
 +#[test]
