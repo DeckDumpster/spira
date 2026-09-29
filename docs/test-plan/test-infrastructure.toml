@@ -166,6 +166,11 @@ id = "UC-test-infrastructure-30"
 tier = "T2"
 statement = "The per-suite watchdog kills a hung suite at its limit. The runner continues. A leaky background child does not wedge the pass."
 
+[use_case.uncovered]
+reason = "suite test-testenv-timeout.sh retired in the 2026-09-29 Rust cutover with testenv-batch.sh (commit 9fa99d61d); behaviour now verified by testenv unit tests runtime::tests::run_bounded_times_out_with_124, batch::tests::timeout_is_passed_to_every_suite_exec, batch::tests::parallel_records_every_outcome_and_writes_out_before_result, record::tests::exit_codes_map_to_statuses"
+date = "2026-09-29"
+bead = "sp-5odic"
+
 [[use_case]]
 id = "UC-test-infrastructure-31"
 tier = "T1"

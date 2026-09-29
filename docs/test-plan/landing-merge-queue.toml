@@ -1,0 +1,28 @@
+api_version = "test-plan/v1"
+area = "landing-merge-queue"
+
+# Partial catalogue. This area's use cases are still declared in the older markdown line
+# format in landing-merge-queue.md; only the ids that needed a typed [use_case.uncovered]
+# marker have moved here so far (the 2026-09-29 Rust cutover retired their last covering
+# suites). Moving the rest is a mechanical port of the markdown list; until then an id
+# listed only in the markdown reads as unknown to `plan-lint.sh`, exactly as before.
+
+[[use_case]]
+id = "UC-landing-merge-queue-04"
+tier = "T1"
+statement = "Certification order is (priority ASC, closed_at ASC). In the phase-2 tiers, never-gated branches come before moved-tip `RED` branches."
+
+[use_case.uncovered]
+reason = "suite test-landing-cert-order-t1.sh retired in the 2026-09-29 Rust cutover (landing-pass/DESIGN.md §7.4, commit 047e85a23); behaviour now verified by landing-pass unit tests order::tests::base_fix_then_express_then_rest_each_by_priority_then_age"
+date = "2026-09-29"
+bead = "sp-4zqoa"
+
+[[use_case]]
+id = "UC-landing-merge-queue-11"
+tier = "T1"
+statement = "A `basefail:<repo>:<suite>` bead is gated first, is exempt from the budget, and is certified while the base is red. Without one, nothing is certified."
+
+[use_case.uncovered]
+reason = "suite test-landing-basefail-select-t1.sh retired in the 2026-09-29 Rust cutover (landing-pass/DESIGN.md §7.4, commit 047e85a23); behaviour now verified by landing-pass unit tests order::tests::basefix_green_only_for_its_own_repository_and_suite and order::tests::base_fix_then_express_then_rest_each_by_priority_then_age"
+date = "2026-09-29"
+bead = "sp-4zqoa"
