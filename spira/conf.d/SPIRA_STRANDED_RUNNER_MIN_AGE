@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=ci
+DOC=HOW LONG A SELF-HOSTED JOB MAY SIT QUEUED before stranded-runner.sh treats a missing or
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG A SELF-HOSTED JOB MAY SIT QUEUED before stranded-runner.sh treats a missing or
+    # offline per-run runner as stranded rather than still provisioning. In seconds.
+    : "${SPIRA_STRANDED_RUNNER_MIN_AGE:=300}"
+SPIRA_CONF_DEFAULT_EOF
