@@ -495,8 +495,13 @@ production; `SPIRA_ARTIFACTS` inside a test run). A round that tests its own run
   container `up` waits at most `SPIRA_TESTENV_QUEUE_TIMEOUT` (900 s) for an admission slot;
   `cargo build`, `configure`/`suspend`/`install` and the testdb baseline execs carry no
   timeout (`ExecRequest::timeout` is `None`). The outer bound is gate.sh's
-  `timeout ${SPIRA_GATE_TIMEOUT:-2700}` around the whole gate string. Measured cost on
-  2026-09-29 (warm aeon worktree, e2e run of D7): see the commit that introduced D7.
+  `timeout ${SPIRA_GATE_TIMEOUT:-2700}` around the whole gate string. Measured on
+  2026-09-29, the D7 end-to-end run (`--deadline 60`, three suites, an aeon worktree's first
+  build, a busy host), 381 s wall in all: cargo build 44 s; orphan sweep + owner claim 55 s;
+  `testenv.sh up` + probe 178 s; configure/suspend/install 12 s; testdb baseline 11 s;
+  **suite phase 61 s** (the cut: deadline + the kill); results, teardown and gate-timing 16 s.
+  Under a 300 s deadline the suite phase is now bounded; the ~300 s of setup around it is not,
+  and on that day it was the larger half.
 
 ## 10. `testenv suites` — the suite-state tooling (replaces spira/suites.sh)
 
