@@ -22,7 +22,7 @@
 #    unused) FAYTH_MODEL of its own.
 #
 # defect: sp-zs04v.4
-# covers: spira/lib.sh spira/aeon.sh concierge.sh spira/reflect.sh spira/conf.sh spira/chamber/*.fayth
+# covers: spira/lib.sh aeon/src/* concierge.sh spira/reflect.sh spira/conf.sh spira/chamber/*.fayth
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 HARNESS="$(cd "$HERE/.." && pwd -P)"

@@ -31,7 +31,7 @@
 # Anything else that names governor.sh after this suite is green is a live reference this
 # suite exists to catch, not a fifth exception to add.
 #
-# covers: spira/watchtower.sh spira/sentinel.sh spira/lib.sh spira/auron-classify.py
+# covers: spira/watchtower.sh sentinel/src/* spira/lib.sh spira/auron-classify.py
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"

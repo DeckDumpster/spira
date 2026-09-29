@@ -16,7 +16,7 @@
 #
 # defect: sp-n3m6k
 # tier: T1
-# covers: spira/lib.sh spira/aeon.sh spira/conf.sh
+# covers: spira/lib.sh aeon/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

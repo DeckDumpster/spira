@@ -15,7 +15,7 @@
 # makes aeon.sh call bump_requeue with the disposition's own unjudged-slain cause.
 #
 # tier: T2
-# covers: spira/aeon.sh spira/lib.sh
+# covers: aeon/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1090

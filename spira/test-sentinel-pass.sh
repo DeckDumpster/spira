@@ -36,7 +36,7 @@
 #
 # defect: sp-len2q sp-4fss sp-994y9
 # tier: T3
-# covers: spira/sentinel.sh spira/lib.sh UC-dispatch-14 UC-dispatch-19
+# covers: sentinel/src/* spira/lib.sh UC-dispatch-14 UC-dispatch-19
 # hermetic-ok: uses a fixture database; systemd/gh/network reached through
 #   SPIRA_LAUNCH, SPIRA_SUMMON and SPIRA_SYSTEMCTL seams pointed at stubs
 set -uo pipefail

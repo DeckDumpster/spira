@@ -14,7 +14,7 @@
 # repo whose base is `master`.
 #
 # tier: T2
-# covers: batcher-cut/src/*.rs batcher/src/*.rs spira/verdict.sh spira/landing.sh spira/lib.sh
+# covers: batcher-cut/src/*.rs batcher/src/*.rs spira/verdict.sh landing-pass/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"

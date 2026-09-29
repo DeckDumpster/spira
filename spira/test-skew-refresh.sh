@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: spira/skew.sh landing-pass/* spira/queue.sh spira/activate.sh spira/build-tarball.sh
+# covers: spira/skew.sh landing-pass/* queue/src/* spira/activate.sh spira/build-tarball.sh
 #
 # test-skew-refresh.sh — stage-and-swap refresh advances regardless of live aeon leases;
 # running processes keep their old inode; dirty tracked files are stashed; gap reports

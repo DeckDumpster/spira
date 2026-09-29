@@ -8,7 +8,7 @@
 #   carries the bead body and no statutes.
 #
 # defect: sp-d0rnp
-# covers: spira/aeon.sh spira/lib.sh spira/chamber/*.fayth
+# covers: aeon/src/* spira/lib.sh spira/chamber/*.fayth
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

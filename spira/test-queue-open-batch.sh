@@ -8,7 +8,7 @@
 # primitives (_base_conflict, format_batch, _batch_open_file) by sourcing batch.sh.
 #
 # tier: T1
-# covers: spira/queue.sh spira/batch.sh spira/lib.sh
+# covers: queue/src/* spira/batch.sh spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

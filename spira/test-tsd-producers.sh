@@ -23,8 +23,8 @@
 # accepting case, and every empty/absent case is paired with a real write.
 #
 # tier: T3
-# covers: spira/lib.sh spira/aeon.sh spira/sentinel.sh spira/cockpit.sh spira/collect.sh
-#         spira/attribute.sh spira/testenv-batch.sh reconciler-engine/src/io.rs
+# covers: spira/lib.sh aeon/src/* sentinel/src/* spira/cockpit.sh spira/collect.sh
+#         spira/attribute.sh testenv/src/* reconciler-engine/src/io.rs
 #         reconciler/src/main.rs reconciler-flow/src/main.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

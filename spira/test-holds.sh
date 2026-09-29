@@ -13,7 +13,7 @@
 # holder is found before an empty result on an untouched path is trusted to mean anything.
 #
 # defect: sp-s9f30
-# covers: spira/holds.sh spira/lib.sh spira/aeon.sh
+# covers: spira/holds.sh spira/lib.sh aeon/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

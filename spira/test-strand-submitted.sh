@@ -33,7 +33,7 @@
 #
 # tier: T1
 # defect: sp-wnsks
-# covers: spira/strand.sh spira/lib.sh spira/strand-classify.py
+# covers: strand/src/* spira/lib.sh
 # hermetic-ok: no database, no systemd, no network
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

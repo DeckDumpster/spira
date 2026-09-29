@@ -23,7 +23,7 @@
 #      flipping back.
 #
 # tier: T1
-# covers: spira/queue.sh spira/verdict.sh spira/lib.sh spira/conf.sh
+# covers: queue/src/* spira/verdict.sh spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

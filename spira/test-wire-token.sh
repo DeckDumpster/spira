@@ -22,7 +22,7 @@
 #
 # defect: sp-dcfm
 # tier: T1
-# covers: spira/sending.sh spira/sentinel.sh spira/cockpit-metrics.py
+# covers: spira/sending.sh sentinel/src/* spira/cockpit-metrics.py
 
 # covers: spira/sending.sh spira/sentinel.sh spira/cockpit-metrics.py
 set -uo pipefail

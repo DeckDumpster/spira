@@ -17,7 +17,7 @@
 # rather than through a second copy of either caller.
 #
 # defect: sp-ynvd
-# covers: spira/aeon.sh spira/lib.sh spira/world.sh spira/conf.sh
+# covers: aeon/src/* spira/lib.sh spira/world.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

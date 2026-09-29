@@ -17,7 +17,7 @@
 #
 # tier: T1
 # defect: sp-sa4mi
-# covers: spira/strand.sh
+# covers: strand/src/*
 # hermetic-ok: uses a fixture database, no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

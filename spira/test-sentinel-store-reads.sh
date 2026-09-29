@@ -20,7 +20,7 @@
 # the output identical.
 #
 # defect: sp-bo67y
-# covers: spira/lib.sh spira/strand.sh spira/sentinel.sh
+# covers: spira/lib.sh strand/src/* sentinel/src/*
 # hermetic-ok: uses a fixture database; bd calls counted through a logging SPIRA_BD shim;
 #              the real chamber (spira/chamber/*.fayth) supplies more than one partition so
 #              the per-partition fan-out this bead removes is genuinely exercised

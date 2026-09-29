@@ -54,7 +54,7 @@
 # implementation of the thing in question (law-prefer-the-real-dependency).
 #
 # defect: sp-9pyr
-# covers: spira/aeon.sh spira/sop.sh spira/close-reason-flags.py spira/chamber/ops.fayth spira/chamber/ops.md spira/test-ops-closing.sh
+# covers: aeon/src/* spira/sop.sh spira/close-reason-flags.py spira/chamber/ops.fayth spira/chamber/ops.md spira/test-ops-closing.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

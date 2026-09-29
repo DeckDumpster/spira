@@ -17,7 +17,7 @@
 # show the brief is ABSENT, beside the case that shows it PRESENT.
 #
 # defect: sp-2e4v
-# covers: spira/aeon.sh spira/lib.sh spira/landing.sh
+# covers: aeon/src/* spira/lib.sh landing-pass/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

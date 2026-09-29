@@ -9,7 +9,7 @@
 #
 # defect: sp-vyl4
 # tier: T1
-# covers: spira/conf.sh spira/sentinel.sh spira/escape.sh spira/chamber/ops.fayth UC-dispatch-07
+# covers: spira/conf.sh sentinel/src/* spira/escape.sh spira/chamber/ops.fayth UC-dispatch-07
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

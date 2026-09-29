@@ -25,7 +25,7 @@
 #
 # defect: sp-qsona (acceptance phase A stage 5)
 # tier: T3
-# covers: landing-pass/* spira/sending.sh spira/pr-pass-branch.sh spira/lib.sh spira/aeon.sh
+# covers: landing-pass/* spira/sending.sh spira/pr-pass-branch.sh spira/lib.sh aeon/src/*
 # hermetic-ok: uses a fixture database and local git repos, no systemd or gh
 # timeout: 240
 set -uo pipefail

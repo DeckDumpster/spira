@@ -20,7 +20,7 @@
 # fayth called `scrubber` that sets the key is held to the rule; one that does not is not.
 # Asserting through groomer.fayth directly would pass against a check keyed on the name.
 #
-# covers: spira/aeon.sh spira/lib.sh spira/chamber/groomer.fayth spira/conf.sh
+# covers: aeon/src/* spira/lib.sh spira/chamber/groomer.fayth spira/conf.sh
 # defect: sp-yr4ih
 # scar: groomer wrote ESCALATED to the groom log without calling mail.sh; sentinel accepted the log line as evidence of the escalation
 set -uo pipefail

@@ -12,7 +12,7 @@
 # byte" or "a mismatch is reported and nothing was deployed".
 #
 # tier: T1
-# covers: spira/queue.sh spira/build-tarball.sh spira/activate.sh spira/skew.sh spira/lib.sh
+# covers: queue/src/* spira/build-tarball.sh spira/activate.sh spira/skew.sh spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

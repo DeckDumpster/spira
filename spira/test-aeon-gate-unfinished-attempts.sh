@@ -16,7 +16,7 @@
 # other two release paths with the same defect, capacity and timeout, at the unit level).
 #
 # tier: T2
-# covers: spira/aeon.sh spira/lib.sh
+# covers: aeon/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1090

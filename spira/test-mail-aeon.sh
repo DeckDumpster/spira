@@ -16,7 +16,7 @@
 # (d): aeon.sh run with a stub agent that immediately closes the bead.
 #
 # tier: T3
-# covers: spira/bead.sh spira/mail.sh spira/aeon.sh UC-operator-channel-12
+# covers: spira/bead.sh spira/mail.sh aeon/src/* UC-operator-channel-12
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

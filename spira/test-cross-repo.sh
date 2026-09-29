@@ -34,7 +34,7 @@
 #
 # defect: sp-cross-repo
 # tier: T2
-# covers: spira/aeon.sh spira/lib.sh
+# covers: aeon/src/* spira/lib.sh
 # hermetic-ok: uses a fixture database, local git repos only, no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

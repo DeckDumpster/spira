@@ -51,7 +51,7 @@
 # reopen there (a FAIL verdict already on record, st=1) leaves the bead plain open and
 # claimable instead. The delivers:action case is exempt from the conversion and stays closed.
 #
-# covers: spira/aeon.sh spira/gate-run.sh
+# covers: aeon/src/* spira/gate-run.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

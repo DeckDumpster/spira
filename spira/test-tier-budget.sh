@@ -23,7 +23,7 @@
 # budget, new/raised allowlist entry, bad suite name) is paired with the accepting case
 # right beside it.
 #
-# covers: spira/tier-budget.sh spira/testenv-batch.sh spira/gate-touched.sh spira/tier-budget-allowlist spira/conf.sh
+# covers: spira/tier-budget.sh testenv/src/* spira/gate-touched.sh spira/tier-budget-allowlist spira/conf.sh
 # tier: T2
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

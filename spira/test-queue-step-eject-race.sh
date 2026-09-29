@@ -10,7 +10,7 @@
 # actually holds the per-repo lock, then launches a real `eject` while it is held.
 #
 # tier: T3
-# covers: spira/queue.sh spira/verdict.sh spira/batch.sh UC-landing-merge-queue-30
+# covers: queue/src/* spira/verdict.sh spira/batch.sh UC-landing-merge-queue-30
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

@@ -11,7 +11,7 @@
 # assertion below is the one that was seen red before spira/lib.sh grew
 # queue_notify_concierge and queue.sh eject started calling it.
 #
-# covers: spira/queue.sh spira/lib.sh spira/mail.sh spira/conf.sh
+# covers: queue/src/* spira/lib.sh spira/mail.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

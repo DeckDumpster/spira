@@ -40,7 +40,7 @@
 #
 # defect: sp-86q8
 # tier: T1
-# covers: spira/watchtower.sh spira/landing.sh spira/cockpit.sh spira/lib.sh spira/aeon.sh
+# covers: spira/watchtower.sh landing-pass/src/* spira/cockpit.sh spira/lib.sh aeon/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

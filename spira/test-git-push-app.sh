@@ -11,7 +11,7 @@
 # 7. SPIRA_GH_APP_* keys are in the conf.sh allowlist.
 # 8. The covered scripts call spira_git_push rather than bare git push.
 #
-# covers: spira/git-credential-app.sh spira/lib.sh spira/landing.sh spira/batch.sh spira/sending.sh spira/verdict.sh spira/queue.sh spira/conf.sh
+# covers: spira/git-credential-app.sh spira/lib.sh landing-pass/src/* spira/batch.sh spira/sending.sh spira/verdict.sh queue/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

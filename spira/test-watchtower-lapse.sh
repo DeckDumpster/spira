@@ -26,7 +26,7 @@
 # the marker; only a successful prompt-file write does.
 #
 # tier: T1
-# covers: spira/watchtower.sh spira/lib.sh spira/aeon.sh
+# covers: spira/watchtower.sh spira/lib.sh aeon/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

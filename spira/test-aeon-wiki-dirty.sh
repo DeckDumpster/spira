@@ -17,7 +17,7 @@
 # transcript claims with what is actually dirty now, minus the generated view.
 #
 # defect: sp-4fl2e
-# covers: spira/aeon.sh spira/lib.sh
+# covers: aeon/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

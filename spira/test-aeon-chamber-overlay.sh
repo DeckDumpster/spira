@@ -28,7 +28,7 @@
 #
 # defect: sp-eibeu, sp-wmcvb
 # tier: T1
-# covers: spira/aeon.sh spira/chamber/builder.md spira/conf.sh spira/doctor.sh spira/work-env.sh
+# covers: aeon/src/* spira/chamber/builder.md spira/conf.sh spira/doctor.sh spira/work-env.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

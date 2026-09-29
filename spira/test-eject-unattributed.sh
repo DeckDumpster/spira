@@ -18,7 +18,7 @@
 # $REPRO_FAIL_FILE, mirroring test-verdict.sh's forge-fixture.sh. No container,
 # no network.
 #
-# covers: spira/verdict.sh spira/landing.sh
+# covers: spira/verdict.sh landing-pass/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

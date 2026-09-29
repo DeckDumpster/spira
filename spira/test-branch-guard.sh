@@ -16,7 +16,7 @@
 #
 # defect: sp-poou
 # tier: T2
-# covers: spira/branch-guard.sh spira/hooks/pre-commit spira/aeon.sh UC-safety-fences-18 UC-safety-fences-19 UC-safety-fences-22
+# covers: spira/branch-guard.sh spira/hooks/pre-commit aeon/src/* UC-safety-fences-18 UC-safety-fences-19 UC-safety-fences-22
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

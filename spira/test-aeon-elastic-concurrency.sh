@@ -38,7 +38,7 @@
 #
 # defect: sp-4gxjo
 # tier: T1
-# covers: spira/aeon.sh spira/lib.sh spira/chamber/builder.fayth
+# covers: aeon/src/* spira/lib.sh spira/chamber/builder.fayth
 # hermetic-ok: no database, no systemd; aeon_count is stubbed, SPIRA_AGENT is never reached
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

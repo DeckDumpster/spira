@@ -26,7 +26,7 @@
 #
 # defect: sp-4rzlw
 # tier: T2
-# covers: spira/aeon.sh spira/lib.sh UC-aeon-execution-11
+# covers: aeon/src/* spira/lib.sh UC-aeon-execution-11
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

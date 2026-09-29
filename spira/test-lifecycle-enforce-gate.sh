@@ -13,7 +13,7 @@
 # appear — because the old gate only asked "are these executable", and stub scripts are.
 #
 # tier: T1
-# covers: spira/aeon.sh spira/conf.sh
+# covers: aeon/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1090

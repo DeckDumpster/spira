@@ -18,7 +18,7 @@
 # against real bd (law-prefer-the-real-dependency).
 #
 # tier: T1
-# covers: spira/lib.sh spira/landing.sh
+# covers: spira/lib.sh landing-pass/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

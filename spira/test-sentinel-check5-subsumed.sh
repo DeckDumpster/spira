@@ -24,7 +24,7 @@
 #
 # defect: sp-9mcl2 sp-a9s2r
 # tier: T3
-# covers: spira/sentinel.sh
+# covers: sentinel/src/*
 # timeout: 120
 # hermetic-ok: uses a fixture database and a local git repo, no systemd or gh
 set -uo pipefail

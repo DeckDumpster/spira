@@ -22,7 +22,7 @@
 # instead of only on lucky ones.
 #
 # defect: sp-3ntca
-# covers: spira/aeon.sh
+# covers: aeon/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

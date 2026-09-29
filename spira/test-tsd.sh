@@ -29,7 +29,7 @@
 # rather than trusted on silence.
 #
 # covers: tsd/src/lib.rs tsd/src/main.rs spira/tsd-query.sh spira/deps.toml spira/conf.sh
-#         spira/lib.sh spira/testenv-batch.sh spira/testenv/Containerfile
+#         spira/lib.sh testenv/src/* spira/testenv/Containerfile
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

@@ -31,7 +31,7 @@
 # `podman container exists` / `podman ps` / `podman container inspect` says.
 #
 # host-reason: needs podman on PATH
-# covers: spira/batch-owner.sh spira/testenv-batch.sh
+# covers: spira/batch-owner.sh testenv/src/*
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"

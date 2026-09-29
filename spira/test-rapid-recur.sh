@@ -12,7 +12,7 @@
 #
 # defect: sp-fmvtv
 # tier: T1
-# covers: spira/lib.sh spira/aeon.sh UC-aeon-execution-11
+# covers: spira/lib.sh aeon/src/* UC-aeon-execution-11
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

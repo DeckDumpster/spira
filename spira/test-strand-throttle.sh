@@ -38,7 +38,7 @@
 #
 # defect: sp-0ua6w
 # tier: T1
-# covers: spira/strand-classify.py spira/strand.sh
+# covers: strand/src/*
 # hermetic-ok: no database, no systemd, no network
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

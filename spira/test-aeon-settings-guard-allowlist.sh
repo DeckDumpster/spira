@@ -25,7 +25,7 @@
 # real output is trusted as evidence of compliance.
 #
 # tier: T1
-# covers: spira/aeon.sh spira/lib.sh UC-safety-fences-16
+# covers: aeon/src/* spira/lib.sh UC-safety-fences-16
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

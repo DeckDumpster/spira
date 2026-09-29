@@ -30,7 +30,7 @@
 # (law-prefer-the-real-dependency) — a stub of either would test the stub.
 #
 # defect: sp-om71s
-# covers: spira/aeon.sh spira/lib.sh
+# covers: aeon/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

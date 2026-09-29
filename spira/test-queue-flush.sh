@@ -6,7 +6,7 @@
 # batch before building the next, and landing's queue pass goes through it — a batch builder
 # with no verdict after it opens one pull request and never lands it.
 #
-# covers: spira/queue.sh spira/batch.sh spira/verdict.sh spira/landing.sh
+# covers: queue/src/* spira/batch.sh spira/verdict.sh landing-pass/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

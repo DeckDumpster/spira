@@ -45,7 +45,7 @@
 # file; this bead does not touch them.
 #
 # defect: sp-dvlq sp-qsona
-# covers: spira/aeon.sh spira/sentinel.sh spira/lib.sh UC-aeon-execution-13
+# covers: aeon/src/* sentinel/src/* spira/lib.sh UC-aeon-execution-13
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

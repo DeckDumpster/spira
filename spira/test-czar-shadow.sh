@@ -28,7 +28,7 @@
 # gap 11 of docs/test-plan/safety-fences.md is the citation for the move.
 #
 # tier: T1
-# covers: spira/czar-fence.sh spira/queue.sh spira/lib.sh spira/aeon.sh spira/watchtower.sh UC-safety-fences-31
+# covers: spira/czar-fence.sh queue/src/* spira/lib.sh aeon/src/* spira/watchtower.sh UC-safety-fences-31
 # hermetic-ok: no database, no systemd; queue.sh fence fires before any db access
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

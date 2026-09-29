@@ -50,7 +50,7 @@
 #
 # tier: T3
 # defect: sp-mqnf sp-njwb sp-fx1p sp-pi3ez sp-wiyr2 sp-qd2ul
-# covers: spira/sentinel.sh spira/lib.sh spira/attempts.sh spira/lc.sh spira/chamber/* lifecycle/* spira-lc/*
+# covers: sentinel/src/* spira/lib.sh spira/attempts.sh spira/lc.sh spira/chamber/* lifecycle/* spira-lc/*
 # timeout: 240
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

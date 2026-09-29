@@ -40,7 +40,7 @@
 #
 # defect: sp-qsona
 # tier: T3
-# covers: spira/sentinel.sh spira/lib.sh
+# covers: sentinel/src/* spira/lib.sh
 # timeout: 120
 # hermetic-ok: uses a fixture database and a local git repo, no systemd or gh
 set -uo pipefail

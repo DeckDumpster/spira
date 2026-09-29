@@ -14,7 +14,7 @@
 #
 # Real git repositories only — no database, no aeon.sh run: the function takes two paths.
 #
-# covers: spira/aeon.sh spira/lib.sh
+# covers: aeon/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

@@ -27,7 +27,7 @@
 # Requires only git and bash — no database fixture.
 #
 # tier: T1
-# covers: spira/wiki-commit.sh spira/aeon.sh
+# covers: spira/wiki-commit.sh aeon/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

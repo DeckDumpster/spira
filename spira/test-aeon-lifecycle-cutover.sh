@@ -21,7 +21,7 @@
 # the container this suite executes in.
 #
 # tier: T2
-# covers: spira/aeon.sh spira/lib.sh spira/work-env.sh spira/conf.sh spira/chamber/builder.md work/* spira-lc/*
+# covers: aeon/src/* spira/lib.sh spira/work-env.sh spira/conf.sh spira/chamber/builder.md work/* spira-lc/*
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

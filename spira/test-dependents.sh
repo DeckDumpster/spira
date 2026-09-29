@@ -45,7 +45,7 @@
 #
 # defect: sp-v890d sp-ya5nk sp-rvoun
 # tier: T2
-# covers: spira/lib.sh spira/sentinel.sh spira/conf.sh spira/strand.sh
+# covers: spira/lib.sh sentinel/src/* spira/conf.sh strand/src/*
 # hermetic-ok: uses a fixture database; mark_queue_waiters tested with real bd;
 #              assertion 10 uses stub ready_count (no db call needed for structural check)
 set -uo pipefail

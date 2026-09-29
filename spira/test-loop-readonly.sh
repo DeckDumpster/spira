@@ -16,7 +16,7 @@
 # the gap sp-zwa7 was told "DO IT" about.
 #
 # tier: T2
-# covers: spira/sentinel.sh spira/lib.sh spira/conf.sh spira/activate.sh
+# covers: sentinel/src/* spira/lib.sh spira/conf.sh spira/activate.sh
 # SKIP: XDG_RUNTIME_DIR absent (testdb requires a user session)
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"

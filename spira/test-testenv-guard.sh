@@ -21,7 +21,7 @@
 # host-reason: fixture suites are invoked directly with `bash`, never through
 # testenv-batch.sh or a container — that IS the scenario under test (run by hand).
 # tier: T1
-# covers: spira/testlib.sh spira/suite-covers.sh spira/testenv-guard.sh spira/testenv-batch.sh
+# covers: spira/testlib.sh spira/suite-covers.sh spira/testenv-guard.sh testenv/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"

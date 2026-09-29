@@ -26,7 +26,7 @@
 #
 # defect: sp-egge2 sp-ne93n sp-l7f5 sp-214 sp-ywlti sp-iu10 sp-2a4hd sp-wnsks
 # tier: T3
-# covers: spira/aeon.sh spira/lib.sh spira/mail.sh UC-aeon-execution-02 UC-aeon-execution-11 UC-aeon-execution-12 UC-aeon-execution-18
+# covers: aeon/src/* spira/lib.sh spira/mail.sh UC-aeon-execution-02 UC-aeon-execution-11 UC-aeon-execution-12 UC-aeon-execution-18
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

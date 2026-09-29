@@ -40,7 +40,7 @@
 # a stub for output-parsing questions).
 #
 # tier: T1
-# covers: spira/gate-check.sh spira/aeon.sh
+# covers: spira/gate-check.sh aeon/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

@@ -9,7 +9,7 @@
 # would have failed (or succeeded) regardless (law-a-pattern-match-is-not-an-identity-check;
 # a check that finds nothing must first prove it could have found something).
 #
-# covers: spira/queue.sh spira/lib.sh spira/conf.sh
+# covers: queue/src/* spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

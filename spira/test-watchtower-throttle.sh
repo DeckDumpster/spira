@@ -17,7 +17,7 @@
 # assertion is preceded by a fixture that proves the detector can fire.
 #
 # tier: T1
-# covers: spira/watchtower.sh spira/sentinel.sh spira/lib.sh spira/conf.sh
+# covers: spira/watchtower.sh sentinel/src/* spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

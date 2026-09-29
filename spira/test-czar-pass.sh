@@ -43,7 +43,7 @@
 # verifies detection. A detector that fires on empty data is not a detector.
 #
 # tier: T1
-# covers: czar-pass/src/main.rs reconciler-engine/src/**.rs spira/czar.sh spira/conf.sh spira/sentinel.sh spira/watchtower.sh systemd/spira-czar-pass.service systemd/spira-czar-pass.timer UC-ops-detection-remediation-23 UC-ops-detection-remediation-24
+# covers: czar-pass/src/main.rs reconciler-engine/src/**.rs spira/czar.sh spira/conf.sh sentinel/src/* spira/watchtower.sh systemd/spira-czar-pass.service systemd/spira-czar-pass.timer UC-ops-detection-remediation-23 UC-ops-detection-remediation-24
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 

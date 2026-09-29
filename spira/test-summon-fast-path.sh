@@ -19,7 +19,7 @@
 #
 # defect: sp-0y2av
 # tier: T1
-# covers: spira/lib.sh spira/sentinel.sh spira/ready-bucket.py UC-dispatch-09
+# covers: spira/lib.sh sentinel/src/* spira/ready-bucket.py UC-dispatch-09
 # hermetic-ok: no real systemd, no real database in sections A-C; a fixture database in D
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

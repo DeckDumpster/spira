@@ -14,7 +14,7 @@
 #
 # defect: sp-kz8ob sp-mvg44
 # tier: T1
-# covers: spira/hooks/aeon-fence.sh spira/bd-close-unacked-guard.sh spira/bd-unacked-comment-deliver.sh spira/aeon.sh spira/suites.sh UC-safety-fences-01 UC-safety-fences-02 UC-safety-fences-03 UC-safety-fences-04 UC-safety-fences-05 UC-safety-fences-15 UC-safety-fences-16
+# covers: spira/hooks/aeon-fence.sh spira/bd-close-unacked-guard.sh spira/bd-unacked-comment-deliver.sh aeon/src/* testenv/src/suites/* UC-safety-fences-01 UC-safety-fences-02 UC-safety-fences-03 UC-safety-fences-04 UC-safety-fences-05 UC-safety-fences-15 UC-safety-fences-16
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

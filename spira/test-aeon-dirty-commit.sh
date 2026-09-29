@@ -30,7 +30,7 @@
 #
 # requires: testenv
 # tier: T2
-# covers: spira/aeon.sh spira/pre-commit-guard.sh spira/worktree-hooks.sh UC-safety-fences-17
+# covers: aeon/src/* spira/pre-commit-guard.sh spira/worktree-hooks.sh UC-safety-fences-17
 # defect: sp-rbxr
 # scar: an aeon ran `git add -A` and staged a pre-existing dirty file; the commit named the bead but carried another process's uncommitted work instead of the aeon's own.
 set -uo pipefail
