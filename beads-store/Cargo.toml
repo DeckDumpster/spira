@@ -1,0 +1,19 @@
+[package]
+name = "beads-store"
+version = "1.0.0"
+edition = "2021"
+description = "beads-store — commits a beads Dolt store's dirty tracked tables (config, memories) through the real dolt engine, never bd, and verifies the commit actually cleared the working set. sp-sghmt."
+
+[dependencies]
+serde_json = "1"
+
+[lib]
+name = "beads_store"
+path = "src/lib.rs"
+
+[[bin]]
+name = "beads-store"
+path = "src/main.rs"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

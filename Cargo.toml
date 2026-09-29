@@ -35,6 +35,7 @@ members = [
     "gate",
     "testkit",
     "intent-report",
+    "beads-store",
 ]
 resolver = "2"
 
