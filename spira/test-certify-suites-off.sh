@@ -11,13 +11,10 @@
 #   1. gate-touched.sh selects NOTHING when SPIRA_GATE_SUITES=off, and the gate command's own
 #      `[ -n "$_s" ] || exit 0` then passes. POSITIVE CONTROL: the same call with the mode on
 #      selects the ejected suite, so the empty answer is the switch and not a broken selector.
-#   2. gate.sh's cache key differs between suites=on and suites=off for the same tree, so a
-#      fences-only PASS cannot satisfy a later full gate. POSITIVE CONTROL: the same mode twice
-#      yields the same key, so the difference is the mode and not noise.
-#   3. gate.sh's env -i allowlist carries the switch to the gate command.
+#   2, 3. the cache key and the env -i handoff: unit tests of the Rust gate (see below).
 #
 # tier: T1
-# covers: spira/gate-touched.sh spira/gate.sh spira/conf.sh
+# covers: spira/gate-touched.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -58,32 +55,10 @@ cmd_rc() { SPIRA_GATE_SUITES="$1" SPIRA_GATE_EJECTED_SUITES=test-conf.sh \
 is "gate command passes after the fences when suites are off" "0" "$(cmd_rc off)"
 is "positive control: gate command reaches the suites when on" "9" "$(cmd_rc on)"
 
-echo "2. gate.sh cache key:"
-fn="$(awk '/^gate_key\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "$HERE/gate.sh")"
-if [ -z "$fn" ]; then
-    bad "gate_key located (positive control)" "awk extracted nothing"
-else
-    ok "gate_key located (positive control)"
-    # gate_key() now calls gate_key_hash() (gate-lib.sh) for the pure hashing step —
-    # sourced here too, since $fn is only the gate_key() body, extracted by awk.
-    key() { ( . "$HERE/gate-lib.sh"; eval "$fn"; REPO="$FIX"; BR=HEAD; files="spira/gate.sh"; CMD="bash x"
-              EXCLUDE="$HERE/gate.sh"; SKEW="$HERE/gate.sh"; REPO_NAME=spira
-              SPIRA_GATE_SUITES="$1" gate_key ); }
-    k_on="$(key on)"; k_on2="$(key on)"; k_off="$(key off)"
-    [ -n "$k_on" ] && ok "key computed" || bad "key computed" "empty"
-    is "positive control: same mode, same key" "$k_on" "$k_on2"
-    [ "$k_on" != "$k_off" ] && ok "suites=off and suites=on have different keys" \
-        || bad "suites=off and suites=on have different keys" "both $k_on"
-fi
-
-echo "3. the switch survives gate.sh's env -i:"
-# gate.sh runs the repo command under `env -i` with an allowlist. #281 shipped without
-# SPIRA_GATE_SUITES on it, so the switch reached gate.sh and died there: every property above
-# held and certification still ran full suites. Assert the handoff, not only the ends.
-envblk="$(awk '/env -i \\$/{f=1} f{print} f&&/bash -c "\$CMD"/{exit}' "$HERE/gate.sh")"
-[ -n "$envblk" ] && ok "gate.sh env -i block located (positive control)" \
-    || bad "gate.sh env -i block located" "awk extracted nothing"
-case "$envblk" in *'SPIRA_GATE_SUITES="${SPIRA_GATE_SUITES:-on}"'*) ok "env -i passes SPIRA_GATE_SUITES to the gate command" ;;
-    *) bad "env -i passes SPIRA_GATE_SUITES to the gate command" "missing from the allowlist" ;; esac
+# 2 AND 3 MOVED WITH THE GATE (sp-0tpcs). The cache key and the gate command's env -i
+# allowlist are the Rust gate's now, and are unit-tested there (`cargo test -p gate`):
+# key.rs every_input_moves_the_key (suites=on/off move the key; the same inputs twice give the
+# same key) and tests.rs fences_only_certification_takes_no_admission_slot (SPIRA_GATE_SUITES
+# reaches the gate command's environment).
 
 tl_summary

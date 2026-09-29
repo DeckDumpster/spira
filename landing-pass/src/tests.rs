@@ -252,6 +252,9 @@ struct FakeTools {
     finish_first: RefCell<Vec<String>>,
     slots_free: Cell<Option<usize>>,
     probes: Cell<u32>,
+    /// `rebase_stale` calls, and the exit it answers (default 0).
+    rebased: RefCell<Vec<String>>,
+    rebase_rc: Cell<i32>,
 }
 
 impl FakeTools {
@@ -321,6 +324,10 @@ impl Tools for FakeTools {
     }
     fn ensure(&self, _: &Path) -> Vec<String> {
         Vec::new()
+    }
+    fn rebase_stale(&self, id: &str, repo: &str) -> i32 {
+        self.rebased.borrow_mut().push(format!("{id} {repo}"));
+        self.rebase_rc.get()
     }
 }
 
@@ -607,6 +614,30 @@ fn a_base_fix_green_on_its_suite_is_certified_first_and_despite_the_budget() {
 }
 
 #[test]
+fn a_branch_that_no_longer_merges_goes_to_rebase_stale_not_red() {
+    let h = H::new(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, "gate: VERDICT=NO_VERDICT reason=conflict branch=spira/sp-a repo=spira suite=-\n".into()));
+    h.run();
+    assert_eq!(h.tools.rebased.borrow()[..], ["sp-a spira".to_string()]);
+    assert!(h.lib.has("land_mark sp-a GATED t1 NO_VERDICT:conflict"));
+    assert!(!h.lib.has("noverdict"), "rebase-stale did the bookkeeping");
+    assert!(!h.lib.has("reopen"), "a stale branch is never charged");
+    assert!(!h.lib.has("land_mark sp-a CERTIFIED"));
+}
+
+#[test]
+fn a_conflict_rebase_stale_could_not_attempt_is_an_ordinary_no_verdict() {
+    let h = H::new(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    h.tools.rebase_rc.set(3);
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, "gate: VERDICT=NO_VERDICT reason=conflict branch=spira/sp-a repo=spira suite=-\n".into()));
+    h.run();
+    assert!(h.lib.has("noverdict sp-a spira conflict NO_VERDICT"));
+    assert!(!h.lib.has("reopen"));
+}
+
+#[test]
 fn no_verdict_is_counted_by_the_seam_and_never_reopens() {
     let h = H::new(LandMode::Queue);
     h.closed("sp-a", "t1");
@@ -615,6 +646,7 @@ fn no_verdict_is_counted_by_the_seam_and_never_reopens() {
     assert!(h.lib.has("noverdict sp-a spira lock-timeout NO_VERDICT"));
     assert!(h.lib.has("land_mark sp-a GATED t1 NO_VERDICT:lock-timeout"));
     assert!(!h.lib.has("reopen"));
+    assert!(h.tools.rebased.borrow().is_empty(), "only a conflict goes to rebase-stale");
 }
 
 #[test]
@@ -1554,6 +1586,9 @@ impl Tools for Injecting<'_> {
     }
     fn ensure(&self, s: &Path) -> Vec<String> {
         self.t.ensure(s)
+    }
+    fn rebase_stale(&self, id: &str, repo: &str) -> i32 {
+        self.t.rebase_stale(id, repo)
     }
 }
 

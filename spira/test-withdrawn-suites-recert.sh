@@ -33,7 +33,8 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 
 REPO="$TMP/repo"; RUN="$TMP/run"; SH="$TMP/spira"
 mkdir -p "$RUN/worktree" "$RUN/landstate" "$RUN/queue/fixq" "$SH"
-cp "$HERE/gate.sh" "$HERE/gate-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
+GATE_BIN="${SPIRA_GATE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/gate}"   # gate.sh execs it (sp-0tpcs)
+cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
    "$HERE/exclude.sh" "$HERE/skew.sh" "$HERE/yield.sh" "$HERE/suite-covers.sh" \
    "$HERE/gate-sweep.sh" "$HERE/lc.sh" "$SH/"
 
@@ -72,6 +73,7 @@ submit() {
         SPIRA_REPO_MAP="$RMAP" \
         SPIRA_QUEUE_DIR="$RUN/queue" \
         SPIRA_CERTIFY_SUITES=off \
+        SPIRA_GATE_BIN="$GATE_BIN" \
         SPIRA_HOME="$SH" "$QUEUE_BIN" submit spira/sp-wsx 2>&1
 }
 

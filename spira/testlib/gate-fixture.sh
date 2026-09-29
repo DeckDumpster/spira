@@ -19,7 +19,10 @@ gate_fixture_init() {
     MAP="$tmp/repo-map"; HOMEDIR="$tmp/home"; SPIRA_CONF_NONE="$tmp/nonexistent.conf"
     SPIRA_DB_NONE="$tmp/nonexistent-db"; GATELOG="$tmp/gate.log"; VDIR="$tmp/verdicts"
     mkdir -p "$RUN/worktree" "$HOMEDIR" "$SH"
-    cp "$HERE/gate.sh" "$HERE/gate-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" \
+    # The gate is the Rust binary gate.sh execs (sp-0tpcs): the tree under test's own build
+    # (testenv's SPIRA_ARTIFACTS), else this checkout's bin/. env -i drops it, so it is passed.
+    GATE_BIN="${SPIRA_GATE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/gate}"
+    cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" \
        "$HERE/skew.sh" "$HERE/yield.sh" "$HERE/suite-covers.sh" "$HERE/gate-sweep.sh" \
        "$HERE/lifecycle-cert.sh" "$SH/"
     export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
@@ -50,6 +53,6 @@ gate_fixture_run() {
         SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         SPIRA_DB="$SPIRA_DB_NONE" SPIRA_REPO_MAP="$MAP" \
         SPIRA_GATE_LOG="$GATELOG" SPIRA_VERDICTS="$VDIR" \
-        SPIRA_VERDICT_TTL=0 \
+        SPIRA_VERDICT_TTL=0 SPIRA_GATE_BIN="$GATE_BIN" \
         "$@" bash "$SH/gate.sh" "$br" "$repo" 2>&1
 }

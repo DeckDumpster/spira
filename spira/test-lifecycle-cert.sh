@@ -23,7 +23,7 @@
 #
 # defect: sp-vd9dn
 # tier: T2
-# covers: spira/lifecycle-cert.sh spira/gate.sh spira/gate-lib.sh lifecycle/src/bead.rs
+# covers: spira/lifecycle-cert.sh spira/gate.sh gate/src/engine.rs lifecycle/src/bead.rs
 # timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

@@ -457,6 +457,17 @@ impl<'a> Pass<'a> {
                     self.log(&format!("CHECK6 {id}: held — the base fails its own gate (suite {})", g.suite));
                     self.base_fail(w, br, id, bead, &tip, &g);
                 }
+                GateOutcome::NoVerdict if reason == "conflict" => {
+                    // STALE, NOT RED (gate/DESIGN.md): the branch no longer merges onto the
+                    // landing ref. rebase-stale rebases it mechanically and re-certifies, or
+                    // returns it to an aeon with the hunks quoted; only when it could not even
+                    // attempt it does this fall back to the ordinary no-verdict record.
+                    let rc = self.tools.rebase_stale(id, name);
+                    self.log(&format!("CHECK6 {id}: {br} does not merge onto {} — handed to rebase-stale (exit {rc})", w.base));
+                    if rc == 3 {
+                        self.lib.noverdict(id, br, name, &reason, g.outcome.word(), &g.out);
+                    }
+                }
                 GateOutcome::NoVerdict => {
                     self.lib.noverdict(id, br, name, &reason, g.outcome.word(), &g.out);
                 }

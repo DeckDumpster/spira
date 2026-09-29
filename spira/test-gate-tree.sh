@@ -20,11 +20,15 @@
 #
 # defect: sp-64v0, sp-d8h0r
 # tier: T2
-# covers: spira/gate.sh spira/gate-lib.sh UC-gate-verdict-16 UC-gate-verdict-17 UC-gate-verdict-18
+# covers: spira/gate.sh gate/src/engine.rs UC-gate-verdict-16 UC-gate-verdict-17 UC-gate-verdict-18
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
-. "$HERE/gate-lib.sh"
+# The gate tree's key: the branch with anything outside [A-Za-z0-9.-] made `-` (gate/src/parse.rs
+# tree_key, unit-tested there; gate-lib.sh's gate_tree_key retired with sp-0tpcs).
+gate_tree_key() { printf '%s' "$1" | tr '/' '-' | tr -c 'A-Za-z0-9.-' '-'; }
+# The gate is the Rust binary gate.sh execs: the tree under test's build, else bin/.
+GATE_BIN="${SPIRA_GATE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/gate}"
 
 command -v flock >/dev/null 2>&1 || { echo "  SKIP  flock is not on PATH"; exit 77; }
 
@@ -38,7 +42,7 @@ mkdir -p "$RUN/worktree" "$HOMEDIR" "$SH"
 
 # The gate under test is a copy — the harness's own bytes are part of the verdict key, so
 # the installed copy must not be what is tested.
-cp "$HERE/gate.sh" "$HERE/gate-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/skew.sh" \
+cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/skew.sh" \
    "$HERE/yield.sh" "$HERE/suite-covers.sh" "$SH/"
 
 git init -q --bare -b main "$REMOTE"
@@ -72,7 +76,7 @@ rungate() {              # rungate <branch> [VAR=VAL ...]
         GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
         SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         SPIRA_DB="$TMP/nonexistent-db" SPIRA_REPO_MAP="$MAP" SPIRA_GATE_LOG="$GATELOG" \
-        SPIRA_VERDICTS="$VDIR" SPIRA_VERDICT_TTL=0 \
+        SPIRA_VERDICTS="$VDIR" SPIRA_VERDICT_TTL=0 SPIRA_GATE_BIN="$GATE_BIN" \
         "$@" bash "$SH/gate.sh" "$br" repo
 }
 

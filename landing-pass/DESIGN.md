@@ -300,6 +300,9 @@ phase=gate; `land_mark GATING tip`; run the gate. Then by outcome:
     `certified` + progress "certified <br> in <name> — base-fix (suite S)"; otherwise file the
     base incident **once per repository per pass**.
   - NO_VERDICT → `spira_land_noverdict` (seam; its `progress` lines cross the mailbox).
+  - NO_VERDICT `reason=conflict` (the branch no longer merges onto the landing ref; gate/DESIGN.md,
+    sp-0tpcs) → `rebase-stale <id> <repo>`, which rebases and re-certifies or reopens with the hunks
+    quoted; only its exit 3 (not attempted) falls back to `spira_land_noverdict`.
   - FAIL → re-read; not closed → "bead is now S … — not reopening"; else `bead_reopen
     cert-gate-red` with the note (commits on the branch, the prior-PASS scope note from
     `gate-run.sh --status`, the gate's last 20 lines), progress, `spira_event bead.reopened`,
@@ -673,6 +676,7 @@ liveness, the clock, spira-lc and the halt ports (signals, podman, testenv teard
 | FAIL reopens with the gate's words; re-read | `a_red_gate_reopens_with_the_gates_own_words_and_marks_red`, `a_bead_reopened_while_its_gate_ran_is_not_reopened_or_certified` |
 | BASE_FAIL: one incident per repo per pass; green base-fix certified first, budget-exempt | `a_red_base_files_one_incident_…`, `a_base_fix_green_on_its_suite_…` |
 | NO_VERDICT; PASS clears counters | `no_verdict_is_counted_by_the_seam_…`, `a_pass_clears_the_branchs_noverdict_counters` |
+| NO_VERDICT conflict → rebase-stale, never charged | `a_branch_that_no_longer_merges_goes_to_rebase_stale_not_red`, `a_conflict_rebase_stale_could_not_attempt_is_an_ordinary_no_verdict` |
 | budget cut, cursor, deferral escalation, rotation | `the_budget_cut_defers_the_rest_…`, `the_walk_starts_at_the_cursor`, `budget::tests` |
 | every early exit says why; EJECTED; gone mid-pass | `every_early_exit_says_why`, `an_ejected_record_on_a_closed_bead_is_reopened`, `a_branch_gone_mid_pass_…` |
 | queue step before/after, missing binary, skew only push/queue | `the_queue_step_runs_before_and_after_…` |
