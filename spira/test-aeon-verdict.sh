@@ -155,13 +155,9 @@ echo
 echo "STRUCTURAL — the shared functions replaced the duplicate case blocks (what"
 echo "test-delivers-parity.sh used to guard, now true by construction):"
 # ==========================================================================================
-want "aeon.sh calls delivers_verdict (via close_verdict)" "close_verdict " "$(cat "$HERE/aeon.sh")"
-# sp-qsona: CHECK 5 is one invariant (a closed work bead needs a LANDED record) and skips
-# delivers:-labelled beads outright, so the sentinel no longer judges delivers: evidence at
-# all — aeon.sh's close_verdict is the one caller left.
-nowant "sentinel.sh no longer judges delivers: evidence (CHECK 5 is one invariant)" "delivers_verdict " "$(cat "$HERE/sentinel.sh")"
-nowant "aeon.sh carries no case \"\$_dtype\" of its own"     'case "$_dtype"' "$(cat "$HERE/aeon.sh")"
-nowant "sentinel.sh carries no case \"\$_dtype\" of its own" 'case "$_dtype"' "$(cat "$HERE/sentinel.sh")"
+# RETIRED with aeon.sh and sentinel.sh (the Rust cutover): the aeon binary's verdict uses the
+# close_verdict seam (`cargo test -p aeon`, aeon/DESIGN.md §9 item 13), and the sentinel
+# binary's CHECK 5 has no delivers: judgement (`cargo test -p sentinel`).
 
 # ==========================================================================================
 echo
@@ -206,7 +202,7 @@ is "the SAME window correctly says no for a bead with no commit at all (positive
 
 # ==========================================================================================
 echo
-echo "E2E — the real aeon.sh: the submitted conversion and its exemptions (sp-qsona), plus"
+echo "E2E — the real aeon binary: the submitted conversion and its exemptions (sp-qsona), plus"
 echo "the legacy reopen's positive control (everything else above is T1/T2):"
 # ==========================================================================================
 # THE SHIM IS THE SESSION, running where the model would and finishing the bead the way the
@@ -214,8 +210,13 @@ echo "the legacy reopen's positive control (everything else above is T1/T2):"
 # $PATH, so a suite that tried to shim `claude` by PATH alone would run the real model
 # against a real account, silently and at full cost.
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
-    || { echo "test-aeon-verdict: aeon.sh has no SPIRA_AGENT injection point — refusing to run the real model" >&2; exit 1; }
+# The aeon is a binary (aeon.sh is gone); it honours SPIRA_AGENT the same way. It and the
+# spira-claim it claims through are resolved as conf.sh's spira_bin does for THIS tree — the
+# temp SPIRA_HOME above is not a checkout, so its own resolution would find neither.
+_rbin() { env -u SPIRA_REPO SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin "$2" 2>/dev/null' _ "$HERE" "$1"; }
+export SPIRA_AEON_BIN="$(_rbin aeon)" SPIRA_CLAIM_BIN="$(_rbin spira-claim)"
+[ -x "$SPIRA_AEON_BIN" ] \
+    || { echo "test-aeon-verdict: the aeon binary is not built (SPIRA_AEON_BIN=$SPIRA_AEON_BIN) — refusing to run" >&2; exit 1; }
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
 FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
@@ -254,7 +255,7 @@ seed() {   # seed <id> [status] [issue_type]
     printf '{"id":"%s","title":"t","status":"%s","issue_type":"%s","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "${2:-open}" "${3:-task}" "$_lbl" | testdb_seed
 }
-run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_HOME/aeon.sh" builder > "$TMP/out" 2>&1; }
+run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
 field() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
