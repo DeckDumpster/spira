@@ -75,6 +75,10 @@ case "$cmd" in
         printf 'pr-create\n' >> "$CALL_LOG"
         printf '%s\n' "$n"
         ;;
+    pr-state)
+        printf 'pr-state\n' >> "$CALL_LOG"
+        printf 'open\n'
+        ;;
     check-status)
         printf 'check-status\n' >> "$CALL_LOG"
         printf '%s\n' "${FIXTURE_CHECK_STATUS:-green}"

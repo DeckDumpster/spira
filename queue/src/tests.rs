@@ -311,6 +311,8 @@ struct FForge {
     /// check-status answers in order; when none is left the answer is `pending`. A `None`
     /// entry is a failed call.
     status: RefCell<Vec<Option<String>>>,
+    /// pr-state answer; `None` reads as `open`.
+    pr_state: RefCell<Option<String>>,
     run: RefCell<Option<String>>,
     meta: RefCell<String>,
 }
@@ -329,6 +331,10 @@ impl Forge for FForge {
     fn branch_protect(&self, _: &Path, _: &Path, b: &str) -> bool {
         self.calls.borrow_mut().push(format!("protect {b}"));
         true
+    }
+    fn pr_state(&self, _: &Path, _: &Path, pr: &str) -> Option<String> {
+        self.calls.borrow_mut().push(format!("pr-state {pr}"));
+        Some(self.pr_state.borrow().clone().unwrap_or_else(|| "open".into()))
     }
     fn check_status(&self, _: &Path, _: &Path, pr: &str, branch: &str) -> Option<String> {
         self.calls.borrow_mut().push(format!("check-status {pr} {branch}"));

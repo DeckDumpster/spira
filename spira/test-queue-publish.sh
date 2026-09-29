@@ -57,7 +57,9 @@ printf '%s | %s | queue.local | local/main | | |\n' "$REPONAME" "$REPO" > "$RMAP
 
 # Forge stub. CALL_LOG records every command asked of it (names only, plus pr-close's
 # argument) so a test can prove the PR was actually closed, not merely that its status
-# was read. FIXTURE_CHECK_STATUS/FIXTURE_RED_SUITES drive check-status's answer.
+# was read. FIXTURE_CHECK_STATUS/FIXTURE_RED_SUITES drive check-status's answer;
+# FIXTURE_PR_STATE drives pr-state's (defaulting to open, since that is the common case
+# every other row of this suite exercises).
 CALL_LOG="$TMP/call-log"; : > "$CALL_LOG"
 PRSEQ="$TMP/pr-seq"
 export CALL_LOG PRSEQ
@@ -70,6 +72,10 @@ case "$cmd" in
         printf '%s\n' "$n" > "$PRSEQ"
         printf 'pr-create\n' >> "$CALL_LOG"
         printf '%s\n' "$n"
+        ;;
+    pr-state)
+        printf 'pr-state\n' >> "$CALL_LOG"
+        printf '%s\n' "${FIXTURE_PR_STATE:-open}"
         ;;
     check-status)
         printf 'check-status\n' >> "$CALL_LOG"
@@ -113,6 +119,7 @@ verdict() {
     SPIRA_FORGE="$SH/forge-fixture.sh" \
     FIXTURE_CHECK_STATUS="${CHECK_STATUS:-green}" \
     FIXTURE_RED_SUITES="${RED_SUITES:-}" \
+    FIXTURE_PR_STATE="${PR_STATE:-open}" \
         SPIRA_HOME="$SH" command queue verdict "$REPONAME" 2>&1
 }
 # mk_bins <head> — land-local now refuses without a --with-bins corpus for the tree it is
@@ -264,6 +271,60 @@ echo
 echo "4b — row 4: healthy publishes never raise the divergence alarm (positive control for 5)"
 # ============================================================================
 is "4b: no divergence mail through four healthy/red publishes" "0" "$(mail_count)"
+
+# ============================================================================
+echo
+echo "4c — sp-h331g: a publish PR closed unmerged is never green, even when CI says so — main never fast-forwards"
+# ============================================================================
+clear_calls
+seed sp-pub3b
+land sp-pub3b threeb.txt threeb
+HEAD3B="$(localmain)"
+PRE_MAIN_3B="$(remote_main)"
+
+queue publish "$REPONAME" >/dev/null
+
+# Closing a PR retriggers its Gate run (to cancel the superseded one), and that retrigger
+# run can itself conclude green — required jobs skip rather than run once the PR is closed.
+# check-status is asked in this fixture to prove a naive settle WOULD have gone green.
+out="$(PR_STATE=closed CHECK_STATUS=green verdict)"; rc=$?
+[ "$rc" -eq 0 ] && ok "4c: verdict settles the abandoned publish" || bad "4c: verdict settles the abandoned publish" "got rc=$rc out=$out"
+is "4c: production (the forge's main) never fast-forwards on a closed PR" "$PRE_MAIN_3B" "$(remote_main)"
+[ "$(callcount check-status)" -eq 0 ] && ok "4c: CI is never even consulted once the PR is closed" \
+    || bad "4c: CI is never even consulted once the PR is closed" "$(cat "$CALL_LOG")"
+is "4c: the member bead is STILL closed — never reopened" closed "$(field sp-pub3b status)"
+[ ! -f "$QDIR/$REPONAME/publish" ] && ok "4c: the publish record is retired" \
+    || bad "4c: the publish record is retired" "got: $(publish_file)"
+want "4c: landing.log records the abandonment, not a green" "QUEUE PUBLISH_ABANDONED" "$(landing_log)"
+
+clear_calls
+seed sp-pub3c
+land sp-pub3c threec.txt threec
+HEAD3C="$(localmain)"
+queue publish "$REPONAME" >/dev/null
+out="$(PR_STATE=merged CHECK_STATUS=green verdict)"; rc=$?
+is "4c-merged: a PR reported merged (never our own doing) also never fast-forwards again here" \
+    "$PRE_MAIN_3B" "$(remote_main)"
+[ ! -f "$QDIR/$REPONAME/publish" ] && ok "4c-merged: the publish record is retired" \
+    || bad "4c-merged: the publish record is retired" "got: $(publish_file)"
+
+clear_calls
+clear_log
+seed sp-pub3d
+land sp-pub3d threed.txt threed
+HEAD3D="$(localmain)"
+queue publish "$REPONAME" >/dev/null
+out="$(PR_STATE=unknown verdict)"; rc=$?
+want "4c-unknown: an unreadable PR state waits rather than guessing" "waiting" "$out"
+[ -f "$QDIR/$REPONAME/publish" ] && ok "4c-unknown: the publish record is left in place" \
+    || bad "4c-unknown: the publish record is left in place" "got: $(publish_file)"
+[ "$(callcount check-status)" -eq 0 ] && ok "4c-unknown: CI is never consulted while PR state is unreadable" \
+    || bad "4c-unknown: CI is never consulted while PR state is unreadable" "$(cat "$CALL_LOG")"
+
+# Clean up: this record would otherwise block every later publish for this fixture (row 2's
+# own-PR-open guard) — settle it green now that PR state reads open again.
+out="$(PR_STATE=open CHECK_STATUS=green verdict)"; rc=$?
+is "4c-unknown cleanup: settles once PR state is readable again" "$HEAD3D" "$(remote_main)"
 
 # ============================================================================
 echo
