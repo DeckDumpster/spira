@@ -266,6 +266,7 @@ else
         cp "$HARNESS/spira/chamber/concierge.md" "$MT_TMP/chamber/modeltest.md"
         sed -e 's|^FAYTH_NAME=.*|FAYTH_NAME=modeltest|' \
             -e 's|^FAYTH_MODEL=.*|FAYTH_MODEL=fayth-declared-should-not-be-used|' \
+            -e 's|^FAYTH_STATUTE_CORE=.*|FAYTH_STATUTE_CORE="law-rm-alpha"|' \
             "$HARNESS/spira/chamber/concierge.fayth" > "$MT_TMP/chamber/modeltest.fayth"
 
         MT_TOML="$MT_TMP/spira.toml"
@@ -281,14 +282,19 @@ EOF
         # toml and would otherwise re-seed $MT_TOML from modeltest.fayth's own FAYTH_MODEL,
         # defeating the property under test. compose_brief/fayth_get still find
         # modeltest.{md,fayth} through SPIRA_HOME directly, which this does not affect.
+        # THE STATUTE BOOK COMES FROM THE SAME FIXTURE SEAM brief_fx uses (SPIRA_MEMORIES_CMD).
+        # Without it compose_brief reads the box's real statute database, so this case passed
+        # only on a host that had one and refused ("cannot reach the statute book database")
+        # everywhere else — including every testenv container.
         ENVARGS=(SPIRA_HOME="$MT_TMP" SPIRA_RUN="$MT_TMP/run" SPIRA_WIKI="$MT_TMP" \
             SPIRA_CONF=/nonexistent SPIRA_REPO_MAP=/nonexistent SPIRA_CHAMBER="$MT_TMP/chamber-empty" \
             SPIRA_TOML="$MT_TOML" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN_MT" CONCIERGE_FAYTH=modeltest \
-            CONCIERGE_SOCKET="$SOCK_MT" CONCIERGE_SESSION="$SOCK_MT")
+            CONCIERGE_SOCKET="$SOCK_MT" CONCIERGE_SESSION="$SOCK_MT" \
+            SPIRA_MEMORIES_CACHE="" SPIRA_MEMORIES_CMD="$(fixture_cmd)")
         env "${ENVARGS[@]}" \
-            systemd-run --user --wait --collect --quiet -- \
+            systemd-run --user --wait --collect --quiet --pipe -- \
             env "${ENVARGS[@]}" \
-            bash "$HARNESS/concierge.sh" start 2>>"$TMP/err" || true
+            bash "$HARNESS/concierge.sh" start >"$MT_TMP/start.err" 2>&1 </dev/null || true
         tmux -L "$SOCK_MT" kill-server 2>/dev/null || true
         if [ -f "$MT_TMP/run/concierge-launch.sh" ]; then
             lnch_mt="$(cat "$MT_TMP/run/concierge-launch.sh")"
@@ -297,7 +303,7 @@ EOF
                 "fayth-declared-should-not-be-used" "$lnch_mt"
         else
             bad "launcher's --model came from persona.modeltest.model" \
-                "start did not write launcher: $(tail -5 "$TMP/err" 2>/dev/null)"
+                "start did not write launcher: $(tail -5 "$MT_TMP/start.err" 2>/dev/null)"
         fi
     fi
 fi
