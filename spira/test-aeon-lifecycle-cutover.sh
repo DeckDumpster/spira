@@ -346,11 +346,12 @@ want "MACHINE_READY_ARGS (bd list, no blocker filter) carries the dependent thro
 "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder >"$TMP/aeon-stack.log" 2>&1
 is "aeon.sh: exits 0 claiming the stacked dependent" "0" "$?"
 is "the dependent, not the prerequisite, was claimed (widened ready + --blockers machine)" "$DEP" "$(cat "$TMP/last-bead" 2>/dev/null)"
+is "the dependent's own session ran work submit to completion" "0" "$(cat "$TMP/work-submit-rc" 2>/dev/null || echo missing)"
 
-depstatus="$(bd -C "$SPIRA_DB" show "$DEP" --json 2>/dev/null | python3 -c '
+depassignee="$(bd -C "$SPIRA_DB" show "$DEP" --json 2>/dev/null | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
-print(d[0].get("status","") if d else "")' 2>/dev/null)"
-is "the dependent's bd status shows it was actually claimed" "in_progress" "$depstatus"
+print(d[0].get("assignee","") or "" if d else "")' 2>/dev/null)"
+is "bd actually claimed the dependent (assignee is set)" "1" "$([ -n "$depassignee" ] && echo 1 || echo 0)"
 
 tl_summary
