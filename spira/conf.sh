@@ -456,9 +456,18 @@ SPIRA_REPO="${SPIRA_REPO:-$SPIRA_REPO_DERIVED}"
 # distinct fault) is not handed a new failure mode by a binary this call was never the one
 # to gate on. A caller that must not proceed without the real thing checks the exit status,
 # same as any other command (SPIRA_CONFIG_BIN below is exactly that caller).
+#
+# SPIRA_ARTIFACTS DESCRIBES ONE CHECKOUT (testenv/DESIGN.md §5): testenv exports
+# SPIRA_ARTIFACTS_ROOT naming the checkout it built, and SPIRA_ARTIFACTS is honoured only
+# when this SPIRA_REPO is that checkout (or no root was named). A fixture that builds a
+# release layout inside a test run then resolves its own bin/, not the runner's target/.
+spira_artifacts_apply() {
+    [ -n "${SPIRA_ARTIFACTS:-}" ] || return 1
+    [ -z "${SPIRA_ARTIFACTS_ROOT:-}" ] || [ "$SPIRA_ARTIFACTS_ROOT" = "$SPIRA_REPO" ]
+}
 spira_bin() {
     local name="$1" dir path
-    dir="${SPIRA_ARTIFACTS:-$SPIRA_REPO/bin}"
+    if spira_artifacts_apply; then dir="$SPIRA_ARTIFACTS"; else dir="$SPIRA_REPO/bin"; fi
     path="$dir/$name"
     printf '%s' "$path"
     [ -x "$path" ] && return 0
@@ -480,7 +489,7 @@ spira_bin() {
 # nothing to do with spira-config, and a hard refusal there would break every one of them
 # the moment the binary happens not to be built.
 if [ -z "${SPIRA_CONFIG_BIN:-}" ]; then
-    if [ -n "${SPIRA_ARTIFACTS:-}" ]; then
+    if spira_artifacts_apply; then
         SPIRA_CONFIG_BIN="$(spira_bin spira-config)" || return 1
     else
         SPIRA_CONFIG_BIN="$(spira_bin spira-config 2>/dev/null)"
@@ -1539,6 +1548,15 @@ spira_conf_defaults() {
     # THE BATCHER'S CUT (sp-jzfog): the batcher-cut crate's `batcher` binary, called by
     # queue.sh unconditionally in place of batch.sh's own cut (sp-vsob2).
     : "${SPIRA_BATCHER_BIN:=$(spira_bin batcher 2>/dev/null)}"
+    # THE RUST HARNESS (the bash-to-Rust cutover): each binary replaces the script named
+    # beside it, and every caller goes through the variable, never a literal path.
+    : "${SPIRA_QUEUE_BIN:=$(spira_bin queue 2>/dev/null)}"          # spira/queue.sh, spira-verdict.sh
+    : "${SPIRA_SENTINEL_BIN:=$(spira_bin sentinel 2>/dev/null)}"    # spira/sentinel.sh
+    : "${SPIRA_STRAND_BIN:=$(spira_bin strand 2>/dev/null)}"        # spira/strand.sh + strand-classify.py
+    : "${SPIRA_TESTENV_BIN:=$(spira_bin testenv 2>/dev/null)}"      # spira/testenv-batch.sh, suites.sh
+    : "${SPIRA_REBASE_STALE_BIN:=$(spira_bin rebase-stale 2>/dev/null)}"  # spira/rebase-stale.sh
+    : "${SPIRA_ROUND_VM_BIN:=$(spira_bin round-vm 2>/dev/null)}"    # spira/round-vm.sh
+    : "${SPIRA_LINT_BIN:=$(spira_bin spira-lint 2>/dev/null)}"      # the ported bash fences
     # test-plan — validates docs/test-plan/*.toml, builds the derived coverage matrix.
     : "${SPIRA_TEST_PLAN_BIN:=$(spira_bin test-plan 2>/dev/null)}"
     # reconciler-flow (sp-rh0x3): backlog trend, stage velocity, stage dwell and round health
@@ -2309,6 +2327,17 @@ if [ -z "${SPIRA_LC_BIN:-}" ]; then
 fi
 export SPIRA_LC_BIN
 
+# SPIRA_CLAIM_BIN and SPIRA_AEON_BIN (spira-claim/DESIGN.md §5 item 1, aeon/DESIGN.md §9
+# item 1) — resolved like SPIRA_LC_BIN, after SPIRA_PATH is applied.
+if [ -z "${SPIRA_CLAIM_BIN:-}" ]; then
+    SPIRA_CLAIM_BIN="$(command -v spira-claim 2>/dev/null)" || SPIRA_CLAIM_BIN="$(spira_bin spira-claim 2>/dev/null)"
+fi
+export SPIRA_CLAIM_BIN
+if [ -z "${SPIRA_AEON_BIN:-}" ]; then
+    SPIRA_AEON_BIN="$(spira_bin aeon 2>/dev/null)" || SPIRA_AEON_BIN=""
+fi
+export SPIRA_AEON_BIN
+
 # BD SCHEMA REFUSAL. When the resolved bd's migration count disagrees with the database's,
 # bd exits 0 with the complaint on stdout — callers that check exit status read success and
 # parse the error as data. Catching it here, once, stops the mismatch from propagating to
@@ -2560,7 +2589,14 @@ export COCKPIT_BOTTOM_PCT \
     SPIRA_WIKI_HOOK \
     SPIRA_WORKSPACES \
     SPIRA_WORK_BIN \
-    SPIRA_WORK_CLOSE_TYPES
+    SPIRA_WORK_CLOSE_TYPES \
+    SPIRA_QUEUE_BIN \
+    SPIRA_SENTINEL_BIN \
+    SPIRA_STRAND_BIN \
+    SPIRA_TESTENV_BIN \
+    SPIRA_REBASE_STALE_BIN \
+    SPIRA_ROUND_VM_BIN \
+    SPIRA_LINT_BIN
 
 # --------------------------------------------------------------------------------------
 # NAME WHAT IS MISSING. A harness that dies with `bd: command not found` from a timer has
