@@ -1,6 +1,8 @@
 //! The gate's boundaries. `real` implements them against git, the helper scripts, lib.sh and
 //! the filesystem; the unit tests drive the engine through a recording fake.
 
+use crate::compose::Changed;
+use spira_config::GateMode;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -73,6 +75,18 @@ pub trait World {
     fn ls_tree_all(&self, repo: &Path, rev: &str) -> String;
     /// `ls-tree --name-only <rev> <path>` names `path`.
     fn ls_tree_has(&self, repo: &Path, rev: &str, path: &str) -> bool;
+
+    /// `git diff --raw -z --no-renames <base> <rev>`: the touched set (DESIGN.md
+    /// "Composition"). Err(output) when git refused.
+    fn diff_raw(&self, repo: &Path, base: &str, rev: &str) -> Result<Vec<Changed>, String>;
+
+    // ---- composition (DESIGN.md "Composition")
+    /// `[repo.<name>] gate_mode`, read through the spira-config library; Ok(Suites) when no
+    /// configuration document is in force, Err(why) when one is and it does not validate.
+    fn gate_mode(&self, repo_name: &str) -> Result<GateMode, String>;
+    /// `cargo metadata --format-version 1 --no-deps --offline` in `tree` with `path` as PATH →
+    /// stdout, or Err(stderr).
+    fn cargo_metadata(&self, tree: &Path, path: &str, home: &str) -> Result<String, String>;
 
     // ---- helpers the gate runs (DESIGN.md "Non-goals": not ported here)
     /// `bash -n` over a script's content → Err(bash's message).

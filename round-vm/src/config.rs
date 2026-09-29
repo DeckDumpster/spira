@@ -88,6 +88,10 @@ pub struct Config {
     pub boot_poll: Duration,
     pub ssh_tries: u32,
     pub wait_poll: Duration,
+    /// `run --attr-spool`: how often results stream back while the corpus runs.
+    pub stream_every: Duration,
+    /// `run --attr-spool`: how long the VM waits for the spool's `close` after the corpus.
+    pub attr_linger: Duration,
 }
 
 fn num<T: std::str::FromStr>(src: &dyn Source, key: &str, default: T) -> Result<T, String> {
@@ -133,6 +137,8 @@ impl Config {
             boot_poll: Duration::from_secs(num(src, "SPIRA_ROUND_VM_BOOT_POLL", 2)?),
             ssh_tries: num(src, "SPIRA_ROUND_VM_SSH_TRIES", 30)?,
             wait_poll: Duration::from_secs(1),
+            stream_every: Duration::from_secs(num(src, "SPIRA_ROUND_VM_STREAM_SECS", 10)?),
+            attr_linger: Duration::from_secs(num(src, "SPIRA_ROUND_VM_ATTR_LINGER", 3600)?),
             host_key,
             host_pubkey,
             state_dir,

@@ -22,7 +22,9 @@
 //! double-red's own failing assertions and applies it, by judgement rather than blind
 //! reproduction.
 
+mod drive;
 mod io;
+mod vm;
 
 use std::collections::BTreeMap;
 use std::env;
@@ -43,14 +45,13 @@ struct Opts {
     db: Option<PathBuf>,
     home: Option<PathBuf>,
     round_vm: Option<PathBuf>,
-    attribute: Option<PathBuf>,
     suites: Option<String>,
     members: Option<String>,
     evidence: Option<String>,
 }
 
 fn usage() -> ExitCode {
-    eprintln!("usage: batcher cut <repo> [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH] [--attribute PATH]");
+    eprintln!("usage: batcher cut <repo> [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
     eprintln!("       batcher judgement-ci <repo> --suites CSV --members CSV --evidence TEXT [--run DIR] [--db DIR] [--home DIR]");
     ExitCode::from(2)
 }
@@ -66,7 +67,6 @@ fn parse() -> Result<Opts, String> {
         db: env::var_os("SPIRA_DB").map(PathBuf::from),
         home: env::var_os("SPIRA_HOME").map(PathBuf::from),
         round_vm: env::var_os("SPIRA_BATCHER_ROUND_VM").map(PathBuf::from),
-        attribute: env::var_os("SPIRA_BATCHER_ATTRIBUTE").map(PathBuf::from),
         suites: None,
         members: None,
         evidence: None,
@@ -78,7 +78,6 @@ fn parse() -> Result<Opts, String> {
             "--db" => o.db = Some(val()?.into()),
             "--home" => o.home = Some(val()?.into()),
             "--round-vm" => o.round_vm = Some(val()?.into()),
-            "--attribute" => o.attribute = Some(val()?.into()),
             "--suites" => o.suites = Some(val()?),
             "--members" => o.members = Some(val()?),
             "--evidence" => o.evidence = Some(val()?),
@@ -152,7 +151,8 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
         round_vm: o.round_vm.clone().unwrap_or_else(default_round_vm),
         queue_bin: sibling_bin("SPIRA_QUEUE_BIN", "queue"),
         rebase_stale_bin: sibling_bin("SPIRA_REBASE_STALE_BIN", "rebase-stale"),
-        attribute: o.attribute.clone().unwrap_or_else(|| home.join("attribute.sh")),
+        round_slots: env::var("SPIRA_BATCHER_ROUND_SLOTS").ok().and_then(|v| v.trim().parse().ok()).filter(|n: &u32| *n > 0),
+        poll_secs: env::var("SPIRA_BATCHER_POLL_SECS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(2),
         // Batcher-parity (sp-myi6w): the Concierge's own proven values, not testenv-batch.sh's
         // own hardware-derived or unpinned defaults — see io::run_suites.
         maxpar: env::var("SPIRA_BATCH_MAXPAR").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(16),
@@ -257,127 +257,174 @@ fn handle_base_conflicts(
     deleted
 }
 
-/// What a round looks like once its local corpus is green: the surviving members (a subset of
-/// what went in, once attribution has ejected any culprit) and how long that took, so the
+/// What a round looks like once it has a decision to land: the surviving members (a subset
+/// of what went in, once attribution ejected any owner) and how long that took, so the
 /// caller can record both without a second pass over the same data.
 struct StableRound {
     members: Vec<Member>,
-    /// The head the full corpus ran green on, and the attribution branch that named it — the
-    /// one tree this round may certify (queue/DESIGN.md §8 D12).
+    /// The head the round judged green — the corpus's own head, or the survivors' head whose
+    /// owned suites re-ran green — and a branch naming it: the one tree this round may
+    /// certify (queue/DESIGN.md §8 D12).
     head: String,
     green_branch: String,
-    /// Wall time of the (first) attribute.sh call that named a culprit — None when the round
-    /// was green from its very first corpus run and attribution never ran.
+    /// The longest per-red attribution wall of the round (red streamed → settled) — None
+    /// when the corpus was green and attribution never ran.
     attribution_seconds: Option<u64>,
-    /// Wall time from the first local red to this round finally going green — None for the
-    /// same reason.
+    /// Wall time from the first red to the round's decision — None for the same reason.
     regreen_seconds: Option<u64>,
 }
 
+/// The effects of a round besides running suites (drive::RoundOps), on this box.
+struct LiveOps<'a> {
+    env: &'a Env,
+    repo: &'a Repo,
+    wt: &'a Path,
+    start_sha: String,
+    round_branch: String,
+    evidence: String,
+    round: String,
+    changed: BTreeMap<String, Vec<String>>,
+    first_red: Option<u64>,
+}
+
+impl drive::RoundOps for LiveOps<'_> {
+    fn suspects(&self, suite: &str, members: &[String]) -> Vec<String> {
+        suspects_in(self.wt, &self.changed, suite, members)
+    }
+
+    fn eject(&mut self, member: &Member, suites: &[String]) {
+        io::eject_member(self.env, &self.repo.name, &member.id, &member.tip, suites);
+        println!("{}", ejected_event(&Ejection { id: member.id.clone(), suites: suites.to_vec() }).text);
+    }
+
+    fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String> {
+        merge_round(self.env, self.repo, self.wt, &self.start_sha, survivors.to_vec())
+    }
+
+    fn incident(&mut self, kind: &str, suites: &[String]) {
+        let what = match kind {
+            "base" => "base itself red",
+            "unattributed" => "local red could not be attributed to anyone",
+            _ => "workspace failed to build",
+        };
+        match io::file_local_red_incident(self.env, self.repo, suites, &self.round_branch, &self.evidence, kind) {
+            Ok(id) => println!("batcher {}: {what} ({}) — filed {id} for Ops", self.repo.name, suites.join(",")),
+            Err(e) => println!("batcher {}: {what} ({}) — could not file for Ops: {e}", self.repo.name, suites.join(",")),
+        }
+    }
+
+    fn record(&mut self, iteration: u32, d: &batcher::attrib::Decision) {
+        for r in &d.records {
+            self.first_red = Some(self.first_red.map_or(r.red_at, |f| f.min(r.red_at)));
+            let owner = match &r.outcome {
+                Some(batcher::attrib::Outcome::Owner(o)) => o.join(","),
+                _ => String::new(),
+            };
+            io::tsd_append(
+                self.env,
+                "round-attribution",
+                &[
+                    ("repo", self.repo.name.clone()),
+                    ("round", self.round.clone()),
+                    ("iteration", iteration.to_string()),
+                    ("suite", r.suite.clone()),
+                    ("outcome", r.outcome.as_ref().map(|o| o.word()).unwrap_or("unsettled").to_string()),
+                    ("owner", owner),
+                    ("attribution_secs", r.attribution_secs().unwrap_or(0).to_string()),
+                    ("reruns", r.reruns.to_string()),
+                    ("settled_before_corpus_end", r.settled_before_main_end.to_string()),
+                ],
+            );
+        }
+    }
+}
+
+/// The commit `rev` names in `repo`, if any.
+fn git_rev(repo: &Repo, rev: &str) -> Option<String> {
+    let o = std::process::Command::new("git").arg("-C").arg(&repo.path).args(["rev-parse", "--verify", "-q", rev]).output().ok()?;
+    o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+/// S's suspects: `# covers:` read from the round tree's own copy of the suite (spira-lint's
+/// parser, the one select.sh's accessor agrees with), members ordered by attrib::suspect_order.
+fn suspects_in(wt: &Path, changed: &BTreeMap<String, Vec<String>>, suite: &str, members: &[String]) -> Vec<String> {
+    let text = std::fs::read_to_string(wt.join("spira").join(suite)).unwrap_or_default();
+    let covers = spira_lint::rules::covers_entries::covers_of(&text);
+    batcher::attrib::suspect_order(suite, covers.as_deref(), members, changed)
+}
+
+/// Resets the round worktree to `start_sha` and merges `members` in order. Same closure rule
+/// as the initial cut (core::combine): a member whose tip merged Empty because a stacked
+/// dependent already carried it is kept; one Empty for any other reason, or a fresh
+/// conflict, drops out.
+fn merge_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, mut members: Vec<Member>) -> Result<Vec<Member>, String> {
+    io::worktree_reset(repo, wt, start_sha)?;
+    let merges: BTreeMap<String, MergeResult> = members.iter().map(|m| (m.id.clone(), io::merge_member(env_, wt, &m.id, &m.tip))).collect();
+    let before = members.clone();
+    members.retain(|m| match merges.get(&m.id) {
+        Some(MergeResult::Ok) => true,
+        Some(MergeResult::Empty) => stacked_into(&before, &m.id),
+        _ => false,
+    });
+    Ok(members)
+}
+
 /// Enforces law-a-round-takes-certified-tips (amended 2026-09-27): a round that is red on its
-/// own local corpus is never sent to CI. Runs the full corpus against `starting` merged onto
-/// `start_sha`; a red is handed to attribute.sh (sp-q8xs9), which names either a BASE_FAIL
-/// (blocks the round, filed for Ops, nobody ejected) or an owning member per suite (ejected,
-/// with every suite it turned red named in its bead's own note). Repeats on the reduced
-/// membership until the corpus is green or the round is empty. Returns `Ok(None)` for either
-/// terminal non-green outcome — the caller opens no PR and changes no open-batch record in
-/// that case, the same as if this round had never been cut.
+/// own corpus is never sent on. The corpus runs on the round VM with concurrent attribution
+/// (DESIGN.md §4): each red is attributed while the corpus still runs; every owner is ejected
+/// with its suites; only those suites re-run on the survivors' release build. Flaky and base
+/// reds do not block (a base red is filed for Ops); an unattributed red or a workspace that
+/// does not build does. Returns `Ok(None)` for a blocked or emptied round — the caller opens
+/// no PR and changes no open-batch record, as if the round had never been cut.
 fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting: Vec<Member>) -> Result<Option<StableRound>, String> {
-    let mut round_members = starting;
-    let mut red_detected_at: Option<u64> = None;
-    let mut attribution_seconds: Option<u64> = None;
-    let mut iteration: u32 = 0;
+    let members = merge_round(env_, repo, wt, start_sha, starting)?;
+    if members.is_empty() {
+        println!("{}", skipped_event("round emptied rebuilding the tree").text);
+        return Ok(None);
+    }
+    let round = now().to_string();
+    let round_branch = format!("spira/batcher-attr/{}-{round}", repo.name);
+    io::set_branch(repo, &round_branch, &io::head_of(wt)?);
+    let suites = io::all_suites(repo, &round_branch);
+    let changed: BTreeMap<String, Vec<String>> = members.iter().map(|m| (m.id.clone(), io::changed_paths(repo, start_sha, &m.tip))).collect();
 
-    loop {
-        io::worktree_reset(repo, wt, start_sha)?;
-        // Same closure rule as the initial cut (core::combine): a member whose tip merged
-        // Empty because a stacked dependent already carried it into this same rebuild is kept,
-        // never dropped — only a member Empty for any other reason (or a fresh conflict) drops
-        // out of the round here.
-        let merges: BTreeMap<String, MergeResult> =
-            round_members.iter().map(|m| (m.id.clone(), io::merge_member(env_, wt, &m.id, &m.tip))).collect();
-        let before = round_members.clone();
-        round_members.retain(|m| match merges.get(&m.id) {
-            Some(MergeResult::Ok) => true,
-            Some(MergeResult::Empty) => stacked_into(&before, &m.id),
-            _ => false,
-        });
-        if round_members.is_empty() {
-            println!("{}", skipped_event("round emptied rebuilding the tree after ejection").text);
-            return Ok(None);
+    let mut runner = vm::VmRunner::new(env_, repo, wt, start_sha, &round, changed.clone())?;
+    let mut ops = LiveOps {
+        env: env_,
+        repo,
+        wt,
+        start_sha: start_sha.to_string(),
+        round_branch: round_branch.clone(),
+        evidence: runner.results.display().to_string(),
+        round,
+        changed,
+        first_red: None,
+    };
+    let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
+    let end = drive::attribute_round(&mut runner, &mut ops, &suites, members, budget);
+    runner.close();
+    match end? {
+        drive::RoundEnd::Land { members, attribution_secs } => {
+            let head = io::head_of(wt)?;
+            let green_branch = if git_rev(repo, &round_branch).as_deref() == Some(head.as_str()) {
+                round_branch
+            } else {
+                let b = format!("{round_branch}-survivors");
+                io::set_branch(repo, &b, &head);
+                b
+            };
+            Ok(Some(StableRound {
+                members,
+                head,
+                green_branch,
+                attribution_seconds: attribution_secs,
+                regreen_seconds: ops.first_red.map(|f| now().saturating_sub(f)),
+            }))
         }
-
-        let head = io::head_of(wt)?;
-        let iter_branch = format!("spira/batcher-attr/{}-{}-{}", repo.name, now(), iteration);
-        io::set_branch(repo, &iter_branch, &head);
-
-        let suites = io::all_suites(repo, &iter_branch);
-        let results_dir = env_.run.join("batch-results").join(format!("{}-{}-attr{iteration}", repo.name, now()));
-        let first = io::run_suites(env_, wt, &suites, &results_dir)?;
-        let reds = io::red_names(&first);
-        if reds.is_empty() {
-            let regreen_seconds = red_detected_at.map(|at| now().saturating_sub(at));
-            return Ok(Some(StableRound { members: round_members, head, green_branch: iter_branch, attribution_seconds, regreen_seconds }));
+        drive::RoundEnd::Blocked(why) => {
+            println!("batcher {}: round blocked — {why}", repo.name);
+            Ok(None)
         }
-        if red_detected_at.is_none() {
-            red_detected_at = Some(now());
-        }
-
-        let member_ids: Vec<String> = round_members.iter().map(|m| m.id.clone()).collect();
-
-        // A --with-bins build failure (exit 4, sp-myi6w) is never something attribute.sh can
-        // bisect: its own job is rerunning a named suite against member subsets, and there is
-        // no subset rerun that answers "does the merged tree compile" — only whether it did.
-        // Filed as an Ops incident naming every member still in the round, the same as an
-        // unresolved local red below, rather than handed to attribute.sh where it could only
-        // ever refuse.
-        if reds == [io::WORKSPACE_BUILD.to_string()] {
-            let evidence = results_dir.display().to_string();
-            println!("batcher {}: workspace failed to build — local round red ({})", repo.name, member_ids.join(","));
-            match io::file_local_red_incident(env_, repo, &reds, &iter_branch, &evidence, "workspace-build") {
-                Ok(id) => println!("batcher {}: filed {id} for Ops", repo.name),
-                Err(e) => println!("batcher {}: could not file for Ops: {e}", repo.name),
-            }
-            return Ok(None);
-        }
-
-        let attr_start = now();
-        let attr = io::attribute(env_, repo, &iter_branch, start_sha, &reds, &member_ids)?;
-        if attribution_seconds.is_none() {
-            attribution_seconds = Some(now().saturating_sub(attr_start));
-        }
-
-        let evidence = results_dir.display().to_string();
-        if !attr.base_suites.is_empty() {
-            println!("{}", batcher::core::base_fail_event(&repo.name, &attr.base_suites).text);
-            match io::file_local_red_incident(env_, repo, &attr.base_suites, &iter_branch, &evidence, "base") {
-                Ok(id) => println!("batcher {}: base itself red — filed {id} for Ops", repo.name),
-                Err(e) => println!("batcher {}: base itself red — could not file for Ops: {e}", repo.name),
-            }
-            return Ok(None);
-        }
-        if attr.ejections.is_empty() {
-            // Defensive: attribute.sh's own bisection always narrows to an owner or BASE for
-            // a red it is given, so this is not expected to fire — but an empty attribution
-            // must never fall through to "nothing to eject, proceed to a PR" silently.
-            println!("batcher {}: local red ({}) could not be attributed to anyone", repo.name, reds.join(","));
-            match io::file_local_red_incident(env_, repo, &reds, &iter_branch, &evidence, "unattributed") {
-                Ok(id) => println!("batcher {}: filed {id} for Ops", repo.name),
-                Err(e) => println!("batcher {}: could not file for Ops: {e}", repo.name),
-            }
-            return Ok(None);
-        }
-        for (id, suites) in &attr.ejections {
-            let tip = round_members.iter().find(|m| &m.id == id).map(|m| m.tip.clone()).unwrap_or_default();
-            io::eject_member(env_, &repo.name, id, &tip, suites);
-            println!("{}", ejected_event(&Ejection { id: id.clone(), suites: suites.clone() }).text);
-        }
-        round_members.retain(|m| !attr.ejections.contains_key(&m.id));
-        if round_members.is_empty() {
-            println!("{}", skipped_event("round emptied by ejection").text);
-            return Ok(None);
-        }
-        iteration += 1;
     }
 }
 
@@ -772,3 +819,6 @@ fn main() -> ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+mod e2e;

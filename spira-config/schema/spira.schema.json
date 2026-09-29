@@ -39,6 +39,14 @@
         "act"
       ]
     },
+    "GateMode": {
+      "description": "`[repo.<name>] gate_mode` — how the gate composes a trial (gate/DESIGN.md \"Composition\").\n\n* `suites` (the default): the repository's gate string, whole — fences, build, and the budgeted suite selection. * `unit`: the composition follows what the branch touches. A branch that touches any bash (or other script) component still runs the gate string whole; one that touches only Rust crates (plus docs, config, suites) runs the fences with suites off, then `cargo test -p` for each touched crate and its reverse dependents on the host; one that touches nothing buildable runs the fences only.\n\nOne command reverts it: `spira-config set repo.<name>.gate_mode suites <file>`.",
+      "type": "string",
+      "enum": [
+        "unit",
+        "suites"
+      ]
+    },
     "LandMode": {
       "description": "How a landed branch reaches its base — see `repo-map.example`'s own `land` column. `Queue` and `QueueForge` are the same mode under two spellings — `queue` is the alias a row has always been able to write, `queue.forge` names it explicitly now that `QueueLocal` exists to contrast it with. `QueueLocal` lands on a local branch (`local/main` in the `base` column) with no forge round trip on the critical path.",
       "type": "string",
@@ -179,6 +187,17 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "gate_mode": {
+          "description": "What the certification gate runs for this repository (design gate-unit-round-integration-2026-09-29, item 4, sp-2ghui). Absent means [`GateMode::Suites`], today's behaviour exactly. Read it with [`RepoSection::gate_mode`].",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/GateMode"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "lanes": {
