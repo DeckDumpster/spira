@@ -452,7 +452,13 @@ if [ -z "${SPIRA_INSTALL_CONFLICT_CONSIDERED:-}" ]; then
     _units_lib="$HERE/systemd/units.sh"
     _gate_lock="$SPIRA_RUN/worktree/.gate.$(basename "$SPIRA_REPO").lock"
 
-    _conflict_foreign "$UNITDIR" "$SPIRA_HOME" "${SPIRA_INSTANCE:-prod}" "$_units_lib" \
+    # OURS IS EITHER HOME THE SENTINEL UNIT CAN EXEC FROM: a unit written before the Rust
+    # cutover ExecStarts $SPIRA_HOME/sentinel.sh; one written after ExecStarts the sentinel
+    # binary conf.sh resolved (@SPIRA_SENTINEL_BIN@, the release's bin/, never SPIRA_HOME).
+    # Comparing only SPIRA_HOME refused every reinstall of a cutover install as foreign.
+    _conflict_foreign "$UNITDIR" "$SPIRA_HOME" "${SPIRA_INSTANCE:-prod}" "$_units_lib" 2>/dev/null \
+        || _conflict_foreign "$UNITDIR" "$(dirname "${SPIRA_SENTINEL_BIN:-$SPIRA_HOME/sentinel}")" \
+               "${SPIRA_INSTANCE:-prod}" "$_units_lib" \
         || exit "$?"
     phase_info "conflict 1 clear: no foreign harness owns these unit names"
 
