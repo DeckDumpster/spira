@@ -301,12 +301,16 @@ impl<'a> Sentinel<'a> {
             }
         };
         let snap = Snapshot::new(list_raw, list, ready);
+        // A GOAL THAT NAMES NO BEAD IS NEVER REACHED — and it stops nothing else. sp-ejf3's
+        // concern is a "goal reached" fired against a dangling reference; that is prevented
+        // by `goal_known` below. Refusing the whole pass instead stopped reclaim, landing and
+        // summoning (2026-09-29: sp-spira never existed; the bash check never fired because
+        // `bd show --json` prints `[]` for a missing bead, so it only surfaced in the rewrite).
         if !self.cfg.skip_reclaim && snap.get(&self.cfg.goal).is_none() {
             self.log(&format!(
-                "GOAL UNRESOLVABLE — {} names no bead in {}; this pass cannot assess completion",
+                "GOAL UNRESOLVABLE — {} names no bead in {}; completion is not assessed this pass, every other check runs",
                 self.cfg.goal, self.cfg.db
             ));
-            return Err(1);
         }
         Ok(snap)
     }
@@ -375,7 +379,8 @@ impl<'a> Sentinel<'a> {
 
         self.phase("CHECK1");
         self.check1();
-        let goal_reached = n_open == 0;
+        let goal_known = self.cfg.skip_reclaim || snap.get(&self.cfg.goal).is_some();
+        let goal_reached = goal_known && n_open == 0;
         if goal_reached {
             self.log(&format!(
                 "goal reached — {} has no open children; finishing the sending",

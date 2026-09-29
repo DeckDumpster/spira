@@ -308,7 +308,7 @@ fn unreadable_store_is_exit_1_and_never_goal_reached() {
 }
 
 #[test]
-fn a_goal_that_names_no_bead_is_exit_1() {
+fn a_goal_that_names_no_bead_is_never_reached_and_stops_nothing() {
     let (w, r, sink, clock) = setup("goal");
     assert_eq!(
         run_mode(
@@ -320,11 +320,13 @@ fn a_goal_that_names_no_bead_is_exit_1() {
             &[("SPIRA_GOAL", "sp-nope")],
             None
         ),
-        1
+        0
     );
     assert!(sink.has(
-        "GOAL UNRESOLVABLE — sp-nope names no bead in /db; this pass cannot assess completion"
+        "GOAL UNRESOLVABLE — sp-nope names no bead in /db; completion is not assessed this pass, every other check runs"
     ));
+    assert!(!sink.has("goal reached"), "a dangling goal is never reached (sp-ejf3)");
+    assert!(sink.has("state: goal=sp-nope"), "the pass continues past the goal check");
 }
 
 #[test]
