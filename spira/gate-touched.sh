@@ -29,41 +29,17 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # check (gate/DESIGN.md "Composition"), and a call here would have been the cold release
 # build that change exists to remove. doctor.sh fails a row whose gate names no build fence.
 
-# THE ALLOWLIST RATCHETS RUN HERE TOO (sp-5m133), same reason: a suite-selection mode that
-# skips everything must not also skip the checks that keep a violator from getting
-# grandfathered in worse than it already is. check-areas is static (no duckdb, no timing
-# data) so it runs unconditionally; the wall-time budgets themselves are judged per-suite
-# inside testenv-batch.sh, against the suites this call actually selects.
-bash "$HERE/tier-budget.sh" lint-allowlist --base "$BASE" || exit 1
-bash "$HERE/tier-budget.sh" lint-allowlist --base "$BASE" --area || exit 1
-bash "$HERE/tier-budget.sh" check-areas --suite-dir "${SPIRA_BATCH_SUITE_DIR:-$HERE}" || exit 1
-
-# THE TEST PLAN'S OWN FENCE, for the same reason build-fence.sh sits here: a suite deletion
-# that silently drops a use case's last coverage, or a coverage matrix that no longer matches
-# its own inputs, is a defect in the tree, not something a suite run would catch. Its stdout
-# is redirected to stderr: plan-lint.sh/plan-matrix.sh print status text on success (fine for
-# standalone use) but gate-touched.sh's own stdout contract is the selected suite list only —
-# build-fence.sh keeps to that by writing every message of its own to stderr; this fence's
-# children do not, so the redirection is done here instead.
-#
-# GATED ON SPIRA_GATE_REPO ACTUALLY BEING THIS REPO. Unlike build-fence.sh (whose failure
-# mode degrades harmlessly to "empty diff, skip" against any tree), this fence does real,
-# ref-sensitive work — docs/test-plan/*.toml and the suite corpus it reads are THIS repo's
-# own. A caller that points SPIRA_GATE_REPO at a different tree (test-gate-touched.sh's own
-# scratch fixture, proving selection logic against a throwaway repo) is not asking this
-# repo's test plan to be checked at all, and BASE there is a label meaningful only inside
-# that scratch tree — resolving it against this repo's own ref namespace would check the
-# wrong thing, not the right thing cautiously.
-_repo="${SPIRA_GATE_REPO:-.}"
-if [ "$_repo" = "." ] || [ "$(cd "$_repo" 2>/dev/null && pwd -P)" = "$(cd "$HERE/.." && pwd -P)" ]; then
-    bash "$HERE/plan-matrix-fence.sh" "$BASE" >&2 || exit 1
-fi
-
-# THE LOCKFILE LINT RUNS ALONGSIDE THE BUILD FENCE, for the same reason: a bumped
-# Cargo.lock with no matching Cargo.toml change is a static property of the tree, not
-# a suite result, and it must be caught before SPIRA_GATE_SUITES=off can skip everything
-# else (sp-4kws1).
-SPIRA_GATE_BASE="${SPIRA_GATE_BASE:-$BASE}" bash "$HERE/lockfile-lint.sh" || exit 1
+# NO FENCE IS CALLED FROM HERE (sp-ufbkh). This script is the suite selector and nothing
+# else. It used to run the tier-budget ratchets (sp-5m133), the test plan's fence and the
+# lockfile lint before selecting, and the gate string captures it as `_s="$(…)";` — so a
+# fence that failed here emptied the selection and the gate string exited 0: the failure
+# was swallowed. The test plan's fence was also skipped outright at every gate, behind a
+# check that SPIRA_GATE_REPO resolved to this tree (the gate sets it to the repository and
+# runs this from its own worktree). All three are spira-lint rules now — plan-matrix,
+# lockfile-lint, tier-budget-allowlist, tier-budget-area-allowlist, tier-budget-areas —
+# which the gate string runs in the gate tree against SPIRA_GATE_BASE, in its `&&` chain,
+# each printing the `fence: <name> checked <n> <unit>` line the gate requires
+# (gate/src/fence.rs).
 
 HEAD="${2:?usage: gate-touched.sh <base> <head>}"
 repo="${SPIRA_GATE_REPO:-.}"

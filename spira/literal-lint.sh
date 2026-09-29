@@ -178,6 +178,7 @@ done
 
 if [ "$bad" = 0 ]; then
     printf 'literal-lint: clean — %d tracked file(s) contain no configured-name literals\n' "${#files[@]}"
+    printf 'fence: literal-lint checked %d files\n' "${#files[@]}" >&2
     exit 0
 fi
 cat >&2 <<'WHY'

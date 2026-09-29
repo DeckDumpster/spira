@@ -42,10 +42,15 @@ out="$(bash "$LINT" --dir "$TMP" 2>&1)"; rc=$?
 is "SEEN RED: positive control — planted offender is refused" "1" "$rc"
 want "and it names the file"                                  "offender.sh" "$out"
 
-# Withdraw the plant; only now is a clean scan evidence of anything.
+# Withdraw the plant. An empty directory is not clean, it is unchecked (sp-ufbkh): refuse.
 rm -f "$OFFENDER"
 out="$(bash "$LINT" --dir "$TMP" 2>&1)"; rc=$?
-is "GREEN AFTER: an empty scratch directory is clean" "0" "$rc"
+is "an empty scratch directory is a refusal, never clean" "3" "$rc"
+# (below line 10: the fence's window is sed's <line-10>,<line+3>)
+{ printf '#\n%.0s' $(seq 11); printf 'SPIRA_INCIDENT_CAUSE=y\nSPIRA_INCIDENT_REF=x\n'; } > "$TMP/declared.sh"
+out="$(bash "$LINT" --dir "$TMP" 2>&1)"; rc=$?
+is   "GREEN AFTER: a declared site is clean" "0" "$rc"
+want "and the clean scan prints its positive control" "fence: incident-cause-lint checked 1 files" "$out"
 
 # --- comments are prose, not code (law-a-matcher-reads-code-not-prose) -----------
 # The shape that turned Concierge round 49 red: a COMMENT quoting the assignment,

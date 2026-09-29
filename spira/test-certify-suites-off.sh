@@ -36,7 +36,8 @@ HEAD_SHA="$(git rev-parse HEAD 2>/dev/null)"
 
 # SPIRA_GATE_REPO/SPIRA_BATCH_SUITE_DIR point every call below at the fixture built
 # above instead of this repo's own 500+ suites: gate-touched.sh's build-fence,
-# tier-budget check-areas and plan-matrix-fence all run unconditionally on a call
+# tier-budget check-areas and plan-matrix-fence all used to run unconditionally on a call (all
+# spira-lint rules now, sp-ufbkh)
 # whose SPIRA_GATE_REPO resolves to the real tree (see gate-touched.sh's own
 # comment on that gate), which used to make every call here pay a real cargo
 # build and a full-corpus scan for a switch this suite never needs to exercise

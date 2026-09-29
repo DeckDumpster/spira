@@ -48,6 +48,9 @@ case "${1:-}" in
 --dir) DIR="${2:?--dir needs a directory}" ;;
 esac
 
+# A directory with no scripts is indistinguishable from a clean one (sp-ufbkh): refuse.
+n="$(grep -rl --include='*.sh' '' "$DIR" 2>/dev/null | grep -vc '/test-')"
+[ "$n" -gt 0 ] || { printf 'incident-cause-lint: no *.sh under %s — refusing to report clean\n' "$DIR" >&2; exit 3; }
 out="$(check_undeclared "$DIR")"
 if [ -n "$out" ]; then
     printf 'incident-cause-lint: SPIRA_INCIDENT_REF sites without SPIRA_INCIDENT_CAUSE:\n' >&2
@@ -55,4 +58,5 @@ if [ -n "$out" ]; then
     exit 1
 fi
 printf 'incident-cause-lint: clean\n'
+printf 'fence: incident-cause-lint checked %d files\n' "$n" >&2
 exit 0

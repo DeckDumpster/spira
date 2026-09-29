@@ -43,6 +43,7 @@ esac
 hits="$(scan "$TARGET")"
 if [ -z "$hits" ]; then
     printf 'gh-intake-lint: clean — no write constructed, no credential read\n'
+    printf 'fence: gh-intake-lint checked %d lines\n' "$(wc -l < "$TARGET")" >&2
     exit 0
 fi
 cat >&2 <<'WHY'

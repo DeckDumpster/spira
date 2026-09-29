@@ -497,9 +497,9 @@ _n="$(grep -c 'select\.sh' "$TOUCHED" 2>/dev/null || true)"
 # test-aeon-world-stop.sh is tier T2, so SPIRA_GATE_TIERS must include it here — the default
 # T0,T1 cert-gate restriction (sp-qu948) is a separate concern from this covers: match.
 # SPIRA_GATE_REPO is pinned off the real tree (SPIRA_BATCH_SUITE_DIR is deliberately left
-# unset — this is the one case that must still scan the real corpus) so plan-matrix-fence
-# and the lockfile/build fences skip instead of building test-plan and re-scanning the same
-# corpus a second and third time; select.sh's own covers-matching is what's under test here.
+# unset — this is the one case that must still scan the real corpus). gate-touched.sh runs no
+# fence since sp-ufbkh (they are spira-lint rules), so nothing here builds test-plan or
+# re-scans the corpus a second time; select.sh's own covers-matching is what's under test.
 # SPIRA_GATE_BUDGET is pinned huge and SPIRA_RUN to a path that cannot exist: this is a
 # coverage-matching acceptance test (sp-vq2za's own budget trimming is test-gate-budget-
 # select.sh's job), and without both an ambient real SPIRA_RUN or a corpus that has grown
@@ -514,7 +514,7 @@ want "K2: conf.sh change selects test-aeon-world-stop.sh (acceptance criterion)"
 
 # K3 (fixture): SPIRA_GATE_FILES with covered.sh selects the covering suite, using
 # the fixture SUITE_DIR from Part B. Isolates from real suite declarations — SPIRA_GATE_REPO
-# is pinned off the real tree too, so gate-touched.sh's plan-matrix-fence (gated on
+# is pinned off the real tree too, so gate-touched.sh's old plan-matrix-fence (gated on
 # SPIRA_GATE_REPO actually being this repo) skips instead of building test-plan and
 # scanning the real corpus for a call this fixture never asked it to check.
 FLIST_K="$TMP/flist-k"
