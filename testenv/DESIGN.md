@@ -20,6 +20,10 @@ Four properties are the point; everything else serves them:
    cargo's default `target/`. `target/<profile-dir>/` is always and only the artifact under
    test, exported as `SPIRA_ARTIFACTS`. There is no `bin/` copy, no tree-keyed
    `cargo-target-bins/<tree>` cache, no one-off `-p spira-config` / `-p test-plan` builds.
+   **One exception, named on the command line:** `--artifacts <dir>` hands testenv
+   executables that cargo already built from this tree on another machine (the CI `build`
+   job). testenv then runs no cargo at all; it validates the set, stages it to
+   `target/prebuilt/`, and keys the cache on its content (D8).
 2. **A stable build path.** The worktree is the caller's own when it already holds the tree
    under test (an aeon's worktree, a round worktree — both outlive the run), otherwise a
    warm, reused scratch slot. Either way cargo is incremental: a one-line shell edit
@@ -37,7 +41,8 @@ Four properties are the point; everything else serves them:
 
 ```
 testenv [--mode parallel|serial] [--suites <a.sh,b.sh,...|->] [--profile <p>]
-        [--with-bins] [--deadline <secs>] [--report [N]] <branch> [<repo-name-or-path>]
+        [--with-bins] [--artifacts <dir>] [--deadline <secs>] [--report [N]]
+        <branch> [<repo-name-or-path>]
 ```
 
 | argument | meaning |
@@ -49,11 +54,12 @@ testenv [--mode parallel|serial] [--suites <a.sh,b.sh,...|->] [--profile <p>]
 | `--suites -` | names one per line on stdin, blank lines ignored; **empty stdin = nothing to run, exit 0**. |
 | (no `--suites`) | diff-derived: `select.sh --base <landref> --head <branch> --no-all-fallback --tiers $SPIRA_BATCH_TIERS(T2,T3)`; its `--mode-file` names the producer (`diff`/`all`). |
 | `--profile P` | cargo profile. Default `aeon` (aeon and gate runs). A round passes `release` (its binaries ship). |
-| `--with-bins` | **no build mode of its own** (always builds). Accepted as an alias for `--profile release` when `--profile` is not given, because every caller that passes it today is a round whose binaries ship (round.sh, round-vm.sh, batcher-cut). See §7, decision D1. |
+| `--with-bins` | **no build mode of its own** (builds, unless `--artifacts`). Accepted as an alias for `--profile release` when `--profile` is not given, because every caller that passes it today is a round whose binaries ship (round.sh, round-vm.sh, batcher-cut). See §7, decision D1. |
+| `--artifacts DIR` | **do not build**: DIR holds the workspace's executables, prebuilt from this tree (CI's `bin/`). Relative to the current directory. Validated before anything else happens: DIR must be a directory holding an executable for every workspace binary target of the tree under test (read from the worktree's `Cargo.toml` files) and at least `spira-config`, `test-plan` and `testenv`; otherwise `VERDICT FAULT rc=2 reason=artifacts-invalid` naming what is missing — never a build, never a partial set. Exclusive with `--profile` and `--with-bins` (usage error). Only the flag selects this mode: an inherited `SPIRA_ARTIFACTS` is still ignored (§5). See D8. |
 | `--deadline S` | a **hard** wall-clock budget, in whole seconds (> 0), for the suite phase: after S seconds no suite starts and running suites are killed; both are recorded `deferred`. Absent = no deadline, and the run is byte-for-byte what it was before the flag existed. See D7. |
 | `--report [N]` | print each suite's median `wall_secs` over its last N (default 20) suite-timing rows as JSON `[{"suite","median","n"}]` (the shape `tsd-query.sh suite-medians` printed) and exit; no branch or container. |
 
-`--mode=X`, `--suites=X`, `--report=N`, `--profile=P`, `--deadline=S` spellings are accepted. `--` ends
+`--mode=X`, `--suites=X`, `--report=N`, `--profile=P`, `--artifacts=DIR`, `--deadline=S` spellings are accepted. `--` ends
 options. An unknown option prints `batch: unknown option: X` and the usage line, exit 2.
 
 ### 2.2 Exit status (unchanged from testenv-batch.sh — every caller branches on it)
@@ -62,7 +68,7 @@ options. An unknown option prints `batch: unknown option: X` and the usage line,
 |---|---|---|
 | 0 | every selected suite passed, skipped, was disabled or skip-req; or nothing was selected; or a cached green for this key | — |
 | 1 | suites ran and at least one non-quarantined suite was `red` or `timeout` | the branch |
-| 2 | usage error; unknown suite; base ref unresolvable; worktree unobtainable; container did not come up / probe failed / died mid-batch / exec storm / `--user` account vanished; concurrent run holds the same key; a repeat of a cached red refused | the harness (or the caller) |
+| 2 | usage error; unknown suite; `--artifacts` directory invalid or incomplete; base ref unresolvable; worktree unobtainable; container did not come up / probe failed / died mid-batch / exec storm / `--user` account vanished; concurrent run holds the same key; a repeat of a cached red refused | the harness (or the caller) |
 | 3 | configure / unit suspend / install inside the container failed; cargo not on PATH | the harness |
 | 4 | the candidate's workspace failed to build | the branch |
 
@@ -103,7 +109,7 @@ stderr; `attribute.sh` treats `>= 2` as a run fault; `gate-retry.sh` retries onl
 | `<suite>.result` | one line, `ResultRecord` (§3.1). Written **after** `<suite>.out`: its presence means complete. |
 | `<suite>.out` | the suite's combined stdout+stderr, trailing newlines stripped, one `\n` added (bash `$(cat)` + `printf '%s\n'`). |
 | `<suite>.tap.json` | new: `TapSummary` (§3.5) for the suite's output. |
-| `batch.meta` | `image_tag= branch= base= key= mode= selection=` then new `profile= artifacts= worktree= tree=` — `key=value` lines; gate-timing.sh reads `key`, `branch`, `base`. Under `--deadline` only, three more lines: `deadline=<S> deferred=<d> deferred_suites=<space list>` (D7). |
+| `batch.meta` | `image_tag= branch= base= key= mode= selection=` then new `profile= artifacts= worktree= tree=` — `key=value` lines; gate-timing.sh reads `key`, `branch`, `base`. Under `--deadline` only, three more lines: `deadline=<S> deferred=<d> deferred_suites=<space list>` (D7). Under `--artifacts`, `profile=prebuilt`, `artifacts=<DIR, absolute>` (the directory given, not the staging copy), and three more lines: `build=prebuilt artifacts_id=<sha256> staged=<wt>/target/prebuilt` (D8). Without it the file is unchanged. |
 | `runner.meta` | `nproc= memtotal_kb= maxpar= cpu_busy_pct= suites_wall_s=` |
 | `timing.tsv` | `<suite>\t<wall_s>\t<status>\t<bd_ms or ->` per suite with a result |
 | `$SPIRA_VERDICTS/batch-<key>` | `VerdictFile` (§3.3), shared with gate.sh's directory |
@@ -112,7 +118,8 @@ stderr; `attribute.sh` treats `>= 2` as a run fault; `gate-retry.sh` retries onl
 | `/tmp/spira-batch-<inst>.owner` | our pid (owner-file protocol shared with testenv.sh) |
 | `$SPIRA_LANDING_CONTAINERS` | container name appended, when that variable is set |
 
-Nothing is written into the worktree except cargo's `target/`.
+Nothing is written into the worktree except cargo's `target/` (and, under `--artifacts`,
+`target/prebuilt/`, recreated each run).
 
 ### 2.5 Environment read
 
@@ -158,7 +165,7 @@ testenv owns orchestration; these stay separate components with their own contra
 | collaborator | used for |
 |---|---|
 | `git` | rev-parse tree/commit, worktree list/add/checkout, status, `show <rev>:spira/suite-state`, landref rungs |
-| `cargo` | `cargo build --profile <p> --workspace` in the worktree |
+| `cargo` | `cargo build --profile <p> --workspace` in the worktree — **not** run at all under `--artifacts` |
 | `spira/select.sh` | diff-derived selection (the ONE selector) |
 | `spira/testenv.sh` | `tag` (image build-closure hash), `up --name --checkout` (image acquisition, boot, linger, cargo-volume ownership), `probe`, `down --name --volumes` |
 | `podman` | `exec`, `container inspect`, `container exists`, `ps -a`, `stop`, `rm`, `volume rm` |
@@ -204,6 +211,11 @@ ISO timestamps→`TIMESTAMP`, `HH:MM:SS`→`TIME`, `[0-9]{3,}`→`N`; then POSIX
   `suite-covers.sh` from the harness dir — the runner and the selector, as before
   (`$0` was the script).
 * `profile` replaces `WITH_BINS`: an `aeon` green must not replay for a `release` run.
+* Under `--artifacts` only, `profile` is `prebuilt` and ` prebuilt=<artifacts_id>` is appended
+  before the newline, where `artifacts_id` = sha256 of `<name>\0<sha256 of the file>\n` for
+  every executable directly under DIR, sorted by name. A prebuilt green therefore never
+  replays for a different set of binaries (another build of the same tree, a different
+  toolchain), nor for a cargo run. Without the flag the key line is byte-for-byte what it was.
 
 `$SPIRA_VERDICTS/batch-<key>`: `key=value` lines `verdict=green|red|partial`, `when=<ISO UTC>`,
 `by=testenv-batch`, `at=<epoch>`, `red_suites=<space list>` (red only),
@@ -256,6 +268,8 @@ parse args ─ resolve repo, landref, tree ─ acquire worktree (in place | scra
   ─ select suites ─ drop disabled (DISABLED records) ─ image tag ─ batch key
   ─ VERDICT CACHE (exit here on a hit)                        ← nothing built yet
   ─ cargo build --profile p  (rc 4 on failure)  ─ SPIRA_ARTIFACTS=<wt>/target/<dir>
+      └ --artifacts DIR: validated right after the worktree (rc 2), hashed into the key,
+        staged to <wt>/target/prebuilt here instead of building  ─ SPIRA_ARTIFACTS=…/prebuilt
   ─ orphan sweeps ─ claim owner file ─ testenv.sh up / probe
   ─ configure, suspend loom+cockpit units, install  (skippable)
   ─ requirements check (skip-req records) ─ shared testdb baseline
@@ -397,6 +411,11 @@ into a fresh `cargo-target-bins/<tree>` on every new tree (95-116 s, sp-zv7j4).
   round-vm.sh, batcher-cut all pass `--with-bins`) into an `aeon`-profile build and leave
   `target/release` stale for land. Mapping it keeps "switch by name" true. Flagged for
   the operator.
+  **Amended 2026-09-29 (D8):** D1 as first written also said testenv *always* builds. That
+  broke CI: gate.yml's `suites` job runs on an ephemeral VM with no Rust toolchain and was
+  handed prebuilt binaries by the `build` job, exactly as testenv-batch.sh was. Every PR
+  faulted `VERDICT FAULT rc=3 ran=0 reason=no-cargo` (run 36596357971, PR 454). "Always
+  builds" now reads "builds unless `--artifacts` says what to test".
 * **D2 — testenv.sh stays the image/boot owner.** Image acquisition (tag = build-closure
   hash, registry pull, build), boot and probe are testenv.sh's contract with other callers
   too (gate.yml publishes images through it). testenv drives it through the runtime trait;
@@ -447,6 +466,31 @@ into a fresh `cargo-target-bins/<tree>` on every new tree (95-116 s, sp-zv7j4).
     the VERDICT line, no `partial` file: `BatchCfg::deadline` is `None` and every new branch is
     guarded on it.
 
+* **D8 — `--artifacts <dir>`: test prebuilt executables, build nothing.** The intent in §1
+  is "binaries cargo built from that tree and nothing else"; *where* cargo ran is not the
+  point. CI builds on a runner that has cargo and tests on one that does not, so the runner
+  must be able to take the build as an input. Chosen shape, and why:
+  * **A flag, not an environment variable.** An inherited `SPIRA_ARTIFACTS` is exactly what
+    §5 strips from pre-build helpers, because a stale one silently points a run at the wrong
+    binaries. Honouring it here would make "no build" something a caller can fall into. The
+    flag is explicit, and it is exclusive with `--profile`/`--with-bins`, which describe a
+    build that will not happen.
+  * **Validated, never partial.** The required set is every binary target of the tree under
+    test's workspace (each member's `[[bin]] name`s, else the package name when
+    `src/main.rs` exists and `autobins` is not false — read from the files, since there is
+    no cargo to ask) plus a floor of `spira-config` (conf.sh refuses without it under
+    SPIRA_ARTIFACTS), `test-plan` (every exec's `SPIRA_TEST_PLAN_BIN`) and `testenv`. A
+    missing directory, or any missing name, is rc 2 `artifacts-invalid` before the key is
+    computed; the names go to stderr. There is no fallback to building.
+  * **Staged, not mounted.** The container sees only the worktree (`/workspace`), and DIR can
+    be anywhere, so every executable in DIR is copied to `<wt>/target/prebuilt/` (the
+    directory is removed first, so nothing from an earlier set survives) and the container
+    gets `SPIRA_ARTIFACTS=/workspace/target/prebuilt`. `SPIRA_ARTIFACTS_ROOT` stays the
+    worktree. Copying ~30 release executables is seconds; a new bind mount would change
+    testenv.sh's contract (D2).
+  * **Keyed by content** (§3.3), so a prebuilt green is a claim about those bytes.
+  * **Unchanged without the flag**: same key, same batch.meta, same build.
+
 ## 8. Cutover (bash and workflow edits for the operator — none made here)
 
 Invocation: from a checkout, `"$(spira_bin testenv)"` (the installed release in
@@ -455,8 +499,8 @@ production; `SPIRA_ARTIFACTS` inside a test run). A round that tests its own run
 
 | file:line | current | replacement |
 |---|---|---|
-| `.github/workflows/gate.yml:508` | `printf '%s\n' "$_s" \| bash spira/testenv-batch.sh --suites - "${{ github.sha }}" \|\| _b=$?` | `printf '%s\n' "$_s" \| bin/testenv --suites - "${{ github.sha }}" \|\| _b=$?` (the build job already ships `bin/testenv`; the run rebuilds in place with `--profile aeon`, or pass `--profile release` to reuse the build job's profile) |
-| `.github/workflows/gate.yml:214-225,317-327` | `make build`, copy the release profile's executables into `bin/`, download into `bin/` | keep only as the source of `bin/testenv`; suites no longer read `bin/` (SPIRA_ARTIFACTS) |
+| `.github/workflows/gate.yml:508` | `printf '%s\n' "$_s" \| bash spira/testenv-batch.sh --suites - "${{ github.sha }}" \|\| _b=$?` | `printf '%s\n' "$_s" \| bin/testenv --artifacts bin --suites - "${{ github.sha }}" \|\| _b=$?` — **corrected 2026-09-29 (D8)**: this row first said "the run rebuilds in place", but the `suites` runner has no cargo, so that faulted `no-cargo` on every PR |
+| `.github/workflows/gate.yml:214-225,317-327` | `make build`, copy the release profile's executables into `bin/`, download into `bin/` | keep: `bin/` is the `--artifacts` directory (D8), and the source of `bin/testenv` |
 | `spira/gate-spira.sh:464` | `} \| bash "$HERE/testenv-batch.sh" --suites - "${SPIRA_GATE_SELECT_HEAD:-HEAD}" >&2` | `} \| "$(spira_bin testenv)" --suites - "${SPIRA_GATE_SELECT_HEAD:-HEAD}" >&2` |
 | `spira/gate-retry.sh:14` | `BATCH="${GATE_RETRY_BATCH:-$HERE/testenv-batch.sh}"` | `BATCH="${GATE_RETRY_BATCH:-$(spira_bin testenv)}"` and lines 64/66 `bash "$BATCH"` → `"$BATCH"` |
 | `spira/attribute.sh:151` | `bash "$HERE/testenv-batch.sh" --suites "$suites_csv" "$sha" "$REPO"` | `"$(spira_bin testenv)" --suites "$suites_csv" "$sha" "$REPO"` |
