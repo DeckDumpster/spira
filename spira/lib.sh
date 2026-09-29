@@ -1587,8 +1587,6 @@ system_prompt_split() {
 }
 
 
-
-
 # all_partition_members -> every open/in_progress bead a partition's own labels would
 # match, one id per line, deduped — EVERY EXCLUSION DROPPED (moved out of spira/attempts.sh,
 # sp-rfodk; its own header comment, verbatim: "a poisoned bead is excluded from dispatch and
