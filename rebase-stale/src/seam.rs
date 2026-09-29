@@ -1,5 +1,5 @@
 //! The impure boundary to the rest of the harness: repo resolution, the bead store, landstate
-//! and the certification gate. Production shells to lib.sh / queue.sh — the same tested
+//! and the certification gate. Production shells to lib.sh / the queue binary — the same tested
 //! functions the bash called, so their side effects (release_claim, WITHDRAWN on reopen, the
 //! requeue event, the TSD dual-write) are not re-derived here. Tests use a recording fake.
 
@@ -33,7 +33,7 @@ pub trait Seam {
     fn bump_requeue(&self, id: &str, reason: &str);
     fn land_mark(&self, id: &str, state: &str, tip: &str, reason: &str);
     fn note(&self, id: &str, text: &str);
-    /// `queue.sh submit <branch> <repo>` — (green?, combined output).
+    /// `queue submit <branch> <repo>` — (green?, combined output).
     fn submit(&self, branch: &str, repo_name: &str) -> (bool, String);
 }
 
@@ -42,6 +42,8 @@ pub struct LibSeam {
     pub db: Option<PathBuf>,
     pub bd: String,
     pub goal: String,
+    /// The queue binary: SPIRA_QUEUE_BIN, else the `queue` installed beside this binary.
+    pub queue_bin: PathBuf,
     db_ok: OnceCell<bool>,
 }
 
@@ -52,6 +54,15 @@ impl LibSeam {
             db,
             bd,
             goal,
+            queue_bin: std::env::var_os("SPIRA_QUEUE_BIN")
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    std::env::current_exe()
+                        .ok()
+                        .and_then(|p| p.parent().map(|d| d.join("queue")))
+                        .unwrap_or_else(|| PathBuf::from("queue"))
+                }),
             db_ok: OnceCell::new(),
         }
     }
@@ -180,10 +191,11 @@ impl Seam for LibSeam {
     }
 
     fn submit(&self, branch: &str, repo_name: &str) -> (bool, String) {
+        // stdout and stderr combined into one capture, as queue.sh's `2>&1` did.
         let o = Command::new("bash")
             .arg("-c")
-            .arg(r#"bash "$0" submit "$1" "$2" 2>&1"#)
-            .arg(self.home.join("queue.sh"))
+            .arg(r#"exec "$0" submit "$1" "$2" 2>&1"#)
+            .arg(&self.queue_bin)
             .arg(branch)
             .arg(repo_name)
             .stdin(Stdio::null())
@@ -193,7 +205,7 @@ impl Seam for LibSeam {
                 o.status.success(),
                 String::from_utf8_lossy(&o.stdout).into_owned(),
             ),
-            Err(e) => (false, format!("queue.sh submit could not run: {e}")),
+            Err(e) => (false, format!("queue submit could not run: {e}")),
         }
     }
 }

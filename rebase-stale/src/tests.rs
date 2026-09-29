@@ -268,7 +268,7 @@ impl Seam for Fake {
             .borrow_mut()
             .push(format!("submit {branch} {repo_name} {tip}"));
         if self.green {
-            (true, "queue.sh submit: certified".into())
+            (true, "queue submit: certified".into())
         } else {
             (
                 false,
@@ -669,7 +669,7 @@ fn lib_seam_passes_payloads_on_stdin_and_reads_status_with_a_positive_control() 
     let fx = Fx::new("libseam");
     let home = fx.root.join("home");
     let out = fx.root.join("calls");
-    // A stand-in lib.sh / queue.sh / bd: each records its argv, one per line, and any stdin.
+    // A stand-in lib.sh / queue / bd: each records its argv, one per line, and any stdin.
     write(
         &home.join("lib.sh"),
         &format!(
@@ -682,12 +682,15 @@ fn lib_seam_passes_payloads_on_stdin_and_reads_status_with_a_positive_control() 
             o = out.display()
         ),
     );
-    write(&home.join("queue.sh"), "echo \"out:$1 $2 $3\"; echo err >&2; exit 1\n");
+    let queue = home.join("queue");
+    write(&queue, "#!/bin/sh\necho \"out:$1 $2 $3\"; echo err >&2; exit 1\n");
+    Command::new("chmod").arg("+x").arg(&queue).status().unwrap();
     let bd = fx.root.join("bd");
     write(&bd, "#!/bin/sh\ncase \"$4\" in sp-goal) echo '[{\"status\":\"open\"}]';; sp-ip) echo '{\"status\":\"in_progress\"}';; *) exit 1;; esac\n");
     Command::new("chmod").arg("+x").arg(&bd).status().unwrap();
 
-    let s = LibSeam::new(home.clone(), Some(fx.root.clone()), bd.to_string_lossy().into(), "sp-goal".into());
+    let mut s = LibSeam::new(home.clone(), Some(fx.root.clone()), bd.to_string_lossy().into(), "sp-goal".into());
+    s.queue_bin = queue;
     let note = "multi\nline $(not expanded) 'quoted'";
     s.reopen("sp-1", "rebase-conflict", note);
     s.note("sp-1", "hello");
