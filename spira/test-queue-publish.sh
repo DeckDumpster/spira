@@ -120,17 +120,23 @@ mk_bins() {
     chmod +x "$dir/fakebin"
 }
 
-land() {   # land <id> <file> <content> — one round: one commit, land-local'd onto local/main
+# land <id> <file> <content> — one round as the batcher builds it: the member's work commit,
+# merged --no-ff onto local/main under the queue's own land subject ("spira: land <id>",
+# queue/DESIGN.md §8 D4 — publish reads its members from those commits), then land-local'd.
+land() {
     local id="$1" file="$2" content="$3"
-    git -C "$REPO" checkout -qb "round-$id" local/main
+    git -C "$REPO" checkout -qb "work-$id" local/main
     printf '%s\n' "$content" > "$REPO/$file"
     git -C "$REPO" add "$file"
     git -C "$REPO" commit -q -m "$id: the work"
-    local tip; tip="$(git -C "$REPO" rev-parse "round-$id")"
+    local tip; tip="$(git -C "$REPO" rev-parse "work-$id")"
+    git -C "$REPO" checkout -qb "round-$id" local/main
+    git -C "$REPO" merge -q --no-ff -m "spira: land $id" "work-$id"
+    local head; head="$(git -C "$REPO" rev-parse "round-$id")"
     git -C "$REPO" checkout -q main
-    git -C "$REPO" branch -D "round-$id" >/dev/null 2>&1
-    mk_bins "$tip"
-    queue land-local "$REPONAME" --head "$tip" --members "$id:$tip" >/dev/null
+    git -C "$REPO" branch -D "round-$id" "work-$id" >/dev/null 2>&1
+    mk_bins "$head"
+    queue land-local "$REPONAME" --head "$head" --members "$id:$tip" >/dev/null
 }
 
 B() { bd -C "$SPIRA_DB" "$@"; }

@@ -75,16 +75,23 @@ mkdir -p "$B_RUN/worktree" "$B_SH" "$B_LANDSTATE" "$B_QUEUEDIR/$B_REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$B_SH/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$B_SH/mail.sh"; chmod +x "$B_SH/mail.sh"
 
-cat > "$B_SH/testenv-batch-stub.sh" <<'STUB'
+# Stub round-vm: batcher-cut's corpus step runs `round-vm run <worktree> --suites CSV
+# --maxpar N --toolchain V --results-dir DIR` (sp-o3o6z) and reads each suite's result
+# protocol from DIR — green for every suite named.
+cat > "$B_SH/round-vm-stub.sh" <<'STUB'
 #!/usr/bin/env bash
-suites_csv=""
+[ "${1:-}" = run ] || { printf 'round-vm-stub: unexpected verb: %s\n' "${1:-}" >&2; exit 2; }
+shift
+suites_csv="" results=""
 while [ $# -gt 0 ]; do
     case "$1" in
-        --suites) shift; suites_csv="${1:-}"; shift ;;
+        --suites) suites_csv="${2:-}"; shift 2 ;;
+        --results-dir) results="${2:-}"; shift 2 ;;
+        --maxpar|--toolchain) shift 2 ;;
         *) shift ;;
     esac
 done
-results="${SPIRA_BATCH_RESULTS:?SPIRA_BATCH_RESULTS unset}"
+: "${results:?round-vm-stub: --results-dir not given}"
 mkdir -p "$results"
 IFS=',' read -r -a suites <<< "$suites_csv"
 for s in "${suites[@]:-}"; do
@@ -94,7 +101,7 @@ for s in "${suites[@]:-}"; do
 done
 exit 0
 STUB
-chmod +x "$B_SH/testenv-batch-stub.sh"
+chmod +x "$B_SH/round-vm-stub.sh"
 
 B_FORGE_LOG="$TMP/batch-forge-log"
 : > "$B_FORGE_LOG"
@@ -134,7 +141,7 @@ out="$(SPIRA_HOME="$B_SH" SPIRA_RUN="$B_RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO_MAP="$B_SH/repo-map" \
     SPIRA_QUEUE_DIR="$B_QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 \
     SPIRA_FORGE="$B_SH/forge-fixture.sh" \
-        "$BATCHER_BIN" cut "$B_REPONAME" --testenv-batch "$B_SH/testenv-batch-stub.sh" 2>&1)"
+        "$BATCHER_BIN" cut "$B_REPONAME" --round-vm "$B_SH/round-vm-stub.sh" 2>&1)"
 
 want "batcher cut: a PR was opened for the master-based batch" "opened" "$out"
 case "$(cat "$B_LANDSTATE/sp-mbase" 2>/dev/null)" in

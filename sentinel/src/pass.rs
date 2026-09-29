@@ -50,6 +50,9 @@ pub struct Sentinel<'a> {
     pub lc: Lifecycle,
     /// ON mode only: the machine could not be read or written this pass → exit 1.
     pub lc_failed: Cell<bool>,
+    /// ON: the pass's one `spira-lc list` (lc_rows), shared by CHECK 7's ready cache and
+    /// CHECK 2/2c — one lifecycle read per pass.
+    pub lc_memo: RefCell<Option<Option<Vec<crate::model::LcRow>>>>,
 }
 
 impl<'a> Sentinel<'a> {
@@ -93,6 +96,7 @@ impl<'a> Sentinel<'a> {
             started,
             lc,
             lc_failed: Cell::new(false),
+            lc_memo: RefCell::new(None),
         }
     }
 

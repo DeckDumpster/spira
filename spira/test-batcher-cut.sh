@@ -299,6 +299,8 @@ printf '%s\n' "$*" >> "$log"
 case "${1:-}" in
     create-bead) exit 0 ;;
     cut|stack) exit "${SPIRA_LC_STUB_RC:-0}" ;;
+    list) printf '[]\n'; exit 0 ;;   # lc_probe: the machine answers with an (empty) array
+    show) printf '{"bead":{}}\n'; exit 0 ;;   # read_stack: a bead the machine holds, unstacked
     *) exit 0 ;;
 esac
 LCSTUB
@@ -627,7 +629,8 @@ is "E: no suites given is refused, not filed" "1" "$([ -z "$(printf '%s\n' "$out
 # =============================================================================
 # CASE F — spira-lc wiring (sp-o7nbr.4): BATCHED at a fresh cut and a stack both call
 # spira-lc, and the open-batch record carries batch_id/version exactly when spira-lc
-# applied. POSITIVE CONTROL last: a planted refusal (rc=3) proves the call is additive —
+# applied. The machine is the subject, so these cuts run with SPIRA_LIFECYCLE_ENFORCE=1;
+# OFF runs no spira-lc at all (batcher-cut/src/io.rs unit tests). POSITIVE CONTROL last: a planted refusal (rc=3) proves the call is additive —
 # the PR still opens and batch_id/version stay unset, never blocking the round.
 # =============================================================================
 echo
@@ -644,7 +647,7 @@ tip_f="$(git -C "$REPO" rev-parse spira/sp-cfff6)"
 git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cfff6"
 certify sp-cfff6 "$tip_f"
 
-SPIRA_LC_BIN="$SH/spira-lc-stub.sh" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
+SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_LC_BIN="$SH/spira-lc-stub.sh" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
 branch_f="$(open_field branch)"; head_f="$(open_field head)"; base_f="$(open_field base)"
 want "F: cut calls spira-lc create-bead for the member" "create-bead sp-cfff6" "$(cat "$LC_LOG")"
 want "F: cut calls spira-lc cut naming the same batch-id, head and base as the open-batch record" \
@@ -663,7 +666,7 @@ tip_g="$(git -C "$REPO" rev-parse spira/sp-cggg7)"
 git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cggg7"
 certify sp-cggg7 "$tip_g"
 
-SPIRA_LC_BIN="$SH/spira-lc-stub.sh" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
+SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_LC_BIN="$SH/spira-lc-stub.sh" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
 want "F: stacking calls spira-lc stack, not cut, on the same batch-id" \
     "stack $branch_f --members sp-cggg7:$tip_g --actor batcher" "$(cat "$LC_LOG")"
 nowant "F: stacking never calls spira-lc cut again for the same batch-id" "cut $branch_f " "$(cat "$LC_LOG")"
@@ -684,7 +687,7 @@ tip_h="$(git -C "$REPO" rev-parse spira/sp-chhh8)"
 git -C "$REPO" worktree remove -f "$RUN/worktree/sp-chhh8"
 certify sp-chhh8 "$tip_h"
 
-out_f_refused="$(SPIRA_LC_BIN="$SH/spira-lc-stub.sh" SPIRA_LC_STUB_LOG="$LC_LOG" SPIRA_LC_STUB_RC=3 cut_repo)"
+out_f_refused="$(SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_LC_BIN="$SH/spira-lc-stub.sh" SPIRA_LC_STUB_LOG="$LC_LOG" SPIRA_LC_STUB_RC=3 cut_repo)"
 want "F: PLANTED REFUSAL — cut still reports the PR opening" "PR " "$out_f_refused"
 want "F: PLANTED REFUSAL — the refusal is logged" "spira-lc cut refused for" "$out_f_refused"
 is   "F: PLANTED REFUSAL — open-batch batch_id stays unset" "" "$(open_field batch_id)"
@@ -901,7 +904,13 @@ echo "L. queue.local: a round lands locally via queue land-local — no push, no
 
 LREPO="$TMP/local-land-repo"
 git init -q -b trunk "$LREPO"
-git -C "$LREPO" commit -q --allow-empty -m base
+# One suite in the tree, as every real repository has: the round's corpus step (the stub
+# round-vm, which is what installs the round's target/release under STUB_INSTALL_BINS) only
+# runs when the round's own tree names a suite — an empty corpus never builds bins at all.
+mkdir -p "$LREPO/spira"
+: > "$LREPO/spira/test-local.sh"
+git -C "$LREPO" add -A
+git -C "$LREPO" commit -q -m base
 git -C "$LREPO" branch local/main trunk
 LRELEASES="$TMP/local-releases"; mkdir -p "$LRELEASES"
 
@@ -991,6 +1000,7 @@ LC_STACKS="$TMP/lc-stacks"; mkdir -p "$LC_STACKS"
 cat > "$SH/spira-lc-stack-stub.sh" <<'LCSTACKSTUB'
 #!/usr/bin/env bash
 case "${1:-}" in
+    list) printf '[]\n'; exit 0 ;;   # the reachability probe lifecycle_enforce=1 makes first
     show)
         f="${SPIRA_LC_STACKS_DIR:?}/${2:-}"
         stack="{}"
@@ -1036,7 +1046,9 @@ certify sp-cmcc3 "$tip_mc" 100
 certify sp-cmaa1 "$tip_ma" 200
 certify sp-cmbb2 "$tip_mb" 300
 
-out_m="$(STUB_INSTALL_BINS=1 SPIRA_LC_BIN="$SH/spira-lc-stack-stub.sh" SPIRA_LC_STACKS_DIR="$LC_STACKS" cut_local)"
+# Stacking is a lifecycle-machine concept (read_stack runs nothing with the switch OFF), so
+# this case runs ON.
+out_m="$(SPIRA_LIFECYCLE_ENFORCE=1 STUB_INSTALL_BINS=1 SPIRA_LC_BIN="$SH/spira-lc-stack-stub.sh" SPIRA_LC_STACKS_DIR="$LC_STACKS" cut_local)"
 want   "M: reports landing locally"                             "landed locally"  "$out_m"
 want   "M: all three members landed in one round"                "3 member(s)"    "$out_m"
 is     "M: sp-cmaa1 landstate LANDED (the closed-over prerequisite, never dropped as EMPTY)" \

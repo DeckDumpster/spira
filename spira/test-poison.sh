@@ -128,6 +128,10 @@ wantrc "spira_lifecycle grants apply cleanly" 0 $?
 export SPIRA_LC_USER=spira_lc
 export SPIRA_LC_PASSWORD="$LC_PASS"
 export SPIRA_LC_BIN="$LC_BIN"
+# The poison valve's hold lives in spira-lc (sp-i2m7y): the machine is this suite's subject,
+# so the sentinel runs with the switch ON. OFF (the default) writes the legacy spira-poison
+# bd label instead — sentinel/src/check4.rs unit tests.
+export SPIRA_LIFECYCLE_ENFORCE=1
 
 # mklc <id>... — a fresh READY row for each id, dropping any row a prior scenario left
 # behind (bd's own fixture resets on every seed/seed_poison call via testdb_reset, but the
@@ -673,8 +677,9 @@ want "and the ask cites the count since the clear, not the total ever charged" \
 # "0 attempts" for every bead in the set — so the poison/requeue/reclaim caps were silently
 # unenforced on exactly the pass where the query broke, with nothing in the log saying why.
 # The seam is SPIRA_BD (same as the CHECK 5 case above): forward every call through to the
-# real engine except the one bulk query, which is failed on purpose by matching "as rcl", a
-# column alias unique to _check4_bulk_sql.
+# real engine except the one bulk query, which is failed on purpose by matching its own
+# text — `spira-claim counts` (which the sentinel's CHECK 4 calls) reads the events trail
+# with one `bd sql` whose FROM clause is unique to it (spira-claim/src/store.rs events_sql).
 # --------------------------------------------------------------------------------------
 echo
 seed; rm -rf "$RUN/poison-asked"
@@ -689,7 +694,7 @@ FAIL_SQL_BD="$TMP/fail-sql-bd"
 {
     printf '#!/usr/bin/env bash\n'
     printf 'case "$*" in\n'
-    printf '  *"as rcl"*) printf "fail-sql-bd: simulated dolt failure\\n" >&2; exit 1 ;;\n'
+    printf '  *"created_at from events where issue_id in ("*) printf "fail-sql-bd: simulated dolt failure\\n" >&2; exit 1 ;;\n'
     printf 'esac\n'
     printf 'exec %q "$@"\n' "$REAL_BD_PATH"
 } > "$FAIL_SQL_BD"
@@ -718,21 +723,23 @@ want "and the operator is asked, same as any other poisoning" "sp-failquery" "$(
 # query (unaffected by this stub, since a poisoned bead is excluded from dispatchable_open
 # only while the label is on) read the bead's real, unchanged count and poisoned it right
 # back. Run every 15-60s, that is the exact flip sp-kogm lived through: poisoned 75 times,
-# cleared 74, across 175 passes. The seam is SPIRA_BD again, matching on a substring unique
-# to attempts_of's own single-id query (the bulk query's outer SELECT has no such text).
+# cleared 74, across 175 passes. The seam is SPIRA_BD again: the stale clear counts through
+# the same `spira-claim counts` events query as the main loop, so the same text is failed.
+# The poison itself is the lifecycle hold (mkpoison), not a bd label.
 # --------------------------------------------------------------------------------------
 echo
 seed; rm -rf "$RUN/poison-asked"
 testdb_seed <<JSONL
-{"id":"sp-flipstale","title":"would clear this pass if attempts_of's query ran","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","spira-poison"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-flipstale","title":"would clear this pass if attempts_of's query ran","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
+mkpoison sp-flipstale
 cycle sp-flipstale 1   # genuinely below POISON_AT=3 — a real stale poison, if the query ran
 
 FAIL_ATTEMPTS_BD="$TMP/fail-attempts-bd"
 {
     printf '#!/usr/bin/env bash\n'
     printf 'case "$*" in\n'
-    printf '  *"0) from events where issue_id="*) printf "fail-attempts-bd: simulated dolt failure\\n" >&2; exit 1 ;;\n'
+    printf '  *"created_at from events where issue_id in ("*) printf "fail-attempts-bd: simulated dolt failure\\n" >&2; exit 1 ;;\n'
     printf 'esac\n'
     printf 'exec %q "$@"\n' "$REAL_BD_PATH"
 } > "$FAIL_ATTEMPTS_BD"

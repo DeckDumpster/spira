@@ -41,7 +41,9 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     if idents(w, "eject", &[("bead id", id), ("repo", &c.r.name)]).is_err() {
         return FAIL;
     }
-    if !suites.is_empty() && idents(w, "eject", &[("suites", suites)]).is_err() {
+    // --suites is a comma-separated list (queue.sh's contract, and what the .ejected sidecar
+    // and recertification read back): each name is an identifier, the commas are not.
+    if !suites.is_empty() && suites.split(',').try_for_each(|s| idents(w, "eject", &[("suite", s)])).is_err() {
         return FAIL;
     }
     let actor = actor(w);

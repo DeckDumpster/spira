@@ -335,7 +335,10 @@ testdb_up() {            # testdb_up <tag>
     local init_out init_rc _init_fd
     _init_fd=""
     printf 'testdb: TRACE: acquiring lock on %s/.server-init.lock\n' "$SPIRA_TESTDB_DATA" >&2
-    if exec {_init_fd}>>"${SPIRA_TESTDB_DATA}/.server-init.lock" 2>/dev/null; then
+    # `exec … 2>/dev/null` with no command would point THIS SHELL's stderr at /dev/null for
+    # good — every later line of the suite's diagnostics silently lost. The group scopes the
+    # 2>/dev/null to the open alone; the fd itself stays open past it.
+    if { exec {_init_fd}>>"${SPIRA_TESTDB_DATA}/.server-init.lock"; } 2>/dev/null; then
         printf 'testdb: TRACE: lock file opened, calling flock\n' >&2
         flock -x "$_init_fd" 2>/dev/null || true
         printf 'testdb: TRACE: flock returned\n' >&2
@@ -357,7 +360,7 @@ testdb_up() {            # testdb_up <tag>
         --database "$TESTDB_NAME" --external -q 2>&1 )"
     init_rc=$?
     printf 'testdb: TRACE: bd init returned with rc=%s\n' "$init_rc" >&2
-    [ -n "$_init_fd" ] && { exec {_init_fd}>&- 2>/dev/null; } || true
+    [ -n "$_init_fd" ] && { { exec {_init_fd}>&-; } 2>/dev/null; } || true
     [ $init_rc -eq 0 ] || {
         printf 'testdb: bd init (server) failed (rc=%s) for %s\n' \
             "$init_rc" "$TESTDB_NAME" >&2
