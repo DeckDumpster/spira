@@ -2,9 +2,10 @@
 #
 # test-units-lint.sh — one render pass and one install pass, checking every watcher and
 # notifier unit's own contract instead of each suite paying for its own checkout clone and
-# systemctl stub to ask the same four questions (D8): is it CPU-fenced, is it niced, did every
-# @PLACEHOLDER@ resolve, and does every path in it come from configuration rather than a
-# literal. test-watch-notify.sh, test-watch-refresh.sh and test-pr-notify.sh each used to
+# systemctl stub to ask the same questions (D8): did every @PLACEHOLDER@ resolve, and does
+# every path in it come from configuration rather than a literal. It also holds the whole
+# render to law-isolate-greedy-work-in-vms (sp-b4oct): no unit carries CPUQuota=, Nice= or
+# IOSchedulingClass= — the OS schedules, greedy work goes to a VM. test-watch-notify.sh, test-watch-refresh.sh and test-pr-notify.sh each used to
 # render+install their own unit to ask this; consolidated here it is one clone and one pass.
 #
 # tier: T0
@@ -84,11 +85,24 @@ paths_are_configured() {  # paths_are_configured <label> <unit-text>
     is "$1: every path in it came from configuration" "" "$stray"
 }
 
+# NO UNIT IS CPU-FENCED OR NICED (sp-b4oct, law-isolate-greedy-work-in-vms). Checked over
+# EVERY rendered unit, not just the watchers. POSITIVE CONTROL first
+# (law-absence-needs-a-positive-control): the same grep must find the directives in a planted
+# unit, and the render must actually hold many units' [Service] lines, or an empty or
+# truncated render would pass the absence check for free.
+_fence_re='^(CPUQuota|Nice|IOSchedulingClass)='
+is "positive control: the fence grep finds a planted CPUQuota=/Nice=" "2" \
+    "$(printf '[Service]\nCPUQuota=35%%\nNice=10\nType=oneshot\n' | grep -cE "$_fence_re")"
+_n_exec="$(grep -c '^ExecStart=' <<< "$rendered")"
+is "positive control: the render holds at least 20 units' ExecStart= lines" "yes" \
+    "$([ "${_n_exec:-0}" -ge 20 ] && echo yes || echo "no ($_n_exec)")"
+is "no rendered unit carries CPUQuota=, Nice= or IOSchedulingClass=" "" \
+    "$(grep -E "$_fence_re" <<< "$rendered")"
+
 for svc in spira-watch-notify-prod.service spira-watch-refresh-prod.service \
            spira-mail-tidy-prod.service; do
     unit="$(block "$svc")"
-    has   "$svc: it is CPU-fenced"                "$unit" "CPUQuota="
-    has   "$svc: and niced"                       "$unit" "Nice="
+    has   "$svc: it rendered"                     "$unit" "ExecStart="
     hasnt "$svc: no placeholder survives into it" "$unit" "@"
     paths_are_configured "$svc" "$unit"
 done
@@ -103,8 +117,7 @@ done
 # THE WATCHER TEMPLATE. Rendered once per manifest row (here, "alpha"), so %i is gone and
 # replaced by the watcher's own name — a real per-instance unit, not a systemd template.
 watch_unit="$(block "spira-watch-alpha-prod.service")"
-has   "spira-watch@ (alpha): it is CPU-fenced"          "$watch_unit" "CPUQuota="
-has   "spira-watch@ (alpha): and niced"                 "$watch_unit" "Nice="
+has   "spira-watch@ (alpha): it rendered"               "$watch_unit" "ExecStart="
 hasnt "spira-watch@ (alpha): no placeholder survives, and %i is gone" "$watch_unit" "@"
 hasnt "spira-watch@ (alpha): and the template specifier is gone too"  "$watch_unit" "%i"
 paths_are_configured "spira-watch@ (alpha)" "$watch_unit"

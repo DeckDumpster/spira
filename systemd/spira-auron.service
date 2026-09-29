@@ -32,11 +32,6 @@ ExecStart=@SPIRA_PROD@/auron.sh
 # heartbeat is exactly what the ops pane renders as stale — so even this failure is
 # visible rather than silent.
 TimeoutStartSec=60
-# This box runs prod and the CI runner. Anything that polls in a loop on shared hardware
-# gets a quota (law-fence-loops-on-shared-hardware) — and a watchdog least of all deserves
-# to be the process that starves what it is watching.
-CPUQuota=10%
-Nice=15
 StandardOutput=append:@SPIRA_RUN@/auron.log
 StandardError=append:@SPIRA_RUN@/auron.log
 

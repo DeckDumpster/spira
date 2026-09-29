@@ -18,11 +18,8 @@ ExecStart=@SPIRA_PROD@/watchd.sh notify
 # it reaches nobody otherwise.
 SuccessExitStatus=1
 # A pass is arithmetic over two files per watcher plus one `grep`: no database, no network,
-# no `bd`, no `git`. It is fenced anyway, before it is enabled, because this is a loop and
-# the box it runs on may also be running production (law-fence-loops-on-shared-hardware).
+# no `bd`, no `git`.
 TimeoutStartSec=120
-CPUQuota=10%
-Nice=10
 StandardOutput=append:@SPIRA_RUN@/watch-notify.log
 StandardError=append:@SPIRA_RUN@/watch-notify.log
 

@@ -27,11 +27,6 @@ Type=simple
 ExecStart=@SPIRA_PROD@/watchd.sh exec %i
 Restart=always
 RestartSec=15
-# A watcher polls, and this box may be running production on the same cores, so it is fenced
-# before it is enabled (law-fence-loops-on-shared-hardware). A watcher's pass is one query
-# and a sleep; if one ever needs more than this, that is a finding about the watcher.
-CPUQuota=15%
-Nice=10
 # THE HINGE. The unit appends stdout to exactly the log the cursor indexes, which is how
 # systemd can own the process without changing the contract a reader latches onto: two files,
 # a log and an integer, and `tail -n +N -F` is a conforming client.

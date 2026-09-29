@@ -91,7 +91,7 @@ SPIRA_ARCHIVIST_EVERY SPIRA_ARCHIVIST_IDLE SPIRA_ARCHIVIST_MODEL SPIRA_ARCHIVIST
 SPIRA_ARCHIVIST_PER_PASS SPIRA_ARCHIVIST_TIMEOUT_RETRIES
 SPIRA_TESTDB_LIB SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT
 SPIRA_TESTENV_REGISTRY SPIRA_TESTENV_MAX_CONCURRENT SPIRA_TESTENV_QUEUE_TIMEOUT SPIRA_TESTENV_QUEUE_POLL SPIRA_GH_INTAKE_REPO SPIRA_GH_INTAKE_PRIORITY SPIRA_GH_INTAKE_BEAD_REPO SPIRA_FLAKY_GH_REPO SPIRA_RELEASE_REPO SPIRA_RELEASE_RUST_TOOLCHAIN
-SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET SPIRA_GATE_SELECT_CAP SPIRA_AEON_CPU_QUOTA SPIRA_GATE_LOCK_WAIT SPIRA_LAND_CPU_QUOTA
+SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET SPIRA_GATE_SELECT_CAP SPIRA_GATE_LOCK_WAIT
 SPIRA_GATE_SUITES SPIRA_SUITE_STATE_FILE SPIRA_SUITES_STATE SPIRA_SUITE_TIMEOUT SPIRA_BATCH_MAXPAR SPIRA_SUITES_BUDGET SPIRA_ATTRIBUTE_MAXPAR
 SPIRA_TIER_BUDGET_T0_MS SPIRA_TIER_BUDGET_T1_MS SPIRA_TIER_BUDGET_T2_MS SPIRA_TIER_BUDGET_T3_MS SPIRA_TIER_BUDGET_WINDOW SPIRA_TIER_ALLOWLIST_MARGIN_PCT SPIRA_TIER_ALLOWLIST SPIRA_TIER_AREA_ALLOWLIST SPIRA_BATCH_MAXPAR_CEILING
 SPIRA_BATCH_MEM_RESERVE_MIB SPIRA_BATCH_MEM_PER_SUITE_MIB SPIRA_BATCH_MEM_AVAIL_MIB SPIRA_BATCH_PSI_THRESHOLD SPIRA_BATCH_ORPHAN_MIN_AGE SPIRA_BATCH_BINS_TTL
@@ -235,7 +235,6 @@ SPIRA_ID_PREFIX
 SPIRA_INCIDENT_LABEL
 SPIRA_INCIDENT_PRIORITY
 SPIRA_INSTANCE
-SPIRA_LAND_CPU_QUOTA
 SPIRA_LAND_GATE_RESERVE
 SPIRA_LANDING_PASS_BIN
 SPIRA_LAND_MAXSEC
@@ -1170,17 +1169,8 @@ spira_conf_defaults() {
     # covers that with margin and is the value observed to pass unchanged branches that 900
     # killed mid-sweep (sp-gys, sp-snyj).
     : "${SPIRA_GATE_TIMEOUT:=2700}"
-    # CPU QUOTA FOR AEON UNITS, as a percent integer (no % sign). Aeons run under this ceiling
-    # so a runaway model session cannot saturate a host that also runs prod and CI runners.
-    # A gate runs inside the calling aeon's cgroup, so this ceiling is inherited by every
-    # repository's CI; SPIRA_GATE_HOST_CORES is exported into the gate environment so a
-    # repository can measure the physical host rather than the fenced view.
-    : "${SPIRA_AEON_CPU_QUOTA:=70}"
-    # CPU QUOTA FOR THE TRANSIENT spira-landing UNIT. Raised from the hardcoded 40% that
-    # every certification gate ran under (starving it below half a core) to match
-    # SPIRA_AEON_CPU_QUOTA, now that gate.sh's host-wide admission pool (SPIRA_CERTIFY_PAR)
-    # bounds concurrent gates on its own — sp-u7wrz.
-    : "${SPIRA_LAND_CPU_QUOTA:=70}"
+    # NO CPU QUOTA FOR AEONS OR THE LANDING UNIT: SPIRA_AEON_CPU_QUOTA and SPIRA_LAND_CPU_QUOTA
+    # are retired (sp-b4oct, law-isolate-greedy-work-in-vms); the OS schedules them.
     # THE GATE'S TIME BUDGET, in seconds. gate-spira.sh times itself per suite and in total;
     # when the total exceeds this value the gate files a bead against the harness — it does
     # NOT fail the branch, because the branch did not cause the overrun. The mechanism exists
@@ -1306,10 +1296,6 @@ spira_conf_defaults() {
     # only the retries exhausted case may be reported as a failure (sp-3ntca).
     : "${SPIRA_CLAIM_RETRIES:=3}"
     : "${SPIRA_CLAIM_RETRY_DELAY_S:=1}"
-    # THE CPU QUOTA APPLIED TO EACH AEON UNIT. Raise this when aeons run real builds that
-    # saturate their slice; SPIRA_GATE_HOST_CORES controls parallelism inside the gate while
-    # this controls how much of one core each aeon may use.
-    : "${SPIRA_AEON_CPU_QUOTA:=70}"
     # THE DECLARED LANES — named scheduling partitions whose capacity does not compete with
     # SPIRA_MAX_AEONS. A lane fayth draws from its own FAYTH_MAX_CONCURRENT rather than from
     # the pool, so the pool can be fully occupied by builders while the lane fayth still has

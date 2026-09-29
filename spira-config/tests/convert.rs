@@ -497,3 +497,23 @@ fn fayth_only_convert_does_not_silently_wipe_scalar_spira_keys() {
     assert_eq!(spira.bd, Some("/custom/bd".to_string()));
     fs::remove_dir_all(&dir).ok();
 }
+
+// sp-b4oct: a legacy spira.conf that still sets the retired CPU quota keys converts — with a
+// warning naming each — rather than being refused as unknown, and neither key reaches the
+// converted document. Positive control for the refusal path is
+// conf_key_parity::a_planted_unmapped_key_is_refused_not_dropped.
+#[test]
+fn retired_cpu_quota_keys_convert_with_a_warning() {
+    let conf = "SPIRA_AEON_CPU_QUOTA=400\nSPIRA_LAND_CPU_QUOTA=70\n";
+    let (doc, warnings) = convert(conf, "/opt/fixture-home", "", &[])
+        .expect("a retired key must not refuse the whole convert");
+    for key in ["SPIRA_AEON_CPU_QUOTA", "SPIRA_LAND_CPU_QUOTA"] {
+        assert!(
+            warnings.0.iter().any(|w| w.contains(key) && w.contains("sp-b4oct")),
+            "no warning for {key}: {:?}",
+            warnings.0
+        );
+    }
+    let sh = spira_config::export_sh(&doc);
+    assert!(!sh.contains("CPU_QUOTA"), "a retired key leaked into export --sh: {sh}");
+}

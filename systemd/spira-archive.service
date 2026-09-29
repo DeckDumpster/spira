@@ -14,11 +14,6 @@ ExecStart=@SPIRA_PROD@/archive.sh sweep
 # for the steady state kills the only pass that had real work to do, every time, and leaves an
 # archive that is permanently one run from complete.
 TimeoutStartSec=3600
-# It compresses, and this box may also be running production and a CI runner. A convenience
-# job must never be able to starve them (law-fence-loops-on-shared-hardware).
-CPUQuota=40%
-Nice=15
-IOSchedulingClass=idle
 StandardOutput=append:@SPIRA_RUN@/archive.log
 StandardError=append:@SPIRA_RUN@/archive.log
 

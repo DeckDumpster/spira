@@ -32,7 +32,7 @@
 # is visible as growing age on that probe's values rather than as a silent backlog.
 #
 # SLOW TIER: SLOW_CONCURRENT caps concurrent slow probes so one graph walk cannot
-# crowd out the fast tier's 5s repaint. Nice=10 on the service yields to the box.
+# crowd out the fast tier's 5s repaint.
 #
 # MIGRATION: keeps writing the merged cockpit.env so existing readers and test suites
 # that source that file do not break when the supervisor replaces cockpit.sh loop.

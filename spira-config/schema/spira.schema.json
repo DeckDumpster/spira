@@ -207,12 +207,6 @@
             "null"
           ]
         },
-        "aeon_cpu_quota": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "agent": {
           "type": [
             "string",
@@ -1061,12 +1055,6 @@
           ]
         },
         "instance": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "land_cpu_quota": {
           "type": [
             "string",
             "null"

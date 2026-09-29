@@ -156,8 +156,6 @@ impl<'a> Sentinel<'a> {
                 "--quiet".into(),
                 format!("--unit={unit}"),
                 format!("--property=RuntimeMaxSec={}", self.cfg.audit_maxsec),
-                format!("--property=CPUQuota={}%", self.cfg.audit_cpu),
-                "--property=Nice=10".into(),
                 format!(
                     "--property=StandardOutput=append:{}/audit.log",
                     self.cfg.run.display()
@@ -326,8 +324,6 @@ impl<'a> Sentinel<'a> {
                 "--quiet".into(),
                 format!("--unit={unit}"),
                 format!("--property=RuntimeMaxSec={}", self.cfg.land_maxsec),
-                format!("--property=CPUQuota={}%", self.cfg.land_cpu),
-                "--property=Nice=10".into(),
                 format!(
                     "--property=StandardOutput=append:{}/landing.log",
                     self.cfg.run.display()

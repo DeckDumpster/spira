@@ -47,9 +47,6 @@ ExecStart=/bin/bash -c 'exec @SPIRA_AEON_BIN@ --home @SPIRA_PROD@ ops --sweep --
 # Matches FAYTH_TIMEOUT_SECONDS plus room for the sweep to start. An aeon that outlives
 # this is killed and the next timer tick starts a fresh pass.
 TimeoutStartSec=2000
-# This box runs prod and the CI runner (law-fence-loops-on-shared-hardware).
-CPUQuota=70%
-Nice=10
 StandardOutput=append:@SPIRA_RUN@/ops.log
 StandardError=append:@SPIRA_RUN@/ops.log
 

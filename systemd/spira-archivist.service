@@ -20,11 +20,6 @@ ExecStart=@SPIRA_PROD@/archivist.sh sweep
 # failed archive in the state file the operator is already reading, whereas this one kills
 # the sweep mid-write and reports only a red unit.
 TimeoutStartSec=1800
-# This box may also be running production and a CI runner, and an unbounded loop here has
-# cost one a load of 274 (law-fence-loops-on-shared-hardware). The sweep itself is a stat per
-# transcript; the quota is for the archive it may go on to run.
-CPUQuota=30%
-Nice=10
 StandardOutput=append:@SPIRA_RUN@/archivist.log
 StandardError=append:@SPIRA_RUN@/archivist.log
 

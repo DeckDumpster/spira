@@ -13,10 +13,6 @@ ExecStart=@SPIRA_PROD_COCK@/moot-sweep.sh --apply
 # Each predicate runs under a 30-second timeout (SPIRA_MOOT_TIMEOUT default).
 # 300 seconds covers up to ten concurrent predicates with room to spare.
 TimeoutStartSec=300
-# Janitorial — must not compete with production or CI on shared hardware
-# (law-fence-loops-on-shared-hardware).
-CPUQuota=10%
-Nice=10
 StandardOutput=append:@SPIRA_RUN@/moot-sweep.log
 StandardError=append:@SPIRA_RUN@/moot-sweep.log
 

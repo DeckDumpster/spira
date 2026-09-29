@@ -18,12 +18,6 @@ ExecStart=@SPIRA_PROD@/watch-refresh.sh
 # A pass is two execs and no restarts in the steady state; anything past this is a fault,
 # not a slow box, and a check that hangs every minute is worse than one that fails.
 TimeoutStartSec=60
-# It polls, and this box may be running production on the same cores
-# (law-fence-loops-on-shared-hardware). Fenced far tighter than the aeon units because the
-# work is a `systemctl show` and a `stat`: if this ever approaches its quota, the pass has
-# stopped being the cheap check it was built to be, and that is the finding.
-CPUQuota=5%
-Nice=15
 StandardOutput=append:@SPIRA_RUN@/watch-refresh.log
 StandardError=append:@SPIRA_RUN@/watch-refresh.log
 

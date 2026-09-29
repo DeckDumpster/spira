@@ -11,8 +11,6 @@ Type=oneshot
 ExecStart=@SPIRA_SENTINEL_BIN@ --summon-only
 # Target ~1s; generous headroom for a summon.lock wait behind a concurrent full pass.
 TimeoutStartSec=60
-CPUQuota=20%
-Nice=10
 StandardOutput=append:@SPIRA_RUN@/sentinel.log
 StandardError=append:@SPIRA_RUN@/sentinel.log
 

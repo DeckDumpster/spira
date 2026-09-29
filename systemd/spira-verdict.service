@@ -10,10 +10,8 @@ ExecStart=@SPIRA_QUEUE_BIN@ step --all
 Environment=SPIRA_HOME=@SPIRA_PROD@
 # TimeoutStartSec covers the longest legitimate job: a red batch replays each member
 # in a container, which takes several minutes per member at full CPU. 3600s matches
-# the CI-run ceiling (SPIRA_QUEUE_CI_MAXSEC). CPUQuota is absent: throttling the
-# poller is fine; throttling the replay containers that run inside it is not.
+# the CI-run ceiling (SPIRA_QUEUE_CI_MAXSEC).
 TimeoutStartSec=3600
-Nice=10
 StandardOutput=append:@SPIRA_RUN@/verdict.log
 StandardError=append:@SPIRA_RUN@/verdict.log
 

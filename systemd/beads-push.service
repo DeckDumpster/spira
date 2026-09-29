@@ -12,11 +12,6 @@ After=default.target
 Type=oneshot
 ExecStart=@SPIRA_PROD_ROOT@/beads-push.sh
 TimeoutStartSec=3600
-# This box also runs prod and the CI runner; a Dolt push is bursty and must never be the
-# reason something user-facing gets slow (law-fence-loops-on-shared-hardware).
-CPUQuota=50%
-Nice=10
-IOSchedulingClass=idle
 StandardOutput=append:@SPIRA_RUN@/beads-push.log
 StandardError=append:@SPIRA_RUN@/beads-push.log
 

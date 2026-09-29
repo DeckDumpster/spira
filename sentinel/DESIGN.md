@@ -179,10 +179,10 @@ The directory paths come from the probe's variables (§6, S0): `SPIRA_POISON_ASK
 **Systemd units:**
 
 - `spira-sentinel[-<inst>].timer` → `.service` runs `sentinel` every 2 min. Type=oneshot,
-  TimeoutStartSec=900, CPUQuota=150%. The live drop-in sets
+  TimeoutStartSec=900. The live drop-in sets
   `Environment=SPIRA_SKIP_CLOSED_CHECK=1`.
 - `spira-summon[-<inst>].timer` → `.service` runs `sentinel --summon-only` every 15 s.
-  TimeoutStartSec=60, CPUQuota=20%.
+  TimeoutStartSec=60.
 - Every aeon unit's `ExecStopPost=<systemd-run> --user --collect --quiet <sentinel>
   --summon-only`. This is lib.sh `summon_refill_argv`, and it runs **with no `--setenv`**,
   so the binary must find its harness from its own path (§2.7).
@@ -190,13 +190,17 @@ The directory paths come from the probe's variables (§6, S0): `SPIRA_POISON_ASK
 **Transient units it starts.** In each case the unit name is the mutex and `--collect` is
 mandatory.
 
+**No explicit CPU quota and no niceness** — on these transient units, on the sentinel's own
+units, or anywhere else (sp-b4oct, law-isolate-greedy-work-in-vms, operator 2026-09-29): the OS
+time-shares the host, and greedy work is isolated in a VM rather than throttled in place. The
+former `SPIRA_AUDIT_CPU_QUOTA` / `SPIRA_LAND_CPU_QUOTA` knobs are gone; setting either in the
+environment has no effect.
+
 `spira-audit` runs `<this exe> --audit`. It is launched through
 `${SPIRA_LAUNCH:-systemd-run} --user --collect --quiet` with:
 
 - `--unit=${SPIRA_AUDIT_UNIT:-spira-audit}`
 - `--property=RuntimeMaxSec=${SPIRA_AUDIT_MAXSEC:-1800}`
-- `--property=CPUQuota=${SPIRA_AUDIT_CPU_QUOTA:-40}%`
-- `--property=Nice=10`
 - stdout and stderr as `append:$SPIRA_RUN/audit.log`
 - `--setenv` for `PATH HOME SPIRA_HOME SPIRA_RUN SPIRA_DB SPIRA_REPO SPIRA_REPO_MAP
   SPIRA_HOME_REPO SPIRA_BD SPIRA_GH SPIRA_POISON_AT SPIRA_REQUEUE_AT SPIRA_RECLAIM_AT
@@ -207,8 +211,6 @@ mandatory.
 
 - `--unit=${SPIRA_LAND_UNIT:-spira-landing}`
 - `RuntimeMaxSec=${SPIRA_LAND_MAXSEC:-3600}`
-- `CPUQuota=${SPIRA_LAND_CPU_QUOTA:-70}%`
-- `Nice=10`
 - stdout and stderr to `landing.log`
 - `--setenv` for `PATH HOME SPIRA_HOME SPIRA_RUN SPIRA_DB SPIRA_REPO SPIRA_REPO_MAP
   SPIRA_HOME_REPO SPIRA_BD SPIRA_GH SPIRA_BATCH_MAXPAR SPIRA_LAND_MAXSEC`
@@ -266,12 +268,10 @@ Binaries are resolved in this order:
 | `SPIRA_AUDIT_UNIT` | `spira-audit` | audit |
 | `SPIRA_AUDIT_MAXSEC` | 1800 | audit |
 | `SPIRA_AUDIT_STALE` | 1800 | audit |
-| `SPIRA_AUDIT_CPU_QUOTA` | 40 | audit |
 | `SPIRA_AUDIT_MAILBOX` | `$SPIRA_RUN/audit.progress` | audit |
 | `SPIRA_LAND_UNIT` | `spira-landing` | CHECK 6 |
 | `SPIRA_LAND_MAXSEC` | 3600 | CHECK 6 |
 | `SPIRA_LAND_STALE` | 1800 | CHECK 6 |
-| `SPIRA_LAND_CPU_QUOTA` | 70 | CHECK 6 |
 | `SPIRA_LAUNCH`, `SPIRA_SYSTEMCTL`, `SPIRA_SUMMON` | `systemd-run`, `systemctl`, `systemd-run` | test seams |
 | `SPIRA_SKIP_RECLAIM` | 0 | fixture fast path (skips the DB and goal checks, STATE, CHECK 2/2c/3/7c/7d) |
 | `SPIRA_SKIP_CLOSED_CHECK` | 0 | skips CHECK 5 |

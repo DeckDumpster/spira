@@ -14,8 +14,6 @@ After=default.target
 Type=oneshot
 ExecStart=@SPIRA_PROD@/gh-intake.sh
 TimeoutStartSec=120
-CPUQuota=10%
-Nice=10
 StandardOutput=append:@SPIRA_RUN@/gh-intake.log
 StandardError=append:@SPIRA_RUN@/gh-intake.log
 
