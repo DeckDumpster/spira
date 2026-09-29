@@ -1380,6 +1380,11 @@ fn land_local_ungated_override_lands_and_records_the_reason() {
     assert!(t.err().contains(&format!("SPIRA_LAND_UNGATED={reason}")), "{}", t.err());
     assert!(t.lib.has(&format!("land_mark sp-a LANDED ta ungated: {reason}")), "the landstate record carries it");
     assert!(t.lib.has(&format!("land_mark sp-b LANDED h1 ungated: {reason}")));
+    let last_mark = t.lib.calls.borrow().iter().rev().find(|c| c.starts_with("land_mark sp-a ")).cloned();
+    assert_eq!(last_mark, Some(format!("land_mark sp-a LANDED ta ungated: {reason}")), "re-marked after bead_close_on_land's own LANDED write");
+    let closes = t.lib.calls.borrow().iter().position(|c| c.starts_with("close_on_land sp-a"));
+    let remark = t.lib.calls.borrow().iter().rposition(|c| c.starts_with("land_mark sp-a "));
+    assert!(closes < remark, "the ungated mark is written after the close");
     assert!(t.landing_log().contains(&format!("QUEUE UNGATED 1000 repo=spira head=h1 tree={T1} reason={reason}")), "{}", t.landing_log());
 }
 

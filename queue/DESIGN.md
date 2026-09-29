@@ -588,7 +588,8 @@ data, not the code; the refusal is the contract).
      a certificate. The reason is bounded to one line and must not be empty; an empty value
      is the same as unset. The override is loud in four places: a `queue.sh land-local:
      UNGATED LANDING …` line on stderr; `ungated: <reason>` as every member's LANDED
-     landstate reason (the record read later); a `QUEUE UNGATED <at> repo=… head=… tree=…
+     landstate reason (the record read later; re-written after `bead_close_on_land`, whose own
+     `LANDED … Closed by landing pass` write would otherwise replace it); a `QUEUE UNGATED <at> repo=… head=… tree=…
      reason=…` line in `landing.log`; and the reason in the landing mail.
   **Rejected:** accepting a PASS for a commit instead of a tree. A merge of the same pair
   with a different message or date is the same content under another id. **Rejected:**
