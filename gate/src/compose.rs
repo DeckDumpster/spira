@@ -922,7 +922,7 @@ cargo: test tests::x ... ok";
 
     // ------------------------------------------------------- the build fence (sp-aprxm)
 
-    /// The production gate string's shape (spira.toml `[repo.spira] gate`, abridged).
+    /// The production gate string's shape (the spira repository's configured gate, abridged).
     const PROD: &str = r#"bash spira/inventory.sh && "$SPIRA_LINT_BIN" && bash spira/wiki-add-fence.sh && bash spira/build-fence.sh && { _s="$(bash spira/gate-touched.sh "$SPIRA_GATE_BASE" x)"; [ -n "$_s" ] || exit 0; }"#;
 
     fn unit_c() -> Composition {
