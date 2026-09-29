@@ -51,7 +51,7 @@ struct Fake {
     /// `cargo metadata` JSON by the revision the tree holds (the last checkout).
     metadata: RefCell<HashMap<String, Result<String, String>>>,
     /// (status, output) of a unit phase by (tree revision, the phase's first word after
-    /// `cargo test --profile aeon -j N`): `--no-run` is the build, anything else the tests.
+    /// `cargo build …` is the build, `cargo test …` the tests.
     unit_runs: RefCell<UnitRuns>,
     /// Every command run_gate was handed, in order.
     cmds: RefCell<Vec<String>>,
@@ -346,8 +346,8 @@ impl World for Fake {
                 .collect();
             return (0, out.join("\n") + "\nVERDICT GREEN");
         }
-        if cmd.starts_with("cargo test") {
-            let kind = if cmd.contains("--no-run") {
+        if cmd.starts_with("cargo ") {
+            let kind = if cmd.starts_with("cargo build") {
                 "build"
             } else {
                 "test"
@@ -1232,14 +1232,14 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
     // host 8 cores / SPIRA_CERTIFY_PAR 2 = 4 jobs; spira-config brings its dependent queue
     assert_eq!(
         cmds[1],
-        "cargo test --profile aeon -j 4 --no-run -p queue -p spira-config"
+        "cargo build --profile aeon -j 4 --all-targets -p queue -p spira-config"
     );
     assert_eq!(
         cmds[2],
         "cargo test --profile aeon -j 4 -p queue -p spira-config -- --test-threads=4"
     );
     assert!(f.stderr().contains(
-        "gate: composition=unit — fences (suites off), then cargo test on the host for: queue spira-config (touched: spira-config)"
+        "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for: queue spira-config (touched: spira-config)"
     ));
     assert!(
         meter(&f).ends_with(" rc=0 pass compose=unit phases=fences:7,build:7,test:7\n"),
@@ -1251,6 +1251,56 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
         written[0].1.ends_with("suites=-\ncompose=unit\n"),
         "{}",
         written[0].1
+    );
+}
+
+/// sp-aprxm: a unit-mode gate builds once. The build fence's cold release `make build` is
+/// dropped from the gate string for a unit composition (branch and base trial alike); a
+/// composition with no build phase of its own keeps it.
+#[test]
+fn a_unit_gate_builds_once_and_every_other_composition_keeps_the_build_fence() {
+    const G: &str = "bash spira/lint.sh && bash spira/build-fence.sh && run-suites";
+    let set = |f: &Fake| f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = G.into();
+
+    let f = unit_fake(&["gate/src/x.rs"]);
+    set(&f);
+    assert_eq!(f.run(), PASS);
+    let cmds = f.cmds.borrow().clone();
+    assert_eq!(cmds[0], "bash spira/lint.sh && run-suites", "{cmds:?}");
+    assert!(
+        cmds[1].starts_with("cargo build --profile aeon"),
+        "{cmds:?}"
+    );
+    assert!(cmds.iter().all(|c| !c.contains("build-fence")), "{cmds:?}");
+
+    // The base trial of a red unit branch runs the same, fence-less string.
+    let f = unit_fake(&["gate/src/x.rs"]);
+    set(&f);
+    f.runs
+        .borrow_mut()
+        .insert(MERGE_SHA.into(), (1, "tsd: test x ... FAILED".into()));
+    let _ = f.run();
+    let cmds = f.cmds.borrow().clone();
+    assert!(cmds.len() > 3, "a base trial ran: {cmds:?}");
+    assert!(cmds.iter().all(|c| !c.contains("build-fence")), "{cmds:?}");
+
+    for paths in [&["gate/src/x.rs", "spira/lib.sh"][..], &["docs/a.md"]] {
+        let f = unit_fake(paths);
+        set(&f);
+        assert_eq!(f.run(), PASS);
+        assert_eq!(
+            f.cmds.borrow()[0],
+            G,
+            "{paths:?}: no build phase, so the fence stays"
+        );
+    }
+    let f = Fake::new();
+    set(&f);
+    assert_eq!(f.run(), PASS);
+    assert_eq!(
+        f.cmds.borrow()[..],
+        [G.to_string()],
+        "suites mode: byte for byte"
     );
 }
 
@@ -1354,7 +1404,7 @@ fn unit_mode_rust_only_returned_bead_runs_its_unit_gate_then_exactly_the_named_s
         "off",
         "the gate string selects nothing"
     );
-    assert!(cmds[1].contains("--no-run -p gate"));
+    assert!(cmds[1].contains("--all-targets -p gate"));
     assert!(
         cmds[3].contains("--suites test-b.sh,test-c.sh \"$SPIRA_GATE_BRANCH\""),
         "{}",

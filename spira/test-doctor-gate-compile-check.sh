@@ -107,14 +107,14 @@ nowant "fixed row: no FAIL survives the fix"     "FAIL  rustrepo"               
 
 # ==========================================================================
 echo
-echo "the full gate-touched.sh chain also counts as reachable:"
+echo "gate-touched.sh alone no longer reaches one (sp-aprxm: it stopped calling build-fence.sh):"
 # ==========================================================================
 RMAP_TOUCHED="$TMP/repo-map-touched"
 cat > "$RMAP_TOUCHED" <<EOF
 rustrepo | $TMP/rustrepo | queue | origin/main | | bash spira/gate-touched.sh "\$SPIRA_GATE_BASE" "\$SPIRA_GATE_BRANCH"
 EOF
 touched_out="$(run_doctor "$RMAP_TOUCHED")"
-want "gate-touched.sh row: OK reports the repo"  "ok    rustrepo: gate command reaches a compile check" "$touched_out"
+want "gate-touched.sh-only row: FAIL names the repo" "FAIL  rustrepo: gate command has no reachable compile check" "$touched_out"
 
 # ==========================================================================
 echo

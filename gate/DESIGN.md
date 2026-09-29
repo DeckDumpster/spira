@@ -296,13 +296,48 @@ spira-config set repo.spira.gate_mode suites <spira.toml>   # off (or: unset rep
 | `unit`, any **script** touched | `suites(script)` | the same |
 | `unit`, `SPIRA_GATE_ALL=1` | `suites(gate-all)` | the same — the caller asked for the corpus |
 | `unit`, the touched set or the graph unreadable | `suites(no-diff)` / `suites(no-metadata)` | the same — no guessing a cheaper gate |
-| `unit`, crates (± docs, config, suites) | `unit` | the gate string with **suites off**, then on the host: `cargo test --profile aeon -j J --no-run -p …` (build) and `cargo test --profile aeon -j J -p … -- --test-threads=J` (test) |
+| `unit`, crates (± docs, config, suites) | `unit` | the gate string with **suites off** and **without the build fence** (below), then on the host: `cargo build --profile aeon -j J --all-targets -p …` (build) and `cargo test --profile aeon -j J -p … -- --test-threads=J` (test) |
 | `unit`, nothing buildable | `fences` | the gate string with **suites off** |
 
 "Suites off" is the gate command's environment: `SPIRA_GATE_SUITES=off` and
-`SPIRA_CERTIFY_ALWAYS_COVERS=` (empty). `gate-touched.sh` then runs its fences (build fence,
-tier budgets, plan matrix, lockfile lint) and selects nothing: its always-covers default,
-`spira/lib.sh`, is a script, and a script never composes as unit or fences.
+`SPIRA_CERTIFY_ALWAYS_COVERS=` (empty). `gate-touched.sh` then runs its fences (tier budgets,
+plan matrix, lockfile lint) and selects nothing: its always-covers default, `spira/lib.sh`, is
+a script, and a script never composes as unit or fences.
+
+### A unit gate builds once (sp-aprxm)
+
+**Intent.** A Rust-only branch's gate compiles the tree once, in the profile its tests run in.
+The probe of 2026-09-29 21:02Z (a one-line change to `tsd`, `gate_mode = "unit"`) spent
+`fences:147,build:21,test:4`: 144s of the fence phase was `spira/build-fence.sh`, a cold
+`make build` (release profile: LTO, one codegen unit, the whole workspace) in a fresh gate
+tree, before the composition's own incremental build proved the same crates compile.
+
+**Contract** (`compose::gate_string`). For a `unit` composition the gate string runs with the
+step `bash spira/build-fence.sh` (`compose::BUILD_FENCE_STEP`) removed wherever it is a whole
+element of the `&&` chain (at the start or after `&& `, followed by ` &&` or the end); anything
+else is left as written. `suites(…)` and `fences` compositions run the string byte for byte:
+they have no build phase of their own, so the build fence stays their compile check (for
+`fences` it skips itself, since nothing buildable changed). The base trial runs the same
+string as the branch trial. `gate-touched.sh` no longer calls `build-fence.sh` (it had since
+sp-9uro3, a second call once the gate string named the fence itself); `doctor.sh` fails a row
+whose gate names no `build-fence.sh`.
+
+**The build phase is `cargo build --all-targets`**, not `cargo test --no-run`: without
+integration tests (23 of the workspace's binary crates have none) the latter compiles a binary
+only under `cfg(test)`, so `#[cfg(not(test))]` code (spira-claim's `main`) would go uncompiled.
+`--all-targets` builds every library and binary both ways plus the test harnesses, and the test
+phase reuses the harnesses.
+
+**What the build fence caught that the unit gate does not, and where it is caught now:**
+
+| the build fence caught | now caught by |
+|---|---|
+| a crate that does not compile (the touched crates and their reverse dependents) | the unit build phase |
+| a workspace input that breaks every crate (`Cargo.lock` the toolchain cannot parse, sp-upkae; `Cargo.toml`, the toolchain pin, `Makefile`) | the unit build phase: a workspace input touches every member |
+| `#[cfg(not(test))]` code in a binary | the unit build phase (`--all-targets`) |
+| `cockpit/panel` | the unit build phase: it is a workspace member |
+| a failure only the **release profile** shows (LTO or link errors, `opt-level = "z"`, `strip`; the workspace has no `debug_assertions` code) | **the round**: its corpus run builds `testenv --profile release` of the whole workspace (`round-vm` `REMOTE_SCRIPT`); then main CI (`gate.yml`'s `make build`) and `release.yml` |
+| the `Makefile`'s binary list | nothing new: `make build` never read it (the list is in `install`); `make install` and `release.yml` do |
 
 The unit phases run through the same port as the gate string (`run_gate`: `env -i`, the same
 environment, `timeout`, the tree), in order, stopping at the first failure. **Admission** is the
@@ -427,6 +462,11 @@ lib.sh seam is one `bash -c '. lib.sh; …'` at start (NUL-separated `key=value`
 * **Composition wraps the gate string; it does not parse it** (sp-2ghui). The string is
   configuration and stays the one list of fences; unit mode runs it with suites off and adds
   the host phases after it. Splitting the string would make a second copy of the fence list.
+  **One exception, by exact text** (sp-aprxm): a unit composition removes the build fence's
+  step, because its own build phase is the compile check. Rejected: a warm per-gate target
+  dir for the fence (a release build relinks every dependent binary with full LTO, and gates
+  sharing a target dir serialise on cargo's lock); an environment switch the fence reads
+  (bash logic); a separate unit-mode gate string in spira.toml (a second copy of the fences).
 * **A script touched anywhere keeps today's whole sequence**, including suites, until that
   component moves to Rust (the operator's default, 2026-09-29). Executables with no extension
   count as scripts, by their mode.

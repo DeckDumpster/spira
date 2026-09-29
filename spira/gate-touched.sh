@@ -22,18 +22,12 @@ set -uo pipefail
 BASE="${1:?usage: gate-touched.sh <base> <head>}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-# THE BUILD FENCE RUNS REGARDLESS OF SPIRA_GATE_SUITES. A compile is a static check of the
-# tree, not a suite — sp-upkae certified green under fences-only certification
-# (SPIRA_GATE_SUITES=off) and then broke the whole batch's build job, because that path never
-# invokes cargo at all. build-fence.sh skips itself when the diff touches nothing that can
-# move a build's result (sp-9uro3). This is the one place in the repo-map's fence chain that
-# runs on every call regardless of mode, so wiring it here needs no repo-map change.
-#
-# SPIRA_GATE_BASE DEFAULTS TO THIS SCRIPT'S OWN $BASE ARGUMENT. gate.sh's real invocation
-# already exports SPIRA_GATE_BASE (and SPIRA_GATE_FILES, which build-fence.sh prefers), so
-# this default only matters for a direct call — like a test's own — that passes BASE and
-# HEAD positionally without setting either env var.
-SPIRA_GATE_BASE="${SPIRA_GATE_BASE:-$BASE}" bash "$HERE/build-fence.sh" || exit 1
+# THE BUILD FENCE IS NOT CALLED FROM HERE (sp-aprxm). It was (sp-9uro3), so a fences-only
+# gate string still compiled the tree; the repository's gate string now names
+# `bash spira/build-fence.sh` itself, which made this a second call. Under gate_mode=unit the
+# Rust gate drops that step from the string, because its own build phase is the compile
+# check (gate/DESIGN.md "Composition"), and a call here would have been the cold release
+# build that change exists to remove. doctor.sh fails a row whose gate names no build fence.
 
 # THE ALLOWLIST RATCHETS RUN HERE TOO (sp-5m133), same reason: a suite-selection mode that
 # skips everything must not also skip the checks that keep a violator from getting

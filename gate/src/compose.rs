@@ -47,8 +47,8 @@ pub enum Class {
 pub enum Composition {
     /// The repository's gate string, whole — today's sequence. `why` names the reason.
     Suites { why: String },
-    /// The gate string with suites off (fences + build fence), then `cargo test` of `crates`
-    /// on the host. `touched` are the members whose files changed (or `*` for a workspace
+    /// The gate string with suites off and without the build fence ([`gate_string`]), then
+    /// `cargo build` and `cargo test` of `crates` on the host. `touched` are the members whose files changed (or `*` for a workspace
     /// input); `crates` adds their reverse dependents, sorted.
     Unit {
         touched: Vec<String>,
@@ -314,13 +314,70 @@ fn pkgs(crates: &[String]) -> String {
     crates.iter().fold(String::new(), |acc, c| acc + " -p " + c)
 }
 
+/// The build fence's step in a repository gate string (`spira/build-fence.sh`, sp-9uro3): a
+/// `make build` — the release profile, the whole workspace, cold in a fresh gate tree.
+pub const BUILD_FENCE_STEP: &str = "bash spira/build-fence.sh";
+
+/// THE GATE STRING A COMPOSITION RUNS (sp-aprxm). A unit composition has its own build
+/// phase, which compiles every touched crate and its reverse dependents, every target, in the
+/// `aeon` profile; the build fence's cold release `make build` of the whole workspace in
+/// front of it only proved the same thing again, at 85% of a Rust-only gate's wall. So a unit
+/// composition runs the gate string with the build fence's step removed, and every other
+/// composition (suites, fences) runs it whole.
+///
+/// The step is removed only where it is a whole element of the `&&` chain: at the start or
+/// after `&& `, and followed by ` &&` or the end. The second value says whether it was.
+pub fn gate_string(comp: &Composition, gate: &str) -> (String, bool) {
+    if !matches!(comp, Composition::Unit { .. }) {
+        return (gate.to_string(), false);
+    }
+    let step = BUILD_FENCE_STEP;
+    let mut out = String::with_capacity(gate.len());
+    let mut rest = gate;
+    let mut dropped = false;
+    while let Some(i) = rest.find(step) {
+        let before = &rest[..i];
+        let after = &rest[i + step.len()..];
+        let head_ok =
+            (out.is_empty() && before.trim().is_empty()) || before.trim_end().ends_with("&&");
+        let tail_ok = after.trim_start().starts_with("&&") || after.trim().is_empty();
+        if !(head_ok && tail_ok) {
+            out.push_str(&rest[..i + step.len()]);
+            rest = after;
+            continue;
+        }
+        dropped = true;
+        if let Some(t) = after.trim_start().strip_prefix("&&") {
+            // `… && STEP && rest` or `STEP && rest`: keep what came before, drop `STEP && `.
+            out.push_str(before);
+            rest = t.trim_start();
+        } else {
+            // `… && STEP` at the end: drop the ` && STEP`.
+            let b = before.trim_end();
+            out.push_str(b.strip_suffix("&&").unwrap_or(b).trim_end());
+            rest = "";
+        }
+    }
+    out.push_str(rest);
+    if dropped && out.trim().is_empty() {
+        out = "true".into();
+    }
+    (out, dropped)
+}
+
 /// The unit phases' commands, in order: build (the `aeon` profile), then the tests.
+///
+/// The build is `cargo build --all-targets` (sp-aprxm), not `cargo test --no-run`: the latter
+/// compiles a binary crate only under `cfg(test)` unless it has integration tests, so code
+/// behind `#[cfg(not(test))]` (spira-claim's `main`) would go uncompiled once the build fence
+/// no longer runs in front of it. `--all-targets` builds every lib and bin both ways and the
+/// test harnesses; the test phase reuses those harnesses (same profile, same mode).
 pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2] {
     let p = pkgs(crates);
     [
         (
             "build",
-            format!("cargo test --profile aeon -j {jobs} --no-run{p}"),
+            format!("cargo build --profile aeon -j {jobs} --all-targets{p}"),
         ),
         (
             "test",
@@ -740,7 +797,7 @@ mod tests {
         assert_eq!(b.0, "build");
         assert_eq!(
             b.1,
-            "cargo test --profile aeon -j 4 --no-run -p gate -p queue"
+            "cargo build --profile aeon -j 4 --all-targets -p gate -p queue"
         );
         assert_eq!(t.0, "test");
         assert_eq!(
@@ -861,5 +918,75 @@ cargo: test tests::x ... ok";
             Ok(&w),
         );
         assert_eq!(c.label(), "unit");
+    }
+
+    // ------------------------------------------------------- the build fence (sp-aprxm)
+
+    /// The production gate string's shape (spira.toml `[repo.spira] gate`, abridged).
+    const PROD: &str = r#"bash spira/inventory.sh && "$SPIRA_LINT_BIN" && bash spira/wiki-add-fence.sh && bash spira/build-fence.sh && { _s="$(bash spira/gate-touched.sh "$SPIRA_GATE_BASE" x)"; [ -n "$_s" ] || exit 0; }"#;
+
+    fn unit_c() -> Composition {
+        Composition::Unit {
+            touched: vec!["tsd".into()],
+            crates: vec!["tsd".into()],
+        }
+    }
+
+    #[test]
+    fn a_unit_composition_builds_once_the_build_fence_is_dropped() {
+        let (g, dropped) = gate_string(&unit_c(), PROD);
+        assert!(dropped);
+        assert_eq!(
+            g,
+            r#"bash spira/inventory.sh && "$SPIRA_LINT_BIN" && bash spira/wiki-add-fence.sh && { _s="$(bash spira/gate-touched.sh "$SPIRA_GATE_BASE" x)"; [ -n "$_s" ] || exit 0; }"#
+        );
+        assert!(!g.contains("build-fence"));
+        // …and its build phase is the compile check that replaces it: every target.
+        let [b, _] = unit_commands(&["tsd".into()], 4);
+        assert!(
+            b.1.starts_with("cargo build ") && b.1.contains("--all-targets"),
+            "{}",
+            b.1
+        );
+    }
+
+    #[test]
+    fn suites_and_fences_compositions_keep_the_build_fence() {
+        for c in [
+            Composition::Suites { why: "mode".into() },
+            Composition::Fences,
+        ] {
+            assert_eq!(gate_string(&c, PROD), (PROD.to_string(), false), "{c:?}");
+        }
+    }
+
+    #[test]
+    fn the_build_fence_is_dropped_only_as_a_whole_chain_element() {
+        let u = unit_c();
+        let s = BUILD_FENCE_STEP;
+        let rows: &[(String, &str, bool)] = &[
+            (format!("{s} && b"), "b", true),
+            (format!("a && {s}"), "a", true),
+            (format!("a && {s} && b && {s}"), "a && b", true),
+            (s.to_string(), "true", true),
+            (format!("a &&   {s}   && b"), "a &&   b", true),
+            // Not a chain element: kept as written.
+            (format!("a; {s} && b"), "", false),
+            (format!("a && {s} || x"), "", false),
+            (format!("a && {s}2 && b"), "", false),
+            (format!("a && x{s} && b"), "", false),
+            ("a && b".to_string(), "", false),
+            (String::new(), "", false),
+        ];
+        for (input, want, dropped) in rows {
+            let (g, d) = gate_string(&u, input);
+            assert_eq!(d, *dropped, "{input:?} -> {g:?}");
+            let want = if *dropped {
+                want.to_string()
+            } else {
+                input.clone()
+            };
+            assert_eq!(g, want, "{input:?}");
+        }
     }
 }
