@@ -60,12 +60,18 @@ pub fn certify_order(name: &str, rows: &[OrderRow]) -> Vec<String> {
 /// basefail_fix_decision: true (a green base-fix) when `external_ref` names THIS
 /// repository's base-fix suite and the branch's own section of the gate transcript does not
 /// show that suite red. A fix for repository A never certifies a branch in repository B.
+///
+/// The base can also be red with no suite named at all — a FENCE failure (gate output
+/// suite='-'), which fails before any suite runs and so never appears in a "name.sh RED"
+/// line. There is no single suite to re-check there, so the fix is instead a branch whose
+/// own section names no red suite at all.
 pub fn basefail_fix_decision(external_ref: Option<&str>, name: &str, gate_out: &str) -> bool {
     let Some(r) = external_ref else { return false };
     let Some(suite) = r.strip_prefix(&format!("basefail:{name}:")) else { return false };
-    if suite.is_empty() || suite == "-" {
+    if suite.is_empty() {
         return false;
     }
+    let fence = suite == "-";
     let mut in_branch = false;
     for line in gate_out.split('\n') {
         if line.starts_with("--- this branch") {
@@ -80,7 +86,11 @@ pub fn basefail_fix_decision(external_ref: Option<&str>, name: &str, gate_out: &
         }
         let f: Vec<&str> = line.split_whitespace().collect();
         for i in 0..f.len().saturating_sub(1) {
-            if f[i] != suite {
+            if fence {
+                if !f[i].ends_with(".sh") {
+                    continue;
+                }
+            } else if f[i] != suite {
                 continue;
             }
             let next = f[i + 1];
@@ -140,6 +150,7 @@ mod tests {
         assert!(basefail_fix_decision(Some("basefail:spira:test-x.sh"), "spira", out));
         assert!(!basefail_fix_decision(Some("basefail:spira:test-y.sh"), "spira", out));
         assert!(!basefail_fix_decision(Some("basefail:other:test-x.sh"), "spira", out));
+        // the branch section is red (test-y.sh), so a fence-red base-fix is not green either
         assert!(!basefail_fix_decision(Some("basefail:spira:-"), "spira", out));
         assert!(!basefail_fix_decision(None, "spira", out));
         let killed = "--- this branch\ntest-x.sh was killed at 300s\n";
@@ -147,6 +158,22 @@ mod tests {
         // a line naming the suite outside the branch section does not count
         let outside = "test-x.sh TIMEOUT\n--- this branch\nall green\n";
         assert!(basefail_fix_decision(Some("basefail:spira:test-x.sh"), "spira", outside));
+    }
+
+    #[test]
+    fn basefix_for_a_fence_red_base_checks_the_branch_is_fully_green() {
+        // suite='-': the base failed a fence, before any suite ran — there is no single
+        // suite name to re-check, so the fix is a branch whose own section names no red at
+        // all, of any suite.
+        let clean = "--- base\ninventory.sh FAILED\n--- this branch\ntest-x.sh ok\ntest-y.sh ok\ngate: VERDICT=BASE_FAIL";
+        assert!(basefail_fix_decision(Some("basefail:spira:-"), "spira", clean));
+        let still_red = "--- base\ninventory.sh FAILED\n--- this branch\ntest-x.sh ok\ntest-y.sh RED\n";
+        assert!(!basefail_fix_decision(Some("basefail:spira:-"), "spira", still_red));
+        let timed_out = "--- this branch\ntest-x.sh was killed at 300s\n";
+        assert!(!basefail_fix_decision(Some("basefail:spira:-"), "spira", timed_out));
+        // a red suite outside the branch section still does not count
+        let outside = "test-x.sh RED\n--- this branch\nall green\n";
+        assert!(basefail_fix_decision(Some("basefail:spira:-"), "spira", outside));
     }
 
     #[test]
