@@ -145,7 +145,7 @@ IHOME="$TMP/ihome"; mkdir -p "$IHOME"
 printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PATH = %s\nSPIRA_PROD = %s\n' \
     "$RUN" "$ROOT/cockpit" "$MAN" "$STUB" "$HERE" > "$TMP/install.conf"
 env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_CONF="$TMP/install.conf" \
-    SPIRA_INSTALL_FORCE=1 SPIRA_HOME="$HERE" \
+    SPIRA_INSTALL_FORCE=1 SPIRA_HOME="$HERE" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
     "SPIRA_SUPERVISE_BIN=$STUB/spira-supervise" \
     "SPIRA_SENTINEL_BIN=$STUB/sentinel" "SPIRA_QUEUE_BIN=$STUB/queue" "SPIRA_AEON_BIN=$STUB/aeon" \
     bash "$CLONE/systemd/install.sh" > "$TMP/install.out" 2>&1
