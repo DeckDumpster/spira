@@ -224,12 +224,18 @@ fn hold_alive(pf: &Path) -> bool {
     pid_in(pf).is_some_and(|pid| Path::new(&format!("/proc/{pid}")).is_dir())
 }
 
-/// A recorded pid that is still an aeon: alive AND its argv names aeon.sh (a recycled pid
-/// must not resurrect a dead aeon's claim).
+/// A recorded pid that is still an aeon: alive AND its argv is the aeon runner — aeon.sh, or
+/// the Rust binary whose argv[0] is `…/aeon` (a recycled pid must not resurrect a dead
+/// aeon's claim).
 pub fn aeon_alive(pf: &Path) -> bool {
     let Some(pid) = pid_in(pf) else { return false };
     let Ok(cmd) = fs::read(format!("/proc/{pid}/cmdline")) else { return false };
-    String::from_utf8_lossy(&cmd).contains("aeon.sh")
+    is_aeon_cmdline(&cmd)
+}
+
+pub fn is_aeon_cmdline(c: &[u8]) -> bool {
+    let argv0 = String::from_utf8_lossy(c.split(|b| *b == 0).next().unwrap_or(&[])).into_owned();
+    String::from_utf8_lossy(c).contains("aeon.sh") || argv0 == "aeon" || argv0.ends_with("/aeon")
 }
 
 fn pidfiles(run: &Path, prefix: &str, suffix: &str) -> Vec<PathBuf> {
@@ -429,6 +435,14 @@ pub fn harness_state(cfg: &Config, now: i64) -> (String, i64) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn aeon_cmdline_matches_the_script_and_the_binary_only() {
+        assert!(super::is_aeon_cmdline(b"bash\0/h/spira/aeon.sh\0builder\0"));
+        assert!(super::is_aeon_cmdline(b"/r/current/bin/aeon\0--home\0/r/current/spira\0builder\0"));
+        assert!(!super::is_aeon_cmdline(b"/usr/bin/sleep\0aeon\0"));
+        assert!(!super::is_aeon_cmdline(b"/r/bin/aeonic\0"));
+    }
+
     use super::*;
 
     #[test]

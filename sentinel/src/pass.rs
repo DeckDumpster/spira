@@ -669,7 +669,7 @@ pub fn pid_count(run: &Path, fayth: &str) -> usize {
             .map(|p| p.trim().to_string())
             .filter(|p| !p.is_empty())
             .and_then(|p| std::fs::read(format!("/proc/{p}/cmdline")).ok())
-            .map(|c| String::from_utf8_lossy(&c).contains("aeon.sh"))
+            .map(|c| is_aeon_cmdline(&c))
             .unwrap_or(false);
         if alive {
             n += 1;
@@ -678,6 +678,14 @@ pub fn pid_count(run: &Path, fayth: &str) -> usize {
         }
     }
     n
+}
+
+/// An aeon's /proc cmdline: the bash runner (`… aeon.sh …`) or the Rust binary, whose argv[0]
+/// is `…/aeon` (lib.sh aeon_alive's rule after the cutover).
+pub fn is_aeon_cmdline(c: &[u8]) -> bool {
+    let argv0 = c.split(|b| *b == 0).next().unwrap_or(&[]);
+    let argv0 = String::from_utf8_lossy(argv0);
+    String::from_utf8_lossy(c).contains("aeon.sh") || argv0 == "aeon" || argv0.ends_with("/aeon")
 }
 
 pub fn append_line(p: &Path, line: &str) {
@@ -699,6 +707,14 @@ pub fn is_exec(p: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn aeon_cmdline_matches_the_script_and_the_binary_only() {
+        assert!(super::is_aeon_cmdline(b"bash\0/h/spira/aeon.sh\0builder\0"));
+        assert!(super::is_aeon_cmdline(b"/r/current/bin/aeon\0--home\0/r/current/spira\0builder\0"));
+        assert!(!super::is_aeon_cmdline(b"/usr/bin/sleep\0aeon\0"));
+        assert!(!super::is_aeon_cmdline(b"/r/bin/aeonic\0"));
+    }
+
     use super::*;
 
     #[test]
