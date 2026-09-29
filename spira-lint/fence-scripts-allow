@@ -12,7 +12,6 @@ spira/bd-stdin-lint.sh
 spira/broker-allowlist-lint.sh
 spira/build-fence.sh
 spira/czar-fence.sh
-spira/deps-lint.sh
 spira/gh-intake-lint.sh
 spira/incident-cause-lint.sh
 spira/literal-lint.sh
@@ -26,7 +25,6 @@ spira/test-broker-allowlist-lint.sh
 spira/test-build-fence.sh
 spira/test-czar-lint.sh
 spira/testdb-mode-lint.sh
-spira/test-deps-lint.sh
 spira/test-gh-intake-lint.sh
 spira/test-literal-lint.sh
 spira/test-lockfile-lint.sh

@@ -22,7 +22,7 @@
 # them properly (claims, reopens, landings belong in the log; the mailbox holds only decisions).
 #
 # The taxonomy and call-site wiring are pure source greps and live in
-# test-event-taxonomy.sh (T0) instead — coverage-map row 20,
+# spira-lint's event-taxonomy rule instead — coverage-map row 20,
 # docs/test-plan/cockpit-observability.md.
 #
 # defect: sp-gvm

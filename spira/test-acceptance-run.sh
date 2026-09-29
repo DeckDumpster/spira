@@ -7,36 +7,24 @@
 # confirms (spira/acceptance-ci.sh, acceptance.yml). The phase structure itself —
 # bead-id extraction, phase env, the ready.sh rc-capture idiom, binary/tarball
 # checks — is extracted into spira/acceptance-lib.sh and unit-tested directly in
-# test-acceptance-lib.sh; this file covers only what only exists at the level of
-# the whole script: argument handling, the verdict line, phase wiring, and the
-# few behaviours (deploy gated on install, install output not discarded) that
-# live in acceptance-run.sh itself rather than in the extracted library.
+# test-acceptance-lib.sh.
+#
+# THE TEXTUAL INVARIANTS LIVE IN spira-lint (sp-l8gl3). Everything this suite used to
+# grep for — the verdict line, phase labels, waiver wiring, budgets, _ci_deploy_env on
+# every deploy/uninstall/world/doctor call, --allow-draft on every deploy of the release
+# under test, the aged-install override key being one conf.sh honours — is the
+# `acceptance-run` rule, run by the gate's lint step on every branch without a container.
+# What stays here is what needs a process: the script's argument handling, and the
+# acceptance agent driven for real against a scratch repository.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
 SCRIPT="$HERE/acceptance-run.sh"
 AGENT="$HERE/acceptance-agent.sh"
-
-wantfile()   { grep -qF -- "$2" "$3" 2>/dev/null && ok "$1" || bad "$1" "not found: $2"; }
-wantrefile() { grep -qE -- "$2" "$3" 2>/dev/null && ok "$1" || bad "$1" "pattern not found: $2"; }
-nowantfile() { grep -qE -- "$2" "$3" 2>/dev/null && bad "$1" "still present: $2" || ok "$1"; }
-
 echo "test-acceptance-run.sh"
 
 echo
-echo "1. POSITIVE CONTROL — acceptance-run.sh and acceptance-lib.sh exist and wire together"
-
-if [ -f "$SCRIPT" ] && [ -x "$SCRIPT" ]; then
-    ok "acceptance-run.sh exists and is executable"
-else
-    bad "acceptance-run.sh exists and is executable" "missing or not executable"
-    tl_summary
-fi
-wantfile "acceptance-run.sh sources acceptance-lib.sh" \
-    '. "$HERE/acceptance-lib.sh"' "$SCRIPT"
-
-echo
-echo "2. Usage errors exit non-zero without running a phase"
+echo "1. Usage errors exit non-zero without running a phase"
 
 bash "$SCRIPT" >/dev/null 2>&1 && bad "no-arg invocation exits non-zero" "exit 0" \
     || ok "no-arg invocation exits non-zero"
@@ -44,113 +32,7 @@ bash "$SCRIPT" some-tag >/dev/null 2>&1 && bad "missing --scratch-repo exits non
     || ok "missing --scratch-repo exits non-zero"
 
 echo
-echo "3. PASS/FAIL verdict line"
-
-wantfile "script emits a verdict line"             "verdict:"        "$SCRIPT"
-wantfile "verdict reports FAIL on any failure"     'verdict="FAIL"'  "$SCRIPT"
-wantfile "verdict reports PASS on zero failures"   'verdict="PASS"'  "$SCRIPT"
-
-echo
-echo "4. Positive-control self-check present"
-
-wantfile "positive-control self-check present" \
-    "positive-control: command -v catches missing tool" "$SCRIPT"
-
-echo
-echo "5. Landing is verified by ancestry, not bead status"
-
-wantrefile "ancestry check uses a SHA range" '_base_sha_before\.\.' "$SCRIPT"
-if grep -qE 'bead_status' "$SCRIPT" 2>/dev/null; then
-    bad "landing check does not rely on a bead_status shortcut" "found bead_status in $SCRIPT"
-else
-    ok "landing check does not rely on a bead_status shortcut"
-fi
-
-echo
-echo "6. Phase A, B, C, D labels present"
-
-for _p in A B C D; do
-    wantfile "phase $_p label present" "phase $_p" "$SCRIPT"
-done
-
-echo
-echo "7. --record writes a git note; --waive-upgrade overrides --prev-tag"
-
-wantfile "--record writes a git note"        "git notes --ref=acceptance" "$SCRIPT"
-wantfile "--record note targets refs/tags/"  "refs/tags/"                 "$SCRIPT"
-wantrefile "--waive-upgrade is a recognized flag" \
-    'waive-upgrade\) do_waive_upgrade=1' "$SCRIPT"
-wantrefile "waiver clears prev_tag regardless of --prev-tag" \
-    'do_waive_upgrade.*-eq 1.*&&.*prev_tag=""' "$SCRIPT"
-wantfile "verdict note records the waiver" "upgrade phases waived by operator" "$SCRIPT"
-
-echo
-echo "8. Old unbounded polling loops are gone; staged checks have tight budgets"
-
-nowantfile "positive-control: old unbounded aeon-wait loop is gone" '_aeon_wait' "$SCRIPT"
-nowantfile "positive-control: old unbounded aged-land-wait loop is gone" '_aged_land_wait' "$SCRIPT"
-wantfile "phase A stage 2 budget is configurable (summon window)" \
-    '_a_t2 )) -lt "${SPIRA_ACCEPT_SUMMON_SECS:-180}"' "$SCRIPT"
-wantfile "phase D stage 2 budget is configurable (summon window)" \
-    '_d_t2 )) -lt "${SPIRA_ACCEPT_SUMMON_SECS:-180}"' "$SCRIPT"
-nowantfile "positive-control: sentinel start no longer hardcodes the base unit name" \
-    'start spira-sentinel\.service' "$SCRIPT"
-_a_sentinel_starts="$(grep -c 'systemctl --user start' "$SCRIPT" 2>/dev/null || true)"
-_a_sentinel_resolved="$(grep -c "list-unit-files 'spira-sentinel\*.service'" "$SCRIPT" 2>/dev/null || true)"
-if [ -n "$_a_sentinel_starts" ] && [ "$_a_sentinel_starts" -gt 0 ] \
-    && [ "$_a_sentinel_starts" = "$_a_sentinel_resolved" ]; then
-    ok "every sentinel start resolves the installed unit by its real (instance-suffixed) name"
-else
-    bad "every sentinel start resolves the installed unit by its real (instance-suffixed) name" \
-        "$_a_sentinel_starts start(s), only $_a_sentinel_resolved resolved via list-unit-files"
-fi
-wantfile "stage 5 budget is 120s" '_a_t5 )) -lt 120' "$SCRIPT"
-
-echo
-echo "9. Phase A: bead labels carry plan+scope; claimability uses bd ready"
-
-wantfile "phase A bead creation uses plan-label variable"  '"acceptance,${_a_plan_label}' "$SCRIPT"
-wantfile "phase A bead creation uses scope-label variable" '"acceptance,${_a_plan_label},${_a_scope_label}' "$SCRIPT"
-wantfile "phase A claimability check uses bd ready" 'bd -C "$bd_db" ready' "$SCRIPT"
-wantfile "claimability check filters by plan+scope label" \
-    '--label "${_a_scope_label},${_a_plan_label}"' "$SCRIPT"
-if grep -F 'sentinel --report' "$SCRIPT" 2>/dev/null | grep -qv '^\s*#'; then
-    bad "claimability does not rely on sentinel --report polling" "found sentinel --report in $SCRIPT"
-else
-    ok "claimability does not rely on sentinel --report polling"
-fi
-wantfile "phase A bead-not-claimable error names the predicate" \
-    'builder predicate does not match bead labels' "$SCRIPT"
-_a_scope_snippet="$(grep -A2 -F '_a_scope_label="$(SPIRA_CONF=' "$SCRIPT" 2>/dev/null)"
-if printf '%s' "$_a_scope_snippet" | grep -q 'SPIRA_HOME_REPO'; then
-    bad "phase A scope label is read as the installed services resolve it" \
-        "SPIRA_HOME_REPO forced onto the scope-label read: $_a_scope_snippet"
-else
-    ok "phase A scope label is read as the installed services resolve it"
-fi
-
-# POSITIVE CONTROL: a scope/plan label read gated on a clean install is exactly the
-# defect sp-bn9go fixes — a failed install must not also mislabel the probe bead.
-nowantfile "positive control: label read is not re-gated on a clean install (sp-bn9go)" \
-    '_install_rc" -eq 0 \] && \[ -f "\$_releases/current/spira/conf\.sh"' "$SCRIPT"
-wantfile "label read is gated only on the release conf existing (sp-bn9go)" \
-    'if [ -f "$_releases/current/spira/conf.sh" ]; then' "$SCRIPT"
-
-# ============================================================================
-echo
-echo "10. Phase B: install.sh output is streamed (tee), not discarded"
-# ============================================================================
-
-if grep -E 'env "\$\{_install_env\[@\]\}".*install\.sh.*>/dev/null' "$SCRIPT" 2>/dev/null; then
-    bad "phase B install.sh output not discarded" "found install.sh with >/dev/null"
-else
-    ok "phase B install.sh output not discarded"
-fi
-wantfile "phase A and B share one _phase_env-built _install_env (no per-phase copy)" \
-    '_phase_env _install_env' "$SCRIPT"
-wantfile "phase B installs from prev tarball via _install_from_tarball" \
-    '_install_from_tarball "$_prev_tarball_file"' "$SCRIPT"
-
+echo "2. Phase B: a failing install.sh's output reaches the report"
 SCRATCH="$(mktemp -d)"
 trap 'rm -rf "$SCRATCH"' EXIT INT TERM
 mkdir -p "$SCRATCH/clone"
@@ -167,15 +49,8 @@ _pb_out="$(
 want "fixture: a failing phase B install.sh's output reaches the report" \
     "prev-install-failure-reason" "$_pb_out"
 
-# ============================================================================
 echo
-echo "11. Phase B: deploy is gated on install success"
-# ============================================================================
-
-wantrefile "phase B deploys only when install succeeded" '_prev_install_rc.*-ne 0' "$SCRIPT"
-wantfile "phase B guard names database service not started" \
-    "database service not started" "$SCRIPT"
-
+echo "3. Phase B: the deploy guard names the database service"
 _pg_out="$(
     _prev_install_rc=1
     [ "$_prev_install_rc" -ne 0 ] && \
@@ -185,17 +60,8 @@ _pg_out="$(
 want "fixture: guard names database-not-started when install fails" \
     "database service not started" "$_pg_out"
 
-# ============================================================================
 echo
-echo "12. acceptance-agent.sh exists and drives the deterministic aeon path"
-# ============================================================================
-
-if [ -f "$AGENT" ] && [ -x "$AGENT" ]; then
-    ok "acceptance-agent.sh exists and is executable"
-else
-    bad "acceptance-agent.sh exists and is executable" "missing or not executable at $AGENT"
-fi
-wantfile "acceptance-agent.sh drains stdin"  "cat >/dev/null" "$AGENT"
+echo "4. acceptance-agent.sh drives the deterministic aeon path"
 # THE STUB MUST COMMIT FOR EVERY BEAD, NOT ONCE PER SCRATCH REPO. It wrote the same empty
 # acceptance-probe.txt every time; phase A committed it to the scratch repo's main, so the
 # phase-D bead (same repo, surviving state) found "nothing to commit", closed with no
@@ -229,141 +95,5 @@ _sw_out="$( cd "$_ag_tmp/repo" && env -i PATH="$PATH" HOME="$_ag_tmp" SPIRA_CONF
 is   "acceptance-agent.sh: a sweep session (no BEAD_ID) exits 0" 0 "$_sw_rc"
 want "and reports a finished turn"                             '"type":"result"' "$_sw_out"
 rm -rf "$_ag_tmp"; unset _ag_tmp _sw_out _sw_rc
-wantfile "acceptance-agent.sh closes bead"   "close" "$AGENT"
-
-# ============================================================================
-echo
-echo "13. Upgrade, rollback and aged-install invariants (structural — each requires"
-echo "    a real deploy.sh/systemd/bd round trip only acceptance.yml can drive)"
-# ============================================================================
-
-wantfile "phase B checks .tag sidecar from .tags dir" ".tags/"            "$SCRIPT"
-wantfile "phase B checks SPIRA_PROD updated"          "SPIRA_PROD"        "$SCRIPT"
-wantfile "phase C captures pre-upgrade unit set"      "_units_pre_upgrade"  "$SCRIPT"
-wantfile "phase C captures post-rollback unit set"    "_units_post_rollback" "$SCRIPT"
-wantfile "phase C diffs pre vs post"                  "_unit_diff"        "$SCRIPT"
-wantfile "phase D checks bead count preserved"        "_aged_pre_beads"   "$SCRIPT"
-wantfile "phase D checks memory count preserved"      "_aged_pre_mems"    "$SCRIPT"
-wantfile "phase D runs doctor.sh"                     "_aged_doctor_rc"   "$SCRIPT"
-# THE OVERRIDE MUST BE A KEY THE HARNESS HONOURS. conf.sh refuses a key it does not know
-# ("spira.conf:5: unknown key ACCEPTANCE_AGED_OVERRIDE, ignored"), so an invented key
-# proved nothing about an operator's setting surviving — it was never in force — and its
-# warning replaced the migration line phase D's rollback check looks for.
-_aged_key="$(grep -F '>> "$_aged_conf"' "$SCRIPT" \
-    | sed -n 's/.*printf .\\n\([A-Z_][A-Z0-9_]*\) = .*/\1/p' | head -1)"
-[ -n "$_aged_key" ] \
-    && ok  "phase D writes an operator override into spira.conf ($_aged_key)" \
-    || bad "phase D writes an operator override into spira.conf" "no KEY = line appended to \$_aged_conf"
-_conf_keys="$(env -i PATH="$PATH" HOME="$HOME" SPIRA_CONF=/nonexistent \
-    bash -c '. "$1/conf.sh" >/dev/null 2>&1; printf %s "$SPIRA_CONF_KEYS"' _ "$HERE")"
-case " $_conf_keys " in
-    *" ${_aged_key:-<none>} "*) ok  "the override key is one conf.sh honours" ;;
-    *) bad "the override key is one conf.sh honours" "${_aged_key:-<none>} is not in SPIRA_CONF_KEYS" ;;
-esac
-wantfile "phase D checks operator override survives"  "_aged_override_got" "$SCRIPT"
-
-# THE BOX IS NEVER SOURCELESS. Its user units cannot read the forge (no credential reaches
-# them), so the run stages every release it holds into a local source and points
-# SPIRA_RELEASE_REPO at it in spira.conf; skew's release-currency check reads that.
-wantfile "phase A stages the release under test into the local release source" \
-    '_stage_release_source "$_release_src"' "$SCRIPT"
-wantfile "spira.conf points SPIRA_RELEASE_REPO at it" \
-    "SPIRA_RELEASE_REPO = %s" "$SCRIPT"
-wantrefile "phase B stages the predecessor too" \
-    '_stage_release_source "\$_release_src" "\$_prev_tarball_file"' "$SCRIPT"
-
-# THE RELEASE UNDER TEST IS A DRAFT until it passes, so every deploy of "$tag" must say
-# --allow-draft; deploy.sh refuses a draft otherwise and phases B-D could never pass.
-_draft_less="$(grep -E 'deploy\.sh"? .*"\$tag"' "$SCRIPT" | grep -v -- '--allow-draft' || true)"
-[ -z "$_draft_less" ] \
-    && ok  "every deploy of the release under test passes --allow-draft" \
-    || bad "every deploy of the release under test passes --allow-draft" "$_draft_less"
-wantfile "phase D checks for failed units"            "_aged_failed"      "$SCRIPT"
-wantfile "phase D checks world not halted"            "_aged_world_out"   "$SCRIPT"
-wantfile "phase D rollback-refused names the migration" "migrat"          "$SCRIPT"
-wantfile "aged-install (from, to) pair recorded in git note" "aged-install from=" "$SCRIPT"
-
-# ============================================================================
-echo
-echo "14. --tarball: recognized flag; phase A drives it through _acquire_tarball"
-# ============================================================================
-# _acquire_tarball itself (the download-skip mechanism) is unit-tested in
-# test-acceptance-lib.sh #10, including the positive control proving gh is
-# never invoked when a path is given. This suite covers only the wiring: the
-# flag is parsed, and both the --tarball and the download code paths in
-# acceptance-run.sh call through the same extracted function.
-
-wantrefile "--tarball is a recognized flag" \
-    '--tarball\) *tarball_path=' "$SCRIPT"
-wantfile "phase A: --tarball path acquires via _acquire_tarball" \
-    '_acquire_tarball "$tag" "$tarball_path" ""' "$SCRIPT"
-wantfile "phase A: download path also acquires via _acquire_tarball (one mechanism)" \
-    '_acquire_tarball "$tag" "" "$_tarball_dir"' "$SCRIPT"
-wantfile "phase A: --tarball reports the download as skipped" \
-    "download skipped" "$SCRIPT"
-
-# ============================================================================
-echo
-echo "15. deploy.sh/uninstall.sh/world.sh/doctor.sh see SPIRA_OPERATED=0 (sp-seae6)"
-# ============================================================================
-# These four run straight from THIS checkout, never an activated release, so conf.sh's
-# own SPIRA_CONFIG_BIN resolution finds neither bin/spira-config nor a cargo build here
-# and no config — SPIRA_OPERATED=0 included — is ever read (sp-seae6). Every such
-# invocation must run under _ci_deploy_env, built by acceptance-lib.sh's _ci_env, which
-# points SPIRA_CONFIG_BIN at the release under test's own binary instead.
-
-wantfile "_ci_deploy_env is built once via _ci_env" \
-    '_ci_deploy_env=(); _ci_env _ci_deploy_env "$_conf"' "$SCRIPT"
-
-# POSITIVE CONTROL: a bare invocation of any of the four is exactly the defect this
-# guards — confirm the check below would catch one.
-_pc_bare="$(mktemp)"
-printf 'bash "$HERE/deploy.sh" --allow-draft "$tag"\n' > "$_pc_bare"
-if grep -E 'bash "\$HERE/(deploy|uninstall|world|doctor)\.sh"' "$_pc_bare" | grep -qv '_ci_deploy_env'; then
-    ok "positive-control: the bare-invocation pattern matches an un-wired call"
-else
-    bad "positive-control: the bare-invocation pattern matches an un-wired call" "no match"
-fi
-rm -f "$_pc_bare"
-
-_bare_ci_calls="$(grep -nE 'bash "\$HERE/(deploy|uninstall|world|doctor)\.sh"' "$SCRIPT" | grep -v '_ci_deploy_env' || true)"
-[ -z "$_bare_ci_calls" ] \
-    && ok  "every deploy.sh/uninstall.sh/world.sh/doctor.sh call runs under _ci_deploy_env" \
-    || bad "every deploy.sh/uninstall.sh/world.sh/doctor.sh call runs under _ci_deploy_env" \
-           "$_bare_ci_calls"
-
-_ci_call_count="$(grep -cE '"\$\{_ci_deploy_env\[@\]\}" bash "\$HERE/(deploy|uninstall|world|doctor)\.sh"' "$SCRIPT" || true)"
-[ -n "$_ci_call_count" ] && [ "$_ci_call_count" -ge 11 ] \
-    && ok  "at least 11 calls (one per phase A/B/C/D deploy, uninstall, world, doctor site) are wired" \
-    || bad "at least 11 calls (one per phase A/B/C/D deploy, uninstall, world, doctor site) are wired" \
-           "found $_ci_call_count"
-
-# ============================================================================
-echo
-echo "16. Every \"\$1/conf.sh\" read runs under _ci_deploy_env (sp-d9j74)"
-# ============================================================================
-# Phase B's .tag-sidecar and SPIRA_PROD checks recompute conf.sh's values in a bare
-# subshell to see what deploy.sh saw. A read with no _ci_deploy_env resolves conf.sh's
-# own default search instead of the scratch conf deploy.sh was pinned to, and finds no
-# config there — so the checks compare against a value conf.sh never actually produced.
-
-# POSITIVE CONTROL: an unwired read of conf.sh is exactly the defect this guards —
-# confirm the check below would catch one.
-_pc_bare_conf="$(mktemp)"
-cat > "$_pc_bare_conf" <<'EOF'
-_x="$(bash -c '. "$1/conf.sh" 2>/dev/null; printf "%s" "${SPIRA_RELEASES:-}"' -- "$HERE" 2>/dev/null || true)"
-EOF
-if grep -nE '\. "\$1/conf\.sh"' "$_pc_bare_conf" | grep -qv '_ci_deploy_env'; then
-    ok "positive-control: an unwired conf.sh read matches the check below"
-else
-    bad "positive-control: an unwired conf.sh read matches the check below" "no match"
-fi
-rm -f "$_pc_bare_conf"
-
-_bare_conf_reads="$(grep -nE '\. "\$1/conf\.sh"' "$SCRIPT" | grep -v '_ci_deploy_env' || true)"
-[ -z "$_bare_conf_reads" ] \
-    && ok  "every \$HERE/conf.sh read runs under _ci_deploy_env" \
-    || bad "every \$HERE/conf.sh read runs under _ci_deploy_env" \
-           "$_bare_conf_reads"
 
 tl_summary
