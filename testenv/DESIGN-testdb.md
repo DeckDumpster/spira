@@ -11,7 +11,7 @@ written before the code, from the fault's evidence and from every caller of
 **A suite that needs a real `bd` against a Dolt server gets a server of its own.** No
 fixture shares a server process, a data directory, a lock or a CPU budget with any other
 fixture, so a full corpus at maxpar 16 is bound by CPU, memory and IO — never by the test
-database (per Ryan, 2026-09-29: every stage is CPU/memory/IO bound, never Dolt-bound).
+database (the operator's rule: every stage is CPU/memory/IO bound, never Dolt-bound).
 
 ### 1.1 The fault this replaces (evidence)
 
