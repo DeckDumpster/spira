@@ -235,6 +235,13 @@ mod tests {
             o
         }
     }
+    /// Each test its own scratch dir: the selector names its files `.<stem>.<pid>`, and
+    /// parallel tests share one pid, so a shared dir let one test delete another's file.
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("aeon-claim-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
     struct FakeSeam(String);
     impl Seam for FakeSeam {
         fn call(&self, func: &str, _args: &[String]) -> Out {
@@ -258,7 +265,7 @@ mod tests {
 
     #[test]
     fn ready_set_goes_on_stdin_and_files_carry_the_rest() {
-        let dir = std::env::temp_dir();
+        let dir = scratch("t1");
         let e = FakeExec {
             calls: Mutex::new(vec![]),
             epics: Out::ok("{\"prio\":{},\"started\":[]}"),
@@ -281,7 +288,7 @@ mod tests {
 
     #[test]
     fn lookup_or_rank_failure_is_claim_error_not_idle() {
-        let dir = std::env::temp_dir();
+        let dir = scratch("t2");
         let e = FakeExec { calls: Mutex::new(vec![]), epics: Out::fail(2, "x"), tier: Out::ok(""), rank: Out::ok("") };
         let s = FakeSeam(String::new());
         let g = FakeGit(0);
@@ -301,7 +308,7 @@ mod tests {
 
     #[test]
     fn a_branch_not_ahead_is_not_resumable() {
-        let dir = std::env::temp_dir();
+        let dir = scratch("t3");
         let e = FakeExec { calls: Mutex::new(vec![]), epics: Out::ok("{}"), tier: Out::ok("sp-a||svc|0|0|2\n"), rank: Out::ok("0\t0\t2\t1\tt\tsp-a\t\n") };
         let s = FakeSeam("svc\t/r\torigin/main\n".into());
         let g = FakeGit(0);
