@@ -197,6 +197,28 @@ pub fn header_line(
     out
 }
 
+/// `slots_line` — live/ceiling/free aeon slots. Fixed like the tokens rows so a long MAIL
+/// section cannot push it off a short pane; the builder/lane split shows only when a lane cap
+/// is declared.
+pub fn slots_line(snap: &Snapshot) -> String {
+    let free = snap.q("SP_SLOTS_FREE");
+    let col = match free {
+        "?" => format!("{BAD}{B}"),
+        "0" => WARN.to_string(),
+        _ => OK.to_string(),
+    };
+    let pool = snap.q("SP_SLOTS_POOL");
+    let split = match (snap.get("SP_SLOTS_LANES_CAP").filter(|c| !c.is_empty()), pool.parse::<i64>(), snap.q("SP_SLOTS_LANES_CAP").parse::<i64>()) {
+        (Some(_), Ok(p), Ok(l)) => format!("  {DIM}(builders {}-{p}, lanes 0-{l}){RST}", (p - l).max(0)),
+        _ => String::new(),
+    };
+    format!(
+        " {DIM}SLOTS{RST}   {B}{}/{}{RST}  {col}{free} free{RST}{split}",
+        snap.q("SP_SLOTS_LIVE"),
+        snap.q("SP_SLOTS_CEILING"),
+    )
+}
+
 /// `tokens_section` — the account's spend, split by half. `spark_*` are pre-rendered
 /// sparkline strings (the original shells to `python3`; this crate does not draw them from
 /// raw history here — see `../DESIGN.md` Decisions).

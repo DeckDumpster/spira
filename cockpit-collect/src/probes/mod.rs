@@ -496,7 +496,7 @@ pub fn slots_keys() -> Kv {
     let mut out = Kv::new();
     let home = io::home_dir();
     let live = io::lib_call(&home, "aeons_live_total", &[]).unwrap_or_else(|| "?".to_string());
-    push(&mut out, "SP_SLOTS_LIVE", live);
+    push(&mut out, "SP_SLOTS_LIVE", live.clone());
 
     // SPIRA_MAX_AEONS is never set into this process's own environment (io::NEVER_EXPORTED)
     // — read io::max_aeons() instead of std::env::var directly.
@@ -511,6 +511,15 @@ pub fn slots_keys() -> Kv {
     }
     let ceiling = std::env::var("SPIRA_MAX_LIVE_AEONS").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or(pool + lt);
     push(&mut out, "SP_SLOTS_CEILING", ceiling.to_string());
+
+    // A failed live read must never resolve to a reassuring free count.
+    let free = match live.trim().parse::<i64>() {
+        Ok(l) => (ceiling - l).max(0).to_string(),
+        Err(_) => "?".to_string(),
+    };
+    push(&mut out, "SP_SLOTS_FREE", free);
+    push(&mut out, "SP_SLOTS_POOL", pool.to_string());
+    push(&mut out, "SP_SLOTS_LANES_CAP", std::env::var("SPIRA_LANES_MAX_LIVE").unwrap_or_default());
 
     let lanes_live = io::lib_call(&home, "aeons_live_lanes", &[]).unwrap_or_else(|| "?".to_string());
     push(&mut out, "SP_SLOTS_LANES_LIVE", lanes_live);
