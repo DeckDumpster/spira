@@ -310,7 +310,8 @@ echo "queue.local — land then refresh, then rollback by ref move:"
 # scratch SPIRA_HOME — no stand-in for any of the four.
 LSH="$TMP/local-spira"; mkdir -p "$LSH"
 cp "$HERE"/skew.sh "$HERE"/activate.sh "$HERE"/build-tarball.sh \
-   "$HERE"/lib.sh "$HERE"/conf.sh "$HERE"/mail.sh "$LSH/" 2>/dev/null
+   "$HERE"/lib.sh "$HERE"/conf.sh "$HERE"/mail.sh "$HERE"/suite-covers.sh "$HERE"/lc.sh \
+   "$HERE"/lifecycle-cert.sh "$LSH/" 2>/dev/null
 
 LREPO="$TMP/local-repo"
 git init -q -b trunk "$LREPO"

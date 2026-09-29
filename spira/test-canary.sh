@@ -29,6 +29,18 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 tl_subshell_safe
 
+# THE STAGE CANNOT RESOLVE A COMPILED BINARY ITSELF: its SPIRA_REPO is a synthetic checkout
+# with no bin/, and testenv's SPIRA_ARTIFACTS applies only to the checkout it built
+# (spira_artifacts_apply). So pin every binary canary.sh and the sentinel reach for — the
+# sentinel itself, the strand and aeon binaries its checks call, landing-pass, and the
+# spira-config that reads spira.toml — to what THIS checkout resolves, exported so the
+# stage inherits them (conf.sh keeps an inherited SPIRA_*_BIN).
+eval "$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1
+    for v in SPIRA_CONFIG_BIN SPIRA_SENTINEL_BIN SPIRA_STRAND_BIN SPIRA_AEON_BIN \
+             SPIRA_LANDING_PASS_BIN SPIRA_CLAIM_BIN; do
+        [ -n "${!v:-}" ] && [ -x "${!v}" ] && printf "export %s=%q\n" "$v" "${!v}"
+    done' _ "$HERE")"
+
 isnt()   { [ "$2" != "$3" ] && ok "$1" || bad "$1" "did not want [$2] got [$3]"; }
 exists() { [ -e "$2" ] && ok "$1" || bad "$1" "expected file/dir: $2"; }
 isexec() { [ -x "$2" ] && ok "$1" || bad "$1" "expected executable: $2"; }
@@ -205,8 +217,7 @@ printf '\nT6: canary-worker claims and closes a bead\n'
 # ─── T7: full end-to-end canary ───────────────────────────────────────────────
 printf '\nT7: full canary (sentinel + landing)\n'
 (
-    # canary.sh runs "$SPIRA_SENTINEL_BIN"; resolve it as conf.sh does (spira_bin).
-    export SPIRA_SENTINEL_BIN="${SPIRA_SENTINEL_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; printf %s "${SPIRA_SENTINEL_BIN:-}"' _ "$HERE")}"
+    # canary.sh runs "$SPIRA_SENTINEL_BIN" and "$SPIRA_LANDING_PASS_BIN": pinned at the top.
     # Capture what canary prints; exit code is what matters.
     out="$(bash "$HERE/canary.sh" 2>&1)"
     rc=$?
