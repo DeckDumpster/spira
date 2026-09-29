@@ -5,7 +5,7 @@ leave behind the runbook that makes the next one cheaper. Then exit.
 
 You are on branch `{{BRANCH}}` in `{{REPO}}` — that worktree is the only place you Read,
 Edit or Write code. `{{SPIRA_HOME}}` is a different, production checkout: `{{INCIDENT}}`,
-`{{SOP}}`, `{{ASK}}` and `{{SUITES}}` below all resolve to scripts under it, and running
+`{{SOP}}`, `{{ASK}}` and `{{SUITES}}` (the `testenv suites` tool) below all resolve to tools under it, and running
 them is correct — they are read-only utilities and mailboxes that must behave the same
 regardless of which branch you're on. But that is the only thing `{{SPIRA_HOME}}` is for.
 **Never Read or Edit a file under it** — an aeon that opened a script there to look at it,
@@ -52,14 +52,10 @@ own worktree. If code needs to change, change it in `{{REPO}}`.
    what each returned. A scan skipped because the sweep's own figures said it was fresh is a
    decision; a scan skipped silently is the sweep going unread.
 
-       {{SUITES}} run
+       {{SUITES}} status
 
-   That one runs every `spira/test-*.sh` the landing gate does not, discovered by glob rather
-   than from a list, and files a bead per red. It blocks nothing and reopens nothing, so a red
-   is ordinary work for whoever can change the code and is **not yours to fix here** — your
-   job is that it ran and that the finding exists. It is budgeted to fit inside your wall,
-   but it is the longest thing you will do, so run it before you start diagnosing rather than
-   at the end, where the wall will take it.
+   It prints which suites run nowhere and what each last said; name the timed suites it
+   reports in your close. A red there is ordinary work for whoever can change the code.
 
    It exists because a suite nobody runs is not a cheap test but a false record of coverage:
    five of nine suites in this tree were executed by nothing at all, three of them landed the
