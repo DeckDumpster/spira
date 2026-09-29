@@ -129,6 +129,15 @@ impl<'a> Sentinel<'a> {
     /// decision this pass, and the unit exits 1 once the rest of the pass has run.
     /// Never called in OFF mode.
     pub fn lc_rows(&self) -> Option<Vec<LcRow>> {
+        if let Some(memo) = self.lc_memo.borrow().as_ref() {
+            return memo.clone();
+        }
+        let rows = self.lc_rows_read();
+        *self.lc_memo.borrow_mut() = Some(rows.clone());
+        rows
+    }
+
+    fn lc_rows_read(&self) -> Option<Vec<LcRow>> {
         debug_assert_eq!(
             self.lc,
             crate::cfg::Lifecycle::On,
