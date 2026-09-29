@@ -271,7 +271,7 @@ parse args ─ resolve repo, landref, tree ─ acquire worktree (in place | scra
       └ --artifacts DIR: validated right after the worktree (rc 2), hashed into the key,
         staged to <wt>/target/prebuilt here instead of building  ─ SPIRA_ARTIFACTS=…/prebuilt
   ─ orphan sweeps ─ claim owner file ─ testenv.sh up / probe
-  ─ configure, suspend loom+cockpit units, install  (skippable)
+  ─ configure, suspend loom+cockpit+queue-watch units, install  (skippable)
   ─ requirements check (skip-req records) ─ shared testdb baseline
   ─ schedule: exclusive first, then LPT; maxpar; PSI pause; per-suite timeout
   ─ faults: container death, exec storm, user-account loss → reclassify, rc 2
@@ -313,7 +313,10 @@ uid 1001, `XDG_RUNTIME_DIR=/run/user/1001`, `CARGO_HOME=/var/spira/cargo`,
 * **Install** (unless `SPIRA_BATCH_SKIP_INSTALL`): `configure.sh` with
   `CONFIGURE_PROD=/workspace/spira CONFIGURE_MAX_AEONS=1 CONFIGURE_MAX_LIVE_AEONS=1
   CONFIGURE_LOOM_ADDR=127.0.0.1:7300 CONFIGURE_DOLT_DATA=`; `ctrl.sh suspend
-  spira-loom|spira-cockpit --reason ... --owner sp-fud1`; `systemd/install.sh <instance>`
+  spira-loom|spira-cockpit|spira-watch-queue-watch --reason ... --owner sp-fud1` (the
+  queue-watch watcher execs `/workspace/bin/queue-watch`, which the container never has; a
+  CPUQuota on its unit hid the crash loop from install's is-active check until quotas were
+  retired, sp-b4oct); `systemd/install.sh <instance>`
   with `SPIRA_PROD=/workspace/spira SPIRA_INSTALL_FORCE=1 SPIRA_RUN=/tmp/spira-batch-<i>
   SPIRA_TESTDB_DATA=/tmp/spira-batch-<i>/testdb`. Any failure → rc 3.
 * **Requirements**: each distinct `# requires:` token (bar `testenv`) is checked once with
