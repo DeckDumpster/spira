@@ -9,6 +9,22 @@ use std::path::Path;
 use std::time::Duration;
 
 // Baked into the image; must agree with the Containerfile (and testenv.sh).
+/// Units suspended (ctrl.sh) before install, each with the reason it cannot run in the
+/// container. Loom and the cockpit collector need a rustc the image does not have
+/// (sp-fud1). The queue-watch watcher execs `/workspace/bin/queue-watch`, which the
+/// container never has (artifacts live under `target/<profile>`), so it exits 127 on every
+/// start: a CPUQuota on its unit used to keep it `active` long enough to pass install's
+/// is-active check; with quotas retired (sp-b4oct) it is seen in `activating` (auto-restart)
+/// and install refuses, so it is suspended like the other Rust-backed units.
+pub const SUSPENDED_UNITS: [(&str, &str); 3] = [
+    ("spira-loom", "image rustc too old for lockfile v4"),
+    ("spira-cockpit", "image rustc too old for lockfile v4"),
+    (
+        "spira-watch-queue-watch",
+        "renders /workspace/bin/queue-watch, which the container does not have",
+    ),
+];
+
 pub const SPIRA_USER: &str = "spirauser";
 pub const USER_RUNTIME: &str = "/run/user/1001";
 pub const CONTAINER_CARGO: &str = "/var/spira/cargo";
@@ -214,7 +230,7 @@ impl<'a> Session<'a> {
         self.as_user(&["bash", "/workspace/spira/configure.sh"], env)
     }
 
-    pub fn suspend_request(&self, unit: &str) -> ExecRequest {
+    pub fn suspend_request(&self, unit: &str, reason: &str) -> ExecRequest {
         let mut env = vec![
             kv("XDG_RUNTIME_DIR", USER_RUNTIME),
             kv("SPIRA_RUN", self.batch_run()),
@@ -227,7 +243,7 @@ impl<'a> Session<'a> {
                 "suspend",
                 unit,
                 "--reason",
-                "image rustc too old for lockfile v4",
+                reason,
                 "--owner",
                 "sp-fud1",
             ],
@@ -250,7 +266,8 @@ impl<'a> Session<'a> {
         )
     }
 
-    /// configure, suspend the Rust-backed units the image cannot build, install.
+    /// configure, suspend the Rust-backed units the container cannot run ([`SUSPENDED_UNITS`]),
+    /// install.
     pub fn install(&self, log: &dyn Fn(&str)) -> Result<(), Fault> {
         log(&format!("configure inside {}", self.name));
         let out = self.rt.exec(&self.configure_request());
@@ -262,8 +279,8 @@ impl<'a> Session<'a> {
             "suspending Rust-backed units inside {} (image rustc too old for lockfile v4)",
             self.name
         ));
-        for unit in ["spira-loom", "spira-cockpit"] {
-            if !self.rt.exec(&self.suspend_request(unit)).ok() {
+        for (unit, reason) in SUSPENDED_UNITS {
+            if !self.rt.exec(&self.suspend_request(unit, reason)).ok() {
                 return Err(Fault::Install(format!(
                     "ctrl suspend failed for {unit} — harness fault"
                 )));
@@ -644,8 +661,9 @@ mod tests {
             ["bash", "/workspace/spira/ctrl.sh", "suspend", "spira-loom"]
         );
         assert_eq!(argv[2][3], "spira-cockpit");
+        assert_eq!(argv[3][3], "spira-watch-queue-watch");
         assert_eq!(
-            argv[3],
+            argv[4],
             vec!["bash", "/workspace/systemd/install.sh", "abc123"]
         );
         let execs = rt.execs.lock().unwrap();
@@ -662,13 +680,13 @@ mod tests {
             Some("/workspace/spira")
         );
         assert_eq!(execs[0].env_value("CONFIGURE_DOLT_DATA"), Some(""));
-        assert_eq!(execs[3].env_value("SPIRA_INSTALL_FORCE"), Some("1"));
+        assert_eq!(execs[4].env_value("SPIRA_INSTALL_FORCE"), Some("1"));
         assert_eq!(
-            execs[3].env_value("SPIRA_RUN"),
+            execs[4].env_value("SPIRA_RUN"),
             Some("/tmp/spira-batch-abc123")
         );
         assert_eq!(
-            execs[3].env_value("SPIRA_TESTDB_DATA"),
+            execs[4].env_value("SPIRA_TESTDB_DATA"),
             Some("/tmp/spira-batch-abc123/testdb")
         );
     }
