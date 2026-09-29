@@ -130,8 +130,8 @@ if ! inv="$(bash spira/inventory.sh 2>&1)"; then
 fi
 
 # BINARY-PATH FENCE (sp-zv7j4). conf.sh's spira_bin is the one resolver a binary path
-# is meant to go through; a hardcoded target/release/ or bin/spira-<name> literal is a
-# second one, invisible until the tree it assumes is not the one in front of it.
+# is meant to go through; a hardcoded build-output path is a second one, invisible until
+# the tree it assumes is not the one in front of it.
 if ! bpf="$(bash spira/binary-path-fence.sh 2>&1)"; then
     printf '%s\n' "$bpf" >&2
     exit 1

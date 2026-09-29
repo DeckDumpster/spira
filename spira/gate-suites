@@ -79,10 +79,9 @@ spira/test-sop-gate-wired.sh
 spira/test-literal-lint.sh
 
 # THE BINARY-PATH FENCE'S OWN POSITIVE CONTROL (sp-zv7j4). conf.sh's spira_bin is the one
-# resolver a binary path is meant to go through; a hardcoded target/release/ or
-# bin/spira-<name> literal is a second one, invisible until the tree it assumes is not the
-# one in front of it. Same shape as the literal-lint suite above: plant, require the name,
-# withdraw, only then trust the silence.
+# resolver a binary path is meant to go through; a hardcoded build-output path is a second
+# one, invisible until the tree it assumes is not the one in front of it. Same shape as the
+# literal-lint suite above: plant, require the name, withdraw, only then trust the silence.
 spira/test-binary-path-fence.sh
 
 # THE SCRATCH-FENCE'S OWN POSITIVE CONTROL. scratch-fence.sh refuses sp-* notes and
