@@ -12,6 +12,10 @@ path = "src/lib.rs"
 name = "testenv"
 path = "src/main.rs"
 
+[[bin]]
+name = "bd-meter"
+path = "src/bd_meter_main.rs"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

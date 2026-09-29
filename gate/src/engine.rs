@@ -85,6 +85,9 @@ struct State {
     harness_h: String,
     pass_suites: String,
     caller: String,
+    /// The gate-run TSD row's (telemetry.rs): the mode in force and the branch's shape.
+    gate_mode: String,
+    branch_type: String,
 }
 
 pub struct Trial<'w, W: World> {
@@ -287,6 +290,7 @@ impl<'w, W: World> Trial<'w, W> {
                 GateMode::Suites
             }
         };
+        self.s.gate_mode = mode.as_str().into();
         // A unit-mode PASS is not a suites-mode PASS: the mode is part of what was judged.
         // Suites mode hashes the command alone, so today's keys are unchanged.
         let key_cmd = match mode {
@@ -331,8 +335,9 @@ impl<'w, W: World> Trial<'w, W> {
         let lock_wait: u64 = key::digits(ctx.var("SPIRA_GATE_LOCK_WAIT"))
             .unwrap_or_else(|| key::digits(&timeout).unwrap_or(2700) * 4);
 
-        // HOST-WIDE ADMISSION (fences-only certification takes no slot).
-        if suites_mode != "off" {
+        // HOST-WIDE ADMISSION (fences-only certification takes no slot — unless the round
+        // named suites against this bead: the re-entry phase runs them, sp-p3srm).
+        if suites_mode != "off" || !ejected.trim().is_empty() {
             let dir = PathBuf::from(format!("{}/gate-admission", self.s.run));
             w.mkdir_p(&dir);
             let t0 = w.now();
@@ -435,9 +440,21 @@ impl<'w, W: World> Trial<'w, W> {
         self.s.filelist = w.temp_file(&format!("{list}\n"));
 
         // THE COMPOSITION: what the branch touches decides what runs.
-        let comp = self.composition(mode, &ctx, &repo, &base, &rev, &tree, &ejected);
+        let comp = self.composition(mode, &ctx, &repo, &base, &rev, &tree);
+        // THE RE-ENTRY CHECK: the suites the round named, against the tree under test.
+        let re = compose::reentry(&ejected, |s| w.exists(&tree.join("spira").join(s)));
         self.s.compose = comp.label();
+        self.s.branch_type = crate::telemetry::branch_type(&crate::telemetry::shape(
+            w, mode, &comp, &ctx, &repo, &base, &rev, &tree,
+        ))
+        .into();
+        if !re.required.is_empty() {
+            self.s.compose.push_str("+reentry");
+        }
         w.eprint(&describe(&comp));
+        if let Some(line) = describe_reentry(&self.s.bead, &re) {
+            w.eprint(&line);
+        }
         let jobs = compose::jobs(
             key::digits(&ctx.host_cores).unwrap_or(1),
             self.admission_par(&ctx),
@@ -502,6 +519,7 @@ impl<'w, W: World> Trial<'w, W> {
             &timeout,
             &cmd,
             jobs,
+            &re.required,
             "",
         );
         self.s.phases.extend(ph);
@@ -513,6 +531,15 @@ impl<'w, W: World> Trial<'w, W> {
             );
         }
         if rc == 0 {
+            let missing = compose::unproven(&out, &re.required);
+            if !missing.is_empty() {
+                self.s.suite = missing[0].clone();
+                return v(NOVERDICT, "reentry-unproven", format!(
+                    "gate: the round returned {} with suites named against it, and this gate did not see them pass: {}\ngate: each must report ok (a skip, a deferral or no line proves nothing) before the bead re-certifies.\n{}",
+                    if self.s.bead.is_empty() { "this branch" } else { &self.s.bead },
+                    missing.join(" "),
+                    parse::tail_bytes(&out, 4000)));
+            }
             let ran = parse::ran_suites(&out);
             let pass_suites = if ran.is_empty() {
                 "-".to_string()
@@ -579,6 +606,7 @@ impl<'w, W: World> Trial<'w, W> {
                 &timeout,
                 &cmd,
                 jobs,
+                &re.required,
                 "base-",
             );
             self.s.phases.extend(ph);
@@ -637,7 +665,6 @@ impl<'w, W: World> Trial<'w, W> {
         base: &str,
         rev: &str,
         tree: &Path,
-        ejected: &str,
     ) -> Composition {
         if mode == GateMode::Suites {
             return Composition::Suites { why: "mode".into() };
@@ -654,7 +681,6 @@ impl<'w, W: World> Trial<'w, W> {
             }
         };
         let forces = Forces {
-            ejected,
             gate_all: ctx.var("SPIRA_GATE_ALL") == "1",
         };
         let members = self.members(ctx, tree);
@@ -824,6 +850,25 @@ impl<'w, W: World> Trial<'w, W> {
                     meter_suffix(&self.s.compose, &self.s.phases)
                 ),
             );
+            let run = crate::telemetry::GateRun {
+                repo: self.s.repo_name.clone(),
+                branch: self.a.branch.clone(),
+                bead: self.s.bead.clone(),
+                caller: self.s.caller.clone(),
+                status: outcome(vd.status).into(),
+                rc: vd.status,
+                reason: vd.reason.clone(),
+                waited_secs: self.s.waited,
+                ran_secs: ran,
+                gate_mode: self.s.gate_mode.clone(),
+                compose: self.s.compose.clone(),
+                branch_type: self.s.branch_type.clone(),
+                phases: meter_suffix(&self.s.compose, &self.s.phases)
+                    .split_once(" phases=")
+                    .map(|(_, p)| p.to_string())
+                    .unwrap_or_default(),
+            };
+            crate::telemetry::append(w, &self.s.run, &w.utc(), &run);
             let y = self.home("yield.sh");
             if w.readable(&y) {
                 if vd.status == PASS {
@@ -900,6 +945,32 @@ pub fn describe(c: &Composition) -> String {
     }
 }
 
+/// The line the trial prints when the round named suites against the bead.
+pub fn describe_reentry(bead: &str, r: &compose::Reentry) -> Option<String> {
+    if r.required.is_empty() && r.gone.is_empty() && r.invalid.is_empty() {
+        return None;
+    }
+    let who = if bead.is_empty() { "this branch" } else { bead };
+    let mut s =
+        format!(
+        "gate: re-entry — the round named suites against {who}; each must pass in this gate: {}",
+        if r.required.is_empty() { "-".to_string() } else { r.required.join(" ") }
+    );
+    if !r.gone.is_empty() {
+        s.push_str(&format!(
+            " (no longer on the tree, nothing to run: {})",
+            r.gone.join(" ")
+        ));
+    }
+    if !r.invalid.is_empty() {
+        s.push_str(&format!(
+            " (not suite names, ignored: {})",
+            r.invalid.join(" ")
+        ));
+    }
+    Some(s)
+}
+
 /// Run a composition's phases in order, each under what is left of `timeout`, stopping at
 /// the first non-zero status. Returns (status, the phases' output joined, the phase walls).
 #[allow(clippy::too_many_arguments)]
@@ -911,6 +982,7 @@ pub fn run_composed<W: World>(
     timeout: &str,
     cmd: &str,
     jobs: u64,
+    reentry: &[String],
     prefix: &str,
 ) -> (i32, String, Vec<(String, u64)>) {
     let budget = key::digits(timeout);
@@ -927,13 +999,30 @@ pub fn run_composed<W: World>(
     let t = w.now();
     let (rc, mut out) = w.run_gate(tree, env, &left(), cmd);
     phases.push((format!("{prefix}{first}"), w.now().saturating_sub(t)));
-    let Composition::Unit { crates, .. } = comp else {
-        return (rc, out, phases);
-    };
     if rc != 0 || w.signalled() {
         return (rc, out, phases);
     }
-    for (name, c) in compose::unit_commands(crates, jobs) {
+    let mut steps: Vec<(&str, String)> = match comp {
+        Composition::Unit { crates, .. } => compose::unit_commands(crates, jobs).into(),
+        _ => Vec::new(),
+    };
+    // THE RE-ENTRY PHASE, last: whatever of the named suites the phases before did not show
+    // passing (all of them after a unit or fences gate or suites-off; only those the gate
+    // string's budget deferred or skipped after a suites gate).
+    let mut reentry_done = false;
+    loop {
+        let (name, c) = if !steps.is_empty() {
+            steps.remove(0)
+        } else if !reentry_done {
+            reentry_done = true;
+            let still = compose::unproven(&out, reentry);
+            if still.is_empty() {
+                break;
+            }
+            ("reentry", compose::reentry_command(&still))
+        } else {
+            break;
+        };
         if budget.is_some_and(|b| w.now().saturating_sub(start) >= b) {
             out.push_str(&format!(
                 "\ngate: SPIRA_GATE_TIMEOUT ({timeout}s) spent before the {name} phase"
@@ -950,9 +1039,7 @@ pub fn run_composed<W: World>(
             out.push_str(&o);
         }
         if r != 0 {
-            out.push_str(&format!(
-                "\ngate: unit phase '{name}' failed (exit {r}): {c}"
-            ));
+            out.push_str(&format!("\ngate: phase '{name}' failed (exit {r}): {c}"));
             return (r, out, phases);
         }
         if w.signalled() {

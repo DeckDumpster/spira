@@ -34,6 +34,7 @@ members = [
     "aeon",
     "gate",
     "testkit",
+    "intent-report",
 ]
 resolver = "2"
 

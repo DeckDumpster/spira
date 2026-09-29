@@ -8,6 +8,7 @@ pub mod key;
 pub mod parse;
 pub mod ports;
 pub mod real;
+pub mod telemetry;
 
 #[cfg(test)]
 mod tests;
