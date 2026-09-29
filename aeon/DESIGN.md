@@ -243,81 +243,91 @@ aeon.sh exported them: `SPIRA_AEON`, `BEADS_ACTOR=aeon-<name>`, `GIT_{AUTHOR,COM
 
 ## 3. Schema (Rust types)
 
+Every type below is in the crate as written here (module in brackets).
+
 ```rust
+// [run] how the binary was invoked, and why the armed region stopped early
 enum Mode { Claim, DryRun, Sweep { prompt: Option<String> } }
+enum Abort { Die(String) /* FATAL, rc 1 */, Exit(i32), Signal(i32) /* rc 128+sig */ }
 
-/// conf.sh's resolution, captured once through the seam (§5).
+// [seam] conf.sh's resolution, captured once through `_aeon_snapshot`
 struct Snapshot {
-    env: BTreeMap<String, String>,        // exported environment after sourcing lib.sh + fayth
-    vars: BTreeMap<String, String>,       // fixed list of shell variables (exported or not)
-    ready_args: Vec<String>,              // READY_ARGS, the sentinel's own query
-    claim_exclude: String,                // fayth_exclude <fayth> <FAYTH_EXCLUDE_LABELS>
+    env: BTreeMap<String, String>,   // conf.sh's EXPORTED environment (the children's base)
+    vars: BTreeMap<String, String>,  // SNAPSHOT_VARS: set shell variables, exported or not
+    ready_args: Vec<String>,         // READY_ARGS — the sentinel's own query, never copied
+    claim_exclude: String,           // fayth_exclude <fayth> <FAYTH_EXCLUDE_LABELS>
 }
 
-/// The persona, as its .fayth declares it (FAYTH_* after sourcing).
-struct Fayth {
-    name: String, labels: String, exclude_labels: String, max_concurrent: u32,
-    elastic: bool, lease_minutes: Option<u32>, heartbeat_seconds: u64,
-    timeout_seconds: Option<u64>, memory_prefixes: String, statute_core: String,
-    tools: String, project_instructions: String, system_prompt: SystemPrompt /*Append|Replace*/,
-    sop_required: bool, groom_escalation_check: bool, graph_only: bool,
-}
+// [conf] the persona (FAYTH_* after sourcing the .fayth) and a typed view of conf.sh
+struct Fayth { name, labels, exclude_labels: String, max_concurrent: u32, elastic: bool,
+    lease_minutes: Option<u32> /* 10 */, heartbeat_seconds: u64 /* 30 */,
+    timeout_seconds: Option<u64>, memory_prefixes /* "law-" */, statute_core,
+    tools /* "Bash,Read,Edit,Write,Glob,Grep" */, project_instructions: String,
+    system_prompt: SystemPrompt /* Append | Replace */, sop_required: bool,
+    groom_escalation_check: bool, graph_only: bool }
+struct Conf { v: BTreeMap<String, String>, home: PathBuf, run: PathBuf }
 
-/// Everything conf.sh resolved that the aeon reads (typed view of Snapshot.vars).
-struct Conf { home, run, db, bd, mail, wiki, chamber_overlay, testdb_lib, testdb_port,
-              world_stop_label, ask_label, submitted_label, scope_label, repo, landstate,
-              thrash_minutes: u64, thrash_streak_cap: u64, brief_keep_recurrences,
-              brief_notes_max_chars, spike_dir, spike_paths, maechen_max_beads,
-              maechen_remedy_label, statute_core, agent, lc_bin, work_bin, claim_bin,
-              toml_file, max_aeons: Option<u32>, verdict_window, eviction_escalate_at,
-              claim_retries, claim_retry_delay_s, bd_timeout_s, bdq_conn_retries, ... }
+// [bd] a bd row (show / ready / update --claim); unknown fields ignored
+#[derive(Deserialize)] struct BeadRow { id: String, status: Option<String>,
+    labels: Option<Vec<String>>, issue_type: Option<String>, dependencies: Option<Vec<Dep>>,
+    close_reason: Option<String>, created_by: Option<String> }
+#[derive(Deserialize)] struct Dep { dependency_type: Option<String>,
+    #[serde(rename = "type")] typ: Option<String> }   // show and list spell it differently
 
-/// A bd row (show / ready / update --claim); unknown fields ignored.
-#[derive(Deserialize)]
-struct BeadRow { id: String, status: Option<String>, labels: Vec<String>,
-                 issue_type: Option<String>, dependencies: Vec<Dep>,
-                 close_reason: Option<String>, created_by: Option<String>,
-                 parent: Option<String>, priority: Option<i64> }
-#[derive(Deserialize)]
-struct Dep { #[serde(alias="dependency_type")] r#type: Option<String>, .. }
+// [claim]
+struct TierLine { id, branch, repo, eprio, estarted, bprio: String } // "id|branch|repo|…"
+enum Selection { Ranked { ids: Vec<String>, resumable: Vec<String>, tier: Option<String> },
+                 ClaimError { log: String, ledger: String } }
+struct Claimed { id: String, repo: String, row: BeadRow, raw: String }
 
-/// One `spira-claim select --top-tier` line: "id|branch|repo|eprio|estarted|bprio".
-struct TierLine { id, branch, repo, eprio: i64, estarted: u8, bprio: i64 }
-
-enum Claimed { Bead { id: String, repo: Option<String>, raw: String }, Idle }
-
+// [decide] the pure decisions
 enum WorldStop { None, Refuse, Stop }
 enum HbTick { Ok, Renew, Lapse, Thrash }
-
-/// aeon_disposition's inputs and output (§4.3).
-struct DispositionIn { status: String, capacity: bool, slain: bool, thrash: bool,
-    thrash_charged: bool, lapsed: bool, gate_unfinished: bool, decision_blocked: bool,
-    session_rc: i32, committed: bool, requeue_cause: Option<String>, operator_wait: bool,
-    yield_headless: bool, session_started: bool, outcome: Option<String>, submitted: bool }
+struct DispositionIn { status: String, capacity, slain, thrash, thrash_charged, lapsed,
+    gate_unfinished, decision_blocked: bool, session_rc: i32, committed: bool,
+    requeue_cause: Option<String>, operator_wait, yield_headless, session_started: bool,
+    outcome: Option<String>, submitted: bool }
 struct Disposition { ledger_status: String, charge: bool, requeue_cause: Option<String>,
                      note: NoteKey }
 enum NoteKey { Capacity, Slain, ThrashCharged, Thrash, Lapsed, GateUnfinished,
-               DecisionBlocked, Timeout, Requeue, OperatorWait, Submitted, YieldHeadless,
-               PreSession, Unlanded, NotJudged }
-
-enum EvictionVerdict { None, Stale, Cap, Reopen }
+    DecisionBlocked, Timeout, Requeue, OperatorWait, Submitted, YieldHeadless, PreSession,
+    Unlanded, NotJudged }
+enum Eviction { None, Stale, Cap, Reopen }
 enum SopVerdict { Satisfied, Decline, Poison }
-enum CloseVerdict { Keep(Reason), Reopen(Reason), None }   // close_verdict "outcome|reason|msg"
+struct CloseVerdict { outcome: String, reason: String, msg: String } // "outcome|reason|msg"
 
-/// The session's summary for the ledger.
-struct SessionFields { wall_s, api_s, turns, in_tok, cache_read_tok, out_tok, think_tok: Option<i64>,
-                       cost_usd: Option<f64> }   // renders "?" for None
+// [ledger]
+struct SessionFields { wall_s, api_s, turns, in_tok, cache_read_tok, out_tok,
+                       think_tok: Option<i64>, cost_usd: Option<f64> } // None renders "?"
 
-/// Brief inputs — everything render() needs, nothing it fetches.
-struct BriefInputs { bead_id, branch, work, repo_name, home_repo, base, base_branch,
-    base_remote: Option<String>, repo_land: String, db, run, home, spike_dir, spike_paths,
-    maechen_max_beads, remedy_label, scope_label, lifecycle_enforce: bool,
-    fixture: Option<FixtureInfo>, testdb_lib, testdb_port, fixture_ms: u64,
-    deadline_at: Option<i64>, now: i64, bead_body: String, thrash_banner: Option<String>,
-    dirty: Vec<String>, resume: Option<(u64, String)>, slain: Option<SlainInfo>,
-    rebase_conflicts: Option<String>, chamber: String /* after overlays */,
-    block_overlays: BTreeMap<String, String> }
+// [brief]
+struct FixtureInfo { name, dir, baseline, bin, started_service, mode, server_init_hash: String }
+struct Tokens { single: Vec<(&'static str, String)>, bead, park, fixture, deadline,
+                finish: String }
+
+// [session]
+struct SessionSpec { prog: String, args: Vec<String>, stdin_file: PathBuf, log: PathBuf,
+                     cwd: PathBuf, env: BTreeMap<String, String>, timeout: Option<u64> }
+struct Stop { sig: AtomicI32 /* 0 none */, pgid: AtomicI32 /* the session's group */ }
+
+// [worktree]
+enum Evict { Kept, Moved(PathBuf), Refused }
+enum Act { Log(String), Note(String), SetBranch(String) }
+
+// [run] aeon.sh's globals, now one struct
+struct State { aeon, bead: String, claimed: Option<BeadRow>, repo_name: String,
+    repo: PathBuf, repo_land, branch: String, pidfile, logf, work: Option<PathBuf>,
+    base, base_branch, base_remote, base_fq: String, world_was_stopped: bool,
+    fixture: Option<FixtureInfo>, fixture_lib: Option<PathBuf>, session_started: bool,
+    session_rc: i32, committed: bool, lc_model_restricted: bool,
+    requeue_cause: Option<String>, requeue_why: String, session_epoch: i64,
+    rebase_conflicts: String, sop_before: Option<String>, groom_lines_before: usize }
 ```
+
+Ports (`ports.rs`, `session.rs`): `Bd::bd(args) -> Out`, `Seam::call(func, args) -> Out`,
+`Git::git(dir, args) -> Out`, `Exec::exec(prog, args, stdin, cwd) -> Out`,
+`Launcher::run(&SessionSpec, &Stop) -> i32`, `Beat` (the heartbeat's clock, trace, fuse and
+`bd heartbeat`). `Out { code, stdout, stderr }`.
 
 ## 4. Behaviour (the decisions, as pure functions)
 
@@ -474,22 +484,28 @@ refuse an enabled-but-unbuildable configuration.
 
 ## 7. Tests
 
-`cargo test -p aeon`: fakes for `Bd`, `Git`, `LibSeam`, `Runner` (process launch) and the
-clock, all traits in `src/ports.rs`. Contract-derived cases: every ledger format; dry run
-writes none; every disposition row; heartbeat ticks; world-stop decisions; eviction
-verdicts; SOP verdicts; claim selection (stdin payload, claim-error on rank/lookup failure,
-lost race falls through, resumable tier, idle); enforce gate (binary presence ignored,
-refusal when missing); FINISH/PARK/LANDING/FIXTURE/DEADLINE rendering; overlays (whole,
-section, append, blocks, absent section ignored); thrash banner placement; system/task
-split; memories tiering; notes bounding; session_result_fields rounding and `?`; trace
-mark numbering; worktree contract (fresh branch, resume, mislabeled branch reset, stale
-non-canonical holder moved aside, foreign-repo eviction, refusal); submitted conversion
-exemptions; closed-bead gate cases.
+`cargo test -p aeon` — 80 tests. Fakes for `Bd`, `Seam`, `Exec` and `Launcher`; git is real
+(temp repositories) wherever the assertion is about git's own behaviour.
+
+| module | contract it pins |
+|---|---|
+| `ledger` | every ledger format byte for byte, cockpit-metrics' regex over it, dry run writes nothing, trim 20,000→5,000, session fields (sum vs last, half-even rounding, `?` never 0), `attempt_trace` segments across a 64 KiB chunk, trace-mark numbering |
+| `decide` | the disposition table row by row and its precedence, hb_tick (test-aeon-lease/test-thrash rows), world-stop, eviction, SOP verdict, close_verdict parsing |
+| `brief` | FINISH follows lifecycle_enforce only; LANDING/PARK per mode; FIXTURE truthful; resume/slain/deadline/holds renderers; notes bounding (`bead_body_is_bounded`); overlays whole/section/append/absent/blocks; literal, ordered substitution; thrash banner lands in task.md; system/task split; memories tiering and budget |
+| `claim` | ready set on stdin and nothing in argv; lookup/rank failure is claim-error; resumable tier; lost race falls through; claim_retry |
+| `worktree` | fresh cut + resume; mislabeled branch reset (sp-om71s case 1); own branch at a previous path moved aside (case 2); test-aeon-worktree-evict-foreign.sh row for row, including the refused move |
+| `session` | lease lapse and thrash trip the stop and write their markers; the trip signals the session's group, never the aeon's; timeout is 124 |
+| `seam` | NUL framing; the fixed script sources lib.sh and the fayth, folds SPIRA_REQUIRE_LABEL, refuses a function off the allowlist; snapshot parsing |
+| `conf` | fayth defaults, the fence, lifecycle_enforce (environment wins, toml bool read through spira-config, binaries irrelevant), persona_model |
+| `run::tests` / `tests` | whole runs: fence, capacity, halted/draining/paused order, dry run, claim-error, idle, poison race, enforce refusal, binary presence never enforces, enforce restricts the model, refused lifecycle claim, world-stop fence, unmapped repo (+ world restarted), happy path to submitted (ledger, brief, argv, env scrub), unlanded exit code, slain (verdict skipped, rc 143), pre-session death, rebase-conflict requeue, sweep |
+| `main` | argv grammar |
+
+The seam's fixed script was also exercised against this branch's real `lib.sh` with an
+isolated HOME/config (read-only for the harness): `_aeon_snapshot` returns the builder's
+predicate, READY_ARGS and CLAIM_EXCLUDE; an off-list function is refused with 97.
 
 The bash suites that drive `aeon.sh` end to end are retired or repointed in the cutover
-(§9); `test-aeon-disposition.sh`, `test-aeon-lease.sh`, `test-aeon-world-stop.sh`,
-`test-aeon-worktree-evict-foreign.sh`, `test-aeon-resume.sh` (render parts) keep testing
-the lib.sh copies, which stay for their other callers.
+(§9); the lib.sh functions they cover stay tested by their own suites.
 
 ## 8. Behaviour deliberately changed (and kept)
 
@@ -517,7 +533,25 @@ Changed:
    interpolating the bead id. bead_reopen writes one such row per eviction-race reopen, so
    the count is the same; on "cannot tell" it is 0, as before.
 7. **`aeon_alive`/install detect the binary** (cutover), since a Rust process's cmdline
-   does not contain `aeon.sh`.
+   does not contain `aeon.sh`. Until cutover item 5 lands, lib.sh reads every binary
+   aeon as dead (aeon_name_take would reuse names; pidfile-mode aeon_count would undercount),
+   so items 1-5 land together.
+8. **`lifecycle_enforce = true` in spira.toml now takes effect.** conf.sh exports the toml
+   bool as the string `true` and aeon.sh tested `= 1`, so the key could only ever be
+   switched on from the environment or spira.conf's `1`. The Rust reads the typed key
+   (and accepts `1`/`true` from the environment).
+9. **The early-exit disposition branches remove the pidfile, its `.name` and the mailbox**
+   (capacity, slain, thrash, lapsed, gate-unfinished, decision-blocked, timeout, requeue,
+   operator-wait, submitted, yield-headless, pre-session). aeon.sh `exit`ed inside the case,
+   above the removal, leaving them for other scans to reap by pid liveness.
+10. **TERM delivered to the aeon's pid alone is forwarded to the session's group.** bash
+    deferred its trap until the model exited (slay.sh's fallback `kill -TERM <pid>` left the
+    session running until it ended on its own). `systemctl stop` (the whole cgroup) is
+    unchanged.
+11. **Resumability skips a candidate whose repository has no resolvable land ref** (bash
+    counted `git rev-list ..<branch>`, i.e. against HEAD of the shared checkout).
+12. **A missing `spira-claim` is a claim-error** (`awake <f> claim-error spira-claim not
+    found`, exit 1) — the ranker is required, not optional.
 
 Kept, although they look wrong (flagged for the operator):
 
@@ -530,6 +564,16 @@ Kept, although they look wrong (flagged for the operator):
   it should not).
 - **`{{BEAD}}` etc. replace only the first occurrence** (concierge.md has three `{{BEAD}}`,
   but the concierge is not summoned through the aeon).
+- **The six session briefs are appended to task.md with no separator** (DIRTY, RESUME,
+  SLAIN, ALREADY_DONE, CLOSE, REBASE: `printf '%s'` each), so `## If you find the work is
+  already done` follows the template's last line directly.
+- **Three verdict reopens do not mark the bead open for the later fences**
+  (delivers-mismatch, closed-without-commit, the SOP poison): aeon.sh left `st=closed`
+  after them; the teardown re-reads the status from the store, as it did.
+- **The `keep|delivers` log line never fires**: close_verdict prints
+  `keep|delivers (<types>) verified` and aeon.sh's case matched `keep|delivers` exactly.
+- **Setup still races the lease**: the heartbeat starts before the worktree, the rebase and
+  the fixture, so a setup quieter than the lease lapses it, as before.
 
 ## 9. Cutover
 
@@ -548,10 +592,15 @@ Kept, although they look wrong (flagged for the operator):
    export SPIRA_AEON_BIN
    ```
    (spira-claim's own cutover item 1 adds the first half; apply once.)
-2. **spira/lib.sh:2730** (`summon_fayth`)
+2. **spira/lib.sh:2724-2730** (`summon_fayth`). Insert before line 2725
+   (`local _sargv; mapfile -t _sargv …`):
+   `    [ -x "${SPIRA_AEON_BIN:-}" ] || { log "CHECK7 $f: aeon binary not built (SPIRA_AEON_BIN) — not summoning"; return 1; }`
+   and at line 2730
    current: `        "$SPIRA_HOME/aeon.sh" "$f" 2>/dev/null`
    replace: `        "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$f" 2>/dev/null`
-3. **spira/escape.sh:56**
+3. **spira/escape.sh:52-56**. Insert before line 52 (`log "escape.sh $FAYTH: $r ready …`):
+   `[ -x "${SPIRA_AEON_BIN:-}" ] || die "escape.sh $FAYTH: aeon binary not built (SPIRA_AEON_BIN)"`
+   and at line 56
    current: `    "$SPIRA_HOME/aeon.sh" "$FAYTH" ${DRY_FLAG} 2>/dev/null`
    replace: `    "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$FAYTH" ${DRY_FLAG} 2>/dev/null`
 4. **systemd/spira-ops.service:46**
@@ -561,13 +610,10 @@ Kept, although they look wrong (flagged for the operator):
 5. **spira/lib.sh:822** (`aeon_alive`)
    current: `    grep -qF 'aeon.sh' <<< "$cmd" || return 1`
    replace: `    grep -qE '(^|/)aeon( |$)|aeon\.sh' <<< "$cmd" || return 1`
-6. **install.sh:246** (`_conflict_aeon`)
+6. **install.sh:246** (`_conflict_aeon`) — a binary aeon's cmdline is
+   `<repo>/bin/aeon\0--home\0<home>\0<fayth>`; match its path as the second pattern:
    current: `    match="$(printf '%s\n' "$home/aeon.sh" \`
-   replace: `    match="$(printf '%s\n' "$home/aeon.sh" "--home $home" \`
-   (a binary aeon's cmdline carries `--home <home>`; NUL-separated in /proc, so the
-   pattern must be matched after `tr '\0' ' '` — change the grep source accordingly:
-   `grep -alFf` on raw cmdline cannot see across the NUL; use
-   `for c in "$proc_root"/[0-9]*/cmdline; do tr '\0' ' ' <"$c" | grep -qF -- "--home $home " && …`)
+   replace: `    match="$(printf '%s\n' "$home/aeon.sh" "$(dirname "$home")/bin/aeon" \`
 7. **spira/timeout-lint.sh:41** — drop `"$HERE/aeon.sh"` from the default list (the lint
    checks bash `timeout` wrapping; the Rust binary bounds every bd call itself).
 8. **spira/config-fence-allow:26** — remove `spira/aeon.sh`.
