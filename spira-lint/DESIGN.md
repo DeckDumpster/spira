@@ -8,18 +8,27 @@ so and says what the rule does instead.
 ## The program
 
 ```
-spira-lint [--root <dir>] [--only <rule>]
+spira-lint [--root <dir>] [--only <rule>] [--base <rev>]
 ```
 
-- `--root` defaults to the git work tree containing the current directory.
+- `--root` defaults to the git work tree containing the current directory. At the gate that
+  is the gate's own worktree (the gate string runs in it), never the repository it came from.
 - `--only <rule>` runs one rule; an unknown name is a usage error.
+- `--base <rev>` is what the branch is judged against, for the rules that compare
+  (`plan-matrix`, `lockfile-lint`, the tier-budget ledgers). It defaults to
+  `SPIRA_GATE_BASE`, which the gate always sets. With neither, those rules **refuse** (exit
+  3): comparing against nothing reads exactly like a clean comparison.
 - **One walk.** `git ls-files -z` (tracked) and `git ls-files -z --others --exclude-standard`
   (untracked, not ignored), once. Each rule filters that walk; no rule lists files itself.
   A file's bytes are read at most once and shared between rules.
 - **Output.** One line per finding on stdout, `<rule>: <path>[:<line>]: <message>`, sorted by
   rule order, then path, then line. After a rule's findings, its hint (what to do about it)
   goes to stderr once. A clean rule prints nothing; a clean run prints one summary line to
-  stderr.
+  stderr, then the positive controls (sp-ufbkh): one `fence: <rule> checked <n> <unit>` per
+  rule that reports one (`Rule::checked`: the rules the gate names in
+  `gate/src/fence.rs` `LINT_RULE_FENCES`), and last `fence: spira-lint checked <files> files
+  (<k> rules: …)`. The gate requires each of those lines on a PASS (gate/DESIGN.md "Every
+  fence proves it checked").
 - **Exit.** `0` clean; `1` any finding; `2` usage; `3` a rule refused to report clean (a bad
   root, an empty scope, an unreadable or malformed allow file). A refusal is never a pass:
   an empty scope is indistinguishable from a matcher that never fires
@@ -450,6 +459,75 @@ file is allowed. It starts empty. An entry naming a file with no call is itself 
 were declared at the file's top level. A literal `"/tmp/…"` path is not a call and is not
 flagged; nothing in the tree creates one. Temp files made by the code under test (a
 production `mktemp`) are that code's to clean and outside this rule.
+
+## Rule `plan-matrix`
+
+Ported from `spira/plan-matrix-fence.sh` (sp-ufbkh), which is deleted.
+
+**Why a rule.** The bash fence ran from `gate-touched.sh` only when `SPIRA_GATE_REPO`
+resolved to the tree the script sat in. The gate sets `SPIRA_GATE_REPO` to the repository and
+runs the gate string in its own worktree, so the two never matched and the fence was skipped
+at every gate, exiting 0. As a rule it judges the tree spira-lint walks, which at the gate is
+the gate tree, and it cannot skip: it refuses.
+
+**Checks**, against [`--base`]:
+1. *Orphans* (`test_plan::orphan_violations`): a use case some `spira/test-*.sh` at the base
+   covered on its `# covers:` line and none here covers, with no `[use_case.uncovered]`
+   marker in the current catalogue. One finding per use case, path `docs/test-plan`.
+2. *The matrix*: `docs/test-plan/*.toml` loads (`test_plan::load_catalogues`; each load error
+   is a finding) and the coverage matrix builds and renders, in memory. Nothing is written:
+   `plan-matrix.sh` still writes `coverage.json`/`COVERAGE.md` for readers.
+
+Suite headers are read by the one parser the bash used (`covers_of`, and `tier_of` =
+`suite_tier_of`: the first `# tier:` before `set -`). The base's suites come from one
+`git ls-tree` and one `git cat-file --batch`.
+
+**Refuses** (exit 3): no base; a base that is not a commit; a base with no suites; no
+`docs/test-plan/`; a catalogue with no use case. **Positive control:** `fence: plan-matrix
+checked <use cases> use-cases (<n> suites here, <m> at the base)`.
+
+## Rule `lockfile-lint`
+
+Ported from `spira/lockfile-lint.sh` (sp-4kws1; sp-ufbkh), which is deleted.
+
+**Intent.** A Cargo.lock bumped by an earlier, unpinned `cargo` can resolve a registry package
+to a version the pinned toolchain cannot parse, with no Cargo.toml edit to review. For every
+package whose locked version rises between the base and this tree (every one of the base's
+versions strictly lower, compared on the first three integer parts; a pre-release is not
+judged, a new package is not a bump), the text of `git diff <base> -- '*Cargo.toml'` must
+name it as a word. One finding per bump, path `Cargo.lock`.
+
+**Refuses** where the bash skipped with exit 0: no base, no Cargo.lock here, none at the base,
+a lock that does not parse or locks nothing. **Positive control:** `fence: lockfile-lint
+checked <n> packages`.
+
+## Rules `tier-budget-allowlist`, `tier-budget-area-allowlist`
+
+Ported from `tier-budget.sh lint-allowlist [--area]` (sp-5m133; sp-ufbkh). The bash
+subcommands remain for use by hand; the gate runs these.
+
+**Intent.** `spira/tier-budget-allowlist` and `spira/tier-budget-area-allowlist` only shrink.
+Each is tab-separated, key in column 1, value in the last column, `#` comments. Against the
+base's copy: a key the base lacks is `new entry <k>`; a value higher than the base's
+(numerically when both are numbers) is `<k> raised <was> -> <now>`.
+
+**Refuses** where the bash passed ("its introducing commit"): no base, no prior copy at the
+base, no ledger here. That pass also passed an unresolvable base having compared nothing.
+**Positive control:** `fence: <rule> checked 1 ledger (<n> entries, <m> at the base)` — one
+ledger, whatever its size, because a ledger shrunk to nothing is the goal, not a silence.
+
+## Rule `tier-budget-areas`
+
+Ported from `tier-budget.sh check-areas` (sp-ufbkh).
+
+**Intent.** At most one T3 suite per use-case area. A suite's areas are the `<area>` of each
+`UC-<area>-NN` token on its `# covers:` line; a suite naming its area twice counts once. An
+area with more than one T3 suite fails unless `spira/tier-budget-area-allowlist` records at
+least that many. One finding per area, path `area <name>`, naming the suites.
+
+**Scope.** `spira/test-*.sh` directly in `spira/`; an empty scope refuses (the bash returned 0
+on no T3 suites, and on no suites at all). **Positive control:** `fence: tier-budget-areas
+checked <n> suites`.
 
 ---
 

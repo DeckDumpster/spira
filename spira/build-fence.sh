@@ -16,10 +16,9 @@
 # SPIRA_GATE_FILES (gate.sh's pre-computed STATUS<tab>FILE or bare FILE list, the same shape
 # select.sh and orphan-test.sh already read) or, failing that, a diff against SPIRA_GATE_BASE.
 #
-# WITH NEITHER, THIS SKIPS — the same convention orphan-test.sh uses for "no diff context":
-# gate.sh always supplies SPIRA_GATE_FILES, so a real certification always has one of the two;
-# a call with neither is a direct or scheduled invocation with nothing to judge a diff against,
-# not a branch this fence has any evidence about.
+# WITH NEITHER, OR AN EMPTY DIFF, THIS REFUSES (exit 2, sp-ufbkh). It used to skip with exit
+# 0, which the gate could not tell from a checked tree. On success, built or not, it prints
+# `fence: build-fence checked <n> changed-files` to stderr, which the gate requires.
 #
 # It fails CLOSED: `make build` runs under whatever toolchain is already on PATH — the same
 # one the gate's own build job uses — and a non-zero exit is a RED certification naming the
@@ -50,12 +49,15 @@ if [ -f "${SPIRA_GATE_FILES:-}" ]; then
 elif [ -n "${SPIRA_GATE_BASE:-}" ]; then
     changed="$(git diff --name-status "$SPIRA_GATE_BASE...HEAD" 2>/dev/null)"
 else
-    printf 'build-fence: SKIP no SPIRA_GATE_FILES or SPIRA_GATE_BASE — no diff to check\n' >&2
-    exit 0
+    printf 'build-fence: no SPIRA_GATE_FILES or SPIRA_GATE_BASE — no diff to check; refusing\n' >&2
+    exit 2
 fi
+n="$(printf '%s\n' "$changed" | grep -c .)"
+[ "$n" -gt 0 ] || { printf 'build-fence: the diff names no file — nothing to judge; refusing\n' >&2; exit 2; }
 
 if ! printf '%s\n' "$changed" | touches_build_surface; then
     printf 'build-fence: no build-surface file in the diff — skipped\n' >&2
+    printf 'fence: build-fence checked %d changed-files\n' "$n" >&2
     exit 0
 fi
 
@@ -66,4 +68,5 @@ if [ "$rc" -ne 0 ]; then
     exit 1
 fi
 printf 'build-fence: make build ok\n' >&2
+printf 'fence: build-fence checked %d changed-files\n' "$n" >&2
 exit 0

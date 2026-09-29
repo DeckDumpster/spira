@@ -10,7 +10,7 @@
 # because `gate-suites` does not name it — the same placement test-spira-config.sh uses while
 # nothing in the gate depends on it directly. Here that is not quite true (plan-lint.sh and
 # plan-matrix.sh both call the compiled binary), but the gate's own fence
-# (spira/plan-matrix-fence.sh, run from gate-touched.sh) exercises the binary against the
+# (spira-lint's plan-matrix rule, sp-ufbkh) exercises the crate's library against the
 # real tree on every branch already; this suite is the crate's unit/property coverage, not a
 # second copy of the fence.
 #

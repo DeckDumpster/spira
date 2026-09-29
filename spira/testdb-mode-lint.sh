@@ -83,6 +83,7 @@ done
 
 if [ "$bad" = 0 ]; then
     printf 'testdb-mode-lint: clean — %d tracked suite(s) checked\n' "${#files[@]}"
+    printf 'fence: testdb-mode-lint checked %d suites\n' "${#files[@]}" >&2
     exit 0
 fi
 cat >&2 <<'WHY'

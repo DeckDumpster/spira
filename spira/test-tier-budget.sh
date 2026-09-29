@@ -225,14 +225,16 @@ printf '\n%s\n' "E. runner wiring"
 # drops the tier-budget check-batch step, which only ever logged "skipped" (testenv/DESIGN.md
 # §7 D4).
 
-# E3: gate-touched.sh runs both allowlist ratchets and check-areas regardless of
-# SPIRA_GATE_SUITES mode (structural — same wiring point and same reason as build-fence.sh,
-# tested the same way in test-build-fence.sh; the ratchets' own pass/fail behavior is covered
-# in D and F).
+# E3: the gate runs the ratchets as spira-lint rules (tier-budget-allowlist,
+# tier-budget-area-allowlist, tier-budget-areas; sp-ufbkh), not from gate-touched.sh, whose
+# captured `_s="$(…)";` swallowed a failing fence. The subcommands here remain for use by hand.
 GT="$(cat "$HERE/gate-touched.sh")"
-want "gate-touched.sh calls tier-budget.sh lint-allowlist" "tier-budget.sh\" lint-allowlist" "$GT"
-want "gate-touched.sh lints the area allowlist too"        "lint-allowlist --base \"\$BASE\" --area" "$GT"
-want "gate-touched.sh calls tier-budget.sh check-areas"     "tier-budget.sh\" check-areas" "$GT"
+nowant "gate-touched.sh no longer runs tier-budget.sh lint-allowlist" "tier-budget.sh\" lint-allowlist" "$GT"
+nowant "gate-touched.sh no longer runs tier-budget.sh check-areas"     "tier-budget.sh\" check-areas" "$GT"
+TBR="$(cat "$HERE/../spira-lint/src/rules/tier_budget.rs" 2>/dev/null)"
+want "spira-lint carries the suite ledger ratchet" '"tier-budget-allowlist"' "$TBR"
+want "spira-lint carries the area ledger ratchet"  '"tier-budget-area-allowlist"' "$TBR"
+want "spira-lint carries the per-area T3 cap"      '"tier-budget-areas"' "$TBR"
 
 # ============================================================================================
 printf '\n%s\n' "F. check-areas and the --area allowlist ratchet: at most one T3 suite per area"

@@ -4,10 +4,11 @@
 # must never produce a stale coverage.json/COVERAGE.md fence failure
 # (law-test-selection-and-plan-are-one-source).
 #
-# Builds a scratch git repo carrying copies of the real plan-matrix.sh, plan-matrix-fence.sh,
+# Builds a scratch git repo carrying copies of the real plan-matrix.sh, plan-lint.sh,
 # select.sh and friends, plus this checkout's own .gitignore. Branches it twice — each branch
 # adds one new covered suite and use case in files the other branch never touches — merges
-# both, and checks the merged tree passes plan-matrix-fence.sh and select.sh selects both new
+# both, and checks the merged tree passes the plan checks (plan-lint.sh --orphans and
+# plan-matrix.sh, what the retired plan-matrix-fence.sh ran) and select.sh selects both new
 # suites. Only docs/test-plan/coverage.json and COVERAGE.md are regenerated (and, before the
 # fix, committed) by both branches, so they are the only place a merge can go stale. Proven
 # over a scratch repository so this suite never touches the real docs/test-plan tree.
@@ -15,7 +16,7 @@
 # host-reason: reads suite source and scratch git repos only; no database, no systemd
 #
 # tier: T1
-# covers: spira/plan-matrix.sh spira/plan-matrix-fence.sh spira/select.sh
+# covers: spira/plan-matrix.sh spira/plan-lint.sh spira/select.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 REAL_ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -41,7 +42,7 @@ export SPIRA_TEST_PLAN_BIN="${CARGO_TARGET_DIR:-$REAL_ROOT/target}/release/test-
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 ROOT="$TMP/root"
 mkdir -p "$ROOT/spira" "$ROOT/docs/test-plan"
-for f in plan-matrix.sh plan-lint.sh plan-matrix-fence.sh suite-covers.sh plan-bin.sh \
+for f in plan-matrix.sh plan-lint.sh suite-covers.sh plan-bin.sh \
          suite-coverage-json.sh tsd-timings-json.sh select.sh select-globs.sh testlib.sh; do
     cp "$HERE/$f" "$ROOT/spira/$f"
 done
@@ -72,7 +73,8 @@ printf '#!/usr/bin/env bash\n# tier: T1\n# covers: spira/test-*.sh\necho catchal
     > "$ROOT/spira/test-catchall.sh"
 
 matrix() { ( cd "$ROOT" && SPIRA_TEST_PLAN_BIN="$SPIRA_TEST_PLAN_BIN" bash spira/plan-matrix.sh "$@" ); }
-fence()  { ( cd "$ROOT" && SPIRA_TEST_PLAN_BIN="$SPIRA_TEST_PLAN_BIN" bash spira/plan-matrix-fence.sh "$@" ); }
+fence()  { ( cd "$ROOT" && export SPIRA_TEST_PLAN_BIN="$SPIRA_TEST_PLAN_BIN" \
+               && bash spira/plan-lint.sh --orphans "$1" && bash spira/plan-matrix.sh ); }
 
 matrix >&2
 git -C "$ROOT" add -A
@@ -139,7 +141,7 @@ fi
 MERGED_SHA="$(git -C "$ROOT" rev-parse HEAD)"
 
 out="$(fence "$BASE_SHA" 2>&1)"; rc=$?
-wantrc "plan-matrix-fence.sh passes on the merged tree" 0 "$rc"
+wantrc "the plan checks pass on the merged tree" 0 "$rc"
 [ "$rc" = 0 ] || printf '# fence output:\n%s\n' "$out" | sed 's/^/# /' >&2
 
 sel="$(cd "$ROOT" && bash spira/select.sh --base "$BASE_SHA" --head "$MERGED_SHA" \

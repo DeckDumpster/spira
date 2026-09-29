@@ -73,12 +73,22 @@ sel_fence "$F" >/dev/null; is "the Makefile itself selects a build" "yes" "$(mad
 F="$TMP/f7"; printf 'M\tREADME.md\n' > "$F"
 sel_fence "$F" >/dev/null; is "an unrelated file with status column is skipped" "no" "$(made)"
 
-echo "2b. no diff context at all is a SKIP, not a forced build:"
+echo "2b. no diff context at all is a REFUSAL, not a pass (sp-ufbkh):"
 rm -f "$MARK"
 out="$(PATH="$SEL/bin:$PATH" fence "$SEL")"; rc=$?
 is "no SPIRA_GATE_FILES/SPIRA_GATE_BASE: build is not attempted" "no" "$(made)"
-is "no SPIRA_GATE_FILES/SPIRA_GATE_BASE: exits 0" "0" "$rc"
+is "no SPIRA_GATE_FILES/SPIRA_GATE_BASE: exits 2, never 0" "2" "$rc"
 want "and says it has no diff to check" "no diff to check" "$out"
+nowant "and prints no positive control" "fence: build-fence checked" "$out"
+
+echo "2c. the positive control: a checked diff says how much it checked (sp-ufbkh):"
+F="$TMP/f9"; printf 'M\tREADME.md\nM\tdocs/x.md\n' > "$F"
+out="$(SPIRA_GATE_FILES="$F" PATH="$SEL/bin:$PATH" fence "$SEL" 2>&1)"; rc=$?
+is   "a skipped build still exits 0" "0" "$rc"
+want "and prints its line with the file count" "fence: build-fence checked 2 changed-files" "$out"
+F="$TMP/f10"; : > "$F"
+out="$(SPIRA_GATE_FILES="$F" PATH="$SEL/bin:$PATH" fence "$SEL" 2>&1)"; rc=$?
+is   "an empty diff is a refusal" "2" "$rc"
 
 echo "3. NEGATIVE CONTROL: a failing stub make is a RED, not swallowed:"
 FAIL="$TMP/fail"; mkdir -p "$FAIL/spira" "$FAIL/bin"

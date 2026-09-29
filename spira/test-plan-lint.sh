@@ -21,7 +21,7 @@
 # host-reason: reads suite source and scratch git repos only; no database, no systemd
 #
 # tier: T1
-# covers: spira/plan-lint.sh spira/suite-covers.sh spira/plan-matrix-fence.sh spira/plan-bin.sh spira/suite-coverage-json.sh
+# covers: spira/plan-lint.sh spira/suite-covers.sh spira/plan-bin.sh spira/suite-coverage-json.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 REAL_ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -184,7 +184,7 @@ env -i PATH="$PATH" HOME="$TMP" TERM=dumb SPIRA_TEST_PLAN_BIN="$SPIRA_TEST_PLAN_
 # every not-yet-migrated area on the real tree) STAYS IN THE CORPUS THROUGHOUT
 # THIS WHOLE SECTION. --orphans must never trip on it: that whole-corpus
 # unknown-UC check is `validate`'s and item 1's (sp-94lbj), deliberately not
-# wired into the gate yet (plan-matrix-fence.sh's own header) — a version that
+# wired into the gate yet (spira-lint's plan-matrix rule runs --orphans only) — a version that
 # ran it here would fail --orphans, and so the gate, on every branch today.
 # ==========================================================================
 printf '#!/usr/bin/env bash\n# tier: T1\n# covers: spira/unmigrated.sh UC-unmigrated-area-01\necho hi\n' \

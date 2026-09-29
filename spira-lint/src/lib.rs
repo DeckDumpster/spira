@@ -37,6 +37,10 @@ impl Entry {
 pub struct Tree {
     pub root: PathBuf,
     pub entries: Vec<Entry>,
+    /// The revision a branch is judged against (`--base`, else `SPIRA_GATE_BASE`), for the
+    /// rules that compare the tree with what it replaces (`plan-matrix`). `None`: not given,
+    /// and such a rule refuses rather than compare against nothing.
+    pub base: Option<String>,
 }
 
 impl Tree {
@@ -96,7 +100,48 @@ impl Tree {
         entries.extend(untracked.into_iter().map(|p| Entry::new(p, false)));
         entries.sort_by(|a, b| a.path.cmp(&b.path));
         entries.dedup_by(|a, b| a.path == b.path);
-        Tree { root: root.to_path_buf(), entries }
+        Tree { root: root.to_path_buf(), entries, base: None }
+    }
+
+    /// The same tree, judged against `base`.
+    pub fn with_base(mut self, base: Option<String>) -> Tree {
+        self.base = base.filter(|b| !b.trim().is_empty());
+        self
+    }
+
+    /// `git -C <root> <args>`'s stdout, or its error.
+    pub fn git(&self, args: &[&str]) -> Result<Vec<u8>, String> {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&self.root)
+            .args(args)
+            .output()
+            .map_err(|e| format!("git {}: {e}", args.join(" ")))?;
+        if out.status.success() {
+            Ok(out.stdout)
+        } else {
+            Err(format!("git {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()))
+        }
+    }
+
+    /// [`Tree::base`] as a commit id. A rule that compares with the base refuses without one:
+    /// comparing against nothing reads as clean.
+    pub fn base_commit(&self) -> Result<String, LintError> {
+        let Some(base) = self.base.as_deref() else {
+            return Err(LintError::Refused(
+                "no base to compare against — pass --base <rev> or set SPIRA_GATE_BASE".into(),
+            ));
+        };
+        self.git(&["rev-parse", "--verify", "--quiet", &format!("{base}^{{commit}}")])
+            .map(|o| String::from_utf8_lossy(&o).trim().to_string())
+            .map_err(|_| {
+                LintError::Refused(format!("the base {base} does not resolve to a commit in {}", self.root.display()))
+            })
+    }
+
+    /// `rel` as it stood at `rev`, or `None` when `rev` has no such file.
+    pub fn show(&self, rev: &str, rel: &str) -> Option<String> {
+        self.git(&["show", &format!("{rev}:{rel}")]).ok().map(|b| String::from_utf8_lossy(&b).into_owned())
     }
 
     /// The file's bytes, read once and cached; `None` when it is not a regular file (a
@@ -161,6 +206,8 @@ pub enum LintError {
     EmptyScope,
     /// An allow-file line that cannot mean anything.
     BadAllow { file: String, line: usize, reason: String },
+    /// The rule cannot check: what it needs is missing (a base, an input). Named, never a pass.
+    Refused(String),
 }
 
 impl fmt::Display for LintError {
@@ -169,6 +216,7 @@ impl fmt::Display for LintError {
             LintError::NotARepo(m) => write!(f, "{m}"),
             LintError::EmptyScope => write!(f, "no files in scope — refusing to report clean"),
             LintError::BadAllow { file, line, reason } => write!(f, "{file}:{line}: {reason}"),
+            LintError::Refused(m) => write!(f, "{m}"),
         }
     }
 }
@@ -192,6 +240,13 @@ pub trait Rule {
     /// What a reader of a finding should do about it; printed once, to stderr.
     fn hint(&self) -> &'static str {
         ""
+    }
+
+    /// The rule's own positive control after a clean check — how much it checked, and of
+    /// what — for a rule the gate expects to see by name (sp-ufbkh). `None` for the rest:
+    /// spira-lint's own line covers them.
+    fn checked(&self) -> Option<(usize, String)> {
+        None
     }
 }
 
@@ -267,6 +322,11 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(rules::gate_workflow::GateWorkflow),
         Box::new(rules::conf_key_registry::ConfKeyRegistry),
         Box::new(rules::tmp_leak::TmpLeak),
+        Box::new(rules::plan_matrix::PlanMatrix::default()),
+        Box::new(rules::lockfile_lint::LockfileLint::default()),
+        Box::new(rules::tier_budget::Ledger::suites()),
+        Box::new(rules::tier_budget::Ledger::areas()),
+        Box::new(rules::tier_budget::Areas::default()),
     ]
 }
 
@@ -275,19 +335,20 @@ pub struct RuleResult {
     pub rule: &'static str,
     pub hint: &'static str,
     pub outcome: Result<Vec<Finding>, LintError>,
+    /// [`Rule::checked`], read after the check.
+    pub checked: Option<(usize, String)>,
 }
 
 /// Run `rules` over `tree`.
 pub fn run(tree: &Tree, rules: &[Box<dyn Rule>]) -> Vec<RuleResult> {
     rules
         .iter()
-        .map(|r| RuleResult {
-            rule: r.name(),
-            hint: r.hint(),
-            outcome: r.check(tree).map(|mut v| {
+        .map(|r| {
+            let outcome = r.check(tree).map(|mut v| {
                 v.sort_by(|a, b| (&a.path, a.line).cmp(&(&b.path, b.line)));
                 v
-            }),
+            });
+            RuleResult { rule: r.name(), hint: r.hint(), outcome, checked: r.checked() }
         })
         .collect()
 }
@@ -297,6 +358,9 @@ pub(crate) mod testutil {
     use std::fs;
     use std::path::Path;
     use std::process::Command;
+
+    /// A rule's outcome and its positive control, as the rule tests read them.
+    pub type Checked = (Result<Vec<crate::Finding>, crate::LintError>, Option<(usize, String)>);
 
     /// A scratch directory removed on drop (testkit's, with this crate's fixture helpers).
     pub struct TempDir(pub testkit::TempDir);
@@ -401,7 +465,7 @@ mod tests {
         }
         t.git(&["add", "."]);
         let tree = Tree::from_git(t.path()).unwrap();
-        let contract = ["event-taxonomy", "acceptance-run", "gate-workflow", "conf-key-registry", "tmp-leak"];
+        let contract = ["event-taxonomy", "acceptance-run", "gate-workflow", "conf-key-registry", "tmp-leak", "plan-matrix", "lockfile-lint", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas"];
         let mut rules = all_rules();
         rules.retain(|r| !contract.contains(&r.name()));
         let mut lines = Vec::new();

@@ -284,6 +284,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "spira-config",
+ "spira-lint",
  "testkit",
  "tsd",
 ]
@@ -1038,6 +1039,7 @@ dependencies = [
  "regex",
  "serde",
  "spira-config",
+ "test-plan",
  "testkit",
  "toml",
 ]

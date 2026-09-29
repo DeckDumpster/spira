@@ -126,6 +126,7 @@ done
 
 if [ "$bad" = 0 ]; then
     printf 'inventory: clean — %d tracked file(s) name no operator infrastructure\n' "${#files[@]}"
+    printf 'fence: inventory checked %d files\n' "${#files[@]}" >&2
     exit 0
 fi
 cat >&2 <<'WHY'

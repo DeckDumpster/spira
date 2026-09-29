@@ -35,12 +35,14 @@ offenders="$(git -C "$ROOT" ls-files 2>/dev/null | grep -E '^(sp-[^/]+|[^/]+\.fi
 
 if [ -z "$offenders" ]; then
     printf 'scratch-fence: no aeon scratch files at root\n'
+    printf 'fence: scratch-fence checked %d files\n' "$count" >&2
     exit 0
 fi
 
 if [ "${SCRATCH_FENCE_OK:-}" = "1" ]; then
     printf 'scratch-fence: SCRATCH_FENCE_OK=1 — override accepted; offenders present:\n' >&2
     printf '%s\n' "$offenders" | sed 's/^/scratch-fence:   /' >&2
+    printf 'fence: scratch-fence checked %d files (override accepted)\n' "$count" >&2
     exit 0
 fi
 
