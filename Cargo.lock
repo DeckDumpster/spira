@@ -92,6 +92,7 @@ dependencies = [
  "batcher",
  "serde_json",
  "spira-config",
+ "spira-lint",
 ]
 
 [[package]]

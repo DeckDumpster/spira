@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use batcher::core::{Member, MergeResult, PoolHistory, SuiteOutcome, SuiteRun};
+use batcher::core::{Member, MergeResult, PoolHistory};
 
 /// Where a repo's landed branch goes — `repo_land`'s `queue`/`queue.forge` alias normalizes
 /// to `Forge`; `queue.local` is `Local`. Carried on `Repo` so a caller never has to re-derive
@@ -52,7 +52,11 @@ pub struct Env {
     pub queue_bin: PathBuf,
     /// The `rebase-stale` binary (SPIRA_REBASE_STALE_BIN, else the one beside this binary).
     pub rebase_stale_bin: PathBuf,
-    pub attribute: PathBuf,
+    /// The round's slot budget for concurrent attribution (DESIGN.md §4.2):
+    /// SPIRA_BATCHER_ROUND_SLOTS, else maxpar + 4.
+    pub round_slots: Option<u32>,
+    /// How often the attribution loop polls the corpus and its reruns (seconds).
+    pub poll_secs: u64,
     /// The Concierge's own proven parallelism (round.sh: SPIRA_BATCH_MAXPAR=16) — set
     /// explicitly on every corpus invocation rather than left for testenv-batch.sh's own
     /// hardware formula, which a bare guest may resolve far below what CI proved green under.
@@ -616,6 +620,17 @@ pub fn deleted_suites(repo: &Repo, member_tip: &str, base_sha: &str) -> Vec<Stri
     out.lines().filter(|l| !l.is_empty()).map(|l| l.rsplit('/').next().unwrap_or(l).to_string()).collect()
 }
 
+/// The paths `tip` changed since it forked from `base_sha` (`git diff base...tip`) — what
+/// attribution orders suspects by and decides a rerun's build by.
+pub fn changed_paths(repo: &Repo, base_sha: &str, tip: &str) -> Vec<String> {
+    run(Command::new("git").arg("-C").arg(&repo.path).args(["diff", "--name-only", &format!("{base_sha}...{tip}")]), "git diff changed paths")
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 pub fn push_branch(repo: &Repo, sha: &str, branch: &str) -> Result<(), String> {
     assert_eq!(repo.land, Land::Forge, "push_branch: unreachable under queue.local — it lands via queue land-local (sp-828tp), never a push");
     let remote = repo.base.split_once('/').map(|(r, _)| r).unwrap_or("origin");
@@ -683,8 +698,7 @@ pub fn bins_present(repo: &Repo, wt: &Path, head: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------------------
-// testenv-batch: run the full corpus, or a named subset (the re-run of the reds), and
-// parse its per-suite result protocol into SuiteRun.
+// testenv's per-suite result protocol: the corpus, and where its results land.
 // ---------------------------------------------------------------------------------------
 
 /// The round's own suite corpus: every `test-*.sh` committed under `spira/` at `branch`'s
@@ -715,78 +729,11 @@ pub fn all_suites(repo: &Repo, branch: &str) -> Vec<String> {
 /// never a real `test-*.sh` file, so it can't collide with one all_suites() would select.
 pub const WORKSPACE_BUILD: &str = "workspace-build";
 
-/// Run `suites` (explicit list — never diff-selected) against `wt`'s own HEAD through the
-/// `round-vm` binary (sp-o3o6z: batcher-parity with the Concierge's own round tool, both
-/// callers of one mechanism) — the corpus runs on the round VM, never this host, so a green
-/// here is the same claim a green Concierge round makes, including about this round's own
-/// Rust changes, which only --with-bins builds. `round-vm run` exits with testenv-batch.sh's
-/// own code whenever the remote run actually happened (round-vm/DESIGN.md §2.2), so the match
-/// below is exactly testenv-batch.sh's own contract. Parses the result protocol
-/// testenv-batch.sh's own docs define: `<status> <epoch> <secs> <fp> <mode> <producer> <rc>`
-/// per suite, plus its `.out` for the assertion lines classify()'s E-check scans (a line
-/// containing "FAIL", the convention every suite here already uses).
-pub fn run_suites(env: &Env, wt: &Path, suites: &[String], results_dir: &Path) -> Result<Vec<SuiteRun>, String> {
-    if suites.is_empty() {
-        return Ok(vec![]);
-    }
-    fs::create_dir_all(results_dir).map_err(|e| format!("{}: {e}", results_dir.display()))?;
-    let mut cmd = Command::new("timeout");
-    cmd.arg("-k").arg("10").arg(env.wall_secs.to_string());
-    cmd.arg(&env.round_vm);
-    cmd.arg("run").arg(wt);
-    cmd.arg("--suites").arg(suites.join(","));
-    cmd.arg("--maxpar").arg(env.maxpar.to_string());
-    cmd.arg("--toolchain").arg(&env.rust_toolchain);
-    cmd.arg("--results-dir").arg(results_dir);
-    cmd.env("SPIRA_HOME", &env.home);
-    cmd.env("SPIRA_RUN", &env.run);
-    cmd.stderr(std::process::Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("round-vm: {e}"))?;
-    let mut stderr_buf = String::new();
-    if let Some(mut se) = child.stderr.take() {
-        use std::io::Read;
-        let _ = se.read_to_string(&mut stderr_buf);
-    }
-    let status = child.wait().map_err(|e| format!("round-vm: {e}"))?;
-    if !stderr_buf.is_empty() {
-        eprint!("{stderr_buf}");
-    }
-    // round-vm exits with testenv-batch.sh's own code whenever the remote run actually
-    // happened (round-vm/DESIGN.md §2.2), so this match is testenv-batch.sh's contract:
-    // exit 1 means "suites ran, some red" — a real answer, not a fault. Exit 2 is overloaded
-    // — usually the VM never came up, but testenv-batch.sh also raises it, before any
-    // container is touched, when a --suites name isn't in the branch's own tree. That is a
-    // suite-list bug, not a harness fault, so it is read off the "unknown suite" line rather
-    // than folded into the same harness-fault verdict. 4 is a round-level red (--with-bins:
-    // the candidate's own workspace failed to build) — the branch's fault, not the harness's,
-    // so the caller reports it as a local round red (stabilize_round's WORKSPACE_BUILD case)
-    // rather than aborting the round unreported.
-    match status.code() {
-        Some(0) | Some(1) | None => {}
-        Some(4) => {
-            return Ok(vec![SuiteRun {
-                name: WORKSPACE_BUILD.to_string(),
-                outcome: SuiteOutcome::Red,
-                failing_assertions: vec!["FAIL — --with-bins: the candidate's workspace failed to build".to_string()],
-            }]);
-        }
-        Some(2) if stderr_buf.contains("batch: unknown suite:") => {
-            let line = stderr_buf.lines().find(|l| l.contains("batch: unknown suite:")).unwrap_or("batch: unknown suite").trim();
-            return Err(format!("round-vm: suite list mismatch, not a harness fault — {line}"));
-        }
-        Some(2) => return Err("round-vm: harness fault — the round VM did not come up or its container died".into()),
-        Some(3) => return Err("round-vm: harness fault — install failed".into()),
-        Some(124) => return Err(format!("round-vm: harness fault — exceeded the {}s wall bound", env.wall_secs)),
-        Some(c) => return Err(format!("round-vm: unexpected exit {c}")),
-    }
-    Ok(suites.iter().map(|s| parse_result(results_dir, s)).collect())
-}
-
 /// The runner writes `<results>/<batch-key>/<suite>.<ext>` (testenv DESIGN.md §9 F1); older
 /// callers expected `<results>/<suite>.<ext>`. Look at the top level first, then in the
 /// newest batch-key subdirectory that holds the file. `None` when neither exists — the caller
 /// treats that as unreached, never green.
-fn locate(results_dir: &Path, suite: &str, ext: &str) -> Option<PathBuf> {
+pub fn locate(results_dir: &Path, suite: &str, ext: &str) -> Option<PathBuf> {
     let name = format!("{suite}.{ext}");
     let top = results_dir.join(&name);
     if top.is_file() {
@@ -806,96 +753,18 @@ fn locate(results_dir: &Path, suite: &str, ext: &str) -> Option<PathBuf> {
     best.map(|(_, p)| p)
 }
 
-fn parse_result(results_dir: &Path, suite: &str) -> SuiteRun {
-    let res_path = locate(results_dir, suite, "result").unwrap_or_else(|| results_dir.join(format!("{suite}.result")));
-    let status = fs::read_to_string(&res_path).ok().and_then(|t| t.split_whitespace().next().map(str::to_string));
-    let outcome = match status.as_deref() {
-        Some("ok") | Some("skip") | Some("disabled") => SuiteOutcome::Green,
-        // Absent — the suite was selected but no result file exists — is unreached, never
-        // green (law-absence-needs-a-positive-control): treat as Red so classify() cannot
-        // manufacture a pass out of silence.
-        _ => SuiteOutcome::Red,
-    };
-    let mut failing_assertions = Vec::new();
-    if outcome == SuiteOutcome::Red {
-        if let Ok(out) = fs::read_to_string(locate(results_dir, suite, "out").unwrap_or_else(|| results_dir.join(format!("{suite}.out")))) {
-            failing_assertions = out.lines().filter(|l| l.contains("FAIL")).map(str::to_string).collect();
-        }
+/// A suite's final status from its `<suite>.result` (testenv DESIGN.md §3.1): `Some(true)`
+/// for a status that does not block (ok, skip, disabled, skip-req, quarantined-red),
+/// `Some(false)` for red, timeout, unreached or deferred, and `None` while there is no
+/// readable result yet — the file is written after `.out`, so its presence means final.
+pub fn result_status(results_dir: &Path, suite: &str) -> Option<bool> {
+    let path = locate(results_dir, suite, "result")?;
+    let text = fs::read_to_string(path).ok()?;
+    match text.split_whitespace().next()? {
+        "ok" | "skip" | "disabled" | "skip-req" | "quarantined-red" => Some(true),
+        "red" | "timeout" | "unreached" | "deferred" => Some(false),
+        _ => None,
     }
-    SuiteRun { name: suite.to_string(), outcome, failing_assertions }
-}
-
-pub fn red_names(verdicts: &[SuiteRun]) -> Vec<String> {
-    verdicts.iter().filter(|s| s.outcome == SuiteOutcome::Red).map(|s| s.name.clone()).collect()
-}
-
-// ---------------------------------------------------------------------------------------
-// Local attribution (sp-hqoap): attribute.sh (sp-q8xs9) names, per red suite, either the
-// member(s) whose tip reproduces it or BASE. Parsed from its stdout protocol rather than
-// re-deriving bisection here — that mechanism is attribute.sh's own, already tested.
-// ---------------------------------------------------------------------------------------
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Attribution {
-    /// Suites attribute.sh found red against the base alone — nobody's fault.
-    pub base_suites: Vec<String>,
-    /// Member id -> the suite(s) attribute.sh attributed to it (attribute.sh's own EJECT
-    /// lines); a suite it attributed to more than one member (a bisected interaction) appears
-    /// under each.
-    pub ejections: BTreeMap<String, Vec<String>>,
-}
-
-fn parse_attribution(out: &str) -> Attribution {
-    let mut a = Attribution::default();
-    for line in out.lines() {
-        if let Some(rest) = line.strip_prefix("ATTR ") {
-            let mut it = rest.splitn(2, ' ');
-            let suite = it.next().unwrap_or("");
-            let remainder = it.next().unwrap_or("");
-            let owner_kv = remainder.split(' ').next().unwrap_or("");
-            if owner_kv.strip_prefix("owner=") == Some("BASE") {
-                a.base_suites.push(suite.to_string());
-            }
-        } else if let Some(rest) = line.strip_prefix("EJECT ") {
-            let mut it = rest.splitn(2, ' ');
-            let id = it.next().unwrap_or("").to_string();
-            let suites: Vec<String> = it.next().unwrap_or("").split(',').map(str::to_string).filter(|s| !s.is_empty()).collect();
-            if !id.is_empty() && !suites.is_empty() {
-                a.ejections.insert(id, suites);
-            }
-        }
-    }
-    a
-}
-
-/// Run attribute.sh over the round's own red suites, on this box, and parse who it blames.
-/// A non-zero exit (a stubbed-out or broken attribution step) is an error, not an empty
-/// attribution — the caller must never read that as "nothing to blame, proceed to a PR"
-/// (law-a-control-that-cannot-check-must-refuse).
-pub fn attribute(
-    env: &Env,
-    repo: &Repo,
-    round_branch: &str,
-    base_sha: &str,
-    suites: &[String],
-    members: &[String],
-) -> Result<Attribution, String> {
-    let out = run(
-        Command::new("bash")
-            .arg(&env.attribute)
-            .arg("--round")
-            .arg(round_branch)
-            .arg("--base")
-            .arg(base_sha)
-            .arg("--suites")
-            .arg(suites.join(","))
-            .arg("--members")
-            .arg(members.join(","))
-            .arg("--repo")
-            .arg(&repo.path),
-        "attribute.sh",
-    )?;
-    Ok(parse_attribution(&out))
 }
 
 /// Eject one member from the round before it ever reaches CI: reopen its bead (which, being
@@ -1046,12 +915,17 @@ pub fn land_local(env: &Env, repo: &Repo, wt: &Path, head: &str, members: &[(Str
 // ---------------------------------------------------------------------------------------
 
 pub fn tsd_append_round(env: &Env, fields: &[(&str, String)]) {
+    tsd_append(env, "batch-round", fields)
+}
+
+/// One row of `family` through tsd-write; best-effort, like every TSD write here.
+pub fn tsd_append(env: &Env, family: &str, fields: &[(&str, String)]) {
     let Some(bin) = &env.tsd_bin else { return };
     if !bin.is_file() {
         return;
     }
     let mut cmd = Command::new(bin);
-    cmd.arg("--family").arg("batch-round").arg("--root").arg(&env.run);
+    cmd.arg("--family").arg(family).arg("--root").arg(&env.run);
     for (k, v) in fields {
         cmd.arg("--field-str").arg(format!("{k}={v}"));
     }
@@ -1198,20 +1072,26 @@ mod result_path_tests {
         let d = tmpdir("nested");
         fs::create_dir_all(d.join("batch-abc")).unwrap();
         fs::write(d.join("batch-abc/test-x.sh.result"), "ok 3s\\n").unwrap();
-        assert_eq!(parse_result(&d, "test-x.sh").outcome, SuiteOutcome::Green);
+        assert_eq!(result_status(&d, "test-x.sh"), Some(true));
     }
 
     #[test]
     fn top_level_result_still_read() {
         let d = tmpdir("top");
         fs::write(d.join("test-y.sh.result"), "ok 1s\\n").unwrap();
-        assert_eq!(parse_result(&d, "test-y.sh").outcome, SuiteOutcome::Green);
+        assert_eq!(result_status(&d, "test-y.sh"), Some(true));
+        fs::write(d.join("test-q.sh.result"), "quarantined-red 1 2 fp p e 1").unwrap();
+        assert_eq!(result_status(&d, "test-q.sh"), Some(true), "quarantined never blocks");
+        fs::write(d.join("test-t.sh.result"), "timeout 1 2 fp p e 124").unwrap();
+        assert_eq!(result_status(&d, "test-t.sh"), Some(false));
+        fs::write(d.join("test-h.sh.result"), "").unwrap();
+        assert_eq!(result_status(&d, "test-h.sh"), None, "half-written: not final yet");
     }
 
     #[test]
-    fn absent_result_is_red_not_green() {
+    fn absent_result_is_not_final_and_never_green() {
         let d = tmpdir("absent");
-        assert_eq!(parse_result(&d, "test-z.sh").outcome, SuiteOutcome::Red);
+        assert_eq!(result_status(&d, "test-z.sh"), None);
     }
 }
 
@@ -1250,7 +1130,8 @@ mod lifecycle_tests {
             round_vm: dir.join("round-vm"),
             queue_bin: dir.join("queue"),
             rebase_stale_bin: dir.join("rebase-stale"),
-            attribute: dir.join("attribute.sh"),
+            round_slots: None,
+            poll_secs: 1,
             maxpar: 1,
             wall_secs: 1,
             rust_toolchain: "1.82.0".into(),

@@ -9,6 +9,7 @@ pub mod provider;
 pub mod pve;
 pub mod run;
 pub mod schema;
+pub mod spool;
 
 #[cfg(test)]
 pub mod testutil;

@@ -68,6 +68,42 @@ exactly as it would read `testenv-batch.sh`. Otherwise **2** if round-vm itself 
 (preflight, mirror, acquire, the VM never became reachable over ssh, ssh transport error
 255, results missing after a green run, refused binaries), else 0.
 
+### 2.2a `run --attr-spool <dir>` — streaming and attribution reruns (sp-hvtgs)
+
+The batcher attributes a red round **while its corpus runs** (batcher-cut DESIGN.md §4). Two
+additions to `run`, both active only when `--attr-spool <dir>` is given; without it `run` is
+unchanged.
+
+1. **Streaming.** While the remote batch runs, every `SPIRA_ROUND_VM_STREAM_SECS` (default 10)
+   `run` pulls `round-work/.runtime/spira/batch-results/` and copies each suite's `.out` and then
+   its `.result` (flattened out of the batch-key directory) into the results dir, so a
+   `.result` there still means complete. The final pull is unchanged.
+2. **The spool.** The VM stays leased after the corpus until the batcher is done with it:
+
+| file | writer | content |
+|---|---|---|
+| `<dir>/req/<job>.req` | batcher (tmp + rename) | `branch=<ref in the tree-dir repo>`, `suites=<csv>`, `build=artifacts\|aeon\|round` |
+| `<dir>/res/<job>/` | round-vm | the job's `<suite>.result`/`.out`, flattened; for `build=round` also `bins/` (the staged executables) and `batch.meta` |
+| `<dir>/res/<job>.done` | round-vm (tmp + rename) | `rc=<the job's testenv exit code, 255 ssh, 2 round-vm's own failure>` |
+| `<dir>/corpus.done` | round-vm (tmp + rename) | `rc=<what run would have exited with>` — written after results, tsd, manifest and binaries are in place |
+| `<dir>/close` | batcher | present: finish in-flight jobs, release the VM, exit |
+
+A request is served as soon as it appears, concurrently with the corpus and with other jobs:
+the job's branch is fetched into the mirror as `refs/heads/attr-<job>`, then on the VM:
+- `artifacts`: clone that ref into `~/attr/<job>` (objects shared with `~/round-work`) and run
+  the round's own `~/round-work/target/release/testenv --artifacts ~/round-work/target/release
+  --suites <csv>` there — no build;
+- `aeon`: the same clone, `--profile aeon` (a debug build of that tree);
+- `round`: waits for the corpus; checks the ref out in `~/round-work` itself and runs
+  `cargo run --profile release -p testenv -- --profile release --suites <csv>` (incremental on
+  the corpus's own target), then stages `target/release` into `~/round-bins/` as the corpus does.
+
+Every job runs with `SPIRA_VERDICT_TTL=0` (a rerun is never a cache hit nor a refused repeat)
+and `SPIRA_BATCH_RESULTS=~/attr-results/<job>`. After `corpus.done`, `run` keeps serving until
+`close` exists and no job is in flight, or `SPIRA_ROUND_VM_ATTR_LINGER` seconds (default 3600)
+pass, then releases the VM (G2 unchanged: a signal still releases it). The exit code is the
+corpus's, as without the spool.
+
 ### 2.3 Guarantees
 
 - **G1 Pool of one.** At most one ready VM and at most one provision in flight, ever.

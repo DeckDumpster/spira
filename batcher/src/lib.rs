@@ -2,4 +2,5 @@
 //! the forge and the bead store, and wires it into the queue in place of batch.sh's cut, is
 //! a separate crate (sp-jzfog).
 
+pub mod attrib;
 pub mod core;
