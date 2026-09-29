@@ -22,6 +22,9 @@ pub enum Status {
     Disabled,
     SkipReq,
     Unreached,
+    /// Cut by `--deadline` (DESIGN.md D7): killed while running, or never started.
+    /// Neither executed nor blocking.
+    Deferred,
 }
 
 impl Status {
@@ -35,6 +38,7 @@ impl Status {
             Status::Disabled => "disabled",
             Status::SkipReq => "skip-req",
             Status::Unreached => "unreached",
+            Status::Deferred => "deferred",
         }
     }
 
@@ -48,6 +52,7 @@ impl Status {
             "disabled" => Status::Disabled,
             "skip-req" => Status::SkipReq,
             "unreached" => Status::Unreached,
+            "deferred" => Status::Deferred,
             _ => return None,
         })
     }
@@ -142,6 +147,29 @@ impl ResultRecord {
             fingerprint: "-".into(),
             mode: None,
             producer: None,
+            rc: None,
+        }
+    }
+
+    /// A suite cut by the deadline: `killed` after `secs` of running (fingerprint
+    /// `deadline:<suite>`), or never started (`secs` 0, fingerprint `-`). rc is always `-`.
+    pub fn deferred(
+        suite: &str,
+        killed_after: Option<u64>,
+        mode: Mode,
+        producer: Producer,
+        epoch: u64,
+    ) -> Self {
+        ResultRecord {
+            status: Status::Deferred,
+            epoch,
+            secs: killed_after.unwrap_or(0),
+            fingerprint: match killed_after {
+                Some(_) => format!("deadline:{suite}"),
+                None => "-".into(),
+            },
+            mode: Some(mode),
+            producer: Some(producer),
             rc: None,
         }
     }
@@ -241,6 +269,10 @@ pub fn suite_line(suite: &str, rec: &ResultRecord) -> String {
         }
         Status::QuarantinedRed => format!("QUARANTINED-RED  rc={rc} after {}s", rec.secs),
         Status::Unreached => "UNREACHED".to_string(),
+        Status::Deferred if rec.fingerprint.starts_with("deadline:") => {
+            format!("DEFERRED deadline after {}s", rec.secs)
+        }
+        Status::Deferred => "DEFERRED deadline".to_string(),
     };
     format!("  {suite:<32} {tail}")
 }
@@ -458,6 +490,35 @@ mod tests {
         let re = Regex::new(r"^\s+test-\S+\.sh\s+(ok|RED|SKIPPED)").unwrap();
         assert!(re.is_match(&suite_line("test-a.sh", &mk(Status::Ok, Some(0), 7))));
         assert!(!re.is_match(&suite_line("test-a.sh", &mk(Status::Unreached, None, 0))));
+    }
+
+    #[test]
+    fn deferred_records_are_neither_executed_nor_blocking_and_round_trip() {
+        let killed =
+            ResultRecord::deferred("test-p.sh", Some(61), Mode::Parallel, Producer::Explicit, 7);
+        assert_eq!(
+            killed.to_string(),
+            "deferred 7 61 deadline:test-p.sh parallel explicit -"
+        );
+        assert_eq!(
+            ResultRecord::parse(&killed.to_string()),
+            Some(killed.clone())
+        );
+        let never = ResultRecord::deferred("test-z.sh", None, Mode::Serial, Producer::Diff, 8);
+        assert_eq!(never.to_string(), "deferred 8 0 - serial diff -");
+        assert!(!Status::Deferred.executed());
+        assert!(!Status::Deferred.blocking());
+        assert_eq!(
+            suite_line("test-p.sh", &killed),
+            format!("  {:<32} DEFERRED deadline after 61s", "test-p.sh")
+        );
+        assert_eq!(
+            suite_line("test-z.sh", &never),
+            format!("  {:<32} DEFERRED deadline", "test-z.sh")
+        );
+        // round.sh's per-suite regex must not count a deferred suite as run
+        let re = Regex::new(r"^\s+test-\S+\.sh\s+(ok|RED|SKIPPED)").unwrap();
+        assert!(!re.is_match(&suite_line("test-p.sh", &killed)));
     }
 
     #[test]

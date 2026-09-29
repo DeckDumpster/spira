@@ -32,6 +32,9 @@ pub fn install_signal_handlers() {
 pub const RC_TIMEOUT: i32 = 124;
 /// rc for a run killed because the batch was cancelled.
 pub const RC_CANCELLED: i32 = 130;
+/// rc for a run killed because the batch's `--deadline` passed (DESIGN.md D7). Outside
+/// 0..=255, so no process can exit with it.
+pub const RC_DEADLINE: i32 = -124;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecRequest {
@@ -40,6 +43,9 @@ pub struct ExecRequest {
     pub env: Vec<(String, String)>,
     pub argv: Vec<String>,
     pub timeout: Option<Duration>,
+    /// The batch's hard deadline (`--deadline`): past it the exec is killed like a timeout,
+    /// but reports [`RC_DEADLINE`]. None = no deadline.
+    pub deadline: Option<Instant>,
     /// Where the combined stdout+stderr goes; the outcome carries it too.
     pub output: Option<PathBuf>,
 }
@@ -52,6 +58,7 @@ impl ExecRequest {
             env: Vec::new(),
             argv: argv.iter().map(|s| s.to_string()).collect(),
             timeout: None,
+            deadline: None,
             output: None,
         }
     }
@@ -115,9 +122,15 @@ fn temp_output() -> PathBuf {
     ))
 }
 
-/// Run `cmd` with stdout+stderr into `out` (created), bounded by `timeout`; SIGTERM then,
-/// 10 s later, SIGKILL on expiry (rc 124) or on cancellation (rc 130).
-pub fn run_bounded(mut cmd: Command, out: &Path, timeout: Option<Duration>) -> i32 {
+/// Run `cmd` with stdout+stderr into `out` (created), bounded by `timeout` and `deadline`;
+/// SIGTERM then, 10 s later, SIGKILL on expiry (rc 124), on the deadline (rc
+/// [`RC_DEADLINE`]; the timeout wins a tie) or on cancellation (rc 130).
+pub fn run_bounded(
+    mut cmd: Command,
+    out: &Path,
+    timeout: Option<Duration>,
+    deadline: Option<Instant>,
+) -> i32 {
     let file = match File::create(out) {
         Ok(f) => f,
         Err(_) => return 127,
@@ -146,13 +159,18 @@ pub fn run_bounded(mut cmd: Command, out: &Path, timeout: Option<Duration>) -> i
         match killed {
             None => {
                 let expired = timeout.is_some_and(|t| start.elapsed() >= t);
-                if expired || cancelled() {
+                let cut = deadline.is_some_and(|d| Instant::now() >= d);
+                if expired || cut || cancelled() {
                     // SAFETY: signalling our own child by pid.
                     unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
-                    killed = Some((
-                        if expired { RC_TIMEOUT } else { RC_CANCELLED },
-                        Instant::now(),
-                    ));
+                    let rc = if expired {
+                        RC_TIMEOUT
+                    } else if cut {
+                        RC_DEADLINE
+                    } else {
+                        RC_CANCELLED
+                    };
+                    killed = Some((rc, Instant::now()));
                 }
             }
             Some((_, at)) if at.elapsed() >= Duration::from_secs(10) => {
@@ -229,7 +247,7 @@ impl ContainerRuntime for Podman {
             Some(p) => (p.clone(), false),
             None => (temp_output(), true),
         };
-        let rc = run_bounded(cmd, &path, req.timeout);
+        let rc = run_bounded(cmd, &path, req.timeout, req.deadline);
         let output = read_lossy(&path);
         if temp {
             let _ = fs::remove_file(&path);
@@ -329,7 +347,7 @@ mod tests {
         let out = temp_output();
         let mut c = Command::new("sh");
         c.args(["-c", "echo out; echo err >&2; exit 3"]);
-        assert_eq!(run_bounded(c, &out, None), 3);
+        assert_eq!(run_bounded(c, &out, None, None), 3);
         let text = read_lossy(&out);
         assert!(text.contains("out") && text.contains("err"));
         let _ = fs::remove_file(out);
@@ -342,10 +360,39 @@ mod tests {
         c.arg("5");
         let t0 = Instant::now();
         assert_eq!(
-            run_bounded(c, &out, Some(Duration::from_millis(200))),
+            run_bounded(c, &out, Some(Duration::from_millis(200)), None),
             RC_TIMEOUT
         );
         assert!(t0.elapsed() < Duration::from_secs(4));
+        let _ = fs::remove_file(out);
+    }
+
+    #[test]
+    fn run_bounded_kills_at_the_deadline_with_its_own_rc() {
+        let out = temp_output();
+        let mut c = Command::new("sh");
+        c.args(["-c", "echo started; sleep 5"]);
+        let t0 = Instant::now();
+        let d = Some(Instant::now() + Duration::from_millis(200));
+        assert_eq!(
+            run_bounded(c, &out, Some(Duration::from_secs(60)), d),
+            RC_DEADLINE
+        );
+        assert!(t0.elapsed() < Duration::from_secs(4));
+        assert!(
+            read_lossy(&out).contains("started"),
+            "partial output is kept"
+        );
+        let _ = fs::remove_file(out);
+    }
+
+    #[test]
+    fn the_per_suite_timeout_wins_a_tie_with_the_deadline() {
+        let out = temp_output();
+        let mut c = Command::new("sleep");
+        c.arg("5");
+        let past = Some(Instant::now());
+        assert_eq!(run_bounded(c, &out, Some(Duration::ZERO), past), RC_TIMEOUT);
         let _ = fs::remove_file(out);
     }
 }

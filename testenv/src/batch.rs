@@ -1,6 +1,7 @@
 //! Running the selected suites in the container: serial or parallel, per-suite timeout,
 //! exclusive drains, PSI admission, and the three harness faults that must never read as a
-//! red suite (container death, exec storm, lost `--user` account). DESIGN.md §4.3.
+//! red suite (container death, exec storm, lost `--user` account). DESIGN.md §4.3. With
+//! `BatchCfg::deadline`, a hard cut of the whole suite phase (DESIGN.md D7).
 
 use crate::fixture::{is_user_account_fault, Liveness, Session, TestDb};
 use crate::record::{self, Mode, Producer, ResultRecord, Status};
@@ -32,6 +33,8 @@ pub struct BatchCfg {
     pub exec_fault_threshold: usize,
     pub quarantined: BTreeSet<String>,
     pub psi_pause: Duration,
+    /// `--deadline`: measured from the start of [`run`]. None = no deadline (D7).
+    pub deadline: Option<Duration>,
 }
 
 /// Side effects the executor reports through, so tests can observe them.
@@ -52,6 +55,8 @@ pub struct BatchOutcome {
     pub exec_fault: Option<usize>,
     pub account_fault: Option<String>,
     pub cancelled: bool,
+    /// The deadline stopped the launch loop; jobs with no record were never started.
+    pub deadline_hit: bool,
 }
 
 impl BatchOutcome {
@@ -66,6 +71,14 @@ impl BatchOutcome {
         self.records
             .iter()
             .filter(|(_, r)| r.status == Status::QuarantinedRed)
+            .map(|(s, _)| s.clone())
+            .collect()
+    }
+    /// Suites cut by the deadline (killed or never started), in name order.
+    pub fn deferred(&self) -> Vec<String> {
+        self.records
+            .iter()
+            .filter(|(_, r)| r.status == Status::Deferred)
             .map(|(s, _)| s.clone())
             .collect()
     }
@@ -130,9 +143,30 @@ struct Shared<'a> {
     records: Mutex<BTreeMap<String, ResultRecord>>,
     empty_output: Mutex<BTreeMap<String, bool>>,
     account_fault: Mutex<Option<String>>,
+    deadline_at: Option<Instant>,
 }
 
 impl Shared<'_> {
+    fn past_deadline(&self) -> bool {
+        self.deadline_at.is_some_and(|d| Instant::now() >= d)
+    }
+
+    /// A suite cut by the deadline: `killed_after` Some = it was running and was killed
+    /// (its partial output is kept), None = never started. No timing row: a truncated wall
+    /// time would drag the suite's median down (D7).
+    fn finish_deferred(&self, suite: &str, killed_after: Option<u64>, output: &str) {
+        let rec = ResultRecord::deferred(
+            suite,
+            killed_after,
+            self.cfg.mode,
+            self.cfg.producer,
+            now_epoch(),
+        );
+        write_suite(&self.cfg.results, suite, &rec, output);
+        (self.hooks.line)(&record::suite_line(suite, &rec));
+        self.records.lock().unwrap().insert(suite.to_string(), rec);
+    }
+
     fn raw_path(&self, suite: &str) -> PathBuf {
         self.cfg.results.join(format!(".{suite}.raw"))
     }
@@ -142,6 +176,7 @@ impl Shared<'_> {
             .session
             .suite_request(self.cfg.mode, n, suite, self.testdb);
         req.timeout = self.cfg.timeout;
+        req.deadline = self.deadline_at;
         let raw = self.raw_path(suite);
         req.output = Some(raw.clone());
         let t0 = Instant::now();
@@ -236,11 +271,25 @@ pub fn run(
         records: Mutex::new(BTreeMap::new()),
         empty_output: Mutex::new(BTreeMap::new()),
         account_fault: Mutex::new(None),
+        // The clock starts as the first suite is scheduled (D7).
+        deadline_at: cfg.deadline.map(|d| Instant::now() + d),
     };
     let mut outcome = BatchOutcome::default();
     match cfg.mode {
         Mode::Serial => run_serial(&sh, jobs, &mut outcome),
         Mode::Parallel => run_parallel(&sh, jobs, &mut outcome),
+    }
+    if outcome.deadline_hit && !outcome.harness_fault() {
+        let d = cfg.deadline.map(|d| d.as_secs()).unwrap_or(0);
+        (hooks.log)(&format!(
+            "deadline {d}s reached — no further suites started; running suites killed"
+        ));
+        for job in jobs {
+            let seen = sh.records.lock().unwrap().contains_key(&job.name);
+            if !seen {
+                sh.finish_deferred(&job.name, None, "");
+            }
+        }
     }
     outcome.records = sh.records.into_inner().unwrap();
     outcome.cancelled |= cancelled();
@@ -254,8 +303,17 @@ fn run_serial(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
             outcome.cancelled = true;
             break;
         }
+        if sh.past_deadline() {
+            outcome.deadline_hit = true;
+            break;
+        }
         let n = i + 1;
         let (rc, secs, output) = sh.exec_suite(n, &job.name);
+        if rc == crate::runtime::RC_DEADLINE {
+            sh.finish_deferred(&job.name, Some(secs), &output);
+            outcome.deadline_hit = true;
+            break;
+        }
         if rc != 0 && secs == 0 && output.trim().is_empty() {
             consecutive += 1;
         } else {
@@ -314,7 +372,7 @@ fn run_parallel(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
                     job.name
                 ));
             }
-            while (sh.hooks.psi_high)() && !cancelled() {
+            while (sh.hooks.psi_high)() && !cancelled() && !sh.past_deadline() {
                 (sh.hooks.log)("memory pressure above threshold — pausing suite launch");
                 std::thread::sleep(sh.cfg.psi_pause);
             }
@@ -323,6 +381,10 @@ fn run_parallel(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
                 while inflight >= sh.cfg.maxpar as usize {
                     wait_one(&mut inflight);
                 }
+            }
+            if sh.past_deadline() {
+                outcome.deadline_hit = true;
+                break;
             }
             if let Liveness::Dead { detail } = sh.session.liveness() {
                 (sh.hooks.log)(&format!(
@@ -346,6 +408,10 @@ fn run_parallel(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
                 let _done = done;
                 let (rc, secs, output) = sh.exec_suite(n, &name);
                 if rc == crate::runtime::RC_CANCELLED && cancelled() {
+                    return;
+                }
+                if rc == crate::runtime::RC_DEADLINE {
+                    sh.finish_deferred(&name, Some(secs), &output);
                     return;
                 }
                 if rc != 0 && is_user_account_fault(&output) {
@@ -419,6 +485,7 @@ mod tests {
             exec_fault_threshold: 5,
             quarantined: BTreeSet::new(),
             psi_pause: Duration::from_millis(1),
+            deadline: None,
         }
     }
 
@@ -773,5 +840,195 @@ mod tests {
         c.timeout = Some(Duration::from_secs(600));
         with_hooks(|h, _| run(&s, &c, h, None, &jobs(&["test-a.sh"])));
         assert_eq!(rt.suite_execs()[0].timeout, Some(Duration::from_secs(600)));
+    }
+
+    /// Suites that take `ms` each but honour the exec's deadline the way `run_bounded` does:
+    /// killed at the deadline with RC_DEADLINE and their partial output.
+    fn timed_suites(rt: &FakeRuntime, times: &[(&str, u64, i32)]) {
+        let table: Vec<(String, u64, i32)> = times
+            .iter()
+            .map(|(n, ms, rc)| (format!("/workspace/spira/{n}"), *ms, *rc))
+            .collect();
+        rt.on(
+            |r| {
+                r.argv
+                    .get(1)
+                    .is_some_and(|a| a.starts_with("/workspace/spira/test-"))
+            },
+            move |r| {
+                let (_, ms, rc) = table
+                    .iter()
+                    .find(|(p, _, _)| Some(p) == r.argv.get(1))
+                    .cloned()
+                    .unwrap_or_default();
+                let end = Instant::now() + Duration::from_millis(ms);
+                loop {
+                    if r.deadline.is_some_and(|d| Instant::now() >= d) {
+                        return ExecOutcome {
+                            rc: crate::runtime::RC_DEADLINE,
+                            output: "partial\n".into(),
+                        };
+                    }
+                    if Instant::now() >= end {
+                        return ExecOutcome {
+                            rc,
+                            output: if rc == 0 {
+                                "ok\n".into()
+                            } else {
+                                "FAIL x\n".into()
+                            },
+                        };
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn deadline_stops_new_starts_in_serial() {
+        let rt = FakeRuntime::new();
+        timed_suites(
+            &rt,
+            &[
+                ("test-a.sh", 80, 0),
+                ("test-b.sh", 80, 0),
+                ("test-c.sh", 80, 0),
+            ],
+        );
+        let dir = tmpdir("dl-serial");
+        let s = session(&rt);
+        let mut c = cfg(Mode::Serial, &dir, 0);
+        c.deadline = Some(Duration::from_millis(120));
+        let out = with_hooks(|h, seen| {
+            let o = run(
+                &s,
+                &c,
+                h,
+                None,
+                &jobs(&["test-a.sh", "test-b.sh", "test-c.sh"]),
+            );
+            assert!(seen
+                .logs
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|l| l.contains("deadline 0s reached")));
+            // no timing row for a deferred suite
+            assert_eq!(seen.timings.lock().unwrap().len(), 1);
+            o
+        });
+        assert!(!out.harness_fault());
+        assert!(out.deadline_hit);
+        assert_eq!(out.records["test-a.sh"].status, Status::Ok);
+        // b was running at the deadline: killed, deferred, partial output kept
+        assert_eq!(out.records["test-b.sh"].status, Status::Deferred);
+        assert_eq!(out.records["test-b.sh"].fingerprint, "deadline:test-b.sh");
+        assert_eq!(
+            fs::read_to_string(dir.join("test-b.sh.out")).unwrap(),
+            "partial\n"
+        );
+        // c never started
+        assert_eq!(out.records["test-c.sh"].status, Status::Deferred);
+        assert_eq!(out.records["test-c.sh"].fingerprint, "-");
+        assert_eq!(rt.suite_execs().len(), 2);
+        assert_eq!(out.deferred(), vec!["test-b.sh", "test-c.sh"]);
+        assert!(out.blocking_reds().is_empty());
+        assert!(fs::read_to_string(dir.join("test-c.sh.result"))
+            .unwrap()
+            .starts_with("deferred "));
+    }
+
+    #[test]
+    fn deadline_in_parallel_kills_the_running_and_starts_nothing_new() {
+        let rt = FakeRuntime::new();
+        // order is kept: the long one first (the selector's priority), then shorts
+        timed_suites(
+            &rt,
+            &[
+                ("test-long.sh", 5_000, 0),
+                ("test-s1.sh", 10, 0),
+                ("test-s2.sh", 10, 1),
+                ("test-s3.sh", 400, 0),
+                ("test-s4.sh", 10, 0),
+            ],
+        );
+        let dir = tmpdir("dl-par");
+        let s = session(&rt);
+        let mut c = cfg(Mode::Parallel, &dir, 2);
+        c.deadline = Some(Duration::from_millis(200));
+        let t0 = Instant::now();
+        let out = with_hooks(|h, _| {
+            run(
+                &s,
+                &c,
+                h,
+                None,
+                &jobs(&[
+                    "test-long.sh",
+                    "test-s1.sh",
+                    "test-s2.sh",
+                    "test-s3.sh",
+                    "test-s4.sh",
+                ]),
+            )
+        });
+        assert!(
+            t0.elapsed() < Duration::from_secs(3),
+            "the deadline is hard"
+        );
+        assert_eq!(out.records["test-long.sh"].status, Status::Deferred);
+        assert_eq!(
+            out.records["test-long.sh"].fingerprint,
+            "deadline:test-long.sh"
+        );
+        assert_eq!(out.records["test-s1.sh"].status, Status::Ok);
+        // a red that finished before the deadline stays red and blocking
+        assert_eq!(out.records["test-s2.sh"].status, Status::Red);
+        assert_eq!(out.blocking_reds(), vec!["test-s2.sh"]);
+        // s3 was started before the deadline and killed at it; s4 never started
+        assert_eq!(out.records["test-s3.sh"].status, Status::Deferred);
+        assert_eq!(out.records["test-s4.sh"].status, Status::Deferred);
+        assert_eq!(out.records["test-s4.sh"].fingerprint, "-");
+        // exec calls race across threads, so compare the set that started
+        let mut started: Vec<String> = rt
+            .suite_execs()
+            .iter()
+            .map(|r| r.argv[1].trim_start_matches("/workspace/spira/").to_string())
+            .collect();
+        started.sort();
+        assert_eq!(
+            started,
+            vec!["test-long.sh", "test-s1.sh", "test-s2.sh", "test-s3.sh"]
+        );
+        assert!(rt.suite_execs().iter().all(|r| r.deadline.is_some()));
+    }
+
+    #[test]
+    fn a_suite_that_hits_its_own_timeout_before_the_deadline_is_still_a_timeout() {
+        let rt = FakeRuntime::new();
+        rt.suite("test-a.sh", 124, "slow\n");
+        let dir = tmpdir("dl-tmo");
+        let s = session(&rt);
+        let mut c = cfg(Mode::Serial, &dir, 0);
+        c.deadline = Some(Duration::from_secs(60));
+        let out = with_hooks(|h, _| run(&s, &c, h, None, &jobs(&["test-a.sh"])));
+        assert_eq!(out.records["test-a.sh"].status, Status::Timeout);
+        assert!(!out.deadline_hit);
+        assert!(out.deferred().is_empty());
+    }
+
+    #[test]
+    fn without_a_deadline_nothing_is_deferred_and_no_exec_carries_one() {
+        let rt = FakeRuntime::new();
+        timed_suites(&rt, &[("test-a.sh", 30, 0), ("test-b.sh", 30, 0)]);
+        let dir = tmpdir("dl-none");
+        let s = session(&rt);
+        let c = cfg(Mode::Parallel, &dir, 1);
+        let out = with_hooks(|h, _| run(&s, &c, h, None, &jobs(&["test-a.sh", "test-b.sh"])));
+        assert!(!out.deadline_hit);
+        assert!(out.deferred().is_empty());
+        assert!(out.records.values().all(|r| r.status == Status::Ok));
+        assert!(rt.suite_execs().iter().all(|r| r.deadline.is_none()));
     }
 }

@@ -233,6 +233,9 @@ fn a_mixed_batch_reports_every_suite_and_a_red_verdict() {
     assert_eq!(status("test-q.sh"), "quarantined-red");
     let meta = fs::read_to_string(res.join("batch.meta")).unwrap();
     assert!(meta.contains("branch=topic\nbase=main\n"));
+    // without --deadline: no deadline lines, nothing deferred (D7)
+    assert!(!meta.contains("deadline=") && !meta.contains("deferred"));
+    assert!(!w.has_line(|l| l.contains("DEFERRED") || l.contains("deadline")));
     assert!(meta.contains("selection=explicit\nprofile=aeon\n"));
     assert!(fs::read_to_string(res.join("timing.tsv"))
         .unwrap()
@@ -527,13 +530,165 @@ fn verdict_lines() {
             red: 2,
             reason: None,
             cached: None,
-            selected_none: false
+            selected_none: false,
+            deferred: None,
         }
         .verdict_line(),
         "VERDICT RED ran=5 red=2"
     );
     assert_eq!(
+        Finish {
+            deferred: Some((5, 300)),
+            ..Finish::green(7)
+        }
+        .verdict_line(),
+        "VERDICT GREEN ran=7 deferred=5 (deadline 300s)"
+    );
+    assert_eq!(
+        Finish {
+            rc: 1,
+            ran: 2,
+            red: 1,
+            reason: None,
+            cached: None,
+            selected_none: false,
+            deferred: Some((3, 60)),
+        }
+        .verdict_line(),
+        "VERDICT RED ran=2 red=1 deferred=3 (deadline 60s)"
+    );
+    assert_eq!(
         Finish::fault(3, "install", 0).verdict_line(),
         "VERDICT FAULT rc=3 ran=0 reason=install"
+    );
+}
+
+/// A suite that runs `ms` and honours the exec's deadline as `run_bounded` does.
+fn slow_suite(rt: &FakeRuntime, suite: &str, ms: u64) {
+    let path = format!("/workspace/spira/{suite}");
+    rt.on(
+        move |r| r.argv.get(1).map(String::as_str) == Some(path.as_str()),
+        move |r| {
+            let end = Instant::now() + Duration::from_millis(ms);
+            loop {
+                if r.deadline.is_some_and(|d| Instant::now() >= d) {
+                    return ExecOutcome {
+                        rc: crate::runtime::RC_DEADLINE,
+                        output: "1..9\nok 1 - first\n".into(),
+                    };
+                }
+                if Instant::now() >= end {
+                    return ExecOutcome {
+                        rc: 0,
+                        output: "ok\n".into(),
+                    };
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        },
+    );
+}
+
+#[test]
+fn a_deadline_cut_is_green_partial_recorded_and_never_cached_as_full() {
+    let w = World::new("deadline");
+    let rt = FakeRuntime::new();
+    slow_suite(&rt, "test-b.sh", 30_000);
+    rt.suite("test-a.sh", 0, "1..1\nok 1 - a\n");
+    let b = FakeBuilder::new(None);
+    let args = [
+        "--deadline",
+        "1",
+        "--suites",
+        "test-b.sh,test-a.sh",
+        "topic",
+    ];
+    let t0 = Instant::now();
+    assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
+    assert!(t0.elapsed() < Duration::from_secs(10), "the cut is hard");
+    assert_eq!(w.last(), "VERDICT GREEN ran=1 deferred=1 (deadline 1s)");
+    assert!(w.has_line(|l| l.starts_with("  test-b.sh") && l.contains("DEFERRED deadline after")));
+    assert!(w
+        .has_line(|l| l
+            .contains("1 suite(s) deferred by the deadline (the round covers them): test-b.sh")));
+
+    let res = w.results_dir();
+    let meta = fs::read_to_string(res.join("batch.meta")).unwrap();
+    assert!(
+        meta.ends_with("deadline=1\ndeferred=1\ndeferred_suites=test-b.sh\n"),
+        "{meta}"
+    );
+    let rec = fs::read_to_string(res.join("test-b.sh.result")).unwrap();
+    assert!(
+        rec.starts_with("deferred ") && rec.contains(" deadline:test-b.sh "),
+        "{rec}"
+    );
+    let tsv = fs::read_to_string(res.join("timing.tsv")).unwrap();
+    assert!(
+        tsv.lines()
+            .any(|l| l.starts_with("test-b.sh\t") && l.contains("\tdeferred\t")),
+        "{tsv}"
+    );
+    // no suite-timing row for the deferred suite: a.sh and __batch__ only
+    let rows = fs::read_to_string(w.root.join("run/tsd/suite-timing.jsonl")).unwrap();
+    assert_eq!(rows.lines().count(), 2);
+    assert!(!rows.contains("test-b.sh"));
+
+    // the verdict is recorded as partial, and the same key runs again rather than replaying
+    let key = res.file_name().unwrap().to_string_lossy().to_string();
+    let v = fs::read_to_string(w.root.join(format!("run/verdicts/batch-{key}"))).unwrap();
+    assert!(v.starts_with("verdict=partial\n"), "{v}");
+    assert!(v.contains("deferred_suites=test-b.sh\n"));
+    assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
+    assert!(!w.last().contains("cached="), "{}", w.last());
+    assert_eq!(
+        b.calls.load(Ordering::SeqCst),
+        2,
+        "a partial green is not a cache hit"
+    );
+}
+
+#[test]
+fn a_red_that_finished_before_the_deadline_makes_the_verdict_red() {
+    let w = World::new("deadline-red");
+    let rt = FakeRuntime::new();
+    slow_suite(&rt, "test-a.sh", 30_000);
+    rt.suite("test-b.sh", 1, "1..1\nnot ok 1 - b is broken\nFAIL b\n");
+    let b = FakeBuilder::new(None);
+    let rc = w.run(
+        &rt,
+        &b,
+        &["--deadline=1", "--suites", "test-a.sh,test-b.sh", "topic"],
+        "",
+        &w.root,
+    );
+    assert_eq!(rc, 1);
+    assert_eq!(w.last(), "VERDICT RED ran=1 red=1 deferred=1 (deadline 1s)");
+    let key = w
+        .results_dir()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    let v = fs::read_to_string(w.root.join(format!("run/verdicts/batch-{key}"))).unwrap();
+    assert!(v.starts_with("verdict=red\n") && v.contains("red_suites=test-b.sh\n"));
+}
+
+#[test]
+fn a_deadline_run_that_finishes_everything_is_a_full_green() {
+    let w = World::new("deadline-full");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let args = ["--deadline", "300", "--suites", "test-a.sh", "topic"];
+    assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
+    assert_eq!(w.last(), "VERDICT GREEN ran=1 deferred=0 (deadline 300s)");
+    let meta = fs::read_to_string(w.results_dir().join("batch.meta")).unwrap();
+    assert!(meta.ends_with("deadline=300\ndeferred=0\ndeferred_suites=\n"));
+    // nothing deferred: an ordinary green, and the cache replays it
+    assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
+    assert!(
+        w.last().starts_with("VERDICT GREEN ran=0 cached="),
+        "{}",
+        w.last()
     );
 }

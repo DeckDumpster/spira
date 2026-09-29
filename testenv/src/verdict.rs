@@ -57,6 +57,8 @@ impl KeyInputs {
 pub enum Verdict {
     Green,
     Red,
+    /// A green cut short by `--deadline` (DESIGN.md D7): recorded, never a cache hit.
+    Partial,
 }
 
 /// `$SPIRA_VERDICTS/batch-<key>`: `key=value` lines.
@@ -70,6 +72,8 @@ pub struct VerdictFile {
     pub red_suites: Option<String>,
     pub override_reason: Option<String>,
     pub concierge_notified: Option<u64>,
+    /// Suites the deadline deferred (partial only).
+    pub deferred_suites: Option<String>,
 }
 
 impl VerdictFile {
@@ -85,6 +89,7 @@ impl VerdictFile {
                     v.verdict = match val.as_str() {
                         "green" => Some(Verdict::Green),
                         "red" => Some(Verdict::Red),
+                        "partial" => Some(Verdict::Partial),
                         _ => None,
                     }
                 }
@@ -94,6 +99,7 @@ impl VerdictFile {
                 "red_suites" => v.red_suites = Some(val),
                 "override_reason" => v.override_reason = Some(val),
                 "concierge_notified" => v.concierge_notified = val.parse().ok(),
+                "deferred_suites" => v.deferred_suites = Some(val),
                 _ => {}
             }
         }
@@ -105,6 +111,7 @@ impl VerdictFile {
         let verdict = match self.verdict.unwrap_or(Verdict::Green) {
             Verdict::Green => "green",
             Verdict::Red => "red",
+            Verdict::Partial => "partial",
         };
         s.push_str(&format!("verdict={verdict}\n"));
         s.push_str(&format!("when={}\n", self.when.clone().unwrap_or_default()));
@@ -121,6 +128,9 @@ impl VerdictFile {
         }
         if let Some(n) = self.concierge_notified {
             s.push_str(&format!("concierge_notified={n}\n"));
+        }
+        if let Some(d) = &self.deferred_suites {
+            s.push_str(&format!("deferred_suites={d}\n"));
         }
         s
     }
@@ -140,6 +150,7 @@ impl VerdictFile {
             red_suites,
             override_reason,
             concierge_notified: None,
+            deferred_suites: None,
         }
     }
 }
@@ -186,6 +197,8 @@ pub fn decide(
     let when = f.when.clone().unwrap_or_else(|| "unknown".into());
     match f.verdict.unwrap_or(Verdict::Green) {
         Verdict::Green => CacheDecision::Green { when },
+        // A deadline-cut green proves only the suites that finished: run the key again.
+        Verdict::Partial => CacheDecision::Miss,
         Verdict::Red => {
             let reason = repeat_reason.unwrap_or("");
             if reason.chars().count() >= MIN_REPEAT_REASON {
@@ -272,6 +285,21 @@ mod tests {
         let text = f.render();
         assert!(text.starts_with("verdict=red\nwhen=2026-09-28T00:00:00Z\nby=testenv-batch\nat=100\nred_suites=test-a.sh test-b.sh\n"));
         assert_eq!(VerdictFile::parse(&text), f);
+    }
+
+    #[test]
+    fn a_partial_green_round_trips_and_is_never_a_cache_hit() {
+        let mut f = VerdictFile::new(Verdict::Partial, "w".into(), 100, None, None);
+        f.deferred_suites = Some("test-p.sh test-z.sh".into());
+        let text = f.render();
+        assert!(text.starts_with("verdict=partial\n"));
+        assert!(text.contains("deferred_suites=test-p.sh test-z.sh\n"));
+        assert_eq!(VerdictFile::parse(&text), f);
+        assert_eq!(decide(Some(&f), 150, 86400, None), CacheDecision::Miss);
+        assert_eq!(
+            decide(Some(&f), 150, 86400, Some("a long enough reason")),
+            CacheDecision::Miss
+        );
     }
 
     #[test]

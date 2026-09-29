@@ -33,6 +33,9 @@ pub struct Finish {
     pub reason: Option<&'static str>,
     pub cached: Option<String>,
     pub selected_none: bool,
+    /// `--deadline` runs that reached the suite phase: (deferred count, deadline secs).
+    /// Renders ` deferred=<d> (deadline <S>s)` on GREEN and RED; None renders nothing (D7).
+    pub deferred: Option<(usize, u64)>,
 }
 
 impl Finish {
@@ -44,6 +47,7 @@ impl Finish {
             reason: Some(reason),
             cached: None,
             selected_none: false,
+            deferred: None,
         }
     }
     fn green(ran: usize) -> Self {
@@ -54,6 +58,7 @@ impl Finish {
             reason: None,
             cached: None,
             selected_none: false,
+            deferred: None,
         }
     }
     fn nothing() -> Self {
@@ -64,10 +69,15 @@ impl Finish {
             reason: None,
             cached: None,
             selected_none: true,
+            deferred: None,
         }
     }
 
     pub fn verdict_line(&self) -> String {
+        let deferred = self
+            .deferred
+            .map(|(d, secs)| format!(" deferred={d} (deadline {secs}s)"))
+            .unwrap_or_default();
         match self.rc {
             0 => {
                 let mut s = format!("VERDICT GREEN ran={}", self.ran);
@@ -77,9 +87,10 @@ impl Finish {
                 if self.selected_none {
                     s.push_str(" selected=0");
                 }
+                s.push_str(&deferred);
                 s
             }
-            1 => format!("VERDICT RED ran={} red={}", self.ran, self.red),
+            1 => format!("VERDICT RED ran={} red={}{deferred}", self.ran, self.red),
             rc => format!(
                 "VERDICT FAULT rc={rc} ran={} reason={}",
                 self.ran,
@@ -933,7 +944,13 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         exec_fault_threshold: s.exec_fault_threshold,
         quarantined: quarantined.clone(),
         psi_pause: Duration::from_secs(5),
+        deadline: args.deadline.map(Duration::from_secs),
     };
+    if let Some(d) = args.deadline {
+        deps.log(&format!(
+            "deadline {d}s on the suite phase — suites not finished by then are deferred"
+        ));
+    }
     let cpu0 = util::cpu_jiffies(&util::read("/proc/stat"));
     let t_suites = Instant::now();
     let outcome = batch::run(&session, &cfg, &hooks, testdb.as_ref(), &jobs);
@@ -987,7 +1004,30 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             ("artifacts", artifacts.display().to_string()),
             ("worktree", wt.path.display().to_string()),
             ("tree", tree.clone()),
-        ],
+        ]
+        .into_iter()
+        .chain(
+            args.deadline
+                .map(|d| {
+                    let names: Vec<&str> = selected
+                        .iter()
+                        .filter(|n| {
+                            records
+                                .get(*n)
+                                .is_some_and(|r| r.status == Status::Deferred)
+                        })
+                        .map(String::as_str)
+                        .collect();
+                    [
+                        ("deadline", d.to_string()),
+                        ("deferred", names.len().to_string()),
+                        ("deferred_suites", names.join(" ")),
+                    ]
+                })
+                .into_iter()
+                .flatten(),
+        )
+        .collect::<Vec<_>>(),
     );
     let batch_wall = t_batch.elapsed().as_secs();
     timing_hook(timing::BATCH_ROW, 0, batch_wall, 0, 0);
@@ -1093,6 +1133,23 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         .filter(|n| records.get(*n).is_some_and(|r| r.status.blocking()))
         .cloned()
         .collect();
+    let deferred: Vec<String> = selected
+        .iter()
+        .filter(|n| {
+            records
+                .get(*n)
+                .is_some_and(|r| r.status == Status::Deferred)
+        })
+        .cloned()
+        .collect();
+    let deferred_count = args.deadline.map(|d| (deferred.len(), d));
+    if !deferred.is_empty() {
+        deps.log(&format!(
+            "{} suite(s) deferred by the deadline (the round covers them): {}",
+            deferred.len(),
+            deferred.join(" ")
+        ));
+    }
     let run_env = [("SPIRA_RUN", s.run.display().to_string())];
     let results_s = results.display().to_string();
     if !reds.is_empty() {
@@ -1133,20 +1190,33 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             reason: None,
             cached: None,
             selected_none: false,
+            deferred: deferred_count,
         };
     }
     if s.verdict_ttl > 0 {
         let _ = fs::create_dir_all(&s.verdicts);
-        let f = VerdictFile::new(
-            Verdict::Green,
+        // A deadline-cut green is recorded as partial, never as a full green (D7).
+        let mut f = VerdictFile::new(
+            if deferred.is_empty() {
+                Verdict::Green
+            } else {
+                Verdict::Partial
+            },
             iso_utc(now_epoch()),
             now_epoch(),
             None,
             override_reason,
         );
+        if !deferred.is_empty() {
+            f.deferred_suites = Some(deferred.join(" "));
+        }
         let _ = fs::write(&verdict_path, f.render());
     }
-    deps.log("all suites passed");
+    if deferred.is_empty() {
+        deps.log("all suites passed");
+    } else {
+        deps.log("every suite that finished before the deadline passed");
+    }
     let _ = helper(
         &deps.harness.script("gate-timing.sh"),
         &[&results_s, "green"],
@@ -1154,7 +1224,10 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         &run_env,
         None,
     );
-    Finish::green(ran)
+    Finish {
+        deferred: deferred_count,
+        ..Finish::green(ran)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

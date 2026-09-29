@@ -3,7 +3,7 @@
 
 use crate::record::Mode;
 
-pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--report [N]] <branch> [<repo-name>]";
+pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--deadline <secs>] [--report [N]] <branch> [<repo-name>]";
 
 /// Where the explicit suite list comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,6 +19,8 @@ pub struct RunArgs {
     pub profile: String,
     /// `--with-bins` was given (logged; only picks the profile, DESIGN.md D1).
     pub with_bins: bool,
+    /// `--deadline S`: hard wall-clock budget for the suite phase (DESIGN.md D7).
+    pub deadline: Option<u64>,
     pub branch: String,
     pub repo: Option<String>,
 }
@@ -43,7 +45,18 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     let mut profile: Option<String> = None;
     let mut with_bins = false;
     let mut report: Option<usize> = None;
+    let mut deadline: Option<u64> = None;
     let mut i = 0;
+    let parse_deadline = |v: &str| -> Result<u64, UsageError> {
+        v.parse::<u64>()
+            .ok()
+            .filter(|n| *n > 0 && v.chars().all(|c| c.is_ascii_digit()))
+            .ok_or_else(|| {
+                UsageError(vec![format!(
+                    "batch: --deadline needs a positive number of seconds, got: {v}"
+                )])
+            })
+    };
     let set_suites = |suites: &mut Option<String>, v: String| -> Result<(), UsageError> {
         if suites.is_some() {
             return Err(err(&["batch: --suites may only be given once"]));
@@ -54,7 +67,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     while i < args.len() {
         let a = args[i].as_str();
         match a {
-            "--mode" | "--suites" | "--profile" => {
+            "--mode" | "--suites" | "--profile" | "--deadline" => {
                 let v = args
                     .get(i + 1)
                     .cloned()
@@ -62,6 +75,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                 match a {
                     "--mode" => mode = v,
                     "--suites" => set_suites(&mut suites, v)?,
+                    "--deadline" => deadline = Some(parse_deadline(&v)?),
                     _ => profile = Some(v),
                 }
                 i += 2;
@@ -100,6 +114,10 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
             }
             _ if a.starts_with("--profile=") => {
                 profile = Some(a["--profile=".len()..].to_string());
+                i += 1;
+            }
+            _ if a.starts_with("--deadline=") => {
+                deadline = Some(parse_deadline(&a["--deadline=".len()..])?);
                 i += 1;
             }
             _ if a.starts_with("--report=") => {
@@ -160,6 +178,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         suites,
         profile,
         with_bins,
+        deadline,
         branch,
         repo,
     }))
@@ -255,6 +274,24 @@ mod tests {
         assert_eq!(p(&["--report", "5"]).unwrap(), Invocation::Report(5));
         assert_eq!(p(&["--report=7"]).unwrap(), Invocation::Report(7));
         assert_eq!(p(&["--report", "HEAD"]).unwrap(), Invocation::Report(20));
+    }
+
+    #[test]
+    fn deadline_is_optional_and_must_be_positive_seconds() {
+        assert_eq!(run(&["b"]).deadline, None);
+        assert_eq!(run(&["--deadline", "300", "b"]).deadline, Some(300));
+        assert_eq!(
+            run(&["--deadline=60", "--suites", "a", "b"]).deadline,
+            Some(60)
+        );
+        for bad in ["0", "-5", "5s", "", "+3"] {
+            let e = p(&["--deadline", bad, "b"]).unwrap_err();
+            assert!(
+                e.0[0].contains("--deadline needs a positive number"),
+                "{bad}"
+            );
+        }
+        assert!(p(&["--deadline"]).is_err());
     }
 
     #[test]

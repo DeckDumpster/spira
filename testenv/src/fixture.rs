@@ -453,10 +453,8 @@ pub mod fake {
     use super::*;
     use std::sync::Mutex;
 
-    type Rule = (
-        Box<dyn Fn(&ExecRequest) -> bool + Send + Sync>,
-        Box<dyn Fn(&ExecRequest) -> ExecOutcome + Send + Sync>,
-    );
+    type Answer = std::sync::Arc<dyn Fn(&ExecRequest) -> ExecOutcome + Send + Sync>;
+    type Rule = (Box<dyn Fn(&ExecRequest) -> bool + Send + Sync>, Answer);
 
     #[derive(Default)]
     pub struct FakeRuntime {
@@ -482,7 +480,7 @@ pub mod fake {
             self.rules
                 .lock()
                 .unwrap()
-                .push((Box::new(pred), Box::new(ans)));
+                .push((Box::new(pred), std::sync::Arc::new(ans)));
         }
         /// Answer a suite script (`bash /workspace/spira/<suite>`) with rc and output.
         pub fn suite(&self, suite: &str, rc: i32, output: &str) {
@@ -526,11 +524,12 @@ pub mod fake {
     impl ContainerRuntime for FakeRuntime {
         fn exec(&self, req: &ExecRequest) -> ExecOutcome {
             self.execs.lock().unwrap().push(req.clone());
-            let out = {
+            // The answer runs outside the lock, so concurrent execs really overlap.
+            let ans = {
                 let rules = self.rules.lock().unwrap();
-                rules.iter().find(|(p, _)| p(req)).map(|(_, a)| a(req))
+                rules.iter().find(|(p, _)| p(req)).map(|(_, a)| a.clone())
             };
-            let out = out.unwrap_or_default();
+            let out = ans.map(|a| a(req)).unwrap_or_default();
             if let Some(p) = &req.output {
                 let _ = std::fs::write(p, &out.output);
             }

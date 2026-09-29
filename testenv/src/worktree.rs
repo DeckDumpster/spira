@@ -311,8 +311,18 @@ mod tests {
         drop(eph);
         assert!(!eph_path.exists());
         drop(wt);
-        // slot reuse: moved to c2, target/ kept, stray removed
-        let wt = acquire(&r2, &|_| {}).unwrap();
+        // slot reuse: moved to c2, target/ kept, stray removed. The flock is released when
+        // the last copy of the descriptor closes, and a process another test thread is
+        // spawning at that instant holds a copy until it execs — so allow a brief retry.
+        let mut wt = acquire(&r2, &|_| {}).unwrap();
+        for _ in 0..50 {
+            if matches!(wt.kind, Kind::Slot { .. }) {
+                break;
+            }
+            drop(wt);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            wt = acquire(&r2, &|_| {}).unwrap();
+        }
         assert_eq!(wt.path, slot_path);
         assert_eq!(fs::read_to_string(wt.path.join("f")).unwrap().trim(), "b");
         assert!(wt.path.join("target/keep").exists());

@@ -37,7 +37,7 @@ Four properties are the point; everything else serves them:
 
 ```
 testenv [--mode parallel|serial] [--suites <a.sh,b.sh,...|->] [--profile <p>]
-        [--with-bins] [--report [N]] <branch> [<repo-name-or-path>]
+        [--with-bins] [--deadline <secs>] [--report [N]] <branch> [<repo-name-or-path>]
 ```
 
 | argument | meaning |
@@ -50,9 +50,10 @@ testenv [--mode parallel|serial] [--suites <a.sh,b.sh,...|->] [--profile <p>]
 | (no `--suites`) | diff-derived: `select.sh --base <landref> --head <branch> --no-all-fallback --tiers $SPIRA_BATCH_TIERS(T2,T3)`; its `--mode-file` names the producer (`diff`/`all`). |
 | `--profile P` | cargo profile. Default `aeon` (aeon and gate runs). A round passes `release` (its binaries ship). |
 | `--with-bins` | **no build mode of its own** (always builds). Accepted as an alias for `--profile release` when `--profile` is not given, because every caller that passes it today is a round whose binaries ship (round.sh, round-vm.sh, batcher-cut). See §7, decision D1. |
+| `--deadline S` | a **hard** wall-clock budget, in whole seconds (> 0), for the suite phase: after S seconds no suite starts and running suites are killed; both are recorded `deferred`. Absent = no deadline, and the run is byte-for-byte what it was before the flag existed. See D7. |
 | `--report [N]` | print each suite's median `wall_secs` over its last N (default 20) suite-timing rows as JSON `[{"suite","median","n"}]` (the shape `tsd-query.sh suite-medians` printed) and exit; no branch or container. |
 
-`--mode=X`, `--suites=X`, `--report=N`, `--profile=P` spellings are accepted. `--` ends
+`--mode=X`, `--suites=X`, `--report=N`, `--profile=P`, `--deadline=S` spellings are accepted. `--` ends
 options. An unknown option prints `batch: unknown option: X` and the usage line, exit 2.
 
 ### 2.2 Exit status (unchanged from testenv-batch.sh — every caller branches on it)
@@ -76,7 +77,8 @@ stderr; `attribute.sh` treats `>= 2` as a run fault; `gate-retry.sh` retries onl
 * One line per suite as it completes, exactly `printf '  %-32s %s'`:
   `ok      <n>s`, `SKIPPED`, `DISABLED`, `SKIP-REQ requires:<tok,...>`, `TIMEOUT after <n>s`,
   `RED     rc=<rc> after <n>s`, `QUARANTINED-RED  rc=<rc> after <n>s`,
-  `QUARANTINED-RED  TIMEOUT after <n>s`, `UNREACHED`. round.sh counts
+  `QUARANTINED-RED  TIMEOUT after <n>s`, `UNREACHED`, and (only under `--deadline`)
+  `DEFERRED deadline after <n>s` (killed at the deadline) / `DEFERRED deadline` (never started). round.sh counts
   `^\s+test-\S+\.sh\s+(ok|RED|SKIPPED)`.
 * Under a RED line, the suite's TAP `not ok` lines (max 10), indented six spaces — they do
   not match the per-suite regex above.
@@ -84,7 +86,9 @@ stderr; `attribute.sh` treats `>= 2` as a run fault; `gate-retry.sh` retries onl
   round.sh greps (`^\| test-.*\| red`).
 * **Last line, always** (new): `VERDICT GREEN ran=<n> [cached=<when>] [selected=0]`,
   `VERDICT RED ran=<n> red=<k>`, or `VERDICT FAULT rc=<rc> ran=<n> reason=<word>`. `ran`
-  counts suites that executed (ok, skip, red, timeout, quarantined-red). round.sh prints its
+  counts suites that executed (ok, skip, red, timeout, quarantined-red). Under `--deadline`
+  the GREEN and RED lines gain ` deferred=<d> (deadline <S>s)` — `VERDICT GREEN ran=7
+  deferred=5 (deadline 300s)` — and a deferred suite is never counted in `ran` (D7). round.sh prints its
   own VERDICT line to a different file, so the two never collide; once round.sh switches it
   can use this line instead of recomputing one.
 * Cargo's own output and helper-script noise go to stderr.
@@ -99,7 +103,7 @@ stderr; `attribute.sh` treats `>= 2` as a run fault; `gate-retry.sh` retries onl
 | `<suite>.result` | one line, `ResultRecord` (§3.1). Written **after** `<suite>.out`: its presence means complete. |
 | `<suite>.out` | the suite's combined stdout+stderr, trailing newlines stripped, one `\n` added (bash `$(cat)` + `printf '%s\n'`). |
 | `<suite>.tap.json` | new: `TapSummary` (§3.5) for the suite's output. |
-| `batch.meta` | `image_tag= branch= base= key= mode= selection=` then new `profile= artifacts= worktree= tree=` — `key=value` lines; gate-timing.sh reads `key`, `branch`, `base`. |
+| `batch.meta` | `image_tag= branch= base= key= mode= selection=` then new `profile= artifacts= worktree= tree=` — `key=value` lines; gate-timing.sh reads `key`, `branch`, `base`. Under `--deadline` only, three more lines: `deadline=<S> deferred=<d> deferred_suites=<space list>` (D7). |
 | `runner.meta` | `nproc= memtotal_kb= maxpar= cpu_busy_pct= suites_wall_s=` |
 | `timing.tsv` | `<suite>\t<wall_s>\t<status>\t<bd_ms or ->` per suite with a result |
 | `$SPIRA_VERDICTS/batch-<key>` | `VerdictFile` (§3.3), shared with gate.sh's directory |
@@ -172,7 +176,9 @@ All records are Rust types with serde (`src/record.rs`, `src/verdict.rs`, `src/t
 <status> <epoch> <secs> <fingerprint> <mode> <producer> <rc>
 ```
 
-* `status`: `ok | skip | red | timeout | quarantined-red | disabled | skip-req | unreached`
+* `status`: `ok | skip | red | timeout | quarantined-red | disabled | skip-req | unreached |
+  deferred` (`deferred` only under `--deadline`: `deferred <epoch> <secs> - <mode> <producer> -`,
+  `secs` = how long it ran before the kill, 0 if never started; D7)
 * `fingerprint`: `-` when green; `timeout:<suite>` on timeout; `requires:<tok,...>` for
   skip-req; else `fp(rc, output)` (§3.2).
 * `mode`: `parallel | serial`; `producer`: `explicit | diff | all`; `rc`: the suite's exit
@@ -199,9 +205,11 @@ ISO timestamps→`TIMESTAMP`, `HH:MM:SS`→`TIME`, `[0-9]{3,}`→`N`; then POSIX
   (`$0` was the script).
 * `profile` replaces `WITH_BINS`: an `aeon` green must not replay for a `release` run.
 
-`$SPIRA_VERDICTS/batch-<key>`: `key=value` lines `verdict=green|red`, `when=<ISO UTC>`,
+`$SPIRA_VERDICTS/batch-<key>`: `key=value` lines `verdict=green|red|partial`, `when=<ISO UTC>`,
 `by=testenv-batch`, `at=<epoch>`, `red_suites=<space list>` (red only),
-`override_reason=`, `concierge_notified=<epoch>`. Absent `verdict` = green (old files).
+`override_reason=`, `concierge_notified=<epoch>`, `deferred_suites=<space list>` (partial
+only). Absent `verdict` = green (old files). `partial` = a deadline-cut green (D7): recorded,
+never a cache hit.
 Written only when `TTL > 0` and a key exists. A green within TTL exits 0 at once; a red
 within TTL exits 2 unless `SPIRA_VERDICT_REPEAT_CONSIDERED` is a ≥10-char sentence, which
 is then recorded as `override_reason` in the new verdict.
@@ -405,6 +413,39 @@ into a fresh `cargo-target-bins/<tree>` on every new tree (95-116 s, sp-zv7j4).
   round.sh does, still has `ran=`.
 * **D6 — scratch slots are warm and bounded.** 4 by default; overflow is a cold throwaway
   worktree, never a wait.
+* **D7 — `--deadline S` is a hard cut of the suite phase, and a cut is not a verdict.**
+  Operator order, 2026-09-29: "the gate timeout needs to be enforced; we cut it off at the
+  timeout — it's not advisory." The gate selects suites to fit `SPIRA_GATE_BUDGET` (300 s) of
+  historical *median* time, and nothing enforced it: gates measured that day ran 1732 s and
+  2574 s (host contention, cold builds, suites slower than their median). The round runs the
+  full corpus anyway, so a suite the gate did not finish is covered there.
+  * **Clock.** Starts when the suite phase starts — immediately before the first suite is
+    scheduled, after build, container up, install, requirements and the testdb baseline.
+    Those are *not* under the deadline (F3 says what bounds them today).
+  * **Cut.** Once `S` has elapsed no suite is launched (serial and parallel alike, and the PSI
+    pause and slot wait give up at the deadline). A suite still running is killed by the
+    **same mechanism as the per-suite timeout** (`run_bounded`: SIGTERM to the `podman exec`,
+    SIGKILL 10 s later); container teardown, which always follows, reaps whatever survives
+    inside. The exec reports `RC_DEADLINE` (-124, outside 0..=255 so no suite can produce it),
+    and the per-suite timeout wins a tie, so a suite that reached its own timeout is still
+    `timeout`.
+  * **Record.** A killed suite and every never-started suite get `deferred` — distinct from
+    `timeout` (the suite's fault) and `unreached` (a harness fault). `deferred` is neither
+    `executed` (not in `ran`) nor `blocking`. A killed suite writes its partial `.out`, no
+    `.tap.json` and **no suite-timing row** (a truncated wall time would drag its median down
+    and make the selector pick more than fits next time).
+  * **Verdict.** RED iff a suite that finished before the cut is red or timed out — exactly as
+    today; otherwise GREEN, rc 0. A cut is not a fault (rc 2/3 would make the gate string
+    exit 75 and retry forever). Order is untouched: the selector's order is the priority.
+  * **Cache.** A green with `deferred > 0` writes `verdict=partial` with `deferred_suites=`;
+    `decide` treats `partial` as a miss, so the same key re-runs rather than replaying a
+    partial as a full green. (A partial must still overwrite a prior red for the key, or a
+    later run without a reason would be refused on stale evidence.) A deadline run where
+    nothing was deferred is a full green and is cached as one; the key does not include `S`,
+    because a full green under any deadline is the same claim.
+  * **Unchanged without the flag.** No `deferred` record, no `batch.meta` lines, no suffix on
+    the VERDICT line, no `partial` file: `BatchCfg::deadline` is `None` and every new branch is
+    guarded on it.
 
 ## 8. Cutover (bash and workflow edits for the operator — none made here)
 
@@ -449,6 +490,13 @@ production; `SPIRA_ARTIFACTS` inside a test run). A round that tests its own run
   absent → Red. testenv keeps the key subdirectory (gate-retry.sh, gate-diag.sh and
   attribute.sh all read `*/`); batcher-cut should glob one level down.
 * **F2** — the tier-budget and bd-shim dead paths (D3, D4).
+* **F3 — the pre-suite phases have no bound of their own inside testenv.** The deadline (D7)
+  deliberately excludes them, but "bounded by their own timeouts" is only partly true: the
+  container `up` waits at most `SPIRA_TESTENV_QUEUE_TIMEOUT` (900 s) for an admission slot;
+  `cargo build`, `configure`/`suspend`/`install` and the testdb baseline execs carry no
+  timeout (`ExecRequest::timeout` is `None`). The outer bound is gate.sh's
+  `timeout ${SPIRA_GATE_TIMEOUT:-2700}` around the whole gate string. Measured cost on
+  2026-09-29 (warm aeon worktree, e2e run of D7): see the commit that introduced D7.
 
 ## 10. `testenv suites` — the suite-state tooling (replaces spira/suites.sh)
 
