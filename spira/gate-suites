@@ -173,6 +173,15 @@ spira/test-lockfile-lint.sh
 # requires the fence to find nothing in the shipped tree.
 spira/test-tmux-scope-fence.sh
 
+# THE CONFIG FENCE'S OWN POSITIVE CONTROL (sp-a8gna). config-fence.sh refuses a new file
+# outside spira-config/ that names spira.toml or repo-map, parses TOML config directly, or
+# writes the config path — the T0 fence keeping the reader/writer cutover (sp-zs04v) from
+# regaining the second, drifting copy the epic exists to delete. This suite plants each
+# violation kind (SEEN RED), withdraws it (SEEN GREEN), confirms a grandfathered entry is
+# skipped and spira-config/ itself is never scanned, and requires the shipped tree to be
+# clean behind its own grandfather list.
+spira/test-config-fence.sh
+
 # NOT IN THE GATE (budget): test-watchtower, test-soak, test-owned, test-uninstall, test-ready,
 # test-install-conflicts, test-configure. test-watchtower (~263s) was moved to the
 # timed set to bring the gate under SPIRA_GATE_BUDGET (sp-6ceo); the pipeline-stall detection
