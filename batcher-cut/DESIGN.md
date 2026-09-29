@@ -71,13 +71,13 @@ honour the same switch in its own rewrite.
 
 ## 4. Concurrent attribution (sp-hvtgs)
 
-Design: brain `wiki/projects/spira/designs/gate-unit-round-integration-2026-09-29.md`, "The
-round attributes its own reds, while it runs", work item 5.
+Design: gate-unit-round-integration, "The round attributes its own reds, while it runs",
+work item 5.
 
 ### 4.1 Intent
 
 A round attributes its own reds **while its corpus runs**, starting on the first streamed red
-(per Ryan, 2026-09-29), so that when the corpus ends the round already has a decision: land,
+(an operator decision), so that when the corpus ends the round already has a decision: land,
 eject the owners, or block. It replaces the old loop (full corpus → `attribute.sh` → full
 corpus again on the reduced membership), which cost a full corpus per iteration. The measured
 hand technique it automates (rounds 105–123) was a targeted rerun of the red suite without one
