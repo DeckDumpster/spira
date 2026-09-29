@@ -106,7 +106,9 @@ The holder of `spira/<id>` is read from `git worktree list --porcelain`. Classif
      per-bead witness of "the bead's aeon unit is active");
   3. the bead store says `in_progress` (a lease not released);
   4. the bead store could not be read, proven by a positive control (`bd show $SPIRA_GOAL`
-     answers): an unreachable DB reads as live (law-absence-needs-a-positive-control);
+     answers): an unreachable DB reads as live (law-absence-needs-a-positive-control). Once
+     the control passes, a bead `bd` cannot show reads as status "" (not in_progress), as
+     `spira_bead_status` does;
   5. any process's cwd is inside the worktree (a hand session or tool working there).
   Witnesses are also checked for the worktree's own basename when it differs from `<id>`
   (sp-87csm: a child's directory can hold a parent's branch).
@@ -189,12 +191,19 @@ most 60 lines per file) plus the reason it was not mechanical.
 ## Tests (unit, `cargo test -p rebase-stale`, temp git repos)
 
 Derived from the contract: stale only by appended key-history rebases mechanically with no
-aeon (exit 0, both lines survive, submit called once, log `mechanical`); a real same-line
-conflict exits 1 with the hunk quoted and the branch untouched; a red gate exits 2 and
-restores; a finished session's leftover worktree does not block and is synced to the new tip;
-a live holder (hold pidfile, in_progress, unreachable DB, cwd) exits 3 untouched; a
-comment-only conflict unions; the collision invariant (no worktree gains or loses a
-registration, the scratch tree stays detached); resolver unit tests.
+aeon (exit 0, both lines survive, submit called once and sees the rebased tip, log
+`mechanical`); a real same-line conflict exits 1 with the hunk quoted, branch untouched,
+requeue bumped, RED marked; a stop mixing a mechanical and a real conflict resolves nothing;
+a red gate exits 2 and restores (a leftover follows back to the old tip); a finished
+session's leftover worktree does not block and is synced to the new tip; a live holder (hold
+pidfile, live aeon pidfile, in_progress, unreachable DB, a process working in it) and a dirty
+leftover exit 3 untouched; a dead aeon pidfile does not block; a foreign checkout is refused;
+a comment-only conflict unions; a derived file is regenerated; already-current is a no-op;
+the scratch tree survives reuse and a dangling registration; the collision invariant (no
+worktree gains or loses a registration, the scratch tree stays detached); `LibSeam` passes
+payloads on stdin and refuses to read absence without its positive control; resolver and
+log-format unit tests. The leftover tests were seen red against the old rule ("registered
+anywhere = live") by mutation.
 
 ## Cutover (operator's decision — not made here)
 

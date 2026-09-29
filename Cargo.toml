@@ -24,6 +24,7 @@ members = [
     "tsd-lifecycle-export",
     "work",
     "spira-lint",
+    "rebase-stale",
 ]
 resolver = "2"
 
