@@ -541,6 +541,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "queue"
+version = "1.0.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "spira-config",
+]
+
+[[package]]
 name = "queue-watch"
 version = "1.0.0"
 dependencies = [
