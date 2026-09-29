@@ -1589,6 +1589,141 @@ fn check5_cap_bounds_filing() {
 }
 
 // ---------------------------------------------------------------------------------------
+// CHECK5-LC (audit, ON path — design sp-pswer.2)
+
+#[test]
+fn check5_lc_reports_all_three_shapes_from_the_lifecycle_rows_alone() {
+    let (w, r, sink, clock) = audit_world("c5lc");
+    r.on(|s| {
+        if is_bd(s, "list") {
+            ok(r#"[
+                {"id":"sp-goal","status":"open","issue_type":"epic"},
+                {"id":"a","status":"open","issue_type":"task"},
+                {"id":"b","status":"in_progress","issue_type":"task"},
+                {"id":"c","status":"closed","issue_type":"task"},
+                {"id":"d","status":"closed","issue_type":"task"},
+                {"id":"e","status":"open","issue_type":"task","dependencies":[{"depends_on_id":"c","type":"blocks"}]},
+                {"id":"f","status":"open","issue_type":"task","dependencies":[{"depends_on_id":"d","type":"blocks"}]}
+            ]"#)
+        } else {
+            None
+        }
+    });
+    r.on(|s| {
+        if s.prog.ends_with("/lc") && s.args[0] == "list" {
+            ok(r#"[
+                {"bead_id":"a","state":"LANDED","holds":[],"version":"1"},
+                {"bead_id":"b","state":"WORKING","holds":[],"version":"1"},
+                {"bead_id":"c","state":"WORKING","holds":[],"version":"1"},
+                {"bead_id":"d","state":"LANDED","holds":[],"version":"1"}
+            ]"#)
+        } else {
+            None
+        }
+    });
+    run_mode(
+        &w,
+        &r,
+        &sink,
+        &clock,
+        Mode::Audit,
+        &[
+            ("SPIRA_SKIP_RECLAIM", "1"),
+            ("SPIRA_LIFECYCLE_ENFORCE", "1"),
+        ],
+        Some(&[]),
+    );
+    assert!(
+        sink.has("STATE-LC a landed-but-open — spira-lc row is LANDED; close it"),
+        "{}",
+        sink.text()
+    );
+    assert!(
+        sink.has("STATE-LC c closed-unlanded — spira-lc row is WORKING, not a terminal state"),
+        "{}",
+        sink.text()
+    );
+    assert!(
+        sink.has("STATE-LC e blocked-by-unlanded c — depends on c, which is closed but its spira-lc row is not a terminal state"),
+        "{}",
+        sink.text()
+    );
+    assert!(
+        !sink.has(" b landed-but-open"),
+        "b's WORKING row agrees with in_progress"
+    );
+    assert!(
+        !sink.has(" d closed-unlanded"),
+        "d's LANDED row agrees with closed"
+    );
+    assert!(
+        !sink.has(" f blocked-by-unlanded"),
+        "f depends on d, which is not in the unlanded set"
+    );
+    assert!(sink.has("CHECK5-LC: 3 state drift line(s) from spira-lc, alongside CHECK 5's own"));
+}
+
+#[test]
+fn check5_lc_is_silent_when_every_row_agrees_with_bd() {
+    let (w, r, sink, clock) = audit_world("c5lcquiet");
+    r.on(|s| {
+        if is_bd(s, "list") {
+            ok(r#"[
+                {"id":"sp-goal","status":"open","issue_type":"epic"},
+                {"id":"a","status":"in_progress","issue_type":"task"},
+                {"id":"c","status":"closed","issue_type":"task"}
+            ]"#)
+        } else {
+            None
+        }
+    });
+    r.on(|s| {
+        if s.prog.ends_with("/lc") && s.args[0] == "list" {
+            ok(r#"[
+                {"bead_id":"a","state":"WORKING","holds":[],"version":"1"},
+                {"bead_id":"c","state":"LANDED","holds":[],"version":"1"}
+            ]"#)
+        } else {
+            None
+        }
+    });
+    run_mode(
+        &w,
+        &r,
+        &sink,
+        &clock,
+        Mode::Audit,
+        &[
+            ("SPIRA_SKIP_RECLAIM", "1"),
+            ("SPIRA_LIFECYCLE_ENFORCE", "1"),
+        ],
+        Some(&[]),
+    );
+    assert!(!sink.has("CHECK5-LC"), "{}", sink.text());
+}
+
+#[test]
+fn check5_lc_never_runs_off_and_never_gates_the_legacy_check5_call() {
+    // OFF: run_mode's own assertion already proves spira-lc is never invoked at all; this
+    // just names the CHECK5-LC line as one more thing that must not appear.
+    let (w, r, sink, clock) = audit_world("c5lcoff");
+    run_mode(
+        &w,
+        &r,
+        &sink,
+        &clock,
+        Mode::Audit,
+        &[("SPIRA_SKIP_RECLAIM", "1")],
+        Some(&[]),
+    );
+    assert!(!sink.has("CHECK5-LC"), "{}", sink.text());
+    assert!(
+        sink.has("audit pass complete"),
+        "the audit pass still completed"
+    );
+}
+
+// ---------------------------------------------------------------------------------------
 // CHECK 6b / 7c / 7d (audit)
 
 /// CHECK 7c/7d are native now (wave 4.28, sp-fbqsv): no more bash seams S7-S10 to mock by
