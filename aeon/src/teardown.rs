@@ -212,7 +212,7 @@ impl Run<'_> {
                 NoteKey::DecisionBlocked => {
                     self.release();
                     self.bump_requeue(&cause);
-                    let ask = self.conf.or("SPIRA_ASK_LABEL", "needs-operator");
+                    let ask = self.conf.or("SPIRA_ASK_LABEL", "needs-operator"); // literal-ok: Rust fallback mirroring conf.sh's default when SPIRA_ASK_LABEL is unset
                     self.note(&format!("Released by aeon.sh: blocked on an open decision bead ({ask} label) — waiting for operator input. No attempt charged; the bead becomes ready when the decision is resolved."));
                     self.log(&format!("{f}: {id} has open decision blocker — released, no attempt charged"));
                     return self.finish(rc, &status);

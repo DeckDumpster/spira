@@ -151,8 +151,8 @@ impl World {
             ("SPIRA_DB", "/db"),
             ("SPIRA_GOAL", "sp-goal"),
             ("SPIRA_SCOPE_LABEL", "spira"),
-            ("SPIRA_ASK_LABEL", "needs-operator"),
-            ("SPIRA_NO_LOOP_LABEL", "no-loop"),
+            ("SPIRA_ASK_LABEL", "needs-operator"), // literal-ok: test fixture
+            ("SPIRA_NO_LOOP_LABEL", "no-loop"), // literal-ok: test fixture
             ("SPIRA_QUEUE_WAIT_LABEL", "spira-queue-waiting"),
             ("SPIRA_SUBMITTED_LABEL", "spira-submitted"),
             ("SPIRA_LC_BIN", &lc),
@@ -174,12 +174,12 @@ impl World {
             &env,
             &[("SPIRA_HOME_REPO_RESOLVED", "spira")],
             &[
-                "builder\tspira,plan\tspira-poison,needs-operator",
-                "ops\tspira,incident\tspira-poison,needs-operator",
+                "builder\tspira,plan\tspira-poison,needs-operator", // literal-ok: test fixture
+                "ops\tspira,incident\tspira-poison,needs-operator", // literal-ok: test fixture
             ],
             &[
-                "spira,plan\tspira-poison,needs-operator",
-                "spira,incident\tspira-poison,needs-operator",
+                "spira,plan\tspira-poison,needs-operator", // literal-ok: test fixture
+                "spira,incident\tspira-poison,needs-operator", // literal-ok: test fixture
             ],
             &["builder", "ops"],
             repos,
@@ -426,7 +426,7 @@ fn audit_dispatch_argv_and_b1_skip_switches() {
         "--user --collect --quiet --unit=spira-audit --property=RuntimeMaxSec=1800 --property=CPUQuota=40% --property=Nice=10",
         &format!("--property=StandardOutput=append:{}/audit.log", w.run.display()),
         "--setenv=SPIRA_DB=/db --setenv=SPIRA_REPO= --setenv=SPIRA_REPO_MAP= --setenv=SPIRA_HOME_REPO=spira --setenv=SPIRA_BD=bd --setenv=SPIRA_GH=gh",
-        "--setenv=SPIRA_POISON_AT=3 --setenv=SPIRA_REQUEUE_AT=5 --setenv=SPIRA_RECLAIM_AT=5 --setenv=SPIRA_ASK_LABEL=needs-operator --setenv=SPIRA_SCOPE_LABEL=spira --setenv=SPIRA_WORK_CLOSE_TYPES=",
+        "--setenv=SPIRA_POISON_AT=3 --setenv=SPIRA_REQUEUE_AT=5 --setenv=SPIRA_RECLAIM_AT=5 --setenv=SPIRA_ASK_LABEL=needs-operator --setenv=SPIRA_SCOPE_LABEL=spira --setenv=SPIRA_WORK_CLOSE_TYPES=", // literal-ok: asserts argv built from the fixture
         "--setenv=SPIRA_SKIP_CLOSED_CHECK=1 /opt/bin/sentinel --audit",
     ] {
         assert!(l.contains(want), "missing {want:?} in {l}");
@@ -536,7 +536,7 @@ fn starved_plan_recomputes_then_judges_once_an_hour() {
         .expect("recount");
     assert_eq!(
         recount.line(),
-        "bd -C /db ready --limit 0 --exclude-type epic,event -u --label spira --exclude-label no-loop --label spira,plan --exclude-label spira-poison,needs-operator --json"
+        "bd -C /db ready --limit 0 --exclude-type epic,event -u --label spira --exclude-label no-loop --label spira,plan --exclude-label spira-poison,needs-operator --json" // literal-ok: asserts argv built from the fixture
     );
     assert!(sink.has("spira: recomputed is_blocked"));
     assert!(sink.has("STARVED — 1 open, 0 ready, 0 running. Dropping to inference."));
@@ -1134,7 +1134,7 @@ fn sending_7c_7d_count_what_their_seams_report() {
     assert!(sink.has("ACT surfaced 1 unclaimable ready bead(s)"));
     assert!(sink.has("ACT freed 1 branch-collision worktree(s)"));
     assert!(sink.has("ACT unlabeled 1 inherited branch-collision bead(s)"));
-    assert!(sink.has("CHECK7d: 1 bead(s) whose recorded branch is held by another bead's worktree — parking with needs-operator"));
+    assert!(sink.has("CHECK7d: 1 bead(s) whose recorded branch is held by another bead's worktree — parking with needs-operator")); // literal-ok: asserts log text built from the fixture
 
     // the next audit finds every base unchanged and does not walk
     let sink2 = FakeSink::default();
@@ -1286,14 +1286,18 @@ fn phases_are_tsd_rows_for_the_full_pass_only() {
 // ---------------------------------------------------------------------------------------
 // §2.9 the lifecycle switch: both modes of every affected CHECK.
 
-const LEGACY_LIST: &str = r#"[
+const LEGACY_LIST: &str = concat!(
+    r#"[
   {"id":"sp-goal","status":"open","issue_type":"epic"},
   {"id":"w1","status":"in_progress","parent":"sp-goal","labels":["spira","plan"],"dependency_count":1,"dependencies":[{"depends_on_id":"q1","type":"blocks"}]},
   {"id":"w2","status":"in_progress","labels":["spira","plan","spira-waiting-operator"],"dependency_count":0},
-  {"id":"q1","status":"open","labels":["needs-operator"]},
+"#,
+    // literal-ok: test fixture — the decision bead carries the fixture's ask label
+    r#"  {"id":"q1","status":"open","labels":["needs-operator"]},
   {"id":"o1","status":"open","assignee":"aeon-dead","labels":["spira","plan"]},
   {"id":"o2","status":"open","assignee":"aeon-live","lease_expires_at":"2099-01-01T00:00:00Z","labels":["spira","plan"]}
-]"#;
+]"#
+);
 
 #[test]
 fn off_check2_protects_by_label_and_reclaims_through_bd() {
@@ -1328,8 +1332,8 @@ fn off_check2_protects_by_label_and_reclaims_through_bd() {
             && s.args.len() > 2
             && s.args[2..] == ["label", "remove", "w2", "spira-waiting-operator"])
         .is_some());
-    assert!(sink.has("CHECK2 w1: only open dep(s) carry needs-operator — labeled spira-waiting-operator, excluded from reclaim"));
-    assert!(sink.has("CHECK2 w2: needs-operator dep no longer blocking — removed spira-waiting-operator, re-enters the reaper"));
+    assert!(sink.has("CHECK2 w1: only open dep(s) carry needs-operator — labeled spira-waiting-operator, excluded from reclaim")); // literal-ok: asserts log text built from the fixture
+    assert!(sink.has("CHECK2 w2: needs-operator dep no longer blocking — removed spira-waiting-operator, re-enters the reaper")); // literal-ok: asserts log text built from the fixture
     let reclaims: Vec<String> = r
         .calls
         .borrow()

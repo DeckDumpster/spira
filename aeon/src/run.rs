@@ -378,7 +378,7 @@ impl<'a> Run<'a> {
                 self.release();
                 self.log(&format!("{who}: {} carries {label} — live aeons present ({live}) — released. Set SPIRA_WORLD_STOP_SKIP=1 to override.", c.id));
                 self.note(&format!("Released by aeon.sh: this bead carries {label} and requires the world halted while it runs. Live aeons are present ({live}) and the world was not stopped. Wait for them to finish, or set SPIRA_WORLD_STOP_SKIP=1 to proceed with live aeons."));
-                self.ledger_done(0, "world-stop-fence");
+                self.ledger_done(0, "world-stop-fence"); // literal-ok: ledger status name, not a label
                 return Err(0);
             }
             WorldStop::Stop => {

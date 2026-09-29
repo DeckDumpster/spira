@@ -231,7 +231,7 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, s
         ("SPIRA_RUN", f.run.display().to_string()),
         ("SPIRA_DB", "/db".to_string()),
         ("SPIRA_ASK_LABEL", "needs-ryan".to_string()),
-        ("SPIRA_WORLD_STOP_LABEL", "world-stop".to_string()),
+        ("SPIRA_WORLD_STOP_LABEL", "world-stop".to_string()), // literal-ok: test fixture
         ("SPIRA_TESTDB_LIB", "spira/testdb.sh".to_string()),
         ("SPIRA_TRACE_MARK", "=== spira attempt".to_string()),
         ("SPIRA_CLAIM_RETRIES", "1".to_string()),
@@ -498,12 +498,12 @@ fn a_refused_lifecycle_claim_releases() {
 fn world_stop_bead_with_live_peers_is_released() {
     let f = fx("wstop");
     seed(&f, "sp-w");
-    f.w.lock().unwrap().labels.get_mut("sp-w").unwrap().insert("world-stop".into());
+    f.w.lock().unwrap().labels.get_mut("sp-w").unwrap().insert("world-stop".into()); // literal-ok: test fixture
     std::fs::write(f.run.join("aeon-builder-sp-other.pid"), format!("{}\n", std::process::id())).unwrap();
     std::fs::write(f.run.join("aeon-builder-sp-dead.pid"), "999999999\n").unwrap();
     let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(o.code, 0);
-    assert!(ledger_lines(&o)[2].contains("status=world-stop-fence"));
+    assert!(ledger_lines(&o)[2].contains("status=world-stop-fence")); // literal-ok: asserts the ledger status name
     assert!(o.log.contains("live aeons present (aeon-builder-sp-other)"));
     assert!(!f.run.join("aeon-builder-sp-dead.pid").exists(), "a dead peer's pidfile is removed");
     let w = o.w.lock().unwrap();
@@ -514,7 +514,7 @@ fn world_stop_bead_with_live_peers_is_released() {
 fn unmapped_repo_is_parked_and_the_world_restarted() {
     let f = fx("unmapped");
     seed(&f, "sp-u");
-    f.w.lock().unwrap().labels.get_mut("sp-u").unwrap().insert("world-stop".into());
+    f.w.lock().unwrap().labels.get_mut("sp-u").unwrap().insert("world-stop".into()); // literal-ok: test fixture
     let mut a = BTreeMap::new();
     a.insert("repo_root", Out::fail(1, ""));
     let o = go(&f, "spira,plan", &[], false, Mode::Claim, a, no_session());

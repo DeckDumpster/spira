@@ -366,7 +366,7 @@ mod tests {
                 ("SPIRA_RUN", "/r"),
                 ("SPIRA_SCOPE_LABEL", scope),
                 ("SPIRA_ASK_LABEL", "ask"),
-                ("SPIRA_NO_LOOP_LABEL", "no-loop"),
+                ("SPIRA_NO_LOOP_LABEL", "no-loop"), // literal-ok: test fixture
                 ("SPIRA_DB", "/db"),
             ],
             &[],
@@ -472,11 +472,11 @@ mod tests {
         let c = cfg("spira");
         assert_eq!(
             ready_args(&c).join(" "),
-            "ready --limit 0 --exclude-type epic,event -u --label spira --exclude-label no-loop"
+            "ready --limit 0 --exclude-type epic,event -u --label spira --exclude-label no-loop" // literal-ok: asserts the argv built from the fixture
         );
         assert_eq!(
             ready_raw_args(&c).join(" "),
-            "ready --limit 0 --exclude-type epic,event -u --exclude-label no-loop"
+            "ready --limit 0 --exclude-type epic,event -u --exclude-label no-loop" // literal-ok: asserts the argv built from the fixture
         );
     }
 }

@@ -564,7 +564,7 @@ fn cmd_unpoison(a: &Args, env: &Env) -> Outcome {
     let asked_dir = env_nonempty("SPIRA_POISON_ASKED").map(Into::into).unwrap_or_else(|| run_dir.join("poison-asked"));
     let ask_label = env_nonempty("SPIRA_ASK_LABEL")
         .or_else(|| env.config.ask_label.clone())
-        .unwrap_or_else(|| "needs-operator".into());
+        .unwrap_or_else(|| "needs-operator".into()); // literal-ok: Rust fallback mirroring conf.sh's default when SPIRA_ASK_LABEL is unset
     let mut live = unpoison::Live {
         store: st,
         run_dir,

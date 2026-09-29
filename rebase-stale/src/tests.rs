@@ -16,6 +16,13 @@ use crate::seam::{BeadStatus, RepoInfo, Seam};
 
 static N: AtomicUsize = AtomicUsize::new(0);
 
+/// chmod 0755 without shelling out to chmod (deps-lint: every external program a crate
+/// runs, tests included, must be declared; this one needs none).
+fn make_executable(p: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
 struct Fx {
     root: PathBuf,
     repo: PathBuf,
@@ -684,10 +691,10 @@ fn lib_seam_passes_payloads_on_stdin_and_reads_status_with_a_positive_control() 
     );
     let queue = home.join("queue");
     write(&queue, "#!/bin/sh\necho \"out:$1 $2 $3\"; echo err >&2; exit 1\n");
-    Command::new("chmod").arg("+x").arg(&queue).status().unwrap();
+    make_executable(&queue);
     let bd = fx.root.join("bd");
     write(&bd, "#!/bin/sh\ncase \"$4\" in sp-goal) echo '[{\"status\":\"open\"}]';; sp-ip) echo '{\"status\":\"in_progress\"}';; *) exit 1;; esac\n");
-    Command::new("chmod").arg("+x").arg(&bd).status().unwrap();
+    make_executable(&bd);
 
     let mut s = LibSeam::new(home.clone(), Some(fx.root.clone()), bd.to_string_lossy().into(), "sp-goal".into());
     s.queue_bin = queue;
