@@ -16,12 +16,6 @@ use crate::seam::{BeadStatus, RepoInfo, Seam};
 
 static N: AtomicUsize = AtomicUsize::new(0);
 
-/// chmod 0755 without shelling out to chmod (deps-lint: every external program a crate
-/// runs, tests included, must be declared; this one needs none).
-fn make_executable(p: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
 
 struct Fx {
     root: PathBuf,
@@ -690,11 +684,11 @@ fn lib_seam_passes_payloads_on_stdin_and_reads_status_with_a_positive_control() 
         ),
     );
     let queue = home.join("queue");
-    write(&queue, "#!/bin/sh\necho \"out:$1 $2 $3\"; echo err >&2; exit 1\n");
-    make_executable(&queue);
+    // testkit::write_exe, never write + chmod: a write descriptor held while another test
+    // thread forks makes the exec fail with ETXTBSY (testkit/DESIGN.md).
+    testkit::write_exe(&queue, "#!/bin/sh\necho \"out:$1 $2 $3\"; echo err >&2; exit 1\n");
     let bd = fx.root.join("bd");
-    write(&bd, "#!/bin/sh\n[ \"$3\" = list ] && { echo '[{\"id\":\"sp-any\"}]'; exit 0; }\ncase \"$4\" in sp-goal) echo '[{\"status\":\"open\"}]';; sp-ip) echo '{\"status\":\"in_progress\"}';; *) exit 1;; esac\n");
-    make_executable(&bd);
+    testkit::write_exe(&bd, "#!/bin/sh\n[ \"$3\" = list ] && { echo '[{\"id\":\"sp-any\"}]'; exit 0; }\ncase \"$4\" in sp-goal) echo '[{\"status\":\"open\"}]';; sp-ip) echo '{\"status\":\"in_progress\"}';; *) exit 1;; esac\n");
 
     let mut s = LibSeam::new(home.clone(), Some(fx.root.clone()), bd.to_string_lossy().into(), "sp-goal".into());
     s.queue_bin = queue;

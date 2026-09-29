@@ -28,9 +28,6 @@ ExecCondition=/usr/bin/test -f @SPIRA_PROD@/chamber/groomer.fayth
 ExecStart=@SPIRA_PROD@/groom-trigger.sh
 # The trigger script files one bead and exits; sixty seconds is generous.
 TimeoutStartSec=60
-# groom-trigger.sh is a bd call and a log line — no CPU worth fencing.
-CPUQuota=10%
-Nice=10
 StandardOutput=append:@SPIRA_RUN@/groom.log
 StandardError=append:@SPIRA_RUN@/groom.log
 

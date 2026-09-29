@@ -34,12 +34,6 @@ RestartSec=5
 # chunk journal. Give it room, and never SIGKILL the group out from under a flush.
 KillSignal=SIGTERM
 TimeoutStopSec=120
-# This box also runs prod and the CI runner. The server averaged 0.54 cores over eleven
-# days of uptime — mostly auto-GC, not queries — so one core of four is generous headroom
-# and still a ceiling (law-fence-loops-on-shared-hardware). No memory cap on purpose: a
-# throttled database is slow, an OOM-killed one is corrupt.
-CPUQuota=100%
-Nice=5
 StandardOutput=append:@SPIRA_RUN@/dolt-beads.log
 StandardError=append:@SPIRA_RUN@/dolt-beads.log
 

@@ -570,8 +570,19 @@ pub fn admission_free(dir: &Path, par: usize) -> usize {
             let Ok(f) = fs::OpenOptions::new().create(true).write(true).truncate(false).open(dir.join(format!("slot.{k}.lock"))) else {
                 return false;
             };
-            // Dropping `f` closes it, which releases the probe's lock.
-            unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) == 0 }
+            // RELEASED BY LOCK_UN, NEVER BY THE CLOSE. A flock belongs to the open file
+            // description, and closing `f` releases it only if no other process holds a copy.
+            // Any thread of this process that forks while the probe holds the lock (every
+            // child starts through `util::command`, whose pre_exec forces a real fork) gives
+            // the child a copy that lives until it execs, and for that window the slot reads
+            // held to gate.sh's admission and to the next probe. LOCK_UN drops the lock on the
+            // description itself, however many copies of it exist.
+            let fd = f.as_raw_fd();
+            let free = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) == 0 };
+            if free {
+                unsafe { libc::flock(fd, libc::LOCK_UN) };
+            }
+            free
         })
         .count()
 }

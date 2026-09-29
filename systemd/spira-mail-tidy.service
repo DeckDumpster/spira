@@ -6,11 +6,7 @@ After=default.target
 [Service]
 Type=oneshot
 ExecStart=@SPIRA_PROD@/mail.sh tidy operator
-# Janitorial — must not compete with production or CI on shared hardware
-# (law-fence-loops-on-shared-hardware).
 TimeoutStartSec=120
-CPUQuota=10%
-Nice=10
 StandardOutput=append:@SPIRA_RUN@/mail-tidy.log
 StandardError=append:@SPIRA_RUN@/mail-tidy.log
 

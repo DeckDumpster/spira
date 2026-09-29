@@ -237,12 +237,10 @@ pub struct Cfg {
     pub audit_unit: String,
     pub audit_maxsec: String,
     pub audit_stale: i64,
-    pub audit_cpu: String,
     pub audit_mailbox: PathBuf,
     pub land_unit: String,
     pub land_maxsec: String,
     pub land_stale: i64,
-    pub land_cpu: String,
     pub launch: String,
     pub systemctl: String,
     pub summon: String,
@@ -379,7 +377,6 @@ impl Cfg {
             audit_unit: or("SPIRA_AUDIT_UNIT", "spira-audit"),
             audit_maxsec: or("SPIRA_AUDIT_MAXSEC", "1800"),
             audit_stale: num("SPIRA_AUDIT_STALE", 1800),
-            audit_cpu: or("SPIRA_AUDIT_CPU_QUOTA", "40"),
             audit_mailbox: c
                 .get("SPIRA_AUDIT_MAILBOX")
                 .filter(|v| !v.is_empty())
@@ -388,7 +385,6 @@ impl Cfg {
             land_unit: or("SPIRA_LAND_UNIT", "spira-landing"),
             land_maxsec: or("SPIRA_LAND_MAXSEC", "3600"),
             land_stale: num("SPIRA_LAND_STALE", 1800),
-            land_cpu: or("SPIRA_LAND_CPU_QUOTA", "70"),
             launch: or("SPIRA_LAUNCH", "systemd-run"),
             systemctl: or("SPIRA_SYSTEMCTL", "systemctl"),
             summon: or("SPIRA_SUMMON", "systemd-run"),

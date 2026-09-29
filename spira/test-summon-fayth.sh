@@ -19,7 +19,7 @@
 #     `have` decoupled from `pool`
 #   - the summon/free/escape rows of test-lanes.sh (its roster-split and ops.fayth-lane
 #     rows stay behind — D5's target is test-fayth.sh, sp-9ce60.2.2)
-#   - the CPUQuota rows of test-fayth.sh (UC-dispatch-23)
+#   - the CPUQuota rows of test-fayth.sh (UC-dispatch-23; now absence rows, sp-b4oct)
 #
 # NEW GAP ROWS (docs/test-plan/dispatch.md section 6):
 #   G5 — the halt gate, previously only source-grepped (test-world.sh)
@@ -476,7 +476,7 @@ MOCK_COUNT=0
 
 # ======================================================================================
 echo
-echo "summon_fayth — SPIRA_AEON_CPU_QUOTA is passed to the summon command"
+echo "summon_fayth — no CPUQuota and no Nice reach the summon command (sp-b4oct)"
 # ======================================================================================
 ARGS_FILE="$T/summon-args"
 MOCK_QUOTA="$T/bin/mock-quota"
@@ -485,18 +485,16 @@ chmod +x "$MOCK_QUOTA"
 export SPIRA_SUMMON="$MOCK_QUOTA"
 MOCK_READY_stretchy=1
 
-unset SPIRA_AEON_CPU_QUOTA 2>/dev/null || true
-rm -f "$ARGS_FILE"
-summon_fayth stretchy >/dev/null 2>&1 || true
-args="$(cat "$ARGS_FILE" 2>/dev/null)"
-want "default quota: CPUQuota=70% appears in args" "CPUQuota=70%" "$args"
-
+# law-isolate-greedy-work-in-vms: the OS schedules aeons. The positive control is that the
+# summon happened at all (TimeoutStartSec is in the captured argv), so an empty capture
+# cannot pass the absence rows. The retired SPIRA_AEON_CPU_QUOTA is set to prove it is inert.
 export SPIRA_AEON_CPU_QUOTA=90
 rm -f "$ARGS_FILE"
 summon_fayth stretchy >/dev/null 2>&1 || true
 args="$(cat "$ARGS_FILE" 2>/dev/null)"
-want   "custom quota: CPUQuota=90% appears in args"     "CPUQuota=90%" "$args"
-nowant "custom quota: CPUQuota=70% is absent from args" "CPUQuota=70%" "$args"
+want   "summon_fayth: the summon argv was captured" "TimeoutStartSec=" "$args"
+nowant "summon_fayth: no CPUQuota, even with the retired knob set" "CPUQuota" "$args"
+nowant "summon_fayth: no Nice"                                    "Nice="    "$args"
 
 unset SPIRA_AEON_CPU_QUOTA
 export SPIRA_SUMMON="$T/bin/mock-summon"
@@ -654,11 +652,10 @@ rm -f "$DRAIN_STAMP_G8"
 
 # ======================================================================================
 echo
-echo "escape.sh honours SPIRA_AEON_CPU_QUOTA (sp-9ce60.4, part of G8: it used to hard-code 70%)"
+echo "escape.sh passes no CPUQuota and no Nice (sp-b4oct; it shares summon_argv since sp-9ce60.4)"
 # ======================================================================================
-# CPUQuota is orthogonal to the halt/drain gate above — it shares summon_argv() with
-# summon_fayth now, the same builder UC-dispatch-23 exercises directly below, so the fix is
-# verified here at the escape.sh call site and again there at the function itself.
+# escape.sh shares summon_argv() with summon_fayth, the same builder UC-dispatch-23 exercises
+# directly below, so the absence is verified here at the escape.sh call site and again there.
 QUOTA_ARGV="$T/escape-quota-argv"
 cat > "$T/bin/mock-summon" <<MOCK
 #!/usr/bin/env bash
@@ -668,15 +665,11 @@ MOCK
 chmod +x "$T/bin/mock-summon"
 
 rm -f "$QUOTA_ARGV"
-unset SPIRA_AEON_CPU_QUOTA 2>/dev/null || true
-bash "$HERE/escape.sh" stretchy 2>/dev/null || true
-want "escape.sh default CPUQuota=70%" "CPUQuota=70%" "$(cat "$QUOTA_ARGV" 2>/dev/null)"
-
-rm -f "$QUOTA_ARGV"
 export SPIRA_AEON_CPU_QUOTA=55
 bash "$HERE/escape.sh" stretchy 2>/dev/null || true
-want   "escape.sh honours a custom SPIRA_AEON_CPU_QUOTA" "CPUQuota=55%" "$(cat "$QUOTA_ARGV" 2>/dev/null)"
-nowant "escape.sh no longer hard-codes 70%"               "CPUQuota=70%" "$(cat "$QUOTA_ARGV" 2>/dev/null)"
+want   "escape.sh: the summon argv was captured" "TimeoutStartSec=" "$(cat "$QUOTA_ARGV" 2>/dev/null)"
+nowant "escape.sh: no CPUQuota, even with the retired knob set" "CPUQuota" "$(cat "$QUOTA_ARGV" 2>/dev/null)"
+nowant "escape.sh: no Nice"                                    "Nice="    "$(cat "$QUOTA_ARGV" 2>/dev/null)"
 unset SPIRA_AEON_CPU_QUOTA
 
 cat > "$T/bin/mock-summon" <<'MOCK'
@@ -690,16 +683,13 @@ chmod +x "$T/bin/mock-summon"
 
 # ======================================================================================
 echo
-echo "UC-dispatch-23 — summon_argv: CPUQuota, TimeoutStartSec, direct on the builder itself"
+echo "UC-dispatch-23 — summon_argv: TimeoutStartSec and no CPUQuota/Nice, direct on the builder itself"
 # ======================================================================================
 sargv="$(summon_argv anchor | tr '\n' ' ')"
-want "summon_argv: default CPUQuota=70%" "CPUQuota=70%" "$sargv"
 want "summon_argv: TimeoutStartSec from the fayth" \
      "TimeoutStartSec=$(fayth_get anchor FAYTH_TIMEOUT_SECONDS 3600)" "$sargv"
-export SPIRA_AEON_CPU_QUOTA=42
-sargv2="$(summon_argv anchor | tr '\n' ' ')"
-want "summon_argv: SPIRA_AEON_CPU_QUOTA propagates" "CPUQuota=42%" "$sargv2"
-unset SPIRA_AEON_CPU_QUOTA
+nowant "summon_argv: no CPUQuota (sp-b4oct)" "CPUQuota" "$sargv"
+nowant "summon_argv: no Nice (sp-b4oct)"     "Nice="    "$sargv"
 
 # UC-dispatch-23 / G17 — the claude CLI argv (model, tools, --setting-sources) is not built
 # here. aeon.sh's two launch sites both call aeon_claude_argv (lib.sh), a pure function of

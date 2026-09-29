@@ -460,9 +460,6 @@ has "the installer registers it on a fresh box" \
     "$(cat "$ROOT/systemd/install.sh")" "install-session-hook.sh"
 has "and a timed unit repairs it afterwards" \
     "$(cat "$ROOT/systemd/cockpit-ensure.service")" "install-session-hook.sh install"
-# law-fence-loops-on-shared-hardware: the unit this was added to fires every minute.
-has "that unit is fenced with a CPU quota" \
-    "$(cat "$ROOT/systemd/cockpit-ensure.service")" "CPUQuota="
 
 echo
 echo "an aeon session is told nothing"

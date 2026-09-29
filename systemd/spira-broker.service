@@ -7,8 +7,6 @@ After=default.target
 Type=oneshot
 ExecStart=@SPIRA_PROD@/broker.sh execute
 TimeoutStartSec=60
-CPUQuota=10%
-Nice=10
 StandardOutput=append:@SPIRA_RUN@/broker.log
 StandardError=append:@SPIRA_RUN@/broker.log
 

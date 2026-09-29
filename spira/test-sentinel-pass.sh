@@ -184,25 +184,28 @@ want "pass 1: audit dispatch's own argv names the sentinel binary --audit" \
 
 # ======================================================================================
 echo
-echo "CHECK6 land dispatch — CPUQuota is SPIRA_LAND_CPU_QUOTA, not a hardcoded 40% (sp-u7wrz):"
+echo "CHECK6/audit dispatch — no CPUQuota and no Nice on either worker (sp-b4oct):"
 # ======================================================================================
-# Filtered to the land unit's own argv line: the audit dispatch added alongside it (above)
-# carries its OWN CPUQuota (SPIRA_AUDIT_CPU_QUOTA, default 40%) and must not be mistaken
-# for the land unit's.
+# law-isolate-greedy-work-in-vms: the OS schedules the landing and audit workers. Each check
+# is on the worker's own argv line, and each line's presence is asserted first so an absent
+# dispatch cannot pass the absence check (law-absence-needs-a-positive-control).
 _land_argv="$(grep -- '--unit=spira-landing' "$LAUNCH_ARGV" 2>/dev/null)"
-want   "default quota: CPUQuota=70% appears in the land-dispatch argv" \
-       "CPUQuota=70%" "$_land_argv"
-nowant "default quota: no longer hard-codes CPUQuota=40%" \
-       "CPUQuota=40%" "$_land_argv"
+_audit_argv="$(grep -- '--unit=spira-audit' "$LAUNCH_ARGV" 2>/dev/null)"
+want   "land dispatch argv was captured"  "--unit=spira-landing" "$_land_argv"
+want   "audit dispatch argv was captured" "--unit=spira-audit"   "$_audit_argv"
+nowant "land dispatch carries no CPUQuota"  "CPUQuota" "$_land_argv"
+nowant "land dispatch carries no Nice"      "Nice="    "$_land_argv"
+nowant "audit dispatch carries no CPUQuota" "CPUQuota" "$_audit_argv"
+nowant "audit dispatch carries no Nice"     "Nice="    "$_audit_argv"
 
+# The retired knob is inert: setting it in the environment adds no quota.
 rm -f "$LAUNCH_ARGV" "$SUMMON_LOG" "$SENDING_LOG"
 out_customquota="$(run_pass "$_run" "" SPIRA_LAND_CPU_QUOTA=55)"
 _land_argv="$(grep -- '--unit=spira-landing' "$LAUNCH_ARGV" 2>/dev/null)"
-want   "custom quota: CPUQuota=55% appears in the land-dispatch argv" \
-       "CPUQuota=55%" "$_land_argv"
-nowant "custom quota: default CPUQuota=70% is absent" \
-       "CPUQuota=70%" "$_land_argv"
-lack "custom quota: pass still runs cleanly" "DATABASE UNREADABLE" "$out_customquota"
+want   "retired SPIRA_LAND_CPU_QUOTA: the land dispatch still happens" \
+       "--unit=spira-landing" "$_land_argv"
+nowant "retired SPIRA_LAND_CPU_QUOTA=55 adds no CPUQuota" "CPUQuota" "$_land_argv"
+lack "retired quota knob: pass still runs cleanly" "DATABASE UNREADABLE" "$out_customquota"
 
 # ======================================================================================
 echo

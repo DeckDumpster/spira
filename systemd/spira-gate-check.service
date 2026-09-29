@@ -20,10 +20,6 @@ ExecStart=@SPIRA_PROD@/gate-check.sh
 # A gh round-trip per open gate, plus discover across pr-mode repos. 120 seconds covers
 # a busy queue on a slow connection and does not compete with the sentinel's own ceiling.
 TimeoutStartSec=120
-# Network I/O only; keep the CPU share low so the sentinel and CI runner are not starved
-# (law-fence-loops-on-shared-hardware).
-CPUQuota=10%
-Nice=10
 StandardOutput=append:@SPIRA_RUN@/gate-check.log
 StandardError=append:@SPIRA_RUN@/gate-check.log
 

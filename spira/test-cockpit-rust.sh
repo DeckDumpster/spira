@@ -15,9 +15,12 @@
 # keyed to the UC ids on the # covers: line below, instead of being folded into a single
 # suite-level count.
 #
-# ONE JOB, NOT TWO SHIMS. Loom's tests/endpoint.rs hits a real `bd` on a throwaway database
-# and refuses to run without LOOM_TEST_DB/LOOM_TEST_BD set (see that file's own comment) —
-# that fixture-building was the deleted test-loom.sh's whole job. It is folded in here rather
+# ONE JOB, NOT TWO SHIMS. Loom's tests/endpoint.rs is hermetic under a plain `cargo test`
+# (a fake `bd` serving a canned answer), except one contract test,
+# real_bd_answers_in_the_shape_the_fake_is_built_from, which is #[ignore]d because it needs a
+# real `bd` on a throwaway database and refuses to run without LOOM_TEST_DB/LOOM_TEST_BD set.
+# This suite builds that fixture and runs it with --include-ignored — that fixture-building
+# was the deleted test-loom.sh's whole job. It is folded in here rather
 # than kept as a second file so the panel and loom tests build against one cached workspace
 # target (`cargo test -p panel -p loom` in a single invocation) instead of two separate
 # `cargo test` processes each paying their own link time.
@@ -75,7 +78,7 @@ export LOOM_TEST_BD="${SPIRA_BD:-bd}"
 
 OUT="$TMP/cargo-test.out"
 CARGO_TERM_COLOR=never "$CARGO_BIN" test --manifest-path "$ROOT/Cargo.toml" \
-    -p panel -p loom --no-fail-fast > "$OUT" 2>&1
+    -p panel -p loom --no-fail-fast -- --include-ignored > "$OUT" 2>&1
 _rc=$?
 cat "$OUT"
 report_cargo "$OUT" "$_rc"

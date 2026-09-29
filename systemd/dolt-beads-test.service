@@ -40,10 +40,6 @@ WorkingDirectory=@SPIRA_TESTDB_DATA@
 # that testdb_drop issues when the last fixture is dropped.
 KillSignal=SIGTERM
 TimeoutStopSec=120
-# Half the production server's ceiling. Fixtures are bursty and this box also runs prod, CI
-# and the operator's session (law-fence-loops-on-shared-hardware).
-CPUQuota=50%
-Nice=10
 StandardOutput=append:@SPIRA_RUN@/dolt-beads-test.log
 StandardError=append:@SPIRA_RUN@/dolt-beads-test.log
 

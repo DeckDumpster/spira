@@ -25,6 +25,10 @@ libc = "0.2"
 spira-config = { path = "../spira-config" }
 tsd = { path = "../tsd" }
 
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
 [profile.release]
 opt-level = "z"
 lto = true

@@ -14,6 +14,10 @@ spira-config = { path = "../spira-config" }
 name = "strand"
 path = "src/main.rs"
 
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
 [profile.release]
 opt-level = "z"
 lto = true

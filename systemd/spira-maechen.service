@@ -29,9 +29,6 @@ ExecCondition=/usr/bin/test -f @SPIRA_PROD@/chamber/maechen.fayth
 ExecStart=@SPIRA_PROD@/maechen-trigger.sh
 # The trigger script queries bd and counts git commits; 120 seconds is generous.
 TimeoutStartSec=120
-# bd queries and git log calls — no CPU worth fencing.
-CPUQuota=10%
-Nice=10
 StandardOutput=append:@SPIRA_RUN@/maechen.log
 StandardError=append:@SPIRA_RUN@/maechen.log
 

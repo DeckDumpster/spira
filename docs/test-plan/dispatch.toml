@@ -114,7 +114,7 @@ statement = "an unmapped-repo bead is parked with ask+overseer before its claim 
 [[use_case]]
 id = "UC-dispatch-23"
 tier = "T1"
-statement = "summoning passes `CPUQuota`, `FAYTH_TIMEOUT_SECONDS` and `--setting-sources` correctly"
+statement = "summoning passes no `CPUQuota`/`Nice` (sp-b4oct), and passes `FAYTH_TIMEOUT_SECONDS` and `--setting-sources` correctly"
 
 [[use_case]]
 id = "UC-dispatch-24"

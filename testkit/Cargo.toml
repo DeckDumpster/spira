@@ -1,0 +1,8 @@
+[package]
+name = "testkit"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "testkit — test scaffolding shared across the workspace: write an executable without an ETXTBSY race (dev-dependency only)."
+
+[dependencies]

@@ -1,5 +1,4 @@
 use super::*;
-use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static SEQ: AtomicUsize = AtomicUsize::new(0);
@@ -12,9 +11,9 @@ fn tmpdir(tag: &str) -> PathBuf {
     d
 }
 
+/// testkit::write_exe, never write + chmod: see testkit/DESIGN.md (ETXTBSY).
 fn exe(p: &Path, text: &str) {
-    fs::write(p, text).unwrap();
-    fs::set_permissions(p, fs::Permissions::from_mode(0o755)).unwrap();
+    testkit::write_exe(p, text);
 }
 
 /// A stand-in `dolt`: `sql-server --config C` listens on C's port until SIGTERM.

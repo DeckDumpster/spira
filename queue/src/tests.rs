@@ -720,9 +720,7 @@ fn flush_refuses_without_a_batcher_and_forces_wait_zero_with_one() {
     assert_eq!(t.run(&["flush"]), 1);
     assert!(t.err().contains("SPIRA_BATCHER_BIN not available"));
     let bin = t.dir.join("batcher");
-    fs::write(&bin, "#!/bin/sh\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+    testkit::write_exe(&bin, "#!/bin/sh\n");
     t.lib.s.batcher_bin = Some(bin);
     assert_eq!(t.run(&["flush"]), 0);
     let calls = t.scripts.calls.borrow().clone();

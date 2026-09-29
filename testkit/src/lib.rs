@@ -1,0 +1,93 @@
+//! Test scaffolding shared across the workspace. Contract: DESIGN.md.
+
+use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
+use std::process::{Command, Stdio};
+
+/// Write `body` to `path` as an executable (mode 0755) that a test will then exec,
+/// WITHOUT THIS PROCESS EVER HOLDING A WRITE DESCRIPTOR ON IT.
+///
+/// `fs::write` followed by an exec fails with ETXTBSY whenever another test thread forks
+/// while the write descriptor is open. The child carries a copy of it until it execs, and
+/// the kernel refuses to exec a file anyone has open for writing. A child process writes
+/// the file here instead, so no fork in this process can inherit a descriptor on it.
+pub fn write_exe(path: impl AsRef<Path>, body: &str) {
+    let path = path.as_ref();
+    let mut c = Command::new("sh")
+        .arg("-c")
+        .arg("cat > \"$1\"")
+        .arg("sh")
+        .arg(path)
+        .stdin(Stdio::piped())
+        .spawn()
+        .expect("sh to write an executable");
+    c.stdin
+        .take()
+        .expect("its stdin")
+        .write_all(body.as_bytes())
+        .expect("the executable's body");
+    assert!(c.wait().expect("the writer").success(), "could not write {}", path.display());
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+        .unwrap_or_else(|e| panic!("chmod 755 {}: {e}", path.display()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("testkit-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn the_file_holds_exactly_the_body_and_is_executable() {
+        let d = dir("body");
+        let p = d.join("x");
+        let body = "#!/bin/sh\nprintf '%s' \"a b\"\n# no trailing newline after this";
+        write_exe(&p, body);
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), body);
+        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o755);
+        let out = Command::new(&p).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "a b");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_rewrite_replaces_the_old_body() {
+        let d = dir("rewrite");
+        let p = d.join("x");
+        write_exe(&p, "#!/bin/sh\necho one\n");
+        write_exe(&p, "#!/bin/sh\necho two\n");
+        assert_eq!(String::from_utf8_lossy(&Command::new(&p).output().unwrap().stdout), "two\n");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// THE RACE ITSELF. Eight threads each write a program and exec it at once, a hundred
+    /// times over, while every one of them is forking. With `fs::write` in place of
+    /// write_exe this fails within a few rounds; here every exec must succeed.
+    #[test]
+    fn concurrent_writers_and_forkers_never_see_text_file_busy() {
+        let d = dir("race");
+        let hs: Vec<_> = (0..8)
+            .map(|t| {
+                let d = d.clone();
+                std::thread::spawn(move || {
+                    for i in 0..100 {
+                        let p = d.join(format!("p{t}-{i}"));
+                        write_exe(&p, "#!/bin/sh\nexit 0\n");
+                        let st = Command::new(&p).status().unwrap_or_else(|e| panic!("exec {}: {e}", p.display()));
+                        assert!(st.success());
+                    }
+                })
+            })
+            .collect();
+        for h in hs {
+            h.join().unwrap();
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}

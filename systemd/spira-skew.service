@@ -29,11 +29,8 @@ ExecStart=@SPIRA_HOME@/skew.sh check --escalate
 # nobody looks at (law-alerts-must-be-actionable). Exit 3 — could not check — stays a
 # failure, because that one is the check itself being broken and reaches nobody otherwise.
 SuccessExitStatus=1
-# A fetch and an ls-files per mapped repository. Cheap, but this box may also be running
-# production and a CI runner (law-fence-loops-on-shared-hardware).
+# A fetch and an ls-files per mapped repository.
 TimeoutStartSec=300
-CPUQuota=20%
-Nice=10
 StandardOutput=append:@SPIRA_RUN@/skew.log
 StandardError=append:@SPIRA_RUN@/skew.log
 

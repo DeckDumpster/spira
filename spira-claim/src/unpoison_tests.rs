@@ -602,10 +602,8 @@ fn ids_and_slugs() {
 // the live world's seams: argv and stdin of the bd / spira-lc calls
 
 fn script(dir: &std::path::Path, name: &str, body: &str) -> String {
-    use std::os::unix::fs::PermissionsExt;
     let p = dir.join(name);
-    std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
-    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    testkit::write_exe(&p, &format!("#!/bin/sh\n{body}\n"));
     p.to_string_lossy().into_owned()
 }
 

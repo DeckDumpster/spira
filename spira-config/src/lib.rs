@@ -348,10 +348,8 @@ pub struct SpiraSection {
     pub gate_timeout: Option<String>,
     pub gate_budget: Option<String>,
     pub gate_select_cap: Option<String>,
-    pub aeon_cpu_quota: Option<String>,
     pub cutover_round_label: Option<String>,
     pub gate_lock_wait: Option<String>,
-    pub land_cpu_quota: Option<String>,
     pub gate_suites: Option<String>,
     pub suite_state_file: Option<String>,
     pub suites_state: Option<String>,
@@ -632,6 +630,10 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "self_closed", bead: "sp-xsl8i" },
     RetiredKey { key: "wake_watchers", bead: "sp-xsl8i" },
     RetiredKey { key: "reclaim_skip_label", bead: "sp-i2m7y" },
+    // No explicit CPU quotas anywhere (law-isolate-greedy-work-in-vms): the aeon launch and the
+    // sentinel's landing dispatch no longer pass CPUQuota, so these keys have no consumer.
+    RetiredKey { key: "aeon_cpu_quota", bead: "sp-b4oct" },
+    RetiredKey { key: "land_cpu_quota", bead: "sp-b4oct" },
 ];
 
 /// Every key in `history` that is neither an active `[spira]` field (`active`) nor listed in
@@ -1017,6 +1019,24 @@ mod tests {
             warnings.iter().any(|w| w.contains("queue_local_gate") && w.contains("sp-vsob2")),
             "{warnings:?}"
         );
+    }
+
+    #[test]
+    fn retired_cpu_quota_keys_warn_and_are_ignored() {
+        // sp-b4oct: a live spira.toml still carrying the aeon/landing CPU quota validates,
+        // with one warning per key naming the retiring bead, and nothing exports them.
+        let (doc, warnings) = validate_with_warnings(
+            "[spira]\naeon_cpu_quota = \"400\"\nland_cpu_quota = \"70\"\n",
+        )
+        .expect("a retired CPU quota key must not be a hard error");
+        for key in ["aeon_cpu_quota", "land_cpu_quota"] {
+            assert!(
+                warnings.iter().any(|w| w.contains(key) && w.contains("sp-b4oct")),
+                "no warning for {key}: {warnings:?}"
+            );
+        }
+        let sh = export_sh(&doc);
+        assert!(!sh.contains("CPU_QUOTA"), "a retired key leaked into export --sh: {sh}");
     }
 
     #[test]

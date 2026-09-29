@@ -25,6 +25,16 @@ fn tmp(content: &str) -> String {
     p.to_string_lossy().into_owned()
 }
 
+/// An executable in the same scratch directory, written without an ETXTBSY race
+/// (testkit::write_exe — DESIGN.md there).
+fn tmp_exe(content: &str) -> String {
+    let dir = std::env::temp_dir().join(format!("spira-claim-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let p: PathBuf = dir.join(format!("x{}", N.fetch_add(1, Ordering::SeqCst)));
+    testkit::write_exe(&p, content);
+    p.to_string_lossy().into_owned()
+}
+
 fn run(args: &[&str], stdin: &str) -> Outcome {
     let a: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     dispatch(&a, &mut stdin.as_bytes())
@@ -422,9 +432,7 @@ fn b_stacked_on_a() -> String {
 
 #[test]
 fn cli_stack_reports_the_certified_prerequisites_tip() {
-    std::env::set_var("SPIRA_BD", tmp(&format!("#!/bin/sh\necho '{}'\n", b_stacked_on_a())));
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(std::env::var("SPIRA_BD").unwrap(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::env::set_var("SPIRA_BD", tmp_exe(&format!("#!/bin/sh\necho '{}'\n", b_stacked_on_a())));
     let lc = tmp(&serde_json::json!([
         {"bead_id":"B","state":"READY","holds":"[]"},
         {"bead_id":"A","state":"CERTIFIED","holds":"[]","stack_depth":"0","tip":"abc123"},
@@ -440,9 +448,7 @@ fn cli_stack_reports_the_certified_prerequisites_tip() {
 
 #[test]
 fn cli_stack_past_the_ceiling_is_refused_but_still_names_the_attempted_depth() {
-    std::env::set_var("SPIRA_BD", tmp(&format!("#!/bin/sh\necho '{}'\n", b_stacked_on_a())));
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(std::env::var("SPIRA_BD").unwrap(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::env::set_var("SPIRA_BD", tmp_exe(&format!("#!/bin/sh\necho '{}'\n", b_stacked_on_a())));
     let lc = tmp(&serde_json::json!([
         {"bead_id":"B","state":"READY","holds":"[]"},
         {"bead_id":"A","state":"CERTIFIED","holds":"[]","stack_depth":"4","tip":"abc123"},
@@ -459,9 +465,7 @@ fn cli_stack_past_the_ceiling_is_refused_but_still_names_the_attempted_depth() {
 // ---- the store, through a fake bd -----------------------------------------------------
 
 fn fake_bd(script: &str) -> Store {
-    let p = tmp(&format!("#!/bin/sh\n{script}\n"));
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let p = tmp_exe(&format!("#!/bin/sh\n{script}\n"));
     Store { bd: p, db: Some("/fake/db".into()), lc: "/nonexistent".into(), timeout: std::time::Duration::from_secs(10) }
 }
 
