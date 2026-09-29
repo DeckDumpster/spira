@@ -5,7 +5,7 @@ After=default.target
 
 [Service]
 Type=oneshot
-ExecStart=@SPIRA_PROD_ROOT@/bin/queue step --all
+ExecStart=@SPIRA_QUEUE_BIN@ step --all
 # The binary finds lib.sh through SPIRA_HOME; the script it replaced found it beside itself.
 Environment=SPIRA_HOME=@SPIRA_PROD@
 # TimeoutStartSec covers the longest legitimate job: a red batch replays each member
