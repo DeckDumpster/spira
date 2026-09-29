@@ -85,10 +85,11 @@ chmod +x "$SH/bd-stub.sh"
 # LC_ENFORCE=1 (SPIRA_LIFECYCLE_ENFORCE); every other case runs the default OFF, where
 # the queue never reaches spira-lc. `list` answers the reachability probe; `show` answers
 # a row in IN_DELIVERY so lc_returned has a state/version to fire the event from.
-LC_LOG="$TMP/lc-calls.log"; : > "$LC_LOG"
+# (LCSTUB_LOG, not LC_LOG: lifecycle-cert.sh, sourced by lib.sh, owns LC_LOG.)
+LCSTUB_LOG="$TMP/lc-calls.log"; : > "$LCSTUB_LOG"
 cat > "$SH/lc-stub.sh" <<'LCSTUB'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "${LC_LOG:?}"
+printf '%s\n' "$*" >> "${LCSTUB_LOG:?}"
 case "${1:-}" in
     list) printf '[]\n' ;;
     show) printf '{"bead":{"bead_id":"%s","state":"IN_DELIVERY","version":"3","holds":"[]"}}\n' "${2:-}" ;;
@@ -118,7 +119,7 @@ run() {
         BEADS_ACTOR="aeon-abandontest" \
         SPIRA_EVENT_COOLDOWN=0 \
         SPIRA_LIFECYCLE_ENFORCE="${LC_ENFORCE:-0}" \
-        SPIRA_LC_BIN="$SH/lc-stub.sh" LC_LOG="$LC_LOG" \
+        SPIRA_LC_BIN="$SH/lc-stub.sh" LCSTUB_LOG="$LCSTUB_LOG" \
         SPIRA_HOME="$SH" "$QUEUE_BIN" "$@" 2>&1
 }
 
@@ -159,7 +160,7 @@ echo "eject: positive control — eject finds a real member (guard is live):"
 write_eject_batch
 printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ej01"
 printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ej02"
-> "$FORGE_LOG"; > "$BD_LOG"; : > "$LC_LOG"
+> "$FORGE_LOG"; > "$BD_LOG"; : > "$LCSTUB_LOG"
 out="$(LC_ENFORCE=1 run eject sp-ej01 --reason 'test-foo.sh RED')"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 for valid member" || bad "exit 0 for valid member" "rc=$rc out=$out"
 want "reports ejection" "ejected sp-ej01" "$out"
@@ -168,20 +169,20 @@ st="$(awk '{print $1}' "$LANDSTATE/sp-ej01" 2>/dev/null || true)"
 # NOT bd reopen ANY MORE (sp-rlyl0): a batch member's eject is a lifecycle Returned event
 # now, not a bd write — the stub records no bd argv for it at all.
 nowant "bd reopen is no longer called for an in-batch eject" "reopen sp-ej01" "$(cat "$BD_LOG")"
-want   "lifecycle on: the eject is a spira-lc Returned event" "Returned" "$(cat "$LC_LOG")"
+want   "lifecycle on: the eject is a spira-lc Returned event" "Returned" "$(cat "$LCSTUB_LOG")"
 
 echo
 echo "eject: lifecycle_enforce OFF (the default) — an in-batch eject hands the bead back through bd:"
 write_eject_batch
 printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ej01"
 printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ej02"
-> "$FORGE_LOG"; > "$BD_LOG"; : > "$LC_LOG"
+> "$FORGE_LOG"; > "$BD_LOG"; : > "$LCSTUB_LOG"
 out="$(run eject sp-ej01 --reason 'test-foo.sh RED')"; rc=$?
 [ "$rc" -eq 0 ] && ok "off: exit 0 for valid member" || bad "off: exit 0 for valid member" "rc=$rc out=$out"
 st="$(awk '{print $1}' "$LANDSTATE/sp-ej01" 2>/dev/null || true)"
 [ "$st" = "RED" ] && ok "off: landstate RED after eject" || bad "off: landstate RED" "got $st"
 want "off: bd reopen called for the in-batch eject" "reopen sp-ej01" "$(cat "$BD_LOG")"
-is   "off: spira-lc never called"                   ""               "$(cat "$LC_LOG")"
+is   "off: spira-lc never called"                   ""               "$(cat "$LCSTUB_LOG")"
 
 echo
 echo "eject: non-member is refused; batch and landstate unchanged:"
@@ -598,7 +599,7 @@ real_run() {
         SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$QUEUEDIR" \
         SPIRA_FORGE="$SH/forge-fake.sh" FORGE_LOG="$FORGE_LOG" \
         SPIRA_LIFECYCLE_ENFORCE="${LC_ENFORCE:-0}" \
-        SPIRA_LC_BIN="$SH/lc-stub.sh" LC_LOG="$LC_LOG" \
+        SPIRA_LC_BIN="$SH/lc-stub.sh" LCSTUB_LOG="$LCSTUB_LOG" \
         SPIRA_HOME="$SH" "$QUEUE_BIN" "$@" 2>&1
 }
 

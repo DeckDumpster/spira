@@ -904,7 +904,13 @@ echo "L. queue.local: a round lands locally via queue land-local — no push, no
 
 LREPO="$TMP/local-land-repo"
 git init -q -b trunk "$LREPO"
-git -C "$LREPO" commit -q --allow-empty -m base
+# One suite in the tree, as every real repository has: the round's corpus step (the stub
+# round-vm, which is what installs the round's target/release under STUB_INSTALL_BINS) only
+# runs when the round's own tree names a suite — an empty corpus never builds bins at all.
+mkdir -p "$LREPO/spira"
+: > "$LREPO/spira/test-local.sh"
+git -C "$LREPO" add -A
+git -C "$LREPO" commit -q -m base
 git -C "$LREPO" branch local/main trunk
 LRELEASES="$TMP/local-releases"; mkdir -p "$LRELEASES"
 
@@ -994,6 +1000,7 @@ LC_STACKS="$TMP/lc-stacks"; mkdir -p "$LC_STACKS"
 cat > "$SH/spira-lc-stack-stub.sh" <<'LCSTACKSTUB'
 #!/usr/bin/env bash
 case "${1:-}" in
+    list) printf '[]\n'; exit 0 ;;   # the reachability probe lifecycle_enforce=1 makes first
     show)
         f="${SPIRA_LC_STACKS_DIR:?}/${2:-}"
         stack="{}"
@@ -1039,7 +1046,9 @@ certify sp-cmcc3 "$tip_mc" 100
 certify sp-cmaa1 "$tip_ma" 200
 certify sp-cmbb2 "$tip_mb" 300
 
-out_m="$(STUB_INSTALL_BINS=1 SPIRA_LC_BIN="$SH/spira-lc-stack-stub.sh" SPIRA_LC_STACKS_DIR="$LC_STACKS" cut_local)"
+# Stacking is a lifecycle-machine concept (read_stack runs nothing with the switch OFF), so
+# this case runs ON.
+out_m="$(SPIRA_LIFECYCLE_ENFORCE=1 STUB_INSTALL_BINS=1 SPIRA_LC_BIN="$SH/spira-lc-stack-stub.sh" SPIRA_LC_STACKS_DIR="$LC_STACKS" cut_local)"
 want   "M: reports landing locally"                             "landed locally"  "$out_m"
 want   "M: all three members landed in one round"                "3 member(s)"    "$out_m"
 is     "M: sp-cmaa1 landstate LANDED (the closed-over prerequisite, never dropped as EMPTY)" \

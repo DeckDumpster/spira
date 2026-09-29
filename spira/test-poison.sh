@@ -128,6 +128,10 @@ wantrc "spira_lifecycle grants apply cleanly" 0 $?
 export SPIRA_LC_USER=spira_lc
 export SPIRA_LC_PASSWORD="$LC_PASS"
 export SPIRA_LC_BIN="$LC_BIN"
+# The poison valve's hold lives in spira-lc (sp-i2m7y): the machine is this suite's subject,
+# so the sentinel runs with the switch ON. OFF (the default) writes the legacy spira-poison
+# bd label instead — sentinel/src/check4.rs unit tests.
+export SPIRA_LIFECYCLE_ENFORCE=1
 
 # mklc <id>... — a fresh READY row for each id, dropping any row a prior scenario left
 # behind (bd's own fixture resets on every seed/seed_poison call via testdb_reset, but the
