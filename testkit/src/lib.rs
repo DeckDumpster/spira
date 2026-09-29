@@ -1,9 +1,63 @@
 //! Test scaffolding shared across the workspace. Contract: DESIGN.md.
 
+use std::ffi::OsStr;
 use std::io::Write;
+use std::ops::Deref;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// A fresh scratch directory under the system temp dir, removed with everything under it
+/// when dropped — including when a failing test unwinds. The only way test code in this
+/// workspace gets scratch space (spira-lint `tmp-leak`, sp-qgfdi).
+#[derive(Debug)]
+pub struct TempDir(PathBuf);
+
+impl TempDir {
+    /// `<temp_dir>/<tag>-<pid>-<n>`, created empty, its path canonical. `<n>` is
+    /// process-wide, so two calls never share a directory.
+    pub fn new(tag: &str) -> TempDir {
+        static N: AtomicUsize = AtomicUsize::new(0);
+        let d = std::env::temp_dir().join(format!(
+            "{tag}-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&d).unwrap_or_else(|e| panic!("mkdir {}: {e}", d.display()));
+        TempDir(d.canonicalize().unwrap_or(d))
+    }
+
+    /// The directory. It lives exactly as long as this value.
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Deref for TempDir {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl AsRef<Path> for TempDir {
+    fn as_ref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl AsRef<OsStr> for TempDir {
+    fn as_ref(&self) -> &OsStr {
+        self.0.as_os_str()
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
 
 /// Write `body` to `path` as an executable (mode 0755) that a test will then exec,
 /// WITHOUT THIS PROCESS EVER HOLDING A WRITE DESCRIPTOR ON IT.
@@ -36,11 +90,36 @@ pub fn write_exe(path: impl AsRef<Path>, body: &str) {
 mod tests {
     use super::*;
 
-    fn dir(tag: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("testkit-{}-{tag}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn dir(tag: &str) -> TempDir {
+        TempDir::new(&format!("testkit-{tag}"))
+    }
+
+    #[test]
+    fn a_temp_dir_is_fresh_distinct_and_gone_after_drop() {
+        let a = TempDir::new("testkit-td");
+        let b = TempDir::new("testkit-td");
+        assert_ne!(a.path(), b.path());
+        assert!(a.is_dir() && std::fs::read_dir(&a).unwrap().next().is_none());
+        std::fs::create_dir_all(a.join("x/y")).unwrap();
+        std::fs::write(a.join("x/y/f"), "z").unwrap();
+        let p = a.to_path_buf();
+        drop(a);
+        assert!(!p.exists(), "{} survived its drop", p.display());
+        assert!(b.is_dir());
+    }
+
+    #[test]
+    fn a_panicking_test_still_removes_its_dir() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let r = std::thread::spawn(move || {
+            let d = TempDir::new("testkit-panic");
+            tx.send(d.to_path_buf()).unwrap();
+            panic!("the test fails");
+        })
+        .join();
+        assert!(r.is_err());
+        let p = rx.recv().unwrap();
+        assert!(!p.exists(), "{} survived an unwinding test", p.display());
     }
 
     #[test]
@@ -53,7 +132,6 @@ mod tests {
         assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o755);
         let out = Command::new(&p).output().unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout), "a b");
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
@@ -63,7 +141,6 @@ mod tests {
         write_exe(&p, "#!/bin/sh\necho one\n");
         write_exe(&p, "#!/bin/sh\necho two\n");
         assert_eq!(String::from_utf8_lossy(&Command::new(&p).output().unwrap().stdout), "two\n");
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     /// THE RACE ITSELF. Eight threads each write a program and exec it at once, a hundred
@@ -72,9 +149,10 @@ mod tests {
     #[test]
     fn concurrent_writers_and_forkers_never_see_text_file_busy() {
         let d = dir("race");
+        let dp = d.to_path_buf();
         let hs: Vec<_> = (0..8)
             .map(|t| {
-                let d = d.clone();
+                let d = dp.clone();
                 std::thread::spawn(move || {
                     for i in 0..100 {
                         let p = d.join(format!("p{t}-{i}"));
@@ -88,6 +166,5 @@ mod tests {
         for h in hs {
             h.join().unwrap();
         }
-        let _ = std::fs::remove_dir_all(&d);
     }
 }

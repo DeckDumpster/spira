@@ -1131,15 +1131,8 @@ mod tests {
     // A private scratch directory per test, so parallel `cargo test` threads never collide
     // on the same path (the real callers always get SPIRA_RUN handed to them by the caller,
     // never a shared ambient default).
-    fn scratch_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "czar-pass-test-{}-{}-{}",
-            name,
-            std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
-        ));
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    fn scratch_dir(name: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("czar-pass-test-{}-{}", name, SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()))
     }
 
     #[test]

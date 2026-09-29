@@ -17,22 +17,46 @@ fn enforce(on: bool) {
     ENFORCE.with(|c| c.set(on));
 }
 
-fn tmp(content: &str) -> String {
-    let dir = std::env::temp_dir().join(format!("spira-claim-test-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+/// A file's path, and the scratch dir that holds it: the file is removed when this drops,
+/// so hold it for as long as anything reads the path (sp-qgfdi).
+struct Tmp {
+    _dir: testkit::TempDir,
+    path: String,
+}
+
+impl std::ops::Deref for Tmp {
+    type Target = String;
+    fn deref(&self) -> &String {
+        &self.path
+    }
+}
+
+impl std::fmt::Display for Tmp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.path)
+    }
+}
+
+impl AsRef<std::path::Path> for Tmp {
+    fn as_ref(&self) -> &std::path::Path {
+        std::path::Path::new(&self.path)
+    }
+}
+
+fn tmp(content: &str) -> Tmp {
+    let dir = testkit::TempDir::new("spira-claim-test");
     let p: PathBuf = dir.join(format!("f{}", N.fetch_add(1, Ordering::SeqCst)));
     std::fs::write(&p, content).unwrap();
-    p.to_string_lossy().into_owned()
+    Tmp { path: p.to_string_lossy().into_owned(), _dir: dir }
 }
 
 /// An executable in the same scratch directory, written without an ETXTBSY race
 /// (testkit::write_exe — DESIGN.md there).
-fn tmp_exe(content: &str) -> String {
-    let dir = std::env::temp_dir().join(format!("spira-claim-test-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+fn tmp_exe(content: &str) -> Tmp {
+    let dir = testkit::TempDir::new("spira-claim-test");
     let p: PathBuf = dir.join(format!("x{}", N.fetch_add(1, Ordering::SeqCst)));
     testkit::write_exe(&p, content);
-    p.to_string_lossy().into_owned()
+    Tmp { path: p.to_string_lossy().into_owned(), _dir: dir }
 }
 
 fn run(args: &[&str], stdin: &str) -> Outcome {
@@ -44,7 +68,7 @@ fn ev(id: &str, t: &str, v: &str, at: &str) -> serde_json::Value {
     serde_json::json!({"issue_id": id, "event_type": t, "new_value": v, "created_at": at})
 }
 
-fn events_file(evs: &[serde_json::Value]) -> String {
+fn events_file(evs: &[serde_json::Value]) -> Tmp {
     tmp(&serde_json::to_string(evs).unwrap())
 }
 
@@ -278,7 +302,7 @@ fn select_reads_a_ready_set_over_128k_from_stdin_and_file() {
 /// The fixture graph from sp-f0qhr's acceptance: A certified → B stacked on it; C blocked
 /// on a merely-submitted D; F blocked on an open epic G; H stacked on a depth-4 certified I;
 /// J with a poison hold; K with no lifecycle row.
-fn machine_fixture() -> (String, String, String) {
+fn machine_fixture() -> (String, Tmp, Tmp) {
     let blocks = |id: &str, on: &str| serde_json::json!({"issue_id": id, "depends_on_id": on, "type": "blocks"});
     let ready = serde_json::json!([
         {"id":"B","priority":1,"labels":["repo:spira"],"dependencies":[blocks("B","A")]},
@@ -375,9 +399,11 @@ fn off_machine_mode_is_the_legacy_rule_and_never_reads_the_lifecycle() {
     // No --lifecycle: were the snapshot read, the store's spira-lc would be run and fail
     // ("cannot tell"). A garbage --lifecycle file: were it read, parsing would fail. Both
     // answer, so neither source was consulted.
-    for extra in [vec![], vec!["--lifecycle".to_string(), tmp("not json")]] {
+    let garbage = tmp("not json");
+    let epics = tmp("{}");
+    for extra in [vec![], vec!["--lifecycle".to_string(), garbage.to_string()]] {
         let mut args: Vec<String> =
-            ["select", "--fayth", "t", "--blockers", "machine", "--blocker-records", &recs, "--epics", &tmp("{}")]
+            ["select", "--fayth", "t", "--blockers", "machine", "--blocker-records", &recs, "--epics", &epics]
                 .iter()
                 .map(|s| s.to_string())
                 .collect();
@@ -432,7 +458,8 @@ fn b_stacked_on_a() -> String {
 
 #[test]
 fn cli_stack_reports_the_certified_prerequisites_tip() {
-    std::env::set_var("SPIRA_BD", tmp_exe(&format!("#!/bin/sh\necho '{}'\n", b_stacked_on_a())));
+    let bd = tmp_exe(&format!("#!/bin/sh\necho '{}'\n", b_stacked_on_a()));
+    std::env::set_var("SPIRA_BD", &*bd);
     let lc = tmp(&serde_json::json!([
         {"bead_id":"B","state":"READY","holds":"[]"},
         {"bead_id":"A","state":"CERTIFIED","holds":"[]","stack_depth":"0","tip":"abc123"},
@@ -448,7 +475,8 @@ fn cli_stack_reports_the_certified_prerequisites_tip() {
 
 #[test]
 fn cli_stack_past_the_ceiling_is_refused_but_still_names_the_attempted_depth() {
-    std::env::set_var("SPIRA_BD", tmp_exe(&format!("#!/bin/sh\necho '{}'\n", b_stacked_on_a())));
+    let bd = tmp_exe(&format!("#!/bin/sh\necho '{}'\n", b_stacked_on_a()));
+    std::env::set_var("SPIRA_BD", &*bd);
     let lc = tmp(&serde_json::json!([
         {"bead_id":"B","state":"READY","holds":"[]"},
         {"bead_id":"A","state":"CERTIFIED","holds":"[]","stack_depth":"4","tip":"abc123"},
@@ -464,9 +492,25 @@ fn cli_stack_past_the_ceiling_is_refused_but_still_names_the_attempted_depth() {
 
 // ---- the store, through a fake bd -----------------------------------------------------
 
-fn fake_bd(script: &str) -> Store {
+/// A store over a fake bd; the fake lives as long as this does.
+struct FakeStore {
+    store: Store,
+    _bd: Tmp,
+}
+
+impl std::ops::Deref for FakeStore {
+    type Target = Store;
+    fn deref(&self) -> &Store {
+        &self.store
+    }
+}
+
+fn fake_bd(script: &str) -> FakeStore {
     let p = tmp_exe(&format!("#!/bin/sh\n{script}\n"));
-    Store { bd: p, db: Some("/fake/db".into()), lc: "/nonexistent".into(), timeout: std::time::Duration::from_secs(10) }
+    FakeStore {
+        store: Store { bd: p.to_string(), db: Some("/fake/db".into()), lc: "/nonexistent".into(), timeout: std::time::Duration::from_secs(10) },
+        _bd: p,
+    }
 }
 
 #[test]

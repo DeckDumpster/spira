@@ -62,6 +62,9 @@ echo "POSITIVE CONTROL — broker binary exists and is executable"
 # in containers the workspace is read-only, so copy the source to a writable tmp path first.
 if [ ! -x "$BROKER_BIN" ]; then
     cp -r "$BROKER_ROOT/." "$T/broker-src"
+    # broker's tests take ../testkit (a path dev-dependency, sp-qgfdi): copied as a sibling
+    # so that relative path still resolves.
+    cp -r "$BROKER_ROOT/../testkit" "$T/testkit"
     printf '  (building broker into %s)\n' "$T/broker-target"
     CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/broker-target" \
         "$CARGO_BIN" build --release \

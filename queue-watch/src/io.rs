@@ -354,23 +354,13 @@ pub fn snapshot(env: &Env, repo: &Repo, prev: &RepoState, now: u64) -> Snapshot 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-    fn scratch_path(tag: &str) -> PathBuf {
+    fn scratch_path(tag: &str) -> testkit::TempDir {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        std::env::temp_dir().join(format!("queue-watch-run_bd-test-{}-{}-{n}", std::process::id(), tag))
-    }
-
-    fn make_stub(body: &str) -> PathBuf {
-        let path = scratch_path("stub");
-        fs::write(&path, format!("#!/usr/bin/env bash\n{body}\n")).unwrap();
-        let mut perms = fs::metadata(&path).unwrap().permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&path, perms).unwrap();
-        path
+        testkit::TempDir::new(&format!("queue-watch-run_bd-test-{tag}-{n}"))
     }
 
     // POSITIVE CONTROL: a connection that never recovers is retried exactly once, not forever.
@@ -412,7 +402,7 @@ mod tests {
         // remote is genuinely named "local", pointed at a path that cannot be fetched.
         git(&dir, &["remote", "add", "local", "/nonexistent-local-remote"]);
 
-        let repo = Repo { name: "l".into(), path: dir.clone(), base: "local/main".into(), forge: PathBuf::new(), local: true };
+        let repo = Repo { name: "l".into(), path: dir.to_path_buf(), base: "local/main".into(), forge: PathBuf::new(), local: true };
         let res = read_on_base(&repo, &[Member { id: "sp-in".into(), tip: tip_in }, Member { id: "sp-out".into(), tip: tip_out }]);
         assert_eq!(res, vec![("sp-in".to_string(), Some(true)), ("sp-out".to_string(), Some(false))]);
         let _ = fs::remove_dir_all(&dir);

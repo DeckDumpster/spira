@@ -107,8 +107,7 @@ mod tests {
 
     #[test]
     fn round_trips_through_a_file() {
-        let dir = std::env::temp_dir().join(format!("reconciler-engine-io-test-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = testkit::TempDir::new("reconciler-engine-io-test");
         let state_path = dir.join("state.json");
 
         let mut state = load_state(&state_path);
@@ -133,8 +132,7 @@ mod tests {
 
     #[test]
     fn alerted_since_round_trips_through_a_file() {
-        let dir = std::env::temp_dir().join(format!("reconciler-engine-io-alerted-test-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = testkit::TempDir::new("reconciler-engine-io-alerted-test");
         let alerted_path = dir.join("alerted.json");
 
         let mut alerted = load_alerted(&alerted_path);

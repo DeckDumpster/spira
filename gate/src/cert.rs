@@ -217,8 +217,7 @@ mod tests {
 
     #[test]
     fn write_is_atomic_and_readable_back() {
-        let d = std::env::temp_dir().join(format!("gate-cert-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
+        let d = testkit::TempDir::new("gate-cert");
         let p = write(&d, &c(Source::Round)).unwrap();
         assert!(certifies(&fs::read_to_string(&p).unwrap(), "spira", T).is_some());
         assert_eq!(fs::read_dir(p.parent().unwrap()).unwrap().count(), 1, "no temp file left");

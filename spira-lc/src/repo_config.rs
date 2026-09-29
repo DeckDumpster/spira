@@ -63,11 +63,8 @@ mod tests {
     use super::*;
     use std::fs;
 
-    fn scratch(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("spira-lc-repo-config-test-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    fn scratch(tag: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("spira-lc-repo-config-test-{tag}"))
     }
 
     #[test]

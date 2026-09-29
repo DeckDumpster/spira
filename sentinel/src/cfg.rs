@@ -517,8 +517,7 @@ pub mod tests {
 
     #[test]
     fn the_switch_resolves_like_the_aeon_crate() {
-        let dir = std::env::temp_dir().join(format!("sentinel-enforce-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = testkit::TempDir::new("sentinel-enforce");
         let toml = dir.join("spira.toml");
         std::fs::write(&toml, "[spira]\nlifecycle_enforce = true\n").unwrap();
         assert_eq!(lifecycle_enforce(None, Some(&toml)), Lifecycle::On);

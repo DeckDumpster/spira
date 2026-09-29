@@ -487,7 +487,7 @@ impl Emit for Cap {
 
 struct T {
     _serial: crate::testutil::Serial,
-    dir: PathBuf,
+    dir: testkit::TempDir,
     git: FGit,
     bd: FBd,
     lib: FLib,
@@ -632,11 +632,6 @@ impl T {
     }
 }
 
-impl Drop for T {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.dir);
-    }
-}
 
 // ------------------------------------------------------------------------------ submit
 

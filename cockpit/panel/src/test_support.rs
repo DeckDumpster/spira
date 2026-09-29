@@ -16,7 +16,7 @@ pub static LOCK: Mutex<()> = Mutex::new(());
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub struct StubBd {
-    dir: std::path::PathBuf,
+    dir: testkit::TempDir,
     log: std::path::PathBuf,
     set_vars: Vec<String>,
     saved_spira_path: Option<String>,
@@ -30,8 +30,7 @@ impl StubBd {
     pub fn new() -> Self {
         let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("panel-stub-bd-{}-{n}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("create stub bd dir");
+        let dir = testkit::TempDir::new(&format!("panel-stub-bd-{n}"));
         let log = dir.join("argv.log");
         std::fs::write(&log, "").expect("init argv log");
         let script = dir.join("bd");
@@ -173,6 +172,5 @@ impl Drop for StubBd {
             Some(p) => std::env::set_var("SPIRA_PATH", p),
             None => std::env::remove_var("SPIRA_PATH"),
         }
-        let _ = std::fs::remove_dir_all(&self.dir);
     }
 }

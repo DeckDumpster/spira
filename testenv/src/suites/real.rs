@@ -400,11 +400,8 @@ impl Git for Real {
 mod tests {
     use super::*;
 
-    fn tmp(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("suites-real-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
-        fs::create_dir_all(&d).unwrap();
-        d
+    fn tmp(tag: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("suites-real-{tag}"))
     }
 
     fn sh(dir: &Path, args: &[&str]) {

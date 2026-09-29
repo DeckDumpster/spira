@@ -18,15 +18,9 @@ static N: AtomicUsize = AtomicUsize::new(0);
 
 
 struct Fx {
-    root: PathBuf,
+    root: testkit::TempDir,
     repo: PathBuf,
     run: PathBuf,
-}
-
-impl Drop for Fx {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
-    }
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -64,12 +58,7 @@ fn write(p: &Path, s: &str) {
 
 impl Fx {
     fn new(tag: &str) -> Fx {
-        let root = std::env::temp_dir().join(format!(
-            "rebase-stale-{tag}-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::SeqCst)
-        ));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = testkit::TempDir::new(&format!("rebase-stale-{tag}-{}", N.fetch_add(1, Ordering::SeqCst)));
         let repo = root.join("repo");
         let run = root.join("run");
         std::fs::create_dir_all(run.join("worktree")).unwrap();
@@ -690,7 +679,7 @@ fn lib_seam_passes_payloads_on_stdin_and_reads_status_with_a_positive_control() 
     let bd = fx.root.join("bd");
     testkit::write_exe(&bd, "#!/bin/sh\n[ \"$3\" = list ] && { echo '[{\"id\":\"sp-any\"}]'; exit 0; }\ncase \"$4\" in sp-goal) echo '[{\"status\":\"open\"}]';; sp-ip) echo '{\"status\":\"in_progress\"}';; *) exit 1;; esac\n");
 
-    let mut s = LibSeam::new(home.clone(), Some(fx.root.clone()), bd.to_string_lossy().into(), "sp-goal".into());
+    let mut s = LibSeam::new(home.clone(), Some(fx.root.to_path_buf()), bd.to_string_lossy().into(), "sp-goal".into());
     s.queue_bin = queue;
     let note = "multi\nline $(not expanded) 'quoted'";
     s.reopen("sp-1", "rebase-conflict", note);
@@ -708,6 +697,6 @@ fn lib_seam_passes_payloads_on_stdin_and_reads_status_with_a_positive_control() 
 
     assert_eq!(s.bead_status("sp-ip"), BeadStatus::Known("in_progress".into()));
     assert_eq!(s.bead_status("sp-unknown"), BeadStatus::Known(String::new()));
-    let dead = LibSeam::new(home, Some(fx.root.clone()), "/nonexistent/bd".into(), "sp-goal".into());
+    let dead = LibSeam::new(home, Some(fx.root.to_path_buf()), "/nonexistent/bd".into(), "sp-goal".into());
     assert_eq!(dead.bead_status("sp-ip"), BeadStatus::Unreachable, "no positive control, no absence");
 }

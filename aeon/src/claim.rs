@@ -237,10 +237,8 @@ mod tests {
     }
     /// Each test its own scratch dir: the selector names its files `.<stem>.<pid>`, and
     /// parallel tests share one pid, so a shared dir let one test delete another's file.
-    fn scratch(name: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("aeon-claim-{}-{name}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn scratch(name: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("aeon-claim-{name}"))
     }
     struct FakeSeam(String);
     impl Seam for FakeSeam {

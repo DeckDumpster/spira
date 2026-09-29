@@ -237,8 +237,7 @@ mod tests {
 
     #[test]
     fn enforce_env_wins_and_binary_presence_is_irrelevant() {
-        let dir = std::env::temp_dir().join(format!("aeon-conf-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = testkit::TempDir::new("aeon-conf");
         let toml = dir.join("spira.toml");
         std::fs::write(&toml, "[spira]\nlifecycle_enforce = true\n").unwrap();
         assert!(lifecycle_enforce(&BTreeMap::new(), Some(&toml)));

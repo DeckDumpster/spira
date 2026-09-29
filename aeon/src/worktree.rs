@@ -226,11 +226,8 @@ mod tests {
         assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
     }
 
-    fn tmp(n: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("aeon-wt-{}-{n}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d.canonicalize().unwrap()
+    fn tmp(n: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("aeon-wt-{n}"))
     }
 
     fn repo(dir: &Path) -> PathBuf {

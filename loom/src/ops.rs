@@ -282,7 +282,8 @@ mod tests {
 
     #[test]
     fn non_sp_keys_are_skipped() {
-        let tmp = std::env::temp_dir().join(format!("loom-ops-{}.env", std::process::id()));
+        let d = testkit::TempDir::new("loom-ops");
+        let tmp = d.join("ops.env");
         std::fs::write(&tmp, "SP_OPEN='5'\nOTHER='x'\nSP_READY='3'\n").unwrap();
         let (data, _, err) = parse_env_file(tmp.to_str().unwrap());
         std::fs::remove_file(&tmp).ok();
@@ -300,8 +301,8 @@ mod tests {
     fn absent_key_not_in_map() {
         // A key absent from the file must be absent from the map. The renderer prints ?
         // for a missing key — it must never receive a default 0.
-        let tmp =
-            std::env::temp_dir().join(format!("loom-ops2-{}.env", std::process::id()));
+        let d = testkit::TempDir::new("loom-ops2");
+        let tmp = d.join("ops.env");
         std::fs::write(&tmp, "SP_OPEN='5'\n").unwrap();
         let (data, _, _) = parse_env_file(tmp.to_str().unwrap());
         std::fs::remove_file(&tmp).ok();
@@ -324,8 +325,7 @@ mod tests {
         // A dead collector would render a halted world as healthy if the banner read the
         // snapshot instead of the stamp — this is the property that makes read_world_state
         // its own read path rather than a field on OpsSnapshot.
-        let dir = std::env::temp_dir().join(format!("ops-world-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = testkit::TempDir::new("ops-world");
         let run = dir.to_str().unwrap();
 
         // POSITIVE CONTROL FIRST: no stamp, not halted — the flip below means something only

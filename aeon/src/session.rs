@@ -274,18 +274,15 @@ mod tests {
         }
     }
 
-    fn tmp(n: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("aeon-hb-{}-{n}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn tmp(n: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("aeon-hb-{n}"))
     }
 
     // test-aeon-lease.sh: a silent trace lapses the lease, writes .lapsed, trips the stop.
     #[test]
     fn silent_trace_lapses_and_trips() {
         let d = tmp("lapse");
-        let hb = Heartbeat { bead: "sp-a".into(), fayth: "builder".into(), run: d.clone(), lease_s: 120, every: Duration::from_millis(1), wall_min: 20 };
+        let hb = Heartbeat { bead: "sp-a".into(), fayth: "builder".into(), run: d.to_path_buf(), lease_s: 120, every: Duration::from_millis(1), wall_min: 20 };
         let b = FakeBeat { now: Mutex::new(0), mtimes: Mutex::new(vec![5]), fuse: "0".into(), logs: Mutex::new(vec![]), beats: Mutex::new(0) };
         let stop = Stop::default();
         let r = hb.run(&b, &stop, &AtomicBool::new(false));
@@ -301,7 +298,7 @@ mod tests {
     #[test]
     fn growing_trace_with_a_stale_fuse_thrashes() {
         let d = tmp("thrash");
-        let hb = Heartbeat { bead: "sp-a".into(), fayth: "builder".into(), run: d.clone(), lease_s: 600, every: Duration::from_millis(1), wall_min: 2 };
+        let hb = Heartbeat { bead: "sp-a".into(), fayth: "builder".into(), run: d.to_path_buf(), lease_s: 600, every: Duration::from_millis(1), wall_min: 2 };
         let b = FakeBeat { now: Mutex::new(0), mtimes: Mutex::new(vec![1, 2, 2, 2, 2, 2]), fuse: "30".into(), logs: Mutex::new(vec![]), beats: Mutex::new(0) };
         let stop = Stop::default();
         let r = hb.run(&b, &stop, &AtomicBool::new(false));
@@ -314,7 +311,7 @@ mod tests {
     #[test]
     fn shutdown_ends_quietly() {
         let d = tmp("down");
-        let hb = Heartbeat { bead: "sp-a".into(), fayth: "b".into(), run: d, lease_s: 600, every: Duration::from_secs(60), wall_min: 20 };
+        let hb = Heartbeat { bead: "sp-a".into(), fayth: "b".into(), run: d.to_path_buf(), lease_s: 600, every: Duration::from_secs(60), wall_min: 20 };
         let b = FakeBeat { now: Mutex::new(0), mtimes: Mutex::new(vec![1]), fuse: "?".into(), logs: Mutex::new(vec![]), beats: Mutex::new(0) };
         let stop = Stop::default();
         assert_eq!(hb.run(&b, &stop, &AtomicBool::new(true)), None);
@@ -332,7 +329,7 @@ mod tests {
         std::fs::write(&task, "hi").unwrap();
         let mut env = BTreeMap::new();
         env.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
-        let spec = SessionSpec { prog: "sh".into(), args: vec!["-c".into(), "cat; sleep 30".into()], stdin_file: task, log: d.join("log"), cwd: d.clone(), env, timeout: None };
+        let spec = SessionSpec { prog: "sh".into(), args: vec!["-c".into(), "cat; sleep 30".into()], stdin_file: task, log: d.join("log"), cwd: d.to_path_buf(), env, timeout: None };
         let t0 = Instant::now();
         let rc = RealLauncher.run(&spec, &stop);
         assert!(t0.elapsed() < Duration::from_secs(10), "a stop already recorded kills the session at once");
@@ -350,7 +347,7 @@ mod tests {
         std::fs::write(&task, "").unwrap();
         let mut env = BTreeMap::new();
         env.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
-        let spec = SessionSpec { prog: "sleep".into(), args: vec!["30".into()], stdin_file: task, log: d.join("log"), cwd: d.clone(), env, timeout: Some(0) };
+        let spec = SessionSpec { prog: "sleep".into(), args: vec!["30".into()], stdin_file: task, log: d.join("log"), cwd: d.to_path_buf(), env, timeout: Some(0) };
         assert_eq!(RealLauncher.run(&spec, &Stop::default()), 124);
     }
 }

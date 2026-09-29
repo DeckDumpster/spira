@@ -661,11 +661,8 @@ pub fn render_memories(mem_json: &str, prefixes: &str, budget: usize, core_csv: 
 mod tests {
     use super::*;
 
-    fn tmpdir(n: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("aeon-brief-{}-{n}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn tmpdir(n: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("aeon-brief-{n}"))
     }
 
     // sp-4vq2q: the runner is absolute — the resolved bin, else bin/testenv beside SPIRA_HOME.

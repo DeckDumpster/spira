@@ -3,12 +3,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 static SEQ: AtomicUsize = AtomicUsize::new(0);
 
-fn tmpdir(tag: &str) -> PathBuf {
+fn tmpdir(tag: &str) -> testkit::TempDir {
     let n = SEQ.fetch_add(1, Ordering::SeqCst);
-    let d = std::env::temp_dir().join(format!("testenv-testdb-{tag}-{}-{n}", std::process::id()));
-    let _ = fs::remove_dir_all(&d);
-    fs::create_dir_all(&d).unwrap();
-    d
+    testkit::TempDir::new(&format!("testenv-testdb-{tag}-{n}"))
 }
 
 /// testkit::write_exe, never write + chmod: see testkit/DESIGN.md (ETXTBSY).
@@ -41,7 +38,7 @@ fn fake_bd(dir: &Path) -> PathBuf {
     p
 }
 
-fn fakes(tag: &str) -> Option<(PathBuf, Tools)> {
+fn fakes(tag: &str) -> Option<(testkit::TempDir, Tools)> {
     if resolve_exe("python3", &std::env::var("PATH").unwrap_or_default()).is_none() {
         eprintln!("skip: no python3 for the stand-in dolt");
         return None;

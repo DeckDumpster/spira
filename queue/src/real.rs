@@ -801,7 +801,7 @@ mod tests {
 
     /// A stand-in lib.sh with the functions the seam calls, so RealLib's whole path —
     /// fixed script, stdin values, answer mark, record parse — runs for real.
-    fn stub_home() -> PathBuf {
+    fn stub_home() -> testkit::TempDir {
         let d = crate::testutil::tmpdir("reallib");
         fs::write(
             d.join("lib.sh"),
@@ -827,7 +827,8 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
     #[test]
     fn context_seam_round_trips_through_bash() {
         let _serial = crate::testutil::serial();
-        let lib = RealLib { home: stub_home() };
+        let home = stub_home();
+        let lib = RealLib { home: home.to_path_buf() };
         let (s, r) = lib.context(Some("spira")).unwrap();
         assert_eq!(s.run, PathBuf::from("/run/x"));
         assert_eq!(s.queue_dir, PathBuf::from("/run/x/queue"));
@@ -846,13 +847,14 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
     #[test]
     fn repos_seam_lists_home_first_once_each_and_ignores_log_lines() {
         let _serial = crate::testutil::serial();
-        let lib = RealLib { home: stub_home() };
+        let home = stub_home();
+        let lib = RealLib { home: home.to_path_buf() };
         assert_eq!(lib.repos().unwrap(), vec!["spira".to_string(), "svc".to_string()]);
         // a lib.sh that logs while it is sourced: the log precedes the mark, never a name
         let d = crate::testutil::tmpdir("reallib-noisy");
         fs::write(d.join("lib.sh"), "echo 'spira: noise while sourcing' >&1\nspira_repos() { printf 'a\\nb\\n'; }\n").unwrap();
         fs::write(d.join("lc.sh"), "").unwrap();
-        assert_eq!(RealLib { home: d }.repos().unwrap(), vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(RealLib { home: d.to_path_buf() }.repos().unwrap(), vec!["a".to_string(), "b".to_string()]);
     }
 
     #[test]
@@ -865,7 +867,7 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
         }
         let bin = d.join("batcher");
         testkit::write_exe(&bin, &format!("#!/bin/sh\nprintf 'batcher %s %s|%s\\n' \"$2\" \"${{SPIRA_LIFECYCLE_ENFORCE:-unset}}\" \"${{SPIRA_LC_BIN:-unset}}\" >> {}\n", rec.display()));
-        let s = RealScripts { home: d.clone() };
+        let s = RealScripts { home: d.to_path_buf() };
         s.verdict("spira", true);
         s.batch_sweep("spira", false, true);
         s.batcher_cut(&bin, "spira", false, true);
@@ -886,9 +888,9 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
         let d = crate::testutil::tmpdir("reallib-norepos");
         fs::write(d.join("lib.sh"), "spira_repos() { return 0; }\n").unwrap();
         fs::write(d.join("lc.sh"), "").unwrap();
-        assert!(RealLib { home: d.clone() }.repos().is_err());
+        assert!(RealLib { home: d.to_path_buf() }.repos().is_err());
         fs::write(d.join("lib.sh"), "exit 9\n").unwrap();
-        assert!(RealLib { home: d }.repos().is_err());
+        assert!(RealLib { home: d.to_path_buf() }.repos().is_err());
     }
 
     #[test]
@@ -961,7 +963,8 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
     #[test]
     fn answer_seams_ignore_log_lines_and_carry_failures() {
         let _serial = crate::testutil::serial();
-        let lib = RealLib { home: stub_home() };
+        let home = stub_home();
+        let lib = RealLib { home: home.to_path_buf() };
         assert_eq!(lib.land_subject("sp-a"), "spira: land sp-a — T");
         assert_eq!(lib.rebase("spira/sp-a", "origin/main", Path::new("/repo"), "spira"), Err("conflict".to_string()));
         assert_eq!(

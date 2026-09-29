@@ -415,6 +415,42 @@ parser is reading the wrong block.
 **Stays in spira-config.** The positive control (a planted unknown key is refused by
 `convert`) is a property of the crate and stays its unit test.
 
+## Rule `tmp-leak`
+
+New (sp-qgfdi); no bash fence precedes it.
+
+**Intent.** A test's scratch directory under the system temp dir outlives the test unless
+something removes it. /tmp is a tmpfs with a fixed inode budget: one `cargo test
+--workspace` left 157 entries there, landing-pass alone had left 84,964, and /tmp ran out
+of inodes on 2026-09-29. `gate_mode = unit` runs those tests on the host at every gate.
+testkit's `TempDir` removes its directory on drop, panics included, so the rule makes it
+the only way test code gets scratch space.
+
+**Scope.** Every `*.rs` in the walk except `testkit/` (which implements `TempDir`) and
+`target/`.
+
+**Test code** is:
+- a whole file under a `tests/` directory (an integration test) or named `tests.rs`;
+- a whole file with an inner `#![cfg(test)]`;
+- the item under an outer `#[cfg(test)]` (or `cfg(all(test, …))`; never `cfg(not(test))`):
+  a `{…}` item is a region of its file, and a `mod name;` makes `name.rs` / `name/mod.rs`
+  (or its `#[path]`) a whole test file;
+- transitively, the file of any `mod name;` declared inside test code.
+
+**Violation.** A call `temp_dir()` in test code (`std::env::temp_dir()`, `env::temp_dir()`,
+or an imported `temp_dir()`), in code and not in a comment or string. One finding per call,
+at its line. The rule does not try to decide whether a particular call is later cleaned up:
+the ones that were cleaned up by hand were each a copy of `TempDir`, and a second copy is a
+second thing to get wrong.
+
+**Allow list.** `spira-lint/tmp-leak-allow`, exact paths, shrink-only; every call in a listed
+file is allowed. It starts empty. An entry naming a file with no call is itself a finding.
+
+**Known limits.** A `mod name;` nested inside an inline `mod m { … }` resolves as if it
+were declared at the file's top level. A literal `"/tmp/…"` path is not a call and is not
+flagged; nothing in the tree creates one. Temp files made by the code under test (a
+production `mktemp`) are that code's to clean and outside this rule.
+
 ---
 
 ## Tests

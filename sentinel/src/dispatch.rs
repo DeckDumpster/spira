@@ -408,8 +408,7 @@ mod tests {
 
     #[test]
     fn drain_reads_every_drain_file_once() {
-        let d = std::env::temp_dir().join(format!("sentinel-drain-{}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
+        let d = testkit::TempDir::new("sentinel-drain");
         let mb = d.join("audit.progress");
         std::fs::write(&mb, "poisoned x\n\nreclaimed 1\n").unwrap();
         std::fs::write(d.join("audit.progress.drain.999999"), "left behind\n").unwrap();

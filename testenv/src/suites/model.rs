@@ -498,8 +498,7 @@ mod tests {
 
     #[test]
     fn population_is_the_glob() {
-        let d = std::env::temp_dir().join(format!("suites-pop-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
+        let d = testkit::TempDir::new("suites-pop");
         fs::create_dir_all(d.join("test-dir.sh")).unwrap();
         for f in ["test-b.sh", "test-a.sh", "lib.sh", "test-a.sh.bak", "test-.sh"] {
             fs::write(d.join(f), "").unwrap();

@@ -483,8 +483,7 @@ mod tests {
                 None
             }
         }
-        let dir = std::env::temp_dir().join(format!("strand-throttle-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = testkit::TempDir::new("strand-throttle");
         let stamp = dir.join("queue-throttled");
         let cfg = Config::resolve(&S(stamp.clone()));
         assert_eq!(throttle_line(&throttle(&cfg)), "open\t");

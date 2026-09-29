@@ -54,7 +54,7 @@ fn sh(dir: &Path, cmd: &str) {
 }
 
 struct World {
-    root: PathBuf,
+    root: testkit::TempDir,
     repo: PathBuf,
     harness: PathBuf,
     owner: PathBuf,
@@ -64,8 +64,7 @@ struct World {
 
 impl World {
     fn new(tag: &str) -> World {
-        let root = std::env::temp_dir().join(format!("testenv-run-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+        let root = testkit::TempDir::new(&format!("testenv-run-{tag}"));
         let repo = root.join("repo");
         let harness = root.join("harness");
         let owner = root.join("owner");
@@ -166,12 +165,6 @@ impl World {
             .collect();
         dirs.sort_by_key(|p| fs::metadata(p).and_then(|m| m.modified()).ok());
         dirs.pop().unwrap()
-    }
-}
-
-impl Drop for World {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
     }
 }
 

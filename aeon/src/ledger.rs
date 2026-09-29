@@ -209,11 +209,8 @@ pub fn trace_mark_line(path: &Path, who: &str, mark: &str, now: i64) -> String {
 mod tests {
     use super::*;
 
-    fn tmp(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("aeon-ledger-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn tmp(name: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("aeon-ledger-{name}"))
     }
 
     #[test]

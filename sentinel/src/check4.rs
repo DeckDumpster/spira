@@ -640,7 +640,7 @@ mod tests {
 
     #[test]
     fn stamps_read_like_lib_sh() {
-        let d = std::env::temp_dir().join(format!("sentinel-stamps-{}", std::process::id()));
+        let d = testkit::TempDir::new("sentinel-stamps");
         let (pa, rq, rc, pl) = (d.join("pa"), d.join("rq"), d.join("rc"), d.join("pl"));
         for x in [&pa, &rq, &rc, &pl] {
             std::fs::create_dir_all(x).unwrap();

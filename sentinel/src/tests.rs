@@ -114,7 +114,7 @@ pub fn tally(s: &Spec, lines: &str) {
 }
 
 pub struct World {
-    pub dir: PathBuf,
+    pub dir: testkit::TempDir,
     pub run: PathBuf,
     pub home: PathBuf,
 }
@@ -123,11 +123,7 @@ impl World {
     pub fn new(tag: &str) -> World {
         use std::sync::atomic::{AtomicU32, Ordering};
         static N: AtomicU32 = AtomicU32::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "sentinel-t-{}-{tag}-{}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::SeqCst)
-        ));
+        let dir = testkit::TempDir::new(&format!("sentinel-t-{tag}-{}", N.fetch_add(1, Ordering::SeqCst)));
         let run = dir.join("run");
         let home = dir.join("home");
         std::fs::create_dir_all(&run).unwrap();
@@ -185,12 +181,6 @@ impl World {
             repos,
         );
         Context::parse(&b).unwrap()
-    }
-}
-
-impl Drop for World {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 

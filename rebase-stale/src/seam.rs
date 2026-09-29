@@ -238,9 +238,8 @@ mod probe_tests {
 
     /// A stub bd: `list` answers with `list_json`; `show sp-held` is in_progress; any other
     /// `show` (the missing goal among them) fails, as bd does for an unknown id.
-    fn stub(name: &str, list_json: &str) -> (PathBuf, LibSeam) {
-        let d = std::env::temp_dir().join(format!("rs-probe-{}-{name}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
+    fn stub(name: &str, list_json: &str) -> (testkit::TempDir, LibSeam) {
+        let d = testkit::TempDir::new(&format!("rs-probe-{name}"));
         let bd = d.join("bd");
         testkit::write_exe(
             &bd,
@@ -248,7 +247,7 @@ mod probe_tests {
                 "#!/bin/sh\ncase \"$3\" in\n list) printf '%s' '{list_json}' ;;\n show) [ \"$4\" = sp-held ] && printf '[{{\"id\":\"sp-held\",\"status\":\"in_progress\"}}]' && exit 0; exit 1 ;;\nesac\n"
             ),
         );
-        let seam = LibSeam::new(d.clone(), Some(d.clone()), bd.to_string_lossy().into(), "sp-spira".into());
+        let seam = LibSeam::new(d.to_path_buf(), Some(d.to_path_buf()), bd.to_string_lossy().into(), "sp-spira".into());
         (d, seam)
     }
 

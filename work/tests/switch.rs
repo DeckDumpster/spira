@@ -2,17 +2,14 @@
 //! on reaches it, and an unreachable socket is "cannot tell".
 
 use std::os::unix::net::UnixListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-fn scratch(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("work-switch-{}-{tag}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
-    d
+fn scratch(tag: &str) -> testkit::TempDir {
+    testkit::TempDir::new(&format!("work-switch-{tag}"))
 }
 
 /// A listening socket that answers `{"exit_code":0,"stdout":"ok"}` and records a connection.
@@ -32,7 +29,7 @@ fn machine(sock: &PathBuf) -> Arc<AtomicBool> {
     hit
 }
 
-fn work(enforce: &str, sock: &PathBuf, home: &PathBuf, verb: &str) -> std::process::Output {
+fn work(enforce: &str, sock: &Path, home: &Path, verb: &str) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_work"))
         .arg(verb)
         .env_clear()

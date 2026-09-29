@@ -681,11 +681,8 @@ mod tests {
         }
     }
 
-    fn scratch(tag: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("strand-lc-{}-{tag}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
-        fs::create_dir_all(&d).unwrap();
-        d
+    fn scratch(tag: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("strand-lc-{tag}"))
     }
 
     /// An executable that appends its argv to `log` — the fake bd and the fake spira-lc.

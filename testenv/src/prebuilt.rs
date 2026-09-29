@@ -252,11 +252,8 @@ pub fn required(worktree: &Path) -> Vec<String> {
 mod tests {
     use super::*;
 
-    fn tmp(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("testenv-prebuilt-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
-        fs::create_dir_all(&d).unwrap();
-        d
+    fn tmp(tag: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("testenv-prebuilt-{tag}"))
     }
 
     fn exe(dir: &Path, name: &str, body: &str) {

@@ -51,12 +51,9 @@ fn real_fixture() -> (String, String) {
 }
 
 /// A fresh temp directory unique to this test process and call.
-fn scratch(kind: &str) -> PathBuf {
+fn scratch(kind: &str) -> testkit::TempDir {
     let n = UNIQUE.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("loom-{kind}-{}-{n}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    dir
+    testkit::TempDir::new(&format!("loom-{kind}-{n}"))
 }
 
 /// testkit::write_exe, never `fs::write` then exec: a write descriptor held while another
@@ -71,7 +68,8 @@ fn script(path: &PathBuf, body: &str) {
 /// The fake prints an advisory line ahead of the JSON, as a fresh real fixture does (its
 /// `beads.role` warning), so the preamble-stripping path is exercised on every run rather
 /// than only when a real bd happens to be unconfigured.
-fn fixture() -> (String, String) {
+/// The first element holds the fixture's directory: keep it for as long as the paths are used.
+fn fixture() -> (testkit::TempDir, String, String) {
     let dir = scratch("fake");
     let db = dir.join("db");
     std::fs::create_dir_all(&db).expect("a fixture db directory");
@@ -91,15 +89,18 @@ fn fixture() -> (String, String) {
          echo 'warning: beads.role is not configured'\n\
          exec cat \"$db/bd-list.json\"\n",
     );
-    (db.to_string_lossy().into_owned(), bd.to_string_lossy().into_owned())
+    let (db, bd) = (db.to_string_lossy().into_owned(), bd.to_string_lossy().into_owned());
+    (dir, db, bd)
 }
 
 /// A `bd` that never answers inside any budget a test sets. `exec` so the process loom kills
 /// on overrun is the sleeper itself, not a shell that would orphan it.
-fn slow_bd() -> String {
-    let bd = scratch("slow").join("bd");
+fn slow_bd() -> (testkit::TempDir, String) {
+    let dir = scratch("slow");
+    let bd = dir.join("bd");
     script(&bd, "#!/bin/sh\nexec sleep 30\n");
-    bd.to_string_lossy().into_owned()
+    let bd = bd.to_string_lossy().into_owned();
+    (dir, bd)
 }
 
 static UNIQUE: AtomicU32 = AtomicU32::new(0);
@@ -109,10 +110,9 @@ static UNIQUE: AtomicU32 = AtomicU32::new(0);
 /// COUNTING INVOCATIONS, NEVER TIMING THEM. "The second request was fast" is satisfied by a
 /// warm page cache, a lucky scheduler or a query that failed early; only the count answers
 /// whether the process boundary was crossed.
-fn counting_bd(real: &str) -> (String, PathBuf) {
+fn counting_bd(real: &str) -> (testkit::TempDir, String, PathBuf) {
     let n = UNIQUE.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("loom-shim-{}-{n}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("a shim directory");
+    let dir = testkit::TempDir::new(&format!("loom-shim-{n}"));
     let counter = dir.join("calls");
     std::fs::write(&counter, b"").expect("an empty counter");
     let shim = dir.join("bd");
@@ -124,7 +124,8 @@ fn counting_bd(real: &str) -> (String, PathBuf) {
             real
         ),
     );
-    (dir.to_string_lossy().into_owned(), counter)
+    let path = dir.to_string_lossy().into_owned();
+    (dir, path, counter)
 }
 
 fn calls(counter: &PathBuf) -> usize {
@@ -279,8 +280,8 @@ fn assert_payload(v: &Value) {
 
 #[tokio::test]
 async fn the_payload_is_bounded_to_live_work_and_carries_typed_edges() {
-    let (db, bd) = fixture();
-    let (shim, _counter) = counting_bd(&bd);
+    let (_fixture_dir, db, bd) = fixture();
+    let (_shim_dir, shim, _counter) = counting_bd(&bd);
     let addr = spawn(cfg(&db, &shim, 20_000, 30)).await;
     let (code, v) = json(addr).await;
     assert_eq!(code, 200, "{v}");
@@ -294,7 +295,7 @@ async fn the_payload_is_bounded_to_live_work_and_carries_typed_edges() {
 #[ignore = "needs the Dolt fixture spira/test-cockpit-rust.sh builds (LOOM_TEST_DB/LOOM_TEST_BD)"]
 async fn real_bd_answers_in_the_shape_the_fake_is_built_from() {
     let (db, bd) = real_fixture();
-    let (shim, _counter) = counting_bd(&bd);
+    let (_shim_dir, shim, _counter) = counting_bd(&bd);
     let addr = spawn(cfg(&db, &shim, 20_000, 30)).await;
     let (code, v) = json(addr).await;
     assert_eq!(code, 200, "{v}");
@@ -303,9 +304,9 @@ async fn real_bd_answers_in_the_shape_the_fake_is_built_from() {
 
 #[tokio::test]
 async fn two_requests_inside_the_window_cost_one_refresh() {
-    let (db, bd) = fixture();
+    let (_fixture_dir, db, bd) = fixture();
 
-    let (shim, counter) = counting_bd(&bd);
+    let (_shim_dir, shim, counter) = counting_bd(&bd);
     let addr = spawn(cfg(&db, &shim, 20_000, 60)).await;
     assert_eq!(calls(&counter), 0, "nothing runs before anybody looks");
 
@@ -325,7 +326,7 @@ async fn two_requests_inside_the_window_cost_one_refresh() {
 
     // THE POSITIVE CONTROL. The counter is shown MOVING under an expired window, so its
     // stillness above is a property of the cache rather than of a shim nobody wired up.
-    let (shim2, counter2) = counting_bd(&bd);
+    let (_shim_dir, shim2, counter2) = counting_bd(&bd);
     let addr2 = spawn(cfg(&db, &shim2, 20_000, 0)).await;
     let (code, _) = json(addr2).await;
     assert_eq!(code, 200);
@@ -337,8 +338,9 @@ async fn two_requests_inside_the_window_cost_one_refresh() {
 
 #[tokio::test]
 async fn a_query_over_budget_is_refused_rather_than_served_late() {
-    let (db, bd) = fixture();
-    let (shim, counter) = counting_bd(&slow_bd());
+    let (_fixture_dir, db, bd) = fixture();
+    let (_slow_dir, slow) = slow_bd();
+    let (_shim_dir, shim, counter) = counting_bd(&slow);
 
     // A bd that sleeps thirty seconds against a budget of a second and a half: the deadline
     // fires on a query that CANNOT finish, not on a threshold a fast machine might meet. The
@@ -358,7 +360,7 @@ async fn a_query_over_budget_is_refused_rather_than_served_late() {
 
     // THE POSITIVE CONTROL. The same fixture, the same shim, an honest budget: 200. Without
     // it a refusal proves only that the endpoint is broken.
-    let (shim2, _) = counting_bd(&bd);
+    let (_shim_dir, shim2, _) = counting_bd(&bd);
     let addr2 = spawn(cfg(&db, &shim2, 20_000, 30)).await;
     let (code, v) = json(addr2).await;
     assert_eq!(code, 200, "{v}");
@@ -366,8 +368,8 @@ async fn a_query_over_budget_is_refused_rather_than_served_late() {
 
 #[tokio::test]
 async fn a_query_that_fails_is_reported_as_such_and_not_as_an_empty_graph() {
-    let (_db, bd) = fixture();
-    let (shim, _) = counting_bd(&bd);
+    let (_fixture_dir, _db, bd) = fixture();
+    let (_shim_dir, shim, _) = counting_bd(&bd);
     // A database directory that does not exist. An empty response would read as "no live
     // work", which is the reading that looks like good news.
     let addr = spawn(cfg("/nonexistent/loom-has-no-database", &shim, 20_000, 30)).await;
@@ -382,8 +384,8 @@ async fn a_query_that_fails_is_reported_as_such_and_not_as_an_empty_graph() {
 
 #[tokio::test]
 async fn the_static_page_and_its_scripts_are_served() {
-    let (db, bd) = fixture();
-    let (shim, _) = counting_bd(&bd);
+    let (_fixture_dir, db, bd) = fixture();
+    let (_shim_dir, shim, _) = counting_bd(&bd);
     let addr = spawn(cfg(&db, &shim, 20_000, 30)).await;
 
     // PRESENCE FIRST. The page must be there before its absence means anything.
@@ -431,9 +433,9 @@ fn ops_cfg(run: &str) -> Config {
     }
 }
 
-fn ops_run_dir() -> PathBuf {
+fn ops_run_dir() -> testkit::TempDir {
     let n = UNIQUE.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("loom-ops-{}-{n}", std::process::id()));
+    let dir = testkit::TempDir::new(&format!("loom-ops-{n}"));
     std::fs::create_dir_all(&dir).expect("a run directory");
     dir
 }

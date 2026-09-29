@@ -13,3 +13,6 @@ spira-config = { path = "../spira-config" }
 [[bin]]
 name = "spira-lint"
 path = "src/main.rs"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

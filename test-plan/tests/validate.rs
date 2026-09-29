@@ -68,8 +68,7 @@ fn bad_tier_is_refused_with_its_path() {
 
 #[test]
 fn duplicate_id_across_files_is_refused_naming_both_paths() {
-    let dir = std::env::temp_dir().join(format!("test-plan-dup-{}", std::process::id()));
-    fs::create_dir_all(&dir).unwrap();
+    let dir = testkit::TempDir::new("test-plan-dup");
     fs::write(
         dir.join("a.toml"),
         "api_version = \"test-plan/v1\"\narea = \"a\"\n\n[[use_case]]\nid = \"UC-shared-01\"\ntier = \"T1\"\nstatement = \"s\"\n",
@@ -90,8 +89,7 @@ fn duplicate_id_across_files_is_refused_naming_both_paths() {
 
 #[test]
 fn area_mismatch_is_refused_naming_the_file() {
-    let dir = std::env::temp_dir().join(format!("test-plan-area-{}", std::process::id()));
-    fs::create_dir_all(&dir).unwrap();
+    let dir = testkit::TempDir::new("test-plan-area");
     fs::write(
         dir.join("a.toml"),
         "api_version = \"test-plan/v1\"\narea = \"wrong-name\"\n",

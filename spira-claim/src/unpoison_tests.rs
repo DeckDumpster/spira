@@ -607,9 +607,8 @@ fn script(dir: &std::path::Path, name: &str, body: &str) -> String {
     p.to_string_lossy().into_owned()
 }
 
-fn live(tag: &str, bd_body: &str, lc_body: &str) -> (Live, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(format!("spira-claim-unpoison-{}-{tag}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+fn live(tag: &str, bd_body: &str, lc_body: &str) -> (Live, testkit::TempDir) {
+    let dir = testkit::TempDir::new(&format!("spira-claim-unpoison-{tag}"));
     std::fs::create_dir_all(dir.join("run/poison-asked")).unwrap();
     let bd = script(&dir, "bd", &bd_body.replace("@LOG@", &dir.join("bd.log").to_string_lossy()));
     let lc = script(&dir, "spira-lc", &lc_body.replace("@LOG@", &dir.join("lc.log").to_string_lossy()));
@@ -648,13 +647,13 @@ fn live_event_insert_is_bounded() {
     assert!(argv.starts_with("ARGV [-C] [/fake/db] [sql] [INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('"), "{argv}");
     assert!(argv.contains("'sp-a', 'poison.cleared', 'harness', 'its yyy"), "{argv}");
     assert!(argv.len() < 600, "the one argv payload is bounded: {}", argv.len());
-    let (mut bad, _) = live("event-fail", "echo 'Error: read-only' >&2; exit 1", "exit 0");
+    let (mut bad, _bad_dir) = live("event-fail", "echo 'Error: read-only' >&2; exit 1", "exit 0");
     assert!(bad.write_event("sp-a", "poison.cleared", "x").unwrap_err().contains("read-only"));
 }
 
 #[test]
 fn live_bead_and_asks() {
-    let (mut w, _) = live(
+    let (mut w, _dir) = live(
         "show",
         r#"case "$3" in
   show) if [ "$4" = sp-a ]; then echo '[{"id":"sp-a","status":"open","labels":["spira-poison"]}]';
@@ -686,7 +685,7 @@ esac"#,
     let row = w.lc_row("sp-a").unwrap().unwrap();
     assert!(row.poisoned() && row.version == 7 && row.state == BeadState::Ready);
     assert_eq!(w.lc_row("sp-none").unwrap(), None);
-    let (mut f, _) = live("lc-false", "exit 0", "exit 1");
+    let (mut f, _dir) = live("lc-false", "exit 0", "exit 1");
     assert!(f.lc_row("sp-a").is_err(), "a bare exit 1 is not spira-lc's no-row answer");
     assert!(w.lc_row("sp-x").is_err());
     assert_eq!(w.lc_unhold_poison("sp-a", &row, "unpoison"), LcApply::Applied);

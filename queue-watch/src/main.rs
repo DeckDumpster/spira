@@ -308,8 +308,7 @@ mod tests {
     #[test]
     fn queue_repos_accepts_queue_queue_forge_and_queue_local() {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!("queue-watch-queue-repos-test-{}-{n}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = testkit::TempDir::new(&format!("queue-watch-queue-repos-test-{n}"));
         let cfg = dir.join("spira.toml");
         fs::write(
             &cfg,

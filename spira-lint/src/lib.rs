@@ -266,6 +266,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(rules::acceptance_run::AcceptanceRun),
         Box::new(rules::gate_workflow::GateWorkflow),
         Box::new(rules::conf_key_registry::ConfKeyRegistry),
+        Box::new(rules::tmp_leak::TmpLeak),
     ]
 }
 
@@ -294,25 +295,15 @@ pub fn run(tree: &Tree, rules: &[Box<dyn Rule>]) -> Vec<RuleResult> {
 #[cfg(test)]
 pub(crate) mod testutil {
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use std::process::Command;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// A scratch directory removed on drop.
-    pub struct TempDir(pub PathBuf);
+    /// A scratch directory removed on drop (testkit's, with this crate's fixture helpers).
+    pub struct TempDir(pub testkit::TempDir);
 
     impl TempDir {
         pub fn new(tag: &str) -> TempDir {
-            static N: AtomicUsize = AtomicUsize::new(0);
-            let d = std::env::temp_dir().join(format!(
-                "spira-lint-{}-{}-{}",
-                tag,
-                std::process::id(),
-                N.fetch_add(1, Ordering::SeqCst)
-            ));
-            let _ = fs::remove_dir_all(&d);
-            fs::create_dir_all(&d).unwrap();
-            TempDir(d)
+            TempDir(testkit::TempDir::new(&format!("spira-lint-{tag}")))
         }
         pub fn path(&self) -> &Path {
             &self.0
@@ -340,11 +331,6 @@ pub(crate) mod testutil {
         }
     }
 
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
 }
 
 #[cfg(test)]
@@ -383,7 +369,7 @@ mod tests {
 
     /// The tree-walking rules over one small fixture tree: one planted violation per rule is
     /// found, named by its rule, and nothing else is. The rules that hold named files to a
-    /// contract (event-taxonomy, acceptance-run, gate-workflow, conf-key-registry) are
+    /// contract (event-taxonomy, acceptance-run, gate-workflow, conf-key-registry), and tmp-leak, which reads Rust, are
     /// fixtured in their own modules.
     #[test]
     fn all_rules_over_a_fixture_tree() {
@@ -415,7 +401,7 @@ mod tests {
         }
         t.git(&["add", "."]);
         let tree = Tree::from_git(t.path()).unwrap();
-        let contract = ["event-taxonomy", "acceptance-run", "gate-workflow", "conf-key-registry"];
+        let contract = ["event-taxonomy", "acceptance-run", "gate-workflow", "conf-key-registry", "tmp-leak"];
         let mut rules = all_rules();
         rules.retain(|r| !contract.contains(&r.name()));
         let mut lines = Vec::new();

@@ -365,20 +365,16 @@ mod tests {
         std::fs::write(path, body).unwrap();
     }
 
-    fn scratch_audit_path(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "broker-execute-test-{}-{}-{}",
-            name,
-            std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir.join("audit.jsonl")
+    /// The scratch dir (hold it: dropping it removes the file) and the audit file in it.
+    fn scratch_audit_path(name: &str) -> (testkit::TempDir, PathBuf) {
+        let dir = testkit::TempDir::new(&format!("broker-execute-test-{name}"));
+        let path = dir.join("audit.jsonl");
+        (dir, path)
     }
 
     #[test]
     fn rate_limit_counts_only_the_same_fayth_in_the_window() {
-        let path = scratch_audit_path("rate-same-fayth");
+        let (_d, path) = scratch_audit_path("rate-same-fayth");
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         let mut lines = Vec::new();
         for i in 0..RATE_LIMIT_MAX {
@@ -393,7 +389,7 @@ mod tests {
 
     #[test]
     fn rate_limit_ignores_entries_outside_the_window() {
-        let path = scratch_audit_path("rate-window");
+        let (_d, path) = scratch_audit_path("rate-window");
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         let mut lines = Vec::new();
         for _ in 0..RATE_LIMIT_MAX {
@@ -405,14 +401,14 @@ mod tests {
 
     #[test]
     fn rate_limit_missing_audit_file_is_not_over_limit() {
-        let path = std::env::temp_dir().join("broker-execute-test-no-such-audit.jsonl");
-        let _ = std::fs::remove_file(&path);
+        let d = testkit::TempDir::new("broker-execute-test-no-audit");
+        let path = d.join("no-such-audit.jsonl");
         assert!(!over_rate_limit(&path, "czar"));
     }
 
     #[test]
     fn refusal_count_includes_refused_and_czar_would_not_done() {
-        let path = scratch_audit_path("refusal-count");
+        let (_d, path) = scratch_audit_path("refusal-count");
         write_audit_lines(&path, &[
             json!({"outcome": "REFUSED"}),
             json!({"outcome": "CZAR-WOULD"}),

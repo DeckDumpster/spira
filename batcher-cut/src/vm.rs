@@ -357,8 +357,7 @@ mod tests {
 
     #[test]
     fn a_done_file_carries_the_exit_code() {
-        let d = std::env::temp_dir().join(format!("batcher-vm-rc-{}", std::process::id()));
-        fs::create_dir_all(&d).unwrap();
+        let d = testkit::TempDir::new("batcher-vm-rc");
         fs::write(d.join("j.done"), "rc=1\n").unwrap();
         assert_eq!(read_rc(&d.join("j.done")), Some(1));
         assert_eq!(read_rc(&d.join("none.done")), None);

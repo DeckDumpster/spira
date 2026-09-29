@@ -194,7 +194,7 @@ impl Launcher for FakeLauncher {
 }
 
 struct Fx {
-    dir: PathBuf,
+    dir: testkit::TempDir,
     home: PathBuf,
     run: PathBuf,
     repo: PathBuf,
@@ -213,8 +213,7 @@ fn rev_parse(dir: &Path, rev: &str) -> String {
 }
 
 fn fx(name: &str) -> Fx {
-    let dir = std::env::temp_dir().join(format!("aeon-run-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = testkit::TempDir::new(&format!("aeon-run-{name}"));
     let home = dir.join("home");
     let run = dir.join("run");
     let repo = dir.join("repo");
@@ -232,7 +231,7 @@ fn fx(name: &str) -> Fx {
     git(&repo, &["add", "f"]);
     git(&repo, &["commit", "-qm", "seed"]);
     let w: W = Arc::new(Mutex::new(World::default()));
-    Fx { dir: dir.canonicalize().unwrap(), home, run, repo, w }
+    Fx { dir, home, run, repo, w }
 }
 
 struct Outcome {

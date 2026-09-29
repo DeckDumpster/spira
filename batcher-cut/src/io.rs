@@ -1101,11 +1101,8 @@ mod result_path_tests {
 
     use super::*;
 
-    fn tmpdir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("batcher-cut-results-{}-{tag}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
-        fs::create_dir_all(&d).unwrap();
-        d
+    fn tmpdir(tag: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("batcher-cut-results-{tag}"))
     }
 
     #[test]
@@ -1142,11 +1139,8 @@ mod lifecycle_tests {
     //! runs it, and an unreachable machine fails the probe.
     use super::*;
 
-    fn scratch(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("batcher-cut-lc-{}-{tag}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
-        fs::create_dir_all(&d).unwrap();
-        d
+    fn scratch(tag: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("batcher-cut-lc-{tag}"))
     }
 
     /// An executable spira-lc stand-in that logs its argv and answers `reply`.
@@ -1230,9 +1224,7 @@ mod certify_tests {
 
     #[test]
     fn a_green_round_certifies_exactly_its_heads_tree() {
-        let d = std::env::temp_dir().join(format!("batcher-cut-cert-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
-        fs::create_dir_all(&d).unwrap();
+        let d = testkit::TempDir::new("batcher-cut-cert");
         git(&d, &["init", "-q"]);
         for (f, body) in [("a", "1"), ("b", "2")] {
             fs::write(d.join(f), body).unwrap();
@@ -1242,7 +1234,7 @@ mod certify_tests {
         let head = git(&d, &["rev-parse", "HEAD"]);
         let tree = git(&d, &["rev-parse", "HEAD^{tree}"]);
         let older = git(&d, &["rev-parse", "HEAD~1^{tree}"]);
-        let repo = Repo { name: "spira".into(), path: d.clone(), base: "local/main".into(), forge: PathBuf::new(), land: Land::Local };
+        let repo = Repo { name: "spira".into(), path: d.to_path_buf(), base: "local/main".into(), forge: PathBuf::new(), land: Land::Local };
         let mut e = super::lifecycle_tests_env(&d);
         e.verdicts = d.join("verdicts");
         let p = certify_round(&e, &repo, &head, "spira/batcher-attr/x").unwrap();
@@ -1263,9 +1255,7 @@ mod eject_tests {
 
     #[test]
     fn an_ejected_member_carries_its_suites_to_the_sidecar_and_the_row() {
-        let d = std::env::temp_dir().join(format!("batcher-cut-eject-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
-        fs::create_dir_all(&d).unwrap();
+        let d = testkit::TempDir::new("batcher-cut-eject");
         // A lib.sh that records each call's argv, one call per line, fields tab-separated.
         let log = d.join("calls");
         let rec = |f: &str| format!("{f}() {{ (IFS=$'\\t'; printf '{f}\\t%s\\n' \"$*\") >> '{}'; }}\n", log.display());
