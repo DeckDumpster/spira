@@ -58,7 +58,7 @@ state; see §4 R7).
 | input | source | notes |
 |---|---|---|
 | the bead store | `$SPIRA_LIST_SNAPSHOT` when readable (sentinel's `bd list --all --limit 0` of this pass), else **one** `bd -C $SPIRA_DB list --all --limit 0 --brief --json` | the WHOLE store, closed beads included. One read per run, not per partition. |
-| the claimable set | `$SPIRA_READY_SNAPSHOT` when readable (filtered in-process by scope label, partition labels, exclusions), else per partition `bd ready --limit 0 --exclude-type epic,event -u [--label <scope>] [--exclude-label <no-loop>] --label <labels> [--exclude-label <excl>] --json` | `bd ready` stays the authority on claimability |
+| the claimable set | `$SPIRA_READY_SNAPSHOT` when readable (filtered in-process by scope label, partition labels, exclusions), else per partition `bd ready --limit 0 --exclude-type epic,event -u [--label <scope>] [--exclude-label <no_loop label>] --label <labels> [--exclude-label <excl>] --json` | `bd ready` stays the authority on claimability |
 | partitions | `SPIRA_LABELS` (+ `SPIRA_EXCLUDE_LABELS`) narrows to one; otherwise the **roster probe** (§2.5) | exclusions: `SPIRA_EXCLUDE_LABELS` overrides all, else the fayth's own, else `spira-poison,<ask>,<ci>` |
 | wait holds | `$SPIRA_LC_BIN list --hold wait` → `[{bead_id}]` | absent binary ⇒ no holds |
 | aeon liveness | `$SPIRA_RUN/hold-<id>.pid` (pid alive) and `$SPIRA_RUN/aeon-*-<id>.pid` (pid alive AND `/proc/<pid>/cmdline` contains `aeon.sh`) | never `pgrep -f` |
@@ -78,7 +78,8 @@ second runner logs `check: another instance holds the lock — declining to avoi
 stale state` and exits 0):
 
 1. classify, age every row against the state, write the pruned state (atomic: unique temp
-   file + rename);
+   file + rename) — except under `--dry-run`, which writes nothing (strand.sh rewrote the
+   state even when dry);
 2. for each non-`info` row:
    - `--dry-run`: log `would <disp> <kind> <id> in [<part>] (<age>s, acted=<a> escalated=<e>): <detail>`;
    - `act` not yet acted: perform the mechanical fix (below), mark `acted`;
@@ -124,10 +125,10 @@ the `conf.sh` default. strand never parses `spira.toml` itself.
 | run dir | `SPIRA_RUN` | `run` | — (required) |
 | harness dir | `SPIRA_HOME` | `prod` | — (required for roster probe and mail) |
 | bd binary | `SPIRA_BD` | `bd` | `bd` |
-| ask label | `SPIRA_ASK_LABEL` | `ask_label` | `needs-operator` |
-| ci label | `SPIRA_CI_LABEL` | `ci_label` | `awaiting-ci` |
+| ask label | `SPIRA_ASK_LABEL` | `ask_label` | conf.sh default |
+| ci label | `SPIRA_CI_LABEL` | `ci_label` | conf.sh default |
 | scope label | `SPIRA_SCOPE_LABEL` | `scope_label`, else `home_repo` | empty |
-| no-loop label | `SPIRA_NO_LOOP_LABEL` | `no_loop_label` | `no-loop` |
+| no_loop label | `SPIRA_NO_LOOP_LABEL` | `no_loop_label` | conf.sh default |
 | submitted label | `SPIRA_SUBMITTED_LABEL` | `submitted_label` | `spira-submitted` |
 | queue-wait label | `SPIRA_QUEUE_WAIT_LABEL` | `queue_wait_label` | `spira-queue-waiting` |
 | open-children label | `SPIRA_OPEN_CHILDREN_LABEL` | `open_children_label` | `spira-open-children` |
@@ -135,7 +136,7 @@ the `conf.sh` default. strand never parses `spira.toml` itself.
 | fleet cap | `SPIRA_MAX_LIVE_AEONS` | `max_live_aeons` | 0 (unconfigured) |
 | throttle release | `SPIRA_QUEUE_THROTTLE_RELEASE_AT` | `queue_throttle_release_at` | 8 |
 | lc binary | `SPIRA_LC_BIN` | `lc_bin` | none |
-| instance | `SPIRA_INSTANCE` | `instance` | none |
+| instance | `SPIRA_INSTANCE` | `instance` | `prod` |
 | grace windows | `SPIRA_GHOST_GRACE` (300), `SPIRA_STRAND_GRACE` (900), `SPIRA_RECLAIM_AT` (5), `SPIRA_EVENT_COOLDOWN` (3600), `BD_TIMEOUT` (180) | — | as shown |
 | snapshots | `SPIRA_LIST_SNAPSHOT`, `SPIRA_READY_SNAPSHOT` | — | none |
 | test seams | `SPIRA_SYSTEMCTL`, `SPIRA_SUMMON`, `SPIRA_CAPACITY_PAUSE`, `SPIRA_THROTTLE_STAMP`, `SPIRA_NOW` | — | |
@@ -239,7 +240,10 @@ Rules:
   them progressing, and no sequenced edge.
 - **R6 — stale-blocked** = unstarted children with no non-closed blocker at all, yet none
   claimable → `bd recompute-blocked` once, then escalate.
-- **R7 — an unreadable store is not an empty graph.** No rows, no state write, exit 2.
+- **R7 — an unreadable input is not an empty graph.** When the store, a partition's ready
+  set or the roster cannot be read: no rows, no state write, a message on stderr, exit 2.
+  (strand.sh classified an empty graph, printed nothing and pruned every episode, so the
+  next readable pass re-escalated everything.)
 - **R8 — children** are every bead in S whose `parent` is the epic. Closed children count
   toward completeness (an all-closed epic is complete, not `empty`); open children outside P
   are another partition's to watch and are not analysed here, but do count as children.

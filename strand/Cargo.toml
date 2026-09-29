@@ -1,0 +1,21 @@
+[package]
+name = "strand"
+version = "1.0.0"
+edition = "2021"
+description = "strand — the stranded-work detector: work that exists and is not moving, with the reason and the one action that clears it. Replaces spira/strand.sh and strand-classify.py (sp-c7h4b)."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+spira-config = { path = "../spira-config" }
+
+[[bin]]
+name = "strand"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
