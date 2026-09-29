@@ -720,8 +720,32 @@ pub fn run_suites(env: &Env, wt: &Path, suites: &[String], results_dir: &Path) -
     Ok(suites.iter().map(|s| parse_result(results_dir, s)).collect())
 }
 
+/// The runner writes `<results>/<batch-key>/<suite>.<ext>` (testenv DESIGN.md §9 F1); older
+/// callers expected `<results>/<suite>.<ext>`. Look at the top level first, then in the
+/// newest batch-key subdirectory that holds the file. `None` when neither exists — the caller
+/// treats that as unreached, never green.
+fn locate(results_dir: &Path, suite: &str, ext: &str) -> Option<PathBuf> {
+    let name = format!("{suite}.{ext}");
+    let top = results_dir.join(&name);
+    if top.is_file() {
+        return Some(top);
+    }
+    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+    for entry in fs::read_dir(results_dir).ok()?.flatten() {
+        let cand = entry.path().join(&name);
+        if !cand.is_file() {
+            continue;
+        }
+        let mtime = fs::metadata(&cand).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+        if best.as_ref().map_or(true, |(t, _)| mtime > *t) {
+            best = Some((mtime, cand));
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
 fn parse_result(results_dir: &Path, suite: &str) -> SuiteRun {
-    let res_path = results_dir.join(format!("{suite}.result"));
+    let res_path = locate(results_dir, suite, "result").unwrap_or_else(|| results_dir.join(format!("{suite}.result")));
     let status = fs::read_to_string(&res_path).ok().and_then(|t| t.split_whitespace().next().map(str::to_string));
     let outcome = match status.as_deref() {
         Some("ok") | Some("skip") | Some("disabled") => SuiteOutcome::Green,
@@ -732,7 +756,7 @@ fn parse_result(results_dir: &Path, suite: &str) -> SuiteRun {
     };
     let mut failing_assertions = Vec::new();
     if outcome == SuiteOutcome::Red {
-        if let Ok(out) = fs::read_to_string(results_dir.join(format!("{suite}.out"))) {
+        if let Ok(out) = fs::read_to_string(locate(results_dir, suite, "out").unwrap_or_else(|| results_dir.join(format!("{suite}.out")))) {
             failing_assertions = out.lines().filter(|l| l.contains("FAIL")).map(str::to_string).collect();
         }
     }
@@ -1077,5 +1101,38 @@ mod land_tests {
     fn force_push_branch_under_local_land_is_unreachable() {
         let r = repo(Land::Local);
         let _ = force_push_branch(&r, "deadbeef", "spira/queue/1");
+    }
+}
+
+#[cfg(test)]
+mod result_path_tests {
+    use super::*;
+
+    fn tmpdir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("batcher-cut-results-{}-{tag}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn reads_result_one_level_down_under_the_batch_key() {
+        let d = tmpdir("nested");
+        fs::create_dir_all(d.join("batch-abc")).unwrap();
+        fs::write(d.join("batch-abc/test-x.sh.result"), "ok 3s\\n").unwrap();
+        assert_eq!(parse_result(&d, "test-x.sh").outcome, SuiteOutcome::Green);
+    }
+
+    #[test]
+    fn top_level_result_still_read() {
+        let d = tmpdir("top");
+        fs::write(d.join("test-y.sh.result"), "ok 1s\\n").unwrap();
+        assert_eq!(parse_result(&d, "test-y.sh").outcome, SuiteOutcome::Green);
+    }
+
+    #[test]
+    fn absent_result_is_red_not_green() {
+        let d = tmpdir("absent");
+        assert_eq!(parse_result(&d, "test-z.sh").outcome, SuiteOutcome::Red);
     }
 }
