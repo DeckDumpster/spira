@@ -271,3 +271,26 @@ fn a_green_main_run_settles_with_no_reruns() {
     assert_eq!(a.decision(), Decision::default());
     assert_eq!(Budget::with_default(16, None).slots, 20);
 }
+
+#[test]
+fn the_round_attribution_row_names_owners_and_leaves_unsettled_time_empty() {
+    let owned = RedRecord {
+        suite: "test-a.sh".into(),
+        outcome: Some(Outcome::Owner(vec!["sp-1".into(), "sp-2".into()])),
+        red_at: 100,
+        settled_at: Some(340),
+        reruns: 3,
+        settled_before_main_end: true,
+    };
+    let f: std::collections::HashMap<_, _> = owned.tsd_fields("spira", "r7", 2).into_iter().collect();
+    assert_eq!(f["outcome"], "owner");
+    assert_eq!(f["owner"], "sp-1,sp-2");
+    assert_eq!(f["attribution_secs"], "240");
+    assert_eq!(f["iteration"], "2");
+    assert_eq!(f["settled_before_corpus_end"], "true");
+    let open = RedRecord { outcome: None, settled_at: None, ..owned };
+    let f: std::collections::HashMap<_, _> = open.tsd_fields("spira", "r7", 1).into_iter().collect();
+    assert_eq!(f["outcome"], "unsettled");
+    assert_eq!(f["owner"], "");
+    assert_eq!(f["attribution_secs"], "", "never 0 for a red that never settled");
+}

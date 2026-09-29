@@ -316,25 +316,8 @@ impl drive::RoundOps for LiveOps<'_> {
     fn record(&mut self, iteration: u32, d: &batcher::attrib::Decision) {
         for r in &d.records {
             self.first_red = Some(self.first_red.map_or(r.red_at, |f| f.min(r.red_at)));
-            let owner = match &r.outcome {
-                Some(batcher::attrib::Outcome::Owner(o)) => o.join(","),
-                _ => String::new(),
-            };
-            io::tsd_append(
-                self.env,
-                "round-attribution",
-                &[
-                    ("repo", self.repo.name.clone()),
-                    ("round", self.round.clone()),
-                    ("iteration", iteration.to_string()),
-                    ("suite", r.suite.clone()),
-                    ("outcome", r.outcome.as_ref().map(|o| o.word()).unwrap_or("unsettled").to_string()),
-                    ("owner", owner),
-                    ("attribution_secs", r.attribution_secs().unwrap_or(0).to_string()),
-                    ("reruns", r.reruns.to_string()),
-                    ("settled_before_corpus_end", r.settled_before_main_end.to_string()),
-                ],
-            );
+            let fields = r.tsd_fields(&self.repo.name, &self.round, iteration);
+            io::tsd_append(self.env, "round-attribution", &fields);
         }
     }
 }

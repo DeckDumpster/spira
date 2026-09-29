@@ -136,11 +136,12 @@ pub fn with_dependents(seed: &BTreeSet<String>, members: &[Member]) -> Vec<Strin
 }
 
 /// The inputs that force today's sequence whatever the mode says.
+///
+/// Ejected suites are not a force (sp-p3srm): a returned bead re-runs exactly what the round
+/// named in its own phase ([`Reentry`]), whatever the composition, so a Rust-only branch keeps
+/// its unit gate and still has to pass them.
 #[derive(Clone, Debug, Default)]
-pub struct Forces<'a> {
-    /// `SPIRA_GATE_EJECTED_SUITES`: a returned bead re-runs what the round named (item 6
-    /// narrows this; until then the whole sequence runs, which includes them).
-    pub ejected: &'a str,
+pub struct Forces {
     /// `SPIRA_GATE_ALL=1`: the caller asked for the full corpus.
     pub gate_all: bool,
 }
@@ -158,9 +159,6 @@ pub fn compose(
     }
     if forces.gate_all {
         return suites("gate-all");
-    }
-    if !forces.ejected.trim().is_empty() {
-        return suites("ejected");
     }
     let members = match members {
         Ok(m) => m,
@@ -329,6 +327,96 @@ pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2
             format!("cargo test --profile aeon -j {jobs}{p} -- --test-threads={jobs}"),
         ),
     ]
+}
+
+// ------------------------------------------------------------------------------ re-entry
+
+/// THE RE-ENTRY CHECK (sp-p3srm; design item 6): a bead the round returned must pass the
+/// suites the round named against it, in its next gate, whatever else that gate selects.
+///
+/// `required` are the named suites that exist on the tree under test, in the order named;
+/// `gone` are named suites the tree no longer has (nothing to run); `invalid` are words that
+/// are not a suite name at all (`test-*.sh`, no `/`). Only `required` is enforced.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Reentry {
+    pub required: Vec<String>,
+    pub gone: Vec<String>,
+    pub invalid: Vec<String>,
+}
+
+/// A suite name the runner accepts: `test-<name>.sh`, one path component, no shell
+/// metacharacters (it is interpolated into the phase's command).
+pub fn is_suite_name(s: &str) -> bool {
+    s.len() > "test-.sh".len()
+        && s.starts_with("test-")
+        && s.ends_with(".sh")
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
+}
+
+/// The ejected-suites list (comma or whitespace separated, as the `.ejected` sidecar and the
+/// EJECTED landstate row write it) against the tree under test. `exists(name)` answers
+/// whether `spira/<name>` is on that tree.
+pub fn reentry(ejected: &str, exists: impl Fn(&str) -> bool) -> Reentry {
+    let mut r = Reentry::default();
+    for w in ejected.split(|c: char| c == ',' || c.is_whitespace()) {
+        if w.is_empty()
+            || r.required
+                .iter()
+                .chain(&r.gone)
+                .chain(&r.invalid)
+                .any(|x| x == w)
+        {
+            continue;
+        }
+        if !is_suite_name(w) {
+            r.invalid.push(w.to_string());
+        } else if exists(w) {
+            r.required.push(w.to_string());
+        } else {
+            r.gone.push(w.to_string());
+        }
+    }
+    r
+}
+
+/// The statuses that satisfy the re-entry check: the suite ran and passed, or the corpus
+/// itself says it does not block (disabled, quarantined — a round would not eject on it).
+/// SKIPPED, SKIP-REQ, UNREACHED, DEFERRED and silence prove nothing.
+const SATISFIED: &[&str] = &["ok", "DISABLED", "QUARANTINED-RED"];
+
+/// The required suites that `out` does not show satisfied, in `required`'s order. A suite
+/// reported twice counts by its last report (the re-entry phase re-runs what the gate string
+/// deferred).
+pub fn unproven(out: &str, required: &[String]) -> Vec<String> {
+    let mut last: HashMap<&str, bool> = HashMap::new();
+    for line in out.lines() {
+        let w: Vec<&str> = line.split_whitespace().collect();
+        for i in 0..w.len() {
+            if let Some(r) = required.iter().find(|r| r.as_str() == w[i]) {
+                if let Some(st) = w.get(i + 1) {
+                    last.insert(r.as_str(), SATISFIED.contains(st));
+                }
+            }
+        }
+    }
+    required
+        .iter()
+        .filter(|r| !last.get(r.as_str()).copied().unwrap_or(false))
+        .cloned()
+        .collect()
+}
+
+/// The re-entry phase's command: exactly `suites`, by name, through the suite runner the
+/// gate string uses, on the revision under test, with **no `--deadline`** — the round named
+/// them, so a budget must not cut them (`SPIRA_GATE_TIMEOUT` still bounds the phase). The
+/// runner's harness faults (2, 3) are NO_VERDICT (75), as in the gate string.
+pub fn reentry_command(suites: &[String]) -> String {
+    format!(
+        "[ -n \"${{SPIRA_TESTENV_BIN:-}}\" ] || {{ echo 'gate: re-entry: SPIRA_TESTENV_BIN is unset — cannot run the suites the round named' >&2; exit 75; }}; \
+_b=0; \"$SPIRA_TESTENV_BIN\" --suites {} \"$SPIRA_GATE_BRANCH\" || _b=$?; case \"$_b\" in 2|3) exit 75;; *) exit \"$_b\";; esac",
+        suites.join(",")
+    )
 }
 
 #[cfg(test)]
@@ -543,21 +631,10 @@ mod tests {
     }
 
     #[test]
-    fn forces_and_a_missing_graph_fall_back_to_suites() {
+    fn gate_all_and_a_missing_graph_fall_back_to_suites() {
         let w = ws();
         let rs = ch(&["gate/src/x.rs"]);
-        let f = Forces {
-            ejected: "test-a.sh",
-            gate_all: false,
-        };
-        assert_eq!(
-            compose(GateMode::Unit, &f, &rs, Ok(&w)).label(),
-            "suites(ejected)"
-        );
-        let f = Forces {
-            ejected: "",
-            gate_all: true,
-        };
+        let f = Forces { gate_all: true };
         assert_eq!(
             compose(GateMode::Unit, &f, &rs, Ok(&w)).label(),
             "suites(gate-all)"
@@ -670,5 +747,119 @@ mod tests {
             t.1,
             "cargo test --profile aeon -j 4 -p gate -p queue -- --test-threads=4"
         );
+    }
+
+    // -------------------------------------------------------------- re-entry (sp-p3srm)
+
+    fn v(xs: &[&str]) -> Vec<String> {
+        xs.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn suite_names_are_one_test_component_and_nothing_else() {
+        assert!(is_suite_name("test-gate-touched.sh"));
+        assert!(is_suite_name("test-a_b.2.sh"));
+        for bad in [
+            "test-.sh",
+            "gate.sh",
+            "spira/test-a.sh",
+            "../test-a.sh",
+            "test-a.sh;rm",
+            "test-$(x).sh",
+            "test-a.bash",
+        ] {
+            assert!(!is_suite_name(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn reentry_splits_the_named_suites_by_what_the_tree_has() {
+        let on_tree = |s: &str| s != "test-gone.sh";
+        let r = reentry(
+            "test-b.sh,test-gone.sh, test-c.sh  test-b.sh,bad;x,",
+            on_tree,
+        );
+        assert_eq!(
+            r.required,
+            v(&["test-b.sh", "test-c.sh"]),
+            "order kept, duplicates once"
+        );
+        assert_eq!(r.gone, v(&["test-gone.sh"]));
+        assert_eq!(r.invalid, v(&["bad;x"]));
+        assert_eq!(reentry("", on_tree), Reentry::default());
+        assert_eq!(reentry(" \n", on_tree), Reentry::default());
+    }
+
+    #[test]
+    fn only_ok_disabled_or_quarantined_satisfies_a_named_suite() {
+        let req = v(&[
+            "test-a.sh",
+            "test-b.sh",
+            "test-c.sh",
+            "test-d.sh",
+            "test-e.sh",
+            "test-f.sh",
+        ]);
+        let out = "  test-a.sh   ok      3s
+  test-b.sh   SKIPPED
+  test-c.sh   DISABLED
+  test-d.sh   QUARANTINED-RED  rc=1 after 2s
+  test-e.sh   DEFERRED deadline
+cargo: test tests::x ... ok";
+        assert_eq!(
+            unproven(out, &req),
+            v(&["test-b.sh", "test-e.sh", "test-f.sh"])
+        );
+        for st in [
+            "RED     rc=1 after 2s",
+            "TIMEOUT after 600s",
+            "UNREACHED",
+            "SKIP-REQ requires:docker",
+        ] {
+            assert_eq!(
+                unproven(&format!("  test-a.sh   {st}"), &v(&["test-a.sh"])),
+                v(&["test-a.sh"]),
+                "{st}"
+            );
+        }
+        assert!(unproven("anything", &[]).is_empty());
+    }
+
+    #[test]
+    fn the_last_report_of_a_suite_counts() {
+        let req = v(&["test-a.sh"]);
+        assert!(unproven("  test-a.sh DEFERRED deadline\n  test-a.sh ok 3s", &req).is_empty());
+        assert_eq!(
+            unproven("  test-a.sh ok 3s\n  test-a.sh RED rc=1", &req),
+            req
+        );
+    }
+
+    #[test]
+    fn the_reentry_command_names_exactly_the_suites_with_no_deadline() {
+        let c = reentry_command(&v(&["test-a.sh", "test-b.sh"]));
+        assert!(
+            c.contains(
+                "\"$SPIRA_TESTENV_BIN\" --suites test-a.sh,test-b.sh \"$SPIRA_GATE_BRANCH\""
+            ),
+            "{c}"
+        );
+        assert!(!c.contains("--deadline"));
+        assert!(c.contains("2|3) exit 75"));
+        assert!(c.contains("SPIRA_TESTENV_BIN is unset"));
+    }
+
+    #[test]
+    fn ejected_suites_no_longer_force_the_suites_composition() {
+        // sp-p3srm narrows sp-2ghui: a returned Rust-only bead keeps its unit composition and
+        // the re-entry phase adds the named suites.
+        let w = ws();
+        let c = compose(
+            GateMode::Unit,
+            &Forces::default(),
+            &ch(&["gate/src/x.rs"]),
+            Ok(&w),
+        );
+        assert_eq!(c.label(), "unit");
     }
 }

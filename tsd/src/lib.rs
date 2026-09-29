@@ -71,6 +71,64 @@ pub fn build_row(ts: &str, host: &str, family: &str, fields: &[(String, Value)])
     serde_json::to_string(&Value::Object(row)).map_err(|e| e.to_string())
 }
 
+/// The envelope's `ts` (`YYYY-MM-DDTHH:MM:SSZ`, or a bare `YYYY-MM-DD`) → Unix epoch seconds.
+/// Anything else is None: a reader skips a row it cannot place in time rather than guessing.
+pub fn parse_ts(s: &str) -> Option<u64> {
+    let s = s.trim();
+    let (date, time) = match s.split_once('T') {
+        Some((d, t)) => (d, Some(t.strip_suffix('Z')?)),
+        None => (s, None),
+    };
+    let mut d = date.split('-');
+    let y: i64 = d.next()?.parse().ok()?;
+    let m: i64 = d.next()?.parse().ok()?;
+    let day: i64 = d.next()?.parse().ok()?;
+    if d.next().is_some() || !(1..=12).contains(&m) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let (hh, mm, ss) = match time {
+        None => (0, 0, 0),
+        Some(t) => {
+            let mut f = t.split(':');
+            let h: i64 = f.next()?.parse().ok()?;
+            let mi: i64 = f.next()?.parse().ok()?;
+            let se: i64 = f.next()?.parse().ok()?;
+            if f.next().is_some() || h > 23 || mi > 59 || se > 60 {
+                return None;
+            }
+            (h, mi, se)
+        }
+    };
+    // Howard Hinnant's days_from_civil.
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    u64::try_from(days * 86_400 + hh * 3600 + mm * 60 + ss).ok()
+}
+
+/// `YYYY-MM-DDTHH:MM:SSZ` for a Unix epoch — the envelope's `ts` shape.
+pub fn iso_utc(epoch: u64) -> String {
+    let days = (epoch / 86_400) as i64;
+    let rem = epoch % 86_400;
+    let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    // Howard Hinnant's civil_from_days.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if mo <= 2 { y + 1 } else { y };
+    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,6 +211,17 @@ mod tests {
                 build_row("t", "h1", "fam", &fields).is_err(),
                 "expected a collision refusal for {key}"
             );
+        }
+    }
+
+    #[test]
+    fn parse_ts_and_iso_utc_round_trip() {
+        assert_eq!(parse_ts("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(parse_ts("2026-09-29T19:18:40Z"), Some(1_790_709_520));
+        assert_eq!(iso_utc(1_790_709_520), "2026-09-29T19:18:40Z");
+        assert_eq!(parse_ts("2026-09-29"), parse_ts("2026-09-29T00:00:00Z"));
+        for bad in ["", "yesterday", "2026-13-01T00:00:00Z", "2026-09-29T19:18:40"] {
+            assert_eq!(parse_ts(bad), None, "{bad}");
         }
     }
 }

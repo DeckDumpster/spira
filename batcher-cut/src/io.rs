@@ -776,13 +776,18 @@ pub fn result_status(results_dir: &Path, suite: &str) -> Option<bool> {
 /// CI-side ejection does, so the funnel (cockpit, census) counts a local and a CI ejection the
 /// same way. `queue-eject-local` is a distinct reopen cause from verdict.sh's `queue-eject`,
 /// so census.sh can tell the two apart.
+///
+/// The suites also go to bead_reopen's fourth argument, which writes the `<id>.ejected`
+/// sidecar, as verdict.sh's own ejection does (sp-p3srm): the gate's re-entry check reads it
+/// first, and unlike the EJECTED landstate row it survives the row being overwritten
+/// (REBASED, WITHDRAWN) before the bead's next gate.
 pub fn eject_member(env: &Env, repo_name: &str, id: &str, tip: &str, suites: &[String]) {
     let suites_csv = suites.join(",");
     let note = format!(
         "Ejected by the merge queue's local attribution (pre-PR): spira/{id} turned red on: {}.",
         suites.join(", ")
     );
-    bead_reopen(env, id, "queue-eject-local", &note);
+    let _ = lib_call(env, "bead_reopen", [id, "queue-eject-local", note.as_str(), suites_csv.as_str()]);
     land_mark(env, id, "EJECTED", tip, &suites_csv);
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(env.run.join("landing.log")) {
         use std::io::Write;
@@ -1250,6 +1255,31 @@ mod certify_tests {
         assert!(gate::cert::certifies(&text, "spira", &older).is_none());
         assert!(gate::cert::path(&e.verdicts, "spira", &older).map(|p| !p.exists()).unwrap_or(true));
         assert!(certify_round(&e, &repo, "no-such-rev", "x").is_err(), "an unresolvable head certifies nothing");
+        let _ = fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod eject_tests {
+    use super::*;
+
+    #[test]
+    fn an_ejected_member_carries_its_suites_to_the_sidecar_and_the_row() {
+        let d = std::env::temp_dir().join(format!("batcher-cut-eject-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        // A lib.sh that records each call's argv, one call per line, fields tab-separated.
+        let log = d.join("calls");
+        let rec = |f: &str| format!("{f}() {{ (IFS=$'\\t'; printf '{f}\\t%s\\n' \"$*\") >> '{}'; }}\n", log.display());
+        fs::write(d.join("lib.sh"), rec("bead_reopen") + &rec("land_mark")).unwrap();
+        let e = super::lifecycle_tests_env(&d);
+        eject_member(&e, "spira", "sp-m2", "abc", &["test-a.sh".into(), "test-b.sh".into()]);
+        let calls = fs::read_to_string(&log).unwrap();
+        let lines: Vec<Vec<&str>> = calls.lines().map(|l| l.split('\t').collect()).collect();
+        assert_eq!(lines.len(), 2, "{calls}");
+        assert_eq!(lines[0][..3], ["bead_reopen", "sp-m2", "queue-eject-local"]);
+        assert_eq!(lines[0][4], "test-a.sh,test-b.sh", "the fourth argument writes <id>.ejected");
+        assert_eq!(lines[1], ["land_mark", "sp-m2", "EJECTED", "abc", "test-a.sh,test-b.sh"]);
         let _ = fs::remove_dir_all(&d);
     }
 }

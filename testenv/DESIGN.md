@@ -243,6 +243,16 @@ end-to-end row per run (`rc=0`, `wall_secs` = whole batch). Readers: tsd-query.s
 tier-budget.sh, gate-budget-select.sh, and testenv itself (LPT order, `--report`). A row
 that does not parse is skipped, never fatal.
 
+**bd wait (`bd_calls`, `bd_ms`), sp-cln99.** Measured by `bd-meter` (`src/bdmeter.rs`, a
+second binary of this crate): in parallel mode the suite's private HOME is made by
+`<artifacts>/bd-meter --install <home>`, which links `$HOME/.local/bin/bd` and
+`…/bd-embedded` to itself. conf.sh puts `$HOME/.local/bin` ahead of the system directories,
+so every `bd`/`bd-embedded` a suite runs by name goes through the meter, which runs the next
+binary of that name on PATH, and appends `<wall_ms> <rc> <subcommand>` to `SPIRA_BD_LOG`.
+An artifact set without the meter falls back to `mkdir -p` (unmetered: `bd_calls` 0). Serial
+mode is unmetered. `bd_calls = 0` therefore means "no metered call", not "no wait"; readers
+report the metered share. Before sp-cln99 nothing wrote the log and every row read 0/0 (D3).
+
 `round` family (only with `SPIRA_ROUND_BATCH_ID`): `batch_id`, `phase="build"`, `secs`,
 `members`, `reds` (red + timeout count).
 
@@ -431,6 +441,9 @@ into a fresh `cargo-target-bins/<tree>` on every new tree (95-116 s, sp-zv7j4).
   but never put it on any PATH (`SPIRA_PATH` was always passed empty), so it never ran.
   The env it passed (`SPIRA_PATH=`, `SPIRA_BD_LOG`, `SPIRA_BD_TIMING_LOG`) is kept, as is
   reading those logs into `bd_calls`/`bd_ms`/`timing.tsv`.
+  **Amended 2026-09-29 (sp-cln99):** nothing wrote `SPIRA_BD_LOG`, so `bd_calls`/`bd_ms`
+  read 0 on every row. `bd-meter` (§3.4) now writes it — Rust, installed as the suite HOME's
+  `bd`, not a shim on `SPIRA_PATH`.
 * **D4 — the tier-budget step is dropped.** It ran only when `$RESULTS/suite-times.tsv`
   was non-empty, and nothing has written that file since suite-times moved to run/tsd; it
   always logged "skipped".
