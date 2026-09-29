@@ -305,4 +305,44 @@ else
     bad "manifest: no pulled bins at all is not treated as a refusal" "returned failure"
 fi
 
+# ---------------------------------------------------------------------------
+# 7. Round result measurement fields (sp-o3o6z): the pulled results directory may be flat (a
+#    fixture testenv-batch.sh) or nested one level under testenv-batch.sh's own BATCH_KEY
+#    cache-key directory — _rvm_results_leaf finds whichever one actually holds .result
+#    files; _rvm_suite_wall_sum sums every suite's own wall time (not the phase's wall-clock
+#    span); _rvm_read_build_wall reads testenv-batch.sh's own build_wall_s from runner.meta,
+#    absent when --with-bins never built.
+# ---------------------------------------------------------------------------
+call_measure() {   # call_measure <fn> <args...>
+    local fn="$1"; shift
+    env -i PATH="$PATH" HOME="$TMP" SPIRA_HOME="$FAKE_HOME" \
+        SPIRA_TOML="$TMP/no-such.toml" SPIRA_CONF="$TMP/no-such.conf" \
+        SPIRA_RUN="$TMP/measure-run" \
+        bash -c 'source "$0/round-vm.sh"; "$1" "${@:2}"' \
+        "$HERE" "$fn" "$@"
+}
+
+FLAT="$TMP/flat-results"; rm -rf "$FLAT"; mkdir -p "$FLAT"
+printf 'ok %s 3 - serial explicit 0\n' "$(date +%s)" > "$FLAT/test-a.sh.result"
+printf 'ok %s 4 - serial explicit 0\n' "$(date +%s)" > "$FLAT/test-b.sh.result"
+is "measure: flat results dir is its own leaf" "$FLAT" "$(call_measure _rvm_results_leaf "$FLAT")"
+
+# Nested one level, the shape testenv-batch.sh's own BATCH_KEY caching produces.
+NESTED_ROOT="$TMP/nested-results"; rm -rf "$NESTED_ROOT"; mkdir -p "$NESTED_ROOT/deadbeef"
+printf 'ok %s 5 - serial explicit 0\n' "$(date +%s)" > "$NESTED_ROOT/deadbeef/test-c.sh.result"
+is "measure: nested results resolve to the BATCH_KEY subdirectory" "$NESTED_ROOT/deadbeef" \
+    "$(call_measure _rvm_results_leaf "$NESTED_ROOT")"
+
+# POSITIVE CONTROL: an empty directory has no leaf to find at all.
+EMPTY_RESULTS="$TMP/empty-results"; rm -rf "$EMPTY_RESULTS"; mkdir -p "$EMPTY_RESULTS"
+is "measure: an empty pulled dir has no leaf" "" "$(call_measure _rvm_results_leaf "$EMPTY_RESULTS")"
+
+is "measure: sum of suite walls adds every suite's own wall time (3+4)" "7" "$(call_measure _rvm_suite_wall_sum "$FLAT")"
+is "measure: sum of suite walls is 0 for an empty results dir" "0" "$(call_measure _rvm_suite_wall_sum "$EMPTY_RESULTS")"
+
+printf 'nproc=8\nmemtotal_kb=100\nmaxpar=16\ncpu_busy_pct=50\nsuites_wall_s=7\nbuild_wall_s=42\n' > "$FLAT/runner.meta"
+is "measure: build wall is read from runner.meta when --with-bins built" "42" "$(call_measure _rvm_read_build_wall "$FLAT")"
+is "measure: build wall is empty when runner.meta has no build_wall_s (never --with-bins)" "" \
+    "$(call_measure _rvm_read_build_wall "$EMPTY_RESULTS")"
+
 tl_summary

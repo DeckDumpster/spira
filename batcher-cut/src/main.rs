@@ -3,7 +3,7 @@
 //! pure core; everything here just gathers the core's inputs from git, testenv-batch, the
 //! forge and the bead store, and carries out what the core decided.
 //!
-//!   batcher cut <repo>   [--run DIR] [--db DIR] [--home DIR] [--testenv-batch PATH]
+//!   batcher cut <repo>   [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]
 //!
 //! Common flags mirror queue-watch's: --run (SPIRA_RUN), --db (SPIRA_DB), --home
 //! (SPIRA_HOME, where lib.sh and forge.sh live). Repo config comes from lib.sh's own
@@ -42,7 +42,7 @@ struct Opts {
     run: Option<PathBuf>,
     db: Option<PathBuf>,
     home: Option<PathBuf>,
-    testenv_batch: Option<PathBuf>,
+    round_vm: Option<PathBuf>,
     attribute: Option<PathBuf>,
     suites: Option<String>,
     members: Option<String>,
@@ -50,7 +50,7 @@ struct Opts {
 }
 
 fn usage() -> ExitCode {
-    eprintln!("usage: batcher cut <repo> [--run DIR] [--db DIR] [--home DIR] [--testenv-batch PATH] [--attribute PATH]");
+    eprintln!("usage: batcher cut <repo> [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH] [--attribute PATH]");
     eprintln!("       batcher judgement-ci <repo> --suites CSV --members CSV --evidence TEXT [--run DIR] [--db DIR] [--home DIR]");
     ExitCode::from(2)
 }
@@ -65,7 +65,7 @@ fn parse() -> Result<Opts, String> {
         run: env::var_os("SPIRA_RUN").map(PathBuf::from),
         db: env::var_os("SPIRA_DB").map(PathBuf::from),
         home: env::var_os("SPIRA_HOME").map(PathBuf::from),
-        testenv_batch: env::var_os("SPIRA_BATCHER_TESTENV_BATCH").map(PathBuf::from),
+        round_vm: env::var_os("SPIRA_BATCHER_ROUND_VM").map(PathBuf::from),
         attribute: env::var_os("SPIRA_BATCHER_ATTRIBUTE").map(PathBuf::from),
         suites: None,
         members: None,
@@ -77,7 +77,7 @@ fn parse() -> Result<Opts, String> {
             "--run" => o.run = Some(val()?.into()),
             "--db" => o.db = Some(val()?.into()),
             "--home" => o.home = Some(val()?.into()),
-            "--testenv-batch" => o.testenv_batch = Some(val()?.into()),
+            "--round-vm" => o.round_vm = Some(val()?.into()),
             "--attribute" => o.attribute = Some(val()?.into()),
             "--suites" => o.suites = Some(val()?),
             "--members" => o.members = Some(val()?),
@@ -131,7 +131,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
         bd: env::var("SPIRA_BD").unwrap_or_else(|_| "bd".into()),
         express_label: env::var("SPIRA_EXPRESS_LABEL").unwrap_or_else(|_| "express".into()),
         tsd_bin: env::var_os("SPIRA_TSD_BIN").map(PathBuf::from),
-        testenv_batch: o.testenv_batch.clone().unwrap_or_else(|| home.join("testenv-batch.sh")),
+        round_vm: o.round_vm.clone().unwrap_or_else(|| home.join("round-vm.sh")),
         attribute: o.attribute.clone().unwrap_or_else(|| home.join("attribute.sh")),
         // Batcher-parity (sp-myi6w): the Concierge's own proven values, not testenv-batch.sh's
         // own hardware-derived or unpinned defaults — see io::run_suites.
@@ -278,7 +278,7 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
 
         let suites = io::all_suites(repo, &iter_branch);
         let results_dir = env_.run.join("batch-results").join(format!("{}-{}-attr{iteration}", repo.name, now()));
-        let first = io::run_suites(env_, repo, &iter_branch, &suites, &results_dir)?;
+        let first = io::run_suites(env_, wt, &suites, &results_dir)?;
         let reds = io::red_names(&first);
         if reds.is_empty() {
             let regreen_seconds = red_detected_at.map(|at| now().saturating_sub(at));

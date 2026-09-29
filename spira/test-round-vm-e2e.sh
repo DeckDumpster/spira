@@ -201,6 +201,9 @@ want "run: manifest names acquire=cold (the only VM there was)" '"acquire": "col
 want "run: manifest names the configured vcpus" '"vcpus": 16' "$manifest_json"
 want "run: manifest names the requested maxpar" '"maxpar": 2' "$manifest_json"
 want "run: manifest names the tree sha" "$TREE_SHA" "$manifest_json"
+want "run: manifest names the batch wall (sp-o3o6z measurement fields)" '"batch_wall_secs":' "$manifest_json"
+want "run: manifest names no build wall — the fixture never wrote runner.meta" '"build_wall_secs": null' "$manifest_json"
+want "run: manifest sums the two suites' own wall times (1s + 1s)" '"suite_wall_secs_sum": 2' "$manifest_json"
 
 tsd_line="$(cat "$HOST_RUN/tsd/suite-timing.jsonl" 2>/dev/null)"
 want "run: the VM's tsd row was merged into the host's run/tsd" "combined" "$tsd_line"

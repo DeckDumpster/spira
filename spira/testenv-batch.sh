@@ -169,6 +169,7 @@ _CONTAINER_WORKSPACE="/workspace"
 MODE="parallel"  # default: parallel is safer and the normal operating mode
 SUITES_EXPLICIT=""  # empty: use diff-derived selection; non-empty: use this comma-list
 WITH_BINS=0  # --with-bins: build the branch's own workspace binaries into its bin/
+_BUILD_WALL_S=""  # set only when --with-bins actually builds (runner.meta's build_wall_s)
 _BATCH_REPORT=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -321,11 +322,13 @@ if [ "$WITH_BINS" = 1 ]; then
     exec 8>"$_bins_target_dir.lock"
     flock -s 8
     log "batch: --with-bins: building workspace binaries for $BR"
+    _build_t0=$(date +%s)
     if ! CARGO_TARGET_DIR="$_bins_target_dir" make -C "$BRANCH_WT" build >&2; then
         flock -u 8; exec 8>&-
         printf 'batch: --with-bins: workspace failed to build — candidate fault\n' >&2
         exit 4
     fi
+    _BUILD_WALL_S=$(( $(date +%s) - _build_t0 ))
     mkdir -p "$BRANCH_WT/bin"
     find "$_bins_target_dir/release" -maxdepth 1 -type f -executable \
         -exec cp -p {} "$BRANCH_WT/bin/" \; 2>/dev/null || true
@@ -1755,10 +1758,10 @@ fi
     _c1i="$(printf '%s' "$_timing_cpu1" | awk '{print $2}')"
     _dt=$(( _c1t - _c0t )); _di=$(( _c1i - _c0i ))
     [ "$_dt" -gt 0 ] && _cpu_pct=$(( 100 * (_dt - _di) / _dt )) || true
-    printf 'nproc=%s\nmemtotal_kb=%s\nmaxpar=%s\ncpu_busy_pct=%s\nsuites_wall_s=%s\n' \
+    printf 'nproc=%s\nmemtotal_kb=%s\nmaxpar=%s\ncpu_busy_pct=%s\nsuites_wall_s=%s\nbuild_wall_s=%s\n' \
         "$_timing_nproc" "$_timing_memtotal_kb" \
         "${SPIRA_BATCH_MAXPAR:-$(nproc 2>/dev/null || printf '-')}" \
-        "$_cpu_pct" "$_suites_wall" \
+        "$_cpu_pct" "$_suites_wall" "${_BUILD_WALL_S:--}" \
         > "$RESULTS/runner.meta"
 } 2>/dev/null || true
 

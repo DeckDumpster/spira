@@ -11,13 +11,17 @@
 #   round-vm.sh release <handle>
 #       Destroys the named VM. Nothing is reused, so nothing needs to be cleaned first.
 #
-#   round-vm.sh run <tree-dir> [--suites <csv>] [--maxpar <n>]
+#   round-vm.sh run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>]
+#                   [--results-dir <dir>]
 #       acquire -> the VM fetches <tree-dir>'s HEAD from a read-only mirror this command
 #       maintains -> runs testenv-batch.sh --mode parallel --with-bins on the VM -> pulls
-#       batch-results/, cargo-target-bins/<tree-sha>/release/ and tsd/*.jsonl back with
-#       rsync -> writes a manifest naming the tree sha, vm, acquire mode, vcpus, maxpar and
-#       wall time -> refuses to install binaries whose tree sha does not match <tree-dir>'s
-#       own HEAD^{tree} -> release.
+#       batch-results/ (flattened into <dir>, default SPIRA_RUN/batch-results),
+#       cargo-target-bins/<tree-sha>/release/ and tsd/*.jsonl back with rsync -> writes a
+#       manifest naming the round result's measurement fields (vm, acquire mode, vcpus,
+#       maxpar, batch wall, build wall, sum of suite walls) -> refuses to install binaries
+#       whose tree sha does not match <tree-dir>'s own HEAD^{tree} -> release. Exits with the
+#       remote testenv-batch.sh's own code when it ran at all, so a caller reads this the same
+#       way it would read that script directly.
 #
 #   round-vm.sh status
 #       Reports the pool: the ready VM if any, a background provision in flight, the last
@@ -287,10 +291,10 @@ _rvm_rsync_pull() {
 
 cmd_run() {
     [ $# -ge 1 ] || {
-        printf 'round-vm.sh run: usage: round-vm.sh run <tree-dir> [--suites <csv>] [--maxpar <n>]\n' >&2
+        printf 'round-vm.sh run: usage: round-vm.sh run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>]\n' >&2
         return 2
     }
-    local tree_dir="$1" suites="" maxpar="$SPIRA_ROUND_VM_MAXPAR"
+    local tree_dir="$1" suites="" maxpar="$SPIRA_ROUND_VM_MAXPAR" toolchain="" results_dir="${SPIRA_RUN:?}/batch-results"
     shift
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -298,6 +302,10 @@ cmd_run() {
             --suites=*) suites="${1#--suites=}"; shift ;;
             --maxpar) maxpar="${2:-}"; shift 2 ;;
             --maxpar=*) maxpar="${1#--maxpar=}"; shift ;;
+            --toolchain) toolchain="${2:-}"; shift 2 ;;
+            --toolchain=*) toolchain="${1#--toolchain=}"; shift ;;
+            --results-dir) results_dir="${2:-}"; shift 2 ;;
+            --results-dir=*) results_dir="${1#--results-dir=}"; shift ;;
             *) printf 'round-vm.sh run: unknown option: %s\n' "$1" >&2; return 2 ;;
         esac
     done
@@ -313,37 +321,38 @@ cmd_run() {
     fi
 
     local sha tree_sha
-    sha="$(git -C "$tree_dir" rev-parse HEAD)" || return 1
-    tree_sha="$(git -C "$tree_dir" rev-parse "HEAD^{tree}")" || return 1
+    sha="$(git -C "$tree_dir" rev-parse HEAD)" || return 2
+    tree_sha="$(git -C "$tree_dir" rev-parse "HEAD^{tree}")" || return 2
 
     local mirror="$STATE_DIR/mirror.git"
     mkdir -p "$STATE_DIR" 2>/dev/null || true
     _rvm_mirror_update "$mirror" "$tree_dir" || {
         printf 'round-vm.sh run: cannot update the mirror from %s\n' "$tree_dir" >&2
-        return 1
+        return 2
     }
     _rvm_git_daemon_ensure "$STATE_DIR" "$SPIRA_ROUND_VM_MIRROR_PORT" || {
         printf 'round-vm.sh run: cannot start the mirror git-daemon on port %s\n' "$SPIRA_ROUND_VM_MIRROR_PORT" >&2
-        return 1
+        return 2
     }
 
     local acq_line handle addr acquire_mode
     acq_line="$(cmd_acquire)" || {
         printf 'round-vm.sh run: acquire failed\n' >&2
-        return 1
+        return 2
     }
     read -r handle addr acquire_mode <<<"$acq_line"
 
     local t0 wall remote_rc=0
     t0=$(date +%s)
     _rvm_ssh "${SPIRA_ROUND_VM_SSH_USER}@${addr}" bash -s -- \
-        "$SPIRA_ROUND_VM_HOST_ADDR" "$SPIRA_ROUND_VM_MIRROR_PORT" "$suites" "$maxpar" <<'REMOTE' || remote_rc=$?
+        "$SPIRA_ROUND_VM_HOST_ADDR" "$SPIRA_ROUND_VM_MIRROR_PORT" "$suites" "$maxpar" "$toolchain" <<'REMOTE' || remote_rc=$?
 set -euo pipefail
-host_addr="$1" port="$2" suites="$3" maxpar="$4"
+host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5"
 rm -rf ~/round-work
 git clone --quiet "git://${host_addr}:${port}/mirror.git" ~/round-work
 cd ~/round-work
 export SPIRA_BATCH_MAXPAR="$maxpar"
+[ -n "$toolchain" ] && export RUSTUP_TOOLCHAIN="$toolchain"
 if [ -n "$suites" ]; then
     exec bash spira/testenv-batch.sh --mode parallel --with-bins --suites "$suites" round
 else
@@ -352,7 +361,17 @@ fi
 REMOTE
     wall=$(( $(date +%s) - t0 ))
 
-    _rvm_rsync_pull "$addr" "round-work/.runtime/spira/batch-results/" "${SPIRA_RUN:?}/batch-results"
+    local pulled_results="$STATE_DIR/.pulled-results.$$"
+    rm -rf "$pulled_results"
+    _rvm_rsync_pull "$addr" "round-work/.runtime/spira/batch-results/" "$pulled_results"
+    local results_leaf
+    results_leaf="$(_rvm_results_leaf "$pulled_results")"
+    mkdir -p "$results_dir" 2>/dev/null || true
+    [ -n "$results_leaf" ] && cp -a "$results_leaf/." "$results_dir/" 2>/dev/null
+    local suite_wall_sum build_wall
+    suite_wall_sum="$(_rvm_suite_wall_sum "$results_dir")"
+    build_wall="$(_rvm_read_build_wall "$results_dir")"
+    rm -rf "$pulled_results"
 
     local pulled_tsd="$STATE_DIR/.pulled-tsd.$$"
     rm -rf "$pulled_tsd"
@@ -369,7 +388,8 @@ REMOTE
 
     mkdir -p "$STATE_DIR/manifests"
     _rvm_write_manifest "$STATE_DIR/manifests/$tree_sha.json" \
-        "$tree_sha" "$found_tree" "$sha" "$handle" "$acquire_mode" "$SPIRA_ROUND_VM_VCPUS" "$maxpar" "$wall"
+        "$tree_sha" "$found_tree" "$sha" "$handle" "$acquire_mode" "$SPIRA_ROUND_VM_VCPUS" "$maxpar" \
+        "$wall" "$build_wall" "$suite_wall_sum"
 
     local rc=0
     _rvm_install_bins "$pulled_bins" "$tree_sha" "${SPIRA_BATCH_BINS_TARGET_DIR:-$SPIRA_RUN/cargo-target-bins}" || rc=1
@@ -378,20 +398,72 @@ REMOTE
     rvm_provider_destroy "$handle" >/dev/null 2>&1 \
         || printf 'round-vm.sh run: warning: release of %s failed\n' "$handle" >&2
 
-    [ "$remote_rc" -eq 0 ] || rc=1
-    return "$rc"
+    # The remote's own exit code is the round's verdict (0/1 green/red, 2/3 its own harness
+    # faults, 4 a --with-bins build failure) — a caller like batcher-cut's run_suites reads
+    # this the same way it would testenv-batch.sh's own exit directly, so it must survive
+    # round-vm.sh's wrapping unchanged. A failure in the PULL/INSTALL step that happens after
+    # a green remote run is round-vm.sh's own fault, not a verdict about the candidate, so it
+    # only surfaces when the remote itself reported success.
+    [ "$remote_rc" -ne 0 ] && return "$remote_rc"
+    [ "$rc" -eq 0 ] || return 2
+    return 0
 }
 
-# _rvm_write_manifest <path> <tree-sha> <tree-sha-found> <commit-sha> <vm> <acquire> <vcpus> <maxpar> <wall-secs>
+# _rvm_results_leaf <pulled-dir> — the pulled batch-results tree may hold `.result` files
+# directly (a fixture testenv-batch.sh with no cache-key nesting) or one level down, under a
+# BATCH_KEY (or timestamp-pid fallback) subdirectory testenv-batch.sh's own caching creates
+# (_batch_key, testenv-batch.sh). Finds the one directory that actually holds them, wherever
+# it landed, so a caller never has to know which shape produced this pull.
+_rvm_results_leaf() {
+    local pulled="$1" f
+    [ -d "$pulled" ] || return 0
+    for f in "$pulled"/*.result; do
+        [ -e "$f" ] && { printf '%s\n' "$pulled"; return 0; }
+        break
+    done
+    f="$(find "$pulled" -mindepth 2 -maxdepth 2 -name '*.result' -print -quit 2>/dev/null)"
+    [ -n "$f" ] && dirname "$f"
+}
+
+# _rvm_suite_wall_sum <results-dir> — sum of every suite's own wall time (.result files'
+# third field), the serial total the design's "sum of suite walls" names — not the wall-clock
+# span of the (parallel) phase that produced them.
+_rvm_suite_wall_sum() {
+    local dir="$1" f secs total=0
+    [ -d "$dir" ] || { printf '0\n'; return 0; }
+    for f in "$dir"/*.result; do
+        [ -e "$f" ] || continue
+        secs="$(awk '{print $3}' "$f" 2>/dev/null)"
+        case "$secs" in ''|*[!0-9]*) continue ;; esac
+        total=$((total + secs))
+    done
+    printf '%s\n' "$total"
+}
+
+# _rvm_read_build_wall <results-dir> — testenv-batch.sh's own build_wall_s (runner.meta),
+# present only when --with-bins actually built the workspace; empty otherwise.
+_rvm_read_build_wall() {
+    local dir="$1" v
+    [ -r "$dir/runner.meta" ] || return 0
+    v="$(awk -F= '$1=="build_wall_s"{print $2}' "$dir/runner.meta" 2>/dev/null)"
+    case "$v" in ''|-|*[!0-9]*) return 0 ;; esac
+    printf '%s\n' "$v"
+}
+
+# _rvm_write_manifest <path> <tree-sha> <tree-sha-found> <commit-sha> <vm> <acquire> <vcpus>
+#   <maxpar> <batch-wall-secs> <build-wall-secs|""> <suite-wall-secs-sum> — the round result
+# sp-o3o6z's own measurement fields: vm, acquire, vcpus, maxpar, build wall, batch wall and
+# the sum of suite walls, all in one record per tree sha.
 _rvm_write_manifest() {
     local path="$1"; shift
     python3 -c "
 import json, sys
 d = dict(tree_sha=sys.argv[1], tree_sha_found=(sys.argv[2] or None), commit_sha=sys.argv[3],
          vm=sys.argv[4], acquire=sys.argv[5], vcpus=int(sys.argv[6]), maxpar=int(sys.argv[7]),
-         wall_secs=int(sys.argv[8]))
-json.dump(d, open(sys.argv[9], 'w'))
-" "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$path"
+         batch_wall_secs=int(sys.argv[8]), build_wall_secs=(int(sys.argv[9]) if sys.argv[9] else None),
+         suite_wall_secs_sum=int(sys.argv[10]))
+json.dump(d, open(sys.argv[11], 'w'))
+" "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "$path"
 }
 
 # _rvm_install_bins <pulled-bins-dir> <expected-tree-sha> <bins-target-base> — the only

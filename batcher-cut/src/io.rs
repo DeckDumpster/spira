@@ -48,15 +48,15 @@ pub struct Env {
     pub bd: String,
     pub express_label: String,
     pub tsd_bin: Option<PathBuf>,
-    pub testenv_batch: PathBuf,
+    pub round_vm: PathBuf,
     pub attribute: PathBuf,
     /// The Concierge's own proven parallelism (round.sh: SPIRA_BATCH_MAXPAR=16) — set
     /// explicitly on every corpus invocation rather than left for testenv-batch.sh's own
     /// hardware formula, which a bare guest may resolve far below what CI proved green under.
     pub maxpar: u32,
-    /// Wall-clock bound on one testenv-batch.sh invocation (round.sh: `timeout 3600`).
-    /// cut()/stack_round() hold the round lock for the duration, so an unbounded run holds it
-    /// unbounded too; enforced with `timeout` so a hang cannot outlive this call.
+    /// Wall-clock bound on one round-vm.sh run (round.sh: `timeout 3600`). cut()/stack_round()
+    /// hold the round lock for the duration, so an unbounded run holds it unbounded too;
+    /// enforced with `timeout` so a hang cannot outlive this call.
     pub wall_secs: u64,
     /// Pinned toolchain for --with-bins' build, same key release.yml's own pin reads
     /// (SPIRA_RELEASE_RUST_TOOLCHAIN) — one fact about which Rust this workspace builds
@@ -653,47 +653,50 @@ pub fn all_suites(repo: &Repo, branch: &str) -> Vec<String> {
 /// never a real `test-*.sh` file, so it can't collide with one all_suites() would select.
 pub const WORKSPACE_BUILD: &str = "workspace-build";
 
-/// Run `suites` (explicit list — never diff-selected) against `branch`, exactly as the
-/// Concierge's own round.sh invokes testenv-batch.sh (RUSTUP_TOOLCHAIN, SPIRA_BATCH_MAXPAR,
-/// `--mode parallel --with-bins`, a wall bound) so a green here is the same claim a green
-/// Concierge round makes — including about this round's own Rust changes, which only
-/// --with-bins builds. Parses the result protocol testenv-batch.sh's own docs define:
-/// `<status> <epoch> <secs> <fp> <mode> <producer> <rc>` per suite, plus its `.out` for the
-/// assertion lines classify()'s E-check scans (a line containing "FAIL", the convention every
-/// suite here already uses).
-pub fn run_suites(env: &Env, repo: &Repo, branch: &str, suites: &[String], results_dir: &Path) -> Result<Vec<SuiteRun>, String> {
+/// Run `suites` (explicit list — never diff-selected) against `wt`'s own HEAD through
+/// round-vm.sh (sp-o3o6z: batcher-parity with the Concierge's own round tool, both callers of
+/// one mechanism) — the corpus runs on the round VM, never this host, so a green here is the
+/// same claim a green Concierge round makes, including about this round's own Rust changes,
+/// which only --with-bins builds. round-vm.sh exits with testenv-batch.sh's own code whenever
+/// the remote run actually happened, so the match below is exactly testenv-batch.sh's own
+/// contract. Parses the result protocol testenv-batch.sh's own docs define: `<status> <epoch>
+/// <secs> <fp> <mode> <producer> <rc>` per suite, plus its `.out` for the assertion lines
+/// classify()'s E-check scans (a line containing "FAIL", the convention every suite here
+/// already uses).
+pub fn run_suites(env: &Env, wt: &Path, suites: &[String], results_dir: &Path) -> Result<Vec<SuiteRun>, String> {
     if suites.is_empty() {
         return Ok(vec![]);
     }
     fs::create_dir_all(results_dir).map_err(|e| format!("{}: {e}", results_dir.display()))?;
     let mut cmd = Command::new("timeout");
     cmd.arg("-k").arg("10").arg(env.wall_secs.to_string());
-    cmd.arg("bash").arg(&env.testenv_batch);
-    cmd.arg("--mode").arg("parallel").arg("--with-bins");
+    cmd.arg("bash").arg(&env.round_vm);
+    cmd.arg("run").arg(wt);
     cmd.arg("--suites").arg(suites.join(","));
-    cmd.arg(branch).arg(&repo.path);
-    cmd.env("SPIRA_BATCH_RESULTS", results_dir);
-    cmd.env("SPIRA_BATCH_MAXPAR", env.maxpar.to_string());
-    cmd.env("RUSTUP_TOOLCHAIN", &env.rust_toolchain);
+    cmd.arg("--maxpar").arg(env.maxpar.to_string());
+    cmd.arg("--toolchain").arg(&env.rust_toolchain);
+    cmd.arg("--results-dir").arg(results_dir);
     cmd.stderr(std::process::Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("testenv-batch.sh: {e}"))?;
+    let mut child = cmd.spawn().map_err(|e| format!("round-vm.sh: {e}"))?;
     let mut stderr_buf = String::new();
     if let Some(mut se) = child.stderr.take() {
         use std::io::Read;
         let _ = se.read_to_string(&mut stderr_buf);
     }
-    let status = child.wait().map_err(|e| format!("testenv-batch.sh: {e}"))?;
+    let status = child.wait().map_err(|e| format!("round-vm.sh: {e}"))?;
     if !stderr_buf.is_empty() {
         eprint!("{stderr_buf}");
     }
-    // Exit 1 means "suites ran, some red" — a real answer, not a fault. Exit 2 is
-    // overloaded: usually the container never came up, but testenv-batch.sh also raises it,
-    // before any container is touched, when a --suites name isn't in the branch's own tree.
-    // That is a suite-list bug, not a container fault, so it is read off the "unknown suite"
-    // line rather than folded into the same harness-fault verdict. 4 is a round-level red
-    // (--with-bins: the candidate's own workspace failed to build) — the branch's fault, not
-    // the harness's, so the caller reports it as a local round red (stabilize_round's
-    // WORKSPACE_BUILD case) rather than aborting the round unreported.
+    // round-vm.sh exits with testenv-batch.sh's own code whenever the remote run actually
+    // happened (see round-vm.sh's own cmd_run), so this match is testenv-batch.sh's contract:
+    // exit 1 means "suites ran, some red" — a real answer, not a fault. Exit 2 is overloaded
+    // — usually the VM never came up, but testenv-batch.sh also raises it, before any
+    // container is touched, when a --suites name isn't in the branch's own tree. That is a
+    // suite-list bug, not a harness fault, so it is read off the "unknown suite" line rather
+    // than folded into the same harness-fault verdict. 4 is a round-level red (--with-bins:
+    // the candidate's own workspace failed to build) — the branch's fault, not the harness's,
+    // so the caller reports it as a local round red (stabilize_round's WORKSPACE_BUILD case)
+    // rather than aborting the round unreported.
     match status.code() {
         Some(0) | Some(1) | None => {}
         Some(4) => {
@@ -705,12 +708,12 @@ pub fn run_suites(env: &Env, repo: &Repo, branch: &str, suites: &[String], resul
         }
         Some(2) if stderr_buf.contains("batch: unknown suite:") => {
             let line = stderr_buf.lines().find(|l| l.contains("batch: unknown suite:")).unwrap_or("batch: unknown suite").trim();
-            return Err(format!("testenv-batch.sh: suite list mismatch, not a harness fault — {line}"));
+            return Err(format!("round-vm.sh: suite list mismatch, not a harness fault — {line}"));
         }
-        Some(2) => return Err("testenv-batch.sh: harness fault — container did not come up or died".into()),
-        Some(3) => return Err("testenv-batch.sh: harness fault — install failed".into()),
-        Some(124) => return Err(format!("testenv-batch.sh: harness fault — exceeded the {}s wall bound", env.wall_secs)),
-        Some(c) => return Err(format!("testenv-batch.sh: unexpected exit {c}")),
+        Some(2) => return Err("round-vm.sh: harness fault — the round VM did not come up or its container died".into()),
+        Some(3) => return Err("round-vm.sh: harness fault — install failed".into()),
+        Some(124) => return Err(format!("round-vm.sh: harness fault — exceeded the {}s wall bound", env.wall_secs)),
+        Some(c) => return Err(format!("round-vm.sh: unexpected exit {c}")),
     }
     Ok(suites.iter().map(|s| parse_result(results_dir, s)).collect())
 }
