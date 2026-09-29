@@ -195,6 +195,22 @@ pub fn parse_bd_json(text: &str) -> Result<Vec<BeadRow>, String> {
     Ok(items.into_iter().filter_map(|i| serde_json::from_value(i).ok()).collect())
 }
 
+/// What `SPIRA_LC_BIN` is pinned to in a step's children while lifecycle_enforce is OFF: a
+/// path that can never be executed (a file "inside" /dev/null). lc.sh gates every spira-lc
+/// call on `[ -x "$SPIRA_LC_BIN" ]` and conf.sh's `:=` keeps a non-empty value, so verdict.sh
+/// and batch.sh never reach the lifecycle machine; batcher-cut's attempt fails to spawn and
+/// takes its land_mark path. Binary presence is never the switch.
+pub const LC_OFF_BIN: &str = "/dev/null/spira-lc-lifecycle-enforce-off";
+
+/// Pin the lifecycle switch into a step child's environment (queue-step-all.md).
+fn lifecycle_env(c: &mut Command, lc_off: bool) {
+    if lc_off {
+        c.env("SPIRA_LIFECYCLE_ENFORCE", "0").env("SPIRA_LC_BIN", LC_OFF_BIN);
+    } else {
+        c.env("SPIRA_LIFECYCLE_ENFORCE", "1");
+    }
+}
+
 // ------------------------------------------------------------------------------- lib seam
 
 pub struct RealLib {
@@ -286,6 +302,14 @@ impl Lib for RealLib {
             remotes: g("remotes").split_whitespace().map(String::from).collect(),
         };
         Ok((s, r))
+    }
+    fn repos(&self) -> Result<Vec<String>, String> {
+        let (rc, ans) = self.answer(Op::Repos, &[]);
+        let names = seam::parse_names0(&ans);
+        if rc != 0 || names.is_empty() {
+            return Err(format!("lib.sh repos seam exited {rc} with {} name(s)", names.len()));
+        }
+        Ok(names)
     }
     fn toml_path(&self) -> Option<PathBuf> {
         let (_, ans) = self.answer(Op::TomlPath, &[]);
@@ -389,23 +413,28 @@ impl Scripts for RealScripts {
                 .env("SPIRA_GATE_SUITES", suites),
         )
     }
-    fn batch_sweep(&self, repo: &str, wait_zero: bool) -> i32 {
+    fn batch_sweep(&self, repo: &str, wait_zero: bool, lc_off: bool) -> i32 {
         let mut c = Command::new("bash");
         c.arg(self.home.join("batch.sh")).arg(repo);
         if wait_zero {
             c.env("SPIRA_QUEUE_BATCH_WAIT", "0");
         }
+        lifecycle_env(&mut c, lc_off);
         c.stdin(Stdio::null()).status().ok().and_then(|s| s.code()).unwrap_or(127)
     }
-    fn verdict(&self, repo: &str) -> i32 {
-        Command::new("bash").arg(self.home.join("verdict.sh")).arg(repo).stdin(Stdio::null()).status().ok().and_then(|s| s.code()).unwrap_or(127)
+    fn verdict(&self, repo: &str, lc_off: bool) -> i32 {
+        let mut c = Command::new("bash");
+        c.arg(self.home.join("verdict.sh")).arg(repo);
+        lifecycle_env(&mut c, lc_off);
+        c.stdin(Stdio::null()).status().ok().and_then(|s| s.code()).unwrap_or(127)
     }
-    fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool) -> i32 {
+    fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool, lc_off: bool) -> i32 {
         let mut c = Command::new(bin);
         c.arg("cut").arg(repo);
         if wait_zero {
             c.env("SPIRA_QUEUE_BATCH_WAIT", "0");
         }
+        lifecycle_env(&mut c, lc_off);
         c.stdin(Stdio::null()).status().ok().and_then(|s| s.code()).unwrap_or(127)
     }
     fn czar_fence(&self, class: &str) -> bool {
@@ -691,6 +720,7 @@ mod tests {
             d.join("lib.sh"),
             r#"SPIRA_RUN=/run/x; LANDSTATE=/run/x/landstate; SPIRA_RELEASES=; SPIRA_DB=/db
 spira_home_repo() { printf spira; }
+spira_repos() { printf 'spira\nsvc\n\nspira\n'; }
 repo_root() { [ "$1" = spira ] && printf /repo || return 1; }
 repo_land() { printf queue.local; }
 repo_field() { case "$2" in land) echo queue.local;; base) echo local/main;; esac; }
@@ -724,6 +754,56 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
         assert_eq!(r.remotes, vec!["origin", "upstream"]);
         let (_, other) = lib.context(Some("nope")).unwrap();
         assert_eq!(other.path, None);
+    }
+
+    #[test]
+    fn repos_seam_lists_home_first_once_each_and_ignores_log_lines() {
+        let _serial = crate::testutil::serial();
+        let lib = RealLib { home: stub_home() };
+        assert_eq!(lib.repos().unwrap(), vec!["spira".to_string(), "svc".to_string()]);
+        // a lib.sh that logs while it is sourced: the log precedes the mark, never a name
+        let d = crate::testutil::tmpdir("reallib-noisy");
+        fs::write(d.join("lib.sh"), "echo 'spira: noise while sourcing' >&1\nspira_repos() { printf 'a\\nb\\n'; }\n").unwrap();
+        fs::write(d.join("lc.sh"), "").unwrap();
+        assert_eq!(RealLib { home: d }.repos().unwrap(), vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn step_children_carry_the_lifecycle_switch_and_never_see_spira_lc_when_it_is_off() {
+        let _serial = crate::testutil::serial();
+        let d = crate::testutil::tmpdir("lc-env");
+        let rec = d.join("seen");
+        for s in ["verdict.sh", "batch.sh"] {
+            fs::write(d.join(s), format!("printf '%s %s %s|%s\\n' {s} \"$1\" \"${{SPIRA_LIFECYCLE_ENFORCE:-unset}}\" \"${{SPIRA_LC_BIN:-unset}}\" >> {}\n", rec.display())).unwrap();
+        }
+        let bin = d.join("batcher");
+        fs::write(&bin, format!("#!/bin/sh\nprintf 'batcher %s %s|%s\\n' \"$2\" \"${{SPIRA_LIFECYCLE_ENFORCE:-unset}}\" \"${{SPIRA_LC_BIN:-unset}}\" >> {}\n", rec.display())).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        let s = RealScripts { home: d.clone() };
+        s.verdict("spira", true);
+        s.batch_sweep("spira", false, true);
+        s.batcher_cut(&bin, "spira", false, true);
+        s.verdict("svc", false);
+        let seen = fs::read_to_string(&rec).unwrap();
+        let off = format!("0|{LC_OFF_BIN}");
+        let lines: Vec<&str> = seen.lines().collect();
+        assert_eq!(lines[0], format!("verdict.sh spira {off}"));
+        assert_eq!(lines[1], format!("batch.sh spira {off}"));
+        assert_eq!(lines[2], format!("batcher spira {off}"));
+        assert!(lines[3].starts_with("verdict.sh svc 1|"), "{}", lines[3]);
+        assert!(!Path::new(LC_OFF_BIN).exists(), "the OFF pin can never be executed");
+    }
+
+    #[test]
+    fn repos_seam_that_answers_nothing_is_an_error_not_an_empty_list() {
+        let _serial = crate::testutil::serial();
+        let d = crate::testutil::tmpdir("reallib-norepos");
+        fs::write(d.join("lib.sh"), "spira_repos() { return 0; }\n").unwrap();
+        fs::write(d.join("lc.sh"), "").unwrap();
+        assert!(RealLib { home: d.clone() }.repos().is_err());
+        fs::write(d.join("lib.sh"), "exit 9\n").unwrap();
+        assert!(RealLib { home: d }.repos().is_err());
     }
 
     #[test]

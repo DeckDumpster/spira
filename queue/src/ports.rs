@@ -101,6 +101,9 @@ pub trait Bd {
 pub trait Lib {
     /// R1: settings and, when `repo` is Some (or the home repo), that repository.
     fn context(&self, repo: Option<&str>) -> Result<(Settings, RepoCtx), String>;
+    /// R22: `spira_repos` — the home repository first, then every other registered name.
+    /// Err when the seam fails or answers nothing.
+    fn repos(&self) -> Result<Vec<String>, String>;
     /// `spira_toml_resolve` (only the transitions ask).
     fn toml_path(&self) -> Option<PathBuf>;
     /// R20: `repo_land` and `spira_landref` read back after a transition's write.
@@ -138,9 +141,11 @@ pub trait Lib {
 pub trait Scripts {
     /// `gate.sh <branch> <repo>` with SPIRA_GATE_BEAD / SPIRA_GATE_SUITES: (rc, output).
     fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String);
-    fn batch_sweep(&self, repo: &str, wait_zero: bool) -> i32;
-    fn verdict(&self, repo: &str) -> i32;
-    fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool) -> i32;
+    /// `lc_off`: lifecycle_enforce is OFF — the child must not reach spira-lc (real.rs pins
+    /// `SPIRA_LC_BIN` to [`crate::real::LC_OFF_BIN`] and `SPIRA_LIFECYCLE_ENFORCE=0`).
+    fn batch_sweep(&self, repo: &str, wait_zero: bool, lc_off: bool) -> i32;
+    fn verdict(&self, repo: &str, lc_off: bool) -> i32;
+    fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool, lc_off: bool) -> i32;
     fn czar_fence(&self, class: &str) -> bool;
     /// `build-tarball.sh build --bin-dir … <head> <repo>` → the tarball path it printed.
     fn build_tarball(&self, bins: &Path, repo_name: &str, name: &str, out: &Path, head: &str, repo: &Path) -> Option<PathBuf>;

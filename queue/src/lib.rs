@@ -33,6 +33,7 @@ pub fn dispatch(w: &World, cmd: &Cmd) -> i32 {
         Cmd::Stats => simple::stats(w),
         Cmd::Flush { repo } => simple::flush(w, repo.as_deref()),
         Cmd::Step { repo } => simple::step(w, repo),
+        Cmd::StepAll => simple::step_all(w),
         Cmd::Eject { id, repo, reason, suites, red, dry_run } => batch::eject(w, id, repo.as_deref(), reason, suites, *red, *dry_run),
         Cmd::Abandon { repo, reason, dry_run } => batch::abandon(w, repo.as_deref(), reason, *dry_run),
         Cmd::OpenBatch { repo, members, skip_pregate, dry_run } => batch::open_batch(w, repo.as_deref(), members, *skip_pregate, *dry_run),

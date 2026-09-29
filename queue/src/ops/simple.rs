@@ -132,15 +132,27 @@ pub fn stats(w: &World) -> i32 {
     OK
 }
 
+/// The lifecycle switch for a step or flush (queue-step-all.md, DESIGN.md §10): OFF →
+/// `lc_off = true` and spira-lc is never touched, not even probed; ON → the machine must
+/// answer before anything runs, else a loud refusal (exit 1).
+fn lc_mode(w: &World, label: &str) -> Result<bool, i32> {
+    if super::lifecycle_on(w) {
+        super::require_lc(w, label)?;
+        Ok(false)
+    } else {
+        Ok(true)
+    }
+}
+
 /// batch.sh's sweep, then the batcher's cut (queue.sh _batch_cut).
-fn batch_cut(w: &World, c: &Ctx, wait_zero: bool) -> i32 {
-    w.scripts.batch_sweep(&c.r.name, wait_zero);
+fn batch_cut(w: &World, c: &Ctx, wait_zero: bool, lc_off: bool) -> i32 {
+    w.scripts.batch_sweep(&c.r.name, wait_zero, lc_off);
     let bin = c.s.batcher_bin.as_ref().filter(|b| is_executable(b));
     let Some(bin) = bin else {
         w.err(format!("queue.sh: SPIRA_BATCHER_BIN not available — cannot cut a round for {}", c.r.name));
         return FAIL;
     };
-    w.scripts.batcher_cut(bin, &c.r.name, wait_zero)
+    w.scripts.batcher_cut(bin, &c.r.name, wait_zero, lc_off)
 }
 
 pub fn is_executable(p: &std::path::Path) -> bool {
@@ -160,7 +172,8 @@ pub fn flush(w: &World, repo: Option<&str>) -> i32 {
     if idents(w, "flush", &[("repo", &c.r.name)]).is_err() {
         return FAIL;
     }
-    batch_cut(w, &c, true)
+    let Ok(lc_off) = lc_mode(w, "flush") else { return FAIL };
+    batch_cut(w, &c, true, lc_off)
 }
 
 /// Routes stderr to stdout (`cmd_publish "$name" 2>&1`).
@@ -174,13 +187,102 @@ impl Emit for Merged<'_> {
     }
 }
 
+/// One stepper per repository (queue-step-all.md): the step lock, never the queue lock —
+/// verdict.sh and batch.sh take the queue lock themselves inside the step.
+enum StepLock {
+    Held(crate::lock::Guard),
+    Busy,
+    Unopenable,
+}
+
+fn step_lock(w: &World, c: &Ctx) -> StepLock {
+    use crate::lock::{try_step_lock, Acquire};
+    match try_step_lock(&c.s.queue_dir, &c.r.name) {
+        Acquire::Held(g) => StepLock::Held(g),
+        Acquire::Busy => {
+            w.err(format!("queue.sh step: another step holds the step lock for {} — skipped", c.r.name));
+            StepLock::Busy
+        }
+        Acquire::Unopenable => {
+            w.err(format!("queue.sh step: cannot open the step lock for {}", c.r.name));
+            StepLock::Unopenable
+        }
+    }
+}
+
 pub fn step(w: &World, repo: &str) -> i32 {
     let Ok(c) = resolve(w, "step", Some(repo)) else { return FAIL };
     if idents(w, "step", &[("repo", &c.r.name)]).is_err() {
         return FAIL;
     }
-    w.scripts.verdict(&c.r.name);
-    batch_cut(w, &c, false);
+    let Ok(lc_off) = lc_mode(w, "step") else { return FAIL };
+    match step_lock(w, &c) {
+        // The other stepper is doing this work; a skipped step is not a failure.
+        StepLock::Busy => OK,
+        StepLock::Unopenable => FAIL,
+        StepLock::Held(_g) => step_locked(w, &c, lc_off),
+    }
+}
+
+/// `step --all`: every queue-mode repository in spira_repos order, each under its own step
+/// lock; a repository's own step status is not propagated (spira-verdict.sh's `|| true`).
+/// Exit 1 only when the repository list cannot be read — absence is not success.
+pub fn step_all(w: &World) -> i32 {
+    let names = match w.lib.repos() {
+        Ok(n) => n,
+        Err(e) => {
+            w.err(format!("queue.sh step --all: cannot list repositories: {e}"));
+            return FAIL;
+        }
+    };
+    // One switch for the whole pass: ON and unreachable refuses before any repo is stepped.
+    let Ok(lc_off) = lc_mode(w, "step --all") else { return FAIL };
+    let (mut stepped, mut busy, mut unresolved) = (Vec::new(), Vec::new(), Vec::new());
+    for name in names {
+        let c = match w.lib.context(Some(&name)) {
+            Ok((s, r)) => Ctx { s, r },
+            Err(e) => {
+                w.err(format!("queue.sh step: cannot resolve the harness configuration: {e}"));
+                unresolved.push(name);
+                continue;
+            }
+        };
+        if !c.r.mode.is_queued() {
+            continue;
+        }
+        if idents(w, "step", &[("repo", &c.r.name)]).is_err() {
+            unresolved.push(name);
+            continue;
+        }
+        w.out(format!("queue.sh step --all: {}", c.r.name));
+        match step_lock(w, &c) {
+            StepLock::Held(g) => {
+                let _ = step_locked(w, &c, lc_off);
+                drop(g);
+                stepped.push(name);
+            }
+            StepLock::Busy => busy.push(name),
+            StepLock::Unopenable => unresolved.push(name),
+        }
+    }
+    let mut line = format!(
+        "queue.sh step --all: stepped={} busy={} unresolved={}",
+        stepped.len(),
+        busy.len(),
+        unresolved.len()
+    );
+    for (label, v) in [("stepped", &stepped), ("busy", &busy), ("unresolved", &unresolved)] {
+        if !v.is_empty() {
+            line.push_str(&format!(" {label}:{}", v.join(",")));
+        }
+    }
+    w.out(line);
+    OK
+}
+
+fn step_locked(w: &World, c: &Ctx, lc_off: bool) -> i32 {
+    w.scripts.verdict(&c.r.name, lc_off);
+    batch_cut(w, c, false, lc_off);
     if c.r.mode == LandMode::QueueLocal {
         let merged = Merged(w.io);
         let w2 = World { io: &merged, ..*w };

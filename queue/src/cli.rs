@@ -24,6 +24,8 @@ pub enum Cmd {
     Stats,
     Flush { repo: Option<String> },
     Step { repo: String },
+    /// `step --all`: every queue-mode repository (queue-step-all.md).
+    StepAll,
     Eject { id: String, repo: Option<String>, reason: Text, suites: String, red: bool, dry_run: bool },
     Abandon { repo: Option<String>, reason: Text, dry_run: bool },
     OpenBatch { repo: Option<String>, members: Text, skip_pregate: bool, dry_run: bool },
@@ -37,7 +39,7 @@ pub enum Cmd {
     Help,
 }
 
-pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>]";
+pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>]";
 
 /// A usage error: the message queue.sh printed (without trailing newline) and exit 2.
 #[derive(Debug, PartialEq, Eq)]
@@ -153,6 +155,15 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
         "flush" => Ok(Cmd::Flush { repo: pos(0) }),
         "step" => {
             let repo = pos(0).ok_or_else(|| Usage("queue.sh step: repo required".into()))?;
+            if repo == "--all" {
+                if args.len() > 1 {
+                    return Err(Usage("queue.sh step: --all takes no repository".into()));
+                }
+                return Ok(Cmd::StepAll);
+            }
+            if repo.starts_with("--") {
+                return Err(Usage(format!("queue.sh step: unknown option: {repo}")));
+            }
             Ok(Cmd::Step { repo })
         }
         "eject" => {

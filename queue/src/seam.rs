@@ -13,6 +13,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     Context,
+    Repos,
     TomlPath,
     Readback,
     LandMark,
@@ -91,6 +92,7 @@ exit 0
 fn body(op: Op) -> &'static str {
     match op {
         Op::Context => CONTEXT,
+        Op::Repos => "printf '\\036'\nspira_repos | while IFS= read -r __r; do [ -n \"$__r\" ] && printf '%s\\0' \"$__r\"; done\nexit \"${PIPESTATUS[0]}\"\n",
         Op::TomlPath => "printf '\\036%s' \"$(spira_toml_resolve 2>/dev/null)\"\nexit 0\n",
         Op::Readback => "printf '\\036%s\\0%s\\0' \"$(repo_land \"$1\")\" \"$(spira_landref \"$1\" 2>/dev/null)\"\nexit 0\n",
         Op::LandMark => "land_mark \"$1\" \"$2\" \"$3\" \"$4\"\nexit $?\n",
@@ -138,6 +140,17 @@ pub fn split_answer(stdout: &str) -> (&str, &str) {
         Some(i) => (&stdout[..i], &stdout[i + MARK.len_utf8()..]),
         None => (stdout, ""),
     }
+}
+
+/// Parse a `name\0` list (the Repos answer): empty names dropped, first occurrence kept.
+pub fn parse_names0(answer: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for n in answer.split('\0').map(str::trim).filter(|n| !n.is_empty()) {
+        if !out.iter().any(|o| o == n) {
+            out.push(n.to_string());
+        }
+    }
+    out
 }
 
 /// Parse the Context answer: `key=value\0` records.
