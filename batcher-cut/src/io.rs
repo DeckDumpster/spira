@@ -317,6 +317,14 @@ fn repo_branch_ids(repo: &Repo) -> Result<std::collections::BTreeSet<String>, St
     Ok(out.lines().filter_map(|l| l.strip_prefix("spira/")).map(str::to_string).collect())
 }
 
+/// A CERTIFIED record is batchable only while its bead is still waiting for a round: OPEN
+/// and carrying the submitted label. A stale record of a CLOSED bead (an incident, an ask, a
+/// test bead, work already landed) is not a member — the first live cut (2026-09-29) merged
+/// nine such branches, one of them `TEST-DRAIN-DEBUG-DELETE-ME` (sp-1346p).
+pub fn eligible(status: &str, labels: &[&str], submitted_label: &str) -> bool {
+    status == "open" && labels.contains(&submitted_label)
+}
+
 /// The certified pool for `repo`: every CERTIFIED landstate record whose branch exists in
 /// this repo's own checkout, with title/priority/express filled in from one bulk `bd show`.
 pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
@@ -329,6 +337,7 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
         serde_json::Value::Array(a) => a,
         o => vec![o],
     };
+    let submitted_label = std::env::var("SPIRA_SUBMITTED_LABEL").ok().filter(|l| !l.is_empty()).unwrap_or_else(|| "spira-submitted".into());
     let mut by_id: BTreeMap<String, (Option<u8>, String, bool)> = BTreeMap::new();
     for it in items {
         let Some(id) = it.get("id").and_then(|x| x.as_str()) else { continue };
@@ -337,6 +346,10 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
             .and_then(|l| l.as_array())
             .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
             .unwrap_or_default();
+        let status = it.get("status").and_then(|x| x.as_str()).unwrap_or("");
+        if !eligible(status, &labels, &submitted_label) {
+            continue;
+        }
         let express = labels.contains(&env.express_label.as_str());
         let priority = it.get("priority").and_then(|p| p.as_u64()).map(|p| p.min(9) as u8);
         let title = it.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
@@ -1162,6 +1175,15 @@ mod land_tests {
 
 #[cfg(test)]
 mod result_path_tests {
+    #[test]
+    fn only_open_submitted_beads_are_batch_members() {
+        let sub = "spira-submitted";
+        assert!(eligible("open", &["repo:spira", sub], sub));
+        assert!(!eligible("closed", &["repo:spira", sub], sub), "a closed bead's stale CERTIFIED record is not a member");
+        assert!(!eligible("open", &["repo:spira"], sub), "reopened for rework: no longer submitted");
+        assert!(!eligible("in_progress", &[sub], sub), "an aeon holds it");
+    }
+
     use super::*;
 
     fn tmpdir(tag: &str) -> PathBuf {
