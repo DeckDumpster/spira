@@ -36,6 +36,9 @@ pub enum Op {
     BaseConflict,
     PfGate,
     SettlePublish,
+    /// R23: land-local's post-deploy smoke (DESIGN.md §8 D11). Its own fixed script: it
+    /// sources the checkout's `conf.sh`, never the PRELUDE's lib.sh.
+    ConfSmoke,
 }
 
 /// The record separator that precedes a seam's machine-readable answer on stdout, so any
@@ -89,6 +92,21 @@ __kv remotes "$__rem"
 exit 0
 "#;
 
+/// R23 in full: read the checkout's spira dir, source its conf.sh (silenced — only the
+/// answer matters) and answer the SPIRA_DB it resolved. No `set -u`: conf.sh is sourced
+/// here as a unit's shell would source it.
+const CONF_SMOKE: &str = r#"{
+__q=()
+while IFS= read -r -d '' __v; do __q+=("$__v"); done
+exec </dev/null
+HERE="${__q[0]}"
+unset __q __v
+. "$HERE/conf.sh" >/dev/null 2>&1
+printf '\036%s' "${SPIRA_DB:-}"
+exit 0
+}
+"#;
+
 fn body(op: Op) -> &'static str {
     match op {
         Op::Context => CONTEXT,
@@ -115,11 +133,15 @@ fn body(op: Op) -> &'static str {
         Op::BaseConflict => ". \"$HERE/batch.sh\" || exit 96\n_base_conflict \"$1\" \"$2\" \"$3\"\nexit $?\n",
         Op::PfGate => ". \"$HERE/batch.sh\" || exit 96\n_PF_DEADLINE=$(( $(date +%s) + $4 ))\n__o=\"$(_pf_gate \"$1\" \"$2\" \"$3\")\"; __rc=$?\nprintf '\\036%s' \"$__o\"\nexit $__rc\n",
         Op::SettlePublish => ". \"$HERE/verdict.sh\" || exit 96\n_verdict_settle_publish \"$1\" \"$2\"\nexit $?\n",
+        Op::ConfSmoke => "",
     }
 }
 
 /// The complete fixed script for `op`.
 pub fn script(op: Op) -> String {
+    if op == Op::ConfSmoke {
+        return CONF_SMOKE.to_string();
+    }
     format!("{PRELUDE}{}}}\n", body(op))
 }
 
@@ -173,7 +195,7 @@ mod tests {
             Op::Context, Op::TomlPath, Op::Readback, Op::LandMark, Op::BeadReopen, Op::CauseEvent, Op::ReleaseClaim,
             Op::CloseOnLand, Op::GhCloseout, Op::Comment, Op::Notify, Op::Event, Op::Divergence, Op::Push, Op::Rebase,
             Op::LandSubject, Op::SortRows, Op::CancelRuns, Op::LcReturned, Op::FormatBatch, Op::BaseConflict, Op::PfGate,
-            Op::SettlePublish,
+            Op::SettlePublish, Op::ConfSmoke,
         ] {
             let s = script(op);
             assert!(s.starts_with("{\n") && s.ends_with("}\n"), "{op:?}");

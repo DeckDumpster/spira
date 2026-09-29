@@ -2,6 +2,7 @@
 //! writes only through the ports in `World` (DESIGN.md §2.2).
 
 pub mod batch;
+pub mod deploy;
 pub mod land;
 pub mod publish;
 pub mod simple;

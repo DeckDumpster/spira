@@ -26,6 +26,15 @@ struct FGit {
     merge_fail: RefCell<BTreeSet<String>>,
     branches: RefCell<Vec<(String, String)>>,
     calls: RefCell<Vec<String>>,
+    /// D11: `rev-parse --show-toplevel` answers, per directory.
+    toplevels: RefCell<BTreeMap<PathBuf, PathBuf>>,
+    /// D11: a per-path HEAD (the checkout's), consulted before the global refs.
+    heads: RefCell<BTreeMap<PathBuf, String>>,
+    dirty: RefCell<Vec<String>>,
+    listings: RefCell<BTreeMap<String, BTreeMap<String, TreeEntry>>>,
+    blobs: RefCell<BTreeMap<String, Vec<u8>>>,
+    /// reset --mixed "succeeds" without moving HEAD (the verify-after-reset case).
+    reset_lies: Cell<bool>,
 }
 
 impl FGit {
@@ -45,6 +54,11 @@ impl FGit {
 
 impl Git for FGit {
     fn rev_parse(&self, _repo: &Path, rev: &str) -> Option<String> {
+        if rev == "HEAD" {
+            if let Some(h) = self.heads.borrow().get(_repo) {
+                return Some(h.clone());
+            }
+        }
         if let Some(t) = rev.strip_suffix("^{tree}") {
             let sha = self.rev_parse(_repo, t)?;
             return self.trees.borrow().get(&sha).cloned();
@@ -115,6 +129,25 @@ impl Git for FGit {
     fn is_clean(&self, _: &Path) -> bool {
         true
     }
+    fn toplevel(&self, dir: &Path) -> Option<PathBuf> {
+        self.toplevels.borrow().get(dir).cloned()
+    }
+    fn tracked_changes(&self, _: &Path) -> Result<Vec<String>, String> {
+        Ok(self.dirty.borrow().clone())
+    }
+    fn tree(&self, _: &Path, rev: &str) -> Result<BTreeMap<String, TreeEntry>, String> {
+        self.listings.borrow().get(rev).cloned().ok_or_else(|| format!("no tree {rev}"))
+    }
+    fn blob(&self, _: &Path, sha: &str) -> Result<Vec<u8>, String> {
+        self.blobs.borrow().get(sha).cloned().ok_or_else(|| format!("no blob {sha}"))
+    }
+    fn reset_mixed(&self, repo: &Path, sha: &str) -> bool {
+        self.calls.borrow_mut().push(format!("reset --mixed {sha}"));
+        if !self.reset_lies.get() {
+            self.heads.borrow_mut().insert(repo.to_path_buf(), sha.into());
+        }
+        true
+    }
 }
 
 #[derive(Default)]
@@ -148,6 +181,8 @@ struct FLib {
     repos: RefCell<Result<Vec<String>, String>>,
     /// Per-name contexts; a name not here resolves to `r`.
     by_name: RefCell<BTreeMap<String, Result<RepoCtx, String>>>,
+    /// R23's answer (the SPIRA_DB the checkout's conf.sh resolves), and the homes it smoked.
+    smoke: RefCell<Result<String, String>>,
 }
 
 impl FLib {
@@ -240,6 +275,10 @@ impl Lib for FLib {
     fn pf_gate(&self, br: &str, _: &str, _: &str, wall: u64) -> (i32, String) {
         self.log(format!("pf_gate {br} {wall}"));
         (self.pf_rc.get(), "pf output".into())
+    }
+    fn conf_smoke(&self, home: &Path) -> Result<String, String> {
+        self.log(format!("conf_smoke {}", home.display()));
+        self.smoke.borrow().clone()
     }
     fn settle_publish(&self, name: &str, _: &Path) -> i32 {
         self.log(format!("settle {name}"));
@@ -516,6 +555,7 @@ impl T {
             conflict_with_base: RefCell::default(),
             repos: RefCell::new(Ok(vec!["spira".into()])),
             by_name: RefCell::default(),
+            smoke: RefCell::new(Ok(dir.display().to_string())),
         };
         let scripts = FScripts::default();
         scripts.fence_ok.set(true);
@@ -1341,6 +1381,237 @@ fn land_local_reads_members_from_stdin() {
     *t.env.stdin.borrow_mut() = "sp-a:ta\nsp-b:tb\n".into();
     assert_eq!(t.run(&["land-local", "--head", "h1", "--members-file", "-"]), 0);
     assert!(t.lib.has("land_mark sp-b LANDED tb"));
+}
+
+// ------------------------------------------------ land-local: the checkout deploy (§8 D11)
+
+fn te(mode: &str, sha: &str) -> TreeEntry {
+    TreeEntry { mode: mode.into(), sha: sha.into() }
+}
+
+fn mode_of(p: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(p).unwrap().permissions().mode() & 0o777
+}
+
+/// The landing repository IS the running harness checkout (`$SPIRA_HOME`'s top level), on
+/// main at b0, no release in force. b0 -> h1 modifies mod.sh (and makes it executable),
+/// flips tool's mode only, adds new/add.txt and a symlink, deletes gone.txt and
+/// sub/gone2.txt. The round worktree's target/release holds spira-config and spira-lc.
+fn checkout_world(mut t: T) -> (T, PathBuf, String) {
+    use std::os::unix::fs::PermissionsExt;
+    local_repo(&t);
+    let co = t.dir.join("checkout");
+    fs::create_dir_all(co.join("spira")).unwrap();
+    fs::create_dir_all(co.join("sub")).unwrap();
+    for (p, body) in [("keep.sh", "keep"), ("mod.sh", "old mod"), ("gone.txt", "g"), ("sub/gone2.txt", "g2"), ("tool", "tool")] {
+        fs::write(co.join(p), body).unwrap();
+        fs::set_permissions(co.join(p), fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    t.lib.s.home = co.join("spira");
+    t.lib.r.borrow_mut().path = Some(co.clone());
+    t.git.toplevels.borrow_mut().insert(co.join("spira"), co.clone());
+    t.git.heads.borrow_mut().insert(co.clone(), "b0".into());
+    *t.git.current.borrow_mut() = Some("main".into());
+    let old: BTreeMap<String, TreeEntry> = [
+        ("keep.sh", te("100644", "k1")),
+        ("mod.sh", te("100644", "m1")),
+        ("gone.txt", te("100644", "g1")),
+        ("sub/gone2.txt", te("100644", "g2")),
+        ("tool", te("100644", "t1")),
+    ]
+    .into_iter()
+    .map(|(p, e)| (p.to_string(), e))
+    .collect();
+    let new: BTreeMap<String, TreeEntry> = [
+        ("keep.sh", te("100644", "k1")),
+        ("mod.sh", te("100755", "m2")),
+        ("tool", te("100755", "t1")),
+        ("new/add.txt", te("100644", "a1")),
+        ("link", te("120000", "l1")),
+    ]
+    .into_iter()
+    .map(|(p, e)| (p.to_string(), e))
+    .collect();
+    t.git.listings.borrow_mut().insert("b0".into(), old);
+    t.git.listings.borrow_mut().insert("h1".into(), new);
+    for (sha, body) in [("m2", "new mod"), ("t1", "tool"), ("a1", "added"), ("l1", "keep.sh")] {
+        t.git.blobs.borrow_mut().insert(sha.into(), body.as_bytes().to_vec());
+    }
+    let wt = round_worktree(&t, "T1");
+    let lc = wt.join("target/release/spira-lc");
+    fs::write(&lc, "#!/bin/sh\n").unwrap();
+    fs::set_permissions(&lc, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(wt.join("target/release/spira-config.d"), "not executable").unwrap();
+    let wts = wt.display().to_string();
+    (t, co, wts)
+}
+
+fn land_to_checkout(t: &T, wts: &str) -> i32 {
+    t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta", "--worktree", wts])
+}
+
+#[test]
+fn land_local_deploys_the_running_checkout_by_stage_and_swap() {
+    let (t, co, wts) = checkout_world(T::new(LandMode::QueueLocal));
+    assert_eq!(land_to_checkout(&t, &wts), 0, "{}", t.err());
+    assert_eq!(t.git.get("refs/heads/local/main").as_deref(), Some("h1"));
+    // modify (content + mode), mode-only change, add, symlink, delete (+ emptied dir)
+    assert_eq!(fs::read_to_string(co.join("mod.sh")).unwrap(), "new mod");
+    assert_eq!(mode_of(&co.join("mod.sh")), 0o755);
+    assert_eq!(mode_of(&co.join("tool")), 0o755);
+    assert_eq!(fs::read_to_string(co.join("new/add.txt")).unwrap(), "added");
+    assert_eq!(mode_of(&co.join("new/add.txt")), 0o644);
+    assert_eq!(fs::read_link(co.join("link")).unwrap(), PathBuf::from("keep.sh"));
+    assert!(!co.join("gone.txt").exists());
+    assert!(!co.join("sub").exists(), "an emptied directory goes with its last file");
+    assert_eq!(fs::read_to_string(co.join("keep.sh")).unwrap(), "keep", "an unchanged file is never rewritten");
+    let leftovers: Vec<_> = fs::read_dir(&co).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().contains("land-new")).collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+    // reset --mixed, then the re-read HEAD is the head
+    assert!(t.git.calls.borrow().iter().any(|c| c == "reset --mixed h1"));
+    assert_eq!(t.git.heads.borrow().get(&co).map(String::as_str), Some("h1"));
+    // binaries: the round's own executables; spira-lc skipped with lifecycle off
+    let rel = co.join("target/release");
+    assert_eq!(fs::read_to_string(rel.join("spira-config")).unwrap(), "#!/bin/sh\n");
+    assert_eq!(mode_of(&rel.join("spira-config")), 0o755);
+    assert!(!rel.join("spira-lc").exists(), "spira-lc is never installed with lifecycle_enforce off");
+    assert!(!rel.join("spira-config.d").exists(), "only executables are installed");
+    // smoke against the checkout's own spira dir; the summary line
+    assert!(t.lib.has(&format!("conf_smoke {}", co.join("spira").display())));
+    assert!(t.out().contains("queue.sh land-local: production checkout b0 -> h1, 6 files, 1 binaries"), "{}", t.out());
+    assert!(t.lib.has("land_mark sp-a LANDED ta"));
+    t.assert_lc_untouched();
+}
+
+#[test]
+fn land_local_deploy_installs_spira_lc_only_with_lifecycle_on() {
+    let (t, co, wts) = checkout_world(T::new(LandMode::QueueLocal));
+    t.var("SPIRA_LIFECYCLE_ENFORCE", "1");
+    assert_eq!(land_to_checkout(&t, &wts), 0, "{}", t.err());
+    assert!(co.join("target/release/spira-lc").exists());
+    assert!(t.out().contains("6 files, 2 binaries"), "{}", t.out());
+}
+
+fn assert_refused_untouched(t: &T, co: &Path, why: &str) {
+    assert!(t.err().contains(why), "{}", t.err());
+    assert!(t.err().contains("refused, nothing changed"), "{}", t.err());
+    assert_eq!(t.git.get("refs/heads/local/main").as_deref(), Some("b0"));
+    assert_eq!(fs::read_to_string(co.join("mod.sh")).unwrap(), "old mod");
+    assert!(co.join("gone.txt").exists());
+    assert!(!t.git.calls.borrow().iter().any(|c| c.starts_with("reset")));
+    assert!(!t.lib.has("land_mark"));
+}
+
+#[test]
+fn land_local_deploy_refuses_a_checkout_off_the_base_branch() {
+    let (t, co, wts) = checkout_world(T::new(LandMode::QueueLocal));
+    *t.git.current.borrow_mut() = Some("hotfix".into());
+    assert_eq!(land_to_checkout(&t, &wts), 1);
+    assert_refused_untouched(&t, &co, "is not on main (it is on hotfix)");
+}
+
+#[test]
+fn land_local_deploy_refuses_when_checkout_head_is_not_an_ancestor() {
+    let (t, co, wts) = checkout_world(T::new(LandMode::QueueLocal));
+    t.git.heads.borrow_mut().insert(co.clone(), "x9".into());
+    assert_eq!(land_to_checkout(&t, &wts), 1);
+    assert_refused_untouched(&t, &co, "HEAD x9 is not an ancestor of h1");
+}
+
+#[test]
+fn land_local_deploy_refuses_tracked_edits_outside_the_allow_list() {
+    let (t, co, wts) = checkout_world(T::new(LandMode::QueueLocal));
+    *t.git.dirty.borrow_mut() = vec!["spira/chamber/builder.md".into(), "mod.sh".into()];
+    t.var("SPIRA_LAND_DEPLOY_ALLOW", "spira/chamber/builder.md:other");
+    assert_eq!(land_to_checkout(&t, &wts), 1);
+    assert_refused_untouched(&t, &co, "1 tracked edit(s) outside SPIRA_LAND_DEPLOY_ALLOW: mod.sh");
+    // every edit allow-listed (an override re-applies them): the deploy proceeds
+    t.var("SPIRA_LAND_DEPLOY_ALLOW", "spira/chamber/builder.md:mod.sh");
+    assert_eq!(land_to_checkout(&t, &wts), 0, "{}", t.err());
+    assert_eq!(fs::read_to_string(co.join("mod.sh")).unwrap(), "new mod");
+}
+
+#[test]
+fn land_local_deploy_requires_the_round_worktree() {
+    let (t, co, _) = checkout_world(T::new(LandMode::QueueLocal));
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1);
+    assert_refused_untouched(&t, &co, "--worktree <round worktree> is required to deploy the production checkout");
+}
+
+#[test]
+fn land_local_deploy_refuses_a_submodule_change() {
+    let (t, co, wts) = checkout_world(T::new(LandMode::QueueLocal));
+    t.git.listings.borrow_mut().get_mut("h1").unwrap().insert("vendor/x".into(), te("160000", "s1"));
+    assert_eq!(land_to_checkout(&t, &wts), 1);
+    assert_refused_untouched(&t, &co, "vendor/x is a submodule change");
+}
+
+#[test]
+fn land_local_deploy_write_failure_stops_before_the_reset() {
+    let (t, co, wts) = checkout_world(T::new(LandMode::QueueLocal));
+    // `new` is a file where new/add.txt needs a directory: the third write fails
+    fs::write(co.join("new"), "in the way").unwrap();
+    assert_eq!(land_to_checkout(&t, &wts), 1);
+    let err = t.err();
+    assert!(err.contains("LAND DEPLOY FAILED: cannot create"), "{err}");
+    assert!(err.contains("2 of 6 file(s) swapped"), "{err}");
+    assert!(err.contains("is NOT reset (HEAD still b0)"), "{err}");
+    assert!(!t.git.calls.borrow().iter().any(|c| c.starts_with("reset")));
+    assert!(!co.join("target/release/spira-config").exists(), "binaries are skipped after a failed move");
+    assert!(!t.lib.has("conf_smoke"));
+    // the ref stays landed and the members are recorded — only the exit says it failed
+    assert_eq!(t.git.get("refs/heads/local/main").as_deref(), Some("h1"));
+    assert!(t.lib.has("land_mark sp-a LANDED ta"));
+    assert!(!t.out().contains("production checkout b0 -> h1"));
+}
+
+#[test]
+fn land_local_deploy_reports_a_head_that_does_not_verify_after_the_reset() {
+    let (t, co, wts) = checkout_world(T::new(LandMode::QueueLocal));
+    t.git.reset_lies.set(true);
+    assert_eq!(land_to_checkout(&t, &wts), 1);
+    assert!(t.err().contains("LAND DEPLOY FAILED: the production checkout's HEAD reads b0 after the reset, not h1"), "{}", t.err());
+    assert!(!co.join("target/release/spira-config").exists());
+    assert!(!t.out().contains("production checkout b0 -> h1"));
+    assert_eq!(t.git.get("refs/heads/local/main").as_deref(), Some("h1"));
+}
+
+#[test]
+fn land_local_deploy_smoke_failure_exits_non_zero_without_reverting() {
+    let (t, co, wts) = checkout_world(T::new(LandMode::QueueLocal));
+    *t.lib.smoke.borrow_mut() = Ok(String::new());
+    assert_eq!(land_to_checkout(&t, &wts), 1);
+    assert!(t.err().contains("LAND SMOKE FAILED: production conf.sh no longer resolves SPIRA_DB (got '')"), "{}", t.err());
+    assert!(t.err().contains("are NOT reverted"));
+    assert_eq!(t.git.get("refs/heads/local/main").as_deref(), Some("h1"));
+    assert_eq!(t.git.heads.borrow().get(&co).map(String::as_str), Some("h1"));
+    assert!(co.join("target/release/spira-config").exists());
+    assert!(t.out().contains("production checkout b0 -> h1, 6 files, 1 binaries"));
+    // a SPIRA_DB that is not a directory fails the same way
+    let (t, _, wts) = checkout_world(T::new(LandMode::QueueLocal));
+    *t.lib.smoke.borrow_mut() = Ok("/nonexistent/db".into());
+    assert_eq!(land_to_checkout(&t, &wts), 1);
+    assert!(t.err().contains("LAND SMOKE FAILED"));
+}
+
+#[test]
+fn land_local_leaves_a_checkout_alone_unless_it_is_the_running_harness_in_checkout_mode() {
+    // another repository: $SPIRA_HOME's top level is elsewhere
+    let (t, co, wts) = checkout_world(T::new(LandMode::QueueLocal));
+    t.git.toplevels.borrow_mut().insert(co.join("spira"), t.dir.join("elsewhere"));
+    assert_eq!(land_to_checkout(&t, &wts), 0, "{}", t.err());
+    assert_eq!(fs::read_to_string(co.join("mod.sh")).unwrap(), "old mod");
+    assert!(!t.git.calls.borrow().iter().any(|c| c.starts_with("reset")));
+    assert!(!co.join("target/release").exists());
+    assert!(!t.lib.has("conf_smoke"));
+    // the running checkout, but a release is in force: the release step, never the deploy
+    let (t, co, wts) = checkout_world(T::new(LandMode::QueueLocal));
+    release_in_force(&t);
+    assert_eq!(land_to_checkout(&t, &wts), 0, "{}", t.err());
+    assert!(t.out().contains("activated spira-h1"));
+    assert_eq!(fs::read_to_string(co.join("mod.sh")).unwrap(), "old mod");
+    assert!(!t.git.calls.borrow().iter().any(|c| c.starts_with("reset")));
 }
 
 // ----------------------------------------------------------------------------- publish

@@ -145,6 +145,71 @@ impl Git for RealGit {
     fn is_clean(&self, wt: &Path) -> bool {
         stdout_of(git(wt).args(["status", "--porcelain"])).map(|s| s.trim().is_empty()).unwrap_or(false)
     }
+    fn toplevel(&self, dir: &Path) -> Option<PathBuf> {
+        stdout_of(git(dir).args(["rev-parse", "--show-toplevel"])).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).map(PathBuf::from)
+    }
+    fn tracked_changes(&self, repo: &Path) -> Result<Vec<String>, String> {
+        let o = git(repo)
+            .args(["status", "--porcelain=v1", "-z", "--untracked-files=no"])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !o.status.success() {
+            return Err(String::from_utf8_lossy(&o.stderr).trim().to_string());
+        }
+        Ok(parse_status_z(&String::from_utf8_lossy(&o.stdout)))
+    }
+    fn tree(&self, repo: &Path, rev: &str) -> Result<std::collections::BTreeMap<String, TreeEntry>, String> {
+        let o = git(repo).args(["ls-tree", "-r", "-z", "--full-tree", rev]).stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
+        if !o.status.success() {
+            return Err(String::from_utf8_lossy(&o.stderr).trim().to_string());
+        }
+        parse_ls_tree_z(&String::from_utf8_lossy(&o.stdout))
+    }
+    fn blob(&self, repo: &Path, sha: &str) -> Result<Vec<u8>, String> {
+        let o = git(repo).args(["cat-file", "blob", sha]).stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
+        if !o.status.success() {
+            return Err(String::from_utf8_lossy(&o.stderr).trim().to_string());
+        }
+        Ok(o.stdout)
+    }
+    fn reset_mixed(&self, repo: &Path, sha: &str) -> bool {
+        ok(git(repo).args(["reset", "-q", "--mixed", sha]).stdout(Stdio::null()).stderr(Stdio::null()))
+    }
+}
+
+/// `status --porcelain=v1 -z`: `XY <path>\0`, and a rename or copy (`R`/`C` in either
+/// column) carries its source path as the next record. Every path named, in order.
+pub fn parse_status_z(out: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut it = out.split('\0').filter(|r| !r.is_empty());
+    while let Some(rec) = it.next() {
+        if rec.len() < 4 {
+            continue;
+        }
+        let (xy, path) = rec.split_at(3);
+        paths.push(path.to_string());
+        if xy.contains('R') || xy.contains('C') {
+            if let Some(src) = it.next() {
+                paths.push(src.to_string());
+            }
+        }
+    }
+    paths
+}
+
+/// `ls-tree -r -z`: `<mode> <type> <sha>\t<path>\0`.
+pub fn parse_ls_tree_z(out: &str) -> Result<std::collections::BTreeMap<String, TreeEntry>, String> {
+    let mut m = std::collections::BTreeMap::new();
+    for rec in out.split('\0').filter(|r| !r.is_empty()) {
+        let (meta, path) = rec.split_once('\t').ok_or_else(|| format!("unparseable ls-tree record: {rec}"))?;
+        let mut f = meta.split(' ');
+        let (Some(mode), Some(_kind), Some(sha)) = (f.next(), f.next(), f.next()) else {
+            return Err(format!("unparseable ls-tree record: {rec}"));
+        };
+        m.insert(path.to_string(), TreeEntry { mode: mode.to_string(), sha: sha.to_string() });
+    }
+    Ok(m)
 }
 
 // ------------------------------------------------------------------------------------- bd
@@ -393,6 +458,28 @@ impl Lib for RealLib {
     }
     fn settle_publish(&self, name: &str, path: &Path) -> i32 {
         self.call(Op::SettlePublish, &[name, &path.display().to_string()], false).0
+    }
+    fn conf_smoke(&self, home: &Path) -> Result<String, String> {
+        let mut cmd = Command::new("bash");
+        // Resolve as a freshly started unit would: nothing this process inherited from its
+        // own conf.sh may stand in for what the checkout's conf.sh resolves now.
+        for (k, _) in std::env::vars_os() {
+            let k = k.to_string_lossy().to_string();
+            if k.starts_with("SPIRA_") && k != "SPIRA_CONF" && k != "SPIRA_TOML" {
+                cmd.env_remove(&k);
+            }
+        }
+        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        let mut child = cmd.spawn().map_err(|e| format!("cannot run bash: {e}"))?;
+        if let Some(mut si) = child.stdin.take() {
+            let _ = si.write_all(&seam::stdin_bytes(Op::ConfSmoke, &[&home.display().to_string()]));
+        }
+        let o = child.wait_with_output().map_err(|e| e.to_string())?;
+        let out = String::from_utf8_lossy(&o.stdout);
+        if !out.contains(seam::MARK) {
+            return Err(format!("the smoke script answered nothing (exit {:?})", o.status.code()));
+        }
+        Ok(seam::split_answer(&out).1.to_string())
     }
 }
 
@@ -804,6 +891,73 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
         assert!(RealLib { home: d.clone() }.repos().is_err());
         fs::write(d.join("lib.sh"), "exit 9\n").unwrap();
         assert!(RealLib { home: d }.repos().is_err());
+    }
+
+    #[test]
+    fn conf_smoke_sources_the_checkouts_conf_sh_without_the_inherited_spira_values() {
+        let _serial = crate::testutil::serial();
+        let d = crate::testutil::tmpdir("conf-smoke");
+        // An inherited SPIRA_DB must not survive into the smoke: conf.sh's `:=` would keep it.
+        fs::write(d.join("conf.sh"), "echo noise\n: \"${SPIRA_DB:=/from/conf}\"\n").unwrap();
+        std::env::set_var("SPIRA_DB", "/inherited");
+        let got = RealLib { home: PathBuf::from("/unused") }.conf_smoke(&d);
+        std::env::remove_var("SPIRA_DB");
+        assert_eq!(got.unwrap(), "/from/conf");
+        fs::write(d.join("conf.sh"), "return 1\n").unwrap();
+        assert_eq!(RealLib { home: PathBuf::from("/unused") }.conf_smoke(&d).unwrap(), "");
+    }
+
+    #[test]
+    fn status_and_ls_tree_parse_their_z_formats() {
+        assert_eq!(parse_status_z(" M a b\0R  new\0old\0M  c\0"), vec!["a b", "new", "old", "c"]);
+        let t = parse_ls_tree_z("100755 blob aa\tbin/x y\x00120000 blob bb\tlink\0").unwrap();
+        assert_eq!(t["bin/x y"], TreeEntry { mode: "100755".into(), sha: "aa".into() });
+        assert_eq!(t["link"].mode, "120000");
+        assert!(parse_ls_tree_z("garbage\0").is_err());
+    }
+
+    #[test]
+    fn real_git_lists_trees_reads_blobs_status_and_resets_for_the_checkout_deploy() {
+        let _serial = crate::testutil::serial();
+        let d = crate::testutil::tmpdir("realgit-deploy");
+        let g = |args: &[&str]| {
+            let o = Command::new("git")
+                .arg("-C")
+                .arg(&d)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(args)
+                .stdin(Stdio::null())
+                .output()
+                .unwrap();
+            assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+            String::from_utf8_lossy(&o.stdout).trim().to_string()
+        };
+        g(&["init", "-q", "-b", "main"]);
+        fs::create_dir_all(d.join("spira")).unwrap();
+        fs::write(d.join("spira/a b.sh"), "one").unwrap();
+        g(&["add", "."]);
+        g(&["commit", "-q", "-m", "one"]);
+        let c1 = g(&["rev-parse", "HEAD"]);
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(d.join("spira/a b.sh"), fs::Permissions::from_mode(0o755)).unwrap();
+        std::os::unix::fs::symlink("spira/a b.sh", d.join("ln")).unwrap();
+        g(&["add", "."]);
+        g(&["commit", "-q", "-m", "two"]);
+        let c2 = g(&["rev-parse", "HEAD"]);
+        let git = RealGit;
+        assert_eq!(git.toplevel(&d.join("spira")).map(|p| fs::canonicalize(p).unwrap()), Some(fs::canonicalize(&d).unwrap()));
+        let t2 = git.tree(&d, &c2).unwrap();
+        assert_eq!(t2["spira/a b.sh"].mode, "100755");
+        assert_eq!(t2["ln"].mode, "120000");
+        assert_eq!(git.blob(&d, &t2["ln"].sha).unwrap(), b"spira/a b.sh");
+        assert!(git.tracked_changes(&d).unwrap().is_empty());
+        fs::write(d.join("spira/a b.sh"), "edited").unwrap();
+        fs::write(d.join("untracked"), "x").unwrap();
+        assert_eq!(git.tracked_changes(&d).unwrap(), vec!["spira/a b.sh".to_string()]);
+        assert!(git.reset_mixed(&d, &c1));
+        assert_eq!(git.rev_parse(&d, "HEAD").as_deref(), Some(c1.as_str()));
+        assert_eq!(fs::read_to_string(d.join("spira/a b.sh")).unwrap(), "edited", "--mixed never touches the files");
+        let _ = fs::remove_dir_all(&d);
     }
 
     #[test]

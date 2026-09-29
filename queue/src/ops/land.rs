@@ -1,5 +1,5 @@
 //! queue.local's terminal step and its undo: land-local, rollback-local (DESIGN.md §2.2,
-//! §8 D2/D3).
+//! §8 D2/D3/D11).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -149,6 +149,19 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
         None => None,
     };
 
+    // In checkout mode, when the landing repository is the running harness checkout, the
+    // land also deploys it (§8 D11) — every precondition is checked here, before the CAS.
+    let deploy_plan = match (release_needed, super::deploy::running_checkout(w, &c.s.home, &path)) {
+        (false, Some(checkout)) => match super::deploy::prepare(w, &checkout, &base, &head, bins.as_deref()) {
+            Ok(p) => Some(p),
+            Err(why) => {
+                w.err(format!("queue.sh land-local: {why}; refused, nothing changed"));
+                return FAIL;
+            }
+        },
+        _ => None,
+    };
+
     // A CAS, never a plain write.
     let base_ref = format!("refs/heads/{base}");
     if !w.git.update_ref(&path, &base_ref, &head, Some(&base_sha)) {
@@ -176,6 +189,12 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
             releases.as_deref().map(|p| p.display().to_string()).unwrap_or_else(|| "<SPIRA_RELEASES unset>".into())
         ));
     }
+    // The checkout deploy (§8 D11) runs right after the CAS; its failures are loud, never
+    // revert the ref, and make the exit non-zero once the members are recorded.
+    let deployed = match &deploy_plan {
+        Some(plan) => super::deploy::run(w, plan, &head, &c.s.home, super::lifecycle_on(w)),
+        None => true,
+    };
 
     let seqfile = c.queue_file("round-seq");
     let n = records::read_seq(&seqfile) + 1;
@@ -196,6 +215,10 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
         &format!("{base} fast-forwarded to {head} (round {n}, archived at {archive}). Members: {listed}"),
     );
     w.out(format!("queue.sh land-local: {base} fast-forwarded to {head} (round {n}, archived at {archive})"));
+    if !deployed {
+        w.err(format!("queue.sh land-local: {base} landed at {head} but the production checkout deploy did not complete — see LAND DEPLOY/SMOKE FAILED above"));
+        return FAIL;
+    }
     OK
 }
 

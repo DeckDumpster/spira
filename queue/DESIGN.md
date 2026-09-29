@@ -552,7 +552,7 @@ data, not the code; the refusal is the contract).
 
 ## 9. Tests
 
-`cargo test -p queue` — 93 unit tests; `cargo test -p spira-config` covers the two library
+`cargo test -p queue` — 122 unit tests; `cargo test -p spira-config` covers the two library
 additions (`set_paths_in_file_writes_both_or_neither`, `legacy_map` row rewrite). Derived
 from §2.2/§8:
 
@@ -566,6 +566,7 @@ from §2.2/§8:
 | claim/release | `claim_and_release_hand_the_batch_back`, `claim_without_reason_is_usage`; `records::tests::claim_then_release_restores_the_owner` |
 | open-batch | `open_batch_*` (5) |
 | land-local: land + archive + members + cached divergence; ff refusal; base/mode; D2/D3; revert; lock-held; stdin members | `land_local_*` (9) |
+| land-local checkout deploy (D11): swap modify/mode-only/add/symlink/delete + emptied dir, reset + HEAD re-read, binaries (spira-lc only with the switch ON), smoke; refusals off-branch, HEAD not an ancestor, tracked edits outside the allow-list, no `--worktree`, gitlink; write failure stops before the reset; verify mismatch; smoke failure exits 1 without reverting; another repository or a release in force untouched | `land_local_deploy*` (10), `land_local_leaves_a_checkout_alone_unless_it_is_the_running_harness_in_checkout_mode`; `real::tests::conf_smoke_sources_the_checkouts_conf_sh_without_the_inherited_spira_values`, `real::tests::real_git_lists_trees_reads_blobs_status_and_resets_for_the_checkout_deploy`, `real::tests::status_and_ls_tree_parse_their_z_formats` |
 | publish: D4 (reaped landstate), landstate tip, nothing-to-publish, refusals | `publish_*` (4); `publish_range::tests` (6) |
 | transitions: wait/verify refusal, happy path, red, timeout, D5 (4 sources + other repo), agreement, D6 restore, archive ancestry | `to_forge_*` (4), `to_local_*` (2), `transitions_*` (2) |
 | rollback-local | `rollback_local_needs_two_rounds_and_a_retained_tarball` |

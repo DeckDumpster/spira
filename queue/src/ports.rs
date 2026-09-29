@@ -3,6 +3,7 @@
 //! environment and the two output streams. `real.rs` implements them against the host;
 //! the unit tests implement them as fakes.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::model::{BeadRow, LandMode, LcBeadRow, RangeCommit};
@@ -90,6 +91,25 @@ pub trait Git {
     fn merge_abort(&self, wt: &Path);
     /// `status --porcelain` is empty.
     fn is_clean(&self, wt: &Path) -> bool;
+    /// `rev-parse --show-toplevel` run in `dir`; None outside a work tree.
+    fn toplevel(&self, dir: &Path) -> Option<PathBuf>;
+    /// Paths with a tracked modification (staged or not): `status --porcelain -z
+    /// --untracked-files=no`, both sides of a rename. Err when git fails.
+    fn tracked_changes(&self, repo: &Path) -> Result<Vec<String>, String>;
+    /// `ls-tree -r -z --full-tree <rev>`: every path with its mode and object.
+    fn tree(&self, repo: &Path, rev: &str) -> Result<BTreeMap<String, TreeEntry>, String>;
+    /// `cat-file blob <sha>`.
+    fn blob(&self, repo: &Path, sha: &str) -> Result<Vec<u8>, String>;
+    /// `reset -q --mixed <sha>`.
+    fn reset_mixed(&self, repo: &Path, sha: &str) -> bool;
+}
+
+/// One `ls-tree` entry: the octal mode as git prints it (`100644`, `100755`, `120000`,
+/// `160000`) and the object it names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeEntry {
+    pub mode: String,
+    pub sha: String,
 }
 
 pub trait Bd {
@@ -135,6 +155,10 @@ pub trait Lib {
     fn pf_gate(&self, branch: &str, name: &str, stamp: &str, wall_secs: u64) -> (i32, String);
     /// R19: `_verdict_settle_publish`: 0 settled-or-waiting, 1 error, 3 red.
     fn settle_publish(&self, name: &str, path: &Path) -> i32;
+    /// R23: source `<home>/conf.sh` as a freshly started unit would (every `SPIRA_*` but
+    /// `SPIRA_CONF`/`SPIRA_TOML` removed) and answer the `SPIRA_DB` it resolved. Err when the
+    /// seam itself could not run.
+    fn conf_smoke(&self, home: &Path) -> Result<String, String>;
 }
 
 /// The harness scripts and binaries queue runs as whole programs.
