@@ -169,10 +169,30 @@ path of B as found on the caller's PATH **without** resolving links (inside a me
 it is the meter's link, so calls stay metered), and `testdb.sh` exports it as `SPIRA_BD`
 (call-site: it reads the value, as it reads `TESTDB_DIR`).
 
+**The server path finds testenv however a suite repoints.** `testdb.sh` resolves the binary
+with `spira_bin testenv`, which a suite that points `SPIRA_REPO`/`SPIRA_HOME` at a fixture
+tree cannot satisfy; the server tier therefore exports `TESTDB_TESTENV=<artifacts>/testenv`,
+which `_testdb_testenv` already prefers. Three suites that test the embedded path itself
+(`test-testdb-failsafe`, `test-testdb-concurrent`, and `test-beads-push-commit`, whose remote
+is written and read through the embedded library) unset `SPIRA_TESTDB_MODE`.
+
+**Measured (testenv, maxpar 8, same host, 2026-09-29).** The six bd-heavy suites (certify,
+auron, landing-red-recurring, closed-strand, bead-dep-add, cockpit-funnel), three runs of
+`local/main` against three of this branch: bd calls 516 → 346; bd wait 138–182 s → 74–81 s;
+per call 267–352 ms → 213–235 ms; share of suite wall 52–61 % → 35–41 %. The 146 suites that
+use testdb: 6,761 → 5,251 calls, 1,996 s → 1,107 s of bd, share 41.6 % → 24.2 %, batch wall
+664 s → 612 s, cgroup peak 3,659 → 3,725 MiB — and 13 server-mode suites that `local/main`
+SKIPPED run again (their template key was the meter's, and the meter cannot `init`).
+
 **Floor.** What remains per call is the `bd` process itself: Go start (~85 ms CPU) and the
 six `git` children bd runs to discover a repository and its role (~7 ms each), plus the
 query. That is the floor for any suite that drives `bd` as a CLI; the remaining lever is the
 number of calls (the harness binaries under test call `bd` per bead per pass), not the store.
+Measured inside the testenv image, idle: `bd --version` 81 ms (Go package init alone is
+63 ms over 689 packages, `GODEBUG=inittrace=1`), a server read 125 ms, a server write
+206 ms, against embedded 254–287 ms and 408 ms. For the six suites (346 calls, ~106 s of
+non-bd wall) the idle floor is ~48 s of bd, a share of ~31 %; 20 % would need ≤ 75 ms per
+call, below `bd --version` itself.
 
 ## 3. Non-goals
 

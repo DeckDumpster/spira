@@ -252,6 +252,11 @@ binary of that name on PATH, and appends `<wall_ms> <rc> <subcommand>` to `SPIRA
 An artifact set without the meter falls back to `mkdir -p` (unmetered: `bd_calls` 0). Serial
 mode is unmetered. `bd_calls = 0` therefore means "no metered call", not "no wait"; readers
 report the metered share. Before sp-cln99 nothing wrote the log and every row read 0/0 (D3).
+Invoked **by path** through a directory on PATH (a caller holding `$SPIRA_BD`, which
+`testdb_up` exports as the absolute path of the meter's link since sp-34ru2), the meter
+searches only the PATH entries after that directory, so a `bd` wrapper ahead of it that execs
+`$SPIRA_BD` (loom's counting shim) is never taken for the real one — the two would exec each
+other until fork failed with EAGAIN.
 
 `round` family (only with `SPIRA_ROUND_BATCH_ID`): `batch_id`, `phase="build"`, `secs`,
 `members`, `reds` (red + timeout count).
