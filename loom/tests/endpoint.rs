@@ -30,7 +30,6 @@
 use loom::{router, Config, Loom};
 use serde_json::Value;
 use std::net::SocketAddr;
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -60,9 +59,23 @@ fn scratch(kind: &str) -> PathBuf {
     dir
 }
 
+/// Write an executable these tests will exec, WITHOUT THIS PROCESS EVER HOLDING A WRITE
+/// DESCRIPTOR ON IT. `fs::write` then exec fails with ETXTBSY whenever another test thread
+/// spawns a child while the write descriptor is open — the child carries a copy until it
+/// execs — so a child process writes the file, and nothing a fork here can inherit ever
+/// points at it (the same fix as landing-pass's testutil::write_exe).
 fn script(path: &PathBuf, body: &str) {
-    std::fs::write(path, body).expect("a script");
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("mode 755");
+    use std::io::Write;
+    let mut c = std::process::Command::new("sh")
+        .arg("-c")
+        .arg("cat > \"$1\" && chmod 755 \"$1\"")
+        .arg("sh")
+        .arg(path)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("sh to write a script");
+    c.stdin.take().expect("its stdin").write_all(body.as_bytes()).expect("the script body");
+    assert!(c.wait().expect("the writer").success(), "could not write {}", path.display());
 }
 
 /// The hermetic fixture: a "database" directory holding bd's canned answer, and a fake `bd`
@@ -116,16 +129,14 @@ fn counting_bd(real: &str) -> (String, PathBuf) {
     let counter = dir.join("calls");
     std::fs::write(&counter, b"").expect("an empty counter");
     let shim = dir.join("bd");
-    std::fs::write(
+    script(
         &shim,
-        format!(
+        &format!(
             "#!/bin/sh\nprintf 'x\\n' >> {}\nexec {} \"$@\"\n",
             counter.display(),
             real
         ),
-    )
-    .expect("a shim");
-    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).expect("mode 755");
+    );
     (dir.to_string_lossy().into_owned(), counter)
 }
 
