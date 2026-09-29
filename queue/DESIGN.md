@@ -110,7 +110,7 @@ nothing changed), then effects in order.
 | `open-batch` | queue | queue lock | refuse if a batch is open. Candidates from `--members` or ranked CERTIFIED (`queue_sort_rows`); admission (closed or submitted); assemble in `$SPIRA_RUN/worktree/.open-batch-<repo>-<pid>` with `land_subject` merges; `format_batch`; branch `spira/queue/<stamp>`; pre-flight gate unless `--skip-pregate` (wall 124 → open anyway); push; `pr-create` (body on stdin); open record; **switch ON only**: spira-lc cut → `batch_id`/`version` (§10); members `BATCHED`; clear `queue-stuck-<repo>`; `QUEUE BATCH … source=open-batch`. |
 | `claim` | any | queue lock | `--reason` required (exit 2); open batch required; already concierge-owned without `--force` → refuse. Rewrite record: `owner=concierge`, `pre_claim_owner=<prev>`, `claim_reason=<one line>`. Mail. |
 | `release` | any | queue lock | open batch, owned by concierge, else refuse. `owner=<pre_claim_owner>`, drop claim keys. |
-| `land-local` | queue.local | queue lock unless LOCK_HELD | base must be a local branch; resolve head; divergence alarm (cached forge ref, never refuses); `base` ancestor of head, else refuse; binaries (§8 D2); CAS `update-ref`; release step (§8 D3), reverting the ref on failure; round-seq+1, `refs/archive/rounds/<n>`; per member `land_mark LANDED`, `gh_issue_closeout`, `bead_close_on_land`, a line; mail; summary line. |
+| `land-local` | queue.local | queue lock unless LOCK_HELD | base must be a local branch; resolve head; divergence alarm (cached forge ref, never refuses); `base` ancestor of head, else refuse; binaries (§8 D2); CAS `update-ref`; release step (§8 D3), reverting the ref on failure — or, in checkout mode with the landing repo being the running harness checkout, its preconditions before the CAS and the checkout deploy after it (§8 D11); round-seq+1, `refs/archive/rounds/<n>`; per member `land_mark LANDED`, `gh_issue_closeout`, `bead_close_on_land`, a line; mail; summary line. |
 | `publish` | queue.local | queue lock unless LOCK_HELD | local base; forge target; refuse if a `publish` record exists; fetch; divergence check refuses; equal → "nothing to publish", exit 0; members from land commits (§8 D4), none → refuse; push `spira/publish/<stamp>`; pr-create; `publish` record; `QUEUE PUBLISH` line. |
 | `to-forge` | queue.local | queue lock, whole move | agreement check (§6 R1); **in-delivery refusal** (§8 D5); local base exists, not checked out; re-read mode under lock; final publish (lock held); poll `_verdict_settle_publish` until the record is gone (3 → refuse; deadline → refuse); fetch, forge tip == local tip; write mode `queue.forge`, base `<remote>/<branch>` (§8 D6); verify; archive `refs/archive/<local-base>`, delete local branch; mail. |
 | `to-local` | queue (forge) | queue lock | agreement check; in-delivery refusal; base remote-tracking; `local/<branch>` absent and not checked out; re-read mode; fetch; an archived `refs/archive/local/<branch>` must be an ancestor of the forge tip; create `local/<branch>` at the forge tip; write mode `queue.local`, base `local/<branch>` (branch deleted if that fails); verify; mail. |
@@ -164,7 +164,8 @@ the tests; CAUGHT/GATE_COST/BATCH are read only by `stats`.
 ### 2.4 Guarantees
 
 - **Refusal changes nothing.** Every refusal before the CAS writes nothing; the land-local
-  release step reverts the ref it moved.
+  release step reverts the ref it moved. The checkout deploy (§8 D11) is the one step after
+  the CAS that does not revert: its failures are loud and make the exit non-zero.
 - **One writer per repo.** Every mutating subcommand takes `$SPIRA_QUEUE_DIR/<repo>/lock`
   with a non-blocking exclusive flock (the same file the batcher's `try_lock` takes).
 - **CAS on the landing ref.** `update-ref <ref> <new> <old>`, never a plain write.
@@ -262,6 +263,8 @@ cost / members; percentage integer.
 | `$SPIRA_RUN/queue-protected-<repo>` | — | protect |
 | `$SPIRA_RUN/queue-stuck-<repo>` | — | open-batch (removed) |
 | `$SPIRA_RELEASES/current`, `.tarballs/` | land-local, rollback-local | build-tarball.sh / activate.sh |
+| the running harness checkout's files, index, `HEAD`, `target/release/*` | land-local (D11) | land-local (D11, checkout mode only) |
+| `SPIRA_LAND_DEPLOY_ALLOW` (env) | land-local (D11) | — |
 | `refs/heads/<local-base>` | | land-local, rollback-local (CAS), to-local (create), to-forge (delete) |
 | `refs/archive/rounds/<n>`, `refs/archive/<local-base>` | rollback-local, to-local | land-local, to-forge |
 | spira.toml `[repo.<name>] mode/base` | agreement check (spira-config lib) | to-forge, to-local (spira-config lib) |
@@ -319,6 +322,7 @@ operation (the function name is part of the text, never data).
 | R18 `batch_fns` (sources batch.sh) | `format_batch`, `_base_conflict`, `_pf_gate` (with `_PF_DEADLINE`) | open-batch only; the queue.forge assembly primitives |
 | R19 `settle_publish` (sources verdict.sh) | `_verdict_settle_publish <repo> <path>` | to-forge's wait; return 3 = red |
 | R20 `readback` | `repo_land`, `spira_landref` after a transition's write | the post-write verification reads what every other component will read |
+| R23 `conf_smoke` | none — sources the checkout's own `conf.sh` (not the PRELUDE's lib.sh) with `SPIRA_*` stripped except `SPIRA_CONF`/`SPIRA_TOML`, answers `SPIRA_DB` | land-local's post-deploy smoke (§8 D11): what a freshly started unit would resolve |
 | R21 `toml_path` | `spira_toml_resolve` (transitions only, as before) | conf.sh's own resolution of which document is in force |
 
 **Not seams — Rust, against the same data:** the `open`/`publish`/`round-seq` records and
@@ -479,6 +483,61 @@ data, not the code; the refusal is the contract).
 - **D10 — identifiers are validated before any argv** (§5); free text never reaches argv
   except the two bounded, one-line cases in §5. `--reason-file`/`--members-file` (stdin
   with `-`) are the payload-safe forms; the argv forms remain for today's callers.
+- **D11 — in checkout mode, land-local deploys the running harness checkout** (the gap D3
+  left: with no `$SPIRA_RELEASES/current` the release step was skipped and nothing moved
+  the checkout production runs, so the loop landed work that never ran; the retired
+  `round.sh land` did it by hand). It applies **only** when no release is in force (D3)
+  **and** the landing repository is the checkout this harness runs from — `git rev-parse
+  --show-toplevel` of `$SPIRA_HOME` equals the repository's path (both canonicalised).
+  Any other repository, or a release in force, behaves exactly as before.
+  1. **Preconditions, checked before the CAS** (a refusal names its reason, ends
+     `refused, nothing changed`, exit 1):
+     - `--worktree` is named — the checkout's binaries must be the round's own build (D2;
+       round 97 once ran new scripts against an old `spira-config`);
+     - the checkout is on the landing ref's branch (`ref_branch(<landref>)`: `local/main` →
+       `main`), and its `HEAD` is an ancestor of the new head;
+     - `git status --porcelain -z --untracked-files=no` names no path outside the
+       **allow-list** `SPIRA_LAND_DEPLOY_ALLOW` — colon-separated checkout-relative paths,
+       exact matches, read from queue's own environment (the batcher unit's `Environment=`
+       or a drop-in; empty or unset = any tracked edit refuses). It exists for the files an
+       active `~/.config/spira/overrides/*.override` edits: local-overrides.timer re-applies
+       them within a minute, so the swap may overwrite such a file (the operator did exactly
+       this by hand at 08:24Z on 2026-09-29), and an allow-listed edit to a file the round
+       did not change simply stays in place. Untracked files are never consulted. The smallest
+       honest rule: the override specs do not declare which paths they touch, so the list is
+       declared once by whoever installs the override, and anything else is a refusal;
+     - no gitlink (mode 160000) changes between `HEAD` and the head — a submodule cannot be
+       swapped as a file.
+  2. **Move** (after the CAS): every path whose tree entry (mode or blob) differs between the
+     checkout's `HEAD` and the head is written beside itself (`.<name>.land-new.<pid>`), given
+     the tree's exact mode (100755 → 0755, 100644 → 0644, 120000 → a symlink), and renamed
+     over the target; paths absent from the head are deleted (then their emptied parent
+     directories). Blobs come from `ls-tree -r -z --full-tree` and `cat-file blob <sha>` — no
+     path ever reaches an argv (§5). Then `git reset -q --mixed <head>`, then `HEAD` is read
+     again and must equal the head (law-production-is-not-a-working-tree: announce only what
+     the tree says). The first write failure stops the move: it is reported as
+     `LAND DEPLOY FAILED: …` with how many files were swapped, the checkout is **not** reset,
+     and binaries and smoke are skipped.
+  3. **Binaries**: every regular executable file directly in `<worktree>/target/release` is
+     copied beside its target in `<checkout>/target/release` and renamed over it. `spira-lc`
+     is never installed while `lifecycle_enforce` is off (§10). A failed install is reported
+     as `LAND DEPLOY FAILED: cannot install <bin> …`.
+  4. **Smoke**: the checkout's own `conf.sh` is sourced by a fixed bash script read from
+     stdin (seam R23, law-payloads-go-on-stdin), in queue's environment with every `SPIRA_*`
+     variable removed except `SPIRA_CONF` and `SPIRA_TOML` (which name the document in force)
+     — so it resolves as a freshly started unit would, not from values this process already
+     inherited. `SPIRA_DB` must come back naming an existing directory; otherwise
+     `LAND SMOKE FAILED: production conf.sh no longer resolves SPIRA_DB (got '…') — the landing
+     ref and the checkout are already at <head> and are NOT reverted; fix before anything else`.
+  5. `queue.sh land-local: production checkout <old9> -> <new9>, N files, M binaries`.
+
+  **After the CAS nothing is reverted**: the ref is the record of what landed, so a deploy,
+  install or smoke failure still marks the members LANDED and closes their beads, and then
+  makes land-local exit 1 (batcher-cut records the round as refused, a loud red; it is the
+  operator's cue). Rejected: reverting the ref on a failed swap (it would not un-write the
+  files already swapped, and would leave a checkout ahead of its own landing ref); a
+  `git checkout`/`reset --hard` move (writes in place — a reader can see half a script);
+  reading the allow-list from the override specs (they declare no paths).
 - **Kept deliberately:** every message's `queue.sh <cmd>:` prefix and text (operators and
   one override grep them); `step`'s status 0 on a non-queue.local repo whatever the cut
   returned (a bash `if` without `else`); `submit` falling back to `$SPIRA_REPO` when the map
