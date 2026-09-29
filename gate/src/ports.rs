@@ -82,7 +82,7 @@ pub trait World {
 
     // ---- composition (DESIGN.md "Composition")
     /// `[repo.<name>] gate_mode`, read through the spira-config library; Ok(Suites) when no
-    /// spira.toml is in force, Err(why) when one is and it does not validate.
+    /// configuration document is in force, Err(why) when one is and it does not validate.
     fn gate_mode(&self, repo_name: &str) -> Result<GateMode, String>;
     /// `cargo metadata --format-version 1 --no-deps --offline` in `tree` with `path` as PATH →
     /// stdout, or Err(stderr).

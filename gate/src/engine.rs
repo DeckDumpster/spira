@@ -283,7 +283,7 @@ impl<'w, W: World> Trial<'w, W> {
         let mode = match w.gate_mode(&name) {
             Ok(m) => m,
             Err(e) => {
-                w.eprint(&format!("gate: spira.toml does not validate ({e})\ngate: composing as gate_mode=suites, today's whole sequence — the stronger check."));
+                w.eprint(&format!("gate: the configuration does not validate ({e})\ngate: composing as gate_mode=suites, today's whole sequence — the stronger check."));
                 GateMode::Suites
             }
         };

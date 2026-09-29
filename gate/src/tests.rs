@@ -1040,7 +1040,7 @@ fn an_unreadable_config_composes_as_suites() {
     *f.mode.borrow_mut() = Err("repo.spira.gate_mode: unknown variant `fast`".into());
     assert_eq!(f.run(), PASS);
     assert_eq!(f.cmds.borrow().len(), 1);
-    assert!(f.stderr().contains("spira.toml does not validate"));
+    assert!(f.stderr().contains("the configuration does not validate"));
     assert!(meter(&f).contains("compose=suites(mode)"));
 }
 
