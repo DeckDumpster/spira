@@ -15,13 +15,5 @@
 # Not payloads — the json-named variable holds a FILE PATH (the "filename-only" findings):
 ^spira/lib\.sh:[0-9]+: python3 .*bdsim\.py" "\$SPIRA_BDJSON_FIXTURE"
 ^spira/watchtower\.sh:[0-9]+: .*"\$_co_json_f" 2>/dev/null\)" \|\| _co_hits=""
-# Not a payload — a space-separated list of red/flaky suite names, bounded by the corpus:
-^spira/gate-diag\.sh:[0-9]+: " "\$\{_json_red:-\}" "\$\{_json_flaky:-\}"
 # One bead's `bd show` JSON (lib.sh has_label-style check), bounded by one bead:
 ^spira/lib\.sh:[0-9]+: ' "\$label" "\$json" 2>/dev/null$
-# Real JSON on argv/env, bounded (the control file; restart alerts per unit; a suite's UC
-# list). The fix moves each onto stdin or a temp file and changes the reader's body, which is
-# not a call-site edit — listed in the cutover report for a rewrite:
-^spira/ctrl\.sh:[0-9]+: (suspended_subjects|has_entry)="\$\(python3 - "\$ctrl_json"
-^spira/auron\.sh:[0-9]+: RESTART_ALERTS="\$_restart_alerts_json"
-^spira/tap-jsonl\.sh:[0-9]+: -v uc="\$uc_json"
