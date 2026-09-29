@@ -97,6 +97,10 @@ pub trait Tools {
     fn skew_refresh(&self, repo: &Path) -> String;
     /// An ensure script (unit-ensure.sh / land-build-ensure.sh), when executable → its lines.
     fn ensure(&self, script: &Path) -> Vec<String>;
+    /// `rebase-stale <id> <repo>` for a branch the gate found no longer merges (gate
+    /// NO_VERDICT reason=conflict, gate/DESIGN.md) → its exit: 0 rebased and certified, 1
+    /// reopened on a real conflict, 2 reopened on a red gate, 3 not attempted.
+    fn rebase_stale(&self, id: &str, repo: &str) -> i32;
 }
 
 pub trait Procs {

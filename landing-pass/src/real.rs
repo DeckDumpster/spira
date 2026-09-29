@@ -686,6 +686,22 @@ impl Tools for RealTools {
         c.arg(script);
         combined(c).1.lines().map(String::from).collect()
     }
+    fn rebase_stale(&self, id: &str, repo: &str) -> i32 {
+        // SPIRA_REBASE_STALE_BIN (conf.sh exports it), else the one installed beside this binary.
+        let bin = std::env::var_os("SPIRA_REBASE_STALE_BIN")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("rebase-stale"))))
+            .filter(|b| executable(b));
+        let Some(bin) = bin else { return 3 };
+        let mut c = command(bin);
+        c.arg(id).arg(repo).env("SPIRA_HOME", &self.home);
+        self.with_env(&mut c);
+        match combined(c).0 {
+            r @ 0..=2 => r,
+            _ => 3,
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

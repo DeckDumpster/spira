@@ -271,6 +271,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gate"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "sha2",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -995,6 +1003,9 @@ name = "spira-lint"
 version = "0.1.0"
 dependencies = [
  "regex",
+ "serde",
+ "spira-config",
+ "toml",
 ]
 
 [[package]]

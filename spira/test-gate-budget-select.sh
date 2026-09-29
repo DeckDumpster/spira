@@ -148,7 +148,7 @@ nowant "P5: the covering (non-ejected) suite is cut at budget=0" "test-a.sh" "$o
 
 want "P5-wiring: gate-touched.sh calls gate-budget-select.sh" \
     "gate-budget-select.sh" "$(cat "$HERE/gate-touched.sh")"
-want "P5-wiring: gate.sh exports SPIRA_GATE_BUDGET into the fenced gate environment" \
-    'SPIRA_GATE_BUDGET="${SPIRA_GATE_BUDGET:-300}"' "$(cat "$HERE/gate.sh")"
+want "P5-wiring: the gate exports SPIRA_GATE_BUDGET into the fenced gate environment" \
+    'e("SPIRA_GATE_BUDGET", ctx.var_or("SPIRA_GATE_BUDGET", "300"))' "$(cat "$HERE/../gate/src/engine.rs")"
 
 tl_summary

@@ -61,7 +61,7 @@ MARK="$TMP/mid-run"; PIDFILE="$TMP/gate.pid"
 printf 'repo | %s | push | origin/main |  | rm -f %s; : > %s; sleep 30\n' \
     "$REPO" "$MARK" "$MARK" > "$MAP"
 (
-    export HOMEDIR SPIRA_CONF_NONE REPO RUN SPIRA_DB_NONE MAP GATELOG VDIR SH BR PIDFILE
+    export HOMEDIR SPIRA_CONF_NONE REPO RUN SPIRA_DB_NONE MAP GATELOG VDIR SH BR PIDFILE GATE_BIN
     setsid bash -c '
         echo "$$" > "$PIDFILE"
         exec env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
@@ -69,7 +69,7 @@ printf 'repo | %s | push | origin/main |  | rm -f %s; : > %s; sleep 30\n' \
             SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
             SPIRA_DB="$SPIRA_DB_NONE" SPIRA_REPO_MAP="$MAP" \
             SPIRA_GATE_LOG="$GATELOG" SPIRA_VERDICTS="$VDIR" SPIRA_VERDICT_TTL=0 \
-            bash "$SH/gate.sh" "$BR" repo
+            SPIRA_GATE_BIN="$GATE_BIN" bash "$SH/gate.sh" "$BR" repo
     '
 ) >/dev/null 2>&1 &
 

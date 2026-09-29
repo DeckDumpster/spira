@@ -852,16 +852,17 @@ want   "O3: selects-on:mode fires for mode-changed script"               "test-f
 
 # ---------------------------------------------------------------------------
 echo
-echo "Part P: real tree — spira/new.sh (100644) addition selects test-script-exec.sh"
+echo "Part P: spira/new.sh (100644) addition selects a covers: spira/*.sh, selects-on: added,mode suite"
 # ---------------------------------------------------------------------------
-# Verify that the real test-script-exec.sh (# covers: spira/*.sh, # selects-on: added,mode)
-# is selected when a spira/*.sh file is added, using the --files mode with A-status.
-# This is the production scenario from the bead: a branch adds a new script without +x.
-# A verbatim COPY of the real file, in a suite-dir of its own, so its actual declaration
-# is what's under test without select.sh paying to scan the other 500+ real suites too.
+# A suite declaring # covers: spira/*.sh and # selects-on: added,mode is selected when a
+# spira/*.sh file is added, using the --files mode with A-status: the scenario of a branch
+# adding a new script without +x. This read a copy of test-script-exec.sh until that check
+# became spira-lint's script-exec rule (sp-l8gl3); the declaration is what is under test, so
+# the fixture carries the same header.
 SD_P="$TMP/suites-p"
 mkdir -p "$SD_P"
-cp "$HERE/test-script-exec.sh" "$SD_P/test-script-exec.sh"
+printf '#!/usr/bin/env bash\n# tier: T1\n# covers: spira/*.sh\n# selects-on: added,mode\nset -uo pipefail\n' \
+    > "$SD_P/test-script-exec.sh"
 chmod +x "$SD_P/test-script-exec.sh"
 
 FLIST_P="$TMP/flist-p"

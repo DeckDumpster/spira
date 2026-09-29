@@ -93,22 +93,22 @@ want "and it is named as a reused one" "VERDICT=PASS reason=cached" "$out"
 want "and the reuse is metered like any other run" "rc=0 cached" "$(cat "$GATELOG")"
 
 # --------------------------------------------------------------------------------------
-# THE BASE MOVED, WHICH IS NOT A DIFFERENT QUESTION. This gate judges the branch's own tree,
-# detached and alone; the base's part in that trial is the changed-file list and nothing else.
-# The branch here is NOT rebased onto the new base, which is the shape that matters: a retry,
-# a second pass, a caller that gates a tree it has already gated. Keying on the base commit
-# would make every landing in the repository retire that verdict for a reason the trial never
-# read. A branch that IS rebased gets the base's content into its own tree, and the case below
-# covers that from the other side — the tree moved, so the verdict goes.
+# THE BASE MOVED, WHICH IS NOW A DIFFERENT QUESTION (sp-0tpcs). The gate judges the branch
+# MERGED onto its landing ref (gate/DESIGN.md), so a landing on the base changes the tree under
+# trial and the merged tree is in the key: the old verdict must not be reused. The branch here
+# is NOT rebased — exactly the stale shape whose branch-tree verdicts were false on 2026-09-29.
 # --------------------------------------------------------------------------------------
 git -C "$REPO" checkout -q main
 printf 'moved\n' > "$REPO/other.txt"
 git -C "$REPO" add -A; git -C "$REPO" commit -q -m "someone else landed"
 git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
 git -C "$REPO" checkout -q --detach origin/main
+rm -f "$TRIP"           # the trial must run, and pass
 out="$(rungate)"; rc=$?
-is  "a landing on the base does not invalidate the verdict" 1 "$(runs)"
-is  "and the reused verdict is still a pass"                0 "$rc"
+: > "$TRIP"             # restored for the rows below, which must not reach the command
+is  "a landing on the base retires the verdict: the merge is judged again" 2 "$(runs)"
+is  "and the merged tree still passes"                                     0 "$rc"
+want "and it was a trial, not a reuse" "VERDICT=PASS reason=pass" "$out"
 
 # --------------------------------------------------------------------------------------
 # THE TREE CHANGED, WHICH IS. This is the half that a broken cache gets wrong silently, and

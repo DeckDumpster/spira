@@ -1555,6 +1555,7 @@ spira_conf_defaults() {
     : "${SPIRA_STRAND_BIN:=$(spira_bin strand 2>/dev/null)}"        # spira/strand.sh + strand-classify.py
     : "${SPIRA_TESTENV_BIN:=$(spira_bin testenv 2>/dev/null)}"      # spira/testenv-batch.sh, suites.sh
     : "${SPIRA_REBASE_STALE_BIN:=$(spira_bin rebase-stale 2>/dev/null)}"  # spira/rebase-stale.sh
+    : "${SPIRA_GATE_BIN:=$(spira_bin gate 2>/dev/null)}"            # spira/gate.sh (sp-0tpcs)
     : "${SPIRA_ROUND_VM_BIN:=$(spira_bin round-vm 2>/dev/null)}"    # spira/round-vm.sh
     : "${SPIRA_LINT_BIN:=$(spira_bin spira-lint 2>/dev/null)}"      # the ported bash fences
     # test-plan — validates docs/test-plan/*.toml, builds the derived coverage matrix.
@@ -2595,6 +2596,7 @@ export COCKPIT_BOTTOM_PCT \
     SPIRA_STRAND_BIN \
     SPIRA_TESTENV_BIN \
     SPIRA_REBASE_STALE_BIN \
+    SPIRA_GATE_BIN \
     SPIRA_ROUND_VM_BIN \
     SPIRA_LINT_BIN
 
