@@ -33,7 +33,7 @@
 #                   builder. The batch builder (batch.sh) collects certified branches into one
 #                   pull request; CI runs the full corpus on it; a green batch fast-forwards
 #                   onto the base branch; every landed batch cuts a release. Base branch
-#                   protection is required — run `queue.sh protect` after switching. A bead in
+#                   protection is required — run `queue protect` after switching. A bead in
 #                   queue mode must NOT park on CI: the batch PR is opened by the batch
 #                   builder, not by the individual branch landing, and there is no run for a
 #                   bead to wait for. `queue.forge` is the same mode, spelled out; `queue`
@@ -143,7 +143,7 @@ platform     | /srv/checkouts/platform    | push | origin/main   |              
 # A queue-mode repository. Branches are individually certified by their gate, then
 # batched by batch.sh into one pull request. CI runs the full corpus on the batch PR
 # and fast-forwards it to the base branch on green. Every landing cuts a release.
-# Run `queue.sh protect <name>` once after switching to set the required check,
+# Run `queue protect <name>` once after switching to set the required check,
 # disallow force-push, and disallow deletion on the base branch — doctor.sh warns
 # for any queue-mode repo whose base branch has no protection record.
-harness      | /srv/checkouts/harness     | queue | origin/main  |                 | bash spira/inventory.sh && bash spira/literal-lint.sh && bash spira/testdb-mode-lint.sh && bash spira/scratch-fence.sh && bash spira/payload-argv-lint.sh && { _b=0; bash spira/testenv-batch.sh "$SPIRA_GATE_BRANCH" || _b=$?; case "$_b" in 2|3) exit 75;; *) exit "$_b";; esac; }
+harness      | /srv/checkouts/harness     | queue | origin/main  |                 | bash spira/inventory.sh && bash spira/literal-lint.sh && bash spira/testdb-mode-lint.sh && bash spira/scratch-fence.sh && "$SPIRA_LINT_BIN" --only payload-argv-lint && { _b=0; "$SPIRA_TESTENV_BIN" "$SPIRA_GATE_BRANCH" || _b=$?; case "$_b" in 2|3) exit 75;; *) exit "$_b";; esac; }

@@ -14,7 +14,7 @@ _TG_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck disable=SC1090
 . "$_TG_SELF/suite-covers.sh"
 if suite_testenv_unmet "${BASH_SOURCE[1]:-$0}"; then
-    printf 'Bail out! %s requires: testenv — run via spira/testenv-batch.sh, not directly (SPIRA_IN_TESTENV != 1)\n' \
+    printf 'Bail out! %s requires: testenv — run via testenv, not directly (SPIRA_IN_TESTENV != 1)\n' \
         "$(basename "${BASH_SOURCE[1]:-$0}")"
     exit 2
 fi
