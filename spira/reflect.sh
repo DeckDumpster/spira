@@ -49,7 +49,7 @@ $BLOCKED
 
 Diagnose why nothing is ready, in at most 150 words. Then answer exactly one question:
 is this a gap a program could have detected? If yes, state the deterministic check that
-would have caught it, precisely enough to implement in sentinel.sh — that is the valuable
+would have caught it, precisely enough to implement in the sentinel (sentinel/src) — that is the valuable
 output, because a stall diagnosed by inference twice is a check that was never written.
 
 If the fix needs a decision only $SPIRA_OPERATOR can make, end with a line beginning 'ESCALATE:'

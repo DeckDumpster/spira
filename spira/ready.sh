@@ -187,10 +187,10 @@ fi
 echo ""
 echo "ready work"
 # =============================================================================
-# sentinel.sh --report lists open beads under SPIRA_GOAL. Each line of open work is
+# sentinel --report lists open beads under SPIRA_GOAL. Each line of open work is
 # indented with two spaces. A timeout guards against a slow or stuck database.
-if ! _rep="$(timeout 20 "$SPIRA_HOME/sentinel.sh" --report 2>&1)"; then
-    UNKN "ready work — sentinel.sh --report failed or timed out" \
+if ! _rep="$(timeout 20 "$SPIRA_SENTINEL_BIN" --report 2>&1)"; then
+    UNKN "ready work — sentinel --report failed or timed out" \
          "$(printf '%s' "$_rep" | head -2)"
 else
     _n_open="$(printf '%s\n' "$_rep" | grep -c '^  ' || true)"
