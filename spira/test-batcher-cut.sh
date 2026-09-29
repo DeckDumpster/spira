@@ -324,10 +324,17 @@ d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(d[0].get("notes","") or "")' 2>/dev/null
 }
 
+labels_of() { B show "$1" --json 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
+print(" ".join(d[0].get("labels") or []))' 2>/dev/null; }
+
+# A batch member is a bead WAITING FOR A ROUND: open and carrying the submitted label
+# (sp-1346p) — a CERTIFIED record of a closed bead is stale and never batched.
 plant() {   # plant <id> [express]
-    local id="$1" express_label="" lbls="\"spira\",\"plan\",\"repo:$REPONAME\""
+    local id="$1" express_label="" lbls="\"spira\",\"plan\",\"repo:$REPONAME\",\"spira-submitted\""
     [ "${2:-}" = express ] && lbls="$lbls,\"express\""
-    printf '{"id":"%s","title":"%s bead","status":"closed","issue_type":"task","labels":[%s],"updated_at":"2026-09-25T00:00:00Z"}\n' \
+    printf '{"id":"%s","title":"%s bead","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-25T00:00:00Z"}\n' \
         "$id" "$id" "$lbls" | testdb_seed
 }
 
@@ -421,7 +428,8 @@ want   "B: attribution names the owner"  "red test-b.sh → owner sp-cbbb2" "$ou
 want   "B: only the owner's suite re-runs on the survivors" "suites=test-b.sh" \
        "$(cat "$RUN"/batch-results/"$REPONAME"-*/spool/req/v1.req 2>/dev/null)"
 is     "B: sp-cbbb2 landstate EJECTED"    "EJECTED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cbbb2")"
-is     "B: sp-cbbb2 reopened, not left closed" "open" "$(status_of sp-cbbb2)"
+is     "B: sp-cbbb2 reopened for rework (open)" "open" "$(status_of sp-cbbb2)"
+nowant "B: sp-cbbb2 no longer submitted — a reopen is rework (sp-1346p)" "spira-submitted" "$(labels_of sp-cbbb2)"
 want   "B: ejection note names every suite it turned red" "test-b.sh" "$(notes_of sp-cbbb2)"
 is     "B: sp-cbbb3 (the bystander) landstate BATCHED" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cbbb3")"
 is     "B: open-batch carries only the bystander" "sp-cbbb3:$tip_b3" "$(open_field members)"
@@ -515,6 +523,7 @@ rm -f "$QUEUEDIR/$REPONAME/base-moved"
 
 out_c="$(STUB_RED_SUITES="" cut_repo)"
 is   "C: sp-cccc3 is reopened"   "open" "$(status_of sp-cccc3)"
+nowant "C: sp-cccc3 no longer submitted — reopened for rebase (sp-1346p)" "spira-submitted" "$(labels_of sp-cccc3)"
 is   "C: sp-cccc3 landstate RED" "RED"  "$(cut -d' ' -f1 < "$LANDSTATE/sp-cccc3")"
 is   "C: bump_requeue stamped merge-conflict" "1" "$(grep -c '^sp-cccc3 merge-conflict$' "$REQUEUE_SPY")"
 nowant "C: no PR opened for the conflicting-only round" "PR " "$out_c"
