@@ -130,12 +130,15 @@ pub enum Fixtures {
 }
 
 impl Fixtures {
-    /// The suite environment that selects this tier in `testdb.sh`'s `testdb_up`.
-    pub fn env(&self) -> Vec<(String, String)> {
+    /// The suite environment that selects this tier in `testdb.sh`'s `testdb_up`. A server
+    /// fixture is made by `testenv testdb up`; `TESTDB_TESTENV` names the artifact under test
+    /// so a suite that repoints `SPIRA_REPO`/`SPIRA_HOME` at a fixture tree still finds it.
+    pub fn env(&self, artifacts: &str) -> Vec<(String, String)> {
         match self {
             Fixtures::Server => {
                 let mut env = TestDb::env(None);
                 env.push(("SPIRA_TESTDB_MODE".into(), "server".into()));
+                env.push(("TESTDB_TESTENV".into(), format!("{artifacts}/testenv")));
                 env
             }
             Fixtures::Shared(t) => TestDb::env(Some(t)),
@@ -427,7 +430,7 @@ impl<'a> Session<'a> {
         env.extend(self.user_env());
         env.push(kv("SPIRA_IN_TESTENV", "1"));
         env.extend(self.artifact_env());
-        env.extend(fixtures.env());
+        env.extend(fixtures.env(&self.artifacts));
         env.push(kv("TMUX", ""));
         env.push(kv("SPIRA_PATH", ""));
         env.push(kv("SPIRA_BD_LOG", self.bd_log(mode, n, suite)));
@@ -852,11 +855,17 @@ mod tests {
             "no suite takes the embedded shared-baseline branch"
         );
         assert_eq!(r.env_value("TESTDB_BASELINE"), None);
+        assert_eq!(
+            r.env_value("TESTDB_TESTENV"),
+            Some("/workspace/target/aeon/testenv"), // path-ok: the container-side artifact
+            "found however the suite repoints SPIRA_REPO"
+        );
         // The fallback tiers never set the mode: testdb_up keeps its embedded default.
         let t = TestDb::parse("TESTDB_NAME=b\nTESTDB_BASELINE=/b\nTESTDB_MODE=embedded\n").unwrap();
         for f in [Fixtures::Shared(t), Fixtures::PerSuite] {
             let r = s.suite_request(Mode::Parallel, 2, "test-a.sh", &f);
             assert_eq!(r.env_value("SPIRA_TESTDB_MODE"), None, "{f:?}");
+            assert_eq!(r.env_value("TESTDB_TESTENV"), None, "{f:?}");
         }
         let r = s.suite_request(
             Mode::Parallel,

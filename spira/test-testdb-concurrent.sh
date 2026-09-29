@@ -11,8 +11,10 @@ testdb_require testdb-concurrent
 
 
 # Build a fresh shared fixture as the owner (TESTDB_SHARED not set).
+# SPIRA_TESTDB_MODE too: this suite exercises the embedded shared-fixture branch, and testenv
+# sends every other suite to a server fixture (DESIGN-testdb.md §2.4).
 unset TESTDB_SHARED TESTDB_NAME TESTDB_DIR TESTDB_BASELINE TESTDB_MODE \
-      TESTDB_BIN TESTDB_PRIVATE_DIR 2>/dev/null || true
+      TESTDB_BIN TESTDB_PRIVATE_DIR SPIRA_TESTDB_MODE 2>/dev/null || true
 testdb_up concurrent || { printf 'SKIP testdb-concurrent: could not build fixture\n' >&2; exit 77; }
 OWNER_DIR="$TESTDB_DIR"
 OWNER_BL="$TESTDB_BASELINE"

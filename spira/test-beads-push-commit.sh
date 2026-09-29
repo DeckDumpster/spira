@@ -50,6 +50,10 @@ TMP="$(mktemp -d)"
 # Opt out of the shared fixture so testdb_up builds a private one.
 TESTDB_SHARED=0
 export TESTDB_SHARED
+# Embedded, by construction: the remote is written and read back through the embedded
+# library (see HOW CLONING IS VERIFIED), so this suite opts out of the server fixture testenv
+# gives every other suite (DESIGN-testdb.md §2.4).
+unset SPIRA_TESTDB_MODE
 
 . "$HERE/testdb.sh"
 testdb_require beads-push-commit

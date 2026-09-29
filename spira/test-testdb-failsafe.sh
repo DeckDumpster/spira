@@ -32,7 +32,9 @@ testdb_require testdb-failsafe
 
 # Build the "production stand-in" fixture: a real bd store that we check for spurious writes.
 # Use a clean call that bypasses any inherited TESTDB_SHARED from the harness environment.
-unset TESTDB_SHARED TESTDB_NAME TESTDB_DIR TESTDB_BASELINE TESTDB_MODE TESTDB_BIN 2>/dev/null || true
+# SPIRA_TESTDB_MODE too: this suite exercises the embedded shared-fixture branch, and testenv
+# sends every other suite to a server fixture (DESIGN-testdb.md §2.4).
+unset TESTDB_SHARED TESTDB_NAME TESTDB_DIR TESTDB_BASELINE TESTDB_MODE TESTDB_BIN SPIRA_TESTDB_MODE 2>/dev/null || true
 testdb_up testdb-failsafe || { printf 'SKIP testdb-failsafe: could not build stand-in fixture\n' >&2; exit 77; }
 PROD_DB="$SPIRA_DB"
 PROD_BD="$SPIRA_BD"
