@@ -1,0 +1,539 @@
+//! The whole pipeline against a real temporary git repository, a fake container runtime and a
+//! fake builder: the contract of DESIGN.md §2 and §4, end to end, without podman or cargo.
+
+use super::*;
+use crate::cli::{parse, Invocation};
+use crate::fixture::fake::FakeRuntime;
+use crate::runtime::ExecOutcome;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+
+struct FakeBuilder {
+    calls: AtomicUsize,
+    fail: Option<i32>,
+    dirs: Mutex<Vec<(PathBuf, String)>>,
+}
+
+impl FakeBuilder {
+    fn new(fail: Option<i32>) -> Self {
+        FakeBuilder {
+            calls: AtomicUsize::new(0),
+            fail,
+            dirs: Mutex::new(vec![]),
+        }
+    }
+}
+
+impl Builder for FakeBuilder {
+    fn build(&self, wt: &Path, profile: &str) -> Result<Duration, BuildError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.dirs
+            .lock()
+            .unwrap()
+            .push((wt.to_path_buf(), profile.to_string()));
+        match self.fail {
+            Some(rc) => Err(BuildError::Failed(rc)),
+            None => Ok(Duration::from_millis(1)),
+        }
+    }
+}
+
+fn sh(dir: &Path, cmd: &str) {
+    let ok = Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .current_dir(dir)
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@t")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@t")
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "{cmd}");
+}
+
+struct World {
+    root: PathBuf,
+    repo: PathBuf,
+    harness: PathBuf,
+    owner: PathBuf,
+    env: HashMap<String, String>,
+    lines: Mutex<Vec<String>>,
+}
+
+impl World {
+    fn new(tag: &str) -> World {
+        let root = std::env::temp_dir().join(format!("testenv-run-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let repo = root.join("repo");
+        let harness = root.join("harness");
+        let owner = root.join("owner");
+        for d in [&repo, &harness.join("spira"), &owner] {
+            fs::create_dir_all(d).unwrap();
+        }
+        fs::create_dir_all(repo.join("spira")).unwrap();
+        let suite = |name: &str, headers: &str| {
+            fs::write(
+                repo.join("spira").join(name),
+                format!("#!/usr/bin/env bash\n{headers}set -uo pipefail\necho ok\n"),
+            )
+            .unwrap()
+        };
+        suite("test-a.sh", "# tier: T2\n");
+        suite("test-b.sh", "");
+        suite("test-c.sh", "# requires: nothere, jq\n");
+        suite("test-d.sh", "");
+        suite("test-q.sh", "");
+        suite("test-x.sh", "# exclusive: builds the world\n");
+        fs::write(repo.join("spira/suite-state"), "# state\ntest-d.sh | disabled | 2026-01-01 | sp-1 | gone\ntest-q.sh | quarantined | 2026-01-01 | sp-2 | flaky\n").unwrap();
+        fs::write(repo.join(".gitignore"), "target/\n").unwrap();
+        sh(&repo, "git init -q -b main && git add . && git commit -qm base && git checkout -qb topic && echo x > f && git add f && git commit -qm topic && git checkout -q main");
+        let env: HashMap<String, String> = [
+            ("SPIRA_RUN", root.join("run").display().to_string()),
+            ("SPIRA_BATCH_LIVENESS_SLEEP", "0".into()),
+            ("SPIRA_BATCH_PSI_THRESHOLD", "0".into()),
+            ("SPIRA_BATCH_MAXPAR", "2".into()),
+            ("HOME", root.display().to_string()),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        World {
+            root,
+            repo,
+            harness,
+            owner,
+            env,
+            lines: Mutex::new(vec![]),
+        }
+    }
+
+    fn run(
+        &self,
+        rt: &FakeRuntime,
+        b: &FakeBuilder,
+        args: &[&str],
+        stdin: &str,
+        cwd: &Path,
+    ) -> i32 {
+        self.lines.lock().unwrap().clear();
+        let env = |k: &str| self.env.get(k).cloned();
+        let input = stdin.to_string();
+        let read_stdin = move || input.clone();
+        let out = |l: &str| self.lines.lock().unwrap().push(l.to_string());
+        let deps = Deps {
+            rt,
+            builder: b,
+            harness: Harness {
+                root: self.harness.clone(),
+            },
+            env: &env,
+            config: None,
+            stdin: &read_stdin,
+            out: &out,
+            owner_dir: self.owner.clone(),
+            cwd: cwd.to_path_buf(),
+            runner_identity: b"runner-v1".to_vec(),
+        };
+        let mut full = vec![];
+        full.extend(args.iter().map(|s| s.to_string()));
+        full.push(self.repo.display().to_string());
+        let inv = parse(&full).unwrap();
+        assert!(matches!(inv, Invocation::Run(_)));
+        execute(inv, &deps)
+    }
+
+    fn last(&self) -> String {
+        self.lines
+            .lock()
+            .unwrap()
+            .last()
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn has_line(&self, pred: impl Fn(&str) -> bool) -> bool {
+        self.lines.lock().unwrap().iter().any(|l| pred(l))
+    }
+
+    fn results_dir(&self) -> PathBuf {
+        let root = self.root.join("run/batch-results");
+        let mut dirs: Vec<PathBuf> = fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+        dirs.sort_by_key(|p| fs::metadata(p).and_then(|m| m.modified()).ok());
+        dirs.pop().unwrap()
+    }
+}
+
+impl Drop for World {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn runtime() -> FakeRuntime {
+    let rt = FakeRuntime::new();
+    rt.suite("test-a.sh", 0, "1..1\nok 1 - a\n");
+    rt.suite("test-b.sh", 1, "1..1\nnot ok 1 - b is broken\nFAIL b\n");
+    rt.suite("test-q.sh", 1, "not ok 1 - flaky\n");
+    rt.suite("test-x.sh", 0, "ok\n");
+    rt.on(
+        |r| r.argv.last().map(String::as_str) == Some("nothere"),
+        |_| ExecOutcome {
+            rc: 1,
+            output: String::new(),
+        },
+    );
+    rt
+}
+
+#[test]
+fn a_mixed_batch_reports_every_suite_and_a_red_verdict() {
+    let w = World::new("mixed");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let rc = w.run(
+        &rt,
+        &b,
+        &[
+            "--suites",
+            "test-a.sh,test-b.sh,test-c.sh,test-d.sh,test-q.sh,test-x.sh",
+            "topic",
+        ],
+        "",
+        &w.root,
+    );
+    assert_eq!(rc, 1);
+    assert_eq!(w.last(), "VERDICT RED ran=4 red=1");
+    assert!(w.has_line(|l| l.starts_with("  test-a.sh") && l.contains("ok      ")));
+    assert!(w.has_line(|l| l.starts_with("  test-b.sh") && l.contains("RED     rc=1")));
+    assert!(w.has_line(|l| l.trim() == "not ok 1 - b is broken"));
+    assert!(w.has_line(|l| l.starts_with("  test-c.sh") && l.contains("SKIP-REQ requires:nothere")));
+    assert!(w.has_line(|l| l.starts_with("  test-d.sh") && l.ends_with("DISABLED")));
+    assert!(w.has_line(|l| l.starts_with("  test-q.sh") && l.contains("QUARANTINED-RED")));
+    assert!(w.has_line(|l| l.contains("spira: batch: quarantined red (not blocking): test-q.sh")));
+
+    let res = w.results_dir();
+    let status = |s: &str| {
+        fs::read_to_string(res.join(format!("{s}.result")))
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(status("test-a.sh"), "ok");
+    assert_eq!(status("test-b.sh"), "red");
+    assert_eq!(status("test-c.sh"), "skip-req");
+    assert_eq!(status("test-d.sh"), "disabled");
+    assert_eq!(status("test-q.sh"), "quarantined-red");
+    let meta = fs::read_to_string(res.join("batch.meta")).unwrap();
+    assert!(meta.contains("branch=topic\nbase=main\n"));
+    assert!(meta.contains("selection=explicit\nprofile=aeon\n"));
+    assert!(fs::read_to_string(res.join("timing.tsv"))
+        .unwrap()
+        .contains("test-b.sh\t"));
+    assert!(res.join("runner.meta").exists());
+
+    // the verdict is cached red, keyed by this run's key
+    let key = res.file_name().unwrap().to_string_lossy().to_string();
+    let v = fs::read_to_string(w.root.join(format!("run/verdicts/batch-{key}"))).unwrap();
+    assert!(v.starts_with("verdict=red\n"));
+    assert!(v.contains("red_suites=test-b.sh\n"));
+
+    // built once, in the throwaway/slot worktree, aeon profile; exclusive suite ran; container torn down
+    assert_eq!(b.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(b.dirs.lock().unwrap()[0].1, "aeon");
+    let calls = rt.testenv_calls.lock().unwrap().clone();
+    assert_eq!(calls.first().unwrap(), &vec!["tag".to_string()]);
+    assert!(calls.iter().any(|c| c[0] == "up"));
+    assert!(
+        calls.last().unwrap()[0] == "down"
+            && calls.last().unwrap().contains(&"--volumes".to_string())
+    );
+    assert!(fs::read_dir(&w.owner)
+        .unwrap()
+        .flatten()
+        .all(|e| !e.file_name().to_string_lossy().ends_with(".owner")));
+
+    // suite-timing rows: one per executed suite and one __batch__
+    let rows = fs::read_to_string(w.root.join("run/tsd/suite-timing.jsonl")).unwrap();
+    assert_eq!(rows.lines().count(), 5);
+    assert!(rows.contains("\"suite\":\"__batch__\""));
+    assert!(rows.contains("\"tier\":\"T2\""));
+
+    // every suite exec carries the artifact contract
+    for r in rt.suite_execs() {
+        assert_eq!(
+            r.env_value("SPIRA_ARTIFACTS"),
+            Some("/workspace/target/aeon")
+        );
+    }
+}
+
+#[test]
+fn an_unchanged_green_tree_returns_from_the_cache_without_building() {
+    let w = World::new("cache");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(
+        w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root),
+        0
+    );
+    assert_eq!(w.last(), "VERDICT GREEN ran=1");
+    assert_eq!(b.calls.load(Ordering::SeqCst), 1);
+    let ups = rt
+        .testenv_calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|c| c[0] == "up")
+        .count();
+
+    assert_eq!(
+        w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root),
+        0
+    );
+    assert!(
+        w.last().starts_with("VERDICT GREEN ran=0 cached="),
+        "{}",
+        w.last()
+    );
+    assert!(w.has_line(|l| l.contains("tree already passed at")));
+    assert_eq!(
+        b.calls.load(Ordering::SeqCst),
+        1,
+        "a cache hit must not build"
+    );
+    assert_eq!(
+        rt.testenv_calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c[0] == "up")
+            .count(),
+        ups
+    );
+
+    // a different profile is a different claim
+    assert_eq!(
+        w.run(
+            &rt,
+            &b,
+            &["--profile", "release", "--suites", "test-a.sh", "topic"],
+            "",
+            &w.root
+        ),
+        0
+    );
+    assert_eq!(b.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(b.dirs.lock().unwrap()[1].1, "release");
+}
+
+#[test]
+fn a_cached_red_is_refused_until_a_reason_is_given() {
+    let mut w = World::new("repeat");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(
+        w.run(&rt, &b, &["--suites", "test-b.sh", "topic"], "", &w.root),
+        1
+    );
+    assert_eq!(
+        w.run(&rt, &b, &["--suites", "test-b.sh", "topic"], "", &w.root),
+        2
+    );
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=repeat-refused");
+    assert!(w.has_line(|l| l.contains("repeat attempt refused — prior red at")));
+    assert_eq!(b.calls.load(Ordering::SeqCst), 1);
+    w.env.insert(
+        "SPIRA_VERDICT_REPEAT_CONSIDERED".into(),
+        "the runner VM was destroyed mid-run".into(),
+    );
+    assert_eq!(
+        w.run(&rt, &b, &["--suites", "test-b.sh", "topic"], "", &w.root),
+        1
+    );
+    assert_eq!(b.calls.load(Ordering::SeqCst), 2);
+    let res = w.results_dir();
+    let key = res.file_name().unwrap().to_string_lossy().to_string();
+    let v = fs::read_to_string(w.root.join(format!("run/verdicts/batch-{key}"))).unwrap();
+    assert!(v.contains("override_reason=the runner VM was destroyed mid-run"));
+}
+
+#[test]
+fn a_build_failure_is_the_candidates_fault_and_touches_no_container() {
+    let w = World::new("build");
+    let rt = runtime();
+    let b = FakeBuilder::new(Some(101));
+    assert_eq!(
+        w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root),
+        4
+    );
+    assert_eq!(w.last(), "VERDICT FAULT rc=4 ran=0 reason=build");
+    assert!(rt
+        .testenv_calls
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|c| c[0] == "tag"));
+}
+
+#[test]
+fn usage_level_outcomes_need_no_build() {
+    let w = World::new("usage");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(
+        w.run(
+            &rt,
+            &b,
+            &["--suites", "test-a.sh,test-nope.sh", "topic"],
+            "",
+            &w.root
+        ),
+        2
+    );
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=unknown-suite");
+    assert_eq!(
+        w.run(&rt, &b, &["--suites", "-", "topic"], "\n\n", &w.root),
+        0
+    );
+    assert_eq!(w.last(), "VERDICT GREEN ran=0 selected=0");
+    assert_eq!(
+        w.run(&rt, &b, &["--suites", "-", "topic"], "test-a.sh\n", &w.root),
+        0
+    );
+    assert_eq!(w.last(), "VERDICT GREEN ran=1");
+    assert_eq!(
+        w.run(
+            &rt,
+            &b,
+            &["--suites", "test-a.sh", "no-such-branch"],
+            "",
+            &w.root
+        ),
+        2
+    );
+    assert_eq!(b.calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn an_install_failure_is_rc_3_and_still_tears_down() {
+    let w = World::new("install");
+    let rt = runtime();
+    rt.on(
+        |r| r.argv.get(1).map(String::as_str) == Some("/workspace/systemd/install.sh"),
+        |_| ExecOutcome {
+            rc: 1,
+            output: String::new(),
+        },
+    );
+    let b = FakeBuilder::new(None);
+    assert_eq!(
+        w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root),
+        3
+    );
+    assert_eq!(w.last(), "VERDICT FAULT rc=3 ran=0 reason=install");
+    assert_eq!(rt.testenv_calls.lock().unwrap().last().unwrap()[0], "down");
+}
+
+#[test]
+fn a_clean_checkout_of_the_branch_is_built_in_place() {
+    let w = World::new("inplace");
+    sh(&w.repo, "git checkout -q topic");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(
+        w.run(
+            &rt,
+            &b,
+            &["--suites", "test-a.sh", "topic"],
+            "",
+            &w.repo.join("spira")
+        ),
+        0
+    );
+    let built = fs::canonicalize(&b.dirs.lock().unwrap()[0].0).unwrap();
+    assert_eq!(built, fs::canonicalize(&w.repo).unwrap());
+    let up = rt
+        .testenv_calls
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|c| c[0] == "up")
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        fs::canonicalize(&up[4]).unwrap(),
+        fs::canonicalize(&w.repo).unwrap()
+    );
+    // the caller's worktree survives the run
+    assert!(w.repo.join("spira/test-a.sh").exists());
+}
+
+#[test]
+fn a_concurrent_run_holding_the_key_is_refused() {
+    let mut w = World::new("owner");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    w.env.insert("SPIRA_BATCH_INSTANCE".into(), "fixed".into());
+    // pid 1 is always alive
+    fs::write(w.owner.join("spira-batch-fixed.owner"), "1\n").unwrap();
+    assert_eq!(
+        w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root),
+        2
+    );
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=concurrent-run");
+    assert_eq!(
+        fs::read_to_string(w.owner.join("spira-batch-fixed.owner")).unwrap(),
+        "1\n"
+    );
+}
+
+#[test]
+fn orphans_with_dead_owners_are_swept_before_starting() {
+    let w = World::new("sweep");
+    let rt = runtime();
+    rt.containers
+        .lock()
+        .unwrap()
+        .push("spira-batch-dead".into());
+    fs::write(w.owner.join("spira-batch-dead.owner"), "999999999\n").unwrap();
+    let b = FakeBuilder::new(None);
+    assert_eq!(
+        w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root),
+        0
+    );
+    assert_eq!(rt.purged.lock().unwrap().clone(), vec!["spira-batch-dead"]);
+    assert!(!w.owner.join("spira-batch-dead.owner").exists());
+}
+
+#[test]
+fn verdict_lines() {
+    assert_eq!(Finish::green(3).verdict_line(), "VERDICT GREEN ran=3");
+    assert_eq!(
+        Finish::nothing().verdict_line(),
+        "VERDICT GREEN ran=0 selected=0"
+    );
+    assert_eq!(
+        Finish {
+            rc: 1,
+            ran: 5,
+            red: 2,
+            reason: None,
+            cached: None,
+            selected_none: false
+        }
+        .verdict_line(),
+        "VERDICT RED ran=5 red=2"
+    );
+    assert_eq!(
+        Finish::fault(3, "install", 0).verdict_line(),
+        "VERDICT FAULT rc=3 ran=0 reason=install"
+    );
+}

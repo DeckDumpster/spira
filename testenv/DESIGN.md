@@ -364,11 +364,23 @@ edit — is for `spira_bin` to honour SPIRA_ARTIFACTS only when `$SPIRA_REPO` is
 ## 6. Build profile (`[profile.aeon]`, already in the workspace Cargo.toml)
 
 `inherits = "dev"`, `opt-level = 0`, `incremental = true`, `debug = "line-tables-only"`;
-outputs to `target/aeon/`. `dev` maps to `target/debug/`. Measured on this worktree
-(2026-09-28, 32-core host, see the bead note for the numbers of record):
+outputs to `target/aeon` (the profile's name); `dev` maps to cargo's `debug` directory.
+Measured in this worktree, 2026-09-28, full workspace (`cargo build --profile aeon
+--workspace`), host rustc 1.82.0:
 
-* warm rebuild after a one-line shell edit: cargo compiles nothing;
-* warm rebuild after a one-line Rust edit in a leaf crate: that crate only.
+| case | wall | what cargo compiled |
+|---|---|---|
+| cold, fresh target dir | 18.3 s | all 24 crates |
+| warm, no change | 0.10 s | nothing |
+| warm, one-line edit to `spira/lib.sh` | 0.12 s | **nothing** |
+| warm, one-line edit to a leaf crate (`tsd-lifecycle-export/src/main.rs`) | 0.62 s | that crate only |
+| warm, one-line edit to a shared crate (`spira-config/src/lib.rs`) | 2.84 s | spira-config and its 3 dependents (+ the leaf above, reverted) |
+| `cargo build --release -p testenv` (LTO, `opt-level=z`) | 87 s | testenv and its dependencies |
+
+So a warm one-suite aeon run after a shell edit spends ~0.1 s in the build step; the
+<30 s-to-first-suite target of the bead is then the container tier (`testenv.sh up`,
+install, baseline), not cargo. The old path rebuilt spira-config and test-plan from cold
+into a fresh `cargo-target-bins/<tree>` on every new tree (95-116 s, sp-zv7j4).
 
 ## 7. Decisions
 
@@ -403,13 +415,13 @@ production; `SPIRA_ARTIFACTS` inside a test run). A round that tests its own run
 | file:line | current | replacement |
 |---|---|---|
 | `.github/workflows/gate.yml:508` | `printf '%s\n' "$_s" \| bash spira/testenv-batch.sh --suites - "${{ github.sha }}" \|\| _b=$?` | `printf '%s\n' "$_s" \| bin/testenv --suites - "${{ github.sha }}" \|\| _b=$?` (the build job already ships `bin/testenv`; the run rebuilds in place with `--profile aeon`, or pass `--profile release` to reuse the build job's profile) |
-| `.github/workflows/gate.yml:214-225,317-327` | `make build`, copy `target/release/*` into `bin/`, download into `bin/` | keep only as the source of `bin/testenv`; suites no longer read `bin/` (SPIRA_ARTIFACTS) |
+| `.github/workflows/gate.yml:214-225,317-327` | `make build`, copy the release profile's executables into `bin/`, download into `bin/` | keep only as the source of `bin/testenv`; suites no longer read `bin/` (SPIRA_ARTIFACTS) |
 | `spira/gate-spira.sh:464` | `} \| bash "$HERE/testenv-batch.sh" --suites - "${SPIRA_GATE_SELECT_HEAD:-HEAD}" >&2` | `} \| "$(spira_bin testenv)" --suites - "${SPIRA_GATE_SELECT_HEAD:-HEAD}" >&2` |
 | `spira/gate-retry.sh:14` | `BATCH="${GATE_RETRY_BATCH:-$HERE/testenv-batch.sh}"` | `BATCH="${GATE_RETRY_BATCH:-$(spira_bin testenv)}"` and lines 64/66 `bash "$BATCH"` → `"$BATCH"` |
 | `spira/attribute.sh:151` | `bash "$HERE/testenv-batch.sh" --suites "$suites_csv" "$sha" "$REPO"` | `"$(spira_bin testenv)" --suites "$suites_csv" "$sha" "$REPO"` |
 | `spira/round-vm.sh:348` | `exec bash spira/testenv-batch.sh --mode parallel --with-bins --suites "$suites" round` | `exec cargo run -q --profile release -p testenv -- --mode parallel --profile release --suites "$suites" round` |
 | `spira/round-vm.sh:350` | `exec bash spira/testenv-batch.sh --mode parallel --with-bins round` | `exec cargo run -q --profile release -p testenv -- --mode parallel --profile release round` |
-| `spira/round-vm.sh:365,375,399-412` | pulls `round-work/.runtime/spira/cargo-target-bins/` and installs by tree | pull `round-work/target/release/` and compare the VM's reported tree (batch.meta `key`/`worktree`) instead of a directory name |
+| `spira/round-vm.sh:365,375,399-412` | pulls `round-work/.runtime/spira/cargo-target-bins/` and installs by tree | pull the VM worktree's release artifacts (`round-work/target/release`) and compare the VM's reported tree (batch.meta `key`/`worktree`) instead of a directory name |
 | `/home/ryan/spira/run/concierge-notes/round.sh:128` | `bash "$w/spira/testenv-batch.sh" --mode parallel --with-bins --suites "$suites" "concierge/round-$2"` | `(cd "$w" && cargo run -q --profile release -p testenv -- --mode parallel --profile release --suites "$suites" "concierge/round-$2")` |
 | `round.sh:134-138` | computes its own VERDICT from grep counts | may read testenv's last line: `tail -1 "$r.out"` is `VERDICT ...` |
 | `round.sh:207` | `SPIRA_BATCH_BINS_TARGET_DIR="$w/.runtime/spira/cargo-target-bins" bash "$H/spira/queue.sh" land-local ...` | drop the variable; pass the round worktree (see queue.sh below) |

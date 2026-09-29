@@ -1,0 +1,176 @@
+//! Suite headers and lifecycle state, read from the tree under test (DESIGN.md §3.6).
+
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+/// The `# key: value` header lines a suite declares before its first `set -` line.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SuiteHeaders {
+    /// `# requires: a, b` — tokens checked with `command -v` inside the container.
+    pub requires: Vec<String>,
+    /// `# exclusive: <reason>` — drains the pool and runs alone.
+    pub exclusive: Option<String>,
+    /// `# tier: T0..T4`, empty when undeclared.
+    pub tier: String,
+}
+
+fn header_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    let rest = line.strip_prefix('#')?;
+    let rest = rest.trim_start_matches(' ');
+    let rest = rest.strip_prefix(key)?.strip_prefix(':')?;
+    Some(rest.trim_start_matches(' '))
+}
+
+impl SuiteHeaders {
+    pub fn parse(text: &str) -> Self {
+        let mut h = SuiteHeaders::default();
+        let (mut got_req, mut got_excl, mut got_tier) = (false, false, false);
+        for line in text.lines() {
+            if line.starts_with("set -") {
+                break;
+            }
+            if !got_req {
+                if let Some(v) = header_value(line, "requires") {
+                    got_req = true;
+                    h.requires = v
+                        .replace(',', " ")
+                        .split_whitespace()
+                        .map(str::to_string)
+                        .collect();
+                }
+            }
+            if !got_excl {
+                if let Some(v) = header_value(line, "exclusive") {
+                    got_excl = true;
+                    if !v.is_empty() {
+                        h.exclusive = Some(v.to_string());
+                    }
+                }
+            }
+            if !got_tier {
+                if let Some(v) = header_value(line, "tier") {
+                    got_tier = true;
+                    h.tier = v.trim().to_string();
+                }
+            }
+        }
+        h
+    }
+
+    /// Requirement tokens that need a check; `testenv` is met by being in the container.
+    pub fn checkable_requires(&self) -> impl Iterator<Item = &str> {
+        self.requires
+            .iter()
+            .map(String::as_str)
+            .filter(|t| *t != "testenv")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SuiteState {
+    Active,
+    Quarantined,
+    Disabled,
+}
+
+/// One row of `spira/suite-state`: `<suite> | <state> | <since> | <bead> | <reason>`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SuiteStateRow {
+    pub suite: String,
+    pub state: SuiteState,
+    pub since: String,
+    pub bead: String,
+    pub reason: String,
+}
+
+/// The parsed suite-state file. Absent file, malformed lines and unknown states all read as
+/// active — fail-closed: an unreadable file makes every suite blocking.
+#[derive(Debug, Clone, Default)]
+pub struct SuiteStates {
+    rows: BTreeMap<String, SuiteStateRow>,
+}
+
+impl SuiteStates {
+    pub fn parse(text: &str) -> Self {
+        let mut rows = BTreeMap::new();
+        for raw in text.lines() {
+            let line = raw.split('#').next().unwrap_or("").trim();
+            if line.is_empty() {
+                continue;
+            }
+            let parts: Vec<&str> = line.splitn(5, '|').map(str::trim).collect();
+            if parts.len() < 5 {
+                continue;
+            }
+            let state = match parts[1] {
+                "active" => SuiteState::Active,
+                "quarantined" => SuiteState::Quarantined,
+                "disabled" => SuiteState::Disabled,
+                _ => continue,
+            };
+            if parts[0].is_empty() {
+                continue;
+            }
+            // First row for a suite wins, as suite_state_of's first-match read does.
+            rows.entry(parts[0].to_string()).or_insert(SuiteStateRow {
+                suite: parts[0].to_string(),
+                state,
+                since: parts[2].to_string(),
+                bead: parts[3].to_string(),
+                reason: parts[4].to_string(),
+            });
+        }
+        SuiteStates { rows }
+    }
+
+    pub fn state_of(&self, suite: &str) -> SuiteState {
+        self.rows
+            .get(suite)
+            .map(|r| r.state)
+            .unwrap_or(SuiteState::Active)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn headers_stop_at_the_first_set_line() {
+        let t = "#!/usr/bin/env bash\n# requires: jq, dolt testenv\n# exclusive: builds cargo\n# tier: T2 \nset -uo pipefail\n# requires: late\n";
+        let h = SuiteHeaders::parse(t);
+        assert_eq!(h.requires, vec!["jq", "dolt", "testenv"]);
+        assert_eq!(h.exclusive.as_deref(), Some("builds cargo"));
+        assert_eq!(h.tier, "T2");
+        assert_eq!(
+            h.checkable_requires().collect::<Vec<_>>(),
+            vec!["jq", "dolt"]
+        );
+    }
+
+    #[test]
+    fn headers_after_set_are_ignored_and_first_wins() {
+        let h = SuiteHeaders::parse("set -e\n# requires: jq\n");
+        assert!(h.requires.is_empty());
+        let h = SuiteHeaders::parse("#requires: a\n# requires: b\n");
+        assert_eq!(h.requires, vec!["a"]);
+    }
+
+    #[test]
+    fn empty_exclusive_is_not_exclusive() {
+        assert_eq!(SuiteHeaders::parse("# exclusive:\n").exclusive, None);
+    }
+
+    #[test]
+    fn suite_state_reads_rows_comments_and_defaults() {
+        let t = "# header\ntest-poison.sh | quarantined | 2026-09-28T12:35:54Z | sp-ytbma | slow # note\n\
+                 test-off.sh | disabled | x | | gone\nbad line\ntest-odd.sh | weird | x | y | z\n";
+        let s = SuiteStates::parse(t);
+        assert_eq!(s.state_of("test-poison.sh"), SuiteState::Quarantined);
+        assert_eq!(s.state_of("test-off.sh"), SuiteState::Disabled);
+        assert_eq!(s.state_of("test-odd.sh"), SuiteState::Active);
+        assert_eq!(s.state_of("test-none.sh"), SuiteState::Active);
+        assert_eq!(SuiteStates::parse("").state_of("x"), SuiteState::Active);
+    }
+}

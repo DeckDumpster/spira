@@ -28,6 +28,7 @@ members = [
     "round-vm",
     "spira-claim",
     "strand",
+    "testenv",
 ]
 resolver = "2"
 
