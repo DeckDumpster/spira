@@ -449,3 +449,15 @@ production; `SPIRA_ARTIFACTS` inside a test run). A round that tests its own run
   absent → Red. testenv keeps the key subdirectory (gate-retry.sh, gate-diag.sh and
   attribute.sh all read `*/`); batcher-cut should glob one level down.
 * **F2** — the tier-budget and bd-shim dead paths (D3, D4).
+
+## 10. `testenv suites` — the suite-state tooling (replaces spira/suites.sh)
+
+`spira/suites.sh` (population, gate/timed partition, the watchtower's `status` block, flake
+reports, quarantine hygiene and the `spira/suite-state` transitions) is folded into this
+crate as the `testenv suites <cmd>` subcommand family (module `suites`), not a crate of its
+own: it reads the same `spira/suite-state`, the same suite headers and the same result
+record this runner already parses and writes, and a second crate would carry a second
+parser of each — the drift suite-covers.sh was written to end. Its contract, schema,
+seams, decisions and cutover are in [DESIGN-suites.md](DESIGN-suites.md). The runner's own
+argument grammar is unchanged: `suites` as the first argument selects the family, and a
+branch literally named `suites` is `testenv -- suites`.
