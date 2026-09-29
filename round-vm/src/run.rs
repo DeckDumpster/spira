@@ -770,6 +770,7 @@ mod tests {
         assert_eq!((m.build_wall_secs, m.suite_wall_secs_sum), (Some(90), 42));
         assert_eq!(m.tree_sha_found.as_deref(), Some("treesha"));
         assert_eq!(m.commit_sha, "commitsha");
+        // path-ok: a test asserting where round-vm installs a fixture binary in a temp worktree
         assert!(tree(&fx).tree_dir.join("target/release/batcher").is_file(), "installed into the round worktree");
         assert!(fs::read_to_string(fx.cfg.run_dir.join("tsd/suite.jsonl")).unwrap().contains("\"ran_on\":\"100\""));
         assert!(remote.jobs.borrow()[0].ends_with("'' '24' ''"), "{:?}", remote.jobs.borrow());
@@ -809,6 +810,7 @@ mod tests {
             ("KEY/batch.meta", "key=KEY\ntree=othersha\n"),
         ]);
         assert_eq!(go(&fx, &remote, &tree(&fx)), 2);
+        // path-ok: a test asserting where round-vm installs a fixture binary in a temp worktree
         assert!(!tree(&fx).tree_dir.join("target/release/batcher").exists());
         assert!(fx.fp.live_vms().is_empty());
     }

@@ -275,6 +275,7 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, s
             own_unit: String::new(),
             t0: crate::util::now_epoch(),
             enforce,
+            // path-ok: a fake binary path in a unit-test fixture, never resolved
             claim_bin: Some("/bin/spira-claim".into()),
             stop: Arc::new(Stop::default()),
             hb_shutdown: Arc::new(AtomicBool::new(false)),

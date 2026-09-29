@@ -153,8 +153,9 @@ done
 # worktree's target/release — where batcher-cut's bins_present and queue land-local look.
 if [ -n "${STUB_INSTALL_BINS:-}" ] && [ -n "$wt" ]; then
     mkdir -p "$wt/target/release"
+    # path-ok: the fixture round worktree's own build output, which the stub round-vm fills
     printf 'fakebin\n' > "$wt/target/release/fakebin"
-    chmod +x "$wt/target/release/fakebin"
+    chmod +x "$wt/target/release/fakebin"   # path-ok: same fixture build output as the line above
 fi
 if [ -n "${STUB_ARGV_LOG:-}" ]; then
     {

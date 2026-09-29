@@ -23,7 +23,6 @@ spira/acceptance-ci.sh
 spira/acceptance-lib.sh
 spira/acceptance-local.sh
 spira/acceptance-run.sh
-spira/aeon.sh
 spira/aeons.sh
 spira/attribute.sh
 spira/batch.sh
@@ -62,10 +61,8 @@ spira/plan-matrix-fence.sh
 spira/pre-activate.sh
 spira/pr-notify.sh
 spira/publish-backlog.sh
-spira/queue.sh
 spira/release.sh
 spira/sending.sh
-spira/sentinel.sh
 spira/skew.sh
 spira/stage.sh
 spira/test-aeon-base-ref-qualify.sh
@@ -135,7 +132,6 @@ spira/test-destroy-branch.sh
 spira/test-doctor-config-files.sh
 spira/test-doctor-gate-compile-check.sh
 spira/test-eject-unattributed.sh
-spira/testenv-batch.sh
 spira/test-epic-claim-order.sh
 spira/test-escape-classify.sh
 spira/test-express-cert-order.sh
@@ -222,7 +218,6 @@ spira/test-queue-submit.sh
 spira/test-queue-transition.sh
 spira/test-queue-watch.sh
 spira/test-rebase-branch.sh
-spira/test-rebase-stale.sh
 spira/test-reclaim-slay-branch-guard.sh
 spira/test-reconciler.sh
 spira/test-released-defects.sh
@@ -246,7 +241,6 @@ spira/test-spira-lc-crate.sh
 spira/test-strand-truncated.sh
 spira/test-submitted-lands.sh
 spira/test-superseded.sh
-spira/test-testenv-batch.sh
 spira/test-thrash-teardown.sh
 spira/test-tsd-producers.sh
 spira/test-unclaimable.sh
@@ -265,3 +259,24 @@ spira/verdict.sh
 # door must name the file it polices. sp-a8gna's brief allows "a short named exception list,
 # e.g. spira-config's own tests"; this is that class. Round 122 (Concierge), sp-cx0mj x sp-a8gna.
 spira/test-spira-config-only-door.sh
+
+# THE RUST CUTOVER CRATES (2026-09-29). Each names spira.toml or repo-map in a comment, a
+# log line kept byte-identical with the script it replaced (sentinel CHECK5, testenv), or a
+# unit-test fixture that writes a throwaway spira.toml for spira-config to read. None parses
+# or writes the live config itself; all read it through spira-config. Shrink as each is
+# reworded.
+aeon/src/brief.rs
+aeon/src/conf.rs
+aeon/src/run.rs
+round-vm/src/cli.rs
+round-vm/src/config.rs
+sentinel/src/cfg.rs
+sentinel/src/check5.rs
+sentinel/src/tests.rs
+spira-claim/src/main.rs
+spira-claim/src/store.rs
+spira-claim/src/unpoison_tests.rs
+strand/src/config.rs
+testenv/src/run.rs
+testenv/src/settings.rs
+testenv/src/suites/ports.rs
