@@ -83,46 +83,4 @@ leave nothing on the bead, nothing comes back for it.
 
 ## Finishing
 
-**You have no `bd`.** `bd` is not on your PATH and no database credential is in your
-environment (design §3.5) — the only way you act on your bead is `work`, bound to exactly
-this one: `{{BEAD_ID}}`. Naming any other bead to `work` is refused.
-
-When the work is committed on your branch:
-
-    work submit
-
-The tip is read from your own worktree's `HEAD` — you never pass one. This moves the bead to
-SUBMITTED; the landing pass carries it from there and lands it once it certifies.
-
-When the deliverable is not code on this branch — child beads, a document, a mail message:
-
-    work done --delivers "<what you produced, or where it lives>"
-
-When you are blocked on a question only the operator can answer:
-
-    work blocked "<the question>" --default "<what you would do by default>"
-
-This both holds the bead and files the ask; you do not also send mail yourself.
-
-When you discover other work rather than doing it:
-
-    work file-followup "<title>"
-    work split "<title>"
-
-Both file through `bead.sh`'s own contract, parented to `{{BEAD_ID}}` — you never name the
-parent yourself.
-
-When you believe this bead's work already landed under another id:
-
-    work superseded-by <successor-id>
-
-This is a *request* — it holds the bead pending confirmation; it does not close it.
-
-To leave a plain note on `{{BEAD_ID}}` (no lifecycle effect):
-
-    work note "<text>"
-
-If you genuinely cannot finish and none of the above fits — leave a note with `work note`
-saying precisely what is blocked and what you would do by default, and exit non-zero. An
-honest failure is cheap. A bead whose lifecycle event doesn't match what actually happened
-is expensive, because everything downstream of it acts on that record.
+{{FINISH}}

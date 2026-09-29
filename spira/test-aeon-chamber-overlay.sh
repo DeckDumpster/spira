@@ -15,14 +15,20 @@
 #    "## <section>" block) and $FAYTH.append.md (appended). A hand edit to the release
 #    checkout is reverted by the next skew refresh with nothing to say so (sp-r1ca2); an
 #    overlay survives it and doctor.sh reports it by name.
+# 3. {{FINISH}} FOLLOWS lifecycle_enforce (sp-wmcvb). sp-xethq rewrote builder.md's Finishing
+#    section unconditionally for the restricted `work` path; sp-74gzo then made that path
+#    explicit and off by default. With the flag off, every builder was still told "You have
+#    no bd" / "work submit" against a daemon nothing starts — no builder session could ever
+#    submit. {{FINISH}} is now chosen by aeon.sh, the way {{LANDING}} is: this asserts both
+#    renderings, the off-by-default legacy bd-close text and the flag-on restricted text.
 #
 # POSITIVE CONTROL: the overlay assertions plant a section and an append file and require
 # both to appear in the rendered task file — an overlay directory nothing reads from would
 # otherwise look identical to one applied correctly.
 #
-# defect: sp-eibeu
+# defect: sp-eibeu, sp-wmcvb
 # tier: T1
-# covers: spira/aeon.sh spira/chamber/builder.md spira/conf.sh spira/doctor.sh
+# covers: spira/aeon.sh spira/chamber/builder.md spira/conf.sh spira/doctor.sh spira/work-env.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -107,6 +113,61 @@ nowant "and no stray {{GATE}} placeholder"                                "{{GAT
 want   "the Tests section's own instruction is still there"       "DO NOT run the full landing" "$task_g"
 want   "and testenv-batch.sh is the verification path"            "testenv-batch.sh"            "$task_g"
 close_bead "$BID_G"
+
+# ==========================================================================================
+echo
+echo "GOLDEN (sp-wmcvb): {{FINISH}} follows lifecycle_enforce, not sp-xethq's fixed text"
+# ==========================================================================================
+# lifecycle_enforce=0 (the default in production until the sp-sa8pn cutover): the rendered
+# brief must name bd ... close and must never tell the model it has no bd — the defect this
+# bead reproduces was every builder since sp-xethq being told the opposite while
+# lifecycle_enforce was off (sp-74gzo), so nothing could ever submit.
+unset SPIRA_LIFECYCLE_ENFORCE
+BID_F0="$(make_bead)"
+[ -n "$BID_F0" ] || { printf 'test-aeon-chamber-overlay: could not create finish/legacy bead\n' >&2; exit 1; }
+aeon builder
+task_f0="$(cat "$SPIRA_RUN/$BID_F0.system.md" "$SPIRA_RUN/$BID_F0.task.md" 2>/dev/null)"
+nowant "SEEN RED CONTROL: lifecycle_enforce=0 never tells the model it has no bd" \
+       "You have no \`bd\`" "$task_f0"
+want   "lifecycle_enforce=0 renders the legacy bd-close Finishing section" \
+       "bd -C $SPIRA_DB close $BID_F0 --reason-file -" "$task_f0"
+want   "and the seven-outcome table is present" "OUTCOME: submitted" "$task_f0"
+nowant "and the restricted work-verb finishing text is absent" "work submit" "$task_f0"
+close_bead "$BID_F0"
+
+# lifecycle_enforce=1: the restricted path, exercised end to end against stub SPIRA_LC_BIN /
+# SPIRA_WORK_BIN — this suite is about brief rendering, not lc_claim_bead's own protocol
+# correctness (test-aeon-lifecycle-cutover.sh covers that against a real spira-lc server), so
+# the stub answers just enough of spira-lc's `show`/`event` surface for the claim to apply.
+cp "$HERE/work-env.sh" "$SPIRA_HOME/"
+STUB_BIN="$TMP/lc-bin"; mkdir -p "$STUB_BIN"
+cat > "$STUB_BIN/spira-lc" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+    show) printf '{"bead":{"state":"READY","version":0,"holder":null,"lease_until":null}}\n' ;;
+    event) exit 0 ;;
+    *) exit 0 ;;
+esac
+STUB
+chmod +x "$STUB_BIN/spira-lc"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB_BIN/work"
+chmod +x "$STUB_BIN/work"
+export SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_LC_BIN="$STUB_BIN/spira-lc" SPIRA_WORK_BIN="$STUB_BIN/work"
+BID_F1="$(make_bead)"
+[ -n "$BID_F1" ] || { printf 'test-aeon-chamber-overlay: could not create finish/restricted bead\n' >&2; exit 1; }
+aeon builder
+task_f1="$(cat "$SPIRA_RUN/$BID_F1.system.md" "$SPIRA_RUN/$BID_F1.task.md" 2>/dev/null)"
+want   "lifecycle_enforce=1 tells the model it has no bd" "You have no \`bd\`" "$task_f1"
+want   "and the finishing verb is work submit" "work submit" "$task_f1"
+nowant "and the legacy bd-close instruction is absent" "bd -C $SPIRA_DB close" "$task_f1"
+# The stub model never calls `work submit`, so the bead is left claimed under the lifecycle
+# machine rather than closed through bd — release it the same way aeon.sh's own cleanup
+# would, so it does not linger ready for a later section's make_bead to reclaim.
+BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" close "$BID_F1" --reason-file - >/dev/null 2>&1 <<'REASON'
+OUTCOME: submitted
+Test scaffolding cleanup — not a real session.
+REASON
+unset SPIRA_LIFECYCLE_ENFORCE SPIRA_LC_BIN SPIRA_WORK_BIN
 
 # ==========================================================================================
 echo
