@@ -707,7 +707,13 @@ mod tests {
                 ..Default::default()
             };
             let p = render_prompt(chamber, &t, None);
-            assert!(p.contains("    /srv/h/bin/testenv spira/sp-a spira\n"), "{p}");
+            // The only runner line is the reproduce-one-named-suite form; a no-`--suites`
+            // pre-close run duplicates the gate's work outside its admission (sp-4vq2q follow-up).
+            assert!(p.contains("    /srv/h/bin/testenv --suites <suite> spira/sp-a spira\n"), "{p}");
+            assert!(!p.contains("    /srv/h/bin/testenv spira/sp-a spira\n"), "{p}");
+            assert!(runner_lines(&p, "/srv/h/bin/testenv").iter().all(|l| l.contains(" --suites <suite> ")));
+            assert!(p.contains("do not run the suites"));
+            assert!(!p.contains("exactly the selection"));
             assert!(!p.contains("{{TESTENV}}") && !p.contains("{{FOLLOWUP}}"));
             assert!(!p.contains("/../bin/testenv"));
             assert!(!p.contains("--suites test-"));
@@ -717,6 +723,29 @@ mod tests {
                 println!("==== lifecycle_enforce={enforce} ====\n{p}");
             }
         }
+    }
+
+    fn runner_lines<'a>(p: &'a str, runner: &str) -> Vec<&'a str> {
+        p.lines().filter(|l| l.contains(runner)).collect()
+    }
+
+    // The batcher brief, too, allows only the reproduce-one-named-suite run, never a pre-close one.
+    #[test]
+    fn batcher_chamber_runs_only_a_named_suite() {
+        let chamber = include_str!("../../spira/chamber/batcher.md");
+        let t = Tokens {
+            single: vec![
+                ("TESTENV", testenv_runner("", "/srv/h/spira")),
+                ("REPO_NAME", "spira".into()),
+            ],
+            ..Default::default()
+        };
+        let p = render_prompt(chamber, &t, None);
+        assert!(p.contains("    /srv/h/bin/testenv --suites <suite> <branch> spira\n"), "{p}");
+        assert!(!p.contains("    /srv/h/bin/testenv <branch> spira\n"), "{p}");
+        let lines = runner_lines(&p, "/srv/h/bin/testenv");
+        assert!(!lines.is_empty() && lines.iter().all(|l| l.contains(" --suites <suite> ")));
+        assert!(!p.contains("exactly what the landing"));
     }
 
     // test-aeon-chamber-overlay.sh GOLDEN (sp-wmcvb): {{FINISH}} follows lifecycle_enforce.

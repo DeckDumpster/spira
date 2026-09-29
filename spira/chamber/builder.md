@@ -37,14 +37,18 @@ session: sp-2tv was summoned twenty-two times, each turn stopping at "Let me che
 
     cargo test -p <crate>
 
-**Before closing**, run the testenv runner on your branch with **no `--suites`**:
+**Before closing, do not run the suites.** Commit and close: the landing pass certifies your
+branch with the budgeted gate right after, under the host-wide admission that keeps gates from
+starving one another. A runner call with no `--suites` is not the gate's selection — it runs the
+full unbudgeted diff set, outside that admission, and the gate never replays it.
 
-    {{TESTENV}} {{BRANCH}} {{REPO_NAME}}
+**The one suite run you may do** is to reproduce a specific suite named in a failure note —
+for example a bead reopened by a red gate or round that names the suite:
 
-With no `--suites` it selects the suites your diff touches — exactly the selection the landing
-gate will make. Do not hand-pick suites and do not go looking for which suites cover your
-files; the runner already knows. It prints a `VERDICT` line; report that line in your close.
-Commit first — the runner tests the committed branch, not your working tree.
+    {{TESTENV}} --suites <suite> {{BRANCH}} {{REPO_NAME}}
+
+That is for reproducing a named failure, never for pre-certifying. Commit first — the runner
+tests the committed branch, not your working tree.
 
 The runner is that absolute path and nothing else (law-tests-run-only-through-testenv):
 
