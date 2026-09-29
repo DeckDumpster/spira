@@ -3,14 +3,15 @@
 //! that only reports when it finishes cleanly is a worker whose silence means nothing.
 //!
 //! TERM and INT are blocked in every thread and received by one thread with `sigwait`, which
-//! forwards TERM to the child the pass is waiting on (a gate, a seam call), writes the status
+//! forwards TERM to the child the pass is waiting on (a gate, a seam call) and to every gate
+//! the concurrent certification walk has running (DESIGN.md §8 D14), writes the status
 //! with rc 143, removes the run record and exits. Children get the default mask back
 //! (`util::command`).
 
 use crate::model::StatusFile;
 use crate::records::Files;
 use crate::report::global_counts;
-use crate::util::{unix_now, CURRENT_CHILD};
+use crate::util::{unix_now, CURRENT_CHILD, GATE_CHILDREN};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
@@ -51,6 +52,8 @@ pub fn install(run: PathBuf) {
                 libc::kill(-child, libc::SIGTERM);
             }
         }
+        // And every gate the concurrent certification walk has running (D14 (i)).
+        GATE_CHILDREN.term_all();
         let files = Files::new(&run);
         let (branches, moved) = global_counts();
         files.write_status(&StatusFile { at: unix_now(), rc: 143, branches, moved });

@@ -9,7 +9,7 @@ use crate::records::Files;
 use crate::report::Reporter;
 use crate::util::{first_line, tail_bytes, tail_lines};
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 pub struct Pass<'a> {
@@ -37,6 +37,26 @@ pub struct Pass<'a> {
 pub(crate) enum Flow {
     Next,
     BudgetCut,
+}
+
+/// What §4.1's steps 1–6 made of a branch.
+pub(crate) enum Screen<'w> {
+    /// Handled (skipped, reopened or recorded) — nothing more this pass.
+    Done(Flow),
+    /// Skipped as not closed, or as held by a live aeon: no decision was made, so the
+    /// concurrent walk may look at it again when a refresh finds it ready (D14 (h)).
+    Retry,
+    Queue(&'w BeadRow),
+    Push(&'w BeadRow),
+}
+
+/// A gate the concurrent walk has started and not yet decided.
+struct Job {
+    ticket: u64,
+    br: String,
+    bead: BeadRow,
+    tip: String,
+    fix: bool,
 }
 
 /// Per-repository walk state.
@@ -243,7 +263,7 @@ impl<'a> Pass<'a> {
             self.log(&format!("CHECK6 {name}: express branch(es) certified first:{list}"));
         }
 
-        let w = Walk {
+        let mut w = Walk {
             repo,
             base,
             base_fq,
@@ -254,6 +274,13 @@ impl<'a> Pass<'a> {
             basefail_filed: Cell::new(false),
             landed_any: Cell::new(false),
         };
+
+        // CONCURRENT CERTIFICATION (DESIGN.md §8 D14): queued repositories only, and only
+        // when SPIRA_CERTIFY_PAR > 1. At 1 the serial walk below runs unchanged.
+        if repo.mode.queued() && self.s.certify_par > 1 {
+            self.walk_concurrent(&mut w, order);
+            return;
+        }
 
         let mut cut_at: Option<usize> = None;
         for (i, br) in order.iter().enumerate() {
@@ -302,6 +329,17 @@ impl<'a> Pass<'a> {
 
     /// One branch (DESIGN.md §4.1 steps 1–7).
     fn branch(&self, w: &Walk, br: &str) -> Flow {
+        let id = br.trim_start_matches("spira/");
+        match self.screen(w, br) {
+            Screen::Done(f) => f,
+            Screen::Retry => Flow::Next,
+            Screen::Queue(bead) => self.certify(w, br, id, bead),
+            Screen::Push(bead) => crate::push::push_or_hold(self, w, br, id, bead),
+        }
+    }
+
+    /// §4.1 steps 1–6: everything before the branch's own mode takes over.
+    fn screen<'w>(&self, w: &'w Walk, br: &str) -> Screen<'w> {
         let repo = w.repo;
         let name = &repo.name;
         let id = br.trim_start_matches("spira/");
@@ -318,7 +356,7 @@ impl<'a> Pass<'a> {
                 )),
                 None => self.log(&format!("CHECK6 {id}: {br} is gone since this pass began — landed or reaped elsewhere, not reopening")),
             }
-            return Flow::Next;
+            return Screen::Done(Flow::Next);
         }
         let bead = w.beads.get(id);
         let st = bead.map(|b| b.status.as_str()).unwrap_or("");
@@ -329,7 +367,7 @@ impl<'a> Pass<'a> {
             } else {
                 self.log(&format!("CHECK6 {id}: {br} not landed — its bead is {shown} and no aeon holds it"));
             }
-            return Flow::Next;
+            return Screen::Retry;
         }
         let bead = bead.expect("closed implies present");
 
@@ -337,17 +375,17 @@ impl<'a> Pass<'a> {
         let bead_path = self.repos.iter().find(|r| r.name == bead.repo).map(|r| r.path.clone());
         if bead_path.as_deref() != Some(repo.path.as_path()) {
             self.log(&format!("CHECK6 {id}: {br} is in {name} but the bead names repo:{} — not landing it here", bead.repo));
-            return Flow::Next;
+            return Screen::Done(Flow::Next);
         }
         if bead.superseded {
             self.log(&format!(
                 "CHECK6 {id}: {br} is superseded — its work landed under the successor's id; leaving it for the Sending to reap"
             ));
-            return Flow::Next;
+            return Screen::Done(Flow::Next);
         }
         if bead.has_label(&self.s.cutover_label) {
             self.log(&format!("CHECK6 {id}: {br} is labelled {} — leaving it for the cutover round", self.s.cutover_label));
-            return Flow::Next;
+            return Screen::Done(Flow::Next);
         }
         if let Some(ls) = self.files.land_state(id) {
             if ls.state == "EJECTED" {
@@ -356,7 +394,7 @@ impl<'a> Pass<'a> {
                 self.lib.land_mark(id, "RED", &tip, "ejected-not-requeued");
                 self.lib.reopen(id, "batch-eject", "Reopened by sentinel: batch gate failure recorded but bead closed before aeon could fix it.");
                 self.out.progress(&format!("reopened {id} — ejected-not-requeued"));
-                return Flow::Next;
+                return Screen::Done(Flow::Next);
             }
         }
         if self.git.content_landed(&repo.path, br, &w.base_fq) {
@@ -364,36 +402,52 @@ impl<'a> Pass<'a> {
             let tip = self.git.rev_parse(&repo.path, br).unwrap_or_else(|| "none".into());
             self.lib.land_mark(id, "CONTENT", &tip, "");
             self.files.drop_ejected(id);
-            return Flow::Next;
+            return Screen::Done(Flow::Next);
         }
         if self.procs.holder_alive(id) {
             self.log(&format!("CHECK6 {id}: a live aeon still holds {br} — deferring the land"));
-            return Flow::Next;
+            return Screen::Retry;
         }
         if repo.mode.queued() {
-            return self.certify(w, br, id, bead);
+            return Screen::Queue(bead);
         }
-        crate::push::push_or_hold(self, w, br, id, bead)
+        Screen::Push(bead)
     }
 
     /// Queue-mode certification (DESIGN.md §4.2).
     fn certify(&self, w: &Walk, br: &str, id: &str, bead: &BeadRow) -> Flow {
+        let tip = match self.certify_screen(w, br, id, bead) {
+            Ok(tip) => tip,
+            Err(f) => return f,
+        };
+        let g = self.run_gate(&w.repo.name, br, id, true, &tip);
+        self.certify_judge(w, br, id, bead, &tip, g)
+    }
+
+    /// §4.2 before the gate: one judgement per tip, then the budget. Ok(the tip to gate).
+    fn certify_screen(&self, w: &Walk, br: &str, id: &str, bead: &BeadRow) -> Result<String, Flow> {
         let repo = w.repo;
-        let name = &repo.name;
         let tip = self.git.rev_parse(&repo.path, br).unwrap_or_default();
         if let Some(ls) = self.files.land_state(id) {
             if ls.state == "WITHDRAWN" && ls.tip == tip {
                 self.log(&format!("CHECK6 {id}: withdrawn at {tip} — staying WITHDRAWN until the tip changes"));
-                return Flow::Next;
+                return Err(Flow::Next);
             }
             if ls.state == "CERTIFIED" && ls.tip == tip {
-                return Flow::Next;
+                return Err(Flow::Next);
             }
         }
-        if !self.budget_allows(bead, name, id) {
-            return Flow::BudgetCut;
+        if !self.budget_allows(bead, &repo.name, id) {
+            return Err(Flow::BudgetCut);
         }
-        let g = self.run_gate(name, br, id, true, &tip);
+        Ok(tip)
+    }
+
+    /// §4.2 after the gate: the one decision this pass makes for this branch.
+    fn certify_judge(&self, w: &Walk, br: &str, id: &str, bead: &BeadRow, tip: &str, g: GateRun) -> Flow {
+        let repo = w.repo;
+        let name = &repo.name;
+        let tip = tip.to_string();
         if g.outcome != GateOutcome::Pass {
             let reason = g.reason_or("unspecified");
             self.log(&format!("CHECK6 {id}: certification gate {} on {br} in {name} ({reason})", g.outcome.word()));
@@ -445,6 +499,179 @@ impl<'a> Pass<'a> {
         self.files.mark_submitted(id, &tip, "certified", self.clock.now());
         self.out.progress(&format!("certified {br} in {name} — gate passed, round and CI are the remaining judges"));
         Flow::Next
+    }
+
+    fn is_fix(&self, w: &Walk, br: &str) -> bool {
+        let id = br.trim_start_matches("spira/");
+        is_base_fix(w.beads.get(id).and_then(|b| b.external_ref.as_deref()), &w.repo.name)
+    }
+
+    fn set_run_inflight(&self, name: &str, inflight: &[Job]) {
+        let brs: Vec<&str> = inflight.iter().map(|j| j.br.as_str()).collect();
+        self.set_run(name, &brs.join(","), if brs.is_empty() { "" } else { "gate" });
+    }
+
+    /// The queued walk with up to `certify_par` gates in flight (DESIGN.md §8 D14). Screening,
+    /// starting and deciding all happen on this thread; only the gates run beside it.
+    fn walk_concurrent(&self, w: &mut Walk, order: Vec<String>) {
+        let name = w.repo.name.clone();
+        let par = self.s.certify_par.max(1);
+        let mut pending: Vec<String> = order;
+        let mut inflight: Vec<Job> = Vec::new();
+        let mut screened: Vec<String> = Vec::new();
+        let mut retry: Vec<String> = Vec::new();
+        // Started or decided this pass: never put back into `pending`.
+        let mut taken: HashSet<String> = HashSet::new();
+        let mut cut: Option<(String, i64)> = None;
+        loop {
+            while cut.is_none() && inflight.len() < par && !pending.is_empty() {
+                // (e) a base fix runs alone: nothing starts beside it, and it starts only
+                // into an idle walk.
+                if inflight.iter().any(|j| j.fix) {
+                    break;
+                }
+                if !inflight.is_empty() && self.is_fix(w, &pending[0]) {
+                    break;
+                }
+                // (f) never start a gate into a full admission pool, unless it is the only one.
+                if !inflight.is_empty() && self.tools.gate_slots_free(par) == Some(0) {
+                    break;
+                }
+                let br = pending.remove(0);
+                let id = br.trim_start_matches("spira/").to_string();
+                screened.push(br.clone());
+                taken.insert(br.clone());
+                self.set_run(&name, &br, "");
+                let bead = match self.screen(w, &br) {
+                    Screen::Done(_) => continue,
+                    Screen::Retry => {
+                        taken.remove(&br);
+                        retry.push(br);
+                        continue;
+                    }
+                    // A queued repository never screens to push; decided as the serial walk would.
+                    Screen::Push(b) => {
+                        let _ = crate::push::push_or_hold(self, w, &br, &id, b);
+                        continue;
+                    }
+                    Screen::Queue(b) => b.clone(),
+                };
+                let tip = match self.certify_screen(w, &br, &id, &bead) {
+                    Ok(t) => t,
+                    Err(Flow::Next) => continue,
+                    Err(Flow::BudgetCut) => {
+                        let left = self.s.land_maxsec - (self.clock.now() as i64 - self.start as i64);
+                        screened.pop();
+                        taken.remove(&br);
+                        cut = Some((br, left));
+                        break;
+                    }
+                };
+                let (wait, note) = gate_lock_wait(self.s.land_maxsec, self.start, self.s.gate_lock_wait.as_deref(), self.clock.now());
+                if let Some(n) = note {
+                    self.log(&n);
+                }
+                self.lib.land_mark(&id, "GATING", &tip, "");
+                let ticket = self.tools.gate_start(&br, &name, &wait, &id);
+                let fix = is_base_fix(bead.external_ref.as_deref(), &name);
+                inflight.push(Job { ticket, br, bead, tip, fix });
+                self.set_run_inflight(&name, &inflight);
+            }
+            if inflight.is_empty() {
+                break;
+            }
+            self.set_run_inflight(&name, &inflight);
+            let Some((ticket, rc, out)) = self.tools.gate_wait_any() else {
+                self.log(&format!("CHECK6 {name}: lost track of {} running gate(s) — ending the walk", inflight.len()));
+                break;
+            };
+            let Some(pos) = inflight.iter().position(|j| j.ticket == ticket) else { continue };
+            let job = inflight.remove(pos);
+            self.set_run_inflight(&name, &inflight);
+            let id = job.br.trim_start_matches("spira/");
+            let _ = self.certify_judge(w, &job.br, id, &job.bead, &job.tip, GateRun::parse(rc, out));
+            if cut.is_none() {
+                self.refresh(w, &mut pending, &mut retry, &taken);
+            }
+        }
+
+        match cut {
+            Some((at, left)) => {
+                let deferred: Vec<String> = std::iter::once(at.clone()).chain(pending).collect();
+                self.log(&format!(
+                    "landing: budget cut at {at} — {left}s left, {} branch(es) deferred in {name}",
+                    deferred.len()
+                ));
+                self.files.set_cursor(&name);
+                for br in &screened {
+                    self.files.clear_deferred(br);
+                }
+                for br in &deferred {
+                    let n = self.files.bump_deferred(br);
+                    if n >= self.s.deferral_escalate_at {
+                        self.lib.ask_budget_deferred(br, &name, n);
+                    }
+                }
+            }
+            None => {
+                for br in &screened {
+                    self.files.clear_deferred(br);
+                }
+            }
+        }
+    }
+
+    /// D14 (h): between completions, one cheap re-read — new branches, and the beads skipped
+    /// as not closed or held — so a branch that became ready mid-pass takes the next free slot.
+    fn refresh(&self, w: &mut Walk, pending: &mut Vec<String>, retry: &mut Vec<String>, taken: &HashSet<String>) {
+        let repo = w.repo;
+        let fresh: Vec<(String, String)> =
+            self.git.spira_refs(&repo.path).into_iter().filter(|(b, _)| !w.enum_tip.contains_key(b)).collect();
+        if fresh.is_empty() && retry.is_empty() {
+            return;
+        }
+        let ids: Vec<String> =
+            fresh.iter().map(|(b, _)| b).chain(retry.iter()).map(|b| b.trim_start_matches("spira/").to_string()).collect();
+        let Ok(rows) = self.beads.show(&ids) else { return };
+        for r in rows {
+            w.beads.insert(r.id.clone(), r);
+        }
+        let ready = |b: &str| {
+            let id = b.trim_start_matches("spira/");
+            w.beads.get(id).map(|x| x.status == "closed").unwrap_or(false) && !self.procs.holder_alive(id)
+        };
+        self.out.add_branches(fresh.len() as u64);
+        let mut added: Vec<String> = Vec::new();
+        for (b, _) in &fresh {
+            if taken.contains(b) {
+                continue;
+            }
+            if ready(b) {
+                added.push(b.clone());
+            } else {
+                retry.push(b.clone());
+            }
+        }
+        retry.retain(|b| {
+            if added.contains(b) || !ready(b) {
+                return true;
+            }
+            added.push(b.clone());
+            false
+        });
+        for (b, t) in fresh {
+            w.enum_tip.insert(b, t);
+        }
+        if added.is_empty() {
+            return;
+        }
+        pending.extend(added.iter().cloned());
+        let rows: Vec<OrderRow> = pending
+            .iter()
+            .map(|b| OrderRow::of(b, w.beads.get(b.trim_start_matches("spira/")), &self.s.express_label))
+            .collect();
+        *pending = certify_order(&repo.name, &rows);
+        self.log(&format!("CHECK6 {}: candidates refreshed — {} newly ready: {}", repo.name, added.len(), added.join(" ")));
     }
 
     /// The gate may start only if the pass can finish it; a base-fix branch is exempt.

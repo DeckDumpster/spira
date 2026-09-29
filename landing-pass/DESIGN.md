@@ -91,7 +91,7 @@ read from the context seam's answer: `SPIRA_RUN`, `SPIRA_REPO`, `SPIRA_DB`, `SPI
 `SPIRA_VERDICT_TTL` (86400), `SPIRA_VERDICTS`, `SPIRA_DEFERRAL_ESCALATE_AT` (5),
 `SPIRA_EXPRESS_LABEL`, `SPIRA_CUTOVER_ROUND_LABEL`, `SPIRA_SUBMITTED_LABEL`,
 `SPIRA_REBASE_ESCALATE_AT` (3), `SPIRA_GIT_NAME/EMAIL`, `SPIRA_INCIDENT`,
-`SPIRA_SCOPE_LABEL`, `SPIRA_ID_PREFIX`, `SPIRA_QUEUE_BIN`, `SPIRA_QUEUE_DIR`,
+`SPIRA_SCOPE_LABEL`, `SPIRA_ID_PREFIX`, `SPIRA_CERTIFY_PAR` (4; §8 D14), `SPIRA_QUEUE_BIN`, `SPIRA_QUEUE_DIR`,
 `SPIRA_LC_BIN`, `SPIRA_PROD`, `SPIRA_HALT_GRACE` (30), `BD_TIMEOUT` (180),
 `SPIRA_BDJSON_FIXTURE` (tests only). The pr pass also honours
 `SPIRA_PR_PASS_BRANCH_SH`, `SPIRA_LANDING_PASS_LOG` as before.
@@ -182,7 +182,8 @@ All paths under `$SPIRA_RUN` unless absolute. Formats unchanged (§3).
    current tip stays withdrawn; RED `no-rebase@<base>` at the same tip and base is not
    re-attempted.
 6. **Never begin a gate the pass cannot finish**: with `SPIRA_LAND_MAXSEC > 0`, a gate
-   starts only while `maxsec - elapsed ≥ reserve`; base-fix branches are exempt.
+   starts only while `maxsec - elapsed ≥ reserve`; base-fix branches are exempt. With
+   concurrent certification (D14) each gate is judged at its own start.
 7. **The status file is written on every exit**, including SIGTERM (exit 143).
 8. **survivors are rebased once per repository per pass** (sp-4hs0i), after its walk,
    only if something landed there.
@@ -307,6 +308,10 @@ phase=gate; `land_mark GATING tip`; run the gate. Then by outcome:
   submitted `certified`, progress "certified <br> in <name> — gate passed, round and CI are
   the remaining judges".
 
+With `SPIRA_CERTIFY_PAR` > 1 the queued walk screens as above but starts up to N gates at
+once and applies each outcome as its gate finishes, refreshing its candidates between
+completions (§8 D14).
+
 ### 4.3 push and hold
 
 hold: submitted at this tip → skip. RED `no-rebase@<current base sha>` at this tip → skip.
@@ -331,6 +336,8 @@ At the first branch refused a gate: stop this repository; log the budget-cut lin
 `landing.cursor = <name>`; every branch from the cut onward gets its deferral counter +1
 (≥ `SPIRA_DEFERRAL_ESCALATE_AT` → `spira_ask_budget_deferred`); every branch before it has its
 counter removed. A repository walked to the end removes every counter it walked.
+In the concurrent queued walk (D14) gates already in flight at the cut run to their verdict
+first; "before the cut" means screened, "from the cut onward" means not yet screened.
 
 ### 4.5 The push land
 
@@ -563,6 +570,56 @@ build or locate the binary — the testenv container already builds the workspac
   selector + testenv) run by gate.sh — this pass never picks suites. `confine.sh` still gets
   the bead's labels as its fifth argument (its interface; bounded by the bead's label set).
 - **D13 — `lifecycle_enforce` (§9).**
+- **D14 — queue certification runs up to `SPIRA_CERTIFY_PAR` gates at once (sp-kg14a).**
+  *Evidence (2026-09-29):* one pass ran from 14:46Z past 15:47Z certifying ~50 backlog
+  branches one at a time (gate walls 574 s, 704 s, 1732 s, 2574 s) while six freshly
+  submitted beads waited for the whole walk. gate.sh already admits every caller through a
+  host-wide counting semaphore of `SPIRA_CERTIFY_PAR` slots, so several gate.sh processes
+  from this pass are safe and bounded by the same ceiling the aeons' own gates share.
+  *Decision:*
+  (a) **Where.** Only the queued walk (queue, queue.local) runs gates concurrently.
+  push/hold stay serial: a push landing moves the base the next branch is merged onto.
+  (b) **N** is `SPIRA_CERTIFY_PAR` read through the context seam (`certify_par`); unset,
+  empty, non-numeric or 0 → **4**. **N = 1 is the serial walk, byte for byte** — the same
+  loop, calls, lines and records as before this decision; no refresh, no probe.
+  (c) **Screening stays on the main thread.** Steps 1–6 of §4.1 and §4.2's tip/landstate/
+  budget checks run exactly as today, one branch at a time, in `certify_order`; a branch
+  that needs a gate gets `land_mark GATING` and its gate.sh is *started* (a thread per gate
+  waits on it; nothing else runs off the main thread).
+  (d) **Decisions are serialized.** Each finished gate's outcome — log, `GATED`/`RED`/
+  `CERTIFIED`, reopen, event, noverdict, submitted record, incident — is applied on the main
+  thread, one gate at a time, in completion order, by the same code the serial walk uses.
+  A branch is started at most once per pass, so no bead gets two decisions.
+  (e) **Base-fix runs alone.** A base-fix branch starts only when no other gate of this pass
+  is in flight, and while it runs nothing else starts: it is the change every other gate is
+  judged against. Base-fix branches still sort first.
+  (f) **Admission-aware.** A second, third… gate starts only if gate.sh's admission pool
+  (`$SPIRA_RUN/gate-admission/slot.<k>.lock`, k ≤ N) has a free slot right now (probed with
+  a non-blocking flock that is released at once); otherwise the pass waits for one of its
+  own gates. A gate started into a full pool would sit out `SPIRA_GATE_LOCK_WAIT` and come
+  back NO_VERDICT `admission-timeout`, charged to a branch that did nothing wrong. The first
+  gate always starts, as today.
+  (g) **Budget.** Every start is judged by `gate_fits` at its own start time — gates run in
+  parallel, so each one that fits can finish inside the pass. The first branch refused a
+  gate is the cut (§4.4): nothing further starts, in-flight gates are waited for and
+  decided, then the cut line, cursor and deferral counters are written — deferred = the cut
+  branch and every branch not yet screened; cleared = every branch screened.
+  (h) **Refresh between completions.** After each decision (at most one re-read per
+  completion, never after a cut) the pass re-enumerates `refs/heads/spira/*` and re-reads,
+  in one `bd show`, only the ids it has not seen and the ids it skipped as *not closed* or
+  *held by a live aeon*. Newly closed or new branches join the unscreened candidates, which
+  are re-sorted by `certify_order` — so a P0 submitted mid-pass takes the next free slot
+  instead of waiting for the next pass. A branch already started or decided is never
+  re-added. New branches count toward `branches seen`. A failed re-read changes nothing.
+  (i) **Signals.** Every running gate's pid is registered; SIGTERM is forwarded to every
+  registered gate's process group (and to the one serial child, as before), then the
+  status file (rc 143) is written as today.
+  (j) **`landing.run`** in the concurrent walk names every in-flight branch, comma-joined,
+  phase `gate`.
+  *Rejected:* threading the whole `branch()` (the decision code shares one bd/lib.sh seam
+  and records that assume one writer); a pool inside the pass separate from gate.sh's
+  semaphore (a second ceiling to keep in step with the first); refreshing on a timer (a
+  completion is the only moment a slot opens, so it is the only moment a newcomer can use).
 - **Kept deliberately:** every per-branch message text and `CHECK6` prefix; one judgement
   per tip (CERTIFIED/WITHDRAWN/RED@base skips); re-read before acting; only FAIL reopens;
   the budget reserve and its base-fix exemption; queue modes never rebase here
@@ -605,7 +662,7 @@ OFF semantics exactly and its ON semantics for the pr content proof.
 
 ## 10. Tests
 
-`cargo test -p landing-pass` — 56 unit tests; `cargo build --workspace` clean. Derived from
+`cargo test -p landing-pass` — 70 unit tests; `cargo build --workspace` clean. Derived from
 §2-§5 and §9, with recording fakes of bd, git, the lib.sh seam, the harness programs,
 liveness, the clock, spira-lc and the halt ports (signals, podman, testenv teardown):
 
@@ -629,6 +686,7 @@ liveness, the clock, spira-lc and the halt ports (signals, podman, testenv teard
 | pr pass | `the_pr_pass_hands_done_branches_to_the_helper_…`, `delivery_rows_accept_a_numeric_version` |
 | lifecycle OFF/ON (§9) | `off_push_mode_never_invokes_spira_lc`, `off_queue_certification_never_invokes_spira_lc`, `on_push_mode_records_deliveries_…`, `on_with_the_machine_unreachable_a_push_landing_is_refused_loudly`, `on_the_pr_pass_proves_content_deliveries_and_is_loud_…`; the OFF pr case asserts no delivery call in `the_pr_pass_hands_done_branches_…` |
 | the seam mechanism, for real through bash | `seam::tests` (values on stdin intact; progress vs log vs answer; the context script against a stand-in lib.sh; a missing lib.sh is 96) |
+| concurrent certification (§8 D14): N gates start; decisions one at a time in completion order; base-fix alone (at the front and when it becomes ready mid-pass); a P0 submitted mid-pass takes the next free slot; a full admission pool holds the second gate; the budget cut waits for in-flight gates; SIGTERM reaches every running gate and its children; PAR=1 is the serial walk; push/hold stay serial; `SPIRA_CERTIFY_PAR` parsing | `par_n_starts_n_gates_before_any_finishes`, `decisions_are_applied_one_at_a_time_in_completion_order`, `a_base_fix_runs_alone_…`, `a_base_fix_that_becomes_ready_mid_pass_…`, `a_p0_submitted_mid_pass_takes_the_next_free_slot`, `a_full_admission_pool_holds_the_second_gate_back`, `a_budget_cut_waits_for_the_gates_in_flight_…`, `sigterm_reaches_every_running_gate_and_its_children`, `the_admission_probe_counts_free_slots_…`, `par_one_is_the_serial_walk_unchanged`, `push_mode_stays_serial_at_any_par`, `the_context_answer_parses_…` |
 | records and parsing | `records_keep_their_shell_formats`, `the_context_answer_parses_…`, `util::tests` |
 
 Also run by hand (not a suite, not production): `landing-pass land` against a stand-in

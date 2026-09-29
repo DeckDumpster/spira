@@ -52,15 +52,16 @@ not a summary to double-check against the bead title.
 ## Tests
 
 While iterating, run the unit tests of the crate you are changing (`cargo test -p <crate>`).
-Before closing, commit, then run the testenv runner on the branch you changed with **no
-`--suites`** (law-tests-run-only-through-testenv):
+Before closing, do not run the suites: commit and close, and the landing pass certifies the
+branch with the budgeted gate right after. A runner call with no `--suites` is not the gate's
+selection — it runs the full unbudgeted diff set outside the gate's host-wide admission. The one
+suite run you may do is to reproduce a specific suite named in a failure note
+(law-tests-run-only-through-testenv):
 
-    {{TESTENV}} <branch> {{REPO_NAME}}
+    {{TESTENV}} --suites <suite> <branch> {{REPO_NAME}}
 
-With no `--suites` it selects the suites that branch's diff touches — exactly what the landing
-gate will run — so do not hand-pick suites. Never run a `test-*.sh` suite directly;
-`spira/testenv.sh` is the container helper, not the runner; `spira/testenv-batch.sh` no
-longer exists.
+never to pre-certify. Never run a `test-*.sh` suite directly; `spira/testenv.sh` is the
+container helper, not the runner; `spira/testenv-batch.sh` no longer exists.
 
 Do not run the full landing gate; the landing pass runs it for whatever you land.
 

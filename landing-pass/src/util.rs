@@ -97,6 +97,51 @@ pub fn branch_key(br: &str) -> String {
 /// The pid of the child this process is waiting on, so a SIGTERM can be forwarded to it.
 pub static CURRENT_CHILD: AtomicI32 = AtomicI32::new(0);
 
+/// The pids of the gates the concurrent certification walk is waiting on (DESIGN.md §8
+/// D14 (i)). Each one leads its own process group; a SIGTERM to the pass is forwarded to
+/// every group in the set, not only to [`CURRENT_CHILD`].
+pub struct ChildSet(std::sync::Mutex<std::collections::BTreeSet<i32>>);
+
+impl ChildSet {
+    pub const fn new() -> ChildSet {
+        ChildSet(std::sync::Mutex::new(std::collections::BTreeSet::new()))
+    }
+    pub fn insert(&self, pid: i32) {
+        if let Ok(mut s) = self.0.lock() {
+            s.insert(pid);
+        }
+    }
+    pub fn remove(&self, pid: i32) {
+        if let Ok(mut s) = self.0.lock() {
+            s.remove(&pid);
+        }
+    }
+    pub fn pids(&self) -> Vec<i32> {
+        self.0.lock().map(|s| s.iter().copied().collect()).unwrap_or_default()
+    }
+    /// TERM every registered process group; returns the pids signalled.
+    pub fn term_all(&self) -> Vec<i32> {
+        let pids = self.pids();
+        for &p in &pids {
+            if p > 0 {
+                unsafe {
+                    libc::kill(-p, libc::SIGTERM);
+                }
+            }
+        }
+        pids
+    }
+}
+
+impl Default for ChildSet {
+    fn default() -> Self {
+        ChildSet::new()
+    }
+}
+
+/// Every gate the concurrent walk has running (production's registry).
+pub static GATE_CHILDREN: ChildSet = ChildSet::new();
+
 /// Every child starts through here: with the default signal mask restored (this process
 /// blocks TERM/INT in all threads so one thread can `sigwait` for them, and a child would
 /// otherwise inherit the block and survive `halt`), and in a process group of its own, so a

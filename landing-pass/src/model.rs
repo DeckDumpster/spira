@@ -72,6 +72,9 @@ pub struct Settings {
     pub land_maxsec: i64,
     pub gate_reserve: i64,
     pub gate_lock_wait: Option<String>,
+    /// `SPIRA_CERTIFY_PAR`: how many certification gates the queued walk runs at once
+    /// (DESIGN.md §8 D14). 1 is the serial walk.
+    pub certify_par: usize,
     pub verdict_ttl: u64,
     pub verdicts: PathBuf,
     pub deferral_escalate_at: u32,
@@ -118,6 +121,7 @@ impl Settings {
             land_maxsec: 0,
             gate_reserve: 2700,
             gate_lock_wait: None,
+            certify_par: 1,
             verdict_ttl: 86_400,
             verdicts: run.join("verdicts"),
             deferral_escalate_at: 5,

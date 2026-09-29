@@ -111,6 +111,7 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         land_maxsec: num("land_maxsec", 3600),
         gate_reserve: num("gate_reserve", 1200),
         gate_lock_wait: kv.get("gate_lock_wait").filter(|v| !v.is_empty()).cloned(),
+        certify_par: certify_par(kv.get("certify_par").map(String::as_str)),
         verdict_ttl: num("verdict_ttl", 0).max(0) as u64,
         verdicts: path_opt("verdicts").unwrap_or_else(|| PathBuf::from(&run).join("verdicts")),
         deferral_escalate_at: num("deferral_at", 5).max(0) as u32,
@@ -134,6 +135,14 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         lifecycle_enforce: false,
     };
     Ok((s, repos))
+}
+
+/// `SPIRA_CERTIFY_PAR` as the landing pass reads it: a positive integer, else 4 (D14 (b)).
+pub fn certify_par(v: Option<&str>) -> usize {
+    match v.map(str::trim).and_then(|v| v.parse::<usize>().ok()) {
+        Some(n) if n > 0 => n,
+        _ => 4,
+    }
 }
 
 pub struct RealLib<'a> {
@@ -465,6 +474,106 @@ pub struct RealTools {
     pub queue_bin: Option<PathBuf>,
     /// Exported to every child: testenv appends its container names here for `halt`.
     pub containers: Option<PathBuf>,
+    /// gate.sh's host-wide admission pool (`$SPIRA_RUN/gate-admission`), probed before a
+    /// concurrent gate starts (DESIGN.md §8 D14 (f)).
+    pub admission: Option<PathBuf>,
+    /// The gates the concurrent walk has started and not yet collected.
+    pub pool: GatePool,
+}
+
+impl RealTools {
+    pub fn new(home: PathBuf, queue_bin: Option<PathBuf>, containers: Option<PathBuf>, admission: Option<PathBuf>) -> RealTools {
+        RealTools { home, queue_bin, containers, admission, pool: GatePool::new(&crate::util::GATE_CHILDREN) }
+    }
+}
+
+/// Gates running concurrently (D14): each is spawned on the calling thread — so its pid is
+/// registered for SIGTERM forwarding before `start` returns — and waited on by a thread of
+/// its own, which sends (ticket, status, transcript) back when it exits.
+pub struct GatePool {
+    tx: std::sync::mpsc::Sender<(u64, i32, String)>,
+    rx: std::sync::mpsc::Receiver<(u64, i32, String)>,
+    next: std::cell::Cell<u64>,
+    running: std::cell::Cell<usize>,
+    children: &'static crate::util::ChildSet,
+}
+
+impl GatePool {
+    pub fn new(children: &'static crate::util::ChildSet) -> GatePool {
+        let (tx, rx) = std::sync::mpsc::channel();
+        GatePool { tx, rx, next: std::cell::Cell::new(1), running: std::cell::Cell::new(0), children }
+    }
+
+    /// Start a prepared command (stdout and stderr into one capture, as `combined`).
+    pub fn start(&self, c: std::process::Command) -> u64 {
+        let ticket = self.next.get();
+        self.next.set(ticket + 1);
+        self.running.set(self.running.get() + 1);
+        let tx = self.tx.clone();
+        let fail = |e: String| {
+            let _ = tx.send((ticket, -1, e));
+        };
+        let mut c = c;
+        let Some((r, w)) = os_pipe() else {
+            fail("cannot create a pipe for the gate".into());
+            return ticket;
+        };
+        let Ok(w2) = w.try_clone() else {
+            fail(String::new());
+            return ticket;
+        };
+        c.stdout(Stdio::from(w)).stderr(Stdio::from(w2)).stdin(Stdio::null());
+        let mut child = match c.spawn() {
+            Ok(ch) => ch,
+            Err(e) => {
+                fail(e.to_string());
+                return ticket;
+            }
+        };
+        // Our copies of the pipe's write end go with the Command: the reader sees EOF when
+        // the gate (and every child of it holding the pipe) is done.
+        drop(c);
+        let pid = child.id() as i32;
+        let children = self.children;
+        children.insert(pid);
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let mut r = r;
+            let _ = std::io::Read::read_to_end(&mut r, &mut buf);
+            let st = child.wait();
+            children.remove(pid);
+            let rc = st.ok().and_then(|s| s.code()).unwrap_or(-1);
+            let _ = tx.send((ticket, rc, String::from_utf8_lossy(&buf).into_owned()));
+        });
+        ticket
+    }
+
+    pub fn wait_any(&self) -> Option<(u64, i32, String)> {
+        if self.running.get() == 0 {
+            return None;
+        }
+        let got = self.rx.recv().ok()?;
+        self.running.set(self.running.get() - 1);
+        Some(got)
+    }
+}
+
+/// Free slots among gate.sh's `slot.1.lock … slot.<par>.lock`, each probed with a
+/// non-blocking flock released at once. A missing pool directory is an idle pool.
+pub fn admission_free(dir: &Path, par: usize) -> usize {
+    use std::os::unix::io::AsRawFd;
+    if !dir.is_dir() {
+        return par;
+    }
+    (1..=par)
+        .filter(|k| {
+            let Ok(f) = fs::OpenOptions::new().create(true).write(true).truncate(false).open(dir.join(format!("slot.{k}.lock"))) else {
+                return false;
+            };
+            // Dropping `f` closes it, which releases the probe's lock.
+            unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) == 0 }
+        })
+        .count()
 }
 
 fn combined(c: std::process::Command) -> (i32, String) {
@@ -520,12 +629,27 @@ pub fn executable(p: &Path) -> bool {
     fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
 }
 
-impl Tools for RealTools {
-    fn gate(&self, branch: &str, repo: &str, lock_wait: &str, bead: &str) -> (i32, String) {
+impl RealTools {
+    fn gate_command(&self, branch: &str, repo: &str, lock_wait: &str, bead: &str) -> std::process::Command {
         let mut c = command(self.home.join("gate.sh"));
         c.arg(branch).arg(repo).env("SPIRA_GATE_LOCK_WAIT", lock_wait).env("SPIRA_GATE_BEAD", bead);
         self.with_env(&mut c);
-        combined(c)
+        c
+    }
+}
+
+impl Tools for RealTools {
+    fn gate(&self, branch: &str, repo: &str, lock_wait: &str, bead: &str) -> (i32, String) {
+        combined(self.gate_command(branch, repo, lock_wait, bead))
+    }
+    fn gate_start(&self, branch: &str, repo: &str, lock_wait: &str, bead: &str) -> u64 {
+        self.pool.start(self.gate_command(branch, repo, lock_wait, bead))
+    }
+    fn gate_wait_any(&self) -> Option<(u64, i32, String)> {
+        self.pool.wait_any()
+    }
+    fn gate_slots_free(&self, par: usize) -> Option<usize> {
+        self.admission.as_ref().map(|d| admission_free(d, par))
     }
     fn gate_status(&self, branch: &str, repo: &str) -> Option<String> {
         let mut c = command("bash");
@@ -613,17 +737,6 @@ pub fn is_aeon_cmdline(cmd: &str) -> bool {
     cmd.contains("aeon.sh") || argv0 == "aeon" || argv0.ends_with("/aeon")
 }
 
-#[cfg(test)]
-mod aeon_cmdline_tests {
-    #[test]
-    fn the_binary_and_the_retired_script_are_both_aeons() {
-        assert!(super::is_aeon_cmdline("/r/current/bin/aeon --home /r/current/spira builder "));
-        assert!(super::is_aeon_cmdline("bash /h/spira/aeon.sh builder "));
-        assert!(!super::is_aeon_cmdline("sleep 30 "));
-        assert!(!super::is_aeon_cmdline("/usr/bin/aeonic --x "));
-    }
-}
-
 pub struct RealClock;
 
 impl Clock for RealClock {
@@ -632,5 +745,16 @@ impl Clock for RealClock {
     }
     fn sleep(&self, secs: u64) {
         std::thread::sleep(std::time::Duration::from_secs(secs));
+    }
+}
+
+#[cfg(test)]
+mod aeon_cmdline_tests {
+    #[test]
+    fn the_binary_and_the_retired_script_are_both_aeons() {
+        assert!(super::is_aeon_cmdline("/r/current/bin/aeon --home /r/current/spira builder "));
+        assert!(super::is_aeon_cmdline("bash /h/spira/aeon.sh builder "));
+        assert!(!super::is_aeon_cmdline("sleep 30 "));
+        assert!(!super::is_aeon_cmdline("/usr/bin/aeonic --x "));
     }
 }
