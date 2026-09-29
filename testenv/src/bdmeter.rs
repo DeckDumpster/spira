@@ -43,8 +43,30 @@ pub fn log_line(wall_ms: u128, rc: i32, args: &[String]) -> String {
 /// The first `<dir>/<name>` on `path` that is an executable file and is not this meter
 /// (compared canonically, so the symlink that invoked us is skipped however it was reached).
 pub fn find_real(name: &str, path: &OsStr, me: &Path) -> Option<PathBuf> {
+    find_real_after(name, path, me, None)
+}
+
+/// [`find_real`], searching only the PATH entries **after** `invoked_from` — the directory
+/// the meter was invoked through by path (`/…/home/.local/bin/bd`), when that directory is on
+/// PATH. A wrapper ahead of it on PATH that execs the meter by path (loom's counting shim
+/// execs `$SPIRA_BD`, an absolute path since sp-34ru2) would otherwise be taken for the real
+/// `bd`, and the two would exec each other until the process table refused (EAGAIN).
+pub fn find_real_after(
+    name: &str,
+    path: &OsStr,
+    me: &Path,
+    invoked_from: Option<&Path>,
+) -> Option<PathBuf> {
     let me = fs::canonicalize(me).unwrap_or_else(|_| me.to_path_buf());
-    std::env::split_paths(path).find_map(|dir| {
+    let dirs: Vec<PathBuf> = std::env::split_paths(path).collect();
+    let start = invoked_from
+        .and_then(|d| fs::canonicalize(d).ok())
+        .and_then(|d| {
+            dirs.iter()
+                .position(|e| fs::canonicalize(e).ok().as_deref() == Some(d.as_path()))
+        })
+        .map_or(0, |i| i + 1);
+    dirs[start.min(dirs.len())..].iter().find_map(|dir| {
         let cand = dir.join(name);
         let meta = fs::metadata(&cand).ok()?;
         use std::os::unix::fs::PermissionsExt;
@@ -146,6 +168,43 @@ mod tests {
             "…however the meter was reached"
         );
         assert_eq!(find_real("bd-embedded", &path, &meter), None);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn invoked_by_path_the_meter_looks_only_past_its_own_directory() {
+        // PATH = <wrapper>:<suite home bin>:<real>. The wrapper (loom's counting shim) execs
+        // the meter by its absolute path; the meter must not take the wrapper for the real bd.
+        let d = tmp("after");
+        let meter = d.join("bd-meter");
+        exe(&meter);
+        let home = d.join("home");
+        install(&home, &meter).unwrap();
+        let bin = home.join(BIN_UNDER_HOME);
+        let wrapper = d.join("wrapper");
+        let real = d.join("real");
+        fs::create_dir_all(&wrapper).unwrap();
+        fs::create_dir_all(&real).unwrap();
+        exe(&wrapper.join("bd"));
+        exe(&real.join("bd"));
+        let path = std::env::join_paths([&wrapper, &bin, &real]).unwrap();
+        assert_eq!(
+            find_real("bd", &path, &meter),
+            Some(wrapper.join("bd")),
+            "plant: without the invoking directory the wrapper is taken — the loop"
+        );
+        assert_eq!(
+            find_real_after("bd", &path, &meter, Some(&bin)),
+            Some(real.join("bd"))
+        );
+        // Invoked from a directory not on PATH: the whole PATH, the meter skipped.
+        assert_eq!(
+            find_real_after("bd", &path, &meter, Some(&d)),
+            Some(wrapper.join("bd"))
+        );
+        // Nothing past the meter's directory: not found, never a wrapper behind it.
+        let path = std::env::join_paths([&wrapper, &bin]).unwrap();
+        assert_eq!(find_real_after("bd", &path, &meter, Some(&bin)), None);
         let _ = fs::remove_dir_all(&d);
     }
 
