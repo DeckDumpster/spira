@@ -46,11 +46,11 @@ FAYTH_STATUTE_CORE="law-closed-is-not-landed,law-never-disarm-a-check-to-proceed
 # ten acceptance cases reliably and is faster than Opus within an 8-minute wall — more
 # turns to collect state, form a verdict, and call the right tool.
 #
-# VERIFIED: claude --model claude-sonnet-4-6 -p ... answers on this box (2026-09-19).
+# VERIFIED: claude --model claude-sonnet-5-5 -p ... answers on this box (2026-09-29).
 # SEED ONLY (sp-zs04v.4): the live value is persona.czar.model in spira.toml,
 # resolved by lib.sh's persona_model — this line only seeds that table on first
 # convert and is no longer read at launch.
-FAYTH_MODEL=claude-sonnet-4-6
+FAYTH_MODEL=claude-sonnet-5-5
 FAYTH_MAX_CONCURRENT=1
 
 # THE CZAR LANE — draws from its own capacity so a full builder pool cannot starve the

@@ -32,7 +32,7 @@ FAYTH_MEMORY_PREFIXES="law-"
 # finding into a concrete deliverable for a builder. Starting expensive and correct
 # beats cheap and silently useless.
 #
-# VERIFIED, NOT ASSUMED. `claude --model claude-opus-5 -p ...` answers on this box,
+# VERIFIED, NOT ASSUMED. `claude --model claude-sonnet-5-5 -p ...` answers on this box,
 # exit 0, verified 2026-09-11. qa.fayth carries the scar for skipping that check: an
 # id the CLI rejects does not fail loudly, every summon dies and the role looks merely
 # quiet, which is the outage shape this harness is worst at noticing. Probe a candidate
@@ -44,7 +44,7 @@ FAYTH_MEMORY_PREFIXES="law-"
 # SEED ONLY (sp-zs04v.4): the live value is persona.maechen.model in spira.toml,
 # resolved by lib.sh's persona_model — this line only seeds that table on first
 # convert and is no longer read at launch.
-FAYTH_MODEL=claude-opus-5
+FAYTH_MODEL=claude-sonnet-5-5
 FAYTH_MAX_CONCURRENT=1
 
 # THE MAECHEN LANE. Maechen draws from its own capacity rather than from SPIRA_MAX_AEONS,
