@@ -1069,11 +1069,28 @@ pub fn shrink_reason(existing: &SpiraToml, new: &SpiraToml) -> Option<String> {
     }
 }
 
-/// Writes `contents` to `path` atomically: a temp file beside it, then a rename. Without
-/// this a reader racing the writer (`spira_toml_read`, another `validate`) can observe a
-/// half-written document — truncated by a writer killed mid-write — as a parse error on a
-/// file that was never actually invalid.
-pub fn write_atomic(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+/// A temp file already written beside its destination, waiting on [`atomic_write_commit`].
+/// Splitting the write from the rename is what lets a caller validate the temp file's
+/// contents — or back up the destination — before the one step that actually replaces it.
+pub struct PendingWrite {
+    tmp: std::path::PathBuf,
+    dest: std::path::PathBuf,
+}
+
+/// Cleans up the temp file when a `PendingWrite` is dropped without being committed — a
+/// validation failure between `atomic_write_start` and `atomic_write_commit` should not
+/// leave a stray `.tmp.<pid>` file beside the destination. A no-op once committed: the
+/// rename has already moved the temp file away, so removing its old path finds nothing.
+impl Drop for PendingWrite {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.tmp);
+    }
+}
+
+/// Writes `contents` to a temp file beside `path`, touching nothing at `path` itself. A
+/// process killed before [`atomic_write_commit`] runs leaves `path` exactly as it was — the
+/// crash window this two-phase split exists to prove closed.
+pub fn atomic_write_start(path: &std::path::Path, contents: &str) -> std::io::Result<PendingWrite> {
     let dir = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -1084,7 +1101,77 @@ pub fn write_atomic(path: &std::path::Path, contents: &str) -> std::io::Result<(
         .unwrap_or("spira-config-out");
     let tmp = dir.join(format!(".{name}.tmp.{}", std::process::id()));
     std::fs::write(&tmp, contents)?;
-    std::fs::rename(&tmp, path)
+    Ok(PendingWrite {
+        tmp,
+        dest: path.to_path_buf(),
+    })
+}
+
+/// The one step that makes a [`PendingWrite`] visible at its destination.
+pub fn atomic_write_commit(pending: PendingWrite) -> std::io::Result<()> {
+    std::fs::rename(&pending.tmp, &pending.dest)
+}
+
+/// Writes `contents` to `path` atomically: a temp file beside it, then a rename. Without
+/// this a reader racing the writer (`spira_toml_read`, another `validate`) can observe a
+/// half-written document — truncated by a writer killed mid-write — as a parse error on a
+/// file that was never actually invalid.
+pub fn write_atomic(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    atomic_write_commit(atomic_write_start(path, contents)?)
+}
+
+/// Copies `path` to a sibling `.bak.<unix-seconds>.<pid>` file before a writer replaces it —
+/// so a bad write has an undo even after `atomic_write_commit` has already run. A no-op,
+/// not an error, when `path` does not exist yet (the first write to a fresh file has nothing
+/// to preserve).
+pub fn backup_existing(path: &std::path::Path) -> std::io::Result<Option<std::path::PathBuf>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("spira-config-out");
+    let backup = path.with_file_name(format!("{name}.bak.{now}.{}", std::process::id()));
+    std::fs::copy(path, &backup)?;
+    Ok(Some(backup))
+}
+
+/// Names this crate treats as secret-shaped and therefore never lets `export --sh` put into
+/// a shell's environment — a schema field named like a credential is validated and typed
+/// like everything else, but its VALUE is exactly the thing the credential-storage design
+/// keeps out of `spira.toml` in the first place.
+///
+/// Matched case-insensitively, as the WHOLE name or its trailing `_`-separated component
+/// (`broker_gh_token` matches on `token`), never a bare substring — `token_window_h` and
+/// `token_projects` (a context-budget window and a project list, not a secret) both lead
+/// with `token_` rather than end with it, and a substring rule would wrongly catch them too.
+pub fn is_secret_shaped(field_name: &str) -> bool {
+    let lower = field_name.to_ascii_lowercase();
+    ["credential", "token", "password", "dsn"]
+        .iter()
+        .any(|pat| lower == *pat || lower.ends_with(&format!("_{pat}")))
+}
+
+/// `repo.<name>.land` is the name `spira-config set`'s callers reach for — the config's own
+/// [`LandMode`] type already carries that meaning — but the field this schema types is
+/// `mode`; this is the one alias between them, applied before path resolution ever sees the
+/// path. Keeping the on-disk field `mode` (rather than renaming it) means an existing
+/// `spira.toml` with `mode = "..."` keeps validating unchanged.
+fn alias_repo_land(path: &str) -> String {
+    let segs: Vec<&str> = path.split('.').collect();
+    if let [rest @ .., last] = segs.as_slice() {
+        if rest.first() == Some(&"repo") && rest.len() == 2 && *last == "land" {
+            let mut segs = rest.to_vec();
+            segs.push("mode");
+            return segs.join(".");
+        }
+    }
+    path.to_string()
 }
 
 /// Serializes `doc` and writes it to `path` atomically — [`write_atomic`] plus the one
@@ -1100,6 +1187,7 @@ pub fn serialize_and_write(path: &std::path::Path, doc: &SpiraToml) -> Result<()
 /// Reads one dotted path out of an already-validated document — `spira.max_aeons`,
 /// `repo.service.mode`, `persona.builder.lease.minutes` — for `spira-config get`.
 pub fn get_path(doc: &SpiraToml, path: &str) -> Option<String> {
+    let path = alias_repo_land(path);
     let value = serde_json::to_value(doc).ok()?;
     let mut cur = &value;
     for seg in path.split('.') {
@@ -1129,6 +1217,9 @@ pub fn spira_string_map(doc: &SpiraToml) -> BTreeMap<String, String> {
         return out;
     };
     for (key, val) in map {
+        if is_secret_shaped(&key) {
+            continue;
+        }
         let shell_val = match val {
             serde_json::Value::Null => continue,
             serde_json::Value::String(s) => s,
@@ -1180,6 +1271,7 @@ fn set_path_leaf(
     path: &str,
     leaf_value: serde_json::Value,
 ) -> Result<SpiraToml, String> {
+    let path = alias_repo_land(path);
     let segs: Vec<&str> = path.split('.').collect();
     let Some((leaf, parents)) = segs.split_last() else {
         return Err("set: empty path".to_string());
@@ -1817,5 +1909,99 @@ mod tests {
         let empty = dir.join("empty.toml");
         std::fs::write(&empty, "").unwrap();
         assert_eq!(migrate_goal_to_id_prefix_in_file(&empty).unwrap(), None);
+    }
+
+    #[test]
+    #[test]
+    fn set_path_repo_land_writes_the_mode_field() {
+        let doc = validate("[repo.home]\npath = \"/srv/home\"\nmode = \"push\"\n").unwrap();
+        let doc = set_path(&doc, "repo.home.land", "queue.local").unwrap();
+        assert_eq!(doc.repo["home"].mode, LandMode::QueueLocal);
+        assert_eq!(get_path(&doc, "repo.home.land"), Some("queue.local".to_string()));
+        assert_eq!(get_path(&doc, "repo.home.mode"), Some("queue.local".to_string()));
+    }
+
+    #[test]
+    fn gate_string_with_quotes_dollar_and_newlines_round_trips_through_toml() {
+        let gate = "echo \"hi\" && $(rm -rf /) # not really\nnext line\n\t'quoted'";
+        let doc = set_path(
+            &validate("[repo.home]\npath = \"/srv/home\"\nmode = \"push\"\n").unwrap(),
+            "repo.home.gate",
+            gate,
+        )
+        .unwrap();
+        let out = toml::to_string_pretty(&doc).expect("serializes");
+        let reparsed = validate(&out).expect("the serialized document must still validate");
+        assert_eq!(reparsed.repo["home"].gate.as_deref(), Some(gate));
+    }
+
+    #[test]
+    fn is_secret_shaped_matches_credential_shaped_names_case_insensitively() {
+        for name in ["token", "BROKER_GH_TOKEN", "db_password", "Credential", "some_dsn"] {
+            assert!(is_secret_shaped(name), "{name} should be secret-shaped");
+        }
+        for name in ["home_repo", "max_aeons", "gate", "path"] {
+            assert!(!is_secret_shaped(name), "{name} should not be secret-shaped");
+        }
+    }
+
+    #[test]
+    fn export_sh_omits_a_secret_shaped_field() {
+        let doc = validate("[spira]\nhome_repo = \"a\"\nbroker_gh_token = \"ghp_x\"\n").unwrap();
+        let out = export_sh(&doc);
+        assert!(out.contains("HOME_REPO="), "{out}");
+        assert!(!out.contains("ghp_x"), "{out}");
+        assert!(!out.to_uppercase().contains("TOKEN"), "{out}");
+    }
+
+    #[test]
+    fn atomic_write_start_leaves_the_destination_untouched_until_commit() {
+        let dir = std::env::temp_dir().join(format!("spira-config-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("spira.toml");
+        std::fs::write(&dest, "original").unwrap();
+
+        let pending = atomic_write_start(&dest, "replacement").expect("temp write succeeds");
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "original");
+
+        atomic_write_commit(pending).expect("commit succeeds");
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "replacement");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn atomic_write_dropped_without_commit_leaves_no_temp_file_and_the_original_intact() {
+        let dir = std::env::temp_dir().join(format!("spira-config-test-drop-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("spira.toml");
+        std::fs::write(&dest, "original").unwrap();
+
+        {
+            let _pending = atomic_write_start(&dest, "never committed").expect("temp write succeeds");
+            // simulates a crash between the temp write and the rename: dropped, never committed
+        }
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "original");
+        let leftover: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp."))
+            .collect();
+        assert!(leftover.is_empty(), "{leftover:?}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn backup_existing_copies_the_old_file_and_is_a_noop_when_absent() {
+        let dir = std::env::temp_dir().join(format!("spira-config-test-backup-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("spira.toml");
+
+        assert_eq!(backup_existing(&dest).unwrap(), None);
+
+        std::fs::write(&dest, "before").unwrap();
+        let backup = backup_existing(&dest).unwrap().expect("a backup path");
+        assert_eq!(std::fs::read_to_string(&backup).unwrap(), "before");
+        std::fs::remove_dir_all(&dir).ok();
+>>>>>>> theirs
     }
 }
