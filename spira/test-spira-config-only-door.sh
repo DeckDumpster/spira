@@ -16,7 +16,10 @@ echo "test-spira-config-only-door.sh"
 # "its own separate documents are out of scope" applies to both readers of that format.
 # `spira-lint/src/rules/deps_lint.rs` (sp-l8gl3) parses spira/deps.toml, spira-lint's own
 # manifest of declared programs — a separate document, never spira.toml.
-EXEMPT_TOML_FROM_STR="desired-state/src/store.rs reconciler-flow/src/io.rs spira-lint/src/rules/deps_lint.rs"
+# `spira-lint/src/rules/lockfile_lint.rs` (sp-ufbkh) parses a tree's Cargo.lock to compare
+# locked package versions against the base — a separate document (Cargo's own lockfile
+# format), never spira.toml, joining deps_lint.rs's carve-out for "its own document kind".
+EXEMPT_TOML_FROM_STR="desired-state/src/store.rs reconciler-flow/src/io.rs spira-lint/src/rules/deps_lint.rs spira-lint/src/rules/lockfile_lint.rs"
 
 # The lines of $1 before its first `#[cfg(test)]` module, with comment-only lines dropped —
 # production code only, so a doc comment describing the file (or a test fixture that must
