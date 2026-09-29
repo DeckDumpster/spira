@@ -126,7 +126,8 @@ printf '%s | %s | queue | origin/master | | |\n' "$B_REPONAME" "$B_REPO" > "$B_S
 testdb_seed <<'JSONL'
 {"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
-printf '{"id":"sp-mbase","title":"master-base fix","status":"closed","issue_type":"task","labels":["express"],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-mbase","depends_on_id":"sp-goal","type":"parent-child"}]}\n' \
+# A batch member is open and submitted (sp-1346p): a closed bead's CERTIFIED record is stale.
+printf '{"id":"sp-mbase","title":"master-base fix","status":"open","issue_type":"task","labels":["express","spira-submitted"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-mbase","depends_on_id":"sp-goal","type":"parent-child"}]}\n' \
     | testdb_seed
 
 git -C "$B_REPO" worktree add -q -b spira/sp-mbase "$B_RUN/worktree/sp-mbase" master
