@@ -1386,6 +1386,15 @@ fn land_local_ungated_override_lands_and_records_the_reason() {
     let remark = t.lib.calls.borrow().iter().rposition(|c| c.starts_with("land_mark sp-a "));
     assert!(closes < remark, "the ungated mark is written after the close");
     assert!(t.landing_log().contains(&format!("QUEUE UNGATED 1000 repo=spira head=h1 tree={T1} reason={reason}")), "{}", t.landing_log());
+    // When bead_close_on_land re-marked the record at the head, the re-mark keeps that tip
+    // and changes only the reason, so publish (§8 D4) reads the tip it always did.
+    let t = T::new(LandMode::QueueLocal);
+    uncertified_local_repo(&t);
+    t.landstate("sp-c", "LANDED h1 5 Closed by landing pass");
+    t.var("SPIRA_LAND_UNGATED", "why");
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-c:tc"]), 0, "{}", t.err());
+    let last_mark = t.lib.calls.borrow().iter().rev().find(|c| c.starts_with("land_mark sp-c ")).cloned();
+    assert_eq!(last_mark.as_deref(), Some("land_mark sp-c LANDED h1 ungated: why"));
 }
 
 #[test]

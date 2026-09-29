@@ -258,9 +258,15 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
         w.lib.gh_issue_closeout(&m.id, &head, &path);
         w.lib.bead_close_on_land(&m.id, &head);
         if ungated.is_some() {
-            // bead_close_on_land re-marks LANDED with its own "Closed by landing pass"
-            // reason; the ungated record must be the one that stays (§8 D12).
-            w.lib.land_mark(&m.id, "LANDED", &m.tip, &landed_reason);
+            // bead_close_on_land re-marks LANDED (at the head) with its own "Closed by
+            // landing pass" reason; the ungated reason must be the one that stays (§8 D12).
+            // Only the reason changes: the tip is whatever the record now holds, so publish
+            // (§8 D4) reads the same tip it would after a certified land.
+            let tip = records::land_state(&c.s.landstate, &m.id)
+                .filter(|st| st.state == "LANDED")
+                .map(|st| st.tip)
+                .unwrap_or_else(|| m.tip.clone());
+            w.lib.land_mark(&m.id, "LANDED", &tip, &landed_reason);
         }
         w.out(format!("queue.sh land-local: {} landed at {head}", m.id));
     }
