@@ -911,6 +911,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "spira-claim"
+version = "1.0.0"
+dependencies = [
+ "lifecycle",
+ "serde",
+ "serde_json",
+ "spira-config",
+]
+
+[[package]]
 name = "spira-config"
 version = "1.0.0"
 dependencies = [

@@ -261,11 +261,11 @@ real red (measured on sp-vd9dn: 5 `reopened`, 7 `reopen` rows).
 | G11 reclaim cap | unit: `reclaim_mail_at_cap`, `counts_reclaims` |
 | G13 requeue cap for another partition | unit: `unpaired_reopened_counts`, `decide_requeue_mail_at_cap`; partition half stays e2e |
 | sp-wiyr2 lift survives next pass | unit: `lift_at_or_above_n_suppresses_poison`, `new_failure_after_lift_poisons` |
-| sp-qd2ul clear sticks; fresh failures poison again; ask cites count since clear | unit: `poison_cleared_floor`, `fresh_run_after_clear_counts_from_zero` |
-| sp-rp4g4 bulk query fails → no decision | unit: `fetch_failure_is_cannot_tell`, `non_json_is_cannot_tell` (exit 2, empty stdout) |
+| sp-qd2ul clear sticks; fresh failures poison again; ask cites count since clear | unit: `poison_cleared_floor`, `fresh_run_after_clear_counts_from_zero`, `same_second_as_floor_is_excluded` |
+| sp-rp4g4 bulk query fails → no decision | unit: `events_read_failure_is_cannot_tell_with_empty_stdout`, `store_events_parses_and_fails_closed`, `poison_decide_fetch_failure_decides_nothing` (exit 2, empty stdout) |
 | sp-418h5 stale-clear scan fails closed | unit: same, on `attempts` |
-| (new) sp-r66qd NULL after clear | unit: `null_safe_no_events`, `null_safe_nothing_after_floor` |
-| (new) sp-j1q6o rebase returns | unit: `rebase_returns_do_not_count`, `three_red_returns_ask` |
+| (new) sp-r66qd NULL after clear | unit: `null_safe_no_events`, `null_safe_nothing_after_floor`, `attempts_null_safe_right_after_clear` |
+| (new) sp-j1q6o rebase returns | unit: `rebase_returns_do_not_count_as_requeues`, `rebase_returns_do_not_count_as_attempts`, `three_red_returns_count`, `rebase_returns_raise_no_ask_red_returns_do`, `sp_vd9dn_real_stream_is_zero` |
 
 What still needs one end-to-end sentinel pass: that CHECK 4 wires `counts`/`decide` output
 to a real hold, mail and event; the dispatchable-set predicate; the closed-mid-pass race.
@@ -351,7 +351,19 @@ sp-j1q6o commit).
 14. Build: add `spira-claim` to the workspace (done here) and to whatever copies built
     binaries into `$SPIRA_ARTIFACTS` (same list `spira-lc` is on).
 
-## 6. Decisions
+## 6. Verification against the live store (read-only, 2026-09-28)
+
+- **Rank parity.** The live `bd ready` set for `spira` (163 beads, 1.87 MB — 14x
+  MAX_ARG_STRLEN) ranked by lib.sh's own `epic_rank_rows` python and by `select`: byte-identical
+  TSV; same for `--resumable`; aeon.sh's band python vs `--top-tier`: identical.
+- **Count parity.** 400 beads with claims/reopens since 2026-09-20, legacy `_check4_bulk_sql`
+  (pre-sp-j1q6o) vs `counts` (0.6 s for all 400): reclaims identical; attempts identical but
+  one (sp-bf31a 1 → 0: a `queue-eject` ended an open claim); requeues differ on 116 — beads
+  at or over REQUEUE_AT=5 go from 45 to 20. A few go *up* (sp-uzwul 4 → 5): red returns of a
+  submitted, open bead (`cert-gate-red`, `closed-without-commit`) write no bd `reopened`
+  row, so the old count never saw them.
+
+## 7. Decisions
 
 - **One fold, not SQL arithmetic.** The bash counts are three `sum(case …)` expressions; a
   rule like "a rebase return forgives the attempt it ended, but not an earlier one" cannot

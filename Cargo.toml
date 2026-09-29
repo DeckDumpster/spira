@@ -26,6 +26,7 @@ members = [
     "spira-lint",
     "rebase-stale",
     "round-vm",
+    "spira-claim",
 ]
 resolver = "2"
 
