@@ -204,7 +204,7 @@ want "case ids: the same string names the case in TAP and in JSONL" \
 _SCB="$SCRATCH/scb"; mkdir -p "$_SCB/spira" "$_SCB/bin" "$_SCB/target/release"
 : > "$_SCB/bin/spira-config"; chmod +x "$_SCB/bin/spira-config"
 : > "$_SCB/target/release/spira-config"; chmod +x "$_SCB/target/release/spira-config"
-_scb_run() { HERE="$_SCB/spira" bash -c ". '$TESTLIB' >/dev/null; testlib_spira_config_bin"; }
+_scb_run() { HERE="$_SCB/spira" bash -c "unset SPIRA_ARTIFACTS; . '$TESTLIB' >/dev/null; testlib_spira_config_bin"; }
 
 is "testlib_spira_config_bin(): picks bin/ when both bin/ and target/release exist" \
     "$_SCB/spira/../bin/spira-config" "$(_scb_run)"
@@ -218,6 +218,16 @@ _SCB_OUT="$(_scb_run)"; _SCB_RC=$?
 is     "testlib_spira_config_bin(): prints nothing when neither exists" "" "$_SCB_OUT"
 wantrc "testlib_spira_config_bin(): fails loudly (rc=1) rather than building one" 1 "$_SCB_RC"
 
+# $SPIRA_ARTIFACTS (testenv's own artifact set, sp-gjx1b) wins over bin/ and target/release —
+# it is guaranteed present under every profile, so it is checked first.
+: > "$_SCB/bin/spira-config"; chmod +x "$_SCB/bin/spira-config"
+_SCB_ARTIFACTS="$_SCB/artifacts"; mkdir -p "$_SCB_ARTIFACTS"
+: > "$_SCB_ARTIFACTS/spira-config"; chmod +x "$_SCB_ARTIFACTS/spira-config"
+is "testlib_spira_config_bin(): \$SPIRA_ARTIFACTS/spira-config wins over bin/ and target/release" \
+    "$_SCB_ARTIFACTS/spira-config" \
+    "$(HERE="$_SCB/spira" SPIRA_ARTIFACTS="$_SCB_ARTIFACTS" bash -c ". '$TESTLIB' >/dev/null; testlib_spira_config_bin")"
+rm -f "$_SCB/bin/spira-config"
+
 # A cargo reachable on PATH must never be invoked — the resolver fails rather than building.
 mkdir -p "$_SCB/fakebin"
 _SCB_CARGO_MARKER="$SCRATCH/cargo-was-called"
@@ -227,7 +237,7 @@ touch "$_SCB_CARGO_MARKER"
 exit 1
 EOF
 chmod +x "$_SCB/fakebin/cargo"
-HERE="$_SCB/spira" PATH="$_SCB/fakebin:$PATH" bash -c ". '$TESTLIB'; testlib_spira_config_bin" >/dev/null 2>&1
+HERE="$_SCB/spira" PATH="$_SCB/fakebin:$PATH" bash -c "unset SPIRA_ARTIFACTS; . '$TESTLIB'; testlib_spira_config_bin" >/dev/null 2>&1
 is "testlib_spira_config_bin(): never shells out to cargo" "0" \
     "$([ -e "$_SCB_CARGO_MARKER" ] && echo 1 || echo 0)"
 
