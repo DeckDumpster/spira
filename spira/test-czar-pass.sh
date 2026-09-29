@@ -90,6 +90,8 @@ if [ ! -x "$CZAR_PASS_BIN" ]; then
     # czar-pass depends on ../reconciler-engine (a path dependency, sp-pu7v6) — copied as
     # a sibling of the isolated build tree so that relative path still resolves.
     cp -r "$HERE/../reconciler-engine" "$T/reconciler-engine"
+    # and its tests take ../testkit (a path dev-dependency, sp-qgfdi).
+    cp -r "$HERE/../testkit" "$T/testkit"
     printf '  (building czar-pass into %s)\n' "$T/czar-pass-target"
     CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/czar-pass-target" \
         "$CARGO_BIN" build --release \
