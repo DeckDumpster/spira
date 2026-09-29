@@ -110,6 +110,7 @@ run_q() {
     SPIRA_QUEUE_DIR="$QDIR" \
     SPIRA_REPO_MAP="$RMAP" \
     SPIRA_RELEASES="$RELEASES" \
+    SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged (queue/DESIGN.md §8 D12)" \
     SPIRA_SYSTEMCTL="$MOCK_SC" \
     MOCK_AEONS="${MOCK_AEONS:-}" \
         SPIRA_HOME="$SH" "$QUEUE_BIN" "$@" 2>&1

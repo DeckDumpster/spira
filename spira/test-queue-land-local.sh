@@ -9,7 +9,7 @@
 # batcher cannot deadlock on itself).
 #
 # tier: T1
-# covers: queue/src/* spira/lib.sh spira/conf.sh
+# covers: queue/src/* gate/src/cert.rs spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -84,6 +84,7 @@ run() {
     SPIRA_QUEUE_DIR="$QDIR" \
     SPIRA_REPO_MAP="$RMAP" \
     SPIRA_RELEASES="$RELEASES" \
+    SPIRA_LAND_UNGATED="${LAND_UNGATED-fixture: hand-built heads no gate judged}" \
         SPIRA_HOME="$SH" "$QUEUE_BIN" "$@" 2>&1
 }
 run_lockheld() {
@@ -96,6 +97,7 @@ run_lockheld() {
     SPIRA_REPO_MAP="$RMAP" \
     SPIRA_RELEASES="$RELEASES" \
     SPIRA_QUEUE_LOCK_HELD=1 \
+    SPIRA_LAND_UNGATED="${LAND_UNGATED-fixture: hand-built heads no gate judged}" \
         SPIRA_HOME="$SH" "$QUEUE_BIN" "$@" 2>&1
 }
 localmain() { git -C "$REPO" rev-parse local/main; }
@@ -118,11 +120,18 @@ git -C "$REPO" checkout -q trunk
 git -C "$REPO" branch -D round-1 >/dev/null 2>&1
 mk_bins "$HEAD1" round-1-bin
 
+# queue/DESIGN.md §8 D12: no gate PASS or round GREEN for this tree, no override -> refused.
+out="$(LAND_UNGATED='' run land-local fixq --head "$HEAD1" --members "sp-lloc1:$HEAD1" --worktree "$(bins_wt "$HEAD1")")"; rc=$?
+[ "$rc" -ne 0 ] && ok "1: an uncertified tree is refused" || bad "1: an uncertified tree is refused" "rc=$rc out=$out"
+want "1: the refusal names the gate command" "gate.sh $HEAD1 fixq" "$out"
+is "1: the refusal moved nothing" "$(git -C "$REPO" rev-parse trunk)" "$(localmain)"
+
 out="$(run land-local fixq --head "$HEAD1" --members "sp-lloc1:$HEAD1" --worktree "$(bins_wt "$HEAD1")")"; rc=$?
+want "1: the override is loud" "UNGATED LANDING of $HEAD1" "$out"
 [ "$rc" -eq 0 ] && ok "1: exit 0 on a real fast-forward" || bad "1: exit 0 on a real fast-forward" "got rc=$rc out=$out"
 is "1: local/main equals the round head" "$HEAD1" "$(localmain)"
 case "$(landstate sp-lloc1)" in
-    "LANDED $HEAD1"*) ok "1: member landstate is LANDED at the round head" ;;
+    "LANDED $HEAD1 "*"ungated: fixture"*) ok "1: member landstate is LANDED at the round head, the override recorded" ;;
     *) bad "1: member landstate is LANDED at the round head" "got: [$(landstate sp-lloc1)]" ;;
 esac
 is "1: the bead is closed"                closed "$(field sp-lloc1 status)"
