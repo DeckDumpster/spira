@@ -125,7 +125,7 @@ All paths under `$SPIRA_RUN` unless absolute. Formats unchanged (§3).
 | `landing.cursor` | `land` (rotation) | on a budget cut: the repo name |
 | `landing.deferred/<br with / → _>` | `land` | per-branch deferral count; removed when visited |
 | `landing.interrupted` | operators | `halt` (atomic) |
-| `landing.lock` (new) | — | `land` flock (§8 D9) |
+| `landing.lock` (new) | — | `land` flock (§8 D7) |
 | `landstate/<id>` | every branch (WITHDRAWN/CERTIFIED/RED/EJECTED), prune, `sweep-red` | only through lib.sh `land_mark` (seam), removed only by the prune (§5) |
 | `landstate/<id>.ejected` | — | removed on LANDED/CONTENT and by the prune |
 | `submitted/<id>` | hold (`submitted`) | `mark_submitted` shape, atomic (hold, certified) |
@@ -156,12 +156,12 @@ All paths under `$SPIRA_RUN` unless absolute. Formats unchanged (§3).
 
 | caller | how | relies on |
 |---|---|---|
-| `spira/sentinel.sh:1311-1325` CHECK 6 | `systemd-run --user --collect --unit=spira-landing … "$SPIRA_HOME/landing.sh"` | unit name as mutex; `landing.status`, `landing.progress`; stdout → `landing.log` |
+| `sentinel/src/dispatch.rs:325-366` CHECK 6 (the sentinel crate; sentinel.sh is gone) | `systemd-run --user --collect --unit=spira-landing … --setenv=SPIRA_LIFECYCLE_ENFORCE=… [--setenv=SPIRA_LC_BIN=<disabled>] $SPIRA_HOME/landing.sh` | unit name as mutex; `landing.status`, `landing.progress`; stdout → `landing.log` |
 | `systemd/spira-landing-pass.service:8` | `@SPIRA_LANDING_PASS_BIN@ --pass` (timer every 90 s) | pr pass |
 | `spira/canary.sh:160` | `bash "$SPIRA_HOME/landing.sh"` | a real pass; `landing.status` |
 | `spira/world.sh:174-175` `live_workers` | argv match on `landing.sh` | halt completeness |
 | `spira/chamber/czar.fayth:90`, `czar.md:122` | `landing.sh halt` | the verb |
-| ~45 bash suites (§7.5) | run the pass, source landing-lib.sh, grep landing.sh | — |
+| ~45 bash suites (§7.4) | run the pass, source landing-lib.sh, grep landing.sh | — |
 
 ### 2.7 Guarantees
 
@@ -411,15 +411,222 @@ deferral files, the prune, `halt`, `sweep-red`, the verdict-cache prune, the pus
 
 ## 7. Cutover
 
-**Not performed** (operator's directive). Line numbers are against this branch's base
-(`4764d03ec`); production's checkout additionally carries the `landstate-keep-unpublished`
-hunk in landing.sh. Apply **after** the queue crate's cutover (this pass calls
-`$SPIRA_QUEUE_BIN step`), in one landing, in this order.
+**Not performed** (operator's directive: no bash, unit or workflow edits). Line numbers are
+against this branch after its merge of `concierge/batch-rust` (queue, sentinel, aeon,
+testenv and spira-claim already cut over there). Production's checkout additionally carries
+the `landstate-keep-unpublished` hunk in landing.sh (landing.sh:1834-1839 there), which
+dies with the file. Apply in one landing, in this order. `$SPIRA_LANDING_PASS_BIN` is
+already resolved by conf.sh (conf.sh:1531) and already in its key list (conf.sh:73).
 
-See §7.1–§7.6 below.
+**Urgent finding:** on `concierge/batch-rust` `spira/queue.sh` is deleted but
+`spira/landing.sh:1756,1767,1845` still run `bash "$SPIRA_HOME/queue.sh" step`, so a
+`landing.sh` pass on that tree settles and cuts no round at all (each step logs a bash
+"No such file" line and is ignored). This cutover removes those calls with the file; if
+landing.sh must run one more time first, repoint them to `"$SPIRA_QUEUE_BIN" step "$repo_name"`.
 
-(§7 is filled in by the implementation commit, from the final code.)
+### 7.1 The worker the sentinel dispatches
+
+| # | file:line | current | replacement |
+|---|---|---|---|
+| 1 | `sentinel/src/cfg.rs:399` (after `lc_bin: bin("SPIRA_LC_BIN", "spira-lc"),`) and `:252` | — | `landing_bin: bin("SPIRA_LANDING_PASS_BIN", "landing-pass"),` and the field `pub landing_bin: Option<String>,` beside `lc_bin` |
+| 2 | `sentinel/src/dispatch.rs:365` | `a.push(self.script("landing.sh").to_string_lossy().into_owned());` | `a.push(self.cfg.landing_bin.clone().unwrap_or_else(\|\| "landing-pass".into())); a.push("land".into());` (the `--setenv` list above it is unchanged: `SPIRA_LIFECYCLE_ENFORCE` and, OFF, the disabled `SPIRA_LC_BIN` are exactly what landing-pass reads, §9; a missing binary makes the launch fail, which the existing "could not dispatch the landing worker" escalation already reports) |
+| 3 | `sentinel/src/dispatch.rs:3,266` | comments naming `landing.sh` | name `landing-pass land` |
+| 4 | `sentinel/src/tests.rs:441,1569` | `.find(… s.args.iter().any(\|x\| x.ends_with("/landing.sh")))` | `.find(… s.args.iter().any(\|x\| x == "land"))` (and give the fixture a `SPIRA_LANDING_PASS_BIN`) |
+| 5 | `sentinel/DESIGN.md:132,133,206` | "written by landing.sh", "`spira-landing` runs `$SPIRA_HOME/landing.sh`" | "written by `landing-pass land`", "`spira-landing` runs `$SPIRA_LANDING_PASS_BIN land`" |
+
+The pr timer is unchanged: `systemd/spira-landing-pass.service:8` keeps
+`ExecStart=@SPIRA_LANDING_PASS_BIN@ --pass`. Only its text changes:
+
+| # | file:line | current | replacement |
+|---|---|---|---|
+| 6 | `systemd/spira-landing-pass.service:2` | `Description=Spira landing pass — pr-mode repository landing, no local gate` | `Description=Spira landing pass — pr mode (the gated modes run as landing-pass land under spira-landing)` |
+| 7 | `systemd/spira-landing-pass.service:3` | `Documentation=file://@SPIRA_HOME@/pr-pass-branch.sh` | unchanged (the helper still does the per-branch pr work) |
+
+### 7.2 Other callers
+
+| # | file:line | current | replacement |
+|---|---|---|---|
+| 8 | `spira/canary.sh:160` | `bash "$SPIRA_HOME/landing.sh" 2>&1 \| sed 's/^/  landing: /' \|\| true` | `"$SPIRA_LANDING_PASS_BIN" land 2>&1 \| sed 's/^/  landing: /' \|\| true` |
+| 9 | `spira/canary.sh:18`, `spira/stage.sh:27-30,148-154` | comments: "canary.sh runs landing.sh directly" | "canary.sh runs `landing-pass land` directly" |
+| 10 | `spira/world.sh:175-176` `live_workers` | `argv_has "$p" "$SPIRA_HOME/gate.sh" "$SPIRA_HOME/landing.sh" "${SPIRA_PROD:-$SPIRA_HOME}/gate.sh" "${SPIRA_PROD:-$SPIRA_HOME}/landing.sh"` | `argv_has "$p" "$SPIRA_HOME/gate.sh" "${SPIRA_PROD:-$SPIRA_HOME}/gate.sh" "$(dirname "${SPIRA_PROD:-$SPIRA_HOME}")/bin/landing-pass" ${SPIRA_LANDING_PASS_BIN:+"$SPIRA_LANDING_PASS_BIN"}` (as the aeon cutover did for `bin/aeon`; note it also matches a 90 s pr pass in flight) |
+| 11 | `spira/world.sh:165,598` | comments naming landing.sh | "landing-pass" |
+| 12 | `spira/chamber/czar.fayth:90` | `Bash(*landing.sh halt*)` | `Bash(*landing-pass halt*)` |
+| 13 | `spira/chamber/czar.md:122` | ``Halt the landing pass with `landing.sh halt` `` | ``Halt the landing pass with `landing-pass halt --reason-file -` `` |
+| 14 | `spira/timeout-lint.sh:41` | `files=("$HERE/landing.sh")   # aeon.sh and sentinel.sh are Rust now; …` | the default file set is now empty: **retire** `timeout-lint.sh` and `test-timeout-lint.sh` (no caller, in no gate string), with their lines `spira-lint/fence-scripts-allow:36,40` and `spira/tier-budget-allowlist:409` |
+| 15 | `spira/lc-delivery.sh:4,14,106,115,122,125` | header names landing.sh's push mode; actor string `landing.sh` | keep the file (pr-pass-branch.sh sources it); header "pr-pass-branch.sh (landing-pass's pr helper) and landing-pass's push mode"; actor strings may stay `landing.sh` (lifecycle history actor names) or become `landing-pass` — the actor is a label, nothing matches on it |
+| 16 | `spira/pr-pass-branch.sh:4`, `spira/land-build-ensure.sh:13`, `spira/confine.sh:13,52`, `spira/gate.sh:41,341,415-416,630`, `spira/gate-lib.sh:39,67`, `spira/lib.sh:774,4784,4837,6682,7442,8267,8843,9200-9202`, `spira/sending.sh:232,594`, `spira/watchtower.sh:343,429`, `spira/conf.sh:1104` | comments / `covers:` naming `landing.sh` | name `landing-pass` (comments only). **One is text a human acts on:** `lib.sh:774` `run \`$SPIRA_HOME/landing.sh\` by hand` → `run \`$SPIRA_LANDING_PASS_BIN land\` by hand` |
+| 17 | `spira/config-fence-allow:18` | `landing-pass/src/main.rs` | **delete** (no .rs file in the crate names the config files any more; shrink-only list) |
+| 18 | `spira/config-fence-allow:55` | `spira/landing.sh` | **delete** (the file is deleted) |
+| 19 | `spira/binary-path-fence-allow:22-26` | the comment block and `landing-pass/src/main.rs` | **delete** (the private bin/-then-target resolver is gone; `SPIRA_LC_BIN` comes from conf.sh) |
+| 20 | `spira/test-ops-allowlist.sh:151` | `bash spira/landing.sh halt\|landing.sh halt` | `landing-pass halt\|landing-pass halt` (and :143's comment) |
+
+### 7.3 Delete
+
+21. `spira/landing.sh`.
+22. `spira/landing-lib.sh` (only landing.sh and three T1 suites sourced it; its three
+    functions are `order.rs` now: `certify_order`, `basefail_fix_decision`,
+    `prior_pass_suites`).
+23. `~/.config/spira/overrides/landstate-keep-unpublished.override` (+ its `.py`): retired —
+    the prune rule (§5) is the structural form. Close sp-bauwt with this landing. (The
+    `.override`'s `needed()` greps landing.sh for its marker; with landing.sh gone it
+    would try to patch a missing file, so it must go in the same step.)
+24. sp-4hs0i closes with this landing (§8 D3).
+
+`spira/pr-pass-branch.sh` and `spira/lc-delivery.sh` stay: the pr pass still delegates each
+branch to the helper (kept pr behaviour).
+
+### 7.4 Bash suites to retire or repoint
+
+The decision cases are unit tests now (`cargo test -p landing-pass`, §10). What still needs
+an end-to-end run is the wiring: the real lib.sh seam against a real fixture store, the real
+gate.sh, the real rebase machinery.
+
+**Invocation**: every `bash "$X/landing.sh"` becomes `"$SPIRA_LANDING_PASS_BIN" land` with
+`SPIRA_HOME="$X"` in its environment (the binary sources `$SPIRA_HOME/lib.sh`; the suites that
+copy scripts into `$SH` must keep copying lib.sh/conf.sh/gate.sh/confine.sh there and must
+build or locate the binary — the testenv container already builds the workspace). Every
+`cp … landing.sh landing-lib.sh …` drops those two names.
+
+| suite | line(s) | action |
+|---|---|---|
+| `test-landing.sh` | 177 | **repoint** (the push-mode end-to-end: keep as the one real-git+real-lib.sh push case) |
+| `test-landing-order.sh`, `test-express-cert-order.sh`, `test-landing-starvation.sh` | 79; 63; 89 | **retire** — ordering, express, rotation and deferral are unit tests (`express_branches_…`, `the_walk_starts_at_the_cursor`, `the_budget_cut_…`, `order::tests`) |
+| `test-landing-gate-wait.sh` | 40, 88 | **retire** — `budget::tests` |
+| `test-landing-base-fail.sh`, `test-landing-basefail-select-t1.sh` | 88; 18 | **repoint** base-fail once (the real incident.sh intake) and **retire** the T1 (`order::tests::basefix_…`) |
+| `test-landing-cert-order-t1.sh`, `test-landing-prior-pass-t1.sh` | 14; 16 | **retire** (source landing-lib.sh; `order::tests`) |
+| `test-cert-gate-reopen-note.sh` | 48 | **retire** (greps landing.sh's text for `tail -N`; `a_red_gate_reopens_with_the_gates_own_words…` asserts the 20-line window) |
+| `test-landing-mode-map.sh` | 165, 171, 260, 279, 307 | **retire** (static greps over landing.sh's `land_repo` body and `# land-modes:`; the modes are `LandMode` and the walk's dispatch) |
+| `test-queue-flush.sh` | 80 | drop the landing.sh grep (the queue step call is `Tools::queue_step`, tested by `the_queue_step_runs_before_and_after…`) |
+| `test-landing-queue-early.sh` | 83, 112-115 | **repoint** the positive control to a `SPIRA_LANDING_PASS_BIN` stub that exits 255; the "early" assertion now expects one `queue early:` block, not two (§8 D5) |
+| `test-landing-halt.sh` | 40, 227, 283 | **repoint** to `"$SPIRA_LANDING_PASS_BIN" halt …`; the pass under test is `landing-pass land` (its pid is the binary's) |
+| `test-landing-race.sh`, `test-landing-rebase.sh`, `test-landing-red-recurring.sh`, `test-superseded.sh`, `test-spike.sh`, `test-certify.sh`, `test-landing-cutover-round.sh`, `test-closed-strand.sh`, `test-submitted-lands.sh`, `test-config-compat-master-base.sh`, `test-land-mode-local.sh`, `test-skew-refresh.sh`, `test-landing-pr.sh` | 56/85; 95; 72; 43/61; 223/233; 100; 77; 42/89; 109; 239/258; 132/184; 276/292; 309 | **repoint** the invocation (above). `test-landing-rebase.sh` expects survivor lines worded "after this pass's landings" and one sweep per pass (§8 D3) |
+| `test-landing-pass.sh` | 4, 11, 101 | **repoint** :101 to `landing-pass land`; property 1 ("landing.sh skips gate.sh for pr repos") is now `a_pr_repository_is_counted_and_left_to_the_pr_pass` — keep the end-to-end half |
+| `test-check5-invariant.sh`, `test-poison.sh`, `test-sentinel-check5-subsumed.sh` | 68; 178; 52 | drop `landing.sh` from the `cp` list (they never run it) |
+| `test-lifecycle-delivery-cutover.sh` | 4, 27, 50 | drop `landing-lib.sh` from the `cp`; its push-mode legs run `landing-pass land` with `SPIRA_LIFECYCLE_ENFORCE=1` |
+| `test-canary.sh` | 53 | drop the "landing.sh symlink" check; add `exists "landing-pass" "$SPIRA_LANDING_PASS_BIN"` |
+| `test-world.sh` | 179-185 | the fake worker is a script named `…/bin/landing-pass` (what `live_workers` matches now) |
+| `test-timeout-lint.sh` | — | **retire** with timeout-lint.sh (#14) |
+| `test-ops-allowlist.sh` | 143, 151 | as #20 |
 
 ## 8. Decisions and deliberate changes
 
-(Filled in by the implementation commit.)
+- **D1 — one resolver.** Repository rows and settings come from conf.sh/lib.sh through the
+  context seam (S1), for the pr pass too. The pr pass's private map parser and its
+  `bin/`-then-`target/` spira-lc resolver are gone (so are their fence allow-list entries,
+  §7 #17, #19). The base is `spira_landref` — the same three-step algorithm the Rust copy
+  had. Two messages that named the map file are reworded ("…in the repository map"),
+  because no .rs file may name it (config-fence).
+- **D2 — pr pass fixes, found while unifying it with the gated pass.**
+  (a) Its bead scan read raw `status == closed`, so a builder's submitted-labelled open bead
+  never reached `pr-pass-branch.sh`; the shared scan reads it as done, as landing.sh and
+  `bead_land_status` always did. (b) Its repository check let any bead whose `repo:` was the
+  home repository into any pr repository; now the bead's repository must resolve to this
+  checkout's path, as landing.sh required. (c) Its `content_landed` said an *ancestor* branch
+  was not landed (it tested `ahead == 0` first); it now uses lib.sh's rule (ancestor →
+  landed → CONTENT). (d) A delivery row's `version` may be a number (lc-delivery.sh already
+  accepted one). (e) Each line was printed to stdout *and* appended to landing-pass.log,
+  which the unit also appends stdout to — every line appeared twice; it now prints once.
+- **D3 — survivors once per pass (sp-4hs0i).** `rebase_survivors` ran after every push
+  landing over the whole judged set (k landings × n survivors). It runs once per repository
+  per pass, after the walk, only if something landed there. Safe because every survivor is
+  re-checked individually (gone, holder, content) before its replay, and branches walked
+  after the last landing already sit on the latest base (the ancestry skip). Log wording:
+  "…after this pass's landings".
+- **D4 — the prune (§5, sp-bauwt)**: never deletes a LANDED record whose tip is not on the
+  forge; absorbs the `landstate-keep-unpublished` override, generalised from the home
+  repository's `origin/main` to each repository's forge ref.
+- **D5 — the queue step runs twice, not three times.** landing.sh called `queue.sh step`
+  before certification twice in a row ("early", then the sp-len2q "verdict first" hotfix —
+  the same call), and once after. Now: once before (`queue early:`), once after
+  (`queue late:`). The step is `$SPIRA_QUEUE_BIN step <repo>`; a missing binary is logged
+  per repository, never a fallback to a deleted queue.sh.
+- **D6 — base-fix certification once.** landing.sh's push/hold BASE_FAIL arm carried the
+  certification block twice, the first copy certifying on the scan's (stale) status. One
+  copy remains, after a re-read.
+- **D7 — `landing.lock`.** The unit name is still the systemd mutex; a hand-run
+  `landing-pass land` beside the unit now declines instead of racing it.
+- **D8 — SIGTERM is immediate.** bash deferred its TERM trap until the foreground gate
+  returned (halt's 30 s grace, then SIGKILL, which skipped the status write). The binary
+  forwards TERM to the child's process group (gate.sh and its suites), writes the status
+  (rc 143) and exits. Every child runs in its own process group with the default mask.
+- **D9 — push-mode conflict path fetches the base's own remote** (bash hard-coded `origin`).
+- **D10 — records written atomically**: `submitted/<id>` (was a plain `>`), `landing.run`,
+  `landing.status`, `landing.cursor`, `landing.deferred/*`.
+- **D11 — halt**: `--reason-file F|-` added (payload on stdin); a multi-line reason is
+  flattened to one line in `landing.interrupted` (a newline broke its key=value format).
+- **D12 — gate.sh / confine.sh are subprocesses with their argv contract**; the queue-mode
+  certification gate is the repository's own gate string (fences + sp-vq2za's budgeted
+  selector + testenv) run by gate.sh — this pass never picks suites. `confine.sh` still gets
+  the bead's labels as its fifth argument (its interface; bounded by the bead's label set).
+- **D13 — `lifecycle_enforce` (§9).**
+- **Kept deliberately:** every per-branch message text and `CHECK6` prefix; one judgement
+  per tip (CERTIFIED/WITHDRAWN/RED@base skips); re-read before acting; only FAIL reopens;
+  the budget reserve and its base-fix exemption; queue modes never rebase here
+  (law-a-round-takes-certified-tips); `skew.sh refresh` for push and queue(forge) only;
+  the pr pass still writes its CONTENT record directly (no lib.sh on a 90 s timer) and still
+  delegates each branch to pr-pass-branch.sh.
+- **Rejected:** porting `rebase_branch`/`recut_onto`/`bead_reopen`/the asks (shared lib.sh
+  machinery with other callers — seams S3-S16); spira-claim for the rebase-escalation
+  counter (it deliberately excludes rebase returns; this counter *is* rebase returns);
+  reading config directly (D1); a fallback to queue.sh (deleted on batch-rust).
+
+## 9. Lifecycle switch
+
+**Finding (operator, 2026-09-29):** the lifecycle machine is not deployed on this host (no
+`spira_lifecycle` database, no `spira_lc` grant, no service or socket). **Decision:**
+`lifecycle_enforce` is THE switch for everything that touches it.
+
+**Resolution:** `spira_config::lifecycle_enforce(<the document conf.sh resolved>)` — the
+one rule the crates share (27000cbf9): the process environment's `SPIRA_LIFECYCLE_ENFORCE`
+wins (`1`/`true` on, anything else off), else the typed `spira.lifecycle_enforce`, else
+**off**. Binary presence is never an input. The document is conf.sh's `SPIRA_TOML_FILE`,
+carried in the context answer.
+
+**OFF (production today):** landing-pass never invokes spira-lc, not even a probe. It also
+pins `SPIRA_LIFECYCLE_ENFORCE=0` and `SPIRA_LC_BIN=/nonexistent/spira-lc-disabled-by-lifecycle_enforce=0`
+(the sentinel's own `LC_DISABLED`) into its environment before any child starts, so the
+bash it still runs — pr-pass-branch.sh's `lc_deliver_pr_merged/closed`, the lib.sh seams —
+cannot reach spira-lc either (lc.sh/lc-delivery.sh treat a non-executable path as absent).
+Behaviour is the pre-lifecycle contract: landstate and labels only.
+
+| path | OFF | ON |
+|---|---|---|
+| pr: content already on base | the `CONTENT` landstate record, nothing else (f031f6dee's OFF semantics, kept) | the same, plus `Delivered` when the delivery row is `PR_OPEN` — best-effort additive; no row / not PR_OPEN is quiet; a machine that cannot be asked or refuses is a loud `landing-pass: <id>: LIFECYCLE: …` line on stderr and the pass goes on (f031f6dee's ON semantics) |
+| pr: helper exits 7/8 | helper's lc calls hold a dead `SPIRA_LC_BIN`: no-ops | helper records Delivered/Returned as before |
+| push: landed / lost the race / conflict | no `lc_deliver_push_*` call at all | `lc_deliver_push_delivered / _requeued / _returned`; spira-lc probed once per pass (`list --state IN_DELIVERY`) before the first push landing — **unreachable refuses the landing loudly** (`landing: lifecycle_enforce is on and spira-lc is unreachable (<why>) — not landing <br> this pass; …`), because the landing would be a delivery the authoritative machine never saw |
+| queue / queue.local certification, hold, prune, halt | never touches spira-lc | never touches spira-lc (gate.sh's own certification event is gate.sh's) |
+
+This rewrite **supersedes** f031f6dee's code path (its `main.rs` is replaced), and keeps its
+OFF semantics exactly and its ON semantics for the pr content proof.
+
+## 10. Tests
+
+`cargo test -p landing-pass` — 56 unit tests; `cargo build --workspace` clean. Derived from
+§2-§5 and §9, with recording fakes of bd, git, the lib.sh seam, the harness programs,
+liveness, the clock, spira-lc and the halt ports (signals, podman, testenv teardown):
+
+| contract | tests (`src/tests.rs` unless named) |
+|---|---|
+| queue certification: green → GATING, CERTIFIED, submitted, one movement | `a_green_gate_certifies_once_and_the_movement_crosses_the_seam` |
+| one judgement per tip | `certified_or_withdrawn_at_the_same_tip_is_not_gated_again` |
+| FAIL reopens with the gate's words; re-read | `a_red_gate_reopens_with_the_gates_own_words_and_marks_red`, `a_bead_reopened_while_its_gate_ran_is_not_reopened_or_certified` |
+| BASE_FAIL: one incident per repo per pass; green base-fix certified first, budget-exempt | `a_red_base_files_one_incident_…`, `a_base_fix_green_on_its_suite_…` |
+| NO_VERDICT; PASS clears counters | `no_verdict_is_counted_by_the_seam_…`, `a_pass_clears_the_branchs_noverdict_counters` |
+| budget cut, cursor, deferral escalation, rotation | `the_budget_cut_defers_the_rest_…`, `the_walk_starts_at_the_cursor`, `budget::tests` |
+| every early exit says why; EJECTED; gone mid-pass | `every_early_exit_says_why`, `an_ejected_record_on_a_closed_bead_is_reopened`, `a_branch_gone_mid_pass_…` |
+| queue step before/after, missing binary, skew only push/queue | `the_queue_step_runs_before_and_after_…` |
+| order, express, pr repos left alone | `express_branches_are_announced_…`, `a_pr_repository_is_counted_…`, `order::tests` |
+| prune (§5) | `the_prune_never_deletes_a_landed_record_the_forge_does_not_have`, `an_unreadable_store_prunes_nothing`, `prune::tests` |
+| push: LANDED first, close, survivors once (sp-4hs0i) | `push_lands_records_first_and_closes_and_rebases_survivors_once_per_pass` |
+| push: conflict/escalation/refused/confine/blocked push/already-landed | `a_real_conflict_reopens_once_…`, `escalation_at_the_threshold_…`, `a_rebase_that_could_not_be_attempted_…`, `confinement_is_asked_before_the_gate`, `a_push_blocked_…`, `a_merge_conflict_on_already_landed_work_…` |
+| push against real repositories | `push_mode_lands_on_a_real_remote` |
+| hold | `hold_gates_notes_and_does_not_advance_the_base` |
+| halt / sweep-red | `halt_dry_run_…`, `halt_terms_then_kills_…`, `halt_refuses_…`, `sweep_red_lists_red_records_only`, `cli::tests` |
+| pr pass | `the_pr_pass_hands_done_branches_to_the_helper_…`, `delivery_rows_accept_a_numeric_version` |
+| lifecycle OFF/ON (§9) | `off_push_mode_never_invokes_spira_lc`, `off_queue_certification_never_invokes_spira_lc`, `on_push_mode_records_deliveries_…`, `on_with_the_machine_unreachable_a_push_landing_is_refused_loudly`, `on_the_pr_pass_proves_content_deliveries_and_is_loud_…`; the OFF pr case asserts no delivery call in `the_pr_pass_hands_done_branches_…` |
+| the seam mechanism, for real through bash | `seam::tests` (values on stdin intact; progress vs log vs answer; the context script against a stand-in lib.sh; a missing lib.sh is 96) |
+| records and parsing | `records_keep_their_shell_formats`, `the_context_answer_parses_…`, `util::tests` |
+
+Also run by hand (not a suite, not production): `landing-pass land` against a stand-in
+`SPIRA_HOME` (stub lib.sh/gate.sh/bdsim.py, a temp git repository) — certified, then skipped
+at the same tip, then SIGTERM mid-gate → `SP_LAND_RC=143`, the gate's own child gone.

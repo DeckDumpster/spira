@@ -14,6 +14,22 @@ pub fn lifecycle_on(doc: Option<&std::path::Path>) -> bool {
     spira_config::lifecycle_enforce(doc)
 }
 
+/// What children are handed as `SPIRA_LC_BIN` with the switch OFF — the sentinel's own
+/// value (sentinel/src/cfg.rs `LC_DISABLED`): non-empty, so conf.sh keeps it, and never
+/// executable, so every lc.sh / lc-delivery.sh call becomes a no-op. This is how "OFF never
+/// invokes spira-lc" holds for the bash this binary still runs (pr-pass-branch.sh, the
+/// lib.sh seams), not only for its own code.
+pub const LC_DISABLED: &str = "/nonexistent/spira-lc-disabled-by-lifecycle_enforce=0";
+
+/// Pin the resolved switch into this process's environment before any child starts, so
+/// every child resolves the same mode (and, OFF, holds no live path to spira-lc).
+pub fn pin_for_children(on: bool) {
+    std::env::set_var("SPIRA_LIFECYCLE_ENFORCE", if on { "1" } else { "0" });
+    if !on {
+        std::env::set_var("SPIRA_LC_BIN", LC_DISABLED);
+    }
+}
+
 /// The lifecycle machine, as far as this pass needs it: is it there?
 pub trait Lc {
     /// `spira-lc list --state IN_DELIVERY`, parsed. Only ever called with the switch ON.

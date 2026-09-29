@@ -256,8 +256,7 @@ impl Submitted {
         format!("{} {} {} {}\n", self.tip, self.at, self.state, self.refreshes)
     }
     /// lib.sh `submitted <id> <tip>`: nothing more to do for this tip — the same tip, and
-    /// not a failed submission younger than an hour's retry window... inverted: a failed one
-    /// is "done" only while it is younger than an hour.
+    /// not a failed submission (a failed one is retried, but not sooner than an hour).
     pub fn settles(&self, tip: &str, now: u64) -> bool {
         if self.tip != tip {
             return false;

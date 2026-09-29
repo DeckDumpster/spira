@@ -168,8 +168,9 @@ impl<'a> PrTools for RealPrTools<'a> {
         c.arg(&self.s.pr_pass_branch_sh).arg(repo).arg(br).arg(id).arg(base).arg(name).arg(tip);
         c.env("SPIRA_HOME", &self.s.home).env("SPIRA_RUN", &self.s.run).env("SPIRA_DB", &self.s.db);
         c.env("SPIRA_ID_PREFIX", &self.s.id_prefix).stdin(Stdio::null());
-        // The switch as this pass resolved it, so the helper's delivery wrappers can obey it.
-        c.env("SPIRA_LIFECYCLE_ENFORCE", if self.s.lifecycle_enforce { "1" } else { "0" });
+        // The switch as this pass resolved it is already pinned into the environment the
+        // helper inherits (lifecycle::pin_for_children): OFF, its lc-delivery.sh calls hold a
+        // non-executable SPIRA_LC_BIN and never reach spira-lc.
         // The helper's own lines go straight to this pass's stdout (the unit's log).
         c.stdout(Stdio::inherit()).stderr(Stdio::inherit());
         match c.status() {

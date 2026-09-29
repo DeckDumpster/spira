@@ -13,7 +13,7 @@ use landing_pass::pr::{PrPass, RealPrTools};
 use landing_pass::real::{load_context, RealBeads, RealClock, RealGit, RealLib, RealProcs, RealTools, SeamRunner};
 use landing_pass::records::Files;
 use landing_pass::report::Reporter;
-use landing_pass::lifecycle::{lifecycle_on, RealLc};
+use landing_pass::lifecycle::{lifecycle_on, pin_for_children, RealLc};
 use landing_pass::{signals, util};
 use std::cell::Cell;
 use std::fs::{self, OpenOptions};
@@ -90,6 +90,10 @@ fn pr() -> i32 {
         }
     };
     s.lifecycle_enforce = lifecycle_on(s.toml.as_deref());
+    pin_for_children(s.lifecycle_enforce);
+    if !s.lifecycle_enforce {
+        s.lc_bin = None;
+    }
     let beads = RealBeads {
         home: s.home.clone(),
         db: s.db.clone(),
@@ -134,6 +138,11 @@ fn land() -> i32 {
         }
     };
     s.lifecycle_enforce = lifecycle_on(s.toml.as_deref());
+    // Before the signal thread exists: the environment is only ever set single-threaded.
+    pin_for_children(s.lifecycle_enforce);
+    if !s.lifecycle_enforce {
+        s.lc_bin = None;
+    }
     let files = Files::new(&s.run);
     let _lock = match try_lock(&files.lock()) {
         Ok(Some(l)) => l,
