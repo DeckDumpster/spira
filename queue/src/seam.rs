@@ -171,6 +171,7 @@ mod tests {
 
     #[test]
     fn values_travel_on_stdin_with_newlines_and_empties_intact() {
+        let _serial = crate::testutil::serial();
         // The seam's own mechanism, against a stand-in lib.sh that defines land_mark as
         // "print my arguments": proves argv is only `bash` and every value arrives whole.
         let dir = crate::testutil::tmpdir("seam");

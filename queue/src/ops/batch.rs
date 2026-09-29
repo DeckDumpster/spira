@@ -2,7 +2,7 @@
 
 use std::fs;
 
-use super::{actor, czar_ok, idents, landing_log, owner_refused, read_text, repo_path, resolve, take_lock, title_line, World, FAIL, OK, USAGE};
+use super::{actor, czar_ok, lifecycle_on, require_lc, idents, landing_log, owner_refused, read_text, repo_path, resolve, take_lock, title_line, World, FAIL, OK, USAGE};
 use crate::cli::Text;
 use crate::ident::bounded_text;
 use crate::model::{EjectCause, LandMode, Member};
@@ -46,6 +46,10 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     }
     let actor = actor(w);
     let cause = EjectCause::decide(red, suites);
+    let lc_on = lifecycle_on(w);
+    if lc_on && !dry_run && require_lc(w, "eject").is_err() {
+        return FAIL;
+    }
     let Ok(_g) = take_lock(w, "eject", &c, "") else { return FAIL };
 
     let open = c.queue_file("open");
@@ -106,7 +110,11 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
             w.out(format!("dry-run: would write suites={suites} to {}/{id}.ejected", landstate.display()));
         }
         w.out(format!("dry-run: would record cause {}", cause.as_str()));
-        w.out(format!("dry-run: would return bead {id} to spira-lc via a Returned event"));
+        if lc_on {
+            w.out(format!("dry-run: would return bead {id} to spira-lc via a Returned event"));
+        } else {
+            w.out(format!("dry-run: would reopen bead {id} and clear assignee"));
+        }
         w.out(format!("dry-run: would post comment to {id}"));
         w.out(format!("dry-run: would close PR {pr}"));
         if !survivors.is_empty() {
@@ -119,15 +127,23 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     let why = if reason.is_empty() { "ejected".to_string() } else { reason.clone() };
     // RED, not EJECTED: EJECTED is the automated attribution state; RED is the operator's.
     w.lib.land_mark(id, "RED", &hit.tip, &why);
-    // The suites the dry-run promised (queue.sh printed this line and never wrote it).
-    if !suites.is_empty() {
-        let _ = write_atomic(&landstate.join(format!("{id}.ejected")), suites);
+    if lc_on {
+        // The suites the dry-run promised (queue.sh printed this line and never wrote it).
+        if !suites.is_empty() {
+            let _ = write_atomic(&landstate.join(format!("{id}.ejected")), suites);
+        }
+        // The cause row spira-claim classifies: eject (harness) or eject-red (judged). §8 D1.
+        w.lib.cause_event(id, cause.as_str());
+        // The delivery-exit event legal from IN_DELIVERY (sp-rlyl0).
+        w.lib.lc_returned(id, &bounded_text(&why));
+        w.lib.release_claim(id);
+    } else {
+        // Pre-lifecycle (before sp-rlyl0): hand the bead back through bead_reopen — reopen,
+        // submitted label off, assignee cleared, the suites sidecar and the cause row, in
+        // the one function every reopen goes through.
+        w.lib.bead_reopen(id, cause.as_str(), suites);
     }
-    // The cause row spira-claim classifies: eject (harness) or eject-red (judged). §8 D1.
-    w.lib.cause_event(id, cause.as_str());
-    w.lib.lc_returned(id, &bounded_text(&why));
-    w.lib.release_claim(id);
-    if !batch_id.is_empty() {
+    if lc_on && !batch_id.is_empty() {
         let r = bounded_text(&why);
         match lc_cas(w, &batch_id, |s, v| w.lc.eject_member(&batch_id, id, s, v, "queue.sh", &r)) {
             Ok(()) => w.out(format!("queue.sh eject: {id} ejected on spira-lc (returned to CERTIFIED there)")),
@@ -183,6 +199,10 @@ pub fn abandon(w: &World, repo: Option<&str>, reason: &Text, dry_run: bool) -> i
     let actor = actor(w);
     let Ok(c) = resolve(w, "abandon", repo) else { return FAIL };
     let Ok(path) = repo_path(w, "abandon", &c) else { return FAIL };
+    let lc_on = lifecycle_on(w);
+    if lc_on && !dry_run && require_lc(w, "abandon").is_err() {
+        return FAIL;
+    }
     let Ok(_g) = take_lock(w, "abandon", &c, "") else { return FAIL };
     let open = c.queue_file("open");
     let kv = match records::read_kv(&open) {
@@ -234,7 +254,7 @@ pub fn abandon(w: &World, repo: Option<&str>, reason: &Text, dry_run: bool) -> i
         return OK;
     }
 
-    if !batch_id.is_empty() {
+    if lc_on && !batch_id.is_empty() {
         let r = bounded_text(&reason);
         match lc_cas(w, &batch_id, |s, v| w.lc.abandon_batch(&batch_id, s, v, "queue.sh", &r)) {
             Ok(()) => w.out(format!("queue.sh abandon: {batch_id} abandoned on spira-lc")),
@@ -318,6 +338,10 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
     let name = c.r.name.clone();
     if c.r.mode != LandMode::Queue {
         w.err(format!("queue.sh open-batch: repo is not in queue mode (mode={})", c.r.mode.as_str()));
+        return FAIL;
+    }
+    let lc_on = lifecycle_on(w);
+    if lc_on && !dry_run && require_lc(w, "open-batch").is_err() {
         return FAIL;
     }
     let Ok(_g) = take_lock(w, "open-batch", &c, "") else { return FAIL };
@@ -497,13 +521,14 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
 
     let lc_id = format!("{name}-{stamp}");
     let csv = members.iter().map(Member::render).collect::<Vec<_>>().join(",");
-    let cut = if w.lc.available() {
+    // Switch OFF: the pre-sp-o7nbr.5 record — no batch_id/version, no spira-lc call.
+    let cut = if !lc_on {
+        Ok(String::new())
+    } else {
         for m in &members {
             w.lc.create_bead(&m.id);
         }
         w.lc.cut(&lc_id, &name, &head, &base_sha, &csv, "queue.sh")
-    } else {
-        Err((2, "SPIRA_LC_BIN not available".into()))
     };
     match cut {
         Ok(version) if !version.is_empty() => {

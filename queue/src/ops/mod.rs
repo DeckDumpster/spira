@@ -51,6 +51,33 @@ pub fn repo_path(w: &World, label: &str, c: &Ctx) -> Result<PathBuf, i32> {
     }
 }
 
+/// `lifecycle_enforce` — THE switch for everything touching the lifecycle machine
+/// (DESIGN.md §10). Resolved as the aeon crate resolves it: the process environment's
+/// `SPIRA_LIFECYCLE_ENFORCE` wins (a unit or a fixture pins it; `1`/`true` = on), else
+/// `spira.lifecycle_enforce` in the document conf.sh resolved, read through the spira-config
+/// library; else off. Binary presence is never consulted.
+pub fn lifecycle_on(w: &World) -> bool {
+    if let Some(v) = w.env.var("SPIRA_LIFECYCLE_ENFORCE") {
+        return v == "1" || v == "true";
+    }
+    w.config.lifecycle_enforce(w.lib.toml_path().as_deref())
+}
+
+/// With the switch ON, spira-lc is authoritative: an unreachable machine is a loud refusal
+/// before anything changes. Never called with the switch OFF.
+pub fn require_lc(w: &World, label: &str) -> Result<(), i32> {
+    let why = if w.lc.available() { w.lc.probe().err() } else { Some("SPIRA_LC_BIN is not an executable".into()) };
+    match why {
+        None => Ok(()),
+        Some(e) => {
+            w.err(format!(
+                "queue.sh {label}: lifecycle_enforce is on and spira-lc is unreachable ({e}) — refused, nothing changed; fix the lifecycle machine or turn lifecycle_enforce off"
+            ));
+            Err(FAIL)
+        }
+    }
+}
+
 /// The acting identity: SPIRA_QUEUE_ACTOR, BEADS_ACTOR, aeon-$SPIRA_AEON, USER, unknown.
 pub fn actor(w: &World) -> String {
     w.var("SPIRA_QUEUE_ACTOR")

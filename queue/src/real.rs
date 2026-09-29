@@ -546,6 +546,10 @@ impl Lc for RealLc {
             Err((rc, out.trim().to_string()))
         }
     }
+    fn probe(&self) -> Result<(), String> {
+        let out = self.stdout(&["list", "--state", "IN_DELIVERY"])?;
+        serde_json::from_str::<serde_json::Value>(&out).map(|_| ()).map_err(|e| format!("spira-lc list: {e}"))
+    }
     fn in_delivery(&self) -> Result<Vec<LcBeadRow>, String> {
         let out = self.stdout(&["list", "--state", "IN_DELIVERY"])?;
         serde_json::from_str(&out).map_err(|e| format!("spira-lc list: {e}"))
@@ -567,6 +571,10 @@ impl ConfigStore for RealConfig {
     fn set_repo_row(&self, toml: &Path, name: &str, mode: &str, base: &str) -> Result<(), String> {
         let (mk, bk) = (format!("repo.{name}.mode"), format!("repo.{name}.base"));
         spira_config::set_paths_in_file(toml, &[(&mk, mode), (&bk, base)])
+    }
+    fn lifecycle_enforce(&self, toml: Option<&Path>) -> bool {
+        let Some(p) = toml.filter(|p| p.is_file()) else { return false };
+        spira_config::load(p).ok().and_then(|d| d.spira).and_then(|s| s.lifecycle_enforce).unwrap_or(false)
     }
     fn set_legacy_map_row(&self, map: &Path, name: &str, land: &str, base: &str) -> Result<(), String> {
         spira_config::legacy_map::set_row_in_file(map, name, land, base)
@@ -701,6 +709,7 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
 
     #[test]
     fn context_seam_round_trips_through_bash() {
+        let _serial = crate::testutil::serial();
         let lib = RealLib { home: stub_home() };
         let (s, r) = lib.context(Some("spira")).unwrap();
         assert_eq!(s.run, PathBuf::from("/run/x"));
@@ -719,6 +728,7 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
 
     #[test]
     fn answer_seams_ignore_log_lines_and_carry_failures() {
+        let _serial = crate::testutil::serial();
         let lib = RealLib { home: stub_home() };
         assert_eq!(lib.land_subject("sp-a"), "spira: land sp-a — T");
         assert_eq!(lib.rebase("spira/sp-a", "origin/main", Path::new("/repo"), "spira"), Err("conflict".to_string()));

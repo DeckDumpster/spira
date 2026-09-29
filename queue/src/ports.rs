@@ -167,6 +167,8 @@ pub trait Lc {
     fn cut(&self, batch_id: &str, repo: &str, head: &str, base: &str, members: &str, actor: &str) -> Result<String, (i32, String)>;
     fn abandon_batch(&self, batch_id: &str, state: &str, version: &str, actor: &str, reason: &str) -> Result<(), (i32, String)>;
     fn eject_member(&self, batch_id: &str, bead: &str, state: &str, version: &str, actor: &str, reason: &str) -> Result<(), (i32, String)>;
+    /// A reachability probe (one read against the lifecycle database). Err names why.
+    fn probe(&self) -> Result<(), String>;
     /// `list --state IN_DELIVERY`. Err = cannot tell.
     fn in_delivery(&self) -> Result<Vec<LcBeadRow>, String>;
 }
@@ -178,6 +180,8 @@ pub trait ConfigStore {
     fn repo_row(&self, toml: &Path, name: &str) -> Result<(String, String), String>;
     /// Write `[repo.<name>] mode` and `base` (validated, atomic).
     fn set_repo_row(&self, toml: &Path, name: &str, mode: &str, base: &str) -> Result<(), String>;
+    /// `spira.lifecycle_enforce` from the resolved document; false when absent/unreadable.
+    fn lifecycle_enforce(&self, toml: Option<&Path>) -> bool;
     /// The legacy map's land/base columns for `name` (spira_config::legacy_map), atomic.
     fn set_legacy_map_row(&self, map: &Path, name: &str, land: &str, base: &str) -> Result<(), String>;
 }

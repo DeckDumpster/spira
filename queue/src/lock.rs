@@ -40,6 +40,7 @@ mod tests {
 
     #[test]
     fn second_taker_is_refused_until_the_first_drops() {
+        let _serial = crate::testutil::serial();
         let d = tmpdir("lock");
         let a = try_lock(&d, "spira");
         assert!(matches!(a, Acquire::Held(_)));
