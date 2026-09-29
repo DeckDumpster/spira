@@ -987,11 +987,12 @@ mod tests {
         GateRedReason::Timeout,
         GateRedReason::Confine,
     ];
-    const ALL_RETURNED_REASONS: [ReturnedReason; 4] = [
+    const ALL_RETURNED_REASONS: [ReturnedReason; 5] = [
         ReturnedReason::PrClosedUnmerged,
         ReturnedReason::PrChangesRequested,
         ReturnedReason::PushRejected,
         ReturnedReason::BatchEjected,
+        ReturnedReason::BaseWithdrawn,
     ];
     const ALL_DROP_REASONS: [DropReason; 2] = [DropReason::ClosedNoBranch, DropReason::Unwanted];
     const ALL_HOLD_CAUSES: [HoldCause; 5] = [
