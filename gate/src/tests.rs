@@ -1,8 +1,10 @@
 //! The decision logic driven through a recording fake of every boundary (DESIGN.md "Boundaries").
 
+use crate::compose::Changed;
 use crate::engine::{Args, Trial, BASEFAIL, FAIL, NOVERDICT, PASS};
 use crate::key;
 use crate::ports::{Ctx, Merge, World};
+use spira_config::GateMode;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -12,6 +14,8 @@ const RUN: &str = "/run";
 const BASE: &str = "local/main";
 const BR: &str = "spira/sp-a";
 const MERGE_SHA: &str = "m3rg3";
+
+type UnitRuns = HashMap<(String, &'static str), (i32, String)>;
 
 struct Fake {
     ctx: RefCell<Result<Ctx, String>>,
@@ -39,6 +43,18 @@ struct Fake {
     err: RefCell<Vec<String>>,
     clock: Cell<u64>,
     signal: Cell<bool>,
+    // ---- composition (sp-2ghui)
+    mode: RefCell<Result<GateMode, String>>,
+    touched: RefCell<Result<Vec<Changed>, String>>,
+    /// `cargo metadata` JSON by the revision the tree holds (the last checkout).
+    metadata: RefCell<HashMap<String, Result<String, String>>>,
+    /// (status, output) of a unit phase by (tree revision, the phase's first word after
+    /// `cargo test --profile aeon -j N`): `--no-run` is the build, anything else the tests.
+    unit_runs: RefCell<UnitRuns>,
+    /// Every command run_gate was handed, in order.
+    cmds: RefCell<Vec<String>>,
+    /// Seconds each run_gate advances the clock by, per command kind.
+    phase_secs: Cell<u64>,
 }
 
 fn ctx() -> Ctx {
@@ -107,6 +123,12 @@ impl Fake {
             err: RefCell::new(Vec::new()),
             clock: Cell::new(1_000_000),
             signal: Cell::new(false),
+            mode: RefCell::new(Ok(GateMode::Suites)),
+            touched: RefCell::new(Ok(Vec::new())),
+            metadata: RefCell::new(HashMap::new()),
+            unit_runs: RefCell::new(HashMap::new()),
+            cmds: RefCell::new(Vec::new()),
+            phase_secs: Cell::new(7),
         }
     }
     fn set_var(&self, k: &str, v: &str) {
@@ -254,19 +276,50 @@ impl World for Fake {
     fn remove_worktree(&self, _: &Path, _: &Path) {
         self.removed_trees.set(self.removed_trees.get() + 1);
     }
-    fn run_gate(&self, _: &Path, env: &[(String, String)], _: &str, _: &str) -> (i32, String) {
+    fn run_gate(&self, _: &Path, env: &[(String, String)], _: &str, cmd: &str) -> (i32, String) {
         self.ran.borrow_mut().push(env.to_vec());
+        self.cmds.borrow_mut().push(cmd.to_string());
         let br = env
             .iter()
             .find(|(k, _)| k == "SPIRA_GATE_BRANCH")
             .map(|(_, v)| v.clone())
             .unwrap_or_default();
-        self.clock.set(self.clock.get() + 7);
+        self.clock.set(self.clock.get() + self.phase_secs.get());
+        if cmd.starts_with("cargo test") {
+            let kind = if cmd.contains("--no-run") {
+                "build"
+            } else {
+                "test"
+            };
+            let at = self.checkouts.borrow().last().cloned().unwrap_or_default();
+            return self
+                .unit_runs
+                .borrow()
+                .get(&(at, kind))
+                .cloned()
+                .unwrap_or((0, format!("{kind} ok")));
+        }
         self.runs
             .borrow()
             .get(&br)
             .cloned()
             .unwrap_or((0, String::new()))
+    }
+    fn diff_raw(&self, _: &Path, _: &str, _: &str) -> Result<Vec<Changed>, String> {
+        self.touched.borrow().clone()
+    }
+    fn gate_mode(&self, _: &str) -> Result<GateMode, String> {
+        self.mode.borrow().clone()
+    }
+    fn cargo_metadata(&self, _: &Path, _: &str, _: &str) -> Result<String, String> {
+        let at = self.checkouts.borrow().last().cloned().unwrap_or_default();
+        self.metadata.borrow().get(&at).cloned().unwrap_or_else(|| {
+            Ok(metadata_json(&[
+                ("gate", &[]),
+                ("spira-config", &[]),
+                ("queue", &["spira-config"]),
+            ]))
+        })
     }
     fn now(&self) -> u64 {
         self.clock.get()
@@ -768,7 +821,8 @@ fn the_meter_row_and_yield_on_a_pass() {
     f.run();
     assert_eq!(
         f.appended.borrow()[0],
-        "2026-09-29T00:00:00Z spira spira/sp-a waited=0s ran=7s rc=0 pass\n"
+        "2026-09-29T00:00:00Z spira spira/sp-a waited=0s ran=7s rc=0 pass compose=suites(mode) phases=gate:7\n",
+        "the composition and its phase walls trail the reason (sp-2ghui)"
     );
     assert_eq!(
         f.yields.borrow()[0],
@@ -845,6 +899,265 @@ fn a_fail_with_no_message_is_downgraded() {
     );
 }
 
+// ---------------------------------------------------------------------------- composition (sp-2ghui)
+
+/// `cargo metadata --no-deps` JSON for members at `/t/<name>` with the named path deps.
+fn metadata_json(members: &[(&str, &[&str])]) -> String {
+    let pkgs: Vec<String> = members
+        .iter()
+        .map(|(n, deps)| {
+            let d: Vec<String> = deps
+                .iter()
+                .map(|x| format!(r#"{{"name":"{x}","path":"/t/{x}"}}"#))
+                .collect();
+            format!(
+                r#"{{"id":"{n} (path+file:///t/{n})","name":"{n}","manifest_path":"/t/{n}/Cargo.toml","dependencies":[{}]}}"#,
+                d.join(",")
+            )
+        })
+        .collect();
+    let ids: Vec<String> = members
+        .iter()
+        .map(|(n, _)| format!(r#""{n} (path+file:///t/{n})""#))
+        .collect();
+    format!(
+        r#"{{"workspace_root":"/t","workspace_members":[{}],"packages":[{}]}}"#,
+        ids.join(","),
+        pkgs.join(",")
+    )
+}
+
+fn unit_fake(paths: &[&str]) -> Fake {
+    let f = Fake::new();
+    *f.mode.borrow_mut() = Ok(GateMode::Unit);
+    *f.touched.borrow_mut() = Ok(paths
+        .iter()
+        .map(|p| Changed {
+            path: p.to_string(),
+            exec: false,
+        })
+        .collect());
+    f
+}
+
+fn meter(f: &Fake) -> String {
+    f.appended.borrow().last().cloned().unwrap_or_default()
+}
+
+#[test]
+fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() {
+    let f = unit_fake(&["spira-config/src/lib.rs", "docs/x.md"]);
+    f.runs
+        .borrow_mut()
+        .insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
+    assert_eq!(f.run(), PASS);
+    let cmds = f.cmds.borrow().clone();
+    assert_eq!(cmds.len(), 3, "{cmds:?}");
+    assert_eq!(
+        cmds[0], "bash spira/fence.sh && run-suites",
+        "the gate string runs, whole"
+    );
+    assert_eq!(f.env_of(0, "SPIRA_GATE_SUITES"), "off", "…with suites off");
+    assert_eq!(f.env_of(0, "SPIRA_CERTIFY_ALWAYS_COVERS"), "");
+    // host 8 cores / SPIRA_CERTIFY_PAR 2 = 4 jobs; spira-config brings its dependent queue
+    assert_eq!(
+        cmds[1],
+        "cargo test --profile aeon -j 4 --no-run -p queue -p spira-config"
+    );
+    assert_eq!(
+        cmds[2],
+        "cargo test --profile aeon -j 4 -p queue -p spira-config -- --test-threads=4"
+    );
+    assert!(f.stderr().contains(
+        "gate: composition=unit — fences (suites off), then cargo test on the host for: queue spira-config (touched: spira-config)"
+    ));
+    assert!(
+        meter(&f).ends_with(" rc=0 pass compose=unit phases=fences:7,build:7,test:7\n"),
+        "{}",
+        meter(&f)
+    );
+    let written = f.written.borrow();
+    assert!(
+        written[0].1.ends_with("suites=-\ncompose=unit\n"),
+        "{}",
+        written[0].1
+    );
+}
+
+#[test]
+fn unit_mode_a_bash_touching_branch_runs_todays_gate_unchanged() {
+    let f = unit_fake(&["gate/src/engine.rs", "spira/lib.sh"]);
+    assert_eq!(f.run(), PASS);
+    assert_eq!(
+        f.cmds.borrow()[..],
+        ["bash spira/fence.sh && run-suites".to_string()]
+    );
+    assert_eq!(f.env_of(0, "SPIRA_GATE_SUITES"), "on", "suites stay on");
+    assert!(
+        meter(&f).contains(" compose=suites(script) phases=gate:7"),
+        "{}",
+        meter(&f)
+    );
+}
+
+#[test]
+fn unit_mode_nothing_buildable_runs_the_fences_only() {
+    let f = unit_fake(&["docs/a.md", "spira/test-x.sh"]);
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.cmds.borrow().len(), 1);
+    assert_eq!(f.env_of(0, "SPIRA_GATE_SUITES"), "off");
+    assert!(
+        meter(&f).contains(" compose=fences phases=fences:7"),
+        "{}",
+        meter(&f)
+    );
+}
+
+#[test]
+fn suites_mode_is_todays_gate_exactly() {
+    // The default mode: the same one command, the same env, the same key as before.
+    let f = Fake::new();
+    *f.touched.borrow_mut() = Err("suites mode must not read the touched set".into());
+    assert_eq!(f.run(), PASS);
+    assert_eq!(
+        f.cmds.borrow()[..],
+        ["bash spira/fence.sh && run-suites".to_string()]
+    );
+    assert_eq!(f.env_of(0, "SPIRA_GATE_SUITES"), "on");
+    assert!(meter(&f).contains(" compose=suites(mode) phases=gate:7"));
+    let unit = unit_fake(&["gate/src/x.rs"]);
+    assert_eq!(unit.run(), PASS);
+    assert_ne!(
+        f.written.borrow()[0].0,
+        unit.written.borrow()[0].0,
+        "a unit-mode PASS is cached under its own key"
+    );
+}
+
+#[test]
+fn an_unreadable_config_composes_as_suites() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    *f.mode.borrow_mut() = Err("repo.spira.gate_mode: unknown variant `fast`".into());
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.cmds.borrow().len(), 1);
+    assert!(f.stderr().contains("the configuration does not validate"));
+    assert!(meter(&f).contains("compose=suites(mode)"));
+}
+
+#[test]
+fn unit_mode_ejected_suites_keep_the_whole_sequence() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    f.set_var("SPIRA_GATE_BEAD", "sp-a");
+    f.files.borrow_mut().insert(
+        PathBuf::from("/run/landstate/sp-a.ejected"),
+        "test-b.sh\n".into(),
+    );
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.cmds.borrow().len(), 1);
+    assert_eq!(f.env_of(0, "SPIRA_GATE_SUITES"), "on");
+    assert!(meter(&f).contains("compose=suites(ejected)"));
+}
+
+#[test]
+fn unit_mode_no_metadata_falls_back_to_suites() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    f.metadata.borrow_mut().insert(
+        MERGE_SHA.into(),
+        Err("error: could not find Cargo.toml".into()),
+    );
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.cmds.borrow().len(), 1);
+    assert!(meter(&f).contains("compose=suites(no-metadata)"));
+}
+
+#[test]
+fn a_red_unit_test_on_a_green_base_is_the_branchs() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    f.unit_runs.borrow_mut().insert(
+        (MERGE_SHA.into(), "test"),
+        (101, "test tests::x ... FAILED".into()),
+    );
+    assert_eq!(f.run(), FAIL);
+    assert!(f.verdict_line().contains("reason=branch-red"));
+    let cmds = f.cmds.borrow().clone();
+    assert_eq!(
+        cmds.len(),
+        6,
+        "branch fences/build/test, base fences/build/test: {cmds:?}"
+    );
+    assert_eq!(f.checkouts.borrow()[1], BASE);
+    assert!(meter(&f).contains(
+        "compose=unit phases=fences:7,build:7,test:7,base-fences:7,base-build:7,base-test:7"
+    ));
+    assert!(f.stderr().contains("unit phase 'test' failed (exit 101)"));
+}
+
+#[test]
+fn a_red_the_base_shares_in_unit_tests_is_the_bases() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    for at in [MERGE_SHA, BASE] {
+        f.unit_runs
+            .borrow_mut()
+            .insert((at.into(), "build"), (101, "error[E0425]".into()));
+    }
+    assert_eq!(f.run(), BASEFAIL);
+    assert_eq!(
+        f.cmds.borrow().len(),
+        4,
+        "a failed build stops before the tests"
+    );
+}
+
+#[test]
+fn a_crate_the_base_lacks_is_not_tested_on_the_base() {
+    let f = unit_fake(&["newcrate/src/lib.rs"]);
+    f.metadata.borrow_mut().insert(
+        MERGE_SHA.into(),
+        Ok(metadata_json(&[("gate", &[]), ("newcrate", &[])])),
+    );
+    f.metadata
+        .borrow_mut()
+        .insert(BASE.into(), Ok(metadata_json(&[("gate", &[])])));
+    f.unit_runs
+        .borrow_mut()
+        .insert((MERGE_SHA.into(), "test"), (101, "FAILED".into()));
+    assert_eq!(
+        f.run(),
+        FAIL,
+        "the base has nothing to test, so the red is the branch's"
+    );
+    let cmds = f.cmds.borrow().clone();
+    assert_eq!(cmds.len(), 4, "base runs its fences only: {cmds:?}");
+    assert!(meter(&f).contains("base-fences:7\n") || meter(&f).ends_with("base-fences:7\n"));
+}
+
+#[test]
+fn a_red_fence_in_unit_mode_runs_no_unit_phase() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    f.runs
+        .borrow_mut()
+        .insert(MERGE_SHA.into(), (1, "literal-lint: RED".into()));
+    assert_eq!(f.run(), FAIL);
+    // branch fences only, then base fences + build + test (base passes its fences)
+    let cmds = f.cmds.borrow().clone();
+    assert_eq!(cmds[0], "bash spira/fence.sh && run-suites");
+    assert!(cmds[1].starts_with("bash spira/fence.sh"), "{cmds:?}");
+}
+
+#[test]
+fn the_unit_phases_share_the_gate_timeout() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    f.set_var("SPIRA_GATE_TIMEOUT", "10");
+    f.phase_secs.set(6);
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(
+        f.verdict_line().contains("reason=timeout"),
+        "{}",
+        f.verdict_line()
+    );
+    assert!(f.stderr().contains("spent before the test phase"));
+}
+
 // ---------------------------------------------------------------------- the tree certificate
 
 const HEX_TREE: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -871,9 +1184,15 @@ fn a_pass_certifies_the_merged_tree_it_judged() {
     let c = cert_written(&f).expect("a PASS writes the tree certificate");
     let parsed = crate::cert::certifies(&c, "spira", HEX_TREE).expect("it certifies (spira, T)");
     assert_eq!(parsed.source, crate::cert::Source::Gate);
-    assert_eq!(parsed.rev, MERGE_SHA, "the revision that carries the merged tree");
+    assert_eq!(
+        parsed.rev, MERGE_SHA,
+        "the revision that carries the merged tree"
+    );
     assert_eq!(parsed.branch, BR);
-    assert_eq!(parsed.harness, "harness", "recorded for the reader, never matched");
+    assert_eq!(
+        parsed.harness, "harness",
+        "recorded for the reader, never matched"
+    );
     assert_eq!(parsed.suites, "test-a.sh,test-b.sh");
 }
 
@@ -902,7 +1221,10 @@ fn a_cached_pass_and_a_syntax_only_pass_certify_too() {
     let f = hex_fake();
     f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = String::new();
     assert_eq!(f.run(), PASS);
-    assert!(cert_written(&f).is_some(), "syntax-only is the repository's whole gate");
+    assert!(
+        cert_written(&f).is_some(),
+        "syntax-only is the repository's whole gate"
+    );
 }
 
 #[test]

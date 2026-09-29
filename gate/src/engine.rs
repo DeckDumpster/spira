@@ -1,9 +1,11 @@
 //! The trial, in the order DESIGN.md "Order of the trial" gives. One way out: [`Trial::finish`].
 
 use crate::cert;
+use crate::compose::{self, Composition, Forces};
 use crate::key::{self, KeyInputs};
 use crate::parse::{self, Attribution};
 use crate::ports::{Ctx, Merge, World};
+use spira_config::GateMode;
 use std::path::{Path, PathBuf};
 
 pub const PASS: i32 = 0;
@@ -71,6 +73,10 @@ struct State {
     tree: Option<PathBuf>,
     filelist: Option<PathBuf>,
     bead: String,
+    /// The composition's label once one was chosen (DESIGN.md "Composition"); empty before.
+    compose: String,
+    /// (phase, wall seconds), in the order they ran; the base trial's carry a `base-` prefix.
+    phases: Vec<(String, u64)>,
     /// The tree certificate (cert.rs) a PASS writes: the merged tree judged, the revision
     /// that carries it, where verdicts live, the harness hash and the suites covered.
     merged_tree: String,
@@ -273,6 +279,21 @@ impl<'w, W: World> Trial<'w, W> {
             }
         }
 
+        // THE MODE (DESIGN.md "Composition"): typed, per repository, through spira-config.
+        let mode = match w.gate_mode(&name) {
+            Ok(m) => m,
+            Err(e) => {
+                w.eprint(&format!("gate: the configuration does not validate ({e})\ngate: composing as gate_mode=suites, today's whole sequence — the stronger check."));
+                GateMode::Suites
+            }
+        };
+        // A unit-mode PASS is not a suites-mode PASS: the mode is part of what was judged.
+        // Suites mode hashes the command alone, so today's keys are unchanged.
+        let key_cmd = match mode {
+            GateMode::Unit => format!("{cmd}\n# gate_mode=unit"),
+            GateMode::Suites => cmd.clone(),
+        };
+
         // THE VERDICT CACHE.
         let suites_mode = ctx.var_or("SPIRA_GATE_SUITES", "on").to_string();
         let verdict_dir = self.s.verdict_dir.clone();
@@ -282,7 +303,7 @@ impl<'w, W: World> Trial<'w, W> {
                 repo: &name,
                 tree: &merged_tree,
                 files: &files,
-                cmd: &cmd,
+                cmd: &key_cmd,
                 harness_h: &h,
                 suites: &suites_mode,
                 bead: if self.s.bead.is_empty() {
@@ -412,7 +433,17 @@ impl<'w, W: World> Trial<'w, W> {
             status_list.trim_end_matches('\n').to_string()
         };
         self.s.filelist = w.temp_file(&format!("{list}\n"));
-        let env = |branch: &str, repeat: &str| -> Vec<(String, String)> {
+
+        // THE COMPOSITION: what the branch touches decides what runs.
+        let comp = self.composition(mode, &ctx, &repo, &base, &rev, &tree, &ejected);
+        self.s.compose = comp.label();
+        w.eprint(&describe(&comp));
+        let jobs = compose::jobs(
+            key::digits(&ctx.host_cores).unwrap_or(1),
+            self.admission_par(&ctx),
+        );
+
+        let env = |branch: &str, repeat: &str, c: &Composition| -> Vec<(String, String)> {
             let e = |k: &str, v: &str| (k.to_string(), v.to_string());
             vec![
                 e(
@@ -438,10 +469,21 @@ impl<'w, W: World> Trial<'w, W> {
                 e("SPIRA_GATE_HOST_CORES", &ctx.host_cores),
                 e("SPIRA_GATE_EJECTED_SUITES", &ejected),
                 e("SPIRA_GATE_ALL", ctx.var_or("SPIRA_GATE_ALL", "0")),
-                e("SPIRA_GATE_SUITES", &suites_mode),
+                // Suites off for a unit or fences composition: the gate string runs its
+                // fences and build fence and selects nothing (gate-touched.sh). The always-
+                // covers carve-out is cleared with it; its default, spira/lib.sh, is a
+                // script, and a script composes as suites, so no carve-out can apply here.
+                e(
+                    "SPIRA_GATE_SUITES",
+                    if c.suites_off() { "off" } else { &suites_mode },
+                ),
                 e(
                     "SPIRA_CERTIFY_ALWAYS_COVERS",
-                    ctx.var("SPIRA_CERTIFY_ALWAYS_COVERS"),
+                    if c.suites_off() {
+                        ""
+                    } else {
+                        ctx.var("SPIRA_CERTIFY_ALWAYS_COVERS")
+                    },
                 ),
                 e("SPIRA_BATCH_MAXPAR", ctx.var("SPIRA_BATCH_MAXPAR")),
                 e("SPIRA_VERDICT_REPEAT_CONSIDERED", repeat),
@@ -452,12 +494,17 @@ impl<'w, W: World> Trial<'w, W> {
             ]
         };
 
-        let (rc, out) = w.run_gate(
+        let (rc, out, ph) = run_composed(
+            w,
             &tree,
-            &env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED")),
+            &comp,
+            &env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED"), &comp),
             &timeout,
             &cmd,
+            jobs,
+            "",
         );
+        self.s.phases.extend(ph);
         if w.signalled() {
             return v(
                 NOVERDICT,
@@ -476,10 +523,11 @@ impl<'w, W: World> Trial<'w, W> {
             if !self.s.key.is_empty() {
                 w.mkdir_p(&verdict_dir);
                 let by = ctx.var_or("SPIRA_GATE_CALLER", &br).to_string();
+                let entry = key::render_entry(&w.utc(), w.now(), &by, &name, &br, &pass_suites);
                 w.write_atomic(
                     &verdict_dir,
                     &self.s.key,
-                    &key::render_entry(&w.utc(), w.now(), &by, &name, &br, &pass_suites),
+                    &format!("{entry}compose={}\n", self.s.compose),
                 );
             }
             return v(
@@ -518,15 +566,22 @@ impl<'w, W: World> Trial<'w, W> {
             .rev_parse(&repo, &format!("{base}^{{commit}}"))
             .unwrap_or_default();
         if self.gate_at(&repo, &tree, &base, &base_want).is_ok() {
-            let (r, o) = w.run_gate(
+            let base_comp = self.base_composition(&comp, &ctx, &tree);
+            let (r, o, ph) = run_composed(
+                w,
                 &tree,
+                &base_comp,
                 &env(
                     &base,
                     "base trial — confirming whether base is independently red",
+                    &base_comp,
                 ),
                 &timeout,
                 &cmd,
+                jobs,
+                "base-",
             );
+            self.s.phases.extend(ph);
             base_rc = r;
             base_out = o;
             base_ran = r != 124 && r != NOVERDICT;
@@ -568,6 +623,81 @@ impl<'w, W: World> Trial<'w, W> {
             }
             Attribution::BaseUntestable => v(NOVERDICT, "base-untestable", format!(
                 "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: and the same command could not be tried against {base}, so whose fault this is\ngate: cannot be established — refusing to charge it to the branch on a guess.")),
+        }
+    }
+
+    /// DESIGN.md "Composition": suites mode never looks; unit mode reads the touched set
+    /// (landing ref → the revision under test) and the workspace graph of the gate tree.
+    #[allow(clippy::too_many_arguments)]
+    fn composition(
+        &self,
+        mode: GateMode,
+        ctx: &Ctx,
+        repo: &Path,
+        base: &str,
+        rev: &str,
+        tree: &Path,
+        ejected: &str,
+    ) -> Composition {
+        if mode == GateMode::Suites {
+            return Composition::Suites { why: "mode".into() };
+        }
+        let changed = match self.w.diff_raw(repo, base, rev) {
+            Ok(c) => c,
+            Err(e) => {
+                self.w.eprint(&format!(
+                    "gate: cannot read the touched set {base}..{rev}: {e}"
+                ));
+                return Composition::Suites {
+                    why: "no-diff".into(),
+                };
+            }
+        };
+        let forces = Forces {
+            ejected,
+            gate_all: ctx.var("SPIRA_GATE_ALL") == "1",
+        };
+        let members = self.members(ctx, tree);
+        if let Err(e) = &members {
+            self.w.eprint(&format!(
+                "gate: cargo metadata failed in the gate tree: {e}"
+            ));
+        }
+        compose::compose(
+            mode,
+            &forces,
+            &changed,
+            members.as_deref().map_err(String::as_str),
+        )
+    }
+
+    fn members(&self, ctx: &Ctx, tree: &Path) -> Result<Vec<compose::Member>, String> {
+        let path = format!("{}/.cargo/bin:{}", ctx.var("HOME"), ctx.var("PATH"));
+        self.w
+            .cargo_metadata(tree, &path, ctx.var("HOME"))
+            .and_then(|j| compose::parse_metadata(&j))
+    }
+
+    /// The base trial runs the same composition, over the crates the base has: a crate the
+    /// branch adds cannot be tested on a base without it, and its absence is not a red.
+    fn base_composition(&self, comp: &Composition, ctx: &Ctx, tree: &Path) -> Composition {
+        let Composition::Unit { touched, crates } = comp else {
+            return comp.clone();
+        };
+        let Ok(members) = self.members(ctx, tree) else {
+            return comp.clone();
+        };
+        let crates: Vec<String> = crates
+            .iter()
+            .filter(|c| members.iter().any(|m| &m.name == *c))
+            .cloned()
+            .collect();
+        if crates.is_empty() {
+            return Composition::Fences;
+        }
+        Composition::Unit {
+            touched: touched.clone(),
+            crates,
         }
     }
 
@@ -683,14 +813,15 @@ impl<'w, W: World> Trial<'w, W> {
             w.append(
                 &self.s.gate_log,
                 &format!(
-                    "{} {} {} waited={}s ran={}s rc={} {}\n",
+                    "{} {} {} waited={}s ran={}s rc={} {}{}\n",
                     w.utc(),
                     self.s.repo_name,
                     self.a.branch,
                     self.s.waited,
                     ran,
                     vd.status,
-                    vd.reason
+                    vd.reason,
+                    meter_suffix(&self.s.compose, &self.s.phases)
                 ),
             );
             let y = self.home("yield.sh");
@@ -734,4 +865,99 @@ impl<'w, W: World> Trial<'w, W> {
         }
         vd.status
     }
+}
+
+/// The gate.log fields after the reason: ` compose=<label> phases=<name>:<secs>,…`, empty
+/// until a composition was chosen. Readers split the note on spaces and take its first word
+/// as the reason (yield.sh), so trailing fields are compatible.
+pub fn meter_suffix(compose: &str, phases: &[(String, u64)]) -> String {
+    if compose.is_empty() {
+        return String::new();
+    }
+    let ph: Vec<String> = phases.iter().map(|(n, t)| format!("{n}:{t}")).collect();
+    let ph = if ph.is_empty() {
+        "-".to_string()
+    } else {
+        ph.join(",")
+    };
+    format!(" compose={compose} phases={ph}")
+}
+
+/// The line the trial prints once it has chosen what to run.
+pub fn describe(c: &Composition) -> String {
+    match c {
+        Composition::Suites { why } => format!(
+            "gate: composition=suites ({why}) — the repository's gate string, whole"
+        ),
+        Composition::Fences => {
+            "gate: composition=fences — nothing buildable touched; fences only, suites off".into()
+        }
+        Composition::Unit { touched, crates } => format!(
+            "gate: composition=unit — fences (suites off), then cargo test on the host for: {} (touched: {})",
+            crates.join(" "),
+            touched.join(" ")
+        ),
+    }
+}
+
+/// Run a composition's phases in order, each under what is left of `timeout`, stopping at
+/// the first non-zero status. Returns (status, the phases' output joined, the phase walls).
+#[allow(clippy::too_many_arguments)]
+pub fn run_composed<W: World>(
+    w: &W,
+    tree: &Path,
+    comp: &Composition,
+    env: &[(String, String)],
+    timeout: &str,
+    cmd: &str,
+    jobs: u64,
+    prefix: &str,
+) -> (i32, String, Vec<(String, u64)>) {
+    let budget = key::digits(timeout);
+    let start = w.now();
+    let left = || match budget {
+        Some(b) => b
+            .saturating_sub(w.now().saturating_sub(start))
+            .max(1)
+            .to_string(),
+        None => timeout.to_string(),
+    };
+    let mut phases = Vec::new();
+    let first = if comp.suites_off() { "fences" } else { "gate" };
+    let t = w.now();
+    let (rc, mut out) = w.run_gate(tree, env, &left(), cmd);
+    phases.push((format!("{prefix}{first}"), w.now().saturating_sub(t)));
+    let Composition::Unit { crates, .. } = comp else {
+        return (rc, out, phases);
+    };
+    if rc != 0 || w.signalled() {
+        return (rc, out, phases);
+    }
+    for (name, c) in compose::unit_commands(crates, jobs) {
+        if budget.is_some_and(|b| w.now().saturating_sub(start) >= b) {
+            out.push_str(&format!(
+                "\ngate: SPIRA_GATE_TIMEOUT ({timeout}s) spent before the {name} phase"
+            ));
+            return (124, out, phases);
+        }
+        let t = w.now();
+        let (r, o) = w.run_gate(tree, env, &left(), &c);
+        phases.push((format!("{prefix}{name}"), w.now().saturating_sub(t)));
+        if !o.is_empty() {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&o);
+        }
+        if r != 0 {
+            out.push_str(&format!(
+                "\ngate: unit phase '{name}' failed (exit {r}): {c}"
+            ));
+            return (r, out, phases);
+        }
+        if w.signalled() {
+            return (r, out, phases);
+        }
+    }
+    (0, out, phases)
 }

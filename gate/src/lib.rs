@@ -2,6 +2,7 @@
 //! ref; a branch that does not merge is stale (NO_VERDICT reason=conflict), not red.
 
 pub mod cert;
+pub mod compose;
 pub mod engine;
 pub mod key;
 pub mod parse;
