@@ -1,9 +1,26 @@
-//! The endpoint against a REAL `bd` on a throwaway database, driven over a real socket.
+//! The endpoint driven over a real socket, against a `bd` it spawns as a real process.
 //!
-//! `spira/test-loom.sh` builds the fixture and runs this; it is the only intended entry
-//! point, and these tests fail loudly rather than skipping when its environment is absent. A
-//! suite that silently no-ops when its fixture is missing reports "0 failed" for a run that
-//! checked nothing, which is indistinguishable from a pass in an exit code.
+//! HERMETIC BY DEFAULT. A unit test must run anywhere `cargo test` runs — the gate's host
+//! included — so the `bd` these tests spawn is `fake_bd()`: a shell script that answers
+//! `bd -C <db> list --limit 0 --json` from `<db>/bd-list.json` and fails, as the real one
+//! does, when `<db>` is not a directory. The canned answer is `tests/fixtures/bd-list.json`,
+//! written in the exact shape real `bd` emits for the four-bead fixture below: the closed
+//! bead is absent (bd's default list excludes it), a label-less bead has NO `labels` key,
+//! and every edge rides on the row that owns it.
+//!
+//! THE FAKE IS KEPT HONEST BY ONE TEST THAT USES THE REAL THING.
+//! `real_bd_answers_in_the_shape_the_fake_is_built_from` is `#[ignore]`d — it needs a Dolt
+//! fixture — and `spira/test-cockpit-rust.sh` builds that fixture and runs it with
+//! `--include-ignored`. It pushes the real `bd`'s answer through the same payload assertions
+//! the hermetic test makes, so a change in bd's output shape turns the suite red rather than
+//! leaving the fake quietly describing a bd that no longer exists. The ignored test FAILS
+//! LOUDLY when its environment is absent rather than skipping: a check that silently no-ops
+//! reports "0 failed" for a run that checked nothing.
+//!
+//! The four-bead fixture (the same one test-cockpit-rust.sh seeds): sp-aaa open, sp-bbb an
+//! open epic whose title needs escaping, sp-ccc in progress with no labels and sp-bbb as its
+//! parent, sp-zzz closed. sp-aaa blocks on sp-ccc; sp-bbb blocks on sp-zzz, the edge that
+//! must be dropped because its other end is not served.
 //!
 //! Every assertion that something is ABSENT is paired with one that the same check can see
 //! something present: a closed bead is in the fixture and must not appear, an invocation
@@ -21,16 +38,68 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-/// The fixture the shell suite built, and the real `bd` that answers for it.
-fn fixture() -> (String, String) {
+/// The Dolt fixture test-cockpit-rust.sh built, and the real `bd` that answers for it. Used
+/// only by the one `#[ignore]`d contract test.
+fn real_fixture() -> (String, String) {
     let db = std::env::var("LOOM_TEST_DB").unwrap_or_default();
     let bd = std::env::var("LOOM_TEST_BD").unwrap_or_default();
     assert!(
         !db.is_empty() && !bd.is_empty(),
-        "LOOM_TEST_DB and LOOM_TEST_BD are unset — run spira/test-loom.sh, which builds the \
-         fixture database these tests read"
+        "LOOM_TEST_DB and LOOM_TEST_BD are unset — run spira/test-cockpit-rust.sh, which \
+         builds the fixture database this test reads"
     );
     (db, bd)
+}
+
+/// A fresh temp directory unique to this test process and call.
+fn scratch(kind: &str) -> PathBuf {
+    let n = UNIQUE.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("loom-{kind}-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    dir
+}
+
+fn script(path: &PathBuf, body: &str) {
+    std::fs::write(path, body).expect("a script");
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("mode 755");
+}
+
+/// The hermetic fixture: a "database" directory holding bd's canned answer, and a fake `bd`
+/// that serves it.
+///
+/// The fake prints an advisory line ahead of the JSON, as a fresh real fixture does (its
+/// `beads.role` warning), so the preamble-stripping path is exercised on every run rather
+/// than only when a real bd happens to be unconfigured.
+fn fixture() -> (String, String) {
+    let dir = scratch("fake");
+    let db = dir.join("db");
+    std::fs::create_dir_all(&db).expect("a fixture db directory");
+    std::fs::write(
+        db.join("bd-list.json"),
+        include_str!("fixtures/bd-list.json"),
+    )
+    .expect("the canned answer");
+    let bd = dir.join("bd");
+    script(
+        &bd,
+        "#!/bin/sh\n\
+         [ \"$1\" = -C ] || { echo \"fake bd: expected -C <db>, got $*\" >&2; exit 2; }\n\
+         db=$2; shift 2\n\
+         [ \"$*\" = 'list --limit 0 --json' ] || { echo \"fake bd: unexpected query: $*\" >&2; exit 2; }\n\
+         [ -d \"$db\" ] || { echo \"Error: no beads database found at $db\" >&2; exit 1; }\n\
+         echo 'warning: beads.role is not configured'\n\
+         exec cat \"$db/bd-list.json\"\n",
+    );
+    (db.to_string_lossy().into_owned(), bd.to_string_lossy().into_owned())
+}
+
+/// A `bd` that never answers inside any budget a test sets. `exec` so the process loom kills
+/// on overrun is the sleeper itself, not a shell that would orphan it.
+fn slow_bd() -> String {
+    let bd = scratch("slow").join("bd");
+    script(&bd, "#!/bin/sh\nexec sleep 30\n");
+    bd.to_string_lossy().into_owned()
 }
 
 static UNIQUE: AtomicU32 = AtomicU32::new(0);
@@ -123,15 +192,8 @@ async fn json(addr: SocketAddr) -> (u16, Value) {
     (code, v)
 }
 
-#[tokio::test]
-async fn the_payload_is_bounded_to_live_work_and_carries_typed_edges() {
-    let (db, bd) = fixture();
-    let (shim, _counter) = counting_bd(&bd);
-    let addr = spawn(cfg(&db, &shim, 20_000, 30)).await;
-
-    let (code, v) = json(addr).await;
-    assert_eq!(code, 200, "{v}");
-
+/// The payload contract, asserted identically against the fake and against the real `bd`.
+fn assert_payload(v: &Value) {
     let ids: Vec<&str> = v["beads"]
         .as_array()
         .expect("a bead array")
@@ -218,6 +280,30 @@ async fn the_payload_is_bounded_to_live_work_and_carries_typed_edges() {
 }
 
 #[tokio::test]
+async fn the_payload_is_bounded_to_live_work_and_carries_typed_edges() {
+    let (db, bd) = fixture();
+    let (shim, _counter) = counting_bd(&bd);
+    let addr = spawn(cfg(&db, &shim, 20_000, 30)).await;
+    let (code, v) = json(addr).await;
+    assert_eq!(code, 200, "{v}");
+    assert_payload(&v);
+}
+
+/// THE CONTRACT TEST THAT KEEPS THE FAKE HONEST. Real `bd`, real Dolt fixture, the same
+/// assertions. Ignored under a plain `cargo test` because it needs the fixture;
+/// spira/test-cockpit-rust.sh builds it and runs this with `--include-ignored`.
+#[tokio::test]
+#[ignore = "needs the Dolt fixture spira/test-cockpit-rust.sh builds (LOOM_TEST_DB/LOOM_TEST_BD)"]
+async fn real_bd_answers_in_the_shape_the_fake_is_built_from() {
+    let (db, bd) = real_fixture();
+    let (shim, _counter) = counting_bd(&bd);
+    let addr = spawn(cfg(&db, &shim, 20_000, 30)).await;
+    let (code, v) = json(addr).await;
+    assert_eq!(code, 200, "{v}");
+    assert_payload(&v);
+}
+
+#[tokio::test]
 async fn two_requests_inside_the_window_cost_one_refresh() {
     let (db, bd) = fixture();
 
@@ -254,15 +340,17 @@ async fn two_requests_inside_the_window_cost_one_refresh() {
 #[tokio::test]
 async fn a_query_over_budget_is_refused_rather_than_served_late() {
     let (db, bd) = fixture();
-    let (shim, counter) = counting_bd(&bd);
+    let (shim, counter) = counting_bd(&slow_bd());
 
-    // One millisecond is under the cost of spawning a process, let alone querying a database,
-    // so the deadline fires on the machinery rather than on a threshold that might be met.
-    let addr = spawn(cfg(&db, &shim, 1, 30)).await;
+    // A bd that sleeps thirty seconds against a budget of a second and a half: the deadline
+    // fires on a query that CANNOT finish, not on a threshold a fast machine might meet. The
+    // budget is long enough that the counting shim has certainly recorded the call before
+    // the kill, so the count below is not a race against process start-up.
+    let addr = spawn(cfg(&db, &shim, 1_500, 30)).await;
     let (code, v) = json(addr).await;
     assert_eq!(code, 503, "an over-budget query must be refused: {v}");
     assert_eq!(v["error"], "over budget");
-    assert_eq!(v["budget_ms"], 1);
+    assert_eq!(v["budget_ms"], 1_500);
     assert_eq!(v["query"], "beads");
     // It was refused because the query overran, not because nothing was tried.
     assert_eq!(calls(&counter), 1);
