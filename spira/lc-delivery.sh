@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sourced, never executed.
 # lc-delivery.sh — wires the delivery state machine (lifecycle crate, design §3.1.2,
-# sp-n1ilm) into pr-pass-branch.sh and landing.sh's push mode. Sourced by both, so a
+# sp-n1ilm) into pr-pass-branch.sh (landing-pass's pr helper) and landing-pass's push mode. Sourced by both, so a
 # pr-mode merge and a push-mode push are recorded through the one function that asks
 # spira-lc, rather than each growing its own notion of "delivered".
 #
@@ -11,7 +11,7 @@
 # case until the round lands together (design §5) — never an error, and never something a
 # caller should let interrupt its own legacy behavior.
 #
-# covers: spira/lc-delivery.sh spira/pr-pass-branch.sh spira/landing.sh lifecycle/* spira-lc/*
+# covers: spira/lc-delivery.sh spira/pr-pass-branch.sh landing-pass/* lifecycle/* spira-lc/*
 set -u
 
 _lc_json_str() {

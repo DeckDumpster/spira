@@ -15,7 +15,7 @@
 # fake-summon.sh, which runs canary-worker.sh instead of aeon.sh — a scripted
 # worker that claims, commits, and closes the bead without invoking Claude.
 # SPIRA_LAUNCH records the landing dispatch and exits 0; canary.sh drives
-# landing.sh directly so it controls the timing.
+# `landing-pass land` directly so it controls the timing.
 #
 # NOTHING TOUCHES THE REAL INSTANCE. STAGE_ROOT contains the stage's own
 # SPIRA_DB, SPIRA_RUN, SPIRA_REPO, and SPIRA_HOME. The production vars are
@@ -157,7 +157,7 @@ _log "running landing pass"
 SPIRA_HOME="$SPIRA_HOME" SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB" \
 SPIRA_REPO="$SPIRA_REPO" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
 SPIRA_BD="$SPIRA_BD" SPIRA_NOTIFY="$SPIRA_NOTIFY" \
-    bash "$SPIRA_HOME/landing.sh" 2>&1 | sed 's/^/  landing: /' || true
+    "$SPIRA_LANDING_PASS_BIN" land 2>&1 | sed 's/^/  landing: /' || true
 
 # ─── assert commit on origin/main --------------------------------------------
 # The bead id must appear in a commit subject on the remote's main branch.

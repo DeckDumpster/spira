@@ -162,7 +162,7 @@ work_services() {
         | grep -Ev "^spira-cockpit(\\.service|${sfx}\\.service)$|^spira-loom(\\.service|${sfx}\\.service)$|^spira-watch@"
 }
 
-# live_workers -> one pid per line for any process running gate.sh or landing.sh from this
+# live_workers -> one pid per line for any process running gate.sh or landing-pass from this
 # home. These are the processes that survive a stop of spira-landing.service if it was killed
 # before they finished — the evidence that the halt was incomplete.
 # NEVER pgrep -f: the pattern is a substring of this script's own command line.
@@ -172,8 +172,9 @@ live_workers() {
         [ -r "$p/cmdline" ] || continue
         c="$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null)" || continue
         # Both homes, for the same reason live_aeons matches both.
-        if argv_has "$p" "$SPIRA_HOME/gate.sh" "$SPIRA_HOME/landing.sh" \
-                        "${SPIRA_PROD:-$SPIRA_HOME}/gate.sh" "${SPIRA_PROD:-$SPIRA_HOME}/landing.sh"
+        if argv_has "$p" "$SPIRA_HOME/gate.sh" "${SPIRA_PROD:-$SPIRA_HOME}/gate.sh" \
+                        "$(dirname "${SPIRA_PROD:-$SPIRA_HOME}")/bin/landing-pass" \
+                        ${SPIRA_LANDING_PASS_BIN:+"$SPIRA_LANDING_PASS_BIN"}
         then printf '%s\n' "${p#/proc/}"; fi
     done
 }
@@ -595,7 +596,7 @@ status)
         printf '  %-26s %s\n' "$svc" "$("$SC" --user is-active "$svc" 2>/dev/null)"
     done < <("$SC" --user list-units 'spira-*.service' --state=active --no-legend 2>/dev/null | awk '{print $1}' | grep -Ev '^spira-watch@')
 
-    # /proc SCAN: gate.sh and landing.sh processes survive a service stop if the service was
+    # /proc SCAN: gate.sh and landing-pass processes survive a service stop if the service was
     # killed before they finished. Status reports the count so a running worker cannot hide
     # behind a HALTED header and 0 live aeons.
     wcount="$(live_workers | grep -c . || true)"

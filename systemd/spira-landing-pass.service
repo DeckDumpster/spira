@@ -1,5 +1,5 @@
 [Unit]
-Description=Spira landing pass — pr-mode repository landing, no local gate
+Description=Spira landing pass — pr mode (the gated modes run as landing-pass land under spira-landing)
 Documentation=file://@SPIRA_HOME@/pr-pass-branch.sh
 After=default.target
 

@@ -119,7 +119,7 @@ handles this (sp-ni3jp). Verify that it ran and that the checkout is clean befor
 landing pass. If it did not run, note the bead and escalate.
 
 **Case 8 — Stale batch after a landing moved base**: never push to base while a batch is
-in CI. Halt the landing pass with `landing.sh halt` if it is about to do so.
+in CI. Halt the landing pass with `landing-pass halt --reason-file -` if it is about to do so.
 
 **Case 9 — BATCHED landstate absent from every open batch** (sp-8jany sat 35h): recertify
 at the branch tip if the branch still points there. If the tip moved, escalate — the

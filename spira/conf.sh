@@ -1101,7 +1101,7 @@ spira_conf_defaults() {
     # never the sandboxed model) to CAS the bead machine's Claim/Release/HolderDead events —
     # the one thing the `work` client's bound-to-one-bead surface deliberately has no verb
     # for (design §3.5's table has no "claim"). Also read by lc-delivery.sh (sourced from
-    # pr-pass-branch.sh and landing.sh's push mode) for show/list/history/event.
+    # pr-pass-branch.sh and landing-pass's push mode) for show/list/history/event.
     : "${SPIRA_LC_BIN:=$(spira_bin spira-lc 2>/dev/null)}"
     # WHERE THE TEST IMAGE IS PUBLISHED, if anywhere. Empty means build it locally and
     # never reach the network, which is the right default: the registry is somebody's

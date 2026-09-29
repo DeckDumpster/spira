@@ -771,7 +771,7 @@ land_escalate() {        # land_escalate <subject-tail> <evidence>
     [ -x "$SPIRA_HOME/mail.sh" ] || return 0
     echo "$now" > "$cd"
     local _subj="Spira is landing nothing — $why"
-    local _dflt="run \`$SPIRA_HOME/landing.sh\` by hand to see the failure, then file the fix as a bead"
+    local _dflt="run \`$SPIRA_LANDING_PASS_BIN land\` by hand to see the failure, then file the fix as a bead"
     "$SPIRA_HOME/mail.sh" send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
