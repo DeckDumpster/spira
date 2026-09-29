@@ -37,8 +37,13 @@ It replaces the scattered bash: `_attempts_sql_query`, `attempts_of`, `reopens_o
   aeon environment, and its cutover touches none of those lines.
 - **Not the claim itself.** The atomic `bd update --claim` and the lifecycle CAS
   (`lc_claim_bead`) stay where they are; `select` only orders candidates.
-- **Not a writer.** It never writes the bead store, the lifecycle store or any file. Every
-  event it counts is written by someone else (`bead_reopen`, `bump_*`, bd itself).
+- **Not a writer — with one named exception.** Every read verb (`attempts`, `requeues`,
+  `counts`, `decide`, `poison-decide`, `epics`, `select`) never writes the bead store, the
+  lifecycle store or any file; every event they count is written by someone else
+  (`bead_reopen`, `bump_*`, bd itself). The one writer is `unpoison` (§8), the operator's
+  and groomer's clear of a poison. It lives here because it writes exactly the records
+  `attempts` floors on and must be judged by `decide`, and a clear verified by a different
+  count from the one CHECK 4 uses is what broke unpoison.sh (sp-r66qd).
 - **Not resumability.** Whether a top-tier candidate already has commits ahead of its base
   needs `repo_root` + `spira_landref` + git; that stays in aeon.sh. `select --top-tier`
   hands aeon.sh the tier to check and `select --resumable FILE` takes the answer back.
@@ -342,9 +347,8 @@ sp-j1q6o commit).
     becomes the same list query piped to `select --fayth "$f" --blockers machine --count`.
     `fayth_ready`/`bulk_ready_by_fayth` (lib.sh:1513/1575) and ready-bucket.py count through
     that `ready_count`.
-12. **spira/unpoison.sh:123** `"$(requeues_of "$id")"` → `"$("$SPIRA_CLAIM_BIN" requeues "$id")"`
-    (it passed the RAW `requeued` row count to check4_decide's requeue slot, a different
-    number from what CHECK 4 uses; this makes them agree).
+12. ~~spira/unpoison.sh:123~~ — **superseded by §8.6**: unpoison.sh is deleted outright and
+    `spira-claim unpoison` takes the requeue count from the same fold CHECK 4 uses.
 13. **spira/test-poison.sh** — reduce to the "stays end-to-end" rows of §4; the unit cases
     are `cargo test -p spira-claim`. Lift its quarantine (`suites.sh activate
     test-poison.sh`) in the same landing (sp-ytbma's obligation 1).
@@ -389,3 +393,301 @@ sp-j1q6o commit).
 - **Machine mode fails closed on a missing own row**, as sp-f0qhr's ready.rs and
   `lc_bead_row` do; a bead filed but never registered with the machine is not claimable
   in machine mode (it is in bd mode, the default until cutover).
+
+## 8. `unpoison` — clear a poison so it stays cleared, and prove it
+
+Replaces **spira/unpoison.sh** (157 lines). Beads: sp-qd2ul (the poison.cleared floor),
+sp-i2m7y (the hold, not the label), sp-r66qd (verify read `<nil>` and failed every genuine
+clear).
+
+### 8.1 Intent
+
+A poison is CHECK 4's lifecycle `poison` hold, put on a bead whose charged attempts reached
+`POISON_AT`. Clearing one by hand failed a different way every time: removing the label
+left the count at the threshold and the next pass re-poisoned (2026-09-26, six beads);
+crediting attempts worked only when every step was remembered. `unpoison` is the one path.
+For each bead it:
+
+1. writes the `poison.cleared` event the attempt count is floored on (§3 "The attempt
+   fold") — **first**, so a CHECK 4 pass racing it sees the reset count before the released
+   hold;
+2. drops the bead's poison-ask history (`$SPIRA_POISON_ASKED/<id>`), so a genuinely new
+   poisoning at the same count is asked about again;
+3. releases the lifecycle `poison` hold through spira-lc (and best-effort removes the
+   vestigial `spira-poison` label, which nothing reads any more);
+4. notes the bead with the cause (the next aeon reads it);
+5. closes the operator ask the poisoning raised
+   (`Spira bead <id> — … — change the approach or drop it?`);
+6. **verifies** — re-reads the events, the hold and the labels and asks `decide` (CHECK 4's
+   own function, same counts) what the next pass will do. Anything but "not poison, hold
+   gone, attempts below threshold" is a FAIL.
+
+`--watch` then waits for one complete **audit** pass (CHECK 4 runs in the audit worker, which
+logs to `$SPIRA_RUN/audit.log` — sentinel/DESIGN.md §2.1/§4 on concierge/rw-sentinel) that
+started after the clear, and confirms the hold did not come back.
+
+It never touches live work: a bead an aeon holds is refused, and the refusal names the exit.
+
+### 8.2 Contract
+
+```
+spira-claim unpoison --bead <id> [--bead <id>...] --cause "<evidence>"
+                     [--watch] [--watch-timeout-s N] [--dry-run]
+                     [--credit <cause-slug>] [--actor NAME]
+                     [--poison-at N] [--db PATH] [--timeout-s N]
+```
+
+| flag | meaning |
+|---|---|
+| `--bead` | required, repeatable. Named only: a positional is a usage error (slay.sh's 2026-09-13 lesson). Ids must match `[A-Za-z0-9._-]+`. |
+| `--cause` | required, non-empty. The evidence that the poison was wrong. The full text goes to the note and the ask's close reason (on stdin); the event carries a bounded form (§8.3). |
+| `--watch` | after clearing, wait for one complete audit pass that started after the clear; fail if none completes in time or the hold came back. Only when every bead cleared and verified, and not with `--dry-run`. |
+| `--watch-timeout-s` | default 2400 (the audit unit's own `RuntimeMaxSec=1800` plus a dispatch interval; the bash script's 25 min was shorter than one audit pass can legally take). |
+| `--dry-run` | print `WOULD` and change nothing. Preconditions (and refusals) are still evaluated. |
+| `--credit` | groomer's harness credit: also write a `requeued` / `unjudged-<slug>` event immediately before the floor (same second, so the fold floors it away; it exists for the census vocabulary). `<slug>` matches `[a-z0-9-]{1,64}`. Written only once every precondition passed. |
+| `--actor` | who is clearing: the lifecycle event's actor and the note's attribution. Default `unpoison`. The bd event's `actor` column is `$BEADS_ACTOR` else `harness` (as `_bump_write_event`). |
+| `--poison-at` | the threshold the precondition and verify use. Default `$SPIRA_POISON_AT` else 3 — sentinel.sh:41's own resolution, and the audit worker gets it via `--setenv=SPIRA_POISON_AT` (sentinel.sh:1144). |
+
+**Stdout, one line per outcome** (humans and groomer.sh read these; the prefix is fixed
+width, as unpoison.sh's):
+
+```
+OK   <id>: cleared — attempts <n> -> <m>, check4 decides "<tokens>"
+SKIP <id>: not poisoned and attempts <n> < <P> — nothing to clear
+FAIL <id>: held by <holder> (<where>) — live work is never touched: let that aeon finish (or stop it: spira/slay.sh --bead <id>), then re-run
+FAIL <id>: no such bead
+FAIL <id>: cannot tell (<what>) — nothing was written
+FAIL <id>: could not write the poison.cleared floor (<err>) — nothing else was changed
+FAIL <id>: did not verify:<reason>... (attempts <m>, check4=<tokens>)
+WOULD <id>: attempts <n>, poisoned=<0|1> — write poison.cleared, reset ask history, release the lifecycle poison hold, note, resolve ask
+     resolved ask <ask-id>
+     warn <id>: <step> failed: <err>          (note / label / ask close: best effort, reported)
+watch: waiting for an audit pass that starts after <ts> (up to <N>s)...
+OK   watch <id>: still clear after a full audit pass
+FAIL watch <id>: re-poisoned by the pass
+FAIL watch: no audit pass completed in <N>s
+```
+
+Verify reasons: `lifecycle-hold-still-present`, `lifecycle-unreadable`, `attempts-still-<m>`,
+`events-unreadable`, `check4-would-repoison`, `ask-history-still-present`.
+
+**Exit codes** — this binary's table (§2) plus one:
+
+| exit | meaning |
+|---|---|
+| 0 | every bead is `OK` or `SKIP` (and, with `--watch`, stayed clear) |
+| 1 | usage (missing `--bead`/`--cause`, a positional, bad id, unknown flag) |
+| 2 | cannot tell — `SPIRA_RUN` unresolvable, so neither the ask history nor the audit log can be found; nothing was written |
+| 3 | at least one bead `FAIL`ed (refused, not cleared, or did not verify), or the watch failed |
+
+unpoison.sh used 1 for "a bead failed" and 2 for usage; that collides with this binary's
+table, where 1 is usage and 2 is cannot-tell, so the failure code moves to 3. The only
+callers that read the code are test-unpoison.sh (repointed in §8.6) and groomer.sh (which
+reads the `OK` line, §8.6).
+
+**Preconditions, per bead, before any write** (in this order):
+
+1. `bd show <id>`: absent → `FAIL no such bead`; the read failing → `FAIL cannot tell`.
+2. The events (`Store::events`, the same chunked `bd sql --json` as `counts`): failing →
+   `FAIL cannot tell`.
+3. `spira-lc show <id>`: exit 0 → the row; exit 1 → no row (not classified: not poisoned);
+   anything else → `FAIL cannot tell` (unpoison.sh read a failed lc read as "not
+   poisoned" and would SKIP or falsely verify).
+4. **Live work.** bd `status == in_progress` with an assignee, **or** a lifecycle row in
+   `WORKING` with a holder → `FAIL held by …`. Nothing is written.
+5. **Nothing to clear.** No poison hold and `attempts < P` → `SKIP`.
+
+**Writes, per bead, in order** (after the preconditions pass; each is its own store call):
+
+| step | store | how | failure |
+|---|---|---|---|
+| (credit) | bd events | `bd -C <db> sql "INSERT … 'requeued' … 'unjudged-<slug>' …"` | FAIL, stop |
+| 1 floor | bd events | `bd -C <db> sql "INSERT … 'poison.cleared' … '<bounded cause>' …"` | FAIL, stop — without the floor, releasing the hold only invites the next pass to re-poison |
+| 2 ask history | file | `rm $SPIRA_POISON_ASKED/<id>` (absent is fine) | reported by verify |
+| 3 hold | spira-lc | `spira-lc show` → `spira-lc event bead <id> --expect <state> --version <v> --actor <actor> --kind '{"Unhold":{"kind":"Poison"}}'`; a refusal (exit 3, lost CAS race) retries once from a fresh read | reported by verify |
+| 3b label | bd | `bd -C <db> label remove <id> spira-poison` | ignored (vestigial) |
+| 4 note | bd | `bd -C <db> note <id> --stdin` ← `Poison cleared by spira-claim unpoison (<actor>; attempts were <n>): <cause>` | `warn` |
+| 5 ask | bd | `bd -C <db> list --status open --label <ask-label> --limit 0 --json`; for each title matching §8.3's rule, `bd -C <db> close <ask> --reason-file -` ← `Resolved by spira-claim unpoison: <id>'s poison was cleared — <cause>` | `warn` |
+
+**Verify** re-reads events (fold → attempts, requeues, reclaims — the fold's, never the raw
+`requeued` row count unpoison.sh passed), the lifecycle row and the bd labels, then
+`decide(attempts, requeues, reclaims, labels, stamp 0:0:0:0, poisoned)`. It fails on: the
+hold still present; the lifecycle row unreadable; attempts ≥ P; the events unreadable; a
+`poison` token; the ask-history file still present.
+
+**Watch.** Records the audit log's length and the clock after the last bead is verified,
+then polls every 10 s up to the timeout. Only bytes appended after the recorded length are
+read (the log is never re-read whole; a log shorter than the recorded length was rotated and
+is read from 0). Lines are `<YYYY-MM-DDTHH:MM:SSZ> spira: <msg>`; lines without that shape
+(bash noise such as `sentinel.sh: line 705: _phase: command not found`) are ignored. A pass:
+
+- **starts** at `CHECK4 examining <n> dispatchable bead(s), poison=<P> …` stamped strictly
+  after the recorded clock;
+- is **disqualified** by `CHECK4 bulk attempts query failed` (that pass decided nothing, so
+  it proves nothing) — the watch keeps waiting for the next one;
+- **completes** at `audit pass complete — …`.
+
+Every poll also reads each cleared bead's hold; a poison hold back is `FAIL watch` at once.
+After a complete, qualifying pass each bead's hold is read once more for the verdict. If the
+pass reported a `poison=<P>` different from `--poison-at`, the watch says so on stdout
+(`watch: note — the audit pass ran with poison=<P>, this clear verified against <p>`).
+
+**Where things are.** bd: `$SPIRA_BD` else `bd`; db: `--db`, `$SPIRA_DB`, spira-config
+`spira.db` (§2). spira-lc: `$SPIRA_LC_BIN` else `spira-lc`. `SPIRA_RUN`: `$SPIRA_RUN`, else
+spira-config `spira.run`; neither → exit 2. Ask history: `$SPIRA_POISON_ASKED` else
+`$SPIRA_RUN/poison-asked` (lib.sh's resolution). Ask label: `$SPIRA_ASK_LABEL`, else
+spira-config `spira.ask_label`, else `needs-operator` (conf.sh:1027). Audit log:
+`$SPIRA_RUN/audit.log`.
+
+**No lib.sh seams.** Every lib.sh function unpoison.sh sourced is reimplemented against the
+same data: `attempts_of`/`requeues_of`/`reclaims_of` → the fold; `check4_decide` → `decide`;
+`bump_poison_cleared` → the same INSERT; `poison_asked_clear` → the same `rm`;
+`lc_held`/`lc_holds`/`lc_unhold` → `spira-lc show`/`event` directly (lc.sh is a thin shell
+over exactly these two calls); `bdq`/`bdjson` → `bd -C <db>`. bdq's create-time fences do
+not apply (no `create`), and its connection retry is not reproduced (a failed write is
+reported, and verify catches what matters).
+
+### 8.3 Schema
+
+```rust
+/// `bd show <id> --json` (first element), only what unpoison reads.
+struct BeadRecord { id: String, status: String, assignee: Option<String>,
+                    labels: Vec<String>, title: Option<String> }
+
+/// `spira-lc show <id>`'s `bead` object. dolt returns every column as a string, so
+/// `version` accepts a number or a numeric string and `holds` a JSON array or its
+/// JSON-encoded text (the same double parse as `rank::parse_lifecycle`).
+struct LcRow { state: BeadState, version: u64, holds: BTreeSet<HoldKind>,
+               holder: Option<String> }
+
+enum LcApply { Applied, Refused(String) /* exit 3 */, CannotTell(String) /* anything else */ }
+
+/// An open operator ask: `bd list … --json` rows.
+struct AskRow { id: String, title: String }
+
+/// Per-bead outcome, printed as §8.2's line.
+enum BeadOutcome { Ok { before: u32, after: u32, decision: String, asks: Vec<String>, warns: Vec<String> },
+                   Skip { attempts: u32 }, Would { attempts: u32, poisoned: bool },
+                   Fail(String) }
+
+/// One parsed audit.log line.
+enum AuditLine { Examining { at: i64, poison_at: Option<u32> }, CountsFailed { at: i64 },
+                 Complete { at: i64 }, Other }
+```
+
+**Ask match.** An ask is this poisoning's when its title starts with `Spira bead <id> — `
+and ends with `— change the approach or drop it?` (sentinel.sh:669's subject). unpoison.sh
+matched the substring `bead <id> —`, which also closed the *requeue* and *reclaim* asks
+(`Spira bead <id> — completed and requeued …`), a different problem the clear does not
+resolve.
+
+**Bounded event value.** The event's `new_value` is the cause with `'`, `"`, `\` and control
+characters removed, cut to 200 characters (unpoison.sh's `tr -d | cut -c1-200`, plus control
+characters). `bd sql` takes its query only as argv (no `--file`, no stdin — probed), so this
+is the one argv payload, and it is bounded. The full cause goes to the note and close
+reason on stdin (law-payloads-go-on-stdin).
+
+### 8.4 Tests (`cargo test -p spira-claim`, fakes, no store)
+
+`src/unpoison.rs` runs the whole flow against a `World` trait (bd, events, spira-lc, the
+ask-history file, the audit log, clock, sleep); the tests implement it in memory.
+
+| contract | test |
+|---|---|
+| clear then verify OK with **zero events after the floor** (sp-r66qd) | `clear_then_verify_ok_with_zero_events` |
+| floor written before the hold is released | `floor_is_written_before_the_hold_is_released` |
+| refuse when an aeon holds it (bd) / (lifecycle WORKING holder), nothing written, exit names slay | `refuse_when_held_by_bd_assignee`, `refuse_when_lifecycle_holder` |
+| ask closed by title match; requeue ask and another bead's ask untouched | `ask_closed_by_title_match_only` |
+| SKIP a healthy bead | `skip_when_not_poisoned_and_below_threshold` |
+| cannot tell on unreadable events / lifecycle → FAIL, no write | `cannot_tell_writes_nothing` |
+| floor write failure stops the bead | `floor_write_failure_stops_before_unhold` |
+| a lost CAS race retries once | `unhold_refused_retries_once` |
+| verify catches a hold that stayed | `verify_fails_when_hold_remains` |
+| dry run writes nothing | `dry_run_writes_nothing` |
+| `--credit` precedes the floor and is floored away | `credit_written_before_floor_and_not_counted` |
+| watch reads the audit log line; noise ignored; a pass that started before the clear or whose counts failed does not count | `watch_reads_audit_log_line`, `watch_ignores_pass_started_before_clear`, `watch_disqualifies_failed_counts_pass` |
+| watch fails on re-poison / timeout | `watch_fails_when_repoisoned`, `watch_times_out` |
+| usage: positional, missing cause, bad id | `usage_errors` |
+| event value is bounded and quote-free | `bounded_cause` |
+
+### 8.5 Behaviour deliberately changed from unpoison.sh
+
+1. **Verify is NULL-safe** (sp-r66qd): the fold returns 0 for a bead with no events after the
+   floor; unpoison.sh's `attempts_of` printed `<nil>` and every genuine clear FAILed.
+2. **Watch reads the audit log**, not sentinel.log: CHECK 4 and CHECK 5 run in the audit
+   worker. It now also requires the pass to have *started* after the clear (unpoison.sh
+   accepted any `CHECK5:` line after the clear, which a pass already running could print),
+   and a pass whose counts failed does not count.
+3. **Fail closed on unreadable lifecycle/events**: unpoison.sh read a failed `lc_held` as
+   "not poisoned".
+4. **A failed floor write stops the bead** instead of carrying on to release the hold.
+5. **Live-work refusal also covers a lifecycle `WORKING` row with a holder**, and names the
+   exit (slay.sh).
+6. **Ask match is exact** (§8.3), so requeue/reclaim asks are no longer closed.
+7. **Requeue count** for verify comes from the fold (§5 item 12's defect).
+8. **Exit codes** 1→3 for failure, 2→1 for usage (§8.2).
+9. **Watch timeout** 25 min → 40 min, configurable.
+10. **`--credit` and `--actor`** are new, for groomer.sh's cutover.
+
+### 8.6 Cutover (not performed; the Concierge applies it)
+
+Line numbers against this branch's base (4764d03ec).
+
+1. **spira/unpoison.sh** — delete the file.
+2. **spira/conf.sh** — `SPIRA_CLAIM_BIN` export: §5 item 1 (same line, needed here too).
+3. **spira/groomer.sh:476-492** (from `_up_labels="$(…label list…)"` through
+   `printf 'UNPOISONED …'`) →
+   ```bash
+       _up_out="$("${SPIRA_CLAIM_BIN:?SPIRA_CLAIM_BIN is unset — source conf.sh}" unpoison \
+           --bead "$id" --cause "$cause: $evidence" --credit "$cause" --actor groomer)"; _up_rc=$?
+       printf '%s\n' "$_up_out"
+       case "$_up_out" in
+           "OK   $id:"*) ;;
+           *) printf 'groomer: unpoison: %s was not cleared (rc=%s) — see above\n' "$id" "$_up_rc" >&2; exit 1 ;;
+       esac
+       printf 'UNPOISONED %s cause=%s\n' "$id" "$cause"
+   ```
+   and delete groomer.sh:473-474 (`. "$HERE/lib.sh"` is then unused by this branch — keep
+   it if a later edit needs it). Why: groomer's own copy checked the vestigial
+   `spira-poison` **label** (so every hold-only poison since sp-i2m7y was refused as
+   "nothing to lift") and never released the lifecycle hold (so CHECK 4 kept it). The
+   `--cause` slug must match `[a-z0-9-]{1,64}`; groomer's documented causes all do.
+   Comment block groomer.sh:433-449: replace "Credits the charge … the charge does not carry
+   forward." with "Delegates to `spira-claim unpoison --credit <cause>` (spira-claim/DESIGN.md
+   §8): the unjudged credit, the poison.cleared floor, the lifecycle hold, the note and the
+   ask, verified by CHECK 4's own decision."
+4. **spira/test-groomer-unpoison.sh** — its stub bd cannot answer `spira-lc`/`bd sql --json`
+   events; repoint: the two refusal cases (no `--cause`, no `--evidence`) stay as they are
+   (groomer refuses before calling anything); the "does not carry spira-poison" case becomes
+   "a bead that is not poisoned is refused" with `SPIRA_CLAIM_BIN` pointed at a stub printing
+   `SKIP <id>: …` (groomer exits 1 because there is no `OK` line); the full-trail case uses a
+   stub `SPIRA_CLAIM_BIN` that records its argv and prints `OK   poisoned-1: cleared …`, and
+   asserts `--credit yield-headless`, `--actor groomer` and the evidence in `--cause`. The
+   write trail itself is covered by `cargo test -p spira-claim` (§8.4).
+5. **spira/test-unpoison.sh** (the e2e against a real spira-lc and a server testdb) —
+   repoint rather than retire; it is the one test of the real INSERT, Unhold and close:
+   - :20-26 also build spira-claim beside spira-lc (:83-85):
+     `"$CARGO_BIN" build --manifest-path "$REPO/spira-claim/Cargo.toml" --quiet` and
+     `export SPIRA_CLAIM_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-claim"`; export
+     `SPIRA_RUN="$TMP/run"` (mkdir) so exit 2 is not hit.
+   - :104 `UNPOISON="$HERE/unpoison.sh"` → `UNPOISON="$SPIRA_CLAIM_BIN"`, and every
+     `bash "$UNPOISON" ` (:127, :146, :147, :152, :155) → `"$UNPOISON" unpoison `.
+   - :146 expected code `"2"` → `"1"` (usage); :148 `"1"` → `"3"`; :155 `"2"` → `"1"`.
+   - :11 `covers:` → `spira-claim/* spira-lc/* lifecycle/*`.
+   - :3 and :126 comment/echo: `unpoison.sh` → `spira-claim unpoison`.
+6. **spira/lib.sh:3264** comment ("a caller right after unpoison.sh") — deleted with
+   `_attempts_sql_query` by §5 item 2.
+7. **sentinel/DESIGN.md (concierge/rw-sentinel) §2.2 row `CHECK5: …` and cutover row 18** —
+   both become moot (nothing parses `CHECK5:` any more); drop them when that branch lands.
+8. **Operator guidance** (not in this repository):
+   - `~/.claude/projects/-home-ryan-spira-brain/memory/feedback_unpoison_tool.md` — every
+     `spira/unpoison.sh --bead <id> --cause "<evidence>" [--watch]` →
+     `spira-claim unpoison --bead <id> --cause "<evidence>" [--watch]`; "If it prints FAIL"
+     stays.
+   - `MEMORY.md` line "Clear poison with unpoison.sh" → "Clear poison with spira-claim
+     unpoison".
+   - brain wiki pages that mention unpoison.sh are dated records (notes, log) and stay as
+     written.
+9. **spira/chamber/groomer.md:184-187** — unchanged: it invokes `groomer.sh unpoison`,
+   whose interface does not change.
+10. Build/install: `spira-claim` is already on the workspace and §5 item 15's artifact list.
