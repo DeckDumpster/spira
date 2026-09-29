@@ -27,8 +27,11 @@ pub const PROBE: &str = r#"set -uo pipefail
 . "${SENTINEL_LIB%/*}/lc.sh" >&2 || exit 97
 env -0
 printf '@vars\0'
-for _v in SPIRA_POISON_ASKED SPIRA_REQUEUE_ASKED SPIRA_RECLAIM_ASKED SPIRA_POISON_LIFTED \
-          SPIRA_ROSTER_WARN_STAMP SPIRA_CAPACITY_PAUSE; do
+# EVERY SPIRA_* SHELL VARIABLE, EXPORTED OR NOT. conf.sh and lib.sh set many keys without
+# exporting them (SPIRA_REPO, SPIRA_HOME, SPIRA_LANDING_PASS_BIN, SPIRA_GH, the CPU quota…),
+# and `env -0` above sees only exported ones — so a fixed list here silently dropped them and
+# the binary fell back to defaults (2026-09-29: CHECK 6 dispatched a bare `landing-pass`).
+for _v in $(compgen -v SPIRA_); do
     printf '%s=%s\0' "$_v" "${!_v:-}"
 done
 printf 'SPIRA_HOME_REPO_RESOLVED=%s\0' "$(spira_home_repo)"
@@ -161,6 +164,32 @@ mod tests {
             std::fs::read_to_string(&tally).unwrap(),
             "act\tescalated\nprogress\tmoved\n"
         );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The probe reports SPIRA_* variables lib.sh SETS BUT DOES NOT EXPORT: `env -0` alone
+    /// dropped SPIRA_REPO and SPIRA_LANDING_PASS_BIN, and CHECK 6 dispatched a bare name.
+    #[test]
+    fn probe_reports_unexported_spira_variables() {
+        let d = std::env::temp_dir().join(format!("sentinel-probe-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(
+            d.join("lib.sh"),
+            "SPIRA_REPO=/the/repo\nSPIRA_LANDING_PASS_BIN=/the/repo/bin/landing-pass\nspira_home_repo() { echo spira; }\nspira_fayths() { :; }\nfayth_partitions() { :; }\nfayth_names() { :; }\n",
+        )
+        .unwrap();
+        std::fs::write(d.join("lc.sh"), "").unwrap();
+        let o = std::process::Command::new("bash")
+            .args(["-c", PROBE])
+            .env("SENTINEL_LIB", d.join("lib.sh"))
+            .env_remove("SPIRA_REPO")
+            .env_remove("SPIRA_LANDING_PASS_BIN")
+            .output()
+            .unwrap();
+        let out = String::from_utf8_lossy(&o.stdout);
+        let vars = out.split("@vars\0").nth(1).unwrap_or("");
+        assert!(vars.contains("SPIRA_REPO=/the/repo\0"), "{out:?}");
+        assert!(vars.contains("SPIRA_LANDING_PASS_BIN=/the/repo/bin/landing-pass\0"), "{out:?}");
         let _ = std::fs::remove_dir_all(&d);
     }
 }
