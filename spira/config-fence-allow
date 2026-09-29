@@ -132,7 +132,6 @@ spira/test-doctor-gate-compile-check.sh
 spira/test-eject-unattributed.sh
 spira/test-epic-claim-order.sh
 spira/test-escape-classify.sh
-spira/test-express-cert-order.sh
 spira/test-express-lane.sh
 spira/test-fayth.sh
 spira/test-gate-check-flaky.sh
@@ -170,12 +169,9 @@ spira/test-install-refusal.sh
 spira/test-land-commit-contract.sh
 spira/test-landed-reap.sh
 spira/test-landed-search.sh
-spira/test-landing-basefail-select-t1.sh
 spira/test-landing-base-fail.sh
 spira/test-landing-cutover-round.sh
-spira/test-landing-gate-wait.sh
 spira/test-landing-halt.sh
-spira/test-landing-order.sh
 spira/test-landing-pass.sh
 spira/test-landing-pr.sh
 spira/test-landing-queue-early.sh
@@ -183,7 +179,6 @@ spira/test-landing-race.sh
 spira/test-landing-rebase.sh
 spira/test-landing-red-recurring.sh
 spira/test-landing.sh
-spira/test-landing-starvation.sh
 spira/test-land-local-release.sh
 spira/test-land-mode-local.sh
 spira/testlib/gate-fixture.sh
