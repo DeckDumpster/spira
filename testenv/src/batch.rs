@@ -583,7 +583,8 @@ mod tests {
         assert!(rt
             .exec_argv()
             .iter()
-            .any(|a| a.first().map(String::as_str) == Some("mkdir")));
+            .any(|a| a.first().is_some_and(|c| c.ends_with("/bd-meter"))
+                && a.get(1).map(String::as_str) == Some("--install")));
     }
 
     #[test]

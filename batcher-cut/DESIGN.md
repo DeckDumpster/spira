@@ -123,8 +123,9 @@ corpus tail frees.
 
 **Record.** One TSD row per red, family `round-attribution`: `repo`, `round`, `iteration`,
 `suite`, `outcome` (`owner|flaky|base|unattributed`), `owner` (comma list, empty unless owner),
-`attribution_secs` (red landed → settled), `reruns` (runs launched for S), `settled_before_corpus_end`
-(`true|false`). Item 7 reads these. The `batch-round` row keeps `attribution_seconds` (the
+`attribution_secs` (red landed → settled; empty, never `0`, for a red that never settled — `outcome` then reads `unsettled`), `reruns` (runs launched for S), `settled_before_corpus_end`
+(`true|false`). Item 7 reads these (`intent-report`, sp-cln99); the fields are built by
+`batcher::attrib::RedRecord::tsd_fields`, unit-tested there. The `batch-round` row keeps `attribution_seconds` (the
 longest per-red attribution wall of the round) and `regreen_seconds`.
 
 ### 4.3 Where the code lives

@@ -79,6 +79,27 @@ impl RedRecord {
     pub fn attribution_secs(&self) -> Option<u64> {
         self.settled_at.map(|s| s.saturating_sub(self.red_at))
     }
+
+    /// The `round-attribution` TSD row's fields (DESIGN.md "Record"), in the order written.
+    /// An unsettled red has no attribution time: the field is empty, never `0`, so a reader
+    /// cannot mistake "never settled" for "settled at once" (sp-cln99).
+    pub fn tsd_fields(&self, repo: &str, round: &str, iteration: u32) -> Vec<(&'static str, String)> {
+        let owner = match &self.outcome {
+            Some(Outcome::Owner(o)) => o.join(","),
+            _ => String::new(),
+        };
+        vec![
+            ("repo", repo.to_string()),
+            ("round", round.to_string()),
+            ("iteration", iteration.to_string()),
+            ("suite", self.suite.clone()),
+            ("outcome", self.outcome.as_ref().map(|o| o.word()).unwrap_or("unsettled").to_string()),
+            ("owner", owner),
+            ("attribution_secs", self.attribution_secs().map(|s| s.to_string()).unwrap_or_default()),
+            ("reruns", self.reruns.to_string()),
+            ("settled_before_corpus_end", self.settled_before_main_end.to_string()),
+        ]
+    }
 }
 
 /// The round's membership as attribution sees it.

@@ -159,11 +159,7 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
     git(&repo_dir, &["checkout", "-q", "main"]);
 
     let stub = root.join("round-vm-stub");
-    write(&stub, STUB);
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    testkit::write_exe(&stub, STUB);
     let run = root.join("run");
     let env = Env {
         home: root.join("no-home"),

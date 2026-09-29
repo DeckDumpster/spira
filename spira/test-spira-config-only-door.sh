@@ -14,24 +14,31 @@ echo "test-spira-config-only-door.sh"
 # composite/resource document format, and `reconciler-flow/src/io.rs` reads that same
 # desired-state document (a Flow resource), never spira.toml — the bead's own carve-out for
 # "its own separate documents are out of scope" applies to both readers of that format.
-EXEMPT_TOML_FROM_STR="desired-state/src/store.rs reconciler-flow/src/io.rs"
+# `spira-lint/src/rules/deps_lint.rs` (sp-l8gl3) parses spira/deps.toml, spira-lint's own
+# manifest of declared programs — a separate document, never spira.toml.
+EXEMPT_TOML_FROM_STR="desired-state/src/store.rs reconciler-flow/src/io.rs spira-lint/src/rules/deps_lint.rs"
 
 # The lines of $1 before its first `#[cfg(test)]` module, with comment-only lines dropped —
 # production code only, so a doc comment describing the file (or a test fixture that must
 # literally write one named spira.toml to exercise discovery/loading) does not itself count
 # as "naming the file".
+#
+# `grep -a` throughout: a source file holding a NUL byte (landing-pass/src/tests.rs does)
+# otherwise reads as binary, and grep prints "binary file matches" in place of its lines —
+# the file's production code would silently go unscanned. The NULs themselves are dropped,
+# since the region is held in a shell variable, which cannot carry one.
 production_region() {
     local file="$1" test_line
-    test_line="$(grep -n '^#\[cfg(test)\]' "$file" | head -1 | cut -d: -f1)"
+    test_line="$(grep -an '^#\[cfg(test)\]' "$file" | head -1 | cut -d: -f1)"
     if [ -n "$test_line" ]; then
         head -n "$((test_line - 1))" "$file"
     else
         cat "$file"
-    fi | grep -v '^[[:space:]]*//'
+    fi | grep -av '^[[:space:]]*//' | tr -d '\000'
 }
 
 find_offenders() {
-    local root="$1" f rel exempt
+    local root="$1" f rel exempt region
     while IFS= read -r -d '' f; do
         rel="${f#"$root"/}"
         case "$rel" in
@@ -41,14 +48,19 @@ find_offenders() {
         for e in $EXEMPT_TOML_FROM_STR; do
             [ "$rel" = "$e" ] && exempt=1
         done
-        if [ "$exempt" -eq 0 ] && production_region "$f" | grep -q 'toml::from_str'; then
+        # CAPTURED, NEVER PIPED INTO `grep -q`. Under pipefail, grep -q exits at the first
+        # match, the writer upstream dies of SIGPIPE (141), and the pipeline reads as NO
+        # match — so an offender was reported or not by scheduling luck, and this suite went
+        # red and green on the same tree.
+        region="$(production_region "$f")"
+        if [ "$exempt" -eq 0 ] && grep -aq 'toml::from_str' <<<"$region"; then
             echo "$f: calls toml::from_str outside spira-config"
         fi
         # Flags path-construction of the literal filename (or its env var) — not every
         # mention of the string "spira.toml", which also appears as a plain descriptive
         # label (spira-lc's RepoConfig.source) once discovery itself goes through
         # spira-config.
-        if production_region "$f" | grep -qE '\.join\("spira\.toml"\)|Path::new\("spira\.toml"\)|read_to_string\("spira\.toml"\)|File::open\("spira\.toml"\)|env::var(_os)?\("SPIRA_TOML"\)'; then
+        if grep -aqE '\.join\("spira\.toml"\)|Path::new\("spira\.toml"\)|read_to_string\("spira\.toml"\)|File::open\("spira\.toml"\)|env::var(_os)?\("SPIRA_TOML"\)' <<<"$region"; then
             echo "$f: resolves spira.toml's path outside spira-config"
         fi
     done < <(find "$root" -type f -name '*.rs' -path '*/src/*' -not -path '*/target/*' -print0)

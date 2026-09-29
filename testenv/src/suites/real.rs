@@ -493,9 +493,12 @@ mod tests {
         let real = Real::new(&s, &|_: &str| None);
         assert_eq!(real.count("--count-undeclared"), None, "absent script");
         let hc = d.join("spira/host-check.sh");
-        fs::write(&hc, "case \"$1\" in --count-undeclared) echo 7;; --count-copying) exit 1;; *) :;; esac\n").unwrap();
-        assert_eq!(real.count("--count-undeclared"), None, "not executable");
+        // Written by testkit (no ETXTBSY race, testkit/DESIGN.md), then made NOT executable for
+        // the first check and executable again for the rest — chmod opens nothing.
+        testkit::write_exe(&hc, "case \"$1\" in --count-undeclared) echo 7;; --count-copying) exit 1;; *) :;; esac\n");
         use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&hc, fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(real.count("--count-undeclared"), None, "not executable");
         fs::set_permissions(&hc, fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(real.count("--count-undeclared").as_deref(), Some("7"));
         assert_eq!(real.count("--count-copying"), None, "failed");
