@@ -103,6 +103,7 @@ spira/test-conf-toml.sh
 spira/test-conf-writeback.sh
 spira/test-containment.sh
 spira/test-cross-repo.sh
+spira/test-cutover-deploy.sh
 spira/test-czar-pass.sh
 spira/test-deadlock-sweep.sh
 spira/test-deploy-preflight-new-unit.sh

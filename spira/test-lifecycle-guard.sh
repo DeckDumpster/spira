@@ -5,9 +5,11 @@
 #   ./test-lifecycle-guard.sh
 #
 # WHERE IT RUNS: the TIMED set, found by the `spira/test-*.sh` glob and run by `suites.sh`,
-# because `gate-suites` does not name it. lifecycle-guard is not wired into the landing gate
-# yet — that happens in the cutover deploy bead, once there is a lifecycle machine for it to
-# guard and an allowlist for today's legacy writers.
+# because `gate-suites` does not name it — this suite is the analyser's own cargo tests, not
+# the gate's call into it. The gate's own wiring (sp-sa8pn: gate.steps builds it
+# and refuses a planted finding) is test-lifecycle-
+# guard-gate.sh, covering gate.steps so gate-touched.sh selects it
+# on any branch that touches either.
 #
 # WHAT IS EXERCISED: each finding class the analyser makes (direct write, write reached
 # through a wrapper — both the "$@"-forwarding and fixed-verb shapes, an unresolvable dynamic
