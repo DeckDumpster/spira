@@ -64,7 +64,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
     let now = timefmt::now();
     let log_text = cfg.sentinel_log().and_then(|p| fs::read_to_string(p).ok()).unwrap_or_default();
     let run_dir = cfg.run.clone().ok_or("SPIRA_RUN is unknown (not in the environment, no [spira].run)")?;
-    let wait_held = probe::wait_held(cfg);
+    let wait_held = probe::wait_held(cfg, &store.beads)?;
     let total_live = probe::aeons_live_total(cfg);
     let capacity = probe::capacity(cfg, now);
     let throttle = probe::throttle(cfg);
@@ -93,6 +93,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
             throttle: throttle.clone(),
             holders,
             wait_held: wait_held.clone(),
+            lifecycle_enforce: cfg.lifecycle_enforce,
         };
         let p = Partition {
             store: &store,
@@ -284,12 +285,12 @@ fn mark(path: &Path, st: &mut state::State, part: &str, row: &Row, what: Mark) {
 
 const RECLAIM_NOTE: &str = "Reclaimed by strand.sh: in_progress with no live aeon holding it and the lease expired. The worker died; this is not an attempt at the work.";
 
-/// The ghost fix: spira-lc HolderDead, the `reclaimed` counter, a note, the event, and the
-/// once-only reclaim-ceiling escalation. Each step is best-effort, as before: one failing
-/// step must not stop the pass from reaching the next row.
+/// The ghost fix: release the dead holder's claim, the `reclaimed` counter, a note, the
+/// event, and the once-only reclaim-ceiling escalation. Each step is best-effort, as before:
+/// one failing step must not stop the pass from reaching the next row.
 fn act_ghost(cfg: &Config, part: &str, row: &Row) {
     let id = row.id.as_str();
-    lc_holder_dead(cfg, id);
+    release_dead_holder(cfg, part, id);
     bump_reclaim(cfg, id, "ghost");
     let n = reclaims_of(cfg, id);
     let _ = probe::bd(cfg, &["note", id, "--stdin"], Some(RECLAIM_NOTE.as_bytes()));
@@ -309,15 +310,43 @@ fn act_ghost(cfg: &Config, part: &str, row: &Row) {
     }
 }
 
+/// The switch (DESIGN.md §9) decides which record the claim lives in. Off: the pre-sp-i2m7y
+/// `bd reclaim --id <id> --older-than 1s`, scoped to the row's own partition — liveness was
+/// already observed directly, so no grace window is left to apply. On: the spira-lc
+/// `HolderDead` event. Returns which path ran, for tests.
+fn release_dead_holder(cfg: &Config, part: &str, id: &str) -> &'static str {
+    if cfg.lifecycle_enforce {
+        lc_holder_dead(cfg, id);
+        return "spira-lc";
+    }
+    let mut args = vec!["reclaim", "--id", id, "--older-than", "1s"];
+    if part != "-" && !part.is_empty() {
+        args.extend(["--label", part]);
+    }
+    if let Err(e) = probe::bd(cfg, &args, None) {
+        warn(&format!("check: {id}: bd reclaim failed: {e}"));
+    }
+    "bd"
+}
+
+/// On only. The step stays best-effort (the rest of the ghost fix still runs), but a
+/// machine that cannot be reached, or refuses, is said out loud: under `lifecycle_enforce`
+/// it is the record of the claim, and a silent miss leaves the bead held by a dead aeon.
 fn lc_holder_dead(cfg: &Config, id: &str) {
-    let Some(bin) = cfg.lc_bin.as_deref().filter(|b| probe::is_executable(Path::new(b))) else {
-        return;
+    let loud = |why: &str| warn(&format!("check: {id}: lifecycle_enforce is on and spira-lc HolderDead did not happen ({why}) — the bead stays held"));
+    let Some(bin) = cfg.lc_bin.as_deref() else {
+        return loud("SPIRA_LC_BIN unset");
     };
+    if !probe::is_executable(Path::new(bin)) {
+        return loud(&format!("{bin} is not executable"));
+    }
     let o = probe::run("timeout", &["30", bin, "show", id], None, &[]);
     if !o.ok {
-        return;
+        return loud(&format!("show: {}", o.stderr.trim()));
     }
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&o.stdout) else { return };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&o.stdout) else {
+        return loud("show: unparseable reply");
+    };
     let bead = &v["bead"];
     let state = bead["state"].as_str().unwrap_or("");
     let version = match &bead["version"] {
@@ -326,14 +355,17 @@ fn lc_holder_dead(cfg: &Config, id: &str) {
         _ => String::new(),
     };
     if state.is_empty() || version.is_empty() {
-        return;
+        return loud("show: no bead row");
     }
-    let _ = probe::run(
+    let o = probe::run(
         "timeout",
         &["30", bin, "event", "bead", id, "--expect", state, "--version", &version, "--actor", "strand", "--kind", "\"HolderDead\""],
         None,
         &[],
     );
+    if !o.ok {
+        loud(&format!("event: {}", o.stderr.trim()));
+    }
 }
 
 fn uuid4() -> Option<String> {
@@ -635,5 +667,94 @@ mod tests {
         assert_eq!(c.rows.len(), 1);
         assert_eq!(c.rows[0].part, "-");
         assert_eq!(c.rows[0].row.kind, "ghost");
+    }
+
+    // ---- the lifecycle switch (DESIGN.md §9) -------------------------------------------
+
+    struct Env(Vec<(&'static str, String)>);
+    impl crate::config::Source for Env {
+        fn env(&self, k: &str) -> Option<String> {
+            self.0.iter().find(|(key, _)| *key == k).map(|(_, v)| v.clone())
+        }
+        fn toml(&self, _: &str) -> Option<String> {
+            None
+        }
+    }
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("strand-lc-{}-{tag}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// An executable that appends its argv to `log` — the fake bd and the fake spira-lc.
+    fn recorder(dir: &std::path::Path, name: &str, log: &std::path::Path, reply: &str) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let p = dir.join(name);
+        fs::write(&p, format!("#!/bin/sh\necho \"$@\" >> '{}'\nprintf '%s' '{}'\n", log.display(), reply)).unwrap();
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+        p.to_string_lossy().into_owned()
+    }
+
+    fn cfg(enforce: &str, bd: &str, lc: &str) -> Config {
+        Config::resolve(&Env(vec![
+            ("SPIRA_LIFECYCLE_ENFORCE", enforce.into()),
+            ("SPIRA_BD", bd.into()),
+            ("SPIRA_DB", "/fake/db".into()),
+            ("SPIRA_LC_BIN", lc.into()),
+        ]))
+    }
+
+    #[test]
+    fn off_ghost_fix_is_bd_reclaim_and_never_runs_spira_lc() {
+        let d = scratch("off-ghost");
+        let (bdlog, lclog) = (d.join("bd.log"), d.join("lc.log"));
+        let bd = recorder(&d, "bd", &bdlog, "");
+        // A real, executable spira-lc: presence alone must not turn anything on.
+        let lc = recorder(&d, "spira-lc", &lclog, "{}");
+        let c = cfg("0", &bd, &lc);
+        assert!(!c.lifecycle_enforce);
+        assert_eq!(release_dead_holder(&c, "spira,plan", "sp-g"), "bd");
+        assert_eq!(release_dead_holder(&c, "-", "sp-h"), "bd");
+        let calls = fs::read_to_string(&bdlog).unwrap();
+        assert!(calls.contains("-C /fake/db reclaim --id sp-g --older-than 1s --label spira,plan"), "{calls}");
+        assert!(calls.contains("-C /fake/db reclaim --id sp-h --older-than 1s\n"), "no partition scope for '-': {calls}");
+        assert!(!lclog.exists(), "spira-lc must never run with lifecycle_enforce off");
+    }
+
+    #[test]
+    fn off_wait_exemption_is_the_legacy_label_and_never_runs_spira_lc() {
+        let d = scratch("off-wait");
+        let lclog = d.join("lc.log");
+        let lc = recorder(&d, "spira-lc", &lclog, r#"[{"bead_id":"sp-from-lc"}]"#);
+        let c = cfg("", "bd", &lc);
+        assert!(!c.lifecycle_enforce, "set-but-empty is off");
+        let beads = crate::model::parse_beads(
+            r#"[{"id":"sp-w","status":"in_progress","labels":["spira-waiting-operator"]},{"id":"sp-x","status":"in_progress","labels":[]}]"#,
+        )
+        .unwrap();
+        let held = probe::wait_held(&c, &beads).unwrap();
+        assert_eq!(held.into_iter().collect::<Vec<_>>(), vec!["sp-w".to_string()]);
+        assert!(!lclog.exists(), "spira-lc must never run with lifecycle_enforce off");
+    }
+
+    #[test]
+    fn on_runs_spira_lc_and_unreachable_is_an_error_not_an_empty_set() {
+        let d = scratch("on");
+        let (bdlog, lclog) = (d.join("bd.log"), d.join("lc.log"));
+        let bd = recorder(&d, "bd", &bdlog, "");
+        let lc = recorder(&d, "spira-lc", &lclog, r#"[{"bead_id":"sp-w"}]"#);
+        let c = cfg("1", &bd, &lc);
+        assert!(c.lifecycle_enforce);
+        let held = probe::wait_held(&c, &[]).unwrap();
+        assert!(held.contains("sp-w"));
+        assert_eq!(release_dead_holder(&c, "spira,plan", "sp-g"), "spira-lc");
+        let calls = fs::read_to_string(&lclog).unwrap();
+        assert!(calls.contains("list --hold wait") && calls.contains("show sp-g"), "{calls}");
+        assert!(!bdlog.exists(), "on: the claim is released through the machine, not bd reclaim");
+        let gone = cfg("1", &bd, "/nonexistent/spira-lc");
+        let e = probe::wait_held(&gone, &[]).unwrap_err();
+        assert!(e.contains("lifecycle_enforce is on and spira-lc is unreachable"), "{e}");
     }
 }
