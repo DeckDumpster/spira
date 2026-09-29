@@ -1,0 +1,2 @@
+# tmp-leak (sp-qgfdi): test files still allowed a bare temp_dir(). Shrink-only: a line
+# leaves when its file moves to testkit::TempDir; nothing is ever added.
