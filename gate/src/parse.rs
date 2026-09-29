@@ -197,6 +197,20 @@ mod tests {
         assert_eq!(timed_out_suites(out), ["test-a.sh", "test-c.sh"]);
     }
 
+    /// sp-gjx1b (testenv DESIGN.md §3.7): an undeclared SKIP/SKIP-REQ is reclassified to a
+    /// plain `RED` — the word every consumer here already keys on — with the reason appended
+    /// after it (`RED     undeclared skip — <requirement>`), never a new status word. This
+    /// proves the gate's own suite-line reader (unchanged) still catches it as red and as ran,
+    /// exactly like any other red, so the new contract propagates without a gate code change.
+    #[test]
+    fn an_undeclared_skip_reclassified_by_testenv_still_reads_as_a_red_suite() {
+        let out = "  test-f.sh                        RED     undeclared skip — skip:server testdb not available\nVERDICT RED ran=1 red=1";
+        assert_eq!(red_suites(out), ["test-f.sh"]);
+        assert_eq!(ran_suites(out), ["test-f.sh"]);
+        let out_req = "  test-e.sh                        RED     undeclared skip — requires:claude\nVERDICT RED ran=0 red=1";
+        assert_eq!(red_suites(out_req), ["test-e.sh"]);
+    }
+
     #[test]
     fn a_word_not_ending_in_sh_is_not_a_suite() {
         assert!(red_suites("cargo RED\nfoo.shx RED").is_empty());

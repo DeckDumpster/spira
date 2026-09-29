@@ -27,6 +27,26 @@ fn directive(desc: &str) -> Option<&'static str> {
     }
 }
 
+/// The reason testlib.sh's `skip <reason>` names, from its TAP skip-all form
+/// (`1..0 # SKIP <reason>`, DESIGN.md §3.7). `None` when the suite exited 77 without
+/// following the convention — the caller then has no requirement to check.
+pub fn skip_all_reason(output: &str) -> Option<String> {
+    for raw in output.lines() {
+        let line = raw.trim();
+        let Some(rest) = line.strip_prefix("1..0") else {
+            continue;
+        };
+        let Some(directive) = rest.trim_start().strip_prefix('#') else {
+            continue;
+        };
+        let directive = directive.trim_start();
+        if directive.len() >= 4 && directive[..4].eq_ignore_ascii_case("skip") {
+            return Some(directive[4..].trim_start().to_string());
+        }
+    }
+    None
+}
+
 pub fn parse(output: &str) -> TapSummary {
     let mut t = TapSummary::default();
     for raw in output.lines() {
@@ -85,5 +105,26 @@ mod tests {
         let t = parse("okay then\nnot okay\nBail out! requires: testenv\n");
         assert_eq!(t.bail_out.as_deref(), Some("requires: testenv"));
         assert_eq!((t.passed, t.failed), (0, 0));
+    }
+
+    #[test]
+    fn skip_all_reason_reads_testlibs_skip_all_form() {
+        assert_eq!(
+            skip_all_reason("1..0 # SKIP no dolt on this host\n"),
+            Some("no dolt on this host".to_string())
+        );
+        // case-insensitive directive word, and text logged before the plan line is ignored.
+        assert_eq!(
+            skip_all_reason("configuring...\n1..0 # skip lowercase directive\n"),
+            Some("lowercase directive".to_string())
+        );
+    }
+
+    #[test]
+    fn skip_all_reason_is_none_without_the_convention() {
+        assert_eq!(skip_all_reason("1..3\nok 1 - a\n"), None);
+        assert_eq!(skip_all_reason("some noise\nno plan line here\n"), None);
+        // a per-case SKIP directive is not the whole-suite form (plan is not "1..0")
+        assert_eq!(skip_all_reason("1..1\nok 1 - a # SKIP not applicable\n"), None);
     }
 }

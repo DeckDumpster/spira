@@ -12,6 +12,7 @@ pub mod runtime;
 pub mod schedule;
 pub mod selection;
 pub mod settings;
+pub mod skipgate;
 pub mod suite;
 pub mod suites;
 pub mod testdb;

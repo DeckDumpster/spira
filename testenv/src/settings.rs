@@ -59,6 +59,9 @@ pub struct Settings {
     pub mail_cmd: Option<PathBuf>,
     pub incident_cmd: Option<PathBuf>,
     pub suite_state_file: String,
+    /// DESIGN.md §3.7: the checked-in skip-declaration allow list, read from the revision
+    /// under test exactly like `suite_state_file`.
+    pub skip_allowlist_file: String,
     pub select_head: Option<String>,
     pub round_batch_id: Option<String>,
     pub round_members: u64,
@@ -180,6 +183,9 @@ impl Settings {
             suite_state_file: src
                 .get("SPIRA_SUITE_STATE_FILE", None)
                 .unwrap_or_else(|| "spira/suite-state".into()),
+            skip_allowlist_file: src
+                .get("SPIRA_SKIP_ALLOWLIST_FILE", None)
+                .unwrap_or_else(|| "spira/skip-allowlist.tsv".into()),
             select_head: src.get("SPIRA_GATE_SELECT_HEAD", None),
             round_batch_id: src.get("SPIRA_ROUND_BATCH_ID", None),
             round_members: src.num("SPIRA_ROUND_MEMBERS", None).unwrap_or(0),
@@ -228,6 +234,7 @@ mod tests {
         assert_eq!(s.run_id, "local-1000");
         assert!(!s.skip_install);
         assert_eq!(s.suite_state_file, "spira/suite-state");
+        assert_eq!(s.skip_allowlist_file, "spira/skip-allowlist.tsv");
     }
 
     #[test]

@@ -1,0 +1,17 @@
+# spira/skip-allowlist.tsv — the skip contract's declared exceptions (testenv/DESIGN.md §3.7).
+#
+# A SKIP or SKIP-REQ is green only when its requirement is declared here, for that exact
+# suite, and the requirement is genuinely outside testenv's own environment (host-only
+# hardware or session state) — never a fixture, a binary in the artifact set, a template or a
+# testdb, which testenv itself must provide; declaring one of those is refused outright
+# (SkipGate::load), because that is exactly the shape that hid 13 suites on 2026-09-29
+# (sp-cln99: the server-mode testdb template lookup broke, and every affected suite SKIPped
+# with no red anywhere).
+#
+# Format: <suite>\t<requirement>\t<why>, tab-separated. <requirement> is the exact
+# ResultRecord.fingerprint testenv computed (skip:<reason, normalized, _-joined> or
+# requires:<tok,...>) — copy it from the suite's own `.result` file or its logged line, do not
+# hand-retype the free-text reason.
+#
+# This file only shrinks: remove a line when the suite stops needing it, never add one to
+# paper over a red.

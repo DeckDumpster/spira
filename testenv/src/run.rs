@@ -12,6 +12,7 @@ use crate::runtime::{cancelled, ContainerRuntime};
 use crate::schedule::{self, Job, MaxparInputs};
 use crate::selection;
 use crate::settings::{Settings, Source};
+use crate::skipgate::{self, SkipGate};
 use crate::suite::{SuiteHeaders, SuiteState, SuiteStates};
 use crate::timing::{self, RoundPhaseRow, SuiteTimingRow};
 use crate::util::{self, git, iso_utc};
@@ -37,6 +38,10 @@ pub struct Finish {
     /// `--deadline` runs that reached the suite phase: (deferred count, deadline secs).
     /// Renders ` deferred=<d> (deadline <S>s)` on GREEN and RED; None renders nothing (D7).
     pub deferred: Option<(usize, u64)>,
+    /// Suites still `skip`/`skip-req` after the skip contract (DESIGN.md §3.7) — declared,
+    /// so still green. Renders ` skipped=<n>` on GREEN and RED when > 0; an undeclared skip
+    /// is not counted here at all, because it was already reclassified red.
+    pub skipped: usize,
 }
 
 impl Finish {
@@ -49,6 +54,7 @@ impl Finish {
             cached: None,
             selected_none: false,
             deferred: None,
+            skipped: 0,
         }
     }
     fn green(ran: usize) -> Self {
@@ -60,6 +66,7 @@ impl Finish {
             cached: None,
             selected_none: false,
             deferred: None,
+            skipped: 0,
         }
     }
     fn nothing() -> Self {
@@ -71,6 +78,7 @@ impl Finish {
             cached: None,
             selected_none: true,
             deferred: None,
+            skipped: 0,
         }
     }
 
@@ -78,6 +86,9 @@ impl Finish {
         let deferred = self
             .deferred
             .map(|(d, secs)| format!(" deferred={d} (deadline {secs}s)"))
+            .unwrap_or_default();
+        let skipped = (self.skipped > 0)
+            .then(|| format!(" skipped={}", self.skipped))
             .unwrap_or_default();
         match self.rc {
             0 => {
@@ -89,9 +100,13 @@ impl Finish {
                     s.push_str(" selected=0");
                 }
                 s.push_str(&deferred);
+                s.push_str(&skipped);
                 s
             }
-            1 => format!("VERDICT RED ran={} red={}{deferred}", self.ran, self.red),
+            1 => format!(
+                "VERDICT RED ran={} red={}{deferred}{skipped}",
+                self.ran, self.red
+            ),
             rc => format!(
                 "VERDICT FAULT rc={rc} ran={} reason={}",
                 self.ran,
@@ -635,6 +650,21 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         })
         .collect();
 
+    // ---- skip contract: the allow list, from the revision under test (DESIGN.md §3.7) -----
+    let skip_gate = match SkipGate::load(
+        &git(
+            &repo.path,
+            &["show", &format!("{br}:{}", s.skip_allowlist_file)],
+        )
+        .unwrap_or_default(),
+    ) {
+        Ok(g) => g,
+        Err(e) => {
+            stderr(&format!("batch: {e}"));
+            return Finish::fault(2, "skip-allowlist-invalid", 0);
+        }
+    };
+
     // ---- key, results dir ----------------------------------------------------------
     let image_tag = {
         let o = deps.rt.testenv(&["tag".into()]);
@@ -851,15 +881,81 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
                 producer: Some(producer),
                 rc: None,
             };
+            let rec = skipgate::apply(&skip_gate, n, quarantined.contains(n), rec);
             batch::write_preempted(&results, n, &rec);
             (deps.out)(&suite_line(n, &rec));
             preempted.insert(n.clone(), rec);
         }
     }
     if runnable.is_empty() {
-        deps.log("all suites pre-empted by unmet requirements — nothing to run");
+        // Fail closed even here: pre-emption is not automatically green — an undeclared
+        // SKIP-REQ (skipgate::apply, above) is a red like any other (DESIGN.md §3.7).
+        let reds: Vec<String> = active
+            .iter()
+            .filter(|n| preempted.get(*n).is_some_and(|r| r.status.blocking()))
+            .cloned()
+            .collect();
+        let skipped_count = active
+            .iter()
+            .filter(|n| {
+                preempted
+                    .get(*n)
+                    .is_some_and(|r| matches!(r.status, Status::Skip | Status::SkipReq))
+            })
+            .count();
         drop(guard);
-        return Finish::green(0);
+        if reds.is_empty() {
+            deps.log("all suites pre-empted by unmet requirements — nothing to run");
+            return Finish {
+                skipped: skipped_count,
+                ..Finish::green(0)
+            };
+        }
+        deps.log(&format!(
+            "{} suite(s) red (undeclared skip/skip-req) — no suite was runnable",
+            reds.len()
+        ));
+        let results_s = results.display().to_string();
+        let run_env = [("SPIRA_RUN", s.run.display().to_string())];
+        if let Some((_, o)) = helper(
+            &deps.harness.script("gate-diag.sh"),
+            &[&results_s],
+            Some(&artifacts),
+            &run_env,
+            None,
+        ) {
+            for l in o.lines() {
+                (deps.out)(l);
+            }
+        }
+        if s.verdict_ttl > 0 {
+            let _ = fs::create_dir_all(&s.verdicts);
+            let f = VerdictFile::new(
+                Verdict::Red,
+                iso_utc(now_epoch()),
+                now_epoch(),
+                Some(reds.join(" ")),
+                override_reason,
+            );
+            let _ = fs::write(&verdict_path, f.render());
+        }
+        let _ = helper(
+            &deps.harness.script("gate-timing.sh"),
+            &[&results_s, "red"],
+            Some(&artifacts),
+            &run_env,
+            None,
+        );
+        return Finish {
+            rc: 1,
+            ran: 0,
+            red: reds.len(),
+            reason: None,
+            cached: None,
+            selected_none: false,
+            deferred: None,
+            skipped: skipped_count,
+        };
     }
 
     // ---- test databases (DESIGN-testdb.md §2.4) -----------------------------------------
@@ -985,6 +1081,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         quarantined: quarantined.clone(),
         psi_pause: Duration::from_secs(5),
         deadline: args.deadline.map(Duration::from_secs),
+        skip_gate,
     };
     if let Some(d) = args.deadline {
         deps.log(&format!(
@@ -1205,6 +1302,24 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             deferred.join(" ")
         ));
     }
+    // Whatever is still `skip`/`skip-req` here was declared (DESIGN.md §3.7): an undeclared
+    // one was already reclassified red above and so is not in this list.
+    let skipped: Vec<String> = selected
+        .iter()
+        .filter(|n| {
+            records
+                .get(*n)
+                .is_some_and(|r| matches!(r.status, Status::Skip | Status::SkipReq))
+        })
+        .cloned()
+        .collect();
+    if !skipped.is_empty() {
+        deps.log(&format!(
+            "{} suite(s) skipped (declared, spira/skip-allowlist.tsv): {}",
+            skipped.len(),
+            skipped.join(" ")
+        ));
+    }
     let run_env = [("SPIRA_RUN", s.run.display().to_string())];
     let results_s = results.display().to_string();
     if !reds.is_empty() {
@@ -1246,6 +1361,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             cached: None,
             selected_none: false,
             deferred: deferred_count,
+            skipped: skipped.len(),
         };
     }
     if s.verdict_ttl > 0 {
@@ -1281,6 +1397,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     );
     Finish {
         deferred: deferred_count,
+        skipped: skipped.len(),
         ..Finish::green(ran)
     }
 }

@@ -7,6 +7,7 @@ use crate::fixture::{is_user_account_fault, Fixtures, Liveness, Session};
 use crate::record::{self, Mode, Producer, ResultRecord, Status};
 use crate::runtime::cancelled;
 use crate::schedule::Job;
+use crate::skipgate::{self, SkipGate};
 use crate::tap;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -35,6 +36,9 @@ pub struct BatchCfg {
     pub psi_pause: Duration,
     /// `--deadline`: measured from the start of [`run`]. None = no deadline (D7).
     pub deadline: Option<Duration>,
+    /// The skip contract (DESIGN.md §3.7): an undeclared SKIP is reclassified red here, at
+    /// the point the record is built, so the printed line and the written `.result` agree.
+    pub skip_gate: SkipGate,
 }
 
 /// Side effects the executor reports through, so tests can observe them.
@@ -196,6 +200,12 @@ impl Shared<'_> {
             self.cfg.mode,
             self.cfg.producer,
             now_epoch(),
+        );
+        let rec = skipgate::apply(
+            &self.cfg.skip_gate,
+            suite,
+            self.cfg.quarantined.contains(suite),
+            rec,
         );
         write_suite(&self.cfg.results, suite, &rec, output);
         (self.hooks.line)(&record::suite_line(suite, &rec));
@@ -483,6 +493,7 @@ mod tests {
             quarantined: BTreeSet::new(),
             psi_pause: Duration::from_millis(1),
             deadline: None,
+            skip_gate: SkipGate::load("").unwrap(),
         }
     }
 
@@ -534,11 +545,17 @@ mod tests {
         let rt = FakeRuntime::new();
         rt.suite("test-a.sh", 0, "ok 1 - a\n");
         rt.suite("test-b.sh", 1, "not ok 1 - b broke\nFAIL b\n");
-        rt.suite("test-c.sh", 77, "skip\n");
+        rt.suite("test-c.sh", 77, "1..0 # SKIP not applicable here\n");
         rt.suite("test-d.sh", 124, "slow\n");
         let dir = tmpdir("par");
         let s = session(&rt);
-        let c = cfg(Mode::Parallel, &dir, 2);
+        let mut c = cfg(Mode::Parallel, &dir, 2);
+        // declared, so this test still exercises a genuine (green) Skip outcome — the skip
+        // contract itself (undeclared -> red) is covered by skipgate.rs and run/tests.rs.
+        c.skip_gate = SkipGate::load(
+            "test-c.sh\tskip:not_applicable_here\tfixture: declared for this test\n",
+        )
+        .unwrap();
         let out = with_hooks(|h, seen| {
             let o = run(
                 &s,

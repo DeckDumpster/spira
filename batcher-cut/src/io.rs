@@ -1131,6 +1131,37 @@ mod result_path_tests {
         let d = tmpdir("absent");
         assert_eq!(result_status(&d, "test-z.sh"), None);
     }
+
+    /// sp-gjx1b (testenv DESIGN.md §3.7): an undeclared SKIP/SKIP-REQ is reclassified to a
+    /// plain `red` status — this reader keys on field 1 only, so it needs no change to block
+    /// on it, exactly like any other red. A *declared* skip/skip-req still passes.
+    #[test]
+    fn an_undeclared_skip_reclassified_by_testenv_blocks_like_any_other_red() {
+        let d = tmpdir("skip-contract");
+        fs::write(
+            d.join("test-f.sh.result"),
+            "red 1 3 skip:server_testdb_not_available parallel diff 77",
+        )
+        .unwrap();
+        assert_eq!(
+            result_status(&d, "test-f.sh"),
+            Some(false),
+            "an undeclared skip must block like any other red"
+        );
+        fs::write(
+            d.join("test-e.sh.result"),
+            "red 1 0 requires:reallymissing parallel diff -",
+        )
+        .unwrap();
+        assert_eq!(result_status(&d, "test-e.sh"), Some(false));
+        // a declared skip/skip-req is unaffected: still green
+        fs::write(
+            d.join("test-g.sh.result"),
+            "skip 1 1 skip:widget_missing_(declared) parallel diff 77",
+        )
+        .unwrap();
+        assert_eq!(result_status(&d, "test-g.sh"), Some(true));
+    }
 }
 
 #[cfg(test)]

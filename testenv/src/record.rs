@@ -189,7 +189,7 @@ impl ResultRecord {
     ) -> Self {
         let (status, fingerprint) = match rc {
             0 => (Status::Ok, "-".to_string()),
-            77 => (Status::Skip, "-".to_string()),
+            77 => (Status::Skip, skip_fingerprint(output)),
             124 => (
                 if quarantined {
                     Status::QuarantinedRed
@@ -263,7 +263,18 @@ pub fn suite_line(suite: &str, rec: &ResultRecord) -> String {
         Status::Disabled => "DISABLED".to_string(),
         Status::SkipReq => format!("SKIP-REQ {}", rec.fingerprint),
         Status::Timeout => format!("TIMEOUT after {}s", rec.secs),
+        // An undeclared SKIP/SKIP-REQ reclassified by the skip contract (DESIGN.md §3.7):
+        // still a plain `red` on disk (gate-diag.sh, round.sh need no new keyword), but the
+        // line names the requirement instead of a meaningless rc/secs pair.
+        Status::Red if rec.fingerprint.starts_with("skip:") || rec.fingerprint.starts_with("requires:") => {
+            format!("RED     undeclared skip — {}", rec.fingerprint)
+        }
         Status::Red => format!("RED     rc={rc} after {}s", rec.secs),
+        Status::QuarantinedRed
+            if rec.fingerprint.starts_with("skip:") || rec.fingerprint.starts_with("requires:") =>
+        {
+            format!("QUARANTINED-RED  undeclared skip — {}", rec.fingerprint)
+        }
         Status::QuarantinedRed if rc == 124 => {
             format!("QUARANTINED-RED  TIMEOUT after {}s", rec.secs)
         }
@@ -302,6 +313,17 @@ fn norm_rules() -> &'static [(Regex, &'static str); 5] {
     })
 }
 
+/// Path/timestamp/number noise stripped from one line — shared by the red fingerprint
+/// (below) and the skip requirement key (DESIGN.md §3.7): a tmp path, a PID-suffixed name or
+/// a timestamp must not make two runs of the same skip, or the same failure, look distinct.
+pub fn normalize_line(line: &str) -> String {
+    let mut cur = line.to_string();
+    for (re, rep) in norm_rules() {
+        cur = re.replace_all(&cur, *rep).into_owned();
+    }
+    cur
+}
+
 /// A short stable digest of a red suite's failure, identical to suites.sh's `_fp` so dedup
 /// keys agree across callers (DESIGN.md §3.2).
 pub fn fingerprint(rc: i32, output: &str) -> String {
@@ -326,15 +348,31 @@ pub fn fingerprint(rc: i32, output: &str) -> String {
             Some(b) => (b, "\n"),
             None => (line, ""),
         };
-        let mut cur = body.to_string();
-        for (re, rep) in norm_rules() {
-            cur = re.replace_all(&cur, *rep).into_owned();
-        }
-        normalized.push_str(&cur);
+        normalized.push_str(&normalize_line(body));
         normalized.push_str(nl);
     }
     let (crc, len) = cksum(normalized.as_bytes());
     format!("{crc}{len}")
+}
+
+/// The fingerprint for a suite that exited 77 (DESIGN.md §3.7): `skip:<requirement>`, where
+/// `<requirement>` is testlib.sh's `skip <reason>` text (tap.rs's skip-all form), normalized
+/// and space-joined with `_` — the `.result` line is `<status> <epoch> <secs> <fingerprint>
+/// <mode> <producer> <rc>` (§3.1), seven fields split on whitespace, and a reason is free
+/// text that would otherwise shift every field after it. A suite that exits 77 without the
+/// convention gets a fixed, always-undeclarable key, so a caller cannot skip silently by
+/// simply omitting the reason.
+pub fn skip_fingerprint(output: &str) -> String {
+    match crate::tap::skip_all_reason(output) {
+        Some(reason) if !reason.trim().is_empty() => {
+            let words: Vec<String> = normalize_line(reason.trim())
+                .split_whitespace()
+                .map(str::to_string)
+                .collect();
+            format!("skip:{}", words.join("_"))
+        }
+        _ => "skip:(no_reason_given)".to_string(),
+    }
 }
 
 /// POSIX `cksum`: CRC-32 (poly 0x04C11DB7, MSB first) over the data then its length.
@@ -443,6 +481,69 @@ mod tests {
     }
 
     #[test]
+    fn skip_fingerprint_names_the_reason_and_normalizes_it() {
+        let rec = ResultRecord::from_exit(
+            77,
+            0,
+            "1..0 # SKIP no dolt on this host\n",
+            "s.sh",
+            false,
+            Mode::Serial,
+            Producer::Explicit,
+            0,
+        );
+        assert_eq!(rec.fingerprint, "skip:no_dolt_on_this_host");
+        // a path in the reason is normalized exactly like a red's fingerprint
+        let rec = ResultRecord::from_exit(
+            77,
+            0,
+            "1..0 # SKIP not found at /tmp/sptest_abc123\n",
+            "s.sh",
+            false,
+            Mode::Serial,
+            Producer::Explicit,
+            0,
+        );
+        assert_eq!(rec.fingerprint, "skip:not_found_at_/tmp/X");
+    }
+
+    #[test]
+    fn skip_without_the_tap_convention_gets_a_fixed_unclaimable_fingerprint() {
+        let rec = ResultRecord::from_exit(
+            77, 0, "exiting early\n", "s.sh", false, Mode::Serial, Producer::Explicit, 0,
+        );
+        assert_eq!(rec.fingerprint, "skip:(no_reason_given)");
+    }
+
+    #[test]
+    fn an_undeclared_skip_reclassified_red_names_the_requirement_in_its_line() {
+        let rec = ResultRecord {
+            status: Status::Red,
+            epoch: 0,
+            secs: 3,
+            fingerprint: "skip:no widget available".into(),
+            mode: Some(Mode::Parallel),
+            producer: Some(Producer::Diff),
+            rc: Some(77),
+        };
+        assert_eq!(
+            suite_line("test-w.sh", &rec),
+            format!("  {:<32} RED     undeclared skip — skip:no widget available", "test-w.sh")
+        );
+        let rec2 = ResultRecord {
+            fingerprint: "requires:claude".into(),
+            ..rec.clone()
+        };
+        assert!(suite_line("test-w.sh", &rec2).contains("undeclared skip — requires:claude"));
+        // an ordinary assertion red (numeric fingerprint) keeps the rc/secs line
+        let ordinary = ResultRecord { fingerprint: "123456".into(), rc: Some(1), ..rec };
+        assert_eq!(
+            suite_line("test-w.sh", &ordinary),
+            format!("  {:<32} RED     rc=1 after 3s", "test-w.sh")
+        );
+    }
+
+    #[test]
     fn disabled_and_skip_req_render_a_dash_rc() {
         let r = ResultRecord {
             status: Status::SkipReq,
@@ -471,8 +572,15 @@ mod tests {
             suite_line("test-a.sh", &mk(Status::Ok, Some(0), 7)),
             format!("  {:<32} ok      7s", "test-a.sh")
         );
+        // an ordinary assertion red: a numeric (cksum) fingerprint, not "skip:"/"requires:"
         assert_eq!(
-            suite_line("test-a.sh", &mk(Status::Red, Some(2), 7)),
+            suite_line(
+                "test-a.sh",
+                &ResultRecord {
+                    fingerprint: "1234567".into(),
+                    ..mk(Status::Red, Some(2), 7)
+                }
+            ),
             format!("  {:<32} RED     rc=2 after 7s", "test-a.sh")
         );
         assert_eq!(
@@ -480,7 +588,13 @@ mod tests {
             format!("  {:<32} SKIPPED", "test-a.sh")
         );
         assert_eq!(
-            suite_line("t.sh", &mk(Status::QuarantinedRed, Some(124), 3)),
+            suite_line(
+                "t.sh",
+                &ResultRecord {
+                    fingerprint: "1234567".into(),
+                    ..mk(Status::QuarantinedRed, Some(124), 3)
+                }
+            ),
             format!("  {:<32} QUARANTINED-RED  TIMEOUT after 3s", "t.sh")
         );
         assert_eq!(

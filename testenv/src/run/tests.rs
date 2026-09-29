@@ -85,7 +85,20 @@ impl World {
         suite("test-d.sh", "");
         suite("test-q.sh", "");
         suite("test-x.sh", "# exclusive: builds the world\n");
+        // For the skip contract (DESIGN.md §3.7): e/f are never declared, g is.
+        suite("test-e.sh", "# requires: reallymissing\n");
+        suite("test-f.sh", "");
+        suite("test-g.sh", "");
         fs::write(repo.join("spira/suite-state"), "# state\ntest-d.sh | disabled | 2026-01-01 | sp-1 | gone\ntest-q.sh | quarantined | 2026-01-01 | sp-2 | flaky\n").unwrap();
+        // test-c.sh's requirement is declared so the general mixed-batch test below stays
+        // green on it; e/f are deliberately left undeclared, g deliberately declared.
+        fs::write(
+            repo.join("spira/skip-allowlist.tsv"),
+            "# suite\trequirement\twhy\n\
+             test-c.sh\trequires:nothere\tfixture: declared for the mixed-batch smoke test\n\
+             test-g.sh\tskip:widget_missing_(declared)\tfixture: declared skip stays green\n",
+        )
+        .unwrap();
         fs::write(repo.join(".gitignore"), "target/\n").unwrap();
         sh(&repo, "git init -q -b main && git add . && git commit -qm base && git checkout -qb topic && echo x > f && git add f && git commit -qm topic && git checkout -q main");
         let env: HashMap<String, String> = [
@@ -201,7 +214,14 @@ fn a_mixed_batch_reports_every_suite_and_a_red_verdict() {
         &w.root,
     );
     assert_eq!(rc, 1);
-    assert_eq!(w.last(), "VERDICT RED ran=4 red=1");
+    // test-c.sh's skip-req is declared (spira/skip-allowlist.tsv, fixture): still green,
+    // named in the skipped count (DESIGN.md §3.7).
+    assert_eq!(w.last(), "VERDICT RED ran=4 red=1 skipped=1");
+    assert!(w.has_line(|l| {
+        l.contains("spira: batch:")
+            && l.contains("1 suite(s) skipped (declared")
+            && l.contains("test-c.sh")
+    }));
     assert!(w.has_line(|l| l.starts_with("  test-a.sh") && l.contains("ok      ")));
     assert!(w.has_line(|l| l.starts_with("  test-b.sh") && l.contains("RED     rc=1")));
     assert!(w.has_line(|l| l.trim() == "not ok 1 - b is broken"));
@@ -269,6 +289,120 @@ fn a_mixed_batch_reports_every_suite_and_a_red_verdict() {
             Some("/workspace/target/aeon")
         );
     }
+}
+
+// ---- the skip contract (DESIGN.md §3.7): fail closed, not open --------------------------
+
+#[test]
+fn an_undeclared_skip_req_is_red_not_green() {
+    let w = World::new("skipreq-undeclared");
+    let rt = runtime();
+    // test-e.sh requires "reallymissing", missing in the container, and
+    // spira/skip-allowlist.tsv (the fixture) declares no requirement for test-e.sh.
+    rt.on(
+        |r| r.argv.last().map(String::as_str) == Some("reallymissing"),
+        |_| ExecOutcome {
+            rc: 1,
+            output: String::new(),
+        },
+    );
+    let b = FakeBuilder::new(None);
+    let rc = w.run(&rt, &b, &["--suites", "test-e.sh", "topic"], "", &w.root);
+    assert_eq!(rc, 1, "an undeclared SKIP-REQ must not read as green");
+    // pre-empted, so it never actually ran (ran=0), but it still reds the verdict
+    assert_eq!(w.last(), "VERDICT RED ran=0 red=1");
+    assert!(w.has_line(|l| l.starts_with("  test-e.sh")
+        && l.contains("RED")
+        && l.contains("undeclared skip")
+        && l.contains("requires:reallymissing")));
+    let res = w.results_dir();
+    let result = fs::read_to_string(res.join("test-e.sh.result")).unwrap();
+    assert!(result.starts_with("red "), "{result}");
+    assert!(result.contains("requires:reallymissing"));
+}
+
+#[test]
+fn a_declared_skip_req_stays_green() {
+    let w = World::new("skipreq-declared");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    // test-c.sh requires "nothere", declared in the fixture's skip-allowlist.tsv.
+    let rc = w.run(&rt, &b, &["--suites", "test-c.sh", "topic"], "", &w.root);
+    assert_eq!(rc, 0);
+    assert_eq!(w.last(), "VERDICT GREEN ran=0 skipped=1");
+    assert!(w.has_line(|l| l.starts_with("  test-c.sh") && l.contains("SKIP-REQ requires:nothere")));
+}
+
+#[test]
+fn a_suite_that_turns_from_green_to_an_undeclared_skip_is_no_longer_green() {
+    let w = World::new("skip-fixture");
+    let b = FakeBuilder::new(None);
+
+    // before: the suite passes outright.
+    let rt_before = runtime();
+    rt_before.suite("test-f.sh", 0, "1..1\nok 1 - widget present\n");
+    let rc = w.run(&rt_before, &b, &["--suites", "test-f.sh", "topic"], "", &w.root);
+    assert_eq!(rc, 0);
+    assert_eq!(w.last(), "VERDICT GREEN ran=1");
+
+    // after: a change lands on the branch (a new tree — otherwise the verdict cache would
+    // just replay the green above) and, in the changed world, the suite now skips —
+    // undeclared, because the fixture's spira/skip-allowlist.tsv names no requirement for
+    // test-f.sh. That is exactly the case that hid 13 suites on 2026-09-29 (sp-cln99): a
+    // SKIP read as green.
+    sh(
+        &w.repo,
+        "git checkout -q topic && echo change >> f && git commit -aqm 'the change' && git checkout -q main",
+    );
+    let rt_after = runtime();
+    rt_after.suite("test-f.sh", 77, "1..0 # SKIP widget missing\n");
+    let rc = w.run(&rt_after, &b, &["--suites", "test-f.sh", "topic"], "", &w.root);
+    assert_ne!(rc, 0, "an undeclared SKIP must not read as green");
+    assert_eq!(w.last(), "VERDICT RED ran=1 red=1");
+    assert!(w.has_line(|l| l.starts_with("  test-f.sh")
+        && l.contains("undeclared skip")
+        && l.contains("widget_missing")));
+    let res = w.results_dir();
+    assert_eq!(
+        fs::read_to_string(res.join("test-f.sh.result"))
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap(),
+        "red"
+    );
+}
+
+#[test]
+fn a_declared_skip_stays_green_and_is_named_in_the_skipped_count() {
+    let w = World::new("skip-declared");
+    let rt = runtime();
+    rt.suite("test-g.sh", 77, "1..0 # SKIP widget missing (declared)\n");
+    let b = FakeBuilder::new(None);
+    let rc = w.run(&rt, &b, &["--suites", "test-g.sh", "topic"], "", &w.root);
+    assert_eq!(rc, 0);
+    assert_eq!(w.last(), "VERDICT GREEN ran=1 skipped=1");
+    assert!(w.has_line(|l| l.starts_with("  test-g.sh") && l.trim().ends_with("SKIPPED")));
+    assert!(w.has_line(|l| l.contains("1 suite(s) skipped (declared") && l.contains("test-g.sh")));
+}
+
+#[test]
+fn an_invalid_skip_allowlist_is_a_fault_not_a_silent_pass() {
+    let w = World::new("skip-allowlist-invalid");
+    // a reserved word (testenv's own responsibility) can never be declared — the file itself
+    // is refused, rather than quietly admitting the one class of bug this contract exists to
+    // catch (sp-cln99's hidden 13 suites).
+    fs::write(
+        w.repo.join("spira/skip-allowlist.tsv"),
+        "test-g.sh\tskip:server testdb not available\tsneaking it past the gate\n",
+    )
+    .unwrap();
+    sh(&w.repo, "git add -A && git commit -qm 'bad allowlist'");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let rc = w.run(&rt, &b, &["--suites", "test-a.sh", "main"], "", &w.root);
+    assert_eq!(rc, 2);
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=skip-allowlist-invalid");
 }
 
 #[test]
@@ -525,6 +659,7 @@ fn verdict_lines() {
             cached: None,
             selected_none: false,
             deferred: None,
+            skipped: 0,
         }
         .verdict_line(),
         "VERDICT RED ran=5 red=2"
@@ -546,9 +681,32 @@ fn verdict_lines() {
             cached: None,
             selected_none: false,
             deferred: Some((3, 60)),
+            skipped: 0,
         }
         .verdict_line(),
         "VERDICT RED ran=2 red=1 deferred=3 (deadline 60s)"
+    );
+    assert_eq!(
+        Finish {
+            skipped: 4,
+            ..Finish::green(9)
+        }
+        .verdict_line(),
+        "VERDICT GREEN ran=9 skipped=4"
+    );
+    assert_eq!(
+        Finish {
+            rc: 1,
+            ran: 5,
+            red: 2,
+            reason: None,
+            cached: None,
+            selected_none: false,
+            deferred: None,
+            skipped: 3,
+        }
+        .verdict_line(),
+        "VERDICT RED ran=5 red=2 skipped=3"
     );
     assert_eq!(
         Finish::fault(3, "install", 0).verdict_line(),
