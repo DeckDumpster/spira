@@ -1414,6 +1414,29 @@ mod tests {
         }
     }
 
+    /// GAP G14 (ops-detection-remediation): every other alert fixture in this file hand-types
+    /// `["alert", "overseer"]` or a plain `flaps:<n>` — never the class-scoped `alert:<key>`
+    /// label auron.sh actually writes alongside it (test-auron.sh's own assertion, the
+    /// writer's half of this contract: `"event|alert,alert:sentinel-stalled,flaps:1,overseer"`).
+    /// So nothing on this side had ever read a bead carrying both labels together — the two
+    /// halves of the contract were asserted independently and never against each other. This
+    /// is the reader's half: the exact label set Auron raises a bead with, after two confirmed
+    /// sightings and one flap, must be an ALERTS item whose flap count reads back correctly.
+    #[test]
+    fn an_auron_shaped_alert_is_recognized_with_its_flap_count() {
+        let a = bead(
+            "sp-auron1",
+            "open",
+            "2026-09-05T10:00:00Z",
+            &["alert", "alert:sentinel-stalled", "flaps:2", "overseer"],
+        );
+        let s = snap(vec![a]);
+        let got = view_items(&s, View::Alerts, false, NOW).unwrap();
+        assert_eq!(ids(Ok(got.clone())), ["sp-auron1"]);
+        assert_eq!(crate::model::flaps(&got[0]), 2);
+        assert!(!crate::model::acked(&got[0]));
+    }
+
     fn c(author: &str, when: &str) -> (String, String, String) {
         (author.into(), when.into(), format!("{author}@{when}"))
     }

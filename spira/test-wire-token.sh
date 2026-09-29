@@ -20,10 +20,18 @@
 # Each grep below targets the functional form — the literal string as it would appear in the
 # source — so a rename that updates every grep but not the say, or vice versa, is caught here.
 #
+# THE CONTRACT ROW pipes one canned SENT line — shaped exactly as send_branch() emits it —
+# through both real parsers. cockpit-metrics.py's sending_metrics() is a pure function,
+# called directly, no source-grep. sentinel.sh has no equivalent extracted function (its
+# parsing is inline in a large conditional block); the grep/field-split idiom below is
+# copied from its exact source line rather than hand-typed, so a source-grep still confirms
+# neither side drifted from the copy.
+#
 # defect: sp-dcfm
 # tier: T1
 # covers: spira/sending.sh sentinel/src/* spira/cockpit-metrics.py
 
+# tier: T0
 # covers: spira/sending.sh spira/sentinel.sh spira/cockpit-metrics.py
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -82,4 +90,38 @@ if grep -q 'startswith("REAPED")' "$METRICS"; then
 else
     ok "cockpit-metrics.py does not startswith(\"REAPED\")"
 fi
+
+# ---------------------------------------------------------------------------------------
+# CONTRACT ROW — one canned SENT line, piped through both real parsers.
+# ---------------------------------------------------------------------------------------
+FIXTURE_LINE='SENT sp-test1  myrepo mybranch  orphaned worktree (branch was already gone)'
+
+# cockpit-metrics.py's sending_metrics(), called directly — no source-grep.
+py_out="$(python3 -c '
+import sys
+sys.path.insert(0, "'"$HERE"'")
+import importlib.util
+spec = importlib.util.spec_from_file_location("cockpit_metrics", "'"$METRICS"'")
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+from datetime import datetime, timezone
+lines = ["2026-09-10T00:00:00Z spira: state: goal=sp-x open=0 plan_ready=0 in_progress=0 aeons=0",
+         "'"$FIXTURE_LINE"'"]
+now = datetime(2026, 9, 10, 0, 5, 0, tzinfo=timezone.utc)
+since = datetime(2026, 9, 9, 0, 0, 0, tzinfo=timezone.utc)
+d = m.sending_metrics(lines, since, now)
+print(d["SP_SENT"])
+' 2>/dev/null)"
+is "cockpit-metrics.py's sending_metrics() counts the fixture SENT line" "1" "$py_out"
+
+# sentinel.sh's own idiom, copied verbatim rather than hand-typed:
+# `grep -c '^SENT' <<< "$sent"` and `while read -r _ rid rrepo rbr _; do ...; done < <(grep '^SENT' <<< "$sent")`.
+sent="$FIXTURE_LINE"
+sh_count="$(grep -c '^SENT' <<< "$sent" || true)"
+is "sentinel.sh's grep -c '^SENT' counts the fixture line" "1" "$sh_count"
+read -r _ rid rrepo rbr _ < <(grep '^SENT' <<< "$sent")
+is "sentinel.sh's field-split extracts the bead id"   "sp-test1" "$rid"
+is "sentinel.sh's field-split extracts the repo name" "myrepo"   "$rrepo"
+is "sentinel.sh's field-split extracts the branch"    "mybranch" "$rbr"
+
 tl_summary
