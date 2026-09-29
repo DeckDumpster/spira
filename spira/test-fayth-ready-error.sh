@@ -22,7 +22,7 @@
 # the suite exercises fayth_ready's own exit-code and stderr plumbing without a real store.
 #
 # defect: sp-3ntca
-# covers: spira/lib.sh spira/sentinel.sh
+# covers: spira/lib.sh sentinel/src/*
 # hermetic-ok: no database, no systemd; ready_count is a stub
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

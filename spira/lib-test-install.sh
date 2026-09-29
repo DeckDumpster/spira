@@ -7,8 +7,8 @@
 # Sourced, never executed.
 #
 # install_fixture_build <fixture-root>
-#   Symlinks the real systemd/*.{service,timer}, install.sh and spira/{conf.sh,watchd.sh,
-#   lib.sh,units.sh} into <fixture-root>/{systemd,spira}; writes an empty watchers manifest
+#   Symlinks the real systemd/*.{service,timer,yaml}, install.sh and spira/{conf.sh,watchd.sh,
+#   lib.sh,units.sh,suite-covers.sh,lifecycle-cert.sh} into <fixture-root>/{systemd,spira}; writes an empty watchers manifest
 #   and repo-map.example, and a no-op install-session-hook.sh stub.
 #
 # install_fixture_render <cache-key> <install.sh-invocation...>
@@ -39,18 +39,35 @@ _lib_install_hash() {  # stdin -> a short content hash; sha256sum where availabl
 install_fixture_build() {
     local fixture="$1" f
     mkdir -p "$fixture/systemd" "$fixture/spira"
-    for f in "$_LIB_INSTALL_SELF/../systemd/"*.service "$_LIB_INSTALL_SELF/../systemd/"*.timer; do
+    # *.yaml: install.sh renders dolt-server{,-test}.yaml whenever SPIRA_{DOLT,TESTDB}_DATA
+    # resolve non-empty. suite-covers.sh: lib.sh sources it unconditionally.
+    for f in "$_LIB_INSTALL_SELF/../systemd/"*.service "$_LIB_INSTALL_SELF/../systemd/"*.timer \
+             "$_LIB_INSTALL_SELF/../systemd/"*.yaml; do
         [ -e "$f" ] || continue
         ln -sf "$f" "$fixture/systemd/$(basename "$f")"
     done
     ln -sf "$_LIB_INSTALL_SELF/../systemd/install.sh" "$fixture/systemd/install.sh"
-    for f in conf.sh watchd.sh lib.sh units.sh; do
+    for f in conf.sh watchd.sh lib.sh units.sh suite-covers.sh lifecycle-cert.sh; do
         [ -e "$_LIB_INSTALL_SELF/$f" ] && ln -sf "$_LIB_INSTALL_SELF/$f" "$fixture/spira/$f"
     done
     printf '# empty — test fixture\n' > "$fixture/spira/watchers"
     printf '# empty\n' > "$fixture/spira/repo-map.example"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$fixture/spira/install-session-hook.sh"
     chmod +x "$fixture/spira/install-session-hook.sh"
+}
+
+# install_fixture_stub_bins <dir> -> writes executable no-op sentinel, queue and aeon stubs
+# into <dir>. The units ExecStart @SPIRA_SENTINEL_BIN@/@SPIRA_QUEUE_BIN@/@SPIRA_AEON_BIN@
+# (8e220de40) and install.sh refuses a unit whose ExecStart target is not executable; a
+# fixture whose SPIRA_REPO has no bin/ passes SPIRA_{SENTINEL,QUEUE,AEON}_BIN=<dir>/<name>.
+# Nothing here runs them — install only places and starts units against a mock systemctl.
+install_fixture_stub_bins() {
+    local dir="$1" b
+    mkdir -p "$dir"
+    for b in sentinel queue aeon; do
+        printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/$b"
+        chmod +x "$dir/$b"
+    done
 }
 
 install_fixture_render() {
@@ -115,12 +132,12 @@ tinstall_fixture() {   # tinstall_fixture <dir>
     src="$(cd "$(dirname "$src")" && pwd -P)"
     mkdir -p "$dir/systemd" "$dir/spira"
     local f
-    for f in "$src/../systemd/"*.service "$src/../systemd/"*.timer; do
+    for f in "$src/../systemd/"*.service "$src/../systemd/"*.timer "$src/../systemd/"*.yaml; do
         [ -e "$f" ] || continue
         ln -sf "$f" "$dir/systemd/$(basename "$f")"
     done
     ln -sf "$src/../systemd/install.sh" "$dir/systemd/install.sh"
-    for f in conf.sh watchd.sh lib.sh; do
+    for f in conf.sh watchd.sh lib.sh suite-covers.sh lifecycle-cert.sh; do
         [ -e "$src/$f" ] && ln -sf "$src/$f" "$dir/spira/$f"
     done
     printf '# empty — test fixture\n' > "$dir/spira/watchers"

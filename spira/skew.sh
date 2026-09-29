@@ -7,7 +7,7 @@
 #   skew.sh refresh [repo]                 fast-forward the checkout to its base ref
 #                                           (queue.local: check only — alarms on a mismatch
 #                                           between what is running and local/main's head,
-#                                           deploys nothing; queue.sh land-local deploys)
+#                                           deploys nothing; queue land-local deploys)
 #   skew.sh gap [repo]                     report commits between HEAD and the base ref
 #   skew.sh copies                         every mapped repository carrying a harness copy
 #   skew.sh foreign <repo> <base> <ref>    may this branch land? — the landing gate's fence
@@ -384,7 +384,7 @@ escalate() {
     if [[ "$condition_key" == *"MANIFEST-MISMATCH=1"* ]]; then
         default_action="the release artifact and its git tag disagree — verify the release was built from the correct commit; rebuild and re-activate if not"
     elif [[ "$condition_key" == *"LOCAL-SKEW=1"* ]]; then
-        default_action="what is running does not match local/main's head — land the round again with queue.sh land-local, or undo with queue.sh rollback-local; refresh will not act on its own"
+        default_action="what is running does not match local/main's head — land the round again with queue land-local, or undo with queue rollback-local; refresh will not act on its own"
     else
         default_action="activate the latest published release — download the latest tarball and run activate.sh with it"
     fi
@@ -436,7 +436,7 @@ _skew_repo_name_for_path() {
 # activated release's MANIFEST commit, or HEAD in a plain checkout) against local/main's
 # head. Equal: nothing to report, exit 0. Unequal: print the finding, escalate once per
 # distinct running/expected pair, exit 1 — and, either way, NEVER touch the checkout, build
-# anything, or swing the current symlink. That is queue.sh land-local's job alone.
+# anything, or swing the current symlink. That is queue land-local's job alone.
 _refresh_check_only() {
     local repo="$1" name="$2" base base_sha running
     # BY NAME, NOT BY PATH. spira_landref given a path re-derives the name via
@@ -468,7 +468,7 @@ _refresh_check_only() {
     fi
 
     local finding
-    finding="LOCAL-SKEW running $running does not match $base ($base_sha) — queue.local deploys only through queue.sh land-local; refresh never resets it"
+    finding="LOCAL-SKEW running $running does not match $base ($base_sha) — queue.local deploys only through queue land-local; refresh never resets it"
     echo "skew: $finding"
     escalate "v1:LOCAL-SKEW=1" "$finding"
     return 1
@@ -490,7 +490,7 @@ _refresh_check_only() {
 # something else is controlling the checkout. A declined refresh names the condition because
 # a refresh that stops is indistinguishable in the log from one with nothing to do.
 #
-# QUEUE.LOCAL NEVER REACHES EITHER BRANCH BELOW. Under queue.local, queue.sh land-local is
+# QUEUE.LOCAL NEVER REACHES EITHER BRANCH BELOW. Under queue.local, queue land-local is
 # THE ONLY DEPLOYER — it packages and activates the round's own binaries atomically. A
 # refresh that instead reset the checkout (stage-and-swap) or rebuilt from source (release
 # mode's `make install`) would deploy something no round ever certified, so this repo gets a

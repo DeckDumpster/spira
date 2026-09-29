@@ -36,7 +36,7 @@
 #
 # tier: T1
 # defect: sp-mqnf sp-njwb sp-fx1p sp-pi3ez sp-f1m7f sp-lzt sp-wiyr2
-# covers: spira/lib.sh spira/sentinel.sh spira/attempts.sh
+# covers: spira/lib.sh sentinel/src/* spira/attempts.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

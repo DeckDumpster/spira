@@ -605,7 +605,7 @@ _live_aeon_n() {
         _pid="$(cat "$_pf" 2>/dev/null)"; [ -n "${_pid:-}" ] || continue
         [ -d "/proc/$_pid" ] || continue
         { _cmd="$(tr '\0' ' ' < "/proc/$_pid/cmdline")"; } 2>/dev/null
-        grep -qF 'aeon.sh' <<< "${_cmd:-}" && _n=$((_n+1))
+        grep -qE '(^|/)aeon( |$)|aeon\.sh' <<< "${_cmd:-}" && _n=$((_n+1))
     done
     printf '%d' "$_n"
 }

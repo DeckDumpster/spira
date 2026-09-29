@@ -15,7 +15,7 @@
 #
 # defect: sp-4l0d, sp-nlhy, sp-foi7
 # tier: T1
-# covers: spira/lib.sh spira/aeon.sh UC-dispatch-22
+# covers: spira/lib.sh aeon/src/* UC-dispatch-22
 # hermetic-ok: no database, no systemd, no network
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

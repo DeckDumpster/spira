@@ -32,7 +32,7 @@
 #
 # defect: sp-smbq0
 # tier: T1
-# covers: spira/conf.sh spira/strand.sh spira/doctor.sh spira/cockpit.sh spira/auron.sh cockpit/layout.sh
+# covers: spira/conf.sh strand/src/* spira/doctor.sh spira/cockpit.sh spira/auron.sh cockpit/layout.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -46,7 +46,7 @@ RUN="$TMP/run"
 mkdir -p "$SH" "$RUN"
 
 # Copy the files under test so edits to the source are tested.
-cp "$HERE/conf.sh" "$HERE/strand.sh" "$HERE/lib.sh" "$SH/"
+cp "$HERE/conf.sh" "$HERE/lib.sh" "$SH/"
 
 # STUB SYSTEMCTL. Behaviour is controlled by two variables exported into the subshell:
 #   SC_ENABLED  — unit name that is-enabled should confirm (empty = none)
@@ -76,22 +76,6 @@ run_spira_unit() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
     SPIRA_SYSTEMCTL="$TMP/systemctl" SPIRA_INSTANCE="$inst" \
         bash -c '. "$1/conf.sh"; spira_unit "$2" "$3"' _ "$SH" "$base" "$type"
-}
-
-# Run the harness_state function extracted from strand.sh. The function definition is
-# sourced directly, then called, so we are testing the real implementation rather than
-# a copy (law-prefer-the-real-dependency). strand.sh runs in a full script context with
-# lib.sh already sourced, so we replicate that here: source lib.sh, then define
-# harness_state by extracting it from strand.sh via awk, then call it.
-run_harness_state() {
-    local inst="$1"
-    # Extract harness_state from strand.sh: the function body from its definition
-    # line to the closing '}' on its own line.
-    local fn_body
-    fn_body="$(awk '/^harness_state\(\)/{found=1} found{print} found && /^\}$/{exit}' "$SH/strand.sh")"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
-    SPIRA_SYSTEMCTL="$TMP/systemctl" SPIRA_INSTANCE="$inst" SENTINEL_LOG="$RUN/sentinel.log" \
-        bash -c '. "$1/lib.sh"; eval "$2"; harness_state' _ "$SH" "$fn_body" 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------------
@@ -145,27 +129,9 @@ is "C: spira_unit returns '?' when no loom unit is known" \
    "?" "$result"
 
 # ---------------------------------------------------------------------------
-# D: strand.sh harness_state must render 'unknown' when unit resolves to '?'
-#    Before this fix it would call: systemctl --user is-active spira-sentinel.timer
-#    which would print 'inactive' for a disabled unit — a confident false reading.
+# D (RETIRED with strand.sh): the strand binary's harness_state renders 'unknown' for a '?'
+# unit — strand/src/probe.rs (spira_unit/harness_state), `cargo test -p strand`.
 # ---------------------------------------------------------------------------
-echo
-echo "D: strand.sh harness_state renders 'unknown' for unresolvable unit:"
-
-write_sc "" ""
-out="$(run_harness_state prod)"
-want   "D: harness_state output contains 'unknown' when unit is '?'" \
-       "unknown" "$out"
-nowant "D: harness_state does not report 'inactive' for a '?' unit" \
-       "inactive" "$out"
-
-# Also verify that when the instance-qualified unit IS active, harness_state reports it.
-write_sc "" "spira-sentinel-prod.timer"
-out="$(run_harness_state prod)"
-want   "D: harness_state reports 'active' when instance-qualified sentinel is active" \
-       "active" "$out"
-nowant "D: harness_state does not report 'inactive' when sentinel is active" \
-       "inactive" "$out"
 
 # ---------------------------------------------------------------------------
 tl_summary

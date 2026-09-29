@@ -20,7 +20,7 @@
 #   for sum_s; if wall_s and seconds are not read the sum is 0 and fails.
 #
 # tier: T0
-# covers: spira/gate-timing.sh spira/testenv-batch.sh spira/conf.sh
+# covers: spira/gate-timing.sh testenv/src/* spira/conf.sh
 # host-reason: reads no live database; all fixtures are local temp dirs
 
 set -uo pipefail

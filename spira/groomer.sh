@@ -440,12 +440,9 @@ except Exception: pass
     # attempts.sh clear already provides for the operator's own judgement; this tool exists
     # so the groomer's judgement leaves the same kind of trace.
     #
-    # Credits the charge as `requeued`/`unjudged-<cause>` — the same vocabulary
-    # session_outcome (lib.sh) already writes when a live charge turns out not to be the
-    # work's fault — so a census reading the events trail sees this lift in the one
-    # vocabulary it already knows, not a second one invented here. bump_poison_cleared then
-    # floors the attempt count itself (sp-qd2ul): the SQL that feeds the poison threshold
-    # discounts every event at or before it, so the charge does not carry forward.
+    # Delegates to `spira-claim unpoison --credit <cause>` (spira-claim/DESIGN.md §8): the
+    # unjudged credit, the poison.cleared floor, the lifecycle hold, the note and the ask,
+    # verified by CHECK 4's own decision.
     id="${1:-}"; [ $# -gt 0 ] && shift
     cause=""
     evidence=""
@@ -472,21 +469,13 @@ except Exception: pass
         exit 1
     fi
 
-    # shellcheck source=lib.sh
-    . "$HERE/lib.sh"
-
-    _up_labels="$("$BD_CMD" -C "$DB" label list "$id" 2>/dev/null)" || _up_labels=""
-    if ! grep -q spira-poison <<< "$_up_labels"; then
-        printf 'groomer: unpoison: %s does not carry spira-poison — nothing to lift\n' "$id" >&2
-        exit 1
-    fi
-
-    bump_requeue "$id" "unjudged-$cause"
-    "$BD_CMD" -C "$DB" label remove "$id" spira-poison >/dev/null 2>&1 \
-        || { printf 'groomer: unpoison: could not remove spira-poison from %s\n' "$id" >&2; exit 1; }
-    bump_poison_cleared "$id" "$cause"
-    poison_asked_clear "$id"
-    "$BD_CMD" -C "$DB" note "$id" "Poison lifted by groomer.sh unpoison, cause: $cause. $evidence A requeued/unjudged-$cause event was recorded, crediting the charged attempt(s) to the harness rather than the work; a poison.cleared event floors the attempt count so this does not immediately re-poison. A genuinely new failure after this still poisons the bead again, at the count starting from zero." >/dev/null 2>&1
+    _up_out="$("${SPIRA_CLAIM_BIN:?SPIRA_CLAIM_BIN is unset — source conf.sh}" unpoison \
+        --bead "$id" --cause "$cause: $evidence" --credit "$cause" --actor groomer)"; _up_rc=$?
+    printf '%s\n' "$_up_out"
+    case "$_up_out" in
+        "OK   $id:"*) ;;
+        *) printf 'groomer: unpoison: %s was not cleared (rc=%s) — see above\n' "$id" "$_up_rc" >&2; exit 1 ;;
+    esac
     printf 'UNPOISONED %s cause=%s\n' "$id" "$cause"
     ;;
 

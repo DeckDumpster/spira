@@ -28,10 +28,13 @@
 # what is under test here is what landing does AFTER a verdict, not how one is reached.
 #
 # defect: sp-dupland
-# covers: spira/landing.sh
+# covers: landing-pass/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+# THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
+# pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
+LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -53,7 +56,7 @@ mkdir -p "$RUN/worktree" "$SH"
 # without it, so a fixture harness that copies one and not the other fails at source time —
 # every case reporting exit 127 and no landing, which reads as landing being broken rather
 # than the fixture being incomplete.
-cp "$HERE/landing.sh" "$HERE/landing-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$SH/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 # The gate stub speaks the gate's PROTOCOL, not just its exit status: landing.sh reads the
 # machine-readable VERDICT line for the reason it records, so a stub that only exited would
@@ -82,7 +85,7 @@ landing() {
     # asserting about a box (law-gates-run-in-a-clean-environment).
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
     SPIRA_REPO_MAP="$SH/repo-map" \
-        bash "$SH/landing.sh" 2>&1
+        "$LANDING_PASS_BIN" land 2>&1
 }
 mailbox() { cat "$RUN/landing.progress" 2>/dev/null; }
 

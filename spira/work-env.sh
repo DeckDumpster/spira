@@ -36,6 +36,7 @@ exec env -i \
     "PATH=/usr/bin:/bin:$work_bin_dir" \
     "SPIRA_WORK_BEAD_ID=$bead_id" \
     "SPIRA_LC_SOCKET=$SPIRA_LC_SOCKET" \
+    "SPIRA_LIFECYCLE_ENFORCE=${SPIRA_LIFECYCLE_ENFORCE:-0}" \
     ${SPIRA_FAYTH:+"SPIRA_FAYTH=$SPIRA_FAYTH"} \
     ${TERM:+"TERM=$TERM"} \
     ${LANG:+"LANG=$LANG"} \

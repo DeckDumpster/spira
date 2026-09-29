@@ -22,11 +22,21 @@
 #    unused) FAYTH_MODEL of its own.
 #
 # defect: sp-zs04v.4
-# covers: spira/lib.sh spira/aeon.sh concierge.sh spira/reflect.sh spira/conf.sh spira/chamber/*.fayth
+# covers: spira/lib.sh aeon/src/* concierge.sh spira/reflect.sh spira/conf.sh spira/chamber/*.fayth
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 HARNESS="$(cd "$HERE/.." && pwd -P)"
 . "$HERE/testlib.sh"
+
+# The aeon binary replaced aeon.sh. Nothing sources conf.sh for THIS tree before here, so
+# resolve it (and the spira-claim it ranks through) the way conf.sh's spira_bin does for this
+# checkout — SPIRA_ARTIFACTS under testenv — unless the caller already exported one.
+_rbin() { env -u SPIRA_REPO SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin "$2" 2>/dev/null' _ "$HERE" "$1"; }
+[ -x "${SPIRA_AEON_BIN:-}" ] || SPIRA_AEON_BIN="$(_rbin aeon)"
+[ -x "${SPIRA_CLAIM_BIN:-}" ] || SPIRA_CLAIM_BIN="$(_rbin spira-claim)"
+export SPIRA_AEON_BIN SPIRA_CLAIM_BIN
+[ -x "$SPIRA_AEON_BIN" ] \
+    || { echo "test-persona-model: the aeon binary is not built (SPIRA_AEON_BIN=$SPIRA_AEON_BIN)" >&2; exit 1; }
 
 echo "test-persona-model.sh"
 
@@ -180,7 +190,7 @@ git -C "$REPO" push -q origin main 2>/dev/null
 # builder.fayth still declares its OWN (now unused) FAYTH_MODEL — proving spira.toml wins
 # over a fayth declaration rather than merely over an absent one.
 SH="$T/home"; mkdir -p "$SH/chamber"
-cp "$HARNESS/spira/lib.sh" "$HARNESS/spira/conf.sh" "$HARNESS/spira/aeon.sh" \
+cp "$HARNESS/spira/lib.sh" "$HARNESS/spira/conf.sh" \
    "$HARNESS/spira/suite-covers.sh" "$SH/" 2>/dev/null
 cp -r "$HARNESS/spira/actors" "$SH/" 2>/dev/null || true
 cat > "$SH/chamber/builder.fayth" <<'FAYTH'
@@ -230,7 +240,7 @@ SHIM
 chmod +x "$BIN/claude"
 export SPIRA_AGENT="$BIN/claude"
 
-aeon() { bash "$SH/aeon.sh" "$@" 2>/dev/null; }
+aeon() { "$SPIRA_AEON_BIN" --home "$SH" "$@" 2>/dev/null; }
 
 # --sweep: no bead needed.
 rm -f "$T/claude-argv"

@@ -5,7 +5,7 @@
 # unit files instead of six suites each re-reading them.
 #
 # tier: T0
-# covers: systemd/*.timer systemd/*.service systemd/units.sh systemd/render.py systemd/concierge.service systemd/beads-push.service spira/spira-verdict.sh spira/collect.sh supervise/** UC-instance-lifecycle-31
+# covers: systemd/*.timer systemd/*.service systemd/units.sh systemd/render.py systemd/concierge.service systemd/beads-push.service spira/collect.sh supervise/** UC-instance-lifecycle-31
 #
 # WHAT THIS GUARDS. Defect sp-7gklu: a timer template existed in systemd/ but was absent from
 # units.sh's UNITS array, so install.sh never wrote it to disk. Defect sp-mplcb: WatchdogSec
@@ -268,17 +268,19 @@ fi
 echo
 echo "The verdict service: driver wiring, TimeoutStartSec>=3600, no CPUQuota:"
 # ============================================================================
-# defect sp-tv7ue: nothing proved the service called queue.sh step (which settles the open
+# defect sp-tv7ue: nothing proved the service called queue step (which settles the open
 # batch then opens the next) rather than verdict.sh alone (which would skip batch.sh and
 # leave no new batch after a landing). defect sp-vhvyi: TimeoutStartSec was too short for a
 # full red-batch replay, and CPUQuota would throttle one if it were ever added.
 _vd_svc="$UNIT_DIR/spira-verdict.service"
-_vd_driver="$HERE/spira-verdict.sh"
 
 if [ -r "$_vd_svc" ]; then
     _vd_execstart="$(grep '^ExecStart=' "$_vd_svc" 2>/dev/null | head -1)"
     if [ -n "$_vd_execstart" ]; then
-        want "spira-verdict.service ExecStart invokes spira-verdict.sh" "spira-verdict.sh" "$_vd_execstart"
+        want "spira-verdict.service ExecStart runs the queue binary's step --all" \
+             "ExecStart=@SPIRA_QUEUE_BIN@ step --all" "$_vd_execstart"
+        want "spira-verdict.service hands the binary its harness (SPIRA_HOME)" \
+             "Environment=SPIRA_HOME=" "$(grep '^Environment=' "$_vd_svc" 2>/dev/null)"
     else
         bad "spira-verdict.service has an ExecStart line" "none found"
     fi
@@ -313,19 +315,8 @@ else
     bad "spira-verdict.service is readable" "not found at $_vd_svc"
 fi
 
-if [ -r "$_vd_driver" ]; then
-    _vd_src="$(cat "$_vd_driver")"
-    if [ -n "$_vd_src" ]; then
-        # POSITIVE CONTROL: a script sourcing nothing cannot call spira_repos or repo_land.
-        want "positive control: spira-verdict.sh sources lib.sh" "lib.sh" "$_vd_src"
-        want "spira-verdict.sh calls queue.sh step" 'queue.sh" step' "$_vd_src"
-        want "spira-verdict.sh iterates repos" "spira_repos" "$_vd_src"
-    else
-        bad "spira-verdict.sh is non-empty" "empty or unreadable"
-    fi
-else
-    bad "spira-verdict.sh is readable" "not found at $_vd_driver"
-fi
+# The step-every-queued-repository behaviour spira-verdict.sh carried is `queue step --all`
+# now; its per-repository order, lock and failure rules are `cargo test -p queue step_all_`.
 
 # ============================================================================
 echo

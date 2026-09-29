@@ -135,16 +135,23 @@ chmod +x "$STUB/systemctl"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB/loginctl"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB/spira-supervise"
 chmod +x "$STUB/systemctl" "$STUB/loginctl" "$STUB/spira-supervise"
+# The sentinel/queue/aeon units ExecStart @SPIRA_*_BIN@ (8e220de40), and install refuses a unit
+# whose target is not executable: no-op stubs, pinned below.
+for _b in sentinel queue aeon; do
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB/$_b"; chmod +x "$STUB/$_b"
+done; unset _b
 IHOME="$TMP/ihome"; mkdir -p "$IHOME"
 : > "$TMP/systemctl.log"
 printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PATH = %s\nSPIRA_PROD = %s\n' \
     "$RUN" "$ROOT/cockpit" "$MAN" "$STUB" "$HERE" > "$TMP/install.conf"
 env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_CONF="$TMP/install.conf" \
-    SPIRA_INSTALL_FORCE=1 SPIRA_HOME="$HERE" \
+    SPIRA_INSTALL_FORCE=1 SPIRA_HOME="$HERE" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
     "SPIRA_SUPERVISE_BIN=$STUB/spira-supervise" \
+    "SPIRA_SENTINEL_BIN=$STUB/sentinel" "SPIRA_QUEUE_BIN=$STUB/queue" "SPIRA_AEON_BIN=$STUB/aeon" \
     bash "$CLONE/systemd/install.sh" > "$TMP/install.out" 2>&1
 ilog="$(cat "$TMP/systemctl.log")"
 has "the install ran" "$ilog" "daemon-reload"
+case "$ilog" in *daemon-reload*) ;; *) tail -20 "$TMP/install.out" | sed 's/^/# install: /' ;; esac
 for pair in "spira-watch-notify-prod" "spira-watch-refresh-prod" \
             "spira-mail-tidy-prod"; do
     has   "$pair: install enabled its timer"        "$ilog" "enable --now $pair.timer"

@@ -55,6 +55,7 @@ DEST="$TMP/home/.config/systemd/user"
 RUN_DIR="$TMP/run"; MOCK_BIN="$TMP/mock-bin"
 DOLT_DATA="$TMP/dolt"; DB="$TMP/db"
 mkdir -p "$DEST" "$RUN_DIR" "$MOCK_BIN" "$DOLT_DATA" "$DB/.beads"
+install_fixture_stub_bins "$MOCK_BIN"   # sentinel/queue/aeon: the units' @SPIRA_*_BIN@
 printf 'listener:\n  port: 3307\n' > "$DOLT_DATA/dolt-server.yaml"
 LOG="$TMP/calls.log"; BD_TRIES="$TMP/bd-tries"
 
@@ -94,6 +95,7 @@ inst() {
         SPIRA_DOLT_DATA="$DOLT_DATA" SPIRA_TESTDB_DATA= SPIRA_DB="$DB" SPIRA_BD="$MOCK_BIN/bd" \
         SPIRA_RUN="$RUN_DIR" SPIRA_HOME="$HERE" SPIRA_PROD="$HERE" SPIRA_REPO="$FAKE_REPO" \
         SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_SUPERVISE_BIN="$MOCK_BIN/spira-supervise" \
+        SPIRA_SENTINEL_BIN="$MOCK_BIN/sentinel" SPIRA_QUEUE_BIN="$MOCK_BIN/queue" SPIRA_AEON_BIN="$MOCK_BIN/aeon" \
         SPIRA_INSTANCE=prod MOCK_INST=prod CALL_LOG="$LOG" BD_TRIES="$BD_TRIES" \
         BD_ANSWER_AFTER="${BD_ANSWER_AFTER:-0}" \
         SPIRA_INSTALL_FORCE=1 SPIRA_DRAIN_INTERVAL=0 \

@@ -16,7 +16,7 @@
 #
 # defect: sp-n3m6k
 # tier: T1
-# covers: spira/lib.sh spira/aeon.sh spira/conf.sh
+# covers: spira/lib.sh aeon/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -167,10 +167,7 @@ nowant "T5: the first recurrence's prose does not"        "Oldest unsent branch:
 
 # ===========================================================================================
 echo
-echo "T6: aeon.sh actually calls bound_bead_notes when it builds BEAD_BODY (delivery fence)"
+echo "T6: (retired with aeon.sh) the aeon binary bounds BEAD_BODY — cargo test -p aeon brief::tests::bead_body_is_bounded"
 # ===========================================================================================
-
-want "T6: aeon.sh's BEAD_BODY is passed through bound_bead_notes" \
-     'BEAD_BODY="$(bound_bead_notes' "$(cat "$HERE/aeon.sh")"
 
 tl_summary

@@ -771,7 +771,7 @@ land_escalate() {        # land_escalate <subject-tail> <evidence>
     [ -x "$SPIRA_HOME/mail.sh" ] || return 0
     echo "$now" > "$cd"
     local _subj="Spira is landing nothing — $why"
-    local _dflt="run \`$SPIRA_HOME/landing.sh\` by hand to see the failure, then file the fix as a bead"
+    local _dflt="run \`$SPIRA_LANDING_PASS_BIN land\` by hand to see the failure, then file the fix as a bead"
     "$SPIRA_HOME/mail.sh" send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
@@ -819,7 +819,7 @@ aeon_alive() {           # aeon_alive <pidfile> -> 0 if the recorded pid is a li
     # test that false-negatives lets the reaper rob an aeon that is still working
     # (law-no-grep-q-under-pipefail).
     local cmd; cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)"
-    grep -qF 'aeon.sh' <<< "$cmd" || return 1
+    grep -qE '(^|/)aeon( |$)|aeon\.sh' <<< "$cmd" || return 1
     return 0
 }
 
@@ -2570,7 +2570,7 @@ world_gate() {
 summon_refill_argv() {
     local bin; bin="$(command -v "${SPIRA_SUMMON:-systemd-run}" 2>/dev/null || printf '%s' "${SPIRA_SUMMON:-systemd-run}")"
     printf -- '--property=ExecStopPost=%s --user --collect --quiet %s --summon-only' \
-        "$bin" "$SPIRA_HOME/sentinel.sh"
+        "$bin" "${SPIRA_SENTINEL_BIN:-$(spira_bin sentinel 2>/dev/null)}"
 }
 
 # summon_argv <fayth> -> systemd-run --property/--setenv flags shared by every summon path
@@ -2722,12 +2722,13 @@ summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label]
     # 1.6s of CPU, leaving an empty log and a sentinel that cheerfully reported "summoned"
     # every two minutes. systemd-run puts the aeon in its own cgroup, quota and journal.
     log "CHECK7 $f: $r ready, $free free — summoning${require_label:+, restricted to '$require_label'}"
+    [ -x "${SPIRA_AEON_BIN:-}" ] || { log "CHECK7 $f: aeon binary not built (SPIRA_AEON_BIN) — not summoning"; return 1; }
     local _sargv; mapfile -t _sargv < <(summon_argv "$f")
     "${SPIRA_SUMMON:-systemd-run}" --user --collect --quiet \
         --unit="spira-aeon-$f-$(date +%s)" \
         "${_sargv[@]}" \
         ${require_label:+--setenv=SPIRA_REQUIRE_LABEL="$require_label"} \
-        "$SPIRA_HOME/aeon.sh" "$f" 2>/dev/null
+        "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$f" 2>/dev/null
     local _rc=$?
     [ "$_rc" -eq 0 ] && SUMMON_FAYTH_CACHED_READY=$(( r > 0 ? r - 1 : 0 ))
     return "$_rc"

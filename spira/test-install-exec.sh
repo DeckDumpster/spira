@@ -35,12 +35,13 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FIXTURE="$TMP/harness"
 mkdir -p "$FIXTURE/systemd" "$FIXTURE/spira"
 
-for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer; do
+for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer "$HERE/../systemd/"*.yaml; do
     [ -e "$f" ] || continue
     ln -s "$f" "$FIXTURE/systemd/$(basename "$f")"
 done
 ln -s "$HERE/../systemd/install.sh" "$FIXTURE/systemd/install.sh"
-for f in conf.sh watchd.sh lib.sh; do
+# lib.sh sources suite-covers.sh unconditionally; lifecycle-cert.sh is optional but real.
+for f in conf.sh watchd.sh lib.sh suite-covers.sh lifecycle-cert.sh; do
     [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
 done
 printf '# empty\n' > "$FIXTURE/spira/watchers"
@@ -75,9 +76,37 @@ chmod +x "$MOCK_BIN/spira-supervise"
 # inst [args] — run install.sh in a controlled environment.
 # TEST_PROD overrides SPIRA_PROD for the scenario under test; default is $HERE (all
 # ExecStart targets exist and are executable there).
+# THE PRODUCTION LAYOUT (the Rust cutover): units ExecStart <release>/bin/{sentinel,queue},
+# i.e. dirname(SPIRA_PROD)/bin, so the default SPIRA_PROD is a fixture release root whose
+# spira/ is this harness and whose bin/ holds executable stubs of those binaries.
+PRODROOT="$TMP/prodroot"
+mkdir -p "$PRODROOT/bin"
+ln -s "$HERE" "$PRODROOT/spira"
+# cockpit-ensure.service ExecStarts dirname(SPIRA_PROD)/cockpit/layout.sh (the COCKPIT PATH
+# case below): a release ships cockpit/ beside spira/, so the clean fixture release does too.
+ln -s "$REAL_COCKPIT" "$PRODROOT/cockpit"
+# concierge.service and beads-push.service ExecStart @SPIRA_PROD_ROOT@/<script>: same reason.
+for _s in concierge.sh beads-push.sh; do ln -s "$REAL_REPO/$_s" "$PRODROOT/$_s"; done; unset _s
+stub_release_bins() {   # stub_release_bins <release-root> [mode]
+    local b; mkdir -p "$1/bin"
+    for b in sentinel queue aeon; do
+        printf '#!/usr/bin/env bash\nexit 0\n' > "$1/bin/$b"
+        chmod "${2:-+x}" "$1/bin/$b"
+    done
+}
+stub_release_bins "$PRODROOT"
+
+# The sentinel, queue and aeon units ExecStart @SPIRA_*_BIN@ (8e220de40), which conf.sh
+# resolves from SPIRA_REPO's bin/. A release keeps bin/ beside its spira/ (= SPIRA_PROD), so
+# the fixture pins each binary to dirname(SPIRA_PROD)/bin — the stubs stub_release_bins
+# writes — and every scenario below still varies the whole release through TEST_PROD alone.
 inst() {
     > "$MOCK_LOG"
+    local _rel; _rel="$(dirname "${TEST_PROD:-$PRODROOT/spira}")"
     env -i \
+        "SPIRA_SENTINEL_BIN=$_rel/bin/sentinel" \
+        "SPIRA_QUEUE_BIN=$_rel/bin/queue" \
+        "SPIRA_AEON_BIN=$_rel/bin/aeon" \
         "PATH=$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
@@ -86,7 +115,7 @@ inst() {
         SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
         "SPIRA_RUN=$SPIRA_RUN_DIR" \
         "SPIRA_HOME=$HERE" \
-        "SPIRA_PROD=${TEST_PROD:-$HERE}" \
+        "SPIRA_PROD=${TEST_PROD:-$PRODROOT/spira}" \
         "SPIRA_REPO=$REAL_REPO" \
         "SPIRA_COCKPIT=$REAL_COCKPIT" \
         "SPIRA_SUPERVISE_BIN=$MOCK_BIN/spira-supervise" \
@@ -131,7 +160,7 @@ TEST_PROD="/no/such/spira/directory" \
 missing_out="$(TEST_PROD="/no/such/spira/directory" inst)"
 missing_rc=$?
 nonzero "missing: exit non-zero when ExecStart target does not exist" "$missing_rc"
-want    "missing: output names the bad path" "/no/such/spira/directory" "$missing_out"
+want    "missing: output names the bad path" "/no/such/spira" "$missing_out"
 want    "missing: output says 'not executable'" "not executable" "$missing_out"
 want    "missing: output names install as the reporter" "install:" "$missing_out"
 
@@ -141,9 +170,10 @@ echo "NON-EXECUTABLE TARGET — target exists but lacks +x:"
 # ==========================================================================
 
 # Build a prod directory with scripts that exist but are not executable.
-NOEXEC="$TMP/noexec-prod"
+NOEXEC="$TMP/noexec-root/spira"
 mkdir -p "$NOEXEC"
-for s in aeon.sh archive.sh archivist.sh cockpit.sh loom.sh sentinel.sh \
+stub_release_bins "$TMP/noexec-root" -x   # bin/sentinel etc. exist but lack +x too
+for s in aeon.sh archive.sh archivist.sh cockpit.sh loom.sh \
          skew.sh suites.sh watchd.sh watchtower.sh; do
     printf '#!/usr/bin/env bash\ntrue\n' > "$NOEXEC/$s"
     # Deliberately NOT chmod +x
@@ -153,7 +183,7 @@ TEST_PROD="$NOEXEC" \
 noexec_out="$(TEST_PROD="$NOEXEC" inst)"
 noexec_rc=$?
 nonzero "noexec: exit non-zero when ExecStart target exists but lacks +x" "$noexec_rc"
-want    "noexec: output names the non-executable script path" "$NOEXEC" "$noexec_out"
+want    "noexec: output names the non-executable script path" "$TMP/noexec-root" "$noexec_out"
 want    "noexec: output says 'not executable'" "not executable" "$noexec_out"
 
 # ==========================================================================
@@ -202,9 +232,9 @@ render_fb_out="$(
 )"
 render_fb_rc=$?
 iszero  "render fallback: --render exits 0 with empty SPIRA_PROD" "$render_fb_rc"
-# With the fallback, @SPIRA_PROD@ resolves to SPIRA_HOME ($HERE). Verify the
-# rendered sentinel ExecStart contains SPIRA_HOME, not a bare-slash path.
-want    "render fallback: sentinel ExecStart contains SPIRA_HOME" "ExecStart=$HERE/sentinel.sh" "$render_fb_out"
+# With the fallback, @SPIRA_PROD@ resolves to SPIRA_HOME ($HERE), so the sentinel binary is
+# dirname(SPIRA_HOME)/bin/sentinel — a real path, not a bare-slash one.
+want    "render fallback: sentinel ExecStart derives from SPIRA_HOME" "ExecStart=$(dirname "$HERE")/bin/sentinel" "$render_fb_out"
 
 # ==========================================================================
 echo
@@ -224,17 +254,20 @@ _tarball_tmp="$TMP/tarball-unpack"
 _tarball_stem="spira-20260901T000000Z"
 _tarball_root="$_tarball_tmp/$_tarball_stem"
 mkdir -p "$_tarball_root"
-if tar -C "$REAL_REPO" --exclude='.git' -cf - . 2>/dev/null | tar -x -C "$_tarball_root" 2>/dev/null; then
+# target/ is the build tree testenv compiles in place (with lock files this user cannot
+# read); it is never part of a release, so it is not part of this one either.
+if tar -C "$REAL_REPO" --exclude='.git' --exclude='./target' -cf - . 2>/dev/null | tar -x -C "$_tarball_root" 2>/dev/null; then
     # FAIL-FIRST: wrong SPIRA_PROD (the release root, without /spira).
     # install.sh looks for sentinel.sh in the wrong place and refuses.
     _tb_fail="$(TEST_PROD="$_tarball_root" inst)"
     _tb_fail_rc=$?
     nonzero "tarball/fail-first: SPIRA_PROD=<release> (missing /spira) → exits non-zero" "$_tb_fail_rc"
-    want    "tarball/fail-first: output names the bad path" "$_tarball_root" "$_tb_fail"
+    want    "tarball/fail-first: output names the bad path" "$_tarball_tmp" "$_tb_fail"
     want    "tarball/fail-first: output says not executable" "not executable" "$_tb_fail"
 
     # Correct SPIRA_PROD — all scripts under <release>/spira/ are executable
-    # because git preserves the +x bit from the tree.
+    # because git preserves the +x bit from the tree; a release also ships bin/.
+    stub_release_bins "$_tarball_root"
     _tb_ok="$(TEST_PROD="$_tarball_root/spira" inst)"
     _tb_ok_rc=$?
     iszero  "tarball/correct: SPIRA_PROD=<release>/spira → install.sh exits 0" "$_tb_ok_rc"

@@ -97,11 +97,13 @@ cat >> "$MAIL_LOG"
 MAIL
 chmod +x "$SH/mail.sh"
 
-cat > "$SH/suites.sh" <<'SUITES'
+cat > "$SH/testenv-stub" <<'SUITES'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$SUITES_LOG"
 SUITES
-chmod +x "$SH/suites.sh"
+chmod +x "$SH/testenv-stub"
+# testenv suites observe-flake is the binary now (testenv/DESIGN-suites.md §9 rows 3-4).
+export SPIRA_TESTENV_BIN="$SH/testenv-stub"
 
 verdict() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \

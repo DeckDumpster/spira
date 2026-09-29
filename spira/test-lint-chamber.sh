@@ -9,7 +9,7 @@
 # checks, same positive controls, run on their own.
 #
 # tier: T0
-# covers: spira/chamber/*.md spira/chamber/*.fayth spira/aeon.sh spira/lib.sh UC-safety-fences-33
+# covers: spira/chamber/*.md spira/chamber/*.fayth aeon/src/run.rs aeon/src/brief.rs spira/lib.sh UC-safety-fences-33
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -47,8 +47,11 @@ unfilled() {                    # unfilled <brief> <filler> -> the placeholders 
         # a whole `bd show` and would take a sed script apart on the first slash in it.
         # `grep -F`, because the second form is written with backslash-escaped braces and
         # every regex dialect reads those as something else.
+        # A THIRD FORM for the aeon binary: its token table names each key as a Rust
+        # string, `("KEY", …)` (aeon/src/run.rs, aeon/src/brief.rs).
         grep -qF "{{$key}}" "$filler" \
           || grep -qF "\\{\\{$key\\}\\}" "$filler" \
+          || grep -qF "(\"$key\"" "$filler" \
           || missing="$missing $ph"
     done
     printf '%s' "$missing"
@@ -58,11 +61,15 @@ unfilled() {                    # unfilled <brief> <filler> -> the placeholders 
 # and a matcher pointed at the wrong file finds nothing too — so it is made to name a planted
 # offender before its silence is worth anything (law-absence-needs-a-positive-control).
 PLANT="$(mktemp -d)"
+# THE AEON'S FILLER is the aeon binary's source (aeon.sh is gone): its token table in run.rs
+# and the block tokens in brief.rs, read as one file.
+AEON_FILLER="$(mktemp)"; trap 'rm -f "$AEON_FILLER"' EXIT
+cat "$HERE/../aeon/src/run.rs" "$HERE/../aeon/src/brief.rs" > "$AEON_FILLER" 2>/dev/null
 printf 'write to {{NOWHERE}}, and also {{DB}}\n' > "$PLANT/planted.md"
 want   "the placeholder check can see an unfilled one" "{{NOWHERE}}" \
-       "$(unfilled "$PLANT/planted.md" "$HERE/aeon.sh")"
+       "$(unfilled "$PLANT/planted.md" "$AEON_FILLER")"
 nowant "and does not accuse one that is filled"        "{{DB}}" \
-       "$(unfilled "$PLANT/planted.md" "$HERE/aeon.sh")"
+       "$(unfilled "$PLANT/planted.md" "$AEON_FILLER")"
 
 # {{DEADLINE}} IS NAMED HERE rather than left to the loop below, because it is the one
 # placeholder that fails silently in both directions. Unfilled, the Ops aeon is told it dies
@@ -75,8 +82,8 @@ nowant "and does not accuse one that is filled"        "{{DB}}" \
 printf 'this session is killed at {{DEADLINE}}\n' > "$PLANT/deadline.md"
 want "an unfilled {{DEADLINE}} fails this suite" "{{DEADLINE}}" \
      "$(unfilled "$PLANT/deadline.md" "$PLANT/nofiller.sh")"
-is   "and aeon.sh is a filler that fills it"     "" \
-     "$(unfilled "$PLANT/deadline.md" "$HERE/aeon.sh")"
+is   "and the aeon binary is a filler that fills it" "" \
+     "$(unfilled "$PLANT/deadline.md" "$AEON_FILLER")"
 rm -rf "$PLANT"
 
 for f in "$HERE"/chamber/*.md; do
@@ -85,7 +92,7 @@ for f in "$HERE"/chamber/*.md; do
     [ -f "$HERE/chamber/$n.fayth" ] && summon="$(sed -n 's/^FAYTH_SUMMON=//p' "$HERE/chamber/$n.fayth" | tr -d '"' | tail -1)"
     [ -n "$summon" ] || summon=auto
     if [ -f "$HERE/chamber/$n.fayth" ] && [ "$summon" = auto ]; then
-        filler="$HERE/aeon.sh"
+        filler="$AEON_FILLER"
     elif [ -f "$HERE/$n.sh" ]; then
         filler="$HERE/$n.sh"
     else
@@ -124,7 +131,7 @@ for f in "$HERE"/chamber/*.md; do
     done < <(
         sed -e "s|{{SOP}}|$HERE/sop.sh|g" -e "s|{{INCIDENT}}|$HERE/incident.sh|g" \
             -e "s|{{ASK}}|$HERE/mail.sh|g" \
-            -e "s|{{SUITES}}|$HERE/suites.sh|g" "$f" |
+            -e "s|{{SUITES}}|testenv suites|g" "$f" |
         grep -oE '(^|[`( ])/[A-Za-z0-9_./-]+\.sh' | tr -d '`( ' | sort -u
     )
     is "every command $n.md names exists and is executable" "" "$missing"

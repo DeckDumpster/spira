@@ -34,7 +34,7 @@
 #
 # defect: sp-cross-repo
 # tier: T2
-# covers: spira/aeon.sh spira/lib.sh
+# covers: aeon/src/* spira/lib.sh
 # hermetic-ok: uses a fixture database, local git repos only, no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -104,8 +104,8 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' \
 # SPIRA_AGENT IS THE INJECTION POINT. The guard below ensures the real model can never
 # run accidentally — conf.sh replaces PATH, so shimming via PATH alone would not reach it.
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP SPIRA_DB
-grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
-    || { echo "test-cross-repo: aeon.sh has no SPIRA_AGENT injection point — refusing to run real model" >&2; exit 1; }
+[ -x "${SPIRA_AEON_BIN:-}" ] \
+    || { echo "test-cross-repo: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run real model" >&2; exit 1; }
 
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
@@ -138,7 +138,7 @@ print(d[0].get("status") or "")'; }
 
 run_aeon() { rm -rf "$SPIRA_RUN/worktree"; \
     SPIRA_REPO="$HOME_REPO" SPIRA_HOME_REPO=home \
-    "$SPIRA_HOME/aeon.sh" builder > "$TMP/aeon.out" 2>&1; }
+    "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/aeon.out" 2>&1; }
 
 seed() {
     testdb_reset

@@ -18,10 +18,14 @@
 # write the sidecar and case B fails (gate passes fences-only, oblivious to the red).
 #
 # tier: T1
-# covers: spira/queue.sh spira/lib.sh spira/batch.sh
+# covers: queue/src/* spira/lib.sh spira/batch.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
+# test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
+QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
+[ -x "$QUEUE_BIN" ] || { echo "FAIL: the queue binary is not built at $QUEUE_BIN"; exit 1; }
 
 echo "test-withdrawn-suites-recert.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -29,9 +33,9 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 
 REPO="$TMP/repo"; RUN="$TMP/run"; SH="$TMP/spira"
 mkdir -p "$RUN/worktree" "$RUN/landstate" "$RUN/queue/fixq" "$SH"
-cp "$HERE/queue.sh" "$HERE/gate.sh" "$HERE/gate-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
+cp "$HERE/gate.sh" "$HERE/gate-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
    "$HERE/exclude.sh" "$HERE/skew.sh" "$HERE/yield.sh" "$HERE/suite-covers.sh" \
-   "$HERE/gate-sweep.sh" "$SH/"
+   "$HERE/gate-sweep.sh" "$HERE/lc.sh" "$SH/"
 
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
@@ -68,7 +72,7 @@ submit() {
         SPIRA_REPO_MAP="$RMAP" \
         SPIRA_QUEUE_DIR="$RUN/queue" \
         SPIRA_CERTIFY_SUITES=off \
-        bash "$SH/queue.sh" submit spira/sp-wsx 2>&1
+        SPIRA_HOME="$SH" "$QUEUE_BIN" submit spira/sp-wsx 2>&1
 }
 
 echo

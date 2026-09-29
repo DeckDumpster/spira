@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-gate-ci-diag.sh — gate-diag.sh emits FAIL lines, annotations, and summary.
 # tier: T1
-# covers: spira/gate-diag.sh .github/workflows/gate.yml spira/testenv-batch.sh
+# covers: spira/gate-diag.sh .github/workflows/gate.yml testenv/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

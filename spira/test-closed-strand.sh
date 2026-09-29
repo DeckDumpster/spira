@@ -16,10 +16,13 @@
 #      and SP_CERT_N (within cert window). A bead closed 5 minutes ago counts as
 #      awaiting cert, not stranded.
 #
-# covers: spira/landing.sh spira/lib.sh spira/cockpit.sh cockpit/health.sh
+# covers: landing-pass/* spira/lib.sh spira/cockpit.sh cockpit/health.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+# THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
+# pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
+LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -39,11 +42,17 @@ git -C "$REPO" fetch -q origin
 git -C "$REPO" remote set-head origin main
 mkdir -p "$RUN/worktree" "$RUN/landstate" "$SH/chamber"
 
-cp "$HERE/landing.sh" "$HERE/landing-lib.sh" "$HERE/sentinel.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
+cp "$HERE/lc.sh" "$HERE/lifecycle-cert.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
    "$HERE/incident.sh" "$HERE/skew.sh" "$HERE/sending.sh" "$HERE/suite-covers.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub pilgrimage.sh 'exit 0'
-stub strand.sh     'exit 0'
+stub strand        'exit 0'
+# THE RUST SENTINEL (sentinel.sh is gone): the binaries are resolved as conf.sh's spira_bin
+# resolves them for THIS tree, and passed explicitly, because the fixture's own SPIRA_REPO is
+# not the tree that built them.
+_rbin() { SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin "$2" 2>/dev/null' _ "$HERE" "$1"; }
+SENTINEL_BIN="${SPIRA_SENTINEL_BIN:-$(_rbin sentinel)}"
+export SPIRA_CLAIM_BIN="${SPIRA_CLAIM_BIN:-$(_rbin spira-claim)}"
 stub sending.sh    'exit 0'
 stub reflect.sh    'exit 0'
 stub gate.sh       'echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2; exit 0'
@@ -70,8 +79,8 @@ sentinel() {
     SPIRA_GOAL=sp-goal SPIRA_FAYTHS="t" SPIRA_INFERENCE_EVERY=999999 \
     SPIRA_NOTIFY="$SH/ask.sh" SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
-    SPIRA_CONF="$TMP/no.conf" \
-        bash "$SH/sentinel.sh" 2>&1
+    SPIRA_CONF="$TMP/no.conf" SPIRA_STRAND_BIN="$SH/strand" \
+        "$SENTINEL_BIN" 2>&1
 }
 
 landing() {
@@ -80,7 +89,7 @@ landing() {
     SPIRA_HOME_REPO="$REPONAME" \
     SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
     SPIRA_CONF="$TMP/no.conf" \
-        bash "$SH/landing.sh" 2>&1
+        "$LANDING_PASS_BIN" land 2>&1
 }
 
 PAST="2026-09-01T00:00:00Z"

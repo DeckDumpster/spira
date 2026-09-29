@@ -1,0 +1,298 @@
+//! Every knob the runner reads (DESIGN.md §2.5): the environment first (a caller's explicit
+//! per-run override), then spira.toml through the spira-config library, then the default.
+//! testenv never parses spira.toml or the repo-map itself.
+
+use spira_config::SpiraToml;
+use std::path::{Path, PathBuf};
+
+pub struct Source<'a> {
+    pub env: &'a dyn Fn(&str) -> Option<String>,
+    pub config: Option<&'a SpiraToml>,
+}
+
+impl Source<'_> {
+    /// Non-empty environment value, else the config path's value.
+    pub fn get(&self, env: &str, config_path: Option<&str>) -> Option<String> {
+        if let Some(v) = (self.env)(env).filter(|v| !v.is_empty()) {
+            return Some(v);
+        }
+        let doc = self.config?;
+        spira_config::get_path(doc, config_path?).filter(|v| !v.is_empty())
+    }
+
+    /// Set at all in the environment, even empty (SPIRA_BATCH_SKIP_INSTALL semantics differ).
+    pub fn env_raw(&self, env: &str) -> Option<String> {
+        (self.env)(env)
+    }
+
+    fn num<T: std::str::FromStr>(&self, env: &str, cfg: Option<&str>) -> Option<T> {
+        self.get(env, cfg).and_then(|v| v.trim().parse().ok())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Settings {
+    pub run: PathBuf,
+    pub results_root: PathBuf,
+    pub verdicts: PathBuf,
+    pub verdict_ttl: u64,
+    pub repeat_reason: Option<String>,
+    /// 0 disables.
+    pub suite_timeout: u64,
+    pub maxpar_requested: Option<i64>,
+    pub maxpar_ceiling: Option<u32>,
+    pub mem_reserve_mib: i64,
+    pub mem_per_suite_mib: i64,
+    pub mem_avail_mib: Option<i64>,
+    /// 0 disables.
+    pub psi_threshold: f64,
+    pub orphan_min_age: u64,
+    pub orphan_prefix: String,
+    pub peak_warn_frac: u64,
+    pub exec_fault_threshold: usize,
+    pub liveness_retries: u32,
+    pub liveness_sleep: u64,
+    pub instance: Option<String>,
+    pub suite_dir: Option<PathBuf>,
+    pub skip_install: bool,
+    pub tiers: String,
+    pub mail_cmd: Option<PathBuf>,
+    pub incident_cmd: Option<PathBuf>,
+    pub suite_state_file: String,
+    pub select_head: Option<String>,
+    pub round_batch_id: Option<String>,
+    pub round_members: u64,
+    pub run_id: String,
+    pub scratch_slots: usize,
+    pub landing_containers: Option<PathBuf>,
+    pub spira_db: Option<String>,
+}
+
+/// SPIRA_RUN as conf.sh derives it when neither the environment nor the config sets it.
+pub fn derive_run(repo: &Path, instance: &str, env: &dyn Fn(&str) -> Option<String>) -> PathBuf {
+    let sfx = if instance.is_empty() || instance == "prod" {
+        String::new()
+    } else {
+        format!("-{instance}")
+    };
+    let writable = std::fs::metadata(repo)
+        .map(|m| !m.permissions().readonly())
+        .unwrap_or(false);
+    if writable {
+        return repo.join(".runtime").join(format!("spira{sfx}"));
+    }
+    let data = env("XDG_DATA_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env("HOME").unwrap_or_default()).join(".local/share"));
+    data.join(format!("spira{sfx}")).join("run")
+}
+
+impl Settings {
+    /// `harness_repo` is where SPIRA_RUN is derived from when nothing sets it (conf.sh's
+    /// SPIRA_REPO); `now` names a local run.
+    pub fn load(src: &Source, harness_repo: &Path, now: u64) -> Settings {
+        let instance = src
+            .get("SPIRA_INSTANCE", Some("spira.instance"))
+            .unwrap_or_else(|| "prod".into());
+        let run = src
+            .get("SPIRA_RUN", Some("spira.run"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                let repo = src
+                    .get("SPIRA_REPO", None)
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| harness_repo.to_path_buf());
+                derive_run(&repo, &instance, src.env)
+            });
+        let path = |env: &str| src.get(env, None).map(PathBuf::from);
+        Settings {
+            results_root: path("SPIRA_BATCH_RESULTS").unwrap_or_else(|| run.join("batch-results")),
+            verdicts: path("SPIRA_VERDICTS").unwrap_or_else(|| run.join("verdicts")),
+            verdict_ttl: src
+                .num("SPIRA_VERDICT_TTL", Some("spira.verdict_ttl"))
+                .unwrap_or(86_400),
+            repeat_reason: src.get("SPIRA_VERDICT_REPEAT_CONSIDERED", None),
+            suite_timeout: src
+                .num("SPIRA_SUITE_TIMEOUT", Some("spira.suite_timeout"))
+                .unwrap_or(600),
+            maxpar_requested: src.num("SPIRA_BATCH_MAXPAR", Some("spira.batch_maxpar")),
+            maxpar_ceiling: src.num(
+                "SPIRA_BATCH_MAXPAR_CEILING",
+                Some("spira.batch_maxpar_ceiling"),
+            ),
+            mem_reserve_mib: src
+                .num(
+                    "SPIRA_BATCH_MEM_RESERVE_MIB",
+                    Some("spira.batch_mem_reserve_mib"),
+                )
+                .unwrap_or(1024),
+            mem_per_suite_mib: src
+                .num(
+                    "SPIRA_BATCH_MEM_PER_SUITE_MIB",
+                    Some("spira.batch_mem_per_suite_mib"),
+                )
+                .unwrap_or(192),
+            mem_avail_mib: src.num(
+                "SPIRA_BATCH_MEM_AVAIL_MIB",
+                Some("spira.batch_mem_avail_mib"),
+            ),
+            psi_threshold: src
+                .num(
+                    "SPIRA_BATCH_PSI_THRESHOLD",
+                    Some("spira.batch_psi_threshold"),
+                )
+                .unwrap_or(10.0),
+            orphan_min_age: src
+                .num(
+                    "SPIRA_BATCH_ORPHAN_MIN_AGE",
+                    Some("spira.batch_orphan_min_age"),
+                )
+                .unwrap_or(3600),
+            orphan_prefix: src
+                .get("SPIRA_BATCH_ORPHAN_PREFIX", None)
+                .unwrap_or_else(|| "spira-batch-".into()),
+            peak_warn_frac: src
+                .num(
+                    "SPIRA_BATCH_PEAK_WARN_FRAC",
+                    Some("spira.batch_peak_warn_frac"),
+                )
+                .unwrap_or(60),
+            exec_fault_threshold: src
+                .num("SPIRA_BATCH_EXEC_FAULT_THRESHOLD", None)
+                .unwrap_or(5)
+                .max(1),
+            liveness_retries: src
+                .num("SPIRA_BATCH_LIVENESS_RETRIES", None)
+                .unwrap_or(3)
+                .max(1),
+            liveness_sleep: src.num("SPIRA_BATCH_LIVENESS_SLEEP", None).unwrap_or(3),
+            instance: src.get("SPIRA_BATCH_INSTANCE", None),
+            suite_dir: path("SPIRA_BATCH_SUITE_DIR"),
+            skip_install: src
+                .env_raw("SPIRA_BATCH_SKIP_INSTALL")
+                .is_some_and(|v| !v.is_empty()),
+            tiers: src
+                .get("SPIRA_BATCH_TIERS", None)
+                .unwrap_or_else(|| "T2,T3".into()),
+            mail_cmd: path("SPIRA_BATCH_MAIL_CMD"),
+            incident_cmd: path("SPIRA_BATCH_INCIDENT_CMD"),
+            suite_state_file: src
+                .get("SPIRA_SUITE_STATE_FILE", None)
+                .unwrap_or_else(|| "spira/suite-state".into()),
+            select_head: src.get("SPIRA_GATE_SELECT_HEAD", None),
+            round_batch_id: src.get("SPIRA_ROUND_BATCH_ID", None),
+            round_members: src.num("SPIRA_ROUND_MEMBERS", None).unwrap_or(0),
+            run_id: src
+                .get("GITHUB_RUN_ID", None)
+                .or_else(|| src.get("SPIRA_BATCH_RUN_ID", None))
+                .unwrap_or_else(|| format!("local-{now}")),
+            scratch_slots: src.num("SPIRA_TESTENV_SCRATCH_SLOTS", None).unwrap_or(4),
+            landing_containers: path("SPIRA_LANDING_CONTAINERS"),
+            spira_db: src.get("SPIRA_DB", Some("spira.db")),
+            run,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn load(env: &[(&str, &str)], cfg: Option<&SpiraToml>) -> Settings {
+        let m: HashMap<String, String> = env
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let f = move |k: &str| m.get(k).cloned();
+        let src = Source {
+            env: &f,
+            config: cfg,
+        };
+        Settings::load(&src, Path::new("/nonexistent-harness"), 1000)
+    }
+
+    #[test]
+    fn defaults_follow_testenv_batch() {
+        let s = load(&[("SPIRA_RUN", "/r"), ("HOME", "/h")], None);
+        assert_eq!(s.results_root, PathBuf::from("/r/batch-results"));
+        assert_eq!(s.verdicts, PathBuf::from("/r/verdicts"));
+        assert_eq!((s.verdict_ttl, s.suite_timeout), (86_400, 600));
+        assert_eq!(
+            (s.mem_reserve_mib, s.mem_per_suite_mib, s.peak_warn_frac),
+            (1024, 192, 60)
+        );
+        assert_eq!(s.orphan_prefix, "spira-batch-");
+        assert_eq!(s.tiers, "T2,T3");
+        assert_eq!(s.run_id, "local-1000");
+        assert!(!s.skip_install);
+        assert_eq!(s.suite_state_file, "spira/suite-state");
+    }
+
+    #[test]
+    fn env_beats_config_and_config_beats_default() {
+        let doc = spira_config::validate(
+            "[spira]\nsuite_timeout = \"900\"\nbatch_maxpar = 12\nverdict_ttl = 60\n",
+        )
+        .unwrap();
+        let s = load(&[("SPIRA_RUN", "/r")], Some(&doc));
+        assert_eq!(s.suite_timeout, 900);
+        assert_eq!(s.maxpar_requested, Some(12));
+        assert_eq!(s.verdict_ttl, 60);
+        let s = load(
+            &[
+                ("SPIRA_RUN", "/r"),
+                ("SPIRA_BATCH_MAXPAR", "16"),
+                ("SPIRA_SUITE_TIMEOUT", "0"),
+            ],
+            Some(&doc),
+        );
+        assert_eq!(s.maxpar_requested, Some(16));
+        assert_eq!(s.suite_timeout, 0);
+    }
+
+    #[test]
+    fn run_id_prefers_github_then_explicit() {
+        assert_eq!(
+            load(
+                &[
+                    ("SPIRA_RUN", "/r"),
+                    ("GITHUB_RUN_ID", "77"),
+                    ("SPIRA_BATCH_RUN_ID", "x")
+                ],
+                None
+            )
+            .run_id,
+            "77"
+        );
+        assert_eq!(
+            load(&[("SPIRA_RUN", "/r"), ("SPIRA_BATCH_RUN_ID", "x")], None).run_id,
+            "x"
+        );
+    }
+
+    #[test]
+    fn run_derivation_uses_xdg_for_an_unwritable_repo_and_suffixes_instances() {
+        let s = load(&[("XDG_DATA_HOME", "/x"), ("SPIRA_INSTANCE", "t1")], None);
+        assert_eq!(s.run, PathBuf::from("/x/spira-t1/run"));
+    }
+
+    #[test]
+    fn skip_install_needs_a_non_empty_value() {
+        assert!(
+            load(
+                &[("SPIRA_RUN", "/r"), ("SPIRA_BATCH_SKIP_INSTALL", "1")],
+                None
+            )
+            .skip_install
+        );
+        assert!(
+            !load(
+                &[("SPIRA_RUN", "/r"), ("SPIRA_BATCH_SKIP_INSTALL", "")],
+                None
+            )
+            .skip_install
+        );
+    }
+}

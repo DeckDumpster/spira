@@ -27,7 +27,7 @@
 #   SPIRA_LAUNCH — replaces systemd-run for sentinel's CHECK 6 (landing
 #     dispatch). The stage writes fake-launch.sh here; it records the dispatch
 #     timestamp (keeping sentinel's staleness accounting correct) and exits 0.
-#     canary.sh runs landing.sh directly when it wants a landing pass.
+#     canary.sh runs `landing-pass land` directly when it wants a landing pass.
 #
 # covers: spira/stage.sh spira/canary.sh
 set -uo pipefail
@@ -145,13 +145,13 @@ SCRIPT
 
     # ---- fake-launch.sh (SPIRA_LAUNCH) --------------------------------------
     # Sentinel's CHECK 6 calls:
-    #   ${SPIRA_LAUNCH} --user --collect --quiet --unit=... --setenv=... landing.sh
+    #   ${SPIRA_LAUNCH} --user --collect --quiet --unit=... --setenv=... landing-pass land
     # We record the dispatch timestamp (so sentinel's staleness checks work)
-    # and exit 0. canary.sh runs landing.sh directly when it wants a landing pass.
+    # and exit 0. canary.sh runs `landing-pass land` directly when it wants a landing pass.
     cat > "$sh/fake-launch.sh" <<'SCRIPT'
 #!/usr/bin/env bash
 # Replaces systemd-run for sentinel CHECK 6. Records dispatch, exits 0.
-# canary.sh drives landing.sh directly.
+# canary.sh drives `landing-pass land` directly.
 [ -n "${SPIRA_RUN:-}" ] && date +%s > "$SPIRA_RUN/landing.dispatched"
 exit 0
 SCRIPT

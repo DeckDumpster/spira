@@ -24,7 +24,7 @@
 #
 # defect: sp-n1ilm
 # tier: T2
-# covers: spira/lc-delivery.sh spira/pr-pass-branch.sh spira/landing.sh landing-pass/* lifecycle/* spira-lc/*
+# covers: spira/lc-delivery.sh spira/pr-pass-branch.sh landing-pass/* lifecycle/* spira-lc/*
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -47,7 +47,7 @@ TMP="$(mktemp -d)"
 # leaving conf.sh to guess at a real installed copy's target/release (law-gates-run-in-a-clean-environment).
 SH="$TMP/spira"
 mkdir -p "$SH"
-cp "$HERE"/lib.sh "$HERE"/conf.sh "$HERE"/deps.toml "$HERE"/landing-lib.sh "$HERE"/lc-delivery.sh \
+cp "$HERE"/lib.sh "$HERE"/conf.sh "$HERE"/deps.toml "$HERE"/lc-delivery.sh \
    "$HERE"/suite-covers.sh "$SH/" 2>/dev/null
 
 SPIRA_HOME="$SH"

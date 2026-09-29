@@ -12,10 +12,14 @@
 # byte" or "a mismatch is reported and nothing was deployed".
 #
 # tier: T1
-# covers: spira/queue.sh spira/build-tarball.sh spira/activate.sh spira/skew.sh spira/lib.sh
+# covers: queue/src/* spira/build-tarball.sh spira/activate.sh spira/skew.sh spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
+# test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
+QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
+[ -x "$QUEUE_BIN" ] || { echo "FAIL: the queue binary is not built at $QUEUE_BIN"; exit 1; }
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -108,7 +112,7 @@ run_q() {
     SPIRA_RELEASES="$RELEASES" \
     SPIRA_SYSTEMCTL="$MOCK_SC" \
     MOCK_AEONS="${MOCK_AEONS:-}" \
-        bash "$SH/queue.sh" "$@" 2>&1
+        SPIRA_HOME="$SH" "$QUEUE_BIN" "$@" 2>&1
 }
 run_skew() {
     MAIL_BODY_FILE="$MAIL_BODY_FILE" \
@@ -136,10 +140,18 @@ mk_round() {
     printf '%s' "$head"
 }
 # mk_bins <head> <content> -> populate the --with-bins corpus for <head>'s own tree.
-mk_bins() {
-    local head="$1" content="$2" tree dir
+# The round worktree queue land-local reads (--worktree, queue/DESIGN.md §8 D2/D3): one
+# detached worktree per tree, at <head>; its target/release is the round's own build.
+bins_wt() {   # bins_wt <head> -> the round worktree for <head>'s tree (created on first use)
+    local head="$1" tree wt
     tree="$(git -C "$REPO" rev-parse "${head}^{tree}")"
-    dir="$RUN/cargo-target-bins/$tree/release"
+    wt="$TMP/round-wt/$tree"
+    [ -d "$wt" ] || git -C "$REPO" worktree add -q --detach "$wt" "$head" >/dev/null 2>&1
+    printf '%s' "$wt"
+}
+mk_bins() {   # mk_bins <head> <content> -> the round's own release build in its worktree
+    local head="$1" content="$2" dir
+    dir="$(bins_wt "$head")/target/release"
     mkdir -p "$dir"
     printf '%s' "$content" > "$dir/fakebin"
     chmod +x "$dir/fakebin"
@@ -170,7 +182,7 @@ seed sp-lrel1
 PRE_MAIN="$(localmain)"
 HEAD1="$(mk_round round-1 one.txt v1)"
 
-out="$(run_q land-local fixq --head "$HEAD1" --members "sp-lrel1:$HEAD1")"; rc=$?
+out="$(run_q land-local fixq --head "$HEAD1" --members "sp-lrel1:$HEAD1" --worktree "$(bins_wt "$HEAD1")")"; rc=$?
 [ "$rc" -ne 0 ] && ok "1: exit non-zero with no corpus for the round's tree" \
     || bad "1: exit non-zero with no corpus for the round's tree" "got rc=$rc out=$out"
 want "1: names the missing corpus"       "no built binaries" "$out"
@@ -184,7 +196,7 @@ echo "2 — the same head, corpus now built: packages, activates, lands"
 # ============================================================================
 mk_bins "$HEAD1" v1-binary
 
-out="$(run_q land-local fixq --head "$HEAD1" --members "sp-lrel1:$HEAD1")"; rc=$?
+out="$(run_q land-local fixq --head "$HEAD1" --members "sp-lrel1:$HEAD1" --worktree "$(bins_wt "$HEAD1")")"; rc=$?
 [ "$rc" -eq 0 ] && ok "2: exit 0 once the corpus exists" \
     || bad "2: exit 0 once the corpus exists" "got rc=$rc out=$out"
 want "2: reports the activated release" "activated spira-$HEAD1" "$out"
@@ -204,7 +216,7 @@ seed sp-lrel3
 HEAD2="$(mk_round round-2 two.txt v2)"
 mk_bins "$HEAD2" v2-binary
 
-out="$(run_q land-local fixq --head "$HEAD2" --members "sp-lrel3:$HEAD2")"; rc=$?
+out="$(run_q land-local fixq --head "$HEAD2" --members "sp-lrel3:$HEAD2" --worktree "$(bins_wt "$HEAD2")")"; rc=$?
 [ "$rc" -eq 0 ] && ok "3: second round lands" || bad "3: second round lands" "got rc=$rc out=$out"
 is   "3: current advances to the second round's release" "spira-$HEAD2" "$(current_name)"
 is   "3: bin/fakebin is the second round's own corpus" \
@@ -317,7 +329,7 @@ HEAD8="$(mk_round round-8 eight.txt v8)"
 mk_bins "$HEAD8" v8-binary
 export MOCK_AEONS="spira-aeon-abc-prod.service"
 
-out="$(run_q land-local fixq --head "$HEAD8" --members "sp-lrel8:$HEAD8")"; rc=$?
+out="$(run_q land-local fixq --head "$HEAD8" --members "sp-lrel8:$HEAD8" --worktree "$(bins_wt "$HEAD8")")"; rc=$?
 unset MOCK_AEONS
 [ "$rc" -eq 0 ] && ok "8: exit 0 despite live aeons — skipped, not refused" \
     || bad "8: exit 0 despite live aeons — skipped, not refused" "got rc=$rc out=$out"
@@ -340,7 +352,7 @@ HEAD9="$(mk_round round-9 nine.txt v9)"
 mk_bins "$HEAD9" v9-binary
 export MOCK_AEONS="spira-aeon-abc-prod.service"
 
-out="$(run_q land-local fixq --head "$HEAD9" --members "sp-lrel9:$HEAD9")"; rc=$?
+out="$(run_q land-local fixq --head "$HEAD9" --members "sp-lrel9:$HEAD9" --worktree "$(bins_wt "$HEAD9")")"; rc=$?
 unset MOCK_AEONS
 [ "$rc" -eq 0 ] && ok "9: exit 0 — the release step runs despite live aeons" \
     || bad "9: exit 0 — the release step runs despite live aeons" "got rc=$rc out=$out"

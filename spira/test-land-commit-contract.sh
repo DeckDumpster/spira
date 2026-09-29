@@ -12,7 +12,7 @@
 # CLOSED != LANDED (law-closed-is-not-landed) depends on them agreeing.
 #
 # tier: T2
-# covers: spira/lib.sh spira/gh-issue-backfill.sh spira/batch.sh spira/verdict.sh spira/landing.sh
+# covers: spira/lib.sh spira/gh-issue-backfill.sh spira/batch.sh spira/verdict.sh landing-pass/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"

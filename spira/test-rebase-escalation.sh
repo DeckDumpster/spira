@@ -26,7 +26,7 @@
 # assertion exercises the actual mechanism that would file one (mail.sh's own kind==question
 # tracking-bead logic), rather than a hand-written model of it.
 #
-# covers: spira/lib.sh spira/landing.sh spira/mail.sh
+# covers: spira/lib.sh landing-pass/src/* spira/mail.sh
 # hermetic-ok: uses a fixture database and a fixture SPIRA_MAIL dir, no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

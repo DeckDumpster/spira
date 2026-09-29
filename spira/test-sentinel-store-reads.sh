@@ -20,7 +20,7 @@
 # the output identical.
 #
 # defect: sp-bo67y
-# covers: spira/lib.sh spira/strand.sh spira/sentinel.sh
+# covers: spira/lib.sh strand/src/* sentinel/src/*
 # hermetic-ok: uses a fixture database; bd calls counted through a logging SPIRA_BD shim;
 #              the real chamber (spira/chamber/*.fayth) supplies more than one partition so
 #              the per-partition fan-out this bead removes is genuinely exercised
@@ -241,7 +241,8 @@ case "$no_wait" in *"$WAIT"*) bad "6b: out-of-scope bead must not be labeled fro
 
 # ==========================================================================================
 echo
-echo "case 7 — strand.sh classify_one: same fan-out fix, run as sentinel.sh runs it"
+echo "case 7 — strand: same fan-out fix, run as the sentinel runs it"
+
 # ==========================================================================================
 testdb_reset
 {
@@ -250,39 +251,44 @@ testdb_reset
 } | testdb_seed
 MOCK_SC="$TMP/mock-systemctl"
 printf '#!/bin/sh\necho inactive\n' > "$MOCK_SC"; chmod +x "$MOCK_SC"
+# strand.sh is gone (the Rust cutover): the strand binary, resolved as conf.sh's spira_bin does.
+STRAND_BIN="${SPIRA_STRAND_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin "$2" 2>/dev/null' _ "$HERE" strand)}"
 reset_calls
-export SPIRA_LABELS=""   # every partition, as sentinel.sh's own call leaves it
-out_nosnap="$(SPIRA_BD="$BD_STUB" SPIRA_SYSTEMCTL="$MOCK_SC" bash "$HERE/strand.sh" report 2>/dev/null)"
+export SPIRA_LABELS=""   # every partition, as the sentinel's own call leaves it
+out_nosnap="$(SPIRA_BD="$BD_STUB" SPIRA_SYSTEMCTL="$MOCK_SC" "$STRAND_BIN" report 2>/dev/null)"
 calls_nosnap="$(n_calls)"
 [ "${calls_nosnap:-0}" -gt 1 ] \
-    && ok "7a POSITIVE CONTROL: no snapshot — strand.sh asks bd more than once (${calls_nosnap} calls)" \
-    || bad "7a POSITIVE CONTROL: no snapshot — strand.sh asks bd more than once" "got ${calls_nosnap:-0} calls"
+    && ok "7a POSITIVE CONTROL: no snapshot — strand asks bd more than once (${calls_nosnap} calls)" \
+    || bad "7a POSITIVE CONTROL: no snapshot — strand asks bd more than once" "got ${calls_nosnap:-0} calls"
 
 LIST_SNAP2="$TMP/list-snapshot3.json"
 bdjson list --all --limit 0 > "$LIST_SNAP2" 2>/dev/null
 reset_calls
 out_snap="$(SPIRA_BD="$BD_STUB" SPIRA_SYSTEMCTL="$MOCK_SC" \
     SPIRA_LIST_SNAPSHOT="$LIST_SNAP2" SPIRA_READY_SNAPSHOT="$READY_SNAP" \
-    bash "$HERE/strand.sh" report 2>/dev/null)"
+    "$STRAND_BIN" report 2>/dev/null)"
 calls_snap="$(n_calls)"
-is   "7b: with both snapshots cached, strand.sh asks bd zero more times" "0" "${calls_snap:-x}"
+is   "7b: with both snapshots cached, strand asks bd zero more times" "0" "${calls_snap:-x}"
 unset SPIRA_LABELS
 
 # ==========================================================================================
 echo
-echo "case 8 — sentinel.sh's full pass populates both snapshots once and cleans them up"
+echo "case 8 — the sentinel's full pass populates both snapshots once and cleans them up"
 # ==========================================================================================
 STUBS="$TMP/stubs"; mkdir -p "$STUBS"
-for _s in pilgrimage.sh strand.sh reflect.sh sending.sh; do
+for _s in pilgrimage.sh strand reflect.sh sending.sh; do
     printf '#!/bin/sh\n' > "$STUBS/$_s"; chmod +x "$STUBS/$_s"
 done
+# THE SENTINEL IS A BINARY (sentinel.sh is gone): it sources lib.sh from SPIRA_HOME.
+for _s in lib.sh conf.sh lc.sh suite-covers.sh lifecycle-cert.sh; do ln -s "$HERE/$_s" "$STUBS/$_s"; done
+SENTINEL_BIN="${SPIRA_SENTINEL_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin "$2" 2>/dev/null' _ "$HERE" sentinel)}"
 ln -sf "$HERE/chamber" "$STUBS/chamber" 2>/dev/null || true
 PASS_RUN="$TMP/pass-run"; mkdir -p "$PASS_RUN/landstate"
 GOAL_JSON="$(printf '{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"]}')"
 testdb_reset
 printf '%s\n' "$GOAL_JSON" | testdb_seed
 export SPIRA_GOAL=sp-goal SPIRA_RUN="$PASS_RUN" SPIRA_MAX_AEONS=0 SPIRA_HOME="$STUBS"
-bash "$HERE/sentinel.sh" >/dev/null 2>&1 || true
+SPIRA_STRAND_BIN="$STUBS/strand" "$SENTINEL_BIN" >/dev/null 2>&1 || true
 leftover="$(ls "$PASS_RUN"/list-snapshot.* "$PASS_RUN"/ready-snapshot.* "$PASS_RUN"/ready-cache.* 2>/dev/null | wc -l | tr -d ' ')"
 is   "8: no snapshot temp file survives a completed pass" "0" "$leftover"
 unset SPIRA_GOAL SPIRA_MAX_AEONS

@@ -3,7 +3,7 @@
 //! pure core; everything here just gathers the core's inputs from git, testenv-batch, the
 //! forge and the bead store, and carries out what the core decided.
 //!
-//!   batcher cut <repo>   [--run DIR] [--db DIR] [--home DIR] [--testenv-batch PATH]
+//!   batcher cut <repo>   [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]
 //!
 //! Common flags mirror queue-watch's: --run (SPIRA_RUN), --db (SPIRA_DB), --home
 //! (SPIRA_HOME, where lib.sh and forge.sh live). Repo config comes from lib.sh's own
@@ -42,7 +42,7 @@ struct Opts {
     run: Option<PathBuf>,
     db: Option<PathBuf>,
     home: Option<PathBuf>,
-    testenv_batch: Option<PathBuf>,
+    round_vm: Option<PathBuf>,
     attribute: Option<PathBuf>,
     suites: Option<String>,
     members: Option<String>,
@@ -50,7 +50,7 @@ struct Opts {
 }
 
 fn usage() -> ExitCode {
-    eprintln!("usage: batcher cut <repo> [--run DIR] [--db DIR] [--home DIR] [--testenv-batch PATH] [--attribute PATH]");
+    eprintln!("usage: batcher cut <repo> [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH] [--attribute PATH]");
     eprintln!("       batcher judgement-ci <repo> --suites CSV --members CSV --evidence TEXT [--run DIR] [--db DIR] [--home DIR]");
     ExitCode::from(2)
 }
@@ -65,7 +65,7 @@ fn parse() -> Result<Opts, String> {
         run: env::var_os("SPIRA_RUN").map(PathBuf::from),
         db: env::var_os("SPIRA_DB").map(PathBuf::from),
         home: env::var_os("SPIRA_HOME").map(PathBuf::from),
-        testenv_batch: env::var_os("SPIRA_BATCHER_TESTENV_BATCH").map(PathBuf::from),
+        round_vm: env::var_os("SPIRA_BATCHER_ROUND_VM").map(PathBuf::from),
         attribute: env::var_os("SPIRA_BATCHER_ATTRIBUTE").map(PathBuf::from),
         suites: None,
         members: None,
@@ -77,7 +77,7 @@ fn parse() -> Result<Opts, String> {
             "--run" => o.run = Some(val()?.into()),
             "--db" => o.db = Some(val()?.into()),
             "--home" => o.home = Some(val()?.into()),
-            "--testenv-batch" => o.testenv_batch = Some(val()?.into()),
+            "--round-vm" => o.round_vm = Some(val()?.into()),
             "--attribute" => o.attribute = Some(val()?.into()),
             "--suites" => o.suites = Some(val()?),
             "--members" => o.members = Some(val()?),
@@ -121,6 +121,24 @@ fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
+/// The `round-vm` binary installed next to this one (both resolve through the same
+/// artifacts directory, conf.sh's spira_bin), unless --round-vm/SPIRA_BATCHER_ROUND_VM names
+/// another.
+fn default_round_vm() -> PathBuf {
+    env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("round-vm")))
+        .unwrap_or_else(|| PathBuf::from("round-vm"))
+}
+
+/// A harness binary: the path its SPIRA_*_BIN names (conf.sh exports each), else the one
+/// installed next to this binary, the same way `default_round_vm` resolves round-vm.
+fn sibling_bin(var: &str, name: &str) -> PathBuf {
+    env::var_os(var).filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| {
+        env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join(name))).unwrap_or_else(|| PathBuf::from(name))
+    })
+}
+
 fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
     Env {
         home: home.clone(),
@@ -131,7 +149,9 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
         bd: env::var("SPIRA_BD").unwrap_or_else(|_| "bd".into()),
         express_label: env::var("SPIRA_EXPRESS_LABEL").unwrap_or_else(|_| "express".into()),
         tsd_bin: env::var_os("SPIRA_TSD_BIN").map(PathBuf::from),
-        testenv_batch: o.testenv_batch.clone().unwrap_or_else(|| home.join("testenv-batch.sh")),
+        round_vm: o.round_vm.clone().unwrap_or_else(default_round_vm),
+        queue_bin: sibling_bin("SPIRA_QUEUE_BIN", "queue"),
+        rebase_stale_bin: sibling_bin("SPIRA_REBASE_STALE_BIN", "rebase-stale"),
         attribute: o.attribute.clone().unwrap_or_else(|| home.join("attribute.sh")),
         // Batcher-parity (sp-myi6w): the Concierge's own proven values, not testenv-batch.sh's
         // own hardware-derived or unpinned defaults — see io::run_suites.
@@ -145,6 +165,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
         git_email: env::var("SPIRA_GIT_EMAIL").unwrap_or_else(|_| "spira@spira.invalid".into()),
         lc_bin: env::var_os("SPIRA_LC_BIN").map(PathBuf::from),
         lc_timeout: env::var("SPIRA_LC_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(30),
+        lc_enforce: spira_config::lifecycle_enforce(None),
     }
 }
 
@@ -156,6 +177,15 @@ fn cut(o: &Opts) -> Result<(), String> {
     }
     let env_ = env_for(o, home, run);
     let repo = find_repo(&env_, &o.repo)?;
+
+    // lifecycle_enforce on: the machine must answer before anything changes (DESIGN.md
+    // "Lifecycle switch"). Off: returns at once, runs nothing.
+    if let Err(e) = io::lc_probe(&env_) {
+        return Err(format!(
+            "batcher cut {}: lifecycle_enforce is on and spira-lc is unreachable ({e}) — refused, nothing changed; fix the lifecycle machine or turn lifecycle_enforce off",
+            repo.name
+        ));
+    }
 
     let Some(_lock) = io::try_lock(&env_, &repo.name)? else {
         println!("batcher cut {}: another operation holds the lock", repo.name);
@@ -206,7 +236,7 @@ fn handle_base_conflicts(
         }
         deleted.insert(m.id.clone(), io::deleted_suites(repo, &m.tip, base_sha));
         if stale_retry_due(m.certified_at, base_moved_at) {
-            // 0/1/2: rebase-stale.sh ran and already did everything this branch would —
+            // 0/1/2: rebase-stale ran and already did everything this branch would —
             // certified a mechanical/clean rebase, or reopened the bead itself with the
             // conflicting hunk or gate output quoted. Only 3 (it could not even attempt
             // the branch) falls through to this call's own, coarser bookkeeping.
@@ -278,7 +308,7 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
 
         let suites = io::all_suites(repo, &iter_branch);
         let results_dir = env_.run.join("batch-results").join(format!("{}-{}-attr{iteration}", repo.name, now()));
-        let first = io::run_suites(env_, repo, &iter_branch, &suites, &results_dir)?;
+        let first = io::run_suites(env_, wt, &suites, &results_dir)?;
         let reds = io::red_names(&first);
         if reds.is_empty() {
             let regreen_seconds = red_detected_at.map(|at| now().saturating_sub(at));
@@ -349,14 +379,14 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
 /// queue.local's terminal step (sp-828tp): `terminal_ready` (core) gates both land modes on
 /// the same every-member-named/bins-present contract before this box changes anything —
 /// green-at-head is stabilize_round's own control flow, already confirmed before this is ever
-/// called (sp-j21fv). Only the action taken once it passes differs — here, `queue.sh
+/// called (sp-j21fv). Only the action taken once it passes differs — here, `queue
 /// land-local` (fast-forward, package, activate, LANDED, bead close) in place of a push and a
 /// PR. Never rebuilds binaries (law-deploy-the-tested-artifacts): the corpus's own --with-bins
 /// run already built the tree `bins_present` looks for.
 fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_start: u64, stable: &StableRound) -> Result<(), String> {
     let head = io::head_of(wt)?;
     let named = io::named_ids(repo, base_sha, &head, &stable.members);
-    let bins_ok = io::bins_present(env_, repo, &head);
+    let bins_ok = io::bins_present(repo, wt, &head);
 
     if let Err(refusal) = batcher::core::terminal_ready(&stable.members, &named, bins_ok) {
         let msg = format!("batcher {}: refused to land locally at {head} — {refusal}", repo.name);
@@ -375,9 +405,9 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
     }
 
     let member_pairs: Vec<(String, String)> = stable.members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
-    let landed = io::land_local(env_, repo, &head, &member_pairs)?;
+    let landed = io::land_local(env_, repo, wt, &head, &member_pairs)?;
     if !landed {
-        io::write_local_verdict(env_, &repo.name, "red", "queue.sh land-local refused — see its own stderr above");
+        io::write_local_verdict(env_, &repo.name, "red", "queue land-local refused — see its own stderr above");
         io::tsd_append_round(
             env_,
             &[
@@ -481,8 +511,9 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
     let pr_n = io::forge_pr_create(repo, &batch_br, &base_branch, &title, &body)?;
 
     // spira-lc's own OPEN-batch lifecycle (sp-o7nbr.4, same contract as sp-o7nbr.2's
-    // _lc_cut_batch for batch.sh): best-effort and additive, never blocking the PR or
-    // the land_mark loop below. A refusal leaves batch_id/version unset on the record,
+    // _lc_cut_batch for batch.sh), only when lifecycle_enforce is on — off returns None
+    // without running anything, the pre-sp-o7nbr.4 record. Best-effort and additive,
+    // never blocking the PR or the land_mark loop below. A refusal leaves batch_id/version unset on the record,
     // so verdict.sh's own land/settle wiring finds nothing to CAS against later.
     let member_pairs: Vec<(String, String)> = merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
     let lc_version = io::lc_cut_batch(env_, &repo.name, &batch_br, &batch_head, &base_sha, &member_pairs);
@@ -614,8 +645,9 @@ fn stack_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason,
     let new_pairs: Vec<(String, String)> = merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
     members.extend(new_pairs.iter().cloned());
 
-    // spira-lc's own pipelining onto the already-cut batch (sp-o7nbr.4): only when the
-    // original cut recorded a batch_id/version — a legacy or refused-cut record has
+    // spira-lc's own pipelining onto the already-cut batch (sp-o7nbr.4): only with
+    // lifecycle_enforce on (off, lc_stack_batch runs nothing and the record is rewritten
+    // without batch_id/version), and only when the original cut recorded a batch_id/version — a legacy or refused-cut record has
     // neither, and there is nothing to CAS the new members against.
     let (lc_batch_id, lc_version) = match (!ob.batch_id.is_empty(), ob.version.parse::<u64>()) {
         (true, Ok(prior)) => match io::lc_stack_batch(env_, &repo.name, &ob.batch_id, prior, &new_pairs) {

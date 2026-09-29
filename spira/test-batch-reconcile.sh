@@ -21,7 +21,7 @@
 # test-cockpit-bd-contract.sh — this file does not re-model it).
 #
 # tier: T1
-# covers: spira/batch.sh spira/conf.sh spira/landing.sh
+# covers: spira/batch.sh spira/conf.sh landing-pass/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

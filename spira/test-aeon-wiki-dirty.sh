@@ -17,7 +17,7 @@
 # transcript claims with what is actually dirty now, minus the generated view.
 #
 # defect: sp-4fl2e
-# covers: spira/aeon.sh spira/lib.sh
+# covers: aeon/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -117,7 +117,7 @@ git -C "$WIKI" push -q origin main 2>/dev/null
 export SPIRA_WIKI="$WIKI"
 
 export SPIRA_HOME="$HARNESS/spira-home"; mkdir -p "$SPIRA_HOME/chamber"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/aeon.sh" "$HERE/wiki-commit.sh" "$SPIRA_HOME/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/wiki-commit.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
@@ -132,8 +132,8 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP HARNESS WIKI ORIGIN REPO
-grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
-    || { echo "test-aeon-wiki-dirty: aeon.sh has no SPIRA_AGENT injection point" >&2; exit 1; }
+[ -x "${SPIRA_AEON_BIN:-}" ] \
+    || { echo "test-aeon-wiki-dirty: the aeon binary is not built (SPIRA_AEON_BIN)" >&2; exit 1; }
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
@@ -153,7 +153,7 @@ testdb_reset
 b1="$(bd -C "$SPIRA_DB" create --title "test: wiki write" --type task -l "$_lbl" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b1" ] || { bad "bead created" "(bead-create failed)"; }
 rm -rf "$SPIRA_RUN/worktree"
-bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
+"$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 bead_status="$(bd -C "$SPIRA_DB" show "$b1" --json 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("status","") if d else "")' 2>/dev/null)"
 # A task bead's close is converted to open+spira-submitted at teardown (sp-qsona): only the
 # landing pass closes a work bead, so "open" here is the session's close having happened.

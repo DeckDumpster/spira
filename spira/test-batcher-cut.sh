@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 #
 # test-batcher-cut.sh — ONE end-to-end suite for the batcher crate's IO seam (sp-jzfog): a
-# whole round through a real fixture repo, a stub testenv-batch and a fake forge, invoking the
-# built binary directly the way queue.sh's _batch_cut does (sp-vsob2: unconditionally, batch.sh's
+# whole round through a real fixture repo, a stub round-vm.sh and a fake forge, invoking the
+# built binary directly the way the queue binary's _batch_cut does (sp-vsob2: unconditionally, batch.sh's
 # own cut retired). This checks WIRING, not behaviour — the pure core's replay tests
 # (test-batcher.sh) already cover triggers, membership, set-asides and classification as
-# fixtures with no IO at all.
+# fixtures with no IO at all. round-vm.sh's OWN contract (a real VM, a real testenv-batch.sh)
+# is test-round-vm.sh/test-round-vm-e2e.sh's job, not this suite's — the stub here only proves
+# batcher-cut calls round-vm.sh run correctly and reads its results back.
 #
 # FOUR CASES:
 #   A. happy path    — an express-certified member merges, the stub corpus is green, a PR
@@ -28,20 +30,22 @@
 #   J. batcher parity   — a member whose tip is already an ancestor of the round head (reset
 #                       to an old base, or no commits of its own) merges as a git no-op; it
 #                       must be set aside as EMPTY, never merged, never marked BATCHED (sp-5xki9).
-#   K. batcher parity (sp-myi6w) — the corpus invocation matches the Concierge's own
-#                       (round.sh): --mode parallel, --with-bins, SPIRA_BATCH_MAXPAR,
-#                       RUSTUP_TOOLCHAIN all present on argv/env; a --with-bins build
-#                       failure (exit 4) is a local round red filed as an Ops incident,
-#                       never handed to attribute.sh and never a harness fault that drops
-#                       the round unreported; a hung testenv-batch.sh is killed at the
+#   K. batcher parity (sp-myi6w) — the corpus runs through round-vm.sh run (sp-o3o6z),
+#                       carrying maxpar and the toolchain pin batcher-parity requires; a
+#                       --with-bins build failure (exit 4) is a local round red filed as an
+#                       Ops incident, never handed to attribute.sh and never a harness fault
+#                       that drops the round unreported; a hung round-vm.sh is killed at the
 #                       configured wall bound.
 #
 # tier: T2
-# covers: batcher-cut/src/*.rs batcher/src/*.rs spira/queue.sh spira/conf.sh spira/lib.sh spira/bead.sh spira/chamber/batcher.fayth spira/chamber/batcher.md
+# covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* spira/conf.sh spira/lib.sh spira/bead.sh spira/chamber/batcher.fayth spira/chamber/batcher.md
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
 . "$HERE/testlib.sh"
+# The queue binary case L lands through (queue/DESIGN.md §7.4): the one conf.sh exports,
+# else the tree under test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
+QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -116,37 +120,53 @@ cat > "$SH/repo-map" <<RMAP
 $REPONAME | $REPO | queue | origin/main | | |
 RMAP
 
-# ── stub testenv-batch: writes the exact result protocol testenv-batch.sh itself documents
-# (<status> <epoch> <secs> <fp> <mode> <producer> <rc>), red for every suite named in
-# STUB_RED_SUITES (comma-separated), ok otherwise. STUB_FLAKE_SUITE is red only for its first
+# ── stub round-vm: stands in for round-vm.sh's own `run <tree-dir> --suites CSV --maxpar N
+# --toolchain V --results-dir DIR` contract (sp-o3o6z), writing the exact result protocol
+# testenv-batch.sh itself documents (<status> <epoch> <secs> <fp> <mode> <producer> <rc>)
+# straight into --results-dir — red for every suite named in STUB_RED_SUITES
+# (comma-separated), ok otherwise. STUB_FLAKE_SUITE is red only for its first
 # STUB_FLAKE_RED_TIMES invocations (counted in STUB_FLAKE_COUNTER_FILE) and green after — a
 # suite that would flip green on an immediate rerun, the shape case G needs to show that a
 # local red now goes through attribution regardless of whether an internal retry would have
-# waved it through. STUB_ARGV_LOG, when set, records this invocation's full argv plus the env
-# batcher-parity (sp-myi6w) requires — RUSTUP_TOOLCHAIN, SPIRA_BATCH_MAXPAR — one line each,
-# so a case can assert on them without guessing at io::run_suites' own internals.
-# STUB_SLEEP_SECS hangs before doing anything else, for the wall-bound case. STUB_EXIT4 exits
-# 4 immediately, before any suite ever runs — mirroring testenv-batch.sh's own --with-bins
-# build failure, which happens before suite selection.
-cat > "$SH/testenv-batch-stub.sh" <<'STUB'
+# waved it through. STUB_ARGV_LOG, when set, records this invocation's own toolchain and
+# maxpar — batcher-parity (sp-myi6w)'s own fields, now carried as round-vm.sh's --toolchain/
+# --maxpar rather than env vars on a direct testenv-batch.sh call — so a case can assert on
+# them without guessing at io::run_suites' own internals. STUB_SLEEP_SECS hangs before doing
+# anything else, for the wall-bound case. STUB_EXIT4 exits 4 immediately, before any suite
+# ever runs — mirroring testenv-batch.sh's own --with-bins build failure (round-vm.sh's own
+# contract: it exits with the remote testenv-batch.sh's code whenever a run happened at all).
+cat > "$SH/round-vm-stub.sh" <<'STUB'
 #!/usr/bin/env bash
+[ "${1:-}" = run ] || { printf 'round-vm-stub: unexpected verb: %s\n' "${1:-}" >&2; exit 2; }
+shift
+suites_csv="" maxpar="" toolchain="" results="" wt=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --suites) suites_csv="${2:-}"; shift 2 ;;
+        --maxpar) maxpar="${2:-}"; shift 2 ;;
+        --toolchain) toolchain="${2:-}"; shift 2 ;;
+        --results-dir) results="${2:-}"; shift 2 ;;
+        *) wt="$1"; shift ;;  # the round worktree positional
+    esac
+done
+# STUB_INSTALL_BINS: stand in for round-vm installing the VM's release build into the round
+# worktree's target/release — where batcher-cut's bins_present and queue land-local look.
+if [ -n "${STUB_INSTALL_BINS:-}" ] && [ -n "$wt" ]; then
+    mkdir -p "$wt/target/release"
+    # path-ok: the fixture round worktree's own build output, which the stub round-vm fills
+    printf 'fakebin\n' > "$wt/target/release/fakebin"
+    chmod +x "$wt/target/release/fakebin"   # path-ok: same fixture build output as the line above
+fi
 if [ -n "${STUB_ARGV_LOG:-}" ]; then
     {
-        printf 'argv:'; printf ' %s' "$@"; printf '\n'
-        printf 'RUSTUP_TOOLCHAIN=%s\n' "${RUSTUP_TOOLCHAIN:-}"
-        printf 'SPIRA_BATCH_MAXPAR=%s\n' "${SPIRA_BATCH_MAXPAR:-}"
+        printf 'argv: run --suites %s\n' "$suites_csv"
+        printf 'RUSTUP_TOOLCHAIN=%s\n' "$toolchain"
+        printf 'SPIRA_BATCH_MAXPAR=%s\n' "$maxpar"
     } >> "$STUB_ARGV_LOG"
 fi
 [ -n "${STUB_SLEEP_SECS:-}" ] && sleep "$STUB_SLEEP_SECS"
 [ -n "${STUB_EXIT4:-}" ] && exit 4
-suites_csv=""
-while [ $# -gt 0 ]; do
-    case "$1" in
-        --suites) shift; suites_csv="${1:-}"; shift ;;
-        *) shift ;;
-    esac
-done
-results="${SPIRA_BATCH_RESULTS:?SPIRA_BATCH_RESULTS unset}"
+: "${results:?round-vm-stub: --results-dir not given}"
 mkdir -p "$results"
 red=0
 IFS=',' read -r -a suites <<< "$suites_csv"
@@ -179,7 +199,7 @@ done
 [ "$red" = 1 ] && exit 1
 exit 0
 STUB
-chmod +x "$SH/testenv-batch-stub.sh"
+chmod +x "$SH/round-vm-stub.sh"
 
 # ── stub attribute.sh: the round's own local red-suite attribution, stubbed so this suite
 # checks WIRING (does a red go through attribution, does an EJECT line actually eject, does a
@@ -279,6 +299,8 @@ printf '%s\n' "$*" >> "$log"
 case "${1:-}" in
     create-bead) exit 0 ;;
     cut|stack) exit "${SPIRA_LC_STUB_RC:-0}" ;;
+    list) printf '[]\n'; exit 0 ;;   # lc_probe: the machine answers with an (empty) array
+    show) printf '{"bead":{}}\n'; exit 0 ;;   # read_stack: a bead the machine holds, unstacked
     *) exit 0 ;;
 esac
 LCSTUB
@@ -315,7 +337,7 @@ cut_repo() {
     SPIRA_LC_BIN="${SPIRA_LC_BIN:-}" \
     SPIRA_LC_STUB_LOG="${SPIRA_LC_STUB_LOG:-}" \
     SPIRA_LC_STUB_RC="${SPIRA_LC_STUB_RC:-0}" \
-        "$BATCHER_BIN" cut "$REPONAME" --testenv-batch "$SH/testenv-batch-stub.sh" \
+        "$BATCHER_BIN" cut "$REPONAME" --round-vm "$SH/round-vm-stub.sh" \
             --attribute "$SH/attribute-stub.sh" 2>&1
 }
 
@@ -607,7 +629,8 @@ is "E: no suites given is refused, not filed" "1" "$([ -z "$(printf '%s\n' "$out
 # =============================================================================
 # CASE F — spira-lc wiring (sp-o7nbr.4): BATCHED at a fresh cut and a stack both call
 # spira-lc, and the open-batch record carries batch_id/version exactly when spira-lc
-# applied. POSITIVE CONTROL last: a planted refusal (rc=3) proves the call is additive —
+# applied. The machine is the subject, so these cuts run with SPIRA_LIFECYCLE_ENFORCE=1;
+# OFF runs no spira-lc at all (batcher-cut/src/io.rs unit tests). POSITIVE CONTROL last: a planted refusal (rc=3) proves the call is additive —
 # the PR still opens and batch_id/version stay unset, never blocking the round.
 # =============================================================================
 echo
@@ -624,7 +647,7 @@ tip_f="$(git -C "$REPO" rev-parse spira/sp-cfff6)"
 git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cfff6"
 certify sp-cfff6 "$tip_f"
 
-SPIRA_LC_BIN="$SH/spira-lc-stub.sh" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
+SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_LC_BIN="$SH/spira-lc-stub.sh" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
 branch_f="$(open_field branch)"; head_f="$(open_field head)"; base_f="$(open_field base)"
 want "F: cut calls spira-lc create-bead for the member" "create-bead sp-cfff6" "$(cat "$LC_LOG")"
 want "F: cut calls spira-lc cut naming the same batch-id, head and base as the open-batch record" \
@@ -643,7 +666,7 @@ tip_g="$(git -C "$REPO" rev-parse spira/sp-cggg7)"
 git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cggg7"
 certify sp-cggg7 "$tip_g"
 
-SPIRA_LC_BIN="$SH/spira-lc-stub.sh" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
+SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_LC_BIN="$SH/spira-lc-stub.sh" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
 want "F: stacking calls spira-lc stack, not cut, on the same batch-id" \
     "stack $branch_f --members sp-cggg7:$tip_g --actor batcher" "$(cat "$LC_LOG")"
 nowant "F: stacking never calls spira-lc cut again for the same batch-id" "cut $branch_f " "$(cat "$LC_LOG")"
@@ -664,7 +687,7 @@ tip_h="$(git -C "$REPO" rev-parse spira/sp-chhh8)"
 git -C "$REPO" worktree remove -f "$RUN/worktree/sp-chhh8"
 certify sp-chhh8 "$tip_h"
 
-out_f_refused="$(SPIRA_LC_BIN="$SH/spira-lc-stub.sh" SPIRA_LC_STUB_LOG="$LC_LOG" SPIRA_LC_STUB_RC=3 cut_repo)"
+out_f_refused="$(SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_LC_BIN="$SH/spira-lc-stub.sh" SPIRA_LC_STUB_LOG="$LC_LOG" SPIRA_LC_STUB_RC=3 cut_repo)"
 want "F: PLANTED REFUSAL — cut still reports the PR opening" "PR " "$out_f_refused"
 want "F: PLANTED REFUSAL — the refusal is logged" "spira-lc cut refused for" "$out_f_refused"
 is   "F: PLANTED REFUSAL — open-batch batch_id stays unset" "" "$(open_field batch_id)"
@@ -703,7 +726,7 @@ cut_other() {
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
     SPIRA_QUEUE_BATCH_WAIT=999999 \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
-        "$BATCHER_BIN" cut "$1" --testenv-batch "$SH/testenv-batch-stub.sh" 2>&1
+        "$BATCHER_BIN" cut "$1" --round-vm "$SH/round-vm-stub.sh" 2>&1
 }
 
 out_g_forge="$(cut_other forgealias)"
@@ -771,16 +794,16 @@ is   "J: sp-cjjjj stays CERTIFIED, never marked BATCHED" "CERTIFIED" "$(cut -d' 
 is   "J: forge pr-create not called for the empty round" "$prcreate_before_j" "$(grep -c '^pr-create' "$FORGE_LOG")"
 
 # =============================================================================
-# CASE K — batcher parity (sp-myi6w): the corpus invocation matches the Concierge's own
-# (round.sh test), and a --with-bins build failure is a round-level red attributed to
-# members, never a harness fault that silently drops the round.
+# CASE K — batcher parity (sp-myi6w, sp-o3o6z): the corpus runs through round-vm.sh run, and
+# a --with-bins build failure is a round-level red attributed to members, never a harness
+# fault that silently drops the round.
 # =============================================================================
 echo
-echo "K. batcher parity: --mode parallel --with-bins, maxpar, toolchain, wall bound, exit 4:"
+echo "K. batcher parity: round-vm.sh run, maxpar, toolchain, wall bound, exit 4:"
 
-# K1 — default argv/env: SPIRA_BATCH_MAXPAR and SPIRA_RELEASE_RUST_TOOLCHAIN both unset, so
-# the batcher's own defaults (16, 1.82.0) must appear on the child's argv/env regardless of
-# whether the ambient environment happens to carry the Concierge's own values.
+# K1 — default argv: SPIRA_BATCH_MAXPAR and SPIRA_RELEASE_RUST_TOOLCHAIN both unset, so the
+# batcher's own defaults (16, 1.82.0) must appear on round-vm.sh's own --maxpar/--toolchain
+# regardless of whether the ambient environment happens to carry the Concierge's own values.
 rm -f "$(open_batch_file)"
 plant sp-cgaa1 express
 git -C "$REPO" worktree add -q -b spira/sp-cgaa1 "$RUN/worktree/sp-cgaa1" main
@@ -793,7 +816,7 @@ certify sp-cgaa1 "$tip_g1"
 
 ARGV_LOG="$TMP/argv-log-default"; : > "$ARGV_LOG"
 STUB_ARGV_LOG="$ARGV_LOG" cut_repo >/dev/null
-want "K1: corpus run in --mode parallel --with-bins" "argv: --mode parallel --with-bins" "$(cat "$ARGV_LOG")"
+want "K1: corpus runs through round-vm.sh run" "argv: run --suites" "$(cat "$ARGV_LOG")"
 want "K1: default toolchain pin is 1.82.0 (release.yml's own pin, no independent default)" \
     "RUSTUP_TOOLCHAIN=1.82.0" "$(cat "$ARGV_LOG")"
 want "K1: default maxpar is 16 (the Concierge's own proven parallelism)" \
@@ -845,7 +868,7 @@ want   "K3: reports filing an Ops incident" "filed sp-inc" "$out_g3"
 want   "K3: the incident names the workspace-build reason" \
     "workspace-build" "$(cat "$INCIDENT_LOG")"
 
-# K4 — a hung testenv-batch.sh is killed at the configured wall bound, not left to hold the
+# K4 — a hung round-vm.sh is killed at the configured wall bound, not left to hold the
 # round lock forever (main.rs's cut() holds it for the whole call).
 rm -f "$(open_batch_file)"
 plant sp-cgdd4 express
@@ -871,17 +894,23 @@ want "K4: reports the wall bound as the cause" "wall bound" "$out_g4"
 
 # =============================================================================
 # CASE L — queue.local's terminal step (sp-828tp, epic sp-hq9x8): a round lands locally via
-# queue.sh land-local — no push, no forge call, no open-batch record — and terminal_ready
+# queue land-local — no push, no forge call, no open-batch record — and terminal_ready
 # (core) refuses before land-local is even invoked when the round's own --with-bins corpus is
 # missing. SEEN RED on today's code: Land::Local reaches push_branch, whose own assert fires
 # ("unreachable under queue.local"), so the batcher process panics instead of landing.
 # =============================================================================
 echo
-echo "L. queue.local: a round lands locally via queue.sh land-local — no push, no PR:"
+echo "L. queue.local: a round lands locally via queue land-local — no push, no PR:"
 
 LREPO="$TMP/local-land-repo"
 git init -q -b trunk "$LREPO"
-git -C "$LREPO" commit -q --allow-empty -m base
+# One suite in the tree, as every real repository has: the round's corpus step (the stub
+# round-vm, which is what installs the round's target/release under STUB_INSTALL_BINS) only
+# runs when the round's own tree names a suite — an empty corpus never builds bins at all.
+mkdir -p "$LREPO/spira"
+: > "$LREPO/spira/test-local.sh"
+git -C "$LREPO" add -A
+git -C "$LREPO" commit -q -m base
 git -C "$LREPO" branch local/main trunk
 LRELEASES="$TMP/local-releases"; mkdir -p "$LRELEASES"
 
@@ -900,16 +929,10 @@ cut_local() {
     SPIRA_TSD_BIN="$TSD_BIN" \
     SPIRA_LC_BIN="${SPIRA_LC_BIN:-}" \
     SPIRA_LC_STACKS_DIR="${SPIRA_LC_STACKS_DIR:-}" \
-        "$BATCHER_BIN" cut locland --testenv-batch "$SH/testenv-batch-stub.sh" \
+    SPIRA_QUEUE_BIN="$QUEUE_BIN" \
+    STUB_INSTALL_BINS="${STUB_INSTALL_BINS:-}" \
+        "$BATCHER_BIN" cut locland --round-vm "$SH/round-vm-stub.sh" \
             --attribute "$SH/attribute-stub.sh" 2>&1
-}
-mk_local_bins() {   # mk_local_bins <tip> — the --with-bins corpus for <tip>'s own tree
-    local tip="$1" tree dir
-    tree="$(git -C "$LREPO" rev-parse "${tip}^{tree}")"
-    dir="$RUN/cargo-target-bins/$tree/release"
-    mkdir -p "$dir"
-    printf 'fakebin\n' > "$dir/fakebin"
-    chmod +x "$dir/fakebin"
 }
 
 # L1 — missing --with-bins corpus: terminal_ready refuses before land-local is ever called,
@@ -941,10 +964,9 @@ git -C "$RUN/worktree/sp-clbb2" commit -q -m "sp-clbb2: work"
 tip_l2="$(git -C "$LREPO" rev-parse spira/sp-clbb2)"
 git -C "$LREPO" worktree remove -f "$RUN/worktree/sp-clbb2"
 certify sp-clbb2 "$tip_l2"
-mk_local_bins "$tip_l2"
 
 prcreate_before_l2="$(grep -c '^pr-create' "$FORGE_LOG")"
-out_l2="$(cut_local)"
+out_l2="$(STUB_INSTALL_BINS=1 cut_local)"
 want   "L2: reports landing locally"      "landed locally" "$out_l2"
 nowant "L2: never reports a PR opening"   "PR "            "$out_l2"
 is     "L2: forge pr-create never called" "$prcreate_before_l2" "$(grep -c '^pr-create' "$FORGE_LOG")"
@@ -978,6 +1000,7 @@ LC_STACKS="$TMP/lc-stacks"; mkdir -p "$LC_STACKS"
 cat > "$SH/spira-lc-stack-stub.sh" <<'LCSTACKSTUB'
 #!/usr/bin/env bash
 case "${1:-}" in
+    list) printf '[]\n'; exit 0 ;;   # the reachability probe lifecycle_enforce=1 makes first
     show)
         f="${SPIRA_LC_STACKS_DIR:?}/${2:-}"
         stack="{}"
@@ -1016,8 +1039,6 @@ git -C "$LREPO" worktree remove -f "$RUN/worktree/sp-cmcc3"
 printf '{"sp-cmaa1":"%s"}\n' "$tip_ma" > "$LC_STACKS/sp-cmbb2"
 printf '{"sp-cmbb2":"%s"}\n' "$tip_mb" > "$LC_STACKS/sp-cmcc3"
 
-mk_local_bins "$tip_mc"
-
 # Certified in the order C, A, B — certified_at deliberately reversed against dependency
 # order, so a sort on order_key alone (no stack awareness) would try to merge C first.
 plant sp-cmcc3; plant sp-cmaa1; plant sp-cmbb2
@@ -1025,7 +1046,9 @@ certify sp-cmcc3 "$tip_mc" 100
 certify sp-cmaa1 "$tip_ma" 200
 certify sp-cmbb2 "$tip_mb" 300
 
-out_m="$(SPIRA_LC_BIN="$SH/spira-lc-stack-stub.sh" SPIRA_LC_STACKS_DIR="$LC_STACKS" cut_local)"
+# Stacking is a lifecycle-machine concept (read_stack runs nothing with the switch OFF), so
+# this case runs ON.
+out_m="$(SPIRA_LIFECYCLE_ENFORCE=1 STUB_INSTALL_BINS=1 SPIRA_LC_BIN="$SH/spira-lc-stack-stub.sh" SPIRA_LC_STACKS_DIR="$LC_STACKS" cut_local)"
 want   "M: reports landing locally"                             "landed locally"  "$out_m"
 want   "M: all three members landed in one round"                "3 member(s)"    "$out_m"
 is     "M: sp-cmaa1 landstate LANDED (the closed-over prerequisite, never dropped as EMPTY)" \

@@ -18,7 +18,7 @@
 #
 # defect: sp-w8l21
 # tier: T1
-# covers: spira/aeon.sh spira/archivist.sh spira/doctor.sh
+# covers: aeon/src/* spira/archivist.sh spira/doctor.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

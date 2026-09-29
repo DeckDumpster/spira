@@ -42,6 +42,7 @@ render() {
         --instance "$SPIRA_INSTANCE" --testdb-port "$SPIRA_TESTDB_PORT" \
         --supervise-bin "$SPIRA_SUPERVISE_BIN" --snap-stale-s "$SPIRA_SNAP_STALE_S" \
         --landing-pass-bin "$SPIRA_LANDING_PASS_BIN" \
+        --sentinel-bin "$SPIRA_SENTINEL_BIN" --queue-bin "$SPIRA_QUEUE_BIN" --aeon-bin "$SPIRA_AEON_BIN" \
         --reconciler-flow-bin "$SPIRA_RECONCILER_FLOW_BIN" --watcher-name "${2:-}"
 }
 

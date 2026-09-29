@@ -155,9 +155,8 @@ is "nor does an outcome nobody has enumerated" free "$(charges something-new)"
 echo
 echo "aeon teardown:"
 
-first="$(sed -n '/^cleanup() {/,/^}/p' "$HERE/aeon.sh" | tail -n +2 \
-          | grep -vE '^\s*(#|local |$)' | sed -n 1p)"
-is "cleanup disarms errexit before anything can fail" "    set +e" "$first"
+# RETIRED with aeon.sh: the teardown is the Rust aeon's (no errexit trap exists to disarm);
+# its run-to-the-end behaviour is `cargo test -p aeon tests::*` (e.g. slain_mid_session_is_free_and_exits_143).
 
 # The hazard itself, so the assertion above is not a rule nobody can see fire: under `set -e`
 # a failing command inside an EXIT trap ends the shell where it stands, and every later step
@@ -194,10 +193,8 @@ echo "counter labels deleted — structural properties:"
 
 # The REQUEUE_CAUSE exemption must still be decided before session_outcome is consulted.
 # A bead that was put back by the harness must not be charged an attempt.
-before="$(grep -n 'REQUEUE_CAUSE" \]; then' "$HERE/aeon.sh" | sed -n 1p | cut -d: -f1)"
-after="$(grep -n '_d_outcome="\$(session_outcome' "$HERE/aeon.sh" | sed -n 1p | cut -d: -f1)"
-is "the requeue path exits before the trace is classified" yes \
-   "$( [ -n "$before" ] && [ -n "$after" ] && [ "$before" -lt "$after" ] && echo yes || echo no)"
+# RETIRED with aeon.sh: the requeue-before-outcome order is the Rust aeon's disposition
+# table, pinned by `cargo test -p aeon decide::tests::disposition_table`.
 
 # BEHAVIOUR, NOT THE QUERY STRING. The original assertion here checked that the SQL
 # contained the word 'status_changed'. It passed while the predicate returned 0 for every

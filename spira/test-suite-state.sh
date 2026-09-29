@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T1
-# covers: spira/suite-state.sh spira/suite-state spira/suite-state-fence.sh spira/suites.sh spira/testenv-batch.sh UC-safety-fences-28
+# covers: spira/suite-state.sh spira/suite-state spira/suite-state-fence.sh testenv/src/suites/* testenv/src/* UC-safety-fences-28
 #
 # Suite lifecycle state: parse, lint, write, activate, and transition commands (D4/UC-28:
 # these structural rows already covered the no-bead, missing-suite and missing-reason

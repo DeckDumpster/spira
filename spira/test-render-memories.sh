@@ -28,7 +28,7 @@
 # PAIRS (law-absence-needs-a-positive-control): every negative case has a positive pair.
 #
 # tier: T2
-# covers: spira/lib.sh spira/conf.sh spira/aeon.sh UC-operator-channel-42 G-08
+# covers: spira/lib.sh spira/conf.sh aeon/src/* UC-operator-channel-42 G-08
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

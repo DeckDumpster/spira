@@ -6,10 +6,14 @@
 # batch before building the next, and landing's queue pass goes through it — a batch builder
 # with no verdict after it opens one pull request and never lands it.
 #
-# covers: spira/queue.sh spira/batch.sh spira/verdict.sh spira/landing.sh
+# covers: queue/src/* spira/batch.sh spira/verdict.sh landing-pass/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
+# test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
+QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
+[ -x "$QUEUE_BIN" ] || { echo "FAIL: the queue binary is not built at $QUEUE_BIN"; exit 1; }
 
 echo "test-queue-flush.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -32,7 +36,7 @@ run() {
     env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_PATH="$TMP/bin" SPIRA_RUN="$TMP/run" \
         SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_BATCH_WAIT=1800 \
-        bash "$TMP/spira/queue.sh" "$@" 2>&1
+        SPIRA_HOME="$TMP/spira" "$QUEUE_BIN" "$@" 2>&1
 }
 
 echo
@@ -70,12 +74,9 @@ first="$(printf '%s\n' "$out" | grep -m1 -oE '^(verdict|batch)-called')"
 is_first="${first:-none}"
 want "verdict runs before batch"   "verdict-called" "$is_first"
 
-echo
-echo "landing's queue pass runs step, not the batch builder alone:"
-# The queue-pass loop is gated by repo_land_queued (queue and queue.local) since sp-xe12f.
-lq="$(grep -E -A3 '= queue \] \|\| continue|repo_land_queued "\$repo_name" \|\| continue' "$HERE/landing.sh" | grep -E 'queue\.sh|batch\.sh' | head -1)"
-want   "landing calls queue.sh step" 'queue.sh" step' "$lq"
-nowant "landing does not call batch.sh directly" 'batch.sh' "$lq"
+# RETIRED with landing.sh: the landing pass's queue step is landing-pass's Tools::queue_step
+# ("$SPIRA_QUEUE_BIN" step <repo>), pinned by cargo test -p landing-pass
+# the_queue_step_runs_before_and_after_the_walk_and_a_missing_binary_is_said.
 
 echo
 tl_summary

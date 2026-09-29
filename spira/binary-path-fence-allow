@@ -8,7 +8,6 @@ Makefile
 spira/build-tarball.sh
 spira/pre-activate.sh
 spira/acceptance-lib.sh
-spira/testenv-batch.sh
 
 # conf.sh's spira_config_bin(): a pre-cutover, memoized ad-hoc build kept for the one
 # caller (lib.sh persona_model) that may run before conf.sh's own SPIRA_CONFIG_BIN
@@ -19,12 +18,6 @@ spira/conf.sh
 # can source conf.sh at all (conf.sh needs the binary to convert spira.conf), so it cannot
 # itself go through spira_bin.
 spira/testlib.sh
-
-# A THIRD LANGUAGE'S COPY OF THE RESOLVER — landing-pass is a compiled Rust process, not a
-# shell script that could source conf.sh, so it carries its own fallback for the one
-# binary (spira-lc) it calls when SPIRA_LC_BIN is not already exported. Migrating it onto
-# SPIRA_ARTIFACTS is follow-up work, not part of this fence.
-landing-pass/src/main.rs
 
 # spira-loom.service deliberately runs from the dev checkout, never a release (its own
 # comment explains why) — its ExecStart path is that deliberate exception, not a bug.
@@ -60,7 +53,6 @@ spira/test-reconciler-alert.sh
 spira/test-reconciler-flow.sh
 spira/test-reconciler.sh
 spira/test-tarball-bins.sh
-spira/test-testenv-batch.sh
 spira/test-testlib.sh
 spira/test-tier-budget.sh
 spira/test-timer-templates.sh

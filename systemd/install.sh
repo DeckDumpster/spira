@@ -217,6 +217,7 @@ render() {
         --instance "$SPIRA_INSTANCE" --testdb-port "$SPIRA_TESTDB_PORT" \
         --supervise-bin "$SPIRA_SUPERVISE_BIN" --snap-stale-s "$SPIRA_SNAP_STALE_S" \
         --landing-pass-bin "$SPIRA_LANDING_PASS_BIN" \
+        --sentinel-bin "$SPIRA_SENTINEL_BIN" --queue-bin "$SPIRA_QUEUE_BIN" --aeon-bin "$SPIRA_AEON_BIN" \
         --reconciler-flow-bin "$SPIRA_RECONCILER_FLOW_BIN" --watcher-name "${2:-}"
 }
 
@@ -428,7 +429,7 @@ _place_dolt_yaml() {  # args: <template-name> <data-dir>
 [ -n "${SPIRA_DOLT_DATA:-}" ]   && _place_dolt_yaml dolt-server.yaml      "$SPIRA_DOLT_DATA"
 [ -n "${SPIRA_TESTDB_DATA:-}" ] && _place_dolt_yaml dolt-server-test.yaml "$SPIRA_TESTDB_DATA"
 
-# SEED THE TEST PROD CHECKOUT'S CONFIG. A non-prod sentinel runs from $SPIRA_PROD/sentinel.sh.
+# SEED THE TEST PROD CHECKOUT'S CONFIG. A non-prod sentinel runs from $SPIRA_PROD/../bin/sentinel.
 # That conf.sh resolves SPIRA_REPO as the git root of $SPIRA_PROD, then looks for
 # $SPIRA_REPO/spira.conf BEFORE ~/.config/spira/spira.conf. Without that file the sentinel
 # falls through to the prod config — using the prod database, prod runtime tree, and

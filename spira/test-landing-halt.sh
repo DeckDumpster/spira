@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-landing-halt.sh — landing.sh halt subcommand: clean pass termination
+# test-landing-halt.sh — landing-pass halt (was landing.sh halt): clean pass termination
 #
 # Acceptance criteria (sp-wbany):
 #   • --dry-run on an idle system reports "no pass running" and exits non-zero.
@@ -11,11 +11,14 @@
 # POSITIVE CONTROL: each structural check is first proved against an offender before
 # trusting the passing case (law-a-regression-test-must-be-seen-to-fail).
 #
-# covers: spira/landing.sh
+# covers: landing-pass/*
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 . "$HERE/testlib.sh"
+# THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
+# pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
+LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 
 echo "test-landing-halt.sh"
 
@@ -37,7 +40,7 @@ run_halt() {
         SPIRA_PROD="$HERE" \
         SPIRA_CONF=/nonexistent \
         SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
-        bash "$HERE/landing.sh" halt "$@" 2>&1
+        "$LANDING_PASS_BIN" halt "$@" 2>&1
 }
 
 # ===========================================================================
@@ -224,7 +227,7 @@ out="$(env -i PATH="$PATH" HOME="$HOME" \
     SPIRA_PATH="$BIN_DIR" \
     SPIRA_CONF=/nonexistent \
     SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
-    bash "$HERE/landing.sh" halt --reason "container teardown test" 2>&1)"; rc=$?
+    "$LANDING_PASS_BIN" halt --reason "container teardown test" 2>&1)"; rc=$?
 kill "$CONT_PID" 2>/dev/null || true
 
 is   "container-halt: exits 0"                            "0" "$rc"
@@ -280,7 +283,7 @@ out="$(env -i PATH="$STUBDIR:$PATH" SPIRA_PATH="$STUBDIR" HOME="$HOME" \
     SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
     PODMAN_LOG="$PODMAN_LOG" \
     FAKE_CNAME="$FAKE_CNAME" \
-    bash "$HERE/landing.sh" halt 2>&1)"
+    "$LANDING_PASS_BIN" halt 2>&1)"
 kill "$VOL_PID" 2>/dev/null || true
 
 want "volumes: halt names the container it tore down" "$FAKE_CNAME" "$out"

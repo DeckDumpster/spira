@@ -5,7 +5,7 @@
 # passes, so every red suite reads as the branch's own. The gate therefore hands both trials
 # the branch as the selection head.
 # tier: T1
-# covers: spira/gate.sh spira/testenv-batch.sh
+# covers: spira/gate.sh testenv/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

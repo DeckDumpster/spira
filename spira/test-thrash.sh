@@ -12,7 +12,7 @@
 # suite is left with what those two do not cover: the probe aeon_fuse_minutes itself.
 #
 # tier: T1
-# covers: spira/lib.sh spira/aeon.sh spira/cockpit.sh spira/cockpit-metrics.py UC-aeon-execution-09
+# covers: spira/lib.sh aeon/src/* spira/cockpit.sh spira/cockpit-metrics.py UC-aeon-execution-09
 # scar: unrecorded
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

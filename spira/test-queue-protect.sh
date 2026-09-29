@@ -10,10 +10,14 @@
 # gaining a --section repositories selector — does not hold; doctor.sh has no
 # repositories section at all post sp-utt1i, let alone a selector for one.
 #
-# covers: spira/queue.sh
+# covers: queue/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
+# test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
+QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
+[ -x "$QUEUE_BIN" ] || { echo "FAIL: the queue binary is not built at $QUEUE_BIN"; exit 1; }
 
 echo "test-queue-protect.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -65,7 +69,7 @@ protect_out="$(
         SPIRA_REPO_MAP="$RMAP" \
         SPIRA_RUN="$TMP/run" \
         SPIRA_FORGE="$BIN/forge-fixture.sh" \
-        bash "$HERE/queue.sh" protect "$QNAME" 2>&1 || true
+        SPIRA_HOME="$HERE" "$QUEUE_BIN" protect "$QNAME" 2>&1 || true
 )"
 
 want "protect: calls forge"           "branch-protect" "$(cat "$FORGE_LOG")"
@@ -105,7 +109,7 @@ fail_out="$(
         SPIRA_REPO_MAP="$RMAP" \
         SPIRA_RUN="$TMP/run" \
         SPIRA_FORGE="$BIN/forge-fixture-fail.sh" \
-        bash "$HERE/queue.sh" protect "$QNAME" 2>&1
+        SPIRA_HOME="$HERE" "$QUEUE_BIN" protect "$QNAME" 2>&1
 )"; fail_rc=$?
 
 [ "$fail_rc" -ne 0 ] && ok "G5: exits non-zero when forge fails" \

@@ -147,8 +147,8 @@ CZAR_TOOLS="$(fayth_tools czar)"
 [ -n "$CZAR_TOOLS" ] || bail "czar.fayth not found or FAYTH_TOOLS unset"
 
 CZAR_ALLOW="bash spira/czar-fence.sh deadlock|czar-fence.sh
-bash spira/queue.sh eject sp-xyz|queue.sh eject
-bash spira/landing.sh halt|landing.sh halt
+/srv/spira/bin/queue eject sp-xyz|queue eject
+/srv/spira/bin/landing-pass halt --reason-file -|landing-pass halt
 bd -C /srv/spira/db show sp-xyz|bd show
 bd -C /srv/spira/db note sp-xyz 'diagnosis'|bd note
 git log --oneline -10|git log

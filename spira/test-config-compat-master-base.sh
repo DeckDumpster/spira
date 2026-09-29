@@ -14,10 +14,13 @@
 # repo whose base is `master`.
 #
 # tier: T2
-# covers: batcher-cut/src/*.rs batcher/src/*.rs spira/verdict.sh spira/landing.sh spira/lib.sh
+# covers: batcher-cut/src/*.rs batcher/src/*.rs spira/verdict.sh landing-pass/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
+# THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
+# pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
+LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -72,16 +75,23 @@ mkdir -p "$B_RUN/worktree" "$B_SH" "$B_LANDSTATE" "$B_QUEUEDIR/$B_REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$B_SH/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$B_SH/mail.sh"; chmod +x "$B_SH/mail.sh"
 
-cat > "$B_SH/testenv-batch-stub.sh" <<'STUB'
+# Stub round-vm: batcher-cut's corpus step runs `round-vm run <worktree> --suites CSV
+# --maxpar N --toolchain V --results-dir DIR` (sp-o3o6z) and reads each suite's result
+# protocol from DIR — green for every suite named.
+cat > "$B_SH/round-vm-stub.sh" <<'STUB'
 #!/usr/bin/env bash
-suites_csv=""
+[ "${1:-}" = run ] || { printf 'round-vm-stub: unexpected verb: %s\n' "${1:-}" >&2; exit 2; }
+shift
+suites_csv="" results=""
 while [ $# -gt 0 ]; do
     case "$1" in
-        --suites) shift; suites_csv="${1:-}"; shift ;;
+        --suites) suites_csv="${2:-}"; shift 2 ;;
+        --results-dir) results="${2:-}"; shift 2 ;;
+        --maxpar|--toolchain) shift 2 ;;
         *) shift ;;
     esac
 done
-results="${SPIRA_BATCH_RESULTS:?SPIRA_BATCH_RESULTS unset}"
+: "${results:?round-vm-stub: --results-dir not given}"
 mkdir -p "$results"
 IFS=',' read -r -a suites <<< "$suites_csv"
 for s in "${suites[@]:-}"; do
@@ -91,7 +101,7 @@ for s in "${suites[@]:-}"; do
 done
 exit 0
 STUB
-chmod +x "$B_SH/testenv-batch-stub.sh"
+chmod +x "$B_SH/round-vm-stub.sh"
 
 B_FORGE_LOG="$TMP/batch-forge-log"
 : > "$B_FORGE_LOG"
@@ -131,7 +141,7 @@ out="$(SPIRA_HOME="$B_SH" SPIRA_RUN="$B_RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO_MAP="$B_SH/repo-map" \
     SPIRA_QUEUE_DIR="$B_QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 \
     SPIRA_FORGE="$B_SH/forge-fixture.sh" \
-        "$BATCHER_BIN" cut "$B_REPONAME" --testenv-batch "$B_SH/testenv-batch-stub.sh" 2>&1)"
+        "$BATCHER_BIN" cut "$B_REPONAME" --round-vm "$B_SH/round-vm-stub.sh" 2>&1)"
 
 want "batcher cut: a PR was opened for the master-based batch" "opened" "$out"
 case "$(cat "$B_LANDSTATE/sp-mbase" 2>/dev/null)" in
@@ -179,7 +189,8 @@ esac
 FORGE
 chmod +x "$V_SH/forge-fixture.sh"
 printf '#!/usr/bin/env bash\ntrue\n' > "$V_SH/mail.sh"; chmod +x "$V_SH/mail.sh"
-printf '#!/usr/bin/env bash\ntrue\n' > "$V_SH/suites.sh"; chmod +x "$V_SH/suites.sh"
+printf '#!/usr/bin/env bash\ntrue\n' > "$V_SH/testenv-stub"; chmod +x "$V_SH/testenv-stub"
+export SPIRA_TESTENV_BIN="$V_SH/testenv-stub"
 printf '%s | %s | queue | origin/master | | |\n' "$V_REPONAME" "$V_REPO" > "$V_SH/repo-map"
 
 # Build one member branch and an open batch record whose local merge commit sits
@@ -224,7 +235,7 @@ esac
 
 # ============================================================================
 echo
-echo "landing.sh: a closed bead's branch lands (push mode) onto a MASTER base:"
+echo "landing-pass land: a closed bead's branch lands (push mode) onto a MASTER base:"
 # ============================================================================
 L_REPO="$TMP/landing-repo"; L_REMOTE="$TMP/landing-remote.git"
 L_RUN="$TMP/landing-run"; L_SH="$TMP/landing-spira"
@@ -235,7 +246,7 @@ git -C "$L_REPO" remote add origin "$L_REMOTE"
 git -C "$L_REPO" push -q origin master
 git -C "$L_REPO" fetch -q origin
 mkdir -p "$L_RUN/worktree" "$L_SH"
-cp "$HERE/landing.sh" "$HERE/landing-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$L_SH/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$L_SH/"
 printf '#!/usr/bin/env bash\necho "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2\nexit 0\n' \
     > "$L_SH/gate.sh"; chmod +x "$L_SH/gate.sh"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$L_SH/confine.sh"; chmod +x "$L_SH/confine.sh"
@@ -254,7 +265,7 @@ git -C "$L_RUN/worktree/sp-lbase" commit -q -m "feat: sp-lbase — work"
 
 out="$(SPIRA_HOME="$L_SH" SPIRA_RUN="$L_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$L_REPO" \
     SPIRA_REPO_MAP="$L_SH/repo-map-does-not-exist" \
-        bash "$L_SH/landing.sh" 2>&1)"
+        "$LANDING_PASS_BIN" land 2>&1)"
 
 want "landing: reports landing the master-base branch" "landed spira/sp-lbase" "$out"
 git -C "$L_REPO" fetch -q origin

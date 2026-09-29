@@ -21,7 +21,7 @@
 # host-reason: fixture suites are invoked directly with `bash`, never through
 # testenv-batch.sh or a container — that IS the scenario under test (run by hand).
 # tier: T1
-# covers: spira/testlib.sh spira/suite-covers.sh spira/testenv-guard.sh spira/testenv-batch.sh
+# covers: spira/testlib.sh spira/suite-covers.sh spira/testenv-guard.sh testenv/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -149,7 +149,7 @@ else
     bad "B1: refuses (non-zero exit) without SPIRA_IN_TESTENV" "exited 0"
 fi
 want "B1: refusal names Bail out!" "Bail out!" "$_b_out"
-want "B1: refusal names testenv-batch.sh" "testenv-batch.sh" "$_b_out"
+want "B1: refusal names the testenv runner" "run via testenv" "$_b_out"
 _b_lines="$(wc -l < "$_b_stublog" | tr -d ' ')"
 is "B1: stub systemctl recorded zero invocations before refusal" "0" "$_b_lines"
 
@@ -184,7 +184,7 @@ else
     bad "C1: refuses (non-zero exit) without SPIRA_IN_TESTENV" "exited 0"
 fi
 want "C1: refusal names Bail out!" "Bail out!" "$_c_out"
-want "C1: refusal names testenv-batch.sh" "testenv-batch.sh" "$_c_out"
+want "C1: refusal names the testenv runner" "run via testenv" "$_c_out"
 _c_lines="$(wc -l < "$_c_stublog" | tr -d ' ')"
 is "C1: stub systemctl recorded zero invocations before refusal" "0" "$_c_lines"
 

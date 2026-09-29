@@ -10,10 +10,14 @@
 # actually holds the per-repo lock, then launches a real `eject` while it is held.
 #
 # tier: T3
-# covers: spira/queue.sh spira/verdict.sh spira/batch.sh UC-landing-merge-queue-30
+# covers: queue/src/* spira/verdict.sh spira/batch.sh UC-landing-merge-queue-30
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
+# test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
+QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
+[ -x "$QUEUE_BIN" ] || { echo "FAIL: the queue binary is not built at $QUEUE_BIN"; exit 1; }
 
 echo "test-queue-step-eject-race.sh"
 
@@ -63,9 +67,10 @@ BDSTUB
 chmod +x "$SH/bd-stub.sh"
 
 printf '#!/usr/bin/env bash\ntrue\n' > "$SH/mail.sh"; chmod +x "$SH/mail.sh"
-printf '#!/usr/bin/env bash\ntrue\n' > "$SH/suites.sh"; chmod +x "$SH/suites.sh"
+# verdict.sh's observe-flake goes to `testenv suites` now (testenv/DESIGN-suites.md §9).
+printf '#!/usr/bin/env bash\ntrue\n' > "$SH/testenv-stub.sh"; chmod +x "$SH/testenv-stub.sh"
 
-# _batch_cut (queue.sh) unconditionally invokes the batcher binary after batch.sh's
+# _batch_cut (the queue binary) unconditionally invokes the batcher binary after batch.sh's
 # own sweep — this race is about the per-repo lock, not the batcher, so the stub
 # does nothing and exits 0.
 printf '#!/usr/bin/env bash\ntrue\n' > "$SH/batcher-stub.sh"; chmod +x "$SH/batcher-stub.sh"
@@ -85,12 +90,13 @@ run() {
         SPIRA_REPO_MAP="$RMAP" \
         SPIRA_QUEUE_DIR="$QUEUEDIR" \
         SPIRA_BATCHER_BIN="$SH/batcher-stub.sh" \
+        SPIRA_TESTENV_BIN="$SH/testenv-stub.sh" \
         SPIRA_QUEUE_CI_MAXSEC=3600 \
         SPIRA_QUEUE_CI_IDLE_SEC=600 \
         SPIRA_QUEUE_INFRA_RETRIES=2 \
         SPIRA_FORGE="$SH/forge-fake.sh" \
         FORGE_LOG="$FORGE_LOG" \
-        bash "$SH/queue.sh" "$@" 2>&1
+        SPIRA_HOME="$SH" "$QUEUE_BIN" "$@" 2>&1
 }
 
 TIP="aabbcc1100000000000000000000000000000001"

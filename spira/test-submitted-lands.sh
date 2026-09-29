@@ -25,12 +25,15 @@
 #
 # defect: sp-qsona (acceptance phase A stage 5)
 # tier: T3
-# covers: spira/landing.sh spira/sending.sh spira/pr-pass-branch.sh spira/lib.sh spira/aeon.sh
+# covers: landing-pass/* spira/sending.sh spira/pr-pass-branch.sh spira/lib.sh aeon/src/*
 # hermetic-ok: uses a fixture database and local git repos, no systemd or gh
 # timeout: 240
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
+# pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
+LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -77,8 +80,8 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/c
 # THE SHIM IS THE SESSION: commit, then close the bead the way a builder does. conf.sh
 # replaces PATH, so the model is injected through SPIRA_AGENT and nothing else.
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
-    || { echo "test-submitted-lands: aeon.sh has no SPIRA_AGENT injection point" >&2; exit 1; }
+[ -x "${SPIRA_AEON_BIN:-}" ] \
+    || { echo "test-submitted-lands: the aeon binary is not built (SPIRA_AEON_BIN)" >&2; exit 1; }
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
@@ -102,11 +105,11 @@ seed() {   # seed <id> [status] [extra-label]
     printf '{"id":"%s","title":"t","status":"%s","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "${2:-open}" "$_lbl" | testdb_seed
 }
-run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_HOME/aeon.sh" builder > "$TMP/aeon.out" 2>&1; }
+run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/aeon.out" 2>&1; }
 landing() {
     rm -f "$SPIRA_RUN/landing.progress"
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO=fixture SPIRA_ID_PREFIX=sp SPIRA_GH="$SPIRA_HOME/gh" \
-        bash "$SPIRA_HOME/landing.sh" 2>&1
+        "$LANDING_PASS_BIN" land 2>&1
 }
 sending() {
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO=fixture SPIRA_GH="$SPIRA_HOME/gh" \

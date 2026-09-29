@@ -16,7 +16,7 @@
 # other two release paths with the same defect, capacity and timeout, at the unit level).
 #
 # tier: T2
-# covers: spira/aeon.sh spira/lib.sh
+# covers: aeon/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1090
@@ -44,6 +44,7 @@ printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
+printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the aeon binary sources <home>/lib.sh; this is the real one, as aeon.sh sourced it
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
@@ -57,8 +58,8 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
-    || { echo "test-aeon-gate-unfinished-attempts: aeon.sh has no SPIRA_AGENT injection — refusing to run the real model" >&2; exit 1; }
+[ -x "${SPIRA_AEON_BIN:-}" ] \
+    || { echo "test-aeon-gate-unfinished-attempts: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model" >&2; exit 1; }
 
 # gate-run.sh stub: always "still running" (exit 2), the shape gate_unfinished() (aeon.sh)
 # requires before it will read the bead's gate as still deciding.
@@ -87,7 +88,7 @@ seed() {
     printf '{"id":"%s","title":"t","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "$_lbl" | testdb_seed
 }
-run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$HERE/aeon.sh" builder > "$TMP/out" 2>&1; }
+run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
 bead_status() {
     BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
         | python3 -c '

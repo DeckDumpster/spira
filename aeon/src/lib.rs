@@ -1,0 +1,21 @@
+//! aeon — the runner summoned to claim one bead, build its worktree, render its brief, run
+//! the model session and account for the outcome. See DESIGN.md.
+
+pub mod bd;
+pub mod brief;
+pub mod claim;
+pub mod conf;
+pub mod decide;
+pub mod ledger;
+pub mod ports;
+pub mod run;
+pub mod seam;
+pub mod session;
+pub mod sweep;
+pub mod teardown;
+pub mod util;
+pub mod verdict;
+pub mod worktree;
+
+#[cfg(test)]
+mod tests;

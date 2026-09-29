@@ -8,7 +8,7 @@
 #   carries the bead body and no statutes.
 #
 # defect: sp-d0rnp
-# covers: spira/aeon.sh spira/lib.sh spira/chamber/*.fayth
+# covers: aeon/src/* spira/lib.sh spira/chamber/*.fayth
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -109,14 +109,14 @@ git -C "$REPO" add f; git -C "$REPO" commit -qm seed
 git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/aeon.sh" "$HERE/suite-covers.sh" "$SPIRA_HOME/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 
-grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
-    || { printf 'test-aeon-prompt-layers: aeon.sh has no SPIRA_AGENT injection point\n' >&2; exit 1; }
+[ -x "${SPIRA_AEON_BIN:-}" ] \
+    || { printf 'test-aeon-prompt-layers: the aeon binary is not built (SPIRA_AEON_BIN)\n' >&2; exit 1; }
 
 BIN="$TMP/bin"; mkdir -p "$BIN"
 export SPIRA_AGENT="$BIN/claude" TMP
@@ -131,7 +131,7 @@ exit 0
 SHIM
 chmod +x "$BIN/claude"
 
-aeon() { bash "$SPIRA_HOME/aeon.sh" "$@" 2>/dev/null; }
+aeon() { "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$@" 2>/dev/null; }
 
 # Shared label for all test fayths.
 T_LABEL="test-layers-bead"

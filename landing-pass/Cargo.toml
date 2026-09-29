@@ -1,14 +1,20 @@
 [package]
 name = "landing-pass"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2021"
-description = "Landing pass — pr-mode repository landing on a short timer, no local gate."
+description = "landing-pass — the one landing pass for every land mode: pr (its own timer, no local gate), push, hold, queue and queue.local (CHECK 6's worker). Replaces spira/landing.sh."
+
+[lib]
+name = "landing_pass"
+path = "src/lib.rs"
+
+[[bin]]
+name = "landing-pass"
+path = "src/main.rs"
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+libc = "0.2"
+spira-config = { path = "../spira-config" }
 
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true

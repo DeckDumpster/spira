@@ -11,7 +11,7 @@
 # 3. Binary present + no source change → build.sh is NOT invoked.
 # 4. cargo absent → build.sh is NOT invoked even when binary is absent.
 #
-# covers: spira/land-build-ensure.sh spira/landing.sh spira/build.sh
+# covers: spira/land-build-ensure.sh landing-pass/* spira/build.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

@@ -24,7 +24,7 @@
 #
 # defect: sp-9ce60 (dispatch test plan, gaps G9/G10)
 # tier: T2
-# covers: spira/lib.sh spira/sentinel.sh spira/lc.sh UC-dispatch-20
+# covers: spira/lib.sh sentinel/src/* spira/lc.sh UC-dispatch-20
 # timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

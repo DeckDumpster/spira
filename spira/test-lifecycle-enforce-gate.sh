@@ -13,7 +13,7 @@
 # appear — because the old gate only asked "are these executable", and stub scripts are.
 #
 # tier: T1
-# covers: spira/aeon.sh spira/conf.sh
+# covers: aeon/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1090
@@ -33,6 +33,7 @@ printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
+printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the aeon binary sources <home>/lib.sh; this is the real one, as aeon.sh sourced it
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
@@ -46,8 +47,8 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
-    || bail "aeon.sh has no SPIRA_AGENT injection point — refusing to run the real model"
+[ -x "${SPIRA_AEON_BIN:-}" ] \
+    || bail "the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model"
 
 # STAND-INS FOR "THE BINARIES ARE BUILT". This suite proves the GATE, not lc_claim_bead's own
 # correctness (test-aeon-lifecycle-cutover.sh covers that end to end against a real spira-lc
@@ -90,7 +91,7 @@ seed() {
 }
 run_aeon() {
     rm -rf "$SPIRA_RUN/worktree"
-    "$HERE/aeon.sh" builder > "$TMP/out" 2>&1
+    "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1
     echo $?
 }
 bead_status() {

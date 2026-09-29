@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: spira/skew.sh spira/landing.sh spira/queue.sh spira/activate.sh spira/build-tarball.sh
+# covers: spira/skew.sh landing-pass/* queue/src/* spira/activate.sh spira/build-tarball.sh
 #
 # test-skew-refresh.sh — stage-and-swap refresh advances regardless of live aeon leases;
 # running processes keep their old inode; dirty tracked files are stashed; gap reports
@@ -14,6 +14,13 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
+# pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
+LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
+# The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
+# test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
+QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
+[ -x "$QUEUE_BIN" ] || { echo "FAIL: the queue binary is not built at $QUEUE_BIN"; exit 1; }
 
 echo "test-skew-refresh.sh"
 
@@ -269,7 +276,7 @@ QUEUE_NEW="$(git -C "$QREPO" rev-parse origin/main)"
     || bad "queue-mode refresh setup" "checkout is already at origin/main before the pass"
 
 mkdir -p "$QSH" "$QRUN"
-cp "$HERE/landing.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/skew.sh" "$QSH/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/skew.sh" "$QSH/"
 cat > "$QSH/repo-map" <<MAP
 qfixture | $QREPO | queue | |
 MAP
@@ -285,7 +292,7 @@ q_out="$(env -i PATH="$PATH" \
     SPIRA_REPO_MAP="$QSH/repo-map" \
     SPIRA_DOLT_DATA="" \
     SPIRA_TESTDB_DATA="" \
-    bash "$QSH/landing.sh" 2>&1)"
+    "$LANDING_PASS_BIN" land 2>&1)"
 
 QUEUE_AFTER="$(git -C "$QREPO" rev-parse HEAD)"
 [ "$QUEUE_AFTER" = "$QUEUE_NEW" ] \
@@ -302,8 +309,9 @@ echo "queue.local — land then refresh, then rollback by ref move:"
 # against the real queue.sh/activate.sh/build-tarball.sh/skew.sh copied verbatim into a
 # scratch SPIRA_HOME — no stand-in for any of the four.
 LSH="$TMP/local-spira"; mkdir -p "$LSH"
-cp "$HERE"/queue.sh "$HERE"/skew.sh "$HERE"/activate.sh "$HERE"/build-tarball.sh \
-   "$HERE"/lib.sh "$HERE"/conf.sh "$HERE"/mail.sh "$LSH/" 2>/dev/null
+cp "$HERE"/skew.sh "$HERE"/activate.sh "$HERE"/build-tarball.sh \
+   "$HERE"/lib.sh "$HERE"/conf.sh "$HERE"/mail.sh "$HERE"/suite-covers.sh "$HERE"/lc.sh \
+   "$HERE"/lifecycle-cert.sh "$LSH/" 2>/dev/null
 
 LREPO="$TMP/local-repo"
 git init -q -b trunk "$LREPO"
@@ -343,7 +351,7 @@ run_lq() {
         SPIRA_REPO_MAP="$LRMAP" \
         SPIRA_RELEASES="$LRELEASES" \
         SPIRA_DB="$TMP/local-no-db" \
-        bash "$LSH/queue.sh" "$@" 2>&1
+        SPIRA_HOME="$LSH" "$QUEUE_BIN" "$@" 2>&1
 }
 run_lskew() {
     env -i PATH="$PATH" \
@@ -367,10 +375,18 @@ lround() {  # lround <branch> <file> <content> -> commit on local/main's tip, pr
     git -C "$LREPO" branch -D "$br" >/dev/null 2>&1
     printf '%s' "$head"
 }
-lbins() {   # lbins <head> <content> -> populate the --with-bins corpus for <head>'s own tree
-    local head="$1" content="$2" tree dir
+# The round worktree queue land-local reads (--worktree, queue/DESIGN.md §8 D2/D3): one
+# detached worktree per tree, at <head>; its target/release is the round's own build.
+lbins_wt() {   # lbins_wt <head> -> the round worktree for <head>'s tree (created on first use)
+    local head="$1" tree wt
     tree="$(git -C "$LREPO" rev-parse "${head}^{tree}")"
-    dir="$LRUN/cargo-target-bins/$tree/release"
+    wt="$TMP/round-wt/$tree"
+    [ -d "$wt" ] || git -C "$LREPO" worktree add -q --detach "$wt" "$head" >/dev/null 2>&1
+    printf '%s' "$wt"
+}
+lbins() {   # lbins <head> <content> -> the round's own release build in its worktree
+    local head="$1" content="$2" dir
+    dir="$(lbins_wt "$head")/target/release"
     mkdir -p "$dir"
     printf '%s' "$content" > "$dir/fakebin"
     chmod +x "$dir/fakebin"
@@ -378,7 +394,7 @@ lbins() {   # lbins <head> <content> -> populate the --with-bins corpus for <hea
 
 LHEAD1="$(lround r1 f1.txt round1)"
 lbins "$LHEAD1" bin1
-lout1="$(run_lq land-local lfixq --head "$LHEAD1" --members "sp-lskw1:$LHEAD1")"; lrc1=$?
+lout1="$(run_lq land-local lfixq --head "$LHEAD1" --members "sp-lskw1:$LHEAD1" --worktree "$(lbins_wt "$LHEAD1")")"; lrc1=$?
 is   "land 1: exits 0"                    "0"      "$lrc1"
 want "land 1: activates the round's release" "activated spira-$LHEAD1" "$lout1"
 is   "land 1: local/main fast-forwards to the round head" "$LHEAD1" "$(git -C "$LREPO" rev-parse local/main)"
@@ -393,7 +409,7 @@ echo
 echo "queue.local refresh — stray write to local/main: alarms, never resets it:"
 LHEAD2="$(lround r2 f2.txt round2)"
 lbins "$LHEAD2" bin2
-lout2="$(run_lq land-local lfixq --head "$LHEAD2" --members "sp-lskw2:$LHEAD2")"; lrc2=$?
+lout2="$(run_lq land-local lfixq --head "$LHEAD2" --members "sp-lskw2:$LHEAD2" --worktree "$(lbins_wt "$LHEAD2")")"; lrc2=$?
 is   "land 2: exits 0"                     "0"      "$lrc2"
 is   "land 2: local/main fast-forwards to the second round head" "$LHEAD2" "$(git -C "$LREPO" rev-parse local/main)"
 

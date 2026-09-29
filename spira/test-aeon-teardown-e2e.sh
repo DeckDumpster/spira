@@ -26,7 +26,7 @@
 #
 # defect: sp-egge2 sp-ne93n sp-l7f5 sp-214 sp-ywlti sp-iu10 sp-2a4hd sp-wnsks
 # tier: T3
-# covers: spira/aeon.sh spira/lib.sh spira/mail.sh UC-aeon-execution-02 UC-aeon-execution-11 UC-aeon-execution-12 UC-aeon-execution-18
+# covers: aeon/src/* spira/lib.sh spira/mail.sh UC-aeon-execution-02 UC-aeon-execution-11 UC-aeon-execution-12 UC-aeon-execution-18
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -512,7 +512,7 @@ exit "$(cat "$TMP/shim-rc" 2>/dev/null || echo 0)"
 SHIM
 chmod +x "$FA_BIN/claude"
 printf 1 > "$FA_TMP/shim-rc"
-sweep_rc="$("$HERE/aeon.sh" sweeper --sweep --prompt "check pipeline" > "$FA_TMP/sweep-out" 2>&1; echo $?)"
+sweep_rc="$("$SPIRA_AEON_BIN" --home "$SPIRA_HOME" sweeper --sweep --prompt "check pipeline" > "$FA_TMP/sweep-out" 2>&1; echo $?)"
 is "sweep with claude rc=1 but ran exits 0 (ops/qa sweep fix)" "0" "$sweep_rc"
 # The positive control for this UC (a refused sweep — no tool calls — exits non-zero so a
 # real ops failure stays visible) is test-aeon-sweep.sh's instead, which already builds the

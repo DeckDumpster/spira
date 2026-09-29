@@ -14,6 +14,10 @@
 # FROM the gate's own literal — could never let the gate read the list itself without
 # circularity; here the list is the source and the gate reads it.
 #
+# The three fences ported to spira-lint (binary-path-fence, payload-argv-lint,
+# config-fence) are no longer files here: gate-spira.sh runs "$SPIRA_LINT_BIN" --only <rule>
+# for each, and refuses to land when the binary is not built.
+#
 # Sourced, never executed.
 #
 # covers: spira/gate-spira.sh
@@ -24,7 +28,6 @@ gate_fence_list() {    # gate_fence_list -> one repo-relative fence path per lin
     printf '%s\n' \
         spira/exclude.sh \
         spira/inventory.sh \
-        spira/binary-path-fence.sh \
         spira/scratch-fence.sh \
         spira/wiki-add-fence.sh \
         spira/sop.sh \
@@ -33,9 +36,7 @@ gate_fence_list() {    # gate_fence_list -> one repo-relative fence path per lin
         spira/bd-stdin-lint.sh \
         spira/gh-intake-lint.sh \
         spira/incident-cause-lint.sh \
-        spira/payload-argv-lint.sh \
         spira/suite-state-fence.sh \
         spira/orphan-test.sh \
-        spira/tmux-scope-fence.sh \
-        spira/config-fence.sh
+        spira/tmux-scope-fence.sh
 }

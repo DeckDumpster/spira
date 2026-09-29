@@ -14,21 +14,19 @@
 #   1. REFUSES without --cause and REFUSES without --evidence (positive control: a script
 #      with no case handler for 'unpoison' would fall through to usage/exit 1 too, so the
 #      refusal must ALSO prove the right bd calls never happened).
-#   2. REFUSES a bead that does not carry spira-poison — nothing to lift.
-#   3. On a poisoned bead with both flags: writes a requeued/unjudged-<cause> event (the
-#      same vocabulary session_outcome already charges attempts through), removes
-#      spira-poison, writes a poison.cleared event (bump_poison_cleared — sp-qd2ul: a clear
-#      that leaves no trace is undone by the very next CHECK 4 pass reading the same count
-#      against a bare label), and writes a note naming the cause and the evidence.
+#   2. REFUSES a bead spira-claim does not clear (not poisoned: spira-claim prints SKIP, not
+#      OK) — groomer exits 1.
+#   3. On a poisoned bead with both flags: delegates to `spira-claim unpoison` with
+#      --credit <cause>, --actor groomer and the evidence in --cause (spira-claim/DESIGN.md
+#      §8.6 item 4). The write trail itself (unjudged credit, poison.cleared floor, note,
+#      ask) is `cargo test -p spira-claim`.
 #
-# STUB BD (law-gates-run-in-a-clean-environment): unpoison's job is to make specific bd
-# calls with the right arguments in the right order; a real Dolt server would test bd's own
-# correctness, already covered where bump_requeue/bump_poison_cleared are tested against a
-# real store (test-attempts.sh, test-poison.sh). The stub also answers `label list` so the
-# poisoned/not-poisoned branches are exercised without a database.
+# STUB spira-claim (SPIRA_CLAIM_BIN): records its argv and answers OK/SKIP by bead id, so
+# the suite needs no database and no lifecycle machine. The refusal cases also prove the
+# stub was never called.
 #
 # tier: T1
-# covers: spira/groomer.sh spira/lib.sh spira/conf.sh
+# covers: spira/groomer.sh spira/conf.sh spira-claim/*
 # defect: sp-0qp7s
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -39,32 +37,38 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
 RUN="$T/run"; mkdir -p "$RUN"
 
-# Bead ids starting with "poisoned-" carry spira-poison; anything else does not. The stub
-# also answers `sql` (bump_requeue/bump_poison_cleared) and `note`/`label remove` by just
-# recording them, same as test-groomer.sh's stub.
+# Bead ids starting with "poisoned-" are poisoned; anything else is not. The stub bd records
+# any call (none are expected: groomer delegates everything to spira-claim).
 STUB_BD="$T/stub-bd"
 BD_LOG="$T/bd.log"
 cat > "$STUB_BD" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$BD_LOG_PATH"
-if [ "$1" = "-C" ]; then shift 2; fi
-if [ "$1" = "label" ] && [ "$2" = "list" ]; then
-    bead_id="$3"
-    case "$bead_id" in
-        poisoned-*) printf '  - plan\n  - spira-poison\n' ;;
-        *)          printf '  - plan\n' ;;
-    esac
-    exit 0
-fi
 exit 0
 STUB
 chmod +x "$STUB_BD"
+
+STUB_CLAIM="$T/stub-spira-claim"
+CLAIM_LOG="$T/claim.log"
+cat > "$STUB_CLAIM" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CLAIM_LOG_PATH"
+bead=""; while [ $# -gt 0 ]; do [ "$1" = "--bead" ] && bead="$2"; shift; done
+case "$bead" in
+    poisoned-*) printf 'OK   %s: cleared (stub)\n' "$bead" ;;
+    *)          printf 'SKIP %s: not poisoned (stub)\n' "$bead" ;;
+esac
+exit 0
+STUB
+chmod +x "$STUB_CLAIM"
 
 run_groomer() {
     env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
+        SPIRA_CLAIM_BIN="$STUB_CLAIM" \
+        CLAIM_LOG_PATH="$CLAIM_LOG" \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_RUN="$RUN" \
         bash "$GROOMSH" "$@" 2>&1
@@ -76,50 +80,51 @@ echo "test-groomer-unpoison.sh"
 echo
 echo "POSITIVE CONTROL: unpoison without --cause is refused (exits 1, bd never called)"
 # ==========================================================================================
-: > "$BD_LOG"
+: > "$BD_LOG"; : > "$CLAIM_LOG"
 out="$(run_groomer unpoison poisoned-1 --evidence 'pre-session death, no work attempted')"; rc=$?
 is   "no --cause exits 1"          1        "$rc"
 want "error mentions --cause"      "--cause" "$out"
 is   "bd not called when --cause missing" "" "$(cat "$BD_LOG" 2>/dev/null)"
+is   "spira-claim not called when --cause missing" "" "$(cat "$CLAIM_LOG" 2>/dev/null)"
 
 # ==========================================================================================
 echo
 echo "unpoison without --evidence is refused (exits 1, bd never called)"
 # ==========================================================================================
-: > "$BD_LOG"
+: > "$BD_LOG"; : > "$CLAIM_LOG"
 out="$(run_groomer unpoison poisoned-1 --cause pre-session-death)"; rc=$?
 is   "no --evidence exits 1"        1           "$rc"
 want "error mentions --evidence"    "--evidence" "$out"
 is   "bd not called when --evidence missing" "" "$(cat "$BD_LOG" 2>/dev/null)"
+is   "spira-claim not called when --evidence missing" "" "$(cat "$CLAIM_LOG" 2>/dev/null)"
 
 # ==========================================================================================
 echo
-echo "unpoison on a bead that does not carry spira-poison is refused (exits 1)"
+echo "unpoison on a bead spira-claim does not clear is refused (exits 1)"
 # ==========================================================================================
-: > "$BD_LOG"
+: > "$BD_LOG"; : > "$CLAIM_LOG"
 out="$(run_groomer unpoison clean-bead --cause pre-session-death --evidence 'nothing to lift')"; rc=$?
 is   "not-poisoned bead exits 1"          1                  "$rc"
-want "error mentions spira-poison"        "spira-poison"     "$out"
-# label list IS called (that is how it learned the bead is clean) but nothing else is.
-nowant "no label remove issued"  "label remove"  "$(cat "$BD_LOG")"
-nowant "no sql event issued"     " sql "         "$(cat "$BD_LOG")"
+want "error says it was not cleared"      "was not cleared"  "$out"
+want "spira-claim was asked"              "unpoison --bead clean-bead" "$(cat "$CLAIM_LOG")"
+nowant "no UNPOISONED line"               "UNPOISONED"       "$out"
 
 # ==========================================================================================
 echo
-echo "unpoison on a poisoned bead with --cause and --evidence: full credit trail"
+echo "unpoison on a poisoned bead with --cause and --evidence: delegates to spira-claim"
 # ==========================================================================================
-: > "$BD_LOG"
+: > "$BD_LOG"; : > "$CLAIM_LOG"
 out="$(run_groomer unpoison poisoned-1 --cause yield-headless --evidence 'the session backgrounded a test batch and ended its turn; the harness, not the work, ended the attempt')"; rc=$?
-log="$(cat "$BD_LOG")"
+log="$(cat "$CLAIM_LOG")"
 
 is   "unpoison exits 0"                       0                 "$rc"
 want "output confirms the lift"               "UNPOISONED poisoned-1 cause=yield-headless" "$out"
-want "an events row credits unjudged-<cause>" "unjudged-yield-headless" "$log"
-want "spira-poison label is removed"          "label remove poisoned-1 spira-poison" "$log"
-want "a poison.cleared event is written"      "poison.cleared" "$log"
-want "a note names the cause"                 "note poisoned-1" "$log"
-want "the note text names the cause"          "yield-headless"  "$log"
-want "the note carries the evidence"          "backgrounded a test batch" "$log"
+want "spira-claim unpoison names the bead"    "unpoison --bead poisoned-1" "$log"
+want "the cause is credited"                  "--credit yield-headless" "$log"
+want "the actor is groomer"                   "--actor groomer" "$log"
+want "--cause carries the cause"              "--cause yield-headless:" "$log"
+want "--cause carries the evidence"           "backgrounded a test batch" "$log"
+is   "groomer itself writes nothing to bd"    "" "$(cat "$BD_LOG")"
 
 echo
 tl_summary

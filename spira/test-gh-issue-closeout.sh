@@ -12,7 +12,7 @@
 # gh_issue_closeout on LANDED beads; the backfill script applies the same filter.
 #
 # tier: T2
-# covers: spira/landing.sh spira/lib.sh spira/gh-issue-backfill.sh
+# covers: landing-pass/src/* spira/lib.sh spira/gh-issue-backfill.sh
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"

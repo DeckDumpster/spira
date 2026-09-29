@@ -22,7 +22,7 @@
 # The API calls are intercepted via SPIRA_GH_API pointing at a stub HTTP server started by
 # this suite (law-probe-a-fixture-not-production).
 #
-# covers: spira/workflow-run-check.py spira/aeon.sh
+# covers: spira/workflow-run-check.py aeon/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

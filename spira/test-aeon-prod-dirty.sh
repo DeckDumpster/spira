@@ -34,7 +34,7 @@
 # spira-poison so subsequent aeon runs do not claim it. Only the current case's bead is
 # available for the next aeon.
 #
-# covers: spira/aeon.sh
+# covers: aeon/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -89,7 +89,7 @@ git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q ori
 # SPIRA_HOME is a subdirectory of HARNESS (a git-tracked repo), so conf.sh derives
 # SPIRA_REPO = git root of HARNESS, matching the exported SPIRA_REPO above.
 export SPIRA_HOME="$HARNESS/spira-home"; mkdir -p "$SPIRA_HOME/chamber"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/aeon.sh" "$SPIRA_HOME/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
@@ -107,8 +107,8 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/c
 # ---- shim: stands in for claude -------------------------------------------------------
 # conf.sh replaces $PATH entirely, so a PATH shim silently runs the real model.
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP HARNESS
-grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
-    || { echo "test-aeon-prod-dirty: aeon.sh has no SPIRA_AGENT injection point — refusing to run the real model" >&2; exit 1; }
+[ -x "${SPIRA_AEON_BIN:-}" ] \
+    || { echo "test-aeon-prod-dirty: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model" >&2; exit 1; }
 
 # Shim behaviour is driven by $TMP/shim-dirty:
 #   clean       — commit only; leave worktree and SPIRA_REPO clean
@@ -194,7 +194,7 @@ b1="$(bd -C "$SPIRA_DB" create --title "test: own worktree dirty" --type task \
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b1" ] || { bad "case 1 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
-bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
+"$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 is "own-dirty: bead is reopened" "open" "$(bead_status "$b1")"
 nowant "own-dirty: reopened by the guard, so NOT converted to submitted" "spira-submitted" "$(bead_labels "$b1")"
 note1="$(latest_note "$b1")"
@@ -216,7 +216,7 @@ b2="$(bd -C "$SPIRA_DB" create --title "test: repo dirty only" --type task \
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b2" ] || { bad "case 2 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
-bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
+"$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 not_reopened "repo-dirty" "$b2"
 # Restore HARNESS so it does not affect later cases.
 git -C "$HARNESS" checkout -q -- incident.sh 2>/dev/null || true
@@ -231,7 +231,7 @@ b3="$(bd -C "$SPIRA_DB" create --title "test: clean" --type task \
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b3" ] || { bad "case 3 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
-bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
+"$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 not_reopened "clean" "$b3"
 
 # ============================================================
@@ -242,7 +242,7 @@ printf 'own-dirty' > "$TMP/shim-dirty"
 b4="$(bd -C "$SPIRA_DB" create --title "test: own dirty with override" --type task \
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b4" ] || { bad "case 4 bead created" "(bead-create failed)"; true; }
-SPIRA_ALLOW_PROD_DIRTY=1 bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
+SPIRA_ALLOW_PROD_DIRTY=1 "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 not_reopened "override (despite dirty worktree)" "$b4"
 
 echo

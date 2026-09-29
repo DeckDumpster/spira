@@ -120,7 +120,7 @@ struct Config {
     fleet_status_sh: String,
     queue_certified_list_sh: String,
     cockpit_sh: String,
-    queue_sh: String,
+    queue_bin: String,
     queue_dir: PathBuf,
     repo_map: Option<PathBuf>,
     releases_dir: PathBuf,
@@ -179,8 +179,14 @@ impl Config {
                 .unwrap_or_else(|_| format!("{}/queue-certified-list.sh", spira_home)),
             cockpit_sh: env::var("SPIRA_COCKPIT_SH")
                 .unwrap_or_else(|_| format!("{}/cockpit.sh", spira_home)),
-            queue_sh: env::var("SPIRA_QUEUE_SH")
-                .unwrap_or_else(|_| format!("{}/queue.sh", spira_home)),
+            // The queue binary (conf.sh exports SPIRA_QUEUE_BIN), else the one installed
+            // beside this binary.
+            queue_bin: env::var("SPIRA_QUEUE_BIN").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| {
+                env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.join("queue").display().to_string()))
+                    .unwrap_or_else(|| "queue".into())
+            }),
             queue_dir: env::var("SPIRA_QUEUE_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("queue")),
@@ -812,9 +818,8 @@ fn observe_queue_mergeable(cfg: &Config) -> Vec<Check> {
                 key,
                 raw,
                 remedy: Remedy::Command {
-                    program: "bash".into(),
+                    program: cfg.queue_bin.clone(),
                     args: vec![
-                        cfg.queue_sh.clone(),
                         "eject".into(),
                         id.to_string(),
                         "--reason".into(),
@@ -1187,7 +1192,7 @@ mod tests {
             fleet_status_sh: String::new(),
             queue_certified_list_sh: String::new(),
             cockpit_sh: String::new(),
-            queue_sh: String::new(),
+            queue_bin: String::new(),
             queue_dir: PathBuf::from("/dev/null"),
             repo_map: None,
             releases_dir: PathBuf::new(),
@@ -1225,7 +1230,7 @@ mod tests {
             fleet_status_sh: base.fleet_status_sh.clone(),
             queue_certified_list_sh: base.queue_certified_list_sh.clone(),
             cockpit_sh: base.cockpit_sh.clone(),
-            queue_sh: base.queue_sh.clone(),
+            queue_bin: base.queue_bin.clone(),
             queue_dir: base.queue_dir.clone(),
             repo_map: base.repo_map.clone(),
             releases_dir: base.releases_dir.clone(),

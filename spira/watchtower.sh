@@ -958,16 +958,19 @@ done
 # NAME plus the cheap facts that say whether the scan is worth this pass, and the session
 # spends its own eight minutes on it.
 #
-# `suites.sh status` is a glob and a read per suite: no database, no network, nothing that
+# `testenv suites status` is a glob and a read per suite: no database, no network, nothing that
 # can hang. A pass that cannot produce it prints why rather than an empty section, because a
 # menu with nothing on it and a menu that could not be built read identically otherwise.
 # SPIRA_SUITES_SH overrides the path so test suites can inject a mock without paying the
 # host-check.sh walk on every watchtower.sh invocation. Same seam as SPIRA_INCIDENT_SH.
-SUITES="${SPIRA_SUITES_SH:-$(dirname "$0")/suites.sh}"
-suites_block="  (unavailable — $SUITES is missing, so nothing knows which suites run nowhere)"
-if [ -r "$SUITES" ]; then
-    suites_block="$(bash "$SUITES" status 2>/dev/null)"
-    [ -n "$suites_block" ] || suites_block="  (unreadable — suites.sh status produced nothing)"
+if [ -n "${SPIRA_SUITES_SH:-}" ]; then
+    suites_block="$(bash "$SPIRA_SUITES_SH" status 2>/dev/null)"
+    [ -n "$suites_block" ] || suites_block="  (unreadable — testenv suites status produced nothing)"
+elif [ -x "${SPIRA_TESTENV_BIN:-}" ]; then
+    suites_block="$("$SPIRA_TESTENV_BIN" suites status 2>/dev/null)"
+    [ -n "$suites_block" ] || suites_block="  (unreadable — testenv suites status produced nothing)"
+else
+    suites_block="  (unavailable — the testenv binary is missing, so nothing knows which suites run nowhere)"
 fi
 
 # THE STRAND LEDGER IS TWO LINES, NOT ONE. strands.json holds every disposition strand.sh
@@ -1394,7 +1397,7 @@ fi
 _batched_too_long="${SP_BATCHED_TOO_LONG:-?}"
 if [ "$_batched_too_long" != "?" ] && [ "$_batched_too_long" -gt 0 ] 2>/dev/null; then
     if [ -x "$INC" ] || [ -r "$INC" ]; then
-        printf 'BATCHED branches not resolved after one batch interval: %s\n\nThe branch(es) below have been in BATCHED state longer than expected:\n\n%s\n\nCheck: is the open batch PR mergeable? Run: gh pr view <pr-number> --json mergeable,mergeStateStatus.\nFix: if DIRTY, abandon the batch: queue.sh abandon <repo> --reason "conflict".\n' \
+        printf 'BATCHED branches not resolved after one batch interval: %s\n\nThe branch(es) below have been in BATCHED state longer than expected:\n\n%s\n\nCheck: is the open batch PR mergeable? Run: gh pr view <pr-number> --json mergeable,mergeStateStatus.\nFix: if DIRTY, abandon the batch: queue abandon <repo> --reason "conflict".\n' \
             "$_batched_too_long" "${SP_BATCHED_TOO_LONG_NAMES:-(unavailable)}" | \
         SPIRA_DB="$SPIRA_DB" \
         SPIRA_INCIDENT_TYPE=task \

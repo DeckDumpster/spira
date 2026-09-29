@@ -52,16 +52,20 @@ echo "the call sites — every outcome the harness has is wired to one"
 # test-poison.sh. What is checkable here is that the claim is still
 # wired, and wired AFTER the ledger — the ledger is what aeon_count and the born/awake
 # positive control read, and it must not come to depend on a database being reachable.
-claim="$(grep -n -A14 '^ledger "awake \$FAYTH \$BEAD_ID"' "$HERE/aeon.sh" 2>/dev/null)"
-want "a claim is emitted"          "spira_event aeon.claimed" "$claim"
-want "and only after the ledger"   "ledger \"awake"           "$claim"
+# RETIRED with aeon.sh (the Rust cutover): the claim event and its ordering after the ledger
+# are the aeon binary's (aeon/src/run.rs), covered by `cargo test -p aeon`.
 
 for site in \
-    "landing.sh:bead.landed"    "landing.sh:bead.reopened" \
-    "sentinel.sh:bead.poisoned" "gate-check.sh:ci.failed" \
-    "strand.sh:branch.reclaimed"; do
+    "gate-check.sh:ci.failed"; do
     f="${site%%:*}"; k="${site##*:}"
     grep -q "spira_event $k " "$HERE/$f" \
+        && ok "$f emits $k" || bad "$f emits $k" "no call site"
+done
+# The sentinel and strand are Rust now: the event kinds are literals in their sources.
+for site in "sentinel/src/check4.rs:bead.poisoned" "strand/src/check.rs:branch.reclaimed" \
+            "landing-pass/src/push.rs:bead.landed" "landing-pass/src/push.rs:bead.reopened"; do
+    f="${site%%:*}"; k="${site##*:}"
+    grep -qF "\"$k\"" "$HERE/../$f" \
         && ok "$f emits $k" || bad "$f emits $k" "no call site"
 done
 

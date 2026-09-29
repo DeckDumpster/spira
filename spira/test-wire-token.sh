@@ -22,7 +22,7 @@
 #
 # defect: sp-dcfm
 # tier: T1
-# covers: spira/sending.sh spira/sentinel.sh spira/cockpit-metrics.py
+# covers: spira/sending.sh sentinel/src/* spira/cockpit-metrics.py
 
 # covers: spira/sending.sh spira/sentinel.sh spira/cockpit-metrics.py
 set -uo pipefail
@@ -32,7 +32,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 echo "test-wire-token.sh"
 
 SENDING="$HERE/sending.sh"
-SENTINEL="$HERE/sentinel.sh"
+SENTINEL="$HERE/../sentinel/src/audit.rs"   # the sentinel is Rust (was sentinel.sh)
 METRICS="$HERE/cockpit-metrics.py"
 
 # ---------------------------------------------------------------------------------------
@@ -52,19 +52,19 @@ else
 fi
 
 # ---------------------------------------------------------------------------------------
-# PARSER 1 — sentinel.sh greps the emitter's stdout and must look for ^SENT.
+# PARSER 1 — the sentinel (sentinel/src/audit.rs) matches lines starting with SENT.
 # ---------------------------------------------------------------------------------------
-if grep -q "'^SENT'" "$SENTINEL"; then
-    ok "sentinel.sh greps ^SENT"
+if grep -qF 'starts_with("SENT")' "$SENTINEL"; then
+    ok "sentinel matches ^SENT"
 else
-    bad "sentinel.sh greps ^SENT" "'^SENT' not found — sentinel is out of sync with emitter"
+    bad "sentinel matches ^SENT" "starts_with(\"SENT\") not found — sentinel is out of sync with emitter"
 fi
 
-# NEGATIVE: old grep pattern must be gone.
-if grep -q "'^REAPED'" "$SENTINEL"; then
-    bad "sentinel.sh no longer greps ^REAPED" "'^REAPED' still present — old pattern survives"
+# NEGATIVE: old match pattern must be gone.
+if grep -q 'REAPED' "$SENTINEL"; then
+    bad "sentinel no longer matches REAPED" "REAPED still present — old pattern survives"
 else
-    ok "sentinel.sh does not grep ^REAPED"
+    ok "sentinel does not match REAPED"
 fi
 
 # ---------------------------------------------------------------------------------------

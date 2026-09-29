@@ -23,7 +23,7 @@
 # applies to a work bead, so an e2e run ends open+spira-submitted rather than closed.
 #
 # defect: sp-htw4r sp-ygvu0 sp-r1501
-# covers: spira/aeon.sh spira/lib.sh spira/conf.sh
+# covers: aeon/src/* spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -107,8 +107,8 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
-    || { echo "test-aeon-eviction-race: aeon.sh has no SPIRA_AGENT injection point" >&2; exit 1; }
+[ -x "${SPIRA_AEON_BIN:-}" ] \
+    || { echo "test-aeon-eviction-race: the aeon binary is not built (SPIRA_AEON_BIN)" >&2; exit 1; }
 
 # The shim commits, writes landstate=RED reason=ejected at the real (post-commit) tip, then
 # closes — reproducing the original race: the eviction is recorded, then the in-flight aeon
@@ -132,7 +132,7 @@ seed() {
     printf '{"id":"%s","title":"t","status":"%s","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "${2:-open}" "$_lbl" | testdb_seed
 }
-run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_HOME/aeon.sh" builder > "$TMP/out" 2>&1; }
+run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
 field() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }

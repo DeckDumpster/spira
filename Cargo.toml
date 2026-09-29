@@ -23,6 +23,15 @@ members = [
     "spira-lc",
     "tsd-lifecycle-export",
     "work",
+    "spira-lint",
+    "rebase-stale",
+    "round-vm",
+    "spira-claim",
+    "strand",
+    "testenv",
+    "sentinel",
+    "queue",
+    "aeon",
 ]
 resolver = "2"
 

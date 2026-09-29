@@ -301,7 +301,7 @@ def main():
                          mir.get("exporter") or "?"))
 
     # -- leases nobody reclaimed -----------------------------------------------------------
-    # strand.sh reclaims a ghost lease within minutes and escalates once if it cannot.
+    # strand reclaims a ghost lease within minutes and escalates once if it cannot.
     # Auron's subject is therefore not the ghost — it is the REAPER, still reporting the
     # same ghost long after its own action should have cleared it.
     ghosts = []
@@ -320,7 +320,7 @@ def main():
         alert("lease-unreclaimed",
               "%d bead(s) have held a lease with no live aeon for over %s"
               % (len(ghosts), fmt_age(ghost_stale)),
-              "THRESHOLD %s — strand.sh reclaims a ghost within one pass and escalates once\n"
+              "THRESHOLD %s — strand reclaims a ghost within one pass and escalates once\n"
               "if it cannot, so a ghost still standing after this is the REAPER failing,\n"
               "not a worker dying.\n\n"
               "Each of these beads reads as in_progress, so nothing else will claim it and\n"

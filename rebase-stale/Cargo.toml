@@ -1,0 +1,21 @@
+[package]
+name = "rebase-stale"
+version = "0.1.0"
+edition = "2021"
+description = "rebase-stale — rebases a submitted branch that went stale against its land ref mechanically; only a real content conflict or a red gate returns it to an aeon (sp-x1c6k, replaces spira/rebase-stale.sh)."
+
+[[bin]]
+name = "rebase-stale"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+spira-config = { path = "../spira-config" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

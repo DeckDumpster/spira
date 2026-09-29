@@ -37,7 +37,7 @@
 # (law-prefer-the-real-dependency).
 #
 # tier: T2
-# covers: spira/gate-check.sh spira/sentinel.sh spira/aeon.sh
+# covers: spira/gate-check.sh sentinel/src/* aeon/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

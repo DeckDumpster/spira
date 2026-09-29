@@ -24,7 +24,7 @@
 # forced rank failure surfaces as a claim-error rather than an empty/idle result.
 #
 # defect: sp-ns46j sp-o4trx
-# covers: spira/lib.sh spira/aeon.sh spira/epic-rank.sh
+# covers: spira/lib.sh aeon/src/* spira/epic-rank.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -258,7 +258,7 @@ printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
 
 AEON_HOME="$TMP/aeonhome"; mkdir -p "$AEON_HOME/chamber"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/aeon.sh" "$HERE/suite-covers.sh" "$AEON_HOME/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$AEON_HOME/"
 cp -r "$HERE/actors" "$AEON_HOME/" 2>/dev/null || true
 AEON_RUN="$TMP/aeonrun"; mkdir -p "$AEON_RUN"
 AEON_REPO_MAP="$TMP/repo-map"
@@ -288,7 +288,7 @@ chmod +x "$BIN/claude"
 
 ( SPIRA_HOME="$AEON_HOME" SPIRA_RUN="$AEON_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP" \
   SPIRA_CONF="$TMP/no-such2.conf" \
-  "$AEON_HOME/aeon.sh" builder > "$TMP/aeon-out" 2>&1 )
+  "$SPIRA_AEON_BIN" --home "$AEON_HOME" builder > "$TMP/aeon-out" 2>&1 )
 
 # A task bead's close is converted to open + spira-submitted at teardown (sp-qsona): only
 # the landing pass closes a work bead directly, so "claimed and finished" reads as
@@ -328,26 +328,33 @@ $(bead sp-e1-rework sp-e1 3)
 $(bead sp-unrelated-p0 "" 0)
 JSONL
 
-# A python3 SHIM that fails only the call epic_rank_rows itself makes — identified by the
-# LOOKUP_FILE env var epic_rank_rows sets and nothing earlier in aeon.sh's own wiring sets —
-# so every other python3 use in aeon.sh/lib.sh (band_lines, epic_parent_lookup, BEAD_ID
-# extraction) still runs for real.
-REAL_PY="$(command -v python3)"
+# A spira-claim SHIM that fails only the final rank — the `select --resumable` call, the
+# aeon binary's epic_rank_rows (aeon/src/claim.rs Selector::select) — and hands every other
+# call (the epic lookup, the --top-tier band) to the real spira-claim, so the lookup and the
+# resumability pass still run for real and only the rank itself is forced to fail. Ranking
+# moved out of python (aeon.sh's epic_rank_rows) into spira-claim with the Rust cutover, so
+# the old python3 shim no longer reached the call under test.
+REAL_CLAIM="${SPIRA_CLAIM_BIN:-}"
+[ -x "$REAL_CLAIM" ] \
+    || { echo "test-epic-claim-order: spira-claim is not built (SPIRA_CLAIM_BIN) — T8 cannot force the rank" >&2; exit 1; }
 BIN2="$TMP/bin2"; mkdir -p "$BIN2"
-cat > "$BIN2/python3" <<STUB
+cat > "$BIN2/spira-claim" <<STUB
 #!/usr/bin/env bash
-if [ -n "\${LOOKUP_FILE:-}" ]; then
-    echo "T8 shim: forced epic_rank_rows failure" >&2
-    exit 1
-fi
-exec "$REAL_PY" "\$@"
+for a in "\$@"; do
+    if [ "\$a" = "--resumable" ]; then
+        cat >/dev/null
+        echo "T8 shim: forced epic_rank_rows failure" >&2
+        exit 1
+    fi
+done
+exec "$REAL_CLAIM" "\$@"
 STUB
-chmod +x "$BIN2/python3"
+chmod +x "$BIN2/spira-claim"
 
 AEON_RUN2="$TMP/aeonrun2"; mkdir -p "$AEON_RUN2"
-( SPIRA_PATH="$BIN2" SPIRA_HOME="$AEON_HOME" SPIRA_RUN="$AEON_RUN2" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP" \
+( SPIRA_CLAIM_BIN="$BIN2/spira-claim" SPIRA_HOME="$AEON_HOME" SPIRA_RUN="$AEON_RUN2" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP" \
   SPIRA_CONF="$TMP/no-such3.conf" \
-  "$AEON_HOME/aeon.sh" builder > "$TMP/aeon-out2" 2>&1 )
+  "$SPIRA_AEON_BIN" --home "$AEON_HOME" builder > "$TMP/aeon-out2" 2>&1 )
 t8_rc=$?
 
 [ "$t8_rc" -ne 0 ] && ok "aeon.sh exits non-zero on a forced rank failure (never the 'idle' success exit)" \

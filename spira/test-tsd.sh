@@ -29,7 +29,7 @@
 # rather than trusted on silence.
 #
 # covers: tsd/src/lib.rs tsd/src/main.rs spira/tsd-query.sh spira/deps.toml spira/conf.sh
-#         spira/lib.sh spira/testenv-batch.sh spira/testenv/Containerfile
+#         spira/lib.sh testenv/src/* spira/testenv/Containerfile
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -191,31 +191,10 @@ want "land_mark succeeds even when SPIRA_TSD_BIN is not executable" "land_mark_r
                                         || ok "no tsd row written when tsd-write is not executable"
 
 # ============================================================================================
-printf '\n%s\n' "9. testenv-batch.sh's suite-times hook writes a suite-timing row"
+printf '\n%s\n' "9. suite-timing rows (RETIRED here)"
 # ============================================================================================
-# Extract the two functions verbatim from the shipped script rather than re-implementing
-# them, so this exercises the code that ships, not a model of it.
-FUNCS="$T/funcs.sh"
-sed -n '/^_append_suite_times() {/,/^}/p; /^_tsd_suite_timing() {/,/^}/p' \
-    "$HERE/testenv-batch.sh" > "$FUNCS"
-[ -s "$FUNCS" ] || bad "could not extract _append_suite_times/_tsd_suite_timing from testenv-batch.sh"
-RUN7="$T/run7"; mkdir -p "$RUN7"
-(
-    export SPIRA_RUN="$RUN7" SPIRA_TSD_BIN="$TSD_BIN"
-    _BATCH_RUN_ID="run7"; BR="spira/sp-test"
-    . "$FUNCS"
-    _append_suite_times "test-example.sh" "0" "12" "3" "45" "parallel"
-)
-FAM7="$RUN7/tsd/suite-timing.jsonl"
-[ -f "$FAM7" ] && ok "suite-timing row appended" \
-                || bad "MUST-FAIL CHECK: no suite-timing row (old testenv-batch.sh behaviour)"
-if [ -f "$FAM7" ]; then
-    is "suite-timing: suite"     "test-example.sh" "$(jpy "$FAM7" 'rows[0]["suite"]')"
-    is "suite-timing: rc"        "0"                "$(jpy "$FAM7" 'rows[0]["rc"]')"
-    is "suite-timing: wall_secs" "12"                "$(jpy "$FAM7" 'rows[0]["wall_secs"]')"
-    is "suite-timing: run_id"    "run7"              "$(jpy "$FAM7" 'rows[0]["run_id"]')"
-    is "suite-timing: branch"    "spira/sp-test"     "$(jpy "$FAM7" 'rows[0]["branch"]')"
-fi
+# The suite-times hook moved with spira/testenv-batch.sh into the testenv crate:
+# testenv/src/timing.rs (append_writes_jsonl_under_run_tsd, rows_carry_the_envelope_and_typed_fields).
 
 # ============================================================================================
 printf '\n%s\n' "10. tsd-query.sh: baseline, rate, dwell, by-group, and their refusals"

@@ -10,10 +10,16 @@
 # exit status must also be checked so a write failure does not silently produce
 # a "certified" result (gap G6).
 #
-# covers: spira/queue.sh spira/suites.sh spira/conf.sh
+# covers: queue/src/* testenv/src/suites/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
+# test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
+QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
+[ -x "$QUEUE_BIN" ] || { echo "FAIL: the queue binary is not built at $QUEUE_BIN"; exit 1; }
+TESTENV_BIN="${SPIRA_TESTENV_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/testenv}"
+[ -x "$TESTENV_BIN" ] || { echo "FAIL: the testenv binary is not built at $TESTENV_BIN"; exit 1; }
 
 echo "test-queue-submit.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -45,7 +51,7 @@ run() {
         SPIRA_RUN="$TMP/run" \
         SPIRA_QUEUE_DIR="$TMP/run/queue" \
         SPIRA_REPO_MAP="$RMAP" \
-        bash "$TMP/spira/queue.sh" "$@" 2>&1
+        SPIRA_HOME="$TMP/spira" "$QUEUE_BIN" "$@" 2>&1
 }
 
 git -C "$REPO" branch "spira/sp-abc01" main
@@ -59,7 +65,7 @@ git -C "$REPO" branch "spira/sp-cso01" main
 env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
     SPIRA_HOME_REPO=fixq SPIRA_REPO="$REPO" SPIRA_RUN="$TMP/run" \
     SPIRA_QUEUE_DIR="$TMP/run/queue" SPIRA_REPO_MAP="$RMAP" SPIRA_CERTIFY_SUITES=off \
-    bash "$TMP/spira/queue.sh" submit spira/sp-cso01 >/dev/null 2>&1
+    SPIRA_HOME="$TMP/spira" "$QUEUE_BIN" submit spira/sp-cso01 >/dev/null 2>&1
 want "the gate is handed suites=off" "suites=off" "$(cat "$GATE_LOG")"
 rm -f "$TMP/run/landstate/sp-cso01"
 
@@ -187,7 +193,7 @@ run2() {
         SPIRA_RUN="$TMP/run2" \
         SPIRA_QUEUE_DIR="$TMP/run2/queue" \
         SPIRA_REPO_MAP="$RMAP2" \
-        bash "$TMP/spira2/queue.sh" "$@" 2>&1
+        SPIRA_HOME="$TMP/spira2" "$QUEUE_BIN" "$@" 2>&1
 }
 
 out="$(run2 submit spira/sp-def02 queuerepo)"; rc=$?
@@ -215,7 +221,7 @@ run3() {
         SPIRA_RUN="$TMP/run3" \
         SPIRA_QUEUE_DIR="$TMP/run3/queue" \
         SPIRA_REPO_MAP="$RMAP3" \
-        bash "$TMP/spira2/queue.sh" "$@" 2>&1
+        SPIRA_HOME="$TMP/spira2" "$QUEUE_BIN" "$@" 2>&1
 }
 out="$(run3 submit spira/sp-ghi03)"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 with no repo arg" || bad "exit 0 with no repo arg" "got rc=$rc out=$out"
@@ -223,9 +229,10 @@ want "gate sees home repo name when no arg" "repo=fixq" "$(cat "$GATE_LOG2")"
 rm -rf "$TMP/run3"
 
 # ===========================================================================
-# suites.sh transitions (quarantine/disable/activate) call queue.sh submit.
-# _sts_transition does `cd "$HERE/.." ` internally, so its own spira/ must live
-# INSIDE the repo it commits to — a separate fixture from the cases above.
+# testenv suites transitions (quarantine/disable/activate) call queue submit
+# (testenv/DESIGN-suites.md §9: suites.sh is `testenv suites` now). The harness root is
+# pinned to the fixture repo (SPIRA_TESTENV_HARNESS), so its spira/ lives INSIDE the repo it
+# commits to — a separate fixture from the cases above.
 # ===========================================================================
 TREPO="$TMP/trepo"
 TSH="$TREPO/spira"
@@ -268,23 +275,31 @@ transition() {
         SPIRA_RUN="$TRUN" \
         SPIRA_QUEUE_DIR="$TRUN/queue" \
         SPIRA_REPO_MAP="$TSH/repo-map" \
-        bash "$TSH/suites.sh" "$@" 2>&1
+        SPIRA_TESTENV_HARNESS="$TREPO" \
+        SPIRA_QUEUE_BIN="$QUEUE_BIN" \
+        "$TESTENV_BIN" suites "$@" 2>&1
 }
 tlandstate() { cat "$TRUN/landstate/${1:-}" 2>/dev/null; }
 tqueue_rec()  { cat "$TRUN/queue/${1:-}" 2>/dev/null; }
 
 echo
-echo "quarantine: creates a branch, commits, and submits it (certified via queue.sh):"
+echo "quarantine: creates a branch, commits, and submits it (certified via queue submit):"
 mkdir -p "$TRUN/queue" "$TRUN/landstate"
 : > "$TGATE_LOG"
 git -C "$TREPO" checkout -q main 2>/dev/null || true
+_thead="$(git -C "$TREPO" rev-parse HEAD)"
 out="$(transition quarantine test-q.sh sp-xyz "flaky test")"
+is "quarantine: the fixture checkout's HEAD did not move (D2: no checkout)" \
+   "$_thead" "$(git -C "$TREPO" rev-parse HEAD)"
 is "quarantine: gate was called" "1" "$(wc -l < "$TGATE_LOG" | tr -d ' ')"
 _qid="$(printf '%s' "$out" | tail -1 | tr -d '[:space:]')"
 case "$_qid" in
     spira-suite-state/*) ok "quarantine: branch name on stdout" ;;
     *) bad "quarantine: branch name on stdout" "got: [$_qid]" ;;
 esac
+git -C "$TREPO" rev-parse --verify -q "refs/heads/$_qid" >/dev/null \
+    && ok "quarantine: the transition branch exists in the fixture repo" \
+    || bad "quarantine: the transition branch exists in the fixture repo" "no ref refs/heads/$_qid"
 case "$(tlandstate "$_qid")" in
     CERTIFIED*) ok "quarantine: transition branch certified" ;;
     *)          bad "quarantine: transition branch certified" "got: [$(tlandstate "$_qid")]" ;;

@@ -26,7 +26,7 @@
 #     matching cases is not discriminating.
 #
 # tier: T2
-# covers: spira/batch.sh spira/landing.sh spira/lib.sh
+# covers: spira/batch.sh landing-pass/src/* spira/lib.sh
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

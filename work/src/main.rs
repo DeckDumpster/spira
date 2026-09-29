@@ -6,6 +6,10 @@
 //! the same code spira-lc's own CLI uses for the same reason: a caller that retries a
 //! "cannot tell" is safe, one that retries a real refusal is not.
 //!
+//! THE lifecycle switch gates all of it (DESIGN.md §3): with `lifecycle_enforce` off every
+//! verb is refused (exit 3) before the socket is touched — `SPIRA_LIFECYCLE_ENFORCE`
+//! (`1`/`true` on), else `spira.lifecycle_enforce`, else off.
+//!
 //! Deploys inert: nothing runs an aeon through this yet (the aeon.sh cutover bead,
 //! sp-xethq, and the restricted unit environment this bead only provides — see
 //! spira/work-env.sh).
@@ -26,6 +30,11 @@ fn main() {
         std::process::exit(CANNOT_TELL);
     };
     let verb_args = args[1..].to_vec();
+
+    if !spira_config::lifecycle_enforce(None) {
+        eprintln!("{}", work::off_refusal(&verb));
+        std::process::exit(REFUSED);
+    }
 
     let Ok(bound) = std::env::var("SPIRA_WORK_BEAD_ID") else {
         eprintln!("cannot tell: SPIRA_WORK_BEAD_ID is not set — this environment is not bound to a bead");

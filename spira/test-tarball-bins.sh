@@ -45,6 +45,9 @@ declare -A TOKEN_TO_BIN=(
     [SPIRA_SUPERVISE_BIN]=spira-supervise
     [SPIRA_LANDING_PASS_BIN]=landing-pass
     [SPIRA_RECONCILER_FLOW_BIN]=reconciler-flow
+    [SPIRA_SENTINEL_BIN]=sentinel
+    [SPIRA_QUEUE_BIN]=queue
+    [SPIRA_AEON_BIN]=aeon
 )
 
 # ---------------------------------------------------------------------------
@@ -186,6 +189,26 @@ fi
 echo
 echo "3. Each @*_BIN@ token in non-optional ExecStart maps to a bin/ in the tarball"
 # ============================================================================
+# The sentinel, queue and aeon binaries have no legacy --*-bin flag: they ship the way a
+# release really builds them, as workspace [[bin]] targets enumerated by --bin-dir (land-local
+# and make install's path). So this case builds its own tarball from a --bin-dir holding one
+# stub per mapped name, and checks every ExecStart token against THAT tree.
+mkdir -p "$TMP/bindir" "$TMP/out-bindir"
+for _b in "${TOKEN_TO_BIN[@]}"; do
+    printf '#!/usr/bin/env bash\necho %s\n' "$_b" > "$TMP/bindir/$_b"
+    chmod +x "$TMP/bindir/$_b"
+done
+unset _b
+bindir_out="$(run_build build --output "$TMP/out-bindir" --bin-dir "$TMP/bindir" HEAD "$REPO" 2>&1)"
+bindir_rc=$?
+is "build with --bin-dir exits 0" "0" "$bindir_rc"
+[ "$bindir_rc" = 0 ] || printf '# %s\n' "$bindir_out"
+tarball3="$(find "$TMP/out-bindir" -name 'spira-*.tar.gz' | head -1)"
+UNPACK3="$TMP/unpack-bindir"
+mkdir -p "$UNPACK3"
+[ -n "${tarball3:-}" ] && [ -f "$tarball3" ] && tar -xzf "$tarball3" -C "$UNPACK3"
+stem3="${tarball3:+$(basename "${tarball3%.tar.gz}")}"
+TREE3="${stem3:+$UNPACK3/$stem3}"
 for tok in "${!FOUND_TOKENS[@]}"; do
     bin_name="${TOKEN_TO_BIN[$tok]:-}"
     if [ -z "$bin_name" ]; then
@@ -193,7 +216,7 @@ for tok in "${!FOUND_TOKENS[@]}"; do
             "not in TOKEN_TO_BIN table — update test-tarball-bins.sh and build-tarball.sh together"
         continue
     fi
-    if [ -x "${TREE:-}/bin/$bin_name" ]; then
+    if [ -x "${TREE3:-}/bin/$bin_name" ]; then
         ok "bin/$bin_name is present for @${tok}@"
     else
         bad "bin/$bin_name is present for @${tok}@" \

@@ -19,6 +19,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub mod convert;
+pub mod legacy_map;
 
 /// The one filename this schema's document is ever named on disk — every path-resolution
 /// function below builds on this instead of a caller spelling `"spira.toml"` itself.
@@ -63,6 +64,40 @@ pub fn discover(explicit: Option<PathBuf>) -> Option<PathBuf> {
 pub fn load(path: &Path) -> Result<SpiraToml, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     validate(&text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// The environment variable that pins `lifecycle_enforce` (a unit's `Environment=`, a
+/// fixture, or conf.sh, which exports it with a default of `0`).
+pub const LIFECYCLE_ENFORCE_ENV: &str = "SPIRA_LIFECYCLE_ENFORCE";
+
+/// THE lifecycle switch's resolution rule (operator decision 2026-09-28: `lifecycle_enforce`
+/// is the one switch for everything that touches the lifecycle machine), identical to the
+/// aeon crate's `conf::lifecycle_enforce`: an environment value, when present, wins — `1` or
+/// `true` is on, anything else (including empty) is off; else the typed
+/// `spira.lifecycle_enforce`; else **off**. Whether a `spira-lc` binary exists is never an
+/// input.
+pub fn resolve_lifecycle_enforce(env_value: Option<&str>, configured: Option<bool>) -> bool {
+    match env_value {
+        Some(v) => v == "1" || v == "true",
+        None => configured.unwrap_or(false),
+    }
+}
+
+/// [`resolve_lifecycle_enforce`] for this process: `$SPIRA_LIFECYCLE_ENFORCE`, else
+/// `spira.lifecycle_enforce` in `toml_file` (or, when `None`, the document [`discover`]
+/// finds), else off. An unreadable or invalid document is off, as in the aeon crate. A
+/// non-UTF-8 environment value is present-but-not-`1`, so off.
+pub fn lifecycle_enforce(toml_file: Option<&Path>) -> bool {
+    if let Some(v) = std::env::var_os(LIFECYCLE_ENFORCE_ENV) {
+        return resolve_lifecycle_enforce(Some(v.to_str().unwrap_or("")), None);
+    }
+    let path = toml_file.map(Path::to_path_buf).or_else(|| discover(None));
+    let configured = path
+        .filter(|p| p.is_file())
+        .and_then(|p| load(&p).ok())
+        .and_then(|d| d.spira)
+        .and_then(|s| s.lifecycle_enforce);
+    resolve_lifecycle_enforce(None, configured)
 }
 
 /// The root of `spira.toml`.
@@ -786,9 +821,59 @@ pub fn unset_path(doc: &SpiraToml, path: &str) -> Result<SpiraToml, String> {
     set_path_leaf(doc, path, serde_json::Value::Null)
 }
 
+/// `spira-config set` for several paths at once, as a library call: read and validate
+/// `file`, apply every `(path, value)` with [`set_path`], re-validate the result, and write
+/// it with [`write_atomic`] — all or nothing. For a Rust caller that must change two keys
+/// together (queue's land-mode transition writes `mode` and `base` as one fact), so the
+/// document is never observed with one written and not the other.
+pub fn set_paths_in_file(file: &std::path::Path, pairs: &[(&str, &str)]) -> Result<(), String> {
+    let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let mut doc = if text.trim().is_empty() { SpiraToml::default() } else { validate(&text)? };
+    for (path, value) in pairs {
+        doc = set_path(&doc, path, value)?;
+    }
+    let out = toml::to_string_pretty(&doc).map_err(|e| format!("{}: {e}", file.display()))?;
+    validate(&out)?;
+    write_atomic(file, &out).map_err(|e| format!("{}: {e}", file.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lifecycle_enforce_resolution_matches_aeon() {
+        // The environment wins, both ways; set-but-empty is off.
+        assert!(resolve_lifecycle_enforce(Some("1"), Some(false)));
+        assert!(resolve_lifecycle_enforce(Some("true"), None));
+        assert!(!resolve_lifecycle_enforce(Some("0"), Some(true)));
+        assert!(!resolve_lifecycle_enforce(Some(""), Some(true)));
+        assert!(!resolve_lifecycle_enforce(Some("yes"), None));
+        assert!(!resolve_lifecycle_enforce(Some("TRUE"), None));
+        // No environment: the typed key, else off.
+        assert!(resolve_lifecycle_enforce(None, Some(true)));
+        assert!(!resolve_lifecycle_enforce(None, Some(false)));
+        assert!(!resolve_lifecycle_enforce(None, None));
+    }
+
+    #[test]
+    fn lifecycle_enforce_reads_the_typed_key_from_a_document() {
+        // Only meaningful when the process environment does not pin the switch.
+        if std::env::var_os(LIFECYCLE_ENFORCE_ENV).is_some() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("spira-config-lce-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("spira.toml");
+        std::fs::write(&p, "[spira]\nlifecycle_enforce = true\n").unwrap();
+        assert!(lifecycle_enforce(Some(&p)));
+        std::fs::write(&p, "[spira]\nlifecycle_enforce = false\n").unwrap();
+        assert!(!lifecycle_enforce(Some(&p)));
+        std::fs::write(&p, "[spira]\nnot_a_key = 1\n").unwrap();
+        assert!(!lifecycle_enforce(Some(&p)), "an invalid document is off");
+        assert!(!lifecycle_enforce(Some(&dir.join("absent.toml"))), "a named but absent document is off");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn valid_minimal_document() {
@@ -1024,5 +1109,21 @@ mod tests {
         std::fs::write(&path, "[spira]\nbogus = 1\n").unwrap();
         let err = load(&path).unwrap_err();
         assert!(err.contains(&path.display().to_string()), "{err}");
+    }
+
+    #[test]
+    fn set_paths_in_file_writes_both_or_neither() {
+        let dir = std::env::temp_dir().join(format!("spira-config-setpaths-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("spira.toml");
+        std::fs::write(&path, "[repo.r]\npath = \"/x\"\nmode = \"queue.local\"\nbase = \"local/main\"\n").unwrap();
+        set_paths_in_file(&path, &[("repo.r.mode", "queue.forge"), ("repo.r.base", "origin/main")]).unwrap();
+        let doc = load(&path).unwrap();
+        assert_eq!(get_path(&doc, "repo.r.mode").as_deref(), Some("queue.forge"));
+        assert_eq!(get_path(&doc, "repo.r.base").as_deref(), Some("origin/main"));
+        let before = std::fs::read_to_string(&path).unwrap();
+        assert!(set_paths_in_file(&path, &[("repo.r.base", "local/main"), ("repo.r.mode", "bogus")]).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

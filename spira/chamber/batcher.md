@@ -51,10 +51,10 @@ not a summary to double-check against the bead title.
 
 ## Tests
 
-Run only the suites that cover what you touched, through `testenv-batch.sh`, never on the
+Run only the suites that cover what you touched, through the `testenv` runner, never on the
 host (law-tests-run-only-through-testenv-batch):
 
-    bash spira/testenv-batch.sh --suites test-foo.sh,test-bar.sh <branch>
+    {{SPIRA_HOME}}/../bin/testenv --suites test-foo.sh,test-bar.sh <branch>
 
 Do not run the full landing gate; the landing pass runs it for whatever you land.
 

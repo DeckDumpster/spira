@@ -27,10 +27,13 @@
 #      the git-call log is not simply empty.
 #
 # tier: T1
-# covers: spira/lib.sh spira/landing.sh spira/repo-map.example
+# covers: spira/lib.sh landing-pass/* spira/repo-map.example
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
+# THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
+# pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
+LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 
 echo "test-land-mode-local.sh"
 
@@ -124,12 +127,12 @@ is "ref_remote: no-repo call keeps the old unconditional split" "origin" "$(ref_
 
 # ============================================================================
 echo
-echo "5 — END TO END: landing.sh never fetches a remote named local for a queue.local row,"
+echo "5 — END TO END: landing-pass land never fetches a remote named local for a queue.local row,"
 echo "    and a queue row swept in the same pass still fetches origin (positive control)"
 # ============================================================================
 E_RUN="$TMP/e-run"; E_SH="$TMP/e-spira"
 mkdir -p "$E_RUN/worktree" "$E_SH"
-cp "$HERE/landing.sh" "$HERE/landing-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$E_SH/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$E_SH/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$E_SH/gate.sh"; chmod +x "$E_SH/gate.sh"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$E_SH/confine.sh"; chmod +x "$E_SH/confine.sh"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$E_SH/skew.sh"; chmod +x "$E_SH/skew.sh"
@@ -181,23 +184,23 @@ chmod +x "$GITSHIM/git"
 out="$(PATH="$GITSHIM:$PATH" SPIRA_PATH="$GITSHIM" SPIRA_HOME="$E_SH" SPIRA_RUN="$E_RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="$E_SH/bd-stub.sh" SPIRA_REPO="$TMP/no-such-home-repo" \
     SPIRA_REPO_MAP="$E_SH/repo-map" \
-        bash "$E_SH/landing.sh" 2>&1)"
+        "$LANDING_PASS_BIN" land 2>&1)"
 
 if grep -Eq 'fetch[^0-9a-zA-Z_.-].* local$' "$GIT_LOG"; then
-    bad "landing.sh: no fetch of a remote named local for the queue.local row" \
+    bad "landing-pass land: no fetch of a remote named local for the queue.local row" \
         "$(grep -E 'fetch' "$GIT_LOG")"
 else
-    ok "landing.sh: no fetch of a remote named local for the queue.local row"
+    ok "landing-pass land: no fetch of a remote named local for the queue.local row"
 fi
 
 if grep -Eq 'fetch[^0-9a-zA-Z_.-].* origin$' "$GIT_LOG"; then
-    ok "landing.sh: positive control — the queue.forge row still fetched origin"
+    ok "landing-pass land: positive control — the queue.forge row still fetched origin"
 else
-    bad "landing.sh: positive control — the queue.forge row still fetched origin" \
+    bad "landing-pass land: positive control — the queue.forge row still fetched origin" \
         "$(cat "$GIT_LOG")"
 fi
 
-nowant "landing.sh: no error naming an unresolvable 'local' remote" \
+nowant "landing-pass land: no error naming an unresolvable 'local' remote" \
     "does not appear to be a git repository" "$out"
 
 tl_summary

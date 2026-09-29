@@ -101,6 +101,10 @@ CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
 LC_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-lc"
 WORK_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/work"
 
+# `work` is the lifecycle machine's door: its subject is lifecycle-ON behaviour. OFF (the
+# default) refuses every verb before the socket — covered by work/src/lib.rs unit tests and
+# test-work-crate.sh.
+export SPIRA_LIFECYCLE_ENFORCE=1
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$PORT"
 export SPIRA_LC_DB=spira_lifecycle
