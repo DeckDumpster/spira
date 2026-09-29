@@ -506,5 +506,42 @@ digest_file="$(ls -t "$SPIRA_MAIL/operator/new/" 2>/dev/null | head -1)"
 digest_msg="$(cat "$SPIRA_MAIL/operator/new/$digest_file" 2>/dev/null)"
 want "delivered digest carries X-Spira-Digest" "X-Spira-Digest: yes" "$digest_msg"
 
+# ==========================================================================
+# T2 — STDIN READ DEADLINE (sp-znoj6): a body source that never closes is
+# refused near SPIRA_LOOM_BUDGET_MS, not hung (sop-mail-send-loom-splice-hang)
+# ==========================================================================
+echo
+echo "stdin read deadline: a body source that never closes is refused, not hung"
+
+DEADLINE_BOX="deadlinebox"
+FIFO="$TMP/deadline.fifo"
+mkfifo "$FIFO"
+
+# The write end is held open by a holder that outlives the budget many times over, so a
+# refusal that arrives near the budget can only be the deadline firing — not a read that
+# happened to finish fast on its own (positive control, per CLAUDE.md).
+( exec 3>"$FIFO"; sleep 5; exec 3>&- ) &
+holder_pid=$!
+
+start_ts="$(date +%s)"
+out="$(SPIRA_LOOM_BUDGET_MS=200 run send "$DEADLINE_BOX" --from "A <a@a>" --subject "Never closes" < "$FIFO" 2>&1)"
+rc=$?
+elapsed=$(( $(date +%s) - start_ts ))
+
+kill "$holder_pid" 2>/dev/null || true
+wait "$holder_pid" 2>/dev/null || true
+
+[ "$rc" != 0 ] && ok "send on a stdin that never closes is refused, not hung" \
+                || bad "send on a stdin that never closes is refused, not hung" "exit 0"
+want "refusal names the deadline" "deadline" "$out"
+want "refusal names the responsible key" "SPIRA_LOOM_BUDGET_MS" "$out"
+if [ "$elapsed" -lt 3 ]; then
+    ok "refusal arrives near the budget (${elapsed}s), not after the full hold"
+else
+    bad "refusal arrives near the budget, not after the full hold" "${elapsed}s elapsed"
+fi
+no_msg="$(ls "$SPIRA_MAIL/$DEADLINE_BOX/new" 2>/dev/null | wc -l | tr -d ' ')"
+is "no message was delivered from the timed-out send" "0" "${no_msg:-0}"
+
 echo
 tl_summary

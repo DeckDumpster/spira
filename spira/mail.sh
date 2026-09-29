@@ -11,7 +11,9 @@
 #   mail.sh sendmail                     RFC 5322 on stdin; closes tracking bead on reply
 #   mail.sh sweep-dismissed [mailbox]    close asks whose mail was deleted (default operator)
 #
-# Send refuses a message that is missing From, missing Subject, has a Subject
+# Send reads its body from stdin under a SPIRA_LOOM_BUDGET_MS deadline — a caller whose
+# write end never closes gets a refusal on stderr, not a silent hang (sop-mail-send-loom-
+# splice-hang). Send also refuses a message that is missing From, missing Subject, has a Subject
 # that is or leads with a bead id, has a body mentioning a bead id without enough
 # context to say what the work is, has an unknown kind, is missing a header the
 # kind requires, has an empty required section, is urgent without
@@ -139,6 +141,16 @@ if reason:
     print("")
     print(reason)
 ' "$id" 2>/dev/null || printf 'unresolved: %s\n' "$id"
+}
+
+# _read_body_deadline -> stdin's full content on stdout, bounded by SPIRA_LOOM_BUDGET_MS.
+# A caller whose write end never closes leaves a bare `cat` here blocked forever in a read
+# syscall (sop-mail-send-loom-splice-hang); `timeout` delivers SIGTERM to unblock it, turning
+# a silent hang into a refusal the caller can see.
+_read_body_deadline() {
+    local budget_ms="${SPIRA_LOOM_BUDGET_MS:-1500}" budget_s
+    budget_s="$(awk -v ms="$budget_ms" 'BEGIN { s = ms / 1000; if (s < 0.1) s = 0.1; printf "%.3f", s }')"
+    timeout "$budget_s" cat
 }
 
 _kind_file()    { printf '%s/%s.md' "${SPIRA_MAIL_KINDS}" "$1"; }
@@ -405,7 +417,12 @@ cmd_send() {
     done
 
     [ -z "$from" ] && [ -n "${SPIRA_MAIL_FROM:-}" ] && from="${SPIRA_MAIL_FROM}"
-    local body; body="$(cat)"
+    local body
+    if ! body="$(_read_body_deadline)"; then
+        printf 'mail.sh send: stdin read exceeded %sms deadline (SPIRA_LOOM_BUDGET_MS) — refusing to hang; ensure the body is piped and stdin is closed\n' \
+            "${SPIRA_LOOM_BUDGET_MS:-1500}" >&2
+        return 1
+    fi
     if [ "$mailbox" = "operator" ]; then
         _repeat_check "$mailbox" "$subject" || return 1
     fi
