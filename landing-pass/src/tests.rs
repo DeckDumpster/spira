@@ -242,15 +242,65 @@ struct FakeTools {
     /// Advance the fake clock by this much per gate (to exercise the budget).
     gate_cost: Cell<u64>,
     clock: RefCell<Option<std::rc::Rc<FakeClock>>>,
+    /// Concurrent gates (D14): started and not yet collected, as (ticket, branch).
+    running: RefCell<Vec<(u64, String)>>,
+    next_ticket: Cell<u64>,
+    /// `start <br>` / `done <br>` in the order they happened.
+    trace: RefCell<Vec<String>>,
+    max_running: Cell<usize>,
+    /// Which running gate finishes next: the first one named here, else the oldest.
+    finish_first: RefCell<Vec<String>>,
+    slots_free: Cell<Option<usize>>,
+    probes: Cell<u32>,
+}
+
+impl FakeTools {
+    fn trace(&self) -> Vec<String> {
+        self.trace.borrow().clone()
+    }
+    fn result_of(&self, br: &str) -> (i32, String) {
+        self.gates.borrow().get(br).cloned().unwrap_or((0, "gate: VERDICT=PASS reason=ok branch=x repo=spira suite=-\n".into()))
+    }
 }
 
 impl Tools for FakeTools {
     fn gate(&self, br: &str, _: &str, wait: &str, bead: &str) -> (i32, String) {
         self.gate_calls.borrow_mut().push((br.into(), wait.into(), bead.into()));
+        self.trace.borrow_mut().push(format!("serial {br}"));
         if let Some(c) = self.clock.borrow().as_ref() {
             c.t.set(c.t.get() + self.gate_cost.get());
         }
-        self.gates.borrow().get(br).cloned().unwrap_or((0, "gate: VERDICT=PASS reason=ok branch=x repo=spira suite=-\n".into()))
+        self.result_of(br)
+    }
+    fn gate_start(&self, br: &str, _: &str, wait: &str, bead: &str) -> u64 {
+        self.gate_calls.borrow_mut().push((br.into(), wait.into(), bead.into()));
+        let t = self.next_ticket.get() + 1;
+        self.next_ticket.set(t);
+        self.running.borrow_mut().push((t, br.into()));
+        self.trace.borrow_mut().push(format!("start {br}"));
+        let n = self.running.borrow().len();
+        self.max_running.set(self.max_running.get().max(n));
+        t
+    }
+    fn gate_wait_any(&self) -> Option<(u64, i32, String)> {
+        let mut run = self.running.borrow_mut();
+        if run.is_empty() {
+            return None;
+        }
+        let first = self.finish_first.borrow().iter().find_map(|f| run.iter().position(|(_, b)| b == f));
+        let (t, br) = run.remove(first.unwrap_or(0));
+        drop(run);
+        self.finish_first.borrow_mut().retain(|f| f != &br);
+        if let Some(c) = self.clock.borrow().as_ref() {
+            c.t.set(c.t.get() + self.gate_cost.get());
+        }
+        self.trace.borrow_mut().push(format!("done {br}"));
+        let (rc, out) = self.result_of(&br);
+        Some((t, rc, out))
+    }
+    fn gate_slots_free(&self, _: usize) -> Option<usize> {
+        self.probes.set(self.probes.get() + 1);
+        self.slots_free.get()
     }
     fn gate_status(&self, _: &str, _: &str) -> Option<String> {
         self.status.borrow().clone()
@@ -396,13 +446,16 @@ impl H {
         fs::write(d.join(id), text).unwrap();
     }
     fn pass(&self) -> Pass<'_> {
+        self.pass_with(&self.tools)
+    }
+    fn pass_with<'p>(&'p self, tools: &'p dyn Tools) -> Pass<'p> {
         Pass {
             s: &self.s,
             repos: &self.repos,
             beads: &self.beads,
             git: &self.git,
             lib: &self.lib,
-            tools: &self.tools,
+            tools,
             procs: &self.procs,
             clock: &*self.clock,
             lc: &self.lc,
@@ -1327,7 +1380,337 @@ repo=other\u{1d}\u{1d}\u{1d}\u{1d}\u{1d}\u{1d}\u{1d}\0";
     assert_eq!(s.path, None, "no path key: halt inherits the caller's PATH");
     let (s2, _) = crate::real::parse_context("run=/r\0path=/stub:/usr/bin\0", Path::new("/h")).unwrap();
     assert_eq!(s2.path.as_deref(), Some("/stub:/usr/bin"));
+    assert_eq!(s.certify_par, 4, "unset SPIRA_CERTIFY_PAR is 4 (D14 (b))");
+    let (s3, _) = crate::real::parse_context("run=/r certify_par=1 ", Path::new("/h")).unwrap();
+    assert_eq!(s3.certify_par, 1);
+    for (v, want) in [("", 4), ("0", 4), ("x", 4), (" 6", 6), ("10", 10)] {
+        assert_eq!(crate::real::certify_par(Some(v)), want, "{v:?}");
+    }
     assert_eq!(crate::real::json_only("warn: x\n[{\"id\":1}]"), "[{\"id\":1}]");
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Concurrent certification (§8 D14, sp-kg14a)
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn h_par(par: usize) -> H {
+    let mut h = H::new(LandMode::QueueLocal);
+    h.s.certify_par = par;
+    h
+}
+
+fn starts(h: &H) -> Vec<String> {
+    h.tools.trace().into_iter().filter_map(|t| t.strip_prefix("start spira/").map(String::from)).collect()
+}
+
+/// The land_mark decision calls, in order: (id, state).
+fn decisions(h: &H) -> Vec<(String, String)> {
+    h.lib
+        .calls
+        .borrow()
+        .iter()
+        .filter_map(|c| {
+            let mut w = c.split(' ');
+            (w.next() == Some("land_mark")).then_some(())?;
+            let id = w.next()?.to_string();
+            let st = w.next()?.to_string();
+            matches!(st.as_str(), "CERTIFIED" | "RED" | "GATED").then_some((id, st))
+        })
+        .collect()
+}
+
+#[test]
+fn par_n_starts_n_gates_before_any_finishes() {
+    let h = h_par(3);
+    for (i, id) in ["sp-a", "sp-b", "sp-c", "sp-d", "sp-e"].iter().enumerate() {
+        h.closed(id, &format!("t{i}"));
+    }
+    h.run();
+    let t = h.tools.trace();
+    assert_eq!(&t[..3], &["start spira/sp-a", "start spira/sp-b", "start spira/sp-c"], "{t:?}");
+    assert_eq!(t[3], "done spira/sp-a");
+    assert_eq!(h.tools.max_running.get(), 3);
+    assert_eq!(starts(&h), vec!["sp-a", "sp-b", "sp-c", "sp-d", "sp-e"]);
+    for id in ["sp-a", "sp-b", "sp-c", "sp-d", "sp-e"] {
+        assert_eq!(h.lib.count(&format!("land_mark {id} CERTIFIED")), 1, "{id}");
+        assert_eq!(h.lib.count(&format!("land_mark {id} GATING")), 1, "{id}");
+    }
+    assert!(!t.iter().any(|x| x.starts_with("serial")), "no serial gate at PAR>1: {t:?}");
+    assert!(h.logged("landing: pass complete — 5 branch(es) seen, 5 movement(s)"));
+    assert!(!h.s.run.join("landing.run").exists() || Files::new(&h.s.run).read_run().map(|r| r.phase != "gate").unwrap_or(true));
+}
+
+#[test]
+fn decisions_are_applied_one_at_a_time_in_completion_order() {
+    let h = h_par(3);
+    h.closed("sp-a", "ta");
+    h.closed("sp-b", "tb");
+    h.closed("sp-c", "tc");
+    let red = "gate: VERDICT=FAIL reason=suite-red branch=spira/sp-b repo=spira suite=test-x.sh\n";
+    h.tools.gates.borrow_mut().insert("spira/sp-b".into(), (1, red.into()));
+    *h.tools.finish_first.borrow_mut() = vec!["spira/sp-c".into(), "spira/sp-b".into(), "spira/sp-a".into()];
+    h.run();
+    assert_eq!(
+        decisions(&h),
+        vec![
+            ("sp-c".into(), "CERTIFIED".into()),
+            ("sp-b".into(), "GATED".into()),
+            ("sp-b".into(), "RED".into()),
+            ("sp-a".into(), "CERTIFIED".into()),
+        ]
+    );
+    // sp-b's whole decision (GATED, reopen, event, RED) is contiguous: nothing of another
+    // bead's decision runs inside it.
+    let calls = h.lib.calls.borrow().clone();
+    let first = calls.iter().position(|c| c.starts_with("land_mark sp-b GATED")).unwrap();
+    let last = calls.iter().position(|c| c.starts_with("land_mark sp-b RED")).unwrap();
+    assert!(calls[first..=last].iter().all(|c| c.contains("sp-b")), "{:?}", &calls[first..=last]);
+    assert_eq!(h.lib.count("reopen sp-b cert-gate-red"), 1);
+    assert_eq!(h.mailbox().lines().collect::<Vec<_>>(), vec![
+        "certified spira/sp-c in spira — gate passed, round and CI are the remaining judges",
+        "reopened sp-b — failed the certification gate",
+        "certified spira/sp-a in spira — gate passed, round and CI are the remaining judges",
+    ]);
+}
+
+#[test]
+fn a_base_fix_runs_alone_before_anything_else_starts() {
+    let h = h_par(4);
+    h.closed("sp-a", "ta");
+    h.closed("sp-b", "tb");
+    let mut fix = h.bead("sp-fix", "closed", &[]);
+    fix.external_ref = Some("basefail:spira:test-x.sh".into());
+    fix.priority = 4;
+    h.beads.rows.borrow_mut().insert("sp-fix".into(), fix);
+    h.git.add("spira/sp-fix", "tf");
+    h.run();
+    let t = h.tools.trace();
+    assert_eq!(&t[..3], &["start spira/sp-fix", "done spira/sp-fix", "start spira/sp-a"], "{t:?}");
+    assert_eq!(starts(&h), vec!["sp-fix", "sp-a", "sp-b"]);
+}
+
+#[test]
+fn a_base_fix_that_becomes_ready_mid_pass_waits_for_the_walk_to_drain_then_runs_alone() {
+    let h = h_par(3);
+    for id in ["sp-a", "sp-b", "sp-c", "sp-d"] {
+        h.closed(id, id);
+    }
+    let mut fix = h.bead("sp-fix", "in_progress", &[]);
+    fix.external_ref = Some("basefail:spira:test-x.sh".into());
+    h.beads.rows.borrow_mut().insert("sp-fix".into(), fix);
+    h.git.add("spira/sp-fix", "tf");
+    let inj = Injecting { t: &h.tools, h: &h, at_done: 1, n: Cell::new(0), inject: &|h: &H| {
+        h.beads.rows.borrow_mut().get_mut("sp-fix").unwrap().status = "closed".into();
+    } };
+    h.pass_with(&inj).run();
+    let t = h.tools.trace();
+    let fix_start = t.iter().position(|x| x == "start spira/sp-fix").unwrap();
+    let fix_done = t.iter().position(|x| x == "done spira/sp-fix").unwrap();
+    // everything started before it had finished before it started, nothing started beside it
+    assert!(t[..fix_start].iter().filter(|x| x.starts_with("start")).count() == t[..fix_start].iter().filter(|x| x.starts_with("done")).count(), "{t:?}");
+    assert_eq!(fix_done, fix_start + 1, "{t:?}");
+    assert_eq!(starts(&h), vec!["sp-a", "sp-b", "sp-c", "sp-fix", "sp-d"]);
+}
+
+/// Delegates to the fake tools; after the `at_done`-th completion, runs `inject` (a bead
+/// submitted while the pass is running).
+struct Injecting<'a> {
+    t: &'a FakeTools,
+    h: &'a H,
+    at_done: usize,
+    n: Cell<usize>,
+    inject: &'a dyn Fn(&H),
+}
+
+impl Tools for Injecting<'_> {
+    fn gate(&self, a: &str, b: &str, c: &str, d: &str) -> (i32, String) {
+        self.t.gate(a, b, c, d)
+    }
+    fn gate_start(&self, a: &str, b: &str, c: &str, d: &str) -> u64 {
+        self.t.gate_start(a, b, c, d)
+    }
+    fn gate_wait_any(&self) -> Option<(u64, i32, String)> {
+        let r = self.t.gate_wait_any();
+        self.n.set(self.n.get() + 1);
+        if self.n.get() == self.at_done {
+            (self.inject)(self.h);
+        }
+        r
+    }
+    fn gate_slots_free(&self, par: usize) -> Option<usize> {
+        self.t.gate_slots_free(par)
+    }
+    fn gate_status(&self, a: &str, b: &str) -> Option<String> {
+        self.t.gate_status(a, b)
+    }
+    fn confine(&self, a: &str, b: &str, c: &Path, d: &str, e: &str) -> (i32, String) {
+        self.t.confine(a, b, c, d, e)
+    }
+    fn queue_step(&self, r: &str) -> Result<Vec<String>, String> {
+        self.t.queue_step(r)
+    }
+    fn skew_refresh(&self, r: &Path) -> String {
+        self.t.skew_refresh(r)
+    }
+    fn ensure(&self, s: &Path) -> Vec<String> {
+        self.t.ensure(s)
+    }
+}
+
+#[test]
+fn a_p0_submitted_mid_pass_takes_the_next_free_slot() {
+    let h = h_par(2);
+    for id in ["sp-a", "sp-b", "sp-c", "sp-d"] {
+        h.closed(id, id);
+    }
+    // In progress when the pass scanned; submitted while the first gates ran.
+    let mut late = h.bead("sp-late", "in_progress", &[]);
+    late.priority = 1;
+    h.beads.rows.borrow_mut().insert("sp-late".into(), late);
+    h.git.add("spira/sp-late", "tl");
+    let inj = Injecting { t: &h.tools, h: &h, at_done: 1, n: Cell::new(0), inject: &|h: &H| {
+        let mut hot = h.bead("sp-hot", "closed", &[]);
+        hot.priority = 0;
+        hot.closed_at = "2026-09-29".into();
+        h.beads.rows.borrow_mut().insert("sp-hot".into(), hot);
+        h.git.add("spira/sp-hot", "th");
+        h.beads.rows.borrow_mut().get_mut("sp-late").unwrap().status = "closed".into();
+    } };
+    h.pass_with(&inj).run();
+    assert_eq!(starts(&h), vec!["sp-a", "sp-b", "sp-hot", "sp-late", "sp-c", "sp-d"]);
+    assert!(h.logged("CHECK6 spira: candidates refreshed — 2 newly ready: spira/sp-hot spira/sp-late"));
+    for id in ["sp-a", "sp-b", "sp-c", "sp-d", "sp-hot", "sp-late"] {
+        assert_eq!(h.lib.count(&format!("land_mark {id} CERTIFIED")), 1, "{id}");
+    }
+    assert!(h.logged("landing: pass complete — 6 branch(es) seen, 6 movement(s)"));
+}
+
+#[test]
+fn a_full_admission_pool_holds_the_second_gate_back() {
+    let h = h_par(3);
+    for id in ["sp-a", "sp-b", "sp-c"] {
+        h.closed(id, id);
+    }
+    h.tools.slots_free.set(Some(0));
+    h.run();
+    assert_eq!(h.tools.max_running.get(), 1, "the first gate always starts; no second into a full pool");
+    assert_eq!(starts(&h), vec!["sp-a", "sp-b", "sp-c"]);
+    assert_eq!(h.tools.probes.get(), 2, "asked only while a gate of this pass is already in flight");
+}
+
+#[test]
+fn a_budget_cut_waits_for_the_gates_in_flight_then_defers_the_rest() {
+    let mut h = h_par(2);
+    h.s.land_maxsec = 3600;
+    h.s.gate_reserve = 2700;
+    h.tools.gate_cost.set(1000);
+    for (i, id) in ["sp-a", "sp-b", "sp-c", "sp-d"].iter().enumerate() {
+        let mut b = h.bead(id, "closed", &[]);
+        b.priority = i as i64;
+        h.beads.rows.borrow_mut().insert(id.to_string(), b);
+        h.git.add(&format!("spira/{id}"), &format!("t{i}"));
+    }
+    let files = Files::new(&h.s.run);
+    for _ in 0..4 {
+        files.bump_deferred("spira/sp-d");
+    }
+    files.bump_deferred("spira/sp-a");
+    h.run();
+    // a and b start together; a's completion leaves 2600s < 2700 — c is the cut; b is still
+    // decided.
+    assert_eq!(starts(&h), vec!["sp-a", "sp-b"]);
+    assert!(h.lib.has("land_mark sp-b CERTIFIED"));
+    assert!(h.logged("landing: budget cut at spira/sp-c — 2600s left, 2 branch(es) deferred in spira"));
+    assert_eq!(files.cursor_repo().as_deref(), Some("spira"));
+    assert!(h.lib.has("ask_budget_deferred spira/sp-d spira 5"));
+    assert!(!h.lib.has("ask_budget_deferred spira/sp-c"));
+    assert!(!files.deferred_dir().join("spira_sp-a").exists());
+}
+
+#[test]
+fn par_one_is_the_serial_walk_unchanged() {
+    // The same scenario at PAR=1 through the concurrent-capable binary: serial gates only,
+    // no probe, no refresh, and the same lines and calls as a walk that knows nothing of D14.
+    let run = |par: usize| {
+        let h = h_par(par);
+        h.closed("sp-a", "ta");
+        h.closed("sp-b", "tb");
+        h.bead("sp-open", "in_progress", &[]);
+        h.git.add("spira/sp-open", "to");
+        h.tools.gates.borrow_mut().insert("spira/sp-b".into(), (1, "gate: VERDICT=FAIL reason=r branch=b repo=spira suite=s\n".into()));
+        h.run();
+        let lines: Vec<String> = h.out.lines().iter().map(|l| l.split_once(' ').map(|x| x.1).unwrap_or("").to_string()).collect();
+        let calls: Vec<String> = h.lib.calls.borrow().clone();
+        (lines, calls, h.tools.trace(), h.tools.probes.get(), h.mailbox())
+    };
+    let (lines, calls, trace, probes, mail) = run(1);
+    assert_eq!(trace, vec!["serial spira/sp-a", "serial spira/sp-b"]);
+    assert_eq!(probes, 0);
+    assert!(!lines.iter().any(|l| l.contains("candidates refreshed")));
+    // what the serial walk has always written
+    assert_eq!(
+        calls.iter().filter(|c| c.starts_with("land_mark")).cloned().collect::<Vec<_>>(),
+        vec![
+            "land_mark sp-a GATING ta ",
+            "land_mark sp-a CERTIFIED ta ",
+            "land_mark sp-b GATING tb ",
+            "land_mark sp-b GATED tb FAIL:r",
+            "land_mark sp-b RED tb gate",
+        ]
+    );
+    // PAR=2 reaches the same decisions and mailbox for this input (only the GATING marks
+    // move: both gates start before either is decided)
+    let (_, calls2, _, _, mail2) = run(2);
+    let no_gating = |v: &[String]| v.iter().filter(|c| !c.contains(" GATING ")).cloned().collect::<Vec<_>>();
+    assert_eq!(no_gating(&calls2), no_gating(&calls));
+    assert_eq!(mail2, mail);
+}
+
+#[test]
+fn sigterm_reaches_every_running_gate_and_its_children() {
+    use crate::real::GatePool;
+    use crate::util::{command, ChildSet};
+    static SET: ChildSet = ChildSet::new();
+    let pool = GatePool::new(&SET);
+    for _ in 0..3 {
+        let mut c = command("sh");
+        // a gate with a child of its own, as gate.sh's suites are
+        c.args(["-c", "sleep 30 & wait"]);
+        pool.start(c);
+    }
+    assert_eq!(SET.pids().len(), 3, "every gate registered before start returns");
+    let t0 = std::time::Instant::now();
+    assert_eq!(SET.term_all().len(), 3);
+    let mut got = Vec::new();
+    while let Some((_, rc, _)) = pool.wait_any() {
+        got.push(rc);
+    }
+    assert_eq!(got.len(), 3);
+    assert!(got.iter().all(|rc| *rc != 0), "{got:?}");
+    assert!(t0.elapsed().as_secs() < 10, "the gates (and their sleeps, which hold the pipe) died at once");
+    assert!(SET.pids().is_empty());
+}
+
+#[test]
+fn the_admission_probe_counts_free_slots_and_releases_them() {
+    use std::os::unix::io::AsRawFd;
+    let d = tmpdir("adm");
+    assert_eq!(crate::real::admission_free(&d.join("absent"), 4), 4);
+    let held = fs::OpenOptions::new().create(true).write(true).truncate(false).open(d.join("slot.2.lock")).unwrap();
+    assert_eq!(unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+    assert_eq!(crate::real::admission_free(&d, 3), 2);
+    drop(held);
+    assert_eq!(crate::real::admission_free(&d, 3), 3, "the probe itself holds nothing afterwards");
+}
+
+#[test]
+fn push_mode_stays_serial_at_any_par() {
+    let mut h = H::new(LandMode::Hold);
+    h.s.certify_par = 4;
+    h.closed("sp-a", "t1");
+    h.closed("sp-b", "t2");
+    h.run();
+    assert!(h.tools.trace().iter().all(|t| t.starts_with("serial")), "{:?}", h.tools.trace());
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

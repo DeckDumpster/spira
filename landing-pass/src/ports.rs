@@ -79,6 +79,15 @@ pub trait Lib {
 pub trait Tools {
     /// gate.sh <branch> <repo> with SPIRA_GATE_LOCK_WAIT / SPIRA_GATE_BEAD → (status, transcript).
     fn gate(&self, branch: &str, repo: &str, lock_wait: &str, bead: &str) -> (i32, String);
+    /// Start gate.sh exactly as [`Tools::gate`] runs it, without waiting (DESIGN.md §8 D14).
+    /// Returns a ticket that [`Tools::gate_wait_any`] hands back with the gate's result.
+    fn gate_start(&self, branch: &str, repo: &str, lock_wait: &str, bead: &str) -> u64;
+    /// Block until any started gate finishes → (ticket, status, transcript); None when none
+    /// is running.
+    fn gate_wait_any(&self) -> Option<(u64, i32, String)>;
+    /// Free slots in gate.sh's host-wide admission pool of `par` slots, probed now; None
+    /// when it cannot be told.
+    fn gate_slots_free(&self, par: usize) -> Option<usize>;
     /// gate-run.sh --status <branch> <repo>: Some(output) when it exits 0.
     fn gate_status(&self, branch: &str, repo: &str) -> Option<String>;
     /// confine.sh <id> <branch> <repo-path> <base> <labels> → (status, output).

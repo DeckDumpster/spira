@@ -662,7 +662,7 @@ OFF semantics exactly and its ON semantics for the pr content proof.
 
 ## 10. Tests
 
-`cargo test -p landing-pass` — 56 unit tests; `cargo build --workspace` clean. Derived from
+`cargo test -p landing-pass` — 70 unit tests; `cargo build --workspace` clean. Derived from
 §2-§5 and §9, with recording fakes of bd, git, the lib.sh seam, the harness programs,
 liveness, the clock, spira-lc and the halt ports (signals, podman, testenv teardown):
 
@@ -686,6 +686,7 @@ liveness, the clock, spira-lc and the halt ports (signals, podman, testenv teard
 | pr pass | `the_pr_pass_hands_done_branches_to_the_helper_…`, `delivery_rows_accept_a_numeric_version` |
 | lifecycle OFF/ON (§9) | `off_push_mode_never_invokes_spira_lc`, `off_queue_certification_never_invokes_spira_lc`, `on_push_mode_records_deliveries_…`, `on_with_the_machine_unreachable_a_push_landing_is_refused_loudly`, `on_the_pr_pass_proves_content_deliveries_and_is_loud_…`; the OFF pr case asserts no delivery call in `the_pr_pass_hands_done_branches_…` |
 | the seam mechanism, for real through bash | `seam::tests` (values on stdin intact; progress vs log vs answer; the context script against a stand-in lib.sh; a missing lib.sh is 96) |
+| concurrent certification (§8 D14): N gates start; decisions one at a time in completion order; base-fix alone (at the front and when it becomes ready mid-pass); a P0 submitted mid-pass takes the next free slot; a full admission pool holds the second gate; the budget cut waits for in-flight gates; SIGTERM reaches every running gate and its children; PAR=1 is the serial walk; push/hold stay serial; `SPIRA_CERTIFY_PAR` parsing | `par_n_starts_n_gates_before_any_finishes`, `decisions_are_applied_one_at_a_time_in_completion_order`, `a_base_fix_runs_alone_…`, `a_base_fix_that_becomes_ready_mid_pass_…`, `a_p0_submitted_mid_pass_takes_the_next_free_slot`, `a_full_admission_pool_holds_the_second_gate_back`, `a_budget_cut_waits_for_the_gates_in_flight_…`, `sigterm_reaches_every_running_gate_and_its_children`, `the_admission_probe_counts_free_slots_…`, `par_one_is_the_serial_walk_unchanged`, `push_mode_stays_serial_at_any_par`, `the_context_answer_parses_…` |
 | records and parsing | `records_keep_their_shell_formats`, `the_context_answer_parses_…`, `util::tests` |
 
 Also run by hand (not a suite, not production): `landing-pass land` against a stand-in

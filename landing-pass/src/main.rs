@@ -172,7 +172,7 @@ fn land() -> i32 {
         fixture: s.bdjson_fixture.clone(),
     };
     let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, incident: s.incident.clone() };
-    let tools = RealTools { home: s.home.clone(), queue_bin: s.queue_bin.clone(), containers: Some(files.containers()) };
+    let tools = RealTools::new(s.home.clone(), s.queue_bin.clone(), Some(files.containers()), Some(s.run.join("gate-admission")));
     let procs = RealProcs { run: s.run.clone() };
     let lc = RealLc { bin: s.lc_bin.clone() };
     let p = Pass {
