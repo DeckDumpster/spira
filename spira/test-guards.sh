@@ -156,16 +156,16 @@ want "UC-safety-fences-01/git-push-blocked" '"decision":"block"' "$out"
 out="$(fence_run "gh pr create --title x" SPIRA_AEON=test-aeon)"
 want "UC-safety-fences-01/gh-pr-create-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "bash spira/queue.sh flush spira" SPIRA_AEON=test-aeon)"
+out="$(fence_run "/opt/spira/bin/queue flush spira" SPIRA_AEON=test-aeon)"
 want "UC-safety-fences-01/queue-flush-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "bash spira/queue.sh stats" SPIRA_AEON=test-aeon)"
+out="$(fence_run "/opt/spira/bin/queue stats" SPIRA_AEON=test-aeon)"
 nowant "UC-safety-fences-01/queue-stats-allowed" '"decision":"block"' "$out"
 
 out="$(fence_run "bash spira/verdict.sh push spira" SPIRA_AEON=test-aeon)"
 want "UC-safety-fences-01/verdict-sh-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "bash spira/testenv-batch.sh --suites test-verdict.sh spira/sp-x" SPIRA_AEON=test-aeon)"
+out="$(fence_run "/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x" SPIRA_AEON=test-aeon)"
 nowant "UC-safety-fences-01/blocked-name-as-suite-arg-allowed" '"decision":"block"' "$out"
 
 out="$(fence_run "git add spira/landing.sh" SPIRA_AEON=test-aeon)"
@@ -192,15 +192,15 @@ fence_rib_rc() {  # fence_rib_rc <cmd> <0|1> [ENV..] -> the fence process's own 
     printf '%s' "$?"
 }
 
-pc="$(fence_rib "bash spira/testenv-batch.sh --suites test-verdict.sh spira/sp-x" 1 SPIRA_AEON=test-aeon)"
+pc="$(fence_rib "/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x" 1 SPIRA_AEON=test-aeon)"
 want "sp-4o925/positive-control-run-in-background-blocked" '"decision":"block"' "$pc"
 
-out="$(fence_rib "bash spira/testenv-batch.sh --suites test-verdict.sh spira/sp-x" 1 SPIRA_AEON=test-aeon)"
+out="$(fence_rib "/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x" 1 SPIRA_AEON=test-aeon)"
 want "sp-4o925/run-in-background-blocked"        '"decision":"block"' "$out"
 want "sp-4o925/reason-names-sp-4o925"            "sp-4o925"           "$out"
 want "sp-4o925/reason-says-run-in-foreground"    "foreground"         "$out"
 
-rc="$(fence_rib_rc "bash spira/testenv-batch.sh --suites test-verdict.sh spira/sp-x" 1 SPIRA_AEON=test-aeon)"
+rc="$(fence_rib_rc "/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x" 1 SPIRA_AEON=test-aeon)"
 is "sp-4o925/blocked-protocol-still-exits-0" 0 "$rc"
 
 out="$(fence_rib "echo ordinary foreground command" 0 SPIRA_AEON=test-aeon)"
@@ -209,10 +209,10 @@ nowant "sp-4o925/run-in-background-false-allowed" '"decision":"block"' "$out"
 out="$(fence_run "echo ordinary foreground command" SPIRA_AEON=test-aeon)"
 nowant "sp-4o925/run-in-background-absent-allowed" '"decision":"block"' "$out"
 
-out="$(fence_rib "bash spira/testenv-batch.sh --suites test-verdict.sh spira/sp-x" 1)"
+out="$(fence_rib "/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x" 1)"
 nowant "sp-4o925/no-SPIRA_AEON-run-in-background-allowed" '"decision":"block"' "$out"
 
-out="$(fence_rib "bash spira/testenv-batch.sh --suites test-verdict.sh spira/sp-x" 1 SPIRA_AEON=test-aeon SPIRA_AEON_OVERRIDE=1)"
+out="$(fence_rib "/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x" 1 SPIRA_AEON=test-aeon SPIRA_AEON_OVERRIDE=1)"
 nowant "sp-4o925/override-bypasses-run-in-background-block" '"decision":"block"' "$out"
 
 # ===========================================================================
@@ -253,7 +253,7 @@ for _cmd in \
     "${FAKE_PROD}/sop.sh match /tmp/sp-x.payload" \
     "${FAKE_PROD}/incident.sh list" \
     "${FAKE_PROD}/mail.sh send operator --from Ops --subject q --kind question --default x" \
-    "${FAKE_PROD}/suites.sh status" \
+    "${FAKE_PROD}/../bin/testenv suites status" \
     "${FAKE_PROD}/groomer.sh run"; do
     out="$(fence_run "$_cmd" SPIRA_AEON=test-aeon)"
     nowant "UC-safety-fences-02/rendered-brief-cmd-allowed-${_cmd##*/}" '"decision":"block"' "$out"
@@ -606,14 +606,16 @@ is "gap2/python3-failure-falls-back-to-no-fences" "<>" "$nopy_out"
 
 # ===========================================================================
 echo
-echo "suites.sh quarantine refuses from an aeon session (not a UC in the catalogue; ported as-is):"
+echo "testenv suites quarantine refuses from an aeon session (not a UC in the catalogue; ported as-is):"
 # ===========================================================================
+: "${SPIRA_TESTENV_BIN:=$(. "$HERE/conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_TESTENV_BIN:-}")}"
+[ -x "${SPIRA_TESTENV_BIN:-}" ] || bad "suites-quarantine/testenv-binary-built" "SPIRA_TESTENV_BIN not executable: ${SPIRA_TESTENV_BIN:-<unset>}"
 out_c0="$(SPIRA_AEON="" SPIRA_CONF=/nonexistent SPIRA_RUN="$FAKE_RUN" \
-    bash "$HERE/suites.sh" quarantine nonexistent-suite.sh bead-id "reason" 2>&1 || true)"
+    "$SPIRA_TESTENV_BIN" suites quarantine nonexistent-suite.sh bead-id "reason" 2>&1 || true)"
 nowant "suites-quarantine/silent-without-SPIRA_AEON" "aeons may not" "$out_c0"
 
 out_c1="$(SPIRA_AEON=test-aeon SPIRA_CONF=/nonexistent SPIRA_RUN="$FAKE_RUN" \
-    bash "$HERE/suites.sh" quarantine nonexistent-suite.sh bead-id "reason" 2>&1)"
+    "$SPIRA_TESTENV_BIN" suites quarantine nonexistent-suite.sh bead-id "reason" 2>&1)"
 rc_c1=$?
 is   "suites-quarantine/exits-nonzero-in-aeon-session" 1               "$rc_c1"
 want "suites-quarantine/names-aeons-may-not"           "aeons may not" "$out_c1"
