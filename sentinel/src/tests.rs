@@ -438,7 +438,7 @@ fn audit_dispatch_argv_and_b1_skip_switches() {
     assert!(sink.has("CHECK4/5 audit: dispatched as spira-audit"));
     assert!(w.run.join("audit.dispatched").exists());
     let land = r
-        .find(|s| s.prog == "/stub/launch" && s.args.iter().any(|x| x.ends_with("/landing.sh")))
+        .find(|s| s.prog == "/stub/launch" && s.args.iter().any(|x| x == "land"))
         .expect("landing dispatched");
     assert!(land
         .line()
@@ -1566,7 +1566,7 @@ fn the_switch_reaches_every_child_and_both_workers() {
             .args
             .contains(&format!("--setenv=SPIRA_LIFECYCLE_ENFORCE={want}")));
         let land = r
-            .find(|s| s.prog == "/stub/launch" && s.args.iter().any(|a| a.ends_with("/landing.sh")))
+            .find(|s| s.prog == "/stub/launch" && s.args.iter().any(|a| a == "land"))
             .unwrap();
         assert!(land
             .args

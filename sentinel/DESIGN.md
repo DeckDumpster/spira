@@ -129,8 +129,8 @@ grep them. The exact strings are the ones §4 quotes; `src/tests.rs` pins the pa
 | `audit.status` | w (audit), r (pass) | `SP_AUDIT_AT=<epoch>\nSP_AUDIT_RC=0\n` | tests only |
 | `audit.progress`, `audit.progress.drain.<pid>` | append (audit), drain-by-rename (pass) | one progress message per line | — |
 | `audit.dispatched`, `landing.dispatched` | w once, never overwritten | `<epoch>\n` | cockpit.sh reads landing.* |
-| `landing.status` | r | `SP_LAND_AT= SP_LAND_RC= SP_LAND_BRANCHES= SP_LAND_MOVED=` lines | written by landing.sh |
-| `landing.progress`, `landing.progress.drain.<pid>` | drain-by-rename | one line per movement | written by landing.sh/stage.sh |
+| `landing.status` | r | `SP_LAND_AT= SP_LAND_RC= SP_LAND_BRANCHES= SP_LAND_MOVED=` lines | written by `landing-pass land` |
+| `landing.progress`, `landing.progress.drain.<pid>` | drain-by-rename | one line per movement | written by `landing-pass land`/stage.sh |
 | `inference.cooldown` | r/w | `<epoch>` | — |
 | `sending.base` | r/w (audit) | `<repo>=<sha>` lines | — |
 | `poison-asked/<id>`, `requeue-asked/<id>`, `reclaim-asked/<id>` | r, append | one count per line | lib.sh (attempts.sh clears) |
@@ -203,7 +203,7 @@ mandatory.
   SPIRA_ASK_LABEL SPIRA_SCOPE_LABEL SPIRA_WORK_CLOSE_TYPES`, in that order, plus **new**
   `SPIRA_SKIP_CLOSED_CHECK` and `SPIRA_SKIP_RECLAIM` when they are set (§9, B1).
 
-`spira-landing` runs `$SPIRA_HOME/landing.sh`. It is launched the same way with:
+`spira-landing` runs `$SPIRA_LANDING_PASS_BIN land`. It is launched the same way with:
 
 - `--unit=${SPIRA_LAND_UNIT:-spira-landing}`
 - `RuntimeMaxSec=${SPIRA_LAND_MAXSEC:-3600}`

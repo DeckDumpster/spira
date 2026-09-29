@@ -1,6 +1,6 @@
 //! The two decoupled workers the full pass starts and never waits on: the audit worker
 //! (`spira-audit`, this binary with --audit) and the landing worker (`spira-landing`,
-//! landing.sh). The unit name is the mutex; `--collect` keeps a failed unit from blocking
+//! `landing-pass land`). The unit name is the mutex; `--collect` keeps a failed unit from blocking
 //! every later dispatch; what a worker did is known only from what it wrote — the mailbox
 //! (drained by rename) and the status file (the positive control).
 
@@ -79,7 +79,7 @@ impl<'a> Sentinel<'a> {
     }
 
     /// The switch this pass resolved, handed to a worker systemd-run starts with a clean
-    /// environment — so the audit worker resolves the same mode, and (OFF) landing.sh is
+    /// environment — so the audit worker resolves the same mode, and (OFF) `landing-pass land` is
     /// handed no live path to spira-lc. The audit worker disables its own children itself.
     fn lifecycle_setenv(&self, landing: bool) -> Vec<String> {
         let mut v = vec![format!(
@@ -263,7 +263,7 @@ impl<'a> Sentinel<'a> {
         );
     }
 
-    /// CHECK 6 — dispatch landing.sh; read what the previous run left behind.
+    /// CHECK 6 — dispatch `landing-pass land`; read what the previous run left behind.
     pub fn check6(&self) {
         let unit = self.cfg.land_unit.clone();
         let mailbox = self.cfg.run.join("landing.progress");
@@ -362,7 +362,8 @@ impl<'a> Sentinel<'a> {
                 self.cfg.land_maxsec
             ));
             a.extend(self.lifecycle_setenv(true));
-            a.push(self.script("landing.sh").to_string_lossy().into_owned());
+            a.push(self.cfg.landing_bin.clone().unwrap_or_else(|| "landing-pass".into()));
+            a.push("land".into());
             let o = self.h.run(
                 Spec::args_owned(self.cfg.launch.clone(), a)
                     .out(Io::Inherit)

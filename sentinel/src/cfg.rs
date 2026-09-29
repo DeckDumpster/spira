@@ -250,6 +250,8 @@ pub struct Cfg {
     pub skip_closed: bool,
     pub tsd_bin: Option<String>,
     pub lc_bin: Option<String>,
+    /// The landing worker CHECK 6 dispatches (`landing-pass land`, landing-pass/DESIGN.md §7.1).
+    pub landing_bin: Option<String>,
     pub claim_bin: Option<String>,
     pub strand_bin: Option<String>,
     pub incident_sh: PathBuf,
@@ -397,6 +399,7 @@ impl Cfg {
                 .filter(|v| !v.is_empty())
                 .map(str::to_string),
             lc_bin: bin("SPIRA_LC_BIN", "spira-lc"),
+            landing_bin: bin("SPIRA_LANDING_PASS_BIN", "landing-pass"),
             claim_bin: bin("SPIRA_CLAIM_BIN", "spira-claim"),
             strand_bin: bin("SPIRA_STRAND_BIN", "strand"),
             incident_sh: c
