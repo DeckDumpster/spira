@@ -8,6 +8,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 static N: AtomicUsize = AtomicUsize::new(0);
 
+thread_local! {
+    /// The lifecycle switch as `select` sees it in this test's thread (main.rs `lifecycle_on`).
+    pub static ENFORCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn enforce(on: bool) {
+    ENFORCE.with(|c| c.set(on));
+}
+
 fn tmp(content: &str) -> String {
     let dir = std::env::temp_dir().join(format!("spira-claim-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -295,6 +304,7 @@ fn machine_fixture() -> (String, String, String) {
 
 #[test]
 fn machine_mode_count_and_claim_agree_on_the_fixture() {
+    enforce(true);
     let (ready, lc, recs) = machine_fixture();
     let base = ["select", "--fayth", "t", "--blockers", "machine", "--lifecycle", &lc, "--blocker-records", &recs];
     let mut ranked_args = base.to_vec();
@@ -312,6 +322,7 @@ fn machine_mode_count_and_claim_agree_on_the_fixture() {
 
 #[test]
 fn machine_mode_stack_max_depth_zero_is_todays_rule() {
+    enforce(true);
     let (ready, lc, recs) = machine_fixture();
     let o = run(
         &["select", "--fayth", "t", "--blockers", "machine", "--lifecycle", &lc, "--blocker-records", &recs,
@@ -331,6 +342,7 @@ fn machine_mode_stack_max_depth_zero_is_todays_rule() {
 
 #[test]
 fn machine_mode_bad_snapshot_is_cannot_tell() {
+    enforce(true);
     let (ready, _, recs) = machine_fixture();
     let o = run(&["select", "--fayth", "t", "--blockers", "machine", "--lifecycle", &tmp(""), "--blocker-records", &recs], &ready);
     assert_eq!((o.code, o.out.as_str()), (CANNOT_TELL, ""));
@@ -342,6 +354,64 @@ fn bd_mode_does_not_refilter() {
     let (ready, _, _) = machine_fixture();
     let o = run(&["select", "--fayth", "t", "--count"], &ready);
     assert_eq!(o.out, "7\n");
+}
+
+// ---- the lifecycle switch (DESIGN.md §6a) ------------------------------------------------
+
+#[test]
+fn off_machine_mode_is_the_legacy_rule_and_never_reads_the_lifecycle() {
+    enforce(false);
+    let (ready, _, recs) = machine_fixture();
+    // No --lifecycle: were the snapshot read, the store's spira-lc would be run and fail
+    // ("cannot tell"). A garbage --lifecycle file: were it read, parsing would fail. Both
+    // answer, so neither source was consulted.
+    for extra in [vec![], vec!["--lifecycle".to_string(), tmp("not json")]] {
+        let mut args: Vec<String> =
+            ["select", "--fayth", "t", "--blockers", "machine", "--blocker-records", &recs, "--epics", &tmp("{}")]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+        args.extend(extra);
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let o = run(&args, &ready);
+        assert_eq!(o.code, 0, "{}", o.err);
+        let ids: Vec<&str> = o.out.lines().map(|l| l.split('\t').nth(5).unwrap()).collect();
+        // Every blocker (A, D, G, I) is open in bd, so B, C, F and H wait; J, K and L have
+        // none. No stacking without the machine: A's CERTIFIED row does not release B.
+        assert_eq!(ids, ["J", "K", "L"]);
+    }
+}
+
+#[test]
+fn off_spira_poison_label_is_not_claimable_in_either_mode() {
+    enforce(false);
+    let ready = serde_json::json!([
+        {"id":"P","priority":0,"labels":["repo:spira","spira-poison"]},
+        {"id":"Q","priority":1,"labels":["repo:spira"]}
+    ])
+    .to_string();
+    assert_eq!(run(&["select", "--fayth", "t", "--count"], &ready).out, "1\n");
+    let o = run(&["select", "--fayth", "t", "--blockers", "machine", "--blocker-records", &tmp("[]"), "--count"], &ready);
+    assert_eq!((o.code, o.out.as_str()), (0, "1\n"), "{}", o.err);
+}
+
+#[test]
+fn on_bd_mode_is_unchanged_and_the_label_is_not_the_poison() {
+    // On, the poison is the lifecycle hold; bd mode does not refilter (bd ready already
+    // applied the predicate's exclusions), exactly as before the switch.
+    enforce(true);
+    let ready = serde_json::json!([{"id":"P","priority":0,"labels":["spira-poison"]}]).to_string();
+    assert_eq!(run(&["select", "--fayth", "t", "--count"], &ready).out, "1\n");
+}
+
+#[test]
+fn on_machine_mode_unreachable_machine_is_cannot_tell() {
+    enforce(true);
+    let (ready, _, recs) = machine_fixture();
+    std::env::set_var("SPIRA_LC_BIN", "/nonexistent/spira-lc");
+    let o = run(&["select", "--fayth", "t", "--blockers", "machine", "--blocker-records", &recs], &ready);
+    assert_eq!((o.code, o.out.as_str()), (CANNOT_TELL, ""));
+    assert!(o.err.contains("lifecycle_enforce is on"), "{}", o.err);
 }
 
 // ---- the store, through a fake bd -----------------------------------------------------

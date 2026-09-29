@@ -375,19 +375,36 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
         Ok(r) => r,
         Err(o) => return o,
     };
+    // THE lifecycle switch (DESIGN.md §6a). Off: spira-lc is never run and the poison is
+    // the spira-poison label — in either blockers mode a labelled bead is not claimable.
+    let enforce = lifecycle_on();
+    if !enforce {
+        rows.retain(|r| !rank::poisoned_by_label(r));
+    }
 
     if machine {
         let st = match store(a, &env.config) {
             Ok(s) => s,
             Err(e) => return Outcome::usage(e),
         };
-        let lc_text = match a.get("--lifecycle") {
-            Some(p) => read_source(p, env.stdin),
-            None => st.lifecycle_snapshot(),
-        };
-        let lc = match lc_text.and_then(|t| rank::parse_lifecycle(&t)) {
-            Ok(m) => m,
-            Err(e) => return Outcome::cannot_tell(format!("{fayth}: lifecycle snapshot: {e}")),
+        let lc = if enforce {
+            let lc_text = match a.get("--lifecycle") {
+                Some(p) => read_source(p, env.stdin),
+                None => st.lifecycle_snapshot(),
+            };
+            match lc_text.and_then(|t| rank::parse_lifecycle(&t)) {
+                Ok(m) => Some(m),
+                Err(e) => {
+                    return Outcome::cannot_tell(format!(
+                        "{fayth}: lifecycle snapshot: {e} (lifecycle_enforce is on, so the machine must answer)"
+                    ))
+                }
+            }
+        } else {
+            if a.has("--lifecycle") {
+                eprintln!("spira-claim: {fayth}: --lifecycle ignored — lifecycle_enforce is off, claimability comes from bd records");
+            }
+            None
         };
         let wanted = rank::all_blockers(&rows);
         let recs = match a.get("--blocker-records") {
@@ -399,7 +416,13 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
             Ok(r) => rank::index_rows(r),
             Err(e) => return Outcome::cannot_tell(format!("{fayth}: blocker records: {e}")),
         };
-        rows.retain(|r| matches!(rank::claimable(r, &lc, &bd, stack_max), Verdict::Claimable { .. }));
+        rows.retain(|r| {
+            let v = match &lc {
+                Some(lc) => rank::claimable(r, lc, &bd, stack_max),
+                None => rank::claimable_legacy(r, &bd),
+            };
+            matches!(v, Verdict::Claimable { .. })
+        });
     }
 
     if a.has("--count") {
@@ -439,6 +462,21 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
         s.push('\n');
         s
     }))
+}
+
+/// `lifecycle_enforce` for `select` (DESIGN.md §6a): `spira_config::lifecycle_enforce` —
+/// `SPIRA_LIFECYCLE_ENFORCE` wins, else `spira.lifecycle_enforce`, else off; the same rule
+/// as the aeon crate and as `unpoison` (§8.7). Tests pin it per thread instead of reading
+/// the host's environment or spira.toml, and default to off.
+fn lifecycle_on() -> bool {
+    #[cfg(test)]
+    {
+        tests::ENFORCE.with(|c| c.get())
+    }
+    #[cfg(not(test))]
+    {
+        spira_config::lifecycle_enforce(None)
+    }
 }
 
 fn main() {

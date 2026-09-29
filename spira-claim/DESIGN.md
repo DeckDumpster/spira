@@ -366,6 +366,45 @@ sp-j1q6o commit).
   submitted, open bead (`cert-gate-red`, `closed-without-commit`) write no bd `reopened`
   row, so the old count never saw them.
 
+## 6a. Lifecycle switch: claim selection
+
+**Finding (operator, 2026-09-28):** the lifecycle machine was never deployed on this host.
+There is no `spira_lifecycle` database, no `spira_lc` grant, and no service or socket.
+**Decision:** `lifecycle_enforce` is THE switch for everything that touches the lifecycle
+machine. `unpoison` records the same switch for itself in §8.7. This section covers
+`select`, and the two must agree: what off-mode unpoison clears (the `spira-poison` label)
+is exactly what off-mode `select` refuses.
+
+**Resolution** (main.rs `lifecycle_on` → `spira_config::lifecycle_enforce`, the aeon
+crate's rule and unpoison's):
+- `SPIRA_LIFECYCLE_ENFORCE` wins: `1`/`true` is on, and anything else, including empty, is off.
+- Else `spira.lifecycle_enforce`.
+- Else **off**.
+
+`SPIRA_LC_BIN`'s existence is never consulted.
+
+| | **off** (production today) | **on** |
+|---|---|---|
+| spira-lc | **never run**; `--lifecycle F` is ignored with a stderr note | `spira-lc list` (or `--lifecycle F`) in machine mode |
+| the poison | the `spira-poison` bd label: a labelled row is dropped in **both** blockers modes | the lifecycle `poison` hold (machine mode, §2 rule 1) |
+| `--blockers bd` (default) | today's rows, less any `spira-poison`-labelled row. Normally that is none, because the caller's `bd ready` excludes the label already (`exclude_default`) | unchanged, bit for bit (§2) |
+| `--blockers machine` | `rank::claimable_legacy`. It uses legacy records: not labelled `spira-poison`, and every `blocks` target bd-`closed`. There is no stacking (depth 0), because stacking exists only in the machine | `rank::claimable`, the stacked-dependents rule (§2) |
+| unreachable machine | irrelevant | `cannot tell` (exit 2, empty stdout): `… lifecycle snapshot: … (lifecycle_enforce is on, so the machine must answer)` |
+| `attempts`/`requeues`/`counts`/`decide`/`poison-decide`/`epics` | no lifecycle call in any era. `poison-decide --poisoned` is the caller's read | same |
+
+**Tests** (tests.rs pins the switch per thread through `ENFORCE`, so neither the host's
+environment nor its spira.toml leaks in):
+- `off_machine_mode_is_the_legacy_rule_and_never_reads_the_lifecycle`: with no
+  `--lifecycle`, and with a garbage one, it still answers, so neither source was read.
+- `off_spira_poison_label_is_not_claimable_in_either_mode`
+- `on_bd_mode_is_unchanged_and_the_label_is_not_the_poison`
+- `on_machine_mode_unreachable_machine_is_cannot_tell`
+- The three earlier machine-mode tests now run with the switch on.
+
+**Cutover addition:** §5 item 11 (machine selection) is gated on `lifecycle_enforce` by the
+caller. Under off, `--blockers machine` is still safe: it gives the legacy answer and never
+contacts the machine.
+
 ## 7. Decisions
 
 - **One fold, not SQL arithmetic.** The bash counts are three `sum(case …)` expressions; a
