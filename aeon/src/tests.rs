@@ -27,6 +27,10 @@ struct World {
     exec_calls: Vec<(String, Vec<String>, Option<String>)>,
     ready_fails: bool,
     claim_taken: BTreeSet<String>,
+    /// `spira-claim stack <id>`'s canned stdout for these tests — `None` falls back to `"{}"`
+    /// (no `claimable` key, so `stack::parse_proposal` reads it as "no stack", same as a
+    /// test that never mentions stacking at all).
+    stack_answer: Option<String>,
 }
 
 type W = Arc<Mutex<World>>;
@@ -161,6 +165,7 @@ impl Exec for FakeExec {
                 "epics" => Out::ok(r#"{"prio":{},"started":[]}"#),
                 "select" if args.contains(&"--top-tier".to_string()) => Out::ok(ids.iter().map(|i| format!("{i}||fixture|2|1|2\n")).collect::<String>()),
                 "select" => Out::ok(ids.iter().map(|i| format!("2\t1\t2\t1\tt\t{i}\t\n")).collect::<String>()),
+                "stack" => Out::ok(self.0.lock().unwrap().stack_answer.clone().unwrap_or_else(|| "{}".into())),
                 _ => Out::ok("{}"),
             };
         }
@@ -193,6 +198,12 @@ struct Fx {
 fn git(dir: &Path, args: &[&str]) {
     let o = std::process::Command::new("git").arg("-C").arg(dir).args(args).env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t").output().unwrap();
     assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+}
+
+fn rev_parse(dir: &Path, rev: &str) -> String {
+    let o = std::process::Command::new("git").arg("-C").arg(dir).args(["rev-parse", rev]).output().unwrap();
+    assert!(o.status.success(), "rev-parse {rev}: {}", String::from_utf8_lossy(&o.stderr));
+    String::from_utf8(o.stdout).unwrap().trim().to_string()
 }
 
 fn fx(name: &str) -> Fx {
@@ -490,6 +501,78 @@ fn a_refused_lifecycle_claim_releases() {
     let o = go(&f, "spira,plan", &extra, true, Mode::Claim, a, no_session());
     assert_eq!(o.code, 0);
     assert!(ledger_lines(&o)[2].contains("status=lc-claim-refused"));
+}
+
+fn lc_bin_extra(f: &Fx) -> Vec<(String, String)> {
+    let bin = f.dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    for b in ["spira-lc", "work"] {
+        let p = bin.join(b);
+        std::fs::write(&p, "#!/bin/sh\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    vec![("SPIRA_LC_BIN".to_string(), bin.join("spira-lc").display().to_string()), ("SPIRA_WORK_BIN".to_string(), bin.join("work").display().to_string())]
+}
+
+// ---- the stacked base (design stacked-dependents-2026-09-28 §1, sp-falao) --------------
+
+#[test]
+fn a_stacked_claim_merges_the_certified_prerequisites_tip_into_the_worktrees_base() {
+    let f = fx("stack-ok");
+    git(&f.repo, &["checkout", "-qb", "spira/sp-a"]);
+    std::fs::write(f.repo.join("a.txt"), "from A\n").unwrap();
+    git(&f.repo, &["add", "a.txt"]);
+    git(&f.repo, &["commit", "-qm", "sp-a work"]);
+    let tip_a = rev_parse(&f.repo, "HEAD");
+    git(&f.repo, &["checkout", "-q", "main"]);
+
+    seed(&f, "sp-b");
+    f.w.lock().unwrap().stack_answer = Some(format!(r#"{{"claimable":true,"stack":{{"sp-a":"{tip_a}"}},"stack_depth":1,"stack_max_depth":4}}"#));
+
+    let extra = lc_bin_extra(&f);
+    let extra: Vec<(&str, &str)> = extra.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> =
+        Box::new(|spec, _w, _| {
+            assert!(spec.cwd.join("a.txt").is_file(), "the worktree must contain A's own commit");
+            0
+        });
+    let o = go(&f, "spira,plan", &extra, true, Mode::Claim, BTreeMap::new(), act);
+    assert_eq!(o.code, 0, "{}", o.log);
+    assert_eq!(o.seen.len(), 1, "the session must have started — the merge must not have conflicted");
+    let parents = std::process::Command::new("git").arg("-C").arg(&f.repo).args(["log", "--format=%P", "-1", "spira/sp-b"]).output().unwrap();
+    let parents = String::from_utf8(parents.stdout).unwrap();
+    assert_eq!(parents.split_whitespace().count(), 2, "the branch's base must be a two-parent merge of main and sp-a's tip: {parents:?}");
+}
+
+#[test]
+fn a_stack_conflict_refuses_the_claim_and_notes_both_prerequisites() {
+    let f = fx("stack-conflict");
+    git(&f.repo, &["checkout", "-qb", "spira/sp-a"]);
+    std::fs::write(f.repo.join("f"), "from A\n").unwrap();
+    git(&f.repo, &["commit", "-qam", "sp-a work"]);
+    let tip_a = rev_parse(&f.repo, "HEAD");
+    git(&f.repo, &["checkout", "-q", "main"]);
+    git(&f.repo, &["checkout", "-qb", "spira/sp-b-prereq"]);
+    std::fs::write(f.repo.join("f"), "from B\n").unwrap();
+    git(&f.repo, &["commit", "-qam", "sp-b-prereq work"]);
+    let tip_b = rev_parse(&f.repo, "HEAD");
+    git(&f.repo, &["checkout", "-q", "main"]);
+
+    seed(&f, "sp-c");
+    f.w.lock().unwrap().stack_answer =
+        Some(format!(r#"{{"claimable":true,"stack":{{"sp-a":"{tip_a}","sp-b-prereq":"{tip_b}"}},"stack_depth":1,"stack_max_depth":4}}"#));
+
+    let extra = lc_bin_extra(&f);
+    let extra: Vec<(&str, &str)> = extra.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let o = go(&f, "spira,plan", &extra, true, Mode::Claim, BTreeMap::new(), no_session());
+    assert_eq!(o.code, 0, "{}", o.log);
+    assert!(ledger_lines(&o).last().unwrap().contains("status=stack-conflict"), "{:?}", ledger_lines(&o));
+    let w = o.w.lock().unwrap();
+    assert_eq!(w.status.get("sp-c").map(String::as_str), Some("open"), "the dependent stays held, not requeued as a fault");
+    let notes: Vec<&str> = w.notes.iter().filter(|(id, _)| id == "sp-a" || id == "sp-b-prereq").map(|(_, t)| t.as_str()).collect();
+    assert_eq!(notes.len(), 2, "both prerequisites get a note: {:?}", w.notes);
+    assert!(notes.iter().all(|n| n.contains("stack conflict: sp-a x sp-b-prereq")), "{notes:?}");
 }
 
 // ---- fences before the workspace ------------------------------------------------------

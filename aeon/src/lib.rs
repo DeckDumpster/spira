@@ -11,6 +11,7 @@ pub mod ports;
 pub mod run;
 pub mod seam;
 pub mod session;
+pub mod stack;
 pub mod sweep;
 pub mod teardown;
 pub mod util;

@@ -13,7 +13,7 @@
 # test-lifecycle-container.sh; testenv-batch.sh already provides the container.
 #
 # tier: T2
-# covers: work/* spira-lc/src/work.rs spira-lc/src/bd.rs spira/bead.sh spira/mail.sh
+# covers: work/* spira-lc/src/work.rs spira-lc/src/main.rs spira-lc/src/bd.rs spira/bead.sh spira/mail.sh
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -176,6 +176,40 @@ is "submit: exits 0 (applied)" "0" "$rc"
 row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state, tip FROM bead WHERE bead_id='$BID'" -r json 2>&1)"
 want "submit: state is SUBMITTED" "SUBMITTED" "$row"
 want "submit: tip is the worktree's real HEAD, not something the aeon could type" "$real_tip" "$row"
+
+# ── stacked dependents: base_withdrawn leaves WORKING in place and tells its holder;
+# submit is refused until the stack is current (design stacked-dependents-2026-09-28 §1,
+# sp-falao's own acceptance: "A reworked while B WORKING -> B's submit refused until it
+# rebases") ────────────────────────────────────────────────────────────────────────────
+PREREQ="prereq-fixture"
+seed_bead "$PREREQ"
+root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='CERTIFIED', tip='newtip', version=1 WHERE bead_id='$PREREQ'" >/dev/null 2>&1
+
+STK="$(bash "$HERE/bead.sh" file "aeon semantic layer: stacked-base fixture" --for builder --repo testrepo)"
+seed_bead "$STK"
+root_sql --use-db spira_lifecycle sql -q \
+    "UPDATE bead SET state='WORKING', holder='aeon-stacked', version=1, stack=JSON_OBJECT('$PREREQ','oldtip') WHERE bead_id='$STK'" >/dev/null 2>&1
+
+before_note="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$STK" 2>&1)"
+out="$("$LC_BIN" event bead "$STK" --expect WORKING --version 1 --actor test --kind "{\"BaseWithdrawn\":{\"prereq\":\"$PREREQ\",\"tip\":\"oldtip\"}}" 2>&1)"; rc=$?
+is "base_withdrawn on a WORKING dependent: applied (exit 0)" "0" "$rc"
+row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state, reason FROM bead WHERE bead_id='$STK'" -r json 2>&1)"
+want "base_withdrawn: the dependent stays WORKING, not sent to REWORK" "\"state\":\"WORKING\"" "$row"
+want "base_withdrawn: the reason names the withdrawn prerequisite and tip" "base_withdrawn: $PREREQ oldtip" "$row"
+after_note="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$STK" 2>&1)"
+[ "$after_note" != "$before_note" ] && ok "base_withdrawn: the WORKING holder is told (a note landed on the bead)" \
+    || bad "base_withdrawn: the WORKING holder is told (a note landed on the bead)" "bd show did not change"
+want "base_withdrawn: the note names the holder" "aeon-stacked" "$after_note"
+
+out="$(cd "$AEON_WT" && work_as "$STK" submit 2>&1)"; rc=$?
+is "submit while the stack still names a withdrawn tip: refused (exit 3)" "3" "$rc"
+want "submit refusal: tells the aeon to rebase onto the current stack" "rebase" "$out"
+
+# once the stack is current again (the aeon rebased and the claim's stack now names the
+# prerequisite's real tip), submit succeeds exactly as it does for an unstacked bead.
+root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET stack=JSON_OBJECT('$PREREQ','newtip') WHERE bead_id='$STK'" >/dev/null 2>&1
+out="$(cd "$AEON_WT" && work_as "$STK" submit 2>&1)"; rc=$?
+is "submit once the stack matches the prerequisite's current tip: applied (exit 0)" "0" "$rc"
 
 # ── done needs WORKING, not SUBMITTED — reset via a fresh bead for the rest ──────────
 DID="$(bash "$HERE/bead.sh" file "aeon semantic layer: done/blocked/split fixture" --for builder --repo testrepo)"

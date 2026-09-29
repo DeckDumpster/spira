@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use lifecycle::bead::{BeadState, HoldKind};
+use lifecycle::bead::{BeadState, HoldKind, Stack};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
@@ -202,6 +202,11 @@ pub struct LifecycleRow {
     pub state: BeadState,
     pub holds: BTreeSet<HoldKind>,
     pub stack_depth: u32,
+    /// The row's own certified tip — `None` for a row never submitted, or one whose tip
+    /// column came back empty. The stack proposal a dependent builds names this, not the
+    /// bd branch head, so a prerequisite that never certifies is never stackable regardless
+    /// of state.
+    pub tip: Option<String>,
 }
 
 pub fn parse_lifecycle(text: &str) -> Result<HashMap<String, LifecycleRow>, String> {
@@ -237,7 +242,11 @@ pub fn parse_lifecycle(text: &str) -> Result<HashMap<String, LifecycleRow>, Stri
             Some(Value::String(s)) => s.trim().parse().unwrap_or(0),
             _ => 0,
         };
-        out.insert(id.to_string(), LifecycleRow { bead_id: id.to_string(), state, holds, stack_depth });
+        let tip = match r.get("tip") {
+            Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+            _ => None,
+        };
+        out.insert(id.to_string(), LifecycleRow { bead_id: id.to_string(), state, holds, stack_depth, tip });
     }
     Ok(out)
 }
@@ -282,14 +291,33 @@ pub fn claimable(
     bd: &HashMap<String, ReadyRow>,
     stack_max_depth: u32,
 ) -> Verdict {
-    let Some(own) = lc.get(&cand.id) else { return Verdict::NoOwnRow };
+    match stack_plan(cand, lc, bd, stack_max_depth) {
+        Ok((_, depth)) => Verdict::Claimable { depth },
+        Err(v) => v,
+    }
+}
+
+/// The same claimability rule as [`claimable`], but also returning the stack proposal a
+/// claim of `cand` would carry: `{prereq_bead_id: certified_tip}` for every blocker this
+/// rule stacked on rather than waited for. `Err(Verdict::TooDeep { depth, .. })` still
+/// carries the depth the proposal would have reached, so a caller can hand it to the
+/// machine's own `Claim` event and let `DepthExceeded` be the refusal of record rather than
+/// duplicating the ceiling check here.
+pub fn stack_plan(
+    cand: &ReadyRow,
+    lc: &HashMap<String, LifecycleRow>,
+    bd: &HashMap<String, ReadyRow>,
+    stack_max_depth: u32,
+) -> Result<(Stack, u32), Verdict> {
+    let Some(own) = lc.get(&cand.id) else { return Err(Verdict::NoOwnRow) };
     if let Some(h) = own.holds.iter().find(|h| **h != HoldKind::Wait) {
-        return Verdict::Held(*h);
+        return Err(Verdict::Held(*h));
     }
     if !matches!(own.state, BeadState::Ready | BeadState::Rework) {
-        return Verdict::OwnState(own.state);
+        return Err(Verdict::OwnState(own.state));
     }
     let own_repo = cand.label_value("repo:");
+    let mut stack = Stack::new();
     let mut stacked_max: Option<u32> = None;
     for bid in blockers(cand) {
         let rec = bd.get(&bid);
@@ -303,6 +331,9 @@ pub fn claimable(
                     BeadState::Landed | BeadState::Done => true,
                     BeadState::Certified | BeadState::InDelivery if stackable => {
                         stacked_max = Some(stacked_max.unwrap_or(0).max(row.stack_depth));
+                        if let Some(tip) = &row.tip {
+                            stack.insert(bid.clone(), tip.clone());
+                        }
                         true
                     }
                     s if s.is_terminal() => bd_closed,
@@ -311,14 +342,14 @@ pub fn claimable(
             }
         };
         if !ok {
-            return Verdict::Blocked(bid);
+            return Err(Verdict::Blocked(bid));
         }
     }
     let depth = stacked_max.map_or(0, |d| d + 1);
     if depth > stack_max_depth {
-        return Verdict::TooDeep { depth, max: stack_max_depth };
+        return Err(Verdict::TooDeep { depth, max: stack_max_depth });
     }
-    Verdict::Claimable { depth }
+    Ok((stack, depth))
 }
 
 /// The legacy poison record: the bd label CHECK 4 puts on a bead when `lifecycle_enforce`
@@ -502,7 +533,7 @@ mod tests {
     // ---- machine mode ----
 
     fn lcrow(id: &str, st: BeadState, holds: &[HoldKind], depth: u32) -> (String, LifecycleRow) {
-        (id.into(), LifecycleRow { bead_id: id.into(), state: st, holds: holds.iter().copied().collect(), stack_depth: depth })
+        (id.into(), LifecycleRow { bead_id: id.into(), state: st, holds: holds.iter().copied().collect(), stack_depth: depth, tip: Some(format!("tip-{id}")) })
     }
 
     fn blocked_on(id: &str, blocker: &str) -> ReadyRow {
@@ -524,6 +555,32 @@ mod tests {
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[HoldKind::Wait], 0), lcrow("A", BeadState::Certified, &[], 0)].into();
         let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
         assert_eq!(claimable(&blocked_on("B", "A"), &lc, &bd, 4), Verdict::Claimable { depth: 1 });
+    }
+
+    #[test]
+    fn stack_plan_names_the_stacked_prerequisites_tip() {
+        let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", BeadState::Certified, &[], 0)].into();
+        let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
+        let (stack, depth) = stack_plan(&blocked_on("B", "A"), &lc, &bd, 4).unwrap();
+        assert_eq!(depth, 1);
+        assert_eq!(stack.get("A").map(String::as_str), Some("tip-A"));
+    }
+
+    #[test]
+    fn stack_plan_omits_a_landed_blocker_it_does_not_stack_on() {
+        let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", BeadState::Landed, &[], 0)].into();
+        let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
+        let (stack, depth) = stack_plan(&blocked_on("B", "A"), &lc, &bd, 4).unwrap();
+        assert_eq!(depth, 0);
+        assert!(stack.is_empty(), "a landed prerequisite is satisfied, not stacked on");
+    }
+
+    #[test]
+    fn stack_plan_too_deep_still_reports_the_attempted_stack() {
+        let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
+        let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", BeadState::InDelivery, &[], 4)].into();
+        let err = stack_plan(&blocked_on("B", "A"), &lc, &bd, 4).unwrap_err();
+        assert_eq!(err, Verdict::TooDeep { depth: 5, max: 4 });
     }
 
     #[test]
