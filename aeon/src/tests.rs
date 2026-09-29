@@ -560,17 +560,40 @@ fn a_stacked_claim_merges_the_certified_prerequisites_tip_into_the_worktrees_bas
 
     let extra = lc_bin_extra(&f);
     let extra: Vec<(&str, &str)> = extra.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let base_sha: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let base_sha_cl = Arc::clone(&base_sha);
     let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> =
-        Box::new(|spec, _w, _| {
+        Box::new(move |spec, _w, _| {
             assert!(spec.cwd.join("a.txt").is_file(), "the worktree must contain A's own commit");
+            // The worktree's HEAD right now, before this session's own commit, is the base
+            // commit aeon built (main merged with A's certified tip) — captured here so the
+            // "ahead of base" count below is against that merge, not main.
+            *base_sha_cl.lock().unwrap() = rev_parse(&spec.cwd, "HEAD");
+            std::fs::write(spec.cwd.join("b.txt"), "from B\n").unwrap();
+            git(&spec.cwd, &["add", "b.txt"]);
+            git(&spec.cwd, &["commit", "-qm", "sp-b work"]);
             0
         });
     let o = go(&f, "spira,plan", &extra, true, Mode::Claim, BTreeMap::new(), act);
     assert_eq!(o.code, 0, "{}", o.log);
     assert_eq!(o.seen.len(), 1, "the session must have started — the merge must not have conflicted");
-    let parents = std::process::Command::new("git").arg("-C").arg(&f.repo).args(["log", "--format=%P", "-1", "spira/sp-b"]).output().unwrap();
+
+    // design stacked-dependents-2026-09-28's own test-strategy item 1: B's "ahead of base"
+    // is B only — A's commit is already inside the base merge, so it must not be counted as
+    // B's own work.
+    let base = base_sha.lock().unwrap().clone();
+    assert!(!base.is_empty(), "the act closure must have captured the base commit");
+    let parents = std::process::Command::new("git").arg("-C").arg(&f.repo).args(["log", "--format=%P", "-1", &base]).output().unwrap();
     let parents = String::from_utf8(parents.stdout).unwrap();
-    assert_eq!(parents.split_whitespace().count(), 2, "the branch's base must be a two-parent merge of main and sp-a's tip: {parents:?}");
+    assert_eq!(parents.split_whitespace().count(), 2, "the base commit must be a two-parent merge of main and sp-a's tip: {parents:?}");
+    let ahead = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&f.repo)
+        .args(["rev-list", "--count", &format!("{base}..spira/sp-b")])
+        .output()
+        .unwrap();
+    let ahead_n: usize = String::from_utf8(ahead.stdout).unwrap().trim().parse().unwrap();
+    assert_eq!(ahead_n, 1, "B's own commits ahead of base must be exactly its own work, not A's");
 }
 
 #[test]

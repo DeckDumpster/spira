@@ -23,7 +23,12 @@
 #   - eject cascade (sp-f3af9, design stacked-dependents-2026-09-28 §3): settling a batch
 #     that ejects a prerequisite also returns every member stacked on it as base-withdrawn,
 #     even when the caller's own --requeue still names it; a hand eject (queue.sh's own
-#     _lc_eject_member) cascades to the same dependent identically.
+#     _lc_eject_member) cascades to the same dependent identically. A 3-deep chain proves the
+#     cascade walks the frontier past one hop, not just a direct dependent (sp-s9675.5).
+#   - the epic-blocker hold-release rule (sp-s9675.5, design §1): a candidate blocked on an
+#     epic stays blocked even once the epic's own lifecycle row is CERTIFIED, and is admitted
+#     only once the epic's bd record closes — proven against the real spira-claim binary
+#     reading this suite's real spira-lc `list` output, not a synthetic fixture.
 #
 # Also covers sp-o7nbr.5's own deliverable: queue.sh's cmd_open_batch/cmd_eject/cmd_abandon
 # onto this same machine via their own _lc_cut_batch/_lc_eject_member/_lc_abandon_batch
@@ -37,8 +42,8 @@
 #
 # defect: sp-o7nbr
 # tier: T2
-# covers: lifecycle/* spira-lc/* queue/src/*
-# timeout: 300
+# covers: lifecycle/* spira-lc/* spira-claim/* spira/batch.sh spira/verdict.sh queue/src/*
+# timeout: 360
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -97,6 +102,14 @@ root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u ro
 # lifecycle is switched on for this suite with SPIRA_LIFECYCLE_ENFORCE, never by a path.
 command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
 export SPIRA_LIFECYCLE_ENFORCE=1
+
+# Also built for sp-s9675.5's own section below (the epic-blocker hold-release rule, design
+# stacked-dependents-2026-09-28 test-strategy item 5): the real spira-claim binary against
+# this suite's real spira-lc `list` output, not a reimplementation of either.
+CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
+    "$CARGO_BIN" build --manifest-path "$REPO/spira-claim/Cargo.toml" --quiet 2>"$TMP/build-claim.log" \
+    || bail "spira-claim failed to build: $(cat "$TMP/build-claim.log")"
+CLAIM_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-claim"
 
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$PORT"
@@ -380,6 +393,36 @@ is "B's reason names base-withdrawn — collateral, not itself accused" "base-wi
 is "unrelated X is merely requeued, unaffected by the cascade" "CERTIFIED" "$(member_field sp-f-x bead state)"
 want "the settle summary meters the one cascaded base_withdrawn" '"base_withdrawn":1' "$out"
 
+# ── criterion 4/6, 3-deep (sp-s9675.5): the cascade walks past one hop ────────────────────
+# The two-member fixture above (A, B) cannot tell a BFS that only checks the root's own
+# direct dependents from one that actually walks the frontier transitively. A three-deep
+# chain A -> B -> C, plus unrelated X, can: ejecting the root A must cascade both B and C
+# (design stacked-dependents-2026-09-28's own test-strategy item 4: "A red in the round ->
+# A, B, C ejected together [3-deep]; unrelated members requeued").
+certify sp-f3-a tipF3A
+certify_stacked sp-f3-b tipF3B sp-f3-a tipF3A
+certify_stacked sp-f3-c tipF3C sp-f3-b tipF3B
+certify sp-f3-x tipF3X
+lc cut batch-stacked-3deep --repo spira --head H7b --base B7b \
+    --members "sp-f3-a:tipF3A,sp-f3-b:tipF3B,sp-f3-c:tipF3C,sp-f3-x:tipF3X" --actor test >/dev/null
+v="$(batch_field batch-stacked-3deep version)"
+lc event batch batch-stacked-3deep --expect OPEN --version "$v" --actor test --kind '{"CiStarted":{"run":"r1"}}' >/dev/null
+v="$(batch_field batch-stacked-3deep version)"
+lc event batch batch-stacked-3deep --expect CI_RUNNING --version "$v" --actor test --kind '"Red"' >/dev/null
+
+v="$(batch_field batch-stacked-3deep version)"
+out="$(lc settle batch-stacked-3deep --expect ATTRIBUTING --version "$v" --actor test --eject sp-f3-a --requeue sp-f3-b,sp-f3-c,sp-f3-x)"
+wantrc "settle applies across the 3-deep chain" 0 $?
+
+is "root A needs rework" "REWORK" "$(member_field sp-f3-a bead state)"
+is "middle B cascades, one hop from the root" "REWORK" "$(member_field sp-f3-b bead state)"
+is "B's reason is collateral" "base-withdrawn" "$(member_field sp-f3-b bead reason)"
+is "SEEN RED FIRST: tip C cascades too — a BFS that stopped after one hop would leave C wrongly CERTIFIED" \
+    "REWORK" "$(member_field sp-f3-c bead state)"
+is "C's reason is collateral" "base-withdrawn" "$(member_field sp-f3-c bead reason)"
+is "unrelated X is merely requeued, unaffected by the cascade" "CERTIFIED" "$(member_field sp-f3-x bead state)"
+want "the settle summary meters both cascaded members" '"base_withdrawn":2' "$out"
+
 # ── sp-o7nbr.5: the queue's own open-batch/eject/abandon CAS onto this same machine, on
 # this same fixture. queue.sh is the queue binary now (queue/DESIGN.md §7.4): its CAS shape
 # is `ops::batch::lc_cas`, unit-tested with the switch on. What this suite still owns is the
@@ -487,5 +530,43 @@ is "SEEN RED FIRST: B follows A out of the batch identically to the settle-red c
     "REWORK" "$(member_field sp-f-hb bead state)"
 is "B's reason is base-withdrawn here too" "base-withdrawn" "$(member_field sp-f-hb bead reason)"
 want "the eject-member summary meters the one cascaded base_withdrawn" '"base_withdrawn":1' "$out"
+
+# ── sp-s9675.5, item 5: the epic-blocker hold-release rule stays "as today" ──────────────
+# design stacked-dependents-2026-09-28 §1's hold-release table: a same-repo work-bead
+# blocker releases the wait hold at CERTIFIED (criterion 5 above stacks on exactly that);
+# "anything else (epic, decision, other repo)" still needs the blocker closed. An epic is
+# never a work bead the aeon machine claims/submits/certifies, so it never gets its own
+# spira-lc row (rank.rs's stack_plan falls back to the bd record's own status precisely
+# because `lc.get(&epic_id)` is `None`) — this fixture reflects that: only B gets a
+# spira-lc row. This rule is implemented in spira-claim's own stack_plan/claimable
+# (rank.rs), already unit-tested there against hand-built fixtures — what is proven here
+# instead is that the real spira-lc `list` output and the real spira-claim binary agree on
+# the same JSON contract for a candidate that does carry a real lifecycle row.
+lc create-bead sp-epicb >/dev/null
+lc_epic_snapshot="$TMP/lc-snapshot-epicb.json"
+lc list > "$lc_epic_snapshot"
+
+ready_epicb="$TMP/ready-epicb.json"
+cat > "$ready_epicb" <<JSON
+[{"id":"sp-epicb","priority":1,"labels":["repo:spira"],"issue_type":"task","dependencies":[{"issue_id":"sp-epicb","depends_on_id":"sp-epic","type":"blocks"}]}]
+JSON
+
+blockers_epic_open="$TMP/blockers-epic-open.json"
+cat > "$blockers_epic_open" <<JSON
+[{"id":"sp-epic","status":"open","issue_type":"epic","labels":["repo:spira"]}]
+JSON
+count_open="$(SPIRA_LIFECYCLE_ENFORCE=1 "$CLAIM_BIN" select --fayth test --blockers machine \
+    --ready "$ready_epicb" --lifecycle "$lc_epic_snapshot" --blocker-records "$blockers_epic_open" --count)"
+wantrc "spira-claim select runs cleanly with the epic still open" 0 $?
+is "B stays blocked while its epic is open" "0" "$count_open"
+
+blockers_epic_closed="$TMP/blockers-epic-closed.json"
+cat > "$blockers_epic_closed" <<JSON
+[{"id":"sp-epic","status":"closed","issue_type":"epic","labels":["repo:spira"]}]
+JSON
+count_closed="$(SPIRA_LIFECYCLE_ENFORCE=1 "$CLAIM_BIN" select --fayth test --blockers machine \
+    --ready "$ready_epicb" --lifecycle "$lc_epic_snapshot" --blocker-records "$blockers_epic_closed" --count)"
+wantrc "spira-claim select runs cleanly once the epic closes" 0 $?
+is "B is claimable once the epic closes — the hand-ordered epic edge, unchanged" "1" "$count_closed"
 
 tl_summary
