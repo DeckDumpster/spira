@@ -48,6 +48,17 @@ export SPIRA_CONF="$T/no-such.conf"
 export SPIRA_HOME="$T"
 export SPIRA_DB="$T/no-db"
 
+# THE AEON IS A BINARY (aeon.sh is gone) and summon_fayth refuses to summon without an
+# executable SPIRA_AEON_BIN. SPIRA_HOME is the temp dir here, so conf.sh's own spira_bin would
+# look in its parent's bin/ and find nothing; resolve it the way conf.sh does for THIS tree
+# (SPIRA_ARTIFACTS under testenv), before lib.sh sources conf.sh. The mock SPIRA_SUMMON
+# never execs it — it only has to be the real, executable path summon_fayth passes on.
+_rbin() { env -u SPIRA_REPO SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin "$2" 2>/dev/null' _ "$HERE" "$1"; }
+[ -x "${SPIRA_AEON_BIN:-}" ] || SPIRA_AEON_BIN="$(_rbin aeon)"
+export SPIRA_AEON_BIN
+[ -x "$SPIRA_AEON_BIN" ] \
+    || { echo "test-summon-fayth: the aeon binary is not built (SPIRA_AEON_BIN=$SPIRA_AEON_BIN)" >&2; exit 1; }
+
 . "$HERE/lib.sh"
 
 # ======================================================================================

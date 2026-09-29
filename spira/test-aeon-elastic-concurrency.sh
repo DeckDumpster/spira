@@ -46,6 +46,13 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 echo "test-aeon-elastic-concurrency.sh"
 
+# The aeon binary replaced aeon.sh. Nothing sources conf.sh for THIS tree before here, so
+# resolve it (and the spira-claim it ranks through) the way conf.sh's spira_bin does for this
+# checkout — SPIRA_ARTIFACTS under testenv — unless the caller already exported one.
+_rbin() { env -u SPIRA_REPO SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin "$2" 2>/dev/null' _ "$HERE" "$1"; }
+[ -x "${SPIRA_AEON_BIN:-}" ] || SPIRA_AEON_BIN="$(_rbin aeon)"
+[ -x "${SPIRA_CLAIM_BIN:-}" ] || SPIRA_CLAIM_BIN="$(_rbin spira-claim)"
+export SPIRA_AEON_BIN SPIRA_CLAIM_BIN
 # The aeon binary (aeon/, which replaced aeon.sh) must be built — a refusal to run at all
 # here is louder than a suite that silently runs nothing.
 [ -x "${SPIRA_AEON_BIN:-}" ] \

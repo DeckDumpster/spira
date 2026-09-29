@@ -131,6 +131,11 @@ printf 'FAYTH_GROOM_ESCALATION_CHECK=1\n' >> "$HOMEDIR/chamber/scrubber.fayth"
 BIN="$TMP/bin"; mkdir -p "$BIN"
 [ -x "${SPIRA_AEON_BIN:-}" ] \
     || { echo "test-groom-escalation-check: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model" >&2; exit 1; }
+# The aeon ranks through spira-claim, resolved by conf.sh (testdb.sh sourced it) from
+# SPIRA_ARTIFACTS. run_aeon's env -i drops SPIRA_ARTIFACTS, so the resolved path is passed
+# explicitly — without it every pass is a "claim-error spira-claim not found".
+[ -x "${SPIRA_CLAIM_BIN:-}" ] \
+    || { echo "test-groom-escalation-check: spira-claim is not built (SPIRA_CLAIM_BIN) — the aeon cannot claim" >&2; exit 1; }
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
@@ -178,6 +183,7 @@ run_aeon() {    # run_aeon <fayth> <act>
         SPIRA_CONF="$TMP/nonexistent.conf" \
         SPIRA_HOME="$HOMEDIR" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
         SPIRA_REPO_MAP="$REPO_MAP" SPIRA_AGENT="$BIN/claude" \
+        SPIRA_CLAIM_BIN="${SPIRA_CLAIM_BIN:-}" \
         SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
         BEADS_NO_AUTO_IMPORT=1 \
         timeout 240 "$SPIRA_AEON_BIN" --home "$HOMEDIR" "$1" > "$TMP/out" 2>&1
