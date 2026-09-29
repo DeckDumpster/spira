@@ -1,0 +1,19 @@
+[package]
+name = "gate"
+version = "0.1.0"
+edition = "2021"
+description = "gate — the certification gate: judges a branch merged onto its landing ref (sp-0tpcs, replaces the logic of spira/gate.sh and spira/gate-lib.sh)."
+
+[[bin]]
+name = "gate"
+path = "src/main.rs"
+
+[dependencies]
+libc = "0.2"
+sha2 = "0.10"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
