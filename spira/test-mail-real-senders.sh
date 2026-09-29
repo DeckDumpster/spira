@@ -20,14 +20,11 @@
 # real mail.sh, not a real database. Standing up a real recurrence count is test-sin-exempt.sh
 # and test-incident-recur-cause.sh's job, not this one's.
 #
-# archivist.sh's session-drift notice fires from inside a real `sweep`, over a fabricated
-# transcript that ctx-meter.sh measures for real, with SPIRA_AGENT stubbed to do exactly what
-# the real archivist's own brief (chamber/archivist.md) tells it to: call
-# `archivist.sh mark <session> archiving <n>` as it files something. Driving it for real is
-# what caught it NOT clearing mail.sh's lint (sp-sgx77, filed). The assertions below describe
-# that current, verified-true behaviour rather than the wanted one, so this suite stays green
-# until sp-sgx77 lands — at which point the "does NOT reach the operator" assertion is the one
-# that goes red and says so.
+# archivist.sh's sweep, driven for real over a fabricated transcript that ctx-meter.sh measures
+# for real, with SPIRA_AGENT stubbed to do exactly what the real archivist's own brief
+# (chamber/archivist.md) tells it to: call `archivist.sh mark <session> archiving <n>` as it
+# files something. A sweep that crosses the top band sends no per-session note of its own — the
+# daily digest is the only path to the operator — so nothing here should ever reach the mailbox.
 #
 # tier: T2
 # covers: spira/lib.sh spira/watchd.sh spira/skew.sh spira/incident.sh spira/archivist.sh spira/ctx-meter.sh spira/incident-stub-bd.py spira/mail.sh UC-operator-channel-05
@@ -137,7 +134,7 @@ want "incident.sh SIN message carries a Default"     "## Default"  "$body"
 want "incident.sh SIN message names the recurrence"  "recurred"    "$body"
 
 echo
-echo "archivist.sh: session-drift notice (note)"
+echo "archivist.sh: sweep over the top band sends no per-session note"
 
 ARC_SH="$HERE/archivist.sh"
 mkdir -p "$TMP/arc-chamber" "$TMP/arc-run" "$TMP/arc-projects/-test-project"
@@ -186,18 +183,15 @@ items="$(sed -n 's/^items_filed=//p' "$TMP/arc-run/archivist/sess-realsender.sta
 is "archivist.sh sweep records the session safe to clear" "safe" "$state"
 is "archivist.sh sweep records the item the stub filed"   "1"    "$items"
 
-# BUT THE PUSH ITSELF NEVER REACHES THE OPERATOR (sp-sgx77): mail.sh's archivist-note
-# guard (added by sp-9zthk to stop PER-FINDING notes) also catches this once-per-session
-# "safe to clear" note, because it is `--kind note` from archivist@spira with no
-# `--digest` — the one shape sp-9zthk's guard was never told to let through. The call
-# site swallows the failure (`>/dev/null 2>&1`), so this is what G-05 exists to catch:
-# a real sender whose message never clears mail.sh's own lint. Flip this assertion (and
-# delete this comment) once sp-sgx77 lands.
-is "archivist.sh notice does NOT reach the operator (sp-sgx77)" "$before" "$after"
+# NOTHING REACHES THE OPERATOR from this sweep: no items were queued for the digest (the
+# stub only calls `mark`, never `record`), so digest_send has nothing to send, and the
+# sweep itself sends no note of its own now that the per-session push is gone.
+is "archivist.sh sweep sends no mail with nothing queued for the digest" "$before" "$after"
 
-# THE MECHANISM, ISOLATED: the same send archive() attempts, run directly, fails lint
-# for the stated reason — so the assertion above is not just "nothing changed" for some
-# unrelated cause.
+# THE LINT ITSELF STILL REFUSES THAT SHAPE: a `--kind note` from archivist@spira with no
+# `--digest` is exactly the ad hoc per-finding note mail.sh's guard exists to stop. This is
+# what G-05 exists to catch, so the guard is worth pinning directly even though nothing in
+# archivist.sh sends this shape any more.
 lint_err="$(printf 'body' | bash "$HERE/mail.sh" send operator \
     --from "Archivist <archivist@spira>" --subject "isolated repro" --kind note 2>&1 >/dev/null)"
 rc=$?

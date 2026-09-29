@@ -59,7 +59,7 @@ ARC_LOCK="$ARC/archivist.lock"
 
 # HOW MANY BANDS A SESSION HAS ALREADY CROSSED, from the threshold it has NOT yet reached.
 # `SP_CTX_NEXT` is the next one above the current context, so "next is high" means warn is
-# behind it. `over` means past every one of them. Still used for the band-3 push notification.
+# behind it. `over` means past every one of them. Read by `list` for its band column.
 crossed() { case "$1" in warn) echo 0 ;; high) echo 1 ;; limit) echo 2 ;; over) echo 3 ;; *) echo -1 ;; esac; }
 
 # ---- the state file, which is a contract with two readers ------------------------------
@@ -93,18 +93,6 @@ write_state() {          # write_state <session> <state> <at_turn> <items>
 state_key() {            # state_key <session> <key>
     sed -n "s/^$2=//p" "$ARC/$1.state" 2>/dev/null | head -1
 }
-
-# ---- the high-water mark, for the band-3 notification only ------------------------------
-# The band-3 push fires once per session: when the context reaches the limit band AND the
-# archivist found something to file. The hwm prevents re-notifying after a second sweep of the
-# same session pushes it past the threshold again. The .notified sentinel is the primary guard;
-# the hwm is kept so the notification block can read it without re-deriving the band.
-set_hwm() {              # set_hwm <session> <band-rank>
-    mkdir -p "$ARC" 2>/dev/null || return 1
-    local tmp="$ARC/.$1.hwm.$$"
-    printf 'band=%s\n' "$2" > "$tmp" && mv -f "$tmp" "$ARC/$1.hwm"
-}
-get_hwm() { sed -n 's/^band=//p' "$ARC/$1.hwm" 2>/dev/null | head -1; }
 
 # ---- how far the transcript has already been read ---------------------------------------
 # A session that crosses `high` and later `limit` is archived twice, over a transcript whose
@@ -518,7 +506,7 @@ for i in sorted(range(len(drifts)), key=lambda i: drifts[i], reverse=True):
     while IFS= read -r idx; do
         [ -n "$idx" ] || continue
         sid="${C_SID[$idx]}"; tp="${C_TP[$idx]}"; ctx="${C_CTX[$idx]}"; turns="${C_TURNS[$idx]}"
-        band="${C_BAND[$idx]}"; drift="${C_DRIFT[$idx]}"; would="${C_WOULD[$idx]}"
+        drift="${C_DRIFT[$idx]}"; would="${C_WOULD[$idx]}"
 
         [ "$would" = archive ] || continue
 
@@ -542,36 +530,11 @@ for i in sorted(range(len(drifts)), key=lambda i: drifts[i], reverse=True):
         [ "$arc_rc" -eq 0 ] || continue
         archived=$((archived + 1))
 
-        # Record the band so a later sweep can read it without re-deriving. This is only for
-        # the notification below; the archive trigger is turns, not bands.
-        set_hwm "$sid" "$band"
-
-        # THE ONE PUSH, AND ONLY FROM THE TOP BAND. Everything below this is already delivered
-        # by the two readers of the state file — the status line and the dashboard both render
-        # "safe to clear (n filed)" the moment it is written, at no cost and with nothing to
-        # dismiss. Sending a message on every archive as well would put a notice in front of
-        # the operator on every long session, and a standing list that never changes becomes
-        # wallpaper — which is how a real one comes to land in a pane they have learned to
-        # ignore (law-alerts-must-be-actionable).
-        #
-        # Past the LIMIT is different: the session is at the ceiling, every further turn is
-        # charged at the full context, and they may not be looking at either pane. So: once per
-        # session, never repeated, and only when there was something to say.
-        [ "$band" -ge 3 ] || continue
-        [ -e "$ARC/$sid.notified" ] && continue
-        filed="$(state_key "$sid" items_filed)"; filed="${filed:-0}"
-        [ "$filed" -gt 0 ] 2>/dev/null || continue
-        : > "$ARC/$sid.notified"
-        local _arc_subj="A session at the keyboard is carrying $ctx tokens; its unfinished business is now saved ($filed item(s)) and it is safe to clear"
-        [ -x "$SPIRA_HOME/mail.sh" ] && "$SPIRA_HOME/mail.sh" send operator \
-            --from "Archivist <archivist@spira>" \
-            --subject "$_arc_subj" \
-            --kind note <<MAILEOF >/dev/null 2>&1
-## Note
-$_arc_subj
-
-Every further turn re-reads all of it. The archivist swept it at turn $turns; anything said since is not covered.
-MAILEOF
+        # NO PER-SESSION PUSH. The daily digest (digest_send, called right after write_state
+        # ... safe) already reaches the operator with everything filed. A second, once-per-
+        # session --kind note here is not a --digest send, so mail.sh's own lint refuses it —
+        # and everything it would have said is already delivered by the two readers of the
+        # state file, the status line and the dashboard, the moment it is written.
     done <<< "$sorted_idx"
 
     # CLEAR THE SWEEP STATE on a normal pass, so a stale "skipped" does not linger.
