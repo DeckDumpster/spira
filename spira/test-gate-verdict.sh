@@ -64,8 +64,11 @@ TTL=600
 rungate() {              # rungate [VAR=VAL ...] -> the gate's own exit status, output on stdout
     gate_fixture_run "$BR" repo SPIRA_VERDICT_TTL="$TTL" "$@"
 }
-entries() { ls -1 "$VDIR" 2>/dev/null | wc -l | tr -d ' '; }
-newest()  { ls -1t "$VDIR"/* 2>/dev/null | head -1; }
+# A VERDICT IS A FILE AT THE TOP OF $VDIR. The gate also writes tree certificates under
+# $VDIR/trees/<repo>/<tree> (gate/DESIGN.md, sp-38bt7); that directory is not a verdict, and
+# counting it made the first PASS look like two.
+entries() { ls -1p "$VDIR" 2>/dev/null | command grep -vc '/$'; }
+newest()  { local f; f="$(ls -1tp "$VDIR" 2>/dev/null | command grep -v '/$' | head -1)"; [ -n "$f" ] && printf '%s/%s\n' "$VDIR" "$f"; }
 
 echo "test-gate-verdict.sh — one verdict per question, and no verdict for a different one"
 
