@@ -13,6 +13,9 @@ sha2 = "0.10"
 name = "incident"
 path = "src/main.rs"
 
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
 [profile.release]
 opt-level = "z"
 lto = true

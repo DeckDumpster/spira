@@ -599,13 +599,6 @@ mod tests {
         assert_eq!(bd.created.borrow().len(), 0);
     }
 
-    fn tmp_dir(name: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("sp-0ekp7-run-rs-test-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d
-    }
-
     #[test]
     fn delivers_default_is_action() {
         let bd = FakeBd::new();
@@ -625,7 +618,7 @@ mod tests {
 
     #[test]
     fn delivers_note_inside_run_creates_the_ledger_directory_and_is_stamped() {
-        let run_dir = tmp_dir("note-in");
+        let run_dir = testkit::TempDir::new("sp-0ekp7-run-rs-note-in");
         let ledger = run_dir.join("sop/applied.jsonl");
         let bd = FakeBd::new();
         let mailer = FakeMailer { sent: RefCell::new(vec![]) };
@@ -647,12 +640,11 @@ mod tests {
         assert!(labels.contains(&format!("delivers:note:{ledger_str}")), "{labels:?}");
         assert!(!labels.contains(&"delivers:action".to_string()));
         assert!(ledger.parent().unwrap().is_dir(), "the ledger's directory must exist — the criterion must be reachable, not just look reachable");
-        let _ = std::fs::remove_dir_all(&run_dir);
     }
 
     #[test]
     fn delivers_note_outside_run_falls_back_to_action_and_logs_outside() {
-        let run_dir = tmp_dir("note-out");
+        let run_dir = testkit::TempDir::new("sp-0ekp7-run-rs-note-out");
         let bd = FakeBd::new();
         let mailer = FakeMailer { sent: RefCell::new(vec![]) };
         let clock = FixedClock(1_000_000);
@@ -672,7 +664,6 @@ mod tests {
         assert!(labels.contains(&"delivers:action".to_string()));
         assert!(!labels.iter().any(|l| l.starts_with("delivers:note:")));
         assert!(log.iter().any(|l| l.contains("outside")), "{log:?}");
-        let _ = std::fs::remove_dir_all(&run_dir);
     }
 
     #[test]
