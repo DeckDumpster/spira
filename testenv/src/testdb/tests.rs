@@ -764,22 +764,19 @@ fn embedded_up_fails_closed_and_cleans_up_when_init_fails() {
     let d = tmpdir("up-fail");
     let bd = d.join("bd-embedded");
     exe(&bd, "#!/usr/bin/env bash\nexit 3\n");
-    let count_fx_dirs = || -> usize {
-        fs::read_dir(std::env::temp_dir())
-            .unwrap()
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with("testenv-testdb-fx-"))
-            })
-            .count()
-    };
-    let before = count_fx_dirs();
     let err = embedded_up(&bd.display().to_string(), "t").unwrap_err();
     assert!(err.contains("bd init failed"), "{err}");
-    let after = count_fx_dirs();
-    assert_eq!(before, after, "a failed init leaves no fixture directory behind");
+    // embedded_up names the fixture dir it removed on failure (in its error text) so this
+    // checks the exact directory, never a heuristic scan of the whole OS temp dir.
+    let named = err
+        .rsplit("fixture dir removed: ")
+        .next()
+        .unwrap()
+        .trim();
+    assert!(
+        !Path::new(named).exists(),
+        "a failed init must leave no fixture directory behind: {named}"
+    );
     let _ = fs::remove_dir_all(&d);
 }
 

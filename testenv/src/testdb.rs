@@ -780,11 +780,16 @@ pub fn embedded_up(bd: &str, tag: &str) -> Result<EmbeddedUp, String> {
     fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
     if let Err(e) = embedded_bd_init(bd, &dir) {
         remove_tree(&dir);
-        return Err(e);
+        // The dir is named so a caller (and a test) can confirm it is really gone,
+        // not just that this call said so.
+        return Err(format!("{e}\n(fixture dir removed: {})", dir.display()));
     }
     if !dir.join(".beads").is_dir() {
         remove_tree(&dir);
-        return Err("bd init left no .beads directory".into());
+        return Err(format!(
+            "bd init left no .beads directory\n(fixture dir removed: {})",
+            dir.display()
+        ));
     }
 
     let baseline = unique_dir("bl");
