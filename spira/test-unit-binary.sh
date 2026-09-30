@@ -105,14 +105,14 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Contract: spira-cockpit.service references @SPIRA_SUPERVISE_BIN@, and
+# Contract: spira-cockpit.service runs the release's bin/spira-supervise, and
 # spira-supervise must be among the discovered binaries.
 # ---------------------------------------------------------------------------
 cockpit_svc="$REPO/systemd/spira-cockpit.service"
-if grep -q '@SPIRA_SUPERVISE_BIN@' "$cockpit_svc" 2>/dev/null; then
-    ok "spira-cockpit.service references @SPIRA_SUPERVISE_BIN@"
+if grep -q '@SPIRA_PROD_ROOT@/bin/spira-supervise' "$cockpit_svc" 2>/dev/null; then
+    ok "spira-cockpit.service runs @SPIRA_PROD_ROOT@/bin/spira-supervise"
 else
-    bad "spira-cockpit.service references @SPIRA_SUPERVISE_BIN@" \
+    bad "spira-cockpit.service runs @SPIRA_PROD_ROOT@/bin/spira-supervise" \
         "not found in $cockpit_svc"
 fi
 

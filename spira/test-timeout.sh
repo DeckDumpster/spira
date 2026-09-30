@@ -94,7 +94,7 @@ MAIL_LOG="$TMP/mail.log"; : > "$MAIL_LOG"
 MAIL_HOME="$TMP/mail-home"; mkdir -p "$MAIL_HOME"
 printf '#!/usr/bin/env bash\n[ "${1:-}" = send ] || exit 0\nprintf "%%s\\n" "$@" >> "%s"\ncat >>"%s"\n' "$MAIL_LOG" "$MAIL_LOG" > "$MAIL_HOME/mail.sh"
 chmod +x "$MAIL_HOME/mail.sh"
-export SPIRA_HOME="$MAIL_HOME"
+export SPIRA_HOME="$MAIL_HOME" PATH="$MAIL_HOME:$PATH"   # lib.sh calls mail.sh by name (sp-gypjk)
 
 spira_ask_timeout_loop sp-t3 spira/sp-t3 ops 480 2 >/dev/null 2>&1
 isge "at-limit call produces an ask" 1 "$(grep -c 'sp-t3' "$MAIL_LOG" || echo 0)"

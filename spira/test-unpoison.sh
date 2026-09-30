@@ -14,14 +14,9 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
-# Resolved BEFORE conf.sh (sourced transitively by testdb.sh/lib.sh below), which can
-# overwrite PATH with the harness's own tool directories first — see test-poison.sh's own
-# note (and test-attempts.sh's own fix for the same ordering bug).
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
+# spira-lc and spira-claim are the tree's own build, by name on the suite's PATH (sp-gypjk).
+command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
+command -v spira-claim >/dev/null 2>&1 || bail "spira-claim is not on PATH"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
@@ -34,7 +29,7 @@ TMP="$(mktemp -d)"
 export SPIRA_TESTDB_MODE=server
 testdb_up unpoison || skip "server testdb not available"
 . "$HERE/lib.sh"
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+export PATH="$PATH:$(dirname "$DOLT_BIN")"
 export SPIRA_POISON_ASKED="$TMP/poison-asked"; mkdir -p "$SPIRA_POISON_ASKED"
 
 # A REAL spira-lc against a throwaway Dolt server (sp-rlyl0), so the poison hold this bead
@@ -72,15 +67,6 @@ done
 [ "$lc_up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/lc-server.log")"
 lc_root_sql() { "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls "$@"; }
 
-CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO/spira-lc/Cargo.toml" --quiet 2>"$TMP/lc-build.log" \
-    || bail "spira-lc failed to build: $(cat "$TMP/lc-build.log")"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO/spira-claim/Cargo.toml" --quiet 2>"$TMP/claim-build.log" \
-    || bail "spira-claim failed to build: $(cat "$TMP/claim-build.log")"
-export SPIRA_LC_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-lc"
-export SPIRA_CLAIM_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-claim"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 # The machine is seeded and asserted on below, so the switch is on (spira-claim/DESIGN.md
 # §8.7); off never calls spira-lc and the hold assertions would be meaningless.
@@ -91,7 +77,7 @@ export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$TMP/lc-data"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
-"$SPIRA_LC_BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1
+spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1
 wantrc "spira-lc schema applies cleanly" 0 $?
 
 . "$HERE/lc.sh"
@@ -109,7 +95,7 @@ d=json.load(sys.stdin); b=(d if isinstance(d,list) else [d])[0]; print(",".join(
 status_of() { bdjson show "$1" | python3 -c 'import sys,json
 d=json.load(sys.stdin); b=(d if isinstance(d,list) else [d])[0]; print(b.get("status",""))'; }
 decide() { check4_decide "$(attempts_of "$1")" "$(requeues_of "$1")" "$(reclaims_of "$1")" "$(labels_of "$1")"; }
-UNPOISON="$SPIRA_CLAIM_BIN"
+UNPOISON=spira-claim
 
 testdb_reset
 testdb_seed <<JSONL
@@ -152,7 +138,11 @@ d=json.load(sys.stdin); b=(d if isinstance(d,list) else [d])[0]; print(b.get("no
 
 echo
 echo "lifecycle_enforce off: the label is the poison, and spira-lc is never needed:"
-out="$(SPIRA_LIFECYCLE_ENFORCE=0 SPIRA_LC_BIN=/nonexistent/spira-lc "$UNPOISON" unpoison --bead pz5 --cause "off-mode clear" 2>&1)"; rc=$?
+# A spira-lc that records being called goes first on PATH: off must never touch it.
+mkdir -p "$TMP/lc-trap"
+printf '#!/bin/sh\ntouch "%s/lc-called"\nexit 1\n' "$TMP" > "$TMP/lc-trap/spira-lc"; chmod +x "$TMP/lc-trap/spira-lc"
+out="$(PATH="$TMP/lc-trap:$PATH" SPIRA_LIFECYCLE_ENFORCE=0 "$UNPOISON" unpoison --bead pz5 --cause "off-mode clear" 2>&1)"; rc=$?
+is   "off: spira-lc is never called" "no" "$([ -e "$TMP/lc-called" ] && echo yes || echo no)"
 is   "off: exit 0" "0" "$rc"
 want "off: reports OK" "OK   pz5" "$out"
 nowant "off: the spira-poison label is removed" "spira-poison" "$(labels_of pz5)"

@@ -75,7 +75,7 @@ SC
 
 world_status() {
     : > "$CALLS"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
     SPIRA_DB="$TMP/no-db" \
     SPIRA_SYSTEMCTL="$TMP/systemctl" \
         bash "$SH/world.sh" status 2>&1

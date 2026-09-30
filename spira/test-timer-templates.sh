@@ -46,6 +46,11 @@ ok "_ENABLE_TMPL block parseable (${#enable_block} bytes)"
 # UNITS+=/ENABLE+= append line, and a timer that is only conditional must appear in an
 # OPTIONAL+= line too — that keeps "never silently absent" true while letting a box decline
 # a unit on purpose and say so.
+# A TOP-LEVEL (unindented) UNITS+= line is unconditional — as much a member as the literal
+# (sp-gypjk: loom, broker, landing-pass and reconciler-flow are appended this way, since a
+# release always carries their binaries). Only an indented append sits inside an `if`.
+units_block="$units_block
+$(grep -E '^UNITS\+=\(' "$UNITS_SH")"
 units_all="$units_block
 $(grep -E '^[[:space:]]*UNITS\+=\(' "$UNITS_SH")"
 enable_all="$enable_block
@@ -278,7 +283,7 @@ if [ -r "$_vd_svc" ]; then
     _vd_execstart="$(grep '^ExecStart=' "$_vd_svc" 2>/dev/null | head -1)"
     if [ -n "$_vd_execstart" ]; then
         want "spira-verdict.service ExecStart runs the queue binary's step --all" \
-             "ExecStart=@SPIRA_QUEUE_BIN@ step --all" "$_vd_execstart"
+             "ExecStart=@SPIRA_PROD_ROOT@/bin/queue step --all" "$_vd_execstart"
         want "spira-verdict.service hands the binary its harness (SPIRA_HOME)" \
              "Environment=SPIRA_HOME=" "$(grep '^Environment=' "$_vd_svc" 2>/dev/null)"
     else
@@ -361,7 +366,7 @@ rm -rf "$_rd_tmp"
 
 # ============================================================================
 echo
-echo "ExecStart @*_BIN@ tokens (OPTIONAL derived from units.sh, not a hand-copied list):"
+echo "ExecStart release binaries, @SPIRA_PROD_ROOT@/bin/<name> (OPTIONAL derived from units.sh, not a hand-copied list):"
 # ============================================================================
 # The old test-tarball-bins.sh hand-copied its list of OPTIONAL unit names; it silently fell
 # out of sync with units.sh (missing spira-landing-pass.service/.timer). Reusing is_optional
@@ -373,14 +378,14 @@ for svc in "$UNIT_DIR"/*.service; do
     [ -e "$svc" ] || continue
     name="$(basename "$svc")"
     is_optional "$name" && continue
-    for tok in $(grep '^ExecStart=' "$svc" 2>/dev/null | grep -oE '@[A-Z_]+_BIN@' | tr -d '@'); do
+    for tok in $(grep '^ExecStart=' "$svc" 2>/dev/null | grep -oE '@SPIRA_PROD_ROOT@/bin/[a-z0-9-]+' | sed 's#.*/bin/##'); do
         _tb_found=$((_tb_found + 1))
-        ok "non-optional $name references @${tok}@ in ExecStart"
+        ok "non-optional $name runs the release's bin/${tok} in ExecStart"
     done
 done
 [ "$_tb_found" -gt 0 ] \
-    && ok "positive control: at least one @*_BIN@ token found in a non-optional unit's ExecStart" \
-    || bad "at least one @*_BIN@ token in non-optional ExecStart" \
+    && ok "positive control: at least one release binary found in a non-optional unit's ExecStart" \
+    || bad "at least one release binary in non-optional ExecStart" \
         "none found — either all units are optional or ExecStart references were removed; positive control failed"
 
 tl_summary

@@ -112,14 +112,14 @@ ACTIVE_TIMERS=""
 
 world() {
     : > "$CALLS"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
     SPIRA_DB="$TMP/no-db" \
     SPIRA_SYSTEMCTL="$TMP/systemctl" \
         bash "$SH/world.sh" "$@" 2>&1
 }
 world_rc() {
     : > "$CALLS"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
     SPIRA_DB="$TMP/no-db" \
     SPIRA_SYSTEMCTL="$TMP/systemctl" \
         bash "$SH/world.sh" "$@" 2>&1; echo "$?"
@@ -244,7 +244,7 @@ want "resume on a world that was not draining says so" "not draining" "$out"
 # later fails here rather than in production.
 HARNESS="$(cd "$HERE/.." && pwd)"
 if [ -d "$HARNESS/systemd" ]; then
-    doors="$(grep -lE 'ExecStart=.*(aeon\.sh|/bin/aeon |@SPIRA_AEON_BIN@)' "$HARNESS/systemd"/*.service 2>/dev/null | wc -l)"
+    doors="$(grep -lE 'ExecStart=.*(aeon\.sh|/bin/aeon )' "$HARNESS/systemd"/*.service 2>/dev/null | wc -l)"
     [ "${doors:-0}" -ge 1 ] && ok "units that ExecStart the aeon directly exist ($doors) — the gate must cover them" \
                             || bad "direct-ExecStart doors" "expected at least one, found ${doors:-0}"
     grep -q 'world.draining' "$HARNESS/aeon/src/run.rs" \

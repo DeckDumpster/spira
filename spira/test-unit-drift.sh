@@ -122,7 +122,7 @@ skew_units() {
         SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
-        bash "$HERE/skew.sh" units 2>&1
+        skew.sh units 2>&1
 }
 
 out="$(skew_units)"; rc=$?
@@ -148,7 +148,7 @@ out="$(env -i PATH="$PATH" HOME="$TMP/home" \
     SPIRA_HOME="$TMP/empty-spira" SPIRA_REPO="$TMP" \
     SPIRA_DOLT_DATA="" \
     SPIRA_TESTDB_DATA="" \
-    bash "$HERE/skew.sh" units 2>&1)"; rc=$?
+    skew.sh units 2>&1)"; rc=$?
 is "skew.sh units exits 3 when installer missing" "3" "$rc"
 want "skew.sh units names the missing installer" "missing" "$out"
 

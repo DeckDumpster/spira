@@ -97,13 +97,15 @@ cat >> "$MAIL_LOG"
 MAIL
 chmod +x "$SH/mail.sh"
 
-cat > "$SH/testenv-stub" <<'SUITES'
+cat > "$SH/testenv" <<'SUITES'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$SUITES_LOG"
 SUITES
-chmod +x "$SH/testenv-stub"
+chmod +x "$SH/testenv"
 # testenv suites observe-flake is the binary now (testenv/DESIGN-suites.md §9 rows 3-4).
-export SPIRA_TESTENV_BIN="$SH/testenv-stub"
+# $SH — this fixture's copy of spira/ plus its stubs — goes first on PATH, so `testenv` and
+# `mail.sh` resolve to the stubs, the way a release's would (sp-gypjk).
+export PATH="$SH:$PATH"
 
 verdict() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \

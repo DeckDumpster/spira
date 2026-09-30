@@ -36,7 +36,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 SH="$TMP/spira"; mkdir -p "$SH" "$TMP/run"
 cp "$HERE/world.sh" "$HERE/ctrl.sh" "$HERE/conf.sh" "$SH/"
 
-export SPIRA_HOME="$SH" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no.conf" SPIRA_DB="$TMP/no-db"
+export PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no.conf" SPIRA_DB="$TMP/no-db"
 export SPIRA_CTRL="$TMP/ctrl.json"
 export SPIRA_INSTANCE="prod"
 

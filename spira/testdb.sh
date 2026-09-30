@@ -59,11 +59,10 @@ TESTDB_MODE="${TESTDB_MODE:-}"
 # private server, data and workspace). Reset and drop hand it back to testenv.
 TESTDB_FIXTURE="${TESTDB_FIXTURE:-}"
 
-# _testdb_testenv — the testenv binary that owns server-mode fixtures: the artifact under
-# test inside testenv, $SPIRA_REPO/bin otherwise (spira_bin). TESTDB_TESTENV overrides.
+# _testdb_testenv — the testenv that owns server-mode fixtures: `testenv` on the PATH the
+# launcher set (sp-gypjk). TESTDB_TESTENV overrides (a suite's stub).
 _testdb_testenv() {
-    if [ -n "${TESTDB_TESTENV:-}" ]; then printf '%s\n' "$TESTDB_TESTENV"; return 0; fi
-    spira_bin testenv
+    printf '%s\n' "${TESTDB_TESTENV:-testenv}"
 }
 
 # _testdb_kv <KEY> <text> — the value of KEY=value in testenv's report.

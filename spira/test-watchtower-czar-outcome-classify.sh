@@ -38,7 +38,7 @@ AGO50="$(minsago 50)"
 classify() {   # classify <outcome-mins> <unclaimed-mins> <json> -> UNCLAIMED/NOT_CLEARED lines
     local outcome_mins="$1" unclaimed_mins="$2" json="$3"
     printf '%s' "$json" > "$TMP/beads.json"
-    python3 "$HERE/watchtower-czar-outcome.py" "$NOW" "$outcome_mins" "$unclaimed_mins" "$TMP/beads.json" \
+    watchtower-czar-outcome.py "$NOW" "$outcome_mins" "$unclaimed_mins" "$TMP/beads.json" \
         2>/dev/null
 }
 

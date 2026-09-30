@@ -63,7 +63,7 @@ if [ "${1:-}" = "--throttle-check" ]; then
 
     _tc_stamp="${SPIRA_THROTTLE_STAMP:-$SPIRA_RUN/queue-throttled}"
     _tc_override="${SPIRA_QUEUE_THROTTLE_OVERRIDE:-}"
-    _tc_inc="${SPIRA_INCIDENT_SH:-$(dirname "$0")/incident.sh}"
+    _tc_inc="${SPIRA_INCIDENT_SH:-$(command -v incident.sh)}"
     _tc_depth_at="${SPIRA_QUEUE_THROTTLE_DEPTH_AT:-16}"
     _tc_release_at="${SPIRA_QUEUE_THROTTLE_RELEASE_AT:-8}"
     _tc_stall_mins="${SPIRA_QUEUE_THROTTLE_STALL_MINS:-50}"
@@ -260,7 +260,7 @@ if [ "${1:-}" = "--czar-outcome-check" ]; then
         exit 0
     }
 
-    _co_inc="${SPIRA_INCIDENT_SH:-$(dirname "$0")/incident.sh}"
+    _co_inc="${SPIRA_INCIDENT_SH:-$(command -v incident.sh)}"
     _co_outcome_mins="${SPIRA_CZAR_OUTCOME_MINS:-30}"
     _co_unclaimed_mins="${SPIRA_CZAR_UNCLAIMED_MINS:-10}"
     _co_label="${SPIRA_CZAR_LABEL:-czar-trigger}"
@@ -286,7 +286,7 @@ if [ "${1:-}" = "--czar-outcome-check" ]; then
     # test-watchtower-czar-outcome-classify.sh without a bd round-trip.
     _co_json_f="$(mktemp)"
     printf '%s\n' "${_co_raw:-[]}" > "$_co_json_f"
-    _co_hits="$(python3 "$(dirname "$0")/watchtower-czar-outcome.py" \
+    _co_hits="$(watchtower-czar-outcome.py \
         "$_co_now" "$_co_outcome_mins" "$_co_unclaimed_mins" "$_co_json_f" 2>/dev/null)" || _co_hits=""
     rm -f "$_co_json_f"
 
@@ -353,7 +353,7 @@ if [ "${1:-}" = "--pr-stall-check" ]; then
 
     _psc_stall_secs=$(( ${SPIRA_PR_STALL_MINS:-60} * 60 ))
     _psc_now="$(date +%s)"
-    _psc_inc="${SPIRA_INCIDENT_SH:-$(dirname "$0")/incident.sh}"
+    _psc_inc="${SPIRA_INCIDENT_SH:-$(command -v incident.sh)}"
     _psc_gh="${SPIRA_GH:-gh}"
 
     [ -r "$_psc_inc" ] || {
@@ -468,7 +468,7 @@ if [ "${1:-}" = "--disabled-timer-check" ]; then
         exit 0
     }
 
-    _dtc_inc="${SPIRA_INCIDENT_SH:-$(dirname "$0")/incident.sh}"
+    _dtc_inc="${SPIRA_INCIDENT_SH:-$(command -v incident.sh)}"
     [ -r "$_dtc_inc" ] || {
         log "watchtower: disabled-timer-check skipped — $_dtc_inc not readable"
         exit 0
@@ -891,7 +891,7 @@ YIELD_REDS="?"; YIELD_DEFECT="?"; YIELD_FAULT="?"; YIELD_UNKNOWN="?"; YIELD_RECO
 YIELD_DEFECT_INFERRED="?"; YIELD_TOP_FAULT="?"
 YIELD_SOLO_N="?"; YIELD_SOLO_MED="?"; YIELD_SOLO_MAX="?"
 YIELD_CONC_N="?"; YIELD_CONC_MED="?"; YIELD_CONC_MAX="?"
-YIELD_SH="$(dirname "$0")/yield.sh"
+YIELD_SH="$(command -v yield.sh)"
 YIELD_WINDOW_S="${SPIRA_YIELD_WINDOW:-86400}"
 if [ -r "$YIELD_SH" ]; then
     # shellcheck disable=SC1090
@@ -966,11 +966,9 @@ done
 if [ -n "${SPIRA_SUITES_SH:-}" ]; then
     suites_block="$(bash "$SPIRA_SUITES_SH" status 2>/dev/null)"
     [ -n "$suites_block" ] || suites_block="  (unreadable — testenv suites status produced nothing)"
-elif [ -x "${SPIRA_TESTENV_BIN:-}" ]; then
-    suites_block="$("$SPIRA_TESTENV_BIN" suites status 2>/dev/null)"
-    [ -n "$suites_block" ] || suites_block="  (unreadable — testenv suites status produced nothing)"
 else
-    suites_block="  (unavailable — the testenv binary is missing, so nothing knows which suites run nowhere)"
+    suites_block="$(testenv suites status 2>/dev/null)"
+    [ -n "$suites_block" ] || suites_block="  (unreadable — testenv suites status produced nothing)"
 fi
 
 # THE STRAND LEDGER IS TWO LINES, NOT ONE. strands.json holds every disposition strand.sh
@@ -993,7 +991,7 @@ fi
 #
 # MISSING GUARD RENDERS A NOTE, NEVER SILENCE. A guard whose script is absent is not the
 # same as a guard that ran and found nothing (law-absence-needs-a-positive-control).
-GUARD_SH="$(dirname "$0")/branch-guard.sh"
+GUARD_SH="$(command -v branch-guard.sh)"
 guard_block="  (unavailable — branch-guard.sh is missing or unreadable)"
 if [ -r "$GUARD_SH" ]; then
     guard_out="$(bash "$GUARD_SH" check 2>&1)"; guard_rc=$?
@@ -1144,7 +1142,7 @@ fi
 # a real database. Same seam sentinel.sh carries for systemctl. Defined here, ahead of the
 # nominal check below, because the failed-units escalation runs on every non-halted pass —
 # nominal or not, a unit that just started failing still needs its clock started.
-INC="${SPIRA_INCIDENT_SH:-$(dirname "$0")/incident.sh}"
+INC="${SPIRA_INCIDENT_SH:-$(command -v incident.sh)}"
 
 # ---------------------------------------------------------------------------------------
 # FAILED UNITS ESCALATION. systemd's own timestamps cannot answer "how long has this been

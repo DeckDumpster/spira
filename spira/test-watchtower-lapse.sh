@@ -52,7 +52,7 @@ wt() {  # wt [VAR=val ...] -> the snapshot
         SPIRA_LAPSED_DIR="${SPIRA_LAPSED_DIR_OVERRIDE:-$TMP/run/lapsed}" \
         SPIRA_LAPSED_MARKER="${SPIRA_LAPSED_MARKER_OVERRIDE:-$TMP/run/lapsed.swept}" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
-        "$@" bash "$HERE/watchtower.sh" --show 2>/dev/null
+        "$@" watchtower.sh --show 2>/dev/null
 }
 
 # wt_file: runs watchtower for real (no --show), writes the prompt file.
@@ -67,7 +67,7 @@ wt_file() {  # wt_file [VAR=val ...] -> $TMP/ops-prompt written
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_INCIDENT_SH="$mock" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
-        "$@" bash "$HERE/watchtower.sh" 2>/dev/null
+        "$@" watchtower.sh 2>/dev/null
 }
 
 fresh() { rm -rf "$TMP/run"; mkdir -p "$TMP/run/landstate"; }

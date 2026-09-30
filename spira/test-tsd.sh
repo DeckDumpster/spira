@@ -16,7 +16,7 @@
 #   6. Concurrent writers to the same family never interleave a line (flock).
 #   7. land_mark (lib.sh) appends a landing-event row alongside its existing landstate file —
 #      MUST FAIL against the previous lib.sh, which had no such row.
-#   8. land_mark still succeeds, unchanged, when SPIRA_TSD_BIN names nothing executable —
+#   8. land_mark still succeeds, unchanged, when tsd-write fails —
 #      the tsd row is best-effort, landing itself never depends on it.
 #   9. testenv-batch.sh's suite-times hook (_append_suite_times) appends a suite-timing row —
 #      the sole producer since the git-notes ledger and suite-times.sh were retired.
@@ -43,16 +43,9 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
 [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
 [ -n "$CARGO_BIN" ] || skip "cargo not found — tsd-write binary cannot be built"
-TSD_ROOT="$HERE/../tsd"
-TSD_BIN="$TSD_ROOT/target/release/tsd-write"
-if [ ! -x "$TSD_BIN" ]; then
-    cp -r "$TSD_ROOT/." "$T/tsd-src"
-    printf '  (building tsd-write into %s)\n' "$T/tsd-target"
-    CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/tsd-target" \
-        "$CARGO_BIN" build --release --manifest-path "$T/tsd-src/Cargo.toml" 2>&1 | tail -5
-    TSD_BIN="$T/tsd-target/release/tsd-write"
-fi
-[ -x "$TSD_BIN" ] || bail "tsd-write binary not found at $TSD_BIN"
+# tsd-write is the tree's own build, on the suite's PATH (sp-gypjk) — never built here.
+command -v tsd-write >/dev/null 2>&1 || bail "tsd-write is not on PATH"
+TSD_BIN=tsd-write
 
 # ── tsd's own #[test] units (tsd/src/lib.rs) ────────────────────────────────────────────────
 CARGO_TEST_LOG="$T/cargo-test-tsd.log"
@@ -155,7 +148,6 @@ printf '\n%s\n' "7-8. land_mark (lib.sh) writes a landing-event row, best-effort
 RUN5="$T/run5"; DB5="$T/db5"; mkdir -p "$RUN5" "$DB5"
 (
     export SPIRA_HOME="$T" SPIRA_RUN="$RUN5" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent
-    export SPIRA_TSD_BIN="$TSD_BIN"
     set -uo pipefail
     . "$HERE/lib.sh"
     land_mark "sp-landtest" "LANDED" "deadbeef" ""
@@ -173,22 +165,23 @@ if [ -f "$FAM5" ]; then
     is "landing-event: tip"   "deadbeef"    "$(jpy "$FAM5" 'rows[0]["tip"]')"
 fi
 
-# Best-effort: an unbuilt/absent SPIRA_TSD_BIN must not break land_mark's own job.
-RUN6="$T/run6"; mkdir -p "$RUN6"
+# Best-effort: a tsd-write that fails must not break land_mark's own job.
+RUN6="$T/run6"; mkdir -p "$RUN6" "$T/failbin"
+printf '#!/bin/sh\nexit 127\n' > "$T/failbin/tsd-write"; chmod +x "$T/failbin/tsd-write"
 (
     export SPIRA_HOME="$T" SPIRA_RUN="$RUN6" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent
-    export SPIRA_TSD_BIN="$T/no-such-binary"
+    export PATH="$T/failbin:$PATH"
     set -uo pipefail
     . "$HERE/lib.sh"
     land_mark "sp-landtest2" "LANDED" "cafef00d" ""
     echo "land_mark_rc=$?"
 ) > "$T/land_mark2.out" 2>&1
 land_out2="$(cat "$T/land_mark2.out")"
-want "land_mark succeeds even when SPIRA_TSD_BIN is not executable" "land_mark_rc=0" "$land_out2"
-[ -f "$RUN6/landstate/sp-landtest2" ] && ok "landstate still written with tsd-write absent" \
-                                       || bad "landstate broke when tsd-write was absent"
-[ -f "$RUN6/tsd/landing-event.jsonl" ] && bad "a tsd row appeared despite no usable tsd-write" \
-                                        || ok "no tsd row written when tsd-write is not executable"
+want "land_mark succeeds even when tsd-write fails" "land_mark_rc=0" "$land_out2"
+[ -f "$RUN6/landstate/sp-landtest2" ] && ok "landstate still written with tsd-write failing" \
+                                       || bad "landstate broke when tsd-write failed"
+[ -f "$RUN6/tsd/landing-event.jsonl" ] && bad "a tsd row appeared despite a failing tsd-write" \
+                                        || ok "no tsd row written when tsd-write fails"
 
 # ============================================================================================
 printf '\n%s\n' "9. suite-timing rows (RETIRED here)"
@@ -209,7 +202,7 @@ else
             --field-str suite=fixture.sh --field "wall_secs=$v"
     done
     qout() { SPIRA_HOME="$T" SPIRA_RUN="$RUN8" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
-                bash "$HERE/tsd-query.sh" "$@" 2>&1; }
+                tsd-query.sh "$@" 2>&1; }
 
     out="$(qout baseline suite-timing wall_secs 999999)"
     want "baseline: avg(wall_secs) over 5 rows is 30" '"baseline":30' "$out"
@@ -263,7 +256,7 @@ if [ -z "$DUCKDB_BIN" ]; then
 else
     RUN9="$T/run9"; mkdir -p "$RUN9"
     qout9() { SPIRA_HOME="$T" SPIRA_RUN="$RUN9" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
-                bash "$HERE/tsd-query.sh" "$@" 2>&1; }
+                tsd-query.sh "$@" 2>&1; }
 
     "$TSD_BIN" --family suite-timing --root "$RUN9" --host ancient-local --ts 2026-09-24T22:00:00Z \
         --field-str suite=acc.sh --field-str run_id=old1 --field-str branch=spira/sp-x \

@@ -67,18 +67,20 @@ ALWAYS='echo "gate: test-boxreader.sh FAILED (rc=1)" >&2; false'
 # THE ENVIRONMENT IS EXPLICIT AND MINIMAL. A suite that inherits a real spira.conf asserts
 # against one box, and one that inherits SPIRA_YIELD writes its planted reds into the real
 # record (law-gates-run-in-a-clean-environment).
-GATE_BIN="${SPIRA_GATE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/gate}"   # gate.sh execs it (sp-0tpcs)
+# gate.sh execs `gate` by name (sp-0tpcs, sp-gypjk): the minimal PATH below carries this
+# fixture's spira/ and the directory the suite's own PATH resolves the release binaries in.
+BIN_DIR="$(dirname "$(command -v gate)")" || bail "gate is not on PATH"
 rungate() {              # rungate <branch> [VAR=VAL ...]
     local br="$1"; shift
-    env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
+    env -i HOME="$HOMEDIR" PATH="$SH:$BIN_DIR:/usr/bin:/bin" \
         GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
         SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         SPIRA_DB="$SPIRA_DB_NONE" SPIRA_REPO_MAP="$MAP" SPIRA_GATE_LOG="$GATELOG" \
-        SPIRA_VERDICTS="$VDIR" SPIRA_YIELD="$YDIR" SPIRA_GATE_BIN="$GATE_BIN" \
+        SPIRA_VERDICTS="$VDIR" SPIRA_YIELD="$YDIR" \
         "$@" bash "$SH/gate.sh" "$br" repo
 }
 yield() {                # yield <args...> -> yield.sh, reading the same record the gate wrote
-    env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
+    env -i HOME="$HOMEDIR" PATH="$SH:$BIN_DIR:/usr/bin:/bin" \
         SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         SPIRA_DB="$SPIRA_DB_NONE" SPIRA_YIELD="$YDIR" SPIRA_GATE_LOG="$GATELOG" \
         SPIRA_YIELD_WINDOW="$WINDOW" \
@@ -348,11 +350,11 @@ echo "it reaches the actor that acts on it — the Ops sweep, not only a human a
 #
 # `--show` gathers and prints and touches nothing, so nothing here can reach a database.
 snap() {
-    env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
+    env -i HOME="$HOMEDIR" PATH="$SH:$BIN_DIR:/usr/bin:/bin" \
         SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         SPIRA_DB="$SPIRA_DB_NONE" SPIRA_YIELD="$YDIR" SPIRA_GATE_LOG="$GATELOG" \
         SPIRA_YIELD_WINDOW="$WINDOW" \
-        bash "$HERE/watchtower.sh" --show 2>/dev/null
+        watchtower.sh --show 2>/dev/null
 }
 S="$(snap)"
 want "the sweep carries the reds"          "gate reds, last 2h" "$S"

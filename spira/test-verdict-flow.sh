@@ -366,9 +366,9 @@ is "original stays unmodified (not marked replied) when close fails" "1" \
 echo
 echo "UC-24: land_escalate reaches the operator unless an OPEN ask with the subject exists"
 
-# land_escalate shells out to "$SPIRA_HOME/mail.sh", so this section points SPIRA_HOME at a
-# scratch dir carrying a logging stub rather than the real mail.sh under test above — the
-# other sections here are about mail.sh itself, this one is about lib.sh's caller contract.
+# land_escalate shells out to `mail.sh` by name (sp-gypjk), so this section puts a scratch
+# dir carrying a logging stub first on PATH rather than the real mail.sh under test above —
+# the other sections here are about mail.sh itself, this one is about lib.sh's caller contract.
 LESC_HOME="$TMP/landesc-home"; mkdir -p "$LESC_HOME"
 MAIL_LOG="$TMP/mail.log"
 cat > "$LESC_HOME/mail.sh" <<MAILSH
@@ -385,7 +385,7 @@ export SPIRA_HOME="$LESC_HOME"
 . "$HERE/lib.sh"
 
 do_escalate() {
-    SPIRA_LAND_ESCALATE_EVERY=0 land_escalate "the landing worker will not start" "evidence"
+    PATH="$LESC_HOME:$PATH" SPIRA_LAND_ESCALATE_EVERY=0 land_escalate "the landing worker will not start" "evidence"
 }
 
 echo "land_escalate: positive control — reaches the operator when no ask is open"

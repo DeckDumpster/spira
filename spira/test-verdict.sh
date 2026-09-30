@@ -252,18 +252,19 @@ MAIL
 chmod +x "$SH/mail.sh"
 
 # ─── testenv stub ─────────────────────────────────────────────────────────────
-cat > "$SH/testenv-stub" <<'SUITES'
+cat > "$SH/testenv" <<'SUITES'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$SUITES_LOG"
 SUITES
-chmod +x "$SH/testenv-stub"
+chmod +x "$SH/testenv"
 # testenv suites observe-flake is the binary now (testenv/DESIGN-suites.md §9 rows 3-4).
-export SPIRA_TESTENV_BIN="$SH/testenv-stub"
+# $SH — this fixture's copy of spira/ plus its stubs — is first on verdict's PATH (below),
+# so `testenv`, `mail.sh`, `batcher` resolve to the stubs, the way a release's would.
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 verdict() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
@@ -1359,15 +1360,14 @@ testdb_seed <<JSONL
 JSONL
 
 BATCHER_LOG="$TMP/batcher-log"; : > "$BATCHER_LOG"
-cat > "$SH/batcher-stub.sh" <<STUB
+cat > "$SH/batcher" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$BATCHER_LOG"
 if [ "\${1:-}" = judgement-ci ]; then
     printf 'id=sp-vd-judged\n'
 fi
 STUB
-chmod +x "$SH/batcher-stub.sh"
-export SPIRA_BATCHER_BIN="$SH/batcher-stub.sh"
+chmod +x "$SH/batcher"
 
 base_sha38="$(git -C "$REPO" rev-parse origin/main)"
 bwt38="$RUN/worktree/sp-vd-bo1"
@@ -1433,7 +1433,7 @@ verdict "$REPONAME" > /dev/null
 is     "39. legacy-owned: judgement-ci never called" "0" "$(wc -l < "$BATCHER_LOG")"
 case "$(landstate sp-vd-bo2)" in EJECTED*) ok "39. legacy-owned: member ejected by verdict's own attribution" ;;
     *) bad "39. legacy-owned: member ejected by verdict's own attribution" "got: $(landstate sp-vd-bo2)" ;; esac
-unset SPIRA_BATCHER_BIN
+rm -f "$SH/batcher"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 

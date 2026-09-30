@@ -25,8 +25,8 @@ mkdir -p "$T/sbin" "$T/run"
 
 ingest() {
     SPIRA_HOME="$HERE" SPIRA_REPO="$HERE/.." SPIRA_RUN="$T/run" SPIRA_DB="$T/db" \
-        SPIRA_PATH="$T/sbin" SPIRA_CONF="$T/no.conf" \
-        bash "$HERE/tsd-ingest.sh" "$@"
+        PATH="$T/sbin:$PATH" SPIRA_PATH="$T/sbin" SPIRA_CONF="$T/no.conf" \
+        tsd-ingest.sh "$@"
 }
 
 # mkzip <zip-path> <arcname> <content> — build a real zip with python's zipfile (only

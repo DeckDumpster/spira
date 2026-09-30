@@ -13,10 +13,8 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-if [ -x "$HERE/tsd-query.sh" ]; then
-    if out="$("$HERE/tsd-query.sh" suite-p50-json 2>/dev/null)" && [ -n "$out" ]; then
-        printf '%s\n' "$out"
-        exit 0
-    fi
+if out="$(tsd-query.sh suite-p50-json 2>/dev/null)" && [ -n "$out" ]; then
+    printf '%s\n' "$out"
+    exit 0
 fi
 printf '{}\n'

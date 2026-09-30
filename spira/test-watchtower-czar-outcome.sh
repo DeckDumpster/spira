@@ -57,7 +57,7 @@ wt_co() {   # wt_co [VAR=val ...]
         SPIRA_BD="$SPIRA_BD" \
         SPIRA_PATH="${SPIRA_PATH:-}" \
         SPIRA_INCIDENT_SH="$MOCK_INC" \
-        "$@" bash "$HERE/watchtower.sh" --czar-outcome-check 2>/dev/null
+        "$@" watchtower.sh --czar-outcome-check 2>/dev/null
 }
 
 # ======================================================================================
