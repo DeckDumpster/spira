@@ -26,6 +26,11 @@ id = "UC-dispatch-05"
 tier = "T0"
 statement = "no harness script passes a bare `-` body to `bd note`/`bd create -d`"
 
+[use_case.uncovered]
+reason = "moved to spira-lint's bd-stdin-lint rule (spira/test-bd-stdin.sh retired); covered by that rule's cargo unit tests, not a spira/test-*.sh suite"
+date = "2026-09-29"
+bead = "sp-pppt0"
+
 [[use_case]]
 id = "UC-dispatch-06"
 tier = "T1"

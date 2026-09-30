@@ -12,8 +12,9 @@ pub struct SuiteHeaders {
     pub exclusive: Option<String>,
     /// `# tier: T0..T4`, empty when undeclared.
     pub tier: String,
-    /// A `# testdb-mode: server` line anywhere in the suite (testdb-mode-lint.sh requires it
-    /// of every server-mode suite): testenv pre-builds the server template (DESIGN-testdb.md).
+    /// A `# testdb-mode: server` line anywhere in the suite (spira-lint's testdb-mode-lint
+    /// rule requires it of every server-mode suite): testenv pre-builds the server template
+    /// (DESIGN-testdb.md).
     #[serde(default)]
     pub testdb_server: bool,
     /// A `# testdb-mode: embedded — <reason>` line: the suite needs the embedded engine

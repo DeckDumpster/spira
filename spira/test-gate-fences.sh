@@ -32,10 +32,7 @@ spira/scratch-fence.sh
 spira/wiki-add-fence.sh
 spira/sop.sh
 spira/literal-lint.sh
-spira/testdb-mode-lint.sh
-spira/bd-stdin-lint.sh
 spira/gh-intake-lint.sh
-spira/incident-cause-lint.sh
 spira/suite-state-fence.sh
 spira/orphan-test.sh
 spira/tmux-scope-fence.sh"
@@ -52,9 +49,10 @@ want "gate-spira.sh sources gate-fences.sh" "gate-fences.sh" "$gate_src"
 want "and reads its fence list from gate_fence_list, not a second literal" \
      "for fence in \$(gate_fence_list)" "$gate_src"
 
-# THE THREE FENCES PORTED TO spira-lint are no longer files on the list above; the gate runs
+# THE FENCES PORTED TO spira-lint are no longer files on the list above; the gate runs
 # each rule through the binary instead. Their behaviour is `cargo test -p spira-lint`.
-for _rule in binary-path-fence payload-argv-lint config-fence fence-scripts; do
+for _rule in binary-path-fence payload-argv-lint config-fence fence-scripts \
+             testdb-mode-lint bd-stdin-lint incident-cause-lint; do
     want "gate-spira.sh runs spira-lint's $_rule rule" \
          "\"\$SPIRA_LINT_BIN\" --only $_rule" "$gate_src"
 done
