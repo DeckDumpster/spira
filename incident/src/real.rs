@@ -180,9 +180,18 @@ impl Bd for RealBd {
         self.run(db, &["label", "remove", id, label]).map(|(rc, ..)| rc == 0).unwrap_or(false)
     }
     fn label_list(&self, db: &str, id: &str) -> Vec<String> {
-        self.run(db, &["label", "list", id])
-            .map(|(_, out, _)| out.lines().map(str::to_string).filter(|l| !l.is_empty()).collect())
-            .unwrap_or_default()
+        // `--json`, not the default human rendering: without it this returned a "🏷 Labels
+        // for <id>:" header line plus each label prefixed "  - ", so the payload-hash
+        // lookup below (an exact `starts_with("payload-hash:")` match) never matched and
+        // every recurrence re-wrote the note body as if the payload had changed — found
+        // via test-incident.sh's "an unchanged payload is recorded exactly once" case.
+        let Ok((rc, out, _)) = self.run(db, &["label", "list", id, "--json"]) else {
+            return Vec::new();
+        };
+        if rc != 0 {
+            return Vec::new();
+        }
+        serde_json::from_str::<Vec<String>>(json_only(&out)).unwrap_or_default()
     }
     fn note(&self, db: &str, id: &str, text: &str) -> bool {
         self.run_stdin(db, &["note", id, "--stdin"], text).map(|(rc, ..)| rc == 0).unwrap_or(false)

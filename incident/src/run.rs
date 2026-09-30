@@ -510,6 +510,29 @@ mod tests {
     }
 
     #[test]
+    fn three_identical_filings_write_the_payload_note_exactly_once() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let mut log = vec![];
+        let c = cfg(&known);
+        let payload = vec![b'x'; 500];
+        let mut id = String::new();
+        for _ in 0..3 {
+            let out = file_one(&bd, &mailer, &clock, &c, "incident:bound", "t", &payload, "spira,incident", &mut log);
+            id = match out {
+                FileOutcome::Filed(id) => id,
+                _ => panic!(),
+            };
+        }
+        let notes = bd.notes.borrow().get(&id).cloned().unwrap_or_default().join("\n");
+        let payload_str = "x".repeat(500);
+        let occurrences = notes.matches(&payload_str).count();
+        assert_eq!(occurrences, 1, "notes:\n{notes}");
+    }
+
+    #[test]
     fn unreachable_database_stays_spooled() {
         let bd = FakeBd { reachable: false, next_id: RefCell::new(1), ..Default::default() };
         let mailer = FakeMailer { sent: RefCell::new(vec![]) };

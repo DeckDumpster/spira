@@ -72,6 +72,8 @@ struct Env {
     ask_label: String,
     unit: String,
     path: String,
+    lock_path: std::path::PathBuf,
+    lock_wait_s: u64,
 }
 
 impl Env {
@@ -103,6 +105,8 @@ impl Env {
             ask_label: env_or("SPIRA_ASK_LABEL", "needs-ryan"), // literal-ok: Rust fallback mirroring lib.sh's own default when SPIRA_ASK_LABEL is unset
             unit: env_or("SPIRA_INCIDENT_UNIT", &unit_from_cgroup()),
             path: env_or("SPIRA_INCIDENT_PATH", "?"),
+            lock_path: std::path::PathBuf::from(env_or("SPIRA_INCIDENT_LOCK", &format!("{spira_run}/incident.lock"))),
+            lock_wait_s: env("SPIRA_INCIDENT_LOCK_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30),
             spira_run,
         }
     }
@@ -179,6 +183,39 @@ fn now_iso() -> String {
 }
 
 /// `drain_one`: process one spool entry — file it, and on success remove the spool file.
+/// `exec 8>>"$lock"; flock -w "$wait" 8`: one lock for the whole intake (not one per
+/// ref), so two callers racing the check-then-create pair on the SAME ref (the watchtower
+/// timer and a hand-run, historically sp-aapz/sp-uvfq filed the same second) serialise
+/// into a filing and a recurrence instead of two beads. `None` on a timed-out wait — the
+/// caller must leave the spool entry in place; a lock held 30s by someone else is the
+/// write-ahead spool behaving exactly as designed, not a loss.
+fn with_incident_lock<R>(lock_path: &std::path::Path, wait_s: u64, f: impl FnOnce() -> R) -> Option<R> {
+    use std::os::unix::io::AsRawFd;
+    extern "C" {
+        fn flock(fd: i32, operation: i32) -> i32;
+    }
+    const LOCK_EX: i32 = 2;
+    const LOCK_NB: i32 = 4;
+    if let Some(parent) = lock_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let file = std::fs::OpenOptions::new().create(true).write(true).open(lock_path).ok()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(wait_s);
+    loop {
+        if unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) } == 0 {
+            let r = f();
+            // The fd (and its flock) is released when `file` drops at the end of this
+            // scope — exactly once, whether `f` returned normally or the lock loop above
+            // never ran again, since this is the only path that reaches here.
+            return Some(r);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
 fn drain_one(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, path: &std::path::Path) -> Result<Option<String>, ()> {
     let raw = std::fs::read(path).map_err(|_| ())?;
     let Some(mut entry) = spool::parse_entry(&raw) else {
@@ -199,7 +236,13 @@ fn drain_one(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, pat
     let mut cfg = env.file_config(&provenance);
     cfg.cause = &cause;
     let mut log = Vec::new();
-    let outcome = run::file_one(bd, mailer, clock, &cfg, &entry.reference, &entry.title, &entry.body, &env.labels, &mut log);
+    let locked = with_incident_lock(&env.lock_path, env.lock_wait_s, || {
+        run::file_one(bd, mailer, clock, &cfg, &entry.reference, &entry.title, &entry.body, &env.labels, &mut log)
+    });
+    let Some(outcome) = locked else {
+        ilog(env, &format!("another intake held {} for {}s — {} stays spooled, drain will retry", env.lock_path.display(), env.lock_wait_s, entry.reference));
+        return Err(());
+    };
     for l in &log {
         ilog(env, l);
     }
