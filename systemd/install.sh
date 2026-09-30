@@ -958,6 +958,17 @@ done
 # specific mechanism that produces this state for any unit whose file has gone (aeons aside,
 # a template change can cause a reload to leave a previously-active unit in failed state).
 # Skip this check when the world is halted — units are intentionally not running.
+#
+# A UNIT THIS INSTALL ITSELF JUST RESTARTED IS RE-RUN ONCE, NOT JUDGED ON THE FIRST TRY
+# (sp-r15cf). `release install-tarball` restarts a fixed list of active services as part of
+# activation (cockpit, loom, mail-deliver, queue-watch) and THIS install then restarts every
+# unit whose Exec* lines changed too — the same unit, twice, seconds apart, on an upgrade.
+# A restart that lands while the prior instance is still releasing what it held (a run-dir
+# lock, a socket) can make the second one exit immediately: "the control process exited with
+# error code" for spira-cockpit-prod.service, deterministically enough under host load to
+# roll back a release that added nothing wrong (acceptance phase B). deploy.sh's own health
+# check already re-runs a unit that "failed inside the deploy window" rather than judging it;
+# this is the same accommodation one layer in, where the double-restart actually happens.
 if [ ! -f "$SPIRA_RUN/world.halted" ]; then
     not_active=""
     for u in "${ENABLE[@]}"; do
@@ -972,6 +983,13 @@ if [ ! -f "$SPIRA_RUN/world.halted" ]; then
         _en="$(systemctl --user is-enabled "$u" 2>/dev/null || true)"
         [ "$_en" = "disabled" ] && [ -z "${_NEW[$u]:-}" ] && continue
         state="$(systemctl --user is-active "$u" 2>/dev/null || true)"
+        if [ "$state" != "active" ] && [ "$state" = "failed" ]; then
+            systemctl --user reset-failed "$u" 2>/dev/null || true
+            if timeout "${SPIRA_INSTALL_RERUN_TIMEOUT:-60}" systemctl --user start "$u" 2>/dev/null; then
+                printf 'install: re-ran %s — it failed inside this install'"'"'s own restart window\n' "$u"
+                state="$(systemctl --user is-active "$u" 2>/dev/null || true)"
+            fi
+        fi
         [ "$state" = "active" ] || not_active="${not_active}    $u ($state)"$'\n'
     done
     if [ -n "$not_active" ]; then
