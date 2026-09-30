@@ -1,5 +1,39 @@
 # Test plan — Cockpit telemetry and operator views (`cockpit-observability`)
 
+> **2026-09-30 (sp-o8n10): `real_bd_answers_in_the_shape_the_fake_is_built_from` deleted**
+> (law-a-test-that-flips-is-deleted): the one case in `test-cockpit-rust.sh`
+> (`loom/tests/endpoint.rs`, UC-cockpit-observability-31's "T1 cert (fake bd) + one T2 real-bd
+> shape row") that runs against a real Dolt-backed `bd`. Red in a 520-suite full-corpus run
+> (`not ok 19`, tree `0e6a077db`); green twice in isolation on that same tree
+> (`SPIRA_VERDICT_TTL=0`, run alone). Root cause: the shared testdb/bd fixture this case built
+> under full-corpus contention, not endpoint.rs's own logic — the same class of stall sp-nmzok
+> already tracks ("dolt-beads stops listening... GROUP BY queries hang server-side" under
+> load). `test-cockpit-rust.sh`'s testdb/bd fixture-building and `--include-ignored` are
+> deleted with it; nothing else in panel or loom used them. **Coverage lost:** UC-31's real-bd
+> shape row — the fake `bd`'s canned answer is checked only against itself now, not against a
+> real one. **Re-add** once sp-nmzok's dolt-beads-under-load stall is fixed, so the real-bd
+> fixture no longer shares a resource that hangs under exactly the load this case needs to run
+> in (a full corpus). A fixture that used its own private, unshared `bd`/Dolt instance rather
+> than the corpus-wide testdb server would also remove the dependency without waiting on
+> sp-nmzok; either is a real fix, not a flake suppression.
+
+> **2026-09-30 (sp-o8n10): `test-snap-stale-threshold.sh` deleted again**
+> (law-a-test-that-flips-is-deleted): red in the same 520-suite full-corpus run, on
+> `watchtower.sh: fresh — no FAULT` — a genuine collector-snapshot-age FAULT
+> (`8s, stale above 7s`) against the fixture's own freshly-written snapshot. Green twice in
+> isolation on the same tree. This is **not** the 2026-09-25 flip (df/meminfo coupling,
+> sp-iuwwu's fix is still in place and unrelated). The fixture writes a "fresh" snapshot and
+> invokes `watchtower.sh` immediately after with `SPIRA_SNAP_STALE_S=7`; several concurrent
+> `gate.sh` certifications were running on the same host during this corpus run (confirmed via
+> `run/gate.log`), and under that contention the scheduling gap between the write and the read
+> can itself exceed 7 seconds with nothing wrong in the code under test. **Coverage lost:** the
+> three-reader contract (`health.sh`, `watchtower.sh`, `doctor.sh` all obeying one
+> `SPIRA_SNAP_STALE_S` key) has no replacement — see row 24's "KEEP snap-stale-threshold as the
+> three-reader contract" below, now unmet. **Re-add** with the wall-clock margin no longer
+> load-dependent: inject a controllable/mockable snapshot age (a fixed `mtime` the fixture sets
+> directly, or a clock the readers take as a parameter) instead of relying on real elapsed time
+> between two shell commands under a host that may be running other gates concurrently.
+
 > **2026-09-26: `test-ci-park.sh` deleted** (sp-0r1lv, law-a-test-that-flips-is-deleted): red in Concierge full-corpus round 24 (2026-09-25), green on the re-run of the same tree — all 35 cases had passed; the RED was a container-runtime timeout in the batch harness itself. `spira_ci_park_state` (`lib.sh`, the pure `watch|no-ci|expired` decision table behind the `$SPIRA_CI_LABEL` park — the mechanism that let one bead reach 22 reclaims while the board read "in CI") is replaced at T1 by `test-ci-park-state.sh`, with no testdb/git/container dependency to catch this class of flake again. Two things it also covered have **no replacement and no coverage**: the `{{PARK}}` section of the brief `aeon.sh` hands out per land mode (`pr` → create a `gh:run` gate, `push`/`hold` → don't), and the ops pane's `SP_AWAITING_N`/`SP_AWAITING_STUCK` rendering of open `gh:run` gates in `cockpit.sh core_detail`. Both need a real `aeon.sh`/`cockpit.sh` run to exercise (T2/T3), so a pure-core replacement was out of scope here; file one if the plan still wants them covered.
 
 > **2026-09-25 (sp-s088v.11): rows 17, 33, 35, 39, 40 closed.** Row 33: `test-loom-page.sh`'s
