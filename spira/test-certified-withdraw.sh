@@ -8,20 +8,27 @@
 # race path, queue.sh eject) stayed admissible to the next batch cut unchanged. The only
 # lever was a hand-written override pinned to one commit, which a rebase defeats.
 #
-# THREE CASES, EACH SEEN TO FAIL AGAINST THE CODE BEFORE THIS FIX:
+# TWO CASES, EACH SEEN TO FAIL AGAINST THE CODE BEFORE THIS FIX:
 #
 #   A. bead_reopen (lib.sh) downgrades a CERTIFIED landstate to WITHDRAWN, and leaves
 #      every other landstate untouched (positive control — this is not a blanket
 #      rewrite of every reopen).
-#   B. batch.sh's second line of defence: a CERTIFIED bead whose store status is not
-#      closed is refused admission whatever the landstate says.
-#   C. End-to-end: reopening a certified, unbatched bead withdraws it from the next
-#      cut; once the aeon pushes a new tip and it recertifies, the next cut admits it.
+#   C. End-to-end: reopening a certified, unbatched bead withdraws it from what the
+#      next cut would draw from; once the aeon pushes a new tip and it recertifies, it
+#      is admissible again.
 #
 # queue.sh eject's own withdrawal of a certified-unbatched bead is covered in
 # test-queue-ops.sh, which already carries this file's REAL BD infrastructure.
 #
-# covers: spira/lib.sh spira/batch.sh spira/conf.sh
+# (batch.sh's own "second line of defence" — refusing a CERTIFIED bead whose store
+# status was not closed, whatever the landstate said — was this file's case B. Retired
+# with batch.sh, sp-uwhx0: no repo runs in `land=queue` mode, and the check was never
+# ported. Case C used to exercise "not picked back up" through batch.sh's own admission
+# sweep; it now checks queue_certified_list directly, lib.sh's selection primitive that
+# any cutter — batch.sh before, the batcher now — draws from, since a WITHDRAWN
+# landstate simply drops out of it, no sweep required.)
+#
+# covers: spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -50,42 +57,6 @@ cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 cat > "$SH/repo-map" <<RMAP
 $REPONAME | $REPO | queue | origin/main | | |
 RMAP
-
-cat > "$SH/mail.sh" <<'MAIL'
-#!/usr/bin/env bash
-exit 0
-MAIL
-chmod +x "$SH/mail.sh"
-
-FORGE_LOG="$TMP/forge-log"
-cat > "$SH/forge-fixture.sh" <<'FORGE'
-#!/usr/bin/env bash
-cmd="${1:-}"; shift; repo="${1:-}"; shift
-case "$cmd" in
-    runs-active)      printf '0\n' ;;
-    main-gate-status) printf 'green deadbeef\n' ;;
-    pr-create)
-        n=$(( $(wc -l < "$FORGE_LOG" 2>/dev/null || echo 0) + 1 ))
-        printf '%s\n' "$n" >> "$FORGE_LOG"
-        printf '%s\n' "$n"
-        ;;
-    *) printf 'forge-fixture: unknown: %s\n' "$cmd" >&2; exit 1 ;;
-esac
-FORGE
-chmod +x "$SH/forge-fixture.sh"
-: > "$FORGE_LOG"
-
-batch() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_QUEUE_DIR="$QUEUEDIR" \
-    SPIRA_QUEUE_BATCH_MAX=8 \
-    SPIRA_QUEUE_BATCH_WAIT=0 \
-    FORGE_LOG="$FORGE_LOG" \
-    SPIRA_FORGE="$SH/forge-fixture.sh" \
-        bash "$SH/batch.sh" "$@" 2>&1
-}
 
 field() { "${TESTDB_BD:-bd}" -C "$SPIRA_DB" show "$1" --json 2>/dev/null | python3 -c '
 import sys,json
@@ -163,41 +134,6 @@ is "work-close-converted: landstate stays CERTIFIED (admission-exempt)" "CERTIFI
 want "work-close-converted: submitted label kept" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" "$(labels_of sp-wd-wcc)"
 
 # =============================================================================
-# B. batch.sh: second line of defence — a CERTIFIED bead whose store status is
-#    not closed is refused admission whatever the landstate says.
-# =============================================================================
-echo
-echo "batch.sh: CERTIFIED bead with a non-closed store status is refused admission:"
-
-testdb_seed <<JSONL
-{"id":"sp-nc-closed","title":"nc-closed","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"2026-09-25T00:00:00Z"}
-{"id":"sp-nc-open","title":"nc-open","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"2026-09-25T00:00:00Z"}
-JSONL
-
-git -C "$REPO" checkout -q -b spira/sp-nc-closed main
-printf 'nc-closed\n' > "$REPO/sp-nc-closed.txt"
-git -C "$REPO" add sp-nc-closed.txt && git -C "$REPO" commit -q -m "sp-nc-closed: work"
-_ncc_tip="$(git -C "$REPO" rev-parse spira/sp-nc-closed)"
-git -C "$REPO" checkout -q main
-
-git -C "$REPO" checkout -q -b spira/sp-nc-open main
-printf 'nc-open\n' > "$REPO/sp-nc-open.txt"
-git -C "$REPO" add sp-nc-open.txt && git -C "$REPO" commit -q -m "sp-nc-open: work"
-_nco_tip="$(git -C "$REPO" rev-parse spira/sp-nc-open)"
-git -C "$REPO" checkout -q main
-
-printf 'CERTIFIED %s %s\n' "$_ncc_tip" "$(date +%s)" > "$LANDSTATE/sp-nc-closed"
-printf 'CERTIFIED %s %s\n' "$_nco_tip" "$(date +%s)" > "$LANDSTATE/sp-nc-open"
-rm -f "$QUEUEDIR/$REPONAME/open"; : > "$FORGE_LOG"
-
-out="$(batch "$REPONAME")"
-want "second line of defence: WARN names the open bead" "not-closed sp-nc-open" "$out"
-want "second line of defence: one certified survives (sp-nc-closed)" "1 certified" "$out"
-is "closed bead: landstate stays CERTIFIED" "CERTIFIED" "$(awk '{print $1}' "$LANDSTATE/sp-nc-closed" 2>/dev/null)"
-is "refused bead: landstate left CERTIFIED" "CERTIFIED" "$(awk '{print $1}' "$LANDSTATE/sp-nc-open" 2>/dev/null)"
-rm -f "$QUEUEDIR/$REPONAME/open"; : > "$FORGE_LOG"
-
-# =============================================================================
 # C. END-TO-END: reopening a certified, unbatched bead withdraws it from the
 #    next cut; recertifying with a new tip admits it on the cut after that.
 # =============================================================================
@@ -215,16 +151,19 @@ _e2e_tip1="$(git -C "$REPO" rev-parse spira/sp-e2e)"
 git -C "$REPO" checkout -q main
 
 printf 'CERTIFIED %s %s\n' "$_e2e_tip1" "$(date +%s)" > "$LANDSTATE/sp-e2e"
-rm -f "$QUEUEDIR/$REPONAME/open"; : > "$FORGE_LOG"
+rm -f "$QUEUEDIR/$REPONAME/open"
 
 # Reopen it — the same mechanism queue.sh eject, the sentinel, and slay.sh all
 # reach through (bead_reopen, sourced above as part of this process's lib.sh).
 bead_reopen sp-e2e recertify-needed "test: withdrawing sp-e2e for a fix" >/dev/null 2>&1
 is "reopen: landstate WITHDRAWN" "WITHDRAWN" "$(awk '{print $1}' "$LANDSTATE/sp-e2e" 2>/dev/null)"
 
-batch "$REPONAME" >/dev/null
-is "cut after reopen: still WITHDRAWN, not picked back up" "WITHDRAWN" \
-    "$(awk '{print $1}' "$LANDSTATE/sp-e2e" 2>/dev/null)"
+# queue_certified_list (lib.sh) is what any cutter — the batcher included — draws
+# admissible branches from; a WITHDRAWN landstate simply does not match its CERTIFIED
+# filter, no separate sweep needed.
+nowant "not picked back up: excluded from what the next cut draws from" "sp-e2e " \
+    "$(queue_certified_list "$REPO")"
+is "still WITHDRAWN after the check" "WITHDRAWN" "$(awk '{print $1}' "$LANDSTATE/sp-e2e" 2>/dev/null)"
 
 # The aeon pushes a new tip and it recertifies.
 git -C "$REPO" checkout -q spira/sp-e2e
@@ -235,8 +174,8 @@ git -C "$REPO" checkout -q main
 bdq close sp-e2e --reason "test: recertified" >/dev/null 2>&1
 printf 'CERTIFIED %s %s\n' "$_e2e_tip2" "$(date +%s)" > "$LANDSTATE/sp-e2e"
 
-out_cut2="$(batch "$REPONAME")"
-nowant "recertified: no WARN excludes it from the count" "sp-e2e" "$out_cut2"
+want "recertified: admissible again — back in what the next cut draws from" "sp-e2e " \
+    "$(queue_certified_list "$REPO")"
 is "recertified: landstate carries the new tip" "$_e2e_tip2" \
     "$(awk '{print $2}' "$LANDSTATE/sp-e2e" 2>/dev/null)"
 

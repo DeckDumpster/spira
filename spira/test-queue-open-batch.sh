@@ -3,12 +3,14 @@
 #   the open record in one hand-invoked command (sp-214zs).
 #
 # Exercises real git merges and conflicts against a fixture repo/remote, a real bd store
-# (testdb.sh) and forge/gate fixtures that log every call — the same shape
-# test-batch-conflict.sh uses for batch.sh, since open-batch reuses its assembly
-# primitives (_base_conflict, format_batch, _batch_open_file) by sourcing batch.sh.
+# (testdb.sh) and forge/gate fixtures that log every call. open-batch's assembly primitives
+# (base_conflict, format_batch, pf_gate) are the same bash bodies batch.sh's own
+# _base_conflict/format_batch/_pf_gate once were — inlined straight into queue/src/seam.rs
+# (sp-uwhx0, batch.sh deleted) rather than sourced from it; this suite is unchanged by that,
+# since it only ever called `queue open-batch`, never batch.sh itself.
 #
 # tier: T1
-# covers: queue/src/* spira/batch.sh spira/lib.sh
+# covers: queue/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

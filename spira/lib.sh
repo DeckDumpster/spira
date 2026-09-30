@@ -24,11 +24,10 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$_spira_lib_dir/conf.sh"
 . "$_spira_lib_dir/suite-covers.sh"
 # CERTIFICATION ONTO EVENTS is `spira-lc certify` / `spira-lc resubmit` (sp-arpjt retired
-# lifecycle-cert.sh into spira-lc's caller verbs). These two names remain ONLY for batch.sh's
-# stale-certification sweep, whose own port (wave 2b) calls the verbs directly; each is the
-# call itself, with the actor the calling script's own name as lifecycle-cert.sh had it.
-lc_certify()  { spira-lc certify "$1" "$2" "$3" "${4:-}" "$(basename "${0:-lifecycle-cert}")"; }
-lc_resubmit() { spira-lc resubmit "$1" "$2" "$(basename "${0:-lifecycle-cert}")"; }
+# lifecycle-cert.sh into spira-lc's caller verbs). The lc_certify/lc_resubmit wrapper
+# functions that once stood in for those two calls are retired too (sp-uwhx0): their only
+# caller was batch.sh's stale-certification sweep, itself retired with batch.sh — nothing
+# else called them (grepped). Call `spira-lc certify`/`spira-lc resubmit` directly.
 unset _spira_lib_dir
 export BEADS_NO_AUTO_IMPORT=1
 mkdir -p "$SPIRA_RUN"

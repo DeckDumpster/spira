@@ -174,14 +174,11 @@ pub trait Scripts {
     fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String);
     /// `lc_off`: lifecycle_enforce is OFF — the child must not reach spira-lc (real.rs pins
     /// `SPIRA_LIFECYCLE_ENFORCE=0`, the one switch every child reads).
-    fn batch_sweep(&self, repo: &str, wait_zero: bool, lc_off: bool) -> i32;
     /// `batcher judgement-ci <repo> --suites CSV --members CSV --evidence T --home --run --db`,
     /// stdout and stderr combined (the verdict reads `id=` off it).
     fn judgement_ci(&self, bin: &Path, s: &Settings, repo: &str, suites: &str, members: &str, evidence: &str) -> RunOut;
     /// `testenv suites observe-flake <suite> <sha>`, best-effort.
     fn observe_flake(&self, suite: &str, sha: &str);
-    /// `attribute.sh --round B --base S --suites CSV --members IDS --repo PATH`, combined output.
-    fn attribute(&self, round: &str, base: &str, suites: &str, members: &str, repo: &Path) -> String;
     /// `mail.sh send operator --from "Spira Queue <queue@spira>" --subject S`, body on stdin.
     fn mail_operator(&self, subject: &str, body: &str);
     fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool, lc_off: bool) -> i32;

@@ -13,9 +13,7 @@ spira/test-aeon-worktree-collision.sh
 spira/test-aeon-worktree-evict-foreign.sh
 # literal-ok: a file path, not the world-stop literal itself
 spira/test-aeon-world-stop.sh
-spira/test-attribute.sh
 spira/test-batch-owner.sh
-spira/test-batch-preflight.sh
 spira/test-bdq-invalid-connection.sh
 spira/test-bead-repo-guard.sh
 spira/test-bin-manifest.sh

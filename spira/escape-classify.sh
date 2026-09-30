@@ -19,7 +19,7 @@
 # match a path the member changed, and whether the member's gate ever produced a verdict
 # for it (gate.log, gate_meter's own format — rc=$SPIRA_GATE_NOVERDICT is a fault, not a
 # fail). FLAKE is not decided here: "red on the round without the member as well" or
-# "flips on rerun" both require evidence only the caller already holds (attribute.sh's own
+# "flips on rerun" both require evidence only the caller already holds (the batcher's own
 # base-red pass, or a rerun) — a class this script would otherwise have to fabricate by
 # re-running the suite itself, which is the caller's job, not the classifier's.
 #

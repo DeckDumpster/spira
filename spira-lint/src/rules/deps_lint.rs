@@ -22,7 +22,7 @@ pub const SYSTEM_ALLOW: &[&str] = &[
     "stat", "sha256sum", "wc", "tr", "head", "tail", "tee", "diff", "patch", "timeout", "curl", "gcc", "nc",
     "setsid", "pgrep", "fuser", "script", "systemctl", "systemd-run",
     "nodejs", // an alternate name for node on some platforms
-    "gate_meter", "yield_note", "fayth_names", "lc_certify", // shell functions, not programs
+    "gate_meter", "yield_note", "fayth_names", // shell functions, not programs
 ];
 
 #[derive(Deserialize)]
