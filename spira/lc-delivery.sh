@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Sourced, never executed.
 # lc-delivery.sh — wires the delivery state machine (lifecycle crate, design §3.1.2,
-# sp-n1ilm) into pr-pass-branch.sh (landing-pass's pr helper) and landing-pass's push mode. Sourced by both, so a
-# pr-mode merge and a push-mode push are recorded through the one function that asks
-# spira-lc, rather than each growing its own notion of "delivered".
+# sp-n1ilm) into landing-pass's pr_branch (sp-t4y60; was pr-pass-branch.sh, landing-pass's
+# pr helper) and landing-pass's push mode, reached through the lib.sh seam's DeliverPr* and
+# Deliver* ops. Sourced by both (via the seam), so a pr-mode merge and a push-mode push are
+# recorded through the one function that asks spira-lc, rather than each growing its own
+# notion of "delivered".
 #
 # Every function here is best-effort and silent on absence: a delivery row exists only
 # once the bead machine's `deliver` event has created it, and that machine is a sibling
@@ -11,7 +13,7 @@
 # case until the round lands together (design §5) — never an error, and never something a
 # caller should let interrupt its own legacy behavior.
 #
-# covers: spira/lc-delivery.sh spira/pr-pass-branch.sh landing-pass/* lifecycle/* spira-lc/*
+# covers: spira/lc-delivery.sh landing-pass/* lifecycle/* spira-lc/*
 set -u
 
 # LIFECYCLE ON OR OFF (sp-gypjk). spira-lc is on every release's PATH; whether it is

@@ -81,7 +81,7 @@
 # The forge seam is a local fixture; no network is reached.
 # mail.sh and suites.sh are stubbed to capture calls.
 #
-# covers: spira/verdict.sh spira/forge.sh spira/conf.sh spira/batch.sh
+# covers: spira/verdict.sh forge/src/* spira/conf.sh spira/batch.sh
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

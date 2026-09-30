@@ -41,6 +41,16 @@ pub enum Op {
     CloseOnLand,
     PruneWorktrees,
     GhUnlandedScan,
+    /// pr-pass-branch.sh port (sp-t4y60): `spira_ask_refresh_loop` (needs_refresh's own
+    /// escalation mail, distinct from `AskRebaseLoop`).
+    AskRefreshLoop,
+    /// `lc_deliver_pr_merged <repo> <id> <br> <merge-sha>`.
+    DeliverPrMerged,
+    /// `lc_deliver_pr_closed <id>`.
+    DeliverPrClosed,
+    /// `spira_git_push <repo> -q --force-with-lease -u <remote> <branch>` — `land_pr`'s push,
+    /// distinct from `Push`'s plain `-q <remote> <refspec>`.
+    ForcePush,
 }
 
 pub const ALL: &[Op] = &[
@@ -71,6 +81,10 @@ pub const ALL: &[Op] = &[
     Op::CloseOnLand,
     Op::PruneWorktrees,
     Op::GhUnlandedScan,
+    Op::AskRefreshLoop,
+    Op::DeliverPrMerged,
+    Op::DeliverPrClosed,
+    Op::ForcePush,
 ];
 
 /// Precedes a seam's machine-readable answer on stdout.
@@ -125,7 +139,7 @@ __kv halt_grace "${SPIRA_HALT_GRACE:-30}"
 __kv path "${PATH:-}"
 __kv bdjson_fixture "${SPIRA_BDJSON_FIXTURE:-}"
 __kv toml "${SPIRA_TOML_FILE:-}"
-__kv pr_pass_branch_sh "${SPIRA_PR_PASS_BRANCH_SH:-pr-pass-branch.sh}"
+__kv pr_refresh_max "${SPIRA_PR_REFRESH_MAX:-5}"
 for __n in $(spira_repos); do
     __p="$(repo_root "$__n" 2>/dev/null)" || __p=""
     __m="$(repo_land "$__n" 2>/dev/null)"
@@ -188,6 +202,10 @@ fn body(op: Op) -> &'static str {
         Op::CloseOnLand => "bead_close_on_land \"$1\" \"$2\" || true\nexit 0\n",
         Op::PruneWorktrees => "spira_prune_worktrees \"$1\" >/dev/null 2>&1\nexit 0\n",
         Op::GhUnlandedScan => "_gh_unlanded_scan || true\nexit 0\n",
+        Op::AskRefreshLoop => "spira_ask_refresh_loop \"$@\" || true\nexit 0\n",
+        Op::DeliverPrMerged => ". \"$HERE/lc-delivery.sh\" || exit 96\nlc_deliver_pr_merged \"$1\" \"$2\" \"$3\" \"$4\" || true\nexit 0\n",
+        Op::DeliverPrClosed => ". \"$HERE/lc-delivery.sh\" || exit 96\nlc_deliver_pr_closed \"$1\" \"$2\" || true\nexit 0\n",
+        Op::ForcePush => "__e=\"$(spira_git_push \"$1\" -q --force-with-lease -u \"$2\" \"$3\" 2>&1 >/dev/null)\"; __rc=$?\nprintf '\\036%s' \"$__e\"\nexit $__rc\n",
     }
 }
 

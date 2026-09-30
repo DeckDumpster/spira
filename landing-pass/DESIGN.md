@@ -5,6 +5,16 @@ and keeps the pr-mode pass this crate already was. One binary, `landing-pass`, f
 This document is the contract; it was written from the script's intent and its callers,
 not by porting it line by line. The code satisfies it and the unit tests are derived from it.
 
+**sp-t4y60 (wave 2) retired `spira/pr-pass-branch.sh`** (162 lines), the per-branch pr worker
+this crate used to shell out to for every done branch in a pr-mode repository. Its logic —
+rebase, confine, force-push, open/refresh the pull request, observe merged/closed — is now
+`src/pr_branch.rs`, called in-process from `pr.rs`'s walk. The mechanism (this crate's own
+lib.sh seam, `Tools`/`Lib`/`Git`/`Beads` ports, unit tests over recording fakes) is exactly
+what push/hold/queue already used; pr mode gets the same treatment. Every place below that
+still describes pr-pass-branch.sh as a subprocess is superseded by this note; the historical
+`§8` decision log (D1–D16, the original landing.sh rewrite) is left as the record of what was
+decided then, not corrected in place.
+
 ## 1. Intent
 
 A bead's work is finished when its branch is closed; it is **landed** when its commit is on
@@ -16,7 +26,7 @@ leaves a record of every transition so the next pass never re-derives what this 
 
 | mode | what the pass does with a done branch |
 |---|---|
-| `pr` | rebase, confine, force-push, open/refresh the PR; observe merged/closed. No local gate — the PR's CI is the gate. (`landing-pass --pass`, its own 90 s timer.) |
+| `pr` | rebase, confine, force-push, open/refresh the PR; observe merged/closed — `pr_branch::run`, in-process (sp-t4y60). No local gate — the PR's CI is the gate. (`landing-pass --pass`, its own 90 s timer.) |
 | `push` | rebase (re-cut on conflict), confine, gate, merge in a private landing worktree, push to the base; after the repository's walk, rebase the survivors **once**. |
 | `hold` | rebase, confine, gate, note the bead "gated and held", never advance the base. |
 | `queue` / `queue.forge` | **certify**: gate the tip once, mark `CERTIFIED`. No local rebase (law-a-round-takes-certified-tips). Settling/cutting rounds is the `queue` binary's `step`. |
@@ -93,11 +103,14 @@ read from the context seam's answer: `SPIRA_RUN`, `SPIRA_REPO`, `SPIRA_DB`, `SPI
 `SPIRA_REBASE_ESCALATE_AT` (3), `SPIRA_GIT_NAME/EMAIL`, `SPIRA_INCIDENT`,
 `SPIRA_SCOPE_LABEL`, `SPIRA_ID_PREFIX`, `SPIRA_CERTIFY_PAR` (4; §8 D14), `SPIRA_QUEUE_DIR`,
 `SPIRA_HALT_GRACE` (30), `BD_TIMEOUT` (180),
-`SPIRA_BDJSON_FIXTURE` (tests only). The pr pass also honours
-`SPIRA_PR_PASS_BRANCH_SH`, `SPIRA_LANDING_PASS_LOG` as before. Every harness tool it runs
-(`queue`, `spira-lc`, `rebase-stale`, `gate.sh`, `gate-run.sh`, `confine.sh`, `skew.sh`,
-`land-build-ensure.sh`, `testenv.sh`, `incident.sh`, `pr-pass-branch.sh`) is invoked by bare
-name on the launcher's PATH (sp-gypjk); none is found through a variable or a directory.
+`SPIRA_BDJSON_FIXTURE` (tests only), `SPIRA_PR_REFRESH_MAX` (5; `pr_branch`'s own refresh
+ceiling, sp-t4y60). The pr pass also honours `SPIRA_LANDING_PASS_LOG` as before.
+`SPIRA_PR_PASS_BRANCH_SH` is gone (sp-t4y60): pr_branch runs in-process, so there is no
+program left to point at, and the setting was dropped from the context seam and `Settings`
+rather than kept dead. Every harness tool it runs (`queue`, `spira-lc`, `rebase-stale`,
+`gate.sh`, `gate-run.sh`, `confine.sh`, `skew.sh`, `land-build-ensure.sh`, `testenv.sh`,
+`incident.sh`, `forge`) is invoked by bare name on the launcher's PATH (sp-gypjk); none is
+found through a variable or a directory.
 
 `halt` runs podman and `testenv.sh` under conf.sh's PATH (the context seam's
 `path`: `SPIRA_PATH` first), as `landing.sh halt` did by sourcing conf.sh; with no loadable
@@ -154,7 +167,7 @@ All paths under `$SPIRA_RUN` unless absolute. Formats unchanged (§3).
 | `skew.sh refresh <repo-path>` | | push, queue |
 | `$SPIRA_REPO/systemd/unit-ensure.sh` (systemd/ is not on PATH), `land-build-ensure.sh` | | once per pass |
 | `testenv.sh down --name <c> --volumes --force-foreign` | | `halt` |
-| `$SPIRA_PR_PASS_BRANCH_SH <repo> <br> <id> <base> <name> <tip>` | exits 0–8 as documented there | pr pass (unchanged) |
+| `forge pr-state/pr-create/pr-list-open/pr-automerge <repo> …` | `pr-create`'s body on stdin | `pr_branch`'s `land_pr`/needs_refresh decision (sp-t4y60) |
 | `spira-lc show/event delivery …` | | pr pass content proof (unchanged) |
 | `bd -C $SPIRA_DB show <ids…> --json` under `timeout $BD_TIMEOUT` | one retry on "invalid connection" | scan, re-reads, prune |
 | `git` | | everything else |
@@ -409,7 +422,7 @@ are values like any other.
 | S7 `ask_*` | `spira_ask_rebase_loop / _red_recurring / _rebase_refused / _budget_deferred` | mail wiring, dedupe |
 | S8 `rebase` / `recut` | `rebase_branch`, `recut_onto` (+ their globals) | scratch worktrees, salvage, formatter |
 | S9 `requeue` | `bump_requeue <id> merge-conflict`; `requeues_of <id>` | events table |
-| S10 `conflict_note` / `other_beads` | `conflict_reopen_note`, `other_beads_on_conflicts` | shared with pr-pass-branch.sh |
+| S10 `conflict_note` / `other_beads` | `conflict_reopen_note`, `other_beads_on_conflicts` | shared with `pr_branch` (sp-t4y60; was pr-pass-branch.sh) |
 | S11 `pr_merged` | `pr_merged <repo> <br>` | ghq wiring |
 | S12 `note` | `bdq note <id> <text>` | bdq retry/czar/fixture |
 | S13 `push` | `spira_git_push <tree> -q <remote> <refspec>` (stderr returned) | GitHub App credentials |
@@ -418,13 +431,22 @@ are values like any other.
 | S16 `closeout` | `gh_issue_closeout`; `bead_close_on_land` | issue close + close + reap |
 | S17 `prune_worktrees` | `spira_prune_worktrees <repo>` | the one destruction site |
 | S18 `gh_unlanded_scan` | `_gh_unlanded_scan` | GitHub asks |
+| S19 `ask_refresh_loop` (sp-t4y60) | `spira_ask_refresh_loop <repo> <name> <br> <id> <base_fq> <n>` | mail wiring, dedupe — `needs_refresh`'s own escalation, distinct from S7's rebase-loop ask |
+| S20 `deliver_pr_merged` / `deliver_pr_closed` (sp-t4y60) | `lc_deliver_pr_merged`, `lc_deliver_pr_closed` (lc-delivery.sh) | delivery CAS, pr mode's own exits (distinct from S15's push-mode wrappers) |
+| S21 `force_push` (sp-t4y60) | `spira_git_push <repo> -q --force-with-lease -u <remote> <br>` (stderr returned) | GitHub App credentials, same as S13; `land_pr`'s push always force-with-lease |
 
 **Rust, against the same data:** the landstate and submitted records (reads; submitted
 writes), the certify order, `basefail_fix_decision`, `prior_pass_suites`, the gate outcome
 mapping (`spira_gate_outcome`/`spira_gate_blames_branch`), `gate_fits`, `gate_lock_wait`,
 `content_landed`, `holder_alive`, the bead scan (bd reads), the status/run/mailbox/cursor/
 deferral files, the prune, `halt`, `sweep-red`, the verdict-cache prune, the push merge loop
-(git), the pr pass (unchanged apart from §8 D1-D2).
+(git), the pr pass's per-repo walk (§8 D1-D2) **and now its per-branch worker too**
+(`pr_branch`, sp-t4y60: rebase-or-reopen, confine, needs_refresh, land_pr's dedup scan and PR
+open/create/automerge via `forge`, the merged/closed exits). What stayed bash for pr_branch
+is exactly what stayed bash for push/hold: `rebase_branch`, `bead_reopen`, `spira_event`,
+the asks, `conflict_reopen_note`/`other_beads_on_conflicts`, `spira_git_push`, and (new
+here) `lc_deliver_pr_merged`/`lc_deliver_pr_closed` — reached through S8–S10, S15's pr-mode
+siblings (S20), S21, exactly as §6's mechanism intends.
 
 ## 7. Cutover
 
@@ -457,7 +479,7 @@ The pr timer is unchanged: `systemd/spira-landing-pass.service:8` keeps
 | # | file:line | current | replacement |
 |---|---|---|---|
 | 6 | `systemd/spira-landing-pass.service:2` | `Description=Spira landing pass — pr-mode repository landing, no local gate` | `Description=Spira landing pass — pr mode (the gated modes run as landing-pass land under spira-landing)` |
-| 7 | `systemd/spira-landing-pass.service:3` | `Documentation=file://@SPIRA_HOME@/pr-pass-branch.sh` | unchanged (the helper still does the per-branch pr work) |
+| 7 | `systemd/spira-landing-pass.service:3` | `Documentation=file://@SPIRA_HOME@/pr-pass-branch.sh` | **superseded by sp-t4y60**: repointed to `file://@SPIRA_HOME@/../landing-pass/src/pr_branch.rs` (the helper is gone; pr_branch runs in-process) |
 
 ### 7.2 Other callers
 
@@ -516,8 +538,9 @@ build or locate the binary — the testenv container already builds the workspac
 | `test-queue-flush.sh` | 80 | drop the landing.sh grep (the queue step call is `Tools::queue_step`, tested by `the_queue_step_runs_before_and_after…`) |
 | `test-landing-queue-early.sh` | 83, 112-115 | **repoint** the positive control to a `SPIRA_LANDING_PASS_BIN` stub that exits 255; the "early" assertion now expects one `queue early:` block, not two (§8 D5) |
 | `test-landing-halt.sh` | 40, 227, 283 | **repoint** to `"$SPIRA_LANDING_PASS_BIN" halt …`; the pass under test is `landing-pass land` (its pid is the binary's) |
-| `test-landing-race.sh`, `test-landing-rebase.sh`, `test-landing-red-recurring.sh`, `test-superseded.sh`, `test-spike.sh`, `test-certify.sh`, `test-landing-cutover-round.sh`, `test-closed-strand.sh`, `test-submitted-lands.sh`, `test-config-compat-master-base.sh`, `test-land-mode-local.sh`, `test-skew-refresh.sh`, `test-landing-pr.sh` | 56/85; 95; 72; 43/61; 223/233; 100; 77; 42/89; 109; 239/258; 132/184; 276/292; 309 | **repoint** the invocation (above). `test-landing-rebase.sh` expects survivor lines worded "after this pass's landings" and one sweep per pass (§8 D3) |
-| `test-landing-pass.sh` | 4, 11, 101 | **repoint** :101 to `landing-pass land`; property 1 ("landing.sh skips gate.sh for pr repos") is now `a_pr_repository_is_counted_and_left_to_the_pr_pass` — keep the end-to-end half |
+| `test-landing-race.sh`, `test-landing-rebase.sh`, `test-landing-red-recurring.sh`, `test-superseded.sh`, `test-spike.sh`, `test-certify.sh`, `test-landing-cutover-round.sh`, `test-closed-strand.sh`, `test-submitted-lands.sh`, `test-config-compat-master-base.sh`, `test-land-mode-local.sh`, `test-skew-refresh.sh` | 56/85; 95; 72; 43/61; 223/233; 100; 77; 42/89; 109; 239/258; 132/184; 276/292 | **repoint** the invocation (above). `test-landing-rebase.sh` expects survivor lines worded "after this pass's landings" and one sweep per pass (§8 D3) |
+| `test-landing-pr.sh` | 309 | repointed then **retired by sp-t4y60**: it drove `pr-pass-branch.sh` directly (not through `landing-pass --pass`), and its subject — rebase/confine/force-push/open-refresh-merged-closed per branch — is `pr_branch::tests` (13 cases) plus the pr-pass walk tests already here |
+| `test-landing-pass.sh` | 4, 11, 101 | repointed then **retired by sp-t4y60**: property 1 ("gate.sh skipped for pr repos") is `a_pr_repository_is_counted_and_left_to_the_pr_pass`; properties 2–4 (`land_pr` master-vs-main, dup suppression, the sp-li2pv escalate-reopen regression) all exercised the now-deleted `land_pr`/`pr-pass-branch.sh` and are `pr_branch::tests::opens_the_pull_request_against_the_repositorys_own_base_branch_not_a_literal_main`, `a_duplicate_pull_request_is_noted_and_not_reopened_as_a_second_pr`, `escalating_past_the_rebase_threshold_still_reopens_the_bead` |
 | `test-check5-invariant.sh`, `test-poison.sh`, `test-sentinel-check5-subsumed.sh` | 68; 178; 52 | drop `landing.sh` from the `cp` list (they never run it) |
 | `test-lifecycle-delivery-cutover.sh` | 4, 27, 50 | drop `landing-lib.sh` from the `cp`; its push-mode legs run `landing-pass land` with `SPIRA_LIFECYCLE_ENFORCE=1` |
 | `test-canary.sh` | 53 | drop the "landing.sh symlink" check; add `exists "landing-pass" "$SPIRA_LANDING_PASS_BIN"` |
@@ -630,12 +653,35 @@ build or locate the binary — the testenv container already builds the workspac
   per tip (CERTIFIED/WITHDRAWN/RED@base skips); re-read before acting; only FAIL reopens;
   the budget reserve and its base-fix exemption; queue modes never rebase here
   (law-a-round-takes-certified-tips); `skew.sh refresh` for push and queue(forge) only;
-  the pr pass still writes its CONTENT record directly (no lib.sh on a 90 s timer) and still
-  delegates each branch to pr-pass-branch.sh.
+  the pr pass still writes its CONTENT record directly (no lib.sh on a 90 s timer); each
+  branch is now decided by `pr_branch::run` in-process (sp-t4y60, D15) rather than delegated
+  to pr-pass-branch.sh.
 - **Rejected:** porting `rebase_branch`/`recut_onto`/`bead_reopen`/the asks (shared lib.sh
   machinery with other callers — seams S3-S16); spira-claim for the rebase-escalation
   counter (it deliberately excludes rebase returns; this counter *is* rebase returns);
   reading config directly (D1); a fallback to queue.sh (deleted on batch-rust).
+- **D15 — pr-pass-branch.sh retired into `src/pr_branch.rs` (sp-t4y60), the same treatment
+  push/hold already got.** The per-branch state machine (submitted-tip fast path,
+  needs_refresh, rebase-or-reopen, confine, land_pr's dedup scan / PR open / auto-merge,
+  merged/closed delivery) is now Rust, reached from `pr.rs`'s existing per-repo walk in
+  place of the `PrTools::branch_helper` subprocess call. Exit codes 0–8 are kept identical
+  (pr.rs's caller still matches `0 | 7 | 8` to count `acted`), and every log line pr-pass-
+  branch.sh printed is reproduced, because operators and suites grep them.
+  *What moved to `forge` instead of the lib.sh seam:* `land_pr`'s GitHub calls
+  (`pr-state`, `pr-create`, and two new verbs the dedup scan and auto-merge needed:
+  `pr-list-open`, `pr-automerge`) — the same forge crate every other GitHub caller in this
+  tree now uses (bd sp-t4y60), not a second parallel path onto `ghq`.
+  *A named difference from bash's `land_pr`:* the duplicate-open-PR scan uses
+  `content_landed`'s merge-tree equivalence (`Git::content_landed`, already this crate's own
+  primitive for "does X already contain every change on Y") instead of bash's per-commit
+  SHA-ancestor loop, and qualifies the candidate ref with the branch's own resolved remote
+  instead of the literal `origin` bash hardcoded there. Both are strictly more correct (tree
+  equivalence survives a rebase or amend the SHA loop would miss; the resolved remote
+  matches what `land_pr`'s own push and base already use, and three repositories in this
+  tree are not on `origin`/`main`) and were not worth preserving as bugs.
+  *Kept as a genuine port, not a rewrite-from-intent:* the escalation thresholds
+  (`SPIRA_PR_REFRESH_MAX`, default 5), the exact log wording, and the state machine's shape
+  — this is a port of a well-specified 162-line script, not a redesign.
 
 ## 9. Lifecycle switch
 
@@ -690,7 +736,8 @@ liveness, the clock, spira-lc and the halt ports (signals, podman, testenv teard
 | push against real repositories | `push_mode_lands_on_a_real_remote` |
 | hold | `hold_gates_notes_and_does_not_advance_the_base` |
 | halt / sweep-red | `halt_dry_run_…`, `halt_terms_then_kills_…`, `halt_refuses_…`, `sweep_red_lists_red_records_only`, `cli::tests` |
-| pr pass | `the_pr_pass_hands_done_branches_to_the_helper_…`, `delivery_rows_accept_a_numeric_version` |
+| pr pass walk (repo-level: enumerate, order, content-landed, holder-alive) | `the_pr_pass_hands_done_branches_to_pr_branch_…`, `delivery_rows_accept_a_numeric_version` |
+| pr_branch (sp-t4y60; per-branch: rebase/reopen/confine/land_pr/refresh/merged/closed) | `pr_branch::tests` — `a_fresh_branch_opens_a_pull_request`, `a_conflicting_rebase_reopens_and_marks_red`, `a_conflicting_rebase_whose_pr_already_merged_is_not_reopened`, `a_rebase_refusal_asks_rather_than_reopens`, `a_confine_violation_reopens_and_never_lands`, `a_confine_that_cannot_evaluate_is_deferred_not_a_violation`, `a_bead_reclaimed_since_the_scan_is_not_landed`, `a_duplicate_pull_request_is_noted_and_not_reopened_as_a_second_pr`, `a_submitted_pr_whose_head_now_settles_is_left_alone`, `a_submitted_pr_reported_merged_is_delivered`, `a_submitted_pr_reported_closed_unmerged_is_returned`, `a_refresh_at_the_ceiling_escalates_instead_of_looping_forever`, `a_refresh_below_the_ceiling_rebases_again` |
 | lifecycle OFF/ON (§9) | `off_push_mode_never_invokes_spira_lc`, `off_queue_certification_never_invokes_spira_lc`, `on_push_mode_records_deliveries_…`, `on_with_the_machine_unreachable_a_push_landing_is_refused_loudly`, `on_the_pr_pass_proves_content_deliveries_and_is_loud_…`; the OFF pr case asserts no delivery call in `the_pr_pass_hands_done_branches_…` |
 | the seam mechanism, for real through bash | `seam::tests` (values on stdin intact; progress vs log vs answer; the context script against a stand-in lib.sh; a missing lib.sh is 96) |
 | concurrent certification (§8 D14): N gates start; decisions one at a time in completion order; base-fix alone (at the front and when it becomes ready mid-pass); a P0 submitted mid-pass takes the next free slot; a full admission pool holds the second gate; the budget cut waits for in-flight gates; SIGTERM reaches every running gate and its children; PAR=1 is the serial walk; push/hold stay serial; `SPIRA_CERTIFY_PAR` parsing | `par_n_starts_n_gates_before_any_finishes`, `decisions_are_applied_one_at_a_time_in_completion_order`, `a_base_fix_runs_alone_…`, `a_base_fix_that_becomes_ready_mid_pass_…`, `a_p0_submitted_mid_pass_takes_the_next_free_slot`, `a_full_admission_pool_holds_the_second_gate_back`, `a_budget_cut_waits_for_the_gates_in_flight_…`, `sigterm_reaches_every_running_gate_and_its_children`, `the_admission_probe_counts_free_slots_…`, `par_one_is_the_serial_walk_unchanged`, `push_mode_stays_serial_at_any_par`, `the_context_answer_parses_…` |

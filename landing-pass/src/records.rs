@@ -57,7 +57,13 @@ impl Files {
 
     /// lib.sh `mark_submitted <id> <tip> <state>` (refreshes 0), written atomically.
     pub fn mark_submitted(&self, id: &str, tip: &str, state: &str, now: u64) {
-        let rec = Submitted { tip: tip.into(), at: now, state: state.into(), refreshes: 0 };
+        self.mark_submitted_refreshed(id, tip, state, now, 0);
+    }
+
+    /// lib.sh `mark_submitted <id> <tip> <state> <refreshes>` — the pr pass's own refresh
+    /// counter (DESIGN.md §6, land_pr).
+    pub fn mark_submitted_refreshed(&self, id: &str, tip: &str, state: &str, now: u64, refreshes: u32) {
+        let rec = Submitted { tip: tip.into(), at: now, state: state.into(), refreshes };
         let _ = atomic_write(&self.run.join("submitted").join(id), &rec.render());
     }
 

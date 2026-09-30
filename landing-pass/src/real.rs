@@ -130,7 +130,7 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         halt_grace: num("halt_grace", 30).max(0) as u64,
         path: kv.get("path").filter(|v| !v.is_empty()).cloned(),
         bdjson_fixture: path_opt("bdjson_fixture"),
-        pr_pass_branch_sh: path_opt("pr_pass_branch_sh").unwrap_or_else(|| PathBuf::from("pr-pass-branch.sh")),
+        pr_refresh_max: num("pr_refresh_max", 5).max(0) as u32,
         toml: path_opt("toml"),
         lifecycle_enforce: false,
     };
@@ -246,6 +246,19 @@ impl<'a> Lib for RealLib<'a> {
     }
     fn gh_unlanded_scan(&self) {
         self.seam.call(Op::GhUnlandedScan, &[]);
+    }
+    fn ask_refresh_loop(&self, repo: &Path, name: &str, branch: &str, id: &str, base_fq: &str, n: u32) {
+        self.seam.call(Op::AskRefreshLoop, &[&p(repo), name, branch, id, base_fq, &n.to_string()]);
+    }
+    fn deliver_pr_merged(&self, repo: &Path, id: &str, branch: &str, merge_sha: &str) {
+        self.seam.call(Op::DeliverPrMerged, &[&p(repo), id, branch, merge_sha]);
+    }
+    fn deliver_pr_closed(&self, id: &str, reason: &str) {
+        self.seam.call(Op::DeliverPrClosed, &[id, reason]);
+    }
+    fn force_push(&self, repo: &Path, remote: &str, branch: &str) -> Result<(), String> {
+        let (rc, err) = self.seam.call(Op::ForcePush, &[&p(repo), remote, branch]);
+        if rc == 0 { Ok(()) } else { Err(err) }
     }
 }
 
@@ -716,6 +729,47 @@ impl Tools for RealTools {
             r @ 0..=2 => r,
             _ => 3,
         }
+    }
+    fn forge_pr_state(&self, repo: &Path, selector: &str) -> Option<String> {
+        let mut c = command("forge");
+        c.arg("pr-state").arg(repo).arg(selector).stdin(Stdio::null());
+        let (rc, so, _) = run_capture(c);
+        if rc == 0 { Some(String::from_utf8_lossy(&so).trim().to_string()) } else { None }
+    }
+    fn forge_pr_create(&self, repo: &Path, head: &str, base: &str, title: &str, body: &str) -> Option<u64> {
+        let mut c = command("forge");
+        c.arg("pr-create").arg(repo).arg(head).arg(base).arg(title);
+        c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        let mut child = c.spawn().ok()?;
+        if let Some(mut si) = child.stdin.take() {
+            use std::io::Write;
+            let _ = si.write_all(body.as_bytes());
+        }
+        let out = child.wait_with_output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+    }
+    fn forge_pr_list_open(&self, repo: &Path) -> Vec<(u64, String)> {
+        let mut c = command("forge");
+        c.arg("pr-list-open").arg(repo).stdin(Stdio::null());
+        let (rc, so, _) = run_capture(c);
+        if rc != 0 {
+            return Vec::new();
+        }
+        String::from_utf8_lossy(&so)
+            .lines()
+            .filter_map(|l| {
+                let (n, br) = l.split_once(' ')?;
+                Some((n.trim().parse().ok()?, br.to_string()))
+            })
+            .collect()
+    }
+    fn forge_pr_automerge(&self, repo: &Path, selector: &str) -> bool {
+        let mut c = command("forge");
+        c.arg("pr-automerge").arg(repo).arg(selector).stdin(Stdio::null());
+        run_capture(c).0 == 0
     }
 }
 

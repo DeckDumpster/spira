@@ -23,7 +23,7 @@
 # attribution (attribute.sh) against the published range and files one fix-forward bead,
 # never reopening a member or calling judgement-ci. See _verdict_settle_publish below.
 #
-# covers: spira/verdict.sh spira/forge.sh spira/conf.sh spira/batch.sh spira/queue.sh spira/attribute.sh
+# covers: spira/verdict.sh forge/src/* spira/conf.sh spira/batch.sh spira/queue.sh spira/attribute.sh
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

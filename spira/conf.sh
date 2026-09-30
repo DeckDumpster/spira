@@ -1800,9 +1800,9 @@ spira_conf_defaults() {
     # WHERE OPEN-BATCH RECORDS ARE KEPT — one file per open batch.
     : "${SPIRA_QUEUE_DIR:=$SPIRA_RUN/queue}"
     # THE FORGE SEAM — the executable batch.sh calls to open pull requests. Empty means use
-    # forge.sh, by name on PATH. A fixture sets this to a local script so the suite never reaches
-    # the real forge.
-    : "${SPIRA_FORGE:=forge.sh}"
+    # `forge` (the Rust binary, sp-t4y60; replaces forge.sh), by name on PATH. A fixture sets
+    # this to a local script so the suite never reaches the real forge.
+    : "${SPIRA_FORGE:=forge}"
     # THE GITHUB REPOSITORY deploy.sh targets when making gh release calls. deploy.sh
     # passes this as --repo so it works from an extracted tarball with no .git checkout.
     # Format: "owner/repo". Empty means deploy.sh derives it from git remote origin.

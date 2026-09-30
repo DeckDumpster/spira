@@ -24,7 +24,7 @@
 # QUEUE_WATCH_BIN may point at another binary; pointing it at a stub that prints nothing is
 # how every assertion below was seen to fail first.
 #
-# covers: queue-watch/* spira/watchers spira/forge.sh
+# covers: queue-watch/* spira/watchers forge/src/*
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
