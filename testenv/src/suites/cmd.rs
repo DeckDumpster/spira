@@ -417,6 +417,65 @@ pub fn run_transition(w: &World, t: &Transition, suite: &str, base: Option<&str>
     }
 }
 
+// ------------------------------------------------------------------------------ lint
+
+/// `spira/suite-state.sh`'s `suite_state_lint` and `suite_state_parse`, merged into one pass
+/// (DESIGN-suites.md §6b, sp-9gd4e): diagnostics to stderr (one per violation, `errors > 0`
+/// fails), one tab-separated row per known-state entry to stdout — `suite_state_parse`'s
+/// exact shape (`suite\tstate\tsince\tbead\treason`), so `suite-state-fence.sh` reads this
+/// command's stdout exactly as it read the bash function's. An absent lifecycle file is not
+/// a fault: it means every suite is active, so there is nothing to lint (mirrors the fence's
+/// own pre-check, which never called the bash lint on a missing file either).
+pub fn lint(w: &World) -> i32 {
+    let Some(text) = model::read_text(&w.s.lifecycle_file()) else {
+        return OK;
+    };
+    let mut errors = 0usize;
+    for (i, raw) in text.lines().enumerate() {
+        let lineno = i + 1;
+        let stripped = raw.split('#').next().unwrap_or("").trim();
+        if stripped.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = stripped.splitn(5, '|').map(str::trim).collect();
+        if parts.len() < 5 {
+            w.err(format!(
+                "suite-state:{lineno}: not parseable (expected suite|state|since|bead|reason): {stripped}"
+            ));
+            errors += 1;
+            continue;
+        }
+        let (suite, state, since, bead, reason) = (parts[0], parts[1], parts[2], parts[3], parts[4]);
+        if !w.s.suite_path(suite).is_file() {
+            w.err(format!("suite-state:{lineno}: suite does not exist: {suite}"));
+            errors += 1;
+        }
+        let known = matches!(state, "active" | "quarantined" | "disabled");
+        if !known {
+            w.err(format!(
+                "suite-state:{lineno}: unknown state {state} (valid: active quarantined disabled)"
+            ));
+            errors += 1;
+        }
+        if reason.is_empty() {
+            w.err(format!("suite-state:{lineno}: missing reason for {suite}"));
+            errors += 1;
+        }
+        if state == "quarantined" && bead.is_empty() {
+            w.err(format!("suite-state:{lineno}: quarantined suite {suite} has no bead id"));
+            errors += 1;
+        }
+        if known && !suite.is_empty() {
+            w.out(format!("{suite}\t{state}\t{since}\t{bead}\t{reason}"));
+        }
+    }
+    if errors > 0 {
+        FAIL
+    } else {
+        OK
+    }
+}
+
 // --------------------------------------------------------------------------- hygiene
 
 pub fn hygiene(w: &World) -> i32 {

@@ -60,6 +60,7 @@ testenv suites names
 testenv suites corpus
 testenv suites status
 testenv suites hygiene
+testenv suites lint
 testenv suites observe-flake <suite> <run-id>
 testenv suites quarantine <suite> <bead> (<reason> | --reason-file <F|->) [--base <rev>]
 testenv suites disable    <suite>        (<reason> | --reason-file <F|->) [--base <rev>]
@@ -69,7 +70,7 @@ testenv suites activate   <suite>                                         [--bas
 `--reason-file` is new: the stdin/file form of a free-text reason (law-payloads-go-on-stdin);
 the positional form stays for the callers and runbooks that exist. `--base` is new (§2.4).
 An unknown subcommand prints
-`usage: testenv suites [list|names|corpus|status|hygiene|observe-flake|quarantine|disable|activate]`
+`usage: testenv suites [list|names|corpus|status|hygiene|lint|observe-flake|quarantine|disable|activate]`
 to stderr and exits 2. `suites.sh run` was retired by sp-b99nj and stays retired: it is an
 unknown subcommand (exit 2), as it already was.
 
@@ -80,6 +81,7 @@ unknown subcommand (exit 2), as it already was.
 | list, status, corpus | always (an unreadable input renders `?` or is named in the output) | — | — |
 | names | printed (empty = nothing to run) | gate list unreadable | — |
 | hygiene | always | — | — |
+| lint | clean, or the lifecycle file is absent (nothing to lint) | any parse/existence/state/reason/bead violation (§6b) | — |
 | observe-flake | recorded (filed, below threshold, or filing failed — all say so on stdout) | — | suite or run id missing, no such suite |
 | quarantine/disable/activate | branch created, committed and submitted; branch name on stdout | refused under `SPIRA_AEON`; git or queue failure | suite/bead/reason missing or malformed, no such suite |
 
@@ -129,6 +131,19 @@ at or over the threshold, then `observe-flake: <suite> reported (bead: <id>)` or
 **`hygiene`** — per suite `hygiene: <s> reactivated (bead <b> LANDED, <n> clean runs)` and
 `hygiene: mailed operator about <s> (age <n>s)`; last line
 `hygiene: <a> reactivated, <m> max-age mailed`.
+
+**`lint`** (§6b, sp-9gd4e; replaces `spira/suite-state.sh`'s `suite_state_lint` +
+`suite_state_parse`, deleted) — diagnostics on **stderr**, one per violation:
+`suite-state:<n>: not parseable (expected suite|state|since|bead|reason): <line>`,
+`suite-state:<n>: suite does not exist: <s>`,
+`suite-state:<n>: unknown state <st> (valid: active quarantined disabled)`,
+`suite-state:<n>: missing reason for <s>`,
+`suite-state:<n>: quarantined suite <s> has no bead id`. On **stdout**, one
+`<suite>\t<state>\t<since>\t<bead>\t<reason>` row per known-state entry (skipping
+unparseable and unknown-state lines) — `suite_state_parse`'s exact shape, read by
+`suite-state-fence.sh`. An absent lifecycle file prints nothing and exits 0 (every suite
+reads as active; there is nothing to lint, the same case `list`/`corpus`/`hygiene` treat as
+empty rather than a fault).
 
 **Transitions** — stdout is exactly the branch name; queue's own output goes to stderr (as
 `queue.sh submit … >&2` did). Refusals, on stderr:
@@ -359,6 +374,22 @@ incident.sh, mail.sh, host-check.sh and the queue (whole programs, §5).
   `test-acceptance-local.sh`; C does the reverse), so `list`/`names`/`corpus` order changed
   with whoever ran it. Byte order is deterministic. The sets are identical (verified, §8).
 
+## 6b. `lint` retires `spira/suite-state.sh` (sp-9gd4e)
+
+`suite-state.sh` was a sourced-only library (never executed, per its own header) with two
+remaining callers: `test-suite-state.sh` (its own test suite) and `suite-state-fence.sh` (a
+gate fence). Everything else that once needed it — the read side (`suite_state_of`) and the
+write side (`suite_state_write`) — was already ported natively to this crate by an earlier
+bead: `crate::suite::SuiteStates` (read) and `model::rewrite_state` (write, behind the
+`quarantine`/`disable`/`activate` transitions above). Only `suite_state_lint` and
+`suite_state_parse` had no Rust equivalent; `lint` (§2.3) is both, merged into one pass, so
+`suite-state-fence.sh` gets one command instead of two bash functions. Both bash files are
+deleted; `test-suite-state.sh`'s cases are subsumed by `suites::tests::lint_*` and
+`suite::tests::suite_state_*` (already covered `suite_state_of`/`suite_state_write` before
+this bead). `suite-state-fence.sh` itself is not rewritten to Rust here — only its call site
+changes (source the deleted bash → run `testenv suites lint`) — its own bd/CLOSED-bead check
+is outside this bead's remit (suite-state.sh never had it).
+
 ## 6a. lifecycle_enforce (operator decision, 2026-09-28)
 
 `lifecycle_enforce` is the single switch for everything touching spira-lc (env
@@ -425,7 +456,7 @@ Line numbers against 4764d03ec. `SPIRA_TESTENV_BIN` is new, resolved like its ne
 | 10 | `spira/test-lint-chamber.sh:127` | `-e "s\|{{SUITES}}\|$HERE/suites.sh\|g"` | `-e "s\|{{SUITES}}\|testenv suites\|g"` |
 | 11 | `spira/conf.sh:1750,1764-1769,1832-1836`, `spira.conf.example:271-293`, `README.md:321,467`, `CLAUDE.md:48,59-61`, `spira/gate-suites` header, `spira/gate-spira.sh:235,374`, `spira/suite-state-fence.sh:6`, `spira/suite-covers.sh:3-12,73`, `spira/tap-jsonl.sh:5,12`, `spira/suite-assert.sh:5-10`, `spira/aeon.sh:1733`, `spira/test-lifecycle-guard.sh:7`, `spira/test-test-plan-crate.sh:9` | comments naming `suites.sh` | name `testenv suites` (comments only) |
 | 12 | **delete** `spira/suites.sh` | — | replaced by `testenv suites` |
-| 13 | `spira/suite-state.sh` | sourced by suites.sh, testenv-batch.sh, suite-state-fence.sh | **keep** until testenv-batch.sh is deleted (testenv cutover); suite-state-fence.sh still uses `suite_state_lint` |
+| 13 | `spira/suite-state.sh` | **done (sp-9gd4e).** `suites.sh` and `testenv-batch.sh` are both already gone; the one remaining blocker, `suite-state-fence.sh`'s `suite_state_lint`/`suite_state_parse`, is now `testenv suites lint` (§2.3, §6b). File deleted, along with `test-suite-state.sh` (§6b). |
 
 Tests (bash; none run here):
 
@@ -438,4 +469,4 @@ Tests (bash; none run here):
 | `test-verdict.sh:254-259`, `test-verdict-replay.sh:100-104`, `test-eject-unattributed.sh:124-128` | the `$SH/suites.sh` stub becomes a `SPIRA_TESTENV_BIN` stub that logs `$*` (the log now starts `suites observe-flake …`) |
 | `test-watchtower*.sh`, `test-snap-stale-threshold.sh` | unchanged: they inject `SPIRA_SUITES_SH`, which row 2 keeps as the test seam |
 | `test-config-compat-master-base.sh:182`, `test-queue-step-eject-race.sh:66`, `test-install-hooks-artifact.sh:126` | drop `suites.sh` from the stubbed-script lists |
-| `test-suite-state.sh` | keep (tests suite-state.sh, which stays) |
+| `test-suite-state.sh` | **retired (sp-9gd4e)** — tested `suite-state.sh`, deleted; covered by `cargo test -p testenv suite::` and `suites::lint_*` |

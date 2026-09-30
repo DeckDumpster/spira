@@ -78,11 +78,14 @@ spira/test-sop-gate-wired.sh
 # THE SUITE-STATE FENCE'S OWN POSITIVE CONTROL (D4/UC-28). suite-state-fence.sh refuses a
 # landing that carries a malformed lifecycle entry or a quarantine against a CLOSED bead
 # (which has no exit path — hygiene requires LANDED, which CLOSED never satisfies).
-# Formerly test-suite-state-fence.sh, a T2 suite whose structural rules duplicated the
-# ones already run here against no real DB; that suite is gone and this file carries all
-# of it, the CLOSED-bead rule demoted to T1 with a stub `bd show`. Whether gate-spira.sh
-# is wired to call the fence is test-gate-fences.sh's row, reading gate_fence_list.
-spira/test-suite-state.sh
+# sp-9gd4e retired suite-state.sh (its read/write/lint logic ported to `testenv suites
+# lint`, DESIGN-suites.md §6b) and test-suite-state.sh with it — the structural rules
+# this suite once duplicated against no real DB are now `cargo test -p testenv
+# suites::lint_*`. The one rule that was always the fence's own, the CLOSED-bead check,
+# lives again in test-suite-state-fence.sh, against a stub `bd show`. Whether
+# gate-spira.sh is wired to call the fence is test-gate-fences.sh's row, reading
+# gate_fence_list.
+spira/test-suite-state-fence.sh
 
 # THE GATE'S OWN FENCE-WIRING LIST (D7). gate-fences.sh exposes gate_fence_list, read by
 # gate-spira.sh's own fence loop; this suite asserts the list equals the expected set and
