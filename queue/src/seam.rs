@@ -1,7 +1,7 @@
 //! The lib.sh seam (DESIGN.md §6): `bash` reading a FIXED script from stdin, followed by
 //! the operation's values, each NUL-terminated. argv is only `bash`; the environment is the
 //! caller's own. The script reads every value first, detaches stdin, sources lib.sh and lc.sh
-//! (and batch.sh or verdict.sh where named) and calls exactly one function, whose name is
+//! (and batch.sh where named) and calls exactly one function, whose name is
 //! part of the fixed text, never data (law-payloads-go-on-stdin).
 //!
 //! Why this works: bash reading a non-seekable stdin reads it one byte at a time, so the
@@ -35,7 +35,7 @@ pub enum Op {
     FormatBatch,
     BaseConflict,
     PfGate,
-    SettlePublish,
+    CreateBug,
 }
 
 /// The record separator that precedes a seam's machine-readable answer on stdout, so any
@@ -85,6 +85,14 @@ __kv map_base "$(repo_field "$__n" base 2>/dev/null)"
 __kv landref "$__lr"
 __kv publish "$__pf"
 __kv remotes "$__rem"
+__K="$(printf '%s' "$__n" | tr 'a-z-' 'A-Z_')"
+case "$__K" in *[!A-Z0-9_]*) __K="" ;; esac
+__v="SPIRA_QUEUE_CI_MAXSEC_$__K"; __kv ci_maxsec "${!__v:-${SPIRA_QUEUE_CI_MAXSEC:-3600}}"
+__v="SPIRA_QUEUE_CI_IDLE_SEC_$__K"; __kv ci_idle "${!__v:-${SPIRA_QUEUE_CI_IDLE_SEC:-600}}"
+__kv infra_retries "${SPIRA_QUEUE_INFRA_RETRIES:-2}"
+__kv lock_wait "${SPIRA_QUEUE_LOCK_WAIT:-90}"
+__kv starve_max "${SPIRA_QUEUE_LOCK_STARVE_MAX:-5}"
+__kv incident_priority "${SPIRA_INCIDENT_PRIORITY:-1}"
 exit 0
 "#;
 
@@ -113,7 +121,9 @@ fn body(op: Op) -> &'static str {
         Op::FormatBatch => ". \"$HERE/batch.sh\" || exit 96\nformat_batch \"$1\" \"$2\" \"$3\"\nexit 0\n",
         Op::BaseConflict => ". \"$HERE/batch.sh\" || exit 96\n_base_conflict \"$1\" \"$2\" \"$3\"\nexit $?\n",
         Op::PfGate => ". \"$HERE/batch.sh\" || exit 96\n_PF_DEADLINE=$(( $(date +%s) + $4 ))\n__o=\"$(_pf_gate \"$1\" \"$2\" \"$3\")\"; __rc=$?\nprintf '\\036%s' \"$__o\"\nexit $__rc\n",
-        Op::SettlePublish => ". \"$HERE/verdict.sh\" || exit 96\n_verdict_settle_publish \"$1\" \"$2\"\nexit $?\n",
+        // The body travels as a value and lands in a temp file inside the script: bd reads
+        // it with --body-file, never argv (law-payloads-go-on-stdin).
+        Op::CreateBug => "__f=\"$(mktemp)\" || exit 1\nprintf '%s' \"$5\" > \"$__f\"\n__id=\"$(BEADS_ACTOR=\"$1\" bdq create \"$2\" --type bug --priority \"$3\" --labels \"$4\" --body-file \"$__f\" --silent 2>/dev/null | tr -d '[:space:]')\"\nrm -f \"$__f\"\nprintf '\\036%s' \"$__id\"\nexit 0\n",
     }
 }
 
@@ -172,7 +182,7 @@ mod tests {
             Op::Context, Op::TomlPath, Op::Readback, Op::LandMark, Op::BeadReopen, Op::CauseEvent, Op::ReleaseClaim,
             Op::CloseOnLand, Op::GhCloseout, Op::Comment, Op::Notify, Op::Event, Op::Divergence, Op::Push, Op::Rebase,
             Op::LandSubject, Op::SortRows, Op::CancelRuns, Op::LcReturned, Op::FormatBatch, Op::BaseConflict, Op::PfGate,
-            Op::SettlePublish,
+            Op::CreateBug,
         ] {
             let s = script(op);
             assert!(s.starts_with("{\n") && s.ends_with("}\n"), "{op:?}");

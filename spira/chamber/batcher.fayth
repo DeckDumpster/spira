@@ -1,5 +1,5 @@
 # batcher.fayth — the Judge: summoned when the batcher-cut binary (or, once sp-lomk3 lands,
-# verdict.sh) cannot resolve a round's red mechanically — a local double-red that survived
+# queue verdict) cannot resolve a round's red mechanically — a local double-red that survived
 # its re-run, or a CI-only red on a batcher-owned batch PR.
 #
 # A fayth is a persona DEFINITION; an aeon is one summoned instance of it: a predicate
@@ -11,7 +11,7 @@ FAYTH_DESC="Judge — settles a double-red or CI-only red with the authority des
 
 # THE PARTITION. Filed only by bead.sh's own --for batcher (batcher-cut's file_judgement,
 # io.rs) — never by hand and never by the plan — so this can only ever see a round this crate
-# or verdict.sh could not resolve itself.
+# or queue verdict could not resolve itself.
 FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_BATCH_JUDGEMENT_LABEL"
 FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
 

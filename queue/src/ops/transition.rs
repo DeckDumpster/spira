@@ -184,7 +184,7 @@ pub fn to_forge(w: &World, repo: Option<&str>) -> i32 {
         let deadline = w.clock.now() + c.s.transition_maxsec;
         w.out(format!("queue.sh to-forge: waiting for publish PR {pr} to settle green"));
         loop {
-            if w.lib.settle_publish(&name, &path) == 3 {
+            if super::verdict::settle_publish(w, &c, &path) == super::verdict::RED {
                 w.err(format!(
                     "queue.sh to-forge: the final publish (PR {pr}) is red — refused, nothing changed; it is left open for the normal fix-forward recovery"
                 ));

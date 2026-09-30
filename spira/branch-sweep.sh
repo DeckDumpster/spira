@@ -18,7 +18,7 @@
 # and leaves anything it cannot prove, even a branch content_landed would allow.
 #
 # spira/queue/* IS NEVER TOUCHED HERE. It is not a bead branch; cockpit.sh reads
-# that population for its stale-tip and unsent measurements, and verdict.sh
+# that population for its stale-tip and unsent measurements, and queue verdict
 # already reaps the local half of it once a batch lands. Reported separately.
 #
 # aeon sessions have no forge credentials (GIT_SSH_COMMAND is neutered) and

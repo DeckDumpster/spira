@@ -23,7 +23,7 @@
 #   On any pull request, the selector (suite-select, built in the select job)
 #   derives the suite selection from the diff against the base ref. That is the right, fast answer for a branch.
 #   A push to main never carries untested work of its own: main only ever
-#   advances by verdict.sh fast-forwarding a queue batch PR's head
+#   advances by queue verdict fast-forwarding a queue batch PR's head
 #   (spira/queue/*), so the pushed SHA already has its own green gate run from
 #   when it was that PR's head. Selecting suites again here would just re-run
 #   them on a second machine for no new information, so push selects NOTHING —

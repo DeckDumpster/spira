@@ -8,13 +8,13 @@
 # repo-map row.
 #
 # THREE ROWS, one per land mode that actually advances a base: the batcher's cut
-# (batch.sh's own merge onto spira_landref, retired sp-vsob2), verdict.sh's fast-forward,
+# (batch.sh's own merge onto spira_landref, retired sp-vsob2), queue verdict's fast-forward,
 # and landing.sh push. (queue mode's certify step and pr mode never move a base branch
 # themselves, so they carry no row here.) Each drives the real script/binary against a
 # repo whose base is `master`.
 #
 # tier: T2
-# covers: batcher-cut/src/*.rs batcher/src/*.rs spira/verdict.sh landing-pass/src/* spira/lib.sh
+# covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* landing-pass/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -139,7 +139,7 @@ fi
 
 # ============================================================================
 echo
-echo "verdict.sh: a green batch fast-forwards a MASTER-based remote:"
+echo "queue verdict: a green batch fast-forwards a MASTER-based remote:"
 # ============================================================================
 V_REPONAME=fixture-verdict
 V_REPO="$TMP/verdict-repo"; V_REMOTE="$TMP/verdict-remote.git"
@@ -175,7 +175,7 @@ printf '%s | %s | queue | origin/master | | |\n' "$V_REPONAME" "$V_REPO" > "$V_S
 
 # Build one member branch and an open batch record whose local merge commit sits
 # on top of the current origin/master — the same shape build_batch() constructs
-# in test-verdict.sh, inlined here so this file has no dependency on that one.
+# in the retired test-verdict.sh, inlined here.
 V_BASE_SHA="$(git -C "$V_REPO" rev-parse origin/master)"
 V_BWT="$V_RUN/worktree/.batch-build"
 git -C "$V_REPO" worktree add -q --detach "$V_BWT" "$V_BASE_SHA"
@@ -203,7 +203,7 @@ out="$(SPIRA_HOME="$V_SH" SPIRA_RUN="$V_RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO_MAP="$V_SH/repo-map" \
     SPIRA_QUEUE_DIR="$V_QUEUEDIR" SPIRA_QUEUE_CI_MAXSEC=3600 SPIRA_QUEUE_CI_IDLE_SEC=600 \
     SPIRA_QUEUE_INFRA_RETRIES=2 SPIRA_FORGE="$V_SH/forge-fixture.sh" PATH="$V_SH:$PATH" \
-        verdict.sh "$V_REPONAME" 2>&1)"
+        queue verdict "$V_REPONAME" 2>&1)"
 
 is   "verdict: remote MASTER fast-forwards to the batch head" \
      "$V_BATCH_HEAD" "$(git -C "$V_REMOTE" rev-parse master 2>/dev/null)"

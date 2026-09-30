@@ -191,7 +191,7 @@ impl Emit for Merged<'_> {
 }
 
 /// One stepper per repository (queue-step-all.md): the step lock, never the queue lock —
-/// verdict.sh and batch.sh take the queue lock themselves inside the step.
+/// the verdict and batch.sh take the queue lock themselves inside the step.
 enum StepLock {
     Held(crate::lock::Guard),
     Busy,
@@ -284,7 +284,9 @@ pub fn step_all(w: &World) -> i32 {
 }
 
 fn step_locked(w: &World, c: &Ctx, lc_off: bool) -> i32 {
-    w.scripts.verdict(&c.r.name, lc_off);
+    // The verdict runs in process (DESIGN-verdict.md); its status is not the step's, as
+    // verdict.sh's was not.
+    let _ = super::verdict::pass(w, c, !lc_off);
     batch_cut(w, c, false, lc_off);
     if c.r.mode == LandMode::QueueLocal {
         let merged = Merged(w.io);
