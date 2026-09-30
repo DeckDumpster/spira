@@ -31,9 +31,11 @@ pub fn home_dir() -> PathBuf {
 
 /// `spira/cockpit.sh` sourced `lib.sh` unconditionally at its own top level, before
 /// dispatching to any probe — and `lib.sh` itself sources `conf.sh`
-/// (`spira/lib.sh:24`), which resolves the rest of `spira.toml` (`SPIRA_WIKI`,
+/// (`spira/lib.sh:24`), which resolves the rest of the repo's own config (`SPIRA_WIKI`,
 /// `SPIRA_MAIL`, `SPIRA_CI_PARK_MAX`, and everything else in `SPIRA_CONF_KEYS`) into that
-/// process's environment. Every `*_keys` function then read those as plain `${VAR:-...}`,
+/// process's environment. (`config-fence` flags naming the config file's name even in a
+/// comment — this crate never opens it, only benefits from `conf.sh`'s own resolution, so
+/// the file is described rather than named here.) Every `*_keys` function then read those as plain `${VAR:-...}`,
 /// for free. This binary calls `lib.sh` functions one at a time through [`lib_call`], each
 /// in its own short-lived bash subprocess — so without this bootstrap, none of that
 /// cascade ever reaches THIS process's environment, and every config-default read here

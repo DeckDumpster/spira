@@ -19,7 +19,7 @@ pub const MANIFEST: &str = "spira/deps.toml";
 pub const SYSTEM_ALLOW: &[&str] = &[
     "bash", "sh", "dash", "env", "true", "false", "sort", "cut", "awk", "gawk", "sed", "grep", "find", "cat",
     "echo", "printf", "date", "kill", "sleep", "wait", "read", "test", "mkdir", "rmdir", "rm", "mv", "cp", "ln",
-    "stat", "sha256sum", "wc", "tr", "head", "tail", "tee", "diff", "patch", "timeout", "curl", "gcc", "nc",
+    "stat", "sha256sum", "wc", "tr", "head", "tail", "tee", "diff", "patch", "timeout", "curl", "gcc", "nc", "ps",
     "setsid", "pgrep", "fuser", "script", "systemctl", "systemd-run",
     "nodejs", // an alternate name for node on some platforms
     "gate_meter", "yield_note", "fayth_names", // shell functions, not programs
