@@ -8,16 +8,16 @@
 //! bead is absent (bd's default list excludes it), a label-less bead has NO `labels` key,
 //! and every edge rides on the row that owns it.
 //!
-//! THE FAKE IS KEPT HONEST BY ONE TEST THAT USES THE REAL THING.
-//! `real_bd_answers_in_the_shape_the_fake_is_built_from` is `#[ignore]`d — it needs a Dolt
-//! fixture — and `spira/test-cockpit-rust.sh` builds that fixture and runs it with
-//! `--include-ignored`. It pushes the real `bd`'s answer through the same payload assertions
-//! the hermetic test makes, so a change in bd's output shape turns the suite red rather than
-//! leaving the fake quietly describing a bd that no longer exists. The ignored test FAILS
-//! LOUDLY when its environment is absent rather than skipping: a check that silently no-ops
-//! reports "0 failed" for a run that checked nothing.
+//! THE REAL-BD CONTRACT TEST IS GONE (sp-o8n10, law-a-test-that-flips-is-deleted, 2026-09-30).
+//! `real_bd_answers_in_the_shape_the_fake_is_built_from` used to keep the fake honest against
+//! a real Dolt-backed `bd`, `#[ignore]`d and run only by `spira/test-cockpit-rust.sh` (which
+//! built the fixture and passed `--include-ignored`). It flipped under full-corpus load (green
+//! run alone, twice, on the same tree a corpus run had shown red) — the shared testdb/bd
+//! infrastructure under contention, not this endpoint's own logic. See
+//! docs/test-plan/cockpit-observability.md for the coverage this leaves and the bead to
+//! re-add it once sp-nmzok (the dolt-beads stall under load) is fixed.
 //!
-//! The four-bead fixture (the same one test-cockpit-rust.sh seeds): sp-aaa open, sp-bbb an
+//! The four-bead fixture (the same one the hermetic tests below build): sp-aaa open, sp-bbb an
 //! open epic whose title needs escaping, sp-ccc in progress with no labels and sp-bbb as its
 //! parent, sp-zzz closed. sp-aaa blocks on sp-ccc; sp-bbb blocks on sp-zzz, the edge that
 //! must be dropped because its other end is not served.
@@ -36,19 +36,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-
-/// The Dolt fixture test-cockpit-rust.sh built, and the real `bd` that answers for it. Used
-/// only by the one `#[ignore]`d contract test.
-fn real_fixture() -> (String, String) {
-    let db = std::env::var("LOOM_TEST_DB").unwrap_or_default();
-    let bd = std::env::var("LOOM_TEST_BD").unwrap_or_default();
-    assert!(
-        !db.is_empty() && !bd.is_empty(),
-        "LOOM_TEST_DB and LOOM_TEST_BD are unset — run spira/test-cockpit-rust.sh, which \
-         builds the fixture database this test reads"
-    );
-    (db, bd)
-}
 
 /// A fresh temp directory unique to this test process and call.
 fn scratch(kind: &str) -> testkit::TempDir {
@@ -281,20 +268,6 @@ fn assert_payload(v: &Value) {
 #[tokio::test]
 async fn the_payload_is_bounded_to_live_work_and_carries_typed_edges() {
     let (_fixture_dir, db, bd) = fixture();
-    let (_shim_dir, shim, _counter) = counting_bd(&bd);
-    let addr = spawn(cfg(&db, &shim, 20_000, 30)).await;
-    let (code, v) = json(addr).await;
-    assert_eq!(code, 200, "{v}");
-    assert_payload(&v);
-}
-
-/// THE CONTRACT TEST THAT KEEPS THE FAKE HONEST. Real `bd`, real Dolt fixture, the same
-/// assertions. Ignored under a plain `cargo test` because it needs the fixture;
-/// spira/test-cockpit-rust.sh builds it and runs this with `--include-ignored`.
-#[tokio::test]
-#[ignore = "needs the Dolt fixture spira/test-cockpit-rust.sh builds (LOOM_TEST_DB/LOOM_TEST_BD)"]
-async fn real_bd_answers_in_the_shape_the_fake_is_built_from() {
-    let (db, bd) = real_fixture();
     let (_shim_dir, shim, _counter) = counting_bd(&bd);
     let addr = spawn(cfg(&db, &shim, 20_000, 30)).await;
     let (code, v) = json(addr).await;
