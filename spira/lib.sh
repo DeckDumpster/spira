@@ -3157,9 +3157,10 @@ _attempts_sql_query() {   # _attempts_sql_query <id> -> the SQL that counts atte
     # GREATEST(...,0) because a bead can carry more closes than claims — an operator closing
     # a bead by hand adds one with no claim behind it.
     #
-    # THE created_at FLOOR. A cleared poison must stay cleared: `attempts.sh clear` records a
-    # poison.cleared event and this excludes everything at or before it, so a bead an operator
-    # judged worth retrying starts that retry at 0 rather than at the count that poisoned it.
+    # THE created_at FLOOR. A cleared poison must stay cleared: `spira-claim unpoison` (or
+    # `groomer.sh deadlocked`) records a poison.cleared event and this excludes everything at
+    # or before it, so a bead an operator judged worth retrying starts that retry at 0 rather
+    # than at the count that poisoned it.
     # Without the floor, clearing the label alone changes nothing this query reads, and CHECK 4
     # reads the same old count against a bare label on its very next pass (sp-qd2ul). COALESCE
     # to the epoch when no poison.cleared event exists, so an uncleared bead's count is
@@ -3250,9 +3251,10 @@ write_lapse_record() {  # write_lapse_record <bead> <quiet_s> <last_action> <tip
 }
 
 # bump_poison_cleared <id> <cause> — the event _attempts_sql_query/_check4_bulk_sql floor on
-# (sp-qd2ul). Written by attempts.sh clear, never by a bare label removal: a clear that leaves
-# no trace here is indistinguishable from one that was never judged, and the next CHECK 4 pass
-# reads the unchanged count against a bare label and re-poisons within minutes.
+# (sp-qd2ul). Written by `spira-claim unpoison` (or `groomer.sh deadlocked`'s call into
+# `spira-claim deadlocked`), never by a bare label removal: a clear that leaves no trace here
+# is indistinguishable from one that was never judged, and the next CHECK 4 pass reads the
+# unchanged count against a bare label and re-poisons within minutes.
 bump_poison_cleared() { _bump_write_event "${1:-}" 'poison.cleared' "${2:-unrecorded}"; }
 
 bump_reopen()  {
@@ -3494,8 +3496,11 @@ census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular o
 }
 
 # counter_of, counter_label, counter_causes, bump_counter, attempt_causes, requeue_causes,
-# recur_causes: retained for compatibility with attempts.sh and test-attempts.sh which
-# read historical labels. These do not write anything.
+# recur_causes: retained for any bead still carrying the historical sp-attempt-N /
+# sp-reclaim-N / sp-requeue-N labels bump_counter stopped writing at sp-lzt — a read-only
+# rendering of whatever a caller finds, nothing more (spira-claim/DESIGN.md §9's `audit`
+# is the going-forward tool, and reads the events table instead). These do not write
+# anything.
 counter_of() {           # counter_of <id> <prefix> -> integer (empty when unset)
     bdq label list "$1" 2>/dev/null | grep -oE "$2-[0-9]+" | grep -oE '[0-9]+$' \
         | sort -n | tail -1 || true
@@ -4024,8 +4029,9 @@ poison_asked_clear() {
     rm -f "${SPIRA_POISON_ASKED:?}/$1" 2>/dev/null || true
 }
 
-# THE LIFT'S OWN DEDUP, FOR THE SAME REASON THE ASK NEEDS ONE. attempts.sh deadlocked takes
-# the label off; it does not and must not touch the attempt count (the rungs are the record
+# THE LIFT'S OWN DEDUP, FOR THE SAME REASON THE ASK NEEDS ONE. `groomer.sh deadlocked` (via
+# `spira-claim deadlocked`) takes the label off; it does not and must not touch the attempt
+# count (the rungs are the record
 # of how the bead got here, sp-rq-s in test-requeue.sh asserts the count survives). So the
 # next CHECK 4 pass reads the same n it always did, against a label that is no longer there,
 # and "poison" fires again within minutes of the lift — sp-wiyr2. Keying the suppression on
@@ -5553,6 +5559,28 @@ for i in (d if isinstance(d, list) else [d]):
         done < <(fayth_partitions)
         [ "$n" -gt 0 ] || log "WARN no persona in the chamber declares a partition — no bead is dispatchable, and none is being examined" >&2
     } | awk -F'\t' 'NF && !seen[$1]++'
+    return 0
+}
+
+# all_partition_members -> every open/in_progress bead a partition's own labels would
+# match, one id per line, deduped — EVERY EXCLUSION DROPPED (moved out of spira/attempts.sh,
+# sp-rfodk; its own header comment, verbatim: "a poisoned bead is excluded from dispatch and
+# is exactly the bead whose count most needs reading, so filtering it out here would hide
+# the evidence"). `dispatchable_open` above answers a different question — what CAN be
+# claimed right now — and applies exclusions to answer it; this answers "whose is it", which
+# a poisoned or asked-about bead still is. groomer.sh's `deadlocked` and any future census
+# over the full board read this, never `dispatchable_open`.
+all_partition_members() {
+    local labels exclude
+    while IFS=$'\t' read -r labels exclude; do
+        [ -n "$labels" ] || continue
+        bdjson list --status open,in_progress --limit 0 --label "$labels" 2>/dev/null \
+            | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+for i in (d if isinstance(d, list) else [d]): print(i["id"])' 2>/dev/null
+    done < <(fayth_partitions) | awk 'NF && !seen[$0]++'
     return 0
 }
 

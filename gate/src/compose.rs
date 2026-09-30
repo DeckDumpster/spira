@@ -552,7 +552,7 @@ mod tests {
                 },
             ),
             (&["gate/src/engine.rs", "spira/lib.sh"], s("script")),
-            (&["cockpit/layout.sh"], s("script")),
+            (&["cockpit/moot-sweep.sh"], s("script")),
             (&["systemd/units.sh"], s("script")),
             (&["rule.sh"], s("script")),
             (&["spira/ready-bucket.py"], s("script")),

@@ -26,18 +26,14 @@ spira/test-certify.sh
 spira/test-claim-retry.sh
 spira/test-closed-strand.sh
 spira/test-cockpit-accept.sh
-spira/test-cockpit-clipboard.sh
 spira/test-cockpit-collector-quota.sh
-spira/test-cockpit-collector-watchdog.sh
 spira/test-cockpit-collect-probes.sh
 spira/test-cockpit-down-marker.sh
 spira/test-cockpit-fuse.sh
 spira/test-cockpit-gate.sh
 spira/test-cockpit-health-restart.sh
-spira/test-cockpit-layout-conf.sh
 spira/test-cockpit-layout-ensure-focus.sh
 spira/test-cockpit-layout.sh
-spira/test-cockpit-mouse.sh
 spira/test-cockpit-probe-fault.sh
 spira/test-cockpit-queue-section.sh
 spira/test-cockpit-queue-wait.sh
@@ -79,7 +75,6 @@ spira/test-lifecycle-guard.sh
 spira/test-loom-page.sh
 spira/test-maechen-closed-record.sh
 spira/test-mail-bead-render.sh
-spira/test-now.sh
 spira/test-ops-closing.sh
 spira/test-overrides.sh
 spira/test-persona-model.sh

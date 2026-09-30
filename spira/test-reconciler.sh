@@ -66,7 +66,7 @@
 #         desired-state/src/resource.rs spira/reconciler.sh
 #         spira/units-manifest.sh spira/fleet-status.sh spira/queue-certified-list.sh
 #         spira/disk-usage.sh spira/disk-remedy.sh
-#         spira/conf.sh cockpit/layout.sh
+#         spira/conf.sh cockpit/ops/src/layout.rs
 #         systemd/spira-reconciler.service systemd/spira-reconciler.timer
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

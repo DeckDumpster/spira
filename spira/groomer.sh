@@ -10,6 +10,7 @@
 #   groomer.sh depends-on-fix <bug-id> --fix <id> --evidence <text>         link bug to in-flight fix, order accordingly
 #   groomer.sh unpoison       <id> --cause <c> --evidence <text>            credit a harness-caused attempt, lift spira-poison
 #   groomer.sh triage-poison  <id> --verdict <work-fault|drop> --evidence <text>  close out a work-caused poison charge
+#   groomer.sh deadlocked     [--apply]                                      lift poison from finished, landable work (spira-claim/DESIGN.md §9)
 #   groomer.sh unwanted       ...                                            REFUSED — exits 2 always
 #
 # WHAT IT DOES NOT DO:
@@ -45,7 +46,7 @@ BD_CMD="${SPIRA_BD:-bd}"
 DB="${SPIRA_DB:-.}"
 
 usage() {
-    printf 'usage: groomer.sh sweep|split-piece|supersede|close|correct-lane|depends-on-fix|unpoison|triage-poison|unwanted ...\n' >&2
+    printf 'usage: groomer.sh sweep|split-piece|supersede|close|correct-lane|depends-on-fix|unpoison|triage-poison|deadlocked|unwanted ...\n' >&2
     exit 1
 }
 
@@ -435,8 +436,8 @@ except Exception: pass
     # batch and ended its turn), a gate that was still running when the release fired, or a
     # precondition that is now satisfied. --cause and --evidence are both REQUIRED — a lift
     # without evidence is indistinguishable from an ungrounded amnesty, which is exactly what
-    # attempts.sh clear already provides for the operator's own judgement; this tool exists
-    # so the groomer's judgement leaves the same kind of trace.
+    # `spira-claim unpoison` already provides for the operator's own judgement; this tool
+    # exists so the groomer's judgement leaves the same kind of trace.
     #
     # Delegates to `spira-claim unpoison --credit <cause>` (spira-claim/DESIGN.md §8): the
     # unjudged credit, the poison.cleared floor, the lifecycle hold, the note and the ask,
@@ -541,6 +542,82 @@ except Exception: pass
     spira-lc unhold "$id" poison groomer.sh >/dev/null 2>&1 || true
     "$BD_CMD" -C "$DB" note "$id" "GROOM: Poison triage — WORK'S FAULT. $evidence Poison lifted (not credited — the charged attempts stand); the fix this triage names is the next claim. A poison.cleared event floors the attempt count so this does not immediately re-poison." >/dev/null 2>&1
     printf 'TRIAGED %s verdict=work-fault\n' "$id"
+    ;;
+
+  deadlocked)
+    # groomer.sh deadlocked [--apply]
+    #
+    # THE GIT HALF of `spira-claim deadlocked` (spira-claim/DESIGN.md §9; replaces
+    # spira/attempts.sh's `deadlocked`, deleted at sp-rfodk). spira-claim decides which
+    # poisoned candidate to lift and does the write; it deliberately does no git (the same
+    # boundary `select` draws around resumability) — resolving a bead's repository and land
+    # ref, and asking whether spira/<id> names the bead and merges cleanly into it, needs the
+    # repo map and lib.sh's git plumbing (bead_repo, repo_root, spira_landrefs), which live
+    # here.
+    #
+    # POISONED IS CHECKED TWICE, ON PURPOSE. This pass filters to poisoned candidates first
+    # so git is never run over a whole partition (hundreds of beads; the git work only pays
+    # for the handful that are actually poisoned) — but spira-claim re-checks poisoned-ness
+    # itself before it writes anything, from the record it trusts (DESIGN.md §6a's switch),
+    # so a bead cleared between this filter and that check is simply skipped there, silently,
+    # never a stale write.
+    apply=0
+    for a in "$@"; do [ "$a" = --apply ] && apply=1; done
+    # shellcheck source=lib.sh
+    . "$HERE/lib.sh"
+    _dl_json="$(mktemp)" || exit 1
+    trap 'rm -f "$_dl_json"' EXIT
+    _dl_enforce=0
+    case "${SPIRA_LIFECYCLE_ENFORCE:-}" in 1|true) _dl_enforce=1 ;; esac
+    printf '[' > "$_dl_json"
+    _dl_first=1
+    for id in $(all_partition_members); do
+        _dl_poisoned=0
+        if [ "$_dl_enforce" = 1 ]; then
+            spira-lc held "$id" poison >/dev/null 2>&1 && _dl_poisoned=1
+        else
+            "$BD_CMD" -C "$DB" label list "$id" 2>/dev/null | grep -qx spira-poison && _dl_poisoned=1
+        fi
+        [ "$_dl_poisoned" = 1 ] || continue
+
+        _dl_repo="$(bead_repo "$id")"
+        _dl_path="$(repo_root "$_dl_repo" 2>/dev/null)" || _dl_path=""
+        _dl_branch="spira/$id"
+        _dl_ok=false; _dl_base=""
+        if [ -z "$_dl_path" ]; then
+            _dl_why="repo:$_dl_repo is not in the repo map — cannot look at its branch"
+        elif ! git -C "$_dl_path" show-ref --verify -q "refs/heads/$_dl_branch"; then
+            _dl_why="no branch $_dl_branch in $_dl_repo — nothing was committed"
+        else
+            _dl_refs="$(spira_landrefs "$_dl_path")" || _dl_refs=""
+            _dl_base="${_dl_refs%% *}"
+            if [ -z "$_dl_base" ]; then
+                _dl_why="$_dl_repo cannot say what it lands on — not judging its branch"
+            else
+                _dl_subjects="$(git -C "$_dl_path" log --format='%s%n%b' -n 200 "$_dl_branch" 2>/dev/null)"
+                if ! grep -qF "$id" <<< "$_dl_subjects"; then
+                    _dl_why="$_dl_branch exists but no commit on it names $id"
+                elif ! git -C "$_dl_path" merge-tree --write-tree "$_dl_base" "$_dl_branch" >/dev/null 2>&1; then
+                    _dl_why="$_dl_branch does not merge into $_dl_base — a person has to resolve it"
+                else
+                    _dl_ok=true; _dl_why=""
+                fi
+            fi
+        fi
+        [ "$_dl_first" = 1 ] || printf ',' >> "$_dl_json"
+        _dl_first=0
+        SPIRA_DL_ID="$id" SPIRA_DL_OK="$_dl_ok" SPIRA_DL_WHY="$_dl_why" SPIRA_DL_BRANCH="$_dl_branch" SPIRA_DL_BASE="$_dl_base" \
+            python3 -c '
+import json, os
+print(json.dumps({
+    "id": os.environ["SPIRA_DL_ID"], "ok": os.environ["SPIRA_DL_OK"] == "true",
+    "why": os.environ["SPIRA_DL_WHY"], "branch": os.environ["SPIRA_DL_BRANCH"], "base": os.environ["SPIRA_DL_BASE"],
+}), end="")' >> "$_dl_json"
+    done
+    printf ']' >> "$_dl_json"
+
+    _dl_flag=(); [ "$apply" = 1 ] && _dl_flag=(--apply)
+    spira-claim deadlocked "${_dl_flag[@]}" --actor groomer --merge-status "$_dl_json" --db "$DB"
     ;;
 
   unwanted)

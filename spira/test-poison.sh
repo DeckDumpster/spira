@@ -51,7 +51,7 @@
 #
 # tier: T3
 # defect: sp-mqnf sp-njwb sp-fx1p sp-pi3ez sp-wiyr2 sp-qd2ul
-# covers: sentinel/src/* spira/lib.sh spira/attempts.sh spira/chamber/* lifecycle/* spira-lc/*
+# covers: sentinel/src/* spira/lib.sh spira/groomer.sh spira-claim/* spira/chamber/* lifecycle/* spira-lc/*
 # timeout: 240
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -144,8 +144,8 @@ mkpoison() {
     done
 }
 # rmpoison <id>... — the test-side equivalent of a human clearing the hold directly
-# (bypassing attempts.sh/unpoison.sh, which have their own coverage elsewhere), via the same
-# `spira-lc unhold` this suite asserts the sentinel's own CHECK 4 reads.
+# (bypassing spira-claim's `deadlocked`/`unpoison`, which have their own coverage elsewhere),
+# via the same `spira-lc unhold` this suite asserts the sentinel's own CHECK 4 reads.
 rmpoison() {
     local i
     for i in "$@"; do
@@ -169,7 +169,7 @@ mkdir -p "$RUN/worktree" "$SH/chamber"
 
 # The program under test, run out of its own directory so it sources the real lib.sh but
 # finds stubbed sub-programs beside it.
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HERE/attempts.sh" "$SH/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HERE/groomer.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub pilgrimage.sh 'printf "%s" "${PILGRIMAGE_OUT:-}"'
 stub strand        'printf "%s" "${STRAND_OUT:-}"'
@@ -258,18 +258,20 @@ predicate() {   # predicate <fn> -> that lib predicate's output under the fixtur
     SPIRA_FAYTHS="${ROSTER:-t tinc}" \
         bash -c ". \"$SH/lib.sh\"; $1" 2>/dev/null
 }
-# attempts.sh under the same configuration as sentinel(), so a deadlock lift is made through
-# the real tool against the real fixture repo — not a model of what it would do.
+# groomer.sh deadlocked (the git half) into spira-claim deadlocked (the decision and the
+# write), under the same configuration as sentinel(), so a deadlock lift is made through the
+# real tools against the real fixture repo — not a model of what either would do.
 deadlocked() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
     SPIRA_FAYTHS="${ROSTER:-t tinc}" \
-        bash "$SH/attempts.sh" deadlocked "$@" 2>&1
+        bash "$SH/groomer.sh" deadlocked "$@" 2>&1
 }
-# attempts.sh clear, same configuration — the operator's own remedy against the real store.
+# spira-claim unpoison, same configuration — the operator's own remedy against the real
+# store (replaces attempts.sh clear, superseded when unpoison shipped, before this bead).
 clearpoison() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
     SPIRA_FAYTHS="${ROSTER:-t tinc}" \
-        bash "$SH/attempts.sh" clear "$@" 2>&1
+        spira-claim unpoison --bead "$1" --cause "operator judged it worth retrying (test-poison.sh sp-qd2ul)" --db "$SPIRA_DB" 2>&1
 }
 status_of() { B show "$1" --json 2>/dev/null | python3 -c '
 import json, sys
@@ -605,11 +607,12 @@ want "the requeue cap fires for the tinc partition's own bead too" \
      "sp-tinc-req — completed and requeued 5 times" "$(cat "$MAIL_LOG")"
 
 # --------------------------------------------------------------------------------------
-# sp-wiyr2 — A LIFT BY attempts.sh deadlocked SURVIVES THE NEXT SENTINEL PASS. deadlocked
-# releases the poison hold on finished, mergeable work; it does not touch the attempt
-# count (the rungs are the record of how the bead got here). Without the fix CHECK 4 reads
-# that same unchanged count against an unheld bead on its very next pass and poisons
-# it right back — the finished-work exemption undone within minutes of being granted.
+# sp-wiyr2 — A LIFT BY `spira-claim deadlocked` (via `groomer.sh deadlocked`) SURVIVES THE
+# NEXT SENTINEL PASS. deadlocked releases the poison hold on finished, mergeable work; it
+# does not touch the attempt count (the rungs are the record of how the bead got here).
+# Without the fix CHECK 4 reads that same unchanged count against an unheld bead on its
+# very next pass and poisons it right back — the finished-work exemption undone within
+# minutes of being granted. (The fix is `mark_poison_lifted`, spira-claim/DESIGN.md §9.)
 # --------------------------------------------------------------------------------------
 echo
 seed_poison; : > "$MAIL_LOG"; out="$(sentinel)"
@@ -629,17 +632,17 @@ want "the check log shows CHECK 4 actually examined the set" "CHECK4 examining" 
 
 # --------------------------------------------------------------------------------------
 # sp-qd2ul — CLEARING THE POISON HOLD MUST STICK. The operator's own remedy (sentinel's ask
-# tells a human to run attempts.sh clear) is `attempts.sh clear`, not the tool-specific
-# `deadlocked` sweep above — the bead need not be finished, only judged worth retrying. What
-# is asserted here is the property the bare-removal case at line ~399 shows this codebase does
-# NOT get for free: a clear survives a sentinel pass with nothing new against it, and is NOT a
-# permanent exemption — a genuinely new run of failures after the clear poisons it again.
+# tells a human to run `spira-claim unpoison`) is not the tool-specific `deadlocked` sweep
+# above — the bead need not be finished, only judged worth retrying. What is asserted here
+# is the property the bare-removal case at line ~399 shows this codebase does NOT get for
+# free: a clear survives a sentinel pass with nothing new against it, and is NOT a permanent
+# exemption — a genuinely new run of failures after the clear poisons it again.
 # --------------------------------------------------------------------------------------
 echo
 seed_poison; : > "$MAIL_LOG"; out="$(sentinel)"
 ispoisoned "sp-orphan is poisoned by the first pass" sp-orphan
-cl_out="$(clearpoison sp-orphan --apply)"
-want "attempts.sh clear reports the lift" "CLEARED  sp-orphan" "$cl_out"
+cl_out="$(clearpoison sp-orphan)"
+want "spira-claim unpoison reports the lift" "OK   sp-orphan: cleared" "$cl_out"
 notpoisoned "the hold is off right after the clear" sp-orphan
 : > "$MAIL_LOG"; out="$(sentinel)"
 notpoisoned "and it is STILL off after the very next sentinel pass" sp-orphan

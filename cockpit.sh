@@ -7,10 +7,10 @@
 #   cockpit.sh --force      also clear a wedged tmux server that still holds live panes
 #   cockpit.sh --no-attach  repair only (timers, scripts; implied when stdin is not a tty)
 #
-# WHY THIS IS AT THE ROOT. Everything below already existed — `cockpit/rebuild.sh` does the
+# WHY THIS IS AT THE ROOT. Everything below already existed — `rebuild` does the
 # whole job and does it well. The problem was finding it. When the server dies the operator is
 # looking for the thing that CREATES a cockpit, and the script that creates one is called
-# "rebuild" and lives one directory down next to eleven others; `layout.sh up` is the obvious
+# "rebuild" and lives one directory down next to eleven others; `layout up` is the obvious
 # guess and it is the wrong one, because its first line is `tmux has-session || exit 1` — it
 # repairs a cockpit and cannot make one. So the recovery got assembled by hand, in the right
 # order, under time pressure, twice.
@@ -21,33 +21,34 @@
 #
 # IT PICKS BETWEEN TWO TOOLS, WHICH IS THE PART THAT WAS NOT WRITTEN DOWN.
 #
-#   cockpit/rebuild.sh   makes a cockpit from nothing, including after the server dies.
-#   cockpit/layout.sh    ensure   heals one that is already up, touching nothing that is fine.
+#   rebuild   makes a cockpit from nothing, including after the server dies.
+#   layout               ensure   heals one that is already up, touching nothing that is fine.
 #
-# Reaching for the wrong one is not harmless in either direction. `layout.sh` cannot create:
-# its first line is `tmux has-session || exit 1`. And `rebuild.sh` on a HEALTHY cockpit runs
-# `layout.sh up`, which RESPAWNS the dashboard panes rather than leaving them — measured here:
+# Reaching for the wrong one is not harmless in either direction. `layout` cannot create:
+# its first line is `tmux has-session || exit 1`. And `rebuild` on a HEALTHY cockpit runs
+# `layout up`, which RESPAWNS the dashboard panes rather than leaving them — measured here:
 # two runs in a row moved the panel and health panes from %4/%3 to %7/%6. Nothing is lost, but
 # both dashboards restart, which is not what "run it again to be safe" should do.
 #
-# So: check first, then heal or rebuild. `layout.sh ensure` is the idempotent path and is used
+# So: check first, then heal or rebuild. `layout ensure` is the idempotent path and is used
 # whenever the cockpit is structurally intact — verified by running it against a healthy
 # cockpit and confirming the pane ids did not move.
 #
-# WHY THE CHECK IS HERE AND NOT A CALL TO `layout.sh ensure`. `ensure` exits 0 whether it healed
+# WHY THE CHECK IS HERE AND NOT A CALL TO `layout ensure`. `ensure` exits 0 whether it healed
 # a cockpit or found no session at all, so its exit code cannot decide anything.
 #
 # THE CONCIERGE IS PART OF "THE COCKPIT" AND LIVES ON A DIFFERENT SOCKET. concierge.sh runs
 # `tmux -L <socket>`, so the concierge session is invisible to `tmux list-sessions` and to
-# every check in rebuild.sh — which is why rebuilding the cockpit used to leave the operator
+# every check in rebuild — which is why rebuilding the cockpit used to leave the operator
 # to start it by hand, having just run the one command that was supposed to restore
 # everything. `concierge.sh start` is idempotent and scrubs its own environment, so it is
 # simply run at the end of both paths.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-REBUILD="$HERE/cockpit/rebuild.sh"
-[ -r "$REBUILD" ] || { echo "cockpit: no rebuild.sh at $REBUILD" >&2; exit 1; }
+# `rebuild` and `layout` are compiled binaries on the release PATH now (sp-llbmi), not
+# scripts under cockpit/ — bare name, never a constructed path.
+command -v rebuild >/dev/null 2>&1 || { echo "cockpit: no 'rebuild' binary on PATH" >&2; exit 1; }
 
 MODE=build; FORCE=0; ATTACH=1
 [ -t 0 ] && [ -t 1 ] || ATTACH=0
@@ -62,19 +63,19 @@ for a in "$@"; do
 done
 
 # THE LAYOUT SERVER IS THE DEFAULT SOCKET, WHEREVER THIS IS RUN FROM. Inside a tmux pane
-# $TMUX names the server that owns the pane, and every bare `tmux` below — and in rebuild.sh
-# and layout.sh — would act on THAT server. Run from the concierge's own session, that built a
+# $TMUX names the server that owns the pane, and every bare `tmux` below — and in rebuild
+# and layout — would act on THAT server. Run from the concierge's own session, that built a
 # second cockpit on the concierge socket (2026-09-25). Remember where the caller is, for the
 # attach at the end, then drop it.
 CALLER_TMUX="${TMUX:-}"
 unset TMUX TMUX_PANE
 
-if [ "$MODE" = probe ]; then exec bash "$REBUILD" probe; fi
+if [ "$MODE" = probe ]; then exec rebuild probe; fi
 
 # ------------------------------------------------------------------------------------------
 # THE ONE GUARD THIS ADDS: DO NOT LET THE OPERATOR KILL THE PANE THEY ARE SITTING IN.
 #
-# rebuild.sh refuses to clear a wedged server that still holds live panes, and `--force` is
+# rebuild refuses to clear a wedged server that still holds live panes, and `--force` is
 # the operator saying they have looked. But "I have looked" and "I am not inside it" are
 # different claims, and only the first one is being made. Run `cockpit.sh --force` from a pane
 # OF the wedged server and the kill takes this script's own shell with it: the command dies
@@ -82,7 +83,7 @@ if [ "$MODE" = probe ]; then exec bash "$REBUILD" probe; fi
 # that vanished for no stated reason.
 #
 # $TMUX is set inside a tmux pane and carries the socket path of the server that owns it.
-# Comparing it to the socket rebuild.sh would act on is the whole test. This is refused rather
+# Comparing it to the socket rebuild would act on is the whole test. This is refused rather
 # than warned about, because the failure is silent and immediate and there is a trivial
 # alternative: run it from a terminal that is not tmux, or detach first.
 # ------------------------------------------------------------------------------------------
@@ -99,7 +100,7 @@ if [ "$FORCE" = 1 ] && [ -n "$CALLER_TMUX" ]; then
 fi
 
 # --- is the cockpit structurally there? ----------------------------------------------------
-# The sessions come from COCKPIT_SESSIONS so this cannot disagree with rebuild.sh, which reads
+# The sessions come from COCKPIT_SESSIONS so this cannot disagree with rebuild, which reads
 # the same key. The FIRST of them is the one holding the dashboards, and `cockpit` is the
 # session that links them.
 { set +u; . "$HERE/spira/conf.sh" 2>/dev/null; set -u; } || true
@@ -117,7 +118,7 @@ cockpit_intact() {
     local tags; tags="$(tmux list-panes -t "${DASH_SESSION}:0" -F '#{@cockpit}' 2>/dev/null)"
     printf '%s\n' "$tags" | grep -qx health || return 1
     # The mail pane is part of the layout only when its program is installed, the same test
-    # rebuild.sh's verify applies. (A `panel` tag was checked here once; that pane was retired,
+    # rebuild's verify applies. (A `panel` tag was checked here once; that pane was retired,
     # so the heal path was never taken and every run rebuilt and respawned both dashboards.)
     local mail="${COCKPIT_MAIL:-}"
     if [ -n "$mail" ] && command -v "${mail%% *}" >/dev/null 2>&1; then
@@ -161,8 +162,8 @@ pane_is_concierge_client() {
 ensure_session_pane() {
     local p; p="$(session_pane)"
     if [ -z "$p" ]; then
-        # The pane exits when its concierge client does; layout.sh ensure reopens it.
-        bash "$HERE/cockpit/layout.sh" ensure 2>&1 | sed 's/^/  /'
+        # The pane exits when its concierge client does; layout ensure reopens it.
+        layout ensure 2>&1 | sed 's/^/  /'
         p="$(session_pane)"
         [ -n "$p" ] || { echo "  session pane: none in ${DASH_SESSION}:0 and ensure did not reopen it" >&2; return 1; }
     fi
@@ -196,21 +197,21 @@ if [ "$FORCE" != 1 ] && cockpit_intact; then
     # The concierge first: the session pane is a client of it, and a pane opened onto a
     # concierge that is not there exits at once and leaves the cockpit without it.
     ensure_concierge
-    bash "$HERE/cockpit/layout.sh" ensure 2>&1 | sed 's/^/  /'
+    layout ensure 2>&1 | sed 's/^/  /'
     ensure_session_pane || echo "cockpit: WARNING — the session pane is not attached to the concierge (see above)" >&2
     attach_operator
     exit 0
 fi
 
-# Not intact (or --force): rebuild.sh is the one that can make a cockpit from nothing. It also
+# Not intact (or --force): rebuild is the one that can make a cockpit from nothing. It also
 # scrubs the session-identity variables before forking a server — a tmux server keeps the
 # environment it was started with for the life of every pane it ever opens — which is the
 # other reason this delegates rather than reimplementing the steps.
 _ck_args=()
 [ "$FORCE" = 1 ] && _ck_args+=(--force)
-bash "$REBUILD" "${_ck_args[@]}"; _ck_rc=$?
+rebuild "${_ck_args[@]}"; _ck_rc=$?
 # Not `exec`: the concierge still has to be started, and it is the half of "the cockpit" that
-# rebuild.sh cannot see.
+# rebuild cannot see.
 ensure_concierge
 [ "$_ck_rc" = 0 ] || cockpit_intact || { echo "cockpit: rebuild failed (rc $_ck_rc); not attaching" >&2; exit "$_ck_rc"; }
 ensure_session_pane || echo "cockpit: WARNING — the session pane is not attached to the concierge (see above)" >&2

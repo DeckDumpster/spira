@@ -1,0 +1,41 @@
+[package]
+name = "cockpit-ops"
+version = "1.0.0"
+edition = "2021"
+description = "Cockpit operator surface — the ops dashboard pane, the tmux layout it lives in, and the bead-answer plumbing beside it. Replaces cockpit/health.sh, cockpit/layout.sh, cockpit/rebuild.sh, cockpit/resolve.sh and cockpit/reply.sh (sp-llbmi)."
+
+[lib]
+name = "cockpit_ops"
+path = "src/lib.rs"
+
+[[bin]]
+name = "health"
+path = "src/health_main.rs"
+
+[[bin]]
+name = "layout"
+path = "src/layout_main.rs"
+
+[[bin]]
+name = "rebuild"
+path = "src/rebuild_main.rs"
+
+[[bin]]
+name = "resolve"
+path = "src/resolve_main.rs"
+
+[[bin]]
+name = "reply"
+path = "src/reply_main.rs"
+
+[dependencies]
+regex = "1"
+
+[dev-dependencies]
+testkit = { path = "../../testkit" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
