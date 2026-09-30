@@ -109,8 +109,11 @@ pub trait World {
     // ---- admission and the tree
     fn nproc_all(&self) -> u64;
     fn mem_avail_mib(&self) -> u64;
-    /// Try `slot.<n>.lock` without waiting; true = held until exit.
-    fn admission_try(&self, dir: &Path, slot: u64) -> bool;
+    /// Try `slot.<n>.lock` without waiting; true = held until exit, with `slot.<n>.holder`
+    /// naming `who` (sp-f4ig1; advisory, for `spira-admit status` and waiting lines).
+    fn admission_try(&self, dir: &Path, slot: u64, who: &str) -> bool;
+    /// The waiting line for a full gate pool of `par` under `run` (spira_config::admission).
+    fn admission_wait_line(&self, run: &str, par: u64) -> String;
     /// Open `<tree>.lock`; false when it cannot be opened.
     fn tree_lock_open(&self, lock: &Path) -> bool;
     /// Try the opened tree lock without waiting.

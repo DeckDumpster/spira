@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "auron",
     "loom",
     "cockpit/panel",
     "cockpit-collect",
@@ -44,13 +45,25 @@ members = [
     "suite-select",
     "release",
     "forge",
+    "incident",
+    "maechen-trigger",
+    "rule",
+    "bead",
 ]
 resolver = "2"
 
 [profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
+# Chosen by measurement (sp-zqo8s, 2026-09-30): see spira-config/DESIGN-build-cache.md
+# section 5 for the full table. Fat LTO + codegen-units=1 (the prior setting) runs a
+# whole-program link-time-optimization pass on every release-bins build that sccache
+# cannot cache, regardless of how warm the rest of the tree is: measured 191-199s on a
+# fresh gate tree and still 146-165s on a tree that already built this release profile
+# once. lto=false lets the link step become a plain linker pass over already-cached
+# object code: measured 113s fresh, 25-28s on a re-certified tip -- faster on both axes,
+# not just the warm one.
+opt-level = 2
+lto = false
+codegen-units = 16
 strip = true
 
 # aeon and gate runs (sp-zv7j4): fast, incremental builds of a worktree that is thrown

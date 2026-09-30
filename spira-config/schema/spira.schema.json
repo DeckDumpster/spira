@@ -649,6 +649,15 @@
             "null"
           ]
         },
+        "compile_par": {
+          "description": "Compile admission slots (sp-f4ig1, gate/DESIGN-admission.md §5); unset derives `min(cores ÷ 10, MemAvailable ÷ 4 GiB)`. A pool size, never a per-job limit.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
         "concierge_inbox": {
           "type": [
             "string",
@@ -1093,7 +1102,7 @@
           "minimum": 0.0
         },
         "lifecycle_enforce": {
-          "description": "Switches an aeon onto the lifecycle semantic layer (work-env.sh, no bd, lc_claim_bead CAS). Default off: a tree that has simply built work/spira-lc must not flip onto it by binary presence alone (sp-74gzo) — aeon.sh only takes the restricted path when this is set, and refuses rather than falling back when set with either binary missing.",
+          "description": "Switches an aeon onto the lifecycle semantic layer (the aeon crate's own restricted env, no bd, lc_claim_bead CAS). Default off: a tree that has simply built work/spira-lc must not flip onto it by binary presence alone (sp-74gzo) — aeon.sh only takes the restricted path when this is set, and refuses rather than falling back when set with either binary missing.",
           "type": [
             "boolean",
             "null"
@@ -1828,7 +1837,25 @@
             "null"
           ]
         },
+        "summon_jitter": {
+          "description": "Seconds of random delay before an aeon's session starts (0 disables; unset: 20).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
         "summon_lock_wait": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "test_par": {
+          "description": "Test admission slots (an agent's own testenv trials); unset derives `min(cores ÷ 8, MemAvailable ÷ 8 GiB)`.",
           "type": [
             "integer",
             "null"

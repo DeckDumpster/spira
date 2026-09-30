@@ -138,7 +138,6 @@ spira/test-held.sh
 spira/test-hold-liveness.sh
 spira/test-hold.sh
 spira/test-holds.sh
-spira/test-incident-decisions.sh
 spira/test-incident.sh
 spira/test-install-bd-init-cwd.sh
 spira/test-install-conf-seed.sh

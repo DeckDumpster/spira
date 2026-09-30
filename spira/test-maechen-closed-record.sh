@@ -27,7 +27,7 @@
 # check is live. Bead ids are pinned to non-default strings; allowlist state
 # is reset between sections.
 #
-# covers: spira/maechen-trigger.sh spira/lib.sh cockpit-collect/src/*
+# covers: spira/maechen-trigger.sh spira/lib.sh cockpit-collect/src/* maechen-trigger/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1090
@@ -36,6 +36,11 @@ testdb_require test-maechen-closed-record
 . "$HERE/testlib.sh"
 
 TRIGSH=maechen-trigger.sh   # invoked by name on the suite's PATH (sp-gypjk)
+# Each trigger invocation below wipes env and rebuilds PATH from scratch for isolation;
+# since sp-0ekp7 moved maechen-trigger.sh's logic into a compiled binary the shim execs,
+# that rebuilt PATH must still reach it — appending the ambient $PATH (which, under
+# testenv, is the staged release's bin/) after the deterministic TESTDB_BIN/$HERE prefix
+# does that without changing resolution order for anything the isolated PATH used to cover.
 T="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
@@ -173,7 +178,7 @@ printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 
 _tr_bd="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-bd}")"
 tr_out="$(env -i HOME="$T" \
-    PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin" \
+    PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_BD="$_tr_bd" \
     SPIRA_DB="$SPIRA_DB" \
@@ -205,7 +210,7 @@ echo
 echo "TRIGGER: second run files nothing new (dedup)"
 # ==========================================================================================
 tr_out2="$(env -i HOME="$T" \
-    PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin" \
+    PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_BD="$_tr_bd" \
     SPIRA_DB="$SPIRA_DB" \
@@ -247,7 +252,7 @@ printf 'sp-cr-ant1 quotation: test bead\n' > "$ALLOW_FILE"
 
 _ant_bd="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-bd}")"
 ant_out="$(env -i HOME="$T" \
-    PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin" \
+    PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_BD="$_ant_bd" \
     SPIRA_DB="$SPIRA_DB" \
@@ -309,7 +314,7 @@ _e2e_bd="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-
 
 # Step 1: trigger files one bead carrying all three rows.
 e2e_trig1="$(env -i HOME="$T" \
-    PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin" \
+    PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_BD="$_e2e_bd" \
     SPIRA_DB="$SPIRA_DB" \
@@ -338,7 +343,7 @@ want "e2e: sweep bead has bead C row" "sp-cr-e2e-c" "$e2e_desc"
 
 # Step 2: second trigger run → dedup.
 e2e_trig2="$(env -i HOME="$T" \
-    PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin" \
+    PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_BD="$_e2e_bd" \
     SPIRA_DB="$SPIRA_DB" \

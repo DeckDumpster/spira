@@ -26,6 +26,13 @@ pub struct Cli {
     pub fayth: String,
     pub mode: Mode,
     pub prompt_from_stdin: bool,
+    /// `--escape`: direct-summon this fayth, bypassing pool and lane checks (replaces
+    /// `spira/escape.sh`, sp-zpaq0). Every other field is ignored in this mode except
+    /// `home` and `fayth`.
+    pub escape: bool,
+    /// `--dry-run` after `--escape <fayth>`: passed through to the summoned aeon, not a
+    /// dry run of the escape decision itself.
+    pub escape_dry_run: bool,
 }
 
 pub fn parse(args: &[String]) -> Result<Cli, String> {
@@ -38,6 +45,12 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
         }
         home = Some(a[1].clone());
         a.drain(..2);
+    }
+    if a.first().map(|s| s.as_str()) == Some("--escape") {
+        let escape_usage = "usage: aeon --escape <fayth> [--dry-run]".to_string();
+        let fayth = a.get(1).cloned().filter(|f| !f.is_empty()).ok_or(escape_usage)?;
+        let escape_dry_run = a.get(2).map(|s| s.as_str()) == Some("--dry-run");
+        return Ok(Cli { home, fayth, mode: Mode::Claim, prompt_from_stdin: false, escape: true, escape_dry_run });
     }
     let fayth = a.first().cloned().filter(|f| !f.is_empty()).ok_or_else(|| usage.clone())?;
     let (mut mode, mut stdin) = (Mode::Claim, false);
@@ -63,7 +76,7 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
         }
         _ => {}
     }
-    Ok(Cli { home, fayth, mode, prompt_from_stdin: stdin })
+    Ok(Cli { home, fayth, mode, prompt_from_stdin: stdin, escape: false, escape_dry_run: false })
 }
 
 fn main() {
@@ -109,6 +122,18 @@ fn main() {
     let claim_bin = "spira-claim".to_string();
 
     let seam = BashSeam { lib: home.join("lib.sh"), fayth_file: fayth_file.clone(), fayth: cli.fayth.clone(), env: &env };
+
+    if cli.escape {
+        // world_gate, capacity_paused, fayth_ready and summon_argv carry real side
+        // effects (a capacity probe can clear the pause file; an expired drain is lifted
+        // and logged) that must stay lib.sh's, reached through the same seam summon_fayth
+        // uses — not reimplemented in Rust where they could drift (escape.rs's own doc).
+        let exec = RealExec { env: &env, timeout: None };
+        let sink = StdSink;
+        let summon_bin = original.get("SPIRA_SUMMON").cloned().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemd-run".to_string());
+        let rc = aeon::escape::run(&seam, &exec, &env, &sink, &summon_bin, &home, &cli.fayth, cli.escape_dry_run, util::now_epoch());
+        std::process::exit(rc);
+    }
     let bd = BdCli {
         bd: conf.or("SPIRA_BD", "bd"),
         db: conf.db(),
@@ -126,7 +151,7 @@ fn main() {
     let clock = util::now_epoch;
     let dry = cli.mode == Mode::DryRun;
     let mut run = Run {
-        d: Deps { bd: &bd, seam: &seam, git: &git, exec: &exec, launcher: &RealLauncher, sink: &sink, env: &env, clock: &clock },
+        d: Deps { bd: &bd, seam: &seam, git: &git, exec: &exec, launcher: &RealLauncher, sink: &sink, env: &env, clock: &clock, sleep: &|d| std::thread::sleep(d) },
         ledger: Ledger { path: conf.ledger(), dry },
         conf,
         fayth,
@@ -174,5 +199,19 @@ mod tests {
         assert_eq!(parse(&a(&["ops", "--sweep", "--prompt", "look"])).unwrap().mode, Mode::Sweep { prompt: Some("look".into()) });
         assert!(parse(&a(&["ops", "--sweep", "-"])).unwrap().prompt_from_stdin);
         assert_eq!(parse(&a(&["ops", "--sweep"])).unwrap().mode, Mode::Sweep { prompt: None });
+    }
+
+    #[test]
+    fn escape_grammar() {
+        let c = parse(&a(&["--escape", "stretchy"])).unwrap();
+        assert!(c.escape);
+        assert_eq!(c.fayth, "stretchy");
+        assert!(!c.escape_dry_run);
+        let c = parse(&a(&["--escape", "stretchy", "--dry-run"])).unwrap();
+        assert!(c.escape_dry_run);
+        let c = parse(&a(&["--home", "/h", "--escape", "stretchy"])).unwrap();
+        assert_eq!(c.home.as_deref(), Some("/h"));
+        assert!(c.escape);
+        assert!(parse(&a(&["--escape"])).is_err());
     }
 }
