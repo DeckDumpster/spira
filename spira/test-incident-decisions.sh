@@ -81,7 +81,7 @@ mkdir -p "$TMP/home" "$TMP/run"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/home/mail.sh"; chmod +x "$TMP/home/mail.sh"
 
 inc() {
-    env -i HOME="$HOME" PATH="$PATH" \
+    env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
         SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" \
         SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_DB="fakedb" \
         SPIRA_RUN="$TMP/run" SPIRA_HOME="$TMP/home" \
@@ -122,7 +122,7 @@ M
 chmod +x "$TMP/home/mail.sh"
 
 inc_env() {   # inc_env VAR=val [VAR=val ...] -- assignments only; ref comes from one of them
-    env -i HOME="$HOME" PATH="$PATH" \
+    env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
         SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" \
         MAIL_LOG="$TMP/mail.log" \
         SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_DB="fakedb" \

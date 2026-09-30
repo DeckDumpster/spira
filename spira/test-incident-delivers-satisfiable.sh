@@ -36,7 +36,7 @@ export STUB_BD_STATE="$TMP/state.json" STUB_BD_LOG="$TMP/bd.log"
 
 file_one() {  # file_one <ref> [VAR=val ...]
     local ref="$1"; shift
-    printf 'payload' | env -i HOME="$HOME" PATH="$PATH" \
+    printf 'payload' | env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
         SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" \
         SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$TMP/home" \

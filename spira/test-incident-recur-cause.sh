@@ -91,7 +91,7 @@ file_incident() {  # file_incident <ref> <title> <payload> [VAR=val ...]
     local ref="$1" title="$2" payload="$3"; shift 3
     printf '%s' "$payload" | \
         env SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" \
-        SPIRA_HOME="$TMP/inc-home" \
+        SPIRA_HOME="$TMP/inc-home" PATH="$TMP/inc-home:$PATH" \
         SPIRA_INCIDENT_REF="$ref" \
         SPIRA_INCIDENT_LOCK="$TMP/run/rc-cause-test.lock" \
         SPIRA_INCIDENT_REPO= \
@@ -110,7 +110,7 @@ file_watcher_incident() {
         env SPIRA_CONF="$TMP/no-conf" \
         SPIRA_DB="$SPIRA_DB" \
         SPIRA_RUN="$TMP/run" \
-        SPIRA_HOME="$TMP/inc-home" \
+        SPIRA_HOME="$TMP/inc-home" PATH="$TMP/inc-home:$PATH" \
         SPIRA_INCIDENT_REF="$ref" \
         SPIRA_INCIDENT_LOCK="$TMP/run/watcher.lock" \
         SPIRA_INCIDENT_REPO= \

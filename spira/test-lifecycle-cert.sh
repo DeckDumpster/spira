@@ -212,7 +212,7 @@ gate_fixture_branch spira/sp-gpass
 printf 'repo | %s | push | origin/main |  | true\n' "$REPO" > "$MAP"
 TIP_PASS="$(git -C "$REPO" rev-parse spira/sp-gpass)"
 seed_bead sp-gpass WORKING - -
-gout="$(gate_fixture_run spira/sp-gpass repo \
+gout="$(gate_fixture_run spira/sp-gpass repo PATH="$PATH" \
     SPIRA_GATE_BEAD=sp-gpass SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" \
     SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP" SPIRA_LC_USER=root SPIRA_LC_PASSWORD=)"
 want "gate.sh: reports PASS" "VERDICT=PASS" "$gout"
@@ -230,7 +230,7 @@ echo "gate.sh: a real FAIL sends the row to REWORK, not CERTIFIED:"
 gate_fixture_branch spira/sp-gred bad.txt trip
 printf 'repo | %s | push | origin/main |  | test ! -f bad.txt\n' "$REPO" > "$MAP"
 seed_bead sp-gred WORKING - -
-gout2="$(gate_fixture_run spira/sp-gred repo \
+gout2="$(gate_fixture_run spira/sp-gred repo PATH="$PATH" \
     SPIRA_GATE_BEAD=sp-gred SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" \
     SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP" SPIRA_LC_USER=root SPIRA_LC_PASSWORD=)"
 want "gate.sh: reports FAIL" "VERDICT=FAIL" "$gout2"

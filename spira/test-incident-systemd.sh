@@ -30,7 +30,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/home/mail.sh"; chmod +x "$TMP/hom
 export STUB_BD_STATE="$TMP/state.json" STUB_BD_LOG="$TMP/bd.log"
 
 sysinc() {  # sysinc <unit>
-    env -i HOME="$HOME" PATH="$PATH" \
+    env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
         SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" \
         SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
         SPIRA_INCIDENT_LOCK="$TMP/run/systemd-test.lock" \
@@ -92,7 +92,7 @@ echo
 echo "an unreachable database leaves the systemd-triggered filing spooled, not lost:"
 # ======================================================================================
 rm -rf "$TMP/run/incident-spool"; mkdir -p "$TMP/run/incident-spool"
-out2="$(env -i HOME="$HOME" PATH="$PATH" \
+out2="$(env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
     SPIRA_BD="$TMP/no-such-bd" \
     SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/systemd-test.lock" \
