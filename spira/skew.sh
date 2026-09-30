@@ -229,6 +229,17 @@ check() {
         return 3
     fi
 
+    # LOCAL RELEASE MODE (queue.local): nothing landing through this box's own home repo
+    # ever gets a release tag — `queue land-local` builds, verifies and activates a commit
+    # straight off local/main, with no push to a forge. The tag machinery below (all_tags,
+    # release_tag, NOT-LATEST/MANIFEST-MISMATCH) answers a question this repo never has an
+    # answer to, so it never runs for it. A repository that still lands through push/pr (the
+    # public pipeline) is untouched: repo_land defaults to "push", so this never fires there.
+    if [ "$(repo_land "$(spira_home_repo)")" = "queue.local" ]; then
+        check_local "$activated_name" "$manifest_commit" "$do_escalate"
+        return $?
+    fi
+
     # THE POSITIVE CONTROL: at least one release tag must exist before the check can claim
     # anything is current. No tags means the check cannot prove currency or detect a mismatch.
     # Artifact mode: SPIRA_REPO has no .git; fall back to gh release list when
@@ -348,6 +359,99 @@ except Exception:
 }
 
 # =======================================================================================
+# check_local — the queue.local answer to "is the activated release current". No release
+# tag ever exists for a commit this box landed itself (nothing pushes one), so `check`'s tag
+# machinery cannot answer the question at all here; this is the branch that runs instead.
+#
+# `release verify` and `release status` do the deterministic work (MANIFEST/hash checking,
+# the hotfix record); this glues their answers to the one question skew asks. Sourced with
+# lib.sh, `release` is the release crate's own binary, resolved off PATH like every other
+# release-tier program this file already calls (e.g. `release build/verify/activate` in
+# refresh(), below).
+#
+#   MATCH     MANIFEST commit == the home repo's landed ref tip                -> clean
+#   HOTFIX    MANIFEST commit is not the tip, but `release status` records it
+#             as the standing hotfix                                          -> clean
+#   BEHIND    MANIFEST commit is an ancestor of the tip, no hotfix recorded    -> finding
+#   TAMPERED  `release verify` finds the release does not match its own MANIFEST -> finding
+#   otherwise (commit unresolvable against the tip, no hotfix explains it)    -> CANNOT-VERIFY
+#
+# Fail closed (law-absence-needs-a-positive-control): an unexplained divergence is
+# CANNOT-VERIFY, never silently accepted as current.
+# =======================================================================================
+check_local() {
+    local activated_name="$1" manifest_commit="$2" do_escalate="$3"
+    local home repo base tip
+    home="$(spira_home_repo)"
+    repo="$(repo_root "$home" 2>/dev/null)"
+    if [ -z "$repo" ] || [ ! -e "$repo/.git" ]; then
+        echo "skew: cannot check — repo:$home has no resolvable git checkout" >&2
+        return 3
+    fi
+    base="$(spira_landref "$home" 2>/dev/null)" || {
+        echo "skew: cannot check — cannot resolve the ref repo:$home lands on" >&2; return 3; }
+    tip="$(git -C "$repo" rev-parse -q --verify "$base" 2>/dev/null)" || {
+        echo "skew: cannot check — ref $base does not resolve in $repo" >&2; return 3; }
+
+    local findings="" hard=0 cond_behind=0 cond_tampered=0 hotfix_line=""
+
+    # ---------------------------------------------------------------- LOCAL-TAMPERED
+    # --no-pre-activate: this is a drift check, not an activation rehearsal — it must never
+    # be Dolt/bead-store bound (the design's own rule), so it skips pre-activate's store
+    # check and asks only whether the release still matches its own MANIFEST.
+    local verify_out
+    if ! verify_out="$(release verify "$activated_name" --no-pre-activate 2>&1)"; then
+        hard=1; cond_tampered=1
+        findings="${findings}LOCAL-TAMPERED release $activated_name fails verify: $(printf '%s' "$verify_out" | tr '\n' ' ')
+"
+    fi
+
+    # ---------------------------------------------------------------- LOCAL-BEHIND / hotfix
+    if [ "$manifest_commit" != "$tip" ]; then
+        hotfix_line="$(release status 2>/dev/null | grep '^RUNNING UNLANDED ' || true)"
+        case "$hotfix_line" in
+            "RUNNING UNLANDED $manifest_commit:"*) ;;  # a recorded, deliberate divergence
+            *)
+                if git -C "$repo" merge-base --is-ancestor "$manifest_commit" "$tip" 2>/dev/null; then
+                    local behind
+                    behind="$(git -C "$repo" rev-list --count "$manifest_commit..$tip" 2>/dev/null)"
+                    hard=1; cond_behind=1
+                    findings="${findings}LOCAL-BEHIND activated $activated_name ($manifest_commit) is ${behind:-an unresolved number of} commit(s) behind $base ($tip)
+"
+                else
+                    findings="${findings}CANNOT-VERIFY activated $activated_name ($manifest_commit) is neither $base's tip ($tip) nor a recorded standing hotfix
+"
+                fi
+                ;;
+        esac
+    fi
+
+    if [ -z "$findings" ]; then
+        if [ "$manifest_commit" = "$tip" ]; then
+            printf 'skew: in effect — %s matches %s (%s); MANIFEST verifies\n' "$activated_name" "$base" "$tip"
+        else
+            printf 'skew: in effect — %s is a recorded standing hotfix (%s); %s is at %s; MANIFEST verifies\n' \
+                "$activated_name" "$hotfix_line" "$base" "$tip"
+        fi
+        return 0
+    fi
+
+    printf '%s' "$findings"
+
+    # A CANNOT-VERIFY line alone is not a verdict in either direction; exit 3, not 1.
+    if [ "$hard" = 0 ]; then
+        echo "skew: the check could not complete — this is not a clean verdict" >&2
+        return 3
+    fi
+
+    if [ "$do_escalate" = 1 ]; then
+        local condition_key="v2:LOCAL-BEHIND=${cond_behind} LOCAL-TAMPERED=${cond_tampered}"
+        escalate "$condition_key" "$findings"
+    fi
+    return 1
+}
+
+# =======================================================================================
 # escalate — once per distinct CONDITION, not once per pass.
 #
 # Keyed on which finding TYPES are present (BEHIND/DIRTY/COPY/STALE yes/no), not on the
@@ -378,6 +482,10 @@ escalate() {
     local default_action
     if [[ "$condition_key" == *"MANIFEST-MISMATCH=1"* ]]; then
         default_action="the release artifact and its git tag disagree — verify the release was built from the correct commit; rebuild and re-activate if not"
+    elif [[ "$condition_key" == *"LOCAL-TAMPERED=1"* ]]; then
+        default_action="the activated release no longer matches its own MANIFEST — release build the commit again and release activate the rebuilt release"
+    elif [[ "$condition_key" == *"LOCAL-BEHIND=1"* ]]; then
+        default_action="the activated release is behind local/main's tip — land it forward with queue land-local, or if the tip is bad, queue rollback-local"
     elif [[ "$condition_key" == *"LOCAL-SKEW=1"* ]]; then
         default_action="what is running does not match local/main's head — land the round again with queue land-local, or undo with queue rollback-local; refresh will not act on its own"
     else
@@ -462,6 +570,19 @@ _refresh_check_only() {
         return 0
     fi
 
+    # A recorded standing hotfix (release status) explains the mismatch on purpose — it is
+    # not skew, it is the operator's own stop-the-world fix, already visible to doctor.sh and
+    # watchtower through the same record. Never alarm on the condition its own mechanism
+    # exists to allow.
+    local hotfix_line
+    hotfix_line="$(release status 2>/dev/null | grep '^RUNNING UNLANDED ' || true)"
+    case "$hotfix_line" in
+        "RUNNING UNLANDED $running:"*)
+            echo "skew: refresh: queue.local — running ($running) is a recorded standing hotfix ($hotfix_line); refresh never resets it"
+            return 0
+            ;;
+    esac
+
     local finding
     finding="LOCAL-SKEW running $running does not match $base ($base_sha) — queue.local deploys only through queue land-local; refresh never resets it"
     echo "skew: $finding"
@@ -493,7 +614,19 @@ _refresh_check_only() {
 # never act on one.
 # =======================================================================================
 refresh() {
-    local repo="${1:-$SPIRA_REPO}" base base_branch remote behind dirty current
+    local repo="${1:-}"
+    if [ -z "$repo" ]; then
+        # NO EXPLICIT REPO: the periodic timer's own call (its ExecStartPre passes none).
+        # $SPIRA_REPO, once a release is activated, names the RELEASE directory the running
+        # tree was built into (conf.sh derives it from $SPIRA_HOME/.., under spira-releases/
+        # — never a git checkout on its own), not the harness's own working checkout. Prefer
+        # repo_root's answer for the home repo (the same repo-map lookup foreign() and check()
+        # already use); fall back to $SPIRA_REPO exactly as before when that does not resolve
+        # to a checkout, so every other caller's behaviour is unchanged.
+        repo="$(repo_root "$(spira_home_repo)" 2>/dev/null)"
+        [ -n "$repo" ] && [ -e "$repo/.git" ] || repo="$SPIRA_REPO"
+    fi
+    local base base_branch remote behind dirty current
     local _qlref_name; _qlref_name="$(_skew_repo_name_for_path "$repo" 2>/dev/null)" || _qlref_name=""
     if [ -n "$_qlref_name" ] && [ "$(repo_land "$_qlref_name" 2>/dev/null)" = "queue.local" ]; then
         _refresh_check_only "$repo" "$_qlref_name"
