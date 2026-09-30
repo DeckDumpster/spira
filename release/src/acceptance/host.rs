@@ -46,12 +46,22 @@ impl Cmd {
     }
 }
 
-/// A finished captured run: exit code (127 when it could not start, 128+n on signal n) and
-/// its stdout followed by its stderr.
+/// A finished captured run: exit code (127 when it could not start, 128+n on signal n), its
+/// stdout followed by its stderr (`text`, the script's `2>&1`), and its stdout alone (`out`,
+/// the script's `2>/dev/null` — what a reader parses, so a warning on stderr can never
+/// corrupt a JSON reply or a sha).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Out {
     pub rc: i32,
     pub text: String,
+    pub out: String,
+}
+
+impl Out {
+    /// A run whose stdout is `s` and whose stderr is empty.
+    pub fn stdout(rc: i32, s: &str) -> Out {
+        Out { rc, text: s.into(), out: s.into() }
+    }
 }
 
 pub trait Host {
@@ -85,11 +95,11 @@ impl Host for RealHost {
     fn run(&self, c: &Cmd) -> Out {
         match command(c).stdin(Stdio::null()).output() {
             Ok(o) => {
-                let mut text = String::from_utf8_lossy(&o.stdout).into_owned();
-                text.push_str(&String::from_utf8_lossy(&o.stderr));
-                Out { rc: code(o.status), text }
+                let out = String::from_utf8_lossy(&o.stdout).into_owned();
+                let text = format!("{out}{}", String::from_utf8_lossy(&o.stderr));
+                Out { rc: code(o.status), text, out }
             }
-            Err(e) => Out { rc: 127, text: format!("{}: {e}\n", c.prog) },
+            Err(e) => Out { rc: 127, text: format!("{}: {e}\n", c.prog), out: String::new() },
         }
     }
 

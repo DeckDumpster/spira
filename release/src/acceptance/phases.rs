@@ -66,7 +66,7 @@ impl Run<'_> {
             c = c.env(*k, *v);
         }
         let out = self.h.run(&c);
-        (out.rc == 0 && !out.text.is_empty()).then_some(out.text)
+        (out.rc == 0 && !out.out.is_empty()).then_some(out.out)
     }
 
     /// The install environment every phase's `install.sh`/`ready.sh` runs under: the launcher
@@ -123,7 +123,7 @@ impl Run<'_> {
     /// Start the sentinel by its installed (instance-suffixed) unit name. Best-effort: the
     /// stage that follows is what judges it.
     fn start_sentinel(&self) {
-        let unit = first_fields(&self.systemctl(&["list-unit-files", "spira-sentinel*.service", "--no-legend", "--plain"]).text).into_iter().next().unwrap_or_default();
+        let unit = first_fields(&self.systemctl(&["list-unit-files", "spira-sentinel*.service", "--no-legend", "--plain"]).out).into_iter().next().unwrap_or_default();
         self.systemctl(&["start", &unit]);
     }
 
@@ -141,7 +141,7 @@ impl Run<'_> {
         let start = self.h.now();
         loop {
             let out = self.h.run(&self.gh(&["release", "view", tag, "--json", "assets", "--jq", ".assets[].name"]));
-            if out.rc == 0 && out.text.lines().any(|l| l.ends_with(".tar.gz")) {
+            if out.rc == 0 && out.out.lines().any(|l| l.ends_with(".tar.gz")) {
                 return true;
             }
             if self.h.now().saturating_sub(start) >= timeout {
@@ -183,8 +183,8 @@ impl Run<'_> {
     /// Start every installed oneshot `spira-*` service once; none may fail.
     fn check_oneshots(&mut self, label: &str) {
         let mut failed = Vec::new();
-        for u in first_fields(&self.systemctl(&["list-unit-files", "--no-legend", "--plain", "spira-*.service"]).text) {
-            if self.systemctl(&["show", "-p", "Type", "--value", &u]).text.trim() != "oneshot" {
+        for u in first_fields(&self.systemctl(&["list-unit-files", "--no-legend", "--plain", "spira-*.service"]).out) {
+            if self.systemctl(&["show", "-p", "Type", "--value", &u]).out.trim() != "oneshot" {
                 continue;
             }
             if self.systemctl(&["start", &u]).rc != 0 {
@@ -196,11 +196,11 @@ impl Run<'_> {
     }
 
     fn unit_set(&self) -> Vec<String> {
-        unit_set(&self.systemctl(&["list-unit-files", "--no-legend"]).text)
+        unit_set(&self.systemctl(&["list-unit-files", "--no-legend"]).out)
     }
 
     fn bead_finished(&self, id: &str) -> bool {
-        bead_finished(&self.h.run(&self.bd(&["show", id, "--json"])).text)
+        bead_finished(&self.h.run(&self.bd(&["show", id, "--json"])).out)
     }
 
     fn world_halted_line(&self) -> Option<String> {
@@ -240,7 +240,7 @@ impl Run<'_> {
         }
 
         let br = format!("spira/{id}");
-        let (ok, t) = self.poll(60, 2, || self.h.run(&self.git(&["log", "--oneline", &br])).text.contains(id));
+        let (ok, t) = self.poll(60, 2, || self.h.run(&self.git(&["log", "--oneline", &br])).out.contains(id));
         let (okn, badn) = if p == "phase A" {
             (format!("{p} stage 3: commit on spira/{id} for {id} ({t}s)"), format!("{p} stage 3: commit on spira/{id} for {id}"))
         } else {
@@ -265,8 +265,8 @@ impl Run<'_> {
         let (ok, t) = self.poll(120, 5, || {
             self.h.run(&self.git(&["fetch", "origin"]));
             let r = self.h.run(&self.git(&["rev-parse", &origin]));
-            let now = if r.rc == 0 { r.text.trim().to_string() } else { base.to_string() };
-            !base.is_empty() && now != base && self.h.run(&self.git(&["log", "--format=%s", &format!("{base}..{now}")])).text.contains(id)
+            let now = if r.rc == 0 { r.out.trim().to_string() } else { base.to_string() };
+            !base.is_empty() && now != base && self.h.run(&self.git(&["log", "--format=%s", &format!("{base}..{now}")])).out.contains(id)
         });
         if ok {
             self.ok(&format!("{landed_name} ({t}s)"));
@@ -278,7 +278,7 @@ impl Run<'_> {
 
     fn rev(&self, r: &str) -> Option<String> {
         let o = self.h.run(&self.git(&["rev-parse", r]));
-        (o.rc == 0).then(|| o.text.trim().to_string()).filter(|s| !s.is_empty())
+        (o.rc == 0).then(|| o.out.trim().to_string()).filter(|s| !s.is_empty())
     }
 
     fn count_beads(&self) -> Option<usize> {
@@ -286,12 +286,12 @@ impl Run<'_> {
         if o.rc != 0 {
             return None;
         }
-        bd_json(&o.text).map(|v| v.len())
+        bd_json(&o.out).map(|v| v.len())
     }
 
     fn count_memories(&self) -> Option<usize> {
         let o = self.h.run(&self.bd(&["memories"]));
-        (o.rc == 0).then(|| o.text.lines().filter(|l| !l.is_empty()).count())
+        (o.rc == 0).then(|| o.out.lines().filter(|l| !l.is_empty()).count())
     }
 }
 
@@ -340,7 +340,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
         r.check(&name, h.on_path(t), || "not found; install before running acceptance".into());
     }
     let mgr = r.systemctl(&["is-system-running"]);
-    r.check("prereq: systemd --user available", !mgr.text.trim().is_empty(), || {
+    r.check("prereq: systemd --user available", !mgr.out.trim().is_empty(), || {
         "systemctl --user is-system-running produced no output; check XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS".into()
     });
     let scratch = r.o.a.scratch_repo.clone();
@@ -446,7 +446,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
     }
 
     println!("\nphase A — end-to-end bead: file, sentinel summons aeon, land by ancestry");
-    let land_ref = h.run(&r.git(&["rev-parse", "--abbrev-ref", "HEAD"])).text.trim().to_string();
+    let land_ref = h.run(&r.git(&["rev-parse", "--abbrev-ref", "HEAD"])).out.trim().to_string();
     let land_ref = if land_ref.is_empty() { "main".to_string() } else { land_ref };
     let base = r.rev(&format!("origin/{land_ref}")).or_else(|| r.rev("HEAD")).unwrap_or_default();
     let (id, out) = r.file_probe(
@@ -465,7 +465,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
         let sel = format!("{},{}", labels.scope, labels.plan);
         let ready = h.run(&r.bd(&["ready", "--label", &sel, "--limit", "0", "--json"]));
         let name = format!("phase A: bead is claimable by builder predicate ({sel})");
-        r.check(&name, ready_has(&ready.text, &id), || format!("bead {id} not found in 'bd ready --label {sel}' — builder predicate does not match bead labels"));
+        r.check(&name, ready_has(&ready.out, &id), || format!("bead {id} not found in 'bd ready --label {sel}' — builder predicate does not match bead labels"));
         let landed = format!("phase A stage 5: bead {id} landed on {}:{land_ref}", scratch.display());
         r.follow("phase A", &id, &land_ref, &base, &landed);
     }
@@ -473,7 +473,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
     println!("\nphase A — uninstall and clean state");
     let rc = h.run(&r.tool("uninstall.sh").arg("--yes")).rc;
     r.is0("phase A: uninstall.sh --yes exits 0", rc);
-    let left: Vec<String> = first_fields(&r.systemctl(&["list-unit-files", "--no-legend", "--plain"]).text).into_iter().filter(|u| u.starts_with("spira-")).collect();
+    let left: Vec<String> = first_fields(&r.systemctl(&["list-unit-files", "--no-legend", "--plain"]).out).into_iter().filter(|u| u.starts_with("spira-")).collect();
     r.check("phase A: no spira-* units remain after uninstall", left.is_empty(), || left.join("\n"));
 
     // ---- phase B / C ----------------------------------------------------------------------
@@ -641,7 +641,7 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
     }
 
     h.show(&r.tool("world.sh").arg("start"));
-    let active = first_fields(&r.systemctl(&["list-units", "--state=active", "--no-legend", "--plain"]).text);
+    let active = first_fields(&r.systemctl(&["list-units", "--state=active", "--no-legend", "--plain"]).out);
     r.check("phase D: sentinel timer active (world live before upgrade)", active.iter().any(|u| u.contains("spira-sentinel")), || "no spira-sentinel* in active units".into());
     h.sleep(30);
 
@@ -664,7 +664,7 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
         r.is_same("phase D: operator override survived aged upgrade", &val, &got);
 
         h.sleep(120);
-        let failed: Vec<String> = first_fields(&r.systemctl(&["list-units", "--state=failed", "--no-legend", "--plain"]).text).into_iter().filter(|u| u.starts_with("spira-")).collect();
+        let failed: Vec<String> = first_fields(&r.systemctl(&["list-units", "--state=failed", "--no-legend", "--plain"]).out).into_iter().filter(|u| u.starts_with("spira-")).collect();
         r.check("phase D: no failed spira units 2 min after aged upgrade", failed.is_empty(), || failed.join("\n"));
         match r.world_halted_line() {
             Some(l) => r.bad("phase D: world running after aged upgrade", &l),

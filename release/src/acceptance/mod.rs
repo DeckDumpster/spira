@@ -243,7 +243,7 @@ impl<'h> Run<'h> {
         let since = crate::fsutil::rfc3339(self.run_start).replace('T', " ").replace('Z', " UTC");
         put("timers.txt", sc(&["list-timers", "--all"]));
         put("units.txt", sc(&["list-units", "spira-*", "--all"]));
-        let units: Vec<String> = first_fields(&h.run(&sc(&["list-units", "spira-*", "--all", "--no-legend", "--plain"])).text);
+        let units: Vec<String> = first_fields(&h.run(&sc(&["list-units", "spira-*", "--all", "--no-legend", "--plain"])).out);
         let mut status = String::new();
         for u in &units {
             status.push_str(&format!("\n=== {u} ===\n"));
@@ -474,7 +474,7 @@ pub fn main(argv: &[String]) -> u8 {
     };
     let origin_of = notes_repo.clone().unwrap_or_else(|| PathBuf::from("."));
     let origin = RealHost.run(&Cmd::new("git").args(["-C", &origin_of.display().to_string(), "remote", "get-url", "origin"]));
-    let gh_repo = gh_repo_from([env("SPIRA_FORGE_REPO"), env("GH_REPO"), env("GITHUB_REPOSITORY")], (origin.rc == 0).then_some(origin.text));
+    let gh_repo = gh_repo_from([env("SPIRA_FORGE_REPO"), env("GH_REPO"), env("GITHUB_REPOSITORY")], (origin.rc == 0).then_some(origin.out));
     let secs = |k: &str, d: u64| env(k).and_then(|v| v.parse().ok()).unwrap_or(d);
     let o = Opts {
         bd_db: a.bd_db.clone().unwrap_or_else(|| home.join("spira-acceptance-test-db")),

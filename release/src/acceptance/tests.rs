@@ -186,7 +186,7 @@ impl Fake {
 
     fn answer(&self, c: &Cmd) -> Out {
         let a: Vec<&str> = c.args.iter().map(String::as_str).collect();
-        let ok = |t: &str| Out { rc: 0, text: t.to_string() };
+        let ok = |t: &str| Out::stdout(0, t);
         let prog = c.prog.rsplit('/').next().unwrap_or("");
         match (prog, a.as_slice()) {
             ("systemctl", ["--user", "is-system-running"]) => ok("running\n"),
@@ -222,7 +222,7 @@ impl Fake {
                     fs::write(self.releases.join(".tags/spira-new"), format!("{v}\n")).unwrap();
                     ok("")
                 } else {
-                    Out { rc: self.rollback.0, text: self.rollback.1.into() }
+                    Out { rc: self.rollback.0, text: self.rollback.1.into(), out: String::new() }
                 }
             }
             ("world.sh", ["status"]) => ok("world: RUNNING\n"),
@@ -237,11 +237,18 @@ impl Fake {
                 self.next_id.set(self.next_id.get() + 1);
                 ok(&format!("✓ Created issue: sp-s{}\n", self.next_id.get()))
             }
-            ("bd", ["-C", _, "ready", ..]) => ok(&format!("[{}]", self.probes.borrow().iter().map(|i| format!("{{\"id\":\"{i}\"}}")).collect::<Vec<_>>().join(","))),
-            ("bd", ["-C", _, "show", _, "--json"]) => ok(r#"[{"status":"open","labels":["spira-submitted"]}]"#),
+            // A warning on stderr (bd's schema-skew notice) never reaches what is parsed.
+            ("bd", ["-C", _, "ready", ..]) => {
+                let json = format!("[{}]", self.probes.borrow().iter().map(|i| format!("{{\"id\":\"{i}\"}}")).collect::<Vec<_>>().join(","));
+                Out { rc: 0, text: format!("{json}\nwarning: schema skew\n"), out: json }
+            }
+            ("bd", ["-C", _, "show", _, "--json"]) => {
+                let json = r#"[{"status":"open","labels":["spira-submitted"]}]"#;
+                Out { rc: 0, text: format!("{json}\nwarning: schema skew\n"), out: json.into() }
+            }
             ("bd", ["-C", _, "list", "--all", "--json"]) => {
                 if self.bead_count_fails {
-                    Out { rc: 1, text: "Error: database unreachable\n".into() }
+                    Out { rc: 1, text: "Error: database unreachable\n".into(), out: String::new() }
                 } else {
                     ok(&format!("[{}]", vec!["{}"; self.next_id.get() as usize].join(",")))
                 }
@@ -259,7 +266,7 @@ impl Fake {
             }
             ("git", _) => ok(""),
             ("gh", _) => ok(""),
-            _ => Out { rc: 127, text: format!("fake: no answer for {}\n", c.line()) },
+            _ => Out { rc: 127, text: format!("fake: no answer for {}\n", c.line()), out: String::new() },
         }
     }
 }

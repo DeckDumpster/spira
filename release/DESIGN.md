@@ -442,7 +442,14 @@ a PASS, each class of FAIL, and the waiver.
 8. **`journalctl --since`** carries an explicit `UTC`. The script passed a UTC wall time
    that journalctl read as local time.
 9. **JSON is parsed with serde_json.** The script parsed it with inline python. A reply that
-   cannot be parsed still counts as "not claimable" or "not finished", as before.
+   cannot be parsed still counts as "not claimable" or "not finished", as before. Every reader
+   parses **stdout alone**, which is the script's `2>/dev/null`. The first cut appended stderr
+   to stdout, and in a real run a bd warning after the JSON turned a claimable probe into a
+   FAIL.
+10. **Unit lists are read with `--plain`.** Without it, `systemctl list-units --state=failed`
+    prefixes a failed unit with `●`. The script's `awk '{print $1}' | grep '^spira-'` then
+    dropped exactly the units it was looking for, so the phase D crash-loop check passed
+    vacuously.
 
 ## Layout
 
