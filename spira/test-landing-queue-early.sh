@@ -18,7 +18,7 @@
 # A queue-mode branch is certified instantly (no local gate — law-a-round-takes-
 # certified-tips), so ordering is read off the pass's own log rather than a gate delay:
 # the "certified spira/<id>" line is land_repo's own marker that the branch loop reached
-# this branch. verdict.sh and batch.sh are stubbed to control what the forge reports.
+# this branch. verdict.sh is stubbed to control what the forge reports.
 #
 # covers: landing-pass/*
 # timeout: 120
@@ -72,8 +72,7 @@ stub gh         'exit 1'
 
 # VERDICT STUB: stateful — outputs a landing line exactly once (simulates a batch file that
 # disappears after a fast-forward). After the first call the batch is gone; subsequent calls
-# are silent. batch.sh is a no-op (no new batch to open in this fixture).
-stub batch.sh 'exit 0'
+# are silent.
 # THE QUEUE STEP IS `queue step <repo>` now (landing-pass/DESIGN.md §8 D5): the
 # stub stands in for the queue binary and runs the stubbed verdict.sh, which is all this
 # suite's ordering assertions read.
