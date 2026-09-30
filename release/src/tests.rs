@@ -221,6 +221,9 @@ impl Systemctl for FakeSystemctl {
     fn state(&self, unit: &str) -> Result<UnitState, String> {
         Ok(self.states.borrow().get(unit).cloned().unwrap_or_else(|| UnitState { active: "inactive".into(), result: "success".into(), kind: "simple".into() }))
     }
+    fn cat(&self, _unit: &str) -> Result<String, String> {
+        Err("cat: not modelled by this fake — activate/rollback never call it".into())
+    }
     fn restart(&self, unit: &str) -> Result<(), String> {
         self.restarts.borrow_mut().push(unit.into());
         if self.restart_fails.contains(unit) {
@@ -1081,7 +1084,7 @@ fn install_tarball_unpacks_read_only_swaps_current_and_restarts_active_services(
     let tb = touch_tarball(&sb, "spira-20260101T000000Z");
     let un = FakeUnpack { name: "spira-20260101T000000Z", files: tarball_bins(), fails: false };
 
-    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO }).unwrap();
+    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO, skip_restart: false }).unwrap();
 
     assert_eq!(r.name, "spira-20260101T000000Z");
     assert!(r.fresh);
@@ -1104,6 +1107,32 @@ fn install_tarball_unpacks_read_only_swaps_current_and_restarts_active_services(
 }
 
 #[test]
+fn install_tarball_skip_restart_restarts_nothing_and_still_swaps_current() {
+    // sp-r15cf: --skip-restart is for a caller that immediately re-renders and restarts
+    // what changed (deploy.sh's _render_release_units, the acceptance harness's own
+    // install_tarball+install_sh pair) — install-tarball's own restart cannot be what
+    // switches a unit onto the new release (every ExecStart is templated with the
+    // release's own path, not "current"), so it is pure duplication there, and racing it
+    // against the render's restart of the same unit failed one deterministically enough
+    // to roll back a release that added nothing wrong (acceptance phase B).
+    let (sb, cfg) = install_world();
+    let sc = FakeSystemctl::new(cfg.unit_dir.clone());
+    let tb = touch_tarball(&sb, "spira-20260101T000000Z");
+    let un = FakeUnpack { name: "spira-20260101T000000Z", files: tarball_bins(), fails: false };
+
+    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO, skip_restart: true }).unwrap();
+
+    // current still swaps, the release is still unpacked and made read-only — only the
+    // restart is skipped.
+    assert_eq!(fs::read_link(cfg.releases.join("current")).unwrap().to_string_lossy(), r.name);
+    assert!(r.restarted.is_empty());
+    assert!(r.restart_failed.is_empty());
+    // daemon-reload still runs: a unit whose file has gone should not be left stale.
+    assert_eq!(*sc.reloads.borrow(), 1);
+    fsutil::make_writable(&cfg.releases.join(&r.name));
+}
+
+#[test]
 fn install_tarball_is_idempotent_when_the_release_already_exists() {
     let (sb, cfg) = install_world();
     let sc = FakeSystemctl::new(cfg.unit_dir.clone());
@@ -1113,7 +1142,7 @@ fn install_tarball_is_idempotent_when_the_release_already_exists() {
     // immutable); this Unpack always errors, so a call would fail the install.
     let un = FakeUnpack { name: "spira-20260101T000000Z", files: vec![], fails: true };
 
-    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO }).unwrap();
+    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO, skip_restart: false }).unwrap();
     assert!(!r.fresh);
     assert_eq!(fs::read_link(cfg.releases.join("current")).unwrap().to_string_lossy(), "spira-20260101T000000Z");
 }
@@ -1126,7 +1155,7 @@ fn install_tarball_refuses_when_the_archive_does_not_produce_the_promised_direct
     // The archive unpacks to a DIFFERENT top-level name than the tarball promised.
     let un = FakeUnpack { name: "spira-99999999T999999Z", files: vec![("MANIFEST", "commit a\n", false)], fails: false };
 
-    let err = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO }).unwrap_err();
+    let err = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO, skip_restart: false }).unwrap_err();
     assert!(err.contains("did not unpack to the expected directory"), "{err}");
     assert!(!cfg.releases.join("current").exists());
     assert!(!cfg.releases.join("spira-20260101T000000Z").exists());
@@ -1155,7 +1184,7 @@ fn install_tarball_dry_run_reports_intent_and_changes_nothing() {
     let tb = touch_tarball(&sb, "spira-20260101T000000Z");
     let un = FakeUnpack { name: "spira-20260101T000000Z", files: tarball_bins(), fails: true };
 
-    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: true, settle: Duration::ZERO }).unwrap();
+    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: true, settle: Duration::ZERO, skip_restart: false }).unwrap();
     assert_eq!(r.name, "spira-20260101T000000Z");
     assert!(!cfg.releases.join("spira-20260101T000000Z").exists());
     assert!(!cfg.releases.join("current").exists());
@@ -1173,7 +1202,7 @@ fn install_tarball_never_restarts_a_transient_unit() {
     let tb = touch_tarball(&sb, "spira-20260101T000000Z");
     let un = FakeUnpack { name: "spira-20260101T000000Z", files: tarball_bins(), fails: false };
 
-    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO }).unwrap();
+    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO, skip_restart: false }).unwrap();
     assert!(!r.restarted.contains(&"spira-landing-prod.service".to_string()), "{:?}", r.restarted);
 }
 
@@ -1185,7 +1214,7 @@ fn install_tarball_reports_a_restart_failure_but_does_not_fail_the_install() {
     let tb = touch_tarball(&sb, "spira-20260101T000000Z");
     let un = FakeUnpack { name: "spira-20260101T000000Z", files: tarball_bins(), fails: false };
 
-    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO }).unwrap();
+    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO, skip_restart: false }).unwrap();
     assert_eq!(r.restart_failed.len(), 1);
     assert!(r.restart_failed[0].starts_with("spira-tool-prod.service"), "{:?}", r.restart_failed);
     assert!(r.restarted.contains(&"spira-watch-pool-prod.service".to_string()));
@@ -1204,7 +1233,7 @@ fn install_tarball_prunes_the_oldest_timestamp_named_releases_beyond_keep_never_
     let un = FakeUnpack { name: "spira-20260101T000000Z", files: tarball_bins(), fails: false };
 
     // keep=2: the new install plus the newest old one survive; the two oldest are pruned.
-    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO }).unwrap();
+    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO, skip_restart: false }).unwrap();
     assert!(r.prune_failed.is_empty(), "{:?}", r.prune_failed);
     let mut pruned = r.pruned.clone();
     pruned.sort();

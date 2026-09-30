@@ -1416,7 +1416,8 @@ mod tests {
 
     /// GAP G14 (ops-detection-remediation): every other alert fixture in this file hand-types
     /// `["alert", "overseer"]` or a plain `flaps:<n>` — never the class-scoped `alert:<key>`
-    /// label auron.sh actually writes alongside it (test-auron.sh's own assertion, the
+    /// label auron actually writes alongside it (the auron crate's own test, formerly
+    /// test-auron.sh's assertion, the
     /// writer's half of this contract: `"event|alert,alert:sentinel-stalled,flaps:1,overseer"`).
     /// So nothing on this side had ever read a bead carrying both labels together — the two
     /// halves of the contract were asserted independently and never against each other. This

@@ -1,6 +1,7 @@
 //! CHECK 7's inputs, and the --summon-only fast path. The summon loop itself (lanes, pool,
 //! fleet ceiling, express grant, elastic reservations) is lib.sh's `ck7_summon_pass`,
-//! reached through its seam under the summon.lock it shares with escape.sh (G5).
+//! reached through its seam under the summon.lock it shares with `aeon --escape` (G5;
+//! escape.sh before it, retired sp-zpaq0).
 
 use crate::cfg::Fayth;
 use crate::host::Io;

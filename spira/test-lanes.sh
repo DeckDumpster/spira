@@ -9,7 +9,7 @@
 #
 # defect: sp-vyl4
 # tier: T1
-# covers: spira/conf.sh sentinel/src/* spira/escape.sh spira/chamber/ops.fayth UC-dispatch-07
+# covers: spira/conf.sh sentinel/src/* spira/chamber/ops.fayth UC-dispatch-07
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -42,7 +42,7 @@ want "the summon pass references spira_lane_fayths" "spira_lane_fayths" \
 want "the summon pass handles LANE_FAYTHS" "LANE_FAYTHS" \
     "$(awk '/^_ck7_summon_body\(\)/,/^}/' "$HERE/lib.sh")"
 
-# escape.sh exists and is executable.
-is "escape.sh is executable" "0" "$([ -x "$HERE/escape.sh" ] && echo 0 || echo 1)"
+# escape.sh is retired into the aeon binary itself (`aeon --escape <fayth>`, sp-zpaq0);
+# its own behaviour rows moved to test-summon-fayth.sh, which already covers this area.
 
 tl_summary
