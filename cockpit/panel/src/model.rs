@@ -359,26 +359,6 @@ fn close_decision(db: &str, item: &Item, reason: &str) -> Result<(), String> {
     }
 }
 
-/// Where `mail.sh` is, found rather than known — same reasoning as `rule_sh`: no hardcoded
-/// path, because a harness that names one operator's checkout is unbuildable for anyone
-/// else. `SPIRA_MAIL_BIN` overrides for a fixture; otherwise the binary walks up from
-/// itself looking for `spira/mail.sh`, an ancestor of wherever the panel was built.
-fn mail_sh() -> Result<String, String> {
-    if let Ok(p) = std::env::var("SPIRA_MAIL_BIN") {
-        if !p.is_empty() {
-            return Ok(p);
-        }
-    }
-    let exe = std::env::current_exe().map_err(|e| format!("cannot locate myself: {e}"))?;
-    for anc in exe.ancestors() {
-        let c = anc.join("spira").join("mail.sh");
-        if c.is_file() {
-            return Ok(c.to_string_lossy().to_string());
-        }
-    }
-    Err("mail.sh not found above this binary — set SPIRA_MAIL_BIN".into())
-}
-
 /// Run a command for its exit status, feeding it stdin — the seam `mail.sh sendmail` needs,
 /// since a message is a body on stdin and every other command here only ever needs argv.
 fn run_piped(cmd: &str, args: &[&str], stdin_body: &str) -> Result<(), String> {
@@ -417,9 +397,10 @@ fn run_piped(cmd: &str, args: &[&str], stdin_body: &str) -> Result<(), String> {
 /// the bd-scanning readers that used to notice this write after the fact
 /// (law-answers-need-a-delivery-path).
 fn notify_concierge(id: &str, subject: &str, from: &str, body: &str) -> Result<(), String> {
-    let mail = mail_sh()?;
+    // mail.sh by name (sp-gypjk): the release's spira/ is on the launcher's PATH, which
+    // child_path() hands on.
     let msg = format!("From: {from} <{from}@spira>\nSubject: {subject}\nX-Spira-Bead: {id}\n\n{body}\n");
-    run_piped(&mail, &["sendmail"], &msg)
+    run_piped("mail.sh", &["sendmail"], &msg)
 }
 
 /// Forward an answer to the concierge, and if the mail itself fails to send, say so on the

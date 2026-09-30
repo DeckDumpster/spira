@@ -119,8 +119,8 @@ exit "$rc"
         self
     }
 
-    /// Also installs a `mail.sh` stub beside the `bd` one and points `SPIRA_MAIL_BIN` at
-    /// it, for `close_decision`/`comment`'s mail-delivery leg. The stub's stdin (the whole
+    /// Also installs a `mail.sh` stub beside the `bd` one — on `SPIRA_PATH`, so the panel's
+    /// by-name `mail.sh` (child_path) finds it first — for `close_decision`/`comment`'s mail-delivery leg. The stub's stdin (the whole
     /// RFC 5322 message) is captured to its own file, since argv alone (`sendmail`) says
     /// nothing about what was sent. Controlled by `MAIL_RC`.
     pub fn mail(mut self) -> Self {
@@ -144,8 +144,6 @@ exit "$rc"
         let mut perm = std::fs::metadata(&script).unwrap().permissions();
         std::os::unix::fs::PermissionsExt::set_mode(&mut perm, 0o755);
         std::fs::set_permissions(&script, perm).expect("chmod stub mail.sh");
-        std::env::set_var("SPIRA_MAIL_BIN", &script);
-        self.set_vars.push("SPIRA_MAIL_BIN".to_string());
         self.mail_inbox = Some(inbox);
         self
     }
