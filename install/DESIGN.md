@@ -99,6 +99,18 @@ template this box ever actually renders, not a synthetic fixture.
   renders empty in that flow exactly as `render.py` always did, and is a business as usual,
   not a bug this bead owns. Re-verified byte-identical against `render.py` on all 63
   templates after reverting (**Parity**, above).
+- **The end-state check (`units-install`'s last act) bounds its wait instead of polling
+  once** (`SPIRA_INSTALL_ACTIVE_WAIT`, default 20s). A real `testenv` batch-container gate
+  run reproduced, twice, identically: `spira-cockpit.service` (`Type=notify`) enabled but
+  reported not-active right after `enable --now`. The original bash's own check was also a
+  single immediate poll with no wait — this port reached the same check after the same
+  sequence of steps, just faster (one process making library calls, not dozens of bash
+  subprocess spawns), which is the most likely reason a race that bash's own slowness
+  happened to absorb now loses often enough to matter. Root cause is not fully provable
+  without the container's own `collector.log`/`journalctl` (outside this session's reach),
+  so this is the best-evidence fix, not a certainty — flagged in the delivery report as
+  worth confirming against a real gate run, and easy to revert (drop the loop, keep one
+  `is_active` call) if the real cause turns out to be something else.
 - **The `$tmpl` "watcher template changed" check in `systemd/install.sh`'s enable loop is
   dropped, not ported.** `tmpl="${u%%@*}@.service"` was meant to mark every watcher instance
   changed when the shared `spira-watch@.service` template changed — but under per-instance

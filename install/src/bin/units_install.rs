@@ -325,23 +325,36 @@ fn main() -> ExitCode {
 
     // End-state check: every ENABLE-set unit not masked/disabled/suspended must be active,
     // unless the world is deliberately halted.
+    //
+    // BOUNDED WAIT, NOT ONE IMMEDIATE POLL: a `Type=notify` unit (spira-cockpit.service)
+    // only reports active once its own first pass signals READY=1, which can take a few
+    // real seconds (a cold collect.sh run) — comfortably inside systemd's own
+    // `TimeoutStartSec`, but not necessarily inside the handful of milliseconds this
+    // process takes to reach this check. `systemd/install.sh`'s original bash reached the
+    // same check only after dozens of its own subprocess-spawning steps, which happened to
+    // leave enough wall-clock time for this to never matter in practice; this port does the
+    // same steps faster, so the wait that was accidental there is explicit here instead.
     if !world_halted {
-        let mut not_active = Vec::new();
-        for u in manifest.enable(&instance) {
-            if report.masked.contains(&u) {
-                continue;
-            }
-            let subject = u.strip_suffix(&format!("-{instance}.service")).or_else(|| u.strip_suffix(&format!("-{instance}.timer"))).or_else(|| u.strip_suffix(".service")).or_else(|| u.strip_suffix(".timer")).unwrap_or(&u);
-            if suspended.contains(subject) {
-                continue;
-            }
-            let disabled = systemctl.is_enabled(&u).as_deref() == Some("disabled") && !report.written.contains(&u);
-            if disabled {
-                continue;
-            }
-            if !systemctl.is_active(&u) {
-                not_active.push(u);
-            }
+        let candidates: Vec<String> = manifest
+            .enable(&instance)
+            .into_iter()
+            .filter(|u| {
+                if report.masked.contains(u) {
+                    return false;
+                }
+                let subject = u.strip_suffix(&format!("-{instance}.service")).or_else(|| u.strip_suffix(&format!("-{instance}.timer"))).or_else(|| u.strip_suffix(".service")).or_else(|| u.strip_suffix(".timer")).unwrap_or(u.as_str());
+                if suspended.contains(subject) {
+                    return false;
+                }
+                !(systemctl.is_enabled(u).as_deref() == Some("disabled") && !report.written.contains(u))
+            })
+            .collect();
+        let max_wait = nonempty_env("SPIRA_INSTALL_ACTIVE_WAIT").and_then(|v| v.parse().ok()).unwrap_or(20u64);
+        let start = std::time::Instant::now();
+        let mut not_active: Vec<String> = candidates.iter().filter(|u| !systemctl.is_active(u)).cloned().collect();
+        while !not_active.is_empty() && start.elapsed().as_secs() < max_wait {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            not_active = candidates.iter().filter(|u| !systemctl.is_active(u)).cloned().collect();
         }
         if !not_active.is_empty() {
             eprintln!("\ninstall: ERROR — these units are enabled but not active:");
