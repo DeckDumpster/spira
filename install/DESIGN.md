@@ -100,17 +100,25 @@ template this box ever actually renders, not a synthetic fixture.
   not a bug this bead owns. Re-verified byte-identical against `render.py` on all 63
   templates after reverting (**Parity**, above).
 - **The end-state check (`units-install`'s last act) bounds its wait instead of polling
-  once** (`SPIRA_INSTALL_ACTIVE_WAIT`, default 20s). A real `testenv` batch-container gate
-  run reproduced, twice, identically: `spira-cockpit.service` (`Type=notify`) enabled but
-  reported not-active right after `enable --now`. The original bash's own check was also a
-  single immediate poll with no wait — this port reached the same check after the same
-  sequence of steps, just faster (one process making library calls, not dozens of bash
-  subprocess spawns), which is the most likely reason a race that bash's own slowness
-  happened to absorb now loses often enough to matter. Root cause is not fully provable
-  without the container's own `collector.log`/`journalctl` (outside this session's reach),
-  so this is the best-evidence fix, not a certainty — flagged in the delivery report as
-  worth confirming against a real gate run, and easy to revert (drop the loop, keep one
-  `is_active` call) if the real cause turns out to be something else.
+  once** (`SPIRA_INSTALL_ACTIVE_WAIT`, default 45s, raised from an initial 20s — see below).
+  A real `testenv` batch-container gate run reproduced, twice, identically:
+  `spira-cockpit.service` (`Type=notify`) enabled but reported not-active right after
+  `enable --now`. The original bash's own check was also a single immediate poll with no
+  wait — this port reached the same check after the same sequence of steps, just faster (one
+  process making library calls, not dozens of bash subprocess spawns), which is the most
+  likely reason a race that bash's own slowness happened to absorb now loses often enough to
+  matter. Root cause is not fully provable without the container's own
+  `collector.log`/`journalctl` (outside this session's reach), so this is the best-evidence
+  fix, not a certainty — flagged in the delivery report as worth confirming against a real
+  gate run, and easy to revert (drop the loop, keep one `is_active` call) if the real cause
+  turns out to be something else. It recurred a third time at the 20s default on a real gate
+  run taken while the host was under heavy concurrent-agent load (`uptime` load average
+  5–13) — consistent with the same race, just needing more margin when the container itself
+  is contending for host CPU, not a different cause. Raised to 45s on that evidence; still
+  bounded and fail-closed (the loop still reports the exact units and exits 1 if the deadline
+  passes), just more patient. Worth revisiting if it recurs even at 45s — the fix should then
+  move from "wait longer" to "look at journalctl for what `spira-cockpit.service` is actually
+  doing."
 - **The `$tmpl` "watcher template changed" check in `systemd/install.sh`'s enable loop is
   dropped, not ported.** `tmpl="${u%%@*}@.service"` was meant to mark every watcher instance
   changed when the shared `spira-watch@.service` template changed — but under per-instance

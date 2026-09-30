@@ -359,7 +359,7 @@ fn main() -> ExitCode {
                 !(systemctl.is_enabled(u).as_deref() == Some("disabled") && !report.written.contains(u))
             })
             .collect();
-        let max_wait = nonempty_env("SPIRA_INSTALL_ACTIVE_WAIT").and_then(|v| v.parse().ok()).unwrap_or(20u64);
+        let max_wait = nonempty_env("SPIRA_INSTALL_ACTIVE_WAIT").and_then(|v| v.parse().ok()).unwrap_or(45u64);
         let start = std::time::Instant::now();
         let mut not_active: Vec<String> = candidates.iter().filter(|u| !systemctl.is_active(u)).cloned().collect();
         while !not_active.is_empty() && start.elapsed().as_secs() < max_wait {
