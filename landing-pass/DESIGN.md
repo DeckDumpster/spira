@@ -108,11 +108,11 @@ ceiling, sp-t4y60). The pr pass also honours `SPIRA_LANDING_PASS_LOG` as before.
 `SPIRA_PR_PASS_BRANCH_SH` is gone (sp-t4y60): pr_branch runs in-process, so there is no
 program left to point at, and the setting was dropped from the context seam and `Settings`
 rather than kept dead. Every harness tool it runs (`queue`, `spira-lc`, `rebase-stale`,
-`gate.sh`, `gate-run.sh`, `confine.sh`, `skew.sh`, `land-build-ensure.sh`, `testenv.sh`,
+`gate.sh`, `gate-run.sh`, `confine.sh`, `skew.sh`, `land-build-ensure.sh`, `testenv`,
 `incident.sh`, `forge`) is invoked by bare name on the launcher's PATH (sp-gypjk); none is
 found through a variable or a directory.
 
-`halt` runs podman and `testenv.sh` under conf.sh's PATH (the context seam's
+`halt` runs podman and `testenv` (its `container` subcommand, sp-s0e1k) under conf.sh's PATH (the context seam's
 `path`: `SPIRA_PATH` first), as `landing.sh halt` did by sourcing conf.sh; with no loadable
 context it prepends `SPIRA_PATH` to the inherited PATH itself (`halt::child_path`).
 
@@ -166,7 +166,7 @@ All paths under `$SPIRA_RUN` unless absolute. Formats unchanged (§3).
 | `queue step <repo>` | stdout+stderr combined, relabelled | queued repos, before and after the walk |
 | `skew.sh refresh <repo-path>` | | push, queue |
 | `$SPIRA_REPO/systemd/unit-ensure.sh` (systemd/ is not on PATH), `land-build-ensure.sh` | | once per pass |
-| `testenv.sh down --name <c> --volumes --force-foreign` | | `halt` |
+| `testenv container down --name <c> --volumes --force-foreign` | | `halt` |
 | `forge pr-state/pr-create/pr-list-open/pr-automerge <repo> …` | `pr-create`'s body on stdin | `pr_branch`'s `land_pr`/needs_refresh decision (sp-t4y60) |
 | `spira-lc show/event delivery …` | | pr pass content proof (unchanged) |
 | `bd -C $SPIRA_DB show <ids…> --json` under `timeout $BD_TIMEOUT` | one retry on "invalid connection" | scan, re-reads, prune |

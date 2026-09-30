@@ -183,7 +183,7 @@ echo "halt tears down a real container recorded in the registry (gap G9)"
 # ===========================================================================
 # Every case above empties LAND_CONTAINERS before the real (non-dry-run) halt
 # runs, so only the dry-run "would tear down" listing (above) ever reads a
-# populated registry — the real teardown call (podman ps + testenv.sh down)
+# populated registry — the real teardown call (podman ps + testenv container down)
 # has never actually run.
 #
 # A stubbed podman must be injected via SPIRA_PATH, not a bare PATH prepend:
@@ -204,14 +204,14 @@ PODEOF
 chmod +x "$BIN_DIR/podman"
 
 PROD_DIR="$TMP/prod"; mkdir -p "$PROD_DIR"
-cat > "$PROD_DIR/testenv.sh" <<TDEOF
+cat > "$PROD_DIR/testenv" <<TDEOF
 #!/usr/bin/env bash
-if [ "\$1" = "down" ]; then
-    printf '%s\n' "\$3" >> "$TEARDOWN_LOG"
+if [ "\$1 \$2" = "container down" ]; then
+    printf '%s\n' "\$4" >> "$TEARDOWN_LOG"
 fi
 exit 0
 TDEOF
-chmod +x "$PROD_DIR/testenv.sh"
+chmod +x "$PROD_DIR/testenv"
 
 sleep 300 &
 CONT_PID=$!
@@ -232,9 +232,9 @@ kill "$CONT_PID" 2>/dev/null || true
 is   "container-halt: exits 0"                            "0" "$rc"
 want "container-halt: reports tearing down the container" "tearing down container $CONT_NAME" "$out"
 if [ -f "$TEARDOWN_LOG" ] && grep -qxF "$CONT_NAME" "$TEARDOWN_LOG"; then
-    ok "container-halt: testenv.sh down --name was actually invoked"
+    ok "container-halt: testenv container down --name was actually invoked"
 else
-    bad "container-halt: testenv.sh down --name was actually invoked" "no matching line in $TEARDOWN_LOG"
+    bad "container-halt: testenv container down --name was actually invoked" "no matching line in $TEARDOWN_LOG"
 fi
 
 # ===========================================================================
@@ -287,7 +287,7 @@ kill "$VOL_PID" 2>/dev/null || true
 
 want "volumes: halt names the container it tore down" "$FAKE_CNAME" "$out"
 vol_log="$(cat "$PODMAN_LOG" 2>/dev/null)"
-want "volumes: testenv.sh stops the container" "stop $FAKE_CNAME" "$vol_log"
+want "volumes: testenv container down stops the container" "stop $FAKE_CNAME" "$vol_log"
 want "volumes: cargo-reg volume is removed" \
     "volume rm ${FAKE_CNAME}-cargo-reg" "$vol_log"
 want "volumes: cargo-git volume is removed" \

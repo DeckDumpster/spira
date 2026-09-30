@@ -18,7 +18,7 @@ pub trait HaltPorts {
     fn now(&self) -> u64;
     /// `podman ps --format {{.Names}}`.
     fn running_containers(&self) -> Vec<String>;
-    /// `testenv.sh down --name <c> --volumes --force-foreign`.
+    /// `testenv container down --name <c> --volumes --force-foreign`.
     fn teardown(&self, name: &str) -> bool;
 }
 
@@ -177,11 +177,11 @@ fn first_line_state(t: &str) -> Option<LandState> {
 }
 
 pub struct RealHalt {
-    /// PATH for podman and testenv.sh (see [`child_path`]); None inherits the caller's.
+    /// PATH for podman and testenv (see [`child_path`]); None inherits the caller's.
     pub path: Option<String>,
 }
 
-/// The PATH halt's podman and testenv.sh run under. landing.sh halt sourced conf.sh, which
+/// The PATH halt's podman and testenv run under. landing.sh halt sourced conf.sh, which
 /// rebuilt PATH with `SPIRA_PATH` first; the binary is exec'd directly (by the czar, by an
 /// operator), so it must apply the same seam or a podman on `SPIRA_PATH` is never found.
 /// conf.sh's own answer (the context seam's `path`) wins; without a context, `SPIRA_PATH`
@@ -228,12 +228,13 @@ impl HaltPorts for RealHalt {
     fn teardown(&self, name: &str) -> bool {
         // --force-foreign: the pass that owned this container was just signalled to death,
         // so its owner may be an orphan with no ancestor relation to this process.
-        // testenv.sh by name, looked up on the PATH handed to the child (sp-gypjk).
-        let mut c = crate::util::command("testenv.sh");
+        // testenv by name, looked up on the PATH handed to the child (sp-gypjk); its
+        // `container` subcommand replaced spira/testenv.sh (sp-s0e1k).
+        let mut c = crate::util::command("testenv");
         if let Some(p) = &self.path {
             c.env("PATH", p);
         }
-        c.args(["down", "--name", name, "--volumes", "--force-foreign"]);
+        c.args(["container", "down", "--name", name, "--volumes", "--force-foreign"]);
         crate::util::run_capture(c).0 == 0
     }
 }

@@ -255,7 +255,7 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
     match w.image.as_deref() {
         Some(i) => {
             j.want(IMAGE, "the file has a name (positive control)", "name:", i);
-            j.want(IMAGE, "it publishes through testenv.sh", "testenv.sh publish", i);
+            j.want(IMAGE, "it publishes through testenv's container driver", "testenv container publish", i);
             j.want(IMAGE, "an already-published tag is skipped", "manifest inspect", i);
             j.want(IMAGE, "the registry path is lowercased", "tr '[:upper:]' '[:lower:]'", i);
         }

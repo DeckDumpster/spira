@@ -107,7 +107,7 @@ pub trait ContainerRuntime: Send + Sync {
     fn names_with_prefix(&self, prefix: &str) -> Vec<String>;
     /// stop, rm, and remove both cargo volumes — the orphan sweep's teardown.
     fn purge(&self, name: &str);
-    /// `bash <harness>/spira/testenv.sh <args>` (tag, up, probe, down): stdout captured,
+    /// `<this executable> container <args>` (tag, up, probe, down; DESIGN.md §12, D17): stdout captured,
     /// stderr passed through. Past `deadline` it is killed (its whole process group) and
     /// reports [`RC_DEADLINE`] (DESIGN.md D9).
     fn testenv(&self, args: &[String], deadline: Option<Instant>) -> ExecOutcome;
@@ -196,9 +196,11 @@ fn read_lossy(p: &Path) -> String {
     String::from_utf8_lossy(&buf).into_owned()
 }
 
-/// The real runtime: podman on PATH, testenv.sh from the harness directory.
+/// The real runtime: podman on PATH; the container driver is this executable's own
+/// `container` subcommand, run as a child against `harness` (DESIGN.md §12, D17).
 pub struct Podman {
-    pub testenv_sh: PathBuf,
+    pub exe: PathBuf,
+    pub harness: PathBuf,
 }
 
 impl Podman {
@@ -287,13 +289,14 @@ impl ContainerRuntime for Podman {
     }
 
     fn testenv(&self, args: &[String], deadline: Option<Instant>) -> ExecOutcome {
-        let mut cmd = Command::new("bash");
-        cmd.arg(&self.testenv_sh)
+        let mut cmd = Command::new(&self.exe);
+        cmd.arg("container")
             .args(args)
+            .env("SPIRA_TESTENV_HARNESS", &self.harness)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
-        // Never let an inherited artifacts dir reach testenv.sh's conf.sh (DESIGN.md §5).
+        // Never let an inherited artifacts dir reach the driver (DESIGN.md §5).
         cmd.env_remove("SPIRA_ARTIFACTS")
             .env_remove("SPIRA_ARTIFACTS_ROOT");
         capture_bounded(cmd, deadline)

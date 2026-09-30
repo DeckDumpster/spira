@@ -58,8 +58,8 @@ pub const TEMPLATE_WORK: &str = "/root/template-work";
 pub const TEMPLATE_SCRIPT: &str = r#"set -euo pipefail
 work="$1"
 cd "$work"
-img="$(bash spira/testenv.sh image)"
-if [ -z "$img" ]; then echo "round-vm template: testenv.sh image printed no image ref" >&2; exit 1; fi
+img="$(cargo run -q --locked --release -p testenv -- container image)"
+if [ -z "$img" ]; then echo "round-vm template: testenv container image printed no image ref" >&2; exit 1; fi
 podman images --format '{{.Repository}}:{{.Tag}}' \
     | { grep '^localhost/spira-testenv:' || true; } | { grep -vxF "$img" || true; } \
     | while read -r old; do podman rmi "$old" >&2; done
@@ -365,7 +365,7 @@ mod tests {
 
     #[test]
     fn the_script_builds_rather_than_loads_and_reports_the_image_last() {
-        assert!(TEMPLATE_SCRIPT.contains("testenv.sh image"));
+        assert!(TEMPLATE_SCRIPT.contains("-p testenv -- container image"));
         assert!(!TEMPLATE_SCRIPT.contains("podman load"));
         assert!(!TEMPLATE_SCRIPT.contains("--layers=false") && !TEMPLATE_SCRIPT.contains("--no-cache"));
         assert!(TEMPLATE_SCRIPT.contains("cargo fetch --locked"));

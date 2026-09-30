@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# test-testenv-systemctl.sh — testenv.sh as a fixture for systemd unit management tests.
+# test-testenv-systemctl.sh — `testenv container` as a fixture for systemd unit management tests.
 #
 # WHAT THIS DEMONSTRATES
 # ----------------------
-# That testenv.sh is usable by a suite other than the rehearsal (test-testenv.sh).
+# That the driver is usable by a suite other than the rehearsal (test-testenv.sh).
 # Here it provides the user systemd environment for a test that installs, starts, and
 # stops a custom user service unit, exercising the full systemctl --user lifecycle
 # against a real session manager rather than a recording stub.
@@ -20,7 +20,7 @@
 # SKIP CONDITION: no podman on PATH, or the testenv image cannot be built.
 #
 # tier: T1
-# covers: spira/testenv.sh spira/testenv/Containerfile
+# covers: testenv/src/container.rs spira/testenv/Containerfile
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -30,24 +30,24 @@ echo "test-testenv-systemctl.sh"
 
 command -v podman >/dev/null 2>&1 || skip "podman not on PATH"
 
-TESTENV="$HERE/testenv.sh"
+# the container driver: `testenv container`, by name on the PATH (sp-s0e1k)
 CNAME="spira-testenv-sc-$$"
 TMP="$(mktemp -d)"
 
 cleanup() {
     # Remove the unit file from the checkout dir so the working tree is clean.
     rm -f "$TMP/spira-probe.service"
-    bash "$TESTENV" down --name "$CNAME" --volumes >/dev/null 2>&1 || true
+    testenv container down --name "$CNAME" --volumes >/dev/null 2>&1 || true
     rm -rf "$TMP"
 }
 trap cleanup EXIT INT TERM
 
-bash "$TESTENV" up --name "$CNAME" >&2
+testenv container up --name "$CNAME" >&2
 iszero "up exits 0" "$?"
 
 # Skip if user systemd is not working (probe exits non-zero). A stub-based suite
 # would be a different test; this one explicitly exercises the real session manager.
-if ! bash "$TESTENV" probe --name "$CNAME"; then
+if ! testenv container probe --name "$CNAME"; then
     printf 'SKIP test-testenv-systemctl.sh: user systemd not available in container\n' >&2
     exit 77
 fi

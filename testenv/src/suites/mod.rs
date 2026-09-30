@@ -164,7 +164,7 @@ pub fn main(args: &[String]) -> i32 {
     };
     let env = |k: &str| std::env::var(k).ok();
     let Some(harness) = crate::run::Harness::locate(&env) else {
-        eprintln!("suites: cannot find the harness (spira/testenv.sh) above the testenv binary; set SPIRA_TESTENV_HARNESS");
+        eprintln!("suites: cannot find the harness (spira/testenv/Containerfile) above the testenv binary; set SPIRA_TESTENV_HARNESS");
         return cmd::FAIL;
     };
     let config = spira_config::discover(None).and_then(|p| spira_config::load(&p).ok());

@@ -24,7 +24,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 command -v podman >/dev/null 2>&1 || skip "podman not on PATH"
 
-TESTENV=testenv.sh   # the SUT, by name on the suite's PATH (sp-gypjk)
+# the container driver: `testenv container`, by name on the suite's PATH (sp-gypjk, sp-s0e1k)
 ATTRIBUTE=attribute.sh   # the SUT, by name on the suite's PATH (sp-gypjk)
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -34,12 +34,12 @@ echo "test-attribute.sh"
 # Pre-flight: confirm the image and user systemd are usable (test-testenv-batch.sh's
 # own B0 check) before paying for the fixture below.
 PRE_CNAME="spira-attr-preflight-$$"
-bash "$TESTENV" up --name "$PRE_CNAME" >&2 || skip "container did not start"
-if ! bash "$TESTENV" probe --name "$PRE_CNAME" 2>/dev/null; then
-    bash "$TESTENV" down --name "$PRE_CNAME" >/dev/null 2>&1 || true
+testenv container up --name "$PRE_CNAME" >&2 || skip "container did not start"
+if ! testenv container probe --name "$PRE_CNAME" 2>/dev/null; then
+    testenv container down --name "$PRE_CNAME" >/dev/null 2>&1 || true
     skip "user systemd not available"
 fi
-bash "$TESTENV" down --name "$PRE_CNAME" >/dev/null 2>&1 || true
+testenv container down --name "$PRE_CNAME" >/dev/null 2>&1 || true
 
 # ===========================================================================
 # FIXTURE — bare remote + a local clone that plays the role of the repo

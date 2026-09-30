@@ -60,7 +60,7 @@ suite run you may do is to reproduce a specific suite named in a failure note
 
     {{TESTENV}} --suites <suite> <branch> {{REPO_NAME}}
 
-never to pre-certify. Never run a `test-*.sh` suite directly; `spira/testenv.sh` is the
+never to pre-certify. Never run a `test-*.sh` suite directly; `testenv container` is the
 container helper, not the runner; `spira/testenv-batch.sh` no longer exists.
 
 Do not run the full landing gate; the landing pass runs it for whatever you land.

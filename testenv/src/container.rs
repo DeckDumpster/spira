@@ -1,0 +1,1077 @@
+//! `testenv container up|down|exec|probe|tag|image|publish` — the fixture container's
+//! driver (DESIGN.md §12, sp-s0e1k; replaces spira/testenv.sh). Everything that touches the
+//! host goes through [`Host`], so the orchestration is unit-tested against a fake.
+
+use crate::settings::{self, Source};
+use regex::Regex;
+use std::os::fd::AsFd;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+/// Baked into the image; must agree with the Containerfile (useradd's uid, the volume paths).
+pub const SPIRA_USER: &str = "spirauser";
+pub const SPIRA_UID: u32 = 1001;
+pub const CONTAINER_CHECKOUT: &str = "/workspace";
+pub const CONTAINER_CARGO: &str = "/var/spira/cargo";
+/// Cargo's build output lives on the named volume, never in the host-owned bind mount.
+pub const CONTAINER_CARGO_TARGET: &str = "/var/spira/cargo/target";
+pub const DEFAULT_NAME: &str = "spira-testenv";
+/// Every container `up` starts carries it, so admission counts every caller's containers.
+pub const TESTENV_LABEL: &str = "spira.testenv=1";
+
+fn user_runtime() -> String {
+    format!("/run/user/{SPIRA_UID}")
+}
+
+/// How a podman call's streams are wired.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Io {
+    /// stdout captured, stderr discarded.
+    Quiet,
+    /// stdout discarded, stderr passed through.
+    Loud,
+    /// stdout sent to our stderr, stderr passed through (`podman push`).
+    ToStderr,
+}
+
+/// A build running in the background.
+pub trait Build {
+    /// Wait up to `d`; Some(rc) once it has exited.
+    fn wait(&mut self, d: Duration) -> Option<i32>;
+}
+
+pub trait Host {
+    fn podman(&self, args: &[String], io: Io) -> (i32, String);
+    /// `podman build <args>` with stdout+stderr into `log`.
+    fn build(&self, args: &[String], log: &Path) -> Box<dyn Build + '_>;
+    /// Replace this process with `podman <args>` (exec); returns only on failure.
+    fn exec_replace(&self, args: &[String]) -> i32;
+    fn read(&self, p: &Path) -> Option<Vec<u8>>;
+    fn is_file(&self, p: &Path) -> bool;
+    fn write(&self, p: &Path, s: &str);
+    fn remove(&self, p: &Path);
+    fn temp_log(&self) -> PathBuf;
+    fn sleep(&self, d: Duration);
+    fn now(&self) -> u64;
+    fn pid(&self) -> u32;
+    fn parent_pid(&self) -> u32;
+    fn pid_live(&self, pid: u32) -> bool;
+    fn ppid_of(&self, pid: u32) -> Option<u32>;
+    /// Open inotify instances across /proc (the per-uid budget every rootless container charges).
+    fn inotify_used(&self) -> u64;
+    fn sysctl(&self, path: &str) -> Option<String>;
+    fn free_disk(&self, p: &Path) -> String;
+    fn free_mem(&self) -> String;
+    fn owner_dir(&self) -> PathBuf;
+    fn err(&self, line: &str);
+    fn out(&self, line: &str);
+}
+
+/// What the subcommands read (DESIGN.md §12.2).
+pub struct Conf {
+    /// The harness root: `<root>/spira/testenv/Containerfile`. None = not found.
+    pub harness: Option<PathBuf>,
+    pub bd_pin: Option<PathBuf>,
+    pub registry: String,
+    pub max_concurrent: i64,
+    pub queue_timeout: u64,
+    pub queue_poll: u64,
+    pub heartbeat: u64,
+    pub basic_wait_ticks: u32,
+    pub basic_retry_sleep: u64,
+}
+
+impl Conf {
+    pub fn load(src: &Source, harness: Option<PathBuf>) -> Conf {
+        let num = |env: &str, cfg: Option<&str>, d: i64| -> i64 {
+            src.get(env, cfg)
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(d)
+        };
+        let bd_pin = src
+            .get("SPIRA_BD_PIN", Some("spira.bd_pin"))
+            .map(PathBuf::from)
+            .or_else(|| {
+                let root = harness.clone().unwrap_or_default();
+                Some(settings::resolve_run(src, &root).join("bd-pin"))
+            });
+        Conf {
+            bd_pin,
+            registry: src
+                .get("SPIRA_TESTENV_REGISTRY", Some("spira.testenv_registry"))
+                .unwrap_or_default(),
+            max_concurrent: num(
+                "SPIRA_TESTENV_MAX_CONCURRENT",
+                Some("spira.testenv_max_concurrent"),
+                8,
+            ),
+            queue_timeout: num(
+                "SPIRA_TESTENV_QUEUE_TIMEOUT",
+                Some("spira.testenv_queue_timeout"),
+                900,
+            )
+            .max(0) as u64,
+            queue_poll: num(
+                "SPIRA_TESTENV_QUEUE_POLL",
+                Some("spira.testenv_queue_poll"),
+                5,
+            )
+            .max(1) as u64,
+            heartbeat: num("SPIRA_TESTENV_BUILD_HEARTBEAT", None, 60).max(1) as u64,
+            basic_wait_ticks: num("SPIRA_TESTENV_BASIC_WAIT_TICKS", None, 20).max(0) as u32,
+            basic_retry_sleep: num("SPIRA_TESTENV_BASIC_RETRY_SLEEP", None, 2).max(0) as u64,
+            harness,
+        }
+    }
+
+    fn spira_dir(&self) -> Option<PathBuf> {
+        self.harness.as_ref().map(|h| h.join("spira"))
+    }
+}
+
+/// The marker [`crate::run::Harness::locate`] and the warm refill look for.
+pub const HARNESS_MARKER: &str = "spira/testenv/Containerfile";
+
+pub const USAGE: &[&str] = &[
+    "usage: testenv container up|down|exec|probe|tag|image|publish [OPTIONS]",
+    "  up      [--name NAME] [--checkout PATH]",
+    "  down    [--name NAME] [--volumes] [--force-foreign]",
+    "  exec    [--name NAME] [--user USER] CMD ARGS...",
+    "  probe   [--name NAME]",
+    "  tag              # print the computed image tag (the build closure hash)",
+    "  image            # acquire the image (pull if configured, else build); print its ref",
+    "  publish          # push the image to SPIRA_TESTENV_REGISTRY under that tag",
+];
+
+pub struct Driver<'a> {
+    pub host: &'a dyn Host,
+    pub conf: &'a Conf,
+}
+
+fn s(v: &str) -> String {
+    v.to_string()
+}
+
+fn sv(v: &[&str]) -> Vec<String> {
+    v.iter().map(|x| x.to_string()).collect()
+}
+
+/// sha256sum's stdin form: `<hex>  -\n`.
+fn sha256sum_line(bytes: &[u8]) -> Vec<u8> {
+    format!("{}  -\n", crate::verdict::sha256_hex(bytes)).into_bytes()
+}
+
+impl Driver<'_> {
+    fn err(&self, l: &str) {
+        self.host.err(l)
+    }
+
+    fn need_harness(&self, what: &str) -> Option<PathBuf> {
+        match self.conf.spira_dir() {
+            Some(d) => Some(d),
+            None => {
+                self.err(&format!(
+                    "testenv {what}: cannot find the harness ({HARNESS_MARKER}) above the testenv binary; set SPIRA_TESTENV_HARNESS"
+                ));
+                None
+            }
+        }
+    }
+
+    /// The build-closure hash: Containerfile, the bd pin, deps.toml — by content, never by
+    /// path, so every checkout of one commit computes one tag. None when the closure cannot
+    /// be read (D18a).
+    pub fn image_tag(&self) -> Option<String> {
+        let dir = self.need_harness("tag")?;
+        let cf = dir.join("testenv/Containerfile");
+        let deps = dir.join("deps.toml");
+        let Some(cf_bytes) = self.host.read(&cf) else {
+            self.err(&format!(
+                "testenv tag: cannot read {} — refusing to name an image nothing can build",
+                cf.display()
+            ));
+            return None;
+        };
+        let Some(deps_bytes) = self.host.read(&deps) else {
+            self.err(&format!(
+                "testenv tag: cannot read {} — refusing to name an image from part of its closure",
+                deps.display()
+            ));
+            return None;
+        };
+        let mut closure = sha256sum_line(&cf_bytes);
+        if let Some(pin) = &self.conf.bd_pin {
+            if self.host.is_file(pin) {
+                closure.extend(self.host.read(pin).unwrap_or_default());
+            }
+        }
+        closure.extend(sha256sum_line(&deps_bytes));
+        Some(crate::verdict::sha256_hex(&closure)[..12].to_string())
+    }
+
+    fn image_ref(&self, tag: &str) -> String {
+        format!("localhost/spira-testenv:{tag}")
+    }
+
+    fn remote_ref(&self, tag: &str) -> Option<String> {
+        let reg = self.conf.registry.trim_end_matches('/');
+        (!self.conf.registry.is_empty()).then(|| format!("{reg}/spira-testenv:{tag}"))
+    }
+
+    fn pq(&self, args: &[&str]) -> bool {
+        self.host.podman(&sv(args), Io::Quiet).0 == 0
+    }
+
+    /// Local, else pulled from the registry and retagged, else built. The local ref.
+    pub fn ensure_image(&self) -> Option<String> {
+        let tag = self.image_tag()?;
+        let img = self.image_ref(&tag);
+        if self.pq(&["image", "exists", &img]) {
+            return Some(img);
+        }
+        if let Some(remote) = self.remote_ref(&tag) {
+            self.err(&format!("testenv: trying {remote}"));
+            if self.pq(&["pull", "-q", &remote]) && self.pq(&["tag", &remote, &img]) {
+                self.err(&format!("testenv: pulled {remote}"));
+                return Some(img);
+            }
+            self.err(&format!(
+                "testenv: {remote} is not in the registry — building it"
+            ));
+        }
+        self.build_image(&img).then_some(img)
+    }
+
+    /// One heartbeat: furthest STEP (multi-stage `[i/n] STEP` too, sp-dvfea), last output
+    /// line, elapsed, free disk and memory.
+    pub fn heartbeat(&self, start: u64, log: &str) {
+        let step =
+            Regex::new(r"^(\[[0-9]+/[0-9]+\] )?STEP [0-9]+/[0-9]+:.*").expect("static regex");
+        let stage = log
+            .lines()
+            .filter(|l| step.is_match(l))
+            .last()
+            .map(|l| l.chars().take(100).collect::<String>())
+            .unwrap_or_else(|| "(no build output yet)".into());
+        let last = log
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .last()
+            .map(|l| l.chars().take(160).collect::<String>());
+        let dir = self.conf.spira_dir().unwrap_or_default();
+        self.err(&format!(
+            "testenv: building — {stage} — elapsed {}s — disk {} free, memory {} free",
+            self.host.now().saturating_sub(start),
+            self.host.free_disk(&dir),
+            self.host.free_mem()
+        ));
+        if let Some(l) = last {
+            self.err(&format!("testenv:   last output: {l}"));
+        }
+    }
+
+    fn build_image(&self, img: &str) -> bool {
+        let Some(dir) = self.need_harness("image") else {
+            return false;
+        };
+        let hb = self.conf.heartbeat;
+        self.err(&format!(
+            "testenv: COLD build of {img} — the tag is a hash of testenv/Containerfile, the bd pin"
+        ));
+        self.err("testenv: and deps.toml, so this VM has nothing to pull and must build it. Cold");
+        self.err("testenv: builds compile a Go and a Rust toolchain from source and have taken");
+        self.err(&format!(
+            "testenv: close to twenty minutes; a heartbeat line follows at least every {hb}s —"
+        ));
+        self.err("testenv: silence past that means stuck, not slow.");
+        let log = self.host.temp_log();
+        let start = self.host.now();
+        let args = vec![
+            s("build"),
+            s("-t"),
+            s(img),
+            s("-f"),
+            dir.join("testenv/Containerfile").display().to_string(),
+            dir.display().to_string(),
+        ];
+        let mut b = self.host.build(&args, &log);
+        let read_log =
+            || String::from_utf8_lossy(&self.host.read(&log).unwrap_or_default()).into_owned();
+        let rc = loop {
+            if let Some(rc) = b.wait(Duration::from_secs(hb)) {
+                break rc;
+            }
+            self.heartbeat(start, &read_log());
+        };
+        let text = read_log();
+        self.host.remove(&log);
+        if rc == 0 {
+            return true;
+        }
+        let lower = text.to_lowercase();
+        if lower.contains("no space left on device") || text.contains("ENOSPC") {
+            self.err(&format!(
+                "testenv: image build failed — disk exhausted on this VM ({} free)",
+                self.host.free_disk(&dir)
+            ));
+        } else {
+            self.err(&format!(
+                "testenv: image build failed — check Containerfile in {}",
+                dir.join("testenv").display()
+            ));
+            let lines: Vec<&str> = text.lines().collect();
+            for l in &lines[lines.len().saturating_sub(40)..] {
+                self.err(l);
+            }
+        }
+        false
+    }
+
+    pub fn cmd_tag(&self) -> i32 {
+        match self.image_tag() {
+            Some(t) => {
+                self.host.out(&t);
+                0
+            }
+            None => 1,
+        }
+    }
+
+    pub fn cmd_image(&self) -> i32 {
+        match self.ensure_image() {
+            Some(i) => {
+                self.host.out(&i);
+                0
+            }
+            None => 1,
+        }
+    }
+
+    /// Push under the closure hash; nothing floating is ever pushed.
+    pub fn cmd_publish(&self) -> i32 {
+        if self.conf.registry.is_empty() {
+            self.err("testenv publish: SPIRA_TESTENV_REGISTRY is unset — nowhere to publish to");
+            return 1;
+        }
+        let Some(img) = self.ensure_image() else {
+            return 1;
+        };
+        let tag = img.rsplit(':').next().unwrap_or_default().to_string();
+        let remote = self.remote_ref(&tag).unwrap_or_default();
+        if !self.pq(&["tag", &img, &remote]) {
+            self.err(&format!("testenv publish: could not tag {img} as {remote}"));
+            return 1;
+        }
+        self.err(&format!("testenv: pushing {remote}"));
+        if self.host.podman(&sv(&["push", &remote]), Io::ToStderr).0 != 0 {
+            self.err("testenv publish: push failed");
+            return 1;
+        }
+        self.host.out(&remote);
+        0
+    }
+
+    fn owner_file(&self, name: &str) -> PathBuf {
+        self.host.owner_dir().join(format!("{name}.owner"))
+    }
+
+    /// True when `target` is this process or an ancestor of it.
+    fn caller_or_ancestor(&self, target: u32) -> bool {
+        let mut pid = self.host.pid();
+        let mut hops = 0;
+        while pid != 0 && hops < 4096 {
+            if pid == target {
+                return true;
+            }
+            pid = self.host.ppid_of(pid).unwrap_or(0);
+            hops += 1;
+        }
+        false
+    }
+
+    fn running_count(&self) -> Option<usize> {
+        let (rc, out) = self.host.podman(
+            &sv(&["ps", "-q", "--filter", &format!("label={TESTENV_LABEL}")]),
+            Io::Quiet,
+        );
+        (rc == 0).then(|| out.lines().filter(|l| !l.trim().is_empty()).count())
+    }
+
+    /// Block until fewer than `max_concurrent` testenv containers run (0 disables).
+    pub fn admit(&self) -> bool {
+        let max = self.conf.max_concurrent;
+        if max <= 0 {
+            return true;
+        }
+        let max = max as usize;
+        let mut n = self.running_count().unwrap_or(0);
+        if n < max {
+            return true;
+        }
+        self.err(&format!(
+            "testenv: {n} testenv containers already running (limit {max}) — queueing"
+        ));
+        let mut waited = 0;
+        while n >= max {
+            if waited >= self.conf.queue_timeout {
+                self.err(&format!(
+                    "testenv: gave up waiting for a slot after {}s (still {n}/{max} running)",
+                    self.conf.queue_timeout
+                ));
+                return false;
+            }
+            self.host.sleep(Duration::from_secs(self.conf.queue_poll));
+            waited += self.conf.queue_poll;
+            n = self.running_count().unwrap_or(0);
+        }
+        self.err(&format!(
+            "testenv: slot free ({n}/{max} running) — starting"
+        ));
+        true
+    }
+
+    fn wait_for(&self, ticks: u32, args: &[&str]) -> bool {
+        for _ in 0..ticks {
+            if self.pq(args) {
+                return true;
+            }
+            self.host.sleep(Duration::from_millis(500));
+        }
+        false
+    }
+
+    fn exec_out(&self, name: &str, argv: &[&str]) -> Option<String> {
+        let mut a = vec!["exec", name];
+        a.extend_from_slice(argv);
+        let (rc, out) = self.host.podman(&sv(&a), Io::Quiet);
+        (rc == 0).then_some(out)
+    }
+
+    fn inotify_pressure(&self) -> (String, String) {
+        let used = self.host.inotify_used();
+        let a = self
+            .host
+            .sysctl("/proc/sys/fs/inotify/max_user_instances")
+            .and_then(|v| v.trim().parse::<u64>().ok());
+        let b = self
+            .host
+            .sysctl("/proc/sys/user/max_inotify_instances")
+            .and_then(|v| v.trim().parse::<u64>().ok());
+        let max = match (a, b) {
+            (Some(a), Some(b)) => a.min(b),
+            (Some(a), None) => a,
+            (None, Some(b)) => b,
+            (None, None) => 0,
+        };
+        (used.to_string(), max.to_string())
+    }
+
+    fn pair(cur: Option<String>, max: Option<String>, unbounded: &str) -> (String, String) {
+        match (cur, max) {
+            (Some(c), Some(m)) if !c.is_empty() && !m.is_empty() && m != unbounded => (c, m),
+            _ => ("?".into(), "?".into()),
+        }
+    }
+
+    fn pids_pressure(&self, name: &str) -> (String, String) {
+        let out = self.exec_out(
+            name,
+            &[
+                "cat",
+                "/sys/fs/cgroup/pids.current",
+                "/sys/fs/cgroup/pids.max",
+            ],
+        );
+        let Some(out) = out else {
+            return ("?".into(), "?".into());
+        };
+        let mut l = out.lines();
+        Self::pair(
+            l.next().map(|v| v.trim().to_string()),
+            l.next().map(|v| v.trim().to_string()),
+            "max",
+        )
+    }
+
+    fn slice_pressure(&self, name: &str) -> (String, String) {
+        let slice = format!("user-{SPIRA_UID}.slice");
+        let Some(out) = self.exec_out(
+            name,
+            &[
+                "systemctl",
+                "show",
+                &slice,
+                "-p",
+                "TasksCurrent",
+                "-p",
+                "TasksMax",
+            ],
+        ) else {
+            return ("?".into(), "?".into());
+        };
+        let field = |k: &str| {
+            out.lines()
+                .find_map(|l| l.strip_prefix(k))
+                .map(|v| v.trim().to_string())
+        };
+        Self::pair(field("TasksCurrent="), field("TasksMax="), "infinity")
+    }
+
+    fn keyring_pressure(&self, name: &str) -> (String, String) {
+        let cur = self
+            .exec_out(name, &["sh", "-c", "wc -l < /proc/keys"])
+            .map(|v| v.trim().to_string());
+        let max = self
+            .exec_out(name, &["cat", "/proc/sys/kernel/keys/maxkeys"])
+            .map(|v| v.trim().to_string());
+        Self::pair(cur, max, "\u{0}")
+    }
+
+    /// Measure all four candidates and name the one closest to its cap (sp-cvle7).
+    pub fn diagnose_boot_failure(&self, name: &str) {
+        let (iu, im) = self.inotify_pressure();
+        let (pu, pm) = self.pids_pressure(name);
+        let (tu, tm) = self.slice_pressure(name);
+        let (ku, km) = self.keyring_pressure(name);
+        self.err(&format!(
+            "testenv: resource check for {name} — inotify instances {iu}/{im}, pids {pu}/{pm}, user-{SPIRA_UID}.slice tasks {tu}/{tm}, keyring {ku}/{km}"
+        ));
+        let mut best: Option<(u64, String)> = None;
+        for (n, u, m) in [
+            ("inotify", &iu, &im),
+            ("pids", &pu, &pm),
+            ("user-slice-tasks", &tu, &tm),
+            ("keyring", &ku, &km),
+        ] {
+            let (Ok(uv), Ok(mv)) = (u.parse::<u64>(), m.parse::<u64>()) else {
+                continue;
+            };
+            if mv == 0 {
+                continue;
+            }
+            let pct = uv * 100 / mv;
+            if best.as_ref().is_none_or(|(b, _)| pct > *b) {
+                best = Some((pct, format!("{n} ({u}/{m}, {pct}%)")));
+            }
+        }
+        match best {
+            Some((pct, label)) if pct >= 90 => {
+                self.err(&format!("testenv: exhausted resource for {name} — {label}"))
+            }
+            Some((_, label)) => self.err(&format!(
+                "testenv: no candidate resource for {name} is near its cap (closest: {label}) — inconclusive"
+            )),
+            None => self.err(&format!(
+                "testenv: could not measure any candidate resource for {name} — container unreachable"
+            )),
+        }
+    }
+
+    pub fn cmd_up(&self, args: &[String]) -> i32 {
+        let mut name = s(DEFAULT_NAME);
+        let mut checkout: Option<String> = None;
+        let mut i = 0;
+        while i < args.len() {
+            match (args[i].as_str(), args.get(i + 1)) {
+                ("--name", Some(v)) => name = v.clone(),
+                ("--checkout", Some(v)) => checkout = Some(v.clone()),
+                (a, _) => {
+                    self.err(&format!("testenv up: unknown argument: {a}"));
+                    return 1;
+                }
+            }
+            i += 2;
+        }
+        let checkout = match checkout
+            .or_else(|| self.conf.harness.as_ref().map(|h| h.display().to_string()))
+        {
+            Some(c) => c,
+            None => {
+                self.need_harness("up");
+                return 1;
+            }
+        };
+        if self.pq(&["container", "exists", &name]) {
+            self.err(&format!("testenv: {name} already exists; nothing to do"));
+            return 0;
+        }
+        let Some(img) = self.ensure_image() else {
+            return 1;
+        };
+        if !self.admit() {
+            return 1;
+        }
+        // pids-limit 8192: 52 parallel suites exhausted podman's rootless default of 2048.
+        let run = vec![
+            s("run"),
+            s("-d"),
+            s("--name"),
+            name.clone(),
+            s("--systemd=true"),
+            s("--pids-limit"),
+            s("8192"),
+            s("--label"),
+            s(TESTENV_LABEL),
+            s("--volume"),
+            format!("{checkout}:{CONTAINER_CHECKOUT}:z"),
+            s("--volume"),
+            format!("{name}-cargo-reg:{CONTAINER_CARGO}/registry"),
+            s("--volume"),
+            format!("{name}-cargo-git:{CONTAINER_CARGO}/git"),
+            img,
+        ];
+        if self.host.podman(&run, Io::Loud).0 != 0 {
+            self.err(&format!("testenv: podman run {name} failed"));
+            return 1;
+        }
+        // First writer wins: a caller (the runner) may already have claimed it.
+        let owner = self.owner_file(&name);
+        if !self.host.is_file(&owner) {
+            self.host
+                .write(&owner, &format!("{}\n", self.host.parent_pid()));
+        }
+        let mut attempt = 0;
+        while !self.wait_for(
+            self.conf.basic_wait_ticks,
+            &["exec", &name, "systemctl", "is-active", "basic.target"],
+        ) {
+            if attempt < 1 {
+                attempt += 1;
+                self.err(&format!(
+                    "testenv: systemd basic.target startup attempt {attempt} failed; retrying after {}s",
+                    self.conf.basic_retry_sleep
+                ));
+                self.host
+                    .sleep(Duration::from_secs(self.conf.basic_retry_sleep));
+                continue;
+            }
+            self.err(&format!(
+                "testenv: system systemd did not reach basic.target after {} attempt(s)",
+                attempt + 1
+            ));
+            self.diagnose_boot_failure(&name);
+            self.pq(&["stop", &name]);
+            self.pq(&["rm", &name]);
+            return 1;
+        }
+        self.pq(&["exec", &name, "loginctl", "enable-linger", SPIRA_USER]);
+        self.pq(&[
+            "exec",
+            &name,
+            "git",
+            "config",
+            "--system",
+            "--add",
+            "safe.directory",
+            CONTAINER_CHECKOUT,
+        ]);
+        // The cargo volumes' mountpoints are created root-owned; chown once, when wrong (D21).
+        let uid = SPIRA_UID.to_string();
+        self.pq(&[
+            "exec",
+            &name,
+            "bash",
+            "-c",
+            "mkdir -p \"$1/target\" 2>/dev/null\n    for d in \"$1\" \"$1/registry\" \"$1/git\" \"$1/target\"; do\n        [ -d \"$d\" ] || continue\n        [ \"$(stat -c %u \"$d\" 2>/dev/null)\" = \"$2\" ] || chown -R \"$2:$2\" \"$d\"\n    done",
+            "_",
+            CONTAINER_CARGO,
+            &uid,
+        ]);
+        let unit = format!("user@{SPIRA_UID}.service");
+        if self.wait_for(20, &["exec", &name, "systemctl", "is-active", &unit]) {
+            self.err(&format!(
+                "testenv: user@{SPIRA_UID}.service active; systemctl --user ready"
+            ));
+        } else {
+            self.err(&format!(
+                "testenv: WARNING user@{SPIRA_UID}.service did not start"
+            ));
+            self.err(
+                "testenv: probe exits non-zero; use SPIRA_SYSTEMCTL stub for systemctl --user",
+            );
+        }
+        0
+    }
+
+    pub fn cmd_down(&self, args: &[String]) -> i32 {
+        let mut name = s(DEFAULT_NAME);
+        let (mut volumes, mut force) = (false, false);
+        let mut i = 0;
+        while i < args.len() {
+            match (args[i].as_str(), args.get(i + 1)) {
+                ("--name", Some(v)) => {
+                    name = v.clone();
+                    i += 1;
+                }
+                ("--volumes", _) => volumes = true,
+                ("--force-foreign", _) => force = true,
+                (a, _) => {
+                    self.err(&format!("testenv down: unknown argument: {a}"));
+                    return 1;
+                }
+            }
+            i += 1;
+        }
+        let owner = self.owner_file(&name);
+        if !force && self.host.is_file(&owner) {
+            let text =
+                String::from_utf8_lossy(&self.host.read(&owner).unwrap_or_default()).into_owned();
+            if let Ok(pid) = text.trim().parse::<u32>() {
+                if pid != 0 && self.host.pid_live(pid) && !self.caller_or_ancestor(pid) {
+                    self.err(&format!(
+                        "testenv down: {name} is owned by pid {pid} (not this process or an ancestor of it)"
+                    ));
+                    self.err(
+                        "testenv down: refusing — pass --force-foreign to tear it down anyway",
+                    );
+                    return 1;
+                }
+            }
+        }
+        self.pq(&["stop", &name]);
+        self.pq(&["rm", &name]);
+        // A failed teardown keeps the owner file, so an orphan sweep can still find both.
+        if !self.pq(&["container", "exists", &name]) {
+            self.host.remove(&owner);
+        }
+        if volumes {
+            self.pq(&["volume", "rm", &format!("{name}-cargo-reg")]);
+            self.pq(&["volume", "rm", &format!("{name}-cargo-git")]);
+        }
+        0
+    }
+
+    pub fn exec_args(name: &str, user: &str, cmd: &[String]) -> Vec<String> {
+        let mut a = vec![s("exec"), s("--user"), s(user)];
+        if user == SPIRA_USER {
+            let rt = user_runtime();
+            for kv in [
+                format!("XDG_RUNTIME_DIR={rt}"),
+                format!("DBUS_SESSION_BUS_ADDRESS=unix:path={rt}/bus"),
+                format!("CARGO_HOME={CONTAINER_CARGO}"),
+                format!("CARGO_TARGET_DIR={CONTAINER_CARGO_TARGET}"),
+            ] {
+                a.push(s("-e"));
+                a.push(kv);
+            }
+        }
+        a.push(s(name));
+        a.extend(cmd.iter().cloned());
+        a
+    }
+
+    pub fn cmd_exec(&self, args: &[String]) -> i32 {
+        let mut name = s(DEFAULT_NAME);
+        let mut user = s("root");
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--name" if i + 1 < args.len() => {
+                    name = args[i + 1].clone();
+                    i += 2;
+                }
+                "--user" if i + 1 < args.len() => {
+                    user = args[i + 1].clone();
+                    i += 2;
+                }
+                "--" => {
+                    i += 1;
+                    break;
+                }
+                a if a.starts_with('-') => {
+                    self.err(&format!("testenv exec: unknown option: {a}"));
+                    return 1;
+                }
+                _ => break,
+            }
+        }
+        let cmd = &args[i..];
+        if cmd.is_empty() {
+            self.err("testenv exec: command required");
+            return 1;
+        }
+        self.host.exec_replace(&Self::exec_args(&name, &user, cmd))
+    }
+
+    pub fn cmd_probe(&self, args: &[String]) -> i32 {
+        let mut name = s(DEFAULT_NAME);
+        let mut i = 0;
+        while i < args.len() {
+            match (args[i].as_str(), args.get(i + 1)) {
+                ("--name", Some(v)) => name = v.clone(),
+                (a, _) => {
+                    self.err(&format!("testenv probe: unknown argument: {a}"));
+                    return 1;
+                }
+            }
+            i += 2;
+        }
+        let unit = format!("user@{SPIRA_UID}.service");
+        let rt = format!("XDG_RUNTIME_DIR={}", user_runtime());
+        let ok = self.pq(&["exec", &name, "systemctl", "is-active", &unit])
+            && self.pq(&[
+                "exec",
+                "--user",
+                SPIRA_USER,
+                "-e",
+                &rt,
+                &name,
+                "systemctl",
+                "--user",
+                "is-active",
+                "default.target",
+            ]);
+        i32::from(!ok)
+    }
+
+    pub fn dispatch(&self, args: &[String]) -> i32 {
+        let rest = args.get(1..).unwrap_or(&[]);
+        match args.first().map(String::as_str) {
+            Some("up") => self.cmd_up(rest),
+            Some("down") => self.cmd_down(rest),
+            Some("exec") => self.cmd_exec(rest),
+            Some("probe") => self.cmd_probe(rest),
+            Some("tag") => self.cmd_tag(),
+            Some("image") => self.cmd_image(),
+            Some("publish") => self.cmd_publish(),
+            _ => {
+                for l in USAGE {
+                    self.err(l);
+                }
+                1
+            }
+        }
+    }
+}
+
+/// The real host.
+pub struct RealHost;
+
+struct RealBuild(std::process::Child);
+
+impl Build for RealBuild {
+    fn wait(&mut self, d: Duration) -> Option<i32> {
+        let end = std::time::Instant::now() + d;
+        loop {
+            match self.0.try_wait() {
+                Ok(Some(st)) => return Some(st.code().unwrap_or(1)),
+                Ok(None) => {}
+                Err(_) => return Some(1),
+            }
+            if std::time::Instant::now() >= end {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+}
+
+struct FailedBuild;
+
+impl Build for FailedBuild {
+    fn wait(&mut self, _: Duration) -> Option<i32> {
+        Some(127)
+    }
+}
+
+fn first_field(cmd: &[&str], row: usize, col: usize) -> String {
+    std::process::Command::new(cmd[0])
+        .args(&cmd[1..])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .nth(row)
+                .and_then(|l| l.split_whitespace().nth(col).map(str::to_string))
+        })
+        .unwrap_or_default()
+}
+
+impl Host for RealHost {
+    fn podman(&self, args: &[String], io: Io) -> (i32, String) {
+        use std::process::{Command, Stdio};
+        let mut c = Command::new("podman");
+        c.args(args).stdin(Stdio::null());
+        match io {
+            Io::Quiet => {
+                c.stderr(Stdio::null());
+                match c.output() {
+                    Ok(o) => (
+                        o.status.code().unwrap_or(1),
+                        String::from_utf8_lossy(&o.stdout).into_owned(),
+                    ),
+                    Err(_) => (127, String::new()),
+                }
+            }
+            Io::Loud => {
+                c.stdout(Stdio::null());
+                (
+                    c.status().map(|s| s.code().unwrap_or(1)).unwrap_or(127),
+                    String::new(),
+                )
+            }
+            Io::ToStderr => {
+                let err = std::io::stderr()
+                    .as_fd()
+                    .try_clone_to_owned()
+                    .map(Stdio::from);
+                c.stdout(err.unwrap_or(Stdio::null()));
+                (
+                    c.status().map(|s| s.code().unwrap_or(1)).unwrap_or(127),
+                    String::new(),
+                )
+            }
+        }
+    }
+
+    fn build(&self, args: &[String], log: &Path) -> Box<dyn Build + '_> {
+        use std::process::{Command, Stdio};
+        let Ok(f) = std::fs::File::create(log) else {
+            return Box::new(FailedBuild);
+        };
+        let Ok(g) = f.try_clone() else {
+            return Box::new(FailedBuild);
+        };
+        match Command::new("podman")
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(f)
+            .stderr(g)
+            .spawn()
+        {
+            Ok(c) => Box::new(RealBuild(c)),
+            Err(_) => Box::new(FailedBuild),
+        }
+    }
+
+    fn exec_replace(&self, args: &[String]) -> i32 {
+        use std::os::unix::process::CommandExt;
+        let e = std::process::Command::new("podman").args(args).exec();
+        eprintln!("testenv exec: podman: {e}");
+        127
+    }
+
+    fn read(&self, p: &Path) -> Option<Vec<u8>> {
+        std::fs::read(p).ok()
+    }
+    fn is_file(&self, p: &Path) -> bool {
+        p.is_file()
+    }
+    fn write(&self, p: &Path, s: &str) {
+        let _ = std::fs::write(p, s);
+    }
+    fn remove(&self, p: &Path) {
+        let _ = std::fs::remove_file(p);
+    }
+    fn temp_log(&self) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "testenv-build-{}-{}.log",
+            std::process::id(),
+            self.now()
+        ))
+    }
+    fn sleep(&self, d: Duration) {
+        std::thread::sleep(d)
+    }
+    fn now(&self) -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    }
+    fn pid(&self) -> u32 {
+        std::process::id()
+    }
+    fn parent_pid(&self) -> u32 {
+        std::os::unix::process::parent_id()
+    }
+    fn pid_live(&self, pid: u32) -> bool {
+        Path::new(&format!("/proc/{pid}")).is_dir()
+    }
+    fn ppid_of(&self, pid: u32) -> Option<u32> {
+        let t = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+        t.lines()
+            .find_map(|l| l.strip_prefix("PPid:"))
+            .and_then(|v| v.trim().parse().ok())
+    }
+    fn inotify_used(&self) -> u64 {
+        let mut n = 0;
+        let Ok(procs) = std::fs::read_dir("/proc") else {
+            return 0;
+        };
+        for p in procs.flatten() {
+            if !p
+                .file_name()
+                .to_string_lossy()
+                .bytes()
+                .all(|b| b.is_ascii_digit())
+            {
+                continue;
+            }
+            let Ok(fds) = std::fs::read_dir(p.path().join("fd")) else {
+                continue;
+            };
+            for fd in fds.flatten() {
+                if let Ok(l) = std::fs::read_link(fd.path()) {
+                    if l.to_string_lossy().starts_with("anon_inode:inotify") {
+                        n += 1;
+                    }
+                }
+            }
+        }
+        n
+    }
+    fn sysctl(&self, path: &str) -> Option<String> {
+        std::fs::read_to_string(path).ok()
+    }
+    fn free_disk(&self, p: &Path) -> String {
+        first_field(&["df", "-Ph", &p.display().to_string()], 1, 3)
+    }
+    fn free_mem(&self) -> String {
+        std::process::Command::new("free")
+            .arg("-h")
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .and_then(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .find(|l| l.starts_with("Mem:"))
+                    .and_then(|l| l.split_whitespace().nth(6).map(str::to_string))
+            })
+            .unwrap_or_default()
+    }
+    fn owner_dir(&self) -> PathBuf {
+        PathBuf::from("/tmp")
+    }
+    fn err(&self, line: &str) {
+        eprintln!("{line}");
+    }
+    fn out(&self, line: &str) {
+        use std::io::Write;
+        let mut o = std::io::stdout().lock();
+        let _ = writeln!(o, "{line}");
+        let _ = o.flush();
+    }
+}
+
+/// `testenv container <args>`.
+pub fn main(
+    args: &[String],
+    harness: Option<PathBuf>,
+    config: Option<&spira_config::SpiraToml>,
+) -> i32 {
+    let env = |k: &str| std::env::var(k).ok();
+    let src = Source { env: &env, config };
+    let conf = Conf::load(&src, harness);
+    Driver {
+        host: &RealHost,
+        conf: &conf,
+    }
+    .dispatch(args)
+}
+
+#[cfg(test)]
+mod tests;
