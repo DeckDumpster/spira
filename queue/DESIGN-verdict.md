@@ -143,9 +143,11 @@ Forge calls (the forge program, `$SPIRA_FORGE`): `check-status <path> <pr> <bran
   observable difference is nil in both modes.
 - **D4 — the publish-green push goes through `spira_git_push`** (seam R12), not a bare
   `git push`: the forge push uses the same credentials every other queue push uses.
-- **D5 — `queue verdict` returns 1 on a refusal** under queue.local (a malformed record, a
-  refused fast-forward), where verdict.sh's `main` returned 0 after any publish settle.
-  `step` ignores the status either way; a hand run now sees the fault in `$?`.
+- **D5 — `queue verdict` returns 1 on a refusal or fault** (a malformed record, a refused
+  fast-forward, an unknown status, a red publish whose fix-forward bead could not be
+  filed), where verdict.sh's `main` returned 0 after any settle attempt. `step` ignores the
+  status either way; a hand run now sees the fault in `$?`. Also named: git's own push and
+  `branch -D` chatter is no longer echoed (the fault lines verdict.sh printed are).
 - **D6 — `_verdict_trap_*` and `SPIRA_QUEUE_REPRO_CI_*`** are gone with D1: nothing in the
   pass blocks long enough to need a TERM log line.
 
@@ -153,12 +155,29 @@ Kept deliberately although small: the lock-starvation counter (a gridlock signal
 fires once per event, conf.sh `SPIRA_QUEUE_LOCK_STARVE_MAX`), `_reap_stale_queue_refs` (stale `spira/queue/*` refs are otherwise
 never cleaned), the head-sha verification (the sp-quu2w class of bug).
 
-## 5. Tests
+## 5. Tests and cutover
 
-Unit tests (`queue/src/tests/verdict.rs`, the crate's own fake world) cover each row of
-§2.1 and §2.2, the pure classifiers (`classify_pending`, `classify_fault`,
-`parse_run_metadata`, `normalize_status`, the per-repo threshold), and `step` running the
-pass in process. Retired suites and why: see the cutover table in the landing commit
-(test-verdict.sh, test-verdict-action.sh, test-verdict-replay.sh,
-test-eject-unattributed.sh, test-queue-eject-mail.sh — their subjects are these unit tests
-or D1). Repointed: every suite that ran `verdict.sh <repo>` now runs `queue verdict`.
+**Unit tests** (`cargo test -p queue`, 158 in all): `queue/src/tests/verdict.rs` (34) covers
+each row of §2.1 and §2.2, the pure classifiers, the lock wait and starvation counter, the
+lifecycle walk, the stash refusal and `step` running the pass in process;
+`real::tests::context_seam_carries_the_verdict_thresholds_with_the_per_repo_override` and
+`real::tests::create_bug_seam_files_through_bdq_with_the_body_in_a_file` run the two seam
+changes through real bash.
+
+**Parity** (before deletion): a temporary suite ran `bash verdict.sh` and `queue verdict`
+on 25 identically-built fixtures (8 queue.local, 17 queue.forge) and compared exit, output,
+queue files, landstate, landing.log, forge calls, helper calls and every ref. 20 identical;
+5 intended differences, each asserted: L2/L4/F1/F17 exit 1 (D5), F13 judgement-ci now gets
+`--home/--run/--db`, F16 a hand-cut red goes to judgement (D1).
+
+**Retired suites** (subject now the unit tests above, or retired behaviour):
+`test-verdict.sh`, `test-verdict-action.sh` (UC-landing-merge-queue-43/44 marked, with the
+unit tests named), `test-verdict-replay.sh` (UC-49, D1/D6), `test-eject-unattributed.sh`
+and `test-queue-eject-mail.sh` (`_attr_eject`, D1), `test-queue-lock-wait.sh` (verdict half:
+`a_held_lock_is_waited_for_then_counted_toward_starvation`; its batch.sh case goes with
+batch.sh, wave 2b). **Repointed:** `test-queue-publish`, `test-queue-transition`,
+`test-config-compat-master-base` (run `queue verdict`), `test-queue-flush` (step's verdict
+seen through the forge), `test-landing-queue-early` (stub renamed), `test-reopen-queue-eject`
+(writer is the lib.sh pair `queue eject --red --suites` calls), `test-lifecycle-cutover`
+(verdict section retired, D3 unit test), `test-guards`/`aeon-fence.sh` (`queue verdict` is
+fenced as a queue verb), `test-git-push-app` (verdict.sh out of the grep list).

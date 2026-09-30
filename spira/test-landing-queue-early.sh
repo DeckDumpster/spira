@@ -18,7 +18,7 @@
 # A queue-mode branch is certified instantly (no local gate — law-a-round-takes-
 # certified-tips), so ordering is read off the pass's own log rather than a gate delay:
 # the "certified spira/<id>" line is land_repo's own marker that the branch loop reached
-# this branch. verdict.sh and batch.sh are stubbed to control what the forge reports.
+# this branch. the queue step and batch.sh are stubbed to control what the forge reports.
 #
 # covers: landing-pass/*
 # timeout: 120
@@ -75,9 +75,10 @@ stub gh         'exit 1'
 # are silent. batch.sh is a no-op (no new batch to open in this fixture).
 stub batch.sh 'exit 0'
 # THE QUEUE STEP IS `queue step <repo>` now (landing-pass/DESIGN.md §8 D5): the
-# stub stands in for the queue binary and runs the stubbed verdict.sh, which is all this
-# suite's ordering assertions read.
-stub queue 'if [ "${1:-}" = step ]; then verdict.sh "${2:-}"; fi; exit 0'
+# stub stands in for the queue binary and runs verdict-fixture (the verdict runs in process
+# inside `queue step` now, queue/DESIGN-verdict.md), which is all this suite's ordering
+# assertions read.
+stub queue 'if [ "${1:-}" = step ]; then verdict-fixture "${2:-}"; fi; exit 0'
 
 B() { bd -C "$SPIRA_DB" "$@"; }
 
@@ -127,10 +128,10 @@ _ctrl_out="$(PATH="$TMP/crash:$PATH" landing)"; _ctrl_rc=$?
 # The batch lands at the early check, before the gate runs.
 # --------------------------------------------------------------------------------------
 
-# verdict.sh stub: first call reports green and marks the batch consumed; subsequent calls are
-# silent (the batch file is gone after a fast-forward, so the real verdict.sh would also be
+# verdict-fixture stub: first call reports green and marks the batch consumed; subsequent calls are
+# silent (the batch file is gone after a fast-forward, so the real verdict would also be
 # silent on the second call).
-stub verdict.sh '
+stub verdict-fixture '
 [ -f "'"$RUN"'/batch-landed" ] && exit 0
 touch "'"$RUN"'/batch-landed"
 printf "verdict fixture: PR 1 landed by fast-forward (abc123)\n"'
@@ -154,12 +155,12 @@ git -C "$REPO" branch -D "spira/sp-earlyq" 2>/dev/null || true
 # The batch lands at the late check, after the gate runs.
 # --------------------------------------------------------------------------------------
 
-# verdict.sh stub: pending until sp-lateq is certified (land_repo's own marker file),
+# verdict-fixture stub: pending until sp-lateq is certified (land_repo's own marker file),
 # then reports landing on the next call. This ties "late" to the branch loop having
 # actually run, rather than to a call count tuned around a gate delay that no longer
 # exists (queue-mode branches certify with no local gate — law-a-round-takes-
 # certified-tips).
-stub verdict.sh '
+stub verdict-fixture '
 if [ -f "'"$RUN"'/landstate/sp-lateq" ] && grep -q "^CERTIFIED" "'"$RUN"'/landstate/sp-lateq"; then
     printf "verdict fixture: PR 1 landed by fast-forward (abc456)\n"
 fi'

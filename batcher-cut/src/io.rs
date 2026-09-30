@@ -424,7 +424,7 @@ fn parse_iso(s: &str) -> Option<u64> {
 }
 
 // ---------------------------------------------------------------------------------------
-// The open-batch record: exactly the key=value shape verdict.sh (and queue-watch) read.
+// The open-batch record: exactly the key=value shape queue verdict (and queue-watch) read.
 // ---------------------------------------------------------------------------------------
 
 #[derive(Clone, Debug, Default)]
@@ -437,13 +437,14 @@ pub struct OpenBatch {
     pub opened: String,
     /// "batcher" when this record was written by this crate; empty for a record batch.sh
     /// wrote (batch.sh never writes this key, so its absence IS the legacy owner — no
-    /// separate default to keep in sync). verdict.sh reads it to decide whether a CI red
-    /// on this PR is its own attribution's or the summoned batcher persona's (sp-lomk3).
+    /// separate default to keep in sync). verdict.sh read it to decide whether a CI red
+    /// on this PR was its own attribution's or the summoned batcher persona's (sp-lomk3);
+    /// `queue verdict` sends every red to the persona (queue/DESIGN-verdict.md D1).
     pub owner: String,
     /// spira-lc's own key for this batch and its current CAS version (sp-o7nbr.4, same
     /// field names as sp-o7nbr.2's `_lc_cut_batch` writes for batch.sh) — present only
-    /// when `lifecycle_enforce` is on and `spira-lc cut`/`stack` actually succeeded. verdict.sh's `_lc_land_batch`/
-    /// `_lc_settle_batch` read these generically off this same open-batch file
+    /// when `lifecycle_enforce` is on and `spira-lc cut`/`stack` actually succeeded. queue verdict's lifecycle land walk
+    /// (queue/DESIGN-verdict.md D3) reads these generically off this same open-batch file
     /// regardless of which cutter wrote it; absent means skip, not CAS against nothing.
     pub batch_id: String,
     pub version: String,
@@ -772,13 +773,13 @@ pub fn result_status(results_dir: &Path, suite: &str) -> Option<bool> {
 
 /// Eject one member from the round before it ever reaches CI: reopen its bead (which, being
 /// CERTIFIED, withdraws that certification — bead_reopen's own contract) with a note naming
-/// every suite it turned red, then record the landstate EJECTED the same way verdict.sh's own
+/// every suite it turned red, then record the landstate EJECTED the same way the retired verdict.sh's own
 /// CI-side ejection does, so the funnel (cockpit, census) counts a local and a CI ejection the
-/// same way. `queue-eject-local` is a distinct reopen cause from verdict.sh's `queue-eject`,
+/// same way. `queue-eject-local` is a distinct reopen cause from the retired verdict.sh's `queue-eject`,
 /// so census.sh can tell the two apart.
 ///
 /// The suites also go to bead_reopen's fourth argument, which writes the `<id>.ejected`
-/// sidecar, as verdict.sh's own ejection does (sp-p3srm): the gate's re-entry check reads it
+/// sidecar, as the retired verdict.sh's own ejection did (sp-p3srm): the gate's re-entry check reads it
 /// first, and unlike the EJECTED landstate row it survives the row being overwritten
 /// (REBASED, WITHDRAWN) before the bead's next gate.
 pub fn eject_member(env: &Env, repo_name: &str, id: &str, tip: &str, suites: &[String]) {

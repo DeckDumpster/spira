@@ -488,6 +488,10 @@ fn a_held_lock_is_waited_for_then_counted_toward_starvation() {
     assert_eq!(fs::read_to_string(t.qfile("lock-skips")).unwrap(), "1\n");
     assert_eq!(t.run(&["verdict", "spira"]), 0);
     assert!(t.out().ends_with("verdict spira: queue lock starvation — skipped 2 consecutive ticks waiting for lock\n"), "{}", t.out());
+    // the signal fires once per gridlock, not on every tick past the threshold
+    assert_eq!(t.run(&["verdict", "spira"]), 0);
+    assert!(t.out().ends_with("verdict spira: another queue operation holds the lock\n"), "{}", t.out());
+    assert_eq!(fs::read_to_string(t.qfile("lock-skips")).unwrap(), "3\n");
     drop(g);
     assert_eq!(t.run(&["verdict", "spira"]), 0);
     assert!(!t.qfile("lock-skips").exists());
@@ -532,4 +536,12 @@ fn a_repo_the_map_does_not_carry_is_refused() {
     t.lib.r.borrow_mut().path = None;
     assert_eq!(t.run(&["verdict", "spira"]), 1);
     assert!(t.err().contains("verdict spira: no repo-map entry"));
+}
+
+#[test]
+fn no_open_batch_never_calls_the_forge() {
+    let t = T::new(LandMode::Queue);
+    assert_eq!(t.run(&["verdict", "spira"]), 0);
+    assert!(t.forge.calls.borrow().is_empty());
+    assert!(t.out().is_empty() && t.err().is_empty());
 }
