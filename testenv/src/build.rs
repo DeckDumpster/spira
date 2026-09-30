@@ -1,6 +1,7 @@
 //! One build tool: `cargo build --profile <p> --workspace` in the worktree under test,
 //! cargo's default `target/` (DESIGN.md §1, §6). The result is `target/<profile-dir>/`.
 
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -27,16 +28,30 @@ pub enum BuildError {
     Failed(i32),
     /// cargo succeeded but wrote somewhere else (a target-dir override in config): rc 3.
     NoArtifacts(PathBuf),
+    /// cargo was killed at the trial's setup cutoff (DESIGN.md D9): rc 2, never the
+    /// candidate's rc 4 — nothing about the branch was judged.
+    Deadline,
 }
 
 pub trait Builder: Sync {
-    fn build(&self, worktree: &Path, profile: &str) -> Result<Duration, BuildError>;
+    /// Build; past `deadline` cargo is killed and the result is [`BuildError::Deadline`].
+    fn build(
+        &self,
+        worktree: &Path,
+        profile: &str,
+        deadline: Option<Instant>,
+    ) -> Result<Duration, BuildError>;
 }
 
 pub struct Cargo;
 
 impl Builder for Cargo {
-    fn build(&self, worktree: &Path, profile: &str) -> Result<Duration, BuildError> {
+    fn build(
+        &self,
+        worktree: &Path,
+        profile: &str,
+        deadline: Option<Instant>,
+    ) -> Result<Duration, BuildError> {
         let t0 = Instant::now();
         let stdout_to_stderr = {
             use std::os::fd::AsFd;
@@ -46,7 +61,7 @@ impl Builder for Cargo {
                 .map(Stdio::from)
                 .unwrap_or_else(|_| Stdio::null())
         };
-        let status = Command::new("cargo")
+        let child = Command::new("cargo")
             .args(["build", "--profile", profile, "--workspace"])
             .current_dir(worktree)
             // cargo's DEFAULT target dir, always: the stable path is what makes it incremental,
@@ -56,11 +71,26 @@ impl Builder for Cargo {
             .env_remove("SPIRA_ARTIFACTS")
             .stdin(Stdio::null())
             .stdout(stdout_to_stderr)
-            .status();
-        let status = match status {
-            Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(BuildError::NoCargo),
+            // Its own process group, so a kill at the cutoff takes rustc with it.
+            .process_group(0)
+            .spawn();
+        let mut child = match child {
+            Ok(c) => c,
             Err(_) => return Err(BuildError::NoCargo),
+        };
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(st)) => break st,
+                Ok(None) => {}
+                Err(_) => return Err(BuildError::NoCargo),
+            }
+            if deadline.is_some_and(|d| Instant::now() >= d) {
+                // SAFETY: signalling the process group of a child we spawned.
+                unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
+                let _ = child.wait();
+                return Err(BuildError::Deadline);
+            }
+            std::thread::sleep(Duration::from_millis(100));
         };
         if !status.success() {
             return Err(BuildError::Failed(status.code().unwrap_or(1)));

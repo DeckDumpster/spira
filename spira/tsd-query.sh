@@ -22,8 +22,8 @@
 #                                                           query: suite, median, n
 #   tsd-query.sh suite-p90s     <n>                        the same shape as suite-medians,
 #                                                           quantile 0.9 instead of 0.5 —
-#                                                           gate-budget-select.sh's predicted
-#                                                           cost for a measured suite
+#                                                           what gate-budget-select.sh read; suite-select
+#                                                           computes the same P90 itself (sp-wx2tw)
 #   tsd-query.sh last-run                                  most recent run_id: sum(wall_secs)
 #                                                           over its suites, and its __batch__
 #                                                           row's wall_secs

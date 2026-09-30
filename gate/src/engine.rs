@@ -543,7 +543,7 @@ impl<'w, W: World> Trial<'w, W> {
                 e("SPIRA_GATE_ALL", ctx.var_or("SPIRA_GATE_ALL", "0")),
                 // Suites off for a unit or fences composition: the gate string runs its
                 // fences (a unit composition without the build fence, sp-aprxm) and
-                // selects nothing (gate-touched.sh). The always-
+                // selects nothing (the selector, `suite-select gate`). The always-
                 // covers carve-out is cleared with it; its default, spira/lib.sh, is a
                 // script, and a script composes as suites, so no carve-out can apply here.
                 e(
@@ -564,6 +564,11 @@ impl<'w, W: World> Trial<'w, W> {
                 e("SPIRA_RUN", &self.s.run),
                 e("SPIRA_LINT_BIN", ctx.var("SPIRA_LINT_BIN")),
                 e("SPIRA_TESTENV_BIN", ctx.var("SPIRA_TESTENV_BIN")),
+                // The runner's budget split and warm path (testenv DESIGN.md §11): the
+                // operator's knobs reach the trial they tune; unset = the runner's defaults.
+                e("SPIRA_TESTENV_SETUP_SHARE", ctx.var("SPIRA_TESTENV_SETUP_SHARE")),
+                e("SPIRA_TESTENV_WARM_SLOTS", ctx.var("SPIRA_TESTENV_WARM_SLOTS")),
+                e("SPIRA_SELECT_BIN", ctx.var("SPIRA_SELECT_BIN")),
             ]
         };
 
@@ -660,7 +665,16 @@ impl<'w, W: World> Trial<'w, W> {
             return v(NOVERDICT, "timeout", format!(
                 "gate: {name}'s own gate was killed at {timeout}s — it judged nothing.\ngate: command: {cmd}\ngate: this is the harness's budget, not a fault in the branch; raise SPIRA_GATE_TIMEOUT.\n{out}"));
         }
+        // THE BUDGET IS THE TRIAL'S (testenv DESIGN.md D9, sp-govet): a trial whose setup did
+        // not finish inside its share of SPIRA_GATE_BUDGET, or whose every suite was deferred,
+        // judged nothing — a named NO_VERDICT, never a pass and never the branch's red.
         if rc == NOVERDICT {
+            if let Some(r) = parse::testenv_fault_reason(&out).filter(|r| r.starts_with("deadline-")) {
+                let phase = &r["deadline-".len()..];
+                return v(NOVERDICT, "budget", format!(
+                    "gate: {name}'s suites trial did not fit its budget — phase `{phase}` was cut at its share of SPIRA_GATE_BUDGET={}s; it judged nothing.\ngate: command: {cmd}\n{out}",
+                    ctx.var_or("SPIRA_GATE_BUDGET", "300")));
+            }
             return v(NOVERDICT, "harness-fault", format!(
                 "gate: {name}'s own gate reported a harness fault (exit {NOVERDICT}) — container or install failed.\ngate: command: {cmd}\n{out}"));
         }
@@ -685,7 +699,15 @@ impl<'w, W: World> Trial<'w, W> {
             .as_ref()
             .filter(|_| self.gate_at(&repo, &tree, &base_rev, &base_rev).is_ok())
         {
-            let base_comp = self.base_composition(&comp, &ctx, &tree);
+            // A branch red before its suites step ran (a fence, the selector) is judged on the
+            // base's fences only: the base's suites answer no question this red asks, and they
+            // were most of every such base trial's wall (sp-govet: base-gate 164-501 s behind
+            // a 12 s fence red).
+            let base_comp = if !comp.suites_off() && !parse::suites_step_ran(&out) {
+                Composition::Fences
+            } else {
+                self.base_composition(&comp, &ctx, &tree)
+            };
             let (r, o, ph) = run_composed(
                 w,
                 &tree,
@@ -1129,7 +1151,8 @@ pub fn describe_reentry(bead: &str, r: &compose::Reentry) -> Option<String> {
 /// The base re-run: the named suites through testenv, on the revision in
 /// `SPIRA_GATE_BRANCH` (the pinned base), no deadline — the gate timeout bounds it. testenv's
 /// 2 and 3 are its own faults, NO_VERDICT, as the gate string maps them. Names are
-/// `red_suites` words; anything outside `[A-Za-z0-9._-]` is dropped, never quoted into a shell.
+/// `red_suites` words; anything that is not a suite name (`is_suite_name`, the selector's
+/// rule) is dropped, never quoted into a shell.
 /// The base re-run's first words: a no-op that names it in a process listing and a trace.
 pub const BASE_RERUN_MARK: &str = ": base-rerun; ";
 
@@ -1137,11 +1160,7 @@ pub fn base_rerun_cmd(suites: &[String]) -> String {
     let list: Vec<&str> = suites
         .iter()
         .map(String::as_str)
-        .filter(|s| {
-            !s.is_empty()
-                && s.chars()
-                    .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
-        })
+        .filter(|s| crate::compose::is_suite_name(s))
         .collect();
     format!(
         "{BASE_RERUN_MARK}_b=0; \"$SPIRA_TESTENV_BIN\" --suites {} \"$SPIRA_GATE_BRANCH\" || _b=$?; case \"$_b\" in 2|3) exit 75;; *) exit \"$_b\";; esac",

@@ -3,10 +3,10 @@
 //! [`ContainerRuntime`], so the orchestration is tested against a fake.
 
 use crate::record::Mode;
-use crate::runtime::{ContainerRuntime, ExecOutcome, ExecRequest};
+use crate::runtime::{ContainerRuntime, ExecOutcome, ExecRequest, RC_DEADLINE};
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 // Baked into the image; must agree with the Containerfile (and testenv.sh).
 /// Units suspended (ctrl.sh) before install, each with the reason it cannot run in the
@@ -40,18 +40,22 @@ pub enum Fault {
     Up(String),
     /// rc 3: configure / suspend / install failed.
     Install(String),
+    /// rc 2: a setup phase was still running at the trial's setup cutoff (DESIGN.md D9).
+    /// The phase word is the VERDICT reason's suffix (`deadline-<phase>`).
+    Deadline(&'static str),
 }
 
 impl Fault {
     pub fn rc(&self) -> i32 {
         match self {
-            Fault::Up(_) => 2,
+            Fault::Up(_) | Fault::Deadline(_) => 2,
             Fault::Install(_) => 3,
         }
     }
     pub fn message(&self) -> &str {
         match self {
             Fault::Up(m) | Fault::Install(m) => m,
+            Fault::Deadline(p) => p,
         }
     }
 }
@@ -176,6 +180,9 @@ pub struct Session<'a> {
     pub artifacts: String,
     pub liveness_retries: u32,
     pub liveness_sleep: Duration,
+    /// The trial's setup cutoff (`--deadline`, DESIGN.md D9): every setup exec and
+    /// testenv.sh call carries it. None = unbounded, as before.
+    pub setup_deadline: Option<Instant>,
 }
 
 fn kv(k: &str, v: impl Into<String>) -> (String, String) {
@@ -191,6 +198,7 @@ impl<'a> Session<'a> {
             artifacts: format!("{WORKSPACE}/target/{profile_dir}"),
             liveness_retries: 3,
             liveness_sleep: Duration::from_secs(3),
+            setup_deadline: None,
         }
     }
 
@@ -233,24 +241,46 @@ impl<'a> Session<'a> {
             .env(&env)
     }
 
+    /// A setup exec: [`Session::as_user`] bounded by the setup cutoff (never a suite's).
+    fn setup_as_user(&self, argv: &[&str], env: Vec<(String, String)>) -> ExecRequest {
+        let mut r = self.as_user(argv, env);
+        r.deadline = self.setup_deadline;
+        r
+    }
+
     /// `testenv.sh up --name <n> --checkout <worktree>`, then `testenv.sh probe`.
     pub fn up(&self, checkout: &Path) -> Result<(), Fault> {
-        let up = self.rt.testenv(&[
-            "up".into(),
-            "--name".into(),
-            self.name.clone(),
-            "--checkout".into(),
-            checkout.display().to_string(),
-        ]);
+        let up = self.rt.testenv(
+            &[
+                "up".into(),
+                "--name".into(),
+                self.name.clone(),
+                "--checkout".into(),
+                checkout.display().to_string(),
+            ],
+            self.setup_deadline,
+        );
+        if up.rc == RC_DEADLINE {
+            return Err(Fault::Deadline("up"));
+        }
         if !up.ok() {
             return Err(Fault::Up(format!(
                 "container {} did not come up",
                 self.name
             )));
         }
-        let probe = self
-            .rt
-            .testenv(&["probe".into(), "--name".into(), self.name.clone()]);
+        self.probe()
+    }
+
+    /// `testenv.sh probe`: user systemd reachable in the container.
+    pub fn probe(&self) -> Result<(), Fault> {
+        let probe = self.rt.testenv(
+            &["probe".into(), "--name".into(), self.name.clone()],
+            self.setup_deadline,
+        );
+        if probe.rc == RC_DEADLINE {
+            return Err(Fault::Deadline("up"));
+        }
         if !probe.ok() {
             return Err(Fault::Up(format!(
                 "probe failed — user systemd not available in {}",
@@ -270,7 +300,7 @@ impl<'a> Session<'a> {
             kv("CONFIGURE_DOLT_DATA", ""),
         ]);
         env.extend(self.artifact_env());
-        self.as_user(&["bash", "/workspace/spira/configure.sh"], env)
+        self.setup_as_user(&["bash", "/workspace/spira/configure.sh"], env)
     }
 
     pub fn suspend_request(&self, unit: &str, reason: &str) -> ExecRequest {
@@ -279,7 +309,7 @@ impl<'a> Session<'a> {
             kv("SPIRA_RUN", self.batch_run()),
         ];
         env.extend(self.artifact_env());
-        self.as_user(
+        self.setup_as_user(
             &[
                 "bash",
                 "/workspace/spira/ctrl.sh",
@@ -303,7 +333,7 @@ impl<'a> Session<'a> {
             kv("SPIRA_TESTDB_DATA", self.testdb_data()),
         ]);
         env.extend(self.artifact_env());
-        self.as_user(
+        self.setup_as_user(
             &["bash", "/workspace/systemd/install.sh", &self.instance],
             env,
         )
@@ -314,6 +344,9 @@ impl<'a> Session<'a> {
     pub fn install(&self, log: &dyn Fn(&str)) -> Result<(), Fault> {
         log(&format!("configure inside {}", self.name));
         let out = self.rt.exec(&self.configure_request());
+        if out.rc == RC_DEADLINE {
+            return Err(Fault::Deadline("install"));
+        }
         if !out.ok() {
             log(&format!("configure rc={} output tail:\n{}", out.rc, out.tail(40)));
             return Err(Fault::Install("configure failed — harness fault".into()));
@@ -323,7 +356,11 @@ impl<'a> Session<'a> {
             self.name
         ));
         for (unit, reason) in SUSPENDED_UNITS {
-            if !self.rt.exec(&self.suspend_request(unit, reason)).ok() {
+            let out = self.rt.exec(&self.suspend_request(unit, reason));
+            if out.rc == RC_DEADLINE {
+                return Err(Fault::Deadline("install"));
+            }
+            if !out.ok() {
                 return Err(Fault::Install(format!(
                     "ctrl suspend failed for {unit} — harness fault"
                 )));
@@ -334,6 +371,9 @@ impl<'a> Session<'a> {
             self.instance, self.name
         ));
         let out = self.rt.exec(&self.install_request());
+        if out.rc == RC_DEADLINE {
+            return Err(Fault::Deadline("install"));
+        }
         if !out.ok() {
             log(&format!("install rc={} output tail:\n{}", out.rc, out.tail(40)));
             return Err(Fault::Install("install failed — harness fault".into()));
@@ -341,26 +381,32 @@ impl<'a> Session<'a> {
         Ok(())
     }
 
-    /// Each distinct token checked once with `command -v` inside the container.
+    /// Each distinct token checked once with `command -v` inside the container. A check
+    /// killed at the setup cutoff is `Fault::Deadline("requirements")`, never "unmet": an
+    /// unmet token becomes a SKIP-REQ, and a deadline must not turn into a verdict.
     pub fn unmet_requirements<'t>(
         &self,
         tokens: impl IntoIterator<Item = &'t str>,
-    ) -> BTreeSet<String> {
+    ) -> Result<BTreeSet<String>, Fault> {
         let mut seen = BTreeSet::new();
         let mut unmet = BTreeSet::new();
         for t in tokens {
             if t.is_empty() || t == "testenv" || !seen.insert(t.to_string()) {
                 continue;
             }
-            let req = self.as_user(
+            let req = self.setup_as_user(
                 &["bash", "-c", "command -v \"$1\" >/dev/null 2>&1", "_", t],
                 vec![kv("XDG_RUNTIME_DIR", USER_RUNTIME)],
             );
-            if !self.rt.exec(&req).ok() {
+            let out = self.rt.exec(&req);
+            if out.rc == RC_DEADLINE {
+                return Err(Fault::Deadline("requirements"));
+            }
+            if !out.ok() {
                 unmet.insert(t.to_string());
             }
         }
-        unmet
+        Ok(unmet)
     }
 
     pub fn baseline_request(&self) -> ExecRequest {
@@ -369,7 +415,7 @@ impl<'a> Session<'a> {
             kv("SPIRA_TESTDB_DATA", self.testdb_data()),
         ];
         env.extend(self.artifact_env());
-        self.as_user(&["bash", "-c", BASELINE_SCRIPT], env)
+        self.setup_as_user(&["bash", "-c", BASELINE_SCRIPT], env)
     }
 
     /// `testenv testdb template` with the artifact under test: the server-mode template is
@@ -378,7 +424,7 @@ impl<'a> Session<'a> {
         let mut env = vec![kv("XDG_RUNTIME_DIR", USER_RUNTIME)];
         env.extend(self.artifact_env());
         let exe = format!("{}/testenv", self.artifacts);
-        self.as_user(
+        self.setup_as_user(
             &[&exe, "testdb", "template", "--bd", "bd", "--dolt", "dolt"],
             env,
         )
@@ -519,12 +565,15 @@ impl<'a> Session<'a> {
     }
 
     pub fn down(&self) -> ExecOutcome {
-        self.rt.testenv(&[
-            "down".into(),
-            "--name".into(),
-            self.name.clone(),
-            "--volumes".into(),
-        ])
+        self.rt.testenv(
+            &[
+                "down".into(),
+                "--name".into(),
+                self.name.clone(),
+                "--volumes".into(),
+            ],
+            None,
+        )
     }
 }
 
@@ -548,6 +597,8 @@ pub mod fake {
         pub testenv_rc: Mutex<std::collections::HashMap<String, i32>>,
         pub containers: Mutex<Vec<String>>,
         pub inspect_extra: Mutex<std::collections::HashMap<String, String>>,
+        /// testenv.sh subcommand → how long it takes (for the setup-cutoff tests).
+        pub testenv_delay: Mutex<std::collections::HashMap<String, Duration>>,
     }
 
     impl FakeRuntime {
@@ -647,8 +698,22 @@ pub mod fake {
             self.purged.lock().unwrap().push(name.into());
             self.containers.lock().unwrap().retain(|c| c != name);
         }
-        fn testenv(&self, args: &[String]) -> ExecOutcome {
+        fn testenv(&self, args: &[String], deadline: Option<Instant>) -> ExecOutcome {
             self.testenv_calls.lock().unwrap().push(args.to_vec());
+            let sub0 = args.first().cloned().unwrap_or_default();
+            if let Some(d) = self.testenv_delay.lock().unwrap().get(&sub0).copied() {
+                // a slow call: past the deadline it is "killed" like the real one
+                let end = Instant::now() + d;
+                while Instant::now() < end {
+                    if deadline.is_some_and(|dl| Instant::now() >= dl) {
+                        return ExecOutcome {
+                            rc: RC_DEADLINE,
+                            output: String::new(),
+                        };
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
             let sub = args.first().cloned().unwrap_or_default();
             let rc = self
                 .testenv_rc
@@ -815,9 +880,62 @@ mod tests {
                 output: String::new(),
             },
         );
-        let unmet = session(&rt).unmet_requirements(["jq", "dolt", "jq", "testenv"]);
+        let unmet = session(&rt)
+            .unmet_requirements(["jq", "dolt", "jq", "testenv"])
+            .unwrap();
         assert_eq!(unmet.into_iter().collect::<Vec<_>>(), vec!["dolt"]);
         assert_eq!(rt.exec_argv().len(), 2);
+    }
+
+    #[test]
+    fn setup_execs_carry_the_cutoff_and_suite_execs_never_do() {
+        let rt = FakeRuntime::new();
+        let mut s = session(&rt);
+        let cut = Instant::now() + Duration::from_secs(60);
+        s.setup_deadline = Some(cut);
+        for r in [
+            s.configure_request(),
+            s.suspend_request("u", "why"),
+            s.install_request(),
+            s.baseline_request(),
+            s.testdb_template_request(),
+        ] {
+            assert_eq!(r.deadline, Some(cut), "{:?}", r.argv);
+        }
+        let fx = Fixtures::PerSuite;
+        let suite = s.suite_request(Mode::Parallel, 1, "test-a.sh", &fx);
+        assert_eq!(suite.deadline, None, "a suite is bounded by the suite phase, not setup");
+    }
+
+    #[test]
+    fn a_requirement_check_killed_at_the_cutoff_is_a_deadline_fault_not_unmet() {
+        let rt = FakeRuntime::new();
+        rt.on(
+            |r| r.argv.last().map(String::as_str) == Some("jq"),
+            |_| ExecOutcome {
+                rc: RC_DEADLINE,
+                output: String::new(),
+            },
+        );
+        assert_eq!(
+            session(&rt).unmet_requirements(["jq"]),
+            Err(Fault::Deadline("requirements"))
+        );
+    }
+
+    #[test]
+    fn a_container_up_past_the_cutoff_is_a_deadline_fault_named_up() {
+        let rt = FakeRuntime::new();
+        rt.testenv_delay
+            .lock()
+            .unwrap()
+            .insert("up".into(), Duration::from_secs(5));
+        let mut s = session(&rt);
+        s.setup_deadline = Some(Instant::now() + Duration::from_millis(50));
+        let t0 = Instant::now();
+        assert_eq!(s.up(Path::new("/wt")), Err(Fault::Deadline("up")));
+        assert!(t0.elapsed() < Duration::from_secs(2));
+        assert_eq!(Fault::Deadline("up").rc(), 2);
     }
 
     #[test]

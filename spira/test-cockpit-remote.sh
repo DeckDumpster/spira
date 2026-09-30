@@ -10,18 +10,20 @@
 #      with a message naming the variable. This suite is the proof that "the default is
 #      gone" does not mean "the guard is silent about it".
 #
-#   2. INVENTORY IS CLEAN. Both files are tracked here; inventory.sh must pass them.
-#      The positive control: if we introduce a forbidden path, inventory.sh must
-#      catch it. Without the positive control a silent grep reports clean even when
+#   2. INVENTORY IS CLEAN. Both files are tracked here; spira-lint's inventory rule must
+#      pass them. The positive control: if we introduce a forbidden path, inventory must
+#      catch it. Without the positive control a silent matcher reports clean even when
 #      pointed at the wrong directory.
 #
 # tier: T1
-# covers: cockpit/remote/cockpit cockpit/remote/cockpit-remote spira/inventory.sh
+# covers: cockpit/remote/cockpit cockpit/remote/cockpit-remote
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+. "$HERE/conf.sh" >/dev/null 2>&1
 REMOTE_DIR="$(dirname "$HERE")/cockpit/remote"
-INVENTORY="$HERE/inventory.sh"
+[ -x "${SPIRA_LINT_BIN:-}" ] || bail "spira-lint is not built (SPIRA_LINT_BIN)"
+inventory_scan() { "$SPIRA_LINT_BIN" --only inventory --scan "$1" 2>/dev/null; }
 
 
 echo "test-cockpit-remote.sh"
@@ -66,9 +68,9 @@ fi
 
 # ======================================================================================
 echo
-echo "4. inventory.sh passes both files:"
+echo "4. the inventory rule passes both files:"
 # ======================================================================================
-# POSITIVE CONTROL. Before believing 'clean', prove inventory.sh can go red. Plant an
+# POSITIVE CONTROL. Before believing 'clean', prove the inventory rule can go red. Plant an
 # inventory-triggering path in a temp file and confirm it is caught. The path is
 # constructed at runtime so this file itself does not trigger the fence.
 T="$(mktemp)"
@@ -76,24 +78,24 @@ trap 'rm -f "$T"' EXIT
 # /workspaces + / yields the full forbidden pattern without writing it as a literal here.
 FORBIDDEN_PREFIX="/workspaces"
 printf '%s\n' '#!/bin/bash' "THING=${FORBIDDEN_PREFIX}/some/path" > "$T"
-if [ -n "$("$INVENTORY" --scan "$T" 2>/dev/null)" ]; then
-    ok "positive control: inventory.sh catches workspace paths"
+if [ -n "$(inventory_scan "$T")" ]; then
+    ok "positive control: the inventory rule catches workspace paths"
 else
-    bad "positive control: inventory.sh catches workspace paths" "offender was not flagged"
+    bad "positive control: the inventory rule catches workspace paths" "offender was not flagged"
 fi
 
-hits_dialer="$("$INVENTORY" --scan "$DIALER" 2>/dev/null)"
-hits_follower="$("$INVENTORY" --scan "$FOLLOWER" 2>/dev/null)"
+hits_dialer="$(inventory_scan "$DIALER")"
+hits_follower="$(inventory_scan "$FOLLOWER")"
 
 if [ -z "$hits_dialer" ]; then
-    ok "cockpit dialer passes inventory.sh"
+    ok "cockpit dialer passes the inventory rule"
 else
-    bad "cockpit dialer passes inventory.sh" "found: $hits_dialer"
+    bad "cockpit dialer passes the inventory rule" "found: $hits_dialer"
 fi
 if [ -z "$hits_follower" ]; then
-    ok "cockpit-remote passes inventory.sh"
+    ok "cockpit-remote passes the inventory rule"
 else
-    bad "cockpit-remote passes inventory.sh" "found: $hits_follower"
+    bad "cockpit-remote passes the inventory rule" "found: $hits_follower"
 fi
 
 # ======================================================================================

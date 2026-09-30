@@ -82,7 +82,7 @@ reached the bash.
 | `SPIRA_GATE_BEAD` | ejected-suites lookup (the re-entry check), the key, `lc_certify` | — |
 | `SPIRA_GATE_CALLER` | `by=` in the cache entry | the branch |
 | `LANDSTATE` (lib.sh) | `<bead>.ejected`, else an `EJECTED` landstate row | `$SPIRA_RUN/landstate` |
-| `SPIRA_GATE_BUDGET`, `SPIRA_GATE_ALL`, `SPIRA_CERTIFY_ALWAYS_COVERS`, `SPIRA_BATCH_MAXPAR`, `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_LINT_BIN`, `SPIRA_TESTENV_BIN`, `PATH`, `HOME` | passed through to the gate command | as bash |
+| `SPIRA_GATE_BUDGET`, `SPIRA_GATE_ALL`, `SPIRA_CERTIFY_ALWAYS_COVERS`, `SPIRA_BATCH_MAXPAR`, `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_LINT_BIN`, `SPIRA_TESTENV_BIN`, `SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS` (sp-govet), `SPIRA_SELECT_BIN` (sp-wx2tw), `PATH`, `HOME` | passed through to the gate command | as bash |
 
 ### The gate command's environment (unchanged list, `env -i`)
 
@@ -91,7 +91,7 @@ reached the bash.
 `SPIRA_GATE_HOST_CORES`, `SPIRA_GATE_EJECTED_SUITES`, `SPIRA_GATE_ALL` (default 0),
 `SPIRA_GATE_SUITES` (default on), `SPIRA_CERTIFY_ALWAYS_COVERS`, `SPIRA_BATCH_MAXPAR`,
 `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_GATE_BUDGET` (default 300), `SPIRA_RUN`,
-`SPIRA_LINT_BIN`, `SPIRA_TESTENV_BIN`. Run as `timeout $SPIRA_GATE_TIMEOUT bash -c "$CMD"` in
+`SPIRA_LINT_BIN`, `SPIRA_TESTENV_BIN`, `SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS` (sp-govet), `SPIRA_SELECT_BIN` (the suite selector, sp-wx2tw). Run as `timeout $SPIRA_GATE_TIMEOUT bash -c "$CMD"` in
 the gate tree, stdout and stderr on one pipe. No lock descriptor reaches it (every descriptor
 this binary opens is close-on-exec; the bash leaked the admission slot's fd 8).
 
@@ -253,6 +253,24 @@ Then, given the branch trial failed with an ordinary red:
 Suite names come from the batch runner's lines: a `*.sh` word followed by `RED`, `TIMEOUT`,
 `FAILED` or `was killed` (reds); `TIMEOUT`/`was killed` (timeouts); those plus `ok`,
 `SKIPPED`, `SKIP-REQ`, `QUARANTINED-RED`, `DISABLED`, `UNREACHED` (ran).
+
+### The trial's budget (sp-govet)
+
+`SPIRA_GATE_BUDGET` is the **whole suites trial's** budget: the runner starts its clock when
+it starts, bounds its setup by a share of it and gives the suites what is left (testenv
+DESIGN.md §11, D9). Two consequences here:
+
+* **A budget cut is `NO_VERDICT reason=budget`.** When the gate string exits 75 and the
+  runner's last line is `VERDICT FAULT … reason=deadline-<phase>` (a setup phase cut at its
+  share, or `deadline-suites`: every suite deferred), the trial judged nothing. The message
+  names the phase and the budget; there is no base trial. Any other runner fault stays
+  `harness-fault`.
+* **A red before the suites step is judged on the base's fences only.** When the branch trial
+  failed and its output shows the suites step never started (no runner `VERDICT` line, no
+  suite line — a fence or the selector failed first), the base trial runs as composition
+  `fences` (suites off). Its suites cannot answer whose fault a fence red is, and they were
+  most of every such base trial's wall: in the rewrite waves a 12 s fence red was followed by
+  a 164–501 s base trial. Attribution is unchanged: base fences pass → `branch-red`, suite `-`.
 
 ## Composition (sp-2ghui)
 
@@ -453,7 +471,8 @@ structure: **the gate cannot PASS a trial in which a fence it ran was silent.**
 * **Which fences** (`fence::expected`, over the gate string the composition actually runs —
   under `gate_mode = unit` without the build fence, `compose::gate_string`): each
   `bash <dir>/<x>.sh` word (the preflight's scan) is the fence `<x>`; the suite selector
-  `gate-touched.sh` is not a fence and runs none; the `$SPIRA_LINT_BIN` word is `spira-lint`
+  `gate-touched.sh` was not a fence and ran none, and its successor, the `suite-select` binary
+  (`"$SPIRA_SELECT_BIN" gate …`, sp-wx2tw), is no `bash` word; the `$SPIRA_LINT_BIN` word is `spira-lint`
   plus each rule in `LINT_RULE_FENCES` that the word's `--only` (if any) includes:
   `plan-matrix`, `lockfile-lint`, `tier-budget-allowlist`, `tier-budget-area-allowlist`,
   `tier-budget-areas`.
@@ -610,6 +629,13 @@ lib.sh seam is one `bash -c '. lib.sh; …'` at start (NUL-separated `key=value`
   as FAIL, is what throttled certification.
 * **`gate-lib.sh` is retired.** Its functions are ported (`src/parse.rs`, `src/key.rs`) with
   unit tests; `test-gate-unit.sh`, which only exercised them, is retired with it.
+* **Suite selection is the `suite-select` crate** (sp-wx2tw, `suite-select/DESIGN.md`). The
+  gate string calls the installed binary (`"$SPIRA_SELECT_BIN" gate …`), which the gate passes
+  into the gate command's environment; its exit 1 (an unclaimed source file) is FAIL and any
+  other failure NO_VERDICT, where `gate-touched.sh` swallowed both into an empty selection.
+  The re-entry check and the base re-run read suite names by the selector's rule
+  (`names::is_suite_name`, `names::split_list`), so the suites the round named, the ones the
+  selector forces, and the ones the base re-run names are one vocabulary.
 
 ## Wave 1 — gate-spira.sh, exclude.sh, build-fence.sh (sp-hyc3a)
 
@@ -623,32 +649,43 @@ Rust gate already does:
   sweep and `systemd/spira-suites.{service,timer}` on 2026-09-26 — confirmed again here by
   grep, matching three independent prior findings (sp-nhid0, sp-z3i42.3, sp-9mnvm). It was
   the sole caller of `gate-fences.sh`'s fence loop, deleted with it. Nothing it did needs a
-  Rust port: the ten fences that loop ran (bd-stdin-lint.sh, gh-intake-lint.sh,
-  incident-cause-lint.sh, tmux-scope-fence.sh, wiki-add-fence.sh, testdb-mode-lint.sh,
-  literal-lint.sh, scratch-fence.sh, binary-path-fence and payload-argv-lint — the latter two
-  already spira-lint rules) are re-homed as plain calls in `spira/repo-map.example`'s shipped
-  gate command (mirroring what sp-9mnvm already applied to this box's live
-  `~/.config/spira/repo-map` by hand) and the eight with no `SPIRA_DB` dependency into
-  `.github/workflows/gate.yml`'s Lints step; `sop.sh lint` and `suite-state-fence.sh` are
-  deliberately left out of both (need a real `SPIRA_DB`; `sop.sh lint` also hangs past 120s
-  under load until sp-oc2i6/sp-rjbrc's O(n²) fix lands on `local/main` — test-sop-gate-wired.sh
-  says so and skips that row rather than asserting it). Its own suite-budget bead-filing and
-  per-suite leaky-child watchdog had exactly one caller (itself) and no live analog before
-  this change either (already so decided: sp-z3i42.2, left open P3). Every test that asserted
-  wiring by grepping `gate-spira.sh`'s source now greps `repo-map.example` instead (18 files);
-  `test-gate-fences.sh`, whose only subject was `gate_fence_list`, is deleted with it.
-  Supersedes the never-landed `spira/sp-m893q` branch (cut before the Rust gate cutover;
-  stale against current `gate.sh`), redone here against `local/main`.
+  Rust port: at the time this bead started, the ten fences that loop ran (bd-stdin-lint.sh,
+  gh-intake-lint.sh, incident-cause-lint.sh, tmux-scope-fence.sh, wiki-add-fence.sh,
+  testdb-mode-lint.sh, literal-lint.sh, scratch-fence.sh, binary-path-fence and
+  payload-argv-lint) were re-homed as plain calls in `spira/repo-map.example`'s shipped gate
+  command (mirroring what sp-9mnvm had already applied to this box's live
+  `~/.config/spira/repo-map` by hand) and into `.github/workflows/gate.yml`'s Lints step.
+  **Overtaken by events on merge with `local/main`:** sp-ekkak/this wave's own concurrent
+  work ported nine of those ten (everything but `build-fence.sh`) into spira-lint rules of
+  the same name and deleted their standalone scripts outright — `spira/repo-map.example` and
+  `gate.yml` are updated again here to call `spira-lint`/`bin/spira-lint --only <rule>`
+  instead of a deleted `bash spira/<rule>.sh`, and `spira/repo-map.example`'s row is now
+  explicitly illustrative only, since `gate.steps` (sp-quu2w, landed after this bead started)
+  is this repository's actual, tree-owned gate definition — see its own header. `sop.sh lint`
+  and `suite-state-fence.sh` are still deliberately left out of both (need a real `SPIRA_DB`;
+  `sop.sh lint` also hangs past 120s under load until sp-oc2i6/sp-rjbrc's O(n²) fix lands on
+  `local/main` — test-sop-gate-wired.sh says so and skips that row rather than asserting it).
+  Its own suite-budget bead-filing and per-suite leaky-child watchdog had exactly one caller
+  (itself) and no live analog before this change either (already so decided: sp-z3i42.2, left
+  open P3). Every test that asserted wiring by grepping `gate-spira.sh`'s source is either
+  deleted with its now-ported subject (nine of them, by the concurrent sp-ekkak work) or
+  repointed to grep `.github/workflows/gate.yml` instead (`test-orphan-test.sh`,
+  `test-sop-gate-wired.sh`'s prose); `test-gate-fences.sh`, whose only subject was
+  `gate_fence_list`, is deleted with it. Supersedes the never-landed `spira/sp-m893q` branch
+  (cut before the Rust gate cutover; stale against current `gate.sh`), redone here against
+  `local/main`.
 * **`build-fence.sh`: KEPT AS BASH, not ported, not retired.** Its job for a `unit`
   composition is *already done* by this crate's own build phase (sp-aprxm, above) — that is
-  precisely why `compose::gate_string` strips its step for that mode. For `suites` and
-  `fences` compositions (a bash-touching branch, or the temporary state before a component
-  moves to Rust) it remains the only compile check and `doctor.sh` requires every repository's
-  gate string to name it. Porting the remainder to Rust now would mean either a new
-  single-purpose binary crate (rejected: `gate/DESIGN.md`'s own fence-scripts law says a new
-  fence is a spira-lint rule, never a new script either direction) or extending spira-lint
+  precisely why `compose::gate_string` strips its step for that mode, and why `gate.steps`
+  keeps `step bash spira/build-fence.sh` its own line (sp-quu2w's own comment says so). For
+  `suites` and `fences` compositions (a bash-touching branch, or the temporary state before a
+  component moves to Rust) it remains the only compile check and `doctor.sh` requires every
+  repository's gate definition to name it. Porting the remainder to Rust now would mean either
+  a new single-purpose binary crate (rejected: `gate/DESIGN.md`'s own fence-scripts law says a
+  new fence is a spira-lint rule, never a new script either direction) or extending spira-lint
   itself, which other concurrent work owns this wave. It retires on its own once every
-  bash-touching path is gone (law-rust-rewrite-order); nothing to do here but leave it wired.
+  bash-touching path is gone (law-rust-rewrite-order); nothing to do here but leave it wired,
+  unchanged, in `gate.steps`.
 * **`exclude.sh`: KEPT AS BASH, not ported, not retired.** The beads-database guard
   (law-beads-is-never-public) is already this crate's own non-goal above ("each moves in its
   own turn of the rewrite order") — not this turn. It is independently wired (called directly
@@ -658,10 +695,11 @@ Rust gate already does:
   changing exclude.sh's behaviour at all. A guard whose whole purpose is refusing to publish
   a beads database fails closed today and is not the rewrite to attempt under a P0 clock.
 
-Parity: every touched suite (`test-select.sh`, `test-exclude.sh`, `test-build-fence.sh`,
-`test-literal-lint.sh`, `test-scratch-fence.sh`, `test-wiki-add-fence.sh`,
-`test-orphan-test.sh`, `test-gh-intake-lint.sh`, `test-sop-gate-wired.sh`,
-`test-bd-stdin.sh`, `test-testdb-mode-lint.sh`, `test-tmux-scope-fence.sh`,
-`test-incident-cause.sh`, `test-inventory.sh`) still passes; `repo-map.example`'s new
-harness row parses as valid bash (`repo_field`'s real parser, not naive `|`-splitting) and
-still names every fence `doctor.sh` and each suite's own positive control require.
+Parity: every suite this bead's own changes touch still passes under `testenv` (from the
+worktree, never the host): `test-exclude.sh`, `test-build-fence.sh`, `test-orphan-test.sh`,
+`test-sop-gate-wired.sh` at each stage of this branch's history, and the full `spira-lint`
+run (18 rules, including `config-fence`) is clean against the merged tree. `cargo test -p
+gate` is green (149 tests, including `a_unit_gate_builds_once_and_every_other_composition_
+keeps_the_build_fence` and, after the sp-quu2w merge, `the_checked_in_definition_keeps_a_
+compile_check_and_proves_its_fences`). The real gate's own VERDICT on the merged head is the
+final proof; see the bead's report for the line.

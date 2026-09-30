@@ -150,6 +150,18 @@ WHY_CAP="${SOP_WHY_CAP:-400}"
 
 usage() { sed -n '3,19p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 slugify() { printf 'sop-%s' "${1#sop-}"; }
+
+# _inventory_scan <file> -> the inventory rule's offending tokens for that file, one per line.
+# The inventory fence moved from spira/inventory.sh to spira-lint's `inventory` rule
+# (sp-ekkak); lib.sh (sourced above) already resolves SPIRA_LINT_BIN via conf.sh. Fails
+# closed: a missing binary refuses rather than silently skipping the check.
+_inventory_scan() {
+    [ -x "${SPIRA_LINT_BIN:-}" ] || {
+        echo "sop: spira-lint is not built (SPIRA_LINT_BIN) — refusing to check operator infrastructure" >&2
+        return 1
+    }
+    "$SPIRA_LINT_BIN" --only inventory --scan "$1" 2>/dev/null
+}
 # A flag proves its value is present before taking it: `shift 2` with one argument left shifts
 # nothing at all, and the parse loop then spins forever on the same token.
 need() { [ "$1" -ge 2 ] || { echo "sop: $2 needs a value" >&2; exit 1; }; }
@@ -276,11 +288,11 @@ write)
         exit 1
     fi
 
-    # SOPs ship in this repository and are scanned by inventory.sh on every landing.
-    # A CHECK or FIX step that names an operator-specific absolute path would block every
+    # SOPs ship in this repository and are scanned by spira-lint's inventory rule on every
+    # landing. A CHECK or FIX step that names an operator-specific absolute path would block every
     # branch that calls `sop.sh write`. Use $SPIRA_DB, $SPIRA_HOME, or other env vars from
     # conf.sh instead — those expand to the right paths on any clone.
-    inv_hits="$(printf '%s\n' "$text" | bash "$(dirname "$0")/inventory.sh" --scan /dev/stdin 2>/dev/null)"
+    inv_hits="$(printf '%s\n' "$text" | _inventory_scan /dev/stdin)"
     if [ -n "$inv_hits" ]; then
         echo "sop: refusing — SOP text names operator infrastructure:" >&2
         printf '%s\n' "$inv_hits" | sed 's/^/     /' >&2
@@ -840,7 +852,7 @@ validate)
     rc=0
     _sop_validate "$key" "$text" || rc=1
     if [ -n "${text//[[:space:]]/}" ]; then
-        inv_hits="$(printf '%s\n' "$text" | bash "$(dirname "$0")/inventory.sh" --scan /dev/stdin 2>/dev/null)"
+        inv_hits="$(printf '%s\n' "$text" | _inventory_scan /dev/stdin)"
         if [ -n "$inv_hits" ]; then
             echo "FAIL  $key: names operator infrastructure:"
             printf '%s\n' "$inv_hits" | sed 's/^/        /'

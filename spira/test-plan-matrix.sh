@@ -13,7 +13,7 @@
 # host-reason: reads suite source and scratch git repos only; no database, no systemd
 #
 # tier: T1
-# covers: spira/plan-matrix.sh spira/gate-touched.sh spira-lint/src/rules/plan_matrix.rs
+# covers: spira/plan-matrix.sh spira-lint/src/rules/plan_matrix.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 REAL_ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -111,10 +111,9 @@ want ".gitignore excludes COVERAGE.md" "docs/test-plan/COVERAGE.md" "$gi"
 # GATE WIRING (sp-ufbkh): the gate runs the test plan's fence as spira-lint's plan-matrix
 # rule, in the gate tree against SPIRA_GATE_BASE. gate-touched.sh ran plan-matrix-fence.sh
 # behind a SPIRA_GATE_REPO check that never matched at the gate, so it never ran there;
-# the script is gone. Confirmed by source reference.
+# both scripts are gone (the selector is the suite-select binary, sp-wx2tw). Confirmed by
+# source reference.
 # ==========================================================================
-gt="$(cat "$HERE/gate-touched.sh")"
-nowant "gate-touched.sh no longer calls a plan-matrix fence script" 'bash "$HERE/plan-matrix-fence.sh"' "$gt"
 rule_src="$(cat "$HERE/../spira-lint/src/rules/plan_matrix.rs" 2>/dev/null)"
 want "spira-lint carries the plan-matrix rule" 'const NAME: &str = "plan-matrix"' "$rule_src"
 want "the rule judges orphans against the base" "orphan_violations" "$rule_src"

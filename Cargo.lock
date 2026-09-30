@@ -85,6 +85,9 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 [[package]]
 name = "batcher"
 version = "0.1.0"
+dependencies = [
+ "suite-select",
+]
 
 [[package]]
 name = "batcher-cut"
@@ -94,7 +97,7 @@ dependencies = [
  "gate",
  "serde_json",
  "spira-config",
- "spira-lint",
+ "suite-select",
  "testkit",
 ]
 
@@ -293,8 +296,33 @@ dependencies = [
  "sha2",
  "spira-config",
  "spira-lint",
+ "suite-select",
  "testkit",
  "tsd",
+]
+
+[[package]]
+name = "gate-check"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "testkit",
+]
+
+[[package]]
+name = "gate-diag"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "testkit",
+]
+
+[[package]]
+name = "gate-run"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "testkit",
 ]
 
 [[package]]
@@ -600,11 +628,11 @@ version = "1.0.0"
 dependencies = [
  "gate",
  "libc",
+ "release",
  "serde",
  "serde_json",
  "spira-config",
  "testkit",
- "toml",
 ]
 
 [[package]]
@@ -713,6 +741,16 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "release"
+version = "0.1.0"
+dependencies = [
+ "sha2",
+ "spira-config",
+ "testkit",
+ "toml",
+]
 
 [[package]]
 name = "ring"
@@ -1048,6 +1086,7 @@ dependencies = [
  "regex",
  "serde",
  "spira-config",
+ "suite-select",
  "test-plan",
  "testkit",
  "toml",
@@ -1077,6 +1116,14 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "suite-select"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "testkit",
+]
 
 [[package]]
 name = "syn"
@@ -1128,6 +1175,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "spira-config",
+ "suite-select",
  "testkit",
  "tsd",
 ]

@@ -133,7 +133,7 @@ longest per-red attribution wall of the round) and `regreen_seconds`.
 | piece | crate | IO |
 |---|---|---|
 | `attrib::Attributor` — the per-suite state machine, slot arithmetic, suspect order, final decision | `batcher` (pure) | none; the clock is an argument |
-| `attrib::suspect_order`, `attrib::case_glob` — `# covers:` matching with select.sh's `case` semantics (`*` crosses `/`; `file#fn` matches on the file) | `batcher` | none |
+| `attrib::suspect_order`, `attrib::case_glob` — `# covers:` matching with the selector's `case` semantics (`suite_select::glob`) (`*` crosses `/`; `file#fn` matches on the file) | `batcher` | none |
 | `drive::drive` — the loop: stream main results in, launch jobs out, until settled | `batcher-cut` | through the `RoundRunner` trait only |
 | `vm::VmRunner` — `RoundRunner` over `round-vm run --attr-spool` | `batcher-cut` | git, round-vm, the spool files |
 

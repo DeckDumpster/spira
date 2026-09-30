@@ -105,7 +105,7 @@ want "the branch trial sees the changed file"      "f1.txt"               "$bran
 want "HOST_CORES is the real host count, not a cgroup-limited one" "HOST_CORES=$real_cores" "$branch_env"
 want "SUITES defaults to conf.sh's gate-suites path" "SUITES=/" "$branch_env"
 want "and names gate-suites"                         "gate-suites"          "$branch_env"
-want "BUDGET reaches the branch trial (sp-vq2za: gate-touched.sh's own budget)" "BUDGET=300" "$branch_env"
+want "BUDGET reaches the branch trial (sp-vq2za: the selector's own budget)" "BUDGET=300" "$branch_env"
 want "BUDGET reaches the base trial too"              "BUDGET=300"           "$base_env"
 want "RUN reaches the branch trial, not dropped by env -i" "RUN=$RUN"        "$branch_env"
 

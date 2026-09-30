@@ -20,4 +20,5 @@ pub mod tap;
 pub mod timing;
 pub mod util;
 pub mod verdict;
+pub mod warm;
 pub mod worktree;

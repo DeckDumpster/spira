@@ -1543,8 +1543,12 @@ spira_conf_defaults() {
     : "${SPIRA_TESTENV_BIN:=$(spira_bin testenv 2>/dev/null)}"      # spira/testenv-batch.sh, suites.sh
     : "${SPIRA_REBASE_STALE_BIN:=$(spira_bin rebase-stale 2>/dev/null)}"  # spira/rebase-stale.sh
     : "${SPIRA_GATE_BIN:=$(spira_bin gate 2>/dev/null)}"            # spira/gate.sh (sp-0tpcs)
+    : "${SPIRA_GATE_RUN_BIN:=$(spira_bin gate-run 2>/dev/null)}"    # spira/gate-run.sh (sp-ubw2o)
+    : "${SPIRA_GATE_CHECK_BIN:=$(spira_bin gate-check 2>/dev/null)}"  # spira/gate-check.sh (sp-ubw2o)
+    : "${SPIRA_GATE_DIAG_BIN:=$(spira_bin gate-diag 2>/dev/null)}"  # spira/gate-diag.sh (sp-ubw2o)
     : "${SPIRA_ROUND_VM_BIN:=$(spira_bin round-vm 2>/dev/null)}"    # spira/round-vm.sh
     : "${SPIRA_LINT_BIN:=$(spira_bin spira-lint 2>/dev/null)}"      # the ported bash fences
+    : "${SPIRA_SELECT_BIN:=$(spira_bin suite-select 2>/dev/null)}"  # the suite selector: select.sh, gate-touched.sh (sp-wx2tw)
     # test-plan — validates docs/test-plan/*.toml, builds the derived coverage matrix.
     : "${SPIRA_TEST_PLAN_BIN:=$(spira_bin test-plan 2>/dev/null)}"
     # reconciler-flow (sp-rh0x3): backlog trend, stage velocity, stage dwell and round health
@@ -1777,22 +1781,21 @@ spira_conf_defaults() {
     : "${SPIRA_SUITE_TIMEOUT:=600}"
     : "${SPIRA_BATCH_LEDGER:=$SPIRA_RUN/batch-timing.tsv}"
     # PER-TIER WALL-TIME BUDGETS, in milliseconds (law-unit-tests-run-under-a-second; test
-    # plan §4.1). An untagged suite is judged as T1 — tier-budget.sh's own rule, not a default
-    # to rely on elsewhere.
+    # plan §4.1). An untagged suite is judged as T1. The gate's budget cut (suite-select) costs an
+    # unmeasured suite at its tier's value here.
     : "${SPIRA_TIER_BUDGET_T0_MS:=1000}"
     : "${SPIRA_TIER_BUDGET_T1_MS:=1000}"
     : "${SPIRA_TIER_BUDGET_T2_MS:=10000}"
     : "${SPIRA_TIER_BUDGET_T3_MS:=60000}"
-    # HOW MANY TRAILING tsd ROWS tier-budget.sh MEDIANS OVER, per suite. A single sample
+    # HOW MANY TRAILING tsd ROWS a per-suite budget median spans (tier-budget.sh's, retired sp-wx2tw). A single sample
     # is noisy; a median across recent runs is what tells a slow box from a slow suite.
     : "${SPIRA_TIER_BUDGET_WINDOW:=20}"
     # HOW FAR AN ALLOWLISTED SUITE MAY DRIFT ABOVE ITS RECORDED TIME before it fails, as a
-    # percent. The allowlist itself may only shrink (spira/tier-budget.sh lint-allowlist);
+    # percent. The allowlist itself may only shrink (spira-lint tier-budget-allowlist);
     # this margin is what still catches a violator getting worse while grandfathered in.
     : "${SPIRA_TIER_ALLOWLIST_MARGIN_PCT:=20}"
     # THE CHECKED-IN RATCHET: today's budget violators and the time each was measured at.
-    # spira/tier-budget.sh is the only writer a human should need — every other write is a
-    # lint failure.
+    # Only shrinking it is legal — every other write is a lint failure.
     : "${SPIRA_TIER_ALLOWLIST:=$SPIRA_HOME/tier-budget-allowlist}"
     # THE SAME RATCHET, for areas (UC-<area>) with more than one T3 suite today. Shrink-only,
     # same as SPIRA_TIER_ALLOWLIST above; consolidating an area's T3 coverage removes/lowers
@@ -2584,8 +2587,12 @@ export COCKPIT_BOTTOM_PCT \
     SPIRA_TESTENV_BIN \
     SPIRA_REBASE_STALE_BIN \
     SPIRA_GATE_BIN \
+    SPIRA_GATE_RUN_BIN \
+    SPIRA_GATE_CHECK_BIN \
+    SPIRA_GATE_DIAG_BIN \
     SPIRA_ROUND_VM_BIN \
-    SPIRA_LINT_BIN
+    SPIRA_LINT_BIN \
+    SPIRA_SELECT_BIN
 
 # --------------------------------------------------------------------------------------
 # NAME WHAT IS MISSING. A harness that dies with `bd: command not found` from a timer has

@@ -33,9 +33,14 @@ members = [
     "queue",
     "aeon",
     "gate",
+    "gate-run",
+    "gate-diag",
+    "gate-check",
     "testkit",
     "intent-report",
     "beads-store",
+    "suite-select",
+    "release",
 ]
 resolver = "2"
 

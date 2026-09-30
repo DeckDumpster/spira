@@ -486,6 +486,98 @@ Suite headers are read by the one parser the bash used (`covers_of`, and `tier_o
 `docs/test-plan/`; a catalogue with no use case. **Positive control:** `fence: plan-matrix
 checked <use cases> use-cases (<n> suites here, <m> at the base)`.
 
+## Rule `plan-lint`
+
+Ported from `spira/plan-lint.sh`'s default (`--lint`) mode (sp-pppt0). The script itself is
+not deleted: its `--orphans` mode is `plan-matrix` above (ported earlier, under sp-ufbkh) and
+`--check`/`--gaps` stay bash-callable utilities used by hand and by
+`test-plan-matrix-merge.sh` (`--gaps` is a report and was never a failure, so it has no gate
+role to port).
+
+**Why a rule.** `plan-lint.sh`'s default mode — every suite declares `# tier:`/`# covers:`,
+and every UC id on `# covers:` exists in the typed catalogue — was never wired into any gate
+string at all, so a violation reached the tree unchecked. This is the first gate coverage
+for it, and it found about 130 pre-existing suites with no `# tier:` and a handful of stale
+UC ids the moment it ran over the real corpus.
+
+**Checks**, over `spira/test-*.sh`: missing `# tier:` (`plan_matrix::tier_of`, empty or
+absent); missing `# covers:` (`covers_entries::covers_of`, empty or absent); a `UC-*` token
+on `# covers:` absent from every `docs/test-plan/*.toml` (loaded fresh via
+`test_plan::load_catalogues`; a malformed catalogue is reported as a finding, not a
+refusal — the same handling `plan-matrix` gives it). No catalogue directory still checks the
+headers; it just cannot check UC ids.
+
+**Allow list.** `spira-lint/plan-lint-allow`: exact suite paths, shrink-only, generated at
+authorship from every suite the real tree already violated (the `fence-scripts`/
+`testlib-migrated` pattern) — so the rule can gate every *new* suite from day one without
+failing every branch on debt it did not add. A listed suite's findings (all of them, not
+per-violation) are suppressed; a listed suite with no findings left is itself a finding
+("no longer needs an exception").
+
+**Refuses** (exit 3): no suites matched `spira/test-*.sh`. **Positive control:**
+`fence: plan-lint checked <n> suites`.
+
+## Rule `testdb-mode-lint`
+
+Ported from `spira/testdb-mode-lint.sh` (sp-pppt0), which is deleted.
+
+**Intent.** Embedded Dolt resets in ~5s; server mode pays a real dolt-beads-test round trip,
+median 110s. A suite that pins `SPIRA_TESTDB_MODE=server` without saying why is
+indistinguishable, at a glance, from one that needs the real engine.
+
+**Scope.** `spira/test-*.sh`, directly in `spira/`.
+
+**Violation.** A live (non-comment) line containing `SPIRA_TESTDB_MODE=server`
+(`export`-prefixed or inline), when the file carries no `# testdb-mode: server — <reason>`
+header (non-empty reason after the em dash) anywhere in it. One finding per request line.
+
+**Refuses** (exit 3): no suites in scope. **Positive control:** `fence: testdb-mode-lint
+checked <n> suites`.
+
+## Rule `bd-stdin-lint`
+
+Ported from `spira/bd-stdin-lint.sh` (sp-pppt0; defect sp-j5z3), which is deleted.
+
+**Intent.** `bd note <id> - <<EOF` and `bd create ... -d - <<EOF` store the literal `-` and
+discard the heredoc body that follows it — six beads shipped with a dash where their body or
+notes should be. The stdin forms (`--stdin`, `--body-file -`) are the fix.
+
+**Scope.** Every file under `spira/` or `chamber/` (git's default pathspec `*`, crossing
+`/`), one pass per file over both shapes together (never two passes for the same file).
+
+**Violation.** A live (non-comment) line matching either shape:
+`bd … note … <space>-<space><<` or `bd … create … (-d<space>-|-d-|--description<space>-)`
+followed by `<`, end of line, or a non-`-` character. One finding per line.
+
+**Refuses** (exit 3): no `spira/` or `chamber/` files in scope. **Positive control:**
+`fence: bd-stdin-lint checked <n> files`.
+
+## Rule `incident-cause-lint`
+
+Ported from `spira/incident-cause-lint.sh` (sp-pppt0), which is deleted.
+
+**Intent.** A producer that sets `SPIRA_INCIDENT_REF` without `SPIRA_INCIDENT_CAUSE` beside
+it files recurrences into the undifferentiated "unrecorded" bucket, collapsing the census
+taxonomy a remedy needs to rank failure classes.
+
+**Scope.** `spira/*.sh`, any depth, excluding suites (a basename starting `test-`) — the bash
+fence's `grep -rn --include='*.sh' | grep -v '/test-'`.
+
+**Violation.** A live, code (non-comment, not inside a quoted string before the `=`)
+`SPIRA_INCIDENT_REF=` assignment with no `SPIRA_INCIDENT_CAUSE` anywhere in its surrounding
+14-line window (10 before, 3 after, clamped to the file's bounds).
+
+**Intended difference from the bash fence.** The bash fence computed its window with
+`sed -n "$((l-10)),$((l+3))p"`; for a site on line 10 or earlier that produces a negative or
+zero start address, which GNU sed rejects as an unrecognised *option* (`-4` looks like a
+flag), not a line-address error — so the window search silently sees nothing and the site is
+refused even when its declared cause sits two lines above it. This rule clamps the window's
+start to line 1 instead, so a site near the top of a short file is judged on what is actually
+around it.
+
+**Refuses** (exit 3): no files in scope. **Positive control:** `fence: incident-cause-lint
+checked <n> files`.
+
 ## Rule `lockfile-lint`
 
 Ported from `spira/lockfile-lint.sh` (sp-4kws1; sp-ufbkh), which is deleted.
@@ -528,6 +620,194 @@ least that many. One finding per area, path `area <name>`, naming the suites.
 **Scope.** `spira/test-*.sh` directly in `spira/`; an empty scope refuses (the bash returned 0
 on no T3 suites, and on no suites at all). **Positive control:** `fence: tier-budget-areas
 checked <n> suites`.
+
+---
+
+# Rules ported from the fences wave-brief (sp-ekkak): inventory, literal, scratch, wiki-add,
+# tmux-scope, gh-intake
+
+These six ran as standalone bash scripts in the gate string (each with its own `[ -r … ]`
+missing-script check and its own `fence: <name> checked …` line). As rules they run inside the
+one `spira-lint` invocation the gate already makes; the aggregate `fence: spira-lint checked …`
+line covers them, the way it already covers config-fence, binary-path-fence, payload-argv-lint
+and fence-scripts. None needed its own entry in `gate/src/fence.rs`'s `LINT_RULE_FENCES` for
+the same reason those four don't.
+
+## Rule `inventory`
+
+Ported from `spira/inventory.sh` (deleted).
+
+**Intent.** This repository is meant to be cloned. A comment naming a repository, a deploy
+path, a host or a person teaches the next agent to reason about infrastructure that does not
+exist, and sometimes to act on it. The check is structural, so it needs no list of the
+operator's own names: an absolute path rooted in a home or workspace directory
+(`/home/<user>/…`, `/Users/<user>/…`, an absolute path rooted at `/workspaces`), a provenance mark naming a person and
+a date (`(per <Name>, YYYY-MM-DD`), and an e-mail address that is neither a reserved example
+domain (RFC 2606 / RFC 6761) nor the `git@host` SSH remote form nor a systemd template
+instance (`unit@instance.service`, which has the shape of an address but no mail domain ends
+this way).
+
+**Scope.** The whole walk (tracked and untracked-not-ignored) minus this rule's own source
+(`spira-lint/src/rules/inventory.rs`, which spells out every pattern) and `spira/
+inventory-deny`. The exemption is applied inside the check, not in `applies_to`, so an empty
+*repository* refuses while an all-exempt one does not read as one — matching the bash
+original's plain `${#tracked[@]} -gt 0` check.
+
+**Violation.** One finding per offending file, message a sorted, deduplicated, comma-joined
+list of the offending tokens — `config-fence`'s "one finding per file whose message lists the
+kinds" shape, not a line-numbered one: the bash original never reported a line either.
+
+**The operator's own additions.** `spira/inventory-deny`, one extended regex per line
+(`#`-comments and blanks dropped), joined into the same alternation as the four structural
+patterns. It ships empty; a shipped deny-list of somebody else's names would be exactly the
+inventory this fence exists to keep out of a shared repository.
+
+**`--scan <file>`.** The one standalone mode spira-lint's CLI supports outside `--only`/`--root`
+(`main.rs`): scans one file's content against the same patterns and deny list, printing one
+offending token per line, exit 0 either way. `spira/inventory.sh --scan /dev/stdin` had one
+real caller beyond its own tests — `sop.sh write`/`validate`, checking a runbook body before
+it is staged — and `test-cockpit-remote.sh`'s positive control on two shipped files. Both now
+call `"$SPIRA_LINT_BIN" --only inventory --scan <file>`.
+
+**Where the bash heuristic was wrong, and what changed.** A malformed `inventory-deny` entry
+made `grep -E` error to stderr while the pipeline still read as "no hits" — an undetected
+false-negative that silently disabled every pattern check, structural patterns included. The
+rule now refuses (`LintError::BadAllow`) rather than compile a broken alternation and report
+clean.
+
+## Rule `literal-lint`
+
+Ported from `spira/literal-lint.sh` (deleted).
+
+**Intent.** `spira/schema.sh` is the one file that declares configured label, status and type
+names. A name that appears as a literal in any other source file can disagree with the
+declaration when an operator changes the default: `lib.sh:117` grepped `"needs-ryan"` while
+`lib.sh:221` read `${SPIRA_ASK_LABEL:-needs-operator}`, and the code default was
+`needs-operator`, so on a default install the destructive-procedure fence never matched and
+every legitimate halting bead was refused.
+
+**Which names.** `spira/schema.sh names`, then `name <key>` and `default <key>` for every
+declared key, filtered to compound tokens (`[a-z0-9-]+` with at least one hyphen — a
+single-word name like `plan` or `spike` is excluded, because it appears legitimately as
+English prose and a fence with a high false-positive rate is a fence everybody learns to
+ignore). **Both values are kept**, union of `name` and `default`: a literal is wrong whether it
+happens to match the configured value or the shipped default, and which of the two
+`schema_name` returns depends on whether the process environment carries an operator override
+— not something to depend on at the gate.
+
+**Reading schema.sh.** The rule shells out to `spira/schema.sh` (a subprocess, the same way
+`Tree::from_git` shells out to `git`) rather than re-declaring the vocabulary: the declaration
+has one home, and a second copy is exactly the class of drift this fence exists to catch. When
+`spira/schema.sh` is missing, not executable, or its `names` call fails or yields nothing, the
+rule warns on stderr and falls back to the shipped defaults (`needs-operator`, `needs-ryan`,
+`awaiting-ci`, `maechen-sweep`, `maechen-remedy`, `review-finding`, `world-stop`) — never an
+empty list, which would make every tree "clean" (law-absence-needs-a-positive-control).
+
+**Scope.** Every tracked file (untracked files are not scanned — the bash original read `git
+ls-files`, the index, because what the next commit ships is what matters).
+
+**Exempt.** `schema.sh` and `conf.sh` by basename (the declaration and the operator-facing
+default assignments); this rule's own source
+(`spira-lint/src/rules/literal_lint.rs`); every `*.md` (prose cannot drift from a declaration
+the way a literal comparison can); every `test-*.sh` by basename (fixture data legitimately
+carries specific label values); every `*.json` (no comment syntax to carry a `literal-ok`
+annotation); a binary file (a NUL byte, or nothing but newlines — PR 331 failed on
+`bin/queue-watch` carrying a default label as a string constant, which has no line to
+annotate).
+
+**Violation.** A non-comment line (stripped of leading whitespace, not starting `#` or `//` —
+both comment syntaxes in this tree) matching a configured name, unless the line or the line
+directly above it carries `literal-ok`. One finding per hit, at its line.
+
+**Where the bash heuristic was wrong.** The bash `CONFIGURED_NAMES` array was a hardcoded copy
+of `schema.sh`'s defaults, itself already stale by the time the fence was written — it guarded
+`needs-operator` on a host running `SPIRA_ASK_LABEL=needs-ryan`, so the exact line that
+motivated the lint sailed through reporting "clean". Reading the declaration at check time
+(rather than a copy of it, however recently taken) is the fix this rule carries forward
+(law-schema-over-code).
+
+## Rule `scratch-fence`
+
+Ported from `spira/scratch-fence.sh` (deleted).
+
+**Intent.** Aeon working notes committed to the harness root ship to every consumer and widen
+the suite-selection fallback (a file no suite declares runs the full corpus) on every branch
+that follows them — ten accumulated before this fence existed.
+
+**Scope.** Tracked, root-level (no `/` in the path) files matching `sp-*` (an aeon working note
+named after a bead) or `*.fixed` (a hand-patched artefact). Untracked files are not scanned —
+the bash original read `git ls-files` with no `--others`.
+
+**The refusal is deliberately not `crate::scope`.** An empty *offender* set is the normal,
+clean state here, not something to refuse on (unlike every rule whose whole *scope* is small
+and violation-shaped, such as `fence-scripts`). What refuses is an empty index — nothing
+tracked at all, checked directly against `tree.entries`, matching the bash original's
+`git ls-files | wc -l`.
+
+**Override.** `SCRATCH_FENCE_OK=1` in the process environment accepts the tree despite
+offenders present — for the one commit that removes them, named in the commit message. This is
+the one rule in the crate that reads an environment variable rather than an allow file; the
+override is rare, operator-invoked, and already how the bash original worked, so the ported
+rule keeps it rather than inventing an allow-list shape nothing else needs.
+
+**A real, non-gate caller.** The tracked `spira/hooks/pre-commit` runs this check directly
+(armed by `exclude.sh install`, which points `core.hooksPath` at it) — the local pre-commit
+chokepoint, not only the landing gate. It now calls `"$SPIRA_LINT_BIN" --only scratch-fence`
+and fails closed (refuses the commit) when `SPIRA_LINT_BIN` is not built, the same way the gate
+already fails closed on a missing `spira-lint` binary.
+
+## Rule `wiki-add-fence`
+
+Ported from `spira/wiki-add-fence.sh` (deleted).
+
+**Intent.** Blanket staging on the wiki checkout (`git add -A`, `git add .`, `git commit -a`)
+sweeps another actor's uncommitted work into the commit, manufacturing false attribution
+(incident: sp-4fl2e). `wiki-commit.sh` is the canonical path; it stages each file explicitly.
+
+**Scope.** Tracked `*.sh` files anywhere in the tree (the bash original scanned `git ls-files --
+'*.sh'`, not scoped to `spira/`). Exempt: this rule's own source
+(`spira-lint/src/rules/wiki_add_fence.rs`).
+
+**Violation.** A non-comment line mentioning `SPIRA_WIKI` that also matches a blanket-staging
+form (`add -A`, `add .` followed by whitespace/`;`/`|`/`&` or end of line, or `commit -a`). One
+finding per line, path and line number, message the raw line text (unmodified, matching the
+bash original, which did not trim it).
+
+## Rule `tmux-scope-fence`
+
+Ported from `spira/tmux-scope-fence.sh` (deleted).
+
+**Intent.** A suite that calls a tmux session-affecting command, or runs `concierge.sh
+start/wake/here/stop`, with no socket of its own drives whatever server the caller's
+environment already points at — the operator's own, on the host, twice (sp-pfca0: the cockpit
+went down both times).
+
+**Scope.** `spira/test-*.sh`, directly in `spira/` (tracked and untracked-not-ignored — the
+bash original globbed the filesystem directly, `"$ROOT"/spira/test-*.sh`, rather than reading
+git). Exempt: this rule's own source (`spira-lint/src/rules/tmux_scope_fence.rs`).
+
+**Violation.** A non-comment line invoking one of the 22 tmux session commands
+(`new-session`, `kill-server`, …, `source-file`) with no `-L <socket>` on that same line and no
+file-wide `TMUX_TMPDIR` (checked as a plain substring anywhere in the file — the shipped
+pattern is one `export TMUX_TMPDIR=…` clearing every bare call after it). Separately, when the
+file carries neither `CONCIERGE_SOCKET` nor `CONCIERGE_SESSION` anywhere, a non-comment line
+invoking `concierge.sh start/wake/here/stop` (with or without a quote before the subcommand).
+
+## Rule `gh-intake-lint`
+
+Ported from `spira/gh-intake-lint.sh` (deleted).
+
+**Intent (law-beads-is-never-public).** The tracker is public and `gh-intake.sh` only reads
+it: a mutating curl flag (`-X POST/PATCH/PUT/DELETE`, `--data`, `-d `) is a write GitHub cannot
+take back, and a credential reference (`GITHUB_TOKEN`, `github.token`, an `Authorization`
+header) is a token the next caller can misuse.
+
+**Scope.** Exactly one file, `spira/gh-intake.sh`. Missing or unreadable refuses
+(`LintError::Refused`) rather than reporting clean — the bash original's `[ -r "$TARGET" ] ||
+exit 3`.
+
+**Violation.** A non-comment line matching the write or credential pattern. One finding per
+line, at its line, message the line text with leading whitespace stripped.
 
 ---
 

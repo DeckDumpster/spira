@@ -8,7 +8,7 @@ use crate::cli::{Invocation, RunArgs, SuitesArg};
 use crate::fixture::{Fixtures, Session};
 use crate::prebuilt::{self, Prebuilt};
 use crate::record::{suite_line, Mode, Producer, ResultRecord, Status};
-use crate::runtime::{cancelled, ContainerRuntime};
+use crate::runtime::{cancelled, ContainerRuntime, RC_DEADLINE};
 use crate::schedule::{self, Job, MaxparInputs};
 use crate::selection;
 use crate::settings::{Settings, Source};
@@ -17,6 +17,7 @@ use crate::suite::{SuiteHeaders, SuiteState, SuiteStates};
 use crate::timing::{self, RoundPhaseRow, SuiteTimingRow};
 use crate::util::{self, git, iso_utc};
 use crate::verdict::{self, CacheDecision, KeyInputs, Verdict, VerdictFile};
+use crate::warm;
 use crate::worktree;
 use spira_config::SpiraToml;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -160,6 +161,8 @@ pub struct Deps<'a> {
     pub cwd: PathBuf,
     /// Bytes that identify this runner for the batch key (the executable in production).
     pub runner_identity: Vec<u8>,
+    /// Spawn the detached refill of warm slot `i` under run dir (DESIGN.md §11.2).
+    pub warm_refill: &'a (dyn Fn(usize, &Path) + Sync),
 }
 
 impl Deps<'_> {
@@ -348,10 +351,53 @@ fn helper(
     ))
 }
 
+/// Like `helper`, but runs a compiled binary directly — no `bash` hop — for a Rust-to-Rust
+/// call. `None` when the binary is not there (a caller falls back to the script shim).
+fn helper_bin(bin: &Path, args: &[&str], artifacts: Option<&Path>, extra_env: &[(&str, String)]) -> Option<(i32, String)> {
+    if !bin.is_file() {
+        return None;
+    }
+    let mut cmd = Command::new(bin);
+    cmd.args(args).stderr(Stdio::inherit());
+    match artifacts {
+        Some(a) => {
+            cmd.env("SPIRA_ARTIFACTS", a);
+            if let Some(root) = a.parent().and_then(Path::parent) {
+                cmd.env("SPIRA_ARTIFACTS_ROOT", root);
+            }
+        }
+        None => {
+            cmd.env_remove("SPIRA_ARTIFACTS")
+                .env_remove("SPIRA_ARTIFACTS_ROOT");
+        }
+    }
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped());
+    let child = cmd.spawn().ok()?;
+    let o = child.wait_with_output().ok()?;
+    Some((o.status.code().unwrap_or(1), String::from_utf8_lossy(&o.stdout).into_owned()))
+}
+
+/// `gate-diag`'s two callers (below) prefer the compiled binary staged into `artifacts`
+/// beside every other crate this workspace builds — a straight Rust-to-Rust call, no `bash`
+/// hop — falling back to the `gate-diag.sh` shim (sp-ubw2o) when the binary is not there.
+fn gate_diag(deps: &Deps, artifacts: &Path, results_s: &str, run_env: &[(&str, String)]) -> Option<(i32, String)> {
+    let bin = artifacts.join("gate-diag");
+    let home = deps.harness.root.join("spira");
+    let home_s = home.display().to_string();
+    helper_bin(&bin, &["--home", &home_s, results_s], Some(artifacts), run_env)
+        .or_else(|| helper(&deps.harness.script("gate-diag.sh"), &[results_s], Some(artifacts), run_env, None))
+}
+
 /// Holds the container for the batch; tears it down however the run ends.
 struct ContainerGuard<'a> {
     session: &'a Session<'a>,
     owner_file: PathBuf,
+    /// The batch key's owner file when the container has a name of its own (a warm slot's):
+    /// released with the run, whatever happened to the container.
+    key_owner: Option<PathBuf>,
     home: PathBuf,
     deps: &'a Deps<'a>,
 }
@@ -382,6 +428,14 @@ impl Drop for ContainerGuard<'_> {
             ));
         } else if mine {
             let _ = fs::remove_file(&self.owner_file);
+        }
+        if let Some(k) = self.key_owner.as_ref().filter(|k| **k != self.owner_file) {
+            let ours = fs::read_to_string(k)
+                .map(|s| s.trim() == std::process::id().to_string())
+                .unwrap_or(false);
+            if ours {
+                let _ = fs::remove_file(k);
+            }
         }
     }
 }
@@ -470,9 +524,108 @@ fn write_meta(results: &Path, name: &str, pairs: &[(&str, String)]) {
     let _ = fs::write(results.join(name), text);
 }
 
+/// The trial's phases in order, seconds each (DESIGN.md §11.2, D11).
+struct Phases {
+    last: Instant,
+    done: Vec<(&'static str, f64)>,
+}
+
+impl Phases {
+    fn new(start: Instant) -> Self {
+        Phases {
+            last: start,
+            done: Vec::new(),
+        }
+    }
+    /// Close the phase that ran since the previous mark.
+    fn mark(&mut self, name: &'static str) {
+        let now = Instant::now();
+        self.done
+            .push((name, now.saturating_duration_since(self.last).as_secs_f64()));
+        self.last = now;
+    }
+    fn render(&self) -> String {
+        self.done
+            .iter()
+            .map(|(n, s)| format!("{n}:{}", s.round() as u64))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
+/// `deadline-<phase>`: the VERDICT reason of a setup phase cut at its share (D9).
+fn deadline_reason(phase: &str) -> &'static str {
+    match phase {
+        "build" => "deadline-build",
+        "tag" => "deadline-tag",
+        "sweep" => "deadline-sweep",
+        "up" => "deadline-up",
+        "install" => "deadline-install",
+        "requirements" => "deadline-requirements",
+        "testdb" => "deadline-testdb",
+        _ => "deadline-setup",
+    }
+}
+
+/// Spawns the refill of a warm slot when the trial that held it ends, however it ends.
+struct RefillOnDrop<'a> {
+    index: usize,
+    run: PathBuf,
+    spawn: &'a (dyn Fn(usize, &Path) + Sync),
+}
+
+impl Drop for RefillOnDrop<'_> {
+    fn drop(&mut self) {
+        (self.spawn)(self.index, &self.run);
+    }
+}
+
 pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     let s = settings(deps);
     let t_batch = Instant::now();
+    // D9: under --deadline the budget is the whole trial's; setup gets its share of it.
+    let setup_cutoff = args
+        .deadline
+        .map(|d| t_batch + Duration::from_millis(d * 1000 * s.setup_share / 100));
+    let deadline_at = args.deadline.map(|d| t_batch + Duration::from_secs(d));
+    let past_cutoff = || setup_cutoff.is_some_and(|c| Instant::now() >= c);
+    // A setup phase cut at its share: say so, and still leave the trial's `__batch__` row
+    // (rc 2), so a reader sees the overrun and which phase it was (D11).
+    let share_note = |phase: &str, ph: &Phases| {
+        deps.log(&format!(
+            "setup phase {phase} did not finish within its share of the budget ({}% of {}s) — no verdict; the trial judged nothing",
+            s.setup_share,
+            args.deadline.unwrap_or(0)
+        ));
+        let mut phases = ph.render();
+        if !phases.is_empty() {
+            phases.push(',');
+        }
+        phases.push_str(&format!(
+            "{phase}:{}",
+            Instant::now().saturating_duration_since(ph.last).as_secs()
+        ));
+        let secs = t_batch.elapsed().as_secs();
+        let _ = timing::append(
+            &s.run,
+            timing::SUITE_TIMING,
+            &iso_utc(now_epoch()),
+            &util::hostname(),
+            &SuiteTimingRow {
+                setup_secs: Some(secs),
+                phases: Some(phases),
+                ..SuiteTimingRow::new(
+                    &s.run_id,
+                    &args.branch,
+                    timing::BATCH_ROW,
+                    2,
+                    secs,
+                    args.mode.as_str(),
+                )
+            },
+        );
+    };
+    let mut ph = Phases::new(t_batch);
 
     // ---- repo, base, revision ------------------------------------------------------
     let repo = match resolve_repo(args.repo.as_deref(), deps) {
@@ -517,13 +670,27 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         run_dir: &s.run,
         slots: s.scratch_slots,
     };
-    let wt = match worktree::acquire(&wreq, &|m| deps.log(m)) {
-        Ok(w) => w,
-        Err(e) => {
-            stderr(&format!("batch: {e}"));
-            return Finish::fault(2, "worktree", 0);
-        }
+    let warm_wanted = args.deadline.is_some() && args.artifacts.is_none() && s.warm_slots > 0;
+    let warm_wt = if warm_wanted {
+        worktree::acquire_warm(&wreq, s.warm_slots, &|m| deps.log(m))
+    } else {
+        None
     };
+    let wt = match warm_wt {
+        Some(w) => w,
+        None => match worktree::acquire(&wreq, &|m| deps.log(m)) {
+            Ok(w) => w,
+            Err(e) => {
+                stderr(&format!("batch: {e}"));
+                return Finish::fault(2, "worktree", 0);
+            }
+        },
+    };
+    let _refill = wt.warm_index().map(|index| RefillOnDrop {
+        index,
+        run: s.run.clone(),
+        spawn: deps.warm_refill,
+    });
     deps.log(&format!(
         "testing {br} ({}) {} at {}",
         &commit[..commit.len().min(12)],
@@ -601,39 +768,52 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             }
         },
         None => {
-            let mode_file =
-                std::env::temp_dir().join(format!("testenv-select-mode-{}", std::process::id()));
+            // The ONE selector, linked (sp-wx2tw). It fails closed: a selection it cannot
+            // compute is a fault here, never an empty selection read as "nothing to do".
             let head = s.select_head.clone().unwrap_or_else(|| br.clone());
-            let a = [
-                "--base",
+            let env = |k: &str| std::env::var(k).ok();
+            let opts = suite_select::select::Options {
+                no_all_fallback: true,
+                no_nocov: false,
+                tiers: suite_select::select::parse_tiers(&s.tiers),
+            };
+            let corpus = match suite_select::corpus::Corpus::load(&suite_dir) {
+                Ok(c) => c,
+                Err(r) => {
+                    stderr(&format!("batch: suite selection refused: {r}"));
+                    return Finish::fault(2, "select-refused", 0);
+                }
+            };
+            match suite_select::io::select_diff(
+                &suite_select::io::RealGit,
+                &repo.path,
+                &corpus,
                 &base,
-                "--head",
                 &head,
-                "--repo",
-                &repo.path.display().to_string(),
-                "--suite-dir",
-                &suite_dir.display().to_string(),
-                "--no-all-fallback",
-                "--tiers",
-                &s.tiers,
-                "--mode-file",
-                &mode_file.display().to_string(),
-            ]
-            .map(str::to_string);
-            let refs: Vec<&str> = a.iter().map(String::as_str).collect();
-            let out = helper(&deps.harness.script("select.sh"), &refs, None, &[], None)
-                .map(|(_, o)| o)
-                .unwrap_or_default();
-            let producer = Producer::parse(&fs::read_to_string(&mode_file).unwrap_or_default())
-                .unwrap_or(Producer::Diff);
-            let _ = fs::remove_file(&mode_file);
-            let mut v: Vec<String> = Vec::new();
-            for n in out.split_whitespace() {
-                if !v.iter().any(|x| x == n) {
-                    v.push(n.to_string());
+                &suite_select::select::Buckets::from_env(&env),
+                &opts,
+            ) {
+                Ok(sel) => {
+                    for l in &sel.log {
+                        deps.log(l);
+                    }
+                    let producer = match sel.mode {
+                        suite_select::select::Mode::All => Producer::All,
+                        suite_select::select::Mode::Diff => Producer::Diff,
+                    };
+                    (sel.suites, producer)
+                }
+                Err(suite_select::select::Fail::Unclaimed { files, .. }) => {
+                    for f in &files {
+                        stderr(&format!("batch: select: unclaimed source file: {f}"));
+                    }
+                    return Finish::fault(2, "select-unclaimed", 0);
+                }
+                Err(suite_select::select::Fail::Refused(r)) => {
+                    stderr(&format!("batch: suite selection refused: {r}"));
+                    return Finish::fault(2, "select-refused", 0);
                 }
             }
-            (v, producer)
         }
     };
     if selected.is_empty() {
@@ -667,7 +847,11 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
 
     // ---- key, results dir ----------------------------------------------------------
     let image_tag = {
-        let o = deps.rt.testenv(&["tag".into()]);
+        let o = deps.rt.testenv(&["tag".into()], setup_cutoff);
+        if o.rc == RC_DEADLINE {
+            share_note("tag", &ph);
+            return Finish::fault(2, deadline_reason("tag"), 0);
+        }
         let t = o.output.trim().to_string();
         if o.ok() && !t.is_empty() {
             t
@@ -676,7 +860,6 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         }
     };
     let mut identity = deps.runner_identity.clone();
-    identity.extend(read_file_bytes(&deps.harness.script("select.sh")));
     identity.extend(read_file_bytes(&deps.harness.script("suite-covers.sh")));
     let key_inputs = KeyInputs {
         repo_name: repo.name.clone(),
@@ -783,6 +966,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         }
     }
 
+    ph.mark("resolve");
     // ---- build in place (or stage the prebuilt set: D8) -----------------------------
     let (pdir, artifacts) = match &prebuilt {
         Some(_) => (
@@ -808,56 +992,133 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             p.dir.display(),
             artifacts.display()
         ));
-    } else if let Some(fin) = build(args, deps, &wt.path, br, &artifacts) {
+    } else if let Some(fin) = build(args, deps, &wt.path, br, &artifacts, setup_cutoff) {
+        if fin.reason == Some(deadline_reason("build")) {
+            share_note("build", &ph);
+        }
         return fin;
     }
     if cancelled() {
         return Finish::fault(2, "interrupted", 0);
     }
+    ph.mark("build");
 
     // ---- container -----------------------------------------------------------------
     let instance = s.instance.clone().unwrap_or_else(|| key[..12].to_string());
     let mut session = Session::new(deps.rt, &instance, &pdir);
     session.liveness_retries = s.liveness_retries;
     session.liveness_sleep = Duration::from_secs(s.liveness_sleep);
+    session.setup_deadline = setup_cutoff;
+    // The batch's own owner file: one live run per key, warm or cold (§4.2).
+    let key_owner = deps.owner_dir.join(format!("{}.owner", session.name));
+    let warm_slot = wt.warm_index();
+    if warm_slot.is_none() {
+        sweep_orphans(&s, deps);
+        ph.mark("sweep");
+        if past_cutoff() {
+            share_note("sweep", &ph);
+            return Finish::fault(2, deadline_reason("sweep"), 0);
+        }
+    }
+    if !claim_owner(&key_owner) {
+        deps.log(&format!("{} is already claimed by a live pid — a concurrent run with the same tree+selection is in flight; refusing to share its container", session.name));
+        return Finish::fault(2, "concurrent-run", 0);
+    }
+    // The warm path (§11.2): the slot's spare, else a container of our own on the slot.
+    let mut warm_word = "off";
+    let mut claimed = false;
+    if let Some(i) = warm_slot {
+        match warm::claim(
+            deps.rt,
+            &s.run,
+            &deps.owner_dir,
+            i,
+            &wt.path,
+            &image_tag,
+            setup_cutoff,
+        ) {
+            warm::Claim::Spare(name) => {
+                session.name = name;
+                claimed = true;
+            }
+            warm::Claim::Cold(why) => {
+                deps.log(&format!(
+                    "warm slot {i}: {why} — booting a container on the slot"
+                ));
+                session.name = warm::fresh_name(i);
+            }
+        }
+        warm_word = if claimed { "spare" } else { "cold" };
+    }
+    let owner_file = deps.owner_dir.join(format!("{}.owner", session.name));
+    if owner_file != key_owner && !claim_owner(&owner_file) {
+        deps.log(&format!(
+            "{} is claimed by another live pid — refusing to share it",
+            session.name
+        ));
+        let _ = fs::remove_file(&key_owner);
+        return Finish::fault(2, "concurrent-run", 0);
+    }
     if let Some(lc) = &s.landing_containers {
         if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(lc) {
             let _ = writeln!(f, "{}", session.name);
         }
-    }
-    sweep_orphans(&s, deps);
-    let owner_file = deps.owner_dir.join(format!("{}.owner", session.name));
-    if !claim_owner(&owner_file) {
-        deps.log(&format!("{} is already claimed by a live pid — a concurrent run with the same tree+selection is in flight; refusing to share its container", session.name));
-        return Finish::fault(2, "concurrent-run", 0);
     }
     let home = deps.owner_dir.join(format!("spira-batch-{instance}"));
     let _ = fs::create_dir_all(&home);
     let guard = ContainerGuard {
         session: &session,
         owner_file,
+        key_owner: Some(key_owner),
         home,
         deps,
     };
 
-    deps.log(&format!(
-        "starting container {} (branch {br})",
-        session.name
-    ));
-    if let Err(f) = session.up(&wt.path) {
+    let up = if claimed {
+        deps.log(&format!(
+            "claimed warm spare {} (branch {br}) — booted before this trial, torn down after it",
+            session.name
+        ));
+        session.probe()
+    } else {
+        deps.log(&format!(
+            "starting container {} (branch {br})",
+            session.name
+        ));
+        session.up(&wt.path)
+    };
+    ph.mark("up");
+    if let Err(f) = up {
+        if let crate::fixture::Fault::Deadline(p) = f {
+            share_note(p, &ph);
+            return Finish::fault(2, deadline_reason(p), 0);
+        }
         deps.log(f.message());
         return Finish::fault(f.rc(), "container-up", 0);
     }
     if !s.skip_install {
         if let Err(f) = session.install(&|m| deps.log(m)) {
+            if let crate::fixture::Fault::Deadline(p) = f {
+                share_note(p, &ph);
+                return Finish::fault(2, deadline_reason(p), 0);
+            }
             deps.log(f.message());
             return Finish::fault(f.rc(), "install", 0);
         }
     }
+    ph.mark("install");
 
     // ---- requirements --------------------------------------------------------------
-    let unmet =
-        session.unmet_requirements(active.iter().flat_map(|n| headers[n].checkable_requires()));
+    let unmet = match session
+        .unmet_requirements(active.iter().flat_map(|n| headers[n].checkable_requires()))
+    {
+        Ok(u) => u,
+        Err(_) => {
+            share_note("requirements", &ph);
+            return Finish::fault(2, deadline_reason("requirements"), 0);
+        }
+    };
+    ph.mark("requirements");
     for t in &unmet {
         deps.log(&format!("requirement not met in container: {t}"));
     }
@@ -917,13 +1178,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         ));
         let results_s = results.display().to_string();
         let run_env = [("SPIRA_RUN", s.run.display().to_string())];
-        if let Some((_, o)) = helper(
-            &deps.harness.script("gate-diag.sh"),
-            &[&results_s],
-            Some(&artifacts),
-            &run_env,
-            None,
-        ) {
+        if let Some((_, o)) = gate_diag(deps, &artifacts, &results_s, &run_env) {
             for l in o.lines() {
                 (deps.out)(l);
             }
@@ -964,6 +1219,10 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     // the Dolt engine and replays its journal every time (sp-34ru2: 61 % of suite wall).
     let t0 = std::time::Instant::now();
     let tpl = session.rt.exec(&session.testdb_template_request());
+    if tpl.rc == RC_DEADLINE {
+        share_note("testdb", &ph);
+        return Finish::fault(2, deadline_reason("testdb"), 0);
+    }
     let fixtures = if tpl.ok() {
         deps.log(&format!(
             "testdb template ready in {} ms — every suite gets a private server fixture",
@@ -981,6 +1240,10 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             session.name
         ));
         let (testdb, bl_out) = session.baseline();
+        if bl_out.rc == RC_DEADLINE {
+            share_note("testdb", &ph);
+            return Finish::fault(2, deadline_reason("testdb"), 0);
+        }
         match testdb {
             Some(t) => Fixtures::Shared(t),
             None => {
@@ -990,6 +1253,12 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         }
     };
     deps.log(&format!("testdb: {}", fixtures.describe()));
+    ph.mark("testdb");
+    if past_cutoff() {
+        share_note("testdb", &ph);
+        return Finish::fault(2, deadline_reason("testdb"), 0);
+    }
+    let setup_secs = t_batch.elapsed().as_secs();
 
     // ---- schedule ------------------------------------------------------------------
     let meminfo = util::read("/proc/meminfo");
@@ -1048,6 +1317,9 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             bd_ms: ms,
             mode: args.mode.as_str().into(),
             tier: tiers.get(suite).cloned().unwrap_or_default(),
+            setup_secs: None,
+            phases: None,
+            warm: None,
         };
         let _ = timing::append(
             &run_root,
@@ -1080,7 +1352,8 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         exec_fault_threshold: s.exec_fault_threshold,
         quarantined: quarantined.clone(),
         psi_pause: Duration::from_secs(5),
-        deadline: args.deadline.map(Duration::from_secs),
+        // D9: what is left of the trial's budget, not S from here.
+        deadline: deadline_at.map(|d| d.saturating_duration_since(Instant::now())),
         skip_gate,
         embedded_only: active
             .iter()
@@ -1088,15 +1361,17 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             .cloned()
             .collect(),
     };
-    if let Some(d) = args.deadline {
+    if let (Some(d), Some(left)) = (args.deadline, cfg.deadline) {
         deps.log(&format!(
-            "deadline {d}s on the suite phase — suites not finished by then are deferred"
+            "deadline {d}s on the trial — setup took {setup_secs}s, the suites get the remaining {}s; suites not finished by then are deferred",
+            left.as_secs()
         ));
     }
     let cpu0 = util::cpu_jiffies(&util::read("/proc/stat"));
     let t_suites = Instant::now();
     let outcome = batch::run(&session, &cfg, &hooks, &fixtures, &jobs);
     let suites_wall = t_suites.elapsed().as_secs();
+    ph.mark("suites");
     let cpu1 = util::cpu_jiffies(&util::read("/proc/stat"));
 
     if args.mode == Mode::Parallel {
@@ -1192,10 +1467,8 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         )
         .collect::<Vec<_>>(),
     );
-    let batch_wall = t_batch.elapsed().as_secs();
-    timing_hook(timing::BATCH_ROW, 0, batch_wall, 0, 0);
-    deps.log(&format!("wall {batch_wall}s"));
     if let Some(id) = &s.round_batch_id {
+        let batch_wall = t_batch.elapsed().as_secs();
         let reds = records.values().filter(|r| r.status.blocking()).count() as u64;
         let row = RoundPhaseRow {
             batch_id: id.clone(),
@@ -1257,7 +1530,46 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         .collect();
     let _ = fs::write(results.join("timing.tsv"), tsv);
     deps.log(&format!("testdb: {} used", fixtures.describe()));
+    ph.mark("post");
     drop(guard);
+    ph.mark("teardown");
+    let batch_wall = t_batch.elapsed().as_secs();
+    let _ = timing::append(
+        &run_root,
+        timing::SUITE_TIMING,
+        &iso_utc(now_epoch()),
+        &host,
+        &SuiteTimingRow {
+            setup_secs: Some(setup_secs),
+            phases: Some(ph.render()),
+            warm: Some(warm_word.into()),
+            ..SuiteTimingRow::new(
+                &s.run_id,
+                br,
+                timing::BATCH_ROW,
+                0,
+                batch_wall,
+                args.mode.as_str(),
+            )
+        },
+    );
+    deps.log(&format!("wall {batch_wall}s"));
+    deps.log(&format!(
+        "phases: {} (setup {setup_secs}s, warm: {warm_word})",
+        ph.render()
+    ));
+    if args.deadline.is_some() {
+        if let Ok(mut f) = fs::OpenOptions::new()
+            .append(true)
+            .open(results.join("batch.meta"))
+        {
+            let _ = writeln!(
+                f,
+                "phases={}\nwarm={warm_word}\nsetup_secs={setup_secs}",
+                ph.render()
+            );
+        }
+    }
 
     // ---- judge ---------------------------------------------------------------------
     if outcome.cancelled {
@@ -1300,6 +1612,14 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         .cloned()
         .collect();
     let deferred_count = args.deadline.map(|d| (deferred.len(), d));
+    // D9: a trial whose every runnable suite was deferred judged nothing — not a pass.
+    if args.deadline.is_some() && ran == 0 && !deferred.is_empty() && reds.is_empty() {
+        deps.log(&format!(
+            "no suite finished inside the budget ({} deferred) — no verdict",
+            deferred.len()
+        ));
+        return Finish::fault(2, "deadline-suites", 0);
+    }
     if !deferred.is_empty() {
         deps.log(&format!(
             "{} suite(s) deferred by the deadline (the round covers them): {}",
@@ -1329,13 +1649,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     let results_s = results.display().to_string();
     if !reds.is_empty() {
         deps.log(&format!("{} suite(s) red", reds.len()));
-        if let Some((_, o)) = helper(
-            &deps.harness.script("gate-diag.sh"),
-            &[&results_s],
-            Some(&artifacts),
-            &run_env,
-            None,
-        ) {
+        if let Some((_, o)) = gate_diag(deps, &artifacts, &results_s, &run_env) {
             for l in o.lines() {
                 (deps.out)(l);
             }
@@ -1407,8 +1721,78 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     }
 }
 
+/// `testenv warm refill <i>` (DESIGN.md §11.2): wait for slot `i`'s lock, run the orphan
+/// sweeps the trials no longer run inline, boot the slot's spare and record it. Detached from
+/// the trial that spawned it; a failure only means the next trial boots cold.
+pub fn warm_refill(i: usize, deps: &Deps) -> i32 {
+    let s = settings(deps);
+    let (_, lock_path, _) = warm::paths(&s.run, i);
+    let end = Instant::now() + Duration::from_secs(s.warm_boot_timeout);
+    let lock = loop {
+        if let Some(l) = worktree::try_lock(&lock_path) {
+            break l;
+        }
+        if Instant::now() >= end {
+            deps.log(&format!(
+                "warm refill {i}: slot still busy after {}s — no spare",
+                s.warm_boot_timeout
+            ));
+            return 1;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    };
+    sweep_orphans(&s, deps);
+    warm::sweep(
+        deps.rt,
+        &deps.owner_dir,
+        &s.run,
+        s.warm_slots,
+        s.orphan_min_age,
+        &|n| {
+            deps.rt
+                .inspect(n, "{{.State.StartedAt}}")
+                .and_then(|t| parse_started_at(&t))
+        },
+        &|m| deps.log(m),
+    );
+    let tag = deps.rt.testenv(&["tag".into()], Some(end));
+    let tag = tag.output.trim().to_string();
+    if tag.is_empty() {
+        deps.log(&format!("warm refill {i}: no image tag — no spare"));
+        return 1;
+    }
+    let left = end.saturating_duration_since(Instant::now());
+    let rc = match warm::boot(deps.rt, &s.run, &deps.owner_dir, i, &tag, left) {
+        Ok(Some(n)) => {
+            deps.log(&format!(
+                "warm refill {i}: spare {n} booted and recorded (image {tag})"
+            ));
+            0
+        }
+        Ok(None) => {
+            deps.log(&format!(
+                "warm refill {i}: a live spare is already recorded"
+            ));
+            0
+        }
+        Err(e) => {
+            deps.log(&format!("warm refill {i}: {e}"));
+            1
+        }
+    };
+    drop(lock);
+    rc
+}
+
 /// `cargo build` in place; `Some` is the fault that ends the run.
-fn build(args: &RunArgs, deps: &Deps, wt: &Path, br: &str, artifacts: &Path) -> Option<Finish> {
+fn build(
+    args: &RunArgs,
+    deps: &Deps,
+    wt: &Path,
+    br: &str,
+    artifacts: &Path,
+    cutoff: Option<Instant>,
+) -> Option<Finish> {
     if args.with_bins {
         deps.log("--with-bins: accepted as an alias (the workspace is always built); profile release unless --profile says otherwise");
     }
@@ -1417,7 +1801,7 @@ fn build(args: &RunArgs, deps: &Deps, wt: &Path, br: &str, artifacts: &Path) -> 
         args.profile,
         artifacts.display()
     ));
-    match deps.builder.build(wt, &args.profile) {
+    match deps.builder.build(wt, &args.profile, cutoff) {
         Ok(d) => deps.log(&format!(
             "build {:.1}s — SPIRA_ARTIFACTS={}",
             d.as_secs_f64(),
@@ -1433,6 +1817,10 @@ fn build(args: &RunArgs, deps: &Deps, wt: &Path, br: &str, artifacts: &Path) -> 
                 p.display()
             ));
             return Some(Finish::fault(3, "artifacts-missing", 0));
+        }
+        Err(BuildError::Deadline) => {
+            stderr("batch: cargo was still building at the trial's setup cutoff — killed; this is not the candidate's build failure");
+            return Some(Finish::fault(2, "deadline-build", 0));
         }
         Err(BuildError::Failed(rc)) => {
             stderr(&format!(

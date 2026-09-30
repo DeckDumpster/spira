@@ -52,11 +52,11 @@ testenv [--mode parallel|serial] [--suites <a.sh,b.sh,...|->] [--profile <p>]
 | `--mode` | `parallel` (default) or `serial`. Recorded in every result (a serial green is a weaker claim). |
 | `--suites LIST` | comma list; each name must exist in the suite dir, else exit 2 with `batch: unknown suite: <name>`. Duplicates dropped, order kept. Given twice → exit 2. |
 | `--suites -` | names one per line on stdin, blank lines ignored; **empty stdin = nothing to run, exit 0**. |
-| (no `--suites`) | diff-derived: `select.sh --base <landref> --head <branch> --no-all-fallback --tiers $SPIRA_BATCH_TIERS(T2,T3)`; its `--mode-file` names the producer (`diff`/`all`). |
+| (no `--suites`) | diff-derived: the `suite-select` library (`io::select_diff`, linked; sp-wx2tw) over `<landref>...<branch>`, no all-suites fallback, tiers `$SPIRA_BATCH_TIERS` (T2,T3); its mode names the producer (`diff`/`all`). A selection it cannot compute is `FAULT rc=2 reason=select-refused` (an unclaimed source file: `select-unclaimed`), never an empty selection. |
 | `--profile P` | cargo profile. Default `aeon` (aeon and gate runs). A round passes `release` (its binaries ship). |
 | `--with-bins` | **no build mode of its own** (builds, unless `--artifacts`). Accepted as an alias for `--profile release` when `--profile` is not given, because every caller that passes it today is a round whose binaries ship (round.sh, round-vm.sh, batcher-cut). See §7, decision D1. |
 | `--artifacts DIR` | **do not build**: DIR holds the workspace's executables, prebuilt from this tree (CI's `bin/`). Relative to the current directory. Validated before anything else happens: DIR must be a directory holding an executable for every workspace binary target of the tree under test (read from the worktree's `Cargo.toml` files) and at least `spira-config`, `test-plan` and `testenv`; otherwise `VERDICT FAULT rc=2 reason=artifacts-invalid` naming what is missing — never a build, never a partial set. Exclusive with `--profile` and `--with-bins` (usage error). Only the flag selects this mode: an inherited `SPIRA_ARTIFACTS` is still ignored (§5). See D8. |
-| `--deadline S` | a **hard** wall-clock budget, in whole seconds (> 0), for the suite phase: after S seconds no suite starts and running suites are killed; both are recorded `deferred`. Absent = no deadline, and the run is byte-for-byte what it was before the flag existed. See D7. |
+| `--deadline S` | a **hard** wall-clock budget, in whole seconds (> 0), for the **whole trial** (sp-govet, §11): the clock starts when testenv starts. Setup (build, container, install, test databases) must finish within its share of S (`SPIRA_TESTENV_SETUP_SHARE`, default 50 %) or the run is `VERDICT FAULT rc=2 reason=deadline-<phase>`; the suite phase gets what is left of S: after that no suite starts and running suites are killed; both are recorded `deferred`. It also selects the warm path (§11.2). Absent = no deadline, and the run is byte-for-byte what it was before the flag existed. See D7, D9. |
 | `--report [N]` | print each suite's median `wall_secs` over its last N (default 20) suite-timing rows as JSON `[{"suite","median","n"}]` (the shape `tsd-query.sh suite-medians` printed) and exit; no branch or container. |
 
 `--mode=X`, `--suites=X`, `--report=N`, `--profile=P`, `--artifacts=DIR`, `--deadline=S` spellings are accepted. `--` ends
@@ -118,7 +118,7 @@ stderr; `attribute.sh` treats `>= 2` as a run fault; `gate-retry.sh` retries onl
 | `<suite>.result` | one line, `ResultRecord` (§3.1). Written **after** `<suite>.out`: its presence means complete. |
 | `<suite>.out` | the suite's combined stdout+stderr, trailing newlines stripped, one `\n` added (bash `$(cat)` + `printf '%s\n'`). |
 | `<suite>.tap.json` | new: `TapSummary` (§3.5) for the suite's output. |
-| `batch.meta` | `image_tag= branch= base= key= mode= selection=` then new `profile= artifacts= worktree= tree=` — `key=value` lines; gate-timing.sh reads `key`, `branch`, `base`. Under `--deadline` only, three more lines: `deadline=<S> deferred=<d> deferred_suites=<space list>` (D7). Under `--artifacts`, `profile=prebuilt`, `artifacts=<DIR, absolute>` (the directory given, not the staging copy), and three more lines: `build=prebuilt artifacts_id=<sha256> staged=<wt>/target/prebuilt` (D8). Without it the file is unchanged. |
+| `batch.meta` | `image_tag= branch= base= key= mode= selection=` then new `profile= artifacts= worktree= tree=` — `key=value` lines; gate-timing.sh reads `key`, `branch`, `base`. Under `--deadline` only, three more lines: `deadline=<S> deferred=<d> deferred_suites=<space list>` (D7). Under `--deadline` also `phases=<name>:<secs>,…` and `warm=spare|cold|off` (§11.2). Under `--artifacts`, `profile=prebuilt`, `artifacts=<DIR, absolute>` (the directory given, not the staging copy), and three more lines: `build=prebuilt artifacts_id=<sha256> staged=<wt>/target/prebuilt` (D8). Without it the file is unchanged. |
 | `runner.meta` | `nproc= memtotal_kb= maxpar= cpu_busy_pct= suites_wall_s=` |
 | `timing.tsv` | `<suite>\t<wall_s>\t<status>\t<bd_ms or ->` per suite with a result |
 | `$SPIRA_VERDICTS/batch-<key>` | `VerdictFile` (§3.3), shared with gate.sh's directory |
@@ -176,7 +176,7 @@ testenv owns orchestration; these stay separate components with their own contra
 |---|---|
 | `git` | rev-parse tree/commit, worktree list/add/checkout, status, `show <rev>:spira/suite-state`, `show <rev>:spira/skip-allowlist.tsv` (§3.7), landref rungs |
 | `cargo` | `cargo build --profile <p> --workspace` in the worktree — **not** run at all under `--artifacts` |
-| `spira/select.sh` | diff-derived selection (the ONE selector) |
+| `suite-select` (crate, linked) | diff-derived selection (the ONE selector, sp-wx2tw) |
 | `spira/testenv.sh` | `tag` (image build-closure hash), `up --name --checkout` (image acquisition, boot, linger, cargo-volume ownership), `probe`, `down --name --volumes` |
 | `podman` | `exec`, `container inspect`, `container exists`, `ps -a`, `stop`, `rm`, `volume rm` |
 | `spira/gate-diag.sh`, `spira/gate-timing.sh` | red diagnostics table / batch-timing ledger row |
@@ -217,7 +217,8 @@ ISO timestamps→`TIMESTAMP`, `HH:MM:SS`→`TIME`, `[0-9]{3,}`→`N`; then POSIX
 `key = sha256("<repo_name> <tree> <image_tag> <sel_hash> <harness_hash> <mode> <producer> <profile>\n")`
 
 * `sel_hash` = sha256 of the sorted suite names, one per line.
-* `harness_hash` = sha256 of the running `testenv` executable, then `select.sh` and
+* `harness_hash` = sha256 of the running `testenv` executable (which links the selector since
+  sp-wx2tw; `select.sh` is gone), then
   `suite-covers.sh` from the harness dir — the runner and the selector, as before
   (`$0` was the script).
 * `profile` replaces `WITH_BINS`: an `aeon` green must not replay for a `release` run.
@@ -267,6 +268,11 @@ Invoked **by path** through a directory on PATH (a caller holding `$SPIRA_BD`, w
 searches only the PATH entries after that directory, so a `bd` wrapper ahead of it that execs
 `$SPIRA_BD` (loom's counting shim) is never taken for the real one — the two would exec each
 other until fork failed with EAGAIN.
+
+The `__batch__` row also carries the trial's phases (sp-govet, §11.2):
+`"setup_secs":<n>` (everything before the first suite could start), `"phases":"build:20,up:2,…"`
+and `"warm":"spare|cold|off"`. Per-suite rows are unchanged; readers that do not know the
+fields ignore them.
 
 `round` family (only with `SPIRA_ROUND_BATCH_ID`): `batch_id`, `phase="build"`, `secs`,
 `members`, `reds` (red + timeout count).
@@ -549,9 +555,9 @@ into a fresh `cargo-target-bins/<tree>` on every new tree (95-116 s, sp-zv7j4).
   historical *median* time, and nothing enforced it: gates measured that day ran 1732 s and
   2574 s (host contention, cold builds, suites slower than their median). The round runs the
   full corpus anyway, so a suite the gate did not finish is covered there.
-  * **Clock.** Starts when the suite phase starts — immediately before the first suite is
-    scheduled, after build, container up, install, requirements and the testdb baseline.
-    Those are *not* under the deadline (F3 says what bounds them today).
+  * **Clock.** As first written: starts when the suite phase starts, setup outside it.
+    **Amended by D9 (sp-govet, §11):** starts when testenv starts; setup is inside it,
+    bounded by its share.
   * **Cut.** Once `S` has elapsed no suite is launched (serial and parallel alike, and the PSI
     pause and slot wait give up at the deadline). A suite still running is killed by the
     **same mechanism as the per-suite timeout** (`run_bounded`: SIGTERM to the `podman exec`,
@@ -659,7 +665,7 @@ production; `SPIRA_ARTIFACTS` inside a test run). A round that tests its own run
   `testenv.sh up` + probe 178 s; configure/suspend/install 12 s; testdb baseline 11 s;
   **suite phase 61 s** (the cut: deadline + the kill); results, teardown and gate-timing 16 s.
   Under a 300 s deadline the suite phase is now bounded; the ~300 s of setup around it is not,
-  and on that day it was the larger half.
+  and on that day it was the larger half. **Closed by D9/D10 (sp-govet, §11).**
 
 ## 10. `testenv suites` — the suite-state tooling (replaces spira/suites.sh)
 
@@ -672,3 +678,123 @@ parser of each — the drift suite-covers.sh was written to end. Its contract, s
 seams, decisions and cutover are in [DESIGN-suites.md](DESIGN-suites.md). The runner's own
 argument grammar is unchanged: `suites` as the first argument selects the family, and a
 branch literally named `suites` is `testenv -- suites`.
+
+## 11. The gate trial under one budget (sp-govet)
+
+### 11.1 Intent
+
+A gate trial (`--deadline S`, the only caller that passes it is the gate string) is judged
+**inside its budget, all of it**: the setup around the suites counts, a setup that cannot
+finish in its share is a named NO_VERDICT and never a silent overrun, and the setup a gate
+pays is small because the container it runs in was booted **before** it was asked for —
+never reused, so no trial can see another's state.
+
+Measured before this change (DESIGN F3, the gate log of the rewrite waves, and a probe
+branch touching `spira/watchtower.sh`, 15 suites):
+
+| phase | quiet host, 2026-09-30 02:23Z | loaded host, 2026-09-29 (F3) |
+|---|---|---|
+| resolve, select, key, image tag | 0.2 s | — |
+| cargo build (the gate's fresh worktree) | 20.4 s | 44 s |
+| orphan sweep + owner claim | 0.1 s | 55 s |
+| `testenv.sh up` + probe | 2.3 s | 178 s |
+| configure + suspend + install | 10.9 s | 12 s |
+| requirements + testdb template | 4.6 s | 11 s |
+| **suite phase** | 75.5 s | 61 s (deadline 60) |
+| results, gate-diag/timing, teardown | 6 s | 16 s |
+| **total** | 120 s | 381 s |
+
+Across the 22 wave trials (2026-09-30 00:31–02:16Z) setup ran 23–258 s (median 48 s, p90
+~170 s) on top of a suite phase that alone could use the whole 300 s. Setup is not one
+cost: on a quiet host it is the cold build; on a loaded one it is the podman control plane
+(`podman ps`/`run`/systemd boot under contention) — both are what a pre-booted container in
+a warm checkout removes from the trial's critical path.
+
+### 11.2 Contract
+
+**The budget (D9).** `--deadline S` starts at process start. Two instants follow:
+
+* `setup_cutoff = start + S × share / 100`, share = `SPIRA_TESTENV_SETUP_SHARE` (integer
+  percent, default 50, clamped to 10..=90 so the suites always get at least 10 %).
+  Every setup phase is bounded by it — the build (cargo is killed), the image tag, the
+  container (`testenv.sh up`/`probe`, or claiming a spare), configure/suspend/install, the
+  requirement checks and the test databases (their execs carry it as their deadline). A
+  phase still running at the cutoff is killed, and the run ends
+  `VERDICT FAULT rc=2 ran=0 reason=deadline-<phase>` with a log line naming the phase, its
+  share and the budget. rc 2 is what the gate string maps to 75: **NO_VERDICT, never red,
+  never green** (a killed build is `deadline-build`, never the candidate's rc 4).
+  `<phase>` ∈ `build | tag | sweep | up | install | requirements | testdb`.
+* `deadline_at = start + S`: the suite phase's hard cut (D7's mechanism, unchanged) is
+  `deadline_at`, not "S after the suites start".
+* **A trial that judged nothing is not a pass.** When suites were runnable and every one of
+  them was deferred (`ran = 0`, `deferred > 0`), the run is
+  `VERDICT FAULT rc=2 reason=deadline-suites`, not `VERDICT GREEN ran=0`.
+
+Without `--deadline` none of this applies: no cutoff, no warm path, same output.
+
+**The warm path (D10).** Under `--deadline`, unless `--artifacts` is given or
+`SPIRA_TESTENV_WARM_SLOTS=0`, testenv tries `SPIRA_TESTENV_WARM_SLOTS` (default 3) warm
+slots before the §4.1 rules:
+
+| thing | where |
+|---|---|
+| slot worktree | `$SPIRA_RUN/worktree/.testenv-warm-<i>` — a detached worktree of the repo, reset per trial exactly as a scratch slot (`checkout --detach --force`, `clean -ffdx -e /target`), so `target/` stays warm |
+| slot lock | `$SPIRA_RUN/worktree/.testenv-warm-<i>.lock`, `flock` exclusive, non-blocking; held for the whole trial |
+| spare record | `$SPIRA_RUN/worktree/.testenv-warm-<i>.spare`: `name=<container> tag=<image tag> booted=<epoch>` lines, written atomically (rename) only after the spare booted and probed |
+| spare container | `spira-warm-<i>-<epoch>-<pid>-<seq>`, booted by `testenv.sh up --name <n> --checkout <slot worktree>` — the slot is bind-mounted at `/workspace`, so the trial's checkout into the slot is what the spare sees |
+
+* **Claim.** With the slot lock held and the tree checked out and built, the trial reads
+  the spare record and **deletes it before using the container** — a spare is claimable at
+  most once, even if the trial dies. It is used only if it is running, its tag is the
+  current image tag, a nonce the trial writes to `<slot>/target/.testenv-warm-nonce` reads
+  back identically from `/workspace/target/.testenv-warm-nonce` inside it (it mounts this
+  slot and sees this checkout), and `testenv.sh probe` passes. Otherwise it is purged and
+  the trial boots its own container on the slot (`warm=cold`) — the same work as before,
+  with a warm build.
+* **Never reused (isolation by construction).** The claimed container is torn down at the
+  end of the trial exactly like a cold one (§4.2 teardown). No container ever runs suites
+  for two trials. The slot's checkout is reset by git and the container's user (uid 1001,
+  a sub-uid on the host) cannot write the bind-mounted host checkout.
+* **Refill.** When a warm trial ends, testenv spawns `testenv warm refill <i>` detached
+  (`setsid`, stdio to `$SPIRA_RUN/testenv-warm.log`). The refiller waits for the slot lock
+  (bounded by `SPIRA_TESTENV_WARM_BOOT_TIMEOUT`, default 600 s), runs the orphan sweeps (moved
+  off the trial's critical path, §4.2), boots the spare (bounded by the same timeout), probes
+  it, and writes the record. A refill that fails leaves no record; the next trial boots cold.
+* **Sweep of warm containers.** `spira-warm-*` containers that no spare record names and
+  whose owner file names a dead pid (or none, when older than the orphan min age) are
+  purged by the refiller's sweep.
+* A spare holds one of testenv.sh's admission slots (`SPIRA_TESTENV_MAX_CONCURRENT`) while
+  idle.
+
+**Phase timings (D11).** Every trial records its phases, in order, in seconds:
+`resolve, build, sweep, up, install, requirements, testdb, suites, post, teardown`
+(`up` covers claiming a spare). Written to the log line `phases: …`, `batch.meta` (`phases=`,
+`warm=`) and the `__batch__` suite-timing row (`setup_secs`, `phases`, `warm`, §3.4).
+`setup_secs` = the time from start to the first suite's launch. A trial cut at its setup share still writes its `__batch__` row, with `rc` 2 and the
+cut phase last in `phases`, so an overrun is visible to every reader of the family.
+
+### 11.3 Decisions
+
+* **D9 — the budget is the trial's, not the suites'.** The operator order is that a gate is
+  cut at its budget; a 300 s suite phase inside a 460 s trial obeys the letter and misses
+  the point. Setup gets a share, not the whole budget, so a trial that spent 280 s in
+  `podman run` cannot leave its suites 20 s and call the result a gate. A setup overrun is
+  a harness fault (rc 2 → NO_VERDICT) because nothing about the branch was judged.
+  *Rejected:* raising the budget; letting setup run unbounded and subtracting it (the
+  overrun the bead exists to end).
+* **D10 — a pre-booted, never-reused container per warm slot.** *Rejected:* one long-lived
+  container reused across trials — isolation would then rest on a cleaning list (tmp, homes,
+  user units, lingering processes, dolt servers, cargo volumes) that is only as good as its
+  author's imagination; a podman image snapshot of an installed container — install
+  depends on the tree under test, so it cannot be baked ahead of the tree. Booting the
+  *next* trial's container while nobody waits is the whole saving and costs no isolation.
+  *Rejected:* making `/workspace` a symlink into a shared mount of every worktree — every
+  trial could then read every other trial's tree.
+* **D10a — the warm path is chosen by `--deadline`.** Rounds (`--profile release`) must
+  build in their own worktree (§4.1, land reads `target/release` there); aeon runs have
+  their own warm worktree. The gate trial is the one caller that pays setup on every run.
+* **D10b — the refill is detached, and failure is quiet.** A refill failing (image pull,
+  admission timeout) only costs the next trial a cold boot, which is today's path; it must
+  not fail the trial that spawned it, and it runs after that trial's verdict.
+* **D11 — phases go on the `__batch__` row**, the one end-to-end row per run, so the
+  suite-timing family's per-suite readers (LPT order, medians, bd wait) are untouched.

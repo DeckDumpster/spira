@@ -121,10 +121,20 @@ id = "UC-safety-fences-24"
 tier = "T1"
 statement = "`scratch-fence.sh` refuses tracked root `sp-*`/`*.fixed` files, ignores subdirectories, exits 3 on an empty index, and honours `SCRATCH_FENCE_OK`"
 
+[use_case.uncovered]
+reason = "scratch-fence.sh moved to spira-lint's `scratch-fence` rule and was deleted (sp-ekkak); the property is unchanged and its cases now run as `cargo test -p spira-lint` (spira-lint/DESIGN.md \"Rule scratch-fence\"), which plan-matrix's suite-header scan cannot see. The pre-commit hook wiring half is UC-safety-fences-22."
+date = "2026-09-29"
+bead = "sp-ekkak"
+
 [[use_case]]
 id = "UC-safety-fences-25"
 tier = "T1"
 statement = "`inventory.sh` refuses absolute home-directory and workspace-container paths, `(per Name, date)` marks and real emails in tracked and untracked files; it exempts its own pattern files and example domains, exits 3 on an empty index, and supports `--scan`/`--patterns`"
+
+[use_case.uncovered]
+reason = "inventory.sh moved to spira-lint's `inventory` rule and was deleted (sp-ekkak); the property is unchanged (`--scan` too, now `\"$SPIRA_LINT_BIN\" --only inventory --scan <file>`) and its cases now run as `cargo test -p spira-lint` (spira-lint/DESIGN.md \"Rule inventory\"), which plan-matrix's suite-header scan cannot see."
+date = "2026-09-29"
+bead = "sp-ekkak"
 
 [[use_case]]
 id = "UC-safety-fences-26"

@@ -77,7 +77,14 @@ pub fn in_place_candidates(
 #[derive(Debug)]
 pub enum Kind {
     InPlace,
-    Slot { _lock: File },
+    Slot {
+        _lock: File,
+    },
+    /// A warm slot (DESIGN.md §11.2): a scratch slot with a pre-booted container of its own.
+    Warm {
+        index: usize,
+        _lock: File,
+    },
     Ephemeral,
 }
 
@@ -93,7 +100,18 @@ impl Worktree {
         match self.kind {
             Kind::InPlace => "in place",
             Kind::Slot { .. } => "scratch slot",
+            Kind::Warm { .. } => "warm slot",
             Kind::Ephemeral => "throwaway worktree",
+        }
+    }
+}
+
+impl Worktree {
+    /// The warm slot's index, when this is one.
+    pub fn warm_index(&self) -> Option<usize> {
+        match self.kind {
+            Kind::Warm { index, .. } => Some(index),
+            _ => None,
         }
     }
 }
@@ -112,7 +130,7 @@ fn is_clean(wt: &Path) -> bool {
     matches!(git(wt, &["status", "--porcelain"]), Ok(s) if s.is_empty())
 }
 
-fn try_lock(path: &Path) -> Option<File> {
+pub(crate) fn try_lock(path: &Path) -> Option<File> {
     let f = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -131,7 +149,7 @@ fn head_of(wt: &Path) -> Option<String> {
 /// Point an existing slot at `commit`, or create it. Checkout rewrites only the files that
 /// differ, so cargo's fingerprints keep `target/` warm; everything else untracked or ignored
 /// is removed, so the slot is the commit and nothing else.
-fn prepare_slot(repo: &Path, slot: &Path, commit: &str) -> Result<(), String> {
+pub(crate) fn prepare_slot(repo: &Path, slot: &Path, commit: &str) -> Result<(), String> {
     let registered = slot.join(".git").exists() && head_of(slot).is_some();
     if !registered {
         let _ = git(repo, &["worktree", "prune"]);
@@ -158,6 +176,33 @@ pub struct Request<'a> {
     pub cwd: &'a Path,
     pub run_dir: &'a Path,
     pub slots: usize,
+}
+
+/// The first free warm slot (DESIGN.md §11.2), locked and checked out at the commit; None
+/// when every slot is busy or unusable (the caller falls back to [`acquire`]).
+pub fn acquire_warm(req: &Request, slots: usize, log: &dyn Fn(&str)) -> Option<Worktree> {
+    let base = req.run_dir.join("worktree");
+    fs::create_dir_all(&base).ok()?;
+    for i in 0..slots {
+        let (slot, lock_path, _) = crate::warm::paths(req.run_dir, i);
+        let Some(lock) = try_lock(&lock_path) else {
+            continue;
+        };
+        match prepare_slot(req.repo, &slot, req.commit) {
+            Ok(()) => {
+                return Some(Worktree {
+                    path: slot,
+                    kind: Kind::Warm {
+                        index: i,
+                        _lock: lock,
+                    },
+                    repo: req.repo.to_path_buf(),
+                })
+            }
+            Err(e) => log(&format!("warm slot {i} unusable ({e}) — trying the next")),
+        }
+    }
+    None
 }
 
 pub fn acquire(req: &Request, log: &dyn Fn(&str)) -> Result<Worktree, String> {

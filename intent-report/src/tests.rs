@@ -250,3 +250,47 @@ fn unmetered_suite_rows_are_not_reported_as_zero_wait() {
         "{out}"
     );
 }
+
+#[test]
+fn runner_trials_split_setup_from_suites_and_skip_rows_without_phases() {
+    let row = |off: u64, extra: &str| {
+        format!(
+            "{{\"ts\":\"{}\",\"family\":\"suite-timing\",\"suite\":\"__batch__\",\"rc\":{}}}\n",
+            ts(off),
+            extra
+        )
+    };
+    let st = [
+        row(1, "0,\"wall_secs\":100"), // an old row: no setup_secs — skipped
+        row(2, "0,\"wall_secs\":120,\"setup_secs\":20,\"phases\":\"resolve:0\",\"warm\":\"spare\""),
+        row(3, "0,\"wall_secs\":200,\"setup_secs\":60,\"phases\":\"resolve:0\",\"warm\":\"cold\""),
+        row(4, "2,\"wall_secs\":150,\"setup_secs\":150,\"phases\":\"up:150\",\"warm\":\"cold\""),
+        format!(
+            "{{\"ts\":\"{}\",\"family\":\"suite-timing\",\"suite\":\"test-a.sh\",\"rc\":0,\"wall_secs\":9,\"setup_secs\":1}}\n",
+            ts(5)
+        ),
+    ]
+    .concat();
+    let rt = runner_trials(&st, all());
+    assert_eq!(rt.len(), 3);
+    let out = render(
+        &Inputs {
+            gate_run: "",
+            gate_log: None,
+            round_attribution: "",
+            suite_timing: &st,
+            landing_event: "",
+        },
+        all(),
+    );
+    assert!(
+        out.contains("6. Test-runner trials with phases: 3; setup median 60 s"),
+        "{out}"
+    );
+    // suites+teardown of the two that reached the suites: 100 and 140 -> median 120
+    assert!(out.contains("suites+teardown median 120 s"), "{out}");
+    assert!(
+        out.contains("warm spare 1, cold on a warm slot 2, no warm path 0; cut at the setup share (rc 2): 1"),
+        "{out}"
+    );
+}

@@ -16,7 +16,7 @@
 #       fixing the same crate (positive control) makes it pass.
 #
 # tier: T2
-# covers: spira/build-fence.sh spira/gate-touched.sh Makefile Cargo.toml Cargo.lock
+# covers: spira/build-fence.sh Makefile Cargo.toml Cargo.lock
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -137,14 +137,13 @@ want "and the fence says so" "make build ok" "$out"
 
 # =========================================================================================
 # GATE INTEGRATION. A fence nothing invokes is a file. The repository's gate string names
-# build-fence.sh itself (doctor.sh fails a row that does not); gate-touched.sh no longer calls
-# it (sp-aprxm), because under gate_mode=unit the Rust gate drops the step from the string and
-# a second call there would be the very cold release build that change removes. The gate
-# crate's own tests (`cargo test -p gate`, compose.rs and tests.rs) cover the drop.
+# build-fence.sh itself (doctor.sh fails a row that does not); the selector (gate-touched.sh,
+# now the suite-select binary, sp-wx2tw) stopped calling it (sp-aprxm), because under
+# gate_mode=unit the Rust gate drops the step from the string and a second call there would be
+# the very cold release build that change removes. The gate crate's own tests
+# (`cargo test -p gate`, compose.rs and tests.rs) cover the drop.
 # =========================================================================================
 echo "6. gate integration:"
-gt="$(cat "$HERE/gate-touched.sh")"
-nowant "gate-touched.sh does not call build-fence.sh (one build per unit gate)" 'bash "$HERE/build-fence.sh"' "$gt"
 dr="$(cat "$HERE/doctor.sh")"
 want "doctor.sh requires the gate string to name build-fence.sh" '*build-fence.sh*)' "$dr"
 is "build-fence.sh is executable" "0" "$([ -x "$HERE/build-fence.sh" ]; echo $?)"

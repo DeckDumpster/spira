@@ -518,7 +518,8 @@ checks run from its own gate to keep it that way.
 
 - `spira/exclude.sh` — a beads database is never public. The check, a pre-commit hook, and the
   installer that arms both.
-- `spira/inventory.sh` — refuses to ship one operator's infrastructure: absolute paths rooted in
+- spira-lint's `inventory` rule (`spira-lint/src/rules/inventory.rs`, ported from
+  `spira/inventory.sh`) — refuses to ship one operator's infrastructure: absolute paths rooted in
   a home or workspace directory, real e-mail addresses, provenance marks naming a person and a
   date. **It scans comments rather than stripping them**, because that is where all of it was:
   a version that stripped them passed a tree naming seven repositories, a host and a person.
@@ -561,7 +562,7 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 | `spira/repo-map.example` | example rows showing the six columns. The real rows are operator data |
 | `spira/exclude.sh` | keeps the beads database and its exports out of this repository — the check the gate runs, the pre-commit hook, and the installer that arms both. A beads database is never public |
 | `spira/hooks/` | the pre-commit hook itself, TRACKED and armed by core.hooksPath. .git/hooks is not cloned, so a hook that lived there would reach a colleague missing and unannounced |
-| `spira/inventory.sh` | the fence that keeps one operator's infrastructure out of a repository meant to be cloned — repository names, hosts, paths, people, dates. It scans comments, which is where all of it was |
+| `spira-lint/src/rules/inventory.rs` | the fence that keeps one operator's infrastructure out of a repository meant to be cloned — repository names, hosts, paths, people, dates. It scans comments, which is where all of it was. Ported from spira/inventory.sh (sp-ekkak) |
 | `spira/inventory-deny` | the tokens that fence refuses beyond the structural ones. Ships EMPTY: a list of somebody else's names is itself the inventory |
 | `spira/actors.example` | commit author to harness, for authors the commit graph cannot vote on. Its rows are one installation's roster |
 | `spira/auron.sh` | the watchdog over the loop — reads timestamps and counters, raises or clears an alert bead. Its only power is speech: it repairs nothing, restarts nothing and summons nothing |

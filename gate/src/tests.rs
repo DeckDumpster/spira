@@ -1521,7 +1521,7 @@ fn a_fences_only_branch_still_reruns_the_named_suites() {
 
 #[test]
 fn a_script_branch_in_unit_mode_with_certify_suites_off_still_reruns_them() {
-    // Production today: certify_suites = "off". gate-touched.sh then exits before it ever
+    // Production today: certify_suites = "off". The selector then exits before it ever
     // unions SPIRA_GATE_EJECTED_SUITES in, so the promise "recertification will force these
     // suites" was never kept. The re-entry phase keeps it.
     let f = returned(unit_fake(&["spira/lib.sh"]), "test-b.sh");
@@ -1866,12 +1866,12 @@ fn a_no_verdict_trial_is_recorded_as_one() {
 // ------------------------------------------------ positive controls (sp-ufbkh)
 
 /// The production gate string's shape: bash fences, spira-lint, the selector.
-const FENCED: &str = r#"bash spira/inventory.sh && "$SPIRA_LINT_BIN" && bash spira/build-fence.sh && { _s="$(bash spira/gate-touched.sh "$SPIRA_GATE_BASE" x)"; [ -n "$_s" ] || exit 0; }"#;
+const FENCED: &str = r#"bash spira/inventory.sh && "$SPIRA_LINT_BIN" && bash spira/build-fence.sh && { _s="$("$SPIRA_SELECT_BIN" gate "$SPIRA_GATE_BASE" x)" || exit 75; [ -n "$_s" ] || exit 0; }"#;
 
 fn fenced() -> Fake {
     let f = Fake::new();
     f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = FENCED.into();
-    for p in ["spira/inventory.sh", "spira/build-fence.sh", "spira/gate-touched.sh"] {
+    for p in ["spira/inventory.sh", "spira/build-fence.sh"] {
         f.blobs.borrow_mut().insert(format!("{BASE}:{p}"), b"x".to_vec());
     }
     f
@@ -2094,4 +2094,77 @@ fn the_definition_is_part_of_the_verdict_key() {
     let key = |f: &Fake| f.written.borrow().iter().find(|(p, _)| p.starts_with("/run/verdicts") && !p.to_string_lossy().contains("/trees/")).map(|(p, _)| p.clone());
     assert!(key(&a).is_some() && key(&b).is_some());
     assert_ne!(key(&a), key(&b), "a different tool set is a different trial");
+}
+
+// ------------------------------------------- the trial's budget (testenv DESIGN.md §11, sp-govet)
+
+#[test]
+fn a_suites_trial_cut_at_its_setup_share_is_a_budget_no_verdict_naming_the_phase() {
+    for (out, phase) in [
+        ("x\nVERDICT FAULT rc=2 ran=0 reason=deadline-up", "up"),
+        ("VERDICT FAULT rc=2 ran=0 reason=deadline-build", "build"),
+        ("  test-b.sh DEFERRED deadline\nVERDICT FAULT rc=2 ran=0 reason=deadline-suites", "suites"),
+    ] {
+        let f = Fake::new();
+        f.runs.borrow_mut().insert(MERGE_SHA.into(), (75, out.into()));
+        assert_eq!(f.run(), NOVERDICT);
+        assert!(f.verdict_line().contains("reason=budget"), "{}", f.verdict_line());
+        assert!(
+            f.stderr().contains(&format!("phase `{phase}` was cut at its share of SPIRA_GATE_BUDGET=300s")),
+            "{}",
+            f.stderr()
+        );
+        assert_eq!(f.ran.borrow().len(), 1, "no base trial for a budget cut");
+    }
+    // any other runner fault stays a harness fault
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(
+        MERGE_SHA.into(),
+        (75, "VERDICT FAULT rc=2 ran=0 reason=container-up".into()),
+    );
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=harness-fault"));
+}
+
+#[test]
+fn a_red_before_the_suites_step_is_judged_on_the_bases_fences_only() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(
+        MERGE_SHA.into(),
+        (1, "spira-lint: 1 violation(s) of rule literal-lint".into()),
+    );
+    assert_eq!(f.run(), FAIL);
+    assert!(f.verdict_line().contains("reason=branch-red"), "{}", f.verdict_line());
+    assert_eq!(f.env_of(0, "SPIRA_GATE_SUITES"), "on", "the branch ran its suites string");
+    assert_eq!(f.env_of(1, "SPIRA_GATE_SUITES"), "off", "the base answers only the fence's question");
+    assert!(meter(&f).contains("compose=suites("), "{}", meter(&f));
+}
+
+#[test]
+fn a_red_inside_the_suites_step_still_runs_the_bases_suites() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(
+        MERGE_SHA.into(),
+        (1, format!("{}\nVERDICT RED ran=3 red=1", red("test-b.sh"))),
+    );
+    f.run();
+    assert_eq!(f.env_of(1, "SPIRA_GATE_SUITES"), "on");
+    // a runner that faulted with rc 4 (the candidate did not build) also reached the step
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(
+        MERGE_SHA.into(),
+        (4, "VERDICT FAULT rc=4 ran=0 reason=build".into()),
+    );
+    f.run();
+    assert_eq!(f.env_of(1, "SPIRA_GATE_SUITES"), "on");
+}
+
+#[test]
+fn the_runners_budget_knobs_reach_the_gate_command() {
+    let f = Fake::new();
+    f.set_var("SPIRA_TESTENV_SETUP_SHARE", "70");
+    f.set_var("SPIRA_TESTENV_WARM_SLOTS", "0");
+    f.run();
+    assert_eq!(f.env_of(0, "SPIRA_TESTENV_SETUP_SHARE"), "70");
+    assert_eq!(f.env_of(0, "SPIRA_TESTENV_WARM_SLOTS"), "0");
 }

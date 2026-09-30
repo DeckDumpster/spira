@@ -149,17 +149,19 @@ platform     | /srv/checkouts/platform    | push | origin/main   |              
 # disallow force-push, and disallow deletion on the base branch — doctor.sh warns
 # for any queue-mode repo whose base branch has no protection record.
 #
-# THE FENCES BELOW WERE gate-spira.sh's (sp-hyc3a, carrying out sp-nhid0's decision):
-# gate-spira.sh had no caller since sp-b99nj retired the background suites sweep
-# (2026-09-26), so its fence loop — bd-stdin-lint.sh, gh-intake-lint.sh,
-# incident-cause-lint.sh, tmux-scope-fence.sh, wiki-add-fence.sh — is re-homed here,
-# in the one place they now run. testdb-mode-lint.sh, literal-lint.sh and
-# scratch-fence.sh already had a live caller and needed no re-homing.
-# build-fence.sh (sp-9uro3) is the compile check under gate_mode=suites/fences; a
-# unit-mode branch's own build phase replaces it instead (sp-aprxm), and
-# `compose::gate_string` strips this exact step from the string for that mode —
-# doctor.sh fails a row that does not name it. sop.sh lint and suite-state-fence.sh
-# are deliberately NOT added: both need a real SPIRA_DB, which a fresh clone of this
-# example has no opinion about; wire them in once you have one (sp-oc2i6/sp-rjbrc
-# also block sop.sh lint on this host — it can hang past 120s).
-harness      | /srv/checkouts/harness     | queue | origin/main  |                 | bash spira/inventory.sh && bash spira/literal-lint.sh && bash spira/testdb-mode-lint.sh && bash spira/scratch-fence.sh && bash spira/bd-stdin-lint.sh && bash spira/gh-intake-lint.sh && bash spira/incident-cause-lint.sh && bash spira/tmux-scope-fence.sh && bash spira/wiki-add-fence.sh && "$SPIRA_LINT_BIN" --only payload-argv-lint && bash spira/build-fence.sh && { bash spira/orphan-test.sh || [ $? -eq 77 ]; } && { _b=0; "$SPIRA_TESTENV_BIN" "$SPIRA_GATE_BRANCH" || _b=$?; case "$_b" in 2|3) exit 75;; *) exit "$_b";; esac; }
+# THIS ROW IS ILLUSTRATIVE ONLY for a repository that keeps its gate string in config.
+# THIS repository owns its own gate from the tree under test (gate.steps, sp-quu2w) —
+# see that file for what actually runs, and gate/DESIGN.md's "Wave 1" section (sp-hyc3a)
+# for the history of what moved where. The row below mirrors gate.steps by hand so the
+# two do not read as contradictory: bare "$SPIRA_LINT_BIN" (no --only) runs every rule,
+# including inventory, literal-lint, scratch-fence, testdb-mode-lint, bd-stdin-lint,
+# gh-intake-lint, incident-cause-lint, tmux-scope-fence and wiki-add-fence — all ported
+# off standalone bash scripts (sp-ekkak; sp-hyc3a for the last five, re-homed off the
+# dead gate-spira.sh they used to run, sp-nhid0's decision). build-fence.sh (sp-9uro3)
+# stays a script: a unit-mode branch's own build phase replaces it instead (sp-aprxm),
+# and `compose::gate_string` strips this exact step from the string for that mode —
+# doctor.sh fails a row that does not name it. Suite selection is suite-select
+# (sp-wx2tw), not select.sh/gate-touched.sh (both retired). sop.sh lint and
+# suite-state-fence.sh are deliberately NOT here: both need a real SPIRA_DB, which a
+# fresh clone of this example has no opinion about.
+harness      | /srv/checkouts/harness     | queue | origin/main  |                 | "$SPIRA_LINT_BIN" && bash spira/build-fence.sh && { _s="$("$SPIRA_SELECT_BIN" gate "$SPIRA_GATE_BASE" "${SPIRA_GATE_SELECT_HEAD:-$SPIRA_GATE_BRANCH}")" || { _r=$?; [ "$_r" = 1 ] && exit 1; exit 75; }; [ -n "$_s" ] || exit 0; _b=0; "$SPIRA_TESTENV_BIN" --deadline "${SPIRA_GATE_BUDGET:-300}" --suites "${_s//$'\n'/,}" "$SPIRA_GATE_BRANCH" || _b=$?; case "$_b" in 2|3) exit 75;; *) exit "$_b";; esac; }

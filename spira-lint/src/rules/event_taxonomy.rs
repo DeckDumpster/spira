@@ -17,7 +17,7 @@ pub const KINDS_FILE: &str = "spira-lint/event-kinds";
 /// Call sites no suite can drive: (file, kind). A shell site must contain
 /// `spira_event <kind> `; a Rust site the literal `"<kind>"`.
 pub const WIRED: &[(&str, &str)] = &[
-    ("spira/gate-check.sh", "ci.failed"),
+    ("gate-check/src/main.rs", "ci.failed"),
     ("sentinel/src/check4.rs", "bead.poisoned"),
     ("strand/src/check.rs", "branch.reclaimed"),
     ("landing-pass/src/push.rs", "bead.landed"),
@@ -137,12 +137,18 @@ mod tests {
     const KINDS: &str = "# kinds\nci.failed\nbead.poisoned\nbranch.reclaimed\nbead.landed\nbead.reopened\n";
 
     fn wired(t: &TempDir) -> Vec<String> {
-        t.write("spira/gate-check.sh", "spira_event ci.failed \"$x\"\n");
+        // Every WIRED entry is a Rust site now (gate-check moved to Rust, sp-ubw2o), so this
+        // fixture also needs one `spira/*.sh` call site of its own — otherwise the first
+        // scan phase finds no shell site at all and its own positive control (EmptyScope)
+        // fires, which is a fact about this fixture, not about the rule being exercised.
+        t.write("spira/an-example.sh", "spira_event bead.landed \"$id\"\n");
+        t.write("gate-check/src/main.rs", "world.spira_event(\"ci.failed\", &blocked, &summary, esc);\n");
         t.write("sentinel/src/check4.rs", "emit(\"bead.poisoned\");\n");
         t.write("strand/src/check.rs", "emit(\"branch.reclaimed\");\n");
         t.write("landing-pass/src/push.rs", "emit(\"bead.landed\"); emit(\"bead.reopened\");\n");
         vec![
-            "spira/gate-check.sh".into(),
+            "spira/an-example.sh".into(),
+            "gate-check/src/main.rs".into(),
             "sentinel/src/check4.rs".into(),
             "strand/src/check.rs".into(),
             "landing-pass/src/push.rs".into(),

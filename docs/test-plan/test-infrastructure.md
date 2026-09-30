@@ -98,7 +98,7 @@ Dimensions (from taxonomy): correctness (C), fail-closed (F), observability (O),
 | UC-test-infrastructure-04 | `file#func` covers narrow selection to hunks inside that function. A global hunk selects all of the file's suites. `--files` mode is conservative. | C | T2 (git) / PR-CI |
 | UC-test-infrastructure-05 | A changed file matching `SPIRA_SELECT_SOURCE` that no suite claims makes selection fail, naming the file. `--report-file` lists unclaimed and unplaced files. | F,O | T1 / lint+cert |
 | UC-test-infrastructure-06 | A queue-branch diff selects the union of its members' suites and falls back to all if any member is unmapped. | C | T2 / PR-CI |
-| UC-test-infrastructure-07 | `gate-spira.sh`, `testenv-batch.sh`, `gate-touched.sh`, `suites.sh names` and gate.yml all delegate to `select.sh`. There is one selector with no private copy. | S | T0 / lint |
+| UC-test-infrastructure-07 | The landing gate string (`suite-select gate`), `testenv` (linked), `batcher-cut`, `gate-spira.sh`, `verdict.sh` and gate.yml all select through the `suite-select` crate. There is one selector with no private copy. | S | T0 / lint |
 
 ### B. Container runner (`testenv.sh`, `testenv-batch.sh`)
 

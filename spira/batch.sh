@@ -89,9 +89,10 @@ _pf_left() {   # seconds left before the pre-flight wall; 0 when spent
     [ "$l" -gt 0 ] && printf '%s' "$l" || printf '0'
 }
 
-# _pf_gate <branch> <name> <stamp> — the batch gate, fast suites only, inside the wall.
+# _pf_gate <branch> <name> <stamp> — the batch gate, inside the wall (its fast-suite filter
+# never reached the Rust gate's env -i command and is retired, sp-wx2tw).
 _pf_gate() {
-    SPIRA_GATE_FAST_MAX_SECS="${SPIRA_PREFLIGHT_SUITE_MAX_SECS:-60}" SPIRA_GATE_BEAD="batch-$3" \
+    SPIRA_GATE_BEAD="batch-$3" \
         _pf_run "$(_pf_left)" bash "$HERE/gate.sh" "$1" "$2" 2>&1
 }
 

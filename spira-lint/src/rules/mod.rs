@@ -1,5 +1,6 @@
 //! One module per rule. Each rule's intent, contract and allow-list schema: DESIGN.md.
 pub mod acceptance_run;
+pub mod bd_stdin_lint;
 pub mod binary_path_fence;
 pub mod conf_key_registry;
 pub mod config_fence;
@@ -7,11 +8,20 @@ pub mod covers_entries;
 pub mod deps_lint;
 pub mod event_taxonomy;
 pub mod fence_scripts;
+pub mod gh_intake_lint;
+pub mod incident_cause_lint;
+pub mod inventory;
+pub mod literal_lint;
 pub mod lockfile_lint;
 pub mod gate_workflow;
 pub mod payload_argv;
+pub mod plan_lint;
 pub mod plan_matrix;
+pub mod scratch_fence;
 pub mod script_exec;
+pub mod testdb_mode_lint;
 pub mod testlib_migrated;
 pub mod tier_budget;
 pub mod tmp_leak;
+pub mod tmux_scope_fence;
+pub mod wiki_add_fence;

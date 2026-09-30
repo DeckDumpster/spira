@@ -34,7 +34,7 @@ statement = "A queue-branch diff selects the union of its members' suites and fa
 [[use_case]]
 id = "UC-test-infrastructure-07"
 tier = "T0"
-statement = "`testenv-batch.sh`, `gate-touched.sh`, `suites.sh names` and gate.yml all delegate to `select.sh`. There is one selector with no private copy."
+statement = "The landing gate string (`suite-select gate`), `testenv` (linked), `batcher-cut`, `verdict.sh` and gate.yml all select through the `suite-select` crate. There is one selector with no private copy. (gate-spira.sh, once also named here, is retired: no caller since sp-b99nj, deleted by sp-hyc3a.)"
 
 [[use_case]]
 id = "UC-test-infrastructure-08"
@@ -234,10 +234,10 @@ statement = "Every non-test, non-sourced operator script is executable."
 [[use_case]]
 id = "UC-test-infrastructure-42"
 tier = "T1"
-statement = "Certification budget. `gate-spira.sh` timed itself and filed one harness bead (\"something must leave gate-suites\") over `SPIRA_GATE_BUDGET`, or on an unmeasurable cost, without failing the branch. `gate-touched.sh` still trims selection to the budget (gate-budget-select.sh) but does not file that bead. **Untested today (see Gaps).**"
+statement = "Certification budget. `gate-spira.sh` timed itself and filed one harness bead (\"something must leave gate-suites\") over `SPIRA_GATE_BUDGET`, or on an unmeasurable cost, without failing the branch. `suite-select` (which replaced `gate-touched.sh`/`gate-budget-select.sh`) still trims selection to the budget (`suite-select/src/budget.rs`) but does not file that bead. **Untested today (see Gaps).**"
 
 [use_case.uncovered]
-reason = "the bead-filing half lived only in gate-spira.sh's own run loop, deleted as dead code (sp-nhid0's decision, carried out by sp-hyc3a); the budget-select trimming it once measured stays live in gate-touched.sh"
+reason = "the bead-filing half lived only in gate-spira.sh's own run loop, deleted as dead code (sp-nhid0's decision, carried out by sp-hyc3a); the budget trimming it once measured moved with gate-touched.sh/gate-budget-select.sh's own retirement into suite-select"
 date = "2026-09-29"
 bead = "sp-hyc3a"
 

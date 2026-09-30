@@ -1,0 +1,20 @@
+[package]
+name = "suite-select"
+version = "0.1.0"
+edition = "2021"
+description = "suite-select — the one suite selector (sp-wx2tw): covers-based selection, the landing gate's budgeted pipeline, and the suite header parser, for the gate, testenv, the batcher and CI."
+
+[lib]
+name = "suite_select"
+path = "src/lib.rs"
+
+[[bin]]
+name = "suite-select"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
