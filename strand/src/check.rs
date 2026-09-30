@@ -334,12 +334,7 @@ fn release_dead_holder(cfg: &Config, part: &str, id: &str) -> &'static str {
 /// it is the record of the claim, and a silent miss leaves the bead held by a dead aeon.
 fn lc_holder_dead(cfg: &Config, id: &str) {
     let loud = |why: &str| warn(&format!("check: {id}: lifecycle_enforce is on and spira-lc HolderDead did not happen ({why}) — the bead stays held"));
-    let Some(bin) = cfg.lc_bin.as_deref() else {
-        return loud("SPIRA_LC_BIN unset");
-    };
-    if !probe::is_executable(Path::new(bin)) {
-        return loud(&format!("{bin} is not executable"));
-    }
+    let bin = cfg.lc_bin.as_str();
     let o = probe::run("timeout", &["30", bin, "show", id], None, &[]);
     if !o.ok {
         return loud(&format!("show: {}", o.stderr.trim()));
@@ -543,9 +538,6 @@ fn tail_lines(path: Option<&Path>, n: usize) -> String {
 
 fn escalate(cfg: &Config, part: &str, kind: &str, id: &str, detail: &str, action: &str) {
     let title = title_for(part, kind, id);
-    let Some(mail) = cfg.home.as_ref().map(|h| h.join("mail.sh")).filter(|m| probe::is_executable(m)) else {
-        return;
-    };
     let bead = if id.is_empty() || id == "-" { None } else { probe::show(cfg, id) };
     let ctx = format!(
         "{}\n\nWHY THIS IS ESCALATED\n{}\n\nSENTINEL STATE\n{}",
@@ -559,9 +551,9 @@ fn escalate(cfg: &Config, part: &str, kind: &str, id: &str, detail: &str, action
         format!("{detail} — nothing in the plan below it can move until this clears")
     };
     let body = escalation_body(&title, action, &why, &ctx);
-    let mail_s = mail.to_string_lossy().into_owned();
+    // mail.sh, by name on the launcher's PATH (sp-gypjk).
     let _ = probe::run(
-        &mail_s,
+        "mail.sh",
         &["send", "operator", "--from", "Strand check <strand@spira>", "--subject", &title, "--kind", "question", "--default", action],
         Some(body.as_bytes()),
         &[],
@@ -697,8 +689,8 @@ mod tests {
             ("SPIRA_LIFECYCLE_ENFORCE", enforce.into()),
             ("SPIRA_BD", bd.into()),
             ("SPIRA_DB", "/fake/db".into()),
-            ("SPIRA_LC_BIN", lc.into()),
         ]))
+        .with_lc(lc)
     }
 
     #[test]
