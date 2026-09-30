@@ -4,6 +4,12 @@
 # absolute paths from whichever box last built it.
 target/
 
+# A release's binaries. The gate stages its build outside the tree, but a bin/ left in a
+# checkout is build output, never source: spira-lint walks untracked-not-ignored files and
+# would scan it (the inventory rule refused every binary of publish PR #458 for the runner's
+# home path baked into it, sp-6cbna), and a release refuses a commit that tracks bin/.
+/bin/
+
 # Machine-local runtime: logs, worktrees, leases, cockpit state. Regenerated, and none of it
 # is content.
 .runtime/
