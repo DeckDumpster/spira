@@ -351,3 +351,129 @@ fn release_like_rustc_invocations_weigh_more() {
     assert_eq!(profile_weight("release"), WEIGHT_RELEASE);
     assert_eq!(profile_weight("aeon"), 1);
 }
+
+/// THE POOLS AS A MODEL, IN VIRTUAL TIME (sp-f4ig1 acceptance: correctness, no load on the box).
+/// Fourteen fake agents released in one instant (the herd) walk compile → test with the phase
+/// costs measured on 2026-09-30 (DESIGN-admission.md §5), every scan through the real
+/// `try_take` / `release` against a real pool directory. Every fourth agent's build is a
+/// release build (weight 4). Each tick checks the pools' invariants.
+#[test]
+fn fourteen_agents_in_one_instant_are_spread_across_the_phases_and_all_finish() {
+    const N: u32 = 14;
+    const COMPILE_PAR: u64 = 3;
+    const TEST_PAR: u64 = 4;
+    let d = run_dir();
+    let p = FakeProcs::default();
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    enum Phase {
+        WaitCompile,
+        Compile(u64),
+        WaitTest,
+        Test(u64),
+        Done,
+    }
+    // Agent i: its cargo is pid 1000+i, its testenv pid 2000+i (different processes, as live).
+    let cargo = |i: u32| 1000 + i;
+    let testenv = |i: u32| 2000 + i;
+    for i in 0..N {
+        p.0.borrow_mut().insert(cargo(i), (i as u64 + 1, 1));
+        p.0.borrow_mut().insert(testenv(i), (i as u64 + 1, 1));
+    }
+    let weight = |i: u32| if i % 4 == 3 { WEIGHT_RELEASE } else { 1 };
+    let compile_secs = |i: u32| if weight(i) > 1 { 145 } else { 40 };
+    const TEST_SECS: u64 = 78;
+    let mut phase = vec![Phase::WaitCompile; N as usize];
+    let mut compile_slot = vec![0u64; N as usize];
+    let mut test_slot = vec![0u64; N as usize];
+    let mut first_admit_order = Vec::new();
+    let (mut max_compile_units, mut max_test, mut max_both_phases_busy) = (0u64, 0usize, 0usize);
+    let start = 1_000_000u64;
+    let mut now = start;
+    while phase.iter().any(|ph| *ph != Phase::Done) {
+        assert!(now - start < 20_000, "the model must finish: {phase:?}");
+        for i in 0..N {
+            let k = i as usize;
+            match phase[k] {
+                Phase::WaitCompile => {
+                    let me = hw(cargo(i), i as u64 + 1, &format!("a{i}"), weight(i));
+                    if let (Take::Admitted { slot, .. }, _) = try_take(&d, Pool::Compile, COMPILE_PAR, &me, 0, now, &p).unwrap() {
+                        compile_slot[k] = slot;
+                        first_admit_order.push(i);
+                        phase[k] = Phase::Compile(now + compile_secs(i));
+                    }
+                }
+                Phase::Compile(until) if now >= until => {
+                    // The cargo exits: its lease is reclaimed by the next scan (never released).
+                    p.kill(cargo(i));
+                    phase[k] = Phase::WaitTest;
+                }
+                Phase::WaitTest => {
+                    let me = h(testenv(i), i as u64 + 1, &format!("a{i}"));
+                    if let (Take::Admitted { slot, .. }, _) = try_take(&d, Pool::Test, TEST_PAR, &me, 0, now, &p).unwrap() {
+                        test_slot[k] = slot;
+                        phase[k] = Phase::Test(now + TEST_SECS);
+                    }
+                }
+                Phase::Test(until) if now >= until => {
+                    let me = h(testenv(i), i as u64 + 1, &format!("a{i}"));
+                    assert!(release(&d, Pool::Test, TEST_PAR, test_slot[k], &me, now).is_some());
+                    phase[k] = Phase::Done;
+                }
+                _ => {}
+            }
+        }
+        // Invariants, read back from the pool directories as `status` reads them.
+        let c = occupancy(&d, Pool::Compile, COMPILE_PAR, &p);
+        let units: u64 = c.holders.iter().map(|l| l.weight).sum();
+        assert!(
+            units <= COMPILE_PAR || c.holders.len() == 1,
+            "compile pool over its size with more than one job: {:?}",
+            c.holders
+        );
+        let t = occupancy(&d, Pool::Test, TEST_PAR, &p);
+        assert!(t.holders.len() as u64 <= TEST_PAR, "{:?}", t.holders);
+        max_compile_units = max_compile_units.max(units);
+        max_test = max_test.max(t.holders.len());
+        let compiling = phase.iter().filter(|ph| matches!(ph, Phase::Compile(_))).count();
+        let testing = phase.iter().filter(|ph| matches!(ph, Phase::Test(_))).count();
+        if compiling > 0 && testing > 0 {
+            max_both_phases_busy = max_both_phases_busy.max(compiling + testing);
+        }
+        now += 1;
+    }
+    // Everyone finished, in bounded time, and the herd was spread: at some tick agents were
+    // compiling AND testing at once.
+    assert!(phase.iter().all(|ph| *ph == Phase::Done));
+    assert!(max_both_phases_busy >= 2, "phases overlapped across agents");
+    assert_eq!(max_test, TEST_PAR as usize, "the test pool filled");
+    assert!(max_compile_units >= COMPILE_PAR, "the compile pool filled");
+    // First come, first served: the herd (all queued at the same instant) is admitted by pid —
+    // and no release build (3, 7, 11) was overtaken by a debug build queued after it.
+    for r in [3u32, 7, 11] {
+        let pos = first_admit_order.iter().position(|a| *a == r).unwrap();
+        assert!(first_admit_order[..pos].iter().all(|a| *a < r), "{first_admit_order:?}");
+    }
+    // Nothing is left held, and every lease that ended was accounted in telemetry.
+    assert!(occupancy(&d, Pool::Compile, COMPILE_PAR, &p).holders.is_empty());
+    assert!(occupancy(&d, Pool::Test, TEST_PAR, &p).holders.is_empty());
+}
+
+#[test]
+fn the_pool_sizes_and_jitter_are_typed_config_keys_exported_to_the_shell() {
+    let doc = crate::validate("[spira]\nid_prefix = \"sp\"\ncompile_par = 5\ntest_par = 2\nsummon_jitter = 7\n").unwrap();
+    let sh = crate::export_sh(&doc);
+    for line in ["COMPILE_PAR='5'", "TEST_PAR='2'", "SUMMON_JITTER='7'"] {
+        assert!(sh.lines().any(|l| l == line || l == line.replace('\'', "")), "{line} in {sh}");
+    }
+    // What conf.sh exports is what the pools read: SPIRA_COMPILE_PAR=5 sizes the compile pool.
+    let b = Host { cores: 32, mem_avail_mib: 36_000 };
+    assert_eq!(size(Pool::Compile, Some("5"), b), 5);
+    assert!(crate::validate("[spira]\nid_prefix = \"sp\"\ncompile_par = \"many\"\n").is_err(), "typed: a non-number is refused");
+    // spira.conf spelling converts too.
+    let mut w = crate::convert::ConvertWarnings::default();
+    let vars: std::collections::BTreeMap<String, String> =
+        [("SPIRA_COMPILE_PAR", "6"), ("SPIRA_TEST_PAR", "3"), ("SPIRA_SUMMON_JITTER", "0")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let s = crate::convert::spira_section(&vars, &mut w).unwrap();
+    assert!(w.0.is_empty(), "{:?}", w.0);
+    assert_eq!((s.compile_par, s.test_par, s.summon_jitter), (Some(6), Some(3), Some(0)));
+}

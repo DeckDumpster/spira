@@ -152,7 +152,8 @@ spira-admit run --pool compile|test [--who W] [--weight N] -- <cmd…>   # hold 
 
 `status` probes gate slots with a non-blocking flock. It names a gate holder from
 `slot.<n>.holder`, which the gate now writes beside the lock when it takes a slot. `run`
-exists for the replay harness (§5) and for a human who wants a job to join the queue.
+lets a human put any job in a pool's queue, and it is the building block of the Concierge's
+quiet-box replay (§7).
 
 ## 4. Schema
 
@@ -285,9 +286,29 @@ them release builds.
 
 ## 7. Proof and acceptance
 
-The bead's acceptance is a 14-agent replay in which memory full-stall stays under 5%, io full
-avg60 stays under 30% sustained, and landings per hour are higher than unshaped at the same
-N. `spira-admit run` makes the replay a fixture. Each simulated agent runs `spira-admit run
---pool compile -- <build>` and then `spira-admit run --pool test -- <testenv>`, and the
-unshaped control runs the same commands with `SPIRA_ADMISSION=off` (inherited: no slot). The
-result of the replay is recorded in the bead's report.
+**Acceptance is correctness** (per the Concierge, 2026-09-30: a load replay on the one
+production host is not worth its cost). Correctness is shown by deterministic unit tests of
+the pools, all run against real pool directories through the real `try_take` / `acquire` /
+`release`:
+
+* admit, release and reclaim, pid reuse, lowering a size, FIFO, weights
+  (`spira-config/src/admission/tests.rs`);
+* **the pools as a model in virtual time**: 14 fake agents released at one instant walk
+  compile → test with the phase costs of §5, and every fourth one is a release build. At every
+  tick the test checks that no pool is over its size (a heavier-than-the-pool build only runs
+  alone), that every agent finishes (no deadlock, no starvation), that the phases overlap
+  across agents, and that no release build is overtaken;
+* no hold-and-wait across phases: testenv releases its compile lease before it takes a test
+  lease, a gate's children inherit the gate's slot, and an inherited job never waits
+  (`testenv/src/run/tests.rs`, `gate/src/tests.rs`);
+* visible waits: the waiting line and the admitted line, from testenv, the gate and the
+  wrapper;
+* jitter bounds, and the sizes read from typed config (`compile_par`, `test_par`,
+  `summon_jitter`).
+
+**The full 14-agent acceptance replay runs only on a quiet box.** The bead's load criteria are
+memory full-stall under 5%, io full avg60 under 30% sustained, and more landings per hour than
+unshaped at the same N. The Concierge schedules that replay after the rewrite waves land. The
+unshaped baseline is 2026-09-30's real jam (§1), and the shaped result is measured in
+production after rollout, from the `admission` telemetry family and host PSI. No load test runs
+on the live box.
