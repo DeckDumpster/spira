@@ -179,7 +179,7 @@ else 4), an additional `ALERT hotfix <sha> standing <n>h >= threshold <n>h` line
 than re-deriving the age or the threshold: `doctor.sh`'s `doctor_check_hotfix` (WARN on
 `RUNNING UNLANDED` alone, FAIL once `ALERT` joins it), the cockpit ops pane
 (`spira/cockpit.sh`'s snapshot carries them as `SP_HOTFIX_LINE` / `SP_HOTFIX_ALERT`;
-`cockpit/health.sh`'s `hotfix_banner` renders them), and `watchtower.sh` (files a bead once
+`cockpit/health.sh`'s `hotfix_banner` renders them), and `watchtower` (files a bead once
 per standing hotfix — `SPIRA_INCIDENT_REF=incident:hotfix-<sha>`, so incident.sh's own
 dedup bumps a recurrence rather than piling up beads while the same one stands).
 

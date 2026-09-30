@@ -6,7 +6,7 @@
 #
 # WHAT THIS SUITE TESTS
 # ---------------------
-# sp-790sv adds watchtower.sh --pr-stall-check, which scans landstate files for
+# sp-790sv adds watchtower --pr-stall-check, which scans landstate files for
 # REBASED pr-open:<repo> entries older than SPIRA_PR_STALL_MINS and acts:
 #   checks red        → escalate, deduped per bead (sp-45rmp: tested first — a red
 #                        request is the likeliest reason a PR sits past the threshold,
@@ -29,7 +29,7 @@
 # then CONFLICTING, then the arm path.
 #
 # tier: T1
-# covers: spira/watchtower.sh sentinel/src/* spira/doctor.sh spira/conf.sh landing-pass/src/*
+# covers: watchtower/src/* sentinel/src/* spira/doctor.sh spira/conf.sh landing-pass/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -132,7 +132,7 @@ psc() {  # psc [VAR=val...]
         INC_CAUSES="$INC_CAUSES" \
         INC_REFS="$INC_REFS" \
         SPIRA_INCIDENT_SH="$INC_STUB" \
-        "$@" watchtower.sh --pr-stall-check 2>/dev/null
+        "$@" watchtower --pr-stall-check 2>/dev/null
 }
 
 fresh() {

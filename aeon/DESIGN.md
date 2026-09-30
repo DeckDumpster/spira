@@ -129,7 +129,7 @@ Append-only, one line per write, `O_APPEND`, no lock. Timestamp is UTC second pr
   `gate-unfinished`, `decision-blocked`, `timeout`, `requeue-<cause>`, `operator-wait`,
   `submitted`, `yield-headless`, `pre-session`, `closed`, `open`, `in_progress`, `?`,
   `sweep`.
-- Readers: `cockpit-metrics.py`, `cockpit.sh` (tail), `watchtower.sh` (`$2=="awake" && $3==f`),
+- Readers: `cockpit-metrics.py`, `cockpit.sh` (tail), `watchtower` (`$2=="awake" && $3==f`),
   `model-switch-report.sh`, `lib.sh rapid_recur_check` (`" done [^ ]* $BEAD_ID "`),
   `full-aeon-fixture.sh`, and many suites. `lib.sh capacity_pause_set` also appends a
   `CAPACITY paused until …` line to the same file (it is called through the seam).

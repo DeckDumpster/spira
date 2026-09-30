@@ -25,9 +25,9 @@
 # shape itself — that this label pair and the lookback filter reach the real store correctly
 # — is covered once in test-cockpit-bd-contract.sh, against real bd.
 #
-# COVERS: spira/cockpit.sh spira/watchtower.sh spira/incident.sh
+# COVERS: spira/cockpit.sh watchtower/src/* spira/incident.sh
 # tier: T2
-# covers: spira/cockpit.sh spira/watchtower.sh spira/incident.sh
+# covers: spira/cockpit.sh watchtower/src/* spira/incident.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

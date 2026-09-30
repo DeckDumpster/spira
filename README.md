@@ -460,7 +460,7 @@ spira/world.sh start
 
 spira/sentinel.sh --report   # the gap, changing nothing
 spira/strand.sh report       # work that exists and is not moving, with the reason
-spira/watchtower.sh --show   # the pipeline's vital signs
+watchtower --show            # the pipeline's vital signs
 spira/suites.sh list         # every suite, where it runs, what it claims to cover
 
 spira/slay.sh --bead <id>      # stop one aeon cleanly and make its bead say what is true
