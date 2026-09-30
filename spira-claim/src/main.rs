@@ -1,6 +1,8 @@
 //! spira-claim — bead attempt accounting, the CHECK 4 poison decision, and epic-first claim
 //! selection. See DESIGN.md for the contract; this file is argument handling only.
 
+mod audit;
+mod deadlock;
 mod decide;
 mod events;
 mod rank;
@@ -48,10 +50,13 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim stack <bead> [--lifecycle F] [--blocker-records F] [--stack-max-depth N]
        spira-claim unpoison --bead ID [--bead ID...] --cause TEXT [--watch] [--watch-timeout-s N] [--dry-run]
                             [--credit SLUG] [--actor NAME] [--poison-at N]   (the one writer: DESIGN.md §8)
+       spira-claim audit --candidates F [--events F] [--lifecycle F]        (every partition's own bd list, exclusions dropped)
+       spira-claim deadlocked [--apply] --merge-status F [--actor NAME]     (§9; the git check is groomer.sh's)
   thresholds: --poison-at N (3) --requeue-at N (5) --reclaim-at N (5)
   common:     --db PATH  --timeout-s N (60)
   exit: 0 answered, 1 usage, 2 cannot tell (stdout empty); unpoison also 3 = a bead failed;
-        stack also 3 = not claimable (its own JSON still names the reason)";
+        stack also 3 = not claimable (its own JSON still names the reason);
+        deadlocked also 3 = a candidate was refused or a lift did not verify";
 
 /// Parsed flags and positionals. Flags listed in `BOOL_FLAGS` take no value.
 struct Args {
@@ -177,6 +182,8 @@ pub fn dispatch(raw: &[String], stdin: &mut dyn Read) -> Outcome {
         "select" => cmd_select(&a, &mut env),
         "stack" => cmd_stack(&a, &mut env),
         "unpoison" => cmd_unpoison(&a, &env),
+        "audit" => cmd_audit(&a, &mut env),
+        "deadlocked" => cmd_deadlocked(&a, &mut env),
         "-h" | "--help" | "help" => Outcome::ok(format!("{USAGE_TEXT}\n")),
         other => Outcome::usage(format!("unknown verb {other}")),
     }
@@ -641,6 +648,104 @@ fn cmd_unpoison(a: &Args, env: &Env) -> Outcome {
         beads_actor: env_nonempty("BEADS_ACTOR").unwrap_or_else(|| "harness".into()),
     };
     let (code, out) = unpoison::run(&o, &mut live);
+    Outcome { code, out, err: String::new() }
+}
+
+/// `audit`'s candidate set: every bead a partition's own labels would match, exclusions
+/// dropped on purpose (attempts.sh's own rule — a poisoned or asked-about bead is exactly
+/// the one whose count most needs reading). The caller's own `bd list --label` per
+/// partition is where the exclusion-free query lives (lib.sh's chamber reading does not
+/// belong in this binary, same boundary as `select`'s ready set); this only folds what it
+/// is handed.
+fn cmd_audit(a: &Args, env: &mut Env) -> Outcome {
+    if let Err(e) = a.check_known(&["--candidates", "--events", "--lifecycle"]) {
+        return Outcome::usage(e);
+    }
+    if !a.pos.is_empty() {
+        return Outcome::usage("audit takes no positional arguments (candidates come on --candidates)");
+    }
+    if a.get("--events") == Some("-") {
+        return Outcome::usage("audit reads candidates on stdin by default; give --events a file");
+    }
+    let cand_text = match read_source(a.get("--candidates").unwrap_or("-"), env.stdin) {
+        Ok(t) => t,
+        Err(e) => return Outcome::cannot_tell(e),
+    };
+    let candidates = match rank::parse_ready(&cand_text) {
+        Ok(c) => c,
+        Err(e) => return Outcome::cannot_tell(format!("--candidates: {e}")),
+    };
+    let mut seen = BTreeSet::new();
+    let ids: Vec<String> = candidates.iter().map(|r| r.id.clone()).filter(|id| seen.insert(id.clone())).collect();
+    let rows = match load_events(a, env, &ids) {
+        Ok(r) => r,
+        Err(o) => return o,
+    };
+    let mut events_by: HashMap<String, Vec<EventRow>> = HashMap::new();
+    for r in rows {
+        events_by.entry(r.issue_id.clone()).or_default().push(r);
+    }
+    let enforce = lifecycle_on();
+    let lc = if enforce {
+        let lc_text = match a.get("--lifecycle") {
+            Some(p) => read_source(p, env.stdin),
+            None => match store(a, &env.config) {
+                Ok(s) => s.lifecycle_snapshot(),
+                Err(e) => return Outcome::usage(e),
+            },
+        };
+        match lc_text.and_then(|t| rank::parse_lifecycle(&t)) {
+            Ok(m) => Some(m),
+            Err(e) => return Outcome::cannot_tell(format!("lifecycle snapshot: {e} (lifecycle_enforce is on, so the machine must answer)")),
+        }
+    } else {
+        None
+    };
+    Outcome::ok(audit::run(&audit::Opts { enforce }, &candidates, &events_by, lc.as_ref()))
+}
+
+/// `deadlocked`'s merge-status input comes from `groomer.sh deadlocked`, which does the git
+/// legwork this binary deliberately does not (DESIGN.md §7, §9). The write is unpoison's
+/// `Live`, reused rather than duplicated, so a lift is provably the same call.
+fn cmd_deadlocked(a: &Args, env: &mut Env) -> Outcome {
+    if let Err(e) = a.check_known(&["--apply", "--merge-status", "--actor"]) {
+        return Outcome::usage(e);
+    }
+    if !a.pos.is_empty() {
+        return Outcome::usage("deadlocked takes no positional arguments");
+    }
+    let text = match read_source(a.get("--merge-status").unwrap_or("-"), env.stdin) {
+        Ok(t) => t,
+        Err(e) => return Outcome::cannot_tell(e),
+    };
+    let candidates = match deadlock::parse_candidates(&text) {
+        Ok(c) => c,
+        Err(e) => return Outcome::cannot_tell(e),
+    };
+    let actor = a.get("--actor").unwrap_or("groomer").to_string();
+    let enforce = lifecycle_enforce(std::env::var("SPIRA_LIFECYCLE_ENFORCE").ok().as_deref(), &env.config);
+    let st = match store(a, &env.config) {
+        Ok(s) => s,
+        Err(e) => return Outcome::usage(e),
+    };
+    if st.db.is_none() {
+        return Outcome::cannot_tell("no bead store: --db, $SPIRA_DB and spira.db are all unset — nothing was written");
+    }
+    // Only `mark_poison_lifted` (sp-wiyr2) touches run_dir; every other World method this
+    // verb calls is store-only, but that one write is load-bearing (DESIGN.md §9), so it is
+    // resolved exactly as `unpoison` resolves it and refused the same way when it is not.
+    let Some(run_dir) = env_nonempty("SPIRA_RUN").or_else(|| env.config.run.clone()) else {
+        return Outcome::cannot_tell("SPIRA_RUN is unset and spira.run is not configured — nothing was written");
+    };
+    let mut live = unpoison::Live {
+        store: st,
+        run_dir: std::path::PathBuf::from(run_dir),
+        asked_dir: std::path::PathBuf::new(),
+        ask_label: String::new(),
+        beads_actor: actor.clone(),
+    };
+    let o = deadlock::Opts { apply: a.has("--apply"), actor, enforce };
+    let (code, out) = deadlock::run(&o, &candidates, &mut live);
     Outcome { code, out, err: String::new() }
 }
 

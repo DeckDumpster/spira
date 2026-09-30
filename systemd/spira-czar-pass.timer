@@ -6,7 +6,7 @@ Description=Czar fast pass — deterministic queue-stall detection every 30 seco
 # completes in under 5 s, so it can run this often without competing with the landing
 # loop. It replaces the sentinel's --queue-checks call (2-min cadence) and reduces
 # fault-to-action time from ~6 min to under 60 s for every deterministic case.
-# The flock in czar.sh --pass prevents overlap when a pass takes longer than expected.
+# The flock in czar-pass --pass prevents overlap when a pass takes longer than expected.
 OnBootSec=60s
 OnActiveSec=60s
 OnUnitActiveSec=30s

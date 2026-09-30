@@ -9,7 +9,7 @@
 //!
 //! `--scan <file>` is the one standalone, tree-free mode: it scans one file's content with
 //! `--only`'s rule instead of walking the repository, for a caller that has text to check but
-//! no commit to check it against (`sop.sh write`, validating a runbook body before it is
+//! no commit to check it against (`sop write`, validating a runbook body before it is
 //! staged). Only `inventory` supports it today — the rule `spira/inventory.sh --scan` carried
 //! and the only one with a real caller outside its own tests. It prints one offending token
 //! per line and exits 0 either way; the caller decides what a non-empty result means. Unlike

@@ -400,6 +400,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v sentinel)\""
 
 [[dep]]
+name = "sop"
+tier = "release"
+purpose = "Spira's sop binary, from the release's bin/"
+version_min = ""
+version_probe = "readlink -f \"$(command -v sop)\""
+
+[[dep]]
 name = "spira"
 tier = "release"
 purpose = "Spira's spira binary, from the release's bin/"
