@@ -404,9 +404,7 @@ mod tests {
 
     #[test]
     fn stage_runner_links_the_exe_under_target() {
-        let d = std::env::temp_dir().join(format!("plan-stage-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
-        fs::create_dir_all(&d).unwrap();
+        let d = testkit::TempDir::new("plan-stage");
         let exe = d.join("exe");
         fs::write(&exe, b"bin").unwrap();
         let wt = d.join("wt");
@@ -415,6 +413,5 @@ mod tests {
         assert_eq!(fs::read(&got).unwrap(), b"bin");
         // again: replaced, not an error
         stage_runner(&wt, &exe).unwrap();
-        let _ = fs::remove_dir_all(&d);
     }
 }

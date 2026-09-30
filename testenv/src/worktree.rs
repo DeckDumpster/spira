@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn scratch_room_refuses_below_its_bounds() {
-        let d = std::env::temp_dir();
+        let d = testkit::TempDir::new("scratch-room");
         assert!(scratch_room(&d, 0, 0).is_ok());
         let e = scratch_room(&d, u64::MAX, 0).unwrap_err();
         assert!(e.contains("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB"), "{e}");
