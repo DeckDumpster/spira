@@ -41,7 +41,7 @@ spira   | spira/hooks/                  | the pre-commit hook itself, TRACKED an
 spira   | spira-lint/src/rules/inventory.rs | the fence that keeps one operator's infrastructure out of a repository meant to be cloned — repository names, hosts, paths, people, dates. It scans comments, which is where all of it was. Ported from spira/inventory.sh (sp-ekkak)
 spira   | spira/inventory-deny          | the tokens that fence refuses beyond the structural ones. Ships EMPTY: a list of somebody else's names is itself the inventory
 spira   | spira/actors.example          | commit author to harness, for authors the commit graph cannot vote on. Its rows are one installation's roster
-spira   | spira/auron.sh                | the watchdog over the loop — reads timestamps and counters, raises or clears an alert bead. Its only power is speech: it repairs nothing, restarts nothing and summons nothing
+spira   | auron/                       | the watchdog over the loop (Rust; replaces spira/auron.sh, sp-zpaq0) — reads timestamps and counters, raises or clears an alert bead. Its only power is speech: it repairs nothing, restarts nothing and summons nothing
 spira   | spira/incident.sh             | turns a production event into a bead Ops can claim — systemd OnFailure, arbitrary payload, or a spool drain; deduplicates by external_ref
 spira   | spira/statutes/               | the SEED statute book, one file per statute. Statutes live in the beads KV store, which is per-installation, so a clone gets the mechanism and none of the law unless it ships as text
 spira   | spira/seed.sh                 | writes those statutes into a fresh database, and never over one already in force

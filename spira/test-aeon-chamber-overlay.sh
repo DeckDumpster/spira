@@ -28,7 +28,7 @@
 #
 # defect: sp-eibeu, sp-wmcvb
 # tier: T1
-# covers: aeon/src/* spira/chamber/builder.md spira/conf.sh doctor/src/* spira/work-env.sh
+# covers: aeon/src/* spira/chamber/builder.md spira/conf.sh doctor/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -139,7 +139,7 @@ close_bead "$BID_F0"
 # SPIRA_WORK_BIN — this suite is about brief rendering, not lc_claim_bead's own protocol
 # correctness (test-aeon-lifecycle-cutover.sh covers that against a real spira-lc server), so
 # the stub answers just enough of spira-lc's `show`/`event` surface for the claim to apply.
-cp "$HERE/work-env.sh" "$SPIRA_HOME/"
+# work-env.sh is retired (sp-zpaq0): the aeon binary builds its own restricted environment.
 STUB_BIN="$TMP/lc-bin"; mkdir -p "$STUB_BIN"
 cat > "$STUB_BIN/spira-lc" <<'STUB'
 #!/usr/bin/env bash

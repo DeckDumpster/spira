@@ -120,7 +120,7 @@ chmod +x "$COCKPIT_DIR/layout.sh"
 # for executability (systemd/install.sh refuses to write a unit whose target
 # is not +x). None of these run for real in this suite; they exist so phase 4
 # succeeds and execution reaches phase 5, the subject under test.
-for _s in archive.sh archivist.sh auron.sh broker.sh czar.sh \
+for _s in archive.sh archivist.sh broker.sh czar.sh \
           gate-check.sh gh-intake.sh groom-trigger.sh maechen-trigger.sh \
           loom.sh mail.sh pr-notify.sh spira-mail-deliver.sh \
           watch-refresh.sh watchtower.sh; do
@@ -129,7 +129,7 @@ for _s in archive.sh archivist.sh auron.sh broker.sh czar.sh \
 done
 # The Rust binaries units ExecStart from the release root: dirname(SPIRA_PROD)/bin.
 mkdir -p "$FIXTURE/bin"
-for _s in sentinel queue aeon skew; do
+for _s in sentinel queue aeon skew auron; do
     printf '#!/usr/bin/env bash\ntrue\n' > "$FIXTURE/bin/$_s"
     chmod +x "$FIXTURE/bin/$_s"
 done

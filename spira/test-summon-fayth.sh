@@ -29,17 +29,25 @@
 #        a governor hook left to test against — there is nothing to write a row for.
 #   G8 — escape.sh and world.halted/world.draining: escape.sh now calls world_gate, the
 #        same refusal summon_fayth uses (sp-uyw4n settled the question; sp-2w2wu wired it).
+#        escape.sh itself is retired into `aeon --escape <fayth>` (sp-zpaq0); the refusal
+#        is unchanged because it is still world_gate, reached through the aeon binary's
+#        own lib.sh seam (aeon/src/escape.rs) rather than escape.sh's own sourcing.
 #
 # POSITIVE CONTROLS BEFORE EACH REFUSAL (law-absence-needs-a-positive-control).
 #
 # tier: T1
-# covers: spira/lib.sh spira/escape.sh spira/world.sh UC-dispatch-09 UC-dispatch-10 UC-dispatch-11 UC-dispatch-12 UC-dispatch-15 UC-dispatch-23
+# covers: spira/lib.sh aeon/src/escape.rs spira/world.sh UC-dispatch-09 UC-dispatch-10 UC-dispatch-11 UC-dispatch-12 UC-dispatch-15 UC-dispatch-23
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 mkdir -p "$T/run" "$T/chamber" "$T/bin"
+
+# `aeon --escape <fayth>` (spira/escape.sh retired, sp-zpaq0) resolves its home from
+# SPIRA_HOME and requires <home>/lib.sh to exist; this one-line stub sources the REAL
+# lib.sh from $HERE, exactly test-lifecycle-enforce-gate.sh's own SPIRA_HOME/lib.sh trick.
+printf '. "%s/lib.sh"\n' "$HERE" > "$T/lib.sh"
 
 # A MINIMAL ENVIRONMENT, non-default everywhere so that assertions cannot pass by reading
 # literals out of conf.sh (law-gates-run-in-a-clean-environment).
@@ -516,10 +524,11 @@ is "lane fayth without pool arg IS summoned even when pool would be 0" \
 
 # ======================================================================================
 echo
-echo "escape.sh — reaches a bead when the pool argument would have refused it"
+echo "aeon --escape — reaches a bead when the pool argument would have refused it"
 # ======================================================================================
 # SUBPROCESS STUB. Shell function overrides (fayth_ready, capacity_paused) do not
-# propagate into `bash escape.sh` — it sources lib.sh fresh. SPIRA_BD is exported to a
+# propagate into `aeon --escape`'s own lib.sh seam — it sources lib.sh fresh, exactly as
+# escape.sh did. SPIRA_BD is exported to a
 # shim that answers "ready" queries from a sentinel file, so the subprocess's readiness
 # can be toggled without a real Dolt database. Its real capacity_paused runs unstubbed;
 # with no pause stamp at $SPIRA_RUN it answers "not paused" on its own.
@@ -548,14 +557,14 @@ is "positive: normal summon with pool=0 produces nothing" "absent" \
 
 # escape.sh bypasses the pool and still summons.
 rm -f "$SUMMONED"
-escape.sh stretchy 2>/dev/null || true
+aeon --escape stretchy 2>/dev/null || true
 want "escape.sh summons despite pool=0 not being passed" "SUMMONED:stretchy" "$(cat "$SUMMONED" 2>/dev/null)"
 
 # THE CONTROL THAT MAKES THE ABOVE MEANINGFUL: escape.sh with nothing ready exits 0 but
 # summons nothing — the summon above is about the fayth having work, not the script
 # always calling the binary unconditionally.
 rm -f "$T/run/fake-ready" "$SUMMONED"
-escape.sh stretchy 2>/dev/null || true
+aeon --escape stretchy 2>/dev/null || true
 is "escape.sh with nothing ready does not summon" "absent" \
    "$( [ -f "$SUMMONED" ] && cat "$SUMMONED" || echo absent )"
 touch "$T/run/fake-ready"
@@ -618,13 +627,13 @@ touch "$T/run/fake-ready"
 
 # POSITIVE CONTROL: with no halt or drain stamp, escape.sh still summons.
 rm -f "$HALT_STAMP" "$T/run/world.draining" "$SUMMONED"
-escape.sh stretchy 2>/dev/null || true
+aeon --escape stretchy 2>/dev/null || true
 is "G8 positive control: no halt/drain, escape.sh summons" \
    "SUMMONED:stretchy" "$(cat "$SUMMONED" 2>/dev/null)"
 
 : > "$HALT_STAMP"
 rm -f "$SUMMONED"
-out="$(escape.sh stretchy 2>&1)"; rc=$?
+out="$(aeon --escape stretchy 2>&1)"; rc=$?
 is "G8: halted — escape.sh does not summon" "absent" "$( [ -f "$SUMMONED" ] && cat "$SUMMONED" || echo absent )"
 want "G8: escape.sh logs the halt refusal" "halted — not summoning" "$out"
 is "G8: escape.sh exits non-zero when halted" "1" "$rc"
@@ -633,14 +642,14 @@ rm -f "$HALT_STAMP"
 DRAIN_STAMP_G8="$T/run/world.draining"
 { echo "now"; echo "gated"; printf 'expires %s\n' "$(( $(date +%s) + 3600 ))"; } > "$DRAIN_STAMP_G8"
 rm -f "$SUMMONED"
-out="$(escape.sh stretchy 2>&1)"; rc=$?
+out="$(aeon --escape stretchy 2>&1)"; rc=$?
 is "G8: live drain — escape.sh does not summon" "absent" "$( [ -f "$SUMMONED" ] && cat "$SUMMONED" || echo absent )"
 want "G8: escape.sh logs the drain refusal" "draining — not summoning" "$out"
 is "G8: escape.sh exits non-zero when draining" "1" "$rc"
 
 { echo "now"; echo "gated"; printf 'expires %s\n' "$(( $(date +%s) - 60 ))"; } > "$DRAIN_STAMP_G8"
 rm -f "$SUMMONED"
-escape.sh stretchy 2>/dev/null || true
+aeon --escape stretchy 2>/dev/null || true
 is "G8: expired drain — escape.sh summons" "SUMMONED:stretchy" "$(cat "$SUMMONED" 2>/dev/null)"
 rm -f "$DRAIN_STAMP_G8"
 
@@ -660,7 +669,7 @@ chmod +x "$T/bin/mock-summon"
 
 rm -f "$QUOTA_ARGV"
 export SPIRA_AEON_CPU_QUOTA=55
-escape.sh stretchy 2>/dev/null || true
+aeon --escape stretchy 2>/dev/null || true
 want   "escape.sh: the summon argv was captured" "TimeoutStartSec=" "$(cat "$QUOTA_ARGV" 2>/dev/null)"
 nowant "escape.sh: no CPUQuota, even with the retired knob set" "CPUQuota" "$(cat "$QUOTA_ARGV" 2>/dev/null)"
 nowant "escape.sh: no Nice"                                    "Nice="    "$(cat "$QUOTA_ARGV" 2>/dev/null)"

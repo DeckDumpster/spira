@@ -9,8 +9,9 @@
 # install_fixture_build <fixture-root>
 #   Symlinks the real systemd/*.{service,timer,yaml}, install.sh and spira/{conf.sh,watchd.sh,
 #   lib.sh,units.sh,suite-covers.sh} into <fixture-root>/{systemd,spira}; writes an empty watchers manifest
-#   and repo-map.example, a no-op install-session-hook.sh stub (install.sh finds it by name, so
-#   a caller puts <fixture-root>/spira first on PATH), and <fixture-root>/bin unit stubs.
+#   and repo-map.example, a no-op `release` stub (install_fixture_release_stub below;
+#   install.sh finds it by name, so a caller puts <fixture-root>/spira first on PATH), and
+#   <fixture-root>/bin unit stubs.
 #
 # install_fixture_render <cache-key> <install.sh-invocation...>
 #   Runs "$@" (an install.sh --render call) once and caches its stdout+rc, keyed on a hash
@@ -34,9 +35,17 @@
 #   <fixture-root>/{systemd,spira,cockpit} symlinked to the real sources, spira/statutes/,
 #   and a fake git origin+repo under <tmp-root> with origin/HEAD set, so the landref check
 #   passes. Sets FAKE_ORIGIN and FAKE_REPO for the caller. Callers still write their own
-#   doctor/configure.sh/build.sh/seed.sh/ready.sh/install-session-hook.sh/install-intake.sh/
-#   cockpit/layout.sh and mock systemctl/loginctl/tmux/bd — those differ suite to suite (a
-#   passing doctor here, a DOCTOR_FAIL_FLAG-gated one there) and are each suite's own.
+#   doctor/configure.sh/build.sh/seed.sh/ready.sh/release (install_fixture_release_stub
+#   below)/cockpit/layout.sh and mock systemctl/loginctl/tmux/bd — those differ suite to
+#   suite (a passing doctor here, a DOCTOR_FAIL_FLAG-gated one there) and are each
+#   suite's own.
+#
+# install_fixture_release_stub <spira-dir>
+#   A no-op `release` binary stub at <spira-dir>/release answering `session-hook
+#   install|status` and `intake install` the way a real success looks (sp-7jr34: install.sh
+#   calls these by bare name now that spira/install-session-hook.sh and
+#   spira/install-intake.sh are gone). For suites whose subject is something else entirely
+#   (dolt mode, bd init cwd, refusal semantics, ...) and only need phase 5 to pass quietly.
 
 _LIB_INSTALL_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
@@ -62,9 +71,23 @@ install_fixture_build() {
     done
     printf '# empty — test fixture\n' > "$fixture/spira/watchers"
     printf '# empty\n' > "$fixture/spira/repo-map.example"
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$fixture/spira/install-session-hook.sh"
-    chmod +x "$fixture/spira/install-session-hook.sh"
+    install_fixture_release_stub "$fixture/spira"
     install_fixture_release_bins "$fixture"
+}
+
+install_fixture_release_stub() {
+    local dir="$1"
+    cat > "$dir/release" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+    "session-hook status")  printf 'ok      SessionStart\n' ;;
+    "session-hook install") printf 'release: session-hook install: stub\n' ;;
+    "intake install")       printf 'release: intake install: stub\n' ;;
+    *) exit 0 ;;
+esac
+exit 0
+EOF
+    chmod +x "$dir/release"
 }
 
 # THE UNIT BINARIES (sp-gypjk). Unit templates ExecStart the release's bin/<tool>

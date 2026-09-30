@@ -221,6 +221,9 @@ impl Systemctl for FakeSystemctl {
     fn state(&self, unit: &str) -> Result<UnitState, String> {
         Ok(self.states.borrow().get(unit).cloned().unwrap_or_else(|| UnitState { active: "inactive".into(), result: "success".into(), kind: "simple".into() }))
     }
+    fn cat(&self, _unit: &str) -> Result<String, String> {
+        Err("cat: not modelled by this fake — activate/rollback never call it".into())
+    }
     fn restart(&self, unit: &str) -> Result<(), String> {
         self.restarts.borrow_mut().push(unit.into());
         if self.restart_fails.contains(unit) {

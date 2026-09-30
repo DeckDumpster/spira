@@ -21,7 +21,7 @@ __aeon_args=()
 while IFS= read -r -d '' __aeon_a; do __aeon_args+=("$__aeon_a"); done
 case "$__aeon_fn" in
     _aeon_snapshot|_aeon_capacity_paused|_aeon_rebase|_aeon_repo_info|_aeon_base|\
-    _aeon_thrash_meta|_aeon_rapid_recur|\
+    _aeon_thrash_meta|_aeon_rapid_recur|_aeon_world_gate|_aeon_fayth_ready|_aeon_summon_argv|\
     aeon_name_take|aeon_count|fayth_free|spira_event|release_own_claim|lc_claim_bead|\
     lc_bead_verified|park_unmapped|repo_root|repo_land|repo_land_queued|\
     spira_home_repo|qualify_base_ref|spira_prune_worktrees|bead_reopen|bump_requeue|\
@@ -58,6 +58,16 @@ _aeon_capacity_paused() {
     capacity_paused >&2; local __rc=$?
     printf '%s' "${SPIRA_CAPACITY_LEFT:-}"
     return $__rc
+}
+_aeon_world_gate() {
+    world_gate "$FAYTH" "$1" >&2; local __rc=$?
+    return $__rc
+}
+_aeon_fayth_ready() {
+    fayth_ready "$FAYTH"
+}
+_aeon_summon_argv() {
+    summon_argv "$FAYTH"
 }
 _aeon_rebase() {
     rebase_branch "$@" >&2; local __rc=$?
