@@ -15,19 +15,28 @@
 # the operator is looking at.
 #
 # defect: sp-tc9ha
-# covers: cockpit/layout.sh cockpit/rebuild.sh
+# covers: cockpit/ops/src/layout.rs cockpit/ops/src/rebuild.rs
 # hermetic-ok: its own TMUX_TMPDIR servers and temp dirs; reads no operator state it can change
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 COCKPIT_DIR="$HERE/../cockpit"
-LAYOUT="$COCKPIT_DIR/layout.sh"
+# `layout` is a binary now (sp-llbmi), invoked by name from the tree's build on PATH.
+LAYOUT="layout"
+# A fake release whose bin/layout is the same file $LAYOUT resolves to on PATH, so
+# the installed-copy guard in `ensure` passes (see DESIGN.md "Configuration").
+_FAKE_RELEASE="$(mktemp -d)"
+mkdir -p "$_FAKE_RELEASE/bin"
+ln -sf "$(command -v "$LAYOUT")" "$_FAKE_RELEASE/bin/layout"
+# The health pane's command is built from $SPIRA_RELEASE/bin on PATH (Conf::rel_prefix),
+# so the real `health` binary needs to be there too, not just `layout`.
+ln -sf "$(command -v health)" "$_FAKE_RELEASE/bin/health"
 
 T1="$(mktemp -d)"; T2="$(mktemp -d)"
 cleanup() {
     TMUX_TMPDIR="$T1" tmux kill-server 2>/dev/null || true
     TMUX_TMPDIR="$T2" tmux kill-server 2>/dev/null || true
-    rm -rf "$T1" "$T2"
+    rm -rf "$T1" "$T2" "$_FAKE_RELEASE"
 }
 trap cleanup EXIT
 trap 'cleanup; exit 130' INT TERM
@@ -54,9 +63,10 @@ tmux start-server
 tmux new-session -d -s brain -x 214 -y 53
 
 layout1() {
+    SPIRA_RELEASE="$_FAKE_RELEASE" \
     SPIRA_COCKPIT="$COCKPIT_DIR" SPIRA_REPO="$T1" SPIRA_RUN="$RUN1" SPIRA_HOME="$HERE" \
     SPIRA_CONF="$T1/no.conf" COCKPIT_CONCIERGE="$FAKE_CONC" COCKPIT_MAIL="" \
-        bash "$LAYOUT" "$@" 2>&1
+        "$LAYOUT" "$@" 2>&1
 }
 
 out="$(layout1 up --window brain:0)"; rc=$?
@@ -95,10 +105,11 @@ RUN2="$T2/run"; mkdir -p "$RUN2"
 TMUX_TMPDIR="$T2" tmux start-server
 
 layout2() {
+    SPIRA_RELEASE="$_FAKE_RELEASE" \
     SPIRA_COCKPIT="$COCKPIT_DIR" SPIRA_REPO="$T2" SPIRA_RUN="$RUN2" SPIRA_HOME="$HERE" \
     SPIRA_CONF="$T2/no.conf" COCKPIT_CONCIERGE="$FAKE_CONC" COCKPIT_MAIL="" \
     TMUX_TMPDIR="$T2" \
-        bash "$LAYOUT" "$@" 2>&1
+        "$LAYOUT" "$@" 2>&1
 }
 
 is "2: no cockpit.down marker before ensure" "0" \

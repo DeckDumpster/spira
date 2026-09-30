@@ -21,7 +21,7 @@
 #   A predicate that errors or times out leaves the ask open. A failed probe must never read
 #   as "condition cleared" — that is the ? not 0 rule (law-absence-needs-a-positive-control).
 #
-#   Resolution goes through resolve.sh, NEVER a raw bd close. resolve.sh records the actor
+#   Resolution goes through `resolve`, NEVER a raw bd close. `resolve` records the actor
 #   as claude, so the audit trail can always tell this close from the operator's own.
 set -uo pipefail
 
@@ -38,7 +38,10 @@ rows=$(cockpit_attention_beads) || {
     exit 0
 }
 
-RESOLVE_SH="${SPIRA_RESOLVE_SH:-$(dirname "$0")/resolve.sh}"
+# `resolve` is a compiled binary on the release PATH now (sp-llbmi), not a script beside
+# this one — bare name, never a constructed path. The override seam keeps its old name so
+# a test that already sets SPIRA_RESOLVE_SH keeps working.
+RESOLVE_SH="${SPIRA_RESOLVE_SH:-resolve}"
 
 found=0; resolved=0; errors=0
 while IFS=$'\t' read -r id pred; do
@@ -50,7 +53,7 @@ while IFS=$'\t' read -r id pred; do
         echo "  CLEARED    $id  ($pred)"
         if [ -n "$apply" ]; then
             reason="auto-resolved: MOOT-WHEN predicate cleared — ${pred} → exit 0. Evidence: ${short}"
-            if bash "$RESOLVE_SH" "$id" "$reason" >/dev/null 2>&1; then
+            if "$RESOLVE_SH" "$id" "$reason" >/dev/null 2>&1; then
                 echo "    resolved"
                 resolved=$((resolved+1))
             else

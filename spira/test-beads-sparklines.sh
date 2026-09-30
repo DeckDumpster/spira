@@ -14,7 +14,7 @@
 #
 # defect: sp-mn8q
 # tier: T1
-# covers: spira/cockpit.sh spira/cockpit-sparklines.py cockpit/health.sh
+# covers: spira/cockpit.sh spira/cockpit-sparklines.py cockpit/ops/src/health.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

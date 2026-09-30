@@ -16,7 +16,7 @@
 #      and SP_CERT_N (within cert window). A bead closed 5 minutes ago counts as
 #      awaiting cert, not stranded.
 #
-# covers: landing-pass/* spira/lib.sh spira/cockpit.sh cockpit/health.sh
+# covers: landing-pass/* spira/lib.sh spira/cockpit.sh cockpit/ops/src/health.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

@@ -18,13 +18,15 @@
 #      more. `layout.sh up` now marks the WINDOW itself (`@cockpit_up`), which survives
 #      every dashboard pane dying.
 #
-# covers: cockpit/health.sh cockpit/layout.sh
+# covers: cockpit/ops/src/health.rs cockpit/ops/src/layout.rs
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 COCKPIT_DIR="$(dirname "$HERE")/cockpit"
-HEALTH="$COCKPIT_DIR/health.sh"
+# `health`/`layout` are binaries now (sp-llbmi), invoked by name from the tree's
+# build on PATH.
+HEALTH="health"
 
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux not available" >&2; exit 0; }
 
@@ -57,7 +59,7 @@ SESS=$(tmux list-panes -t "$WIN" -F '#{pane_id}')
 # server.
 HEALTH_CMD="SPIRA_CONF='$CONF' SPIRA_HOME='$HERE' SPIRA_REPO='$TMP' SPIRA_RUN='$TMP/.runtime' \
 SPIRA_DB='$TMP/nodb' SPIRA_REPO_MAP='$TMP/no-map' SPIRA_FAYTHS=t \
-SPIRA_SYSTEMCTL='$MOCK_SYSTEMCTL' SPIRA_HEALTH_TICK=$TICK bash '$HEALTH' loop"
+SPIRA_SYSTEMCTL='$MOCK_SYSTEMCTL' SPIRA_HEALTH_TICK=$TICK '$HEALTH' loop"
 HP=$(tmux split-window -P -F '#{pane_id}' -d -h -t "$SESS" "$HEALTH_CMD")
 tmux set-option -p -t "$HP" @cockpit health
 sleep 0.6
@@ -90,25 +92,26 @@ is "A: health pane still tagged after the restart" "health" "$(tmux display -p -
 tmux kill-pane -t "$HP" 2>/dev/null || true
 
 # ── Case B: the pane dies outright — ensure must still find and heal the window ───────
-# A stub stands in for health.sh here: this case is about `ensure` recognising an up
+# A stub stands in for health here: this case is about `ensure` recognising an up
 # window with no tagged pane left, not about the real loop's own restart behaviour
-# (Case A already covers that against the genuine script).
+# (Case A already covers that against the genuine binary).
 #
-# `ensure` refuses to run from anywhere but SPIRA_COCKPIT/layout.sh (a copy must not heal
-# the operator's live cockpit) — so, as in test-cockpit-layout-mail.sh, it runs from a copy
-# of layout.sh installed alongside the stub, not from the worktree path directly.
-# conf.sh comes along too, at the same `../spira` remove layout.sh expects: with it
-# missing, layout.sh silently loses every config-derived default rather than failing loud.
-ROOT="$TMP/root"; mkdir -p "$ROOT/cockpit" "$ROOT/spira"
-cp "$COCKPIT_DIR/layout.sh" "$COCKPIT_DIR/tmux-env.sh" "$ROOT/cockpit/"
+# `ensure` refuses to run from anywhere but the binary installed at
+# $SPIRA_RELEASE/bin/layout (a copy must not heal the operator's live cockpit) — so this
+# copies the REAL `layout` binary into a fake release's bin/ and runs it from there,
+# which makes it "the installed one" by construction (see DESIGN.md "Configuration").
+# The health stub goes in the same bin/, ahead of the real `health` on PATH.
+ROOT="$TMP/root"; mkdir -p "$ROOT/bin" "$ROOT/cockpit" "$ROOT/spira"
+cp "$(command -v layout)" "$ROOT/bin/layout"
+cp "$COCKPIT_DIR/tmux-env.sh" "$ROOT/cockpit/"
 cp "$HERE/conf.sh" "$ROOT/spira/"
-printf '#!/usr/bin/env bash\nsleep 300\n' > "$ROOT/cockpit/health.sh"
-chmod +x "$ROOT/cockpit/health.sh"
+printf '#!/usr/bin/env bash\nsleep 300\n' > "$ROOT/bin/health"
+chmod +x "$ROOT/bin/health"
 
 tmux new-session -d -s brain -x 200 -y 50
 WIN2=brain:0
 SESS2=$(tmux list-panes -t "$WIN2" -F '#{pane_id}')
-HP2=$(tmux split-window -P -F '#{pane_id}' -d -h -t "$SESS2" "bash '$ROOT/cockpit/health.sh' loop")
+HP2=$(tmux split-window -P -F '#{pane_id}' -d -h -t "$SESS2" "PATH='$ROOT/bin:$PATH' health loop")
 tmux set-option -p -t "$HP2" @cockpit health
 # What `up` sets on a real cockpit — marks the WINDOW, independent of any pane tag.
 tmux set-option -w -t "$WIN2" @cockpit_up 1
@@ -120,13 +123,14 @@ sleep 0.2
 is "SEEN RED: no pane in the window is tagged" "" \
     "$(tmux list-panes -t "$WIN2" -F '#{@cockpit}' 2>/dev/null | grep -v '^$')"
 
+SPIRA_RELEASE="$ROOT" \
 SPIRA_COCKPIT="$ROOT/cockpit" \
 SPIRA_REPO="$TMP" \
 SPIRA_RUN="$TMP/.runtime" \
 SPIRA_HOME="$HERE" \
 SPIRA_CONF="$TMP/no.conf" \
 COCKPIT_CLIENT_IDLE_SECS=0 \
-    bash "$ROOT/cockpit/layout.sh" ensure >/dev/null 2>&1 || true
+    "$ROOT/bin/layout" ensure >/dev/null 2>&1 || true
 sleep 0.5
 
 is "B: ensure recreated the health pane" "1" \

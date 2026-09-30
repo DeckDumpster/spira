@@ -20,7 +20,7 @@
 #   And: health.sh renders "N ready · M reachable" and "K stranded" when K > 0.
 #
 # tier: T1
-# covers: spira/cockpit.sh cockpit/health.sh spira/collect.sh
+# covers: spira/cockpit.sh cockpit/ops/src/health.rs spira/collect.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -182,7 +182,7 @@ touch "$BUDGET"
     printf 'SP_RATELIM_5H_ETA=-\nSP_RATELIM_7D_ETA=-\nSP_RATELIM_AGE=0\n'
 } > "$SNAP"
 
-pane_out="$(SPIRA_RUN="$TMP" bash "$HERE/../cockpit/health.sh" once 2>/dev/null)"
+pane_out="$(SPIRA_RUN="$TMP" health once 2>/dev/null)"
 echo "--- pane NEXT row (screenshot) ---"
 printf '%s\n' "$pane_out" | grep -i 'NEXT\|ready\|reachable' || true
 echo "---"
@@ -210,7 +210,7 @@ echo "health.sh: K=0 → no stranded clause"
     printf 'SP_RATELIM_5H_ETA=-\nSP_RATELIM_7D_ETA=-\nSP_RATELIM_AGE=0\n'
 } > "$SNAP"
 
-pane_no_strand="$(SPIRA_RUN="$TMP" bash "$HERE/../cockpit/health.sh" once 2>/dev/null)"
+pane_no_strand="$(SPIRA_RUN="$TMP" health once 2>/dev/null)"
 want   "reachable still shown when K=0" "reachable"  "$pane_no_strand"
 nowant "stranded absent when K=0"       "stranded"   "$pane_no_strand"
 
@@ -233,7 +233,7 @@ echo "health.sh: SP_REACHABLE=? renders ? not 0"
     printf 'SP_RATELIM_5H_ETA=-\nSP_RATELIM_7D_ETA=-\nSP_RATELIM_AGE=0\n'
 } > "$SNAP"
 
-pane_q="$(SPIRA_RUN="$TMP" bash "$HERE/../cockpit/health.sh" once 2>/dev/null)"
+pane_q="$(SPIRA_RUN="$TMP" health once 2>/dev/null)"
 want   "? reachable appears in pane" "? reachable" "$pane_q"
 nowant "0 reachable must not appear" "0 reachable" "$pane_q"
 
@@ -286,7 +286,7 @@ is "SP_STRANDED=1 with ask+insight exclusion" "1" \
     printf 'SP_RATELIM_5H_ETA=-\nSP_RATELIM_7D_ETA=-\nSP_RATELIM_AGE=0\n'
 } > "$SNAP"
 
-pane_ask="$(SPIRA_RUN="$TMP" bash "$HERE/../cockpit/health.sh" once 2>/dev/null)"
+pane_ask="$(SPIRA_RUN="$TMP" health once 2>/dev/null)"
 echo "--- NEXT pane screenshot (ask/insight excluded) ---"
 printf '%s\n' "$pane_ask" | grep -i 'NEXT\|ready\|reachable\|stranded' || true
 echo "---"

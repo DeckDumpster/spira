@@ -538,3 +538,45 @@ tier = "release"
 purpose = "Spira's world binary, from the release's bin/"
 version_min = ""
 version_probe = "readlink -f \"$(command -v world)\""
+
+[[dep]]
+name = "health"
+tier = "release"
+purpose = "Spira's health binary (the ops dashboard pane), from the release's bin/"
+version_min = ""
+version_probe = "readlink -f \"$(command -v health)\""
+
+[[dep]]
+name = "layout"
+tier = "release"
+purpose = "Spira's layout binary (the cockpit's tmux layout), from the release's bin/"
+version_min = ""
+version_probe = "readlink -f \"$(command -v layout)\""
+
+[[dep]]
+name = "rebuild"
+tier = "release"
+purpose = "Spira's rebuild binary (assembles the cockpit from nothing), from the release's bin/"
+version_min = ""
+version_probe = "readlink -f \"$(command -v rebuild)\""
+
+[[dep]]
+name = "resolve"
+tier = "release"
+purpose = "Spira's resolve binary (closes a bead in its own thread), from the release's bin/"
+version_min = ""
+version_probe = "readlink -f \"$(command -v resolve)\""
+
+[[dep]]
+name = "reply"
+tier = "release"
+purpose = "Spira's reply binary (comments on a bead in its own thread), from the release's bin/"
+version_min = ""
+version_probe = "readlink -f \"$(command -v reply)\""
+
+[[dep]]
+name = "stty"
+tier = "optional"
+purpose = "health's terminal-size probe for its own pane (falls back to $LINES/$COLUMNS, then a fixed default when absent)"
+version_min = ""
+version_probe = "stty --version"

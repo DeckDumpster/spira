@@ -29,16 +29,16 @@
 #
 # defect: sp-v7ok
 # tier: T1
-# covers: cockpit/health.sh spira-world/src/bin/world.rs
+# covers: cockpit/ops/src/health.rs spira-world/src/bin/world.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
-PANE="$(cd "$HERE/../cockpit" && pwd)/health.sh"
+PANE="health"
 
 echo "test-drain-banner.sh"
 
-if [ ! -f "$PANE" ]; then
-    bad "cockpit/health.sh exists" "$PANE not found"; exit 1
+if ! command -v "$PANE" >/dev/null 2>&1; then
+    bad "health binary is on PATH" "$PANE not found"; exit 1
 fi
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
@@ -56,7 +56,7 @@ pane() {   # pane -> health.sh frame, ANSI stripped
     env -i PATH="$PATH:$PD" HOME="$PD" TERM=dumb LC_ALL=C.UTF-8 \
         SPIRA_CONF="$PD/no.conf" SPIRA_REPO="$PD" SPIRA_RUN="$PD/run" \
         SPIRA_SYSTEMCTL="$PD/bin-mock-systemctl" \
-        bash "$PANE" once 0 96 2>/dev/null | sed 's/\x1b\[[?0-9;]*[a-zA-Z]//g'
+        "$PANE" once 0 96 2>/dev/null | sed 's/\x1b\[[?0-9;]*[a-zA-Z]//g'
 }
 
 # ======================================================================================

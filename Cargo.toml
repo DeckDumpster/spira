@@ -5,6 +5,7 @@ members = [
     "auron",
     "loom",
     "cockpit/panel",
+    "cockpit/ops",
     "broker",
     "czar-pass",
     "supervise",
