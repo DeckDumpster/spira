@@ -219,6 +219,8 @@ pub struct Cfg {
     pub no_loop: String,
     pub incident_label: String,
     pub queue_wait: String,
+    /// SPIRA_OPEN_CHILDREN_LABEL (conf.sh defaults it); empty disables CHECK 3c.
+    pub open_children: String,
     pub submitted: String,
     pub work_types: Vec<String>,
     pub poison_at: u32,
@@ -333,6 +335,7 @@ impl Cfg {
             no_loop: s("SPIRA_NO_LOOP_LABEL"),
             incident_label: or("SPIRA_INCIDENT_LABEL", "incident"),
             queue_wait: s("SPIRA_QUEUE_WAIT_LABEL"),
+            open_children: s("SPIRA_OPEN_CHILDREN_LABEL"),
             submitted: s("SPIRA_SUBMITTED_LABEL"),
             work_types: or("SPIRA_WORK_CLOSE_TYPES", "task bug feature")
                 .split_whitespace()

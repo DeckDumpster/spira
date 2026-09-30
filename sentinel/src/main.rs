@@ -5,16 +5,21 @@
 //!   sentinel --summon-only   CHECK 7 alone                     (spira-summon.service, and
 //!                            every aeon unit's ExecStopPost)
 //!   sentinel --audit         the decoupled audit worker        (the spira-audit unit)
+//!   sentinel --open-children [--dry-run]
+//!                            CHECK 3c alone over a fresh snapshot (suites; a read-only
+//!                            production probe with --dry-run)
 
 mod audit;
 mod cfg;
 mod check4;
 mod check5;
 mod dispatch;
+mod fresh;
 mod host;
 mod legacy;
 mod lifecycle;
 mod model;
+mod open_children;
 mod pass;
 mod render;
 mod seams;
@@ -91,7 +96,8 @@ fn fatal(msg: &str) -> i32 {
 fn main() {
     temps::install_handlers();
     let first = std::env::args().nth(1);
-    let mode = Mode::from_first(first.as_deref());
+    let second = std::env::args().nth(2);
+    let mode = Mode::from_args(first.as_deref(), second.as_deref());
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("sentinel"));
     let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe) else {
         std::process::exit(fatal("cannot find lib.sh (set SPIRA_HOME)"));

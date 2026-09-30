@@ -89,10 +89,15 @@ sentinel --summon-only   CHECK 7 alone                                  (spira-s
                          every aeon unit's ExecStopPost via lib.sh summon_refill_argv)
 sentinel --audit         the decoupled audit worker (CHECK 4/5/6b/7c/7d), started by the
                          full pass as the transient unit `spira-audit`
+sentinel --open-children [--dry-run]
+                         CHECK 3c alone over a fresh snapshot (the suites' entry point).
+                         --dry-run prints `would add|remove <label> to|from <id>` and
+                         writes nothing: a read-only probe safe against production
 ```
 
-Only the **first** argument is read, exactly as the old `[ "${1:-}" = … ]` did. Any other
-first argument, or none, means a full pass. Nothing else is parsed.
+Only the **first** argument selects the mode, exactly as the old `[ "${1:-}" = … ]` did. Any
+other first argument, or none, means a full pass. The one second argument read is
+`--dry-run` after `--open-children`.
 
 | exit | when |
 |---|---|
@@ -364,6 +369,18 @@ lets the refill ExecStopPost, which has no environment, still work.
   every exit path, including the early exits: RAII guard plus a SIGTERM handler.
 - **G10. OFF never reaches spira-lc.** Not directly, and not through anything it starts (§2.9).
   The unit tests assert this for every OFF-mode test.
+- **G11. Re-read before every write (sp-du8bv).** A decision comes from the pass-start
+  snapshot; the write it leads to does not trust it. Before a snapshot-driven mutation, the
+  check re-reads the beads it is about to touch — one `bd show <id>… --json` per check —
+  and skips any whose status is no longer what the snapshot showed, whose row is gone, or
+  whose re-read failed (`<CHECK> <id>: <was> in this pass's snapshot, <now> now — skipped,
+  the next pass decides it again`). CHECK 2c also requires the same assignee and no live
+  lease, because `bd assign <id> ""` is unconditional and would strip a claim an aeon took
+  after the snapshot. Covered: CHECK 2's protect label, CHECK 2c's release, CHECK 3c's
+  label, CHECK 4's poison and ask, and the stale-poison lift. ON-mode lifecycle writes are
+  exempt because `spira-lc apply` carries the row version and the machine refuses a stale
+  one. Summons are exempt because an aeon claims through `bd ready --claim`, which reads
+  live. `bd reclaim` queries live itself. Implemented in `src/fresh.rs`.
 - **G9. No payload in argv or env to a seam.** Seam scripts are constants. Data travels on
   stdin, and the environment carries only configuration and file paths.
 
@@ -420,13 +437,15 @@ enum Judge { Yes, Cooldown, No }
 
 /// The pass's bookkeeping.
 struct Tally { acted: u32, progressed: u32 }
-enum Mode { Pass, Report, SummonOnly, Audit }
+enum Mode { Pass, Report, SummonOnly, Audit, OpenChildren { dry: bool } }
 ```
 
 ## 4. The pass, check by check
 
 All numbered checks keep their names in the tsd phase rows (`setup`, `CHECK1`, `CHECK2`,
-`CHECK2b`, `CHECK2c`, `CHECK3`, `CHECK6`, `CHECK3b`, `CHECK7`, `CHECK8`, `end`). The full
+`CHECK2b`, `CHECK2c`, `CHECK3`, `CHECK6`, `CHECK3b`, `CHECK3c`, `CHECK7`, `CHECK8`, `end`).
+These rows are the per-check timing; the `end` phase is never flushed, so a complete pass is
+one with a `CHECK8` row (or `CHECK7`, when the goal is reached). The full
 pass writes them. The audit worker writes none: the old one crashed with
 `_phase: command not found`.
 
@@ -556,8 +575,25 @@ is not an early exit.
 
 The S3 evidence strings are byte-identical to today's.
 
-**CHECK 3b/3c.** S4: `mark_queue_waiters`, `close_landed_queue_waiters`, then
-`mark_open_children`.
+**CHECK 3b.** S4: `mark_queue_waiters`, then `close_landed_queue_waiters`.
+
+**CHECK 3c — coordination beads with open children** (`src/open_children.rs`, replacing
+lib.sh `mark_open_children`, sp-du8bv). The label is `SPIRA_OPEN_CHILDREN_LABEL`; empty
+disables the check.
+
+1. Build the candidates: the ready snapshot narrowed to `SPIRA_SCOPE_LABEL`, then every
+   snapshot row with `status = open` that carries the label. Deduplicate, ready first. With
+   no ready snapshot, make one live claim query (`READY_ARGS`).
+2. Build the open-parents set in one walk over the list snapshot: for every row whose status
+   is not `closed`, its `parent` field and the target of every `parent-child` dependency.
+3. Add the label where a candidate is an open parent and lacks it; remove it where a
+   candidate carries it and is not. Log exactly as lib.sh did:
+   `mark_open_children: <id> — has an open child, excluded from dispatch` and
+   `mark_open_children: <id> — children all closed, re-enters dispatch`.
+4. Re-read before writing (G11).
+
+No `bd children` call is ever made. The bash version made one per candidate, and 221 of them
+cost 302 s against a 60 s pass budget (§5).
 
 **CHECK 7.** S2.
 
@@ -587,8 +623,10 @@ The S3 evidence strings are byte-identical to today's.
      logged `CHECK4 <id>: requeue escalation path refused the ask — retries next pass`.
    - **`reclaim-mail`.** The same shape, with the reclaim wording and caps.
    - **`poison` or `ask`.**
-     - First re-read the status with `bd show <id>`. If `closed`, log
+     - First re-read the bead with `bd show <id>` (G11). If it is now `closed`, log
        `CHECK4 <id>: <n> attempts, but it closed while this pass ran — not poisoned, not asked`.
+       If its status is otherwise not the snapshot's, or the re-read failed, log the G11 skip
+       line. Either way, nothing is written.
      - For `poison`: Hold poison `poisoned after <n> in_progress transition(s) without landing`
        (actor `sentinel`), then `bd note` (fixed text), then progress
        `poisoned <id> after <n> attempts`, then the spira_event `bead.poisoned` (S5).
@@ -694,6 +732,15 @@ Then log `pass complete — <a> action(s), <p> progress`.
 2-minute timer, before sp-bo67y (the snapshots) and sp-994y9 (the audit split). After them
 it took about 20 s.
 
+The Rust pass regressed to a median 198 s (106–375 s over the last 30 production passes,
+2026-09-29 15:37Z to 2026-09-30 09:53Z; sp-du8bv). The `sentinel-phase` rows attributed
+91.5 % of it to CHECK 3b (median 181.5 s, max 338 s). Every other check had a median of
+4 s or less. Inside CHECK 3b, lib.sh `mark_open_children` ran `bd children` once per
+candidate, and 221 candidates took 302 s when measured alone. CHECK 3c now decides from the
+snapshot. The same 8,504-row store and 221 candidates take 2.4 s end to end with
+`--open-children --dry-run`, including the probe and both snapshot reads; the decision
+itself takes milliseconds.
+
 **Budget:**
 
 | mode | target (p50) | alarm | hard ceiling |
@@ -756,7 +803,7 @@ counter semantics lib.sh functions had when they ran in-process.
 | S1 | summon-gate | `world_gate fleet summon-only \|\| exit 1; if capacity_paused; then log "summon-only: account out of capacity for another ${SPIRA_CAPACITY_LEFT}s — not summoning"; exit 1; fi` | — | inherited (log) |
 | S2 | ck7 | `ck7_summon_pass` | — | inherited |
 | S3 | land-escalate | `IFS= read -r why; ev="$(cat)"; land_escalate "$why" "$ev"` | line 1 = subject tail, rest = evidence | inherited |
-| S4 | check3b | `mark_queue_waiters 2>/dev/null \|\| true; close_landed_queue_waiters 2>/dev/null \|\| true; mark_open_children 2>/dev/null \|\| true` | — | inherited |
+| S4 | check3b | `mark_queue_waiters 2>/dev/null \|\| true; close_landed_queue_waiters 2>/dev/null \|\| true` (`mark_open_children` is CHECK 3c, in Rust) | — | inherited |
 | S5 | event | `IFS= read -r -d '' k; IFS= read -r -d '' t; IFS= read -r -d '' ti; IFS= read -r -d '' de; spira_event "$k" "$t" "$ti" "$de" \|\| true` | 4 NUL-terminated fields | — |
 | S6 | trace-tail | `IFS= read -r f; IFS= read -r n; trace_tail "$f" "$n"` | path, count | captured |
 | S7 | detect-unclaimable | `detect_unclaimable_ready 2>/dev/null` | — | captured |
@@ -927,6 +974,15 @@ About 30 suites carry `# covers: … spira/sentinel.sh`. That changes to
   label all do real work again; since sp-i2m7y they had silently done nothing, because
   spira-lc is not deployed. With it ON, the unreachable machine fails the unit instead of
   logging `WARN` and moving on.
+- **B12. CHECK 3c is Rust, and reads no bead store per candidate (sp-du8bv).** lib.sh
+  `mark_open_children` and `bead_has_open_children` are deleted.
+  `test-dispatch-open-children.sh` drives `sentinel --open-children`. The candidate set, the
+  decision and the log lines are unchanged. The children are read from the pass-start
+  snapshot rather than live, so a child created mid-pass is seen by the next pass. That is
+  under a minute now, where the old live read landed 3 to 6 minutes after the snapshot.
+- **B13. Re-read before every write (G11, sp-du8bv).** A CHECK 4 poison or ask is also
+  skipped when the re-read fails. It used to go ahead on the snapshot row with "could not
+  read the bead" as its evidence. CHECK 2c no longer strips a claim taken after the snapshot.
 - **B10. The Sending's "every swept repo is stamped" test matches `<name>=` at the start of
   a stamp line.** The bash `grep -qF "<name>="` matched it anywhere, so `a=` was satisfied
   by `ba=…`.

@@ -8,8 +8,9 @@
 # reading as ready while its whole deliverable sits in open children. A dispatcher that
 # claims it burns a session for zero actionable work, every time.
 #
-# THE FIX. mark_open_children (lib.sh) applies SPIRA_OPEN_CHILDREN_LABEL to a bead with any
-# non-closed child (via `bd children`), the same out-of-band-label seam mark_queue_waiters
+# THE FIX. CHECK 3c (the sentinel binary, `sentinel --open-children`; sp-du8bv moved it out of
+# lib.sh's mark_open_children) applies SPIRA_OPEN_CHILDREN_LABEL to a bead with any non-closed
+# child (from the store snapshot), the same out-of-band-label seam mark_queue_waiters
 # uses for a predicate bd cannot express as a dependency. ready_shared_exclude carries the
 # label into fayth_exclude and strand.sh's classify_one, so every "is this claimable"
 # predicate — ready_count, fayth_ready, and the aeon claim built from CLAIM_EXCLUDE — excludes
@@ -68,6 +69,9 @@ print(" ".join(sorted(r.get("id","") for r in (d if isinstance(d, list) else [d]
 
 LABEL="${SPIRA_OPEN_CHILDREN_LABEL:-spira-open-children}"
 
+# CHECK 3c alone, through the binary on PATH (the tree's own build under testenv).
+mark_open_children() { sentinel --open-children >/dev/null 2>&1; }
+
 seed() {
     testdb_reset
     testdb_seed <<JSONL
@@ -92,7 +96,7 @@ has   "1: bd ready lists sp-parent before mark_open_children runs — the defect
 echo
 echo "assertions 2-4 — two open children: label applied, bead excluded from summon:"
 # =====================================================================================
-mark_open_children 2>/dev/null
+mark_open_children
 has   "2: mark_open_children applies $LABEL to sp-parent" \
       "$LABEL" "$(labels_of sp-parent)"
 
@@ -106,7 +110,7 @@ lacks "4: sp-parent no longer in the ready set (fayth_ready excludes it)" \
 echo
 echo "assertion 5 — second pass is idempotent:"
 # =====================================================================================
-mark_open_children 2>/dev/null
+mark_open_children
 has   "5: second mark_open_children call leaves label in place" \
       "$LABEL" "$(labels_of sp-parent)"
 
@@ -115,7 +119,7 @@ echo
 echo "assertion 6 — one of two children closes: label stays, ALL children must close:"
 # =====================================================================================
 B close sp-kid1 --reason "done" >/dev/null 2>&1
-mark_open_children 2>/dev/null
+mark_open_children
 has   "6: one child still open — sp-parent stays labeled" \
       "$LABEL" "$(labels_of sp-parent)"
 
@@ -124,7 +128,7 @@ echo
 echo "assertions 7-8 — last child closes: label removed, bead is summonable again:"
 # =====================================================================================
 B close sp-kid2 --reason "done" >/dev/null 2>&1
-mark_open_children 2>/dev/null
+mark_open_children
 lacks "7: every child closed — label removed from sp-parent" \
       "$LABEL" "$(labels_of sp-parent)"
 

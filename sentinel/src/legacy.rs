@@ -44,6 +44,14 @@ fn first_id(line: &str) -> Option<String> {
     None
 }
 
+/// A lease that has not yet expired (an unparseable one counts as live, as below).
+pub fn lease_live(b: &crate::model::Bead, now: i64) -> bool {
+    match b.lease_expires_at.as_deref().filter(|l| !l.is_empty()) {
+        None => false,
+        Some(l) => crate::host::parse_iso(l).map_or(true, |t| t > now),
+    }
+}
+
 /// CHECK 2c's predicate (lib.sh `orphan_claims`): an OPEN bead in the partition that still
 /// carries an assignee and holds no future lease. in_progress is deliberately not here — a
 /// live claim is `bd reclaim`'s to time out. An unparseable lease is not evidence of death.
@@ -85,7 +93,14 @@ impl<'a> Sentinel<'a> {
             .filter(|b| b.has(&skip))
             .map(|b| b.id.clone())
             .collect();
-        for (add, id) in wait_decisions(snap, &held, &ask) {
+        let decisions = wait_decisions(snap, &held, &ask);
+        let ids: Vec<&str> = decisions.iter().map(|(_, id)| id.as_str()).collect();
+        let live = self.reread(&ids);
+        for (add, id) in decisions.iter().cloned() {
+            let was = snap.get(&id).map(|b| b.status.clone()).unwrap_or_default();
+            if self.still("CHECK2", &id, &was, live.as_ref()).is_none() {
+                continue;
+            }
             if add {
                 self.bd().quiet(self.h, &["label", "add", &id, &skip], None);
                 self.log(&format!("CHECK2 {id}: only open dep(s) carry {ask} — labeled {skip}, excluded from reclaim"));
@@ -142,16 +157,29 @@ impl<'a> Sentinel<'a> {
     pub fn check2c_legacy(&self, snap: &Snapshot) -> usize {
         let now = self.h.now();
         let mut seen = HashSet::new();
-        let mut lines = Vec::new();
+        let mut orphans = Vec::new();
         for p in &self.ctx.partitions {
             for (id, who) in orphan_claims(snap, &p.labels, now) {
-                if !seen.insert(id.to_string()) {
-                    continue;
+                if seen.insert(id.to_string()) {
+                    orphans.push((id, who));
                 }
-                // Only what moved: an assign that lost a race to a real claim changes nothing.
-                if self.bd().quiet(self.h, &["assign", id, ""], None) {
-                    lines.push(format!("RELEASED\t{id}\t{who}"));
-                }
+            }
+        }
+        // `bd assign <id> ""` is unconditional: re-read first, or a claim an aeon took after
+        // the snapshot is stripped. Release only a bead that is still the orphan it was.
+        let ids: Vec<&str> = orphans.iter().map(|(i, _)| *i).collect();
+        let live = self.reread(&ids);
+        let mut lines = Vec::new();
+        for (id, who) in orphans {
+            let Some(b) = self.still("CHECK2c", id, "open", live.as_ref()) else {
+                continue;
+            };
+            if b.assignee.as_deref() != Some(who) || lease_live(b, now) {
+                self.log(&format!("CHECK2c {id}: claimed or re-leased since this pass's snapshot — not released"));
+                continue;
+            }
+            if self.bd().quiet(self.h, &["assign", id, ""], None) {
+                lines.push(format!("RELEASED\t{id}\t{who}"));
             }
         }
         if !lines.is_empty() {

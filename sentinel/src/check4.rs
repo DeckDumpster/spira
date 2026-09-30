@@ -8,7 +8,7 @@ use std::path::Path;
 use crate::cfg::Lifecycle;
 use crate::host::{Io, Spec};
 use crate::lifecycle::{hold_event, unhold_event};
-use crate::model::{parse_beads, Bead, LandState};
+use crate::model::{Bead, LandState};
 use crate::pass::Sentinel;
 use crate::render::{bead_context, causes};
 use crate::seams;
@@ -357,18 +357,20 @@ impl<'a> Sentinel<'a> {
             }
 
             if tok.contains("poison") || tok.contains("ask") {
-                // The one field that decides it, re-read live: the snapshot is a snapshot, and
-                // the landing pass may have closed this bead seconds ago.
-                let json = self
-                    .bd()
-                    .json(self.h, &["show".into(), id.clone()])
-                    .unwrap_or_default();
-                let shown: Option<Bead> =
-                    parse_beads(&json).ok().and_then(|v| v.into_iter().next());
-                if shown.as_ref().map(|b| b.status.as_str()) == Some("closed") {
-                    self.log(&format!("CHECK4 {id}: {n} attempts, but it closed while this pass ran — not poisoned, not asked"));
-                    continue;
+                // Re-read before the write (fresh.rs): the snapshot is a snapshot, and the
+                // landing pass or an aeon may have moved this bead since it was taken.
+                let was = snap.get(id).map(|b| b.status.clone()).unwrap_or_default();
+                let live = self.reread(&[id.as_str()]);
+                if let Some(b) = live.as_ref().and_then(|m| m.get(id.as_str())) {
+                    if b.status == "closed" && was != "closed" {
+                        self.log(&format!("CHECK4 {id}: {n} attempts, but it closed while this pass ran — not poisoned, not asked"));
+                        continue;
+                    }
                 }
+                let Some(shown) = self.still("CHECK4", id, &was, live.as_ref()).cloned() else {
+                    continue;
+                };
+                let shown = Some(shown);
                 if tok.contains("poison") {
                     self.poison_write(id, n);
                     let note = format!(
@@ -607,6 +609,13 @@ impl<'a> Sentinel<'a> {
             };
             if !tok.contains("clear") {
                 continue;
+            }
+            if self.lc == Lifecycle::Off {
+                let was = snap.get(id).map(|b| b.status.clone()).unwrap_or_default();
+                let live = self.reread(&[id]);
+                if self.still("CHECK4", id, &was, live.as_ref()).is_none() {
+                    continue;
+                }
             }
             self.poison_lift(id);
             self.progress(&format!(
