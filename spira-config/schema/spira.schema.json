@@ -183,12 +183,6 @@
             "null"
           ]
         },
-        "gate": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "gate_mode": {
           "description": "What the certification gate runs for this repository (design gate-unit-round-integration-2026-09-29, item 4, sp-2ghui). Absent means [`GateMode::Suites`], today's behaviour exactly. Read it with [`RepoSection::gate_mode`].",
           "anyOf": [

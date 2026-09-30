@@ -1,4 +1,5 @@
 //! `gate [--home <spira-dir>] <branch> [repo-name]` — see DESIGN.md.
+//! `gate [--home <spira-dir>] --definition [repo-name]` — the landing ref's gate command.
 
 use gate::engine::{Args, Trial};
 use gate::real::{install_signal_handlers, Real};
@@ -24,6 +25,20 @@ fn main() {
         }
         home = Some(PathBuf::from(argv.remove(1)));
         argv.remove(0);
+    }
+    if argv.first().map(String::as_str) == Some("--definition") {
+        let repo = argv.get(1).filter(|r| !r.is_empty()).cloned();
+        let world = Real::new(home.clone().unwrap_or_else(default_home));
+        match gate::engine::definition(&world, repo.as_deref()) {
+            Ok(cmd) => {
+                println!("{cmd}");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("gate: --definition: {e}");
+                std::process::exit(1);
+            }
+        }
     }
     let Some(branch) = argv.first().filter(|b| !b.is_empty()).cloned() else {
         eprintln!("gate.sh: 1: usage: gate.sh <branch> [repo-name]");

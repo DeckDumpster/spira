@@ -116,10 +116,16 @@ nowant "SEEN RED: does not say base-red reason" "reason=base-red" "$out"
 # --------------------------------------------------------------------------------------
 # CASE 4 — SEEN GREEN (positive control for case 3): the same file, now present on the
 # base. If the gate still refused after this, case 3 would be proving nothing.
+#
+# `bash tools/check.sh` is itself a `bash <dir>/<x>.sh` word in the gate command (like any
+# real fence in the production string), so since sp-ufbkh it must print its own positive
+# control — `fence: check checked <n> <unit>` — on success or the gate reads it as a fence
+# that ran silent (NO_VERDICT reason=fence-silent), never PASS. Stale before sp-ufbkh, which
+# is exactly what this case now exercises alongside "the file exists and ran".
 # --------------------------------------------------------------------------------------
 RUNS="$TMP/runs"; : > "$RUNS"
 mkdir -p "$(dirname "$REPO/$GATE_FILE")"
-printf '#!/usr/bin/env bash\nprintf "ran\\n" >> %s\necho ok\n' "$RUNS" > "$REPO/$GATE_FILE"
+printf '#!/usr/bin/env bash\nprintf "ran\\n" >> %s\necho "fence: check checked 1 file"\necho ok\n' "$RUNS" > "$REPO/$GATE_FILE"
 git -C "$REPO" add -A; git -C "$REPO" commit -q -m "add check.sh"
 git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
 gate_fixture_branch repo/sp-t2 missing-cmd2.txt change2
