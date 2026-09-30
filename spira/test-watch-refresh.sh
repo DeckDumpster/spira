@@ -170,7 +170,7 @@ fresh_show() { : > "$SHOW"; show "spira-watch-answers-prod.service" active "@$UN
 # outright instead of being missed.
 runpass() {
     : > "$ACT"
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="${WR_MAN:-$MAN}" \
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_WATCHERS="${WR_MAN:-$MAN}" \
         \
         WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" SHIM="$SHIM" \
         SYSTEMCTL_RC="${SYSTEMCTL_RC:-0}" RESTART_RC="${RESTART_RC:-0}" \
@@ -444,7 +444,7 @@ printf '0::/user.slice/user-1000.slice/user@1000.service/\n' \
 # to log the pid it would signal rather than sending a real signal.
 runreap() {
     : > "$REAP_ACT"
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_WATCHERS="$MAN" \
         \
         WR_PROC_ROOT="$FAKEPROC" WR_REAP_ACT="$REAP_ACT" \
         bash -c '
@@ -508,7 +508,7 @@ echo "the entry point, run as systemd runs it"
 # point) does not scan the real /proc of the test runner.
 EMPTYPROC="$TMP/empty-proc"; mkdir -p "$EMPTYPROC"
 reset_mtimes; fresh_show; touch -d "@$NEWER" "$COCKPIT/watch-answers.sh"; : > "$ACT"
-out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
+out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_WATCHERS="$MAN" \
       \
       SPIRA_PATH="$SHIM" WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" \
       WR_PROC_ROOT="$EMPTYPROC" \
@@ -516,7 +516,7 @@ out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_WATCH
 is "it runs"                       "0" "$rc"
 has "and restarts the stale unit"  "$(acted)" "restart spira-watch-answers-prod.service"
 hasnt "and no raw manifest line leaked onto this process's own stdout" "$out" "|daemon|"
-out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
+out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_WATCHERS="$MAN" \
       \
       SPIRA_PATH="$SHIM" WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" \
       WR_PROC_ROOT="$EMPTYPROC" \

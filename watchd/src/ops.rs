@@ -150,6 +150,12 @@ impl Ops for Real {
     }
 
     fn orphan_lock(&self, target: &str) -> Option<String> {
+        // `target` is the manifest row's whole target — "<program> <args...>" — but the
+        // cmdline match below (like the pgrep search) is against the PROGRAM alone, never
+        // the row's full string with its arguments still attached. Scar: passing `target`
+        // whole here meant no live orphan ever matched, because /proc/<pid>/cmdline's argv
+        // is NUL-separated (argv[0] is the program, argv[1] a separate element) and never
+        // reassembles into "program args" as one space-joined string.
         let prog = target.split(' ').next().unwrap_or("");
         if prog.is_empty() {
             return None;
@@ -158,7 +164,7 @@ impl Ops for Real {
         let out = Command::new("pgrep").arg("-f").arg(&base).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
         for line in String::from_utf8_lossy(&out.stdout).lines() {
             let Ok(pid) = line.trim().parse::<i32>() else { continue };
-            if !cmdline_has_arg(pid, target) {
+            if !cmdline_has_arg(pid, prog) {
                 continue;
             }
             let fd_dir = format!("/proc/{pid}/fd");

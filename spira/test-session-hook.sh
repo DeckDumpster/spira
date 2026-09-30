@@ -116,7 +116,7 @@ PY
 hook() {
     local ev="$1" src="$2"; shift 2
     printf '{"hook_event_name":"%s","source":"%s"}' "$ev" "$src" \
-      | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" SPIRA_CONF="$CONF" "$@" \
+      | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 "$@" \
         bash "$CLONE/spira/hooks/session.sh"
 }
 
@@ -183,7 +183,7 @@ is "and prints nothing at all" "" "$out3"
 echo
 echo "it never breaks a session start"
 run_raw() {                        # run_raw <stdin> — the hook with an arbitrary payload
-    printf '%s' "$1" | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" SPIRA_CONF="$CONF" \
+    printf '%s' "$1" | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 \
         bash "$CLONE/spira/hooks/session.sh"
 }
 out4="$(run_raw 'not json at all')"; is "malformed stdin still exits clean" "0" "$?"
