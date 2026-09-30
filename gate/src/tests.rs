@@ -510,11 +510,11 @@ fn a_current_branch_is_judged_as_itself() {
 fn the_gate_command_gets_the_launcher_path_set_outright_from_spira_release() {
     let f = Fake::new();
     f.ancestor.set(true);
-    f.set_var("PATH", "/home/u/.cargo/bin:/checkout/target/release:/usr/bin");
+    f.set_var("PATH", "/inherited/.cargo/bin:/checkout/target/release:/usr/bin");
     assert_eq!(f.run(), PASS);
     assert_eq!(
         f.env_of(0, "PATH"),
-        "/rel/bin:/rel/spira:/usr/local/bin:/usr/bin:/bin:/home/u/.cargo/bin",
+        format!("/rel/bin:/rel/spira:/usr/local/bin:/usr/bin:/bin:{}/.cargo/bin", ctx().var("HOME")),
         "the release's bin/ and spira/, the system dirs, cargo for tree builds — nothing inherited"
     );
     assert_eq!(f.env_of(0, "SPIRA_RELEASE"), "/rel");
