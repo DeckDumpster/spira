@@ -814,7 +814,7 @@ pub fn file_local_red_incident(
     let tmp = tmp_dir.join(format!("local-red-{}-{}.txt", repo.name, now()));
     fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
     let out = run(
-        Command::new("bash").arg(env.home.join("incident.sh")).arg("file").arg(&title).arg(&tmp).env("SPIRA_INCIDENT_TYPE", "bug").env(
+        Command::new("incident.sh").arg("file").arg(&title).arg(&tmp).env("SPIRA_INCIDENT_TYPE", "bug").env(
             "SPIRA_INCIDENT_PRIORITY",
             "1",
         ).env("SPIRA_INCIDENT_ACTOR", "batcher").env("SPIRA_INCIDENT_REPO", &repo.name).env(
@@ -1005,8 +1005,7 @@ pub fn file_judgement(env: &Env, repo: &Repo, j: &batcher::core::Judgement, memb
     let tmp = tmp_dir.join(format!("judgement-{}-{}.txt", repo.name, now()));
     fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
     let out = run(
-        Command::new("bash")
-            .arg(env.home.join("bead.sh"))
+        Command::new("bead.sh")
             .arg("file")
             .arg(&title)
             .arg("--for")
