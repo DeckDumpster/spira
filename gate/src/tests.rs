@@ -1524,11 +1524,11 @@ fn an_instant_admission_announces_nothing() {
     assert!(!f.stderr().contains("gate: admitted to a certification slot"));
 }
 
-/// sp-q20wb: raising the limit in `spira.toml` while a gate already waits must reach it —
-/// the frozen `Ctx.SPIRA_CERTIFY_PAR` (conf.sh's export at this process's own start) cannot.
-/// Fixture: slots 1-2 (the frozen par) are permanently busy; slot 3 is the only free one,
-/// and only appears once the live config is read as 3 — one poll after the first, standing
-/// in for "the operator edits spira.toml while this gate is already waiting."
+/// sp-q20wb: raising the limit in the config document while a gate already waits must reach
+/// it — the frozen `Ctx.SPIRA_CERTIFY_PAR` (conf.sh's export at this process's own start)
+/// cannot. Fixture: slots 1-2 (the frozen par) are permanently busy; slot 3 is the only free
+/// one, and only appears once the live config is read as 3 — one poll after the first,
+/// standing in for "the operator edits the config while this gate is already waiting."
 #[test]
 fn a_limit_raised_in_the_live_config_admits_an_already_waiting_gate() {
     let f = Fake::new();

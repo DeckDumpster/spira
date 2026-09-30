@@ -438,9 +438,9 @@ impl<'w, W: World> Trial<'w, W> {
             let t0 = w.now();
             let mut announced = false;
             let admitted_slot = 'wait: loop {
-                // Re-read on every pass (sp-q20wb): a raised SPIRA_CERTIFY_PAR in spira.toml
-                // must reach a gate already waiting, which the frozen `Ctx` — captured once
-                // when lib.sh sourced conf.sh at this process's start — cannot.
+                // Re-read on every pass (sp-q20wb): a raised SPIRA_CERTIFY_PAR in the config
+                // document must reach a gate already waiting, which the frozen `Ctx` —
+                // captured once when lib.sh sourced conf.sh at this process's start — cannot.
                 let par = self.admission_par(&ctx);
                 for slot in 1..=par {
                     if w.admission_try(&dir, slot) {
@@ -1150,8 +1150,8 @@ impl<'w, W: World> Trial<'w, W> {
         String::new()
     }
 
-    /// `spira.toml`'s own `certify_par`, read fresh; else `SPIRA_CERTIFY_PAR` as this trial's
-    /// `Ctx` froze it at start; else derived from the box. Called on every pass of the
+    /// The config document's own `certify_par`, read fresh; else `SPIRA_CERTIFY_PAR` as this
+    /// trial's `Ctx` froze it at start; else derived from the box. Called on every pass of the
     /// admission wait (sp-q20wb): the live config read is what lets a limit raised in the
     /// file admit a gate that is already waiting — the frozen `Ctx` value cannot change
     /// mid-trial, since conf.sh exported it once, before this process's `exec`.
