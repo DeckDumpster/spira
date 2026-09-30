@@ -21,6 +21,13 @@
 /// Where a gated tree keeps its definition, relative to the repository root.
 pub const PATH: &str = "gate.steps";
 
+/// The gate tree's directory of tools keyed by tree id (sp-g9f3t; DESIGN.md "Tools keyed by
+/// the tree they were built from"). Under `target/`, which `git clean -e target` keeps.
+pub const TOOLS_DIR: &str = "target/gate-tools";
+
+/// The stamp in a keyed tools directory: the tree id its binaries were built from.
+pub const TOOLS_STAMP: &str = "TREE";
+
 /// A binary the steps call that is built from the tree under test, not the installed one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Bin {
@@ -107,6 +114,18 @@ impl Def {
     /// (the gate command runs under `env -i`, so no CARGO_TARGET_DIR moves it).
     pub fn bin_path(tree: &std::path::Path, b: &Bin) -> std::path::PathBuf {
         tree.join("target").join("aeon").join(&b.package)
+    }
+
+    /// Where a trial's tools live (sp-g9f3t): a directory of the gate tree keyed by the git
+    /// tree id they were built from, stamped with that id in `TREE`. The steps read this,
+    /// never [`Def::bin_path`], which names no tree.
+    pub fn tools_dir(tree: &std::path::Path, tree_id: &str) -> std::path::PathBuf {
+        tree.join(TOOLS_DIR).join(tree_id)
+    }
+
+    /// Every package this definition builds.
+    pub fn packages(&self) -> Vec<String> {
+        self.bins.iter().map(|b| b.package.clone()).collect()
     }
 
     /// The tools phase: build every `bin` package from the tree, in the profile the unit
