@@ -736,6 +736,22 @@ fn an_ejected_record_on_a_closed_bead_is_reopened() {
     assert_eq!(h.mailbox(), "reopened sp-a — ejected-not-requeued\n");
 }
 
+/// sp-vjf6u: a branch landed by another route (a cherry-pick batch, say) is not an ancestor
+/// of the base, so `content_landed` cannot see it — the pass must still never gate or reopen
+/// a LANDED record on the strength of that.
+#[test]
+fn a_landed_record_on_a_closed_bead_is_never_gated_or_reopened() {
+    let h = H::new(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    h.landstate("sp-a", "LANDED t0 5 spira");
+    h.run();
+    assert!(h.logged("CHECK6 sp-a: closed with landstate LANDED"));
+    assert!(!h.lib.has("land_mark"));
+    assert!(!h.lib.has("reopen"));
+    assert!(h.tools.gate_calls.borrow().is_empty());
+    assert_eq!(Files::new(&h.s.run).land_state("sp-a").unwrap().state, "LANDED", "the record itself is untouched");
+}
+
 #[test]
 fn a_branch_gone_mid_pass_is_never_evidence_of_unlanded_work() {
     let h = H::new(LandMode::Queue);
