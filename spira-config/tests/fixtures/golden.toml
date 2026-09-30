@@ -43,7 +43,6 @@ czar_stage_deadlock = "shadow"
 path = "/srv/checkouts/home"
 mode = "push"
 base = "origin/main"
-gate = 'bash spira/inventory.sh && "$SPIRA_TESTENV_BIN" "$SPIRA_GATE_BRANCH"'
 lanes = [
     "plan",
     "incident",
@@ -56,7 +55,6 @@ path = "/srv/checkouts/service"
 mode = "pr"
 base = "origin/master"
 format = "cargo fmt --all"
-gate = '{ _b=0; "$SPIRA_TESTENV_BIN" "$SPIRA_GATE_BRANCH" || _b=$?; case "$_b" in 2|3) exit 75;; *) exit "$_b";; esac; }'
 lanes = [
     "plan",
     "incident",

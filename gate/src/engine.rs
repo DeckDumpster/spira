@@ -1,6 +1,7 @@
 //! The trial, in the order DESIGN.md "Order of the trial" gives. One way out: [`Trial::finish`].
 
 use crate::cert;
+use crate::def::{self, Resolved};
 use crate::fence;
 use crate::compose::{self, Composition, Forces};
 use crate::key::{self, KeyInputs};
@@ -285,15 +286,53 @@ impl<'w, W: World> Trial<'w, W> {
             );
         }
 
-        // LAYER 2 — the repository's own gate.
-        let cmd = ctx.gate_cmd.clone();
+        // LAYER 2 — the repository's own gate. THE TREE OWNS ITS GATE (sp-quu2w): the
+        // definition is the tree under test's `gate.steps`, and the base trial runs the
+        // landing ref's own. The repo-map column is read only for a repository whose landing
+        // ref has never carried one; once it has, a tree without a readable definition is
+        // refused, never quietly gated by config.
+        let column = ctx.gate_cmd.clone();
+        let base_blob = w.show_blob(&repo, &base_rev, def::PATH);
+        let tree_blob = w.show_blob(&repo, &rev, def::PATH);
+        let (cmd, tree_def) = match def::resolve(base_blob.as_deref(), tree_blob.as_deref(), &column) {
+            Resolved::Column(c) => (c, None),
+            Resolved::Tree(d) => {
+                if !column.trim().is_empty() {
+                    w.eprint(&format!("gate: {name}'s repo-map gate column is ignored — the tree's {} is its gate (sp-quu2w); clear the column", def::PATH));
+                }
+                (d.command(), Some(d))
+            }
+            Resolved::Refused { branch: true, why } => {
+                return v(FAIL, "gate-definition", format!(
+                    "gate: {br} as it would land has no gate definition the gate can read.\ngate: {why}\ngate: the tree under test owns its gate ({}); fix it on the branch.", def::PATH));
+            }
+            Resolved::Refused { branch: false, why } => {
+                return v(BASEFAIL, "base-gate-definition", format!(
+                    "gate: {base}'s own gate definition does not read — this branch did not cause it.\ngate: {why}\ngate: fix {} on {base}.", def::PATH));
+            }
+        };
+        let base_def = def::resolve_base(base_blob.as_deref(), &column);
         if cmd.is_empty() {
             return v(PASS, "syntax-only", "");
         }
         for p in parse::bash_paths(&cmd) {
-            if !w.ls_tree_has(&repo, &base_rev, &p) {
-                return v(NOVERDICT, "cmd-missing-file", format!(
-                    "gate: {name}'s gate command names 'bash {p}' but {p} is absent from {base}.\ngate: command: {cmd}\ngate: this is a gate configuration error, not a fault in any branch.\ngate: land {p} on the base before wiring it into the gate command, or remove it."));
+            if tree_def.is_none() {
+                if !w.ls_tree_has(&repo, &base_rev, &p) {
+                    return v(NOVERDICT, "cmd-missing-file", format!(
+                        "gate: {name}'s gate command names 'bash {p}' but {p} is absent from {base}.\ngate: command: {cmd}\ngate: this is a gate configuration error, not a fault in any branch.\ngate: land {p} on the base before wiring it into the gate command, or remove it."));
+                }
+                continue;
+            }
+            // A tree definition names files of the same tree: the branch that deletes a
+            // fence script removes its step in the same commit.
+            if !w.ls_tree_has(&repo, &rev, &p) {
+                let base_names_it = matches!(&base_def, Ok(Resolved::Tree(b)) if parse::bash_paths(&b.command()).contains(&p));
+                if base_names_it && !w.ls_tree_has(&repo, &base_rev, &p) {
+                    return v(BASEFAIL, "base-gate-definition", format!(
+                        "gate: {base}'s own {} names 'bash {p}' and {base} does not carry {p} — this branch did not cause it.\ngate: fix {} on {base}.", def::PATH, def::PATH));
+                }
+                return v(FAIL, "gate-definition", format!(
+                    "gate: {br} as it would land names 'bash {p}' in {} but does not carry {p}.\ngate: command: {cmd}\ngate: a branch that deletes a fence removes its `step` line in the same commit.", def::PATH));
             }
         }
 
@@ -308,9 +347,10 @@ impl<'w, W: World> Trial<'w, W> {
         self.s.gate_mode = mode.as_str().into();
         // A unit-mode PASS is not a suites-mode PASS: the mode is part of what was judged.
         // Suites mode hashes the command alone, so today's keys are unchanged.
+        let cmd_text = tree_def.as_ref().map(def::Def::key_text).unwrap_or_else(|| cmd.clone());
         let key_cmd = match mode {
-            GateMode::Unit => format!("{cmd}\n# gate_mode=unit"),
-            GateMode::Suites => cmd.clone(),
+            GateMode::Unit => format!("{cmd_text}\n# gate_mode=unit"),
+            GateMode::Suites => cmd_text,
         };
 
         // THE VERDICT CACHE.
@@ -532,9 +572,14 @@ impl<'w, W: World> Trial<'w, W> {
             w,
             &tree,
             &comp,
-            &env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED"), &comp),
+            &with_bins(
+                env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED"), &comp),
+                tree_def.as_ref(),
+                &tree,
+            ),
             &timeout,
             &cmd,
+            tree_def.as_ref().and_then(|d| d.tools_command(jobs)).as_deref(),
             jobs,
             &re.required,
             "",
@@ -625,19 +670,39 @@ impl<'w, W: World> Trial<'w, W> {
         // merge was cut from, never the ref re-read by name (sp-hh5h0).
         let mut base_ran = false;
         let (mut base_rc, mut base_out) = (1, String::new());
-        if self.gate_at(&repo, &tree, &base_rev, &base_rev).is_ok() {
+        // THE BASE TRIAL RUNS THE BASE'S OWN DEFINITION (sp-quu2w): the landing ref's
+        // gate.steps, or its column when it never adopted one. A base definition that does
+        // not read leaves the base untested — whose fault the red is stays unestablished.
+        let base_gate = match &base_def {
+            Ok(Resolved::Tree(d)) => Some((d.command(), Some(d.clone()))),
+            Ok(Resolved::Column(c)) => Some((c.clone(), None)),
+            Ok(Resolved::Refused { .. }) => None,
+            Err(e) => {
+                w.eprint(&format!("gate: {base}'s own {} does not read — no base trial: {e}", def::PATH));
+                None
+            }
+        };
+        if let Some((base_cmd, bdef)) = base_gate
+            .as_ref()
+            .filter(|_| self.gate_at(&repo, &tree, &base_rev, &base_rev).is_ok())
+        {
             let base_comp = self.base_composition(&comp, &ctx, &tree);
             let (r, o, ph) = run_composed(
                 w,
                 &tree,
                 &base_comp,
-                &env(
-                    &base_rev,
-                    "base trial — confirming whether base is independently red",
-                    &base_comp,
+                &with_bins(
+                    env(
+                        &base_rev,
+                        "base trial — confirming whether base is independently red",
+                        &base_comp,
+                    ),
+                    bdef.as_ref(),
+                    &tree,
                 ),
                 &timeout,
-                &cmd,
+                base_cmd,
+                bdef.as_ref().and_then(|d| d.tools_command(jobs)).as_deref(),
                 jobs,
                 &re.required,
                 "base-",
@@ -1086,6 +1151,21 @@ fn short(rev: &str) -> &str {
     rev.get(..12).unwrap_or(rev)
 }
 
+/// The environment with each `bin` of a tree definition pointing at the binary built from
+/// `tree` (sp-quu2w), replacing the installed one the context named.
+pub fn with_bins(
+    mut env: Vec<(String, String)>,
+    d: Option<&def::Def>,
+    tree: &Path,
+) -> Vec<(String, String)> {
+    for b in d.map(|d| d.bins.as_slice()).unwrap_or(&[]) {
+        let p = def::Def::bin_path(tree, b).to_string_lossy().into_owned();
+        env.retain(|(k, _)| k != &b.var);
+        env.push((b.var.clone(), p));
+    }
+    env
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run_composed<W: World>(
     w: &W,
@@ -1094,6 +1174,7 @@ pub fn run_composed<W: World>(
     env: &[(String, String)],
     timeout: &str,
     cmd: &str,
+    tools: Option<&str>,
     jobs: u64,
     reentry: &[String],
     prefix: &str,
@@ -1108,6 +1189,16 @@ pub fn run_composed<W: World>(
         None => timeout.to_string(),
     };
     let mut phases = Vec::new();
+    // THE TOOLS PHASE (sp-quu2w): the binaries the steps call, built from the tree under
+    // test, before any step runs. A tree whose tools do not build is judged like any red.
+    if let Some(t) = tools {
+        let t0 = w.now();
+        let (rc, out) = w.run_gate(tree, env, &left(), t);
+        phases.push((format!("{prefix}tools"), w.now().saturating_sub(t0)));
+        if rc != 0 || w.signalled() {
+            return (rc, format!("{out}\ngate: phase 'tools' failed (exit {rc}): {t}"), phases);
+        }
+    }
     let first = if comp.suites_off() { "fences" } else { "gate" };
     // A unit composition builds once (sp-aprxm): its build phase, not the build fence.
     let (cmd, _) = compose::gate_string(comp, cmd);
@@ -1162,4 +1253,28 @@ pub fn run_composed<W: World>(
         }
     }
     (0, out, phases)
+}
+
+/// `gate --definition [repo-name]` (sp-quu2w): the gate command the landing ref's tree
+/// defines for the repository — its `gate.steps`, composed; or its repo-map column when the
+/// landing ref never carried one. The one reader of a repository's gate outside a trial
+/// (doctor.sh's compile-check check), so the resolution lives here and nowhere else.
+pub fn definition<W: World>(w: &W, repo: Option<&str>) -> Result<String, String> {
+    let ctx = w.context(repo)?;
+    let name = ctx.repo_name.clone();
+    let root = ctx
+        .repo_root
+        .clone()
+        .ok_or_else(|| format!("repo-map has no entry for '{name}'"))?;
+    let base = ctx
+        .landref
+        .clone()
+        .ok_or_else(|| format!("cannot resolve the ref '{name}' lands on"))?;
+    let root = PathBuf::from(root);
+    let blob = w.show_blob(&root, &base, def::PATH);
+    match def::resolve_base(blob.as_deref(), &ctx.gate_cmd)? {
+        Resolved::Tree(d) => Ok(d.command()),
+        Resolved::Column(c) => Ok(c),
+        Resolved::Refused { why, .. } => Err(why),
+    }
 }

@@ -12,6 +12,9 @@
 //! a fence it ran is missing its line, or reports `checked 0`, is NO_VERDICT
 //! `reason=fence-silent`, never PASS.
 //!
+//! The string is the tree's own definition (`gate.steps`, def.rs, sp-quu2w) composed, so
+//! the expectation moves with the branch that ports or deletes a fence.
+//!
 //! Which fences a gate string runs is read from the string itself, the same way the
 //! preflight reads its `bash <path>` words ([`parse::bash_paths`]): each `bash <dir>/<x>.sh`
 //! is the fence `<x>`, except the suite selector ([`SELECTOR`]), which runs none; the
@@ -151,7 +154,9 @@ pub fn summary(expected: &[String], out: &str) -> String {
 mod tests {
     use super::*;
 
-    /// The spira repository's gate string with the selector binary (sp-wx2tw).
+    /// A parser fixture: the spira repository's gate string, with the selector binary
+    /// (sp-wx2tw). The live definition is the tree's `gate.steps` (def.rs, sp-quu2w); a fence
+    /// port edits that file, not this fixture.
     const PROD: &str = r#"bash spira/inventory.sh && bash spira/literal-lint.sh && bash spira/scratch-fence.sh && "$SPIRA_LINT_BIN" && bash spira/testdb-mode-lint.sh && bash spira/bd-stdin-lint.sh && bash spira/gh-intake-lint.sh && bash spira/incident-cause-lint.sh && bash spira/tmux-scope-fence.sh && bash spira/wiki-add-fence.sh && bash spira/build-fence.sh && { _s="$("$SPIRA_SELECT_BIN" gate "$SPIRA_GATE_BASE" "${SPIRA_GATE_SELECT_HEAD:-$SPIRA_GATE_BRANCH}")" || { _r=$?; [ "$_r" = 1 ] && exit 1; exit 75; }; [ -n "$_s" ] || exit 0; _b=0; "$SPIRA_TESTENV_BIN" --deadline "${SPIRA_GATE_BUDGET:-300}" --suites "${_s//$'\n'/,}" "$SPIRA_GATE_BRANCH" || _b=$?; case "$_b" in 2|3) exit 75;; *) exit "$_b";; esac; }"#;
 
     #[test]
