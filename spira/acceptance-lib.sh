@@ -224,11 +224,16 @@ _acquire_tarball() {
     _download_tarball "$_at_tag" "$_at_dir"
 }
 
-# _install_from_tarball <tarball> <releases-dir> <conf> — activate + install.sh --skip-build.
+# _install_from_tarball <tarball> <releases-dir> <conf> — release install-tarball +
+# install.sh --skip-build. release install-tarball (sp-jsnbm) replaces activate.sh; it
+# needs a run dir of its own for its activation history (unused by this phase, but
+# required to resolve — DESIGN.md "install-tarball"), a sibling of <releases-dir> the
+# same way production's spira-releases/ and run/ are siblings. ${SPIRA_RELEASE_BIN:-release}
+# lets tests fake the binary the same way SPIRA_ACTIVATE_SH let them fake activate.sh.
 _install_from_tarball() {
     local _tb="$1" _rel="$2" _cf="$3"
-    SPIRA_CONF="$_cf" SPIRA_RELEASES="$_rel" SPIRA_ACTIVATE_FORCE=1 \
-        activate.sh "$_tb" || return 1
+    SPIRA_CONF="$_cf" SPIRA_RELEASES="$_rel" SPIRA_RUN="$(dirname "$_rel")/run" \
+        "${SPIRA_RELEASE_BIN:-release}" install-tarball "$_tb" || return 1
 }
 
 # _extract_bead_id <bd-create-output> — the bead id from `bd create`'s "Created issue:"

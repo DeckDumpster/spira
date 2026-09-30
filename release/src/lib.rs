@@ -5,11 +5,14 @@
 
 pub mod activate;
 pub mod build;
+pub mod canary;
 pub mod config;
 pub mod fsutil;
 pub mod git;
+pub mod install;
 pub mod manifest;
 pub mod prune;
+pub mod stage;
 pub mod systemctl;
 pub mod units;
 pub mod verify;

@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 #
-# test-canary.sh — exercises stage.sh (the isolated test environment builder) and
-# canary.sh (the end-to-end pipeline canary that runs on that stage).
+# test-canary.sh — exercises `release stage` (sp-jsnbm; was stage.sh, the isolated test
+# environment builder) and `release canary` (was canary.sh, the end-to-end pipeline canary
+# that runs on that stage).
 #
 #   ./test-canary.sh
 #
 # WHAT THIS TESTS:
-#   - stage.sh up creates a fully isolated Spira environment under a temp dir
+#   - release stage up creates a fully isolated Spira environment under a temp dir
 #   - Every path exported by up resolves under STAGE_ROOT (isolation assertion)
 #   - The stage's beads database is usable (bd create/list round-trips)
 #   - The stage git setup is correct: bare remote + working checkout on main
-#   - stage.sh down removes STAGE_ROOT completely
-#   - canary.sh runs end-to-end on a stage: bead filed → sentinel pass (with
-#     fake-summon.sh / canary-worker.sh) → landing pass → commit on origin/main
+#   - release stage down removes STAGE_ROOT completely
+#   - release canary runs end-to-end on a stage: bead filed → sentinel pass (with
+#     fake-summon.sh / release canary-worker) → landing pass → commit on origin/main
 #
 # POSITIVE CONTROLS:
 #   - Bead-visible-in-stage-db proves the DB check is asking the right store
@@ -22,7 +23,7 @@
 #   - Each test that mutates env runs in a subshell; stage vars cannot leak
 #   - The real SPIRA_DB (before stage eval) is never written to in any test
 #
-# covers: spira/canary.sh spira/stage.sh
+# covers: release/src/canary.rs release/src/stage.rs
 # scar: unrecorded
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -39,9 +40,9 @@ isexec() { [ -x "$2" ] && ok "$1" || bad "$1" "expected executable: $2"; }
 # ─── T1: stage up creates expected structure ──────────────────────────────────
 printf '\nT1: stage up creates expected structure\n'
 (
-    eval "$(stage.sh up)" \
+    eval "$(release stage up)" \
         || { printf '  FATAL: stage up failed\n'; exit 1; }
-    trap 'stage.sh down "$STAGE_ROOT" 2>/dev/null' EXIT
+    trap 'release stage down "$STAGE_ROOT" 2>/dev/null' EXIT
 
     [ -n "${STAGE_ROOT:-}" ] && ok "STAGE_ROOT is set" || bad "STAGE_ROOT is set" "empty"
     [ -d "${STAGE_ROOT:-/nonexistent}" ] && ok "STAGE_ROOT is a directory" || bad "STAGE_ROOT is a directory" "$STAGE_ROOT"
@@ -50,11 +51,14 @@ printf '\nT1: stage up creates expected structure\n'
     exists "repo-map"              "$SPIRA_HOME/repo-map"
     isexec "fake-summon.sh"        "$SPIRA_HOME/fake-summon.sh"
     isexec "fake-launch.sh"        "$SPIRA_HOME/fake-launch.sh"
-    isexec "canary-worker.sh"      "$SPIRA_HOME/canary-worker.sh"
+    # canary-worker.sh is gone: fake-summon.sh execs `release canary-worker` directly —
+    # the worker is a subcommand of the same binary, not a per-stage file (sp-jsnbm).
+    want "fake-summon execs release canary-worker" "release canary-worker" "$(cat "$SPIRA_HOME/fake-summon.sh")"
     exists "lib.sh symlink"        "$SPIRA_HOME/lib.sh"
-    # sentinel.sh is gone: the stage runs the sentinel binary (canary.sh: `sentinel`).
-    # landing.sh is gone: canary.sh runs `landing-pass land` (landing-pass/DESIGN.md §7.2).
+    # sentinel.sh is gone: the stage runs the sentinel binary (release canary: `sentinel`).
+    # landing.sh is gone: release canary runs `landing-pass land` (landing-pass/DESIGN.md §7.2).
     exists "landing-pass"          "$(command -v landing-pass)"
+    exists "release binary"        "$(command -v release)"
     exists "bare remote"           "$STAGE_ROOT/remote.git/HEAD"
     exists "repo checkout"         "$STAGE_ROOT/repo/.git"
     exists "SPIRA_RUN/worktree"    "$SPIRA_RUN/worktree"
@@ -89,9 +93,9 @@ printf '\nT1: stage up creates expected structure\n'
 # ─── T2: all stage paths are under STAGE_ROOT ────────────────────────────────
 printf '\nT2: stage isolation — all paths under STAGE_ROOT\n'
 (
-    eval "$(stage.sh up)" \
+    eval "$(release stage up)" \
         || { printf '  FATAL: stage up failed\n'; exit 1; }
-    trap 'stage.sh down "$STAGE_ROOT" 2>/dev/null' EXIT
+    trap 'release stage down "$STAGE_ROOT" 2>/dev/null' EXIT
 
     for var in SPIRA_HOME SPIRA_RUN SPIRA_DB SPIRA_REPO SPIRA_SUMMON SPIRA_LAUNCH; do
         val="${!var:-}"
@@ -111,9 +115,9 @@ printf '\nT2: stage isolation — all paths under STAGE_ROOT\n'
 # ─── T3: stage db is usable (real bd round-trip) ─────────────────────────────
 printf '\nT3: stage db is usable\n'
 (
-    eval "$(stage.sh up)" \
+    eval "$(release stage up)" \
         || { printf '  FATAL: stage up failed\n'; exit 1; }
-    trap 'stage.sh down "$STAGE_ROOT" 2>/dev/null' EXIT
+    trap 'release stage down "$STAGE_ROOT" 2>/dev/null' EXIT
 
     # Create a bead; bd exits non-zero on a broken db
     # hermetic-ok: $SPIRA_DB is the stage database — always a mktemp temp dir from stage.sh up
@@ -144,10 +148,10 @@ printf '\nT3: stage db is usable\n'
 # ─── T4: stage down removes the root completely ───────────────────────────────
 printf '\nT4: stage down removes STAGE_ROOT\n'
 (
-    eval "$(stage.sh up)" \
+    eval "$(release stage up)" \
         || { printf '  FATAL: stage up failed\n'; exit 1; }
     saved_root="$STAGE_ROOT"
-    stage.sh down "$STAGE_ROOT"
+    release stage down "$STAGE_ROOT"
     [ ! -d "$saved_root" ] && ok "STAGE_ROOT removed after down" \
                             || bad "STAGE_ROOT removed after down" "$saved_root still exists"
 )
@@ -157,7 +161,7 @@ printf '\nT5: stage down refuses a non-stage path\n'
 (
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' EXIT
-    err="$(stage.sh down "$tmp" 2>&1)" && rc=0 || rc=$?
+    err="$(release stage down "$tmp" 2>&1)" && rc=0 || rc=$?
     isnt "down of non-stage exits non-zero" "0" "$rc"
     want "down of non-stage prints refusal" "canary.fayth" "$err"
     rm -rf "$tmp"
@@ -166,9 +170,9 @@ printf '\nT5: stage down refuses a non-stage path\n'
 # ─── T6: canary-worker.sh claims, commits, closes ────────────────────────────
 printf '\nT6: canary-worker claims and closes a bead\n'
 (
-    eval "$(stage.sh up)" \
+    eval "$(release stage up)" \
         || { printf '  FATAL: stage up failed\n'; exit 1; }
-    trap 'stage.sh down "$STAGE_ROOT" 2>/dev/null' EXIT
+    trap 'release stage down "$STAGE_ROOT" 2>/dev/null' EXIT
 
     # Create a goal epic and a plan bead
     # hermetic-ok: $SPIRA_DB is the stage database — always a mktemp temp dir from stage.sh up
@@ -181,10 +185,10 @@ printf '\nT6: canary-worker claims and closes a bead\n'
 
     # Run the worker directly (it inherits the stage env from the subshell)
     SPIRA_HOME="$SPIRA_HOME" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" \
-    SPIRA_REPO="$SPIRA_REPO" PATH="$PATH" \
-        bash "$SPIRA_HOME/canary-worker.sh" 2>/dev/null
+    SPIRA_REPO="$SPIRA_REPO" SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" PATH="$PATH" \
+        release canary-worker 2>/dev/null
     rc=$?
-    is "canary-worker exits 0" "0" "$rc"
+    is "release canary-worker exits 0" "0" "$rc"
 
     # Bead must be closed
     # hermetic-ok: $SPIRA_DB is the stage database — always a mktemp temp dir from stage.sh up
@@ -210,9 +214,9 @@ printf '\nT7: full canary (sentinel + landing)\n'
 (
     # canary.sh runs `sentinel` and `landing-pass` by name, on this suite's PATH.
     # Capture what canary prints; exit code is what matters.
-    out="$(canary.sh 2>&1)"
+    out="$(release canary 2>&1)"
     rc=$?
-    is "canary.sh exits 0" "0" "$rc"
+    is "release canary exits 0" "0" "$rc"
     want "canary log shows PASS"    "PASS"    "$out"
     want "canary log shows sentinel" "sentinel" "$out"
     want "canary log shows landing"  "landing"  "$out"

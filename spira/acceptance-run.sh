@@ -43,7 +43,7 @@
 #
 # PHASES
 #   A. Fresh install: check prerequisites, download release tarball for <tag>,
-#      install from tarball (activate.sh + install.sh --skip-build), assert all
+#      install from tarball (release install-tarball + install.sh --skip-build), assert all
 #      native binaries in bin/ are executable, land a bead by ancestry, run
 #      uninstall, verify clean state.
 #   B. Upgrade: install from <prev-tag> tarball, capture unit set, deploy.sh <tag>,
@@ -300,7 +300,7 @@ _activate_rc=0
 [ -f "${_tarball_file:-}" ] && \
     _install_from_tarball "$_tarball_file" "$_releases" "$_conf" \
     2>&1 | tee "$TMP/activate.log" || _activate_rc=${PIPESTATUS[0]}
-is0 "phase A: activate.sh exits 0" "$_activate_rc"
+is0 "phase A: release install-tarball exits 0" "$_activate_rc"
 
 # Assert every native binary the release ships is present and executable.
 if [ -d "$_releases/current" ]; then
@@ -556,7 +556,7 @@ else
             -- "$HERE" 2>/dev/null || true)"
         [ -z "$_releases_dir" ] && _releases_dir="${SPIRA_RELEASES:-${HOME}/spira-releases}"
         # deploy.sh writes the full release tag to .tags/<release_stem> beside the release
-        # dirs; current/.tag does not exist (release dirs are read-only after activate.sh).
+        # dirs; current/.tag does not exist (release dirs are read-only after release install-tarball).
         _current_rel="$(readlink "${_releases_dir}/current" 2>/dev/null || true)"
         _tag_sidecar="${_releases_dir}/.tags/${_current_rel:-}"
         _sidecar_val="$(cat "$_tag_sidecar" 2>/dev/null || printf '')"

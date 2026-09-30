@@ -1875,7 +1875,7 @@ spira_conf_defaults() {
     # The stamp file is never written while this is 'off'; pool follows SPIRA_MAX_AEONS alone.
     : "${SPIRA_QUEUE_THROTTLE_OVERRIDE:=}"
 
-    # ---- RELEASE ACTIVATION (activate.sh) -----------------------------------------------
+    # ---- RELEASE ACTIVATION (release install-tarball) -----------------------------------------------
     # WHERE RELEASE TARBALLS ARE UNPACKED. Each activation unpacks a tarball into a
     # timestamped subdirectory here and swaps the 'current' symlink atomically. systemd units
     # render ExecStart= paths through 'current', so a swap is a deployment. The disk holding
@@ -1897,10 +1897,10 @@ spira_conf_defaults() {
     # pointing at somebody else's account would silently fetch their releases.
     : "${SPIRA_GH_REPO:=}"
 
-    # THE ACTIVATED RELEASE — the ONLY directory systemd executes. activate.sh swaps
+    # THE ACTIVATED RELEASE — the ONLY directory systemd executes. release install-tarball swaps
     # the 'current' symlink here atomically on each deployment; ExecStart= paths resolve
     # through it so a swap is a deploy. A missing symlink means no release has been
-    # activated yet; install.sh refuses until activate.sh runs at least once.
+    # activated yet; install.sh refuses until release install-tarball runs at least once.
     # The harness lives under spira/ inside the release directory, so the executable path
     # is current/spira/sentinel.sh, not current/sentinel.sh.
     # NO-COLON FORM preserves SPIRA_PROD= for single-checkout mode.

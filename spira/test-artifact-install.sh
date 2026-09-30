@@ -6,11 +6,12 @@
 #   the source-checkout path (loom/target/release/loom), which a tarball install never
 #   has. Prove that path is absent here, then that conf.sh resolves to bin/loom instead.
 #
-# CASE 2 (Gap G8). activate.sh reuses an already-present, same-named release dir rather
-#   than re-unpacking (the mechanism rollback depends on). Plant the PRIOR release with
-#   its own marker so the check cannot pass by accident (law-absence-needs-a-positive-
-#   control), then activate a fresh release carrying a distinguishable sp-x.fixed marker
-#   and confirm that marker — not the prior one — is what current/bin/loom holds.
+# CASE 2 (Gap G8). release install-tarball (sp-jsnbm; was activate.sh) reuses an
+#   already-present, same-named release dir rather than re-unpacking (the mechanism
+#   rollback depends on). Plant the PRIOR release with its own marker so the check cannot
+#   pass by accident (law-absence-needs-a-positive-control), then activate a fresh release
+#   carrying a distinguishable sp-x.fixed marker and confirm that marker — not the prior
+#   one — is what current/bin/loom holds.
 #
 # The cargo build and a live loom process serving /api/beads run once, for real, in
 # acceptance.yml (loom-from-release), against the real build-tarball.sh output — not
@@ -18,7 +19,7 @@
 # lifecycle.md, UC-instance-lifecycle-15). defect: sp-kcx8.
 #
 # tier: T1
-# covers: spira/conf.sh spira/activate.sh UC-instance-lifecycle-15
+# covers: spira/conf.sh release/src/install.rs UC-instance-lifecycle-15
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -56,20 +57,18 @@ tar -czf "$TARBALL" -C "$SCRATCH/stage" "$FIXED_NAME"
 MOCK_SC="$SCRATCH/mock-systemctl"
 printf '#!/bin/sh\nexit 0\n' > "$MOCK_SC" && chmod +x "$MOCK_SC"
 
-# Minimal, isolated environment (mirrors test-activate.sh): SPIRA_DB/SPIRA_CONF point at
-# nothing so conf.sh derives from env alone, never the operator's real store or config.
+# Minimal, isolated environment (mirrors test-activate.sh's replacement, install.rs's own
+# unit tests): SPIRA_DB/SPIRA_CONF point at nothing so nothing here can read the operator's
+# real store or config. release install-tarball needs no SPIRA_CONF or SPIRA_HOME (its
+# roots come from SPIRA_RELEASES/SPIRA_RUN directly), unlike activate.sh's lib.sh sourcing.
 env -i \
     "PATH=$PATH" "HOME=$HOME" \
-    "SPIRA_HOME=$HERE" \
-    "SPIRA_DB=/nonexistent-spira-db" \
     "SPIRA_RUN=$RUN_DIR" \
-    "SPIRA_CONF=/nonexistent" \
     "SPIRA_RELEASES=$RELEASES" \
     "SPIRA_INSTANCE=prod" \
     "SPIRA_SYSTEMCTL=$MOCK_SC" \
-    "SPIRA_ACTIVATE_FORCE=1" \
-    activate.sh "$TARBALL" >&2
-wantrc "activate.sh exits 0" 0 "$?"
+    release install-tarball "$TARBALL" >&2
+wantrc "release install-tarball exits 0" 0 "$?"
 
 want "gap G8: the just-built marker (sp-x.fixed) is what's live after activation" \
     "sp-x.fixed" "$(cat "$RELEASES/current/bin/loom" 2>/dev/null || true)"

@@ -87,10 +87,15 @@ except Exception: print("")' 2>/dev/null)"
 # name on PATH, sp-gypjk) or by a path ending /$1, directly or through bash/sh/source; ""
 # if it only appears as an argument (a git file operation, a cat). Splits compound commands
 # on shell separators. An optional $3 names the one verb that stays allowed (queue stats).
+# An optional $4 (comma-separated) inverts that to a deny-list: only a subcommand named in
+# it counts as a hit, so e.g. "release build"/"release status" pass while "release
+# activate" does not (used for the release crate's own mutating subcommands, sp-jsnbm).
 _exec_ctx() {
     python3 -c '
 import sys, re
-script = sys.argv[1]; cmd = sys.argv[2]; allow = sys.argv[3] if len(sys.argv) > 3 else ""
+script = sys.argv[1]; cmd = sys.argv[2]
+allow = sys.argv[3] if len(sys.argv) > 3 else ""
+deny = sys.argv[4].split(",") if len(sys.argv) > 4 and sys.argv[4] else None
 EXEC = {"bash", "sh", "ksh", "zsh", "dash", "source", ".", "exec", "env", "timeout"}
 def is_script(tok):
     return tok == script or tok.endswith("/" + script)
@@ -110,6 +115,10 @@ def hit(text, depth=0):
         if toks and is_script(toks[0]):
             if allow and len(toks) > 1 and toks[1] == allow:
                 continue
+            if deny is not None:
+                if len(toks) > 1 and toks[1] in deny:
+                    return True
+                continue
             return True
     return False
 if hit(cmd): print("1")
@@ -118,12 +127,24 @@ if hit(cmd): print("1")
 
 reason=""
 
-for _script in landing.sh batch.sh verdict.sh slay.sh world.sh deploy.sh activate.sh promote.sh; do
+for _script in landing.sh batch.sh verdict.sh slay.sh world.sh deploy.sh promote.sh; do
     case "$cmd" in
         *"$_script"*)
             [ "$(_exec_ctx "$_script" "$cmd")" = "1" ] && { reason="aeons may not call $_script (sp-kz8ob: landing and batch handle forge writes; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)"; break; } ;;
     esac
 done
+
+# release's mutating subcommands (activate, install-tarball, rollback — sp-jsnbm: the
+# release crate's DESIGN.md) replace activate.sh's own fence entry: deploy.sh and
+# land-local are the only callers. build/verify/prune/status/stage/canary stay allowed —
+# an aeon may legitimately run those against its own worktree.
+if [ -z "$reason" ]; then
+    case "$cmd" in
+        *release*)
+            [ "$(_exec_ctx release "$cmd" "" "activate,install-tarball,rollback")" = "1" ] && \
+                reason="aeons may not call release activate/install-tarball/rollback (sp-kz8ob: landing and batch handle forge writes; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
+    esac
+fi
 
 if [ -z "$reason" ]; then
     # queue.sh is the queue binary now (queue/DESIGN.md §7.2 row 18), invoked by name:

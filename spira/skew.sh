@@ -27,7 +27,7 @@
 # Both are answerable from the artifact and the git tag — no working tree comparison, no
 # fetch required beyond what the tag list returns.
 #
-# `check` REPORTS; it does not repair. Activation is activate.sh's job.
+# `check` REPORTS; it does not repair. Activation is release install-tarball's job.
 #
 # EXIT   0  checked, and the activated release is the latest; MANIFEST matches its tag
 #        1  checked, and it is not — the finding is on stdout; with --escalate it has been escalated
@@ -298,7 +298,7 @@ except Exception:
     latest_tag="$(printf '%s\n' "$all_tags" | tail -1)"
 
     # Read the .tag sidecar. Sidecar lives in .tags/ beside the release dirs, not inside
-    # the release dir (which is read-only after activate.sh runs chmod -R a-w).
+    # the release dir (which is read-only after release install-tarball runs chmod -R a-w).
     local release_tag=""
     local tag_sidecar="$SPIRA_RELEASES/.tags/$activated_name"
     if [ -f "$tag_sidecar" ]; then
@@ -489,7 +489,7 @@ escalate() {
     elif [[ "$condition_key" == *"LOCAL-SKEW=1"* ]]; then
         default_action="what is running does not match local/main's head — land the round again with queue land-local, or undo with queue rollback-local; refresh will not act on its own"
     else
-        default_action="activate the latest published release — download the latest tarball and run activate.sh with it"
+        default_action="activate the latest published release — download the latest tarball and run release install-tarball with it"
     fi
     local _subj="The Spira copy in force is not the code that landed"
     local _body

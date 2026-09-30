@@ -2,11 +2,14 @@
 
 use release::activate::{self, Ctx};
 use release::build::{self, BuildOpts, RealCargo};
+use release::canary::{self, CanaryOpts};
 use release::config::{self, Config, Flags};
 use release::git::RealGit;
+use release::install::{self, InstallOpts, RealUnpack};
+use release::stage::{self, StageOpts};
 use release::systemctl::RealSystemctl;
 use release::verify::{self, VerifyOpts};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -17,6 +20,11 @@ const USAGE: &str = "usage:
   release rollback [--repo R] [--settle SECS]
   release prune [--keep N]
   release status
+  release install-tarball <tarball> [--dry-run] [--settle SECS]
+  release stage up [ROOT]
+  release stage down <ROOT>
+  release canary [--stage ROOT] [--deadline SECS]
+  release canary-worker
 every subcommand also takes --releases D and --run D";
 
 struct Args {
@@ -29,6 +37,9 @@ struct Args {
     landed_ref: String,
     settle: Duration,
     pre_activate: bool,
+    dry_run: bool,
+    stage: Option<String>,
+    deadline: Duration,
 }
 
 fn parse(argv: &[String]) -> Result<Args, String> {
@@ -42,6 +53,9 @@ fn parse(argv: &[String]) -> Result<Args, String> {
         landed_ref: "local/main".into(),
         settle: Duration::from_secs(3),
         pre_activate: true,
+        dry_run: false,
+        stage: None,
+        deadline: Duration::from_secs(120),
     };
     let mut it = argv.iter();
     while let Some(x) = it.next() {
@@ -57,6 +71,9 @@ fn parse(argv: &[String]) -> Result<Args, String> {
             "--landed-ref" => a.landed_ref = val(x)?,
             "--settle" => a.settle = Duration::from_secs(val(x)?.parse().map_err(|_| "--settle needs whole seconds".to_string())?),
             "--no-pre-activate" => a.pre_activate = false,
+            "--dry-run" => a.dry_run = true,
+            "--stage" => a.stage = Some(val(x)?),
+            "--deadline" => a.deadline = Duration::from_secs(val(x)?.parse().map_err(|_| "--deadline needs whole seconds".to_string())?),
             "-h" | "--help" => return Err(String::new()),
             f if f.starts_with('-') => return Err(format!("unknown flag {f}")),
             p => a.pos.push(p.to_string()),
@@ -69,15 +86,83 @@ fn system_dirs() -> Vec<PathBuf> {
     release::SYSTEM_DIRS.iter().map(PathBuf::from).collect()
 }
 
+fn which(prog: &str, path: Option<&String>) -> Option<PathBuf> {
+    let path = path.cloned().or_else(|| std::env::var("PATH").ok())?;
+    path.split(':').filter(|d| !d.is_empty()).map(|d| PathBuf::from(d).join(prog)).find(|p| p.is_file())
+}
+
+/// `stage up`'s roots: `SPIRA_RELEASE`'s own `spira/` (the release's tools, never a
+/// checkout — DESIGN.md "stage") and `bd-embedded` resolved from `PATH`. `TESTDB_SHARED`
+/// together with `TESTDB_BASELINE`, when both are set, is stage.sh's own fast path.
+/// `SPIRA_SCOPE_LABEL` is deliberately never read from the caller's environment: a stage
+/// always starts with it empty (DESIGN.md "stage").
+fn resolve_stage_opts(env: &config::Env, root: Option<PathBuf>) -> Result<StageOpts, String> {
+    let release = env.get("SPIRA_RELEASE").filter(|s| !s.is_empty()).ok_or("SPIRA_RELEASE is not set — stage needs it to find the release's own spira/ scripts")?;
+    let harness_spira = PathBuf::from(release).join("spira");
+    let bd_embedded = which("bd-embedded", env.get("PATH")).ok_or("bd-embedded not found; install: npm install -g @beads/bd")?;
+    let testdb_baseline = if env.get("TESTDB_SHARED").map(String::as_str) == Some("1") { env.get("TESTDB_BASELINE").filter(|s| !s.is_empty()).map(PathBuf::from) } else { None };
+    Ok(StageOpts { root, harness_spira, bd_embedded, testdb_baseline, scope_label: String::new() })
+}
+
 fn run(argv: &[String]) -> Result<(), (u8, String)> {
     let usage = |m: String| (2u8, if m.is_empty() { USAGE.to_string() } else { format!("{m}\n{USAGE}") });
     let a = parse(argv).map_err(usage)?;
     let (cmd, rest) = a.pos.split_first().ok_or_else(|| usage(String::new()))?;
     let want = |n: usize| if rest.len() == n { Ok(()) } else { Err(usage(format!("{cmd} takes {n} argument(s)"))) };
     let env = config::process_env();
+    let fail = |e: String| (1u8, e);
+
+    // stage/canary/canary-worker operate entirely under their own STAGE_ROOT (or, for
+    // canary-worker, a stage's inherited env) and never touch spira-releases/ or
+    // spira.toml — resolving Config here would make canary-worker (run inside an isolated
+    // stage that deliberately sets no SPIRA_RELEASES, DESIGN.md "stage": isolation) fail
+    // before it ever got to its own work, or worse, read the real host's spira.toml.
+    match cmd.as_str() {
+        "stage" => {
+            let (sub, srest) = rest.split_first().ok_or_else(|| usage("stage needs a subcommand: up or down".into()))?;
+            match sub.as_str() {
+                "up" => {
+                    if srest.len() > 1 {
+                        return Err(usage("stage up takes at most one argument (ROOT)".into()));
+                    }
+                    let so = resolve_stage_opts(&env, srest.first().map(PathBuf::from)).map_err(fail)?;
+                    let s = stage::up(&so).map_err(fail)?;
+                    for (k, v) in &s.env {
+                        println!("export {k}={v}");
+                    }
+                }
+                "down" => {
+                    let root = srest.first().ok_or_else(|| usage("stage down needs <ROOT>".into()))?;
+                    stage::down(Path::new(root)).map_err(fail)?;
+                }
+                other => return Err(usage(format!("unknown stage subcommand {other}"))),
+            }
+            return Ok(());
+        }
+        "canary" => {
+            want(0)?;
+            let external_stage = a.stage.as_ref().map(PathBuf::from);
+            // Only needed to stand up canary's OWN stage; with --stage it is never read.
+            let stage_opts = match &external_stage {
+                Some(_) => StageOpts { root: None, harness_spira: PathBuf::new(), bd_embedded: PathBuf::new(), testdb_baseline: None, scope_label: String::new() },
+                None => resolve_stage_opts(&env, None).map_err(fail)?,
+            };
+            let verdict_window = env.get("SPIRA_VERDICT_WINDOW").and_then(|s| s.parse().ok()).unwrap_or(400);
+            let o = CanaryOpts { external_stage, stage_opts, deadline: a.deadline, verdict_window };
+            let r = canary::canary(&o).map_err(fail)?;
+            println!("release: canary PASS — commit '{}' on origin/main in {}s (stage {})", r.commit, r.elapsed.as_secs(), r.stage_root.display());
+            return Ok(());
+        }
+        "canary-worker" => {
+            want(0)?;
+            canary::canary_worker().map_err(fail)?;
+            return Ok(());
+        }
+        _ => {}
+    }
+
     let cfg = Config::resolve(&a.flags, &env).map_err(|e| (1, e))?;
     let repo = || a.repo.clone().or_else(|| env.get("SPIRA_REPO").filter(|s| !s.is_empty()).map(PathBuf::from));
-    let fail = |e: String| (1u8, e);
     match cmd.as_str() {
         "build" => {
             want(1)?;
@@ -121,6 +206,22 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
         "status" => {
             want(0)?;
             print!("{}", activate::status(&cfg).map_err(fail)?);
+        }
+        "install-tarball" => {
+            want(1)?;
+            let sc = RealSystemctl::from_env();
+            let o = InstallOpts { dry_run: a.dry_run, settle: a.settle };
+            let r = install::install(&cfg, &sc, &RealUnpack, &PathBuf::from(&rest[0]), &o).map_err(fail)?;
+            println!(
+                "release: {} {}; {} unit(s) restarted [{}]{}, {} release(s) pruned [{}]",
+                r.name,
+                if a.dry_run { "would install" } else if r.fresh { "installed" } else { "already present" },
+                r.restarted.len(),
+                r.restarted.join(" "),
+                if r.restart_failed.is_empty() { String::new() } else { format!(" ({} failed)", r.restart_failed.len()) },
+                r.pruned.len(),
+                r.pruned.join(" "),
+            );
         }
         other => return Err(usage(format!("unknown subcommand {other}"))),
     }

@@ -7,6 +7,7 @@ use crate::build::{self, BuildOpts, Cargo};
 use crate::config::{Config, Env, Flags};
 use crate::fsutil;
 use crate::git::Git;
+use crate::install::{self, InstallOpts, Unpack};
 use crate::manifest::{Entry, Manifest};
 use crate::systemctl::{Systemctl, UnitState};
 use crate::units;
@@ -185,6 +186,11 @@ struct FakeSystemctl {
     restarts: RefCell<Vec<String>>,
     reloads: RefCell<usize>,
     poison: Option<String>,
+    /// Unit names `list_active` must never return, mirroring a `systemd-run` transient
+    /// unit (no file of its own).
+    transient: BTreeSet<String>,
+    /// When set, `restart` fails for this unit name instead of updating its state.
+    restart_fails: BTreeSet<String>,
 }
 
 impl FakeSystemctl {
@@ -195,7 +201,15 @@ impl FakeSystemctl {
         s.insert("spira-watch-pool-prod.service".into(), st("active", "simple"));
         s.insert("spira-job-prod.service".into(), st("active", "oneshot"));
         s.insert("shared.service".into(), st("inactive", "oneshot"));
-        FakeSystemctl { unit_dir, states: RefCell::new(s), restarts: RefCell::new(vec![]), reloads: RefCell::new(0), poison: None }
+        FakeSystemctl {
+            unit_dir,
+            states: RefCell::new(s),
+            restarts: RefCell::new(vec![]),
+            reloads: RefCell::new(0),
+            poison: None,
+            transient: BTreeSet::new(),
+            restart_fails: BTreeSet::new(),
+        }
     }
 }
 
@@ -209,6 +223,9 @@ impl Systemctl for FakeSystemctl {
     }
     fn restart(&self, unit: &str) -> Result<(), String> {
         self.restarts.borrow_mut().push(unit.into());
+        if self.restart_fails.contains(unit) {
+            return Err(format!("{unit}: simulated restart failure"));
+        }
         let text = fs::read_to_string(self.unit_dir.join(unit)).unwrap_or_default();
         let bad = self.poison.as_ref().map(|p| units::exec_lines(&text).iter().any(|l| l.contains(p.as_str()))).unwrap_or(false);
         let mut s = self.states.borrow_mut();
@@ -221,6 +238,17 @@ impl Systemctl for FakeSystemctl {
             e.result = "success".into();
         }
         Ok(())
+    }
+    fn list_active(&self, glob: &str) -> Result<Vec<String>, String> {
+        // The only glob shapes install-tarball ever passes: "<prefix>*<suffix>".
+        let (pre, suf) = glob.split_once('*').unwrap_or((glob, ""));
+        Ok(self
+            .states
+            .borrow()
+            .iter()
+            .filter(|(name, st)| st.active == "active" && name.starts_with(pre) && name.ends_with(suf) && !self.transient.contains(name.as_str()))
+            .map(|(name, _)| name.clone())
+            .collect())
     }
 }
 
@@ -985,4 +1013,242 @@ fn a_configured_threshold_changes_when_status_alerts() {
     let flags = Flags { releases: Some(w.cfg.releases.clone()), run: w.cfg.run.clone(), keep: Some(2) };
     let low_cfg = Config::resolve_with(&flags, &env, None).unwrap();
     assert!(activate::status(&low_cfg).unwrap().contains("ALERT hotfix"));
+}
+
+// ---------------------------------------------------------------- install-tarball
+
+/// An `Unpack` that ignores the tarball's actual bytes (tests never build a real
+/// `.tar.gz`) and materialises `into/<name>/` with the given files, mirroring what
+/// `spira/build-tarball.sh`'s tarball contains: `git archive` output plus `bin/`.
+struct FakeUnpack {
+    name: &'static str,
+    files: Vec<(&'static str, &'static str, bool)>,
+    fails: bool,
+}
+
+impl Unpack for FakeUnpack {
+    fn extract(&self, _tarball: &Path, into: &Path) -> Result<(), String> {
+        if self.fails {
+            return Err("simulated extract failure".into());
+        }
+        let root = into.join(self.name);
+        for (p, body, x) in &self.files {
+            if *x {
+                exe(&root.join(p), body)
+            } else {
+                file(&root.join(p), body)
+            }
+        }
+        Ok(())
+    }
+}
+
+fn tarball_bins() -> Vec<(&'static str, &'static str, bool)> {
+    vec![("bin/loom", "#!/bin/sh\n", true), ("bin/panel", "#!/bin/sh\n", true), ("MANIFEST", "commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ntimestamp 20260101T000000Z\nrepo spira\n", false)]
+}
+
+/// A releases-dir World with no build/verify machinery involved — install-tarball never
+/// touches `cfg.run`'s history/hotfix state, so `run` is left unset here on purpose.
+fn install_world() -> (Sandbox, Config) {
+    let sb = Sandbox::new();
+    let mut env = Env::new();
+    env.insert("SPIRA_UNIT_DIR".into(), sb.p().join("units").display().to_string());
+    let flags = Flags { releases: Some(sb.p().join("rel")), run: None, keep: Some(2) };
+    let cfg = Config::resolve_with(&flags, &env, None).unwrap();
+    fs::create_dir_all(sb.p().join("units")).unwrap();
+    (sb, cfg)
+}
+
+fn touch_tarball(sb: &Sandbox, name: &str) -> PathBuf {
+    let tb = sb.p().join(format!("{name}.tar.gz"));
+    file(&tb, "");
+    tb
+}
+
+#[test]
+fn release_name_from_tarball_accepts_the_naming_convention_and_refuses_the_rest() {
+    assert_eq!(install::release_name_from_tarball(Path::new("spira-20260101T000000Z.tar.gz")).unwrap(), "spira-20260101T000000Z");
+    assert_eq!(install::release_name_from_tarball(Path::new("/tmp/x/spira-1.tgz")).unwrap(), "spira-1");
+    assert!(install::release_name_from_tarball(Path::new("spira-1.zip")).is_err());
+    assert!(install::release_name_from_tarball(Path::new("release.tar.gz")).is_err());
+    assert!(install::release_name_from_tarball(Path::new("spira-.tar.gz")).is_err());
+}
+
+#[test]
+fn install_tarball_unpacks_read_only_swaps_current_and_restarts_active_services() {
+    let (sb, cfg) = install_world();
+    let sc = FakeSystemctl::new(cfg.unit_dir.clone());
+    let tb = touch_tarball(&sb, "spira-20260101T000000Z");
+    let un = FakeUnpack { name: "spira-20260101T000000Z", files: tarball_bins(), fails: false };
+
+    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO }).unwrap();
+
+    assert_eq!(r.name, "spira-20260101T000000Z");
+    assert!(r.fresh);
+    let dir = cfg.releases.join(&r.name);
+    assert!(dir.join("bin/loom").exists());
+    // Read-only: the fsutil::set_readonly sweep cleared every write bit.
+    assert_eq!(fs::metadata(dir.join("bin/loom")).unwrap().permissions().mode() & 0o222, 0);
+    assert_eq!(fs::metadata(&dir).unwrap().permissions().mode() & 0o222, 0);
+    assert_eq!(fs::read_link(cfg.releases.join("current")).unwrap().to_string_lossy(), r.name);
+    // FakeSystemctl seeds two active spira-*.service units (spira-tool-prod, spira-watch-pool-prod)
+    // plus one active oneshot (spira-job-prod, also a .service); install-tarball restarts every
+    // active spira-*.service unconditionally (DESIGN.md "install-tarball"), unlike release
+    // activate's changed-ExecStart-only rule.
+    let mut restarted = r.restarted.clone();
+    restarted.sort();
+    assert_eq!(restarted, vec!["spira-job-prod.service", "spira-tool-prod.service", "spira-watch-pool-prod.service"]);
+    assert_eq!(*sc.reloads.borrow(), 1);
+    assert!(r.restart_failed.is_empty());
+    fsutil::make_writable(&dir);
+}
+
+#[test]
+fn install_tarball_is_idempotent_when_the_release_already_exists() {
+    let (sb, cfg) = install_world();
+    let sc = FakeSystemctl::new(cfg.unit_dir.clone());
+    fs::create_dir_all(cfg.releases.join("spira-20260101T000000Z")).unwrap();
+    let tb = touch_tarball(&sb, "spira-20260101T000000Z");
+    // Extraction must never be attempted for an already-present release (releases are
+    // immutable); this Unpack always errors, so a call would fail the install.
+    let un = FakeUnpack { name: "spira-20260101T000000Z", files: vec![], fails: true };
+
+    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO }).unwrap();
+    assert!(!r.fresh);
+    assert_eq!(fs::read_link(cfg.releases.join("current")).unwrap().to_string_lossy(), "spira-20260101T000000Z");
+}
+
+#[test]
+fn install_tarball_refuses_when_the_archive_does_not_produce_the_promised_directory() {
+    let (sb, cfg) = install_world();
+    let sc = FakeSystemctl::new(cfg.unit_dir.clone());
+    let tb = touch_tarball(&sb, "spira-20260101T000000Z");
+    // The archive unpacks to a DIFFERENT top-level name than the tarball promised.
+    let un = FakeUnpack { name: "spira-99999999T999999Z", files: vec![("MANIFEST", "commit a\n", false)], fails: false };
+
+    let err = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO }).unwrap_err();
+    assert!(err.contains("did not unpack to the expected directory"), "{err}");
+    assert!(!cfg.releases.join("current").exists());
+    assert!(!cfg.releases.join("spira-20260101T000000Z").exists());
+}
+
+#[test]
+fn install_tarball_refuses_a_missing_file_or_a_bad_name_before_touching_anything() {
+    let (sb, cfg) = install_world();
+    let sc = FakeSystemctl::new(cfg.unit_dir.clone());
+    let un = FakeUnpack { name: "x", files: vec![], fails: true };
+
+    let missing = sb.p().join("spira-1.tar.gz");
+    let e1 = install::install(&cfg, &sc, &un, &missing, &InstallOpts::default()).unwrap_err();
+    assert!(e1.contains("not found"), "{e1}");
+
+    let bad_name = touch_tarball(&sb, "notspira");
+    let e2 = install::install(&cfg, &sc, &un, &bad_name, &InstallOpts::default()).unwrap_err();
+    assert!(e2.contains("must be named"), "{e2}");
+    assert!(!cfg.releases.exists() || fs::read_dir(&cfg.releases).unwrap().next().is_none());
+}
+
+#[test]
+fn install_tarball_dry_run_reports_intent_and_changes_nothing() {
+    let (sb, cfg) = install_world();
+    let sc = FakeSystemctl::new(cfg.unit_dir.clone());
+    let tb = touch_tarball(&sb, "spira-20260101T000000Z");
+    let un = FakeUnpack { name: "spira-20260101T000000Z", files: tarball_bins(), fails: true };
+
+    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: true, settle: Duration::ZERO }).unwrap();
+    assert_eq!(r.name, "spira-20260101T000000Z");
+    assert!(!cfg.releases.join("spira-20260101T000000Z").exists());
+    assert!(!cfg.releases.join("current").exists());
+    assert_eq!(*sc.reloads.borrow(), 0);
+    assert!(sc.restarts.borrow().is_empty());
+}
+
+#[test]
+fn install_tarball_never_restarts_a_transient_unit() {
+    let (sb, cfg) = install_world();
+    let sc = FakeSystemctl::new(cfg.unit_dir.clone());
+    sc.states.borrow_mut().insert("spira-landing-prod.service".into(), UnitState { active: "active".into(), result: "success".into(), kind: "simple".into() });
+    // Mark it transient (a systemd-run unit with no file of its own — sp-hvtdj).
+    let sc = FakeSystemctl { transient: BTreeSet::from(["spira-landing-prod.service".to_string()]), ..sc };
+    let tb = touch_tarball(&sb, "spira-20260101T000000Z");
+    let un = FakeUnpack { name: "spira-20260101T000000Z", files: tarball_bins(), fails: false };
+
+    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO }).unwrap();
+    assert!(!r.restarted.contains(&"spira-landing-prod.service".to_string()), "{:?}", r.restarted);
+}
+
+#[test]
+fn install_tarball_reports_a_restart_failure_but_does_not_fail_the_install() {
+    let (sb, cfg) = install_world();
+    let sc = FakeSystemctl::new(cfg.unit_dir.clone());
+    let sc = FakeSystemctl { restart_fails: BTreeSet::from(["spira-tool-prod.service".to_string()]), ..sc };
+    let tb = touch_tarball(&sb, "spira-20260101T000000Z");
+    let un = FakeUnpack { name: "spira-20260101T000000Z", files: tarball_bins(), fails: false };
+
+    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO }).unwrap();
+    assert_eq!(r.restart_failed.len(), 1);
+    assert!(r.restart_failed[0].starts_with("spira-tool-prod.service"), "{:?}", r.restart_failed);
+    assert!(r.restarted.contains(&"spira-watch-pool-prod.service".to_string()));
+    fsutil::make_writable(&cfg.releases.join(&r.name));
+}
+
+#[test]
+fn install_tarball_prunes_the_oldest_timestamp_named_releases_beyond_keep_never_current() {
+    let (sb, cfg) = install_world();
+    let sc = FakeSystemctl::new(cfg.unit_dir.clone());
+    fs::create_dir_all(&cfg.releases).unwrap();
+    for old in ["spira-20250101T000000Z", "spira-20250201T000000Z", "spira-20250301T000000Z"] {
+        fs::create_dir_all(cfg.releases.join(old)).unwrap();
+    }
+    let tb = touch_tarball(&sb, "spira-20260101T000000Z");
+    let un = FakeUnpack { name: "spira-20260101T000000Z", files: tarball_bins(), fails: false };
+
+    // keep=2: the new install plus the newest old one survive; the two oldest are pruned.
+    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO }).unwrap();
+    assert!(r.prune_failed.is_empty(), "{:?}", r.prune_failed);
+    let mut pruned = r.pruned.clone();
+    pruned.sort();
+    assert_eq!(pruned, vec!["spira-20250101T000000Z", "spira-20250201T000000Z"]);
+    assert!(cfg.releases.join("spira-20250301T000000Z").exists());
+    assert!(cfg.releases.join("spira-20260101T000000Z").exists());
+    fsutil::make_writable(&cfg.releases.join("spira-20260101T000000Z"));
+}
+
+
+// ---------------------------------------------------------------- stage
+
+#[test]
+fn stage_fayth_names_the_canary_persona_with_one_concurrent_slot() {
+    let f = crate::stage::fayth_content();
+    assert!(f.contains("FAYTH_NAME=canary"));
+    assert!(f.contains("FAYTH_MAX_CONCURRENT=1"));
+    assert!(f.contains("SPIRA_SCOPE_LABEL"));
+}
+
+#[test]
+fn stage_repo_map_line_has_six_columns_named_for_the_repo_and_an_empty_gate() {
+    let line = crate::stage::repo_map_line(Path::new("/tmp/x/repo"));
+    let cols: Vec<&str> = line.trim_end().split('|').map(str::trim).collect();
+    assert_eq!(cols.len(), 6, "{line:?}");
+    assert_eq!(cols[0], "repo");
+    assert_eq!(cols[1], "/tmp/x/repo");
+    assert_eq!(cols[2], "push");
+    assert_eq!(cols[3], "origin/main");
+    assert_eq!(cols[4], "");
+    assert_eq!(cols[5], "");
+}
+
+#[test]
+fn stage_up_refuses_an_existing_root_and_down_refuses_a_non_stage_directory() {
+    let sb = Sandbox::new();
+    let existing = sb.p().join("already-here");
+    fs::create_dir_all(&existing).unwrap();
+    let so = crate::stage::StageOpts { root: Some(existing.clone()), harness_spira: sb.p().join("nope"), bd_embedded: sb.p().join("nope"), testdb_baseline: None, scope_label: String::new() };
+    let err = crate::stage::up(&so).unwrap_err();
+    assert!(err.contains("already exists"), "{err}");
+
+    let not_a_stage = sb.p().join("plain-dir");
+    fs::create_dir_all(&not_a_stage).unwrap();
+    let err2 = crate::stage::down(&not_a_stage).unwrap_err();
+    assert!(err2.contains("does not look like a stage"), "{err2}");
 }

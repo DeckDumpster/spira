@@ -142,9 +142,9 @@ _ask() {
 if [ -z "$_prod_given" ]; then
     _prod="$(_ask \
         "SPIRA_PROD — the activated release directory systemd executes from.
-  The default resolves to SPIRA_RELEASES/current, the symlink activate.sh
+  The default resolves to SPIRA_RELEASES/current, the symlink release install-tarball
   swaps on each deployment. No release is activated on a fresh install;
-  run activate.sh before re-running install.sh." \
+  run release install-tarball before re-running install.sh." \
         SPIRA_PROD "$(_def SPIRA_PROD)")"
 fi
 
@@ -214,7 +214,7 @@ HEADER
     cat <<PROD_COMMENT
 # SPIRA_PROD: the activated release directory. systemd executes every unit's
 # ExecStart from this path. The default is SPIRA_RELEASES/current; install.sh
-# refuses until a release is activated with activate.sh.
+# refuses until a release is activated with release install-tarball.
 PROD_COMMENT
     printf 'SPIRA_PROD = %s\n\n' "$_prod"
 

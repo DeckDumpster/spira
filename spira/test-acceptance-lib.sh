@@ -134,18 +134,20 @@ is "pair: nothing missing -> empty" "" "$(_lib_check_bins "$(dirname "$_rel_full
 
 # ===========================================================================
 echo
-echo "6. _install_from_tarball: forwards conf/releases/force to activate.sh, propagates its exit"
+echo "6. _install_from_tarball: forwards conf/releases/run and the subcommand to release install-tarball, propagates its exit"
 # ===========================================================================
 
 FAKEHERE="$SCRATCH/fakehere"
 mkdir -p "$FAKEHERE"
-cat > "$FAKEHERE/activate.sh" <<'EOF'
+# release install-tarball (sp-jsnbm) replaced activate.sh; the fake stands in for the
+# release binary and takes the subcommand as its own first argument.
+cat > "$FAKEHERE/release" <<'EOF'
 #!/bin/sh
-printf 'activate: tb=%s conf=%s releases=%s force=%s\n' \
-    "$1" "$SPIRA_CONF" "$SPIRA_RELEASES" "$SPIRA_ACTIVATE_FORCE"
+printf 'release: sub=%s tb=%s conf=%s releases=%s run=%s\n' \
+    "$1" "$2" "$SPIRA_CONF" "$SPIRA_RELEASES" "$SPIRA_RUN"
 exit "${ACTIVATE_EXIT:-0}"
 EOF
-chmod +x "$FAKEHERE/activate.sh"
+chmod +x "$FAKEHERE/release"
 
 _lib_install_from_tarball() {  # <tarball> <releases-dir> <conf>
     PATH="$FAKEHERE:$PATH" bash -c '. "$0"; HERE="$1"; _install_from_tarball "$2" "$3" "$4"' \
@@ -154,16 +156,17 @@ _lib_install_from_tarball() {  # <tarball> <releases-dir> <conf>
 
 _ift_out="$(_lib_install_from_tarball "/tmp/pinned.tar.gz" "/tmp/pinned-rel" "/tmp/pinned-conf")"
 _ift_rc=$?
-is "activate.sh success -> _install_from_tarball exits 0" "0" "$_ift_rc"
+is "release install-tarball success -> _install_from_tarball exits 0" "0" "$_ift_rc"
+want "subcommand is install-tarball" "sub=install-tarball"     "$_ift_out"
 want "tarball path forwarded"   "tb=/tmp/pinned.tar.gz"      "$_ift_out"
 want "conf forwarded"           "conf=/tmp/pinned-conf"      "$_ift_out"
 want "releases forwarded"       "releases=/tmp/pinned-rel"   "$_ift_out"
-want "SPIRA_ACTIVATE_FORCE=1"   "force=1"                    "$_ift_out"
+want "run derived as a sibling of releases' parent" "run=/tmp/run" "$_ift_out"
 
 ACTIVATE_EXIT=1 PATH="$FAKEHERE:$PATH" bash -c '. "$0"; HERE="$1"; _install_from_tarball "$2" "$3" "$4"' \
     "$LIB" "$FAKEHERE" "/tmp/x.tar.gz" "/tmp/rel" "/tmp/conf" >/dev/null 2>&1
 _ift_fail_rc=$?
-is "activate.sh failure -> _install_from_tarball returns non-zero" "1" "$_ift_fail_rc"
+is "release install-tarball failure -> _install_from_tarball returns non-zero" "1" "$_ift_fail_rc"
 
 # ===========================================================================
 echo
