@@ -7,20 +7,23 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
-MAIL="$HERE/mail"
+# mail is a compiled Rust binary now (sp-ooh1k) — there is no `cmd_send()` bash function
+# left to scan a case statement out of. `run_send` in main.rs is the same option loop,
+# one `"--flag" => { ... }` match arm per option; read that file's source instead.
+MAIL_MAIN_RS="$HERE/../mail/src/main.rs"
 CHAMBER="$HERE/chamber"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
-# Extract cmd_send's known --options from mail by scanning its option loop.
+# Extract run_send's known --options from mail/src/main.rs by scanning its match arms.
 # Returns one option per line, sorted.
 cmd_send_opts() {
-    python3 - "$MAIL" <<'PY'
+    python3 - "$MAIL_MAIN_RS" <<'PY'
 import re, sys
 text = open(sys.argv[1]).read()
-m = re.search(r'^cmd_send\(\).*?^}', text, re.MULTILINE | re.DOTALL)
+m = re.search(r'^fn run_send\(.*?\n^}', text, re.MULTILINE | re.DOTALL)
 if m:
-    for o in sorted(set(re.findall(r'^\s+(--[a-z][a-z-]+)\)', m.group(0), re.MULTILINE))):
+    for o in sorted(set(re.findall(r'"(--[a-z][a-z-]+)"\s*=>', m.group(0)))):
         print(o)
 PY
 }

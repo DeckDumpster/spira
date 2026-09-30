@@ -312,38 +312,35 @@ is "both concurrent sends land as distinct files (no msgid collision)" "2" "$con
 echo
 echo "G-11: repeat guard's check-then-stamp is atomic under a forced race (sp-ifh5h)"
 
-# SEEN RED FIRST (before the sp-ifh5h fix): two callers that both reached _repeat_check
-# before either reached _repeat_stamp both saw "no stamp yet" and both proceeded. The forced
-# interleave below reproduces exactly that window: caller A's check is left holding the
-# fingerprint's lock, unstamped, while caller B's check for the identical subject runs
-# concurrently. B must block in flock() rather than read a stale "no stamp" state, and
-# only see the fresh stamp once A stamps and releases.
+# SEEN RED FIRST (before the sp-ifh5h fix): two callers that both reached the repeat check
+# before either stamped both saw "no stamp yet" and both proceeded. mail's per-fingerprint
+# flock (mail/src/repeat.rs) is held from the check through delivery and the stamp, not
+# released and reacquired around them, so this needs no artificial interleave any more (that
+# trick only existed to force the race while the check was a sourced bash function with its
+# own global _REPEAT_FP/_REPEAT_LOCK_FD — a compiled binary has neither to reach into): two
+# real, concurrent `mail send` processes for the identical subject already race on the same
+# lock file, and the lock guarantees exactly one passes regardless of which starts first.
 CONC_SUBJ="Concurrent repeat-guard race subject for G-11"
-_REPEAT_FP=""
-_repeat_check operator "$CONC_SUBJ" >/dev/null 2>&1; race_rc_a=$?
-is "caller A's check passes and holds the lock, unstamped" 0 "$race_rc_a"
+qbody "$CONC_SUBJ" "pick one" > "$TMP/race-body"
 
+race_a_rc_file="$TMP/race-a-rc"
 race_b_rc_file="$TMP/race-b-rc"
-(
-    # Each subshell inherits A's lock fd by fork(2): flock(2) locks belong to the open file
-    # DESCRIPTION, not a single descriptor, so closing only A's copy below would not release
-    # it while this inherited copy stays open. Close it here first.
-    exec {_REPEAT_LOCK_FD}>&-
-    _REPEAT_LOCK_FD=""
-    _REPEAT_FP=""
-    _repeat_check operator "$CONC_SUBJ" >/dev/null 2>&1
-    echo $? > "$race_b_rc_file"
-) &
+( run send operator --from "Sentinel <sentinel@spira>" --subject "$CONC_SUBJ" \
+    --kind question --default "pick one" < "$TMP/race-body" >/dev/null 2>&1
+  echo $? > "$race_a_rc_file" ) &
+pid_a=$!
+( run send operator --from "Sentinel <sentinel@spira>" --subject "$CONC_SUBJ" \
+    --kind question --default "pick one" < "$TMP/race-body" >/dev/null 2>&1
+  echo $? > "$race_b_rc_file" ) &
 pid_b=$!
 
-# Give B time to reach flock() and start blocking on A's still-held lock (best effort; the
-# lock guarantees correctness regardless of exactly how long this is).
-sleep 0.3
-_repeat_stamp   # stamps and releases A's lock — exactly one of A/B may pass unrefused
-
-wait "$pid_b"
+wait "$pid_a" "$pid_b"
+race_rc_a="$(cat "$race_a_rc_file" 2>/dev/null)"
 race_rc_b="$(cat "$race_b_rc_file" 2>/dev/null)"
-is "caller B's racing check for the same subject is refused once A has stamped" "1" "${race_rc_b:-unset}"
+race_successes=0
+[ "$race_rc_a" = 0 ] && race_successes=$((race_successes + 1))
+[ "$race_rc_b" = 0 ] && race_successes=$((race_successes + 1))
+is "exactly one of the two racing sends succeeds (rc_a=$race_rc_a rc_b=$race_rc_b)" "1" "$race_successes"
 
 # ==========================================================================
 # T2 — ARCHIVIST DIGEST GUARD END TO END (sp-9zthk)
