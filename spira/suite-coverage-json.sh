@@ -7,7 +7,7 @@
 #
 # ONE PARSER: this sources spira/suite-covers.sh (suite_tier_of/suite_covers_of) rather than
 # re-reading the header format itself, so the JSON this emits can never drift from what
-# suites.sh and gate-spira.sh already agree a header means.
+# suites.sh and gate-touched.sh already agree a header means.
 #
 # --ref reads suites out of git history, not the working tree, so a caller can compare a
 # branch's tip against its base (spira/plan-lint.sh --orphans) without a second checkout.

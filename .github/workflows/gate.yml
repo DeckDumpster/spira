@@ -432,12 +432,28 @@ jobs:
         # Cheap, pure Rust (spira-lint, downloaded above with the other release
         # binaries), and they fail on the things no suite can see: operator
         # infrastructure named in a public repo, configured names written as
-        # literals, and scratch paths escaping into tracked files. Ported from
-        # standalone bash scripts to spira-lint rules of the same name (sp-ekkak).
+        # literals, scratch paths escaping into tracked files. Ported from
+        # standalone bash scripts to spira-lint rules of the same name (sp-ekkak):
+        # inventory, literal-lint, scratch-fence, then (sp-hyc3a, carrying out
+        # sp-nhid0's decision to retire the dead gate-spira.sh that used to run
+        # them) bd-stdin-lint, gh-intake-lint, incident-cause-lint, tmux-scope-fence
+        # and wiki-add-fence, plus testdb-mode-lint (already had a live caller, no
+        # re-homing needed, added here for CI parity). orphan-test.sh is not yet a
+        # spira-lint rule, so it still runs as a script; it SKIPs (77) without a
+        # SPIRA_GATE_BASE diff, which this job never sets, so it is inert here but
+        # harmless. sop.sh lint and suite-state-fence.sh are not here: both need a
+        # real SPIRA_DB, which this fresh runner never has.
         run: |
-          bin/spira-lint --only inventory      # path-ok: CI downloads release binaries straight into bin/; no conf.sh to resolve spira_bin from in a workflow step
-          bin/spira-lint --only literal-lint   # path-ok: see above
-          bin/spira-lint --only scratch-fence  # path-ok: see above
+          bin/spira-lint --only inventory            # path-ok: CI downloads release binaries straight into bin/; no conf.sh to resolve spira_bin from in a workflow step
+          bin/spira-lint --only literal-lint          # path-ok: see above
+          bin/spira-lint --only scratch-fence         # path-ok: see above
+          bin/spira-lint --only testdb-mode-lint       # path-ok: see above
+          bin/spira-lint --only bd-stdin-lint          # path-ok: see above
+          bin/spira-lint --only gh-intake-lint         # path-ok: see above
+          bin/spira-lint --only incident-cause-lint    # path-ok: see above
+          bin/spira-lint --only tmux-scope-fence       # path-ok: see above
+          bin/spira-lint --only wiki-add-fence         # path-ok: see above
+          bash spira/orphan-test.sh || [ $? -eq 77 ]
 
       - name: Suites
         # The exit-code mapping matches the repo-map's gate command exactly. Keep
