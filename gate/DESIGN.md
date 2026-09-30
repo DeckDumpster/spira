@@ -644,8 +644,10 @@ closes the question the gate could not answer.
 * **In the gate tree, not a shared cache under SPIRA_RUN.** A shared cache keyed by tree would
   let concurrent gates prune each other's directories; inside the locked gate tree nothing
   else reads them, and `git clean -e target` already keeps them across checkouts.
-* **The build stays incremental in the shared `target/`.** A cold per-tree `CARGO_TARGET_DIR`
-  would rebuild every dependency for every new base (minutes a gate). What is attributed is
+* **The build stays in the tree's own `target/`** (amended sp-z61hj: one-shot, not
+  incremental, and its build directories live on tmpfs — see "Build IO" below). A cold
+  per-tree `CARGO_TARGET_DIR` would rebuild every dependency for every new base (minutes a
+  gate). What is attributed is
   the binary the steps run: copied out of a build run in a tree proved to hold the id.
 * **Copying is Rust (`install_tools`), not more shell in the tools string.** The proof and the
   install are logic; the tools string stays `cargo build … && [ -x … ]`.
@@ -773,3 +775,36 @@ gate` is green (149 tests, including `a_unit_gate_builds_once_and_every_other_co
 keeps_the_build_fence` and, after the sp-quu2w merge, `the_checked_in_definition_keeps_a_
 compile_check_and_proves_its_fences`). The real gate's own VERDICT on the merged head is the
 final proof; see the bead's report for the line.
+
+## Build IO (sp-z61hj)
+
+Full contract: `spira-config/DESIGN-build-cache.md`. In the gate:
+
+* **Every build compiles through the box's sccache.** The wrapper is resolved on the PATH the
+  gate command gets (`World::build_wrapper`); `RUSTC_WRAPPER` and
+  `SCCACHE_IGNORE_SERVER_IO_ERROR=1` join the command's environment (with
+  `SPIRA_BUILD_CACHE`, so testenv resolves the same). sccache absent →
+  `NO_VERDICT reason=no-build-cache` for a trial that builds in the tree (a `bin` line, a unit
+  composition, `--release-bins`), before anything builds; a trial that builds nothing (a
+  column-gated repository, the suites' fixture repositories) does not need it. The tmpfs
+  preparation below applies to the same trials. `SPIRA_BUILD_CACHE=off` is
+  honoured and printed.
+* **The tools phase and the unit phases are one-shot**: `--config
+  profile.aeon.incremental=false` (never `CARGO_INCREMENTAL`, which sccache hashes into every
+  key and so would split the cache from an aeon's interactive builds).
+* **The gate tree builds on tmpfs** (`src/target.rs`, `World::target_on_tmpfs`): after the
+  checkout, `target/{aeon,release,debug,gate-tools}` are links into
+  `$SPIRA_GATE_TARGET_ROOT` (default `/tmp/spira-gate-target-<run hash>`); orphaned
+  directories are removed, the least recently used unlocked ones evicted over
+  `SPIRA_GATE_TARGET_CAP_MIB`, and short of room (`_MIN_FREE_MIB`, `_MIN_MEM_MIB`) is
+  `NO_VERDICT reason=scratch-short` — never the disk.
+* Measured on a one-line Rust probe (unit composition, cold gate tree): 1,020,960,768 bytes
+  written before; see the bead's closing note for after.
+* **`gate.sh --release-bins <branch> <repo>`** (the hand landing): on a PASS, `cargo build
+  --release --workspace --locked` (one-shot, through the cache) runs in the gate tree, whose
+  `target/release` is on tmpfs, and the gate prints the `queue land-local … --worktree <gate
+  tree>` that ships it. The gate tree holds the judged (merged) tree, which is the landing
+  head's tree, so land-local's tree check accepts it; a failed build empties
+  `target/release`, so an older tree's binaries can never be shipped from it. This replaces
+  the release build a hand landing ran in its worktree on the disk. The verdict is unchanged.
+

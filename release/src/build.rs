@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Compiles the workspace in `tree` with `CARGO_TARGET_DIR=target`. A trait so the rest of
+/// Compiles the workspace in `tree` into the target directory `target`. A trait so the rest of
 /// build is tested without cargo.
 pub trait Cargo {
     fn build(&self, tree: &Path, target: &Path) -> Result<(), String>;
@@ -18,10 +18,22 @@ pub struct RealCargo;
 
 impl Cargo for RealCargo {
     fn build(&self, tree: &Path, target: &Path) -> Result<(), String> {
+        // Through the box's compilation cache (sp-z61hj; spira-config/DESIGN-build-cache.md):
+        // absent sccache refuses. The target is a `--target-dir` argument, never the
+        // CARGO_TARGET_DIR variable, which sccache hashes into every key — two releases built
+        // that way would share no dependency.
+        let wrapper = spira_config::build::wrapper_from_env()?;
+        if wrapper == spira_config::build::Wrapper::Off {
+            eprintln!("release: {}", wrapper.describe());
+        }
         let st = Command::new("cargo")
-            .args(["build", "--release", "--workspace", "--locked"])
+            .args(["build", "--release", "--workspace", "--locked", "--target-dir"])
+            .arg(target)
+            .args(spira_config::build::one_shot("release"))
+            .envs(wrapper.env())
+            .env_remove("CARGO_TARGET_DIR")
+            .env_remove("CARGO_INCREMENTAL")
             .current_dir(tree)
-            .env("CARGO_TARGET_DIR", target)
             .stdout(std::io::stderr())
             .status()
             .map_err(|e| format!("cannot run cargo: {e}"))?;

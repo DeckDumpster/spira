@@ -8,6 +8,7 @@ pub mod container;
 pub mod fixture;
 pub mod plan;
 pub mod prebuilt;
+pub mod reap;
 pub mod record;
 pub mod run;
 pub mod runtime;

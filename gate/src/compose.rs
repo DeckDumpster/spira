@@ -377,11 +377,11 @@ pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2
     [
         (
             "build",
-            format!("cargo build --profile aeon -j {jobs} --all-targets{p}"),
+            format!("cargo build --profile aeon {} -j {jobs} --all-targets{p}", spira_config::build::one_shot_words("aeon")),
         ),
         (
             "test",
-            format!("cargo test --profile aeon -j {jobs}{p} -- --test-threads={jobs}"),
+            format!("cargo test --profile aeon {} -j {jobs}{p} -- --test-threads={jobs}", spira_config::build::one_shot_words("aeon")),
         ),
     ]
 }
@@ -783,12 +783,12 @@ mod tests {
         assert_eq!(b.0, "build");
         assert_eq!(
             b.1,
-            "cargo build --profile aeon -j 4 --all-targets -p gate -p queue"
+            "cargo build --profile aeon --config profile.aeon.incremental=false -j 4 --all-targets -p gate -p queue"
         );
         assert_eq!(t.0, "test");
         assert_eq!(
             t.1,
-            "cargo test --profile aeon -j 4 -p gate -p queue -- --test-threads=4"
+            "cargo test --profile aeon --config profile.aeon.incremental=false -j 4 -p gate -p queue -- --test-threads=4"
         );
     }
 
