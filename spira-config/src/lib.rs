@@ -235,6 +235,13 @@ pub struct SpiraSection {
     pub queue_throttle_override: Option<String>,
     pub client_settings: Option<String>,
     pub mail: Option<String>,
+    /// Mutes outgoing mail: `sendmail`/`send` file the message into `cur/` already-seen
+    /// instead of `new/`, so it is recorded but never wakes a reader. Replaces the tracked
+    /// edit to `spira/mail.sh` that local-overrides held (sp-9hwim, design
+    /// runtime-is-a-release #5) — the override checked for a file's existence
+    /// (`~/.config/spira/mail-mute`); this is the same switch as a typed key so the checkout
+    /// carries no uncommitted patch. Default off (unset): mail flows normally.
+    pub mail_mute: Option<bool>,
     pub mail_session_mailbox: Option<String>,
     pub repo_map: Option<String>,
     pub prefix_map: Option<String>,
@@ -1090,6 +1097,16 @@ mod tests {
         let out = export_sh(&doc);
         assert!(out.contains("HOME_REPO='a b'\n"), "{out}");
         assert!(out.contains("MAX_AEONS='4'\n"), "{out}");
+    }
+
+    #[test]
+    fn export_sh_renders_a_toml_bool_as_the_word_true_not_1() {
+        // sp-9hwim: a caller reading a bool key off export --sh (mail.sh's SPIRA_MAIL_MUTE)
+        // must match on "1|true", the same spelling every other [spira] bool key already
+        // uses — never a bare `= "1"`, which a TOML `true` would silently fail.
+        let doc = validate("[spira]\nmail_mute = true\n").unwrap();
+        let out = export_sh(&doc);
+        assert!(out.contains("MAIL_MUTE='true'\n"), "{out}");
     }
 
     #[test]

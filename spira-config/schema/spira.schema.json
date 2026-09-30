@@ -1197,6 +1197,13 @@
             "null"
           ]
         },
+        "mail_mute": {
+          "description": "Mutes outgoing mail: `sendmail`/`send` file the message into `cur/` already-seen instead of `new/`, so it is recorded but never wakes a reader. Replaces the tracked edit to `spira/mail.sh` that local-overrides held (sp-9hwim, design runtime-is-a-release #5) — the override checked for a file's existence (`~/.config/spira/mail-mute`); this is the same switch as a typed key so the checkout carries no uncommitted patch. Default off (unset): mail flows normally.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "mail_readers": {
           "type": [
             "string",

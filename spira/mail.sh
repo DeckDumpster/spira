@@ -36,6 +36,26 @@ _mail_dir()    { printf '%s/%s' "${SPIRA_MAIL}" "$1"; }
 _mail_ensure() { local d; d="$(_mail_dir "$1")"; mkdir -p "$d/tmp" "$d/new" "$d/cur"; }
 _mail_msgid()  { printf '%s.%s.%s' "$(date +%s)" "$RANDOM" "$$"; }
 
+# _mail_deliver <dir> <msgid> — moves a written message out of tmp/ into the mailbox proper.
+# Muted (SPIRA_MAIL_MUTE=1/true, sp-9hwim, design runtime-is-a-release #5) delivers straight
+# into cur/ already flagged Seen, so the message is recorded — a reader that lists cur/ still
+# finds it — but wakes nobody, the same effect the local-overrides tracked edit to this file
+# used to get by checking a file's existence. Unmuted (the default) is unchanged: new/.
+# 1|true, same spelling every other [spira] bool key here (SPIRA_LIFECYCLE_ENFORCE,
+# SPIRA_CERT_IDLE_SKIP) reads: conf.sh's own shell default is "0", but a TOML `true` comes
+# through spira-config's `export --sh` as the literal word "true", never "1".
+_mail_deliver() {
+    local dir="$1" msgid="$2"
+    case "${SPIRA_MAIL_MUTE:-0}" in
+    1|true)
+        mv "$dir/tmp/$msgid" "$dir/cur/$msgid:2,S"
+        ;;
+    *)
+        mv "$dir/tmp/$msgid" "$dir/new/$msgid"
+        ;;
+    esac
+}
+
 # _mailbox_valid <mailbox> <cmd> -> 0 if usable, else 1 with a message on stderr. The
 # mailbox is positional, and an option that lands in that slot (a caller's typo, a flag
 # meant for elsewhere) is otherwise a legal directory name: nine calls of the shape
@@ -503,7 +523,7 @@ cmd_send() {
         printf '%s\n' "$body"
     } > "$dir/tmp/$msgid"
 
-    mv "$dir/tmp/$msgid" "$dir/new/$msgid"
+    _mail_deliver "$dir" "$msgid"
 
     if [ "$mailbox" = "operator" ]; then
         _repeat_stamp
@@ -806,7 +826,7 @@ cmd_sendmail() {
     local dir; dir="$(_mail_dir "$dest_mailbox")"
     local msgid; msgid="$(_mail_msgid)"
     printf '%s\n' "$raw" > "$dir/tmp/$msgid"
-    mv "$dir/tmp/$msgid" "$dir/new/$msgid"
+    _mail_deliver "$dir" "$msgid"
 }
 
 _is_unread() {

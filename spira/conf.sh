@@ -65,7 +65,7 @@ SPIRA_HOME_REPO SPIRA_DB SPIRA_RUN SPIRA_GOAL
 SPIRA_PATH SPIRA_WORKSPACES SPIRA_REPO_MAP SPIRA_PREFIX_MAP SPIRA_CHAMBER SPIRA_CHAMBER_OVERLAY SPIRA_WATCHERS SPIRA_WATCHERS_OVERLAY SPIRA_OVERRIDES
 SPIRA_ACTIONABLE SPIRA_ID_PREFIX SPIRA_HEALTH_TIMEOUT SPIRA_NOTIFY_AGE SPIRA_WAKE
 SPIRA_CLIENT_SETTINGS SPIRA_CTRL
-SPIRA_MAIL SPIRA_MAIL_KINDS SPIRA_MAIL_READERS SPIRA_MAIL_UNREAD_AGE SPIRA_MAIL_SETTLE SPIRA_MAIL_SESSION_MAILBOX SPIRA_MAIL_REPEAT_WINDOW SPIRA_MAIL_TIDY_FRESH SPIRA_MAIL_WAKE_BACKOFF SPIRA_MAIL_INDEX
+SPIRA_MAIL SPIRA_MAIL_KINDS SPIRA_MAIL_READERS SPIRA_MAIL_UNREAD_AGE SPIRA_MAIL_SETTLE SPIRA_MAIL_SESSION_MAILBOX SPIRA_MAIL_REPEAT_WINDOW SPIRA_MAIL_TIDY_FRESH SPIRA_MAIL_WAKE_BACKOFF SPIRA_MAIL_INDEX SPIRA_MAIL_MUTE
 SPIRA_CONCIERGE_INBOX SPIRA_CONCIERGE_INBOX_DEDUP SPIRA_CONCIERGE_INBOX_STALL SPIRA_CONCIERGE_INBOX_BACKOFF SPIRA_MAIL_SETTLE_EVENT
 SPIRA_COCKPIT SPIRA_COCKPIT_TRACE_LINES SPIRA_SNAP_STALE_S SPIRA_NOTIFY SPIRA_OPERATOR SPIRA_OPERATOR_ACTOR SPIRA_TZ SPIRA_ASK_LABEL SPIRA_VERIFY_TIMEOUT SPIRA_RECLAIM_GRACE_SECS SPIRA_OPERATED
 SPIRA_CI_LABEL SPIRA_CI_PARK_MAX SPIRA_WORLD_STOP_LABEL
@@ -445,31 +445,35 @@ SPIRA_CONF_KEYS=" $(echo $SPIRA_CONF_KEYS) "
 # this format anymore (every writer targets spira.toml through spira_config_set/_at, below;
 # sp-usxfl) — this is read-only, kept so a box that has only ever known spira.conf still
 # resolves it as the conversion SOURCE `spira_toml_resolve` reads from below.
+#
+# NO $SPIRA_REPO CANDIDATE (sp-9hwim, design runtime-is-a-release #5): config is read from
+# an explicit SPIRA_CONF, from XDG, or from /etc/spira only — never from beside the
+# checkout, which the running system must not read at all. A caller that means "the config
+# beside THIS tree" (a fixture, the gate's scratch checkout) says so with an explicit
+# SPIRA_CONF, exactly the same seam the environment-wins rule above already relies on.
 spira_conf_file() {
     local c
     if [ -n "${SPIRA_CONF+set}" ]; then
         [ -f "$SPIRA_CONF" ] && printf '%s' "$SPIRA_CONF"
         return 0
     fi
-    for c in "$SPIRA_REPO/spira.conf" \
-             "${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf" \
+    for c in "${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf" \
              /etc/spira/spira.conf; do
         [ -f "$c" ] && { printf '%s' "$c"; return 0; }
     done
     return 0
 }
 
-# spira_toml_file -> the path of spira.toml in force, or empty. Same three-tier search
-# spira.conf used, and for the same reason: an explicit path, beside the checkout, XDG,
-# then /etc/spira.
+# spira_toml_file -> the path of spira.toml in force, or empty. Same search spira_conf_file
+# uses, and for the same reason: an explicit path, then XDG, then /etc/spira — never beside
+# the checkout (sp-9hwim).
 spira_toml_file() {
     local c
     if [ -n "${SPIRA_TOML+set}" ]; then
         [ -f "$SPIRA_TOML" ] && printf '%s' "$SPIRA_TOML"
         return 0
     fi
-    for c in "$SPIRA_REPO/spira.toml" \
-             "${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml" \
+    for c in "${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml" \
              /etc/spira/spira.toml; do
         [ -f "$c" ] && { printf '%s' "$c"; return 0; }
     done
@@ -482,6 +486,13 @@ spira_toml_file() {
 # `spira-config convert` call — finds the SAME file rather than converting with no map at
 # all (sp-zs04v.2: an auto-convert with no --repo-map produced a spira.toml with an empty
 # [repo] table, and overwrote a real one).
+#
+# AMBIENT NEVER READS $SPIRA_HOME/repo-map (sp-9hwim, design runtime-is-a-release #5): when
+# SPIRA_HOME was derived (nobody named a tree on purpose), the map comes from beside the
+# resolved config file — now always XDG or /etc, never the checkout — or from the tracked
+# `repo-map.example` a clean clone ships. AN EXPLICIT SPIRA_HOME is unaffected: a caller that
+# names its own tree on purpose (a fixture, the gate's scratch checkout) still gets that
+# tree's own repo-map first, because that tree is what it means.
 _spira_repo_map_candidate() {
     local cf d c
     cf="$(spira_conf_file)"
@@ -489,7 +500,7 @@ _spira_repo_map_candidate() {
     if [ -n "$_spira_conf_home_env" ]; then
         set -- "$SPIRA_HOME/repo-map" ${d:+"$d/repo-map"} "$SPIRA_HOME/repo-map.example"
     else
-        set -- ${d:+"$d/repo-map"} "$SPIRA_HOME/repo-map" "$SPIRA_HOME/repo-map.example"
+        set -- ${d:+"$d/repo-map"} "$SPIRA_HOME/repo-map.example"
     fi
     for c in "$@"; do
         [ -f "$c" ] && { printf '%s' "$c"; return 0; }
@@ -758,15 +769,12 @@ spira_conf_defaults() {
     # INSTANCE-QUALIFIED: each instance writes its own runtime tree — pid files, the aeon
     # ledger, the cockpit state — so a test instance cannot overwrite prod's working state.
     # For prod the suffix is empty; the path is unchanged.
-    # A read-only SPIRA_REPO (release tarball) cannot grow .runtime; fall back to
-    # XDG_DATA_HOME so mkdir on first use succeeds.
-    if [ -z "${SPIRA_RUN:-}" ]; then
-        if [ -w "$SPIRA_REPO" ]; then
-            SPIRA_RUN="$SPIRA_REPO/.runtime/spira${_spira_inst_sfx}"
-        else
-            SPIRA_RUN="${XDG_DATA_HOME:-$HOME/.local/share}/spira${_spira_inst_sfx}/run"
-        fi
-    fi
+    # NEVER UNDER SPIRA_REPO (sp-9hwim, design runtime-is-a-release #5): the checkout is
+    # the git repository landings merge into, nothing else, and at cutover it has no
+    # working tree at all — a default that wrote `$SPIRA_REPO/.runtime` would resolve to a
+    # path that no longer exists, silently, on whichever caller still took this fallback.
+    # XDG_DATA_HOME every time, writable checkout or not.
+    : "${SPIRA_RUN:=${XDG_DATA_HOME:-$HOME/.local/share}/spira${_spira_inst_sfx}/run}"
     # THE OPERATIONAL CONTROL PLANE FILE. Durable state — suspensions, pauses, drains —
     # that lives outside source control and survives install.sh, pull, and reset.
     # Defaults to the gitignored runtime directory so no git operation ever touches it.
@@ -780,6 +788,12 @@ spira_conf_defaults() {
     : "${SPIRA_MEMORIES_CACHE=$SPIRA_RUN/memories-cache.json}"
     : "${SPIRA_MEMORIES_CACHE_AGE:=300}"
     : "${SPIRA_MAIL:=$SPIRA_RUN/mail}"
+    # MUTES OUTGOING MAIL: mail.sh files a muted message straight into `cur/` (seen), never
+    # `new/`, so it is recorded but wakes no reader. Replaces the local-overrides tracked
+    # edit to spira/mail.sh (sp-9hwim, design runtime-is-a-release #5) — same on/off, now a
+    # config key instead of an uncommitted patch to a checked-out file. Off by default: mail
+    # flows normally unless an operator sets it, in spira.toml or the environment.
+    : "${SPIRA_MAIL_MUTE:=0}"
     : "${SPIRA_MAIL_KINDS:=$SPIRA_HOME/mail/kinds}"
     # THE CONCIERGE READS ITS MAIL THROUGH THE DURABLE INBOX, NOT A KEYSTROKE. inbox-append.sh
     # only ever appends a line to SPIRA_CONCIERGE_INBOX; the concierge's own inbox-triage.sh

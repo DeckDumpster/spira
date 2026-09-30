@@ -205,6 +205,7 @@ pub fn spira_section(
             "SPIRA_QUEUE_THROTTLE_OVERRIDE" => s.queue_throttle_override = Some(val.clone()),
             "SPIRA_CLIENT_SETTINGS" => s.client_settings = Some(val.clone()),
             "SPIRA_MAIL" => s.mail = Some(val.clone()),
+            "SPIRA_MAIL_MUTE" => s.mail_mute = parse_bool01(warnings, "mail_mute", val),
             "SPIRA_MAIL_SESSION_MAILBOX" => s.mail_session_mailbox = Some(val.clone()),
             "SPIRA_REPO_MAP" => s.repo_map = Some(val.clone()),
             "SPIRA_PREFIX_MAP" => s.prefix_map = Some(val.clone()),

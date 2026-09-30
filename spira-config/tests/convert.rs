@@ -514,3 +514,34 @@ fn retired_tool_path_keys_convert_with_a_warning() {
     assert_eq!(doc.spira.as_ref().unwrap().batcher_enable.as_deref(), Some("0"));
     assert!(warnings.0.iter().any(|w| w.contains("SPIRA_LC_BIN is retired (sp-gypjk")), "{:?}", warnings.0);
 }
+
+// sp-9hwim: the mail-mute override becomes a typed key. A legacy SPIRA_MAIL_MUTE=1 converts
+// to spira.mail_mute = true (the same 0/1 spelling every other bool key here uses); an
+// unset conf carries no mail_mute at all, matching "default off, mail flows normally".
+#[test]
+fn legacy_mail_mute_converts_to_the_typed_key() {
+    let (doc, warnings) = convert("SPIRA_MAIL_MUTE=1\n", "/opt/fixture-home", "", &[])
+        .expect("a known key must not refuse the convert");
+    assert!(warnings.0.is_empty(), "{:?}", warnings.0);
+    assert_eq!(doc.spira.as_ref().unwrap().mail_mute, Some(true));
+}
+
+#[test]
+fn mail_mute_absent_by_default() {
+    let (doc, warnings) =
+        convert("SPIRA_HOME_REPO=home\n", "/opt/fixture-home", "", &[]).expect("converts");
+    assert!(warnings.0.is_empty(), "{:?}", warnings.0);
+    assert_eq!(doc.spira.as_ref().unwrap().mail_mute, None);
+}
+
+#[test]
+fn mail_mute_bad_value_warns_not_a_spelling_the_key_accepts() {
+    let (doc, warnings) = convert("SPIRA_MAIL_MUTE=maybe\n", "/opt/fixture-home", "", &[])
+        .expect("a bad value warns, it does not refuse the whole convert");
+    assert_eq!(doc.spira.as_ref().unwrap().mail_mute, None);
+    assert!(
+        warnings.0.iter().any(|w| w.contains("mail_mute") && w.contains("maybe")),
+        "{:?}",
+        warnings.0
+    );
+}
