@@ -30,7 +30,7 @@
 #
 # defect: sp-1xb0
 # tier: T1
-# covers: spira/yield.sh spira/gate.sh spira/watchtower.sh cockpit/ops/src/health.rs UC-gate-verdict-22 UC-gate-verdict-23 UC-gate-verdict-24
+# covers: spira/yield.sh spira/gate.sh watchtower/src/* cockpit/ops/src/health.rs UC-gate-verdict-22 UC-gate-verdict-23 UC-gate-verdict-24
 # scar: yield.sh was absent; gate faults landed in the wrong column and no count existed, so the gate's cost-vs-catch ratio was unmeasured.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -354,7 +354,7 @@ snap() {
         SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         SPIRA_DB="$SPIRA_DB_NONE" SPIRA_YIELD="$YDIR" SPIRA_GATE_LOG="$GATELOG" \
         SPIRA_YIELD_WINDOW="$WINDOW" \
-        watchtower.sh --show 2>/dev/null
+        watchtower --show 2>/dev/null
 }
 S="$(snap)"
 want "the sweep carries the reds"          "gate reds, last 2h" "$S"

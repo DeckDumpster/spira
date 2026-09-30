@@ -10,7 +10,7 @@
 # much of it lane fayths (ops/qa/groomer) currently hold, and SPIRA_MAX_AEONS itself.
 #
 # Reuses aeon_count/ready_count/fayth_partitions/spira_task_fayths exactly as
-# sentinel.sh and watchtower.sh do, so this cannot disagree with what already decides
+# the sentinel and watchtower binaries do, so this cannot disagree with what already decides
 # who gets summoned (law-prefer-the-real-dependency).
 #
 # covers: spira/lib.sh spira/conf.sh spira/sentinel.sh

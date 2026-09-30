@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-express-lane.sh — express label and sentinel admission bypass.
 #
-# covers: spira/bead.sh spira/conf.sh spira/cockpit.sh sentinel/src/* spira/lib.sh spira/watchtower.sh
+# covers: spira/bead.sh spira/conf.sh spira/cockpit.sh sentinel/src/* spira/lib.sh watchtower/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

@@ -122,13 +122,13 @@ chmod +x "$COCKPIT_DIR/layout.sh"
 for _s in archive.sh archivist.sh broker.sh \
           gate-check.sh groom-trigger.sh maechen-trigger.sh \
           loom.sh mail.sh pr-notify.sh skew.sh spira-mail-deliver.sh \
-          watch-refresh.sh watchtower.sh; do
+          watch-refresh.sh; do
     printf '#!/usr/bin/env bash\ntrue\n' > "$SPIRA_DIR/$_s"
     chmod +x "$SPIRA_DIR/$_s"
 done
 # The Rust binaries units ExecStart from the release root: dirname(SPIRA_PROD)/bin.
 mkdir -p "$FIXTURE/bin"
-for _s in sentinel queue aeon auron; do
+for _s in sentinel queue aeon watchtower auron; do
     printf '#!/usr/bin/env bash\ntrue\n' > "$FIXTURE/bin/$_s"
     chmod +x "$FIXTURE/bin/$_s"
 done
