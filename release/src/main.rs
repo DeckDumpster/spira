@@ -22,7 +22,7 @@ const USAGE: &str = "usage:
   release rollback [--repo R] [--settle SECS]
   release prune [--keep N]
   release status
-  release install-tarball <tarball> [--dry-run] [--settle SECS]
+  release install-tarball <tarball> [--dry-run] [--settle SECS] [--skip-restart]
   release stage up [ROOT]
   release stage down <ROOT>
   release canary [--stage ROOT] [--deadline SECS]
@@ -45,6 +45,7 @@ struct Args {
     dry_run: bool,
     stage: Option<String>,
     deadline: Duration,
+    skip_restart: bool,
 }
 
 fn parse(argv: &[String]) -> Result<Args, String> {
@@ -61,6 +62,7 @@ fn parse(argv: &[String]) -> Result<Args, String> {
         dry_run: false,
         stage: None,
         deadline: Duration::from_secs(120),
+        skip_restart: false,
     };
     let mut it = argv.iter();
     while let Some(x) = it.next() {
@@ -77,6 +79,7 @@ fn parse(argv: &[String]) -> Result<Args, String> {
             "--settle" => a.settle = Duration::from_secs(val(x)?.parse().map_err(|_| "--settle needs whole seconds".to_string())?),
             "--no-pre-activate" => a.pre_activate = false,
             "--dry-run" => a.dry_run = true,
+            "--skip-restart" => a.skip_restart = true,
             "--stage" => a.stage = Some(val(x)?),
             "--deadline" => a.deadline = Duration::from_secs(val(x)?.parse().map_err(|_| "--deadline needs whole seconds".to_string())?),
             "-h" | "--help" => return Err(String::new()),
@@ -394,7 +397,7 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
         "install-tarball" => {
             want(1)?;
             let sc = RealSystemctl::from_env();
-            let o = InstallOpts { dry_run: a.dry_run, settle: a.settle };
+            let o = InstallOpts { dry_run: a.dry_run, settle: a.settle, skip_restart: a.skip_restart };
             let r = install::install(&cfg, &sc, &RealUnpack, &PathBuf::from(&rest[0]), &o).map_err(fail)?;
             println!(
                 "release: {} {}; {} unit(s) restarted [{}]{}, {} release(s) pruned [{}]",
