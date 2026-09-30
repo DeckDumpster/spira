@@ -492,15 +492,15 @@ pub fn abandoned_event(id: &Id, why: &str) -> Event {
 
 // ---------------------------------------------------------------------------------------
 // Local red-suite attribution (sp-hqoap): a round that goes red on its own local corpus is
-// never sent to CI. attribute.sh (sp-q8xs9) names, per red suite, either the member(s) whose
-// tip reproduces it or BASE — the base itself, unrelated to any round member. What is pure
-// here is just naming the two outcomes the IO seam's attribute() call can produce; the
-// attribution itself (bisection, per-member reproduction) is attribute.sh's own, already
-// tested (test-attribute.sh) and not reproduced in this crate.
+// never sent to CI. Attribution names, per red suite, either the member(s) whose tip
+// reproduces it or BASE — the base itself, unrelated to any round member. What is pure here
+// is just naming the two outcomes an ejection can carry; the attribution itself (targeted,
+// without-member reruns of each red suite as it lands) is `attrib`'s own (sp-hvtgs,
+// concurrent with the round) — attribute.sh, its bash predecessor, is retired (sp-uwhx0).
 // ---------------------------------------------------------------------------------------
 
-/// One member ejected from the round before it ever reached CI, and the suite(s) attribute.sh
-/// found it responsible for.
+/// One member ejected from the round before it ever reached CI, and the suite(s) it was
+/// found responsible for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ejection {
     pub id: Id,

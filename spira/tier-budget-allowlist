@@ -64,16 +64,12 @@ test-auron.sh	T1	83.0
 test-batch-bisect-expiry.sh	T1	53.0
 test-batch-cited-commit.sh	T2	18.0
 test-batch-conflict.sh	T1	30.5
-test-batch-conflicting-pr.sh	T1	3.0
 test-batch-express.sh	T1	21.0
 test-batch-idle-cut.sh	T1	18.0
 test-batch-nocut-reason.sh	T1	8.0
 test-batch-owner.sh	T1	4.5
-test-batch-preflight.sh	T1	5.0
-test-batch-reconcile.sh	T1	13.0
 test-batch-red-main.sh	T1	16.0
 test-batch-repeat-refused-delivers.sh	T1	18.5
-test-batch-stuck.sh	T1	26.5
 test-batch-timing.sh	T1	5.0
 test-bd-lock-retry.sh	T1	2.5
 test-bd-resolve.sh	T1	3.0
@@ -101,7 +97,6 @@ test-census-reopen.sh	T1	78.5
 test-census-tz-boundary.sh	T1	65.0
 test-census-watermark.sh	T1	52.5
 test-census.sh	T1	79.5
-test-cert-stale-gate-key.sh	T1	51.5
 test-certified-withdraw.sh	T1	22.0
 test-certify.sh	T1	114.0
 test-chamber-repo-labels.sh	T1	4.5

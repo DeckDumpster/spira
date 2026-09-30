@@ -9,9 +9,10 @@
 # 5. spira_git_push adds credential.helper and URL rewriting when App creds are set.
 # 6. spira_git_push passes through as a plain git push when no creds are configured.
 # 7. SPIRA_GH_APP_* keys are in the conf.sh allowlist.
-# 8. The covered scripts call spira_git_push rather than bare git push.
+# 8. (retired, sp-uwhx0) — every script this once grepped is either Rust now or deleted;
+#    see the section itself for why.
 #
-# covers: spira/git-credential-app.sh spira/lib.sh landing-pass/src/* spira/batch.sh sending/src/* queue/src/* spira/conf.sh
+# covers: spira/git-credential-app.sh spira/lib.sh landing-pass/src/* sending/src/* queue/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -173,42 +174,13 @@ for key in SPIRA_GH_APP_ID SPIRA_GH_APP_INSTALLATION_ID SPIRA_GH_APP_KEY \
 done
 
 # =========================================================================
-echo
-echo "8. STATIC CHECK — covered scripts use spira_git_push"
+# 8. STATIC CHECK — covered scripts use spira_git_push — RETIRED (sp-uwhx0). Its own
+# subjects: landing.sh (already handled above — the landing-pass binary, pushes through its
+# own seam, source-grep cannot see it), sending.sh (now the `sending` binary, sp-arpjt),
+# queue.sh/verdict.sh (now the `queue` binary, sp-flj4a; verdict runs in process inside it),
+# and batch.sh (deleted, sp-uwhx0 — the batcher crate cuts and the queue binary pushes the
+# batch now). Every one of them is either Rust — a source grep cannot see through a seam
+# regardless of language — or gone outright. Nothing left for a bash grep to check.
 # =========================================================================
-# landing.sh is the landing-pass binary now: it pushes through lib.sh's spira_git_push via its
-# seam (landing-pass/src/seam.rs Op::Push), which this source grep cannot see.
-for f in batch.sh; do
-    # sending.sh is the `sending` binary now (sp-arpjt): its remote-branch delete is lib.sh's
-    # spira_reap_landed_branch through its seam, which this source grep cannot see.
-    #
-    # queue.sh is the queue binary now: it pushes through lib.sh's spira_git_push via its
-    # seam R12 (queue/DESIGN.md §7.4), which this source grep cannot see — and so does
-    # verdict.sh's settle, which moved into that binary (queue/DESIGN-verdict.md, D4).
-    #
-    # batch.sh's own cut retired (sp-vsob2): the batcher crate cuts and the queue binary
-    # pushes the batch. batch.sh pushes nothing anymore, so
-    # it only gets the bare-push check below, not the positive presence check.
-    if [ "$f" = "batch.sh" ]; then
-        want_sym=''
-    else
-        want_sym='spira_git_push'
-    fi
-    if [ -z "$want_sym" ]; then
-        :
-    elif grep -qE "$want_sym" "$HERE/$f"; then
-        ok "$f: spira_git_push present"
-    else
-        bad "$f: spira_git_push present" "not found"
-    fi
-    # No bare 'git ... push' should remain in the push paths of these files.
-    bare="$(grep -nE '^\s+git\s+-C\s+\S+\s+push\b|^\s+git\s+push\b' "$HERE/$f" 2>/dev/null \
-            | grep -v '^\s*#' | head -2 || true)"
-    if [ -n "${bare:-}" ]; then
-        bad "$f: no uncovered bare git push" "found: ${bare}"
-    else
-        ok "$f: no uncovered bare git push"
-    fi
-done
 
 tl_summary

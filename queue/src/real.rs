@@ -428,15 +428,6 @@ impl Scripts for RealScripts {
                 .env("SPIRA_GATE_SUITES", suites),
         )
     }
-    fn batch_sweep(&self, repo: &str, wait_zero: bool, lc_off: bool) -> i32 {
-        let mut c = Command::new("batch.sh");
-        c.arg(repo);
-        if wait_zero {
-            c.env("SPIRA_QUEUE_BATCH_WAIT", "0");
-        }
-        lifecycle_env(&mut c, lc_off);
-        c.stdin(Stdio::null()).status().ok().and_then(|s| s.code()).unwrap_or(127)
-    }
     fn judgement_ci(&self, bin: &Path, s: &Settings, repo: &str, suites: &str, members: &str, evidence: &str) -> RunOut {
         let (rc, out) = run_combined(
             Command::new(bin)
@@ -454,9 +445,6 @@ impl Scripts for RealScripts {
     }
     fn observe_flake(&self, suite: &str, sha: &str) {
         let _ = ok(Command::new("testenv").args(["suites", "observe-flake", suite, sha]).stdout(Stdio::null()).stderr(Stdio::null()));
-    }
-    fn attribute(&self, round: &str, base: &str, suites: &str, members: &str, repo: &Path) -> String {
-        run_combined(Command::new("attribute.sh").args(["--round", round, "--base", base, "--suites", suites, "--members", members, "--repo"]).arg(repo)).1
     }
     fn mail_operator(&self, subject: &str, body: &str) {
         let Ok(mut child) = Command::new("mail.sh")
@@ -874,31 +862,21 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
     }
 
     #[test]
-    fn step_children_carry_the_lifecycle_switch_and_never_see_spira_lc_when_it_is_off() {
+    fn batcher_cut_carries_the_lifecycle_switch() {
+        // verdict runs in process now (DESIGN-verdict.md) and batch.sh is deleted
+        // (sp-uwhx0) — batcher_cut is the only remaining Scripts method that both spawns a
+        // child and takes lc_off, so it is the only one left to prove the switch on.
         let _serial = crate::testutil::serial();
         let d = crate::testutil::tmpdir("lc-env");
         let rec = d.join("seen");
-        // batch.sh is run by name: this test puts its own first on PATH. (The verdict runs in
-        // process now — DESIGN-verdict.md — so it has no child to pin.)
-        let bindir = d.join("bin");
-        fs::create_dir_all(&bindir).unwrap();
-        let s = "batch.sh";
-        testkit::write_exe(bindir.join(s), &format!("#!/bin/sh\nprintf '%s %s %s\\n' {s} \"$1\" \"${{SPIRA_LIFECYCLE_ENFORCE:-unset}}\" >> {}\n", rec.display()));
         let bin = d.join("batcher");
         testkit::write_exe(&bin, &format!("#!/bin/sh\nprintf 'batcher %s %s\\n' \"$2\" \"${{SPIRA_LIFECYCLE_ENFORCE:-unset}}\" >> {}\n", rec.display()));
-        let old_path = std::env::var_os("PATH").unwrap_or_default();
-        let mut p = std::ffi::OsString::from(&bindir);
-        p.push(":");
-        p.push(&old_path);
-        std::env::set_var("PATH", &p);
         let s = RealScripts { home: d.to_path_buf() };
-        s.batch_sweep("spira", false, true);
         s.batcher_cut(&bin, "spira", false, true);
-        s.batch_sweep("svc", false, false);
-        std::env::set_var("PATH", &old_path);
+        s.batcher_cut(&bin, "svc", false, false);
         let seen = fs::read_to_string(&rec).unwrap();
         let lines: Vec<&str> = seen.lines().collect();
-        assert_eq!(lines, ["batch.sh spira 0", "batcher spira 0", "batch.sh svc 1"]);
+        assert_eq!(lines, ["batcher spira 0", "batcher svc 1"]);
     }
 
     #[test]
@@ -922,5 +900,152 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
             lib.sort_rows(Path::new("/repo"), "b0", "[]", "sp-a ta 6\nsp-b tb 5\n"),
             vec![("sp-b".to_string(), "tb".to_string()), ("sp-a".to_string(), "ta".to_string())]
         );
+    }
+
+    // ---------------------------------------------------------------------------- sp-uwhx0
+    // format_batch/base_conflict/pf_gate used to source batch.sh (deleted); these run the
+    // inlined bodies against a real git repo and real bash, not the FLib fakes ops.rs tests
+    // use elsewhere — parity proof that the inlining kept batch.sh's own behaviour.
+
+    fn git(dir: &std::path::Path, args: &[&str]) -> String {
+        let out = Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// A bare-bones lib.sh: none of format_batch/base_conflict/pf_gate call any lib.sh
+    /// function except `repo_format` and `log` (FormatBatch), and PfGate calls `gate.sh` by
+    /// name — supplied by the caller's PATH, not lib.sh.
+    fn minimal_home(repo_format_body: &str) -> testkit::TempDir {
+        let d = crate::testutil::tmpdir("batchfns");
+        fs::write(d.join("lib.sh"), format!("log() {{ :; }}\nrepo_format() {{ {repo_format_body}\n}}\n")).unwrap();
+        fs::write(d.join("lc.sh"), "").unwrap();
+        d
+    }
+
+    #[test]
+    fn base_conflict_is_true_only_when_the_tip_conflicts_with_base_itself() {
+        let _serial = crate::testutil::serial();
+        let run = crate::testutil::tmpdir("bc-run");
+        fs::create_dir_all(run.join("worktree")).unwrap();
+        std::env::set_var("SPIRA_RUN", run.path());
+        let repo = crate::testutil::tmpdir("bc-repo");
+        git(&repo, &["init", "-q"]);
+        git(&repo, &["config", "user.email", "a@b.c"]);
+        git(&repo, &["config", "user.name", "t"]);
+        fs::write(repo.join("f"), "base\n").unwrap();
+        git(&repo, &["add", "f"]);
+        git(&repo, &["commit", "-q", "-m", "base"]);
+        let base = git(&repo, &["rev-parse", "HEAD"]);
+
+        // A tip that edits the same line the new base also edits: conflicts with base itself.
+        git(&repo, &["checkout", "-qb", "tipA"]);
+        fs::write(repo.join("f"), "tipA\n").unwrap();
+        git(&repo, &["commit", "-qam", "tipA"]);
+        let tip_conflicts = git(&repo, &["rev-parse", "HEAD"]);
+
+        git(&repo, &["checkout", "-q", &base]);
+        git(&repo, &["checkout", "-qb", "advance-base"]);
+        fs::write(repo.join("f"), "advanced\n").unwrap();
+        git(&repo, &["commit", "-qam", "advance"]);
+        let new_base = git(&repo, &["rev-parse", "HEAD"]);
+
+        let home = minimal_home(":");
+        let lib = RealLib { home: home.to_path_buf() };
+        assert!(lib.base_conflict(&repo, &new_base, &tip_conflicts), "same-line edits on both sides must conflict with base");
+
+        // A tip that touches an unrelated file: merges cleanly with base (no base conflict).
+        git(&repo, &["checkout", "-q", &base]);
+        git(&repo, &["checkout", "-qb", "tipB"]);
+        fs::write(repo.join("g"), "tipB\n").unwrap();
+        git(&repo, &["add", "g"]);
+        git(&repo, &["commit", "-qm", "tipB"]);
+        let tip_clean = git(&repo, &["rev-parse", "HEAD"]);
+        assert!(!lib.base_conflict(&repo, &new_base, &tip_clean), "a disjoint-file tip must not conflict with base");
+
+        // The scratch worktree it used is cleaned up either way.
+        assert!(!run.join("worktree").read_dir().unwrap().any(|e| e.unwrap().file_name().to_string_lossy().starts_with(".batch-ck-")));
+        std::env::remove_var("SPIRA_RUN");
+    }
+
+    #[test]
+    fn format_batch_commits_only_when_the_formatter_changes_something() {
+        let _serial = crate::testutil::serial();
+        let repo = crate::testutil::tmpdir("fb-repo");
+        git(&repo, &["init", "-q"]);
+        git(&repo, &["config", "user.email", "a@b.c"]);
+        git(&repo, &["config", "user.name", "t"]);
+        fs::write(repo.join("f.txt"), "unformatted\n").unwrap();
+        git(&repo, &["add", "f.txt"]);
+        git(&repo, &["commit", "-q", "-m", "base"]);
+        let base = git(&repo, &["rev-parse", "HEAD"]);
+        fs::write(repo.join("f.txt"), "member change\n").unwrap();
+        git(&repo, &["commit", "-qam", "member"]);
+        let before_head = git(&repo, &["rev-parse", "HEAD"]);
+
+        // repo_format prints a shell command that rewrites the tracked file.
+        let home = minimal_home("printf 'echo formatted > f.txt'");
+        let lib = RealLib { home: home.to_path_buf() };
+        lib.format_batch(&repo, &base, "spira");
+        let after_head = git(&repo, &["rev-parse", "HEAD"]);
+        assert_ne!(before_head, after_head, "a formatter that changes tracked content must produce a new commit");
+        assert_eq!(fs::read_to_string(repo.join("f.txt")).unwrap(), "formatted\n");
+        let msg = git(&repo, &["log", "-1", "--format=%s"]);
+        assert_eq!(msg, "spira: format batch");
+        assert!(git(&repo, &["status", "--porcelain"]).is_empty(), "the tree must be clean after the commit");
+
+        // A formatter that changes nothing: no new commit.
+        let home2 = minimal_home("printf 'true'");
+        let lib2 = RealLib { home: home2.to_path_buf() };
+        lib2.format_batch(&repo, &base, "spira");
+        assert_eq!(git(&repo, &["rev-parse", "HEAD"]), after_head, "a no-op formatter must not add a commit");
+
+        // repo_format answering nothing: format_batch does not touch the tree at all.
+        let home3 = minimal_home("printf ''");
+        let lib3 = RealLib { home: home3.to_path_buf() };
+        fs::write(repo.join("f.txt"), "dirty\n").unwrap();
+        lib3.format_batch(&repo, &base, "spira");
+        assert_eq!(fs::read_to_string(repo.join("f.txt")).unwrap(), "dirty\n", "no configured formatter must leave the working tree untouched");
+        git(&repo, &["checkout", "-q", "--", "."]);
+    }
+
+    #[test]
+    fn pf_gate_returns_gates_output_and_rc_and_enforces_its_own_wall() {
+        let _serial = crate::testutil::serial();
+        let bindir = crate::testutil::tmpdir("pfgate-bin");
+        testkit::write_exe(&bindir.join("gate.sh"), "#!/bin/sh\nprintf 'gate ran for %s/%s bead=%s\\n' \"$1\" \"$2\" \"$SPIRA_GATE_BEAD\"\nexit 3\n");
+        let old_path = std::env::var_os("PATH").unwrap_or_default();
+        let mut p = std::ffi::OsString::from(bindir.path());
+        p.push(":");
+        p.push(&old_path);
+        std::env::set_var("PATH", &p);
+        let home = minimal_home(":");
+        let lib = RealLib { home: home.to_path_buf() };
+        let (rc, out) = lib.pf_gate("spira/queue/1", "spira", "1700000000", 10);
+        assert_eq!(rc, 3);
+        assert_eq!(out.trim(), "gate ran for spira/queue/1/spira bead=batch-1700000000");
+
+        // A gate that outlives the wall is killed — the WHOLE process group, grandchild
+        // included (test-batch-preflight.sh's own case: a test container the gate started
+        // must not outlive the wall) — and reported as 124, not left running.
+        let mark = crate::testutil::tmpdir("pfgate-mark");
+        let grandchild_pid = mark.join("grandchild-pid");
+        testkit::write_exe(
+            &bindir.join("gate.sh"),
+            &format!("#!/bin/sh\nsleep 30 & echo $! > {}\nsleep 30\n", grandchild_pid.display()),
+        );
+        let t0 = std::time::Instant::now();
+        let (rc, _) = lib.pf_gate("spira/queue/2", "spira", "1700000001", 1);
+        assert_eq!(rc, 124);
+        assert!(t0.elapsed().as_secs() < 20, "the wall must cut the gate off well before its own sleep finishes");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let gc = fs::read_to_string(&grandchild_pid).unwrap_or_default();
+        let gc = gc.trim();
+        assert!(!gc.is_empty(), "the gate's grandchild must have started");
+        assert!(
+            Command::new("kill").arg("-0").arg(gc).status().map(|s| !s.success()).unwrap_or(true),
+            "the whole process group must be killed, grandchild included — pid {gc} still alive"
+        );
+        std::env::set_var("PATH", &old_path);
     }
 }

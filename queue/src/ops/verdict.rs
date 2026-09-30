@@ -163,26 +163,23 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
     let pfile = c.queue_file("publish");
     let Ok(Some(kv)) = records::read_kv(&pfile) else { return OK };
     let field = |k: &str| kv.get(k).unwrap_or("").to_string();
-    let (pr, branch, forge_sha, head) = (field("pr"), field("branch"), field("base"), field("head"));
+    let (pr, forge_sha, head) = (field("pr"), field("base"), field("head"));
     let suites = red_suites_csv(out);
     let run_url = tagged(out, "run-url: ").last().map(|s| s.to_string()).unwrap_or_default();
     let ids: Vec<String> = kv.members().into_iter().map(|m| m.id).filter(|i| !i.is_empty()).collect();
     let member_ids = ids.join(",");
 
-    let attr = if !suites.is_empty() && !member_ids.is_empty() {
-        w.scripts.attribute(&branch, &forge_sha, &suites, &member_ids, path)
-    } else {
-        String::new()
-    };
+    // Local attribution (attribute.sh, a per-suite without-member rebuild against this
+    // published range) is retired with attribute.sh, sp-uwhx0 — not ported: it bisects a
+    // one-off range, not a round, and the batcher's own attribution (attrib.rs, sp-hvtgs)
+    // has no seam for that shape. The fix-forward bead still files either way; it just
+    // names red suites and members instead of a local reproduction.
     w.forge.pr_close(&c.s.forge, path, &pr);
 
     let mut body = format!("Publish PR {pr} red for {name} ({}).\n\n", if run_url.is_empty() { "run link unavailable" } else { &run_url });
     body.push_str(&format!("Published range: {}..{}\n", short(&forge_sha), short(&head)));
     body.push_str(&format!("Red suites: {}\n\n", if suites.is_empty() { "<none named>" } else { &suites }));
     body.push_str(&format!("Members in this publish: {}\n\n", if member_ids.is_empty() { "<none>" } else { &member_ids }));
-    if !attr.is_empty() {
-        body.push_str(&format!("Local attribution (attribute.sh):\n{}\n\n", attr.trim_end_matches('\n')));
-    }
     body.push_str("Fix forward on local/main — the next publish carries the fix. Production was never rolled back and no member bead was reopened.");
     let title = if suites.is_empty() { format!("publish PR {pr} red for {name}") } else { format!("publish PR {pr} red for {name}: {suites}") };
     let actor = w.var("SPIRA_QUEUE_ACTOR").unwrap_or_else(|| "queue.sh".into());

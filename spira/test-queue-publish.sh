@@ -4,8 +4,9 @@
 # pushes local/main's commits since the forge target's own tip to one new forge branch and
 # opens one PR; `queue verdict` settles it separately from the queue.forge batch machinery: green
 # fast-forwards the forge target to IDENTICAL SHAs with no land_mark and no bead close, red
-# runs local attribution and files one fix-forward bead without reopening a member, and
-# "nothing to publish" is a no-op. The record lives at queue/<repo>/publish, never
+# files one fix-forward bead without reopening a member (naming red suites and members —
+# local attribution, attribute.sh, is retired, sp-uwhx0), and "nothing to publish" is a
+# no-op. The record lives at queue/<repo>/publish, never
 # queue/<repo>/open, so it can never be mistaken for a queue.forge batch in flight.
 #
 # REAL MAIL, NOT A STUB, for the divergence alarm (row 4): mail.sh runs for real so cases 5
@@ -13,7 +14,7 @@
 # foreign commit — the same seam test-publish-backlog.sh uses for its own alarm assertions.
 #
 # tier: T1
-# covers: queue/src/* spira/lib.sh spira/conf.sh spira/attribute.sh
+# covers: queue/src/* spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
