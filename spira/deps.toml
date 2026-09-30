@@ -211,6 +211,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v aeons)\""
 
 [[dep]]
+name = "auron"
+tier = "release"
+purpose = "Spira's auron binary, from the release's bin/ — the watchdog over the loop (replaces spira/auron.sh, sp-zpaq0)"
+version_min = ""
+version_probe = "readlink -f \"$(command -v auron)\""
+
+[[dep]]
 name = "batcher"
 tier = "release"
 purpose = "Spira's batcher binary, from the release's bin/"

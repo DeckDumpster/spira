@@ -48,7 +48,7 @@ state; see §4 R7).
 |---|---|---|
 | `spira/sentinel.sh:317` (CHECK 2b) | `"$SPIRA_HOME/strand.sh" check 2>&1` | stdout lines starting `RECLAIMED`, `RECOMPUTED`, `STRANDED`; exit status ignored |
 | `spira/cockpit.sh:2427` `strand_keys` | reads `$SPIRA_RUN/strands.json` | keys `<partition>:<kind>:<id>` split with `rsplit(":", 2)`; values carry `escalated` |
-| `spira/auron.sh:108,518` | reads `$SPIRA_RUN/strands.json` (or `SPIRA_AURON_STRANDS`) | a JSON object |
+| `auron/src/main.rs` (formerly `spira/auron.sh:108,518`, retired sp-zpaq0) | reads `$SPIRA_RUN/strands.json` (or `SPIRA_AURON_STRANDS`) | a JSON object |
 | `cockpit/health.sh` | `SP_STRAND_GHOST`, `SP_STRANDS` from cockpit.sh | kind `ghost` spelled as before |
 | operator / concierge / runbooks | `strand.sh report [--json]` | the text and JSON shapes in §3.4 |
 | bash suites `test-strand-lock.sh`, `test-strand-reclaim-n.sh`, `test-sentinel-store-reads.sh` (case 7), `test-unit-name.sh`, `test-closed-strand.sh` | run `strand.sh` | see §7 |
@@ -291,7 +291,7 @@ throttle-state parsing; `--from` parsing.
 | 7 | `spira/test-sentinel-store-reads.sh:255,266` (case 7) | `bash "$HERE/strand.sh" report` counting bd calls | point at the binary; 7b holds (0 bd calls with both snapshots); 7a's positive control still holds (1 `bd list` + 1 `bd ready` per partition) |
 | 8 | `spira/test-unit-name.sh:49,88–91` | awk-extracts `harness_state` from strand.sh | drop the strand.sh case; `probe::spira_unit`/`harness_state` carry it (a unit test there needs a stub systemctl) |
 | 9 | `spira/test-closed-strand.sh:46` | `stub strand.sh 'exit 0'` | stub the binary via `SPIRA_STRAND_BIN` |
-| 10 | `spira/auron.sh:92` (comment) | names strand-classify.py | reword |
+| 10 | `spira/auron.sh:92` (comment) | names strand-classify.py | **MOOT.** auron.sh is retired (sp-zpaq0); the comment does not exist to reword |
 | 11 | later | roster probe (§2.5) | retire when `[persona.<name>]` carries labels and exclusions |
 
 This branch also carries `a21b071a1` (an aeon's earlier bash fix of the same defect in
