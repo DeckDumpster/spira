@@ -1570,7 +1570,7 @@ $(printf '%s\n' "$shown" | head -"$WD_NOTIFY_MAX" | sed 's/^/    /')"
     _wd_notify_health; local hrc=$?
     [ "$hrc" = 3 ] && return 3
     [ "$hrc" = 1 ] && found=1
-    bash "$SPIRA_HOME/mail-health.sh"; local mhrc=$?
+    mail-health.sh; local mhrc=$?
     [ "$mhrc" = 3 ] && return 3
     [ "$mhrc" = 1 ] && found=1
     [ "$found" = 1 ] && return 1
@@ -1605,12 +1605,8 @@ _wd_ask() {
     [ -f "$stamp" ] && prev="$(cat "$stamp" 2>/dev/null)"
     [ "$fp" = "$prev" ] && return 0
 
-    if [ ! -x "$SPIRA_HOME/mail.sh" ]; then
-        echo "watchd: mail.sh not found — the findings above reach nobody" >&2
-        return 1
-    fi
     local _subj="$3" _dflt="$4" _why="$5" _ev="$6"
-    "$SPIRA_HOME/mail.sh" send operator \
+    mail.sh send operator \
         --from "Watchd <watchd@spira>" \
         --subject "$_subj" \
         --kind question \
