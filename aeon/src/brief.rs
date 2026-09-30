@@ -60,24 +60,17 @@ branch reaches `{base_branch}` from there is described above, and none of it nee
     }
 }
 
-/// `{{TESTENV}}`: the testenv runner, ABSOLUTE. `SPIRA_TESTENV_BIN` as the aeon resolved it
-/// wins; without one, the harness's `bin/testenv` beside `SPIRA_HOME`, joined lexically so
-/// no `..` survives. Never a path relative to the aeon's worktree, which has no `bin/` — an
-/// aeon told `{{SPIRA_HOME}}/../bin/testenv` ran `./spira/testenv.sh`, the container helper,
-/// instead (sp-4vq2q).
-pub fn testenv_runner(testenv_bin: &str, home: &str) -> String {
-    if !testenv_bin.is_empty() {
-        return testenv_bin.to_string();
-    }
-    let h = Path::new(home);
-    h.parent().unwrap_or(h).join("bin").join("testenv").display().to_string()
-}
+/// `{{TESTENV}}`: the testenv runner, by bare name (sp-gypjk). The aeon's environment carries
+/// the launcher's PATH, so `testenv` is the release's binary — never a path relative to the
+/// aeon's worktree (an aeon told `{{SPIRA_HOME}}/../bin/testenv` once ran
+/// `./spira/testenv.sh`, the container helper, instead: sp-4vq2q).
+pub const TESTENV: &str = "testenv";
 
 /// `{{FOLLOWUP}}`: how to file work discovered rather than done, selected by
 /// `lifecycle_enforce` exactly as `{{FINISH}}` is. With it OFF every `work` verb refuses
 /// (exit 3), and an aeon that fell back to raw `bd create --parent` gave all six children
 /// the parent's `branch:` label (sp-o4co5).
-pub fn followup_brief(lifecycle_enforce: bool, home: &str, bead_id: &str, repo_name: &str) -> String {
+pub fn followup_brief(lifecycle_enforce: bool, bead_id: &str, repo_name: &str) -> String {
     if lifecycle_enforce {
         format!(
             "**File it as a bead** — `work file-followup \"<title>\"` for work that follows from
@@ -88,9 +81,9 @@ pub fn followup_brief(lifecycle_enforce: bool, home: &str, bead_id: &str, repo_n
         format!(
             "**File it as a bead** through the contract, never with raw `bd create`:
 
-      {home}/bead.sh file \"<title>\" --for <persona> --repo {repo_name} [--priority N] [--body-file F] [--parent {bead_id}]
+      bead.sh file \"<title>\" --for <persona> --repo {repo_name} [--priority N] [--body-file F] [--parent {bead_id}]
 
-  `--for` names the persona that should claim it (`{home}/bead.sh contract` lists the legal
+  `--for` names the persona that should claim it (`bead.sh contract` lists the legal
   personas, repos and types). A follow-up must never carry this bead's `branch:` label —
   `branch:` names one bead's own worktree, and raw `bd create --parent` copies it onto every
   child. `bead.sh file` does not. (The `work` verbs refuse while lifecycle enforcement is
@@ -643,7 +636,7 @@ pub fn render_memories(mem_json: &str, prefixes: &str, budget: usize, core_csv: 
             (
                 "sop-",
                 format!(
-                    "## Runbooks on the shelf — full text on request\n\nThese bind exactly as the statutes above do. Read the full runbook —\nCHECK, FIX, ESCALATE — with:\n\n    {harness}/spira/sop.sh show <slug-without-sop-prefix>\n"
+                    "## Runbooks on the shelf — full text on request\n\nThese bind exactly as the statutes above do. Read the full runbook —\nCHECK, FIX, ESCALATE — with:\n\n    sop.sh show <slug-without-sop-prefix>\n"
                 ),
             ),
         ];
@@ -665,24 +658,21 @@ mod tests {
         testkit::TempDir::new(&format!("aeon-brief-{n}"))
     }
 
-    // sp-4vq2q: the runner is absolute — the resolved bin, else bin/testenv beside SPIRA_HOME.
+    // sp-4vq2q, sp-gypjk: the runner is the bare name — never a path relative to home.
     #[test]
-    fn testenv_runner_is_absolute_never_relative_to_home() {
-        assert_eq!(testenv_runner("/opt/art/testenv", "/srv/harness/spira"), "/opt/art/testenv");
-        let r = testenv_runner("", "/srv/harness/spira");
-        assert_eq!(r, "/srv/harness/bin/testenv");
-        assert!(!r.contains(".."));
+    fn testenv_runner_is_the_bare_name() {
+        assert_eq!(TESTENV, "testenv");
     }
 
     // sp-o4co5: {{FOLLOWUP}} follows lifecycle_enforce exactly as {{FINISH}} does.
     #[test]
     fn followup_follows_lifecycle_enforce() {
-        let off = followup_brief(false, "/h/spira", "sp-a", "spira");
-        assert!(off.contains("/h/spira/bead.sh file \"<title>\" --for <persona> --repo spira"));
+        let off = followup_brief(false, "sp-a", "spira");
+        assert!(off.contains("\n      bead.sh file \"<title>\" --for <persona> --repo spira"));
         assert!(off.contains("never with raw `bd create`"));
         assert!(off.contains("`branch:` label"));
         assert!(!off.contains("work file-followup"));
-        let on = followup_brief(true, "/h/spira", "sp-a", "spira");
+        let on = followup_brief(true, "sp-a", "spira");
         assert!(on.contains("work file-followup"));
         assert!(on.contains("work split"));
         assert!(!on.contains("bead.sh file"));
@@ -695,8 +685,8 @@ mod tests {
         for enforce in [false, true] {
             let t = Tokens {
                 single: vec![
-                    ("TESTENV", testenv_runner("", "/srv/h/spira")),
-                    ("FOLLOWUP", followup_brief(enforce, "/srv/h/spira", "sp-a", "spira")),
+                    ("TESTENV", TESTENV.into()),
+                    ("FOLLOWUP", followup_brief(enforce, "sp-a", "spira")),
                     ("BRANCH", "spira/sp-a".into()),
                     ("REPO_NAME", "spira".into()),
                     ("SPIRA_HOME", "/srv/h/spira".into()),
@@ -706,15 +696,15 @@ mod tests {
             let p = render_prompt(chamber, &t, None);
             // The only runner line is the reproduce-one-named-suite form; a no-`--suites`
             // pre-close run duplicates the gate's work outside its admission (sp-4vq2q follow-up).
-            assert!(p.contains("    /srv/h/bin/testenv --suites <suite> spira/sp-a spira\n"), "{p}");
-            assert!(!p.contains("    /srv/h/bin/testenv spira/sp-a spira\n"), "{p}");
-            assert!(runner_lines(&p, "/srv/h/bin/testenv").iter().all(|l| l.contains(" --suites <suite> ")));
+            assert!(p.contains("    testenv --suites <suite> spira/sp-a spira\n"), "{p}");
+            assert!(!p.contains("    testenv spira/sp-a spira\n"), "{p}");
+            assert!(runner_lines(&p, "    testenv ").iter().all(|l| l.contains(" --suites <suite> ")));
             assert!(p.contains("do not run the suites"));
             assert!(!p.contains("exactly the selection"));
             assert!(!p.contains("{{TESTENV}}") && !p.contains("{{FOLLOWUP}}"));
             assert!(!p.contains("/../bin/testenv"));
             assert!(!p.contains("--suites test-"));
-            assert_eq!(p.contains("/srv/h/spira/bead.sh file"), !enforce);
+            assert_eq!(p.contains("bead.sh file"), !enforce);
             assert_eq!(p.contains("work file-followup"), enforce);
             if std::env::var_os("AEON_PRINT_BRIEF").is_some() {
                 println!("==== lifecycle_enforce={enforce} ====\n{p}");
@@ -732,15 +722,15 @@ mod tests {
         let chamber = include_str!("../../spira/chamber/batcher.md");
         let t = Tokens {
             single: vec![
-                ("TESTENV", testenv_runner("", "/srv/h/spira")),
+                ("TESTENV", TESTENV.into()),
                 ("REPO_NAME", "spira".into()),
             ],
             ..Default::default()
         };
         let p = render_prompt(chamber, &t, None);
-        assert!(p.contains("    /srv/h/bin/testenv --suites <suite> <branch> spira\n"), "{p}");
-        assert!(!p.contains("    /srv/h/bin/testenv <branch> spira\n"), "{p}");
-        let lines = runner_lines(&p, "/srv/h/bin/testenv");
+        assert!(p.contains("    testenv --suites <suite> <branch> spira\n"), "{p}");
+        assert!(!p.contains("    testenv <branch> spira\n"), "{p}");
+        let lines = runner_lines(&p, "    testenv ");
         assert!(!lines.is_empty() && lines.iter().all(|l| l.contains(" --suites <suite> ")));
         assert!(!p.contains("exactly what the landing"));
     }
@@ -902,7 +892,7 @@ mod tests {
         let m = render_memories(j, "law-,sop-", 120000, "law-a", "/h");
         assert!(m.starts_with("## law-a\n\nA text\n\n\n## Statutes in force"), "{m}");
         assert!(m.contains("    /h/rule.sh show <slug-without-law-prefix>\nlaw-b"));
-        assert!(m.ends_with("    /h/spira/sop.sh show <slug-without-sop-prefix>\nsop-x"));
+        assert!(m.ends_with("    sop.sh show <slug-without-sop-prefix>\nsop-x"));
         assert!(!m.contains("other"));
         let tight = render_memories(j, "law-", 5, "law-a", "/h");
         assert!(tight.starts_with("## Statutes in force") && tight.contains("law-a\nlaw-b"), "over budget falls back to the index");

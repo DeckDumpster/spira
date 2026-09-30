@@ -194,7 +194,7 @@ impl Launcher for FakeLauncher {
 }
 
 struct Fx {
-    dir: testkit::TempDir,
+    _dir: testkit::TempDir,
     home: PathBuf,
     run: PathBuf,
     repo: PathBuf,
@@ -231,7 +231,7 @@ fn fx(name: &str) -> Fx {
     git(&repo, &["add", "f"]);
     git(&repo, &["commit", "-qm", "seed"]);
     let w: W = Arc::new(Mutex::new(World::default()));
-    Fx { dir, home, run, repo, w }
+    Fx { _dir: dir, home, run, repo, w }
 }
 
 struct Outcome {
@@ -292,7 +292,7 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, s
             t0: crate::util::now_epoch(),
             enforce,
             // path-ok: a fake binary path in a unit-test fixture, never resolved
-            claim_bin: Some("/bin/spira-claim".into()),
+            claim_bin: "spira-claim".into(),
             stop: Arc::new(Stop::default()),
             hb_shutdown: Arc::new(AtomicBool::new(false)),
             hb_done: Arc::new(AtomicBool::new(false)),
@@ -419,33 +419,14 @@ fn poison_raced_releases_and_records() {
 // ---- lifecycle_enforce ---------------------------------------------------------------
 
 #[test]
-fn enforce_with_a_missing_binary_refuses_before_any_setup() {
-    let f = fx("enf-missing");
-    seed(&f, "sp-e");
-    let o = go(&f, "spira,plan", &[("SPIRA_LC_BIN", "/nonexistent/spira-lc"), ("SPIRA_WORK_BIN", "/nonexistent/work")], true, Mode::Claim, BTreeMap::new(), no_session());
-    assert_eq!(o.code, 1);
-    assert!(ledger_lines(&o)[2].contains("status=lifecycle-enforce-binary-missing"));
-    let w = o.w.lock().unwrap();
-    assert!(!w.seam_calls.iter().any(|c| c.0 == "lc_claim_bead"));
-    assert!(!f.run.join("worktree").exists(), "no session setup");
-}
-
-#[test]
 fn binary_presence_alone_never_selects_the_restricted_path() {
     let f = fx("enf-off");
     seed(&f, "sp-l");
-    let bin = f.dir.join("bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    for b in ["spira-lc", "work"] {
-        let p = bin.join(b);
-        testkit::write_exe(&p, "#!/bin/sh\n");
-    }
-    let extra = [("SPIRA_LC_BIN", bin.join("spira-lc").display().to_string()), ("SPIRA_WORK_BIN", bin.join("work").display().to_string())];
-    let extra: Vec<(&str, &str)> = extra.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let extra: Vec<(&str, &str)> = Vec::new();
     let o = go(&f, "spira,plan", &extra, false, Mode::Claim, BTreeMap::new(), commits_and_closes());
     let w = o.w.lock().unwrap();
     assert!(!w.seam_calls.iter().any(|c| c.0 == "lc_claim_bead"), "enforce off: no lifecycle CAS");
-    assert_ne!(o.seen[0].prog, "bash", "enforce off: the model is not wrapped in work-env.sh");
+    assert_ne!(o.seen[0].prog, "work-env.sh", "enforce off: the model is not wrapped in work-env.sh");
     let task = std::fs::read_to_string(f.run.join("sp-l.task.md")).unwrap();
     assert!(!task.contains("You have no `bd`") && task.contains("bd -C /db close sp-l --reason-file -"));
 }
@@ -454,14 +435,7 @@ fn binary_presence_alone_never_selects_the_restricted_path() {
 fn enforce_claims_through_the_machine_and_restricts_the_model() {
     let f = fx("enf-on");
     seed(&f, "sp-r");
-    let bin = f.dir.join("bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    for b in ["spira-lc", "work"] {
-        let p = bin.join(b);
-        testkit::write_exe(&p, "#!/bin/sh\n");
-    }
-    let extra = [("SPIRA_LC_BIN", bin.join("spira-lc").display().to_string()), ("SPIRA_WORK_BIN", bin.join("work").display().to_string())];
-    let extra: Vec<(&str, &str)> = extra.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let extra: Vec<(&str, &str)> = Vec::new();
     let mut a = BTreeMap::new();
     a.insert("lc_bead_verified", Out::ok(""));
     let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|spec, _w, _| {
@@ -475,8 +449,8 @@ fn enforce_claims_through_the_machine_and_restricts_the_model() {
     let w = o.w.lock().unwrap();
     let cas = w.seam_calls.iter().find(|c| c.0 == "lc_claim_bead").expect("lifecycle CAS claim");
     assert_eq!(cas.1[1], "aeon-ifrit");
-    assert_eq!(o.seen[0].prog, "bash");
-    assert!(o.seen[0].args[0].ends_with("/work-env.sh") && o.seen[0].args[1] == "sp-r" && o.seen[0].args[2] == "--");
+    assert_eq!(o.seen[0].prog, "work-env.sh");
+    assert!(o.seen[0].args[0] == "sp-r" && o.seen[0].args[1] == "--");
     let task = std::fs::read_to_string(f.run.join("sp-r.task.md")).unwrap();
     assert!(task.contains("**You have no `bd`.**"));
     assert!(ledger_lines(&o).last().unwrap().contains("status=submitted"));
@@ -487,14 +461,7 @@ fn enforce_claims_through_the_machine_and_restricts_the_model() {
 fn a_refused_lifecycle_claim_releases() {
     let f = fx("enf-refused");
     seed(&f, "sp-z");
-    let bin = f.dir.join("bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    for b in ["spira-lc", "work"] {
-        let p = bin.join(b);
-        testkit::write_exe(&p, "#!/bin/sh\n");
-    }
-    let extra = [("SPIRA_LC_BIN", bin.join("spira-lc").display().to_string()), ("SPIRA_WORK_BIN", bin.join("work").display().to_string())];
-    let extra: Vec<(&str, &str)> = extra.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let extra: Vec<(&str, &str)> = Vec::new();
     let mut a = BTreeMap::new();
     a.insert("lc_claim_bead", Out::fail(3, ""));
     let o = go(&f, "spira,plan", &extra, true, Mode::Claim, a, no_session());
@@ -502,14 +469,9 @@ fn a_refused_lifecycle_claim_releases() {
     assert!(ledger_lines(&o)[2].contains("status=lc-claim-refused"));
 }
 
-fn lc_bin_extra(f: &Fx) -> Vec<(String, String)> {
-    let bin = f.dir.join("bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    for b in ["spira-lc", "work"] {
-        let p = bin.join(b);
-        testkit::write_exe(&p, "#!/bin/sh\n");
-    }
-    vec![("SPIRA_LC_BIN".to_string(), bin.join("spira-lc").display().to_string()), ("SPIRA_WORK_BIN".to_string(), bin.join("work").display().to_string())]
+/// No tool paths to hand in any more (sp-gypjk): spira-lc and work are found by name.
+fn lc_bin_extra(_f: &Fx) -> Vec<(String, String)> {
+    Vec::new()
 }
 
 // ---- the stacked base (design stacked-dependents-2026-09-28 §1, sp-falao) --------------
