@@ -191,6 +191,16 @@ run) and from the PSI of the host.
 | test — testenv `up`→teardown, 8 suites at `batch_maxpar` 8 | 78 s (up 3, install 11, testdb 4, suites 55, teardown 5) | 1.2 / 8 | 0.44–0.55 GiB container (testenv: "cgroup peak 536MiB, ~67MiB/slot") | 35 MiB in place; a scratch slot's release target ≈ 3.2 GiB | 7 private sql-servers at peak | 6.3 MiB/s host-wide during the suites; host io full avg10 ≤ 3.8% |
 | gate — a certification trial (gate.log, 2026-09-30, 30 trials) | 200–800 s (median ~400) | its own composition | a gate tree's target on tmpfs ≈ 0.7 GiB, plus a warm testenv slot ≈ 3.2 GiB | ≈ 3.9 GiB | ≤ 8 | — |
 
+**The release profile changed under this measurement.** sp-zqo8s landed while this bead was
+in flight. It moved `[profile.release]` from fat LTO with `codegen-units = 1` and `opt-level
+= "z"` to `lto = false`, `codegen-units = 16` and `opt-level = 2`. The 15.3 GiB and 22-`rustc`
+row above was measured on the old profile. `WEIGHT_RELEASE = 4` is therefore a starting
+value, and it errs on the safe side: a lighter release build weighing 4 only runs alone when
+it could have shared the pool. Re-derive it from the `admission` rows (`held_secs` per weight)
+and a single release build's anon peak on the new profile, on a quiet box, and change it by
+editing the constant. The detection (`-C opt-level=` other than 0) still marks the new profile
+as release-like.
+
 **What binds each phase.** Compile is bound by RAM first and cores second. An aeon-profile
 build carries 2.7 GiB of anon and uses about 9 cores. A release (LTO) build carries **15.3
 GiB**, with 22 `rustc` alive for a minute. The jam's "~20 rustc" and its memory full-stall

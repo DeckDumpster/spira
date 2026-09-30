@@ -152,7 +152,8 @@ pub struct Lease {
 /// A compile job's weight in units of the compile pool (DESIGN-admission.md §5). A unit is
 /// what one aeon-profile workspace build costs (≈2.7 GiB anon, ≈9 cores); a release build
 /// (LTO, codegen-units=1) peaked at 15.3 GiB anon with 22 rustc alive, 145 s — ⌈15.3 ÷ 4⌉ = 4
-/// units. A job heavier than the whole pool runs alone.
+/// units. A job heavier than the whole pool runs alone. Measured on the fat-LTO profile that
+/// sp-zqo8s replaced (DESIGN-admission.md §5): a safe starting value, re-derived after rollout.
 pub const WEIGHT_RELEASE: u64 = 4;
 
 /// The weight of a rustc invocation's build: an optimised (`-C opt-level=` other than 0) or
