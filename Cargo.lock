@@ -41,6 +41,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "auron"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "testkit",
+]
+
+[[package]]
 name = "axum"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -108,6 +117,15 @@ dependencies = [
  "serde_json",
  "spira-config",
  "suite-select",
+ "testkit",
+]
+
+[[package]]
+name = "bead"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "spira-config",
  "testkit",
 ]
 
@@ -809,6 +827,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rule"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "testkit",
+]
+
+[[package]]
 name = "rustix"
 version = "0.38.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -972,6 +998,7 @@ version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
 dependencies = [
+ "indexmap",
  "itoa",
  "memchr",
  "serde",

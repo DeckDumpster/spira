@@ -111,10 +111,19 @@ doctor_check_config_files() {
         local out
         if ! command -v spira-config >/dev/null 2>&1; then
             FAIL "cannot validate $toml — spira-config is not on PATH"
-        elif out="$(spira-config validate "$toml" 2>&1)"; then
-            OK "spira.toml validates — $toml"
         else
-            FAIL "spira.toml fails validation — $toml" "$out"
+            # sp-oppza ONE-TIME UPGRADE MIGRATION, ahead of validate: a box whose config
+            # predates sp-k6m1m (goal set, no id_prefix) is repaired in place instead of
+            # failing validation on every such box. Idempotent — a no-op once id_prefix is
+            # set, which includes production's own state, set by hand — so unconditional.
+            local mig
+            mig="$(spira-config migrate "$toml" 2>&1)"
+            [ -n "$mig" ] && printf '%s\n' "$mig"
+            if out="$(spira-config validate "$toml" 2>&1)"; then
+                OK "spira.toml validates — $toml"
+            else
+                FAIL "spira.toml fails validation — $toml" "$out"
+            fi
         fi
     fi
 }
@@ -384,7 +393,16 @@ except Exception:
 # days: nothing here restarts it, nothing before this check even looked. Dedup, age-since-
 # failed and the anomaly it becomes are watchtower's job (sp-niqjl); doctor's job is the
 # one-pass read of current state.
-# --------------------------------------------------------------------------------------
+#
+# SPIRA_DOCTOR_INSTALLING softens a failed unit to WARN (sp-r15cf). This check runs at
+# install.sh's phase 0 — its OWN preflight, before phase 0 has touched a single unit — so
+# every failure it finds here necessarily PREDATES this install run: it cannot be something
+# this install broke, because this install has not acted yet. Refusing the install outright
+# over a unit that was already down (an aged box's own leftover failure, unrelated to the
+# release being installed) blocks the one thing that might repair it — phase 4 re-renders
+# and restarts. Outside SPIRA_DOCTOR_INSTALLING (the ordinary runtime read doctor.sh and
+# deploy.sh's own health check use) this stays a FAIL: a unit failed while the box was
+# already up IS live evidence something broke, with no "before phase 0" innocence to claim.
 doctor_check_failed_units() {
     local sc="${SPIRA_SYSTEMCTL:-systemctl}" out n=0 line unit
     # --plain: without it systemctl prefixes each failed unit with a "● " status bullet,
@@ -397,8 +415,13 @@ doctor_check_failed_units() {
     while IFS= read -r line; do
         [ -n "$line" ] || continue
         unit="${line%% *}"
-        FAIL "$unit is a failed systemd unit" \
-             "Check: journalctl --user -u $unit -n 20"
+        if [ -n "${SPIRA_DOCTOR_INSTALLING:-}" ]; then
+            WARN "$unit is a failed systemd unit — pre-existing, predates this install" \
+                 "Check: journalctl --user -u $unit -n 20"
+        else
+            FAIL "$unit is a failed systemd unit" \
+                 "Check: journalctl --user -u $unit -n 20"
+        fi
         n=$((n+1))
     done <<< "$out"
     [ "$n" -eq 0 ] && OK "no failed spira-* units"

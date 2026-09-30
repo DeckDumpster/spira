@@ -21,7 +21,7 @@
 # the container this suite executes in.
 #
 # tier: T2
-# covers: aeon/src/* spira/lib.sh spira/work-env.sh spira/conf.sh spira/chamber/builder.md work/* spira-lc/*
+# covers: aeon/src/* spira/lib.sh spira/conf.sh spira/chamber/builder.md work/* spira-lc/*
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -196,7 +196,8 @@ printf 'seed\n' > "$FREPO/f"
 git -C "$FREPO" add f; git -C "$FREPO" commit -qm seed; git -C "$FREPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/spira-home"; mkdir -p "$SPIRA_HOME/chamber"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/work-env.sh" "$SPIRA_HOME/"
+# work-env.sh is retired (sp-zpaq0): the aeon binary builds its own restricted environment.
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"

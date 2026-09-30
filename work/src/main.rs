@@ -12,7 +12,7 @@
 //!
 //! Deploys inert: nothing runs an aeon through this yet (the aeon.sh cutover bead,
 //! sp-xethq, and the restricted unit environment this bead only provides — see
-//! spira/work-env.sh).
+//! aeon/src/restrict.rs, formerly spira/work-env.sh, retired sp-zpaq0).
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;

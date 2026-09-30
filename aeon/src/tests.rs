@@ -3,6 +3,7 @@
 //! because the worktree contract is about git's own refusals.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -198,6 +199,11 @@ struct Fx {
     home: PathBuf,
     run: PathBuf,
     repo: PathBuf,
+    /// A directory holding a stub `work` binary, so the restricted-env resolution
+    /// (`restrict::work_bin_dir`, sp-zpaq0) finds one exactly as the real release's
+    /// `bin/` does — without it, every `enforce=true` test would exercise the "work is
+    /// not on PATH" refusal instead of the restriction itself.
+    bin: PathBuf,
     w: W,
 }
 
@@ -230,8 +236,13 @@ fn fx(name: &str) -> Fx {
     std::fs::write(repo.join("f"), "seed\n").unwrap();
     git(&repo, &["add", "f"]);
     git(&repo, &["commit", "-qm", "seed"]);
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let work_stub = bin.join("work");
+    std::fs::write(&work_stub, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&work_stub, std::fs::Permissions::from_mode(0o755)).unwrap();
     let w: W = Arc::new(Mutex::new(World::default()));
-    Fx { _dir: dir, home, run, repo, w }
+    Fx { _dir: dir, home, run, repo, bin, w }
 }
 
 struct Outcome {
@@ -261,7 +272,7 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, s
         vars.insert(k.to_string(), v.to_string());
     }
     let mut base = BTreeMap::new();
-    base.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
+    base.insert("PATH".to_string(), format!("{}:{}", f.bin.display(), std::env::var("PATH").unwrap_or_default()));
     base.insert("GH_TOKEN".to_string(), "secret".to_string());
     for (k, v) in [("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")] {
         base.insert(k.into(), v.into());
@@ -426,7 +437,7 @@ fn binary_presence_alone_never_selects_the_restricted_path() {
     let o = go(&f, "spira,plan", &extra, false, Mode::Claim, BTreeMap::new(), commits_and_closes());
     let w = o.w.lock().unwrap();
     assert!(!w.seam_calls.iter().any(|c| c.0 == "lc_claim_bead"), "enforce off: no lifecycle CAS");
-    assert_ne!(o.seen[0].prog, "work-env.sh", "enforce off: the model is not wrapped in work-env.sh");
+    assert!(!o.seen[0].env.contains_key("SPIRA_WORK_BEAD_ID"), "enforce off: the model is not run under the restricted environment");
     let task = std::fs::read_to_string(f.run.join("sp-l.task.md")).unwrap();
     assert!(!task.contains("You have no `bd`") && task.contains("bd -C /db close sp-l --reason-file -"));
 }
@@ -449,8 +460,9 @@ fn enforce_claims_through_the_machine_and_restricts_the_model() {
     let w = o.w.lock().unwrap();
     let cas = w.seam_calls.iter().find(|c| c.0 == "lc_claim_bead").expect("lifecycle CAS claim");
     assert_eq!(cas.1[1], "aeon-ifrit");
-    assert_eq!(o.seen[0].prog, "work-env.sh");
-    assert!(o.seen[0].args[0] == "sp-r" && o.seen[0].args[1] == "--");
+    assert_eq!(o.seen[0].env.get("SPIRA_WORK_BEAD_ID").map(|s| s.as_str()), Some("sp-r"), "the model runs bound to this bead");
+    assert!(!o.seen[0].env.contains_key("SPIRA_DB"), "the restricted env never carries SPIRA_DB");
+    assert!(!o.seen[0].env.contains_key("GH_TOKEN"), "the restricted env never carries GH_TOKEN");
     let task = std::fs::read_to_string(f.run.join("sp-r.task.md")).unwrap();
     assert!(task.contains("**You have no `bd`.**"));
     assert!(ledger_lines(&o).last().unwrap().contains("status=submitted"));

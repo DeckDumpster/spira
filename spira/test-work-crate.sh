@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 #
-# test-work-crate.sh — the `work` client crate's pure logic (cargo test -p work), the
-# built binary's own refusal/cannot-tell behavior with no server reachable, and
-# work-env.sh's isolation (no `bd` on PATH, no DB credential in the environment).
+# test-work-crate.sh — the `work` client crate's pure logic (cargo test -p work) and the
+# built binary's own refusal/cannot-tell behavior with no server reachable.
 #
 # The refusal check (a verb naming any bead other than the bound one) is asserted here
 # WITHOUT a reachable spira-lc socket, precisely to prove it never needed one: refused
@@ -11,8 +10,16 @@
 # (test-work-container.sh) is what proves a request that clears this check reaches a real
 # spira-lc and does what it says.
 #
+# THE RESTRICTED-ENVIRONMENT ISOLATION (no `bd` on PATH, no DB credential reachable) USED
+# TO BE TESTED HERE, against the standalone `spira/work-env.sh` wrapper. That script is
+# retired (sp-zpaq0, rewrite wave 5): its only caller was aeon.sh/aeon itself
+# (work/DESIGN.md §2), so there is no standalone binary left to invoke. The property moved
+# with the mechanism — `aeon/src/restrict.rs`'s own unit tests (`cargo test -p aeon`) hold
+# the allow-list to account (bd/SPIRA_DB never leak, the bound bead id always does), and
+# test-aeon-lifecycle-cutover.sh still proves it end to end against a real spira-lc.
+#
 # tier: T1
-# covers: work/* spira-lc/src/work.rs spira-lc/src/bd.rs spira/work-env.sh spira/conf.sh
+# covers: work/* spira-lc/src/work.rs spira-lc/src/bd.rs spira/conf.sh
 # timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -77,28 +84,9 @@ out="$(env -i PATH="/usr/bin:/bin" SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_WORK_BEAD_ID=
     "$WORK_BIN" close 2>&1)"; rc=$?
 is "unknown verb: refused (exit 3)" "3" "$rc"
 
-# ── work-env.sh: bd absent from PATH, no DB credential readable ─────────────────────
-# POSITIVE CONTROL first: bd IS found on the ambient PATH, so its absence below is the
-# wrapper's doing, not a fluke of this box's environment (law-absence-needs-a-positive-control).
-if command -v bd >/dev/null 2>&1; then
-    ok "POSITIVE CONTROL: bd is on the ambient PATH outside the wrapper"
-else
-    skip "bd is not installed on this box at all; the wrapper's exclusion cannot be distinguished from its absence"
-fi
-
-out="$(cd "$REPO" && SPIRA_DB="/should/not/leak" SPIRA_BD="/should/not/leak" \
-    SPIRA_LC_PASSWORD_FILE="/should/not/leak" \
-    work-env.sh sp-bound1 -- bash -c '
-        command -v bd >/dev/null 2>&1 && { echo "BD_FOUND"; exit 1; }
-        work_prog=work
-        command -v "$work_prog" >/dev/null 2>&1 || { echo "WORK_MISSING"; exit 1; }
-        [ "$SPIRA_WORK_BEAD_ID" = sp-bound1 ] || { echo "BEAD_ID_WRONG"; exit 1; }
-        env | grep -qi "SPIRA_DB\|SPIRA_BD\|SPIRA_LC_PASSWORD\|CREDENTIAL\|_TOKEN\|_SECRET" && { echo "CREDENTIAL_LEAKED"; exit 1; }
-        echo OK
-    ' 2>&1)"; rc=$?
-is   "work-env.sh: the wrapped command runs cleanly" "0"  "$rc"
-want "work-env.sh: bd is absent from PATH inside it" "OK" "$out"
-nowant "work-env.sh: bd was NOT found inside it"        "BD_FOUND"        "$out"
-nowant "work-env.sh: no credential-shaped var leaked"   "CREDENTIAL_LEAKED" "$out"
+# The restricted-environment isolation this section used to assert against the standalone
+# work-env.sh wrapper moved with the mechanism to aeon/src/restrict.rs (sp-zpaq0) — see
+# this file's header comment. Its own unit tests hold the allow-list to account; nothing
+# stands alone here to invoke any more.
 
 tl_summary

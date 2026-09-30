@@ -25,7 +25,13 @@ Type=oneshot
 # It is idempotent and writes nothing when the file already says what it should, and it
 # REFUSES while the hook's own file is absent — so between arming this and the branch that
 # adds the hook landing, the pass is a no-op rather than a registration pointing at nothing.
-ExecStartPre=-@SPIRA_PROD@/install-session-hook.sh install
+#
+# ADDRESSED THROUGH `current`, NEVER THIS UNIT'S OWN @SPIRA_PROD@ (sp-7jr34). The registered
+# command names releases/current, resolved by `release session-hook` itself — not the sha
+# this unit happens to be rendered against — so re-rendering this unit on every activation
+# (DESIGN.md "activate": "never current, so a unit states exactly what it runs") no longer
+# registers a NEW, unrecognisable entry each time. 27 had accumulated before this was fixed.
+ExecStartPre=-@SPIRA_PROD_ROOT@/bin/release session-hook install
 ExecStart=@SPIRA_PROD_COCK@/layout.sh ensure
 TimeoutStartSec=60
 StandardOutput=append:@SPIRA_RUN@/cockpit-heal.log

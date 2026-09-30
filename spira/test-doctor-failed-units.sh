@@ -68,6 +68,10 @@ MOCK
 }
 
 run_doctor() {
+    # $1, if "installing", sets SPIRA_DOCTOR_INSTALLING=1 — install.sh's own phase-0
+    # preflight, where a failed unit necessarily predates this run (sp-r15cf).
+    local installing=""
+    [ "${1:-}" = installing ] && installing=1
     env -i \
         PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" \
         HOME="$TMP/home" \
@@ -78,6 +82,7 @@ run_doctor() {
         SPIRA_DB="$TMP/db" \
         SPIRA_RUN="$TMP/run" \
         SPIRA_INSTANCE=prod \
+        ${installing:+SPIRA_DOCTOR_INSTALLING=1} \
         doctor.sh 2>/dev/null
 }
 units_section() { sed -n '/^systemd units$/,/^$/p' <<< "$1"; }
@@ -127,6 +132,26 @@ probe_out="$(run_doctor || true)"
 probe_sec="$(units_section "$probe_out")"
 want   "probe failure: FAIL fires" "FAIL" "$probe_sec"
 nowant "probe failure: no false-clean ok" "no failed spira-* units" "$probe_sec"
+
+# ==========================================================================
+echo
+echo "5. SPIRA_DOCTOR_INSTALLING — a failed unit at preflight predates this run, so it is a"
+echo "   WARN, not a FAIL: install.sh's phase 0 has not touched a single unit yet, so"
+echo "   whatever doctor.sh finds failed here cannot be something THIS install broke"
+echo "   (sp-r15cf: an aged install refused itself over a failure the box already had):"
+# ==========================================================================
+write_systemctl "spira-summon-prod.service loaded failed failed summon"
+installing_out="$(run_doctor installing || true)"
+installing_rc=$?
+installing_sec="$(units_section "$installing_out")"
+want   "installing: WARN, names the unit" "spira-summon-prod.service" "$installing_sec"
+want   "installing: says pre-existing" "predates this install" "$installing_sec"
+nowant "installing: no FAIL for it" "FAIL  spira-summon-prod.service" "$installing_sec"
+is     "installing: doctor.sh itself does not refuse on this alone" "0" "$installing_rc"
+# The ordinary (non-installing) case must be untouched by this — still a hard FAIL.
+not_installing_out="$(run_doctor || true)"
+not_installing_sec="$(units_section "$not_installing_out")"
+want "ordinary run: still FAILs (no regression)" "FAIL  spira-summon-prod.service" "$not_installing_sec"
 
 echo
 tl_summary
