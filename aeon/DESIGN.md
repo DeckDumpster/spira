@@ -188,7 +188,7 @@ through lib.sh functions (§5), never hand-written SQL.
 ### 2.7 Programs called
 
 `bd` (`$SPIRA_BD`), `git`, `spira-claim`, the model (`$SPIRA_AGENT`, default `claude`),
-`work-env.sh` (enforce only), `world.sh stop|start`, `gate-run.sh --status`,
+`world.sh stop|start`, `gate-run.sh --status`,
 `worktree-hooks.sh install`, `holds.sh`, `wiki-commit.sh`, `sop ledger-init|digest|log`,
 `close-reason-flags.py`, `workflow-run-check.py`, the repository's own testdb library, and
 `bash` for the lib.sh seam. Every Spira tool and script is invoked by its bare name on the
@@ -212,7 +212,7 @@ which runs `spira-lint` by name: a fresh worktree commits with no build of its o
 | caller | line | how |
 |---|---|---|
 | `spira/lib.sh` `summon_fayth` | 2726-2730 | `systemd-run --user --collect --quiet --unit=spira-aeon-$f-<ts> <summon_argv> [--setenv=SPIRA_REQUIRE_LABEL=…] "$SPIRA_HOME/aeon.sh" "$f"` |
-| `spira/escape.sh` | 52-56 | same shape, unit `spira-aeon-$FAYTH-escape-<ts>`, `${DRY_FLAG}` |
+| `aeon --escape <fayth>` (this binary, `escape.rs`; was `spira/escape.sh`) | — | same shape, unit `spira-aeon-$FAYTH-escape-<ts>`, `[--dry-run]` |
 | `systemd/spira-ops.service` | 46 | `exec @SPIRA_PROD@/aeon.sh ops --sweep --prompt - < @SPIRA_RUN@/ops-sweep-prompt.txt` |
 | `spira/lib.sh` `aeon_alive` | 822 | identifies a live aeon by `aeon.sh` in `/proc/<pid>/cmdline` |
 | `install.sh` `_conflict_aeon` | 246 | refuses install while a process cmdline is `<home>/aeon.sh` |
@@ -565,6 +565,19 @@ Changed:
     counted `git rev-list ..<branch>`, i.e. against HEAD of the shared checkout).
 12. **A missing `spira-claim` is a claim-error** (`awake <f> claim-error spira-claim not
     found`, exit 1) — the ranker is required, not optional.
+13. **`spira/work-env.sh` is retired, not called.** (sp-zpaq0, rewrite wave 5.) Its only
+    caller was aeon.sh/aeon itself (work/DESIGN.md §2); the allow-listed restricted
+    environment it built with `env -i` is now built in-process (`restrict.rs`) and applied
+    directly to the model's `SessionSpec`, rather than spawned as a wrapper around the
+    agent binary. The acceptance property is unchanged ("in the provided aeon environment,
+    `command -v bd` fails and no credential is readable") and is now a `cargo test -p aeon`
+    fact (`restrict.rs`'s own tests) instead of a bash integration fixture's.
+14. **`spira/escape.sh` is retired into this binary as `aeon --escape <fayth> [--dry-run]`.**
+    (sp-zpaq0.) `world_gate`, `capacity_paused`, `fayth_ready` and `summon_argv` are still
+    reached through the lib.sh seam (§5) — they carry real side effects (a capacity probe
+    can clear the pause file; an expired drain is lifted and logged) that a Rust
+    reimplementation would have to duplicate exactly or drift from; `escape.rs` is the
+    decision (`decide`, pure, unit-tested) and the `systemd-run` argv/spawn (`run`).
 
 Kept, although they look wrong (flagged for the operator):
 

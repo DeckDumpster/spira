@@ -204,6 +204,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v aeon)\""
 
 [[dep]]
+name = "auron"
+tier = "release"
+purpose = "Spira's auron binary, from the release's bin/ — the watchdog over the loop (replaces spira/auron.sh, sp-zpaq0)"
+version_min = ""
+version_probe = "readlink -f \"$(command -v auron)\""
+
+[[dep]]
 name = "batcher"
 tier = "release"
 purpose = "Spira's batcher binary, from the release's bin/"
@@ -216,6 +223,13 @@ tier = "release"
 purpose = "Spira's bd-meter binary, from the release's bin/"
 version_min = ""
 version_probe = "readlink -f \"$(command -v bd-meter)\""
+
+[[dep]]
+name = "bead"
+tier = "release"
+purpose = "Spira's bead binary, from the release's bin/"
+version_min = ""
+version_probe = "readlink -f \"$(command -v bead)\""
 
 [[dep]]
 name = "beads-store"
@@ -356,6 +370,13 @@ tier = "release"
 purpose = "Spira's round-vm binary, from the release's bin/"
 version_min = ""
 version_probe = "readlink -f \"$(command -v round-vm)\""
+
+[[dep]]
+name = "rule"
+tier = "release"
+purpose = "Spira's rule binary, from the release's bin/"
+version_min = ""
+version_probe = "readlink -f \"$(command -v rule)\""
 
 [[dep]]
 name = "sentinel"
