@@ -60,7 +60,7 @@ JSONL
 }
 
 census_out() {
-    SPIRA_DB="$TESTDB_DIR" bash "$HERE/census.sh" --with-suppressed 2>/dev/null
+    SPIRA_DB="$TESTDB_DIR" census.sh --with-suppressed 2>/dev/null
 }
 
 # ======================================================================================
@@ -272,7 +272,7 @@ bump_requeue "sp-p1" merge-conflict >/dev/null 2>&1
 bump_requeue "sp-p2" merge-conflict >/dev/null 2>&1
 bump_requeue "sp-p3" merge-conflict >/dev/null 2>&1
 
-_fold_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" bash "$HERE/census.sh" --with-suppressed 2>/dev/null)"
+_fold_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" census.sh --with-suppressed 2>/dev/null)"
 _fold_line="$(printf '%s\n' "$_fold_out" | grep 'sp-reopen-rebase-conflict' || true)"
 want "covers:sp-requeue-merge-conflict suppresses sp-reopen-rebase-conflict" "[suppressed" "$_fold_line"
 nowant "sp-reopen-rebase-conflict not emitted unsuppressed" "sp-reopen-rebase-conflict" \
@@ -286,7 +286,7 @@ testdb_seed <<'JSONL'
 JSONL
 bump_requeue "sp-q1" merge-conflict >/dev/null 2>&1
 
-_unrel_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" bash "$HERE/census.sh" --with-suppressed 2>/dev/null)"
+_unrel_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" census.sh --with-suppressed 2>/dev/null)"
 _unrel_line="$(printf '%s\n' "$_unrel_out" | grep 'sp-reopen-rebase-conflict' || true)"
 nowant "unrelated covers: does not suppress sp-reopen-rebase-conflict" "[suppressed" "$_unrel_line"
 want "sp-reopen-rebase-conflict still appears without suppression" "sp-reopen-rebase-conflict" "$_unrel_out"
@@ -399,7 +399,7 @@ JSONL
 bead_reopen   "sp-ev2" eviction-race "Eviction race test" >/dev/null 2>&1
 bump_requeue  "sp-ev2" eviction-race >/dev/null 2>&1
 
-_evict_sup_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" bash "$HERE/census.sh" --with-suppressed 2>/dev/null)"
+_evict_sup_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" census.sh --with-suppressed 2>/dev/null)"
 _evict_sup_line="$(printf '%s\n' "$_evict_sup_out" | grep 'sp-reopen-eviction-race' || true)"
 want   "covers:sp-requeue-eviction-race suppresses sp-reopen-eviction-race" "[suppressed" "$_evict_sup_line"
 nowant "sp-reopen-eviction-race not emitted unsuppressed" "sp-reopen-eviction-race" \

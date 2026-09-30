@@ -94,7 +94,7 @@ call_repair() {   # call_repair <window> -> nothing; runs repair_dashboards sour
     local window="$1"
     TMUX_TMPDIR="$TMUXDIR" env -i HOME="$TMP" PATH="/usr/bin:/bin" TMUX_TMPDIR="$TMUXDIR" \
         WINDOW="$window" MAIL_CMD="" SPIRA_REPO="$TMP" SPIRA_COCKPIT="$COCKPIT_DIR" \
-        SPIRA_RUN="$RUN" SPIRA_INSTANCE=fixture SPIRA_LOOM_BIN="" COCKPIT_CWD="$TMP" \
+        SPIRA_RUN="$RUN" SPIRA_INSTANCE=fixture COCKPIT_CWD="$TMP" \
         COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \
         bash -c '. "'"$LAYOUT"'"; repair_dashboards' 2>/dev/null || true
 }

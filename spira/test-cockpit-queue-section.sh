@@ -121,7 +121,7 @@ queue() {
         SPIRA_QUEUE_DIR="$TMP/queue" \
         SPIRA_SUITE_STATE_FILE="spira/suite-state-test" \
         SPIRA_BDJSON_FIXTURE="$TMP/beads.json" \
-        bash "$HERE/cockpit.sh" queue 2>/dev/null
+        cockpit.sh queue 2>/dev/null
 }
 
 out="$(queue)"
@@ -229,7 +229,7 @@ out2="$(env -i PATH="$BASE_PATH" HOME="$TMP2" LC_ALL=C.UTF-8 \
     SPIRA_REPO_MAP="$MAP2" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
     SPIRA_QUEUE_DIR="$TMP2/queue" \
     SPIRA_BDJSON_FIXTURE="$BEADS2_JSON" \
-    bash "$HERE/cockpit.sh" queue 2>/dev/null)"
+    cockpit.sh queue 2>/dev/null)"
 val2() { printf '%s' "$out2" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 
 is "SP_QUEUE_NEXT_N is the whole 32, not the row cap" "32" "$(val2 SP_QUEUE_NEXT_N)"

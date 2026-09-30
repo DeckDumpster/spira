@@ -19,8 +19,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
 # THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
-# pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
-LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
+# pass, `halt` to stop one. Invoked by name on this suite's PATH (sp-gypjk).
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -28,27 +27,8 @@ testdb_require test-config-compat-master-base
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up cfgcompatmaster || skip "testdb not available"
 
-# ── build the batcher binary (law-absence-needs-a-positive-control: no binary, no row).
-# Same toolchain-directory and CARGO_TARGET_DIR pinning as test-batcher-cut.sh — see its
-# own comments for why cargo's bare PATH entry and $ROOT/target are both the wrong answer
-# inside testenv-batch.sh's podman exec.
-ROOT="$(cd "$HERE/.." && pwd -P)"
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-[ -z "$CARGO_BIN" ] && [ -x "/usr/local/cargo/bin/cargo" ] && CARGO_BIN="/usr/local/cargo/bin/cargo"
-if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-config-compat-master-base: cargo not found — the batcher binary cannot be built"
-    exit 77
-fi
-PATH="$(dirname "$CARGO_BIN"):$PATH"; export PATH
-CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
-BATCHER_BIN="$CARGO_TARGET_DIR_FOR_BUILD/release/batcher"
-if [ ! -x "$BATCHER_BIN" ]; then
-    printf '  (building batcher-cut into %s)\n' "$BATCHER_BIN"
-    CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-        "$CARGO_BIN" build --release --manifest-path "$ROOT/Cargo.toml" -p batcher-cut 2>&1 | tail -10
-fi
-[ -x "$BATCHER_BIN" ] || { echo "test-config-compat-master-base: batcher binary did not build"; exit 1; }
+# The batcher is the tree's own build, by name on this suite's PATH (sp-gypjk).
+command -v batcher >/dev/null || bail "batcher is not on PATH"
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
@@ -141,8 +121,8 @@ printf 'CERTIFIED %s %s\n' "$B_TIP" "$(date +%s)" > "$B_LANDSTATE/sp-mbase"
 out="$(SPIRA_HOME="$B_SH" SPIRA_RUN="$B_RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO_MAP="$B_SH/repo-map" \
     SPIRA_QUEUE_DIR="$B_QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 \
-    SPIRA_FORGE="$B_SH/forge-fixture.sh" \
-        "$BATCHER_BIN" cut "$B_REPONAME" --round-vm "$B_SH/round-vm-stub.sh" 2>&1)"
+    SPIRA_FORGE="$B_SH/forge-fixture.sh" PATH="$B_SH:$PATH" \
+        batcher cut "$B_REPONAME" --round-vm "$B_SH/round-vm-stub.sh" 2>&1)"
 
 want "batcher cut: a PR was opened for the master-based batch" "opened" "$out"
 case "$(cat "$B_LANDSTATE/sp-mbase" 2>/dev/null)" in
@@ -190,8 +170,8 @@ esac
 FORGE
 chmod +x "$V_SH/forge-fixture.sh"
 printf '#!/usr/bin/env bash\ntrue\n' > "$V_SH/mail.sh"; chmod +x "$V_SH/mail.sh"
-printf '#!/usr/bin/env bash\ntrue\n' > "$V_SH/testenv-stub"; chmod +x "$V_SH/testenv-stub"
-export SPIRA_TESTENV_BIN="$V_SH/testenv-stub"
+# Stubs are injected by NAME: the fixture home $V_SH goes first on PATH (sp-gypjk).
+printf '#!/usr/bin/env bash\ntrue\n' > "$V_SH/testenv"; chmod +x "$V_SH/testenv"
 printf '%s | %s | queue | origin/master | | |\n' "$V_REPONAME" "$V_REPO" > "$V_SH/repo-map"
 
 # Build one member branch and an open batch record whose local merge commit sits
@@ -223,8 +203,8 @@ printf 'green\nhead-sha: %s\n' "$V_BATCH_HEAD" > "$V_FORGE_STATUS_FILE"
 out="$(SPIRA_HOME="$V_SH" SPIRA_RUN="$V_RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO_MAP="$V_SH/repo-map" \
     SPIRA_QUEUE_DIR="$V_QUEUEDIR" SPIRA_QUEUE_CI_MAXSEC=3600 SPIRA_QUEUE_CI_IDLE_SEC=600 \
-    SPIRA_QUEUE_INFRA_RETRIES=2 SPIRA_FORGE="$V_SH/forge-fixture.sh" \
-        bash "$V_SH/verdict.sh" "$V_REPONAME" 2>&1)"
+    SPIRA_QUEUE_INFRA_RETRIES=2 SPIRA_FORGE="$V_SH/forge-fixture.sh" PATH="$V_SH:$PATH" \
+        verdict.sh "$V_REPONAME" 2>&1)"
 
 is   "verdict: remote MASTER fast-forwards to the batch head" \
      "$V_BATCH_HEAD" "$(git -C "$V_REMOTE" rev-parse master 2>/dev/null)"
@@ -265,8 +245,8 @@ git -C "$L_RUN/worktree/sp-lbase" add -A
 git -C "$L_RUN/worktree/sp-lbase" commit -q -m "feat: sp-lbase — work"
 
 out="$(SPIRA_HOME="$L_SH" SPIRA_RUN="$L_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$L_REPO" \
-    SPIRA_REPO_MAP="$L_SH/repo-map-does-not-exist" \
-        "$LANDING_PASS_BIN" land 2>&1)"
+    SPIRA_REPO_MAP="$L_SH/repo-map-does-not-exist" PATH="$L_SH:$PATH" \
+        landing-pass land 2>&1)"
 
 want "landing: reports landing the master-base branch" "landed spira/sp-lbase" "$out"
 git -C "$L_REPO" fetch -q origin

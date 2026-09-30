@@ -33,7 +33,7 @@ run_cockpit() {
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
         "$@" \
-        bash "$HERE/cockpit.sh" once 2>/dev/null
+        cockpit.sh once 2>/dev/null
 }
 
 # ======================================================================================
@@ -85,7 +85,7 @@ env -i PATH="$BASE_PATH" SPIRA_PATH="$BIN" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
     SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
     INVOCATION_ID="inv-42" MOCK_INVOCATION_ID="inv-42" \
-    bash "$HERE/cockpit.sh" once >/dev/null 2>&1
+    cockpit.sh once >/dev/null 2>&1
 if [ -f "$RUN/cockpit.env" ]; then
     ok "matching INVOCATION_ID: snapshot IS written"
 else
@@ -181,7 +181,7 @@ rl_out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
     SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
-    bash "$HERE/cockpit.sh" ratelim 2>/dev/null)"
+    cockpit.sh ratelim 2>/dev/null)"
 
 want  "five_hour utilisation present"        "SP_RATELIM_5H="     "$rl_out"
 want  "seven_day utilisation present"        "SP_RATELIM_7D="     "$rl_out"
@@ -203,7 +203,7 @@ rl_empty="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_RUN="$EMPTY_RUN" SPIRA_DB="$TMP/nodb" \
     SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
-    bash "$HERE/cockpit.sh" ratelim 2>/dev/null)"
+    cockpit.sh ratelim 2>/dev/null)"
 
 want "SP_RATELIM_5H is '?'" "SP_RATELIM_5H=?" "$rl_empty"
 want "SP_RATELIM_7D is '?'" "SP_RATELIM_7D=?" "$rl_empty"

@@ -27,7 +27,7 @@ run_strands() {
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        bash "$HERE/cockpit.sh" strands 2>/dev/null
+        cockpit.sh strands 2>/dev/null
 }
 
 field() { printf '%s\n' "$1" | grep "^$2=" | sed "s/^$2=//"; }

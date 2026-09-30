@@ -37,7 +37,7 @@ health_cmd() {
     env -i HOME="$TMP" PATH="/usr/bin:/bin" \
         SPIRA_REPO="$TMP" SPIRA_COCKPIT="$FAKE_COCK" \
         SPIRA_RUN="$TMP/run" SPIRA_INSTANCE=fixture \
-        SPIRA_LOOM_BIN="" COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \
+        COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \
         COCKPIT_MAIL="" TMUX_BIN=/bin/false \
         "$@" \
         bash -c '. "'"$LAYOUT"'"; build_health_cmd'

@@ -31,7 +31,7 @@ layout() {   # layout <COCKPIT_MAIL> <action> [args]
     local mail="$1"; shift
     env -i HOME="$TMP" PATH="$TMP/bin:/usr/bin:/bin" TMUX_TMPDIR="$TMUX_TMPDIR" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_REPO="$TMP" SPIRA_COCKPIT="$ROOT/cockpit" \
-        SPIRA_INSTANCE=fixture SPIRA_PROD="$TMP/noprod" SPIRA_LOOM_BIN="" \
+        SPIRA_INSTANCE=fixture SPIRA_PROD="$TMP/noprod" \
         COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=31 COCKPIT_MAIL="$mail" \
         bash "$ROOT/cockpit/layout.sh" "$@" 2>&1
 }

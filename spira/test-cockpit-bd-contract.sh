@@ -48,7 +48,7 @@ run_probe() {    # run_probe <subcommand> [env KEY=val ...]
         SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" SPIRA_ASK_LABEL=needs-ryan \
         SPIRA_CI_LABEL=awaiting-ci \
         "$@" \
-        bash "$HERE/cockpit.sh" "$sub" 2>/dev/null
+        cockpit.sh "$sub" 2>/dev/null
 }
 field() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1; }
 

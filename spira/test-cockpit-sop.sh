@@ -71,7 +71,7 @@ run_sops() {    # run_sops [env KEY=val ...] — extra env entries are prepended
         SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
         SPIRA_SOP_LEDGER="$LEDGER" SPIRA_NOW="$NOW" \
         "$@" \
-        bash "$HERE/cockpit.sh" sops 2>/dev/null
+        cockpit.sh sops 2>/dev/null
 }
 
 # Write a ledger entry directly — the cockpit probe reads the file, not a bead.

@@ -254,57 +254,48 @@ echo "start — the launcher's --model comes from persona.<fayth>.model, not FAY
 if ! systemctl --user status >/dev/null 2>&1 || ! command -v systemd-run >/dev/null 2>&1; then
     printf '  skip  (no systemd user session — launcher model test requires it)\n'
 else
-    CARGO_BIN_MT="$(command -v cargo 2>/dev/null || true)"
-    [ -z "$CARGO_BIN_MT" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN_MT="$HOME/.cargo/bin/cargo"
-    SPIRA_CONFIG_BIN_MT="$HARNESS/target/release/spira-config"
-    [ -x "$SPIRA_CONFIG_BIN_MT" ] || [ -z "$CARGO_BIN_MT" ] || \
-        "$CARGO_BIN_MT" build --release --manifest-path "$HARNESS/spira-config/Cargo.toml" >/dev/null 2>&1
-    if [ ! -x "$SPIRA_CONFIG_BIN_MT" ]; then
-        printf '  skip  (spira-config binary not built and cargo unavailable — launcher model test requires it)\n'
-    else
-        MT_TMP="$TMP/model-test"; mkdir -p "$MT_TMP/chamber" "$MT_TMP/chamber-empty"
-        cp "$HARNESS/spira/chamber/concierge.md" "$MT_TMP/chamber/modeltest.md"
-        sed -e 's|^FAYTH_NAME=.*|FAYTH_NAME=modeltest|' \
-            -e 's|^FAYTH_MODEL=.*|FAYTH_MODEL=fayth-declared-should-not-be-used|' \
-            -e 's|^FAYTH_STATUTE_CORE=.*|FAYTH_STATUTE_CORE="law-rm-alpha"|' \
-            "$HARNESS/spira/chamber/concierge.fayth" > "$MT_TMP/chamber/modeltest.fayth"
+    MT_TMP="$TMP/model-test"; mkdir -p "$MT_TMP/chamber" "$MT_TMP/chamber-empty"
+    cp "$HARNESS/spira/chamber/concierge.md" "$MT_TMP/chamber/modeltest.md"
+    sed -e 's|^FAYTH_NAME=.*|FAYTH_NAME=modeltest|' \
+        -e 's|^FAYTH_MODEL=.*|FAYTH_MODEL=fayth-declared-should-not-be-used|' \
+        -e 's|^FAYTH_STATUTE_CORE=.*|FAYTH_STATUTE_CORE="law-rm-alpha"|' \
+        "$HARNESS/spira/chamber/concierge.fayth" > "$MT_TMP/chamber/modeltest.fayth"
 
-        MT_TOML="$MT_TMP/spira.toml"
-        cat > "$MT_TOML" <<'EOF'
+    MT_TOML="$MT_TMP/spira.toml"
+    cat > "$MT_TOML" <<'EOF'
 [persona.modeltest]
 model = "concierge-toml-model"
 EOF
 
-        SOCK_MT="test-concierge-model-$$"
-        tmux -L "$SOCK_MT" kill-server 2>/dev/null || true
-        # SPIRA_CHAMBER points at an EMPTY dir, not $MT_TMP/chamber: spira_toml_resolve's
-        # auto-convert-from-fayth watches SPIRA_CHAMBER for a fayth newer than the cached
-        # toml and would otherwise re-seed $MT_TOML from modeltest.fayth's own FAYTH_MODEL,
-        # defeating the property under test. compose_brief/fayth_get still find
-        # modeltest.{md,fayth} through SPIRA_HOME directly, which this does not affect.
-        # THE STATUTE BOOK COMES FROM THE SAME FIXTURE SEAM brief_fx uses (SPIRA_MEMORIES_CMD).
-        # Without it compose_brief reads the box's real statute database, so this case passed
-        # only on a host that had one and refused ("cannot reach the statute book database")
-        # everywhere else — including every testenv container.
-        ENVARGS=(SPIRA_HOME="$MT_TMP" SPIRA_RUN="$MT_TMP/run" SPIRA_WIKI="$MT_TMP" \
-            SPIRA_CONF=/nonexistent SPIRA_REPO_MAP=/nonexistent SPIRA_CHAMBER="$MT_TMP/chamber-empty" \
-            SPIRA_TOML="$MT_TOML" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN_MT" CONCIERGE_FAYTH=modeltest \
-            CONCIERGE_SOCKET="$SOCK_MT" CONCIERGE_SESSION="$SOCK_MT" \
-            SPIRA_MEMORIES_CACHE="" SPIRA_MEMORIES_CMD="$(fixture_cmd)")
+    SOCK_MT="test-concierge-model-$$"
+    tmux -L "$SOCK_MT" kill-server 2>/dev/null || true
+    # SPIRA_CHAMBER points at an EMPTY dir, not $MT_TMP/chamber: spira_toml_resolve's
+    # auto-convert-from-fayth watches SPIRA_CHAMBER for a fayth newer than the cached
+    # toml and would otherwise re-seed $MT_TOML from modeltest.fayth's own FAYTH_MODEL,
+    # defeating the property under test. compose_brief/fayth_get still find
+    # modeltest.{md,fayth} through SPIRA_HOME directly, which this does not affect.
+    # THE STATUTE BOOK COMES FROM THE SAME FIXTURE SEAM brief_fx uses (SPIRA_MEMORIES_CMD).
+    # Without it compose_brief reads the box's real statute database, so this case passed
+    # only on a host that had one and refused ("cannot reach the statute book database")
+    # everywhere else — including every testenv container.
+    ENVARGS=(SPIRA_HOME="$MT_TMP" SPIRA_RUN="$MT_TMP/run" SPIRA_WIKI="$MT_TMP" \
+        SPIRA_CONF=/nonexistent SPIRA_REPO_MAP=/nonexistent SPIRA_CHAMBER="$MT_TMP/chamber-empty" \
+        SPIRA_TOML="$MT_TOML" CONCIERGE_FAYTH=modeltest \
+        CONCIERGE_SOCKET="$SOCK_MT" CONCIERGE_SESSION="$SOCK_MT" \
+        SPIRA_MEMORIES_CACHE="" SPIRA_MEMORIES_CMD="$(fixture_cmd)")
+    env "${ENVARGS[@]}" \
+        systemd-run --user --wait --collect --quiet --pipe -- \
         env "${ENVARGS[@]}" \
-            systemd-run --user --wait --collect --quiet --pipe -- \
-            env "${ENVARGS[@]}" \
-            bash "$HARNESS/concierge.sh" start >"$MT_TMP/start.err" 2>&1 </dev/null || true
-        tmux -L "$SOCK_MT" kill-server 2>/dev/null || true
-        if [ -f "$MT_TMP/run/concierge-launch.sh" ]; then
-            lnch_mt="$(cat "$MT_TMP/run/concierge-launch.sh")"
-            want   "launcher's --model came from persona.modeltest.model" "concierge-toml-model" "$lnch_mt"
-            nowant "launcher did not use the fayth's own FAYTH_MODEL" \
-                "fayth-declared-should-not-be-used" "$lnch_mt"
-        else
-            bad "launcher's --model came from persona.modeltest.model" \
-                "start did not write launcher: $(tail -5 "$MT_TMP/start.err" 2>/dev/null)"
-        fi
+        bash "$HARNESS/concierge.sh" start >"$MT_TMP/start.err" 2>&1 </dev/null || true
+    tmux -L "$SOCK_MT" kill-server 2>/dev/null || true
+    if [ -f "$MT_TMP/run/concierge-launch.sh" ]; then
+        lnch_mt="$(cat "$MT_TMP/run/concierge-launch.sh")"
+        want   "launcher's --model came from persona.modeltest.model" "concierge-toml-model" "$lnch_mt"
+        nowant "launcher did not use the fayth's own FAYTH_MODEL" \
+            "fayth-declared-should-not-be-used" "$lnch_mt"
+    else
+        bad "launcher's --model came from persona.modeltest.model" \
+            "start did not write launcher: $(tail -5 "$MT_TMP/start.err" 2>/dev/null)"
     fi
 fi
 

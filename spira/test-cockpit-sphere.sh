@@ -46,7 +46,7 @@ sphere() {    # sphere <fixture-file>
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-goal SPIRA_FAYTHS=t \
         SPIRA_SCOPE_LABEL="$SCOPE_LABEL" \
         SPIRA_ASK_LABEL=needs-ryan \
-        bash "$HERE/cockpit.sh" sphere 2>/dev/null
+        cockpit.sh sphere 2>/dev/null
 }
 field() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1; }
 

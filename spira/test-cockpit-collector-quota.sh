@@ -66,7 +66,7 @@ env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
     SPIRA_REPO_MAP="$TMP/no-map" \
     FRAG_DIR="$FRAG_DIR" COCK="$MOCK_COCK" \
-    bash "$HERE/collect.sh" _probe_body_test testprobe 30 quick 2>"$log_out" || true
+    collect.sh _probe_body_test testprobe 30 quick 2>"$log_out" || true
 
 log_msg="$(cat "$log_out" 2>/dev/null)"
 want "pass log: contains probe name"     "testprobe"   "$log_msg"

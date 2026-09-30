@@ -55,7 +55,7 @@ run_merge() {
         SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
         SPIRA_COCKPIT="$TMP" FRAG_DIR="$FRAG_DIR" \
-        bash "$HERE/collect.sh" merge 2>/dev/null
+        collect.sh merge 2>/dev/null
 }
 
 # ============================================================
@@ -92,7 +92,7 @@ env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
     SPIRA_COCKPIT="$TMP" \
     FRAG_DIR="$FRAG_DIR" COCK="$MOCK_COCK" \
-    bash "$HERE/collect.sh" _probe_body_test queue 10 queue 2>/dev/null || true
+    collect.sh _probe_body_test queue 10 queue 2>/dev/null || true
 
 frag="$(cat "$FRAG_DIR/queue.env" 2>/dev/null)"
 want "_probe_body_test: fragment has _PROBE_STATUS=ok"  "_PROBE_STATUS=ok"  "$frag"

@@ -31,11 +31,6 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 has() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
@@ -46,9 +41,7 @@ export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 log() { :; }
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
-# PATH is set AFTER lib.sh (which sources conf.sh transitively) — conf.sh can overwrite
-# PATH with the harness's own tool directories first (test-poison.sh's own note).
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+export PATH="$PATH:$(dirname "$DOLT_BIN")"
 unset SPIRA_LC_SOCKET
 _real_bdq="$(declare -f bdq)"
 bdq() { :; }   # G9 exercises the spira-lc transition, not bd's own note/event writes; G10 restores the real one below
@@ -83,18 +76,15 @@ done
 [ "$lc_up" = 1 ] || bail "dolt sql-server for spira_lifecycle never came up: $(cat "$LC_TMP/server.log")"
 lc_root_sql() { "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls "$@"; }
 
-LC_CARGO_TARGET="$LC_TMP/cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$LC_CARGO_TARGET" \
-    "$CARGO_BIN" build --manifest-path "$REPO/spira-lc/Cargo.toml" --quiet 2>"$LC_TMP/build.log" \
-    || bail "spira-lc failed to build: $(cat "$LC_TMP/build.log")"
-export SPIRA_LC_BIN="$LC_CARGO_TARGET/debug/spira-lc"
+# spira-lc is the tree's own build, by name on this suite's PATH (sp-gypjk) — never a
+# second cargo build of it here.
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LC_PORT"
 export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$LC_TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
-"$SPIRA_LC_BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
+spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
 wantrc "spira_lifecycle schema applies cleanly" 0 $?
 
 # shellcheck disable=SC1090

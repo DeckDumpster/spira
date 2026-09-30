@@ -32,7 +32,7 @@ run_czar() {
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_BD="$bd_path" \
-        bash "$HERE/cockpit.sh" czar_triggers 2>/dev/null
+        cockpit.sh czar_triggers 2>/dev/null
 }
 
 field() { printf '%s\n' "$1" | grep "^$2=" | sed "s/^$2=//"; }

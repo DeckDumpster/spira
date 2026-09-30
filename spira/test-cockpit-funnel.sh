@@ -100,7 +100,7 @@ out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
     SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
     SPIRA_PATH="$BD_PATH" \
-    bash "$HERE/cockpit.sh" once 2>/dev/null)"
+    cockpit.sh once 2>/dev/null)"
 
 val() { printf '%s' "$out" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 
@@ -185,7 +185,7 @@ out_b="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
     SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
     SPIRA_PATH="$BD_PATH" \
-    bash "$HERE/cockpit.sh" once 2>/dev/null)"
+    cockpit.sh once 2>/dev/null)"
 
 valb() { printf '%s' "$out_b" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 

@@ -43,7 +43,7 @@ run_core() {
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_QUEUE_WAIT_LABEL="$wait_label" \
         SPIRA_BD="$bd_path" \
-        bash "$HERE/cockpit.sh" core 2>/dev/null
+        cockpit.sh core 2>/dev/null
 }
 
 # make_bd_wait <path> <wait-label> — a mock bd that returns a bead carrying the

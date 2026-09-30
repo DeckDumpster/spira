@@ -31,7 +31,7 @@ run_probe() {   # run_probe <SPIRA_BD=path> -> stdout of probe()
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=builder \
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_BD="$bd_path" \
-        bash "$HERE/cockpit.sh" once 2>/dev/null
+        cockpit.sh once 2>/dev/null
 }
 
 # SPIRA_FAYTHS NAMES A PERSONA THAT EXISTS. It used to say `t`, for which there is no
@@ -70,7 +70,7 @@ _unres_out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=no-such-persona \
     SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
     SPIRA_BD="$BD_EMPTY" \
-    bash "$HERE/cockpit.sh" once 2>/dev/null)"
+    cockpit.sh once 2>/dev/null)"
 want   "SP_READY is ? when no persona resolves"   "SP_READY=?"  "$_unres_out"
 nowant "SP_READY is NOT 0 when no persona resolves" "SP_READY=0" "$_unres_out"
 

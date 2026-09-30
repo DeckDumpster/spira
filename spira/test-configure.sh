@@ -31,15 +31,7 @@ iszero() { [ "${2:-1}" -eq 0 ] && ok "$1" || bad "$1" "wanted exit 0, got ${2:-?
 echo "test-configure.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
-# conf.sh's spira.conf path shells out to spira-config to auto-convert (sp-zs04v.2), and
-# both sourcings of conf.sh below need one of their own, mirroring test-conf.sh. Skip (not
-# fail) if no prebuilt binary is available, matching that suite's own tolerance.
-SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)"
-if [ -z "$SPIRA_CONFIG_BIN" ]; then
-    echo "SKIP: no spira-config binary found — cannot exercise the auto-convert path"
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"
-    exit 77
-fi
+# conf.sh's spira.conf path calls spira-config by name to auto-convert (sp-zs04v.2, sp-gypjk).
 
 # ==========================================================================
 echo
@@ -50,7 +42,7 @@ echo "positive control (a) — conf.sh refuses an unknown key:"
 # wrote garbage (law-absence-needs-a-positive-control).
 _pc_conf="$TMP/pc-bad.conf"
 printf 'SPIRA_NONEXISTENT_KEY_ZZZZZ = value\n' > "$_pc_conf"
-_pc_warn="$(SPIRA_CONF="$_pc_conf" SPIRA_DB=/tmp/pc-nodb-$$ SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+_pc_warn="$(SPIRA_CONF="$_pc_conf" SPIRA_DB=/tmp/pc-nodb-$$ \
     bash -c ". '$HERE/conf.sh'" 2>&1 1>/dev/null || true)"
 if printf '%s\n' "$_pc_warn" | grep -q 'unknown key'; then
     ok "conf.sh warns about an unknown key in the config file"
@@ -97,7 +89,7 @@ run_configure() {
         CONFIGURE_MAX_LIVE_AEONS="" \
         CONFIGURE_LOOM_ADDR="127.0.0.1:8788" \
         CONFIGURE_DOLT_DATA="" \
-        bash "$HERE/configure.sh" --no-repo-map "$@" 2>&1
+        configure.sh --no-repo-map "$@" 2>&1
 }
 
 _out="$(run_configure)"; _rc=$?
@@ -156,7 +148,7 @@ echo "round-trip — conf.sh accepts the generated file (no unknown-key warnings
 # ==========================================================================
 # Source conf.sh with the generated file as the config and capture stderr.
 # Any "unknown key" warning means configure.sh wrote a key conf.sh doesn't recognise.
-_rt_warn="$(SPIRA_CONF="$OUT" SPIRA_DB="/tmp/configure-test-nodb-$$" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+_rt_warn="$(SPIRA_CONF="$OUT" SPIRA_DB="/tmp/configure-test-nodb-$$" \
     bash -c ". '$HERE/conf.sh'" 2>&1 1>/dev/null || true)"
 if printf '%s\n' "$_rt_warn" | grep -q 'unknown key'; then
     bad "round-trip" "conf.sh rejected a key: $_rt_warn"
@@ -206,7 +198,7 @@ run_configure2() {
         CONFIGURE_MAX_LIVE_AEONS="" \
         CONFIGURE_LOOM_ADDR="127.0.0.1:8788" \
         CONFIGURE_DOLT_DATA="" \
-        bash "$HERE/configure.sh" "$@" 2>&1
+        configure.sh "$@" 2>&1
 }
 
 _seed_out="$(run_configure2)"; _seed_rc=$?
@@ -237,7 +229,7 @@ _preserve_out="$(env -i \
     CONFIGURE_MAX_LIVE_AEONS="" \
     CONFIGURE_LOOM_ADDR="127.0.0.1:8788" \
     CONFIGURE_DOLT_DATA="" \
-    bash "$HERE/configure.sh" 2>&1)"
+    configure.sh 2>&1)"
 
 if grep -qF "$EXISTING_MAP_MARKER" "$FAKE_HOME3/.config/spira/repo-map" 2>/dev/null; then
     ok "existing repo-map was not overwritten"

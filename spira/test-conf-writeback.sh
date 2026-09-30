@@ -132,28 +132,16 @@ FAYTH_NAME=builder
 EOF
 touch -d '+1 minute' "$CHAMBER/builder.fayth"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-CONFIG_BIN="$HERE/../target/release/spira-config"
-if [ ! -x "$CONFIG_BIN" ] && [ -n "$CARGO_BIN" ]; then
-    CARGO_TARGET_DIR="$TMP/target" "$CARGO_BIN" build --release \
-        --manifest-path "$HERE/../spira-config/Cargo.toml" >/dev/null 2>&1
-    CONFIG_BIN="$TMP/target/release/spira-config"
-fi
-if [ ! -x "$CONFIG_BIN" ]; then
-    echo "SKIP: spira-config binary not available — cannot exercise the auto-convert path"
-else
-    resolved="$(env -i PATH="$PATH" HOME="$FIXHOME" \
-        SPIRA_CONF=/nonexistent \
-        SPIRA_WATCHERS="$HARNESS/spira/watchers" \
-        SPIRA_CHAMBER="$CHAMBER" SPIRA_CONFIG_BIN="$CONFIG_BIN" \
-        bash -c ". '$HARNESS/spira/conf.sh'; spira_toml_resolve" 2>/dev/null)"
-    isne "spira_toml_resolve's own auto-convert does not target the real spira.toml" \
-         "$REAL_TOML" "$resolved"
-    want "the redirect lives under the harness root" "$HARNESS" "$resolved"
-    after_sum="$(sha256sum "$REAL_TOML" | awk '{print $1}')"
-    is "the operator's real spira.toml survives spira_toml_resolve's own auto-convert" \
-       "$ORIG_SUM" "$after_sum"
-fi
+resolved="$(env -i PATH="$PATH" HOME="$FIXHOME" \
+    SPIRA_CONF=/nonexistent \
+    SPIRA_WATCHERS="$HARNESS/spira/watchers" \
+    SPIRA_CHAMBER="$CHAMBER" \
+    bash -c ". '$HARNESS/spira/conf.sh'; spira_toml_resolve" 2>/dev/null)"
+isne "spira_toml_resolve's own auto-convert does not target the real spira.toml" \
+     "$REAL_TOML" "$resolved"
+want "the redirect lives under the harness root" "$HARNESS" "$resolved"
+after_sum="$(sha256sum "$REAL_TOML" | awk '{print $1}')"
+is "the operator's real spira.toml survives spira_toml_resolve's own auto-convert" \
+   "$ORIG_SUM" "$after_sum"
 
 tl_summary

@@ -84,26 +84,8 @@ else
     tail -60 "$CARGO_TEST_LOG" >&2
 fi
 
-CZAR_PASS_BIN="$CZAR_PASS_ROOT/target/release/czar-pass"
-if [ ! -x "$CZAR_PASS_BIN" ]; then
-    cp -r "$CZAR_PASS_ROOT/." "$T/czar-pass-src"
-    # czar-pass depends on ../reconciler-engine (a path dependency, sp-pu7v6) — copied as
-    # a sibling of the isolated build tree so that relative path still resolves.
-    cp -r "$HERE/../reconciler-engine" "$T/reconciler-engine"
-    # and its tests take ../testkit (a path dev-dependency, sp-qgfdi).
-    cp -r "$HERE/../testkit" "$T/testkit"
-    printf '  (building czar-pass into %s)\n' "$T/czar-pass-target"
-    CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/czar-pass-target" \
-        "$CARGO_BIN" build --release \
-        --manifest-path "$T/czar-pass-src/Cargo.toml" 2>&1 | tail -5
-    CZAR_PASS_BIN="$T/czar-pass-target/release/czar-pass"
-fi
-if [ ! -x "$CZAR_PASS_BIN" ]; then
-    printf 'czar-pass binary not found at %s\n' "$CZAR_PASS_BIN" >&2
-    printf '0 passed, 1 failed\n'
-    exit 1
-fi
-export SPIRA_CZAR_PASS_BIN="$CZAR_PASS_BIN"
+# czar.sh execs czar-pass by name: the tree's own build, on this suite's PATH (sp-gypjk).
+command -v czar-pass >/dev/null || bail "czar-pass is not on PATH"
 
 # Minimal test environment — no real database needed: incident is stubbed,
 # summon_fayth silently returns 1 when fayth_ready finds no db (|| true guards it).
