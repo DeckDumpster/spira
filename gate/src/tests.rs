@@ -2158,3 +2158,13 @@ fn a_red_inside_the_suites_step_still_runs_the_bases_suites() {
     f.run();
     assert_eq!(f.env_of(1, "SPIRA_GATE_SUITES"), "on");
 }
+
+#[test]
+fn the_runners_budget_knobs_reach_the_gate_command() {
+    let f = Fake::new();
+    f.set_var("SPIRA_TESTENV_SETUP_SHARE", "70");
+    f.set_var("SPIRA_TESTENV_WARM_SLOTS", "0");
+    f.run();
+    assert_eq!(f.env_of(0, "SPIRA_TESTENV_SETUP_SHARE"), "70");
+    assert_eq!(f.env_of(0, "SPIRA_TESTENV_WARM_SLOTS"), "0");
+}

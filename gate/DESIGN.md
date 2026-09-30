@@ -82,7 +82,7 @@ reached the bash.
 | `SPIRA_GATE_BEAD` | ejected-suites lookup (the re-entry check), the key, `lc_certify` | — |
 | `SPIRA_GATE_CALLER` | `by=` in the cache entry | the branch |
 | `LANDSTATE` (lib.sh) | `<bead>.ejected`, else an `EJECTED` landstate row | `$SPIRA_RUN/landstate` |
-| `SPIRA_GATE_BUDGET`, `SPIRA_GATE_ALL`, `SPIRA_CERTIFY_ALWAYS_COVERS`, `SPIRA_BATCH_MAXPAR`, `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_LINT_BIN`, `SPIRA_TESTENV_BIN`, `PATH`, `HOME` | passed through to the gate command | as bash |
+| `SPIRA_GATE_BUDGET`, `SPIRA_GATE_ALL`, `SPIRA_CERTIFY_ALWAYS_COVERS`, `SPIRA_BATCH_MAXPAR`, `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_LINT_BIN`, `SPIRA_TESTENV_BIN`, `SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS` (sp-govet), `PATH`, `HOME` | passed through to the gate command | as bash |
 
 ### The gate command's environment (unchanged list, `env -i`)
 
@@ -91,7 +91,7 @@ reached the bash.
 `SPIRA_GATE_HOST_CORES`, `SPIRA_GATE_EJECTED_SUITES`, `SPIRA_GATE_ALL` (default 0),
 `SPIRA_GATE_SUITES` (default on), `SPIRA_CERTIFY_ALWAYS_COVERS`, `SPIRA_BATCH_MAXPAR`,
 `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_GATE_BUDGET` (default 300), `SPIRA_RUN`,
-`SPIRA_LINT_BIN`, `SPIRA_TESTENV_BIN`. Run as `timeout $SPIRA_GATE_TIMEOUT bash -c "$CMD"` in
+`SPIRA_LINT_BIN`, `SPIRA_TESTENV_BIN`, `SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS`. Run as `timeout $SPIRA_GATE_TIMEOUT bash -c "$CMD"` in
 the gate tree, stdout and stderr on one pipe. No lock descriptor reaches it (every descriptor
 this binary opens is close-on-exec; the bash leaked the admission slot's fd 8).
 

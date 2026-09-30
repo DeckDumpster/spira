@@ -564,6 +564,10 @@ impl<'w, W: World> Trial<'w, W> {
                 e("SPIRA_RUN", &self.s.run),
                 e("SPIRA_LINT_BIN", ctx.var("SPIRA_LINT_BIN")),
                 e("SPIRA_TESTENV_BIN", ctx.var("SPIRA_TESTENV_BIN")),
+                // The runner's budget split and warm path (testenv DESIGN.md §11): the
+                // operator's knobs reach the trial they tune; unset = the runner's defaults.
+                e("SPIRA_TESTENV_SETUP_SHARE", ctx.var("SPIRA_TESTENV_SETUP_SHARE")),
+                e("SPIRA_TESTENV_WARM_SLOTS", ctx.var("SPIRA_TESTENV_WARM_SLOTS")),
             ]
         };
 
