@@ -113,7 +113,9 @@ duplication is exactly what let a timer added after a hand list was written esca
 - Writes: an `incident.sh` bead (red-check / auto-merge-off), `rm` the landstate record
   (CONFLICTING), or `gh pr merge --auto --squash` (otherwise).
 - Env seams: `SPIRA_PR_STALL_MINS` (60), `SPIRA_GH` (gh), `GH_TIMEOUT` (120),
-  `SPIRA_INCIDENT_SH`, `SPIRA_DB`, `SPIRA_HOME` (for `seams::repo_root`, §3/§6).
+  `SPIRA_INCIDENT_SH`, `SPIRA_DB` — plus whatever `seams::repo_root` needs to resolve the
+  repo (`SPIRA_REPO_MAP`, etc.); it sources lib.sh from `main::lib_sh_dir` (§6), never from
+  `$SPIRA_HOME`.
 
 ### `--disabled-timer-check`
 - Reads: `world.sh`'s `TIMER_PRIORITY` and `ctrl.sh`'s suspension map (via the seam, §3);
@@ -135,14 +137,23 @@ runs `cockpit/moot-sweep.sh --apply`.
 
 ## 6. Seams
 
-- `main::spira_home` — `$SPIRA_HOME`, falling back to `command -v lib.sh`'s directory.
-  The bash always had lib.sh's functions regardless of `SPIRA_HOME`, by sourcing it
-  relative to `$0` (`. "$(dirname "$0")/lib.sh"`); a compiled binary has no `$0` directory
-  to be relative to, and every seam below that needs lib.sh (`git::spira_landref`,
-  `seams::repo_root`, `seams::timer_priority_and_suspended`, `seams::pipeline_probe`) goes
-  through this resolution. Production always sets `SPIRA_HOME` (the systemd unit, sentinel's
-  dispatch); the fallback matters for a suite run in a clean `env -i` that puts only
-  `spira/` on `PATH`, the common shape once `SPIRA_HOME` stops being assumed.
+- **`main::lib_sh_dir` vs `main::spira_home` — two different questions, not one.**
+  `lib_sh_dir` is where lib.sh's CODE lives, found via `incident::which("lib.sh")` on
+  `$PATH`. The bash always had lib.sh's functions by sourcing it relative to `$0`
+  (`. "$(dirname "$0")/lib.sh"`) at the top of watchtower.sh, regardless of what
+  `$SPIRA_HOME` was set to — a compiled binary has no `$0` directory to be relative to, so
+  this is the equivalent self-location. Every seam that needs lib.sh's code uses it:
+  `git::spira_landref`, `seams::repo_root`, `seams::pipeline_probe`. `spira_home` is
+  `$SPIRA_HOME` the environment variable (falling back to `lib_sh_dir` only when unset),
+  used only by `seams::timer_priority_and_suspended` — the bash reached world.sh/ctrl.sh
+  via a literal `"${SPIRA_HOME}/world.sh"`, genuinely `SPIRA_HOME`-driven, not `$0`-relative.
+  Conflating the two was a real bug (sp-lnmbq): a caller that points `SPIRA_HOME` at a
+  fixture directory holding data files but no lib.sh (test-watchtower.sh's idle-while-ready
+  section, which overrides `SPIRA_HOME` so `bulk_ready_by_fayth`'s chamber lookup reads its
+  fixture, while still expecting the real lib.sh code to run) made every lib.sh-sourcing
+  seam fail closed with no error. `SPIRA_HOME` still reaches lib.sh's own functions
+  correctly either way — it is inherited in the seam's subprocess environment, never
+  passed as the sourcing path.
 - `incident::file` — spawns `bash $SPIRA_INCIDENT_SH file <title> -` with the same
   `SPIRA_INCIDENT_*` env and body-on-stdin contract as every bash call site.
 - `seams::timer_priority_and_suspended` — one `bash -c` that sources `world.sh`
