@@ -297,7 +297,7 @@ pub struct SpiraSection {
     pub concierge_inbox_backoff: Option<u32>,
     pub mail_settle: Option<u64>,
     pub cockpit_clipboard: Option<String>,
-    /// Switches an aeon onto the lifecycle semantic layer (work-env.sh, no bd, lc_claim_bead
+    /// Switches an aeon onto the lifecycle semantic layer (the aeon crate's own restricted env, no bd, lc_claim_bead
     /// CAS). Default off: a tree that has simply built work/spira-lc must not flip onto it by
     /// binary presence alone (sp-74gzo) — aeon.sh only takes the restricted path when this is
     /// set, and refuses rather than falling back when set with either binary missing.
