@@ -88,7 +88,7 @@ BD_BAD="$TMP/bin-bad/bd"
 # Returns the value of SPIRA_BD; extra env vars can be appended.
 conf_val() {
     local spira_path="${1:-}"; shift || true
-    env -i PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" \
+    env -i PATH="$TOOLS:/usr/bin:/bin" \
         HOME="$TMP/home" \
         SPIRA_HOME="$HARNESS/spira" \
         SPIRA_REPO="$HARNESS" \
@@ -103,7 +103,7 @@ conf_val() {
 # Source conf.sh with the fake database (schema check fires); returns exit code.
 conf_with_db() {
     local spira_path="${1:-}"; shift || true
-    env -i PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" \
+    env -i PATH="$TOOLS:/usr/bin:/bin" \
         HOME="$TMP/home" \
         SPIRA_HOME="$HARNESS/spira" \
         SPIRA_REPO="$HARNESS" \
@@ -164,7 +164,7 @@ echo "config file — SPIRA_BD from spira.conf wins over PATH-derived default:"
 CONF_FILE="$TMP/spira.conf"
 printf 'SPIRA_BD = %s\n' "$BD_GOOD" > "$CONF_FILE"
 # bin-bad is first on PATH; config pins bin-good.
-got="$(env -i PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" \
+got="$(env -i PATH="$TOOLS:/usr/bin:/bin" \
     HOME="$TMP/home" \
     SPIRA_HOME="$HARNESS/spira" \
     SPIRA_REPO="$HARNESS" \
@@ -176,7 +176,7 @@ got="$(env -i PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" \
 is "config-file SPIRA_BD wins over PATH-derived default" "$BD_GOOD" "$got"
 
 # env still overrides the config file.
-got="$(env -i PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" \
+got="$(env -i PATH="$TOOLS:/usr/bin:/bin" \
     HOME="$TMP/home" \
     SPIRA_HOME="$HARNESS/spira" \
     SPIRA_REPO="$HARNESS" \
@@ -192,7 +192,7 @@ is "env wins over config file for SPIRA_BD" "$BD_BAD" "$got"
 echo
 echo "SPIRA_BD is exported — child processes inherit it:"
 # ==========================================================================
-exported="$(env -i PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" \
+exported="$(env -i PATH="$TOOLS:/usr/bin:/bin" \
     HOME="$TMP/home" \
     SPIRA_HOME="$HARNESS/spira" \
     SPIRA_REPO="$HARNESS" \

@@ -57,7 +57,8 @@ echo
 echo "POSITIVE CONTROL — broker binary exists and is executable"
 # =========================================================================
 # broker is the tree's own build, invoked by name on the suite's PATH (sp-gypjk).
-if command -v broker >/dev/null 2>&1; then
+BROKER_DIR="$(command -v broker)" && BROKER_DIR="$(dirname "$BROKER_DIR")"
+if [ -n "$BROKER_DIR" ]; then
     ok "broker binary is present and executable"
 else
     bad "broker is not on PATH (positive control: fails before the fix)"
@@ -92,7 +93,7 @@ mkdir -p "$SPIRA_RUN"
 
 base_env() {
     env -i \
-        PATH="/usr/local/bin:/usr/bin:/bin" \
+        PATH="$BROKER_DIR:/usr/local/bin:/usr/bin:/bin" \
         HOME="$T/home" \
         SPIRA_HOME="$HERE" \
         SPIRA_RUN="$SPIRA_RUN" \

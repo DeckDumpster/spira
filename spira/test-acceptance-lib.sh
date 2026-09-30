@@ -148,7 +148,7 @@ EOF
 chmod +x "$FAKEHERE/activate.sh"
 
 _lib_install_from_tarball() {  # <tarball> <releases-dir> <conf>
-    bash -c '. "$0"; HERE="$1"; _install_from_tarball "$2" "$3" "$4"' \
+    PATH="$FAKEHERE:$PATH" bash -c '. "$0"; HERE="$1"; _install_from_tarball "$2" "$3" "$4"' \
         "$LIB" "$FAKEHERE" "$1" "$2" "$3"
 }
 
@@ -160,7 +160,7 @@ want "conf forwarded"           "conf=/tmp/pinned-conf"      "$_ift_out"
 want "releases forwarded"       "releases=/tmp/pinned-rel"   "$_ift_out"
 want "SPIRA_ACTIVATE_FORCE=1"   "force=1"                    "$_ift_out"
 
-ACTIVATE_EXIT=1 bash -c '. "$0"; HERE="$1"; _install_from_tarball "$2" "$3" "$4"' \
+ACTIVATE_EXIT=1 PATH="$FAKEHERE:$PATH" bash -c '. "$0"; HERE="$1"; _install_from_tarball "$2" "$3" "$4"' \
     "$LIB" "$FAKEHERE" "/tmp/x.tar.gz" "/tmp/rel" "/tmp/conf" >/dev/null 2>&1
 _ift_fail_rc=$?
 is "activate.sh failure -> _install_from_tarball returns non-zero" "1" "$_ift_fail_rc"

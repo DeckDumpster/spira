@@ -259,10 +259,9 @@ exec /bin/rm "\$@"
 STUBEOF
 chmod +x "$STUBDIR/rm"
 
-# SPIRA_PATH, not PATH: conf.sh (sourced via lib.sh) rebuilds PATH deterministically
-# and only honors SPIRA_PATH as its prepend (conf.sh:2168) — a plain PATH override
-# here is discarded before activate.sh ever calls rm.
-_out="$(run_activate "SPIRA_PATH=$STUBDIR" "SPIRA_RELEASES_KEEP=3" -- "$TB")"
+# PATH, the launcher's: conf.sh keeps the caller's PATH first and only appends its own
+# tail (sp-gypjk), so the stub rm is what activate.sh calls.
+_out="$(run_activate "PATH=$STUBDIR:$PATH" "SPIRA_RELEASES_KEEP=3" -- "$TB")"
 
 if printf '%s\n' "$_out" | grep -q "prune left entries behind under $POISON"; then
     ok "prune: mid-loop failure is diagnosed, not just the last candidate"

@@ -47,8 +47,9 @@ custrepo-one | /tmp/one | push | origin/main | | true | plan
 custrepo-two | /tmp/two | push | origin/main | | true | plan
 MAP
 
+TOOLS="$(command -v spira-config)" && TOOLS="$(dirname "$TOOLS")"
 run_contract() {
-    env -i HOME="$T" PATH="/usr/bin:/bin" \
+    env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" \
         SPIRA_CONF="$T/none.conf" \
         SPIRA_HOME="$T" \
         SPIRA_REPO_MAP="${1-$T/repo-map}" \
