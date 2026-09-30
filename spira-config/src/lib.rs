@@ -815,6 +815,71 @@ pub fn valid_id_prefix(p: &str) -> bool {
     !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// sp-oppza: the ONE-TIME UPGRADE MIGRATION for a box that last wrote its config before
+/// sp-k6m1m retired the goal concept. Such a box's `[spira]` table (or legacy `spira.conf`)
+/// names a `goal` shaped like a bead id — `"<prefix>-<rest>"` — the exact prefix this
+/// installation's own bead ids carry (`conf.sh` used to derive `SPIRA_ID_PREFIX` from it as
+/// `${SPIRA_GOAL%%-*}`). With id_prefix now required and nothing deriving it, that derivation
+/// is reproduced here so an existing box migrates instead of failing activation outright.
+/// `None` when `goal` is not bead-id-shaped (no hyphen, or a prefix `valid_id_prefix` rejects)
+/// — that box gets the ordinary "required" refusal naming the key, same as one with no goal
+/// at all.
+pub fn id_prefix_from_goal(goal: &str) -> Option<String> {
+    let (prefix, _) = goal.split_once('-')?;
+    valid_id_prefix(prefix).then(|| prefix.to_string())
+}
+
+/// sp-oppza: `spira-config migrate` — the automatic form of `the_migration_is_one_set`
+/// (spira-config/tests/validate.rs): read, `set_path spira.id_prefix`, write. Run by the
+/// installer (pre-activate, doctor) before either checks `spira.id_prefix` is set, so a box
+/// whose config predates sp-k6m1m migrates instead of failing activation on every one of
+/// them. `Ok(None)` when there is nothing to do — no `[spira]` table, `id_prefix` ALREADY SET
+/// (production's own state, set by hand: a true no-op, checked first), or `goal` is not
+/// bead-id-shaped (that box gets the ordinary "required" refusal naming the key, same as one
+/// with no goal at all). `Ok(Some((new_text, message)))` otherwise: the migrated document,
+/// with `goal` gone (the ordinary retirement already drops it — [`validate`] strips it before
+/// this ever reaches `set_path`), and a message for the caller to log.
+pub fn migrate_goal_to_id_prefix(text: &str) -> Result<Option<(String, String)>, String> {
+    let root: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    let prefix = match root.get("spira").and_then(|v| v.as_table()) {
+        Some(spira) if !spira.contains_key("id_prefix") => {
+            match spira.get("goal").and_then(|v| v.as_str()).and_then(id_prefix_from_goal) {
+                Some(p) => p,
+                None => return Ok(None),
+            }
+        }
+        _ => return Ok(None),
+    };
+    let doc = validate(text)?;
+    let migrated = set_path(&doc, "spira.id_prefix", &prefix)?;
+    let out = toml::to_string_pretty(&migrated).map_err(|e| e.to_string())?;
+    let msg = format!("migrated: goal implied id_prefix = {prefix:?} (sp-k6m1m/sp-oppza, one-time) — goal removed");
+    Ok(Some((out, msg)))
+}
+
+/// File wrapper for [`migrate_goal_to_id_prefix`]: reads `file` and, when a migration
+/// applies, writes the result back atomically (via [`write_atomic`]) and returns the message
+/// to log. A missing or empty file is nothing to migrate, not an error — `spira-config
+/// migrate` is meant to run unconditionally, ahead of every `validate`, same as this crate's
+/// other idempotent seams (`spira_toml_resolve`'s auto-convert).
+pub fn migrate_goal_to_id_prefix_in_file(file: &std::path::Path) -> Result<Option<String>, String> {
+    let text = match std::fs::read_to_string(file) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{}: {e}", file.display())),
+    };
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    match migrate_goal_to_id_prefix(&text)? {
+        Some((out, msg)) => {
+            write_atomic(file, &out).map_err(|e| format!("{}: {e}", file.display()))?;
+            Ok(Some(msg))
+        }
+        None => Ok(None),
+    }
+}
+
 /// Whether `[spira]` sets any key at all. An empty table — the shape `convert` writes when
 /// it regenerates only `[persona.*]` — says nothing about the host, so it needs no prefix.
 fn spira_sets_anything(s: &SpiraSection) -> bool {
@@ -1549,5 +1614,73 @@ mod tests {
         assert_eq!(repo_gate_mode(&off, "r"), GateMode::Suites);
         let gone = unset_path(&on, "repo.r.gate_mode").unwrap();
         assert_eq!(repo_gate_mode(&gone, "r"), GateMode::Suites);
+    }
+
+    // ---- sp-oppza: migrate_goal_to_id_prefix — the automatic one-time upgrade migration ----
+
+    #[test]
+    fn id_prefix_from_goal_reads_the_prefix_and_refuses_what_is_not_bead_shaped() {
+        assert_eq!(id_prefix_from_goal("sp-spira").as_deref(), Some("sp"));
+        assert_eq!(id_prefix_from_goal("tt-own-thing").as_deref(), Some("tt"));
+        for bad in ["nohyphen", "-leadinghyphen", "sp with space-x", ""] {
+            assert_eq!(id_prefix_from_goal(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn migrate_derives_id_prefix_from_a_bead_shaped_goal_and_drops_goal() {
+        let (out, msg) = migrate_goal_to_id_prefix("[spira]\ngoal = \"sp-spira\"\ndb = \"/db\"\n")
+            .expect("parses")
+            .expect("a migration applies");
+        assert!(msg.contains("sp-k6m1m") && msg.contains("sp-oppza"), "{msg}");
+        let (doc, _) = validate_strict(&out).expect("the migrated document passes the same check doctor/pre-activate run");
+        let s = doc.spira.unwrap();
+        assert_eq!(s.id_prefix.as_deref(), Some("sp"));
+        assert_eq!(s.db.as_deref(), Some("/db"), "the rest of [spira] survives");
+        assert!(!out.contains("goal"), "{out}");
+    }
+
+    #[test]
+    fn migrate_is_a_true_no_op_once_id_prefix_is_set_by_hand() {
+        // Production's own state: id_prefix already set BY HAND. Checked first, so a goal
+        // left behind alongside it changes nothing — no rewrite, same as the retired-key
+        // warning path already covers.
+        assert_eq!(migrate_goal_to_id_prefix("[spira]\nid_prefix = \"sp\"\ngoal = \"sp-spira\"\n").unwrap(), None);
+        assert_eq!(migrate_goal_to_id_prefix("[spira]\nid_prefix = \"tt\"\n").unwrap(), None);
+    }
+
+    #[test]
+    fn migrate_is_a_no_op_with_nothing_to_migrate() {
+        assert_eq!(migrate_goal_to_id_prefix("[spira]\ndb = \"/db\"\n").unwrap(), None, "no goal at all");
+        assert_eq!(migrate_goal_to_id_prefix("[spira]\ngoal = \"nohyphen\"\n").unwrap(), None, "goal not bead-shaped");
+        assert_eq!(migrate_goal_to_id_prefix("[repo.a]\npath = \"/a\"\nmode = \"push\"\n").unwrap(), None, "no [spira] table at all");
+        assert_eq!(migrate_goal_to_id_prefix("").unwrap(), None, "empty document");
+    }
+
+    #[test]
+    fn migrate_in_file_writes_atomically_and_a_second_run_is_silent() {
+        let dir = testkit::TempDir::new("spira-config-migrate");
+        let path = dir.join("spira.toml");
+        std::fs::write(&path, "[spira]\ngoal = \"sp-spira\"\ndb = \"/db\"\n").unwrap();
+
+        let msg = migrate_goal_to_id_prefix_in_file(&path).unwrap().expect("first run migrates");
+        assert!(msg.contains("sp-oppza"), "{msg}");
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(after.contains("id_prefix = \"sp\""), "{after}");
+        assert!(!after.contains("goal"), "{after}");
+
+        // SECOND RUN IS SILENT: id_prefix is there now, so this is the true no-op path —
+        // proof the migration ran exactly once, not on every invocation.
+        assert_eq!(migrate_goal_to_id_prefix_in_file(&path).unwrap(), None);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), after, "unchanged on the second run");
+    }
+
+    #[test]
+    fn migrate_in_file_is_a_no_op_on_a_missing_or_empty_file() {
+        let dir = testkit::TempDir::new("spira-config-migrate-missing");
+        assert_eq!(migrate_goal_to_id_prefix_in_file(&dir.join("nonexistent.toml")).unwrap(), None);
+        let empty = dir.join("empty.toml");
+        std::fs::write(&empty, "").unwrap();
+        assert_eq!(migrate_goal_to_id_prefix_in_file(&empty).unwrap(), None);
     }
 }
