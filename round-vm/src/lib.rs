@@ -10,6 +10,7 @@ pub mod pve;
 pub mod run;
 pub mod schema;
 pub mod spool;
+pub mod template;
 
 #[cfg(test)]
 pub mod testutil;

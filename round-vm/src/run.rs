@@ -105,6 +105,12 @@ host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5"
 rm -rf ~/round-work ~/round-bins
 git clone --quiet "git://${host_addr}:${port}/mirror.git" ~/round-work
 cd ~/round-work
+tag="$(bash spira/testenv.sh tag 2>/dev/null)" || tag=""
+if [ -n "$tag" ] && podman image exists "localhost/spira-testenv:$tag" 2>/dev/null; then
+    echo "round-vm: template image: localhost/spira-testenv:$tag present" >&2
+elif [ -n "$tag" ]; then
+    echo "round-vm: template image: localhost/spira-testenv:$tag absent — this round builds it; refresh the template with round-vm template" >&2
+fi
 export SPIRA_BATCH_MAXPAR="$maxpar"
 if [ -n "$toolchain" ]; then export RUSTUP_TOOLCHAIN="$toolchain"; fi
 set +e
@@ -141,7 +147,7 @@ pub struct SshRemote {
 }
 
 impl SshRemote {
-    fn ssh_opts(&self) -> Vec<String> {
+    pub(crate) fn ssh_opts(&self) -> Vec<String> {
         [
             "-i", &self.key.to_string_lossy(), "-p", &self.port.to_string(),
             "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
@@ -698,6 +704,16 @@ mod tests {
         assert!(parse_run_args(&args(&["/t", "--bogus"])).unwrap_err().contains("unknown option: --bogus"));
         assert!(parse_run_args(&args(&["/t", "--maxpar", "x"])).unwrap_err().contains("--maxpar"));
         assert!(parse_run_args(&args(&["/t", "--suites"])).unwrap_err().contains("needs a value"));
+    }
+
+    #[test]
+    fn the_remote_script_says_whether_the_template_holds_the_rounds_image() {
+        let clone = REMOTE_SCRIPT.find("git clone").unwrap();
+        let check = REMOTE_SCRIPT.find("podman image exists").unwrap();
+        let batch = REMOTE_SCRIPT.find("cargo run").unwrap();
+        assert!(clone < check && check < batch, "checked after the clone, before testenv starts");
+        assert!(REMOTE_SCRIPT.contains("template image: localhost/spira-testenv:$tag present"));
+        assert!(REMOTE_SCRIPT.contains("absent — this round builds it; refresh the template with round-vm template"));
     }
 
     #[test]

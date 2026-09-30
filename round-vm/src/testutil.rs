@@ -33,6 +33,8 @@ pub enum Step {
     Destroy,
     /// destroy reports success and the VM stays.
     DestroySilently,
+    Shutdown,
+    MakeTemplate,
 }
 
 #[derive(Debug, Clone)]
@@ -40,6 +42,7 @@ struct FakeVm {
     name: String,
     running: bool,
     files: BTreeMap<String, String>,
+    template: bool,
 }
 
 #[derive(Default)]
@@ -69,7 +72,7 @@ impl FakeProvider {
     pub fn plant(&self, vmid: &str, name: &str) {
         self.0.lock().unwrap().vms.insert(
             vmid.into(),
-            FakeVm { name: name.into(), running: true, files: BTreeMap::new() },
+            FakeVm { name: name.into(), running: true, files: BTreeMap::new(), template: false },
         );
     }
     pub fn calls(&self) -> Vec<String> {
@@ -125,7 +128,7 @@ impl Provider for FakeProvider {
         if g.vms.contains_key(vmid) {
             return Err(format!("VM {vmid} already exists"));
         }
-        g.vms.insert(vmid.into(), FakeVm { name: name.into(), running: false, files: BTreeMap::new() });
+        g.vms.insert(vmid.into(), FakeVm { name: name.into(), running: false, files: BTreeMap::new(), template: false });
         Ok(())
     }
     fn start(&self, vmid: &str) -> Result<(), String> {
@@ -175,6 +178,41 @@ impl Provider for FakeProvider {
     }
     fn name_of(&self, vmid: &str) -> Result<Option<String>, String> {
         Ok(self.0.lock().unwrap().vms.get(vmid).map(|v| v.name.clone()))
+    }
+    fn clone_full(&self, vmid: &str, name: &str) -> Result<(), String> {
+        self.step(Step::Clone, format!("clone-full {vmid} {name}"))?;
+        let mut g = self.0.lock().unwrap();
+        if g.vms.contains_key(vmid) {
+            return Err(format!("VM {vmid} already exists"));
+        }
+        g.vms.insert(vmid.into(), FakeVm { name: name.into(), running: false, files: BTreeMap::new(), template: false });
+        Ok(())
+    }
+    fn shutdown(&self, vmid: &str) -> Result<(), String> {
+        self.step(Step::Shutdown, format!("shutdown {vmid}"))?;
+        let mut g = self.0.lock().unwrap();
+        g.vms.get_mut(vmid).ok_or("no such VM")?.running = false;
+        Ok(())
+    }
+    fn make_template(&self, vmid: &str) -> Result<(), String> {
+        self.step(Step::MakeTemplate, format!("template {vmid}"))?;
+        let mut g = self.0.lock().unwrap();
+        let v = g.vms.get_mut(vmid).ok_or("no such VM")?;
+        if v.running {
+            return Err("cannot convert a running VM".into());
+        }
+        v.template = true;
+        Ok(())
+    }
+    fn is_template(&self, vmid: &str) -> Result<bool, String> {
+        Ok(self.0.lock().unwrap().vms.get(vmid).map(|v| v.template).unwrap_or(false))
+    }
+}
+
+impl FakeProvider {
+    /// Every VM that exists, by id, with its name.
+    pub fn all_vms(&self) -> Vec<(String, String)> {
+        self.0.lock().unwrap().vms.iter().map(|(id, v)| (id.clone(), v.name.clone())).collect()
     }
 }
 

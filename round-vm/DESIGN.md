@@ -32,6 +32,7 @@ means the same thing.
 | `round-vm run <tree-dir> [--suites CSV] [--maxpar N] [--toolchain V] [--results-dir D]` | the remote batch's own output | see 2.2 |
 | `round-vm status` | exactly three lines: `ready: <handle> <addr>\|none`, `provisioning: pid <pid>\|none`, `outage: <reason>\|none` | 0 |
 | `round-vm _provision-bg` | internal: the one background provision | 0 |
+| `round-vm template <tree-dir> [--vmid N]` | `<new-template-vmid> <image-ref>` | 0 built, verified a template; 1 failed (the half-built VM destroyed, or named if it could not be); 2 usage/preflight |
 
 Every option also accepts the `--opt=value` spelling. An unknown verb or no verb exits 1.
 
@@ -113,6 +114,53 @@ and `SPIRA_BATCH_RESULTS=~/attr-results/<job>`. After `corpus.done`, `run` keeps
 pass, then releases the VM (G2 unchanged: a signal still releases it). The exit code is the
 corpus's, as without the spool.
 
+### 2.2b `template` — a round template whose test image is built, not loaded (sp-dvfea)
+
+**Why.** A round's VM must hold `localhost/spira-testenv:<tag>` (the tag is the hash of the
+Containerfile, the bd pin and deps.toml), or testenv builds the image on the VM before any
+suite runs. Measured 2026-09-30 (sp-dp872's proof round): `up:1139` of a 1615 s round — a
+cold `podman build` (a Go toolchain, bd compiled from source, a Rust toolchain). Template 108
+did carry an image, but a **loaded** one (`podman load`) of an older tag: a loaded image has
+no build cache, so when the tag moved — though only 4 of its 23 layers differ, all of them
+from `COPY conf.sh`/`deps.toml` onward — the VM rebuilt all 23 from nothing. Shipping the
+host's image instead (`podman save | ssh podman load`) was measured and rejected: the host's
+disk is the contended resource (100% util, 2 s read waits during a round), and the 2 GB
+stream ran past 17 minutes.
+
+**What.** `round-vm template <tree-dir>` makes a new template from the current one
+(`PVE_TEMPLATE_VMID`) whose image is **built on the template itself**, so the template keeps
+podman's layer cache. A later closure change then rebuilds only the steps it touches — for a
+`conf.sh`/`deps.toml`/doctor change, the last few layers, in seconds — and a round whose tag
+equals the template's builds nothing. The cargo registry is warmed with the tree's
+`Cargo.lock` too.
+
+It **never repoints anything**: it prints the new VMID; switching `PVE_TEMPLATE_VMID` in
+`pve.env` is the operator's infrastructure change, and so is destroying the old template.
+
+1. Preflight (exit 2): `<tree-dir>` is a git checkout; `SPIRA_ROUND_VM_HOST_PUBKEY` and
+   `SPIRA_ROUND_VM_HOST_KEY` are readable.
+2. VMID: `--vmid N` if given (templates belong in their own range; nextid lands in the band
+   round clones use), else the hypervisor's nextid.
+3. **Full** clone of `PVE_TEMPLATE_VMID` to it, named `round-template-<commit12>` (a linked
+   clone would tie the new template's disk to the old one). It is never named
+   `round-<vmid>`, so no `acquire`, `release` or reap can destroy it (G4).
+4. Start, wait for the address, deliver the key (the same code as provision, §2.4), wait for
+   ssh.
+5. Stream `git archive <commit>` of the tree to `/root/template-work` on the VM, then run
+   `TEMPLATE_SCRIPT` there: `testenv.sh image` (builds with podman's default `--layers`,
+   keeping the cache), `podman rmi` every other `localhost/spira-testenv:*` tag, `cargo
+   fetch --locked`, then delete the work tree and `/root/.ssh/authorized_keys`. The script
+   prints `image=<ref>`; a missing line is a failure.
+6. Graceful shutdown (the guest flushes its image store), verify stopped, convert to a
+   template, verify `template: 1` in its config.
+7. Any failure from step 3 on destroys the VM — fenced on the exact name this run gave it —
+   and reports the reason; a VM that will not die is named on stderr for the operator.
+
+**How the operator knows to run it.** `REMOTE_SCRIPT` checks, before testenv starts, whether
+the VM already holds the round's tag, and says so on the round's stderr either way:
+`round-vm: template image: <ref> present` or `... absent — this round builds it; refresh
+the template with round-vm template`.
+
 ### 2.3 Guarantees
 
 - **G1 Pool of one.** At most one ready VM and at most one provision in flight, ever.
@@ -127,7 +175,9 @@ corpus's, as without the spool.
   `doomed`, retried on every `acquire`.
 - **G4 Destroy is fenced.** round-vm only ever destroys a VM named `round-<vmid>`. A
   handle naming anything else (the template, another client's VM that won a `nextid`
-  race) is refused and never touched.
+  race) is refused and never touched. The one other name it destroys is the
+  `round-template-<commit12>` a `template` run gave its own half-built clone (§2.2b), and
+  only from inside that run.
 - **G5 No local mode.** No path runs the batch anywhere but the VM.
 - **G6 One alarm per outage.** The first failure of an outage mails the operator
   (`$SPIRA_HOME/mail.sh send <mailbox> --kind alert`, mailbox `SPIRA_ROUND_VM_MAIL_MAILBOX`,
@@ -247,6 +297,11 @@ pub trait Provider {
     fn stop(&self, vmid: &str) -> Result<(), String>;
     fn destroy(&self, vmid: &str) -> Result<(), String>;
     fn name_of(&self, vmid: &str) -> Result<Option<String>, String>; // None: the VMID is gone
+    // `template` (§2.2b) only:
+    fn clone_full(&self, vmid: &str, name: &str) -> Result<(), String>; // full=1 clone of the template
+    fn shutdown(&self, vmid: &str) -> Result<(), String>;                // graceful, task-waited
+    fn make_template(&self, vmid: &str) -> Result<(), String>;           // POST .../template
+    fn is_template(&self, vmid: &str) -> Result<bool, String>;           // GET .../config: template == 1
 }
 ```
 
@@ -266,6 +321,8 @@ insecure fallback. Responses it reads, each wrapped in `{"data": ...}`:
 | `POST .../agent/exec` | `{"pid": 42}` |
 | `GET .../agent/exec-status?pid=42` | `{"exited": 1\|true, "exitcode": 0}` |
 | `POST .../agent/file-write` | `null` |
+| `POST .../status/shutdown`, `POST .../template` | a task UPID string (or `null`) |
+| `GET .../qemu/<id>/config` | `{"template": 1, ...}` (absent when not a template) |
 
 ### 3.4 Round result (`<state>/manifests/<tree-sha>.json`)
 

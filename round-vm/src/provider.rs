@@ -24,6 +24,13 @@ pub trait Provider {
     fn destroy(&self, vmid: &str) -> Result<(), String>;
     /// The VM's name, or None if the VMID does not exist.
     fn name_of(&self, vmid: &str) -> Result<Option<String>, String>;
+    /// `template` only (DESIGN.md §2.2b): a FULL clone of the round template to `vmid`.
+    fn clone_full(&self, vmid: &str, name: &str) -> Result<(), String>;
+    /// Graceful shutdown, waited on, so the guest flushes its disks.
+    fn shutdown(&self, vmid: &str) -> Result<(), String>;
+    /// Converts the (stopped) VM into a template.
+    fn make_template(&self, vmid: &str) -> Result<(), String>;
+    fn is_template(&self, vmid: &str) -> Result<bool, String>;
 }
 
 /// The only name round-vm gives a VM, and the only name it will ever destroy (G4).
@@ -57,14 +64,18 @@ impl std::fmt::Display for DestroyError {
 
 /// Stop, destroy, then poll until the VMID is gone (G3). A VMID already gone is success.
 pub fn destroy_verified(p: &dyn Provider, vmid: &str, t: Timing) -> Result<(), DestroyError> {
+    destroy_fenced(p, vmid, &vm_name(vmid), t)
+}
+
+/// [`destroy_verified`] fenced on an exact `expected` name (G4): anything else is refused.
+pub fn destroy_fenced(p: &dyn Provider, vmid: &str, expected: &str, t: Timing) -> Result<(), DestroyError> {
     let name = p
         .name_of(vmid)
         .map_err(|e| DestroyError::Failed(format!("round-vm: destroy {vmid}: cannot list VMs: {e}")))?;
     let Some(name) = name else { return Ok(()) };
-    if name != vm_name(vmid) {
+    if name != expected {
         return Err(DestroyError::NotOurs(format!(
-            "round-vm: refusing to destroy VM {vmid}: it is named {name:?}, not {:?}",
-            vm_name(vmid)
+            "round-vm: refusing to destroy VM {vmid}: it is named {name:?}, not {expected:?}"
         )));
     }
     if p.alive(vmid).unwrap_or(true) {
@@ -160,12 +171,19 @@ pub fn provision(p: &dyn Provider, spec: &ProvisionSpec, on_vmid: &mut dyn FnMut
     if let Err(e) = p.clone_to(&vmid, &vm_name(&vmid)) {
         return Err(cleanup(p, &vmid, t, format!("clone refused: {e}")));
     }
-    if let Err(e) = p.start(&vmid) {
-        return Err(cleanup(p, &vmid, t, format!("VM {vmid} did not start: {e}")));
+    match boot(p, &vmid, spec) {
+        Ok(addr) => Ok(Vm { handle: vmid, addr }),
+        Err(reason) => Err(cleanup(p, &vmid, t, reason)),
     }
+}
+
+/// Start → address → key, for a VM already cloned. The caller destroys it on Err.
+pub fn boot(p: &dyn Provider, vmid: &str, spec: &ProvisionSpec) -> Result<String, String> {
+    let t = spec.timing;
+    p.start(vmid).map_err(|e| format!("VM {vmid} did not start: {e}"))?;
     let mut addr = None;
     for i in 0..t.boot_tries.max(1) {
-        if let Ok(Some(a)) = p.guest_addr(&vmid, spec.iface) {
+        if let Ok(Some(a)) = p.guest_addr(vmid, spec.iface) {
             addr = Some(a);
             break;
         }
@@ -173,13 +191,10 @@ pub fn provision(p: &dyn Provider, spec: &ProvisionSpec, on_vmid: &mut dyn FnMut
             std::thread::sleep(t.poll);
         }
     }
-    let Some(addr) = addr else {
-        return Err(cleanup(p, &vmid, t, format!("VM {vmid} did not come up on the network ({})", spec.iface)));
-    };
-    if let Err(e) = deliver_key(p, &vmid, spec.ssh_user, spec.pubkey) {
-        return Err(cleanup(p, &vmid, t, format!("guest-agent key delivery failed on VM {vmid}: {e}")));
-    }
-    Ok(Vm { handle: vmid, addr })
+    let addr = addr.ok_or_else(|| format!("VM {vmid} did not come up on the network ({})", spec.iface))?;
+    deliver_key(p, vmid, spec.ssh_user, spec.pubkey)
+        .map_err(|e| format!("guest-agent key delivery failed on VM {vmid}: {e}"))?;
+    Ok(addr)
 }
 
 #[cfg(test)]
