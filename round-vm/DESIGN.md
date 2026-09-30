@@ -52,8 +52,9 @@ wait for a VM, whether it provisioned one itself or waited on the provision in f
    then act as a **launcher** (runtime-is-a-release, sp-dvfea; the GitHub CI twin is
    sp-6cbna): `cargo build --profile release --workspace` (a failure exits 4, testenv's
    build-failure code), stage that build as a release with the round's own `release build
-   <sha> --bin-dir target/release --releases ~/round-releases`, and set `SPIRA_RELEASE` and
-   `PATH` **outright** (`$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:~/.cargo/bin:` the system
+   <sha> --bin-dir target/release --releases ~/round-releases`, and set `SPIRA_RELEASE`,
+   `SPIRA_REPO=~/round-work` (a release is not a checkout; without it testenv, run from the
+   release, cannot resolve the base ref) and `PATH` **outright** (`$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:~/.cargo/bin:` the system
    directories), refusing (exit 2) unless `spira-config` then resolves into that release.
    Both are written to `~/round-launcher.env` for the attribution jobs (§2.2a), which source
    it. Without this every conf.sh load on the VM printed `spira-config: command not found`

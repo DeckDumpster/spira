@@ -118,13 +118,14 @@ fi
 echo "round-vm: built the round in $(( $(date +%s) - t0 ))s" >&2
 rel_sha="$(target/release/release build "$(git rev-parse HEAD)" --repo "$HOME/round-work" --bin-dir "$HOME/round-work/target/release" --releases "$HOME/round-releases")"
 export SPIRA_RELEASE="$HOME/round-releases/$rel_sha"
+export SPIRA_REPO="$HOME/round-work"
 export PATH="$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 got="$(command -v spira-config || true)"
 if [ "$got" != "$SPIRA_RELEASE/bin/spira-config" ]; then
     echo "round-vm: spira-config resolves to ${got:-nothing}, not the staged release $SPIRA_RELEASE" >&2
     exit 2
 fi
-printf 'export SPIRA_RELEASE=%q\nexport PATH=%q\n' "$SPIRA_RELEASE" "$PATH" > ~/round-launcher.env
+printf 'export SPIRA_RELEASE=%q\nexport SPIRA_REPO=%q\nexport PATH=%q\n' "$SPIRA_RELEASE" "$SPIRA_REPO" "$PATH" > ~/round-launcher.env
 echo "round-vm: launcher: SPIRA_RELEASE=$SPIRA_RELEASE" >&2
 tag="$(bash spira/testenv.sh tag)" || tag=""
 if [ -n "$tag" ] && podman image exists "localhost/spira-testenv:$tag" 2>/dev/null; then
@@ -749,6 +750,10 @@ mod tests {
         let tenv = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         assert!(build < stage && stage < path && path < first_script && path < tenv);
         assert!(REMOTE_SCRIPT.contains("export SPIRA_RELEASE=\"$HOME/round-releases/$rel_sha\""));
+        // A release is not a checkout: testenv run from it names the repo by SPIRA_REPO, or
+        // it cannot resolve the base ref (the first proof round: VERDICT FAULT reason=base-ref).
+        assert!(REMOTE_SCRIPT.contains("export SPIRA_REPO=\"$HOME/round-work\""));
+        assert!(REMOTE_SCRIPT.contains("export SPIRA_REPO=%q"));
         assert!(REMOTE_SCRIPT.contains("\"$SPIRA_RELEASE/bin/spira-config\""), "positive control on what PATH resolves");
         assert!(!REMOTE_SCRIPT.contains(":$PATH"), "PATH is set outright, never appended to");
         assert!(!REMOTE_SCRIPT.contains("cargo run"), "testenv runs from the staged release by name");
