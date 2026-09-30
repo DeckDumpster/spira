@@ -5,8 +5,8 @@
 # than a land_mark write. See lifecycle/src/bead.rs for the transition table this plays
 # against and design wiki/projects/spira/designs/bead-lifecycle-state-machine-2026-09-26.md.
 #
-# INERT UNTIL SPIRA_LC_BIN RESOLVES TO A REAL BINARY (conf.sh) — the cutover deploy (sp-sa8pn)
-# is what installs it and grants the DB. Until then every call here returns 2 ("cannot tell")
+# INERT UNTIL SPIRA_LIFECYCLE_ENFORCE IS ON (sp-gypjk) — the cutover deploy (sp-sa8pn)
+# is what turns it on and grants the DB. Until then every call here returns 2 ("cannot tell")
 # having touched nothing, so the legacy landstate path this bead is cutting over stays the
 # only one in force. This is deliberate, not a fallback to paper over: design's own non-goal
 # is "keeping the loop running during cutover" — there is none, the cutover is downtime.
