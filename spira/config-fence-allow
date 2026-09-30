@@ -150,7 +150,6 @@ spira/test-install-dolt-breaker.sh
 spira/test-install-dolt-mode.sh
 spira/test-install-dolt-port-wait.sh
 spira/test-install-dolt-ready.sh
-spira/test-install-exec.sh
 spira/test-install-hooks-artifact.sh
 spira/test-install-refusal.sh
 spira/test-land-commit-contract.sh
