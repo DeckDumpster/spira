@@ -1,0 +1,572 @@
+//! Orchestration: the dedupe scan, filing a new bead or bumping a recurrence, the Sin
+//! escalation and the undeclared-repo ask. Pure decision-making lives in `decide.rs`; this
+//! module only sequences calls to the `Bd`/`Mailer`/`Clock` ports and never contains a
+//! judgement call `decide.rs` could have made instead — table-driven parity against the
+//! bash is easiest when every "should this fire" answer has exactly one place it is typed.
+
+use crate::decide::{self, DedupHit};
+use crate::ports::{self, Bd, Clock, Mailer};
+
+pub struct FileConfig<'a> {
+    pub db: &'a str,
+    pub kind: &'a str,
+    pub priority: &'a str,
+    pub actor: Option<&'a str>,
+    pub cause: &'a str,
+    pub sin_at: u32,
+    pub sin_exempt: bool,
+    pub watcher_interval_s: i64,
+    pub dedup_lookback_days: i64,
+    pub repo_declared: Option<&'a str>,
+    pub delivers_pref: Option<&'a str>,
+    pub sop_ledger: &'a str,
+    pub spira_run: &'a str,
+    pub home_repo: &'a str,
+    pub known_repos: &'a [String],
+    pub ask_label: &'a str,
+    pub provenance: &'a str,
+}
+
+pub enum FileOutcome {
+    Filed(String),
+    /// The database could not be reached; the caller must keep the spool entry.
+    Unreachable,
+    /// The database was reachable but the `bd create` guards refused the filing outright
+    /// (a bad repo: label or destructive/schema-delete text) — also kept spooled, since
+    /// retrying an unreachable-looking failure is safer than silently dropping the event,
+    /// and the guard message is on the log for a human to fix the caller.
+    Refused,
+}
+
+fn since_date(now: i64, lookback_days: i64) -> String {
+    let secs = lookback_days.max(0) * 86_400;
+    let epoch = (now - secs).max(0);
+    epoch_to_date(epoch)
+}
+
+/// `date -u -d @<epoch> +%Y-%m-%d`, reimplemented without a libc TZ dependency: days since
+/// the epoch via the standard proleptic Gregorian calendar (civil_from_days, Howard
+/// Hinnant's algorithm), which is what every other UTC-date site in this codebase would
+/// compute too — verified against `date -u` for several sample epochs while writing this.
+pub fn epoch_to_date(epoch: i64) -> String {
+    let days = epoch.div_euclid(86_400);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as i64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// `_dedup_incident`: the four-pass scan (open label-keyed, open fallback, closed
+/// label-keyed, closed fallback). `None` means "no existing incident, and the database
+/// answered" (a real "nothing found"); `Some(Err(()))` means the database could not be
+/// reached at all — the two are distinguished by a final reachability probe, exactly as
+/// the bash does, because an empty dedup scan and an unreachable store print identically
+/// from `bd list`'s own `2>/dev/null`.
+fn dedup_incident(bd: &dyn Bd, db: &str, reference: &str, lookback_days: i64, now: i64) -> Result<Option<DedupHit>, ()> {
+    let ref_label = format!("ref:{}", decide::ref_hash(reference));
+
+    if let Ok(rows) = bd.list(db, &["open", "in_progress"], Some(&ref_label), None) {
+        if let Some(hit) = decide::dedup_scan(&rows, true, false, reference) {
+            return Ok(Some(hit));
+        }
+    }
+    if let Ok(rows) = bd.list(db, &["open", "in_progress"], None, None) {
+        if let Some(hit) = decide::dedup_scan(&rows, true, true, reference) {
+            return Ok(Some(hit));
+        }
+    }
+    let since = since_date(now, lookback_days);
+    if let Ok(rows) = bd.list(db, &["closed"], Some(&ref_label), Some(&since)) {
+        if let Some(hit) = decide::dedup_scan(&rows, false, false, reference) {
+            return Ok(Some(hit));
+        }
+    }
+    if let Ok(rows) = bd.list(db, &["closed"], None, Some(&since)) {
+        if let Some(hit) = decide::dedup_scan(&rows, false, true, reference) {
+            return Ok(Some(hit));
+        }
+    }
+    if bd.reachable(db) {
+        Ok(None)
+    } else {
+        Err(())
+    }
+}
+
+/// `file_one`: create or dedupe. `labels` is the full label string a fresh filing would
+/// carry (`SPIRA_INCIDENT_LABELS`, e.g. "spira,incident"); the dedupe scan itself never
+/// filters on it (see `dedup_incident` — only `ref:<hash>` is a safe prefilter, per
+/// incident.sh's own comment: two filers declaring different labels must still find each
+/// other's bead).
+#[allow(clippy::too_many_arguments)]
+pub fn file_one(
+    bd: &dyn Bd,
+    mailer: &dyn Mailer,
+    clock: &dyn Clock,
+    cfg: &FileConfig,
+    reference: &str,
+    title: &str,
+    payload: &[u8],
+    labels: &str,
+    log: &mut Vec<String>,
+) -> FileOutcome {
+    let now = clock.now();
+    let hit = match dedup_incident(bd, cfg.db, reference, cfg.dedup_lookback_days, now) {
+        Err(()) => {
+            log.push(format!("database unreachable — {reference} stays spooled"));
+            return FileOutcome::Unreachable;
+        }
+        Ok(h) => h,
+    };
+
+    match hit {
+        Some(DedupHit::Open { id }) | Some(DedupHit::Closed { id, closed_at: None }) => {
+            bump_and_note(bd, mailer, clock, cfg, &id, reference, title, payload, false, now, log)
+        }
+        Some(DedupHit::Closed { id, closed_at: Some(closed_at) }) => {
+            let closed_ts = parse_iso8601(&closed_at);
+            let cause = closed_ts.map(|ts| decide::reopen_cause(ts, now, cfg.watcher_interval_s)).unwrap_or("recurrence");
+            let _ = cause;
+            bd.reopen(cfg.db, &id);
+            let note = format!(
+                "Recurrence at {} — same failure fingerprint, dedup within {}-day window",
+                iso_now_public(now),
+                cfg.dedup_lookback_days
+            );
+            bd.note(cfg.db, &id, &note);
+            bump_and_note(bd, mailer, clock, cfg, &id, reference, title, payload, true, now, log)
+        }
+        None => file_new(bd, cfg, reference, title, payload, labels, log),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bump_and_note(
+    bd: &dyn Bd,
+    mailer: &dyn Mailer,
+    _clock: &dyn Clock,
+    cfg: &FileConfig,
+    id: &str,
+    reference: &str,
+    title: &str,
+    payload: &[u8],
+    was_reopened: bool,
+    now: i64,
+    log: &mut Vec<String>,
+) -> FileOutcome {
+    let ev_n = ports::recurs_of(bd, cfg.db, id);
+    let events_unknown = ev_n.is_none();
+    let n = ev_n.unwrap_or(0) + 1;
+
+    bd.label_add(cfg.db, id, &format!("ref:{}", decide::ref_hash(reference)));
+
+    let prev_hash = bd.label_list(cfg.db, id).into_iter().find(|l| l.starts_with("payload-hash:"));
+    let (note_suffix, new_hash) = decide::recur_note_body(prev_hash.as_deref(), payload, was_reopened);
+    let reopen_note = if was_reopened { "\nReopened by dedup — same external ref seen again within the lookback window." } else { "" };
+    let note = format!("Recurrence {n} at {}.{reopen_note}{}", iso_now_public(now), note_suffix.clone().unwrap_or_default());
+    bd.note(cfg.db, id, &note);
+    if note_suffix.is_some() {
+        if let Some(prev) = &prev_hash {
+            bd.label_remove(cfg.db, id, prev);
+        }
+        bd.label_add(cfg.db, id, &format!("payload-hash:{new_hash}"));
+    }
+
+    ports::bump_recur(bd, cfg.db, id, cfg.cause);
+    log.push(format!("{reference} recurred ({n}) — {id}"));
+
+    let already_sin = bd.label_list(cfg.db, id).iter().any(|l| l == "sin");
+    if events_unknown {
+        log.push(format!("{reference}: recurrence count unknown — events query failed; Sin is blind this cycle"));
+    } else if cfg.sin_exempt && n >= cfg.sin_at {
+        log.push(format!("{reference} crossed SIN_AT={} ({n} recurrences) but is exempt — no escalation", cfg.sin_at));
+    } else if decide::crosses_sin(n, cfg.sin_at, cfg.sin_exempt, events_unknown, already_sin) {
+        bd.label_add(cfg.db, id, "sin");
+        let age = bd
+            .show_created_at(cfg.db, id)
+            .and_then(|c| parse_iso8601(&c))
+            .map(|created| now - created)
+            .filter(|secs| *secs > 0)
+            .map(|secs| format!(" over {}h {}m", secs / 3600, (secs % 3600) / 60))
+            .unwrap_or_default();
+        let subject = format!("{} — recurred {n} times{age} with no fix holding. Mute it, or keep paging?", cfg.provenance);
+        let default = format!("mute this alert and leave {id} open for Ops to work unpaged; keep paging only if you want a decision on every recurrence");
+        let evidence: Vec<u8> = payload.iter().take(2000).copied().collect();
+        let body = format!(
+            "{id} is \"{title}\". It has fired {n} times{age} and each recurrence pages you while filing nothing new. Its current vital signs are below — if they show nothing you must act on, muting is the right answer.\n\n{}",
+            String::from_utf8_lossy(&evidence)
+        );
+        mailer.send_operator_question(&subject, &default, &body);
+        log.push(format!("{reference} is a SIN at {n} recurrences — escalated once"));
+    }
+    FileOutcome::Filed(id.to_string())
+}
+
+fn file_new(bd: &dyn Bd, cfg: &FileConfig, reference: &str, title: &str, payload: &[u8], labels: &str, log: &mut Vec<String>) -> FileOutcome {
+    if let Some(bad_repo) = cfg.repo_declared.and_then(|r| decide::invalid_repo_label(&format!("repo:{r}"), cfg.home_repo, cfg.known_repos)) {
+        log.push(format!("spira: repo:{bad_repo} is not in the repo map"));
+        // Same fallback the bash's set-state guard takes: file under the home repo rather
+        // than refuse the whole event.
+    }
+    if let Some(phrase) = decide::destructive_phrase(title, "", labels, cfg.ask_label) {
+        log.push(format!("create FAILED for {reference} — contains \"{phrase}\", needs {} — stays spooled", cfg.ask_label));
+        return FileOutcome::Refused;
+    }
+    if decide::contains_schema_delete(title, "") {
+        log.push(format!("create FAILED for {reference} — contains a schema_migrations DELETE — stays spooled"));
+        return FileOutcome::Refused;
+    }
+
+    let body = String::from_utf8_lossy(payload).into_owned();
+    let id = match bd.create(cfg.db, title, cfg.kind, cfg.priority, labels, reference, &body, cfg.actor) {
+        Ok(id) => id,
+        Err(e) => {
+            log.push(format!("create FAILED for {reference} — stays spooled ({e})"));
+            return FileOutcome::Unreachable;
+        }
+    };
+    log.push(format!("filed {id} for {reference}"));
+
+    if let Some(repo) = cfg.repo_declared {
+        let effective = if repo == cfg.home_repo || cfg.known_repos.iter().any(|r| r == repo) {
+            repo.to_string()
+        } else {
+            log.push(format!("warning: SPIRA_INCIDENT_REPO={repo} has no repo-map entry; using {}", cfg.home_repo));
+            cfg.home_repo.to_string()
+        };
+        bd.set_state(cfg.db, &id, &format!("repo={effective}"));
+    }
+
+    match cfg.delivers_pref {
+        Some("note") => {
+            if cfg.sop_ledger.starts_with(cfg.spira_run) {
+                bd.label_add(cfg.db, &id, &format!("delivers:note:{}", cfg.sop_ledger));
+            } else {
+                bd.label_add(cfg.db, &id, "delivers:action");
+            }
+        }
+        Some(other) => {
+            bd.label_add(cfg.db, &id, &format!("delivers:{other}"));
+        }
+        None => {
+            bd.label_add(cfg.db, &id, "delivers:action");
+        }
+    }
+    bd.label_add(cfg.db, &id, &format!("ref:{}", decide::ref_hash(reference)));
+
+    if cfg.repo_declared.is_none() {
+        bd.label_add(cfg.db, &id, "needs-repo-triage");
+        bd.note(
+            cfg.db,
+            &id,
+            "Repository not declared — SPIRA_INCIDENT_REPO was not set. An aeon claiming this bead works it in the home-repo fallback, which may be the wrong checkout.",
+        );
+        log.push(format!("{reference} labelled needs-repo-triage — repo undeclared"));
+    }
+    FileOutcome::Filed(id)
+}
+
+/// `_provenance`: "<unit> on <host>: <path>".
+pub fn provenance(unit: &str, host: &str, path: &str) -> String {
+    format!("{unit} on {host}: {path}")
+}
+
+/// A minimal, dependency-free RFC3339/ISO-8601 UTC parser for the subset bd actually
+/// prints ("YYYY-MM-DDTHH:MM:SSZ"), returning a Unix epoch. `None` on anything else —
+/// the caller already treats an unparseable timestamp as "recurrence", never a crash.
+pub fn parse_iso8601(s: &str) -> Option<i64> {
+    if s.len() < 19 {
+        return None;
+    }
+    let y: i64 = s.get(0..4)?.parse().ok()?;
+    let mo: i64 = s.get(5..7)?.parse().ok()?;
+    let d: i64 = s.get(8..10)?.parse().ok()?;
+    let h: i64 = s.get(11..13)?.parse().ok()?;
+    let mi: i64 = s.get(14..16)?.parse().ok()?;
+    let se: i64 = s.get(17..19)?.parse().ok()?;
+    // days_from_civil (Hinnant), inverse of epoch_to_date above.
+    let y2 = if mo <= 2 { y - 1 } else { y };
+    let era = if y2 >= 0 { y2 } else { y2 - 399 } / 400;
+    let yoe = y2 - era * 400;
+    let mp = if mo > 2 { mo - 3 } else { mo + 9 };
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days * 86_400 + h * 3600 + mi * 60 + se)
+}
+
+/// Public so `main.rs` has exactly one date formatter in the binary (used for the `ilog`
+/// timestamp and the spool filename's stamp, matching `date -u +%Y-%m-%dT%H:%M:%SZ`).
+pub fn iso_now_public(epoch: i64) -> String {
+    let date = epoch_to_date(epoch);
+    let secs_of_day = epoch.rem_euclid(86_400);
+    format!("{date}T{:02}:{:02}:{:02}Z", secs_of_day / 3600, (secs_of_day % 3600) / 60, secs_of_day % 60)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::decide::BeadRow;
+    use crate::decide::BeadStatus;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    #[derive(Default)]
+    struct FakeBd {
+        rows: RefCell<Vec<BeadRow>>,
+        reachable: bool,
+        created: RefCell<Vec<(String, String)>>,
+        labels: RefCell<HashMap<String, Vec<String>>>,
+        notes: RefCell<HashMap<String, Vec<String>>>,
+        next_id: RefCell<u32>,
+    }
+
+    impl FakeBd {
+        fn new() -> FakeBd {
+            FakeBd { reachable: true, next_id: RefCell::new(1), ..Default::default() }
+        }
+    }
+
+    impl Bd for FakeBd {
+        fn list(&self, _db: &str, statuses: &[&str], label: Option<&str>, _closed_after: Option<&str>) -> Result<Vec<BeadRow>, String> {
+            let rows = self.rows.borrow();
+            Ok(rows
+                .iter()
+                .filter(|r| {
+                    let status_ok = statuses.iter().any(|s| match *s {
+                        "open" => r.status == BeadStatus::Open,
+                        "in_progress" => r.status == BeadStatus::InProgress,
+                        "closed" => r.status == BeadStatus::Closed,
+                        _ => false,
+                    });
+                    let label_ok = label.map(|l| r.labels.iter().any(|x| x == l)).unwrap_or(true);
+                    status_ok && label_ok
+                })
+                .cloned()
+                .collect())
+        }
+        fn create(&self, _db: &str, title: &str, _kind: &str, _priority: &str, labels: &str, external_ref: &str, _body: &str, _actor: Option<&str>) -> Result<String, String> {
+            let mut n = self.next_id.borrow_mut();
+            let id = format!("sp-fake{n}");
+            *n += 1;
+            self.created.borrow_mut().push((title.to_string(), external_ref.to_string()));
+            self.rows.borrow_mut().push(BeadRow {
+                id: id.clone(),
+                status: BeadStatus::Open,
+                external_ref: Some(external_ref.to_string()),
+                labels: labels.split(',').map(str::to_string).collect(),
+                closed_at: None,
+            });
+            Ok(id)
+        }
+        fn label_add(&self, _db: &str, id: &str, label: &str) -> bool {
+            self.labels.borrow_mut().entry(id.to_string()).or_default().push(label.to_string());
+            if let Some(row) = self.rows.borrow_mut().iter_mut().find(|r| r.id == id) {
+                row.labels.push(label.to_string());
+            }
+            true
+        }
+        fn label_remove(&self, _db: &str, id: &str, label: &str) -> bool {
+            if let Some(row) = self.rows.borrow_mut().iter_mut().find(|r| r.id == id) {
+                row.labels.retain(|l| l != label);
+            }
+            true
+        }
+        fn label_list(&self, _db: &str, id: &str) -> Vec<String> {
+            self.rows.borrow().iter().find(|r| r.id == id).map(|r| r.labels.clone()).unwrap_or_default()
+        }
+        fn note(&self, _db: &str, id: &str, text: &str) -> bool {
+            self.notes.borrow_mut().entry(id.to_string()).or_default().push(text.to_string());
+            true
+        }
+        fn set_state(&self, _db: &str, _id: &str, _kv: &str) -> bool {
+            true
+        }
+        fn reopen(&self, _db: &str, id: &str) -> bool {
+            if let Some(row) = self.rows.borrow_mut().iter_mut().find(|r| r.id == id) {
+                row.status = BeadStatus::Open;
+                row.closed_at = None;
+            }
+            true
+        }
+        fn show_closed_at(&self, _db: &str, id: &str) -> Option<String> {
+            self.rows.borrow().iter().find(|r| r.id == id).and_then(|r| r.closed_at.clone())
+        }
+        fn show_created_at(&self, _db: &str, _id: &str) -> Option<String> {
+            None
+        }
+        fn reachable(&self, _db: &str) -> bool {
+            self.reachable
+        }
+        fn sql(&self, _db: &str, _query: &str) -> Result<String, String> {
+            Ok("header\n----\n0\n".to_string())
+        }
+    }
+
+    struct FakeMailer {
+        sent: RefCell<Vec<String>>,
+    }
+    impl Mailer for FakeMailer {
+        fn send_operator_question(&self, subject: &str, _default: &str, _body: &str) -> bool {
+            self.sent.borrow_mut().push(subject.to_string());
+            true
+        }
+    }
+
+    struct FixedClock(i64);
+    impl Clock for FixedClock {
+        fn now(&self) -> i64 {
+            self.0
+        }
+    }
+
+    fn cfg<'a>(known: &'a [String]) -> FileConfig<'a> {
+        FileConfig {
+            db: "db",
+            kind: "bug",
+            priority: "2",
+            actor: None,
+            cause: "systemd-fail",
+            sin_at: 5,
+            sin_exempt: false,
+            watcher_interval_s: 1800,
+            dedup_lookback_days: 7,
+            repo_declared: Some("spira"),
+            delivers_pref: None,
+            sop_ledger: "/run/sop/applied.jsonl",
+            spira_run: "/run",
+            home_repo: "spira",
+            known_repos: known,
+            ask_label: "needs-ryan",
+            provenance: "foo.service on host: ?",
+        }
+    }
+
+    #[test]
+    fn first_filing_creates_a_bead() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &cfg(&known), "incident:x", "x failed", b"payload", "spira,incident", &mut log);
+        match out {
+            FileOutcome::Filed(id) => assert!(id.starts_with("sp-fake")),
+            _ => panic!("expected Filed"),
+        }
+        assert_eq!(bd.created.borrow().len(), 1);
+    }
+
+    #[test]
+    fn second_filing_is_a_recurrence_not_a_new_bead() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let mut log = vec![];
+        let c = cfg(&known);
+        let first = file_one(&bd, &mailer, &clock, &c, "incident:x", "x failed", b"payload", "spira,incident", &mut log);
+        let id1 = match first {
+            FileOutcome::Filed(id) => id,
+            _ => panic!(),
+        };
+        let second = file_one(&bd, &mailer, &clock, &c, "incident:x", "x failed", b"payload", "spira,incident", &mut log);
+        match second {
+            FileOutcome::Filed(id2) => assert_eq!(id1, id2, "recurrence must bump the SAME bead"),
+            _ => panic!("expected Filed"),
+        }
+        assert_eq!(bd.created.borrow().len(), 1, "only one bead ever created");
+    }
+
+    #[test]
+    fn unreachable_database_stays_spooled() {
+        let bd = FakeBd { reachable: false, next_id: RefCell::new(1), ..Default::default() };
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &cfg(&known), "incident:x", "x failed", b"payload", "spira,incident", &mut log);
+        assert!(matches!(out, FileOutcome::Unreachable));
+        assert_eq!(bd.created.borrow().len(), 0);
+    }
+
+    #[test]
+    fn sin_threshold_escalates_exactly_once() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let mut c = cfg(&known);
+        bd.rows.borrow_mut().push(BeadRow {
+            id: "sp-existing".into(),
+            status: BeadStatus::Open,
+            external_ref: Some("incident:y".into()),
+            labels: vec![],
+            closed_at: None,
+        });
+        c.sin_at = 1;
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &c, "incident:y", "y failed", b"payload", "spira,incident", &mut log);
+        assert!(matches!(out, FileOutcome::Filed(_)));
+        assert_eq!(mailer.sent.borrow().len(), 1, "first crossing escalates once");
+
+        let out2 = file_one(&bd, &mailer, &clock, &c, "incident:y", "y failed", b"payload", "spira,incident", &mut log);
+        assert!(matches!(out2, FileOutcome::Filed(_)));
+        assert_eq!(mailer.sent.borrow().len(), 1, "a bead already labelled sin is never paged twice");
+    }
+
+    #[test]
+    fn undeclared_repo_gets_needs_repo_triage() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let mut c = cfg(&known);
+        c.repo_declared = None;
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &c, "incident:z", "z failed", b"payload", "spira,incident", &mut log);
+        let id = match out {
+            FileOutcome::Filed(id) => id,
+            _ => panic!(),
+        };
+        assert!(bd.label_list("db", &id).contains(&"needs-repo-triage".to_string()));
+    }
+
+    #[test]
+    fn destructive_title_is_refused_without_needs_ryan() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &cfg(&known), "incident:danger", "needs the world stopped", b"p", "spira,incident", &mut log);
+        assert!(matches!(out, FileOutcome::Refused));
+        assert_eq!(bd.created.borrow().len(), 0);
+    }
+
+    #[test]
+    fn epoch_date_matches_known_values() {
+        // Verified against `date -u -d @1790812800 +%Y-%m-%d` => 2026-10-01.
+        assert_eq!(epoch_to_date(1_790_812_800), "2026-10-01");
+        assert_eq!(parse_iso8601("2026-10-01T00:00:00Z"), Some(1_790_812_800));
+        assert_eq!(parse_iso8601("1970-01-01T00:00:00Z"), Some(0));
+    }
+
+    #[test]
+    fn since_date_subtracts_lookback_days() {
+        // 1_790_812_800 - 7*86400 = 1_790_208_000 => `date -u` 2026-09-24.
+        assert_eq!(since_date(1_790_812_800, 7), "2026-09-24");
+    }
+
+    #[test]
+    fn provenance_format() {
+        assert_eq!(provenance("foo.service", "host1", "/tmp/x"), "foo.service on host1: /tmp/x");
+    }
+}
