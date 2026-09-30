@@ -797,4 +797,11 @@ Full contract: `spira-config/DESIGN-build-cache.md`. In the gate:
   `NO_VERDICT reason=scratch-short` — never the disk.
 * Measured on a one-line Rust probe (unit composition, cold gate tree): 1,020,960,768 bytes
   written before; see the bead's closing note for after.
+* **`gate.sh --release-bins <branch> <repo>`** (the hand landing): on a PASS, `cargo build
+  --release --workspace --locked` (one-shot, through the cache) runs in the gate tree, whose
+  `target/release` is on tmpfs, and the gate prints the `queue land-local … --worktree <gate
+  tree>` that ships it. The gate tree holds the judged (merged) tree, which is the landing
+  head's tree, so land-local's tree check accepts it; a failed build empties
+  `target/release`, so an older tree's binaries can never be shipped from it. This replaces
+  the release build a hand landing ran in its worktree on the disk. The verdict is unchanged.
 

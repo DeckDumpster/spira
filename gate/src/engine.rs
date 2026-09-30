@@ -54,6 +54,10 @@ pub struct Args {
     pub home: PathBuf,
     pub branch: String,
     pub repo: Option<String>,
+    /// `--release-bins` (sp-z61hj): on a PASS, build the release profile of the judged tree
+    /// in the gate tree (tmpfs, through the build cache), so a hand landing ships it with
+    /// `queue land-local --worktree <gate tree>` instead of rebuilding in a worktree on disk.
+    pub release_bins: bool,
 }
 
 /// What the finish needs to know about how far the trial got.
@@ -95,6 +99,10 @@ struct State {
     path: String,
     /// The compiler wrapper's environment for every build the trial runs (sp-z61hj).
     build_env: Vec<(String, String)>,
+    /// What `--release-bins` builds with: HOME, SPIRA_RELEASE and the trial's timeout.
+    home_dir: String,
+    release: String,
+    timeout: String,
 }
 
 pub struct Trial<'w, W: World> {
@@ -179,6 +187,9 @@ impl<'w, W: World> Trial<'w, W> {
             }
             Err(e) => return v(NOVERDICT, "no-build-cache", format!("gate: {e} — refusing to judge")),
         }
+        self.s.home_dir = ctx.var("HOME").to_string();
+        self.s.release = ctx.var(spira_config::RELEASE_ENV).to_string();
+        self.s.timeout = ctx.var_or("SPIRA_GATE_TIMEOUT", "2700").to_string();
         let repo = PathBuf::from(repo);
         self.s.repo = repo.clone();
         self.s.run = ctx.var("SPIRA_RUN").to_string();
@@ -1035,6 +1046,43 @@ impl<'w, W: World> Trial<'w, W> {
     }
 
     /// The one way out: meters, records, certifies and cleans up.
+    /// `--release-bins` after a PASS (sp-z61hj): `cargo build --release --workspace` of the
+    /// judged tree in the gate tree — its build directories are on tmpfs and it compiles
+    /// through the build cache, so a hand landing writes nothing to the disk for it. A failed
+    /// build empties `target/release`, so `queue land-local --worktree` can never ship an
+    /// older tree's binaries from it (fail closed). The verdict is unchanged: it judged the
+    /// tree; the binaries are the landing's.
+    fn release_bins(&mut self) {
+        let w = self.w;
+        let Some(tree) = self.s.tree.clone() else { return };
+        let e = |k: &str, v: &str| (k.to_string(), v.to_string());
+        let mut env = vec![
+            e("PATH", &self.s.path),
+            e(spira_config::RELEASE_ENV, &self.s.release),
+            e("HOME", &self.s.home_dir),
+            e("TERM", "dumb"),
+        ];
+        env.extend(self.s.build_env.iter().cloned());
+        let cmd = release_bins_command();
+        let t0 = w.now();
+        let (rc, out) = w.run_gate(&tree, &env, &self.s.timeout, &cmd);
+        self.s.phases.push(("release-bins".into(), w.now().saturating_sub(t0)));
+        if rc == 0 {
+            w.eprint(&format!(
+                "gate: --release-bins: the release binaries of tree {} are in {}/target/release — land with: queue land-local <repo> --head <sha> --members <…> --worktree {}",
+                self.s.merged_tree,
+                tree.display(),
+                tree.display()
+            ));
+        } else {
+            let tail: Vec<&str> = out.lines().rev().take(20).collect();
+            w.eprint(&format!(
+                "{}\ngate: --release-bins: the release build FAILED (exit {rc}) — target/release emptied; there are no binaries to land",
+                tail.into_iter().rev().collect::<Vec<_>>().join("\n")
+            ));
+        }
+    }
+
     fn finish(&mut self, vd: Verdict) -> i32 {
         let mut vd = vd;
         let w = self.w;
@@ -1057,6 +1105,9 @@ impl<'w, W: World> Trial<'w, W> {
         ));
         if vd.status == PASS {
             self.certify();
+            if self.a.release_bins {
+                self.release_bins();
+            }
         }
         if let Some(f) = self.s.filelist.take() {
             w.remove(&f);
@@ -1293,6 +1344,15 @@ fn tools_proved<W: World>(w: &W, dir: &Path, id: &str, pkgs: &[String]) -> Resul
         Some(p) => Err(format!("{TOOLS_UNATTRIBUTED}: {} lacks {p}", dir.display())),
         None => Ok(()),
     }
+}
+
+/// The `--release-bins` command (sp-z61hj): the release profile of the whole workspace,
+/// one-shot, locked; on failure `target/release` is emptied so nothing stale can be landed.
+pub fn release_bins_command() -> String {
+    format!(
+        "cargo build --release --workspace --locked {} || {{ _r=$?; find target/release -mindepth 1 -delete 2>/dev/null; exit $_r; }}",
+        spira_config::build::one_shot_words("release")
+    )
 }
 
 pub fn with_bins(

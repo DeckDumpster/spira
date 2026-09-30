@@ -200,12 +200,16 @@ impl Fake {
             .insert(k.into(), v.into());
     }
     fn run(&self) -> i32 {
+        self.run_with(false)
+    }
+    fn run_with(&self, release_bins: bool) -> i32 {
         Trial::new(
             self,
             Args {
                 home: PathBuf::from("/h"),
                 branch: BR.into(),
                 repo: Some("spira".into()),
+                release_bins,
             },
         )
         .run()
@@ -2452,4 +2456,42 @@ fn a_tree_built_testenv_is_given_the_gate_tree_as_its_harness() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert!(f.ran.borrow().iter().all(|e| e.iter().all(|(k, _)| k != "SPIRA_TESTENV_HARNESS")));
+}
+
+/// `--release-bins` on a PASS: the judged tree's release profile is built in the gate tree
+/// (tmpfs) through the build cache, one-shot, and the landing is told where it is.
+#[test]
+fn release_bins_builds_the_judged_tree_in_the_gate_tree_after_a_pass() {
+    let f = Fake::new();
+    assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
+    let cmds = f.cmds.borrow().clone();
+    let last = cmds.last().unwrap();
+    assert_eq!(last, &crate::engine::release_bins_command());
+    assert!(last.starts_with("cargo build --release --workspace --locked --config profile.release.incremental=false"), "{last}");
+    assert!(last.contains("find target/release -mindepth 1 -delete"), "a failed build leaves nothing to land: {last}");
+    let env = f.ran.borrow().last().unwrap().clone();
+    assert!(env.contains(&("RUSTC_WRAPPER".to_string(), "/box/.cargo/bin/sccache".to_string())), "{env:?}");
+    assert!(env.iter().any(|(k, v)| k == "PATH" && v.ends_with(":/box/.cargo/bin")), "{env:?}");
+    assert_eq!(f.trees.borrow().last().map(PathBuf::as_path), Some(Path::new(GATE_TREE)));
+    assert!(f.stderr().contains(&format!("--worktree {GATE_TREE}")), "{}", f.stderr());
+    // Without the flag nothing extra is built.
+    let g = Fake::new();
+    assert_eq!(g.run(), PASS);
+    assert!(!g.cmds.borrow().iter().any(|c| c.contains("--release")), "{:?}", g.cmds.borrow());
+}
+
+/// No PASS, no release build; a failed release build is said out loud and the verdict stands.
+#[test]
+fn release_bins_never_builds_for_a_red_tree_and_a_failed_build_is_loud() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-b.sh FAIL".into()));
+    f.run_with(true);
+    assert!(!f.cmds.borrow().iter().any(|c| c.contains("--release")), "{:?}", f.cmds.borrow());
+
+    let f = Fake::new();
+    for at in [MERGE_SHA, BR, BASE] {
+        f.unit_runs.borrow_mut().insert((at.to_string(), "build"), (101, "error: could not compile `x`".into()));
+    }
+    assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
+    assert!(f.stderr().contains("the release build FAILED (exit 101)"), "{}", f.stderr());
 }
