@@ -128,7 +128,7 @@ law_section="$(printf '%s\n' "$out_mixed" | awk '/^## Statutes/{f=1} /^## Runboo
 sop_section="$(printf '%s\n' "$out_mixed" | awk '/^## Runbooks/{f=1} f')"
 
 want   "mixed: sop slug present"            "sop-rm-widget"  "$out_mixed"
-want   "mixed: sop.sh retrieval command"    "sop.sh show"    "$out_mixed"
+want   "mixed: sop retrieval command"       "sop show"       "$out_mixed"
 want   "mixed: runbook heading present"     "Runbooks on the shelf" "$out_mixed"
 want   "mixed: law slug still present"      "law-rm-alpha"   "$out_mixed"
 want   "mixed: rule.sh retrieval command"   "rule.sh show"   "$out_mixed"
@@ -139,11 +139,17 @@ nowant "mixed: sop slug not under law header" "sop-rm-widget" "$law_section"
 want   "mixed: law slug under law header"   "law-rm-alpha"   "$law_section"
 nowant "mixed: law slug not under sop header" "law-rm-alpha" "$sop_section"
 
-_sop_path="$(printf '%s\n' "$sop_section" | sed -n 's|^ *\(/[^ ]*sop\.sh\) show.*|\1|p' | head -1)"
-if [ -x "${_sop_path:-}" ]; then
-    ok "mixed: sop.sh path is executable"
+# sop is Rust-ported (sp-8fsql) and its hint is now a bare name resolved on the release
+# PATH, unlike rule.sh's (still bash, still a full path) above — so the check here is "is
+# this name on PATH at all", not "is this absolute path executable".
+if printf '%s\n' "$sop_section" | grep -q '^ *sop show '; then
+    if command -v sop >/dev/null 2>&1; then
+        ok "mixed: sop is on PATH"
+    else
+        bad "mixed: sop is on PATH" "the hint names a bare command that PATH cannot resolve"
+    fi
 else
-    bad "mixed: sop.sh path is executable" "not executable: [${_sop_path:-<not found>}]"
+    bad "mixed: sop retrieval command is a bare name" "not found in: $sop_section"
 fi
 
 # ==========================================================================

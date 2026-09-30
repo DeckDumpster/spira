@@ -221,6 +221,11 @@ id = "UC-operator-channel-36"
 tier = "T1"
 statement = "A watcher-filed incident refiled while blocked by an open dependency stays open, records no reopen event and stays out of bd ready. A closed incident refiled…"
 
+[use_case.uncovered]
+reason = "incident.sh's reopen-cause classification (closed-while-live vs recurrence) moved to the incident crate's Rust port (sp-0ekp7, wave 7b): decide::reopen_cause, unit tested in decide::tests::reopen_cause_classifies_by_interval. Its last shell cover, test-incident-recur-cause.sh, was deleted along with incident.sh's shell internals it sourced directly. plan-matrix only recognises spira/test-*.sh covers: headers, so a Rust unit test cannot re-cover this id even though the property is still tested on every `cargo test -p incident`."
+date = "2026-09-30"
+bead = "sp-0ekp7"
+
 [[use_case]]
 id = "UC-operator-channel-37"
 tier = "T0"
@@ -265,3 +270,8 @@ statement = "SOP validation (write and lint): SYMPTOM/CHECK/FIX present, MATCH i
 id = "UC-operator-channel-45"
 tier = "T2"
 statement = "The SOP ledger: applied appends one complete JSON record at the configured path, append-only in epoch order, and refuses bad arguments while writing nothing. A…"
+
+[use_case.uncovered]
+reason = "sop.sh is retired (sp-8fsql); applied's ledger-append decision tree (bad-argument refusals write nothing, one complete JSON record per call, epoch order, the three-valued log read) is now `logic::applied`/`ledger.rs` in the `sop` crate, covered by `cargo test -p sop` (sop/DESIGN.md §5), which plan-matrix's suite-header scan over spira/test-*.sh cannot see. spira/test-sop.sh is repointed to a thin T1 wiring smoke test of the real binary against a real scratch store; it still exercises `applied` end to end but the decision-tree cases it used to carry by name are what moved."
+date = "2026-09-30"
+bead = "sp-8fsql"

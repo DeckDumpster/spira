@@ -34,7 +34,7 @@
 #
 # defect: sp-kufh
 # tier: T1
-# covers: spira/incident.sh spira/incident-stub-bd.py
+# covers: spira/incident.sh spira/incident-stub-bd.py incident/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

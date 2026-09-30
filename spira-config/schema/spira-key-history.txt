@@ -320,3 +320,6 @@ round_vm_ssh_user
 round_vm_state_dir
 round_vm_vcpus
 hotfix_alert_hours
+compile_par
+test_par
+summon_jitter

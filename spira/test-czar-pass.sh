@@ -5,7 +5,7 @@
 # WHAT THIS SUITE CHECKS.
 #   0. cargo test -p czar-pass: every detect_* function's fire/silent boundary against a
 #      scratch Config, run as Rust #[test]s rather than through the binary.
-#   1. czar.sh exists and is executable.
+#   1. czar-pass is found on PATH and accepts --pass.
 #   2. Pass with an empty environment completes in under 5 s (budget).
 #   3. A concurrent pass is skipped (flock prevents overlap).
 #   4. ci-stalled acceptance case: fixture with a queued CI job > threshold →
@@ -43,15 +43,17 @@
 # verifies detection. A detector that fires on empty data is not a detector.
 #
 # tier: T1
-# covers: czar-pass/src/main.rs reconciler-engine/src/**.rs spira/czar.sh spira/conf.sh sentinel/src/* watchtower/src/* systemd/spira-czar-pass.service systemd/spira-czar-pass.timer UC-ops-detection-remediation-23 UC-ops-detection-remediation-24
+# covers: czar-pass/src/main.rs reconciler-engine/src/**.rs spira/conf.sh sentinel/src/* watchtower/src/* systemd/spira-czar-pass.service systemd/spira-czar-pass.timer UC-ops-detection-remediation-23 UC-ops-detection-remediation-24
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 . "$HERE/testlib.sh"
 lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1: did not want [$2] in [$3]"; }
 
-CZAR="$HERE/czar.sh"
-[ -x "$CZAR" ] || { printf 'czar.sh not found or not executable: %s\n' "$CZAR" >&2; exit 2; }
+# sp-8fsql: czar.sh (a one-line `exec czar-pass "$@"` shim) is retired; every caller invokes
+# czar-pass directly by bare name on the release PATH (sp-gypjk), the same as forge before it.
+CZAR="$(command -v czar-pass 2>/dev/null || true)"
+[ -n "$CZAR" ] && [ -x "$CZAR" ] || { printf 'czar-pass not found on PATH\n' >&2; exit 2; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
@@ -84,7 +86,7 @@ else
     tail -60 "$CARGO_TEST_LOG" >&2
 fi
 
-# czar.sh execs czar-pass by name: the tree's own build, on this suite's PATH (sp-gypjk).
+# czar-pass is found directly on this suite's PATH (sp-gypjk).
 
 # Minimal test environment — no real database needed: incident is stubbed,
 # summon_fayth silently returns 1 when fayth_ready finds no db (|| true guards it).
@@ -127,16 +129,16 @@ export SPIRA_SUMMON=true
 printf 'test-czar-pass.sh\n'
 
 # ==========================================================================================
-printf '\n%s\n' "1. czar.sh exists and accepts --pass"
+printf '\n%s\n' "1. czar-pass exists on PATH and accepts --pass"
 # ==========================================================================================
-[ -f "$CZAR" ] && ok "czar.sh exists" || bad "czar.sh not found at $CZAR"
-[ -x "$CZAR" ] && ok "czar.sh is executable" || bad "czar.sh not executable"
+[ -f "$CZAR" ] && ok "czar-pass exists" || bad "czar-pass not found at $CZAR"
+[ -x "$CZAR" ] && ok "czar-pass is executable" || bad "czar-pass not executable"
 
 # ==========================================================================================
 printf '\n%s\n' "2. budget: empty environment completes in under 5s"
 # ==========================================================================================
 _t0="$(date +%s)"
-bash "$CZAR" --pass >/dev/null 2>&1
+"$CZAR" --pass >/dev/null 2>&1
 _t1="$(date +%s)"
 _elapsed=$(( _t1 - _t0 ))
 [ "$_elapsed" -lt 5 ] \
@@ -149,7 +151,7 @@ printf '\n%s\n' "3. flock: concurrent pass is skipped"
 # Hold the lock manually, then try to run the pass; it must exit 0 immediately.
 _lock="$SPIRA_RUN/czar-pass.lock"
 exec 9>"$_lock"; flock 9
-_flock_out="$(bash "$CZAR" --pass 2>&1 || true)"
+_flock_out="$("$CZAR" --pass 2>&1 || true)"
 exec 9>&-
 want "concurrent pass logs 'already running'" "already running" "$_flock_out"
 
@@ -158,7 +160,7 @@ printf '\n%s\n' "4. ci-stalled acceptance case (POSITIVE CONTROL first)"
 # ==========================================================================================
 # POSITIVE CONTROL: no open batch → ci-stalled not detected.
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
-bash "$CZAR" --pass >/dev/null 2>&1
+"$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "ci-stalled: DETECTED=no when no open batch" "CLASS=ci-stalled DETECTED=no" "$_log"
 
@@ -190,7 +192,7 @@ mkdir -p "$T/testrepo"
 printf 'testrepo | %s | push | origin/main | |\n' "$T/testrepo" > "$SPIRA_REPO_MAP"
 
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
-bash "$CZAR" --pass >/dev/null 2>&1
+"$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "ci-stalled: DETECTED=yes in czar.log" "CLASS=ci-stalled DETECTED=yes" "$_log"
 
@@ -201,7 +203,7 @@ rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-f
       "$INC_LOG"
 printf '%s spira: verdict spira: PR 90 red — no suites identified; leaving batch open\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SPIRA_RUN/landing.log"
-bash "$CZAR" --pass >/dev/null 2>&1
+"$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
 want "shadow: CZAR-WOULD written to czar.log for deadlock" "CZAR-WOULD: deadlock" "$_log"
@@ -214,7 +216,7 @@ rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-f
       "$INC_LOG"
 printf '%s spira: verdict spira: PR 91 red — no suites identified; leaving batch open\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SPIRA_RUN/landing.log"
-SPIRA_CZAR_STAGE_DEADLOCK=act bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_CZAR_STAGE_DEADLOCK=act "$CZAR" --pass >/dev/null 2>&1
 _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
 want "act: incident filed with cause=deadlock" "cause=deadlock" "$_inc_log"
 
@@ -223,7 +225,7 @@ printf '\n%s\n' "8. world halted: pass exits without acting"
 # ==========================================================================================
 touch "$SPIRA_RUN/world.halted"
 rm -f "$SPIRA_RUN/czar.log" "$INC_LOG"
-_halt_out="$(bash "$CZAR" --pass 2>&1)"
+_halt_out="$("$CZAR" --pass 2>&1)"
 _rc=$?
 rm -f "$SPIRA_RUN/world.halted"
 [ "$_rc" -eq 0 ] && ok "halted: exits 0" || bad "halted: expected exit 0, got $_rc"
@@ -306,7 +308,7 @@ printf 'redrepo | %s | push | origin/main | |\n' "$T/redrepo" >> "$SPIRA_REPO_MA
 
 export SPIRA_CI_RED_MAX_SECS=600
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
-bash "$CZAR" --pass >/dev/null 2>&1
+"$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "ci-red: DETECTED=no when run just turned red (60s < 600s threshold)" \
     "CLASS=ci-red DETECTED=no" "$_log"
@@ -332,7 +334,7 @@ FEOF14
 chmod +x "$STUB_FORGE"
 
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
-bash "$CZAR" --pass >/dev/null 2>&1
+"$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "ci-red: DETECTED=yes when run red >threshold" "CLASS=ci-red DETECTED=yes" "$_log"
 lack "ci-red: interval is not ~1800s (batch-open age)" "not acting for 1" "$_log"
@@ -360,7 +362,7 @@ FEOF15
 chmod +x "$STUB_FORGE"
 
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
-bash "$CZAR" --pass >/dev/null 2>&1
+"$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "coexistence: ci-stalled still DETECTED=yes" "CLASS=ci-stalled DETECTED=yes" "$_log"
 want "coexistence: ci-red stays DETECTED=no (run only 60s red)" "CLASS=ci-red DETECTED=no" "$_log"
@@ -395,7 +397,7 @@ FEOF16
 chmod +x "$STUB_FORGE"
 
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
-bash "$CZAR" --pass >/dev/null 2>&1
+"$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "base-red: DETECTED=no when base's own run is green" "CLASS=base-red DETECTED=no" "$_log"
 lack "base-red: no bead filed for a green base" "cause=base-red" "$(cat "$INC_LOG" 2>/dev/null || true)"
@@ -425,7 +427,7 @@ FEOF17
 chmod +x "$STUB_FORGE"
 
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
-SPIRA_CZAR_STAGE_BASE_RED=act bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_CZAR_STAGE_BASE_RED=act "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
 want "base-red: DETECTED=yes when base's own run is red" "CLASS=base-red DETECTED=yes" "$_log"
@@ -444,7 +446,7 @@ printf '\n%s\n' "18. base-red: still red on a second pass → same dedupe ref (r
 # proves czar-pass computes the SAME ref on repeated passes for an unchanged suite set,
 # which is the half of the dedupe contract that lives in this seam.
 rm -f "$SPIRA_RUN/czar-pass.swept" "$INC_LOG"
-SPIRA_CZAR_STAGE_BASE_RED=act bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_CZAR_STAGE_BASE_RED=act "$CZAR" --pass >/dev/null 2>&1
 _ref18="$(grep -o 'ref=[^ ]*' "$INC_LOG" 2>/dev/null | tail -1)"
 is "base-red: dedupe ref is stable across passes with the same suite set" "$_ref17" "$_ref18"
 
@@ -461,7 +463,7 @@ FEOF19
 chmod +x "$STUB_FORGE"
 
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
-bash "$CZAR" --pass >/dev/null 2>&1
+"$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "base-red: DETECTED=no while unreadable is still inside grace" \
     "CLASS=base-red DETECTED=no" "$_log"
@@ -480,7 +482,7 @@ st = {'base-red:baseredrepo': {'since': $_old_unreadable, 'remedy_attempted_at':
 print(json.dumps(st))
 " > "$SPIRA_RUN/reconciler-state.json"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$INC_LOG"
-SPIRA_CZAR_STAGE_BASE_RED=act bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_CZAR_STAGE_BASE_RED=act "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
 want "base-red: DETECTED=yes once unreadable outlasts grace" "CLASS=base-red DETECTED=yes" "$_log"
@@ -509,7 +511,7 @@ chmod +x "$STUB_FORGE"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
 printf '%s spira: verdict spira: PR 72 red — suites identified; failing attribution\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SPIRA_RUN/landing.log"
-bash "$CZAR" --pass >/dev/null 2>&1
+"$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "deadlock: DETECTED=no when no 'no suites' line" "CLASS=deadlock DETECTED=no" "$_log"
 
@@ -517,7 +519,7 @@ want "deadlock: DETECTED=no when no 'no suites' line" "CLASS=deadlock DETECTED=n
 printf '%s spira: verdict spira: PR 72 red — no suites identified; leaving batch open\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$SPIRA_RUN/landing.log"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
-SPIRA_CZAR_STAGE_DEADLOCK=act bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_CZAR_STAGE_DEADLOCK=act "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
 want "deadlock: DETECTED=yes on 'no suites identified' fixture" "CLASS=deadlock DETECTED=yes" "$_log"
@@ -529,7 +531,7 @@ printf '\n%s\n' "23. ATTRIBUTION-FAILED: ejected 0, requeued N"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
 printf '%s spira: verdict spira: PR 73 — ejected 2, requeued 1\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SPIRA_RUN/landing.log"
-bash "$CZAR" --pass >/dev/null 2>&1
+"$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "attribution-failed: DETECTED=no when ejected is non-zero" \
     "CLASS=attribution-failed DETECTED=no" "$_log"
@@ -537,7 +539,7 @@ want "attribution-failed: DETECTED=no when ejected is non-zero" \
 printf '%s spira: verdict spira: PR 73 — ejected 0, requeued 5\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$SPIRA_RUN/landing.log"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
-SPIRA_CZAR_STAGE_ATTRIBUTION_FAILED=act bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_CZAR_STAGE_ATTRIBUTION_FAILED=act "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
 want "attribution-failed: DETECTED=yes on ejected 0, requeued 5" \
@@ -551,14 +553,14 @@ printf '\n%s\n' "24. SORT-FAILED: queue_sort_rows ranking failed"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
 printf '%s spira: verdict spira: PR 74 red\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SPIRA_RUN/landing.log"
-bash "$CZAR" --pass >/dev/null 2>&1
+"$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "sort-failed: DETECTED=no when ranking did not fail" "CLASS=sort-failed DETECTED=no" "$_log"
 
 printf '%s spira: queue_sort_rows: ranking failed (rc=1) -- returning rows unranked\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$SPIRA_RUN/landing.log"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
-SPIRA_CZAR_STAGE_SORT_FAILED=act bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_CZAR_STAGE_SORT_FAILED=act "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
 want "sort-failed: DETECTED=yes on ranking-failed fixture" "CLASS=sort-failed DETECTED=yes" "$_log"
@@ -576,7 +578,7 @@ rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-f
 _recent_ts="$(date -u -d '@'"$(( $(date +%s) - 100 ))" +%Y-%m-%dT%H:%M:%SZ)"
 printf '%s spira: landing: pass complete — 3 branch(es) seen, 0 movement(s)\n' \
     "$_recent_ts" > "$SPIRA_RUN/landing.log"
-SPIRA_SYSTEMCTL="$STUB_SC" bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_SYSTEMCTL="$STUB_SC" "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "loop-stalled: DETECTED=no when last pass is 100s old (threshold 3000s)" \
     "CLASS=loop-stalled DETECTED=no" "$_log"
@@ -585,7 +587,7 @@ _old_ts="$(date -u -d '@'"$(( $(date +%s) - 4000 ))" +%Y-%m-%dT%H:%M:%SZ)"
 printf '%s spira: landing: pass complete — 3 branch(es) seen, 0 movement(s)\n' \
     "$_old_ts" > "$SPIRA_RUN/landing.log"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
-SPIRA_SYSTEMCTL="$STUB_SC" SPIRA_CZAR_STAGE_LOOP_STALLED=act bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_SYSTEMCTL="$STUB_SC" SPIRA_CZAR_STAGE_LOOP_STALLED=act "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
 want "loop-stalled: DETECTED=yes when last pass is 4000s old (threshold 3000s)" \
@@ -598,12 +600,12 @@ printf '\n%s\n' "26. marker advances after each pass — same landing.log line n
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
 printf '%s spira: verdict spira: PR 72 red — no suites identified; leaving batch open\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SPIRA_RUN/landing.log"
-SPIRA_CZAR_STAGE_DEADLOCK=act bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_CZAR_STAGE_DEADLOCK=act "$CZAR" --pass >/dev/null 2>&1
 _log1="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "marker: first pass detects the line" "CLASS=deadlock DETECTED=yes" "$_log1"
 
 rm -f "$SPIRA_RUN/czar.log"
-SPIRA_CZAR_STAGE_DEADLOCK=act bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_CZAR_STAGE_DEADLOCK=act "$CZAR" --pass >/dev/null 2>&1
 _log2="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 lack "marker: second pass does not re-detect the same line" "CLASS=deadlock DETECTED=yes" "$_log2"
 
@@ -632,7 +634,7 @@ esac
 exit 0
 FEOF27A
 chmod +x "$STUB_FORGE"
-SPIRA_CZAR_STAGE_CI_STALLED=act bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_CZAR_STAGE_CI_STALLED=act "$CZAR" --pass >/dev/null 2>&1
 _ref_a="$(grep -o 'ref=[^ ]*' "$INC_LOG" 2>/dev/null | tail -1)"
 
 rm -f "$SPIRA_RUN/czar-pass.swept" "$INC_LOG"
@@ -646,7 +648,7 @@ esac
 exit 0
 FEOF27B
 chmod +x "$STUB_FORGE"
-SPIRA_CZAR_STAGE_CI_STALLED=act bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_CZAR_STAGE_CI_STALLED=act "$CZAR" --pass >/dev/null 2>&1
 _ref_b="$(grep -o 'ref=[^ ]*' "$INC_LOG" 2>/dev/null | tail -1)"
 is "ci-stalled: dedupe ref stable across passes with different queued durations" \
     "$_ref_a" "$_ref_b"
@@ -661,7 +663,7 @@ printf '\n%s\n' "28. ATTRIBUTION-FAILED: requeued 0 is a no-op; multi-digit requ
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
 printf '%s spira: verdict spira: PR 75 — ejected 0, requeued 0\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SPIRA_RUN/landing.log"
-bash "$CZAR" --pass >/dev/null 2>&1
+"$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "attribution-failed: DETECTED=no when requeued is 0 (no-op)" \
     "CLASS=attribution-failed DETECTED=no" "$_log"
@@ -669,7 +671,7 @@ want "attribution-failed: DETECTED=no when requeued is 0 (no-op)" \
 printf '%s spira: verdict spira: PR 76 — ejected 0, requeued 10\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$SPIRA_RUN/landing.log"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
-SPIRA_CZAR_STAGE_ATTRIBUTION_FAILED=act bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_CZAR_STAGE_ATTRIBUTION_FAILED=act "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "attribution-failed: multi-digit requeued count (10) still fires" \
     "CLASS=attribution-failed DETECTED=yes" "$_log"
@@ -682,7 +684,7 @@ printf '\n%s\n' "29. LOOP-STALLED: no log at all, a log with no pass-complete li
 # SPIRA_LOOP_STALL_SECS must actually change the outcome, not just exist in the allowlist.
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* \
       "$INC_LOG" "$SPIRA_RUN/landing.log"
-SPIRA_SYSTEMCTL="$STUB_SC" bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_SYSTEMCTL="$STUB_SC" "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "loop-stalled: DETECTED=no when landing.log does not exist" \
     "CLASS=loop-stalled DETECTED=no" "$_log"
@@ -690,7 +692,7 @@ want "loop-stalled: DETECTED=no when landing.log does not exist" \
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
 printf '%s spira: verdict spira: PR 72 red\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SPIRA_RUN/landing.log"
-SPIRA_SYSTEMCTL="$STUB_SC" bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_SYSTEMCTL="$STUB_SC" "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "loop-stalled: DETECTED=no when the log has no 'pass complete' line" \
     "CLASS=loop-stalled DETECTED=no" "$_log"
@@ -699,7 +701,7 @@ rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
 _thresh_ts="$(date -u -d '@'"$(( $(date +%s) - 100 ))" +%Y-%m-%dT%H:%M:%SZ)"
 printf '%s spira: landing: pass complete — 3 branch(es) seen, 0 movement(s)\n' \
     "$_thresh_ts" > "$SPIRA_RUN/landing.log"
-SPIRA_SYSTEMCTL="$STUB_SC" SPIRA_LOOP_STALL_SECS=50 bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_SYSTEMCTL="$STUB_SC" SPIRA_LOOP_STALL_SECS=50 "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "loop-stalled: configurable threshold — 100s age fires at threshold=50s" \
     "CLASS=loop-stalled DETECTED=yes" "$_log"
@@ -728,7 +730,7 @@ exit 0
 FEOF30A
 chmod +x "$STUB_FORGE"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
-bash "$CZAR" --pass >/dev/null 2>&1
+"$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "ci-stalled: DETECTED=no when queued only 100s (threshold 600s)" \
     "CLASS=ci-stalled DETECTED=no" "$_log"
@@ -743,7 +745,7 @@ exit 0
 FEOF30B
 chmod +x "$STUB_FORGE"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
-bash "$CZAR" --pass >/dev/null 2>&1
+"$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "ci-stalled: DETECTED=no when forge returns no queued-since (nothing queued)" \
     "CLASS=ci-stalled DETECTED=no" "$_log"
@@ -758,7 +760,7 @@ exit 0
 FEOF30C
 chmod +x "$STUB_FORGE"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
-bash "$CZAR" --pass >/dev/null 2>&1
+"$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "ci-stalled: DETECTED=no when the open file has no branch= field" \
     "CLASS=ci-stalled DETECTED=no" "$_log"
@@ -783,7 +785,7 @@ FEOF32
 chmod +x "$STUB_FORGE"
 
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$INC_LOG"
-bash "$CZAR" --pass >/dev/null 2>&1
+"$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 _cis_line="$(printf '%s\n' "$_log" | grep 'CLASS=ci-stalled ' | tail -1)"
 want "ci-stalled: STATUS=unobservable when the forge call fails" "STATUS=unobservable" "$_cis_line"
@@ -819,7 +821,7 @@ FEOF33
 chmod +x "$STUB_FORGE"
 
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$INC_LOG" "$FORGE_LOG"
-SPIRA_CZAR_STAGE_CI_STALLED=act bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_CZAR_STAGE_CI_STALLED=act "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 _forge_calls_1="$(cat "$FORGE_LOG" 2>/dev/null || true)"
 want "remedy pass 1: ci-stalled DETECTED=yes" "CLASS=ci-stalled DETECTED=yes" "$_log"
@@ -827,7 +829,7 @@ want "remedy pass 1: deterministic rerun attempted" "REMEDY=det-rerun" "$_log"
 want "remedy pass 1: workflow-rerun called" "workflow-rerun" "$_forge_calls_1"
 
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$INC_LOG" "$FORGE_LOG"
-SPIRA_CZAR_STAGE_CI_STALLED=act bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_CZAR_STAGE_CI_STALLED=act "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
 _forge_calls_2="$(cat "$FORGE_LOG" 2>/dev/null || true)"

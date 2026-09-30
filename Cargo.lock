@@ -111,6 +111,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bead"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "spira-config",
+ "testkit",
+]
+
+[[package]]
 name = "beads-store"
 version = "1.0.0"
 dependencies = [
@@ -364,6 +373,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gh-intake"
+version = "1.0.0"
+dependencies = [
+ "serde_json",
+ "sha2",
+ "ureq",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -460,6 +478,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "incident"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "testkit",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -548,6 +576,13 @@ dependencies = [
  "serde_json",
  "testkit",
  "tokio",
+]
+
+[[package]]
+name = "maechen-trigger"
+version = "1.0.0"
+dependencies = [
+ "testkit",
 ]
 
 [[package]]
@@ -796,6 +831,14 @@ dependencies = [
  "spira-config",
  "testkit",
  "ureq",
+]
+
+[[package]]
+name = "rule"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "testkit",
 ]
 
 [[package]]
@@ -1061,6 +1104,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sop"
+version = "1.0.0"
+dependencies = [
+ "regex",
+ "serde_json",
+ "sha2",
+ "testkit",
+]
+
+[[package]]
 name = "spira-claim"
 version = "1.0.0"
 dependencies = [
@@ -1075,12 +1128,14 @@ dependencies = [
 name = "spira-config"
 version = "1.0.0"
 dependencies = [
+ "libc",
  "schemars",
  "serde",
  "serde_json",
  "serde_path_to_error",
  "testkit",
  "toml",
+ "tsd",
 ]
 
 [[package]]
@@ -1205,6 +1260,7 @@ dependencies = [
  "spira-config",
  "suite-select",
  "testkit",
+ "toml",
  "tsd",
 ]
 

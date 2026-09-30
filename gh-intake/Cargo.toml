@@ -1,0 +1,18 @@
+[package]
+name = "gh-intake"
+version = "1.0.0"
+edition = "2021"
+description = "gh-intake — ingest public GitHub issues as beads, with author triage. Replaces spira/gh-intake.sh."
+
+[lib]
+name = "gh_intake"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gh-intake"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+sha2 = "0.10"
+ureq = { version = "2", default-features = false, features = ["tls"] }

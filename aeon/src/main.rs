@@ -151,7 +151,7 @@ fn main() {
     let clock = util::now_epoch;
     let dry = cli.mode == Mode::DryRun;
     let mut run = Run {
-        d: Deps { bd: &bd, seam: &seam, git: &git, exec: &exec, launcher: &RealLauncher, sink: &sink, env: &env, clock: &clock },
+        d: Deps { bd: &bd, seam: &seam, git: &git, exec: &exec, launcher: &RealLauncher, sink: &sink, env: &env, clock: &clock, sleep: &|d| std::thread::sleep(d) },
         ledger: Ledger { path: conf.ledger(), dry },
         conf,
         fayth,

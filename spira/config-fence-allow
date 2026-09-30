@@ -43,7 +43,6 @@ spira/gate-run.sh
 spira/gate.sh
 spira/gate-spira.sh
 spira/gate-suites
-spira/gh-intake.sh
 spira/hooks/aeon-fence.sh
 spira/incident.sh
 spira-lc/src/repo_config.rs
@@ -139,7 +138,6 @@ spira/test-held.sh
 spira/test-hold-liveness.sh
 spira/test-hold.sh
 spira/test-holds.sh
-spira/test-incident-decisions.sh
 spira/test-incident.sh
 spira/test-install-bd-init-cwd.sh
 spira/test-install-conf-seed.sh

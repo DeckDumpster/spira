@@ -70,7 +70,8 @@ duplication is exactly what let a timer added after a hand list was written esca
 ## 4. Decisions — what was dropped
 
 - **`--queue-checks` is deleted, not ported.** It has been a one-line retirement stub since
-  sp-rpibz moved the six queue-stall detectors into `czar.sh --pass`; `test-czar-pass.sh`
+  sp-rpibz moved the six queue-stall detectors into `czar-pass --pass` (czar.sh, the shim
+  that once ran it, retired by sp-8fsql); `test-czar-pass.sh`
   already asserts nothing calls it. grep across systemd units, the sentinel crate, and every
   `.sh`/`.rs` caller in the release tree turned up zero live callers — only the stub itself
   and comments. Dropped entirely; `watchtower --queue-checks` is no longer a valid argument.
