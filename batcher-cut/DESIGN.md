@@ -152,6 +152,12 @@ pub trait RoundRunner {
 predates §2.2a, or a stand-in), its exit code stands for the corpus's; the reruns it never
 answers fault, so any red is unattributed and blocks the round — never a silent green.
 
+**Every round-vm exit is typed** (`vm::corpus_end`, sp-dp872): 0/1 ran, 4 workspace build;
+2, 3, the wall-bound kill (124/137) and anything else are harness faults — the round is not
+judged, no verdict is written. round-vm's stderr goes to `<run>/batch-results/<repo>-<round>/
+round-vm.stderr`, and **every fault carries its last 40 lines into the round log**, so the log
+says why and not only that.
+
 **Trees.** A job's tree is the round's base with every member *not* in its removal set merged in
 round order (`merge_member`, the round's own commit subject), committed on
 `spira/batcher-attr/<repo>-<round>-j<job>`. The build a job asks round-vm for is `artifacts`

@@ -68,6 +68,15 @@ exactly as it would read `testenv-batch.sh`. Otherwise **2** if round-vm itself 
 (preflight, mirror, acquire, the VM never became reachable over ssh, ssh transport error
 255, results missing after a green run, refused binaries), else 0.
 
+**The exit set is closed: {0, 1, 2, 3, 4}** (sp-dp872). A remote exit outside testenv's own
+contract — cargo's 101, git's 128, a signal — never reached a verdict and is round-vm's own
+fault: **2**, with the remote code named on stderr. A panic anywhere in round-vm is also
+**2**, never Rust's 101 (`cli::no_panic`); a panic during `run` first releases the run's VM
+(G2). Scar: the first two rounds cut from the release ended "unexpected exit 101" — cargo's
+code, because testenv had grown a second binary (`bd-meter`) and the remote `cargo run -p
+testenv` could no longer choose one. Every remote `cargo run` names `--bin testenv`, and
+testenv declares `default-run`.
+
 ### 2.2a `run --attr-spool <dir>` — streaming and attribution reruns (sp-hvtgs)
 
 The batcher attributes a red round **while its corpus runs** (batcher-cut DESIGN.md §4). Two
