@@ -102,12 +102,25 @@ EOF
 # whose ExecStart target is not executable. A fixture therefore stages a release-shaped bin/
 # beside the spira/ its SPIRA_PROD names. Nothing here runs them — install only places and
 # starts units against a mock systemctl.
-INSTALL_FIXTURE_UNIT_BINS="sentinel queue aeon spira-supervise landing-pass reconciler-flow spira-lc sending"
+# DERIVED, never hand-listed: every @SPIRA_PROD_ROOT@/bin/<name> a unit template in this tree
+# execs (ExecStart, ExecStartPre, ExecCondition, ...). A hand list went stale the day auron moved
+# into bin/ and turned three install suites red on the base.
+_install_fixture_unit_bins() {
+    local sysd
+    sysd="$(cd "$(dirname "${BASH_SOURCE[0]}")/../systemd" 2>/dev/null && pwd)" || return 1
+    grep -ho '@SPIRA_PROD_ROOT@/bin/[A-Za-z0-9_.-]*' "$sysd"/*.service "$sysd"/*.timer 2>/dev/null \
+        | sed 's|.*/bin/||' | sort -u | tr '\n' ' '
+}
+INSTALL_FIXTURE_UNIT_BINS="$(_install_fixture_unit_bins)"
 
 # install_fixture_release_bins <prod-root> -> no-op stubs at <prod-root>/bin/<tool> for every
 # binary a unit template ExecStarts.
 install_fixture_release_bins() {
     local dir="$1/bin" b
+    if [ -z "${INSTALL_FIXTURE_UNIT_BINS// /}" ]; then
+        echo "lib-test-install: found no unit binaries under systemd/ — refusing to stage an empty bin/" >&2
+        return 1
+    fi
     mkdir -p "$dir"
     for b in $INSTALL_FIXTURE_UNIT_BINS; do
         printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/$b"
