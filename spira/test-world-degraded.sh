@@ -31,7 +31,10 @@ echo "test-world-degraded.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 SH="$TMP/spira"; mkdir -p "$SH" "$TMP/run"
-cp "$HERE/world.sh" "$HERE/ctrl.sh" "$HERE/conf.sh" "$SH/"
+WORLD_BIN="$(command -v world || true)"
+[ -n "$WORLD_BIN" ] && [ -x "$WORLD_BIN" ] || { echo "test-world-degraded.sh: the world binary is not on PATH" >&2; exit 1; }
+cp "$WORLD_BIN" "$SH/world.sh"; chmod +x "$SH/world.sh"
+cp "$HERE/conf.sh" "$SH/"
 
 CALLS="$TMP/sc-calls"
 DISABLED_TIMERS=""   # comma-separated TIMER_PRIORITY bases (e.g. "spira-sentinel") to report disabled
@@ -78,7 +81,7 @@ run() {   # run <world.sh args...> -> sets $out and $rc
     out="$(PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no.conf" \
            SPIRA_DB="$TMP/no-db" SPIRA_SYSTEMCTL="$TMP/systemctl" \
            SPIRA_CTRL="$TMP/ctrl.json" SPIRA_INSTANCE=prod \
-           bash "$SH/world.sh" "$@" 2>&1)" || rc=$?
+           "$SH/world.sh" "$@" 2>&1)" || rc=$?
 }
 
 # ============================================================================

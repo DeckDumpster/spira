@@ -401,7 +401,7 @@ want "and it is loud about that too" "DRAIN EXPIRED" "$out"
 echo
 echo "drain expiry — the seam: world.sh drain WRITES the expiry, and --for sets it"
 rm -f "$DRAIN_STAMP"
-SPIRA_RUN="$SPIRA_RUN" world.sh drain --for 900 --timeout 1 >/dev/null 2>&1
+SPIRA_RUN="$SPIRA_RUN" world drain --for 900 --timeout 1 >/dev/null 2>&1
 if [ -f "$DRAIN_STAMP" ]; then
     exp="$(sed -n 's/^expires \([0-9][0-9]*\)$/\1/p' "$DRAIN_STAMP" | head -1)"
     if [ -n "$exp" ]; then

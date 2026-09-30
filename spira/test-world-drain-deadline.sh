@@ -38,7 +38,10 @@ SLAY_CALLS="$TMP/slay-calls"
 export SLAY_CALLS
 mkdir -p "$SH" "$RUN"
 
-cp "$HERE/world.sh" "$HERE/conf.sh" "$SH/"
+WORLD_BIN="$(command -v world || true)"
+[ -n "$WORLD_BIN" ] && [ -x "$WORLD_BIN" ] || { echo "test-world-drain-deadline.sh: the world binary is not on PATH" >&2; exit 1; }
+cp "$WORLD_BIN" "$SH/world.sh"; chmod +x "$SH/world.sh"
+cp "$HERE/conf.sh" "$SH/"
 
 # Stub systemctl: answers inactive for everything so halt/drain banner checks stay quiet.
 printf '#!/usr/bin/env bash\necho inactive\nexit 3\n' > "$TMP/systemctl"
@@ -59,7 +62,7 @@ drain() {
     rc=0
     out="$(PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no.conf" \
            SPIRA_DB="$TMP/no-db" SPIRA_SYSTEMCTL="$TMP/systemctl" \
-           bash "$SH/world.sh" drain "$@" 2>&1)" || rc=$?
+           "$SH/world.sh" drain "$@" 2>&1)" || rc=$?
 }
 
 TEST_BEAD="sp-drain-test"
@@ -180,7 +183,7 @@ chmod +x "$TMP/systemctl-g11"
 : > "$G11_CALLS"
 g11_out="$(PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no.conf" SPIRA_DB="$TMP/no-db" \
            SPIRA_SYSTEMCTL="$TMP/systemctl-g11" SPIRA_INSTANCE=prod \
-           bash "$SH/world.sh" start 2>&1)"
+           "$SH/world.sh" start 2>&1)"
 g11_calls="$(cat "$G11_CALLS")"
 
 want   "an inactive watcher is started"             "start spira-watch-inactive-prod.service" "$g11_calls"

@@ -57,7 +57,10 @@ export CALLS            # the stub appends to this path; it must be visible in i
 mkdir -p "$SH" "$RUN"
 
 # A copy of the harness the world.sh under test can source without touching the real box.
-cp "$HERE/world.sh" "$HERE/conf.sh" "$SH/"
+WORLD_BIN="$(command -v world || true)"
+[ -n "$WORLD_BIN" ] && [ -x "$WORLD_BIN" ] || { echo "test-world.sh: the world binary is not on PATH" >&2; exit 1; }
+cp "$WORLD_BIN" "$SH/world.sh"; chmod +x "$SH/world.sh"
+cp "$HERE/conf.sh" "$SH/"
 # slay.sh is called by `stop` for live aeons; stub it so no real aeons are touched.
 printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/slay.sh"; chmod +x "$SH/slay.sh"
 
@@ -115,14 +118,14 @@ world() {
     PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
     SPIRA_DB="$TMP/no-db" \
     SPIRA_SYSTEMCTL="$TMP/systemctl" \
-        bash "$SH/world.sh" "$@" 2>&1
+        "$SH/world.sh" "$@" 2>&1
 }
 world_rc() {
     : > "$CALLS"
     PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
     SPIRA_DB="$TMP/no-db" \
     SPIRA_SYSTEMCTL="$TMP/systemctl" \
-        bash "$SH/world.sh" "$@" 2>&1; echo "$?"
+        "$SH/world.sh" "$@" 2>&1; echo "$?"
 }
 
 # --------------------------------------------------------------------------------------

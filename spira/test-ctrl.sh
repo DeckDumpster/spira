@@ -46,7 +46,7 @@ ctrl() {
         SPIRA_CTRL="$CTRL_FILE" \
         SPIRA_INSTANCE=prod \
         SPIRA_SYSTEMCTL="$TMP/sc" \
-        ctrl.sh "$@"
+        ctrl "$@"
 }
 
 # write_sc <active_unit> <enabled_unit> [masked_units...]

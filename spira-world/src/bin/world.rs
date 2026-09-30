@@ -225,7 +225,7 @@ fn cmd_stop(args: &[String]) -> i32 {
         }
         println!("  slaying {bead} (pid {pid})");
         let why_text = if why.is_empty() { "the world was stopped".to_string() } else { why.clone() };
-        let ok = Command::new("slay")
+        let ok = Command::new("slay.sh")
             .args(["--bead", &bead, "--keep-work", "--why", &why_text])
             .output()
             .map(|o| o.status.success())
@@ -461,7 +461,7 @@ fn cmd_drain(args: &[String]) -> i32 {
                         continue;
                     }
                     println!("  slaying {bead} (pid {pid})");
-                    let ok = Command::new("slay")
+                    let ok = Command::new("slay.sh")
                         .args(["--bead", &bead, "--keep-work", "--reopen", "--why", "drain deadline reached"])
                         .output()
                         .map(|o| o.status.success())
