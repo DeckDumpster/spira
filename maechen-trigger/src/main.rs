@@ -168,5 +168,9 @@ fn count_landings(world: &dyn World, repo_name_or_path: &str, since_ts: i64) -> 
         }
     };
     let subjects = world.git_log_subjects(&repo_path, since_ts, &base_ref);
-    engine::parse_landing_ids(&subjects).len() as u64
+    let ids = engine::parse_landing_ids(&subjects);
+    eprintln!(
+        "DEBUG count_landings repo_name_or_path={repo_name_or_path:?} base_ref={base_ref:?} repo_path={repo_path:?} since_ts={since_ts} subjects={subjects:?} ids={ids:?}"
+    );
+    ids.len() as u64
 }
