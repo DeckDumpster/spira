@@ -481,10 +481,10 @@ GHEALTH="$TMP/gamma-health"; printf 'exit 0\n' > "$GHEALTH"
 MAND="$TMP/watchers-daemon"
 printf 'gamma|daemon|%s|bash %s\n' "$GTARGET" "$GHEALTH" > "$MAND"
 
-# INJECTED THROUGH SPIRA_PATH, NOT PATH. conf.sh rebuilds PATH from SPIRA_PATH plus a fixed
-# tail, so a stub merely prepended to PATH is discarded and the box's real systemctl answers
-# instead — which under `env -i` has no bus, returns nothing, and makes "no unwell watcher"
-# pass for a reason that has nothing to do with the code.
+# INJECTED FIRST ON PATH (sp-gypjk: conf.sh keeps the caller's PATH first and only appends
+# SPIRA_PATH), so the stub, not the box's real systemctl, answers — which under `env -i`
+# has no bus, returns nothing, and would make "no unwell watcher" pass for a reason that has
+# nothing to do with the code.
 STUBBIN="$TMP/stubbin"; mkdir -p "$STUBBIN"
 SC_STATE="$TMP/sc-state"; SC_NR="$TMP/sc-nr"; SC_SILENT="$TMP/sc-silent"
 printf 'active\n' > "$SC_STATE"; printf '0\n' > "$SC_NR"; : > "$SC_SILENT"
@@ -506,7 +506,7 @@ chmod +x "$STUBBIN/systemctl"
 # notify_d <age> — the same command over the daemon manifest. SPIRA_ACTIONABLE stays pinned
 # so the events half cannot match a line by accident and answer for the health half.
 notify_d() {
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_PATH="$STUBBIN" SPIRA_CONF="$CONF" \
+    env -i HOME="$TMP/home" PATH="$STUBBIN:$PATH" SPIRA_PATH="$STUBBIN" SPIRA_CONF="$CONF" \
         SPIRA_WATCHERS="$MAND" SPIRA_ACTIONABLE="$FILTER" \
         SPIRA_NOTIFY_AGE="$1" SPIRA_NOW="$(_spira_now)" \
         SC_STATE="$SC_STATE" SC_NR="$SC_NR" SC_SILENT="$SC_SILENT" \
@@ -516,7 +516,7 @@ notify_d() {
 # status_d — the same daemon manifest through `status` (UC-operator-channel-30: HALTED vs
 # DEGRADED), reusing the fixture above rather than a fixture of its own.
 status_d() {
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_PATH="$STUBBIN" SPIRA_CONF="$CONF" \
+    env -i HOME="$TMP/home" PATH="$STUBBIN:$PATH" SPIRA_PATH="$STUBBIN" SPIRA_CONF="$CONF" \
         SPIRA_WATCHERS="$MAND" bash "$CLONE/spira/watchd.sh" status 2>/dev/null
 }
 mature_unhealthy() {

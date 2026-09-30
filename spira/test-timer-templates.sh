@@ -46,6 +46,11 @@ ok "_ENABLE_TMPL block parseable (${#enable_block} bytes)"
 # UNITS+=/ENABLE+= append line, and a timer that is only conditional must appear in an
 # OPTIONAL+= line too — that keeps "never silently absent" true while letting a box decline
 # a unit on purpose and say so.
+# A TOP-LEVEL (unindented) UNITS+= line is unconditional — as much a member as the literal
+# (sp-gypjk: loom, broker, landing-pass and reconciler-flow are appended this way, since a
+# release always carries their binaries). Only an indented append sits inside an `if`.
+units_block="$units_block
+$(grep -E '^UNITS\+=\(' "$UNITS_SH")"
 units_all="$units_block
 $(grep -E '^[[:space:]]*UNITS\+=\(' "$UNITS_SH")"
 enable_all="$enable_block

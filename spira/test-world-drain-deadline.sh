@@ -57,7 +57,7 @@ printf '#!/usr/bin/env bash\nsleep 120\n' > "$SH/aeon.sh"; chmod +x "$SH/aeon.sh
 
 drain() {
     rc=0
-    out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no.conf" \
+    out="$(PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no.conf" \
            SPIRA_DB="$TMP/no-db" SPIRA_SYSTEMCTL="$TMP/systemctl" \
            bash "$SH/world.sh" drain "$@" 2>&1)" || rc=$?
 }
@@ -178,7 +178,7 @@ SC
 chmod +x "$TMP/systemctl-g11"
 
 : > "$G11_CALLS"
-g11_out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no.conf" SPIRA_DB="$TMP/no-db" \
+g11_out="$(PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no.conf" SPIRA_DB="$TMP/no-db" \
            SPIRA_SYSTEMCTL="$TMP/systemctl-g11" SPIRA_INSTANCE=prod \
            bash "$SH/world.sh" start 2>&1)"
 g11_calls="$(cat "$G11_CALLS")"

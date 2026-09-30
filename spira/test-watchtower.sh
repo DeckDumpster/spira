@@ -66,7 +66,9 @@ chmod +x "$MOCK_SUITES"
 # (law-gates-run-in-a-clean-environment). Without this, every assertion about the nominal
 # path is silently coupled to this host's real root-disk usage and real free memory — a
 # box that happens to be 90% full on the day this runs would fail tests that have nothing
-# to do with disk. conf.sh rebuilds PATH from SPIRA_PATH plus a fixed suffix and discards
+# to do with disk. (Since sp-gypjk conf.sh keeps the caller's PATH first and only appends
+# SPIRA_PATH, so the stub dir is also put first on PATH wherever PATH is passed through.)
+# Historically: conf.sh rebuilt PATH from SPIRA_PATH plus a fixed suffix and discarded
 # whatever PATH was inherited, so prepending to $PATH here is invisible by the time df
 # runs — SPIRA_PATH is the only seam that lands. The stub reports WT_DISK_PCT (default 12)
 # so a test wanting the anomaly path sets that var; SPIRA_MEMINFO_PATH is a plain path
@@ -96,7 +98,7 @@ chmod +x "$SYSTEMCTL_CLEAN"
 # The program under test, in an environment holding nothing but what it needs. `--show`
 # gathers and prints and touches nothing, so nothing here can reach a database or file a bead.
 wt() {                   # wt [VAR=val ...] -> the snapshot
-    env -i PATH="$PATH" HOME="$TMP" \
+    env -i PATH="$DF_CLEAN:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
@@ -423,7 +425,7 @@ wt_file() {   # wt_file [VAR=val ...] -> $TMP/ops-prompt written; $TMP/incident-
         "$TMP/incident-called" > "$mock"
     chmod +x "$mock"
     rm -f "$TMP/incident-called" "$TMP/ops-prompt"
-    env -i PATH="$PATH" HOME="$TMP" \
+    env -i PATH="$DF_CLEAN:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \

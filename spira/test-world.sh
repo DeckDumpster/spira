@@ -112,14 +112,14 @@ ACTIVE_TIMERS=""
 
 world() {
     : > "$CALLS"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
     SPIRA_DB="$TMP/no-db" \
     SPIRA_SYSTEMCTL="$TMP/systemctl" \
         bash "$SH/world.sh" "$@" 2>&1
 }
 world_rc() {
     : > "$CALLS"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
     SPIRA_DB="$TMP/no-db" \
     SPIRA_SYSTEMCTL="$TMP/systemctl" \
         bash "$SH/world.sh" "$@" 2>&1; echo "$?"

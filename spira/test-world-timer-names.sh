@@ -88,7 +88,7 @@ SC
 world_stop() {
     local inst="$1"; shift
     : > "$CALLS"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
     SPIRA_SYSTEMCTL="$TMP/systemctl" SPIRA_INSTANCE="$inst" \
         bash "$SH/world.sh" stop "$@" 2>&1
 }
@@ -96,7 +96,7 @@ world_stop() {
 world_status() {
     local inst="$1"
     : > "$CALLS"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
     SPIRA_SYSTEMCTL="$TMP/systemctl" SPIRA_INSTANCE="$inst" \
         bash "$SH/world.sh" status 2>&1
 }

@@ -25,7 +25,7 @@ mkdir -p "$T/sbin" "$T/run"
 
 ingest() {
     SPIRA_HOME="$HERE" SPIRA_REPO="$HERE/.." SPIRA_RUN="$T/run" SPIRA_DB="$T/db" \
-        SPIRA_PATH="$T/sbin" SPIRA_CONF="$T/no.conf" \
+        PATH="$T/sbin:$PATH" SPIRA_PATH="$T/sbin" SPIRA_CONF="$T/no.conf" \
         tsd-ingest.sh "$@"
 }
 

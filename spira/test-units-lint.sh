@@ -61,7 +61,10 @@ printf 'test-units-lint.sh\n'
 # THE RENDER PASS. Cheap (no systemctl, no install run) — one Python substitution per unit,
 # which is what every removed per-suite section actually needed to check content.
 # =======================================================================================
-rendered="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" \
+# SPIRA_WATCHERS IN THE ENVIRONMENT, not only the conf: units.sh runs `watchd.sh` by name
+# (sp-gypjk), i.e. the tree's own copy, whose conf.sh would otherwise find the tree's
+# spira.toml before this suite's pinned conf. The environment wins over any config file.
+rendered="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
     bash "$CLONE/systemd/install.sh" --render 2>"$TMP/render.err")"
 is "the render pass produced units" "yes" "$([ -n "$rendered" ] && echo yes || echo no)"
 # `note:` lines are install.sh commenting on units this suite does not touch (an unbuilt
@@ -157,7 +160,7 @@ IHOME="$TMP/ihome"; mkdir -p "$IHOME"
 : > "$TMP/systemctl.log"
 printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PATH = %s\nSPIRA_PROD = %s\n' \
     "$RUN" "$ROOT/cockpit" "$MAN" "$STUB" "$PRODROOT/spira" > "$TMP/install.conf"
-env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_CONF="$TMP/install.conf" \
+env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_CONF="$TMP/install.conf" SPIRA_WATCHERS="$MAN" \
     SPIRA_INSTALL_FORCE=1 SPIRA_HOME="$HERE" \
     bash "$CLONE/systemd/install.sh" > "$TMP/install.out" 2>&1
 ilog="$(cat "$TMP/systemctl.log")"
