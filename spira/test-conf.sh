@@ -140,16 +140,21 @@ want "SPIRA_INSTANCE is exported" "SPIRA_INSTANCE=" "$exported"
 
 # ==========================================================================
 echo
-echo "read-only SPIRA_REPO — SPIRA_RUN falls back to XDG_DATA_HOME:"
+echo "SPIRA_RUN never defaults inside SPIRA_REPO, writable or not (sp-9hwim, design"
+echo "runtime-is-a-release #5 — nothing reads or writes the checkout at runtime):"
 # ==========================================================================
-# Positive control: a writable SPIRA_REPO produces a .runtime path inside it.
+# A writable SPIRA_REPO must NOT produce a path inside it. This used to fall back to
+# "$SPIRA_REPO/.runtime/spira"; that branch is gone, so a writable checkout gets the same
+# XDG default an unwritable one always got. The checkout has no working tree at all once
+# the running system cuts over to spira-releases/<sha>, so a default that could still land
+# there would resolve to a path that does not exist.
 WRITABLE_REPO="$TMP/writable-repo"
 mkdir -p "$WRITABLE_REPO"
 run_writable="$(conf_val SPIRA_RUN SPIRA_REPO="$WRITABLE_REPO" XDG_DATA_HOME="$TMP/xdg-data")"
-want "writable SPIRA_REPO: SPIRA_RUN is inside repo" "$WRITABLE_REPO" "$run_writable"
-want "writable SPIRA_REPO: SPIRA_RUN contains .runtime" ".runtime" "$run_writable"
+nowant "writable SPIRA_REPO: SPIRA_RUN is NOT inside the repo" "$WRITABLE_REPO" "$run_writable"
+want   "writable SPIRA_REPO: SPIRA_RUN still uses XDG fallback" "$TMP/xdg-data" "$run_writable"
 
-# With a read-only SPIRA_REPO, SPIRA_RUN must fall back to XDG_DATA_HOME.
+# An unwritable SPIRA_REPO gets the identical XDG default — same code path, no branch.
 READONLY_REPO="$TMP/readonly-repo"
 mkdir -p "$READONLY_REPO"
 chmod a-w "$READONLY_REPO"
@@ -157,6 +162,8 @@ run_readonly="$(conf_val SPIRA_RUN SPIRA_REPO="$READONLY_REPO" XDG_DATA_HOME="$T
 chmod u+w "$READONLY_REPO"
 nowant "read-only SPIRA_REPO: SPIRA_RUN not inside repo" "$READONLY_REPO" "$run_readonly"
 want   "read-only SPIRA_REPO: SPIRA_RUN uses XDG fallback" "$TMP/xdg-data" "$run_readonly"
+is     "writable and read-only SPIRA_REPO produce the identical SPIRA_RUN default" \
+       "$run_readonly" "$run_writable"
 
 # ==========================================================================
 echo

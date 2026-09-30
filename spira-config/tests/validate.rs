@@ -91,6 +91,19 @@ mod spira_section {
         let doc = validate("[spira]\nstack_max_depth = 0\n").expect("valid");
         assert_eq!(doc.spira.unwrap().stack_max_depth, Some(0));
     }
+
+    #[test]
+    fn mail_mute_true_is_valid() {
+        // sp-9hwim: the typed replacement for the mail-mute file-existence override.
+        let doc = validate("[spira]\nmail_mute = true\n").expect("valid");
+        assert_eq!(doc.spira.unwrap().mail_mute, Some(true));
+    }
+
+    #[test]
+    fn mail_mute_wrong_type_is_refused() {
+        let err = validate("[spira]\nmail_mute = \"yes\"\n").unwrap_err();
+        assert!(err.starts_with("spira.mail_mute"), "{err}");
+    }
 }
 
 mod retired_keys {

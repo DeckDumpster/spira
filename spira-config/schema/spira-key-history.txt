@@ -166,6 +166,7 @@ maechen_remedy_label
 mail
 mail_index
 mail_kinds
+mail_mute
 mail_readers
 mail_repeat_window
 mail_session_mailbox

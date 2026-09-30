@@ -66,7 +66,7 @@ pub fn typed_cases() -> BTreeMap<&'static str, (&'static str, &'static str)> {
     ] {
         m.insert(k, ("700", "700"));
     }
-    for k in ["SPIRA_CERT_IDLE_SKIP", "SPIRA_QUEUE_LOCAL_GATE", "SPIRA_QUEUE_BATCH_IDLE_CUT", "SPIRA_LIFECYCLE_ENFORCE"] {
+    for k in ["SPIRA_CERT_IDLE_SKIP", "SPIRA_QUEUE_LOCAL_GATE", "SPIRA_QUEUE_BATCH_IDLE_CUT", "SPIRA_LIFECYCLE_ENFORCE", "SPIRA_MAIL_MUTE"] {
         m.insert(k, ("1", "true"));
     }
     m.insert("SPIRA_CERTIFY_SUITES", ("on", "on"));

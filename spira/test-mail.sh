@@ -543,5 +543,49 @@ fi
 no_msg="$(ls "$SPIRA_MAIL/$DEADLINE_BOX/new" 2>/dev/null | wc -l | tr -d ' ')"
 is "no message was delivered from the timed-out send" "0" "${no_msg:-0}"
 
+# ==========================================================================
+# MAIL-MUTE (sp-9hwim, design runtime-is-a-release #5): SPIRA_MAIL_MUTE replaces the
+# local-overrides tracked edit to this file, which kept the running system's checkout
+# dirty on purpose. A muted message must still be RECORDED (a reader listing cur/ finds
+# it, and mail.sh read/list still work) but must never land in new/ and wake anyone.
+# ==========================================================================
+echo
+echo "mail-mute: a typed config key, not a file-existence check on the checkout"
+
+MUTE_BOX="mutebox"
+mkdir -p "$SPIRA_MAIL/$MUTE_BOX/new" "$SPIRA_MAIL/$MUTE_BOX/cur" "$SPIRA_MAIL/$MUTE_BOX/tmp"
+
+echo
+echo "unmuted (default): send lands in new/"
+echo "body" | run send "$MUTE_BOX" --from "A <a@a>" --subject "Unmuted" >/dev/null 2>&1
+is "SPIRA_MAIL_MUTE unset: message lands in new/" "1" \
+    "$(ls "$SPIRA_MAIL/$MUTE_BOX/new" 2>/dev/null | wc -l | tr -d ' ')"
+is "SPIRA_MAIL_MUTE unset: nothing lands in cur/" "0" \
+    "$(ls "$SPIRA_MAIL/$MUTE_BOX/cur" 2>/dev/null | wc -l | tr -d ' ')"
+
+echo
+echo "muted: send is recorded in cur/, already Seen, never wakes new/"
+before_new="$(ls "$SPIRA_MAIL/$MUTE_BOX/new" 2>/dev/null | wc -l | tr -d ' ')"
+echo "body" | SPIRA_MAIL_MUTE=1 run send "$MUTE_BOX" --from "A <a@a>" --subject "Muted" >/dev/null 2>&1
+is "SPIRA_MAIL_MUTE=1: new/ does not grow" "$before_new" \
+    "$(ls "$SPIRA_MAIL/$MUTE_BOX/new" 2>/dev/null | wc -l | tr -d ' ')"
+muted_file="$(ls "$SPIRA_MAIL/$MUTE_BOX/cur" 2>/dev/null | grep ':2,S$' | head -1)"
+is "SPIRA_MAIL_MUTE=1: the message is recorded in cur/, flagged Seen" "1" \
+    "$([ -n "$muted_file" ] && echo 1 || echo 0)"
+want "muted message content survives — it is recorded, not discarded" "Muted" \
+    "$(cat "$SPIRA_MAIL/$MUTE_BOX/cur/$muted_file" 2>/dev/null)"
+
+echo
+echo "muted sendmail (raw path, no In-Reply-To -> concierge) is muted the same way as send"
+mkdir -p "$SPIRA_MAIL/concierge/new" "$SPIRA_MAIL/concierge/cur" "$SPIRA_MAIL/concierge/tmp"
+conc_new_before="$(ls "$SPIRA_MAIL/concierge/new" 2>/dev/null | wc -l | tr -d ' ')"
+conc_cur_before="$(ls "$SPIRA_MAIL/concierge/cur" 2>/dev/null | wc -l | tr -d ' ')"
+printf 'From: Someone <s@s>\nSubject: raw muted\n\nbody\n' \
+    | SPIRA_MAIL_MUTE=1 run sendmail >/dev/null 2>&1
+is "SPIRA_MAIL_MUTE=1 sendmail: new/ does not grow" "$conc_new_before" \
+    "$(ls "$SPIRA_MAIL/concierge/new" 2>/dev/null | wc -l | tr -d ' ')"
+is "SPIRA_MAIL_MUTE=1 sendmail: recorded in cur/ instead" "$((conc_cur_before + 1))" \
+    "$(ls "$SPIRA_MAIL/concierge/cur" 2>/dev/null | wc -l | tr -d ' ')"
+
 echo
 tl_summary

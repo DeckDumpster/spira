@@ -588,24 +588,34 @@ _out="$(run_deploy "SC_FAILED_UNITS=spira-real-prod.service loaded failed failed
 want   "deploy-window: a unit that fails again is left for doctor" "spira-real-prod.service fails again under" "$_out"
 
 # PROPERTY 6e — THE RE-RENDER DOES NOT LEAK THE CHECKOUT'S DERIVED RUNTIME PATHS. conf.sh
-# derives SPIRA_RUN (and, chained under it, SPIRA_CTRL, SPIRA_TESTDB_DATA, SPIRA_WORKSPACES,
-# SPIRA_MAIL, SPIRA_DOLT_DATA) from the checkout's own SPIRA_REPO when nothing sets them
-# explicitly; the release's own conf.sh keeps any such value it inherits instead of deriving
-# its own. A deploy from a source checkout then rendered units pointed at the CHECKOUT's
-# runtime tree, and after a rollback a unit reading a file under it found no such directory.
+# used to derive SPIRA_RUN (and, chained under it, SPIRA_CTRL, SPIRA_TESTDB_DATA,
+# SPIRA_WORKSPACES, SPIRA_MAIL, SPIRA_DOLT_DATA) from the checkout's own SPIRA_REPO when
+# nothing set them explicitly; the release's own conf.sh keeps any such value it inherits
+# instead of deriving its own. A deploy from a source checkout then rendered units pointed
+# at the CHECKOUT's runtime tree, and after a rollback a unit reading a file under it found
+# no such directory.
+#
+# SPIRA_RUN NO LONGER CAN DERIVE INTO THE CHECKOUT AT ALL (sp-9hwim, design
+# runtime-is-a-release #5): the branch that rooted it under a writable SPIRA_REPO is gone,
+# so the positive control below now proves the derived default landed under XDG_DATA_HOME
+# (pinned into $TMP so an unset SPIRA_RUN cannot touch the real operator's home) rather than
+# under the checkout. The leak assertion itself is unchanged and still matters: it guards
+# every OTHER checkout-derived path (SPIRA_CTRL, SPIRA_MAIL, ...) chained under SPIRA_RUN,
+# not just SPIRA_RUN itself.
 # "SPIRA_RUN=" overrides run_deploy's usual forced value with
 # empty, which is as unset as no value for conf.sh's `:=` — every other property here forces
 # SPIRA_RUN, so this is the one place the checkout is left to derive it as an operator's
 # checkout with nothing configured would.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
-DERIVED_RUN="$FAKE_REPO/.runtime/spira"
-rm -rf "$DERIVED_RUN"
+DERIVED_XDG="$TMP/derived-xdg-6e"
+DERIVED_RUN="$DERIVED_XDG/spira/run"
+rm -rf "$DERIVED_XDG"
 
-_out="$(run_deploy "SPIRA_RUN=" -- "$NEW_TAG" 2>&1)"
+_out="$(run_deploy "SPIRA_RUN=" "XDG_DATA_HOME=$DERIVED_XDG" -- "$NEW_TAG" 2>&1)"
 _rc=$?
 is0 "leak/fail-first: deploy exits 0" "$_rc"
 
-# POSITIVE CONTROL: the checkout's own conf.sh really did derive a checkout-rooted SPIRA_RUN
+# POSITIVE CONTROL: the checkout's own conf.sh really did derive SOME SPIRA_RUN under XDG
 # (deploy.sh mkdir -p's it) — proving there was something here to leak before trusting that
 # it did not (law-absence-needs-a-positive-control).
 [ -d "$DERIVED_RUN" ] \
@@ -616,7 +626,7 @@ _got_paths="$(grep '^install-paths' "$CALL_LOG" 2>/dev/null | head -1)"
 is "leak: none of the checkout-derived runtime paths reach the release re-render" \
    "install-paths SPIRA_RUN=UNSET SPIRA_CTRL=UNSET SPIRA_TESTDB_DATA=UNSET SPIRA_WORKSPACES=UNSET SPIRA_MAIL=UNSET SPIRA_DOLT_DATA=UNSET" \
    "$_got_paths"
-unset DERIVED_RUN _got_paths
+unset DERIVED_RUN DERIVED_XDG _got_paths
 
 # ==========================================================================
 echo
