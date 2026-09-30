@@ -87,7 +87,7 @@ exit 0
 SHIM
 chmod +x "$BIN/claude"
 
-aeon() { aeon --home "$SPIRA_HOME" "$@" 2>/dev/null; }
+aeon() { command aeon --home "$SPIRA_HOME" "$@" 2>/dev/null; }
 
 # bd helpers against the fixture database.
 bead_status()   { BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
