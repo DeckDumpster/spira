@@ -44,6 +44,20 @@ fn nonempty(v: Option<&String>) -> Option<String> {
     v.filter(|s| !s.is_empty()).cloned()
 }
 
+/// The systemd user unit directory: `SPIRA_UNIT_DIR`, else `$XDG_CONFIG_HOME/systemd/user`,
+/// else `$HOME/.config/systemd/user`. A standalone function (not only a [`Config`] field) so
+/// a caller that needs only this — `release intake`, which has nothing to do with
+/// `spira-releases/` at all — is never coupled to [`Config::resolve`]'s own requirement that
+/// the releases directory resolve too (DESIGN.md "intake": intake's own config is orthogonal
+/// to a release's).
+pub fn unit_dir_from_env(env: &Env) -> Result<PathBuf, String> {
+    nonempty(env.get("SPIRA_UNIT_DIR"))
+        .map(PathBuf::from)
+        .or_else(|| nonempty(env.get("XDG_CONFIG_HOME")).map(|x| PathBuf::from(x).join("systemd/user")))
+        .or_else(|| nonempty(env.get("HOME")).map(|h| PathBuf::from(h).join(".config/systemd/user")))
+        .ok_or_else(|| "no systemd unit directory: set SPIRA_UNIT_DIR, XDG_CONFIG_HOME or HOME".to_string())
+}
+
 impl Config {
     /// Resolve from `flags`, `env` and the host config document `spira-config` discovers.
     pub fn resolve(flags: &Flags, env: &Env) -> Result<Config, String> {
@@ -74,11 +88,7 @@ impl Config {
             None => DEFAULT_KEEP,
             Some(s) => s.trim().parse::<usize>().ok().filter(|k| *k >= 1).ok_or_else(|| format!("releases_keep must be a whole number >= 1, got {s:?}"))?,
         };
-        let unit_dir = nonempty(env.get("SPIRA_UNIT_DIR"))
-            .map(PathBuf::from)
-            .or_else(|| nonempty(env.get("XDG_CONFIG_HOME")).map(|x| PathBuf::from(x).join("systemd/user")))
-            .or_else(|| nonempty(env.get("HOME")).map(|h| PathBuf::from(h).join(".config/systemd/user")))
-            .ok_or("no systemd unit directory: set SPIRA_UNIT_DIR, XDG_CONFIG_HOME or HOME")?;
+        let unit_dir = unit_dir_from_env(env)?;
         Ok(Config { releases, run, keep, unit_dir, env: env.clone(), spira })
     }
 
