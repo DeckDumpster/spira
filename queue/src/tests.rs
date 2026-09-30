@@ -271,11 +271,6 @@ impl Scripts for FScripts {
         self.calls.borrow_mut().push(format!("gate {br} {repo} bead={bead} suites={suites}"));
         (self.gate_rc.get(), "gate says".into())
     }
-    fn batch_sweep(&self, repo: &str, wz: bool, lc_off: bool) -> i32 {
-        self.calls.borrow_mut().push(format!("sweep {repo} wait0={wz}"));
-        self.lc_off.borrow_mut().push(lc_off);
-        0
-    }
     fn verdict(&self, repo: &str, lc_off: bool) -> i32 {
         self.calls.borrow_mut().push(format!("verdict {repo}"));
         self.lc_off.borrow_mut().push(lc_off);
@@ -685,7 +680,7 @@ fn flush_refuses_without_a_batcher_and_forces_wait_zero_with_one() {
     t.lib.s.batcher_bin = Some(bin);
     assert_eq!(t.run(&["flush"]), 0);
     let calls = t.scripts.calls.borrow().clone();
-    assert!(calls.contains(&"sweep spira wait0=true".to_string()) && calls.contains(&"cut spira wait0=true".to_string()));
+    assert!(calls.contains(&"cut spira wait0=true".to_string()));
 }
 
 #[test]

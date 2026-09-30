@@ -118,7 +118,7 @@ if hit(cmd): print("1")
 
 reason=""
 
-for _script in landing.sh batch.sh verdict.sh slay.sh world.sh deploy.sh activate.sh promote.sh; do
+for _script in landing.sh verdict.sh slay.sh world.sh deploy.sh activate.sh promote.sh; do
     case "$cmd" in
         *"$_script"*)
             [ "$(_exec_ctx "$_script" "$cmd")" = "1" ] && { reason="aeons may not call $_script (sp-kz8ob: landing and batch handle forge writes; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)"; break; } ;;
@@ -141,14 +141,14 @@ if [ -z "$reason" ]; then
         *"gh release create"*|*"gh release edit"*|*"gh release delete"*|\
         *"gh workflow run"*|\
         *"gh run rerun"*|*"gh run cancel"*)
-            reason="aeons carry no forge credentials (sp-kz8ob: forge writes go through landing.sh and batch.sh)" ;;
+            reason="aeons carry no forge credentials (sp-kz8ob: forge writes go through landing.sh and the batcher)" ;;
     esac
 fi
 
 if [ -z "$reason" ]; then
     case "$cmd" in
         *"git push"*|*"git -C"*" push "*)
-            reason="aeons carry no push credentials (sp-kz8ob: landing.sh and batch.sh handle all merges and pushes)" ;;
+            reason="aeons carry no push credentials (sp-kz8ob: landing.sh and the batcher handle all merges and pushes)" ;;
     esac
 fi
 

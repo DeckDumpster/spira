@@ -149,7 +149,6 @@ pub trait Scripts {
     fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String);
     /// `lc_off`: lifecycle_enforce is OFF — the child must not reach spira-lc (real.rs pins
     /// `SPIRA_LIFECYCLE_ENFORCE=0`, the one switch every child reads).
-    fn batch_sweep(&self, repo: &str, wait_zero: bool, lc_off: bool) -> i32;
     fn verdict(&self, repo: &str, lc_off: bool) -> i32;
     fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool, lc_off: bool) -> i32;
     fn czar_fence(&self, class: &str) -> bool;

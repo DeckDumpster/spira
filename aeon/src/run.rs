@@ -924,7 +924,7 @@ impl<'a> Run<'a> {
         env.set("GH_CONFIG_DIR", &gh.display().to_string());
         env.unset("GH_TOKEN");
         env.unset("GITHUB_TOKEN");
-        env.set("GIT_SSH_COMMAND", "echo 'aeon: no SSH credentials — landing.sh and batch.sh handle forge writes' >&2; exit 1");
+        env.set("GIT_SSH_COMMAND", "echo 'aeon: no SSH credentials — landing.sh and the batcher handle forge writes' >&2; exit 1");
         env.set("GIT_TERMINAL_PROMPT", "0");
         env.set("GIT_ASKPASS", "/bin/false");
         let sys_file = self.run_dir().join(format!("{bead}.system.md"));

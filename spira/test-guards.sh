@@ -143,11 +143,11 @@ deliver_run() {  # deliver_run <bid> <run-tmp> -> stdout
 echo
 echo "UC-safety-fences-01 — aeon session: queue- and landing-operating commands refused:"
 # ===========================================================================
-pc="$(fence_run "bash spira/batch.sh spira" SPIRA_AEON=test-aeon)"
-want "UC-safety-fences-01/positive-control-batch-sh-blocked" '"decision":"block"' "$pc"
+pc="$(fence_run "bash spira/landing.sh spira" SPIRA_AEON=test-aeon)"
+want "UC-safety-fences-01/positive-control-landing-sh-blocked" '"decision":"block"' "$pc"
 
-out="$(fence_run "bash spira/batch.sh spira" SPIRA_AEON=test-aeon)"
-want "UC-safety-fences-01/batch-sh-blocked"        '"decision":"block"' "$out"
+out="$(fence_run "bash spira/landing.sh spira" SPIRA_AEON=test-aeon)"
+want "UC-safety-fences-01/landing-sh-blocked"      '"decision":"block"' "$out"
 want "UC-safety-fences-01/reason-names-sp-kz8ob"   "sp-kz8ob"           "$out"
 
 out="$(fence_run "git push origin main" SPIRA_AEON=test-aeon)"
@@ -429,7 +429,7 @@ nowant "UC-safety-fences-05/self-comment-not-delivered" "additionalContext" "$ou
 echo
 echo "UC-safety-fences-15 — shared PreToolUse pass-through block (D1), applied to both guards:"
 # ===========================================================================
-FENCE_REP_CMD="bash spira/batch.sh spira"
+FENCE_REP_CMD="bash spira/landing.sh spira"
 
 out="$(fence_run "$FENCE_REP_CMD")"
 nowant "UC-safety-fences-15/fence-no-SPIRA_AEON-allows" '"decision":"block"' "$out"

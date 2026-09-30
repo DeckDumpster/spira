@@ -103,7 +103,7 @@ nothing changed), then effects in order.
 | `submit <br> [repo]` | any | none | queue modes require `spira/*` or `spira-suite-state/*`; branch must exist. Gate: `gate.sh <br> <repo>` with `SPIRA_GATE_BEAD=<id>` `SPIRA_GATE_SUITES=${SPIRA_CERTIFY_SUITES:-on}`. Red: gate output to stderr, `QUEUE CAUGHT` line, exit gate rc. Green: `QUEUE GATE_COST` line, then queue/queue.local: `land_mark <id> CERTIFIED <tip>` + `$SPIRA_QUEUE_DIR/<id>` = `CERTIFIED <tip> <epoch>\n`; push: fetch, `rebase_branch`, push `<br>:<base-branch>`, `land_mark LANDED`, `bead_close_on_land`; pr/hold: `land_mark CERTIFIED`. |
 | `protect [repo]` | queue | none | `forge branch-protect <path> <base-branch>`; receipt `$SPIRA_RUN/queue-protected-<repo>` = `<base-branch>\n`; five fixed stdout lines. |
 | `stats` | — | none | reads `$SPIRA_RUN/landing.log`; five fixed lines (§3.5). |
-| `flush [repo]` | queue | none | `batch.sh <repo>` sweep, then `batcher cut <repo>` (by name, on the launcher's PATH — sp-gypjk) with `SPIRA_QUEUE_BATCH_WAIT=0`. `SPIRA_BATCHER_ENABLE=0`: no cut, rc 0 (the operator cuts rounds; replaces `batcher_bin = "/bin/true"`). |
+| `flush [repo]` | queue | none | `batcher cut <repo>` (by name, on the launcher's PATH — sp-gypjk) with `SPIRA_QUEUE_BATCH_WAIT=0`. `SPIRA_BATCHER_ENABLE=0`: no cut, rc 0 (the operator cuts rounds; replaces `batcher_bin = "/bin/true"`). Ran `batch.sh <repo>`'s pre-cut sweep first, until sp-uwhx0 (batch.sh retirement, below). |
 | `step <repo>` | any queued | none | `verdict.sh <repo>`; the flush pair; under queue.local then `publish <repo>` (its stderr folded into stdout, as `2>&1` did). Exit is the last step's. |
 | `eject <id>` | any | queue lock (non-blocking) | member of the open batch: owner check; `land_mark RED <tip> <reason|ejected>`; then **switch OFF**: `bead_reopen <id> <cause> "" <suites>`; **switch ON**: cause event (§8 D1), `lc_returned`, `release_claim`, spira-lc `eject-member` when the record has `batch_id` (§10); bead comment; survivors `land_mark CERTIFIED`; `forge pr-close`; remove `open`; concierge mail. Not a member but CERTIFIED: `bead_reopen <id> <cause> "" <suites>` (WITHDRAWN) + comment. Otherwise refuse, naming the members. `--dry-run` prints the plan, checks the bead resolves. |
 | `abandon` | any | queue lock | `--reason` required (exit 2). No open batch: refuse. Owner check. spira-lc `abandon-batch` when `batch_id` **and the switch is ON** (§10); cancel branch runs; PR comment + close; members not RED/EJECTED → `land_mark CERTIFIED`; append `reason=`/`actor=` to the record, rename it `closed-pr<n>-<stamp>`; `QUEUE ABANDON` line; `queue.abandoned` event; mail. |
@@ -153,9 +153,9 @@ Tests (retired or repointed in §7): `test-queue-submit`, `test-withdrawn-suites
 `test-git-push-app:177`, `test-queue-flush:77`.
 
 **Readers of what queue writes** (the formats are unchanged, §3): the `open` record is read
-by verdict.sh, batch.sh, lib.sh `queue_batch_owner`, landing.sh, cockpit.sh, batcher-cut,
+by verdict.sh, lib.sh `queue_batch_owner`, landing.sh, cockpit.sh, batcher-cut,
 queue-watch, czar-pass, spira-lc `legacy_files`, and the operator's round/watch scripts; the
-`publish` record by verdict.sh and queue-watch; the lock by batch.sh, verdict.sh,
+`publish` record by verdict.sh and queue-watch; the lock by verdict.sh,
 batcher-cut and the reconciler's stale-lock probe. `round-seq`, `refs/archive/rounds/*`,
 the `$SPIRA_QUEUE_DIR/<id>` entry and `queue-protected-<repo>` have no reader
 outside queue itself and the tests; landing.log's ABANDON/PUBLISH lines have none outside
@@ -319,7 +319,7 @@ operation (the function name is part of the text, never data).
 | R15 `sort_rows` | `queue_sort_rows <path> <base>` with `PRIO_JSON` set **inside** the script from a value read on stdin; rows piped in | the ranking batch.sh also uses |
 | R16 `cancel_runs` | `queue_cancel_branch_runs <forge> <path> <branch> QUEUE` | RUN_CANCEL log lines |
 | R17 `lc_returned` | `lc_returned <id> <reason>` (switch ON only) | the Returned event CAS |
-| R18 `batch_fns` (sources batch.sh) | `format_batch`, `_base_conflict`, `_pf_gate` (with `_PF_DEADLINE`) | open-batch only; the queue.forge assembly primitives |
+| R18 `batch_fns` (sources batch.sh) | `format_batch`, `_base_conflict`, `_pf_gate` (with `_PF_DEADLINE`) | **retired, sp-uwhx0**: open-batch never called these (they were batch.sh's own `main()` and pre-flight-wall helpers, unused by queue's own open-batch seam, which has its own `base_conflict` in batcher-cut); batch.sh is deleted |
 | R19 `settle_publish` (sources verdict.sh) | `_verdict_settle_publish <repo> <path>` | to-forge's wait; return 3 = red |
 | R20 `readback` | `repo_land`, `spira_landref` after a transition's write | the post-write verification reads what every other component will read |
 | R21 `toml_path` | `spira_toml_resolve` (transitions only, as before) | conf.sh's own resolution of which document is in force |
