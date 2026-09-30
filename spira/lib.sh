@@ -88,10 +88,10 @@ bdq() {
     # through here, so this is the one place that covers all of them (sp-ydog2).
     #
     # SOP_APPLIED_TRACE=1 logs wall-clock start/end around the whole retry loop below, which
-    # every bd subprocess call in the codebase goes through (including the three `sop.sh
+    # every bd subprocess call in the codebase goes through (including the three `sop
     # applied` makes: bdjson memories, and the bead-note write). Off by default — a `date`
     # call and an append are cheap, but this runs on every bd invocation in the harness, so
-    # it stays gated rather than always-on. Follow-up to sp-ohnz7 (sop.sh applied()
+    # it stays gated rather than always-on. Follow-up to sp-ohnz7 (the bash sop.sh's applied()
     # ledger/wiki-regen contention): the hangs it reproduced only appear under real
     # concurrent dolt load and could not safely be forced (law-probe-a-fixture-not-
     # production), so this turns "time it under load" into "read the trace from the next
@@ -5099,7 +5099,7 @@ if index_slugs:
             "## Runbooks on the shelf — full text on request\n\n"
             "These bind exactly as the statutes above do. Read the full runbook —\n"
             "CHECK, FIX, ESCALATE — with:\n\n"
-            f"    {harness}/spira/sop.sh show <slug-without-sop-prefix>\n"
+            "    sop show <slug-without-sop-prefix>\n"
         ),
     }
     for ns, header in NAMESPACES.items():
@@ -5176,10 +5176,10 @@ world_stop_decide() {
 #   -> "<wrote> <verdict>", wrote is yes|no|unreadable, verdict is satisfied|decline|poison
 #
 # The closing rule (FAYTH_SOP_REQUIRED): an incident closed with no runbook behind it has
-# its close undone. <shelf-before>/<shelf-after> are `sop.sh digest` lines taken either side
+# its close undone. <shelf-before>/<shelf-after> are `sop digest` lines taken either side
 # of the session; a line present after and absent before is a write or an amendment. A
 # retirement (shelf shrinks, no new line) does not discharge the rule — curation is not the
-# thing the incident was supposed to leave behind. <applied-rc> is `sop.sh log --bead <id>
+# thing the incident was supposed to leave behind. <applied-rc> is `sop log --bead <id>
 # --check pass --since <session-epoch>`'s own exit code: 0 recorded, 1 read and no such
 # record, anything else unreadable.
 #
@@ -8724,7 +8724,7 @@ queue_bisect_resolve() {
 
 # gh_issue_closeout — comment and close the GitHub issue linked to a landed bead.
 #
-# The write-back complement to gh-intake.sh's one-way ingest. Intake holds no
+# The write-back complement to gh-intake's one-way ingest. Intake holds no
 # credential; this runs only from the credentialed landing path. The comment
 # cites commit sha and subject — both public on the repo — and a link. No bead
 # notes, bodies or internal judgement reach the public tracker

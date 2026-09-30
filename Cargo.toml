@@ -44,6 +44,8 @@ members = [
     "suite-select",
     "release",
     "forge",
+    "gh-intake",
+    "sop",
     "incident",
     "maechen-trigger",
     "rule",

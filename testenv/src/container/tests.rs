@@ -187,7 +187,7 @@ fn harness(f: &Fake, root: &str) {
     );
     f.file(
         &format!("{root}/spira/deps.toml"),
-        "[bd]\ntier = \"fatal\"\n",
+        "[[dep]]\nname = \"bd\"\ntier = \"runtime\"\n",
     );
 }
 
@@ -207,14 +207,16 @@ fn the_tag_is_the_scripts_hash_of_the_closure_by_content() {
     harness(&f, "/h");
     f.file("/run/bd-pin", "migrations=12\n");
     let c = conf("/h");
-    // What testenv.sh computed: sha256sum < Containerfile; cat pin; sha256sum < deps.toml,
-    // all through sha256sum, first 12 hex.
+    // Containerfile and the bd pin hash in full; deps.toml hashes only the (name, tier)
+    // rows doctor-check.sh's FATAL/WARN case arms actually consult — here just "bd
+    // runtime" (sp-ehj2t: the raw file used to hash whole, so every release-tier addition
+    // cold-built a new image).
     let line = |b: &str| format!("{}  -\n", crate::verdict::sha256_hex(b.as_bytes()));
     let closure = format!(
         "{}{}{}",
         line("FROM ubuntu:24.04\n"),
         "migrations=12\n",
-        line("[bd]\ntier = \"fatal\"\n")
+        line("bd runtime\n")
     );
     let want = crate::verdict::sha256_hex(closure.as_bytes())[..12].to_string();
     assert_eq!(tag_of(&f, &c), Some(want));
@@ -229,14 +231,117 @@ fn every_closure_input_moves_the_tag_and_nothing_else_does() {
     assert_eq!(base.len(), 12);
     f.file("/h/spira/unrelated.sh", "echo hi");
     assert_eq!(tag_of(&f, &c).unwrap(), base, "a file outside the closure");
-    f.file("/h/spira/deps.toml", "[bd]\ntier = \"warn\"\n");
+    f.file(
+        "/h/spira/deps.toml",
+        "[[dep]]\nname = \"bd\"\ntier = \"optional\"\n",
+    );
     let deps = tag_of(&f, &c).unwrap();
-    assert_ne!(deps, base, "deps.toml");
+    assert_ne!(deps, base, "a checked-tier deps.toml change");
     f.file("/run/bd-pin", "migrations=13\n");
     let pin = tag_of(&f, &c).unwrap();
     assert_ne!(pin, deps, "the bd pin");
     f.file("/h/spira/testenv/Containerfile", "FROM ubuntu:26.04\n");
     assert_ne!(tag_of(&f, &c).unwrap(), pin, "the Containerfile");
+}
+
+// ---- tag: deps.toml only counts what doctor-check.sh's build-time check reads
+// (sp-ehj2t) ---------------------------------------------------------------------------
+
+#[test]
+fn adding_a_release_tier_entry_leaves_the_tag_unchanged() {
+    // Every rewrite branch adds its own new binary to deps.toml as tier "release"
+    // (testenv stages Spira's own binaries per run; none of them are installed into the
+    // image). doctor-check.sh's case statement has no arm for "release", so it can never
+    // change whether the image build passes — the tag must not move either.
+    let f = Fake::new();
+    harness(&f, "/h");
+    let c = conf("/h");
+    let base = tag_of(&f, &c).unwrap();
+    f.file(
+        "/h/spira/deps.toml",
+        "[[dep]]\nname = \"bd\"\ntier = \"runtime\"\n\n[[dep]]\nname = \"aeon\"\ntier = \"release\"\n",
+    );
+    assert_eq!(tag_of(&f, &c).unwrap(), base, "a release-tier addition");
+}
+
+#[test]
+fn two_manifests_differing_only_in_release_entries_share_one_tag() {
+    let f = Fake::new();
+    harness(&f, "/a");
+    f.file(
+        "/a/spira/deps.toml",
+        "[[dep]]\nname = \"bd\"\ntier = \"runtime\"\n\n[[dep]]\nname = \"aeon\"\ntier = \"release\"\n",
+    );
+    harness(&f, "/b");
+    f.file(
+        "/b/spira/deps.toml",
+        "[[dep]]\nname = \"bd\"\ntier = \"runtime\"\n\n[[dep]]\nname = \"batcher\"\ntier = \"release\"\n\n[[dep]]\nname = \"gate\"\ntier = \"release\"\n",
+    );
+    assert_eq!(
+        tag_of(&f, &conf("/a")),
+        tag_of(&f, &conf("/b")),
+        "two branches differing only in which release-tier binaries they declare"
+    );
+}
+
+#[test]
+fn changing_a_runtime_tier_entry_changes_the_tag() {
+    let f = Fake::new();
+    harness(&f, "/h");
+    let c = conf("/h");
+    let base = tag_of(&f, &c).unwrap();
+    f.file(
+        "/h/spira/deps.toml",
+        "[[dep]]\nname = \"bd\"\ntier = \"optional\"\n",
+    );
+    assert_ne!(
+        tag_of(&f, &c).unwrap(),
+        base,
+        "a runtime-tier entry's tier changed"
+    );
+}
+
+#[test]
+fn an_operator_tier_entry_moves_the_tag_like_optional_does() {
+    // doctor-check.sh buckets "optional" and "operator" into the same WARN arm
+    // (present-or-waived); only "dev" and "release" hit no arm. An operator-tier
+    // addition can change whether the build needs a waiver, so it must move the tag —
+    // unlike a release-tier addition, which never can.
+    let f = Fake::new();
+    harness(&f, "/h");
+    let c = conf("/h");
+    let base = tag_of(&f, &c).unwrap();
+    f.file(
+        "/h/spira/deps.toml",
+        "[[dep]]\nname = \"bd\"\ntier = \"runtime\"\n\n[[dep]]\nname = \"go\"\ntier = \"operator\"\n",
+    );
+    assert_ne!(tag_of(&f, &c).unwrap(), base, "an operator-tier addition");
+}
+
+#[test]
+fn a_dev_tier_entry_never_moves_the_tag() {
+    // dev-tier programs (podman, bd-embedded, rustup) are what tests need to exist, not
+    // what the image build verifies; doctor-check.sh's own "dev" arm is a deliberate
+    // no-op, so the tag must not move either.
+    let f = Fake::new();
+    harness(&f, "/h");
+    let c = conf("/h");
+    let base = tag_of(&f, &c).unwrap();
+    f.file(
+        "/h/spira/deps.toml",
+        "[[dep]]\nname = \"bd\"\ntier = \"runtime\"\n\n[[dep]]\nname = \"podman\"\ntier = \"dev\"\n",
+    );
+    assert_eq!(tag_of(&f, &c).unwrap(), base, "a dev-tier addition");
+}
+
+#[test]
+fn an_unparseable_manifest_refuses_instead_of_naming_an_image() {
+    let f = Fake::new();
+    f.file("/h/spira/testenv/Containerfile", "FROM ubuntu:24.04\n");
+    f.file("/h/spira/deps.toml", "not valid toml === [[[");
+    let c = conf("/h");
+    assert_eq!(tag_of(&f, &c), None, "an unparseable deps.toml");
+    assert!(f.errs().contains("deps.toml"));
 }
 
 #[test]

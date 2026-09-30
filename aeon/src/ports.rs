@@ -24,7 +24,7 @@ pub trait Git: Send + Sync {
     fn git(&self, dir: &Path, args: &[&str]) -> Out;
 }
 
-/// Any other program (spira-claim, world.sh, gate-run.sh, holds.sh, sop.sh, python3, …).
+/// Any other program (spira-claim, world.sh, gate-run.sh, holds.sh, sop, python3, …).
 pub trait Exec: Send + Sync {
     fn exec(&self, prog: &str, args: &[String], stdin: Option<Vec<u8>>, cwd: Option<&Path>) -> Out;
 }

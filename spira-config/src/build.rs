@@ -42,6 +42,29 @@ impl Wrapper {
         }
     }
 
+    /// The environment an AGENT's cargo gets (sp-f4ig1, gate/DESIGN-admission.md §3.3): the
+    /// same compiler, fronted by `spira-admit` (`admit`, an absolute path) so every build the
+    /// agent starts takes a compile slot for its cargo. The compiler this wrapper would have
+    /// been is `SPIRA_ADMIT_INNER` (empty when off: rustc itself); `run` is the pools' home
+    /// and `who` the lease's label. Still no `CARGO_*` variable (DESIGN §2.2). The gate and
+    /// testenv never use this: they take their slots in-process and keep [`Wrapper::env`].
+    pub fn admitted_env(&self, admit: &Path, run: &str, who: &str) -> Vec<(String, String)> {
+        let inner = match self {
+            Wrapper::Sccache(p) => p.display().to_string(),
+            Wrapper::Off => String::new(),
+        };
+        let mut env = vec![
+            ("RUSTC_WRAPPER".into(), admit.display().to_string()),
+            (crate::admission::INNER_ENV.into(), inner),
+            (crate::admission::WHO_ENV.into(), who.to_string()),
+            ("SPIRA_RUN".into(), run.to_string()),
+        ];
+        if matches!(self, Wrapper::Sccache(_)) {
+            env.push(("SCCACHE_IGNORE_SERVER_IO_ERROR".into(), "1".into()));
+        }
+        env
+    }
+
     /// One line for a log: which cache this build compiles through.
     pub fn describe(&self) -> String {
         match self {
@@ -146,6 +169,24 @@ mod tests {
         assert_eq!(w, Wrapper::Off);
         assert_eq!(w.env(), vec![("RUSTC_WRAPPER".to_string(), String::new())]);
         assert!(w.describe().contains("OFF"));
+    }
+
+    #[test]
+    fn an_agents_build_is_fronted_by_spira_admit_with_the_same_compiler_inside() {
+        let (d, path) = bin_dir(true);
+        let admit = Path::new("/rel/bin/spira-admit");
+        let env = wrapper(&path, None).unwrap().admitted_env(admit, "/run/spira", "sp-abc");
+        let get = |k: &str| env.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
+        assert_eq!(get("RUSTC_WRAPPER").as_deref(), Some("/rel/bin/spira-admit"));
+        assert_eq!(get("SPIRA_ADMIT_INNER"), Some(d.path().join("sccache").display().to_string()));
+        assert_eq!(get("SPIRA_ADMIT_WHO").as_deref(), Some("sp-abc"));
+        assert_eq!(get("SPIRA_RUN").as_deref(), Some("/run/spira"));
+        assert_eq!(get("SCCACHE_IGNORE_SERVER_IO_ERROR").as_deref(), Some("1"));
+        assert!(env.iter().all(|(k, _)| !k.starts_with("CARGO_")), "{env:?}");
+        // Off: admission still fronts rustc; the inner compiler is rustc itself.
+        let off = Wrapper::Off.admitted_env(admit, "/run/spira", "sp-abc");
+        assert!(off.contains(&("SPIRA_ADMIT_INNER".to_string(), String::new())));
+        assert!(off.contains(&("RUSTC_WRAPPER".to_string(), "/rel/bin/spira-admit".to_string())));
     }
 
     #[test]
