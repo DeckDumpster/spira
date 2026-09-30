@@ -1670,6 +1670,32 @@ fn publish_refuses_a_divergence_an_open_publish_and_a_range_without_land_commits
     assert!(!t.lib.has("push"));
 }
 
+#[test]
+fn publish_waits_on_an_unmoved_red_head_then_republishes_once_local_main_moves() {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    fs::write(t.qfile("publish-red"), "head=m3\nfix_forward=sp-fix\n").unwrap();
+    assert_eq!(t.run(&["publish"]), 0, "{}", t.err());
+    assert!(t.out().contains("waiting on fix-forward sp-fix for spira"));
+    assert!(t.landing_log().contains("QUEUE PUBLISH_WAIT"));
+    assert!(t.landing_log().contains("fix_forward=sp-fix"));
+    assert!(!t.lib.has("push"));
+    assert!(t.forge.calls.borrow().is_empty());
+    assert!(!t.qfile("publish").exists());
+    // the marker survives — the head still has not moved
+    assert!(t.qfile("publish-red").exists());
+
+    // local/main moves past the red head: the marker no longer matches and is cleared,
+    // and this publish proceeds normally.
+    t.git.set("refs/heads/local/main", "m4");
+    t.git.ancestor("m4", "m4");
+    t.git.ancestor("f0", "m4");
+    *t.git.log.borrow_mut() = vec![RangeCommit { sha: "m4".into(), parents: vec!["m3".into()], subject: "spira: land sp-c".into() }];
+    assert_eq!(t.run(&["publish"]), 0, "{}", t.err());
+    assert!(t.qfile("publish").exists());
+    assert!(!t.qfile("publish-red").exists());
+}
+
 // -------------------------------------------------------------------------- transitions
 
 fn forgeable(t: &mut T) {

@@ -1442,6 +1442,15 @@ _verdict_settle_publish_red() {
     rm -f "$bf"
 
     rm -f "$pfile"
+
+    # Read by queue's publish op: holds off step's next publish call on this same head
+    # (law-a-retry-must-change-an-input).
+    local rfile="${SPIRA_QUEUE_DIR:?}/$name/publish-red"
+    local rtmp; rtmp="$(mktemp "${rfile}.XXXXXX" 2>/dev/null)" && {
+        printf 'head=%s\nfix_forward=%s\n' "$head_sha" "${fid:-<create-failed>}" > "$rtmp"
+        mv -f "$rtmp" "$rfile"
+    }
+
     printf 'QUEUE PUBLISH_RED %s repo=%s pr=%s suites=%s fix_forward=%s\n' \
         "$(date +%s)" "$name" "$pr_n" "${suites_csv:-none}" "${fid:-<create-failed>}" \
         >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
