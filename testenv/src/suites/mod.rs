@@ -11,7 +11,7 @@ use cmd::Transition;
 use ports::World;
 
 pub const USAGE: &str =
-    "usage: testenv suites [list|names|corpus|status|hygiene|observe-flake|quarantine|disable|activate]";
+    "usage: testenv suites [list|names|corpus|status|hygiene|lint|observe-flake|quarantine|disable|activate]";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reason {
@@ -27,6 +27,7 @@ pub enum Cmd {
     Corpus,
     Status,
     Hygiene,
+    Lint,
     ObserveFlake { suite: String, run_id: String },
     Quarantine { suite: String, bead: String, reason: Option<Reason>, base: Option<String> },
     Disable { suite: String, reason: Option<Reason>, base: Option<String> },
@@ -96,6 +97,7 @@ pub fn parse(args: &[String]) -> Result<Cmd, Usage> {
         "corpus" => Cmd::Corpus,
         "status" => Cmd::Status,
         "hygiene" => Cmd::Hygiene,
+        "lint" => Cmd::Lint,
         "observe-flake" => Cmd::ObserveFlake { suite: pos(0), run_id: pos(1) },
         "quarantine" => {
             let (p, f, base) = transition_args("quarantine", rest)?;
@@ -141,6 +143,7 @@ pub fn dispatch(w: &World, c: &Cmd) -> i32 {
         Cmd::Corpus => cmd::corpus(w),
         Cmd::Status => cmd::status(w),
         Cmd::Hygiene => cmd::hygiene(w),
+        Cmd::Lint => cmd::lint(w),
         Cmd::ObserveFlake { suite, run_id } => cmd::observe_flake(w, suite, run_id),
         Cmd::Quarantine { suite, bead, reason, base } => with_reason("quarantined", reason, &|r| {
             let t = Transition::Quarantine { bead: bead.clone(), reason: r };

@@ -363,7 +363,6 @@ test-strand-pool-paused.sh	T1	2.0
 test-strand-throttle.sh	T1	2.0
 test-strand-truncated.sh	T1	4.0
 test-suite-state-fence.sh	T1	6.0
-test-suite-state.sh	T1	2.0
 test-suite-times.sh	T1	2.0
 test-suites-fixture-fault.sh	T1	19.5
 test-suites-timeout.sh	T2	14.0

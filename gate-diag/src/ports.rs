@@ -1,5 +1,7 @@
-//! The boundary `real.rs` implements against the filesystem, the environment and
-//! `tap_jsonl_rows` (`spira/tap-jsonl.sh`, not ported here — DESIGN.md "Non-goals").
+//! The boundary `real.rs` implements against the filesystem and the environment.
+//! `tap_jsonl_rows` (`spira/tap-jsonl.sh`, sp-9gd4e) is no longer an effect on this
+//! boundary: it is a pure function, `testenv::tap::jsonl_rows`, called directly from
+//! `main.rs` over the `read`/`suite_source` ports already named below.
 
 use std::path::{Path, PathBuf};
 
@@ -28,10 +30,6 @@ pub trait World {
 
     /// `<root>-retry`'s result for `suite` (same two-level scan), first field only.
     fn retry_status(&self, root: &Path, suite: &str) -> Option<String>;
-
-    /// `tap_jsonl_rows <suite> <src> <out> <fallback-status> <secs>` via the shared
-    /// `tap-jsonl.sh` (DESIGN.md "Non-goals") — its stdout, one JSON row per line.
-    fn tap_jsonl_rows(&self, home: &Path, suite: &str, src: &Path, out: &Path, fallback: &str, secs: &str) -> String;
 
     fn write(&self, p: &Path, content: &str);
     fn append(&self, p: &Path, content: &str);

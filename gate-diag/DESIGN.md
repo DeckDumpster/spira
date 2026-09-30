@@ -48,15 +48,21 @@ gate-diag [--home <spira-dir>] <results-root>   # what gate-diag.sh execs
 
 ### Non-goals
 
-* **Porting `tap-jsonl.sh` (and `suite-covers.sh`, which it sources).** Both are shared with
-  `spira/suites.sh`, a caller outside this bead's remit; porting them here would fork the one
-  TAP parser the bash's own header insists on ("ONE PARSER, ONE PLACE"). This binary shells
-  out to `tap_jsonl_rows` exactly as the bash did, for every suite's per-case
-  `results.jsonl` rows — the same non-goal shape `gate`'s DESIGN.md uses for `exclude.sh`/
-  `skew.sh`.
 * **Changing what counts as a FAIL line, a died suite, or a flake.** Every heuristic (the two-
   tier grep, the declared-timeout lookup, the retry-status mapping) is ported as specified
   below, not redesigned.
+
+**Formerly a non-goal, now done (sp-9gd4e):** porting `tap-jsonl.sh`'s `tap_jsonl_rows` was
+out of this bead's original remit because it was shared with `spira/suites.sh` — forking it
+here would have split the one TAP parser the bash's own header insisted on ("ONE PARSER, ONE
+PLACE"). `suites.sh` no longer exists (replaced by `testenv suites`, DESIGN-suites.md), so
+this binary's `tap_jsonl_rows` shell-out was its only caller left. sp-9gd4e ported it to
+`testenv::tap::jsonl_rows` (testenv/DESIGN.md §3.5a) — "one parser, one place" now means one
+Rust function two crates call, not one sourced bash file. This binary calls it directly (a
+`testenv` path dependency); `ports.rs::World` lost the `tap_jsonl_rows` method, since a pure
+function is not an effect on this boundary. Parity: bash and Rust produce byte-identical
+`results.jsonl` rows over every `spira/*.sh` file in the tree (633, tier/UC extraction) plus
+planted TAP/skip-all/bail-out/escaping fixtures (sp-9gd4e's report).
 
 ## Design
 
@@ -64,8 +70,9 @@ gate-diag [--home <spira-dir>] <results-root>   # what gate-diag.sh execs
 "died with output but no FAIL line" messages, the declared-timeout lookup's fallback, retry-
 status classification, the summary row and annotation text, and the JSON/JUnit XML builders.
 None of it touches the filesystem. `ports.rs` names the boundary (reading a `.result`/`.out`
-file, listing suites in the two-level scan, running `tap_jsonl_rows`, GitHub Actions
-environment, writing the step summary); `real.rs` implements it. `main.rs` is the glue.
+file, listing suites in the two-level scan, GitHub Actions environment, writing the step
+summary); `real.rs` implements it. `main.rs` is the glue — it also calls
+`testenv::tap::jsonl_rows` directly (a pure function, not a port).
 
 ### Suite result collection (unchanged scan and status vocabulary)
 

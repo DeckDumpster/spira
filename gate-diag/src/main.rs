@@ -51,7 +51,9 @@ fn run(world: &dyn World, home: &std::path::Path, root: &std::path::Path) -> i32
         let (status, secs, _rc) = world.read_result(&rf.result_path);
         let fallback = if status.is_empty() { "red".to_string() } else { status };
         let secs_s = secs.map(|s| s.to_string()).unwrap_or_else(|| "0".to_string());
-        let rows = world.tap_jsonl_rows(home, &rf.suite, &home.join(&rf.suite), &rf.out_path, &fallback, &secs_s);
+        let src = world.suite_source(home, &rf.suite).unwrap_or_default();
+        let out = world.read(&rf.out_path);
+        let rows = testenv::tap::jsonl_rows(&rf.suite, &src, out.as_deref(), &fallback, &secs_s);
         world.append(&jsonl_path, &rows);
     }
     if let Some(jsonl) = world.read(&jsonl_path) {
