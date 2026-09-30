@@ -179,15 +179,6 @@ impl Provider for FakeProvider {
     fn name_of(&self, vmid: &str) -> Result<Option<String>, String> {
         Ok(self.0.lock().unwrap().vms.get(vmid).map(|v| v.name.clone()))
     }
-    fn clone_full(&self, vmid: &str, name: &str) -> Result<(), String> {
-        self.step(Step::Clone, format!("clone-full {vmid} {name}"))?;
-        let mut g = self.0.lock().unwrap();
-        if g.vms.contains_key(vmid) {
-            return Err(format!("VM {vmid} already exists"));
-        }
-        g.vms.insert(vmid.into(), FakeVm { name: name.into(), running: false, files: BTreeMap::new(), template: false });
-        Ok(())
-    }
     fn shutdown(&self, vmid: &str) -> Result<(), String> {
         self.step(Step::Shutdown, format!("shutdown {vmid}"))?;
         let mut g = self.0.lock().unwrap();

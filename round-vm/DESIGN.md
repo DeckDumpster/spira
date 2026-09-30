@@ -141,8 +141,12 @@ It **never repoints anything**: it prints the new VMID; switching `PVE_TEMPLATE_
    `SPIRA_ROUND_VM_HOST_KEY` are readable.
 2. VMID: `--vmid N` if given (templates belong in their own range; nextid lands in the band
    round clones use), else the hypervisor's nextid.
-3. **Full** clone of `PVE_TEMPLATE_VMID` to it, named `round-template-<commit12>` (a linked
-   clone would tie the new template's disk to the old one). It is never named
+3. **Linked** clone of `PVE_TEMPLATE_VMID` to it, named `round-template-<commit12>` — the
+   same clone a round VM gets, so the old template's base disk stays referenced and cannot
+   be destroyed while the new one exists. A full clone was tried first and abandoned: it
+   copies the whole 250 GB disk (24% after 9 minutes) on the storage the Spira host's own
+   disk shares, and the host's load went to 57 with its API calls timing out; the aborted
+   clone also left a `lock: clone` placeholder that only root@pam can remove. It is never named
    `round-<vmid>`, so no `acquire`, `release` or reap can destroy it (G4).
 4. Start, wait for the address, deliver the key (the same code as provision, §2.4), wait for
    ssh.
@@ -298,7 +302,6 @@ pub trait Provider {
     fn destroy(&self, vmid: &str) -> Result<(), String>;
     fn name_of(&self, vmid: &str) -> Result<Option<String>, String>; // None: the VMID is gone
     // `template` (§2.2b) only:
-    fn clone_full(&self, vmid: &str, name: &str) -> Result<(), String>; // full=1 clone of the template
     fn shutdown(&self, vmid: &str) -> Result<(), String>;                // graceful, task-waited
     fn make_template(&self, vmid: &str) -> Result<(), String>;           // POST .../template
     fn is_template(&self, vmid: &str) -> Result<bool, String>;           // GET .../config: template == 1

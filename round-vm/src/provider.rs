@@ -24,9 +24,7 @@ pub trait Provider {
     fn destroy(&self, vmid: &str) -> Result<(), String>;
     /// The VM's name, or None if the VMID does not exist.
     fn name_of(&self, vmid: &str) -> Result<Option<String>, String>;
-    /// `template` only (DESIGN.md §2.2b): a FULL clone of the round template to `vmid`.
-    fn clone_full(&self, vmid: &str, name: &str) -> Result<(), String>;
-    /// Graceful shutdown, waited on, so the guest flushes its disks.
+    /// `template` only (DESIGN.md §2.2b) from here. Graceful shutdown, waited on, so the guest flushes its disks.
     fn shutdown(&self, vmid: &str) -> Result<(), String>;
     /// Converts the (stopped) VM into a template.
     fn make_template(&self, vmid: &str) -> Result<(), String>;

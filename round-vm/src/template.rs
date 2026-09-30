@@ -138,7 +138,7 @@ pub struct Built {
     pub image: String,
 }
 
-/// Clone (full) → boot → key → unpack → build the image → shut down → convert → verify.
+/// Clone (linked) → boot → key → unpack → build the image → shut down → convert → verify.
 /// Any failure after the clone destroys the VM, fenced on the name this run gave it.
 pub fn build(
     p: &dyn Provider,
@@ -155,9 +155,9 @@ pub fn build(
     };
     let name = template_name(commit);
     let t = spec.timing;
-    eprintln!("round-vm template: full clone of the round template to {vmid} ({name})");
+    eprintln!("round-vm template: linked clone of the round template to {vmid} ({name})");
     let result = p
-        .clone_full(&vmid, &name)
+        .clone_to(&vmid, &name)
         .map_err(|e| format!("clone refused: {e}"))
         .and_then(|()| prepare_vm(p, g, spec, ssh_tries, tree, commit, &vmid));
     match result {
@@ -284,7 +284,7 @@ mod tests {
     }
 
     #[test]
-    fn a_build_clones_in_full_builds_the_image_then_converts_a_stopped_vm() {
+    fn a_build_clones_builds_the_image_then_converts_a_stopped_vm() {
         let p = FakeProvider::new();
         let g = FakeGuest::ok();
         let b = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into())).unwrap();
@@ -292,8 +292,7 @@ mod tests {
         assert!(p.is_template("9120").unwrap());
         assert_eq!(p.name("9120").as_deref(), Some("round-template-0123456789ab"));
         let calls = p.calls();
-        assert!(calls.contains(&"clone-full 9120 round-template-0123456789ab".to_string()), "{calls:?}");
-        assert_eq!(p.count("clone "), 0, "never a linked clone: {calls:?}");
+        assert!(calls.contains(&"clone 9120 round-template-0123456789ab".to_string()), "{calls:?}");
         assert!(p.file("9120", "/root/.ssh/authorized_keys").is_some(), "the key went in through the agent");
         let order: Vec<&String> = calls.iter().filter(|c| c.starts_with("shutdown") || c.starts_with("template")).collect();
         assert_eq!(order, ["shutdown 9120", "template 9120"]);

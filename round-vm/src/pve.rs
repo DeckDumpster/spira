@@ -247,14 +247,6 @@ impl<T: Transport> Provider for Pve<T> {
         )
     }
 
-    fn clone_full(&self, vmid: &str, name: &str) -> Result<(), String> {
-        let mut params = vec![("newid", vmid.to_string()), ("name", name.to_string()), ("full", "1".to_string())];
-        if let Some(pool) = &self.env.pool {
-            params.push(("pool", pool.clone()));
-        }
-        self.task(Method::Post, &format!("{}/clone", self.qemu(&self.env.template_vmid)), &params)
-    }
-
     fn shutdown(&self, vmid: &str) -> Result<(), String> {
         self.task(Method::Post, &format!("{}/status/shutdown", self.qemu(vmid)), &[])
     }
@@ -384,16 +376,8 @@ mod tests {
     }
 
     #[test]
-    fn a_template_build_clones_in_full_shuts_down_gracefully_and_converts() {
+    fn a_template_build_shuts_down_gracefully_and_converts() {
         let p = pve();
-        p.clone_full("123", "round-template-abc").unwrap();
-        let (_, path, params) = last(&p, "/clone");
-        assert_eq!(path, "/nodes/pve/qemu/9000/clone");
-        assert!(params.contains(&("full".into(), "1".into())), "{params:?}");
-        assert!(params.contains(&("name".into(), "round-template-abc".into())));
-        p.clone_to("124", "round-124").unwrap();
-        let (_, _, linked) = last(&p, "/clone");
-        assert!(linked.contains(&("full".into(), "0".into())), "a round clone stays linked");
         p.shutdown("123").unwrap();
         assert_eq!(last(&p, "/status/shutdown").0, Method::Post);
         p.make_template("123").unwrap();
