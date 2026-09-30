@@ -12,6 +12,15 @@ use testenv::runtime::{self, Podman};
 /// gate reading our stdout must not wait on it), output appended to
 /// `$SPIRA_RUN/testenv-warm.log`.
 fn spawn_refill(i: usize, run: &std::path::Path) {
+    spawn_warm(&["refill".to_string(), i.to_string()], run);
+}
+
+/// Spawn `testenv warm sweep` detached (DESIGN.md D12), exactly as the refill.
+fn spawn_sweep(run: &std::path::Path) {
+    spawn_warm(&["sweep".to_string()], run);
+}
+
+fn spawn_warm(sub: &[String], run: &std::path::Path) {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
     let Ok(exe) = std::env::current_exe() else {
@@ -26,7 +35,8 @@ fn spawn_refill(i: usize, run: &std::path::Path) {
         Err(_) => (Stdio::null(), Stdio::null()),
     };
     let _ = Command::new(exe)
-        .args(["warm", "refill", &i.to_string()])
+        .arg("warm")
+        .args(sub)
         .env("SPIRA_RUN", run)
         .stdin(Stdio::null())
         .stdout(out)
@@ -48,14 +58,22 @@ fn main() -> ExitCode {
         let rc = testenv::testdb::main(&args[1..]);
         return ExitCode::from(rc.clamp(0, 255) as u8);
     }
+    // `testenv plan <json>` — the container setup in one exec, run inside the container
+    // (DESIGN.md §11.4, sp-t26yx).
+    if args.first().map(String::as_str) == Some(testenv::plan::PLAN_ARG) {
+        let rc = testenv::plan::main(&args[1..]);
+        return ExitCode::from(rc.clamp(0, 255) as u8);
+    }
     // `testenv warm refill <slot>` — boot a warm slot's spare (DESIGN.md §11.2); spawned
     // detached by the trial that used the slot.
     let warm_refill = args.first().map(String::as_str) == Some("warm");
+    let warm_sweep = warm_refill && args.get(1).map(String::as_str) == Some("sweep");
     if warm_refill
+        && !warm_sweep
         && (args.get(1).map(String::as_str) != Some("refill")
             || args.get(2).and_then(|v| v.parse::<usize>().ok()).is_none())
     {
-        eprintln!("usage: testenv warm refill <slot>");
+        eprintln!("usage: testenv warm refill <slot> | testenv warm sweep");
         return ExitCode::from(2);
     }
     let inv = if warm_refill {
@@ -126,9 +144,12 @@ fn main() -> ExitCode {
         cwd: std::env::current_dir().unwrap_or_default(),
         runner_identity: identity,
         warm_refill: &spawn_refill,
+        spawn_sweep: &spawn_sweep,
+        runner_exe: std::env::current_exe().unwrap_or_default(),
     };
     let rc = match inv {
         Some(inv) => run::execute(inv, &deps),
+        None if warm_sweep => run::warm_sweep(&deps),
         None => run::warm_refill(args[2].parse().unwrap_or(0), &deps),
     };
     ExitCode::from(rc.clamp(0, 255) as u8)

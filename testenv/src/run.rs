@@ -5,7 +5,7 @@
 use crate::batch::{self, now_epoch, BatchCfg, Hooks};
 use crate::build::{artifacts_dir, profile_dir, BuildError, Builder};
 use crate::cli::{Invocation, RunArgs, SuitesArg};
-use crate::fixture::{Fixtures, Session};
+use crate::fixture::{Fixtures, Session, SetupFault, WORKSPACE};
 use crate::prebuilt::{self, Prebuilt};
 use crate::record::{suite_line, Mode, Producer, ResultRecord, Status};
 use crate::runtime::{cancelled, ContainerRuntime, RC_DEADLINE};
@@ -163,6 +163,11 @@ pub struct Deps<'a> {
     pub runner_identity: Vec<u8>,
     /// Spawn the detached refill of warm slot `i` under run dir (DESIGN.md §11.2).
     pub warm_refill: &'a (dyn Fn(usize, &Path) + Sync),
+    /// Spawn `testenv warm sweep` detached (DESIGN.md D12): a gate trial never runs the
+    /// orphan sweep on its critical path.
+    pub spawn_sweep: &'a (dyn Fn(&Path) + Sync),
+    /// This executable: linked into the worktree as the in-container setup runner (§11.4).
+    pub runner_exe: PathBuf,
 }
 
 impl Deps<'_> {
@@ -524,6 +529,20 @@ impl Phases {
         self.done
             .push((name, now.saturating_duration_since(self.last).as_secs_f64()));
         self.last = now;
+    }
+    /// Close the time since the previous mark as `parts` measured elsewhere (inside the
+    /// setup exec): every part but the first as given, the first gets the remainder (the
+    /// exec's own overhead lands there), and `carry` seconds stay open for the next mark.
+    fn mark_split(&mut self, parts: &[(&'static str, f64)], carry: f64) {
+        let now = Instant::now();
+        let total = now.saturating_duration_since(self.last).as_secs_f64();
+        let rest: f64 = parts.iter().skip(1).map(|(_, s)| s).sum::<f64>() + carry;
+        let first = (total - rest).max(0.0);
+        for (i, (n, s)) in parts.iter().enumerate() {
+            self.done.push((n, if i == 0 { first } else { *s }));
+        }
+        let carry = std::time::Duration::from_secs_f64(carry.clamp(0.0, total));
+        self.last = now.checked_sub(carry).unwrap_or(now);
     }
     fn render(&self) -> String {
         self.done
@@ -998,7 +1017,13 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     // The batch's own owner file: one live run per key, warm or cold (§4.2).
     let key_owner = deps.owner_dir.join(format!("{}.owner", session.name));
     let warm_slot = wt.warm_index();
-    if warm_slot.is_none() {
+    if warm_slot.is_none() && setup_cutoff.is_some() {
+        // D12 (sp-t26yx): every podman call of the sweep takes podman's global locks, and
+        // under load one sweep ran nine minutes — past the trial's whole budget, since no
+        // podman call in it can be cut. A gate trial spawns it detached, like the refill.
+        (deps.spawn_sweep)(&s.run);
+        deps.log("orphan sweep spawned detached — off the trial's critical path");
+    } else if warm_slot.is_none() {
         sweep_orphans(&s, deps);
         ph.mark("sweep");
         if past_cutoff() {
@@ -1082,39 +1107,55 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         deps.log(f.message());
         return Finish::fault(f.rc(), "container-up", 0);
     }
-    // The tree under test as a release, whether or not the install runs: every exec's PATH
-    // is built from it (DESIGN.md §5).
-    if let Err(f) = session.stage(&|m| deps.log(m)) {
-        if let crate::fixture::Fault::Deadline(p) = f {
+    // ---- setup: stage, install, requirements, testdb template — ONE exec (§11.4) ------
+    // The tree under test is staged as a release whether or not the install runs: every
+    // exec's PATH is built from it (DESIGN.md §5). Each podman exec pays podman's global
+    // locks, whose cost under load is set by everyone else's podman calls and the host's
+    // flush latency (sp-t26yx), so the whole setup is one exec of our own runner.
+    let runner = match crate::plan::stage_runner(&wt.path, &deps.runner_exe) {
+        Ok(_) => format!("{WORKSPACE}/{}", crate::plan::RUNNER_REL),
+        Err(e) => {
+            deps.log(&format!(
+                "cannot stage the setup runner into {}: {e}",
+                wt.path.display()
+            ));
+            return Finish::fault(2, "stage", 0);
+        }
+    };
+    let setup = match session.setup(
+        &runner,
+        !s.skip_install,
+        active.iter().flat_map(|n| headers[n].checkable_requires()),
+        &|m| deps.log(m),
+    ) {
+        Ok(v) => v,
+        Err(SetupFault {
+            fault: crate::fixture::Fault::Deadline(p),
+            ..
+        }) => {
             share_note(p, &ph);
             return Finish::fault(2, deadline_reason(p), 0);
         }
-        deps.log(f.message());
-        return Finish::fault(f.rc(), "stage", 0);
-    }
-    if !s.skip_install {
-        if let Err(f) = session.install(&|m| deps.log(m)) {
-            if let crate::fixture::Fault::Deadline(p) = f {
-                share_note(p, &ph);
-                return Finish::fault(2, deadline_reason(p), 0);
-            }
-            deps.log(f.message());
-            return Finish::fault(f.rc(), "install", 0);
-        }
-    }
-    ph.mark("install");
-
-    // ---- requirements --------------------------------------------------------------
-    let unmet = match session
-        .unmet_requirements(active.iter().flat_map(|n| headers[n].checkable_requires()))
-    {
-        Ok(u) => u,
-        Err(_) => {
-            share_note("requirements", &ph);
-            return Finish::fault(2, deadline_reason("requirements"), 0);
+        Err(SetupFault { fault, reason }) => {
+            deps.log(fault.message());
+            return Finish::fault(fault.rc(), reason, 0);
         }
     };
-    ph.mark("requirements");
+    // podman's own cost of the exec is the install phase's, where each exec used to pay it;
+    // the testdb share stays open for the embedded fallback below (D11).
+    let part = |p: &str| {
+        setup
+            .phase_secs
+            .iter()
+            .find(|(n, _)| *n == p)
+            .map(|(_, s)| *s)
+            .unwrap_or(0.0)
+    };
+    ph.mark_split(
+        &[("install", part("install")), ("requirements", part("requirements"))],
+        part("testdb"),
+    );
+    let unmet = setup.unmet.clone();
     for t in &unmet {
         deps.log(&format!("requirement not met in container: {t}"));
     }
@@ -1209,16 +1250,12 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     // The server template first: when it builds, every suite gets a private sql-server
     // fixture and no embedded baseline is built. A `bd` call against an embedded store opens
     // the Dolt engine and replays its journal every time (sp-34ru2: 61 % of suite wall).
-    let t0 = std::time::Instant::now();
-    let tpl = session.rt.exec(&session.testdb_template_request());
-    if tpl.rc == RC_DEADLINE {
-        share_note("testdb", &ph);
-        return Finish::fault(2, deadline_reason("testdb"), 0);
-    }
+    let tpl = &setup.template;
     let fixtures = if tpl.ok() {
         deps.log(&format!(
-            "testdb template ready in {} ms — every suite gets a private server fixture",
-            t0.elapsed().as_millis()
+            "testdb template ready in {} ms (under {}) — every suite gets a private server fixture",
+            setup.template_ms,
+            crate::fixture::CONTAINER_TESTDB_ROOT
         ));
         Fixtures::Server
     } else {
@@ -1766,6 +1803,30 @@ pub fn warm_refill(i: usize, deps: &Deps) -> i32 {
     };
     drop(lock);
     rc
+}
+
+/// `testenv warm sweep`: both orphan sweeps, detached from the gate trial that spawned it
+/// (D12). One sweeper at a time: a sweep already running is this one's work done.
+pub fn warm_sweep(deps: &Deps) -> i32 {
+    let s = settings(deps);
+    let Some(_lock) = worktree::try_lock(&s.run.join("testenv-sweep.lock")) else {
+        return 0;
+    };
+    sweep_orphans(&s, deps);
+    warm::sweep(
+        deps.rt,
+        &deps.owner_dir,
+        &s.run,
+        s.warm_slots,
+        s.orphan_min_age,
+        &|n| {
+            deps.rt
+                .inspect(n, "{{.State.StartedAt}}")
+                .and_then(|t| parse_started_at(&t))
+        },
+        &|m| deps.log(m),
+    );
+    0
 }
 
 /// `cargo build` in place; `Some` is the fault that ends the run.

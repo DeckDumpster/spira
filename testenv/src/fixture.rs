@@ -2,6 +2,7 @@
 //! the per-suite exec environment (DESIGN.md §4.2). Everything goes through
 //! [`ContainerRuntime`], so the orchestration is tested against a fake.
 
+use crate::plan;
 use crate::record::Mode;
 use crate::runtime::{ContainerRuntime, ExecOutcome, ExecRequest, RC_DEADLINE};
 use std::collections::BTreeSet;
@@ -30,6 +31,55 @@ pub const USER_RUNTIME: &str = "/run/user/1001";
 pub const CONTAINER_CARGO: &str = "/var/spira/cargo";
 pub const CONTAINER_CARGO_TARGET: &str = "/var/spira/cargo/target";
 pub const WORKSPACE: &str = "/workspace";
+/// Where every test database lives inside the container (sp-t26yx): the container's `/tmp`
+/// is a tmpfs (`podman run --systemd=true`), so a throwaway database's fsyncs never reach the
+/// host disk. On the overlay (`/var/tmp`) a `bd init`'s CREATE DATABASE queued behind the
+/// host's writeback and overran bd's 10 s read timeout (`[mysql] i/o timeout`).
+pub const CONTAINER_TESTDB_ROOT: &str = "/tmp/spira-testdb";
+
+/// What the one setup exec established ([`Session::setup`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Setup {
+    /// Requirement tokens `command -v` did not find.
+    pub unmet: BTreeSet<String>,
+    /// The testdb template step's rc and output.
+    pub template: ExecOutcome,
+    pub template_ms: u64,
+    /// Seconds each setup phase ran inside the container, in order.
+    pub phase_secs: Vec<(&'static str, f64)>,
+    /// The exec's wall on the host; the difference is podman's own cost.
+    pub wall_secs: f64,
+}
+
+/// A setup that did not complete, with the VERDICT reason word it maps to (`stage`,
+/// `install`, or `deadline` for [`Fault::Deadline`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetupFault {
+    pub fault: Fault,
+    pub reason: &'static str,
+}
+
+/// The template and every server fixture live under [`CONTAINER_TESTDB_ROOT`], and
+/// `testenv testdb` refuses a root that is not a tmpfs rather than silently fsync to disk.
+pub fn testdb_root_env() -> Vec<(String, String)> {
+    vec![
+        kv("TESTDB_ROOT", CONTAINER_TESTDB_ROOT),
+        kv("TESTDB_REQUIRE_TMPFS", "1"),
+    ]
+}
+
+fn static_phase(p: &str) -> &'static str {
+    match p {
+        "requirements" => "requirements",
+        "testdb" => "testdb",
+        _ => "install",
+    }
+}
+
+fn tail(s: &str, n: usize) -> String {
+    let lines: Vec<&str> = s.lines().collect();
+    lines[lines.len().saturating_sub(n)..].join("\n")
+}
 
 /// The image's own PATH (Containerfile: `PATH=/usr/local/cargo/bin:$PATH` over Debian's
 /// default). A launched process's PATH is the staged release's `bin/` and `spira/`, then this
@@ -168,6 +218,7 @@ impl Fixtures {
             Fixtures::Server => {
                 let mut env = TestDb::env(None);
                 env.push(("SPIRA_TESTDB_MODE".into(), "server".into()));
+                env.extend(testdb_root_env());
                 env
             }
             Fixtures::Shared(t) => TestDb::env(Some(t)),
@@ -277,27 +328,6 @@ impl<'a> Session<'a> {
         ];
         argv.extend(self.bins.iter().map(String::as_str));
         self.setup_as_user(&argv, vec![kv("XDG_RUNTIME_DIR", USER_RUNTIME)])
-    }
-
-    pub fn stage(&self, log: &dyn Fn(&str)) -> Result<(), Fault> {
-        let out = self.rt.exec(&self.stage_request());
-        if out.rc == RC_DEADLINE {
-            return Err(Fault::Deadline("install"));
-        }
-        if !out.ok() {
-            log(&format!("stage rc={} output tail:\n{}", out.rc, out.tail(40)));
-            return Err(Fault::Install(format!(
-                "staging the release layout at {} failed — harness fault",
-                self.release
-            )));
-        }
-        log(&format!(
-            "staged the tree under test as a release at {} ({} binaries); PATH={}",
-            self.release,
-            self.bins.len(),
-            self.release_path()
-        ));
-        Ok(())
     }
 
     fn user_env(&self) -> Vec<(String, String)> {
@@ -416,76 +446,221 @@ impl<'a> Session<'a> {
         self.setup_as_user(&["bash", &install, &self.instance], env)
     }
 
-    /// configure, suspend the Rust-backed units the container cannot run ([`SUSPENDED_UNITS`]),
-    /// install.
-    pub fn install(&self, log: &dyn Fn(&str)) -> Result<(), Fault> {
-        log(&format!("configure inside {}", self.name));
-        let out = self.rt.exec(&self.configure_request());
-        if out.rc == RC_DEADLINE {
-            return Err(Fault::Deadline("install"));
-        }
-        if !out.ok() {
-            log(&format!("configure rc={} output tail:\n{}", out.rc, out.tail(40)));
-            return Err(Fault::Install("configure failed — harness fault".into()));
-        }
-        log(&format!(
-            "suspending Rust-backed units inside {} (image rustc too old for lockfile v4)",
-            self.name
-        ));
-        for (unit, reason) in SUSPENDED_UNITS {
-            let out = self.rt.exec(&self.suspend_request(unit, reason));
-            if out.rc == RC_DEADLINE {
-                return Err(Fault::Deadline("install"));
-            }
-            if !out.ok() {
-                return Err(Fault::Install(format!(
-                    "ctrl suspend failed for {unit} — harness fault"
-                )));
-            }
-        }
-        log(&format!(
-            "install instance {} inside {}",
-            self.instance, self.name
-        ));
-        let out = self.rt.exec(&self.install_request());
-        if out.rc == RC_DEADLINE {
-            return Err(Fault::Deadline("install"));
-        }
-        if !out.ok() {
-            log(&format!("install rc={} output tail:\n{}", out.rc, out.tail(40)));
-            return Err(Fault::Install("install failed — harness fault".into()));
-        }
-        Ok(())
-    }
-
-    /// Each distinct token checked once with `command -v` inside the container. A check
-    /// killed at the setup cutoff is `Fault::Deadline("requirements")`, never "unmet": an
-    /// unmet token becomes a SKIP-REQ, and a deadline must not turn into a verdict.
-    pub fn unmet_requirements<'t>(
+    /// The setup's steps, in order (sp-t26yx, DESIGN.md §11.4): stage; unless `install` is
+    /// false, configure, suspend the Rust-backed units the container cannot run
+    /// ([`SUSPENDED_UNITS`]) and install; one `command -v` per distinct requirement token
+    /// (`testenv` is testenv's own and never checked); the testdb template. Each step is
+    /// exactly the request that used to be its own `podman exec`.
+    pub fn setup_steps<'t>(
         &self,
+        install: bool,
         tokens: impl IntoIterator<Item = &'t str>,
-    ) -> Result<BTreeSet<String>, Fault> {
+    ) -> Vec<plan::Step> {
+        let step = |name: String, phase: &str, req: ExecRequest, must: bool| plan::Step {
+            name,
+            phase: phase.into(),
+            argv: req.argv,
+            env: req.env,
+            must,
+        };
+        let mut steps = vec![step("stage".into(), "install", self.stage_request(), true)];
+        if install {
+            steps.push(step("configure".into(), "install", self.configure_request(), true));
+            for (unit, reason) in SUSPENDED_UNITS {
+                steps.push(step(
+                    format!("suspend:{unit}"),
+                    "install",
+                    self.suspend_request(unit, reason),
+                    true,
+                ));
+            }
+            steps.push(step("install".into(), "install", self.install_request(), true));
+        }
         let mut seen = BTreeSet::new();
-        let mut unmet = BTreeSet::new();
         for t in tokens {
             if t.is_empty() || t == "testenv" || !seen.insert(t.to_string()) {
                 continue;
             }
-            let mut env = vec![kv("XDG_RUNTIME_DIR", USER_RUNTIME)];
-            env.extend(self.release_env());
-            let req = self.setup_as_user(
-                &["bash", "-c", "command -v \"$1\" >/dev/null 2>&1", "_", t],
-                env,
-            );
-            let out = self.rt.exec(&req);
-            if out.rc == RC_DEADLINE {
-                return Err(Fault::Deadline("requirements"));
+            steps.push(step(
+                format!("requires:{t}"),
+                "requirements",
+                self.requirement_request(t),
+                false,
+            ));
+        }
+        steps.push(step(
+            "template".into(),
+            "testdb",
+            self.testdb_template_request(),
+            false,
+        ));
+        steps
+    }
+
+    /// `command -v <token>` as the suite user, on the staged release's PATH.
+    pub fn requirement_request(&self, token: &str) -> ExecRequest {
+        let mut env = vec![kv("XDG_RUNTIME_DIR", USER_RUNTIME)];
+        env.extend(self.release_env());
+        self.setup_as_user(
+            &["bash", "-c", "command -v \"$1\" >/dev/null 2>&1", "_", token],
+            env,
+        )
+    }
+
+    /// Run the whole setup ([`Session::setup_steps`]) in ONE `podman exec` of `runner` (the
+    /// container's path to [`plan::RUNNER_REL`]), bounded by the setup cutoff, and read it
+    /// back. A failing stage/configure/suspend/install step is the same harness fault its own
+    /// exec was; a requirement that fails is unmet (a SKIP-REQ), never a fault; the template
+    /// is reported, not judged. An exec killed at the cutoff is `Fault::Deadline` naming the
+    /// phase of the step it was in — never "unmet", never a template failure.
+    pub fn setup<'t>(
+        &self,
+        runner: &str,
+        install: bool,
+        tokens: impl IntoIterator<Item = &'t str>,
+        log: &dyn Fn(&str),
+    ) -> Result<Setup, SetupFault> {
+        let plan = plan::Plan {
+            nonce: plan::nonce(),
+            steps: self.setup_steps(install, tokens),
+        };
+        let json = serde_json::to_string(&plan).unwrap_or_default();
+        let mut req = ExecRequest::new(&self.name, &[runner, plan::PLAN_ARG, &json]).user(SPIRA_USER);
+        req.deadline = self.setup_deadline;
+        let t0 = Instant::now();
+        let out = self.rt.exec(&req);
+        let wall = t0.elapsed().as_secs_f64();
+        let parsed = plan::parse(&plan, &out.output);
+        let fault = |fault: Fault, reason: &'static str| SetupFault { fault, reason };
+        for r in &parsed.results {
+            let must = plan.steps.iter().any(|s| s.name == r.name && s.must);
+            if !must || r.rc == 0 {
+                continue;
             }
-            if !out.ok() {
-                unmet.insert(t.to_string());
+            if r.rc == RC_DEADLINE {
+                break;
+            }
+            return Err(match r.name.as_str() {
+                "stage" => {
+                    log(&format!("stage rc={} output tail:\n{}", r.rc, tail(&r.output, 40)));
+                    fault(
+                        Fault::Install(format!(
+                            "staging the release layout at {} failed — harness fault",
+                            self.release
+                        )),
+                        "stage",
+                    )
+                }
+                "configure" => {
+                    log(&format!("configure rc={} output tail:\n{}", r.rc, tail(&r.output, 40)));
+                    fault(Fault::Install("configure failed — harness fault".into()), "install")
+                }
+                "install" => {
+                    log(&format!("install rc={} output tail:\n{}", r.rc, tail(&r.output, 40)));
+                    fault(Fault::Install("install failed — harness fault".into()), "install")
+                }
+                other => fault(
+                    Fault::Install(format!(
+                        "ctrl suspend failed for {} — harness fault",
+                        other.strip_prefix("suspend:").unwrap_or(other)
+                    )),
+                    "install",
+                ),
+            });
+        }
+        if out.rc == RC_DEADLINE {
+            // The step it was in: the one that began and never ended, else the first with no
+            // result (the exec was cut before the runner said anything).
+            let name = parsed.unfinished.clone().or_else(|| {
+                plan.steps
+                    .iter()
+                    .find(|s| !parsed.results.iter().any(|r| r.name == s.name))
+                    .map(|s| s.name.clone())
+            });
+            let phase = name
+                .and_then(|n| plan.steps.iter().find(|s| s.name == n))
+                .map(|s| s.phase.as_str())
+                .unwrap_or("install");
+            return Err(fault(Fault::Deadline(static_phase(phase)), "deadline"));
+        }
+        if parsed.results.len() != plan.steps.len() {
+            log(&format!(
+                "setup runner rc={} returned {} of {} steps — output tail:\n{}",
+                out.rc,
+                parsed.results.len(),
+                plan.steps.len(),
+                out.tail(20)
+            ));
+            return Err(fault(
+                Fault::Install(format!(
+                    "the setup runner {runner} did not complete in {} — harness fault",
+                    self.name
+                )),
+                "stage",
+            ));
+        }
+        let mut phase_secs: Vec<(&'static str, f64)> = Vec::new();
+        for r in &parsed.results {
+            let p = static_phase(&r.phase);
+            let secs = r.ms as f64 / 1000.0;
+            match phase_secs.iter_mut().find(|(n, _)| *n == p) {
+                Some((_, s)) => *s += secs,
+                None => phase_secs.push((p, secs)),
             }
         }
-        Ok(unmet)
+        let inside: f64 = phase_secs.iter().map(|(_, s)| s).sum();
+        log(&format!(
+            "staged the tree under test as a release at {} ({} binaries); PATH={}",
+            self.release,
+            self.bins.len(),
+            self.release_path()
+        ));
+        if install {
+            log(&format!(
+                "configured, suspended the Rust-backed units ({}) and installed instance {} inside {}",
+                SUSPENDED_UNITS.map(|(u, _)| u).join(", "),
+                self.instance,
+                self.name
+            ));
+        }
+        log(&format!(
+            "setup in one exec: {wall:.1}s wall, {inside:.1}s in the container ({}) — podman exec overhead {:.1}s",
+            parsed
+                .results
+                .iter()
+                .map(|r| format!("{} {:.1}s", r.name, r.ms as f64 / 1000.0))
+                .collect::<Vec<_>>()
+                .join(", "),
+            (wall - inside).max(0.0)
+        ));
+        let unmet = parsed
+            .results
+            .iter()
+            .filter(|r| r.phase == "requirements" && r.rc != 0)
+            .filter_map(|r| r.name.strip_prefix("requires:").map(str::to_string))
+            .collect();
+        let template = parsed
+            .results
+            .iter()
+            .find(|r| r.name == "template")
+            .map(|r| ExecOutcome {
+                rc: r.rc,
+                output: r.output.clone(),
+            })
+            .unwrap_or_default();
+        let template_ms = parsed
+            .results
+            .iter()
+            .find(|r| r.name == "template")
+            .map(|r| r.ms)
+            .unwrap_or(0);
+        Ok(Setup {
+            unmet,
+            template,
+            template_ms,
+            phase_secs,
+            wall_secs: wall,
+        })
     }
 
     pub fn baseline_request(&self) -> ExecRequest {
@@ -502,6 +677,7 @@ impl<'a> Session<'a> {
     pub fn testdb_template_request(&self) -> ExecRequest {
         let mut env = vec![kv("XDG_RUNTIME_DIR", USER_RUNTIME)];
         env.extend(self.release_env());
+        env.extend(testdb_root_env());
         let exe = self.in_release("bin/testenv");
         self.setup_as_user(
             &[&exe, "testdb", "template", "--bd", "bd", "--dolt", "dolt"],
@@ -678,6 +854,10 @@ pub mod fake {
         pub inspect_extra: Mutex<std::collections::HashMap<String, String>>,
         /// testenv.sh subcommand → how long it takes (for the setup-cutoff tests).
         pub testenv_delay: Mutex<std::collections::HashMap<String, Duration>>,
+        /// Plan execs seen ([`crate::plan`]): what really crosses podman, once per setup.
+        pub plans: Mutex<usize>,
+        /// Answer plan execs with this instead of running their steps (a broken runner).
+        pub plan_answer: Mutex<Option<ExecOutcome>>,
     }
 
     impl FakeRuntime {
@@ -733,8 +913,9 @@ pub mod fake {
         }
     }
 
-    impl ContainerRuntime for FakeRuntime {
-        fn exec(&self, req: &ExecRequest) -> ExecOutcome {
+    impl FakeRuntime {
+        /// One exec, recorded and answered by the first matching rule.
+        pub fn exec_one(&self, req: &ExecRequest) -> ExecOutcome {
             self.execs.lock().unwrap().push(req.clone());
             // The answer runs outside the lock, so concurrent execs really overlap.
             let ans = {
@@ -746,6 +927,50 @@ pub mod fake {
                 let _ = std::fs::write(p, &out.output);
             }
             out
+        }
+
+        /// A plan exec (`<runner> plan <json>`, [`crate::plan`]) is answered the way the real
+        /// runner answers it: each step becomes the exec it used to be (recorded and answered
+        /// by the rules), framed; a step answered with `RC_DEADLINE` is the one the cutoff
+        /// killed (begun, never ended), and a failing `must` step ends the plan.
+        fn exec_plan(&self, req: &ExecRequest) -> Option<ExecOutcome> {
+            if req.argv.get(1).map(String::as_str) != Some(crate::plan::PLAN_ARG)
+                || !req.argv[0].ends_with(crate::plan::RUNNER_REL)
+            {
+                return None;
+            }
+            let plan: crate::plan::Plan = serde_json::from_str(req.argv.get(2)?).ok()?;
+            *self.plans.lock().unwrap() += 1;
+            if let Some(a) = self.plan_answer.lock().unwrap().clone() {
+                return Some(a);
+            }
+            let mut out = String::new();
+            for step in &plan.steps {
+                out.push_str(&crate::plan::frame_begin(&plan.nonce, &step.name));
+                let mut sr = ExecRequest::new(&req.container, &[]);
+                sr.argv = step.argv.clone();
+                sr.env = step.env.clone();
+                sr.user = req.user.clone();
+                sr.deadline = req.deadline;
+                let o = self.exec_one(&sr);
+                if o.rc == RC_DEADLINE {
+                    return Some(ExecOutcome { rc: RC_DEADLINE, output: out });
+                }
+                out.push_str(&crate::plan::frame_end(&plan.nonce, &step.name, o.rc, 0, &o.output));
+                if step.must && o.rc != 0 {
+                    return Some(ExecOutcome { rc: o.rc, output: out });
+                }
+            }
+            Some(ExecOutcome { rc: 0, output: out })
+        }
+    }
+
+    impl ContainerRuntime for FakeRuntime {
+        fn exec(&self, req: &ExecRequest) -> ExecOutcome {
+            if let Some(o) = self.exec_plan(req) {
+                return o;
+            }
+            self.exec_one(req)
         }
         fn inspect(&self, name: &str, format: &str) -> Option<String> {
             if format == "{{.State.Running}}" {
@@ -876,12 +1101,23 @@ mod tests {
         assert_eq!(r.env_value("SPIRA_RELEASE"), Some("/tmp/spira-release-abc123"));
     }
 
+    const RUNNER: &str = "/workspace/target/.testenv-runner/testenv";
+
+    fn run_setup(s: &Session, install: bool, tokens: &[&str]) -> Result<Setup, SetupFault> {
+        s.setup(RUNNER, install, tokens.iter().copied(), &|_| {})
+    }
+
     #[test]
     fn install_runs_configure_suspends_then_install_from_the_staged_release() {
         let rt = FakeRuntime::new();
         let s = session(&rt);
-        s.install(&|_| {}).unwrap();
-        let argv = rt.exec_argv();
+        run_setup(&s, true, &[]).unwrap();
+        // stage first, then configure, three suspends, install, then the template
+        let mut argv = rt.exec_argv();
+        assert_eq!(argv.remove(0)[..3], ["bash", "-c", STAGE_SCRIPT]);
+        assert_eq!(argv.len(), 6);
+        assert_eq!(argv[5][1..3], ["testdb", "template"]);
+        rt.execs.lock().unwrap().remove(0);
         assert_eq!(argv[0], vec!["bash", "/tmp/spira-release-abc123/spira/configure.sh"]);
         assert_eq!(
             argv[1][..4],
@@ -894,7 +1130,7 @@ mod tests {
             vec!["bash", "/tmp/spira-release-abc123/systemd/install.sh", "abc123"]
         );
         let execs = rt.execs.lock().unwrap();
-        for r in execs.iter() {
+        for r in execs.iter().take(5) {
             assert_eq!(r.user.as_deref(), Some("spirauser"));
             assert_eq!(r.env_value("SPIRA_RELEASE"), Some("/tmp/spira-release-abc123"));
             assert_eq!(
@@ -931,9 +1167,9 @@ mod tests {
         let rt = FakeRuntime::new();
         let mut s = session(&rt);
         s.bins = vec!["spira-config".into(), "testenv".into()];
-        s.stage(&|_| {}).unwrap();
+        run_setup(&s, false, &[]).unwrap();
         let argv = rt.exec_argv();
-        assert_eq!(argv.len(), 1);
+        assert_eq!(argv.len(), 2, "stage, then the template (no install)");
         assert_eq!(argv[0][..3], ["bash", "-c", STAGE_SCRIPT]);
         assert_eq!(
             argv[0][3..],
@@ -944,8 +1180,10 @@ mod tests {
             rc: 1,
             output: "testenv: stage: testenv was not built into /workspace/target/aeon".into(),
         });
-        let e = session(&rt).stage(&|_| {}).unwrap_err();
-        assert_eq!(e.rc(), 3, "a release that cannot be staged is a harness fault");
+        let e = run_setup(&session(&rt), true, &[]).unwrap_err();
+        assert_eq!(e.fault.rc(), 3, "a release that cannot be staged is a harness fault");
+        assert_eq!(e.reason, "stage");
+        assert_eq!(rt.exec_argv().len(), 1, "nothing runs after a failed stage");
     }
 
     #[test]
@@ -991,10 +1229,93 @@ mod tests {
                 output: String::new(),
             },
         );
-        let e = session(&rt).install(&|_| {}).unwrap_err();
-        assert_eq!(e.rc(), 3);
-        assert!(e.message().contains("spira-loom"));
-        assert_eq!(rt.exec_argv().len(), 2);
+        let e = run_setup(&session(&rt), true, &["jq"]).unwrap_err();
+        assert_eq!(e.fault.rc(), 3);
+        assert_eq!(e.reason, "install");
+        assert!(e.fault.message().contains("spira-loom"));
+        assert_eq!(rt.exec_argv().len(), 3, "stage, configure, the failed suspend — then nothing");
+    }
+
+    #[test]
+    fn the_whole_setup_is_one_exec_as_the_suite_user_under_the_cutoff() {
+        let rt = FakeRuntime::new();
+        let mut s = session(&rt);
+        let cut = Instant::now() + Duration::from_secs(60);
+        s.setup_deadline = Some(cut);
+        let got = run_setup(&s, true, &["jq", "dolt"]).unwrap();
+        assert_eq!(*rt.plans.lock().unwrap(), 1, "one podman exec for every setup step");
+        assert_eq!(rt.exec_argv().len(), 9, "stage, configure, 3 suspends, install, 2 checks, template");
+        for r in rt.execs.lock().unwrap().iter() {
+            assert_eq!(r.user.as_deref(), Some(SPIRA_USER));
+            assert_eq!(r.deadline, Some(cut));
+        }
+        assert!(got.unmet.is_empty());
+        assert_eq!(
+            got.phase_secs.iter().map(|(p, _)| *p).collect::<Vec<_>>(),
+            vec!["install", "requirements", "testdb"]
+        );
+    }
+
+    #[test]
+    fn a_setup_cut_during_install_is_a_deadline_fault_named_install() {
+        let rt = FakeRuntime::new();
+        rt.on(
+            |r| r.argv.get(1).is_some_and(|a| a.ends_with("/systemd/install.sh")),
+            |_| ExecOutcome { rc: RC_DEADLINE, output: String::new() },
+        );
+        let e = run_setup(&session(&rt), true, &["jq"]).unwrap_err();
+        assert_eq!(e.fault, Fault::Deadline("install"));
+    }
+
+    #[test]
+    fn a_template_cut_at_the_cutoff_is_a_deadline_fault_not_a_fallback() {
+        let rt = FakeRuntime::new();
+        rt.on(
+            |r| r.argv.get(1).map(String::as_str) == Some("testdb"),
+            |_| ExecOutcome { rc: RC_DEADLINE, output: String::new() },
+        );
+        let e = run_setup(&session(&rt), true, &[]).unwrap_err();
+        assert_eq!(e.fault, Fault::Deadline("testdb"));
+    }
+
+    #[test]
+    fn a_failed_template_is_reported_not_a_fault() {
+        let rt = FakeRuntime::new();
+        rt.on(
+            |r| r.argv.get(1).map(String::as_str) == Some("testdb"),
+            |_| ExecOutcome { rc: 1, output: "bd init (server) failed".into() },
+        );
+        let got = run_setup(&session(&rt), true, &[]).unwrap();
+        assert_eq!(got.template.rc, 1);
+        assert!(got.template.output.contains("bd init"));
+    }
+
+    #[test]
+    fn a_runner_that_says_nothing_is_a_harness_fault_never_a_pass() {
+        let rt = FakeRuntime::new();
+        *rt.plan_answer.lock().unwrap() = Some(ExecOutcome {
+            rc: 127,
+            output: "crun: executable file not found".into(),
+        });
+        let e = run_setup(&session(&rt), true, &[]).unwrap_err();
+        assert_eq!((e.fault.rc(), e.reason), (3, "stage"));
+        // and one cut before it said anything is a deadline in its first phase
+        *rt.plan_answer.lock().unwrap() = Some(ExecOutcome { rc: RC_DEADLINE, output: String::new() });
+        let e = run_setup(&session(&rt), true, &[]).unwrap_err();
+        assert_eq!(e.fault, Fault::Deadline("install"));
+    }
+
+    #[test]
+    fn the_template_and_server_fixtures_live_on_the_container_tmpfs() {
+        let rt = FakeRuntime::new();
+        let s = session(&rt);
+        let r = s.testdb_template_request();
+        assert_eq!(r.env_value("TESTDB_ROOT"), Some(CONTAINER_TESTDB_ROOT));
+        assert_eq!(r.env_value("TESTDB_REQUIRE_TMPFS"), Some("1"));
+        assert!(CONTAINER_TESTDB_ROOT.starts_with("/tmp/"));
+        let env = Fixtures::Server.env();
+        assert!(env.contains(&("TESTDB_ROOT".into(), CONTAINER_TESTDB_ROOT.into())));
+        assert!(env.contains(&("TESTDB_REQUIRE_TMPFS".into(), "1".into())));
     }
 
     #[test]
@@ -1022,11 +1343,14 @@ mod tests {
                 output: String::new(),
             },
         );
-        let unmet = session(&rt)
-            .unmet_requirements(["jq", "dolt", "jq", "testenv"])
-            .unwrap();
-        assert_eq!(unmet.into_iter().collect::<Vec<_>>(), vec!["dolt"]);
-        assert_eq!(rt.exec_argv().len(), 2);
+        let got = run_setup(&session(&rt), false, &["jq", "dolt", "jq", "testenv"]).unwrap();
+        assert_eq!(got.unmet.into_iter().collect::<Vec<_>>(), vec!["dolt"]);
+        let checks = rt
+            .exec_argv()
+            .into_iter()
+            .filter(|a| a.get(2).is_some_and(|c| c.starts_with("command -v")))
+            .count();
+        assert_eq!(checks, 2, "once per distinct token; testenv is never checked");
     }
 
     #[test]
@@ -1061,8 +1385,11 @@ mod tests {
             },
         );
         assert_eq!(
-            session(&rt).unmet_requirements(["jq"]),
-            Err(Fault::Deadline("requirements"))
+            run_setup(&session(&rt), true, &["jq"]).map(|_| ()),
+            Err(SetupFault {
+                fault: Fault::Deadline("requirements"),
+                reason: "deadline"
+            })
         );
     }
 
