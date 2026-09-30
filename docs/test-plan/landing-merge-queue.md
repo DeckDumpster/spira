@@ -389,3 +389,38 @@ mechanism may re-add a T1 suite once the subject and its assertions read the sam
 - sp-s088v.18 — open: verdict-timer dedup, remaining gaps G3/G4/G9/G10/G12/G13/G14
 - sp-lxoyd — landed: re-triage above (KEEP test-batch-stuck.sh, KEEP test-landing-gate-wait.sh)
 - sp-tey33 — landed: test-landing-gate-fits.sh deleted (law-a-test-that-flips-is-deleted)
+
+**sp-htrqk (2026-09-30):** `test-batch-red-main.sh` **DELETE.** It was red on local/main
+itself (both full-corpus runs of 09-30, tree f2b16e4e7; sp-s0e1k parity evidence), not from a
+branch — it drove `verdict.sh`, which the queue crate's landing cutover (sp-flj4a, sp-vsob2)
+had already removed, so every case failed on `bash: … verdict.sh: No such file or directory`
+rather than on the property it meant to test.
+
+That property — **main's own push-gate state is never consulted before the merge queue's
+fast-forward, and the forge is never asked about it** (sp-x54re, superseding sp-221n8/
+sp-wmn0w) — is now structurally true of the current landing path (`queue land-local`,
+`queue/src/ops/land.rs`), not merely untested:
+
+- The `main-gate-status` forge verb the old suite stubbed does not exist anywhere in the
+  tree any more (`forge::Forge`'s trait in `queue/src/ports.rs` has no such method, and
+  `grep -r main-gate-status` outside this suite and `test-queue-step-eject-race.sh`'s inert
+  fixture stub turns up nothing) — there is no call a regression could add back.
+- `land-local`'s only forge-derived check is the cached-ref divergence alarm (`land.rs` row
+  4), which is documented and unit-tested to **never refuse**:
+  `queue/src/tests.rs::land_local_lands_marks_and_archives` asserts
+  `t.lib.has("divergence f0 b0")` and `!t.git.calls...fetch` — the cached forge ref is read,
+  never fetched, and never blocks the fast-forward.
+  `land-local`'s only actual landing gate is the head **tree's own** certificate (a gate PASS
+  or round GREEN for that tree — §8 D12), covered by
+  `land_local_refuses_a_tree_no_gate_or_round_certified`,
+  `land_local_accepts_a_gate_pass_for_the_head_tree`,
+  `land_local_accepts_a_round_green_for_the_head_tree`, and
+  `land_local_ignores_a_pass_for_another_tree_or_repo` — a different property (self-
+  certification) from the one this suite tested (no back pressure from a stale reading of
+  *main's* state), and one the old suite never exercised.
+
+Deleted alongside it (both are shrink-only lists of files that exist, so a deleted file's
+line is dead weight): its `spira/config-fence-allow` line and its `spira/tier-budget-
+allowlist` line (T1, 16.0 s). No caller outside the suite corpus referenced it (no systemd
+unit, `.github/workflows`, `spira.toml` gate string, or chamber brief named it; gate.steps
+selects suites dynamically by `suite-select`/`covers:`, not by a fixed list).
