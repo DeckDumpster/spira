@@ -144,6 +144,19 @@ surface gets an accounting, and none of it turned out to be dead).
   release's own shadow-check (`release::clashes`); the workspace convention (`sending.sh` →
   `sending`, not `spira-sending`) is unambiguous either way.
 
+- **`mail.sh` ships as a compatibility symlink, deliberately, not just deleted.** Every
+  caller this tree can see was repointed to bare `mail`, but three cannot be git-grepped
+  from here: the Concierge persona text builds `$SPIRA_HOME/mail.sh send operator ...`,
+  brain's `escalation-hook.sh` pattern-matches `mail.sh ... --kind question|suit` verbatim
+  to enforce the statute-check gate, and an operator's own `aerc` config (outside version
+  control) may still say `outgoing = <release>/spira/mail.sh`. `build-tarball.sh` symlinks
+  both `bin/mail.sh → mail` and `spira/mail.sh → ../bin/mail` (the latter specifically
+  because those callers name `$SPIRA_HOME/mail.sh`, not just whatever `bin/` resolves on
+  PATH) — the same fix sp-6onps used for `world.sh`/`slay.sh`/`aeons.sh`/`ctrl.sh`.
+  **Retire this once the Concierge persona, `escalation-hook.sh` and the operator's own
+  `aerc` config are repointed to bare `mail`** — it is a compatibility name, not a second
+  permanent spelling.
+
 ## 6. Test strategy
 
 - **Unit** (`cargo test -p mail`): every lint rule (the table test-mail.sh used to run
