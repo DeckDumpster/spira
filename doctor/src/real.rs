@@ -310,7 +310,10 @@ impl World for Real {
         extract_semver(&text)
     }
     fn arch(&self) -> String {
-        Command::new("uname").arg("-m").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+        // `std::env::consts::ARCH` at compile time (x86_64/aarch64/...) — the same values
+        // `uname -m` reports for the two architectures this check cares about, with no
+        // subprocess and no new `deps.toml` entry for a program declared only for this.
+        std::env::consts::ARCH.to_string()
     }
     fn spira_bin_purpose(&self, name: &str) -> String {
         self.seam("spira_bin_purpose \"$1\"", &[name])

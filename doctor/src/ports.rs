@@ -42,7 +42,7 @@ pub trait World {
     /// `overrides.sh doctor` -> Ok on exit 0, Err(its stdout, one problem per line) otherwise.
     fn overrides_doctor(&self) -> Result<String, String>;
 
-    // ---- lib.sh repo-map seam (never re-derived; see skew/DESIGN.md §2 for the same rule) ----
+    // ---- lib.sh repository-map seam (never re-derived; see skew/DESIGN.md §2 for the same rule) ----
     fn repo_names(&self) -> Vec<String>;
     fn repo_field(&self, name: &str, field: &str) -> Option<String>;
     fn dir_has_cargo_toml_within(&self, path: &Path) -> bool; // maxdepth 2

@@ -1,6 +1,6 @@
 //! The production [`crate::ports::World`]: git, `bd`-adjacent tools (`release`, `mail.sh`,
 //! `overrides.sh`, `install.sh`, `exclude.sh`), `gh`, and the `lib.sh` repository-map seam —
-//! the same one-shot context call `gate-check`/`queue` use rather than re-deriving repo-map
+//! the same one-shot context call `gate-check`/`queue` use rather than re-deriving the repository map
 //! resolution in Rust a second time (DESIGN.md §4: lib.sh stays the one authority).
 
 use crate::ports::{StatusRow, World};

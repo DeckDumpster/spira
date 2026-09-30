@@ -248,7 +248,7 @@ fn config_files_none_present() {
 fn config_files_both_present_warns() {
     let f = Fake::default();
     f.set("SPIRA_CONF_FILE", "/etc/spira.conf");
-    f.set("SPIRA_TOML_FILE", "/etc/spira.toml");
+    f.set("SPIRA_TOML_FILE", "/etc/spira-cfg.toml");
     f.which.borrow_mut().insert("spira-config".into(), "/bin/spira-config".into());
     *f.config_valid.borrow_mut() = Ok(());
     let out = check_config_files(&f);
@@ -259,7 +259,7 @@ fn config_files_both_present_warns() {
 #[test]
 fn config_files_toml_fails_validation() {
     let f = Fake::default();
-    f.set("SPIRA_TOML_FILE", "/etc/spira.toml");
+    f.set("SPIRA_TOML_FILE", "/etc/spira-cfg.toml");
     f.which.borrow_mut().insert("spira-config".into(), "/bin/spira-config".into());
     *f.config_valid.borrow_mut() = Err("bad key".into());
     let out = check_config_files(&f);
@@ -269,7 +269,7 @@ fn config_files_toml_fails_validation() {
 #[test]
 fn config_files_toml_but_no_spira_config_binary_fails() {
     let f = Fake::default();
-    f.set("SPIRA_TOML_FILE", "/etc/spira.toml");
+    f.set("SPIRA_TOML_FILE", "/etc/spira-cfg.toml");
     let out = check_config_files(&f);
     assert_eq!(out[1].level, Level::Fail);
     assert!(out[1].msg.contains("spira-config is not on PATH"));

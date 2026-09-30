@@ -1,6 +1,6 @@
 //! Everything skew.sh's ported logic needs from the world, as a trait (DESIGN.md §4).
 //! `real.rs` implements it against the host (git, bd, release, gh, mail.sh, overrides.sh,
-//! install.sh, exclude.sh, and the lib.sh repo-map seam); `tests.rs` implements it as a
+//! install.sh, exclude.sh, and the lib.sh repository-map seam); `tests.rs` implements it as a
 //! fake recording calls and returning canned data — the same technique `forge`'s `FakeGh`
 //! and `gate-check`'s fakes use.
 
@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 pub type StatusRow = (char, String);
 
 pub trait World {
-    // ---- repo-map / lib.sh seam (never re-derived; lib.sh stays the one authority) ----
+    // ---- repository map / lib.sh seam (never re-derived; lib.sh stays the one authority) ----
     fn repo_names(&self) -> Vec<String>;
     fn repo_root(&self, name: &str) -> Option<PathBuf>;
     fn repo_field(&self, name: &str, field: &str) -> Option<String>;
