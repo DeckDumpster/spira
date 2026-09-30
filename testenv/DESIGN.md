@@ -157,7 +157,7 @@ parses spira.toml or the repo-map itself (law-config-through-the-cli-only).
 | `SPIRA_BATCH_SUITE_DIR` | `<worktree>/spira` | — |
 | `SPIRA_BATCH_SKIP_INSTALL` | — | — |
 | `SPIRA_BATCH_TIERS` | `T2,T3` | — |
-| `SPIRA_BATCH_MAIL_CMD` / `SPIRA_BATCH_INCIDENT_CMD` | `<harness>/spira/mail.sh` / `incident.sh` | — |
+| `SPIRA_BATCH_MAIL_CMD` / `SPIRA_BATCH_INCIDENT_CMD` | `mail.sh` / `incident.sh` on PATH (sp-gypjk) | — |
 | `SPIRA_SUITE_STATE_FILE` | `spira/suite-state` | — |
 | `SPIRA_SKIP_ALLOWLIST_FILE` (new, §3.7) | `spira/skip-allowlist.tsv` | — |
 | `SPIRA_GATE_SELECT_HEAD` | `<branch>` | — |

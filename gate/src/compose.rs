@@ -457,8 +457,7 @@ pub fn unproven(out: &str, required: &[String]) -> Vec<String> {
 /// runner's harness faults (2, 3) are NO_VERDICT (75), as in the gate string.
 pub fn reentry_command(suites: &[String]) -> String {
     format!(
-        "[ -n \"${{SPIRA_TESTENV_BIN:-}}\" ] || {{ echo 'gate: re-entry: SPIRA_TESTENV_BIN is unset — cannot run the suites the round named' >&2; exit 75; }}; \
-_b=0; \"$SPIRA_TESTENV_BIN\" --suites {} \"$SPIRA_GATE_BRANCH\" || _b=$?; case \"$_b\" in 2|3) exit 75;; *) exit \"$_b\";; esac",
+        "_b=0; testenv --suites {} \"$SPIRA_GATE_BRANCH\" || _b=$?; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac",
         suites.join(",")
     )
 }
@@ -884,13 +883,13 @@ cargo: test tests::x ... ok";
         let c = reentry_command(&v(&["test-a.sh", "test-b.sh"]));
         assert!(
             c.contains(
-                "\"$SPIRA_TESTENV_BIN\" --suites test-a.sh,test-b.sh \"$SPIRA_GATE_BRANCH\""
+                "testenv --suites test-a.sh,test-b.sh \"$SPIRA_GATE_BRANCH\""
             ),
             "{c}"
         );
         assert!(!c.contains("--deadline"));
-        assert!(c.contains("2|3) exit 75"));
-        assert!(c.contains("SPIRA_TESTENV_BIN is unset"));
+        assert!(c.contains("2|3|127) exit 75"), "a testenv missing from PATH (127) is NO_VERDICT");
+        assert!(!c.contains("SPIRA_TESTENV_BIN"), "testenv by bare name (sp-gypjk)");
     }
 
     #[test]

@@ -126,9 +126,7 @@ impl<'a> Sentinel<'a> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let Some(bin) = self.cfg.claim_bin.clone() else {
-            return Err(127);
-        };
+        let bin = self.cfg.claim_bin.clone();
         let o = self.h.run(
             Spec::args_owned(bin, vec!["counts".into()])
                 .stdin(format!("{}\n", ids.join("\n")))
@@ -151,7 +149,7 @@ impl<'a> Sentinel<'a> {
         stamp: &str,
         poisoned: Option<bool>,
     ) -> Option<HashSet<String>> {
-        let bin = self.cfg.claim_bin.clone()?;
+        let bin = self.cfg.claim_bin.clone();
         let mut a = vec![
             "decide".to_string(),
             "--poison-at".into(),

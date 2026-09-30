@@ -5,7 +5,7 @@ use std::cell::{Cell, RefCell};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::cfg::{Cfg, Context, Lifecycle, LC_DISABLED};
+use crate::cfg::{Cfg, Context, Lifecycle};
 use crate::host::{Host, Io, Out, Spec};
 use crate::seams;
 use crate::store::{self, Bd, Snapshot};
@@ -65,17 +65,13 @@ impl<'a> Sentinel<'a> {
         pass_id: String,
         lc: Lifecycle,
     ) -> Sentinel<'a> {
-        let mut cfg = Cfg::from_context(&ctx, home);
-        // Every child sees the same switch this process resolved. OFF: no path to spira-lc
-        // reaches anything this process runs (lc.sh's -x guards make each call a no-op).
+        let cfg = Cfg::from_context(&ctx, home);
+        // Every child sees the same switch this process resolved; OFF is
+        // SPIRA_LIFECYCLE_ENFORCE=0 and nothing else (sp-gypjk: no poisoned tool path).
         h.set_env(
             "SPIRA_LIFECYCLE_ENFORCE",
             if lc == Lifecycle::On { "1" } else { "0" },
         );
-        if lc == Lifecycle::Off {
-            cfg.lc_bin = None;
-            h.set_env("SPIRA_LC_BIN", LC_DISABLED);
-        }
         let tally_file = cfg
             .run
             .join(format!(".sentinel-tally.{}", std::process::id()));
@@ -133,7 +129,8 @@ impl<'a> Sentinel<'a> {
         let now = self.h.now();
         let prev = self.phase.borrow_mut().replace((name.to_string(), now));
         let (pname, t0) = prev.unwrap_or_else(|| ("setup".to_string(), self.started));
-        if let Some(bin) = self.cfg.tsd_bin.as_ref().filter(|b| is_exec(Path::new(b))) {
+        {
+            let bin = &self.cfg.tsd_bin;
             let root = self.cfg.run.to_string_lossy().into_owned();
             let _ = self.h.run(
                 Spec::args_owned(
@@ -217,12 +214,8 @@ impl<'a> Sentinel<'a> {
         body: &str,
         own_dedup: bool,
     ) -> bool {
-        let m = self.cfg.home.join("mail.sh");
-        if !is_exec(&m) {
-            return false;
-        }
         let mut s = Spec::args_owned(
-            m.to_string_lossy().into_owned(),
+            "mail.sh",
             vec![
                 "send".into(),
                 "operator".into(),
@@ -526,10 +519,7 @@ impl<'a> Sentinel<'a> {
 
     /// CHECK 2b — stranded work (the strand crate).
     fn check2b(&self) {
-        let Some(bin) = self.cfg.strand_bin.clone() else {
-            self.log("CHECK2b WARN: the strand binary is not installed (SPIRA_STRAND_BIN) — stranded work is not being checked");
-            return;
-        };
+        let bin = self.cfg.strand_bin.clone();
         let o = self.h.run(Spec::args_owned(bin, vec!["check".into()]));
         let text = format!("{}{}", o.stdout, o.stderr);
         if !text.is_empty() {
@@ -705,6 +695,20 @@ pub fn append_line(p: &Path, line: &str) {
     {
         let _ = writeln!(f, "{line}");
     }
+}
+
+/// `command -v <name>` against `path`: the first executable `<dir>/<name>`, else `name`
+/// unchanged (so the spawn fails naming the tool). Resolution by PATH, never construction.
+pub fn on_path(name: &str, path: &str) -> String {
+    if name.contains('/') {
+        return name.to_string();
+    }
+    path.split(':')
+        .filter(|d| !d.is_empty())
+        .map(|d| Path::new(d).join(name))
+        .find(|p| is_exec(p))
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| name.to_string())
 }
 
 pub fn is_exec(p: &Path) -> bool {

@@ -96,7 +96,8 @@ pub struct Run<'a> {
     pub own_unit: String,
     pub t0: i64,
     pub enforce: bool,
-    pub claim_bin: Option<String>,
+    /// `spira-claim`, by name on the launcher's PATH; a field so a test can point it at a fixture.
+    pub claim_bin: String,
     pub stop: Arc<Stop>,
     pub hb_shutdown: Arc<AtomicBool>,
     pub hb_done: Arc<AtomicBool>,
@@ -286,7 +287,7 @@ impl<'a> Run<'a> {
     /// blocks on this the way it blocks on `lc_claim_bead` itself, since the worst case is
     /// only that this round misses the speed the stack would have bought it.
     fn stack_proposal(&self, id: &str, who: &str) -> stack::Proposal {
-        let Some(claim_bin) = self.claim_bin.clone() else { return stack::Proposal::default() };
+        let claim_bin = self.claim_bin.clone();
         let o = self.d.exec.exec(&claim_bin, &s(&["stack", id]), None, None);
         match stack::parse_proposal(&o.stdout) {
             Some(p) => p,
@@ -320,11 +321,7 @@ impl<'a> Run<'a> {
             }
         };
         let ready = if ready.trim().is_empty() { "[]".to_string() } else { ready };
-        let Some(claim_bin) = self.claim_bin.clone() else {
-            self.log(&format!("{}: claim-error spira-claim not found — not reporting idle for a rank that never ran", self.f()));
-            self.ledger.awake(self.now(), self.f(), "claim-error spira-claim not found");
-            return Err(1);
-        };
+        let claim_bin = self.claim_bin.clone();
         let who = format!("{}/{}", self.f(), self.s.aeon);
         let sel = Selector { exec: self.d.exec, seam: self.d.seam, git: self.d.git, claim_bin: &claim_bin, fayth: &self.fayth.name, scratch: &self.conf.run, pid: self.pid };
         let (ids, resumable, tier) = match sel.select(&ready) {
@@ -360,19 +357,6 @@ impl<'a> Run<'a> {
 
         // ---- lifecycle: lifecycle_enforce alone decides (sp-74gzo) ----
         if self.enforce {
-            let x = |k: &str| {
-                let p = self.conf.s(k);
-                !p.is_empty() && is_executable(Path::new(&p))
-            };
-            if !x("SPIRA_LC_BIN") || !x("SPIRA_WORK_BIN") {
-                self.release();
-                self.log(&format!(
-                    "{who}: {} — lifecycle_enforce is set but SPIRA_LC_BIN/SPIRA_WORK_BIN are not both executable — refusing rather than falling back to the legacy path",
-                    c.id
-                ));
-                self.ledger_done(0, "lifecycle-enforce-binary-missing");
-                return Err(1);
-            }
             let holder = format!("aeon-{}", self.s.aeon);
             let until = self.now() + self.fayth.lease_seconds();
             let proposal = self.stack_proposal(&c.id, &who);
@@ -420,8 +404,7 @@ impl<'a> Run<'a> {
             WorldStop::Stop => {
                 let extra = if live.is_empty() { String::new() } else { format!(" (SPIRA_WORLD_STOP_SKIP set, live: {live})") };
                 self.log(&format!("{who}: {} carries {label} — stopping the world before this session{extra}", c.id));
-                let w = self.home().join("world.sh").display().to_string();
-                if !self.d.exec.exec(&w, &s(&["stop", "--why", &format!("{label} bead {}", c.id)]), None, None).success() {
+                if !self.d.exec.exec("world.sh", &s(&["stop", "--why", &format!("{label} bead {}", c.id)]), None, None).success() {
                     self.log(&format!("{who}: {} world.sh stop returned non-zero — proceeding", c.id));
                 }
                 self.s.world_was_stopped = true;
@@ -538,8 +521,7 @@ impl<'a> Run<'a> {
         if self.s.world_was_stopped {
             self.s.world_was_stopped = false;
             self.log(&format!("{}: {} {} bead — starting the world", self.f(), self.s.bead, self.conf.s("SPIRA_WORLD_STOP_LABEL")));
-            let w = self.home().join("world.sh").display().to_string();
-            let _ = self.d.exec.exec(&w, &s(&["start"]), None, None);
+            let _ = self.d.exec.exec("world.sh", &s(&["start"]), None, None);
         }
     }
 
@@ -676,8 +658,7 @@ impl<'a> Run<'a> {
             dirty = set.into_iter().collect::<Vec<_>>();
             let body: String = dirty.iter().map(|l| format!("{l}\n")).collect();
             let _ = std::fs::write(gitdir.join("spira-dirty-before"), body);
-            let hooks = self.home().join("worktree-hooks.sh").display().to_string();
-            let _ = self.d.exec.exec("env", &s(&[&format!("SPIRA_HOME={}", self.home().display()), "bash", &hooks, "install", &wdisp]), None, None);
+            let _ = self.d.exec.exec("env", &s(&[&format!("SPIRA_HOME={}", self.home().display()), "worktree-hooks.sh", "install", &wdisp]), None, None);
         }
 
         // ---- one test fixture for the whole session ----
@@ -691,11 +672,11 @@ impl<'a> Run<'a> {
         self.s.session_epoch = self.now();
         self.d.env.set("SESSION_EPOCH", &self.s.session_epoch.to_string());
         if self.fayth.sop_required {
-            let sop = self.home().join("sop.sh").display().to_string();
-            if !self.d.exec.exec(&sop, &s(&["ledger-init"]), None, None).success() {
+            let sop = "sop.sh";
+            if !self.d.exec.exec(sop, &s(&["ledger-init"]), None, None).success() {
                 self.log(&format!("{}: could not create the SOP applications ledger — the closing rule cannot be judged this run", self.f()));
             }
-            let dg = self.d.exec.exec(&sop, &s(&["digest"]), None, None);
+            let dg = self.d.exec.exec(sop, &s(&["digest"]), None, None);
             if dg.success() {
                 self.s.sop_before = Some(dg.text());
             } else {
@@ -790,9 +771,9 @@ impl<'a> Run<'a> {
         let mut body = brief::bound_bead_notes(&format!("{body}\n"), keep, max).trim_end_matches('\n').to_string();
         let paths: Vec<String> = self.sv("bead_named_paths", &s(&[&body, &self.s.repo.display().to_string()])).stdout.lines().filter(|l| !l.is_empty()).map(String::from).collect();
         if !paths.is_empty() {
-            let mut a = s(&[&self.home().join("holds.sh").display().to_string(), "--repo", &self.s.repo_name]);
+            let mut a = s(&["--repo", &self.s.repo_name]);
             a.extend(paths);
-            let h = self.d.exec.exec("bash", &a, None, None);
+            let h = self.d.exec.exec("holds.sh", &a, None, None);
             let hb = brief::holds_brief(&bead, h.code, &h.stdout);
             if !hb.is_empty() {
                 body = format!("{body}\n\n{hb}");
@@ -826,14 +807,16 @@ impl<'a> Run<'a> {
                 ("DB", db.clone()),
                 ("SPIKE_DIR", self.conf.s("SPIRA_SPIKE_DIR")),
                 ("SPIKE_PATHS", self.conf.s("SPIRA_SPIKE_PATHS")),
-                ("SOP", format!("{home}/sop.sh")),
-                ("INCIDENT", format!("{home}/incident.sh")),
-                ("ASK", format!("{home}/mail.sh")),
-                ("SUITES", format!("{} suites", brief::testenv_runner(&self.conf.s("SPIRA_TESTENV_BIN"), &home))),
-                ("TESTENV", brief::testenv_runner(&self.conf.s("SPIRA_TESTENV_BIN"), &home)),
-                ("FOLLOWUP", brief::followup_brief(self.enforce, &home, &bead, &self.s.repo_name)),
-                ("GROOM", format!("{home}/groomer.sh")),
-                ("DEP", format!("{home}/bead.sh dep add")),
+                // Tools by bare name (sp-gypjk): the aeon's environment carries the
+                // launcher's PATH, whose first entries are the release's bin/ and spira/.
+                ("SOP", "sop.sh".into()),
+                ("INCIDENT", "incident.sh".into()),
+                ("ASK", "mail.sh".into()),
+                ("SUITES", format!("{} suites", brief::TESTENV)),
+                ("TESTENV", brief::TESTENV.into()),
+                ("FOLLOWUP", brief::followup_brief(self.enforce, &bead, &self.s.repo_name)),
+                ("GROOM", "groomer.sh".into()),
+                ("DEP", "bead.sh dep add".into()),
                 ("SPIRA_HOME", home.clone()),
                 ("RUN", self.run_dir().display().to_string()),
                 ("MAX_BEADS", self.conf.s("SPIRA_MAECHEN_MAX_BEADS")),
@@ -944,11 +927,12 @@ impl<'a> Run<'a> {
         self.s.session_started = true;
         let agent = self.agent_bin();
         let (prog, args) = if self.enforce {
-            // The model runs through work-env.sh, bound to this bead (design §3.5).
+            // The model runs through work-env.sh, bound to this bead (design §3.5); by name,
+            // on the launcher's PATH (sp-gypjk).
             self.s.lc_model_restricted = true;
-            let mut a = s(&[&self.home().join("work-env.sh").display().to_string(), &bead, "--", &agent]);
+            let mut a = s(&[&bead, "--", &agent]);
             a.extend(argv);
-            ("bash".to_string(), a)
+            ("work-env.sh".to_string(), a)
         } else {
             (agent, argv)
         };

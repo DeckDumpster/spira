@@ -13,31 +13,23 @@ pub const HOST_CHECK_WALL: Duration = Duration::from_secs(30);
 
 pub struct Real {
     suite_dir: PathBuf,
-    incident: PathBuf,
-    mail: PathBuf,
-    queue_bin: Option<PathBuf>,
-}
-
-fn executable(p: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    fs::metadata(p)
-        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
+    /// incident.sh / mail.sh: the SPIRA_INCIDENT / SPIRA_MAIL_CMD test seams, else found on
+    /// PATH (sp-gypjk). None = not on PATH.
+    incident: Option<PathBuf>,
+    mail: Option<PathBuf>,
+    /// The PATH this run was given; host-check.sh is looked up on it at each call.
+    path: String,
 }
 
 impl Real {
     pub fn new(s: &Settings, env: &dyn Fn(&str) -> Option<String>) -> Real {
         let get = |k: &str| env(k).filter(|v| !v.is_empty()).map(PathBuf::from);
-        let queue_bin = get("SPIRA_QUEUE_BIN").or_else(|| {
-            let exe = std::env::current_exe().ok()?;
-            let sib = exe.parent()?.join("queue");
-            executable(&sib).then_some(sib)
-        });
+        let path = env("PATH").unwrap_or_default();
         Real {
-            incident: get("SPIRA_INCIDENT").unwrap_or_else(|| s.suite_dir.join("incident.sh")),
-            mail: get("SPIRA_MAIL_CMD").unwrap_or_else(|| s.suite_dir.join("mail.sh")),
+            incident: get("SPIRA_INCIDENT").or_else(|| crate::util::which_in(&path, "incident.sh")),
+            mail: get("SPIRA_MAIL_CMD").or_else(|| crate::util::which_in(&path, "mail.sh")),
             suite_dir: s.suite_dir.clone(),
-            queue_bin,
+            path,
         }
     }
 }
@@ -180,15 +172,14 @@ impl LibSeam for Real {
 
 impl Intake for Real {
     fn file(&self, f: &FlakeFiling) -> Result<String, String> {
-        if fs::File::open(&self.incident).is_err() {
+        let Some(incident) = self.incident.as_ref().filter(|i| fs::File::open(i).is_ok()) else {
             return Err(format!(
-                "no intake at {} — {} flake finding reaches nobody",
-                self.incident.display(),
+                "no intake (incident.sh is not on PATH) — {} flake finding reaches nobody",
                 f.suite
             ));
-        }
+        };
         let mut child = Command::new("bash")
-            .arg(&self.incident)
+            .arg(incident)
             .arg("file")
             .arg(&f.title)
             .arg("-")
@@ -226,8 +217,11 @@ impl Intake for Real {
 
 impl Mail for Real {
     fn send_operator(&self, from: &str, subject: &str, bead: Option<&str>, body: &str) -> bool {
+        let Some(mail) = self.mail.as_ref() else {
+            return false;
+        };
         let mut c = Command::new("bash");
-        c.arg(&self.mail)
+        c.arg(mail)
             .args(["send", "operator", "--from", from, "--subject", subject]);
         if let Some(b) = bead {
             c.args(["--bead", b]);
@@ -249,10 +243,8 @@ impl Mail for Real {
 
 impl HostCheck for Real {
     fn count(&self, flag: &str) -> Option<String> {
-        let script = self.suite_dir.join("host-check.sh");
-        if !executable(&script) {
-            return None;
-        }
+        // host-check.sh on the launcher's PATH (sp-gypjk); absent or not executable is None.
+        let script = crate::util::which_in(&self.path, "host-check.sh")?;
         let mut child = Command::new("bash")
             .arg(&script)
             .arg(flag)
@@ -277,20 +269,8 @@ impl HostCheck for Real {
 
 impl Queue for Real {
     fn submit(&self, branch: &str) -> bool {
-        let mut c = match &self.queue_bin {
-            Some(bin) => Command::new(bin),
-            None => {
-                // Transitional: until the queue crate's cutover ships the binary.
-                let sh = self.suite_dir.join("queue.sh");
-                if !sh.is_file() {
-                    eprintln!("suites: no queue tool (SPIRA_QUEUE_BIN, a queue binary beside testenv, or spira/queue.sh)");
-                    return false;
-                }
-                let mut c = Command::new("bash");
-                c.arg(sh);
-                c
-            }
-        };
+        // The release's `queue`, by name on the launcher's PATH (sp-gypjk).
+        let mut c = Command::new("queue");
         let err = std::io::stderr();
         c.arg("submit")
             .arg(branch)
@@ -487,7 +467,8 @@ mod tests {
         let d = tmp("hc");
         fs::create_dir_all(d.join("spira")).unwrap();
         let s = Settings::load(&crate::settings::Source { env: &|_: &str| None, config: None }, &d);
-        let real = Real::new(&s, &|_: &str| None);
+        let on_path = d.join("spira").display().to_string();
+        let real = Real::new(&s, &|k: &str| (k == "PATH").then(|| on_path.clone()));
         assert_eq!(real.count("--count-undeclared"), None, "absent script");
         let hc = d.join("spira/host-check.sh");
         // Written by testkit (no ETXTBSY race, testkit/DESIGN.md), then made NOT executable for

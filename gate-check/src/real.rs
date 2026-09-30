@@ -121,9 +121,9 @@ impl World for Real {
     }
 
     fn file_bead(&self, title: &str, repo: &str, priority: i64, body: &str) {
-        let bead_sh = self.home.join("bead.sh");
-        let mut c = Command::new("bash");
-        c.arg(&bead_sh).arg("file").arg(title).arg("--for").arg("builder").arg("--repo").arg(repo).arg("-p").arg(priority.to_string()).arg("--body-file").arg("-");
+        // bead.sh by name on the launcher's PATH (sp-gypjk).
+        let mut c = Command::new("bead.sh");
+        c.arg("file").arg(title).arg("--for").arg("builder").arg("--repo").arg(repo).arg("-p").arg(priority.to_string()).arg("--body-file").arg("-");
         c.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
         if let Ok(mut child) = c.spawn() {
             if let Some(mut w) = child.stdin.take() {
@@ -223,9 +223,8 @@ impl World for Real {
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string()).unwrap_or_default()
     }
 
-    fn tsd_ingest(&self, home: &Path, repo: &str, run_id: &str) {
-        let script = home.join("tsd-ingest.sh");
-        let _ = Command::new("bash").arg(&script).arg(repo).arg(run_id).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    fn tsd_ingest(&self, _home: &Path, repo: &str, run_id: &str) {
+        let _ = Command::new("tsd-ingest.sh").arg(repo).arg(run_id).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
     }
 
     fn print(&self, s: &str) {

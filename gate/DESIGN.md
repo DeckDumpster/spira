@@ -1,8 +1,8 @@
 # gate — design
 
 Replaces the logic of `spira/gate.sh` and `spira/gate-lib.sh` with one Rust binary, `gate`.
-`spira/gate.sh` stays as the one entry point every caller already names; it resolves
-`SPIRA_GATE_BIN` through `conf.sh` and `exec`s it. Bead: sp-0tpcs (epic sp-8m1at, design
+`spira/gate.sh` stays as the one entry point every caller already names; it `exec`s `gate`
+by bare name on the launcher's PATH (sp-gypjk; it once resolved `SPIRA_GATE_BIN`). Bead: sp-0tpcs (epic sp-8m1at, design
 `gate-unit-round-integration-2026-09-29`, item 3). First crate of the rewrite order
 (law-rust-rewrite-order: the gate first).
 
@@ -44,8 +44,9 @@ gate [--home <spira-dir>] --definition [repo-name] # the landing ref's gate comm
 ```
 
 * `repo-name` defaults to `spira_home_repo`.
-* `--home` is the directory holding `lib.sh`, `exclude.sh`, `skew.sh`, `yield.sh` and
-  `gate-sweep.sh`. The default is `$SPIRA_HOME`, then `<dir of this binary>/../spira`.
+* `--home` is the directory holding `lib.sh` (and the files `harness_h` hashes). The default is
+  `$SPIRA_HOME`, then `<dir of this binary>/../spira`. `exclude.sh`, `skew.sh`, `yield.sh` and
+  `gate-sweep.sh` are found on PATH (sp-gypjk); exclude.sh or skew.sh missing is NO_VERDICT.
 * `gate.sh` execs with `exec -a "$0"`, so `/proc/<pid>/cmdline` still names `…/gate.sh` and the
   two process scans that look for a running gate (`gate-run.sh unmanaged_gate`, `world.sh
   live_workers`) keep matching.
@@ -60,7 +61,7 @@ gate [--home <spira-dir>] --definition [repo-name] # the landing ref's gate comm
 | `rebase-stale` | through `queue submit` | green or not |
 | `batch.sh _pf_gate` | `bash gate.sh`, `SPIRA_GATE_BEAD=batch-*` | exit status |
 | `gate-run.sh` (the aeon's self-certification; `aeon` reads `gate-run.sh --status`) | `bash gate.sh <br> <repo>` | exit status, output file |
-| suites (`testlib/gate-fixture.sh` and the gate suites that copy `spira/`) | `bash $SH/gate.sh`, `SPIRA_GATE_BIN` passed through | output |
+| suites (`testlib/gate-fixture.sh` and the gate suites that copy `spira/`) | `gate.sh`, with the fixture's `gate` first on PATH | output |
 
 ### Environment it reads
 
@@ -82,16 +83,19 @@ reached the bash.
 | `SPIRA_GATE_BEAD` | ejected-suites lookup (the re-entry check), the key, `lc_certify` | — |
 | `SPIRA_GATE_CALLER` | `by=` in the cache entry | the branch |
 | `LANDSTATE` (lib.sh) | `<bead>.ejected`, else an `EJECTED` landstate row | `$SPIRA_RUN/landstate` |
-| `SPIRA_GATE_BUDGET`, `SPIRA_GATE_ALL`, `SPIRA_CERTIFY_ALWAYS_COVERS`, `SPIRA_BATCH_MAXPAR`, `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_LINT_BIN`, `SPIRA_TESTENV_BIN`, `SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS` (sp-govet), `SPIRA_SELECT_BIN` (sp-wx2tw), `PATH`, `HOME` | passed through to the gate command | as bash |
+| `SPIRA_GATE_BUDGET`, `SPIRA_GATE_ALL`, `SPIRA_CERTIFY_ALWAYS_COVERS`, `SPIRA_BATCH_MAXPAR`, `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS` (sp-govet), `PATH`, `HOME` | passed through to the gate command | as bash |
 
 ### The gate command's environment (unchanged list, `env -i`)
 
-`PATH=$HOME/.cargo/bin:$PATH`, `HOME`, `TERM=dumb`, `SPIRA_GATE_REPO`, `SPIRA_GATE_REPO_NAME`,
+`PATH=$PATH:$HOME/.cargo/bin` (the launcher's PATH first, so a bare tool name is the
+release's; cargo appended for tree builds — sp-gypjk), `HOME`, `TERM=dumb`, `SPIRA_GATE_REPO`, `SPIRA_GATE_REPO_NAME`,
 `SPIRA_GATE_BRANCH`, `SPIRA_GATE_BASE`, `SPIRA_GATE_SELECT_HEAD=<branch>`, `SPIRA_GATE_FILES`,
 `SPIRA_GATE_HOST_CORES`, `SPIRA_GATE_EJECTED_SUITES`, `SPIRA_GATE_ALL` (default 0),
 `SPIRA_GATE_SUITES` (default on), `SPIRA_CERTIFY_ALWAYS_COVERS`, `SPIRA_BATCH_MAXPAR`,
 `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_GATE_BUDGET` (default 300), `SPIRA_RUN`,
-`SPIRA_LINT_BIN`, `SPIRA_TESTENV_BIN`, `SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS` (sp-govet), `SPIRA_SELECT_BIN` (the suite selector, sp-wx2tw). Run as `timeout $SPIRA_GATE_TIMEOUT bash -c "$CMD"` in
+`SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS` (sp-govet), and each `bin <VAR>` of
+the tree's gate.steps (`SPIRA_LINT_BIN`, `SPIRA_SELECT_BIN`: the tree under test's builds, the
+design's one explicit hand-off). Every installed tool (`testenv`) is invoked by bare name. Run as `timeout $SPIRA_GATE_TIMEOUT bash -c "$CMD"` in
 the gate tree, stdout and stderr on one pipe. No lock descriptor reaches it (every descriptor
 this binary opens is close-on-exec; the bash leaked the admission slot's fd 8).
 
@@ -231,11 +235,11 @@ on the branch and absent from the base trial's ran-set is checked in this order:
 
 * the base has no `spira/<suite>` → the branch's own, with nothing to run;
 * otherwise it is re-run on the pinned base, by name, in one call:
-  `"$SPIRA_TESTENV_BIN" --suites <a,b> "$SPIRA_GATE_BRANCH"` in the gate tree, under the
+  `testenv --suites <a,b> "$SPIRA_GATE_BRANCH"` in the gate tree, under the
   base trial's environment. It has no `--deadline`, so only the gate timeout bounds it.
-  Exits 2 and 3 map to 75, as in the gate string. Names outside `[A-Za-z0-9._-]` are dropped.
+  Exits 2 and 3 map to 75, as in the gate string, and so does 127 (testenv not on PATH). Names outside `[A-Za-z0-9._-]` are dropped.
   Its output is appended to the base's output, and its wall time is metered as the
-  `base-rerun` phase. With `SPIRA_TESTENV_BIN` unset there is no re-run.
+  `base-rerun` phase.
 
 Then, given the branch trial failed with an ordinary red:
 
@@ -421,12 +425,12 @@ exits 0.
 * **The phase** (`run_composed`): after the composition's own phases pass, the suites of
   *required* that the output so far does not show satisfied run as one more phase,
   `reentry`:
-  `"$SPIRA_TESTENV_BIN" --suites <a,b> "$SPIRA_GATE_BRANCH"`, the runner's 2/3 mapped to 75
+  `testenv --suites <a,b> "$SPIRA_GATE_BRANCH"`, the runner's 2/3 (and 127, not on PATH) mapped to 75
   as the gate string maps them, **no `--deadline`** (the round named them; the phase is bounded
   by what is left of `SPIRA_GATE_TIMEOUT`), through the same `run_gate` port, environment and
   tree. After a unit or fences composition, or suites off, that is all of *required*; after a
   suites gate that already ran them, nothing (no second container); after one whose budget
-  deferred some, just those. An unset `SPIRA_TESTENV_BIN` exits 75 (NO_VERDICT).
+  deferred some, just those.
 * **The proof** (`compose::unproven`): the branch trial's output must show every required
   suite's **last** runner line as `ok`, `DISABLED` or `QUARANTINED-RED` (the last two do not
   block a round either, so a round never ejects on them). `SKIPPED`, `SKIP-REQ`, `UNREACHED`,

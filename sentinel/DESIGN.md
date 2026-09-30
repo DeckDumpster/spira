@@ -154,7 +154,7 @@ The directory paths come from the probe's variables (§6, S0): `SPIRA_POISON_ASK
 |---|---|
 | the whole bead store | `bd -C $SPIRA_DB list --all --limit 0 --json` |
 | the broad ready set | `bd -C $SPIRA_DB ready --limit 0 --exclude-type epic,event -u [--exclude-label $SPIRA_NO_LOOP_LABEL] --json` (lib.sh `ready_raw_args`) |
-| every lifecycle row (**ON only**) | `$SPIRA_LC_BIN list` → `[{bead_id,state,holder,lease_until,holds,version}]` |
+| every lifecycle row (**ON only**) | `spira-lc list` → `[{bead_id,state,holder,lease_until,holds,version}]` |
 
 **Extra reads, only on the rare paths:**
 
@@ -207,7 +207,7 @@ environment has no effect.
   SPIRA_ASK_LABEL SPIRA_SCOPE_LABEL SPIRA_WORK_CLOSE_TYPES`, in that order, plus **new**
   `SPIRA_SKIP_CLOSED_CHECK` and `SPIRA_SKIP_RECLAIM` when they are set (§9, B1).
 
-`spira-landing` runs `$SPIRA_LANDING_PASS_BIN land`. It is launched the same way with:
+`spira-landing` runs `landing-pass land` (the PATH-resolved program: a transient unit has no launcher PATH). It is launched the same way with:
 
 - `--unit=${SPIRA_LAND_UNIT:-spira-landing}`
 - `RuntimeMaxSec=${SPIRA_LAND_MAXSEC:-3600}`
@@ -230,20 +230,18 @@ Dead ones are deleted, as `aeon_count` does.
 | step | command | reads back |
 |---|---|---|
 | CHECK 1 | `$SPIRA_HOME/pilgrimage.sh check` | output passed through; `^PILGRIMAGE COMPLETE` counted → progress |
-| CHECK 2b | `$SPIRA_STRAND_BIN check` | output passed through; `^RECLAIMED` → progress, `^STRANDED` → act |
-| CHECK 4 | `$SPIRA_CLAIM_BIN counts` (ids on stdin), `decide --poison-at P --requeue-at R --reclaim-at C -- n rq rc labels stamp [poisoned]`; `$SPIRA_HOME/mail.sh send operator --from … --subject … --kind question --default …` (body on stdin) | `id\tatt\treq\trcl`; tokens; rc |
-| CHECK 5 | `bash ${SPIRA_INCIDENT_SH:-$SPIRA_HOME/incident.sh} file "<title>" -` (env `SPIRA_INCIDENT_*`, body on stdin) | ignored |
+| CHECK 2b | `strand check` | output passed through; `^RECLAIMED` → progress, `^STRANDED` → act |
+| CHECK 4 | `spira-claim counts` (ids on stdin), `decide --poison-at P --requeue-at R --reclaim-at C -- n rq rc labels stamp [poisoned]`; `mail.sh send operator --from … --subject … --kind question --default …` (body on stdin) | `id\tatt\treq\trcl`; tokens; rc |
+| CHECK 5 | `bash ${SPIRA_INCIDENT_SH:-incident.sh} file "<title>" -` (env `SPIRA_INCIDENT_*`, body on stdin) | ignored |
 | CHECK 6 | `bash $SPIRA_HOME/watchtower.sh --throttle-check`, `--czar-outcome-check`, `--pr-stall-check`, `--disabled-timer-check` (only when the file is readable; each 2>/dev/null) | ignored |
 | CHECK 6b | `$SPIRA_HOME/sending.sh --skip-queue` | output passed through; `^SENT <id> <repo> <branch>` → act; `^FAILED` → log |
 | CHECK 8 | `$SPIRA_HOME/reflect.sh "<open children, newline-separated>"` >> `reflect.log` | — |
-| tsd | `$SPIRA_TSD_BIN --family sentinel-phase --root $SPIRA_RUN --field-str pass=<id> --field-str check=<name> --field secs=<n>` | best-effort |
+| tsd | `tsd-write --family sentinel-phase --root $SPIRA_RUN --field-str pass=<id> --field-str check=<name> --field secs=<n>` | best-effort |
 
-Binaries are resolved in this order:
-
-- `SPIRA_STRAND_BIN`, `SPIRA_CLAIM_BIN` and `SPIRA_LC_BIN`: the probe's environment first,
-  then `spira_bin <name>` (`$SPIRA_ARTIFACTS` else `$SPIRA_REPO/bin`).
-- An absent binary is logged once per pass. The check that needed it makes no decision.
-  An absent spira-lc keeps lc.sh's contract: nothing is held, and nothing is read as held.
+Every Spira tool is invoked by its bare name on the PATH the launcher set (sp-gypjk; design
+runtime-is-a-release). There is no resolver, no `SPIRA_*_BIN` override and no "not
+installed" state: a tool missing from PATH fails its spawn (rc 127), naming itself. The
+names live as plain `Cfg` fields so a unit test can point one at a fixture.
 
 ### 2.6 Configuration (environment, as resolved by conf.sh through the probe)
 
@@ -278,7 +276,6 @@ Binaries are resolved in this order:
 | `SPIRA_LIFECYCLE_ENFORCE` / `spira.lifecycle_enforce` | off | **the lifecycle switch** (§2.9). The unit's own environment wins (`1`/`true` = on, anything else = off). It is read from this process's original environment, not conf.sh's, which defaults it to 0. Else `spira.lifecycle_enforce` in the spira.toml conf.sh resolved (`SPIRA_TOML_FILE`), read with the spira-config library. Else off. This is the same resolution as the aeon crate (concierge/rw-aeon `aeon/src/conf.rs`). Binary presence is never consulted |
 | `SPIRA_RECLAIM_SKIP_LABEL` | `spira-waiting-operator` | OFF's CHECK 2 protection label. The key was retired by sp-i2m7y; this is its last default, kept as a literal |
 | `SPIRA_FAYTHS` | the chamber | the roster (lib.sh `spira_fayths`, via the probe) |
-| `SPIRA_TSD_BIN` | — | phase rows |
 | `SPIRA_SENTINEL_PASS_TARGET_SECS` | 60 | **new**: the full-pass budget WARN (§5) |
 | `SPIRA_SENTINEL_PASS_BUDGET_SECS` | 90 | CHECK 7's own budget, inside the seam |
 
@@ -291,14 +288,14 @@ source commits it was recovered from are named.
 |---|---|---|
 | **2 (protect waiting)** | Candidates are snapshot beads that are `in_progress` and either carry `$SPIRA_RECLAIM_SKIP_LABEL` or have dependencies. Dependency facts come from the snapshot join. Protect with `bd label add <id> spira-waiting-operator` (log `… — labeled <skip>, excluded from reclaim`). Release with `bd label remove` (log `… — removed <skip>, re-enters the reaper`). Source: `f043dee14^` lib.sh `check2_protect_waiting` | The same decision over the lifecycle `wait` hold. Hold and unhold go through `spira-lc event` (log `… — wait-held …` / `… — wait released …`) |
 | **2 (reap)** | One `bd reclaim --older-than <grace/60>m --label <partition> --exclude-label <skip>` per partition. `bd reclaim` resets status and assignee and records the recovery. Each `✓`/`Reclaimed` line is one reclaim, and its id gets a `reclaimed/stale-lease` events row. Then progress `reclaimed <n> stale lease(s)`. No partition logs `CHECK2 no persona in the chamber declares a partition — no lease is being reaped`. Source: `f043dee14^` `check2_reclaim_stale` + `parse_reclaimed` | WORKING rows past `SPIRA_RECLAIM_GRACE_SECS`, not wait-held, get a HolderDead event, an events row and a `bd note`. The protect step's successful writes apply before the reap |
-| **2b** | `strand check` with `SPIRA_LC_BIN` disabled. strand then reads no wait holds and fires no HolderDead (see the gap below) | `strand check` with the live `SPIRA_LC_BIN` |
+| **2b** | `strand check` with `SPIRA_LIFECYCLE_ENFORCE=0`. strand then reads no wait holds and fires no HolderDead (see the gap below) | `strand check` with `SPIRA_LIFECYCLE_ENFORCE=1` |
 | **2c** | Orphaned claims: snapshot beads per partition that are `open`, with an assignee, and whose lease is absent or past (an unparseable lease is left alone). Each gets `bd assign <id> ""`; only a successful assign prints `RELEASED\t<id>\t<assignee>`. Then progress `released <n> orphaned claim(s)`, and plan_ready is re-counted live for CHECK 3 and 8. Source: `542b9445f^` `release_orphan_claims_partitions` | Detect only: `INCONSISTENT` lines for rows whose holder and state disagree |
-| **3b / 3c** | The seam runs with `SPIRA_LC_BIN` disabled. `mark_queue_waiters` and `close_landed_queue_waiters` then write only the `spira-queue-waiting` label; their `lc_hold wait`/`lc_unhold` dual writes are no-ops. That is exactly their pre-sp-mys5p behaviour | The same seam with the live binary: label plus hold, as lib.sh has it |
+| **3b / 3c** | The seam runs with `SPIRA_LIFECYCLE_ENFORCE=0`. `mark_queue_waiters` and `close_landed_queue_waiters` then write only the `spira-queue-waiting` label; their `lc_hold wait`/`lc_unhold` dual writes are no-ops. That is exactly their pre-sp-mys5p behaviour | The same seam with the switch on: label plus hold, as lib.sh has it |
 | **4 (poisoned?)** | The `spira-poison` bd label. Every partition excludes it, so a poisoned bead is not in the dispatchable set. `decide`'s `poisoned` argument is the label | The lifecycle `poison` hold |
 | **4 (poison)** | `bd label add <id> spira-poison`. The note ends `… no persona can claim it again while the label stands.` Source: `e08d8982b^` | Hold poison (`spira-lc event`). The note ends `… while the hold stands.` No bd label |
 | **4 (stale clear)** | Snapshot beads carrying `spira-poison`, not closed, not an epic or event. `clear` means `bd label remove <id> spira-poison` | Beads the lifecycle rows hold `poison` on. `clear` means Unhold poison |
 | **4 (counts, asks)** | spira-claim over the bd events trail, the asked stamps, mail.sh. Identical in both modes | ← |
-| **5, 6, 6b, 7, 7c, 7d, 8** | No lifecycle read or write of their own. Children run with `SPIRA_LC_BIN` disabled | Children run with the live binary |
+| **5, 6, 6b, 7, 7c, 7d, 8** | No lifecycle read or write of their own. Children run with `SPIRA_LIFECYCLE_ENFORCE=0` | Children run with it `1` |
 
 **Children.** The switch reaches everything this process starts:
 
@@ -306,13 +303,8 @@ source commits it was recovered from are named.
   pilgrimage.sh, sending.sh, watchtower.sh, incident.sh and reflect.sh.
 - Both systemd-run workers get it as `--setenv`. The audit worker resolves the same mode
   from it.
-- In OFF mode, every child also gets
-  `SPIRA_LC_BIN=/nonexistent/spira-lc-disabled-by-lifecycle_enforce=0`, and so does the
-  landing worker, by `--setenv`. The value is non-empty, so conf.sh's resolvers keep it:
-  `: "${SPIRA_LC_BIN:=…}"` at :1096, and `[ -z … ]` at :2307, both checked live. It is
-  never executable, so every `lc.sh` function's `[ -x "$SPIRA_LC_BIN" ]` guard makes it a
-  no-op. `lc-delivery.sh`'s `"${SPIRA_LC_BIN:?}"` fails to exec (rc 127) instead of
-  reaching the machine.
+- That switch is the whole of OFF (sp-gypjk). No child is handed a poisoned tool path;
+  `lc.sh` gates each call on `SPIRA_LIFECYCLE_ENFORCE`, never on whether `spira-lc` exists.
 
 **ON is loud.** Two things fail the unit:
 
@@ -797,6 +789,10 @@ functions have their own tests:
 - the Sending skip test.
 
 ## 8. Cutover (applied by the Concierge; nothing below is edited by this branch)
+
+> **Historical record.** This cutover has been applied. Its `SPIRA_SENTINEL_BIN` / `spira_bin`
+> rows were later superseded by sp-gypjk: every caller invokes `sentinel` by bare name on the
+> launcher's PATH, and no binary resolver remains.
 
 Line numbers are against this branch's base, `7ce25b21b`.
 

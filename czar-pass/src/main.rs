@@ -88,10 +88,10 @@ impl Config {
             marker: env::var("SPIRA_CZAR_PASS_MARKER")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("czar-pass.swept")),
-            incident_sh: env::var("SPIRA_INCIDENT_SH")
-                .unwrap_or_else(|_| format!("{}/incident.sh", spira_home)),
-            forge_sh: env::var("SPIRA_FORGE")
-                .unwrap_or_else(|_| format!("{}/forge.sh", spira_home)),
+            // By name on the launcher's PATH (sp-gypjk); SPIRA_INCIDENT_SH / SPIRA_FORGE
+            // remain the seams that name another script.
+            incident_sh: env::var("SPIRA_INCIDENT_SH").unwrap_or_else(|_| "incident.sh".into()),
+            forge_sh: env::var("SPIRA_FORGE").unwrap_or_else(|_| "forge.sh".into()),
             queue_dir: env::var("SPIRA_QUEUE_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("queue")),
@@ -246,8 +246,7 @@ fn infer(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str) {
             } else {
                 format!("{},{}", cfg.scope_label, cfg.czar_label)
             };
-            let mut child = Command::new("bash")
-                .arg(&cfg.incident_sh)
+            let mut child = script(&cfg.incident_sh)
                 .arg("file")
                 .arg(subj)
                 .arg("-")
@@ -292,8 +291,7 @@ fn infer_urgent(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str, r
             if !cfg.scope_label.is_empty() {
                 labels = format!("{},{}", cfg.scope_label, labels);
             }
-            let mut child = Command::new("bash")
-                .arg(&cfg.incident_sh)
+            let mut child = script(&cfg.incident_sh)
                 .arg("file")
                 .arg(subj)
                 .arg("-")
@@ -446,9 +444,20 @@ fn file_mtime(path: &Path) -> Option<u64> {
 // A failed forge call and "nothing going on" must stay distinguishable (sp-pu7v6): a
 // spawn failure, a non-zero exit or invalid UTF-8 all report Err, so a caller can report
 // its invariant unobservable instead of silently reading the failure as "satisfied".
+/// A harness script: a bare name (sp-gypjk: the release's `spira/`, on the launcher's PATH)
+/// is exec'd by name; a path (a test seam's mock) goes through `bash`, as before.
+fn script(s: &str) -> Command {
+    if s.contains('/') {
+        let mut c = Command::new("bash");
+        c.arg(s);
+        c
+    } else {
+        Command::new(s)
+    }
+}
+
 fn run_forge(forge_sh: &str, args: &[&str]) -> Result<String, String> {
-    let mut cmd = Command::new("bash");
-    cmd.arg(forge_sh);
+    let mut cmd = script(forge_sh);
     for a in args {
         cmd.arg(a);
     }

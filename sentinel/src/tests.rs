@@ -129,18 +129,12 @@ impl World {
         std::fs::create_dir_all(&run).unwrap();
         std::fs::create_dir_all(run.join("landstate")).unwrap();
         std::fs::create_dir_all(&home).unwrap();
-        for s in ["mail.sh", "lc", "claim", "strand"] {
-            exe(&home.join(s));
-        }
         World { dir, run, home }
     }
 
     pub fn ctx(&self, extra: &[(&str, &str)], repos: Option<&[&str]>) -> Context {
         let run = self.run.to_string_lossy().into_owned();
         let home = self.home.to_string_lossy().into_owned();
-        let lc = self.home.join("lc").to_string_lossy().into_owned();
-        let claim = self.home.join("claim").to_string_lossy().into_owned();
-        let strand = self.home.join("strand").to_string_lossy().into_owned();
         let mut env: Vec<(&str, &str)> = vec![
             ("SPIRA_RUN", &run),
             ("SPIRA_HOME", &home),
@@ -151,9 +145,6 @@ impl World {
             ("SPIRA_NO_LOOP_LABEL", "no-loop"), // literal-ok: test fixture
             ("SPIRA_QUEUE_WAIT_LABEL", "spira-queue-waiting"),
             ("SPIRA_SUBMITTED_LABEL", "spira-submitted"),
-            ("SPIRA_LC_BIN", &lc),
-            ("SPIRA_CLAIM_BIN", &claim),
-            ("SPIRA_STRAND_BIN", &strand),
             ("PATH", "/usr/bin:/bin"),
             ("HOME", "/home/x"),
             ("SPIRA_SUMMON", "systemd-run"),
@@ -203,7 +194,7 @@ pub fn standard(r: &FakeRunner) {
     r.on(|s| if is_bd(s, "list") { ok(LIST) } else { None });
     r.on(|s| if is_bd(s, "ready") { ok(READY) } else { None });
     r.on(|s| {
-        if s.prog.ends_with("/lc") && s.args.first().map(String::as_str) == Some("list") {
+        if s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("list") {
             ok("[]")
         } else {
             None
@@ -249,28 +240,15 @@ pub fn run_mode<'a>(
     if lc == Lifecycle::Off {
         // OFF never invokes spira-lc — not directly, and no child is handed a path to it.
         assert_eq!(
-            r.count(|s| s.prog.ends_with("/lc")),
+            r.count(|s| s.prog == "spira-lc"),
             0,
             "OFF called spira-lc: {:#?}",
             r.lines()
         );
+        // ...and OFF is SPIRA_LIFECYCLE_ENFORCE=0 alone: no child is handed a tool path.
         for s in r.calls.borrow().iter() {
-            if let Some(v) = env_of(s, "SPIRA_LC_BIN") {
-                assert_eq!(
-                    v,
-                    crate::cfg::LC_DISABLED,
-                    "{} was handed a live SPIRA_LC_BIN",
-                    s.line()
-                );
-            }
-            if seam_name(s).is_some() || s.prog.ends_with("/strand") {
-                assert_eq!(
-                    env_of(s, "SPIRA_LC_BIN"),
-                    Some(crate::cfg::LC_DISABLED),
-                    "{}",
-                    s.line()
-                );
-            }
+            assert_eq!(env_of(s, "SPIRA_LC_BIN"), None, "{}", s.line());
+            assert!(!s.args.iter().any(|a| a.starts_with("--setenv=SPIRA_LC_BIN")), "{}", s.line());
         }
     }
     rc
@@ -345,7 +323,7 @@ fn skip_reclaim_skips_the_db_and_goal_checks() {
 fn full_pass_reads_the_store_once_and_exports_it() {
     let (w, r, sink, clock) = setup("full");
     r.on(|s| {
-        if s.prog.ends_with("/strand") {
+        if s.prog == "strand" {
             // the snapshot paths reached strand
             assert!(env_of(s, "SPIRA_LIST_SNAPSHOT")
                 .is_some_and(|p| std::fs::read_to_string(p).unwrap().contains("sp-goal")));
@@ -368,7 +346,7 @@ fn full_pass_reads_the_store_once_and_exports_it() {
     assert_eq!(r.count(|s| is_bd(s, "ready")), 1);
     // lifecycle_enforce OFF (the default here): no lifecycle read at all — run_mode asserts
     // that for every OFF test. ON's one read is pinned in on_check2_reaps_….
-    assert_eq!(r.count(|s| s.prog.ends_with("/lc")), 0);
+    assert_eq!(r.count(|s| s.prog == "spira-lc"), 0);
     assert!(sink.has("spira: state: goal=sp-goal open=2 plan_ready=1 in_progress=1 aeons=0 fayths=[builder ops]"), "{}", sink.text());
     assert!(sink.has("RECLAIMED sp-x — ghost"));
     assert!(sink.has("ACT handled 1 stranded item(s)"));
@@ -568,7 +546,7 @@ fn report_lists_open_children_and_nothing_when_empty() {
         "{t}"
     );
     assert_eq!(
-        r.count(|s| s.prog.ends_with("/strand")),
+        r.count(|s| s.prog == "strand"),
         0,
         "--report changes nothing"
     );
@@ -645,13 +623,13 @@ fn on_check2_reaps_stale_leases_and_2c_reports_desync() {
     let (w, r, sink, clock) = setup("check2");
     let lease = NOW - 20_000;
     r.on(move |s| {
-        if s.prog.ends_with("/lc") && s.args[0] == "list" {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
             return ok(&format!(
                 r#"[{{"bead_id":"sp-b","state":"WORKING","holder":"aeon-1","lease_until":"{lease}","holds":"[]","version":"3"}},
                     {{"bead_id":"sp-c","state":"READY","holder":"ghost","holds":"[]","version":"1"}}]"#
             ));
         }
-        if s.prog.ends_with("/lc") && s.args[0] == "show" {
+        if s.prog == "spira-lc" && s.args[0] == "show" {
             return ok(r#"{"bead":{"state":"WORKING","version":"3"}}"#);
         }
         None
@@ -666,12 +644,12 @@ fn on_check2_reaps_stale_leases_and_2c_reports_desync() {
         None,
     );
     assert_eq!(
-        r.count(|s| s.prog.ends_with("/lc") && s.args[0] == "list"),
+        r.count(|s| s.prog == "spira-lc" && s.args[0] == "list"),
         1,
         "ON: one lifecycle read per pass"
     );
     let ev = r
-        .find(|s| s.prog.ends_with("/lc") && s.args[0] == "event")
+        .find(|s| s.prog == "spira-lc" && s.args[0] == "event")
         .unwrap();
     assert_eq!(
         ev.args,
@@ -721,16 +699,16 @@ fn audit_world(tag: &str) -> (World, FakeRunner, FakeSink, FakeClock) {
         }
     });
     r.on(|s| {
-        if s.prog.ends_with("/lc") && s.args[0] == "list" {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
             return ok(r#"[{"bead_id":"sp-h","state":"READY","holds":["poison"],"version":"2"}]"#);
         }
-        if s.prog.ends_with("/lc") && s.args[0] == "show" {
+        if s.prog == "spira-lc" && s.args[0] == "show" {
             return ok(r#"{"bead":{"state":"READY","version":"9"}}"#);
         }
         None
     });
     r.on(|s| {
-        if s.prog.ends_with("/claim") && s.args[0] == "counts" {
+        if s.prog == "spira-claim" && s.args[0] == "counts" {
             let ids = String::from_utf8(s.stdin.clone().unwrap()).unwrap();
             let mut o = String::new();
             for id in ids.lines() {
@@ -743,7 +721,7 @@ fn audit_world(tag: &str) -> (World, FakeRunner, FakeSink, FakeClock) {
             }
             return ok(&o);
         }
-        if s.prog.ends_with("/claim") && s.args[0] == "decide" {
+        if s.prog == "spira-claim" && s.args[0] == "decide" {
             let pos = &s.args[8..];
             return ok(
                 match (
@@ -804,7 +782,7 @@ fn check4_poisons_asks_mails_and_clears() {
     );
     // decide got thresholds, the stamp and the lifecycle poison read
     let d = r
-        .find(|s| s.prog.ends_with("/claim") && s.args[0] == "decide" && s.args[8] == "3")
+        .find(|s| s.prog == "spira-claim" && s.args[0] == "decide" && s.args[8] == "3")
         .unwrap();
     assert_eq!(
         d.args,
@@ -830,7 +808,7 @@ fn check4_poisons_asks_mails_and_clears() {
         .find(|s| is_bd(s, "show") && s.args[3] == "sp-p")
         .is_some());
     let hold = r
-        .find(|s| s.prog.ends_with("/lc") && s.args[0] == "event" && s.args[2] == "sp-p")
+        .find(|s| s.prog == "spira-lc" && s.args[0] == "event" && s.args[2] == "sp-p")
         .unwrap();
     assert_eq!(
         hold.args[3..],
@@ -860,7 +838,7 @@ fn check4_poisons_asks_mails_and_clears() {
     // the ask: evidence carries the bead, the repo and the trace; marked once accepted
     let ask = r
         .find(|s| {
-            s.prog.ends_with("/mail.sh") && s.args.iter().any(|a| a.contains("change the approach"))
+            s.prog == "mail.sh" && s.args.iter().any(|a| a.contains("change the approach"))
         })
         .unwrap();
     assert!(env_of(&ask, "SPIRA_MAIL_REPEAT_CONSIDERED").is_none());
@@ -875,7 +853,7 @@ fn check4_poisons_asks_mails_and_clears() {
     // the requeue mail
     let rq = r
         .find(|s| {
-            s.prog.ends_with("/mail.sh") && s.args.iter().any(|a| a.contains("requeued 5 times"))
+            s.prog == "mail.sh" && s.args.iter().any(|a| a.contains("requeued 5 times"))
         })
         .unwrap();
     assert_eq!(
@@ -889,7 +867,7 @@ fn check4_poisons_asks_mails_and_clears() {
     );
     // the stale clear
     let un = r
-        .find(|s| s.prog.ends_with("/lc") && s.args[0] == "event" && s.args[2] == "sp-h")
+        .find(|s| s.prog == "spira-lc" && s.args[0] == "event" && s.args[2] == "sp-h")
         .unwrap();
     assert_eq!(un.args.last().unwrap(), r#"{"Unhold":{"kind":"Poison"}}"#);
     assert!(sink.has("ACT CHECK4 sp-h: stale poison cleared — 1 attempt(s), below threshold 3"));
@@ -911,7 +889,7 @@ fn check4_poisons_asks_mails_and_clears() {
 fn check4_decides_nothing_when_counts_fail_and_skips_a_bead_closed_mid_pass() {
     let (w, r, sink, clock) = audit_world("c4fail");
     r.on(|s| {
-        if s.prog.ends_with("/claim") && s.args[0] == "counts" {
+        if s.prog == "spira-claim" && s.args[0] == "counts" {
             fail(2)
         } else {
             None
@@ -932,7 +910,7 @@ fn check4_decides_nothing_when_counts_fail_and_skips_a_bead_closed_mid_pass() {
     );
     assert!(sink.has("CHECK4 bulk attempts query failed (rc=2) — making no poison/requeue/reclaim decision this pass"));
     assert_eq!(
-        r.count(|s| s.prog.ends_with("/claim") && s.args[0] == "decide"),
+        r.count(|s| s.prog == "spira-claim" && s.args[0] == "decide"),
         0
     );
     assert!(sink.has(
@@ -964,7 +942,7 @@ fn check4_decides_nothing_when_counts_fail_and_skips_a_bead_closed_mid_pass() {
         "CHECK4 sp-p: 3 attempts, but it closed while this pass ran — not poisoned, not asked"
     ));
     assert!(r
-        .find(|s| s.prog.ends_with("/lc") && s.args[0] == "event" && s.args[2] == "sp-p")
+        .find(|s| s.prog == "spira-lc" && s.args[0] == "event" && s.args[2] == "sp-p")
         .is_none());
 }
 
@@ -1234,18 +1212,8 @@ fn roster_warnings_name_each_left_out_persona_once() {
 #[test]
 fn phases_are_tsd_rows_for_the_full_pass_only() {
     let (w, r, sink, clock) = setup("phase");
-    let tsd = w.home.join("tsd");
-    exe(&tsd);
-    let t = tsd.to_string_lossy().into_owned();
-    run_mode(
-        &w,
-        &r,
-        &sink,
-        &clock,
-        Mode::Pass,
-        &[("SPIRA_TSD_BIN", &t)],
-        None,
-    );
+    let t = "tsd-write".to_string();
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
     let checks: Vec<String> = r
         .calls
         .borrow()
@@ -1420,7 +1388,7 @@ fn off_check4_poisons_and_clears_by_label() {
         sink.text()
     );
     let d = r
-        .find(|s| s.prog.ends_with("/claim") && s.args[0] == "decide" && s.args[8] == "3")
+        .find(|s| s.prog == "spira-claim" && s.args[0] == "decide" && s.args[8] == "3")
         .unwrap();
     assert_eq!(
         d.args.last().unwrap(),
@@ -1442,7 +1410,7 @@ fn off_check4_poisons_and_clears_by_label() {
         .calls
         .borrow()
         .iter()
-        .filter(|s| s.prog.ends_with("/claim") && s.args[0] == "counts")
+        .filter(|s| s.prog == "spira-claim" && s.args[0] == "counts")
         .map(|s| String::from_utf8(s.stdin.clone().unwrap()).unwrap())
         .collect::<Vec<_>>();
     assert_eq!(counts.last().unwrap(), "sp-h\n");
@@ -1481,7 +1449,7 @@ fn on_check4_note_names_the_hold() {
 fn on_an_unreachable_machine_is_loud_and_fails_the_unit() {
     let (w, r, sink, clock) = setup("onfail");
     r.on(|s| {
-        if s.prog.ends_with("/lc") {
+        if s.prog == "spira-lc" {
             return Some(Out {
                 rc: 2,
                 stdout: String::new(),
@@ -1523,7 +1491,8 @@ fn on_an_unreachable_machine_is_loud_and_fails_the_unit() {
     assert_eq!(r.count(|s| is_bd(s, "reclaim") || is_bd(s, "assign")), 0);
 
     let (w, r, sink, clock) = setup("onmissing");
-    std::fs::remove_file(w.home.join("lc")).unwrap();
+    // spira-lc missing from PATH: the spawn fails (rc 127), naming the tool.
+    r.on(|s| if s.prog == "spira-lc" { fail(127) } else { None });
     let rc = run_mode(
         &w,
         &r,
@@ -1537,7 +1506,7 @@ fn on_an_unreachable_machine_is_loud_and_fails_the_unit() {
         Some(&[]),
     );
     assert_eq!(rc, 1);
-    assert!(sink.has("LIFECYCLE UNREACHABLE — lifecycle_enforce=1 but spira-lc is not installed"));
+    assert!(sink.has("LIFECYCLE UNREACHABLE — lifecycle_enforce=1 but `spira-lc list` failed (rc=127"), "{}", sink.text());
     assert!(sink
         .has("CHECK4 lifecycle read failed — making no poison/requeue/reclaim decision this pass"));
     assert_eq!(
@@ -1573,14 +1542,7 @@ fn the_switch_reaches_every_child_and_both_workers() {
         assert!(land
             .args
             .contains(&format!("--setenv=SPIRA_LIFECYCLE_ENFORCE={want}")));
-        let disabled = format!("--setenv=SPIRA_LC_BIN={}", crate::cfg::LC_DISABLED);
-        assert_eq!(land.args.contains(&disabled), !on);
-        if on {
-            assert_eq!(
-                env_of(&ck7, "SPIRA_LC_BIN"),
-                None,
-                "ON: children keep conf.sh's own SPIRA_LC_BIN"
-            );
-        }
+        assert!(!land.args.iter().any(|a| a.starts_with("--setenv=SPIRA_LC_BIN")));
+        assert_eq!(env_of(&ck7, "SPIRA_LC_BIN"), None);
     }
 }

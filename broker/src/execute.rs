@@ -182,10 +182,9 @@ fn repo_map_lookup(repo: &str) -> Option<String> {
     crate::repo_map::lookup(repo)
 }
 
-fn czar_fence_check(spira_home: &str, class: &str) -> Result<bool, String> {
-    let fence = format!("{}/czar-fence.sh", spira_home);
-    let status = Command::new("bash")
-        .arg(&fence)
+fn czar_fence_check(_spira_home: &str, class: &str) -> Result<bool, String> {
+    // czar-fence.sh by name on the launcher's PATH (sp-gypjk).
+    let status = Command::new("czar-fence.sh")
         .arg(class)
         .status()
         .map_err(|e| format!("cannot run czar-fence.sh: {e}"))?;

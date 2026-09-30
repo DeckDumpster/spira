@@ -68,8 +68,7 @@ impl Run<'_> {
             return;
         }
         let lines: Vec<&str> = new.lines().filter(|l| !l.is_empty()).collect();
-        let script = self.home().join("wiki-commit.sh").display().to_string();
-        let o = self.d.exec.exec("bash", &s(&[&script, &wiki, &format!("{}: wiki writes for {}", self.f(), self.s.bead)]), Some(format!("{new}\n").into_bytes()), None);
+        let o = self.d.exec.exec("wiki-commit.sh", &s(&[&wiki, &format!("{}: wiki writes for {}", self.f(), self.s.bead)]), Some(format!("{new}\n").into_bytes()), None);
         if o.success() {
             let mut shown = lines.iter().take(5).cloned().collect::<Vec<_>>().join(" ");
             if lines.len() > 5 {
@@ -120,17 +119,14 @@ impl Run<'_> {
                 } else {
                     let cur = self.d.git.git(&self.s.repo, &["rev-parse", &branch]);
                     let cur = if cur.success() { cur.text() } else { String::new() };
-                    let count = match &self.claim_bin {
-                        Some(b) => {
-                            let o = self.d.exec.exec(b, &s(&["requeues", &id, "--json"]), None, None);
-                            if o.success() {
-                                eviction_race_count(&o.stdout)
-                            } else {
-                                self.log(&format!("{f}: {id} spira-claim could not count prior eviction-race reopens (rc={}) — reading it as 0", o.code));
-                                0
-                            }
+                    let count = {
+                        let o = self.d.exec.exec(&self.claim_bin, &s(&["requeues", &id, "--json"]), None, None);
+                        if o.success() {
+                            eviction_race_count(&o.stdout)
+                        } else {
+                            self.log(&format!("{f}: {id} spira-claim could not count prior eviction-race reopens (rc={}) — reading it as 0", o.code));
+                            0
                         }
-                        None => 0,
                     };
                     match decide::eviction_reopen(&ls, &cur, count, &reasons, cap_at) {
                         Eviction::Stale => self.log(&format!("{f}: {id} closed with landstate={state} — record tip {tip} ≠ branch tip {cur}, stale record, close stands")),
@@ -213,7 +209,7 @@ impl Run<'_> {
         // ---- the closing rule: an incident resolved without a runbook is not resolved ----
         let mut sop_silent = false;
         if self.fayth.sop_required && st == "closed" && !superseded {
-            let sop = self.home().join("sop.sh").display().to_string();
+            let sop = "sop.sh";
             let after = self.d.exec.exec(&sop, &s(&["digest"]), None, None);
             let applied = self.d.exec.exec(&sop, &s(&["log", "--bead", &id, "--check", "pass", "--since", &self.s.session_epoch.to_string()]), None, None).code;
             let before = self.s.sop_before.clone();
@@ -240,8 +236,7 @@ impl Run<'_> {
         if st == "closed" && committed && !sop_silent {
             let cr = bd::show(self.d.bd, &id).and_then(|r| r.close_reason).unwrap_or_default();
             if !cr.is_empty() && !self.conf.set_nonempty("SPIRA_CLOSE_REASON_OVERRIDE") {
-                let script = self.home().join("close-reason-flags.py").display().to_string();
-                let o = self.d.exec.exec("python3", &s(&[&script, &cr]), None, None);
+                let o = self.d.exec.exec("close-reason-flags.py", &s(&[&cr]), None, None);
                 let hit = if o.success() { o.text() } else { String::new() };
                 if !hit.is_empty() {
                     self.bead_reopen(UNFINISHED_REASON, &format!("Reopened by aeon.sh: close reason contains a statute phrase (\"{hit}\") that says the work is not done (law-no-close-reason-admits-unfinished). A remainder is a bead, not a sentence in the close reason. Two endings: (a) file the remainder with bead.sh, cite its id in the reason, then close; (b) groomer.sh depends-on-fix {id} --fix <blocker-bead> if a fix is already in flight (law-a-bug-with-a-fix-in-flight-depends-on-it)."));
@@ -298,8 +293,7 @@ impl Run<'_> {
                             &format!("BASE={base}"),
                             &format!("SPIRA_GH_API={}", self.conf.or("SPIRA_GH_API", "https://api.github.com")),
                             &format!("SPIRA_WORKFLOW_ONLY_PATHS={wf}"),
-                            "python3",
-                            &self.home().join("workflow-run-check.py").display().to_string(),
+                            "workflow-run-check.py",
                         ]);
                         let o = self.d.exec.exec("env", &a, None, None);
                         if o.success() { o.text() } else { String::new() }

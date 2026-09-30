@@ -116,10 +116,6 @@ impl<'w, W: World> Trial<'w, W> {
         self.finish(verdict)
     }
 
-    fn home(&self, f: &str) -> PathBuf {
-        self.a.home.join(f)
-    }
-
     fn trial(&mut self) -> Verdict {
         let w = self.w;
         let ctx = match w.context(self.a.repo.as_deref()) {
@@ -241,17 +237,13 @@ impl<'w, W: World> Trial<'w, W> {
                 return v(FAIL, "syntax", format!("gate: {f} fails bash -n\n{syntax}"));
             }
         }
-        let exclude = self.home("exclude.sh");
-        if !w.readable(&exclude) {
+        let Some(exclude) = w.which("exclude.sh") else {
             return v(
                 NOVERDICT,
                 "missing-exclude",
-                format!(
-                    "gate: {} is missing — refusing to land unchecked",
-                    exclude.display()
-                ),
+                "gate: exclude.sh is not on PATH — refusing to land unchecked".to_string(),
             );
-        }
+        };
         let offenders = w.exclude_filter(&exclude, &w.ls_tree_all(&repo, &rev));
         let offenders = offenders.trim_end_matches('\n');
         if !offenders.is_empty() {
@@ -260,17 +252,13 @@ impl<'w, W: World> Trial<'w, W> {
                 "gate: {br} would land beads data in the harness tree:\n{}\ngate: a beads database is never public and belongs in no shared repository.\ngate: remove them from the branch — there is no override for this one.",
                 listed.join("\n")));
         }
-        let skew = self.home("skew.sh");
-        if !w.readable(&skew) {
+        let Some(skew) = w.which("skew.sh") else {
             return v(
                 NOVERDICT,
                 "missing-skew",
-                format!(
-                    "gate: {} is missing — refusing to land unchecked",
-                    skew.display()
-                ),
+                "gate: skew.sh is not on PATH — refusing to land unchecked".to_string(),
             );
-        }
+        };
         let (skew_rc, skew_out) = w.skew_foreign(&skew, &repo, &base_rev, &br);
         if skew_rc == 3 {
             return v(NOVERDICT, "skew-init-fault", format!(
@@ -427,8 +415,7 @@ impl<'w, W: World> Trial<'w, W> {
                 .unwrap_or_default(),
             parse::tree_key(&br)
         ));
-        let sweep = self.home("gate-sweep.sh");
-        if w.readable(&sweep) {
+        if let Some(sweep) = w.which("gate-sweep.sh") {
             w.sweep(&sweep, &repo);
         }
         if let Some(parent) = tree.parent() {
@@ -518,9 +505,11 @@ impl<'w, W: World> Trial<'w, W> {
         let env = |branch: &str, repeat: &str, c: &Composition| -> Vec<(String, String)> {
             let e = |k: &str, v: &str| (k.to_string(), v.to_string());
             vec![
+                // The launcher's PATH first (the release's bin/ and spira/, so a bare tool
+                // name is the release's — sp-gypjk); cargo appended, for the tree builds.
                 e(
                     "PATH",
-                    &format!("{}/.cargo/bin:{}", ctx.var("HOME"), ctx.var("PATH")),
+                    &format!("{}:{}/.cargo/bin", ctx.var("PATH"), ctx.var("HOME")),
                 ),
                 e("HOME", ctx.var("HOME")),
                 e("TERM", "dumb"),
@@ -562,13 +551,10 @@ impl<'w, W: World> Trial<'w, W> {
                 e("SPIRA_VERDICT_REPEAT_CONSIDERED", repeat),
                 e("SPIRA_GATE_BUDGET", ctx.var_or("SPIRA_GATE_BUDGET", "300")),
                 e("SPIRA_RUN", &self.s.run),
-                e("SPIRA_LINT_BIN", ctx.var("SPIRA_LINT_BIN")),
-                e("SPIRA_TESTENV_BIN", ctx.var("SPIRA_TESTENV_BIN")),
                 // The runner's budget split and warm path (testenv DESIGN.md §11): the
                 // operator's knobs reach the trial they tune; unset = the runner's defaults.
                 e("SPIRA_TESTENV_SETUP_SHARE", ctx.var("SPIRA_TESTENV_SETUP_SHARE")),
                 e("SPIRA_TESTENV_WARM_SLOTS", ctx.var("SPIRA_TESTENV_WARM_SLOTS")),
-                e("SPIRA_SELECT_BIN", ctx.var("SPIRA_SELECT_BIN")),
             ]
         };
 
@@ -759,7 +745,7 @@ impl<'w, W: World> Trial<'w, W> {
                     absent.push(s);
                 }
             }
-            if !unrun.is_empty() && !ctx.var("SPIRA_TESTENV_BIN").is_empty() {
+            if !unrun.is_empty() {
                 let rerun = base_rerun_cmd(&unrun);
                 let t = w.now();
                 let (r, o) = w.run_gate(
@@ -873,7 +859,7 @@ impl<'w, W: World> Trial<'w, W> {
     }
 
     fn members(&self, ctx: &Ctx, tree: &Path) -> Result<Vec<compose::Member>, String> {
-        let path = format!("{}/.cargo/bin:{}", ctx.var("HOME"), ctx.var("PATH"));
+        let path = format!("{}:{}/.cargo/bin", ctx.var("PATH"), ctx.var("HOME"));
         self.w
             .cargo_metadata(tree, &path, ctx.var("HOME"))
             .and_then(|j| compose::parse_metadata(&j))
@@ -1044,8 +1030,7 @@ impl<'w, W: World> Trial<'w, W> {
                     .unwrap_or_default(),
             };
             crate::telemetry::append(w, &self.s.run, &w.utc(), &run);
-            let y = self.home("yield.sh");
-            if w.readable(&y) {
+            if let Some(y) = w.which("yield.sh") {
                 if vd.status == PASS {
                     w.yield_sh(
                         &y,
@@ -1163,7 +1148,7 @@ pub fn base_rerun_cmd(suites: &[String]) -> String {
         .filter(|s| crate::compose::is_suite_name(s))
         .collect();
     format!(
-        "{BASE_RERUN_MARK}_b=0; \"$SPIRA_TESTENV_BIN\" --suites {} \"$SPIRA_GATE_BRANCH\" || _b=$?; case \"$_b\" in 2|3) exit 75;; *) exit \"$_b\";; esac",
+        "{BASE_RERUN_MARK}_b=0; testenv --suites {} \"$SPIRA_GATE_BRANCH\" || _b=$?; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac",
         list.join(",")
     )
 }

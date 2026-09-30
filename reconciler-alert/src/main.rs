@@ -19,16 +19,13 @@ use std::io::Read as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-fn spira_home() -> String {
-    env::var("SPIRA_HOME").unwrap_or_else(|_| ".".to_string())
-}
-
 fn spira_repo() -> String {
     env::var("SPIRA_REPO").unwrap_or_else(|_| ".".to_string())
 }
 
+/// mail.sh by name on the launcher's PATH (sp-gypjk).
 fn mail_sh() -> String {
-    format!("{}/mail.sh", spira_home())
+    "mail.sh".to_string()
 }
 
 fn concierge_sh() -> String {

@@ -33,20 +33,12 @@ impl Run<'_> {
         let _ = self.d.exec.exec("bash", &s(&["-c", FIXTURE_DROP]), Some(data), None);
     }
 
-    /// `gate-run.sh --status <branch> <repo>`: (exit code, stdout). `gate-run.sh` is now a
-    /// thin exec-shim into the Rust `gate-run` binary (sp-ubw2o), but this call site still
-    /// names the path, not `SPIRA_GATE_RUN_BIN`, directly — a session (or a suite fixture,
-    /// `test-aeon-gate-close-silent.sh`) that plants its own script at this exact path to
-    /// script this method's behavior must keep working, in production and under test alike.
-    /// Invoked directly (no `bash` prefix), the same convention `world.sh` already uses
-    /// elsewhere in this crate: the file is executable with its own shebang.
+    /// `gate-run.sh --status <branch> <repo>`: (exit code, stdout), by name on the
+    /// launcher's PATH (sp-gypjk). A suite fixture scripts it by putting its own
+    /// `gate-run.sh` first on PATH.
     fn gate_status(&self) -> Option<(i32, String)> {
-        let bin = self.home().join("gate-run.sh");
-        if !bin.is_file() {
-            return None;
-        }
         let o = self.d.exec.exec(
-            &bin.display().to_string(),
+            "gate-run.sh",
             &s(&["--status", &self.s.branch, &self.s.repo_name]),
             None,
             None,

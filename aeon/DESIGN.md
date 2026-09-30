@@ -187,12 +187,16 @@ through lib.sh functions (§5), never hand-written SQL.
 
 ### 2.7 Programs called
 
-`bd` (`$SPIRA_BD`), `git`, `spira-claim` (`$SPIRA_CLAIM_BIN`, else on PATH, else
-`$SPIRA_ARTIFACTS|$SPIRA_REPO/bin`), the model (`$SPIRA_AGENT`, default `claude`),
-`$SPIRA_HOME/work-env.sh` (enforce only), `world.sh stop|start`, `gate-run.sh --status`,
+`bd` (`$SPIRA_BD`), `git`, `spira-claim`, the model (`$SPIRA_AGENT`, default `claude`),
+`work-env.sh` (enforce only), `world.sh stop|start`, `gate-run.sh --status`,
 `worktree-hooks.sh install`, `holds.sh`, `wiki-commit.sh`, `sop.sh ledger-init|digest|log`,
 `close-reason-flags.py`, `workflow-run-check.py`, the repository's own testdb library, and
-`bash` for the lib.sh seam.
+`bash` for the lib.sh seam. Every Spira tool and script is invoked by its bare name on the
+PATH the launcher set (sp-gypjk: the release's `bin/` and `spira/` first); there is no
+`SPIRA_*_BIN` override, no `$SPIRA_ARTIFACTS` or `$SPIRA_REPO/bin` lookup, and no "binary
+missing" refusal — a missing tool fails its spawn, naming itself. The briefs name tools the
+same way (`{{TESTENV}}` is `testenv`, `{{SOP}}` is `sop.sh`, …). Only the Claude Code hooks
+(`spira/hooks/…`, not on PATH) are still addressed under `SPIRA_HOME`.
 
 ### 2.8 Callers (every one found)
 
@@ -576,6 +580,10 @@ Kept, although they look wrong (flagged for the operator):
   the fixture, so a setup quieter than the lease lapses it, as before.
 
 ## 9. Cutover
+
+> **Historical record.** Its `SPIRA_AEON_BIN` / `SPIRA_CLAIM_BIN` / `spira_bin` rows were later
+> superseded by sp-gypjk: `aeon` and `spira-claim` are invoked by bare name on the launcher's
+> PATH, and no binary resolver remains.
 
 **Not performed** (operator's directive). Line numbers against this branch's base
 (`7ce25b21b`). `$SPIRA_AEON_BIN` is resolved in conf.sh like `SPIRA_LC_BIN`.

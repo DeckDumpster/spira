@@ -209,7 +209,7 @@ impl World for Real {
         let _ = c.spawn();
     }
 
-    fn run_gate(&self, home: &Path, branch: &str, repo_name: &str, out_path: &Path) -> i32 {
+    fn run_gate(&self, _home: &Path, branch: &str, repo_name: &str, out_path: &Path) -> i32 {
         let out_file = match fs::OpenOptions::new().create(true).write(true).truncate(true).open(out_path) {
             Ok(f) => f,
             Err(_) => return 1,
@@ -218,8 +218,8 @@ impl World for Real {
             Ok(f) => f,
             Err(_) => return 1,
         };
-        let status = Command::new("bash")
-            .arg(home.join("gate.sh"))
+        // gate.sh by name on the launcher's PATH (sp-gypjk).
+        let status = Command::new("gate.sh")
             .arg(branch)
             .arg(repo_name)
             .stdin(Stdio::null())

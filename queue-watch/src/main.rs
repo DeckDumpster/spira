@@ -87,12 +87,12 @@ enum NoRepos {
 /// with none, or with no spira.toml yet, is IDLE — a fact about the install, said once and
 /// reported by health — never a crash loop. A spira.toml that does not parse is fatal: that is
 /// a fault someone must fix.
-fn queue_repos(cfg: Option<PathBuf>, home: &Path) -> Result<Vec<Repo>, NoRepos> {
+fn queue_repos(cfg: Option<PathBuf>) -> Result<Vec<Repo>, NoRepos> {
     let Some(cfg) = cfg else { return Err(NoRepos::Idle("no spira.toml found".into())) };
     let doc = spira_config::load(&cfg).map_err(NoRepos::Fatal)?;
-    // A repo may name its own forge script; otherwise the harness's own (SPIRA_FORGE, which
-    // conf.sh defaults to forge.sh beside the rest of the harness).
-    let default_forge = env::var_os("SPIRA_FORGE").map(PathBuf::from).unwrap_or_else(|| home.join("forge.sh"));
+    // A repo may name its own forge script; otherwise SPIRA_FORGE, else the release's
+    // `forge.sh` by name on the launcher's PATH (sp-gypjk).
+    let default_forge = env::var_os("SPIRA_FORGE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("forge.sh"));
     let repos: Vec<Repo> = doc
         .repo
         .iter()
@@ -170,7 +170,7 @@ fn write_health(run: &Path, t: u64, interval: u64, repos: usize, blind: &[String
 
 fn watch(o: &Opts) -> Result<(), String> {
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
-    let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
+    let _home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
     let env_ = Env {
         queue_dir: env::var_os("SPIRA_QUEUE_DIR").map(PathBuf::from).unwrap_or_else(|| run.join("queue")),
         landstate: run.join("landstate"),
@@ -195,7 +195,7 @@ fn watch(o: &Opts) -> Result<(), String> {
     loop {
         let t = now();
         if repos.is_empty() {
-            match queue_repos(spira_config::discover(o.config.clone()), &home) {
+            match queue_repos(spira_config::discover(o.config.clone())) {
                 Ok(r) => {
                     println!("{} - watching resumed: {} queue-mode repo(s) found", iso(t), r.len());
                     repos = r;
@@ -333,7 +333,7 @@ mode = "push"
         )
         .unwrap();
 
-        let repos = match queue_repos(Some(cfg), &dir) {
+        let repos = match queue_repos(Some(cfg)) {
             Ok(r) => r,
             Err(NoRepos::Idle(w)) => panic!("unexpectedly idle: {w}"),
             Err(NoRepos::Fatal(w)) => panic!("unexpectedly fatal: {w}"),

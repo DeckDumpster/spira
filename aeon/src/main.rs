@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
@@ -103,7 +103,7 @@ fn main() {
     let fayth = Fayth::from_vars(&cli.fayth, &snap.vars);
     let toml = conf.s("SPIRA_TOML_FILE");
     let enforce = conf::lifecycle_enforce(&original, (!toml.is_empty()).then(|| Path::new(&toml)));
-    let claim_bin = resolve_claim_bin(&conf, &snap.env);
+    let claim_bin = "spira-claim".to_string();
 
     let seam = BashSeam { lib: home.join("lib.sh"), fayth_file: fayth_file.clone(), fayth: cli.fayth.clone(), env: &env };
     let bd = BdCli {
@@ -149,25 +149,6 @@ fn own_unit_from_cgroup() -> String {
     let t = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
     let re = regex::Regex::new(r"spira-aeon-[^/\s]+\.service").unwrap();
     re.find_iter(&t).last().map(|m| m.as_str().to_string()).unwrap_or_default()
-}
-
-/// `$SPIRA_CLAIM_BIN`, else `spira-claim` on conf.sh's PATH, else `$SPIRA_ARTIFACTS` or
-/// `$SPIRA_REPO/bin`.
-fn resolve_claim_bin(conf: &Conf, env: &BTreeMap<String, String>) -> Option<String> {
-    let x = |p: &Path| aeon::run::is_executable(p);
-    let b = conf.s("SPIRA_CLAIM_BIN");
-    if !b.is_empty() && x(Path::new(&b)) {
-        return Some(b);
-    }
-    for d in env.get("PATH").cloned().unwrap_or_default().split(':').filter(|d| !d.is_empty()) {
-        let p = Path::new(d).join("spira-claim");
-        if x(&p) {
-            return Some(p.display().to_string());
-        }
-    }
-    let dir = if conf.set_nonempty("SPIRA_ARTIFACTS") { PathBuf::from(conf.s("SPIRA_ARTIFACTS")) } else { PathBuf::from(conf.s("SPIRA_REPO")).join("bin") };
-    let p = dir.join("spira-claim");
-    x(&p).then(|| p.display().to_string())
 }
 
 #[cfg(test)]
