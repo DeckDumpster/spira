@@ -45,9 +45,6 @@ for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer "$HERE/../syste
     [ -e "$f" ] || continue
     ln -s "$f" "$SYSTEMD_DIR/$(basename "$f")" 2>/dev/null || true
 done
-ln -s "$HERE/../systemd/install.sh" "$SYSTEMD_DIR/install.sh"
-ln -s "$HERE/../systemd/units.sh"   "$SYSTEMD_DIR/units.sh"
-
 ln -s "$HERE/conf.sh"         "$SPIRA_DIR/conf.sh"
 ln -s "$HERE/lib.sh"          "$SPIRA_DIR/lib.sh"
 ln -s "$HERE/suite-covers.sh" "$SPIRA_DIR/suite-covers.sh"
@@ -154,7 +151,6 @@ exit 1
 EOF
 chmod +x "$SPIRA_DIR/exclude.sh"
 
-ln -s "$REAL_REPO/install.sh" "$FIXTURE/install.sh"
 # Unit binaries (sp-gypjk): the units ExecStart $FIXTURE/bin/<tool>, the release layout.
 . "$HERE/lib-test-install.sh"
 install_fixture_release_bins "$FIXTURE"
@@ -230,7 +226,7 @@ _rendered="$(env -i \
     "MOCK_LOG=$MOCK_LOG" \
     SPIRA_INSTALL_FORCE=1 \
     "SPIRA_BD=$MOCK_BIN/bd" \
-    bash "$SYSTEMD_DIR/install.sh" prod --render 2>/dev/null)"
+    units-install prod --render 2>/dev/null)"
 _render_rc=$?
 if [ "$_render_rc" = 0 ]; then
     _cur=""
@@ -267,7 +263,7 @@ run_install() {   # run_install <SPIRA_REPO> -- extra env assignments...
         SPIRA_INSTALL_CONFLICT_CONSIDERED=1 \
         "SPIRA_BD=$MOCK_BIN/bd" \
         "$@" \
-        bash "$FIXTURE/install.sh" prod --no-session-hook 2>&1
+        spira-install prod --no-session-hook 2>&1
 }
 
 # ===========================================================================

@@ -92,7 +92,6 @@ exit 0
 EOF
 chmod +x "$COCKPIT_DIR/layout.sh"
 
-ln -s "$REAL_REPO/install.sh" "$FIXTURE/install.sh"
 # Unit binaries (sp-gypjk): the units ExecStart $FIXTURE/bin/<tool>, the release layout.
 . "$HERE/lib-test-install.sh"
 install_fixture_release_bins "$FIXTURE"
@@ -176,7 +175,7 @@ run_install() {
         SPIRA_INSTALL_CONFLICT_CONSIDERED=1 \
         "SPIRA_BD=$MOCK_BIN/bd" \
         "${extra_env[@]+"${extra_env[@]}"}" \
-        bash "$FIXTURE/install.sh" "${install_args[@]+"${install_args[@]}"}" 2>&1
+        spira-install "${install_args[@]+"${install_args[@]}"}" 2>&1
 }
 
 CONF_DEST="$FAKE_HOME/.config/spira/spira.conf"

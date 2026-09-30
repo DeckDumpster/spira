@@ -184,7 +184,6 @@ for _f in "$HERE/"*.sh; do
 done
 unset _f _bn
 
-ln -s "$REAL_REPO/install.sh" "$FIXTURE/install.sh"
 # Unit binaries (sp-gypjk): the units ExecStart $FIXTURE/bin/<tool>, the release layout.
 . "$HERE/lib-test-install.sh"
 install_fixture_release_bins "$FIXTURE"
@@ -312,7 +311,7 @@ _rendered="$(env -i \
     "SPIRA_COCKPIT=$COCKPIT_DIR" \
     SPIRA_INSTALL_FORCE=1 \
     "SPIRA_BD=$MOCK_BIN/bd" \
-    bash "$SYSTEMD_DIR/install.sh" prod --render 2>/dev/null)"
+    units-install prod --render  2>/dev/null)"
 _render_rc=$?
 if [ "$_render_rc" = 0 ]; then
     _cur=""
@@ -348,7 +347,7 @@ run_install() {
         "SPIRA_INSTALL_DOLT_WAIT=10" \
         "SPIRA_INSTALL_DOLT_CLOSE_WAIT=3" \
         "SPIRA_INSTALL_DB_WAIT=5" \
-        bash "$FIXTURE/install.sh" prod 2>&1 | tee "$output_file"
+        spira-install prod 2>&1 | tee "$output_file"
     # Return the exit code of install.sh, not tee
     return "${PIPESTATUS[0]}"
 }

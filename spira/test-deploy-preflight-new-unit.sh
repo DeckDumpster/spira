@@ -68,6 +68,8 @@ inst() {
     env -i PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_PATH="$DOLT_DIR" \
+        SPIRA_HOME="$FIXTURE/spira" \
+        SPIRA_REPO="$FIXTURE" \
         SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \

@@ -279,7 +279,9 @@ fn migrate_legacy(ctx: &Ctx, r: &mut Report) {
             r.migrated_legacy.push(name.to_string());
         }
     }
-    if !ctx.skip_migrate_watchers {
+    if ctx.skip_migrate_watchers {
+        println!("install: --no-migrate-watchers: sparing watcher legacy units (spira-watch-* and spira-watch@*)");
+    } else {
         for w in &ctx.manifest.watch_names {
             for old in [format!("spira-watch-{w}.service"), format!("spira-watch@{w}.service")] {
                 if ctx.systemctl.disable_now(&old).is_ok() {

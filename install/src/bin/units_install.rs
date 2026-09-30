@@ -281,16 +281,26 @@ fn main() -> ExitCode {
     }
 
     // Prune watcher and non-watcher spira-* units this manifest no longer names.
+    //
+    // DEST SCAN, ALONGSIDE systemctl's OWN LISTS, not instead of them: a unit file here
+    // that systemd has not indexed yet (before this run's own daemon-reload, or when the
+    // daemon's HOME differs from this process's — per-suite test isolation gives each
+    // suite its own HOME, but a real daemon was started against the operator's) is an
+    // orphan regardless of what the daemon's search path currently includes. `dir` is
+    // where this binary writes unit files, so it is the ground truth a mocked or
+    // not-yet-reloaded `systemctl` cannot be.
     let expected = install_units::expected_installed_names(&manifest, &instance);
     let watch_glob = format!("spira-watch-*-{instance}.service");
-    let candidates = systemctl.list_matching(&watch_glob);
+    let mut candidates = systemctl.list_matching(&watch_glob);
+    candidates.extend(glob_dir(&dir, &watch_glob));
     for u in install_units::prune_targets(candidates.iter().map(|s| s.as_str()), &expected, |_| false) {
         if systemctl.disable_now(&u).is_ok() {
             println!("disabled  {u} (no row in the manifest)");
         }
     }
     for glob in [format!("spira-*-{instance}.service"), format!("spira-*-{instance}.timer")] {
-        let candidates = systemctl.list_matching(&glob);
+        let mut candidates = systemctl.list_matching(&glob);
+        candidates.extend(glob_dir(&dir, &glob));
         for u in install_units::prune_targets(candidates.iter().map(|s| s.as_str()), &expected, |n| n.starts_with("spira-watch-") || n.starts_with("spira-aeon-")) {
             let _ = systemctl.disable_now(&u);
             let _ = std::fs::remove_file(dir.join(&u));
@@ -371,4 +381,21 @@ fn main() -> ExitCode {
 
 fn whoami() -> String {
     Command::new("id").arg("-un").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+}
+
+/// Every file directly under `dir` whose name matches `glob` (a single `*` wildcard, the
+/// only shape `systemctl --user list-unit-files <glob>` is ever called with here).
+fn glob_dir(dir: &Path, glob: &str) -> Vec<String> {
+    let Some((pre, suf)) = glob.split_once('*') else {
+        return Vec::new();
+    };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    rd.flatten()
+        .filter_map(|e| {
+            let n = e.file_name().to_string_lossy().to_string();
+            (e.path().is_file() && n.starts_with(pre) && n.ends_with(suf) && n.len() >= pre.len() + suf.len()).then_some(n)
+        })
+        .collect()
 }

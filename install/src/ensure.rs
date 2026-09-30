@@ -91,7 +91,7 @@ pub fn run(ctx: &Ctx) -> Report {
             if ctx.systemctl.enable(name).is_ok() && ctx.systemctl.enable_now(name).is_ok() {
                 r.broker_enabled.push(name.to_string());
             }
-        } else if ctx.systemctl.is_enabled(name).is_some() && ctx.systemctl.disable_now(name).is_ok() {
+        } else if ctx.systemctl.is_enabled(name).as_deref() == Some("enabled") && ctx.systemctl.disable(name).is_ok() {
             r.broker_disabled.push(name.to_string());
         }
     }

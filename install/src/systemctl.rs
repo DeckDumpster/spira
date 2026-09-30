@@ -13,6 +13,10 @@ pub trait Systemctl {
     fn enable(&self, unit: &str) -> Result<(), String>;
     fn enable_now(&self, unit: &str) -> Result<(), String>;
     fn disable_now(&self, unit: &str) -> Result<(), String>;
+    /// `systemctl disable` — unlike [`Self::disable_now`], leaves a running unit running
+    /// (`unit-ensure`'s producer guard: withdrawing the opt-in stops it firing again, not
+    /// mid-flight).
+    fn disable(&self, unit: &str) -> Result<(), String>;
     /// `systemctl restart`. Some units (`dolt-beads.service`, `RefuseManualStop=yes`) refuse
     /// this outright; callers needing that unit's own kill+respawn path use [`Self::kill`].
     fn restart(&self, unit: &str) -> Result<(), String>;
@@ -87,6 +91,14 @@ impl Systemctl for RealSystemctl {
             Err(err)
         }
     }
+    fn disable(&self, unit: &str) -> Result<(), String> {
+        let (ok, _, err) = self.run(&["disable", unit]);
+        if ok {
+            Ok(())
+        } else {
+            Err(err)
+        }
+    }
     fn restart(&self, unit: &str) -> Result<(), String> {
         let (ok, _, err) = self.run(&["restart", unit]);
         if ok {
@@ -129,6 +141,7 @@ pub struct FakeSystemctl {
     pub kills: std::cell::RefCell<Vec<String>>,
     pub enabled_now: std::cell::RefCell<Vec<String>>,
     pub disabled_now: std::cell::RefCell<Vec<String>>,
+    pub disabled: std::cell::RefCell<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -174,6 +187,11 @@ impl Systemctl for FakeSystemctl {
         let e = m.entry(unit.to_string()).or_default();
         e.enabled = Some("disabled".into());
         e.active = false;
+        Ok(())
+    }
+    fn disable(&self, unit: &str) -> Result<(), String> {
+        self.disabled.borrow_mut().push(unit.to_string());
+        self.units.borrow_mut().entry(unit.to_string()).or_default().enabled = Some("disabled".into());
         Ok(())
     }
     fn restart(&self, unit: &str) -> Result<(), String> {
