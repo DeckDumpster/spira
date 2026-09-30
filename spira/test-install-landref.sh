@@ -181,6 +181,12 @@ out_force="$(inst "$REPO" SPIRA_INSTALL_FORCE=1)"; rc_force=$?
 # (no unit templates in the minimal fixture), but that is not what we are testing here.
 nowant "force on wrong branch: no landref refuse in output" "refusing — checkout is on branch" "$out_force"
 
+# FIXTURE/systemd symlinks the real templates (above), so SPIRA_INSTALL_FORCE=1 does not
+# merely fail differently here — it clears every other check too and actually renders and
+# writes real units into dest. Clear dest before the next positive control, or its own
+# dest_empty assertion fails on this case's leftovers, not on anything it is testing.
+find "$TMP/home/.config/systemd/user" -maxdepth 1 \( -name '*.service' -o -name '*.timer' \) -delete
+
 # Restore to main.
 git -C "$REPO" checkout -q main 2>/dev/null
 

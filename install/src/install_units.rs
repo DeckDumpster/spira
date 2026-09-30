@@ -245,7 +245,9 @@ fn apply(ctx: &Ctx, unit: &str, action: Action) {
 fn restart_active(ctx: &Ctx, unit: &str) {
     let base = unit.strip_suffix(".timer").unwrap_or(unit);
     if base == "dolt-beads.service" || unit == "dolt-beads.service" {
-        let _ = ctx.systemctl.kill(unit);
+        if ctx.systemctl.kill(unit).is_ok() {
+            println!("restarted {unit} (kill — RefuseManualStop=yes)");
+        }
     } else {
         let _ = ctx.systemctl.restart(unit);
     }

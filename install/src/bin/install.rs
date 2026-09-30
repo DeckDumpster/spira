@@ -269,7 +269,8 @@ fn main() -> ExitCode {
                 }
                 let _ = Command::new("git").args(["-C", &db, "config", "beads.role", "maintainer"]).status();
             } else {
-                if tool_status("bd", &["init"]) != 0 {
+                // cwd == SPIRA_DB, not -C: see bd_output's doc comment above for why.
+                if Command::new("bd").current_dir(&db).arg("init").status().map(|s| s.success()).unwrap_or(false) != true {
                     eprintln!("install: phase database failed — bd init failed");
                     return ExitCode::from(2);
                 }
@@ -655,6 +656,7 @@ fn wait_dolt_query(port: u16, max_secs: u64) -> bool {
 
 fn wait_bd_list(db: &str, max_secs: u64) -> bool {
     let start = std::time::Instant::now();
+    let mut attempt: u64 = 0;
     loop {
         let ok = Command::new("bd").args(["-C", db, "list", "--json"]).env("BD_NON_INTERACTIVE", "1").output().map(|o| o.status.success()).unwrap_or(false);
         if ok {
@@ -663,13 +665,21 @@ fn wait_bd_list(db: &str, max_secs: u64) -> bool {
         if start.elapsed().as_secs() >= max_secs {
             return false;
         }
+        attempt += 1;
+        info(&format!("  db probe: attempt {attempt} of {max_secs}: retrying"));
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
 }
 
+/// Runs `bd <args>` with `db` as cwd, not `-C db` — `bd init`'s own remote-less repository
+/// is allowed (db_git_guard, above), and `-C` makes a fresh `bd init` look inside a
+/// directory that does not have a beads project yet, which is exactly what `bd` refuses
+/// (original: `( cd "$SPIRA_DB" && ... bd init ... )`, install.sh lines ~639/~660 before
+/// retirement). Only the init call needs this; every other `bd` call in this binary keeps
+/// `-C` for the already-initialised database it is allowed to name from outside.
 fn bd_output(db: &str, args: &[&str]) -> (i32, String) {
     let mut c = Command::new("bd");
-    c.arg("-C").arg(db).args(args).env("BD_NON_INTERACTIVE", "1");
+    c.current_dir(db).args(args).env("BD_NON_INTERACTIVE", "1");
     match c.output() {
         Ok(o) => (o.status.code().unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
         Err(e) => (127, format!("cannot run bd: {e}")),
@@ -684,12 +694,20 @@ fn conflicts(instance: &str) -> Result<(), install::guards::Conflict> {
     let unit_dir = bootstrap::unit_dir();
     let our_dir = Path::new(&home).canonicalize().map(|p| p.to_string_lossy().to_string()).unwrap_or(home.clone());
 
-    // Conflict 1: a foreign harness copy.
+    // Conflict 1: a foreign harness copy. Tried against SPIRA_HOME first, then against
+    // dirname(SPIRA_PROD or SPIRA_HOME)/bin — an older, cutover-era unit ExecStarts
+    // $SPIRA_HOME/sentinel.sh directly, while a current one ExecStarts the release's
+    // bin/sentinel; comparing only SPIRA_HOME refused every reinstall of a cutover install
+    // as foreign (install.sh's own comment, preserved here: either match clears it).
     let sentinel_file = unit_dir.join(format!("spira-sentinel-{instance}.service"));
     let installed_exec_dir = std::fs::read_to_string(&sentinel_file).ok().and_then(|t| {
         t.lines().find_map(|l| l.strip_prefix("ExecStart=")).map(|v| v.split_whitespace().next().unwrap_or("").to_string()).and_then(|exe| Path::new(&exe).parent().map(|p| p.to_string_lossy().to_string())).and_then(|d| Path::new(&d).canonicalize().ok()).map(|p| p.to_string_lossy().to_string())
     });
-    conflict_foreign(instance, installed_exec_dir.as_deref(), &our_dir)?;
+    let prod = nonempty_env("SPIRA_PROD").unwrap_or_else(|| home.clone());
+    let bin_dir = Path::new(&prod).parent().map(|p| p.join("bin")).map(|p| p.to_string_lossy().to_string()).map(|p| Path::new(&p).canonicalize().map(|c| c.to_string_lossy().to_string()).unwrap_or(p)).unwrap_or_default();
+    if conflict_foreign(instance, installed_exec_dir.as_deref(), &our_dir).is_err() {
+        conflict_foreign(instance, installed_exec_dir.as_deref(), &bin_dir)?;
+    }
 
     // Conflict 2: a live aeon under this installation.
     let cmdlines = proc_cmdlines();

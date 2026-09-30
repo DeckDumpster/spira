@@ -39,6 +39,7 @@ _units() {
     fi
     env -i \
         PATH="$path" \
+        HOME="$HOME" \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
         SPIRA_INSTANCE=prod \

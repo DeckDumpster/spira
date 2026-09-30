@@ -58,13 +58,26 @@ printf 'SPIRA_ID_PREFIX = sp\nSPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS
 printf 'test-units-lint.sh\n'
 
 # =======================================================================================
-# THE RENDER PASS. Cheap (no systemctl, no install run) — one Python substitution per unit,
+# THE RENDER PASS. Cheap (no systemctl, no install run) — one substitution pass per unit,
 # which is what every removed per-suite section actually needed to check content.
 # =======================================================================================
 # SPIRA_WATCHERS IN THE ENVIRONMENT, not only the conf: units.sh runs `watchd.sh` by name
 # (sp-gypjk), i.e. the tree's own copy, whose conf.sh would otherwise find the tree's
 # spira.toml before this suite's pinned conf. The environment wins over any config file.
+#
+# SPIRA_HOME/SPIRA_RUN/SPIRA_COCKPIT/SPIRA_PROD IN THE ENVIRONMENT TOO (sp-31dm0): $CONF
+# above still exists for the tools that source conf.sh (watchd.sh), but units-install is a
+# compiled binary that never sources conf.sh and so never reads a spira.conf file at all —
+# it only reads real environment variables (install::bootstrap::host_from_env). Leaving
+# these four to the conf file alone rendered every @SPIRA_HOME@/@SPIRA_RUN@/@SPIRA_PROD@
+# path empty or wrong (e.g. "/spira/watchd.sh", "append:/watch-notify.log") without units-
+# install ever saying so — paths_are_configured caught it as a stray path on
+# spira-watch-notify-prod.service, the one unit here whose [Service] block leans on all
+# three. SPIRA_HOME = $CLONE/spira (this suite's own clone, never the real checkout, per
+# the comment above); SPIRA_PROD is left empty on purpose (render()'s own fallback to
+# SPIRA_HOME is exactly what the comment below this block is testing).
 rendered="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
+    SPIRA_HOME="$CLONE/spira" SPIRA_RUN="$RUN" SPIRA_COCKPIT="$COCKPIT" SPIRA_PROD= \
     units-install --render 2>"$TMP/render.err")"
 is "the render pass produced units" "yes" "$([ -n "$rendered" ] && echo yes || echo no)"
 # `note:` lines are install.sh commenting on units this suite does not touch (an unbuilt
