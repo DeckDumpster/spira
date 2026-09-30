@@ -82,8 +82,8 @@ chmod +x "$SH/bd-stub.sh"
 # in-batch eject is a Returned event there, sp-rlyl0). Those cases run with
 # LC_ENFORCE=1 (SPIRA_LIFECYCLE_ENFORCE); every other case runs the default OFF, where
 # the queue never reaches spira-lc. `list` answers the reachability probe; `show` answers
-# a row in IN_DELIVERY so lc_returned has a state/version to fire the event from.
-# (LCSTUB_LOG, not LC_LOG: lifecycle-cert.sh, sourced by lib.sh, owns LC_LOG.)
+# a row in IN_DELIVERY. The queue calls the caller verb `spira-lc returned <id> <reason>`
+# (lc.sh's lc_returned until sp-arpjt), which is what the stub records.
 LCSTUB_LOG="$TMP/lc-calls.log"; : > "$LCSTUB_LOG"
 STUBBIN="$TMP/stubbin"; mkdir -p "$STUBBIN"   # stubs named as the tools they stand in for, first on PATH
 cat > "$SH/lc-stub.sh" <<'LCSTUB'
@@ -169,7 +169,7 @@ st="$(awk '{print $1}' "$LANDSTATE/sp-ej01" 2>/dev/null || true)"
 # NOT bd reopen ANY MORE (sp-rlyl0): a batch member's eject is a lifecycle Returned event
 # now, not a bd write — the stub records no bd argv for it at all.
 nowant "bd reopen is no longer called for an in-batch eject" "reopen sp-ej01" "$(cat "$BD_LOG")"
-want   "lifecycle on: the eject is a spira-lc Returned event" "Returned" "$(cat "$LCSTUB_LOG")"
+want   "lifecycle on: the eject is a spira-lc Returned event (the caller verb, sp-arpjt)" "returned sp-ej01" "$(cat "$LCSTUB_LOG")"
 
 echo
 echo "eject: lifecycle_enforce OFF (the default) — an in-batch eject hands the bead back through bd:"
