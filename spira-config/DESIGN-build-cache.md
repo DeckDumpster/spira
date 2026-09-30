@@ -210,3 +210,87 @@ box; the fixture image waives it, `spira/testenv/doctor-waivers`): the cache liv
   build tool in there builds uncached on purpose rather than being refused — testenv itself
   builds on the host), and interactive shells of agents and the Concierge (an operator may point
   `~/.cargo/config.toml`'s `build.rustc-wrapper` at the same sccache).
+
+## 5. `[profile.release]` chosen by measurement (sp-zqo8s, 2026-09-30)
+
+sp-283wz (§2.5) established that sccache never caches a binary's link/codegen step (39 of
+this workspace's 43 crates are binaries) and that this floor, not cross-tree path misses, is
+most of `release-bins`'s wall clock. What was still open: whether the workspace's
+`[profile.release]` — `opt-level="z"`, `lto=true` (fat), `codegen-units=1`, inherited
+unexamined from the 5-crate workspace (sp-c411z) — was the slowest possible way to pay that
+floor. It was.
+
+### Method
+
+Four candidates, each built with `cargo build --release --workspace --locked --config
+profile.release.incremental=false` (the exact `release_bins_command()`, `gate/src/engine.rs`),
+through the box's shared sccache. Two measurements per candidate:
+
+* **cold** — a brand-new worktree of `local/main` that has never built this profile's exact
+  flags before (a fresh gate tree: dependency crates still hit sccache, since their
+  `CARGO_MANIFEST_DIR` is the shared `~/.cargo/registry` path regardless of tree; workspace
+  crates and the link step do not, per §2.5).
+* **warm** — the same worktree, `target/` wiped and rebuilt again immediately after: what a
+  gate tree pays on a *second* `--release-bins` at the same tip (a re-certification, or a
+  branch that fails and is re-landed at the same commit).
+
+All eight builds ran **one at a time** (never in parallel) on a box otherwise busy with
+~16 concurrent aeons (load average 20–90 on 32 cores over the session; noted per row). Midway
+through, the Concierge capped `~/.cargo/config.toml`'s `[build] jobs` at 8 (18:41:54 UTC,
+2026-09-30) to ease the same contention; every number below is **under that cap** — the first
+pass's uncapped numbers (profile A cold 173s/108s, B 171s/167s, C cold 168s) were discarded
+per that instruction rather than mixed in. The **hot-path check** is `spira-lint --root .
+--base local/main` — a real gate fence binary, run three times per candidate (first run
+absorbs page-cache warmup; the two after are the reported range) — chosen because it is
+CPU-and-I/O over 1,472 files and 26 rules, the kind of thing the gate runs on every trial.
+**bin/ size** is the sum of the 40 top-level executables in `target/release` (what
+`build-tarball.sh --bin-dir` would ship), matching the bead's bound.
+
+### Results
+
+| candidate | opt-level | lto | codegen-units | cold wall | warm wall | bin/ size | hot-path (spira-lint) |
+|---|---|---|---|---|---|---|---|
+| A — current | `"z"` | `true` (fat) | 1 | 191s (load 29/32/38, 31 agents) | 146–162s (load 31–45, 27–30 agents) | 43 MB | 5.7–6.1s |
+| B | 2 | `"thin"` | 16 | 199s (load 50/48/43, 31 agents) | 149–165s (load 43–52, 33–36 agents) | 61 MB | 5.8–6.6s |
+| C | 2 | `false` | 16 | **113s** (load 29/34/40, 32 agents) | **25–28s** (load 34–48, 36–41 agents) | 61 MB | 6.0–8.7s |
+| D | `"s"` | `"thin"` | 16 (default) | 198s (load 28/36/42, 35 agents) | 162s (load 35/37/42, 35 agents) | 52 MB | 5.6–5.7s |
+
+All four are inside the bound (bin/ ≤ 86 MB, 2× today's 43 MB); no candidate approaches a
+GitHub release-asset limit. No hot-path regression: `spira-lint`'s own wall clock is flat
+across all four (it is I/O- and regex-bound, not sensitive to codegen opt-level), so
+`opt-level="z"`'s size-over-speed trade was never buying anything on this fence.
+
+**C — `lto=false, codegen-units=16, opt-level=2` — wins on every axis measured:**
+*cold* 113s is already the fastest of the four (a genuinely fresh gate tree is ~40% faster
+than the current profile, not slower); *warm* 25–28s is a 5–6× win over every LTO candidate
+(A, B, D all stay at 146–199s regardless of warmth). The mechanism: `lto=true`/`"thin"` both
+run a whole-program link-time-optimization pass that sccache cannot cache and that reprocesses
+every crate's IR at link time regardless of how warm the object-code cache is; `lto=false`
+lets the link step become a plain `ld` pass over already-compiled, already-cached object code,
+so a warm tree relinks in seconds instead of minutes. This matters operationally because a
+gate tree is reused across re-certifications of the same tip (LRU-evicted, not wiped every
+trial) — the *warm* number is the one most hand-landings and re-lands actually pay.
+
+**Decision: land profile C.** `codegen-units=16` (vs. today's 1) also gives rustc's own
+codegen a real thread pool instead of serializing every crate to one unit — part of why even
+the cold number improves. `opt-level=2` over `"z"`: size-optimize only mattered when the link
+step (LTO) was already the dominant cost; with LTO off, `opt-level=2`'s slightly larger output
+(61 MB vs. the current 43 MB, still within bound) buys normal optimization instead of
+optimizing for size no caller asked for.
+
+### Caveats
+
+* The **cold** numbers for A, B, D above are each a single fresh-worktree sample (not the
+  bead's literal "2 samples on a fresh gate tree" for every row) — the first measurement pass
+  (2 fresh samples per candidate) ran before the jobs=8 cap and was discarded per the
+  Concierge's instruction rather than compared across two different caps. Re-running a second
+  independently-fresh-worktree cold sample per candidate, under jobs=8, would tighten this if
+  the box quiets down; the gap between C and the rest (113s vs. 191–199s) is large enough
+  relative to the load-driven noise seen across this session (±20–50s swings between otherwise
+  identical runs) that it is very unlikely to be an artifact, but it is one sample each, not two.
+* `spira-lint` is one gate fence, not a profile of every hot path; opt-level differences on a
+  CPU-bound binary (e.g. a tight loop in `sentinel` or `queue`) were not separately measured.
+* Box load climbed steadily across the whole measurement session (roughly 20 → 90 on 32 cores
+  before the jobs cap, 28–50 after) independent of which profile was building — every row
+  above carries its own load/agent-count so a reader can judge how much of a given number is
+  profile and how much is ambient contention.
