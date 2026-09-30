@@ -51,7 +51,7 @@ is  "a second call appends, never truncates" "2" "$n"
 echo
 echo "SPIRA_MAIL_READERS defaults the concierge reader to the inbox (deliverable 4)"
 default_readers="$(env -u SPIRA_MAIL_READERS bash -c '. "'"$HERE"'/conf.sh"; printf %s "$SPIRA_MAIL_READERS"')"
-is   "the default names the concierge mailbox" "concierge=$HERE/inbox-append.sh" "$default_readers"
+is   "the default names the concierge mailbox" "concierge=inbox-append.sh" "$default_readers"
 # POSITIVE CONTROL: an operator override still wins — the default only fills what is unset.
 overridden="$(SPIRA_MAIL_READERS="concierge=echo wake" bash -c '. "'"$HERE"'/conf.sh"; printf %s "$SPIRA_MAIL_READERS"')"
 is   "an explicit SPIRA_MAIL_READERS is never overwritten" "concierge=echo wake" "$overridden"
