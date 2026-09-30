@@ -109,8 +109,22 @@ pub trait World {
     // ---- admission and the tree
     fn nproc_all(&self) -> u64;
     fn mem_avail_mib(&self) -> u64;
+    /// `[spira] certify_par` read fresh from `spira.toml` on every call (sp-q20wb) — never
+    /// the frozen `Ctx.SPIRA_CERTIFY_PAR`, which conf.sh resolved once, before this process's
+    /// `exec`, and which therefore cannot see a limit raised in the file while a gate already
+    /// waits on it. None when no document is in force, or it sets no `certify_par`: the
+    /// caller then falls back to the environment, then the derived default, as before.
+    fn certify_par_live(&self) -> Option<u64>;
     /// Try `slot.<n>.lock` without waiting; true = held until exit.
     fn admission_try(&self, dir: &Path, slot: u64) -> bool;
+    /// Record which branch holds `slot.<n>` (sp-q20wb), informational only — never read by
+    /// `admission_try` itself, only by another gate's waiting message. Best-effort: a write
+    /// that fails names nobody, it never blocks admission.
+    fn admission_mark(&self, dir: &Path, slot: u64, branch: &str);
+    /// The branch [`admission_mark`] last recorded for `slot.<n>`, if the file is there and
+    /// reads. None (an old gate, the file never written, or unreadable) is silently skipped
+    /// by the caller — this is a message's completeness, never a correctness question.
+    fn admission_holder(&self, dir: &Path, slot: u64) -> Option<String>;
     /// Open `<tree>.lock`; false when it cannot be opened.
     fn tree_lock_open(&self, lock: &Path) -> bool;
     /// Try the opened tree lock without waiting.

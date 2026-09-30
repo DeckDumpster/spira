@@ -268,6 +268,11 @@ impl World for Real {
             }
         }
     }
+    fn certify_par_live(&self) -> Option<u64> {
+        let p = spira_config::discover(None)?;
+        let doc = spira_config::load(&p).ok()?;
+        doc.spira.as_ref()?.certify_par.map(u64::from)
+    }
     fn cargo_metadata(&self, tree: &Path, path: &str, home: &str) -> Result<String, String> {
         let o = Command::new("cargo")
             .args([
@@ -522,6 +527,17 @@ impl World for Real {
             return true;
         }
         false
+    }
+    fn admission_mark(&self, dir: &Path, slot: u64, branch: &str) {
+        // Best-effort (the doc comment): a write that fails still holds the slot's own
+        // flock, which is what admission actually depends on.
+        let _ = fs::write(dir.join(format!("slot.{slot}.lock.holder")), branch);
+    }
+    fn admission_holder(&self, dir: &Path, slot: u64) -> Option<String> {
+        fs::read_to_string(dir.join(format!("slot.{slot}.lock.holder")))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     }
     fn tree_lock_open(&self, lock: &Path) -> bool {
         match OpenOptions::new()
