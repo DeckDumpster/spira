@@ -1,0 +1,20 @@
+[package]
+name = "maechen-trigger"
+version = "1.0.0"
+edition = "2021"
+description = "maechen-trigger — evaluate the Maechen trigger conditions (landing volume, time gap, invalid-closed rows) and file a sweep bead when one fires, with idempotent dedup. Rust port of spira/maechen-trigger.sh (sp-0ekp7, wave 7b)."
+
+[[bin]]
+name = "maechen-trigger"
+path = "src/main.rs"
+
+[dependencies]
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

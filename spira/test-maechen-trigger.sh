@@ -49,7 +49,7 @@
 # throwaway repos.
 #
 # tier: T2
-# covers: spira/maechen-trigger.sh spira/conf.sh
+# covers: spira/maechen-trigger.sh spira/conf.sh maechen-trigger/*
 # hermetic-ok: stub bd, real git with throwaway repos
 # scar: unrecorded
 set -uo pipefail
@@ -57,6 +57,12 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 TRIGSH=maechen-trigger.sh   # invoked by name on the suite's PATH (sp-gypjk)
+# Every run_trigger below wipes env and rebuilds PATH for isolation; since sp-0ekp7 moved
+# maechen-trigger.sh's logic into a compiled binary the shim execs, PATH must still reach
+# it — appending the ambient $PATH (the staged release's bin/, under testenv) after the
+# deterministic $HERE prefix does that. Safe with the stub bd: it's referenced by its
+# absolute path via SPIRA_BD, never found through PATH, so this cannot substitute the
+# real `bd` for the stub.
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
 
@@ -122,7 +128,7 @@ now_ts="$(date +%s)"
 # Base environment shared by all runs. Individual tests override variables as needed.
 run_trigger() {
     : > "$BD_LOG"
-    env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="${SPIRA_BD_OVERRIDE:-$STUB_BD}" \
         BD_LOG_PATH="$BD_LOG" \
@@ -269,7 +275,7 @@ printf 'nonmatch | %s | push | origin/main | | true | self\n' "$NONMATCH_REPO" >
 # Use a far-future gap threshold to doubly ensure only the landing trigger is tested.
 printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 : > "$BD_LOG"
-out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
@@ -341,7 +347,7 @@ echo "ERROR: bd create fails — exit code is 1"
 printf '0\n' > "$WATERMARK_FILE"
 SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
 SPIRA_MAECHEN_LANDING_INTERVAL=999 \
-    out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$FAIL_BD" \
         BD_LOG_PATH="$BD_LOG" \
@@ -366,7 +372,7 @@ echo "LABELS: custom SPIRA_SCOPE_LABEL and SPIRA_MAECHEN_LABEL are used"
 # default passes even if the code has the literal written in.
 printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 : > "$BD_LOG"
-out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
@@ -395,7 +401,7 @@ echo "LABELS: empty SPIRA_SCOPE_LABEL — no leading comma"
 # ==========================================================================================
 printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 : > "$BD_LOG"
-out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
@@ -464,7 +470,7 @@ REPOMAP_B4T="$T/repomap-b4t"
 printf 'home-b4t | %s | push | origin/main | | true | self\nnoremote|%s|\ncounted|%s|\n' \
     "$HOME_B4T" "$NOREMOTE_B4T" "$COUNTED_B4T" > "$REPOMAP_B4T"
 : > "$BD_LOG"
-out_b4t="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+out_b4t="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
@@ -537,7 +543,7 @@ REPOMAP_3LJK="$T/repomap-3ljk"
 printf 'home-3ljk | %s | push | origin/main | | true | self\ngitea-repo|%s|\n' \
     "$HOME_3LJK" "$GITEA_REPO" > "$REPOMAP_3LJK"
 : > "$BD_LOG"
-out_3ljk="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:/usr/lib/git-core" \
+out_3ljk="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:/usr/lib/git-core:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
@@ -578,7 +584,7 @@ git -C "$LAND_FORM_REPO" rev-parse HEAD > "$LAND_FORM_REPO/.git/refs/remotes/ori
 
 printf 'land-form | %s | push | origin/main | | true | self\n' "$LAND_FORM_REPO" > "$T/map-land-form"
 : > "$BD_LOG"
-out_lf="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+out_lf="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" SPIRA_BD="$STUB_BD" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
     SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" SPIRA_REPO="$LAND_FORM_REPO" \
     SPIRA_REPO_MAP="$T/map-land-form" \
@@ -608,7 +614,7 @@ git -C "$MERGE_FORM_REPO" rev-parse HEAD > "$MERGE_FORM_REPO/.git/refs/remotes/o
 
 printf 'merge-form | %s | push | origin/main | | true | self\n' "$MERGE_FORM_REPO" > "$T/map-merge-form"
 : > "$BD_LOG"
-out_mf="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+out_mf="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" SPIRA_BD="$STUB_BD" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
     SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" SPIRA_REPO="$MERGE_FORM_REPO" \
     SPIRA_REPO_MAP="$T/map-merge-form" \
@@ -641,7 +647,7 @@ git -C "$DEDUP_FORM_REPO" rev-parse HEAD > "$DEDUP_FORM_REPO/.git/refs/remotes/o
 printf 'dedup-form | %s | push | origin/main | | true | self\n' "$DEDUP_FORM_REPO" > "$T/map-dedup-form"
 # Threshold=2: only 1 distinct bead landed — trigger must NOT fire.
 : > "$BD_LOG"
-out_dd="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+out_dd="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" SPIRA_BD="$STUB_BD" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
     SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" SPIRA_REPO="$DEDUP_FORM_REPO" \
     SPIRA_REPO_MAP="$T/map-dedup-form" \
@@ -655,7 +661,7 @@ nowant "dedup forms: same-bead pair does not reach 2"    "create" "$(cat "$BD_LO
 git -C "$DEDUP_FORM_REPO" commit --allow-empty -q -m "spira: land sp-fff6"
 git -C "$DEDUP_FORM_REPO" rev-parse HEAD > "$DEDUP_FORM_REPO/.git/refs/remotes/origin/main"
 : > "$BD_LOG"
-out_dd2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+out_dd2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" SPIRA_BD="$STUB_BD" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
     SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" SPIRA_REPO="$DEDUP_FORM_REPO" \
     SPIRA_REPO_MAP="$T/map-dedup-form" \
@@ -701,7 +707,7 @@ printf 'home-wpjm | %s | push | origin/main | | true | self\n' "$HOMEREPO_WPJM" 
 printf '%d\n' "$(( $(date +%s) - 1 ))" > "$WATERMARK_FILE"
 printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 : > "$BD_LOG"
-out_wpjm="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+out_wpjm="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
@@ -723,7 +729,7 @@ want "bd create called"  "create" "$(cat "$BD_LOG")"
 # Run 2: threshold=3 (above 2 landings, below 4) — must NOT fire, proving no double-count.
 printf '%d\n' "$(( $(date +%s) - 1 ))" > "$WATERMARK_FILE"
 : > "$BD_LOG"
-out_wpjm2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+out_wpjm2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
@@ -753,7 +759,7 @@ printf 'testrepo | %s | push | origin/main | | | develop\n' "$TESTREPO" > "$NOLA
 printf 'dev-repo | /tmp/dev | push | origin/main | | | develop\n' >> "$NOLANEMAP"
 printf '0\n' > "$WATERMARK_FILE"
 : > "$BD_LOG"
-out_ng="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+out_ng="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
@@ -774,7 +780,7 @@ want   "no-lane map: logs skipping trigger"   "skipping trigger" "$out_ng"
 # POSITIVE CONTROL: testrepo is in SELFMAP with self mode — maechen-sweep is admitted.
 printf '0\n' > "$WATERMARK_FILE"
 : > "$BD_LOG"
-out_lp="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+out_lp="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
