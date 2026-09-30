@@ -38,9 +38,12 @@ for a in "$@"; do
     case "$a" in
         -C)   skip_next=1 ;;
         show) cmd=show ;;
+        list) cmd=list ;;
     esac
 done
 [ "$cmd" = show ] && printf '[]\n'
+# The positive control (spira_db_reachable): the store lists at least one bead.
+[ "$cmd" = list ] && printf '[{"id":"sp-any"}]\n'
 exit 0
 EOF
 chmod +x "$STUB_BD"
