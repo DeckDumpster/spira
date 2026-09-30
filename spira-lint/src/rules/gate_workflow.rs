@@ -191,8 +191,8 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
     j.want(GATE, "runs spira-lint's inventory rule", "spira-lint --only inventory", g);
     j.want(GATE, "runs spira-lint's literal-lint rule", "spira-lint --only literal-lint", g);
     j.want(GATE, "runs spira-lint's scratch-fence rule", "spira-lint --only scratch-fence", g);
-    j.want(GATE, "runs the testenv runner", "bin/testenv --artifacts bin --suites -", g);
-    j.want(GATE, "its retry tests the same prebuilt bin/", "GATE_RETRY_ARTIFACTS=bin bash spira/gate-retry.sh", g);
+    j.want(GATE, "runs the testenv runner on the staged release's build", "testenv --artifacts \"$SPIRA_RELEASE/bin\" --suites -", g);
+    j.want(GATE, "its retry tests the same prebuilt set", "GATE_RETRY_ARTIFACTS=\"$SPIRA_RELEASE/bin\" bash spira/gate-retry.sh", g);
     // 2. queue PRs use diff-selected suites
     j.want(GATE, "the selected list is piped via --suites", "--suites", g);
     j.want(GATE, "queue PRs use the selector", "suite-select select", g);
@@ -359,6 +359,28 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
     j.want(GATE, "the build job uploads the binaries artifact", "upload-artifact", &build);
     j.want(GATE, "the suites job needs build", "build", &suites_job);
     j.want(GATE, "the suites job downloads the binaries artifact", "download-artifact", &suites_job);
+    // 29. GitHub Actions is a launcher: the suites job stages its build as a release and
+    // sets SPIRA_RELEASE and PATH from it for every later step (sp-6cbna). Without it
+    // conf.sh fails closed on a missing spira-config and every by-name tool resolves to
+    // nothing of this commit's.
+    let stage = step(g, "Stage the build as a release", true);
+    j.located(GATE, "the Stage the build as a release step", &stage);
+    j.want(GATE, "the staging step lays out a release from the tested build", "/release\" build", &stage);
+    j.want(GATE, "the staging step takes the downloaded binaries, running no cargo", "--bin-dir", &stage);
+    j.want(GATE, "the staging step sets SPIRA_RELEASE for every later step", "SPIRA_RELEASE=%s", &stage);
+    j.want(GATE, "the staging step sets PATH for every later step", "PATH=%s", &stage);
+    j.want(GATE, "the staging step writes both to GITHUB_ENV", "GITHUB_ENV", &stage);
+    j.want(GATE, "PATH starts with the staged release", "_path=\"$_rel/bin:$_rel/spira:", &stage);
+    j.want(GATE, "the suites step runs after the staging step", "Stage the build as a release", &suites_job);
+    // 30. lints never scan build output: the binaries land outside the checkout, and the
+    // lints run spira-lint by name from the release, never a bin/ inside the tree.
+    let dl = step(g, "Download binaries", true);
+    j.located(GATE, "the Download binaries step", &dl);
+    j.want(GATE, "binaries download outside the checkout", "path: ${{ runner.temp }}/", &dl);
+    let lints = step(g, "Lints", true);
+    j.located(GATE, "the Lints step", &lints);
+    j.want(GATE, "the lints assert spira-lint resolves from the staged release", "\"$SPIRA_RELEASE/bin/spira-lint\"", &lints);
+    j.nowant(GATE, "the lints do not run a spira-lint inside the checkout", "bin/spira-lint --only", &lints);
     // 19/20. provision is conditional on a selection and waits for the guest agent
     let prov = block(g, "provision");
     j.located(GATE, "the provision job block", &prov);
@@ -595,6 +617,22 @@ mod tests {
         w.gate = Some(join(&g.lines().filter(|l| !l.contains("vm-token")).collect::<Vec<_>>()));
         let got: Vec<String> = judge(&w).into_iter().map(|(_, m)| m).collect();
         assert!(got.iter().any(|m| m.contains("teardown must receive needs.provision.outputs.vm-token")), "{got:?}");
+    }
+
+    #[test]
+    fn a_suites_job_that_never_stages_a_release_is_caught() {
+        let got = planted(gate, "      - name: Stage the build as a release", "      - name: Build the release somewhere else");
+        assert!(got.iter().any(|m| m.contains("the Stage the build as a release step was not located")), "{got:?}");
+        let got = planted(gate, "printf 'PATH=%s\\n' \"$_path\" >> \"$GITHUB_ENV\"", "true");
+        assert!(got.iter().any(|m| m.contains("the staging step sets PATH for every later step")), "{got:?}");
+    }
+
+    #[test]
+    fn build_output_inside_the_checkout_is_caught() {
+        let got = planted(gate, "path: ${{ runner.temp }}/build", "path: bin/");
+        assert!(got.iter().any(|m| m.contains("binaries download outside the checkout")), "{got:?}");
+        let got = planted(gate, "          spira-lint --only inventory", "          bin/spira-lint --only inventory");
+        assert!(got.iter().any(|m| m.contains("do not run a spira-lint inside the checkout")), "{got:?}");
     }
 
     #[test]

@@ -608,9 +608,12 @@ into a fresh `cargo-target-bins/<tree>` on every new tree (95-116 s, sp-zv7j4).
     testenv.sh's contract (D2).
   * **Keyed by content** (§3.3), so a prebuilt green is a claim about those bytes.
   * **Unchanged without the flag**: same key, same batch.meta, same build.
-  * **CI passes it twice**: gate.yml's suites step runs `bin/testenv --artifacts bin`, and its
-    serial re-run of reds, `gate-retry.sh`, takes `GATE_RETRY_ARTIFACTS=bin` and passes the
-    same flag — otherwise the first red would turn into a `no-cargo` fault on the retry.
+  * **CI passes it twice**: gate.yml's suites step runs `testenv --artifacts
+    "$SPIRA_RELEASE/bin"`, and its serial re-run of reds, `gate-retry.sh`, takes
+    `GATE_RETRY_ARTIFACTS="$SPIRA_RELEASE/bin"` and passes the same flag — otherwise the first
+    red would turn into a `no-cargo` fault on the retry. `$SPIRA_RELEASE` is the release the
+    suites job stages from its downloaded build (`release build --bin-dir`, sp-6cbna), so the
+    runner is a launcher like any other: PATH is that release's, set once for every step.
 
 ## 8. Cutover (bash and workflow edits for the operator — none made here)
 
@@ -621,7 +624,7 @@ production; `SPIRA_ARTIFACTS` inside a test run). A round that tests its own run
 | file:line | current | replacement |
 |---|---|---|
 | `.github/workflows/gate.yml:508` | `printf '%s\n' "$_s" \| bash spira/testenv-batch.sh --suites - "${{ github.sha }}" \|\| _b=$?` | `printf '%s\n' "$_s" \| bin/testenv --artifacts bin --suites - "${{ github.sha }}" \|\| _b=$?` — **corrected 2026-09-29 (D8)**: this row first said "the run rebuilds in place", but the `suites` runner has no cargo, so that faulted `no-cargo` on every PR |
-| `.github/workflows/gate.yml:214-225,317-327` | `make build`, copy the release profile's executables into `bin/`, download into `bin/` | keep: `bin/` is the `--artifacts` directory (D8), and the source of `bin/testenv` |
+| `.github/workflows/gate.yml:214-225,317-327` | `make build`, copy the release profile's executables into `bin/`, download into `bin/` | keep: `bin/` is the `--artifacts` directory (D8), and the source of `bin/testenv` — **amended 2026-09-30 (sp-6cbna)**: the suites job downloads into the runner's temp directory, stages a release from it (`release build --bin-dir`) and sets `SPIRA_RELEASE`/PATH through `GITHUB_ENV`; `--artifacts` names `$SPIRA_RELEASE/bin`. A `bin/` inside the checkout was scanned by spira-lint as untracked source |
 | `spira/gate-spira.sh:464` | `} \| bash "$HERE/testenv-batch.sh" --suites - "${SPIRA_GATE_SELECT_HEAD:-HEAD}" >&2` | `} \| "$(spira_bin testenv)" --suites - "${SPIRA_GATE_SELECT_HEAD:-HEAD}" >&2` |
 | `spira/gate-retry.sh:14` | `BATCH="${GATE_RETRY_BATCH:-$HERE/testenv-batch.sh}"` | `BATCH="${GATE_RETRY_BATCH:-$(spira_bin testenv)}"` and lines 64/66 `bash "$BATCH"` → `"$BATCH"` |
 | `spira/attribute.sh:151` | `bash "$HERE/testenv-batch.sh" --suites "$suites_csv" "$sha" "$REPO"` | `"$(spira_bin testenv)" --suites "$suites_csv" "$sha" "$REPO"` |
