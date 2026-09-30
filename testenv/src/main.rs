@@ -86,9 +86,14 @@ fn main() -> ExitCode {
             None
         }
     });
-    let rt = Podman {
-        testenv_sh: harness.script("testenv.sh"),
+    // The container helper, by name on the launcher's PATH (sp-gypjk) — never joined under
+    // the harness directory. Missing is a harness fault naming it.
+    let Some(testenv_sh) = testenv::util::which_in(&std::env::var("PATH").unwrap_or_default(), "testenv.sh") else {
+        eprintln!("batch: testenv.sh is not on PATH (the launcher puts the release's spira/ there)");
+        println!("VERDICT FAULT rc=2 ran=0 reason=harness-missing");
+        return ExitCode::from(2);
     };
+    let rt = Podman { testenv_sh };
     let stdin = || {
         let mut s = String::new();
         let _ = std::io::stdin().read_to_string(&mut s);

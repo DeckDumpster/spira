@@ -166,6 +166,11 @@ pub struct Deps<'a> {
 }
 
 impl Deps<'_> {
+    /// A harness script on this run's PATH (sp-gypjk), or None.
+    pub fn which(&self, name: &str) -> Option<PathBuf> {
+        crate::util::which_in(&(self.env)("PATH").unwrap_or_default(), name)
+    }
+
     fn log(&self, msg: &str) {
         (self.out)(&format!("{} spira: batch: {msg}", iso_utc(now_epoch())));
     }
@@ -388,7 +393,7 @@ fn gate_diag(deps: &Deps, artifacts: &Path, results_s: &str, run_env: &[(&str, S
     let home = deps.harness.root.join("spira");
     let home_s = home.display().to_string();
     helper_bin(&bin, &["--home", &home_s, results_s], Some(artifacts), run_env)
-        .or_else(|| helper(&deps.harness.script("gate-diag.sh"), &[results_s], Some(artifacts), run_env, None))
+        .or_else(|| helper(&deps.which("gate-diag.sh")?, &[results_s], Some(artifacts), run_env, None))
 }
 
 /// Holds the container for the batch; tears it down however the run ends.
@@ -1194,13 +1199,9 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             );
             let _ = fs::write(&verdict_path, f.render());
         }
-        let _ = helper(
-            &deps.harness.script("gate-timing.sh"),
-            &[&results_s, "red"],
-            Some(&artifacts),
-            &run_env,
-            None,
-        );
+        if let Some(gt) = deps.which("gate-timing.sh") {
+            let _ = helper(&gt, &[&results_s, "red"], Some(&artifacts), &run_env, None);
+        }
         return Finish {
             rc: 1,
             ran: 0,
@@ -1665,13 +1666,9 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             );
             let _ = fs::write(&verdict_path, f.render());
         }
-        let _ = helper(
-            &deps.harness.script("gate-timing.sh"),
-            &[&results_s, "red"],
-            Some(&artifacts),
-            &run_env,
-            None,
-        );
+        if let Some(gt) = deps.which("gate-timing.sh") {
+            let _ = helper(&gt, &[&results_s, "red"], Some(&artifacts), &run_env, None);
+        }
         return Finish {
             rc: 1,
             ran,
@@ -1707,13 +1704,9 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     } else {
         deps.log("every suite that finished before the deadline passed");
     }
-    let _ = helper(
-        &deps.harness.script("gate-timing.sh"),
-        &[&results_s, "green"],
-        Some(&artifacts),
-        &run_env,
-        None,
-    );
+    if let Some(gt) = deps.which("gate-timing.sh") {
+        let _ = helper(&gt, &[&results_s, "green"], Some(&artifacts), &run_env, None);
+    }
     Finish {
         deferred: deferred_count,
         skipped: skipped.len(),
@@ -1855,11 +1848,8 @@ fn refuse_repeat(
     let csv = red_suites.replace(' ', ",");
     let short = &key[..16];
     if !already_notified {
-        let mail = s
-            .mail_cmd
-            .clone()
-            .unwrap_or_else(|| deps.harness.script("mail.sh"));
-        if mail.is_file() {
+        let mail = s.mail_cmd.clone().or_else(|| deps.which("mail.sh"));
+        if let Some(mail) = mail.filter(|m| m.is_file()) {
             let tip = git(&repo.path, &["rev-parse", "--verify", "-q", br])
                 .unwrap_or_else(|_| "unknown".into());
             let mut body = format!(
@@ -1890,11 +1880,8 @@ fn refuse_repeat(
             let _ = writeln!(f, "concierge_notified={}", now_epoch());
         }
     }
-    let incident = s
-        .incident_cmd
-        .clone()
-        .unwrap_or_else(|| deps.harness.script("incident.sh"));
-    if incident.is_file() && s.spira_db.is_some() {
+    let incident = s.incident_cmd.clone().or_else(|| deps.which("incident.sh"));
+    if let Some(incident) = incident.filter(|i| i.is_file() && s.spira_db.is_some()) {
         let mut body = format!(
             "Repeat attempt refused. Prior red at {when}. Key: batch-{key}. Red suites: {red_suites}. Branch: {br}. SPIRA_VERDICT_REPEAT_CONSIDERED was not set or was too short.\n\nTwo routes forward:\n1. Commit a fix — the new tree produces a new key and the cache does not apply.\n2. If the red was environmental (not a code defect), re-run with SPIRA_VERDICT_REPEAT_CONSIDERED set to a sentence describing why (min 10 chars): SPIRA_VERDICT_REPEAT_CONSIDERED=\"<reason>\" testenv --suites {csv} {br}\n"
         );

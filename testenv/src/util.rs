@@ -61,6 +61,20 @@ pub fn read(path: &str) -> String {
     std::fs::read_to_string(path).unwrap_or_default()
 }
 
+/// `command -v <name>` over `path` (a PATH value): the first executable `<dir>/<name>`.
+/// Harness scripts and Spira tools are found this way — on the launcher's PATH (sp-gypjk) —
+/// never joined under the harness directory.
+pub fn which_in(path: &str, name: &str) -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    std::env::split_paths(path)
+        .map(|d| d.join(name))
+        .find(|p| {
+            std::fs::metadata(p)
+                .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+                .unwrap_or(false)
+        })
+}
+
 pub fn nproc() -> u32 {
     std::thread::available_parallelism()
         .map(|n| n.get() as u32)

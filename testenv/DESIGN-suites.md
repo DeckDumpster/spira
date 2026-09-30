@@ -180,9 +180,8 @@ Precedence as testenv's own (§2.5 of DESIGN.md): environment, then spira.toml t
 | `SPIRA_FLAKE_WINDOW` | `spira.flake_window` | 604800 |
 | `SPIRA_QUARANTINE_CLEAN_RUNS` | `spira.quarantine_clean_runs` | 10 |
 | `SPIRA_QUARANTINE_MAX_AGE` | `spira.quarantine_max_age` | 604800 |
-| `SPIRA_INCIDENT` | — | `<harness>/spira/incident.sh` |
-| `SPIRA_MAIL_CMD` (new) | — | `<harness>/spira/mail.sh` |
-| `SPIRA_QUEUE_BIN` | — | `queue` beside the running executable, else `bash <harness>/spira/queue.sh` (transitional, §5) |
+| `SPIRA_INCIDENT` | — | `incident.sh` on PATH (sp-gypjk) |
+| `SPIRA_MAIL_CMD` (new) | — | `mail.sh` on PATH (sp-gypjk) |
 | `LANDSTATE` | — | `$SPIRA_RUN/landstate` |
 | `SPIRA_AEON` | — | non-empty refuses transitions |
 | `SPIRA_GIT_NAME`, `SPIRA_GIT_EMAIL` | — | `spira`, `spira@spira.invalid` |
@@ -319,7 +318,7 @@ incident.sh, mail.sh, host-check.sh and the queue (whole programs, §5).
 | `incident.sh file <title> -` | observe-flake | env (§3.5), payload on stdin, id on the last stdout line |
 | `mail.sh send operator --from … --subject … [--bead …]` | hygiene | body on stdin |
 | `host-check.sh --count-undeclared` / `--count-copying` | status | one number on stdout; 30 s wall |
-| `queue submit <branch>` | transitions | `$SPIRA_QUEUE_BIN`, else `queue` beside this binary, else `bash <harness>/spira/queue.sh submit` until the queue crate's cutover lands; stdout+stderr to our stderr |
+| `queue submit <branch>` | transitions | `queue submit`, by name on the launcher's PATH (sp-gypjk; formerly `$SPIRA_QUEUE_BIN`, a sibling of this binary, or `queue.sh`); stdout+stderr to our stderr |
 
 ## 6. Decisions (behaviour deliberately changed)
 
