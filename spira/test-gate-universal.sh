@@ -113,7 +113,7 @@ want "missing-skew: names the reason" "reason=missing-skew" "$out"
 # (class: sp-gate-conf-fail-as-foreign-harness) — the branch is not at fault for the box's
 # database being unavailable.
 # --------------------------------------------------------------------------------------
-printf '#!/usr/bin/env bash\nexit 3\n' > "$SH/skew.sh"
+printf '#!/usr/bin/env bash\nexit 3\n' > "$SH/skew.sh"; chmod +x "$SH/skew.sh"   # found by name on PATH (sp-gypjk)
 gate_fixture_branch spira/sp-u6 ok6.txt fine
 out="$(rungate spira/sp-u6)"; rc=$?
 is     "skew-init-fault: exits NO_VERDICT, not FAIL" 75 "$rc"

@@ -198,10 +198,11 @@ printf '%s\n' "$(( $(date +%s) - 7200 ))" > "$UF"
 run_notify() {
     rm -rf "$MAIL"; mkdir -p "$MAIL"
     rm -f "$WDIR/notify-health.escalated"
-    # SPIRA_PATH prepended so conf.sh's PATH rewrite keeps mock binaries in PATH.
+    # The fake home's mail.sh stub and the mock binaries go FIRST on PATH: watchd calls
+    # mail.sh and systemctl by name (sp-gypjk).
     env -i \
         HOME="$TMP/home" \
-        PATH="$MOCK_BIN:$PATH" \
+        PATH="$FAKE_HOME:$MOCK_BIN:$PATH" \
         SPIRA_PATH="$MOCK_BIN" \
         SPIRA_CONF=/nonexistent \
         SPIRA_RUN="$RUN" \

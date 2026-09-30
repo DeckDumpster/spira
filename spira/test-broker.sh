@@ -93,7 +93,7 @@ mkdir -p "$SPIRA_RUN"
 
 base_env() {
     env -i \
-        PATH="$BROKER_DIR:/usr/local/bin:/usr/bin:/bin" \
+        PATH="$BROKER_DIR:$HERE:/usr/local/bin:/usr/bin:/bin" \
         HOME="$T/home" \
         SPIRA_HOME="$HERE" \
         SPIRA_RUN="$SPIRA_RUN" \

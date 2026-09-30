@@ -152,6 +152,8 @@ cat > "$TMP/mail.sh" <<'MAILEOF'
 printf 'SENT\n' >> "$MAIL_LOG"
 MAILEOF
 chmod +x "$TMP/mail.sh"
+# incident.sh calls mail.sh by name (sp-gypjk): the stub goes first on PATH.
+export PATH="$TMP:$PATH"
 
 # ---- working bd sql: the true positive control -------------------------------------
 export MAIL_LOG="$TMP/mail-ok.log"; : > "$MAIL_LOG"
