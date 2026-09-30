@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 #
-# test-queue-lock-wait.sh — verdict.sh and batch.sh wait for the per-repo queue lock
-#   (flock -w) instead of skipping on the first miss, and count consecutive misses so a
-#   real gridlock announces itself instead of blending into the noise (sp-7w54q).
+# test-queue-lock-wait.sh — verdict.sh waits for the per-repo queue lock (flock -w)
+#   instead of skipping on the first miss, and counts consecutive misses so a real
+#   gridlock announces itself instead of blending into the noise (sp-7w54q).
 #
 # CASES:
 #   a. WAIT SUCCEEDS (verdict.sh): lock released before SPIRA_QUEUE_LOCK_WAIT expires —
 #      verdict.sh acquires it and completes instead of skipping its turn.
-#   b. WAIT SUCCEEDS (batch.sh): same guard, exercised through batch.sh.
 #   c. STARVATION COUNTER: consecutive flock timeouts increment lock-skips; a
 #      successful acquisition resets the counter.
 #   d. STARVATION SIGNAL fires exactly once at the threshold, not on every tick above it.
@@ -17,14 +16,18 @@
 #   suite's git-branch/worktree churn entirely: verdict.sh's lock check runs before any
 #   branch is touched, so no branch, worktree or forge PR traffic is needed to exercise it.
 #
+# (case b exercised the same wait/starvation guard through batch.sh's own copy of it —
+# same lib.sh mechanism, a second caller. Retired with batch.sh, sp-uwhx0: no repo runs
+# in `land=queue` mode. Case a already proves the guard itself; nothing else called it.)
+#
 # SEEN RED WITHOUT THE FIX.
-#   a, b: reverting to flock -n prints "holds the lock" even though the holder releases a
+#   a: reverting to flock -n prints "holds the lock" even though the holder releases a
 #      moment later — the nowant assertion fails.
 #   c: removing the lock-skips file writes leaves the counter at 0 always.
 #   d: using -ge instead of -eq re-fires the starvation line on every tick past threshold.
 #
 # defect: sp-7w54q
-# covers: spira/verdict.sh spira/batch.sh spira/conf.sh
+# covers: spira/verdict.sh spira/conf.sh
 # timeout: 60
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -82,7 +85,6 @@ run_env() {
         bash "$SH/$1" "$REPONAME" 2>&1
 }
 verdict_run() { run_env verdict.sh; }
-batch_run()   { run_env batch.sh; }
 
 clean_case() { rm -f "$SKIPS_FILE"; }
 
@@ -109,21 +111,6 @@ rca=$?
 wait "$HOLDER_A"
 nowant "a: verdict does not skip when lock is released in time" "holds the lock" "$outa"
 is     "a: verdict exits 0 after waiting"                       "0" "$rca"
-clean_case
-
-# =============================================================================
-# b. WAIT SUCCEEDS (batch.sh): same guard, exercised through batch.sh's copy of it.
-# =============================================================================
-mkfifo "$TMP/ready_b"
-( exec 8>"$LOCKFILE"; flock -n 8; printf x > "$TMP/ready_b"; sleep 1 ) &
-HOLDER_B=$!
-read -r _ < "$TMP/ready_b"
-
-outb="$(LOCK_WAIT=5 batch_run)"
-rcb=$?
-wait "$HOLDER_B"
-nowant "b: batch does not skip when lock is released in time" "holds the lock" "$outb"
-is     "b: batch exits 0 after waiting"                        "0" "$rcb"
 clean_case
 
 # =============================================================================

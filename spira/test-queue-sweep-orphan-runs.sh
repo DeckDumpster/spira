@@ -9,7 +9,7 @@
 # main's push gate — is covered in test-forge-orphan-runs.sh; this suite is the sweep's own
 # decision once handed a list of candidate runs.
 #
-# covers: spira/lib.sh spira/forge.sh spira/batch.sh
+# covers: spira/lib.sh spira/forge.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

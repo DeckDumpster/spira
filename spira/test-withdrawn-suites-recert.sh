@@ -18,7 +18,7 @@
 # write the sidecar and case B fails (gate passes fences-only, oblivious to the red).
 #
 # tier: T1
-# covers: queue/src/* spira/lib.sh spira/batch.sh
+# covers: queue/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
