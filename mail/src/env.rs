@@ -6,7 +6,7 @@
 //! tree by the time a bare-named binary runs).
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct Env {
@@ -44,7 +44,8 @@ fn var_u64(k: &str, default: u64) -> u64 {
 impl Env {
     pub fn load() -> Env {
         let run_dir = var("SPIRA_RUN").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp/spira"));
-        let home = var("SPIRA_HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+        let exe = env::current_exe().unwrap_or_default();
+        let home = locate_home(var("SPIRA_HOME").as_deref(), &exe).unwrap_or_else(|| PathBuf::from("."));
         let mail_root = var("SPIRA_MAIL").map(PathBuf::from).unwrap_or_else(|| run_dir.join("mail"));
         let kinds_dir = var("SPIRA_MAIL_KINDS").map(PathBuf::from).unwrap_or_else(|| home.join("mail/kinds"));
         let index_file = var("SPIRA_MAIL_INDEX").map(PathBuf::from).unwrap_or_else(|| mail_root.join("index"));
@@ -82,5 +83,57 @@ impl Env {
         } else {
             &self.id_prefix
         }
+    }
+}
+
+/// `SPIRA_HOME`, else the first directory holding `lib.sh` among the release and cargo
+/// layouts around this executable (same pattern as `sending::locate_home`, `queue`'s
+/// `harness_home` — every crate re-derives this itself; conf.sh deliberately never exports
+/// `SPIRA_HOME` to child processes, "and that is a fence", so a caller that sources conf.sh
+/// without also exporting it — every `env -i` test fixture, and any real caller that never
+/// bothered — leaves this unset on purpose. mail.sh never had this gap: it sourced conf.sh
+/// itself, which derives `SPIRA_HOME` from *mail.sh's own* `BASH_SOURCE`, not from the
+/// environment. A compiled binary has no `BASH_SOURCE`; deriving from `current_exe()`'s own
+/// location is the equivalent). Sp-ooh1k's own regression: `SPIRA_MAIL_KINDS` (and the
+/// chamber-persona check in `sendmail::reply_mailbox`) silently resolved relative to `.`
+/// instead, so `--kind question`/`event`/etc. refused as "unknown kind" the moment a caller
+/// did not also happen to export `SPIRA_HOME` — found by `test-pr-notify.sh`'s `env -i`
+/// fixture, the one case that does not.
+pub fn locate_home(env_home: Option<&str>, exe: &Path) -> Option<PathBuf> {
+    if let Some(h) = env_home.filter(|h| !h.is_empty()) {
+        return Some(PathBuf::from(h));
+    }
+    let dir = exe.parent()?;
+    [dir.join("../spira"), dir.join("../../spira"), dir.join("../../../spira")]
+        .into_iter()
+        .find(|c| c.join("lib.sh").is_file())
+        .map(|c| c.canonicalize().unwrap_or(c))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn locate_home_prefers_the_explicit_env_var() {
+        let t = testkit::TempDir::new("mail-home-env");
+        assert_eq!(locate_home(Some("/h"), &t.path().join("bin/mail")), Some(PathBuf::from("/h")));
+    }
+
+    #[test]
+    fn locate_home_finds_the_release_layouts_sibling_spira_dir() {
+        let t = testkit::TempDir::new("mail-home-release");
+        let rel = t.path().join("rel");
+        std::fs::create_dir_all(rel.join("bin")).unwrap();
+        std::fs::create_dir_all(rel.join("spira")).unwrap();
+        std::fs::write(rel.join("spira/lib.sh"), "").unwrap();
+        let exe = rel.join("bin/mail");
+        assert_eq!(locate_home(None, &exe), Some(rel.join("spira").canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn locate_home_finds_nothing_with_no_lib_sh_around() {
+        let t = testkit::TempDir::new("mail-home-none");
+        assert_eq!(locate_home(None, &t.path().join("x/y")), None);
     }
 }

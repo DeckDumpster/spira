@@ -97,11 +97,12 @@ if [ -n "$BRIEF" ] && [ -f "$BRIEF" ]; then
     # to run. The failure arrives hours later as "the concierge does not escalate anything".
     nowant "no placeholder survives rendering"  "{{"          "$B"
     want   "the brief names the mail path"      "mail send operator"  "$B"
-    mail_path="$(printf '%s\n' "$B" | grep -oE '[^ `(]*mail\.sh' | head -1)"
-    if [ -n "$mail_path" ] && command -v "$mail_path" >/dev/null 2>&1; then
-        ok "mail path in brief resolves on PATH: $mail_path"
+    # mail is a compiled binary now, invoked bare (sp-ooh1k) — the brief names no path to
+    # extract any more; the only thing left to prove is that "mail" itself resolves.
+    if command -v mail >/dev/null 2>&1; then
+        ok "mail path in brief resolves on PATH: mail"
     else
-        bad "mail path in brief resolves on PATH" "[${mail_path:-<not found>}]"
+        bad "mail path in brief resolves on PATH" "[not found on PATH]"
     fi
     want   "and the bead contract"              "bead.sh file" "$B"
     # THE FILE, NOT THE STRING. The string check above is the positive control: the path

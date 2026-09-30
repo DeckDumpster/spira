@@ -53,8 +53,13 @@ command -v spira-config >/dev/null 2>&1 || bail "spira-config is not on PATH"
 # earn.
 CLONE="$TMP/clone"
 mkdir -p "$CLONE/spira/hooks"
-cp "$HERE/conf.sh" "$HERE/watchd.sh" "$HERE/install-session-hook.sh" "$HERE/mail" "$CLONE/spira/"
+cp "$HERE/conf.sh" "$HERE/watchd.sh" "$HERE/install-session-hook.sh" "$CLONE/spira/"
 cp "$HERE/inbox-triage.sh" "$CLONE/spira/"
+# `mail` is a compiled binary now (sp-ooh1k), not a bash script beside these — and "$HERE/mail"
+# is the pre-existing kinds/ directory (spira/mail/kinds), not the tool. Symlink the real
+# compiled binary in by name instead, so this clone stays self-contained rather than leaning
+# on whatever happens to be further down the outer PATH.
+ln -sf "$(command -v mail)" "$CLONE/spira/mail"
 cp "$HERE/hooks/session.sh" "$CLONE/spira/hooks/"
 
 # `status` asks systemd about every daemon row. A stub answers instead, so this suite says
