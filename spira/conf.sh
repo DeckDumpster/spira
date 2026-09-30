@@ -977,7 +977,7 @@ spira_conf_defaults() {
     # cleanup a storm; a fixture build measured 6s against an empty server and 84s against
     # production. This store is disposable — wiping it costs nothing but the next build.
     # DERIVED, never a literal. A hardcoded operator path here is refused by
-    # inventory.sh, which gate-spira.sh runs FIRST and independently of the suites — so
+    # inventory.sh, which the landing gate runs first and independently of the suites — so
     # one literal default made origin/main refuse every branch, including the branches
     # that would have removed it (sp-2p7o, landed 14:15, blocked everything until 15:0x).
     : "${SPIRA_TESTDB_DATA:=$(_spira_join "$SPIRA_WORKSPACES" beads-test)}"
@@ -1068,15 +1068,16 @@ spira_conf_defaults() {
     : "${SPIRA_GATE_TIMEOUT:=2700}"
     # NO CPU QUOTA FOR AEONS OR THE LANDING UNIT: SPIRA_AEON_CPU_QUOTA and SPIRA_LAND_CPU_QUOTA
     # are retired (sp-b4oct, law-isolate-greedy-work-in-vms); the OS schedules them.
-    # THE GATE'S TIME BUDGET, in seconds. gate-spira.sh times itself per suite and in total;
-    # when the total exceeds this value the gate files a bead against the harness — it does
-    # NOT fail the branch, because the branch did not cause the overrun. The mechanism exists
-    # because the previous 43-suite gate was not built in a day: each suite was individually
-    # justified while the total grew to 17 minutes unchecked. A budget is the only thing that
-    # makes that argument explicit — adding a check that would push the gate over budget is
-    # caught on the timed run and on the gate's own self-check, not on the first innocent branch
-    # that trips it. Set against a measurement: gate-spira.sh measured ~210s when this key was
-    # added (2026-09-08); 300 gives headroom while still catching the next suite added without argument.
+    # THE GATE'S TIME BUDGET, in seconds. gate-touched.sh trims coverage-based suite
+    # selection to fit inside it (gate-budget-select.sh), most-specific-first, and the
+    # Rust gate passes it to testenv as `--deadline`. The mechanism exists because the
+    # previous 43-suite gate was not built in a day: each suite was individually
+    # justified while the total grew to 17 minutes unchecked. A budget is the only thing
+    # that makes that argument explicit. Set against a measurement taken when this key
+    # was added (2026-09-08, ~210s); 300 gives headroom while still bounding the next
+    # suite added without argument. (gate-spira.sh's own overrun bead-filing — a second,
+    # separate mechanism — was retired with it, sp-hyc3a/sp-nhid0: no caller since
+    # sp-b99nj, 2026-09-26, and no analog before this change either.)
     : "${SPIRA_GATE_BUDGET:=300}"
     # HOW MANY SUITES THE LANDING GATE MAY SELECT. 0 = no cap. When the
     # coverage-based selection exceeds this, ejected suites are kept and

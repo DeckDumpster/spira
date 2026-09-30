@@ -5,7 +5,7 @@
 #
 # WHY THIS EXISTS
 # ----------------
-# exclude.sh is fence one of gate-spira.sh's own list (line 111) and fence one of
+# exclude.sh is the beads-data fence in gate.sh's own universal layer and fence one of
 # hooks/pre-commit, and law-beads-is-never-public rests on it, but no suite drove it
 # before this one (gap 4 in docs/test-plan/safety-fences.md).
 #
@@ -16,8 +16,8 @@
 #
 # WIDENING PARITY (sp-aoads). `filter` widens a harness one level under the root to "."
 # with the same rule `scope`/`check`/`staged`/`install` use, so a `.beads/` at the
-# repository root is caught by `git ls-files | exclude.sh filter` — gate-spira.sh's own
-# landing-gate call — exactly when `check` and the pre-commit `staged` hook would also
+# repository root is caught by `git ls-tree -r --name-only | exclude.sh filter` — gate.sh's
+# own landing-gate call — exactly when `check` and the pre-commit `staged` hook would also
 # catch it. The "widened" row below asserts that parity against an identical tree.
 #
 # tier: T2

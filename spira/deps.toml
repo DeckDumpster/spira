@@ -31,6 +31,13 @@ version_min = ""
 version_probe = "git --version"
 
 [[dep]]
+name = "tar"
+tier = "runtime"
+purpose = "release build extracts git archive of the commit it builds (release crate)"
+version_min = ""
+version_probe = "tar --version"
+
+[[dep]]
 name = "python3"
 tier = "runtime"
 purpose = "every JSON payload this harness parses"

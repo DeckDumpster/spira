@@ -1,0 +1,21 @@
+[package]
+name = "release"
+version = "0.1.0"
+edition = "2021"
+description = "release — the release producer (sp-m3ipc): build, verify, activate (with --hotfix), rollback and prune spira-releases/<sha>. Replaces make install, spira/activate.sh and spira/build-tarball.sh for local use."
+
+[lib]
+name = "release"
+path = "src/lib.rs"
+
+[[bin]]
+name = "release"
+path = "src/main.rs"
+
+[dependencies]
+sha2 = "0.10"
+toml = "0.8"
+spira-config = { path = "../spira-config" }
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

@@ -1,0 +1,77 @@
+//! systemd, behind a trait: the real one runs `systemctl --user` (or `$SPIRA_SYSTEMCTL`);
+//! unit tests use a fake.
+
+use std::process::Command;
+
+/// What `systemctl show` says about a unit.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct UnitState {
+    /// `ActiveState`: active, inactive, activating, failed, ...
+    pub active: String,
+    /// `Result`: success, exit-code, ...
+    pub result: String,
+    /// `Type`: simple, oneshot, notify, ...
+    pub kind: String,
+}
+
+pub trait Systemctl {
+    fn daemon_reload(&self) -> Result<(), String>;
+    fn state(&self, unit: &str) -> Result<UnitState, String>;
+    fn restart(&self, unit: &str) -> Result<(), String>;
+}
+
+pub struct RealSystemctl {
+    pub program: String,
+}
+
+impl RealSystemctl {
+    pub fn from_env() -> RealSystemctl {
+        RealSystemctl { program: std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".into()) }
+    }
+
+    fn run(&self, args: &[&str]) -> Result<String, String> {
+        let out = Command::new(&self.program)
+            .arg("--user")
+            .args(args)
+            .output()
+            .map_err(|e| format!("cannot run {}: {e}", self.program))?;
+        if !out.status.success() {
+            return Err(format!(
+                "{} --user {} failed ({}): {}",
+                self.program,
+                args.join(" "),
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    }
+}
+
+/// Parse `Key=Value` lines from `systemctl show -p ...`.
+pub fn parse_show(text: &str) -> UnitState {
+    let mut s = UnitState::default();
+    for line in text.lines() {
+        if let Some((k, v)) = line.split_once('=') {
+            match k {
+                "ActiveState" => s.active = v.to_string(),
+                "Result" => s.result = v.to_string(),
+                "Type" => s.kind = v.to_string(),
+                _ => {}
+            }
+        }
+    }
+    s
+}
+
+impl Systemctl for RealSystemctl {
+    fn daemon_reload(&self) -> Result<(), String> {
+        self.run(&["daemon-reload"]).map(|_| ())
+    }
+    fn state(&self, unit: &str) -> Result<UnitState, String> {
+        self.run(&["show", unit, "-p", "ActiveState", "-p", "Result", "-p", "Type"]).map(|t| parse_show(&t))
+    }
+    fn restart(&self, unit: &str) -> Result<(), String> {
+        self.run(&["restart", unit]).map(|_| ())
+    }
+}

@@ -34,7 +34,7 @@
 # git user config and this suite configures one explicitly.
 #
 # tier: T0
-# covers: spira/orphan-test.sh spira/gate-spira.sh
+# covers: spira/orphan-test.sh .github/workflows/gate.yml
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
