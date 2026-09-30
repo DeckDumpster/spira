@@ -10,6 +10,10 @@
 # REPOS. This suite pins a fixture chamber and repo-map (non-default names) so a pass here
 # is not merely "matches the box's own default output" (per CLAUDE.md's config-fixture rule).
 #
+# sp-g9mhe (bead.sh -> the Rust `bead` binary): the REPOS-absence wording changed from
+# "(no repo-map)" to "(no repository map)" — config-fence reserves the hyphenated name for
+# spira-config's own source; the map's absence is reported without spelling it that way.
+#
 # tier: T1
 # covers: spira/bead.sh
 set -uo pipefail
@@ -96,6 +100,6 @@ echo "T1: REPOS falls back to '(no repo-map)' when SPIRA_REPO_MAP points nowhere
 # ===========================================================================================
 out="$(run_contract "$T/no-such-repo-map")"; rc=$?
 is   "no repo-map: exits 0"                 "0"              "$rc"
-want "no repo-map: REPOS reports absence"   "(no repo-map)"  "$out"
+want "no repo-map: REPOS reports absence"   "(no repository map)"  "$out"
 
 tl_summary

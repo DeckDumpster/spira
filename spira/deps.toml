@@ -36,6 +36,20 @@ version_min = ""
 version_probe = "git --version"
 
 [[dep]]
+name = "hostname"
+tier = "optional"
+purpose = "incident's systemd-unit evidence gathering names the host it ran on; missing it degrades to an empty host field, never a failure to file"
+version_min = ""
+version_probe = "hostname --version"
+
+[[dep]]
+name = "journalctl"
+tier = "optional"
+purpose = "incident's systemd-unit evidence gathering includes the failing unit's last 40 journal lines; missing it degrades to '(journal unavailable)', never a failure to file"
+version_min = ""
+version_probe = "journalctl --version"
+
+[[dep]]
 name = "tar"
 tier = "runtime"
 purpose = "release build extracts git archive of the commit it builds (release crate)"
@@ -225,6 +239,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v bd-meter)\""
 
 [[dep]]
+name = "bead"
+tier = "release"
+purpose = "Spira's bead binary, from the release's bin/"
+version_min = ""
+version_probe = "readlink -f \"$(command -v bead)\""
+
+[[dep]]
 name = "beads-store"
 tier = "release"
 purpose = "Spira's beads-store binary, from the release's bin/"
@@ -363,6 +384,13 @@ tier = "release"
 purpose = "Spira's round-vm binary, from the release's bin/"
 version_min = ""
 version_probe = "readlink -f \"$(command -v round-vm)\""
+
+[[dep]]
+name = "rule"
+tier = "release"
+purpose = "Spira's rule binary, from the release's bin/"
+version_min = ""
+version_probe = "readlink -f \"$(command -v rule)\""
 
 [[dep]]
 name = "sentinel"
