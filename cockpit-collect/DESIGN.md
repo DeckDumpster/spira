@@ -102,12 +102,16 @@ no subcommand prefix (a test's mock script, same shape the bash mock scripts alw
 
 ### Formatting fidelity
 
-Nine keys (`SP_HOTFIX_LINE`, `SP_HOTFIX_ALERT`, `SP_OVERRIDES_LIST`, `SP_AURON_KEYS`, and
-the five `*_NAMES` space-lists) wrap their own value in a literal single quote *before* the
-merge's own `shq()` quotes the line a second time — an accretion from the bash, kept rather
-than "fixed": `health.sh` already parses this exact double-quoted shape, and changing the
-producer without touching that reader would break it (`law-rust-rewrites-start-from-
-intent` — name the accident, don't silently correct behaviour a reader depends on).
+Ten keys (`SP_HOTFIX_LINE`, `SP_HOTFIX_ALERT`, `SP_OVERRIDES_LIST`, `SP_AURON_KEYS`, and
+the six `*_NAMES` space-lists, `SP_PROTECTED_NAMES` included) wrapped their own value in a
+literal single quote in the bash *before* the merge's own `shq()` quoted the line a second
+time — so an empty value round-tripped as the four-character string `''''` rather than the
+two-character `''` every other empty key produces, and a reader that plain-sources the
+snapshot (the new Rust pane, sp-llbmi) sees that as a non-empty string, not absence. Found
+in production's live `cockpit.env` (the operator, 2026-09-30) and fixed here, not replicated:
+these ten keys now go through the exact same single `push`/one-`self_quote`-at-merge path
+every other key does. No reader depends on the doubled shape — it was never intentional,
+just two independent quoting steps neither knew about the other.
 
 `sanitize_title`'s trailing `.replace("=", "-")` (mirroring the bash's
 `re.sub(...)[:80].replace("=", "-")`) can never fire: the allowlist already maps `=` to a

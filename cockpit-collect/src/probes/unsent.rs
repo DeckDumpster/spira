@@ -185,18 +185,18 @@ fn branch_backlog_section(out: &mut Kv) {
 
     push(out, "SP_BRANCH_DONE", done.to_string());
     push(out, "SP_UNADOPTED", unadopted.to_string());
-    super::push_q(out, "SP_UNADOPTED_NAMES", &unadopted_names.join(" "));
+    super::push(out, "SP_UNADOPTED_NAMES", unadopted_names.join(" "));
     push(out, "SP_ORPHAN_WORK", orphan_work.to_string());
     push(out, "SP_ROUND_BRANCHES", round_branches.to_string());
-    super::push_q(out, "SP_ROUND_BRANCHES_NAMES", &round_branches_names.join(" "));
+    super::push(out, "SP_ROUND_BRANCHES_NAMES", round_branches_names.join(" "));
     push(out, "SP_PROBE_FAIL", probe_fail.to_string());
-    super::push_q(out, "SP_PROBE_FAIL_NAMES", &probe_fail_names.join(" "));
+    super::push(out, "SP_PROBE_FAIL_NAMES", probe_fail_names.join(" "));
     push(out, "SP_PROTECTED", protected.to_string());
-    super::push_q(out, "SP_PROTECTED_NAMES", &protected_names.join(" "));
+    super::push(out, "SP_PROTECTED_NAMES", protected_names.join(" "));
     push(out, "SP_BATCHED_STRANDED", batched_stranded.to_string());
-    super::push_q(out, "SP_BATCHED_STRANDED_NAMES", &batched_stranded_names.join(" "));
+    super::push(out, "SP_BATCHED_STRANDED_NAMES", batched_stranded_names.join(" "));
     push(out, "SP_BATCHED_TOO_LONG", batched_too_long.to_string());
-    super::push_q(out, "SP_BATCHED_TOO_LONG_NAMES", &batched_too_long_names.join(" "));
+    super::push(out, "SP_BATCHED_TOO_LONG_NAMES", batched_too_long_names.join(" "));
     push(out, "SP_CLOSED_STRANDED", closed_stranded.to_string());
     if closed_stranded > 0 {
         if let Some(o) = closed_stranded_oldest {

@@ -124,7 +124,7 @@ statement = "NOW rows come from `trace_stats`/`trace_tail`: turns are distinct m
 [[use_case]]
 id = "UC-cockpit-observability-24"
 tier = "T1"
-statement = "DRAINING (minutes and resume hint) and STOPPED are independent banners; a stale snapshot is STALE (naming probe and kill count) when its core probe timed out, FAULT (age) otherwise; the threshold `SPIRA_SNAP_STALE_S` is shared with `watchtower.sh` and `doctor.sh`"
+statement = "DRAINING (minutes and resume hint) and STOPPED are independent banners; a stale snapshot is STALE (naming probe and kill count) when its core probe timed out, FAULT (age) otherwise; the threshold `SPIRA_SNAP_STALE_S` is shared with `watchtower` and `doctor.sh`"
 
 [[use_case]]
 id = "UC-cockpit-observability-25"

@@ -105,7 +105,6 @@ spira/test-testdb-failsafe.sh
 spira/test-testlib.sh
 spira/test-tsd-ingest.sh
 spira/test-tsd.sh
-spira/test-watchtower-unit-extraction-sp-ezeiy.sh
 spira/test-workflow-run-check.sh
 spira/test-workspace-dist.sh
 spira/test-world-drain-deadline.sh

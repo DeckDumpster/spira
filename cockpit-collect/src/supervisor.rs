@@ -659,6 +659,26 @@ mod tests {
         assert!(snap.contains("SP_COLLECTOR_REV="));
     }
 
+    /// The merge path's own copy of the empty-value regression `main.rs`'s tests cover for
+    /// `once` (the operator, 2026-09-30): a probe's empty value for one of the ten previously
+    /// self-quoting keys must merge to exactly `KEY=''`, not the doubled quoting production
+    /// carried (a probe quoting its own output, then merge's `self_quote` quoting it again).
+    #[test]
+    fn merge_renders_empty_value_as_two_char_empty_quotes_not_doubled() {
+        let run = TempDir::new("cc-merge-empty");
+        let cfg = cfg(&run);
+        std::fs::create_dir_all(&cfg.frag_dir).unwrap();
+        write_atomic(
+            &cfg.frag_dir.join("now.env"),
+            "_PROBE_AT=1\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_HOTFIX_LINE=\nSP_PROTECTED_NAMES=\n",
+        );
+        assert!(merge_fragments(&cfg));
+        let snap = std::fs::read_to_string(&cfg.snap).unwrap();
+        assert!(snap.contains("SP_HOTFIX_LINE=''\n"), "snap was: {snap}");
+        assert!(snap.contains("SP_PROTECTED_NAMES=''\n"), "snap was: {snap}");
+        assert!(!snap.contains("''''"), "must not be doubled: {snap}");
+    }
+
     #[test]
     fn merge_stale_keeps_last_known_good_values() {
         let run = TempDir::new("cc-merge-stale");

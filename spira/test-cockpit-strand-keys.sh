@@ -4,7 +4,7 @@
 # SP_STRAND_GHOST and SP_STRAND_OTHER, derived from $SPIRA_RUN/strands.json.
 #
 # Before this suite, gap #2 of docs/test-plan/cockpit-observability.md: these four keys
-# were only ever SEEDED into fixtures (test-cockpit-probe-fault.sh, watchtower.sh's own
+# were only ever SEEDED into fixtures (test-cockpit-probe-fault.sh, watchtower's own
 # suite) — nothing derived them from a strands.json shaped the way strand.sh actually
 # writes it (partition:kind:id -> {first, acted, escalated}), and nothing checked the
 # collector's own honest-unknown branches.

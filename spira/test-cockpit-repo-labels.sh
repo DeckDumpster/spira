@@ -30,7 +30,7 @@
 #
 # defect: sp-sqlk
 # tier: T2
-# covers: cockpit-collect/src/* spira/watchtower.sh
+# covers: cockpit-collect/src/* watchtower/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

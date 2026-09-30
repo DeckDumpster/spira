@@ -12,7 +12,7 @@ mod reachable;
 mod unsent;
 
 use crate::io;
-use crate::quoting::{sanitize, sanitize_title, self_quote};
+use crate::quoting::{sanitize, sanitize_title};
 use serde_json::Value;
 use std::path::Path;
 
@@ -20,10 +20,6 @@ pub type Kv = Vec<(String, String)>;
 
 fn push(out: &mut Kv, k: &str, v: impl Into<String>) {
     out.push((k.to_string(), v.into()));
-}
-
-fn push_q(out: &mut Kv, k: &str, v: &str) {
-    out.push((k.to_string(), self_quote(v)));
 }
 
 /// Render a [`Kv`] as the raw `KEY=value` lines a probe subcommand prints on stdout —
@@ -226,22 +222,22 @@ pub fn now_keys() -> Kv {
     if auron_status.is_file() {
         let (firing, keys) = read_auron_status(&auron_status);
         push(&mut out, "SP_AURON_FIRING", firing);
-        push_q(&mut out, "SP_AURON_KEYS", &keys);
+        push(&mut out, "SP_AURON_KEYS", keys);
     } else {
         push(&mut out, "SP_AURON_FIRING", "?");
-        push_q(&mut out, "SP_AURON_KEYS", "");
+        push(&mut out, "SP_AURON_KEYS", "");
     }
 
     let rs_out = io::run_tool("release", &["status"], None).unwrap_or_default();
     let rs_line = rs_out.lines().find(|l| l.starts_with("RUNNING UNLANDED ")).unwrap_or("");
     let rs_alert = rs_out.lines().find(|l| l.starts_with("ALERT ")).unwrap_or("");
-    push_q(&mut out, "SP_HOTFIX_LINE", rs_line);
-    push_q(&mut out, "SP_HOTFIX_ALERT", rs_alert);
+    push(&mut out, "SP_HOTFIX_LINE", rs_line);
+    push(&mut out, "SP_HOTFIX_ALERT", rs_alert);
 
     let (ov_n, ov_failed, ov_list) = overrides_summary();
     push(&mut out, "SP_OVERRIDES_N", ov_n.to_string());
     push(&mut out, "SP_OVERRIDES_FAILED", ov_failed.to_string());
-    push_q(&mut out, "SP_OVERRIDES_LIST", &ov_list);
+    push(&mut out, "SP_OVERRIDES_LIST", ov_list);
 
     let (gate_rows, gate_n, gate_live) = gate_run_scan(&run);
     for (idx, (slug, age, phase, why)) in gate_rows.iter().enumerate() {
