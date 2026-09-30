@@ -1,18 +1,15 @@
 //! Host values for rendering a unit template (systemd/render.py's argument set, in Rust) and
-//! the render call itself, which delegates to `release::units::render_from_values` — the same
-//! substitution, `%i`, timer-`Unit=` rewrite and one-trailing-newline rules `release activate`
-//! and `release install-tarball` already use, so there is exactly one renderer, not two that
-//! can drift the way `install.sh`'s and `unit-ensure.sh`'s hand-copied heredocs once did.
-//!
-//! DECISION: render.py refused only on an unfilled placeholder and specially refused `@DOLT@`
-//! when empty; every other key rendered empty silently (e.g. an unset `SPIRA_TESTDB_DATA` in
-//! a template that happened to use it). `release::units::render_from_values` is stricter — any
-//! placeholder used with an empty value refuses by name, `SPIRA_PATH_TAIL` excepted — matching
-//! the render `release activate`/`install-tarball` already ship. This crate adopts that
-//! stricter rule rather than porting the looser one: FAIL CLOSED (wave brief, 2026-09-29).
-//! Checked against every template in `systemd/` (DESIGN.md "Parity"): no template uses a key
-//! that is empty on the path that renders it, so the stricter rule changes no real verdict —
-//! it only turns a hypothetical silent-empty render into a named refusal.
+//! the render call itself — render.py's own rules, not `release::units::render_from_values`
+//! (`release activate`/`install-tarball`'s renderer, which is stricter: any placeholder used
+//! with an empty value refuses). That strictness was tried here first and reverted (DESIGN.md
+//! "Decisions"): a live `testenv` batch container never sets `SPIRA_DB`/`SPIRA_SNAP_STALE_S`
+//! before running this crate's binaries — `install.sh` got them from sourcing conf.sh, which
+//! this crate does not — and render.py's original, permissive rule (substitute a known key
+//! even when it is empty; refuse only an entirely-unfilled placeholder, plus one special case
+//! for `@DOLT@`) is what every caller has actually been relying on. This file is therefore
+//! its own renderer, using only [`release::units::placeholders`] and
+//! [`release::units::normalize`] (structural parsing that carries no behaviour of its own)
+//! from the shared module.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -76,7 +73,39 @@ fn dirname(p: &str) -> String {
 /// Render one template (systemd/render.py's rules). `template_name` is used only for error
 /// messages and the `spira-*.timer` `Unit=` rewrite — it need not match `path`'s basename.
 pub fn render(template_name: &str, text: &str, host: &HostValues, watcher: Option<&str>) -> Result<String, String> {
-    release::units::render_from_values(template_name, text, &host.to_map(), watcher, &host.instance)
+    let map = host.to_map();
+    // render.py's own special case, checked against the RAW template before substitution:
+    // an empty DOLT is fine for a template that never names it, but a refusal — not a
+    // silent empty ExecStart — for one that does.
+    if text.contains("@DOLT@") && map.get("DOLT").is_none_or(|v| v.is_empty()) {
+        return Err(format!("{template_name}: dolt is not on PATH; install dolt before rendering units that need it"));
+    }
+    let mut out = text.to_string();
+    for k in release::units::placeholders(text) {
+        if let Some(v) = map.get(&k) {
+            out = out.replace(&format!("@{k}@"), v);
+        }
+    }
+    if let Some(w) = watcher {
+        out = out.replace("%i", w);
+    }
+    if template_name.starts_with("spira-") && template_name.ends_with(".timer") {
+        out = out
+            .lines()
+            .map(|l| match l.strip_prefix("Unit=spira-").and_then(|r| r.strip_suffix(".service")) {
+                Some(name) if !name.is_empty() && name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-') => {
+                    format!("Unit=spira-{name}-{}.service", host.instance)
+                }
+                _ => l.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+    let left = release::units::placeholders(&out);
+    if !left.is_empty() {
+        return Err(format!("{template_name} has placeholders nothing fills: {}", left.join(", ")));
+    }
+    Ok(release::units::normalize(&out))
 }
 
 /// Render the template at `path`, naming it by its own basename.
@@ -140,12 +169,27 @@ mod tests {
     }
 
     #[test]
-    fn a_key_used_with_an_empty_value_refuses_except_path_tail() {
-        let e = render("z.service", "Environment=SPIRA_DOLT_DATA=@SPIRA_DOLT_DATA@\n", &hv(), None).unwrap_err();
-        assert!(e.contains("SPIRA_DOLT_DATA"), "{e}");
-        // SPIRA_PATH_TAIL is the one OPTIONAL_EMPTY key — empty is the ordinary case.
+    fn a_known_key_substitutes_even_when_its_value_is_empty() {
+        // render.py's own permissive rule: SPIRA_DOLT_DATA is a known key, just an empty one
+        // here — substituted as empty, not refused. Real callers never hit this in practice
+        // (units.sh only ever installs a template that uses it when SPIRA_DOLT_DATA is set),
+        // but a batch container that has not sourced conf.sh leaves other keys
+        // (SPIRA_DB, SPIRA_SNAP_STALE_S) genuinely empty and still needs this to render.
+        let out = render("z.service", "Environment=SPIRA_DOLT_DATA=@SPIRA_DOLT_DATA@\n", &hv(), None).unwrap();
+        assert_eq!(out, "Environment=SPIRA_DOLT_DATA=\n");
         let out = render("w.service", "Environment=PATH=/bin@SPIRA_PATH_TAIL@\n", &hv(), None).unwrap();
         assert_eq!(out, "Environment=PATH=/bin\n");
+    }
+
+    #[test]
+    fn dolt_is_the_one_key_refused_when_empty_and_used() {
+        let mut h = hv();
+        h.dolt = "".into();
+        let e = render("dolt-beads.service", "ExecStart=@DOLT@ sql-server\n", &h, None).unwrap_err();
+        assert!(e.contains("dolt"), "{e}");
+        // A template that never names @DOLT@ is unaffected by DOLT being empty.
+        let out = render("other.service", "ExecStart=/bin/true\n", &h, None).unwrap();
+        assert_eq!(out, "ExecStart=/bin/true\n");
     }
 
     #[test]

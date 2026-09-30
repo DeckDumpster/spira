@@ -59,7 +59,7 @@ unit-ensure [--diff]
 | `ensure` | `systemd/unit-ensure.sh` | The same render/write, without restart: enable+start only newly-installed units, the MISSING-TARGET guard, and the broker-producer guard run on every invocation. |
 | `checks` | root `install.sh`'s path-collision/landref/live-aeon refusals as `units-install` runs them | Shared between `units-install` and `install`'s phase 4 so the two cannot resolve a different answer from the same box. |
 | `orchestrate` | root `install.sh`'s phase sequencing (the parts worth unit-testing without doctor.sh/a real dolt server/systemd) | The `Deps` trait for external tools not yet ported, the dolt-query-ready retry loop, phase 4's wiring, `spira-config path-tail`'s logic read in-process instead of shelled out to. |
-| `bootstrap` | glue `systemd/install.sh`/`unit-ensure.sh` both had (source conf.sh/units.sh, call `watchd.sh units`, read `ctrl.sh`'s suspended set) | Resolve host values, the manifest and the unit directory from the environment a caller already set — the one place this is done, so `install`, `units-install` and `unit-ensure` cannot each derive it slightly differently. |
+| `bootstrap` | glue `systemd/install.sh`/`unit-ensure.sh` both had (source conf.sh/units.sh, call `watchd.sh units`, read `ctrl.sh`'s suspended set) | Resolve host values, the manifest and the unit directory from the environment a caller already set — the one place this is done, so `install`, `units-install` and `unit-ensure` cannot each derive it slightly differently. Also applies the three plain `conf.sh` defaults that matter to rendering (`SPIRA_SNAP_STALE_S=60`, `SPIRA_TESTDB_PORT=3308`, `SPIRA_COCKPIT=dirname(SPIRA_HOME)/cockpit`) when the caller's environment leaves them unset — see Decisions. |
 
 The root `install` binary's phase bodies (database bootstrap, spira-lc system-user creation,
 cockpit symlinks) live directly in `src/bin/install.rs` — they are almost entirely "shell to a
@@ -79,18 +79,26 @@ template this box ever actually renders, not a synthetic fixture.
 
 ## Decisions
 
-- **The renderer's empty-value refusal is adopted, not render.py's looser rule** (FAIL CLOSED,
-  wave brief 2026-09-29). `render.py` refused only an entirely-unfilled placeholder, plus one
-  hand-written special case for `@DOLT@`. `release::units::render_from_values` (already shipped
-  for `release activate`/`install-tarball`) refuses **any** placeholder used with an empty
-  value, `SPIRA_PATH_TAIL` excepted. This crate reuses that same function rather than porting
-  the looser rule, so the whole render surface — `activate`, `install-tarball`, `install`,
-  `units-install`, `unit-ensure` — shares one behaviour. Checked against every template
-  (**Parity**, above): no template renders a key empty on the path that reaches it today, so
-  this changes no real verdict, only turns a hypothetical silent-empty render into a named
-  refusal. The one wording difference this drops: `@DOLT@`'s old special message ("dolt is not
-  on PATH; install dolt before rendering units that need it") becomes the generic "uses DOLT
-  but no value is set for it" — the refusal, not the prose, is what mattered.
+- **`install::values::render` ports render.py's own (permissive) rule, not
+  `release::units::render_from_values`'s stricter one — tried the other way first, reverted
+  on real evidence.** The first cut reused `render_from_values` (`release activate`/
+  `install-tarball`'s renderer, which refuses any placeholder used with an empty value,
+  `SPIRA_PATH_TAIL` excepted) on the theory that no template renders a key empty on the path
+  that reaches it. Two real `testenv` batch-container gate runs disproved that: `install.sh`
+  got `SPIRA_SNAP_STALE_S`/`SPIRA_TESTDB_PORT`/`SPIRA_COCKPIT` (defaulted) and `SPIRA_DB`
+  (genuinely left empty in that flow) for free by sourcing `conf.sh`; this crate does not
+  source `conf.sh`, and a batch container never sets several of these before running its
+  binaries. The stricter rule turned that silent-empty render into a real, branch-breaking
+  refusal in a flow that must keep working. Reverted to render.py's exact original rule
+  (substitute a known key even when empty; refuse only a wholly-unfilled placeholder, plus
+  the one hand-written special case for `@DOLT@`) and separately fixed the one real
+  consequence: `bootstrap::host_from_env` now applies `conf.sh`'s own plain defaults for
+  `SPIRA_SNAP_STALE_S` (60), `SPIRA_TESTDB_PORT` (3308) and `SPIRA_COCKPIT`
+  (`dirname(SPIRA_HOME)/cockpit`) when the environment leaves them unset, closing the gap
+  `conf.sh` sourcing used to close for free. `SPIRA_DB` has no such default in `conf.sh` — it
+  renders empty in that flow exactly as `render.py` always did, and is a business as usual,
+  not a bug this bead owns. Re-verified byte-identical against `render.py` on all 63
+  templates after reverting (**Parity**, above).
 - **The `$tmpl` "watcher template changed" check in `systemd/install.sh`'s enable loop is
   dropped, not ported.** `tmpl="${u%%@*}@.service"` was meant to mark every watcher instance
   changed when the shared `spira-watch@.service` template changed — but under per-instance
