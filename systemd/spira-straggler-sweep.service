@@ -3,7 +3,7 @@
 # --skip-queue call) — their landed branches are reaped at landing itself. This is the
 # once-a-day backstop for whatever that landing-time reap missed.
 Description=Spira straggler sweep — reap stranded branches/worktrees in queue-mode repos
-Documentation=file://@SPIRA_HOME@/sending.sh
+Documentation=file://@SPIRA_PROD_ROOT@/sending/DESIGN.md
 After=default.target
 
 [Service]
@@ -14,7 +14,7 @@ After=default.target
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
-ExecStart=@SPIRA_PROD@/sending.sh --queue-only
+ExecStart=@SPIRA_PROD_ROOT@/bin/sending --queue-only
 TimeoutStartSec=600
 StandardOutput=append:@SPIRA_RUN@/straggler-sweep.log
 StandardError=append:@SPIRA_RUN@/straggler-sweep.log

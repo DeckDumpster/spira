@@ -191,7 +191,7 @@ merge-failed messages, which are new.
 `<tree-key>` is the branch with `/` → `-` and anything outside `[A-Za-z0-9.-]` → `-`.
 
 Yield records go through `yield.sh pass|record` exactly as before (with `SPIRA_RUN` set
-explicitly), and certification events through `lc_certify` (lib.sh) when `SPIRA_GATE_BEAD` is set
+explicitly), and certification events through `spira-lc certify` (lib.sh's `lc_certify` until sp-arpjt) when `SPIRA_GATE_BEAD` is set
 and the branch tip resolved: `pass <key>` on 0, `infra <reason>` on 75/76, `red <reason>` else.
 
 ### The verdict key
@@ -659,7 +659,7 @@ the files above. `src/compose.rs` is the pure decision (classification, reverse 
 the composition, the unit commands) with its own tests.
 `src/real.rs` implements it; `src/tests.rs` drives the engine through a recording fake. The
 lib.sh seam is one `bash -c '. lib.sh; …'` at start (NUL-separated `key=value`) and one per
-`lc_certify` / `spira_prune_worktrees`, payloads never on argv.
+`spira_prune_worktrees`, payloads never on argv (certification is `spira-lc certify`, a binary, since sp-arpjt).
 
 ## Decisions
 

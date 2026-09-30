@@ -387,8 +387,15 @@ impl Lib for RealLib {
     fn cancel_runs(&self, forge: &Path, path: &Path, branch: &str) {
         self.call(Op::CancelRuns, &[&forge.display().to_string(), &path.display().to_string(), branch], false);
     }
+    /// `spira-lc returned` — the caller verb that replaced lc.sh's `lc_returned` (sp-arpjt).
+    /// Best-effort and silent, as the seam call was; the machine reads its own switch.
     fn lc_returned(&self, id: &str, reason: &str) {
-        self.call(Op::LcReturned, &[id, reason], false);
+        let _ = Command::new("spira-lc")
+            .args(["returned", id, reason])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
     fn format_batch(&self, wt: &Path, base: &str, name: &str) {
         self.call(Op::FormatBatch, &[&wt.display().to_string(), base, name], false);
@@ -772,7 +779,6 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
 "#,
         )
         .unwrap();
-        fs::write(d.join("lc.sh"), "").unwrap();
         d
     }
 
@@ -852,7 +858,6 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
         // a lib.sh that logs while it is sourced: the log precedes the mark, never a name
         let d = crate::testutil::tmpdir("reallib-noisy");
         fs::write(d.join("lib.sh"), "echo 'spira: noise while sourcing' >&1\nspira_repos() { printf 'a\\nb\\n'; }\n").unwrap();
-        fs::write(d.join("lc.sh"), "").unwrap();
         assert_eq!(RealLib { home: d.to_path_buf() }.repos().unwrap(), vec!["a".to_string(), "b".to_string()]);
     }
 
@@ -879,7 +884,6 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
         let _serial = crate::testutil::serial();
         let d = crate::testutil::tmpdir("reallib-norepos");
         fs::write(d.join("lib.sh"), "spira_repos() { return 0; }\n").unwrap();
-        fs::write(d.join("lc.sh"), "").unwrap();
         assert!(RealLib { home: d.to_path_buf() }.repos().is_err());
         fs::write(d.join("lib.sh"), "exit 9\n").unwrap();
         assert!(RealLib { home: d.to_path_buf() }.repos().is_err());

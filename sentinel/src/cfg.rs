@@ -251,6 +251,8 @@ pub struct Cfg {
     pub landing_bin: String,
     pub claim_bin: String,
     pub strand_bin: String,
+    /// The Sending CHECK 6b runs (`sending --skip-queue`, sending/DESIGN.md).
+    pub sending_bin: String,
     pub incident_sh: PathBuf,
     pub home_repo: String,
     pub fayths_str: String,
@@ -370,6 +372,7 @@ impl Cfg {
             landing_bin: "landing-pass".into(),
             claim_bin: "spira-claim".into(),
             strand_bin: "strand".into(),
+            sending_bin: "sending".into(),
             // SPIRA_INCIDENT_SH stays a test seam (a mock incident.sh); unset, the release's
             // incident.sh by name — `bash incident.sh` finds a slashless script on PATH.
             incident_sh: c
@@ -535,7 +538,7 @@ pub mod tests {
         assert_eq!(k.home, PathBuf::from("/h"));
         assert_eq!(k.home_repo, "h");
         assert_eq!(k.incident_sh, PathBuf::from("incident.sh"));
-        assert_eq!((k.lc_bin.as_str(), k.claim_bin.as_str(), k.strand_bin.as_str(), k.landing_bin.as_str(), k.tsd_bin.as_str()), ("spira-lc", "spira-claim", "strand", "landing-pass", "tsd-write"));
+        assert_eq!((k.lc_bin.as_str(), k.claim_bin.as_str(), k.strand_bin.as_str(), k.landing_bin.as_str(), k.tsd_bin.as_str(), k.sending_bin.as_str()), ("spira-lc", "spira-claim", "strand", "landing-pass", "tsd-write", "sending"));
         assert_eq!(k.pass_target, 60);
     }
 }

@@ -275,11 +275,11 @@ echo
 echo "case 8 — the sentinel's full pass populates both snapshots once and cleans them up"
 # ==========================================================================================
 STUBS="$TMP/stubs"; mkdir -p "$STUBS"
-for _s in pilgrimage.sh strand reflect.sh sending.sh; do
+for _s in pilgrimage.sh strand reflect.sh sending; do
     printf '#!/bin/sh\n' > "$STUBS/$_s"; chmod +x "$STUBS/$_s"
 done
 # THE SENTINEL IS A BINARY (sentinel.sh is gone): it sources lib.sh from SPIRA_HOME.
-for _s in lib.sh conf.sh lc.sh suite-covers.sh lifecycle-cert.sh; do ln -s "$HERE/$_s" "$STUBS/$_s"; done
+for _s in lib.sh conf.sh suite-covers.sh; do ln -s "$HERE/$_s" "$STUBS/$_s"; done
 ln -sf "$HERE/chamber" "$STUBS/chamber" 2>/dev/null || true
 PASS_RUN="$TMP/pass-run"; mkdir -p "$PASS_RUN/landstate"
 GOAL_JSON="$(printf '{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"]}')"

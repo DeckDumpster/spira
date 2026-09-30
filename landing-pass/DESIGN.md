@@ -406,7 +406,7 @@ The forge refs are read as last fetched; a stale one only delays a prune.
 One mechanism (the queue crate's, §6 there): `bash` with **no arguments**, reading from stdin
 a fixed script (compiled into the binary per operation) followed by the operation's values,
 each NUL-terminated. The script reads every value, detaches stdin, sources `lib.sh` (and
-`lc-delivery.sh` where named), defines `progress` (prints `\x1f<line>`, which the binary
+nothing else since sp-arpjt retired `lc-delivery.sh`), defines `progress` (prints `\x1f<line>`, which the binary
 turns into a mailbox movement) and `act` (= `log`), calls exactly one function, and prints
 its answer after `\x1e`. Nothing in argv or the environment. Payloads (notes, gate output)
 are values like any other.
@@ -427,12 +427,12 @@ are values like any other.
 | S12 `note` | `bdq note <id> <text>` | bdq retry/czar/fixture |
 | S13 `push` | `spira_git_push <tree> -q <remote> <refspec>` (stderr returned) | GitHub App credentials |
 | S14 `land_subject` | `land_subject <id>` | merge subject with title |
-| S15 `deliver_*` | `lc_deliver_push_delivered / _requeued / _returned` (lc-delivery.sh) | delivery CAS |
+| S15 `deliver_*` | `spira-lc deliver push-delivered / push-requeued / push-returned` (lc-delivery.sh's `lc_deliver_push_*` until sp-arpjt) | delivery CAS |
 | S16 `closeout` | `gh_issue_closeout`; `bead_close_on_land` | issue close + close + reap |
 | S17 `prune_worktrees` | `spira_prune_worktrees <repo>` | the one destruction site |
 | S18 `gh_unlanded_scan` | `_gh_unlanded_scan` | GitHub asks |
 | S19 `ask_refresh_loop` (sp-t4y60) | `spira_ask_refresh_loop <repo> <name> <br> <id> <base_fq> <n>` | mail wiring, dedupe — `needs_refresh`'s own escalation, distinct from S7's rebase-loop ask |
-| S20 `deliver_pr_merged` / `deliver_pr_closed` (sp-t4y60) | `lc_deliver_pr_merged`, `lc_deliver_pr_closed` (lc-delivery.sh) | delivery CAS, pr mode's own exits (distinct from S15's push-mode wrappers) |
+| S20 `deliver_pr_merged` / `deliver_pr_closed` (sp-t4y60) | `spira-lc deliver pr-merged` / `pr-closed` (lc-delivery.sh's `lc_deliver_pr_*` until sp-arpjt) | delivery CAS, pr mode's own exits (distinct from S15's push-mode wrappers) |
 | S21 `force_push` (sp-t4y60) | `spira_git_push <repo> -q --force-with-lease -u <remote> <br>` (stderr returned) | GitHub App credentials, same as S13; `land_pr`'s push always force-with-lease |
 
 **Rust, against the same data:** the landstate and submitted records (reads; submitted
@@ -511,7 +511,7 @@ The pr timer is unchanged: `systemd/spira-landing-pass.service:8` keeps
     would try to patch a missing file, so it must go in the same step.)
 24. sp-4hs0i closes with this landing (§8 D3).
 
-`spira/pr-pass-branch.sh` and `spira/lc-delivery.sh` stay: the pr pass still delegates each
+`spira/pr-pass-branch.sh` stayed until sp-t4y60 (landing-pass/src/pr_branch.rs), and `spira/lc-delivery.sh` until sp-arpjt made it `spira-lc deliver`: the pr pass still delegates each
 branch to the helper (kept pr behaviour).
 
 ### 7.4 Bash suites to retire or repoint

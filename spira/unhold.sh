@@ -5,12 +5,11 @@
 #   unhold.sh <bead-id>
 #
 # Kills the heartbeat, removes the pidfile, and releases the operator hold on spira-lc
-# (sp-rlyl0) that hold.sh applied — best-effort, the same construction every lc.sh caller
+# (sp-rlyl0) that hold.sh applied — best-effort, the same construction every spira-lc caller-verb call
 # uses. The bead is available for the loop to pick up as soon as nothing else holds it.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
-. "$HERE/lc.sh"
 
 ID=""
 while [ $# -gt 0 ]; do
@@ -39,6 +38,6 @@ fi
 rm -f "$PIDFILE" "$HBFILE"
 
 # Release the operator hold on spira-lc.
-lc_unhold "$ID" operator "hold-$ID" >/dev/null 2>&1 || true
+spira-lc unhold "$ID" operator "hold-$ID" >/dev/null 2>&1 || true
 
 printf 'released %s\n' "$ID"

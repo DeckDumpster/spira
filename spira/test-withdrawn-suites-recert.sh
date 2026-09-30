@@ -34,7 +34,7 @@ REPO="$TMP/repo"; RUN="$TMP/run"; SH="$TMP/spira"
 mkdir -p "$RUN/worktree" "$RUN/landstate" "$RUN/queue/fixq" "$SH"
 cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
    "$HERE/exclude.sh" "$HERE/skew.sh" "$HERE/yield.sh" "$HERE/suite-covers.sh" \
-   "$HERE/gate-sweep.sh" "$HERE/lc.sh" "$SH/"
+   "$HERE/gate-sweep.sh" "$SH/"
 
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base

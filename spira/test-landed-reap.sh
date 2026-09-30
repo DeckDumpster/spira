@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-landed-reap.sh — bead_close_on_land reaps a landed member's branch and worktree at
-#   the moment it closes it, using the same verified deletion sending.sh uses
+#   the moment it closes it, using the same verified deletion the `sending` binary uses
 #   (spira_reap_landed_branch, lib.sh) — never a tip comparison, and it refuses to delete a
 #   branch whose content is not actually on the repository's base.
 #
@@ -25,7 +25,7 @@
 #
 # defect: sp-jci6o
 # tier: T1
-# covers: spira/lib.sh spira/sending.sh queue/src/*
+# covers: spira/lib.sh sending/src/* queue/src/*
 # hermetic-ok: a stub bd (a JSON-file-per-id fixture) and local git repos — no database, no
 #   systemd, no real network
 set -uo pipefail

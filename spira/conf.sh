@@ -1028,7 +1028,10 @@ spira_conf_defaults() {
     : "${SPIRA_LC_SOCKET:=/run/spira-lc/sock}"
     # Whether an aeon takes the lifecycle semantic layer at all (design §3.5). Default off:
     # `work` and `spira-lc` are on every release's PATH, and their presence alone must not
-    # flip an aeon onto the restricted path. Only aeon.sh's own gates read this (sp-74gzo).
+    # flip an aeon onto the restricted path. EXPORTED (sp-arpjt): the lifecycle calls a
+    # script makes are `spira-lc` caller verbs now, children that read the switch from their
+    # own environment — exporting the value this file resolved keeps them agreeing with the
+    # shell that sourced it, as the sourced lc.sh functions did by construction.
     : "${SPIRA_LIFECYCLE_ENFORCE:=0}"
     # WHERE THE TEST IMAGE IS PUBLISHED, if anywhere. Empty means build it locally and
     # never reach the network, which is the right default: the registry is somebody's
@@ -2418,6 +2421,7 @@ export COCKPIT_BOTTOM_PCT \
     SPIRA_LC_TESTDB_PORT \
     SPIRA_LC_UNIX_GROUP \
     SPIRA_LC_UNIX_USER \
+    SPIRA_LIFECYCLE_ENFORCE \
     SPIRA_LOOM_ADDR \
     SPIRA_LOOM_BUDGET_MS \
     SPIRA_LOOM_CACHE_S \

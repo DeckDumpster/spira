@@ -76,9 +76,9 @@ pub trait Lib {
     /// `spira_ask_refresh_loop <repo> <name> <branch> <id> <base_fq> <n>` — needs_refresh's
     /// escalation when a pull request has been refreshed `SPIRA_PR_REFRESH_MAX` times.
     fn ask_refresh_loop(&self, repo: &Path, name: &str, branch: &str, id: &str, base_fq: &str, n: u32);
-    /// `lc_deliver_pr_merged <repo> <id> <br> <merge-sha>`.
+    /// `spira-lc deliver pr-merged <repo> <id> <br> <merge-sha>`.
     fn deliver_pr_merged(&self, repo: &Path, id: &str, branch: &str, merge_sha: &str);
-    /// `lc_deliver_pr_closed <id> <reason>`.
+    /// `spira-lc deliver pr-closed <id> <reason>`.
     fn deliver_pr_closed(&self, id: &str, reason: &str);
     /// `spira_git_push --force-with-lease -u <remote> <branch>`; Err(its stderr).
     fn force_push(&self, repo: &Path, remote: &str, branch: &str) -> Result<(), String>;

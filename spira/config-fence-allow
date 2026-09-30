@@ -56,7 +56,6 @@ spira/pre-activate.sh
 spira/pr-notify.sh
 spira/publish-backlog.sh
 spira/release.sh
-spira/sending.sh
 spira/skew.sh
 spira/stage.sh
 spira/test-aeon-base-ref-qualify.sh

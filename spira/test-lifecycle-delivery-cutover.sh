@@ -24,7 +24,7 @@
 #
 # defect: sp-n1ilm
 # tier: T2
-# covers: spira/lc-delivery.sh landing-pass/* lifecycle/* spira-lc/*
+# covers: spira-lc/src/callers.rs landing-pass/* lifecycle/* spira-lc/*
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -41,7 +41,7 @@ TMP="$(mktemp -d)"
 # tmp dir's parent, never a real installed copy (law-gates-run-in-a-clean-environment).
 SH="$TMP/spira"
 mkdir -p "$SH"
-cp "$HERE"/lib.sh "$HERE"/conf.sh "$HERE"/deps.toml "$HERE"/lc-delivery.sh \
+cp "$HERE"/lib.sh "$HERE"/conf.sh "$HERE"/deps.toml \
    "$HERE"/suite-covers.sh "$SH/" 2>/dev/null
 
 SPIRA_HOME="$SH"
@@ -103,9 +103,7 @@ cat "$TMP/schema.log" >&2
 SPIRA_HOME="$SH"
 # shellcheck source=/dev/null
 . "$SH/lib.sh"
-# shellcheck source=/dev/null
-. "$SH/lc-delivery.sh"
-is "lc-delivery.sh reaches the lifecycle machine (switched on by SPIRA_LIFECYCLE_ENFORCE)" "1" "$SPIRA_LIFECYCLE_ENFORCE"
+is "spira-lc deliver reaches the lifecycle machine (switched on by SPIRA_LIFECYCLE_ENFORCE)" "1" "$SPIRA_LIFECYCLE_ENFORCE"
 
 seed_bead() {       # seed_bead <id>
     root_sql --use-db spira_lifecycle sql -q \
@@ -165,7 +163,7 @@ echo
 # --------------------------------------------------------------------------------------
 mk_pr_branch sp-norow
 merge_sha_norow="$(squash_merge sp-norow)"
-out="$(lc_deliver_pr_merged "$GITREPO" sp-norow "spira/sp-norow" "$merge_sha_norow" 2>&1)"
+out="$(spira-lc deliver pr-merged "$GITREPO" sp-norow "spira/sp-norow" "$merge_sha_norow" 2>&1)"
 rc=$?
 wantrc "with no delivery row, lc_deliver_pr_merged skips rather than fails" 1 $rc
 want   "and it says why" "no delivery row" "$out"
@@ -183,13 +181,13 @@ merge_sha="$(squash_merge sp-squash)"
 git -C "$GITREPO" merge-base --is-ancestor "spira/sp-squash" "$merge_sha" 2>/dev/null
 wantrc "POSITIVE CONTROL: ancestry alone cannot see a squash merge (proves content proof is load-bearing)" 1 $?
 
-lc_deliver_pr_merged "$GITREPO" sp-squash "spira/sp-squash" "$merge_sha"
+spira-lc deliver pr-merged "$GITREPO" sp-squash "spira/sp-squash" "$merge_sha"
 wantrc "a squash-merged PR's delivery event applies" 0 $?
 is "and the delivery row moves to EXITED" "EXITED" "$(delivery_state sp-squash)"
 is "and the merge commit is recorded" "$merge_sha" "$(delivery_merge_sha sp-squash)"
 is "and the event log names it Delivered, applied" "Delivered 1" "$(last_event sp-squash)"
 
-out="$(lc_deliver_pr_merged "$GITREPO" sp-squash "spira/sp-squash" "$merge_sha" 2>&1)"
+out="$(spira-lc deliver pr-merged "$GITREPO" sp-squash "spira/sp-squash" "$merge_sha" 2>&1)"
 wantrc "a delivery already EXITED refuses a second Delivered rather than firing it twice" 1 $?
 want   "and says the row is no longer PR_OPEN" "not PR_OPEN" "$out"
 
@@ -197,7 +195,7 @@ want   "and says the row is no longer PR_OPEN" "not PR_OPEN" "$out"
 # A PR CLOSED UNMERGED IS RETURNED.
 # --------------------------------------------------------------------------------------
 seed_delivery sp-closed pr PR_OPEN 102
-lc_deliver_pr_closed sp-closed "closed unmerged"
+spira-lc deliver pr-closed sp-closed "closed unmerged"
 wantrc "a closed-unmerged PR's delivery event applies" 0 $?
 is "and the delivery row moves to EXITED" "EXITED" "$(delivery_state sp-closed)"
 is "and the event log names it Returned, applied" "Returned 1" "$(last_event sp-closed)"
@@ -207,20 +205,20 @@ is "and the event log names it Returned, applied" "Returned 1" "$(last_event sp-
 # conflict, returned when it genuinely conflicts.
 # --------------------------------------------------------------------------------------
 seed_delivery sp-pushed push PUSHING
-lc_deliver_push_delivered sp-pushed deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+spira-lc deliver push-delivered sp-pushed deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
 wantrc "a clean push's delivery event applies" 0 $?
 is "and the delivery row moves to EXITED" "EXITED" "$(delivery_state sp-pushed)"
 is "and the pushed commit is recorded" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" "$(delivery_merge_sha sp-pushed)"
 is "and the event log names it Delivered, applied" "Delivered 1" "$(last_event sp-pushed)"
 
 seed_delivery sp-requeued push PUSHING
-lc_deliver_push_requeued sp-requeued cafecafecafecafecafecafecafecafecafecafe
+spira-lc deliver push-requeued sp-requeued cafecafecafecafecafecafecafecafecafecafe
 wantrc "a push rejected by a moved base — no real conflict — applies as requeued" 0 $?
 is "and the delivery row moves to EXITED" "EXITED" "$(delivery_state sp-requeued)"
 is "and the event log names it Requeued, applied" "Requeued 1" "$(last_event sp-requeued)"
 
 seed_delivery sp-returned push PUSHING
-lc_deliver_push_returned sp-returned "genuinely conflicts with origin/main"
+spira-lc deliver push-returned sp-returned "genuinely conflicts with origin/main"
 wantrc "a push that genuinely conflicts applies as returned" 0 $?
 is "and the delivery row moves to EXITED" "EXITED" "$(delivery_state sp-returned)"
 is "and the event log names it Returned, applied" "Returned 1" "$(last_event sp-returned)"
@@ -230,7 +228,7 @@ is "and the event log names it Returned, applied" "Returned 1" "$(last_event sp-
 # is checked directly — a push-mode wrapper against a PR_OPEN row must refuse, not adapt.
 # --------------------------------------------------------------------------------------
 seed_delivery sp-wrongmode pr PR_OPEN 103
-out="$(lc_deliver_push_delivered sp-wrongmode abc123 2>&1)"
+out="$(spira-lc deliver push-delivered sp-wrongmode abc123 2>&1)"
 wantrc "a push wrapper against a PR_OPEN row refuses rather than adapting" 1 $?
 want   "and says which state it found instead" "not PUSHING" "$out"
 is     "and the row is untouched" "PR_OPEN" "$(delivery_state sp-wrongmode)"

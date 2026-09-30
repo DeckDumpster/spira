@@ -284,7 +284,7 @@ echo
 echo "attempts.sh reclassify — on a store with no counter labels:"
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HERE/lc.sh" "$HERE/attempts.sh" "$SPIRA_HOME/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HERE/attempts.sh" "$SPIRA_HOME/"
 printf 'FAYTH_LABELS="spira,plan"\nFAYTH_EXCLUDE_LABELS="spira-poison"\nFAYTH_MAX_CONCURRENT=0\n' \
     > "$SPIRA_HOME/chamber/t.fayth"
 ATT="$SPIRA_HOME/attempts.sh"
@@ -317,7 +317,7 @@ echo "attempts.sh clear — lift a poison and make it stick (sp-qd2ul):"
 
 # poisoned() (attempts.sh) reads a real spira-lc hold, not the bd label (sp-i2m7y), so
 # clear's own gate needs a real spira-lc/Dolt server behind it — the same throwaway-server
-# shape test-lc-hold.sh and test-check2-reaper.sh use, not a stub of lc_held that would only
+# shape test-lc-hold.sh and test-check2-reaper.sh use, not a stub of spira-lc held that would only
 # prove this suite's model of spira-lc agrees with itself. CARGO_BIN/DOLT_BIN were resolved
 # at the top of this file, before conf.sh could drop them from PATH; other cases already ran,
 # so a missing tool here is bail, not skip (law-a-refusal-names-its-exit).
@@ -354,7 +354,7 @@ done
 lc_root_sql() { "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls "$@"; }
 
 command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"   # the tree's build, by name (sp-gypjk)
-# lc.sh consults spira-lc only with lifecycle ON (sp-gypjk: the switch, not a binary path).
+# spira-lc's caller verbs consult the machine only with lifecycle ON (sp-gypjk; sp-arpjt).
 export SPIRA_LIFECYCLE_ENFORCE=1
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LC_PORT"
@@ -364,8 +364,6 @@ export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
 spira-lc admin-apply-ddl "$SRC_ROOT/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
 wantrc "spira_lifecycle schema applies cleanly" 0 $?
-# shellcheck disable=SC1090
-. "$HERE/lc.sh"
 mklc() { lc_root_sql --use-db spira_lifecycle sql -q "DELETE FROM bead WHERE bead_id = '$1'" >/dev/null 2>&1
          spira-lc create-bead "$1" >/dev/null 2>&1; }
 
@@ -386,9 +384,9 @@ bdq update sp-cl2 --status open        >/dev/null 2>&1
 bdq update sp-cl2 --status in_progress >/dev/null 2>&1
 bdq label add sp-cl2 spira-poison >/dev/null 2>&1
 mklc sp-cl2
-lc_hold sp-cl2 poison "seed" test
+spira-lc hold sp-cl2 poison "seed" test
 is "the fixture starts poisoned with 3 attempts" 3 "$(num "$(attempts_of sp-cl2)")"
-is "and spira-lc really holds the poison kind" 0 "$(lc_held sp-cl2 poison; echo $?)"
+is "and spira-lc really holds the poison kind" 0 "$(spira-lc held sp-cl2 poison; echo $?)"
 
 out_dry="$("$ATT" clear sp-cl2 2>&1)"
 case "$out_dry" in *"would clear"*"sp-cl2"*"attempts 3 -> 0"*) ok "dry run names the reset" ;;
@@ -403,7 +401,7 @@ case "$out_apply" in *"CLEARED"*"sp-cl2"*) ok "--apply reports the clear" ;;
 labels_cl2="$(bdq label list sp-cl2 2>/dev/null)" || labels_cl2=""
 [[ "$labels_cl2" != *spira-poison* ]] && ok "the label is off" \
     || bad "the label is off" "got [$labels_cl2]"
-is "and the spira-lc poison hold is really lifted" 1 "$(lc_held sp-cl2 poison; echo $?)"
+is "and the spira-lc poison hold is really lifted" 1 "$(spira-lc held sp-cl2 poison; echo $?)"
 is "and attempts_of reads 0 — the clear sticks, not just the label" \
    "0" "$(num "$(attempts_of sp-cl2)")"
 notes_cl2="$(bdq show sp-cl2 2>/dev/null | tr -s ' \n\t' ' ')" || notes_cl2=""

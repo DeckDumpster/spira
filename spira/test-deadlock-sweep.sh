@@ -12,11 +12,11 @@
 # THE HOLD, NOT THE LABEL (sp-i2m7y): poisoned() (attempts.sh) reads a real spira-lc hold,
 # so this suite starts its own throwaway `dolt sql-server` for spira_lifecycle and builds a
 # real spira-lc binary, the same shape test-lc-hold.sh and test-check2-reaper.sh use — a
-# stub lc_hold/lc_held would only prove this suite's own model of spira-lc agrees with
+# stub `spira-lc hold`/`held` would only prove this suite's own model of spira-lc agrees with
 # itself.
 #
 # tier: T2
-# covers: spira/attempts.sh spira/lib.sh spira/lc.sh UC-aeon-execution-24
+# covers: spira/attempts.sh spira/lib.sh UC-aeon-execution-24
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -69,7 +69,7 @@ done
 [ "$lc_up" = 1 ] || bail "dolt sql-server for spira_lifecycle never came up: $(cat "$LC_TMP/server.log")"
 
 # spira-lc is the tree under test's own build, by name on the suite's PATH (sp-gypjk).
-# lc.sh consults spira-lc only with lifecycle ON (sp-gypjk: the switch, not a binary path).
+# spira-lc's caller verbs consult the machine only with lifecycle ON (sp-gypjk; sp-arpjt).
 export SPIRA_LIFECYCLE_ENFORCE=1
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LC_PORT"
@@ -79,15 +79,13 @@ export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
 spira-lc admin-apply-ddl "$SRC_ROOT/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
 wantrc "spira_lifecycle schema applies cleanly" 0 $?
-# shellcheck disable=SC1090
-. "$HERE/lc.sh"
-# mkpoison <id> — a fresh READY row, then a real Hold{Poison} event through lc_hold, the
+# mkpoison <id> — a fresh READY row, then a real Hold{Poison} event through `spira-lc hold`, the
 # same shape test-poison.sh's own mkpoison uses.
 mkpoison() {
     spira-lc create-bead "$1" >/dev/null 2>&1
-    lc_hold "$1" poison "seed" test >/dev/null 2>&1
+    spira-lc hold "$1" poison "seed" test >/dev/null 2>&1
 }
-lcheld() { lc_held "$1" poison; }
+lcheld() { spira-lc held "$1" poison; }
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
 REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null

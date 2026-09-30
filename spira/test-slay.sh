@@ -17,7 +17,7 @@
 # about what git says exists (law-prefer-the-real-dependency).
 #
 # defect: sp-ekio
-# covers: spira/slay.sh spira/lib.sh spira/lc.sh spira-lc/* lifecycle/*
+# covers: spira/slay.sh spira/lib.sh spira-lc/* lifecycle/*
 # scar: slay.sh left the bead in an inconsistent state after terminating the aeon and did not salvage uncommitted work from the worktree.
 # timeout: 180
 set -uo pipefail
@@ -135,7 +135,7 @@ done
 lc_root_sql() { "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls "$@"; }
 
 command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
-# lc.sh consults spira-lc only with lifecycle ON (sp-gypjk: the switch, not a binary path).
+# spira-lc's caller verbs consult the machine only with lifecycle ON (sp-gypjk; sp-arpjt).
 export SPIRA_LIFECYCLE_ENFORCE=1
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LCPORT"
@@ -166,7 +166,6 @@ git -C "$REPO" remote set-head origin main
 
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
-. "$HERE/lc.sh"
 SLAY="$HERE/slay.sh"
 
 # ---- helpers -----------------------------------------------------------------------
@@ -183,7 +182,7 @@ print(d[0].get("assignee","") or "" if d else "")' 2>/dev/null; }
 
 has_label() { local _all; _all="$(bdq label list "$1" 2>/dev/null)"; [[ "$_all" == *"$2"* ]]; }
 
-lc_state_of() { _lc_json_field "$(lc_show "$1")" 'd.get("bead",{}).get("state","")'; }
+lc_state_of() { spira-lc state "$1"; }
 lc_seed_working() {   # lc_seed_working <bead-id> — the lifecycle row a real Claim would leave
     lc_root_sql --use-db spira_lifecycle sql -q \
         "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('$1','WORKING','[]',0,0)" >/dev/null 2>&1

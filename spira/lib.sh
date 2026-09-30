@@ -23,11 +23,11 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 }
 . "$_spira_lib_dir/conf.sh"
 . "$_spira_lib_dir/suite-covers.sh"
-# OPTIONAL, UNLIKE THE TWO ABOVE: a fixture that copies lib.sh+conf.sh to run out of its own
-# tree and has no reason to know about certification-onto-events should not have to also copy
-# this file, or see it fail loudly. Its absence just means lc_certify/lc_available/lc_resubmit
-# are undefined, which every caller already guards with `command -v` before use.
-[ -f "$_spira_lib_dir/lifecycle-cert.sh" ] && . "$_spira_lib_dir/lifecycle-cert.sh"
+# CERTIFICATION ONTO EVENTS is `spira-lc certify` / `spira-lc resubmit` (sp-arpjt retired
+# lifecycle-cert.sh into spira-lc's caller verbs). The lc_certify/lc_resubmit wrapper
+# functions that once stood in for those two calls are retired too (sp-uwhx0): their only
+# caller was batch.sh's stale-certification sweep, itself retired with batch.sh — nothing
+# else called them (grepped). Call `spira-lc certify`/`spira-lc resubmit` directly.
 unset _spira_lib_dir
 export BEADS_NO_AUTO_IMPORT=1
 mkdir -p "$SPIRA_RUN"
@@ -1353,7 +1353,7 @@ claim_retry() {
 # many IN_PROGRESS beads exist. In practice there are only a few at a time, so this is cheap.
 check2_protect_waiting() {
     local ask_label="$SPIRA_ASK_LABEL"
-    local held_wait; held_wait="$(lc_list_held wait 2>/dev/null)"
+    local held_wait; held_wait="$(spira-lc list-held wait 2>/dev/null)"
 
     # Collect IN_PROGRESS beads that need dep inspection.
     # Output: one line per bead: "<id> <has_skip:0|1> <dep_count>"
@@ -1424,12 +1424,12 @@ for item in (d if isinstance(d, list) else [d]):
         [ -n "$id" ] || continue
         case "$action" in
             add)
-                lc_hold "$id" wait "waiting on $ask_label dep(s), excluded from CHECK 2's reclaim" sentinel >/dev/null 2>&1 || true
+                spira-lc hold "$id" wait "waiting on $ask_label dep(s), excluded from CHECK 2's reclaim" sentinel >/dev/null 2>&1 || true
                 log "CHECK2 $id: only open dep(s) carry $ask_label — wait-held, excluded from reclaim"
                 act "protected $id from reclaim: waiting on $ask_label dep"
                 ;;
             remove)
-                lc_unhold "$id" wait sentinel >/dev/null 2>&1 || true
+                spira-lc unhold "$id" wait sentinel >/dev/null 2>&1 || true
                 log "CHECK2 $id: $ask_label dep no longer blocking — wait released, re-enters the reaper"
                 act "unprotected $id: $ask_label dep closed"
                 ;;
@@ -1818,12 +1818,12 @@ for bid in labeled:
                 bdq label add "$id" "$label" >/dev/null 2>&1 || true
                 # Dual-written, not a replace (sp-ki12s precedent): fayth_ready still reads
                 # the label, not this hold, until CHECK 3b's reader is cut over in the round.
-                lc_hold "$id" wait "blocker certified or batched, not yet landed" sentinel || true
+                spira-lc hold "$id" wait "blocker certified or batched, not yet landed" sentinel || true
                 log "mark_queue_waiters: $id — queue-wait applied"
                 ;;
             remove)
                 bdq label remove "$id" "$label" >/dev/null 2>&1 || true
-                lc_unhold "$id" wait sentinel || true
+                spira-lc unhold "$id" wait sentinel || true
                 log "mark_queue_waiters: $id — blocker landed, cleared"
                 ;;
         esac
@@ -1851,7 +1851,7 @@ close_landed_queue_waiters() {
         { read -r _state _ < "$_ls"; } 2>/dev/null || continue
         if [ "$_state" = "LANDED" ]; then
             bdq label remove "$_id" "$label" >/dev/null 2>&1 || true
-            lc_unhold "$_id" wait sentinel || true
+            spira-lc unhold "$_id" wait sentinel || true
             bdq close "$_id" \
                 --reason "Content already on main (landstate=LANDED); no branch remained to land." \
                 >/dev/null 2>&1 || true
@@ -2214,7 +2214,7 @@ park_unmapped() {
     bdq label add "$id" "overseer"          >/dev/null 2>&1 || true
     # Dual-written, not a replace (sp-ki12s precedent) — the label is still what every
     # fayth's dispatch exclusion reads until that reader is cut over in the same round.
-    lc_hold "$id" ask "repo:$repo_name has no repo-map entry" aeon.sh || true
+    spira-lc hold "$id" ask "repo:$repo_name has no repo-map entry" aeon.sh || true
     bdq note "$id" "Parked by aeon.sh: this bead carries repo:$repo_name, and $SPIRA_REPO_MAP has no entry for it (or its path is not a git checkout). Labeled $SPIRA_ASK_LABEL and overseer — no aeon will claim it again until a human corrects the label or adds the repo to the map and removes that label. Refusing to work it in the home repo — a fix landed in the wrong repository passes every check downstream." >/dev/null 2>&1
     release_own_claim "$id"
 }
@@ -2254,7 +2254,7 @@ check2c_lc_consistency() {   # check2c_lc_consistency -> an INCONSISTENT line pe
         elif [ "$state" != WORKING ] && [ -n "$holder" ]; then
             printf 'INCONSISTENT\t%s\t%s with a holder still set\n' "$id" "$state"
         fi
-    done < <(lc_list_all)
+    done < <(spira-lc list-all)
     return 0
 }
 
@@ -2267,11 +2267,11 @@ check2_reclaim_stale() {
         [ -n "$lease_until" ] || continue
         case ",$holds," in *,wait,*) continue ;; esac
         [ $(( now - lease_until )) -gt "$grace" ] || continue
-        lc_holder_dead "$id" sentinel || continue
+        spira-lc holder-dead "$id" sentinel || continue
         bump_reclaim "$id" stale-lease >/dev/null 2>&1
         bdq note "$id" "Reclaimed by CHECK 2: in_progress with a lease that expired $(( (now - lease_until) / 60 ))m ago and was never released." >/dev/null 2>&1
         n_reclaimed=$((n_reclaimed+1))
-    done < <(lc_list_state WORKING)
+    done < <(spira-lc list-state WORKING)
     [ "$n_reclaimed" -gt 0 ] && progress "reclaimed $n_reclaimed stale lease(s)"
     return 0
 }
@@ -3832,7 +3832,7 @@ rapid_recur_check() {
     # Dual-written alongside the label, not a replace (sp-ki12s precedent): the fayth
     # exclusion aeon.sh's own dispatch reads is still the label, not this hold, until the
     # dispatch-predicate reader cutover lands in the same round.
-    lc_hold "$BEAD_ID" ask "rapid-recur: $_count consecutive sub-10s aeon summons" "$FAYTH" || true
+    spira-lc hold "$BEAD_ID" ask "rapid-recur: $_count consecutive sub-10s aeon summons" "$FAYTH" || true
     bdq note "$BEAD_ID" \
         "RAPID-RECUR: $_count consecutive sub-10s aeon runs on $BEAD_ID. Each summon dies before meaningful work, suggesting a setup loop — the defect recurs identically on every retry. Parked with $SPIRA_ASK_LABEL and overseer instead of only annotated: a fourth summon cannot learn anything the third did not. Check: worktree path, conflicting branches, or box state. Details in aeon-ledger." \
         >/dev/null 2>&1 || true
@@ -6002,7 +6002,7 @@ park_branch_collisions() {
         bdq label add "$id" "overseer" >/dev/null 2>&1 || true
         # Dual-written, not a replace (sp-ki12s precedent) — the label is still what every
         # fayth's dispatch exclusion reads until that reader is cut over in the same round.
-        lc_hold "$id" ask "branch $branch squatted by $holder_id's worktree at $holder_path" sentinel || true
+        spira-lc hold "$id" ask "branch $branch squatted by $holder_id's worktree at $holder_path" sentinel || true
         bdq note "$id" "Parked by detect_branch_collisions: recorded branch $branch is checked out in $holder_id's worktree at $holder_path, not this bead's own canonical path. Every summon reaches aeon.sh's law-one-aeon-one-worktree refusal (or a no-op self-correct, when this bead's own default branch is the squatted one) before a session can start, and nothing about the input changes on retry. Labeled $SPIRA_ASK_LABEL and overseer so dispatch stops spending a claim here — free $holder_path or correct the branch: label, then remove $SPIRA_ASK_LABEL." >/dev/null 2>&1 || true
     done <<< "$1"
 }
@@ -7513,17 +7513,14 @@ spira_holder_witnesses() {
         # bd's in_progress can be stale once a caller releases the claim through spira-lc
         # instead of bd (sp-rlyl0: slay.sh's HolderDead) — trust it UNLESS the lifecycle row
         # exists and positively says the claim is gone (any state but WORKING). A row this
-        # cannot read at all (lc.sh not sourced by the caller, no binary, DB down, not yet
-        # classified) proves nothing either way, so bd's own signal still governs then —
-        # this can only make the check LESS restrictive, never more, for a caller that has
-        # not sourced lc.sh at all.
-        if declare -F lc_show >/dev/null 2>&1 && declare -F _lc_json_field >/dev/null 2>&1; then
-            local _lcjs _lcrc _lcstate
-            _lcjs="$(lc_show "$id")"; _lcrc=$?
-            if [ "$_lcrc" = 0 ]; then
-                _lcstate="$(_lc_json_field "$_lcjs" 'd.get("bead",{}).get("state","")')"
-                [ -n "$_lcstate" ] && [ "$_lcstate" != WORKING ] && return 1
-            fi
+        # cannot read at all (lifecycle off, no binary, DB down, not yet classified) proves
+        # nothing either way, so bd's own signal still governs then. `spira-lc state` answers
+        # rc 2 with the switch off, exactly as lc.sh's lc_show did (sp-arpjt); with it on,
+        # every caller now gets this read, not only the ones that had sourced lc.sh — which
+        # can only make the check LESS restrictive, never more.
+        local _lcstate
+        if _lcstate="$(spira-lc state "$id" 2>/dev/null)"; then
+            [ -n "$_lcstate" ] && [ "$_lcstate" != WORKING ] && return 1
         fi
         printf 'in_progress — the lease has not been released'; return 0
     fi
@@ -7673,7 +7670,7 @@ spira_destroy_worktree() {
 #   "slain"    — slay.sh has already parked any unlanded commits at refs/slain/<id>; the
 #                branch still carries content not on the base, but the durable copy is no
 #                longer in refs/heads alone, so deletion is safe.
-#   "archived" — sending.sh's send_orphan has already parked a bead-less branch's unlanded
+#   "archived" — the Sending's orphan archive (sending binary) has already parked a bead-less branch's unlanded
 #                commits at refs/archive/<branch> and verified the write reads back, the
 #                same durable-copy-exists reasoning as "slain".
 # Any other non-empty value is treated the same way (future callers that have verified

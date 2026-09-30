@@ -40,8 +40,8 @@ for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer "$HERE/../syste
     ln -s "$f" "$FIXTURE/systemd/$(basename "$f")"
 done
 ln -s "$HERE/../systemd/install.sh" "$FIXTURE/systemd/install.sh"
-# lib.sh sources suite-covers.sh unconditionally; lifecycle-cert.sh is optional but real.
-for f in conf.sh watchd.sh lib.sh suite-covers.sh lifecycle-cert.sh; do
+# lib.sh sources suite-covers.sh unconditionally.
+for f in conf.sh watchd.sh lib.sh suite-covers.sh; do
     [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
 done
 printf '# empty\n' > "$FIXTURE/spira/watchers"
@@ -89,7 +89,7 @@ ln -s "$REAL_COCKPIT" "$PRODROOT/cockpit"
 for _s in concierge.sh beads-push.sh; do ln -s "$REAL_REPO/$_s" "$PRODROOT/$_s"; done; unset _s
 stub_release_bins() {   # stub_release_bins <release-root> [mode]
     local b; mkdir -p "$1/bin"
-    for b in sentinel queue aeon spira-supervise landing-pass reconciler-flow; do
+    for b in sentinel queue aeon spira-supervise landing-pass reconciler-flow sending; do
         printf '#!/usr/bin/env bash\nexit 0\n' > "$1/bin/$b"
         chmod "${2:-+x}" "$1/bin/$b"
     done

@@ -2,7 +2,8 @@
 //! sentinel-<name>`: never assembled from data; data arrives on stdin; the environment
 //! carries only configuration and file paths (law-payloads-go-on-stdin).
 //!
-//! The prelude sources lib.sh and lc.sh the way sentinel.sh did, and redefines `act` and
+//! The prelude sources lib.sh the way sentinel.sh did (lc.sh is gone — lib.sh's lifecycle
+//! calls are `spira-lc` caller verbs now, sp-arpjt), and redefines `act` and
 //! `progress` — which lib.sh functions call, and which sentinel.sh used to define — to
 //! append to $SENTINEL_TALLY, so the counters keep their in-process semantics. Loading
 //! lib.sh is silent here: the probe (S0) already surfaced whatever conf.sh had to say once
@@ -10,7 +11,6 @@
 
 pub const PRELUDE: &str = r#"set -uo pipefail
 . "$SENTINEL_LIB" >/dev/null 2>&1 || exit 97
-. "${SENTINEL_LIB%/*}/lc.sh" >/dev/null 2>&1 || exit 97
 act()      { printf 'act\t%s\n' "$*" >> "$SENTINEL_TALLY"; log "ACT $*"; }
 progress() { printf 'progress\t%s\n' "$*" >> "$SENTINEL_TALLY"; log "ACT $*"; }
 "#;
@@ -24,7 +24,6 @@ pub fn script(body: &str) -> String {
 /// own chatter goes to stderr so stdout stays the NUL-separated record stream.
 pub const PROBE: &str = r#"set -uo pipefail
 . "$SENTINEL_LIB" >&2 || exit 97
-. "${SENTINEL_LIB%/*}/lc.sh" >&2 || exit 97
 env -0
 printf '@vars\0'
 # EVERY SPIRA_* SHELL VARIABLE, EXPORTED OR NOT. conf.sh and lib.sh set many keys without
@@ -134,7 +133,6 @@ mod tests {
             "log() { printf 'LOG %s\\n' \"$*\"; }\nland_escalate() { printf 'why=%s ev=%s\\n' \"$1\" \"$2\"; act escalated; progress moved; }\n",
         )
         .unwrap();
-        std::fs::write(d.join("lc.sh"), "").unwrap();
         let tally = d.join("tally");
         let o = std::process::Command::new("bash")
             .args(["-c", &script(LAND_ESCALATE), "sentinel-land-escalate"])
@@ -175,7 +173,6 @@ mod tests {
             "SPIRA_REPO=/the/repo\nSPIRA_GH=/the/gh-app.sh\nspira_home_repo() { echo spira; }\nspira_fayths() { :; }\nfayth_partitions() { :; }\nfayth_names() { :; }\n",
         )
         .unwrap();
-        std::fs::write(d.join("lc.sh"), "").unwrap();
         let o = std::process::Command::new("bash")
             .args(["-c", PROBE])
             .env("SENTINEL_LIB", d.join("lib.sh"))

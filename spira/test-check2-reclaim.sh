@@ -28,7 +28,7 @@
 #
 # A REAL bd ON A FIXTURE DATABASE (law-prefer-the-real-dependency). check2_protect_waiting
 # calls bd show for the dependency shape; a stub would drift silently and prove nothing
-# about the real dependency-reading path. lc_hold/lc_unhold themselves are stubbed as call
+# about the real dependency-reading path. `spira-lc hold`/`unhold` themselves are stubbed as call
 # recorders here rather than run against a real spira-lc server — this file's job is only
 # to prove the three dep shapes below never REACH the hold/release calls at all, which a
 # recorder catches exactly as well as a real store and without a second dolt server (the
@@ -36,7 +36,7 @@
 #
 # tier: T2
 # defect: sp-rzyl
-# covers: sentinel/src/* spira/lib.sh spira/lc.sh UC-dispatch-21
+# covers: sentinel/src/* spira/lib.sh UC-dispatch-21
 # hermetic-ok: uses a fixture database, no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -56,13 +56,15 @@ progress() { progressed=$((progressed+1)); act "$@"; }
 log()      { : ; }   # suppress log noise in test output
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
-# shellcheck disable=SC1090
-. "$HERE/lc.sh"
 
-# lc_hold/lc_unhold as call recorders, not the real spira-lc client — see the file header.
+# `spira-lc hold`/`unhold` as call recorders, not the real spira-lc client — see the file
+# header. A `spira-lc` first on PATH (lib.sh calls the caller verbs by bare name, sp-arpjt):
+# hold/unhold are recorded as `hold <id> <kind>`, every read answers empty.
 HOLD_CALLS="$TMP/hold-calls"; : > "$HOLD_CALLS"
-lc_hold()   { printf 'hold %s %s\n'   "$1" "$2" >> "$HOLD_CALLS"; }
-lc_unhold() { printf 'unhold %s %s\n' "$1" "$2" >> "$HOLD_CALLS"; }
+mkdir -p "$TMP/lcbin"
+printf '#!/usr/bin/env bash\ncase "$1" in hold|unhold) printf "%%s %%s %%s\\n" "$1" "$2" "$3" >> "%s" ;; esac\nexit 0\n' "$HOLD_CALLS" > "$TMP/lcbin/spira-lc"
+chmod +x "$TMP/lcbin/spira-lc"
+export PATH="$TMP/lcbin:$PATH"
 
 echo "test-check2-reclaim.sh"
 
@@ -81,7 +83,7 @@ testdb_seed <<JSONL
 JSONL
 acted=0; : > "$HOLD_CALLS"
 check2_protect_waiting
-is "dead worker: no lc_hold/lc_unhold call" "" "$(cat "$HOLD_CALLS")"
+is "dead worker: no spira-lc hold/unhold call" "" "$(cat "$HOLD_CALLS")"
 is "dead worker: no act recorded" "0" "$acted"
 
 # ======================================================================================
@@ -97,7 +99,7 @@ testdb_seed <<JSONL
 JSONL
 acted=0; : > "$HOLD_CALLS"
 check2_protect_waiting
-is "non-ryan dep: no lc_hold/lc_unhold call" "" "$(cat "$HOLD_CALLS")"
+is "non-ryan dep: no spira-lc hold/unhold call" "" "$(cat "$HOLD_CALLS")"
 is "non-ryan dep: no act recorded" "0" "$acted"
 
 # ======================================================================================
@@ -114,7 +116,7 @@ testdb_seed <<JSONL
 JSONL
 acted=0; : > "$HOLD_CALLS"
 check2_protect_waiting
-is "mixed deps: no lc_hold/lc_unhold call" "" "$(cat "$HOLD_CALLS")"
+is "mixed deps: no spira-lc hold/unhold call" "" "$(cat "$HOLD_CALLS")"
 is "mixed deps: no act recorded" "0" "$acted"
 
 tl_summary

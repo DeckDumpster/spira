@@ -458,10 +458,14 @@ impl World for Real {
             .status();
     }
     fn lc_certify(&self, bead: &str, tip: &str, outcome: &str, detail: &str) {
-        self.lib(
-            r#"command -v lc_certify >/dev/null 2>&1 || exit 0; lc_certify "$@""#,
-            &[bead, tip, outcome, detail],
-        );
+        // spira-lc's caller verb (lifecycle-cert.sh's lc_certify until sp-arpjt): it reads
+        // the switch itself and answers "cannot tell" having touched nothing when it is off.
+        let _ = Command::new("spira-lc")
+            .args(["certify", bead, tip, outcome, detail, "gate"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
     fn harness_hash(&self) -> Option<String> {
         let mut buf = Vec::new();
