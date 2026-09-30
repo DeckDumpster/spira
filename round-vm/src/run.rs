@@ -95,35 +95,59 @@ pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// The VM side of a round: clone the mirror, run the round's own `testenv` (built from the
-/// round's own tree, release profile — its binaries ship), then stage the round's
-/// executables from `target/release` into `~/round-bins/` so the host pulls the binaries and
-/// not cargo's whole target directory. testenv builds the clone in place (its HEAD is the
-/// round's commit), so `~/round-work/target/release` is the round's build.
+/// The VM side of a round. The VM is a LAUNCHER (design runtime-is-a-release, sp-dvfea): it
+/// builds the round's tree, stages that build as a release (`release build --bin-dir`, the
+/// same layout production and GitHub CI run, sp-6cbna) and sets `SPIRA_RELEASE` and `PATH`
+/// outright — the release's `bin/` and `spira/`, then cargo and the system directories —
+/// for everything after, so conf.sh finds `spira-config` and every harness script runs this
+/// round's tools by name. [`LAUNCHER_ENV`] records the two for the attribution jobs.
+/// Then it runs the round's own `testenv` (release profile — its binaries ship; its in-place
+/// build is incremental on the one just made) and stages `target/release`'s executables
+/// into `~/round-bins/` so the host pulls the binaries and not cargo's target directory.
 pub const REMOTE_SCRIPT: &str = r#"set -euo pipefail
 host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5"
-rm -rf ~/round-work ~/round-bins
+rm -rf ~/round-work ~/round-bins ~/round-launcher.env
 git clone --quiet "git://${host_addr}:${port}/mirror.git" ~/round-work
 cd ~/round-work
-tag="$(bash spira/testenv.sh tag 2>/dev/null)" || tag=""
+if [ -n "$toolchain" ]; then export RUSTUP_TOOLCHAIN="$toolchain"; fi
+t0=$(date +%s)
+if ! cargo build -q --profile release --workspace; then
+    echo "round-vm: the round's workspace build failed" >&2
+    exit 4
+fi
+echo "round-vm: built the round in $(( $(date +%s) - t0 ))s" >&2
+rel_sha="$(target/release/release build "$(git rev-parse HEAD)" --repo "$HOME/round-work" --bin-dir "$HOME/round-work/target/release" --releases "$HOME/round-releases")"
+export SPIRA_RELEASE="$HOME/round-releases/$rel_sha"
+export PATH="$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+got="$(command -v spira-config || true)"
+if [ "$got" != "$SPIRA_RELEASE/bin/spira-config" ]; then
+    echo "round-vm: spira-config resolves to ${got:-nothing}, not the staged release $SPIRA_RELEASE" >&2
+    exit 2
+fi
+printf 'export SPIRA_RELEASE=%q\nexport PATH=%q\n' "$SPIRA_RELEASE" "$PATH" > ~/round-launcher.env
+echo "round-vm: launcher: SPIRA_RELEASE=$SPIRA_RELEASE" >&2
+tag="$(bash spira/testenv.sh tag)" || tag=""
 if [ -n "$tag" ] && podman image exists "localhost/spira-testenv:$tag" 2>/dev/null; then
     echo "round-vm: template image: localhost/spira-testenv:$tag present" >&2
 elif [ -n "$tag" ]; then
     echo "round-vm: template image: localhost/spira-testenv:$tag absent — this round builds it; refresh the template with round-vm template" >&2
 fi
 export SPIRA_BATCH_MAXPAR="$maxpar"
-if [ -n "$toolchain" ]; then export RUSTUP_TOOLCHAIN="$toolchain"; fi
 set +e
 if [ -n "$suites" ]; then
-    cargo run -q --profile release -p testenv --bin testenv -- --mode parallel --profile release --suites "$suites" round
+    testenv --mode parallel --profile release --suites "$suites" round
 else
-    cargo run -q --profile release -p testenv --bin testenv -- --mode parallel --profile release round
+    testenv --mode parallel --profile release round
 fi
 rc=$?
 mkdir -p ~/round-bins
 find target/release -maxdepth 1 -type f -executable -exec cp {} ~/round-bins/ \; 2>/dev/null
 exit "$rc"
 "#;
+
+/// What REMOTE_SCRIPT leaves on the VM for the attribution jobs: the launcher's
+/// `SPIRA_RELEASE` and `PATH`, as `export` lines.
+pub const LAUNCHER_ENV: &str = "round-launcher.env";
 
 /// Where REMOTE_SCRIPT stages the round's executables, relative to the VM user's home.
 pub const REMOTE_BINS: &str = "round-bins/";
@@ -710,10 +734,26 @@ mod tests {
     fn the_remote_script_says_whether_the_template_holds_the_rounds_image() {
         let clone = REMOTE_SCRIPT.find("git clone").unwrap();
         let check = REMOTE_SCRIPT.find("podman image exists").unwrap();
-        let batch = REMOTE_SCRIPT.find("cargo run").unwrap();
+        let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         assert!(clone < check && check < batch, "checked after the clone, before testenv starts");
         assert!(REMOTE_SCRIPT.contains("template image: localhost/spira-testenv:$tag present"));
         assert!(REMOTE_SCRIPT.contains("absent — this round builds it; refresh the template with round-vm template"));
+    }
+
+    #[test]
+    fn the_vm_is_a_launcher_release_path_set_outright_before_any_harness_script() {
+        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let stage = REMOTE_SCRIPT.find("release build").unwrap();
+        let path = REMOTE_SCRIPT.find("export PATH=\"$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:").unwrap();
+        let first_script = REMOTE_SCRIPT.find("spira/testenv.sh").unwrap();
+        let tenv = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
+        assert!(build < stage && stage < path && path < first_script && path < tenv);
+        assert!(REMOTE_SCRIPT.contains("export SPIRA_RELEASE=\"$HOME/round-releases/$rel_sha\""));
+        assert!(REMOTE_SCRIPT.contains("\"$SPIRA_RELEASE/bin/spira-config\""), "positive control on what PATH resolves");
+        assert!(!REMOTE_SCRIPT.contains(":$PATH"), "PATH is set outright, never appended to");
+        assert!(!REMOTE_SCRIPT.contains("cargo run"), "testenv runs from the staged release by name");
+        assert!(REMOTE_SCRIPT.contains(LAUNCHER_ENV));
+        assert!(REMOTE_SCRIPT.contains("exit 4"), "a failed workspace build is testenv's build-failure code");
     }
 
     #[test]

@@ -49,10 +49,17 @@ wait for a VM, whether it provisioned one itself or waited on the provision in f
    serves `<state>` on `SPIRA_ROUND_VM_MIRROR_PORT`.
 3. `acquire`. The VM is **leased to this process** from this point on.
 4. Wait until ssh reaches the VM. On the VM: clone `git://<host-addr>:<port>/mirror.git`,
-   then `cargo run -q --profile release -p testenv -- --mode parallel --profile release
-   [--suites CSV] round` with `SPIRA_BATCH_MAXPAR` and, if given, `RUSTUP_TOOLCHAIN`
-   (the cutover from testenv-batch.sh); then stage `target/release`'s executables into
-   `~/round-bins/`.
+   then act as a **launcher** (runtime-is-a-release, sp-dvfea; the GitHub CI twin is
+   sp-6cbna): `cargo build --profile release --workspace` (a failure exits 4, testenv's
+   build-failure code), stage that build as a release with the round's own `release build
+   <sha> --bin-dir target/release --releases ~/round-releases`, and set `SPIRA_RELEASE` and
+   `PATH` **outright** (`$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:~/.cargo/bin:` the system
+   directories), refusing (exit 2) unless `spira-config` then resolves into that release.
+   Both are written to `~/round-launcher.env` for the attribution jobs (§2.2a), which source
+   it. Without this every conf.sh load on the VM printed `spira-config: command not found`
+   (conf.sh fails closed without it, sp-c7b85). Then `testenv --mode parallel --profile
+   release [--suites CSV] round` by name from the release, with `SPIRA_BATCH_MAXPAR` and, if
+   given, `RUSTUP_TOOLCHAIN`; then stage `target/release`'s executables into `~/round-bins/`.
 5. rsync back `batch-results/` (flattened out of any one-level `BATCH_KEY` nesting into the
    results dir, default `$SPIRA_RUN/batch-results`), `tsd/*.jsonl` (merged into
    `$SPIRA_RUN/tsd`, tagged `ran_on`, `vcpus`, `maxpar`) and `round-bins/`.
@@ -105,7 +112,7 @@ the job's branch is fetched into the mirror as `refs/heads/attr-<job>`, then on 
   --suites <csv>` there — no build;
 - `aeon`: the same clone, `--profile aeon` (a debug build of that tree);
 - `round`: waits for the corpus; checks the ref out in `~/round-work` itself and runs
-  `cargo run --profile release -p testenv -- --profile release --suites <csv>` (incremental on
+  `cargo build -p testenv --bin testenv`, then that `testenv --profile release --suites <csv>` (incremental on
   the corpus's own target), then stages `target/release` into `~/round-bins/` as the corpus does.
 
 Every job runs with `SPIRA_VERDICT_TTL=0` (a rerun is never a cache hit nor a refused repeat)

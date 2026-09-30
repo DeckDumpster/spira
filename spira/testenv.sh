@@ -193,16 +193,24 @@ _free_disk() { df -Ph "$HERE" 2>/dev/null | awk 'NR==2{print $4}'; }
 _free_mem()  { free -h 2>/dev/null | awk '/^Mem:/{print $7}'; }
 
 # One heartbeat line: the furthest build STEP seen in the log so far (podman's own
-# progress, which a cold build can go many minutes between), elapsed time, and free
-# disk/memory — so a real resource exhaustion is named rather than looking like a hang.
+# progress, which a cold build can go many minutes between), the build's latest output
+# line, elapsed time, and free disk/memory — so a real resource exhaustion is named rather
+# than looking like a hang.
+#
+# A MULTI-STAGE BUILD PREFIXES ITS STEPS: podman prints `[2/3] STEP 3/4: ...`, never a bare
+# `STEP`, so a pattern anchored on `^STEP` matched nothing and every heartbeat of a 1986s
+# round-VM build read "(no build output yet)" while apt was timing out (sp-dvfea).
 _build_heartbeat() {
-    local start="$1" buildlog="$2" now elapsed stage
+    local start="$1" buildlog="$2" now elapsed stage last
     now=$(date +%s)
     elapsed=$((now - start))
-    stage="$(grep -o '^STEP [0-9]*/[0-9]*:.*' "$buildlog" 2>/dev/null | tail -1)"
+    stage="$(grep -oE '^(\[[0-9]+/[0-9]+\] )?STEP [0-9]+/[0-9]+:.*' "$buildlog" 2>/dev/null | tail -1 | cut -c1-100)"
     [ -n "$stage" ] || stage="(no build output yet)"
+    last="$(grep -v '^[[:space:]]*$' "$buildlog" 2>/dev/null | tail -1 | cut -c1-160)"
     printf 'testenv: building — %s — elapsed %ss — disk %s free, memory %s free\n' \
         "$stage" "$elapsed" "$(_free_disk)" "$(_free_mem)" >&2
+    [ -n "$last" ] && printf 'testenv:   last output: %s\n' "$last" >&2
+    return 0
 }
 
 # Build $1 (the local image ref). Runs `podman build` in the background and prints a

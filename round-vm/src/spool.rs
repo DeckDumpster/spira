@@ -84,6 +84,8 @@ pub struct AttrJob {
 /// `round` also restages `~/round-bins/`.
 pub const REMOTE_ATTR_SCRIPT: &str = r#"set -euo pipefail
 host_addr="$1" port="$2" job="$3" ref="$4" suites="$5" build="$6" toolchain="$7"
+# The launcher the corpus set up (run.rs REMOTE_SCRIPT): the round's staged release on PATH.
+. "$HOME/round-launcher.env" || { echo "round-vm: no staged release on this VM (round-launcher.env)" >&2; exit 2; }
 if [ -n "$toolchain" ]; then export RUSTUP_TOOLCHAIN="$toolchain"; fi
 export SPIRA_VERDICT_TTL=0 SPIRA_BATCH_MAXPAR=1 SPIRA_BATCH_RESULTS="$HOME/attr-results/$job"
 rm -rf "$SPIRA_BATCH_RESULTS"; mkdir -p "$SPIRA_BATCH_RESULTS"
@@ -95,7 +97,8 @@ round)
     cd "$HOME/round-work" || exit 2
     git fetch --quiet origin "+refs/heads/$ref:refs/heads/$ref" || exit 2
     git checkout --quiet --force --detach "refs/heads/$ref" || exit 2
-    cargo run -q --profile release -p testenv --bin testenv -- --mode parallel --profile release --suites "$suites" HEAD
+    cargo build -q --profile release -p testenv --bin testenv || exit 4
+    "$tenv" --mode parallel --profile release --suites "$suites" HEAD
     rc=$?
     rm -rf "$HOME/round-bins"; mkdir -p "$HOME/round-bins"
     find target/release -maxdepth 1 -type f -executable -exec cp {} "$HOME/round-bins/" \; 2>/dev/null
