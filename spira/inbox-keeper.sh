@@ -40,7 +40,7 @@ while true; do
            && [ "$lm" -gt "$last_seen" ] \
            && [ $((now - last_wake)) -ge "${SPIRA_CONCIERGE_INBOX_BACKOFF:-3600}" ]; then
             echo "$(date -u +%FT%TZ) no triage monitor for $(( (now-last_seen)/60 ))m with events waiting — re-arm wake"
-            "$CONCIERGE" wake "[inbox-keeper] events are waiting and no inbox monitor is running — re-arm: Monitor $SPIRA_HOME/inbox-triage.sh"
+            "$CONCIERGE" wake "[inbox-keeper] events are waiting and no inbox monitor is running — re-arm: Monitor inbox-triage.sh"
             last_wake=$now
         fi
     fi

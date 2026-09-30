@@ -115,7 +115,7 @@ JSONL
 : > "$GHLOG"
 out="$(SPIRA_GH="$TMP/bin/gh" GHLOG="$GHLOG" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
      SPIRA_RUN="$RUN" SPIRA_HOME="$SH" SPIRA_HOME_REPO=fixture SPIRA_REPO="$REPO" \
-     SPIRA_REPO_MAP="$SH/repo-map" bash "$SH/gh-issue-backfill.sh" --dry-run 2>&1)"
+     SPIRA_REPO_MAP="$SH/repo-map" PATH="$SH:$PATH" gh-issue-backfill.sh --dry-run 2>&1)"
 
 BACKFILL_SHA_PREFIX="$(printf '%s\n' "$out" | grep -oE 'as [0-9a-f]{8}' | awk '{print $2}')"
 if [ -n "$BACKFILL_SHA_PREFIX" ]; then

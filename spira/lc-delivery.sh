@@ -14,6 +14,11 @@
 # covers: spira/lc-delivery.sh spira/pr-pass-branch.sh landing-pass/* lifecycle/* spira-lc/*
 set -u
 
+# LIFECYCLE ON OR OFF (sp-gypjk). spira-lc is on every release's PATH; whether it is
+# consulted is SPIRA_LIFECYCLE_ENFORCE (1/true = on), never whether a binary happens to be
+# found — the off switch used to be a poisoned SPIRA_LC_BIN path handed to children.
+_lc_dl_on() { case "${SPIRA_LIFECYCLE_ENFORCE:-0}" in 1|true) return 0 ;; esac; return 1; }
+
 _lc_json_str() {
     local s="${1:-}"
     s="${s//\\/\\\\}"
@@ -27,7 +32,8 @@ _lc_json_str() {
 # no delivery row (spira-lc unreachable, the bead has no row, or its answer did not parse).
 lc_delivery_show() {
     local id="$1" out
-    out="$("${SPIRA_LC_BIN:?}" show "$id" 2>/dev/null)" || return 1
+    _lc_dl_on || return 1
+    out="$(spira-lc show "$id" 2>/dev/null)" || return 1
     python3 -c '
 import sys, json
 try:
@@ -48,7 +54,8 @@ print(f"{state} {version}")
 # a caller that retries "cannot tell" is safe, one that retries a real refusal is not.
 lc_delivery_event() {
     local id="$1" expect="$2" version="$3" actor="$4" kind="$5"
-    "${SPIRA_LC_BIN:?}" event delivery "$id" --expect "$expect" --version "$version" \
+    _lc_dl_on || return 2
+    spira-lc event delivery "$id" --expect "$expect" --version "$version" \
         --actor "$actor" --kind "$kind"
 }
 

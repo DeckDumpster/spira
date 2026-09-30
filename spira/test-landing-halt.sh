@@ -18,7 +18,6 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
 # THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
 # pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
-LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 
 echo "test-landing-halt.sh"
 
@@ -40,7 +39,7 @@ run_halt() {
         SPIRA_PROD="$HERE" \
         SPIRA_CONF=/nonexistent \
         SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
-        "$LANDING_PASS_BIN" halt "$@" 2>&1
+        landing-pass halt "$@" 2>&1
 }
 
 # ===========================================================================
@@ -227,7 +226,7 @@ out="$(env -i PATH="$PATH" HOME="$HOME" \
     SPIRA_PATH="$BIN_DIR" \
     SPIRA_CONF=/nonexistent \
     SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
-    "$LANDING_PASS_BIN" halt --reason "container teardown test" 2>&1)"; rc=$?
+    landing-pass halt --reason "container teardown test" 2>&1)"; rc=$?
 kill "$CONT_PID" 2>/dev/null || true
 
 is   "container-halt: exits 0"                            "0" "$rc"
@@ -283,7 +282,7 @@ out="$(env -i PATH="$STUBDIR:$PATH" SPIRA_PATH="$STUBDIR" HOME="$HOME" \
     SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
     PODMAN_LOG="$PODMAN_LOG" \
     FAKE_CNAME="$FAKE_CNAME" \
-    "$LANDING_PASS_BIN" halt 2>&1)"
+    landing-pass halt 2>&1)"
 kill "$VOL_PID" 2>/dev/null || true
 
 want "volumes: halt names the container it tore down" "$FAKE_CNAME" "$out"

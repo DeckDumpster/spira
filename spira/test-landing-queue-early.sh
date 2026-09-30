@@ -27,7 +27,6 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 # THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
 # pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
-LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 before_in_output() {
     # before_in_output <label> <first> <second> <output>
     # passes if <first> appears before <second> in <output>
@@ -75,10 +74,10 @@ stub gh         'exit 1'
 # disappears after a fast-forward). After the first call the batch is gone; subsequent calls
 # are silent. batch.sh is a no-op (no new batch to open in this fixture).
 stub batch.sh 'exit 0'
-# THE QUEUE STEP IS "$SPIRA_QUEUE_BIN" step <repo> now (landing-pass/DESIGN.md §8 D5): the
+# THE QUEUE STEP IS `queue step <repo>` now (landing-pass/DESIGN.md §8 D5): the
 # stub stands in for the queue binary and runs the stubbed verdict.sh, which is all this
 # suite's ordering assertions read.
-stub queue-bin 'if [ "${1:-}" = step ]; then bash "$SPIRA_HOME/verdict.sh" "${2:-}"; fi; exit 0'
+stub queue 'if [ "${1:-}" = step ]; then bash "$SPIRA_HOME/verdict.sh" "${2:-}"; fi; exit 0'
 
 B() { bd -C "$SPIRA_DB" "$@"; }
 
@@ -86,8 +85,8 @@ landing() {
     rm -f "$RUN/landing.progress"
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
-    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" SPIRA_QUEUE_BIN="$SH/queue-bin" \
-        "$LANDING_PASS_BIN" land 2>&1
+    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
+        PATH="$SH:$PATH" landing-pass land 2>&1
 }
 
 seed() {
@@ -115,11 +114,10 @@ MAP
 echo "test-landing-queue-early.sh"
 
 # POSITIVE CONTROL: prove that a landing-pass crash is caught, not a silent non-zero exit.
-# Temporarily point LANDING_PASS_BIN at a stub that exits 255, run it, then restore it.
-stub landing-pass-crash 'exit 255'
-_real_lp="$LANDING_PASS_BIN"; LANDING_PASS_BIN="$SH/landing-pass-crash"
-_ctrl_out="$(landing)"; _ctrl_rc=$?
-LANDING_PASS_BIN="$_real_lp"
+# Put a landing-pass that exits 255 first on PATH (the SUT is found by name), run it.
+mkdir -p "$TMP/crash"
+printf '#!/usr/bin/env bash\nexit 255\n' > "$TMP/crash/landing-pass"; chmod +x "$TMP/crash/landing-pass"
+_ctrl_out="$(PATH="$TMP/crash:$PATH" landing)"; _ctrl_rc=$?
 [ "$_ctrl_rc" -ne 0 ] \
     && ok "positive-control: landing crash detected (rc=$_ctrl_rc)" \
     || bad "positive-control" "expected non-zero from a landing-pass that exits 255; got rc=0"

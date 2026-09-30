@@ -8,17 +8,13 @@
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/conf.sh"
 
-if [ ! -x "${SPIRA_LOOM_BIN:-}" ]; then
-    printf 'loom: binary not found at %s\n' "${SPIRA_LOOM_BIN:-<unset>}" >&2
-    printf 'loom: build it: cd %s/loom && cargo build --release\n' "$SPIRA_REPO" >&2
-    exit 2
-fi
+command -v loom >/dev/null 2>&1 || { printf 'loom: not found on PATH (%s)\n' "$PATH" >&2; exit 2; }
 
 _conf_file="${SPIRA_CONF_FILE:-}"
 _conf_mtime_0="$(stat --format='%Y' "$_conf_file" 2>/dev/null || echo 0)"
 _tick="${SPIRA_LOOM_TICK:-5}"
 
-"$SPIRA_LOOM_BIN" "$@" &
+loom "$@" &
 _loom_pid=$!
 
 trap '

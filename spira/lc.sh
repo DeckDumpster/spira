@@ -13,6 +13,11 @@
 # not yet classified) · 3 refused (illegal transition, terminal state, lost a CAS race).
 set -uo pipefail
 
+# LIFECYCLE ON OR OFF (sp-gypjk). spira-lc is on every release's PATH; whether it is
+# consulted is SPIRA_LIFECYCLE_ENFORCE (1/true = on), never whether a binary happens to be
+# found — the off switch used to be a poisoned SPIRA_LC_BIN path handed to children.
+_lc_on() { case "${SPIRA_LIFECYCLE_ENFORCE:-0}" in 1|true) return 0 ;; esac; return 1; }
+
 _lc_json_field() {   # _lc_json_field <json> <python-expr over d>
     printf '%s' "$1" | python3 -c '
 import sys, json
@@ -40,11 +45,11 @@ _lc_hold_kind_tag() {   # _lc_hold_kind_tag <poison|ask|wait|operator> -> Poison
 }
 
 # lc_show <bead-id> -> the `spira-lc show` JSON on stdout; rc 0 found, 1 no such row, 2
-# cannot tell (binary missing, DB unreachable).
+# cannot tell (lifecycle off, DB unreachable).
 lc_show() {
     local id="${1:?lc_show needs a bead id}"
-    [ -x "${SPIRA_LC_BIN:-}" ] || { printf '{}'; return 2; }
-    "$SPIRA_LC_BIN" show "$id" 2>/dev/null
+    _lc_on || { printf '{}'; return 2; }
+    spira-lc show "$id" 2>/dev/null
 }
 
 # lc_event <bead-id> <expect-state> <version> <actor> <kind-json> -> applies one event.
@@ -53,8 +58,8 @@ lc_show() {
 # come from the SAME read the caller reasoned from, not a second one taken here.
 lc_event() {
     local id="${1:?}" expect="${2:?}" version="${3:?}" actor="${4:?}" kind="${5:?}"
-    [ -x "${SPIRA_LC_BIN:-}" ] || return 2
-    "$SPIRA_LC_BIN" event bead "$id" --expect "$expect" --version "$version" --actor "$actor" --kind "$kind" >/dev/null 2>&1
+    _lc_on || return 2
+    spira-lc event bead "$id" --expect "$expect" --version "$version" --actor "$actor" --kind "$kind" >/dev/null 2>&1
 }
 
 # HoldCause is a closed enum (lifecycle/src/reason.rs), never a caller's own prose — the
@@ -172,7 +177,7 @@ lc_returned() {
 }
 
 # lc_holds <bead-id> -> the row's current hold kinds, one per line (empty if none, not
-# yet classified, or the binary/DB is unreachable — a caller that only wants to know
+# yet classified, or lifecycle is off / the DB is unreachable — a caller that only wants to know
 # whether a specific kind is held should grep this, not treat an empty result as an error).
 #
 # `holds` is a JSON column; `spira-lc show` hands it back verbatim from `dolt sql -r json`,
@@ -194,24 +199,24 @@ lc_held() {
 }
 
 # lc_list_held <kind> -> every bead id currently carrying that hold, one per line (empty if
-# none, or the binary/DB is unreachable). The bulk counterpart to lc_held: a sweep over many
+# none, or lifecycle is off / the DB is unreachable). The bulk counterpart to lc_held: a sweep over many
 # beads (CHECK 4's stale-poison scan) asks this once instead of lc_holds per bead.
 lc_list_held() {
     local kind="${1:?lc_list_held needs a hold kind}"
-    [ -x "${SPIRA_LC_BIN:-}" ] || return 0
-    local js; js="$("$SPIRA_LC_BIN" list --hold "$kind" 2>/dev/null)" || return 0
+    _lc_on || return 0
+    local js; js="$(spira-lc list --hold "$kind" 2>/dev/null)" || return 0
     _lc_json_field "$js" '"\n".join(r.get("bead_id","") for r in (d if isinstance(d, list) else []))' 2>/dev/null
 }
 
 # lc_list_state <state> -> "<id>\t<lease_until>\t<holds-comma-separated>" for every bead
-# currently in that state, one per line (empty if none, or the binary/DB is unreachable).
+# currently in that state, one per line (empty if none, or lifecycle is off / the DB is unreachable).
 # CHECK 2's reclaim scan asks this once (state=WORKING) instead of a per-bead lc_show call
 # against every dispatchable bead — the same bulk-over-per-bead shape lc_list_held gives
 # CHECK 4.
 lc_list_state() {
     local state="${1:?lc_list_state needs a bead state}"
-    [ -x "${SPIRA_LC_BIN:-}" ] || return 0
-    local js; js="$("$SPIRA_LC_BIN" list --state "$state" 2>/dev/null)" || return 0
+    _lc_on || return 0
+    local js; js="$(spira-lc list --state "$state" 2>/dev/null)" || return 0
     _lc_json_field "$js" '"\n".join("%s\t%s\t%s" % (
         r.get("bead_id",""),
         r.get("lease_until") if r.get("lease_until") is not None else "",
@@ -220,11 +225,11 @@ lc_list_state() {
 }
 
 # lc_list_all -> "<id>\t<state>\t<holder>" for every bead row spira_lifecycle holds, one per
-# line (empty if none, or the binary/DB is unreachable). CHECK 2c's consistency sweep asks
+# line (empty if none, or lifecycle is off / the DB is unreachable). CHECK 2c's consistency sweep asks
 # this once instead of a per-bead lc_show call against every dispatchable bead.
 lc_list_all() {
-    [ -x "${SPIRA_LC_BIN:-}" ] || return 0
-    local js; js="$("$SPIRA_LC_BIN" list 2>/dev/null)" || return 0
+    _lc_on || return 0
+    local js; js="$(spira-lc list 2>/dev/null)" || return 0
     _lc_json_field "$js" '"\n".join("%s\t%s\t%s" % (
         r.get("bead_id",""), r.get("state",""), r.get("holder") or ""
     ) for r in (d if isinstance(d, list) else []))' 2>/dev/null
