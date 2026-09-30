@@ -54,12 +54,19 @@ impl RealBd {
             .map_err(|e| format!("{} {}: {e}", self.bd, args.join(" ")))
     }
 
-    /// Inherits stdout/stderr — for a call `groomer.sh` ran uncaptured, so bd's own
-    /// messages still reach whoever is reading this process's output.
+    /// Discards bd's own stdout (a write verb's confirmation chatter), keeping stderr
+    /// visible so a real failure still surfaces. `groomer.sh` redirected most of these
+    /// write calls to `/dev/null` for exactly this reason: `split-piece`'s own stdout
+    /// contract is the new id alone, and nothing here should leak bd's own text into a
+    /// caller's command substitution — `split-piece`'s `set-state`/`label remove` were
+    /// the two call sites the original script was explicit about; the rest (label
+    /// add/remove, note, supersede, dep add) never had a test that needed their real-bd
+    /// stdout visible either, so the same treatment is both safe and consistent.
     fn run_inherit(&self, args: &[&str]) -> Result<std::process::ExitStatus, String> {
         self.cmd()
             .args(args)
             .stdin(Stdio::null())
+            .stdout(Stdio::null())
             .status()
             .map_err(|e| format!("{} {}: {e}", self.bd, args.join(" ")))
     }

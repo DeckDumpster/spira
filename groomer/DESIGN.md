@@ -103,10 +103,15 @@ the bash suites' `STUB_BD` argv-recording technique without a subprocess.
   option: %s`) is reproduced verbatim in `src/main.rs::parse_flags`**, including exit code
   1 for every case, so the CLI's error surface does not change shape for any caller
   (aeon.sh, the chamber brief, an operator at a terminal) mid-rewrite.
-- **`bd`'s own stdout/stderr is no longer captured and swallowed for the calls
-  `groomer.sh` ran uncaptured** (`label add`/`remove`, `close`, `note`, `set-state`,
-  `supersede`, `dep add`) — `RealBd::run_inherit` lets them flow straight through, the
-  same visibility the bash had by not redirecting them. Calls the bash *did* capture
+- **Every write verb discards bd's own stdout, keeping stderr visible.**
+  `groomer.sh` redirected most of its write calls to `/dev/null` (`split-piece`'s
+  `set-state`/`label remove` most pointedly — `split-piece`'s own stdout contract is the
+  new id alone, and letting bd's confirmation text leak into it broke exactly that: a
+  caller capturing `$(groomer split-piece …)` got bd's "✓ Set branch = …" text ahead of
+  the id, caught by `test-groomer-split-piece.sh` against a real store). `label
+  add`/`remove`, `note`, `set-state`, `supersede` and `dep add` all get the same
+  treatment in `RealBd::run_inherit` — consistent, and nothing in this crate's suites
+  needs one of them to print bd's own chatter. Calls the bash captured for their value
   (`show --json`, `label list`, `create`) still capture here, for the same reason.
 - **Dropped: nothing behavioural.** Every subcommand, every flag, every exit code and
   every refusal in `groomer.sh` has a caller-facing equivalent here. What moved is *where*

@@ -52,7 +52,7 @@ STUB
 chmod +x "$STUB_BD"
 
 run_groomer() {
-    env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    env -i HOME="$T" PATH="$PATH" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
