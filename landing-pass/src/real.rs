@@ -662,17 +662,18 @@ impl Tools for RealTools {
     fn gate_slots_free(&self, par: usize) -> Option<usize> {
         self.admission.as_ref().map(|d| admission_free(d, par))
     }
+    /// `gate-run.sh` is now a thin exec-shim into the Rust `gate-run` binary (sp-ubw2o), but
+    /// this call site still names the path, not `SPIRA_GATE_RUN_BIN`, directly — a session
+    /// (or a suite fixture) that plants its own script at this exact path to script this
+    /// method's behavior must keep working. Invoked directly (no `bash` prefix): the file is
+    /// executable with its own shebang.
     fn gate_status(&self, branch: &str, repo: &str) -> Option<String> {
-        // SPIRA_GATE_RUN_BIN (conf.sh exports it), else the one installed beside this binary
-        // (sp-ubw2o, replaces spira/gate-run.sh — same resolution `rebase_stale` uses above).
-        let bin = std::env::var_os("SPIRA_GATE_RUN_BIN")
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("gate-run"))))
-            .filter(|b| executable(b));
-        let Some(bin) = bin else { return None };
+        let bin = self.home.join("gate-run.sh");
+        if !executable(&bin) {
+            return None;
+        }
         let mut c = command(bin);
-        c.arg("--home").arg(&self.home).arg("--status").arg(branch).arg(repo).stdin(Stdio::null());
+        c.arg("--status").arg(branch).arg(repo).stdin(Stdio::null());
         let (rc, so, _) = run_capture(c);
         if rc == 0 { Some(String::from_utf8_lossy(&so).trim_end_matches('\n').to_string()) } else { None }
     }

@@ -3,7 +3,7 @@
 //! this module gathers its inputs lazily (a marker a higher row would match is never
 //! consumed early) and performs the side effects the verdict names.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
@@ -33,22 +33,21 @@ impl Run<'_> {
         let _ = self.d.exec.exec("bash", &s(&["-c", FIXTURE_DROP]), Some(data), None);
     }
 
-    /// `gate-run --status <branch> <repo>`: (exit code, stdout). `SPIRA_GATE_RUN_BIN`
-    /// (conf.sh exports it), else the one installed beside `spira/gate-run.sh` (sp-ubw2o,
-    /// replaces the bash — landing-pass's `real::gate_status` resolves it the same way).
+    /// `gate-run.sh --status <branch> <repo>`: (exit code, stdout). `gate-run.sh` is now a
+    /// thin exec-shim into the Rust `gate-run` binary (sp-ubw2o), but this call site still
+    /// names the path, not `SPIRA_GATE_RUN_BIN`, directly — a session (or a suite fixture,
+    /// `test-aeon-gate-close-silent.sh`) that plants its own script at this exact path to
+    /// script this method's behavior must keep working, in production and under test alike.
+    /// Invoked directly (no `bash` prefix), the same convention `world.sh` already uses
+    /// elsewhere in this crate: the file is executable with its own shebang.
     fn gate_status(&self) -> Option<(i32, String)> {
-        let bin = self.conf.s("SPIRA_GATE_RUN_BIN");
-        let bin = if !bin.is_empty() {
-            PathBuf::from(bin)
-        } else {
-            self.home().join("gate-run.sh")
-        };
+        let bin = self.home().join("gate-run.sh");
         if !bin.is_file() {
             return None;
         }
         let o = self.d.exec.exec(
             &bin.display().to_string(),
-            &s(&["--home", &self.home().display().to_string(), "--status", &self.s.branch, &self.s.repo_name]),
+            &s(&["--status", &self.s.branch, &self.s.repo_name]),
             None,
             None,
         );

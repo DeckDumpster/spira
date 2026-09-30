@@ -29,6 +29,15 @@ observed asked for it to be retired, and a hand operator (or a future automated 
 still gets the same bounded-wait contract the file's own header describes — but this
 crate's *unit* tests are what now prove it, not a live bash suite (see "Test strategy").
 
+Both call sites still name the path `<home>/gate-run.sh`, not `SPIRA_GATE_RUN_BIN`, and
+invoke it directly rather than through `bash` (the file is executable with its own
+shebang — the same convention `aeon` already uses for `world.sh`). An earlier version of
+this bead had both callers prefer `SPIRA_GATE_RUN_BIN` first; that broke
+`test-aeon-gate-close-silent.sh`, which plants its own stub script at exactly this path to
+script `gate_status`'s return value, because the env-resolved binary silently won out over
+the stub. Naming the path is also simply what the bash always did — no caller here ever
+read an env var to find `gate-run.sh`, and there is no reason for that to start now.
+
 ## Contract (unchanged from the bash)
 
 ```
