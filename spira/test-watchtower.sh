@@ -1212,7 +1212,7 @@ above just proved via a full subprocess run — same stub, same thresholds, in-p
 of forked:"
 # ======================================================================================
 disk_mem_t1() {           # disk_mem_t1 [VAR=val ...] -> "$_disk_disp|$_mem_disp|$_disk_breach|$_mem_breach"
-    ( cd "$HERE" && env -i HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_PATH="$DF_CLEAN" \
+    ( cd "$HERE" && env -i HOME="$TMP" PATH="$DF_CLEAN:$PATH" SPIRA_CONF=/nonexistent SPIRA_PATH="$DF_CLEAN" \
         SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" "$@" \
         bash -c 'set -uo pipefail
                  . ./watchtower.sh
