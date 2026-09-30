@@ -15,7 +15,7 @@
 # swept under either flag is judged exactly as sending.sh always judged it.
 #
 # tier: T1
-# covers: spira/sending.sh spira/lib.sh
+# covers: sending/src/* spira/lib.sh
 # hermetic-ok: a stub bd (always answers "no bead"), local git repos — no database, no
 #   systemd, no real network
 set -uo pipefail
@@ -76,7 +76,7 @@ export SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_HOME_REPO="$PNAME" SPIRA_REPO="$PREP
 sending() {
     SPIRA_HOME="$HERE" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$STUB_BD" \
     SPIRA_REPO="$PREPO" SPIRA_HOME_REPO="$PNAME" SPIRA_REPO_MAP="$TMP/repo-map" \
-        sending.sh --no-fetch "$@" 2>&1
+        command sending --no-fetch "$@" 2>&1
 }
 branch_exists() {   # branch_exists <repo> <branch>
     git -C "$1" show-ref --verify -q "refs/heads/$2" 2>/dev/null

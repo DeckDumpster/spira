@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# test-wire-token.sh — SENT is the wire token between sending.sh, sentinel.sh, and
+# test-wire-token.sh — SENT is the wire token between the Sending (sending/, was sending.sh),
+# the sentinel, and
 # cockpit-metrics.py. Three programs parse each other's stdout; a rename that lands in the
 # emitter but not both parsers yields ZERO rather than an error, so the failure mode is
 # silence rather than a crash. This suite is the positive control: it fails the moment any of
@@ -29,34 +30,32 @@
 #
 # defect: sp-dcfm
 # tier: T1
-# covers: spira/sending.sh sentinel/src/* spira/cockpit-metrics.py
-
-# tier: T0
-# covers: spira/sending.sh spira/sentinel.sh spira/cockpit-metrics.py
+# covers: sending/src/* sentinel/src/* spira/cockpit-metrics.py
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
 echo "test-wire-token.sh"
 
-SENDING="$HERE/sending.sh"
+SENDING="$HERE/../sending/src/sweep.rs"   # the Sending is Rust (was sending.sh, sp-arpjt)
 SENTINEL="$HERE/../sentinel/src/audit.rs"   # the sentinel is Rust (was sentinel.sh)
 METRICS="$HERE/cockpit-metrics.py"
 
 # ---------------------------------------------------------------------------------------
-# EMITTER. sending.sh must emit `say "SENT …"` — the wire token on the stdout channel.
+# EMITTER. The Sending emits `SENT …` lines — `self.landed(.., "SENT")` for every landed
+# arm, and `format!("SENT {id} …")` for an orphaned worktree.
 # ---------------------------------------------------------------------------------------
-if grep -q 'say "SENT ' "$SENDING"; then
-    ok "sending.sh emits SENT"
+if grep -qF 'self.landed(c, id, br, "SENT")' "$SENDING" && grep -qF 'format!("SENT {id}' "$SENDING"; then
+    ok "the Sending emits SENT"
 else
-    bad "sending.sh emits SENT" "say \"SENT \" not found — emitter is out of sync"
+    bad "the Sending emits SENT" "\"SENT\" verb not found in $SENDING — emitter is out of sync"
 fi
 
-# NEGATIVE: the old token must be gone from the emitter's say calls.
-if grep -q 'say "REAPED' "$SENDING"; then
-    bad "sending.sh no longer emits REAPED" "say \"REAPED found — old token still present"
+# NEGATIVE: the old token must never be a landed line's own verb.
+if grep -qF 'format!("REAPED' "$SENDING"; then
+    bad "the Sending no longer emits REAPED as a sent line" "a REAPED emitter was found"
 else
-    ok "sending.sh does not emit REAPED"
+    ok "the Sending does not emit REAPED as a sent line"
 fi
 
 # ---------------------------------------------------------------------------------------

@@ -8,7 +8,7 @@
 #
 # install_fixture_build <fixture-root>
 #   Symlinks the real systemd/*.{service,timer,yaml}, install.sh and spira/{conf.sh,watchd.sh,
-#   lib.sh,units.sh,suite-covers.sh,lifecycle-cert.sh} into <fixture-root>/{systemd,spira}; writes an empty watchers manifest
+#   lib.sh,units.sh,suite-covers.sh} into <fixture-root>/{systemd,spira}; writes an empty watchers manifest
 #   and repo-map.example, a no-op install-session-hook.sh stub (install.sh finds it by name, so
 #   a caller puts <fixture-root>/spira first on PATH), and <fixture-root>/bin unit stubs.
 #
@@ -57,7 +57,7 @@ install_fixture_build() {
         ln -sf "$f" "$fixture/systemd/$(basename "$f")"
     done
     ln -sf "$_LIB_INSTALL_SELF/../systemd/install.sh" "$fixture/systemd/install.sh"
-    for f in conf.sh watchd.sh lib.sh units.sh suite-covers.sh lifecycle-cert.sh; do
+    for f in conf.sh watchd.sh lib.sh units.sh suite-covers.sh; do
         [ -e "$_LIB_INSTALL_SELF/$f" ] && ln -sf "$_LIB_INSTALL_SELF/$f" "$fixture/spira/$f"
     done
     printf '# empty — test fixture\n' > "$fixture/spira/watchers"
@@ -72,7 +72,7 @@ install_fixture_build() {
 # whose ExecStart target is not executable. A fixture therefore stages a release-shaped bin/
 # beside the spira/ its SPIRA_PROD names. Nothing here runs them — install only places and
 # starts units against a mock systemctl.
-INSTALL_FIXTURE_UNIT_BINS="sentinel queue aeon spira-supervise landing-pass reconciler-flow spira-lc"
+INSTALL_FIXTURE_UNIT_BINS="sentinel queue aeon spira-supervise landing-pass reconciler-flow spira-lc sending"
 
 # install_fixture_release_bins <prod-root> -> no-op stubs at <prod-root>/bin/<tool> for every
 # binary a unit template ExecStarts.
@@ -133,7 +133,7 @@ mk_install_fixture() {
     done
     ln -sf "$_LIB_INSTALL_SELF/../systemd/install.sh" "$systemd/install.sh"
     ln -sf "$_LIB_INSTALL_SELF/../systemd/units.sh"   "$systemd/units.sh"
-    for f in conf.sh lib.sh watchd.sh suite-covers.sh lifecycle-cert.sh; do
+    for f in conf.sh lib.sh watchd.sh suite-covers.sh; do
         [ -e "$_LIB_INSTALL_SELF/$f" ] && ln -sf "$_LIB_INSTALL_SELF/$f" "$spira/$f"
     done
     printf '# empty\n' > "$spira/watchers"
@@ -200,7 +200,7 @@ tinstall_fixture() {   # tinstall_fixture <dir>
         ln -sf "$f" "$dir/systemd/$(basename "$f")"
     done
     ln -sf "$src/../systemd/install.sh" "$dir/systemd/install.sh"
-    for f in conf.sh watchd.sh lib.sh suite-covers.sh lifecycle-cert.sh; do
+    for f in conf.sh watchd.sh lib.sh suite-covers.sh; do
         [ -e "$src/$f" ] && ln -sf "$src/$f" "$dir/spira/$f"
     done
     printf '# empty — test fixture\n' > "$dir/spira/watchers"

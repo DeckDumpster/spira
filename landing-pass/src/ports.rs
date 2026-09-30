@@ -73,6 +73,15 @@ pub trait Lib {
     fn close_on_land(&self, id: &str, sha: &str);
     fn prune_worktrees(&self, repo: &Path);
     fn gh_unlanded_scan(&self);
+    /// `spira_ask_refresh_loop <repo> <name> <branch> <id> <base_fq> <n>` — needs_refresh's
+    /// escalation when a pull request has been refreshed `SPIRA_PR_REFRESH_MAX` times.
+    fn ask_refresh_loop(&self, repo: &Path, name: &str, branch: &str, id: &str, base_fq: &str, n: u32);
+    /// `spira-lc deliver pr-merged <repo> <id> <br> <merge-sha>`.
+    fn deliver_pr_merged(&self, repo: &Path, id: &str, branch: &str, merge_sha: &str);
+    /// `spira-lc deliver pr-closed <id> <reason>`.
+    fn deliver_pr_closed(&self, id: &str, reason: &str);
+    /// `spira_git_push --force-with-lease -u <remote> <branch>`; Err(its stderr).
+    fn force_push(&self, repo: &Path, remote: &str, branch: &str) -> Result<(), String>;
 }
 
 /// The harness programs the pass runs as subprocesses (DESIGN.md §2.5).
@@ -101,6 +110,19 @@ pub trait Tools {
     /// NO_VERDICT reason=conflict, gate/DESIGN.md) → its exit: 0 rebased and certified, 1
     /// reopened on a real conflict, 2 reopened on a red gate, 3 not attempted.
     fn rebase_stale(&self, id: &str, repo: &str) -> i32;
+
+    // ── forge (sp-t4y60): land_pr's GitHub calls, the pr pass's own seam onto the forge ──
+
+    /// `forge pr-state <repo> <selector>` → `open`/`merged`/`closed`/`unknown`; None only
+    /// when the program itself could not be run (never a guess at the word).
+    fn forge_pr_state(&self, repo: &Path, selector: &str) -> Option<String>;
+    /// `forge pr-create <repo> <head> <base> <title>` (body on stdin) → the new PR number,
+    /// or None.
+    fn forge_pr_create(&self, repo: &Path, head: &str, base: &str, title: &str, body: &str) -> Option<u64>;
+    /// `forge pr-list-open <repo>` → `(number, headRefName)` per open PR.
+    fn forge_pr_list_open(&self, repo: &Path) -> Vec<(u64, String)>;
+    /// `forge pr-automerge <repo> <selector>` → armed?
+    fn forge_pr_automerge(&self, repo: &Path, selector: &str) -> bool;
 }
 
 pub trait Procs {

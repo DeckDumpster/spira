@@ -32,7 +32,6 @@
 # and it is not a judgement about the approach: there is nothing left to judge.
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
-. "$(dirname "$0")/lc.sh"
 
 APPLY=0
 CMD="${1:-audit}"; shift 2>/dev/null || true
@@ -63,10 +62,10 @@ for i in (d if isinstance(d,list) else [d]): print(i["id"])' 2>/dev/null
 uniq_candidates() { candidates | awk 'NF && !seen[$0]++'; }
 
 # THE SPIRA-LC HOLD, NOT THE bd LABEL (sp-i2m7y): CHECK 4 stopped writing spira-poison once
-# dispatchable_open and check4_decide moved onto lc_held, so a predicate still reading the
+# dispatchable_open and check4_decide moved onto the lifecycle hold (`spira-lc held`), so a predicate still reading the
 # label here would find every bead unpoisoned forever, and `deadlocked`/`clear` below would
 # skip real holds unconditionally.
-poisoned() { lc_held "$1" poison; }
+poisoned() { spira-lc held "$1" poison; }
 
 case "$CMD" in
 audit)
@@ -223,10 +222,10 @@ deadlocked)
         # happened at; check4_decide will not re-poison as long as nothing has moved past it,
         # and a genuinely new failure (one more claim after this lift) still poisons it again.
         # THE HOLD IS THE GATE, NOT THE (now vestigial) LABEL: poisoned() above reads
-        # lc_held, and CHECK 4 no longer writes the label at all (sp-i2m7y) — gating on
+        # `spira-lc held`, and CHECK 4 no longer writes the label at all (sp-i2m7y) — gating on
         # `bdq label remove` succeeding would refuse every real poison forever, since
         # there is never a label there to remove.
-        if lc_unhold "$id" poison attempts.sh; then
+        if spira-lc unhold "$id" poison attempts.sh; then
             bdq label remove "$id" spira-poison >/dev/null 2>&1
             bdq note "$id" "Poison lifted by attempts.sh deadlocked: $br carries a commit naming $id and merges cleanly into $base, so this is finished, landable work. A poisoned bead stays open, an open bead carrying the label is claimed by nobody, and the landing pass lands only closed beads — so the label was holding completed work out of the queue permanently. The counters are left standing as the record of how it got here." >/dev/null 2>&1
             att="$(attempts_of "$id")"; poison_lifted_mark "$id" "${att:-0}" || true
@@ -273,7 +272,7 @@ clear)
             continue
         fi
         # THE HOLD IS THE GATE, NOT THE (now vestigial) LABEL — see the matching note above.
-        if lc_unhold "$id" poison attempts.sh; then
+        if spira-lc unhold "$id" poison attempts.sh; then
             bdq label remove "$id" spira-poison >/dev/null 2>&1
             bump_poison_cleared "$id" operator
             poison_asked_clear "$id"

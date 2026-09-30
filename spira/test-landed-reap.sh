@@ -25,7 +25,7 @@
 #
 # defect: sp-jci6o
 # tier: T1
-# covers: spira/lib.sh spira/sending.sh queue/src/* spira/batch.sh
+# covers: spira/lib.sh sending/src/* queue/src/* spira/batch.sh
 # hermetic-ok: a stub bd (a JSON-file-per-id fixture) and local git repos — no database, no
 #   systemd, no real network
 set -uo pipefail

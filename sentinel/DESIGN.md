@@ -119,7 +119,7 @@ The format is `<YYYY-MM-DDTHH:MM:SSZ> spira: <msg>` (lib.sh `log`), in UTC.
 | `ACT <msg>` for every act/progress (`summoned a <f> aeon`, `invoked reflection`, `poisoned <id> after <n> attempts`, `reclaimed <n> stale lease(s)`, …) | cockpit-metrics.py:65,69, cockpit.sh:626 |
 | `pass complete — <a> action(s), <p> progress[, goal reached]` | auron-classify.py:110 |
 | `summon-only pass complete — <a> action(s)`, `audit pass complete — <a> action(s), <p> progress` | nothing outside tests |
-| untimestamped `RECLAIMED`, `SENT`, `HELD`, `KEEP`, `FAILED` lines passed through from strand and sending.sh | cockpit.sh:637, cockpit-metrics.py:236 |
+| untimestamped `RECLAIMED`, `SENT`, `HELD`, `KEEP`, `FAILED` lines passed through from strand and sending | cockpit.sh:637, cockpit-metrics.py:236 |
 | `CHECK5: …` summary lines | unpoison.sh:145 (reads sentinel.log, but CHECK 5 logs to audit.log; pre-existing, §9) |
 
 Every other message is kept word for word as well, because the bash suites and the operator
@@ -239,7 +239,7 @@ Dead ones are deleted, as `aeon_count` does.
 | CHECK 4 | `spira-claim counts` (ids on stdin), `decide --poison-at P --requeue-at R --reclaim-at C -- n rq rc labels stamp [poisoned]`; `mail.sh send operator --from … --subject … --kind question --default …` (body on stdin) | `id\tatt\treq\trcl`; tokens; rc |
 | CHECK 5 | `bash ${SPIRA_INCIDENT_SH:-incident.sh} file "<title>" -` (env `SPIRA_INCIDENT_*`, body on stdin) | ignored |
 | CHECK 6 | `bash $SPIRA_HOME/watchtower.sh --throttle-check`, `--czar-outcome-check`, `--pr-stall-check`, `--disabled-timer-check` (only when the file is readable; each 2>/dev/null) | ignored |
-| CHECK 6b | `$SPIRA_HOME/sending.sh --skip-queue` | output passed through; `^SENT <id> <repo> <branch>` → act; `^FAILED` → log |
+| CHECK 6b | `sending --skip-queue` (sending/DESIGN.md; sending.sh until sp-arpjt) | output passed through; `^SENT <id> <repo> <branch>` → act; `^FAILED` → log |
 | CHECK 8 | `$SPIRA_HOME/reflect.sh "<open children, newline-separated>"` >> `reflect.log` | — |
 | tsd | `tsd-write --family sentinel-phase --root $SPIRA_RUN --field-str pass=<id> --field-str check=<name> --field secs=<n>` | best-effort |
 
@@ -305,11 +305,12 @@ source commits it was recovered from are named.
 **Children.** The switch reaches everything this process starts:
 
 - Every child gets `SPIRA_LIFECYCLE_ENFORCE=0|1`. That covers seams, strand,
-  pilgrimage.sh, sending.sh, watchtower.sh, incident.sh and reflect.sh.
+  pilgrimage.sh, sending, watchtower.sh, incident.sh and reflect.sh.
 - Both systemd-run workers get it as `--setenv`. The audit worker resolves the same mode
   from it.
 - That switch is the whole of OFF (sp-gypjk). No child is handed a poisoned tool path;
-  `lc.sh` gates each call on `SPIRA_LIFECYCLE_ENFORCE`, never on whether `spira-lc` exists.
+  `spira-lc`'s caller verbs gate each call on `SPIRA_LIFECYCLE_ENFORCE` (they replaced `lc.sh`,
+  sp-arpjt), never on whether `spira-lc` exists.
 
 **ON is loud.** Two things fail the unit:
 
@@ -328,9 +329,10 @@ exits 1. A CAS refusal (rc 3) is the normal race: a WARN, and it is retried next
   `bd reclaim --id <id> --older-than 1s`, and the exemption read `spira-waiting-operator`.
   The strand crate needs the same switch (it reads `SPIRA_LIFECYCLE_ENFORCE`, which the
   sentinel now hands it).
-- **sending.sh:488, OFF.** It writes only `lc_content_on_base`, a no-op when disabled.
+- **sending.sh:488, OFF.** It wrote only `lc_content_on_base`, a no-op when disabled.
   Before `dc3e364bf` it was `bdq label add "$id" content-landed`, which CHECK 5's exemption
-  still reads. Cutover row 39.
+  still reads. Cutover row 39 — closed by sp-arpjt: the `sending` binary writes the label
+  OFF and the ContentOnBase event ON (sending/DESIGN.md §2).
 
 ### 2.7 Finding the harness
 
@@ -683,7 +685,7 @@ cost 302 s against a 60 s pass budget (§5).
 1. **Skip test.** Skip only when the `sending.base` stamp matches every swept repository's
    current landref sha, and every swept repo is in the stamp. Swept means not queue-mode,
    with a root and a landref. On a skip, log `sending: base unchanged — skipped`.
-2. **Otherwise** run sending.sh and act on each `SENT` line:
+2. **Otherwise** run `sending --skip-queue` and act on each `SENT` line:
    `act "sent <repo> <branch> <id>"`.
 3. **Failures.** A `FAILED` line logs `sending reported a branch it could not delete`.
 4. **Stamp.** Rewrite the stamp.
@@ -787,7 +789,6 @@ Every seam runs `bash -c '<fixed script>' sentinel-<name>`. That means:
 ```bash
 set -uo pipefail
 . "$SENTINEL_LIB" || exit 97
-. "${SENTINEL_LIB%/*}/lc.sh" || exit 97
 act()      { printf 'act\t%s\n' "$*" >> "$SENTINEL_TALLY"; log "ACT $*"; }
 progress() { printf 'progress\t%s\n' "$*" >> "$SENTINEL_TALLY"; log "ACT $*"; }
 ```

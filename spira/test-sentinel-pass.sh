@@ -53,7 +53,7 @@ for _s in pilgrimage.sh strand reflect.sh; do
 done
 # THE SENTINEL IS A BINARY (sentinel.sh is gone). It sources lib.sh from SPIRA_HOME, so the
 # stub home carries the real lib.sh and what it sources; strand is the stub first on PATH.
-for _s in lib.sh conf.sh lc.sh suite-covers.sh lifecycle-cert.sh; do
+for _s in lib.sh conf.sh suite-covers.sh; do
     ln -s "$HERE/$_s" "$STUBS/$_s"
 done
 printf '#!/bin/sh\necho inactive\n'  > "$STUBS/mock-systemctl"; chmod +x "$STUBS/mock-systemctl"
@@ -123,8 +123,8 @@ SENDING_LOG="$TMP/sending.log"
 # sending.sh SLEEPS before it records itself — this is the old inline cost (CHECK 6b's
 # per-branch walk) that used to sit between the pass starting and CHECK 7 running. A
 # normal pass must never pay this; only `--audit` may.
-printf '#!/bin/sh\nsleep 2\necho "called $*" >> "%s"\n' "$SENDING_LOG" > "$STUBS/sending.sh"
-chmod +x "$STUBS/sending.sh"
+printf '#!/bin/sh\nsleep 2\necho "called $*" >> "%s"\n' "$SENDING_LOG" > "$STUBS/sending"
+chmod +x "$STUBS/sending"
 # mock-summon records each summon so the fill assertion can count them.
 printf '#!/bin/sh\necho summoned >> "$SUMMON_LOG"\n' > "$STUBS/mock-summon"; chmod +x "$STUBS/mock-summon"
 

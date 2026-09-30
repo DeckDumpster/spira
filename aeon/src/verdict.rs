@@ -133,7 +133,9 @@ impl Run<'_> {
                         Eviction::Cap => {
                             let ask = self.conf.ask_label();
                             let _ = self.d.bd.bd(&s(&["label", "add", &id, &ask]));
-                            self.sdo("lc_hold", &s(&[&id, "ask", &format!("eviction-race guard capped: reopened {count} time(s) already"), &f]));
+                            // spira-lc's caller verb: lc.sh's lc_hold was never sourced into this seam, so
+                            // the allowlisted name answered "command not found" (sp-arpjt).
+                            let _ = self.d.exec.exec("spira-lc", &s(&["hold", &id, "ask", &format!("eviction-race guard capped: reopened {count} time(s) already"), &f]), None, None);
                             self.note(&format!("Eviction-race guard capped: reopened {count} time(s) already. Recertify the branch by hand and clear the {ask} label; the guard will not reopen it again on its own."));
                             self.log(&format!("{f}: {id} eviction-race escalated — {count} prior requeue(s) ≥ {cap_at}, labeled {ask} instead of reopening"));
                             let _ = std::fs::write(&seen_f, &key);

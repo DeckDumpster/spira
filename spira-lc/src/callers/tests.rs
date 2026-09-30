@@ -1,0 +1,444 @@
+//! The caller verbs against an in-memory machine that applies the REAL transition tables
+//! (`lifecycle::bead::apply`, `lifecycle::delivery::apply`) and answers `show`/`list`/
+//! `event` in the shape `dolt -r json` gives them — every column string-valued, JSON
+//! columns as JSON text. What these prove is the composition (which row is read, which
+//! event is built, under which CAS); the SQL and the CAS race are spira-lc's own and are
+//! proven against a real server by the container suites (test-lc-hold.sh and friends).
+
+use std::collections::BTreeMap;
+use std::process::Command;
+
+use lifecycle::bead::{BeadEvent, BeadRow, BeadState, HoldKind};
+use lifecycle::delivery::{DeliveryEvent, DeliveryRow, DeliveryState};
+use serde_json::{json, Value};
+
+use super::*;
+
+#[derive(Default)]
+struct Fake {
+    beads: BTreeMap<String, BeadRow>,
+    deliveries: BTreeMap<String, DeliveryRow>,
+    /// Every `event` call, as `(machine, key, expect, version, actor, kind-json)`.
+    events: Vec<(String, String, String, String, String, String)>,
+    calls: usize,
+    /// Answer every call with this (a machine that cannot be reached).
+    down: bool,
+}
+
+fn opt(v: &Option<String>) -> Value {
+    v.clone().map(Value::String).unwrap_or(Value::Null)
+}
+
+impl Fake {
+    fn bead(&mut self, id: &str, state: BeadState) -> &mut BeadRow {
+        let mut r = BeadRow::filed(id);
+        r.state = state;
+        self.beads.insert(id.into(), r);
+        self.beads.get_mut(id).unwrap()
+    }
+    fn row_json(r: &BeadRow) -> Value {
+        let holds: Vec<&str> = r.holds.iter().map(|h| h.as_str()).collect();
+        json!({
+            "bead_id": r.bead_id, "state": r.state.as_str(), "tip": opt(&r.tip), "gate_key": opt(&r.gate_key),
+            "holder": opt(&r.holder), "lease_until": r.lease_until.map(|n| Value::String(n.to_string())).unwrap_or(Value::Null),
+            "holds": serde_json::to_string(&holds).unwrap(), "reason": opt(&r.reason), "version": r.version.to_string(),
+        })
+    }
+    fn state(&self, id: &str) -> &'static str {
+        self.beads[id].state.as_str()
+    }
+}
+
+fn flag(args: &[String], name: &str) -> Option<String> {
+    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+}
+
+impl Machine for Fake {
+    fn call(&mut self, args: &[String]) -> (i32, String) {
+        self.calls += 1;
+        if self.down {
+            return (CANNOT_TELL, "cannot tell: down".into());
+        }
+        match args[0].as_str() {
+            "show" => match self.beads.get(&args[1]) {
+                None => (1, "{}".into()),
+                Some(r) => {
+                    let d = self.deliveries.get(&args[1]).map(|d| {
+                        json!({"bead_id": d.bead_id, "mode": d.mode.as_str(), "state": d.state.as_str(), "version": d.version.to_string()})
+                    });
+                    (0, json!({"bead": Self::row_json(r), "delivery": d}).to_string())
+                }
+            },
+            "list" => {
+                let st = flag(args, "--state");
+                let hold = flag(args, "--hold");
+                let rows: Vec<Value> = self
+                    .beads
+                    .values()
+                    .filter(|r| st.as_deref().is_none_or(|s| r.state.as_str() == s))
+                    .filter(|r| hold.as_deref().is_none_or(|h| r.holds.iter().any(|x| x.as_str() == h)))
+                    .map(Self::row_json)
+                    .collect();
+                (0, Value::Array(rows).to_string())
+            }
+            "event" => {
+                let (machine, key) = (args[1].clone(), args[2].clone());
+                let (expect, version, actor, kind) = (
+                    flag(args, "--expect").unwrap(),
+                    flag(args, "--version").unwrap(),
+                    flag(args, "--actor").unwrap(),
+                    flag(args, "--kind").unwrap(),
+                );
+                self.events.push((machine.clone(), key.clone(), expect.clone(), version.clone(), actor.clone(), kind.clone()));
+                let ver: u64 = version.parse().unwrap();
+                if machine == "bead" {
+                    let Some(row) = self.beads.get(&key) else { return (2, "no row".into()) };
+                    let ev = BeadEvent { expect: BeadState::from_str(&expect).unwrap(), version: ver, kind: serde_json::from_str(&kind).unwrap(), actor };
+                    let o = lifecycle::bead::apply(row, &ev);
+                    if !o.applied {
+                        return (REFUSED, format!("refused: {:?}", o.refusal));
+                    }
+                    self.beads.insert(key, o.row);
+                } else {
+                    let Some(row) = self.deliveries.get(&key) else { return (2, "no row".into()) };
+                    let ev = DeliveryEvent { expect: DeliveryState::from_str(&expect).unwrap(), version: ver, kind: serde_json::from_str(&kind).unwrap(), actor };
+                    let o = lifecycle::delivery::apply(row, &ev);
+                    if !o.applied {
+                        return (REFUSED, format!("refused: {:?}", o.refusal));
+                    }
+                    self.deliveries.insert(key, o.row);
+                }
+                (0, String::new())
+            }
+            other => panic!("unexpected primitive {other}"),
+        }
+    }
+}
+
+fn v(xs: &[&str]) -> Vec<String> {
+    xs.iter().map(|s| s.to_string()).collect()
+}
+
+fn go(f: &mut Fake, verb: &str, args: &[&str]) -> Answer {
+    run(verb, &v(args), f)
+}
+
+// ---- OFF: identical to the shell library with the switch off -------------------------
+
+#[test]
+fn off_answers_are_the_shell_librarys_and_read_nothing() {
+    for verb in ["hold", "unhold", "release", "holder-dead", "drop", "returned", "content-on-base", "state", "certify", "resubmit"] {
+        let a = off(verb, &v(&["sp-a", "x", "y"]));
+        assert_eq!((a.code, a.stdout.as_str(), a.cert_log.is_none()), (CANNOT_TELL, "", true), "{verb}");
+    }
+    for verb in ["holds", "list-held", "list-state", "list-all"] {
+        assert_eq!(off(verb, &v(&["sp-a"])), Answer::code(0), "{verb}");
+    }
+    assert_eq!(off("held", &v(&["sp-a", "poison"])).code, 1);
+    // _lc_deliver with no row: logged, skipped, rc 1 — with the actor each exit names.
+    let a = off("deliver", &v(&["pr-merged", "/r", "sp-a", "spira/sp-a", "abc"]));
+    assert_eq!(a.code, 1);
+    assert!(a.stdout.ends_with(" spira: lc: no delivery row for sp-a — not recording pr-pass-branch's event (inert until the delivery round lands)\n"), "{}", a.stdout);
+    let a = off("deliver", &v(&["push-returned", "sp-b", "why"]));
+    assert!(a.stdout.contains("no delivery row for sp-b — not recording landing.sh's event"), "{}", a.stdout);
+    for verb in VERBS {
+        assert!(is_verb(verb));
+    }
+    assert!(!is_verb("show") && !is_verb("event") && !is_verb("list"), "primitives are not caller verbs");
+}
+
+// ---- holds -----------------------------------------------------------------------------
+
+#[test]
+fn hold_suspends_without_moving_state_and_unhold_restores_it() {
+    let mut f = Fake::default();
+    f.bead("sp-h", BeadState::Working);
+    for kind in ["poison", "ask", "wait", "operator"] {
+        assert_eq!(go(&mut f, "hold", &["sp-h", kind, "held for it", "t"]).code, APPLIED, "{kind}");
+        assert_eq!(f.state("sp-h"), "WORKING");
+        assert_eq!(go(&mut f, "holds", &["sp-h"]).stdout, kind);
+        assert_eq!(go(&mut f, "held", &["sp-h", kind]).code, 0);
+        assert_eq!(go(&mut f, "held", &["sp-h", "other"]).code, 1);
+        assert_eq!(go(&mut f, "unhold", &["sp-h", kind, "t"]).code, APPLIED);
+        assert_eq!(go(&mut f, "holds", &["sp-h"]).stdout, "");
+    }
+}
+
+#[test]
+fn hold_event_is_byte_identical_to_the_shell_librarys() {
+    let mut f = Fake::default();
+    f.bead("sp-j", BeadState::Ready);
+    go(&mut f, "hold", &["sp-j", "poison", "seed \"quoted\"", "test"]);
+    go(&mut f, "unhold", &["sp-j", "poison"]);
+    go(&mut f, "hold", &["sp-j", "wait", ""]);
+    let kinds: Vec<&str> = f.events.iter().map(|e| e.5.as_str()).collect();
+    assert_eq!(
+        kinds,
+        [
+            r#"{"Hold":{"kind":"Poison","cause":"attempts-exhausted","detail":"seed \"quoted\""}}"#,
+            r#"{"Unhold":{"kind":"Poison"}}"#,
+            r#"{"Hold":{"kind":"Wait","cause":"unlanded-blocker","detail":""}}"#,
+        ]
+    );
+    // CAS from the same read; default actor "sentinel", as lc.sh.
+    assert_eq!((f.events[0].2.as_str(), f.events[0].3.as_str(), f.events[0].4.as_str()), ("READY", "0", "test"));
+    assert_eq!((f.events[1].3.as_str(), f.events[1].4.as_str()), ("1", "sentinel"));
+}
+
+#[test]
+fn hold_refusals_and_absences_keep_the_shell_exit_codes() {
+    let mut f = Fake::default();
+    f.bead("sp-t", BeadState::Landed);
+    assert_eq!(go(&mut f, "hold", &["sp-t", "poison", "x"]).code, REFUSED, "terminal refuses");
+    assert_eq!(go(&mut f, "hold", &["sp-none", "poison", "x"]).code, NO_ROW, "no row");
+    let a = go(&mut f, "hold", &["sp-t", "bogus", "x"]);
+    assert_eq!((a.code, a.stderr.as_str()), (CANNOT_TELL, "lc: unknown hold kind 'bogus'\n"));
+    assert_eq!(go(&mut f, "holds", &["sp-none"]), Answer::code(0));
+    assert_eq!(go(&mut f, "held", &["sp-none", "poison"]).code, 1);
+    let mut down = Fake { down: true, ..Default::default() };
+    assert_eq!(go(&mut down, "hold", &["sp-t", "poison", "x"]).code, CANNOT_TELL);
+    assert_eq!(go(&mut down, "list-all", &[]), Answer::code(0), "an unreachable machine lists nothing, rc 0");
+}
+
+// ---- releases, drops, returns, content-on-base -----------------------------------------
+
+#[test]
+fn release_and_holder_dead_return_working_to_ready_and_refuse_elsewhere() {
+    let mut f = Fake::default();
+    f.bead("sp-r", BeadState::Working).holder = Some("aeon-1".into());
+    assert_eq!(go(&mut f, "release", &["sp-r", "t"]).code, APPLIED);
+    assert_eq!(f.state("sp-r"), "READY");
+    assert_eq!(go(&mut f, "release", &["sp-r"]).code, REFUSED);
+    f.bead("sp-d", BeadState::Working).holder = Some("aeon-2".into());
+    assert_eq!(go(&mut f, "holder-dead", &["sp-d", "slay"]).code, APPLIED);
+    assert_eq!(f.state("sp-d"), "READY");
+    assert_eq!(f.events.last().unwrap().5, r#""HolderDead""#);
+}
+
+#[test]
+fn drop_is_orthogonal_and_terminal() {
+    let mut f = Fake::default();
+    f.bead("sp-x", BeadState::Ready);
+    assert_eq!(go(&mut f, "drop", &["sp-x", "operator decided", "slay"]).code, APPLIED);
+    assert_eq!(f.state("sp-x"), "DROPPED");
+    assert_eq!(f.events[0].5, r#"{"Drop":{"reason":"unwanted"}}"#);
+    assert_eq!(go(&mut f, "drop", &["sp-x", "again"]).code, REFUSED);
+}
+
+#[test]
+fn returned_moves_in_delivery_to_rework_as_batch_ejected() {
+    let mut f = Fake::default();
+    f.bead("sp-e", BeadState::InDelivery);
+    assert_eq!(go(&mut f, "returned", &["sp-e", "ejected from open batch", "queue"]).code, APPLIED);
+    assert_eq!(f.state("sp-e"), "REWORK");
+    assert_eq!(f.events[0].5, r#"{"Returned":{"reason":"batch-ejected"}}"#);
+}
+
+#[test]
+fn content_on_base_lands_any_non_terminal_state_with_its_proof() {
+    let mut f = Fake::default();
+    f.bead("sp-c", BeadState::Working);
+    assert_eq!(go(&mut f, "content-on-base", &["sp-c", "merge-tree:abc"]).code, APPLIED);
+    assert_eq!(f.state("sp-c"), "LANDED");
+    assert_eq!(f.beads["sp-c"].reason.as_deref(), Some("merge-tree:abc"));
+    assert_eq!(f.events[0].4, "sending", "lc_content_on_base's default actor");
+    assert_eq!(go(&mut f, "content-on-base", &["sp-c", "again"]).code, REFUSED);
+}
+
+// ---- reads -----------------------------------------------------------------------------
+
+#[test]
+fn state_and_the_bulk_lists_keep_their_line_shapes() {
+    let mut f = Fake::default();
+    let w = f.bead("sp-1", BeadState::Working);
+    w.holder = Some("aeon-1".into());
+    w.lease_until = Some(1_700_000_000);
+    w.holds.insert(HoldKind::Wait);
+    w.holds.insert(HoldKind::Poison);
+    f.bead("sp-2", BeadState::Ready).holds.insert(HoldKind::Poison);
+    f.bead("sp-3", BeadState::Working);
+    assert_eq!(go(&mut f, "state", &["sp-1"]).stdout, "WORKING");
+    assert_eq!(go(&mut f, "state", &["sp-9"]).code, NO_ROW);
+    assert_eq!(go(&mut f, "list-held", &["poison"]).stdout, "sp-1\nsp-2");
+    assert_eq!(go(&mut f, "list-state", &["WORKING"]).stdout, "sp-1\t1700000000\tpoison,wait\nsp-3\t\t");
+    assert_eq!(go(&mut f, "list-all", &[]).stdout, "sp-1\tWORKING\taeon-1\nsp-2\tREADY\t\nsp-3\tWORKING\t");
+}
+
+// ---- delivery exits --------------------------------------------------------------------
+
+#[test]
+fn deliver_skips_without_a_row_or_in_the_wrong_state_and_applies_in_the_right_one() {
+    let mut f = Fake::default();
+    let a = go(&mut f, "deliver", &["push-delivered", "sp-p", "abc"]);
+    assert_eq!(a.code, NO_ROW);
+    assert!(a.stdout.contains("lc: no delivery row for sp-p — not recording landing.sh's event"), "{}", a.stdout);
+    f.bead("sp-p", BeadState::InDelivery);
+    let a = go(&mut f, "deliver", &["push-delivered", "sp-p", "abc"]);
+    assert!(a.stdout.contains("no delivery row for sp-p"), "a bead row with no delivery row is still no delivery row");
+    f.deliveries.insert("sp-p".into(), DeliveryRow::start_push("sp-p"));
+    let a = go(&mut f, "deliver", &["pr-closed", "sp-p", "closed"]);
+    assert_eq!(a.code, NO_ROW);
+    assert!(a.stdout.contains("lc: sp-p delivery is PUSHING, not PR_OPEN — not recording pr-pass-branch's event"), "{}", a.stdout);
+    let a = go(&mut f, "deliver", &["push-delivered", "sp-p", "abc"]);
+    assert_eq!(a.code, APPLIED, "{}", a.stdout);
+    assert!(a.stdout.contains("lc: sp-p delivery PUSHING -> applied (landing.sh)"));
+    assert_eq!(f.events.last().unwrap().5, r#"{"Delivered":{"merge_sha":"abc","proof":"ancestry"}}"#);
+    let a = go(&mut f, "deliver", &["push-delivered", "sp-p", "abc"]);
+    assert!(a.stdout.contains("delivery is EXITED, not PUSHING"), "a second sighting refuses: {}", a.stdout);
+}
+
+#[test]
+fn deliver_push_requeued_and_returned_build_the_typed_exits() {
+    for (sub, extra, want) in [
+        ("push-requeued", "cafe", r#"{"Requeued":{"tip":"cafe"}}"#),
+        ("push-returned", "genuinely conflicts", r#"{"Returned":{"reason":"push-rejected"}}"#),
+    ] {
+        let mut f = Fake::default();
+        f.bead("sp-q", BeadState::InDelivery);
+        f.deliveries.insert("sp-q".into(), DeliveryRow::start_push("sp-q"));
+        assert_eq!(go(&mut f, "deliver", &[sub, "sp-q", extra]).code, APPLIED, "{sub}");
+        assert_eq!(f.events[0].5, want);
+        assert_eq!(f.deliveries["sp-q"].state, DeliveryState::Exited);
+    }
+}
+
+fn git(dir: &std::path::Path, args: &[&str]) -> String {
+    let o = Command::new("git").arg("-C").arg(dir).args(args).env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t").output().unwrap();
+    assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+    String::from_utf8_lossy(&o.stdout).trim().to_string()
+}
+
+#[test]
+fn deliver_pr_merged_proves_by_merge_tree_when_the_squash_holds_the_diff() {
+    let t = testkit::TempDir::new("spira-lc-prmerged");
+    let r = t.path();
+    git(r, &["init", "-q", "-b", "main"]);
+    git(r, &["commit", "-q", "--allow-empty", "-m", "base"]);
+    git(r, &["checkout", "-q", "-b", "spira/sp-s"]);
+    std::fs::write(r.join("f"), "x\n").unwrap();
+    git(r, &["add", "f"]);
+    git(r, &["commit", "-q", "-m", "sp-s: work"]);
+    git(r, &["checkout", "-q", "main"]);
+    std::fs::write(r.join("f"), "x\n").unwrap();
+    git(r, &["add", "f"]);
+    git(r, &["commit", "-q", "-m", "squash (#1)"]);
+    let squash = git(r, &["rev-parse", "HEAD"]);
+    std::fs::write(r.join("g"), "unrelated\n").unwrap();
+    git(r, &["checkout", "-q", "-b", "spira/sp-u", "main~1"]);
+    std::fs::write(r.join("h"), "never landed\n").unwrap();
+    git(r, &["add", "h"]);
+    git(r, &["commit", "-q", "-m", "sp-u: work"]);
+    let repo = r.to_str().unwrap();
+
+    assert!(content_landed(r, "spira/sp-s", &squash), "squash holds the diff");
+    assert!(!content_landed(r, "spira/sp-u", &squash), "a branch with work outstanding is not landed");
+    for (id, br, proof) in [("sp-s", "spira/sp-s", "merge-tree"), ("sp-u", "spira/sp-u", "gh-merged")] {
+        let mut f = Fake::default();
+        f.bead(id, BeadState::InDelivery);
+        f.deliveries.insert(id.into(), DeliveryRow::start_pr(id, 7));
+        let a = go(&mut f, "deliver", &["pr-merged", repo, id, br, &squash]);
+        assert_eq!(a.code, APPLIED, "{}", a.stdout);
+        assert_eq!(f.events[0].5, format!(r#"{{"Delivered":{{"merge_sha":"{squash}","proof":"{proof}"}}}}"#));
+        assert_eq!(f.events[0].4, "pr-pass-branch");
+    }
+    let mut f = Fake::default();
+    f.bead("sp-s", BeadState::InDelivery);
+    f.deliveries.insert("sp-s".into(), DeliveryRow::start_pr("sp-s", 7));
+    assert_eq!(go(&mut f, "deliver", &["pr-closed", "sp-s", "closed unmerged"]).code, APPLIED);
+    assert_eq!(f.events[0].5, r#"{"Returned":{"reason":"pr-closed-unmerged"}}"#);
+}
+
+// ---- certification ---------------------------------------------------------------------
+
+#[test]
+fn certify_submits_a_working_bead_before_the_verdict_lands() {
+    let mut f = Fake::default();
+    f.bead("sp-w", BeadState::Working).holder = Some("aeon".into());
+    let a = go(&mut f, "certify", &["sp-w", "fff666", "pass", "keyB", "gate"]);
+    assert_eq!((a.code, a.cert_log.clone()), (APPLIED, Some(("applied".into(), "pass tip=fff666".into()))));
+    assert_eq!(f.state("sp-w"), "CERTIFIED");
+    assert_eq!(f.beads["sp-w"].gate_key.as_deref(), Some("keyB"));
+    let kinds: Vec<&str> = f.events.iter().map(|e| e.5.as_str()).collect();
+    assert_eq!(kinds, [r#"{"Submit":{"tip":"fff666"}}"#, r#"{"GatePass":{"tip":"fff666","gate_key":"keyB"}}"#]);
+    assert!(f.events.iter().all(|e| e.4 == "gate"));
+}
+
+#[test]
+fn certify_voids_a_stale_certification_first_and_leaves_a_current_one_alone() {
+    let mut f = Fake::default();
+    let r = f.bead("sp-s", BeadState::Certified);
+    r.tip = Some("aaa111".into());
+    r.gate_key = Some("keyA".into());
+    // Same tip: no Submit, the pass is not a SUBMITTED transition — skipped, rc 3.
+    let a = go(&mut f, "certify", &["sp-s", "aaa111", "pass", "keyA"]);
+    assert_eq!(a.code, REFUSED);
+    assert_eq!(a.cert_log.unwrap().0, "skip");
+    assert!(f.events.is_empty());
+    // Moved tip: Submit voids it, then the verdict lands on SUBMITTED.
+    assert_eq!(go(&mut f, "certify", &["sp-s", "bbb222", "pass", "keyA"]).code, APPLIED);
+    assert_eq!((f.state("sp-s"), f.beads["sp-s"].tip.as_deref()), ("CERTIFIED", Some("bbb222")));
+    assert_eq!(f.events[0].4, "lifecycle-cert", "default actor");
+}
+
+#[test]
+fn certify_maps_red_reasons_and_infra_and_refuses_what_it_cannot_reach() {
+    for (raw, want) in [("branch-red", "suites-failed"), ("syntax", "syntax"), ("beads-data", "policy-violation"), ("foreign-harness", "policy-violation"), ("no-rebase", "no-rebase"), ("timeout", "timeout"), ("confine", "confine"), ("a-reason-never-heard-of", "suites-failed")] {
+        let mut f = Fake::default();
+        f.bead("sp-r", BeadState::Working);
+        assert_eq!(go(&mut f, "certify", &["sp-r", "ddd", "red", raw]).code, APPLIED, "{raw}");
+        assert_eq!(f.events[1].5, format!(r#"{{"GateRed":{{"tip":"ddd","reason":"{want}"}}}}"#));
+        assert_eq!(f.state("sp-r"), "REWORK");
+    }
+    let mut f = Fake::default();
+    f.bead("sp-i", BeadState::Working);
+    assert_eq!(go(&mut f, "certify", &["sp-i", "eee", "infra", "-"]).code, APPLIED);
+    assert_eq!(f.events[1].5, r#"{"GateInfra":{"tip":"eee"}}"#);
+    assert_eq!(f.state("sp-i"), "SUBMITTED", "an infra verdict is a retry: the row stays SUBMITTED");
+    // REWORK: lifecycle-cert.sh tried Submit from REWORK too, but the machine has no such
+    // transition (a REWORK bead is re-claimed first) — the attempt is refused, the row is
+    // not SUBMITTED, and the verdict is skipped: rc 3, exactly as the shell answered.
+    f.bead("sp-rw", BeadState::Rework);
+    let a = go(&mut f, "certify", &["sp-rw", "eee", "pass", "k"]);
+    assert_eq!((a.code, a.cert_log.unwrap().0), (REFUSED, "skip".into()));
+    assert_eq!(f.state("sp-rw"), "REWORK");
+    let a = go(&mut f, "certify", &["sp-none", "eee", "pass", "k"]);
+    assert_eq!((a.code, a.cert_log.unwrap()), (CANNOT_TELL, ("cannot-tell".into(), "no lifecycle row yet".into())));
+    f.bead("sp-rd", BeadState::Ready);
+    assert_eq!(go(&mut f, "certify", &["sp-rd", "eee", "pass", "k"]).code, REFUSED, "READY never reaches SUBMITTED");
+    f.bead("sp-o", BeadState::Working);
+    let a = go(&mut f, "certify", &["sp-o", "eee", "bogus", "k"]);
+    assert_eq!((a.code, a.cert_log.unwrap().1), (CANNOT_TELL, "unknown outcome bogus".into()));
+}
+
+#[test]
+fn resubmit_records_a_moved_tip_with_no_verdict() {
+    let mut f = Fake::default();
+    let r = f.bead("sp-m", BeadState::Certified);
+    r.tip = Some("aaa".into());
+    let a = go(&mut f, "resubmit", &["sp-m", "ccc333"]);
+    assert_eq!((a.code, a.cert_log.unwrap()), (APPLIED, ("applied".into(), "resubmit tip=ccc333".into())));
+    assert_eq!((f.state("sp-m"), f.beads["sp-m"].tip.as_deref()), ("SUBMITTED", Some("ccc333")));
+    let a = go(&mut f, "resubmit", &["sp-m", "ddd"]);
+    assert_eq!((a.code, a.cert_log.unwrap().0), (REFUSED, "skip".into()));
+    assert_eq!(go(&mut f, "resubmit", &["sp-none", "ddd"]).code, CANNOT_TELL);
+}
+
+#[test]
+fn every_event_verb_needs_its_arguments() {
+    let mut f = Fake::default();
+    for (verb, args) in [("hold", vec!["sp-a"]), ("drop", vec!["sp-a"]), ("returned", vec!["sp-a"]), ("content-on-base", vec!["sp-a"]), ("certify", vec!["sp-a", "t"]), ("deliver", vec!["push-delivered", "sp-a"]), ("state", vec![])] {
+        let a = go(&mut f, verb, &args);
+        assert_eq!(a.code, CANNOT_TELL, "{verb}");
+        assert!(a.stderr.starts_with("usage: spira-lc "), "{verb}: {}", a.stderr);
+    }
+    assert_eq!(f.calls, 0, "a malformed call reads nothing");
+}
+
+#[test]
+fn log_lines_carry_libsh_logs_timestamp() {
+    assert_eq!(fmt_utc(0), "1970-01-01T00:00:00Z");
+    assert_eq!(fmt_utc(1_790_000_000), "2026-09-21T14:13:20Z");
+    assert_eq!(fmt_utc(951_782_400), "2000-02-29T00:00:00Z");
+    let l = log_line("x");
+    assert!(l.len() == "2026-09-21T14:13:20Z spira: x\n".len() && l.ends_with("Z spira: x\n"), "{l}");
+}

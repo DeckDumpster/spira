@@ -74,8 +74,6 @@ spira/test-landing-base-fail.sh
 spira/test-landing-build.sh
 spira/test-landing-cutover-round.sh
 spira/test-landing-halt.sh
-spira/test-landing-pass.sh
-spira/test-landing-pr.sh
 spira/test-landing-queue-early.sh
 spira/test-landing-race.sh
 spira/test-landing-rebase.sh

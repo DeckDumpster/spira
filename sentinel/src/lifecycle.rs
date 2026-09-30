@@ -11,7 +11,8 @@ use crate::host::{Io, Spec};
 use crate::model::{parse_lc_rows, LcRow};
 use crate::pass::Sentinel;
 
-/// lc.sh `_lc_hold_kind_tag` / `_lc_hold_kind_cause`.
+/// The hold kind's serde tag and implied cause (spira-lc callers.rs `hold_cause`; lc.sh's
+/// `_lc_hold_kind_tag` / `_lc_hold_kind_cause` before sp-arpjt).
 pub fn hold_tag(kind: &str) -> Option<(&'static str, &'static str)> {
     Some(match kind {
         "poison" => ("Poison", "attempts-exhausted"),
@@ -191,8 +192,9 @@ impl<'a> Sentinel<'a> {
         }
     }
 
-    /// lc.sh `lc_show` + `lc_event`: read the row's current state and version, then apply
-    /// `kind` under that CAS. Ok(()) applied; Err(rc) as lc.sh (1 no row, 2 cannot tell).
+    /// `spira-lc show` + `event`: read the row's current state and version, then apply
+    /// `kind` under that CAS. Ok(()) applied; Err(rc) as the caller verbs (1 no row, 2 cannot
+    /// tell).
     pub fn lc_event(&self, id: &str, kind: &str, actor: &str) -> Result<(), i32> {
         let bin = self.cfg.lc_bin.clone();
         let o = self

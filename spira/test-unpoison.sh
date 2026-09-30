@@ -80,7 +80,6 @@ export SPIRA_LC_PASSWORD=""
 spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1
 wantrc "spira-lc schema applies cleanly" 0 $?
 
-. "$HERE/lc.sh"
 lc_seed_working_poisoned() {   # lc_seed_working_poisoned <bead-id>
     lc_root_sql --use-db spira_lifecycle sql -q \
         "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('$1','WORKING','[\"poison\"]',0,0)" >/dev/null 2>&1
@@ -129,9 +128,9 @@ want "reports OK" "OK   pz1" "$out"
 nowant "the vestigial label is removed too" "spira-poison" "$(labels_of pz1)"
 is   "attempt count floored to 0" "0" "$(attempts_of pz1)"
 nowant "check4 no longer decides poison" "poison" "$(decide pz1)"
-nowant "the lifecycle poison hold is released, against a real spira-lc" "poison" "$(lc_holds pz1)"
+nowant "the lifecycle poison hold is released, against a real spira-lc" "poison" "$(spira-lc holds pz1)"
 is   "...and the lifecycle row's WORKING state is undisturbed by releasing the hold" \
-     "WORKING" "$(_lc_json_field "$(lc_show pz1)" 'd.get("bead",{}).get("state","")')"
+     "WORKING" "$(spira-lc state pz1)"
 is   "the poisoning's operator ask is resolved" "closed" "$(status_of pzask)"
 want "the cause is recorded on the bead" "every session ended its turn" "$(bdjson show pz1 | python3 -c 'import sys,json
 d=json.load(sys.stdin); b=(d if isinstance(d,list) else [d])[0]; print(b.get("notes") or "")')"
@@ -155,7 +154,7 @@ out="$("$UNPOISON" unpoison --bead pz3 --cause x 2>&1)"; rc=$?
 is   "a bead a live aeon holds is refused" "3" "$rc"
 want "and says who holds it" "held by aeon-test" "$out"
 want "and leaves its poison" "spira-poison" "$(labels_of pz3)"
-want "and leaves its lifecycle poison hold too, against a real spira-lc" "poison" "$(lc_holds pz3)"
+want "and leaves its lifecycle poison hold too, against a real spira-lc" "poison" "$(spira-lc holds pz3)"
 out="$("$UNPOISON" unpoison --bead pz4 --cause x 2>&1)"; rc=$?
 is   "a healthy bead is skipped, not an error" "0" "$rc"
 want "and says so" "SKIP pz4" "$out"

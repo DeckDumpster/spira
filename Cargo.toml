@@ -21,6 +21,7 @@ members = [
     "lifecycle-guard",
     "lifecycle",
     "spira-lc",
+    "sending",
     "tsd-lifecycle-export",
     "work",
     "spira-lint",
@@ -41,6 +42,7 @@ members = [
     "beads-store",
     "suite-select",
     "release",
+    "forge",
 ]
 resolver = "2"
 

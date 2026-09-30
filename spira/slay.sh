@@ -48,7 +48,6 @@
 #   6. SAY WHAT WAS DONE, with the evidence, and exit non-zero on anything it could not do.
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
-. "$(dirname "$0")/lc.sh"
 
 usage() {
     cat <<'USAGE'
@@ -142,7 +141,7 @@ if [ -f "$hpf" ]; then
     hbpid=""; [ -f "${hpf%.pid}.hb" ] && hbpid="$(cat "${hpf%.pid}.hb" 2>/dev/null)"
     [ -n "$hbpid" ] && kill "$hbpid" 2>/dev/null
     rm -f "$hpf" "${hpf%.pid}.hb"
-    lc_unhold "$ID" operator slay >/dev/null 2>&1 || true
+    spira-lc unhold "$ID" operator slay >/dev/null 2>&1 || true
     say "hold: manual hold released for $ID (holder pid ${hpid:-?}, heartbeat ${hbpid:-none})"
     rm -f "$SPIRA_RUN/$ID.slain"
 else
@@ -205,14 +204,14 @@ st="$(status_of)"
 if [ "$st" = in_progress ]; then
     # THE LIFECYCLE EVENT, NOT bd reopen/unclaim (sp-rlyl0): the holder is gone because this
     # script just killed it, not because it released cleanly — HolderDead, best-effort like
-    # every lc.sh caller. In the common case aeon.sh's own exit path (step 3 above) already
+    # every spira-lc caller-verb call. In the common case aeon.sh's own exit path (step 3 above) already
     # called release_own_claim and bd already reads open here; the gap this leaves is the
     # rare case a live pid survived to a hard KILL, where aeon.sh's own trap never ran and
     # nothing now flips bd's status — spira_holder_witnesses (lib.sh, unconverted) then
     # reads a stale in_progress and refuses the destroy below. Out of this bead's scope
     # (lib.sh is shared with every caller that has not cut over yet); flagged, not silently
     # left for the next reader to rediscover.
-    lc_holderdead "$ID" slay >/dev/null 2>&1 || true
+    spira-lc holder-dead "$ID" slay >/dev/null 2>&1 || true
 fi
 bdq update "$ID" --assignee "" --force >/dev/null 2>&1 || bdq update "$ID" --assignee "" >/dev/null 2>&1
 
@@ -329,11 +328,11 @@ case "$MODE" in
             # reopening an unlanded close within two minutes (sp-m56w); CHECK 5 itself is
             # deleted in this same cutover round (sp-yyros), so the label's one reader is
             # gone with it.
-            lc_drop "$ID" "$REASON — $note" slay >/dev/null 2>&1 || true
+            spira-lc drop "$ID" "$REASON — $note" slay >/dev/null 2>&1 || true
             # The note is best-effort: bd refusing it (closed bead, permission, network)
             # must not flip the exit to non-zero when the bead state is already correct.
             bdq note "$ID" "$REASON — $note" >/dev/null 2>&1 || true ;;
-    # NO bd reopen (sp-rlyl0): the release already happened above, through lc_holderdead,
+    # NO bd reopen (sp-rlyl0): the release already happened above, through `spira-lc holder-dead`,
     # where the lease was released — a second write here would be the same "correct at a
     # distance" hazard bead_reopen's own removal fixes. Only the note remains this path's
     # to write.

@@ -41,15 +41,15 @@ git -C "$REPO" fetch -q origin
 git -C "$REPO" remote set-head origin main
 mkdir -p "$RUN/worktree" "$RUN/landstate" "$SH/chamber"
 
-cp "$HERE/lc.sh" "$HERE/lifecycle-cert.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
-   "$HERE/incident.sh" "$HERE/skew.sh" "$HERE/sending.sh" "$HERE/suite-covers.sh" "$SH/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" \
+   "$HERE/incident.sh" "$HERE/skew.sh" "$HERE/suite-covers.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub pilgrimage.sh 'exit 0'
 stub strand        'exit 0'
 # THE RUST SENTINEL (sentinel.sh is gone): sentinel, spira-claim and landing-pass are found by
 # name on PATH; the fixture home $SH goes FIRST on PATH, so its stubs (strand, gate.sh, ...)
 # are the ones a bare name reaches (sp-gypjk).
-stub sending.sh    'exit 0'
+stub sending       'exit 0'
 stub reflect.sh    'exit 0'
 stub gate.sh       'echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2; exit 0'
 stub confine.sh    'exit 0'

@@ -1,6 +1,6 @@
 //! The lib.sh seam (DESIGN.md §6): `bash` reading a FIXED script from stdin, followed by
 //! the operation's values, each NUL-terminated. argv is only `bash`; the environment is the
-//! caller's own. The script reads every value first, detaches stdin, sources lib.sh and lc.sh
+//! caller's own. The script reads every value first, detaches stdin, sources lib.sh
 //! (and batch.sh where named) and calls exactly one function, whose name is
 //! part of the fixed text, never data (law-payloads-go-on-stdin).
 //!
@@ -31,7 +31,6 @@ pub enum Op {
     LandSubject,
     SortRows,
     CancelRuns,
-    LcReturned,
     FormatBatch,
     BaseConflict,
     PfGate,
@@ -51,7 +50,6 @@ HERE="${__q[0]}"
 set -- "${__q[@]:1}"
 unset __q __v
 . "$HERE/lib.sh" || exit 96
-. "$HERE/lc.sh" || exit 96
 "#;
 
 const CONTEXT: &str = r#"__n="${1:-}"; [ -n "$__n" ] || __n="$(spira_home_repo)"
@@ -66,7 +64,7 @@ __kv run "${SPIRA_RUN:-}"
 __kv queue_dir "${SPIRA_QUEUE_DIR:-${SPIRA_RUN:-}/queue}"
 __kv landstate "${LANDSTATE:-${SPIRA_RUN:-}/landstate}"
 __kv releases "${SPIRA_RELEASES:-}"
-__kv forge "${SPIRA_FORGE:-forge.sh}"
+__kv forge "${SPIRA_FORGE:-forge}"
 __kv repo_map "${SPIRA_REPO_MAP:-}"
 __kv batcher_enable "${SPIRA_BATCHER_ENABLE:-1}"
 __kv submitted_label "${SPIRA_SUBMITTED_LABEL:-spira-submitted}"
@@ -117,7 +115,6 @@ fn body(op: Op) -> &'static str {
         Op::LandSubject => "printf '\\036%s' \"$(land_subject \"$1\")\"\nexit 0\n",
         Op::SortRows => "PRIO_JSON=\"$3\"\nprintf '\\036'\nprintf '%s' \"$4\" | queue_sort_rows \"$1\" \"$2\" | awk '{print $5, $6}'\nexit 0\n",
         Op::CancelRuns => "queue_cancel_branch_runs \"$1\" \"$2\" \"$3\" QUEUE || true\nexit 0\n",
-        Op::LcReturned => "lc_returned \"$1\" \"$2\" >/dev/null 2>&1 || true\nexit 0\n",
         Op::FormatBatch => ". \"$HERE/batch.sh\" || exit 96\nformat_batch \"$1\" \"$2\" \"$3\"\nexit 0\n",
         Op::BaseConflict => ". \"$HERE/batch.sh\" || exit 96\n_base_conflict \"$1\" \"$2\" \"$3\"\nexit $?\n",
         Op::PfGate => ". \"$HERE/batch.sh\" || exit 96\n_PF_DEADLINE=$(( $(date +%s) + $4 ))\n__o=\"$(_pf_gate \"$1\" \"$2\" \"$3\")\"; __rc=$?\nprintf '\\036%s' \"$__o\"\nexit $__rc\n",
@@ -181,7 +178,7 @@ mod tests {
         for op in [
             Op::Context, Op::TomlPath, Op::Readback, Op::LandMark, Op::BeadReopen, Op::CauseEvent, Op::ReleaseClaim,
             Op::CloseOnLand, Op::GhCloseout, Op::Comment, Op::Notify, Op::Event, Op::Divergence, Op::Push, Op::Rebase,
-            Op::LandSubject, Op::SortRows, Op::CancelRuns, Op::LcReturned, Op::FormatBatch, Op::BaseConflict, Op::PfGate,
+            Op::LandSubject, Op::SortRows, Op::CancelRuns, Op::FormatBatch, Op::BaseConflict, Op::PfGate,
             Op::CreateBug,
         ] {
             let s = script(op);
@@ -198,7 +195,6 @@ mod tests {
         // "print my arguments": proves argv is only `bash` and every value arrives whole.
         let dir = crate::testutil::tmpdir("seam");
         std::fs::write(dir.join("lib.sh"), "land_mark() { printf '[%s]' \"$@\"; }\n").unwrap();
-        std::fs::write(dir.join("lc.sh"), "").unwrap();
         let home = dir.to_str().unwrap();
         let mut child = Command::new("bash").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
         child.stdin.take().unwrap().write_all(&stdin_bytes(Op::LandMark, &[home, "sp-a", "RED", "", "line one\nline $(two) `x`"])).unwrap();

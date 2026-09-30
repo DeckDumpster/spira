@@ -18,7 +18,7 @@
 #
 # defect: sp-amac
 # tier: T2
-# covers: landing-pass/* spira/sending.sh spira/lib.sh
+# covers: landing-pass/* sending/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -43,7 +43,7 @@ git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" "$HERE/incident-dedup-decision.py" \
-   "$HERE/skew.sh" "$HERE/sending.sh" "$HERE/suite-covers.sh" "$SH/"
+   "$HERE/skew.sh" "$HERE/suite-covers.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
 stub gate.sh 'echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2; exit 0'
@@ -67,7 +67,7 @@ sending() {
     SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" \
     SPIRA_REPO_MAP="$SH/repo-map" \
-        bash "$SH/sending.sh" 2>&1
+        command sending 2>&1
 }
 
 seed() {
@@ -235,7 +235,7 @@ advance_base conflict.txt "base content for dry run"
 git -C "$REPO" fetch -q origin
 out="$(SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" \
-    bash "$SH/sending.sh" --dry-run 2>&1)"
+    command sending --dry-run 2>&1)"
 want "dry-run names the superseded branch" "WOULD  sp-drysup" "$out"
 want "and mentions the reason"             "superseded" "$out"
 # After dry-run, the branch must still be there.

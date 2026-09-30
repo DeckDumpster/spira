@@ -65,13 +65,13 @@ git -C "$REPO" fetch -q origin
 git -C "$REPO" remote set-head origin main
 mkdir -p "$RUN/worktree" "$RUN/landstate" "$SH/chamber"
 
-cp "$HERE/lib.sh" "$HERE/lc.sh" "$HERE/lifecycle-cert.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SH/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SH/"
 # THE RUST SENTINEL (sentinel.sh is gone): sentinel and spira-claim are found by name on
 # PATH; the fixture home $SH goes FIRST on PATH so its stubs (strand, ...) win (sp-gypjk).
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub pilgrimage.sh 'exit 0'
 stub strand        'exit 0'
-stub sending.sh    'exit 0'
+stub sending       'exit 0'
 stub reflect.sh    'exit 0'
 stub ask.sh        'true'
 

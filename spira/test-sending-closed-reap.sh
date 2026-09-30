@@ -25,7 +25,7 @@
 #      landed() was only consulted at n=0. Now: closed + landed() = SENT before KEEP.
 #      Positive control: a closed bead whose id does NOT appear on the base is KEPT.
 #
-# covers: spira/sending.sh spira/lib.sh
+# covers: sending/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -48,7 +48,7 @@ git -C "$REPO" remote set-head origin main
 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/sending.sh" "$HERE/suite-covers.sh" "$SH/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
 stub gh 'exit 1'
@@ -59,7 +59,7 @@ sending() {
     SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" \
     SPIRA_REPO_MAP="$SH/repo-map" \
-        bash "$SH/sending.sh" --no-fetch 2>&1
+        command sending --no-fetch 2>&1
 }
 
 # ---------------------------------------------------------------------------

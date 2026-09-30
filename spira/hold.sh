@@ -25,11 +25,10 @@
 # suspends dispatch without pretending this is a genuine Working-state claim, which nothing
 # here actually is — the pidfile and heartbeat below are what stop the reaper regardless of
 # whether the row is classified yet, so the lifecycle write is best-effort by the same
-# construction every other lc.sh caller uses.
+# construction every other spira-lc caller-verb call uses.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
-. "$HERE/lc.sh"
 
 ID=""; HOLD_PID=$$; MODE=hold
 while [ $# -gt 0 ]; do
@@ -70,10 +69,10 @@ if [ -f "$PIDFILE" ]; then
     rm -f "$PIDFILE" "$HBFILE"
 fi
 
-# Hold the bead on spira-lc — best-effort, like every other lc.sh caller (CANNOT_TELL until
+# Hold the bead on spira-lc — best-effort, like every other spira-lc caller-verb call (CANNOT_TELL until
 # the bead is classified; a refusal here is logged and does not block the hold, since the
 # pidfile below is what actually keeps the reaper off it).
-lc_hold "$ID" operator "manual hold via hold.sh (pid $HOLD_PID)" "hold-$ID" >/dev/null 2>&1 || true
+spira-lc hold "$ID" operator "manual hold via hold.sh (pid $HOLD_PID)" "hold-$ID" >/dev/null 2>&1 || true
 
 # Write the pidfile.
 echo "$HOLD_PID" > "$PIDFILE"

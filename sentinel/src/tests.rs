@@ -1085,9 +1085,8 @@ fn check5_cap_bounds_filing() {
 #[test]
 fn sending_7c_7d_count_what_their_seams_report() {
     let (w, r, sink, clock) = setup("tail");
-    exe(&w.home.join("sending.sh"));
     r.on(|s| {
-        if s.prog.ends_with("/sending.sh") {
+        if s.prog == "sending" && s.args == ["--skip-queue"] {
             ok("SENT sp-a  spira spira/sp-a  merged\nFAILED sp-b  refused\n")
         } else {
             None

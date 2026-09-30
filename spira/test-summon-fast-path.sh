@@ -265,7 +265,7 @@ mkdir -p "$DSTUBS"
 ln -s "$HERE/chamber" "$DSTUBS/chamber"
 ln -s "$HERE/ready-bucket.py" "$DSTUBS/ready-bucket.py"
 # THE SENTINEL IS A BINARY (sentinel.sh is gone): it sources lib.sh from SPIRA_HOME.
-for _s in lib.sh conf.sh lc.sh suite-covers.sh lifecycle-cert.sh; do ln -s "$HERE/$_s" "$DSTUBS/$_s"; done
+for _s in lib.sh conf.sh suite-covers.sh; do ln -s "$HERE/$_s" "$DSTUBS/$_s"; done
 SUMMON_LOG="$T/d-summoned.log"
 printf '#!/bin/sh\necho summoned >> "%s"\n' "$SUMMON_LOG" > "$DSTUBS/mock-summon"; chmod +x "$DSTUBS/mock-summon"
 # SPIRA_SUMMON below is this mock, not systemd-run, so aeon_count takes its pidfile

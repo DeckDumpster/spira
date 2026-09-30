@@ -105,13 +105,19 @@ fn pr() -> i32 {
     };
     let tools = RealPrTools { s: &s, out: &out };
     let procs = RealProcs { run: s.run.clone() };
+    let files = Files::new(&s.run);
+    let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, incident: s.incident.clone() };
+    let land_tools = RealTools::new(s.home.clone(), s.queue_bin.clone(), None, None);
     let p = PrPass {
         s: &s,
         repos: &repos,
         beads: &beads,
         git: &RealGit,
+        lib: &lib,
+        land_tools: &land_tools,
         procs: &procs,
         tools: &tools,
+        files: &files,
         out: &out,
         loud: Default::default(),
     };

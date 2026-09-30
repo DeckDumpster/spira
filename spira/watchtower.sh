@@ -1320,7 +1320,7 @@ _unadopted="${SP_UNADOPTED:-?}"
 
 if [ "$_unsent_oldest" != "?" ] && [ "$_unsent_oldest" -ge "$UNSENT_WARN_H" ] 2>/dev/null; then
     if [ -x "$INC" ] || [ -r "$INC" ]; then
-        printf 'Oldest unsent branch: %sh — threshold is %sh\n\nA branch this old without a landing means the Sending rite has not run or cannot delete it.\nBranches owned by live in_progress beads are work in flight; confirm the branch has no holder before acting.\n\nCheck sending.sh and the rite logs. Reap manually if the owning bead is already closed.\n' \
+        printf 'Oldest unsent branch: %sh — threshold is %sh\n\nA branch this old without a landing means the Sending rite has not run or cannot delete it.\nBranches owned by live in_progress beads are work in flight; confirm the branch has no holder before acting.\n\nCheck the sending binary (`sending --dry-run`) and the rite logs. Reap manually if the owning bead is already closed.\n' \
             "$_unsent_oldest" "$UNSENT_WARN_H" | \
         SPIRA_DB="$SPIRA_DB" \
         SPIRA_INCIDENT_TYPE=task \
@@ -1406,7 +1406,7 @@ fi
 _batched_stranded="${SP_BATCHED_STRANDED:-?}"
 if [ "$_batched_stranded" != "?" ] && [ "$_batched_stranded" -gt 0 ] 2>/dev/null; then
     if [ -x "$INC" ] || [ -r "$INC" ]; then
-        printf 'Stranded BATCHED branches: %s\n\nThe branch(es) below have BATCHED landstate but their ID is absent from every open batch members= line. sending.sh refuses to reap BATCHED branches, so these are permanently stuck until the landstate is corrected.\n\nBranch IDs (spira/ prefix omitted): %s\n\nCheck: for each id, read $SPIRA_RUN/landstate/<id> (first field = BATCHED) and confirm the id does not appear in $SPIRA_QUEUE_DIR/*/open members= lines.\nFix: if the branch still points to the BATCHED tip, recertify: land_mark <id> CERTIFIED <tip>. If the tip moved, escalate — the branch has diverged from what was batched.\n' \
+        printf 'Stranded BATCHED branches: %s\n\nThe branch(es) below have BATCHED landstate but their ID is absent from every open batch members= line. The Sending refuses to reap BATCHED branches, so these are permanently stuck until the landstate is corrected.\n\nBranch IDs (spira/ prefix omitted): %s\n\nCheck: for each id, read $SPIRA_RUN/landstate/<id> (first field = BATCHED) and confirm the id does not appear in $SPIRA_QUEUE_DIR/*/open members= lines.\nFix: if the branch still points to the BATCHED tip, recertify: land_mark <id> CERTIFIED <tip>. If the tip moved, escalate — the branch has diverged from what was batched.\n' \
             "$_batched_stranded" "${SP_BATCHED_STRANDED_NAMES:-(unavailable)}" | \
         SPIRA_DB="$SPIRA_DB" \
         SPIRA_INCIDENT_TYPE=task \
@@ -1463,7 +1463,7 @@ _closed_stranded_oldest="${SP_CLOSED_STRANDED_OLDEST_H:-?}"
 if [ "$_closed_stranded_oldest" != "?" ] && \
    [ "$_closed_stranded_oldest" -ge "$CLOSED_STRANDED_WARN_H" ] 2>/dev/null; then
     if [ -x "$INC" ] || [ -r "$INC" ]; then
-        printf 'Closed-bead branches not reaped: oldest %sh (threshold %sh)\n\nThese branches belong to CLOSED beads but sending.sh has kept them every pass because none of its reap rules matched. Each pass makes a GitHub API call per branch and logs a KEEP line.\n\nRun: sending.sh --dry-run  to see each branch and the rule it failed.\n\nCommon causes:\n  - work landed via a batch PR whose commit names the bead (check: git log --grep=<id> origin/main)\n  - a superseded bead with an empty branch (check n>0 guard)\n  - a non-code deliverable bead with no delivers: label\n\nReap by hand if confirmed safe: spira_destroy_branch / spira_destroy_worktree via sending.sh one-shot.\n' \
+        printf 'Closed-bead branches not reaped: oldest %sh (threshold %sh)\n\nThese branches belong to CLOSED beads but the Sending has kept them every pass because none of its reap rules matched. Each pass makes a GitHub API call per branch and logs a KEEP line.\n\nRun: sending --dry-run  to see each branch and the rule it failed.\n\nCommon causes:\n  - work landed via a batch PR whose commit names the bead (check: git log --grep=<id> origin/main)\n  - a superseded bead with an empty branch (check n>0 guard)\n  - a non-code deliverable bead with no delivers: label\n\nReap by hand if confirmed safe: spira_destroy_branch / spira_destroy_worktree via `sending <bead-id>` (one bead).\n' \
             "$_closed_stranded_oldest" "$CLOSED_STRANDED_WARN_H" | \
         SPIRA_DB="$SPIRA_DB" \
         SPIRA_INCIDENT_TYPE=task \
