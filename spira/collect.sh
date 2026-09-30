@@ -116,7 +116,10 @@ _run_probe_body() {
     local name="$1" timeout_s="$2" cmd="$3"
     local frag="$FRAG_DIR/${name}.env"
     local now; now=$(date +%s)
-    trap 'rm -f "$FRAG_DIR"/."$name".* 2>/dev/null' EXIT
+    # $name is pre-expanded here, not deferred: a deferred '$name' would read as
+    # unbound once this function returns and its `local` scope pops, because the
+    # trap fires at the (sub)shell's own exit, after the return.
+    trap "rm -f \"\$FRAG_DIR\"/.\"${name}\".* 2>/dev/null" EXIT
     local out_tmp; out_tmp="$(mktemp "$FRAG_DIR/.${name}.XXXXXX")" || return 1
 
     if timeout "$timeout_s" bash "$COCK" "$cmd" > "$out_tmp" 2>/dev/null; then
