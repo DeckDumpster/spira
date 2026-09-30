@@ -72,7 +72,7 @@ ALWAYS='echo "gate: test-boxreader.sh FAILED (rc=1)" >&2; false'
 BIN_DIR="$(dirname "$(command -v gate)")" || bail "gate is not on PATH"
 rungate() {              # rungate <branch> [VAR=VAL ...]
     local br="$1"; shift
-    env -i HOME="$HOMEDIR" PATH="$SH:$BIN_DIR:/usr/bin:/bin" \
+    env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$HOMEDIR" PATH="$SH:$BIN_DIR:/usr/bin:/bin" \
         GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
         SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         SPIRA_DB="$SPIRA_DB_NONE" SPIRA_REPO_MAP="$MAP" SPIRA_GATE_LOG="$GATELOG" \
@@ -80,7 +80,7 @@ rungate() {              # rungate <branch> [VAR=VAL ...]
         "$@" bash "$SH/gate.sh" "$br" repo
 }
 yield() {                # yield <args...> -> yield.sh, reading the same record the gate wrote
-    env -i HOME="$HOMEDIR" PATH="$SH:$BIN_DIR:/usr/bin:/bin" \
+    env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$HOMEDIR" PATH="$SH:$BIN_DIR:/usr/bin:/bin" \
         SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         SPIRA_DB="$SPIRA_DB_NONE" SPIRA_YIELD="$YDIR" SPIRA_GATE_LOG="$GATELOG" \
         SPIRA_YIELD_WINDOW="$WINDOW" \
@@ -294,7 +294,7 @@ echo "the count has a positive control — a recorder that stopped is not a clea
 # they are seen to make the counts be withheld.
 CTL="$TMP/ctl"; mkdir -p "$CTL"
 ctl() {                  # ctl -> a report over an EMPTY record, against $GATELOG
-    env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
+    env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
         SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         SPIRA_DB="$SPIRA_DB_NONE" SPIRA_YIELD="$CTL" SPIRA_GATE_LOG="$GATELOG" \
         SPIRA_YIELD_WINDOW="$WINDOW" bash "$SH/yield.sh" report
@@ -304,7 +304,7 @@ ctl() {                  # ctl -> a report over an EMPTY record, against $GATELO
 # WITH NO RECORD DIRECTORY AT ALL and a meter that saw no reds, nothing is wrong: the gate
 # has simply never refused anything here. That is `absent`, and it must not read the same as
 # a recorder that stopped — which is the very next case.
-R="$(env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" SPIRA_CONF="$SPIRA_CONF_NONE" \
+R="$(env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$HOMEDIR" PATH="/usr/bin:/bin" SPIRA_CONF="$SPIRA_CONF_NONE" \
       SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB_NONE" \
       SPIRA_YIELD="$TMP/never-written" SPIRA_GATE_LOG="$GATELOG" \
       SPIRA_YIELD_WINDOW="$WINDOW" bash "$SH/yield.sh" report)"
@@ -325,7 +325,7 @@ is "so the reds count is WITHHELD, not reported as 0" "?" "$(f "$R" YIELD_REDS)"
 is "and so is the gate-fault column"                  "?" "$(f "$R" YIELD_FAULT)"
 is "and the unknown column"                           "?" "$(f "$R" YIELD_UNKNOWN)"
 want "and the human view says which side went quiet" "THE RECORDER IS NOT RUNNING" \
-     "$(env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" SPIRA_CONF="$SPIRA_CONF_NONE" \
+     "$(env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$HOMEDIR" PATH="/usr/bin:/bin" SPIRA_CONF="$SPIRA_CONF_NONE" \
         SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB_NONE" \
         SPIRA_YIELD="$CTL" SPIRA_GATE_LOG="$GATELOG" SPIRA_YIELD_WINDOW="$WINDOW" \
         bash "$SH/yield.sh" show)"
@@ -350,7 +350,7 @@ echo "it reaches the actor that acts on it — the Ops sweep, not only a human a
 #
 # `--show` gathers and prints and touches nothing, so nothing here can reach a database.
 snap() {
-    env -i HOME="$HOMEDIR" PATH="$SH:$BIN_DIR:$HERE:/usr/bin:/bin" \
+    env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$HOMEDIR" PATH="$SH:$BIN_DIR:$HERE:/usr/bin:/bin" \
         SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         SPIRA_DB="$SPIRA_DB_NONE" SPIRA_YIELD="$YDIR" SPIRA_GATE_LOG="$GATELOG" \
         SPIRA_YIELD_WINDOW="$WINDOW" \

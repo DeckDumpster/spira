@@ -277,7 +277,9 @@ EOF
     # Without it compose_brief reads the box's real statute database, so this case passed
     # only on a host that had one and refused ("cannot reach the statute book database")
     # everywhere else — including every testenv container.
-    ENVARGS=(SPIRA_HOME="$MT_TMP" SPIRA_RUN="$MT_TMP/run" SPIRA_WIKI="$MT_TMP" \
+    # SPIRA_RELEASE: concierge.sh start refuses without it (sp-31gtu); the transient unit
+    # gets the user manager's environment, so it is handed the suite's own release.
+    ENVARGS=(SPIRA_RELEASE="$SPIRA_RELEASE" SPIRA_HOME="$MT_TMP" SPIRA_RUN="$MT_TMP/run" SPIRA_WIKI="$MT_TMP" \
         SPIRA_CONF=/nonexistent SPIRA_REPO_MAP=/nonexistent SPIRA_CHAMBER="$MT_TMP/chamber-empty" \
         SPIRA_TOML="$MT_TOML" CONCIERGE_FAYTH=modeltest \
         CONCIERGE_SOCKET="$SOCK_MT" CONCIERGE_SESSION="$SOCK_MT" \

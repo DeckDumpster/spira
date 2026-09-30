@@ -73,7 +73,7 @@ printf 'repo | %s | push | origin/main |  | %s\n' "$REPO" "$CMD" > "$MAP"
 
 rungate() {              # rungate <branch> [VAR=VAL ...]
     local br="$1"; shift
-    env -i HOME="$HOMEDIR" PATH="$SH:$TOOLS:/usr/bin:/bin" \
+    env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$HOMEDIR" PATH="$SH:$TOOLS:/usr/bin:/bin" \
         GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
         SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         SPIRA_DB="$TMP/nonexistent-db" SPIRA_REPO_MAP="$MAP" SPIRA_GATE_LOG="$GATELOG" \

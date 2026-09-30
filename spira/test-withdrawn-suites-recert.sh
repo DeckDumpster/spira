@@ -60,7 +60,7 @@ printf 'fixq | %s | queue | main |  | %s\n' "$REPO" "$SH/gate-stub.sh" > "$RMAP"
 
 submit() {
     : > "$GATELOG"
-    env -i PATH="$SH:$BIN_DIR:/usr/local/bin:/usr/bin:/bin" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$SPIRA_RELEASE" PATH="$SH:$BIN_DIR:/usr/local/bin:/usr/bin:/bin" HOME="$TMP" \
         GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$SH" \

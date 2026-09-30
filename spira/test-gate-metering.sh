@@ -67,7 +67,7 @@ printf 'repo | %s | push | origin/main |  | rm -f %s; : > %s; sleep 30\n' \
     export HOMEDIR SPIRA_CONF_NONE REPO RUN SPIRA_DB_NONE MAP GATELOG VDIR SH BR PIDFILE TOOLS
     setsid bash -c '
         echo "$$" > "$PIDFILE"
-        exec env -i HOME="$HOMEDIR" PATH="$SH:$TOOLS:/usr/bin:/bin" \
+        exec env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$HOMEDIR" PATH="$SH:$TOOLS:/usr/bin:/bin" \
             GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
             SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
             SPIRA_DB="$SPIRA_DB_NONE" SPIRA_REPO_MAP="$MAP" \

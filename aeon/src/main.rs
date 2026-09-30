@@ -80,11 +80,7 @@ fn main() {
     }
     // THE LAUNCHER SETS PATH (sp-31gtu): the aeon's launcher (the summon's systemd-run, the
     // ops unit) hands it a PATH set outright from SPIRA_RELEASE, and the aeon carries it to
-    // the session and its subagents unchanged. It needs SPIRA_RELEASE itself to arm the
-    // worktree with the release's hooks: unset is fatal, naming it — there is no fallback.
-    if let Err(e) = spira_config::release_path_from_env(std::env::var(spira_config::RELEASE_ENV).ok().as_deref()) {
-        fatal(&format!("{}: {e}", cli.fayth));
-    }
+    // the session and its subagents unchanged — it never rebuilds or appends to it.
     let original: BTreeMap<String, String> = std::env::vars().collect();
     let exe = std::env::current_exe().ok();
     let Some(home) = conf::resolve_home(cli.home.as_deref(), &original, exe.as_deref()) else {
