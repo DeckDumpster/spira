@@ -12,6 +12,8 @@ struct FakeBuilder {
     calls: AtomicUsize,
     fail: Option<i32>,
     dirs: Mutex<Vec<(PathBuf, String)>>,
+    /// How long a build takes; it honours the cutoff the way cargo's kill does.
+    delay: Duration,
 }
 
 impl FakeBuilder {
@@ -20,13 +22,32 @@ impl FakeBuilder {
             calls: AtomicUsize::new(0),
             fail,
             dirs: Mutex::new(vec![]),
+            delay: Duration::ZERO,
+        }
+    }
+    fn slow(delay: Duration) -> Self {
+        FakeBuilder {
+            delay,
+            ..FakeBuilder::new(None)
         }
     }
 }
 
 impl Builder for FakeBuilder {
-    fn build(&self, wt: &Path, profile: &str) -> Result<Duration, BuildError> {
+    fn build(
+        &self,
+        wt: &Path,
+        profile: &str,
+        deadline: Option<Instant>,
+    ) -> Result<Duration, BuildError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        let end = Instant::now() + self.delay;
+        while Instant::now() < end {
+            if deadline.is_some_and(|d| Instant::now() >= d) {
+                return Err(BuildError::Deadline);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
         self.dirs
             .lock()
             .unwrap()
@@ -60,6 +81,8 @@ struct World {
     owner: PathBuf,
     env: HashMap<String, String>,
     lines: Mutex<Vec<String>>,
+    /// Warm slots whose refill the run asked for.
+    refills: Mutex<Vec<usize>>,
 }
 
 impl World {
@@ -106,6 +129,8 @@ impl World {
             ("SPIRA_BATCH_LIVENESS_SLEEP", "0".into()),
             ("SPIRA_BATCH_PSI_THRESHOLD", "0".into()),
             ("SPIRA_BATCH_MAXPAR", "2".into()),
+            // the warm path has its own tests; the rest keep the §4.1 worktree rules
+            ("SPIRA_TESTENV_WARM_SLOTS", "0".into()),
             ("HOME", root.display().to_string()),
         ]
         .into_iter()
@@ -118,6 +143,7 @@ impl World {
             owner,
             env,
             lines: Mutex::new(vec![]),
+            refills: Mutex::new(vec![]),
         }
     }
 
@@ -147,6 +173,7 @@ impl World {
             owner_dir: self.owner.clone(),
             cwd: cwd.to_path_buf(),
             runner_identity: b"runner-v1".to_vec(),
+            warm_refill: &|i, _| self.refills.lock().unwrap().push(i),
         };
         let mut full = vec![];
         full.extend(args.iter().map(|s| s.to_string()));
@@ -341,7 +368,13 @@ fn a_suite_that_turns_from_green_to_an_undeclared_skip_is_no_longer_green() {
     // before: the suite passes outright.
     let rt_before = runtime();
     rt_before.suite("test-f.sh", 0, "1..1\nok 1 - widget present\n");
-    let rc = w.run(&rt_before, &b, &["--suites", "test-f.sh", "topic"], "", &w.root);
+    let rc = w.run(
+        &rt_before,
+        &b,
+        &["--suites", "test-f.sh", "topic"],
+        "",
+        &w.root,
+    );
     assert_eq!(rc, 0);
     assert_eq!(w.last(), "VERDICT GREEN ran=1");
 
@@ -356,7 +389,13 @@ fn a_suite_that_turns_from_green_to_an_undeclared_skip_is_no_longer_green() {
     );
     let rt_after = runtime();
     rt_after.suite("test-f.sh", 77, "1..0 # SKIP widget missing\n");
-    let rc = w.run(&rt_after, &b, &["--suites", "test-f.sh", "topic"], "", &w.root);
+    let rc = w.run(
+        &rt_after,
+        &b,
+        &["--suites", "test-f.sh", "topic"],
+        "",
+        &w.root,
+    );
     assert_ne!(rc, 0, "an undeclared SKIP must not read as green");
     assert_eq!(w.last(), "VERDICT RED ran=1 red=1");
     assert!(w.has_line(|l| l.starts_with("  test-f.sh")
@@ -402,7 +441,10 @@ fn an_invalid_skip_allowlist_is_a_fault_not_a_silent_pass() {
     let b = FakeBuilder::new(None);
     let rc = w.run(&rt, &b, &["--suites", "test-a.sh", "main"], "", &w.root);
     assert_eq!(rc, 2);
-    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=skip-allowlist-invalid");
+    assert_eq!(
+        w.last(),
+        "VERDICT FAULT rc=2 ran=0 reason=skip-allowlist-invalid"
+    );
 }
 
 #[test]
@@ -766,9 +808,10 @@ fn a_deadline_cut_is_green_partial_recorded_and_never_cached_as_full() {
     let res = w.results_dir();
     let meta = fs::read_to_string(res.join("batch.meta")).unwrap();
     assert!(
-        meta.ends_with("deadline=1\ndeferred=1\ndeferred_suites=test-b.sh\n"),
+        meta.contains("deadline=1\ndeferred=1\ndeferred_suites=test-b.sh\nphases=resolve:"),
         "{meta}"
     );
+    assert!(meta.contains("\nwarm=off\nsetup_secs="), "{meta}");
     let rec = fs::read_to_string(res.join("test-b.sh.result")).unwrap();
     assert!(
         rec.starts_with("deferred ") && rec.contains(" deadline:test-b.sh "),
@@ -834,7 +877,18 @@ fn a_deadline_run_that_finishes_everything_is_a_full_green() {
     assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
     assert_eq!(w.last(), "VERDICT GREEN ran=1 deferred=0 (deadline 300s)");
     let meta = fs::read_to_string(w.results_dir().join("batch.meta")).unwrap();
-    assert!(meta.ends_with("deadline=300\ndeferred=0\ndeferred_suites=\n"));
+    assert!(
+        meta.contains("deadline=300\ndeferred=0\ndeferred_suites=\nphases="),
+        "{meta}"
+    );
+    // the __batch__ row carries setup vs suites (D11)
+    let rows = fs::read_to_string(w.root.join("run/tsd/suite-timing.jsonl")).unwrap();
+    let batch = rows.lines().find(|l| l.contains("\"__batch__\"")).unwrap();
+    assert!(
+        batch.contains("\"setup_secs\":") && batch.contains("\"warm\":\"off\""),
+        "{batch}"
+    );
+    assert!(batch.contains("\"phases\":\"resolve:"), "{batch}");
     // nothing deferred: an ordinary green, and the cache replays it
     assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
     assert!(
@@ -1051,4 +1105,259 @@ fn a_prebuilt_green_is_keyed_by_the_binaries_it_tested() {
         1,
         "only the cargo run built"
     );
+}
+
+// ---- the whole trial under the budget (DESIGN.md §11, D9) -------------------------------
+
+#[test]
+fn a_build_still_running_at_the_setup_cutoff_is_no_verdict_never_the_candidates_red() {
+    let w = World::new("cut-build");
+    let rt = runtime();
+    // --deadline 1, share 50 %: the cutoff is 0.5 s in; the build would take 30 s
+    let b = FakeBuilder::slow(Duration::from_secs(30));
+    let t0 = Instant::now();
+    let rc = w.run(
+        &rt,
+        &b,
+        &["--deadline", "1", "--suites", "test-a.sh", "topic"],
+        "",
+        &w.root,
+    );
+    assert_eq!(
+        rc, 2,
+        "a harness fault (the gate string maps it to 75), not rc 4"
+    );
+    assert!(
+        t0.elapsed() < Duration::from_secs(5),
+        "killed at the cutoff"
+    );
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=deadline-build");
+    assert!(w.has_line(|l| l
+        .contains("setup phase build did not finish within its share of the budget (50% of 1s)")));
+    assert!(rt.suite_execs().is_empty());
+    let rows = fs::read_to_string(w.root.join("run/tsd/suite-timing.jsonl")).unwrap();
+    assert!(
+        rows.contains("\"phases\":\"resolve:0,build:0\"") && rows.contains("\"rc\":2"),
+        "{rows}"
+    );
+}
+
+#[test]
+fn a_container_that_cannot_come_up_within_its_share_is_named_and_torn_down() {
+    let w = World::new("cut-up");
+    let rt = runtime();
+    rt.testenv_delay
+        .lock()
+        .unwrap()
+        .insert("up".into(), Duration::from_secs(30));
+    let b = FakeBuilder::new(None);
+    let t0 = Instant::now();
+    let rc = w.run(
+        &rt,
+        &b,
+        &["--deadline", "1", "--suites", "test-a.sh", "topic"],
+        "",
+        &w.root,
+    );
+    assert_eq!(rc, 2);
+    assert!(t0.elapsed() < Duration::from_secs(5));
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=deadline-up");
+    assert!(rt.suite_execs().is_empty());
+    assert!(
+        rt.testenv_calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c[0] == "down"),
+        "a half-started container is still torn down"
+    );
+}
+
+#[test]
+fn the_suites_get_what_setup_left_of_the_budget_not_the_whole_budget_again() {
+    let w = World::new("cut-left");
+    let rt = FakeRuntime::new();
+    slow_suite(&rt, "test-b.sh", 30_000);
+    rt.suite("test-a.sh", 0, "1..1\nok 1 - a\n");
+    // --deadline 3: setup takes 1.2 s of its 1.5 s share, so the suites get ~1.8 s
+    let b = FakeBuilder::slow(Duration::from_millis(1200));
+    let t0 = Instant::now();
+    let rc = w.run(
+        &rt,
+        &b,
+        &[
+            "--deadline",
+            "3",
+            "--suites",
+            "test-b.sh,test-a.sh",
+            "topic",
+        ],
+        "",
+        &w.root,
+    );
+    let took = t0.elapsed();
+    assert_eq!(rc, 0);
+    assert_eq!(w.last(), "VERDICT GREEN ran=1 deferred=1 (deadline 3s)");
+    assert!(
+        took < Duration::from_millis(3800),
+        "the cut comes at 3 s from start, not 3 s after setup: {took:?}"
+    );
+    assert!(w.has_line(
+        |l| l.contains("deadline 3s on the trial — setup took 1s, the suites get the remaining 1s")
+    ));
+}
+
+#[test]
+fn a_trial_where_every_runnable_suite_was_deferred_judged_nothing() {
+    let w = World::new("cut-all");
+    let rt = FakeRuntime::new();
+    slow_suite(&rt, "test-b.sh", 30_000);
+    let b = FakeBuilder::new(None);
+    let rc = w.run(
+        &rt,
+        &b,
+        &["--deadline", "1", "--suites", "test-b.sh", "topic"],
+        "",
+        &w.root,
+    );
+    assert_eq!(rc, 2);
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=deadline-suites");
+}
+
+// ---- warm slots (DESIGN.md §11.2, D10) -------------------------------------------------
+
+/// The fake container sees the slot's checkout: `cat` of the nonce reads the host file.
+fn mounting(rt: &FakeRuntime, slot: PathBuf) {
+    rt.on(
+        |r| r.argv.first().map(String::as_str) == Some("cat"),
+        move |_| ExecOutcome {
+            rc: 0,
+            output: fs::read_to_string(slot.join(crate::warm::NONCE_FILE)).unwrap_or_default(),
+        },
+    );
+}
+
+fn batch_rows(w: &World) -> Vec<String> {
+    fs::read_to_string(w.root.join("run/tsd/suite-timing.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| l.contains("\"__batch__\""))
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn a_warm_trial_claims_the_slots_spare_once_tears_it_down_and_asks_for_a_refill() {
+    let mut w = World::new("warm");
+    w.env.insert("SPIRA_TESTENV_WARM_SLOTS".into(), "1".into());
+    w.env.insert("SPIRA_VERDICT_TTL".into(), "0".into());
+    let run = w.root.join("run");
+    let (slot, _, record) = crate::warm::paths(&run, 0);
+    let rt = runtime();
+    mounting(&rt, slot.clone());
+    let b = FakeBuilder::new(None);
+    let args = ["--deadline", "300", "--suites", "test-a.sh", "topic"];
+
+    // 1st trial: the slot has no spare yet — it boots its own container ON the slot
+    assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
+    assert!(w.has_line(|l| l.contains("warm slot 0: no spare booted in this slot yet")));
+    let ups: Vec<Vec<String>> = rt
+        .testenv_calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|c| c[0] == "up")
+        .cloned()
+        .collect();
+    assert_eq!(ups.len(), 1);
+    let first = ups[0][2].clone();
+    assert!(first.starts_with("spira-warm-0-"), "{first}");
+    assert_eq!(
+        ups[0][4],
+        slot.display().to_string(),
+        "the container mounts the warm slot"
+    );
+    assert_eq!(b.dirs.lock().unwrap()[0].0, slot, "built in the warm slot");
+    assert!(batch_rows(&w)[0].contains("\"warm\":\"cold\""));
+    assert_eq!(
+        *w.refills.lock().unwrap(),
+        vec![0],
+        "the trial asks for the slot's refill"
+    );
+
+    // the refill boots a spare on the slot (what `testenv warm refill 0` does)
+    let owner = w.owner.clone();
+    let spare = crate::warm::boot(&rt, &run, &owner, 0, "tag123", Duration::from_secs(5))
+        .unwrap()
+        .unwrap();
+    assert!(record.exists());
+
+    // 2nd trial: claims it — no boot on its critical path — and tears it down after
+    let ups_before = rt
+        .testenv_calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|c| c[0] == "up")
+        .count();
+    assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
+    assert!(
+        w.has_line(|l| l.contains(&format!("claimed warm spare {spare}"))),
+        "{:?}",
+        w.lines.lock().unwrap()
+    );
+    let calls = rt.testenv_calls.lock().unwrap().clone();
+    assert_eq!(
+        calls.iter().filter(|c| c[0] == "up").count(),
+        ups_before,
+        "no boot in the trial"
+    );
+    assert!(
+        calls.iter().any(|c| c[0] == "probe" && c[2] == spare),
+        "the spare is probed before use"
+    );
+    assert!(
+        calls.iter().any(|c| c[0] == "down" && c[2] == spare),
+        "and torn down after — never reused"
+    );
+    assert!(!record.exists(), "the record was consumed by the claim");
+    assert!(!rt.exists(&spare));
+    let suites = rt.suite_execs();
+    assert_eq!(suites.last().unwrap().container, spare);
+    assert_ne!(
+        spare, first,
+        "each trial ran in a container no other trial used"
+    );
+    assert!(batch_rows(&w)[1].contains("\"warm\":\"spare\""));
+    assert_eq!(*w.refills.lock().unwrap(), vec![0, 0]);
+
+    // 3rd trial with no refill in between: the spare is gone, so it boots cold again
+    assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
+    assert!(w.has_line(|l| l.contains("no spare booted")));
+}
+
+#[test]
+fn without_a_deadline_or_with_artifacts_there_is_no_warm_path() {
+    let mut w = World::new("warm-off");
+    w.env.insert("SPIRA_TESTENV_WARM_SLOTS".into(), "2".into());
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(
+        w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root),
+        0
+    );
+    assert!(!b.dirs.lock().unwrap()[0]
+        .0
+        .to_string_lossy()
+        .contains(".testenv-warm-"));
+    assert!(w.refills.lock().unwrap().is_empty());
+    let ups: Vec<Vec<String>> = rt
+        .testenv_calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|c| c[0] == "up")
+        .cloned()
+        .collect();
+    assert!(ups[0][2].starts_with("spira-batch-"));
 }

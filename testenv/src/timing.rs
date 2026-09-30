@@ -26,6 +26,43 @@ pub struct SuiteTimingRow {
     pub mode: String,
     /// The suite's `# tier:` at measurement time; empty when undeclared.
     pub tier: String,
+    /// `__batch__` only (DESIGN.md §11.2, D11): seconds from start to the first suite's launch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_secs: Option<u64>,
+    /// `__batch__` only: `<phase>:<secs>,…` in order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phases: Option<String>,
+    /// `__batch__` only: `spare` (claimed a pre-booted container), `cold` (booted one on a
+    /// warm slot), `off` (no warm path).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warm: Option<String>,
+}
+
+impl SuiteTimingRow {
+    /// A row with the per-suite fields; the `__batch__`-only ones empty.
+    pub fn new(
+        run_id: &str,
+        branch: &str,
+        suite: &str,
+        rc: i64,
+        wall_secs: u64,
+        mode: &str,
+    ) -> Self {
+        SuiteTimingRow {
+            run_id: run_id.into(),
+            branch: branch.into(),
+            suite: suite.into(),
+            rc,
+            wall_secs,
+            bd_calls: 0,
+            bd_ms: 0,
+            mode: mode.into(),
+            tier: String::new(),
+            setup_secs: None,
+            phases: None,
+            warm: None,
+        }
+    }
 }
 
 /// One `round` row: the corpus build phase of a round (only with SPIRA_ROUND_BATCH_ID).
@@ -195,7 +232,35 @@ mod tests {
             bd_ms: 30,
             mode: "parallel".into(),
             tier: String::new(),
+            setup_secs: None,
+            phases: None,
+            warm: None,
         }
+    }
+
+    #[test]
+    fn the_batch_row_carries_its_phases_and_a_suite_row_does_not() {
+        let plain = render(
+            "suite-timing",
+            "2026-09-30T00:00:00Z",
+            "h",
+            &row("test-a.sh", 3),
+        )
+        .unwrap();
+        assert!(!plain.contains("setup_secs") && !plain.contains("phases"));
+        let b = SuiteTimingRow {
+            setup_secs: Some(31),
+            phases: Some("resolve:1,up:0".into()),
+            warm: Some("spare".into()),
+            ..SuiteTimingRow::new("r", "b", BATCH_ROW, 0, 90, "parallel")
+        };
+        let line = render("suite-timing", "2026-09-30T00:00:00Z", "h", &b).unwrap();
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["setup_secs"], 31);
+        assert_eq!(v["warm"], "spare");
+        assert_eq!(v["phases"], "resolve:1,up:0");
+        // readers of the per-suite fields are unaffected
+        assert!(mean_wall_by_suite(&line).is_empty());
     }
 
     #[test]

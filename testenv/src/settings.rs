@@ -67,6 +67,12 @@ pub struct Settings {
     pub round_members: u64,
     pub run_id: String,
     pub scratch_slots: usize,
+    /// DESIGN.md §11.2: warm slots tried under `--deadline` (0 = no warm path).
+    pub warm_slots: usize,
+    /// DESIGN.md D9: setup's share of `--deadline`, percent, clamped to 10..=90.
+    pub setup_share: u64,
+    /// DESIGN.md §11.2: how long a refill may wait for its slot and boot its spare.
+    pub warm_boot_timeout: u64,
     pub landing_containers: Option<PathBuf>,
     pub spira_db: Option<String>,
 }
@@ -194,6 +200,15 @@ impl Settings {
                 .or_else(|| src.get("SPIRA_BATCH_RUN_ID", None))
                 .unwrap_or_else(|| format!("local-{now}")),
             scratch_slots: src.num("SPIRA_TESTENV_SCRATCH_SLOTS", None).unwrap_or(4),
+            warm_slots: src.num("SPIRA_TESTENV_WARM_SLOTS", None).unwrap_or(3),
+            setup_share: src
+                .num("SPIRA_TESTENV_SETUP_SHARE", None)
+                .unwrap_or(50u64)
+                .clamp(10, 90),
+            warm_boot_timeout: src
+                .num("SPIRA_TESTENV_WARM_BOOT_TIMEOUT", None)
+                .unwrap_or(600u64)
+                .max(1),
             landing_containers: path("SPIRA_LANDING_CONTAINERS"),
             spira_db: src.get("SPIRA_DB", Some("spira.db")),
             run,
@@ -235,6 +250,22 @@ mod tests {
         assert!(!s.skip_install);
         assert_eq!(s.suite_state_file, "spira/suite-state");
         assert_eq!(s.skip_allowlist_file, "spira/skip-allowlist.tsv");
+        assert_eq!(
+            (s.warm_slots, s.setup_share, s.warm_boot_timeout),
+            (3, 50, 600)
+        );
+    }
+
+    #[test]
+    fn the_setup_share_is_clamped_so_the_suites_always_get_some_budget() {
+        let share = |v: &str| {
+            load(
+                &[("SPIRA_RUN", "/r"), ("SPIRA_TESTENV_SETUP_SHARE", v)],
+                None,
+            )
+            .setup_share
+        };
+        assert_eq!((share("100"), share("0"), share("70")), (90, 10, 70));
     }
 
     #[test]

@@ -108,8 +108,9 @@ pub trait ContainerRuntime: Send + Sync {
     /// stop, rm, and remove both cargo volumes — the orphan sweep's teardown.
     fn purge(&self, name: &str);
     /// `bash <harness>/spira/testenv.sh <args>` (tag, up, probe, down): stdout captured,
-    /// stderr passed through.
-    fn testenv(&self, args: &[String]) -> ExecOutcome;
+    /// stderr passed through. Past `deadline` it is killed (its whole process group) and
+    /// reports [`RC_DEADLINE`] (DESIGN.md D9).
+    fn testenv(&self, args: &[String], deadline: Option<Instant>) -> ExecOutcome;
 }
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -285,25 +286,59 @@ impl ContainerRuntime for Podman {
         self.podman_quiet(&["volume", "rm", &format!("{name}-cargo-git")]);
     }
 
-    fn testenv(&self, args: &[String]) -> ExecOutcome {
+    fn testenv(&self, args: &[String], deadline: Option<Instant>) -> ExecOutcome {
         let mut cmd = Command::new("bash");
         cmd.arg(&self.testenv_sh)
             .args(args)
             .stdin(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
         // Never let an inherited artifacts dir reach testenv.sh's conf.sh (DESIGN.md §5).
         cmd.env_remove("SPIRA_ARTIFACTS")
             .env_remove("SPIRA_ARTIFACTS_ROOT");
-        match cmd.output() {
-            Ok(o) => ExecOutcome {
-                rc: o.status.code().unwrap_or(1),
-                output: String::from_utf8_lossy(&o.stdout).into_owned(),
-            },
-            Err(e) => ExecOutcome {
+        capture_bounded(cmd, deadline)
+    }
+}
+
+/// Run `cmd` (stdout piped by the caller) to completion or `deadline`, whichever is first;
+/// at the deadline its process group is killed and the rc is [`RC_DEADLINE`].
+pub fn capture_bounded(mut cmd: Command, deadline: Option<Instant>) -> ExecOutcome {
+    use std::os::unix::process::CommandExt;
+    cmd.process_group(0);
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            return ExecOutcome {
                 rc: 127,
                 output: e.to_string(),
-            },
+            }
         }
+    };
+    let reader = child.stdout.take().map(|mut out| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = out.read_to_end(&mut buf);
+            buf
+        })
+    });
+    let rc = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st.code().unwrap_or_else(|| 128 + st_signal(&st)),
+            Ok(None) => {}
+            Err(_) => break 127,
+        }
+        if deadline.is_some_and(|d| Instant::now() >= d) {
+            // SAFETY: signalling the process group of a child we spawned.
+            unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
+            let _ = child.wait();
+            break RC_DEADLINE;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let buf = reader.and_then(|h| h.join().ok()).unwrap_or_default();
+    ExecOutcome {
+        rc,
+        output: String::from_utf8_lossy(&buf).into_owned(),
     }
 }
 
@@ -384,6 +419,22 @@ mod tests {
             "partial output is kept"
         );
         let _ = fs::remove_file(out);
+    }
+
+    #[test]
+    fn capture_bounded_returns_stdout_and_kills_the_group_at_the_deadline() {
+        let mut c = Command::new("sh");
+        c.args(["-c", "echo hi; exit 4"]).stdout(Stdio::piped());
+        let o = capture_bounded(c, None);
+        assert_eq!((o.rc, o.output.as_str()), (4, "hi\n"));
+        let mut c = Command::new("sh");
+        // a grandchild holding stdout open: only a group kill ends the read
+        c.args(["-c", "echo started; sleep 30 & sleep 30"]).stdout(Stdio::piped());
+        let t0 = Instant::now();
+        let o = capture_bounded(c, Some(Instant::now() + Duration::from_millis(300)));
+        assert_eq!(o.rc, RC_DEADLINE);
+        assert!(o.output.contains("started"));
+        assert!(t0.elapsed() < Duration::from_secs(5));
     }
 
     #[test]

@@ -8,6 +8,33 @@ use testenv::cli;
 use testenv::run::{self, Deps, Harness};
 use testenv::runtime::{self, Podman};
 
+/// Spawn `testenv warm refill <i>` detached: its own process group, no stdio of ours (a
+/// gate reading our stdout must not wait on it), output appended to
+/// `$SPIRA_RUN/testenv-warm.log`.
+fn spawn_refill(i: usize, run: &std::path::Path) {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(run.join("testenv-warm.log"));
+    let (out, err) = match log.and_then(|f| f.try_clone().map(|g| (f, g))) {
+        Ok((f, g)) => (Stdio::from(f), Stdio::from(g)),
+        Err(_) => (Stdio::null(), Stdio::null()),
+    };
+    let _ = Command::new(exe)
+        .args(["warm", "refill", &i.to_string()])
+        .env("SPIRA_RUN", run)
+        .stdin(Stdio::null())
+        .stdout(out)
+        .stderr(err)
+        .process_group(0)
+        .spawn();
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // `testenv suites …` — the suite-state tooling (DESIGN-suites.md). A branch literally
@@ -21,15 +48,29 @@ fn main() -> ExitCode {
         let rc = testenv::testdb::main(&args[1..]);
         return ExitCode::from(rc.clamp(0, 255) as u8);
     }
-    let inv = match cli::parse(&args) {
-        Ok(i) => i,
-        Err(cli::UsageError(lines)) => {
-            for l in lines {
-                eprintln!("{l}");
+    // `testenv warm refill <slot>` — boot a warm slot's spare (DESIGN.md §11.2); spawned
+    // detached by the trial that used the slot.
+    let warm_refill = args.first().map(String::as_str) == Some("warm");
+    if warm_refill
+        && (args.get(1).map(String::as_str) != Some("refill")
+            || args.get(2).and_then(|v| v.parse::<usize>().ok()).is_none())
+    {
+        eprintln!("usage: testenv warm refill <slot>");
+        return ExitCode::from(2);
+    }
+    let inv = if warm_refill {
+        None
+    } else {
+        Some(match cli::parse(&args) {
+            Ok(i) => i,
+            Err(cli::UsageError(lines)) => {
+                for l in lines {
+                    eprintln!("{l}");
+                }
+                println!("VERDICT FAULT rc=2 ran=0 reason=usage");
+                return ExitCode::from(2);
             }
-            println!("VERDICT FAULT rc=2 ran=0 reason=usage");
-            return ExitCode::from(2);
-        }
+        })
     };
     runtime::install_signal_handlers();
     let env = |k: &str| std::env::var(k).ok();
@@ -74,7 +115,11 @@ fn main() -> ExitCode {
         owner_dir: std::path::PathBuf::from("/tmp"),
         cwd: std::env::current_dir().unwrap_or_default(),
         runner_identity: identity,
+        warm_refill: &spawn_refill,
     };
-    let rc = run::execute(inv, &deps);
+    let rc = match inv {
+        Some(inv) => run::execute(inv, &deps),
+        None => run::warm_refill(args[2].parse().unwrap_or(0), &deps),
+    };
     ExitCode::from(rc.clamp(0, 255) as u8)
 }
