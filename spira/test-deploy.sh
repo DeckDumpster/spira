@@ -55,19 +55,8 @@ TMP="$(mktemp -d)"
 BD_MIG_CNT_FILE="$TMP/bd-migrate.cnt"
 trap 'rm -rf "$TMP"' EXIT
 
-# Resolve or build the spira-config binary. deploy.sh's SPIRA_PROD writer (PROPERTY 9) goes
-# through it unconditionally now (sp-usxfl) — skip (not fail) the whole suite if cargo is
-# unavailable, the same gate test-conf-toml.sh and test-spira-config.sh already carry.
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-[ -n "$CARGO_BIN" ] || skip "cargo not found — spira-config binary cannot be built"
-SPIRA_CONFIG_BIN="$HERE/../target/release/spira-config"
-if [ ! -x "$SPIRA_CONFIG_BIN" ]; then
-    CARGO_TARGET_DIR="$TMP/cargo-target" "$CARGO_BIN" build --release \
-        --manifest-path "$HERE/../spira-config/Cargo.toml" >/dev/null 2>&1
-    SPIRA_CONFIG_BIN="$TMP/cargo-target/release/spira-config"
-fi
-[ -x "$SPIRA_CONFIG_BIN" ] || bail "spira-config binary not found/built at $SPIRA_CONFIG_BIN"
+# spira-config (deploy.sh's SPIRA_PROD writer, PROPERTY 9) is the tree's own build, by name
+# on the suite's PATH, which every run below carries (sp-gypjk).
 
 RELEASES="$TMP/releases"
 RUN_DIR="$TMP/run"
@@ -177,8 +166,7 @@ chmod +x "$BIN/activate.sh"
 cat > "$BIN/install.sh" <<'IEOF'
 #!/usr/bin/env bash
 printf 'install SPIRA_PROD=%s SPIRA_HOME=%s\n' "${SPIRA_PROD:-UNSET}" "${SPIRA_HOME:-UNSET}" >> "${CALL_LOG:-/dev/null}"
-printf 'install-bins SPIRA_REPO=%s SPIRA_BROKER_BIN=%s SPIRA_LOOM_BIN=%s\n' \
-    "${SPIRA_REPO:-UNSET}" "${SPIRA_BROKER_BIN:-UNSET}" "${SPIRA_LOOM_BIN:-UNSET}" >> "${CALL_LOG:-/dev/null}"
+printf 'install-bins SPIRA_REPO=%s\n' "${SPIRA_REPO:-UNSET}" >> "${CALL_LOG:-/dev/null}"
 printf 'install-paths SPIRA_RUN=%s SPIRA_CTRL=%s SPIRA_TESTDB_DATA=%s SPIRA_WORKSPACES=%s SPIRA_MAIL=%s SPIRA_DOLT_DATA=%s\n' \
     "${SPIRA_RUN:-UNSET}" "${SPIRA_CTRL:-UNSET}" "${SPIRA_TESTDB_DATA:-UNSET}" \
     "${SPIRA_WORKSPACES:-UNSET}" "${SPIRA_MAIL:-UNSET}" "${SPIRA_DOLT_DATA:-UNSET}" >> "${CALL_LOG:-/dev/null}"
@@ -304,7 +292,6 @@ run_deploy() {
         "SPIRA_RUN=$RUN_DIR" \
         "SPIRA_CONF=/nonexistent" \
         "SPIRA_TOML=$TMP/nonexistent/spira.toml" \
-        "SPIRA_CONFIG_BIN=$SPIRA_CONFIG_BIN" \
         "SPIRA_RELEASES=$RELEASES" \
         "SPIRA_REPO=$FAKE_REPO" \
         "SPIRA_FORGE_REPO=testowner/testrepo" \
@@ -433,8 +420,8 @@ want   "rollback: restarts active unit onto prior release" \
        "SC --user restart spira-sentinel-prod.service" "$(cat "$SC_LOG")"
 # THE ROLLBACK'S RE-RENDER RESOLVES THE PRIOR RELEASE'S OWN BINARIES, as the forward one must
 # (PROPERTY 6b): the last install call is the rollback's.
-is "rollback: re-render runs with SPIRA_REPO = the restored release, derived binary paths cleared" \
-   "install-bins SPIRA_REPO=$RELEASES/current SPIRA_BROKER_BIN=UNSET SPIRA_LOOM_BIN=UNSET" \
+is "rollback: re-render runs with SPIRA_REPO = the restored release" \
+   "install-bins SPIRA_REPO=$RELEASES/current" \
    "$(grep '^install-bins' "$CALL_LOG" | tail -1)"
 
 # The symlink alone does not prove the units re-rendered during rollback actually resolved
@@ -555,16 +542,16 @@ else
 fi
 
 # PROPERTY 6b — THE RE-RENDER RESOLVES THE RELEASE'S BINARIES, NOT THE INVOKING CHECKOUT'S.
-# deploy.sh sources conf.sh, which derives and EXPORTS SPIRA_BROKER_BIN, SPIRA_LOOM_BIN, ...
+# deploy.sh sourced conf.sh, which then derived and EXPORTED per-tool binary paths (gone since sp-gypjk)
 # from the SPIRA_REPO it was run from. Handed on, the release's install.sh kept them (conf.sh
 # only fills unset keys): run from a source checkout with nothing built, units.sh found no
 # broker or loom binary and PRUNED spira-broker and spira-loom on every deploy — acceptance
 # phase C's rollback then failed its health check on "loom does not answer" and its unit set
-# came back without broker/loom (2026-09-26). The re-render gets SPIRA_REPO = the release,
-# and the derived binary paths are cleared so the release's own bin/ is what is resolved.
+# came back without broker/loom (2026-09-26). The re-render gets SPIRA_REPO = the release.
+# (There are no derived binary paths left to clear since sp-gypjk: tools go by name.)
 _got_bins="$(grep '^install-bins' "$CALL_LOG" 2>/dev/null | head -1)"
-is "re-render: SPIRA_REPO is the activated release, derived binary paths cleared" \
-   "install-bins SPIRA_REPO=$RELEASES/current SPIRA_BROKER_BIN=UNSET SPIRA_LOOM_BIN=UNSET" \
+is "re-render: SPIRA_REPO is the activated release" \
+   "install-bins SPIRA_REPO=$RELEASES/current" \
    "$_got_bins"
 
 # PROPERTY 6c — A UNIT THE TARGET RELEASE PRUNED LEAVES NO FAILED GHOST. Deploying an OLDER
@@ -1235,7 +1222,7 @@ _rdonly_out="$(env -i \
     "SPIRA_INSTALL_SH=$BIN/install.sh" \
     "SPIRA_COCKPIT_LAYOUT_SH=$BIN/layout.sh" \
     "SPIRA_DOCTOR_SH=$BIN/doctor.sh" \
-    "SPIRA_SKEW_SH=$HERE/skew.sh" \
+    "SPIRA_SKEW_SH=skew.sh" \
     "SPIRA_SLAY_SH=$BIN/slay.sh" \
     "CALL_LOG=$CALL_LOG" \
     "SC_LOG=$SC_LOG" \

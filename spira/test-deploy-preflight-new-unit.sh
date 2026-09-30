@@ -33,6 +33,9 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# The tree's tools for a minimal-PATH run (sp-gypjk): where this suite's PATH finds the
+# tree's build, and the tree's own spira/.
+TOOLS="$(dirname "$(command -v spira-config)"):$HERE"
 
 echo "test-deploy-preflight-new-unit.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -117,7 +120,7 @@ skew_out="$(env -i PATH="$PATH" HOME="$TMP/home" \
     SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
     SPIRA_DOLT_DATA="" \
     SPIRA_TESTDB_DATA="" \
-    bash "$HERE/skew.sh" units)"; skew_rc=$?
+    skew.sh units)"; skew_rc=$?
 is   "skew.sh units: also catches the withheld unit" "1" "$skew_rc"
 want "skew.sh units: also names it MISSING" "MISSING" "$skew_out"
 
@@ -159,7 +162,7 @@ touch "$TMP/run/cockpit.env"
 
 run_doctor() {
     env -i \
-        PATH="/usr/local/bin:/usr/bin:/bin" \
+        PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" \
         HOME="$TMP/doctor-home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_PATH="$TMP" \
@@ -171,7 +174,7 @@ run_doctor() {
         SPIRA_OPERATED=0 \
         SPIRA_DOCTOR=1 \
         SPIRA_DOLT_DATA="" \
-        bash "$HERE/doctor.sh" 2>&1
+        doctor.sh 2>&1
 }
 
 doctor_out="$(run_doctor)"; doctor_rc=$?

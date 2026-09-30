@@ -608,14 +608,13 @@ is "gap2/python3-failure-falls-back-to-no-fences" "<>" "$nopy_out"
 echo
 echo "testenv suites quarantine refuses from an aeon session (not a UC in the catalogue; ported as-is):"
 # ===========================================================================
-: "${SPIRA_TESTENV_BIN:=$(. "$HERE/conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_TESTENV_BIN:-}")}"
-[ -x "${SPIRA_TESTENV_BIN:-}" ] || bad "suites-quarantine/testenv-binary-built" "SPIRA_TESTENV_BIN not executable: ${SPIRA_TESTENV_BIN:-<unset>}"
+command -v testenv >/dev/null 2>&1 || bad "suites-quarantine/testenv-on-path" "testenv is not on PATH"
 out_c0="$(SPIRA_AEON="" SPIRA_CONF=/nonexistent SPIRA_RUN="$FAKE_RUN" \
-    "$SPIRA_TESTENV_BIN" suites quarantine nonexistent-suite.sh bead-id "reason" 2>&1 || true)"
+    testenv suites quarantine nonexistent-suite.sh bead-id "reason" 2>&1 || true)"
 nowant "suites-quarantine/silent-without-SPIRA_AEON" "aeons may not" "$out_c0"
 
 out_c1="$(SPIRA_AEON=test-aeon SPIRA_CONF=/nonexistent SPIRA_RUN="$FAKE_RUN" \
-    "$SPIRA_TESTENV_BIN" suites quarantine nonexistent-suite.sh bead-id "reason" 2>&1)"
+    testenv suites quarantine nonexistent-suite.sh bead-id "reason" 2>&1)"
 rc_c1=$?
 is   "suites-quarantine/exits-nonzero-in-aeon-session" 1               "$rc_c1"
 want "suites-quarantine/names-aeons-may-not"           "aeons may not" "$out_c1"

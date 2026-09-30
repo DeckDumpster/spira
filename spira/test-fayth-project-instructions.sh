@@ -110,7 +110,7 @@ env -i HOME="$TMP/home" PATH="$PATH" \
     SPIRA_AGENT="$BIN/claude" \
     SPIRA_WIKI="$WIKI_DIR" \
     TMP="$TMP" \
-    bash "$HERE/archivist.sh" now "$PROJ_DIR/test-session.jsonl" 2>/dev/null || true
+    archivist.sh now "$PROJ_DIR/test-session.jsonl" 2>/dev/null || true
 argv_arc_wiki="$(cat "$TMP/claude-argv" 2>/dev/null || true)"
 
 want "archivist: --add-dir in argv when SPIRA_WIKI set" "--add-dir"  "$argv_arc_wiki"
@@ -131,7 +131,7 @@ env -i HOME="$TMP/home" PATH="$PATH" \
     SPIRA_CHAMBER="$HERE/chamber" \
     SPIRA_AGENT="$BIN/claude" \
     TMP="$TMP" \
-    bash "$HERE/archivist.sh" now "$PROJ_DIR/test-session.jsonl" 2>/dev/null || true
+    archivist.sh now "$PROJ_DIR/test-session.jsonl" 2>/dev/null || true
 argv_arc_nowiki="$(cat "$TMP/claude-argv" 2>/dev/null || true)"
 
 nowant "archivist: no --add-dir when SPIRA_WIKI unset" "--add-dir" "$argv_arc_nowiki"

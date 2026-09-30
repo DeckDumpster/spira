@@ -24,11 +24,12 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+# The tree's tools for a minimal-PATH run (sp-gypjk): where this suite's PATH finds the
+# tree's build, and the tree's own spira/.
+TOOLS="$(dirname "$(command -v spira-config)"):$HERE"
 # The gate tree's key: the branch with anything outside [A-Za-z0-9.-] made `-` (gate/src/parse.rs
 # tree_key, unit-tested there; gate-lib.sh's gate_tree_key retired with sp-0tpcs).
 gate_tree_key() { printf '%s' "$1" | tr '/' '-' | tr -c 'A-Za-z0-9.-' '-'; }
-# The gate is the Rust binary gate.sh execs: the tree under test's build, else bin/.
-GATE_BIN="${SPIRA_GATE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/gate}"
 
 command -v flock >/dev/null 2>&1 || { echo "  SKIP  flock is not on PATH"; exit 77; }
 
@@ -72,11 +73,11 @@ printf 'repo | %s | push | origin/main |  | %s\n' "$REPO" "$CMD" > "$MAP"
 
 rungate() {              # rungate <branch> [VAR=VAL ...]
     local br="$1"; shift
-    env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
+    env -i HOME="$HOMEDIR" PATH="$SH:$TOOLS:/usr/bin:/bin" \
         GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
         SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         SPIRA_DB="$TMP/nonexistent-db" SPIRA_REPO_MAP="$MAP" SPIRA_GATE_LOG="$GATELOG" \
-        SPIRA_VERDICTS="$VDIR" SPIRA_VERDICT_TTL=0 SPIRA_GATE_BIN="$GATE_BIN" \
+        SPIRA_VERDICTS="$VDIR" SPIRA_VERDICT_TTL=0 \
         "$@" bash "$SH/gate.sh" "$br" repo
 }
 

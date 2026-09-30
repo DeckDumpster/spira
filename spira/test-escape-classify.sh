@@ -153,7 +153,7 @@ file_gap() {
         SPIRA_MAIL="$TMP/mail" \
         SPIRA_REPO_MAP="$REPO_MAP" \
         SPIRA_INCIDENT_REPO="spira" \
-        bash "$HERE/escape-classify.sh" record --member mem-a --suite test-esc-miss.sh \
+        escape-classify.sh record --member mem-a --suite test-esc-miss.sh \
             --class mapping_gap --paths spira/touched.sh --evidence "test fixture" \
             >/dev/null 2>&1
 }

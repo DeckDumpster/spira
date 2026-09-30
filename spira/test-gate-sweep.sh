@@ -11,6 +11,9 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+# The tree's tools for a minimal-PATH run (sp-gypjk): where this suite's PATH finds the
+# tree's build, and the tree's own spira/.
+TOOLS="$(dirname "$(command -v spira-config)"):$HERE"
 . "$HERE/testlib/gate-fixture.sh"
 
 command -v flock >/dev/null 2>&1 || { echo "  SKIP  flock is not on PATH"; exit 77; }
@@ -23,7 +26,7 @@ TREE="$RUN/worktree/.gate.$(basename "$REPO")"
 echo "test-gate-sweep.sh — gate-sweep.sh removes stale gate worktrees"
 
 run_sweep() {
-    env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
+    env -i HOME="$HOMEDIR" PATH="$SH:$TOOLS:/usr/bin:/bin" \
         SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         SPIRA_DB="$SPIRA_DB_NONE" \
         bash "$SH/gate-sweep.sh" "$REPO" "$@" 2>&1
@@ -96,7 +99,7 @@ PS_EMPTY="$TMP/ps-empty.txt"; touch "$PS_EMPTY"
 PS_LIVE="$TMP/ps-live.txt"
 
 run_sweep_batch() {
-    env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
+    env -i HOME="$HOMEDIR" PATH="$SH:$TOOLS:/usr/bin:/bin" \
         SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         SPIRA_DB="$SPIRA_DB_NONE" \
         SPIRA_SUITE_TIMEOUT="${1}" \

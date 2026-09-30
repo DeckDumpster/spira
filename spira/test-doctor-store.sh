@@ -34,6 +34,9 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+# The tree's tools for a minimal-PATH run (sp-gypjk): where this suite's PATH finds the
+# tree's build, and the tree's own spira/.
+TOOLS="$(dirname "$(command -v spira-config)"):$HERE"
 
 echo "test-doctor-store.sh"
 SRV_PID=""
@@ -73,7 +76,7 @@ make_systemctl active
 run_doctor() {
     local extra="${1:-}"
     env -i \
-        PATH="/usr/local/bin:/usr/bin:/bin" \
+        PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_PATH="$BIN" \
@@ -84,7 +87,7 @@ run_doctor() {
         SPIRA_INSTANCE=prod \
         SPIRA_DOLT_DATA="${SPIRA_DOLT_DATA_OVERRIDE-}" \
         ${extra} \
-        bash "$HERE/doctor.sh" 2>/dev/null
+        doctor.sh 2>/dev/null
 }
 store_section() { sed -n '/^store$/,/^$/p' <<< "$1"; }
 

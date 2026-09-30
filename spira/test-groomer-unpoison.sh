@@ -32,7 +32,6 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-GROOMSH="$HERE/groomer.sh"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
 RUN="$T/run"; mkdir -p "$RUN"
@@ -48,7 +47,8 @@ exit 0
 STUB
 chmod +x "$STUB_BD"
 
-STUB_CLAIM="$T/stub-spira-claim"
+STUB_DIR="$T/stubbin"; mkdir -p "$STUB_DIR"
+STUB_CLAIM="$STUB_DIR/spira-claim"   # found by name, first on run_groomer's PATH (sp-gypjk)
 CLAIM_LOG="$T/claim.log"
 cat > "$STUB_CLAIM" <<'STUB'
 #!/usr/bin/env bash
@@ -63,15 +63,14 @@ STUB
 chmod +x "$STUB_CLAIM"
 
 run_groomer() {
-    env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    env -i HOME="$T" PATH="$STUB_DIR:$HERE:/usr/bin:/bin" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
-        SPIRA_CLAIM_BIN="$STUB_CLAIM" \
         CLAIM_LOG_PATH="$CLAIM_LOG" \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_RUN="$RUN" \
-        bash "$GROOMSH" "$@" 2>&1
+        groomer.sh "$@" 2>&1
 }
 
 echo "test-groomer-unpoison.sh"

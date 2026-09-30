@@ -28,7 +28,6 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-GROOMSH="$HERE/groomer.sh"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
 RUN="$T/run"; mkdir -p "$RUN"
@@ -59,7 +58,7 @@ run_groomer() {
         BD_LOG_PATH="$BD_LOG" \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_RUN="$RUN" \
-        bash "$GROOMSH" "$@" 2>&1
+        groomer.sh "$@" 2>&1
 }
 
 echo "test-groomer-poison-triage.sh"

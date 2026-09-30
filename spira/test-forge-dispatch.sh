@@ -14,6 +14,9 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# The tree's tools for a minimal-PATH run (sp-gypjk): where this suite's PATH finds the
+# tree's build, and the tree's own spira/.
+TOOLS="$(dirname "$(command -v spira-config)"):$HERE"
 
 echo "test-forge-dispatch.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -40,10 +43,10 @@ DISPATCH_LOG="$TMP/dispatch-log"
 : > "$DISPATCH_LOG"
 
 dispatch() {   # dispatch <ref> <suites-csv> [rc]
-    env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
+    env -i PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
         SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh" \
         DISPATCH_LOG="$DISPATCH_LOG" DISPATCH_RC="${3:-0}" \
-        bash "$HERE/forge.sh" dispatch "$TMP/repo" "$1" "$2" 2>/dev/null
+        forge.sh dispatch "$TMP/repo" "$1" "$2" 2>/dev/null
 }
 
 echo
@@ -65,9 +68,9 @@ is "dispatch propagates a failing gh exit code" "1" "$?"
 
 echo
 echo "positive control — dispatch refuses with no ref rather than guessing one:"
-out_noref="$(env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
+out_noref="$(env -i PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
     SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh" DISPATCH_LOG="$DISPATCH_LOG" \
-    bash "$HERE/forge.sh" dispatch "$TMP/repo" "" "test-owned.sh" 2>&1)"
+    forge.sh dispatch "$TMP/repo" "" "test-owned.sh" 2>&1)"
 is "dispatch with no ref exits 1" "1" "$?"
 want "dispatch with no ref names the missing argument" "ref required" "$out_noref"
 
@@ -77,10 +80,10 @@ ARTIFACTS_JSON=""
 ARTIFACT_ZIP=""
 
 fail_lines() {   # fail_lines <run-id> <suites-space-sep>
-    env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
+    env -i PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
         SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh" \
         ARTIFACTS_JSON="${ARTIFACTS_JSON:-}" ARTIFACT_ZIP="${ARTIFACT_ZIP:-}" \
-        bash "$HERE/forge.sh" fail-lines "$TMP/repo" "$1" "$2" 2>/dev/null
+        forge.sh fail-lines "$TMP/repo" "$1" "$2" 2>/dev/null
 }
 
 python3 -c "

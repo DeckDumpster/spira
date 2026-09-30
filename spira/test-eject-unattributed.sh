@@ -121,13 +121,13 @@ esac
 FORGE
 chmod +x "$SH/forge-fixture.sh"
 
-cat > "$SH/testenv-stub" <<'SUITES'
+# testenv suites observe-flake is the binary now (testenv/DESIGN-suites.md §9 rows 3-4); the
+# stub is found by name, first on the PATH verdict() runs with (sp-gypjk).
+cat > "$SH/testenv" <<'SUITES'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$SUITES_LOG"
 SUITES
-chmod +x "$SH/testenv-stub"
-# testenv suites observe-flake is the binary now (testenv/DESIGN-suites.md §9 rows 3-4).
-export SPIRA_TESTENV_BIN="$SH/testenv-stub"
+chmod +x "$SH/testenv"
 
 cat > "$SH/mail.sh" <<'MAIL'
 #!/usr/bin/env bash
@@ -137,7 +137,7 @@ MAIL
 chmod +x "$SH/mail.sh"
 
 verdict() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \

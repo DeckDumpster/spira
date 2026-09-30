@@ -28,7 +28,6 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 echo "test-exclude.sh"
 
-EXCLUDE="$HERE/exclude.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # A path list carrying the harness signature (boundary + gate.sh + lib.sh in one
@@ -42,13 +41,13 @@ SIGNATURE=$'spira/boundary\nspira/gate.sh\nspira/lib.sh\n'
 # every path in scope and the narrowing assertion vacuous.
 NESTED_SIGNATURE=$'vendor/spira/boundary\nvendor/spira/gate.sh\nvendor/spira/lib.sh\n'
 
-filter_with() { printf '%s' "$1" | bash "$EXCLUDE" filter; }
+filter_with() { printf '%s' "$1" | exclude.sh filter; }
 
 # ===========================================================================
 echo
 echo "FAIL-CLOSED — no harness signature in the path list:"
 # ===========================================================================
-out="$(printf 'a/b.txt\nc/d.jsonl\n' | bash "$EXCLUDE" filter 2>&1)"; rc=$?
+out="$(printf 'a/b.txt\nc/d.jsonl\n' | exclude.sh filter 2>&1)"; rc=$?
 is   "no signature: filter exits 3, refusing to guard nothing" "3" "$rc"
 want "no signature: says why"                                  "nothing to guard" "$out"
 
@@ -114,11 +113,11 @@ git -C "$WIDEROOT" config user.name t
 git -C "$WIDEROOT" add -A
 git -C "$WIDEROOT" commit -q -m init
 
-out="$(git -C "$WIDEROOT" ls-files | bash "$EXCLUDE" filter 2>&1)"; rc=$?
+out="$(git -C "$WIDEROOT" ls-files | exclude.sh filter 2>&1)"; rc=$?
 is   "sp-aoads: filter on a root-level .beads/ (widened) reports it" "0" "$rc"
 want "sp-aoads: filter names the offending path"                     ".beads/config.yaml" "$out"
 
-crc=0; bash "$EXCLUDE" check "$WIDEROOT" >/dev/null 2>&1 || crc=$?
+crc=0; exclude.sh check "$WIDEROOT" >/dev/null 2>&1 || crc=$?
 is "check on the identical tree also refuses (same scope as filter now)" "1" "$crc"
 
 # ===========================================================================
@@ -141,7 +140,7 @@ git -C "$REPO" commit -q -m init
 mkdir -p "$REPO/.beads"
 echo x > "$REPO/.beads/config.yaml"
 git -C "$REPO" add -A
-out="$(bash "$EXCLUDE" staged "$REPO" 2>&1)"; rc=$?
+out="$(exclude.sh staged "$REPO" 2>&1)"; rc=$?
 is   "POSITIVE: staged root-level .beads/config.yaml → staged refuses" "1" "$rc"
 want "POSITIVE: refusal names the offending path"                      ".beads/config.yaml" "$out"
 want "POSITIVE: refusal names the override"                            "git restore --staged" "$out"
@@ -151,7 +150,7 @@ git -C "$REPO" clean -qfdx
 # SEEN GREEN: a clean stage passes.
 echo more >> "$REPO/spira/lib.sh"
 git -C "$REPO" add -A
-out="$(bash "$EXCLUDE" staged "$REPO" 2>&1)"; rc=$?
+out="$(exclude.sh staged "$REPO" 2>&1)"; rc=$?
 is "clean stage: staged exits 0" "0" "$rc"
 
 tl_summary

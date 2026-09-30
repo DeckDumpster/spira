@@ -65,7 +65,7 @@ run_gate_check() {
         SPIRA_PATH="$TMP/sbin" \
         SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_CONF="$TMP/no.conf" \
         SPIRA_FLAKY_GH_REPO="test-org/test-repo" \
-        bash "$HERE/gate-check.sh" 2>/dev/null
+        gate-check.sh 2>/dev/null
 }
 
 # --------------------------------------------------------------------------------------

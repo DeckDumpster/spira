@@ -36,7 +36,7 @@ run_doctor() {
         SPIRA_INSTANCE=prod \
         SPIRA_DOCTOR_INSTALLING=1 \
         SPIRA_DUCKDB_BIN="${SPIRA_DUCKDB_BIN_OVERRIDE:-duckdb}" \
-        bash "$HERE/doctor.sh" 2>&1
+        doctor.sh 2>&1
 }
 tsd_section() { sed -n '/^time series query layer$/,/^$/p' <<< "$1"; }
 

@@ -42,7 +42,6 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-TRIGSH="$HERE/groom-trigger.sh"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
 
@@ -99,7 +98,7 @@ run_trigger() {
         SPIRA_DB="$T/fixture.db" \
         SPIRA_RUN="$T/run" \
         SPIRA_REPO_MAP="$GROOM_MAP" \
-        bash "$TRIGSH" "$@" 2>&1
+        groom-trigger.sh "$@" 2>&1
 }
 
 # ==========================================================================================
@@ -164,7 +163,7 @@ out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
         SPIRA_RUN="$T/run" \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_REPO_MAP="$GROOM_MAP" \
-        bash "$TRIGSH" 2>&1)"; rc=$?
+        groom-trigger.sh 2>&1)"; rc=$?
 is   "create failure exits 1" 1 "$rc"
 want "failure log mentions ERROR" "ERROR" "$out"
 
@@ -188,7 +187,7 @@ out="$(BD_LIST_OUTPUT="[]" \
         SPIRA_REPO_MAP="$GROOM_MAP" \
         SPIRA_SCOPE_LABEL="myproject" \
         SPIRA_GROOMER_LABEL="hygiene" \
-    bash "$TRIGSH" 2>&1)"; rc=$?
+    groom-trigger.sh 2>&1)"; rc=$?
 is   "custom labels exits 0"                        0           "$rc"
 want "custom scope label in create args"            "myproject" "$(cat "$BD_LOG")"
 want "custom groomer label in create args"          "hygiene"   "$(cat "$BD_LOG")"
@@ -218,7 +217,7 @@ out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
         SPIRA_REPO_MAP="$GROOM_MAP" \
         SPIRA_SCOPE_LABEL="" \
         SPIRA_GROOMER_LABEL="groom" \
-    bash "$TRIGSH" 2>&1)"; rc=$?
+    groom-trigger.sh 2>&1)"; rc=$?
 is     "empty scope exits 0"               0     "$rc"
 nowant "no leading comma in labels"        ",groom" "$(grep 'create' "$BD_LOG")"
 want   "groomer label present without scope" "groom" "$(cat "$BD_LOG")"
@@ -243,7 +242,7 @@ out_ng="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_REPO_MAP="$CONSUME_MAP" \
     SPIRA_HOME_REPO="home-tg" \
     SPIRA_GROOMER_LABEL="groom" \
-    bash "$TRIGSH" 2>&1)"; rc_ng=$?
+    groom-trigger.sh 2>&1)"; rc_ng=$?
 is     "no-groom-map: trigger exits 0"        0 "$rc_ng"
 nowant "no-groom-map: no bd create call"      "create" "$(cat "$BD_LOG")"
 want   "no-groom-map: logs skipping trigger"  "skipping trigger" "$out_ng"
@@ -260,7 +259,7 @@ out_gp="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_RUN="$T/run" \
     SPIRA_REPO_MAP="$GROOM_MAP" \
     SPIRA_GROOMER_LABEL="groom" \
-    bash "$TRIGSH" 2>&1)"; rc_gp=$?
+    groom-trigger.sh 2>&1)"; rc_gp=$?
 is   "groom-admitted map: trigger exits 0"      0        "$rc_gp"
 want "groom-admitted map: bd create is called"  "create" "$(cat "$BD_LOG")"
 
@@ -304,7 +303,7 @@ out_t2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_RUN="$T/run" \
     SPIRA_REPO_MAP="$GROOM_MAP" \
     SPIRA_GROOM_THRESHOLD="2" \
-    bash "$TRIGSH" 2>&1)"; rc_t2=$?
+    groom-trigger.sh 2>&1)"; rc_t2=$?
 is   "threshold=2, score=2: exits 0"        0        "$rc_t2"
 want "threshold=2, score=2: create called"  "create" "$(cat "$BD_LOG")"
 : > "$BD_LOG"
@@ -318,7 +317,7 @@ out_t3="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_RUN="$T/run" \
     SPIRA_REPO_MAP="$GROOM_MAP" \
     SPIRA_GROOM_THRESHOLD="3" \
-    bash "$TRIGSH" 2>&1)"; rc_t3=$?
+    groom-trigger.sh 2>&1)"; rc_t3=$?
 is     "threshold=3, score=2: exits 0"          0         "$rc_t3"
 nowant "threshold=3, score=2: no create call"   "create"  "$(cat "$BD_LOG")"
 want   "threshold=3, score=2: logs no-pass"     "no-pass" "$out_t3"
