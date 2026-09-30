@@ -9,9 +9,11 @@ pub trait Alarm {
     fn raise(&self, reason: &str);
 }
 
-/// Mails through the harness's own `mail.sh send` (a subprocess, never reimplemented).
+/// Mails through the harness's own `mail.sh send` (a subprocess, never reimplemented),
+/// invoked by name on the launcher's PATH (sp-gypjk); `mail` is a field only so a unit test
+/// can hand in a recorder.
 pub struct MailAlarm {
-    pub spira_home: Option<PathBuf>,
+    pub mail: PathBuf,
     pub mailbox: String,
     pub retry_secs: u64,
 }
@@ -23,12 +25,8 @@ pub fn alarm_body(reason: &str, retry_secs: u64) -> String {
 impl Alarm for MailAlarm {
     fn raise(&self, reason: &str) {
         eprintln!("round-vm: outage: {reason}");
-        let Some(home) = &self.spira_home else {
-            eprintln!("round-vm: SPIRA_HOME not set — the outage alarm cannot be mailed");
-            return;
-        };
-        let mail = home.join("mail.sh");
-        let child = crate::procs::command(&mail)
+        let mail = &self.mail;
+        let child = crate::procs::command(mail)
             .arg("send")
             .arg(&self.mailbox)
             .arg("--from")
@@ -64,7 +62,7 @@ mod tests {
         let log = d.path().join("log");
         let mail = d.path().join("mail.sh");
         testkit::write_exe(&mail, &format!("#!/bin/sh\necho \"$@\" > {0}\ncat >> {0}\n", log.display()));
-        MailAlarm { spira_home: Some(d.path().into()), mailbox: "operator".into(), retry_secs: 60 }
+        MailAlarm { mail: mail.clone(), mailbox: "operator".into(), retry_secs: 60 }
             .raise("API unreachable (nextid)");
         let got = std::fs::read_to_string(&log).unwrap();
         assert!(got.starts_with("send operator --from Round VM <round-vm@spira> --subject round VM outage: API unreachable (nextid) --kind alert"), "{got}");
