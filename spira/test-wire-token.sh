@@ -104,7 +104,7 @@ spec = importlib.util.spec_from_file_location("cockpit_metrics", "'"$METRICS"'")
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 from datetime import datetime, timezone
-lines = ["2026-09-10T00:00:00Z spira: state: goal=sp-x open=0 plan_ready=0 in_progress=0 aeons=0",
+lines = ["2026-09-10T00:00:00Z spira: state: open=0 plan_ready=0 in_progress=0 aeons=0",
          "'"$FIXTURE_LINE"'"]
 now = datetime(2026, 9, 10, 0, 5, 0, tzinfo=timezone.utc)
 since = datetime(2026, 9, 9, 0, 0, 0, tzinfo=timezone.utc)

@@ -152,7 +152,7 @@ testdb_require test-tsd-producers
 testdb_up tsd_producers || { echo "test-tsd-producers: could not build fixture"; exit 1; }
 testdb_reset
 testdb_seed <<'JSONL'
-{"id":"sp-goal2","title":"goal","status":"open","issue_type":"epic","labels":["plan"]}
+{"id":"sp-epic2","title":"epic","status":"open","issue_type":"epic","labels":["plan"]}
 {"id":"sp-c1","title":"bead 1","status":"open","issue_type":"task","labels":["plan"]}
 {"id":"sp-c2","title":"bead 2","status":"open","issue_type":"task","labels":["plan"]}
 JSONL
@@ -181,7 +181,6 @@ out_pass="$(env -i \
     SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="$SPIRA_BD" \
     SPIRA_PATH="$SPIRA_PATH" \
-    SPIRA_GOAL="sp-goal2" \
     SPIRA_SKIP_RECLAIM=1 \
     SPIRA_LAND_STALE=999999 \
     SPIRA_SYSTEMCTL="$SP_STUBS/mock-systemctl" \
@@ -193,8 +192,8 @@ out_pass="$(env -i \
 rc=$?
 _pass_wall=$(( $(date +%s) - _pass_t0 ))
 is   "sentinel pass exits 0"                       "0"            "$rc"
-want "sentinel pass reaches goal reached (SPIRA_SKIP_RECLAIM forces n_open=0)" \
-     "goal reached" "$out_pass"
+want "sentinel pass runs to completion (SPIRA_SKIP_RECLAIM forces open=0)" \
+     "pass complete — " "$out_pass"
 
 FAM_SP="$SP_RUN/tsd/sentinel-phase.jsonl"
 [ -f "$FAM_SP" ] && ok "sentinel-phase rows appended" \

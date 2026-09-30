@@ -174,12 +174,9 @@ printf '\nT6: canary-worker claims and closes a bead\n'
         || { printf '  FATAL: stage up failed\n'; exit 1; }
     trap 'release stage down "$STAGE_ROOT" 2>/dev/null' EXIT
 
-    # Create a goal epic and a plan bead
+    # Create an unparented plan bead (there is no goal epic, sp-k6m1m)
     # hermetic-ok: $SPIRA_DB is the stage database — always a mktemp temp dir from stage.sh up
-    goal="$(bd -C "$SPIRA_DB" create "t6 goal" --type epic --silent 2>/dev/null \
-        | tr -d '[:space:]')"
-    # hermetic-ok: $SPIRA_DB is the stage database — always a mktemp temp dir from stage.sh up
-    bead="$(bd -C "$SPIRA_DB" create "t6 task" --type task --parent "$goal" \
+    bead="$(bd -C "$SPIRA_DB" create "t6 task" --type task \
         --labels "spira,plan" --silent 2>/dev/null | tr -d '[:space:]')"
     [ -n "$bead" ] || { printf '  FATAL: could not create bead\n'; exit 1; }
 

@@ -139,7 +139,6 @@ run_ready() {
         SPIRA_DB="$DB" \
         SPIRA_SYSTEMCTL="$BIN/systemctl" \
         SPIRA_BD="$BIN/bd" \
-        SPIRA_GOAL="sp-test" \
         SPIRA_INSTANCE="prod" \
         SPIRA_LOOM_ADDR="127.0.0.1:8788" \
         SPIRA_LOOM_BUDGET_MS="1500" \

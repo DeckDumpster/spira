@@ -116,6 +116,7 @@ CONF3="$ROOT3/spira.conf"; TOML3="$ROOT3/spira.toml"
 INST3="test$$-b"
 cat > "$TOML3" <<'EOF'
 [spira]
+id_prefix = "sp"
 max_aeons = 4
 EOF
 

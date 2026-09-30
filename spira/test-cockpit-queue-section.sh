@@ -117,7 +117,7 @@ queue() {
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$REPO" SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+        SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
         SPIRA_QUEUE_DIR="$TMP/queue" \
         SPIRA_SUITE_STATE_FILE="spira/suite-state-test" \
         SPIRA_BDJSON_FIXTURE="$TMP/beads.json" \
@@ -226,7 +226,7 @@ out2="$(env -i PATH="$BASE_PATH" HOME="$TMP2" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP2/no.conf" SPIRA_HOME="$HERE" \
     SPIRA_REPO="$REPO2" SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
     SPIRA_RUN="$RUN2" SPIRA_DB="$TMP2/nodb" \
-    SPIRA_REPO_MAP="$MAP2" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_REPO_MAP="$MAP2" SPIRA_FAYTHS=t \
     SPIRA_QUEUE_DIR="$TMP2/queue" \
     SPIRA_BDJSON_FIXTURE="$BEADS2_JSON" \
     cockpit.sh queue 2>/dev/null)"

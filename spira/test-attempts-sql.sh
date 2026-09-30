@@ -188,7 +188,7 @@ SH_C4="$TMP/spira-c4"; mkdir -p "$SH_C4/chamber"
 printf 'FAYTH_LABELS="spira,plan"\nFAYTH_EXCLUDE_LABELS="spira-poison"\nFAYTH_MAX_CONCURRENT=0\n' \
     > "$SH_C4/chamber/t.fayth"
 bulk_predicate() {
-    SPIRA_HOME="$SH_C4" SPIRA_RUN="$TMP/run-c4" SPIRA_DB="$SPIRA_DB" SPIRA_GOAL=sp-goal \
+    SPIRA_HOME="$SH_C4" SPIRA_RUN="$TMP/run-c4" SPIRA_DB="$SPIRA_DB" \
     SPIRA_FAYTHS="t" bash -c ". \"$HERE/lib.sh\"; $1" 2>/dev/null
 }
 bulk_c4="$(bulk_predicate 'check4_bulk_data "c1	spira,plan
@@ -237,7 +237,7 @@ SH="$TMP/spira"; mkdir -p "$SH/chamber"
 printf 'FAYTH_LABELS="spira,plan"\nFAYTH_EXCLUDE_LABELS="spira-poison"\nFAYTH_MAX_CONCURRENT=0\n' \
     > "$SH/chamber/t.fayth"
 lib_predicate() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" SPIRA_GOAL=sp-goal \
+    SPIRA_HOME="$SH" SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" \
     SPIRA_FAYTHS="t" bash -c ". \"$HERE/lib.sh\"; $1" 2>/dev/null
 }
 testdb_reset

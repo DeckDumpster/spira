@@ -94,7 +94,6 @@ run_cut() {   # run_cut [args] -> stdout
         SPIRA_RUN="$TMP/run" \
         SPIRA_REPO_MAP="$REPO_MAP" \
         SPIRA_REPO="$SH" \
-        SPIRA_GOAL=sp-goal \
         SPIRA_ID_PREFIX=sp \
         bash "$SH/release.sh" cut "$@" 2>&1
 }
@@ -105,7 +104,6 @@ run_show() {  # run_show <tag> -> stdout
         SPIRA_RUN="$TMP/run" \
         SPIRA_REPO_MAP="$REPO_MAP" \
         SPIRA_REPO="$SH" \
-        SPIRA_GOAL=sp-goal \
         SPIRA_ID_PREFIX=sp \
         bash "$SH/release.sh" show "$@" 2>&1
 }

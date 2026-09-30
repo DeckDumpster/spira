@@ -255,7 +255,7 @@ testdb_require test-summon-fast-path
 testdb_up summon_fast || { echo "test-summon-fast-path: could not build fixture"; exit 1; }
 testdb_reset
 testdb_seed <<'JSONL'
-{"id":"sp-goal1","title":"goal","status":"open","issue_type":"epic","labels":["plan"]}
+{"id":"sp-epic1","title":"epic","status":"open","issue_type":"epic","labels":["plan"]}
 {"id":"sp-b1","title":"bead 1","status":"open","issue_type":"task","labels":["plan"]}
 {"id":"sp-b2","title":"bead 2","status":"open","issue_type":"task","labels":["plan"]}
 JSONL
@@ -293,7 +293,6 @@ run_summon_only() {   # run_summon_only <run-dir> [KEY=VAL ...]
         SPIRA_RUN="$run" \
         SPIRA_DB="$SPIRA_DB" \
         SPIRA_BD="$DSTUBS/counting-bd" \
-        SPIRA_GOAL="sp-goal1" \
         SPIRA_SUMMON="$DSTUBS/mock-summon" \
         SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL= SPIRA_MAX_AEONS=2 \
         "$@" \
@@ -323,7 +322,7 @@ is "D: pool=2 -> exactly 2 summons (elastic fill, bounded by the pool)" "2" "$(g
 is "D: exactly ONE bd call fetched the ready set" "1" "$(grep -c ' ready ' "$BD_CALL_LOG" 2>/dev/null || echo 0)"
 want "D: the one call was a ready query" "ready" "$(cat "$BD_CALL_LOG" 2>/dev/null)"
 want "D: log reports the summon-only pass" "summon-only pass complete" "$out_d1"
-nowant "D: no full-pass state line" "state: goal=" "$out_d1"
+nowant "D: no full-pass state line" "state: open=" "$out_d1"
 nowant "D: no full-pass CHECK7c" "CHECK7c" "$out_d1"
 nowant "D: no Sending" "sending:" "$out_d1"
 

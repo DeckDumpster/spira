@@ -43,7 +43,7 @@ sphere() {    # sphere <fixture-file>
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_BDJSON_FIXTURE="$1" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-goal SPIRA_FAYTHS=t \
+        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
         SPIRA_SCOPE_LABEL="$SCOPE_LABEL" \
         SPIRA_ASK_LABEL=needs-ryan \
         cockpit.sh sphere 2>/dev/null

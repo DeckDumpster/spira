@@ -91,7 +91,6 @@ testdb_up holds || {
 
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such-conf"
-export SPIRA_GOAL=sp-goal
 
 REPO="$TMP/repo"
 git init -q "$REPO"
@@ -125,7 +124,7 @@ printf 'fixture | %s | queue | | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-20T00:00:00Z"}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-20T00:00:00Z"}
 {"id":"tst-holder","title":"holder bead","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-20T00:00:00Z"}
 {"id":"tst-closed","title":"closed bead","status":"closed","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-20T00:00:00Z"}
 JSONL
@@ -201,7 +200,7 @@ _t5_lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-pl
 
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-20T00:00:00Z"}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-20T00:00:00Z"}
 {"id":"tst-holder","title":"holder bead","status":"open","issue_type":"task","labels":[$_t5_lbl],"updated_at":"2026-09-20T00:00:00Z"}
 {"id":"tst-claim","title":"claim bead","description":"a case in spira/batch.sh needs one more branch","status":"open","issue_type":"task","labels":[$_t5_lbl,"repo:fixture"],"updated_at":"2026-09-20T00:00:00Z"}
 JSONL

@@ -47,7 +47,7 @@ echo "control: today's grouped (several-keys-per-line) shape CONFLICTS:"
 # Reproduces the shape SPIRA_CONF_KEYS had before this bead: several keys sharing one
 # line. Two branches each append a distinct key to that SAME line — the independent-edit
 # case the bead's evidence names (sp-zs04v.3/.4, sp-o9nkc, sp-umcjk, sp-xsl8i, sp-5dcpj).
-GROUPED='SPIRA_HOME_REPO SPIRA_DB SPIRA_RUN SPIRA_GOAL
+GROUPED='SPIRA_HOME_REPO SPIRA_DB SPIRA_RUN SPIRA_ID_PREFIX
 SPIRA_PATH SPIRA_WORKSPACES SPIRA_REPO_MAP
 SPIRA_MAIL SPIRA_MAIL_KINDS'
 OLD="$TMP/old-repo"
@@ -73,8 +73,8 @@ echo
 echo "fix: one key per line merges cleanly and both keys resolve:"
 # =============================================================================
 ONE_PER_LINE='SPIRA_DB
-SPIRA_GOAL
 SPIRA_HOME_REPO
+SPIRA_ID_PREFIX
 SPIRA_MAIL
 SPIRA_MAIL_KINDS
 SPIRA_PATH
@@ -86,7 +86,7 @@ repo_with "$NEW" "$ONE_PER_LINE"
 # Sorted insertion, mirroring how a real branch would add a key to conf.sh's sorted list.
 add_and_commit "$NEW" alpha 's/^SPIRA_WORKSPACES$/SPIRA_WORKSPACES\nSPIRA_ZZTEST_ALPHA/' \
     "add SPIRA_ZZTEST_ALPHA"
-add_and_commit "$NEW" bravo 's/^SPIRA_GOAL$/SPIRA_GOAL\nSPIRA_ZZTEST_BRAVO/' \
+add_and_commit "$NEW" bravo 's/^SPIRA_ID_PREFIX$/SPIRA_ID_PREFIX\nSPIRA_ZZTEST_BRAVO/' \
     "add SPIRA_ZZTEST_BRAVO"
 ( cd "$NEW" && git checkout -q alpha && git merge -q --no-edit bravo ) >"$TMP/new-merge.log" 2>&1
 new_rc=$?

@@ -162,7 +162,7 @@ echo
 echo "config file — SPIRA_BD from spira.conf wins over PATH-derived default:"
 # ==========================================================================
 CONF_FILE="$TMP/spira.conf"
-printf 'SPIRA_BD = %s\n' "$BD_GOOD" > "$CONF_FILE"
+printf 'SPIRA_ID_PREFIX = sp\nSPIRA_BD = %s\n' "$BD_GOOD" > "$CONF_FILE"
 # bin-bad is first on PATH; config pins bin-good.
 got="$(env -i PATH="$TOOLS:/usr/bin:/bin" \
     HOME="$TMP/home" \

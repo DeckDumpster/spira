@@ -61,7 +61,6 @@ run_doctor() {
         SPIRA_REPO_MAP=/nonexistent \
         SPIRA_NOTIFY="$TMP/bin/fake-notify" \
         SPIRA_SYSTEMCTL="$TMP/bin/systemctl" \
-        SPIRA_GOAL=sp-test \
         SPIRA_COCKPIT="$TMP/run" \
         SPIRA_SNAP_STALE_S=60 \
         "$@" \

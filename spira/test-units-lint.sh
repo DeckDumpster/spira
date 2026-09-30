@@ -52,7 +52,7 @@ CONF="$RENDER_DIR/spira.conf"
 #
 # SPIRA_PROD pinned to empty: render() then falls back to SPIRA_HOME ($CLONE/spira), so
 # ExecStart resolves from the clone rather than this box's own derived release path.
-printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PROD = \n' \
+printf 'SPIRA_ID_PREFIX = sp\nSPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PROD = \n' \
     "$RUN" "$COCKPIT" "$MAN" > "$CONF"
 
 printf 'test-units-lint.sh\n'

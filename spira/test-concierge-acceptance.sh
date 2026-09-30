@@ -200,7 +200,7 @@ else
     LDIR="$LTMP/tmux"; mkdir -p "$LDIR"
     LSESS="cockpit-d"
     LCONF="$LTMP/spira.conf"
-    printf 'SPIRA_PROD = %s\nSPIRA_RUN = %s\n' "$HARNESS" "$LTMP/run" > "$LCONF"
+    printf 'SPIRA_ID_PREFIX = sp\nSPIRA_PROD = %s\nSPIRA_RUN = %s\n' "$HARNESS" "$LTMP/run" > "$LCONF"
     mkdir -p "$LTMP/run"
 
     TMUX_TMPDIR="$LDIR" tmux start-server

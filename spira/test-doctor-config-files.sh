@@ -83,7 +83,6 @@ run_doctor() {
         SPIRA_BD_PIN="$TMP/run/bd-pin" \
         SPIRA_NOTIFY="$TMP/bin/fake-notify" \
         SPIRA_SYSTEMCTL="$TMP/bin/systemctl" \
-        SPIRA_GOAL=sp-test \
         SPIRA_COCKPIT="$TMP/run" \
         SPIRA_SNAP_STALE_S=60 \
         doctor.sh 2>/dev/null || true
@@ -104,7 +103,7 @@ echo
 echo "spira.toml only:"
 # ==========================================================================
 rm -f "$CONF"
-printf '[spira]\nmax_aeons = 4\n' > "$TOML"
+printf '[spira]\nid_prefix = "sp"\nmax_aeons = 4\n' > "$TOML"
 toml_out="$(run_doctor "$CONF" "$TOML")"
 want   "toml-only: OK spira.toml only"             "ok    spira.toml only"                      "$toml_out"
 nowant "toml-only: no both-files WARN"             "both"                                       "$toml_out"
@@ -114,7 +113,7 @@ echo
 echo "spira.conf only (legacy) — conversion fails closed, so the toml never appears:"
 # ==========================================================================
 rm -f "$TOML"
-printf 'SPIRA_MAX_AEONS = 4\n' > "$CONF"
+printf 'SPIRA_ID_PREFIX = sp\nSPIRA_MAX_AEONS = 4\n' > "$CONF"
 conf_out="$(run_doctor "$CONF" "$TOML" "$TMP/no-such-repo-map")"
 if [ ! -e "$TOML" ]; then
     ok "conf-only: conversion did not create a spira.toml (repo-map refused)"
@@ -128,8 +127,8 @@ nowant "conf-only: no both-files WARN"             "both"                       
 echo
 echo "both files present — WARN names both paths:"
 # ==========================================================================
-printf '[spira]\nmax_aeons = 4\n' > "$TOML"
-printf 'SPIRA_MAX_AEONS = 4\n' > "$CONF"
+printf '[spira]\nid_prefix = "sp"\nmax_aeons = 4\n' > "$TOML"
+printf 'SPIRA_ID_PREFIX = sp\nSPIRA_MAX_AEONS = 4\n' > "$CONF"
 both_out="$(run_doctor "$CONF" "$TOML")"
 want "both: WARN fires"           "warn  both $CONF and $TOML exist" "$both_out"
 want "both: names the fix"        "remove $CONF"                     "$both_out"
@@ -140,7 +139,7 @@ echo
 echo "spira.toml in force validates — doctor calls spira-config, not its own parser:"
 # ==========================================================================
 rm -f "$CONF"
-printf '[spira]\nmax_aeons = 4\n' > "$TOML"
+printf '[spira]\nid_prefix = "sp"\nmax_aeons = 4\n' > "$TOML"
 valid_out="$(run_doctor "$CONF" "$TOML")"
 want "valid: OK validates"       "ok    spira.toml validates"  "$valid_out"
 nowant "valid: no FAIL"          "FAIL  spira.toml fails"      "$valid_out"

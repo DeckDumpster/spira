@@ -282,13 +282,13 @@ done
 for _s in lib.sh conf.sh suite-covers.sh; do ln -s "$HERE/$_s" "$STUBS/$_s"; done
 ln -sf "$HERE/chamber" "$STUBS/chamber" 2>/dev/null || true
 PASS_RUN="$TMP/pass-run"; mkdir -p "$PASS_RUN/landstate"
-GOAL_JSON="$(printf '{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"]}')"
+EPIC_JSON="$(printf '{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"]}')"
 testdb_reset
-printf '%s\n' "$GOAL_JSON" | testdb_seed
-export SPIRA_GOAL=sp-goal SPIRA_RUN="$PASS_RUN" SPIRA_MAX_AEONS=0 SPIRA_HOME="$STUBS" PATH="$STUBS:$PATH"
+printf '%s\n' "$EPIC_JSON" | testdb_seed
+export SPIRA_RUN="$PASS_RUN" SPIRA_MAX_AEONS=0 SPIRA_HOME="$STUBS" PATH="$STUBS:$PATH"
 PATH="$STUBS:$PATH" sentinel >/dev/null 2>&1 || true
 leftover="$(ls "$PASS_RUN"/list-snapshot.* "$PASS_RUN"/ready-snapshot.* "$PASS_RUN"/ready-cache.* 2>/dev/null | wc -l | tr -d ' ')"
 is   "8: no snapshot temp file survives a completed pass" "0" "$leftover"
-unset SPIRA_GOAL SPIRA_MAX_AEONS
+unset SPIRA_MAX_AEONS
 export SPIRA_HOME="$HERE"
 export SPIRA_RUN="$TMP/run"

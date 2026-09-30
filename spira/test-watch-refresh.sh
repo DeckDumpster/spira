@@ -72,7 +72,7 @@ printf '#!/bin/sh\n: stub\n'      > "$COCKPIT/moot-sweep.sh"
 printf '#!/bin/sh\n: stub\n'      > "$COCKPIT/verify-asks.sh"
 chmod +x "$COCKPIT/watch-answers.sh" "$COCKPIT/layout.sh" "$COCKPIT/moot-sweep.sh" "$COCKPIT/verify-asks.sh"
 CONF="$TMP/spira.conf"
-printf 'SPIRA_COCKPIT = %s\nSPIRA_RUN = %s\n' "$COCKPIT" "$RUN" > "$CONF"
+printf 'SPIRA_ID_PREFIX = sp\nSPIRA_COCKPIT = %s\nSPIRA_RUN = %s\n' "$COCKPIT" "$RUN" > "$CONF"
 
 # A SECOND HARNESS COPY, so "the unit's ExecStart" can be told apart from "this harness's
 # watchd.sh" — a box carrying a stale install points at exactly this, and it is the only

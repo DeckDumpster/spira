@@ -88,7 +88,7 @@ echo "config file — SPIRA_PROD from spira.conf wins over derived default:"
 # ==========================================================================
 CONF_FILE="$TMP/spira.conf"
 conf_prod="$TMP/conf-chosen/spira"
-printf 'SPIRA_PROD = %s\n' "$conf_prod" > "$CONF_FILE"
+printf 'SPIRA_ID_PREFIX = sp\nSPIRA_PROD = %s\n' "$conf_prod" > "$CONF_FILE"
 got="$(env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF="$CONF_FILE" \
     bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_PROD:-}\"" 2>/dev/null)"
 is "config-file SPIRA_PROD wins over derived default" "$conf_prod" "$got"

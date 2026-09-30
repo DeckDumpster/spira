@@ -73,7 +73,7 @@ cp "$HERE/conf.sh" "$HERE/watchd.sh" "$NOMAIL/"
 RUN="$TMP/elsewhere/run"; COCKPIT="$TMP/elsewhere/cockpit"
 mkdir -p "$RUN" "$COCKPIT"
 CONF="$TMP/spira.conf"
-printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\n' "$RUN" "$COCKPIT" > "$CONF"
+printf 'SPIRA_ID_PREFIX = sp\nSPIRA_RUN = %s\nSPIRA_COCKPIT = %s\n' "$RUN" "$COCKPIT" > "$CONF"
 
 # The escalation seam, stubbed to a log. What is asserted here is that a mail is SENT, once,
 # and that it carries the event as its evidence — never what the mailbox does with it after.
