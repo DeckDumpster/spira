@@ -27,7 +27,7 @@
 # daily digest is the only path to the operator — so nothing here should ever reach the mailbox.
 #
 # tier: T2
-# covers: spira/lib.sh spira/watchd.sh spira/skew.sh spira/incident.sh archivist/src/* spira/ctx-meter.sh spira/incident-stub-bd.py spira/mail.sh UC-operator-channel-05
+# covers: spira/lib.sh spira/watchd.sh spira/skew.sh spira/incident.sh archivist/src/* spira/ctx-meter.sh spira/incident-stub-bd.py spira/mail.sh incident/* UC-operator-channel-05
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
