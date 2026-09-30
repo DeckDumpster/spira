@@ -393,6 +393,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v spira-config)\""
 
 [[dep]]
+name = "spira-admit"
+tier = "release"
+purpose = "Spira's spira-admit binary, from the release's bin/ (host-wide admission pools, sp-f4ig1)"
+version_min = ""
+version_probe = "readlink -f \"$(command -v spira-admit)\""
+
+[[dep]]
 name = "spira-lc"
 tier = "release"
 purpose = "Spira's spira-lc binary, from the release's bin/"

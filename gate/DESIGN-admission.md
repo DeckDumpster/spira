@@ -1,0 +1,270 @@
+# Host-wide admission — pipeline shaping (sp-f4ig1)
+
+The gate has owned host-wide admission since sp-4vq2q: `SPIRA_CERTIFY_PAR` flock slots under
+`$SPIRA_RUN/gate-admission`. This document extends that one pool into **three**, one per heavy
+phase of an aeon's loop, and says how each is sized. The shared code is
+`spira_config::admission` (every heavy tool already depends on `spira-config` for the build
+wrapper, `spira_config::build`); the agent-facing entry is the `spira-admit` binary of the
+same crate. `gate/DESIGN.md` §"Admission" is unchanged except where this document says so.
+
+## 1. Intent
+
+On 2026-09-30 the box jammed three times while ~14 agents worked at once: load 64 on 32
+cores; memory full-stall 59% and 66% with ~20 `rustc` and 34 dolt fixtures alive; and `/tmp`
+(a tmpfs sharing the RAM) overflowing. Gate trials already queued on the certify slots.
+Nothing else did. An agent's own `cargo build`/`cargo test` in its worktree and its own
+`testenv` runs bypassed admission entirely. So the agents' peaks coincided: they compiled
+together, then tested together, then gated together.
+
+What the operator ordered (Ryan, 2026-09-30):
+
+* *"what you want to avoid is a thundering herd: N aeons doing compiles at the same time,
+  then tests at the same time, then gates at the same time. throughput is higher if you can
+  have aeons running in each phase."* The answer is **pipeline shaping**: a separate
+  host-wide pool per heavy phase, so at any moment some aeons compile, some test, some gate,
+  and none of the three peaks stacks on another.
+* *"stagger, don't throttle."* Earlier, per-job limits (cargo `-j`, `batch_maxpar`) were cut to
+  survive the peak, and every gate was slowed by it, even a gate running alone. Then
+  **law-reduce-the-count-never-throttle-the-job** was enacted: when the box congests,
+  lower the number of concurrent jobs and let each one run at full speed. The pools
+  control **how many** jobs run in each phase **and nothing else**.
+
+## 2. Non-goals
+
+* **Any per-job speed limit.** That covers CPU quotas, cargo `jobs` caps, `--test-threads`
+  caps, reduced suite width or `batch_maxpar` cuts, and nice/ionice. This change also
+  *removes* one the gate already had (§6 D3).
+* Admission for the round (it runs on the round VM, law-isolate-greedy-work-in-vms), for
+  `release build` (the landing path publishes tested binaries through `--bin-dir` and does not
+  compile, DESIGN-build-cache.md §1 item 4), or for the model session itself (it is cheap).
+* Changing the gate's pool mechanism. The gate keeps its flock slots and its
+  `SPIRA_GATE_LOCK_WAIT` bound, because `landing-pass` probes `slot.N.lock` and the
+  landing pass's budget depends on that bound (§6 D4).
+
+## 3. Contract
+
+### 3.1 The three pools
+
+| pool | what takes a slot | holder | size key (env / spira.toml) | directory |
+|---|---|---|---|---|
+| **compile** | a cargo build of a workspace: an agent's own `cargo build/test/check/clippy` in its worktree (through the aeon's build wrapper, §3.3); testenv's in-place build | the cargo process (agents) or the testenv process | `SPIRA_COMPILE_PAR` / `compile_par` | `$SPIRA_RUN/compile-admission` |
+| **test** | an agent's own `testenv` trial, from container `up` to teardown | the testenv process | `SPIRA_TEST_PAR` / `test_par` | `$SPIRA_RUN/test-admission` |
+| **gate** | a gate trial that runs suites or unit phases (unchanged) | the gate process (flock) | `SPIRA_CERTIFY_PAR` / `certify_par` | `$SPIRA_RUN/gate-admission` |
+
+* **A slot is admission, never a limit.** An admitted job runs at the default width: cargo's
+  own `-j` (all cores), testenv's configured `batch_maxpar`, and the gate's unit phases at the
+  host's cores (§6 D3).
+* **One phase at a time, never two slots at once.** testenv holds its compile slot for the
+  build only, releases it, then takes a test slot for `up` through teardown. No holder waits for
+  a slot while it holds another, so the pools cannot deadlock (there is no hold-and-wait).
+* **Inherited admission.** A process whose environment carries `SPIRA_ADMISSION=<pool>:<slot>`
+  runs inside a job that is already admitted. It takes no slot of its own. The gate sets this on
+  every command it runs, so its testenv and cargo run on the gate's slot. testenv sets it on its
+  build, which is paid for by testenv's compile slot. Inheritance also follows the process tree
+  for compile leases: a cargo whose ancestor already holds a compile lease (for example a nested
+  `cargo` run from a test) takes none.
+* **Waiting never fails.** A compile or test waiter waits for as long as it takes. It prints, to
+  its own stderr, once when it starts waiting and then every 30 s:
+  `waiting for a test slot: 2 of 2 held by sp-abc (testenv pid 123, 41s), sp-def (testenv pid 456, 12s)`
+  and, once it is admitted, `admitted to test slot 1 after 37s`. Under `--deadline`, testenv
+  moves its deadline later by the time it spent waiting. The budget meters work, not queueing.
+  The gate's bounded wait is unchanged (§6 D4). It now prints the same kind of waiting line.
+* **Sizes are re-read on every pass of a wait**, so a size an operator raises takes effect at
+  once. Lowering a size never evicts a holder: slots above the new size drain as their holders
+  finish.
+
+### 3.2 Leases (compile and test)
+
+A lease is a file `slot.<n>` in the pool's directory. Its content is one line:
+`pid=<p> start=<starttime> who=<label> since=<epoch> waited=<secs> last=<epoch>`. Every
+read-modify-write of the directory happens under an exclusive `flock` on `<dir>/lock`, which is
+held only for the scan, never across a wait or a job.
+
+* **Live** means `/proc/<pid>/stat` exists and its field 22 (starttime) equals `start`. A
+  dead or recycled pid frees the slot. The next scan **reclaims** it and writes the lease's
+  telemetry row with `end=reclaimed`. Nothing depends on a holder exiting cleanly.
+* **Take**: under the lock, scan `slot.1..=size`. If a live lease already names this holder,
+  it is ours (`last` is refreshed). This is what lets the hundreds of `rustc` invocations of
+  one cargo share a single slot. Otherwise, if a live lease names an ancestor of the holder,
+  admission is inherited. Otherwise, the first free or dead slot is written. Otherwise the pool
+  is busy, and the scan returns the live holders for the waiting line.
+* **Release**: remove `slot.<n>` if it still names this holder, and write the telemetry row
+  with `end=released`. testenv releases through a guard's `Drop`. A cargo lease is never
+  released explicitly: it ends when the cargo process ends, and the next scan reclaims it.
+  `spira-admit status` scans too. The row's `held_secs` is `last − since` (the last compile
+  the lease saw), so the row stays honest when the reclaim happens late.
+* **Waiters** leave a `wait.<pid>` file (`start= who= since=`) while they wait. It is removed
+  once they are admitted, and reclaimed if they die. `spira-admit status` counts these files.
+
+### 3.3 The compile wrapper (`spira-admit` as `RUSTC_WRAPPER`)
+
+An agent's cargo gets `RUSTC_WRAPPER` from the aeon, which asks `spira_config::build` for it.
+The aeon now asks for **`Wrapper::admitted_env(spira-admit)`**. That sets
+`RUSTC_WRAPPER=<abs path of spira-admit>`, sets `SPIRA_ADMIT_INNER=<abs path of sccache>`
+(empty with `SPIRA_BUILD_CACHE=off`), sets `SPIRA_ADMIT_WHO=<bead>`, and keeps
+`SCCACHE_IGNORE_SERVER_IO_ERROR=1`. cargo runs `spira-admit <rustc> <args…>` for every
+compilation:
+
+1. `SPIRA_ADMISSION` set: exec the inner compiler at once (inherited).
+2. Arguments with no `--crate-name` (the `rustc -vV` and `--print` probes that `cargo
+   metadata` makes too): exec at once. A probe is not a build, and `cargo metadata` must
+   never queue behind builds.
+3. Otherwise, take a compile lease for the **parent process** (the cargo), waiting visibly if
+   the pool is busy. Then exec `SPIRA_ADMIT_INNER <rustc> <args…>`, or `<rustc> <args…>`
+   when the inner compiler is empty.
+
+The wrapper adds no `CARGO_*` variable, so sccache's keys are unchanged
+(DESIGN-build-cache.md §2.2), and it execs, so the compiler's exit status and output are the
+compiler's own. The gate and testenv keep the **plain** `Wrapper::env()`, because each of them
+takes its slot in-process.
+
+`spira-admit` is absent from the aeon's PATH on an old release. The aeon then hands out the
+plain wrapper and logs `aeon: spira-admit not on PATH — this session's builds are not
+admitted`, the same way it already falls back when sccache is missing. A session is not a
+build, and a scheduling tool never stops the world.
+
+### 3.4 Summon jitter
+
+Before it starts the model session, the aeon sleeps a uniform random `0..=SPIRA_SUMMON_JITTER`
+seconds (spira.toml `summon_jitter`, default **20**, and `0` disables it). A sentinel pass that
+summons a batch of aeons at the same moment therefore does not start them in lockstep. The
+sleep checks the stop flag every second, so a stopped aeon exits at once. The jitter is
+logged: `aeon: summon jitter 13s`.
+
+### 3.5 `spira-admit`
+
+```
+spira-admit <rustc> <args…>                      # RUSTC_WRAPPER mode (§3.3)
+spira-admit status [--json]                      # pools: size, held, waiting, holders
+spira-admit run --pool compile|test [--who W] -- <cmd…>   # hold a lease around any command
+```
+
+`status` probes gate slots with a non-blocking flock. It names a gate holder from
+`slot.<n>.holder`, which the gate now writes beside the lock when it takes a slot. `run`
+exists for the replay harness (§5) and for a human who wants a job to join the queue.
+
+## 4. Schema
+
+* **Lease / waiter files:** §3.2. **Gate holder:** `$SPIRA_RUN/gate-admission/slot.<n>.holder`,
+  in the same one-line format (`pid= start= who=<branch> since=`). It is advisory: the flock
+  stays the lock.
+* **Config** (typed spira.toml, `[spira]`; all optional). `compile_par` and `test_par` are u32,
+  and unset derives the size from the box (§5). `summon_jitter` is a u64 of seconds, and unset
+  means 20. Each is exported to the shell by `export --sh` as `SPIRA_COMPILE_PAR`,
+  `SPIRA_TEST_PAR` and `SPIRA_SUMMON_JITTER`, and each is registered in `conf.sh`'s key lists.
+* **Telemetry**: `$SPIRA_RUN/tsd/admission.jsonl`, family `admission`, one row per lease that
+  ends. The envelope is `ts`, `host` and `family`, followed by `pool`, `who`, `slot`, `size`,
+  `waited_secs`, `held_secs` and `end` (`released` or `reclaimed`). From these rows come
+  time-waiting and time-in-phase per aeon and per pool. Pool occupancy at any instant comes
+  from `spira-admit status`. The gate's own wait was already in gate.log (`waited=`) and in
+  the `gate-run` family.
+
+## 5. Sizing — derived from measured phase costs
+
+**Measured on this box, 2026-09-30.** The box has 32 cores and 60 GiB RAM, with 36 GiB
+MemAvailable under the day's load. `/tmp` is a 31 GiB tmpfs that shares that RAM, and the
+disk is one virtual SATA device. Each run went into its own `systemd-run --user --scope`, one
+at a time. A 1 s sampler (`/proc` and the scope's `cpu.stat` / `memory.stat`) recorded cores,
+anonymous memory, shmem (the tmpfs pages charged to the run), process counts, the containers
+the run `podman exec`ed into, and host `sda` writes. **cgroup `io.stat` is not available on
+this host.** The root cgroup delegates only `cpu memory pids`, and no `io` controller is enabled
+anywhere, so per-run IO comes from `/proc/diskstats` (host-wide, and noisy while other agents
+run) and from the PSI of the host.
+
+| phase (one job) | wall | cores avg / peak | anon RAM peak | tmpfs | dolt | disk written |
+|---|---|---|---|---|---|---|
+| compile — agent `cargo build --profile aeon --workspace --all-targets`, deps from sccache, cold target | 38–43 s | 8.1–9.8 / 14 | 2.7 GiB (rustc peak 8) | 0 | 0 | 0.8–1.2 GiB (3.0 GiB target on disk) |
+| compile — agent `cargo test --profile aeon --workspace` after that build | 71 s | 1.0 / 5 | 0.6 GiB | 6 MiB | 0 | host-noisy |
+| compile — testenv in-place `cargo build --profile release --workspace` (LTO, cgu=1) | 127 s | MEASURE_REL_AVG / MEASURE_REL_PEAK | MEASURE_REL_ANON | 0 | 0 | MEASURE_REL_W |
+| test — testenv `up`→teardown, 8 suites at `batch_maxpar` 8 | MEASURE_T_WALL | MEASURE_T_AVG / MEASURE_T_PEAK | 0.55 GiB container (testenv: "cgroup peak 546MiB, ~68MiB/slot") | MEASURE_T_SHM | one private sql-server per running suite (≤ 8) | host-noisy |
+| gate — a certification trial (gate.log, 2026-09-30, 30 trials) | 200–800 s (median ~400) | its own composition | a gate tree's target on tmpfs ≈ 0.7 GiB, plus a warm testenv slot ≈ 3.2 GiB | ≈ 3.9 GiB | ≤ 8 | — |
+
+**What binds each phase.** Compile is bound by cores and RAM. One build peaks near half the
+box's cores and carries 2.7 GiB of anon, and the release (LTO) build is heavier on both. Test
+is bound by dolt fixtures, fsync IO and tmpfs, not by cores: eight private sql-servers per
+trial, and a trial's RAM is small. Gate is bound by tmpfs and wall time. A gate holds about
+3.9 GiB of `/tmp` for as long as 800 s.
+
+**The sizes.** Each derived size is at least 1, re-read on every pass of a wait, and
+overridable by its key:
+
+* `compile_par = min(cores ÷ 10, MemAvailable ÷ 4 GiB)`. **3** on this box. Three builds
+  average about 27 of 32 cores together, and their peaks (3 × 14) oversubscribe the CPU only
+  for seconds, which costs time-slicing but no stalls. Their anon RAM (3 × 2.7 GiB, or about
+  3 × 4 GiB with a release build in one of them) is under a quarter of MemAvailable. At 14
+  agents unshaped, ~20 `rustc` processes were alive. At 3 slots the ceiling is the width of
+  3 cargo jobs.
+* `test_par = min(cores ÷ 8, MemAvailable ÷ 8 GiB)`. **4** on this box. That is 32 private
+  sql-servers at most: the jam saw 34 alongside 20 `rustc`, and the compile pool now removes
+  the `rustc` half. The 8 GiB of memory per slot covers the container, eight dolt servers and
+  a scratch slot's release target on tmpfs.
+* `certify_par`: unchanged. It is derived as `min(cores ÷ 4, MemAvailable ÷ 400 MiB)` and set
+  to 3 in production. A gate trial carries about 3.9 GiB of tmpfs, so 3 gates hold about
+  12 GiB of the 31 GiB `/tmp`.
+
+**The statute, applied.** When a measurement shows a phase congesting, the fix is **that
+phase's pool size**, and nothing else. A job never runs narrower: no CPU quota, no cargo
+`jobs` cap, no `--test-threads` cap, no smaller `batch_maxpar`, no nice or ionice.
+law-reduce-the-count-never-throttle-the-job.
+
+**Why the pools do not stack their peaks.** A worst-case instant has 3 compiles, 4 test trials
+and 3 gates running. That is about 27 + 4 × ~3 + 3 × ~9 average cores, roughly 2× the cores:
+CPU time-slicing, which delays jobs without stalling them. The anon RAM is about 12 + 4 × 1 +
+3 × 3 GiB, about 25 GiB, which is under the 36 GiB MemAvailable. The tmpfs is about 12 GiB of
+gates plus test scratch. Unshaped, the same 14 agents could put 14 builds (about 38 GiB of
+anon) on the box at once, and that is the stall the operator saw.
+
+## 6. Decisions
+
+* **D1: per-phase pools, not one pool** (operator amendment, 2026-09-30). The bead was first
+  written as "one host-wide admission". A single pool admits whatever phase arrives. Fourteen
+  aeons that finish reading their briefs together then compile together, and the pool only
+  decides which N of them do it. Separate pools let a compiling aeon and a testing aeon run
+  side by side, so each phase's resource (cores, dolt/fsync, tmpfs) is shared by its own jobs
+  only.
+* **D2: the compile gate is `RUSTC_WRAPPER`, not a `cargo` shim.** The build wrapper is the
+  seam every agent build already passes through (sp-z61hj). A `cargo` shim on PATH would
+  shadow rustup's proxy for every tool on the launcher PATH, the gate included. The wrapper
+  sees one `rustc` at a time, so the lease is keyed by the cargo process (the wrapper's parent)
+  and lives as long as the cargo does: a pid+starttime lease, with no daemon and no fd to
+  inherit. Rejected: flock per `rustc`, which is a host-wide jobserver, meaning per-job
+  throttling under another name.
+* **D3: the gate's `J = cores ÷ certify_par` is removed.** The gate divided the host's cores
+  among its pool and passed that as `cargo -j` and `--test-threads` to its unit phases (it
+  was 10 at `certify_par` 3). That is a per-job speed limit, and the statute forbids it. A
+  gate that runs alone was paying for gates that did not exist. `compose::jobs` now returns
+  the host's cores. How many gates run together is `certify_par`'s job.
+* **D4: the gate keeps its flock pool and its bounded wait.** `landing-pass` probes
+  `slot.N.lock` before it dispatches a gate (landing-pass/DESIGN.md), and the landing pass's
+  run budget assumes `SPIRA_GATE_LOCK_WAIT`. Only the waiting line and the holder sidecar are
+  new. The "never fails for waiting" rule applies to the aeon-side pools. A gate is started by
+  the landing pass, never by an aeon (aeon teardown.rs: self-certifying blocks a session on
+  gate admission).
+* **D5: leases, not flocks, for compile and test.** A flock is held by an open fd, and a cargo
+  has no fd of ours. A lease names a pid and dies with it. testenv could have held a flock,
+  but one mechanism for both aeon-side pools gives `status` and the telemetry one reader.
+* **D6: probes are not builds.** Without rule 2 of §3.3, `cargo metadata` would take a
+  compile slot, and the gate's own `cargo metadata` composition step would queue behind agent
+  builds.
+* **D7: release builds are not admitted.** The landing path no longer compiles (sp-z61hj
+  item 4). `release build` is run by hand or by `release.yml`. Admitting it would put the
+  landing path behind agent builds for no measured gain.
+* **D8: jitter at the aeon, not in lib.sh.** The summon loop is still bash
+  (`ck7_summon_pass`), and new logic is Rust. The aeon is the first Rust code a summon reaches.
+* **D9: dropped behaviour.** testenv's existing container-count queue
+  (`SPIRA_TESTENV_MAX_CONCURRENT`, which gives up after `SPIRA_TESTENV_QUEUE_TIMEOUT`) stays
+  as a backstop, and the test pool normally keeps it from ever engaging. Nothing else is
+  dropped.
+* **Finding, not fixed here.** Under `lifecycle_enforce`, the model's restricted environment
+  (`aeon/src/restrict.rs`) carries neither `RUSTC_WRAPPER` nor cargo on its PATH. An enforced
+  session therefore gets neither the build cache nor admission. That is the restriction's
+  scope, and it is reported to the Concierge.
+
+## 7. Proof and acceptance
+
+The bead's acceptance is a 14-agent replay in which memory full-stall stays under 5%, io full
+avg60 stays under 30% sustained, and landings per hour are higher than unshaped at the same
+N. `spira-admit run` makes the replay a fixture. Each simulated agent runs `spira-admit run
+--pool compile -- <build>` and then `spira-admit run --pool test -- <testenv>`, and the
+unshaped control runs the same commands with `SPIRA_ADMISSION=off` (inherited: no slot). The
+result of the replay is recorded in the bead's report.
