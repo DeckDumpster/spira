@@ -1,13 +1,17 @@
 # tier-budget-allowlist — today's per-tier budget violators (law-unit-tests-run-under-a-second;
 # test plan §4.1), and the wall time each was measured at when seeded.
 #
-# spira/tier-budget.sh checks every suite's tier (# tier: header; untagged counts as T1)
+# spira/tier-budget.sh checked every suite's tier (# tier: header; untagged counts as T1)
 # against its budget: T0/T1 1000ms, T2 10s, T3 60s. A suite NOT on this list is held to that
-# budget outright. A suite ON this list fails only if it gets slower than its recorded time
+# budget outright. A suite ON this list failed only if it gets slower than its recorded time
 # here, plus SPIRA_TIER_ALLOWLIST_MARGIN_PCT (default 20%) for load noise — the ratchet that
 # lets the hard rule land without every suite in the corpus going red on the same day.
 #
-# THE ALLOWLIST CAN ONLY SHRINK. spira/tier-budget.sh lint-allowlist fails a branch that adds
+# (That per-suite check lost its caller when testenv dropped its tier-budget step — testenv/
+# DESIGN.md D4 — and tier-budget.sh was deleted in sp-wx2tw; the gate's budget cut,
+# suite-select, costs an unmeasured suite at these tiers' caps.)
+#
+# THE ALLOWLIST CAN ONLY SHRINK. spira-lint's tier-budget-allowlist rule fails a branch that adds
 # an entry or raises a recorded time; it does not fail one that removes an entry or lowers a
 # time. Rewrite a suite to fit its tier's budget (or lower) and delete its line here — that is
 # the only way this file is meant to change size.
@@ -20,9 +24,7 @@
 # median wall_secs over each suite's last 20 recorded runs, restricted to suites this checkout
 # still has a file for. 439 of the corpus's suites were already over their tier's new budget;
 # 33 of those were over 60s outright, together holding 38% of measured suite-seconds — the
-# scale that makes a hard, unratcheted cutover impossible on day one. test-tier-budget.sh
-# itself is the 440th: it has no history to seed from (it did not exist yet) but needs cargo
-# and duckdb for real, so it is entered by hand at its own measured time.
+# scale that makes a hard, unratcheted cutover impossible on day one.
 test-acceptance-ci.sh	T1	15.0
 test-acceptance-prev-tag.sh	T1	12.5
 test-acceptance-ready.sh	T1	5.0
@@ -103,7 +105,6 @@ test-census-watermark.sh	T1	52.5
 test-census.sh	T1	79.5
 test-cert-stale-gate-key.sh	T1	51.5
 test-certified-withdraw.sh	T1	22.0
-test-certify-suites-off.sh	T1	8.5
 test-certify.sh	T1	114.0
 test-chamber-repo-labels.sh	T1	4.5
 test-check2-reclaim.sh	T1	23.0
@@ -220,7 +221,6 @@ test-gate-preflight.sh	T1	2.0
 test-gate-retry-structural.sh	T1	2.0
 test-gate-retry.sh	T1	2.0
 test-gate-sweep.sh	T1	8.5
-test-gate-touched.sh	T1	2.0
 test-gate-tree.sh	T2	19.0
 test-gate-unit.sh	T1	4.5
 test-gate-verdict.sh	T1	11.0
@@ -335,7 +335,6 @@ test-schema-apply.sh	T1	223.0
 test-schema.sh	T1	7.0
 test-scope-label.sh	T1	3.5
 test-scratch-fence.sh	T1	2.0
-test-select.sh	T1	29.0
 test-sending-certified-guard.sh	T1	7.5
 test-sending-closed-reap.sh	T1	13.0
 test-sending-content-label.sh	T1	11.5
@@ -384,7 +383,6 @@ test-testlib.sh	T1	2.0
 test-thrash-streak.sh	T1	28.5
 test-thrash-wall.sh	T1	2.0
 test-thrash.sh	T1	4.0
-test-tier-budget.sh	T2	40.0
 test-timeout.sh	T1	17.5
 test-timer-templates.sh	T1	2.0
 test-tmux-env.sh	T1	2.0

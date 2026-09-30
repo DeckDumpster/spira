@@ -79,58 +79,12 @@ impl Runs {
 // --------------------------------------------------------------------------- headers
 
 /// suite-covers.sh's `suite_covers_of`: the first `# covers:` line plus its continuation
-/// lines; empty when there is none (which callers read as "covers everything").
+/// lines, blank-joined; empty when there is none (which callers read as "covers
+/// everything"). The selector crate's parser (sp-wx2tw).
 pub fn covers_of(text: &str) -> String {
-    let mut lines = text.lines();
-    let mut out = None::<String>;
-    for l in lines.by_ref() {
-        if let Some(rest) = l.strip_prefix('#') {
-            let rest = rest.trim_start_matches(' ');
-            if let Some(v) = rest.strip_prefix("covers:") {
-                out = Some(v.trim_start_matches(' ').to_string());
-                break;
-            }
-        }
-    }
-    let Some(mut out) = out else {
-        return String::new();
-    };
-    for l in lines {
-        if !is_continuation(l) {
-            break;
-        }
-        let body = l[1..].trim_start_matches([' ', '\t']);
-        out.push(' ');
-        out.push_str(body);
-    }
-    out
-}
-
-/// `^#[ \t]{2,}[^ \t#]` and not `^# [A-Za-z][A-Za-z_-]*:`.
-fn is_continuation(l: &str) -> bool {
-    let Some(rest) = l.strip_prefix('#') else {
-        return false;
-    };
-    let ws = rest.len() - rest.trim_start_matches([' ', '\t']).len();
-    let after = rest[ws..].chars().next();
-    if ws < 2 || matches!(after, None | Some(' ' | '\t' | '#')) {
-        return false;
-    }
-    // a "# word:" directive (exactly one space, then a word, then a colon) ends the block
-    if let Some(d) = l.strip_prefix("# ") {
-        let mut cs = d.chars();
-        if cs.next().is_some_and(|c| c.is_ascii_alphabetic()) {
-            let word: String = d
-                .chars()
-                .skip(1)
-                .take_while(|c| c.is_ascii_alphabetic() || *c == '_' || *c == '-')
-                .collect();
-            if d[1 + word.len()..].starts_with(':') {
-                return false;
-            }
-        }
-    }
-    true
+    suite_select::header::covers_of(text)
+        .map(|v| v.join(" "))
+        .unwrap_or_default()
 }
 
 /// The first `# priority: N` anywhere in the suite, whitespace removed; `0`–`4` or the default.

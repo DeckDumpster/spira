@@ -41,10 +41,20 @@ id = "UC-gate-verdict-08"
 tier = "T1"
 statement = "covers:-based selection. A suite is selected when its covers: names a changed file, or when it has no covers:, or when it is a meta suite covering `spira/test-*.sh`. A suite covering only unchanged files is not selected. A suite added by the branch is present on the branch tree and absent on the base. `SPIRA_GATE_FILES` overrides the computed diff."
 
+[use_case.uncovered]
+reason = "suite test-gate-touched.sh retired with gate-touched.sh (sp-wx2tw, suite selection moved to the suite-select crate); behaviour now verified by suite-select unit tests gate::tests::uc_gate_verdict_08_covers_selection_on_the_branch_tree and gate::tests::uc_gate_verdict_08_a_file_list_selects_from_the_base_corpus"
+date = "2026-09-29"
+bead = "sp-wx2tw"
+
 [[use_case]]
 id = "UC-gate-verdict-09"
 tier = "T1"
 statement = "Suites in `SPIRA_GATE_EJECTED_SUITES` (CSV) are always added. A suite that is both covered and ejected appears once. An ejected suite that no longer exists is skipped. (sp-px6ng)"
+
+[use_case.uncovered]
+reason = "suite test-gate-touched.sh retired with gate-touched.sh (sp-wx2tw, suite selection moved to the suite-select crate); behaviour now verified by suite-select unit tests gate::tests::uc_gate_verdict_09_ejected_suites_are_always_added_once_and_only_if_present"
+date = "2026-09-29"
+bead = "sp-wx2tw"
 
 [[use_case]]
 id = "UC-gate-verdict-10"

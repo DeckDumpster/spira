@@ -768,39 +768,52 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             }
         },
         None => {
-            let mode_file =
-                std::env::temp_dir().join(format!("testenv-select-mode-{}", std::process::id()));
+            // The ONE selector, linked (sp-wx2tw). It fails closed: a selection it cannot
+            // compute is a fault here, never an empty selection read as "nothing to do".
             let head = s.select_head.clone().unwrap_or_else(|| br.clone());
-            let a = [
-                "--base",
+            let env = |k: &str| std::env::var(k).ok();
+            let opts = suite_select::select::Options {
+                no_all_fallback: true,
+                no_nocov: false,
+                tiers: suite_select::select::parse_tiers(&s.tiers),
+            };
+            let corpus = match suite_select::corpus::Corpus::load(&suite_dir) {
+                Ok(c) => c,
+                Err(r) => {
+                    stderr(&format!("batch: suite selection refused: {r}"));
+                    return Finish::fault(2, "select-refused", 0);
+                }
+            };
+            match suite_select::io::select_diff(
+                &suite_select::io::RealGit,
+                &repo.path,
+                &corpus,
                 &base,
-                "--head",
                 &head,
-                "--repo",
-                &repo.path.display().to_string(),
-                "--suite-dir",
-                &suite_dir.display().to_string(),
-                "--no-all-fallback",
-                "--tiers",
-                &s.tiers,
-                "--mode-file",
-                &mode_file.display().to_string(),
-            ]
-            .map(str::to_string);
-            let refs: Vec<&str> = a.iter().map(String::as_str).collect();
-            let out = helper(&deps.harness.script("select.sh"), &refs, None, &[], None)
-                .map(|(_, o)| o)
-                .unwrap_or_default();
-            let producer = Producer::parse(&fs::read_to_string(&mode_file).unwrap_or_default())
-                .unwrap_or(Producer::Diff);
-            let _ = fs::remove_file(&mode_file);
-            let mut v: Vec<String> = Vec::new();
-            for n in out.split_whitespace() {
-                if !v.iter().any(|x| x == n) {
-                    v.push(n.to_string());
+                &suite_select::select::Buckets::from_env(&env),
+                &opts,
+            ) {
+                Ok(sel) => {
+                    for l in &sel.log {
+                        deps.log(l);
+                    }
+                    let producer = match sel.mode {
+                        suite_select::select::Mode::All => Producer::All,
+                        suite_select::select::Mode::Diff => Producer::Diff,
+                    };
+                    (sel.suites, producer)
+                }
+                Err(suite_select::select::Fail::Unclaimed { files, .. }) => {
+                    for f in &files {
+                        stderr(&format!("batch: select: unclaimed source file: {f}"));
+                    }
+                    return Finish::fault(2, "select-unclaimed", 0);
+                }
+                Err(suite_select::select::Fail::Refused(r)) => {
+                    stderr(&format!("batch: suite selection refused: {r}"));
+                    return Finish::fault(2, "select-refused", 0);
                 }
             }
-            (v, producer)
         }
     };
     if selected.is_empty() {
@@ -847,7 +860,6 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         }
     };
     let mut identity = deps.runner_identity.clone();
-    identity.extend(read_file_bytes(&deps.harness.script("select.sh")));
     identity.extend(read_file_bytes(&deps.harness.script("suite-covers.sh")));
     let key_inputs = KeyInputs {
         repo_name: repo.name.clone(),

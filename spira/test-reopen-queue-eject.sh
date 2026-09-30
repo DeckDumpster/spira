@@ -13,7 +13,8 @@
 # docs/test-plan/gate-verdict.md section 3 first proposed): gate.sh, this area's own
 # subject script, is the reader, and landing-merge-queue has no test-plan file to receive
 # it. The selection half that used to share this file (ejected suite added/CSV/dedup/
-# absent-skipped) has moved to test-gate-touched.sh, which already owns UC-gate-verdict-09.
+# absent-skipped) has moved to the suite-select crate's unit tests (gate::tests, UC-gate-verdict-09,
+# sp-wx2tw).
 #
 # tier: T1
 # covers: spira/verdict.sh spira/gate.sh

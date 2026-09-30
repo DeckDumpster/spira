@@ -52,7 +52,7 @@ testenv [--mode parallel|serial] [--suites <a.sh,b.sh,...|->] [--profile <p>]
 | `--mode` | `parallel` (default) or `serial`. Recorded in every result (a serial green is a weaker claim). |
 | `--suites LIST` | comma list; each name must exist in the suite dir, else exit 2 with `batch: unknown suite: <name>`. Duplicates dropped, order kept. Given twice → exit 2. |
 | `--suites -` | names one per line on stdin, blank lines ignored; **empty stdin = nothing to run, exit 0**. |
-| (no `--suites`) | diff-derived: `select.sh --base <landref> --head <branch> --no-all-fallback --tiers $SPIRA_BATCH_TIERS(T2,T3)`; its `--mode-file` names the producer (`diff`/`all`). |
+| (no `--suites`) | diff-derived: the `suite-select` library (`io::select_diff`, linked; sp-wx2tw) over `<landref>...<branch>`, no all-suites fallback, tiers `$SPIRA_BATCH_TIERS` (T2,T3); its mode names the producer (`diff`/`all`). A selection it cannot compute is `FAULT rc=2 reason=select-refused` (an unclaimed source file: `select-unclaimed`), never an empty selection. |
 | `--profile P` | cargo profile. Default `aeon` (aeon and gate runs). A round passes `release` (its binaries ship). |
 | `--with-bins` | **no build mode of its own** (builds, unless `--artifacts`). Accepted as an alias for `--profile release` when `--profile` is not given, because every caller that passes it today is a round whose binaries ship (round.sh, round-vm.sh, batcher-cut). See §7, decision D1. |
 | `--artifacts DIR` | **do not build**: DIR holds the workspace's executables, prebuilt from this tree (CI's `bin/`). Relative to the current directory. Validated before anything else happens: DIR must be a directory holding an executable for every workspace binary target of the tree under test (read from the worktree's `Cargo.toml` files) and at least `spira-config`, `test-plan` and `testenv`; otherwise `VERDICT FAULT rc=2 reason=artifacts-invalid` naming what is missing — never a build, never a partial set. Exclusive with `--profile` and `--with-bins` (usage error). Only the flag selects this mode: an inherited `SPIRA_ARTIFACTS` is still ignored (§5). See D8. |
@@ -176,7 +176,7 @@ testenv owns orchestration; these stay separate components with their own contra
 |---|---|
 | `git` | rev-parse tree/commit, worktree list/add/checkout, status, `show <rev>:spira/suite-state`, `show <rev>:spira/skip-allowlist.tsv` (§3.7), landref rungs |
 | `cargo` | `cargo build --profile <p> --workspace` in the worktree — **not** run at all under `--artifacts` |
-| `spira/select.sh` | diff-derived selection (the ONE selector) |
+| `suite-select` (crate, linked) | diff-derived selection (the ONE selector, sp-wx2tw) |
 | `spira/testenv.sh` | `tag` (image build-closure hash), `up --name --checkout` (image acquisition, boot, linger, cargo-volume ownership), `probe`, `down --name --volumes` |
 | `podman` | `exec`, `container inspect`, `container exists`, `ps -a`, `stop`, `rm`, `volume rm` |
 | `spira/gate-diag.sh`, `spira/gate-timing.sh` | red diagnostics table / batch-timing ledger row |
@@ -217,7 +217,8 @@ ISO timestamps→`TIMESTAMP`, `HH:MM:SS`→`TIME`, `[0-9]{3,}`→`N`; then POSIX
 `key = sha256("<repo_name> <tree> <image_tag> <sel_hash> <harness_hash> <mode> <producer> <profile>\n")`
 
 * `sel_hash` = sha256 of the sorted suite names, one per line.
-* `harness_hash` = sha256 of the running `testenv` executable, then `select.sh` and
+* `harness_hash` = sha256 of the running `testenv` executable (which links the selector since
+  sp-wx2tw; `select.sh` is gone), then
   `suite-covers.sh` from the harness dir — the runner and the selector, as before
   (`$0` was the script).
 * `profile` replaces `WITH_BINS`: an `aeon` green must not replay for a `release` run.

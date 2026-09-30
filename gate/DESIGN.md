@@ -82,7 +82,7 @@ reached the bash.
 | `SPIRA_GATE_BEAD` | ejected-suites lookup (the re-entry check), the key, `lc_certify` | — |
 | `SPIRA_GATE_CALLER` | `by=` in the cache entry | the branch |
 | `LANDSTATE` (lib.sh) | `<bead>.ejected`, else an `EJECTED` landstate row | `$SPIRA_RUN/landstate` |
-| `SPIRA_GATE_BUDGET`, `SPIRA_GATE_ALL`, `SPIRA_CERTIFY_ALWAYS_COVERS`, `SPIRA_BATCH_MAXPAR`, `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_LINT_BIN`, `SPIRA_TESTENV_BIN`, `SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS` (sp-govet), `PATH`, `HOME` | passed through to the gate command | as bash |
+| `SPIRA_GATE_BUDGET`, `SPIRA_GATE_ALL`, `SPIRA_CERTIFY_ALWAYS_COVERS`, `SPIRA_BATCH_MAXPAR`, `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_LINT_BIN`, `SPIRA_TESTENV_BIN`, `SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS` (sp-govet), `SPIRA_SELECT_BIN` (sp-wx2tw), `PATH`, `HOME` | passed through to the gate command | as bash |
 
 ### The gate command's environment (unchanged list, `env -i`)
 
@@ -91,7 +91,7 @@ reached the bash.
 `SPIRA_GATE_HOST_CORES`, `SPIRA_GATE_EJECTED_SUITES`, `SPIRA_GATE_ALL` (default 0),
 `SPIRA_GATE_SUITES` (default on), `SPIRA_CERTIFY_ALWAYS_COVERS`, `SPIRA_BATCH_MAXPAR`,
 `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_GATE_BUDGET` (default 300), `SPIRA_RUN`,
-`SPIRA_LINT_BIN`, `SPIRA_TESTENV_BIN`, `SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS`. Run as `timeout $SPIRA_GATE_TIMEOUT bash -c "$CMD"` in
+`SPIRA_LINT_BIN`, `SPIRA_TESTENV_BIN`, `SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS` (sp-govet), `SPIRA_SELECT_BIN` (the suite selector, sp-wx2tw). Run as `timeout $SPIRA_GATE_TIMEOUT bash -c "$CMD"` in
 the gate tree, stdout and stderr on one pipe. No lock descriptor reaches it (every descriptor
 this binary opens is close-on-exec; the bash leaked the admission slot's fd 8).
 
@@ -471,7 +471,8 @@ structure: **the gate cannot PASS a trial in which a fence it ran was silent.**
 * **Which fences** (`fence::expected`, over the gate string the composition actually runs —
   under `gate_mode = unit` without the build fence, `compose::gate_string`): each
   `bash <dir>/<x>.sh` word (the preflight's scan) is the fence `<x>`; the suite selector
-  `gate-touched.sh` is not a fence and runs none; the `$SPIRA_LINT_BIN` word is `spira-lint`
+  `gate-touched.sh` was not a fence and ran none, and its successor, the `suite-select` binary
+  (`"$SPIRA_SELECT_BIN" gate …`, sp-wx2tw), is no `bash` word; the `$SPIRA_LINT_BIN` word is `spira-lint`
   plus each rule in `LINT_RULE_FENCES` that the word's `--only` (if any) includes:
   `plan-matrix`, `lockfile-lint`, `tier-budget-allowlist`, `tier-budget-area-allowlist`,
   `tier-budget-areas`.
@@ -628,3 +629,10 @@ lib.sh seam is one `bash -c '. lib.sh; …'` at start (NUL-separated `key=value`
   as FAIL, is what throttled certification.
 * **`gate-lib.sh` is retired.** Its functions are ported (`src/parse.rs`, `src/key.rs`) with
   unit tests; `test-gate-unit.sh`, which only exercised them, is retired with it.
+* **Suite selection is the `suite-select` crate** (sp-wx2tw, `suite-select/DESIGN.md`). The
+  gate string calls the installed binary (`"$SPIRA_SELECT_BIN" gate …`), which the gate passes
+  into the gate command's environment; its exit 1 (an unclaimed source file) is FAIL and any
+  other failure NO_VERDICT, where `gate-touched.sh` swallowed both into an empty selection.
+  The re-entry check and the base re-run read suite names by the selector's rule
+  (`names::is_suite_name`, `names::split_list`), so the suites the round named, the ones the
+  selector forces, and the ones the base re-run names are one vocabulary.

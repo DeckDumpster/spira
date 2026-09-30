@@ -34,7 +34,7 @@ statement = "A queue-branch diff selects the union of its members' suites and fa
 [[use_case]]
 id = "UC-test-infrastructure-07"
 tier = "T0"
-statement = "`gate-spira.sh`, `testenv-batch.sh`, `gate-touched.sh`, `suites.sh names` and gate.yml all delegate to `select.sh`. There is one selector with no private copy."
+statement = "The landing gate string (`suite-select gate`), `testenv` (linked), `batcher-cut`, `gate-spira.sh`, `verdict.sh` and gate.yml all select through the `suite-select` crate. There is one selector with no private copy."
 
 [[use_case]]
 id = "UC-test-infrastructure-08"

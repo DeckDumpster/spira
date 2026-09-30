@@ -9,35 +9,8 @@ pub struct CoversEntries;
 
 const NAME: &str = "covers-entries";
 
-/// `suite_covers_of` (spira/suite-covers.sh): the first `# covers:` line's globs, folded with
-/// its continuation lines — a comment line indented by two or more blanks that is not itself
-/// a `# word:` directive. `None` when the suite declares nothing.
-pub fn covers_of(text: &str) -> Option<Vec<String>> {
-    let mut it = text.lines();
-    let first = it.by_ref().find_map(|l| {
-        let rest = l.strip_prefix('#')?.trim_start_matches(' ');
-        rest.strip_prefix("covers:").map(|r| r.trim_start_matches(' ').to_string())
-    })?;
-    let mut out = first;
-    for l in it {
-        let Some(body) = l.strip_prefix('#') else { break };
-        let blanks = body.len() - body.trim_start_matches([' ', '\t']).len();
-        let rest = &body[blanks..];
-        let is_directive = body.starts_with(' ')
-            && body[1..].split_once(':').is_some_and(|(w, _)| {
-                !w.is_empty()
-                    && w.as_bytes()[0].is_ascii_alphabetic()
-                    && w.bytes().all(|b| b.is_ascii_alphabetic() || b == b'_' || b == b'-')
-            });
-        if blanks >= 2 && !rest.is_empty() && !rest.starts_with('#') && !is_directive {
-            out.push(' ');
-            out.push_str(rest);
-        } else {
-            break;
-        }
-    }
-    Some(out.split_whitespace().map(str::to_string).collect())
-}
+/// `suite_covers_of`: the one Rust parser lives in the selector crate (sp-wx2tw).
+pub use suite_select::header::covers_of;
 
 /// A use-case (`UC-<area>-NN`) or gap (`G-NN`) id: a catalogue entry, never a path.
 pub fn is_catalogue_token(t: &str) -> bool {

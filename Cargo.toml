@@ -39,6 +39,7 @@ members = [
     "testkit",
     "intent-report",
     "beads-store",
+    "suite-select",
 ]
 resolver = "2"
 

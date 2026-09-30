@@ -400,7 +400,7 @@ _any_suite_in_selection() {  # _any_suite_in_selection <suites-spacesep> <repo> 
     # Three dots: the member's own change since it forked. Two would add everything the base
     # gained since, blaming a member for suites it never touched (PR 87 ejected all six).
     git -C "$repo" diff --name-only "$base...$tip" 2>/dev/null > "$tmp" || true
-    sel="$(bash "$HERE/select.sh" --files "$tmp" --repo "$repo" 2>/dev/null)"
+    sel="$("$SPIRA_SELECT_BIN" select --files "$tmp" --repo "$repo" --suite-dir "$HERE" 2>/dev/null)"
     rm -f "$tmp"
     for s in $suites; do printf '%s\n' "$sel" | grep -qxF "$s" && return 0; done
     return 1
@@ -897,7 +897,7 @@ ${_line#build-error: }" ;;
             _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
             _mf="$(mktemp)"
             git -C "$repo" diff --name-only "$base_sha...$_mtip" 2>/dev/null > "$_mf" || true
-            _msel="$(bash "$HERE/select.sh" --files "$_mf" --repo "$repo" --no-all-fallback 2>/dev/null)"
+            _msel="$("$SPIRA_SELECT_BIN" select --files "$_mf" --repo "$repo" --suite-dir "$HERE" --no-all-fallback 2>/dev/null)"
             rm -f "$_mf"
             _mcsv=""
             for _rs in $red_suites; do

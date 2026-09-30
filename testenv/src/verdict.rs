@@ -20,7 +20,7 @@ pub struct KeyInputs {
     pub tree: String,
     pub image_tag: String,
     pub suites: Vec<String>,
-    /// sha256 of the runner executable, then select.sh and suite-covers.sh.
+    /// sha256 of the runner executable, then suite-covers.sh (the selector is linked in: the executable covers it, sp-wx2tw).
     pub harness_hash: String,
     pub mode: Mode,
     pub producer: Producer,

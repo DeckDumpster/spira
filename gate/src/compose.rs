@@ -402,36 +402,23 @@ pub struct Reentry {
 }
 
 /// A suite name the runner accepts: `test-<name>.sh`, one path component, no shell
-/// metacharacters (it is interpolated into the phase's command).
-pub fn is_suite_name(s: &str) -> bool {
-    s.len() > "test-.sh".len()
-        && s.starts_with("test-")
-        && s.ends_with(".sh")
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
-}
+/// metacharacters (it is interpolated into the phase's command). The selector's contract
+/// (sp-wx2tw): the ejected suites the selector adds and the ones this check requires are
+/// read by the same rule.
+pub use suite_select::names::is_suite_name;
 
 /// The ejected-suites list (comma or whitespace separated, as the `.ejected` sidecar and the
 /// EJECTED landstate row write it) against the tree under test. `exists(name)` answers
 /// whether `spira/<name>` is on that tree.
 pub fn reentry(ejected: &str, exists: impl Fn(&str) -> bool) -> Reentry {
     let mut r = Reentry::default();
-    for w in ejected.split(|c: char| c == ',' || c.is_whitespace()) {
-        if w.is_empty()
-            || r.required
-                .iter()
-                .chain(&r.gone)
-                .chain(&r.invalid)
-                .any(|x| x == w)
-        {
-            continue;
-        }
-        if !is_suite_name(w) {
-            r.invalid.push(w.to_string());
-        } else if exists(w) {
-            r.required.push(w.to_string());
+    for w in suite_select::names::split_list(ejected) {
+        if !is_suite_name(&w) {
+            r.invalid.push(w);
+        } else if exists(&w) {
+            r.required.push(w);
         } else {
-            r.gone.push(w.to_string());
+            r.gone.push(w);
         }
     }
     r
@@ -923,7 +910,7 @@ cargo: test tests::x ... ok";
     // ------------------------------------------------------- the build fence (sp-aprxm)
 
     /// The production gate string's shape (the spira repository's configured gate, abridged).
-    const PROD: &str = r#"bash spira/inventory.sh && "$SPIRA_LINT_BIN" && bash spira/wiki-add-fence.sh && bash spira/build-fence.sh && { _s="$(bash spira/gate-touched.sh "$SPIRA_GATE_BASE" x)"; [ -n "$_s" ] || exit 0; }"#;
+    const PROD: &str = r#"bash spira/inventory.sh && "$SPIRA_LINT_BIN" && bash spira/wiki-add-fence.sh && bash spira/build-fence.sh && { _s="$("$SPIRA_SELECT_BIN" gate "$SPIRA_GATE_BASE" x)" || exit 75; [ -n "$_s" ] || exit 0; }"#;
 
     fn unit_c() -> Composition {
         Composition::Unit {
@@ -938,7 +925,7 @@ cargo: test tests::x ... ok";
         assert!(dropped);
         assert_eq!(
             g,
-            r#"bash spira/inventory.sh && "$SPIRA_LINT_BIN" && bash spira/wiki-add-fence.sh && { _s="$(bash spira/gate-touched.sh "$SPIRA_GATE_BASE" x)"; [ -n "$_s" ] || exit 0; }"#
+            r#"bash spira/inventory.sh && "$SPIRA_LINT_BIN" && bash spira/wiki-add-fence.sh && { _s="$("$SPIRA_SELECT_BIN" gate "$SPIRA_GATE_BASE" x)" || exit 75; [ -n "$_s" ] || exit 0; }"#
         );
         assert!(!g.contains("build-fence"));
         // …and its build phase is the compile check that replaces it: every target.

@@ -468,47 +468,13 @@ impl Attributor {
 // Suspect order: the members whose diff touches S's `# covers:` paths first.
 // ---------------------------------------------------------------------------------------
 
-/// Does `path` match `pat` the way select.sh's `case "$file" in $pat)` does: `*` matches any
-/// string, `/` included; `?` one character; `[...]` a bracket (`!`/`^` negates); `\x` a
-/// literal x.
-pub fn case_glob(pat: &str, path: &str) -> bool {
-    fn m(p: &[u8], s: &[u8]) -> bool {
-        match p.split_first() {
-            None => s.is_empty(),
-            Some((b'*', rest)) => (0..=s.len()).any(|i| m(rest, &s[i..])),
-            Some((b'?', rest)) => !s.is_empty() && m(rest, &s[1..]),
-            Some((b'[', rest)) => {
-                let Some(&c) = s.first() else { return false };
-                let (neg, mut i) = match rest.first() {
-                    Some(b'!') | Some(b'^') => (true, 1),
-                    _ => (false, 0),
-                };
-                let start = i;
-                let mut hit = false;
-                while i < rest.len() {
-                    if rest[i] == b']' && i > start {
-                        return hit != neg && m(&rest[i + 1..], &s[1..]);
-                    }
-                    if i + 2 < rest.len() && rest[i + 1] == b'-' && rest[i + 2] != b']' {
-                        hit |= rest[i] <= c && c <= rest[i + 2];
-                        i += 3;
-                    } else {
-                        hit |= rest[i] == c;
-                        i += 1;
-                    }
-                }
-                c == b'[' && m(rest, &s[1..])
-            }
-            Some((b'\\', rest)) if !rest.is_empty() => s.first() == Some(&rest[0]) && m(&rest[1..], &s[1..]),
-            Some((&c, rest)) => s.first() == Some(&c) && m(rest, &s[1..]),
-        }
-    }
-    m(pat.as_bytes(), path.as_bytes())
-}
+/// Does `path` match `pat` the way the selector's `case` matching does (`*` crosses `/`):
+/// the selector crate's matcher, so attribution and selection cannot disagree (sp-wx2tw).
+pub use suite_select::glob::case_match as case_glob;
 
 /// Whether a member that changed `paths` touches suite `suite` (`spira/<suite>`), whose
 /// `# covers:` globs are `covers` (`None`: no declaration — it covers everything, as in
-/// select.sh). A `file#function` glob matches on its file.
+/// the selector). A `file#function` glob matches on its file.
 pub fn touches(suite: &str, covers: Option<&[String]>, paths: &[String]) -> bool {
     let Some(globs) = covers else { return !paths.is_empty() };
     paths.iter().any(|p| {
