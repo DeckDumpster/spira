@@ -102,7 +102,9 @@ out="$(pb --show)"; rc=$?
 is   "2: exit 0"                              "0" "$rc"
 want "2: OVER is reported for fixlocal"       "OVER fixlocal" "$out"
 want "2: names the unpublished count"         "1 unpublished commit" "$out"
+is "DEBUG case2 out" "__marker__" "$(printf '%s' "$out" | tr '\n' '|')"
 is   "2: exactly one mail sent"               "1" "$(mail_count)"
+tl_summary; exit 1
 is   "2: the mail names the crossing"         "1" "$(mail_grep "OVER fixlocal")"
 
 clear_mail
