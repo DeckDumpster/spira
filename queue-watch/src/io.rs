@@ -187,7 +187,8 @@ pub fn read_beads(env: &Env, ids: &BTreeSet<String>) -> Result<(BTreeMap<String,
 }
 
 fn forge(repo: &Repo, sub: &str, pr: &str) -> Result<String, String> {
-    // A bare name (the release's forge.sh) is exec'd by name on PATH; a configured path via bash.
+    // A bare name (the release's `forge` binary, default since sp-yv4b3) is exec'd by name
+    // on PATH; a configured path via bash.
     let mut c = if repo.forge.components().count() == 1 {
         Command::new(&repo.forge)
     } else {
