@@ -460,7 +460,7 @@ fn every_shipped_service_renders_the_release_path_set_outright() {
 
 #[test]
 fn every_shipped_service_renders_the_configured_path_tail_after_the_system_dirs() {
-    every_shipped_service_carries_path(":/home/ryan/.local/bin:/home/ryan/.cargo/bin", ":/home/ryan/.local/bin:/home/ryan/.cargo/bin");
+    every_shipped_service_carries_path(":/h/.local/bin:/h/.cargo/bin", ":/h/.local/bin:/h/.cargo/bin");
 }
 
 // ---------------------------------------------------------------- activate
@@ -752,9 +752,9 @@ fn host_values_carries_the_configured_path_tail_env_over_config_and_refuses_a_ba
     let c = Config::resolve_with(&Flags::default(), &env, None).unwrap();
     assert_eq!(c.host_values().unwrap().get("SPIRA_PATH_TAIL").map(String::as_str), Some(""));
     // The typed key.
-    let toml: spira_config::SpiraToml = spira_config::validate("[spira]\npath = \"/home/ryan/.local/bin:/home/ryan/.cargo/bin\"\n").unwrap();
+    let toml: spira_config::SpiraToml = spira_config::validate("[spira]\npath = \"/h/.local/bin:/h/.cargo/bin\"\n").unwrap();
     let c = Config::resolve_with(&Flags::default(), &env, Some(toml.clone())).unwrap();
-    assert_eq!(c.host_values().unwrap().get("SPIRA_PATH_TAIL").map(String::as_str), Some(":/home/ryan/.local/bin:/home/ryan/.cargo/bin"));
+    assert_eq!(c.host_values().unwrap().get("SPIRA_PATH_TAIL").map(String::as_str), Some(":/h/.local/bin:/h/.cargo/bin"));
     // The environment wins over the typed key.
     let mut env2 = env.clone();
     env2.insert("SPIRA_PATH".into(), "/x/bin".into());

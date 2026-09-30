@@ -90,7 +90,7 @@ fn ctx() -> Ctx {
         ("HOME", "/home/u"),
         ("SPIRA_RELEASE", "/rel"),
         // The box's own tool tail (sp-c7b85) — cargo, for the tree builds a gate step runs.
-        ("SPIRA_PATH", "/home/u/.cargo/bin"),
+        ("SPIRA_PATH", "/box/.cargo/bin"),
         ("LANDSTATE", "/run/landstate"),
     ] {
         vars.insert(k.to_string(), v.to_string());
@@ -516,8 +516,8 @@ fn the_gate_command_gets_the_launcher_path_set_outright_from_spira_release() {
     assert_eq!(f.run(), PASS);
     assert_eq!(
         f.env_of(0, "PATH"),
-        format!("/rel/bin:/rel/spira:/usr/local/bin:/usr/bin:/bin:{}/.cargo/bin", ctx().var("HOME")),
-        "the release's bin/ and spira/, the system dirs, cargo for tree builds — nothing inherited"
+        format!("/rel/bin:/rel/spira:/usr/local/bin:/usr/bin:/bin:{}", ctx().var("SPIRA_PATH")),
+        "the release's bin/ and spira/, the system dirs, then the box's own tool tail — nothing inherited"
     );
     assert_eq!(f.env_of(0, "SPIRA_RELEASE"), "/rel");
 }

@@ -1071,8 +1071,8 @@ mod tests {
     #[test]
     fn release_path_with_tail_appends_after_the_system_dirs() {
         assert_eq!(
-            release_path_with_tail("/r/spira-releases/abc", "/home/ryan/.local/bin:/home/ryan/.cargo/bin").unwrap(),
-            "/r/spira-releases/abc/bin:/r/spira-releases/abc/spira:/usr/local/bin:/usr/bin:/bin:/home/ryan/.local/bin:/home/ryan/.cargo/bin"
+            release_path_with_tail("/r/spira-releases/abc", "/h/.local/bin:/h/.cargo/bin").unwrap(),
+            "/r/spira-releases/abc/bin:/r/spira-releases/abc/spira:/usr/local/bin:/usr/bin:/bin:/h/.local/bin:/h/.cargo/bin"
         );
         // An empty (or all-whitespace) tail changes nothing — same as before this bead.
         for empty in ["", "   "] {
@@ -1089,14 +1089,13 @@ mod tests {
 
     #[test]
     fn release_path_with_tail_refuses_a_tail_entry_inside_a_checkout() {
-        let dir = std::env::temp_dir().join(format!("spira-config-test-checkout-{}", std::process::id()));
+        let dir = testkit::TempDir::new("spira-config-tail-checkout");
         let bin = dir.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::create_dir_all(dir.join(".git")).unwrap();
         let e = release_path_with_tail("/r/spira-releases/abc", bin.to_str().unwrap()).unwrap_err();
         assert!(e.contains("checkout"), "{e}");
         assert!(e.contains(".git"), "{e}");
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
