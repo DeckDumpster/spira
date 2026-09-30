@@ -44,11 +44,10 @@ hasnt() { case "$2" in *"$3"*) bad "$1" "$2" ;; *) ok "$1" ;; esac; }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/home" "$TMP/run"
 
-# conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2); `run()` below
-# points SPIRA_REPO at a fictitious directory so it can never resolve one on its own, so
-# without this every fixture SPIRA_RUN silently reverts to its computed default and the mail
-# assertions below check a directory pr-notify never wrote to.
-SPIRA_CONFIG_BIN="$(testlib_spira_config_bin "$TMP")" || skip "cargo not found — spira-config binary cannot be built"
+# conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2), by name on the
+# suite's PATH (sp-gypjk); without it every fixture SPIRA_RUN silently reverts to its
+# computed default and the mail assertions below check a directory pr-notify never wrote to.
+command -v spira-config >/dev/null 2>&1 || bail "spira-config is not on PATH"
 
 # ALL VALUES PINNED TO NON-DEFAULTS so sourcing pr-notify.sh cannot read the operator's own
 # configuration (law-gates-run-in-a-clean-environment).
@@ -152,8 +151,8 @@ chmod +x "$GH_BIN/gh"
 run() {  # run [args...] -> pr-notify.sh in a clean env; stdout in $TMP/out
     env -i HOME="$TMP/home" PATH="$PATH" \
         SPIRA_PATH="$GH_BIN" SPIRA_CONF="$CONF" SPIRA_REPO_MAP="$REPO_MAP" \
-        SPIRA_REPO="$TMP/empty-repo" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" GH_LOG="$GH_LOG" \
-        bash "$HERE/pr-notify.sh" "$@" > "$TMP/out" 2>"$TMP/err"
+        SPIRA_REPO="$TMP/empty-repo" GH_LOG="$GH_LOG" \
+        pr-notify.sh "$@" > "$TMP/out" 2>"$TMP/err"
 }
 
 pending_json() {  # pending_json <num> <title>
@@ -309,7 +308,7 @@ runb() {  # runb <args...> -> pr-notify.sh against BRANCH_MAP
         SPIRA_PATH="$GH_BIN" SPIRA_CONF="$CONF" SPIRA_REPO_MAP="$BRANCH_MAP" \
         SPIRA_REPO="$TMP/empty-repo" GH_LOG="$GH_LOG" \
         GH_BRANCH_HAS_PR="${GH_BRANCH_HAS_PR:-0}" \
-        bash "$HERE/pr-notify.sh" "$@" > "$TMP/out" 2>"$TMP/err"
+        pr-notify.sh "$@" > "$TMP/out" 2>"$TMP/err"
 }
 
 GH_BRANCH_HAS_PR=0
@@ -377,8 +376,8 @@ rm -f "$TMP/repos/queue-repo/.gh-pr-state"
 run_gone() {
     env -i HOME="$TMP/home" PATH="$PATH" \
         SPIRA_PATH="$GH_BIN" SPIRA_CONF="$CONF" SPIRA_REPO_MAP="$GONE_MAP" \
-        SPIRA_REPO="$TMP/empty-repo" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" GH_LOG="$GH_LOG" \
-        bash "$HERE/pr-notify.sh" --show > "$TMP/out" 2>"$TMP/err"
+        SPIRA_REPO="$TMP/empty-repo" GH_LOG="$GH_LOG" \
+        pr-notify.sh --show > "$TMP/out" 2>"$TMP/err"
 }
 run_gone
 outg="$(cat "$TMP/out")"
@@ -409,8 +408,8 @@ EOF
 actionable() {
     env -i HOME="$TMP/home" PATH="$PATH" \
         SPIRA_CONF="$CONF" SPIRA_REPO_MAP="$GONE_MAP" SPIRA_REPO="$TMP/empty-repo" \
-        SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" SPIRA_ACTIONABLE="${SPIRA_ACTIONABLE_OVERRIDE:-}" \
-        bash "$HERE/pr-notify.sh" actionable "$FLOG"
+        SPIRA_ACTIONABLE="${SPIRA_ACTIONABLE_OVERRIDE:-}" \
+        pr-notify.sh actionable "$FLOG"
 }
 
 out9="$(SPIRA_ACTIONABLE_OVERRIDE='ANSWERED|COMMENTED|ESCALAT|STRANDED|POISON|DEGRADED|BLOCKED|UNREACHABLE|FAIL|ERROR|LANDED|⚠ BRANCH' actionable)"

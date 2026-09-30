@@ -12,8 +12,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 # The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
 # test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
-QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
-[ -x "$QUEUE_BIN" ] || { echo "FAIL: the queue binary is not built at $QUEUE_BIN"; exit 1; }
 
 echo "test-queue-flush.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -33,10 +31,10 @@ git init -q -b main "$TMP/repo"
 RMAP="$TMP/repo-map"
 
 run() {
-    env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" \
+    env -i PATH="$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_PATH="$TMP/bin" SPIRA_RUN="$TMP/run" \
         SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_BATCH_WAIT=1800 \
-        SPIRA_HOME="$TMP/spira" "$QUEUE_BIN" "$@" 2>&1
+        SPIRA_HOME="$TMP/spira" queue "$@" 2>&1
 }
 
 echo
@@ -75,7 +73,7 @@ is_first="${first:-none}"
 want "verdict runs before batch"   "verdict-called" "$is_first"
 
 # RETIRED with landing.sh: the landing pass's queue step is landing-pass's Tools::queue_step
-# ("$SPIRA_QUEUE_BIN" step <repo>), pinned by cargo test -p landing-pass
+# (`queue step <repo>`), pinned by cargo test -p landing-pass
 # the_queue_step_runs_before_and_after_the_walk_and_a_missing_binary_is_said.
 
 echo

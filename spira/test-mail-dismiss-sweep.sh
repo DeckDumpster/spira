@@ -43,8 +43,8 @@ export SPIRA_RUN="$TMP/run"
 export SPIRA_OPERATOR_ACTOR="ryan-op"                         # non-default: catches a hardcoded "operator"
 mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_RUN"
 
-MAIL="$HERE/mail.sh"
-run() { bash "$MAIL" "$@"; }
+MAIL=mail.sh   # invoked by name on the suite's PATH (sp-gypjk)
+run() { "$MAIL" "$@"; }
 
 bead_status() {
     "$SPIRA_BD" -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \

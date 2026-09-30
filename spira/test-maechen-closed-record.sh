@@ -35,7 +35,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 testdb_require test-maechen-closed-record
 . "$HERE/testlib.sh"
 
-TRIGSH="$HERE/maechen-trigger.sh"
+TRIGSH=maechen-trigger.sh   # invoked by name on the suite's PATH (sp-gypjk)
 T="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
@@ -89,7 +89,7 @@ run_livelock() {
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SPIKE_LABEL=spike \
         SPIRA_SCOPE_LABEL="$ALLW_SCOPE" \
-        bash "$HERE/cockpit.sh" livelock 2>/dev/null
+        cockpit.sh livelock 2>/dev/null
 }
 
 # Without allowlist: INVALID-CLOSED row expected.
@@ -132,7 +132,7 @@ run_livelock_uf() {
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SPIKE_LABEL=spike \
         SPIRA_SCOPE_LABEL="$ALLW_SCOPE" \
-        bash "$HERE/cockpit.sh" livelock 2>/dev/null
+        cockpit.sh livelock 2>/dev/null
 }
 
 out="$(run_livelock_uf)"
@@ -185,7 +185,7 @@ tr_out="$(env -i HOME="$T" \
     SPIRA_SCOPE_LABEL="$TR_SCOPE" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \
     SPIRA_MAECHEN_LANDING_INTERVAL=999 \
-    bash "$TRIGSH" 2>&1)"; tr_rc=$?
+    "$TRIGSH" 2>&1)"; tr_rc=$?
 
 is   "invalid-closed trigger: exits 0"             0 "$tr_rc"
 want "invalid-closed trigger: log mentions rows"   "invalid-closed trigger:" "$tr_out"
@@ -217,7 +217,7 @@ tr_out2="$(env -i HOME="$T" \
     SPIRA_SCOPE_LABEL="$TR_SCOPE" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \
     SPIRA_MAECHEN_LANDING_INTERVAL=999 \
-    bash "$TRIGSH" 2>&1)"; tr_rc2=$?
+    "$TRIGSH" 2>&1)"; tr_rc2=$?
 is   "dedup second run: exits 0"      0          "$tr_rc2"
 want "dedup second run: logs skip"    "skipping" "$tr_out2"
 tr_count="$("$SPIRA_BD" -C "$SPIRA_DB" list \
@@ -259,7 +259,7 @@ ant_out="$(env -i HOME="$T" \
     SPIRA_SCOPE_LABEL="$ANT_SCOPE" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \
     SPIRA_MAECHEN_LANDING_INTERVAL=999 \
-    bash "$TRIGSH" 2>&1)"; ant_rc=$?
+    "$TRIGSH" 2>&1)"; ant_rc=$?
 
 is     "allowlisted only: trigger exits 0"    0            "$ant_rc"
 want   "allowlisted only: logs no trigger"    "no trigger" "$ant_out"
@@ -321,7 +321,7 @@ e2e_trig1="$(env -i HOME="$T" \
     SPIRA_SCOPE_LABEL="$E2E_SCOPE" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \
     SPIRA_MAECHEN_LANDING_INTERVAL=999 \
-    bash "$TRIGSH" 2>&1)"; e2e_rc1=$?
+    "$TRIGSH" 2>&1)"; e2e_rc1=$?
 is   "e2e: trigger run 1 exits 0"           0                      "$e2e_rc1"
 want "e2e: trigger log mentions rows"        "invalid-closed trigger:" "$e2e_trig1"
 
@@ -350,7 +350,7 @@ e2e_trig2="$(env -i HOME="$T" \
     SPIRA_SCOPE_LABEL="$E2E_SCOPE" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \
     SPIRA_MAECHEN_LANDING_INTERVAL=999 \
-    bash "$TRIGSH" 2>&1)"
+    "$TRIGSH" 2>&1)"
 want "e2e: second trigger run logs skipping" "skipping" "$e2e_trig2"
 e2e_bead_count="$("$SPIRA_BD" -C "$SPIRA_DB" list \
     --status open --label "$E2E_SCOPE,$E2E_MAE" --json 2>/dev/null \
@@ -377,7 +377,7 @@ e2e_final="$(env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
     SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
     SPIRA_SPIKE_LABEL=spike \
     SPIRA_SCOPE_LABEL="$E2E_SCOPE" \
-    bash "$HERE/cockpit.sh" livelock 2>/dev/null)"
+    cockpit.sh livelock 2>/dev/null)"
 
 is "e2e: SP_INVALID_CLOSED=0 after pass" "0" \
    "$(printf '%s\n' "$e2e_final" | sed -n 's/^SP_INVALID_CLOSED=//p' | head -1)"

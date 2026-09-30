@@ -39,7 +39,7 @@ export SPIRA_ASK_LABEL=asks-test    # non-default: catches hardcoded literals
 export SPIRA_MAIL_TIDY_FRESH=3600   # non-default: 1h window
 export SPIRA_DB="$TMP/db"
 
-MAIL="$HERE/mail.sh"
+MAIL=mail.sh   # invoked by name on the suite's PATH (sp-gypjk)
 OLD_AGE=7200    # older than SPIRA_MAIL_TIDY_FRESH
 URGENT_MAX_S=604800
 
@@ -68,7 +68,7 @@ STUB
 chmod +x "$STUB_BD"
 export SPIRA_BD="$STUB_BD"
 
-run_tidy() { bash "$MAIL" tidy operator "$@"; }
+run_tidy() { "$MAIL" tidy operator "$@"; }
 
 send_msg() {   # send_msg <mailbox> <subject> <bead-id|-> [--urgent]
     local mbox="$1" subj="$2" bid="$3"; shift 3
@@ -76,7 +76,7 @@ send_msg() {   # send_msg <mailbox> <subject> <bead-id|-> [--urgent]
     [ "$bid" != "-" ] && extra+=(--bead "$bid")
     [ "${1:-}" = "--urgent" ] && extra+=(--urgent)
     echo "body" | SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="fixture" \
-        bash "$MAIL" send "$mbox" \
+        "$MAIL" send "$mbox" \
             --from "Bot <bot@spira>" \
             --subject "$subj" \
             "${extra[@]}" 2>/dev/null
@@ -236,16 +236,16 @@ echo "=== Fresh install: a mailbox install created but no mail ever reached ==="
 # now creates it with `mail.sh ensure operator`; tidy's own refusal of a mailbox that does
 # not exist stays (a misconfigured SPIRA_MAIL must not tidy silently).
 FRESH="$TMP/fresh-mail"
-out="$(SPIRA_MAIL="$FRESH" bash "$MAIL" tidy operator 2>&1)"; rc=$?
+out="$(SPIRA_MAIL="$FRESH" "$MAIL" tidy operator 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && ok "positive control: tidy of a mailbox nothing created still refuses" \
                 || bad "positive control: tidy of a mailbox nothing created still refuses" "rc=0"
 want "positive control: and says why" "mailbox not found" "$out"
-SPIRA_MAIL="$FRESH" bash "$MAIL" ensure operator; rc=$?
+SPIRA_MAIL="$FRESH" "$MAIL" ensure operator; rc=$?
 is "mail.sh ensure operator exits 0" 0 "$rc"
 [ -d "$FRESH/operator/new" ] && [ -d "$FRESH/operator/cur" ] && [ -d "$FRESH/operator/tmp" ] \
     && ok  "ensure creates the operator maildir (new, cur, tmp)" \
     || bad "ensure creates the operator maildir (new, cur, tmp)" "$(ls -R "$FRESH" 2>&1 | head -5)"
-out="$(SPIRA_MAIL="$FRESH" bash "$MAIL" tidy operator 2>&1)"; rc=$?
+out="$(SPIRA_MAIL="$FRESH" "$MAIL" tidy operator 2>&1)"; rc=$?
 is     "tidy of the ensured, empty mailbox exits 0" 0 "$rc"
 nowant "and does not report it missing" "mailbox not found" "$out"
 want   "install.sh ensures the operator mailbox" 'mail.sh" ensure operator' "$(cat "$HERE/../install.sh")"

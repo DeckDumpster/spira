@@ -48,7 +48,7 @@ export SPIRA_REPO_MAP="$TMP/repo-map"
 printf '' > "$SPIRA_REPO_MAP"   # empty; amend does not need it
 
 run_bead() { SPIRA_HOME="$SPIRA_HOME" SPIRA_MAIL="$SPIRA_MAIL" SPIRA_RUN="$SPIRA_RUN" \
-             bash "$HERE/bead.sh" "$@"; }
+             bead.sh "$@"; }
 
 # File a bead in the fixture db, then claim it manually.
 BID2="$(bdq create "Test amend bead" -l "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}partition:${SPIRA_PLAN_LABEL:-plan},repo:fixture" --json 2>/dev/null \
@@ -118,8 +118,8 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || { bad "(d): the aeon binary is not built (SPIRA_AEON_BIN)" ""; tl_summary; exit 1; }
+command -v aeon >/dev/null 2>&1 \
+    || { bad "(d): aeon is not on PATH" ""; tl_summary; exit 1; }
 
 export MAILBOX_SEEN_MARKER="$TMP/mailbox-seen"
 
@@ -149,7 +149,7 @@ SPIRA_HOME="$SPIRA_HOME" SPIRA_RUN="$SPIRA_RUN" SPIRA_MAIL="$SPIRA_MAIL" \
 SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
 SPIRA_AGENT="$BIN/claude" SPIRA_CONF="" \
 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
-    "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder >/dev/null 2>&1 || aeon_rc=$?
+    aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || aeon_rc=$?
 
 status="$(bdq show "$BID4" --json 2>/dev/null \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,dict) else d[0]; print(d.get("status",""))' 2>/dev/null)"

@@ -43,7 +43,7 @@ export SPIRA_ID_PREFIX="sp"
 export SPIRA_RUN="$TMP/run"
 export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite"
 
-run() { bash "$HERE/mail.sh" "$@"; }
+run() { mail.sh "$@"; }
 
 body_of() {
     local mailbox="$1" f

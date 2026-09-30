@@ -25,28 +25,28 @@ export SPIRA_CONF=""
 export SPIRA_ID_PREFIX="sp"
 export SPIRA_MAIL_UNREAD_AGE=60
 
-HEALTH="$HERE/mail-health.sh"
-MAIL="$HERE/mail.sh"
+HEALTH=mail-health.sh   # invoked by name on the suite's PATH (sp-gypjk)
+MAIL=mail.sh   # invoked by name on the suite's PATH (sp-gypjk)
 
 # Deliver a message to a mailbox and backdate its mtime to simulate an old backlog.
 send_old() {
     local mailbox="$1" age_s="$2"
     echo "body" | SPIRA_MAIL_LINT_CONSIDERED="test" \
-        bash "$MAIL" send "$mailbox" --from "S <s@s>" --subject "Old message" 2>/dev/null
+        "$MAIL" send "$mailbox" --from "S <s@s>" --subject "Old message" 2>/dev/null
     local f; f="$(ls -t "$SPIRA_MAIL/$mailbox/new/" 2>/dev/null | head -1)"
     [ -n "$f" ] || { printf 'send_old: no file in new/\n' >&2; return 1; }
     touch -d "@$(( $(date +%s) - age_s ))" "$SPIRA_MAIL/$mailbox/new/$f"
 }
 
 op_count() {
-    bash "$MAIL" count operator 2>/dev/null
+    "$MAIL" count operator 2>/dev/null
 }
 
 export SPIRA_MAIL_READERS="concierge=echo wake"
 
 # install.sh runs this before any timer can read the operator mailbox; a read verb now
 # refuses a mailbox that was never provisioned, so the fixture must match that order.
-bash "$MAIL" ensure operator
+"$MAIL" ensure operator
 
 echo
 echo "=== POSITIVE CONTROL — fires when threshold exceeded ==="
@@ -58,19 +58,19 @@ is "SEEN RED: operator starts with 0 messages" "0" "$initial"
 
 send_old concierge 120
 
-rc=0; bash "$HEALTH" 2>/dev/null; rc=$?
+rc=0; "$HEALTH" 2>/dev/null; rc=$?
 is1 "exits 1 when backlog exceeds threshold" "$rc"
 
 count1="$(op_count)"
 is "operator receives exactly one health message" "1" "$count1"
 
-msg="$(bash "$MAIL" list operator --unread 2>/dev/null)"
+msg="$("$MAIL" list operator --unread 2>/dev/null)"
 want "message names the mailbox" "concierge" "$msg"
 
 echo
 echo "=== fires once, not per pass ==="
 
-rc=0; bash "$HEALTH" 2>/dev/null; rc=$?
+rc=0; "$HEALTH" 2>/dev/null; rc=$?
 isz "exits 0 on second pass with same backlog" "$rc"
 
 count2="$(op_count)"
@@ -80,10 +80,10 @@ echo
 echo "=== re-fires after backlog clears and recurs ==="
 
 # Read concierge mail — clears the backlog.
-bash "$MAIL" read concierge >/dev/null 2>&1 || true
+"$MAIL" read concierge >/dev/null 2>&1 || true
 
 # Health should clear state (no backlog).
-rc=0; bash "$HEALTH" 2>/dev/null; rc=$?
+rc=0; "$HEALTH" 2>/dev/null; rc=$?
 isz "exits 0 when mailbox is empty" "$rc"
 
 # State file must be gone.
@@ -93,7 +93,7 @@ is "state file removed when mailbox empties" "1" "$sf_gone"
 # New old backlog arrives.
 send_old concierge 120
 
-rc=0; bash "$HEALTH" 2>/dev/null; rc=$?
+rc=0; "$HEALTH" 2>/dev/null; rc=$?
 is1 "re-fires when backlog recurs after clearing" "$rc"
 
 count3="$(op_count)"
@@ -105,13 +105,13 @@ echo "=== silent below threshold ==="
 # Send fresh mail to a different mailbox — not old enough.
 export SPIRA_MAIL_READERS="freshbox=echo wake"
 echo "fresh" | SPIRA_MAIL_LINT_CONSIDERED="test" \
-    bash "$MAIL" send freshbox --from "T <t@t>" --subject "Fresh message" 2>/dev/null
+    "$MAIL" send freshbox --from "T <t@t>" --subject "Fresh message" 2>/dev/null
 
 # SEEN RED: confirm freshbox has mail so that silence below is meaningful.
-fresh_count="$(bash "$MAIL" count freshbox 2>/dev/null)"
+fresh_count="$("$MAIL" count freshbox 2>/dev/null)"
 is "SEEN RED: freshbox has 1 message" "1" "$fresh_count"
 
-rc=0; bash "$HEALTH" 2>/dev/null; rc=$?
+rc=0; "$HEALTH" 2>/dev/null; rc=$?
 isz "exits 0 when age below threshold" "$rc"
 
 count4="$(op_count)"

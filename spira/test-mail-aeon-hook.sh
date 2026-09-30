@@ -27,7 +27,7 @@ cp "$HERE/mail.sh" "$SPIRA_HOME/"
 cp "$HERE/hooks/aeon-mail-deliver.sh" "$SPIRA_HOME/hooks/"
 HOOK="$SPIRA_HOME/hooks/aeon-mail-deliver.sh"
 
-run_mail() { SPIRA_HOME="$SPIRA_HOME" bash "$SPIRA_HOME/mail.sh" "$@"; }
+run_mail() { SPIRA_HOME="$SPIRA_HOME" mail.sh "$@"; }
 
 # ==========================================================================
 # (e) SEEN RED: empty mailbox hook must have been able to find something — plant

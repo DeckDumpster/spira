@@ -132,7 +132,7 @@ psc() {  # psc [VAR=val...]
         INC_CAUSES="$INC_CAUSES" \
         INC_REFS="$INC_REFS" \
         SPIRA_INCIDENT_SH="$INC_STUB" \
-        "$@" bash "$HERE/watchtower.sh" --pr-stall-check 2>/dev/null
+        "$@" watchtower.sh --pr-stall-check 2>/dev/null
 }
 
 fresh() {

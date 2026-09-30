@@ -15,8 +15,6 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 # The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
 # test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
-QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
-[ -x "$QUEUE_BIN" ] || { echo "FAIL: the queue binary is not built at $QUEUE_BIN"; exit 1; }
 
 . "$HERE/testdb.sh"
 testdb_require test-queue-owner-refuse
@@ -68,7 +66,7 @@ queue() {
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
     SPIRA_MAIL="$MAIL" \
-        SPIRA_HOME="$SH" "$QUEUE_BIN" "$@"
+        SPIRA_HOME="$SH" queue "$@"
 }
 
 echo "test-queue-owner-refuse.sh"

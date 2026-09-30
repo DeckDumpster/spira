@@ -53,7 +53,7 @@ chmod +x "$STUB_BD"
 export SPIRA_BD="$STUB_BD"
 export SPIRA_DB="$TMP/db"
 
-unread() { bash "$HERE/mail.sh" count operator 2>/dev/null; }
+unread() { mail.sh count operator 2>/dev/null; }
 
 echo
 echo "lib.sh: land_escalate (question)"
@@ -98,7 +98,7 @@ is "skew.sh escalate delivers exactly one message" "$((before + 1))" "$after"
 echo
 echo "incident.sh: SIN escalation (question)"
 
-INC="$HERE/incident.sh"
+INC=incident.sh   # invoked by name on the suite's PATH (sp-gypjk)
 SIN_STATE="$TMP/sin-state.json"
 SIN_LOG="$TMP/sin-bd.log"
 SIN_AT=2
@@ -116,7 +116,7 @@ file_sin_incident() {
         SPIRA_INCIDENT_LOCK="$TMP/run/real-sender-sin.lock" \
         SPIRA_INCIDENT_REPO=real-sender-fixture \
         SPIRA_SIN_AT="$SIN_AT" \
-        bash "$INC" file "$title" - 2>/dev/null
+        "$INC" file "$title" - 2>/dev/null
 }
 
 ref="incident:real-sender-sin-test"
@@ -136,7 +136,7 @@ want "incident.sh SIN message names the recurrence"  "recurred"    "$body"
 echo
 echo "archivist.sh: sweep over the top band sends no per-session note"
 
-ARC_SH="$HERE/archivist.sh"
+ARC_SH=archivist.sh   # invoked by name on the suite's PATH (sp-gypjk)
 mkdir -p "$TMP/arc-chamber" "$TMP/arc-run" "$TMP/arc-projects/-test-project"
 cp "$HERE/chamber/archivist.md" "$TMP/arc-chamber/"
 
@@ -163,7 +163,7 @@ STUB_ARC_CLAUDE="$TMP/stub-archivist-claude"
 cat > "$STUB_ARC_CLAUDE" <<STUBEOF
 #!/usr/bin/env bash
 cat >/dev/null
-bash "$ARC_SH" mark sess-realsender archiving 1
+"$ARC_SH" mark sess-realsender archiving 1
 exit 0
 STUBEOF
 chmod +x "$STUB_ARC_CLAUDE"
@@ -173,7 +173,7 @@ SPIRA_RUN="$TMP/arc-run" SPIRA_TOKEN_PROJECTS="$TMP/arc-projects" \
     SPIRA_CTX_WARN=200000 SPIRA_CTX_HIGH=400000 SPIRA_CTX_LIMIT=1000000 \
     SPIRA_ARCHIVIST_EVERY=10 SPIRA_ARCHIVIST_PER_PASS=1 SPIRA_ARCHIVIST_TIMEOUT=10 \
     SPIRA_CHAMBER="$TMP/arc-chamber" SPIRA_AGENT="$STUB_ARC_CLAUDE" \
-    bash "$ARC_SH" sweep >/dev/null 2>&1
+    "$ARC_SH" sweep >/dev/null 2>&1
 after="$(unread)"
 
 # THE SWEEP ITSELF WORKED: the fabricated session crossed the top band and archive()
@@ -192,7 +192,7 @@ is "archivist.sh sweep sends no mail with nothing queued for the digest" "$befor
 # `--digest` is exactly the ad hoc per-finding note mail.sh's guard exists to stop. This is
 # what G-05 exists to catch, so the guard is worth pinning directly even though nothing in
 # archivist.sh sends this shape any more.
-lint_err="$(printf 'body' | bash "$HERE/mail.sh" send operator \
+lint_err="$(printf 'body' | mail.sh send operator \
     --from "Archivist <archivist@spira>" --subject "isolated repro" --kind note 2>&1 >/dev/null)"
 rc=$?
 is "the isolated repro also fails" "1" "$rc"

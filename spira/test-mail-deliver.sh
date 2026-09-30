@@ -45,7 +45,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 SERVICE="$HERE/../systemd/spira-mail-deliver.service"
-WORLD="$HERE/world.sh"
+WORLD=world.sh   # invoked by name on the suite's PATH (sp-gypjk)
 WATCHD="$HERE/watchd.sh"
 
 echo
@@ -109,7 +109,7 @@ run_start() {
     env -i HOME="$WTMP/home" PATH="$WBIN:$PATH" \
         SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_RUN="$WRUN" \
         SPIRA_SYSTEMCTL="$WBIN/systemctl" \
-        "${@}" bash "$WORLD" start >/dev/null 2>&1
+        "${@}" "$WORLD" start >/dev/null 2>&1
 }
 
 echo
@@ -191,7 +191,7 @@ run_notify() {
         SPIRA_ACTIONABLE=WAKEME \
         SPIRA_MAIL_REPEAT_WINDOW=0 \
         "${@}" \
-        bash "$WATCHD" notify 2>/dev/null
+        watchd.sh notify 2>/dev/null
 }
 
 asks()     { find "$MAIL/operator/new" -type f 2>/dev/null | wc -l | tr -d ' '; }
@@ -369,7 +369,7 @@ done
 first_seen="$(_wake_count "$ATT2")"
 
 env -i HOME="$TMP/home" PATH="$PATH" SPIRA_MAIL="$WMAIL2" SPIRA_CONF=/nonexistent \
-    bash "$HERE/mail.sh" read wakebox >/dev/null 2>&1
+    mail.sh read wakebox >/dev/null 2>&1
 
 sleep 2.5
 loop_exited=0; _bg_exited "$LOOP2_PID" 30 && loop_exited=1

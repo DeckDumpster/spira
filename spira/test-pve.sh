@@ -121,7 +121,7 @@ run_pve() {
         CURL_FIXTURE="$fixture" \
         CURL_STATUS="${CURL_STATUS:-200}" \
         CURL_RC="${CURL_RC:-0}" \
-        bash "$HERE/pve.sh" "$@" 2>&1
+        pve.sh "$@" 2>&1
 }
 
 reset_log() { : > "$CURL_LOG"; }
@@ -163,7 +163,7 @@ no_env_out="$(env -i \
     SPIRA_CONF="$TMP/no.conf" \
     SPIRA_PVE_ENV="$TMP/missing.env" \
     CURL_LOG_PATH="$CURL_LOG" \
-    bash "$HERE/pve.sh" status 100 2>&1)" || true
+    pve.sh status 100 2>&1)" || true
 want "missing creds: error names env file" "missing.env" "$no_env_out"
 is "missing creds: no curl call" "0" "$(call_count)"
 
@@ -184,7 +184,7 @@ missing_cert_out="$(env -i \
     SPIRA_CONF="$TMP/no.conf" \
     SPIRA_PVE_ENV="$bad_env" \
     CURL_LOG_PATH="$CURL_LOG" \
-    bash "$HERE/pve.sh" status 100 2>&1)" || true
+    pve.sh status 100 2>&1)" || true
 want "missing cacert: error mentions cacert" "cacert" "$missing_cert_out"
 is "missing cacert: no curl call" "0" "$(call_count)"
 

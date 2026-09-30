@@ -56,7 +56,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
-TRIGSH="$HERE/maechen-trigger.sh"
+TRIGSH=maechen-trigger.sh   # invoked by name on the suite's PATH (sp-gypjk)
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
 
@@ -135,7 +135,7 @@ run_trigger() {
         SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-spira}" \
         SPIRA_MAECHEN_LANDING_INTERVAL="${SPIRA_MAECHEN_LANDING_INTERVAL:-25}" \
         SPIRA_MAECHEN_MAX_GAP_SECONDS="${SPIRA_MAECHEN_MAX_GAP_SECONDS:-10800}" \
-        bash "$TRIGSH" 2>&1
+        "$TRIGSH" 2>&1
 }
 
 # ==========================================================================================
@@ -282,7 +282,7 @@ out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
         SPIRA_SCOPE_LABEL="spira" \
         SPIRA_MAECHEN_LANDING_INTERVAL=2 \
         SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 \
-        bash "$TRIGSH" 2>&1)"; rc=$?
+        "$TRIGSH" 2>&1)"; rc=$?
 is   "non-matching commits do not fire"   0 "$rc"
 nowant "no create for non-matching"       "create" "$(cat "$BD_LOG")"
 
@@ -354,7 +354,7 @@ SPIRA_MAECHEN_LANDING_INTERVAL=999 \
         SPIRA_SCOPE_LABEL="spira" \
         SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
         SPIRA_MAECHEN_LANDING_INTERVAL=999 \
-        bash "$TRIGSH" 2>&1)"; rc=$?
+        "$TRIGSH" 2>&1)"; rc=$?
 is   "bd create failure exits 1"       1        "$rc"
 want "failure log mentions ERROR"      "ERROR"  "$out"
 
@@ -379,7 +379,7 @@ out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
         SPIRA_MAECHEN_LABEL="retro" \
         SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
         SPIRA_MAECHEN_LANDING_INTERVAL=999 \
-        bash "$TRIGSH" 2>&1)"; rc=$?
+        "$TRIGSH" 2>&1)"; rc=$?
 is   "custom labels exits 0"                       0            "$rc"
 want "custom scope label in create"                "myproject"  "$(cat "$BD_LOG")"
 want "custom maechen label in create"              "retro"      "$(cat "$BD_LOG")"
@@ -408,7 +408,7 @@ out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
         SPIRA_MAECHEN_LABEL="maechen-sweep" \
         SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
         SPIRA_MAECHEN_LANDING_INTERVAL=999 \
-        bash "$TRIGSH" 2>&1)"; rc=$?
+        "$TRIGSH" 2>&1)"; rc=$?
 is     "empty scope exits 0"                0 "$rc"
 nowant "no leading comma in --label"        ",maechen-sweep" "$(grep 'create' "$BD_LOG" || true)"
 want   "maechen label present without scope" "maechen-sweep" "$(cat "$BD_LOG")"
@@ -477,7 +477,7 @@ out_b4t="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 \
     SPIRA_MAECHEN_LANDING_INTERVAL=2 \
-    bash "$TRIGSH" 2>&1)"; rc_b4t=$?
+    "$TRIGSH" 2>&1)"; rc_b4t=$?
 # (a) The arithmetic-error message must not appear — log() must not pollute $(...) capture.
 nowant "no 'value too great for base' from log stdout capture" \
     "value too great for base" "$out_b4t"
@@ -550,7 +550,7 @@ out_3ljk="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:/usr/lib/git-core" \
     SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 \
     SPIRA_MAECHEN_LANDING_INTERVAL=2 \
-    bash "$TRIGSH" 2>&1)"; rc_3ljk=$?
+    "$TRIGSH" 2>&1)"; rc_3ljk=$?
 nowant "no 'cannot resolve base ref' for gitea-remote repo" \
     "cannot resolve base ref" "$out_3ljk"
 is   "landing trigger fires for gitea-remote repo" 0 "$rc_3ljk"
@@ -584,7 +584,7 @@ out_lf="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_REPO_MAP="$T/map-land-form" \
     SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2 \
-    bash "$TRIGSH" 2>&1)"; rc_lf=$?
+    "$TRIGSH" 2>&1)"; rc_lf=$?
 is   "spira:land form: exits 0"         0        "$rc_lf"
 want "spira:land form: bd create called" "create" "$(cat "$BD_LOG")"
 want "spira:land form: reason mentions landings" "landings" "$out_lf"
@@ -614,7 +614,7 @@ out_mf="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_REPO_MAP="$T/map-merge-form" \
     SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2 \
-    bash "$TRIGSH" 2>&1)"; rc_mf=$?
+    "$TRIGSH" 2>&1)"; rc_mf=$?
 is   "merge forms: exits 0"              0        "$rc_mf"
 want "merge forms: bd create called"     "create" "$(cat "$BD_LOG")"
 
@@ -647,7 +647,7 @@ out_dd="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_REPO_MAP="$T/map-dedup-form" \
     SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2 \
-    bash "$TRIGSH" 2>&1)"; rc_dd=$?
+    "$TRIGSH" 2>&1)"; rc_dd=$?
 is     "dedup forms: same-bead merge+land: exits 0"       0 "$rc_dd"
 nowant "dedup forms: same-bead pair does not reach 2"    "create" "$(cat "$BD_LOG")"
 
@@ -661,7 +661,7 @@ out_dd2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_REPO_MAP="$T/map-dedup-form" \
     SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2 \
-    bash "$TRIGSH" 2>&1)"; rc_dd2=$?
+    "$TRIGSH" 2>&1)"; rc_dd2=$?
 is   "dedup forms: two distinct beads reach threshold 2" 0        "$rc_dd2"
 want "dedup forms: trigger fires at 2 distinct beads"    "create" "$(cat "$BD_LOG")"
 
@@ -714,7 +714,7 @@ out_wpjm="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 \
     SPIRA_MAECHEN_LANDING_INTERVAL=2 \
-    bash "$TRIGSH" 2>&1)"; rc_wpjm=$?
+    "$TRIGSH" 2>&1)"; rc_wpjm=$?
 nowant "no 'cannot resolve base ref' when home repo resolved via map" \
     "cannot resolve base ref" "$out_wpjm"
 is   "landing trigger fires — home repo landings counted via map" 0 "$rc_wpjm"
@@ -736,7 +736,7 @@ out_wpjm2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 \
     SPIRA_MAECHEN_LANDING_INTERVAL=3 \
-    bash "$TRIGSH" 2>&1)"; rc_wpjm2=$?
+    "$TRIGSH" 2>&1)"; rc_wpjm2=$?
 is     "threshold=3 exits 0 — home repo not double-counted" 0 "$rc_wpjm2"
 nowant "no create at threshold=3 — exactly 2 landings, not 4" \
     "create" "$(cat "$BD_LOG")"
@@ -766,7 +766,7 @@ out_ng="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
     SPIRA_MAECHEN_LANDING_INTERVAL=0 \
-    bash "$TRIGSH" 2>&1)"; rc_ng=$?
+    "$TRIGSH" 2>&1)"; rc_ng=$?
 is     "no-lane map: trigger exits 0"         0 "$rc_ng"
 nowant "no-lane map: no bd create call"       "create" "$(cat "$BD_LOG")"
 want   "no-lane map: logs skipping trigger"   "skipping trigger" "$out_ng"
@@ -787,7 +787,7 @@ out_lp="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
     SPIRA_MAECHEN_LANDING_INTERVAL=0 \
-    bash "$TRIGSH" 2>&1)"; rc_lp=$?
+    "$TRIGSH" 2>&1)"; rc_lp=$?
 is   "lane-admitted map: trigger exits 0"       0        "$rc_lp"
 want "lane-admitted map: bd create is called"   "create" "$(cat "$BD_LOG")"
 

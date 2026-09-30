@@ -22,7 +22,7 @@ export SPIRA_CONF=""
 export SPIRA_ID_PREFIX="sp"
 export SPIRA_DB=""
 
-run_mail() { bash "$HERE/mail.sh" "$@"; }
+run_mail() { mail.sh "$@"; }
 
 # ==========================================================================
 # POSITIVE CONTROL — mail.sh done marks R flag
@@ -124,7 +124,7 @@ printf 'From: Operator <op@h>\nSubject: Read message\nDate: %s\n\nbody\n' \
 printf 'From: Operator <op@h>\nSubject: Done message\nDate: %s\n\nbody\n' \
     "$(date -u '+%a, %d %b %Y %H:%M:%S +0000')" > "$MAIL_DIR/concierge/cur/done-msg:2,R"
 
-keys="$(SPIRA_MAIL="$MAIL_DIR" bash "$HERE/cockpit.sh" mail 2>/dev/null)"
+keys="$(SPIRA_MAIL="$MAIL_DIR" cockpit.sh mail 2>/dev/null)"
 isz "cockpit.sh mail exits 0" "$?"
 
 want "SP_MAIL_UNREAD=1" "SP_MAIL_UNREAD=1" "$keys"
@@ -145,7 +145,7 @@ touch "$BUDGET"
 # Build a minimal snapshot from cockpit.sh mail probe output
 {
     printf 'SP_AT=%s\n' "$(date +%s)"
-    SPIRA_MAIL="$MAIL_DIR" bash "$HERE/cockpit.sh" mail 2>/dev/null
+    SPIRA_MAIL="$MAIL_DIR" cockpit.sh mail 2>/dev/null
     # Minimal keys for health.sh to not crash
     printf 'SP_AEONS=0\nSP_SENTINEL_AGE=5\nSP_OPS_AGE=5\nSP_AURON_AGE=5\n'
     printf 'SP_SENTINEL_TIMER=1\nSP_OPS_TIMER=1\nSP_AURON_TIMER=1\nSP_AURON_FIRING=0\n'

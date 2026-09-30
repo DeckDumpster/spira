@@ -52,13 +52,9 @@ _rc=$?
 cat "$UNIT_OUT"
 report_cargo "$UNIT_OUT" "$_rc"
 
-BIN="${QUEUE_WATCH_BIN:-}"
-if [ -z "$BIN" ]; then
-    CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/target" "$CARGO_BIN" build --release \
-        --manifest-path "$ROOT/queue-watch/Cargo.toml" >/dev/null 2>&1
-    BIN="$T/target/release/queue-watch"
-fi
-[ -x "$BIN" ] || bail "queue-watch binary was not built at $BIN"
+# The tree's queue-watch, by name on the suite's PATH (sp-gypjk).
+BIN=queue-watch
+command -v "$BIN" >/dev/null 2>&1 || bail "queue-watch is not on PATH"
 
 # --- fixtures --------------------------------------------------------------------------------
 RUN="$T/run"; FX="$T/fx"; Q="$RUN/queue/q"
@@ -217,9 +213,7 @@ hout2="$("$BIN" health --run "$ARUN" 2>&1)"; hrc2=$?
 
 # --- 5. wiring -------------------------------------------------------------------------------
 row="$(command grep -E '^queue-watch\|daemon\|' "$HERE/watchers" || true)"
-want "watchd row runs the binary"                 "@SPIRA_QUEUE_WATCH_BIN@ watch --run @SPIRA_RUN@" "$row"
-want "watchd row carries a health probe"          "@SPIRA_QUEUE_WATCH_BIN@ health --run @SPIRA_RUN@" "$row"
-want "watchd knows the placeholder"               "SPIRA_QUEUE_WATCH_BIN" "$(command grep -E '^WATCHD_KEYS=|SPIRA_QUEUE_WATCH_BIN"' "$HERE/watchd.sh")"
-want "conf.sh resolves the binary"                'SPIRA_QUEUE_WATCH_BIN:=$(spira_bin queue-watch' "$(cat "$HERE/conf.sh")"
+want "watchd row runs the binary by name"         "|queue-watch watch --run @SPIRA_RUN@" "$row"
+want "watchd row carries a health probe"          "|queue-watch health --run @SPIRA_RUN@" "$row"
 
 tl_summary

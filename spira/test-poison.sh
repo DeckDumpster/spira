@@ -56,14 +56,6 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
-# Resolve cargo/dolt BEFORE conf.sh (sourced transitively by testdb.sh below), which can
-# overwrite PATH with the harness's own tool directories first — see
-# test-lifecycle-container.sh's own note.
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
@@ -71,7 +63,7 @@ DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 testdb_available || skip "no fixture database reachable"
 testdb_require test-poison
 TMP="$(mktemp -d)"; trap 'testdb_drop; [ -n "${LC_SERVER_PID:-}" ] && kill "$LC_SERVER_PID" >/dev/null 2>&1; rm -rf "$TMP"' EXIT INT TERM
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+export PATH="$(dirname "$DOLT_BIN"):$PATH"
 unset SPIRA_LC_SOCKET
 # testdb-mode: server — sentinel's poison threshold reads attempts_of/check4_bulk_data via
 # bd sql, which embedded mode refuses.
@@ -106,11 +98,9 @@ done
 [ "$lc_up" = 1 ] || bail "dolt sql-server for spira_lifecycle never came up: $(cat "$LC_TMP/server.log")"
 lc_root_sql() { "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls "$@"; }
 
-LC_CARGO_TARGET="$LC_TMP/cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$LC_CARGO_TARGET" \
-    "$CARGO_BIN" build --manifest-path "$SRC_ROOT/spira-lc/Cargo.toml" --quiet 2>"$LC_TMP/build.log" \
-    || bail "spira-lc failed to build: $(cat "$LC_TMP/build.log")"
-LC_BIN="$LC_CARGO_TARGET/debug/spira-lc"
+# The tree's spira-lc, by name on the suite's PATH (sp-gypjk).
+LC_BIN=spira-lc
+command -v "$LC_BIN" >/dev/null 2>&1 || bail "spira-lc is not on PATH"
 
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LC_PORT"
@@ -124,10 +114,9 @@ LC_PASS="test-pass-$$"
 sed "s/@SPIRA_LC_PASSWORD@/$LC_PASS/" "$SRC_ROOT/lifecycle/grants.sql" > "$LC_TMP/grants_filled.sql"
 lc_root_sql sql < "$LC_TMP/grants_filled.sql" >"$LC_TMP/grants.log" 2>&1
 wantrc "spira_lifecycle grants apply cleanly" 0 $?
-# From here on SPIRA_LC_BIN runs as spira_lc, the real production grant set — never root.
+# From here on spira-lc runs as spira_lc, the real production grant set — never root.
 export SPIRA_LC_USER=spira_lc
 export SPIRA_LC_PASSWORD="$LC_PASS"
-export SPIRA_LC_BIN="$LC_BIN"
 # The poison valve's hold lives in spira-lc (sp-i2m7y): the machine is this suite's subject,
 # so the sentinel runs with the switch ON. OFF (the default) writes the legacy spira-poison
 # bd label instead — sentinel/src/check4.rs unit tests.
@@ -150,7 +139,7 @@ mkpoison() {
     local i
     for i in "$@"; do
         mklc "$i"
-        SPIRA_LC_BIN="$LC_BIN" bash -c '. "$1"/lc.sh; lc_hold "$2" poison "seed" test' _ "$SH" "$i" >/dev/null 2>&1
+        bash -c '. "$1"/lc.sh; lc_hold "$2" poison "seed" test' _ "$SH" "$i" >/dev/null 2>&1
     done
 }
 # rmpoison <id>... — the test-side equivalent of a human clearing the hold directly
@@ -159,13 +148,13 @@ mkpoison() {
 rmpoison() {
     local i
     for i in "$@"; do
-        SPIRA_LC_BIN="$LC_BIN" bash -c '. "$1"/lc.sh; lc_unhold "$2" poison test' _ "$SH" "$i" >/dev/null 2>&1
+        bash -c '. "$1"/lc.sh; lc_unhold "$2" poison test' _ "$SH" "$i" >/dev/null 2>&1
     done
 }
 # lcheld <id> -> 0 if spira-lc currently holds the poison kind on <id> — the real
 # lc_held/lc_holds this suite's own $SH/lc.sh ships, not a model of it.
 lcheld() {
-    SPIRA_LC_BIN="$LC_BIN" bash -c '. "$1"/lc.sh; lc_held "$2" poison' _ "$SH" "$1"
+    bash -c '. "$1"/lc.sh; lc_held "$2" poison' _ "$SH" "$1"
 }
 
 REPO="$TMP/repo"; RUN="$TMP/run"; REMOTE="$TMP/remote.git"; SH="$TMP/spira"
@@ -183,12 +172,8 @@ cp "$HERE/lib.sh" "$HERE/lc.sh" "$HERE/lifecycle-cert.sh" "$HERE/conf.sh" "$HERE
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub pilgrimage.sh 'printf "%s" "${PILGRIMAGE_OUT:-}"'
 stub strand        'printf "%s" "${STRAND_OUT:-}"'
-# THE RUST SENTINEL (sentinel.sh is gone): the binaries are resolved as conf.sh's spira_bin
-# resolves them for THIS tree, and passed explicitly, because the fixture's own SPIRA_REPO is
-# not the tree that built them.
-_rbin() { SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin "$2" 2>/dev/null' _ "$HERE" "$1"; }
-SENTINEL_BIN="${SPIRA_SENTINEL_BIN:-$(_rbin sentinel)}"
-export SPIRA_CLAIM_BIN="${SPIRA_CLAIM_BIN:-$(_rbin spira-claim)}"
+# THE RUST SENTINEL (sentinel.sh is gone) and spira-claim are the tree's, by name on PATH;
+# the stubbed sub-programs in $SH are injected by putting $SH first on the sentinel's PATH.
 stub sending.sh    'printf "%s" "${SENDING_OUT:-}"'
 stub gate.sh       'exit ${GATE_RC:-0}'
 stub reflect.sh    'touch "$SPIRA_RUN/reflect.fired"'
@@ -249,8 +234,8 @@ sentinel() {
         SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
         SPIRA_SUMMON="$TMP/launch" \
         SPIRA_SKIP_RECLAIM=1 \
-        SPIRA_SKIP_CLOSED_CHECK=1 SPIRA_STRAND_BIN="$SH/strand" \
-            "$SENTINEL_BIN" --audit 2>&1
+        SPIRA_SKIP_CLOSED_CHECK=1 PATH="$SH:$PATH" \
+            command sentinel --audit 2>&1
     )"
     normal_out="$(
         SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
@@ -259,8 +244,8 @@ sentinel() {
         SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
         SPIRA_SUMMON="$TMP/launch" \
         SPIRA_SKIP_RECLAIM=1 \
-        SPIRA_SKIP_CLOSED_CHECK=1 SPIRA_STRAND_BIN="$SH/strand" \
-            "$SENTINEL_BIN" 2>&1
+        SPIRA_SKIP_CLOSED_CHECK=1 PATH="$SH:$PATH" \
+            command sentinel 2>&1
     )"
     printf '%s\n%s\n' "$audit_out" "$normal_out"
 }

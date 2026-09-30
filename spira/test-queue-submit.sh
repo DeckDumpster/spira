@@ -16,10 +16,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 # The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
 # test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
-QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
-[ -x "$QUEUE_BIN" ] || { echo "FAIL: the queue binary is not built at $QUEUE_BIN"; exit 1; }
-TESTENV_BIN="${SPIRA_TESTENV_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/testenv}"
-[ -x "$TESTENV_BIN" ] || { echo "FAIL: the testenv binary is not built at $TESTENV_BIN"; exit 1; }
 
 echo "test-queue-submit.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -43,7 +39,7 @@ RMAP="$TMP/repo-map"
 printf 'fixq | %s | queue | main | | |\n' "$REPO" > "$RMAP"
 
 run() {
-    env -i PATH="/usr/local/bin:/usr/bin:/bin" \
+    env -i PATH="$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME_REPO=fixq \
@@ -51,7 +47,7 @@ run() {
         SPIRA_RUN="$TMP/run" \
         SPIRA_QUEUE_DIR="$TMP/run/queue" \
         SPIRA_REPO_MAP="$RMAP" \
-        SPIRA_HOME="$TMP/spira" "$QUEUE_BIN" "$@" 2>&1
+        SPIRA_HOME="$TMP/spira" queue "$@" 2>&1
 }
 
 git -C "$REPO" branch "spira/sp-abc01" main
@@ -62,10 +58,10 @@ echo "certification honours SPIRA_CERTIFY_SUITES=off (fences only), as landing.s
 mkdir -p "$TMP/run/queue" "$TMP/run/landstate"
 : > "$GATE_LOG"
 git -C "$REPO" branch "spira/sp-cso01" main
-env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
+env -i PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent \
     SPIRA_HOME_REPO=fixq SPIRA_REPO="$REPO" SPIRA_RUN="$TMP/run" \
     SPIRA_QUEUE_DIR="$TMP/run/queue" SPIRA_REPO_MAP="$RMAP" SPIRA_CERTIFY_SUITES=off \
-    SPIRA_HOME="$TMP/spira" "$QUEUE_BIN" submit spira/sp-cso01 >/dev/null 2>&1
+    SPIRA_HOME="$TMP/spira" queue submit spira/sp-cso01 >/dev/null 2>&1
 want "the gate is handed suites=off" "suites=off" "$(cat "$GATE_LOG")"
 rm -f "$TMP/run/landstate/sp-cso01"
 
@@ -185,7 +181,7 @@ printf 'queuerepo | %s | queue | main | | |\n' "$REPO2" >> "$RMAP2"
 mkdir -p "$TMP/run2/queue" "$TMP/run2/landstate"
 : > "$GATE_LOG2"
 run2() {
-    env -i PATH="/usr/local/bin:/usr/bin:/bin" \
+    env -i PATH="$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME_REPO=holdhome \
@@ -193,7 +189,7 @@ run2() {
         SPIRA_RUN="$TMP/run2" \
         SPIRA_QUEUE_DIR="$TMP/run2/queue" \
         SPIRA_REPO_MAP="$RMAP2" \
-        SPIRA_HOME="$TMP/spira2" "$QUEUE_BIN" "$@" 2>&1
+        SPIRA_HOME="$TMP/spira2" queue "$@" 2>&1
 }
 
 out="$(run2 submit spira/sp-def02 queuerepo)"; rc=$?
@@ -213,7 +209,7 @@ RMAP3="$TMP/repo-map3"
 printf 'fixq | %s | queue | main | | |\n' "$REPO" > "$RMAP3"
 
 run3() {
-    env -i PATH="/usr/local/bin:/usr/bin:/bin" \
+    env -i PATH="$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME_REPO=fixq \
@@ -221,7 +217,7 @@ run3() {
         SPIRA_RUN="$TMP/run3" \
         SPIRA_QUEUE_DIR="$TMP/run3/queue" \
         SPIRA_REPO_MAP="$RMAP3" \
-        SPIRA_HOME="$TMP/spira2" "$QUEUE_BIN" "$@" 2>&1
+        SPIRA_HOME="$TMP/spira2" queue "$@" 2>&1
 }
 out="$(run3 submit spira/sp-ghi03)"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 with no repo arg" || bad "exit 0 with no repo arg" "got rc=$rc out=$out"
@@ -266,7 +262,7 @@ git -C "$TREPO" push -q origin main
 git -C "$TREPO" fetch -q origin
 
 transition() {
-    env -i PATH="/usr/local/bin:/usr/bin:/bin" \
+    env -i PATH="$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$TSH" \
@@ -276,8 +272,7 @@ transition() {
         SPIRA_QUEUE_DIR="$TRUN/queue" \
         SPIRA_REPO_MAP="$TSH/repo-map" \
         SPIRA_TESTENV_HARNESS="$TREPO" \
-        SPIRA_QUEUE_BIN="$QUEUE_BIN" \
-        "$TESTENV_BIN" suites "$@" 2>&1
+        testenv suites "$@" 2>&1
 }
 tlandstate() { cat "$TRUN/landstate/${1:-}" 2>/dev/null; }
 tqueue_rec()  { cat "$TRUN/queue/${1:-}" 2>/dev/null; }

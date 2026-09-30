@@ -50,7 +50,7 @@ run_report() {
     SPIRA_RUN="$SPIRA_RUN_DIR" \
     SPIRA_SOP_LEDGER="$SOP_LEDGER" \
     SPIRA_CONF=/dev/null \
-    bash "$HERE/model-switch-report.sh" \
+    model-switch-report.sh \
         --since "$CHANGE" --until "$UNTIL" \
         "$@" 2>/dev/null
 }

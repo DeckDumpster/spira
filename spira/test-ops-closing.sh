@@ -109,16 +109,15 @@ printf 'FAYTH_SOP_REQUIRED=1\n' >> "$HOMEDIR/chamber/healer.fayth"
 
 # THE SHIM IS THE SESSION. It always commits and always closes, so the commit half of the
 # verdict is satisfied in every case here and the only thing under test is what the session
-# recorded. The guard is not decoration: conf.sh REPLACES $PATH, so a suite shimming `claude`
-# by PATH alone would run the real model against a real account.
+# recorded. The guard is not decoration: a suite shimming `claude` by PATH alone would run
+# the real model against a real account if anything reordered PATH.
 BIN="$TMP/bin"; mkdir -p "$BIN"
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || { echo "test-ops-closing: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model" >&2; exit 1; }
-# The aeon ranks through spira-claim, resolved by conf.sh (testdb.sh sourced it) from
-# SPIRA_ARTIFACTS. run_aeon's env -i drops SPIRA_ARTIFACTS, so the resolved path is passed
-# explicitly — without it every pass is a "claim-error spira-claim not found".
-[ -x "${SPIRA_CLAIM_BIN:-}" ] \
-    || { echo "test-ops-closing: spira-claim is not built (SPIRA_CLAIM_BIN) — the aeon cannot claim" >&2; exit 1; }
+# aeon and the spira-claim it ranks through are invoked by name on the suite's PATH
+# (sp-gypjk); run_aeon's env -i keeps that PATH.
+for _t in aeon spira-claim; do
+    command -v "$_t" >/dev/null 2>&1 \
+        || { echo "test-ops-closing: $_t is not on PATH — refusing to run the real model" >&2; exit 1; }
+done
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
@@ -130,14 +129,14 @@ git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — the wo
 case "$(cat "$TMP/act")" in
     none) ;;
     write-new)
-        "$SPIRA_HOME/sop.sh" write brand-new - >/dev/null 2>&1 <<'SOP'
+        sop.sh write brand-new - >/dev/null 2>&1 <<'SOP'
 SYMPTOM: something nobody had seen before
 CHECK: systemctl is-failed fixture.service
 FIX: restart it and watch the next run
 SOP
         ;;
     amend)
-        "$SPIRA_HOME/sop.sh" write disk-full - >/dev/null 2>&1 <<'SOP'
+        sop.sh write disk-full - >/dev/null 2>&1 <<'SOP'
 MATCH: (No space left on device|disk.*full)
 SYMPTOM: a unit fails and the volume it writes to is full
 CHECK: df -h /var | tail -1
@@ -145,13 +144,13 @@ FIX: clear the oldest artifacts, restart the unit, and confirm the next run is g
 SOP
         ;;
     applied-yes)
-        "$SPIRA_HOME/sop.sh" applied disk-full --bead "$id" --check pass --held yes >/dev/null 2>&1 ;;
+        sop.sh applied disk-full --bead "$id" --check pass --held yes >/dev/null 2>&1 ;;
     applied-no)
-        "$SPIRA_HOME/sop.sh" applied disk-full --bead "$id" --check pass --held no >/dev/null 2>&1 ;;
+        sop.sh applied disk-full --bead "$id" --check pass --held no >/dev/null 2>&1 ;;
     applied-fail)
-        "$SPIRA_HOME/sop.sh" applied disk-full --bead "$id" --check fail --held unknown >/dev/null 2>&1 ;;
+        sop.sh applied disk-full --bead "$id" --check fail --held unknown >/dev/null 2>&1 ;;
     retire)
-        "$SPIRA_HOME/sop.sh" retire disk-full >/dev/null 2>&1 ;;
+        sop.sh retire disk-full >/dev/null 2>&1 ;;
 esac
 case "$(cat "$TMP/act")" in
     bad-reason) bd -C "$SPIRA_DB" close "$id" --reason "DIAGNOSED: X. TEMPORARY WORKAROUND: Y must be removed once fix lands." >/dev/null 2>&1 ;;
@@ -176,11 +175,10 @@ run_aeon() {             # run_aeon <fayth> <act>
         SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_WIKI="" \
         SPIRA_HOME="$HOMEDIR" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
         SPIRA_REPO_MAP="$REPO_MAP" SPIRA_AGENT="$BIN/claude" \
-        SPIRA_CLAIM_BIN="${SPIRA_CLAIM_BIN:-}" \
         SPIRA_SOP_LEDGER="${LEDGER_OVERRIDE:-$LEDGER}" \
         SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
         BEADS_NO_AUTO_IMPORT=1 \
-        timeout 300 "$SPIRA_AEON_BIN" --home "$HOMEDIR" "$1" > "$TMP/out" 2>&1
+        timeout 300 aeon --home "$HOMEDIR" "$1" > "$TMP/out" 2>&1
 }
 sop() {                  # the same program the aeon runs, in the same environment
     env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" \

@@ -28,7 +28,7 @@ export SPIRA_ID_PREFIX="sp"
 
 cp -r "$HERE/mail/kinds/." "$TMP/kinds/"
 
-run() { bash "$HERE/mail.sh" "$@"; }
+run() { mail.sh "$@"; }
 
 # ==========================================================================
 # T1 — LINT TABLE over _lint_check (UC-operator-channel-02, -03, -04)
@@ -251,7 +251,7 @@ want "SEEN GREEN: From header carries SPIRA_MAIL_FROM value" "Aeon <aeon@spira>"
 echo
 echo "lint override end to end: header recorded on the delivered message"
 
-out="$(echo "body" | SPIRA_MAIL_LINT_CONSIDERED="e2e override" bash "$HERE/mail.sh" send lint-override 2>&1)"; rc=$?
+out="$(echo "body" | SPIRA_MAIL_LINT_CONSIDERED="e2e override" mail.sh send lint-override 2>&1)"; rc=$?
 is "SPIRA_MAIL_LINT_CONSIDERED=1 bypasses missing From and Subject end to end" 0 "$rc"
 msg="$(cat "$SPIRA_MAIL/lint-override/new"/* 2>/dev/null)"
 want "X-Spira-Lint-Override header is present"  "X-Spira-Lint-Override" "$msg"
@@ -394,7 +394,7 @@ echo
 echo "repeat guard — override bypasses the guard, recorded on the message"
 
 out="$(qbody "$SUBJ_A2" "close or fix" \
-    | SPIRA_MAIL_REPEAT_CONSIDERED="testing override" bash "$HERE/mail.sh" send operator \
+    | SPIRA_MAIL_REPEAT_CONSIDERED="testing override" mail.sh send operator \
         --from "Sentinel <sentinel@spira>" --subject "$SUBJ_A2" \
         --kind question --default "close or fix" 2>&1)"
 is "SPIRA_MAIL_REPEAT_CONSIDERED lets the repeat through" 0 "$?"
