@@ -348,6 +348,46 @@ fn helper(
     ))
 }
 
+/// Like `helper`, but runs a compiled binary directly — no `bash` hop — for a Rust-to-Rust
+/// call. `None` when the binary is not there (a caller falls back to the script shim).
+fn helper_bin(bin: &Path, args: &[&str], artifacts: Option<&Path>, extra_env: &[(&str, String)]) -> Option<(i32, String)> {
+    if !bin.is_file() {
+        return None;
+    }
+    let mut cmd = Command::new(bin);
+    cmd.args(args).stderr(Stdio::inherit());
+    match artifacts {
+        Some(a) => {
+            cmd.env("SPIRA_ARTIFACTS", a);
+            if let Some(root) = a.parent().and_then(Path::parent) {
+                cmd.env("SPIRA_ARTIFACTS_ROOT", root);
+            }
+        }
+        None => {
+            cmd.env_remove("SPIRA_ARTIFACTS")
+                .env_remove("SPIRA_ARTIFACTS_ROOT");
+        }
+    }
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped());
+    let child = cmd.spawn().ok()?;
+    let o = child.wait_with_output().ok()?;
+    Some((o.status.code().unwrap_or(1), String::from_utf8_lossy(&o.stdout).into_owned()))
+}
+
+/// `gate-diag`'s two callers (below) prefer the compiled binary staged into `artifacts`
+/// beside every other crate this workspace builds — a straight Rust-to-Rust call, no `bash`
+/// hop — falling back to the `gate-diag.sh` shim (sp-ubw2o) when the binary is not there.
+fn gate_diag(deps: &Deps, artifacts: &Path, results_s: &str, run_env: &[(&str, String)]) -> Option<(i32, String)> {
+    let bin = artifacts.join("gate-diag");
+    let home = deps.harness.root.join("spira");
+    let home_s = home.display().to_string();
+    helper_bin(&bin, &["--home", &home_s, results_s], Some(artifacts), run_env)
+        .or_else(|| helper(&deps.harness.script("gate-diag.sh"), &[results_s], Some(artifacts), run_env, None))
+}
+
 /// Holds the container for the batch; tears it down however the run ends.
 struct ContainerGuard<'a> {
     session: &'a Session<'a>,
@@ -929,13 +969,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         ));
         let results_s = results.display().to_string();
         let run_env = [("SPIRA_RUN", s.run.display().to_string())];
-        if let Some((_, o)) = helper(
-            &deps.harness.script("gate-diag.sh"),
-            &[&results_s],
-            Some(&artifacts),
-            &run_env,
-            None,
-        ) {
+        if let Some((_, o)) = gate_diag(deps, &artifacts, &results_s, &run_env) {
             for l in o.lines() {
                 (deps.out)(l);
             }
@@ -1341,13 +1375,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     let results_s = results.display().to_string();
     if !reds.is_empty() {
         deps.log(&format!("{} suite(s) red", reds.len()));
-        if let Some((_, o)) = helper(
-            &deps.harness.script("gate-diag.sh"),
-            &[&results_s],
-            Some(&artifacts),
-            &run_env,
-            None,
-        ) {
+        if let Some((_, o)) = gate_diag(deps, &artifacts, &results_s, &run_env) {
             for l in o.lines() {
                 (deps.out)(l);
             }

@@ -429,13 +429,15 @@ jobs:
         run: bash spira/testenv.sh publish
 
       - name: Lints
-        # Cheap, pure bash, and they fail on the things no suite can see: operator
+        # Cheap, pure Rust (spira-lint, downloaded above with the other release
+        # binaries), and they fail on the things no suite can see: operator
         # infrastructure named in a public repo, configured names written as
-        # literals, and scratch paths escaping into tracked files.
+        # literals, and scratch paths escaping into tracked files. Ported from
+        # standalone bash scripts to spira-lint rules of the same name (sp-ekkak).
         run: |
-          bash spira/inventory.sh
-          bash spira/literal-lint.sh
-          bash spira/scratch-fence.sh
+          bin/spira-lint --only inventory      # path-ok: CI downloads release binaries straight into bin/; no conf.sh to resolve spira_bin from in a workflow step
+          bin/spira-lint --only literal-lint   # path-ok: see above
+          bin/spira-lint --only scratch-fence  # path-ok: see above
 
       - name: Suites
         # The exit-code mapping matches the repo-map's gate command exactly. Keep

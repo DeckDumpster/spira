@@ -1,0 +1,21 @@
+[package]
+name = "gate-run"
+version = "0.1.0"
+edition = "2021"
+description = "gate-run — runs the landing gate detached and reports its verdict in bounded slices (sp-ubw2o, replaces spira/gate-run.sh)."
+
+[[bin]]
+name = "gate-run"
+path = "src/main.rs"
+
+[dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

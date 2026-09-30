@@ -36,6 +36,11 @@ id = "UC-dispatch-06"
 tier = "T1"
 statement = "GitHub intake never mutates GitHub, dedups idempotently, promotes only on write access"
 
+[use_case.uncovered]
+reason = "the never-mutates-GitHub half (gh-intake-lint.sh: no mutating curl flag, no credential reference) moved to spira-lint's `gh-intake-lint` rule and was deleted (sp-ekkak); its cases now run as `cargo test -p spira-lint` (spira-lint/DESIGN.md \"Rule gh-intake-lint\"), which plan-matrix's suite-header scan cannot see. The dedup/promotion half stays covered by test-gh-intake.sh."
+date = "2026-09-29"
+bead = "sp-ekkak"
+
 [[use_case]]
 id = "UC-dispatch-07"
 tier = "T1"

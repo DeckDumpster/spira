@@ -131,7 +131,11 @@ if [ -n "$offenders" ]; then
     exit 1
 fi
 
-if ! inv="$(bash spira/inventory.sh 2>&1)"; then
+# INVENTORY FENCE. This repository is meant to be cloned: a comment naming a repository, a
+# deploy path, a host or a person teaches the next agent to reason about infrastructure that
+# does not exist. Ported to spira-lint (sp-ekkak); spira-lint/DESIGN.md "Rule inventory".
+[ -x "${SPIRA_LINT_BIN:-}" ] || { say "spira-lint is not built (SPIRA_LINT_BIN) — refusing to land unchecked"; exit 1; }
+if ! inv="$("$SPIRA_LINT_BIN" --only inventory 2>&1)"; then
     printf '%s\n' "$inv" >&2
     exit 1
 fi
@@ -139,7 +143,6 @@ fi
 # BINARY-PATH FENCE (sp-zv7j4). conf.sh's spira_bin is the one resolver a binary path
 # is meant to go through; a hardcoded build-output path is a second one, invisible until
 # the tree it assumes is not the one in front of it.
-[ -x "${SPIRA_LINT_BIN:-}" ] || { say "spira-lint is not built (SPIRA_LINT_BIN) — refusing to land unchecked"; exit 1; }
 if ! bpf="$("$SPIRA_LINT_BIN" --only binary-path-fence 2>&1)"; then
     printf '%s\n' "$bpf" >&2
     exit 1
@@ -149,9 +152,8 @@ fi
 # consumer and trigger the all-suites fallback in coverage selection (a file no suite
 # declares widens the diff to the full corpus, ~65 min). The class of defect is repeatable:
 # ten accumulated before this fence existed. SCRATCH_FENCE_OK=1 is the named override,
-# valid only for the commit that removes existing offenders.
-[ -r spira/scratch-fence.sh ] || { say "spira/scratch-fence.sh is missing — refusing to land unchecked"; exit 1; }
-if ! scr="$(bash spira/scratch-fence.sh 2>&1)"; then
+# valid only for the commit that removes existing offenders. Ported to spira-lint (sp-ekkak).
+if ! scr="$("$SPIRA_LINT_BIN" --only scratch-fence 2>&1)"; then
     printf '%s\n' "$scr" >&2
     exit 1
 fi
@@ -160,9 +162,8 @@ printf '%s\n' "$scr" >&2
 # WIKI BLANKET-ADD FENCE. Blanket staging on the wiki checkout (git add -A, git add .,
 # git commit -a) sweeps another actor's uncommitted work into the commit and manufactures
 # false attribution (incident: sp-4fl2e). wiki-commit.sh is the canonical path and stages
-# files explicitly; this fence keeps that pattern in force.
-[ -r spira/wiki-add-fence.sh ] || { say "spira/wiki-add-fence.sh is missing — refusing to land unchecked"; exit 1; }
-if ! waf="$(bash spira/wiki-add-fence.sh 2>&1)"; then
+# files explicitly; this fence keeps that pattern in force. Ported to spira-lint (sp-ekkak).
+if ! waf="$("$SPIRA_LINT_BIN" --only wiki-add-fence 2>&1)"; then
     printf '%s\n' "$waf" >&2
     exit 1
 fi
@@ -186,8 +187,8 @@ fi
 # while lib.sh:221 read ${SPIRA_ASK_LABEL:-needs-ryan}, and the code default is
 # needs-operator — so the destructive-procedure fence had no bypass and every halting bead
 # was refused on a default install. One accessor per name makes that class unwritable.
-[ -r spira/literal-lint.sh ] || { say "spira/literal-lint.sh is missing — refusing to land unchecked"; exit 1; }
-if ! lit="$(bash spira/literal-lint.sh 2>&1)"; then
+# Ported to spira-lint (sp-ekkak).
+if ! lit="$("$SPIRA_LINT_BIN" --only literal-lint 2>&1)"; then
     printf '%s\n' "$lit" >&2
     exit 1
 fi
@@ -214,8 +215,8 @@ fi
 
 # GH-INTAKE FENCE. The tracker is public and gh-intake.sh must only read it
 # (law-beads-is-never-public): no mutating curl flag, no credential reference.
-[ -r spira/gh-intake-lint.sh ] || { say "spira/gh-intake-lint.sh is missing — refusing to land unchecked"; exit 1; }
-if ! gil="$(bash spira/gh-intake-lint.sh 2>&1)"; then
+# Ported to spira-lint (sp-ekkak).
+if ! gil="$("$SPIRA_LINT_BIN" --only gh-intake-lint 2>&1)"; then
     printf '%s\n' "$gil" >&2
     exit 1
 fi
@@ -275,9 +276,8 @@ fi
 # start/wake/here/stop, with no socket of its own reaches whatever tmux server the
 # caller's environment already points at — the operator's own, on the host, twice
 # (sp-pfca0: the cockpit went down both times). Every such call must carry -L/-S,
-# TMUX_TMPDIR, or CONCIERGE_SOCKET/CONCIERGE_SESSION.
-[ -r spira/tmux-scope-fence.sh ] || { say "spira/tmux-scope-fence.sh is missing — refusing to land unchecked"; exit 1; }
-if ! tsf="$(bash spira/tmux-scope-fence.sh 2>&1)"; then
+# TMUX_TMPDIR, or CONCIERGE_SOCKET/CONCIERGE_SESSION. Ported to spira-lint (sp-ekkak).
+if ! tsf="$("$SPIRA_LINT_BIN" --only tmux-scope-fence 2>&1)"; then
     printf '%s\n' "$tsf" >&2
     exit 1
 fi

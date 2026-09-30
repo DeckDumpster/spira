@@ -62,7 +62,6 @@ spira/test-epic-claim-order.sh
 spira/test-express-lane.sh
 spira/test-fayth-project-instructions.sh
 spira/test-fayth-ready-error.sh
-spira/test-gate-diag.sh
 spira/test-git-push-app.sh
 spira/test-governor-deleted.sh
 spira/test-groom-escalation-check.sh
@@ -123,7 +122,6 @@ spira/test-testdb-failsafe.sh
 spira/test-testenv-image-heartbeat.sh
 spira/test-testenv-owner-guard.sh
 spira/test-testlib.sh
-spira/test-tmux-scope-fence.sh
 spira/test-tsd-ingest.sh
 spira/test-tsd.sh
 spira/test-verdict-action.sh

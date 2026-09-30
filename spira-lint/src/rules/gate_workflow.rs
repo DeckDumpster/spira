@@ -188,9 +188,9 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
 
     // 1. the real gate, not a cheaper subset
     j.want(GATE, "the file has a name (positive control)", "name:", g);
-    j.want(GATE, "runs inventory.sh", "spira/inventory.sh", g);
-    j.want(GATE, "runs literal-lint.sh", "spira/literal-lint.sh", g);
-    j.want(GATE, "runs scratch-fence.sh", "spira/scratch-fence.sh", g);
+    j.want(GATE, "runs spira-lint's inventory rule", "spira-lint --only inventory", g);
+    j.want(GATE, "runs spira-lint's literal-lint rule", "spira-lint --only literal-lint", g);
+    j.want(GATE, "runs spira-lint's scratch-fence rule", "spira-lint --only scratch-fence", g);
     j.want(GATE, "runs the testenv runner", "bin/testenv --artifacts bin --suites -", g);
     j.want(GATE, "its retry tests the same prebuilt bin/", "GATE_RETRY_ARTIFACTS=bin bash spira/gate-retry.sh", g);
     // 2. queue PRs use diff-selected suites

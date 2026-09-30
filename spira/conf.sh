@@ -1542,6 +1542,9 @@ spira_conf_defaults() {
     : "${SPIRA_TESTENV_BIN:=$(spira_bin testenv 2>/dev/null)}"      # spira/testenv-batch.sh, suites.sh
     : "${SPIRA_REBASE_STALE_BIN:=$(spira_bin rebase-stale 2>/dev/null)}"  # spira/rebase-stale.sh
     : "${SPIRA_GATE_BIN:=$(spira_bin gate 2>/dev/null)}"            # spira/gate.sh (sp-0tpcs)
+    : "${SPIRA_GATE_RUN_BIN:=$(spira_bin gate-run 2>/dev/null)}"    # spira/gate-run.sh (sp-ubw2o)
+    : "${SPIRA_GATE_CHECK_BIN:=$(spira_bin gate-check 2>/dev/null)}"  # spira/gate-check.sh (sp-ubw2o)
+    : "${SPIRA_GATE_DIAG_BIN:=$(spira_bin gate-diag 2>/dev/null)}"  # spira/gate-diag.sh (sp-ubw2o)
     : "${SPIRA_ROUND_VM_BIN:=$(spira_bin round-vm 2>/dev/null)}"    # spira/round-vm.sh
     : "${SPIRA_LINT_BIN:=$(spira_bin spira-lint 2>/dev/null)}"      # the ported bash fences
     : "${SPIRA_SELECT_BIN:=$(spira_bin suite-select 2>/dev/null)}"  # the suite selector: select.sh, gate-touched.sh (sp-wx2tw)
@@ -2583,6 +2586,9 @@ export COCKPIT_BOTTOM_PCT \
     SPIRA_TESTENV_BIN \
     SPIRA_REBASE_STALE_BIN \
     SPIRA_GATE_BIN \
+    SPIRA_GATE_RUN_BIN \
+    SPIRA_GATE_CHECK_BIN \
+    SPIRA_GATE_DIAG_BIN \
     SPIRA_ROUND_VM_BIN \
     SPIRA_LINT_BIN \
     SPIRA_SELECT_BIN
