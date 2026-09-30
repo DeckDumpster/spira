@@ -824,3 +824,175 @@ It would close no ask: no open ask titled for sp-n9z exists, because every CHECK
 (test-unpoison.sh) must export `SPIRA_LIFECYCLE_ENFORCE=1`, because it seeds a real spira-lc
 and asserts on the hold. A second e2e case with `SPIRA_LIFECYCLE_ENFORCE=0` and
 `SPIRA_LC_BIN=/nonexistent` asserts the label is removed and the bead verifies.
+
+## 9. `audit` and `deadlocked` — the board, and lifting a finished bead's poison
+
+Replaces **spira/attempts.sh** (290 lines; sp-rfodk, wave 3 of the Rust rewrite, world
+stopped). attempts.sh had five verbs: `audit`, `reclassify`, `prune-reclaims`, `deadlocked`,
+`clear`. Only `audit` and `deadlocked` are ported; the others are retired, not carried
+forward — §9.4 says why, with the evidence.
+
+### 9.1 `audit` — what every claimable bead is carrying, and why
+
+```
+spira-claim audit --candidates F|- [--events F] [--lifecycle F]
+    -> for every deduplicated id in the candidate set with a nonzero attempts, requeues or
+       reclaims: "<id> attempts=<n> reclaims=<n> requeues=<n> [POISONED]", followed by an
+       indented cause line per attempt (charged/exempt), per counting return, and per raw
+       `reclaimed` row; a summary "--- <n> bead(s) carrying counters, of <total> claimable".
+```
+
+`--candidates` is a `bd list`-shaped JSON array (id, labels — [`rank::ReadyRow`]), supplied
+by the caller, not fetched here. That caller is `groomer.sh`'s (or an operator's) own
+exclusion-free query over every fayth partition's labels — attempts.sh's own `candidates()`,
+moved to lib.sh as `all_partition_members` (§9.3) because git has no place reading a
+chamber's `.fayth` files, and `select`'s ready set is built the same way for the same reason
+(§7). **Exclusions are dropped on purpose, unchanged from attempts.sh's own rule:** a
+poisoned or asked-about bead is excluded from *dispatch*, and is exactly the bead whose
+count most needs reading, so filtering it out here would hide the evidence.
+
+**The causes are not the labels attempts.sh's audit printed.** That audit read
+`sp-attempt-N-cause` / `sp-reclaim-N-cause` bd LABELS through lib.sh's `counter_causes` — a
+representation `bump_counter` stopped writing at sp-lzt ("counter labels are no longer
+written"). Every bead claimed since has real attempts, requeues and reclaims with no such
+label, so the old audit's cause breakdown has been silently empty for the beads it matters
+for, for as long as sp-lzt has stood. This audit reads the same events-table fold
+`attempts`/`requeues`/`counts` already answer from (`events::fold`) — the causes it prints
+are the ones actually charging the bead today. `counter_causes` and friends stay in lib.sh,
+read-only, for whatever a caller still finds on an old bead (§9.4).
+
+**Poisoned respects the switch (§6a), which attempts.sh's own `poisoned()` did not.**
+attempts.sh called `spira-lc held "$id" poison` unconditionally, on every bead, regardless
+of `lifecycle_enforce` — a latent defect that predates the switch and was never exercised in
+production, where `lifecycle_enforce` has been off throughout (§6a). `audit` reads the label
+off, and a `spira-lc list` snapshot on (`--lifecycle F`, or fetched), exactly as `select`
+does. This is a deliberate correction, named here rather than silently carried forward.
+
+### 9.2 `deadlocked` — lift a poison from finished, landable work
+
+```
+spira-claim deadlocked [--apply] --merge-status F|- [--actor NAME]
+    -> for every row {"id","ok","why","branch","base"}: if the bead is not poisoned right
+       now (label off, lifecycle hold on — §6a), silent, exactly as attempts.sh's own
+       `poisoned || continue`. Otherwise:
+         ok=false -> "KEEP     <id> <why>"
+         ok=true, held by a live claim -> "FAIL <id>: held by … — live work is never
+                                           touched: … then re-run" (new: §9.5)
+         ok=true, --apply -> lifts the hold/label, notes why, marks the lift (§9.2.1),
+                              verifies, "RESTORED <id> …"
+         ok=true, dry run -> "WOULD    <id> …"
+    summary: "--- <n> poisoned bead(s) examined, <n> finished and landable, <n> restored"
+```
+
+**THE GIT STAYS OUT, same boundary as `select` (§7 "`select` does no git").** Resolving a
+bead's repository and land ref, and asking whether `spira/<id>` names the bead and merges
+cleanly into it, needs the repo map and `git` — lib.sh's `bead_repo`, `repo_root`,
+`spira_landrefs`. `groomer.sh deadlocked` does that legwork (once per candidate, after its
+own poisoned pre-filter so git is never run over a whole partition) and hands the verdict in
+on `--merge-status`; this binary decides and writes from it, and re-checks poisoned-ness
+itself, from the record it trusts, before writing anything — so a bead cleared between
+groomer's filter and this check is skipped here, silently, never a stale write.
+
+**THE WRITE IS UNPOISON'S, NOT A SECOND COPY.** Releasing the hold/label is exactly
+`unpoison`'s steps 3 and 3b (§8.2), through the same `World`/`Live`. Deliberately not
+`unpoison` itself, and not merged into it as a mode: `deadlocked` never floors the attempt
+count (§7's own rule, restated below), never resets ask history, and never closes an ask, so
+sharing one function would need a flag for each — cheaper to repeat the dozen lines than to
+grow `unpoison::one` a mode it does not otherwise have.
+
+#### 9.2.1 sp-wiyr2, ported: the lift's own dedup
+
+`deadlocked` releases the poison hold on finished, mergeable work; it does not and must not
+touch the attempt count — the rungs are the record of how the bead got here
+(test-requeue.sh's sp-rq-s, and test-deadlock-sweep.sh's own assertion, both pre-date this
+bead and are unchanged). Without a record of the lift, CHECK 4's very next pass reads that
+same unchanged count against a bead no longer held and poisons it right back within
+minutes — sp-wiyr2. `mark_poison_lifted` writes `$SPIRA_RUN/poison-lifted/<id>` (last line =
+the attempts count at the lift), the same file lib.sh's `poison_lifted_mark` wrote and
+sentinel's Rust CHECK 4 already reads into `AskedStamp.lifted_at_or_above_n` (§3, `decide`).
+Added to the `World` trait (a fourth writer, alongside `unpoison`'s three — DESIGN.md's own
+"one writer" claim in §1 is now "one writer per verb, each named"), because `unpoison` never
+calls it: its own floor (`poison.cleared`) is what keeps a clear lifted, by a different
+mechanism the fold already knows how to discount.
+
+### 9.3 `all_partition_members` (lib.sh)
+
+attempts.sh's own `candidates()`/`uniq_candidates()` — every open/in_progress bead a
+partition's own labels would match, one id per line, deduped, **exclusions dropped on
+purpose** — moved to lib.sh under this name (spira/lib.sh, beside `dispatchable_open`, its
+exclusion-*applying* sibling that answers a different question: what *can* be claimed right
+now). `groomer.sh deadlocked` is its only caller today; `audit`'s `--candidates` is meant to
+be fed from the same query.
+
+### 9.4 Decisions
+
+- **`reclassify` and `prune-reclaims` are retired, not ported.** Both operate on the
+  `sp-attempt-N-cause` / `sp-reclaim-N-unrecorded` bd LABEL representation `bump_counter`
+  stopped writing at sp-lzt ("counter labels are no longer written"; lib.sh's own comment on
+  `bump_counter`). A read-only scan of the live store on 2026-09-30
+  (`select label, count(*) from labels where label like 'sp-attempt-%' or 'sp-reclaim-%' or
+  'sp-requeue-%' group by label`) found exactly one row anywhere in it —
+  `sp-requeue-1-merge-conflict` (a `sp-requeue-N-cause` label, which neither command reads:
+  `reclassify` reads only `sp-attempt-N`, `prune-reclaims` only `sp-reclaim-N-unrecorded`).
+  Zero candidates for either command, confirming there has been no behaviour for either to
+  carry forward since the day `bump_counter` became a no-op. `counter_causes` and its
+  siblings stay in lib.sh, read-only (lib.sh's own comment there is updated to point at this
+  section instead of the deleted script).
+- **`clear` is retired, not ported: `spira-claim unpoison` already supersedes it.** attempts.sh
+  had two ways to lift a poison — `deadlocked` (finished work) and `clear` (an operator's
+  own judgement) — written before `unpoison` existed. `clear`'s job is `unpoison`'s job,
+  done more carefully (§8: the `poison.cleared` floor written *before* the hold is released,
+  fail-closed on an unreadable machine, a real verify against CHECK 4's own `decide`). Every
+  caller that named `attempts.sh clear` (sentinel's poison ask default, groomer.sh's own
+  comment, test-poison.sh's `clearpoison`) is repointed to `spira-claim unpoison` in this
+  same change; none is left naming a deleted file.
+- **`audit`'s causes come from the events fold, not the retired labels** (§9.1) — a
+  correction, not a like-for-like port, because the labels it used to read have been silently
+  empty since sp-lzt.
+- **`audit`'s and `deadlocked`'s poisoned check honours `lifecycle_enforce` (§6a)**, which
+  attempts.sh's own `poisoned()` did not — an unconditional `spira-lc held` call, live-tested
+  nowhere against production's actual (off) mode. Corrected here, not carried forward.
+- **`deadlocked` gains a live-work refusal** attempts.sh's own case did not have (§9.5) —
+  cheap, since `unpoison`'s precondition already exists to copy, and it is the one guard
+  standing between a wrong merge-status verdict (groomer.sh's git check, not proven infallible
+  by this bead) and a lift under a claim that should not exist on a poisoned bead but might.
+- **The git stays in bash** (`groomer.sh deadlocked`), for the same reason `select` draws
+  the line where it does (§7): resolving a repository and its land ref needs the repo map,
+  which has no Rust port yet and is out of this bead's scope.
+
+### 9.5 New: live work is never touched
+
+`deadlocked`'s precondition, copied from `unpoison`'s (§8.2 #4): a bead `bd`-`in_progress`
+with an assignee, or (lifecycle_enforce on) a lifecycle row in `WORKING` with a holder, is
+refused rather than lifted — `FAIL <id>: held by … — live work is never touched: let that
+aeon finish (or stop it: spira/slay.sh --bead <id>), then re-run`. attempts.sh's own
+`deadlocked` had no such guard (a poisoned bead should never be claimed in the first place,
+so it was never exercised); this is the one check standing between a git verdict that turns
+out to be wrong and a lift reaching work in progress.
+
+### 9.6 Parity evidence (read-only, 2026-09-30)
+
+- **`attempts`, exact match.** The live `bd` store's own claimable candidates (230 ids, every
+  fayth partition, exclusions dropped), old `attempts.sh audit` (bash, run to a 280 s
+  timeout twice — it never finished the candidate set once, the same slowness this rewrite
+  exists to fix) against new `spira-claim audit` (same candidates, same store, under 1 s):
+  **18 of 18 overlapping ids agree on `attempts` exactly**, including sp-g3uwp (1),
+  sp-jrvdm (2), sp-kbjv6 (1), sp-zs04v.3 (2).
+- **`requeues`, an intended difference, already measured.** The same overlap disagrees on
+  `requeues` (e.g. sp-kbjv6: old 22, new 4) — attempts.sh's `audit` calls lib.sh's still-bash
+  `reopens_of`, a bare `count(*) where event_type='reopened'` that sp-j1q6o's fix never
+  reached; `events::fold`'s `requeues` (§3) excludes rebase/harness-caused returns and pairs
+  bd's bare `reopened` with its cause row. This is exactly §6's own "Count parity" finding
+  (400 beads, "requeues differ on 116 … 45 to 20"), not a new discrepancy this bead
+  introduced — cited here rather than re-measured.
+- **`deadlocked`'s decision and write**, proven against a fake `World` (12 unit tests,
+  `deadlock_tests.rs`): silent skip when not poisoned, `KEEP` with reason, dry-run `WOULD`
+  writes nothing, `--apply` restores and leaves the attempt record standing (both
+  `lifecycle_enforce` on and off), a live-work claim refuses and writes nothing, a lost CAS
+  race retries once, a lift that does not verify reports `REFUSED`, and the sp-wiyr2 mark is
+  written with the count at the moment of the lift. The git half (`groomer.sh deadlocked`)
+  is exercised end to end by the updated test-deadlock-sweep.sh and test-poison.sh (real
+  `spira-lc`/Dolt server, real git merge-tree), against the same fixtures attempts.sh's
+  `deadlocked` was proven against.
+- **`reclassify`/`prune-reclaims` retirement**: evidence is §9.4's read-only label count, not
+  a before/after run — there is no "after" for a command with no candidates left.

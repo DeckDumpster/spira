@@ -211,7 +211,7 @@ impl Run<'_> {
         // ---- the closing rule: an incident resolved without a runbook is not resolved ----
         let mut sop_silent = false;
         if self.fayth.sop_required && st == "closed" && !superseded {
-            let sop = "sop.sh";
+            let sop = "sop";
             let after = self.d.exec.exec(&sop, &s(&["digest"]), None, None);
             let applied = self.d.exec.exec(&sop, &s(&["log", "--bead", &id, "--check", "pass", "--since", &self.s.session_epoch.to_string()]), None, None).code;
             let before = self.s.sop_before.clone();
@@ -223,7 +223,7 @@ impl Run<'_> {
                     "{f}: {id} closing rule NOT judged — the shelf or the applications ledger could not be read (wrote={wrote} applied={applied}). Absence is not proven, so nothing is poisoned."
                 )),
                 SopVerdict::Poison => {
-                    self.bead_reopen("no-sop", "Reopened and poisoned by aeon.sh: this incident was closed and no runbook came out of it. The session recorded neither an SOP written or amended (sop.sh write) nor a runbook whose CHECK confirmed (sop.sh applied --check pass), so nothing on the shelf is any better for this incident having happened and the next occurrence costs exactly as much. The closing rule is not optional: an incident resolved without an SOP must produce one. To clear this, write the runbook this incident should have left — or, if one already fitted and held, record it — then remove the spira-poison label.");
+                    self.bead_reopen("no-sop", "Reopened and poisoned by aeon.sh: this incident was closed and no runbook came out of it. The session recorded neither an SOP written or amended (sop write) nor a runbook whose CHECK confirmed (sop applied --check pass), so nothing on the shelf is any better for this incident having happened and the next occurrence costs exactly as much. The closing rule is not optional: an incident resolved without an SOP must produce one. To clear this, write the runbook this incident should have left — or, if one already fitted and held, record it — then remove the spira-poison label.");
                     let _ = self.d.bd.bd(&s(&["label", "add", &id, "spira-poison"]));
                     self.ts_print(&format!("{f}: {id} REOPENED and POISONED — closed with no runbook written and no SOP application recorded"));
                     sop_silent = true;

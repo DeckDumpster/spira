@@ -122,7 +122,7 @@ tools = [
     "Bash(git -C * fetch*)",
     "Bash(git -C * for-each-ref*)",
     "Bash(git -C * rev-parse*)",
-    "Bash(*sop.sh*)",
+    "Bash(*sop*)",
     "Bash(*incident.sh*)",
     "Bash(*mail *)",
     "Bash(*testenv *)",

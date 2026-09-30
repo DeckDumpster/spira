@@ -39,9 +39,9 @@ FAYTH_MEMORY_PREFIXES="law-,sop-"
 #
 # Three ways to satisfy it, and one of them costs a single command:
 #
-#   nothing on the shelf fit; I diagnosed something new   ->  sop.sh write
-#   an SOP fit but was incomplete                         ->  sop.sh write   (the upsert)
-#   an SOP fit and its CHECK confirmed                    ->  sop.sh applied --check pass
+#   nothing on the shelf fit; I diagnosed something new   ->  sop write
+#   an SOP fit but was incomplete                         ->  sop write   (the upsert)
+#   an SOP fit and its CHECK confirmed                    ->  sop applied --check pass
 #
 # The third row is what keeps this from firing on a good session. "It matched, it held, it
 # taught us nothing new" is a complete outcome and must not be punished — SILENCE is what is
@@ -162,7 +162,7 @@ FAYTH_HEARTBEAT_SECONDS=30
 # Bash is restricted to a diagnostic allowlist (sp-39pqw): reads the machine and
 # records findings in the graph. Not in the list: rm, git write operations, systemd
 # mutations. The ref guard (sp-q27cp) remains the floor for git refs.
-FAYTH_TOOLS="Bash(systemctl status*),Bash(systemctl show*),Bash(systemctl list-*),Bash(systemctl is-*),Bash(systemctl cat*),Bash(journalctl*),Bash(ls*),Bash(cat *),Bash(head *),Bash(tail *),Bash(grep *),Bash(awk *),Bash(find *),Bash(wc *),Bash(sort *),Bash(uniq *),Bash(sed *),Bash(python3 *),Bash(echo *),Bash(printf *),Bash(date*),Bash(basename *),Bash(dirname *),Bash(bd *),Bash(git log*),Bash(git show*),Bash(git status*),Bash(git diff*),Bash(git fetch*),Bash(git for-each-ref*),Bash(git rev-parse*),Bash(git -C * log*),Bash(git -C * show*),Bash(git -C * status*),Bash(git -C * diff*),Bash(git -C * fetch*),Bash(git -C * for-each-ref*),Bash(git -C * rev-parse*),Bash(*sop.sh*),Bash(*incident.sh*),Bash(*mail *),Bash(*testenv *),Read,Glob,Grep,TodoWrite"
+FAYTH_TOOLS="Bash(systemctl status*),Bash(systemctl show*),Bash(systemctl list-*),Bash(systemctl is-*),Bash(systemctl cat*),Bash(journalctl*),Bash(ls*),Bash(cat *),Bash(head *),Bash(tail *),Bash(grep *),Bash(awk *),Bash(find *),Bash(wc *),Bash(sort *),Bash(uniq *),Bash(sed *),Bash(python3 *),Bash(echo *),Bash(printf *),Bash(date*),Bash(basename *),Bash(dirname *),Bash(bd *),Bash(git log*),Bash(git show*),Bash(git status*),Bash(git diff*),Bash(git fetch*),Bash(git for-each-ref*),Bash(git rev-parse*),Bash(git -C * log*),Bash(git -C * show*),Bash(git -C * status*),Bash(git -C * diff*),Bash(git -C * fetch*),Bash(git -C * for-each-ref*),Bash(git -C * rev-parse*),Bash(*sop*),Bash(*incident.sh*),Bash(*mail *),Bash(*testenv *),Read,Glob,Grep,TodoWrite"
 FAYTH_PROJECT_INSTRUCTIONS=none
 
 # REPLACE: Ops reads, diagnoses, and files — never writes code. The default coding

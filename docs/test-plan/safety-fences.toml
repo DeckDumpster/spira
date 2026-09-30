@@ -34,7 +34,7 @@ statement = "an aeon may not remove any `delivers:*` label, and the refusal name
 [[use_case]]
 id = "UC-safety-fences-07"
 tier = "T1"
-statement = "an aeon may not write `sop-*`/`law-*` keys with `bd remember` in any form; the refusal names `sop.sh write`/`rule.sh enact`, and those sanctioned writers pass"
+statement = "an aeon may not write `sop-*`/`law-*` keys with `bd remember` in any form; the refusal names `sop write`/`rule.sh enact`, and those sanctioned writers pass"
 
 [[use_case]]
 id = "UC-safety-fences-08"

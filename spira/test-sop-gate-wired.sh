@@ -8,20 +8,20 @@
 #
 # NOT CURRENTLY WIRED (sp-hyc3a, sp-9mnvm). sop.sh lint used to run from gate-spira.sh,
 # which had no caller since sp-b99nj (2026-09-26) and is deleted with the rest of that
-# dead script. It is deliberately NOT re-homed into the harness's shipped gate command alongside the other
-# nine fences gate-spira.sh carried: sop.sh applied — and by extension sop.sh lint, which
-# shares its O(n^2) whitespace-strip over the shelf JSON (sop.sh:406/660/799) — hangs past
-# 120s under concurrent test-suite load (sp-oc2i6, sp-rjbrc). The fix (commit 43e57c268 on
-# branch spira/sp-krqu0) has not landed on local/main. Wiring the fence in now would time
-# out every gate. Re-add the "the gate calls sop.sh lint" row once that fix lands and this
-# suite proves it under load.
+# dead script. It is deliberately NOT re-homed into the harness's shipped gate command
+# alongside the other nine fences gate-spira.sh carried: `sop applied` — and by extension
+# `sop lint` — needs a real SPIRA_DB, which a fresh gate/CI runner never has (the same
+# reason suite-state-fence.sh is not there either). sop.sh's own O(n^2) whitespace-strip
+# over the shelf JSON (the other half of why this was never wired) is gone with the bash
+# it lived in: the Rust port (sop crate, sp-8fsql) has no such cost. Re-add the "the gate
+# calls sop lint" row only if the SPIRA_DB-in-CI constraint is ever lifted.
 #
 # tier: T0
-# covers: spira/sop.sh UC-operator-channel-44
+# covers: sop/src/main.rs UC-operator-channel-44
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
-want "lint appears in sop.sh's own usage" "lint" "$(sop.sh bogus-subcommand 2>&1)"
+want "lint appears in sop's own usage" "lint" "$(sop bogus-subcommand 2>&1)"
 
 tl_summary

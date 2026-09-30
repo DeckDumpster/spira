@@ -120,8 +120,8 @@ chmod +x "$COCKPIT_DIR/layout.sh"
 # for executability (systemd/install.sh refuses to write a unit whose target
 # is not +x). None of these run for real in this suite; they exist so phase 4
 # succeeds and execution reaches phase 5, the subject under test.
-for _s in archive.sh archivist.sh broker.sh czar.sh \
-          gate-check.sh gh-intake.sh groom-trigger.sh maechen-trigger.sh \
+for _s in archive.sh archivist.sh broker.sh \
+          gate-check.sh groom-trigger.sh maechen-trigger.sh \
           loom.sh mail pr-notify.sh skew.sh spira-mail-deliver.sh \
           watch-refresh.sh watchtower.sh; do
     printf '#!/usr/bin/env bash\ntrue\n' > "$SPIRA_DIR/$_s"

@@ -1,5 +1,6 @@
 //! The trial, in the order DESIGN.md "Order of the trial" gives. One way out: [`Trial::finish`].
 
+use crate::basecache;
 use crate::cert;
 use crate::def::{self, Resolved};
 use crate::fence;
@@ -424,12 +425,24 @@ impl<'w, W: World> Trial<'w, W> {
 
         // HOST-WIDE ADMISSION (fences-only certification takes no slot — unless the round
         // named suites against this bead: the re-entry phase runs them, sp-p3srm).
+        //
+        // sp-q20wb: a gate that blocks here used to print nothing at all — not even the
+        // composition line, so a genuine queue looked exactly like a hang — and gate.log's
+        // `waited=` measured only the tree-lock wait after admission, never this one. Both
+        // are fixed below: a first message on blocking (and one on being admitted, if the
+        // wait was not instant), and the wait accumulated into `self.s.waited` so the
+        // tree-lock section's own wait adds to it instead of overwriting it.
         if suites_mode != "off" || !ejected.trim().is_empty() {
             let dir = PathBuf::from(format!("{}/gate-admission", self.s.run));
             w.mkdir_p(&dir);
             let t0 = w.now();
             let mut said: Option<u64> = None;
             'wait: loop {
+                // Re-read on every pass (sp-q20wb): a raised SPIRA_CERTIFY_PAR in the config
+                // document must reach a gate already waiting, which the frozen `Ctx` —
+                // captured once when lib.sh sourced conf.sh at this process's start — cannot.
+                // `admission_wait_line` below takes this same `par`, never re-deriving its
+                // own: one source for the pool's size, not two.
                 let par = self.admission_par(&ctx);
                 for slot in 1..=par {
                     if w.admission_try(&dir, slot, &br) {
@@ -445,6 +458,7 @@ impl<'w, W: World> Trial<'w, W> {
                     said = Some(w.now());
                 }
                 if w.signalled() {
+                    self.s.waited = w.now() - t0;
                     return v(
                         NOVERDICT,
                         "died",
@@ -452,11 +466,16 @@ impl<'w, W: World> Trial<'w, W> {
                     );
                 }
                 if w.now().saturating_sub(t0) >= lock_wait {
+                    self.s.waited = w.now() - t0;
                     return v(NOVERDICT, "admission-timeout", format!(
                         "gate: all {par} host-wide gate admission slots busy for {lock_wait}s — no verdict on {br}\ngate: this is host-wide gate concurrency (SPIRA_CERTIFY_PAR={par}), not a fault in the branch."));
                 }
                 w.sleep_ms(1000);
             }
+            // sp-q20wb: gate.log's `waited=` covers admission too now, not only the tree
+            // lock that follows it — the tree-lock section below adds its own wait to this
+            // instead of overwriting it.
+            self.s.waited = w.now() - t0;
         }
 
         // THE TREE, locked for the whole trial.
@@ -485,12 +504,16 @@ impl<'w, W: World> Trial<'w, W> {
                 ),
             );
         }
+        // sp-q20wb: carried forward so an admission wait above adds to this one in
+        // gate.log's `waited=`, rather than the tree-lock wait overwriting it.
+        let admission_waited = self.s.waited;
         let t0 = w.now();
         loop {
             if w.tree_lock_try() {
                 break;
             }
             if w.signalled() {
+                self.s.waited = admission_waited + w.now().saturating_sub(t0);
                 return v(
                     NOVERDICT,
                     "died",
@@ -498,7 +521,7 @@ impl<'w, W: World> Trial<'w, W> {
                 );
             }
             if w.now().saturating_sub(t0) >= lock_wait {
-                self.s.waited = w.now() - t0;
+                self.s.waited = admission_waited + (w.now() - t0);
                 self.s.start = w.now();
                 return v(NOVERDICT, "lock-timeout", format!(
                     "gate: another gate has held {} for {lock_wait}s — no verdict on {br}\ngate: this is a queue, not a fault in the branch; retry, or raise SPIRA_GATE_LOCK_WAIT.",
@@ -508,14 +531,11 @@ impl<'w, W: World> Trial<'w, W> {
         }
         self.s.held_lock = true;
         self.s.tree = Some(tree.clone());
-        self.s.waited = w.now() - t0;
+        let tree_waited = w.now() - t0;
+        self.s.waited = admission_waited + tree_waited;
         self.s.start = w.now();
-        if self.s.waited > 0 {
-            w.eprint(&format!(
-                "gate: waited {}s for {}",
-                self.s.waited,
-                tree.display()
-            ));
+        if tree_waited > 0 {
+            w.eprint(&format!("gate: waited {tree_waited}s for {}", tree.display()));
         }
         w.write_holder(&PathBuf::from(format!("{}.lock.holder", tree.display())));
 
@@ -797,7 +817,14 @@ impl<'w, W: World> Trial<'w, W> {
             // base's fences only: the base's suites answer no question this red asks, and they
             // were most of every such base trial's wall (sp-govet: base-gate 164-501 s behind
             // a 12 s fence red).
-            let base_comp = if !comp.suites_off() && !parse::suites_step_ran(&out) {
+            //
+            // sp-kqger: A SUITES COMPOSITION NEVER MIRRORS THE BRANCH'S SELECTION ON THE BASE
+            // EITHER, for the same reason — it was the 275-337 s cost this bead exists to cut,
+            // and it answered nothing the branch's own red suites did not already ask. The
+            // base's fences run instead (cheap, ~12-60 s); each red suite is judged by the
+            // base-suite cache below, or a targeted rerun that pays for only the suites the
+            // cache could not answer.
+            let base_comp = if matches!(comp, Composition::Suites { .. }) {
                 Composition::Fences
             } else {
                 self.base_composition(&comp, &ctx, &tree)
@@ -839,19 +866,72 @@ impl<'w, W: World> Trial<'w, W> {
         // trial did not run — its selection differed, or --deadline deferred it — is run on
         // the base now, by name, before anyone is blamed. A suite the base does not have is
         // the branch's own and needs no run.
+        //
+        // sp-kqger: THE BASE-SUITE CACHE. Since the base trial above never ran the branch's
+        // suites at all (a suites composition is always judged fences-only now), every named
+        // red suite reaches this loop. Each is answered by `basecache` — keyed on the base
+        // tree (already this cache's own directory), the suite, the gate's harness and the
+        // testenv image a rebuild of the suite container would change — or, on a miss, by the
+        // same targeted rerun the bash's "unrun" suites always used, now paying for only the
+        // suites the cache could not answer. A full cache hit skips the rerun entirely: a
+        // flip-suspect (green in the cache, red on the branch) re-runs nothing extra.
         let mut absent: Vec<String> = Vec::new();
         if base_ran {
             let base_ran_set = parse::ran_suites(&base_out);
+            let cacheable = matches!(comp, Composition::Suites { .. });
+            let mut image_tag: Option<String> = None;
+            let mut image_tag_tried = false;
             let mut unrun: Vec<String> = Vec::new();
             for s in parse::red_suites(&out) {
                 if base_ran_set.contains(&s) {
                     continue;
                 }
-                if w.ls_tree_has(&repo, &base_rev, &format!("spira/{s}")) {
-                    unrun.push(s);
-                } else {
+                if !w.ls_tree_has(&repo, &base_rev, &format!("spira/{s}")) {
                     absent.push(s);
+                    continue;
                 }
+                if cacheable {
+                    if !image_tag_tried {
+                        image_tag_tried = true;
+                        // A pure hash of the suite container's build closure in this tree
+                        // (Containerfile, deps.toml) — the fourth key component, alongside
+                        // the base tree, the suite and the harness. None when it cannot be
+                        // read: every lookup below then misses, and nothing is cached.
+                        let t = w.now();
+                        let (tag_rc, tag_out) = w.run_gate(
+                            &tree,
+                            &env(
+                                &base_rev,
+                                "testenv image tag (sp-kqger base-suite cache)",
+                                &Composition::Fences,
+                            ),
+                            &timeout,
+                            "testenv container tag",
+                        );
+                        self.s
+                            .phases
+                            .push(("base-image-tag".into(), w.now().saturating_sub(t)));
+                        image_tag = (tag_rc == 0)
+                            .then(|| tag_out.trim().to_string())
+                            .filter(|s| !s.is_empty());
+                    }
+                    if let Some(tag) = &image_tag {
+                        let hit = basecache::path(&self.s.verdict_dir, &self.s.repo_name, &base_tree, &s)
+                            .and_then(|p| w.read(&p))
+                            .and_then(|e| basecache::fresh(&e, &self.s.harness_h, tag));
+                        if let Some(pass) = hit {
+                            base_out.push_str(&format!(
+                                "\n  {s:<32} {} cached (sp-kqger base-suite cache)",
+                                if pass { "ok     " } else { "RED    " }
+                            ));
+                            if !pass {
+                                base_rc = base_rc.max(1);
+                            }
+                            continue;
+                        }
+                    }
+                }
+                unrun.push(s);
             }
             if !unrun.is_empty() {
                 let rerun = base_rerun_cmd(&unrun);
@@ -887,6 +967,33 @@ impl<'w, W: World> Trial<'w, W> {
                 }
                 if r != 0 && base_rc == 0 {
                     base_rc = r;
+                }
+                // sp-kqger: warm the cache with whatever this rerun actually judged. A suite
+                // it never reported on (a fault, an unexpected timeout) is left uncached —
+                // the next gate asks again rather than trusting a run that did not answer.
+                if let Some(tag) = &image_tag {
+                    let ran = parse::ran_suites(&o);
+                    let fresh_reds = parse::red_suites(&o);
+                    let when = w.utc();
+                    let at = w.now();
+                    for s in &unrun {
+                        if !ran.contains(s) {
+                            continue;
+                        }
+                        let Some(p) = basecache::path(&self.s.verdict_dir, &self.s.repo_name, &base_tree, s) else {
+                            continue;
+                        };
+                        let Some(dir) = p.parent() else { continue };
+                        let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
+                            continue;
+                        };
+                        w.mkdir_p(dir);
+                        w.write_atomic(
+                            dir,
+                            name,
+                            &basecache::render(!fresh_reds.contains(s), &self.s.harness_h, tag, &when, at),
+                        );
+                    }
                 }
             }
         }
@@ -1031,8 +1138,15 @@ impl<'w, W: World> Trial<'w, W> {
         String::new()
     }
 
-    /// SPIRA_CERTIFY_PAR, else derived from the box, re-read on every pass of the wait.
+    /// The config document's own `certify_par`, read fresh; else `SPIRA_CERTIFY_PAR` as this
+    /// trial's `Ctx` froze it at start; else derived from the box. Called on every pass of the
+    /// admission wait (sp-q20wb): the live config read is what lets a limit raised in the
+    /// file admit a gate that is already waiting — the frozen `Ctx` value cannot change
+    /// mid-trial, since conf.sh exported it once, before this process's `exec`.
     fn admission_par(&self, ctx: &Ctx) -> u64 {
+        if let Some(n) = self.w.certify_par_live() {
+            return n.max(1);
+        }
         if let Some(n) = key::digits(ctx.var("SPIRA_CERTIFY_PAR")) {
             return n;
         }

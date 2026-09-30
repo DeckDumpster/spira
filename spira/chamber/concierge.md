@@ -92,7 +92,7 @@ bd -C {{DB}} ...                    the store; reading is never fenced
 ```
 {{SPIRA_HOME}}/world.sh stop|start|drain|resume     halt or release the whole loop
 {{SPIRA_HOME}}/slay.sh <bead-id>                    stop ONE aeon and make its bead true
-{{SPIRA_HOME}}/sop.sh write|applied                 the runbook shelf
+sop write|applied                                   the runbook shelf
 {{RULE}} enact <slug> "<statute>"                   write law; then it synthesises
 {{RULE}} retire <slug> | list | show <slug>
 {{COCKPIT}}/layout.sh up|down|ensure                the cockpit; `ensure` self-heals

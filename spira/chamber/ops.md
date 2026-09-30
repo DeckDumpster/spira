@@ -20,7 +20,7 @@ own worktree. If code needs to change, change it in `{{REPO}}`.
        bd -C {{DB}} show {{BEAD_ID}} > /tmp/{{BEAD_ID}}.payload
        {{SOP}} match /tmp/{{BEAD_ID}}.payload
 
-   A hit prints `sop-<slug>` with how it matched. Read it with `sop.sh show <slug>`, then
+   A hit prints `sop-<slug>` with how it matched. Read it with `sop show <slug>`, then
    run its **CHECK** to confirm you are really looking at that failure.
 
    **Record what the CHECK returned before you run the FIX. This is not optional.**
@@ -111,7 +111,7 @@ own worktree. If code needs to change, change it in `{{REPO}}`.
        SOP
 
    If an SOP already matched and was right, **amend it** instead — same command, same
-   slug — so what you learned is in the runbook rather than in a log. `sop.sh` regenerates
+   slug — so what you learned is in the runbook rather than in a log. `sop` regenerates
    `wiki/notes/standard-operating-procedures.md`; commit that page.
 
    **Amend in this session, before closing** (`law-sops-are-amended-by-the-session-that-found-the-gap`).
@@ -126,9 +126,9 @@ own worktree. If code needs to change, change it in `{{REPO}}`.
    shapes an honest session takes, and recording one is still the cheapest way to leave
    what you learned where the next session finds it:
 
-       nothing on the shelf fit; you diagnosed something new   sop.sh write
-       an SOP fit but was incomplete                           sop.sh write   (the upsert)
-       an SOP fit and its CHECK confirmed                      sop.sh applied --check pass
+       nothing on the shelf fit; you diagnosed something new   sop write
+       an SOP fit but was incomplete                           sop write   (the upsert)
+       an SOP fit and its CHECK confirmed                      sop applied --check pass
 
    But none of them is demanded, and a fourth ending is equally good: *nothing was wrong.*
    Say so and close. What `--held` says does not enter into it either — `no` and `unknown`
@@ -147,11 +147,11 @@ own worktree. If code needs to change, change it in `{{REPO}}`.
 - **Your commit subject must contain the bead id `{{BEAD_ID}}`.** The SOP page is normally
   what you commit. This is enforced: a bead closed with no commit naming it is reopened,
   which is exactly how the closing rule is a mechanism and not a request.
-  **Exception — SOP already existed with no changes:** when `sop.sh applied --check pass`
+  **Exception — SOP already existed with no changes:** when `sop applied --check pass`
   is the correct outcome (the runbook held, nothing new to amend), no new file is committed.
-  The bead carries `delivers:note:$SPIRA_SOP_LEDGER` — calling `sop.sh applied` writes to
+  The bead carries `delivers:note:$SPIRA_SOP_LEDGER` — calling `sop applied` writes to
   the ledger, which the sentinel verifies as the evidence of Ops having done the work. A
-  session that closes without calling either `sop.sh applied` or `sop.sh write` is
+  session that closes without calling either `sop applied` or `sop write` is
   re-summoned.
 - **Prod is a different checkout.** Merging changes nothing on the running system; if the
   fix is code, the deploy is a separate, named step and you must say whether you ran it.
