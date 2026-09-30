@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 #
-# test-session-hook.sh — the session hook's output, and its registration in the client's
-# own settings file.
+# test-session-hook.sh — the session hook's own output.
 #
 #   ./test-session-hook.sh
 #
-# WHAT IT HOLDS. The hook's output is prepended to a context window that has just opened, and
-# its registration lives in a file no landing gate can reach. Both fail silently by nature, so
-# every property below is one that would otherwise be believed rather than known:
+# WHAT IT HOLDS. The hook's output is prepended to a context window that has just opened,
+# which fails silently by nature, so every property below is one that would otherwise be
+# believed rather than known:
 #
 #   1. ONE LINE PER WATCHER, AND NOTHING ELSE. Output is one header line, one line per manifest
 #      row, and at most one mail line — never a backlog preview. The assertion is on the exact
@@ -23,10 +22,16 @@
 #      hook calls.
 #   5. IT NEVER BREAKS A SESSION START. No stdin, malformed stdin, no manifest, an unreadable
 #      one: exit 0 every time, and silence where there is nothing to say.
-#   6. THE REGISTRATION IS MANAGED, NOT DESCRIBED. Installing twice leaves one entry, unrelated
-#      settings survive, the entry carries NO matcher, and it is on `SessionStart` only — a
-#      stale `PostCompact` registration (from before that was known to double-fire on every
-#      compaction) is reported by `status` and removed by `install`.
+#
+# ITS REGISTRATION IN THE CLIENT'S OWN SETTINGS FILE moved to `release session-hook`
+# (sp-7jr34) and with it every property about the registration itself — converging any number
+# of earlier entries to one, the no-matcher/`PostCompact`-retiring shape, a foreign entry
+# reported but never removed, `prune`, the backup-then-atomic-write — which are now
+# `release/src/session_hook.rs`'s own unit tests (`cargo test -p release`), plus one
+# regression test run under the client's real minimal environment
+# (`release/tests/session_hook_minimal_env.rs`). What is left of that concern here is "the
+# repair is wired, not merely available" below: that this tree's own call sites still invoke
+# it, which no Rust test can see.
 #
 # It needs no database and no beads server. Every configured value is pinned to a NON-DEFAULT,
 # so a literal written into the hook cannot pass by coincidence, and nothing here can reach
@@ -34,7 +39,7 @@
 #
 # defect: sp-4vp
 # tier: T1
-# covers: spira/install-session-hook.sh spira/hooks/session.sh watchd/* inbox-triage/* spira/mail.sh systemd/install.sh systemd/cockpit-ensure.service
+# covers: spira/hooks/session.sh watchd/* inbox-triage/* spira/mail.sh systemd/install.sh systemd/cockpit-ensure.service
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -56,7 +61,7 @@ command -v watchd >/dev/null 2>&1 || bail "watchd is not on PATH"
 # earn.
 CLONE="$TMP/clone"
 mkdir -p "$CLONE/spira/hooks"
-cp "$HERE/conf.sh" "$HERE/install-session-hook.sh" "$HERE/mail.sh" "$CLONE/spira/"
+cp "$HERE/conf.sh" "$HERE/mail.sh" "$CLONE/spira/"
 cp "$HERE/hooks/session.sh" "$CLONE/spira/hooks/"
 # `watchd` and `inbox-triage` (sp-48f6g) are compiled binaries, not scripts under spira/ to
 # copy — the hook finds them on PATH, same as spira-config above.
@@ -308,161 +313,29 @@ is "no Monitor instruction is printed" "0" \
 rm "$MAIL_DIR/concierge/new/3.msg"
 
 echo
-echo "the registration in the client's settings file"
-SET="$TMP/elsewhere/settings.json"
-cat > "$SET" <<'EOF'
-{
-  "statusLine": { "command": "/some/meter.sh", "refreshInterval": 5 },
-  "hooks": {
-    "SessionStart": [
-      { "matcher": "clear|startup|resume",
-        "hooks": [ { "type": "command", "command": "/gone/hooks/old-session.sh" } ] }
-    ]
-  }
-}
-EOF
-ish() { env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" \
-        bash "$CLONE/spira/install-session-hook.sh" "$@"; }
-
-out="$(ish status)"; rc=$?
-is  "status refuses to report an unregistered hook as fine" "1" "$rc"
-has "and names the event it is missing from"   "$out" "MISSING SessionStart"
-# A FOREIGN HOOK IS REPORTED, NEVER REMOVED. Two session hooks both reporting on watchers is
-# the state this replaced, and which of them the operator wants is theirs to say.
-has "a command that is not ours is reported"   "$out" "other"
-
-ish install >/dev/null
-out="$(ish status)"; rc=$?
-is  "after install, status is clean"           "0" "$rc"
-has "SessionStart carries the hook"            "$out" "ok      SessionStart"
-hasnt "PostCompact is not registered"          "$out" "PostCompact"
-
-# NO MATCHER AT ALL. An absent matcher matches every source; a matcher naming a subset is how
-# a hook comes to be missing from `compact` and `fork`, both of which open a context window
-# with no Monitor attached.
-ours="$(python3 - "$SET" "$CLONE/spira/hooks/session.sh" <<'PY'
-import json, sys
-doc = json.load(open(sys.argv[1]))
-for ev, entries in doc["hooks"].items():
-    for e in entries:
-        for h in e.get("hooks", []):
-            if h.get("command") == sys.argv[2]:
-                print("%s matcher=%r" % (ev, e.get("matcher")))
-PY
-)"
-is "the SessionStart entry carries no matcher" "SessionStart matcher=None" \
-   "$(printf '%s\n' "$ours" | grep '^SessionStart')"
-is "and there is no PostCompact entry at all" "" \
-   "$(printf '%s\n' "$ours" | grep '^PostCompact' || true)"
-
-# INSTALLING TWICE LEAVES ONE ENTRY. It is run from `doctor` and by hand, so a second run that
-# appended would grow the file without bound and run the hook twice per session start.
-ish install >/dev/null
-n="$(python3 - "$SET" "$CLONE/spira/hooks/session.sh" <<'PY'
-import json, sys
-doc = json.load(open(sys.argv[1]))
-print(sum(1 for entries in doc["hooks"].values() for e in entries
-          for h in e.get("hooks", []) if h.get("command") == sys.argv[2]))
-PY
-)"
-is "installing twice leaves one entry, on SessionStart alone" "1" "$n"
-
-# AND EVERYTHING ELSE IN THE FILE SURVIVES. This is the operator's live client configuration
-# and it holds settings nothing here knows about, which is why it is parsed and re-serialised
-# rather than templated.
-keep="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["statusLine"]["command"])' "$SET")"
-is "unrelated settings are untouched" "/some/meter.sh" "$keep"
-is "a backup of the prior file is left" "1" "$(ls "$SET.spira.bak" >/dev/null 2>&1 && echo 1 || echo 0)"
-
-echo
-echo "a stale PostCompact registration is reported, then removed"
-# A BOX THAT INSTALLED BEFORE THIS WAS KNOWN still carries this hook on PostCompact, which
-# fires it a second time on every compaction — `SessionStart` already sees the same compaction
-# with `source=compact`. The repair path is `install`; `status` names the fault first, so the
-# suite can prove it was there before proving it is gone (law-absence-needs-a-positive-control).
-STALESET="$TMP/elsewhere/stale-settings.json"
-python3 - "$CLONE/spira/hooks/session.sh" > "$STALESET" <<'PY'
-import json, sys
-hook = sys.argv[1]
-entry = {"hooks": [{"type": "command", "command": hook, "timeout": 10}]}
-doc = {"hooks": {"SessionStart": [entry], "PostCompact": [entry]}}
-print(json.dumps(doc))
-PY
-ish2() { env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" \
-         SPIRA_CLIENT_SETTINGS="$STALESET" bash "$CLONE/spira/install-session-hook.sh" "$@"; }
-
-out="$(ish2 status)"; rc=$?
-is  "status flags the stale registration"      "1" "$rc"
-has "and names PostCompact by its state"       "$out" "STALE   PostCompact"
-
-out="$(ish2 install)"
-has "install reports the removal"              "$out" "PostCompact (retired)"
-after="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["hooks"]))' "$STALESET")"
-hasnt "and PostCompact is gone from the file"  "$after" "PostCompact"
-has   "while SessionStart still carries it"    "$after" "SessionStart"
-
-out="$(ish2 status)"; rc=$?
-is  "status is clean afterwards"               "0" "$rc"
-
-echo
-echo "PRUNE IS HOW A FOREIGN ENTRY IS REMOVED — by name, deliberately, one substring at a time."
-out="$(ish prune /gone)"
-has "prune names what it removed" "$out" "/gone/hooks/old-session.sh"
-out="$(ish status)"
-hasnt "and it is gone from status" "$out" "/gone/hooks/old-session.sh"
-has  "while ours remains"          "$out" "ok      SessionStart"
-
-ish uninstall >/dev/null
-out="$(ish status)"; rc=$?
-is "uninstall leaves nothing registered" "1" "$rc"
-# AN ENTRY EMPTIED OF HOOKS IS REMOVED, not left as a husk: the client validates a matcher
-# entry by its hooks being non-empty, so a husk turns a clean uninstall into a settings file
-# reported as malformed.
-husk="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(json.dumps(d.get("hooks","gone")))' "$SET")"
-is "and no empty husk is left behind" '"gone"' "$husk"
-keep="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["statusLine"]["command"])' "$SET")"
-is "with the rest of the file still intact" "/some/meter.sh" "$keep"
-
-echo
-echo "install is a repair, so it must be safe to run on a timer"
-# WRITES ONLY ON CHANGE. It runs from `cockpit-ensure` every minute as well as by hand; a
-# version that rewrote on every pass would churn the operator's live client settings and its
-# backup once a minute, and would report a change on every one of them.
-ish install >/dev/null
-before="$(cat "$SET")"
-rm -f "$SET.spira.bak"
-out="$(ish install)"; rc=$?
-is "a second install exits clean"            "0" "$rc"
-is "and changes nothing in the file"         "$before" "$(cat "$SET")"
-is "and writes no backup, having written nothing" "0" \
-   "$(ls "$SET.spira.bak" >/dev/null 2>&1 && echo 1 || echo 0)"
-is "and says nothing"                        "" "$out"
-
-# AND IT REFUSES A HOOK THAT IS NOT THERE. A registered command that does not exist is a hook
-# error reported to the user at every session start — and that is exactly the state a timed
-# repair falls into while the file it names is still arriving with a branch.
-GONE="$TMP/gone-clone"
-mkdir -p "$GONE/spira/hooks"
-cp "$HERE/conf.sh" "$HERE/install-session-hook.sh" "$GONE/spira/"
-SET2="$TMP/elsewhere/settings2.json"
-out="$(env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" \
-       SPIRA_CLIENT_SETTINGS="$SET2" bash "$GONE/spira/install-session-hook.sh" install 2>&1)"; rc=$?
-is  "install refuses when the hook is not there" "1" "$rc"
-has "and names what is missing"                  "$out" "not executable"
-is  "and registers nothing at all"               "0" \
-    "$(ls "$SET2" >/dev/null 2>&1 && echo 1 || echo 0)"
-
-echo
 echo "the repair is wired, not merely available"
 # A REGISTRATION DONE ONCE BY HAND ROTS INVISIBLY, and the rot is silent: a hook bound to a
 # path whose harness was decommissioned goes on printing that harness's banner into every
 # session on the box and looks, from inside one, exactly like a working hook. So the wiring is
 # asserted rather than described — install writes it once, and a timer repairs it.
+#
+# THE REGISTRATION MECHANICS THEMSELVES (sp-7jr34) moved into the `release` crate as
+# `release session-hook`, which owns: converging any number of earlier Spira entries — a
+# sha-pinned path, the bare "current" path, wrapped or not — to exactly one on both
+# `SessionStart` and `statusLine`; the no-matcher, `PostCompact`-retiring shape; reporting a
+# foreign hook without ever removing it; `prune <substring>` as the deliberate removal path;
+# the backup-then-atomic-write and "no change, no write" properties; and refusing when the
+# hook/meter file is not executable. All of that is `release/src/session_hook.rs`'s own unit
+# tests now (`cargo test -p release`), run on every change to that file rather than only when
+# this suite happens to run. `release/tests/session_hook_minimal_env.rs` covers sp-7jr34's own
+# regression directly: the registered command, run under the client's real minimal
+# environment, succeeds — and the OLD unwrapped form does not. What is left here is the one
+# thing those tests cannot see: that the CALL SITES in this tree actually invoke it.
 ROOT="$(cd "$HERE/.." && pwd -P)"
 has "the installer registers it on a fresh box" \
-    "$(cat "$ROOT/systemd/install.sh")" "install-session-hook.sh"
+    "$(cat "$ROOT/systemd/install.sh")" "release session-hook install"
 has "and a timed unit repairs it afterwards" \
-    "$(cat "$ROOT/systemd/cockpit-ensure.service")" "install-session-hook.sh install"
+    "$(cat "$ROOT/systemd/cockpit-ensure.service")" "release session-hook install"
 
 echo
 echo "an aeon session is told nothing"

@@ -2,7 +2,7 @@
 #
 # session.sh — the coding agent's SessionStart hook: what is watching, what is unread,
 # unread mail, and — on the concierge socket only — the mandatory first action to arm the
-# inbox-triage Monitor. Registered by `install-session-hook.sh`.
+# inbox-triage Monitor. Registered by `release session-hook install`.
 #
 # WHY A HOOK CAN ONLY PRINT. A command hook communicates with the client through stdout,
 # stderr and an exit code only — it cannot call a tool. The OUTER HARNESS owns the watcher
@@ -70,7 +70,7 @@ except Exception: print("")' 2>/dev/null)"
 
 # SessionEnd has nothing to say and nowhere to say it — the context it would print into is
 # the one going away. It is handled rather than refused so that registering it is harmless,
-# but `install-session-hook.sh` deliberately does not register it: with systemd owning the
+# but `release session-hook install` deliberately does not register it: with systemd owning the
 # watchers there are no processes for a departing session to guarantee. Checked before the
 # concierge block below too — a departing session gets no arm instruction either.
 [ "$event" = SessionEnd ] && exit 0

@@ -159,7 +159,7 @@ SPIRA_ID_PREFIX = sp
 
 # ---- the session hook ---------------------------------------------------------------------
 # The coding agent's OWN settings file — the one the client reads, not one of ours. The session
-# hook is registered in it by `spira/install-session-hook.sh`, and `spira/doctor.sh` reports
+# hook is registered in it by `release session-hook install`, and `spira/doctor.sh` reports
 # whether it still is. Point this elsewhere if your client keeps its settings somewhere else.
 # Default: $HOME/.claude/settings.json
 # SPIRA_CLIENT_SETTINGS = $HOME/.config/some-agent/settings.json
@@ -437,7 +437,7 @@ SPIRA_ID_PREFIX = sp
 
 # The alert units whose failure should be filed as an incident bead, as a find(1) name
 # pattern — `*` `?` and `[...]` work, brace expansion does not. Empty means none, and
-# install-intake.sh then says so rather than wiring whatever happens to match.
+# `release intake install` then says so rather than wiring whatever happens to match.
 #
 # NAME ONLY UNITS WHOSE FAILURE IS ACTIONABLE. Where alert templates are rendered per
 # environment, most usually belong to development instances that fail routinely and by design,
