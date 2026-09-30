@@ -355,6 +355,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gh-intake"
+version = "1.0.0"
+dependencies = [
+ "serde_json",
+ "sha2",
+ "ureq",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1048,6 +1057,15 @@ checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sop"
+version = "1.0.0"
+dependencies = [
+ "regex",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

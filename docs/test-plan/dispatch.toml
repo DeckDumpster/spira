@@ -37,9 +37,9 @@ tier = "T1"
 statement = "GitHub intake never mutates GitHub, dedups idempotently, promotes only on write access"
 
 [use_case.uncovered]
-reason = "the never-mutates-GitHub half (gh-intake-lint.sh: no mutating curl flag, no credential reference) moved to spira-lint's `gh-intake-lint` rule and was deleted (sp-ekkak); its cases now run as `cargo test -p spira-lint` (spira-lint/DESIGN.md \"Rule gh-intake-lint\"), which plan-matrix's suite-header scan cannot see. The dedup/promotion half stays covered by test-gh-intake.sh."
-date = "2026-09-29"
-bead = "sp-ekkak"
+reason = "the never-mutates-GitHub half (gh-intake-lint.sh: no mutating curl flag, no credential reference) moved to spira-lint's `gh-intake-lint` rule and was deleted (sp-ekkak); its cases now run as `cargo test -p spira-lint` (spira-lint/DESIGN.md \"Rule gh-intake-lint\"). gh-intake.sh itself is retired (sp-8fsql): the dedup/promotion decision tree — idempotent re-run, trust by author_association, spira:accept promotion checked against current access, the post-check refusing an unlabelled work bead — is now `logic::run()` in the `gh-intake` crate, covered by `cargo test -p gh-intake` (gh-intake/DESIGN.md §5). spira/test-gh-intake.sh is repointed to a thin T1 wiring smoke test of the real binary (env vars, subprocess boundaries to bd/mail.sh) that plan-matrix's suite-header scan still credits; the decision-tree cases it used to carry are what moved and are what this marker names."
+date = "2026-09-30"
+bead = "sp-8fsql"
 
 [[use_case]]
 id = "UC-dispatch-07"
