@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub mod admission;
 pub mod build;
 pub mod convert;
 pub mod legacy_map;
@@ -265,6 +266,14 @@ pub struct SpiraSection {
     pub fayths: Vec<String>,
     pub batch_maxpar: Option<u32>,
     pub certify_par: Option<u32>,
+    /// Compile admission slots (sp-f4ig1, gate/DESIGN-admission.md §5); unset derives
+    /// `min(cores ÷ 10, MemAvailable ÷ 4 GiB)`. A pool size, never a per-job limit.
+    pub compile_par: Option<u32>,
+    /// Test admission slots (an agent's own testenv trials); unset derives
+    /// `min(cores ÷ 8, MemAvailable ÷ 8 GiB)`.
+    pub test_par: Option<u32>,
+    /// Seconds of random delay before an aeon's session starts (0 disables; unset: 20).
+    pub summon_jitter: Option<u64>,
     pub certify_suites: Option<OnOff>,
     pub cert_idle_skip: Option<bool>,
     pub queue_batch_max: Option<u32>,

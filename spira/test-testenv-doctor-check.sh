@@ -121,6 +121,27 @@ nowant "dev tier: absent dev program is not named" "$ABSENT" "$out"
 
 # ============================================================================
 echo
+echo "release tier — an absent release-tier program is never checked (sp-ehj2t: testenv"
+echo "stages Spira's own binaries per run; the image never installs them):"
+# ============================================================================
+# write_conf has no release-tier slot (only runtime/optional/dev); write this one by hand.
+cat > "$TMP/conf.sh" <<EOF
+spira_deps_list() { printf '%s\n' bash git $ABSENT; }
+spira_bin_tier() {
+    case "\$1" in
+        bash) echo runtime ;;
+        git) echo optional ;;
+        $ABSENT) echo release ;;
+        *) echo optional ;;
+    esac
+}
+EOF
+out="$(bash "$CHECKER" "$TMP/conf.sh" 2>&1)"; rc=$?
+iszero "release tier: absent release program does not fail the build" "$rc"
+nowant "release tier: absent release program is not named" "$ABSENT" "$out"
+
+# ============================================================================
+echo
 echo "clean run — all programs present exits 0:"
 # ============================================================================
 write_conf "bash python3" "git"

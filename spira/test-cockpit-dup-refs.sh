@@ -27,7 +27,7 @@
 #
 # COVERS: spira/cockpit.sh spira/watchtower.sh spira/incident.sh
 # tier: T2
-# covers: spira/cockpit.sh spira/watchtower.sh spira/incident.sh
+# covers: spira/cockpit.sh spira/watchtower.sh spira/incident.sh incident/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

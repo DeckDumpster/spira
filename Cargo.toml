@@ -46,6 +46,8 @@ members = [
     "forge",
     "watchd",
     "inbox-triage",
+    "incident",
+    "maechen-trigger",
     "rule",
     "bead",
 ]
