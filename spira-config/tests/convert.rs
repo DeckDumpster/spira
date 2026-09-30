@@ -69,13 +69,8 @@ fn converts_conf_repo_map_and_fayths() {
     assert_eq!(home.mode, LandMode::Push);
     assert_eq!(home.base, Some("origin/main".to_string()));
     assert_eq!(home.format, None);
-    assert_eq!(
-        home.gate,
-        Some(
-            "bash spira/inventory.sh && \"$SPIRA_TESTENV_BIN\" \"$SPIRA_GATE_BRANCH\""
-                .to_string()
-        )
-    );
+    // The repo-map's gate column is not carried into spira.toml (sp-quu2w: the tree under
+    // test owns its gate); the row around it must still parse — its lanes come after it.
     assert_eq!(
         home.lanes,
         vec![Lane::Plan, Lane::Incident, Lane::Groom, Lane::Spike]
@@ -84,13 +79,9 @@ fn converts_conf_repo_map_and_fayths() {
     let service = doc.repo.get("service").expect("service repo row");
     assert_eq!(service.mode, LandMode::Pr);
     assert_eq!(service.format, Some("cargo fmt --all".to_string()));
-    // The gate command's own `2|3)` case pattern must survive the pipe-delimited parse —
-    // this is the row that plants a literal `|` inside the gate column on purpose.
-    assert!(service
-        .gate
-        .as_deref()
-        .unwrap()
-        .contains("case \"$_b\" in 2|3) exit 75"));
+    // The gate column's own `2|3)` case pattern must survive the pipe-delimited parse —
+    // this is the row that plants a literal `|` inside the gate column on purpose — so the
+    // lanes after it still read, though the gate itself is no longer carried (sp-quu2w).
     assert_eq!(service.lanes, vec![Lane::Plan, Lane::Incident]);
 
     let builder = doc.persona.get("builder").expect("builder persona");

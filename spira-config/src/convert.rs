@@ -508,7 +508,8 @@ struct RepoRow {
     land: String,
     base: String,
     format: String,
-    gate: String,
+    // The gate column is not carried (sp-quu2w: the tree under test owns its gate; the
+    // column is read from repo-map itself for a repository that never adopted `gate.steps`).
     lanes_raw: String,
 }
 
@@ -544,22 +545,6 @@ fn parse_repo_row(line: &str) -> Option<RepoRow> {
     } else {
         ""
     };
-    let gate_start = if nf >= 6 {
-        6
-    } else if nf == 5 {
-        5
-    } else {
-        4
-    };
-    let gate_end = lanes_idx.map(|li| li - 1).unwrap_or(nf);
-    let gate = if gate_start <= gate_end && gate_start <= nf {
-        fields[gate_start - 1..gate_end.min(nf)]
-            .join("|")
-            .trim()
-            .to_string()
-    } else {
-        String::new()
-    };
     let lanes_raw = lanes_idx
         .map(|li| fields[li - 1].trim().to_string())
         .unwrap_or_default();
@@ -575,7 +560,6 @@ fn parse_repo_row(line: &str) -> Option<RepoRow> {
             .unwrap_or_default(),
         base: base.to_string(),
         format: format.to_string(),
-        gate,
         lanes_raw,
     })
 }
@@ -659,11 +643,6 @@ pub fn repo_sections(
                     None
                 } else {
                     Some(row.format)
-                },
-                gate: if row.gate.is_empty() {
-                    None
-                } else {
-                    Some(row.gate)
                 },
                 lanes,
                 forge: None,

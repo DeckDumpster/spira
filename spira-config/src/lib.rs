@@ -500,7 +500,8 @@ pub struct RepoSection {
     pub mode: LandMode,
     pub base: Option<String>,
     pub format: Option<String>,
-    pub gate: Option<String>,
+    // `gate` is retired (sp-quu2w, RETIRED_REPO_KEYS): the gate string lives in the tree
+    // under test (`gate.steps`), which the gate reads; this key never had a reader.
     #[serde(default)]
     pub lanes: Vec<Lane>,
     /// Overrides the host's default forge script for this one repository. Absent means
@@ -636,6 +637,15 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "land_cpu_quota", bead: "sp-b4oct" },
 ];
 
+/// A `[repo.<name>]` key dropped from `RepoSection`, accepted from a live config with a
+/// warning instead of the hard "unknown field" error, exactly as [`RETIRED_SPIRA_KEYS`] is.
+pub const RETIRED_REPO_KEYS: &[RetiredKey] = &[
+    // The gate string moved into the tree under test (`gate.steps`, gate/DESIGN.md "The tree
+    // owns its gate"): a branch that ports a fence edits it in the same commit. The legacy
+    // repo-map column still gates a repository whose landing ref has never carried one.
+    RetiredKey { key: "gate", bead: "sp-quu2w" },
+];
+
 /// Every key in `history` that is neither an active `[spira]` field (`active`) nor listed in
 /// [`RETIRED_SPIRA_KEYS`] — a key the schema dropped without retiring it.
 pub fn missing_from_retirement(
@@ -674,6 +684,19 @@ pub fn validate_with_warnings(text: &str) -> Result<(SpiraToml, Vec<String>), St
                     "{} is retired ({}) and ignored — remove it",
                     retired.key, retired.bead
                 ));
+            }
+        }
+    }
+    if let Some(repos) = root.get_mut("repo").and_then(|v| v.as_table_mut()) {
+        for (name, table) in repos.iter_mut() {
+            let Some(table) = table.as_table_mut() else { continue };
+            for retired in RETIRED_REPO_KEYS {
+                if table.remove(retired.key).is_some() {
+                    warnings.push(format!(
+                        "repo.{name}.{} is retired ({}) and ignored — remove it",
+                        retired.key, retired.bead
+                    ));
+                }
             }
         }
     }
@@ -1018,6 +1041,22 @@ mod tests {
             warnings.iter().any(|w| w.contains("queue_local_gate") && w.contains("sp-vsob2")),
             "{warnings:?}"
         );
+    }
+
+    #[test]
+    fn the_retired_repo_gate_key_warns_and_is_ignored() {
+        let (doc, warnings) = validate_with_warnings(
+            "[repo.spira]\npath = \"/p\"\nmode = \"push\"\ngate = \"bash spira/x.sh\"\n",
+        )
+        .expect("a retired repo key must not be a hard error");
+        assert!(doc.repo.contains_key("spira"));
+        assert!(
+            warnings.iter().any(|w| w.contains("repo.spira.gate") && w.contains("sp-quu2w")),
+            "{warnings:?}"
+        );
+        // Positive control: a misspelt repo key is still refused.
+        let err = validate("[repo.spira]\npath = \"/p\"\nmode = \"push\"\ngatee = 1\n").unwrap_err();
+        assert!(err.contains("repo.spira"), "{err}");
     }
 
     #[test]
