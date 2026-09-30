@@ -1,5 +1,8 @@
 # Test plan — Operator channel and codified knowledge (`operator-channel`)
 
+> **2026-09-30: `test-watchd-overlay.sh` deleted** (law-a-test-that-flips-is-deleted): red under full-corpus load in the gates for sp-b4oct (`not ok 6 - manifest still exits 0`) and sp-wx2tw (`not ok 9 - the overlay daemon has a unit name`, base green in the same gate), green in isolation. UC-operator-channel-35 stays covered by `test-watchd-prune.sh`; the watchd overlay manifest/units/status path has **no suite coverage** until sp-6jpng finds the load dependence and re-adds it.
+
+
 Part of [[test-plan-2026-09-23]], section 5. Area id `operator-channel`; use-case ids are `UC-operator-channel-NN`.
 
 Scope: everything that carries words between the harness, agents and Ryan. That covers Maildir mail (send/read/lint/tidy/deliver/done/sendmail), decision-bead filing and verdicts flowing back, `watchd.sh tail/notify/prune/health-ids` and `watch-refresh.sh`, the concierge session, and the stores of learned procedure (`sop.sh`, `rule.sh`, `render_memories`). The dashboards that display these words belong to cockpit-observability.

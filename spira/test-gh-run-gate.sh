@@ -36,6 +36,13 @@
 # a gate is open or closed. A stub would be a second implementation of the thing in question
 # (law-prefer-the-real-dependency).
 #
+# PART 3 (gate-check.sh's own discover-loop argument passing: pr vs push filtering, the
+# branch named to `bd gate discover`) retired sp-ubw2o: that decision now lives in the Rust
+# `gate-check` crate's `discover_branches` (gate-check/DESIGN.md), covered by `cargo test -p
+# gate-check` and the bead's own stubbed-bd smoke run. Parts 1, 2 and 4 stay — they exercise
+# `bd`'s own gate mechanism against a real store, and the systemd wiring, neither of which
+# this bead touched.
+#
 # tier: T2
 # covers: spira/gate-check.sh sentinel/src/* aeon/src/*
 set -uo pipefail
@@ -157,66 +164,6 @@ nowant "sp-b not resolved: stays blocked"        "sp-b" "$(ready_ids)"
 gh_calls="$(cat "$GH_LOG" 2>/dev/null)"
 want   "check used --repo flag for gate A"         "--repo org-a/repo-a"  "$gh_calls"
 want   "check used --repo flag for gate B too"     "--repo org-b/repo-b"  "$gh_calls"
-
-# ======================================================================================
-# PART 3: gate-check.sh exists and calls bd gate discover per pr-mode repository.
-#
-# gate-check.sh is the script the timer runs. It must: iterate pr-mode repos and call
-# bd gate discover from within each one, then call bd gate check --type=gh:run.
-# Verified by stubbing bd, capturing calls, and checking what gate-check.sh asked.
-# ======================================================================================
-echo
-echo "gate-check.sh iterates pr-mode repos for discover:"
-
-GATE_CHECK="$HERE/gate-check.sh"
-[ -f "$GATE_CHECK" ] && ok "gate-check.sh exists" || bad "gate-check.sh exists" "file not found"
-
-# Build a minimal repo-map with one pr repo and one push repo.
-MAP="$TMP/repo-map"
-PR_REPO="$TMP/pr-repo"; mkdir -p "$PR_REPO"
-git init -q -b main "$PR_REPO" 2>/dev/null
-git -C "$PR_REPO" commit -q --allow-empty -m init 2>/dev/null
-PUSH_REPO="$TMP/push-repo"; mkdir -p "$PUSH_REPO"
-cat > "$MAP" <<MAP
-prrepo   | $PR_REPO   | pr   | origin/main | |
-pushrepo | $PUSH_REPO | push | origin/main | |
-MAP
-
-# STUB BD: log every subcommand+args pair so we can assert which calls were made.
-# SPIRA_BD IS THE INJECTION POINT. conf.sh resets $PATH but honours a pre-set SPIRA_BD,
-# which gate-check.sh uses via `${SPIRA_BD:-bd}`. Setting it here bypasses PATH entirely
-# so the stub receives every bd call regardless of conf.sh's PATH rebuild.
-#
-# The stub returns one open unbound gate with metadata.branch so gate-check's discover
-# loop has a branch to pass. Without this the loop emits nothing (no unbound gates)
-# and the discover call would never happen — which would silence the positive control.
-BD_LOG="$TMP/bd-calls.log"
-mkdir -p "$TMP/sbin"
-cat > "$TMP/sbin/bd" <<'BDSTUB'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$BD_LOG"
-case "$*" in
-    *"gate list"*"--json"*|*"gate list --json"*)
-        printf '[{"id":"sp-g1","await_type":"gh:run","metadata":{"branch":"spira/pr-branch","repo":"org/repo"}}]\n' ;;
-esac
-BDSTUB
-chmod +x "$TMP/sbin/bd"
-export BD_LOG
-
-SH="$TMP/spira"; mkdir -p "$SH"
-cp "$HERE/gate-check.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$SH/"
-
-# The positive control for pr-repo discover: the stub bd will see a gate discover call
-# with the branch from the gate's metadata.
-: > "$BD_LOG"
-SPIRA_HOME="$SH" SPIRA_REPO="$PR_REPO" SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" \
-SPIRA_REPO_MAP="$MAP" SPIRA_CONF="$TMP/no.conf" SPIRA_BD="$TMP/sbin/bd" \
-    bash "$SH/gate-check.sh" 2>/dev/null
-
-bd_calls="$(cat "$BD_LOG" 2>/dev/null)"
-want   "gate discover is called with branch"  "gate discover --branch spira/pr-branch" "$bd_calls"
-want   "gate check --type=gh:run is called"   "gate check"                             "$bd_calls"
-nowant "discover not called for push repo"    "$PUSH_REPO"                             "$(grep discover "$BD_LOG" 2>/dev/null)"
 
 # ======================================================================================
 # PART 4: the systemd timer for gate-check exists.
