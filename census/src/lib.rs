@@ -26,32 +26,32 @@ pub fn run(w: &dyn World, with_suppressed: bool) -> i32 {
     let row = match w.bd_sql_utc_now_row() {
         Ok(r) => r,
         Err(e) => {
-            w.err(&format!("census.sh: cannot verify the substrate clock against UTC — refusing to rank blind\n{e}"));
+            w.err(&format!("census: cannot verify the substrate clock against UTC — refusing to rank blind\n{e}"));
             return 1;
         }
     };
     let substrate_utc = row.split('|').next().unwrap_or("").trim().to_string();
     let Some(substrate_epoch) = w.parse_utc_to_epoch(&substrate_utc) else {
-        w.err(&format!("census.sh: cannot verify the substrate clock against UTC — refusing to rank blind\n{row}"));
+        w.err(&format!("census: cannot verify the substrate clock against UTC — refusing to rank blind\n{row}"));
         return 1;
     };
     let skew = substrate_epoch - host_epoch;
     if skew.abs() > tolerance {
         w.err(&format!(
-            "census.sh: substrate clock skew is {skew}s (tolerance {tolerance}s) — refusing to rank a windowed query over a clock that disagrees with UTC"
+            "census: substrate clock skew is {skew}s (tolerance {tolerance}s) — refusing to rank a windowed query over a clock that disagrees with UTC"
         ));
-        w.err(&format!("census.sh: substrate utc_fn={substrate_utc} host_utc={}", w.format_epoch_utc(host_epoch)));
+        w.err(&format!("census: substrate utc_fn={substrate_utc} host_utc={}", w.format_epoch_utc(host_epoch)));
         return 1;
     }
 
     // RANKED CENSUS: since-watermark when the watermark is valid, all-time otherwise.
     let Ok(all_time) = census_counts(w, None) else {
-        w.err("census.sh: events substrate is unreachable — cannot produce a census");
+        w.err("census: events substrate is unreachable — cannot produce a census");
         return 1;
     };
     let ranked = if watermark_ts > 0 {
         let Ok(since_wm) = census_counts(w, Some(watermark_ts)) else {
-            w.err("census.sh: events substrate is unreachable — cannot produce a census");
+            w.err("census: events substrate is unreachable — cannot produce a census");
             return 1;
         };
         w.merge_py(&all_time, &since_wm)
@@ -98,7 +98,7 @@ pub fn run(w: &dyn World, with_suppressed: bool) -> i32 {
                         orphaned_by_class.entry(class.to_string()).or_default().push(bead_id.to_string());
                     }
                 }
-                2 => w.err(&format!("census.sh: remedy {bead_id}: land status unknown, not suppressing {class}")),
+                2 => w.err(&format!("census: remedy {bead_id}: land status unknown, not suppressing {class}")),
                 _ => {}
             }
         }
@@ -171,14 +171,14 @@ fn read_watermark(w: &dyn World, path: &std::path::Path) -> i64 {
         Some(raw) => {
             let trimmed: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
             if trimmed.is_empty() || !trimmed.chars().all(|c| c.is_ascii_digit()) {
-                w.err(&format!("census.sh: watermark at {} is unreadable; falling back to all-time counts", path.display()));
+                w.err(&format!("census: watermark at {} is unreadable; falling back to all-time counts", path.display()));
                 0
             } else {
                 trimmed.parse().unwrap_or(0)
             }
         }
         None => {
-            w.err(&format!("census.sh: no watermark file at {}; reporting all-time counts", path.display()));
+            w.err(&format!("census: no watermark file at {}; reporting all-time counts", path.display()));
             0
         }
     }
