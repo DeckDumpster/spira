@@ -636,7 +636,7 @@ pub fn render_memories(mem_json: &str, prefixes: &str, budget: usize, core_csv: 
             (
                 "sop-",
                 format!(
-                    "## Runbooks on the shelf — full text on request\n\nThese bind exactly as the statutes above do. Read the full runbook —\nCHECK, FIX, ESCALATE — with:\n\n    sop.sh show <slug-without-sop-prefix>\n"
+                    "## Runbooks on the shelf — full text on request\n\nThese bind exactly as the statutes above do. Read the full runbook —\nCHECK, FIX, ESCALATE — with:\n\n    sop show <slug-without-sop-prefix>\n"
                 ),
             ),
         ];
@@ -892,7 +892,7 @@ mod tests {
         let m = render_memories(j, "law-,sop-", 120000, "law-a", "/h");
         assert!(m.starts_with("## law-a\n\nA text\n\n\n## Statutes in force"), "{m}");
         assert!(m.contains("    /h/rule.sh show <slug-without-law-prefix>\nlaw-b"));
-        assert!(m.ends_with("    sop.sh show <slug-without-sop-prefix>\nsop-x"));
+        assert!(m.ends_with("    sop show <slug-without-sop-prefix>\nsop-x"));
         assert!(!m.contains("other"));
         let tight = render_memories(j, "law-", 5, "law-a", "/h");
         assert!(tight.starts_with("## Statutes in force") && tight.contains("law-a\nlaw-b"), "over budget falls back to the index");

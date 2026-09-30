@@ -32,7 +32,7 @@ spira/repo-map
 spira/repo-map.local
 
 # Wiki content belongs to the brain repository, not to the harness. An aeon working in a
-# spira-harness worktree that also runs sop.sh synth or writes a note must write to
+# spira-harness worktree that also runs `sop synth` or writes a note must write to
 # $SPIRA_WIKI, not relative to its cwd. This entry ensures a misdirected write stays
 # untracked rather than landing on main — the fence that turns the mistake into a miss
 # rather than an inventory refusal.

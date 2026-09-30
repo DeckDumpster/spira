@@ -752,7 +752,7 @@ retire-unsatisfiable-delivers)
                 # worst thing a migration can do. And the repair itself was a mirage: the
                 # sentinel requires the ledger's MTIME to move during the session, so an
                 # empty directory satisfies nothing. Creating it belongs in the writer,
-                # where a session that runs sop.sh can actually fill it.
+                # where a session that runs sop can actually fill it.
                 [ -d "$(dirname "$_path")" ] && { k=$((k+1)); continue; } ;;
         esac
         if [ "$_dry" = 1 ]; then
