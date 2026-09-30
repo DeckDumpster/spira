@@ -41,8 +41,8 @@
 # and the next reader of a violation message will look there first.
 #
 # WHEN IT RUNS. Only when SPIRA_GATE_BASE is in the environment, meaning this was invoked
-# from gate.sh as part of the landing gate. Without it, the fence exits 77 (skip) — the
-# scheduled test runner (gate-spira.sh) has no diff and there is nothing to analyze.
+# from gate.sh as part of the landing gate. Without it, the fence exits 77 (skip) — a direct
+# or scheduled invocation with no branch context has no diff and nothing to analyze.
 #
 # Re-violation of law-prefer-the-real-dependency (rung 3) is what promoted this to rung 4.
 
@@ -54,7 +54,7 @@ ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)"
 OVERRIDE_MARKER="orphan-test-ok"
 
 # Without a base ref there is no diff; skip rather than report a false clean.
-# A scheduled run (gate-spira.sh without a branch context) is expected to skip.
+# A direct invocation with no branch context is expected to skip.
 if [ -z "${SPIRA_GATE_BASE:-}" ]; then
     printf 'orphan-test: SKIP no SPIRA_GATE_BASE — no diff to check (not running from the landing gate)\n'
     exit 77

@@ -410,11 +410,24 @@ jobs:
       - name: Lints
         # Cheap, pure bash, and they fail on the things no suite can see: operator
         # infrastructure named in a public repo, configured names written as
-        # literals, and scratch paths escaping into tracked files.
+        # literals, scratch paths escaping into tracked files, a heredoc body stored
+        # as a literal dash, a mutating call in the public tracker's read-only path,
+        # an incident ref with no recorded cause, an unscoped tmux/concierge.sh call,
+        # and a blanket wiki add. Re-homed here from gate-spira.sh (sp-hyc3a, carrying
+        # out sp-nhid0's decision): that script had no caller since sp-b99nj retired
+        # the background suites sweep (2026-09-26), and this is the fence loop it used
+        # to run. sop.sh lint and suite-state-fence.sh are not here: both need a real
+        # SPIRA_DB, which this fresh runner never has.
         run: |
           bash spira/inventory.sh
           bash spira/literal-lint.sh
           bash spira/scratch-fence.sh
+          bash spira/bd-stdin-lint.sh
+          bash spira/gh-intake-lint.sh
+          bash spira/incident-cause-lint.sh
+          bash spira/tmux-scope-fence.sh
+          bash spira/wiki-add-fence.sh
+          bash spira/orphan-test.sh || [ $? -eq 77 ]
 
       - name: Suites
         # The exit-code mapping matches the repo-map's gate command exactly. Keep

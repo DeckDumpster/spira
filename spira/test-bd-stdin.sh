@@ -10,7 +10,7 @@
 # `bd create ... -d - <<EOF` store the literal "-" and discard the heredoc that follows —
 # six beads shipped with a dash where their body or notes should be (sp-j5z3). The check
 # used to live inside this suite as two separate grep -r passes over spira/ and chamber/
-# (one per pattern); it is now the fence gate-spira.sh runs directly, in one pass, and this
+# (one per pattern); it is now a single fence the gate runs directly, in one pass, and this
 # suite is its positive control (UC-dispatch-05, T0).
 #
 # THE POSITIVE CONTROL IS FIRST. A fence that reports a clean tree is indistinguishable
@@ -20,7 +20,7 @@
 #
 # defect: sp-j5z3
 # tier: T0
-# covers: spira/bd-stdin-lint.sh spira/gate-spira.sh UC-dispatch-05
+# covers: spira/bd-stdin-lint.sh spira/repo-map.example UC-dispatch-05
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -137,7 +137,7 @@ is   "--scan is silent on --stdin usage" "" "$(lint --scan "$PROBE")"
 # GATE INTEGRATION. A fence nothing invokes is a file; this is the one property no amount
 # of matcher testing can establish.
 # ---------------------------------------------------------------------------------------
-want "the gate names this fence" "spira/bd-stdin-lint.sh" "$(cat "$HERE/gate-spira.sh")"
+want "the gate names this fence" "spira/bd-stdin-lint.sh" "$(cat "$HERE/repo-map.example")"
 is   "and it is executable"      "0" "$([ -x "$HERE/bd-stdin-lint.sh" ]; echo $?)"
 
 tl_summary

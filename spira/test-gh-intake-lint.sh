@@ -15,7 +15,7 @@
 # file's silence evidence of anything.
 #
 # tier: T0
-# covers: spira/gh-intake-lint.sh spira/gh-intake.sh spira/gate-spira.sh UC-dispatch-06
+# covers: spira/gh-intake-lint.sh spira/gh-intake.sh spira/repo-map.example UC-dispatch-06
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -56,7 +56,7 @@ is "GREEN: read-only curl and a comment mentioning the words are both silent" ""
 # ---------------------------------------------------------------------------------------
 # GATE INTEGRATION. A fence nothing invokes is a file.
 # ---------------------------------------------------------------------------------------
-want "the gate names this fence" "spira/gh-intake-lint.sh" "$(cat "$HERE/gate-spira.sh")"
+want "the gate names this fence" "spira/gh-intake-lint.sh" "$(cat "$HERE/repo-map.example")"
 is   "and it is executable"      "0" "$([ -x "$HERE/gh-intake-lint.sh" ]; echo $?)"
 
 # ---------------------------------------------------------------------------------------

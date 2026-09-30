@@ -34,7 +34,7 @@ statement = "A queue-branch diff selects the union of its members' suites and fa
 [[use_case]]
 id = "UC-test-infrastructure-07"
 tier = "T0"
-statement = "`gate-spira.sh`, `testenv-batch.sh`, `gate-touched.sh`, `suites.sh names` and gate.yml all delegate to `select.sh`. There is one selector with no private copy."
+statement = "`testenv-batch.sh`, `gate-touched.sh`, `suites.sh names` and gate.yml all delegate to `select.sh`. There is one selector with no private copy."
 
 [[use_case]]
 id = "UC-test-infrastructure-08"
@@ -234,7 +234,12 @@ statement = "Every non-test, non-sourced operator script is executable."
 [[use_case]]
 id = "UC-test-infrastructure-42"
 tier = "T1"
-statement = "Certification budget. `gate-spira.sh` times itself. Over `SPIRA_GATE_BUDGET`, or an unmeasurable cost, files one harness bead (\"something must leave gate-suites\") and is not a branch failure. **Untested today (see Gaps).**"
+statement = "Certification budget. `gate-spira.sh` timed itself and filed one harness bead (\"something must leave gate-suites\") over `SPIRA_GATE_BUDGET`, or on an unmeasurable cost, without failing the branch. `gate-touched.sh` still trims selection to the budget (gate-budget-select.sh) but does not file that bead. **Untested today (see Gaps).**"
+
+[use_case.uncovered]
+reason = "the bead-filing half lived only in gate-spira.sh's own run loop, deleted as dead code (sp-nhid0's decision, carried out by sp-hyc3a); the budget-select trimming it once measured stays live in gate-touched.sh"
+date = "2026-09-29"
+bead = "sp-hyc3a"
 
 [[use_case]]
 id = "UC-test-infrastructure-43"

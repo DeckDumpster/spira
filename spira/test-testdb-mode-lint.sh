@@ -18,7 +18,7 @@
 # (law-absence-needs-a-positive-control).
 #
 # tier: T1
-# covers: spira/testdb-mode-lint.sh spira/gate-spira.sh
+# covers: spira/testdb-mode-lint.sh spira/repo-map.example
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -143,6 +143,6 @@ want "an inline request without export is still caught" "SPIRA_TESTDB_MODE=serve
 # GATE INTEGRATION. A fence nothing invokes is a file; this is the one property no amount
 # of matcher testing can establish.
 # ---------------------------------------------------------------------------------------
-want "the gate names this fence" "spira/testdb-mode-lint.sh" "$(cat "$HERE/gate-spira.sh")"
+want "the gate names this fence" "spira/testdb-mode-lint.sh" "$(cat "$HERE/repo-map.example")"
 is   "and it is executable"      "0" "$([ -x "$HERE/testdb-mode-lint.sh" ]; echo $?)"
 tl_summary

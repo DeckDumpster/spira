@@ -22,7 +22,7 @@
 #
 # tier: T1
 # tier: T0
-# covers: spira/scratch-fence.sh spira/gate-spira.sh UC-safety-fences-24
+# covers: spira/scratch-fence.sh spira/repo-map.example UC-safety-fences-24
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -121,12 +121,11 @@ out="$(fence_at "$ROOT")"; rc=$?
 is   "sp-* in subdirectory does not trigger" "0" "$rc"
 
 # ---------------------------------------------------------------------------------------
-# GATE INTEGRATION (D7): whether the gate is wired to scratch-fence.sh is
-# test-gate-fences.sh's row, reading gate_fence_list rather than grepping this file's
-# source for the name. PRE-COMMIT INTEGRATION: whether the hook calls scratch-fence.sh is
+# GATE INTEGRATION. PRE-COMMIT INTEGRATION: whether the hook calls scratch-fence.sh is
 # UC-safety-fences-22's commit-through-hook row (sp-pohf2) — a real commit through the
 # armed hook proves the wiring; a grep of the hook's source only proved the string was
 # still there.
 # ---------------------------------------------------------------------------------------
+want "the gate names this fence" "spira/scratch-fence.sh" "$(cat "$HERE/repo-map.example")"
 
 tl_summary

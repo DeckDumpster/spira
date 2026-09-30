@@ -17,7 +17,7 @@
 #
 # host-reason: tests tmux-scope-fence.sh against scratch git repositories only
 #
-# covers: spira/tmux-scope-fence.sh spira/gate-spira.sh spira/gate-fences.sh
+# covers: spira/tmux-scope-fence.sh spira/repo-map.example
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -165,19 +165,12 @@ git -C "$ROOT" rm -qf spira/test-comment-only.sh
 git -C "$ROOT" commit -q -m "remove comment-only suite"
 
 # ---------------------------------------------------------------------------------------
-# GATE INTEGRATION: the fence is wired into gate-spira.sh via gate_fence_list, and every
-# entry that list names is a real file — the same check test-gate-fences.sh runs, repeated
-# here so this row does not depend on that one to catch a dropped wiring.
+# GATE INTEGRATION: a fence nothing invokes is a file.
 # ---------------------------------------------------------------------------------------
-if grep -q "tmux-scope-fence" "$HERE/gate-spira.sh" 2>/dev/null; then
-    ok "gate-spira.sh references tmux-scope-fence.sh"
+if grep -q "tmux-scope-fence" "$HERE/repo-map.example" 2>/dev/null; then
+    ok "repo-map.example references tmux-scope-fence.sh"
 else
-    bad "gate-spira.sh references tmux-scope-fence.sh" "not found in gate-spira.sh"
-fi
-if grep -q "spira/tmux-scope-fence.sh" "$HERE/gate-fences.sh" 2>/dev/null; then
-    ok "gate-fences.sh lists tmux-scope-fence.sh"
-else
-    bad "gate-fences.sh lists tmux-scope-fence.sh" "not found in gate_fence_list"
+    bad "repo-map.example references tmux-scope-fence.sh" "not found in repo-map.example"
 fi
 
 # ---------------------------------------------------------------------------------------

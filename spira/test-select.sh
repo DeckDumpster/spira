@@ -8,7 +8,7 @@
 #   3. diff mode with an unmapped change falls back to all suites; mode-file gets "all"
 #   4. diff mode with no changed files selects only no-covers (always-run) suites
 #      mode-file gets "diff"
-#   5. gate-spira.sh and testenv-batch.sh contain no inline selection loop;
+#   5. gate-touched.sh and the testenv runner contain no inline selection loop;
 #      both delegate to select.sh
 #
 # POSITIVE CONTROLS (law-absence-needs-a-positive-control)
@@ -16,7 +16,7 @@
 #   • C: all three suites are the planted offenders for unmapped fallback
 #
 # tier: T1
-# covers: spira/select.sh spira/select-globs.sh spira/gate-spira.sh testenv/src/run.rs spira/gate-touched.sh
+# covers: spira/select.sh spira/select-globs.sh testenv/src/run.rs spira/gate-touched.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -179,12 +179,6 @@ echo
 echo "Part E: caller contract — no inline loop in either caller"
 # ---------------------------------------------------------------------------
 
-# E1: gate-spira.sh does not call suite_covers_of (an inline loop would need it).
-# grep -c exits 1 with count "0" when no matches; use || true to suppress the
-# non-zero exit without appending a second "0" to the captured output.
-_n="$(grep -c 'suite_covers_of' "$HERE/gate-spira.sh" 2>/dev/null || true)"
-iseq "E1: gate-spira.sh has no suite_covers_of" "${_n:-0}" "0"
-
 # E2/E3: the testenv runner (testenv/src/run.rs, which replaced testenv-batch.sh) calls
 # select.sh rather than carrying its own corpus loop.
 TESTENV_RUN="$HERE/../testenv/src/run.rs"
@@ -194,38 +188,28 @@ _n="$(grep -c 'select\.sh' "$TESTENV_RUN" 2>/dev/null || true)"
 [ "${_n:-0}" -ge 1 ] && ok "E3: testenv runner calls select.sh" \
     || bad "E3: testenv runner calls select.sh" "no reference found"
 
-# E4: gate-spira.sh calls select.sh.
-_n="$(grep -c 'select\.sh' "$HERE/gate-spira.sh" 2>/dev/null || true)"
-[ "${_n:-0}" -ge 1 ] && ok "E4: gate-spira.sh calls select.sh" \
-    || bad "E4: gate-spira.sh calls select.sh" "no reference found"
-
 # E5: the testenv runner calls select.sh with --no-all-fallback (keeps gate cheap;
 #     the round's own scheduled run provides full-corpus coverage instead).
 _n="$(grep -c 'no-all-fallback' "$TESTENV_RUN" 2>/dev/null || true)"
 [ "${_n:-0}" -ge 1 ] && ok "E5: testenv runner uses --no-all-fallback" \
     || bad "E5: testenv runner uses --no-all-fallback" "no reference found"
 
-# E6: gate-spira.sh (the per-branch/aeon gate) ALSO uses --no-all-fallback —
-# sp-dv6ae: a branch touching a plumbing file (conf.sh) used to run the entire
-# non-gated corpus here for coverage the round's own scheduled run already
-# provides (law-local-gates-buy-latency-not-coverage). --report-file replaces
-# the fallback with a warning naming what it would have covered.
-_n="$(grep -c 'no-all-fallback' "$HERE/gate-spira.sh" 2>/dev/null || true)"
-[ "${_n:-0}" -ge 1 ] && ok "E6: gate-spira.sh uses --no-all-fallback" \
-    || bad "E6: gate-spira.sh uses --no-all-fallback" "no reference found"
+# E6: gate-touched.sh (the per-branch landing gate selector) ALSO uses
+# --no-all-fallback — sp-dv6ae: a branch touching a plumbing file (conf.sh) used
+# to run the entire non-gated corpus here for coverage the round's own scheduled
+# run already provides (law-local-gates-buy-latency-not-coverage). (gate-spira.sh
+# carried the same rows for the retired scheduled runner, plus a --report-file
+# diagnostic with no live analog; both were deleted with it, sp-hyc3a/sp-nhid0.)
+_n="$(grep -c 'no-all-fallback' "$HERE/gate-touched.sh" 2>/dev/null || true)"
+[ "${_n:-0}" -ge 1 ] && ok "E6: gate-touched.sh uses --no-all-fallback" \
+    || bad "E6: gate-touched.sh uses --no-all-fallback" "no reference found"
 
-# E6b: gate-spira.sh reports what the fallback would have covered via --report-file,
-# rather than silently narrowing an unmapped file's coverage.
-_n="$(grep -c -- '--report-file' "$HERE/gate-spira.sh" 2>/dev/null || true)"
-[ "${_n:-0}" -ge 1 ] && ok "E6b: gate-spira.sh uses --report-file" \
-    || bad "E6b: gate-spira.sh uses --report-file" "no reference found"
-
-# E7: gate-spira.sh calls select.sh with --files (uses pre-computed list from gate.sh,
-#     not --base/--head). This keeps the interface compatible with test fixtures that
-#     supply SPIRA_GATE_FILES without git refs.
-_n="$(grep -c -- '--files' "$HERE/gate-spira.sh" 2>/dev/null || true)"
-[ "${_n:-0}" -ge 1 ] && ok "E7: gate-spira.sh calls select.sh with --files" \
-    || bad "E7: gate-spira.sh calls select.sh with --files" "no reference found"
+# E7: gate-touched.sh calls select.sh with --files (uses pre-computed list from
+#     gate.sh, not --base/--head). This keeps the interface compatible with test
+#     fixtures that supply SPIRA_GATE_FILES without git refs.
+_n="$(grep -c -- '--files' "$HERE/gate-touched.sh" 2>/dev/null || true)"
+[ "${_n:-0}" -ge 1 ] && ok "E7: gate-touched.sh calls select.sh with --files" \
+    || bad "E7: gate-touched.sh calls select.sh with --files" "no reference found"
 
 # E8: gate-touched.sh (the landing gate selector) calls select.sh — closing the
 #     "caller the source never names" gap (law-bake-rules-into-tools).

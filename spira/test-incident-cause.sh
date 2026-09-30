@@ -5,9 +5,9 @@
 #
 #   ./test-incident-cause.sh
 #
-# incident-cause-lint.sh is now a gate fence (spira/gate-spira.sh), not a suite of its
-# own: like literal-lint.sh and testdb-mode-lint.sh, it costs nothing to run on every
-# push and belongs in the T0 lint stage rather than the certification suite list.
+# incident-cause-lint.sh is a gate fence, not a suite of its own: like literal-lint.sh
+# and testdb-mode-lint.sh, it costs nothing to run on every push and belongs in the T0
+# lint stage rather than the certification suite list.
 #
 # THE POSITIVE CONTROL IS FIRST (law-absence-needs-a-positive-control). A checker that
 # reports the real tree clean is indistinguishable from a mis-scoped glob, an off-by-one
@@ -15,7 +15,7 @@
 # be named before the shipped tree's silence means anything.
 #
 # tier: T1
-# covers: spira/incident-cause-lint.sh spira/gate-spira.sh
+# covers: spira/incident-cause-lint.sh spira/repo-map.example
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -73,7 +73,7 @@ is   "the shipped spira/ tree is clean" "0" "$rc"
 [ "$rc" = 0 ] || printf '%s\n' "$out" >&2
 
 # --- gate integration: a fence nothing invokes is a file --------------------------
-want "the gate names this fence"     "spira/incident-cause-lint.sh" "$(cat "$HERE/gate-spira.sh")"
+want "the gate names this fence"     "spira/incident-cause-lint.sh" "$(cat "$HERE/repo-map.example")"
 is   "and the fence script is readable" "0" "$([ -r "$LINT" ]; echo $?)"
 
 tl_summary

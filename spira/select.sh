@@ -8,7 +8,7 @@
 # Prints one suite name (basename only) per line to stdout. Exit 0 with empty
 # output means "nothing to run" — not an error.
 #
-# THE ONE IMPLEMENTATION. gate-spira.sh and testenv-batch.sh both call this;
+# THE ONE IMPLEMENTATION. gate-touched.sh and the testenv runner both call this;
 # neither carries a selection loop of its own. The algorithm lives here once,
 # so the two callers cannot disagree about what to run.
 #
@@ -76,7 +76,7 @@
 #                                     exercises shared build/install/runtime scaffolding
 #   unknown  everything else         → all-suites fallback when unclaimed (today's behaviour)
 #
-# covers: spira/suite-covers.sh spira/select-globs.sh spira/gate-spira.sh spira/testenv-batch.sh
+# covers: spira/suite-covers.sh spira/select-globs.sh spira/gate-touched.sh testenv/src/run.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 [ -r "$HERE/suite-covers.sh" ] || { printf 'select: suite-covers.sh is missing\n' >&2; exit 1; }
