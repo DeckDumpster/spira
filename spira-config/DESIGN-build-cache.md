@@ -110,6 +110,54 @@ Output: `target-reap: removed <n> target dir(s), <MiB> MiB (<ids>)`, and one lin
 open bead count. Called by the landing pass once per pass (it replaced `land-build-ensure.sh`
 in that slot), and by hand.
 
+### 2.5 Why cross-tree workspace-crate hits are not reachable (sp-283wz, 2026-09-30)
+
+sp-283wz set out to make unchanged workspace crates hit sccache across trees via
+`SCCACHE_BASEDIRS` and/or `--remap-path-prefix`, on the premise that "their path is part of
+the key" the way a dependency crate's registry path is not. **Neither lever can do this in
+sccache 0.18.0, and the premise undersells the actual cost.** Read from the vendored source
+(`~/.cargo/registry/src/*/sccache-0.18.0/src/compiler/rust.rs`, `compiler/c.rs`), confirmed
+against real builds:
+
+* **`SCCACHE_BASEDIRS` is wired into the C/C++ frontend only.** `storage.basedirs()` is read
+  in exactly two places, both in `compiler/c.rs` (preprocessor-output stripping). Rust's
+  `generate_hash_key` (`compiler/rust.rs`) takes `_storage` — underscore-prefixed, unused. It
+  hashes the literal command-line arguments (`args.hash(...)`), every `CARGO_*` environment
+  variable including `CARGO_MANIFEST_DIR` (an absolute path), and the compilation's `cwd`
+  directly — none basedir-normalized, none skippable. A worktree's absolute path reaches the
+  hash three different ways and `SCCACHE_BASEDIRS` touches none of them for Rust.
+* **Adding `--remap-path-prefix` makes it worse, not neutral.** The flag is parsed as
+  `PassThrough` (`rust.rs` ~line 1047) and is not in the small set of args excluded from the
+  hash (`-L`, `--extern`, `--out-dir`, `--check-cfg`, `--diagnostic-width`) — its literal text
+  is hashed. Its `FROM` side is necessarily the tree's own absolute path (that is what makes
+  it useful for debug info), so it differs byte-for-byte per tree. Measured (scratch
+  `sp-283wz-expB`, two worktrees of the same commit, same `Cargo.lock`): a plain sccache
+  build of `spira-config` in a second tree hit 15/24 cacheable requests, matching the first
+  tree exactly — this is sp-z61hj's existing, working dependency-crate win. Adding
+  `SCCACHE_BASEDIRS` plus a per-tree `--remap-path-prefix` to *one side only* (the natural way
+  to try it, since the flag's value is inherently per-tree) drove that to **0/24**: it does
+  not gain workspace-crate hits, it loses the dependency-crate hits already landed.
+* **The dominant cost was never the workspace-crate rlibs — it is binary linking, and
+  sccache refuses to cache that in any tree, including the same tree twice.** 39 of this
+  workspace's 43 crates have a `src/main.rs`. sccache's Rust frontend hard-refuses any
+  non-`rlib`/`staticlib` crate type before it ever computes a hash
+  (`cannot_cache!("crate-type", ...)`, `rust.rs` ~line 1183: *"We can't cache non-rlib/
+  staticlib crates, because rustc invokes the system linker to link them, and we don't know
+  about all the linker inputs"*). Measured: rebuilding `spira-config --release` at the
+  *identical path* twice (fresh `--target-dir` each time, nothing else changed) took the same
+  ~100s both times. Isolating the crate alone (dependencies already warm) showed the library
+  half sccache-hit in under a second while the **binary link/codegen step still ran, taking
+  ~52s** — every time, same tree, same content, same everything. No basedir, remap, or
+  path trick reaches this: it is refused before the cache is consulted at all. With 39 such
+  binaries in `--release --workspace`, this floor — not cross-tree path collisions — is most
+  of `release-bins`'s wall clock.
+* **Conclusion:** this bead's described fix is not implemented, because it would either do
+  nothing (bare `SCCACHE_BASEDIRS`) or actively regress sp-z61hj's dependency-crate hits
+  (`SCCACHE_BASEDIRS` + `--remap-path-prefix`). A real reduction in `release-bins` wall clock
+  has to come from building fewer binaries per trial, or from something other than sccache
+  entirely (a content-addressed artifact cache keyed on each crate's git tree hash, e.g.) —
+  out of scope here; see sp-283wz's report for the measurements this rests on.
+
 ## 3. Schema
 
 No new config keys in `spira.toml`. Environment only:
@@ -134,9 +182,12 @@ box; the fixture image waives it, `spira/testenv/doctor-waivers`): the cache liv
   keeps each tree's own target (attribution unchanged) and shares only compiler outputs,
   keyed by their full inputs; concurrent builds are safe.
 * **Workspace crates are not shared across trees.** Their keys include their absolute path
-  (`CARGO_MANIFEST_DIR`), which differs per worktree. sccache 0.18's `SCCACHE_BASEDIRS` is a
-  server-wide setting and cannot name a per-build root. Accepted: the bead's measure is
-  dependency crates, and a workspace crate's build is cheap next to its dependencies.
+  (`CARGO_MANIFEST_DIR`, the literal args, and `cwd`), which differs per worktree, and
+  `SCCACHE_BASEDIRS` does not reach any of the three for sccache 0.18's Rust frontend
+  (§2.5). **Superseded 2026-09-30 (sp-283wz): "a workspace crate's build is cheap next to
+  its dependencies" was wrong** — most of this workspace's crates are binaries, and
+  sccache refuses to cache a binary's link step in any tree, including the same one twice.
+  That refusal, not the cross-tree path, is most of `release-bins`'s wall clock (§2.5).
 * **Proc-macro, build-script and binary crates are not cacheable by sccache** (35 of 92
   requests in the probe). They are compiled per tree — on tmpfs for a gate tree.
 * **`SCCACHE_IGNORE_SERVER_IO_ERROR=1`.** The server is spawned by whichever client first
