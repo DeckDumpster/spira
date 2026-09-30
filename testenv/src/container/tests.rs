@@ -903,3 +903,10 @@ fn settings_come_from_the_environment_then_the_config_then_conf_sh_defaults() {
     );
     assert_eq!(c.bd_pin, Some(PathBuf::from("/pin")));
 }
+
+#[test]
+fn sizes_read_like_df_h() {
+    assert_eq!(human(512), "512B");
+    assert_eq!(human(3 * 1024 * 1024 * 1024 + 100 * 1024 * 1024), "3.1G");
+    assert_eq!(human(45 * 1024 * 1024 * 1024), "45G");
+}

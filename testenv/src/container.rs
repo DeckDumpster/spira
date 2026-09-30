@@ -874,19 +874,22 @@ impl Build for FailedBuild {
     }
 }
 
-fn first_field(cmd: &[&str], row: usize, col: usize) -> String {
-    std::process::Command::new(cmd[0])
-        .args(&cmd[1..])
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()
-        .and_then(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .nth(row)
-                .and_then(|l| l.split_whitespace().nth(col).map(str::to_string))
-        })
-        .unwrap_or_default()
+/// Bytes as `df -h`/`free -h` print them: one decimal under 10, binary units.
+pub fn human(bytes: u64) -> String {
+    let units = ["B", "K", "M", "G", "T", "P"];
+    let mut v = bytes as f64;
+    let mut u = 0;
+    while v >= 1024.0 && u < units.len() - 1 {
+        v /= 1024.0;
+        u += 1;
+    }
+    if u == 0 {
+        format!("{bytes}B")
+    } else if v < 10.0 {
+        format!("{v:.1}{}", units[u])
+    } else {
+        format!("{v:.0}{}", units[u])
+    }
 }
 
 impl Host for RealHost {
@@ -1027,21 +1030,23 @@ impl Host for RealHost {
         std::fs::read_to_string(path).ok()
     }
     fn free_disk(&self, p: &Path) -> String {
-        first_field(&["df", "-Ph", &p.display().to_string()], 1, 3)
+        use std::os::unix::ffi::OsStrExt;
+        let Ok(c) = std::ffi::CString::new(p.as_os_str().as_bytes()) else {
+            return "?".into();
+        };
+        // SAFETY: statvfs fills the zeroed struct from a valid NUL-terminated path.
+        let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+        if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+            return "?".into();
+        }
+        human(st.f_bavail.saturating_mul(st.f_frsize))
     }
     fn free_mem(&self) -> String {
-        std::process::Command::new("free")
-            .arg("-h")
-            .stderr(std::process::Stdio::null())
-            .output()
+        std::fs::read_to_string("/proc/meminfo")
             .ok()
-            .and_then(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .lines()
-                    .find(|l| l.starts_with("Mem:"))
-                    .and_then(|l| l.split_whitespace().nth(6).map(str::to_string))
-            })
-            .unwrap_or_default()
+            .and_then(|t| crate::util::meminfo_kb(&t, "MemAvailable"))
+            .map(|kb| human(kb * 1024))
+            .unwrap_or_else(|| "?".into())
     }
     fn owner_dir(&self) -> PathBuf {
         PathBuf::from("/tmp")

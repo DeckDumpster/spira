@@ -1010,4 +1010,4 @@ default conf.sh carries — conf.sh is no longer sourced:
 * **D21 — the in-container cargo-volume chown stays one `sh -c`.** It runs inside the
   container, as root, on paths the image defines; one exec instead of nine.
 * **Dropped:** the `_image_tag` "narrow closure" positive control (it tested `sha256sum`);
-  `cut -c` byte-truncation of heartbeat lines (now characters).
+  `cut -c` byte-truncation of heartbeat lines (now characters); `df -Ph`/`free -h` (now statvfs and `/proc/meminfo` MemAvailable, same units).
