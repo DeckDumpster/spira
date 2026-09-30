@@ -1038,6 +1038,15 @@
             "null"
           ]
         },
+        "hotfix_alert_hours": {
+          "description": "Hours a standing hotfix (`release activate --hotfix`) may run before `release status` emits its ALERT line — doctor, the ops pane and watchtower all key off that line rather than re-deriving the age themselves (sp-6p20x). Default 4 when unset.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
         "id_prefix": {
           "type": [
             "string",

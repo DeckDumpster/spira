@@ -288,6 +288,25 @@ for j, l in enumerate(lines[-n:]):
         echo "SP_AURON_KEYS=''"
     fi
 
+    # HOTFIX (sp-6p20x). `release status` is the one place that knows whether a hotfix
+    # stands and whether it has stood past the configured alert threshold (spira.
+    # hotfix_alert_hours) — the pane reads its RUNNING UNLANDED / ALERT lines verbatim
+    # rather than re-deriving the age from $SPIRA_RUN/release/hotfix itself, same rule as
+    # doctor.sh. Empty when no hotfix stands (or the probe failed): `release` is a
+    # release-tier tool doctor.sh already checks resolves, so a genuinely broken `release
+    # status` shows up there, not as a silent gap on this pane.
+    local _rs_out _rs_line _rs_alert
+    _rs_out="$(release status 2>/dev/null)" || _rs_out=""
+    _rs_line="$(printf '%s\n' "$_rs_out" | grep '^RUNNING UNLANDED ')"
+    _rs_alert="$(printf '%s\n' "$_rs_out" | grep '^ALERT ')"
+    # Escaped for the single-quoted form below: this file is `.` sourced by health.sh, and
+    # a hotfix --reason typed by hand during an emergency is exactly the free text likeliest
+    # to carry an apostrophe.
+    _rs_line=${_rs_line//\'/\'\\\'\'}
+    _rs_alert=${_rs_alert//\'/\'\\\'\'}
+    echo "SP_HOTFIX_LINE='$_rs_line'"
+    echo "SP_HOTFIX_ALERT='$_rs_alert'"
+
     # OPERATOR OVERRIDES (sp-qdh0x). overrides.sh list is the harness's own answer for what is
     # active and what has failed; the pane must not keep a second model of that state.
     local _ov_out _ov_n=0 _ov_failed=0 _ov_line _ov_name _ov_bead _ov_state _ov_list=""

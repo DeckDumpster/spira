@@ -385,7 +385,9 @@ pub fn rollback(ctx: &Ctx) -> Result<String, String> {
     Ok(prev.sha)
 }
 
-/// `release status`.
+/// `release status`. Reads the hotfix record itself, never re-derived elsewhere: doctor,
+/// the ops pane and watchtower all key off THIS text (`RUNNING UNLANDED` / `ALERT`) instead
+/// of reading `$SPIRA_RUN/release/hotfix` or computing an age of their own (sp-6p20x).
 pub fn status(cfg: &Config) -> Result<String, String> {
     let mut s = format!("current {}\n", current(cfg).unwrap_or_else(|| "none".into()));
     if let Ok(state) = cfg.state_dir() {
@@ -395,6 +397,16 @@ pub fn status(cfg: &Config) -> Result<String, String> {
         }
         if let Some(hf) = read_hotfix(&state)? {
             s.push_str(&format!("RUNNING UNLANDED {}: {} (since {})\n", hf.sha, hf.reason, hf.at));
+            // ALERT once the hotfix has stood at least `hotfix_alert_hours` (default 4h,
+            // DESIGN.md "Hotfix: visibility"). A `since` this crate itself did not write
+            // (corrupt or hand-edited) never alerts silently-as-zero: it is simply not aged.
+            if let Some(started) = fsutil::parse_rfc3339(&hf.at) {
+                let threshold = cfg.hotfix_alert_hours()?;
+                let age_hours = fsutil::now_secs().saturating_sub(started) / 3600;
+                if age_hours >= threshold {
+                    s.push_str(&format!("ALERT hotfix {} standing {age_hours}h >= threshold {threshold}h\n", hf.sha));
+                }
+            }
         }
     }
     Ok(s)

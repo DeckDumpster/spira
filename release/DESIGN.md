@@ -23,7 +23,7 @@ release verify <sha> [--no-pre-activate]                MANIFEST, unit binaries,
 release activate <sha> [--hotfix "<reason>"] [--repo R] [--landed-ref REF] [--settle S]
 release rollback [--settle S]                           activate the previous release
 release prune [--keep N]                                keep the newest N releases
-release status                                          current, previous, RUNNING UNLANDED
+release status                                          current, previous, RUNNING UNLANDED, ALERT
 ```
 
 Every subcommand also takes `--releases D` (else `$SPIRA_RELEASES`, else `spira.releases`,
@@ -161,8 +161,16 @@ oneshot mid-run, and an aeon's tools stay on disk in its release. So there is no
 
 `activate <sha> --hotfix "<reason>"` activates as above and records
 `$SPIRA_RUN/release/hotfix` (`sha`, `reason`, `at`). `release status` prints
-`RUNNING UNLANDED <sha>: <reason>` while it stands (doctor, the ops pane and watchtower read
-that; wiring them is not this bead).
+`RUNNING UNLANDED <sha>: <reason> (since <at>)` while it stands, and, once it has stood at
+least `hotfix_alert_hours` (env `SPIRA_HOTFIX_ALERT_HOURS`, else `spira.hotfix_alert_hours`,
+else 4), an additional `ALERT hotfix <sha> standing <n>h >= threshold <n>h` line
+(sp-6p20x). Every consumer reads these two lines from `release status`'s own text rather
+than re-deriving the age or the threshold: `doctor.sh`'s `doctor_check_hotfix` (WARN on
+`RUNNING UNLANDED` alone, FAIL once `ALERT` joins it), the cockpit ops pane
+(`spira/cockpit.sh`'s snapshot carries them as `SP_HOTFIX_LINE` / `SP_HOTFIX_ALERT`;
+`cockpit/health.sh`'s `hotfix_banner` renders them), and `watchtower.sh` (files a bead once
+per standing hotfix — `SPIRA_INCIDENT_REF=incident:hotfix-<sha>`, so incident.sh's own
+dedup bumps a recurrence rather than piling up beads while the same one stands).
 
 A later activation **without** `--hotfix`, while a hotfix stands, **supersedes it only if
 the hotfix commit is an ancestor of both the new commit and `--landed-ref`** (default
@@ -219,5 +227,4 @@ which own unit membership.
 
 ## Not this bead
 
-Launchers that set PATH (sp-31gtu, sp-gypjk); doctor / ops pane / watchtower reading the
-hotfix record.
+Launchers that set PATH (sp-31gtu, sp-gypjk).

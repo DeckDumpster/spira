@@ -508,6 +508,10 @@ pub struct SpiraSection {
     pub auron_restart_window: Option<String>,
     pub releases: Option<String>,
     pub releases_keep: Option<String>,
+    /// Hours a standing hotfix (`release activate --hotfix`) may run before `release
+    /// status` emits its ALERT line — doctor, the ops pane and watchtower all key off that
+    /// line rather than re-deriving the age themselves (sp-6p20x). Default 4 when unset.
+    pub hotfix_alert_hours: Option<u32>,
     pub gh_repo: Option<String>,
     pub reviewer_model: Option<String>,
     pub reviewer_verdicts: Option<String>,

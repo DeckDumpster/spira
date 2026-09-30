@@ -1358,6 +1358,43 @@ if [ "$_unadopted" != "?" ] && [ "$_unadopted" -gt 0 ] 2>/dev/null; then
 fi
 
 # ---------------------------------------------------------------------------------------
+# HOTFIX ESCALATION (sp-6p20x). `release status` is the one place that knows whether a
+# hotfix stands and whether it has stood past the configured alert threshold (spira.
+# hotfix_alert_hours, default 4h) — this reads its ALERT line rather than re-deriving the
+# age from $SPIRA_RUN/release/hotfix or computing a threshold of its own, same rule as
+# doctor.sh and the cockpit pane.
+#
+# FILED ONCE PER HOTFIX. SPIRA_INCIDENT_REF is keyed on the standing commit
+# (incident:hotfix-<sha>), so incident.sh's own dedup bumps a recurrence on every sweep
+# the same hotfix still stands, rather than piling up a fresh bead each pass; a later,
+# different hotfix (a new sha) files its own bead under its own ref.
+# ---------------------------------------------------------------------------------------
+_rs_out="$(release status 2>/dev/null)" || _rs_out=""
+_rs_alert="$(printf '%s\n' "$_rs_out" | grep '^ALERT ')"
+if [ -n "$_rs_alert" ]; then
+    _rs_line="$(printf '%s\n' "$_rs_out" | grep '^RUNNING UNLANDED ')"
+    _rs_sha="$(printf '%s\n' "$_rs_line" | sed -n 's/^RUNNING UNLANDED \([0-9a-f]\{40\}\):.*/\1/p')"
+    if [ -n "$_rs_sha" ]; then
+        if [ -x "$INC" ] || [ -r "$INC" ]; then
+            printf '%s\n\n%s\n\nThe running system is on a commit that has not landed. It will be superseded\nautomatically once that commit is an ancestor of local/main; until then land the fix\nor `release rollback`.\n' \
+                "$_rs_line" "$_rs_alert" | \
+            SPIRA_DB="$SPIRA_DB" \
+            SPIRA_INCIDENT_TYPE=task \
+            SPIRA_INCIDENT_PRIORITY=1 \
+            SPIRA_INCIDENT_ACTOR=watchtower \
+            SPIRA_SIN_EXEMPT=1 \
+            SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
+            SPIRA_INCIDENT_REF="incident:hotfix-${_rs_sha}" \
+            SPIRA_INCIDENT_CAUSE=hotfix-standing \
+            bash "$INC" file "HOTFIX: RUNNING UNLANDED ${_rs_sha:0:12} past threshold" - >/dev/null || true
+            log "watchtower: hotfix escalation filed (${_rs_sha} past threshold)"
+        else
+            log "watchtower: $INC is missing — hotfix escalation not filed"
+        fi
+    fi
+fi
+
+# ---------------------------------------------------------------------------------------
 # BATCHED-STRANDED ESCALATION. A branch whose landstate is BATCHED but whose ID is absent
 # from every open batch members= line is permanently skipped by sending.sh (CERTIFIED/BATCHED
 # guard). It will age in SP_UNSENT_OLDEST_H forever, and any watchtower that reads only the

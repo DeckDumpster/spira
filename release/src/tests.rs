@@ -887,3 +887,102 @@ fn rfc3339_is_correct() {
     assert_eq!(fsutil::rfc3339(0), "1970-01-01T00:00:00Z");
     assert_eq!(fsutil::rfc3339(1_790_640_000), "2026-09-29T00:00:00Z");
 }
+
+#[test]
+fn parse_rfc3339_round_trips_through_rfc3339() {
+    for secs in [0u64, 1, 59, 60, 3599, 3600, 86_399, 86_400, 1_790_640_000, 4_102_444_799, 253_402_300_799] {
+        let s = fsutil::rfc3339(secs);
+        assert_eq!(fsutil::parse_rfc3339(&s), Some(secs), "round-trip of {s:?}");
+    }
+}
+
+#[test]
+fn parse_rfc3339_refuses_anything_it_did_not_write() {
+    for bad in ["", "not a date", "2026-09-29T00:00:00", "2026-09-29 00:00:00Z", "2026-13-01T00:00:00Z", "2026-09-29T24:00:00Z", "2026-09-29T00:00:00Zx"] {
+        assert_eq!(fsutil::parse_rfc3339(bad), None, "{bad:?} must not parse");
+    }
+}
+
+// ---------------------------------------------------------------- hotfix alert threshold
+
+#[test]
+fn hotfix_alert_hours_defaults_to_four_and_is_configurable() {
+    let mut base = Env::new();
+    base.insert("HOME".into(), "/h".into());
+    base.insert("SPIRA_RELEASES".into(), "/e".into());
+
+    let cfg = Config::resolve_with(&Flags::default(), &base, None).unwrap();
+    assert_eq!(cfg.hotfix_alert_hours().unwrap(), 4);
+
+    let mut env = base.clone();
+    env.insert("SPIRA_HOTFIX_ALERT_HOURS".into(), "1".into());
+    let cfg = Config::resolve_with(&Flags::default(), &env, None).unwrap();
+    assert_eq!(cfg.hotfix_alert_hours().unwrap(), 1);
+
+    let toml: spira_config::SpiraToml = spira_config::validate("[spira]\nhotfix_alert_hours = 9\n").unwrap();
+    let cfg = Config::resolve_with(&Flags::default(), &base, Some(toml)).unwrap();
+    assert_eq!(cfg.hotfix_alert_hours().unwrap(), 9);
+
+    let mut env = base;
+    env.insert("SPIRA_HOTFIX_ALERT_HOURS".into(), "nope".into());
+    let cfg = Config::resolve_with(&Flags::default(), &env, None).unwrap();
+    assert!(cfg.hotfix_alert_hours().unwrap_err().contains("SPIRA_HOTFIX_ALERT_HOURS"));
+}
+
+#[test]
+fn status_alerts_only_once_a_standing_hotfix_crosses_the_threshold() {
+    let w = World::new(); // default threshold: 4h
+    w.build(A).unwrap();
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, A, Some("stop the world")).unwrap();
+    let state = w.cfg.state_dir().unwrap();
+
+    // Just under the threshold: RUNNING UNLANDED shows, no ALERT.
+    let at = fsutil::rfc3339(fsutil::now_secs() - 3 * 3600 - 1800);
+    fs::write(state.join("hotfix"), format!("sha {A}\nreason stop the world\nat {at}\n")).unwrap();
+    let st = activate::status(&w.cfg).unwrap();
+    assert!(st.contains(&format!("RUNNING UNLANDED {A}: stop the world")), "{st}");
+    assert!(!st.contains("ALERT"), "{st}");
+
+    // Past the threshold: ALERT joins the RUNNING UNLANDED line, naming the sha and hours.
+    let at = fsutil::rfc3339(fsutil::now_secs() - 5 * 3600);
+    fs::write(state.join("hotfix"), format!("sha {A}\nreason stop the world\nat {at}\n")).unwrap();
+    let st = activate::status(&w.cfg).unwrap();
+    assert!(st.contains(&format!("RUNNING UNLANDED {A}")), "{st}");
+    assert!(st.contains(&format!("ALERT hotfix {A} standing 5h >= threshold 4h")), "{st}");
+}
+
+#[test]
+fn status_never_alerts_when_no_hotfix_stands() {
+    let w = World::new();
+    w.build(A).unwrap();
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, A, None).unwrap();
+    let st = activate::status(&w.cfg).unwrap();
+    assert!(!st.contains("UNLANDED") && !st.contains("ALERT"), "{st}");
+}
+
+#[test]
+fn a_configured_threshold_changes_when_status_alerts() {
+    let w = World::new();
+    w.build(A).unwrap();
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, A, Some("hot")).unwrap();
+    let state = w.cfg.state_dir().unwrap();
+    let at = fsutil::rfc3339(fsutil::now_secs() - 2 * 3600);
+    fs::write(state.join("hotfix"), format!("sha {A}\nreason hot\nat {at}\n")).unwrap();
+
+    // Default threshold (4h): 2h standing does not alert.
+    assert!(!activate::status(&w.cfg).unwrap().contains("ALERT"));
+
+    // A 1h threshold, read from the environment override, does.
+    let mut env = Env::new();
+    env.insert("SPIRA_UNIT_DIR".into(), w.cfg.unit_dir.display().to_string());
+    env.insert("SPIRA_HOTFIX_ALERT_HOURS".into(), "1".into());
+    let flags = Flags { releases: Some(w.cfg.releases.clone()), run: w.cfg.run.clone(), keep: Some(2) };
+    let low_cfg = Config::resolve_with(&flags, &env, None).unwrap();
+    assert!(activate::status(&low_cfg).unwrap().contains("ALERT hotfix"));
+}

@@ -11,6 +11,8 @@
 # read-only, fast questions, each its own function so watchtower can call them directly:
 #
 #   doctor_check_release_tools    — is every Spira tool on PATH, by name (sp-gypjk)
+#   doctor_check_hotfix           — does `release status` show a standing hotfix, and has
+#                                    it stood past the configured alert threshold (sp-6p20x)
 #   doctor_check_chamber_overlays — which operator overlay, if any, is in force
 #   doctor_check_gate_compile_check — does every Rust repo's configured gate command still
 #                                     reach a compile check (sp-1hmrm)
@@ -55,6 +57,29 @@ doctor_check_release_tools() {
         FAIL "not on PATH:$missing" "PATH is $PATH — the launcher sets it to the release's bin/ and spira/"
     else
         OK "all $n release tools resolve on PATH"
+    fi
+}
+
+# --------------------------------------------------------------------------------------
+# HOTFIX (sp-6p20x). `release activate --hotfix` is the stop-the-world seam: the running
+# system is on a commit that has not landed. `release status` is the one place that knows
+# whether one stands and whether it has stood past the configured threshold (spira.
+# hotfix_alert_hours, default 4h) — this reads its RUNNING UNLANDED / ALERT lines rather
+# than re-deriving the age from $SPIRA_RUN/release/hotfix itself. WARN below the threshold
+# (visible, not yet urgent); FAIL once ALERT fires, so a hotfix nobody has landed shows up
+# fatal here the same way a failed unit does.
+# --------------------------------------------------------------------------------------
+doctor_check_hotfix() {
+    local out line alert
+    out="$(release status 2>/dev/null)" || out=""
+    line="$(printf '%s\n' "$out" | grep '^RUNNING UNLANDED ')"
+    alert="$(printf '%s\n' "$out" | grep '^ALERT ')"
+    if [ -n "$alert" ]; then
+        FAIL "$line" "$alert — land the fix (it supersedes automatically) or \`release rollback\`"
+    elif [ -n "$line" ]; then
+        WARN "$line" "land the fix or \`release rollback\` before it stands past threshold"
+    else
+        OK "no hotfix standing"
     fi
 }
 
@@ -536,6 +561,10 @@ echo "spira doctor"
 echo
 echo "release tools"
 doctor_check_release_tools
+
+echo
+echo "hotfix"
+doctor_check_hotfix
 
 echo
 echo "config files"

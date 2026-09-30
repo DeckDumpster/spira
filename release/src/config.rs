@@ -36,6 +36,10 @@ pub struct Config {
 /// Default number of releases prune keeps (design: about 65 MB each).
 pub const DEFAULT_KEEP: usize = 5;
 
+/// Default hours a standing hotfix may run before `release status` alerts (DESIGN.md
+/// "Hotfix: visibility").
+pub const DEFAULT_HOTFIX_ALERT_HOURS: u64 = 4;
+
 fn nonempty(v: Option<&String>) -> Option<String> {
     v.filter(|s| !s.is_empty()).cloned()
 }
@@ -140,6 +144,27 @@ impl Config {
         let tail = self.path_tail()?;
         m.insert("SPIRA_PATH_TAIL".into(), if tail.is_empty() { String::new() } else { format!(":{tail}") });
         Ok(m)
+    }
+
+    /// Hours a standing hotfix may run before `release status` emits its ALERT line
+    /// (DESIGN.md "Hotfix: visibility"): `SPIRA_HOTFIX_ALERT_HOURS`, else
+    /// `spira.hotfix_alert_hours`, else [`DEFAULT_HOTFIX_ALERT_HOURS`]. `Err` on a
+    /// non-numeric or zero override, naming it, rather than silently alerting on every
+    /// pass or never at all.
+    pub fn hotfix_alert_hours(&self) -> Result<u64, String> {
+        if let Some(s) = self.env("SPIRA_HOTFIX_ALERT_HOURS") {
+            return s
+                .trim()
+                .parse::<u64>()
+                .ok()
+                .filter(|h| *h >= 1)
+                .ok_or_else(|| format!("SPIRA_HOTFIX_ALERT_HOURS must be a whole number >= 1, got {s:?}"));
+        }
+        match self.spira.hotfix_alert_hours {
+            None => Ok(DEFAULT_HOTFIX_ALERT_HOURS),
+            Some(0) => Err("spira.hotfix_alert_hours must be >= 1, got 0".to_string()),
+            Some(h) => Ok(u64::from(h)),
+        }
     }
 
     fn which(&self, prog: &str) -> Option<String> {

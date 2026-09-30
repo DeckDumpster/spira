@@ -377,6 +377,27 @@ drain_banner() {
 }
 
 
+# HOTFIX (sp-6p20x). A standing hotfix is the running system on a commit that has not
+# landed — visible here the moment it exists, before it ever crosses doctor.sh's FAIL
+# threshold, the same rule as DRAINING: a state that changes what every other row on this
+# pane means must say so rather than wait for a WARN to be noticed elsewhere.
+#
+# FROM THE SNAPSHOT, not a probe of its own. cockpit.sh already pays the one `release
+# status` call this pass needs and hands its RUNNING UNLANDED / ALERT lines through
+# verbatim (SP_HOTFIX_LINE, SP_HOTFIX_ALERT) — this pane never shells out (see the file
+# header): a repaint every 2s cannot afford a second one.
+hotfix_banner() {
+    [ -n "${SP_HOTFIX_LINE:-}" ] || return 0
+    if [ -n "${SP_HOTFIX_ALERT:-}" ]; then
+        printf '%s%s ■ HOTFIX PAST THRESHOLD %s%s%s\n' "$C_B" "$C_BAD" "$C_RST" "$C_DIM" "$C_RST"
+    else
+        printf '%s%s ■ HOTFIX %s%s%s\n' "$C_B" "$C_WARN" "$C_RST" "$C_DIM" "$C_RST"
+    fi
+    printf '  %s\n' "$SP_HOTFIX_LINE"
+    [ -n "${SP_HOTFIX_ALERT:-}" ] && printf '  %s%s%s\n' "$C_BAD" "$SP_HOTFIX_ALERT" "$C_RST"
+    printf '  %sclear it:%s release rollback, or land the fix (it supersedes automatically)\n' "$C_DIM" "$C_RST"
+}
+
 header_line() {
     local age="?" stale="" pass_dur=""
     [ -n "${SP_AT:-}" ] && age=$(( $(date +%s) - SP_AT ))
@@ -394,6 +415,7 @@ header_line() {
     [ -n "${SP_PASS_SECS:-}" ] && pass_dur="  ${C_DIM}pass ${SP_PASS_SECS}s${C_RST}"
     halt_banner
     drain_banner
+    hotfix_banner
     # AURON IS SHOWN WITH ITS AGE, NEVER OMITTED WHEN IT IS SILENT. It is the watchdog over
     # the loop and its only power is speech, so a dead Auron and a healthy system produce
     # the same pane unless its own pulse is on it — and the pane would render the healthy
