@@ -1053,3 +1053,15 @@ default conf.sh carries — conf.sh is no longer sourced:
   container, as root, on paths the image defines; one exec instead of nine.
 * **Dropped:** the `_image_tag` "narrow closure" positive control (it tested `sha256sum`);
   `cut -c` byte-truncation of heartbeat lines (now characters); `df -Ph`/`free -h` (now statvfs and `/proc/meminfo` MemAvailable, same units).
+
+## Build IO (sp-z61hj)
+
+Full contract: `spira-config/DESIGN-build-cache.md`. The builder (`src/build.rs`) compiles
+through the box's sccache (`RUSTC_WRAPPER`, resolved on testenv's own PATH) and one-shot
+(`--config profile.<p>.incremental=false`; a caller's `CARGO_INCREMENTAL` is removed, since
+sccache hashes it into every key). sccache absent is `VERDICT FAULT rc=3
+reason=no-build-cache` — never a cold build of every dependency; `SPIRA_BUILD_CACHE=off` opts
+out, loudly. The fixture container sets `SPIRA_BUILD_CACHE=off` (it has no sccache; testenv
+builds on the host). The crate also ships **`target-reap`** (`src/reap.rs`): the `target/`
+of every `$SPIRA_RUN/worktree/<bead id>` whose bead is closed is removed, on one `bd show`;
+an unreadable answer removes nothing. The landing pass runs it once per pass.

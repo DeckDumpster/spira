@@ -1,4 +1,4 @@
-//! `gate [--home <spira-dir>] <branch> [repo-name]` — see DESIGN.md.
+//! `gate [--home <spira-dir>] [--release-bins] <branch> [repo-name]` — see DESIGN.md.
 //! `gate [--home <spira-dir>] --definition [repo-name]` — the landing ref's gate command.
 
 use gate::engine::{Args, Trial};
@@ -26,6 +26,13 @@ fn main() {
         home = Some(PathBuf::from(argv.remove(1)));
         argv.remove(0);
     }
+    // `--release-bins` (sp-z61hj): on a PASS, build the judged tree's release binaries in the
+    // gate tree for a hand landing (engine.rs `release_bins`).
+    let mut release_bins = false;
+    if argv.first().map(String::as_str) == Some("--release-bins") {
+        release_bins = true;
+        argv.remove(0);
+    }
     if argv.first().map(String::as_str) == Some("--definition") {
         let repo = argv.get(1).filter(|r| !r.is_empty()).cloned();
         let world = Real::new(home.clone().unwrap_or_else(default_home));
@@ -41,13 +48,13 @@ fn main() {
         }
     }
     let Some(branch) = argv.first().filter(|b| !b.is_empty()).cloned() else {
-        eprintln!("gate.sh: 1: usage: gate.sh <branch> [repo-name]");
+        eprintln!("gate.sh: 1: usage: gate.sh [--release-bins] <branch> [repo-name]");
         std::process::exit(1);
     };
     let repo = argv.get(1).filter(|r| !r.is_empty()).cloned();
     let home = home.unwrap_or_else(default_home);
     install_signal_handlers();
     let world = Real::new(home.clone());
-    let code = Trial::new(&world, Args { home, branch, repo }).run();
+    let code = Trial::new(&world, Args { home, branch, repo, release_bins }).run();
     std::process::exit(code);
 }

@@ -148,7 +148,7 @@ The **ci_secs** column is per file, from signals.tsv. Where one file covers seve
 | 22 | test-landing::bulk scan, ghost branch, no repo label, reopened during gate ×2 | integration / (249) | KEEP; bulk scan could be a T1 stub-count test |
 | 23 | test-landing::verdict TTL prune, reused verdict | integration / (249) | DEMOTE-TO-T1 (prune); keep the reused-verdict line |
 | 24 | test-landing-halt::(all) | component / 11 | KEEP; DELETE the vacuous "positive control" (a string that greps itself) |
-| 25 | test-landing-build::(all) | component / 2 | KEEP |
+| 25 | test-landing-build::(all) | component / 2 | RETIRED (sp-z61hj): its subject, `land-build-ensure.sh`, is deleted — a landing publishes a release from tested binaries; the pass's slot now runs `target-reap` (`cargo test -p testenv reap::`) |
 | 26 | test-landing-mode-map::(all); test-landing-race::fence rebase, fence fetch; test-landing-rebase::fence arms | static / 6, (21), (129) | move to T0 lint stage; mode-map's per-mode check is unscoped (any `pr)` arm in 2,138 lines passes) and must be scoped to `land_repo` |
 | 27 | test-queue-submit::(all 7); test-submit::(all 6) | component / 10; integration / 5 | MERGE test-submit INTO test-queue-submit; table-drive the three copy-pasted transition blocks; drop the testdb (bead-less path) |
 | 28 | test-queue-flush::(all) | component / 5 | KEEP as T1; SOURCE-GREP the `grep -A3` landing wiring check (replace it with a landing pass using a stub queue.sh that records `step`); assert the rc of the push-mode refusal |
@@ -236,7 +236,7 @@ The **ci_secs** column is per file, from signals.tsv. Where one file covers seve
 - **G7. `queue.sh abandon` bead side effects.** The testdb is seeded but no bead state is read back, so whatever abandon does to beads is unverified. *(Deferred — see the follow-up beads filed by sp-ulr4e.)*
 - **G8. A bd failure while batching is invisible.** At batch.sh:422, `prio_json="$(bdjson show …)" || prio_json="[]"` means a bd outage silently disables express and priority ordering. test-queue-sort-large covers the sort's own fail-open, but not batch.sh logging it (observability dimension). *(Deferred — see the follow-up beads filed by sp-ulr4e.)*
 - **G9. Real container teardown in `landing.sh halt`.** Teardown is asserted only in the dry-run listing, because the registry is emptied before the real halt (test-landing-halt note). *(Deferred — see the follow-up beads filed by sp-ulr4e.)*
-- **G10. The source-changed trigger in `land-build-ensure.sh`** (reflog `@{1}`) is deliberately neutralised and untested.
+- **G10. ~~The source-changed trigger in `land-build-ensure.sh`~~** — closed by deletion (sp-z61hj): the script and its post-landing rebuild are gone.
 - **G11. The Rust crates `broker`, `czar-pass` and `supervise` have zero `#[test]`**, and no workflow runs `cargo test`. The broker's refusal of czar-only verbs is a security fence tested only through a bash suite that contains a tautology ("FAILS OPEN"). *(Deferred — see the follow-up beads filed by sp-ulr4e.)*
 - **G12. The queue-mode repo map is missing in test-landing-race's early cases.** They never write `$SH/repo-map`, so they pass through the `SPIRA_REPO` fallback. The explicit-map path of push-mode races is untested.
 - **G13. Concurrency between landing and a queue operation on one repo.** Each lock is tested alone (batch, verdict, eject, abandon). Nothing runs a landing pass's `queue.sh step` against an operator `eject` at the same moment to show that exactly one wins with a consistent landstate. Propose one T3 nightly row.

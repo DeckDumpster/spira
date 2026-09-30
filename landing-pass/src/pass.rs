@@ -156,7 +156,11 @@ impl<'a> Pass<'a> {
         } else {
             String::new()
         };
-        for script in [self.s.repo.join("systemd/unit-ensure.sh"), PathBuf::from("land-build-ensure.sh")] {
+        // unit-ensure.sh, then the reaper of finished work's build output (sp-z61hj): the
+        // `target/` of every worktree whose bead is closed. It took the slot of
+        // land-build-ensure.sh, whose post-landing `cargo build --release --workspace` was
+        // redundant once a landing publishes a release from its tested binaries.
+        for script in [self.s.repo.join("systemd/unit-ensure.sh"), PathBuf::from("target-reap")] {
             for l in self.tools.ensure(&script) {
                 self.log(&l);
             }

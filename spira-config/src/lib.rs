@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub mod build;
 pub mod convert;
 pub mod legacy_map;
 
