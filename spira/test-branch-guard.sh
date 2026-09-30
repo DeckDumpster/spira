@@ -267,20 +267,26 @@ echo "test-branch-guard.sh — hooks/pre-commit: the tracked hook runs exclude.s
 # branch-guard used to copy hooks/pre-commit into a fixture and never run it, and test-
 # scratch-fence only grepped it for the string "scratch-fence".
 #
-# scratch-fence moved to spira-lint (sp-ekkak): the hook now runs "$SPIRA_LINT_BIN" --only
-# scratch-fence, so SPIRA_LINT_BIN is resolved from THIS checkout's real conf.sh (the one
-# artifact this throwaway clone cannot build itself) and exported so the hook's own
-# `: "${SPIRA_LINT_BIN:=…}"` default-assign sees it already set.
+# scratch-fence moved to spira-lint (sp-ekkak): the hook resolves spira-lint itself now
+# (SPIRA_LINT_BIN if set, else conf.sh's spira_bin, else this worktree's own target/{aeon,
+# release} build), so nothing here needs to export it. THE NO-ENV, INSTALLED-BINARY PATH is
+# what this fixture exercises: SPIRA_LINT_BIN is deliberately left unset, and a copy of the
+# real, already-built binary is placed at $HREPO/bin/spira-lint — conf.sh's spira_bin
+# resolves $SPIRA_REPO/bin/<name>, and $SPIRA_REPO derives from where conf.sh itself sits,
+# so this is exactly the shape of an installed release, just rooted at $HREPO instead of
+# /home/ryan/spira/harness.
 # ---------------------------------------------------------------------------------------
+_real_lint_bin="$( . "$HERE/conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_LINT_BIN:-}")"
+[ -x "${_real_lint_bin:-}" ] || bail "spira-lint is not built (SPIRA_LINT_BIN) — cannot exercise the pre-commit hook's scratch-fence stage"
 HREPO="$TMP/hrepo"
-mkdir -p "$HREPO/hooks"
+mkdir -p "$HREPO/hooks" "$HREPO/bin"
 git init -q -b main "$HREPO"
 cp "$HERE/boundary" "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" \
    "$HERE/exclude.sh" "$HERE/branch-guard.sh" "$HREPO/"
 cp "$HERE/hooks/pre-commit" "$HREPO/hooks/pre-commit"
-chmod +x "$HREPO/exclude.sh" "$HREPO/branch-guard.sh" "$HREPO/hooks/pre-commit"
-export SPIRA_LINT_BIN="${SPIRA_LINT_BIN:-$( . "$HERE/conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_LINT_BIN:-}")}"
-[ -x "${SPIRA_LINT_BIN:-}" ] || bail "spira-lint is not built (SPIRA_LINT_BIN) — cannot exercise the pre-commit hook's scratch-fence stage"
+cp "$_real_lint_bin" "$HREPO/bin/spira-lint"
+chmod +x "$HREPO/exclude.sh" "$HREPO/branch-guard.sh" "$HREPO/hooks/pre-commit" "$HREPO/bin/spira-lint"
+unset SPIRA_LINT_BIN 2>/dev/null || true
 GIT_AUTHOR_NAME=op GIT_AUTHOR_EMAIL="op@example.com" \
 GIT_COMMITTER_NAME=op GIT_COMMITTER_EMAIL="op@example.com" \
 git -C "$HREPO" add -A
@@ -318,14 +324,23 @@ want "hook run: refusal names exclude.sh" "exclude.sh" "$out"
 want "hook run: refusal names the offending file" "export.jsonl" "$out"
 git -C "$HREPO" restore --staged export.jsonl 2>/dev/null; rm -f "$HREPO/export.jsonl"
 
-echo "SEEN RED: scratch-fence.sh, through the real hook, refuses a root-level sp-* file:"
+echo "SEEN RED: scratch-fence, through the real hook, refuses a root-level sp-* file — SPIRA_LINT_BIN unset, resolved via conf.sh's spira_bin to the installed \$HREPO/bin/spira-lint:"
+is   "SPIRA_LINT_BIN is genuinely unset for this case (the no-env path)" "" "${SPIRA_LINT_BIN:-}"
 printf 'notes\n' > "$HREPO/sp-xxxx-notes.md"
 git -C "$HREPO" add sp-xxxx-notes.md
 out="$(commit_through_hook op@example.com op "sp-test: stage scratch note")"; rc=$?
-is   "hook run: scratch-fence.sh refuses a root-level sp-* file" "1" "$rc"
-want "hook run: refusal names scratch-fence.sh" "scratch-fence" "$out"
+is   "hook run: scratch-fence refuses a root-level sp-* file" "1" "$rc"
+want "hook run: refusal names scratch-fence" "scratch-fence" "$out"
 want "hook run: refusal names the offending file" "sp-xxxx-notes.md" "$out"
 git -C "$HREPO" restore --staged sp-xxxx-notes.md 2>/dev/null; rm -f "$HREPO/sp-xxxx-notes.md"
+
+echo "SEEN RED AGAIN with an explicit SPIRA_LINT_BIN: the env-set path still works (the hook prefers it over conf.sh's resolution):"
+printf 'notes\n' > "$HREPO/sp-yyyy-notes.md"
+git -C "$HREPO" add sp-yyyy-notes.md
+out="$(SPIRA_LINT_BIN="$HREPO/bin/spira-lint" commit_through_hook op@example.com op "sp-test: stage scratch note via explicit env")"; rc=$?
+is   "hook run: scratch-fence refuses with SPIRA_LINT_BIN set explicitly" "1" "$rc"
+want "hook run: refusal names scratch-fence" "scratch-fence" "$out"
+git -C "$HREPO" restore --staged sp-yyyy-notes.md 2>/dev/null; rm -f "$HREPO/sp-yyyy-notes.md"
 
 echo "SEEN RED: branch-guard.sh, through the real hook, refuses an aeon-identity commit on the base branch:"
 printf 'more\n' >> "$HREPO/lib.sh"

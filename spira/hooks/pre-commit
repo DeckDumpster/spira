@@ -16,14 +16,27 @@
 # actually runs. Resolved relative to this file, so it works in a worktree and in a clone at
 # any path.
 #
-# scratch-fence moved to spira-lint (sp-ekkak): this hook resolves SPIRA_LINT_BIN the same
-# way gate-spira.sh does (a subshell over conf.sh, so sourcing it does not touch this
-# script's own environment) and fails closed — refuses the commit — when the binary is not
-# built, rather than silently skip the check.
+# scratch-fence moved to spira-lint (sp-ekkak). Resolved the way the rest of the harness
+# resolves a Rust tool, in order, because an aeon worktree neither sets SPIRA_LINT_BIN nor
+# installs a release: an already-set SPIRA_LINT_BIN; else conf.sh's spira_bin (the
+# installed release, e.g. /home/ryan/spira/harness/bin/spira-lint); else this worktree's
+# own build, aeon profile before release (aeon worktrees build crates for their own unit
+# tests and rarely carry an installed release). Fails closed — refuses the commit, naming
+# what to build — only when none of those resolves to an executable; it never silently
+# skips the check.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 bash "$HERE/../exclude.sh" staged || exit 1
-: "${SPIRA_LINT_BIN:=$( . "$HERE/../conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_LINT_BIN:-}")}"
-[ -x "${SPIRA_LINT_BIN:-}" ] || { echo "pre-commit: spira-lint is not built (SPIRA_LINT_BIN) — refusing to commit unchecked" >&2; exit 1; }
+ROOT="$(cd "$HERE/../.." && pwd)"
+[ -x "${SPIRA_LINT_BIN:-}" ] || SPIRA_LINT_BIN="$( . "$HERE/../conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_LINT_BIN:-}")"
+if [ ! -x "${SPIRA_LINT_BIN:-}" ]; then
+    for _cand in "$ROOT/target/aeon/spira-lint" "$ROOT/target/release/spira-lint"; do
+        [ -x "$_cand" ] && { SPIRA_LINT_BIN="$_cand"; break; }
+    done
+fi
+[ -x "${SPIRA_LINT_BIN:-}" ] || {
+    echo "pre-commit: spira-lint is not built — build it (cargo build -p spira-lint), install a release, or set SPIRA_LINT_BIN — refusing to commit unchecked" >&2
+    exit 1
+}
 "$SPIRA_LINT_BIN" --only scratch-fence || exit 1
 exec bash "$HERE/../branch-guard.sh" staged
