@@ -113,8 +113,8 @@ Where they run: **cert** = certification (every commit, local and gate), **batch
 ### Acceptance runner (release gate)
 | ID | Requirement | Dims | Tier / where |
 |---|---|---|---|
-| UC-instance-lifecycle-46 | `acceptance-ci.sh` builds a scratch repo on `main` with a git identity and a repo-map, puts `~/.local/bin` on PATH, passes `XDG_RUNTIME_DIR`, and propagates `acceptance-run.sh`'s exit code. | CON | T2 / cert |
-| UC-instance-lifecycle-47 | `acceptance-run.sh` runs install with `SPIRA_OPERATED=0`, runs the clone's own `ready.sh` (not masked by `\|\| true`), extracts bead ids robustly (GH#2950), proves landing by ancestry, and records a git note. It emits a single PASS/FAIL line. | CON, TI | T1 (extracted functions) cert + T4 accept |
+| UC-instance-lifecycle-46 | `acceptance-ci.sh` builds a scratch repo on `main` with a git identity and a repo-map, puts `~/.local/bin` on PATH, passes `XDG_RUNTIME_DIR`, and propagates `release acceptance`'s exit code. | CON | T2 / cert |
+| UC-instance-lifecycle-47 | `release acceptance` (was `acceptance-run.sh`, sp-ak7qm) runs install with `SPIRA_OPERATED=0`, runs the clone's own `ready.sh` (not masked by `\|\| true`), extracts bead ids robustly (GH#2950), proves landing by ancestry, and records a git note. It emits a single PASS/FAIL line. | CON, TI | T1 (extracted functions) cert + T4 accept |
 
 ---
 

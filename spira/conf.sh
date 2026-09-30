@@ -1935,7 +1935,7 @@ spira_conf_defaults() {
     # any of these, or any .github/workflows/ file, must cite a dispatched run URL
     # (law-a-workflow-lands-on-its-own-run). SPIRA_GH_API is the GitHub REST API base; set
     # it to a local stub in tests to avoid live network calls.
-    : "${SPIRA_WORKFLOW_ONLY_PATHS:=spira/acceptance-ci.sh spira/acceptance-run.sh spira/acceptance-agent.sh spira/build-tarball.sh}"
+    : "${SPIRA_WORKFLOW_ONLY_PATHS:=spira/acceptance-ci.sh spira/acceptance-agent.sh spira/build-tarball.sh}"
     : "${SPIRA_GH_API:=https://api.github.com}"
 
     # CAPACITY PROBE — while a pause is in force and its horizon is far out, the harness

@@ -34,6 +34,7 @@ release install-tarball <tarball> [--dry-run] [--settle S]   the public pipeline
 release stage up [ROOT] | down <ROOT>                   an isolated Spira for testing
 release canary [--stage ROOT] [--deadline S]            end-to-end pipeline canary on a stage
 release canary-worker                                   the stage's synthetic aeon (internal)
+release acceptance <tag> --scratch-repo P [...]         release acceptance on a clean machine (DESIGN.md "acceptance")
 ```
 
 Every subcommand also takes `--releases D` (else `$SPIRA_RELEASES`, else `spira.releases`,
@@ -320,6 +321,129 @@ the full stage env; there is no per-stage copy of it (unlike `stage.sh`'s own
 `canary-worker.sh`, written fresh into every stage) because it is a subcommand of the one
 binary already on every launcher's `PATH`.
 
+### acceptance
+
+**sp-ak7qm** (rewrite wave 3) moves `spira/acceptance-run.sh` and the library it sourced,
+`spira/acceptance-lib.sh`, into this crate. Both scripts are deleted.
+
+**Intent.** Before a release is published, prove on a genuinely clean machine that its
+tarball installs, lands a bead end to end, and uninstalls. When a predecessor is given, also
+prove that it upgrades from the predecessor, rolls back to it, and upgrades a populated,
+aged install without losing state. The verdict is one line, and a git note on the tag records
+it. A PASS has to mean the thing works. So every check reports what it looked at, and a check
+that cannot look reports FAIL, never a pass.
+
+It lives in `release` because it drives `install-tarball` and nothing else in the workspace
+knows the release lineage. It also gets onto a clean machine for free. The acceptance workflow
+takes the candidate tarball's own `bin/release` and runs `release acceptance`, so the
+acceptance logic comes from the same commit as the artifact under test. Before, it came from
+the tag's checkout, which was the same commit by another route.
+
+```
+release acceptance <tag> --scratch-repo <path> [--prev-tag <tag>] [--record]
+                   [--notes-repo <path>] [--file-defects] [--bd-db <path>]
+                   [--agent <path>] [--waive-upgrade] [--tarball <path>]
+                   [--prev-tarball <path>]
+```
+
+The flags keep the script's meanings (`--tarball`: phase A uses a local file and every deploy of
+`<tag>` gets `deploy.sh --tarball`; `--prev-tarball` does the same for `<prev-tag>`;
+`--waive-upgrade` clears any `--prev-tag` and skips B/C/D, and the note says so). The one new
+flag is `--notes-repo`. Environment knobs are unchanged: `SPIRA_ACCEPT_SUMMON_SECS` (180),
+`SPIRA_ACCEPT_ASSET_WAIT_SECS` (600), `SPIRA_ACCEPTANCE_FORENSICS`, `SPIRA_NOTES_REPO`,
+`SPIRA_FORGE_REPO`/`GH_REPO`/`GITHUB_REPOSITORY`.
+
+Exit `0` every check passed; `1` a check failed; `2` usage, or a failed prerequisite.
+
+**Phases.** The same four, with the same check names, so a log from the script and a log from
+the binary compare line for line. The prerequisites are the positive control of the tool lookup;
+`bd`, `dolt`, `git`, `gh` and `python3` on `PATH` (`install.sh` and `systemd/render.py`
+still need python3); a working `systemctl --user`; and a git scratch repo. **A** checks the
+positive control of the binary check, then acquires the tarball (a bounded wait for the forge
+asset, sp-5olmi), stages it into the local release source, and runs `install-tarball`. It then
+requires every native binary, runs `install.sh --skip-build`, and requires `ready.sh` to
+exit 0. It files a probe bead, requires the builder predicate to be able to claim it, and
+follows it through summoned, committed, closed-or-submitted and landed by ancestry on
+`origin/<land ref>`. Finally it uninstalls and requires no `spira-*` unit to remain. **B**
+installs `<prev-tag>`, snapshots the unit set, runs `deploy.sh --allow-draft <tag>`, and
+starts every oneshot. It requires the `.tags/<current>` sidecar to name `<tag>` and
+`SPIRA_PROD` to point into the releases directory. **C** runs `deploy.sh <prev-tag>`, starts
+the oneshots, and requires the unit set to equal B's snapshot. **D** installs `<prev-tag>`
+over the surviving state, seeds beads and statutes, writes an operator override
+(`SPIRA_CHECK5_MAX_FILE`, a key conf.sh honours), starts the world, and deploys `<tag>`. It
+then requires bead and memory counts to be preserved, `doctor.sh` to exit 0, the override to
+survive, no unit to fail within 2 min, and the world to be live, and requires a second probe
+bead to land. The forced rollback must either succeed with a live world or refuse and name
+the migration.
+
+**Schema.** Each check prints `  ok    <name>` or `  FAIL  <name>: <reason>` on stdout and
+writes one JSON line to `<forensics>/checks.jsonl`:
+`{"phase","check","verdict":"ok"|"fail","reason"?,"ts","elapsed"}`. The first failure in a
+phase takes a forensics snapshot, `<forensics>/NN-first-fail-<phase>/`, and the end of the
+run takes one too. A snapshot holds the timers, unit status, per-unit journals, `bd`
+list/ready/probe, the run dir, the instance config directory, the scratch repo's refs, `ps`,
+`free` and `df`. A forensics failure never changes the verdict. The summary is
+`<pass> passed, <fail> failed`, followed by `verdict: PASS|FAIL  tag=<tag>  date=<rfc3339>`.
+The note on `refs/tags/<tag>` under `refs/notes/acceptance` has this form:
+
+```
+PASS|FAIL
+<rfc3339> <tag>  <n> passed, <m> failed
+sha256:<hex> tarball:<name>            (when a tarball was acquired)
+aged-install from=<prev>: PASS|FAIL    (when a predecessor was tested)
+upgrade phases waived by operator      (when waived)
+```
+
+**Structure, where the script had text.** The `acceptance-run` spira-lint rule held the
+script to about 55 textual invariants, because the script ran for real only on a clean
+machine. In Rust each one either is structural or is a unit test:
+
+- There is one `tool()` constructor for `deploy.sh`, `uninstall.sh`, `world.sh`, `doctor.sh`
+  and every `conf.sh` read. So "every call runs under `_ci_deploy_env`" has no other way to
+  be written.
+- There is one `deploy_tag()` that always passes `--allow-draft`.
+- There is one `start_sentinel()` that resolves the instance-suffixed unit from
+  `list-unit-files`.
+- There is one probe-bead routine shared by A and D, labelled `acceptance,<plan>,<scope>,repo:<scratch>`.
+- The override key is a constant, and a test checks it against `conf.sh`'s `SPIRA_CONF_KEYS`.
+
+Tests run the whole run, all four phases, against a fake `Host` and a fake clock. They cover
+a PASS, each class of FAIL, and the waiver.
+
+**Decisions** (behaviour dropped or changed, deliberately):
+
+1. **The `release` that installs a tarball is this binary itself** (`current_exe`), not
+   `${SPIRA_RELEASE_BIN:-release}` from `PATH`. On a clean machine nothing had put a
+   `release` on `PATH`, so the bare name could not resolve there.
+2. **Everything the release runs gets the release's launcher environment**:
+   `SPIRA_RELEASE=<releases>/current` and `PATH=current/bin:current/spira:$PATH`. That covers
+   `install.sh`, `ready.sh`, `deploy.sh`, `uninstall.sh`, `world.sh`, `doctor.sh` and the
+   `conf.sh` reads. The script put only `current/bin` on PATH, and only for the last four. It
+   then called `deploy.sh` and the others by bare name (sp-gypjk), but they live in
+   `current/spira/`, which that PATH never reached. `install.sh` ran on the caller's own PATH
+   and so could not resolve `doctor.sh` or `spira-config`. Both are phase A FAILs on
+   local/main: `release: command not found`, then `uninstall.sh` exit 127.
+3. **`conf.sh` is read from the release under test** (`current/spira/conf.sh`), not from
+   the checkout the script sat in. There is no checkout: a release is the only thing that
+   runs.
+4. **`--notes-repo` replaces the script's own checkout** (`$HERE/..`) as the repository the
+   note is written to and the forge repo is derived from. It defaults to
+   `$SPIRA_NOTES_REPO`. **`--record` with neither is a usage error (exit 2)**, where the
+   script always had a checkout to fall back on.
+5. **A count that cannot be read is a FAIL.** `bd list --all --json | python3 … || printf 0`
+   read an unreadable store as 0 both before and after the upgrade, and 0 ≥ 0 passed. Now
+   phase D fails when it cannot count. The same applies to a `SPIRA_RELEASES` that the
+   release conf does not yield: phase B's sidecar check no longer guesses
+   `$HOME/spira-releases` in its place.
+6. **The per-step `$TMP/*.log` tee copies are dropped.** `$TMP` was removed at exit, so no one
+   could ever read them. Tool output streams to stdout, as it did through `tee`.
+7. **The default forensics directory outlives the run.** It is a `mktemp`-style directory of
+   its own, not `$TMP/forensics`, which the script deleted at exit while printing its path.
+8. **`journalctl --since`** carries an explicit `UTC`. The script passed a UTC wall time
+   that journalctl read as local time.
+9. **JSON is parsed with serde_json.** The script parsed it with inline python. A reply that
+   cannot be parsed still counts as "not claimable" or "not finished", as before.
+
 ## Layout
 
 | module | what |
@@ -337,6 +461,7 @@ binary already on every launcher's `PATH`.
 | `install` | `install-tarball`: unpack, swap, restart, prune a timestamp-named release |
 | `stage` | stand up / tear down an isolated Spira; the fayth, repo-map and dispatch-script content |
 | `canary` | the end-to-end canary run, and `canary-worker`, the synthetic aeon |
+| `acceptance` | `release acceptance`: the release acceptance run (phases A-D), its checks, forensics and note |
 
 Unit tests run activation and rollback against a fake `Systemctl` and a temporary unit
 directory; `install-tarball` against a fake `Systemctl` and a fake `Unpack` (no real `tar`);
@@ -359,10 +484,12 @@ unpacking one): the GitHub release workflow builds its tarball with it
 (`.github/workflows/release.yml`, `make dist`, `acceptance-local.sh`). `install-tarball`
 replaces `spira/activate.sh`, which is deleted: `deploy.sh` (`SPIRA_ACTIVATE_SH`, default
 `release`, now takes `install-tarball` as its own first argument),
-`acceptance-lib.sh`'s `_install_from_tarball` (`${SPIRA_RELEASE_BIN:-release} install-tarball`,
-needing `SPIRA_RUN` as a sibling of the releases dir it did not need before — DESIGN.md
-"install-tarball" resolves `state_dir()` unconditionally), `acceptance-run.sh` and
-`install.sh`'s own messages. `stage`/`canary` replace `spira/stage.sh` and `spira/canary.sh`,
+`release acceptance` (which runs its own binary's `install-tarball` with `SPIRA_RUN` as a
+sibling of the releases dir — DESIGN.md "install-tarball" resolves `state_dir()`
+unconditionally; sp-ak7qm replaced acceptance-lib.sh's `_install_from_tarball`) and
+`install.sh`'s own messages. `release acceptance` replaces `spira/acceptance-run.sh` and
+`spira/acceptance-lib.sh`, which are deleted: `acceptance-ci.sh` (acceptance.yml) and
+`acceptance-local.sh` run the candidate tarball's own `bin/release acceptance`. `stage`/`canary` replace `spira/stage.sh` and `spira/canary.sh`,
 which are deleted; today's only caller is their own suite, `test-canary.sh`. `systemd/render.py`
 remains for `install.sh` and `unit-ensure.sh`, which own unit membership.
 

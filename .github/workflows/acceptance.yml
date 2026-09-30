@@ -1,5 +1,10 @@
-# acceptance.yml — run acceptance-run.sh against a release tag on a genuinely
+# acceptance.yml — run `release acceptance` against a release tag on a genuinely
 # clean machine and record PASS/FAIL in refs/notes/acceptance on the tag.
+#
+# THE RUN IS THE CANDIDATE'S OWN BINARY (sp-ak7qm; release/DESIGN.md "acceptance").
+# The "Stage the candidate's release binary" step takes bin/release out of the draft
+# release's own tarball onto ~/.local/bin; acceptance-ci.sh runs `release acceptance`
+# from there. Nothing is compiled on the machine under test.
 #
 # TRIGGERS
 #   push to spira-release-* tags: fired by gate.yml's cut job, which pushes the
@@ -27,7 +32,7 @@
 # On PASS the draft is published (undrafted). On FAIL the draft is deleted and the
 # tag is retracted so no incomplete release is left visible.
 #
-# RECORDING. acceptance-run.sh --record writes refs/notes/acceptance on the tag.
+# RECORDING. release acceptance --record writes refs/notes/acceptance on the tag.
 # When --prev-tag is given, the note also includes an aged-install from=<prev> line
 # so each (from, to) upgrade path is queryable. The Push notes step pushes those
 # notes back so the verdict persists on the repo. The Step summary step writes a
@@ -218,9 +223,36 @@ jobs:
             | tar -xz -C /tmp
           sudo install -m 0755 "/tmp/dolt-linux-${_arch}/bin/dolt" /usr/local/bin/dolt
 
+      - name: Stage the candidate's release binary
+        # `release acceptance` is the candidate's own bin/release, taken from the tarball
+        # release.yml attached to the draft. The upload can trail the tag push (sp-5olmi),
+        # so wait for the asset, bounded, as phase A itself does; no asset fails the job,
+        # which retracts the draft exactly as a phase A "release asset appears" FAIL did.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          _tag="${{ inputs.tag || github.ref_name }}"
+          _dl="$(mktemp -d)"
+          for _i in $(seq 40); do
+            gh release view "$_tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' \
+              2>/dev/null | grep -q '\.tar\.gz$' && break
+            sleep 15
+          done
+          gh release download "$_tag" --repo "$GITHUB_REPOSITORY" --pattern 'spira-*.tar.gz' --dir "$_dl" || {
+            printf 'acceptance: no spira-*.tar.gz asset on %s — release.yml upload never appeared\n' "$_tag" >&2
+            exit 1
+          }
+          mkdir -p "$HOME/.local/bin"
+          tar -xzOf "$_dl"/spira-*.tar.gz --wildcards '*/bin/release' > "$HOME/.local/bin/release" || {
+            printf 'acceptance: %s tarball carries no bin/release\n' "$_tag" >&2
+            exit 1
+          }
+          chmod +x "$HOME/.local/bin/release"
+
       - name: Run acceptance (scratch repo, config, run, verdict)
         # acceptance-ci.sh creates the scratch repo with --initial-branch=main,
-        # writes the repo-map, calls acceptance-run.sh, pushes notes, and writes
+        # writes the repo-map, calls release acceptance, pushes notes, and writes
         # the step summary. (Its suite, test-acceptance-ci.sh, was deleted as a flip 2026-09-27.)
         env:
           CONFIGURE_MAX_AEONS: "1"
@@ -241,7 +273,7 @@ jobs:
                  --record)
           if [ "$_waive" = "true" ]; then
             # Operator waiver (workflow_dispatch only, never a tag push): skip
-            # derivation entirely so no prev-tag is passed at all, and acceptance-run.sh
+            # derivation entirely so no prev-tag is passed at all, and release acceptance
             # prints its existing "skip phase B+C / phase D" lines.
             _args+=(--waive-upgrade)
           else
