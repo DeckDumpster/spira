@@ -18,7 +18,7 @@ pub const MANIFEST: &str = "spira/deps.toml";
 /// harness dependencies. A standard utility is added here, not to the manifest.
 pub const SYSTEM_ALLOW: &[&str] = &[
     "bash", "sh", "dash", "env", "true", "false", "sort", "cut", "awk", "gawk", "sed", "grep", "find", "cat",
-    "echo", "printf", "date", "kill", "sleep", "wait", "read", "test", "mkdir", "rmdir", "rm", "mv", "cp", "ln",
+    "echo", "printf", "date", "kill", "sleep", "wait", "read", "test", "mkdir", "rmdir", "rm", "mv", "cp", "ln", "df",
     "stat", "sha256sum", "wc", "tr", "head", "tail", "tee", "diff", "patch", "timeout", "curl", "gcc", "nc",
     "setsid", "pgrep", "fuser", "script", "systemctl", "systemd-run", "stty", "loginctl", "id", "getent", "install",
     "nodejs", // an alternate name for node on some platforms

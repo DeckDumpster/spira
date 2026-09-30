@@ -28,7 +28,7 @@ Type=oneshot
 # timer sits silent and starts working by itself the moment the file is there. No step for
 # anyone to remember.
 ExecCondition=/usr/bin/test -f @SPIRA_PROD@/chamber/ops.fayth
-# SKIP WHEN NOMINAL. watchtower.sh writes SWEEP:NOMINAL as the first line of the prompt
+# SKIP WHEN NOMINAL. watchtower writes SWEEP:NOMINAL as the first line of the prompt
 # file when every measurable signal is green: no lapses, fresh snapshot, no stuck
 # no-verdict branches, no drain. A model session reading a nominal snapshot costs ~22k
 # tokens to say hello — the expensive way to run an if. When the first line is that
@@ -43,7 +43,7 @@ ExecStartPre=-@SPIRA_PROD_ROOT@/bin/release intake install
 # Anything the spool is still holding because the database was unreachable when the event
 # arrived. A write-ahead record nobody drains is a lost event with extra steps.
 ExecStartPre=-@SPIRA_PROD@/incident.sh drain
-# THE PROMPT FILE IS WRITTEN BY WATCHTOWER. spira-watchtower.timer fires watchtower.sh on
+# THE PROMPT FILE IS WRITTEN BY WATCHTOWER. spira-watchtower.timer fires watchtower on
 # a thirty-minute cadence; it writes the snapshot to $SPIRA_RUN/ops-sweep-prompt.txt before
 # this unit runs. Ops reads that file and enters sweep mode with it as the brief. If the
 # file is absent (watchtower has not run since boot), this unit exits non-zero and systemd

@@ -15,8 +15,8 @@
 #   8. World halted: pass exits 0 without acting.
 #   9. SPIRA_LOOP_STALL_SECS and SPIRA_CI_RED_MAX_SECS are in conf.sh allowlist.
 #  10. spira-czar-pass.timer and .service exist in systemd/.
-#  11. watchtower.sh --queue-checks is retired (stub response only).
-#  12. sentinel.sh no longer calls watchtower --queue-checks.
+#  11. watchtower --queue-checks is deleted (not even a stub; sp-lnmbq).
+#  12. sentinel no longer calls watchtower --queue-checks.
 #  16-21. base-red: the base ref's OWN gate run, not a batch's. Positive control
 #      (green base → no bead), red base → P0+express bead naming the failing suites
 #      (replaying the 2026-09-24 shape: test-install-bootstrap-release.sh and
@@ -43,7 +43,7 @@
 # verifies detection. A detector that fires on empty data is not a detector.
 #
 # tier: T1
-# covers: czar-pass/src/main.rs reconciler-engine/src/**.rs spira/conf.sh sentinel/src/* spira/watchtower.sh systemd/spira-czar-pass.service systemd/spira-czar-pass.timer UC-ops-detection-remediation-23 UC-ops-detection-remediation-24
+# covers: czar-pass/src/main.rs reconciler-engine/src/**.rs spira/conf.sh sentinel/src/* watchtower/src/* systemd/spira-czar-pass.service systemd/spira-czar-pass.timer UC-ops-detection-remediation-23 UC-ops-detection-remediation-24
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
@@ -257,14 +257,18 @@ _timer="$(cat "$_sd/spira-czar-pass.timer" 2>/dev/null)"
 want "timer: OnUnitActiveSec=30s" "OnUnitActiveSec=30s" "$_timer"
 
 # ==========================================================================================
-printf '\n%s\n' "11. watchtower.sh --queue-checks is retired"
+printf '\n%s\n' "11. watchtower --queue-checks is deleted, not retired (sp-lnmbq)"
 # ==========================================================================================
-wt="$HERE/watchtower.sh"
-_wt_out="$(SPIRA_RUN="$SPIRA_RUN" bash "$wt" --queue-checks 2>&1 || true)"
-want "watchtower: --queue-checks logs 'retired'" "retired" "$_wt_out"
-# The queue-stall detector logic must not be in watchtower.sh anymore.
-lack "watchtower: no 'ejected 0' detector in watchtower.sh" "ejected 0, requeued" \
-    "$(cat "$wt")"
+# watchtower.sh's retirement stub (the six queue-stall detectors moved here, sp-rpibz) is
+# gone along with the rest of the bash: the Rust watchtower crate never had a --queue-checks
+# handler at all, retire-rather-than-port (DESIGN.md §4). It is simply not a recognized
+# argument now.
+_wt_rc=0
+_wt_out="$(SPIRA_RUN="$SPIRA_RUN" watchtower --queue-checks 2>&1)" || _wt_rc=$?
+is "watchtower: --queue-checks is not a recognized argument" "2" "$_wt_rc"
+# The queue-stall detector logic must not be in the watchtower crate either.
+lack "watchtower: no 'ejected 0' detector in the watchtower crate" "ejected 0, requeued" \
+    "$(cat "$HERE"/../watchtower/src/*.rs "$HERE"/../watchtower/src/sweep/*.rs 2>/dev/null)"
 
 # ==========================================================================================
 printf '\n%s\n' "12. the sentinel does not call watchtower --queue-checks"

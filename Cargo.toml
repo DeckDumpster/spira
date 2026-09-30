@@ -33,6 +33,7 @@ members = [
     "strand",
     "testenv",
     "sentinel",
+    "watchtower",
     "queue",
     "aeon",
     "gate",
