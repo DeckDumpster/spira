@@ -1,22 +1,30 @@
 #!/usr/bin/env bash
 #
-# test-deadlock-sweep.sh — `attempts.sh deadlocked` lists poisoned beads whose work is
-# finished and would land cleanly (WOULD), keeps the ones that really failed (KEEP with a
-# reason), changes nothing without --apply, and --apply lifts the poison while leaving the
-# attempt record standing as history.
+# test-deadlock-sweep.sh — `groomer.sh deadlocked` (the git half) into `spira-claim
+# deadlocked` (the decision and the write) lists poisoned beads whose work is finished and
+# would land cleanly (WOULD), keeps the ones that really failed (KEEP with a reason),
+# changes nothing without --apply, and --apply lifts the poison while leaving the attempt
+# record standing as history. Replaces spira/attempts.sh's `deadlocked` verb, deleted at
+# sp-rfodk when attempts.sh moved into spira-claim.
 #
 # Split out of test-requeue.sh (sp-g44ke, docs/test-plan/aeon-execution.md D15, UC-24): no
 # aeon.sh run is needed here — the "deadlock" is a branch that already merges cleanly, built
 # with one real commit on a throwaway origin, never a live session.
 #
-# THE HOLD, NOT THE LABEL (sp-i2m7y): poisoned() (attempts.sh) reads a real spira-lc hold,
-# so this suite starts its own throwaway `dolt sql-server` for spira_lifecycle and builds a
-# real spira-lc binary, the same shape test-lc-hold.sh and test-check2-reaper.sh use — a
-# stub `spira-lc hold`/`held` would only prove this suite's own model of spira-lc agrees with
-# itself.
+# THE HOLD, NOT THE LABEL (sp-i2m7y): `spira-claim deadlocked` reads a real spira-lc hold
+# when lifecycle_enforce is on, so this suite starts its own throwaway `dolt sql-server` for
+# spira_lifecycle and calls a real `spira-lc` binary (on PATH, testenv --with-bins), the same
+# shape test-lc-hold.sh and test-check2-reaper.sh use — a stub `spira-lc hold`/`held` would
+# only prove this suite's own model of spira-lc agrees with itself.
+#
+# THE GIT HALF STAYS BASH, ON PURPOSE (spira-claim/DESIGN.md §7, §9): `groomer.sh deadlocked`
+# resolves the candidate's repository and land ref and asks git whether spira/<id> merges;
+# `spira-claim deadlocked` never touches git, decides from the verdict it is handed, and does
+# the write. This suite exercises both halves together, through the real groomer.sh and the
+# real spira-claim binary — not a model of either.
 #
 # tier: T2
-# covers: spira/attempts.sh spira/lib.sh UC-aeon-execution-24
+# covers: spira/groomer.sh spira/lib.sh spira-claim/* UC-aeon-execution-24
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -123,7 +131,7 @@ cycle() {   # cycle <id> <n> — create n status_changed(in_progress) events via
 notes()   { bd -C "$SPIRA_DB" show "$1" 2>/dev/null | tr '\n' ' '; }
 lib() { bash -c ". \"$SPIRA_HOME/lib.sh\"; $1" 2>/dev/null; }
 count_of() { local c; c="$(lib "attempts_of $1")"; printf '%s' "${c:-0}"; }
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/groomer.sh" "$SPIRA_HOME/"
 
 echo "test-deadlock-sweep.sh"
 
@@ -142,7 +150,7 @@ for b in sp-rq-s sp-rq-k; do
 done
 sweep() { SPIRA_HOME="$SPIRA_HOME" SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB" \
           SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_REPO="$REPO" SPIRA_FAYTHS=builder \
-          attempts.sh deadlocked "$@" 2>&1; }
+          bash "$SPIRA_HOME/groomer.sh" deadlocked "$@" 2>&1; }
 out="$(sweep)"
 want "the deadlocked bead is named"            "WOULD    sp-rq-s" "$out"
 want "the genuinely failed one is kept"        "KEEP     sp-rq-k" "$out"
@@ -153,7 +161,7 @@ out="$(sweep --apply)"
 want "the sweep lifts it"                      "RESTORED sp-rq-s" "$out"
 is   "and the hold is gone"                    1 "$(lcheld sp-rq-s; echo $?)"
 is     "the rungs are left standing as the record" "3" "$(count_of sp-rq-s)"
-want   "the bead records why"                  "Poison lifted by attempts.sh deadlocked" "$(notes sp-rq-s | tr -s ' ')"
+want   "the bead records why"                  "Poison lifted by spira-claim deadlocked" "$(notes sp-rq-s | tr -s ' ')"
 is   "the bead that really failed keeps its poison" 0 "$(lcheld sp-rq-k; echo $?)"
 
 tl_summary

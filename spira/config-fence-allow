@@ -42,7 +42,6 @@ spira/gate-run.sh
 spira/gate.sh
 spira/gate-spira.sh
 spira/gate-suites
-spira/gh-intake.sh
 spira/hooks/aeon-fence.sh
 spira/incident.sh
 spira-lc/src/repo_config.rs

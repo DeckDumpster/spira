@@ -97,6 +97,29 @@ struct Fake {
     /// What target_on_tmpfs answers; the trees it was asked for.
     target_err: RefCell<Option<String>>,
     targets: RefCell<Vec<PathBuf>>,
+    // ---- the base-suite cache (sp-kqger)
+    /// What `testenv container tag` answers; a real image tag by default so every test not
+    /// about this cache specifically exercises it exactly as it would for real.
+    image_tag: RefCell<(i32, String)>,
+    /// `<BASE>^{tree}` answers this instead of the default `tree-of-<BASE>` (not a real git
+    /// object id, so `basecache::path` refuses it) when a test needs a real-looking tree id
+    /// to exercise the cache's own file path.
+    base_tree_override: RefCell<Option<String>>,
+    // ---- admission (sp-q20wb)
+    /// What `certify_par_live` answers once `certify_par_live_after` calls have passed;
+    /// None (the default, immediately) falls back to `Ctx`'s frozen `SPIRA_CERTIFY_PAR`,
+    /// exactly as every test not about the live re-read expects.
+    certify_par_live: Cell<Option<u64>>,
+    /// Calls to `certify_par_live` before it stops answering None and starts answering
+    /// `certify_par_live` — the fixture for "the file is edited while a gate already waits."
+    certify_par_live_after: Cell<u32>,
+    /// `admission_try` fails this many times (across every slot tried) before it answers
+    /// `admission_free` — a countdown, so a test can make the wait last some real ticks
+    /// before the slot is granted, rather than either instantly free or never free.
+    admission_free_after: Cell<u32>,
+    /// When set, only this exact slot number is ever free — every other slot always
+    /// reports busy, regardless of `admission_free`/`admission_free_after`.
+    admission_only_slot_free: Cell<Option<u64>>,
 }
 
 fn ctx() -> Ctx {
@@ -191,6 +214,12 @@ impl Fake {
             wrapper_asked: RefCell::new(Vec::new()),
             target_err: RefCell::new(None),
             targets: RefCell::new(Vec::new()),
+            image_tag: RefCell::new((0, "tag1".into())),
+            base_tree_override: RefCell::new(None),
+            certify_par_live: Cell::new(None),
+            certify_par_live_after: Cell::new(0),
+            admission_free_after: Cell::new(0),
+            admission_only_slot_free: Cell::new(None),
         }
     }
     fn set_var(&self, k: &str, v: &str) {
@@ -279,6 +308,11 @@ impl World for Fake {
             let at = self.checkouts.borrow().last().cloned().unwrap_or_default();
             return Some(format!("tree-of-{at}"));
         }
+        if rev == format!("{BASE}^{{tree}}") {
+            if let Some(t) = self.base_tree_override.borrow().clone() {
+                return Some(t);
+            }
+        }
         if rev.ends_with("^{tree}") {
             return Some(format!("tree-of-{}", rev.trim_end_matches("^{tree}")));
         }
@@ -356,8 +390,24 @@ impl World for Fake {
     fn mem_avail_mib(&self) -> u64 {
         4000
     }
-    fn admission_try(&self, _: &Path, _: u64, who: &str) -> bool {
+    fn certify_par_live(&self) -> Option<u64> {
+        let left = self.certify_par_live_after.get();
+        if left > 0 {
+            self.certify_par_live_after.set(left - 1);
+            return None;
+        }
+        self.certify_par_live.get()
+    }
+    fn admission_try(&self, _: &Path, slot: u64, who: &str) -> bool {
         self.admission_who.borrow_mut().push(who.to_string());
+        if let Some(only) = self.admission_only_slot_free.get() {
+            return slot == only;
+        }
+        let left = self.admission_free_after.get();
+        if left > 0 {
+            self.admission_free_after.set(left - 1);
+            return false;
+        }
         self.admission_free.get()
     }
     fn admission_wait_line(&self, _: &str, par: u64) -> String {
@@ -404,12 +454,18 @@ impl World for Fake {
     fn run_gate(&self, tree: &Path, env: &[(String, String)], _: &str, cmd: &str) -> (i32, String) {
         self.ran.borrow_mut().push(env.to_vec());
         self.cmds.borrow_mut().push(cmd.to_string());
+        self.clock.set(self.clock.get() + self.phase_secs.get());
+        // sp-kqger: the base-suite cache's fourth key component, queried once per base trial
+        // that has an uncached red suite to ask about. Kept apart from the `--suites`/`cargo`
+        // branches below so it is never mistaken for a rerun or a unit phase.
+        if cmd == "testenv container tag" {
+            return self.image_tag.borrow().clone();
+        }
         let br = env
             .iter()
             .find(|(k, _)| k == "SPIRA_GATE_BRANCH")
             .map(|(_, v)| v.clone())
             .unwrap_or_default();
-        self.clock.set(self.clock.get() + self.phase_secs.get());
         if let Some(list) = cmd
             .split_once("--suites ")
             .and_then(|(_, r)| r.split_whitespace().next())
@@ -802,25 +858,27 @@ fn a_red_the_base_trial_did_not_run_is_run_on_the_base_first() {
     let cmds = f.cmds.borrow();
     assert_eq!(
         cmds.len(),
-        3,
-        "branch trial, base trial, base re-run: {cmds:?}"
+        4,
+        "branch trial, base trial, the cache's image tag, base re-run: {cmds:?}"
     );
+    assert_eq!(cmds[2], "testenv container tag", "sp-kqger: the cache is consulted first");
     assert!(
-        cmds[2].contains(&format!(
+        cmds[3].contains(&format!(
             "testenv --suites {SUITE} \"$SPIRA_GATE_BRANCH\""
         )),
         "{}",
-        cmds[2]
+        cmds[3]
     );
     assert!(
-        !cmds[2].contains("--deadline"),
+        !cmds[3].contains("--deadline"),
         "the re-run is not cut by a deadline"
     );
-    assert_eq!(f.env_of(2, "SPIRA_GATE_BRANCH"), BASE, "re-run on the base");
+    assert_eq!(f.env_of(3, "SPIRA_GATE_BRANCH"), BASE, "re-run on the base");
     assert!(f
         .stderr()
         .contains(&format!("gate: re-ran on local/main (local/main): {SUITE}")));
     assert!(meter_row(&f).contains(",base-rerun:7"), "{}", meter_row(&f));
+    assert!(meter_row(&f).contains("base-image-tag:7"), "{}", meter_row(&f));
 }
 
 /// The re-run finds the suite green on the base: now, and only now, it is the branch's.
@@ -835,7 +893,174 @@ fn a_red_the_base_re_run_passes_is_the_branchs() {
         .insert(BASE.into(), (0, "  test-a.sh ok".into()));
     assert_eq!(f.run(), FAIL);
     assert!(f.verdict_line().ends_with(&format!("suite={SUITE}")));
-    assert_eq!(f.cmds.borrow().len(), 3);
+    assert_eq!(
+        f.cmds.borrow().len(),
+        4,
+        "branch trial, base trial, the cache's image tag, base re-run: {:?}",
+        f.cmds.borrow()
+    );
+}
+
+// ------------------------------------------------- the base-suite cache (sp-kqger)
+
+/// A real-looking git tree id (40 hex chars) — the cache's own directory component,
+/// `basecache::path` refuses anything else. The default fixture's `tree-of-<rev>` stands in
+/// for the base tree everywhere else; these tests need it real enough to build a path.
+const BASE_TREE_HEX: &str = "0123456789abcdef0123456789abcdef01234567";
+
+fn base_cache_path(suite: &str) -> PathBuf {
+    PathBuf::from(format!("/run/verdicts/base-suites/spira/{BASE_TREE_HEX}/{suite}"))
+}
+
+/// A full cache hit answers every red suite without running anything extra on the base — the
+/// acceptance this bead exists for: "a flip-suspect (base green in cache, branch red) re-runs
+/// nothing extra."
+#[test]
+fn a_fresh_base_suite_cache_hit_skips_the_rerun_entirely() {
+    let f = Fake::new();
+    *f.base_tree_override.borrow_mut() = Some(BASE_TREE_HEX.into());
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, red(SUITE)));
+    f.runs
+        .borrow_mut()
+        .insert(BASE.into(), (0, "  test-a.sh ok".into()));
+    f.files.borrow_mut().insert(
+        base_cache_path(SUITE),
+        crate::basecache::render(true, "harness", "tag1", "2026-09-30T00:00:00Z", 100),
+    );
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    assert!(f.verdict_line().ends_with(&format!("suite={SUITE}")));
+    assert!(
+        f.cmds.borrow().iter().any(|c| c == "testenv container tag"),
+        "the cache is still consulted: {:?}",
+        f.cmds.borrow()
+    );
+    assert!(
+        !f.cmds.borrow().iter().any(|c| c.contains("--suites")),
+        "a full cache hit re-runs nothing extra: {:?}",
+        f.cmds.borrow()
+    );
+}
+
+/// A cached base-red is exactly as informative as a freshly-run one: it still names the
+/// suite, and BASEFAIL still follows.
+#[test]
+fn a_cached_base_red_still_names_the_suite() {
+    let f = Fake::new();
+    *f.base_tree_override.borrow_mut() = Some(BASE_TREE_HEX.into());
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, red(SUITE)));
+    f.runs
+        .borrow_mut()
+        .insert(BASE.into(), (0, "  test-a.sh ok".into()));
+    f.files.borrow_mut().insert(
+        base_cache_path(SUITE),
+        crate::basecache::render(false, "harness", "tag1", "2026-09-30T00:00:00Z", 100),
+    );
+    assert_eq!(f.run(), BASEFAIL);
+    assert!(f.verdict_line().contains("reason=base-red"), "{}", f.verdict_line());
+    assert!(
+        f.verdict_line().ends_with(&format!("suite={SUITE}")),
+        "a cached red still names the suite: {}",
+        f.verdict_line()
+    );
+    assert!(
+        !f.cmds.borrow().iter().any(|c| c.contains("--suites")),
+        "a full cache hit re-runs nothing extra: {:?}",
+        f.cmds.borrow()
+    );
+}
+
+/// FAIL CLOSED: an entry recorded under a different harness or testenv image is a miss, not
+/// a wrong answer with the right shape — the gate runs the suite rather than trust it.
+#[test]
+fn a_cache_entry_under_a_different_harness_is_a_miss_and_runs() {
+    let f = Fake::new();
+    *f.base_tree_override.borrow_mut() = Some(BASE_TREE_HEX.into());
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, red(SUITE)));
+    f.runs
+        .borrow_mut()
+        .insert(BASE.into(), (0, "  test-a.sh ok".into()));
+    f.files.borrow_mut().insert(
+        base_cache_path(SUITE),
+        // Recorded PASS, but under a harness this trial's is not — must not be trusted.
+        crate::basecache::render(true, "an-older-harness", "tag1", "2026-09-30T00:00:00Z", 100),
+    );
+    f.reruns.borrow_mut().insert(
+        (BASE.into(), SUITE.into()),
+        (0, format!("  {SUITE:<32} ok      1s")),
+    );
+    assert_eq!(f.run(), FAIL, "the stale entry is a miss: the fresh rerun answers green");
+    assert!(
+        f.cmds.borrow().iter().any(|c| c.contains("--suites")),
+        "a mismatched entry still runs: {:?}",
+        f.cmds.borrow()
+    );
+}
+
+/// An unreadable image tag (the query failed) never trusts any cache entry, matching or not.
+#[test]
+fn an_unresolved_image_tag_never_trusts_the_cache() {
+    let f = Fake::new();
+    *f.base_tree_override.borrow_mut() = Some(BASE_TREE_HEX.into());
+    *f.image_tag.borrow_mut() = (1, String::new());
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, red(SUITE)));
+    f.runs
+        .borrow_mut()
+        .insert(BASE.into(), (0, "  test-a.sh ok".into()));
+    f.files.borrow_mut().insert(
+        base_cache_path(SUITE),
+        crate::basecache::render(true, "harness", "tag1", "2026-09-30T00:00:00Z", 100),
+    );
+    f.reruns.borrow_mut().insert(
+        (BASE.into(), SUITE.into()),
+        (0, format!("  {SUITE:<32} ok      1s")),
+    );
+    assert_eq!(f.run(), FAIL, "no image tag, so no lookup: the fresh rerun answers green");
+    assert!(f.cmds.borrow().iter().any(|c| c.contains("--suites")), "fail closed: still runs");
+}
+
+/// A fresh rerun (no prior cache entry) warms the cache for the next gate on this base tree.
+#[test]
+fn a_fresh_rerun_warms_the_cache_for_the_next_gate() {
+    let f = Fake::new();
+    *f.base_tree_override.borrow_mut() = Some(BASE_TREE_HEX.into());
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, red(SUITE)));
+    f.runs
+        .borrow_mut()
+        .insert(BASE.into(), (0, "  test-a.sh ok".into()));
+    f.reruns
+        .borrow_mut()
+        .insert((BASE.into(), SUITE.into()), (1, red(SUITE)));
+    assert_eq!(f.run(), BASEFAIL);
+    let path = base_cache_path(SUITE);
+    let written = f.written.borrow();
+    assert!(
+        written.iter().any(|(p, c)| p == &path
+            && c.contains("verdict=FAIL")
+            && c.contains("harness=harness")
+            && c.contains("image=tag1")),
+        "a fresh run warms the cache: {written:?}"
+    );
+}
+
+/// A suite the base never reports on (a fault, an unexpected timeout) is left uncached — the
+/// next gate asks again rather than trusting a run that did not actually answer.
+#[test]
+fn a_rerun_that_faulted_writes_no_cache_entry() {
+    let f = Fake::new();
+    *f.base_tree_override.borrow_mut() = Some(BASE_TREE_HEX.into());
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, red(SUITE)));
+    f.runs
+        .borrow_mut()
+        .insert(BASE.into(), (0, "  test-a.sh ok".into()));
+    f.reruns
+        .borrow_mut()
+        .insert((BASE.into(), SUITE.into()), (75, "batch: no image".into()));
+    assert_eq!(f.run(), NOVERDICT);
+    let path = base_cache_path(SUITE);
+    assert!(
+        !f.written.borrow().iter().any(|(p, _)| p == &path),
+        "a run that did not answer is never cached"
+    );
 }
 
 /// testenv's --deadline deferred the suite on the base: not run, so re-run.
@@ -1231,6 +1456,82 @@ fn a_signal_is_no_verdict() {
     f.signal.set(true);
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=died"));
+}
+
+// --------------------------------------------- admission is visible, logged, re-read (sp-q20wb)
+//
+// sp-f4ig1 (landed after this bead, concurrently) owns the wait/holder-naming messages now —
+// `admission_wait_line`, backed by `spira_config::admission` — so the fake here is a stub
+// (`format!("waiting for a gate slot: {par} of {par} held by fake")`) and holder-naming
+// itself is tested in that crate, not here. What stays this bead's own to prove: the wait is
+// announced at all (not silent), gate.log's `waited=` covers admission, and the live
+// re-read of the pool's size (`certify_par_live`) reaches an already-waiting gate.
+
+/// The wait is announced once, not once per second: a gate held for a while does not spam.
+#[test]
+fn the_waiting_message_prints_exactly_once() {
+    let f = Fake::new();
+    f.admission_free.set(false);
+    f.set_var("SPIRA_GATE_LOCK_WAIT", "3");
+    f.run();
+    let waits = f
+        .stderr()
+        .lines()
+        .filter(|l| l.starts_with("gate: waiting for a gate slot"))
+        .count();
+    assert_eq!(waits, 1, "{}", f.stderr());
+}
+
+/// Being admitted after a real wait is also announced — and the wait reaches gate.log's
+/// `waited=`, which used to measure only the tree-lock wait and read 0 for a gate that had
+/// in fact queued for admission.
+#[test]
+fn an_admission_wait_is_announced_when_admitted_and_logged_as_waited() {
+    let f = Fake::new();
+    f.admission_free_after.set(2); // both slots busy for exactly one full pass, then free
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(
+        f.stderr().contains("gate: admitted to a gate slot after 1s"),
+        "{}",
+        f.stderr()
+    );
+    let row = f.appended.borrow()[0].clone();
+    assert!(row.contains("waited=1s"), "{row}");
+}
+
+/// A gate that never has to wait for admission announces neither message — the fast path
+/// prints exactly what it always did.
+#[test]
+fn an_instant_admission_announces_nothing() {
+    let f = Fake::new();
+    assert_eq!(f.run(), PASS);
+    assert!(!f.stderr().contains("gate: waiting for a gate slot"));
+    assert!(!f.stderr().contains("gate: admitted to a gate slot"));
+}
+
+/// sp-q20wb: raising the limit in the config document while a gate already waits must reach
+/// it — the frozen `Ctx.SPIRA_CERTIFY_PAR` (conf.sh's export at this process's own start)
+/// cannot. Fixture: slots 1-2 (the frozen par) are permanently busy; slot 3 is the only free
+/// one, and only appears once the live config is read as 3 — one poll after the first,
+/// standing in for "the operator edits the config while this gate is already waiting."
+#[test]
+fn a_limit_raised_in_the_live_config_admits_an_already_waiting_gate() {
+    let f = Fake::new();
+    f.admission_only_slot_free.set(Some(3));
+    f.certify_par_live_after.set(1); // first poll still sees the frozen par (2)
+    f.certify_par_live.set(Some(3)); // every poll after that sees the raised one
+    f.set_var("SPIRA_GATE_LOCK_WAIT", "5");
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(
+        f.stderr().contains("gate: waiting for a gate slot: 2 of 2 held by fake"),
+        "the first poll still used the frozen par of 2: {}",
+        f.stderr()
+    );
+    assert!(
+        f.stderr().contains("gate: admitted to a gate slot after 1s"),
+        "the second poll saw the raised par (3) and slot 3 was free: {}",
+        f.stderr()
+    );
 }
 
 // ---------------------------------------------------------------------------- the finish
@@ -2262,23 +2563,43 @@ fn a_red_before_the_suites_step_is_judged_on_the_bases_fences_only() {
     assert!(meter(&f).contains("compose=suites("), "{}", meter(&f));
 }
 
+/// sp-kqger: a red inside the suites step used to make the base trial re-run the branch's
+/// whole suite selection (SPIRA_GATE_SUITES=on for the base too) — the 275-337 s mirror this
+/// bead removes. The base's main command is fences-only now, whatever the branch's red
+/// looked like; the red suite itself is still judged, by the cache or a targeted rerun.
 #[test]
-fn a_red_inside_the_suites_step_still_runs_the_bases_suites() {
+fn a_red_inside_the_suites_step_is_still_judged_on_the_base_per_suite() {
     let f = Fake::new();
     f.runs.borrow_mut().insert(
         MERGE_SHA.into(),
         (1, format!("{}\nVERDICT RED ran=3 red=1", red("test-b.sh"))),
     );
-    f.run();
-    assert_eq!(f.env_of(1, "SPIRA_GATE_SUITES"), "on");
-    // a runner that faulted with rc 4 (the candidate did not build) also reached the step
+    f.reruns.borrow_mut().insert(
+        (BASE.into(), "test-b.sh".into()),
+        (0, "  test-b.sh                          ok      1s".into()),
+    );
+    assert_eq!(f.run(), FAIL);
+    assert_eq!(f.env_of(1, "SPIRA_GATE_SUITES"), "off");
+    assert!(f.cmds.borrow().iter().any(|c| c == "testenv container tag"), "{:?}", f.cmds.borrow());
+    assert!(
+        f.cmds.borrow().iter().any(|c| c.contains("--suites test-b.sh")),
+        "the red suite is still judged on the base, just not by a mirrored selection: {:?}",
+        f.cmds.borrow()
+    );
+
+    // a runner that faulted with rc 4 (the candidate did not build) also reached the step,
+    // but names no suite — nothing for the cache or a rerun to ask about.
     let f = Fake::new();
     f.runs.borrow_mut().insert(
         MERGE_SHA.into(),
         (4, "VERDICT FAULT rc=4 ran=0 reason=build".into()),
     );
     f.run();
-    assert_eq!(f.env_of(1, "SPIRA_GATE_SUITES"), "on");
+    assert_eq!(f.env_of(1, "SPIRA_GATE_SUITES"), "off");
+    assert!(
+        !f.cmds.borrow().iter().any(|c| c == "testenv container tag"),
+        "no suite named: nothing to ask the cache about"
+    );
 }
 
 #[test]

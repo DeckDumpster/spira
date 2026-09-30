@@ -268,6 +268,11 @@ impl World for Real {
             }
         }
     }
+    fn certify_par_live(&self) -> Option<u64> {
+        let p = spira_config::discover(None)?;
+        let doc = spira_config::load(&p).ok()?;
+        doc.spira.as_ref()?.certify_par.map(u64::from)
+    }
     fn cargo_metadata(&self, tree: &Path, path: &str, home: &str) -> Result<String, String> {
         let o = Command::new("cargo")
             .args([

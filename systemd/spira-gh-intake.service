@@ -1,12 +1,16 @@
 [Unit]
-# gh-intake.sh fetches open issues from SPIRA_GH_INTAKE_REPO and runs them
+# gh-intake fetches open issues from SPIRA_GH_INTAKE_REPO and runs them
 # through a triage gate: OWNER/MEMBER/COLLABORATOR authors become work beads;
 # everyone else gets an untrusted record and a daily digest. Promotion via
 # spira:accept requires the actor to currently have admin/maintain/write access,
 # verified at promotion time against the collaborators API.
 #
-# The script reads SPIRA_GH_INTAKE_REPO through conf.sh. When unset it logs one
-# line and exits 0, keeping the unit inert on installs with no configured inbox.
+# gh-intake reads SPIRA_GH_INTAKE_REPO (and its siblings) from its own process
+# environment, the same as every other Rust-ported unit here (czar-pass,
+# sentinel, ...): whatever resolves spira.toml into the systemd user session's
+# environment supplies it, not this unit's own Environment= lines. Unset, it
+# logs one line and exits 0, keeping the unit inert on installs with no
+# configured inbox.
 Description=Spira GitHub issue intake — triage gate
 After=default.target
 
@@ -18,7 +22,7 @@ After=default.target
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
-ExecStart=@SPIRA_PROD@/gh-intake.sh
+ExecStart=@SPIRA_PROD_ROOT@/bin/gh-intake
 TimeoutStartSec=120
 StandardOutput=append:@SPIRA_RUN@/gh-intake.log
 StandardError=append:@SPIRA_RUN@/gh-intake.log

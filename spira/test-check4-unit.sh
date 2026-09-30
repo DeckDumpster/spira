@@ -36,7 +36,7 @@
 #
 # tier: T1
 # defect: sp-mqnf sp-njwb sp-fx1p sp-pi3ez sp-f1m7f sp-lzt sp-wiyr2
-# covers: spira/lib.sh sentinel/src/* spira/attempts.sh
+# covers: spira/lib.sh sentinel/src/* spira-claim/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -69,7 +69,7 @@ is "CONTROL: one attempt at POISON_AT=0 still poisons"      "poison ask" \
    "$(c4d 1 0 0 "spira,plan" 0:0:0 0 0)"
 
 echo
-echo "a recorded lift (sp-wiyr2): attempts.sh deadlocked takes the label off but not the"
+echo "a recorded lift (sp-wiyr2): spira-claim deadlocked takes the label off but not the"
 echo "count, so the fourth stamp field is what stops the very next pass poisoning it back:"
 
 is "lifted at this count, already asked: no re-poison"        "none" \
