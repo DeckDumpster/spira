@@ -1,322 +1,126 @@
-//! land-local's checkout deploy (DESIGN.md §8 D11): when production runs a checkout (no
-//! release in force) and the landing repository IS that checkout, move it to the landed
-//! head — stage-and-swap, `reset --mixed`, a HEAD re-read — install the round's own
-//! binaries, and smoke the checkout's conf.sh.
+//! land-local's deploy (DESIGN.md §8 D13): a landing of the harness repository publishes a
+//! release. After the fast-forward, `release build <head> --bin-dir <the round's tested
+//! build>` → `release verify <sha>` → `release activate <sha>`. Nothing here edits, builds in
+//! or links into a checkout; the release crate is the only thing that makes, checks or
+//! switches to `spira-releases/<sha>`.
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::World;
-use crate::ports::{ref_branch, TreeEntry};
 
-/// The allow-list of checkout-relative paths whose tracked edits a deploy may overwrite
-/// (the files active overrides re-apply). Colon-separated, exact paths.
-pub const ALLOW_VAR: &str = "SPIRA_LAND_DEPLOY_ALLOW";
+/// `<releases>/current` is a symlink: a release is in force, so a landing activates its own.
+/// Absent: nothing runs a release yet (before the cutover), and the release step is skipped
+/// (§8 D13) — the first activation is the cutover's.
+pub fn release_in_force(releases: &Path) -> bool {
+    fs::symlink_metadata(releases.join("current")).map(|m| m.file_type().is_symlink()).unwrap_or(false)
+}
 
-const GITLINK: &str = "160000";
+/// What `current` names now (for the fault text: "current is untouched, still <x>").
+pub fn current_name(releases: &Path) -> String {
+    fs::read_link(releases.join("current")).map(|p| p.display().to_string()).unwrap_or_else(|_| "absent".into())
+}
 
-/// Everything the deploy will do, fixed before the CAS.
-#[derive(Debug)]
+/// Everything the deploy needs, fixed before the CAS (every refusal is before it).
+#[derive(Debug, Clone)]
 pub struct Plan {
-    pub checkout: PathBuf,
-    /// The checkout's HEAD before the land.
-    pub old: String,
-    /// Paths to write, with their entry at the head.
-    pub writes: Vec<(String, TreeEntry)>,
-    /// Paths the head no longer has.
-    pub deletes: Vec<String>,
-    /// The round's own `target/release`.
-    pub bins: PathBuf,
+    /// The landing repository (`release build --repo`, `release activate --repo`).
+    pub repo: PathBuf,
+    /// The landing ref (`release activate --landed-ref`: the hotfix supersede rule).
+    pub landref: String,
+    /// `$SPIRA_RELEASES` (`--releases`).
+    pub releases: PathBuf,
+    /// `$SPIRA_RUN` (`--run`: history and the hotfix record).
+    pub run: PathBuf,
+    /// The round's own tested build of the head (`--bin-dir`, law-deploy-the-tested-artifacts).
+    /// None only for rollback-local, which re-activates a release that already exists.
+    pub bins: Option<PathBuf>,
+    /// `$SPIRA_DB`, handed to every release child (verify's pre-activate store check).
+    pub db: String,
 }
 
-fn canon(p: &Path) -> PathBuf {
-    fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+/// How a deploy ended. `Fault` is loud and makes land-local exit 1; the landing itself is
+/// already recorded and is never reverted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Outcome {
+    Activated(String),
+    Fault(String),
 }
 
-/// The running harness checkout, when it is `repo`: `$SPIRA_HOME`'s work-tree top level
-/// equals the landing repository's path. None for any other repository.
-pub fn running_checkout(w: &World, home: &Path, repo: &Path) -> Option<PathBuf> {
-    let top = w.git.toplevel(home)?;
-    (canon(&top) == canon(repo)).then(|| repo.to_path_buf())
+impl Plan {
+    fn common(&self) -> Vec<String> {
+        vec!["--releases".into(), self.releases.display().to_string(), "--run".into(), self.run.display().to_string()]
+    }
 }
 
-fn short(sha: &str) -> &str {
-    &sha[..sha.len().min(9)]
+fn args(v: &[&str]) -> Vec<String> {
+    v.iter().map(|s| s.to_string()).collect()
 }
 
-/// D11 step 1: every precondition, before the CAS. Err is the refusal reason.
-pub fn prepare(w: &World, checkout: &Path, landref: &str, head: &str, bins: Option<&Path>) -> Result<Plan, String> {
-    let Some(bins) = bins else {
-        return Err(format!(
-            "--worktree <round worktree> is required to deploy the production checkout {} — its binaries must be the round's own build",
-            checkout.display()
-        ));
+/// Run one `release` step; forward its stderr (release prefixes its own lines); Err is the
+/// fault text for a non-zero exit.
+fn step(w: &World, plan: &Plan, what: &str, mut a: Vec<String>) -> Result<String, String> {
+    a.extend(plan.common());
+    let r = w.scripts.release(&a, &plan.db);
+    let err = r.err.trim_end_matches('\n');
+    if !err.is_empty() {
+        w.err(err);
+    }
+    if r.rc != 0 {
+        let why = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("no output").trim().to_string();
+        return Err(format!("release {what} exited {}: {why}", r.rc));
+    }
+    Ok(r.out)
+}
+
+/// Build (from the tested binaries) and verify `head`'s release; the sha on success.
+pub fn build_and_verify(w: &World, plan: &Plan, head: &str) -> Result<String, String> {
+    let Some(bins) = &plan.bins else {
+        return Err("no tested build to publish (--bin-dir)".into());
     };
-    let want = ref_branch(landref);
-    let on = w.git.current_branch(checkout);
-    if on.as_deref() != Some(want) {
-        return Err(format!(
-            "the production checkout {} is not on {want} (it is on {}) — cannot deploy",
-            checkout.display(),
-            on.unwrap_or_else(|| "a detached HEAD".into())
-        ));
+    let out = step(
+        w,
+        plan,
+        "build",
+        args(&["build", head, "--repo", &plan.repo.display().to_string(), "--bin-dir", &bins.display().to_string()]),
+    )?;
+    let sha = out.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").to_string();
+    if sha != head {
+        return Err(format!("release build answered {sha:?} for {head} — not the landed commit"));
     }
-    let Some(old) = w.git.rev_parse(checkout, "HEAD") else {
-        return Err(format!("cannot read the production checkout's HEAD ({})", checkout.display()));
-    };
-    if !w.git.is_ancestor(checkout, &old, head) {
-        return Err(format!("the production checkout's HEAD {} is not an ancestor of {head} — cannot deploy by fast-forward", short(&old)));
-    }
-    let dirty = w.git.tracked_changes(checkout).map_err(|e| format!("cannot read the production checkout's status: {e}"))?;
-    let allow: Vec<String> = w.var(ALLOW_VAR).map(|v| v.split(':').filter(|p| !p.is_empty()).map(str::to_string).collect()).unwrap_or_default();
-    let unexpected: Vec<&String> = dirty.iter().filter(|p| !allow.contains(p)).collect();
-    if !unexpected.is_empty() {
-        let shown: Vec<&str> = unexpected.iter().take(5).map(|s| s.as_str()).collect();
-        return Err(format!(
-            "the production checkout has {} tracked edit(s) outside {ALLOW_VAR}: {}{}",
-            unexpected.len(),
-            shown.join(", "),
-            if unexpected.len() > 5 { ", …" } else { "" }
-        ));
-    }
-    let a = w.git.tree(checkout, &old).map_err(|e| format!("cannot list the tree at {}: {e}", short(&old)))?;
-    let b = w.git.tree(checkout, head).map_err(|e| format!("cannot list the tree at {}: {e}", short(head)))?;
-    let (writes, deletes) = diff(&a, &b);
-    if let Some((p, _)) = writes.iter().find(|(p, e)| e.mode == GITLINK || a.get(p).is_some_and(|o| o.mode == GITLINK)) {
-        return Err(format!("{p} is a submodule change — a gitlink cannot be deployed by swap"));
-    }
-    if let Some(p) = deletes.iter().find(|p| a[*p].mode == GITLINK) {
-        return Err(format!("{p} is a submodule removal — a gitlink cannot be deployed by swap"));
-    }
-    Ok(Plan { checkout: checkout.to_path_buf(), old, writes, deletes, bins: bins.to_path_buf() })
+    step(w, plan, "verify", args(&["verify", &sha]))?;
+    Ok(sha)
 }
 
-/// Paths whose entry differs (or is new) at `b`, and paths `b` no longer has.
-fn diff(a: &BTreeMap<String, TreeEntry>, b: &BTreeMap<String, TreeEntry>) -> (Vec<(String, TreeEntry)>, Vec<String>) {
-    let writes = b.iter().filter(|(p, e)| a.get(*p) != Some(e)).map(|(p, e)| (p.clone(), e.clone())).collect();
-    let deletes = a.keys().filter(|p| !b.contains_key(*p)).cloned().collect();
-    (writes, deletes)
+/// `release verify <sha>` alone (rollback-local: the release already exists; never rebuilt).
+pub fn verify(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
+    step(w, plan, "verify", args(&["verify", sha])).map(|_| ())
 }
 
-fn beside(target: &Path, tag: &str) -> PathBuf {
-    let name = target.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    target.with_file_name(format!(".{name}.{tag}.{}", std::process::id()))
-}
-
-/// Write one entry beside its target with the tree's exact mode, then rename over it.
-fn swap_one(w: &World, checkout: &Path, path: &str, e: &TreeEntry) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    let target = checkout.join(path);
-    if let Some(dir) = target.parent() {
-        fs::create_dir_all(dir).map_err(|err| format!("cannot create {}: {err}", dir.display()))?;
-    }
-    let data = w.git.blob(checkout, &e.sha).map_err(|err| format!("cannot read {path} ({}) from git: {err}", e.sha))?;
-    let tmp = beside(&target, "land-new");
-    let _ = fs::remove_file(&tmp);
-    let written = match e.mode.as_str() {
-        "120000" => {
-            let to = String::from_utf8_lossy(&data).to_string();
-            std::os::unix::fs::symlink(&to, &tmp).map_err(|err| err.to_string())
-        }
-        m => {
-            let mode = if m == "100755" { 0o755 } else { 0o644 };
-            fs::write(&tmp, &data)
-                .and_then(|()| fs::set_permissions(&tmp, fs::Permissions::from_mode(mode)))
-                .map_err(|err| err.to_string())
-        }
-    };
-    let r = written.and_then(|()| fs::rename(&tmp, &target).map_err(|err| err.to_string()));
-    if let Err(err) = r {
-        let _ = fs::remove_file(&tmp);
-        return Err(format!("cannot write {path}: {err}"));
+/// Switch the running system onto `sha` (`release activate`, which applies the hotfix
+/// supersede rule against `--landed-ref`).
+pub fn activate(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
+    let out = step(
+        w,
+        plan,
+        "activate",
+        args(&["activate", sha, "--repo", &plan.repo.display().to_string(), "--landed-ref", &plan.landref]),
+    )?;
+    let out = out.trim_end_matches('\n');
+    if !out.is_empty() {
+        w.out(out);
     }
     Ok(())
 }
 
-fn delete_one(checkout: &Path, path: &str) -> Result<(), String> {
-    let target = checkout.join(path);
-    match fs::remove_file(&target) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(format!("cannot delete {path}: {e}")),
-    }
-    // Emptied parent directories go too (as a checkout would leave them), never the root.
-    let mut dir = target.parent();
-    while let Some(d) = dir {
-        if d == checkout || !d.starts_with(checkout) || fs::remove_dir(d).is_err() {
-            break;
-        }
-        dir = d.parent();
-    }
-    Ok(())
-}
-
-/// D11 steps 2-5, after the CAS. Returns false when anything failed (already reported
-/// loudly); nothing here reverts the ref.
-pub fn run(w: &World, plan: &Plan, head: &str, home: &Path, lifecycle_on: bool) -> bool {
-    let checkout = &plan.checkout;
-    let total = plan.writes.len() + plan.deletes.len();
-    let mut done = 0usize;
-    let mut failure = None;
-    for (p, e) in &plan.writes {
-        if let Err(why) = swap_one(w, checkout, p, e) {
-            failure = Some(why);
-            break;
-        }
-        done += 1;
-    }
-    if failure.is_none() {
-        for p in &plan.deletes {
-            if let Err(why) = delete_one(checkout, p) {
-                failure = Some(why);
-                break;
-            }
-            done += 1;
-        }
-    }
-    if let Some(why) = failure {
-        w.err(format!(
-            "LAND DEPLOY FAILED: {why} — {done} of {total} file(s) swapped; the production checkout {} is NOT reset (HEAD still {}), binaries and smoke skipped; the landing ref is already at {head} and is not reverted",
-            checkout.display(),
-            short(&plan.old)
-        ));
-        return false;
-    }
-    if !w.git.reset_mixed(checkout, head) {
-        w.err(format!("LAND DEPLOY FAILED: git reset --mixed {head} failed in {} after all {total} file(s) were swapped", checkout.display()));
-        return false;
-    }
-    let now = w.git.rev_parse(checkout, "HEAD");
-    if now.as_deref() != Some(head) {
-        w.err(format!(
-            "LAND DEPLOY FAILED: the production checkout's HEAD reads {} after the reset, not {head} — binaries and smoke skipped",
-            now.as_deref().unwrap_or("<unreadable>")
-        ));
-        return false;
-    }
-
-    let (installed, bins_ok) = install_bins(w, &plan.bins, checkout, lifecycle_on);
-    let smoke_ok = smoke(w, home, head);
-    w.out(format!("queue.sh land-local: production checkout {} -> {}, {total} files, {installed} binaries", short(&plan.old), short(head)));
-    bins_ok && smoke_ok
-}
-
-/// D11 step 3: every regular executable directly in the round's `target/release`, copied
-/// beside its target in `<checkout>/target/release` and renamed over it, and linked (or
-/// re-linked) at `<checkout>/bin/<name>` — the path `spira_bin` actually resolves
-/// (conf.sh: `$SPIRA_REPO/bin/$name`). Before this, only the copy happened: an existing
-/// `bin/<name>` symlink kept working because the file its target already named was
-/// overwritten in place, but a binary landing for the first time had no symlink to update
-/// and `spira_bin` could never find it (sp-cln99, sp-sghmt). spira-lc only with
-/// lifecycle_enforce on.
-///
-/// Fail closed: every binary the workspace's own `[[bin]]` targets declare
-/// ([`release::workspace::expected_bins`], the one reader `release build` also uses) must be among what the round actually built, or the deploy refuses
-/// rather than link whatever happened to be there.
-fn install_bins(w: &World, from: &Path, checkout: &Path, lifecycle_on: bool) -> (usize, bool) {
-    let to = checkout.join("target").join("release");
-    let bin_dir = checkout.join("bin");
-    let mut entries: Vec<PathBuf> = match fs::read_dir(from) {
-        Ok(rd) => rd.flatten().map(|e| e.path()).filter(|p| super::simple::is_executable(p)).collect(),
-        Err(e) => {
-            w.err(format!("LAND DEPLOY FAILED: cannot read the round's binaries at {}: {e}", from.display()));
-            return (0, false);
-        }
+/// D13 after the CAS: build → verify → activate.
+pub fn run(w: &World, plan: &Plan, head: &str) -> Outcome {
+    let sha = match build_and_verify(w, plan, head) {
+        Ok(s) => s,
+        Err(why) => return Outcome::Fault(why),
     };
-    entries.sort();
-    if let Err(e) = fs::create_dir_all(&to) {
-        w.err(format!("LAND DEPLOY FAILED: cannot create {}: {e}", to.display()));
-        return (0, false);
+    match activate(w, plan, &sha) {
+        Ok(()) => Outcome::Activated(sha),
+        Err(why) => Outcome::Fault(why),
     }
-    let mut got: BTreeSet<String> = BTreeSet::new();
-    let (mut n, mut ok) = (0, true);
-    for src in entries {
-        let Some(name) = src.file_name().map(|n| n.to_string_lossy().to_string()) else { continue };
-        if name == "spira-lc" && !lifecycle_on {
-            continue;
-        }
-        let dst = to.join(&name);
-        let tmp = beside(&dst, "land-new");
-        let r = fs::copy(&src, &tmp).and_then(|_| fs::rename(&tmp, &dst));
-        match r {
-            Ok(()) => {
-                n += 1;
-                got.insert(name.clone());
-                if let Err(e) = link_bin(&bin_dir, &name, &dst) {
-                    w.err(format!("LAND DEPLOY FAILED: cannot link bin/{name} -> {}: {e}", dst.display()));
-                    ok = false;
-                }
-            }
-            Err(e) => {
-                let _ = fs::remove_file(&tmp);
-                w.err(format!("LAND DEPLOY FAILED: cannot install {name} into {}: {e}", to.display()));
-                ok = false;
-            }
-        }
-    }
-
-    if let Some(worktree) = from.parent().and_then(Path::parent) {
-        match release::workspace::expected_bins(worktree) {
-            Ok(expected) => {
-                let missing: Vec<&String> = expected
-                    .iter()
-                    .filter(|name| name.as_str() != "spira-lc" || lifecycle_on)
-                    .filter(|name| !got.contains(name.as_str()))
-                    .collect();
-                if !missing.is_empty() {
-                    let names: Vec<&str> = missing.iter().map(|s| s.as_str()).collect();
-                    w.err(format!(
-                        "LAND DEPLOY FAILED: the workspace's [[bin]] targets declare {} but the round's build at {} does not have {}: refusing a partial binary set",
-                        names.join(", "),
-                        from.display(),
-                        if missing.len() == 1 { "it" } else { "them" }
-                    ));
-                    ok = false;
-                }
-            }
-            Err(e) => {
-                w.err(format!("LAND DEPLOY FAILED: cannot determine the workspace's [[bin]] targets from {}: {e}", worktree.display()));
-                ok = false;
-            }
-        }
-    }
-
-    (n, ok)
-}
-
-/// Atomically make `<bin_dir>/<name>` a symlink to `target` (the checkout's own
-/// target/release, joined with `<name>` — the path `spira_bin` resolves in production).
-/// Idempotent: a link already pointing there is left alone.
-fn link_bin(bin_dir: &Path, name: &str, target: &Path) -> Result<(), String> {
-    fs::create_dir_all(bin_dir).map_err(|e| format!("cannot create {}: {e}", bin_dir.display()))?;
-    let link = bin_dir.join(name);
-    if fs::read_link(&link).ok().as_deref() == Some(target) {
-        return Ok(());
-    }
-    let tmp = beside(&link, "land-bin");
-    let _ = fs::remove_file(&tmp);
-    if let Err(e) = std::os::unix::fs::symlink(target, &tmp) {
-        return Err(e.to_string());
-    }
-    if let Err(e) = fs::rename(&tmp, &link) {
-        let _ = fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
-    Ok(())
-}
-
-/// D11 step 4: the checkout's own conf.sh must still resolve SPIRA_DB to a directory.
-fn smoke(w: &World, home: &Path, head: &str) -> bool {
-    let got = match w.lib.conf_smoke(home) {
-        Ok(db) => db,
-        Err(e) => format!("<smoke did not run: {e}>"),
-    };
-    if !got.is_empty() && Path::new(&got).is_dir() {
-        return true;
-    }
-    w.err(format!(
-        "LAND SMOKE FAILED: production conf.sh no longer resolves SPIRA_DB (got '{got}') — the landing ref and the checkout are already at {head} and are NOT reverted; fix before anything else"
-    ));
-    false
 }

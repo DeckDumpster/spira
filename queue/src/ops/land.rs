@@ -1,5 +1,5 @@
 //! queue.local's terminal step and its undo: land-local, rollback-local (DESIGN.md §2.2,
-//! §8 D2/D3/D11).
+//! §8 D2/D12/D13).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,13 +8,6 @@ use super::{czar_ok, idents, lock_held_by_caller, read_text, repo_path, resolve,
 use crate::cli::Text;
 use crate::model::{LandMode, Member};
 use crate::records::{self, write_atomic};
-
-/// `$SPIRA_RELEASES/current` is a symlink: production runs an installed release, so a land
-/// must package and activate one. Absent (or no releases dir configured): production runs a
-/// checkout, nothing reads the symlink, and the release step is skipped (sp-zt0ae).
-pub fn release_in_force(releases: Option<&Path>) -> bool {
-    releases.map(|r| fs::symlink_metadata(r.join("current")).map(|m| m.file_type().is_symlink()).unwrap_or(false)).unwrap_or(false)
-}
 
 /// The round's own binaries: `<worktree>/target/release`, when that worktree is checked
 /// out at `head`'s tree and holds at least one executable (testenv's SPIRA_ARTIFACTS
@@ -170,10 +163,8 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
         },
     };
 
-    // What ships is the round's own build (§8 D2). Needed only when a release is in force
-    // (§8 D3); checked whenever a worktree is named, so a wrong worktree never passes.
-    let releases = c.s.releases.clone();
-    let release_needed = release_in_force(releases.as_deref());
+    // A landing of the harness repository publishes a release (§8 D13); every precondition
+    // is checked here, before the CAS. What ships is the round's own tested build (§8 D2).
     let bins = match worktree {
         Some(wt) => match round_bins(w, &path, &head, wt) {
             Ok(b) => Some(b),
@@ -182,27 +173,28 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
                 return FAIL;
             }
         },
-        None if release_needed => {
-            w.err(format!(
-                "queue.sh land-local: --worktree <round worktree> is required while production runs a release ({}/current exists); refused, nothing changed",
-                releases.as_deref().map(|p| p.display().to_string()).unwrap_or_default()
-            ));
-            return FAIL;
-        }
         None => None,
     };
-
-    // In checkout mode, when the landing repository is the running harness checkout, the
-    // land also deploys it (§8 D11) — every precondition is checked here, before the CAS.
-    let deploy_plan = match (release_needed, super::deploy::running_checkout(w, &c.s.home, &path)) {
-        (false, Some(checkout)) => match super::deploy::prepare(w, &checkout, &base, &head, bins.as_deref()) {
+    // Only a landing of the harness (the repository releases are made from), and only
+    // while a release is in force: before the cutover nothing runs one, and the first
+    // activation is the cutover's, never a routine landing's.
+    let in_force = c.s.releases.clone().filter(|r| super::deploy::release_in_force(r));
+    let plan = if name != c.s.home_repo {
+        None
+    } else if let Some(releases) = in_force {
+        match deploy_plan(&c.s, &path, &base, releases, bins) {
             Ok(p) => Some(p),
             Err(why) => {
                 w.err(format!("queue.sh land-local: {why}; refused, nothing changed"));
                 return FAIL;
             }
-        },
-        _ => None,
+        }
+    } else {
+        w.err(format!(
+            "queue.sh land-local: release step skipped: no release is in force ({}/current is absent) — production does not run {head} until a release is activated",
+            c.s.releases.as_deref().map(|p| p.display().to_string()).unwrap_or_else(|| "<SPIRA_RELEASES unset>".into())
+        ));
+        None
     };
 
     // A CAS, never a plain write.
@@ -218,33 +210,6 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
         ));
         super::landing_log(&c.s.run, &format!("QUEUE UNGATED {} repo={name} head={head} tree={tree} reason={reason}", w.clock.now()));
     }
-
-    // Package and activate before anything else observes the land; a failure reverts.
-    if release_needed {
-        let rel = releases.clone().unwrap_or_default();
-        match package_and_activate(w, &rel, &name, &head, &path, bins.as_deref().unwrap_or(Path::new(""))) {
-            Ok(release) => w.out(format!("queue.sh land-local: activated {release}")),
-            Err(why) => {
-                if !why.is_empty() {
-                    w.err(format!("queue.sh land-local: {why}"));
-                }
-                let _ = w.git.update_ref(&path, &base_ref, &base_sha, Some(&head));
-                w.err(format!("queue.sh land-local: packaging/activation failed for {head} — reverted, nothing changed"));
-                return FAIL;
-            }
-        }
-    } else {
-        w.err(format!(
-            "queue.sh land-local: release step skipped: production runs a checkout (no {}/current)",
-            releases.as_deref().map(|p| p.display().to_string()).unwrap_or_else(|| "<SPIRA_RELEASES unset>".into())
-        ));
-    }
-    // The checkout deploy (§8 D11) runs right after the CAS; its failures are loud, never
-    // revert the ref, and make the exit non-zero once the members are recorded.
-    let deployed = match &deploy_plan {
-        Some(plan) => super::deploy::run(w, plan, &head, &c.s.home, super::lifecycle_on(w)),
-        None => true,
-    };
 
     let seqfile = c.queue_file("round-seq");
     let n = records::read_seq(&seqfile) + 1;
@@ -270,42 +235,50 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
         }
         w.out(format!("queue.sh land-local: {} landed at {head}", m.id));
     }
+    // The landing is recorded; now publish its release (§8 D13). A fault never reverts the
+    // ref or the records: it leaves `current` where it was and makes the exit non-zero.
+    let outcome = plan.as_ref().map(|p| super::deploy::run(w, p, &head));
+    let deploy_note = match (&outcome, &plan) {
+        (Some(super::deploy::Outcome::Activated(sha)), _) => {
+            w.out(format!("queue.sh land-local: activated release {sha}"));
+            format!(" Release {sha} activated.")
+        }
+        (Some(super::deploy::Outcome::Fault(why)), Some(p)) => {
+            w.err(format!(
+                "LAND DEPLOY FAILED for {head}: {why} — current is untouched (still {}); {base} is at {head} and the landing stays recorded",
+                super::deploy::current_name(&p.releases)
+            ));
+            format!(" DEPLOY FAULT: {head} landed but its release was not activated: {why}.")
+        }
+        _ => String::new(),
+    };
     let listed = ms.iter().map(Member::render).collect::<Vec<_>>().join(",");
     w.lib.notify(
         &name,
         &format!("local landing (round {n})"),
         &format!(
-            "{base} fast-forwarded to {head} (round {n}, archived at {archive}). Members: {listed}{}",
+            "{base} fast-forwarded to {head} (round {n}, archived at {archive}). Members: {listed}{}{deploy_note}",
             ungated.as_ref().map(|r| format!(". UNGATED — no gate PASS or round GREEN for this tree; SPIRA_LAND_UNGATED={r}")).unwrap_or_default()
         ),
     );
     w.out(format!("queue.sh land-local: {base} fast-forwarded to {head} (round {n}, archived at {archive})"));
-    if !deployed {
-        w.err(format!("queue.sh land-local: {base} landed at {head} but the production checkout deploy did not complete — see LAND DEPLOY/SMOKE FAILED above"));
+    if matches!(outcome, Some(super::deploy::Outcome::Fault(_))) {
         return FAIL;
     }
     OK
 }
 
-/// build-tarball.sh with the round's own binaries, retained under `.tarballs` so a
-/// rollback can re-activate it, then activate.sh (SPIRA_ACTIVATE_LAND_LOCAL=1).
-fn package_and_activate(w: &World, releases: &Path, name: &str, head: &str, repo: &Path, bins: &Path) -> Result<String, String> {
-    let retain = releases.join(".tarballs");
-    fs::create_dir_all(&retain).map_err(|_| format!("cannot create {}", retain.display()))?;
-    let release = format!("spira-{head}");
-    let built = w
-        .scripts
-        .build_tarball(bins, name, &release, &retain, head, repo)
-        .filter(|p| p.is_file())
-        .ok_or_else(|| "build-tarball.sh did not produce a tarball".to_string())?;
-    let (rc, out) = w.scripts.activate(&built, true);
-    if !out.is_empty() {
-        w.err(out.trim_end_matches('\n'));
-    }
-    if rc != 0 {
-        return Err(String::new());
-    }
-    Ok(release)
+/// §8 D13's precondition for a landing of the harness while a release is in force: the
+/// round's tested build to publish (law-deploy-the-tested-artifacts — never a rebuild). Err
+/// is the refusal reason.
+fn deploy_plan(s: &crate::ports::Settings, repo: &Path, landref: &str, releases: PathBuf, bins: Option<PathBuf>) -> Result<super::deploy::Plan, String> {
+    let Some(bins) = bins else {
+        return Err(format!(
+            "--worktree <round worktree> is required to land {}: its release ships the round's own tested build (law-deploy-the-tested-artifacts), never a rebuild",
+            s.home_repo
+        ));
+    };
+    Ok(super::deploy::Plan { repo: repo.to_path_buf(), landref: landref.to_string(), releases, run: s.run.clone(), bins: Some(bins), db: s.db.clone() })
 }
 
 pub fn rollback_local(w: &World, repo: Option<&str>) -> i32 {
@@ -339,18 +312,23 @@ pub fn rollback_local(w: &World, repo: Option<&str>) -> i32 {
         w.err(format!("queue.sh rollback-local: refs/archive/rounds/{} has no archived head", n - 1));
         return FAIL;
     };
-    let releases = c.s.releases.clone().unwrap_or_default();
-    let tarball = releases.join(".tarballs").join(format!("spira-{prev}.tar.gz"));
-    if !tarball.is_file() {
-        w.err(format!("queue.sh rollback-local: no retained tarball for the previous release at {}", tarball.display()));
+    // Re-activate the previous round's release (§8 D13): it was published when that round
+    // landed, so it is verified and activated as it stands — never rebuilt.
+    let Some(releases) = c.s.releases.clone() else {
+        w.err("queue.sh rollback-local: SPIRA_RELEASES does not resolve — no release to roll back to");
+        return FAIL;
+    };
+    if !super::deploy::release_in_force(&releases) {
+        w.err(format!("queue.sh rollback-local: no release is in force ({}/current is absent) — nothing to roll back", releases.display()));
         return FAIL;
     }
-    let (rc, out) = w.scripts.activate(&tarball, false);
-    if !out.is_empty() {
-        w.err(out.trim_end_matches('\n'));
+    if !releases.join(&prev).is_dir() {
+        w.err(format!("queue.sh rollback-local: no release {prev} in {} (pruned, or that round never published one)", releases.display()));
+        return FAIL;
     }
-    if rc != 0 {
-        w.err(format!("queue.sh rollback-local: activate.sh failed to re-activate spira-{prev}"));
+    let plan = super::deploy::Plan { repo: path.clone(), landref: base.clone(), releases, run: c.s.run.clone(), bins: None, db: c.s.db.clone() };
+    if let Err(why) = super::deploy::verify(w, &plan, &prev).and_then(|()| super::deploy::activate(w, &plan, &prev)) {
+        w.err(format!("queue.sh rollback-local: {why} — could not re-activate release {prev}; nothing changed"));
         return FAIL;
     }
     let base_ref = format!("refs/heads/{base}");
@@ -368,8 +346,8 @@ pub fn rollback_local(w: &World, repo: Option<&str>) -> i32 {
     w.lib.notify(
         &c.r.name,
         &format!("local rollback (round {n} -> {})", n - 1),
-        &format!("{base} reset to {prev} (release spira-{prev} re-activated)."),
+        &format!("{base} reset to {prev} (release {prev} re-activated)."),
     );
-    w.out(format!("queue.sh rollback-local: activated spira-{prev}, {base} reset to {prev}"));
+    w.out(format!("queue.sh rollback-local: activated release {prev}, {base} reset to {prev}"));
     OK
 }

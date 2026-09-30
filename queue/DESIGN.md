@@ -20,9 +20,9 @@ answers six needs:
    (`abandon`) — every mutation serialised by the repo's queue lock, every owner-claimed
    batch refused unless the actor is its owner.
 3. **Land a round locally** (`land-local`, `queue.local`): fast-forward the local landing
-   ref by CAS, package and activate the round's own binaries when production runs a
-   release, archive the round head, mark every member LANDED and close its bead. The ONLY
-   writer of the local landing ref.
+   ref by CAS, archive the round head, mark every member LANDED and close its bead, then —
+   for the harness, while a release is in force — publish the round's own binaries as
+   `spira-releases/<sha>` and activate it (§8 D13). The ONLY writer of the local landing ref.
 4. **Publish** (`publish`, `queue.local`): push local/main's unpublished range to the forge
    as one PR whose members are the beads that range landed.
 5. **Change land mode** (`to-forge`/`to-local`): move a repository between `queue.local`
@@ -89,7 +89,7 @@ publish, rollback-local skip their own flock — the caller holds it), `SPIRA_QU
 `SPIRA_FAYTH`/`SPIRA_CZAR_CLASS` (czar fence), `SPIRA_CERTIFY_SUITES` (submit),
 `SPIRA_QUEUE_BATCH_WAIT` (flush forces 0 for the batcher), `SPIRA_PREFLIGHT_WALL_SECS`,
 `SPIRA_QUEUE_TRANSITION_POLLSEC`/`_MAXSEC`, `SPIRA_PUBLISH_REMOTE[_<NAME>]`,
-`SPIRA_PUBLISH_BRANCH_<NAME>`, `SPIRA_ACTIVATE_LAND_LOCAL` (set for activate.sh), `SPIRA_LAND_UNGATED` and `SPIRA_VERDICTS` (land-local, §8 D12),
+`SPIRA_PUBLISH_BRANCH_<NAME>`, `SPIRA_LAND_UNGATED` and `SPIRA_VERDICTS` (land-local, §8 D12),
 `SPIRA_HOME` (where lib.sh and the scripts live; else spira-config `spira.prod`; else
 `<exe>/../spira`).
 
@@ -110,11 +110,11 @@ nothing changed), then effects in order.
 | `open-batch` | queue | queue lock | refuse if a batch is open. Candidates from `--members` or ranked CERTIFIED (`queue_sort_rows`); admission (closed or submitted); assemble in `$SPIRA_RUN/worktree/.open-batch-<repo>-<pid>` with `land_subject` merges; `format_batch`; branch `spira/queue/<stamp>`; pre-flight gate unless `--skip-pregate` (wall 124 → open anyway); push; `pr-create` (body on stdin); open record; **switch ON only**: spira-lc cut → `batch_id`/`version` (§10); members `BATCHED`; clear `queue-stuck-<repo>`; `QUEUE BATCH … source=open-batch`. |
 | `claim` | any | queue lock | `--reason` required (exit 2); open batch required; already concierge-owned without `--force` → refuse. Rewrite record: `owner=concierge`, `pre_claim_owner=<prev>`, `claim_reason=<one line>`. Mail. |
 | `release` | any | queue lock | open batch, owned by concierge, else refuse. `owner=<pre_claim_owner>`, drop claim keys. |
-| `land-local` | queue.local | queue lock unless LOCK_HELD | base must be a local branch; resolve head; divergence alarm (cached forge ref, never refuses); `base` ancestor of head, else refuse; **the head's tree carries a gate PASS or round GREEN certificate, else refuse (§8 D12; `SPIRA_LAND_UNGATED=<reason>` overrides, logged)**; binaries (§8 D2); CAS `update-ref`; release step (§8 D3), reverting the ref on failure — or, in checkout mode with the landing repo being the running harness checkout, its preconditions before the CAS and the checkout deploy after it (§8 D11); round-seq+1, `refs/archive/rounds/<n>`; per member `land_mark LANDED`, `gh_issue_closeout`, `bead_close_on_land`, a line; mail; summary line. |
+| `land-local` | queue.local | queue lock unless LOCK_HELD | base must be a local branch; resolve head; divergence alarm (cached forge ref, never refuses); `base` ancestor of head, else refuse; **the head's tree carries a gate PASS or round GREEN certificate, else refuse (§8 D12; `SPIRA_LAND_UNGATED=<reason>` overrides, logged)**; the round's binaries when `--worktree` is named (§8 D2); for the harness repository while a release is in force, `--worktree` required (§8 D13); CAS `update-ref`; round-seq+1, `refs/archive/rounds/<n>`; per member `land_mark LANDED`, `gh_issue_closeout`, `bead_close_on_land`, a line; then the release (§8 D13): `release build <head> --bin-dir` → `release verify` → `release activate`, a failure a loud deploy fault (exit 1) that reverts nothing; mail; summary line. |
 | `publish` | queue.local | queue lock unless LOCK_HELD | local base; forge target; refuse if a `publish` record exists; fetch; divergence check refuses; equal → "nothing to publish", exit 0; members from land commits (§8 D4), none → refuse; push `spira/publish/<stamp>`; pr-create; `publish` record; `QUEUE PUBLISH` line. |
 | `to-forge` | queue.local | queue lock, whole move | agreement check (§6 R1); **in-delivery refusal** (§8 D5); local base exists, not checked out; re-read mode under lock; final publish (lock held); poll `_verdict_settle_publish` until the record is gone (3 → refuse; deadline → refuse); fetch, forge tip == local tip; write mode `queue.forge`, base `<remote>/<branch>` (§8 D6); verify; archive `refs/archive/<local-base>`, delete local branch; mail. |
 | `to-local` | queue (forge) | queue lock | agreement check; in-delivery refusal; base remote-tracking; `local/<branch>` absent and not checked out; re-read mode; fetch; an archived `refs/archive/local/<branch>` must be an ancestor of the forge tip; create `local/<branch>` at the forge tip; write mode `queue.local`, base `local/<branch>` (branch deleted if that fails); verify; mail. |
-| `rollback-local` | queue.local | queue lock unless LOCK_HELD | round-seq ≥ 2; `refs/archive/rounds/<n-1>`; tarball `$SPIRA_RELEASES/.tarballs/spira-<sha>.tar.gz`; `activate.sh`; CAS the ref back; mail. Bead state untouched. |
+| `rollback-local` | queue.local | queue lock unless LOCK_HELD | round-seq ≥ 2; `refs/archive/rounds/<n-1>`; a release in force and `$SPIRA_RELEASES/<prev>` present; `release verify <prev>` → `release activate <prev>` (never rebuilt, §8 D13); CAS the ref back; mail. Bead state untouched. |
 
 The czar fence (`SPIRA_FAYTH=czar` with `SPIRA_CZAR_CLASS`) runs `czar-fence.sh <class>`
 first on eject, abandon, open-batch, land-local, publish and rollback-local, as before.
@@ -157,15 +157,15 @@ by verdict.sh, batch.sh, lib.sh `queue_batch_owner`, landing.sh, cockpit.sh, bat
 queue-watch, czar-pass, spira-lc `legacy_files`, and the operator's round/watch scripts; the
 `publish` record by verdict.sh and queue-watch; the lock by batch.sh, verdict.sh,
 batcher-cut and the reconciler's stale-lock probe. `round-seq`, `refs/archive/rounds/*`,
-`.tarballs`, the `$SPIRA_QUEUE_DIR/<id>` entry and `queue-protected-<repo>` have no reader
+the `$SPIRA_QUEUE_DIR/<id>` entry and `queue-protected-<repo>` have no reader
 outside queue itself and the tests; landing.log's ABANDON/PUBLISH lines have none outside
 the tests; CAUGHT/GATE_COST/BATCH are read only by `stats`.
 
 ### 2.4 Guarantees
 
-- **Refusal changes nothing.** Every refusal before the CAS writes nothing; the land-local
-  release step reverts the ref it moved. The checkout deploy (§8 D11) is the one step after
-  the CAS that does not revert: its failures are loud and make the exit non-zero.
+- **Refusal changes nothing.** Every refusal before the CAS writes nothing. The release step
+  (§8 D13) runs after the landing is recorded and does not revert it: a build, verify or
+  activate failure leaves `current` where it was, is loud, and makes the exit non-zero.
 - **One writer per repo.** Every mutating subcommand takes `$SPIRA_QUEUE_DIR/<repo>/lock`
   with a non-blocking exclusive flock (the same file the batcher's `try_lock` takes).
 - **CAS on the landing ref.** `update-ref <ref> <new> <old>`, never a plain write.
@@ -262,9 +262,7 @@ cost / members; percentage integer.
 | `$SPIRA_RUN/landing.log` | stats | submit, abandon, open-batch, publish, land-local `QUEUE UNGATED` (append) |
 | `$SPIRA_RUN/queue-protected-<repo>` | — | protect |
 | `$SPIRA_RUN/queue-stuck-<repo>` | — | open-batch (removed) |
-| `$SPIRA_RELEASES/current`, `.tarballs/` | land-local, rollback-local | build-tarball.sh / activate.sh |
-| the running harness checkout's files, index, `HEAD`, `target/release/*`, `bin/*` | land-local (D11) | land-local (D11, checkout mode only) |
-| `SPIRA_LAND_DEPLOY_ALLOW` (env) | land-local (D11) | — |
+| `$SPIRA_RELEASES/current` (is a release in force?), `$SPIRA_RELEASES/<sha>` | land-local, rollback-local | `release build` / `release activate` only (§8 D13) |
 | `${SPIRA_VERDICTS:-$SPIRA_RUN/verdicts}/trees/<repo>/<tree>` (tree certificate, `gate::cert`) | land-local (D12) | the gate (PASS), batcher-cut (round GREEN) |
 | `SPIRA_LAND_UNGATED` (env) | land-local (D12) | — |
 | `refs/heads/<local-base>` | | land-local, rollback-local (CAS), to-local (create), to-forge (delete) |
@@ -283,7 +281,7 @@ cost / members; percentage integer.
   `bd comment --stdin` through the seam, mail through the seam).
 - **Identifiers** (bead id, branch, ref, sha, repo name, PR number, path) may appear in argv
   of git, `bd show`, forge.sh and the harness scripts whose interface is argv (`gate.sh`,
-  `batch.sh`, `verdict.sh`, `build-tarball.sh`, `activate.sh`, `czar-fence.sh`), **only after
+  `batch.sh`, `verdict.sh`, `release`, `czar-fence.sh`), **only after
   validation** against a fixed grammar (§3 `ident.rs`: `[A-Za-z0-9._/:@+-]`, no leading
   `-`, ≤ 255 bytes) — so argv is bounded by construction, never by the backlog. A value that
   fails validation is refused, never passed.
@@ -324,7 +322,6 @@ operation (the function name is part of the text, never data).
 | R18 `batch_fns` (sources batch.sh) | `format_batch`, `_base_conflict`, `_pf_gate` (with `_PF_DEADLINE`) | open-batch only; the queue.forge assembly primitives |
 | R19 `settle_publish` (sources verdict.sh) | `_verdict_settle_publish <repo> <path>` | to-forge's wait; return 3 = red |
 | R20 `readback` | `repo_land`, `spira_landref` after a transition's write | the post-write verification reads what every other component will read |
-| R23 `conf_smoke` | none — sources the checkout's own `conf.sh` (not the PRELUDE's lib.sh) with `SPIRA_*` stripped except `SPIRA_CONF`/`SPIRA_TOML`, answers `SPIRA_DB` | land-local's post-deploy smoke (§8 D11): what a freshly started unit would resolve |
 | R21 `toml_path` | `spira_toml_resolve` (transitions only, as before) | conf.sh's own resolution of which document is in force |
 
 **Not seams — Rust, against the same data:** the `open`/`publish`/`round-seq` records and
@@ -446,15 +443,12 @@ data, not the code; the refusal is the contract).
   SPIRA_ARTIFACTS contract), named with `--worktree`, verified by tree
   (`<worktree> HEAD^{tree}` = `<head>^{tree}`) and by holding at least one executable. The
   tree-keyed `cargo-target-bins/<tree>/release` cache and `SPIRA_BATCH_BINS_TARGET_DIR` are
-  gone. A named worktree that fails either check refuses before the ref moves.
-- **D3 — the release step is skipped while `$SPIRA_RELEASES/current` is absent**
-  (absorbing the retired `land-local-release-skip` override, already in queue.sh as
-  sp-zt0ae). New: in that state `--worktree` is **not required** — nothing is packaged, so
-  a missing binary corpus is not a reason to refuse the land (queue.sh refused it anyway).
-  Once `current` exists, `--worktree` is required and the step runs as before
-  (build-tarball.sh with `--bin-dir <worktree>/target/release`, activate.sh with
-  `SPIRA_ACTIVATE_LAND_LOCAL=1`, ref reverted on failure). An unset `SPIRA_RELEASES` is
-  treated as "no release in force" rather than aborting mid-land.
+  gone. A named worktree that fails either check refuses before the ref moves. Those bytes
+  become the release's `bin/` (§8 D13, `release build --bin-dir`), never a rebuild
+  (law-deploy-the-tested-artifacts).
+- **D3 — retired by D13** (it packaged a tarball with build-tarball.sh and activated it with
+  activate.sh, reverting the ref on failure). What survives: with no `$SPIRA_RELEASES/current`
+  nothing runs a release, the release step is skipped and `--worktree` is not required.
 - **D4 — publish members come from the land commits (sp-bauwt, option b).** Every
   `spira: land <id>[ — title]` commit in `forge..local` is a member; the tip is the LANDED
   landstate tip when that tip is in the range, else the land merge's second parent, else the
@@ -485,77 +479,10 @@ data, not the code; the refusal is the contract).
 - **D10 — identifiers are validated before any argv** (§5); free text never reaches argv
   except the two bounded, one-line cases in §5. `--reason-file`/`--members-file` (stdin
   with `-`) are the payload-safe forms; the argv forms remain for today's callers.
-- **D11 — in checkout mode, land-local deploys the running harness checkout** (the gap D3
-  left: with no `$SPIRA_RELEASES/current` the release step was skipped and nothing moved
-  the checkout production runs, so the loop landed work that never ran; the retired
-  `round.sh land` did it by hand). It applies **only** when no release is in force (D3)
-  **and** the landing repository is the checkout this harness runs from — `git rev-parse
-  --show-toplevel` of `$SPIRA_HOME` equals the repository's path (both canonicalised).
-  Any other repository, or a release in force, behaves exactly as before.
-  1. **Preconditions, checked before the CAS** (a refusal names its reason, ends
-     `refused, nothing changed`, exit 1):
-     - `--worktree` is named — the checkout's binaries must be the round's own build (D2;
-       round 97 once ran new scripts against an old `spira-config`);
-     - the checkout is on the landing ref's branch (`ref_branch(<landref>)`: `local/main` →
-       `main`), and its `HEAD` is an ancestor of the new head;
-     - `git status --porcelain -z --untracked-files=no` names no path outside the
-       **allow-list** `SPIRA_LAND_DEPLOY_ALLOW` — colon-separated checkout-relative paths,
-       exact matches, read from queue's own environment (the batcher unit's `Environment=`
-       or a drop-in; empty or unset = any tracked edit refuses). It exists for the files an
-       active `~/.config/spira/overrides/*.override` edits: local-overrides.timer re-applies
-       them within a minute, so the swap may overwrite such a file (the operator did exactly
-       this by hand at 08:24Z on 2026-09-29), and an allow-listed edit to a file the round
-       did not change simply stays in place. Untracked files are never consulted. The smallest
-       honest rule: the override specs do not declare which paths they touch, so the list is
-       declared once by whoever installs the override, and anything else is a refusal;
-     - no gitlink (mode 160000) changes between `HEAD` and the head — a submodule cannot be
-       swapped as a file.
-  2. **Move** (after the CAS): every path whose tree entry (mode or blob) differs between the
-     checkout's `HEAD` and the head is written beside itself (`.<name>.land-new.<pid>`), given
-     the tree's exact mode (100755 → 0755, 100644 → 0644, 120000 → a symlink), and renamed
-     over the target; paths absent from the head are deleted (then their emptied parent
-     directories). Blobs come from `ls-tree -r -z --full-tree` and `cat-file blob <sha>` — no
-     path ever reaches an argv (§5). Then `git reset -q --mixed <head>`, then `HEAD` is read
-     again and must equal the head (law-production-is-not-a-working-tree: announce only what
-     the tree says). The first write failure stops the move: it is reported as
-     `LAND DEPLOY FAILED: …` with how many files were swapped, the checkout is **not** reset,
-     and binaries and smoke are skipped.
-  3. **Binaries**: every regular executable file directly in `<worktree>/target/release` is
-     copied beside its target in `<checkout>/target/release` and renamed over it, then
-     linked (or re-linked) at `<checkout>/bin/<name>` — the path `spira_bin` actually
-     resolves (`conf.sh`: `$SPIRA_REPO/bin/$name`), atomically (a temp symlink, renamed
-     over), and left alone when it already points there. `spira-lc` is never installed
-     while `lifecycle_enforce` is off (§10). A failed install or link is reported as
-     `LAND DEPLOY FAILED: cannot install/link <bin> …`.
-     **Fail closed** (sp-ma9uh, incident 2026-09-29: a landed crate's binary — twice —
-     never reached `bin/`, because only the `target/release` copy existed and nothing
-     had ever linked a name that was new): every binary the workspace's own `[[bin]]`
-     targets declare must be among what the round actually built, or the deploy refuses
-     — `LAND DEPLOY FAILED: … refusing a partial binary set` — rather than land a
-     checkout the workspace itself no longer matches. The source of truth is the
-     workspace's manifests (`<worktree>/Cargo.toml`'s `[workspace] members`, each
-     member's `[[bin]]` tables or its implicit `src/main.rs` default), read directly,
-     never the Makefile's `install` list: that list is hand-maintained prose and had
-     already drifted as of 2026-09-29 (missing `reconciler-alert`, `lifecycle-guard`,
-     `spira-lc` and `test-plan`, all already built and already running) — a list that
-     must be remembered and edited by hand for every new binary crate is exactly the
-     failure mode this closes.
-  4. **Smoke**: the checkout's own `conf.sh` is sourced by a fixed bash script read from
-     stdin (seam R23, law-payloads-go-on-stdin), in queue's environment with every `SPIRA_*`
-     variable removed except `SPIRA_CONF` and `SPIRA_TOML` (which name the document in force)
-     — so it resolves as a freshly started unit would, not from values this process already
-     inherited. `SPIRA_DB` must come back naming an existing directory; otherwise
-     `LAND SMOKE FAILED: production conf.sh no longer resolves SPIRA_DB (got '…') — the landing
-     ref and the checkout are already at <head> and are NOT reverted; fix before anything else`.
-  5. `queue.sh land-local: production checkout <old9> -> <new9>, N files, M binaries`.
-
-  **After the CAS nothing is reverted**: the ref is the record of what landed, so a deploy,
-  install or smoke failure still marks the members LANDED and closes their beads, and then
-  makes land-local exit 1 (batcher-cut records the round as refused, a loud red; it is the
-  operator's cue). Rejected: reverting the ref on a failed swap (it would not un-write the
-  files already swapped, and would leave a checkout ahead of its own landing ref); a
-  `git checkout`/`reset --hard` move (writes in place — a reader can see half a script);
-  reading the allow-list from the override specs (they declare no paths).
+- **D11 — retired by D13 (sp-gkfg1).** The checkout deploy — stage-and-swap of the running
+  harness checkout, the binary install and `bin/` links (sp-ma9uh), the `conf.sh` smoke (seam
+  R23) and `SPIRA_LAND_DEPLOY_ALLOW` — is deleted. The running system executes only a
+  release, so nothing is ever edited, built or linked in a checkout.
 - **D12 — land-local lands only a tree something certified (incident 2026-09-29 17:52Z).**
   Two branches each passed the gate alone; the Concierge merged local/main into one of them
   and landed that merge with `queue land-local` after only unit tests. No gate ever judged the
@@ -612,6 +539,51 @@ data, not the code; the refusal is the contract).
   scanning `verdicts/` for a key; the key is a hash that includes inputs land-local cannot
   know (the changed-file list, the bead, the ejected suites). **Rejected:** a
   `--certified-by-round` flag, for the reason in (1).
+- **D13 — a landing publishes a release (sp-gkfg1; brain
+  `wiki/projects/spira/designs/runtime-is-a-release-2026-09-29.md`).** Applies when the landing
+  repository is the harness (`spira.home_repo`, the repository releases are made from — its
+  name is the MANIFEST's `repo`) **and** a release is in force (`$SPIRA_RELEASES/current` is a
+  symlink). Any other repository lands with no release step at all. With no release in force
+  (before the cutover) the step is skipped with a loud line: `release step skipped: no release
+  is in force (…/current is absent) — production does not run <head> until a release is
+  activated`. The first activation is the cutover's (sp-6p20x), never a routine landing's.
+  1. **Before the CAS:** `--worktree` is required and passes D2's tree check (refusal:
+     `--worktree <round worktree> is required to land <repo>: its release ships the round's own
+     tested build (law-deploy-the-tested-artifacts), never a rebuild`).
+  2. **The landing is recorded first:** CAS, round-seq, archive ref, every member LANDED and
+     closed — before the slow part, so a killed or failed deploy never loses the record.
+  3. **Then, by name on the launcher's PATH, each with `SPIRA_DB` set** (verify's
+     pre-activate store check needs it) and `--releases $SPIRA_RELEASES --run $SPIRA_RUN`:
+     `release build <head> --repo <repo> --bin-dir <worktree>/target/release` (must answer
+     `<head>`), `release verify <head>`, `release activate <head> --repo <repo> --landed-ref
+     <landing ref>`. Activation re-renders the installed units against
+     `spira-releases/<head>`, swaps `current`, daemon-reloads and restarts what changed; a
+     standing hotfix is superseded only if `<head>` and the landing ref contain it, else
+     activation refuses (the release crate's rule; land-local passes the landing ref).
+  4. **A failure is a deploy fault, never a partial deploy:** `LAND DEPLOY FAILED for <head>:
+     release <step> exited <rc>: <its last line> — current is untouched (still <sha>); <base> is
+     at <head> and the landing stays recorded`, the same in the landing mail, and exit 1.
+     Nothing is reverted: the ref is the record of what landed (D11's reasoning, kept).
+  5. `rollback-local` re-activates the previous round's release as it stands (`release verify`
+     → `release activate`, never rebuilt; refused when pruned or when no release is in force),
+     then moves the ref back.
+
+  **Why `--bin-dir` and not `release build`'s own cargo build:** the statute
+  law-deploy-the-tested-artifacts (a rebuild is a different artifact from the one that
+  passed). `release build --bin-dir` is the same build, MANIFEST and verify with the round's
+  tested bytes as `bin/`; a hotfix or a hand-built release still compiles. It also keeps the
+  landing fast: no cargo on the round's critical path.
+  **Who installs new and retires old units: `systemd/install.sh`, not activation.** Which
+  units a host runs is host policy (units.sh: `inotifywait` present, `SPIRA_DOLT_DATA`, the
+  broker opt-in, the watcher manifest), and it already has one reader; a second in Rust would
+  be two readers that drift (exactly how `render.py` came to exist). Activation keeps every
+  installed unit on the release it switched to; a unit a release adds or retires is a design
+  change whose bead names `install.sh` in its cutover steps. `render.py` stays for that reason:
+  install.sh and unit-ensure.sh render through it.
+  **Rejected:** building when no release is in force (a routine landing would do the
+  cutover's first activation, or build a release nothing runs); keeping the tarball and
+  `activate.sh` for local landings (two ways to make a release); reverting the ref on a
+  failed activation (the members are already closed; a ref behind its own records is worse).
 - **Kept deliberately:** every message's `queue.sh <cmd>:` prefix and text (operators and
   one override grep them); `step`'s status 0 on a non-queue.local repo whatever the cut
   returned (a bash `if` without `else`); `submit` falling back to `$SPIRA_REPO` when the map
@@ -626,7 +598,7 @@ data, not the code; the refusal is the contract).
 
 ## 9. Tests
 
-`cargo test -p queue` — 129 unit tests; `cargo test -p spira-config` covers the two library
+`cargo test -p queue` — 121 unit tests; `cargo test -p spira-config` covers the two library
 additions (`set_paths_in_file_writes_both_or_neither`, `legacy_map` row rewrite). Derived
 from §2.2/§8:
 
@@ -639,12 +611,12 @@ from §2.2/§8:
 | abandon | `abandon_with_lifecycle_on_abandons_the_batch_on_spira_lc`, `abandon_requires_a_reason`, `abandon_keeps_red_members_archives_and_audits`, `abandon_dry_run_prints_the_audit_line_and_changes_nothing` |
 | claim/release | `claim_and_release_hand_the_batch_back`, `claim_without_reason_is_usage`; `records::tests::claim_then_release_restores_the_owner` |
 | open-batch | `open_batch_*` (5) |
-| land-local: land + archive + members + cached divergence; ff refusal; base/mode; D2/D3; revert; lock-held; stdin members | `land_local_*` (9, each on a certified tree — `local_repo` writes the gate PASS) |
+| land-local: land + archive + members + cached divergence; ff refusal; base/mode; D2; lock-held; stdin members | `land_local_*` (8, each on a certified tree — `local_repo` writes the gate PASS) |
 | land-local certification (D12): refuses an ungated tree; a gate PASS for the tree; a round GREEN for the tree; a PASS for another tree (the pre-merge branch) or another repo does not count; the override lands and records its reason (landstate, landing.log, stderr) | `land_local_refuses_a_tree_no_gate_or_round_certified`, `land_local_accepts_a_gate_pass_for_the_head_tree`, `land_local_accepts_a_round_green_for_the_head_tree`, `land_local_ignores_a_pass_for_another_tree_or_repo`, `land_local_ungated_override_lands_and_records_the_reason`, `land_local_a_pass_from_an_older_gate_binary_still_counts`; `gate::cert::tests` |
-| land-local checkout deploy (D11): swap modify/mode-only/add/symlink/delete + emptied dir, reset + HEAD re-read, binaries (spira-lc only with the switch ON) linked into `bin/` (a new binary gets a symlink for the first time, an existing one is idempotent, a workspace `[[bin]]` target the round did not build refuses), smoke; refusals off-branch, HEAD not an ancestor, tracked edits outside the allow-list, no `--worktree`, gitlink; write failure stops before the reset; verify mismatch; smoke failure exits 1 without reverting; another repository or a release in force untouched | `land_local_deploy*` (12), `land_local_leaves_a_checkout_alone_unless_it_is_the_running_harness_in_checkout_mode`; `real::tests::conf_smoke_sources_the_checkouts_conf_sh_without_the_inherited_spira_values`, `real::tests::real_git_lists_trees_reads_blobs_status_and_resets_for_the_checkout_deploy`, `real::tests::status_and_ls_tree_parse_their_z_formats` |
+| land-local publishes a release (D13): build `--bin-dir` → verify → activate with `SPIRA_DB`, `--releases`, `--run`, `--landed-ref`, recorded before the release step; a build, verify or activate (hotfix) failure is a deploy fault that leaves current, keeps the landing and exits 1; a build answering another sha; no release in force skips it, loudly, with no worktree needed; the harness needs `--worktree` while a release is in force; another repository never runs it | `land_local_publishes_the_rounds_tested_build_as_a_release_and_activates_it`, `land_local_build_failure_leaves_current_alone_keeps_the_landing_and_reports_a_deploy_fault`, `land_local_verify_or_activate_failure_is_a_deploy_fault_too`, `land_local_over_a_standing_hotfix_is_refused_by_release_activate_and_reported`, `land_local_answer_for_another_commit_is_a_fault`, `land_local_with_no_release_in_force_skips_the_release_step_and_needs_no_worktree`, `land_local_of_the_harness_requires_the_round_worktree_while_a_release_is_in_force`, `land_local_of_another_repository_publishes_no_release`; `release::tests::build_with_a_bin_dir_ships_those_binaries_without_cargo_and_still_refuses_a_partial_set`; suite `test-land-local-release.sh` (the real queue and release binaries, a scratch releases dir, a mock systemctl) |
 | publish: D4 (reaped landstate), landstate tip, nothing-to-publish, refusals | `publish_*` (4); `publish_range::tests` (6) |
 | transitions: wait/verify refusal, happy path, red, timeout, D5 (4 sources + other repo), agreement, D6 restore, archive ancestry | `to_forge_*` (4), `to_local_*` (2), `transitions_*` (2) |
-| rollback-local | `rollback_local_needs_two_rounds_and_a_retained_tarball` |
+| rollback-local | `rollback_local_reactivates_the_previous_rounds_release_without_rebuilding` |
 | stats, CLI, records, idents | `stats::tests`, `cli::tests`, `records::tests`, `ident::tests`, `model::tests`, `lock::tests` |
 | the seam mechanism itself, for real through bash with a stand-in lib.sh | `seam::tests::values_travel_on_stdin_with_newlines_and_empties_intact`, `real::tests::context_seam_round_trips_through_bash`, `real::tests::answer_seams_ignore_log_lines_and_carry_failures` |
 

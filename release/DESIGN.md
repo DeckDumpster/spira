@@ -18,7 +18,7 @@ does ever points the running system at a checkout, a worktree or a `target/` dir
 ## Contract
 
 ```
-release build <commit> [--repo R] [--target-dir T]      build spira-releases/<sha>, print <sha>
+release build <commit> [--repo R] [--target-dir T | --bin-dir D]  build spira-releases/<sha>, print <sha>
 release verify <sha> [--no-pre-activate]                MANIFEST, unit binaries, pre-activate
 release activate <sha> [--hotfix "<reason>"] [--repo R] [--landed-ref REF] [--settle S]
 release rollback [--settle S]                           activate the previous release
@@ -43,8 +43,13 @@ Exit `0` success; `1` refused or failed, with the reason on stderr; `2` usage.
    step 7 is a `rename(2)`).
 3. `cargo build --release --workspace --locked` in the stage, with `CARGO_TARGET_DIR` at
    `--target-dir` (else `$SPIRA_RUN/release/target`, a cache that is not part of any
-   release; else a throw-away `.target-<pid>` beside the stage).
-4. Copy every workspace `[[bin]]` target into `bin/`. The list is read from the commit's own
+   release; else a throw-away `.target-<pid>` beside the stage). **With `--bin-dir D`
+   there is no cargo build:** the binaries are taken from `D`, a tested build of this commit
+   the caller vouches for — `queue land-local` passes the round's own `target/release`
+   (law-deploy-the-tested-artifacts: a rebuild is a different artifact from the one that
+   passed; sp-gkfg1). `--bin-dir` and `--target-dir` exclude each other.
+4. Copy every workspace `[[bin]]` target (from cargo's output or `--bin-dir`) into `bin/`;
+   anything else in that directory is not shipped. The list is read from the commit's own
    `Cargo.toml` members ([`workspace::expected_bins`] — the one reader; `queue`'s deploy
    calls the same function). A declared binary the build did not produce is a refusal.
 5. **Name clashes:** an executable directly in `bin/` or `spira/` whose name is also a
@@ -116,7 +121,9 @@ per-instance unit `spira-<x>-<instance>.<service|timer>` to `spira-<x>.<service|
 watcher `spira-watch-<name>-<instance>.service` to `spira-watch@.service`. Masked units
 (symlinks) and units with no template are not touched. Installing a unit for the first time
 and removing a retired one remain `systemd/install.sh`'s job; activation re-renders what
-is installed.
+is installed. (Decided in sp-gkfg1, queue/DESIGN.md §8 D13: which units a host runs is host
+policy with one reader, units.sh; a unit a release adds or retires is a design change whose
+cutover steps run install.sh.)
 
 **Render.** `systemd/render.py`'s rules, in Rust: every `@KEY@` is replaced; `%i` becomes
 the watcher name; a `spira-*.timer`'s `Unit=spira-<x>.service` gains the instance suffix;
@@ -187,8 +194,20 @@ before removal; one that still cannot be removed is reported, and prune exits 1.
 Unit tests run activation and rollback against a fake `Systemctl` and a temporary unit
 directory; nothing in a test touches the host's systemd.
 
+## Callers
+
+`queue land-local` builds (`--bin-dir`), verifies and activates every landing of the harness
+while a release is in force, and `queue rollback-local` verifies and re-activates the previous
+round's (sp-gkfg1, queue/DESIGN.md §8 D13); `skew.sh refresh` in release mode builds,
+verifies and activates the checkout's head. The Makefile's `install` target is deleted.
+`spira/build-tarball.sh` and `spira/activate.sh` remain for the public pipeline only: the
+GitHub release workflow builds its tarball with the first (`.github/workflows/release.yml`,
+`make dist`, `acceptance-local.sh`), and a fresh install from that tarball activates it with
+the second (`acceptance.yml`, `acceptance-run.sh`, `acceptance-lib.sh`, `deploy.sh`,
+`install.sh`'s messages). `systemd/render.py` remains for `install.sh` and `unit-ensure.sh`,
+which own unit membership.
+
 ## Not this bead
 
-Wiring `queue land-local` to build → verify → activate (sp-gkfg1); launchers that set PATH
-(sp-31gtu, sp-gypjk); doctor / ops pane / watchtower reading the hotfix record; deleting the
-Makefile `install` target, `activate.sh` and `build-tarball.sh` (their callers move first).
+Launchers that set PATH (sp-31gtu, sp-gypjk); doctor / ops pane / watchtower reading the
+hotfix record.

@@ -178,8 +178,8 @@ echo
 echo "3. Each bin/<name> a non-optional ExecStart runs is in the tarball"
 # ============================================================================
 # The sentinel, queue and aeon binaries have no legacy --*-bin flag: they ship the way a
-# release really builds them, as workspace [[bin]] targets enumerated by --bin-dir (land-local
-# and make install's path). So this case builds its own tarball from a --bin-dir holding one
+# release really builds them, as workspace [[bin]] targets enumerated by --bin-dir (the
+# public pipeline's path). So this case builds its own tarball from a --bin-dir holding one
 # stub per mapped name, and checks every ExecStart token against THAT tree.
 mkdir -p "$TMP/bindir" "$TMP/out-bindir"
 for _b in "${!FOUND_TOKENS[@]}"; do

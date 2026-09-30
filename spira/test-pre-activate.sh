@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
 #
 # test-pre-activate.sh — pre-activate.sh gates a release against five checks
-# before releases/current moves onto it, and make install refuses the flip
-# when the gate fails. Every check gets a fixture release dir with stubbed
+# before releases/current moves onto it (release verify runs it and refuses the flip
+# when the gate fails). Every check gets a fixture release dir with stubbed
 # probes (a fake spira-config, a fake bd, a fake install.sh --render, a fake
 # self-test.sh) rather than the real dependency, since pre-activate exists
 # specifically to run before those real dependencies are trusted.
 #
 # tier: T1
-# covers: spira/pre-activate.sh spira/self-test.sh Makefile
+# covers: spira/pre-activate.sh spira/self-test.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-ROOT="$(cd "$HERE/.." && pwd -P)"
 . "$HERE/testlib.sh"
 
 echo "test-pre-activate.sh"
@@ -227,52 +226,7 @@ selftest_out="$(cat "$TMP/selftest_out2")"
 is   "self-test.sh: tampered binary: exit 1"  1 "$selftest_rc"
 want "self-test.sh: tampered binary: names it" "sha256" "$selftest_out"
 
-# ── Makefile: pre-activate gates the real flip, forward and rollback alike ───────────
-# A throwaway git repo, not the suite's own checkout: a testenv container's checkout
-# can be a worktree whose git metadata points at a host path that does not exist in
-# the container, and `git rev-parse` (which the install recipe needs for _root/_sha)
-# fails there for reasons that have nothing to do with pre-activate.
-MROOT="$TMP/makerepo"
-git init -q "$MROOT"
-git -C "$MROOT" config user.email "test@test"
-git -C "$MROOT" config user.name "test"
-printf 'x\n' > "$MROOT/x.txt"
-git -C "$MROOT" add x.txt
-git -C "$MROOT" commit -q -m init
-SHA="$(git -C "$MROOT" rev-parse HEAD)"
-MAKE="make -C $MROOT -f $ROOT/Makefile"
-
-MREL="$TMP/makerels"
-mkdir -p "$MREL"
-
-# A pre-existing release dir means make install's cargo-build branch is skipped —
-# only the gate and the flip run, so this exercises the wiring with no cargo, no
-# git archive, and no network: exactly the rollback path the Makefile comment names.
-mkdir -p "$MREL/$SHA/spira"
-printf '#!/usr/bin/env bash\nexit 1\n' > "$MREL/$SHA/spira/pre-activate.sh"
-chmod +x "$MREL/$SHA/spira/pre-activate.sh"
-$MAKE install SPIRA_RELEASES="$MREL" COMMIT=HEAD >"$TMP/make_out" 2>&1
-make_rc=$?
-make_out="$(cat "$TMP/make_out")"
-is   "make install: failing gate: exit nonzero"        1 $([ "$make_rc" -ne 0 ] && echo 1 || echo 0)
-is   "make install: failing gate: current not created" 1 $([ -e "$MREL/current" ] || echo 1)
-want "make install: failing gate: says so" "pre-activate failed" "$make_out"
-
-printf '#!/usr/bin/env bash\nexit 0\n' > "$MREL/$SHA/spira/pre-activate.sh"
-$MAKE install SPIRA_RELEASES="$MREL" COMMIT=HEAD >"$TMP/make_out2" 2>&1
-make_rc=$?
-make_out="$(cat "$TMP/make_out2")"
-is "make install: passing gate: exit 0" 0 "$make_rc"
-is "make install: passing gate: current flips" "$SHA" "$(basename "$(readlink "$MREL/current")")"
-
-# A release with no pre-activate.sh at all is refused, not silently activated.
-MREL2="$TMP/makerels-nopre"
-mkdir -p "$MREL2/$SHA"
-$MAKE install SPIRA_RELEASES="$MREL2" COMMIT=HEAD >"$TMP/make_out3" 2>&1
-make_rc=$?
-make_out="$(cat "$TMP/make_out3")"
-is   "make install: no pre-activate.sh: exit nonzero" 1 $([ "$make_rc" -ne 0 ] && echo 1 || echo 0)
-is   "make install: no pre-activate.sh: current not created" 1 $([ -e "$MREL2/current" ] || echo 1)
-want "make install: no pre-activate.sh: names the reason" "unverifiable" "$make_out"
+# The gate on the real flip (a failing or missing pre-activate.sh refuses activation) is
+# the release crate's `release verify` now (release/src/tests.rs); make install is gone (sp-gkfg1).
 
 tl_summary

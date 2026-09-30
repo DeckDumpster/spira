@@ -486,9 +486,9 @@ _refresh_check_only() {
 # a refresh that stops is indistinguishable in the log from one with nothing to do.
 #
 # QUEUE.LOCAL NEVER REACHES EITHER BRANCH BELOW. Under queue.local, queue land-local is
-# THE ONLY DEPLOYER — it packages and activates the round's own binaries atomically. A
+# THE ONLY DEPLOYER — it publishes and activates the round's own binaries as a release. A
 # refresh that instead reset the checkout (stage-and-swap) or rebuilt from source (release
-# mode's `make install`) would deploy something no round ever certified, so this repo gets a
+# mode's `release build`) would deploy something no round ever certified, so this repo gets a
 # third path: compare what is running against local/main's head and alarm on a mismatch,
 # never act on one.
 # =======================================================================================
@@ -516,8 +516,12 @@ refresh() {
         fi
         git -C "$repo" merge --ff-only -q "$_base" 2>/dev/null || {
             echo "skew: refresh: cannot fast-forward to $_base"; return 1; }
-        make -C "$repo" install SPIRA_RELEASES="$SPIRA_RELEASES" || {
-            echo "skew: refresh: make install failed"; return 1; }
+        local _sha
+        _sha="$(git -C "$repo" rev-parse HEAD)" \
+            && release build "$_sha" --repo "$repo" --releases "$SPIRA_RELEASES" >/dev/null \
+            && release verify "$_sha" --releases "$SPIRA_RELEASES" \
+            && release activate "$_sha" --repo "$repo" --landed-ref "$_base" --releases "$SPIRA_RELEASES" || {
+            echo "skew: refresh: release build/verify/activate of $_sha failed"; return 1; }
         echo "skew: refreshed — new release installed ($_behind commit(s))"
         overrides.sh apply "$repo"
         return 0

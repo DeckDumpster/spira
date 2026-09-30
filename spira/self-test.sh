@@ -2,8 +2,8 @@
 #
 # self-test.sh <release-dir> — the release's own self-test: every binary the
 # MANIFEST names is present, executable, and hashes to what MANIFEST recorded
-# at build time. Catches a release corrupted or hand-edited between `make
-# install` writing it and pre-activate.sh checking it.
+# at build time. Catches a release corrupted or hand-edited between `release
+# build` writing it and pre-activate.sh checking it.
 set -uo pipefail
 
 REL="${1:?usage: self-test.sh <release-dir>}"
