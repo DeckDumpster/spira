@@ -1128,12 +1128,14 @@ dependencies = [
 name = "spira-config"
 version = "1.0.0"
 dependencies = [
+ "libc",
  "schemars",
  "serde",
  "serde_json",
  "serde_path_to_error",
  "testkit",
  "toml",
+ "tsd",
 ]
 
 [[package]]
