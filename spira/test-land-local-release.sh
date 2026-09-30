@@ -52,18 +52,11 @@ rm -f "$MAIL_BODY_FILE"
 # ---------------------------------------------------------------------------
 REPO="$TMP/repo"
 git init -q -b trunk "$REPO"
-mkdir -p "$REPO/src" "$REPO/spira" "$REPO/systemd"
-cat > "$REPO/Cargo.toml" <<'EOF'
-[package]
-name = "fakebin"
-version = "0.1.0"
-edition = "2021"
-
-[[bin]]
-name = "fakebin"
-path = "src/main.rs"
-EOF
-echo 'fn main() {}' > "$REPO/src/main.rs"
+mkdir -p "$REPO/fakebin/src" "$REPO/spira" "$REPO/systemd"
+# A one-member workspace: release reads the [[bin]] targets from [workspace].members.
+printf '[workspace]\nmembers = ["fakebin"]\n' > "$REPO/Cargo.toml"
+printf '[package]\nname = "fakebin"\nversion = "0.1.0"\nedition = "2021"\n' > "$REPO/fakebin/Cargo.toml"
+echo 'fn main() {}' > "$REPO/fakebin/src/main.rs"
 printf '#!/bin/sh\nexit 0\n' > "$REPO/spira/pre-activate.sh"
 chmod +x "$REPO/spira/pre-activate.sh"
 cat > "$REPO/systemd/spira-fake.service" <<'EOF'
@@ -72,7 +65,7 @@ Type=simple
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 ExecStart=@SPIRA_RELEASE@/bin/fakebin
 EOF
-git -C "$REPO" add Cargo.toml src spira systemd
+git -C "$REPO" add Cargo.toml fakebin spira systemd
 git -C "$REPO" -c core.hooksPath=/dev/null commit -q -m base
 git -C "$REPO" branch local/main trunk
 

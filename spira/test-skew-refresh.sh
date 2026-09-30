@@ -320,24 +320,17 @@ LREPO="$TMP/local-repo"
 git init -q -b trunk "$LREPO"
 git -C "$LREPO" config user.email "test@test"
 git -C "$LREPO" config user.name "test"
-mkdir -p "$LREPO/src"
-cat > "$LREPO/Cargo.toml" <<'EOF'
-[package]
-name = "fakebin"
-version = "0.1.0"
-edition = "2021"
-
-[[bin]]
-name = "fakebin"
-path = "src/main.rs"
-EOF
-echo 'fn main() {}' > "$LREPO/src/main.rs"
+mkdir -p "$LREPO/fakebin/src"
+# A one-member workspace: release reads the [[bin]] targets from [workspace].members.
+printf '[workspace]\nmembers = ["fakebin"]\n' > "$LREPO/Cargo.toml"
+printf '[package]\nname = "fakebin"\nversion = "0.1.0"\nedition = "2021"\n' > "$LREPO/fakebin/Cargo.toml"
+echo 'fn main() {}' > "$LREPO/fakebin/src/main.rs"
 # What release verify needs of a release: its own pre-activate.sh and a systemd/ directory.
 mkdir -p "$LREPO/spira" "$LREPO/systemd"
 printf '#!/bin/sh\nexit 0\n' > "$LREPO/spira/pre-activate.sh"
 chmod +x "$LREPO/spira/pre-activate.sh"
 printf '[Service]\nExecStart=@SPIRA_RELEASE@/bin/fakebin\n' > "$LREPO/systemd/spira-fake.service"
-git -C "$LREPO" add Cargo.toml src spira systemd
+git -C "$LREPO" add Cargo.toml fakebin spira systemd
 git -C "$LREPO" commit -q -m base
 git -C "$LREPO" branch local/main trunk
 
