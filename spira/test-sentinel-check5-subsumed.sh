@@ -80,7 +80,7 @@ chmod +x "$TMP/mock-incident.sh"
 HOME_REPO="$(basename "$REPO")"
 printf '%s | %s | pr | main | |\n' "$HOME_REPO" "$REPO" > "$TMP/repo-map"
 
-sentinel() {
+run_sentinel() {
     SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$HOME_REPO" \
     SPIRA_GOAL=sp-goal SPIRA_FAYTHS=t SPIRA_INFERENCE_EVERY=999999 \
@@ -88,7 +88,7 @@ sentinel() {
     SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
     SPIRA_CONF="$TMP/no-such-conf" \
     SPIRA_INCIDENT_SH="$TMP/mock-incident.sh" \
-    SPIRA_SKIP_RECLAIM=1 PATH="$SH:$PATH" \
+    SPIRA_SKIP_RECLAIM=1 \
         sentinel --audit 2>&1
 }
 
@@ -112,7 +112,7 @@ JSONL
 touch "$RUN/sp-bare.log"
 rm -f "$RUN/landstate/sp-bare"
 : > "$INC_LOG"
-sentinel >/dev/null
+run_sentinel >/dev/null
 inc_out="$(cat "$INC_LOG")"
 want "positive control: an ordinary closed bead IS reported" "REF=closed-not-landed:sp-bare" "$inc_out"
 
@@ -131,7 +131,7 @@ touch "$RUN/sp-subs.log"
 rm -f "$RUN/landstate/sp-subs"
 : > "$INC_LOG"
 
-sentinel >/dev/null
+run_sentinel >/dev/null
 is "sp-subs stays closed either way" closed "$(status_of sp-subs)"
 inc_out="$(cat "$INC_LOG")"
 nowant "no incident is filed for the subsumed bead" "sp-subs" "$inc_out"

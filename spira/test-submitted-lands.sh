@@ -66,6 +66,8 @@ stub gh         'exit 1'
 gate_pass() { stub gate.sh 'echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2; exit 0'; }
 gate_fail() { stub gate.sh 'echo "gate: VERDICT=FAIL reason=stub-fail branch=$1 repo=${2:-?}" >&2; exit 1'; }
 gate_pass
+# The fixture home (and its stubs) is the harness in force: bare names resolve here first.
+export PATH="$SPIRA_HOME:$PATH"
 
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
@@ -112,7 +114,7 @@ landing() {
 }
 sending() {
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO=fixture SPIRA_GH="$SPIRA_HOME/gh" \
-        bash "$SPIRA_HOME/sending.sh" 2>&1
+        sending.sh 2>&1
 }
 on_base() { git -C "$REPO" fetch -q origin 2>/dev/null; git -C "$REPO" log --format=%s origin/main 2>/dev/null; }
 

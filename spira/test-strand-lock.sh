@@ -124,7 +124,7 @@ cat >/dev/null
 STUB
 chmod +x "$BARRIER_HOME/mail.sh"
 
-env SPIRA_RUN="$TMP/run" SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$BARRIER_HOME" \
+env SPIRA_RUN="$TMP/run" SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$BARRIER_HOME" PATH="$BARRIER_HOME:$PATH" \
     strand check --from "$TMP/fixture.tsv" >"$TMP/runner1.log" 2>&1 &
 P1=$!
 
