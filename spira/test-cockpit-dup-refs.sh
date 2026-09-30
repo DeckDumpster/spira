@@ -44,7 +44,7 @@ dup_refs() {    # dup_refs <fixture-file>
         SPIRA_DB="$TMP/nodb" \
         SPIRA_RUN="$TMP" \
         SPIRA_BDJSON_FIXTURE="$1" \
-        bash "$HERE/cockpit.sh" dup_refs 2>/dev/null
+        cockpit.sh dup_refs 2>/dev/null
 }
 key() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1; }
 

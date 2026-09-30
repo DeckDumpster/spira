@@ -349,18 +349,14 @@ else
 fi
 
 step "watchers"
-if [ -x "$SPIRA_HOME/watchd.sh" ]; then
-    "$SPIRA_HOME/watchd.sh" status 2>&1 | sed 's/^/  /'
-else
-    say "  (watchd.sh not found — skipped)"
-fi
+watchd.sh status 2>&1 | sed 's/^/  /'
 
 echo
 if [ "$fail" -eq 0 ]; then
     say "cockpit rebuilt. Attach with:  tmux attach -t cockpit"
     say "A watcher's Monitor cannot be started by a script — re-attach them in the session:"
-    say "    Monitor: $SPIRA_HOME/watchd.sh tail answers"
-    say "    Monitor: $SPIRA_HOME/watchd.sh tail view"
+    say "    Monitor: watchd.sh tail answers"
+    say "    Monitor: watchd.sh tail view"
     exit 0
 fi
 warn "$fail check(s) failed — the cockpit is NOT fully rebuilt"

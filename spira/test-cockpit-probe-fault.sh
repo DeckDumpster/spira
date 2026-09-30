@@ -444,7 +444,7 @@ run_probe() {
         SPIRA_REPO_MAP="$TMP/no-map" \
         BD_TIMEOUT=1 \
         "$@" \
-        bash "$HERE/cockpit.sh" "$sub" 2>/dev/null
+        cockpit.sh "$sub" 2>/dev/null
 }
 mkdir -p "$TMP/run"
 

@@ -101,11 +101,9 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' \
 # THE SHIM stands in for the model. It extracts the bead id and the worktree path from
 # the prompt, makes a commit in the worktree naming the bead, then closes it.
 #
-# SPIRA_AGENT IS THE INJECTION POINT. The guard below ensures the real model can never
-# run accidentally — conf.sh replaces PATH, so shimming via PATH alone would not reach it.
+# SPIRA_AGENT IS THE INJECTION POINT: the aeon (the tree's own build, on this suite's PATH)
+# runs the shim below as its agent, so the real model can never run.
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP SPIRA_DB
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || { echo "test-cross-repo: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run real model" >&2; exit 1; }
 
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
@@ -138,7 +136,7 @@ print(d[0].get("status") or "")'; }
 
 run_aeon() { rm -rf "$SPIRA_RUN/worktree"; \
     SPIRA_REPO="$HOME_REPO" SPIRA_HOME_REPO=home \
-    "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/aeon.out" 2>&1; }
+    aeon --home "$SPIRA_HOME" builder > "$TMP/aeon.out" 2>&1; }
 
 seed() {
     testdb_reset

@@ -39,12 +39,12 @@ export SPIRA_CONCIERGE_INBOX_DEDUP=2
 
 echo "inbox-append.sh — one line per call, at the configured (non-default) path"
 is "the inbox does not exist yet" "0" "$([ -f "$SPIRA_CONCIERGE_INBOX" ] && echo 1 || echo 0)"
-bash "$HERE/inbox-append.sh" "hello world"
+inbox-append.sh "hello world"
 want "a line lands with a UTC timestamp"  "hello world" "$(cat "$SPIRA_CONCIERGE_INBOX")"
 want "and an ISO-8601 Z timestamp prefix" "T" "$(head -1 "$SPIRA_CONCIERGE_INBOX")"
 n="$(wc -l < "$SPIRA_CONCIERGE_INBOX")"
 is  "exactly one line" "1" "$n"
-bash "$HERE/inbox-append.sh" "second event"
+inbox-append.sh "second event"
 n="$(wc -l < "$SPIRA_CONCIERGE_INBOX")"
 is  "a second call appends, never truncates" "2" "$n"
 
@@ -59,9 +59,9 @@ is   "an explicit SPIRA_MAIL_READERS is never overwritten" "concierge=echo wake"
 echo
 echo "the inbox-keeper watchd row — a harness watchd row, not an operator overlay file"
 want "spira/watchers carries an inbox-keeper daemon row" \
-    "inbox-keeper|daemon|@SPIRA_HOME@/inbox-keeper.sh" "$(cat "$HERE/watchers")"
+    "inbox-keeper|daemon|inbox-keeper.sh" "$(cat "$HERE/watchers")"
 MAN="$TMP/elsewhere/manifest-check"
-SPIRA_WATCHERS_OVERLAY="$TMP/elsewhere/no-overlay" bash "$HERE/watchd.sh" manifest \
+SPIRA_WATCHERS_OVERLAY="$TMP/elsewhere/no-overlay" watchd.sh manifest \
     > "$MAN" 2>"$TMP/elsewhere/manifest.err"; rc=$?
 is   "the shipped manifest, alone, still parses" "0" "$rc"
 want "and names inbox-keeper as a daemon row" "inbox-keeper|daemon" "$(cat "$MAN")"
@@ -72,15 +72,15 @@ echo "inbox-triage.sh — drops its own known noise, dedups, passes the rest"
 # about the pattern and not about the fixture being unable to pass anything at all.
 : > "$SPIRA_CONCIERGE_INBOX"
 OUT="$TMP/elsewhere/triage.out"
-bash "$HERE/inbox-triage.sh" > "$OUT" 2>/dev/null &
+inbox-triage.sh > "$OUT" 2>/dev/null &
 TRIAGE_PID=$!
 trap 'kill "$TRIAGE_PID" 2>/dev/null; rm -rf "$TMP"' EXIT INT TERM
 sleep 0.5   # let tail -F attach before anything is written
 
-bash "$HERE/inbox-append.sh" "a decision needs a bead: sp-example wants review"
-bash "$HERE/inbox-append.sh" "ROUND RESULT: nothing to do"
-bash "$HERE/inbox-append.sh" "watcher x OPENED a new pane"
-bash "$HERE/inbox-append.sh" "pool: NEW CERTIFIED tip abc123"
+inbox-append.sh "a decision needs a bead: sp-example wants review"
+inbox-append.sh "ROUND RESULT: nothing to do"
+inbox-append.sh "watcher x OPENED a new pane"
+inbox-append.sh "pool: NEW CERTIFIED tip abc123"
 sleep 1
 
 want "an ordinary event passes through (positive control)" "a decision needs a bead" "$(cat "$OUT")"
@@ -89,16 +89,16 @@ nowant "an OPENED line is dropped"  " OPENED "     "$(cat "$OUT")"
 nowant "a pool NEW CERTIFIED line is dropped" "pool: NEW CERTIFIED" "$(cat "$OUT")"
 
 : > "$OUT"
-bash "$HERE/inbox-append.sh" "escalation: needs a decision"
+inbox-append.sh "escalation: needs a decision"
 sleep 0.3
-bash "$HERE/inbox-append.sh" "escalation: needs a decision"
+inbox-append.sh "escalation: needs a decision"
 sleep 0.5
 n="$(wc -l < "$OUT")"
 is "a repeat within the dedup window is suppressed" "1" "$n"
 
 : > "$OUT"
 sleep 2.5   # past SPIRA_CONCIERGE_INBOX_DEDUP=2
-bash "$HERE/inbox-append.sh" "escalation: needs a decision"
+inbox-append.sh "escalation: needs a decision"
 sleep 0.5
 n="$(wc -l < "$OUT")"
 is "the same text past the dedup window passes again" "1" "$n"

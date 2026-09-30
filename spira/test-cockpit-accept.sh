@@ -33,7 +33,7 @@ run_unsent() {
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
         "$@" \
-        bash "$HERE/cockpit.sh" unsent 2>/dev/null
+        cockpit.sh unsent 2>/dev/null
 }
 
 # A non-default SPIRA_PROD: the code strips a trailing "/spira" to find the repo

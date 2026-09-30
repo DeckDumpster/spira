@@ -48,7 +48,7 @@ run_core() {
         SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_BD="$bd_path" \
-        bash "$HERE/cockpit.sh" core 2>/dev/null
+        cockpit.sh core 2>/dev/null
 }
 
 # Build a mock bd that returns a given JSON array when queried for the plan partition
@@ -145,7 +145,7 @@ ops|${SPIRA_SCOPE_LABEL},incident|
 "
 uc16_out="$(PARTS="$UC16_PARTS" ALL_PARTS="$UC16_PARTS" \
     SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" SPIRA_CI_LABEL=awaiting-ci SPIRA_ASK_LABEL=needs-ryan \
-    python3 "$HERE/unclaimable.py" <<< "$CASE4_JSON")"
+    unclaimable.py <<< "$CASE4_JSON")"
 nowant "UC-16 classifier agrees sp-uc4a is claimable"    "sp-uc4a"               "$uc16_out"
 want   "UC-16 classifier agrees sp-uc4b is unclaimable"  "UNCLAIMABLE sp-uc4b"   "$uc16_out"
 

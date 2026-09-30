@@ -102,7 +102,7 @@ run_watchdog() {
 
     env -i HOME="$TMP" PATH="$BIN:/usr/bin:/bin" SPIRA_PATH="$BIN" \
         SPIRA_REPO="$TMP" SPIRA_COCKPIT="$TMP/cockpit" SPIRA_RUN="$RUN" \
-        SPIRA_LOOM_BIN="" COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \
+        COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \
         COCKPIT_MAIL="" \
         SPIRA_INSTANCE="$instance" \
         SPIRA_PROD="$PROD" \
@@ -149,7 +149,7 @@ echo "replaced during a pass: a promotion after an earlier fresh check is still 
 run_watchdog_once() {
     env -i HOME="$TMP" PATH="$BIN:/usr/bin:/bin" SPIRA_PATH="$BIN" \
         SPIRA_REPO="$TMP" SPIRA_COCKPIT="$TMP/cockpit" SPIRA_RUN="$RUN" \
-        SPIRA_LOOM_BIN="" COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \
+        COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \
         COCKPIT_MAIL="" \
         SPIRA_INSTANCE=prod SPIRA_PROD="$PROD" \
         MOCK_ACTIVE_SFX=prod MOCK_RESTART_LOG="$RESTART_LOG" MOCK_PS_ELAPSED="$1" \

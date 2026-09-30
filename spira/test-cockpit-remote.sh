@@ -22,8 +22,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 . "$HERE/conf.sh" >/dev/null 2>&1
 REMOTE_DIR="$(dirname "$HERE")/cockpit/remote"
-[ -x "${SPIRA_LINT_BIN:-}" ] || bail "spira-lint is not built (SPIRA_LINT_BIN)"
-inventory_scan() { "$SPIRA_LINT_BIN" --only inventory --scan "$1" 2>/dev/null; }
+inventory_scan() { spira-lint --only inventory --scan "$1" 2>/dev/null; }
 
 
 echo "test-cockpit-remote.sh"

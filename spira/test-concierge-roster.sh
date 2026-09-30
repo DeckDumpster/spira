@@ -140,9 +140,7 @@ echo
 echo "session hook records the concierge session id on context reset"
 
 # The hook sources conf.sh, whose SPIRA_CONF (a spira.conf) is auto-converted through
-# spira-config (sp-zs04v.2). env -i drops SPIRA_ARTIFACTS, so the hook's conf.sh would look in
-# $SPIRA_REPO/bin and fail; hand it the binary the way test-session-hook.sh does.
-SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)" || skip "no spira-config binary found — cannot be built here"
+# spira-config (sp-zs04v.2) — found by name on the PATH env -i keeps (sp-gypjk).
 
 # The hook fires with source=clear (or startup/compact) and a new session_id;
 # SPIRA_CONCIERGE=1 gates recording.
@@ -164,7 +162,7 @@ run_hook() {  # run_hook <session_id> <source> [extra-env...]
     local sid="$1" src="$2"; shift 2
     printf '{"hook_event_name":"SessionStart","session_id":"%s","source":"%s","cwd":"%s"}' \
         "$sid" "$src" "$SID_HOOK_DIR" \
-      | env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" SPIRA_CONF="$HOOK_CONF" "$@" \
+      | env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$HOOK_CONF" "$@" \
         bash "$HOOK" >/dev/null 2>&1
 }
 
@@ -226,7 +224,7 @@ run_hook_link() {
     local sid="$1" src="$2"; shift 2
     printf '{"hook_event_name":"SessionStart","session_id":"%s","source":"%s","cwd":"%s"}' \
         "$sid" "$src" "$SID_LINK_DIR" \
-      | env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" SPIRA_CONF="$HOOK_CONF_LINK" "$@" \
+      | env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$HOOK_CONF_LINK" "$@" \
         bash "$HOOK" >/dev/null 2>&1
 }
 # NEGATIVE CONTROL: a symlink SPIRA_PROD pointing somewhere else must still refuse.
@@ -246,7 +244,7 @@ EOF
 rm -f "$SID_LINK_DIR/run/concierge-session"
 printf '{"hook_event_name":"SessionStart","session_id":"%s","source":"%s","cwd":"%s"}' \
     "hook-sid-refused" "startup" "$SID_LINK_DIR" \
-  | env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" SPIRA_CONF="$HOOK_CONF_OTHER" SPIRA_CONCIERGE=1 \
+  | env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$HOOK_CONF_OTHER" SPIRA_CONCIERGE=1 \
     bash "$HOOK" >/dev/null 2>&1
 is "symlink SPIRA_PROD to a different dir is still refused" \
    "" "$(cat "$SID_LINK_DIR/run/concierge-session" 2>/dev/null)"

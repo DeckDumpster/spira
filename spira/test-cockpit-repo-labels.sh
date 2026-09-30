@@ -52,7 +52,7 @@ run_repo_labels() {    # run_repo_labels <fixture-file> [KEY=val ...]
         SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-goal SPIRA_FAYTHS=t \
         SPIRA_ASK_LABEL=needs-ryan \
         "$@" \
-        bash "$HERE/cockpit.sh" repo_labels 2>/dev/null
+        cockpit.sh repo_labels 2>/dev/null
 }
 field() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1; }
 

@@ -52,8 +52,6 @@ _PROD_PATH="$PATH"
 # ─── incident helper (writes to PRODUCTION, not the stage) ───────────────────
 _file_incident() {
     local title="$1" body="$2"
-    local inc="$HERE/incident.sh"
-    [ -r "$inc" ] || return 0
     [ -n "$_PROD_DB" ] || return 0
     SPIRA_DB="$_PROD_DB" SPIRA_RUN="${_PROD_RUN:-/tmp/canary-inc-$$}" \
     SPIRA_HOME="$_PROD_HOME" SPIRA_NOTIFY="${_PROD_NOTIFY:-/bin/true}" \
@@ -64,7 +62,7 @@ _file_incident() {
     SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
     SPIRA_INCIDENT_REF="canary:pipeline" \
     SPIRA_INCIDENT_CAUSE=canary-fail \
-        bash "$inc" file "$title" - <<< "$body" >/dev/null 2>&1 || true
+        incident.sh file "$title" - <<< "$body" >/dev/null 2>&1 || true
 }
 
 # ─── stage setup ─────────────────────────────────────────────────────────────
@@ -78,7 +76,7 @@ if [ -n "$EXTERNAL_STAGE" ]; then
     STAGE_ROOT="${STAGE_ROOT:-$EXTERNAL_STAGE}"
     _OWN_STAGE=0
 else
-    eval "$(bash "$HERE/stage.sh" up)" \
+    eval "$(stage.sh up)" \
         || _die "could not set up stage"
     _OWN_STAGE=1
 fi
@@ -88,7 +86,7 @@ _log "stage: STAGE_ROOT=$STAGE_ROOT"
 _cleanup() {
     local rc=$?
     if [ "${_OWN_STAGE:-0}" = 1 ] && [ -n "${STAGE_ROOT:-}" ]; then
-        bash "$HERE/stage.sh" down "$STAGE_ROOT" 2>/dev/null || true
+        stage.sh down "$STAGE_ROOT" 2>/dev/null || true
     fi
     exit $rc
 }
@@ -133,7 +131,7 @@ SPIRA_FAYTHS="$SPIRA_FAYTHS" SPIRA_MAX_AEONS="$SPIRA_MAX_AEONS" \
 SPIRA_GOAL="$SPIRA_GOAL" \
 SPIRA_SUMMON="$SPIRA_SUMMON" SPIRA_LAUNCH="$SPIRA_LAUNCH" \
 SPIRA_NOTIFY="$SPIRA_NOTIFY" SPIRA_BD="$SPIRA_BD" \
-    "$SPIRA_SENTINEL_BIN" 2>&1 | sed 's/^/  sentinel: /' || true
+    sentinel 2>&1 | sed 's/^/  sentinel: /' || true
 
 # Verify the worker closed the bead.
 _bead_st="$(bd -C "$SPIRA_DB" show "$_bead_id" --json 2>/dev/null \
@@ -157,7 +155,7 @@ _log "running landing pass"
 SPIRA_HOME="$SPIRA_HOME" SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB" \
 SPIRA_REPO="$SPIRA_REPO" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
 SPIRA_BD="$SPIRA_BD" SPIRA_NOTIFY="$SPIRA_NOTIFY" \
-    "$SPIRA_LANDING_PASS_BIN" land 2>&1 | sed 's/^/  landing: /' || true
+    landing-pass land 2>&1 | sed 's/^/  landing: /' || true
 
 # ─── assert commit on origin/main --------------------------------------------
 # The bead id must appear in a commit subject on the remote's main branch.

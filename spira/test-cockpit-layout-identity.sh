@@ -70,7 +70,6 @@ SPIRA_REPO="$TMP" \
 SPIRA_RUN="$TMP/.runtime" \
 SPIRA_HOME="$HERE" \
 SPIRA_CONF="$TMP/no.conf" \
-SPIRA_PANEL="$TMP/fake/nonexistent-panel" \
 COCKPIT_CLIENT_IDLE_SECS=0 \
     bash "$LAYOUT" ensure --window cockpit:0 >/dev/null 2>&1 || true
 sleep 0.3

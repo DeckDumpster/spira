@@ -27,16 +27,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 echo "test-conf-toml.sh"
 
 # ==========================================================================
-# Resolve or build the spira-config binary. Skip (not fail) if cargo is unavailable — every
-# case below, including T0, needs it. Checked BEFORE any case runs: testlib's skip() bails
-# instead of skipping once a case has already recorded (law-a-refusal-names-its-exit).
-# ==========================================================================
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-if [ -z "$CARGO_BIN" ]; then
-    skip "cargo not found — spira-config binary cannot be built"
-fi
-
+# spira-config is the tree's own build, found by name on this suite's PATH (sp-gypjk).
 # ==========================================================================
 echo
 echo "T0 — the old KEY=value reader is gone from conf.sh:"
@@ -49,21 +40,7 @@ fi
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 CRATE="$HERE/../spira-config"
-SPIRA_CONFIG_BIN="$HERE/../target/release/spira-config"
-if [ ! -x "$SPIRA_CONFIG_BIN" ]; then
-    printf '  (building spira-config into %s)\n' "$T/target"
-    CARGO_TARGET_DIR="$T/target" "$CARGO_BIN" build --release \
-        --manifest-path "$CRATE/Cargo.toml" >/dev/null 2>&1
-    SPIRA_CONFIG_BIN="$T/target/release/spira-config"
-fi
-if [ -x "$SPIRA_CONFIG_BIN" ]; then
-    ok "spira-config binary is present and executable"
-else
-    bail "spira-config binary not found/built at $SPIRA_CONFIG_BIN"
-fi
-
-# A minimal harness tree so conf.sh resolves sensibly; SPIRA_CONFIG_BIN is passed in
-# explicitly since this scratch tree carries no compiled binaries of its own.
+# A minimal harness tree so conf.sh resolves sensibly; spira-config comes from PATH.
 HARNESS="$T/harness"
 mkdir -p "$HARNESS/spira"
 ln -s "$HERE/conf.sh" "$HARNESS/spira/conf.sh"
@@ -75,7 +52,7 @@ printf '# empty\n' > "$HARNESS/spira/watchers"
 conf_val() {
     local key="$1"; shift
     env -i PATH="$PATH" HOME="$T/home" \
-        SPIRA_CONF=/nonexistent SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+        SPIRA_CONF=/nonexistent\
         SPIRA_WATCHERS="$HARNESS/spira/watchers" \
         "$@" \
         bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${${key}:-}\"" 2>/dev/null
@@ -86,7 +63,7 @@ echo
 echo "T1 — spira.toml -> conf.sh's environment matches spira-config export --sh, key by key:"
 # ==========================================================================
 FIXTURE="$CRATE/tests/fixtures/golden.toml"
-exported="$("$SPIRA_CONFIG_BIN" export --sh "$FIXTURE")"
+exported="$(spira-config export --sh "$FIXTURE")"
 checked=0 mismatch=0
 while IFS='=' read -r rawkey rest; do
     [ -n "$rawkey" ] || continue
@@ -187,7 +164,7 @@ SHRINK_TOML="$SHRINK_DIR/spira.toml"
 SHRINK_CONF="$SHRINK_DIR/spira.conf"
 printf 'SPIRA_PROD = %s\n' "$SHRINK_DIR/prod" > "$SHRINK_CONF"
 
-"$SPIRA_CONFIG_BIN" convert --conf "$SHRINK_CONF" \
+spira-config convert --conf "$SHRINK_CONF" \
     --repo-map "$CRATE/tests/fixtures/repo-map" \
     --fayth "$CRATE/tests/fixtures/chamber/builder.fayth" \
     --fayth "$CRATE/tests/fixtures/chamber/ops.fayth" \
@@ -195,7 +172,7 @@ printf 'SPIRA_PROD = %s\n' "$SHRINK_DIR/prod" > "$SHRINK_CONF"
 before="$(cat "$SHRINK_TOML" 2>/dev/null)"
 want "first (full) conversion has [repo.home]" "[repo.home]" "$before"
 
-if "$SPIRA_CONFIG_BIN" convert --conf "$SHRINK_CONF" --home "$SHRINK_DIR" \
+if spira-config convert --conf "$SHRINK_CONF" --home "$SHRINK_DIR" \
     --out "$SHRINK_TOML" >/dev/null 2>&1
 then
     bad "convert refuses to shrink the existing document" "exited 0 instead of refusing"
@@ -232,20 +209,15 @@ is "SPIRA_PROD survives an unwritable SPIRA_REPO" "$ro_prod" "$got_ro_prod"
 echo
 echo "BOOTSTRAP — no spira-config binary anywhere: cargo stays reachable:"
 # ==========================================================================
-# A fresh worktree (no target/, no bin/ — $HARNESS above has neither) cannot resolve
-# SPIRA_CONFIG_BIN, so nothing can be read from spira.conf or spira.toml at all: every
-# SPIRA_* key falls back to its derived default, including SPIRA_PATH (empty). If cargo
-# is reachable only through a configured SPIRA_PATH, this is a deadlock: the binary that
-# would let a worktree build its own spira-config needs cargo on PATH, and cargo isn't
-# there until spira.toml is read. SPIRA_CONFIG_BIN is deliberately left unset (not passed)
-# so the worktree resolves it on its own and finds nothing.
+# conf.sh keeps the caller's PATH first and APPENDS the box tail, ~/.cargo/bin included (the
+# gate and testenv build trees under test with cargo), even with no config readable at all.
 BOOT_HOME="$T/boot-home"
 mkdir -p "$BOOT_HOME/.cargo/bin"
 printf '#!/bin/sh\nexit 0\n' > "$BOOT_HOME/.cargo/bin/cargo"
 chmod +x "$BOOT_HOME/.cargo/bin/cargo"
 boot_path="$(env -i PATH=/usr/bin:/bin HOME="$BOOT_HOME" SPIRA_CONF=/nonexistent \
     bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\$PATH\"" 2>/dev/null)"
-want "conf.sh's PATH still reaches \$HOME/.cargo/bin with no spira-config binary built" \
+want "conf.sh's PATH still reaches \$HOME/.cargo/bin with no config readable" \
     "$BOOT_HOME/.cargo/bin" "$boot_path"
 
 # ==========================================================================

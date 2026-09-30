@@ -40,7 +40,7 @@ run_reachable() {
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SCOPE_LABEL=spira \
         SPIRA_BD="$bd_path" \
-        bash "$HERE/cockpit.sh" reachable 2>/dev/null
+        cockpit.sh reachable 2>/dev/null
 }
 
 # Like run_reachable but passes SPIRA_SCOPE_LABEL so the scope filter is active.
@@ -53,7 +53,7 @@ run_reachable_scoped() {
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SCOPE_LABEL="$scope" \
         SPIRA_BD="$bd_path" \
-        bash "$HERE/cockpit.sh" reachable 2>/dev/null
+        cockpit.sh reachable 2>/dev/null
 }
 
 # =============================================================================

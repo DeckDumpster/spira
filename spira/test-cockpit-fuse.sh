@@ -47,7 +47,7 @@ run_now() {
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" BD_TIMEOUT=1 \
         "$@" \
-        bash "$HERE/cockpit.sh" now 2>/dev/null
+        cockpit.sh now 2>/dev/null
 }
 
 # make_aeon <bead> -> start a fake aeon process and write its pid file.

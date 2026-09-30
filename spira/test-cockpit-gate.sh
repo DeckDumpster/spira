@@ -34,7 +34,7 @@ run_now() {
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
         "$@" \
-        bash "$HERE/cockpit.sh" now 2>/dev/null
+        cockpit.sh now 2>/dev/null
 }
 run_unsent() {
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
@@ -43,7 +43,7 @@ run_unsent() {
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
         BD_TIMEOUT=1 \
         "$@" \
-        bash "$HERE/cockpit.sh" unsent 2>/dev/null
+        cockpit.sh unsent 2>/dev/null
 }
 
 # ======================================================================================
@@ -131,7 +131,7 @@ stderr_out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
     SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
-    bash "$HERE/gate-run.sh" --status spira/sp-nonexistent spira 2>&1 >/dev/null)" || true
+    gate-run.sh --status spira/sp-nonexistent spira 2>&1 >/dev/null)" || true
 nowant "no stderr from --status" "No such file" "$stderr_out"
 
 # ======================================================================================

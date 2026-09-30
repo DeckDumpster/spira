@@ -103,7 +103,7 @@ unlanded() {    # unlanded <fixture-file>
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
         SPIRA_BDJSON_FIXTURE="$1" \
-        bash "$HERE/cockpit.sh" unsent 2>/dev/null
+        cockpit.sh unsent 2>/dev/null
 }
 
 out="$(unlanded "$TMP/beads.json")"

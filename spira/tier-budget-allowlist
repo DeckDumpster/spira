@@ -282,7 +282,6 @@ test-limits.sh	T1	21.5
 test-literal-lint.sh	T1	51.5
 test-livelock.sh	T1	48.0
 test-loom-page.sh	T1	13.0
-test-loom-rebuild.sh	T1	3.5
 test-loop-readonly.sh	T1	10.0
 test-maechen-blind-window.sh	T1	21.5
 test-maechen-sibling-blind.sh	T1	2.0

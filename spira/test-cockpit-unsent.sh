@@ -114,7 +114,7 @@ unsent() {    # unsent <fixture-file>
         SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
         SPIRA_QUEUE_DIR="$RUN/queue" \
         SPIRA_BDJSON_FIXTURE="$1" \
-        bash "$HERE/cockpit.sh" unsent 2>/dev/null
+        cockpit.sh unsent 2>/dev/null
 }
 
 out="$(unsent "$TMP/beads.json")"

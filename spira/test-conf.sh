@@ -44,16 +44,13 @@ printf '# empty\n' > "$HARNESS/spira/repo-map.example"
 printf '# empty\n' > "$HARNESS/spira/watchers"
 
 # The "config file" block below exercises conf.sh's auto-convert-from-spira.conf path,
-# which shells out to spira-config. Skip (not fail) that one block if no prebuilt binary
-# is available, mirroring test-broker.sh (law-absence-needs-a-positive-control: skip, not
-# a vacuous pass on the auto-convert assertion).
-SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)"
+# which calls spira-config by name on this suite's PATH (sp-gypjk).
 
 # Load conf.sh in a subprocess and print the value of the requested key.
 conf_val() {
     local key="$1"; shift
     env -i "$@" PATH="$PATH" HOME="$TMP/home" \
-        SPIRA_CONF=/nonexistent SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+        SPIRA_CONF=/nonexistent \
         SPIRA_WATCHERS="$HARNESS/spira/watchers" \
         bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${${key}:-}\"" 2>/dev/null
 }
@@ -89,22 +86,18 @@ want "default includes SPIRA_WORKSPACES path" "$ws_b" "$prod_b"
 echo
 echo "config file — SPIRA_PROD from spira.conf wins over derived default:"
 # ==========================================================================
-if [ -z "$SPIRA_CONFIG_BIN" ]; then
-    echo "SKIP: no spira-config binary found — cannot auto-convert spira.conf"
-else
-    CONF_FILE="$TMP/spira.conf"
-    conf_prod="$TMP/conf-chosen/spira"
-    printf 'SPIRA_PROD = %s\n' "$conf_prod" > "$CONF_FILE"
-    got="$(env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF="$CONF_FILE" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
-        bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_PROD:-}\"" 2>/dev/null)"
-    is "config-file SPIRA_PROD wins over derived default" "$conf_prod" "$got"
+CONF_FILE="$TMP/spira.conf"
+conf_prod="$TMP/conf-chosen/spira"
+printf 'SPIRA_PROD = %s\n' "$conf_prod" > "$CONF_FILE"
+got="$(env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF="$CONF_FILE" \
+    bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_PROD:-}\"" 2>/dev/null)"
+is "config-file SPIRA_PROD wins over derived default" "$conf_prod" "$got"
 
-    # env still overrides the config file
-    override="$TMP/env-overrides/spira"
-    got="$(env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF="$CONF_FILE" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" SPIRA_PROD="$override" \
-        bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_PROD:-}\"" 2>/dev/null)"
-    is "env wins over config file" "$override" "$got"
-fi
+# env still overrides the config file
+override="$TMP/env-overrides/spira"
+got="$(env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF="$CONF_FILE" SPIRA_PROD="$override" \
+    bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_PROD:-}\"" 2>/dev/null)"
+is "env wins over config file" "$override" "$got"
 
 # ==========================================================================
 echo
