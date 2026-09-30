@@ -268,6 +268,11 @@ impl World for Real {
             }
         }
     }
+    fn certify_par_live(&self) -> Option<u64> {
+        let p = spira_config::discover(None)?;
+        let doc = spira_config::load(&p).ok()?;
+        doc.spira.as_ref()?.certify_par.map(u64::from)
+    }
     fn cargo_metadata(&self, tree: &Path, path: &str, home: &str) -> Result<String, String> {
         let o = Command::new("cargo")
             .args([
@@ -522,7 +527,7 @@ impl World for Real {
             .map(|kib| kib / 1024)
             .unwrap_or(1600)
     }
-    fn admission_try(&self, dir: &Path, slot: u64) -> bool {
+    fn admission_try(&self, dir: &Path, slot: u64, who: &str) -> bool {
         let Ok(f) = OpenOptions::new()
             .create(true)
             .write(true)
@@ -533,9 +538,21 @@ impl World for Real {
         };
         if Self::flock_nb(&f) {
             self.admission.borrow_mut().push(f);
+            use spira_config::admission as adm;
+            let me = std::process::id();
+            let start = adm::Procs::start_of(&adm::RealProcs, me).unwrap_or(0);
+            let _ = fs::write(
+                dir.join(format!("slot.{slot}.holder")),
+                adm::gate_holder_line(me, start, who, adm::now_epoch()),
+            );
             return true;
         }
         false
+    }
+    fn admission_wait_line(&self, run: &str, par: u64) -> String {
+        use spira_config::admission as adm;
+        let o = adm::gate_occupancy(Path::new(run), par);
+        adm::wait_line(adm::Pool::Gate, par, &o.holders, adm::now_epoch())
     }
     fn tree_lock_open(&self, lock: &Path) -> bool {
         match OpenOptions::new()

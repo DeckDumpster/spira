@@ -1,6 +1,6 @@
 [Unit]
 Description=Spira czar fast pass — queue-stall detection with deterministic remedies
-Documentation=file://@SPIRA_HOME@/czar.sh
+Documentation=file://@SPIRA_HOME@/../czar-pass/src/main.rs
 After=default.target
 
 [Service]
@@ -11,7 +11,7 @@ After=default.target
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
-ExecStart=@SPIRA_PROD@/czar.sh --pass
+ExecStart=@SPIRA_PROD_ROOT@/bin/czar-pass --pass
 # A pass reads local files and makes at most 2 gh API calls; 60 s is generous.
 TimeoutStartSec=60
 Environment=SPIRA_HOME=@SPIRA_PROD@

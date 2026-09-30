@@ -18,14 +18,16 @@
 # tool — simulating a human running the tool from inside that other session.
 #
 # defect: sp-1biss
-# covers: cockpit/layout.sh cockpit/rebuild.sh
+# covers: cockpit/ops/src/layout.rs cockpit/ops/src/rebuild.rs
 # hermetic-ok: two servers of its own under one TMUX_TMPDIR; touches no operator state
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 COCKPIT_DIR="$HERE/../cockpit"
-LAYOUT="$COCKPIT_DIR/layout.sh"
-REBUILD="$COCKPIT_DIR/rebuild.sh"
+# `layout`/`rebuild` are binaries now (sp-llbmi), invoked by name from the tree's build
+# on PATH.
+LAYOUT="layout"
+REBUILD="rebuild"
 
 command -v tmux >/dev/null 2>&1 || skip "tmux not available"
 
@@ -49,8 +51,12 @@ echo "1. layout.sh up: a decoy \$TMUX must not steer the repair onto the decoy s
 # ======================================================================================
 RUN1="$T/run"; mkdir -p "$RUN1"
 FAKE_COCK="$T/fake-cockpit"; mkdir -p "$FAKE_COCK"
-printf '#!/usr/bin/env bash\nsleep 600\n' > "$FAKE_COCK/health.sh"
-chmod +x "$FAKE_COCK/health.sh"
+# `health` is a binary now (sp-llbmi), found via PATH ($SPIRA_RELEASE/bin) rather than
+# $SPIRA_COCKPIT — the pane's command line replaces PATH outright with
+# "$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:...", so the stub goes there.
+FAKE_RELEASE="$T"; mkdir -p "$FAKE_RELEASE/bin"
+printf '#!/usr/bin/env bash\nsleep 600\n' > "$FAKE_RELEASE/bin/health"
+chmod +x "$FAKE_RELEASE/bin/health"
 
 # REAL: the default socket (no -L) — stands in for the cockpit's own server. Named
 # "brain", not "cockpit", so section 2 below is free to use "cockpit" as the session
@@ -75,9 +81,10 @@ if [ -z "$decoy_sock" ] || [ -z "$decoy_pid" ]; then
 fi
 
 TMUX="$DECOY_TMUX" TMUX_PANE="$decoy_pane" \
+SPIRA_RELEASE="$FAKE_RELEASE" \
 SPIRA_COCKPIT="$FAKE_COCK" SPIRA_REPO="$T" SPIRA_RUN="$RUN1" SPIRA_HOME="$HERE" \
 SPIRA_CONF="$T/no.conf" COCKPIT_MAIL="" \
-    bash "$LAYOUT" up --window brain:0 >/dev/null 2>&1
+    "$LAYOUT" up --window brain:0 >/dev/null 2>&1
 rc=$?
 is "up exits 0 even with a decoy \$TMUX in the environment" "0" "$rc"
 
@@ -104,7 +111,7 @@ for s in $SESSLIST cockpit; do tmux -L decoy new-session -d -s "$s" -c "$T" 2>/d
 
 out="$(TMUX="$DECOY_TMUX" TMUX_PANE="$decoy_pane" \
     SPIRA_CONF="$T/no.conf" COCKPIT_SESSIONS="$SESSLIST" \
-    bash "$REBUILD" probe 2>&1)"
+    "$REBUILD" probe 2>&1)"
 
 want "probe reflects the REAL server: session cockpit MISSING" \
      "session cockpit" "$out"

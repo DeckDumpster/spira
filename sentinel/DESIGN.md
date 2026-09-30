@@ -140,8 +140,8 @@ grep them. The exact strings are the ones §4 quotes; `src/tests.rs` pins the pa
 | `landing.progress`, `landing.progress.drain.<pid>` | drain-by-rename | one line per movement | written by `landing-pass land`/stage.sh |
 | `inference.cooldown` | r/w | `<epoch>` | — |
 | `sending.base` | r/w (audit) | `<repo>=<sha>` lines | — |
-| `poison-asked/<id>`, `requeue-asked/<id>`, `reclaim-asked/<id>` | r, append | one count per line | lib.sh (attempts.sh clears) |
-| `poison-lifted/<id>` | r | last line = count lifted at | written by attempts.sh |
+| `poison-asked/<id>`, `requeue-asked/<id>`, `reclaim-asked/<id>` | r, append | one count per line | lib.sh (`spira-claim unpoison` clears `poison-asked`) |
+| `poison-lifted/<id>` | r | last line = count lifted at | written by `spira-claim deadlocked` (via `groomer.sh deadlocked`, spira-claim/DESIGN.md §9) |
 | `landstate/<id>` | r | `<STATE> <tip> …` | the landing pass |
 | `<id>.log` | existence (CHECK 5), trace tail (ask) | aeon session log | aeon.sh |
 | `roster-warn` stamp (`$SPIRA_ROSTER_WARN_STAMP`) | r/w | sorted excluded fayths | lib.sh |
@@ -915,7 +915,7 @@ named unit tests.
 | 37 | `test-deploy.sh:140,433` | the stub moves to `current/bin/sentinel` |
 | 39 | `spira/sending.sh:488` | `lc_content_on_base "$id" "merge-tree:$(git -C "$REPO" rev-parse "$LANDREF" 2>/dev/null)" sending >/dev/null 2>&1 \|\| true` | `if [ "${SPIRA_LIFECYCLE_ENFORCE:-0}" = 1 ]; then lc_content_on_base "$id" "merge-tree:$(git -C "$REPO" rev-parse "$LANDREF" 2>/dev/null)" sending >/dev/null 2>&1 \|\| true; else bdq label add "$id" content-landed >/dev/null 2>&1 \|\| true; fi` (restores CHECK 5's `content-landed` exemption in OFF mode) |
 | 40 | `strand` crate (`check.rs` `act_ghost`/`lc_holder_dead`; the wait-held exemption in `probe.rs`) | spira-lc only | behind `SPIRA_LIFECYCLE_ENFORCE`. OFF: `bd reclaim --id <id> --older-than 1s`, and the exemption reads the `spira-waiting-operator` label. That is strand's own change, not made here (§2.9 gaps) |
-| 38 | lib.sh functions left with no production caller | `check2_protect_waiting` (1363), `check2c_lc_consistency` (2335), `check2_reclaim_stale` (2348) — ported to `lifecycle.rs`; `check8_should_judge` (1697); `check4_closed_branched` (5600); `ready_cache_populate` (1563); `roster_warnings` (1051) | delete **after** the suites that drive them are retired: `test-check2-reclaim.sh`, `test-check2-reaper.sh`, `test-reclaim-escalated.sh` (→ `lifecycle::tests`), `test-check8-progressed.sh`, `test-roster-warn.sh` (→ `tests::roster_warnings_name_each_left_out_persona_once`), `test-poison.sh`/`test-sentinel-store-reads.sh` references. Not required for the cutover to work; `dispatchable_open` stays (attempts.sh). |
+| 38 | lib.sh functions left with no production caller | `check2_protect_waiting` (1363), `check2c_lc_consistency` (2335), `check2_reclaim_stale` (2348) — ported to `lifecycle.rs`; `check8_should_judge` (1697); `check4_closed_branched` (5600); `ready_cache_populate` (1563); `roster_warnings` (1051) | delete **after** the suites that drive them are retired: `test-check2-reclaim.sh`, `test-check2-reaper.sh`, `test-reclaim-escalated.sh` (→ `lifecycle::tests`), `test-check8-progressed.sh`, `test-roster-warn.sh` (→ `tests::roster_warnings_name_each_left_out_persona_once`), `test-poison.sh`/`test-sentinel-store-reads.sh` references. Not required for the cutover to work; `dispatchable_open` stays (its exclusion-free sibling `all_partition_members`, moved out of the retired `spira/attempts.sh` at sp-rfodk, is what `groomer.sh deadlocked` calls now). |
 
 **Source greps that break when the file goes.** Each greps sentinel.sh's text; point it at
 `sentinel/src/*.rs`, or at lib.sh where the text now lives:

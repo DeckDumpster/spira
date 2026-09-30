@@ -70,6 +70,7 @@ SPIRA_CONCIERGE_INBOX SPIRA_CONCIERGE_INBOX_DEDUP SPIRA_CONCIERGE_INBOX_STALL SP
 SPIRA_COCKPIT SPIRA_COCKPIT_TRACE_LINES SPIRA_SNAP_STALE_S SPIRA_NOTIFY SPIRA_OPERATOR SPIRA_OPERATOR_ACTOR SPIRA_TZ SPIRA_ASK_LABEL SPIRA_VERIFY_TIMEOUT SPIRA_RECLAIM_GRACE_SECS SPIRA_OPERATED
 SPIRA_CI_LABEL SPIRA_CI_PARK_MAX SPIRA_WORLD_STOP_LABEL
 SPIRA_LAND_MAXSEC SPIRA_LAND_GATE_RESERVE SPIRA_CERTIFY_PAR SPIRA_CERTIFY_SUITES SPIRA_CERTIFY_ALWAYS_COVERS SPIRA_VERDICT_TTL SPIRA_REBASE_ESCALATE_AT SPIRA_EVICTION_ESCALATE_AT SPIRA_VERDICT_WINDOW SPIRA_CHECK5_MAX_FILE SPIRA_CHECK5_MAX_RESOLVE SPIRA_REMEDY_WINDOW SPIRA_PR_STALL_MINS SPIRA_DEFERRAL_ESCALATE_AT SPIRA_CUTOVER_ROUND_LABEL
+SPIRA_COMPILE_PAR SPIRA_TEST_PAR SPIRA_SUMMON_JITTER
 SPIRA_BROKER_ENABLE SPIRA_BROKER_GH_CONFIG_DIR SPIRA_BROKER_GH_TOKEN
 SPIRA_LOOM_ADDR SPIRA_LOOM_BUDGET_MS SPIRA_LOOM_CACHE_S SPIRA_LOOM_READY_GRACE
 SPIRA_FLOW_WINDOW_HOURS SPIRA_FLOW_BASELINE_HOURS SPIRA_FLOW_GRACE_SECS SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS SPIRA_DESIRED_DIR
@@ -1058,7 +1059,7 @@ spira_conf_defaults() {
     # HOW LONG `up` queues for a free slot before giving up, and how often it re-checks.
     : "${SPIRA_TESTENV_QUEUE_TIMEOUT:=900}"
     : "${SPIRA_TESTENV_QUEUE_POLL:=5}"
-    # WHICH TRACKER gh-intake.sh ingests from, as "owner/repo". Empty means there is
+    # WHICH TRACKER gh-intake ingests from, as "owner/repo". Empty means there is
     # no inbox and intake refuses to guess: a default pointing at somebody else's
     # repository would quietly file their reports into this operator's graph.
     #
@@ -1780,17 +1781,17 @@ spira_conf_defaults() {
     # refuses the transition — the publish PR is left open for the normal cadence to settle.
     # In seconds.
     : "${SPIRA_QUEUE_TRANSITION_MAXSEC:=1800}"
-    # HOW LONG A CI JOB MAY BE IN QUEUED STATUS (no runner assigned) before czar.sh --pass
+    # HOW LONG A CI JOB MAY BE IN QUEUED STATUS (no runner assigned) before czar-pass --pass
     # fires ci-stalled. A queued job with a torn-down VM label will never start; the czar
     # cancels the stuck run and re-dispatches the whole workflow. In seconds.
     : "${SPIRA_CI_QUEUED_MAX_SECS:=600}"
-    # HOW LONG WITHOUT A LANDING PASS COMPLETING before czar.sh --pass fires loop-stalled.
+    # HOW LONG WITHOUT A LANDING PASS COMPLETING before czar-pass --pass fires loop-stalled.
     # Above the 2700s local-gate timeout so an ordinary batch gate does not trigger it.
     : "${SPIRA_LOOP_STALL_SECS:=3000}"
-    # HOW LONG A BATCH OPEN FILE MAY SIT AFTER ITS CI RUN COMPLETES RED before czar.sh
+    # HOW LONG A BATCH OPEN FILE MAY SIT AFTER ITS CI RUN COMPLETES RED before czar-pass
     # --pass fires ci-red (verdict not acting on a red result). In seconds.
     : "${SPIRA_CI_RED_MAX_SECS:=600}"
-    # HOW LONG A BASE REF'S OWN CI STATUS MAY COME BACK UNREADABLE before czar.sh --pass
+    # HOW LONG A BASE REF'S OWN CI STATUS MAY COME BACK UNREADABLE before czar-pass --pass
     # treats it as unreadable rather than a momentary gap between a push landing and
     # GitHub creating the run object for it. In seconds; base-red RED itself fires with
     # no grace — that half is urgency, not a race with GitHub's own bookkeeping.

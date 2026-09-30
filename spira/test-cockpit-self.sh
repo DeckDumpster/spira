@@ -37,14 +37,14 @@
 # are strings and the suite is hermetic by construction.
 #
 # defect: sp-jo8i
-# covers: spira/cockpit-metrics.py cockpit/health.sh
+# covers: spira/cockpit-metrics.py cockpit/ops/src/health.rs
 
-# covers: spira/cockpit-metrics.py cockpit/health.sh
+# covers: spira/cockpit-metrics.py cockpit/ops/src/health.rs
 # scar: the SELF metrics (repeating aeons, stillborn starts, starved passes) were absent; current session anomalies were invisible on the health pane.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
-HEALTH="$(cd "$(dirname "$0")/../cockpit" && pwd)/health.sh"
+HEALTH="health"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
@@ -203,7 +203,7 @@ run_health() {   # run_health: sources cockpit.env and renders once at 80 cols
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
-        bash "$HEALTH" once 0 80 2>/dev/null
+        "$HEALTH" once 0 80 2>/dev/null
 }
 
 # SP_PASS_SECS present → 'pass Ns' appears in header

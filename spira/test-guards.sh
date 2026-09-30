@@ -250,7 +250,7 @@ out="$(fence_run "cat ${FAKE_PROD}/spira/census" SPIRA_AEON=test-aeon)"
 nowant "UC-safety-fences-02/cat-read-from-prod-allowed" '"decision":"block"' "$out"
 
 for _cmd in \
-    "${FAKE_PROD}/sop.sh match /tmp/sp-x.payload" \
+    "${FAKE_PROD}/../bin/sop match /tmp/sp-x.payload" \
     "${FAKE_PROD}/incident.sh list" \
     "${FAKE_PROD}/mail.sh send operator --from Ops --subject q --kind question --default x" \
     "${FAKE_PROD}/../bin/testenv suites status" \

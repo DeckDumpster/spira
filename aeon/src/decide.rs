@@ -193,7 +193,7 @@ pub enum SopVerdict {
     Poison,
 }
 
-/// Returns (wrote: yes|no|unreadable, verdict). `applied` is `sop.sh log`'s exit code:
+/// Returns (wrote: yes|no|unreadable, verdict). `applied` is `sop log`'s exit code:
 /// 0 recorded, 1 read and absent, anything else unreadable.
 pub fn sop_rule_verdict(before_ok: bool, before: &str, after_ok: bool, after: &str, applied: i32) -> (&'static str, SopVerdict) {
     let wrote = if before_ok && after_ok {

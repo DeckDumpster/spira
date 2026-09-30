@@ -11,13 +11,14 @@
 # biggest client's height governs regardless of which client was most recently active.
 #
 # defect: sp-eq5
-# covers: cockpit/layout.sh
+# covers: cockpit/ops/src/layout.rs
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 COCKPIT_DIR="$(dirname "$HERE")/cockpit"
-LAYOUT="$COCKPIT_DIR/layout.sh"
+# `layout` is a binary now (sp-llbmi), invoked by name from the tree's build on PATH.
+LAYOUT="layout"
 
 if ! command -v script >/dev/null 2>&1; then
     echo "SKIP: 'script' not available" >&2
@@ -131,19 +132,25 @@ WH_EXPECTED=$(TMUX_TMPDIR="$TMUXDIR" tmux display-message -t cockpit -p '#{windo
 [ -n "$WH_EXPECTED" ] || WH_EXPECTED=23
 
 # ── Run ensure ──────────────────────────────────────────────────────────────────
-# SPIRA_COCKPIT matches BASH_SOURCE[0]'s directory so the copy-guard in ensure
-# passes (it compares realpath of the running script to realpath of
-# $SPIRA_COCKPIT/layout.sh; they are identical when we point it at the worktree).
+# SPIRA_RELEASE points at a fake release whose bin/layout is a symlink to the SAME
+# binary $LAYOUT resolves to on PATH, so the copy-guard in `ensure` passes (it
+# compares canonicalized paths of the running binary and $SPIRA_RELEASE/bin/layout;
+# with the symlink they are the same file, exactly the "this is the installed one"
+# case the guard exists to distinguish from a worktree copy).
 # SPIRA_CONF names a non-existent file so conf.sh skips operator config.
 # COCKPIT_CLIENT_IDLE_SECS=2: detach clients idle > 2 s — the ghost (~2.6 s old)
 # is detached; the live (< 1 s old) survives.
+_fake_release="$TMP/fake-release"
+mkdir -p "$_fake_release/bin"
+ln -sf "$(command -v "$LAYOUT")" "$_fake_release/bin/layout"
+SPIRA_RELEASE="$_fake_release" \
 SPIRA_COCKPIT="$COCKPIT_DIR" \
 SPIRA_REPO="$TMP" \
 SPIRA_RUN="$RUN" \
 SPIRA_HOME="$HERE" \
 SPIRA_CONF="$TMP/no.conf" \
 COCKPIT_CLIENT_IDLE_SECS=2 \
-    bash "$LAYOUT" ensure 2>/dev/null || true
+    "$LAYOUT" ensure 2>/dev/null || true
 
 sleep 0.2
 
