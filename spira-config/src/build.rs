@@ -2,6 +2,12 @@
 //! shared compilation cache (`sccache`), and — for a one-shot build — without cargo's
 //! incremental cache. Every build tool (gate, testenv, release) asks here; none spells the
 //! wrapper or the switch itself.
+//!
+//! No `SCCACHE_BASEDIRS` or `--remap-path-prefix` knob lives here (sp-283wz,
+//! DESIGN-build-cache.md §2.5): sccache 0.18.0's Rust frontend never consults basedirs (that
+//! wiring exists only for its C/C++ frontend), and adding `--remap-path-prefix` would hash
+//! literally, regressing the dependency-crate cache hits this module already gets right.
+//! Read §2.5 before reaching for either on a workspace-crate cross-tree miss.
 
 use std::path::{Path, PathBuf};
 
@@ -39,7 +45,12 @@ impl Wrapper {
     /// One line for a log: which cache this build compiles through.
     pub fn describe(&self) -> String {
         match self {
-            Wrapper::Sccache(p) => format!("build cache: sccache ({})", p.display()),
+            Wrapper::Sccache(p) => format!(
+                "build cache: sccache ({}) — dependency crates only, cross-tree; a workspace \
+                 crate's own build and every binary's link/codegen are per-tree (sp-283wz, \
+                 DESIGN-build-cache.md §2.5)",
+                p.display()
+            ),
             Wrapper::Off => format!("build cache: OFF ({CACHE_ENV}=off) — every dependency compiles cold"),
         }
     }
@@ -65,7 +76,7 @@ pub fn wrapper(path: &str, setting: Option<&str>) -> Result<Wrapper, String> {
         "off" => Ok(Wrapper::Off),
         "" | "sccache" => find_on(path, WRAPPER).map(Wrapper::Sccache).ok_or_else(|| {
             format!(
-                "sccache is not on the build's PATH ({path}) — every Spira build compiles through the box's shared compilation cache (spira/deps.toml; install: cargo install sccache --locked). {CACHE_ENV}=off builds uncached, on purpose"
+                "sccache is not on the build's PATH ({path}) — every Spira build compiles through the box's one shared compilation cache (spira/deps.toml; install: cargo install sccache --locked). {CACHE_ENV}=off builds uncached, on purpose"
             )
         }),
         other => Err(format!("{CACHE_ENV}={other:?} is not a build cache setting (unset, `sccache` or `off`)")),
