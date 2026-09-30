@@ -231,17 +231,20 @@ fn build_candidates(seam: &dyn Seam, cfg: &Env, arc: &Path, now: i64) -> Vec<Can
         let drift = turns_n as i64 - cov as i64;
         let prev_state = state::read_state_key(arc, &sid, "state");
         let would = candidates::would_archive(drift, cfg.every, prev_state.as_deref());
+        let ctx_display = if ctx_raw.is_empty() { "-".to_string() } else { ctx_raw.clone() };
+        let turns_display = if turns_raw.is_empty() { "-".to_string() } else { turns_raw.clone() };
         let ctx = if ctx_raw.is_empty() { "0".to_string() } else { ctx_raw };
-        out.push(Candidate { sid, tp: tp.to_string_lossy().into_owned(), ctx, turns: turns_n, next, band, drift, would_archive: would, prev_state });
+        out.push(Candidate { sid, tp: tp.to_string_lossy().into_owned(), ctx, turns: turns_n, ctx_display, turns_display, next, band, drift, would_archive: would, prev_state });
     }
     out
 }
 
-/// `archivist list` — the table the sweep would act on, without acting.
+/// `archivist list` — the table the sweep would act on, without acting. Shows a meter
+/// that could not be read as `-`, never as `0` — a `0` reads as "measured, and empty".
 pub fn list(seam: &dyn Seam, cfg: &Env, arc: &Path) -> String {
     let mut out = format!("{:<40} {:>10} {:>6} {:>8} {:>5} {}\n", "SESSION", "CONTEXT", "TURNS", "BAND", "DRIFT", "WOULD");
     for c in build_candidates(seam, cfg, arc, now_epoch()) {
-        out.push_str(&format!("{:<40} {:>10} {:>6} {:>8} {:>5} {}\n", c.sid, c.ctx, c.turns, c.band, c.drift, if c.would_archive { "archive" } else { "hold" }));
+        out.push_str(&format!("{:<40} {:>10} {:>6} {:>8} {:>5} {}\n", c.sid, c.ctx_display, c.turns_display, c.band, c.drift, if c.would_archive { "archive" } else { "hold" }));
     }
     out
 }
@@ -668,5 +671,33 @@ mod tests {
         // a has more drift (50) than b (5), so a is archived and b is deferred.
         assert_eq!(seam.agent_calls.borrow().len(), 1);
         assert!(lines.iter().any(|l| l.contains("sess-b deferred")));
+    }
+
+    #[test]
+    fn list_shows_a_dash_for_an_unreadable_meter_never_a_zero() {
+        let dir = testkit::TempDir::new("archivist-run");
+        let projects = testkit::TempDir::new("archivist-projects");
+        std::fs::create_dir_all(projects.join("p")).unwrap();
+        std::fs::write(projects.join("p").join("sess-a.jsonl"), "x").unwrap();
+
+        let mut c = cfg();
+        c.run = dir.path().to_string_lossy().into_owned();
+        c.token_projects = projects.path().to_string_lossy().into_owned();
+
+        let seam = FakeSeam::new();
+        let a_path = projects.join("p").join("sess-a.jsonl").to_string_lossy().into_owned();
+        // The meter answered SP_CTX_NEXT (so the row is not dropped as unreadable) but
+        // left SP_CTX_NOW/SP_CTX_TURNS blank.
+        let mut env_a = std::collections::HashMap::new();
+        env_a.insert("SP_CTX_NEXT".into(), "warn".into());
+        seam.ctx_env.borrow_mut().insert(a_path, env_a);
+
+        let out = list(&seam, &c, &dir);
+        let row = out.lines().find(|l| l.starts_with("sess-a")).expect("sess-a row");
+        let fields: Vec<&str> = row.split_whitespace().collect();
+        // SESSION CONTEXT TURNS BAND DRIFT WOULD — band and drift are legitimately 0
+        // here; CONTEXT and TURNS are the unreadable ones and must be "-", never "0".
+        assert_eq!(fields[1], "-", "context column: {row}");
+        assert_eq!(fields[2], "-", "turns column: {row}");
     }
 }

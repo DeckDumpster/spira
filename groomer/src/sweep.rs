@@ -228,10 +228,10 @@ mod sweep_tests {
 
     #[test]
     fn parses_a_livelock_line() {
-        let row = parse_livelock("LIVELOCK sp-1 unmapped-repo — repo: label not in the repo-map").unwrap();
+        let row = parse_livelock("LIVELOCK sp-1 unmapped-repo — repo: label not mapped to a repository").unwrap();
         assert_eq!(row.id, "sp-1");
         assert_eq!(row.category, "unmapped-repo");
-        assert_eq!(row.reason, "repo: label not in the repo-map");
+        assert_eq!(row.reason, "repo: label not mapped to a repository");
     }
 
     #[test]

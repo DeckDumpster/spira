@@ -6,8 +6,13 @@
 pub struct Candidate {
     pub sid: String,
     pub tp: String,
+    /// `${ctx:-0}` — the archive-ready value `{{CTX}}` substitutes with.
     pub ctx: String,
     pub turns: u64,
+    /// `${ctx:--}` / `${turns:--}` — `list`'s own display, which shows a genuinely
+    /// unreadable meter as `-`, never as `0` (a `0` reads as "measured, and empty").
+    pub ctx_display: String,
+    pub turns_display: String,
     pub next: String,
     pub band: i32,
     pub drift: i64,
@@ -54,7 +59,19 @@ mod tests {
     }
 
     fn c(sid: &str, drift: i64) -> Candidate {
-        Candidate { sid: sid.into(), tp: String::new(), ctx: String::new(), turns: 0, next: String::new(), band: 0, drift, would_archive: drift >= 1, prev_state: None }
+        Candidate {
+            sid: sid.into(),
+            tp: String::new(),
+            ctx: String::new(),
+            turns: 0,
+            ctx_display: String::new(),
+            turns_display: String::new(),
+            next: String::new(),
+            band: 0,
+            drift,
+            would_archive: drift >= 1,
+            prev_state: None,
+        }
     }
 
     #[test]
