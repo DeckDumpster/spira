@@ -166,11 +166,13 @@ jobs:
           elif [ "${{ github.event_name }}" = "pull_request" ] \
              && printf '%s' "${{ github.head_ref }}" | grep -qE '^spira/queue/'; then
             _base="${{ github.event.pull_request.base.sha }}"
+            # path-ok: CI builds the selector from this commit in this job; there is no conf.sh here
             _s="$(target/release/suite-select select --base "$_base" --head "${{ github.sha }}" \
                   --repo . --suite-dir spira)" || { printf 'select: the selector refused (rc %s)\n' "$?"; exit 1; }
             _s="$(printf '%s\n' "$_s" | tr '\n' ',' | sed 's/,$//')"
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
             _base="${{ github.event.pull_request.base.sha }}"
+            # path-ok: CI builds the selector from this commit in this job; there is no conf.sh here
             _s="$(target/release/suite-select gate "$_base" "${{ github.sha }}")" \
               || { printf 'select: the selector refused (rc %s)\n' "$?"; exit 1; }
             _s="$(printf '%s\n' "$_s" | tr '\n' ',' | sed 's/,$//')"

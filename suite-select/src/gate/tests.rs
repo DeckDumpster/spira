@@ -39,21 +39,16 @@ impl Git for FakeGit {
     }
 }
 
-struct Dir(PathBuf);
-impl Drop for Dir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+/// A suite directory that removes itself; `.0` is its path.
+struct Dir(PathBuf, #[allow(dead_code)] testkit::TempDir);
 
 fn dir(tag: &str, suites: &[(&str, &str)]) -> Dir {
-    let d = std::env::temp_dir().join(format!("sp-wx2tw-gate-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
+    let t = testkit::TempDir::new(&format!("suite-select-gate-{tag}"));
+    let d = t.path().to_path_buf();
     for (n, h) in suites {
         std::fs::write(d.join(n), h).unwrap();
     }
-    Dir(d)
+    Dir(d, t)
 }
 
 fn genv(d: &Path, extra: &[(&str, &str)]) -> GateEnv {

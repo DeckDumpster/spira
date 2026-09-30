@@ -103,7 +103,7 @@ mod tests {
 
     #[test]
     fn a_missing_family_is_no_timings_not_a_refusal() {
-        let d = std::env::temp_dir().join(format!("sp-wx2tw-timing-{}", std::process::id()));
-        assert_eq!(load(&d, 20).unwrap(), P90s::default());
+        let d = testkit::TempDir::new("suite-select-timing");
+        assert_eq!(load(d.path(), 20).unwrap(), P90s::default());
     }
 }

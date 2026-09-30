@@ -138,8 +138,8 @@ mod tests {
 
     #[test]
     fn loading_refuses_what_it_cannot_read() {
-        let d = std::env::temp_dir().join(format!("sp-wx2tw-corpus-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let t = testkit::TempDir::new("suite-select-corpus");
+        let d = t.path().join("spira");
         assert!(Corpus::load(&d).is_err(), "missing dir");
         std::fs::create_dir_all(&d).unwrap();
         assert!(Corpus::load(&d).is_err(), "empty corpus");
@@ -151,6 +151,5 @@ mod tests {
         assert!(Corpus::load_named(&d, &["test-gone.sh".into()]).is_err());
         std::fs::write(d.join("test-c.sh"), "# tier: TX\n").unwrap();
         assert!(Corpus::load(&d).is_err(), "an unplaceable tier");
-        let _ = std::fs::remove_dir_all(&d);
     }
 }
