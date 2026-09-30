@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: spira/skew.sh sp-9thdw
+# covers: spira/skew.sh
 #
 # test-skew-local-release.sh — skew.sh under queue.local (sp-9thdw). Nothing landing
 # through this box's own home repo ever gets a release tag: `queue land-local` builds,
@@ -37,7 +37,7 @@ mkdir -p "$TMP/home"
 
 # ---------------------------------------------------------------------------
 # REPO: a queue.local fixture. trunk is the working branch; local/main is the landed ref
-# (repo-map's declared base), matching the shape test-skew-refresh.sh's container tier uses.
+# (the repo map's declared base), matching the shape test-skew-refresh.sh's container tier uses.
 # C1 -> C2 on local/main (C2 is the tip). C3 branches off C1 on a side branch and is never
 # merged, so it is a genuine divergence: neither C2's ancestor nor its descendant.
 # ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ C3="$(git -C "$REPO" rev-parse HEAD)"
 git -C "$REPO" checkout -q trunk
 git -C "$REPO" branch -D side >/dev/null 2>&1
 
-RMAP="$TMP/repo-map"
+RMAP="$TMP/fixture-repo-list"
 printf 'lfixq | %s | queue.local | local/main | | |\n' "$REPO" > "$RMAP"
 
 # ---------------------------------------------------------------------------
