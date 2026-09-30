@@ -367,6 +367,13 @@ jobs:
         # tail: it is where podman, gh and the rest of this machine's tools live.
         # The release lives outside the checkout and outside RUNNER_TEMP, which the
         # runner cleans and a read-only release would refuse.
+        #
+        # SPIRA_REPO NAMES THE CHECKOUT. The tools now run from the release, so a tool
+        # that defaults its repository to its own harness root (testenv does) would
+        # find the release directory — not a git repository, no base ref — and fault
+        # `reason=base-ref` before testing anything (sp-6cbna's first proof run,
+        # 36704154120). The launcher says which repository is under test, as a
+        # production unit does with Environment=SPIRA_REPO.
         run: |
           set -euo pipefail
           _releases="$HOME/.cache/spira-ci/releases"
@@ -380,6 +387,7 @@ jobs:
             exit 1
           }
           printf 'SPIRA_RELEASE=%s\n' "$_rel" >> "$GITHUB_ENV"
+          printf 'SPIRA_REPO=%s\n' "$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
           printf 'PATH=%s\n' "$_path" >> "$GITHUB_ENV"
           printf 'stage: release %s staged at %s\n' "$_sha" "$_rel"
 

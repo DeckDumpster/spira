@@ -373,8 +373,9 @@ was dropped, as `docs/test-plan/test-infrastructure.md` row 38 already proposed.
 
 Two properties were added after the port (sp-6cbna): **29**, the suites job is a launcher —
 its "Stage the build as a release" step lays out a release from the downloaded build
-(`release build --bin-dir`) and writes `SPIRA_RELEASE` and a PATH that starts with that
-release to `GITHUB_ENV`; and **30**, lints never scan build output — the binaries download
+(`release build --bin-dir`) and writes `SPIRA_RELEASE`, `SPIRA_REPO` (the checkout — a tool
+run from the release would otherwise default its repository to the release directory) and a
+PATH that starts with that release to `GITHUB_ENV`; and **30**, lints never scan build output — the binaries download
 under `runner.temp`, not into the checkout, and the Lints step runs `spira-lint` by name after
 asserting it resolves to `$SPIRA_RELEASE/bin/spira-lint`.
 

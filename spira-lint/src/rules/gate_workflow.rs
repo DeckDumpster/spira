@@ -369,6 +369,7 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
     j.want(GATE, "the staging step takes the downloaded binaries, running no cargo", "--bin-dir", &stage);
     j.want(GATE, "the staging step sets SPIRA_RELEASE for every later step", "SPIRA_RELEASE=%s", &stage);
     j.want(GATE, "the staging step sets PATH for every later step", "PATH=%s", &stage);
+    j.want(GATE, "the staging step names the checkout as the repository under test", "SPIRA_REPO=%s", &stage);
     j.want(GATE, "the staging step writes both to GITHUB_ENV", "GITHUB_ENV", &stage);
     j.want(GATE, "PATH starts with the staged release", "_path=\"$_rel/bin:$_rel/spira:", &stage);
     j.want(GATE, "the suites step runs after the staging step", "Stage the build as a release", &suites_job);
@@ -625,6 +626,8 @@ mod tests {
         assert!(got.iter().any(|m| m.contains("the Stage the build as a release step was not located")), "{got:?}");
         let got = planted(gate, "printf 'PATH=%s\\n' \"$_path\" >> \"$GITHUB_ENV\"", "true");
         assert!(got.iter().any(|m| m.contains("the staging step sets PATH for every later step")), "{got:?}");
+        let got = planted(gate, "printf 'SPIRA_REPO=%s\\n' \"$GITHUB_WORKSPACE\" >> \"$GITHUB_ENV\"", "true");
+        assert!(got.iter().any(|m| m.contains("names the checkout as the repository under test")), "{got:?}");
     }
 
     #[test]
