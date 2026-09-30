@@ -375,10 +375,6 @@ escalate() {
     # Stdout goes to skew.log under the service unit. Stderr does too (both streams are
     # captured), but everything below writes to stdout so the delivery path is explicit and
     # does not depend on StandardError being redirected — which has changed once already.
-    if [ ! -x "$SPIRA_HOME/mail.sh" ]; then
-        echo "skew: mail.sh not found — the finding above reaches nobody"
-        return 1
-    fi
 
     local default_action
     if [[ "$condition_key" == *"MANIFEST-MISMATCH=1"* ]]; then
@@ -403,7 +399,7 @@ $findings
 MAILEOF
 )"
     local notify_out notify_rc
-    notify_out="$(printf '%s\n' "$_body" | "$SPIRA_HOME/mail.sh" send operator \
+    notify_out="$(printf '%s\n' "$_body" | mail.sh send operator \
         --from "Skew check <skew@spira>" \
         --subject "$_subj" \
         --kind question \
@@ -524,7 +520,7 @@ refresh() {
         make -C "$repo" install SPIRA_RELEASES="$SPIRA_RELEASES" || {
             echo "skew: refresh: make install failed"; return 1; }
         echo "skew: refreshed — new release installed ($_behind commit(s))"
-        [ -x "$SPIRA_HOME/overrides.sh" ] && "$SPIRA_HOME/overrides.sh" apply "$repo"
+        overrides.sh apply "$repo"
         return 0
     fi
     [ -e "$repo/.git" ] || {
@@ -594,7 +590,7 @@ refresh() {
     # just wrote the base ref's own files over anything an operator override held in this
     # checkout; without this call there is a window — previously closed only by a timer
     # running once a minute outside the harness — where the reset brief is live (sp-qdh0x).
-    [ -x "$SPIRA_HOME/overrides.sh" ] && "$SPIRA_HOME/overrides.sh" apply "$repo"
+    overrides.sh apply "$repo"
     return 0
 }
 

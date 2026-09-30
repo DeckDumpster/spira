@@ -8,9 +8,4 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/conf.sh"
-if [ ! -x "${SPIRA_RECONCILER_BIN:-}" ]; then
-    printf 'reconciler: binary not found at %s\n' "${SPIRA_RECONCILER_BIN:-<unset>}" >&2
-    printf 'reconciler: run: make build (in %s)\n' "$SPIRA_REPO" >&2
-    exit 2
-fi
-exec "${SPIRA_RECONCILER_BIN}" "$@"
+exec reconciler "$@"

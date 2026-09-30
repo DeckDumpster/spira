@@ -131,10 +131,10 @@ else
     if [ -n "$_predates" ]; then
         FAIL "world halted — $STAMP (mtime $_halt_h) PREDATES this install" \
              "The halt in $SPIRA_RUN survived uninstall/reinstall; the loop will not summon.
-    Clear it: $SPIRA_HOME/world.sh start"
+    Clear it: world.sh start"
     else
         FAIL "world halted — $STAMP (mtime $_halt_h)" \
-             "The loop was stopped. Resume: $SPIRA_HOME/world.sh start"
+             "The loop was stopped. Resume: world.sh start"
     fi
 fi
 
@@ -170,11 +170,11 @@ else
         | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null \
         || echo '?')"
     PASS "database readable — $SPIRA_DB ($_bead_count bead(s))"
-    if _miss_out="$("$SPIRA_HOME/seed.sh" --list 2>/dev/null)"; then
+    if _miss_out="$(seed.sh --list 2>/dev/null)"; then
         _missing="$(printf '%s\n' "$_miss_out" | grep -c ' -$' || true)"
         if [ "${_missing:-0}" -gt 0 ]; then
             WARN "$_missing shipped statute(s) not in this database" \
-                 "Write them in: $SPIRA_HOME/seed.sh"
+                 "Write them in: seed.sh"
         else
             PASS "all shipped statutes in force"
         fi
@@ -189,7 +189,7 @@ echo "ready work"
 # =============================================================================
 # sentinel --report lists open beads under SPIRA_GOAL. Each line of open work is
 # indented with two spaces. A timeout guards against a slow or stuck database.
-if ! _rep="$(timeout 20 "$SPIRA_SENTINEL_BIN" --report 2>&1)"; then
+if ! _rep="$(timeout 20 sentinel --report 2>&1)"; then
     UNKN "ready work — sentinel --report failed or timed out" \
          "$(printf '%s' "$_rep" | head -2)"
 else
@@ -210,19 +210,8 @@ echo "loom"
 # Probe Loom at $SPIRA_LOOM_ADDR/api/beads. python3 is a fatal doctor.sh requirement
 # so it is always available. SPIRA_LOOM_PROBE overrides the HTTP call for test fixtures.
 _loom_url="http://$SPIRA_LOOM_ADDR/api/beads"
-if ! [ -x "${SPIRA_LOOM_BIN:-}" ]; then
-    _loom_unit="$(spira_unit loom service)"
-    if [ "$_loom_unit" = "?" ]; then
-        # Binary absent and no unit found: installer deliberately skipped loom (cargo absent).
-        # The loop is unaffected; this is not a fault.
-        SKIP "loom not installed — binary not built at ${SPIRA_LOOM_BIN:-<unset>}" \
-             "Build it: cd $SPIRA_REPO/loom && cargo build --release"
-    else
-        # Binary absent but unit is installed: inconsistent state; probe should have worked.
-        UNKN "loom — binary not built at ${SPIRA_LOOM_BIN:-<unset>}; cannot probe $_loom_url" \
-             "Build it: cd $SPIRA_REPO/loom && cargo build --release"
-    fi
-else
+# loom is in every release's bin/ (sp-gypjk): there is no "not built" state to skip on.
+{
     _loom_probe_cmd="${SPIRA_LOOM_PROBE:-}"
     if [ -n "$_loom_probe_cmd" ]; then
         _loom_result="$($_loom_probe_cmd "$_loom_url" "$SPIRA_LOOM_BUDGET_MS" 2>/dev/null)"
@@ -281,7 +270,7 @@ PYEOF
                  "${_loom_svc:-spira-loom.service} may be degraded."
             ;;
     esac
-fi
+}
 
 # =============================================================================
 echo ""

@@ -153,14 +153,14 @@ slugify() { printf 'sop-%s' "${1#sop-}"; }
 
 # _inventory_scan <file> -> the inventory rule's offending tokens for that file, one per line.
 # The inventory fence moved from spira/inventory.sh to spira-lint's `inventory` rule
-# (sp-ekkak); lib.sh (sourced above) already resolves SPIRA_LINT_BIN via conf.sh. Fails
-# closed: a missing binary refuses rather than silently skipping the check.
+# (sp-ekkak); called by name on the launcher's PATH (sp-gypjk). Fails closed: a missing
+# tool refuses rather than silently skipping the check.
 _inventory_scan() {
-    [ -x "${SPIRA_LINT_BIN:-}" ] || {
-        echo "sop: spira-lint is not built (SPIRA_LINT_BIN) — refusing to check operator infrastructure" >&2
+    command -v spira-lint >/dev/null 2>&1 || {
+        echo "sop: spira-lint is not on PATH — refusing to check operator infrastructure" >&2
         return 1
     }
-    "$SPIRA_LINT_BIN" --only inventory --scan "$1" 2>/dev/null
+    spira-lint --only inventory --scan "$1" 2>/dev/null
 }
 # A flag proves its value is present before taking it: `shift 2` with one argument left shifts
 # nothing at all, and the parse loop then spins forever on the same token.
@@ -465,8 +465,7 @@ if m: print(m.group(1).strip())
             # A single-token METRIC has no subcommand — malformed; skip enforcement so the
             # lint error is what the author sees, not a silent pass.
             if [ -n "$_metric_key" ] && [ -n "$_metric_subcmd" ] && [ "$_metric_key" != "$_metric_subcmd" ]; then
-                _cockpit_path="${SOP_METRIC_COCKPIT:-$HERE/cockpit.sh}"
-                _metric_raw="$(timeout 30 bash "$_cockpit_path" "$_metric_subcmd" 2>/dev/null \
+                _metric_raw="$(timeout 30 ${SOP_METRIC_COCKPIT:+bash} "${SOP_METRIC_COCKPIT:-cockpit.sh}" "$_metric_subcmd" 2>/dev/null \
                     | grep "^${_metric_key}=" | sed "s/^${_metric_key}=//" | head -1)" \
                     || _metric_raw=""
                 _metric_fixed="$(METRIC_V="$_metric_raw" python3 -c '

@@ -87,12 +87,11 @@ if [ -n "${SPIRA_CONCIERGE:-}" ]; then
     _cunread="$(wc -l < "$_cinbox" 2>/dev/null || echo 0)"
     case "$_cunread" in *[!0-9]*|'') _cunread=0 ;; esac
     printf 'MANDATORY FIRST ACTION: arm the Concierge inbox monitor before anything else — Monitor command=%s, timeout_ms=1800000, description="concierge inbox (triaged)". Every watcher and mail event reaches you ONLY through %s (%s lines); nothing types into the pane. Re-arm it at every 30-minute expiry. Then read recent inbox lines: tail -20 %s\n' \
-        "$SPIRA_HOME/inbox-triage.sh" "$_cinbox" "$_cunread" "$_cinbox"
+        "$(command -v inbox-triage.sh || printf inbox-triage.sh)" "$_cinbox" "$_cunread" "$_cinbox"
 fi
 
-WATCHD="$SPIRA_HOME/watchd.sh"
-[ -x "$WATCHD" ] || exit 0
-MAIL="$SPIRA_HOME/mail.sh"
+WATCHD=watchd.sh
+MAIL=mail.sh
 
 # FIRE THE ARCHIVIST ON CLEAR. A clear starts a new session while the previous transcript is
 # still on disk. The turns between the last drift sweep and now are uncovered; this catches
@@ -103,8 +102,8 @@ MAIL="$SPIRA_HOME/mail.sh"
 source="$(printf '%s' "$payload" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("source",""))
 except Exception: print("")' 2>/dev/null)"
-if [ "$source" = "clear" ] && [ -x "$SPIRA_HOME/archivist.sh" ]; then
-    "$SPIRA_HOME/archivist.sh" now </dev/null >/dev/null 2>&1 &
+if [ "$source" = "clear" ]; then
+    archivist.sh now </dev/null >/dev/null 2>&1 &
 fi
 
 # RECORD THE CONCIERGE'S OWN SESSION ID. The launcher sets SPIRA_CONCIERGE=1 so that no other
@@ -156,7 +155,7 @@ rows="$(printf '%s\n' "$status" | awk 'NR==1 { next } /^[[:space:]]*$/ { exit } 
 
 # ONE LINE FOR THE SESSION MAILBOX — count only; marks nothing read; no Monitor instruction.
 mail_line=""
-if [ -x "$MAIL" ] && [ -n "${SPIRA_MAIL_SESSION_MAILBOX:-}" ]; then
+if [ -n "${SPIRA_MAIL_SESSION_MAILBOX:-}" ]; then
     _mn="$("$MAIL" count "$SPIRA_MAIL_SESSION_MAILBOX" 2>/dev/null)" || _mn=0
     case "${_mn:-}" in *[!0-9]*|"") _mn=0 ;; esac
     if [ "$_mn" -gt 0 ]; then
