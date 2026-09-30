@@ -349,14 +349,14 @@ else
 fi
 
 step "watchers"
-watchd.sh status 2>&1 | sed 's/^/  /'
+watchd status 2>&1 | sed 's/^/  /'
 
 echo
 if [ "$fail" -eq 0 ]; then
     say "cockpit rebuilt. Attach with:  tmux attach -t cockpit"
     say "A watcher's Monitor cannot be started by a script — re-attach them in the session:"
-    say "    Monitor: watchd.sh tail answers"
-    say "    Monitor: watchd.sh tail view"
+    say "    Monitor: watchd tail answers"
+    say "    Monitor: watchd tail view"
     exit 0
 fi
 warn "$fail check(s) failed — the cockpit is NOT fully rebuilt"

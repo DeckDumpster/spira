@@ -48,6 +48,9 @@ command -v spira-config >/dev/null 2>&1 || bail "spira-config is not on PATH"
 
 REAL_STAT="$(command -v stat)"
 REAL_MKDIR="$(command -v mkdir)"
+REAL_BASH="$(command -v bash)"
+REAL_SPIRA_CONFIG="$(command -v spira-config)"
+REAL_WATCHD="$(command -v watchd)" || bail "watchd is not on PATH"
 
 # A harness tree that is NOT this checkout, so nothing here can read the operator's own
 # configuration, units or watchers and report a pass it did not earn.
@@ -75,10 +78,10 @@ CONF="$TMP/spira.conf"
 printf 'SPIRA_ID_PREFIX = sp\nSPIRA_COCKPIT = %s\nSPIRA_RUN = %s\n' "$COCKPIT" "$RUN" > "$CONF"
 
 # A SECOND HARNESS COPY, so "the unit's ExecStart" can be told apart from "this harness's
-# watchd.sh" — a box carrying a stale install points at exactly this, and it is the only
+# watchd binary" — a box carrying a stale install points at exactly this, and it is the only
 # reason the pass reads ExecStart out of systemd rather than deriving it.
 OTHER="$TMP/other-harness"; mkdir -p "$OTHER"
-printf '#!/bin/sh\n: dispatcher\n' > "$OTHER/watchd.sh"
+printf '#!/bin/sh\n: dispatcher\n' > "$OTHER/watchd"
 
 MAN="$TMP/watchers"
 cat > "$MAN" <<EOF
@@ -92,7 +95,7 @@ T0=1735689600
 UNIT_START=$((T0 + 100))
 NEWER=$((T0 + 200))
 reset_mtimes() {
-    touch -d "@$T0" "$CLONE/spira"/*.sh "$COCKPIT"/* "$OTHER"/watchd.sh "$CONF" "$MAN"
+    touch -d "@$T0" "$CLONE/spira"/*.sh "$COCKPIT"/* "$OTHER"/watchd "$CONF" "$MAN"
 }
 
 # ---- the stubs -------------------------------------------------------------------------
@@ -119,6 +122,24 @@ cat > "$SHIM/mkdir" <<EOF
 printf 'mkdir %s\n' "\$*" >> "\$WR_EXECLOG"
 exec $REAL_MKDIR "\$@"
 EOF
+# watchd (sp-48f6g): wr_pass now execs `watchd manifest` and `watchd restart <name>` where
+# the manifest used to be read in-process by sourcing watchd.sh — one more real exec per
+# pass, counted below. watchd's own conf.sh seam needs bash and spira-config reachable too.
+cat > "$SHIM/watchd" <<EOF
+#!/bin/bash
+printf 'watchd %s\n' "\$*" >> "\$WR_EXECLOG"
+exec $REAL_WATCHD "\$@"
+EOF
+cat > "$SHIM/bash" <<EOF
+#!/bin/bash
+printf 'bash %s\n' "\$*" >> "\$WR_EXECLOG"
+exec $REAL_BASH "\$@"
+EOF
+cat > "$SHIM/spira-config" <<EOF
+#!/bin/bash
+printf 'spira-config %s\n' "\$*" >> "\$WR_EXECLOG"
+exec $REAL_SPIRA_CONFIG "\$@"
+EOF
 # THE TRIPWIRES. A staleness check that queried the store would be the very failure it
 # exists to detect, so the programs that could reach one are present, loud and fatal.
 for f in bd dolt git python3 date; do
@@ -136,7 +157,7 @@ EXECLOG="$TMP/execs"; ACT="$TMP/acted"; SHOW="$TMP/show"
 # show <unit> <state> <start> [execstart-path] — one block of `systemctl show` output.
 show() {
     printf 'Id=%s\nActiveState=%s\nActiveEnterTimestamp=%s\nExecStart={ path=%s ; argv[]=%s %s ; pid=1 }\n\n' \
-        "$1" "$2" "$3" "${4:-$CLONE/spira/watchd.sh}" "${4:-$CLONE/spira/watchd.sh}" "exec x" >> "$SHOW"
+        "$1" "$2" "$3" "${4:-$CLONE/bin/watchd}" "${4:-$CLONE/bin/watchd}" "exec x" >> "$SHOW"
 }
 fresh_show() { : > "$SHOW"; show "spira-watch-answers-prod.service" active "@$UNIT_START"; }
 
@@ -161,7 +182,7 @@ runpass() {
         ' _ "${1:-}" > "$TMP/out" 2>"$TMP/err"
 }
 acted()  { tr '\n' ' ' < "$ACT"; }
-execs()  { grep -cE '^(systemctl|stat|mkdir|FORBIDDEN)' "$EXECLOG" 2>/dev/null || true; }
+execs()  { grep -cE '^(systemctl|stat|mkdir|watchd|FORBIDDEN)' "$EXECLOG" 2>/dev/null || true; }
 
 echo "the positive control — nothing has changed, and the check looked anyway"
 reset_mtimes; fresh_show
@@ -177,9 +198,15 @@ has "one show for every unit at once"        "$(cat "$EXECLOG")" "spira-watch-an
 
 echo
 echo "what one pass costs (law-fence-loops-on-shared-hardware)"
-is "a steady pass is exactly two execs"      "2" "$(execs)"
+# sp-48f6g: watchd.sh rewritten to the compiled binary `watchd` — the manifest, read
+# in-process at no exec cost by sourcing watchd.sh, is now read by one more real exec,
+# `watchd manifest`, plus whatever watchd's own conf.sh seam costs inside that one exec
+# (never counted here — it is one exec from this process's own point of view, same as any
+# other external tool wr_pass calls once per pass).
+is "a steady pass is exactly three execs"    "3" "$(execs)"
 is "one systemctl"  "1" "$(grep -c '^systemctl' "$EXECLOG" || true)"
 is "and one stat"   "1" "$(grep -c '^stat' "$EXECLOG" || true)"
+is "and one watchd (the manifest read)" "1" "$(grep -c '^watchd' "$EXECLOG" || true)"
 # A staleness check that queried the database would BE the failure it exists to detect.
 is "and it opens no database, and runs no other program" "" \
    "$(grep '^FORBIDDEN' "$EXECLOG" || true)"
@@ -207,16 +234,19 @@ restarts_on "conf.sh"                        "$CLONE/spira/conf.sh"
 # The manifest is what says which target the row means, so a row repointed is a watcher
 # running the wrong program with a perfectly current file behind it.
 restarts_on "the manifest"                   "$MAN"
-restarts_on "the dispatcher it is started through" "$CLONE/spira/watchd.sh"
+# "the dispatcher it is started through" (watchd.sh's own mtime) is retired (sp-48f6g):
+# watchd is now a compiled binary shared by every watcher and by watch-refresh.sh's own
+# `watchd manifest`/`watchd restart` calls, so its own mtime is no longer part of what a
+# pass compares against a watcher's start time — see watch-refresh.sh's own DESIGN note.
 
 # AND THE UNIT'S OWN ExecStart, which is not necessarily this harness's copy. A box carrying
 # an install from another checkout runs that tree's dispatcher, and only systemd knows.
 reset_mtimes; : > "$SHOW"
-show "spira-watch-answers-prod.service" active "@$UNIT_START" "$OTHER/watchd.sh"
-touch -d "@$NEWER" "$OTHER/watchd.sh"
+show "spira-watch-answers-prod.service" active "@$UNIT_START" "$OTHER/watchd"
+touch -d "@$NEWER" "$OTHER/watchd"
 runpass
 has "the unit's own ExecStart, wherever it points" "$(acted)" "restart spira-watch-answers-prod.service"
-has "and the message names the file that caused it" "$(cat "$TMP/out")" "$OTHER/watchd.sh"
+has "and the message names the file that caused it" "$(cat "$TMP/out")" "$OTHER/watchd"
 
 echo
 echo "a target that carries arguments — the row shape the shipped manifest uses"
@@ -371,7 +401,7 @@ REAP_ERR="$TMP/reap_err"
 SUPERVISED_PID=10001    # in spira-watch@answers.service cgroup — must never be signalled
 PROD_PID=10005          # in spira-watch-answers-prod.service cgroup — equally supervised
 ORPHAN_PID=10002        # NOT in any spira-watch unit, running watch-answers.sh
-TAIL_PID=10003          # NOT in any spira-watch unit, running watchd.sh tail
+TAIL_PID=10003          # NOT in any spira-watch unit, running watchd tail
 
 mkdir -p "$FAKEPROC/$SUPERVISED_PID" "$FAKEPROC/$PROD_PID" \
          "$FAKEPROC/$ORPHAN_PID" "$FAKEPROC/$TAIL_PID"
@@ -393,8 +423,10 @@ printf 'bash\0%s\0' "$COCKPIT/watch-answers.sh" > "$FAKEPROC/$ORPHAN_PID/cmdline
 printf '0::/user.slice/user-1000.slice/user@1000.service/\n' \
     > "$FAKEPROC/$ORPHAN_PID/cgroup"
 
-# session tail: watchd.sh tail answers opened by a live session's Monitor — must survive
-printf 'bash\0%s\0tail\0answers\0' "$CLONE/spira/watchd.sh" > "$FAKEPROC/$TAIL_PID/cmdline"
+# session tail: watchd tail answers opened by a live session's Monitor — must survive.
+# sp-48f6g: watchd.sh rewritten to the compiled binary `watchd` — argv[0] names it
+# directly, no bash/sh wrapper (a real exec'd binary's cmdline has no interpreter in it).
+printf '%s\0tail\0answers\0' "$CLONE/bin/watchd" > "$FAKEPROC/$TAIL_PID/cmdline"
 printf '0::/user.slice/user-1000.slice/user@1000.service/\n' \
     > "$FAKEPROC/$TAIL_PID/cgroup"
 
@@ -454,13 +486,13 @@ hasnt "and not mentioning the brief"          "$(cat "$REAP_OUT")" "$BRIEF_PID"
 
 echo
 echo "orphan reaping — watchd exec outside any spira-watch unit is a target; tail never is"
-# watchd.sh exec is the supervised daemon verb. In practice exec processes ARE in spira-watch
+# watchd exec is the supervised daemon verb. In practice exec processes ARE in spira-watch
 # cgroups (systemd puts them there), so the cgroup guard covers them — the verb check is
 # belt-and-braces.
 # tail is a reader that a session opens via Monitor; it is never a reap target regardless of
 # cgroup (law-bind-the-actor: the reaper must not sever a channel it told the session to open).
 mkdir -p "$FAKEPROC/10004"
-printf 'bash\0%s\0exec\0answers\0' "$CLONE/spira/watchd.sh" > "$FAKEPROC/10004/cmdline"
+printf '%s\0exec\0answers\0' "$CLONE/bin/watchd" > "$FAKEPROC/10004/cmdline"
 printf '0::/user.slice/user-1000.slice/user@1000.service/\n' > "$FAKEPROC/10004/cgroup"
 runreap
 has "watchd exec outside any spira-watch unit IS a reap target" "$(reap_acted)" "10004"
@@ -468,8 +500,10 @@ has "watchd exec outside any spira-watch unit IS a reap target" "$(reap_acted)" 
 echo
 echo "the entry point, run as systemd runs it"
 # Everything above calls the pass as a function. This is the one that proves the file is
-# also a program, and that sourcing it — which is how watch-refresh.sh reads the manifest —
-# still leaves watchd.sh silent rather than running its own dispatcher.
+# also a program. sp-48f6g: watch-refresh.sh no longer sources watchd.sh to read the
+# manifest in-process (watchd is a compiled binary now — nothing to source); it execs
+# `watchd manifest` and captures the output, so a raw manifest dump leaking onto this
+# process's own stdout is no longer a design this file could even have.
 # WR_PROC_ROOT is set to an empty directory so the orphan reaper (now part of the entry
 # point) does not scan the real /proc of the test runner.
 EMPTYPROC="$TMP/empty-proc"; mkdir -p "$EMPTYPROC"
@@ -481,7 +515,7 @@ out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_WATCH
       bash "$CLONE/spira/watch-refresh.sh" 2>&1)"; rc=$?
 is "it runs"                       "0" "$rc"
 has "and restarts the stale unit"  "$(acted)" "restart spira-watch-answers-prod.service"
-hasnt "and sourcing watchd.sh printed no manifest of its own" "$out" "|daemon|"
+hasnt "and no raw manifest line leaked onto this process's own stdout" "$out" "|daemon|"
 out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
       \
       SPIRA_PATH="$SHIM" WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" \

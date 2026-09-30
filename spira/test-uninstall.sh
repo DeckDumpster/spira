@@ -52,7 +52,7 @@ mkdir -p "$FAKE_REPO"
 
 # ---------------------------------------------------------------------------
 # Fixture: minimal harness tree with real scripts behind symlinks so that
-# owned.sh can source conf.sh, watchd.sh, etc.
+# owned.sh can source conf.sh, etc.
 # ---------------------------------------------------------------------------
 FIXTURE="$TMP/harness"
 mkdir -p "$FIXTURE/systemd" "$FIXTURE/spira" "$FIXTURE/cockpit"
@@ -63,7 +63,7 @@ for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer; do
 done
 ln -s "$HERE/../systemd/install.sh"  "$FIXTURE/systemd/install.sh"
 ln -s "$HERE/../systemd/units.sh"    "$FIXTURE/systemd/units.sh"
-for f in conf.sh watchd.sh lib.sh owned.sh install-session-hook.sh; do
+for f in conf.sh lib.sh owned.sh install-session-hook.sh; do
     [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
 done
 # Link the real uninstall.sh so the test drives it.

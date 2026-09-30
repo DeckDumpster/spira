@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-concierge-inbox.sh — the durable inbox that replaced keystroke wakes into the
-#   concierge pane: inbox-append.sh, inbox-triage.sh, the inbox-keeper watchd row, and
+#   concierge pane: inbox-append.sh, inbox-triage, the inbox-keeper watchd row, and
 #   SPIRA_MAIL_READERS defaulting the concierge mailbox to it.
 #
 # WHAT THIS REPLACED. Every watcher and mail-deliver used to wake the concierge with a
@@ -17,7 +17,7 @@
 # EVERY CONFIGURED VALUE IS PINNED TO A NON-DEFAULT, so a literal written into the
 # mechanism cannot pass by coincidence.
 #
-# covers: spira/inbox-append.sh spira/inbox-triage.sh spira/inbox-keeper.sh spira/conf.sh spira/watchers
+# covers: spira/inbox-append.sh spira/inbox-triage spira/inbox-keeper.sh spira/conf.sh spira/watchers
 # tier: T1
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -61,18 +61,18 @@ echo "the inbox-keeper watchd row — a harness watchd row, not an operator over
 want "spira/watchers carries an inbox-keeper daemon row" \
     "inbox-keeper|daemon|inbox-keeper.sh" "$(cat "$HERE/watchers")"
 MAN="$TMP/elsewhere/manifest-check"
-SPIRA_WATCHERS_OVERLAY="$TMP/elsewhere/no-overlay" watchd.sh manifest \
+SPIRA_WATCHERS_OVERLAY="$TMP/elsewhere/no-overlay" watchd manifest \
     > "$MAN" 2>"$TMP/elsewhere/manifest.err"; rc=$?
 is   "the shipped manifest, alone, still parses" "0" "$rc"
 want "and names inbox-keeper as a daemon row" "inbox-keeper|daemon" "$(cat "$MAN")"
 
 echo
-echo "inbox-triage.sh — drops its own known noise, dedups, passes the rest"
+echo "inbox-triage — drops its own known noise, dedups, passes the rest"
 # THE POSITIVE CONTROL FIRST: an ordinary line must pass, so the drops proven below are
 # about the pattern and not about the fixture being unable to pass anything at all.
 : > "$SPIRA_CONCIERGE_INBOX"
 OUT="$TMP/elsewhere/triage.out"
-inbox-triage.sh > "$OUT" 2>/dev/null &
+inbox-triage > "$OUT" 2>/dev/null &
 TRIAGE_PID=$!
 trap 'kill "$TRIAGE_PID" 2>/dev/null; rm -rf "$TMP"' EXIT INT TERM
 sleep 0.5   # let tail -F attach before anything is written

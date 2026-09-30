@@ -610,7 +610,7 @@ drain_one() {            # drain_one <spool-path>
 
 # SOURCEABLE, AND SILENT WHEN IT IS. Without this guard, `. incident.sh` from a test wanting
 # only _reopen_cause would run the dispatcher against the caller's own arguments (or none,
-# landing on the `*)` branch below and exiting the sourcing shell) — the same seam watchd.sh
+# landing on the `*)` branch below and exiting the sourcing shell) — the same seam watchd
 # already opens before its own dispatch.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "${1:-}" in

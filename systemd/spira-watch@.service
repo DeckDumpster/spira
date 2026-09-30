@@ -8,7 +8,7 @@
 # killed them. The point of this unit is that the outer harness owns the process and a
 # session merely latches onto its log.
 Description=Spira watcher %i
-Documentation=file://@SPIRA_HOME@/watchd.sh
+Documentation=file://@SPIRA_PROD_ROOT@/watchd/DESIGN.md
 After=default.target
 # THE BURST LIMITER HAS TO BE REACHABLE. Five starts at RestartSec=15 span at least 60s, so
 # systemd's default 10s window can never hold five and the limiter never fires — a target
@@ -26,11 +26,13 @@ StartLimitBurst=5
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=simple
-# THE DISPATCHER, NOT THE COMMAND. `watchd.sh exec %i` resolves the row's target through the
-# manifest, so the manifest stays the single source of truth and no path is baked into a unit
-# — a unit with a path in it runs on exactly one box, and systemd's complaint about a wrong
-# one is a bare "No such file or directory" in a journal nobody is watching.
-ExecStart=@SPIRA_PROD@/watchd.sh exec %i
+# THE DISPATCHER, NOT THE COMMAND. `watchd exec %i` resolves the row's target through the
+# manifest, so the manifest stays the single source of truth — only the WATCHER's own
+# target (a manifest row) may vary by box; the dispatcher's own path is the release's,
+# same as every other Rust-rewritten tool's unit (`@SPIRA_PROD_ROOT@/bin/<tool>`, sp-48f6g:
+# watchd.sh rewritten to the compiled binary `watchd`, replacing the bash dispatcher that
+# used to live at @SPIRA_PROD@/watchd.sh).
+ExecStart=@SPIRA_PROD_ROOT@/bin/watchd exec %i
 Restart=always
 RestartSec=15
 # THE HINGE. The unit appends stdout to exactly the log the cursor indexes, which is how

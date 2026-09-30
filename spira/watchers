@@ -5,7 +5,7 @@
 # NOT THE ONLY MANIFEST. Every `*.watchers` file in SPIRA_WATCHERS_OVERLAY (default
 # ~/.config/spira/watchers.d/) is read the same way and merged into the same rows, so an
 # operator's or the Concierge's own watcher joins this one without a change here — see
-# watchd.sh for why a name must still be unique across both.
+# watchd for why a name must still be unique across both.
 #
 # ONE ROW IS ONE WATCHER, and one `daemon` row is one systemd unit: `install.sh` renders
 # `spira-watch@.service` and enables `spira-watch@<name>.service` for every daemon row here,
@@ -15,7 +15,7 @@
 # KINDS
 #
 #   daemon   we own the process. The target is a program that loops forever; systemd runs
-#            it through `watchd.sh exec <name>` and appends its stdout to the watcher's log.
+#            it through `watchd exec <name>` and appends its stdout to the watcher's log.
 #            NOTHING ELSE MAY BE RUNNING IT. A target that notices a second copy and exits
 #            CLEANLY is restarted anyway — `Restart=always` restarts on exit 0 too — so a
 #            copy somebody started by hand turns its unit into a loop that spawns and dies on
@@ -59,7 +59,7 @@
 # THE FOURTH FIELD is a command that must exit 0 for the watcher to be reported healthy. It
 # may contain `|`, and unlike a target it IS shell — a target is what systemd starts, so it
 # must be a program; an assertion is a question asked once, and the useful ones are pipelines.
-# It runs only under `watchd.sh status`, never on a timer, so it costs nothing in the steady
+# It runs only under `watchd status`, never on a timer, so it costs nothing in the steady
 # state. Leave it empty and `status` renders `-`: no assertion was made, which is a different
 # fact from one that passed, and a watcher judged on its unit state alone cannot be told from
 # a blind one — a process listing, an `is-active` and an unread count are all SILENT for a
@@ -67,7 +67,7 @@
 #
 # WHAT AN ASSERTION SHOULD LOOK FOR IS ITS OWN IDS, NOT FOREIGN ONES. A database here may hold
 # beads imported under other prefixes, so "this state names something that is not ours" is
-# true of a healthy watcher and would have passed on the blind one. `watchd.sh health-ids
+# true of a healthy watcher and would have passed on the blind one. `watchd health-ids
 # <file>` asks the question that discriminates: does this state name a single bead of OUR
 # prefix. Point it at whatever file the watcher keeps its own memory in.
 
@@ -94,7 +94,7 @@ pr-notify|daemon|pr-notify.sh watch --interval 90|pr-notify.sh health
 # asks the multiplexer what IS, and calls the two disagreeing DEGRADED. Optional, because the
 # surface it steers is the operator's own: SPIRA_VIEW names the program and is empty until it
 # is set.
-?view|daemon|@SPIRA_VIEW@ watch|watchd.sh health-view @SPIRA_VIEW@ @SPIRA_VIEW_SESSION@
+?view|daemon|@SPIRA_VIEW@ watch|watchd health-view @SPIRA_VIEW@ @SPIRA_VIEW_SESSION@
 
 # MAIL-DELIVER monitors the delivery daemon that wakes registered readers on new mail.
 # It is not owned by watchd (it has its own unit), so the kind is `extern`. The health
@@ -104,7 +104,7 @@ pr-notify|daemon|pr-notify.sh watch --interval 90|pr-notify.sh health
 mail-deliver|extern|mail-deliver|spira-mail-deliver.sh health
 
 # INBOX-KEEPER is the only path that may type into the concierge pane, and only a re-arm
-# line when no inbox-triage.sh Monitor has read SPIRA_CONCIERGE_INBOX for a while with
+# line when no inbox-triage Monitor has read SPIRA_CONCIERGE_INBOX for a while with
 # events waiting (a /clear or compaction killed it). Everything else reaches the concierge
 # through that durable inbox, never a keystroke. See inbox-keeper.sh.
 inbox-keeper|daemon|inbox-keeper.sh
@@ -122,7 +122,7 @@ publish-backlog|daemon|publish-backlog.sh watch --interval 900|publish-backlog.s
 # queue-watch — merge-queue transitions for every `mode = "queue"` repository: batch opened,
 # CI, ejected, re-pushed, landed (verified on base), closed without landing, forced cuts,
 # priority inversions and stalls. Derived from queue state and the forge, never from the
-# queue's log, which misses whole transitions. Latch on with `watchd.sh tail queue-watch`.
+# queue's log, which misses whole transitions. Latch on with `watchd tail queue-watch`.
 # The health probe fails when the last poll is stale or was blind, so silence is never
 # mistaken for a quiet queue.
 queue-watch|daemon|queue-watch watch --run @SPIRA_RUN@ --db @SPIRA_DB@ --home @SPIRA_HOME@|queue-watch health --run @SPIRA_RUN@

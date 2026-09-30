@@ -2,7 +2,7 @@
 #
 # session.sh — the coding agent's SessionStart hook: what is watching, what is unread,
 # unread mail, and — on the concierge socket only — the mandatory first action to arm the
-# inbox-triage.sh Monitor. Registered by `install-session-hook.sh`.
+# inbox-triage Monitor. Registered by `install-session-hook.sh`.
 #
 # WHY A HOOK CAN ONLY PRINT. A command hook communicates with the client through stdout,
 # stderr and an exit code only — it cannot call a tool. The OUTER HARNESS owns the watcher
@@ -11,7 +11,7 @@
 # IT PRINTS A SUMMARY, NEVER A REPLAY. Everything here lands in a context window that has
 # just opened, which is the most expensive place text in this harness can go. One line per
 # watcher — name, health, unit state, unread count — and nothing else; the session re-attaches
-# with `watchd.sh tail <name>`, which replays from its cursor anyway, so an event preview here
+# with `watchd tail <name>`, which replays from its cursor anyway, so an event preview here
 # would be paid twice.
 #
 # NO WATCHERS MEANS NO OUTPUT. This is registered in the client's own settings file, so it
@@ -78,7 +78,7 @@ except Exception: print("")' 2>/dev/null)"
 # THE CONCIERGE'S MANDATORY FIRST ACTION, ON EVERY SessionStart SOURCE — startup, resume,
 # clear, compact and fork all open a context with no Monitor attached, which is the only
 # condition this is about (same reasoning as the "no source is special" comment below). It
-# does not wait on WATCHD or a manifest: the inbox-triage.sh Monitor is how mail and watcher
+# does not wait on WATCHD or a manifest: the inbox-triage Monitor is how mail and watcher
 # events reach this session AT ALL now that a keystroke wake no longer does, so it must stay
 # constantly attached. SPIRA_CONCIERGE is exported only by concierge.sh's own launcher, so
 # every other session on the box gets none of this.
@@ -87,10 +87,10 @@ if [ -n "${SPIRA_CONCIERGE:-}" ]; then
     _cunread="$(wc -l < "$_cinbox" 2>/dev/null || echo 0)"
     case "$_cunread" in *[!0-9]*|'') _cunread=0 ;; esac
     printf 'MANDATORY FIRST ACTION: arm the Concierge inbox monitor before anything else — Monitor command=%s, timeout_ms=1800000, description="concierge inbox (triaged)". Every watcher and mail event reaches you ONLY through %s (%s lines); nothing types into the pane. Re-arm it at every 30-minute expiry. Then read recent inbox lines: tail -20 %s\n' \
-        "$(command -v inbox-triage.sh || printf inbox-triage.sh)" "$_cinbox" "$_cunread" "$_cinbox"
+        "$(command -v inbox-triage || printf inbox-triage)" "$_cinbox" "$_cunread" "$_cinbox"
 fi
 
-WATCHD=watchd.sh
+WATCHD=watchd
 MAIL=mail.sh
 
 # FIRE THE ARCHIVIST ON CLEAR. A clear starts a new session while the previous transcript is
@@ -164,7 +164,7 @@ if [ -n "${SPIRA_MAIL_SESSION_MAILBOX:-}" ]; then
 fi
 
 # ONE LINE PER WATCHER, AND NOTHING ELSE. A fresh context window is the
-# most expensive place text can go, and the session re-attaches with `watchd.sh tail <name>`,
+# most expensive place text can go, and the session re-attaches with `watchd tail <name>`,
 # which replays everything from its cursor anyway — so a preview of unread events here is paid
 # twice. Each line is the watcher, its health, and its unread count; a DEGRADED one carries
 # the reason `status` gave, because that is the half that says what to do. No peek, no

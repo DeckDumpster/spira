@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: systemd/spira-mail-deliver.service spira/world.sh spira/watchd.sh spira/watchers spira/spira-mail-deliver.sh spira/mail.sh spira/mail-health.sh spira/conf.sh UC-operator-channel-10
+# covers: systemd/spira-mail-deliver.service spira/world.sh watchd/* spira/watchers spira/spira-mail-deliver.sh spira/mail.sh spira/mail-health.sh spira/conf.sh UC-operator-channel-10
 #
 # PROPERTIES UNDER TEST
 # ---------------------
@@ -17,7 +17,7 @@
 # 4. COMPOUND: a down delivery daemon plus aged concierge mail produces exactly one
 #    liveness message (from watchd) and one aged-mail message (from mail-health.sh) — never
 #    zero, never a duplicate of either.
-# 5. LOG PATH: the unit's StandardOutput path is the exact path watchd.sh's own _wd_logfile
+# 5. LOG PATH: the unit's StandardOutput path is the exact path watchd's own status table
 #    computes for this row — sp-12uu8's fixed defect, where the two literals had drifted apart
 #    and nothing was ever appended to the path the watcher health row advertised as its log.
 # 6. WAKE RETRY: a mailbox with unread mail and nobody reading gets woken again on
@@ -46,7 +46,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 SERVICE="$HERE/../systemd/spira-mail-deliver.service"
 WORLD=world.sh   # invoked by name on the suite's PATH (sp-gypjk)
-WATCHD="$HERE/watchd.sh"
+WATCHD=watchd    # sp-48f6g: watchd.sh rewritten to the compiled binary; invoked by name too
 
 echo
 echo "1. SERVICE UNIT — SuccessExitStatus=143:"
@@ -144,8 +144,8 @@ CONCIERGE_NEW="$MAIL/concierge/new"
 mkdir -p "$CONCIERGE_NEW" "$MAIL/concierge/cur" "$MAIL/concierge/tmp"
 
 # Manifest: mail-deliver as extern watcher. The health command runs the daemon's own
-# script via SPIRA_HOME (set by conf.sh to the harness directory when watchd.sh sources
-# it) — asking it whether it is watching its registered mailboxes, nothing about mail age.
+# script via SPIRA_HOME (set by conf.sh wherever it is sourced) — asking it whether it is
+# watching its registered mailboxes, nothing about mail age.
 MAN="$TMP/watchers"
 printf 'mail-deliver|extern|mail-deliver|@SPIRA_HOME@/spira-mail-deliver.sh health\n' > "$MAN"
 
@@ -190,7 +190,7 @@ run_notify() {
         SPIRA_ACTIONABLE=WAKEME \
         SPIRA_MAIL_REPEAT_WINDOW=0 \
         "${@}" \
-        watchd.sh notify 2>/dev/null
+        watchd notify 2>/dev/null
 }
 
 asks()     { find "$MAIL/operator/new" -type f 2>/dev/null | wc -l | tr -d ' '; }
@@ -265,16 +265,21 @@ is "4c: exactly one aged-mail message from mail-health.sh" "1" "$aged"
 
 # ---------------------------------------------------------------------------
 echo
-echo "5. LOG PATH — the unit's StandardOutput is the path watchd.sh's own _wd_logfile computes:"
+echo "5. LOG PATH — the unit's StandardOutput is the path watchd's own status table computes:"
 
-# Ask watchd.sh's own function what path an extern row named "mail-deliver" logs to,
-# rather than re-typing the "watchd/<name>.log" convention as a second literal here.
+# Ask the real watchd (sp-48f6g: watchd.sh rewritten to the compiled binary; _wd_logfile no
+# longer exists to source) what path an extern row named "mail-deliver" logs to, via its
+# `status` table's own LOG column — rather than re-typing the "watchd/<name>.log" convention
+# as a second literal here.
 LOGRUN="$TMP/logpath-run"
+LOGWATCHERS="$TMP/logpath-watchers"
+printf 'mail-deliver|extern|mail-deliver\n' > "$LOGWATCHERS"
 expected_logfile="$(
     env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_RUN="$LOGRUN" \
-        bash -c '. "$1"; _wd_logfile mail-deliver extern mail-deliver' _ "$WATCHD"
+        SPIRA_WATCHERS="$LOGWATCHERS" "$WATCHD" status 2>/dev/null \
+        | awk '$1=="mail-deliver" { print $NF }'
 )"
-is "5a: _wd_logfile computes the log under watchd/" "$LOGRUN/watchd/mail-deliver.log" "$expected_logfile"
+is "5a: watchd status computes the log under watchd/" "$LOGRUN/watchd/mail-deliver.log" "$expected_logfile"
 
 unit_line="$(grep -m1 '^StandardOutput=append:' "$SERVICE")"
 unit_resolved="${unit_line#StandardOutput=append:}"

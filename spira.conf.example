@@ -115,7 +115,7 @@
 # SPIRA_WATCHERS = $HOME/.config/spira/watchers
 
 # Which of a watcher's lines a reader is shown by default: an extended regular expression that
-# `watchd.sh drain` and `watchd.sh tail` BOTH match against the whole line, so that the command
+# `watchd drain` and `watchd tail` BOTH match against the whole line, so that the command
 # a session hook advertises and the command a session latches with cannot disagree about what
 # matters. Everything else stays in the log, where `--all` and the file itself still reach it.
 #
@@ -129,7 +129,7 @@
 # Default: ANSWERED|COMMENTED|ESCALAT|STRANDED|POISON|DEGRADED|BLOCKED|UNREACHABLE|FAIL|ERROR|LANDED|⚠
 # SPIRA_ACTIONABLE = ANSWERED|STRANDED|FAIL|ERROR
 
-# The id prefix of your own beads, without the hyphen. `watchd.sh health-ids` looks for it to
+# The id prefix of your own beads, without the hyphen. `watchd health-ids` looks for it to
 # prove a watcher is still reading THIS database rather than one retired underneath it.
 #
 # It asks whether the state names ONE of your ids, and not whether it names a foreign one —
@@ -139,7 +139,7 @@
 SPIRA_ID_PREFIX = sp
 
 # How long a health command in the watcher manifest may run, in seconds. A probe is your own
-# command and `watchd.sh status` is what a session hook runs at every start, so an unbounded
+# command and `watchd status` is what a session hook runs at every start, so an unbounded
 # one hangs the opening of a context window rather than merely being slow. Running out of time
 # is DEGRADED: it did not prove the watcher can see anything.
 # Default: 10

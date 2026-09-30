@@ -12,7 +12,7 @@
 //! forge.sh lives), --config FILE (spira.toml; default search: SPIRA_TOML, $SPIRA_REPO,
 //! $XDG_CONFIG_HOME/spira, /etc/spira).
 //!
-//! Runs as a watchd `daemon` row, so a reader latches on with `watchd.sh tail queue-watch`
+//! Runs as a watchd `daemon` row, so a reader latches on with `watchd tail queue-watch`
 //! instead of hand-rolling a pipeline over the queue's log.
 
 mod core;
