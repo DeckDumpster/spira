@@ -124,7 +124,7 @@ stderr; `attribute.sh` treats `>= 2` as a run fault; `gate-retry.sh` retries onl
 | `$SPIRA_VERDICTS/batch-<key>` | `VerdictFile` (§3.3), shared with gate.sh's directory |
 | `$SPIRA_RUN/tsd/suite-timing.jsonl` | one `SuiteTimingRow` (§3.4) per executed suite plus one `__batch__` row |
 | `$SPIRA_RUN/tsd/round.jsonl` | one `phase=build` row when `SPIRA_ROUND_BATCH_ID` is set |
-| `/tmp/spira-batch-<inst>.owner` | our pid (owner-file protocol shared with testenv.sh) |
+| `/tmp/spira-batch-<inst>.owner` | our pid (owner-file protocol shared with `testenv container`) |
 | `$SPIRA_LANDING_CONTAINERS` | container name appended, when that variable is set |
 
 Nothing is written into the worktree except cargo's `target/` (and, under `--artifacts`,
@@ -164,7 +164,7 @@ parses spira.toml or the repo-map itself (law-config-through-the-cli-only).
 | `SPIRA_ROUND_BATCH_ID`, `SPIRA_ROUND_MEMBERS` | — | — |
 | `GITHUB_RUN_ID` / `SPIRA_BATCH_RUN_ID` | `local-<epoch>` | — |
 | `SPIRA_TESTENV_SCRATCH_SLOTS` (new) | 4 | — |
-| `SPIRA_TESTENV_HARNESS` (new) | the ancestor of the running binary that holds `spira/testenv.sh` | — |
+| `SPIRA_TESTENV_HARNESS` (new) | the ancestor of the running binary that holds `spira/testenv/Containerfile` (was `spira/testenv.sh`, §12) | — |
 
 Retired with the tree-keyed cache: `SPIRA_BATCH_BINS_TARGET_DIR`, `SPIRA_BATCH_BINS_TTL`.
 
@@ -177,7 +177,7 @@ testenv owns orchestration; these stay separate components with their own contra
 | `git` | rev-parse tree/commit, worktree list/add/checkout, status, `show <rev>:spira/suite-state`, `show <rev>:spira/skip-allowlist.tsv` (§3.7), landref rungs |
 | `cargo` | `cargo build --profile <p> --workspace` in the worktree — **not** run at all under `--artifacts` |
 | `suite-select` (crate, linked) | diff-derived selection (the ONE selector, sp-wx2tw) |
-| `spira/testenv.sh` (the harness copy's own — `<harness>/spira/testenv.sh`, the file `Harness::locate` found; a gate-built testenv therefore drives the tree under test's own, sp-isom7) | `tag` (image build-closure hash), `up --name --checkout` (image acquisition, boot, linger, cargo-volume ownership), `probe`, `down --name --volumes` |
+| this executable's `container` subcommand (§12; was `spira/testenv.sh`), run as a child against the harness copy `Harness::locate` found — a gate-built testenv therefore drives the tree under test's own image closure, sp-isom7 | `tag` (image build-closure hash), `up --name --checkout` (image acquisition, boot, linger, cargo-volume ownership), `probe`, `down --name --volumes` |
 | `podman` | `exec`, `container inspect`, `container exists`, `ps -a`, `stop`, `rm`, `volume rm` |
 | `spira/gate-diag.sh`, `spira/gate-timing.sh` | red diagnostics table / batch-timing ledger row |
 | `spira/mail.sh`, `spira/incident.sh` | a refused repeat of a cached red: one Concierge note per key (payload on stdin), one incident (payload on stdin) |
@@ -372,7 +372,7 @@ parse args ─ resolve repo, landref, tree ─ acquire worktree (in place | scra
   ─ cargo build --profile p  (rc 4 on failure)  ─ artifacts <wt>/target/<dir>
       └ --artifacts DIR: validated right after the worktree (rc 2), hashed into the key,
         staged to <wt>/target/prebuilt here instead of building  ─ artifacts …/prebuilt
-  ─ orphan sweeps ─ claim owner file ─ testenv.sh up / probe
+  ─ orphan sweeps ─ claim owner file ─ testenv container up / probe
   ─ stage the tree as a release, PATH from it (§5; rc 3 reason=stage)
   ─ configure, suspend loom+cockpit+queue-watch units, install  (skippable)
   ─ requirements check (skip-req records) ─ testdb template (else shared baseline)
@@ -409,10 +409,11 @@ uid 1001, `XDG_RUNTIME_DIR=/run/user/1001`, `CARGO_HOME=/var/spira/cargo`,
   `<prefix>*` containers with no owner file older than the min age — stop, rm, both cargo
   volumes, `/tmp/<name>`.
 * **Owner claim**: refuse (rc 2) when the file names another live pid.
-* **Image and boot**: `testenv.sh up --name <n> --checkout <worktree>` (image by
+* **Image and boot**: `testenv container up --name <n> --checkout <worktree>` (§12; image by
   build-closure tag: local, else pulled from the registry, else built; `--systemd`,
   pids-limit 8192, the worktree bind-mounted at `/workspace`, cargo volumes), then
-  `testenv.sh probe`. testenv owns neither the Containerfile nor the tag scheme.
+  `testenv container probe`. The runner owns neither the Containerfile nor the tag scheme; the
+  `container` subcommand (§12) does.
 * **Install** (unless `SPIRA_BATCH_SKIP_INSTALL`): `configure.sh` with
   `CONFIGURE_PROD=/workspace/spira CONFIGURE_MAX_AEONS=1 CONFIGURE_MAX_LIVE_AEONS=1
   CONFIGURE_LOOM_ADDR=127.0.0.1:7300 CONFIGURE_DOLT_DATA=`; `ctrl.sh suspend
@@ -445,7 +446,7 @@ uid 1001, `XDG_RUNTIME_DIR=/run/user/1001`, `CARGO_HOME=/var/spira/cargo`,
 * **Every** exec that runs harness code (configure, suspend, install, baseline, suites)
   carries `SPIRA_RELEASE=<stage>` and `PATH=<stage>/bin:<stage>/spira:<image PATH>` (§5).
 * **Teardown** (always, including on SIGINT/SIGTERM): only while the owner file still names
-  us, `testenv.sh down --name <n> --volumes`; remove the host home; release the owner file
+  us, `testenv container down --name <n> --volumes`; remove the host home; release the owner file
   only once podman confirms the container is gone.
 
 The runtime is a trait (`ContainerRuntime`); the orchestration is unit-tested against a fake.
@@ -531,7 +532,8 @@ into a fresh `cargo-target-bins/<tree>` on every new tree (95-116 s, sp-zv7j4).
   handed prebuilt binaries by the `build` job, exactly as testenv-batch.sh was. Every PR
   faulted `VERDICT FAULT rc=3 ran=0 reason=no-cargo` (run 36596357971, PR 454). "Always
   builds" now reads "builds unless `--artifacts` says what to test".
-* **D2 — testenv.sh stays the image/boot owner.** Image acquisition (tag = build-closure
+* **D2 — testenv.sh stays the image/boot owner.** *(Retired 2026-09-30 by D16, §12: the
+  script is deleted and its contract is `testenv container`.)* Image acquisition (tag = build-closure
   hash, registry pull, build), boot and probe are testenv.sh's contract with other callers
   too (gate.yml publishes images through it). testenv drives it through the runtime trait;
   everything testenv-batch.sh did with podman directly is Rust.
@@ -745,14 +747,14 @@ slots before the §4.1 rules:
 | slot worktree | `$SPIRA_RUN/worktree/.testenv-warm-<i>` — a detached worktree of the repo, reset per trial exactly as a scratch slot (`checkout --detach --force`, `clean -ffdx -e /target`), so `target/` stays warm |
 | slot lock | `$SPIRA_RUN/worktree/.testenv-warm-<i>.lock`, `flock` exclusive, non-blocking; held for the whole trial |
 | spare record | `$SPIRA_RUN/worktree/.testenv-warm-<i>.spare`: `name=<container> tag=<image tag> booted=<epoch>` lines, written atomically (rename) only after the spare booted and probed |
-| spare container | `spira-warm-<i>-<epoch>-<pid>-<seq>`, booted by `testenv.sh up --name <n> --checkout <slot worktree>` — the slot is bind-mounted at `/workspace`, so the trial's checkout into the slot is what the spare sees |
+| spare container | `spira-warm-<i>-<epoch>-<pid>-<seq>`, booted by `testenv container up --name <n> --checkout <slot worktree>` — the slot is bind-mounted at `/workspace`, so the trial's checkout into the slot is what the spare sees |
 
 * **Claim.** With the slot lock held and the tree checked out and built, the trial reads
   the spare record and **deletes it before using the container** — a spare is claimable at
   most once, even if the trial dies. It is used only if it is running, its tag is the
   current image tag, a nonce the trial writes to `<slot>/target/.testenv-warm-nonce` reads
   back identically from `/workspace/target/.testenv-warm-nonce` inside it (it mounts this
-  slot and sees this checkout), and `testenv.sh probe` passes. Otherwise it is purged and
+  slot and sees this checkout), and `testenv container probe` passes. Otherwise it is purged and
   the trial boots its own container on the slot (`warm=cold`) — the same work as before,
   with a warm build.
 * **Never reused (isolation by construction).** The claimed container is torn down at the
@@ -767,7 +769,7 @@ slots before the §4.1 rules:
 * **Sweep of warm containers.** `spira-warm-*` containers that no spare record names and
   whose owner file names a dead pid (or none, when older than the orphan min age) are
   purged by the refiller's sweep.
-* A spare holds one of testenv.sh's admission slots (`SPIRA_TESTENV_MAX_CONCURRENT`) while
+* A spare holds one of `testenv container`'s admission slots (`SPIRA_TESTENV_MAX_CONCURRENT`) while
   idle.
 
 **Phase timings (D11).** Every trial records its phases, in order, in seconds:

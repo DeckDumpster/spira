@@ -372,10 +372,6 @@ test-superseded.sh	T1	19.0
 test-tarball-bins.sh	T1	4.0
 test-testdb-concurrent.sh	T1	12.5
 test-testdb-failsafe.sh	T1	21.5
-test-testenv-image-heartbeat.sh	T1	100.0
-test-testenv-image-tag.sh	T1	2.0
-test-testenv-registry.sh	T1	3.0
-test-testenv-scratch.sh	T1	44.5
 test-testlib.sh	T1	2.0
 test-thrash-streak.sh	T1	28.5
 test-thrash-wall.sh	T1	2.0
