@@ -35,7 +35,7 @@
 # not about what systemd reported.
 #
 # defect: sp-i96t
-# covers: spira/world.sh
+# covers: spira-world/src/bin/world.rs
 # hermetic-ok: stubs systemctl via SPIRA_SYSTEMCTL; /proc scan uses real background process
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

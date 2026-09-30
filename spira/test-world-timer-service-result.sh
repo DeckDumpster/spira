@@ -22,7 +22,7 @@
 #
 # defect: sp-2z9y
 # tier: T1
-# covers: spira/world.sh
+# covers: spira-world/src/bin/world.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

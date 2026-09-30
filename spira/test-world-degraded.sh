@@ -22,7 +22,7 @@
 # reaching a real systemd user manager (law-gates-run-in-a-clean-environment).
 #
 # tier: T1
-# covers: spira/world.sh
+# covers: spira-world/src/bin/world.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

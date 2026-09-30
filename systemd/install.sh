@@ -484,18 +484,22 @@ declare -A _MASKED=()   # units masked by the operator — skipped, never overwr
 declare -A _NEW=()      # units that did not exist before this run — safe to enable fresh
 _n_unchanged=0
 
-# CONTROL PLANE, READ ONCE. ctrl.sh check sources conf.sh and spawns python3 per call; asking
-# it once per unit (4 call sites below, over dozens of units) made that dozens of process
-# starts per install. CTRL_LIB=1 sources ctrl.sh for its functions only (no CLI dispatch);
-# ctrl_load_suspended does the one python3 read and ctrl_is_suspended decides per unit in pure
-# bash — the same predicate world.sh start now uses (cluster 6, docs/test-plan/instance-lifecycle.md).
-# A fallback definition covers the pre-existing "ctrl.sh absent or fails -> enabled normally"
-# contract when the file is not executable.
-ctrl_is_suspended() { return 1; }
+# CONTROL PLANE, READ ONCE. `ctrl.sh check` (now the `ctrl` binary) spawns a process per
+# call; asking it once per unit (4 call sites below, over dozens of units) made that dozens
+# of process starts per install. `ctrl` is now Rust (sp-6onps) and cannot be sourced as a
+# bash library the way CTRL_LIB=1 used to — so this reads its `suspended` dump once instead,
+# into the same associative array `ctrl_is_suspended` (unchanged: a pure lookup) already
+# decides against per unit, in pure bash — the same predicate world.sh start uses (cluster
+# 6, docs/test-plan/instance-lifecycle.md).
+# A fallback definition covers the pre-existing "ctrl absent or fails -> enabled normally"
+# contract when the binary is not on PATH.
+ctrl_is_suspended() { local -n _arr="$1"; local _subject="$2"; [ -n "${_arr[$_subject]+x}" ] || return 1; printf '%s' "${_arr[$_subject]}"; }
 declare -A _CTRL_SUSPENDED=()
-if [ -x "$SPIRA_HOME/ctrl.sh" ]; then
-    CTRL_LIB=1 . "$SPIRA_HOME/ctrl.sh"
-    ctrl_load_suspended _CTRL_SUSPENDED
+if command -v ctrl >/dev/null 2>&1; then
+    while IFS=$'\t' read -r _cs_subject _cs_reason; do
+        [ -n "$_cs_subject" ] || continue
+        _CTRL_SUSPENDED["$_cs_subject"]="$_cs_reason"
+    done < <(ctrl suspended 2>/dev/null)
 fi
 for u in "${UNITS[@]}"; do
     [ "$u" = "spira-watch@.service" ] && continue

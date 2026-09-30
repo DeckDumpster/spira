@@ -20,7 +20,7 @@
 #   3. --timeout 0 with a live aeon: NOT DRAINED, exit 1, slay.sh not called (unchanged).
 #
 # defect: sp-yqslx
-# covers: spira/world.sh
+# covers: spira-world/src/bin/world.rs
 set -uo pipefail
 set -m
 HERE="$(cd "$(dirname "$0")" && pwd)"

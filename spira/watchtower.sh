@@ -474,10 +474,20 @@ if [ "${1:-}" = "--disabled-timer-check" ]; then
         exit 0
     }
 
-    WORLD_LIB=1 . "${SPIRA_HOME}/world.sh"
+    # world.sh and ctrl.sh are the `world` and `ctrl` binaries now (sp-6onps) and cannot be
+    # sourced as bash libraries the way WORLD_LIB=1/CTRL_LIB=1 used to — each is read once
+    # through a small machine-readable seam instead: `world timer-priority` for the fixed
+    # TIMER_PRIORITY list, `ctrl suspended` for every currently-suspended subject.
+    TIMER_PRIORITY=()
+    while IFS= read -r _dtc_base; do
+        [ -n "$_dtc_base" ] && TIMER_PRIORITY+=("$_dtc_base")
+    done < <(world timer-priority 2>/dev/null)
+    ctrl_is_suspended() { local -n _arr="$1"; local _subject="$2"; [ -n "${_arr[$_subject]+x}" ] || return 1; printf '%s' "${_arr[$_subject]}"; }
     declare -A CTRL_SUSPENDED=()
-    CTRL_LIB=1 . "${SPIRA_HOME}/ctrl.sh"
-    ctrl_load_suspended CTRL_SUSPENDED
+    while IFS=$'\t' read -r _dtc_subject _dtc_reason; do
+        [ -n "$_dtc_subject" ] || continue
+        CTRL_SUSPENDED["$_dtc_subject"]="$_dtc_reason"
+    done < <(ctrl suspended 2>/dev/null)
 
     _dtc_sc="${SPIRA_SYSTEMCTL:-systemctl}"
     _dtc_sfx="${SPIRA_INSTANCE:+-$SPIRA_INSTANCE}"

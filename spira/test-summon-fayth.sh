@@ -33,7 +33,7 @@
 # POSITIVE CONTROLS BEFORE EACH REFUSAL (law-absence-needs-a-positive-control).
 #
 # tier: T1
-# covers: spira/lib.sh spira/escape.sh spira/world.sh UC-dispatch-09 UC-dispatch-10 UC-dispatch-11 UC-dispatch-12 UC-dispatch-15 UC-dispatch-23
+# covers: spira/lib.sh spira/escape.sh spira-world/src/bin/world.rs UC-dispatch-09 UC-dispatch-10 UC-dispatch-11 UC-dispatch-12 UC-dispatch-15 UC-dispatch-23
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

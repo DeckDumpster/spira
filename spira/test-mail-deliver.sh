@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: systemd/spira-mail-deliver.service spira/world.sh spira/watchd.sh spira/watchers spira/spira-mail-deliver.sh spira/mail.sh spira/mail-health.sh spira/conf.sh UC-operator-channel-10
+# covers: systemd/spira-mail-deliver.service spira-world/src/bin/world.rs spira/watchd.sh spira/watchers spira/spira-mail-deliver.sh spira/mail.sh spira/mail-health.sh spira/conf.sh UC-operator-channel-10
 #
 # PROPERTIES UNDER TEST
 # ---------------------

@@ -29,7 +29,7 @@
 #
 # defect: sp-v7ok
 # tier: T1
-# covers: cockpit/health.sh spira/world.sh
+# covers: cockpit/health.sh spira-world/src/bin/world.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

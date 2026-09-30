@@ -420,10 +420,11 @@ impl<'a> Session<'a> {
             kv("SPIRA_RUN", self.batch_run()),
         ];
         env.extend(self.release_env());
-        let ctrl = self.in_release("spira/ctrl.sh");
+        // ctrl.sh is the `ctrl` binary now (sp-6onps): a native executable under bin/, not
+        // a bash script under spira/ — no `bash` prefix needed to run it.
+        let ctrl = self.in_release("bin/ctrl");
         self.setup_as_user(
             &[
-                "bash",
                 &ctrl,
                 "suspend",
                 unit,
@@ -1123,11 +1124,11 @@ mod tests {
         rt.execs.lock().unwrap().remove(0);
         assert_eq!(argv[0], vec!["bash", "/tmp/spira-release-abc123/spira/configure.sh"]);
         assert_eq!(
-            argv[1][..4],
-            ["bash", "/tmp/spira-release-abc123/spira/ctrl.sh", "suspend", "spira-loom"]
+            argv[1][..3],
+            ["/tmp/spira-release-abc123/bin/ctrl", "suspend", "spira-loom"]
         );
-        assert_eq!(argv[2][3], "spira-cockpit");
-        assert_eq!(argv[3][3], "spira-watch-queue-watch");
+        assert_eq!(argv[2][2], "spira-cockpit");
+        assert_eq!(argv[3][2], "spira-watch-queue-watch");
         assert_eq!(
             argv[4],
             vec!["bash", "/tmp/spira-release-abc123/systemd/install.sh", "abc123"]
@@ -1226,7 +1227,7 @@ mod tests {
     fn a_failed_step_is_an_install_fault_and_stops() {
         let rt = FakeRuntime::new();
         rt.on(
-            |r| r.argv.get(2).map(String::as_str) == Some("suspend"),
+            |r| r.argv.get(1).map(String::as_str) == Some("suspend"),
             |_| ExecOutcome {
                 rc: 1,
                 output: String::new(),

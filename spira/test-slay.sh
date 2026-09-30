@@ -17,7 +17,7 @@
 # about what git says exists (law-prefer-the-real-dependency).
 #
 # defect: sp-ekio
-# covers: spira/slay.sh spira/lib.sh spira-lc/* lifecycle/*
+# covers: spira-world/src/bin/slay.rs spira/lib.sh spira-lc/* lifecycle/*
 # scar: slay.sh left the bead in an inconsistent state after terminating the aeon and did not salvage uncommitted work from the worktree.
 # timeout: 180
 set -uo pipefail

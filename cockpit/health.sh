@@ -345,7 +345,7 @@ halt_banner() {
     [ -n "$why" ]   && printf '  %swhy%s   %s\n' "$C_DIM" "$C_RST" "${why:0:60}"
     [ "$tstate" != active ] && [ -z "$since" ] \
         && printf '  %ssentinel.timer is %s and no world.sh halt was recorded%s\n' "$C_DIM" "$tstate" "$C_RST"
-    printf '  %sstart it:%s spira/world.sh start\n' "$C_DIM" "$C_RST"
+    printf '  %sstart it:%s bin/world.sh start\n' "$C_DIM" "$C_RST"
 }
 
 # A DRAINING WORLD FOLLOWS THE HALT BANNER, because a pool held at zero by design and a pool
