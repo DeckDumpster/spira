@@ -36,7 +36,7 @@ queue verdict <repo>
 
 - `<repo>` is required (`queue.sh verdict: repo required`, exit 2).
 - **Exit:** `0` settled, waiting, or nothing to do (no record; another operation holds the
-  lock); `1` a refusal or a fault the operator must see (no repo-map entry, unopenable
+  lock); `1` a refusal or a fault the operator must see (not a registered repository, unopenable
   lock, malformed record, fast-forward refused, base unresolvable, unknown status,
   judgement-ci failed); `2` usage. `queue step` ignores it, as it ignored verdict.sh's.
 - **Lifecycle switch** (DESIGN.md §10): resolved once, like `step`. OFF (production):
@@ -147,7 +147,9 @@ Forge calls (the forge program, `$SPIRA_FORGE`): `check-status <path> <pr> <bran
   fast-forward, an unknown status, a red publish whose fix-forward bead could not be
   filed), where verdict.sh's `main` returned 0 after any settle attempt. `step` ignores the
   status either way; a hand run now sees the fault in `$?`. Also named: git's own push and
-  `branch -D` chatter is no longer echoed (the fault lines verdict.sh printed are).
+  `branch -D` chatter is no longer echoed (the fault lines verdict.sh printed are), and
+  verdict.sh's "no repo-map entry" reads "not a registered repository (no checkout path)":
+  only spira-config may name that file (config-fence).
 - **D6 — `_verdict_trap_*` and `SPIRA_QUEUE_REPRO_CI_*`** are gone with D1: nothing in the
   pass blocks long enough to need a TERM log line.
 

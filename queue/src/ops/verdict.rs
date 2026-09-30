@@ -33,7 +33,7 @@ pub fn verdict(w: &World, repo: &str) -> i32 {
 pub fn pass(w: &World, c: &Ctx, lc_on: bool) -> i32 {
     let name = c.r.name.as_str();
     let Some(path) = c.r.path.clone() else {
-        w.err(format!("verdict {name}: no repo-map entry"));
+        w.err(format!("verdict {name}: not a registered repository (no checkout path)"));
         return FAIL;
     };
     match c.r.mode {

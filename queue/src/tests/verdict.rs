@@ -535,7 +535,7 @@ fn a_repo_the_map_does_not_carry_is_refused() {
     let t = T::new(LandMode::Queue);
     t.lib.r.borrow_mut().path = None;
     assert_eq!(t.run(&["verdict", "spira"]), 1);
-    assert!(t.err().contains("verdict spira: no repo-map entry"));
+    assert!(t.err().contains("verdict spira: not a registered repository (no checkout path)"));
 }
 
 #[test]
