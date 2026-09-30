@@ -10,7 +10,7 @@
 #   linger flag, but only when install.sh's own stamp says this install enabled it
 #   ~/.local/bin symlinks pointing into this harness tree
 #   session hooks in the agent settings file
-#   alert drop-ins (install-intake.sh uninstall)
+#   alert drop-ins (removed directly — see "5. ALERT DROP-INS" below)
 #   cockpit panes (layout.sh down — sessions are never killed)
 #
 # Kept unless --purge:
@@ -331,17 +331,18 @@ fi
 # ---------------------------------------------------------------------------
 if [ -n "$_un_session_settings" ]; then
     printf '\nRemoving session hooks...\n'
-    install-session-hook.sh uninstall 2>/dev/null || true
+    release session-hook uninstall 2>/dev/null || true
 fi
 
 # ---------------------------------------------------------------------------
-# 5. ALERT DROP-INS. Delegate to install-intake.sh which knows the exact shape.
+# 5. ALERT DROP-INS. `release intake uninstall` needs SPIRA_ALERT_GLOB to know the
+#    exact shape, which the call site cannot promise still set (the reason this
+#    removes each drop-in directly below, rather than delegating to it).
 # ---------------------------------------------------------------------------
 if [ "${#_un_dropin_paths[@]}" -gt 0 ]; then
     printf '\nRemoving alert drop-ins...\n'
-    # install-intake.sh uninstall needs SPIRA_ALERT_GLOB to know which templates
-    # to check. The dropin file names tell us exactly which ones exist; remove
-    # each directly in case SPIRA_ALERT_GLOB is no longer set in the environment.
+    # The dropin file names tell us exactly which ones exist; remove each directly
+    # in case SPIRA_ALERT_GLOB is no longer set in the environment.
     for _un_dp in "${_un_dropin_paths[@]}"; do
         if [ -f "$_un_dp" ]; then
             rm -f "$_un_dp"
