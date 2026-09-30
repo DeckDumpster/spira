@@ -663,8 +663,16 @@ impl Tools for RealTools {
         self.admission.as_ref().map(|d| admission_free(d, par))
     }
     fn gate_status(&self, branch: &str, repo: &str) -> Option<String> {
-        let mut c = command("bash");
-        c.arg(self.home.join("gate-run.sh")).arg("--status").arg(branch).arg(repo).stdin(Stdio::null());
+        // SPIRA_GATE_RUN_BIN (conf.sh exports it), else the one installed beside this binary
+        // (sp-ubw2o, replaces spira/gate-run.sh — same resolution `rebase_stale` uses above).
+        let bin = std::env::var_os("SPIRA_GATE_RUN_BIN")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("gate-run"))))
+            .filter(|b| executable(b));
+        let Some(bin) = bin else { return None };
+        let mut c = command(bin);
+        c.arg("--home").arg(&self.home).arg("--status").arg(branch).arg(repo).stdin(Stdio::null());
         let (rc, so, _) = run_capture(c);
         if rc == 0 { Some(String::from_utf8_lossy(&so).trim_end_matches('\n').to_string()) } else { None }
     }

@@ -3,7 +3,7 @@
 //! this module gathers its inputs lazily (a marker a higher row would match is never
 //! consumed early) and performs the side effects the verdict names.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
@@ -33,13 +33,25 @@ impl Run<'_> {
         let _ = self.d.exec.exec("bash", &s(&["-c", FIXTURE_DROP]), Some(data), None);
     }
 
-    /// `gate-run.sh --status <branch> <repo>`: (exit code, stdout).
+    /// `gate-run --status <branch> <repo>`: (exit code, stdout). `SPIRA_GATE_RUN_BIN`
+    /// (conf.sh exports it), else the one installed beside `spira/gate-run.sh` (sp-ubw2o,
+    /// replaces the bash — landing-pass's `real::gate_status` resolves it the same way).
     fn gate_status(&self) -> Option<(i32, String)> {
-        let g = self.home().join("gate-run.sh");
-        if !g.is_file() {
+        let bin = self.conf.s("SPIRA_GATE_RUN_BIN");
+        let bin = if !bin.is_empty() {
+            PathBuf::from(bin)
+        } else {
+            self.home().join("gate-run.sh")
+        };
+        if !bin.is_file() {
             return None;
         }
-        let o = self.d.exec.exec("bash", &s(&[&g.display().to_string(), "--status", &self.s.branch, &self.s.repo_name]), None, None);
+        let o = self.d.exec.exec(
+            &bin.display().to_string(),
+            &s(&["--home", &self.home().display().to_string(), "--status", &self.s.branch, &self.s.repo_name]),
+            None,
+            None,
+        );
         Some((o.code, o.text()))
     }
 

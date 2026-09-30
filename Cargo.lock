@@ -298,6 +298,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "gate-check"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "testkit",
+]
+
+[[package]]
+name = "gate-diag"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "testkit",
+]
+
+[[package]]
+name = "gate-run"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "testkit",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
