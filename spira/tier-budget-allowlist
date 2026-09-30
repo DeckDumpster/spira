@@ -167,7 +167,6 @@ test-configure.sh	T1	2.0
 test-containment.sh	T1	21.5
 test-content-landed-empty-branch.sh	T1	17.5
 test-content-landed-no-reopen.sh	T1	29.5
-test-counter-events-sentinel.sh	T1	22.0
 test-cross-repo.sh	T1	35.5
 test-ctrl.sh	T1	55.5
 test-ctx-pointer.sh	T1	5.0

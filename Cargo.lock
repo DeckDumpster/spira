@@ -477,6 +477,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "incident"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "testkit",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -565,6 +575,13 @@ dependencies = [
  "serde_json",
  "testkit",
  "tokio",
+]
+
+[[package]]
+name = "maechen-trigger"
+version = "1.0.0"
+dependencies = [
+ "testkit",
 ]
 
 [[package]]

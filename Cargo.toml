@@ -47,6 +47,8 @@ members = [
     "skew",
     "doctor",
     "census",
+    "incident",
+    "maechen-trigger",
     "rule",
     "bead",
 ]

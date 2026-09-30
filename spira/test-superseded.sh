@@ -42,7 +42,7 @@ git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" "$HERE/incident-dedup-decision.py" \
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" \
    "$HERE/suite-covers.sh" "$SH/"
 # `skew` is a compiled binary now (sp-yyk47): landing-pass's own `skew_refresh` resolves it
 # by bare name on PATH, which is `$SH` first here, so the binary must actually be there.
