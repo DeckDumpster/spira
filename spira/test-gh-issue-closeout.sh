@@ -89,6 +89,8 @@ printf 'LANDED %s %s push\n' "$LANDED_SHA" "$(date +%s)" > "$RUN/landstate/$BEAD
 # _gh_unlanded_scan's landed() check) need the same repo mapping the backfill
 # subprocess calls above are given inline, but in-process this time.
 export SPIRA_HOME="$SH"
+# lib.sh calls mail.sh by name (sp-gypjk): the fixture's stubbed mail.sh must come first.
+export PATH="$SH:$PATH"
 # Explicit, or a container with a real installed harness leaves SPIRA_REPO_MAP already
 # set and conf.sh's "only resolve when unset" guard never looks at $SH/repo-map at all
 # (law-gates-run-in-a-clean-environment) — tests 6-8 dodge this by overriding it only on
