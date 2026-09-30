@@ -248,6 +248,6 @@ is "mail.sh ensure operator exits 0" 0 "$rc"
 out="$(SPIRA_MAIL="$FRESH" "$MAIL" tidy operator 2>&1)"; rc=$?
 is     "tidy of the ensured, empty mailbox exits 0" 0 "$rc"
 nowant "and does not report it missing" "mailbox not found" "$out"
-want   "install.sh ensures the operator mailbox" 'mail.sh" ensure operator' "$(cat "$HERE/../install.sh")"
+want   "install.sh ensures the operator mailbox" 'mail.sh ensure operator' "$(cat "$HERE/../install.sh")"
 
 tl_summary

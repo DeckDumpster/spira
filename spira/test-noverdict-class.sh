@@ -44,6 +44,8 @@ chmod +x "$SH/mail.sh"
 BD_FIXTURE="$TMP/bd.json"
 printf '[]\n' > "$BD_FIXTURE"
 
+# The fixture home first on PATH: lib.sh calls mail.sh by name (sp-gypjk).
+export PATH="$SH:$PATH"
 export SPIRA_HOME="$SH" SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db.json" \
        SPIRA_BDJSON_FIXTURE="$BD_FIXTURE" BEADS_NO_AUTO_IMPORT=1
 progress() { :; }   # landing.sh's own progress(); a no-op log is enough for this suite
