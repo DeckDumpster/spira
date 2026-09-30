@@ -89,7 +89,7 @@ chmod +x "$FAKE_SPIRA_HOME/seed.sh"
 cat > "$BIN/sentinel" <<'MOCK'
 #!/usr/bin/env bash
 if [ "${1:-}" = "--report" ]; then
-    printf '\nOpen beads under sp-test:\n  sp-abc\n'
+    printf '\nOpen plan beads:\n  sp-abc\n'
     exit 0
 fi
 exit 1
