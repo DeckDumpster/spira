@@ -137,7 +137,7 @@ live_aeons() {
         # matching SPIRA_HOME alone made this blind to every real aeon: on 2026-09-11 `stop`
         # printed "no live aeons" with four running. law-verify-through-the-executing-copy.
         argv_has "$p" "$SPIRA_HOME/aeon.sh" "${SPIRA_PROD:-$SPIRA_HOME}/aeon.sh" \
-            "$(dirname "${SPIRA_PROD:-$SPIRA_HOME}")/bin/aeon" ${SPIRA_AEON_BIN:+"$SPIRA_AEON_BIN"} || continue
+            "$(dirname "${SPIRA_PROD:-$SPIRA_HOME}")/bin/aeon" "$(command -v aeon)" || continue
         pid="${p#/proc/}"
         printf '%s %s\n' "$pid" "$("$SC" --user status "$pid" 2>/dev/null | head -1 | awk '{print $2}')"
     done
@@ -174,7 +174,7 @@ live_workers() {
         # Both homes, for the same reason live_aeons matches both.
         if argv_has "$p" "$SPIRA_HOME/gate.sh" "${SPIRA_PROD:-$SPIRA_HOME}/gate.sh" \
                         "$(dirname "${SPIRA_PROD:-$SPIRA_HOME}")/bin/landing-pass" \
-                        ${SPIRA_LANDING_PASS_BIN:+"$SPIRA_LANDING_PASS_BIN"}
+                        "$(command -v landing-pass)"
         then printf '%s\n' "${p#/proc/}"; fi
     done
 }
@@ -280,7 +280,7 @@ stop)
         bead="$(basename "$pf" .pid)"; bead="${bead#aeon-}"; bead="${bead#*-}"
         if [ -n "$bead" ]; then
             printf '  slaying %s (pid %s)\n' "$bead" "$pid"
-            "$SPIRA_HOME/slay.sh" --bead "$bead" --keep-work --why "${why:-the world was stopped}" >/dev/null 2>&1 \
+            slay.sh --bead "$bead" --keep-work --why "${why:-the world was stopped}" >/dev/null 2>&1 \
                 || printf '    slay.sh could not stop %s — left running, say so rather than pretend\n' "$bead"
             n=$((n+1))
         fi
@@ -503,7 +503,7 @@ drain)
                     _abead="$(basename "$_pf" .pid)"; _abead="${_abead#aeon-}"; _abead="${_abead#*-}"
                     [ -n "$_abead" ] || continue
                     printf '  slaying %s (pid %s)\n' "$_abead" "$_pid"
-                    "$SPIRA_HOME/slay.sh" --bead "$_abead" --keep-work --reopen \
+                    slay.sh --bead "$_abead" --keep-work --reopen \
                         --why "drain deadline reached" >/dev/null 2>&1 \
                         || printf '    slay.sh could not stop %s — left running\n' "$_abead" >&2
                 done

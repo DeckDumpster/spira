@@ -122,7 +122,7 @@ fi
 # ---------------------------------------------------------------------------
 # COLLECT THE MANIFEST from owned.sh. Parse: kind|id|location|phase|retention
 # ---------------------------------------------------------------------------
-_un_manifest="$("$HERE/owned.sh" list "$SPIRA_INSTANCE" 2>/dev/null)" || {
+_un_manifest="$(owned.sh list "$SPIRA_INSTANCE" 2>/dev/null)" || {
     printf 'uninstall: owned.sh list failed\n' >&2; exit 1; }
 
 # Build parallel arrays for grouped display.
@@ -329,15 +329,15 @@ fi
 # ---------------------------------------------------------------------------
 # 4. SESSION HOOKS in the agent settings file.
 # ---------------------------------------------------------------------------
-if [ -n "$_un_session_settings" ] && [ -f "$HERE/install-session-hook.sh" ]; then
+if [ -n "$_un_session_settings" ]; then
     printf '\nRemoving session hooks...\n'
-    "$HERE/install-session-hook.sh" uninstall 2>/dev/null || true
+    install-session-hook.sh uninstall 2>/dev/null || true
 fi
 
 # ---------------------------------------------------------------------------
 # 5. ALERT DROP-INS. Delegate to install-intake.sh which knows the exact shape.
 # ---------------------------------------------------------------------------
-if [ "${#_un_dropin_paths[@]}" -gt 0 ] && [ -f "$HERE/install-intake.sh" ]; then
+if [ "${#_un_dropin_paths[@]}" -gt 0 ]; then
     printf '\nRemoving alert drop-ins...\n'
     # install-intake.sh uninstall needs SPIRA_ALERT_GLOB to know which templates
     # to check. The dropin file names tell us exactly which ones exist; remove

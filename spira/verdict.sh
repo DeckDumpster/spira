@@ -246,7 +246,7 @@ _repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-f
                     # and the evidence file for a harness fault; see _repro_fault.
     local suites="$1" repo="$2" base="$3" tip="$4" _fail_out="${5:-}" _flaky_out="${6:-}" _wt_id="${7:-$$}"
     local _pr="${8:-}" _member="${9:-$_wt_id}"
-    local forge="${SPIRA_FORGE:-$HERE/forge.sh}"
+    local forge="${SPIRA_FORGE:-forge.sh}"
     local status_out status run_id="" br="" remote=""
 
     if [ -z "$base" ]; then
@@ -378,7 +378,7 @@ _suites_red_on_base() {
     local suites="$1" repo="$2" base="$3"
     _BASELINE_RED=""
     [ -n "$suites" ] || return 0
-    local forge="${SPIRA_FORGE:-$HERE/forge.sh}" remote br status_out status
+    local forge="${SPIRA_FORGE:-forge.sh}" remote br status_out status
     remote="$(_repro_remote "$repo")"
     br="$(_repro_ci_branch base base "$base")"
     spira_git_push "$repo" -q "$remote" "${base}:refs/heads/${br}" 2>/dev/null || return 0
@@ -400,7 +400,7 @@ _any_suite_in_selection() {  # _any_suite_in_selection <suites-spacesep> <repo> 
     # Three dots: the member's own change since it forked. Two would add everything the base
     # gained since, blaming a member for suites it never touched (PR 87 ejected all six).
     git -C "$repo" diff --name-only "$base...$tip" 2>/dev/null > "$tmp" || true
-    sel="$("$SPIRA_SELECT_BIN" select --files "$tmp" --repo "$repo" --suite-dir "$HERE" 2>/dev/null)"
+    sel="$(suite-select select --files "$tmp" --repo "$repo" --suite-dir "$HERE" 2>/dev/null)"
     rm -f "$tmp"
     for s in $suites; do printf '%s\n' "$sel" | grep -qxF "$s" && return 0; done
     return 1
@@ -492,7 +492,7 @@ Requeued branches: $requeued_ids"
 Unjudged branches (harness fault): $unjudged_ids"
     fi
     printf '%s' "$body" \
-    | bash "$HERE/mail.sh" send operator \
+    | mail.sh send operator \
         --from "Spira Queue <queue@spira>" \
         --subject "Merge queue: $name red in PR $pr_n" \
         2>/dev/null || true
@@ -572,7 +572,7 @@ _attr_eject() {
         printf '## Note\nMerge queue attribution for %s: reopen refused for %s.\n\nThe bead may be stranded. Ejection from PR %s (%s) was NOT recorded.\nInvestigate bead state and reopen manually if needed.\n' \
             "$name" "$id" "$pr_n" "$name" \
         | SPIRA_MAIL_LINT_CONSIDERED="queue-eject-reopen-failure" \
-          bash "$HERE/mail.sh" send operator \
+          mail.sh send operator \
             --from "Spira Queue <queue@spira>" \
             --subject "Merge queue: $name reopen refused for $id" \
             2>/dev/null || true
@@ -619,7 +619,7 @@ _attr_eject() {
         "$id" "$pr_n" "$name" \
         "${title:-(title unavailable)}" "${summary:-(no description)}" "${diffstat:-(diffstat unavailable)}" \
         "$_method_line" "$suites" "$_excluded_line" "$_fail_section" "$_run_line" "$rest_of_batch" "$id" "$_unattr_section" \
-    | bash "$HERE/mail.sh" send operator \
+    | mail.sh send operator \
         --from "Spira Queue <queue@spira>" \
         --subject "Merge queue: $id ejected from $name" \
         --bead "$id" \
@@ -661,8 +661,8 @@ _q_summon_batcher_ci() {
         return 0
     fi
 
-    if [ -z "${SPIRA_BATCHER_BIN:-}" ] || [ ! -x "$SPIRA_BATCHER_BIN" ]; then
-        printf 'verdict %s: PR %s red (%s) — batcher-owned but SPIRA_BATCHER_BIN not available; cannot summon judgement\n' \
+    if [ "${SPIRA_BATCHER_ENABLE:-1}" = 0 ]; then
+        printf 'verdict %s: PR %s red (%s) — batcher-owned but the batcher is off (SPIRA_BATCHER_ENABLE=0); cannot summon judgement\n' \
             "$name" "$pr_n" "$suites_csv" >&2
         return 1
     fi
@@ -672,7 +672,7 @@ _q_summon_batcher_ci() {
     [ -n "$run_url" ] && evidence="$evidence — $run_url"
 
     local out id
-    out="$("$SPIRA_BATCHER_BIN" judgement-ci "$name" --suites "$suites_csv" --members "$member_ids" --evidence "$evidence" 2>&1)"
+    out="$(batcher judgement-ci "$name" --suites "$suites_csv" --members "$member_ids" --evidence "$evidence" 2>&1)"
     id="$(printf '%s\n' "$out" | sed -n 's/^id=//p' | head -1)"
     if [ -n "$id" ]; then
         { grep -v '^judgement=' "$batch_file" 2>/dev/null; printf 'judgement=%s\n' "$id"; } \
@@ -897,7 +897,7 @@ ${_line#build-error: }" ;;
             _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
             _mf="$(mktemp)"
             git -C "$repo" diff --name-only "$base_sha...$_mtip" 2>/dev/null > "$_mf" || true
-            _msel="$("$SPIRA_SELECT_BIN" select --files "$_mf" --repo "$repo" --suite-dir "$HERE" --no-all-fallback 2>/dev/null)"
+            _msel="$(suite-select select --files "$_mf" --repo "$repo" --suite-dir "$HERE" --no-all-fallback 2>/dev/null)"
             rm -f "$_mf"
             _mcsv=""
             for _rs in $red_suites; do
@@ -1347,7 +1347,7 @@ _verdict_settle_publish() {
         return 1
     fi
 
-    local forge="${SPIRA_FORGE:-$HERE/forge.sh}"
+    local forge="${SPIRA_FORGE:-forge.sh}"
     _PUBLISH_STATUS_OUT="$("$forge" check-status "$repo" "$pr_n" "$branch" 2>/dev/null)"
     local status; status="$(verdict_normalize_status "$(printf '%s\n' "$_PUBLISH_STATUS_OUT" | head -1)")"
 
@@ -1414,11 +1414,11 @@ _verdict_settle_publish_red() {
 
     local attr_out=""
     if [ -n "$suites_csv" ] && [ -n "$member_ids" ]; then
-        attr_out="$(bash "$HERE/attribute.sh" --round "$branch" --base "$forge_sha" \
+        attr_out="$(attribute.sh --round "$branch" --base "$forge_sha" \
             --suites "$suites_csv" --members "$member_ids" --repo "$repo" 2>&1)"
     fi
 
-    local forge="${SPIRA_FORGE:-$HERE/forge.sh}"
+    local forge="${SPIRA_FORGE:-forge.sh}"
     "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
 
     local body
@@ -1555,7 +1555,7 @@ _verdict_process() {
     remote="$(ref_remote "$base" "$repo")"
     base_branch="$(ref_branch "$base")"
 
-    local forge="${SPIRA_FORGE:-$HERE/forge.sh}"
+    local forge="${SPIRA_FORGE:-forge.sh}"
 
     local status_out status
     status_out="$("$forge" check-status "$repo" "$pr_n" "${branch_name:-}" 2>/dev/null)" || status_out="pending"
@@ -1649,7 +1649,7 @@ _verdict_process() {
                 rm -f "$batch_file"
                 printf '## Note\nMerge queue batch for %s closed after %d failed CI run attempts.\n\nPR %s (head %s) has been closed. Members returned to CERTIFIED.\n' \
                     "$name" "$(( run_retries + 1 ))" "$pr_n" "$batch_head" \
-                | bash "$HERE/mail.sh" send operator \
+                | mail.sh send operator \
                     --from "Spira Queue <queue@spira>" \
                     --subject "Merge queue: $name CI fault after $(( run_retries + 1 )) attempts" \
                     2>/dev/null || true
@@ -1676,7 +1676,7 @@ _verdict_process() {
                         "$name" "$pr_n"
                     printf '## Note\nMerge queue batch for %s: CI reported green but named no head-sha, so its result cannot be tied to the sealed batch head.\n\nSealed batch head: %s\n\nTreated the same as a head mismatch. Members returned to CERTIFIED.\n' \
                         "$name" "$batch_head" \
-                    | bash "$HERE/mail.sh" send operator \
+                    | mail.sh send operator \
                         --from "Spira Queue <queue@spira>" \
                         --subject "Merge queue: $name CI head unverifiable (missing head-sha)" \
                         2>/dev/null || true
@@ -1685,7 +1685,7 @@ _verdict_process() {
                         "$name" "$pr_n" "$ci_head" "$batch_head"
                     printf '## Note\nMerge queue batch for %s: CI result belongs to a different commit.\n\nCI-reported PR head: %s\nSealed batch head: %s\n\nSomething pushed to the batch branch after sealing. Members returned to CERTIFIED.\n' \
                         "$name" "$ci_head" "$batch_head" \
-                    | bash "$HERE/mail.sh" send operator \
+                    | mail.sh send operator \
                         --from "Spira Queue <queue@spira>" \
                         --subject "Merge queue: $name CI head mismatch" \
                         2>/dev/null || true
@@ -1716,7 +1716,7 @@ _verdict_process() {
                     while IFS= read -r _line; do
                         case "$_line" in
                             "flaky: "*)
-                                "$SPIRA_TESTENV_BIN" suites observe-flake "${_line#flaky: }" "$batch_head" \
+                                testenv suites observe-flake "${_line#flaky: }" "$batch_head" \
                                     2>/dev/null || true
                                 ;;
                         esac

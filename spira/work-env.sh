@@ -22,11 +22,11 @@ bead_id="${1:-}"
 shift || true
 [ "${1:-}" = "--" ] && shift
 
-work_bin_dir="$(dirname "$SPIRA_WORK_BIN")"
-[ -x "$SPIRA_WORK_BIN" ] || {
-    printf 'work-env.sh: %s is not built (SPIRA_WORK_BIN); cargo build -p work\n' "$SPIRA_WORK_BIN" >&2
+_work="$(command -v work)" || {
+    printf 'work-env.sh: work is not on PATH — the launcher sets PATH to a release\n' >&2
     exit 2
 }
+work_bin_dir="$(dirname "$_work")"
 
 cmd=("$@")
 [ ${#cmd[@]} -eq 0 ] && cmd=("${SHELL:-/bin/bash}")
