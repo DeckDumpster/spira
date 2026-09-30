@@ -191,7 +191,7 @@ pub const READY: &str = r#"[{"id":"sp-a","labels":["spira","plan"]}]"#;
 
 /// The default world: a healthy store, every script succeeding quietly.
 pub fn standard(r: &FakeRunner) {
-    r.on(|s| if is_bd(s, "list") { ok(LIST) } else { None });
+    store_is(r, LIST);
     r.on(|s| if is_bd(s, "ready") { ok(READY) } else { None });
     r.on(|s| {
         if s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("list") {
@@ -207,6 +207,29 @@ pub fn standard(r: &FakeRunner) {
             None
         }
     });
+}
+
+/// `bd show <id>… --json` answered from a list fixture: the store as it is NOW, which the
+/// re-read before every write (fresh.rs) consults. Missing ids are omitted, as bd does.
+pub fn show_from(list: &'static str) -> impl Fn(&Spec) -> Option<Out> {
+    move |s| {
+        if !is_bd(s, "show") {
+            return None;
+        }
+        let rows: Vec<serde_json::Value> = serde_json::from_str(list).unwrap();
+        let ids: Vec<&String> = s.args[3..].iter().filter(|a| *a != "--json").collect();
+        let hit: Vec<&serde_json::Value> = rows
+            .iter()
+            .filter(|r| ids.iter().any(|i| r["id"].as_str() == Some(i.as_str())))
+            .collect();
+        ok(&serde_json::to_string(&hit).unwrap())
+    }
+}
+
+/// The store: `bd list` returns `list`, and a live re-read agrees with it.
+pub fn store_is(r: &FakeRunner, list: &'static str) {
+    r.on(move |s| if is_bd(s, "list") { ok(list) } else { None });
+    r.on(show_from(list));
 }
 
 pub fn run_mode<'a>(
@@ -1231,7 +1254,7 @@ fn phases_are_tsd_rows_for_the_full_pass_only() {
         checks,
         [
             "setup", "CHECK1", "CHECK2", "CHECK2b", "CHECK2c", "CHECK3", "CHECK6", "CHECK3b",
-            "CHECK7", "CHECK8"
+            "CHECK3c", "CHECK7", "CHECK8"
         ]
         .map(|c| format!("check={c}"))
     );
@@ -1268,13 +1291,7 @@ const LEGACY_LIST: &str = concat!(
 #[test]
 fn off_check2_protects_by_label_and_reclaims_through_bd() {
     let (w, r, sink, clock) = setup("off2");
-    r.on(|s| {
-        if is_bd(s, "list") {
-            ok(LEGACY_LIST)
-        } else {
-            None
-        }
-    });
+    store_is(&r, LEGACY_LIST);
     r.on(|s| {
         if is_bd(s, "reclaim") && s.args.iter().any(|a| a == "spira,plan") {
             return ok("✓ Reclaimed sp-dead (lease expired 200m ago)\n");
@@ -1324,13 +1341,7 @@ fn off_check2_protects_by_label_and_reclaims_through_bd() {
 #[test]
 fn off_check2c_releases_orphaned_claims_and_recounts_the_plan() {
     let (w, r, sink, clock) = setup("off2c");
-    r.on(|s| {
-        if is_bd(s, "list") {
-            ok(LEGACY_LIST)
-        } else {
-            None
-        }
-    });
+    store_is(&r, LEGACY_LIST);
     run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
     let assigns: Vec<Vec<String>> = r
         .calls
@@ -1360,15 +1371,13 @@ fn off_check2c_releases_orphaned_claims_and_recounts_the_plan() {
 #[test]
 fn off_check4_poisons_and_clears_by_label() {
     let (w, r, sink, clock) = audit_world("off4");
-    r.on(|s| {
-        if is_bd(s, "list") {
-            return ok(r#"[{"id":"sp-goal","status":"open"},
+    store_is(
+        &r,
+        r#"[{"id":"sp-goal","status":"open"},
               {"id":"sp-p","status":"open","labels":["spira","plan"],"issue_type":"task"},
               {"id":"sp-h","status":"open","labels":["spira","plan","spira-poison"],"issue_type":"task"},
-              {"id":"sp-x","status":"closed","labels":["spira","plan","spira-poison"],"issue_type":"task"}]"#);
-        }
-        None
-    });
+              {"id":"sp-x","status":"closed","labels":["spira","plan","spira-poison"],"issue_type":"task"}]"#,
+    );
     run_mode(
         &w,
         &r,
@@ -1545,4 +1554,203 @@ fn the_switch_reaches_every_child_and_both_workers() {
         assert!(!land.args.iter().any(|a| a.starts_with("--setenv=SPIRA_LC_BIN")));
         assert_eq!(env_of(&ck7, "SPIRA_LC_BIN"), None);
     }
+}
+
+// ---------------------------------------------------------------------------------------
+// CHECK 3c (sp-du8bv): open children decided from the snapshot, never `bd children`.
+
+const OC_LIST: &str = r#"[
+  {"id":"sp-goal","status":"open","issue_type":"epic"},
+  {"id":"sp-a","status":"open","parent":"sp-goal","labels":["spira","plan"],"issue_type":"task"},
+  {"id":"sp-k","status":"open","labels":["spira"],"dependencies":[{"depends_on_id":"sp-a","type":"parent-child"}]},
+  {"id":"sp-done","status":"open","labels":["spira","plan","spira-open-children"],"issue_type":"task"},
+  {"id":"sp-dk","status":"closed","parent":"sp-done"}
+]"#;
+const OC_READY: &str = r#"[{"id":"sp-a","labels":["spira","plan"]},{"id":"sp-out","labels":["other"]}]"#;
+
+fn open_children_world(r: &FakeRunner) {
+    store_is(r, OC_LIST);
+    r.on(|s| if is_bd(s, "ready") { ok(OC_READY) } else { None });
+}
+
+#[test]
+fn full_pass_marks_open_children_from_the_snapshot_without_bd_children() {
+    let (w, r, sink, clock) = setup("oc-full");
+    open_children_world(&r);
+    let extra = [("SPIRA_OPEN_CHILDREN_LABEL", "spira-open-children")];
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &extra, None);
+    assert_eq!(r.count(|s| is_bd(s, "children")), 0, "{:#?}", r.lines());
+    assert_eq!(r.count(|s| is_bd(s, "list")), 1, "still one store read per pass");
+    assert_eq!(r.count(|s| is_bd(s, "ready")), 1, "the ready snapshot is reused");
+    assert!(r
+        .find(|s| is_bd(s, "label") && s.args[2..] == ["label", "add", "sp-a", "spira-open-children"])
+        .is_some());
+    assert!(r
+        .find(|s| is_bd(s, "label")
+            && s.args[2..] == ["label", "remove", "sp-done", "spira-open-children"])
+        .is_some());
+    assert_eq!(r.count(|s| is_bd(s, "label")), 2, "{:#?}", r.lines());
+    assert!(sink.has("mark_open_children: sp-a — has an open child, excluded from dispatch"));
+    assert!(sink.has("mark_open_children: sp-done — children all closed, re-enters dispatch"));
+    let seams: Vec<String> = r.calls.borrow().iter().filter_map(seam_name).collect();
+    for sm in seams {
+        let body = r.find(|s| seam_name(s).as_deref() == Some(sm.as_str())).unwrap();
+        assert!(!body.args[1].contains("mark_open_children"), "no seam runs the bash loop");
+    }
+}
+
+#[test]
+fn open_children_dry_run_writes_nothing_and_prints_the_decision() {
+    let (w, r, sink, clock) = setup("oc-dry");
+    open_children_world(&r);
+    let extra = [("SPIRA_OPEN_CHILDREN_LABEL", "spira-open-children")];
+    let rc = run_mode(&w, &r, &sink, &clock, Mode::OpenChildren { dry: true }, &extra, None);
+    assert_eq!(rc, 0);
+    assert_eq!(r.count(|s| is_bd(s, "label")), 0);
+    assert_eq!(r.count(|s| is_bd(s, "children")), 0);
+    assert!(sink.has("would add spira-open-children to sp-a"), "{}", sink.text());
+    assert!(sink.has("would remove spira-open-children from sp-done"));
+    assert!(!sink.has("pass complete"), "the mode runs CHECK 3c alone");
+}
+
+#[test]
+fn open_children_mode_writes_and_an_unset_label_does_nothing() {
+    let (w, r, sink, clock) = setup("oc-mode");
+    open_children_world(&r);
+    let extra = [("SPIRA_OPEN_CHILDREN_LABEL", "spira-open-children")];
+    run_mode(&w, &r, &sink, &clock, Mode::OpenChildren { dry: false }, &extra, None);
+    assert_eq!(r.count(|s| is_bd(s, "label")), 2);
+
+    let (w, r, sink, clock) = setup("oc-off");
+    open_children_world(&r);
+    run_mode(&w, &r, &sink, &clock, Mode::OpenChildren { dry: false }, &[], None);
+    assert_eq!(r.count(|s| is_bd(s, "label")), 0, "empty SPIRA_OPEN_CHILDREN_LABEL disables it");
+}
+
+#[test]
+fn open_children_mode_fails_loudly_on_an_unreadable_store() {
+    let (w, r, sink, clock) = setup("oc-fail");
+    r.on(|s| if is_bd(s, "list") { fail(1) } else { None });
+    let extra = [("SPIRA_OPEN_CHILDREN_LABEL", "spira-open-children")];
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::OpenChildren { dry: false }, &extra, None), 1);
+    assert_eq!(r.count(|s| is_bd(s, "label")), 0);
+}
+
+// ---------------------------------------------------------------------------------------
+// Re-read before every write (fresh.rs, sp-du8bv): a bead that moved since the pass-start
+// snapshot is not written. Scar: passes ran 2-6 minutes, so a snapshot decision could be
+// minutes old by the time its write went out.
+
+const OFF4_SNAP: &str = r#"[{"id":"sp-goal","status":"open"},
+  {"id":"sp-p","status":"open","labels":["spira","plan"],"issue_type":"task"},
+  {"id":"sp-h","status":"open","labels":["spira","plan","spira-poison"],"issue_type":"task"}]"#;
+const OFF4_NOW: &str = r#"[{"id":"sp-goal","status":"open"},
+  {"id":"sp-p","status":"in_progress","labels":["spira","plan"],"issue_type":"task"},
+  {"id":"sp-h","status":"closed","labels":["spira","plan","spira-poison"],"issue_type":"task"}]"#;
+
+fn off4_run(tag: &str, live: Option<&'static str>) -> (FakeRunner, FakeSink) {
+    let (w, r, sink, clock) = audit_world(tag);
+    store_is(&r, OFF4_SNAP);
+    match live {
+        Some(now) => r.on(show_from(now)),
+        None => r.on(|s| if is_bd(s, "show") { fail(1) } else { None }),
+    }
+    run_mode(
+        &w,
+        &r,
+        &sink,
+        &clock,
+        Mode::Audit,
+        &[("SPIRA_SKIP_CLOSED_CHECK", "1"), ("SPIRA_SKIP_RECLAIM", "1")],
+        Some(&[]),
+    );
+    (r, sink)
+}
+
+#[test]
+fn check4_does_not_poison_or_unpoison_a_bead_that_moved_since_the_snapshot() {
+    let (r, sink) = off4_run("fresh4", Some(OFF4_NOW));
+    assert_eq!(r.count(|s| is_bd(s, "label")), 0, "{:#?}", r.lines());
+    assert_eq!(r.count(|s| is_bd(s, "note")), 0);
+    assert!(!sink.has("ACT poisoned"), "{}", sink.text());
+    assert!(sink.has(
+        "CHECK4 sp-p: open in this pass's snapshot, in_progress now — skipped, the next pass decides it again"
+    ));
+    assert!(!sink.has("stale poison cleared"), "sp-h closed since — its lift is skipped too");
+    // the re-read is of exactly the bead about to be written
+    assert!(r.find(|s| is_bd(s, "show") && s.args[3..] == ["sp-p", "--json"]).is_some());
+}
+
+#[test]
+fn check4_writes_nothing_blind_when_the_re_read_fails() {
+    let (r, sink) = off4_run("fresh4fail", None);
+    assert_eq!(r.count(|s| is_bd(s, "label")), 0, "{:#?}", r.lines());
+    assert!(sink.has(
+        "CHECK4 sp-p: could not re-read it before writing — skipped, the next pass decides it again"
+    ));
+}
+
+#[test]
+fn check4_still_poisons_a_bead_that_has_not_moved() {
+    let (r, sink) = off4_run("fresh4same", Some(OFF4_SNAP));
+    assert!(r
+        .find(|s| is_bd(s, "label") && s.args[2..] == ["label", "add", "sp-p", "spira-poison"])
+        .is_some());
+    assert!(sink.has("ACT poisoned sp-p after 3 attempts"));
+}
+
+const LEGACY_NOW: &str = r#"[
+  {"id":"w1","status":"closed","labels":["spira","plan"]},
+  {"id":"w2","status":"in_progress","labels":["spira","plan","spira-waiting-operator"]},
+  {"id":"o1","status":"in_progress","assignee":"aeon-new","lease_expires_at":"2099-01-01T00:00:00Z","labels":["spira","plan"]}
+]"#;
+
+#[test]
+fn check2_and_2c_skip_beads_that_moved_since_the_snapshot() {
+    let (w, r, sink, clock) = setup("fresh2");
+    store_is(&r, LEGACY_LIST);
+    r.on(show_from(LEGACY_NOW));
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
+    // w1 closed since: no protect label; w2 unchanged: its unprotect still goes out
+    assert!(r
+        .find(|s| is_bd(s, "label") && s.args[2..] == ["label", "add", "w1", "spira-waiting-operator"])
+        .is_none());
+    assert!(r
+        .find(|s| is_bd(s, "label")
+            && s.args[2..] == ["label", "remove", "w2", "spira-waiting-operator"])
+        .is_some());
+    assert!(sink.has("CHECK2 w1: in_progress in this pass's snapshot, closed now — skipped"));
+    // o1 was claimed by a live aeon after the snapshot: its claim is NOT stripped
+    assert_eq!(r.count(|s| is_bd(s, "assign")), 0, "{:#?}", r.lines());
+    assert!(sink.has("CHECK2c o1: open in this pass's snapshot, in_progress now — skipped"));
+    // one re-read per check, not one per bead
+    assert!(r.find(|s| is_bd(s, "show") && s.args[3..] == ["o1", "--json"]).is_some());
+}
+
+#[test]
+fn check2c_does_not_release_a_claim_re_leased_since_the_snapshot() {
+    const RELEASED: &str = r#"[{"id":"o1","status":"open","assignee":"aeon-dead","lease_expires_at":"2099-01-01T00:00:00Z"}]"#;
+    let (w, r, sink, clock) = setup("fresh2c");
+    store_is(&r, LEGACY_LIST);
+    r.on(show_from(RELEASED));
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
+    assert_eq!(r.count(|s| is_bd(s, "assign")), 0);
+    assert!(sink.has("CHECK2c o1: claimed or re-leased since this pass's snapshot — not released"));
+}
+
+#[test]
+fn check3c_skips_a_bead_that_moved_since_the_snapshot() {
+    const NOW: &str = r#"[{"id":"sp-a","status":"closed"},{"id":"sp-done","status":"open"}]"#;
+    let (w, r, sink, clock) = setup("fresh3c");
+    open_children_world(&r);
+    r.on(show_from(NOW));
+    let extra = [("SPIRA_OPEN_CHILDREN_LABEL", "spira-open-children")];
+    run_mode(&w, &r, &sink, &clock, Mode::OpenChildren { dry: false }, &extra, None);
+    assert_eq!(r.count(|s| is_bd(s, "label")), 1, "{:#?}", r.lines());
+    assert!(r
+        .find(|s| is_bd(s, "label")
+            && s.args[2..] == ["label", "remove", "sp-done", "spira-open-children"])
+        .is_some());
+    assert!(sink.has("CHECK3c sp-a: open in this pass's snapshot, closed now — skipped"));
+    assert_eq!(r.count(|s| is_bd(s, "show")), 1, "one re-read for the whole check");
 }

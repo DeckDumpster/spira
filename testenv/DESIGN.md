@@ -802,3 +802,105 @@ cut phase last in `phases`, so an overrun is visible to every reader of the fami
   not fail the trial that spawned it, and it runs after that trial's verdict.
 * **D11 — phases go on the `__batch__` row**, the one end-to-end row per run, so the
   suite-timing family's per-suite readers (LPT order, medians, bd wait) are untouched.
+
+### 11.4 The setup in one exec (sp-t26yx)
+
+**The fault.** Under concurrent load (2026-09-30: four gate trials, landing-pass certifying
+four gates, other agents' testenv runs) trials ended `NO_VERDICT` in setup:
+`deadline-install` and `deadline-testdb`. In a reproduction (four concurrent trials of eight
+suites, `--deadline 300`) all four ended NO_VERDICT: install phases of 29–120 s, one
+`ctrl.sh suspend` sequence alone 104 s, where a quiet host takes 11 s for the whole install.
+
+**The cause is podman, not the scripts.** Every `podman exec` takes podman's global locks:
+the libpod database (sqlite in rollback-journal mode — `db.sql-journal`, `fdatasync` on every
+commit, readers spin on the PENDING byte while a writer commits) and the storage
+`overlay-layers/layers.lock` (held by every container create/remove and image export).
+Sampled while trials ran: `podman exec <idle container> true` 0.3–0.8 s quiet, **24–73 s**
+loaded, `podman ps` up to 130 s; an strace of one 67 s exec shows 37 `fdatasync`s on
+`db.sql` (7.5 s) and a 53 s blocking wait on `layers.lock`. The setup paid that toll once per
+step: stage, configure, three suspends, install, one `command -v` per requirement token and
+the testdb template — 7 + k execs.
+
+**Contract.** The setup is **one** `podman exec`: the host links its own executable into
+the worktree (`target/.testenv-runner/testenv`, a hard link, else a copy) and runs
+`/workspace/target/.testenv-runner/testenv plan <json>` as the suite user under the setup
+cutoff. The plan is the exact list of requests that used to be execs, each with its argv and
+env, its phase (`install`, `requirements`, `testdb`) and whether it must succeed. The runner
+executes them in order and frames each result (`<nonce> begin <name>` /
+`<nonce> end <name> rc= ms= len=` + output); a failing `must` step ends the plan. The host
+reads it back:
+
+* a failed stage/configure/suspend/install step is the fault its own exec was (rc 3,
+  reasons `stage` / `install`, same messages and output tails);
+* a requirement step that fails is unmet (SKIP-REQ) — never a fault;
+* the template's rc and output feed §2.4's server/embedded choice exactly as before;
+* an exec killed at the cutoff is `deadline-<phase of the step it was in>` (the one that
+  began and never ended, else the first without a result) — never "unmet", never a
+  template failure;
+* a runner that returns fewer results than steps, without a deadline, is a harness fault
+  (rc 3, `stage`) — never a pass.
+
+The runner is the *host's* testenv, never the candidate's, so the two always speak the same
+plan format whatever tree is under test. Phases are unchanged (D11): the in-container time
+of each phase is measured by the runner; the exec's own podman overhead is added to
+`install`, and a log line names it: `setup in one exec: <wall>s wall, <inside>s in the
+container (<step> <s>, …) — podman exec overhead <s>`.
+
+### 11.5 Decisions (sp-t26yx)
+
+* **D12 — a gate trial never sweeps inline.** Off the warm path (a scratch slot, all warm
+  slots busy) a `--deadline` trial spawns `testenv warm sweep` detached (one sweeper at a
+  time, `flock` on `$SPIRA_RUN/testenv-sweep.lock`) instead of running both orphan sweeps on
+  its critical path: their podman calls cannot be cut, and one sweep ran **nine minutes**
+  (10:53–11:02Z), past the trial's whole 300 s budget. Without `--deadline` the sweep is
+  unchanged.
+* **D13 — one exec, not a faster exec.** *Rejected:* longer setup share or timeouts (the
+  operator rule; the cost is lock queueing, which a longer wait only hides); one
+  `podman exec` per step with retries (multiplies the toll); running setup through
+  `podman run` arguments (the container is booted before the tree is built — warm spares).
+* **D14 — test databases live on the container tmpfs** (DESIGN-testdb.md §2.5).
+* **D16 — scratch and warm slots live on a tmpfs, bounded, fail closed.** A slot is
+  disposable build state: cargo's `target/` (1.4–2.4 GB a slot, seven slots) is rewritten
+  on every relink, and on the host's one virtual disk (66–100 % utilised, IO pressure
+  `full` 30–70 % under gate load) it competed with production Dolt and podman's own
+  database. The slots' root is `worktree::scratch_root($SPIRA_RUN)`:
+  `$SPIRA_TESTENV_SCRATCH` if set; else `$SPIRA_RUN/worktree` when `$SPIRA_RUN` is itself on
+  a tmpfs (unit tests); else `/tmp/spira-testenv-<sha256(SPIRA_RUN)[..6]>` when `/tmp` is a
+  tmpfs; else `$SPIRA_RUN/worktree`. Slot locks and spare records move with the slots.
+  Before a scratch or warm slot is used, the root must have
+  `SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB` (default 4096) free and, on a tmpfs,
+  `SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB` (default 8192) of MemAvailable — tmpfs pages are RAM,
+  and a build that pushed the host into swap would put it back on the disk. Short of either:
+  no warm slot, and a scratch slot is refused with `VERDICT FAULT rc=2
+  reason=scratch-short` — never a silent fallback to the disk. The caller's own worktree
+  (in place) is untouched. After the move every slot starts cold once (cargo keys its
+  fingerprints on the workspace path, so the old `target/` cannot be carried over); the old
+  disk slots under `$SPIRA_RUN/worktree/.testenv-{slot,warm}-*` are no longer read and can
+  be removed with `git worktree remove`.
+* **D15 — the refill boots through the slot's own harness.** `testenv warm refill <i>` is
+  spawned with `SPIRA_TESTENV_HARNESS=<slot worktree>` and cwd `$SPIRA_RUN`. A gate's testenv
+  lives in a transient `.gate.harness.*` worktree the gate removes the moment testenv exits;
+  the refill it spawned then ran that worktree's `testenv.sh`, found it gone
+  (`testenv-warm.log`: `…/.gate.harness.concierge-sp-9thdw/spira/testenv.sh: No such file
+  or directory` → `warm refill 0: no image tag — no spare`), so gate trials never found a
+  spare and every one paid a cold `up` — the `deadline-up` NO_VERDICTs. The slot holds the
+  tree the trial just tested and outlives it.
+
+**Measured (same eight suites, `--deadline 300`, 2026-09-30).**
+
+| run | concurrency | setup NO_VERDICTs | setup s | post s | host disk writes |
+|---|---|---|---|---|---|
+| before, loaded (world running) | 4 | 4 of 4 (install, testdb) | 139–150+ | — | — |
+| before, loaded + a 126-suite corpus | 4 + 1 | 4 of 4 (2 install, 2 testdb) | cut at 150 | — | — |
+| after (one exec, tmpfs testdb), loaded | 4 | 0 of 4 | 55–76 | 91–136 | — |
+| before, world stopped | 2 | 0 of 2 | 34 | 115 | 1.87 GB |
+| after (+ tmpfs slots, spares), world stopped | 2 | 0 of 2 | 26 | 7 | 0.10 GB |
+
+With the slots on tmpfs a trial's container upper dir held 348 KB (32 files) mid-suite, so
+the container adds nothing to the disk either.
+
+**Not fixed here (reported).** The podman control plane itself (libpod sqlite and
+`layers.lock` on the saturated disk) still bounds `testenv.sh up` for a cold trial and the
+teardown; an external `podman save` of the 2 GB testenv image ran at least 16 minutes during the
+measurements (10:51–11:07Z+), and the two probe rounds in that window were the worst. Those are host/operator matters (podman's
+`static_dir`/database backend, and what else runs image operations on the gate host).

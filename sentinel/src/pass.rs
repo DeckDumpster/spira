@@ -17,6 +17,8 @@ pub enum Mode {
     Report,
     SummonOnly,
     Audit,
+    /// CHECK 3c alone; `dry` prints the decision and writes nothing.
+    OpenChildren { dry: bool },
 }
 
 impl Mode {
@@ -26,7 +28,16 @@ impl Mode {
             Some("--report") => Mode::Report,
             Some("--summon-only") => Mode::SummonOnly,
             Some("--audit") => Mode::Audit,
+            Some("--open-children") => Mode::OpenChildren { dry: false },
             _ => Mode::Pass,
+        }
+    }
+
+    /// The only mode with a second argument: `--open-children --dry-run`.
+    pub fn from_args(a: Option<&str>, b: Option<&str>) -> Mode {
+        match (Mode::from_first(a), b) {
+            (Mode::OpenChildren { .. }, Some("--dry-run")) => Mode::OpenChildren { dry: true },
+            (m, _) => m,
         }
     }
 }
@@ -264,8 +275,25 @@ impl<'a> Sentinel<'a> {
     pub fn run(&self) -> i32 {
         match self.mode {
             Mode::SummonOnly => self.summon_only(),
+            Mode::OpenChildren { dry } => self.open_children_only(dry),
             _ => self.full(),
         }
+    }
+
+    /// `sentinel --open-children`: one snapshot read, CHECK 3c over it, nothing else.
+    fn open_children_only(&self, dry: bool) -> i32 {
+        let r = store::bulk(&self.bd(), self.h, &store::ready_raw_args(&self.cfg));
+        let (list_raw, list) = match r.list {
+            Ok(x) => x,
+            Err(e) => {
+                self.h
+                    .log_err(&format!("mark_open_children: the store snapshot could not be read ({e})"));
+                return 1;
+            }
+        };
+        let snap = Snapshot::new(list_raw, list, r.ready.ok());
+        self.mark_open_children(&snap, dry);
+        0
     }
 
     /// The bulk reads, the DB check and the goal check (every mode but --summon-only).
@@ -431,6 +459,10 @@ impl<'a> Sentinel<'a> {
             Io::Inherit,
             true,
         );
+        // CHECK 3c from the snapshot: one walk in memory, never one `bd children` per
+        // candidate (sp-du8bv: that loop was 91% of every pass).
+        self.phase("CHECK3c");
+        self.mark_open_children(&snap, false);
         self.phase("CHECK7");
         self.seam("ck7", seams::CK7, None, Io::Inherit, Io::Inherit, true);
 
@@ -737,6 +769,15 @@ mod tests {
         assert_eq!(Mode::from_first(Some("--summon-only")), Mode::SummonOnly);
         assert_eq!(Mode::from_first(Some("--audit")), Mode::Audit);
         assert_eq!(Mode::from_first(Some("--bogus")), Mode::Pass);
+        assert_eq!(
+            Mode::from_args(Some("--open-children"), None),
+            Mode::OpenChildren { dry: false }
+        );
+        assert_eq!(
+            Mode::from_args(Some("--open-children"), Some("--dry-run")),
+            Mode::OpenChildren { dry: true }
+        );
+        assert_eq!(Mode::from_args(Some("--audit"), Some("--dry-run")), Mode::Audit);
     }
 
     #[test]
