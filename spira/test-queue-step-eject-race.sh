@@ -14,8 +14,8 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
-# The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
-# test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
+# The queue binary (queue/DESIGN.md §7.4), invoked by name: the tree under test's build is
+# on the suite's PATH (sp-gypjk).
 
 echo "test-queue-step-eject-race.sh"
 
