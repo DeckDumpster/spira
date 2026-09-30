@@ -98,7 +98,7 @@ escape_file_mapping_gap() {
     SPIRA_INCIDENT_LABELS="${SPIRA_INCIDENT_LABELS:-${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},test-plan-gap}" \
     SPIRA_INCIDENT_CAUSE="test-plan-gap" \
     SPIRA_INCIDENT_REPO="${SPIRA_INCIDENT_REPO:-}" \
-        bash "$HERE/incident.sh" file "test-plan gap: $suite does not cover $member's change" "$body"
+        incident.sh file "test-plan gap: $suite does not cover $member's change" "$body"
     local rc=$?
     rm -f "$body"
     return "$rc"

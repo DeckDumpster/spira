@@ -14,7 +14,7 @@
 # prebuilt executables the first batch did, on a runner with no cargo (testenv DESIGN D8).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-BATCH="${GATE_RETRY_BATCH:-${SPIRA_TESTENV_BIN:-$HERE/../bin/testenv}}"
+BATCH="${GATE_RETRY_BATCH:-testenv}"
 ROOT="${1:?usage: gate-retry.sh <results-root> <rev>}"
 REV="${2:?usage: gate-retry.sh <results-root> <rev>}"
 _art=()

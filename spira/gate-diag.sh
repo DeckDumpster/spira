@@ -9,13 +9,13 @@
 # The logic is the Rust `gate-diag` binary (gate-diag/DESIGN.md, sp-ubw2o): the same scan,
 # the same two FAIL-line tiers, the same retry classification, the same red-suites.json and
 # results.jsonl shapes. This file stays the one entry point every caller names (testenv,
-# .github/workflows/gate.yml); it only resolves the binary and hands over — the same shim
+# .github/workflows/gate.yml); it only hands over to the binary, by name on the launcher's PATH (sp-gypjk) — the same shim
 # `gate.sh` uses for `gate` (sp-0tpcs).
 #
 # covers: spira/gate-diag.sh .github/workflows/gate.yml spira/testenv-batch.sh spira/tap-jsonl.sh
 . "$(dirname "$0")/conf.sh" || exit 75
-if [ ! -x "${SPIRA_GATE_DIAG_BIN:-}" ]; then
-    printf 'gate-diag: the gate-diag binary is not built (SPIRA_GATE_DIAG_BIN=%s) — refusing to run.\n' "${SPIRA_GATE_DIAG_BIN:-<unset>}" >&2
+if ! command -v gate-diag >/dev/null 2>&1; then
+    printf 'gate-diag: gate-diag is not on PATH (the launcher sets PATH to a release) — refusing to run.\n' >&2
     exit 75
 fi
-exec -a "$0" "$SPIRA_GATE_DIAG_BIN" --home "$(dirname "$0")" "$@"
+exec -a "$0" gate-diag --home "$(dirname "$0")" "$@"

@@ -166,13 +166,13 @@ jobs:
           elif [ "${{ github.event_name }}" = "pull_request" ] \
              && printf '%s' "${{ github.head_ref }}" | grep -qE '^spira/queue/'; then
             _base="${{ github.event.pull_request.base.sha }}"
-            # path-ok: CI builds the selector from this commit in this job; there is no conf.sh here
+            # CI judges its own build: the selector built from this commit, by explicit path
             _s="$(target/release/suite-select select --base "$_base" --head "${{ github.sha }}" \
                   --repo . --suite-dir spira)" || { printf 'select: the selector refused (rc %s)\n' "$?"; exit 1; }
             _s="$(printf '%s\n' "$_s" | tr '\n' ',' | sed 's/,$//')"
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
             _base="${{ github.event.pull_request.base.sha }}"
-            # path-ok: CI builds the selector from this commit in this job; there is no conf.sh here
+            # CI judges its own build: the selector built from this commit, by explicit path
             _s="$(target/release/suite-select gate "$_base" "${{ github.sha }}")" \
               || { printf 'select: the selector refused (rc %s)\n' "$?"; exit 1; }
             _s="$(printf '%s\n' "$_s" | tr '\n' ',' | sed 's/,$//')"
@@ -335,9 +335,9 @@ jobs:
 
       - name: Download binaries
         # The build job compiled every crate and uploaded the binaries as an
-        # artifact. Download them into bin/ so conf.sh's preference for
-        # $SPIRA_REPO/bin/<name> takes effect and every suite runs the real
-        # compiled binary rather than the dev-tree fallback.
+        # artifact. Download them into bin/: this job judges its own commit, so it
+        # hands that build to testenv by explicit path (--artifacts bin), the one
+        # place a build is named by path (design runtime-is-a-release, sp-gypjk).
         uses: actions/download-artifact@v4
         with:
           name: binaries-${{ github.sha }}
@@ -435,9 +435,9 @@ jobs:
         # literals, and scratch paths escaping into tracked files. Ported from
         # standalone bash scripts to spira-lint rules of the same name (sp-ekkak).
         run: |
-          bin/spira-lint --only inventory      # path-ok: CI downloads release binaries straight into bin/; no conf.sh to resolve spira_bin from in a workflow step
-          bin/spira-lint --only literal-lint   # path-ok: see above
-          bin/spira-lint --only scratch-fence  # path-ok: see above
+          bin/spira-lint --only inventory      # CI judges its own build: the commit's binaries, by explicit path
+          bin/spira-lint --only literal-lint   # see above
+          bin/spira-lint --only scratch-fence  # see above
 
       - name: Suites
         # The exit-code mapping matches the repo-map's gate command exactly. Keep
@@ -535,7 +535,7 @@ jobs:
           # A red suite gets one serial re-run; red then green is a flake, not a failure.
           if [ "$_b" = 1 ]; then
             _b=0
-            GATE_RETRY_ARTIFACTS=bin bash spira/gate-retry.sh "$SPIRA_BATCH_RESULTS" "${{ github.sha }}" || _b=$?
+            GATE_RETRY_BATCH=bin/testenv GATE_RETRY_ARTIFACTS=bin bash spira/gate-retry.sh "$SPIRA_BATCH_RESULTS" "${{ github.sha }}" || _b=$?
           fi
           case "$_b" in
             0) printf 'gate: pass\n' ;;

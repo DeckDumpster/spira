@@ -16,8 +16,8 @@
 #
 # covers: spira/gate-check.sh spira/sentinel.sh spira/aeon.sh
 . "$(dirname "$0")/conf.sh" || exit 75
-if [ ! -x "${SPIRA_GATE_CHECK_BIN:-}" ]; then
-    printf 'gate-check: the gate-check binary is not built (SPIRA_GATE_CHECK_BIN=%s) — refusing to run.\n' "${SPIRA_GATE_CHECK_BIN:-<unset>}" >&2
+if ! command -v gate-check >/dev/null 2>&1; then
+    printf 'gate-check: gate-check is not on PATH (the launcher sets PATH to a release) — refusing to run.\n' >&2
     exit 75
 fi
-exec -a "$0" "$SPIRA_GATE_CHECK_BIN" --home "$(dirname "$0")" "$@"
+exec -a "$0" gate-check --home "$(dirname "$0")" "$@"

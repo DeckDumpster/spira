@@ -63,12 +63,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # checks below are the identity check on the result, and they fail closed.
 cd "$HERE/.." 2>/dev/null || { printf 'gate: cannot reach the tree holding %s\n' "$0" >&2; exit 1; }
 
-# THE RUST TOOLS THIS GATE RUNS (spira-lint for the ported fences, testenv for the suites):
-# the caller's SPIRA_*_BIN when it passed one (gate.sh does), else conf.sh's spira_bin,
-# resolved in a subshell so sourcing conf.sh leaves this script's stripped environment as is.
-: "${SPIRA_LINT_BIN:=$( . "$HERE/conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_LINT_BIN:-}")}"
-: "${SPIRA_TESTENV_BIN:=$( . "$HERE/conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_TESTENV_BIN:-}")}"
-: "${SPIRA_SELECT_BIN:=$( . "$HERE/conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_SELECT_BIN:-}")}"
+# THE RUST TOOLS THIS GATE RUNS (spira-lint for the ported fences, suite-select, testenv for
+# the suites) are invoked by bare name on the PATH the launcher set (sp-gypjk).
 
 rc=0
 gate_total=0      # wall-clock seconds summed across all suites
@@ -134,8 +130,8 @@ fi
 # INVENTORY FENCE. This repository is meant to be cloned: a comment naming a repository, a
 # deploy path, a host or a person teaches the next agent to reason about infrastructure that
 # does not exist. Ported to spira-lint (sp-ekkak); spira-lint/DESIGN.md "Rule inventory".
-[ -x "${SPIRA_LINT_BIN:-}" ] || { say "spira-lint is not built (SPIRA_LINT_BIN) — refusing to land unchecked"; exit 1; }
-if ! inv="$("$SPIRA_LINT_BIN" --only inventory 2>&1)"; then
+command -v spira-lint >/dev/null 2>&1 || { say "spira-lint is not on PATH — refusing to land unchecked"; exit 1; }
+if ! inv="$(spira-lint --only inventory 2>&1)"; then
     printf '%s\n' "$inv" >&2
     exit 1
 fi
@@ -145,7 +141,7 @@ fi
 # declares widens the diff to the full corpus, ~65 min). The class of defect is repeatable:
 # ten accumulated before this fence existed. SCRATCH_FENCE_OK=1 is the named override,
 # valid only for the commit that removes existing offenders. Ported to spira-lint (sp-ekkak).
-if ! scr="$("$SPIRA_LINT_BIN" --only scratch-fence 2>&1)"; then
+if ! scr="$(spira-lint --only scratch-fence 2>&1)"; then
     printf '%s\n' "$scr" >&2
     exit 1
 fi
@@ -155,7 +151,7 @@ printf '%s\n' "$scr" >&2
 # git commit -a) sweeps another actor's uncommitted work into the commit and manufactures
 # false attribution (incident: sp-4fl2e). wiki-commit.sh is the canonical path and stages
 # files explicitly; this fence keeps that pattern in force. Ported to spira-lint (sp-ekkak).
-if ! waf="$("$SPIRA_LINT_BIN" --only wiki-add-fence 2>&1)"; then
+if ! waf="$(spira-lint --only wiki-add-fence 2>&1)"; then
     printf '%s\n' "$waf" >&2
     exit 1
 fi
@@ -180,7 +176,7 @@ fi
 # needs-operator — so the destructive-procedure fence had no bypass and every halting bead
 # was refused on a default install. One accessor per name makes that class unwritable.
 # Ported to spira-lint (sp-ekkak).
-if ! lit="$("$SPIRA_LINT_BIN" --only literal-lint 2>&1)"; then
+if ! lit="$(spira-lint --only literal-lint 2>&1)"; then
     printf '%s\n' "$lit" >&2
     exit 1
 fi
@@ -190,7 +186,7 @@ fi
 # why is indistinguishable from one copied from a suite that did. A stated reason
 # (# testdb-mode: server — <reason>) is required wherever SPIRA_TESTDB_MODE=server is
 # requested.
-if ! tml="$("$SPIRA_LINT_BIN" --only testdb-mode-lint 2>&1)"; then
+if ! tml="$(spira-lint --only testdb-mode-lint 2>&1)"; then
     printf '%s\n' "$tml" >&2
     exit 1
 fi
@@ -200,7 +196,7 @@ fi
 # follows it — six beads shipped with a dash where their body or notes should be
 # (sp-j5z3). The stdin forms (--stdin, --body-file -) are required wherever spira/ or
 # chamber/ pass a heredoc body to bd note or bd create.
-if ! bsl="$("$SPIRA_LINT_BIN" --only bd-stdin-lint 2>&1)"; then
+if ! bsl="$(spira-lint --only bd-stdin-lint 2>&1)"; then
     printf '%s\n' "$bsl" >&2
     exit 1
 fi
@@ -208,7 +204,7 @@ fi
 # GH-INTAKE FENCE. The tracker is public and gh-intake.sh must only read it
 # (law-beads-is-never-public): no mutating curl flag, no credential reference.
 # Ported to spira-lint (sp-ekkak).
-if ! gil="$("$SPIRA_LINT_BIN" --only gh-intake-lint 2>&1)"; then
+if ! gil="$(spira-lint --only gh-intake-lint 2>&1)"; then
     printf '%s\n' "$gil" >&2
     exit 1
 fi
@@ -217,7 +213,7 @@ fi
 # SPIRA_INCIDENT_REF filing site with no SPIRA_INCIDENT_CAUSE files recurrences into the
 # undifferentiated "unrecorded" bucket, collapsing the census taxonomy a remedy needs to
 # rank failure classes.
-if ! icl="$("$SPIRA_LINT_BIN" --only incident-cause-lint 2>&1)"; then
+if ! icl="$(spira-lint --only incident-cause-lint 2>&1)"; then
     printf '%s\n' "$icl" >&2
     exit 1
 fi
@@ -226,7 +222,7 @@ fi
 # store size, handed to python3/jq/awk through argv or an environment variable, crosses
 # MAX_ARG_STRLEN (128 KiB) silently — the exec dies, the caller reads empty output, and
 # empty reads as "nothing to do". Five outages in seventeen days before this fence existed.
-if ! pal="$("$SPIRA_LINT_BIN" --only payload-argv-lint 2>&1)"; then
+if ! pal="$(spira-lint --only payload-argv-lint 2>&1)"; then
     printf '%s\n' "$pal" >&2
     exit 1
 fi
@@ -269,7 +265,7 @@ fi
 # caller's environment already points at — the operator's own, on the host, twice
 # (sp-pfca0: the cockpit went down both times). Every such call must carry -L/-S,
 # TMUX_TMPDIR, or CONCIERGE_SOCKET/CONCIERGE_SESSION. Ported to spira-lint (sp-ekkak).
-if ! tsf="$("$SPIRA_LINT_BIN" --only tmux-scope-fence 2>&1)"; then
+if ! tsf="$(spira-lint --only tmux-scope-fence 2>&1)"; then
     printf '%s\n' "$tsf" >&2
     exit 1
 fi
@@ -280,7 +276,7 @@ printf '%s\n' "$tsf" >&2
 # parse or write either. config-fence-allow grandfathers today's real offenders — the
 # sp-zs04v cutover has not reached them yet — and shrinks as each one migrates; nothing is
 # added to it for a newly written file.
-if ! cfg_fence="$("$SPIRA_LINT_BIN" --only config-fence 2>&1)"; then
+if ! cfg_fence="$(spira-lint --only config-fence 2>&1)"; then
     printf '%s\n' "$cfg_fence" >&2
     exit 1
 fi
@@ -288,7 +284,7 @@ printf '%s\n' "$cfg_fence" >&2
 
 # FENCE-SCRIPTS (spira-lint, sp-tvor6). A new fence is a spira-lint rule, never a new bash
 # script; spira-lint/fence-scripts-allow only shrinks.
-if ! fsc="$("$SPIRA_LINT_BIN" --only fence-scripts 2>&1)"; then
+if ! fsc="$(spira-lint --only fence-scripts 2>&1)"; then
     printf '%s\n' "$fsc" >&2
     exit 1
 fi
@@ -428,7 +424,7 @@ if [ -f "${SPIRA_GATE_FILES:-}" ]; then
     # file descriptors that delay gate-spira.sh's cleanup path.
     _cv_mode_file="$(mktemp)"
     _cv_report_file="$(mktemp)"
-    _cv_raw="$("$SPIRA_SELECT_BIN" select \
+    _cv_raw="$(suite-select select \
         --files "${SPIRA_GATE_FILES}" --suite-dir "$HERE" \
         --mode-file "$_cv_mode_file" \
         --report-file "$_cv_report_file" \
@@ -466,7 +462,7 @@ else
         for s in $suites $extra_suites; do
             printf '%s\n' "$(basename "$s")"
         done
-    } | "${SPIRA_TESTENV_BIN:-testenv}" --suites - "${SPIRA_GATE_SELECT_HEAD:-HEAD}" >&2
+    } | testenv --suites - "${SPIRA_GATE_SELECT_HEAD:-HEAD}" >&2
     _tb_rc=${PIPESTATUS[1]}
     _tb_t1=$(date +%s 2>/dev/null) || _tb_t1=""
     if [ -n "$_tb_t0" ] && [ -n "$_tb_t1" ]; then

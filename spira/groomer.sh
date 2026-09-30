@@ -134,7 +134,7 @@ case "$cmd" in
                     _sw_log "REPORT $_sw_bid unmapped-repo — bd show failed; leaving for model. $_sw_reason"
                     continue
                 fi
-                _sw_pred="$(printf '%s\n' "$_sw_bj" | python3 "$HERE/groomer-litter-predicate.py" 2>/dev/null)"
+                _sw_pred="$(printf '%s\n' "$_sw_bj" | groomer-litter-predicate.py 2>/dev/null)"
                 _sw_has_content="$(printf '%s\n' "$_sw_pred" | sed -n 's/^HAS_CONTENT //p')"
                 _sw_meta="$(printf '%s\n' "$_sw_pred" | sed -n 's/^META //p')"
                 if [ "${_sw_has_content:-0}" = "0" ]; then
@@ -469,7 +469,7 @@ except Exception: pass
         exit 1
     fi
 
-    _up_out="$("${SPIRA_CLAIM_BIN:?SPIRA_CLAIM_BIN is unset — source conf.sh}" unpoison \
+    _up_out="$(spira-claim unpoison \
         --bead "$id" --cause "$cause: $evidence" --credit "$cause" --actor groomer)"; _up_rc=$?
     printf '%s\n' "$_up_out"
     case "$_up_out" in
@@ -553,7 +553,7 @@ except Exception: pass
     # escalation policy (law-escalate-decisions-not-problems). This refusal is in the
     # code, not in a sentence in the brief.
     printf 'groomer: REFUSED — closing a bead as unwanted is a policy decision, not a hygiene operation.\n' >&2
-    printf 'groomer: escalate to Ryan: "$SPIRA_HOME/mail.sh" send operator --from "<sender>" --subject "<question>" --kind question --default "close <id> as unwanted"\n' >&2
+    printf 'groomer: escalate to Ryan: mail.sh send operator --from "<sender>" --subject "<question>" --kind question --default "close <id> as unwanted"\n' >&2
     exit 2
     ;;
 

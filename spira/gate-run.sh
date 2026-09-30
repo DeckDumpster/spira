@@ -17,8 +17,8 @@
 # own liveness check on a detached run) and `lib.sh`/`cockpit.sh`'s generic `*gate*` scans
 # still find it.
 . "$(dirname "$0")/conf.sh" || exit 75
-if [ ! -x "${SPIRA_GATE_RUN_BIN:-}" ]; then
-    printf 'gate-run: the gate-run binary is not built (SPIRA_GATE_RUN_BIN=%s) — refusing to run.\n' "${SPIRA_GATE_RUN_BIN:-<unset>}" >&2
+if ! command -v gate-run >/dev/null 2>&1; then
+    printf 'gate-run: gate-run is not on PATH (the launcher sets PATH to a release) — refusing to run.\n' >&2
     exit 75
 fi
-exec -a "$0" "$SPIRA_GATE_RUN_BIN" --home "$(dirname "$0")" "$@"
+exec -a "$0" gate-run --home "$(dirname "$0")" "$@"
