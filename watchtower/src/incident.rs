@@ -16,22 +16,29 @@ pub fn resolve(env_override: Option<String>) -> Option<String> {
     which("incident.sh")
 }
 
-/// `command -v <name>` — a PATH lookup, nothing more.
+/// A `$PATH` search for `name`, first match wins — the bash's `command -v <name>`, but done
+/// directly rather than shelled out. Scar: `sh -c 'command -v lib.sh'` resolves to `dash` on
+/// this host, and dash's PATH search for `command -v` skips a regular file with no
+/// executable bit — lib.sh ships `-r--r--r--` in a release, so every caller that only needs
+/// to *find* it (never to run it directly — it is always `. sourced` or invoked via `bash
+/// <path>`) silently got `None` and every seam built on it failed closed with no error.
+/// bash's own `command -v` tolerates this; dash's does not. Searching `$PATH` ourselves
+/// needs no shell and is the same answer regardless of which `/bin/sh` a host points at.
 pub fn which(name: &str) -> Option<String> {
-    let out = Command::new("sh")
-        .arg("-c")
-        .arg(format!("command -v {name}"))
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
+    which_in(name, &std::env::var("PATH").ok()?)
+}
+
+fn which_in(name: &str, path: &str) -> Option<String> {
+    for dir in path.split(':') {
+        if dir.is_empty() {
+            continue;
+        }
+        let candidate = std::path::Path::new(dir).join(name);
+        if candidate.is_file() {
+            return Some(candidate.to_string_lossy().into_owned());
+        }
     }
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    None
 }
 
 /// True when the resolved path exists and is either executable or readable — the bash's
@@ -136,6 +143,28 @@ pub fn file(incident_sh: &str, f: &Finding) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The scar, reproduced: lib.sh ships non-executable in a release (`-r--r--r--`), and
+    /// this must still be found — `which` is used to LOCATE the file, never to run it
+    /// directly.
+    #[test]
+    fn which_finds_a_non_executable_regular_file_on_path() {
+        let d = testkit::TempDir::new("wt-which-nonexec");
+        let target = d.join("lib.sh");
+        std::fs::write(&target, "# not executable\n").unwrap();
+        let mut perms = std::fs::metadata(&target).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o444);
+        std::fs::set_permissions(&target, perms).unwrap();
+
+        let found = which_in("lib.sh", &format!("/does/not/exist:{}", d.display()));
+        assert_eq!(found, Some(target.to_string_lossy().into_owned()));
+    }
+
+    #[test]
+    fn which_returns_none_when_not_on_any_path_entry() {
+        let found = which_in("definitely-not-a-real-tool-name.sh", "/does/not/exist:/also/not/here");
+        assert_eq!(found, None);
+    }
 
     #[test]
     fn resolve_prefers_the_override() {
