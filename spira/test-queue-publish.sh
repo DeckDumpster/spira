@@ -33,7 +33,11 @@ echo "test-queue-publish.sh"
 
 SH="$TMP/spira"; mkdir -p "$SH"
 cp -r "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null || true
-cp -r "$HERE/mail" "$SH/mail" 2>/dev/null || true
+# mail is a compiled binary now (sp-ooh1k), not a script beside these, and "$HERE/mail" is
+# the pre-existing kinds/ directory (spira/mail/kinds), not the tool — symlink the real
+# compiled binary in by name instead, so a bare `mail` found via $SH on PATH is the real
+# thing ("REAL MAIL, NOT A STUB" above).
+ln -sf "$(command -v mail)" "$SH/mail"
 chmod +x "$SH"/*.sh 2>/dev/null || true
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 
