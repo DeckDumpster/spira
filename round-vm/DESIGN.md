@@ -168,6 +168,18 @@ It **never repoints anything**: it prints the new VMID; switching `PVE_TEMPLATE_
 7. Any failure from step 3 on destroys the VM — fenced on the exact name this run gave it —
    and reports the reason; a VM that will not die is named on stderr for the operator.
 
+**Operator procedure** (infrastructure — an agent builds and proves, the operator switches):
+1. `round-vm template <a checkout of local/main> --vmid 91xx` (templates in their own range);
+   stdout is `<vmid> <image-ref>`. About 17 minutes, a cold build with its heartbeat.
+2. Prove it without touching production: `SPIRA_PVE_ENV=<a copy of pve.env naming the new
+   VMID> SPIRA_ROUND_VM_STATE_DIR=<scratch> SPIRA_ROUND_VM_MIRROR_PORT=<a free port> round-vm
+   run <tree> --suites test-batcher.sh`; the round's `phases:` line must show `up:` in seconds
+   and the stderr `template image: ... present`. Release the scratch pool's ready VM after.
+3. Switch: set `PVE_TEMPLATE_VMID=<vmid>` in `pve.env` (G7: the next acquire reads it; the
+   ready VM already cloned from the old template is used once more).
+4. The old template stays while the new one's linked base references it; destroying it is
+   the operator's call and `qm destroy` refuses while a linked clone depends on it.
+
 **How the operator knows to run it.** `REMOTE_SCRIPT` checks, before testenv starts, whether
 the VM already holds the round's tag, and says so on the round's stderr either way:
 `round-vm: template image: <ref> present` or `... absent — this round builds it; refresh
