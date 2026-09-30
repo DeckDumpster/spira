@@ -45,10 +45,8 @@ hasnt() { case "$2" in *"$3"*) bad "$1" "$2" ;; *) ok "$1" ;; esac; }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/home" "$TMP/bin"
 
-# conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2); CLONE and GONE
-# below carry none of this checkout's own target/, so without this every configured value
-# below is silently dropped instead of read.
-SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)" || skip "no spira-config binary found — cannot be built here"
+# conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2), found on PATH.
+command -v spira-config >/dev/null 2>&1 || bail "spira-config is not on PATH"
 
 # A harness tree that is NOT this checkout, so nothing here can read the operator's own
 # configuration, their watcher manifest or their client settings and report a pass it did not
@@ -108,7 +106,7 @@ PY
 hook() {
     local ev="$1" src="$2"; shift 2
     printf '{"hook_event_name":"%s","source":"%s"}' "$ev" "$src" \
-      | env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" "$@" \
+      | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" SPIRA_CONF="$CONF" "$@" \
         bash "$CLONE/spira/hooks/session.sh"
 }
 
@@ -175,7 +173,7 @@ is "and prints nothing at all" "" "$out3"
 echo
 echo "it never breaks a session start"
 run_raw() {                        # run_raw <stdin> — the hook with an arbitrary payload
-    printf '%s' "$1" | env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+    printf '%s' "$1" | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" SPIRA_CONF="$CONF" \
         bash "$CLONE/spira/hooks/session.sh"
 }
 out4="$(run_raw 'not json at all')"; is "malformed stdin still exits clean" "0" "$?"
@@ -318,7 +316,7 @@ cat > "$SET" <<'EOF'
   }
 }
 EOF
-ish() { env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+ish() { env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" \
         bash "$CLONE/spira/install-session-hook.sh" "$@"; }
 
 out="$(ish status)"; rc=$?
@@ -385,7 +383,7 @@ entry = {"hooks": [{"type": "command", "command": hook, "timeout": 10}]}
 doc = {"hooks": {"SessionStart": [entry], "PostCompact": [entry]}}
 print(json.dumps(doc))
 PY
-ish2() { env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+ish2() { env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" \
          SPIRA_CLIENT_SETTINGS="$STALESET" bash "$CLONE/spira/install-session-hook.sh" "$@"; }
 
 out="$(ish2 status)"; rc=$?
@@ -442,7 +440,7 @@ GONE="$TMP/gone-clone"
 mkdir -p "$GONE/spira/hooks"
 cp "$HERE/conf.sh" "$HERE/install-session-hook.sh" "$GONE/spira/"
 SET2="$TMP/elsewhere/settings2.json"
-out="$(env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+out="$(env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" \
        SPIRA_CLIENT_SETTINGS="$SET2" bash "$GONE/spira/install-session-hook.sh" install 2>&1)"; rc=$?
 is  "install refuses when the hook is not there" "1" "$rc"
 has "and names what is missing"                  "$out" "not executable"

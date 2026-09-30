@@ -52,11 +52,10 @@ for _s in pilgrimage.sh strand reflect.sh; do
     printf '#!/bin/sh\n' > "$STUBS/$_s"; chmod +x "$STUBS/$_s"
 done
 # THE SENTINEL IS A BINARY (sentinel.sh is gone). It sources lib.sh from SPIRA_HOME, so the
-# stub home carries the real lib.sh and what it sources; strand is SPIRA_STRAND_BIN.
+# stub home carries the real lib.sh and what it sources; strand is the stub first on PATH.
 for _s in lib.sh conf.sh lc.sh suite-covers.sh lifecycle-cert.sh; do
     ln -s "$HERE/$_s" "$STUBS/$_s"
 done
-SENTINEL_BIN="${SPIRA_SENTINEL_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; printf %s "${SPIRA_SENTINEL_BIN:-}"' _ "$HERE")}"
 printf '#!/bin/sh\necho inactive\n'  > "$STUBS/mock-systemctl"; chmod +x "$STUBS/mock-systemctl"
 LAUNCH_ARGV="$TMP/launch-argv"
 # mock-launch stands in for systemd-run: it records every dispatch's own argv (CHECK 6's
@@ -83,7 +82,7 @@ printf '#!/bin/sh\nexit 1\n' > "$FAILING_BD"; chmod +x "$FAILING_BD"
 _run_unreadable="$TMP/run-unreadable"; mkdir -p "$_run_unreadable"
 out_unreadable="$(env -i \
     PATH="$PATH" HOME="$HOME" \
-    SPIRA_HOME="$STUBS" \
+    SPIRA_HOME="$STUBS" PATH="$STUBS:$PATH" \
     SPIRA_RUN="$_run_unreadable" \
     SPIRA_DB="$TMP/irrelevant-db" \
     SPIRA_BD="$FAILING_BD" \
@@ -94,9 +93,8 @@ out_unreadable="$(env -i \
     SPIRA_SYSTEMCTL="$STUBS/mock-systemctl" \
     SPIRA_LAUNCH="$STUBS/mock-launch" \
     SPIRA_NOTIFY="$STUBS/mock-notify" \
-    SPIRA_STRAND_BIN="$STUBS/strand" \
-    ${SPIRA_ARTIFACTS:+SPIRA_ARTIFACTS=$SPIRA_ARTIFACTS} \
-    "$SENTINEL_BIN" 2>&1)"
+    PATH="$STUBS:$PATH" \
+    sentinel 2>&1)"
 rc=$?
 is   "exits 1 when bd cannot reach the database"  "1" "$rc"
 want "reports DATABASE UNREADABLE"                 "DATABASE UNREADABLE" "$out_unreadable"
@@ -141,7 +139,7 @@ run_pass() {
     local -a sarg=(); [ -n "$arg" ] && sarg=("$arg")
     env -i \
         PATH="$PATH" HOME="$HOME" \
-        SPIRA_HOME="$STUBS" \
+        SPIRA_HOME="$STUBS" PATH="$STUBS:$PATH" \
         SPIRA_RUN="$run" \
         SPIRA_DB="$SPIRA_DB" \
         SPIRA_BD="$SPIRA_BD" \
@@ -157,10 +155,9 @@ run_pass() {
         SUMMON_LOG="$SUMMON_LOG" \
         SENDING_LOG="$SENDING_LOG" \
         SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL= SPIRA_MAX_AEONS=3 \
-        SPIRA_STRAND_BIN="$STUBS/strand" \
-        ${SPIRA_ARTIFACTS:+SPIRA_ARTIFACTS=$SPIRA_ARTIFACTS} \
+        PATH="$STUBS:$PATH" \
         "$@" \
-        "$SENTINEL_BIN" "${sarg[@]}" 2>&1
+        sentinel "${sarg[@]}" 2>&1
 }
 
 _run="$TMP/run-pass"

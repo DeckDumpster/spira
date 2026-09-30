@@ -15,12 +15,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 # THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
-# pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
-LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
-# The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
-# test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
-QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
-[ -x "$QUEUE_BIN" ] || { echo "FAIL: the queue binary is not built at $QUEUE_BIN"; exit 1; }
+# pass, `halt` to stop one. It and queue (queue/DESIGN.md §7.4) are called by name on PATH.
 
 echo "test-skew-refresh.sh"
 
@@ -79,7 +74,7 @@ run_skew_cmd() {
         SPIRA_RUN="$run_dir" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
-        bash "$HERE/skew.sh" "$@" 2>&1
+        skew.sh "$@" 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -197,7 +192,7 @@ run_skew_release() {
         SPIRA_RELEASES="$RELEASES" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
-        bash "$HERE/skew.sh" "$@" 2>&1
+        skew.sh "$@" 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -284,7 +279,7 @@ MAP
 q_out="$(env -i PATH="$PATH" \
     HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_HOME="$QSH" \
+    SPIRA_HOME="$QSH" PATH="$QSH:$PATH" \
     SPIRA_RUN="$QRUN" \
     SPIRA_DB="$TMP/qland-no-db" \
     SPIRA_REPO="$QREPO" \
@@ -292,7 +287,7 @@ q_out="$(env -i PATH="$PATH" \
     SPIRA_REPO_MAP="$QSH/repo-map" \
     SPIRA_DOLT_DATA="" \
     SPIRA_TESTDB_DATA="" \
-    "$LANDING_PASS_BIN" land 2>&1)"
+    landing-pass land 2>&1)"
 
 QUEUE_AFTER="$(git -C "$QREPO" rev-parse HEAD)"
 [ "$QUEUE_AFTER" = "$QUEUE_NEW" ] \
@@ -343,7 +338,7 @@ run_lq() {
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_HOME="$LSH" \
+        SPIRA_HOME="$LSH" PATH="$LSH:$PATH" \
         SPIRA_HOME_REPO=lfixq \
         SPIRA_REPO="$LREPO" \
         SPIRA_RUN="$LRUN" \
@@ -352,13 +347,13 @@ run_lq() {
         SPIRA_RELEASES="$LRELEASES" \
         SPIRA_DB="$TMP/local-no-db" \
         SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged (queue/DESIGN.md §8 D12)" \
-        SPIRA_HOME="$LSH" "$QUEUE_BIN" "$@" 2>&1
+        SPIRA_HOME="$LSH" PATH="$LSH:$PATH" queue "$@" 2>&1
 }
 run_lskew() {
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_HOME="$LSH" \
+        SPIRA_HOME="$LSH" PATH="$LSH:$PATH" \
         SPIRA_REPO="$LREPO" \
         SPIRA_RUN="$LRUN" \
         SPIRA_REPO_MAP="$LRMAP" \

@@ -115,7 +115,7 @@ run_skew() {
         SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$RELEASES" \
         "${@}" \
-        bash "$HERE/skew.sh" check 2>&1
+        skew.sh check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -216,7 +216,7 @@ run_skew_noart() {
         SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$releases_dir" \
         "${@}" \
-        bash "$HERE/skew.sh" check 2>&1
+        skew.sh check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -288,7 +288,7 @@ run_skew_artifact() {
         SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$RELEASES" \
         "${@}" \
-        bash "$HERE/skew.sh" check 2>&1
+        skew.sh check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -449,7 +449,7 @@ run_skew_checkout() {
         SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$RELEASES_CK" \
         "${@}" \
-        bash "$HERE/skew.sh" check 2>&1
+        skew.sh check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 

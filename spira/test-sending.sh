@@ -61,7 +61,7 @@ export SPIRA_CONF="$TMP/no-such-conf"
 
 # --------------------------------------------------------------------------------------
 # A THROWAWAY spira-lc/Dolt SERVER, the same shape test-lc-hold.sh and
-# test-check2-reaper.sh use. Exported so the `bash "$HERE/sending.sh"` subprocess the
+# test-check2-reaper.sh use. Exported so the `sending.sh` subprocess the
 # `sending()` helper below spawns inherits it too.
 # --------------------------------------------------------------------------------------
 LCREPO="$(cd "$HERE/.." && pwd)"
@@ -94,11 +94,7 @@ done
 [ "$lc_up" = 1 ] || bail "dolt sql-server for spira_lifecycle never came up: $(cat "$LC_TMP/server.log")"
 lc_root_sql() { "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls "$@"; }
 
-LC_CARGO_TARGET="$LC_TMP/cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$LC_CARGO_TARGET" \
-    "$CARGO_BIN" build --manifest-path "$LCREPO/spira-lc/Cargo.toml" --quiet 2>"$LC_TMP/build.log" \
-    || bail "spira-lc failed to build: $(cat "$LC_TMP/build.log")"
-export SPIRA_LC_BIN="$LC_CARGO_TARGET/debug/spira-lc"
+command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LC_PORT"
 export SPIRA_LC_DB=spira_lifecycle
@@ -106,7 +102,7 @@ export SPIRA_LC_DATA_DIR="$LC_TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
 unset SPIRA_LC_SOCKET
-"$SPIRA_LC_BIN" admin-apply-ddl "$LCREPO/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
+spira-lc admin-apply-ddl "$LCREPO/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
 wantrc "spira_lifecycle schema applies cleanly" 0 $?
 
 # shellcheck disable=SC1090
@@ -209,7 +205,7 @@ sending() {
     SPIRA_HOME="$HERE" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$STUB_BD" \
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$HOME_REPO" SPIRA_GH="$STUB_GH" \
     SPIRA_REPO_MAP="$TMP/repo-map" \
-        bash "$HERE/sending.sh" --no-fetch --status-from "$STATUS_FILE" "$@" 2>&1
+        sending.sh --no-fetch --status-from "$STATUS_FILE" "$@" 2>&1
 }
 branch_exists() { git -C "$REPO" show-ref --verify -q "refs/heads/$1" 2>/dev/null; }
 
@@ -559,7 +555,7 @@ printf '%s | %s | push | main | |\n' "$DHOME" "$DREPO" > "$TMP/dry-repo-map"
 dry_out="$(SPIRA_HOME="$HERE" SPIRA_RUN="$DRUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$STUB_BD" \
     SPIRA_REPO="$DREPO" SPIRA_HOME_REPO="$DHOME" SPIRA_REAPLOG="$DRUN/reap.log" \
     SPIRA_REPO_MAP="$TMP/dry-repo-map" \
-        bash "$HERE/sending.sh" --dry-run --no-fetch 2>&1)"
+        sending.sh --dry-run --no-fetch 2>&1)"
 want "dry-run reports WOULD, not SENT"  "WOULD  sp-dry  send branch" "$dry_out"
 nowant "dry-run never reports SENT"     "SENT sp-dry"                "$dry_out"
 is "dry-run leaves the branch in place" 0 "$(git -C "$DREPO" show-ref --verify -q refs/heads/spira/sp-dry; echo $?)"
@@ -628,7 +624,7 @@ printf '%s | %s | push | main | |\n' "$FHOME" "$FREPO" > "$TMP/fail-repo-map"
 fail_out="$(SPIRA_HOME="$HERE" SPIRA_RUN="$FRUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$STUB_BD" \
     SPIRA_REPO="$FREPO" SPIRA_HOME_REPO="$FHOME" SPIRA_REAPLOG="$FRUN/reap.log" \
     SPIRA_REPO_MAP="$TMP/fail-repo-map" \
-        bash "$HERE/sending.sh" --no-fetch 2>&1)"
+        sending.sh --no-fetch 2>&1)"
 fail_rc=$?
 want "sp-fail is reported FAILED" "FAILED sp-fail" "$fail_out"
 wantrc "the pass exits non-zero when failed > 0" 1 "$fail_rc"

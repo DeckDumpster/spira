@@ -13,6 +13,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 want "gate-spira.sh calls sop.sh lint" "sop.sh lint" "$(cat "$HERE/gate-spira.sh")"
-want "lint appears in sop.sh's own usage" "lint" "$(bash "$HERE/sop.sh" bogus-subcommand 2>&1)"
+want "lint appears in sop.sh's own usage" "lint" "$(sop.sh bogus-subcommand 2>&1)"
 
 tl_summary

@@ -64,7 +64,7 @@ echo "it refuses a machine whose container runtime cannot start:"
 mkdir -p "$TMP/brokenbin"
 printf '#!/bin/sh\nexit 1\n' > "$TMP/brokenbin/podman"
 chmod +x "$TMP/brokenbin/podman"
-out="$(PATH="$TMP/brokenbin:$PATH" bash "$SCRIPT" --check 2>&1)"; rc=$?
+out="$(PATH="$TMP/brokenbin:$PATH" runner-deps.sh --check 2>&1)"; rc=$?
 if [ "$rc" -eq 0 ]; then
     bad "a broken runtime is refused" "exited 0"
 else
@@ -93,7 +93,7 @@ echo "it accepts a machine that works:"
 # a box without one this asserts nothing and says so, rather than reporting a
 # pass it did not earn.
 if command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1; then
-    if bash "$SCRIPT" --check >/dev/null 2>&1; then
+    if runner-deps.sh --check >/dev/null 2>&1; then
         ok "a working machine passes"
     else
         bad "a working machine passes" "refused a host with a working rootless podman"

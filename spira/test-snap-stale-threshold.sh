@@ -88,12 +88,12 @@ run_watchtower() {  # run_watchtower [extra env...]
         SPIRA_SUITES_SH="$TMP/bin/suites.sh" \
         SPIRA_PATH="$DF_CLEAN" SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" \
         SPIRA_SNAP_STALE_S=7 \
-        "$@" bash "$HERE/watchtower.sh" --show 2>/dev/null
+        "$@" watchtower.sh --show 2>/dev/null
 }
 
 run_doctor() {
     env -i \
-        PATH="$TMP/bin:/usr/local/bin:/usr/bin:/bin" \
+        PATH="$TMP/bin:$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_PATH="$TMP/bin" \
@@ -107,7 +107,7 @@ run_doctor() {
         SPIRA_GOAL=sp-test \
         SPIRA_COCKPIT="$TMP/run" \
         SPIRA_SNAP_STALE_S=7 \
-        "$@" bash "$HERE/doctor.sh" 2>/dev/null || true
+        "$@" doctor.sh 2>/dev/null || true
 }
 
 # ===========================================================================

@@ -45,19 +45,13 @@ mkdir -p "$T/run" "$T/chamber" "$T/bin"
 # literals out of conf.sh (law-gates-run-in-a-clean-environment).
 export SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
-export SPIRA_HOME="$T"
+export SPIRA_HOME="$T" PATH="$T:$PATH"
 export SPIRA_DB="$T/no-db"
 
-# THE AEON IS A BINARY (aeon.sh is gone) and summon_fayth refuses to summon without an
-# executable SPIRA_AEON_BIN. SPIRA_HOME is the temp dir here, so conf.sh's own spira_bin would
-# look in its parent's bin/ and find nothing; resolve it the way conf.sh does for THIS tree
-# (SPIRA_ARTIFACTS under testenv), before lib.sh sources conf.sh. The mock SPIRA_SUMMON
-# never execs it — it only has to be the real, executable path summon_fayth passes on.
-_rbin() { env -u SPIRA_REPO SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin "$2" 2>/dev/null' _ "$HERE" "$1"; }
-[ -x "${SPIRA_AEON_BIN:-}" ] || SPIRA_AEON_BIN="$(_rbin aeon)"
-export SPIRA_AEON_BIN
-[ -x "$SPIRA_AEON_BIN" ] \
-    || { echo "test-summon-fayth: the aeon binary is not built (SPIRA_AEON_BIN=$SPIRA_AEON_BIN)" >&2; exit 1; }
+# THE AEON IS A BINARY (aeon.sh is gone): summon_fayth hands systemd-run the aeon it finds
+# on PATH (sp-gypjk). The mock SPIRA_SUMMON never execs it.
+command -v aeon >/dev/null 2>&1 \
+    || { echo "test-summon-fayth: aeon is not on PATH" >&2; exit 1; }
 
 . "$HERE/lib.sh"
 
@@ -407,7 +401,7 @@ want "and it is loud about that too" "DRAIN EXPIRED" "$out"
 echo
 echo "drain expiry — the seam: world.sh drain WRITES the expiry, and --for sets it"
 rm -f "$DRAIN_STAMP"
-SPIRA_RUN="$SPIRA_RUN" bash "$HERE/world.sh" drain --for 900 --timeout 1 >/dev/null 2>&1
+SPIRA_RUN="$SPIRA_RUN" world.sh drain --for 900 --timeout 1 >/dev/null 2>&1
 if [ -f "$DRAIN_STAMP" ]; then
     exp="$(sed -n 's/^expires \([0-9][0-9]*\)$/\1/p' "$DRAIN_STAMP" | head -1)"
     if [ -n "$exp" ]; then
@@ -554,14 +548,14 @@ is "positive: normal summon with pool=0 produces nothing" "absent" \
 
 # escape.sh bypasses the pool and still summons.
 rm -f "$SUMMONED"
-bash "$HERE/escape.sh" stretchy 2>/dev/null || true
+escape.sh stretchy 2>/dev/null || true
 want "escape.sh summons despite pool=0 not being passed" "SUMMONED:stretchy" "$(cat "$SUMMONED" 2>/dev/null)"
 
 # THE CONTROL THAT MAKES THE ABOVE MEANINGFUL: escape.sh with nothing ready exits 0 but
 # summons nothing — the summon above is about the fayth having work, not the script
 # always calling the binary unconditionally.
 rm -f "$T/run/fake-ready" "$SUMMONED"
-bash "$HERE/escape.sh" stretchy 2>/dev/null || true
+escape.sh stretchy 2>/dev/null || true
 is "escape.sh with nothing ready does not summon" "absent" \
    "$( [ -f "$SUMMONED" ] && cat "$SUMMONED" || echo absent )"
 touch "$T/run/fake-ready"
@@ -624,13 +618,13 @@ touch "$T/run/fake-ready"
 
 # POSITIVE CONTROL: with no halt or drain stamp, escape.sh still summons.
 rm -f "$HALT_STAMP" "$T/run/world.draining" "$SUMMONED"
-bash "$HERE/escape.sh" stretchy 2>/dev/null || true
+escape.sh stretchy 2>/dev/null || true
 is "G8 positive control: no halt/drain, escape.sh summons" \
    "SUMMONED:stretchy" "$(cat "$SUMMONED" 2>/dev/null)"
 
 : > "$HALT_STAMP"
 rm -f "$SUMMONED"
-out="$(bash "$HERE/escape.sh" stretchy 2>&1)"; rc=$?
+out="$(escape.sh stretchy 2>&1)"; rc=$?
 is "G8: halted — escape.sh does not summon" "absent" "$( [ -f "$SUMMONED" ] && cat "$SUMMONED" || echo absent )"
 want "G8: escape.sh logs the halt refusal" "halted — not summoning" "$out"
 is "G8: escape.sh exits non-zero when halted" "1" "$rc"
@@ -639,14 +633,14 @@ rm -f "$HALT_STAMP"
 DRAIN_STAMP_G8="$T/run/world.draining"
 { echo "now"; echo "gated"; printf 'expires %s\n' "$(( $(date +%s) + 3600 ))"; } > "$DRAIN_STAMP_G8"
 rm -f "$SUMMONED"
-out="$(bash "$HERE/escape.sh" stretchy 2>&1)"; rc=$?
+out="$(escape.sh stretchy 2>&1)"; rc=$?
 is "G8: live drain — escape.sh does not summon" "absent" "$( [ -f "$SUMMONED" ] && cat "$SUMMONED" || echo absent )"
 want "G8: escape.sh logs the drain refusal" "draining — not summoning" "$out"
 is "G8: escape.sh exits non-zero when draining" "1" "$rc"
 
 { echo "now"; echo "gated"; printf 'expires %s\n' "$(( $(date +%s) - 60 ))"; } > "$DRAIN_STAMP_G8"
 rm -f "$SUMMONED"
-bash "$HERE/escape.sh" stretchy 2>/dev/null || true
+escape.sh stretchy 2>/dev/null || true
 is "G8: expired drain — escape.sh summons" "SUMMONED:stretchy" "$(cat "$SUMMONED" 2>/dev/null)"
 rm -f "$DRAIN_STAMP_G8"
 
@@ -666,7 +660,7 @@ chmod +x "$T/bin/mock-summon"
 
 rm -f "$QUOTA_ARGV"
 export SPIRA_AEON_CPU_QUOTA=55
-bash "$HERE/escape.sh" stretchy 2>/dev/null || true
+escape.sh stretchy 2>/dev/null || true
 want   "escape.sh: the summon argv was captured" "TimeoutStartSec=" "$(cat "$QUOTA_ARGV" 2>/dev/null)"
 nowant "escape.sh: no CPUQuota, even with the retired knob set" "CPUQuota" "$(cat "$QUOTA_ARGV" 2>/dev/null)"
 nowant "escape.sh: no Nice"                                    "Nice="    "$(cat "$QUOTA_ARGV" 2>/dev/null)"

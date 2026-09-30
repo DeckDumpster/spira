@@ -76,7 +76,7 @@ export SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_HOME_REPO="$PNAME" SPIRA_REPO="$PREP
 sending() {
     SPIRA_HOME="$HERE" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$STUB_BD" \
     SPIRA_REPO="$PREPO" SPIRA_HOME_REPO="$PNAME" SPIRA_REPO_MAP="$TMP/repo-map" \
-        bash "$HERE/sending.sh" --no-fetch "$@" 2>&1
+        sending.sh --no-fetch "$@" 2>&1
 }
 branch_exists() {   # branch_exists <repo> <branch>
     git -C "$1" show-ref --verify -q "refs/heads/$2" 2>/dev/null

@@ -86,7 +86,7 @@ run_skew() {
         SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$RELEASES" \
         "${@}" \
-        bash "$HERE/skew.sh" check --escalate 2>&1
+        skew.sh check --escalate 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -102,7 +102,7 @@ run_skew_ro() {
         SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$RELEASES" \
         "${@}" \
-        bash "$HERE/skew.sh" check 2>&1
+        skew.sh check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -117,7 +117,7 @@ run_skew_shared() {
         SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$RELEASES" \
         "${@}" \
-        bash "$HERE/skew.sh" check --escalate 2>&1
+        skew.sh check --escalate 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 

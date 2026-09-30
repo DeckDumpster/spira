@@ -116,7 +116,6 @@ cat > "$BIN/fake-agent" <<'MOCK'
 printf 'fake-agent v0\n'
 MOCK
 chmod +x "$BIN/fake-agent"
-touch "$BIN/fake-loom" && chmod +x "$BIN/fake-loom"
 
 printf '[Timer]\nOnBootSec=2min\n' > "$UNIT_DIR/spira-sentinel-prod.timer"
 printf 'SP_AT=0\n' > "$RUN/cockpit.env"
@@ -130,11 +129,10 @@ run_ready() {
     done
     [ "${1:-}" = "--" ] && shift
     env -i \
-        PATH="$BIN:/usr/local/bin:/usr/bin:/bin" \
         HOME="$FAKE_HOME" \
         SPIRA_PATH="$BIN" \
         SPIRA_CONF="$TMP/no.conf" \
-        SPIRA_HOME="$FAKE_SPIRA_HOME" \
+        SPIRA_HOME="$FAKE_SPIRA_HOME" PATH="$BIN:$FAKE_SPIRA_HOME:$PATH" \
         SPIRA_REPO="$TMP" \
         SPIRA_REPO_MAP="$TMP/no-map" \
         SPIRA_RUN="$RUN" \
@@ -143,8 +141,6 @@ run_ready() {
         SPIRA_BD="$BIN/bd" \
         SPIRA_GOAL="sp-test" \
         SPIRA_INSTANCE="prod" \
-        SPIRA_LOOM_BIN="$BIN/fake-loom" \
-        SPIRA_SENTINEL_BIN="$BIN/sentinel" \
         SPIRA_LOOM_ADDR="127.0.0.1:8788" \
         SPIRA_LOOM_BUDGET_MS="1500" \
         SPIRA_LOOM_PROBE="$BIN/loom-probe" \
@@ -152,7 +148,7 @@ run_ready() {
         FAKE_SC_ACTIVE="spira-sentinel-prod.timer spira-mail-tidy-prod.timer" \
         FAKE_SC_ENABLED="spira-sentinel-prod.timer" \
         "${extra_env[@]}" \
-        bash "$HERE/ready.sh" 2>/dev/null
+        ready.sh 2>/dev/null
 }
 
 echo "test-ready-timers.sh"

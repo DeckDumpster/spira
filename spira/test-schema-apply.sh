@@ -51,8 +51,8 @@ testdb_require "test-schema-apply.sh"
 echo
 echo "the generated column classifies every declared kind"
 work_types="$(awk -F'"' '/^SCHEMA_WORK_TYPES=/{print $2}' "$HERE/schema.sh")"
-for k in $("$HERE/schema.sh" kinds); do
-    t="$("$HERE/schema.sh" type-of "$k")"
+for k in $(schema.sh kinds); do
+    t="$(schema.sh type-of "$k")"
     case " $work_types " in
         *" $t "*) [ "$k" = work ] || [ "$t" = chore ] && ok "kind $k ($t) is a work type" || bad "kind $k" "unexpectedly a work type" ;;
         *)        ok "kind $k ($t) is excluded from work by type" ;;
@@ -97,7 +97,7 @@ elif [ "${TESTDB_MODE:-embedded}" != embedded ]; then
         "$TESTDB_MODE" >&2
     testdb_drop >/dev/null 2>&1
 else
-    o_emb="$("$HERE/schema-apply.sh" 2>&1)"; rc_emb=$?
+    o_emb="$(schema-apply.sh 2>&1)"; rc_emb=$?
     [ "$rc_emb" != 0 ] && ok "apply exits non-zero on an engine it cannot use (rc=$rc_emb)" \
                        || bad "apply exits non-zero on an engine it cannot use" \
                               "it exited 0 and the caller has no way to know: $o_emb"
@@ -153,7 +153,7 @@ else
     # FIRST APPLY IS THE POSITIVE CONTROL. A bare fixture has none of the model, so this run
     # must report that it ADDED things. Without it, the idempotence assertions below would
     # pass just as well against an apply that had quietly become a no-op on every store.
-    o1="$("$HERE/schema-apply.sh" 2>&1)"; rc1=$?
+    o1="$(schema-apply.sh 2>&1)"; rc1=$?
     [ "$rc1" = 0 ] && ok "apply succeeds on a bare store" \
                    || bad "apply succeeds on a bare store" "exited $rc1: $o1"
     want "and adds the generated column"    "_is_work"              "$o1"
@@ -161,11 +161,11 @@ else
 
     # NOW the store is correct, so the checker must say so. This is the assertion that used
     # to be made against the operator's own database.
-    "$HERE/schema.sh" check >/dev/null 2>&1 \
+    schema.sh check >/dev/null 2>&1 \
         && ok "schema.sh check passes against the store apply just built" \
         || bad "schema.sh check" "reported drift on a store schema-apply.sh had just applied"
 
-    o2="$("$HERE/schema-apply.sh" 2>&1)"
+    o2="$(schema-apply.sh 2>&1)"
     want "second run reports types already exact"    "already exact"   "$o2"
     want "second run reports _is_work already there" "already present" "$o2"
     testdb_drop >/dev/null 2>&1

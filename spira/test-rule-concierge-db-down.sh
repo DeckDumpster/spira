@@ -130,7 +130,7 @@ EOF
 
 run_concierge_brief() {
     SPIRA_DB="$DB" SPIRA_RUN="$SPIRA_RUN" SPIRA_BD="$SPIRA_BD" \
-        SPIRA_HOME="$FX" CONCIERGE_FAYTH=fx SPIRA_MEMORIES_CACHE="" \
+        SPIRA_HOME="$FX" PATH="$FX:$PATH" CONCIERGE_FAYTH=fx SPIRA_MEMORIES_CACHE="" \
         bash "$CONCIERGE_SH" brief 2>&1
 }
 

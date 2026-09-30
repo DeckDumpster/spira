@@ -44,7 +44,7 @@ touch "$METER"
 check() {
     local settings="$TMP/settings-$1.json"
     printf '%s\n' "$2" > "$settings"
-    python3 "$HERE/statusline-check.py" "$settings" "$METER" "$RUN"
+    statusline-check.py "$settings" "$METER" "$RUN"
 }
 
 # ---------------------------------------------------------------------------
@@ -66,7 +66,7 @@ out="$(check absent "{\"theme\":\"dark\"}")"
 is "absent" "absent" "$out"
 
 printf 'not json' > "$TMP/settings-unreadable.json"
-out="$(python3 "$HERE/statusline-check.py" "$TMP/settings-unreadable.json" "$METER" "$RUN")"
+out="$(statusline-check.py "$TMP/settings-unreadable.json" "$METER" "$RUN")"
 has "unreadable" "unreadable" "$out"
 
 out="$(check other "{\"statusLine\":{\"command\":\"date\",\"refreshInterval\":5}}")"

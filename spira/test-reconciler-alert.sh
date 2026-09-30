@@ -64,10 +64,8 @@ _rc=$?
 cat "$ALERT_OUT"
 report_cargo "$ALERT_OUT" "$_rc"
 
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/alert-target" "$CARGO_BIN" build --release \
-    --manifest-path "$T/reconciler-alert-src/Cargo.toml" >/dev/null 2>&1
-BIN="$T/alert-target/release/reconciler-alert"
-[ -x "$BIN" ] || bail "reconciler-alert binary was not built at $BIN"
+# The tree under test's own reconciler-alert, on PATH (sp-gypjk).
+command -v reconciler-alert >/dev/null 2>&1 || bail "reconciler-alert is not on PATH"
 
 # --- fixtures --------------------------------------------------------------------------------
 # Real mail.sh and its real conf.sh, so this suite exercises the actual lint and the actual
@@ -101,7 +99,7 @@ mailcount() { find "$SPIRA_RUN/mail/$1/new" -type f 2>/dev/null | wc -l | tr -d 
 # ==========================================================================================
 printf '\n%s\n' "2. a fresh gap past grace wakes the concierge, evidence-carrying"
 # ==========================================================================================
-out="$("$BIN" gap --invariant fleet-size --now 1000 --state "$STATE" \
+out="$(reconciler-alert gap --invariant fleet-size --now 1000 --state "$STATE" \
     --status gap --desired "8 aeons" --observed "3 aeons" --since 940 --is-gap 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "gap call exits 0" || bad "gap call exits 0" "rc=$rc: $out"
 want "reports sent to concierge" "sent to concierge" "$out"
@@ -118,7 +116,7 @@ is "operator mailbox is empty so far" "0" "$(mailcount operator)"
 # ==========================================================================================
 printf '\n%s\n' "3. the same unresolved streak does not alert twice (dedup per gap)"
 # ==========================================================================================
-out="$("$BIN" gap --invariant fleet-size --now 1060 --state "$STATE" \
+out="$(reconciler-alert gap --invariant fleet-size --now 1060 --state "$STATE" \
     --status gap --desired "8 aeons" --observed "3 aeons" --since 940 --is-gap 2>&1)"
 want "reports no alert (deduped)" "no alert" "$out"
 is   "still exactly one message — no repeat" "1" "$(mailcount concierge)"
@@ -126,8 +124,8 @@ is   "still exactly one message — no repeat" "1" "$(mailcount concierge)"
 # ==========================================================================================
 printf '\n%s\n' "4. once the streak closes, a new streak (new since) alerts again"
 # ==========================================================================================
-"$BIN" gap --invariant fleet-size --now 1100 --state "$STATE" --status satisfied >/dev/null 2>&1
-out="$("$BIN" gap --invariant fleet-size --now 1200 --state "$STATE" \
+reconciler-alert gap --invariant fleet-size --now 1100 --state "$STATE" --status satisfied >/dev/null 2>&1
+out="$(reconciler-alert gap --invariant fleet-size --now 1200 --state "$STATE" \
     --status gap --desired "8 aeons" --observed "2 aeons" --since 1150 --is-gap 2>&1)"
 want "reports sent to concierge again" "sent to concierge" "$out"
 is   "a second message reaches concierge" "2" "$(mailcount concierge)"
@@ -135,7 +133,7 @@ is   "a second message reaches concierge" "2" "$(mailcount concierge)"
 # ==========================================================================================
 printf '\n%s\n' "5. a gap inside its own grace period raises nothing"
 # ==========================================================================================
-out="$("$BIN" gap --invariant cockpit-dashboards --now 3000 --state "$STATE" \
+out="$(reconciler-alert gap --invariant cockpit-dashboards --now 3000 --state "$STATE" \
     --status gap --desired "dashboards configured" --observed "none configured" --since 2990 2>&1)"
 want "reports no alert" "no alert" "$out"
 is   "no new message for a still-graced gap" "2" "$(mailcount concierge)"
@@ -143,7 +141,7 @@ is   "no new message for a still-graced gap" "2" "$(mailcount concierge)"
 # ==========================================================================================
 printf '\n%s\n' "6. an unobservable input, past its own grace, alerts like a gap"
 # ==========================================================================================
-out="$("$BIN" gap --invariant queue-watch --now 4000 --state "$STATE" \
+out="$(reconciler-alert gap --invariant queue-watch --now 4000 --state "$STATE" \
     --status unobservable --reason "queue-watch: no reading in 90s" --since 3900 --is-gap 2>&1)"
 want "reports sent to concierge" "sent to concierge" "$out"
 # Grab the newest message specifically (three now exist).
@@ -155,7 +153,7 @@ want "the reason is carried as the observed field" "observed:  queue-watch: no r
 # ==========================================================================================
 printf '\n%s\n' "7. a remedy that did not close its gap is named as failed"
 # ==========================================================================================
-"$BIN" gap --invariant loop-stalled --now 5000 --state "$STATE" \
+reconciler-alert gap --invariant loop-stalled --now 5000 --state "$STATE" \
     --status gap --desired "a pass within 3000s" --observed "last pass 5100s ago" \
     --since 4900 --is-gap --remedy-failed --last-remedy "reset-failed + start spira-landing" >/dev/null 2>&1
 newest="$(ls -t "$SPIRA_RUN/mail/concierge/new"/* | head -1)"
@@ -167,7 +165,7 @@ printf '\n%s\n' "8. concierge not running: the same alert lands in operator mail
 # ==========================================================================================
 rm -f "$CONCIERGE_RUNNING_FLAG"
 before_concierge="$(mailcount concierge)"
-out="$("$BIN" gap --invariant land-rate --now 6000 --state "$STATE" \
+out="$(reconciler-alert gap --invariant land-rate --now 6000 --state "$STATE" \
     --status gap --desired "land rate > 0 over 30m" --observed "0 landed in 30m, work waiting" \
     --since 4200 --is-gap 2>&1)"
 want "reports concierge not running" "concierge not running" "$out"
@@ -184,7 +182,7 @@ printf '\n%s\n' "9. the operator path: permissions, policy, destructive; nothing
 touch "$CONCIERGE_RUNNING_FLAG"
 for class in permissions policy destructive; do
     before="$(mailcount operator)"
-    out="$(printf 'the pve console needs a one-time grant\n' | "$BIN" escalate --class "$class" \
+    out="$(printf 'the pve console needs a one-time grant\n' | reconciler-alert escalate --class "$class" \
         --subject "escalation-$class needs a decision" --default "wait for the operator" 2>&1)"
     want "escalate $class: reports sent to operator" "sent to operator" "$out"
     after="$(mailcount operator)"
@@ -198,7 +196,7 @@ done
 
 before_op="$(mailcount operator)"
 before_con="$(mailcount concierge)"
-out="$(printf 'stop filing the same class of ticket every night\n' | "$BIN" escalate --class urgent \
+out="$(printf 'stop filing the same class of ticket every night\n' | reconciler-alert escalate --class urgent \
     --subject "an unpermitted escalation class" 2>&1)"
 want "an unpermitted class is refused" "refused" "$out"
 is "operator mail gets nothing for a refused class" "$before_op" "$(mailcount operator)"

@@ -307,8 +307,7 @@ nowant "rule.sh: default hook: no brain path named" "brain/.claude"   "$out_defa
 echo
 echo "=== cockpit.sh statute_keys: SP_STATUTE_SKEW (no-wiki case) ==="
 
-COCKPIT_SH="$HERE/cockpit.sh"
-run_statute_keys() { SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="${1:-}" bash "$COCKPIT_SH" statute 2>/dev/null; }
+run_statute_keys() { SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="${1:-}" cockpit.sh statute 2>/dev/null; }
 
 # NEGATIVE CONTROL: SPIRA_WIKI unset → all ? (the WIKI-dependent MISMATCH/OK cases live in
 # test-law-synth.sh, which needs a wiki checkout and reports its absence as a skip).

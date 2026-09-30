@@ -51,7 +51,7 @@ echo "--- the validator: one rule, one violation, no shelf and no bd ---"
 # ===========================================================================================
 
 # sop_v <slug> <body> -> validates via the write-time validator, body on stdin.
-sop_v() { printf '%s' "$2" | env -i HOME="$HOME" PATH="$PATH" bash "$HERE/sop.sh" validate "$1" 2>&1; }
+sop_v() { printf '%s' "$2" | env -i HOME="$HOME" PATH="$PATH" sop.sh validate "$1" 2>&1; }
 sop_v_rc() { sop_v "$1" "$2" >/dev/null 2>&1; printf '%s' "$?"; }
 
 WELL_FORMED="$(printf 'MATCH: (test)\nSYMPTOM: test failed\nCHECK: check it\nFIX: fix it')"
@@ -109,7 +109,7 @@ echo "--- lint: the validator applied to the whole shelf, via SOP_SHELF_CMD ---"
 # SOP_SHELF_CMD IS THE SEAM: its output stands in for `bd memories --json`. No database
 # anywhere in this section — including the fail-closed case, where the command simply
 # produces nothing, exactly as a broken bd read does.
-sop_shelf() { env -i HOME="$HOME" PATH="$PATH" SOP_SHELF_CMD="$1" bash "$HERE/sop.sh" "${@:2}" 2>&1; }
+sop_shelf() { env -i HOME="$HOME" PATH="$PATH" SOP_SHELF_CMD="$1" sop.sh "${@:2}" 2>&1; }
 sop_shelf_rc() { sop_shelf "$@" >/dev/null 2>&1; printf '%s' "$?"; }
 
 CLEAN_SHELF='printf "%s" "{\"sop-clean\":\"SYMPTOM: s\\nCHECK: c\\nFIX: f\"}"'
@@ -166,7 +166,7 @@ sop() {                  # sop <args...> — the program under test, in a clean 
         SPIRA_DB="${SPIRA_DB_OVERRIDE:-$SPIRA_DB}" \
         SPIRA_SOP_LEDGER="${LEDGER_OVERRIDE:-$LEDGER}" SOP_WHY_CAP="$WHY_CAP" \
         BEADS_ACTOR="aeon-testops" BEADS_NO_AUTO_IMPORT=1 \
-        timeout 120 bash "$HERE/sop.sh" "$@" 2>&1
+        timeout 120 sop.sh "$@" 2>&1
 }
 sop_rc() {               # the same, but the caller wants only the status
     sop "$@" >/dev/null 2>&1; printf '%s' "$?"
@@ -621,7 +621,7 @@ sop_m() {   # like sop() but with SOP_METRIC_COCKPIT — defaults to the mock, o
         BEADS_ACTOR="aeon-testops" BEADS_NO_AUTO_IMPORT=1 \
         SOP_METRIC_COCKPIT="${SOP_METRIC_COCKPIT:-$MOCK_COCKPIT}" \
         MOCK_UNADOPTED="${MOCK_UNADOPTED:-0}" \
-        timeout 120 bash "$HERE/sop.sh" "$@" 2>&1
+        timeout 120 sop.sh "$@" 2>&1
 }
 
 sop write metric-sop - <<'SOP' >/dev/null 2>&1

@@ -49,7 +49,6 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 # THE STRAND IS A BINARY (strand.sh and strand-classify.py are gone). Cases 0-2 drove the
 # python classifier with THROTTLE_STATE; they are `cargo test -p strand` now (classify::tests,
 # the starved/throttled/throttle-unreadable variants). Case 3 runs the binary's own reader.
-STRAND_BIN="${SPIRA_STRAND_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin strand 2>/dev/null' _ "$HERE")}"
 
 echo "test-strand-throttle.sh"
 
@@ -58,16 +57,16 @@ echo
 echo "case 3 — 'strand throttle-state' against a real stamp file:"
 # ======================================================================================
 mkdir -p "$TMP/run"
-out="$(SPIRA_RUN="$TMP/run" "$STRAND_BIN" throttle-state 2>&1)"
+out="$(SPIRA_RUN="$TMP/run" strand throttle-state 2>&1)"
 want "throttle_state: no stamp reads open" $'open\t' "$out"
 
 _stamp="$TMP/run/queue-throttled"
 printf 'since=2026-09-24T18:01:47Z depth=12 since_land=4m\n' > "$_stamp"
-out="$(SPIRA_RUN="$TMP/run" "$STRAND_BIN" throttle-state 2>&1)"
+out="$(SPIRA_RUN="$TMP/run" strand throttle-state 2>&1)"
 want "throttle_state: readable stamp reads shut" $'shut\tdepth 12' "$out"
 
 chmod 000 "$_stamp"
-out="$(SPIRA_RUN="$TMP/run" "$STRAND_BIN" throttle-state 2>&1)"
+out="$(SPIRA_RUN="$TMP/run" strand throttle-state 2>&1)"
 chmod 644 "$_stamp"
 want "throttle_state: unreadable stamp reads unreadable" "unreadable" "$out"
 tl_summary

@@ -41,7 +41,6 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 echo "test-sin-exempt.sh"
 
-INC="$HERE/incident.sh"
 STUB_BD="$HERE/incident-stub-bd.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/home" "$TMP/run"
@@ -62,12 +61,12 @@ file_incident() {  # file_incident <ref> <title> <payload> [VAR=val ...]
         SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" \
         MAIL_LOG="$MAIL_LOG" \
         SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" \
-        SPIRA_HOME="$TMP/home" \
+        SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH" \
         SPIRA_INCIDENT_REF="$ref" \
         SPIRA_INCIDENT_LOCK="$TMP/run/sinex-test.lock" \
         SPIRA_INCIDENT_REPO= \
         "$@" \
-        bash "$INC" file "$title" - 2>/dev/null
+        incident.sh file "$title" - 2>/dev/null
 }
 
 bead_of() {  # bead_of <ref> -> id

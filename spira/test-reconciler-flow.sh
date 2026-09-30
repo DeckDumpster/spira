@@ -53,50 +53,16 @@ testdb_require test-reconciler-flow
 
 command -v duckdb >/dev/null 2>&1 || { echo "SKIP test-reconciler-flow: duckdb not on PATH"; exit 77; }
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-# A testenv container installs the toolchain at /usr/local/cargo/bin (spira/testenv/
-# Containerfile) but `podman exec` does not carry the image's own PATH into the exec'd
-# process — only bare command -v/$HOME lookups above find it when run outside a container.
-[ -z "$CARGO_BIN" ] && [ -x /usr/local/cargo/bin/cargo ] && CARGO_BIN=/usr/local/cargo/bin/cargo
-if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-reconciler-flow: cargo not found — reconciler-flow binary cannot be built"
-    exit 77
-fi
-export PATH="$(dirname "$CARGO_BIN"):$PATH"
 
 T="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$T"' EXIT INT TERM
 testdb_up reconcilerflow || { echo "test-reconciler-flow: could not build a fixture database"; exit 1; }
 
-# Isolated build tree, its path dependencies (reconciler-engine, tsd) copied alongside it —
-# same shape test-czar-pass.sh uses for the same reason: a Cargo path dependency resolves
-# relative to the manifest, so the sibling must exist in the copy too.
-FLOW_ROOT="$HERE/../reconciler-flow"
-FLOW_BIN="$FLOW_ROOT/target/release/reconciler-flow"
-if [ ! -x "$FLOW_BIN" ]; then
-    cp -r "$FLOW_ROOT/." "$T/reconciler-flow-src"
-    cp -r "$HERE/../reconciler-engine" "$T/reconciler-engine"
-    cp -r "$HERE/../tsd" "$T/tsd"
-    # Pin resolution to the workspace's own lock — unlocked, cargo re-resolves transitive
-    # deps fresh and can land on a version needing a newer edition than the toolchain ships.
-    cp "$HERE/../Cargo.lock" "$T/reconciler-flow-src/Cargo.lock"
-    printf '  (building reconciler-flow into %s)\n' "$T/reconciler-flow-target"
-    CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/reconciler-flow-target" \
-        "$CARGO_BIN" build --release \
-        --manifest-path "$T/reconciler-flow-src/Cargo.toml" 2>&1 | tail -5
-    FLOW_BIN="$T/reconciler-flow-target/release/reconciler-flow"
-fi
-if [ ! -x "$FLOW_BIN" ]; then
-    printf 'reconciler-flow binary not found at %s\n' "$FLOW_BIN" >&2
-    printf '0 passed, 1 failed\n'
-    exit 1
-fi
-ok "reconciler-flow binary built"
+# reconciler-flow is the tree under test's own build, on PATH (sp-gypjk).
+command -v reconciler-flow >/dev/null 2>&1 || { echo "test-reconciler-flow: reconciler-flow is not on PATH" >&2; exit 1; }
 
 export SPIRA_HOME="$HERE"
 export SPIRA_RUN="$T/run"
-export SPIRA_TSD_BIN=""            # best-effort self-write disabled: not under test here
 export SPIRA_DUCKDB_BIN="duckdb"
 export SPIRA_BD="${TESTDB_BD:-bd-embedded}"
 export SPIRA_FLOW_WINDOW_HOURS="0.5"
@@ -121,7 +87,7 @@ STUB
 chmod +x "$T/mail.sh"
 export SPIRA_MAIL_SH="$T/mail.sh"
 
-run_pass() { "$FLOW_BIN" --pass >"$T/pass-out.log" 2>&1; }
+run_pass() { reconciler-flow --pass >"$T/pass-out.log" 2>&1; }
 status_of() {
     # Last reconciler-status.jsonl line for key $1, field $2 ("status" or "is_gap").
     # Under run/tsd/ (design reconciler-time-series-2026-09-27 §2, sp-69m85).
@@ -383,7 +349,7 @@ echo "   watcher gets it again on every invocation via lib.sh, this binary sourc
 reset_env
 rm -rf "$SPIRA_RUN"
 SAVED_SPIRA_RUN="$SPIRA_RUN"
-"$FLOW_BIN" --pass >"$T/pass-out.log" 2>&1
+reconciler-flow --pass >"$T/pass-out.log" 2>&1
 rc=$?
 is "a pass exits 0 even when SPIRA_RUN does not exist yet" "0" "$rc"
 [ -d "$SAVED_SPIRA_RUN" ] && ok "the pass creates SPIRA_RUN itself" || bad "the pass creates SPIRA_RUN itself" "still missing: $SAVED_SPIRA_RUN"

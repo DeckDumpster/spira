@@ -39,7 +39,7 @@ CHAMBER="$T/chamber"; mkdir -p "$CHAMBER"
 printf 'FAYTH_LABELS=test\n' > "$CHAMBER/alpha.fayth"
 printf 'FAYTH_LABELS=test\n' > "$CHAMBER/beta.fayth"
 
-export SPIRA_HOME="$T"
+export SPIRA_HOME="$T" PATH="$T:$PATH"
 export SPIRA_RUN="$RUN"
 export SPIRA_CONF="$T/no-such.conf"
 # shellcheck disable=SC1090
