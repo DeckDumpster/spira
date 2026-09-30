@@ -91,7 +91,7 @@ echo "2. write refuses a shape violation and operator infrastructure"
 out="$(printf 'SYMPTOM: only this\n' | run_sop write test-bad -)"; rc=$?
 is "missing-fields write exits 1" "1" "$rc"
 want "names the missing field" "missing required field: CHECK" "$out"
-out="$(printf 'SYMPTOM: x\nCHECK: y\nFIX: rm -rf /home/ryan/whatever\n' | run_sop write test-leaky -)"; rc=$?
+out="$(printf 'SYMPTOM: x\nCHECK: y\nFIX: rm -rf /opt/operator-secrets/whatever\n' | run_sop write test-leaky -)"; rc=$?
 is "operator-path write exits 1" "1" "$rc"
 want "refuses operator infrastructure" "operator infrastructure" "$out"
 out="$(run_sop list)"

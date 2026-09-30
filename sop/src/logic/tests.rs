@@ -100,7 +100,7 @@ fn write_refuses_missing_fields() {
 fn write_refuses_operator_infrastructure() {
     let bd = FakeBd::default();
     let proc = FakeProc::default();
-    *proc.inventory_hits.borrow_mut() = vec!["FIX: /home/ryan/whatever".to_string()];
+    *proc.inventory_hits.borrow_mut() = vec!["FIX: /opt/operator-secrets/whatever".to_string()];
     let r = write(&bd, &proc, &env(), "x", GOOD);
     assert_eq!(r.code, 1);
     assert!(r.err.iter().any(|l| l.contains("operator infrastructure")));
@@ -168,8 +168,8 @@ fn applied_needs_bead_or_pass() {
     let bd = FakeBd::default();
     let proc = FakeProc::default();
     let clock = FakeClock;
-    let dir = tempdir();
-    let lp = dir.join("applied.jsonl");
+    let dir = testkit::TempDir::new("sop-test");
+    let lp = dir.path().join("applied.jsonl");
     let a = AppliedArgs { key: "x", bead: None, pass: None, check: "pass", held: "yes", why: None };
     let r = applied(&bd, &proc, &clock, &env(), &lp, &a);
     assert_eq!(r.code, 1);
@@ -181,8 +181,8 @@ fn applied_refuses_check_fail_held_yes() {
     let bd = FakeBd::default();
     let proc = FakeProc::default();
     let clock = FakeClock;
-    let dir = tempdir();
-    let lp = dir.join("applied.jsonl");
+    let dir = testkit::TempDir::new("sop-test");
+    let lp = dir.path().join("applied.jsonl");
     let a = applied_args("x", Some("sp-1"), "fail", "yes");
     let r = applied(&bd, &proc, &clock, &env(), &lp, &a);
     assert_eq!(r.code, 1);
@@ -195,8 +195,8 @@ fn applied_refuses_an_unknown_slug_when_the_shelf_is_readable() {
     bd.seed("sop-other", GOOD);
     let proc = FakeProc::default();
     let clock = FakeClock;
-    let dir = tempdir();
-    let lp = dir.join("applied.jsonl");
+    let dir = testkit::TempDir::new("sop-test");
+    let lp = dir.path().join("applied.jsonl");
     let a = applied_args("sop-missing", Some("sp-1"), "pass", "yes");
     let r = applied(&bd, &proc, &clock, &env(), &lp, &a);
     assert_eq!(r.code, 1);
@@ -209,8 +209,8 @@ fn applied_records_a_ledger_line_and_a_bead_note() {
     bd.seed("sop-x", GOOD);
     let proc = FakeProc::default();
     let clock = FakeClock;
-    let dir = tempdir();
-    let lp = dir.join("applied.jsonl");
+    let dir = testkit::TempDir::new("sop-test");
+    let lp = dir.path().join("applied.jsonl");
     let a = applied_args("x", Some("sp-1"), "pass", "yes");
     let r = applied(&bd, &proc, &clock, &env(), &lp, &a);
     assert_eq!(r.code, 0, "{:?}", r.err);
@@ -229,8 +229,8 @@ fn applied_accepts_a_pass_record_with_no_bead() {
     bd.seed("sop-x", GOOD);
     let proc = FakeProc::default();
     let clock = FakeClock;
-    let dir = tempdir();
-    let lp = dir.join("applied.jsonl");
+    let dir = testkit::TempDir::new("sop-test");
+    let lp = dir.path().join("applied.jsonl");
     let a = AppliedArgs { key: "x", bead: None, pass: Some("pass-7"), check: "pass", held: "unknown", why: None };
     let r = applied(&bd, &proc, &clock, &env(), &lp, &a);
     assert_eq!(r.code, 0, "{:?}", r.err);
@@ -248,8 +248,8 @@ fn applied_downgrades_held_yes_to_unknown_when_the_metric_has_not_cleared() {
     let proc = FakeProc::default();
     *proc.metric_value.borrow_mut() = Some("SP_UNADOPTED=7\n".to_string());
     let clock = FakeClock;
-    let dir = tempdir();
-    let lp = dir.join("applied.jsonl");
+    let dir = testkit::TempDir::new("sop-test");
+    let lp = dir.path().join("applied.jsonl");
     let a = applied_args("x", Some("sp-1"), "pass", "yes");
     let r = applied(&bd, &proc, &clock, &env(), &lp, &a);
     assert_eq!(r.code, 0, "{:?}", r.err);
@@ -267,8 +267,8 @@ fn applied_confirms_held_yes_when_the_metric_reads_zero() {
     let proc = FakeProc::default();
     *proc.metric_value.borrow_mut() = Some("SP_UNADOPTED=0\n".to_string());
     let clock = FakeClock;
-    let dir = tempdir();
-    let lp = dir.join("applied.jsonl");
+    let dir = testkit::TempDir::new("sop-test");
+    let lp = dir.path().join("applied.jsonl");
     let a = applied_args("x", Some("sp-1"), "pass", "yes");
     let r = applied(&bd, &proc, &clock, &env(), &lp, &a);
     assert_eq!(r.code, 0, "{:?}", r.err);
@@ -284,8 +284,8 @@ fn applied_on_an_unreadable_shelf_still_records_marked_unreadable() {
     *bd.unreadable.borrow_mut() = true;
     let proc = FakeProc::default();
     let clock = FakeClock;
-    let dir = tempdir();
-    let lp = dir.join("applied.jsonl");
+    let dir = testkit::TempDir::new("sop-test");
+    let lp = dir.path().join("applied.jsonl");
     let a = applied_args("x", Some("sp-1"), "pass", "yes");
     let r = applied(&bd, &proc, &clock, &env(), &lp, &a);
     assert_eq!(r.code, 0, "an unreadable shelf must not block the record");
@@ -321,8 +321,8 @@ fn digest_distinguishes_unreadable_from_empty() {
 
 #[test]
 fn ledger_init_creates_once_and_says_present_after() {
-    let dir = tempdir();
-    let lp = dir.join("sop").join("applied.jsonl");
+    let dir = testkit::TempDir::new("sop-test");
+    let lp = dir.path().join("sop").join("applied.jsonl");
     let r1 = ledger_init(&lp);
     assert_eq!(r1.code, 0);
     assert!(lp.exists());
@@ -357,8 +357,8 @@ fn synth_writes_the_page() {
     let bd = FakeBd::default();
     bd.seed("sop-x", GOOD);
     let clock = FakeClock;
-    let dir = tempdir();
-    let out = dir.join("page.md");
+    let dir = testkit::TempDir::new("sop-test");
+    let out = dir.path().join("page.md");
     let r = synth(&bd, &clock, Some(out.to_str().unwrap()));
     assert_eq!(r.code, 0, "{:?}", r.err);
     let text = std::fs::read_to_string(&out).unwrap();
@@ -388,19 +388,9 @@ fn validate_cmd_reports_ok_and_scans_for_infrastructure() {
     assert!(r.out.iter().any(|l| l.contains("ok    sop-x")));
 
     let proc2 = FakeProc::default();
-    *proc2.inventory_hits.borrow_mut() = vec!["FIX: /home/ryan/x".to_string()];
+    *proc2.inventory_hits.borrow_mut() = vec!["FIX: /opt/operator-secrets/x".to_string()];
     let r2 = validate_cmd(&proc2, "x", GOOD, 250);
     assert_eq!(r2.code, 1);
     assert!(r2.out.iter().any(|l| l.contains("operator infrastructure")));
 }
 
-fn tempdir() -> std::path::PathBuf {
-    let d = std::env::temp_dir().join(format!("sop-test-{}-{}", std::process::id(), rand_suffix()));
-    std::fs::create_dir_all(&d).unwrap();
-    d
-}
-
-fn rand_suffix() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64
-}

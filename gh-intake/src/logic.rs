@@ -60,7 +60,7 @@ pub fn run(http: &dyn Http, bd: &dyn Bd, repo: &dyn Repo, mail: &dyn Mail, cfg: 
             return r.die(format!(
                 "repo:{} does not resolve to a checkout through $SPIRA_REPO_MAP.\n       \
                  Every ingested bead would be parked by aeon.sh on first claim and left for a\n       \
-                 human. Add {} to the repo-map, or set SPIRA_GH_INTAKE_BEAD_REPO to a\n       \
+                 human. Add {} to that map, or set SPIRA_GH_INTAKE_BEAD_REPO to a\n       \
                  name that resolves.",
                 cfg.bead_repo, cfg.bead_repo
             ))

@@ -1066,6 +1066,7 @@ dependencies = [
  "regex",
  "serde_json",
  "sha2",
+ "testkit",
 ]
 
 [[package]]
