@@ -20,6 +20,28 @@ expressed as sourcing and this crate expresses as function calls:
   kill is not an attempt, a slain bead is not evidence the work was bad, and the branch is
   retired, not nuked, unless asked.
 
+## The round-VM defect this wave also fixes (sp-2bkpn)
+
+On 2026-09-30 a `world.sh stop` interrupted an in-flight Concierge round mid-corpus on the
+round VM (batcher-cut, `round-vm run`) without ever knowing one existed. Acceptance:
+`world status` lists an in-flight round; `stop` names it; a round-drain option exists.
+`world stop` and `world status` now read `round-vm status` (`spira_world::round`) and
+report what it shows — `provisioning: pid <N>` is the one signal that command exposes for
+"a round is using the VM pool right now." `stop --round-drain [--round-drain-timeout SECS]`
+waits for that to clear before proceeding, the same shape `drain` already gives live
+aeons; without the flag, `stop` still names what it found and proceeds (naming it was the
+acceptance criterion; blocking every halt on a round already claimed the target box is not
+what draining the aeon pool costs, and the flag exists for when that tradeoff is wanted).
+
+**What this does not close.** `round-vm status`'s `provisioning` field names a VM being
+acquired or actively driven; it is not a full account of round-vm's lease ownership, and a
+round already past its provisioning phase with no further acquire pending would not be
+named by this alone (round-vm's own `release_owned_by` reconciliation, which reclaims a
+lease when its owning process dies, is the deeper mechanism and is out of this wave's four
+scripts). This closes the acceptance criteria as written and the immediate blind spot —
+`world stop` used to say nothing whatsoever about a round — without reaching into round-vm's
+crate.
+
 ## Contract
 
 - `world stop [--why TEXT] [--hard]`: halts timers (priority order, then everything else

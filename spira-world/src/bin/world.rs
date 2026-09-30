@@ -1,6 +1,6 @@
 //! world.sh — stop and start Spira as a whole. Replaces spira/world.sh (bash).
 //!
-//!   world.sh stop [--why "..."] [--hard]
+//!   world.sh stop [--why "..."] [--hard] [--round-drain] [--round-drain-timeout SECS]
 //!   world.sh start
 //!   world.sh drain [--timeout SECS | --for SECS | --deadline SECS]
 //!   world.sh resume
@@ -10,6 +10,12 @@
 //! never risk the data, and a stopped server makes every diagnostic fail) and cockpit*/
 //! concierge (halting the loop must not blind the operator reading it). `stop --hard` adds
 //! the watcher services; nothing here ever stops Dolt.
+//!
+//! A ROUND ON THE ROUND VM IS NAMED, NEVER SILENTLY INTERRUPTED (sp-2bkpn). `status` and
+//! `stop` both read `round-vm status`; `stop` prints what it finds before doing anything
+//! else, and `--round-drain` waits (up to `--round-drain-timeout`, default 1800s) for it to
+//! clear first — the same shape `drain` already gives live aeons. See `spira_world::round`
+//! for exactly what this can and cannot see.
 //!
 //! AEONS ARE STOPPED THROUGH slay.sh, never killed directly — a bare kill leaves the bead
 //! held until its lease expires and charges the attempt anyway, which is how a halt for an
@@ -115,6 +121,8 @@ fn bead_of_pidfile(path: &std::path::Path) -> String {
 fn cmd_stop(args: &[String]) -> i32 {
     let mut why = String::new();
     let mut hard = false;
+    let mut round_drain = false;
+    let mut round_drain_timeout = std::time::Duration::from_secs(1800);
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -126,9 +134,44 @@ fn cmd_stop(args: &[String]) -> i32 {
                 hard = true;
                 i += 1;
             }
+            "--round-drain" => {
+                round_drain = true;
+                i += 1;
+            }
+            "--round-drain-timeout" => {
+                if let Some(n) = args.get(i + 1).and_then(|v| v.parse::<u64>().ok()) {
+                    round_drain_timeout = std::time::Duration::from_secs(n);
+                }
+                i += 2;
+            }
             _ => i += 1,
         }
     }
+
+    // sp-2bkpn: a halt used to interrupt an in-flight Concierge round on the round VM
+    // (batcher-cut, round-vm run) without ever knowing one existed. Name it before doing
+    // anything else, and — with --round-drain — wait for it to clear first, the same shape
+    // `drain` already gives live aeons.
+    if let Some(desc) = spira_world::round::read().and_then(|s| spira_world::round::in_flight_description(&s)) {
+        eprintln!("spira: {desc}");
+        if round_drain {
+            eprintln!("spira: --round-drain given — waiting up to {}s for it to clear before halting", round_drain_timeout.as_secs());
+            let cleared = spira_world::round::wait_for_clear(
+                round_drain_timeout,
+                std::time::Duration::from_secs(10),
+                |d| std::thread::sleep(d),
+                std::time::Instant::now,
+            );
+            if !cleared {
+                eprintln!("spira: round-vm still provisioning after {}s — halting anyway (it was not blocking, only named); rerun with a longer --round-drain-timeout to wait further", round_drain_timeout.as_secs());
+            } else {
+                eprintln!("spira: round-vm clear — proceeding with the halt");
+            }
+        } else {
+            eprintln!("spira: proceeding without --round-drain — this halt may interrupt it. Use --round-drain to wait first.");
+        }
+    }
+
     println!("spira: halting the loop");
     let timers = enumerate_timers();
     for t in &timers {
@@ -552,6 +595,15 @@ fn cmd_status() -> i32 {
     let aeon_refs: Vec<&str> = aeon_paths.iter().map(String::as_str).collect();
     let a = spira_world::proc::live_aeons(std::path::Path::new("/proc"), &aeon_refs, |_| String::new()).len();
     println!("  live aeons: {a}");
+
+    // sp-2bkpn: name an in-flight round so a halt is never the first anyone hears of it.
+    match spira_world::round::read() {
+        Some(s) => match spira_world::round::in_flight_description(&s) {
+            Some(desc) => println!("  {desc}"),
+            None => println!("  round-vm: no round in flight"),
+        },
+        None => println!("  round-vm: not on PATH or could not be read — unknown"),
+    }
     0
 }
 
@@ -575,7 +627,7 @@ fn main() {
             0
         }
         _ => {
-            eprintln!("usage: world.sh {{stop [--why \"...\"] [--hard] | drain [--timeout SECS | --deadline SECS] | resume | start | status}}");
+            eprintln!("usage: world.sh {{stop [--why \"...\"] [--hard] [--round-drain] [--round-drain-timeout SECS] | drain [--timeout SECS | --deadline SECS] | resume | start | status}}");
             64
         }
     };
