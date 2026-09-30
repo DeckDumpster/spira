@@ -42,7 +42,7 @@ machine.
 - Else the typed `spira.lifecycle_enforce`.
 - Else **off**.
 
-`SPIRA_LC_BIN` existing on disk never turns it on. `Env::lc_enforce` carries the result.
+`spira-lc` being on PATH never turns it on. `Env::lc_enforce` carries the result.
 `lcq` itself refuses when it is off, so a forgotten call site still cannot reach the binary.
 
 | | **off** (production today) | **on** |

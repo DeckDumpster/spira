@@ -66,7 +66,7 @@ fn parse() -> Result<Opts, String> {
         run: env::var_os("SPIRA_RUN").map(PathBuf::from),
         db: env::var_os("SPIRA_DB").map(PathBuf::from),
         home: env::var_os("SPIRA_HOME").map(PathBuf::from),
-        round_vm: env::var_os("SPIRA_BATCHER_ROUND_VM").map(PathBuf::from),
+        round_vm: None,
         suites: None,
         members: None,
         evidence: None,
@@ -112,7 +112,7 @@ fn find_repo(env_: &Env, name: &str) -> Result<Repo, String> {
     if base.is_empty() {
         return Err(format!("{name}: spira_landref could not resolve a base ref"));
     }
-    let forge = env::var_os("SPIRA_FORGE").map(PathBuf::from).unwrap_or_else(|| env_.home.join("forge.sh"));
+    let forge = env::var_os("SPIRA_FORGE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("forge.sh"));
     Ok(Repo { name: name.to_string(), path: PathBuf::from(path), base, forge, land })
 }
 
@@ -120,22 +120,9 @@ fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-/// The `round-vm` binary installed next to this one (both resolve through the same
-/// artifacts directory, conf.sh's spira_bin), unless --round-vm/SPIRA_BATCHER_ROUND_VM names
-/// another.
+/// `round-vm`, by name on the launcher's PATH (sp-gypjk), unless --round-vm names another.
 fn default_round_vm() -> PathBuf {
-    env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("round-vm")))
-        .unwrap_or_else(|| PathBuf::from("round-vm"))
-}
-
-/// A harness binary: the path its SPIRA_*_BIN names (conf.sh exports each), else the one
-/// installed next to this binary, the same way `default_round_vm` resolves round-vm.
-fn sibling_bin(var: &str, name: &str) -> PathBuf {
-    env::var_os(var).filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| {
-        env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join(name))).unwrap_or_else(|| PathBuf::from(name))
-    })
+    PathBuf::from("round-vm")
 }
 
 fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
@@ -147,10 +134,11 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
         db: o.db.clone(),
         bd: env::var("SPIRA_BD").unwrap_or_else(|_| "bd".into()),
         express_label: env::var("SPIRA_EXPRESS_LABEL").unwrap_or_else(|_| "express".into()),
-        tsd_bin: env::var_os("SPIRA_TSD_BIN").map(PathBuf::from),
+        // Every harness tool by name, on the launcher's PATH (sp-gypjk).
+        tsd_bin: Some(PathBuf::from("tsd-write")),
         round_vm: o.round_vm.clone().unwrap_or_else(default_round_vm),
-        queue_bin: sibling_bin("SPIRA_QUEUE_BIN", "queue"),
-        rebase_stale_bin: sibling_bin("SPIRA_REBASE_STALE_BIN", "rebase-stale"),
+        queue_bin: PathBuf::from("queue"),
+        rebase_stale_bin: PathBuf::from("rebase-stale"),
         round_slots: env::var("SPIRA_BATCHER_ROUND_SLOTS").ok().and_then(|v| v.trim().parse().ok()).filter(|n: &u32| *n > 0),
         poll_secs: env::var("SPIRA_BATCHER_POLL_SECS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(2),
         // Batcher-parity (sp-myi6w): the Concierge's own proven values, not testenv-batch.sh's
@@ -163,7 +151,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
         },
         git_name: env::var("SPIRA_GIT_NAME").unwrap_or_else(|_| "spira".into()),
         git_email: env::var("SPIRA_GIT_EMAIL").unwrap_or_else(|_| "spira@spira.invalid".into()),
-        lc_bin: env::var_os("SPIRA_LC_BIN").map(PathBuf::from),
+        lc_bin: Some(PathBuf::from("spira-lc")),
         lc_timeout: env::var("SPIRA_LC_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(30),
         lc_enforce: spira_config::lifecycle_enforce(None),
         verdicts: gate::cert::verdicts_dir(env::var("SPIRA_VERDICTS").ok().as_deref(), &run),
