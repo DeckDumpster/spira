@@ -54,7 +54,7 @@ _mk_container() {  # _mk_container <cname> — a real, long-lived, ownerless con
     _ALL_CNAMES="$_ALL_CNAMES $1"
 }
 
-_mk_cargo_vols() {  # _mk_cargo_vols <cname> — the named pair testenv.sh mounts under it
+_mk_cargo_vols() {  # _mk_cargo_vols <cname> — the named pair `testenv container up` mounts under it
     podman volume create "${1}-cargo-reg" >/dev/null 2>&1
     podman volume create "${1}-cargo-git" >/dev/null 2>&1
     _ALL_VOLS="$_ALL_VOLS ${1}-cargo-reg ${1}-cargo-git"

@@ -53,7 +53,7 @@ tests the committed branch, not your working tree.
 The runner is that absolute path and nothing else (law-tests-run-only-through-testenv):
 
 - **Never run a `test-*.sh` suite directly** on the host.
-- **`spira/testenv.sh` is the container helper, not the runner.** Do not call it.
+- **`testenv container` is the container helper, not the runner.** Do not call it.
 - **`spira/testenv-batch.sh` no longer exists.** Do not look for it.
 - Your worktree has no `bin/`; never build a runner path relative to it or to `{{SPIRA_HOME}}`.
 

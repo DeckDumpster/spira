@@ -109,8 +109,6 @@ spira/test-sending.sh
 spira/test-sentinel-store-reads.sh
 spira/test-slay.sh
 spira/test-testdb-failsafe.sh
-spira/test-testenv-image-heartbeat.sh
-spira/test-testenv-owner-guard.sh
 spira/test-testlib.sh
 spira/test-tsd-ingest.sh
 spira/test-tsd.sh

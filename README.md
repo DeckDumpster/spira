@@ -328,7 +328,7 @@ Every suite declares what it covers on a `# covers:` line. Three properties a ne
 - **A check that finds nothing must first prove it could have found something.** Plant an
   offender, require the matcher to say so, and only then believe it when it is silent.
 - **Test against the real dependency** on a throwaway instance — `spira/testdb.sh` for a beads
-  database, `spira/testenv.sh` for a rootless container with real user systemd — never a
+  database, `testenv container` for a rootless container with real user systemd — never a
   hand-written model of it. A stub reproduces the surface you remember, so its gaps surface as
   failures in correct code.
 - **Run in an explicit, minimal environment.** `hermetic.sh` refuses a suite that reaches the
@@ -342,12 +342,9 @@ plus a soak that reproduces a merge-queue livelock. The 17-minute, 43-suite gate
 found zero real defects on the morning the pipeline could not land anything, and was itself
 most of the contention that livelocked the queue.
 
-To try a harness command against a real database without touching production:
-
-```sh
-bd -C "$(spira/testenv.sh scratch)" <command>   # a throwaway database path
-spira/testenv.sh shell                          # a subshell where everything targets the fixture
-```
+To try a harness command against a real database without touching production, start a
+throwaway one with `testenv testdb up` (testenv/DESIGN-testdb.md): it prints the database's
+paths as `KEY=value` lines, and `testenv testdb down` removes it.
 
 ---
 
@@ -423,7 +420,7 @@ WARN does not.
 | 6 | the configured agent binary is present | WARN by design — an ephemeral install is valid without a credentialled agent |
 | 7 | the two tagged tmux panes are present | WARN by design — the loop runs without a terminal surface |
 
-The install rehearsal (`spira/test-install-rehearsal.sh`, run by `testenv.sh` inside a container
+The install rehearsal (`spira/test-install-rehearsal.sh`, run by `testenv container` inside a container
 with real systemd) proves rows 1–3 and most of 5.
 
 ### Uninstalling
@@ -580,7 +577,7 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 | `spira/ready.sh` | postflight: seven readiness checks after install; exit 3 when installed-but-not-ready |
 | `spira/build.sh` | builds Loom and the cockpit panel; a clone that skips this gets a service that exits 2 and an empty panel |
 | `spira/configure.sh` | bootstraps ~/.config/spira/ on first install; never overwrites an existing file |
-| `spira/testenv.sh` | rootless podman container with user systemd for the install-rehearsal suite tier |
+| `testenv/src/container.rs` | rootless podman container with user systemd for the install-rehearsal suite tier |
 | `docs/` | spike investigations and evidence files from the harness's own development |
 | `concierge.sh` | one named Remote Control session, so a phone can reach the harness |
 | `rule.sh` | enacting a statute writes the beads KV store, which is the harness's substrate |

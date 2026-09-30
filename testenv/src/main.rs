@@ -14,12 +14,15 @@ use testenv::runtime::{self, Podman};
 ///
 /// Its harness is the SLOT's checkout, never ours (sp-t26yx): a gate's testenv lives in a
 /// transient `.gate.harness.*` worktree that the gate removes as soon as we exit, and a
-/// refill that booted through that worktree's `testenv.sh` found it gone every time
+/// refill that booted through that worktree's harness found it gone every time
 /// ("no image tag — no spare"), so no gate trial ever claimed a spare and every one paid
 /// a cold `up`. The slot holds the tree the trial just tested and outlives it.
 fn spawn_refill(i: usize, run: &std::path::Path) {
     let slot = testenv::warm::paths(run, i).0;
-    let harness = slot.join("spira/testenv.sh").is_file().then_some(slot);
+    let harness = slot
+        .join(testenv::container::HARNESS_MARKER)
+        .is_file()
+        .then_some(slot);
     spawn_warm(&["refill".to_string(), i.to_string()], run, harness);
 }
 
@@ -59,6 +62,16 @@ fn spawn_warm(sub: &[String], run: &std::path::Path, harness: Option<std::path::
         .spawn();
 }
 
+fn load_config(who: &str) -> Option<spira_config::SpiraToml> {
+    spira_config::discover(None).and_then(|p| match spira_config::load(&p) {
+        Ok(doc) => Some(doc),
+        Err(e) => {
+            eprintln!("{who}: ignoring unreadable config: {e}");
+            None
+        }
+    })
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // `testenv suites …` — the suite-state tooling (DESIGN-suites.md). A branch literally
@@ -70,6 +83,15 @@ fn main() -> ExitCode {
     // `testenv testdb …` — server-mode test databases (DESIGN-testdb.md).
     if args.first().map(String::as_str) == Some("testdb") {
         let rc = testenv::testdb::main(&args[1..]);
+        return ExitCode::from(rc.clamp(0, 255) as u8);
+    }
+    // `testenv container …` — the fixture container's driver (DESIGN.md §12, sp-s0e1k). A
+    // branch literally named `container` is `testenv -- container`.
+    if args.first().map(String::as_str) == Some("container") {
+        let env = |k: &str| std::env::var(k).ok();
+        let harness = Harness::locate(&env).map(|h| h.root);
+        let config = load_config("testenv");
+        let rc = testenv::container::main(&args[1..], harness, config.as_ref());
         return ExitCode::from(rc.clamp(0, 255) as u8);
     }
     // `testenv plan <json>` — the container setup in one exec, run inside the container
@@ -107,30 +129,24 @@ fn main() -> ExitCode {
     runtime::install_signal_handlers();
     let env = |k: &str| std::env::var(k).ok();
     let Some(harness) = Harness::locate(&env) else {
-        eprintln!("batch: cannot find the harness (spira/testenv.sh) above the testenv binary; set SPIRA_TESTENV_HARNESS");
+        eprintln!("batch: cannot find the harness (spira/testenv/Containerfile) above the testenv binary; set SPIRA_TESTENV_HARNESS");
         println!("VERDICT FAULT rc=2 ran=0 reason=harness-missing");
         return ExitCode::from(2);
     };
-    let config = spira_config::discover(None).and_then(|p| match spira_config::load(&p) {
-        Ok(doc) => Some(doc),
-        Err(e) => {
-            eprintln!("batch: ignoring unreadable config: {e}");
-            None
-        }
-    });
-    // The container helper is the one in this binary's own harness copy (sp-isom7): the
-    // directory Harness::locate found by that very file. In a release that is the release's
-    // spira/testenv.sh — what a PATH lookup would find — and when a gate builds testenv from
-    // the tree under test (gate.steps `bin SPIRA_TESTENV_BIN testenv`) it is that tree's, so
-    // the runner and the container it drives always come from the same tree. Missing is a
-    // harness fault naming it.
-    let testenv_sh = harness.script("testenv.sh");
-    if !testenv_sh.is_file() {
-        eprintln!("batch: {} is missing (the harness copy this testenv belongs to)", testenv_sh.display());
+    let config = load_config("batch");
+    // The container driver is this executable (DESIGN.md §12, D17) against this binary's own
+    // harness copy (sp-isom7): in a release, the release; when a gate builds testenv from the
+    // tree under test (gate.steps `bin SPIRA_TESTENV_BIN testenv`), that tree — so the runner
+    // and the image it boots always come from the same tree.
+    let Ok(exe) = std::env::current_exe() else {
+        eprintln!("batch: cannot resolve this executable's own path (the container driver)");
         println!("VERDICT FAULT rc=2 ran=0 reason=harness-missing");
         return ExitCode::from(2);
-    }
-    let rt = Podman { testenv_sh };
+    };
+    let rt = Podman {
+        exe,
+        harness: harness.root.clone(),
+    };
     let stdin = || {
         let mut s = String::new();
         let _ = std::io::stdin().read_to_string(&mut s);

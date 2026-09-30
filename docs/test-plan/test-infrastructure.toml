@@ -94,7 +94,7 @@ statement = "Verdict cache: a repeat attempt at the same (branch, sha, mode, sel
 [[use_case]]
 id = "UC-test-infrastructure-20"
 tier = "T0"
-statement = "Constants mirrored from `testenv.sh` match, and every `_CONTAINER_*` used is declared. The batch cleanup trap removes the fixture home and owner file on TERM and on normal exit."
+statement = "Constants mirrored from `testenv container` (testenv/src/container.rs) match, and every `_CONTAINER_*` used is declared. The batch cleanup trap removes the fixture home and owner file on TERM and on normal exit."
 
 [[use_case]]
 id = "UC-test-infrastructure-21"
@@ -110,6 +110,11 @@ statement = "A vanished baseline makes `testdb_up` exit 75 (fixture-fault). On a
 id = "UC-test-infrastructure-23"
 tier = "T2"
 statement = "`testenv.sh scratch` prints a new, empty, working DB distinct from SPIRA_DB. `testenv.sh shell [-c]` points SPIRA_DB at a fixture and tears down SPIRA_DB, SPIRA_RUN and SPIRA_SPOOL on exit."
+
+[use_case.uncovered]
+reason = "testenv.sh scratch and shell were retired with testenv.sh (testenv/DESIGN.md §12 D19): their only caller was their own suite; a throwaway database is `testenv testdb up`"
+date = "2026-09-30"
+bead = "sp-s0e1k"
 
 [[use_case]]
 id = "UC-test-infrastructure-24"

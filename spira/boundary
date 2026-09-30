@@ -56,7 +56,7 @@ spira   | spira/owned.sh                | single declaration of what one install
 spira   | spira/ready.sh                | postflight: seven readiness checks after install; exit 3 when installed-but-not-ready
 spira   | spira/build.sh                | builds Loom and the cockpit panel; a clone that skips this gets a service that exits 2 and an empty panel
 spira   | spira/configure.sh            | bootstraps ~/.config/spira/ on first install; never overwrites an existing file
-spira   | spira/testenv.sh              | rootless podman container with user systemd for the install-rehearsal suite tier
+spira   | testenv/src/container.rs      | rootless podman container with user systemd for the install-rehearsal suite tier
 spira   | docs/                         | spike investigations and evidence files from the harness's own development
 spira   | concierge.sh                  | one named Remote Control session, so a phone can reach the harness
 spira   | rule.sh                       | enacting a statute writes the beads KV store, which is the harness's substrate

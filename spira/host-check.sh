@@ -9,7 +9,7 @@
 #   host-check.sh --count-copying    print the count of suites still copying harness files or stubs
 #
 # WHAT THIS IS FOR. The container is the default execution context for a suite.
-# A suite added with no annotation is expected to run inside testenv.sh; one that
+# A suite added with no annotation is expected to run inside a testenv container; one that
 # cannot says why at the top of its file:
 #
 #   # host-reason: drives the operator's own tmux server, which the container has no equivalent of
@@ -54,7 +54,7 @@ host_reason_of() {
     return 1
 }
 
-# has_container <file> -> 0 if any non-comment code line calls testenv.sh with up or exec.
+# has_container <file> -> 0 if any non-comment code line calls testenv (`testenv container`) with up or exec.
 # `up` and `exec` are the subcommands that start or send work into a container; the others
 # (scratch, shell, tag, probe) run on the host. Skips comment-only and blank lines.
 has_container() {
@@ -67,7 +67,7 @@ has_container() {
             stripped="${stripped:1}"
         done
         case "$stripped" in '#'*|'') continue ;; esac
-        # Non-comment code line: match testenv.sh (or a variable that contains it) being
+        # Non-comment code line: match testenv (or a variable that contains it) being
         # called with `up` or `exec`. The `up` subcommand starts the container; `exec` sends
         # a command into it. Both are the signals that assertions run inside a container.
         case "$line" in
@@ -97,7 +97,7 @@ host_check_one() {
 case "${1:-}" in
 # --host-check [<file>]: check one file, or all suites, for host-reason compliance.
 # A suite passes if it has a non-empty `# host-reason:` declaration, or if any
-# non-comment code line calls testenv.sh with `up` or `exec`.
+# non-comment code line calls `testenv container` with `up` or `exec`.
 ""|--host-check)
     if [ -n "${2:-}" ]; then
         host_check_one "$2" "${2##*/}"
@@ -112,7 +112,7 @@ REFUSED by host-check.sh — the suite above runs on the host without declaring 
     # host-reason: drives the operator's own tmux server, which the container has no equivalent of
 
   The reason must be non-empty. A suite that runs in a container instead carries no annotation
-  and calls testenv.sh (up or exec) so its assertions execute inside the container.
+  and calls `testenv container` (up or exec) so its assertions execute inside the container.
 WHY
         fi
         exit "$rc"
@@ -143,7 +143,7 @@ REFUSED by host-check.sh — each suite above runs on the host without declaring
     # host-reason: drives the operator's own tmux server, which the container has no equivalent of
 
   The reason must be non-empty. A suite that runs in a container instead carries no annotation
-  and calls testenv.sh (up or exec) so its assertions execute inside the container.
+  and calls `testenv container` (up or exec) so its assertions execute inside the container.
 WHY
     exit 1
     ;;

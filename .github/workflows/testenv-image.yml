@@ -15,7 +15,7 @@
 # in one pull.
 #
 # WHY IT RUNS ON EVERY PUSH AND NOT ON A PATH FILTER. The closure is computed by
-# testenv.sh from several files, and a path filter is a second, hand-written copy
+# testenv (`testenv container tag`) from several files, and a path filter is a second, hand-written copy
 # of that list. When the two disagree the workflow does not fail — it silently
 # publishes nothing, and the gate discovers the gap by paying for a build. So this
 # runs unconditionally and asks the registry whether the tag is already there,
@@ -61,12 +61,18 @@ jobs:
           printf '%s' "${{ secrets.GITHUB_TOKEN }}" \
             | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
+      - name: Build the container driver
+        # `testenv container` (sp-s0e1k) replaced spira/testenv.sh. This runner has no
+        # release to take it from, so it builds the tree's own; rustup reads the pinned
+        # toolchain from rust-toolchain.toml.
+        run: cargo build -q --locked --release -p testenv
+
       - name: Publish the image if this closure has not been published
         env:
           SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
         run: |
           set -uo pipefail
-          tag="$(bash spira/testenv.sh tag)" || {
+          tag="$(target/release/testenv container tag)" || {
             printf 'publish: could not compute the build closure hash\n' >&2; exit 1; }
           [ -n "$tag" ] || { printf 'publish: empty closure hash\n' >&2; exit 1; }
           ref="${SPIRA_TESTENV_REGISTRY}/spira-testenv:${tag}"
@@ -80,4 +86,4 @@ jobs:
           fi
 
           printf 'publish: %s is not published yet — building\n' "$ref"
-          bash spira/testenv.sh publish
+          target/release/testenv container publish

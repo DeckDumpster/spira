@@ -100,7 +100,7 @@ current base in a throwaway tree, run the failing suite, and eject if it fails:
 
 `{{TESTENV}}` is the testenv runner, an absolute path (law-tests-run-only-through-testenv).
 Naming the failing suite is right here — you are reproducing one known red, not certifying a
-diff. Never run a `test-*.sh` suite directly; `spira/testenv.sh` is the container helper, not
+diff. Never run a `test-*.sh` suite directly; `testenv container` is the container helper, not
 the runner; `spira/testenv-batch.sh` no longer exists.
 
 Eject the member whose own diff (not the batch diff) turns the suite red. Rebuild

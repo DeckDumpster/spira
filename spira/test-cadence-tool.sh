@@ -44,18 +44,18 @@ echo "test-cadence-tool.sh"
 
 command -v podman >/dev/null 2>&1 || skip "podman not on PATH"
 
-TESTENV="$HERE/testenv.sh"
+# the container driver: `testenv container`, by name on the PATH (sp-s0e1k)
 CNAME="spira-testenv-cadtool-$$"
 
 cleanup() {
-    bash "$TESTENV" down --name "$CNAME" --volumes >/dev/null 2>&1 || true
+    testenv container down --name "$CNAME" --volumes >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
-bash "$TESTENV" up --name "$CNAME" >&2
+testenv container up --name "$CNAME" >&2
 iszero "container up exits 0" "$?"
 
-if ! bash "$TESTENV" probe --name "$CNAME"; then
+if ! testenv container probe --name "$CNAME"; then
     printf 'SKIP test-cadence-tool.sh: user systemd not available in container\n' >&2
     exit 77
 fi
