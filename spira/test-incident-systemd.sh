@@ -17,7 +17,7 @@
 # and this suite has no systemd user session to make that path interesting to reproduce.
 #
 # tier: T2
-# covers: spira/incident.sh spira/incident-stub-bd.py
+# covers: spira/incident.sh spira/incident-stub-bd.py incident/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

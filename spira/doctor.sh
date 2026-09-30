@@ -111,10 +111,19 @@ doctor_check_config_files() {
         local out
         if ! command -v spira-config >/dev/null 2>&1; then
             FAIL "cannot validate $toml — spira-config is not on PATH"
-        elif out="$(spira-config validate "$toml" 2>&1)"; then
-            OK "spira.toml validates — $toml"
         else
-            FAIL "spira.toml fails validation — $toml" "$out"
+            # sp-oppza ONE-TIME UPGRADE MIGRATION, ahead of validate: a box whose config
+            # predates sp-k6m1m (goal set, no id_prefix) is repaired in place instead of
+            # failing validation on every such box. Idempotent — a no-op once id_prefix is
+            # set, which includes production's own state, set by hand — so unconditional.
+            local mig
+            mig="$(spira-config migrate "$toml" 2>&1)"
+            [ -n "$mig" ] && printf '%s\n' "$mig"
+            if out="$(spira-config validate "$toml" 2>&1)"; then
+                OK "spira.toml validates — $toml"
+            else
+                FAIL "spira.toml fails validation — $toml" "$out"
+            fi
         fi
     fi
 }

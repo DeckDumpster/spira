@@ -184,6 +184,7 @@ merge-failed messages, which are new.
 | `$SPIRA_VERDICTS/<key>` | `when=<UTC>\nat=<epoch>\nby=<caller>\nrepo=<name>\nbranch=<br>\nsuites=<csv or ->\ncompose=<label>\n`, written to `.<key>.<pid>` and renamed | PASS from a trial only |
 | `$SPIRA_VERDICTS/trees/<repo>/<T>` (the tree certificate, `src/cert.rs`) | `verdict=PASS\nsource=gate\ntree=<T>\nrepo=<name>\nrev=<gate revision>\nbranch=<br>\nby=<caller>\nwhen=<UTC>\nat=<epoch>\nharness=<harness_h or ->\nsuites=<csv or ->\n`, temp + rename | every PASS (`pass`, `cached`, `syntax-only`) once the merged tree `T` is known |
 | `$SPIRA_RUN/gate-admission/slot.<n>.lock` | empty; `flock` held for the trial | unless `SPIRA_GATE_SUITES=off` and no suites were named against the bead |
+| `$SPIRA_RUN/gate-admission/slot.<n>.holder` | `pid=<p> start=<starttime> who=<branch> since=<epoch> waited=0 last=<epoch>\n` (advisory; the flock is the lock; sp-f4ig1) | written when the slot is taken; read by `spira-admit status` and the waiting line |
 | `$SPIRA_RUN/worktree/.gate.<repo-basename>.<tree-key>` | the gate worktree (detached) | removed on every non-PASS verdict; kept on PASS for cargo's fingerprints |
 | `<tree>.lock`, `<tree>.lock.holder` | lock; `<pid> <pgid>\n` | holder removed at exit |
 | a temp file (`SPIRA_GATE_FILES`) | `git diff --name-status BASE...BR` | removed at exit |
@@ -375,9 +376,10 @@ phase reuses the harnesses.
 
 The unit phases run through the same port as the gate string (`run_gate`: `env -i`, the same
 environment, `timeout`, the tree), in order, stopping at the first failure. **Admission** is the
-same slot the trial already holds. **The CPU budget** is `J = max(1, host cores ÷ the admission
-pool size)` for both `cargo -j` and `--test-threads`, so the pool's gates together use about the
-host. **The timeout** is shared: each phase gets what is left of `SPIRA_GATE_TIMEOUT`, and a
+same slot the trial already holds. **The width** is the host's cores for both `cargo -j` and
+`--test-threads`. How many gates share the host is the pool size's job, never a narrower gate
+(sp-f4ig1, DESIGN-admission.md D3; law-reduce-the-count-never-throttle-the-job). It was `host
+cores ÷ the admission pool size` until then. **The timeout** is shared: each phase gets what is left of `SPIRA_GATE_TIMEOUT`, and a
 phase with nothing left is status 124 (NO_VERDICT `timeout`).
 
 **The base trial** runs the same composition on the landing ref, over the touched crates the

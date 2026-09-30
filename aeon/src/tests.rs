@@ -251,6 +251,8 @@ struct Outcome {
     ledger: String,
     w: W,
     seen: Vec<SessionSpec>,
+    /// Seconds the summon jitter slept.
+    slept: usize,
 }
 
 fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, seam_answers: BTreeMap<&'static str, Out>, act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync>) -> Outcome {
@@ -288,11 +290,15 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, s
     let launcher = FakeLauncher { w: Arc::clone(&f.w), seen: Mutex::new(vec![]), act };
     let sink = MemSink::default();
     let clock = crate::util::now_epoch;
+    let slept = std::sync::atomic::AtomicUsize::new(0);
+    let sleep = |_: std::time::Duration| {
+        slept.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    };
     let dry = mode == Mode::DryRun;
     let cwd = std::env::current_dir().unwrap();
     let code = {
         let mut run = Run {
-            d: Deps { bd: &bd, seam: &seam, git: &git, exec: &exec, launcher: &launcher, sink: &sink, env: &env, clock: &clock },
+            d: Deps { bd: &bd, seam: &seam, git: &git, exec: &exec, launcher: &launcher, sink: &sink, env: &env, clock: &clock, sleep: &sleep },
             ledger: Ledger { path: conf.ledger(), dry },
             conf,
             fayth,
@@ -314,7 +320,7 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, s
     };
     let _ = std::env::set_current_dir(cwd);
     let seen = launcher.seen.lock().unwrap().clone();
-    Outcome { code, log: sink.all(), ledger: std::fs::read_to_string(f.run.join("aeon-ledger.log")).unwrap_or_default(), w: Arc::clone(&f.w), seen }
+    Outcome { code, log: sink.all(), ledger: std::fs::read_to_string(f.run.join("aeon-ledger.log")).unwrap_or_default(), w: Arc::clone(&f.w), seen, slept: slept.load(std::sync::atomic::Ordering::SeqCst) }
 }
 
 fn no_session() -> Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> {
@@ -744,4 +750,60 @@ fn sweep_runs_without_a_bead() {
     let task = std::fs::read_to_string(f.run.join("sweep-builder-4242.task.md")).unwrap();
     assert_eq!(task, "look at X");
     assert!(!f.run.join("aeon-builder-sweep-4242.pid").exists());
+}
+
+// ---- admission and summon jitter (sp-f4ig1) -------------------------------------------
+
+fn stub(f: &Fx, name: &str) -> PathBuf {
+    let p = f.bin.join(name);
+    std::fs::write(&p, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    p
+}
+
+#[test]
+fn an_agents_cargo_compiles_through_spira_admit_with_sccache_inside() {
+    let f = fx("admit");
+    seed(&f, "sp-adm");
+    let admit = stub(&f, "spira-admit");
+    let sccache = stub(&f, "sccache");
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0")], false, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let env = &o.seen[0].env;
+    let get = |k: &str| env.get(k).map(String::as_str);
+    assert_eq!(get("RUSTC_WRAPPER"), Some(admit.to_str().unwrap()));
+    assert_eq!(get("SPIRA_ADMIT_INNER"), Some(sccache.to_str().unwrap()));
+    assert_eq!(get("SPIRA_ADMIT_WHO"), Some("sp-adm"));
+    assert_eq!(get("SPIRA_RUN"), Some(f.run.to_str().unwrap()));
+    assert!(!o.log.contains("not admitted"), "{}", o.log);
+    assert_eq!(o.slept, 0, "SPIRA_SUMMON_JITTER=0 disables the jitter");
+    assert!(!o.log.contains("summon jitter"));
+}
+
+#[test]
+fn without_spira_admit_the_session_still_runs_on_the_plain_cache_and_says_so() {
+    let f = fx("admit-absent");
+    seed(&f, "sp-nadm");
+    let sccache = stub(&f, "sccache");
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0")], false, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let env = &o.seen[0].env;
+    if env.get("PATH").is_some_and(|p| p.split(':').any(|d| std::path::Path::new(d).join("spira-admit").exists())) {
+        return; // the host's PATH carries a spira-admit the fixture cannot hide
+    }
+    assert_eq!(env.get("RUSTC_WRAPPER").map(String::as_str), Some(sccache.to_str().unwrap()));
+    assert!(!env.contains_key("SPIRA_ADMIT_INNER"));
+    assert!(o.log.contains("spira-admit not on PATH — this session's builds are not admitted"), "{}", o.log);
+}
+
+#[test]
+fn the_summon_jitter_sleeps_what_it_logs_and_never_more_than_its_bound() {
+    let f = fx("jitter");
+    seed(&f, "sp-jit");
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "5")], false, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    assert!(o.slept <= 5, "{}", o.slept);
+    if o.slept > 0 {
+        assert!(o.log.contains(&format!("summon jitter {}s", o.slept)), "{}", o.log);
+    } else {
+        assert!(!o.log.contains("summon jitter"));
+    }
+    assert_eq!(o.seen.len(), 1, "the session still ran");
 }

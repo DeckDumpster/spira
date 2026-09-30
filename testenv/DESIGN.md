@@ -929,6 +929,34 @@ container (<step> <s>, …) — podman exec overhead <s>`.
   or directory` → `warm refill 0: no image tag — no spare`), so gate trials never found a
   spare and every one paid a cold `up` — the `deadline-up` NO_VERDICTs. The slot holds the
   tree the trial just tested and outlives it.
+* **D22 — a `harness-fault` line names the container and never fabricates an exit reason it
+  never read (sp-2zu0t).** Five gate trials on 2026-09-30 (concierge/sp-48f6g,
+  concierge/sp-31dm0, concierge/sp-zpaq0; ~19:18–21:20Z, ~90 min, under the current 3-slot
+  admission) ended `NO_VERDICT reason=harness-fault`, each after the suite phase had already
+  run for several minutes — not a setup-time fault. `podman events` for the window shows
+  short-lived `spira-batch-*`/`spira-warm-*` containers dying across several concurrently
+  admitted trials, the same podman control-plane contention §11.4 named for the setup phase
+  (libpod's sqlite lock, `layers.lock`) — no kernel OOM and no podman `container oom` event
+  appear anywhere in the journal for the window, so it is not memory exhaustion. Two defects
+  followed from reading [`Session::liveness`]: (1) the detail carried only `ExitCode=`/
+  `OOMKilled=`, with no container name — by the time a human reads the gate's output the
+  container is already `podman rm`'d, so the fault cannot be correlated to *which* container,
+  slot, or concurrent trial died; (2) `liveness_retries` exhausted by failed/empty `podman
+  inspect` answers (never a definitive `Running=false`) was reported exactly like a confirmed
+  death, asserting an `ExitCode`/`OOMKilled` that were themselves read from a container whose
+  state was never actually observed — conflating "the lookup is unreliable under load" with
+  "the container died". Fixed: the detail always names the container
+  (`container=<name> …`), and the two cases are worded distinctly — a confirmed `Running=false`
+  still reports `ExitCode=`/`OOMKilled=`, but an inspect that never got a definitive answer
+  reports `container=<name> state unknown — <n> consecutive \`podman inspect\` lookups failed
+  or returned no answer (never saw Running=false)` instead. No plumbing changed: `batch.rs`,
+  `run.rs` and `gate/src/parse.rs::harness_fault_detail` already carry the detail opaquely
+  through to the gate's NO_VERDICT message, so the fix is confined to
+  `fixture.rs::Session::liveness`. *Not fixed here*: whether admission concurrency
+  (`SPIRA_CERTIFY_PAR`) against warm-slot count (`SPIRA_TESTENV_WARM_SLOTS`, both currently 3)
+  should be widened, and whether the per-suite exec loop should get D13's one-exec treatment —
+  reported, not landed, since that is a production-config and cross-cutting-design call
+  outside one bead's diff.
 
 **Measured (same eight suites, `--deadline 300`, 2026-09-30).**
 

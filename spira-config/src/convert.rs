@@ -128,6 +128,9 @@ pub fn spira_section(
             "SPIRA_FAYTHS" => s.fayths = val.split_whitespace().map(str::to_string).collect(),
             "SPIRA_BATCH_MAXPAR" => s.batch_maxpar = parse_u32(warnings, "batch_maxpar", val),
             "SPIRA_CERTIFY_PAR" => s.certify_par = parse_u32(warnings, "certify_par", val),
+            "SPIRA_COMPILE_PAR" => s.compile_par = parse_u32(warnings, "compile_par", val),
+            "SPIRA_TEST_PAR" => s.test_par = parse_u32(warnings, "test_par", val),
+            "SPIRA_SUMMON_JITTER" => s.summon_jitter = parse_u64(warnings, "summon_jitter", val),
             "SPIRA_CERTIFY_SUITES" => {
                 s.certify_suites = match val.as_str() {
                     "on" => Some(OnOff::On),

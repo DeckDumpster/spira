@@ -2,6 +2,7 @@
 //! cache, build, stand up the container, install, run, record, judge, tear down. Every exit
 //! goes through [`Finish`], which is printed as the final `VERDICT` line.
 
+use spira_config::admission;
 use crate::batch::{self, now_epoch, BatchCfg, Hooks};
 use crate::build::{artifacts_dir, profile_dir, BuildError, Builder};
 use crate::cli::{Invocation, RunArgs, SuitesArg};
@@ -585,11 +586,48 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     let s = settings(deps);
     let t_batch = Instant::now();
     // D9: under --deadline the budget is the whole trial's; setup gets its share of it.
-    let setup_cutoff = args
-        .deadline
-        .map(|d| t_batch + Duration::from_millis(d * 1000 * s.setup_share / 100));
-    let deadline_at = args.deadline.map(|d| t_batch + Duration::from_secs(d));
-    let past_cutoff = || setup_cutoff.is_some_and(|c| Instant::now() >= c);
+    // Cells: time spent waiting for an admission slot moves both later (sp-f4ig1,
+    // gate/DESIGN-admission.md §3.1) — the budget meters work, not queueing.
+    let setup_cutoff = std::cell::Cell::new(
+        args.deadline
+            .map(|d| t_batch + Duration::from_millis(d * 1000 * s.setup_share / 100)),
+    );
+    let deadline_at = std::cell::Cell::new(args.deadline.map(|d| t_batch + Duration::from_secs(d)));
+    let past_cutoff = || setup_cutoff.get().is_some_and(|c| Instant::now() >= c);
+    let shift = |waited: u64| {
+        if waited > 0 {
+            let by = Duration::from_secs(waited);
+            setup_cutoff.set(setup_cutoff.get().map(|c| c + by));
+            deadline_at.set(deadline_at.get().map(|c| c + by));
+        }
+    };
+    // HOST-WIDE ADMISSION (sp-f4ig1): the build takes a compile slot, the container through
+    // teardown a test slot — one at a time, never both. Under a gate (SPIRA_ADMISSION) the
+    // gate's slot covers both. Waiting never fails; it is said on stderr.
+    let admit = |pool: admission::Pool, weight: u64| -> admission::Guard {
+        let inherit = (deps.env)(admission::INHERIT_ENV);
+        let who = [admission::WHO_ENV, "SPIRA_WORK_BEAD_ID", "BEAD_ID"]
+            .iter()
+            .find_map(|k| (deps.env)(k).filter(|v| !v.trim().is_empty()))
+            .unwrap_or_else(|| args.branch.clone());
+        let size_of = || {
+            admission::size(pool, (deps.env)(pool.size_env()).as_deref(), admission::Host::read())
+        };
+        let q = admission::Request {
+            run: &s.run,
+            pool,
+            holder_pid: std::process::id(),
+            who: &who,
+            inherit: inherit.as_deref(),
+            weight,
+        };
+        let seams = admission::Seams {
+            size_of: &size_of,
+            procs: &admission::RealProcs,
+            sleep: &|d: Duration| std::thread::sleep(d),
+        };
+        admission::acquire(&q, &seams, &mut |l: &str| deps.log(l))
+    };
     // A setup phase cut at its share: say so, and still leave the trial's `__batch__` row
     // (rc 2), so a reader sees the overrun and which phase it was (D11).
     let share_note = |phase: &str, ph: &Phases| {
@@ -855,7 +893,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
 
     // ---- key, results dir ----------------------------------------------------------
     let image_tag = {
-        let o = deps.rt.testenv(&["tag".into()], setup_cutoff);
+        let o = deps.rt.testenv(&["tag".into()], setup_cutoff.get());
         if o.rc == RC_DEADLINE {
             share_note("tag", &ph);
             return Finish::fault(2, deadline_reason("tag"), 0);
@@ -1000,16 +1038,30 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             p.dir.display(),
             artifacts.display()
         ));
-    } else if let Some(fin) = build(args, deps, &wt.path, br, &artifacts, setup_cutoff) {
-        if fin.reason == Some(deadline_reason("build")) {
-            share_note("build", &ph);
+    } else {
+        let lease = admit(admission::Pool::Compile, admission::profile_weight(&args.profile));
+        shift(lease.waited);
+        if lease.waited > 0 {
+            ph.mark("admit-compile");
         }
-        return fin;
+        let built = build(args, deps, &wt.path, br, &artifacts, setup_cutoff.get());
+        drop(lease);
+        if let Some(fin) = built {
+            if fin.reason == Some(deadline_reason("build")) {
+                share_note("build", &ph);
+            }
+            return fin;
+        }
     }
     if cancelled() {
         return Finish::fault(2, "interrupted", 0);
     }
     ph.mark("build");
+    let _test_lease = admit(admission::Pool::Test, 1);
+    shift(_test_lease.waited);
+    if _test_lease.waited > 0 {
+        ph.mark("admit-test");
+    }
 
     // ---- container -----------------------------------------------------------------
     let instance = s.instance.clone().unwrap_or_else(|| key[..12].to_string());
@@ -1021,11 +1073,11 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     };
     session.liveness_retries = s.liveness_retries;
     session.liveness_sleep = Duration::from_secs(s.liveness_sleep);
-    session.setup_deadline = setup_cutoff;
+    session.setup_deadline = setup_cutoff.get();
     // The batch's own owner file: one live run per key, warm or cold (§4.2).
     let key_owner = deps.owner_dir.join(format!("{}.owner", session.name));
     let warm_slot = wt.warm_index();
-    if warm_slot.is_none() && setup_cutoff.is_some() {
+    if warm_slot.is_none() && setup_cutoff.get().is_some() {
         // D12 (sp-t26yx): every podman call of the sweep takes podman's global locks, and
         // under load one sweep ran nine minutes — past the trial's whole budget, since no
         // podman call in it can be cut. A gate trial spawns it detached, like the refill.
@@ -1054,7 +1106,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             i,
             &wt.path,
             &image_tag,
-            setup_cutoff,
+            setup_cutoff.get(),
         ) {
             warm::Claim::Spare(name) => {
                 session.name = name;
@@ -1390,7 +1442,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         quarantined: quarantined.clone(),
         psi_pause: Duration::from_secs(5),
         // D9: what is left of the trial's budget, not S from here.
-        deadline: deadline_at.map(|d| d.saturating_duration_since(Instant::now())),
+        deadline: deadline_at.get().map(|d| d.saturating_duration_since(Instant::now())),
         skip_gate,
         embedded_only: active
             .iter()

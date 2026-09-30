@@ -47,6 +47,8 @@ pub struct Deps<'a> {
     pub sink: &'a dyn Sink,
     pub env: &'a Env,
     pub clock: &'a (dyn Fn() -> i64 + Sync),
+    /// The summon jitter's sleep (sp-f4ig1): one second at a time, the stop flag checked between.
+    pub sleep: &'a (dyn Fn(Duration) + Sync),
 }
 
 /// Everything learned along the way — aeon.sh's globals, now fields.
@@ -933,9 +935,23 @@ impl<'a> Run<'a> {
         // cold. A session is not a build: absent sccache falls back — loudly — to uncached.
         let path = env.child().get("PATH").cloned().unwrap_or_default();
         let setting = env.child().get(spira_config::build::CACHE_ENV).cloned();
+        //
+        // THE COMPILE POOL (sp-f4ig1; gate/DESIGN-admission.md §3.3): the same compiler, fronted
+        // by `spira-admit`, so each cargo the agent starts takes a host-wide compile slot and
+        // N agents never compile all at once. Absent spira-admit (an older release) falls back,
+        // loudly, to the plain wrapper: a scheduling tool never stops a session.
+        let admit = spira_config::build::find_on(&path, spira_config::admission::BIN);
+        let run_dir = self.conf.run.display().to_string();
         match spira_config::build::wrapper(&path, setting.as_deref()) {
             Ok(w) => {
-                for (k, v) in w.env() {
+                let vars = match &admit {
+                    Some(a) => w.admitted_env(a, &run_dir, &bead),
+                    None => {
+                        self.log(&format!("{}: spira-admit not on PATH — this session's builds are not admitted", self.f()));
+                        w.env()
+                    }
+                };
+                for (k, v) in vars {
                     env.set(&k, &v);
                 }
                 if w == spira_config::build::Wrapper::Off {
@@ -943,6 +959,19 @@ impl<'a> Run<'a> {
                 }
             }
             Err(e) => self.log(&format!("{}: {e} — this session's builds are UNCACHED", self.f())),
+        }
+        // THE SUMMON JITTER (sp-f4ig1 §3.4): aeons a pass summoned together start apart.
+        let max = self.conf.n(spira_config::admission::JITTER_ENV, spira_config::admission::JITTER_DEFAULT as i64).max(0) as u64;
+        let seed = ((std::process::id() as u64) << 32)
+            ^ std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos() as u64).unwrap_or(0);
+        let j = spira_config::admission::jitter(max, seed);
+        if j > 0 {
+            self.log(&format!("{}: summon jitter {j}s", self.f()));
+            for _ in 0..j {
+                self.check_stop()?;
+                (self.d.sleep)(Duration::from_secs(1));
+            }
+            self.check_stop()?;
         }
         let sys_file = self.run_dir().join(format!("{bead}.system.md"));
         let task_file = self.run_dir().join(format!("{bead}.task.md"));
