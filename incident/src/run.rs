@@ -246,17 +246,35 @@ fn file_new(bd: &dyn Bd, cfg: &FileConfig, reference: &str, title: &str, payload
 
     match cfg.delivers_pref {
         Some("note") => {
-            if cfg.sop_ledger.starts_with(cfg.spira_run) {
+            // Reachable exactly when the ledger is under $SPIRA_RUN (a session here can
+            // only ever write there) AND its directory can actually be created — the
+            // original bug (sp-obwc's sibling): a bare mtime/prefix check without the
+            // mkdir left the criterion looking satisfiable while nothing had made the
+            // directory exist, so the eventual write would still fail.
+            let under_run = cfg.sop_ledger.starts_with(&format!("{}/", cfg.spira_run));
+            let mkdir_ok = under_run
+                && std::path::Path::new(cfg.sop_ledger)
+                    .parent()
+                    .map(|p| std::fs::create_dir_all(p).is_ok())
+                    .unwrap_or(false);
+            if mkdir_ok {
                 bd.label_add(cfg.db, &id, &format!("delivers:note:{}", cfg.sop_ledger));
                 log.push(format!("delivers: {id}: delivers:note:{} written (SPIRA_INCIDENT_DELIVERS=note)", cfg.sop_ledger));
             } else {
                 bd.label_add(cfg.db, &id, "delivers:action");
-                log.push(format!("delivers: {id}: delivers:action written (note path not satisfiable — fallback)"));
+                if under_run {
+                    log.push(format!("delivers: {id}: cannot create the ledger's directory — falling back to delivers:action"));
+                } else {
+                    log.push(format!("delivers: {id}: ledger {} is outside {} — falling back to delivers:action", cfg.sop_ledger, cfg.spira_run));
+                }
             }
         }
+        Some("action") => {
+            bd.label_add(cfg.db, &id, "delivers:action");
+            log.push(format!("delivers: {id}: delivers:action written (SPIRA_INCIDENT_DELIVERS set by caller)"));
+        }
         Some(other) => {
-            bd.label_add(cfg.db, &id, &format!("delivers:{other}"));
-            log.push(format!("delivers: {id}: delivers:{other} written (SPIRA_INCIDENT_DELIVERS set by caller)"));
+            log.push(format!("delivers: {id}: unrecognised SPIRA_INCIDENT_DELIVERS='{other}' — label not written"));
         }
         None => {
             bd.label_add(cfg.db, &id, "delivers:action");
@@ -555,6 +573,119 @@ mod tests {
         let out = file_one(&bd, &mailer, &clock, &cfg(&known), "incident:danger", "needs the world stopped", b"p", "spira,incident", &mut log);
         assert!(matches!(out, FileOutcome::Refused));
         assert_eq!(bd.created.borrow().len(), 0);
+    }
+
+    fn tmp_dir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("sp-0ekp7-run-rs-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn delivers_default_is_action() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &cfg(&known), "incident:d1", "t", b"p", "spira,incident", &mut log);
+        let id = match out {
+            FileOutcome::Filed(id) => id,
+            _ => panic!(),
+        };
+        let labels = bd.label_list("db", &id);
+        assert!(labels.contains(&"delivers:action".to_string()));
+        assert!(!labels.iter().any(|l| l.starts_with("delivers:note:")));
+    }
+
+    #[test]
+    fn delivers_note_inside_run_creates_the_ledger_directory_and_is_stamped() {
+        let run_dir = tmp_dir("note-in");
+        let ledger = run_dir.join("sop/applied.jsonl");
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let mut c = cfg(&known);
+        let run_str = run_dir.to_str().unwrap().to_string();
+        let ledger_str = ledger.to_str().unwrap().to_string();
+        c.spira_run = &run_str;
+        c.sop_ledger = &ledger_str;
+        c.delivers_pref = Some("note");
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &c, "incident:d2", "t", b"p", "spira,incident", &mut log);
+        let id = match out {
+            FileOutcome::Filed(id) => id,
+            _ => panic!(),
+        };
+        let labels = bd.label_list("db", &id);
+        assert!(labels.contains(&format!("delivers:note:{ledger_str}")), "{labels:?}");
+        assert!(!labels.contains(&"delivers:action".to_string()));
+        assert!(ledger.parent().unwrap().is_dir(), "the ledger's directory must exist — the criterion must be reachable, not just look reachable");
+        let _ = std::fs::remove_dir_all(&run_dir);
+    }
+
+    #[test]
+    fn delivers_note_outside_run_falls_back_to_action_and_logs_outside() {
+        let run_dir = tmp_dir("note-out");
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let mut c = cfg(&known);
+        let run_str = run_dir.to_str().unwrap().to_string();
+        c.spira_run = &run_str;
+        c.sop_ledger = "/somewhere/else/applied.jsonl";
+        c.delivers_pref = Some("note");
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &c, "incident:d3", "t", b"p", "spira,incident", &mut log);
+        let id = match out {
+            FileOutcome::Filed(id) => id,
+            _ => panic!(),
+        };
+        let labels = bd.label_list("db", &id);
+        assert!(labels.contains(&"delivers:action".to_string()));
+        assert!(!labels.iter().any(|l| l.starts_with("delivers:note:")));
+        assert!(log.iter().any(|l| l.contains("outside")), "{log:?}");
+        let _ = std::fs::remove_dir_all(&run_dir);
+    }
+
+    #[test]
+    fn delivers_action_mode_writes_that_label_verbatim() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let mut c = cfg(&known);
+        c.delivers_pref = Some("action");
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &c, "incident:d5", "t", b"p", "spira,incident", &mut log);
+        let id = match out {
+            FileOutcome::Filed(id) => id,
+            _ => panic!(),
+        };
+        let labels = bd.label_list("db", &id);
+        assert!(labels.contains(&"delivers:action".to_string()));
+    }
+
+    #[test]
+    fn delivers_unrecognised_value_writes_no_label_and_logs_it() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let mut c = cfg(&known);
+        c.delivers_pref = Some("bogus");
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &c, "incident:d4", "t", b"p", "spira,incident", &mut log);
+        let id = match out {
+            FileOutcome::Filed(id) => id,
+            _ => panic!(),
+        };
+        let labels = bd.label_list("db", &id);
+        assert!(!labels.iter().any(|l| l.starts_with("delivers:")), "{labels:?}");
+        assert!(log.iter().any(|l| l.contains("unrecognised")), "{log:?}");
     }
 
     #[test]

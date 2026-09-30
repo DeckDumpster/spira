@@ -1,24 +1,31 @@
 #!/usr/bin/env bash
 # tier: T1
-# covers: spira/incident.sh spira/lib.sh
+# covers: spira/lib.sh
 #
 # REGRESSION: incident.sh stamped delivers:note:applied.jsonl on every incident by default,
 # so a diagnosis-only incident was reopened when it closed — the criterion could not be met
 # by correct work. The check was also time-based, not identity-based, so a concurrent
 # unrelated SOP application satisfied the criterion by coincidence.
 #
+# THE incident.sh HALF OF THIS SUITE IS RETIRED (sp-0ekp7, wave 7b): incident.sh's delivers:
+# logic moved to the `incident` Rust crate (incident::run::file_new's delivers match arm),
+# and this suite's two incident.sh assertions were source-grep over its bash text — dead
+# once the logic moved. Real behavioural coverage of the same two properties (default
+# stamps delivers:action; the note/SOP-ledger path is reachable only via
+# SPIRA_INCIDENT_DELIVERS=note, and only when the ledger's directory can actually be
+# created) now lives in incident/src/run.rs's unit tests: delivers_default_is_action,
+# delivers_note_inside_run_creates_the_ledger_directory_and_is_stamped,
+# delivers_note_outside_run_falls_back_to_action_and_logs_outside,
+# delivers_unrecognised_value_writes_no_label_and_logs_it. The lib.sh half below (the
+# applied.jsonl identity check, untouched by this bead) stays as a bash suite.
+#
 # Seen to fail against the unfixed tree (commit sp-qqf3q):
-#   FAIL  default stamps delivers:action, not the SOP ledger: not found in incident.sh else branch
 #   FAIL  lib.sh uses identity check for applied.jsonl, not mtime: not found in delivers_verdict's note case
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-INC="$HERE/incident.sh"
 LIB="$HERE/lib.sh"
-INC_CODE="$(grep -vE '^[[:space:]]*#' "$INC")"
-INC_JOINED="$(printf '%s' "$INC_CODE" | sed -e :a -e '/\\$/N; s/\\\n//; ta')"
 LIB_CODE="$(grep -vE '^[[:space:]]*#' "$LIB")"
 LIB_JOINED="$(printf '%s' "$LIB_CODE" | sed -e :a -e '/\\$/N; s/\\\n//; ta')"
-has_inc() { grep -qE "$1" <<< "$INC_JOINED"; }
 has_lib() { grep -qE "$1" <<< "$LIB_JOINED"; }
 
 . "$HERE/testlib.sh"
@@ -26,28 +33,6 @@ has_lib() { grep -qE "$1" <<< "$LIB_JOINED"; }
 echo "test-incident-delivers-reopen-mismatch.sh"
 echo
 
-echo "incident.sh default stamps delivers:action, not the SOP ledger:"
-# The default path (no SPIRA_INCIDENT_DELIVERS set) must write delivers:action.
-# Previously it wrote delivers:note:applied.jsonl, which caused correct diagnostic
-# work to be reopened for failing to produce an SOP ledger record.
-# The ilog for the default must name both "delivers:action" and "default".
-if has_inc 'ilog.*delivers:action.*default|ilog.*default.*delivers:action'; then
-    ok "default stamps delivers:action, not the SOP ledger"
-else
-    bad "default stamps delivers:action, not the SOP ledger" \
-        "no ilog for delivers:action default path in incident.sh"
-fi
-
-# The SOP ledger path must only be reachable via SPIRA_INCIDENT_DELIVERS=note.
-# If it exists outside that guard, an unguarded incident gets an unsatisfiable criterion.
-if has_inc 'SPIRA_INCIDENT_DELIVERS.*note|note\)'; then
-    ok "delivers:note SOP ledger path is behind SPIRA_INCIDENT_DELIVERS=note guard"
-else
-    bad "delivers:note SOP ledger path is behind SPIRA_INCIDENT_DELIVERS=note guard" \
-        "SOP ledger criterion must be opt-in, not default"
-fi
-
-echo
 echo "lib.sh uses identity check for applied.jsonl, not mtime:"
 # The shared global SOP ledger mtime proves only that someone applied some SOP during
 # this session — a concurrent unrelated aeon satisfies the criterion for free.
