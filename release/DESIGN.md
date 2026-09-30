@@ -35,6 +35,8 @@ release stage up [ROOT] | down <ROOT>                   an isolated Spira for te
 release canary [--stage ROOT] [--deadline S]            end-to-end pipeline canary on a stage
 release canary-worker                                   the stage's synthetic aeon (internal)
 release acceptance <tag> --scratch-repo P [...]         release acceptance on a clean machine (DESIGN.md "acceptance")
+release session-hook install|status|uninstall|prune S  the client's SessionStart hook + statusLine (DESIGN.md "session-hook")
+release intake install|status|uninstall                 wire systemd alert units into incident intake (DESIGN.md "intake")
 ```
 
 Every subcommand also takes `--releases D` (else `$SPIRA_RELEASES`, else `spira.releases`,
@@ -451,6 +453,110 @@ a PASS, each class of FAIL, and the waiver.
     dropped exactly the units it was looking for, so the phase D crash-loop check passed
     vacuously.
 
+### session-hook
+
+**sp-7jr34** (rewrite wave 6b) moves `spira/install-session-hook.sh` here. The script is
+deleted.
+
+**Intent.** The coding agent client's `SessionStart` hook and status line are registered in
+its own settings file, outside every checkout — no landing gate can see that file and nothing
+that lands can fix it. Exactly one Spira entry for each must ever be registered, addressed so
+that it keeps working across every future release activation without being re-registered.
+
+**THE DEFECT THIS BEAD FIXES (P0, found in the bead's own comments).** The script computed its
+registered command from `SPIRA_HOME`, which a release activation sets to that release's own
+sha-pinned directory (`spira-releases/<sha>/spira`, never `current` — DESIGN.md "activate":
+"never current, so a unit states exactly what it runs"). `install`'s own idempotence only
+stripped a command byte-identical to the CURRENT invocation's own path, so every activation
+registered a command the next activation's `install` did not recognise as "ours" — 27 had
+accumulated before this was found, and the same shape was found again, once, in the course of
+fixing it (a leftover bare sha-pinned entry the hand-fix had missed) — proof the fix must
+recognise every earlier form, not just exact matches. Every one of the 27 exited 1: a hook
+registered as a bare path runs under the CLIENT's own environment, which does not carry the
+launcher's PATH, so `conf.sh` could not find `spira-config` and failed closed. The status line
+had no installer at all and was wired by hand into the identical broken shape.
+
+**The fix.** The registered command is always addressed through `<releases>/current` — never a
+sha directory — and is SELF-CONTAINED: `env SPIRA_RELEASE=<releases>/current
+PATH=<release_path_with_tail> <releases>/current/spira/hooks/session.sh` (and the same for
+`ctx-meter.sh`, as `statusLine`). It carries its own environment regardless of what invoked it,
+so it no longer matters which release's `install-session-hook.sh` — now `release
+session-hook` — happened to run it. "Ours" is recognised by a command SUFFIX
+(`spira/hooks/session.sh` / `spira/ctx-meter.sh`), not by exact match, so `install` converges
+any number of earlier forms — sha-pinned, bare "current", wrapped or not — to exactly one
+entry, on both `hooks.SessionStart` and `statusLine` (a test plants three sha-pinned entries
+plus a bare "current" one and asserts `install` leaves exactly one:
+`session_hook::tests::three_activations_converge_to_one`).
+
+**Why `install`/`status` need a release and `uninstall`/`prune` do not.** Only `install` and
+`status` need to construct the canonical command, which needs the releases directory
+(`Config`). `uninstall` and `prune` touch only the settings file and recognise entries by
+suffix alone — resolving `Config` for them would refuse an uninstall on a box whose releases
+directory cannot be found, which is exactly the state an uninstall may be reached from. `main.rs`
+resolves `Config` only inside the two branches that need it.
+
+**What is kept vs. dropped, against the script:**
+
+* Same four verbs, same `SessionStart`-only, no-matcher registration, same `PostCompact`
+  retirement (a stale registration from before `SessionStart`'s own `source=compact` was known
+  to cover it), same `prune <substring>` as the deliberate, one-at-a-time way a foreign entry
+  is removed.
+* **`statusLine` is now managed too** (bead requirement 1) — the script never touched it; it
+  had been wired by hand into the exact shape that broke. `install` refuses (changing nothing)
+  when either the hook or the meter file is not an executable file — a registered command that
+  does not exist is a hook error at every session start, worse than one still absent.
+* **The settings document round-trips through `serde_json` with `preserve_order`** (the
+  crate's `Cargo.toml` opts the whole workspace build into the feature — additive, changes no
+  other crate's correctness, only the order `Value` iterates and serialises in), so a rewrite
+  of the operator's live settings file does not reshuffle every other key into alphabetical
+  order. The python script preserved order by construction (a plain `dict`); `BTreeMap`-backed
+  `serde_json::Map` would not have.
+* **Backup and atomic write are unchanged**: `<path>.spira.bak` written only when the prior
+  content differs from what is about to be written, `write_atomic` (temp file, `rename(2)`).
+
+**Requirement 3's own test.** `release/tests/session_hook_minimal_env.rs` builds a real release
+fixture (a freshly-built `spira-config` binary, the checkout's own real `spira/`), runs
+`session.sh` and `ctx-meter.sh` through the REGISTERED COMMAND `session_hook::install` writes,
+under `env -i HOME PATH=/usr/bin:/bin` — the client's own minimal environment, never the
+launcher's — and asserts `rc=0` and non-empty output. A second test runs the OLD, unwrapped
+bare-path form under the same minimal env and asserts it FAILS, so the first test's pass is
+known to be about the fix and not about a fixture that would have passed either way
+(law-absence-needs-a-positive-control).
+
+### intake
+
+**sp-7jr34** (rewrite wave 6b) moves `spira/install-intake.sh` here. The script is deleted.
+
+**Intent.** A systemd alert template's `OnFailure=` reaches a human (Pushover); a drop-in adds
+a second `ExecStart=` that also files the event as an incident bead, so it becomes work with an
+identity instead of a notification that scrolls past. A drop-in survives the alert template
+being re-rendered by its own repo's deploy, which an edit to the unit file itself would not.
+
+**No default glob.** `SPIRA_ALERT_GLOB` names the caller's own alert units (a `find -name`
+pattern); unset, every subcommand is a deliberate no-op (prints why, exits `0`) — a default
+would be one box's inventory, and the wrong one would silently wire nothing while reporting
+success. On this host it is unset today, so `intake` is presently inert in production; the
+mechanism is exercised end-to-end by this crate's own tests with a planted template.
+
+**Kept from the script, unchanged in shape:** the drop-in filename and content
+(`50-spira-intake.conf`, a second `ExecStart=-<incident.sh> systemd %i`, the leading `-` so a
+failure here cannot fail the alert), writing only the templates whose drop-in would actually
+change, a `daemon-reload` only when something changed, and the post-write verify against
+`systemctl --user cat <template>@probe.service` (a template's own always-nameable instance,
+so `cat` can show the merged unit including the drop-in without that instance ever running).
+`find` is still shelled to (behind a [`intake::Templates`] trait, so tests never run a real
+one) rather than reimplemented, because `find -name`'s glob (`*`, `?`, `[...]`) is exactly what
+`SPIRA_ALERT_GLOB`'s own documentation promises and a hand-rolled matcher is a second place for
+that promise to drift from what it actually does.
+
+**The `Systemctl` trait gained one method, `cat`** (`systemctl --user cat <unit>`), for this
+verify step alone — `activate`/`rollback`/`install-tarball` never call it.
+
+**Needs no `Config` at all** — only the systemd unit directory
+(`config::unit_dir_from_env`, the same fallback chain `Config::resolve` uses for its own
+`unit_dir` field, pulled out to a standalone function precisely so `intake` is never coupled to
+the releases directory resolving, which it has nothing to do with).
+
 ## Layout
 
 | module | what |
@@ -469,14 +575,20 @@ a PASS, each class of FAIL, and the waiver.
 | `stage` | stand up / tear down an isolated Spira; the fayth, repo-map and dispatch-script content |
 | `canary` | the end-to-end canary run, and `canary-worker`, the synthetic aeon |
 | `acceptance` | `release acceptance`: the release acceptance run (phases A-D), its checks, forensics and note |
+| `session_hook` | `release session-hook`: the client's `SessionStart` hook and `statusLine` |
+| `intake` | `release intake`: systemd alert templates wired to `incident.sh` via a drop-in |
 
 Unit tests run activation and rollback against a fake `Systemctl` and a temporary unit
 directory; `install-tarball` against a fake `Systemctl` and a fake `Unpack` (no real `tar`);
-`stage`'s pure content (the fayth, the repo-map line) and its build-time refusals directly.
-Nothing in a test touches the host's systemd, a real tarball, or a real `bd`/`git`/`sentinel`
-— `stage` and `canary`'s own orchestration is proved instead by running them for real, once,
-against a scratch `STAGE_ROOT` and the real `sentinel`/`landing-pass` binaries (this bead's
-own delivery evidence; `test-canary.sh` repeats this under the gate/round).
+`stage`'s pure content (the fayth, the repo-map line) and its build-time refusals directly;
+`intake` against a fake `Templates` (no real `find`) and the same fake `Systemctl`.
+`session_hook`'s JSON transformation is pure and needs no fake at all; one further test
+(`release/tests/session_hook_minimal_env.rs`) runs the real `session.sh`/`ctx-meter.sh`
+through a really-built `spira-config` (sp-7jr34's own requirement 3). Nothing in a test
+touches the host's systemd, a real tarball, or a real `bd`/`git`/`sentinel` — `stage` and
+`canary`'s own orchestration is proved instead by running them for real, once, against a
+scratch `STAGE_ROOT` and the real `sentinel`/`landing-pass` binaries (this bead's own delivery
+evidence; `test-canary.sh` repeats this under the gate/round).
 
 ## Callers
 
@@ -499,6 +611,21 @@ unconditionally; sp-ak7qm replaced acceptance-lib.sh's `_install_from_tarball`) 
 `acceptance-local.sh` run the candidate tarball's own `bin/release acceptance`. `stage`/`canary` replace `spira/stage.sh` and `spira/canary.sh`,
 which are deleted; today's only caller is their own suite, `test-canary.sh`. `systemd/render.py`
 remains for `install.sh` and `unit-ensure.sh`, which own unit membership.
+
+`release session-hook` replaces `spira/install-session-hook.sh`, which is deleted: every
+former bare-name caller is repointed — `concierge.sh`'s `start` (no longer overrides
+`SPIRA_HOME` first: the registered command is addressed through `current` regardless of which
+release's `concierge.sh` runs it, so there is nothing left to override), `install.sh`'s and
+`systemd/install.sh`'s own phase 5, `spira/owned.sh`'s `_session_hook_status`, and
+`spira/uninstall.sh`'s removal step. `cockpit-ensure.service`'s `ExecStartPre` is repointed to
+`@SPIRA_PROD_ROOT@/bin/release session-hook install` (was `@SPIRA_PROD@/install-session-hook.sh
+install` — `@SPIRA_PROD@` is the sha-pinned `spira/install-session-hook.sh` is deliberately no
+longer addressed by, DESIGN.md "session-hook"). `release intake` replaces
+`spira/install-intake.sh`, which is deleted: `install.sh`'s own phase 5 and
+`spira-ops.service`'s `ExecStartPre`, repointed the same way to `@SPIRA_PROD_ROOT@/bin/release
+intake install`. `spira/uninstall.sh`'s ALERT DROP-INS step never called
+`install-intake.sh` (it removes each drop-in file directly, by the paths `owned.sh` names) and
+needed no change beyond its own comments.
 
 ## Not this bead
 
