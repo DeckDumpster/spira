@@ -468,15 +468,25 @@ _wd_parse_file() {
             faults=1; continue
         fi
         target="$_wd_out"
-        # ABSOLUTE, ALWAYS for daemon and log. A unit is started with no working directory
-        # worth the name, so a relative target resolves against `/`. An extern target is a
-        # service base name (e.g. mail-deliver), not a path — no slash required.
-        if [ "$kind" != extern ]; then
-            case "$target" in /*) ;;
-                *) echo "watchd: $file:$n: '$name': target must be an absolute path, got '$target'" >&2
-                   faults=1; continue ;;
-            esac
-        fi
+        # A LOG TARGET IS ABSOLUTE: a unit is started with no working directory worth the
+        # name, so a relative file resolves against `/`. A DAEMON TARGET'S PROGRAM IS A BARE
+        # NAME (sp-gypjk: found on the PATH the launcher set — the release's bin/ and spira/)
+        # or an absolute path; a relative path with a slash in it is neither, and is refused.
+        # An extern target is a service base name (e.g. mail-deliver), not a path.
+        case "$kind" in
+            extern) ;;
+            daemon)
+                case "${target%% *}" in
+                    /*) ;;
+                    */*) echo "watchd: $file:$n: '$name': a daemon's program is a bare name or an absolute path, got '$target'" >&2
+                         faults=1; continue ;;
+                esac ;;
+            *)
+                case "$target" in /*) ;;
+                    *) echo "watchd: $file:$n: '$name': target must be an absolute path, got '$target'" >&2
+                       faults=1; continue ;;
+                esac ;;
+        esac
         if [ -n "$health" ] && ! _wd_expand "$health"; then
             if [ -n "$optional" ] && [ -n "$_wd_empty" ]; then
                 seen="$seen$name "
@@ -589,7 +599,7 @@ cmd_exec() {
     # SPLIT ON WHITESPACE, NOT SHELL. Nothing in a target is expanded or substituted; a row
     # that needs a pipeline points at a script that is one.
     local -a argv; read -r -a argv <<< "$target"
-    [ -x "${argv[0]}" ] || echo "watchd: $want: ${argv[0]} is not executable — starting it anyway so the failure is systemd's to report" >&2
+    command -v "${argv[0]}" >/dev/null 2>&1 || echo "watchd: $want: ${argv[0]} is not on PATH — starting it anyway so the failure is systemd's to report" >&2
     exec "${argv[@]}"
 }
 
