@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: spira/inventory.sh spira/repo-map.example UC-safety-fences-25
+# covers: spira/inventory.sh .github/workflows/gate.yml UC-safety-fences-25
 #
 # host-reason: creates scratch git repos to test inventory.sh; no container-hosted state
 set -uo pipefail
@@ -167,7 +167,7 @@ want "--patterns includes /workspaces/ pattern" "/workspaces/" "$out"
 want "--patterns includes per-name pattern"     "per " "$out"
 
 # ---------------------------------------------------------------------------------------
-# GATE INTEGRATION. The repo-map's own gate command already runs `bash spira/inventory.sh`
+# GATE INTEGRATION. The harness's own gate command already runs `bash spira/inventory.sh`
 # against the shipped tree on every landing (UC-safety-fences-25, D6) — re-running that same
 # check here against a mirrored copy asserted nothing this suite's own rows and the gate's own
 # run don't already cover, twice, on every branch.

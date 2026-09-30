@@ -422,6 +422,7 @@ jobs:
           bash spira/inventory.sh
           bash spira/literal-lint.sh
           bash spira/scratch-fence.sh
+          bash spira/testdb-mode-lint.sh
           bash spira/bd-stdin-lint.sh
           bash spira/gh-intake-lint.sh
           bash spira/incident-cause-lint.sh

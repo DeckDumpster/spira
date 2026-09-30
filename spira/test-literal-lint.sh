@@ -26,7 +26,7 @@
 # files are actually traversed.
 #
 # tier: T1
-# covers: spira/literal-lint.sh spira/repo-map.example
+# covers: spira/literal-lint.sh .github/workflows/gate.yml
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -208,6 +208,6 @@ want "SEEN RED: default literal refused with exported SPIRA_ASK_LABEL" "needs-op
 # GATE INTEGRATION. A fence nothing invokes is a file; this is the one property no amount
 # of matcher testing can establish.
 # ---------------------------------------------------------------------------------------
-want "the gate names this fence" "spira/literal-lint.sh" "$(cat "$HERE/repo-map.example")"
+want "the gate names this fence" "spira/literal-lint.sh" "$(cat "$HERE/../.github/workflows/gate.yml")"
 is   "and it is executable"      "0" "$([ -x "$HERE/literal-lint.sh" ]; echo $?)"
 tl_summary

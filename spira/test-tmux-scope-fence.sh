@@ -17,7 +17,7 @@
 #
 # host-reason: tests tmux-scope-fence.sh against scratch git repositories only
 #
-# covers: spira/tmux-scope-fence.sh spira/repo-map.example
+# covers: spira/tmux-scope-fence.sh .github/workflows/gate.yml
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -167,10 +167,10 @@ git -C "$ROOT" commit -q -m "remove comment-only suite"
 # ---------------------------------------------------------------------------------------
 # GATE INTEGRATION: a fence nothing invokes is a file.
 # ---------------------------------------------------------------------------------------
-if grep -q "tmux-scope-fence" "$HERE/repo-map.example" 2>/dev/null; then
-    ok "repo-map.example references tmux-scope-fence.sh"
+if grep -q "tmux-scope-fence" "$HERE/../.github/workflows/gate.yml" 2>/dev/null; then
+    ok "gate.yml references tmux-scope-fence.sh"
 else
-    bad "repo-map.example references tmux-scope-fence.sh" "not found in repo-map.example"
+    bad "gate.yml references tmux-scope-fence.sh" "not found in gate.yml"
 fi
 
 # ---------------------------------------------------------------------------------------

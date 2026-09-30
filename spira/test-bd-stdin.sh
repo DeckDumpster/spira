@@ -20,7 +20,7 @@
 #
 # defect: sp-j5z3
 # tier: T0
-# covers: spira/bd-stdin-lint.sh spira/repo-map.example UC-dispatch-05
+# covers: spira/bd-stdin-lint.sh .github/workflows/gate.yml UC-dispatch-05
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -137,7 +137,7 @@ is   "--scan is silent on --stdin usage" "" "$(lint --scan "$PROBE")"
 # GATE INTEGRATION. A fence nothing invokes is a file; this is the one property no amount
 # of matcher testing can establish.
 # ---------------------------------------------------------------------------------------
-want "the gate names this fence" "spira/bd-stdin-lint.sh" "$(cat "$HERE/repo-map.example")"
+want "the gate names this fence" "spira/bd-stdin-lint.sh" "$(cat "$HERE/../.github/workflows/gate.yml")"
 is   "and it is executable"      "0" "$([ -x "$HERE/bd-stdin-lint.sh" ]; echo $?)"
 
 tl_summary

@@ -19,7 +19,7 @@
 # host-reason: tests wiki-add-fence.sh against scratch git repositories only
 #
 # tier: T0
-# covers: spira/wiki-add-fence.sh spira/repo-map.example
+# covers: spira/wiki-add-fence.sh .github/workflows/gate.yml
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -116,11 +116,11 @@ git -C "$ROOT" rm -qf spira/with-comment.sh
 git -C "$ROOT" commit -q -m "remove comment-only file"
 
 # ---------------------------------------------------------------------------------------
-# GATE INTEGRATION: wiki-add-fence.sh is referenced in the repo-map's gate command.
+# GATE INTEGRATION: wiki-add-fence.sh is referenced in .github/workflows/gate.yml.
 # ---------------------------------------------------------------------------------------
-if grep -q "wiki-add-fence" "$HERE/repo-map.example" 2>/dev/null; then
-    ok "repo-map.example references wiki-add-fence.sh"
+if grep -q "wiki-add-fence" "$HERE/../.github/workflows/gate.yml" 2>/dev/null; then
+    ok "gate.yml references wiki-add-fence.sh"
 else
-    bad "repo-map.example references wiki-add-fence.sh" "not found in repo-map.example"
+    bad "gate.yml references wiki-add-fence.sh" "not found in gate.yml"
 fi
 tl_summary

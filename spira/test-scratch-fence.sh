@@ -22,7 +22,7 @@
 #
 # tier: T1
 # tier: T0
-# covers: spira/scratch-fence.sh spira/repo-map.example UC-safety-fences-24
+# covers: spira/scratch-fence.sh .github/workflows/gate.yml UC-safety-fences-24
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -126,6 +126,6 @@ is   "sp-* in subdirectory does not trigger" "0" "$rc"
 # armed hook proves the wiring; a grep of the hook's source only proved the string was
 # still there.
 # ---------------------------------------------------------------------------------------
-want "the gate names this fence" "spira/scratch-fence.sh" "$(cat "$HERE/repo-map.example")"
+want "the gate names this fence" "spira/scratch-fence.sh" "$(cat "$HERE/../.github/workflows/gate.yml")"
 
 tl_summary

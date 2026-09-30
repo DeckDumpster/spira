@@ -15,7 +15,7 @@
 # be named before the shipped tree's silence means anything.
 #
 # tier: T1
-# covers: spira/incident-cause-lint.sh spira/repo-map.example
+# covers: spira/incident-cause-lint.sh .github/workflows/gate.yml
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -73,7 +73,7 @@ is   "the shipped spira/ tree is clean" "0" "$rc"
 [ "$rc" = 0 ] || printf '%s\n' "$out" >&2
 
 # --- gate integration: a fence nothing invokes is a file --------------------------
-want "the gate names this fence"     "spira/incident-cause-lint.sh" "$(cat "$HERE/repo-map.example")"
+want "the gate names this fence"     "spira/incident-cause-lint.sh" "$(cat "$HERE/../.github/workflows/gate.yml")"
 is   "and the fence script is readable" "0" "$([ -r "$LINT" ]; echo $?)"
 
 tl_summary
