@@ -18,7 +18,7 @@
 #           test-cockpit-landed.sh; coverage row 10)
 #
 # defect: sp-a5ga sp-884p
-# covers: spira/cockpit.sh cockpit/health.sh
+# covers: spira/cockpit.sh cockpit/ops/src/health.rs
 # scar: closed beads with a branch but no landstate were invisible; UNLND is now QUEUE. The
 #       worked/landed row once counted all-time under a 24h header, producing nonsense
 #       against scoped counts, and a body mention was once enough to mark a bead landed.
@@ -132,7 +132,7 @@ nowant "sp-oldd's landing commit does not inflate SP_CLOSED" "SP_CLOSED=5" "$out
 nowant "sp-oldd's landing commit does not inflate SP_LANDED" "SP_LANDED=2" "$out"
 
 echo "--- pane renders QUEUE, not UNLND ---"
-PANE="$HERE/../cockpit/health.sh"
+PANE="health"
 {
     printf '%s\n' "$out" | python3 -c '
 import sys
@@ -151,7 +151,7 @@ pane="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$ALPHA" \
     SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_BD="${REAL_BD:-bd}" \
     SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
-    bash "$PANE" once 0 120 2>/dev/null)"
+    "$PANE" once 0 120 2>/dev/null)"
 
 want "pane renders QUEUE label" "QUEUE" "$pane"
 nowant "pane does not render old UNLND label" "UNLND" "$pane"

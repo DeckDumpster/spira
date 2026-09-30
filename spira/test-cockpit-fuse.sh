@@ -16,11 +16,11 @@
 # turn boundary from a terminal state.
 #
 # defect: sp-yhue
-# covers: spira/cockpit.sh cockpit/health.sh spira/lib.sh
+# covers: spira/cockpit.sh cockpit/ops/src/health.rs spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
-PANE="$HERE/../cockpit/health.sh"
+PANE="health"
 TMP="$(mktemp -d)"; trap 'kill_all 2>/dev/null; rm -rf "$TMP"' EXIT
 RUN="$TMP/run"
 mkdir -p "$RUN"
@@ -220,7 +220,7 @@ fi
 echo
 echo "health.sh: lease countdown renders on the bead row"
 
-if [ ! -f "$PANE" ]; then
+if ! command -v "$PANE" >/dev/null 2>&1; then
     bad "cannot find pane at $PANE"
 else
 
@@ -244,7 +244,7 @@ pane() {
     env -i PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_REPO="$TMP" SPIRA_RUN="$PD" \
         SPIRA_SYSTEMCTL="$PD/bin/mock-systemctl" \
-        bash "$PANE" once "${1:-0}" "${2:-0}" 2>/dev/null \
+        "$PANE" once "${1:-0}" "${2:-0}" 2>/dev/null \
       | sed 's/\x1b\[[?0-9;]*[a-zA-Z]//g'
 }
 
