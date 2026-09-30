@@ -37,18 +37,15 @@ fn dedup_key(body: &str) -> String {
     oldest_re.replace_all(&step1, "oldest Ns").into_owned()
 }
 
-/// `SPIRA_HOME` from the environment, else found by searching upward from this binary's own
-/// directory for an ancestor whose `spira/conf.sh` exists (same approach as `watchd`'s
-/// `home_dir`, including the reason a fixed parent count is not enough: conf.sh does not
-/// export SPIRA_HOME, and a release's `<release>/bin/inbox-triage` and a testenv/aeon-profile
-/// build's `<checkout>/target/aeon/inbox-triage` put `spira/` a different number of levels
-/// up).
+/// Where THIS BINARY's own `conf.sh` lives — found by searching upward from the binary's
+/// own directory for an ancestor whose `spira/conf.sh` exists. Same approach as `watchd`'s
+/// `home_dir`, for the same two reasons: never `$SPIRA_HOME` (a caller's own config input,
+/// which a fixture may point elsewhere for reasons that have nothing to do with where this
+/// binary's own conf.sh lives — the bash's `inbox-triage.sh` never read it either, only its
+/// own `BASH_SOURCE[0]`), and never a fixed parent count (a release's
+/// `<release>/bin/inbox-triage` and a testenv/aeon-profile build's
+/// `<checkout>/target/aeon/inbox-triage` put `spira/` a different number of levels up).
 fn home_dir() -> PathBuf {
-    if let Ok(h) = std::env::var("SPIRA_HOME") {
-        if !h.is_empty() {
-            return PathBuf::from(h);
-        }
-    }
     std::env::current_exe().ok().and_then(|p| find_spira_dir(&p, |d| d.join("conf.sh").is_file())).unwrap_or_else(|| PathBuf::from("spira"))
 }
 

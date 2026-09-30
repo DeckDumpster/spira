@@ -92,11 +92,17 @@ pub fn load(home: &Path) -> Result<Context, String> {
             kv.insert(k.to_string(), v.to_string());
         }
     }
-    let mut take = |k: &str| kv.remove(k).unwrap_or_default();
+    // NON-DESTRUCTIVE: `SPIRA_RUN` and `SPIRA_DB` are both a `WATCHD_KEYS` placeholder AND
+    // a named `Context` field below. A `.remove()` here (as the `take` closure does for the
+    // fields that are ONLY a placeholder) would empty both before `run`/`db` ever got a
+    // chance to read them — caught only by an end-to-end run against the real seam, because
+    // every unit test constructs `Context` as a struct literal directly, never through this
+    // function.
     let mut placeholders = HashMap::new();
     for key in crate::manifest::KEYS {
-        placeholders.insert(key.to_string(), take(key));
+        placeholders.insert(key.to_string(), kv.get(*key).cloned().unwrap_or_default());
     }
+    let mut take = |k: &str| kv.remove(k).unwrap_or_default();
     Ok(Context {
         run: take("SPIRA_RUN"),
         watchers: take("SPIRA_WATCHERS"),
@@ -148,30 +154,29 @@ impl Context {
     }
 }
 
-/// `SPIRA_HOME` from this process's own environment when set, else found by searching
-/// upward from this binary's own directory for an ancestor whose `spira/conf.sh` exists.
+/// Where THIS BINARY's own `conf.sh` lives — found by searching upward from the binary's
+/// own directory for an ancestor whose `spira/conf.sh` exists.
 ///
-/// NOT AN ENVIRONMENT LOOKUP EVEN WHEN A CALLER ALREADY SOURCED conf.sh: conf.sh
-/// deliberately does not `export` SPIRA_HOME ("for the same reason `SPIRA_ID_PREFIX` is
-/// not" — a value a worktree's own conf.sh resolved must never leak into a child process
-/// that might be running against a different checkout's idea of itself). So a shell that
-/// sourced conf.sh and then runs `watchd` by bare name hands it NO `SPIRA_HOME` at all;
-/// this binary has always had to find its own, the same as `gate` and every other
-/// Rust-rewritten tool.
+/// DELIBERATELY NEVER `$SPIRA_HOME`, even when a caller has one set. `SPIRA_HOME` is a
+/// piece of a CALLER's resolved config — an input conf.sh computes, that a fixture may set
+/// to point somewhere else entirely for its own reasons (a test pointed it at a directory
+/// holding a three-line stub `conf.sh`, to fake `watch_unit_name` for an unrelated
+/// command). The bash's own `watchd.sh` never read `$SPIRA_HOME` to decide what to source
+/// either — it sourced conf.sh from `$(dirname "${BASH_SOURCE[0]}")`, i.e. its OWN
+/// location, ignoring whatever `$SPIRA_HOME` said. A compiled binary has no
+/// `BASH_SOURCE[0]`; searching upward from `current_exe()` is the equivalent question
+/// ("where do I, this program, actually live") asked the only way a binary can ask it.
+/// Scar: reading `$SPIRA_HOME` first sourced that fixture's stub conf.sh instead of the
+/// real one, and every var the real one would have set — `SPIRA_RUN`, `SPIRA_ACTIONABLE`,
+/// `SPIRA_NOTIFY_AGE`, the manifest path — came back empty, well before the test's actual
+/// assertions were reached.
 ///
-/// NOT A FIXED PARENT COUNT either (the scar this replaced): a release runs this binary
-/// from `<release>/bin/watchd`, one level below `spira/`'s sibling; a testenv or
-/// aeon-profile build tree runs it from `<checkout>/target/aeon/watchd`, TWO levels below.
-/// Fixing the depth to the release's shape made the conf.sh seam fail closed
-/// ("conf.sh could not be sourced") on every other build layout, caught by an aeon-profile
-/// testenv run inside a container, not by a unit test whose fixture happened to sit beside
-/// the binary either way.
+/// NOT A FIXED PARENT COUNT either (a second scar this same walk fixed): a release runs
+/// this binary from `<release>/bin/watchd`, one level below `spira/`'s sibling; a testenv
+/// or aeon-profile build tree runs it from `<checkout>/target/aeon/watchd`, TWO levels
+/// below. Fixing the depth to the release's shape made the conf.sh seam fail closed
+/// ("conf.sh could not be sourced") on every other build layout.
 pub fn home_dir() -> PathBuf {
-    if let Ok(h) = std::env::var("SPIRA_HOME") {
-        if !h.is_empty() {
-            return PathBuf::from(h);
-        }
-    }
     std::env::current_exe()
         .ok()
         .and_then(|p| find_spira_dir(&p, |d| d.join("conf.sh").is_file()))
@@ -241,5 +246,30 @@ mod tests {
         let exe = Path::new("/a/b/c/watchd");
         let exists = has(&["/a/b/spira", "/a/spira"]);
         assert_eq!(find_spira_dir(exe, exists), Some(PathBuf::from("/a/b/spira")));
+    }
+
+    /// END TO END, through the real seam (spawns `bash`, parses its NUL-separated output) —
+    /// every other test in this crate constructs `Context` as a struct literal directly and
+    /// would never have caught this. Scar: `SPIRA_RUN` and `SPIRA_DB` are each BOTH a
+    /// `WATCHD_KEYS` placeholder and a named `Context` field; populating `placeholders`
+    /// first with the destructive `take` (a `.remove()`) emptied both before `run`/`db`
+    /// ever read them, so every daemon row's log path came back relative
+    /// ("watchd/<name>.log" instead of "$SPIRA_RUN/watchd/<name>.log") and `health-ids`'
+    /// database lookup silently had no database. Found only by running the compiled binary
+    /// against a real manifest, not by any unit test, until this one.
+    #[test]
+    fn load_does_not_let_the_placeholder_map_consume_a_field_the_context_also_needs() {
+        let d = testkit::TempDir::new("watchd-context");
+        std::fs::write(
+            d.join("conf.sh"),
+            "SPIRA_RUN=/fixture/run\nSPIRA_DB=/fixture/db\nSPIRA_WATCHERS=/fixture/watchers\n",
+        )
+        .unwrap();
+        let ctx = load(&d).expect("the seam to source this trivial conf.sh");
+        assert_eq!(ctx.run, "/fixture/run", "SPIRA_RUN is also a WATCHD_KEYS placeholder");
+        assert_eq!(ctx.db, "/fixture/db", "SPIRA_DB is also a WATCHD_KEYS placeholder");
+        assert_eq!(ctx.watchers, "/fixture/watchers");
+        assert_eq!(ctx.placeholders.get("SPIRA_RUN").map(String::as_str), Some("/fixture/run"));
+        assert_eq!(ctx.placeholders.get("SPIRA_DB").map(String::as_str), Some("/fixture/db"));
     }
 }
