@@ -48,7 +48,7 @@ printf '\nT1: stage up creates expected structure\n'
     [ -d "${STAGE_ROOT:-/nonexistent}" ] && ok "STAGE_ROOT is a directory" || bad "STAGE_ROOT is a directory" "$STAGE_ROOT"
 
     exists "canary.fayth"         "$SPIRA_HOME/chamber/canary.fayth"
-    exists "repo-map"              "$SPIRA_HOME/repo-map"
+    exists "repo map"               "$SPIRA_REPO_MAP"
     isexec "fake-summon.sh"        "$SPIRA_HOME/fake-summon.sh"
     isexec "fake-launch.sh"        "$SPIRA_HOME/fake-launch.sh"
     # canary-worker.sh is gone: fake-summon.sh execs `release canary-worker` directly —
@@ -70,13 +70,13 @@ printf '\nT1: stage up creates expected structure\n'
     # bd shim must be bd-embedded
     is "SPIRA_BD=bd-embedded" "bd-embedded" "$SPIRA_BD"
 
-    # Verify the repo-map has the 6-column format required by doctor.sh/landing.sh
-    col_count="$(awk -F'|' '{print NF}' "$SPIRA_HOME/repo-map" | head -1)"
-    is "repo-map has 6 columns" "6" "$col_count"
+    # Verify the stage's own repo map has the 6-column format required by doctor.sh/landing.sh
+    col_count="$(awk -F'|' '{print NF}' "$SPIRA_REPO_MAP" | head -1)"
+    is "repo map has 6 columns" "6" "$col_count"
 
     # Verify the land column is "push" (not pr or hold — the synthetic repo must push)
-    land_col="$(awk -F'|' '{gsub(/ /,"",$3); print $3}' "$SPIRA_HOME/repo-map" | head -1)"
-    is "repo-map land=push" "push" "$land_col"
+    land_col="$(awk -F'|' '{gsub(/ /,"",$3); print $3}' "$SPIRA_REPO_MAP" | head -1)"
+    is "repo map land=push" "push" "$land_col"
 
     # remote checkout is on main
     # hermetic-ok: $STAGE_ROOT/remote.git is always a mktemp temp dir created by stage.sh up
