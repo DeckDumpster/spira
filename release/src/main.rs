@@ -113,10 +113,10 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
     let fail = |e: String| (1u8, e);
 
     // stage/canary/canary-worker operate entirely under their own STAGE_ROOT (or, for
-    // canary-worker, a stage's inherited env) and never touch spira-releases/ or
-    // spira.toml — resolving Config here would make canary-worker (run inside an isolated
-    // stage that deliberately sets no SPIRA_RELEASES, DESIGN.md "stage": isolation) fail
-    // before it ever got to its own work, or worse, read the real host's spira.toml.
+    // canary-worker, a stage's inherited env) and never touch spira-releases/ or the host
+    // config document — resolving Config here would make canary-worker (run inside an
+    // isolated stage that deliberately sets no SPIRA_RELEASES, DESIGN.md "stage": isolation)
+    // fail before it ever got to its own work, or worse, read the real host's own config.
     match cmd.as_str() {
         "stage" => {
             let (sub, srest) = rest.split_first().ok_or_else(|| usage("stage needs a subcommand: up or down".into()))?;

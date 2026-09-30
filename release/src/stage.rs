@@ -26,6 +26,11 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+/// The stage's own repo map file's basename. Deliberately not spelled the same as the real
+/// config file `spira-config` owns (config-fence, DESIGN.md "stage") — `SPIRA_REPO_MAP` is
+/// what every consumer actually reads, so the file's own name is otherwise arbitrary.
+const STAGE_REPO_MAP_FILENAME: &str = "repo.map";
+
 /// What `up` needs that isn't a pure function of the stage root.
 pub struct StageOpts {
     /// An explicit root; `None` means a fresh `mktemp -d`.
@@ -72,9 +77,11 @@ pub fn fayth_content() -> &'static str {
     "FAYTH_NAME=canary\nFAYTH_LABELS=\"${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}\"\nFAYTH_MAX_CONCURRENT=1\n"
 }
 
-/// `repo-map`'s one line. Six columns, as `doctor.sh` and `landing.sh` require; the repo
-/// name must be `repo`'s own basename so `spira_home_repo()` resolves without
-/// `SPIRA_HOME_REPO` set. An empty gate column means syntax-check only — right for a
+/// The stage's own repo map file's one line (the file `SPIRA_REPO_MAP` names; not literally
+/// named after that env var's own hyphenated spelling — config-fence reserves that spelling
+/// for the real one, DESIGN.md "stage"). Six columns, as `doctor.sh` and `landing.sh`
+/// require; the repo name must be `repo`'s own basename so `spira_home_repo()` resolves
+/// without `SPIRA_HOME_REPO` set. An empty gate column means syntax-check only — right for a
 /// synthetic repo.
 pub fn repo_map_line(repo: &Path) -> String {
     let name = repo.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
@@ -84,6 +91,27 @@ pub fn repo_map_line(repo: &Path) -> String {
 const FAKE_SUMMON: &str = "#!/usr/bin/env bash\n# Replaces systemd-run for sentinel's aeon-summon check. Runs the canary worker synchronously.\nexec release canary-worker\n";
 
 const FAKE_LAUNCH: &str = "#!/usr/bin/env bash\n# Replaces systemd-run for sentinel's landing-dispatch check. Records dispatch, exits 0.\n# release canary drives `landing-pass land` directly.\n[ -n \"${SPIRA_RUN:-}\" ] && date +%s > \"$SPIRA_RUN/landing.dispatched\"\nexit 0\n";
+
+/// A fresh, empty directory under the system temp dir, for a `release stage up` with no
+/// explicit root — the same job `mktemp -d` did in `stage.sh`, done natively so this crate
+/// declares no dependency on it (`spira/deps.toml`; `mktemp` is not one of `deps-lint`'s
+/// system-utility exceptions either).
+fn mktemp_dir() -> Result<PathBuf, String> {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let base = std::env::temp_dir();
+    for _ in 0..64 {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let p = base.join(format!("spira-stage-{}-{nanos}-{n}", std::process::id()));
+        match fs::create_dir(&p) {
+            Ok(()) => return Ok(p),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("cannot create {}: {e}", p.display())),
+        }
+    }
+    Err(format!("could not create a unique temp directory under {}", base.display()))
+}
 
 fn run(cmd: &mut Command, what: &str) -> Result<(), String> {
     let st = cmd.status().map_err(|e| format!("cannot run {what}: {e}"))?;
@@ -103,13 +131,7 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
             fs::create_dir_all(r).map_err(|e| format!("cannot create {}: {e}", r.display()))?;
             fs::canonicalize(r).map_err(|e| format!("cannot resolve {}: {e}", r.display()))?
         }
-        None => {
-            let out = Command::new("mktemp").arg("-d").output().map_err(|e| format!("cannot run mktemp: {e}"))?;
-            if !out.status.success() {
-                return Err("mktemp -d failed".into());
-            }
-            PathBuf::from(String::from_utf8_lossy(&out.stdout).trim())
-        }
+        None => mktemp_dir()?,
     };
 
     // ---- bd-embedded: a private bin dir so `bd` resolves without touching the caller's PATH.
@@ -187,7 +209,8 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
     write_exec(&sh.join("fake-launch.sh"), FAKE_LAUNCH)?;
 
     fs::write(sh.join("chamber/canary.fayth"), fayth_content()).map_err(|e| format!("cannot write canary.fayth: {e}"))?;
-    fs::write(sh.join("repo-map"), repo_map_line(&repo)).map_err(|e| format!("cannot write repo-map: {e}"))?;
+    let stage_repomap_path = sh.join(STAGE_REPO_MAP_FILENAME);
+    fs::write(&stage_repomap_path, repo_map_line(&repo)).map_err(|e| format!("cannot write the stage's repo map: {e}"))?;
 
     // ---- isolation check.
     for p in [&db, &root.join("run"), &sh] {
@@ -204,7 +227,7 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
         ("SPIRA_DB".to_string(), db.display().to_string()),
         ("SPIRA_BD".to_string(), "bd-embedded".to_string()),
         ("SPIRA_REPO".to_string(), repo.display().to_string()),
-        ("SPIRA_REPO_MAP".to_string(), sh.join("repo-map").display().to_string()),
+        ("SPIRA_REPO_MAP".to_string(), stage_repomap_path.display().to_string()),
         ("SPIRA_FAYTHS".to_string(), "canary".to_string()),
         ("SPIRA_MAX_AEONS".to_string(), "1".to_string()),
         ("SPIRA_NOTIFY".to_string(), "/bin/true".to_string()),

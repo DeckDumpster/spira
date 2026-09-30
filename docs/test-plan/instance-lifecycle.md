@@ -15,6 +15,18 @@ Inputs: 62 primary files plus 1 secondary (`test-pr-notify.sh`, unit-render sect
 
 Together they cost 58 s. They are kept in the arithmetic in section 7, so the total reconciles with signals.tsv.
 
+> **2026-09-30: `activate.sh`, `stage.sh`, `canary.sh` and `test-activate.sh` retired (sp-jsnbm).**
+> `activate.sh` moved into the release crate as `release install-tarball`; `stage.sh`/`canary.sh`
+> moved as `release stage`/`release canary`/`release canary-worker` (release/DESIGN.md).
+> UC-08, -09 and -11 lost `test-activate.sh`, their only cover, and now carry
+> `[use_case.uncovered]` in the toml: the behaviour moved to `install-tarball` and is proved by
+> that crate's own unit tests (`cargo test -p release`), which this matrix — bash-suite-only by
+> design (`spira/test-*.sh` — `plan_matrix.rs`'s `is_suite`) — cannot see. UC-10's live-aeon
+> guard is dropped by design, not merely untested: under runtime-is-a-release an aeon's worktree
+> is never under `spira-releases/`, so there is nothing left for an install to disrupt.
+> `test-canary.sh` (misfiled, priced only here) is unaffected in shape, only in what it now
+> calls.
+
 ---
 
 ## 1. Intent (the de facto spec)
