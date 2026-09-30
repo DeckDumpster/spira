@@ -69,6 +69,8 @@ done
 [ "$lc_up" = 1 ] || bail "dolt sql-server for spira_lifecycle never came up: $(cat "$LC_TMP/server.log")"
 
 # spira-lc is the tree under test's own build, by name on the suite's PATH (sp-gypjk).
+# lc.sh consults spira-lc only with lifecycle ON (sp-gypjk: the switch, not a binary path).
+export SPIRA_LIFECYCLE_ENFORCE=1
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LC_PORT"
 export SPIRA_LC_DB=spira_lifecycle

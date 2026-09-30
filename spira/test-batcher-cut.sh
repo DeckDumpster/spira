@@ -259,7 +259,7 @@ bump_requeue() {
 LIBSPY
 
 cut_repo() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
@@ -863,7 +863,7 @@ locland   | $LREPO | queue.local | local/main  | | |
 RMAP
 
 cut_local() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
