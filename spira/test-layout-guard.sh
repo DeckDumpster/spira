@@ -45,7 +45,6 @@ make_tree() {
     cat > "$root/spira/conf.sh" <<CONF
 SPIRA_HOME="${root}/spira"
 SPIRA_COCKPIT="\${SPIRA_COCKPIT:-}"
-SPIRA_PANEL="\${SPIRA_PANEL:-/dev/null}"
 SPIRA_REPO="\${SPIRA_REPO:-/tmp}"
 SPIRA_RUN="\${SPIRA_RUN:-/tmp}"
 COCKPIT_CWD="\${COCKPIT_CWD:-/tmp}"
