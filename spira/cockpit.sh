@@ -290,27 +290,21 @@ for j, l in enumerate(lines[-n:]):
 
     # OPERATOR OVERRIDES (sp-qdh0x). overrides.sh list is the harness's own answer for what is
     # active and what has failed; the pane must not keep a second model of that state.
-    if [ -x "$SPIRA_HOME/overrides.sh" ]; then
-        local _ov_out _ov_n=0 _ov_failed=0 _ov_line _ov_name _ov_bead _ov_state _ov_list=""
-        _ov_out="$("$SPIRA_HOME/overrides.sh" list 2>/dev/null)"
-        while IFS=' ' read -r _ov_name _ov_bead _ov_state; do
-            [ -n "${_ov_name:-}" ] || continue
-            case "$_ov_state" in
-                retired) continue ;;
-                failed:*) _ov_failed=$((_ov_failed+1)) ;;
-            esac
-            _ov_n=$((_ov_n+1))
-            _ov_list="${_ov_list:+$_ov_list,}${_ov_name}:${_ov_bead}"
-        done <<< "$_ov_out"
-        echo "SP_OVERRIDES_N=$_ov_n"
-        echo "SP_OVERRIDES_FAILED=$_ov_failed"
-        echo "SP_OVERRIDES_LIST='$_ov_list'"
-        unset _ov_out _ov_n _ov_failed _ov_line _ov_name _ov_bead _ov_state _ov_list
-    else
-        echo "SP_OVERRIDES_N=?"
-        echo "SP_OVERRIDES_FAILED=?"
-        echo "SP_OVERRIDES_LIST=''"
-    fi
+    local _ov_out _ov_n=0 _ov_failed=0 _ov_line _ov_name _ov_bead _ov_state _ov_list=""
+    _ov_out="$(overrides.sh list 2>/dev/null)"
+    while IFS=' ' read -r _ov_name _ov_bead _ov_state; do
+        [ -n "${_ov_name:-}" ] || continue
+        case "$_ov_state" in
+            retired) continue ;;
+            failed:*) _ov_failed=$((_ov_failed+1)) ;;
+        esac
+        _ov_n=$((_ov_n+1))
+        _ov_list="${_ov_list:+$_ov_list,}${_ov_name}:${_ov_bead}"
+    done <<< "$_ov_out"
+    echo "SP_OVERRIDES_N=$_ov_n"
+    echo "SP_OVERRIDES_FAILED=$_ov_failed"
+    echo "SP_OVERRIDES_LIST='$_ov_list'"
+    unset _ov_out _ov_n _ov_failed _ov_line _ov_name _ov_bead _ov_state _ov_list
 
     # gate-run/ — live gate runs. LIVENESS FROM /proc ON argv, never from directory existence
     # or pgrep -f (law-absence-needs-a-positive-control). Nothing prunes gate-run/, so stale
@@ -966,7 +960,7 @@ for t, i in aged[:20]:
     # file on any HIST_COLS change, discarding all token history. Sparklines are bucketed
     # from timestamps on disk and need no accumulated series.
     bdjson list --all --limit 0 --label "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" 2>/dev/null | \
-    python3 "$HERE/cockpit-sparklines.py" "$SPIRA_RUN/landing.log" 2>/dev/null
+    cockpit-sparklines.py "$SPIRA_RUN/landing.log" 2>/dev/null
 
 
     # ---- TOKENS: what the account is spending, and which half is spending it ------------
@@ -980,7 +974,7 @@ for t, i in aged[:20]:
     # every pass at all. The full corpus is billions of tokens of history and re-reading it
     # here would make the instrument cost more than the thing it measures. Do not "simplify"
     # that away by calling `report`.
-    "$HERE/tokens.sh" env 2>/dev/null \
+    tokens.sh env 2>/dev/null \
       || { for k in SP_TOK_WINDOW_H SP_TOK_AEON_WIN SP_TOK_ARC_WIN SP_TOK_SESS_WIN SP_TOK_WIN \
                     SP_TOK_AEON_TURNS SP_TOK_ARC_TURNS SP_TOK_SESS_TURNS \
                     SP_TOK_AEON_CTX SP_TOK_ARC_CTX SP_TOK_SESS_CTX \
@@ -1229,19 +1223,17 @@ else:
     # by name, and the way a pair like this drifts is that one side is edited and the other
     # is not — which is findable by grep only if both sides spell the key.
     _y_reds="?"; _y_def="?"; _y_fault="?"; _y_unk="?"; _y_solo="?"; _y_conc="?"; _y_worst="?"
-    if [ -r "$HERE/yield.sh" ]; then
-        while IFS='=' read -r _k _v; do
-            case "$_k" in
-                YIELD_REDS)     _y_reds="$_v" ;;
-                YIELD_DEFECT)   _y_def="$_v" ;;
-                YIELD_FAULT)    _y_fault="$_v" ;;
-                YIELD_UNKNOWN)  _y_unk="$_v" ;;
-                YIELD_SOLO_MED) _y_solo="$_v" ;;
-                YIELD_CONC_MED) _y_conc="$_v" ;;
-                YIELD_TOP_FAULT) _y_worst="$_v" ;;
-            esac
-        done < <(SPIRA_RUN="$SPIRA_RUN" bash "$HERE/yield.sh" report 2>/dev/null)
-    fi
+    while IFS='=' read -r _k _v; do
+        case "$_k" in
+            YIELD_REDS)     _y_reds="$_v" ;;
+            YIELD_DEFECT)   _y_def="$_v" ;;
+            YIELD_FAULT)    _y_fault="$_v" ;;
+            YIELD_UNKNOWN)  _y_unk="$_v" ;;
+            YIELD_SOLO_MED) _y_solo="$_v" ;;
+            YIELD_CONC_MED) _y_conc="$_v" ;;
+            YIELD_TOP_FAULT) _y_worst="$_v" ;;
+        esac
+    done < <(SPIRA_RUN="$SPIRA_RUN" yield.sh report 2>/dev/null)
     echo "SP_YIELD_REDS=$_y_reds"
     echo "SP_YIELD_DEFECT=$_y_def"
     echo "SP_YIELD_FAULT=$_y_fault"
@@ -1252,7 +1244,7 @@ else:
 
     # ---- suite-times: last-run sum and wall, from run/tsd/ -----------------
     local _st_sum="?" _st_wall="?"
-    local _st_json; _st_json="$(bash "$HERE/tsd-query.sh" last-run 2>/dev/null)"
+    local _st_json; _st_json="$(tsd-query.sh last-run 2>/dev/null)"
     if [ -n "$_st_json" ]; then
         read -r _st_sum _st_wall <<< "$(printf '%s' "$_st_json" | python3 -c '
 import json, sys
@@ -2841,7 +2833,7 @@ PY
 # every one of its keys read '?' forever (sp-4doni). Same pattern as the missing `queue`
 # arm above: the function was real, the seam to invoke it in production was not.
 sending_keys() {
-    python3 "$HERE/cockpit-metrics.py" \
+    cockpit-metrics.py \
         "$SPIRA_RUN/sentinel.log" "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null || {
         # The script itself already turns internal failures into per-key '?' — this
         # only covers it not running at all (missing python3, bad path).

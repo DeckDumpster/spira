@@ -41,7 +41,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # COCK may be overridden from the environment for testing; normal operation uses cockpit.sh.
-: "${COCK:=$HERE/cockpit.sh}"
+: "${COCK:=$(command -v cockpit.sh)}"
 
 SNAP="$SPIRA_RUN/cockpit.env"
 # FRAG_DIR may be overridden from the environment for testing.
