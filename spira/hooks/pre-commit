@@ -16,27 +16,19 @@
 # actually runs. Resolved relative to this file, so it works in a worktree and in a clone at
 # any path.
 #
-# scratch-fence moved to spira-lint (sp-ekkak). Resolved the way the rest of the harness
-# resolves a Rust tool, in order, because an aeon worktree neither sets SPIRA_LINT_BIN nor
-# installs a release: an already-set SPIRA_LINT_BIN; else conf.sh's spira_bin (the operator's
-# installed release); else this worktree's own build, aeon profile before release (aeon
-# worktrees build crates for their own unit tests and rarely carry an installed release).
-# Fails closed — refuses the commit, naming what to build — only when none of those
-# resolves to an executable; it never silently skips the check.
+# scratch-fence moved to spira-lint (sp-ekkak). Every tool here — exclude.sh, spira-lint,
+# branch-guard.sh — is invoked by bare name on the PATH the launcher set (sp-gypjk): the
+# worktree creator points core.hooksPath at the release's spira/hooks and the aeon's
+# environment carries the release PATH, so the hook and the tools it runs are the
+# release's. A tool missing from PATH refuses the commit, naming it; it never silently
+# skips the check.
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
-bash "$HERE/../exclude.sh" staged || exit 1
-ROOT="$(cd "$HERE/../.." && pwd)"
-[ -x "${SPIRA_LINT_BIN:-}" ] || SPIRA_LINT_BIN="$( . "$HERE/../conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_LINT_BIN:-}")"
-if [ ! -x "${SPIRA_LINT_BIN:-}" ]; then
-    # path-ok: the last-resort fallback the header comment names, tried after spira_bin.
-    for _cand in "$ROOT/target/aeon/spira-lint" "$ROOT/target/release/spira-lint"; do
-        [ -x "$_cand" ] && { SPIRA_LINT_BIN="$_cand"; break; }
-    done
-fi
-[ -x "${SPIRA_LINT_BIN:-}" ] || {
-    echo "pre-commit: spira-lint is not built — build it (cargo build -p spira-lint), install a release, or set SPIRA_LINT_BIN — refusing to commit unchecked" >&2
-    exit 1
-}
-"$SPIRA_LINT_BIN" --only scratch-fence || exit 1
-exec bash "$HERE/../branch-guard.sh" staged
+for _t in exclude.sh spira-lint branch-guard.sh; do
+    command -v "$_t" >/dev/null 2>&1 || {
+        echo "pre-commit: $_t is not on PATH — the launcher sets PATH to a release; refusing to commit unchecked" >&2
+        exit 1
+    }
+done
+exclude.sh staged || exit 1
+spira-lint --only scratch-fence || exit 1
+exec branch-guard.sh staged

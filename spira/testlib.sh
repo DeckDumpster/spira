@@ -85,6 +85,15 @@ _TL_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$_TL_SELF/suite-covers.sh"
 _TL_TIER="$(suite_tier_of "${BASH_SOURCE[1]:-$0}")"
 _TL_UC="$(suite_uc_of "${BASH_SOURCE[1]:-$0}")"
+# THE SUITE'S PATH (sp-gypjk; interim until sp-isom7). Every Spira tool is invoked by its
+# bare name on a PATH the launcher sets — for a suite, testenv. Today's testenv hands a suite
+# the tree under test's build as SPIRA_ARTIFACTS rather than as PATH, so this library, which
+# every suite sources first, puts that build and this tree's own spira/ at the FRONT of PATH:
+# the same two directories a release puts there (bin/, spira/), so a suite resolves tools
+# exactly the way production does. sp-isom7 makes testenv stage the tree as a release and
+# set PATH itself; this block is deleted then.
+PATH="${SPIRA_ARTIFACTS:+$SPIRA_ARTIFACTS:}$_TL_SELF:$PATH"
+export PATH
 unset _TL_SELF
 
 _tl_init() {
@@ -189,33 +198,6 @@ nowant() {  # nowant <name> <needle> <haystack>
 
 wantrc() {  # wantrc <name> <expected-rc> <actual-rc>
     [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted rc=$2 got rc=$3"
-}
-
-# testlib_spira_config_bin — a spira-config binary for a suite that sources conf.sh OUTSIDE
-# this checkout's own target/ (a scratch clone, a fixture harness tree with no Cargo build
-# of its own): conf.sh's spira.toml auto-convert shells out to this binary (sp-zs04v.2).
-# Resolution order: $SPIRA_CONFIG_BIN if already set and executable (a caller, e.g. a
-# release's own suite run, that has already resolved one), then $SPIRA_ARTIFACTS/spira-config
-# — testenv's own artifact set, which every profile (aeon or release) guarantees holds this
-# binary (testenv/DESIGN.md §2.1 D8, sp-gjx1b: an aeon-profile gate was reading only the
-# release-profile fallback below and skipping "no spira-config binary found" on every one of
-# these suites), then $HERE/../bin/spira-config (what testenv-batch.sh builds once per batch,
-# sp-w56nr), then $HERE/../target/release — a bare `cargo build --release` checkout. Never
-# builds one: a suite that cold-builds spira-config on every run of its own cost ~950
-# suite-seconds across a corpus (sp-w56nr). Prints the resolved path on success; prints
-# nothing and returns 1 when none exists — the caller decides whether that is its own skip
-# or its own bail.
-testlib_spira_config_bin() {
-    local bin
-    if [ -n "${SPIRA_CONFIG_BIN:-}" ] && [ -x "$SPIRA_CONFIG_BIN" ]; then
-        printf '%s' "$SPIRA_CONFIG_BIN"
-        return 0
-    fi
-    bin="${SPIRA_ARTIFACTS:-}/spira-config"
-    [ -x "$bin" ] || bin="$HERE/../bin/spira-config"
-    [ -x "$bin" ] || bin="$HERE/../target/release/spira-config"
-    [ -x "$bin" ] || return 1
-    printf '%s' "$bin"
 }
 
 # report_cargo <out-file> <rc> — one ok/bad per `test <path> ... ok|FAILED` line a `cargo

@@ -302,7 +302,7 @@ bdjson() { bdq "$@" --json 2>/dev/null | json_only; }
 # stdout is spira-lc's own reply. Same timeout-wrapped-external-tool shape as ghq above,
 # and the same reason: this is the one thing outside the harness's own state a caller must
 # not hang on.
-lcq() { timeout "${SPIRA_LC_TIMEOUT:-30}" "${SPIRA_LC_BIN:?}" "$@"; }
+lcq() { timeout "${SPIRA_LC_TIMEOUT:-30}" spira-lc "$@"; }
 
 # ask_already_open <subject> -> 0 when an OPEN operator ask already carries that subject.
 #
@@ -374,13 +374,12 @@ for i in rows:
 # put nine identical decisions in his pane in one day.
 spira_ask_machinery() {  # <bead> <branch> <repo> <outcome> <reason> <count> <gate output>
     local id="$1" br="$2" repo="$3" outcome="$4" reason="$5" n="$6" out="$7"
-    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
     ask_already_open "$br cannot be judged" && return 0
     local _subj="$br cannot be judged: $outcome x$n in a row ($reason)"
-    local _dflt="raise the budget or clear the contention this reason names, then let the next pass take it; if it is not obvious, run \`$SPIRA_HOME/gate.sh $br $repo\` by hand and read the whole output"
+    local _dflt="raise the budget or clear the contention this reason names, then let the next pass take it; if it is not obvious, run \`gate.sh $br $repo\` by hand and read the whole output"
     local _why="$outcome means the machinery could not reach a verdict — the branch has NOT been judged and has NOT been charged, and $id is not at fault. It has now failed to be judged $n times, so this is no longer a queue clearing itself. Nothing on $br can land until a verdict is reached, and every other branch of $repo is behind the same fault."
     local _ev; _ev="$(printf '%s' "$out" | tail -20)"
-    "$SPIRA_HOME/mail.sh" send operator \
+    mail.sh send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind question \
@@ -406,13 +405,12 @@ MAILEOF
 # and names every branch the fault touched.
 spira_ask_machinery_class() {  # <repo> <reason> <branches-csv> <outcome> <count> <gate output>
     local repo="$1" reason="$2" branches="$3" outcome="$4" n="$5" out="$6"
-    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
     ask_already_open "$repo cannot be judged: $outcome ($reason)" && return 0
     local _subj="$repo cannot be judged: $outcome x$n in a day ($reason) — $branches"
     local _dflt="this is one machinery fault behind every branch named above, not one per branch; fix the cause this reason names, then let the next pass take all of them"
     local _why="$outcome/$reason means the machinery could not reach a verdict for any of these branches — none of them is at fault and none has been charged. It has recurred $n times across $repo within a day, so this is escalated once for the class rather than once per branch."
     local _ev; _ev="$(printf '%s' "$out" | tail -20)"
-    "$SPIRA_HOME/mail.sh" send operator \
+    mail.sh send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind question \
@@ -512,7 +510,6 @@ spira_is_generated_file() {
 spira_ask_rebase_loop() {  # <bead> <branch> <repo-name> <requeue-count> <conflicts> <other-beads> [<repo-dir> <base>]
     local id="$1" br="$2" name="$3" n="$4" conflicts="$5" others="$6"
     local repo_dir="${7:-}" base_ref="${8:-}"
-    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
     # Fetch bead title and status so the event names the work and its current state.
     local bead_title bead_status
     bead_title="$(bdjson show "$id" 2>/dev/null | python3 -c '
@@ -576,7 +573,7 @@ print(d[0].get("title", "") if d else "")' 2>/dev/null)"
     if [ -n "$tip_short" ] && [ -n "$ahead" ]; then
         _extra="${_extra:+$_extra$'\n'}Branch: ${tip_short} (${ahead} commit(s) ahead of ${base_ref})."
     fi
-    "$SPIRA_HOME/mail.sh" send concierge \
+    mail.sh send concierge \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind note <<MAILEOF >/dev/null 2>&1
@@ -605,14 +602,13 @@ MAILEOF
 # Deduped on "$br red recurring $reason_class" so one open ask suppresses re-escalation.
 spira_ask_red_recurring() {  # <bead> <branch> <repo-name> <reason-class> <first-red-epoch>
     local id="$1" br="$2" name="$3" reason_class="$4" first_epoch="${5:-0}"
-    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
     ask_already_open "$br red recurring $reason_class" && return 0
     local elapsed_h=0
     [ "${first_epoch:-0}" -gt 0 ] && \
         elapsed_h=$(( ( $(date +%s) - first_epoch ) / 3600 ))
     local _subj="$br red recurring: $reason_class twice on $id in $name"
     local _dflt="investigate why $br cannot land ($reason_class); close the bead if the work is superseded, or rebase by hand if the root cause is external"
-    "$SPIRA_HOME/mail.sh" send operator \
+    mail.sh send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind question \
@@ -631,11 +627,10 @@ MAILEOF
 # A refusal is an infrastructure fault, not the work's fault — the bead stays closed.
 spira_ask_rebase_refused() {  # <bead> <branch> <repo-name> <reason>
     local id="$1" br="$2" name="$3" reason="$4"
-    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
     ask_already_open "$br rebase refused" && return 0
     local _subj="$br rebase refused in $name: $reason"
     local _dflt="fix the infrastructure; $id stays closed and its branch will land on the next pass"
-    "$SPIRA_HOME/mail.sh" send operator \
+    mail.sh send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind question \
@@ -655,10 +650,9 @@ MAILEOF
 # spira_ask_budget_deferred — branch deferred by budget exhaustion N consecutive passes.
 spira_ask_budget_deferred() {  # <branch> <repo> <count>
     local br="$1" name="$2" n="$3"
-    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
     ask_already_open "$br budget-deferred" && return 0
     local _subj="$br budget-deferred: $n consecutive passes in $name"
-    "$SPIRA_HOME/mail.sh" send operator \
+    mail.sh send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind alert <<MAILEOF >/dev/null 2>&1
@@ -684,14 +678,13 @@ MAILEOF
 # which is the failure law-alerts-must-be-actionable names.
 spira_ask_refresh_loop() {  # <repo> <repo-name> <branch> <bead> <base> <n>
     local repo="$1" name="$2" br="$3" id="$4" base="$5" n="$6" behind
-    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
     ask_already_open "$id refresh cap" && return 0
     behind="$(git -C "$repo" rev-list --count "$br..$base" 2>/dev/null)" || behind="?"
     local _subj="Spira: $id's pull request has been rebased $n time(s) and still has not merged"
     local _dflt="reopen $id at P0 so an aeon owns the pull request's own failure, and leave the branch alone until it does"
     local _ev; _ev="$(printf 'BRANCH    %s in %s\nBASE      %s, %s commit(s) ahead of the branch\nREFRESHED %s time(s); the cap is %s\n\n%s\n' \
          "$br" "$name" "$base" "$behind" "$n" "${SPIRA_PR_REFRESH_MAX:-5}" "$(bead_context "$id")")"
-    "$SPIRA_HOME/mail.sh" send operator \
+    mail.sh send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind question \
@@ -720,11 +713,10 @@ MAILEOF
 # information even if a previous ask about the same bead was already closed.
 spira_ask_timeout_loop() {  # <bead> <branch> <fayth> <cap-seconds> <timeout-count>
     local id="$1" br="$2" fayth="$3" cap="$4" n="$5"
-    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
     ask_already_open "$id timed out $n" && return 0
     local _subj="$id timed out $n times in the $fayth lane (${cap}s cap)"
     local _dflt="move the bead to a persona with no cap (e.g. a builder) by replacing the 'incident' label with 'plan', or split the work into pieces that fit the lane"
-    "$SPIRA_HOME/mail.sh" send operator \
+    mail.sh send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind question \
@@ -768,11 +760,10 @@ land_escalate() {        # land_escalate <subject-tail> <evidence>
     now="$(date +%s)"; last=0
     [ -f "$cd" ] && last="$(cat "$cd" 2>/dev/null || echo 0)"
     [ $(( now - last )) -lt "${SPIRA_LAND_ESCALATE_EVERY:-3600}" ] && return 0
-    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
     echo "$now" > "$cd"
     local _subj="Spira is landing nothing — $why"
-    local _dflt="run \`$SPIRA_LANDING_PASS_BIN land\` by hand to see the failure, then file the fix as a bead"
-    "$SPIRA_HOME/mail.sh" send operator \
+    local _dflt="run \`landing-pass land\` by hand to see the failure, then file the fix as a bead"
+    mail.sh send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind question \
@@ -1085,10 +1076,10 @@ roster_warnings() {      # roster_warnings <roster> -> a WARN line per fayth lef
 # (cockpit, a sweep) must see a fayth edited after it started, and spira_toml_resolve's own
 # mtime check keeps a call that finds nothing stale cheap.
 persona_model() {
-    local name="$1" def="${2:-claude-opus-5}" bin toml v=""
+    local name="$1" def="${2:-claude-opus-5}" toml v=""
     toml="$(spira_toml_resolve)"
-    if [ -n "$toml" ] && bin="$(spira_config_bin)"; then
-        v="$("$bin" get "persona.$name.model" "$toml" 2>/dev/null)"
+    if [ -n "$toml" ]; then
+        v="$(spira-config get "persona.$name.model" "$toml" 2>/dev/null)"
     fi
     printf '%s' "${v:-$def}"
 }
@@ -1590,7 +1581,7 @@ bulk_ready_by_fayth() {
     [ -n "$parts" ] || return 0
     printf '%s' "$raw" | json_only \
         | PARTS="$parts" SPIRA_QUEUE_WAIT_LABEL="${SPIRA_QUEUE_WAIT_LABEL:-}" \
-          SPIRA_SUBMITTED_LABEL="${SPIRA_SUBMITTED_LABEL:-}" python3 "$SPIRA_HOME/ready-bucket.py"
+          SPIRA_SUBMITTED_LABEL="${SPIRA_SUBMITTED_LABEL:-}" ready-bucket.py
 }
 
 # express_ready_in_task_pool <task-fayths> <express-label>
@@ -2194,7 +2185,7 @@ release_claim() {        # release_claim <id> -> 0 if the assignee is now clear
 # caller must fail closed on that — never assume READY for a row it cannot read.
 lc_bead_row() {
     local id="$1" out
-    out="$("$SPIRA_LC_BIN" show "$id" 2>/dev/null)" || return 1
+    out="$(spira-lc show "$id" 2>/dev/null)" || return 1
     printf '%s' "$out" | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
@@ -2211,7 +2202,7 @@ print("%s\t%s\t%s\t%s" % (b.get("state") or "", b.get("version") if b.get("versi
 # refused, 2 cannot tell (the machine was unreachable — never treated as a refusal, so a
 # caller that retries a "cannot tell" is safe and one that retries a real refusal is not).
 lc_event_bead() {
-    "$SPIRA_LC_BIN" event bead "$1" --expect "$2" --version "$3" --actor "$4" --kind "$5" >/dev/null 2>&1
+    spira-lc event bead "$1" --expect "$2" --version "$3" --actor "$4" --kind "$5" >/dev/null 2>&1
 }
 
 # lc_claim_bead <id> <holder> <lease-until-epoch> [<stack-json> <stack-depth>
@@ -2575,7 +2566,7 @@ world_gate() {
 summon_refill_argv() {
     local bin; bin="$(command -v "${SPIRA_SUMMON:-systemd-run}" 2>/dev/null || printf '%s' "${SPIRA_SUMMON:-systemd-run}")"
     printf -- '--property=ExecStopPost=%s --user --collect --quiet %s --summon-only' \
-        "$bin" "${SPIRA_SENTINEL_BIN:-$(spira_bin sentinel 2>/dev/null)}"
+        "$bin" "$(command -v sentinel || printf sentinel)"
 }
 
 # summon_argv <fayth> -> systemd-run --property/--setenv flags shared by every summon path
@@ -2726,13 +2717,14 @@ summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label]
     # 1.6s of CPU, leaving an empty log and a sentinel that cheerfully reported "summoned"
     # every two minutes. systemd-run puts the aeon in its own cgroup, quota and journal.
     log "CHECK7 $f: $r ready, $free free — summoning${require_label:+, restricted to '$require_label'}"
-    [ -x "${SPIRA_AEON_BIN:-}" ] || { log "CHECK7 $f: aeon binary not built (SPIRA_AEON_BIN) — not summoning"; return 1; }
+    # systemd-run is handed the PATH-resolved aeon (a transient unit has no launcher PATH).
+    local _aeon; _aeon="$(command -v aeon)" || { log "CHECK7 $f: aeon not found on PATH — not summoning"; return 1; }
     local _sargv; mapfile -t _sargv < <(summon_argv "$f")
     "${SPIRA_SUMMON:-systemd-run}" --user --collect --quiet \
         --unit="spira-aeon-$f-$(date +%s)" \
         "${_sargv[@]}" \
         ${require_label:+--setenv=SPIRA_REQUIRE_LABEL="$require_label"} \
-        "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$f" 2>/dev/null
+        "$_aeon" --home "$SPIRA_HOME" "$f" 2>/dev/null
     local _rc=$?
     [ "$_rc" -eq 0 ] && SUMMON_FAYTH_CACHED_READY=$(( r > 0 ? r - 1 : 0 ))
     return "$_rc"
@@ -5855,7 +5847,7 @@ detect_unclaimable_ready() {
         local _det_args; mapfile -t _det_args < <(ready_raw_args)
         bdjson "${_det_args[@]}" 2>/dev/null
     fi \
-    | PARTS="$parts" ALL_PARTS="$all_parts" python3 "$SPIRA_HOME/unclaimable.py" 2>/dev/null
+    | PARTS="$parts" ALL_PARTS="$all_parts" unclaimable.py 2>/dev/null
 }
 
 # file_unclaimable_incidents — for each UNCLAIMABLE line in detect_unclaimable_ready output,
@@ -7373,9 +7365,8 @@ queue_owner_refused() {
 # was told" meant in practice before this existed.
 queue_notify_concierge() {
     local name="$1" subject="$2" body="$3"
-    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
     printf '## Alert\n%s\n' "$body" \
-    | "$SPIRA_HOME/mail.sh" send "${SPIRA_MAIL_SESSION_MAILBOX:-concierge}" \
+    | mail.sh send "${SPIRA_MAIL_SESSION_MAILBOX:-concierge}" \
         --from "Spira Queue <queue@spira>" \
         --subject "Merge queue: $name $subject" \
         --kind alert \
@@ -8276,15 +8267,13 @@ LAND_EVICTION_REASONS="ejected conflicts-with-base rebase-suite-red"
 # caller's exit status — an unbuilt or missing binary means the family stays unwritten, not
 # that landing itself fails.
 _tsd_landing_event() {
-    local bin="${SPIRA_TSD_BIN:-}"
-    [ -n "$bin" ] && [ -x "$bin" ] || return 0
     local id="$1" state="$2" tip="${3:-none}" reason="${4:-}"
     if [ -n "$reason" ]; then
-        "$bin" --family landing-event --root "${SPIRA_RUN:-}" \
+        tsd-write --family landing-event --root "${SPIRA_RUN:-}" \
             --field-str "bead=$id" --field-str "state=$state" --field-str "tip=$tip" \
             --field-str "reason=$reason" >/dev/null 2>&1 || true
     else
-        "$bin" --family landing-event --root "${SPIRA_RUN:-}" \
+        tsd-write --family landing-event --root "${SPIRA_RUN:-}" \
             --field-str "bead=$id" --field-str "state=$state" --field-str "tip=$tip" \
             >/dev/null 2>&1 || true
     fi
@@ -8305,10 +8294,8 @@ _tsd_kv_field() {
 # aeon-session row (run/tsd/), reusing the fields session_result_fields already computed
 # for ledger_done's own ledger line. Best-effort, like _tsd_landing_event.
 _tsd_aeon_session() {
-    local bin="${SPIRA_TSD_BIN:-}"
-    [ -n "$bin" ] && [ -x "$bin" ] || return 0
     local bead="$1" fayth="$2" rc="$3" status="$4" fields="$5"
-    "$bin" --family aeon-session --root "${SPIRA_RUN:-}" \
+    tsd-write --family aeon-session --root "${SPIRA_RUN:-}" \
         --field-str "bead=$bead" --field-str "fayth=$fayth" \
         --field "rc=$rc" --field-str "status=$status" \
         --field "wall_s=$(_tsd_kv_field "$fields" wall_s)" \
@@ -8323,8 +8310,6 @@ _tsd_aeon_session() {
 # here. Reads the fragment directly, never the merged cockpit.env: the fragment is this
 # probe's own fresh sample, and the merge's first-wins rule can otherwise repeat a stale one.
 _tsd_slots_sample() {
-    local bin="${SPIRA_TSD_BIN:-}"
-    [ -n "$bin" ] && [ -x "$bin" ] || return 0
     local frag="$1" k v
     local live="?" ceiling="?" lanes_live="?" ready="?" paused="?"
     while IFS='=' read -r k v; do
@@ -8336,7 +8321,7 @@ _tsd_slots_sample() {
             SP_SLOTS_CAPACITY_PAUSED) paused="$v" ;;
         esac
     done < "$frag"
-    "$bin" --family slots --root "${SPIRA_RUN:-}" \
+    tsd-write --family slots --root "${SPIRA_RUN:-}" \
         --field "live=$live" --field "ceiling=$ceiling" --field "lanes_live=$lanes_live" \
         --field "ready=$ready" --field "capacity_paused=$paused" \
         >/dev/null 2>&1 || true
@@ -8345,9 +8330,7 @@ _tsd_slots_sample() {
 # _tsd_sentinel_phase <pass> <check> <secs> — appends one CHECK's wall time for one
 # sentinel.sh pass (run/tsd/sentinel-phase). Best-effort, like every tsd producer here.
 _tsd_sentinel_phase() {
-    local bin="${SPIRA_TSD_BIN:-}"
-    [ -n "$bin" ] && [ -x "$bin" ] || return 0
-    "$bin" --family sentinel-phase --root "${SPIRA_RUN:-}" \
+    tsd-write --family sentinel-phase --root "${SPIRA_RUN:-}" \
         --field-str "pass=$1" --field-str "check=$2" --field "secs=$3" \
         >/dev/null 2>&1 || true
 }
@@ -8362,11 +8345,9 @@ _TSD_ROUND_PHASES=" build corpus attribute rerun land publish "
 # timing (run/tsd/round). TIMINGS ONLY: no state field exists on this row to carry one.
 # Best-effort, like every tsd producer here.
 _tsd_round_phase() {
-    local bin="${SPIRA_TSD_BIN:-}"
-    [ -n "$bin" ] && [ -x "$bin" ] || return 0
     local batch_id="$1" phase="$2" secs="$3" members="${4:-0}" reds="${5:-0}"
     case "$_TSD_ROUND_PHASES" in *" $phase "*) ;; *) return 0 ;; esac
-    "$bin" --family round --root "${SPIRA_RUN:-}" \
+    tsd-write --family round --root "${SPIRA_RUN:-}" \
         --field-str "batch_id=$batch_id" --field-str "phase=$phase" \
         --field "secs=$secs" --field "members=$members" --field "reds=$reds" \
         >/dev/null 2>&1 || true
@@ -8380,11 +8361,9 @@ _TSD_ESCAPE_CLASSES=" mapping_gap gate_gap environment_gap flake "
 # escape): a round red attributed to <member> on <suite>, classified per sp-6vd2s
 # (escape-classify.sh). Best-effort, like every tsd producer here.
 _tsd_escape() {
-    local bin="${SPIRA_TSD_BIN:-}"
-    [ -n "$bin" ] && [ -x "$bin" ] || return 0
     local member="$1" suite="$2" class="$3" batch_id="${4:-}"
     case "$_TSD_ESCAPE_CLASSES" in *" $class "*) ;; *) return 0 ;; esac
-    "$bin" --family escape --root "${SPIRA_RUN:-}" \
+    tsd-write --family escape --root "${SPIRA_RUN:-}" \
         --field-str "member=$member" --field-str "suite=$suite" --field-str "class=$class" \
         --field-str "batch_id=$batch_id" \
         >/dev/null 2>&1 || true
@@ -8992,7 +8971,6 @@ gh_issue_ask_unlanded() {  # gh_issue_ask_unlanded <bead-id> <external-ref> [dra
         return 0
     fi
 
-    [ -x "${SPIRA_HOME}/mail.sh" ] || return 0
     _subj="Close GitHub issue $ext_ref for bead $id"
     # Backfill: if an existing ask blocks this work bead, convert to relates_to.
     _gh_close_ask_unblock "$_subj" "$id"
@@ -9008,7 +8986,7 @@ gh_issue_ask_unlanded() {  # gh_issue_ask_unlanded <bead-id> <external-ref> [dra
 
     _dflt="${draft:-post a comment explaining the resolution and close the issue}"
 
-    _err="$("${SPIRA_HOME}/mail.sh" send operator \
+    _err="$(mail.sh send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind question \
@@ -9353,7 +9331,7 @@ spira_git_push() {
     local repo="$1"; shift
     if [ -n "${SPIRA_GH_APP_ID:-}" ] && [ -n "${SPIRA_GH_APP_INSTALLATION_ID:-}" ]; then
         git -C "$repo" \
-            -c "credential.helper=${SPIRA_HOME}/spira/git-credential-app.sh" \
+            -c "credential.helper=!git-credential-app.sh" \
             -c "url.https://github.com/.insteadOf=git@github.com:" \
             push "$@"
     else

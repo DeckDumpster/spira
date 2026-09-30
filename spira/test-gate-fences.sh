@@ -45,7 +45,7 @@ want "and reads its fence list from gate_fence_list, not a second literal" \
 
 # THE FENCES PORTED TO spira-lint are no longer files on the list above; the gate runs
 # each rule through the binary instead. Their behaviour is `cargo test -p spira-lint`.
-for _rule in binary-path-fence payload-argv-lint config-fence fence-scripts \
+for _rule in payload-argv-lint config-fence fence-scripts \
              testdb-mode-lint bd-stdin-lint incident-cause-lint \
              inventory literal-lint scratch-fence wiki-add-fence tmux-scope-fence gh-intake-lint; do
     want "gate-spira.sh runs spira-lint's $_rule rule" \

@@ -310,7 +310,6 @@ pub fn lines(content: &[u8]) -> Vec<&[u8]> {
 pub fn all_rules() -> Vec<Box<dyn Rule>> {
     vec![
         Box::new(rules::config_fence::ConfigFence),
-        Box::new(rules::binary_path_fence::BinaryPathFence),
         Box::new(rules::payload_argv::PayloadArgv),
         Box::new(rules::fence_scripts::FenceScripts),
         Box::new(rules::testlib_migrated::TestlibMigrated),
@@ -451,13 +450,12 @@ mod tests {
         let t = TempDir::new("fixture");
         t.git_init();
         // The planted strings are assembled with concat! so this source file itself carries
-        // none of them — config-fence, binary-path-fence and deps-lint all scan *.rs.
+        // none of them — config-fence and deps-lint scan *.rs.
         let cfg_name = concat!("spira", ".toml");
-        let bin_path = concat!("target", "/release/", "reconciler");
         let prog = concat!("no-such", "-prog");
         t.write("spira/clean.sh", "#!/bin/sh\necho ok\n");
         t.write("spira/cfg.sh", &format!("#!/bin/sh\n# see {cfg_name}\n"));
-        t.write("spira/bin.sh", &format!("#!/bin/sh\nBIN=\"$R/{bin_path}\"\n"));
+        t.write("spira/bin.sh", "#!/bin/sh\nreconciler\n");
         t.write("spira/payload.sh", "#!/bin/sh\nX_JSON=\"$y\" python3 -c 'print(1)'\n");
         t.write("spira/new-fence.sh", "#!/bin/sh\n");
         t.write("spira/probe.sh", &format!("#!/bin/sh\ncommand -v {prog}\n"));
@@ -465,7 +463,6 @@ mod tests {
         t.write("spira/test-own.sh", "#!/bin/sh\n# covers: spira/clean.sh spira/gone.sh\nok() { :; }\n");
         t.write("spira/deps.toml", "[[dep]]\nname = \"git\"\n");
         t.write("spira/config-fence-allow", "");
-        t.write("spira/binary-path-fence-allow", "");
         t.write("spira/payload-argv-lint-allow", "");
         t.write("spira-lint/fence-scripts-allow", "");
         t.write("spira-lint/testlib-migrated-allow", "");
@@ -488,7 +485,6 @@ mod tests {
             lines,
             vec![
                 "config-fence: spira/cfg.sh: name".to_string(),
-                format!("binary-path-fence: spira/bin.sh:2: BIN=\"$R/{bin_path}\""),
                 "payload-argv-lint: spira/payload.sh:2: env: $X_JSON handed to python3".to_string(),
                 "fence-scripts: spira/new-fence.sh: a new bash fence/lint script — write it as a spira-lint rule instead".to_string(),
                 "testlib-migrated: spira/test-own.sh: defines its own ok()/bad()/is()/want()/nowant()/wantrc() — source testlib.sh instead".to_string(),

@@ -136,41 +136,12 @@ pub struct ConfigAllow(BTreeSet<String>);   // entry == Finding.path
   no shell. A persona that tells an agent to write the config names it, and `name` catches
   that.
 
-## Rule `binary-path-fence`
+## Rule `binary-path-fence` — deleted (sp-gypjk)
 
-Ported from `spira/binary-path-fence.sh` (sp-zv7j4).
-
-**Intent.** `conf.sh`'s `spira_bin` is the one binary resolver. A test run's only source of
-a binary is `$SPIRA_ARTIFACTS`, and production's only source is the installed release's
-`bin/`. A literal build-output path is a second resolver. It silently assumes one tree,
-until the tree in front of it is the other.
-
-**Scope.** Every tracked file (untracked files are not scanned, as before).
-
-**Violation.** A line containing `target/release/`, `target/debug/`, `target/aeon/` or
-`bin/spira-`, reported as one finding per line: `path:line: <line, leading whitespace
-stripped>`. This rule stays textual on purpose. It spans shell, Rust, Makefiles and systemd
-units, and a literal path is the same defect in each of them.
-
-**Exempt.**
-- Files ending `.md`, `.json` or `.tsv`. Prose and fixture data resolve nothing, and they
-  have no comment syntax to carry a marker.
-- Binary files (a NUL byte) and files with no non-newline byte.
-- The allow file itself, and this rule's own source
-  (`spira-lint/src/rules/binary_path_fence.rs`).
-- **A line marked `path-ok: <reason>`**, or a line whose previous line carries the marker.
-  The marker is the literal `path-ok:` followed by a non-empty reason.
-
-**Allow list.** `spira/binary-path-fence-allow`: exact repo-relative paths. A `#` starts a
-comment anywhere on a line, and the entry is trimmed.
-
-```rust
-pub struct BinaryPathAllow(BTreeSet<String>);
-```
-
-**Where the bash heuristic was wrong.** The marker was the bare substring `path-ok`, so
-`# path-ok` with no reason, or any line merely containing the word, exempted itself and
-the line after it. The tree carries no marker today, so requiring the reason costs nothing.
+Every Spira tool is invoked by its bare name on a PATH the launcher sets (design
+runtime-is-a-release, 2026-09-29), so there is no resolver left for a literal build-output
+path to be "a second one" of. The design takes no lint for this: the running system is a
+release with no checkout beside it, and a stray path fails closed on first use.
 
 ## Rule `payload-argv-lint`
 
