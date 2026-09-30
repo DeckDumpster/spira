@@ -450,7 +450,7 @@ mod tests {
             spira_run: "/run",
             home_repo: "spira",
             known_repos: known,
-            ask_label: "needs-ryan",
+            ask_label: "needs-ryan", // literal-ok: test fixture value, not a config default read at runtime.
             provenance: "foo.service on host: ?",
         }
     }

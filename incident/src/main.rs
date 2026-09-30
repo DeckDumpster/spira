@@ -100,7 +100,7 @@ impl Env {
             sop_ledger: env_or("SPIRA_SOP_LEDGER", &format!("{spira_run}/sop/applied.jsonl")),
             home_repo: env_or("SPIRA_HOME_REPO", "spira"),
             known_repos: repo_names(),
-            ask_label: env_or("SPIRA_ASK_LABEL", "needs-ryan"),
+            ask_label: env_or("SPIRA_ASK_LABEL", "needs-ryan"), // literal-ok: Rust fallback mirroring lib.sh's own default when SPIRA_ASK_LABEL is unset
             unit: env_or("SPIRA_INCIDENT_UNIT", &unit_from_cgroup()),
             path: env_or("SPIRA_INCIDENT_PATH", "?"),
             spira_run,

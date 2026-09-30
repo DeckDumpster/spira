@@ -430,13 +430,15 @@ mod tests {
 
     #[test]
     fn destructive_phrase_matches_and_is_bypassed_by_ask_label() {
-        assert_eq!(destructive_phrase("needs the world stopped", "", "plan", "needs-ryan"), Some("world stopped".to_string()));
-        assert_eq!(destructive_phrase("needs the world stopped", "", "plan,needs-ryan", "needs-ryan"), None);
+        // literal-ok: test fixture values (the ask-label argument under test), not a
+        // config default read at runtime.
+        assert_eq!(destructive_phrase("needs the world stopped", "", "plan", "needs-ryan"), Some("world stopped".to_string())); // literal-ok
+        assert_eq!(destructive_phrase("needs the world stopped", "", "plan,needs-ryan", "needs-ryan"), None); // literal-ok
         assert_eq!(
-            destructive_phrase("run systemctl restart spira-gate", "", "plan", "needs-ryan"),
+            destructive_phrase("run systemctl restart spira-gate", "", "plan", "needs-ryan"), // literal-ok
             Some("systemctl restart spira-".to_string())
         );
-        assert_eq!(destructive_phrase("ordinary title", "ordinary body", "plan", "needs-ryan"), None);
+        assert_eq!(destructive_phrase("ordinary title", "ordinary body", "plan", "needs-ryan"), None); // literal-ok
     }
 
     #[test]

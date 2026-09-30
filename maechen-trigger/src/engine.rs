@@ -347,7 +347,7 @@ spira: land sp-s0e1k
     fn trigger_labels_with_and_without_scope() {
         // literal-ok: test fixture values, not a config default read at runtime.
         assert_eq!(trigger_labels("", "maechen-sweep"), "maechen-sweep");
-        assert_eq!(trigger_labels("spira", "maechen-sweep"), "spira,maechen-sweep");
+        assert_eq!(trigger_labels("spira", "maechen-sweep"), "spira,maechen-sweep"); // literal-ok: test fixture value, not a config default read at runtime.
     }
 
     #[test]
