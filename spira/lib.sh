@@ -61,15 +61,15 @@ bdq() {
     if [ "${SPIRA_FAYTH:-}" = czar ] && [ -n "${SPIRA_CZAR_CLASS:-}" ]; then
         case "${1:-}" in
             reopen)
-                bash "$(dirname "${BASH_SOURCE[0]}")/czar-fence.sh" "${SPIRA_CZAR_CLASS}" || return 1 ;;
+                czar-fence.sh "${SPIRA_CZAR_CLASS}" || return 1 ;;
             update|close)
                 if [ "${2:-}" != "${SPIRA_CZAR_TRIGGER_BEAD:-__none__}" ]; then
-                    bash "$(dirname "${BASH_SOURCE[0]}")/czar-fence.sh" "${SPIRA_CZAR_CLASS}" || return 1
+                    czar-fence.sh "${SPIRA_CZAR_CLASS}" || return 1
                 fi ;;
         esac
     fi
     if [ -n "${SPIRA_BDJSON_FIXTURE:-}" ]; then
-        python3 "$(dirname "${BASH_SOURCE[0]}")/bdsim.py" "$SPIRA_BDJSON_FIXTURE" "$@"
+        bdsim.py "$SPIRA_BDJSON_FIXTURE" "$@"
         return $?
     fi
     # Refuse rather than fall through to bd's own auto-discovery: bd -C "" does not
@@ -5861,12 +5861,11 @@ detect_unclaimable_ready() {
 # bead that is still unclaimable on the next sentinel pass bumps the recurrence counter
 # rather than filing a duplicate.
 #
-# SPIRA_INCIDENT_SH overrides the path to incident.sh. Test suites inject a mock here;
-# production uses the default.
+# SPIRA_INCIDENT_SH overrides incident.sh (found by name on PATH). Test suites inject a
+# mock here; production uses the default.
 file_unclaimable_incidents() {   # file_unclaimable_incidents <detect_unclaimable_ready output>
     local line bid reason inc
-    inc="${SPIRA_INCIDENT_SH:-$(dirname "$0")/incident.sh}"
-    [ -x "$inc" ] || return 0
+    inc="${SPIRA_INCIDENT_SH:-incident.sh}"
     while IFS= read -r line; do
         case "$line" in UNCLAIMABLE\ *) ;; *) continue ;; esac
         bid="${line#UNCLAIMABLE }"; bid="${bid%% —*}"

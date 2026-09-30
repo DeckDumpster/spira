@@ -48,14 +48,13 @@ trap '[ "$_skew_init_done" = 0 ] && exit 3' EXIT
 _skew_init_done=1
 trap - EXIT
 
-EXCLUDE="$(dirname "$0")/exclude.sh"
 
 # harness_in <repo-path> -> the harness directories in its WORKING TREE, one per line.
 # Exit 1 when it holds none, which is the ordinary answer for most repositories.
 harness_in() {
     local root="$1"
     [ -e "$root/.git" ] || return 1
-    git -C "$root" ls-files 2>/dev/null | bash "$EXCLUDE" harness-in 2>/dev/null
+    git -C "$root" ls-files 2>/dev/null | exclude.sh harness-in 2>/dev/null
 }
 
 # harness_in_ref <repo-path> <ref> -> the harness directories in that REF, one per line.
@@ -63,7 +62,7 @@ harness_in() {
 # contain after this branch merges, and the branch may be the thing that adds the copy.
 harness_in_ref() {
     local root="$1" ref="$2"
-    git -C "$root" ls-tree -r --name-only "$ref" 2>/dev/null | bash "$EXCLUDE" harness-in 2>/dev/null
+    git -C "$root" ls-tree -r --name-only "$ref" 2>/dev/null | exclude.sh harness-in 2>/dev/null
 }
 
 # =======================================================================================

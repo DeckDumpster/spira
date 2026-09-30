@@ -225,7 +225,6 @@ _provenance() {
 # the same incident returning. One bead that says "red 6 times over 2 days" lets Ops
 # see the pattern; a chain of six single-occurrence beads does not (sp-srgr6).
 # --------------------------------------------------------------------------------------
-_DEDUP_PY="$(dirname "${BASH_SOURCE[0]}")/incident-dedup-decision.py"
 
 _dedup_incident() {      # _dedup_incident <ref> -> "open <id> <n>" | "closed <id> <n>" | nothing
     local ref="$1" _ref_label _since _r
@@ -239,7 +238,7 @@ _dedup_incident() {      # _dedup_incident <ref> -> "open <id> <n>" | "closed <i
     # external_ref is confirmed client-side. bdq adds -C "$SPIRA_DB" so the query reaches
     # the configured database, not the auto-discovered one (law-address-the-store-with-spira-bd).
     _r="$(bdq list --status open,in_progress --limit 0 --label "$_ref_label" --json 2>/dev/null \
-      | json_only | python3 "$_DEDUP_PY" open 0 "$ref" 2>/dev/null)"
+      | json_only | incident-dedup-decision.py open 0 "$ref" 2>/dev/null)"
     if [ -n "$_r" ]; then printf '%s' "$_r"; return; fi
 
     # Sub-path B: fallback for beads without the ref: label (filed by older code).
@@ -248,7 +247,7 @@ _dedup_incident() {      # _dedup_incident <ref> -> "open <id> <n>" | "closed <i
     # Skips beads that carry any ref: label — those were already checked in sub-path A.
     # Once found here, file_one adds the label so this path is not needed again.
     _r="$(bdq list --status open,in_progress --limit 0 --json 2>/dev/null \
-      | json_only | python3 "$_DEDUP_PY" open 1 "$ref" 2>/dev/null)"
+      | json_only | incident-dedup-decision.py open 1 "$ref" 2>/dev/null)"
     if [ -n "$_r" ]; then printf '%s' "$_r"; return; fi
 
     # PASS 2 — recently-closed. Only reached when no open bead matched.
@@ -260,13 +259,13 @@ _dedup_incident() {      # _dedup_incident <ref> -> "open <id> <n>" | "closed <i
     # Prints "closed <id> <closed_at>" so the caller can compute how recently
     # the bead was closed and classify the reopen as closed-while-live vs recurrence.
     _r="$(bdq list --status closed --closed-after "$_since" --limit 0 --label "$_ref_label" --json 2>/dev/null \
-      | json_only | python3 "$_DEDUP_PY" closed 0 "$ref" 2>/dev/null)"
+      | json_only | incident-dedup-decision.py closed 0 "$ref" 2>/dev/null)"
     if [ -n "$_r" ]; then printf '%s' "$_r"; return; fi
 
     # Sub-path B for closed beads: fallback for unlabeled beads. No label filter,
     # same reason as the open-bead fallback above.
     bdq list --status closed --closed-after "$_since" --limit 0 --json 2>/dev/null \
-      | json_only | python3 "$_DEDUP_PY" closed 1 "$ref" 2>/dev/null
+      | json_only | incident-dedup-decision.py closed 1 "$ref" 2>/dev/null
 }
 
 # --------------------------------------------------------------------------------------
