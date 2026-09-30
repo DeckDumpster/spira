@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "mail",
+    "auron",
     "loom",
     "cockpit/panel",
     "broker",

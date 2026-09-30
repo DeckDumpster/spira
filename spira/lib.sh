@@ -2420,8 +2420,8 @@ fayths_for_labels() {    # fayths_for_labels <labels> -> personas whose partitio
 # least.
 # world_gate <fayth> <log-prefix> -> 0 if summons are permitted, 1 if halted or draining.
 # Extracted so a second caller can share the exact check rather than a second copy of it.
-# escape.sh calls this too (sp-uyw4n, sp-2w2wu): it reaches around a broken scheduler, not
-# around a halt or drain the operator asked for.
+# aeon --escape calls this too (sp-uyw4n, sp-2w2wu; escape.sh before it, retired sp-zpaq0):
+# it reaches around a broken scheduler, not around a halt or drain the operator asked for.
 #
 # HALTED — world.sh stop writes this stamp; only world.sh start removes it. Checked before
 # drain: halt is indefinite and requires explicit operator action.
@@ -2487,8 +2487,8 @@ summon_refill_argv() {
 }
 
 # summon_argv <fayth> -> systemd-run --property/--setenv flags shared by every summon path
-# (summon_fayth, escape.sh), one argv token per line. The caller supplies its own --unit
-# name and the aeon.sh invocation that follows.
+# (summon_fayth, aeon --escape — escape.sh before it, retired sp-zpaq0), one argv token per
+# line. The caller supplies its own --unit name and the aeon invocation that follows.
 summon_argv() {
     local f="$1"
     printf '%s\n' \

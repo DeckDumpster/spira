@@ -15,11 +15,19 @@
 # mklog (a synthetic sentinel log in lib.sh's log() format) is needed here too, for the
 # wedge()/heal() fixtures below — it is duplicated from test-auron-classify.sh rather than
 # shared, since testlib.sh suites are sourced standalone with no shared-helper convention.
+#
+# auron.sh is retired into the `auron` binary (sp-zpaq0, rewrite wave 5); this suite now
+# drives that binary (`command auron --home "$SH"`) instead of `bash "$SH/auron.sh"`,
+# exactly test-aeon-sweep.sh's own `command aeon --home ...` pattern for the same reason
+# (the wrapper function below is itself named `auron`, shadowing the bare binary name).
 # tier: T2
-# covers: spira/auron.sh spira/conf.sh
+# covers: auron/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+
+command -v auron >/dev/null 2>&1 \
+    || { echo "test-auron: auron is not on PATH" >&2; exit 1; }
 
 # mklog — a synthetic sentinel log, in the format lib.sh's log() actually writes.
 #   mklog <passes> <ready> <aeons> <summoned:0|1> <complete:0|1> <last-pass-ends-at>
@@ -57,7 +65,7 @@ fi
 testdb_up auron || { echo "test-auron: could not build a fixture database"; exit 1; }
 
 SH="$TMP/spira"; RUN="$TMP/run"; mkdir -p "$SH" "$RUN"
-cp "$HERE/auron.sh" "$HERE/auron-classify.py" "$HERE/lib.sh" "$HERE/conf.sh" "$SH/"
+cp "$HERE/auron-classify.py" "$HERE/lib.sh" "$HERE/conf.sh" "$SH/"
 # ITS OWN SPIRA_HOME AND ITS OWN repo-map. Without one, SPIRA_HOME falls back to the
 # INSTALLED harness directory and this suite would read the operator's real repositories.
 printf 'brain | %s | push | origin/main | |\n' "$TMP/repo" > "$SH/repo-map"
@@ -66,7 +74,7 @@ auron() {   # auron [--report] — one run against the fixture, with a chosen da
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="${AURON_DB:-$SPIRA_DB}" \
     SPIRA_REPO="$TMP/repo" SPIRA_EXPORTER="" SPIRA_SYSTEMCTL=true \
     SPIRA_AURON_SENTINEL_LOG="$RUN/sentinel.log" \
-        "$SH/auron.sh" "$@" 2>&1
+        command auron --home "$SH" "$@" 2>&1
 }
 alert_status() {   # alert_status <key> -> "<id> <status>", or "-" if there is no bead
     bd -C "$SPIRA_DB" list --all --limit 0 --label alert --json 2>/dev/null \
@@ -410,7 +418,7 @@ auron_restart() {
     SPIRA_SYSTEMCTL="$RESTART_SC" \
     SPIRA_AURON_SENTINEL_LOG="$RUN/sentinel.log" \
     SPIRA_AURON_RESTARTS=3 SPIRA_AURON_RESTART_WINDOW=3600 \
-        "$SH/auron.sh" "$@" 2>&1
+        command auron --home "$SH" "$@" 2>&1
 }
 restart_alert_status() {
     bd -C "$SPIRA_DB" list --all --limit 0 --label alert --json 2>/dev/null \
