@@ -12,7 +12,6 @@
 #   runtime-tree  SPIRA_RUN directory
 #   database      SPIRA_DB path
 #   session-hook  SessionStart and PostCompact entries in SPIRA_CLIENT_SETTINGS
-#   binary        built binaries: SPIRA_LOOM_BIN, SPIRA_PANEL
 #   dolt-yaml     dolt-server.yaml configs in SPIRA_DOLT_DATA / SPIRA_TESTDB_DATA
 #   cockpit-pane  tmux panes tagged @cockpit=panel and @cockpit=health
 #   alert-dropin  50-spira-intake.conf drop-ins for alert units
@@ -107,8 +106,8 @@ _owned_alert_dropins() {
 }
 
 _owned_binaries() {
-    [ -n "${SPIRA_LOOM_BIN:-}" ] && _row binary spira-loom  "$SPIRA_LOOM_BIN" build keep
-    [ -n "${SPIRA_PANEL:-}" ]    && _row binary spira-panel "$SPIRA_PANEL"     build keep
+    # Binaries are the release's (sp-gypjk): nothing an install owns lives outside it.
+    :
 }
 
 _owned_dolt_yaml() {
@@ -191,7 +190,7 @@ _file_status() {
 
 _session_hook_status() {
     local event="$1" out
-    out="$("$HERE/install-session-hook.sh" status 2>/dev/null)" || true
+    out="$(install-session-hook.sh status 2>/dev/null)" || true
     if printf '%s\n' "$out" | grep -qE "^ok[[:space:]]+$event([[:space:]]|$)"; then
         printf 'present'
     else
@@ -263,14 +262,7 @@ _check_alert_dropins() {
 
 _check_binaries() {
     local status
-    if [ -n "${SPIRA_LOOM_BIN:-}" ]; then
-        status="$(_file_status "$SPIRA_LOOM_BIN")"
-        printf '%s|%s|%s|%s\n' binary spira-loom "$SPIRA_LOOM_BIN" "$status"
-    fi
-    if [ -n "${SPIRA_PANEL:-}" ]; then
-        status="$(_file_status "$SPIRA_PANEL")"
-        printf '%s|%s|%s|%s\n' binary spira-panel "$SPIRA_PANEL" "$status"
-    fi
+    :   # binaries are the release's (sp-gypjk) — no install-owned binary rows
 }
 
 _check_dolt_yaml() {

@@ -19,7 +19,6 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)"
 [ -n "$ROOT" ] || ROOT="$(cd "$HERE/.." && pwd -P)"
-. "$HERE/plan-bin.sh"
 DOCS_DIR="$ROOT/docs/test-plan"
 JSON_OUT="$DOCS_DIR/coverage.json"
 MD_OUT="$DOCS_DIR/COVERAGE.md"
@@ -29,13 +28,11 @@ case "${1:-}" in
     *) printf 'plan-matrix.sh: unknown argument %s\n' "$1" >&2; exit 2 ;;
 esac
 
-bin="$(resolve_test_plan_bin)" || exit 1
-
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 bash "$HERE/suite-coverage-json.sh" > "$tmp/suites.json"
 bash "$HERE/tsd-timings-json.sh" > "$tmp/timings.json"
 
-if ! "$bin" write-matrix --catalogue-dir "$DOCS_DIR" --suites "$tmp/suites.json" \
+if ! test-plan write-matrix --catalogue-dir "$DOCS_DIR" --suites "$tmp/suites.json" \
     --timings "$tmp/timings.json" --out-json "$JSON_OUT" --out-md "$MD_OUT"
 then
     printf 'plan-matrix.sh: matrix generation failed\n' >&2

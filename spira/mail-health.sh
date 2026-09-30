@@ -36,7 +36,7 @@ while IFS= read -r _line; do
     _mb="${_mb%"${_mb##*[![:space:]]}"}"
     [ -z "$_mb" ] && continue
 
-    age="$(bash "$_here/mail.sh" unread-age "$_mb" 2>/dev/null)" || { err=1; continue; }
+    age="$(mail.sh unread-age "$_mb" 2>/dev/null)" || { err=1; continue; }
 
     sf="${_state_dir}/${_mb}"
 
@@ -56,13 +56,13 @@ while IFS= read -r _line; do
     [ "$prev" = "$key" ] && continue
 
     mkdir -p "$_state_dir" 2>/dev/null
-    count="$(bash "$_here/mail.sh" count "$_mb" 2>/dev/null || printf '?')"
+    count="$(mail.sh count "$_mb" 2>/dev/null || printf '?')"
     age_m=$(( age / 60 ))
 
     printf '## Note\n%s is not reading its mail (%s message(s), oldest %s minutes unread).\n' \
         "$_mb" "$count" "$age_m" \
     | SPIRA_MAIL_REPEAT_CONSIDERED="mail-health has own dedup" \
-      bash "$_here/mail.sh" send operator \
+      mail.sh send operator \
         --from "Mail health <health@spira>" \
         --subject "$_mb is not reading its mail" \
         2>/dev/null || { err=1; continue; }
