@@ -4,15 +4,15 @@
 # not recompiled by every suite (and every scenario within a suite) that needs a "nothing
 # changed" DEST baseline (cluster 11, docs/test-plan/instance-lifecycle.md).
 #
+# Sourced, never executed.
+#
 # sp-31dm0: install.sh, systemd/install.sh, systemd/unit-ensure.sh and systemd/units.sh are
-# retired; `units-install`/`unit-ensure`/`install` are compiled binaries now, resolved by bare
-# name on PATH (the workspace is always built under testenv — the same convention
+# retired; `units-install`/`unit-ensure`/`spira-install` are compiled binaries now, resolved
+# by bare name on PATH (the workspace is always built under testenv — the same convention
 # test-reconciler.sh's `command -v reconciler` already relies on), not symlinked into the
 # fixture. The fixture still symlinks the *templates* (systemd/*.service/.timer/.yaml) and
 # the bash libraries the binaries still shell out to (conf.sh, lib.sh, watchd.sh,
 # suite-covers.sh) — everything this crate itself owns now lives in the binary, not the tree.
-#
-# Sourced, never executed.
 #
 # install_fixture_build <fixture-root>
 #   Symlinks the real systemd/*.{service,timer,yaml} and spira/{conf.sh,watchd.sh,lib.sh,

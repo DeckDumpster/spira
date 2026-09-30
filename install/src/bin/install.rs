@@ -1,12 +1,14 @@
-//! `install` — the root installer (`install.sh`, in Rust). Nine phases: preflight, conflict
-//! checks, config, build, database, units, hooks, cockpit, verify. Every tool this phase
-//! sequence calls that has not itself moved to Rust yet (`doctor.sh`, `configure.sh`,
-//! `build.sh`, `seed.sh`, `mail.sh`, `release session-hook`, `release intake`,
-//! `exclude.sh`, `ready.sh`) is invoked by bare name on the launcher `PATH`, exactly as
-//! `install.sh` did — none of them are this bead's scope.
+//! `spira-install` — the root installer (`install.sh`, in Rust). Named `spira-install`, not
+//! `install`: `/usr/bin/install` is a system command, and a release refuses to ship a binary
+//! that shadows one (release::build::clashes). Nine phases: preflight, conflict checks,
+//! config, build, database, units, hooks, cockpit, verify. Every tool this phase sequence
+//! calls that has not itself moved to Rust yet (`doctor.sh`, `configure.sh`, `build.sh`,
+//! `seed.sh`, `mail.sh`, `release session-hook`, `release intake`, `exclude.sh`, `ready.sh`)
+//! is invoked by bare name on the launcher `PATH`, exactly as `install.sh` did — none of
+//! them are this bead's scope.
 //!
-//! usage: install [<instance>] [--dry-run] [--ephemeral] [--laptop] [--skip-build]
-//!                 [--no-session-hook] [--system-user]
+//! usage: spira-install [<instance>] [--dry-run] [--ephemeral] [--laptop] [--skip-build]
+//!                       [--no-session-hook] [--system-user]
 
 use install::bootstrap::{self, nonempty_env};
 use install::checks;

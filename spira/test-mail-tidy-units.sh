@@ -5,7 +5,7 @@
 # "unit greps -> T0 unit lint") so a source-text check never pays for a Maildir fixture.
 #
 # tier: T0
-# covers: systemd/spira-mail-tidy.service systemd/spira-mail-tidy.timer systemd/units.sh
+# covers: systemd/spira-mail-tidy.service systemd/spira-mail-tidy.timer install/src/manifest.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

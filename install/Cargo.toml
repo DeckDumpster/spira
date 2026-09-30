@@ -9,7 +9,9 @@ name = "install"
 path = "src/lib.rs"
 
 [[bin]]
-name = "install"
+# NEVER "install": /usr/bin/install is a system command, and `release build` refuses a
+# release whose bin/ shadows one (release::build::clashes, SYSTEM_DIRS).
+name = "spira-install"
 path = "src/bin/install.rs"
 
 [[bin]]

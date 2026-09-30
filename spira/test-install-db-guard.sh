@@ -18,7 +18,7 @@
 #   - no .git anywhere                                      -> allowed
 #
 # tier: T1
-# covers: install.sh
+# covers: install/src/bin/install.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"

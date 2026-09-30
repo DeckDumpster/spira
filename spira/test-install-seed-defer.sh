@@ -16,7 +16,7 @@
 #   defer  an existing server-mode database whose server is down — seed after phase 4 starts it
 #
 # tier: T1
-# covers: install.sh
+# covers: install/src/bin/install.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"

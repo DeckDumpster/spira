@@ -17,7 +17,7 @@
 #   C  BINARY MISSING: SPIRA_BROKER_ENABLE=1 but binary not executable → broker
 #      timer absent from ENABLE even though the opt-in is set.
 #
-# covers: systemd/units.sh spira/conf.sh
+# covers: install/src/manifest.rs spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

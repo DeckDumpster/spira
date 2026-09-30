@@ -29,7 +29,7 @@
 # the suite is not trivially green.
 #
 # tier: T2
-# covers: spira/uninstall.sh spira/owned.sh systemd/install.sh UC-instance-lifecycle-38 UC-instance-lifecycle-39
+# covers: spira/uninstall.sh spira/owned.sh install/src/bin/units_install.rs UC-instance-lifecycle-38 UC-instance-lifecycle-39
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"

@@ -213,7 +213,7 @@ impl Fake {
                 }
             }
             ("bash", _) => ok(""), // ready.sh
-            ("install", _) => ok(""), // install (sp-31dm0): invoked directly now, no bash wrapper
+            ("spira-install", _) => ok(""), // spira-install (sp-31dm0): invoked directly now, no bash wrapper
             ("deploy.sh", args) => {
                 let tag = args.last().unwrap();
                 if args.contains(&"--allow-draft") {
@@ -418,7 +418,7 @@ fn every_tool_runs_on_the_release_launcher_path_and_every_deploy_of_the_tag_allo
         assert_eq!(c.env_of("SPIRA_RUN"), Some(b.root.join("tmp/run").display().to_string().as_str()));
     }
     // install (sp-31dm0) always runs with SPIRA_OPERATED=0, on the launcher environment too.
-    for c in log.iter().filter(|c| c.prog.ends_with("/bin/install")) {
+    for c in log.iter().filter(|c| c.prog.ends_with("/bin/spira-install")) {
         assert_eq!(c.env_of("SPIRA_OPERATED"), Some("0"));
         assert_eq!(c.env_of("SPIRA_HOME_REPO"), Some("scratch-repo"));
         assert_eq!(c.env_of("PATH"), Some(want_path.as_str()), "install resolves doctor.sh and spira-config by bare name");

@@ -17,7 +17,7 @@
 # (law-absence-needs-a-positive-control).
 #
 # tier: T1
-# covers: install.sh UC-instance-lifecycle-17
+# covers: install/src/bin/install.rs UC-instance-lifecycle-17
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"

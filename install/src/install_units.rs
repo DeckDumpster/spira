@@ -452,13 +452,7 @@ mod tests {
         assert!(matches!(r.enabled_actions.iter().find(|(u, _)| u == "spira-sentinel-prod.timer").unwrap().1, Action::Restart));
     }
 
-    fn tempdir() -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("install-units-test-{}-{}", std::process::id(), rand_suffix()));
-        std::fs::create_dir_all(&d).unwrap();
-        d
-    }
-    fn rand_suffix() -> u64 {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64
+    fn tempdir() -> testkit::TempDir {
+        testkit::TempDir::new("install-units-test")
     }
 }

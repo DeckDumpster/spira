@@ -9,7 +9,7 @@
 # render+install their own unit to ask this; consolidated here it is one clone and one pass.
 #
 # tier: T0
-# covers: systemd/*.service systemd/*.timer systemd/install.sh UC-operator-channel-37
+# covers: systemd/*.service systemd/*.timer install/src/bin/units_install.rs UC-operator-channel-37
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"

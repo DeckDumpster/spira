@@ -32,7 +32,7 @@
 # a clear case that would pass regardless (law-a-regression-test-must-be-seen-to-fail).
 #
 # tier: T1
-# covers: install.sh UC-instance-lifecycle-16
+# covers: install/src/bin/install.rs UC-instance-lifecycle-16
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"

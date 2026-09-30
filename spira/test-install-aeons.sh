@@ -29,7 +29,7 @@
 #
 # defect: sp-1j0r, sp-syub
 # tier: T2
-# covers: systemd/install.sh UC-instance-lifecycle-21 UC-instance-lifecycle-23
+# covers: install/src/bin/units_install.rs UC-instance-lifecycle-21 UC-instance-lifecycle-23
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REAL_REPO="$(cd "$HERE/.." && pwd -P)"

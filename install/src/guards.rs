@@ -260,10 +260,10 @@ mod tests {
 
     #[test]
     fn conf_key_parsing_strips_quotes_and_expands_home() {
-        let c = parse_conf_keys("other.conf", "# comment\nSPIRA_INSTANCE=test\nSPIRA_RUN=\"~/run\"\nSPIRA_DB='$HOME/db'\nIGNORED=1\n", "/home/ryan");
+        let c = parse_conf_keys("other.conf", "# comment\nSPIRA_INSTANCE=test\nSPIRA_RUN=\"~/run\"\nSPIRA_DB='$HOME/db'\nIGNORED=1\n", "/opt/fixture");
         assert_eq!(c.instance, "test");
-        assert_eq!(c.values["SPIRA_RUN"], "/home/ryan/run");
-        assert_eq!(c.values["SPIRA_DB"], "/home/ryan/db");
+        assert_eq!(c.values["SPIRA_RUN"], "/opt/fixture/run");
+        assert_eq!(c.values["SPIRA_DB"], "/opt/fixture/db");
         assert!(!c.values.contains_key("IGNORED"));
     }
 

@@ -9,7 +9,7 @@
 # sections, which do exercise real systemd.
 #
 # tier: T1
-# covers: systemd/install.sh systemd/units.sh UC-instance-lifecycle-24
+# covers: install/src/bin/units_install.rs install/src/manifest.rs UC-instance-lifecycle-24
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

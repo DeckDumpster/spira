@@ -172,14 +172,14 @@ iszero "configure.sh exits 0" "$?"
 
 # ===========================================================================
 echo
-echo "build install (sp-31dm0: systemd/install.sh is retired; it is a compiled binary now):"
+echo "build spira-install (sp-31dm0: systemd/install.sh is retired; it is a compiled binary now):"
 # ===========================================================================
 # Targeted, not a full workspace build (the gap sp-isom7 tracks for the release's own bin/
 # staying stubbed here): only the crate this suite itself now needs to exec.
 "${CEXEC[@]}" "$CNAME" bash -c \
-    'cd /workspace && cargo build --release -p install --bin install 2>&1' >&2
+    'cd /workspace && cargo build --release -p install --bin spira-install 2>&1' >&2
 iszero "cargo build -p install exits 0" "$?"
-INSTALL_BIN="/workspace/target/release/install"
+INSTALL_BIN="/workspace/target/release/spira-install"
 
 # Create the fake database marker. The .beads directory satisfies directory-existence
 # checks in ready.sh ("database absent — no .beads") and seed.sh without requiring

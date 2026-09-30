@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: systemd/install.sh spira/skew.sh UC-instance-lifecycle-34
+# covers: install/src/bin/units_install.rs spira/skew.sh UC-instance-lifecycle-34
 #
 # test-unit-drift.sh — a landed template change leaves the installed unit stale, and is
 # detected.

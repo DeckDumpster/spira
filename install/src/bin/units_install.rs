@@ -50,7 +50,7 @@ fn main() -> ExitCode {
             eprintln!("usage: units-install --seed-prod-instance <conf> <toml> <instance> <home>");
             return ExitCode::from(2);
         };
-        if let Some(msg) = install::seed_instance::seed_prod_instance(conf, toml, instance, home) {
+        if let Some(msg) = install::seed_instance::seed_prod_instance(Path::new(conf), Path::new(toml), instance, Path::new(home)) {
             println!("{msg}");
         }
         return ExitCode::SUCCESS;

@@ -33,6 +33,42 @@ pub fn find_under(dir: &Path) -> Option<PathBuf> {
     p.is_file().then_some(p)
 }
 
+/// `dir/spira.toml`, named but not necessarily present — for a writer at a root other than
+/// this process's own (`install`'s cross-checkout instance seed, sp-31dm0), which must
+/// resolve the path without naming it itself (config-fence: only spira-config names
+/// `spira.toml` or `repo-map`).
+pub fn toml_path_at(dir: &Path) -> PathBuf {
+    dir.join(FILE_NAME)
+}
+
+/// The conventional `repo-map` filename, checked at `conf_dir` (if given) then as
+/// `<home>/repo-map.example` — the same lookup conf.sh's `_spira_repo_map_candidate` makes
+/// for a root other than this process's own `SPIRA_HOME`. `None` when neither exists.
+pub fn repo_map_candidate(conf_dir: Option<&Path>, home: &Path) -> Option<PathBuf> {
+    const REPO_MAP: &str = "repo-map";
+    conf_dir
+        .map(|d| d.join(REPO_MAP))
+        .into_iter()
+        .chain(std::iter::once(home.join(format!("{REPO_MAP}.example"))))
+        .find(|c| c.is_file())
+}
+
+/// `spira-config convert --conf <conf> --home <home> --out <out> [--repo-map <repo_map>]
+/// [--fayth <f>]...`, built (not run) — for a writer at a root other than this process's
+/// own (`install`'s cross-checkout instance seed, sp-31dm0), which must not name this
+/// binary's own flags itself (config-fence: only spira-config names `repo-map`).
+pub fn convert_command(conf: &Path, home: &Path, out: &Path, repo_map: Option<&Path>, fayth: &[PathBuf]) -> std::process::Command {
+    let mut cmd = std::process::Command::new("spira-config");
+    cmd.arg("convert").arg("--conf").arg(conf).arg("--home").arg(home).arg("--out").arg(out);
+    if let Some(rm) = repo_map {
+        cmd.arg("--repo-map").arg(rm);
+    }
+    for f in fayth {
+        cmd.arg("--fayth").arg(f);
+    }
+    cmd
+}
+
 /// The search a host-wide reader with no explicit path resolves one from: `explicit` if
 /// given (a caller's own `--config`/`$SPIRA_TOML` precedence), else `$SPIRA_TOML`, else
 /// `$SPIRA_REPO/spira.toml`, else `$XDG_CONFIG_HOME/spira/spira.toml` (`$HOME/.config` when

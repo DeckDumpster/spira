@@ -33,7 +33,7 @@
 # SKIP CONDITION: XDG_RUNTIME_DIR is not /run/user/1001 (suite must run inside
 # the testenv container as spirauser) or user systemd is not responding.
 #
-# covers: systemd/install.sh
+# covers: install/src/bin/units_install.rs
 # requires: testenv
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"

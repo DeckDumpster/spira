@@ -24,7 +24,7 @@
 # is instead invoked directly with controlled flags, bypassing conf.sh entirely.
 # This runs the actual renderer, not a copy.
 #
-# covers: systemd/render.py systemd/install.sh
+# covers: install/src/values.rs install/src/bin/units_install.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 RENDER_PY="$HERE/../systemd/render.py"

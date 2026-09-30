@@ -105,7 +105,6 @@ mod tests {
     use crate::manifest::{build, Inputs};
     use crate::systemctl::FakeSystemctl;
     use crate::values::HostValues;
-    use std::path::Path;
 
     fn host() -> HostValues {
         HostValues { home: "/h".into(), repo: "/h".into(), run: "/run".into(), db: "/db".into(), cockpit: "/h/cockpit".into(), dolt_data: "".into(), testdb_data: "".into(), dolt: "/usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), testdb_port: "3308".into(), snap_stale_s: "600".into(), path_tail: "".into() }
@@ -117,10 +116,8 @@ mod tests {
         m
     }
 
-    fn td() -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("ensure-test-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn td() -> testkit::TempDir {
+        testkit::TempDir::new("ensure-test")
     }
 
     #[test]
@@ -156,6 +153,5 @@ mod tests {
         let r3 = run(&ctx);
         assert_eq!(r3.updated, vec!["spira-sentinel-prod.service".to_string()]);
         assert_eq!(sc.restarts.borrow().len(), 0);
-        let _ = Path::new(""); // keep Path import used across edits
     }
 }

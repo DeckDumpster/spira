@@ -26,7 +26,7 @@
 # A mock systemctl records calls without touching systemd.
 #
 # tier: T1
-# covers: systemd/unit-ensure.sh systemd/install.sh
+# covers: install/src/bin/unit_ensure.rs install/src/bin/units_install.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

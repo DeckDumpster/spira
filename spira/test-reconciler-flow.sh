@@ -40,7 +40,7 @@
 # defect: sp-rh0x3
 # covers: reconciler-flow/src/**.rs spira/conf.sh spira/build-tarball.sh
 #         systemd/spira-reconciler-flow.service systemd/spira-reconciler-flow.timer
-#         systemd/units.sh systemd/install.sh
+#         install/src/manifest.rs install/src/bin/units_install.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 

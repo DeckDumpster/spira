@@ -10,7 +10,7 @@
 # inotifywait (an external program) still gates a unit.
 #
 # tier: T1
-# covers: systemd/units.sh systemd/install.sh systemd/spira-mail-deliver.service systemd/spira-loom.service systemd/spira-broker.service UC-instance-lifecycle-25
+# covers: install/src/manifest.rs install/src/bin/units_install.rs systemd/spira-mail-deliver.service systemd/spira-loom.service systemd/spira-broker.service UC-instance-lifecycle-25
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

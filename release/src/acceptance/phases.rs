@@ -106,10 +106,11 @@ impl Run<'_> {
         self.h.show(&c)
     }
 
-    /// `install` (sp-31dm0: a compiled binary at `current/bin/install` now, replacing the
-    /// root `install.sh` script — no `bash` wrapper).
+    /// `spira-install` (sp-31dm0: a compiled binary at `current/bin/spira-install` now,
+    /// replacing the root `install.sh` script — no `bash` wrapper; named `spira-install`,
+    /// not `install`, because `/usr/bin/install` is a system command).
     fn install_sh(&self) -> i32 {
-        let c = Cmd::new(Self::s(&self.o.releases().join("current/bin/install"))).arg("--skip-build").envs(&self.install_env());
+        let c = Cmd::new(Self::s(&self.o.releases().join("current/bin/spira-install"))).arg("--skip-build").envs(&self.install_env());
         self.h.show(&c)
     }
 

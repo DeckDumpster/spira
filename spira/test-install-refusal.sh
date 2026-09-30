@@ -16,7 +16,7 @@
 #    systemctl call — this is install.sh:33-39's exit-1 contract (gap G3), previously
 #    asserted only by grepping for the phase name, never by running the refusal.
 #
-# covers: install.sh UC-instance-lifecycle-18
+# covers: install/src/bin/install.rs UC-instance-lifecycle-18
 # tier: T2
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"

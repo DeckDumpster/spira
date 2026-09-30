@@ -25,7 +25,7 @@
 #   - no manifest unit is disabled by the watcher prune (spira-watch-refresh/-notify).
 #
 # tier: T2
-# covers: systemd/install.sh systemd/units.sh
+# covers: install/src/bin/units_install.rs install/src/manifest.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REAL_REPO="$(cd "$HERE/.." && pwd -P)"

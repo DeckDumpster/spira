@@ -31,7 +31,7 @@
 # the testenv container as spirauser) or user systemd is not responding.
 #
 # tier: T1
-# covers: systemd/install.sh
+# covers: install/src/bin/units_install.rs
 # requires: testenv
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
