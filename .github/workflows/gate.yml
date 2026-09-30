@@ -194,8 +194,9 @@ jobs:
   # failure surfaces before any suite starts and before any release tag exists,
   # without adding wall clock when the cache is warm (a cached build takes
   # roughly as long as a clone and VM boot). The binaries are uploaded as an
-  # artifact; the suites job downloads them into bin/ so every suite runs
-  # against the real compiled output rather than a stub.
+  # artifact; the suites job stages them as a release (bin/ from this build,
+  # spira/ from the commit) so every suite runs against the real compiled output
+  # rather than a stub, on the same PATH shape production runs.
   # ---------------------------------------------------------------------------
   build:
     needs: select
@@ -335,17 +336,60 @@ jobs:
 
       - name: Download binaries
         # The build job compiled every crate and uploaded the binaries as an
-        # artifact. Download them into bin/: this job judges its own commit, so it
-        # hands that build to testenv by explicit path (--artifacts bin), the one
-        # place a build is named by path (design runtime-is-a-release, sp-gypjk).
+        # artifact. They land OUTSIDE the checkout, in the runner's temp directory:
+        # build output inside the tree is an untracked bin/ that spira-lint's walk
+        # (tracked plus untracked-not-ignored) scans as if it were source, and the
+        # inventory rule then refuses every binary for the runner's own home path
+        # baked into it (publish PR #458, sp-6cbna).
         uses: actions/download-artifact@v4
         with:
           name: binaries-${{ github.sha }}
-          path: bin/
+          path: ${{ runner.temp }}/build
 
       - name: Mark binaries executable
         # upload-artifact does not preserve the executable bit; restore it.
-        run: chmod +x bin/* 2>/dev/null || true
+        run: chmod +x "$RUNNER_TEMP"/build/*
+
+      - name: Stage the build as a release
+        # GITHUB ACTIONS IS A LAUNCHER, AND A LAUNCHER SETS THE RELEASE PATH (design
+        # runtime-is-a-release, sp-6cbna). conf.sh fails closed without spira-config
+        # on PATH (sp-c7b85) and every harness script invokes its tools by name
+        # (sp-gypjk), so a step that runs with the runner's own PATH runs nothing of
+        # this commit's: publish PR #458 printed "spira-config: command not found"
+        # from every conf.sh load.
+        #
+        # This is the one place the build is named by path. `release build
+        # --bin-dir` lays out exactly what production runs — this commit's tree
+        # plus bin/ from the tested build, no cargo, refusing a partial set — and
+        # from here on every step gets SPIRA_RELEASE and a PATH that starts with
+        # that release, set outright through GITHUB_ENV rather than prepended piece
+        # by piece. The runner's own PATH follows the system directories as the
+        # tail: it is where podman, gh and the rest of this machine's tools live.
+        # The release lives outside the checkout and outside RUNNER_TEMP, which the
+        # runner cleans and a read-only release would refuse.
+        #
+        # SPIRA_REPO NAMES THE CHECKOUT. The tools now run from the release, so a tool
+        # that defaults its repository to its own harness root (testenv does) would
+        # find the release directory — not a git repository, no base ref — and fault
+        # `reason=base-ref` before testing anything (sp-6cbna's first proof run,
+        # 36704154120). The launcher says which repository is under test, as a
+        # production unit does with Environment=SPIRA_REPO.
+        run: |
+          set -euo pipefail
+          _releases="$HOME/.cache/spira-ci/releases"
+          _sha="$("$RUNNER_TEMP/build/release" build "${{ github.sha }}" \
+                    --repo "$GITHUB_WORKSPACE" --bin-dir "$RUNNER_TEMP/build" --releases "$_releases")"
+          _rel="$_releases/$_sha"
+          _path="$_rel/bin:$_rel/spira:/usr/local/bin:/usr/bin:/bin:$PATH"
+          _got="$(PATH="$_path" command -v spira-config)"
+          [ "$_got" = "$_rel/bin/spira-config" ] || {
+            printf 'stage: spira-config resolves to %s, not the staged release %s\n' "${_got:-nothing}" "$_rel" >&2
+            exit 1
+          }
+          printf 'SPIRA_RELEASE=%s\n' "$_rel" >> "$GITHUB_ENV"
+          printf 'SPIRA_REPO=%s\n' "$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          printf 'PATH=%s\n' "$_path" >> "$GITHUB_ENV"
+          printf 'stage: release %s staged at %s\n' "$_sha" "$_rel"
 
       - name: Confirm the job landed on the provisioned machine
         # RUNNER_NAME is set by the runner process itself, so it is the one value
@@ -443,16 +487,21 @@ jobs:
         # SPIRA_GATE_BASE diff, which this job never sets, so it is inert here but
         # harmless. sop.sh lint and suite-state-fence.sh are not here: both need a
         # real SPIRA_DB, which this fresh runner never has.
+        #
+        # By name, from the staged release (the step above). The first line is the
+        # positive control that GITHUB_ENV's PATH actually reached this step: a
+        # spira-lint resolved from anywhere else would judge a different build.
         run: |
-          bin/spira-lint --only inventory            # CI judges its own build: the commit's binaries, by explicit path
-          bin/spira-lint --only literal-lint          # see above
-          bin/spira-lint --only scratch-fence         # see above
-          bin/spira-lint --only testdb-mode-lint       # see above
-          bin/spira-lint --only bd-stdin-lint          # see above
-          bin/spira-lint --only gh-intake-lint         # see above
-          bin/spira-lint --only incident-cause-lint    # see above
-          bin/spira-lint --only tmux-scope-fence       # see above
-          bin/spira-lint --only wiki-add-fence         # see above
+          [ "$(command -v spira-lint)" = "$SPIRA_RELEASE/bin/spira-lint" ]
+          spira-lint --only inventory
+          spira-lint --only literal-lint
+          spira-lint --only scratch-fence
+          spira-lint --only testdb-mode-lint
+          spira-lint --only bd-stdin-lint
+          spira-lint --only gh-intake-lint
+          spira-lint --only incident-cause-lint
+          spira-lint --only tmux-scope-fence
+          spira-lint --only wiki-add-fence
           bash spira/orphan-test.sh || [ $? -eq 77 ]
 
       - name: Suites
@@ -544,14 +593,16 @@ jobs:
             printf 'gate: %s on %s — running the whole corpus\n' \
               "${{ github.event_name }}" "${{ github.ref_name }}"
           fi
-          # --artifacts bin: this runner has no Rust toolchain. The build job compiled this
-          # SHA and bin/ holds its executables; testenv tests those and runs no cargo
-          # (testenv/DESIGN.md D8). Without it every run faulted reason=no-cargo.
-          printf '%s\n' "$_s" | bin/testenv --artifacts bin --suites - "${{ github.sha }}" || _b=$?
+          # --artifacts "$SPIRA_RELEASE/bin": this runner has no Rust toolchain. The build
+          # job compiled this SHA and the staged release's bin/ holds its executables;
+          # testenv tests those and runs no cargo (testenv/DESIGN.md D8). Without it
+          # every run faulted reason=no-cargo. testenv itself resolves by name, from
+          # that same release.
+          printf '%s\n' "$_s" | testenv --artifacts "$SPIRA_RELEASE/bin" --suites - "${{ github.sha }}" || _b=$?
           # A red suite gets one serial re-run; red then green is a flake, not a failure.
           if [ "$_b" = 1 ]; then
             _b=0
-            GATE_RETRY_BATCH=bin/testenv GATE_RETRY_ARTIFACTS=bin bash spira/gate-retry.sh "$SPIRA_BATCH_RESULTS" "${{ github.sha }}" || _b=$?
+            GATE_RETRY_ARTIFACTS="$SPIRA_RELEASE/bin" bash spira/gate-retry.sh "$SPIRA_BATCH_RESULTS" "${{ github.sha }}" || _b=$?
           fi
           case "$_b" in
             0) printf 'gate: pass\n' ;;
@@ -570,7 +621,7 @@ jobs:
         # place they run either: no prebuilt binaries there, plus a cold image
         # build on every run. Run them directly on this runner instead: it already
         # has podman (runner-deps.sh), the same warm testenv image the step above
-        # just used, and this job's own compiled binaries in bin/.
+        # just used, and this job's own compiled binaries in the staged release.
         #
         # if: always() so a corpus failure above does not hide these two — they are
         # independent containers and this is the only place either runs.

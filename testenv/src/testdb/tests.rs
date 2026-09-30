@@ -22,7 +22,8 @@ signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
 s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.bind(("127.0.0.1", port)); s.listen(64)
 while True:
-    c, _ = s.accept(); c.close()
+    c, _ = s.accept()
+    c.sendall(bytes([5, 0, 0, 0, 0x0a]) + b"8.0\x00"); c.close()
 "#;
 
 /// A stand-in `bd init --server`: writes the .beads files bd writes, counts its runs.
@@ -498,4 +499,58 @@ fn real_bd_and_dolt_isolated_fixtures() {
     down(&b.fixture).unwrap();
     assert!(!a.fixture.exists() && !b.fixture.exists());
     let _ = fs::remove_dir_all(&d);
+}
+
+// ---- readiness and the tmpfs root (sp-t26yx) -----------------------------------------------
+
+#[test]
+fn a_greeting_is_protocol_10_at_sequence_0() {
+    assert!(is_greeting(&[0x4a, 0, 0, 0, 0x0a]));
+    assert!(!is_greeting(&[0x17, 0, 0, 0, 0xff]), "an error packet is not ready");
+    assert!(!is_greeting(&[0x4a, 0, 0, 1, 0x0a]), "not the first packet");
+    assert!(!is_greeting(&[0, 0, 0, 0, 0x0a]), "an empty payload");
+}
+
+#[test]
+fn an_accepting_socket_that_never_greets_is_not_ready() {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    let held = std::thread::spawn(move || {
+        let (c, _) = l.accept().unwrap();
+        sleep(Duration::from_millis(900));
+        drop(c);
+    });
+    let t0 = Instant::now();
+    assert!(!greets(&addr), "TCP accept alone is not readiness");
+    assert!(t0.elapsed() < Duration::from_secs(3), "each attempt stays bounded");
+    held.join().unwrap();
+}
+
+#[test]
+fn a_greeting_socket_is_ready() {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    let srv = std::thread::spawn(move || {
+        let (mut c, _) = l.accept().unwrap();
+        c.write_all(&[5, 0, 0, 0, 0x0a, b'8', b'.', b'0', 0]).unwrap();
+    });
+    assert!(greets(&addr));
+    srv.join().unwrap();
+}
+
+#[test]
+fn nothing_listening_is_not_ready() {
+    let port = free_port().unwrap();
+    assert!(!greets(&([127, 0, 0, 1], port).into()));
+}
+
+#[test]
+fn tmpfs_is_read_from_the_nearest_existing_ancestor() {
+    assert!(!on_tmpfs(Path::new("/proc")), "procfs is not a tmpfs");
+    let shm = Path::new("/dev/shm");
+    if on_tmpfs(shm) {
+        assert!(on_tmpfs(&shm.join("sp-t26yx-absent/deeper")));
+    } else {
+        eprintln!("skip: /dev/shm is not a tmpfs here");
+    }
 }

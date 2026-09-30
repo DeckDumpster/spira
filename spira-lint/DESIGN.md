@@ -371,6 +371,14 @@ finding, because the checks on it would be vacuous. The suite's section 16a asse
 `find` counts files in an empty directory, which tests `find` and not the workflow, so it
 was dropped, as `docs/test-plan/test-infrastructure.md` row 38 already proposed.
 
+Two properties were added after the port (sp-6cbna): **29**, the suites job is a launcher —
+its "Stage the build as a release" step lays out a release from the downloaded build
+(`release build --bin-dir`) and writes `SPIRA_RELEASE`, `SPIRA_REPO` (the checkout — a tool
+run from the release would otherwise default its repository to the release directory) and a
+PATH that starts with that release to `GITHUB_ENV`; and **30**, lints never scan build output — the binaries download
+under `runner.temp`, not into the checkout, and the Lints step runs `spira-lint` by name after
+asserting it resolves to `$SPIRA_RELEASE/bin/spira-lint`.
+
 **Tests.** The shipped workflow files are the passing fixture, via `include_str!`. Each
 planted violation is a one-line edit of a copy. The test asserts that the edit applied, so
 a workflow change that removes the planted text fails the test and does not pass vacuously.

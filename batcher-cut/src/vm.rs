@@ -37,6 +37,45 @@ fn read_rc(path: &Path) -> Option<i32> {
     fs::read_to_string(path).ok()?.lines().find_map(|l| l.strip_prefix("rc=")).and_then(|v| v.trim().parse().ok())
 }
 
+/// How many of round-vm's last stderr lines a fault carries into the round log.
+const STDERR_TAIL_LINES: usize = 40;
+
+/// round-vm's own stderr, the last [`STDERR_TAIL_LINES`] lines, indented under the fault it
+/// explains — so the round log says why, not only that (sp-dp872).
+pub fn stderr_tail(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.is_empty() {
+        return "\n  (round-vm wrote nothing to stderr)".into();
+    }
+    let from = lines.len().saturating_sub(STDERR_TAIL_LINES);
+    let mut out = format!("\n  round-vm stderr (last {} of {} lines):", lines.len() - from, lines.len());
+    for l in &lines[from..] {
+        out.push_str("\n    ");
+        out.push_str(l);
+    }
+    out
+}
+
+/// The corpus run's end, typed from round-vm's exit code (round-vm DESIGN.md §2.2). `Ok` is
+/// a verdict the round can be judged on; every `Err` is a harness fault — the round is not
+/// judged (no verdict) — and carries round-vm's stderr.
+pub fn corpus_end(rc: i32, stderr: &str, wall_secs: u64) -> Result<MainEnd, String> {
+    let why = match rc {
+        0 | 1 => return Ok(MainEnd::Ran),
+        4 => return Ok(MainEnd::WorkspaceBuild),
+        2 => {
+            if let Some(line) = stderr.lines().find(|l| l.contains("batch: unknown suite:")) {
+                return Err(format!("round-vm: suite list mismatch, not a harness fault — {}", line.trim()));
+            }
+            "round-vm: harness fault — the round VM did not come up, its container died, or round-vm itself failed".to_string()
+        }
+        3 => "round-vm: harness fault — install failed".to_string(),
+        124 | 137 => format!("round-vm: harness fault — exceeded the {wall_secs}s wall bound"),
+        c => format!("round-vm: harness fault — exit {c}, outside round-vm's contract (0-4)"),
+    };
+    Err(format!("{why}{}", stderr_tail(stderr)))
+}
+
 enum Main {
     None,
     Finished(MainEnd),
@@ -255,32 +294,19 @@ impl RoundRunner for VmRunner<'_> {
         let Some((job, suites)) = verify else {
             let rc = match (corpus_rc, exited) {
                 (Some(rc), _) => rc,
-                (None, Some(124 | 137)) => return Err(format!("round-vm: harness fault — exceeded the {}s wall bound", self.env.wall_secs)),
                 // A round-vm that exited without writing corpus.done (one that predates the
                 // spool, or a stand-in) answered with its exit code alone; its reruns will
                 // fault, which leaves any red unattributed and the round blocked — never green.
                 (None, Some(rc)) => rc,
                 (None, None) => return Ok(p),
             };
-            p.done = Some(match rc {
-                0 | 1 => MainEnd::Ran,
-                4 => MainEnd::WorkspaceBuild,
-                2 => {
-                    let text = self.stderr_text();
-                    if let Some(line) = text.lines().find(|l| l.contains("batch: unknown suite:")) {
-                        return Err(format!("round-vm: suite list mismatch, not a harness fault — {}", line.trim()));
-                    }
-                    return Err("round-vm: harness fault — the round VM did not come up or its container died".into());
-                }
-                3 => return Err("round-vm: harness fault — install failed".into()),
-                c => return Err(format!("round-vm: unexpected exit {c}")),
-            });
+            p.done = Some(corpus_end(rc, &self.stderr_text(), self.env.wall_secs)?);
             self.main = Main::Finished(p.done.unwrap());
             return Ok(p);
         };
         let Some(rc) = read_rc(&res_root.join(format!("{job}.done"))) else {
             if exited.is_some() {
-                return Err("round-vm exited before the survivors' verification ran".into());
+                return Err(format!("round-vm exited before the survivors' verification ran{}", stderr_tail(&self.stderr_text())));
             }
             return Ok(p);
         };
@@ -294,7 +320,7 @@ impl RoundRunner for VmRunner<'_> {
                 p.done = Some(MainEnd::Ran);
             }
             4 => p.done = Some(MainEnd::WorkspaceBuild),
-            c => return Err(format!("the survivors' verification faulted (rc {c})")),
+            c => return Err(format!("the survivors' verification faulted (rc {c}){}", stderr_tail(&self.stderr_text()))),
         }
         self.main = Main::Finished(p.done.unwrap());
         Ok(p)
@@ -353,6 +379,37 @@ mod tests {
         assert_eq!(build_for(&["a".to_string()], &changed), "artifacts");
         assert_eq!(build_for(&["a".to_string(), "b".to_string()], &changed), "aeon");
         assert_eq!(build_for(&["unknown".to_string()], &changed), "aeon", "unknown paths are never neutral");
+    }
+
+    /// sp-dp872: two walkthrough rounds ended "round-vm: unexpected exit 101" and the round
+    /// log never said why — the reason sat in round-vm.stderr, unread. Every exit is a typed
+    /// outcome, and every fault carries round-vm's own words.
+    #[test]
+    fn every_corpus_exit_is_typed_and_a_fault_carries_round_vm_s_stderr() {
+        let err = "round-vm run: 103 192.168.1.194 warm\nerror: `cargo run` could not determine which binary to run.\n";
+        assert_eq!(corpus_end(0, err, 600), Ok(MainEnd::Ran));
+        assert_eq!(corpus_end(1, err, 600), Ok(MainEnd::Ran));
+        assert_eq!(corpus_end(4, err, 600), Ok(MainEnd::WorkspaceBuild));
+        for rc in [2, 3, 101, 124, 137, -1] {
+            let e = corpus_end(rc, err, 600).unwrap_err();
+            assert!(e.contains("harness fault"), "rc {rc}: {e}");
+            assert!(e.contains("could not determine which binary"), "rc {rc} lost round-vm's stderr: {e}");
+        }
+        assert!(corpus_end(101, err, 600).unwrap_err().contains("exit 101"));
+        assert!(corpus_end(124, "", 600).unwrap_err().contains("600s wall bound"));
+        let mismatch = corpus_end(2, "batch: unknown suite: test-x.sh\n", 600).unwrap_err();
+        assert!(mismatch.contains("suite list mismatch, not a harness fault"), "{mismatch}");
+    }
+
+    #[test]
+    fn the_stderr_tail_is_bounded() {
+        let mut long = String::new();
+        for i in 0..500 {
+            long.push_str(&format!("line {i}\n"));
+        }
+        let t = stderr_tail(&long);
+        assert!(t.contains("line 499") && !t.contains("line 0\n"), "{t}");
+        assert_eq!(stderr_tail(""), "\n  (round-vm wrote nothing to stderr)");
     }
 
     #[test]
