@@ -7,6 +7,12 @@ Documentation=file://@SPIRA_HOME@/sending.sh
 After=default.target
 
 [Service]
+# THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built
+# from it alone — nothing inherited from the user manager — so every tool invoked by bare
+# name is that release's. Rendered from the release root (spira-releases/<sha>; the harness
+# checkout's root until the release deploy lands).
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin
 Type=oneshot
 ExecStart=@SPIRA_PROD@/sending.sh --queue-only
 TimeoutStartSec=600

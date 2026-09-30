@@ -91,7 +91,8 @@ pub fn release_values(rel: &Path) -> BTreeMap<String, String> {
     for k in ["SPIRA_HOME", "SPIRA_PROD"] {
         m.insert(k.to_string(), format!("{r}/spira"));
     }
-    for k in ["SPIRA_PROD_ROOT", "SPIRA_REPO"] {
+    // SPIRA_RELEASE: the root every unit's `Environment=PATH=` is built from (sp-31gtu).
+    for k in ["SPIRA_PROD_ROOT", "SPIRA_REPO", "SPIRA_RELEASE"] {
         m.insert(k.to_string(), r.clone());
     }
     for k in ["SPIRA_PROD_COCK", "SPIRA_COCKPIT"] {

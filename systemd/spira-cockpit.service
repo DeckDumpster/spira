@@ -11,6 +11,12 @@ StartLimitIntervalSec=120
 StartLimitBurst=5
 
 [Service]
+# THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built
+# from it alone — nothing inherited from the user manager — so every tool invoked by bare
+# name is that release's. Rendered from the release root (spira-releases/<sha>; the harness
+# checkout's root until the release deploy lands).
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin
 # Type=notify: spira-supervise sends READY=1 once collect.sh is up, then WATCHDOG=1 while
 # the snapshot is fresh.  The supervisor is the main PID so its datagrams are credited
 # by the manager (sp-3az9w established that bash cannot satisfy this; sp-mplcb fixes it).

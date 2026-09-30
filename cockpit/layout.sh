@@ -116,6 +116,17 @@ unset TMUX
 # simple filesystem paths with no embedded single quotes.
 _CONF_PREFIX=""
 [ -n "${SPIRA_CONF:-}" ] && _CONF_PREFIX="SPIRA_CONF='${SPIRA_CONF}' "
+# THE COCKPIT IS A LAUNCHER, SO IT SETS PATH OUTRIGHT (sp-31gtu). A pane gets the tmux
+# SERVER's environment, whatever shell started that server, so each Spira pane's command
+# carries SPIRA_RELEASE and a PATH built from it alone — the release's bin/ and spira/, then
+# the system directories — and a tool it runs by bare name is the release's. The pane's own
+# conf.sh appends the box's tail. The mail pane runs the operator's own client, not a Spira
+# tool, and keeps the server's PATH. Unset is a refusal, never a fallback.
+[ -n "${SPIRA_RELEASE:-}" ] || {
+    printf 'cockpit: SPIRA_RELEASE is not set — the launcher sets it to the release the running system executes, and every pane'\''s PATH is built from it\n' >&2
+    exit 1
+}
+_REL_PREFIX="${_CONF_PREFIX}SPIRA_RELEASE='${SPIRA_RELEASE}' PATH='${SPIRA_RELEASE}/bin:${SPIRA_RELEASE}/spira:/usr/local/bin:/usr/bin:/bin' "
 # The panes open where the operator works — COCKPIT_CWD, a spira.conf key.
 CWD="$COCKPIT_CWD"
 # COCKPIT_RIGHT_PCT controls how wide the full-height ops column is, as a % of the window.
@@ -132,7 +143,7 @@ mkdir -p "$RUN" || { printf 'cockpit: runtime directory %s is not writable\n' "$
 # resolved above (prod checkout in split-checkout mode, unless SPIRA_DEV_RENDERER=1). Its
 # own function because a test needs the string layout.sh WOULD hand tmux without spawning
 # a pane to read it back off #{pane_start_command}.
-build_health_cmd() { printf '%s' "${_CONF_PREFIX}$COCK/health.sh loop"; }
+build_health_cmd() { printf '%s' "${_REL_PREFIX}$COCK/health.sh loop"; }
 
 # Default to the window this script was invoked from; fall back to the claude window.
 default_window() {
@@ -545,7 +556,7 @@ up)
         _conc="${SPIRA_REPO}/concierge.sh"
         if [ -x "$_conc" ]; then
             sess=$($TMUX_BIN split-window -P -F '#{pane_id}' -b -v -l 60% -t "$(all_tagged | head -1)" -c "$CWD" \
-                "${_CONF_PREFIX}${_conc} here") \
+                "${_REL_PREFIX}${_conc} here") \
                 || { echo "cockpit: could not restore the session pane" >&2; exit 1; }
             echo "cockpit: session pane was gone — opened concierge.sh here at $sess"
         else

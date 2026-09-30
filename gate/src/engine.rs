@@ -90,6 +90,9 @@ struct State {
     /// The gate-run TSD row's (telemetry.rs): the mode in force and the branch's shape.
     gate_mode: String,
     branch_type: String,
+    /// The gate command's PATH, set outright: the launcher's release PATH, then cargo for the
+    /// tree builds (sp-31gtu). Empty until SPIRA_RELEASE has been read.
+    path: String,
 }
 
 pub struct Trial<'w, W: World> {
@@ -150,6 +153,14 @@ impl<'w, W: World> Trial<'w, W> {
                 format!("gate: repo-map has no entry for '{name}' — refusing to guess a checkout"),
             );
         };
+        // THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the gate command runs under `env -i`
+        // with PATH built from SPIRA_RELEASE — never the PATH this process inherited — so a
+        // bare tool name in a step is the running release's. cargo is appended for the tree
+        // builds (`bin` lines, unit phases). Unset is a refusal naming it, never a fallback.
+        match spira_config::release_path_from_env(Some(ctx.var(spira_config::RELEASE_ENV))) {
+            Ok(p) => self.s.path = format!("{p}:{}/.cargo/bin", ctx.var("HOME")),
+            Err(e) => return v(NOVERDICT, "release-unset", format!("gate: {e} — refusing to judge")),
+        }
         let repo = PathBuf::from(repo);
         self.s.repo = repo.clone();
         self.s.run = ctx.var("SPIRA_RUN").to_string();
@@ -505,12 +516,10 @@ impl<'w, W: World> Trial<'w, W> {
         let env = |branch: &str, repeat: &str, c: &Composition| -> Vec<(String, String)> {
             let e = |k: &str, v: &str| (k.to_string(), v.to_string());
             vec![
-                // The launcher's PATH first (the release's bin/ and spira/, so a bare tool
-                // name is the release's — sp-gypjk); cargo appended, for the tree builds.
-                e(
-                    "PATH",
-                    &format!("{}:{}/.cargo/bin", ctx.var("PATH"), ctx.var("HOME")),
-                ),
+                // Set outright from SPIRA_RELEASE (sp-31gtu): the release's bin/ and spira/, the
+                // system dirs, then cargo for the tree builds. Never the inherited PATH.
+                e("PATH", &self.s.path),
+                e(spira_config::RELEASE_ENV, ctx.var(spira_config::RELEASE_ENV)),
                 e("HOME", ctx.var("HOME")),
                 e("TERM", "dumb"),
                 e("SPIRA_GATE_REPO", &repo.to_string_lossy()),
@@ -859,9 +868,8 @@ impl<'w, W: World> Trial<'w, W> {
     }
 
     fn members(&self, ctx: &Ctx, tree: &Path) -> Result<Vec<compose::Member>, String> {
-        let path = format!("{}:{}/.cargo/bin", ctx.var("PATH"), ctx.var("HOME"));
         self.w
-            .cargo_metadata(tree, &path, ctx.var("HOME"))
+            .cargo_metadata(tree, &self.s.path, ctx.var("HOME"))
             .and_then(|j| compose::parse_metadata(&j))
     }
 

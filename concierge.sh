@@ -323,6 +323,12 @@ concierge_stray_holders() {
 case "${1:-status}" in
 
 start)
+    # The launcher's release (sp-31gtu): the session's gates, aeons and panes build PATH from
+    # it, so a start without it is refused here rather than failing later, one tool at a time.
+    [ -n "${SPIRA_RELEASE:-}" ] || {
+        echo "concierge: SPIRA_RELEASE is not set — start it from concierge.service, whose unit sets it" >&2
+        exit 1
+    }
     # THE SESSION HOOK IS ENSURED ON EVERY start, not only the first — this is also what the
     # 10-minute re-ensure timer calls, so "start (and restart)" is the same code path. Runs
     # before the already-running check below so a concierge already up still gets it repaired.
@@ -446,6 +452,8 @@ start)
     # --remain-after-exit keeps the unit active after tmux new-session daemonizes and exits,
     # preventing the KillMode cleanup until the server itself stops.
     # PATH and HOME are the minimum the launcher needs: PATH to find claude, HOME for config.
+    # SPIRA_RELEASE rides with them (sp-31gtu): the Concierge is a launcher too — the gates,
+    # aeons and cockpit it starts build their PATH from it.
     #
     # remain-on-exit ON, chained onto the same tmux invocation rather than set afterwards —
     # a set-option issued after the fact races the client's own exit. Without it, a client
@@ -453,7 +461,7 @@ start)
     # later" this function observes cannot be told apart from "the id truly cannot be resumed
     # any more" — which is the defect this whole branch exists to fix (sp-aaew9).
     systemd-run --user --collect --quiet --remain-after-exit \
-        --setenv=PATH="$PATH" --setenv=HOME="$HOME" -- \
+        --setenv=SPIRA_RELEASE="$SPIRA_RELEASE" --setenv=PATH="$PATH" --setenv=HOME="$HOME" -- \
         tmux -L "$SOCKET" new-session -d -s "$SESSION" -c "$BRAIN" "$LAUNCHER" \
         ';' set-option -t "$SESSION" remain-on-exit on
     sleep 3
@@ -478,7 +486,7 @@ start)
         } > "$LAUNCHER"
         chmod +x "$LAUNCHER"
         systemd-run --user --collect --quiet --remain-after-exit \
-            --setenv=PATH="$PATH" --setenv=HOME="$HOME" -- \
+            --setenv=SPIRA_RELEASE="$SPIRA_RELEASE" --setenv=PATH="$PATH" --setenv=HOME="$HOME" -- \
             tmux -L "$SOCKET" new-session -d -s "$SESSION" -c "$BRAIN" "$LAUNCHER"
         sleep 3
         if $TM has-session -t "$SESSION" 2>/dev/null; then

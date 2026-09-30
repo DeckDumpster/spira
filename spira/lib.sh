@@ -2577,7 +2577,7 @@ summon_argv() {
     printf '%s\n' \
         --property=TimeoutStartSec="$(fayth_get "$f" FAYTH_TIMEOUT_SECONDS 3600)" \
         "$(summon_refill_argv)" \
-        --setenv=PATH="$PATH" --setenv=HOME="$HOME"
+        --setenv=SPIRA_RELEASE="${SPIRA_RELEASE:-}" --setenv=PATH="$PATH" --setenv=HOME="$HOME"
 }
 
 summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label] [reuse-ready]

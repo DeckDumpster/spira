@@ -8,6 +8,12 @@ Documentation=file://@SPIRA_HOME@/skew.sh
 After=default.target
 
 [Service]
+# THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built
+# from it alone — nothing inherited from the user manager — so every tool invoked by bare
+# name is that release's. Rendered from the release root (spira-releases/<sha>; the harness
+# checkout's root until the release deploy lands).
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin
 Type=oneshot
 # ADVANCE THE CHECKOUT BEFORE CHECKING IT. The landing pass calls 'skew.sh refresh' on every
 # merge, which keeps the checkout current under normal operation. This ExecStartPre is the
@@ -15,14 +21,14 @@ Type=oneshot
 # that advances the checkout, and it advances it here, before the STALE check that depends on
 # it being current. The '-' prefix makes this non-fatal: a dirty tree, a non-fast-forward, or
 # a network failure still lets the check run and report what it found.
-ExecStartPre=-@SPIRA_HOME@/skew.sh refresh
+ExecStartPre=-@SPIRA_PROD@/skew.sh refresh
 # @SPIRA_HOME@ is correct here even in split-checkout mode. If this used @SPIRA_PROD@,
 # skew.sh would run with SPIRA_REPO = the prod checkout root; the repo-map entry for
 # "spira" would then point at the dev checkout, which copies() would classify as a second
 # harness copy — a false COPY finding on every run. Running from @SPIRA_HOME@ sets
 # SPIRA_REPO = the dev checkout root; the repo-map "spira" entry is "self"; no COPY.
 # In single-checkout mode @SPIRA_HOME@ = @SPIRA_PROD@ so this is a no-op.
-ExecStart=@SPIRA_HOME@/skew.sh check --escalate
+ExecStart=@SPIRA_PROD@/skew.sh check --escalate
 # DIVERGENCE IS NOT A UNIT FAILURE. skew.sh exits 1 when it found something and has already
 # put the decision in front of the operator; leaving the unit red on top of that is a second
 # alert for one condition, and a unit permanently red is one whose next genuine failure

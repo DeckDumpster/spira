@@ -55,6 +55,10 @@ def main() -> int:
         m["SPIRA_PROD"] = m["SPIRA_HOME"]
     m["SPIRA_PROD_COCK"] = os.path.dirname(m["SPIRA_PROD"]) + "/cockpit"
     m["SPIRA_PROD_ROOT"] = os.path.dirname(m["SPIRA_PROD"])
+    # The release root every unit builds its PATH from (sp-31gtu): the directory holding bin/
+    # and spira/ — spira-releases/<sha>, or the harness checkout's root until the release
+    # deploy lands (sp-gkfg1). release activate renders the same key from the release itself.
+    m["SPIRA_RELEASE"] = m["SPIRA_PROD_ROOT"]
 
     text = open(args.template).read()
     if not m["DOLT"] and "@DOLT@" in text:

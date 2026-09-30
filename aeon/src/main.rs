@@ -78,6 +78,14 @@ fn main() {
         let _ = std::io::stdin().read_to_string(&mut p);
         cli.mode = Mode::Sweep { prompt: Some(p.trim_end_matches('\n').to_string()) };
     }
+    // THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): built from SPIRA_RELEASE alone — never
+    // the PATH this process inherited — before conf.sh (through the seam) appends the box's
+    // own tail. So the session, its subagents and the worktree's hooks resolve every tool by
+    // name to the release's copy. Unset is fatal, naming it: there is no fallback.
+    match spira_config::release_path_from_env(std::env::var(spira_config::RELEASE_ENV).ok().as_deref()) {
+        Ok(p) => std::env::set_var("PATH", p),
+        Err(e) => fatal(&format!("{}: {e}", cli.fayth)),
+    }
     let original: BTreeMap<String, String> = std::env::vars().collect();
     let exe = std::env::current_exe().ok();
     let Some(home) = conf::resolve_home(cli.home.as_deref(), &original, exe.as_deref()) else {

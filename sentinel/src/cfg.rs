@@ -285,6 +285,7 @@ impl Cfg {
         let mut raw = BTreeMap::new();
         for k in [
             "PATH",
+            "SPIRA_RELEASE",
             "HOME",
             "SPIRA_HOME",
             "SPIRA_RUN",

@@ -410,6 +410,46 @@ fn render_names_the_release_and_refuses_what_it_cannot_fill() {
     assert!(e.contains("uses SPIRA_DB but no value"), "{e}");
 }
 
+/// Every service template this tree ships, rendered against a release, carries that release's
+/// launcher PATH, set outright (sp-31gtu): the acceptance "rendered units carry the release
+/// PATH", checked against the real templates rather than a fixture.
+#[test]
+fn every_shipped_service_renders_the_release_path_set_outright() {
+    let rel = Path::new("/r/spira-releases").join(A);
+    let r = rel.display().to_string();
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
+    let mut host = BTreeMap::new();
+    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "SPIRA_TESTDB_PORT", "SPIRA_SNAP_STALE_S", "DOLT", "SPIRA_INSTANCE"] {
+        host.insert(k.to_string(), format!("/host/{k}"));
+    }
+    let mut n = 0;
+    for e in std::fs::read_dir(&dir).unwrap().flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if !name.ends_with(".service") {
+            continue;
+        }
+        let text = std::fs::read_to_string(e.path()).unwrap();
+        let watcher = name.contains('@').then_some("w");
+        let out = units::render(&name, &text, &rel, &host, watcher, "prod").unwrap_or_else(|e| panic!("{name}: {e}"));
+        let path_lines: Vec<&str> = out.lines().filter(|l| l.starts_with("Environment=PATH=")).collect();
+        assert_eq!(
+            path_lines,
+            [format!("Environment=PATH={r}/bin:{r}/spira:/usr/local/bin:/usr/bin:/bin").as_str()],
+            "{name}"
+        );
+        assert!(out.contains(&format!("\nEnvironment=SPIRA_RELEASE={r}\n")), "{name}");
+        for l in out.lines().filter(|l| l.starts_with("ExecStart=")) {
+            let prog = l["ExecStart=".len()..].split_whitespace().next().unwrap_or("");
+            assert!(
+                prog.starts_with(&r) || prog.starts_with("/host/DOLT") || prog == "/bin/bash",
+                "{name}: ExecStart runs {prog}, not under the release"
+            );
+        }
+        n += 1;
+    }
+    assert!(n >= 30, "read the shipped templates ({n})");
+}
+
 // ---------------------------------------------------------------- activate
 
 #[test]

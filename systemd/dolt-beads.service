@@ -25,6 +25,12 @@ StartLimitBurst=5
 RefuseManualStop=yes
 
 [Service]
+# THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built
+# from it alone — nothing inherited from the user manager — so every tool invoked by bare
+# name is that release's. Rendered from the release root (spira-releases/<sha>; the harness
+# checkout's root until the release deploy lands).
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin
 Type=simple
 ExecStart=@DOLT@ sql-server --config @SPIRA_DOLT_DATA@/dolt-server.yaml
 WorkingDirectory=@SPIRA_DOLT_DATA@

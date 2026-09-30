@@ -163,6 +163,9 @@ impl<'a> Sentinel<'a> {
             ];
             a.extend(self.setenv(&[
                 "PATH",
+                // The release the worker's PATH was built from (sp-31gtu), for its own
+                // launches (a gate, an aeon worktree's hooks) to build theirs.
+                "SPIRA_RELEASE",
                 "HOME",
                 "SPIRA_HOME",
                 "SPIRA_RUN",
@@ -331,6 +334,9 @@ impl<'a> Sentinel<'a> {
             ];
             a.extend(self.setenv(&[
                 "PATH",
+                // The release the worker's PATH was built from (sp-31gtu), for its own
+                // launches (a gate, an aeon worktree's hooks) to build theirs.
+                "SPIRA_RELEASE",
                 "HOME",
                 "SPIRA_HOME",
                 "SPIRA_RUN",

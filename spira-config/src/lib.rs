@@ -68,6 +68,33 @@ pub fn load(path: &Path) -> Result<SpiraToml, String> {
 
 /// The environment variable that pins `lifecycle_enforce` (a unit's `Environment=`, a
 /// fixture, or conf.sh, which exports it with a default of `0`).
+/// The one variable a launcher builds PATH from (brain `runtime-is-a-release-2026-09-29`):
+/// the root of the release the running system executes — `spira-releases/<sha>`, and until
+/// the release deploy lands (sp-gkfg1) the harness checkout's root, which has `bin/` and
+/// `spira/` in the same places.
+pub const RELEASE_ENV: &str = "SPIRA_RELEASE";
+
+/// The system directories every launcher's PATH ends with (the release's name-clash rule
+/// checks these, `release::SYSTEM_DIRS`).
+pub const SYSTEM_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
+
+/// The launcher's PATH, set outright — never appended to an inherited one (sp-31gtu):
+/// `<release>/bin:<release>/spira:/usr/local/bin:/usr/bin:/bin`.
+pub fn release_path(release: &str) -> String {
+    format!("{release}/bin:{release}/spira:{SYSTEM_PATH}")
+}
+
+/// [`release_path`] of `$SPIRA_RELEASE`, or the refusal naming it: unset (or empty) is a hard
+/// failure, never a fallback to an inherited PATH.
+pub fn release_path_from_env(value: Option<&str>) -> Result<String, String> {
+    match value.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(r) => Ok(release_path(r.trim_end_matches('/'))),
+        None => Err(format!(
+            "{RELEASE_ENV} is not set — the launcher sets it to the release the running system executes, and PATH is built from it; there is no fallback"
+        )),
+    }
+}
+
 pub const LIFECYCLE_ENFORCE_ENV: &str = "SPIRA_LIFECYCLE_ENFORCE";
 
 /// THE lifecycle switch's resolution rule (operator decision 2026-09-28: `lifecycle_enforce`
@@ -951,6 +978,18 @@ pub fn set_paths_in_file(file: &std::path::Path, pairs: &[(&str, &str)]) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_launcher_path_is_the_release_then_the_system_dirs_and_unset_is_refused() {
+        assert_eq!(
+            release_path("/r/spira-releases/abc"),
+            "/r/spira-releases/abc/bin:/r/spira-releases/abc/spira:/usr/local/bin:/usr/bin:/bin"
+        );
+        assert_eq!(release_path_from_env(Some("/h/")).unwrap(), "/h/bin:/h/spira:/usr/local/bin:/usr/bin:/bin");
+        for v in [None, Some(""), Some("  ")] {
+            assert!(release_path_from_env(v).unwrap_err().contains("SPIRA_RELEASE is not set"));
+        }
+    }
 
     #[test]
     fn lifecycle_enforce_resolution_matches_aeon() {

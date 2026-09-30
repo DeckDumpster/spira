@@ -88,7 +88,7 @@ fn ctx() -> Ctx {
         ("SPIRA_VERDICT_TTL", "86400"),
         ("SPIRA_CERTIFY_PAR", "2"),
         ("HOME", "/home/u"),
-        ("PATH", "/usr/bin"),
+        ("SPIRA_RELEASE", "/rel"),
         ("LANDSTATE", "/run/landstate"),
     ] {
         vars.insert(k.to_string(), v.to_string());
@@ -504,6 +504,31 @@ fn a_current_branch_is_judged_as_itself() {
     assert_eq!(f.run(), PASS);
     assert_eq!(f.checkouts.borrow()[0], BR);
     assert_eq!(f.env_of(0, "SPIRA_GATE_BRANCH"), BR);
+}
+
+#[test]
+fn the_gate_command_gets_the_launcher_path_set_outright_from_spira_release() {
+    let f = Fake::new();
+    f.ancestor.set(true);
+    f.set_var("PATH", "/home/u/.cargo/bin:/checkout/target/release:/usr/bin");
+    assert_eq!(f.run(), PASS);
+    assert_eq!(
+        f.env_of(0, "PATH"),
+        "/rel/bin:/rel/spira:/usr/local/bin:/usr/bin:/bin:/home/u/.cargo/bin",
+        "the release's bin/ and spira/, the system dirs, cargo for tree builds — nothing inherited"
+    );
+    assert_eq!(f.env_of(0, "SPIRA_RELEASE"), "/rel");
+}
+
+#[test]
+fn an_unset_spira_release_is_no_verdict_naming_it_and_nothing_runs() {
+    let f = Fake::new();
+    f.ancestor.set(true);
+    f.set_var("SPIRA_RELEASE", "");
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=release-unset"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("SPIRA_RELEASE is not set"));
+    assert!(f.ran.borrow().is_empty(), "no gate command ran");
 }
 
 #[test]

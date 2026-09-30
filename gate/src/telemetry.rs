@@ -49,7 +49,12 @@ pub fn shape<W: World>(
             why: "no-diff".into(),
         };
     };
-    let path = format!("{}/.cargo/bin:{}", ctx.var("HOME"), ctx.var("PATH"));
+    // The launcher's PATH from SPIRA_RELEASE (sp-31gtu), cargo for `cargo metadata`.
+    let path = format!(
+        "{}:{}/.cargo/bin",
+        spira_config::release_path(ctx.var(spira_config::RELEASE_ENV)),
+        ctx.var("HOME")
+    );
     let members = w
         .cargo_metadata(tree, &path, ctx.var("HOME"))
         .and_then(|j| compose::parse_metadata(&j));

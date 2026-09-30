@@ -8,13 +8,19 @@ StartLimitIntervalSec=60
 StartLimitBurst=5
 
 [Service]
+# THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built
+# from it alone — nothing inherited from the user manager — so every tool invoked by bare
+# name is that release's. Rendered from the release root (spira-releases/<sha>; the harness
+# checkout's root until the release deploy lands).
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin
 Type=simple
 # @SPIRA_HOME@ (dev checkout), not @SPIRA_PROD@. The loom binary is a compiled Rust artifact
 # at $SPIRA_REPO/loom/target/release/loom — gitignored and not cloned into the prod checkout.
 # loom.sh is an 8-line wrapper exec'd in one shot, not read incrementally, so it does not have
 # the partial-execution hazard that makes aeon.sh and sentinel.sh run from the prod checkout.
 # Running from @SPIRA_HOME@ sets SPIRA_REPO = dev checkout root, where the binary is built.
-ExecStart=@SPIRA_HOME@/loom.sh
+ExecStart=@SPIRA_PROD@/loom.sh
 Restart=always
 # The MINIMUM time between restarts. A crash loop is visible in the log; a 5-second floor
 # keeps it from chewing CPU while remaining fast to recover from a transient.
