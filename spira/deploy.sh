@@ -454,6 +454,32 @@ _render_release_units() {
         bash "${SPIRA_INSTALL_SH:-$SPIRA_RELEASES/current/systemd/install.sh}"
 }
 
+# _activated_release_cmd <cmd> [args...] — run a release-relative tool (doctor.sh, skew.sh)
+# against $SPIRA_RELEASES/current under the SAME pinning _render_release_units uses, rather
+# than this process's own ambient PATH/conf.sh state.
+#
+# THE HEALTH CHECK MUST JUDGE THE RELEASE JUST ACTIVATED, NOT WHOEVER HAPPENS TO BE ON
+# deploy.sh's OWN PATH. An upgrade's deploy.sh is, by construction, the PREDECESSOR's own
+# copy — "current" still pointed at it when this process started and sourced ITS conf.sh,
+# before this same run swapped current to the incoming release. A predecessor's conf.sh
+# that predates the launcher-PATH invariant (sp-gypjk: the launcher's bin/ and spira/ come
+# first and are never rewritten) can instead OVERWRITE $PATH wholesale, and every bare-name
+# call this process makes for the rest of its life — doctor.sh, skew.sh — then resolves
+# through whatever the box happens to fall back to, not the release under test. Health-
+# checking then judged a manifest that was never the one just activated: a release that
+# added spira-watch-inbox-keeper/pr-notify/publish-backlog read back as ORPHANS with "no
+# daemon row in the manifest", and a good upgrade rolled itself back (acceptance phase B,
+# sp-r15cf). $_spira_orig_env is the environment as invoked, captured before ANY conf.sh —
+# predecessor's or this one's — had a chance to touch PATH, so re-pinning under it here
+# finds the release actually activated regardless of what ran this deploy.
+_activated_release_cmd() {
+    env -i "${_spira_orig_env[@]}" \
+        SPIRA_REPO="$SPIRA_RELEASES/current" \
+        SPIRA_HOME="$SPIRA_RELEASES/current/spira" \
+        SPIRA_PROD="$SPIRA_RELEASES/current/spira" \
+        "$@"
+}
+
 # Rollback: restore prior state, restart, resume.
 # On a non-first deploy: swap current back to the prior release.
 # On a first deploy: remove current and re-render units against the original checkout.
@@ -536,8 +562,21 @@ spira_config_set SPIRA_PROD "$_new_prod" \
 log "deploy: spira.toml updated — SPIRA_PROD = $_new_prod"
 
 # Activate the tarball.
+#
+# --skip-restart (sp-r15cf): install-tarball's own restart cannot be what switches a
+# running unit onto the new release — every ExecStart line is templated with the
+# RELEASE'S OWN path (release/DESIGN.md "Render": SPIRA_HOME/SPIRA_PROD are <rel>/spira,
+# a specific hash, never "current"), and that templating has not happened yet here; it
+# happens in _render_release_units below. Restarting now just bounces a unit back onto
+# the release it was already running, then _render_release_units restarts the same unit
+# AGAIN seconds later once its Exec lines actually changed — twice in the same handful of
+# seconds, racing whatever the first instance was still releasing (a socket, a run-dir
+# lock) and failing the second with "the control process exited with error code" for
+# spira-cockpit-prod.service, deterministically enough under host load to roll back a
+# release that added nothing wrong (acceptance phase B). The render's restart is the one
+# that matters; this step only needs to land the bits and swap the symlink.
 log "deploy: activating"
-"$_ACTIVATE" install-tarball "$_tarball" || { _rollback "release install-tarball failed"; }
+"$_ACTIVATE" install-tarball --skip-restart "$_tarball" || { _rollback "release install-tarball failed"; }
 
 # Record the release tag in .tags/ (beside the release dirs, not inside the read-only one).
 printf '%s\n' "$tag" > "$SPIRA_RELEASES/.tags/$release_stem" || {
@@ -604,7 +643,7 @@ log "deploy: health check"
 _deploy_failed=""
 "$_WORLD" status >/dev/null 2>&1 \
     || _deploy_failed="${_deploy_failed:+$_deploy_failed, }world status"
-_skew_out="$("$_SKEW" check 2>/dev/null)"
+_skew_out="$(_activated_release_cmd "$_SKEW" check 2>/dev/null)"
 _skew_exit=$?
 # AN OLDER RELEASE THE OPERATOR NAMED IS NOT-LATEST BY CONSTRUCTION. skew.sh check answers
 # NOT-LATEST (exit 1) whenever a newer release tag exists — exactly the state a deliberate
@@ -638,7 +677,7 @@ if [ "$_skew_exit" -eq 0 ] && [ "$_named_tag" = 1 ]; then
 fi
 # THE FAIL LINES ARE THE EVIDENCE. A bare "ROLLBACK — doctor" says a check failed and not
 # which; the rollback that follows destroys the state it failed on. Print what doctor said.
-if ! _doctor_out="$(SPIRA_DOCTOR=1 "$_DOCTOR" 2>&1)"; then
+if ! _doctor_out="$(_activated_release_cmd env SPIRA_DOCTOR=1 "$_DOCTOR" 2>&1)"; then
     _deploy_failed="${_deploy_failed:+$_deploy_failed, }doctor"
     printf '%s\n' "$_doctor_out" | grep -E '^\s*FAIL' | sed 's/^/deploy: doctor: /' >&2
 fi

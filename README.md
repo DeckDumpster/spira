@@ -260,7 +260,7 @@ conforming client. A row may carry a **health assertion**, because a watcher rep
 identically whether nothing happened or it is reading the wrong database.
 
 **Incidents.** `spira/incident.sh` turns a production event into a bead ops can claim, from a
-failed systemd unit, an arbitrary payload, or a spool flush. `spira/install-intake.sh` wires
+failed systemd unit, an arbitrary payload, or a spool flush. `release intake install` wires
 `OnFailure=` drop-ins over `SPIRA_ALERT_GLOB` so a failed unit files itself; dedup keys on the
 unit name, so a recurrence labels the open incident rather than filing a second one.
 
