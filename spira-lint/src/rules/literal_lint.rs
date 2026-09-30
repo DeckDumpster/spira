@@ -71,13 +71,13 @@ fn configured_names_env(schema: &std::path::Path, extra_env: &[(&str, &str)]) ->
 
 /// What `schema.sh` would otherwise read from the box rather than the tree (sp-g9f3t):
 /// conf.sh's config file search (explicit SPIRA_CONF/SPIRA_TOML, else XDG — the operator's
-/// own spira.toml) and the chamber its staleness check compares against it. Pinned to a path
+/// own config file) and the chamber its staleness check compares against it. Pinned to a path
 /// that does not exist, so the names are the tree's declarations plus any override the
 /// environment carries — the same on every box, whatever its config file or its mtimes.
 /// (Unpinned, the same tree flipped between 0 and 5 findings on the gate on mtimes alone.)
 const BOX_CONFIG_PINS: &[(&str, &str)] = &[
-    ("SPIRA_CONF", "/nonexistent/spira-lint/spira.conf"),
-    ("SPIRA_TOML", "/nonexistent/spira-lint/spira.toml"),
+    ("SPIRA_CONF", "/nonexistent/spira-lint/conf"),
+    ("SPIRA_TOML", "/nonexistent/spira-lint/config"),
     ("SPIRA_CHAMBER", "/nonexistent/spira-lint/chamber"),
 ];
 
@@ -316,7 +316,7 @@ mod tests {
     }
 
     /// sp-g9f3t, the 2026-09-30 base-red: the real schema.sh sources conf.sh, which reads the
-    /// box's own spira.toml (HOME/XDG, or SPIRA_CONF/SPIRA_TOML) — or not, depending on file
+    /// box's own config file (HOME/XDG, or SPIRA_CONF/SPIRA_TOML) — or not, depending on file
     /// mtimes. A config file on the box is not an input to a tree's verdict: the same tree
     /// must give the same names on any box. This fixture reads the box's config the way
     /// conf.sh does; the rule must not see its `needs-box` label. An explicit environment
@@ -326,9 +326,9 @@ mod tests {
         let t = TempDir::new("lit-box");
         testkit::write_exe(
             t.path().join("schema.sh"),
-            "#!/usr/bin/env bash\ncfg=\"${SPIRA_TOML-${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml}\"\nask=\n[ -f \"$cfg\" ] && ask=\"$(sed -n 's/^ask_label = \"\\(.*\\)\"$/\\1/p' \"$cfg\")\"\ncase \"$1\" in\n  names) echo ask ;;\n  name) printf '%s' \"${SPIRA_ASK_LABEL:-${ask:-needs-operator}}\" ;;\n  default) printf '%s' needs-operator ;;\nesac\n",
+            "#!/usr/bin/env bash\ncfg=\"${SPIRA_TOML-${XDG_CONFIG_HOME:-$HOME/.config}/spira/box-config}\"\nask=\n[ -f \"$cfg\" ] && ask=\"$(sed -n 's/^ask_label = \"\\(.*\\)\"$/\\1/p' \"$cfg\")\"\ncase \"$1\" in\n  names) echo ask ;;\n  name) printf '%s' \"${SPIRA_ASK_LABEL:-${ask:-needs-operator}}\" ;;\n  default) printf '%s' needs-operator ;;\nesac\n",
         );
-        t.write("home/.config/spira/spira.toml", "[spira]\nask_label = \"needs-box\"\n");
+        t.write("home/.config/spira/box-config", "[spira]\nask_label = \"needs-box\"\n");
         let home = t.path().join("home");
         let home = home.to_str().unwrap();
         let schema = t.path().join("schema.sh");
