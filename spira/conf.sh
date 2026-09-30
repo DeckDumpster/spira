@@ -1058,7 +1058,7 @@ spira_conf_defaults() {
     # HOW LONG `up` queues for a free slot before giving up, and how often it re-checks.
     : "${SPIRA_TESTENV_QUEUE_TIMEOUT:=900}"
     : "${SPIRA_TESTENV_QUEUE_POLL:=5}"
-    # WHICH TRACKER gh-intake.sh ingests from, as "owner/repo". Empty means there is
+    # WHICH TRACKER gh-intake ingests from, as "owner/repo". Empty means there is
     # no inbox and intake refuses to guess: a default pointing at somebody else's
     # repository would quietly file their reports into this operator's graph.
     #
@@ -1780,17 +1780,17 @@ spira_conf_defaults() {
     # refuses the transition — the publish PR is left open for the normal cadence to settle.
     # In seconds.
     : "${SPIRA_QUEUE_TRANSITION_MAXSEC:=1800}"
-    # HOW LONG A CI JOB MAY BE IN QUEUED STATUS (no runner assigned) before czar.sh --pass
+    # HOW LONG A CI JOB MAY BE IN QUEUED STATUS (no runner assigned) before czar-pass --pass
     # fires ci-stalled. A queued job with a torn-down VM label will never start; the czar
     # cancels the stuck run and re-dispatches the whole workflow. In seconds.
     : "${SPIRA_CI_QUEUED_MAX_SECS:=600}"
-    # HOW LONG WITHOUT A LANDING PASS COMPLETING before czar.sh --pass fires loop-stalled.
+    # HOW LONG WITHOUT A LANDING PASS COMPLETING before czar-pass --pass fires loop-stalled.
     # Above the 2700s local-gate timeout so an ordinary batch gate does not trigger it.
     : "${SPIRA_LOOP_STALL_SECS:=3000}"
-    # HOW LONG A BATCH OPEN FILE MAY SIT AFTER ITS CI RUN COMPLETES RED before czar.sh
+    # HOW LONG A BATCH OPEN FILE MAY SIT AFTER ITS CI RUN COMPLETES RED before czar-pass
     # --pass fires ci-red (verdict not acting on a red result). In seconds.
     : "${SPIRA_CI_RED_MAX_SECS:=600}"
-    # HOW LONG A BASE REF'S OWN CI STATUS MAY COME BACK UNREADABLE before czar.sh --pass
+    # HOW LONG A BASE REF'S OWN CI STATUS MAY COME BACK UNREADABLE before czar-pass --pass
     # treats it as unreadable rather than a momentary gap between a push landing and
     # GitHub creating the run object for it. In seconds; base-red RED itself fires with
     # no grace — that half is urgency, not a race with GitHub's own bookkeeping.

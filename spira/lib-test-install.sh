@@ -72,7 +72,7 @@ install_fixture_build() {
 # whose ExecStart target is not executable. A fixture therefore stages a release-shaped bin/
 # beside the spira/ its SPIRA_PROD names. Nothing here runs them — install only places and
 # starts units against a mock systemctl.
-INSTALL_FIXTURE_UNIT_BINS="sentinel queue aeon spira-supervise landing-pass reconciler-flow spira-lc sending"
+INSTALL_FIXTURE_UNIT_BINS="sentinel queue aeon spira-supervise landing-pass reconciler-flow spira-lc sending czar-pass gh-intake"
 
 # install_fixture_release_bins <prod-root> -> no-op stubs at <prod-root>/bin/<tool> for every
 # binary a unit template ExecStarts.
