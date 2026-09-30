@@ -139,7 +139,7 @@ inst() {
     done
     [ "${1:-}" = "--" ] && shift
     env -i \
-        "PATH=$MOCK_BIN:$FIXTURE/spira:$GIT_BIN:$PATH" \
+        "PATH=$MOCK_BIN:$FIXTURE/bin:$FIXTURE/spira:$GIT_BIN:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
         "SPIRA_REPO=$repo" \
