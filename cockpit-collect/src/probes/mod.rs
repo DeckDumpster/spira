@@ -912,9 +912,26 @@ pub fn sop_keys() -> Kv {
     let sop_keys_set: std::collections::HashSet<&str> = shelf.iter().filter(|(k, v)| v.is_string() && k.starts_with("sop-")).map(|(k, _)| k.as_str()).collect();
     let mut ledger_sops = std::collections::HashSet::new();
     let mut recurred = std::collections::HashSet::new();
+    // The newest SWEEP timestamp comes from the ledger row's own `epoch` field — a plain
+    // number every row carries — never from parsing `ts` (an ISO string used only for the
+    // recurrence window). Unlike `recurred`, `epoch` is read from EVERY row, not gated on
+    // `check=="pass" && held=="no"`.
     let mut newest_epoch: Option<i64> = None;
-    if let Ok(content) = std::fs::read_to_string(&ledger) {
+    // A MISSING LEDGER IS A VALID STATE (no SOP has ever been applied — every SOP is
+    // never-fired). An UNREADABLE ledger (present but cannot be opened, e.g. a directory)
+    // is the failure case and renders `?` for all three keys.
+    if Path::new(&ledger).exists() {
+        let Ok(content) = std::fs::read_to_string(&ledger) else {
+            push(&mut out, "SP_SOP_NEVER_FIRED", "?");
+            push(&mut out, "SP_SOP_RECURRED", "?");
+            push(&mut out, "SP_SWEEP_AGE", "?");
+            return out;
+        };
         for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
             let Ok(r) = serde_json::from_str::<Value>(line) else { continue };
             let k = r.get("sop").and_then(Value::as_str).unwrap_or("");
             if k.is_empty() {
@@ -926,8 +943,13 @@ pub fn sop_keys() -> Kv {
                     if ts >= since {
                         recurred.insert(k.to_string());
                     }
-                    if newest_epoch.map(|n| ts > n).unwrap_or(true) {
-                        newest_epoch = Some(ts);
+                }
+            }
+            if let Some(ep) = r.get("epoch").and_then(Value::as_f64) {
+                if ep > 0.0 {
+                    let ep = ep as i64;
+                    if newest_epoch.map(|n| ep > n).unwrap_or(true) {
+                        newest_epoch = Some(ep);
                     }
                 }
             }
@@ -936,7 +958,7 @@ pub fn sop_keys() -> Kv {
     let never_fired = sop_keys_set.iter().filter(|k| !ledger_sops.contains(**k)).count();
     push(&mut out, "SP_SOP_NEVER_FIRED", never_fired.to_string());
     push(&mut out, "SP_SOP_RECURRED", recurred.len().to_string());
-    push(&mut out, "SP_SWEEP_AGE", newest_epoch.map(|e| (io::now() - e).to_string()).unwrap_or_else(|| "?".to_string()));
+    push(&mut out, "SP_SWEEP_AGE", newest_epoch.map(|e| (now - e).max(0).to_string()).unwrap_or_else(|| "?".to_string()));
     out
 }
 
