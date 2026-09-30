@@ -5,6 +5,7 @@ edition = "2021"
 description = "batcher — pure core: round membership, set-asides, green/flip/double-red classification, adaptive triggers and stacking. The IO seam (git, testenv-batch, the forge, the bead store) lives in a separate crate."
 
 [dependencies]
+suite-select = { path = "../suite-select" }
 
 [profile.release]
 opt-level = "z"

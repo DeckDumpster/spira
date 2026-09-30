@@ -47,7 +47,6 @@ spira/gate-run.sh
 spira/gate.sh
 spira/gate-spira.sh
 spira/gate-suites
-spira/gate-touched.sh
 spira/gh-intake.sh
 spira/hooks/aeon-fence.sh
 spira/incident.sh
@@ -98,7 +97,6 @@ spira/test-canary.sh
 spira/test-census-pipeline.sh
 spira/test-certified-withdraw.sh
 spira/test-certify.sh
-spira/test-certify-suites-off.sh
 spira/test-cert-stale-gate-key.sh
 spira/test-chamber-repo-labels.sh
 spira/test-check5-invariant.sh

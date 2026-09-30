@@ -20,8 +20,8 @@
 # means what it says.
 #
 # PULL REQUEST vs PUSH ARE DIFFERENT GATES, AND MUST BE.
-#   On any pull request, select.sh derives the suite selection from the diff
-#   against the base ref. That is the right, fast answer for a branch.
+#   On any pull request, the selector (suite-select, built in the select job)
+#   derives the suite selection from the diff against the base ref. That is the right, fast answer for a branch.
 #   A push to main never carries untested work of its own: main only ever
 #   advances by verdict.sh fast-forwarding a queue batch PR's head
 #   (spira/queue/*), so the pushed SHA already has its own green gate run from
@@ -115,7 +115,9 @@ permissions:
 jobs:
   # ---------------------------------------------------------------------------
   # Compute the suite selection before touching any infrastructure.
-  # For pull requests: gate-touched.sh selects from the diff.
+  # For pull requests: the selector (suite-select) selects from the diff. It is
+  # built here, from this commit, because the select job runs before `build`.
+  # A selector that cannot select fails the job (exit 75/1), never an empty list.
   # For everything else: the whole corpus.
   #
   # An empty output means no suites were selected — provision is skipped.
@@ -133,6 +135,21 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+      - name: Read pinned toolchain for the selector
+        id: seltoolchain
+        if: github.event_name == 'pull_request'
+        run: |
+          v=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          [ -n "$v" ] || { printf 'rust-toolchain.toml has no channel\n' >&2; exit 1; }
+          printf 'version=%s\n' "$v" >> "$GITHUB_OUTPUT"
+      - name: Install Rust for the selector
+        if: github.event_name == 'pull_request'
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.seltoolchain.outputs.version }}
+      - name: Build the selector
+        if: github.event_name == 'pull_request'
+        run: cargo build --release -p suite-select
       - name: Select suites
         id: sel
         run: |
@@ -149,12 +166,14 @@ jobs:
           elif [ "${{ github.event_name }}" = "pull_request" ] \
              && printf '%s' "${{ github.head_ref }}" | grep -qE '^spira/queue/'; then
             _base="${{ github.event.pull_request.base.sha }}"
-            _s="$(bash spira/select.sh --base "$_base" --head "${{ github.sha }}" \
-                  | tr '\n' ',' | sed 's/,$//')"
+            _s="$(target/release/suite-select select --base "$_base" --head "${{ github.sha }}" \
+                  --repo . --suite-dir spira)" || { printf 'select: the selector refused (rc %s)\n' "$?"; exit 1; }
+            _s="$(printf '%s\n' "$_s" | tr '\n' ',' | sed 's/,$//')"
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
             _base="${{ github.event.pull_request.base.sha }}"
-            _s="$(bash spira/gate-touched.sh "$_base" "${{ github.sha }}" \
-                  | tr '\n' ',' | sed 's/,$//')"
+            _s="$(target/release/suite-select gate "$_base" "${{ github.sha }}")" \
+              || { printf 'select: the selector refused (rc %s)\n' "$?"; exit 1; }
+            _s="$(printf '%s\n' "$_s" | tr '\n' ',' | sed 's/,$//')"
           elif [ "${{ github.event_name }}" = "push" ]; then
             # The pushed SHA already carries a green gate run from its life as a
             # queue batch PR's head (see the PULL REQUEST vs PUSH comment above).

@@ -20,10 +20,11 @@
 use crate::parse;
 use std::collections::BTreeMap;
 
-/// The suite selector's script stem. It is not a fence and runs none (sp-ufbkh): the gate
-/// string captures it as `_s="$(…)";`, so a fence failing inside it emptied the selection
-/// and the string exited 0. Its fences are spira-lint rules now, in the `&&` chain;
-/// `the_selector_runs_no_fence_…` fails if one comes back.
+/// The retired suite selector's script stem (`bash spira/gate-touched.sh`). It was not a
+/// fence and ran none (sp-ufbkh). The selector is the `suite-select` binary now
+/// (`"$SPIRA_SELECT_BIN" gate …`, sp-wx2tw), which is no `bash <path>` word, so a gate
+/// string naming it expects no fence line from it; the stem stays so a string still naming
+/// the script is read the same way until it is changed.
 pub const SELECTOR: &str = "gate-touched";
 
 
@@ -150,8 +151,8 @@ pub fn summary(expected: &[String], out: &str) -> String {
 mod tests {
     use super::*;
 
-    /// The spira repository's configured gate string, as of 2026-09-29.
-    const PROD: &str = r#"bash spira/inventory.sh && bash spira/literal-lint.sh && bash spira/scratch-fence.sh && "$SPIRA_LINT_BIN" && bash spira/testdb-mode-lint.sh && bash spira/bd-stdin-lint.sh && bash spira/gh-intake-lint.sh && bash spira/incident-cause-lint.sh && bash spira/tmux-scope-fence.sh && bash spira/wiki-add-fence.sh && bash spira/build-fence.sh && { _s="$(bash spira/gate-touched.sh "$SPIRA_GATE_BASE" "${SPIRA_GATE_SELECT_HEAD:-$SPIRA_GATE_BRANCH}")"; [ -n "$_s" ] || exit 0; _b=0; "$SPIRA_TESTENV_BIN" --deadline "${SPIRA_GATE_BUDGET:-300}" --suites "${_s//$'\n'/,}" "$SPIRA_GATE_BRANCH" || _b=$?; case "$_b" in 2|3) exit 75;; *) exit "$_b";; esac; }"#;
+    /// The spira repository's gate string with the selector binary (sp-wx2tw).
+    const PROD: &str = r#"bash spira/inventory.sh && bash spira/literal-lint.sh && bash spira/scratch-fence.sh && "$SPIRA_LINT_BIN" && bash spira/testdb-mode-lint.sh && bash spira/bd-stdin-lint.sh && bash spira/gh-intake-lint.sh && bash spira/incident-cause-lint.sh && bash spira/tmux-scope-fence.sh && bash spira/wiki-add-fence.sh && bash spira/build-fence.sh && { _s="$("$SPIRA_SELECT_BIN" gate "$SPIRA_GATE_BASE" "${SPIRA_GATE_SELECT_HEAD:-$SPIRA_GATE_BRANCH}")" || { _r=$?; [ "$_r" = 1 ] && exit 1; exit 75; }; [ -n "$_s" ] || exit 0; _b=0; "$SPIRA_TESTENV_BIN" --deadline "${SPIRA_GATE_BUDGET:-300}" --suites "${_s//$'\n'/,}" "$SPIRA_GATE_BRANCH" || _b=$?; case "$_b" in 2|3) exit 75;; *) exit "$_b";; esac; }"#;
 
     #[test]
     fn the_production_gate_string_runs_these_fences() {
@@ -222,18 +223,14 @@ mod tests {
         assert_eq!(summary(&want, out), "a=3 files, c=0 files");
     }
 
-    /// The selector's preamble (everything before it reads HEAD) calls no script at all, and
-    /// every rule the gate expects a line from is one spira-lint runs.
+    /// The selector is a binary (sp-wx2tw): no bash selector script is left to grow a fence,
+    /// its word in the gate string expects none, and every rule the gate expects a line from
+    /// is one spira-lint runs.
     #[test]
     fn the_selector_runs_no_fence_and_spira_lint_has_every_rule_fence() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-        let src = std::fs::read_to_string(dir.join("gate-touched.sh")).unwrap();
-        let section = src.split("\nHEAD=").next().unwrap();
-        let calls: Vec<&str> = section
-            .lines()
-            .filter(|l| !l.trim_start().starts_with('#') && l.contains("bash "))
-            .collect();
-        assert!(calls.is_empty(), "{calls:?}");
+        assert!(!dir.join("gate-touched.sh").exists(), "the bash selector came back");
+        assert!(!expected(PROD).iter().any(|f| f.contains("select")), "{:?}", expected(PROD));
         let rules: Vec<&str> = spira_lint::all_rules().iter().map(|r| r.name()).collect();
         for f in LINT_RULE_FENCES {
             assert!(rules.contains(f), "spira-lint has no rule {f}: {rules:?}");

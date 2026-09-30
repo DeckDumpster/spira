@@ -1,5 +1,5 @@
 //! Explicit suite lists (`--suites a,b` and `--suites -`). Diff-derived selection is
-//! select.sh's job (the ONE selector); run.rs calls it.
+//! the suite-select crate's (the ONE selector); run.rs links it.
 
 /// A named suite does not exist in the suite directory: exit 2, naming it.
 #[derive(Debug, Clone, PartialEq, Eq)]

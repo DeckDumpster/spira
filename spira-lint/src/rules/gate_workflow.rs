@@ -195,7 +195,7 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
     j.want(GATE, "its retry tests the same prebuilt bin/", "GATE_RETRY_ARTIFACTS=bin bash spira/gate-retry.sh", g);
     // 2. queue PRs use diff-selected suites
     j.want(GATE, "the selected list is piped via --suites", "--suites", g);
-    j.want(GATE, "queue PRs use select.sh", "select.sh", g);
+    j.want(GATE, "queue PRs use the selector", "suite-select select", g);
     j.want(GATE, "queue PRs match spira/queue/", "spira/queue/", g);
     // 3. an infrastructure fault is not a branch failure
     j.want(GATE, "the harness-fault exit code is handled", "75", g);
@@ -291,7 +291,8 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
     let sel = step(g, "Select suites", false);
     j.located(GATE, "the Select suites step", &sel);
     j.want(GATE, "select matches queue PRs", "spira/queue/", &sel);
-    j.want(GATE, "queue selection uses select.sh", "select.sh", &sel);
+    j.want(GATE, "queue selection uses the selector", "suite-select select", &sel);
+    j.want(GATE, "PR selection uses the selector's gate pipeline", "suite-select gate", &sel);
     j.want(GATE, "select has a dedicated push branch", "\"push\"", &sel);
     let push_branch = between(&sel, |l| l.contains("= \"push\""), |l| l == "          else");
     j.located(GATE, "the push branch of the select step", &push_branch);

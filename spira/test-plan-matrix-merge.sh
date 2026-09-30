@@ -4,19 +4,19 @@
 # must never produce a stale coverage.json/COVERAGE.md fence failure
 # (law-test-selection-and-plan-are-one-source).
 #
-# Builds a scratch git repo carrying copies of the real plan-matrix.sh, plan-lint.sh,
-# select.sh and friends, plus this checkout's own .gitignore. Branches it twice — each branch
+# Builds a scratch git repo carrying copies of the real plan-matrix.sh, plan-lint.sh
+# and friends, plus this checkout's own .gitignore. Branches it twice — each branch
 # adds one new covered suite and use case in files the other branch never touches — merges
 # both, and checks the merged tree passes the plan checks (plan-lint.sh --orphans and
-# plan-matrix.sh, what the retired plan-matrix-fence.sh ran) and select.sh selects both new
-# suites. Only docs/test-plan/coverage.json and COVERAGE.md are regenerated (and, before the
+# plan-matrix.sh, what the retired plan-matrix-fence.sh ran) and the selector (suite-select,
+# sp-wx2tw) selects both new suites. Only docs/test-plan/coverage.json and COVERAGE.md are regenerated (and, before the
 # fix, committed) by both branches, so they are the only place a merge can go stale. Proven
 # over a scratch repository so this suite never touches the real docs/test-plan tree.
 #
 # host-reason: reads suite source and scratch git repos only; no database, no systemd
 #
 # tier: T1
-# covers: spira/plan-matrix.sh spira/plan-lint.sh spira/select.sh
+# covers: spira/plan-matrix.sh spira/plan-lint.sh suite-select/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 REAL_ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -38,12 +38,17 @@ if ! "$CARGO_BIN" build --release --manifest-path "$REAL_ROOT/test-plan/Cargo.to
     exit 1
 fi
 export SPIRA_TEST_PLAN_BIN="${CARGO_TARGET_DIR:-$REAL_ROOT/target}/release/test-plan"
+if ! "$CARGO_BIN" build --release --manifest-path "$REAL_ROOT/suite-select/Cargo.toml" >&2; then
+    echo "FAIL building the real suite-select binary: cargo build failed" >&2
+    exit 1
+fi
+SELECT_BIN="${CARGO_TARGET_DIR:-$REAL_ROOT/target}/release/suite-select"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 ROOT="$TMP/root"
 mkdir -p "$ROOT/spira" "$ROOT/docs/test-plan"
 for f in plan-matrix.sh plan-lint.sh suite-covers.sh plan-bin.sh \
-         suite-coverage-json.sh tsd-timings-json.sh select.sh select-globs.sh testlib.sh; do
+         suite-coverage-json.sh tsd-timings-json.sh testlib.sh; do
     cp "$HERE/$f" "$ROOT/spira/$f"
 done
 # Carries THIS repo's own tracking rule for the generated files — the fixture proves the
@@ -66,8 +71,8 @@ EOF
 printf '#!/usr/bin/env bash\n# tier: T1\n# covers: spira/dispatch.sh UC-dispatch-01\necho hi\n' \
     > "$ROOT/spira/test-covers-00.sh"
 # A catch-all claiming every suite file itself, mirroring the real corpus's
-# test-citations.sh — without it, select.sh would refuse ANY new suite file as an
-# unclaimed source file (spira/*.sh), a real but unrelated property of select.sh this
+# test-citations.sh — without it, the selector would refuse ANY new suite file as an
+# unclaimed source file (spira/*.sh), a real but unrelated property of the selector this
 # fixture must not trip over.
 printf '#!/usr/bin/env bash\n# tier: T1\n# covers: spira/test-*.sh\necho catchall\n' \
     > "$ROOT/spira/test-catchall.sh"
@@ -144,9 +149,9 @@ out="$(fence "$BASE_SHA" 2>&1)"; rc=$?
 wantrc "the plan checks pass on the merged tree" 0 "$rc"
 [ "$rc" = 0 ] || printf '# fence output:\n%s\n' "$out" | sed 's/^/# /' >&2
 
-sel="$(cd "$ROOT" && bash spira/select.sh --base "$BASE_SHA" --head "$MERGED_SHA" \
+sel="$(cd "$ROOT" && "$SELECT_BIN" select --base "$BASE_SHA" --head "$MERGED_SHA" \
     --repo "$ROOT" --suite-dir "$ROOT/spira" 2>"$TMP/select.log")"
-want "select.sh selects branch A's new suite" "test-covers-a.sh" "$sel"
-want "select.sh selects branch B's new suite" "test-covers-b.sh" "$sel"
+want "the selector selects branch A's new suite" "test-covers-a.sh" "$sel"
+want "the selector selects branch B's new suite" "test-covers-b.sh" "$sel"
 
 tl_summary

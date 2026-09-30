@@ -14,7 +14,7 @@
 # FAIL before the same row, repaired, is trusted to report OK.
 #
 # tier: T1
-# covers: spira/doctor.sh spira/build-fence.sh spira/gate-touched.sh
+# covers: spira/doctor.sh spira/build-fence.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -107,14 +107,14 @@ nowant "fixed row: no FAIL survives the fix"     "FAIL  rustrepo"               
 
 # ==========================================================================
 echo
-echo "gate-touched.sh alone no longer reaches one (sp-aprxm: it stopped calling build-fence.sh):"
+echo "the selector alone reaches none (sp-aprxm; the suite-select binary since sp-wx2tw):"
 # ==========================================================================
 RMAP_TOUCHED="$TMP/repo-map-touched"
 cat > "$RMAP_TOUCHED" <<EOF
-rustrepo | $TMP/rustrepo | queue | origin/main | | bash spira/gate-touched.sh "\$SPIRA_GATE_BASE" "\$SPIRA_GATE_BRANCH"
+rustrepo | $TMP/rustrepo | queue | origin/main | | "\$SPIRA_SELECT_BIN" gate "\$SPIRA_GATE_BASE" "\$SPIRA_GATE_BRANCH"
 EOF
 touched_out="$(run_doctor "$RMAP_TOUCHED")"
-want "gate-touched.sh-only row: FAIL names the repo" "FAIL  rustrepo: gate command has no reachable compile check" "$touched_out"
+want "selector-only row: FAIL names the repo" "FAIL  rustrepo: gate command has no reachable compile check" "$touched_out"
 
 # ==========================================================================
 echo

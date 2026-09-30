@@ -503,7 +503,7 @@ impl<'w, W: World> Trial<'w, W> {
                 e("SPIRA_GATE_ALL", ctx.var_or("SPIRA_GATE_ALL", "0")),
                 // Suites off for a unit or fences composition: the gate string runs its
                 // fences (a unit composition without the build fence, sp-aprxm) and
-                // selects nothing (gate-touched.sh). The always-
+                // selects nothing (the selector, `suite-select gate`). The always-
                 // covers carve-out is cleared with it; its default, spira/lib.sh, is a
                 // script, and a script composes as suites, so no carve-out can apply here.
                 e(
@@ -524,6 +524,7 @@ impl<'w, W: World> Trial<'w, W> {
                 e("SPIRA_RUN", &self.s.run),
                 e("SPIRA_LINT_BIN", ctx.var("SPIRA_LINT_BIN")),
                 e("SPIRA_TESTENV_BIN", ctx.var("SPIRA_TESTENV_BIN")),
+                e("SPIRA_SELECT_BIN", ctx.var("SPIRA_SELECT_BIN")),
             ]
         };
 
@@ -1064,7 +1065,8 @@ pub fn describe_reentry(bead: &str, r: &compose::Reentry) -> Option<String> {
 /// The base re-run: the named suites through testenv, on the revision in
 /// `SPIRA_GATE_BRANCH` (the pinned base), no deadline — the gate timeout bounds it. testenv's
 /// 2 and 3 are its own faults, NO_VERDICT, as the gate string maps them. Names are
-/// `red_suites` words; anything outside `[A-Za-z0-9._-]` is dropped, never quoted into a shell.
+/// `red_suites` words; anything that is not a suite name (`is_suite_name`, the selector's
+/// rule) is dropped, never quoted into a shell.
 /// The base re-run's first words: a no-op that names it in a process listing and a trace.
 pub const BASE_RERUN_MARK: &str = ": base-rerun; ";
 
@@ -1072,11 +1074,7 @@ pub fn base_rerun_cmd(suites: &[String]) -> String {
     let list: Vec<&str> = suites
         .iter()
         .map(String::as_str)
-        .filter(|s| {
-            !s.is_empty()
-                && s.chars()
-                    .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
-        })
+        .filter(|s| crate::compose::is_suite_name(s))
         .collect();
     format!(
         "{BASE_RERUN_MARK}_b=0; \"$SPIRA_TESTENV_BIN\" --suites {} \"$SPIRA_GATE_BRANCH\" || _b=$?; case \"$_b\" in 2|3) exit 75;; *) exit \"$_b\";; esac",

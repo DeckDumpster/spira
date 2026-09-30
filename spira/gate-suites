@@ -138,7 +138,7 @@ spira/test-landing-rebase.sh
 # rust-toolchain, or the Makefile — the check fences-only certification (SPIRA_GATE_SUITES=off)
 # used to skip entirely, which let sp-upkae certify green and then break the whole batch's
 # build job (sp-9uro3). This suite plants a real, deliberately uncompilable crate (SEEN RED),
-# fixes it (SEEN GREEN), and confirms build-fence.sh is wired into gate-touched.sh so it runs
+# fixes it (SEEN GREEN), and confirms the gate string names build-fence.sh itself so it runs
 # regardless of SPIRA_GATE_SUITES.
 spira/test-build-fence.sh
 

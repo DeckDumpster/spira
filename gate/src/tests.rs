@@ -1516,7 +1516,7 @@ fn a_fences_only_branch_still_reruns_the_named_suites() {
 
 #[test]
 fn a_script_branch_in_unit_mode_with_certify_suites_off_still_reruns_them() {
-    // Production today: certify_suites = "off". gate-touched.sh then exits before it ever
+    // Production today: certify_suites = "off". The selector then exits before it ever
     // unions SPIRA_GATE_EJECTED_SUITES in, so the promise "recertification will force these
     // suites" was never kept. The re-entry phase keeps it.
     let f = returned(unit_fake(&["spira/lib.sh"]), "test-b.sh");
@@ -1861,12 +1861,12 @@ fn a_no_verdict_trial_is_recorded_as_one() {
 // ------------------------------------------------ positive controls (sp-ufbkh)
 
 /// The production gate string's shape: bash fences, spira-lint, the selector.
-const FENCED: &str = r#"bash spira/inventory.sh && "$SPIRA_LINT_BIN" && bash spira/build-fence.sh && { _s="$(bash spira/gate-touched.sh "$SPIRA_GATE_BASE" x)"; [ -n "$_s" ] || exit 0; }"#;
+const FENCED: &str = r#"bash spira/inventory.sh && "$SPIRA_LINT_BIN" && bash spira/build-fence.sh && { _s="$("$SPIRA_SELECT_BIN" gate "$SPIRA_GATE_BASE" x)" || exit 75; [ -n "$_s" ] || exit 0; }"#;
 
 fn fenced() -> Fake {
     let f = Fake::new();
     f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = FENCED.into();
-    for p in ["spira/inventory.sh", "spira/build-fence.sh", "spira/gate-touched.sh"] {
+    for p in ["spira/inventory.sh", "spira/build-fence.sh"] {
         f.blobs.borrow_mut().insert(format!("{BASE}:{p}"), b"x".to_vec());
     }
     f

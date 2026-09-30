@@ -14,7 +14,7 @@
 # rust-toolchain(.toml), or the Makefile itself. Anything else — a script, a doc, a bead
 # label — is skipped, so a script-only branch pays nothing. The list comes from
 # SPIRA_GATE_FILES (gate.sh's pre-computed STATUS<tab>FILE or bare FILE list, the same shape
-# select.sh and orphan-test.sh already read) or, failing that, a diff against SPIRA_GATE_BASE.
+# the selector and orphan-test.sh already read) or, failing that, a diff against SPIRA_GATE_BASE.
 #
 # WITH NEITHER, OR AN EMPTY DIFF, THIS REFUSES (exit 2, sp-ufbkh). It used to skip with exit
 # 0, which the gate could not tell from a checked tree. On success, built or not, it prints

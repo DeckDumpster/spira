@@ -30,20 +30,9 @@ fn is_suite(path: &str) -> bool {
     direct_child(path, "spira").is_some_and(|b| b.starts_with("test-") && b.ends_with(".sh"))
 }
 
-/// `suite_tier_of` (spira/suite-covers.sh): the first `# tier:` value before `set -`.
-pub fn tier_of(text: &str) -> Option<String> {
-    for l in text.lines() {
-        if l.starts_with("set -") {
-            return None;
-        }
-        if let Some(rest) = l.strip_prefix('#') {
-            if let Some(v) = rest.trim_start_matches(' ').strip_prefix("tier:") {
-                return Some(v.trim_start_matches(' ').to_string());
-            }
-        }
-    }
-    None
-}
+/// `suite_tier_of`: the first `# tier:` value before `set -` — the selector crate's parser
+/// (sp-wx2tw).
+pub use suite_select::header::tier_of;
 
 /// One suite's declared coverage, as `suite-coverage-json.sh` renders it.
 pub fn coverage(path: &str, text: &str) -> SuiteCoverage {

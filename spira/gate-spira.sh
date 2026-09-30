@@ -68,6 +68,7 @@ cd "$HERE/.." 2>/dev/null || { printf 'gate: cannot reach the tree holding %s\n'
 # resolved in a subshell so sourcing conf.sh leaves this script's stripped environment as is.
 : "${SPIRA_LINT_BIN:=$( . "$HERE/conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_LINT_BIN:-}")}"
 : "${SPIRA_TESTENV_BIN:=$( . "$HERE/conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_TESTENV_BIN:-}")}"
+: "${SPIRA_SELECT_BIN:=$( . "$HERE/conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_SELECT_BIN:-}")}"
 
 rc=0
 gate_total=0      # wall-clock seconds summed across all suites
@@ -402,9 +403,9 @@ done < "$SUITE_LIST"
 # verdict a gate must never reach by accident.
 [ -n "$suites" ] || { say "$SUITE_LIST names no suite — refusing to report a pass on nothing"; exit 1; }
 
-# COVERAGE-BASED SELECTION OF NON-GATED SUITES via select.sh.
+# COVERAGE-BASED SELECTION OF NON-GATED SUITES via the selector (suite-select, sp-wx2tw).
 # When SPIRA_GATE_FILES names a readable file (set by gate.sh when calling a
-# repository's own gate command), select.sh is asked for the diff-derived suite
+# repository's own gate command), the selector is asked for the diff-derived suite
 # set. Results that duplicate a gated suite are skipped; the gated list always
 # runs regardless of diff.
 #
@@ -423,20 +424,20 @@ done < "$SUITE_LIST"
 # is still visible in the gate's own output rather than silently narrowed.
 extra_suites=""
 if [ -f "${SPIRA_GATE_FILES:-}" ]; then
-    # select.sh owns the selection algorithm; this script owns which suites are
+    # suite-select owns the selection algorithm; this script owns which suites are
     # already in the gated list. Deduplicate so each suite runs at most once.
     # --files passes the pre-computed list from gate.sh directly rather than
     # re-computing the diff — avoids double work and lets test fixtures supply
     # the list without needing git refs.
-    # Run select.sh synchronously in a command substitution so it fully exits before
-    # we read the mode file. A process substitution (< <(bash select.sh ...)) leaves
-    # select.sh running as a background subshell that can block in a container
+    # Run the selector synchronously in a command substitution so it fully exits before
+    # we read the mode file. A process substitution (< <(… select ...)) leaves
+    # the selector running as a background subshell that can block in a container
     # environment when a suite exits non-zero — the background process holds open
     # file descriptors that delay gate-spira.sh's cleanup path.
     _cv_mode_file="$(mktemp)"
     _cv_report_file="$(mktemp)"
-    _cv_raw="$(bash "$HERE/select.sh" \
-        --files "${SPIRA_GATE_FILES}" \
+    _cv_raw="$("$SPIRA_SELECT_BIN" select \
+        --files "${SPIRA_GATE_FILES}" --suite-dir "$HERE" \
         --mode-file "$_cv_mode_file" \
         --report-file "$_cv_report_file" \
         --no-all-fallback \

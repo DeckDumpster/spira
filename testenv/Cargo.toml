@@ -24,6 +24,7 @@ sha2 = "0.10"
 libc = "0.2"
 spira-config = { path = "../spira-config" }
 tsd = { path = "../tsd" }
+suite-select = { path = "../suite-select" }
 
 
 [dev-dependencies]

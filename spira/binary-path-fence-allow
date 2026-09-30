@@ -54,7 +54,6 @@ spira/test-reconciler-flow.sh
 spira/test-reconciler.sh
 spira/test-tarball-bins.sh
 spira/test-testlib.sh
-spira/test-tier-budget.sh
 spira/test-timer-templates.sh
 spira/test-tsd-producers.sh
 spira/test-tsd.sh

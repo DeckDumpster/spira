@@ -6,7 +6,7 @@
 #
 # THE CASE THIS REPRODUCES. Three writers can add a case to the same few lines of a shared
 # file on the same day without any existing tool noticing, because the duplicate-work guard
-# keys on bead ids and held.sh/owned.sh/gate-touched.sh each answer a different question. The
+# keys on bead ids and held.sh/owned.sh/the suite selector each answer a different question. The
 # fix is a lookup keyed on the file itself: which open bead's branch already touches it.
 #
 # EVERY CHECK IS A PAIR (law-absence-needs-a-positive-control): the fixture proves a known

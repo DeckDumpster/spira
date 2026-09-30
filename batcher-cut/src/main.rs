@@ -328,11 +328,11 @@ fn git_rev(repo: &Repo, rev: &str) -> Option<String> {
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
 }
 
-/// S's suspects: `# covers:` read from the round tree's own copy of the suite (spira-lint's
-/// parser, the one select.sh's accessor agrees with), members ordered by attrib::suspect_order.
+/// S's suspects: `# covers:` read from the round tree's own copy of the suite (the selector
+/// crate's parser, sp-wx2tw), members ordered by attrib::suspect_order.
 fn suspects_in(wt: &Path, changed: &BTreeMap<String, Vec<String>>, suite: &str, members: &[String]) -> Vec<String> {
     let text = std::fs::read_to_string(wt.join("spira").join(suite)).unwrap_or_default();
-    let covers = spira_lint::rules::covers_entries::covers_of(&text);
+    let covers = suite_select::header::covers_of(&text);
     batcher::attrib::suspect_order(suite, covers.as_deref(), members, changed)
 }
 
