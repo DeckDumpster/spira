@@ -104,6 +104,13 @@ check_config() {
         fail config "$bin not found in release"
         return
     fi
+    # sp-oppza ONE-TIME UPGRADE MIGRATION, ahead of validate: a box whose config predates
+    # sp-k6m1m (goal set, no id_prefix) is repaired in place instead of failing activation on
+    # every such box. Idempotent — a no-op once id_prefix is set, which includes production's
+    # own state, set by hand — so this runs unconditionally, every pre-activate.
+    local mig
+    mig="$("$bin" migrate "$toml" 2>&1)"
+    [ -n "$mig" ] && printf 'pre-activate: %s\n' "$mig"
     local out rc
     out="$("$bin" validate "$toml" 2>&1)"
     rc=$?

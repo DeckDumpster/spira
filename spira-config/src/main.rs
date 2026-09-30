@@ -9,6 +9,7 @@
 //!   spira-config unset <path> <file>    remove one value from <file> in place
 //!   spira-config schema                 the JSON Schema spira.toml is validated against
 //!   spira-config path-tail              the box's `spira.path` tail, or a refusal naming why
+//!   spira-config migrate <file>         one-time: a pre-k6m1m goal implies id_prefix (sp-oppza)
 //!
 //! `validate`, `get` and `export` read `spira.toml` from: the file argument if one is
 //! given, else `$SPIRA_TOML`, else `./spira.toml`, else stdin — the same "explicit, then
@@ -21,8 +22,9 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use spira_config::{
-    convert, discover, export_sh, get_path, json_schema, load, set_path, shrink_reason,
-    tail_refusals, unset_path, validate, validate_strict, write_atomic, SpiraToml,
+    convert, discover, export_sh, get_path, json_schema, load, migrate_goal_to_id_prefix_in_file,
+    set_path, shrink_reason, tail_refusals, unset_path, validate, validate_strict, write_atomic,
+    SpiraToml,
 };
 
 fn read_input(file: Option<&str>) -> Result<String, String> {
@@ -71,6 +73,24 @@ fn cmd_validate(file: Option<&str>) -> ExitCode {
         }
         Err(e) => {
             eprintln!("spira-config: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `migrate <file>` — sp-oppza's one-time upgrade migration, run by the installer
+/// (pre-activate, doctor) before `validate`: a box whose config predates sp-k6m1m (goal set,
+/// no id_prefix) is repaired in place instead of failing activation. Idempotent: a file
+/// already migrated, or one with nothing to migrate, is untouched and prints nothing.
+fn cmd_migrate(file: &str) -> ExitCode {
+    match migrate_goal_to_id_prefix_in_file(Path::new(file)) {
+        Ok(Some(msg)) => {
+            println!("spira-config migrate: {file}: {msg}");
+            ExitCode::SUCCESS
+        }
+        Ok(None) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("spira-config migrate: {e}");
             ExitCode::FAILURE
         }
     }
@@ -416,9 +436,16 @@ fn main() -> ExitCode {
         },
         Some("schema") => cmd_schema(),
         Some("path-tail") => cmd_path_tail(),
+        Some("migrate") => match args.get(1) {
+            Some(file) => cmd_migrate(file),
+            None => {
+                eprintln!("usage: spira-config migrate <file>");
+                ExitCode::FAILURE
+            }
+        },
         _ => {
             eprintln!(
-                "usage: spira-config <validate|get|export|convert|set|unset|schema|path-tail> ...\n\
+                "usage: spira-config <validate|get|export|convert|set|unset|schema|path-tail|migrate> ...\n\
                  \n\
                  \x20 validate [file]\n\
                  \x20 get <dotted.path> [file]\n\
@@ -428,7 +455,8 @@ fn main() -> ExitCode {
                  \x20 set <dotted.path> <value> <file>\n\
                  \x20 unset <dotted.path> <file>\n\
                  \x20 schema\n\
-                 \x20 path-tail"
+                 \x20 path-tail\n\
+                 \x20 migrate <file>"
             );
             ExitCode::FAILURE
         }

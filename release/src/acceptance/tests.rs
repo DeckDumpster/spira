@@ -523,3 +523,32 @@ fn record_without_a_notes_repo_is_a_usage_error() {
     std::env::remove_var("SPIRA_NOTES_REPO");
     assert_eq!(main(&a), 2);
 }
+
+/// Regression sp-oppza: phase A's own bootstrap `spira.conf` — not `configure.sh`, which
+/// never touches a file already there — is what a fresh acceptance install's box actually
+/// gets its config from. sp-k6m1m made `spira.id_prefix` required by `spira-config validate`
+/// (doctor, pre-activate) whenever `[spira]` sets anything, but this bootstrap text set
+/// `SPIRA_OPERATED`/`SPIRA_RELEASES` without ever setting `SPIRA_ID_PREFIX` — so the box it
+/// produced failed activation immediately. Runs the bootstrap text through the SAME
+/// converter `conf.sh`'s auto-convert uses (`spira-config convert`'s own reader), the
+/// positive control every absence check needs: before the fix, `id_prefix` came back `None`
+/// and `require_id_prefix` refused exactly as the real box did.
+#[test]
+fn phase_a_bootstrap_conf_sets_id_prefix() {
+    let b = Box_::new();
+    let f = b.fake();
+    let o = b.opts(&[]);
+    let releases = o.releases();
+    let r = Run::new(&f, o);
+    let text = r.bootstrap_conf_text(&releases);
+
+    assert!(text.contains("SPIRA_OPERATED = 0"), "sanity: this IS the bootstrap conf — {text:?}");
+
+    let raw = spira_config::convert::read_conf(&text, "/home/test");
+    let mut warnings = spira_config::convert::ConvertWarnings::default();
+    let section = spira_config::convert::spira_section(&raw, &mut warnings).expect("no unknown keys in the bootstrap conf");
+    assert_eq!(section.id_prefix.as_deref(), Some("sp"), "bootstrap conf must set SPIRA_ID_PREFIX (sp-k6m1m/sp-oppza)");
+
+    let doc = spira_config::SpiraToml { spira: Some(section), repo: Default::default(), persona: Default::default() };
+    assert!(spira_config::require_id_prefix(&doc).is_ok(), "the converted document must pass the same check doctor/pre-activate run");
+}
