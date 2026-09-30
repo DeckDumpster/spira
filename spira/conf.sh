@@ -631,8 +631,7 @@ spira_toml_resolve() {
     fi
     [ "$stale" -eq 0 ] && { printf '%s' "$toml"; return 0; }
 
-    local bin target out
-    bin="$(spira_config_bin)" || { [ -n "$toml" ] && printf '%s' "$toml"; return 0; }
+    local target out
     if [ -n "${SPIRA_TOML+set}" ]; then
         # SPIRA_TOML NAMES ITS OWN WRITE TARGET, same as the pinned-SPIRA_CONF case above:
         # a caller (deploy.sh, a test fixture) that pinned this path on purpose must have the
@@ -647,7 +646,7 @@ spira_toml_resolve() {
     fi
     local -a args=(--home "$HOME" --out "$target")
     for f in "${fayth_files[@]}"; do args+=(--fayth "$f"); done
-    if out="$("$bin" convert "${args[@]}" 2>&1)"; then
+    if out="$(spira-config convert "${args[@]}" 2>&1)"; then
         [ -n "$out" ] && printf '%s\n' "$out" >&2
         printf '%s' "$target"
     else
