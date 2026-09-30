@@ -2253,6 +2253,7 @@ fn the_runners_budget_knobs_reach_the_gate_command() {
 fn the_base_trial_runs_tools_keyed_by_the_base_tree_never_a_stale_one() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "a-fence: red on the branch".into()));
+    // literal-ok: the 2026-09-30 finding, quoted as the stale tool's answer.
     let stale = (1, "literal-lint: aeon/src/tests.rs:249: \"needs-ryan\"".to_string());
     // path-ok: the unkeyed build output the branch trial left in the gate tree.
     let unkeyed = format!("{GATE_TREE}/target/aeon/spira-lint");
