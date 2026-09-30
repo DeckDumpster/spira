@@ -22,7 +22,7 @@
 # the landing fast-forward (law-a-regression-test-must-be-seen-to-fail).
 #
 # tier: T2
-# covers: queue/src/* spira/forge.sh spira/conf.sh
+# covers: queue/src/* forge/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

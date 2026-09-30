@@ -228,6 +228,22 @@ impl Lib for FakeLib {
     fn gh_unlanded_scan(&self) {
         self.rec("gh_unlanded_scan".into());
     }
+    fn ask_refresh_loop(&self, _: &Path, name: &str, br: &str, id: &str, _: &str, n: u32) {
+        self.rec(format!("ask_refresh_loop {id} {br} {name} {n}"));
+    }
+    fn deliver_pr_merged(&self, _: &Path, id: &str, br: &str, sha: &str) {
+        self.rec(format!("deliver_pr_merged {id} {br} {sha}"));
+    }
+    fn deliver_pr_closed(&self, id: &str, reason: &str) {
+        self.rec(format!("deliver_pr_closed {id} {reason}"));
+    }
+    fn force_push(&self, _: &Path, remote: &str, br: &str) -> Result<(), String> {
+        self.rec(format!("force_push {remote} {br}"));
+        match self.push_err.borrow().clone() {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -255,6 +271,12 @@ struct FakeTools {
     /// `rebase_stale` calls, and the exit it answers (default 0).
     rebased: RefCell<Vec<String>>,
     rebase_rc: Cell<i32>,
+    /// forge (sp-t4y60): `selector -> answer` for `pr-state`; absent means `None`.
+    forge_pr_state: RefCell<HashMap<String, String>>,
+    forge_pr_create_n: Cell<Option<u64>>,
+    forge_pr_list_open: RefCell<Vec<(u64, String)>>,
+    forge_automerge_ok: Cell<bool>,
+    forge_calls: RefCell<Vec<String>>,
 }
 
 impl FakeTools {
@@ -328,6 +350,22 @@ impl Tools for FakeTools {
     fn rebase_stale(&self, id: &str, repo: &str) -> i32 {
         self.rebased.borrow_mut().push(format!("{id} {repo}"));
         self.rebase_rc.get()
+    }
+    fn forge_pr_state(&self, _: &Path, selector: &str) -> Option<String> {
+        self.forge_calls.borrow_mut().push(format!("pr-state {selector}"));
+        self.forge_pr_state.borrow().get(selector).cloned()
+    }
+    fn forge_pr_create(&self, _: &Path, head: &str, base: &str, title: &str, _: &str) -> Option<u64> {
+        self.forge_calls.borrow_mut().push(format!("pr-create {head} {base} {title}"));
+        self.forge_pr_create_n.get()
+    }
+    fn forge_pr_list_open(&self, _: &Path) -> Vec<(u64, String)> {
+        self.forge_calls.borrow_mut().push("pr-list-open".into());
+        self.forge_pr_list_open.borrow().clone()
+    }
+    fn forge_pr_automerge(&self, _: &Path, selector: &str) -> bool {
+        self.forge_calls.borrow_mut().push(format!("pr-automerge {selector}"));
+        self.forge_automerge_ok.get()
     }
 }
 
@@ -439,6 +477,7 @@ impl H {
             closed_at: "2026-09-01".into(),
             priority: 2,
             external_ref: None,
+            title: String::new(),
         };
         self.beads.rows.borrow_mut().insert(id.into(), b.clone());
         b
@@ -1166,6 +1205,18 @@ fn push_mode_lands_on_a_real_remote() {
             self.0.prune_worktrees(a)
         }
         fn gh_unlanded_scan(&self) {}
+        fn ask_refresh_loop(&self, a: &Path, b: &str, c: &str, d: &str, e: &str, n: u32) {
+            self.0.ask_refresh_loop(a, b, c, d, e, n)
+        }
+        fn deliver_pr_merged(&self, a: &Path, b: &str, c: &str, d: &str) {
+            self.0.deliver_pr_merged(a, b, c, d)
+        }
+        fn deliver_pr_closed(&self, a: &str, b: &str) {
+            self.0.deliver_pr_closed(a, b)
+        }
+        fn force_push(&self, a: &Path, b: &str, c: &str) -> Result<(), String> {
+            self.0.force_push(a, b, c)
+        }
     }
     let fl = FakeLib::default();
     let lib = PushLib(&fl);
@@ -1324,16 +1375,10 @@ fn sweep_red_lists_red_records_only() {
 
 #[derive(Default)]
 struct FakePr {
-    helper: RefCell<Vec<String>>,
     delivered: RefCell<Vec<String>>,
-    rc: Cell<i32>,
     fail: RefCell<Option<String>>,
 }
 impl PrTools for FakePr {
-    fn branch_helper(&self, _: &Path, br: &str, id: &str, base: &str, name: &str, tip: &str) -> i32 {
-        self.helper.borrow_mut().push(format!("{br} {id} {base} {name} {tip}"));
-        self.rc.get()
-    }
     fn deliver_by_content(&self, id: &str, sha: &str) -> Result<(), String> {
         self.delivered.borrow_mut().push(format!("{id} {sha}"));
         match self.fail.borrow().clone() {
@@ -1344,7 +1389,7 @@ impl PrTools for FakePr {
 }
 
 #[test]
-fn the_pr_pass_hands_done_branches_to_the_helper_and_proves_content_landings() {
+fn the_pr_pass_hands_done_branches_to_pr_branch_and_proves_content_landings() {
     let h = H::new(LandMode::Pr);
     h.closed("sp-done", "t1");
     let mut sub = h.bead("sp-sub", "closed", &["spira-submitted"]);
@@ -1356,22 +1401,31 @@ fn the_pr_pass_hands_done_branches_to_the_helper_and_proves_content_landings() {
     h.git.shas.borrow_mut().insert("refs/remotes/origin/main".into(), "M".into());
     h.bead("sp-wip", "in_progress", &[]);
     h.git.add("spira/sp-wip", "t4");
+    // sp-done and sp-sub each rebase clean (FakeLib's default), confine clean (FakeTools'
+    // default) and land_pr opens a fresh PR — forge_pr_create answers a PR number so land_pr
+    // succeeds for both.
+    h.tools.forge_pr_create_n.set(Some(1));
     let tools = FakePr::default();
+    let files = Files::new(&h.s.run);
     let p = PrPass {
         s: &h.s,
         repos: &h.repos,
         beads: &h.beads,
         git: &h.git,
+        lib: &h.lib,
+        land_tools: &h.tools,
         procs: &h.procs,
         tools: &tools,
+        files: &files,
         out: &h.out,
         loud: Default::default(),
     };
     let (seen, acted) = p.run();
     assert_eq!((seen, acted), (4, 2));
-    let hl = tools.helper.borrow().clone();
-    assert!(hl.contains(&"spira/sp-done sp-done origin/main spira t1".to_string()));
-    assert!(hl.contains(&"spira/sp-sub sp-sub origin/main spira t2".to_string()), "submitted reads as done");
+    // sp-merged is the content-landed fast path (never reaches pr_branch); sp-wip is not
+    // closed (never reaches it either). sp-done and sp-sub both reach pr_branch's rebase.
+    assert!(h.lib.has("rebase spira/sp-done"));
+    assert!(h.lib.has("rebase spira/sp-sub"), "submitted reads as done, so it is walked too");
     // lifecycle_enforce is OFF (the default): the CONTENT record only; spira-lc never runs.
     assert!(tools.delivered.borrow().is_empty());
     assert!(fs::read_to_string(h.s.run.join("landstate/sp-merged")).unwrap().starts_with("CONTENT t3 "));
@@ -1606,6 +1660,18 @@ impl Tools for Injecting<'_> {
     fn rebase_stale(&self, id: &str, repo: &str) -> i32 {
         self.t.rebase_stale(id, repo)
     }
+    fn forge_pr_state(&self, r: &Path, s: &str) -> Option<String> {
+        self.t.forge_pr_state(r, s)
+    }
+    fn forge_pr_create(&self, r: &Path, h: &str, b: &str, t: &str, body: &str) -> Option<u64> {
+        self.t.forge_pr_create(r, h, b, t, body)
+    }
+    fn forge_pr_list_open(&self, r: &Path) -> Vec<(u64, String)> {
+        self.t.forge_pr_list_open(r)
+    }
+    fn forge_pr_automerge(&self, r: &Path, s: &str) -> bool {
+        self.t.forge_pr_automerge(r, s)
+    }
 }
 
 #[test]
@@ -1776,13 +1842,17 @@ fn push_mode_stays_serial_at_any_par() {
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn pr_run(h: &H, tools: &FakePr) -> Vec<String> {
+    let files = Files::new(&h.s.run);
     let p = PrPass {
         s: &h.s,
         repos: &h.repos,
         beads: &h.beads,
         git: &h.git,
+        lib: &h.lib,
+        land_tools: &h.tools,
         procs: &h.procs,
         tools,
+        files: &files,
         out: &h.out,
         loud: Default::default(),
     };

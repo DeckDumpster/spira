@@ -41,6 +41,7 @@ members = [
     "beads-store",
     "suite-select",
     "release",
+    "forge",
 ]
 resolver = "2"
 

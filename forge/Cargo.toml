@@ -1,0 +1,16 @@
+[package]
+name = "forge"
+version = "1.0.0"
+edition = "2021"
+description = "forge — the one seam onto GitHub (pr/run/branch-protection queries and mutations). Replaces spira/forge.sh."
+
+[lib]
+name = "forge"
+path = "src/lib.rs"
+
+[[bin]]
+name = "forge"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"

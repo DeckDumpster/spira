@@ -16,7 +16,7 @@
 # abandon's bead side effects were previously unread and unverified; nothing here would
 # have caught an accidental bdq call added to that path).
 #
-# covers: queue/src/* spira/forge.sh spira/conf.sh
+# covers: queue/src/* forge/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
