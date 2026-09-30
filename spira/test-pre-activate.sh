@@ -91,7 +91,7 @@ run() {
         HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/home/.config" SPIRA_REPO="$TMP/emptyrepo" \
         SPIRA_TOML="$TMP/no-such.toml" \
         PATH="$TMP/binstub:$PATH" \
-        bash "$HERE/pre-activate.sh" "$1" 2>&1
+        pre-activate.sh "$1" 2>&1
     )"
     rc=$?
 }
@@ -140,7 +140,7 @@ printf 'spira = {}\n' > "$TMP/spira.toml"
 out="$(
     HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/home/.config" SPIRA_REPO="$TMP/emptyrepo" \
     SPIRA_TOML="$TMP/spira.toml" PATH="$TMP/binstub:$PATH" \
-    bash "$HERE/pre-activate.sh" "$REL" 2>&1
+    pre-activate.sh "$REL" 2>&1
 )"; rc=$?
 is   "config: valid spira.toml: exit 0"  0 "$rc"
 want "config: valid spira.toml: reports ok" "ok   config" "$out"
@@ -149,7 +149,7 @@ REL="$TMP/rel-config-bad"; CONFIG_RC=1 mkrel "$REL"
 out="$(
     HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/home/.config" SPIRA_REPO="$TMP/emptyrepo" \
     SPIRA_TOML="$TMP/spira.toml" PATH="$TMP/binstub:$PATH" \
-    bash "$HERE/pre-activate.sh" "$REL" 2>&1
+    pre-activate.sh "$REL" 2>&1
 )"; rc=$?
 is   "config: invalid spira.toml: exit 1"   1 "$rc"
 want "config: invalid spira.toml: FAILs"    "FAIL config" "$out"
@@ -217,11 +217,11 @@ chmod +x "$REL/bin/thing"
     printf 'commit deadbeef\n'
     printf 'bin/thing %s\n' "$(sha256sum "$REL/bin/thing" | awk '{print $1}')"
 } > "$REL/MANIFEST"
-"$HERE/self-test.sh" "$REL" >"$TMP/selftest_out" 2>&1
+self-test.sh "$REL" >"$TMP/selftest_out" 2>&1
 is "self-test.sh: matching sha256: exit 0" 0 "$?"
 
 printf 'tampered\n' >> "$REL/bin/thing"
-"$HERE/self-test.sh" "$REL" >"$TMP/selftest_out2" 2>&1
+self-test.sh "$REL" >"$TMP/selftest_out2" 2>&1
 selftest_rc=$?
 selftest_out="$(cat "$TMP/selftest_out2")"
 is   "self-test.sh: tampered binary: exit 1"  1 "$selftest_rc"

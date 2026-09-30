@@ -65,8 +65,7 @@ _emit() { printf '%s\n' "$1"; }
 _report() {
     local line="$1"
     _emit "$line"
-    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
-    "$SPIRA_HOME/mail.sh" send concierge \
+    mail.sh send concierge \
         --from "PR Notify <pr-notify@spira>" \
         --subject "pr-notify: $line" \
         --kind event <<MAILEOF >/dev/null || printf 'pr-notify: mail send failed for: %s\n' "$line" >&2

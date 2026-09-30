@@ -26,28 +26,25 @@
 #
 # THE CATALOGUE IS TYPED (docs/test-plan/*.toml, test-plan/src/lib.rs), so id
 # existence and catalogue well-formedness are answered by the test-plan
-# binary (built on demand via cargo — see resolve_test_plan_bin below), not
+# binary (invoked by name on the launcher's PATH, sp-gypjk), not
 # by grepping markdown. Per-suite header presence stays a bash string check:
 # it is about a suite file, not the catalogue.
 #
-# covers: spira/suite-covers.sh spira/plan-lint.sh spira/suite-coverage-json.sh spira/plan-bin.sh docs/test-plan/*.toml
+# covers: spira/suite-covers.sh spira/plan-lint.sh spira/suite-coverage-json.sh docs/test-plan/*.toml
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)"
 [ -n "$ROOT" ] || ROOT="$(cd "$HERE/.." && pwd -P)"
 [ -r "$HERE/suite-covers.sh" ] || { printf 'plan-lint: suite-covers.sh is missing\n' >&2; exit 1; }
 . "$HERE/suite-covers.sh"
-. "$HERE/plan-bin.sh"
 DOCS_DIR="$ROOT/docs/test-plan"
 
 # catalogue_ucs -> "<uc-id> <tier>" one pair per line, from every docs/test-plan/*.toml
 # catalogue via `test-plan catalogue-ids`. Returns 1 (having printed the real error) on a
-# missing cargo/build failure or a malformed catalogue — never silently empty, which would
+# missing test-plan or a malformed catalogue — never silently empty, which would
 # read every suite's UC id as unknown instead of naming the actual defect.
 catalogue_ucs() {
-    local bin
-    bin="$(resolve_test_plan_bin)" || return 1
-    "$bin" catalogue-ids --catalogue-dir "$DOCS_DIR"
+    test-plan catalogue-ids --catalogue-dir "$DOCS_DIR"
 }
 
 # lint_one <file> <relpath> <catalogue-file> -> 0 clean, 1 violation (prints each to stdout)
@@ -90,11 +87,10 @@ case "${1:-}" in
     ;;
 --orphans)
     baseref="${2:?usage: plan-lint.sh --orphans <base-ref>}"
-    bin="$(resolve_test_plan_bin)" || exit 1
     _cur="$(mktemp)"; _prev="$(mktemp)"; trap 'rm -f "$_cur" "$_prev"' EXIT
     bash "$HERE/suite-coverage-json.sh" > "$_cur"
     bash "$HERE/suite-coverage-json.sh" --ref "$baseref" > "$_prev"
-    "$bin" orphans --catalogue-dir "$DOCS_DIR" --suites "$_cur" --prev-suites "$_prev"
+    test-plan orphans --catalogue-dir "$DOCS_DIR" --suites "$_cur" --prev-suites "$_prev"
     exit $?
     ;;
 --gaps)

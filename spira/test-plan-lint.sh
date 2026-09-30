@@ -12,16 +12,14 @@
 #
 # THE WHOLE-TREE WALK IS OVER A SCRATCH REPOSITORY — plan-lint.sh resolves
 # its ROOT via git from its own location, so copying it (with suite-covers.sh,
-# plan-bin.sh and suite-coverage-json.sh) into a throwaway git repo is
+# suite-coverage-json.sh) into a throwaway git repo is
 # enough to isolate every assertion from the real, not-yet-migrated spira/
-# corpus. SPIRA_TEST_PLAN_BIN is exported to a binary built ONCE from the
-# real repository's own test-plan/ crate — the scratch repo never needs
-# cargo itself, it only needs somewhere to point.
+# corpus. test-plan is the real tree's own binary, by name on the suite's PATH.
 #
 # host-reason: reads suite source and scratch git repos only; no database, no systemd
 #
 # tier: T1
-# covers: spira/plan-lint.sh spira/suite-covers.sh spira/plan-bin.sh spira/suite-coverage-json.sh
+# covers: spira/plan-lint.sh spira/suite-covers.sh spira/suite-coverage-json.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 REAL_ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -31,34 +29,21 @@ isnz() { [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero exit got 0"; }
 
 echo "test-plan-lint.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-plan-lint: cargo not found on PATH or at ~/.cargo/bin" >&2
-    exit 77
-fi
-export PATH="$(dirname "$CARGO_BIN"):$PATH"
-if ! "$CARGO_BIN" build --release --manifest-path "$REAL_ROOT/test-plan/Cargo.toml" >&2; then
-    echo "FAIL building the real test-plan binary: cargo build failed" >&2
-    exit 1
-fi
-# CARGO_TARGET_DIR, when set (the testenv container points it off the bind mount), is where
-# the build above actually landed; only its absence means cargo used $REAL_ROOT/target.
-export SPIRA_TEST_PLAN_BIN="${CARGO_TARGET_DIR:-$REAL_ROOT/target}/release/test-plan"
+# test-plan (and suite-select) are the tree's own, by name on the suite's PATH (sp-gypjk).
+for _t in test-plan suite-select; do
+    command -v "$_t" >/dev/null 2>&1 || bail "$_t is not on PATH"
+done
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 ROOT="$TMP/root"
 mkdir -p "$ROOT/spira" "$ROOT/docs/test-plan"
 cp "$HERE/plan-lint.sh" "$ROOT/spira/plan-lint.sh"
 cp "$HERE/suite-covers.sh" "$ROOT/spira/suite-covers.sh"
-cp "$HERE/plan-bin.sh" "$ROOT/spira/plan-bin.sh"
 cp "$HERE/suite-coverage-json.sh" "$ROOT/spira/suite-coverage-json.sh"
 git init -q -b main "$ROOT"
 git -C "$ROOT" config user.email t@t; git -C "$ROOT" config user.name t
 
-lint() { env -i PATH="$PATH" HOME="$TMP" TERM=dumb SPIRA_TEST_PLAN_BIN="$SPIRA_TEST_PLAN_BIN" \
+lint() { env -i PATH="$PATH" HOME="$TMP" TERM=dumb \
     bash "$ROOT/spira/plan-lint.sh" "$@" 2>&1; }
 commit() { git -C "$ROOT" add -A && git -C "$ROOT" commit -q -m "$1"; }
 
@@ -165,12 +150,11 @@ rm "$ROOT/spira/test-covers-02.sh"
 EMPTY_ROOT="$TMP/empty"; mkdir -p "$EMPTY_ROOT/spira" "$EMPTY_ROOT/docs/test-plan"
 cp "$HERE/plan-lint.sh" "$EMPTY_ROOT/spira/plan-lint.sh"
 cp "$HERE/suite-covers.sh" "$EMPTY_ROOT/spira/suite-covers.sh"
-cp "$HERE/plan-bin.sh" "$EMPTY_ROOT/spira/plan-bin.sh"
 cp "$HERE/suite-coverage-json.sh" "$EMPTY_ROOT/spira/suite-coverage-json.sh"
 git init -q -b main "$EMPTY_ROOT"
 git -C "$EMPTY_ROOT" config user.email t@t; git -C "$EMPTY_ROOT" config user.name t
 rc_empty=0
-env -i PATH="$PATH" HOME="$TMP" TERM=dumb SPIRA_TEST_PLAN_BIN="$SPIRA_TEST_PLAN_BIN" \
+env -i PATH="$PATH" HOME="$TMP" TERM=dumb \
     bash "$EMPTY_ROOT/spira/plan-lint.sh" > /dev/null 2>&1 || rc_empty=$?
 [ "$rc_empty" = 3 ] && ok "empty corpus refuses to report clean (exit 3)" \
     || bad "empty corpus refuses to report clean (exit 3)" "got exit $rc_empty"

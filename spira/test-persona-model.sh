@@ -28,15 +28,10 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 HARNESS="$(cd "$HERE/.." && pwd -P)"
 . "$HERE/testlib.sh"
 
-# The aeon binary replaced aeon.sh. Nothing sources conf.sh for THIS tree before here, so
-# resolve it (and the spira-claim it ranks through) the way conf.sh's spira_bin does for this
-# checkout — SPIRA_ARTIFACTS under testenv — unless the caller already exported one.
-_rbin() { env -u SPIRA_REPO SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin "$2" 2>/dev/null' _ "$HERE" "$1"; }
-[ -x "${SPIRA_AEON_BIN:-}" ] || SPIRA_AEON_BIN="$(_rbin aeon)"
-[ -x "${SPIRA_CLAIM_BIN:-}" ] || SPIRA_CLAIM_BIN="$(_rbin spira-claim)"
-export SPIRA_AEON_BIN SPIRA_CLAIM_BIN
-[ -x "$SPIRA_AEON_BIN" ] \
-    || { echo "test-persona-model: the aeon binary is not built (SPIRA_AEON_BIN=$SPIRA_AEON_BIN)" >&2; exit 1; }
+# The aeon binary replaced aeon.sh; it (and the spira-claim it ranks through) is invoked by
+# name on the suite's PATH (sp-gypjk).
+command -v aeon >/dev/null 2>&1 \
+    || { echo "test-persona-model: aeon is not on PATH" >&2; exit 1; }
 
 echo "test-persona-model.sh"
 
@@ -100,21 +95,11 @@ want "capacity_probe falls back to persona_model builder" \
 
 # ==========================================================================
 echo
-echo "resolving/building spira-config:"
+echo "spira-config on PATH:"
 # ==========================================================================
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
-SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)"
-if [ -z "$SPIRA_CONFIG_BIN" ]; then
-    CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-    [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-    [ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin — install Rust: https://rustup.rs/"
-    printf '  (building spira-config into %s)\n' "$T/target"
-    CARGO_TARGET_DIR="$T/target" "$CARGO_BIN" build --release \
-        --manifest-path "$HARNESS/spira-config/Cargo.toml" >/dev/null 2>&1
-    SPIRA_CONFIG_BIN="$T/target/release/spira-config"
-    [ -x "$SPIRA_CONFIG_BIN" ] || bail "spira-config binary not found/built at $SPIRA_CONFIG_BIN"
-fi
-ok "spira-config binary is present and executable"
+command -v spira-config >/dev/null 2>&1 || bail "spira-config is not on PATH"
+ok "spira-config is on PATH"
 
 # ==========================================================================
 echo
@@ -133,11 +118,11 @@ EOF
 # fayth-auto-convert never fires and overwrites the fixture's own [persona.builder] entry.
 FX_HOME="$T/fixture-home"; mkdir -p "$FX_HOME"
 mkdir -p "$T/empty-chamber"
-resolve() {  # resolve <fayth> [default] [toml] [config-bin]
+resolve() {  # resolve <fayth> [default] [toml]
     env -i PATH="$PATH" HOME="$FX_HOME" SPIRA_HOME="$HARNESS/spira" \
         SPIRA_CONF=/nonexistent SPIRA_RUN="$T/run-resolve" \
         SPIRA_REPO_MAP=/nonexistent SPIRA_CHAMBER="$T/empty-chamber" \
-        SPIRA_TOML="${3-$TOML}" SPIRA_CONFIG_BIN="${4-$SPIRA_CONFIG_BIN}" \
+        SPIRA_TOML="${3-$TOML}" \
         bash -c '. "$1"/lib.sh >/dev/null 2>&1; persona_model "$2" "${3-}"' \
         _ "$HARNESS/spira" "$1" "${2:-}"
 }
@@ -146,7 +131,6 @@ is "spira.toml entry wins"                 "toml-override-model" "$(resolve buil
 is "no entry for this persona -> built-in" "claude-opus-5"        "$(resolve groomer)"
 is "no entry, caller default -> caller's"  "caller-default"       "$(resolve groomer caller-default)"
 is "no spira.toml at all -> built-in"      "claude-opus-5"        "$(resolve builder '' /nonexistent/spira.toml)"
-is "no spira-config binary -> built-in"    "claude-opus-5"        "$(resolve builder '' "$TOML" /nonexistent/spira-config)"
 
 # ==========================================================================
 echo
@@ -166,7 +150,7 @@ rm -f "$_probe_argv"
 env -i PATH="$PATH" HOME="$FX_HOME" SPIRA_HOME="$HARNESS/spira" \
     SPIRA_CONF=/nonexistent SPIRA_RUN="$T/run-probe" \
     SPIRA_REPO_MAP=/nonexistent SPIRA_CHAMBER="$T/empty-chamber" \
-    SPIRA_TOML="$TOML" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+    SPIRA_TOML="$TOML" \
     SPIRA_AGENT="$BIN/claude" SHIM_ARGV_OUT="$_probe_argv" \
     bash -c '. "$1/lib.sh" >/dev/null 2>&1; unset SPIRA_CAPACITY_PROBE_MODEL; capacity_probe' \
     _ "$HARNESS/spira" >/dev/null 2>&1
@@ -224,7 +208,7 @@ printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$T/repo-map"
 # scratch mktemp dir, not a real checkout — which the fixture fayth above has no reason to
 # know about. An empty key is the documented way an operator disables scope restriction.
 export SPIRA_HOME="$SH" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$T/repo-map" SPIRA_CONF=/nonexistent \
-       SPIRA_CHAMBER="$T/empty-chamber" SPIRA_TOML="$TOML" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+       SPIRA_CHAMBER="$T/empty-chamber" SPIRA_TOML="$TOML" \
        SPIRA_SCOPE_LABEL= T
 mkdir -p "$SPIRA_RUN"
 
@@ -240,7 +224,7 @@ SHIM
 chmod +x "$BIN/claude"
 export SPIRA_AGENT="$BIN/claude"
 
-aeon() { "$SPIRA_AEON_BIN" --home "$SH" "$@" 2>/dev/null; }
+aeon() { command aeon --home "$SH" "$@" 2>/dev/null; }
 
 # --sweep: no bead needed.
 rm -f "$T/claude-argv"

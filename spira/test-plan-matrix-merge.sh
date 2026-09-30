@@ -24,30 +24,15 @@ REAL_ROOT="$(cd "$HERE/.." && pwd -P)"
 
 echo "test-plan-matrix-merge.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-plan-matrix-merge: cargo not found on PATH or at ~/.cargo/bin" >&2
-    exit 77
-fi
-export PATH="$(dirname "$CARGO_BIN"):$PATH"
-if ! "$CARGO_BIN" build --release --manifest-path "$REAL_ROOT/test-plan/Cargo.toml" >&2; then
-    echo "FAIL building the real test-plan binary: cargo build failed" >&2
-    exit 1
-fi
-export SPIRA_TEST_PLAN_BIN="${CARGO_TARGET_DIR:-$REAL_ROOT/target}/release/test-plan"
-if ! "$CARGO_BIN" build --release --manifest-path "$REAL_ROOT/suite-select/Cargo.toml" >&2; then
-    echo "FAIL building the real suite-select binary: cargo build failed" >&2
-    exit 1
-fi
-SELECT_BIN="${CARGO_TARGET_DIR:-$REAL_ROOT/target}/release/suite-select"
+# test-plan (and suite-select) are the tree's own, by name on the suite's PATH (sp-gypjk).
+for _t in test-plan suite-select; do
+    command -v "$_t" >/dev/null 2>&1 || bail "$_t is not on PATH"
+done
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 ROOT="$TMP/root"
 mkdir -p "$ROOT/spira" "$ROOT/docs/test-plan"
-for f in plan-matrix.sh plan-lint.sh suite-covers.sh plan-bin.sh \
+for f in plan-matrix.sh plan-lint.sh suite-covers.sh \
          suite-coverage-json.sh tsd-timings-json.sh testlib.sh; do
     cp "$HERE/$f" "$ROOT/spira/$f"
 done
@@ -77,8 +62,8 @@ printf '#!/usr/bin/env bash\n# tier: T1\n# covers: spira/dispatch.sh UC-dispatch
 printf '#!/usr/bin/env bash\n# tier: T1\n# covers: spira/test-*.sh\necho catchall\n' \
     > "$ROOT/spira/test-catchall.sh"
 
-matrix() { ( cd "$ROOT" && SPIRA_TEST_PLAN_BIN="$SPIRA_TEST_PLAN_BIN" bash spira/plan-matrix.sh "$@" ); }
-fence()  { ( cd "$ROOT" && export SPIRA_TEST_PLAN_BIN="$SPIRA_TEST_PLAN_BIN" \
+matrix() { ( cd "$ROOT" && bash spira/plan-matrix.sh "$@" ); }
+fence()  { ( cd "$ROOT" && export \
                && bash spira/plan-lint.sh --orphans "$1" && bash spira/plan-matrix.sh ); }
 
 matrix >&2
@@ -149,7 +134,7 @@ out="$(fence "$BASE_SHA" 2>&1)"; rc=$?
 wantrc "the plan checks pass on the merged tree" 0 "$rc"
 [ "$rc" = 0 ] || printf '# fence output:\n%s\n' "$out" | sed 's/^/# /' >&2
 
-sel="$(cd "$ROOT" && "$SELECT_BIN" select --base "$BASE_SHA" --head "$MERGED_SHA" \
+sel="$(cd "$ROOT" && suite-select select --base "$BASE_SHA" --head "$MERGED_SHA" \
     --repo "$ROOT" --suite-dir "$ROOT/spira" 2>"$TMP/select.log")"
 want "the selector selects branch A's new suite" "test-covers-a.sh" "$sel"
 want "the selector selects branch B's new suite" "test-covers-b.sh" "$sel"

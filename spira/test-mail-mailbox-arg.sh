@@ -29,7 +29,7 @@ export SPIRA_CONF=""
 export SPIRA_ID_PREFIX="sp"
 mkdir -p "$SPIRA_MAIL_KINDS"
 
-run() { bash "$HERE/mail.sh" "$@"; }
+run() { mail.sh "$@"; }
 
 no_mailbox_created() {  # <name> <label>
     [ -e "$SPIRA_MAIL/$1" ] && bad "$2: no mailbox created" "found $SPIRA_MAIL/$1" \

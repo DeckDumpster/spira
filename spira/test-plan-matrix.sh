@@ -23,27 +23,15 @@ isnz() { [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero exit got 0"; }
 
 echo "test-plan-matrix.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-plan-matrix: cargo not found on PATH or at ~/.cargo/bin" >&2
-    exit 77
-fi
-export PATH="$(dirname "$CARGO_BIN"):$PATH"
-if ! "$CARGO_BIN" build --release --manifest-path "$REAL_ROOT/test-plan/Cargo.toml" >&2; then
-    echo "FAIL building the real test-plan binary: cargo build failed" >&2
-    exit 1
-fi
-# CARGO_TARGET_DIR, when set (the testenv container points it off the bind mount), is where
-# the build above actually landed; only its absence means cargo used $REAL_ROOT/target.
-export SPIRA_TEST_PLAN_BIN="${CARGO_TARGET_DIR:-$REAL_ROOT/target}/release/test-plan"
+# test-plan (and suite-select) are the tree's own, by name on the suite's PATH (sp-gypjk).
+for _t in test-plan suite-select; do
+    command -v "$_t" >/dev/null 2>&1 || bail "$_t is not on PATH"
+done
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 ROOT="$TMP/root"
 mkdir -p "$ROOT/spira" "$ROOT/docs/test-plan"
-for f in plan-matrix.sh plan-lint.sh suite-covers.sh plan-bin.sh suite-coverage-json.sh tsd-timings-json.sh; do
+for f in plan-matrix.sh plan-lint.sh suite-covers.sh suite-coverage-json.sh tsd-timings-json.sh; do
     cp "$HERE/$f" "$ROOT/spira/$f"
 done
 
@@ -59,7 +47,7 @@ EOF
 printf '#!/usr/bin/env bash\n# tier: T1\n# covers: spira/dispatch.sh UC-dispatch-01\necho hi\n' \
     > "$ROOT/spira/test-covers-01.sh"
 
-matrix() { env -i PATH="$PATH" HOME="$TMP" TERM=dumb SPIRA_TEST_PLAN_BIN="$SPIRA_TEST_PLAN_BIN" \
+matrix() { env -i PATH="$PATH" HOME="$TMP" TERM=dumb \
     bash "$ROOT/spira/plan-matrix.sh" "$@" 2>&1; }
 
 # ==========================================================================

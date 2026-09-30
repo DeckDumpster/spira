@@ -15,8 +15,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 # The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
 # test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
-QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
-[ -x "$QUEUE_BIN" ] || { echo "FAIL: the queue binary is not built at $QUEUE_BIN"; exit 1; }
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -85,7 +83,7 @@ run() {
     SPIRA_REPO_MAP="$RMAP" \
     SPIRA_RELEASES="$RELEASES" \
     SPIRA_LAND_UNGATED="${LAND_UNGATED-fixture: hand-built heads no gate judged}" \
-        SPIRA_HOME="$SH" "$QUEUE_BIN" "$@" 2>&1
+        SPIRA_HOME="$SH" queue "$@" 2>&1
 }
 run_lockheld() {
     SPIRA_CONF=/nonexistent \
@@ -98,7 +96,7 @@ run_lockheld() {
     SPIRA_RELEASES="$RELEASES" \
     SPIRA_QUEUE_LOCK_HELD=1 \
     SPIRA_LAND_UNGATED="${LAND_UNGATED-fixture: hand-built heads no gate judged}" \
-        SPIRA_HOME="$SH" "$QUEUE_BIN" "$@" 2>&1
+        SPIRA_HOME="$SH" queue "$@" 2>&1
 }
 localmain() { git -C "$REPO" rev-parse local/main; }
 landstate() { cat "$RUN/landstate/${1:-}" 2>/dev/null; }
@@ -178,7 +176,7 @@ RMAP2="$TMP/repo-map-other"
 printf 'fixq | %s | queue | local/main | | |\n' "$REPO" > "$RMAP2"
 out="$(SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_HOME_REPO=fixq SPIRA_REPO="$REPO" \
     SPIRA_RUN="$RUN" SPIRA_QUEUE_DIR="$QDIR" SPIRA_REPO_MAP="$RMAP2" \
-    SPIRA_HOME="$SH" "$QUEUE_BIN" land-local fixq --head "$HEAD1" --members "sp-lloc1:$HEAD1" --worktree "$(bins_wt "$HEAD1")" 2>&1)"; rc=$?
+    SPIRA_HOME="$SH" queue land-local fixq --head "$HEAD1" --members "sp-lloc1:$HEAD1" --worktree "$(bins_wt "$HEAD1")" 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && ok "3: exit non-zero for a non-queue.local mode" || bad "3: exit non-zero for a non-queue.local mode" "got rc=$rc"
 want "3: names the actual mode" "mode=queue" "$out"
 

@@ -128,7 +128,7 @@ fi
 tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
 
 # CONFINEMENT: a spike's branch must be confined to its allowed paths.
-confine_out="$("$SPIRA_HOME/confine.sh" "$id" "$br" "$repo" "$baseref" "" 2>&1)"
+confine_out="$(confine.sh "$id" "$br" "$repo" "$baseref" "" 2>&1)"
 confine_rc=$?
 if [ "$confine_rc" = 1 ]; then
     bead_reopen "$id" confine-fail "Reopened by landing-pass: $confine_out"

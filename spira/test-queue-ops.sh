@@ -21,8 +21,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 # The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
 # test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
-QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
-[ -x "$QUEUE_BIN" ] || { echo "FAIL: the queue binary is not built at $QUEUE_BIN"; exit 1; }
 
 echo "test-queue-ops.sh"
 
@@ -87,6 +85,7 @@ chmod +x "$SH/bd-stub.sh"
 # a row in IN_DELIVERY so lc_returned has a state/version to fire the event from.
 # (LCSTUB_LOG, not LC_LOG: lifecycle-cert.sh, sourced by lib.sh, owns LC_LOG.)
 LCSTUB_LOG="$TMP/lc-calls.log"; : > "$LCSTUB_LOG"
+STUBBIN="$TMP/stubbin"; mkdir -p "$STUBBIN"   # stubs named as the tools they stand in for, first on PATH
 cat > "$SH/lc-stub.sh" <<'LCSTUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${LCSTUB_LOG:?}"
@@ -97,12 +96,13 @@ esac
 exit 0
 LCSTUB
 chmod +x "$SH/lc-stub.sh"
+ln -sf "$SH/lc-stub.sh" "$STUBBIN/spira-lc"
 
 RMAP="$TMP/repo-map"
 printf '%s | %s | queue | main | | |\n' "$REPONAME" "$REPO" > "$RMAP"
 
 run() {
-    env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" \
+    env -i PATH="$STUBBIN:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$SH" \
         SPIRA_RUN="$RUN" \
@@ -119,8 +119,8 @@ run() {
         BEADS_ACTOR="aeon-abandontest" \
         SPIRA_EVENT_COOLDOWN=0 \
         SPIRA_LIFECYCLE_ENFORCE="${LC_ENFORCE:-0}" \
-        SPIRA_LC_BIN="$SH/lc-stub.sh" LCSTUB_LOG="$LCSTUB_LOG" \
-        SPIRA_HOME="$SH" "$QUEUE_BIN" "$@" 2>&1
+        LCSTUB_LOG="$LCSTUB_LOG" \
+        SPIRA_HOME="$SH" queue "$@" 2>&1
 }
 
 TIP01="aabbcc1100000000000000000000000000000001"
@@ -553,7 +553,7 @@ printf 'RED %s %s\n'     "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ab03"
 > "$FORGE_LOG"; : > "$DIRTY_MERGE_LOG"; : > "$DIRTY_MAIL_LOG"
 printf '66601 in_progress\n' > "$RUNS_FILE"
 
-dirty_out="$(env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" \
+dirty_out="$(env -i PATH="$STUBBIN:$PATH" HOME="$TMP" \
     SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_RUN="$RUN" \
     SPIRA_DB="${SPIRA_DB:-/nonexistent}" SPIRA_BD="$SH/bd-stub.sh" BD_LOG="$BD_LOG" \
     SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$QUEUEDIR" \
@@ -593,14 +593,14 @@ import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
 
 real_run() {
-    env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" \
+    env -i PATH="$STUBBIN:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_RUN="$RUN" \
         SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD:-bd}" \
         SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$QUEUEDIR" \
         SPIRA_FORGE="$SH/forge-fake.sh" FORGE_LOG="$FORGE_LOG" \
         SPIRA_LIFECYCLE_ENFORCE="${LC_ENFORCE:-0}" \
-        SPIRA_LC_BIN="$SH/lc-stub.sh" LCSTUB_LOG="$LCSTUB_LOG" \
-        SPIRA_HOME="$SH" "$QUEUE_BIN" "$@" 2>&1
+        LCSTUB_LOG="$LCSTUB_LOG" \
+        SPIRA_HOME="$SH" queue "$@" 2>&1
 }
 
 testdb_reset

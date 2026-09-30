@@ -53,7 +53,7 @@ run_skew_cmd() {
         SPIRA_OVERRIDES="$OVDIR" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
-        bash "$HERE/skew.sh" "$@" 2>&1
+        skew.sh "$@" 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -80,7 +80,7 @@ is   "refresh: override brief present after reset" \
 
 list1="$(env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
     SPIRA_RUN="$RUN1" SPIRA_OVERRIDES="$OVDIR" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
-    bash "$HERE/overrides.sh" list)"
+    overrides.sh list)"
 want "list: override is active" "test-cap $BEAD active" "$list1"
 
 # ===========================================================================
@@ -116,7 +116,7 @@ is   "refresh: brief now carries the permanent fix, not the override's hand" \
 
 list2="$(env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
     SPIRA_RUN="$RUN2" SPIRA_OVERRIDES="$OVDIR" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
-    bash "$HERE/overrides.sh" list)"
+    overrides.sh list)"
 want "list: override reports retired, not active" "test-cap $BEAD retired" "$list2"
 nowant "list: no longer reports active" " active" "$list2"
 
@@ -147,13 +147,13 @@ EOF
 RUN4="$(mktemp -d "$TMP/run-XXXXX")"
 apply_out="$(env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
     SPIRA_RUN="$RUN4" SPIRA_OVERRIDES="$FAILDIR" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
-    bash "$HERE/overrides.sh" apply "$REPO" 2>&1)"; apply_rc=$?
+    overrides.sh apply "$REPO" 2>&1)"; apply_rc=$?
 is   "apply: a failing override exits non-zero"  "1"              "$apply_rc"
 want "apply: names the failing override"         "broken"         "$apply_out"
 
 doctor_out="$(env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
     SPIRA_RUN="$RUN4" SPIRA_OVERRIDES="$FAILDIR" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
-    bash "$HERE/overrides.sh" doctor "$REPO")"; doctor_rc=$?
+    overrides.sh doctor "$REPO")"; doctor_rc=$?
 is   "doctor: a failed override is not a silent pass" "1"        "$doctor_rc"
 want "doctor: names the failed override"              "broken"   "$doctor_out"
 
@@ -167,10 +167,10 @@ apply()  { return 0; }
 EOF
 env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
     SPIRA_RUN="$RUN4" SPIRA_OVERRIDES="$FAILDIR" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
-    bash "$HERE/overrides.sh" apply "$REPO" >/dev/null
+    overrides.sh apply "$REPO" >/dev/null
 list4="$(env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
     SPIRA_RUN="$RUN4" SPIRA_OVERRIDES="$FAILDIR" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
-    bash "$HERE/overrides.sh" list)"
+    overrides.sh list)"
 want "list: no longer failed once apply succeeds" "broken sp-testbroken active" "$list4"
 
 echo
