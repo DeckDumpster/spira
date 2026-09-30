@@ -554,3 +554,274 @@ fn tmpfs_is_read_from_the_nearest_existing_ancestor() {
         eprintln!("skip: /dev/shm is not a tmpfs here");
     }
 }
+
+// ---- embedded fixtures (sp-k2oyn) -----------------------------------------------------
+
+fn write_beads(dir: &Path, marker: &str) {
+    let beads = dir.join(".beads");
+    fs::create_dir_all(&beads).unwrap();
+    fs::write(beads.join("metadata.json"), marker).unwrap();
+}
+
+#[test]
+fn unique_dir_never_repeats_within_a_process() {
+    let a = unique_dir("u");
+    let b = unique_dir("u");
+    assert_ne!(a, b);
+}
+
+#[test]
+fn embedded_reset_restores_the_baseline_and_drops_extra_state() {
+    let d = tmpdir("er");
+    let baseline = d.join("baseline");
+    write_beads(&baseline, "baseline");
+    let fx = d.join("fx");
+    write_beads(&fx, "live-and-changed");
+    fs::write(fx.join(".beads/extra-table.json"), "state a fresh fixture never had").unwrap();
+
+    embedded_reset(&fx, &baseline).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(fx.join(".beads/metadata.json")).unwrap(),
+        "baseline",
+        "reset content matches the baseline, not the live state"
+    );
+    assert!(
+        !fx.join(".beads/extra-table.json").exists(),
+        "reset drops state the baseline never had"
+    );
+    assert!(!fx.join(".beads.new").exists());
+    assert!(!fx.join(".beads.old").exists(), "the rename dance cleans up after itself");
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn embedded_reset_is_a_swap_even_when_beads_is_absent() {
+    // A fixture whose .beads was already removed (e.g. a prior interrupted reset) still
+    // resets: the `mv` of a missing .beads is a documented no-op, not a failure.
+    let d = tmpdir("er-absent");
+    let baseline = d.join("baseline");
+    write_beads(&baseline, "baseline");
+    let fx = d.join("fx");
+    fs::create_dir_all(&fx).unwrap();
+
+    embedded_reset(&fx, &baseline).unwrap();
+    assert_eq!(
+        fs::read_to_string(fx.join(".beads/metadata.json")).unwrap(),
+        "baseline"
+    );
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn embedded_reset_refuses_a_baseline_with_no_beads() {
+    let d = tmpdir("er-bad");
+    let baseline = d.join("empty-baseline");
+    fs::create_dir_all(&baseline).unwrap();
+    let fx = d.join("fx");
+    write_beads(&fx, "live");
+
+    let err = embedded_reset(&fx, &baseline).unwrap_err();
+    assert!(err.contains("no .beads"), "{err}");
+    assert_eq!(
+        fs::read_to_string(fx.join(".beads/metadata.json")).unwrap(),
+        "live",
+        "a refused reset must not touch the live fixture"
+    );
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn embedded_borrow_gets_its_own_copy_never_the_baseline_itself() {
+    let d = tmpdir("bor");
+    let baseline = d.join("baseline");
+    write_beads(&baseline, "shared baseline");
+
+    let b1 = embedded_borrow(&baseline).unwrap();
+    let b2 = embedded_borrow(&baseline).unwrap();
+    assert_ne!(b1.dir, b2.dir, "two borrowers never share a directory");
+    assert_eq!(
+        fs::read_to_string(b1.dir.join(".beads/metadata.json")).unwrap(),
+        "shared baseline"
+    );
+    fs::write(b1.dir.join(".beads/metadata.json"), "borrower 1 wrote this").unwrap();
+    assert_eq!(
+        fs::read_to_string(baseline.join(".beads/metadata.json")).unwrap(),
+        "shared baseline",
+        "a borrower's write never reaches the shared baseline"
+    );
+    assert_eq!(
+        fs::read_to_string(b2.dir.join(".beads/metadata.json")).unwrap(),
+        "shared baseline",
+        "and never reaches another borrower either"
+    );
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn embedded_borrow_refuses_a_gone_baseline() {
+    let d = tmpdir("bor-gone");
+    let err = embedded_borrow(&d.join("never-existed")).unwrap_err();
+    assert!(err.contains("could not copy baseline"), "{err}");
+}
+
+#[test]
+fn embedded_borrow_refuses_a_baseline_with_no_beads() {
+    let d = tmpdir("bor-empty");
+    let baseline = d.join("baseline");
+    fs::create_dir_all(&baseline).unwrap();
+    let err = embedded_borrow(&baseline).unwrap_err();
+    assert!(err.contains("could not copy baseline"), "{err}");
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn embedded_down_removes_every_path_it_is_given() {
+    let d = tmpdir("down");
+    let a = d.join("fx");
+    let b = d.join("baseline");
+    let c = d.join("bin");
+    write_beads(&a, "x");
+    write_beads(&b, "x");
+    fs::create_dir_all(&c).unwrap();
+
+    embedded_down(&[a.clone(), b.clone(), c.clone()]);
+
+    let t0 = Instant::now();
+    while (a.exists() || b.exists() || c.exists()) && t0.elapsed() < Duration::from_secs(5) {
+        sleep(Duration::from_millis(20));
+    }
+    assert!(!a.exists(), "fixture dir removed");
+    assert!(!b.exists(), "baseline dir removed");
+    assert!(!c.exists(), "bin dir removed");
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn embedded_down_tolerates_empty_and_missing_paths() {
+    // Server mode zeroes these vars before calling drop's shared cleanup path; embedded-down
+    // must be a no-op, not a failure, on an empty string or a path that is already gone.
+    embedded_down(&[PathBuf::new(), PathBuf::from("/does/not/exist")]);
+}
+
+#[test]
+fn embedded_check_is_false_for_a_bd_that_is_not_on_path() {
+    assert!(!embedded_check("sp-k2oyn-no-such-bd-binary"));
+}
+
+fn fake_bd_embedded(dir: &Path) -> PathBuf {
+    // A stand-in for bd-embedded: `init` writes .beads and succeeds; anything else fails.
+    let p = dir.join("bd-embedded");
+    exe(
+        &p,
+        "#!/usr/bin/env bash\nset -e\nif [ \"$1\" = init ]; then mkdir -p .beads; \\\n  printf '{\"backend\":\"dolt\",\"dolt_mode\":\"embedded\"}' > .beads/metadata.json; \\\n  printf run >> .beads/.inits; exit 0; fi\nexit 1\n",
+    );
+    p
+}
+
+#[test]
+fn embedded_check_true_with_a_working_bd() {
+    let d = tmpdir("check-ok");
+    let bd = fake_bd_embedded(&d);
+    assert!(embedded_check(&bd.display().to_string()));
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn embedded_up_builds_a_fixture_with_a_baseline_and_a_bd_shim() {
+    let d = tmpdir("up-ok");
+    let bd = fake_bd_embedded(&d);
+    let bd_s = bd.display().to_string();
+
+    let u = embedded_up(&bd_s, "sometag").unwrap();
+    assert!(u.name.starts_with("sptest_sometag_"));
+    assert!(u.dir.join(".beads/metadata.json").is_file());
+    assert!(
+        u.baseline.join(".beads/metadata.json").is_file(),
+        "the baseline is a real snapshot, not a reference to the live dir"
+    );
+    assert_ne!(u.dir, u.baseline);
+    let bin = u.bin.clone().expect("a resolvable bd gets a PATH shim");
+    assert_eq!(fs::read_link(bin.join("bd")).unwrap(), bd);
+    assert_eq!(u.bd, bd_s, "TESTDB_BD reports the resolved bd path");
+
+    // The baseline is independent of the live dir from this point on.
+    fs::write(u.dir.join(".beads/metadata.json"), "mutated by the suite").unwrap();
+    assert_eq!(
+        fs::read_to_string(u.baseline.join(".beads/metadata.json")).unwrap(),
+        "{\"backend\":\"dolt\",\"dolt_mode\":\"embedded\"}"
+    );
+    let _ = fs::remove_dir_all(&d);
+    let _ = fs::remove_dir_all(&u.dir);
+    let _ = fs::remove_dir_all(&u.baseline);
+    if let Some(b) = u.bin {
+        let _ = fs::remove_dir_all(&b);
+    }
+}
+
+#[test]
+fn embedded_up_fails_closed_and_cleans_up_when_init_fails() {
+    let d = tmpdir("up-fail");
+    let bd = d.join("bd-embedded");
+    exe(&bd, "#!/usr/bin/env bash\nexit 3\n");
+    let count_fx_dirs = || -> usize {
+        fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("testenv-testdb-fx-"))
+            })
+            .count()
+    };
+    let before = count_fx_dirs();
+    let err = embedded_up(&bd.display().to_string(), "t").unwrap_err();
+    assert!(err.contains("bd init failed"), "{err}");
+    let after = count_fx_dirs();
+    assert_eq!(before, after, "a failed init leaves no fixture directory behind");
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+#[ignore = "needs real bd (embedded engine) on PATH"]
+fn real_bd_embedded_up_check_reset_and_down() {
+    let path = std::env::var("PATH").unwrap_or_default();
+    let Some(bd) = resolve_exe("bd-embedded", &path) else {
+        eprintln!("skip: no bd-embedded on PATH");
+        return;
+    };
+    let bd_s = bd.display().to_string();
+    assert!(embedded_check(&bd_s), "real bd-embedded should pass the probe");
+
+    let u = embedded_up(&bd_s, "real").unwrap();
+    let real_bd = u.bin.as_ref().unwrap().join("bd");
+    let out = Command::new(&real_bd)
+        .args(["-C", &u.dir.display().to_string(), "create", "sp-k2oyn real check", "-q"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+
+    embedded_reset(&u.dir, &u.baseline).unwrap();
+    let out = Command::new(&real_bd)
+        .args(["-C", &u.dir.display().to_string(), "list", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&out.stdout).contains("sp-k2oyn real check"),
+        "reset must clear what was created after the baseline"
+    );
+
+    let mut paths = vec![u.dir.clone(), u.baseline.clone()];
+    if let Some(b) = &u.bin {
+        paths.push(b.clone());
+    }
+    embedded_down(&paths);
+    let t0 = Instant::now();
+    while paths.iter().any(|p| p.exists()) && t0.elapsed() < Duration::from_secs(5) {
+        sleep(Duration::from_millis(20));
+    }
+    for p in &paths {
+        assert!(!p.exists(), "{} should be gone", p.display());
+    }
+}

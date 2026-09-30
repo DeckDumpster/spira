@@ -1,6 +1,9 @@
 //! `testenv testdb` — server-mode test databases, one private Dolt sql-server per fixture,
 //! started from a pre-initialised template (DESIGN-testdb.md). Replaces the shared
 //! `dolt-beads-test.service` + init lock that serialised every server-mode suite (sp-v2lqd).
+//! Also the embedded-mode fixture lifecycle (init, baseline snapshot, borrow, reset, drop),
+//! moved out of `testdb.sh`'s bash so the script becomes a call-site shim (DESIGN-testdb.md
+//! §6, sp-k2oyn).
 
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -10,6 +13,7 @@ use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -20,7 +24,7 @@ const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const PORT_ATTEMPTS: u32 = 5;
 
-const USAGE: &str = "usage: testenv testdb template --bd B --dolt D [--root R]\n       testenv testdb up --tag T --bd B --dolt D [--root R] [--owner PID]\n       testenv testdb reset --fixture F\n       testenv testdb down --fixture F\n       testenv testdb reap --fixture F --owner PID";
+const USAGE: &str = "usage: testenv testdb template --bd B --dolt D [--root R]\n       testenv testdb up --tag T --bd B --dolt D [--root R] [--owner PID]\n       testenv testdb reset --fixture F\n       testenv testdb down --fixture F\n       testenv testdb reap --fixture F --owner PID\n       testenv testdb embedded-check --bd B\n       testenv testdb embedded-up --tag T --bd B\n       testenv testdb embedded-borrow --baseline BASE\n       testenv testdb embedded-reset --dir D --baseline BASE\n       testenv testdb embedded-down [--dir D] [--baseline BASE] [--bin BIN]";
 
 // ---- pure pieces ---------------------------------------------------------------------
 
@@ -683,6 +687,232 @@ pub fn reap(fx: &Path, owner: u32, poll: Duration) {
     }
 }
 
+// ---- embedded fixtures (sp-k2oyn, DESIGN-testdb.md §6) --------------------------------
+//
+// A private tmpdir fixture on bd's embedded Dolt engine: no server, cleanup is rm -rf.
+// This is the logic `testdb.sh`'s embedded branch of `testdb_up`/`testdb_reset`/
+// `testdb_drop` used to carry directly; the bash file now marshals arguments to these
+// subcommands and exports the KV report, exactly as it already did for server mode
+// (§2.3). Sourcing still has to happen in bash — only sourcing can set variables in the
+// calling shell — so the file itself is not removed, only what it does inline.
+
+fn unique_dir(tag: &str) -> PathBuf {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, Ordering::SeqCst);
+    std::env::temp_dir().join(format!(
+        "testenv-testdb-{tag}-{}-{}-{n}",
+        std::process::id(),
+        now_ms()
+    ))
+}
+
+/// `env -i PATH HOME TERM=dumb BD_NON_INTERACTIVE=1 <bd> init --non-interactive --prefix sp
+/// --skip-agents --skip-hooks -q` in `cwd` — the same clean-environment init `testdb.sh`
+/// always used (embedded and the server template both use it). `bd` is passed as given
+/// (a bare name is resolved by `env`'s own PATH search, exactly as a bare command in bash
+/// would be); the caller resolves an absolute path separately for reporting.
+fn embedded_bd_init(bd: &str, cwd: &Path) -> Result<(), String> {
+    let path = std::env::var("PATH").unwrap_or_default();
+    let home = std::env::var("HOME").unwrap_or_default();
+    let out = Command::new("env")
+        .arg("-i")
+        .arg(format!("PATH={path}"))
+        .arg(format!("HOME={home}"))
+        .arg("TERM=dumb")
+        .arg("BD_NON_INTERACTIVE=1")
+        .arg(bd)
+        .args([
+            "init",
+            "--non-interactive",
+            "--prefix",
+            "sp",
+            "--skip-agents",
+            "--skip-hooks",
+            "-q",
+        ])
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("spawn {bd}: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "bd init failed (rc={}):\n{}{}",
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ))
+    }
+}
+
+/// Does bd's embedded engine work on this host? A throwaway `bd init`, diagnostics
+/// discarded — this is a probe (testdb.sh memoises the boolean for its own session), not a
+/// fault report. False on anything that stops it: `bd` not found, init refuses, no /tmp.
+pub fn embedded_check(bd: &str) -> bool {
+    let dir = unique_dir("check");
+    if fs::create_dir_all(&dir).is_err() {
+        return false;
+    }
+    let ok = embedded_bd_init(bd, &dir).is_ok();
+    remove_tree(&dir);
+    ok
+}
+
+#[derive(Debug)]
+pub struct EmbeddedUp {
+    pub name: String,
+    pub dir: PathBuf,
+    pub baseline: PathBuf,
+    pub bin: Option<PathBuf>,
+    /// What the caller should export as `SPIRA_BD`/`TESTDB_BD`: the absolute path `bd`
+    /// resolved to, or `bd` itself if that lookup fails despite init succeeding (matches
+    /// testdb.sh's `${_bd_real:-$TESTDB_BD}` fallback).
+    pub bd: String,
+}
+
+/// A fresh embedded fixture: `bd init` into a private dir, a baseline snapshot of the
+/// `.beads` it wrote (so `reset` never re-pays init's cost), and a PATH shim directory
+/// holding a `bd` symlink (so a suite's bare `bd` calls resolve to the same binary this
+/// fixture was built with, surviving conf.sh's PATH rebuild via SPIRA_PATH — call site).
+pub fn embedded_up(bd: &str, tag: &str) -> Result<EmbeddedUp, String> {
+    let dir = unique_dir("fx");
+    fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+    if let Err(e) = embedded_bd_init(bd, &dir) {
+        remove_tree(&dir);
+        return Err(e);
+    }
+    if !dir.join(".beads").is_dir() {
+        remove_tree(&dir);
+        return Err("bd init left no .beads directory".into());
+    }
+
+    let baseline = unique_dir("bl");
+    if let Err(e) = fs::create_dir_all(&baseline) {
+        remove_tree(&dir);
+        return Err(format!("mkdir {}: {e}", baseline.display()));
+    }
+    if let Err(e) = copy_tree(&dir.join(".beads"), &baseline.join(".beads")) {
+        remove_tree(&dir);
+        remove_tree(&baseline);
+        return Err(format!("baseline snapshot: {e}"));
+    }
+    if !baseline.join(".beads").is_dir() {
+        remove_tree(&dir);
+        remove_tree(&baseline);
+        return Err("baseline snapshot is empty".into());
+    }
+
+    let path = std::env::var("PATH").unwrap_or_default();
+    let bd_abs = locate_exe(bd, &path);
+    let bin = bd_abs.as_ref().and_then(|abs| {
+        let b = unique_dir("bin");
+        if fs::create_dir_all(&b).is_err() {
+            return None;
+        }
+        if std::os::unix::fs::symlink(abs, b.join("bd")).is_ok() {
+            Some(b)
+        } else {
+            remove_tree(&b);
+            None
+        }
+    });
+
+    let secs = now_ms() / 1000;
+    Ok(EmbeddedUp {
+        name: format!("sptest_{tag}_{secs}_{}", std::process::id()),
+        dir,
+        baseline,
+        bin,
+        bd: bd_abs
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| bd.to_string()),
+    })
+}
+
+#[derive(Debug)]
+pub struct EmbeddedBorrow {
+    pub dir: PathBuf,
+}
+
+/// A borrower's private copy of a shared embedded fixture's baseline `.beads` — never a
+/// reset against the database other borrowers are reading (that misuse is what sp-v2lqd
+/// removed from server mode; embedded mode never shared a server, but it did share a
+/// baseline directory borrowers copy from, never write to).
+pub fn embedded_borrow(baseline: &Path) -> Result<EmbeddedBorrow, String> {
+    let dir = unique_dir("priv");
+    fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+    if let Err(e) = copy_tree(&baseline.join(".beads"), &dir.join(".beads")) {
+        remove_tree(&dir);
+        return Err(format!("could not copy baseline: {e}"));
+    }
+    if !dir.join(".beads").is_dir() {
+        remove_tree(&dir);
+        return Err("shared fixture baseline is empty — fixture collapsed".into());
+    }
+    Ok(EmbeddedBorrow { dir })
+}
+
+/// Back to exactly the baseline: copy to a fresh sibling, rename the old `.beads` aside,
+/// rename the new one into place. Never `rm -rf` then `cp` — on an overlay2 filesystem
+/// `rm -rf` can leave `.beads` partially removed (a kernel whiteout/readdir race), and a
+/// `cp` into a directory that still exists nests instead of replacing it, compounding on
+/// every later reset (sp-i0vz5). `rename(2)` is atomic and does not recurse.
+pub fn embedded_reset(dir: &Path, baseline: &Path) -> Result<(), String> {
+    let src = baseline.join(".beads");
+    if !src.is_dir() {
+        return Err(format!("baseline has no .beads: {}", baseline.display()));
+    }
+    let new = dir.join(".beads.new");
+    let old = dir.join(".beads.old");
+    remove_tree(&new);
+    remove_tree(&old);
+    if let Err(e) = copy_tree(&src, &new) {
+        remove_tree(&new);
+        return Err(format!("copy baseline: {e}"));
+    }
+    let cur = dir.join(".beads");
+    let _ = fs::rename(&cur, &old); // no-op when .beads is absent, as in bash
+    fs::rename(&new, &cur).map_err(|e| format!("rename into place: {e}"))?;
+    remove_tree(&old); // best-effort; the live database is already correct either way
+    Ok(())
+}
+
+/// Detach `rm -rf p` into its own session so a slow overlay2 delete (whiteout unlinks
+/// measured at ~19s) never blocks the caller past a Podman exec timeout — the same reason
+/// `testdb_drop` backgrounded this with a bare `&` before it moved here.
+fn background_rm(p: &Path) {
+    let mut cmd = Command::new("rm");
+    cmd.arg("-rf")
+        .arg(p)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    detach(&mut cmd);
+    let _ = cmd.spawn();
+}
+
+/// Remove every embedded leftover (fixture dir, baseline snapshot, PATH shim dir). Rename
+/// each aside first so a concurrent reader never sees a half-removed directory, then
+/// background the actual delete. A missing or empty path is skipped, not an error — this
+/// is teardown, called from an EXIT trap, and it must not itself fail the suite.
+pub fn embedded_down(paths: &[PathBuf]) {
+    for p in paths {
+        if p.as_os_str().is_empty() || !p.exists() {
+            continue;
+        }
+        let mut name = p.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+        name.push(format!(".del-{}", std::process::id()));
+        let gone = p.with_file_name(name);
+        let target = if fs::rename(p, &gone).is_ok() {
+            gone
+        } else {
+            p.clone()
+        };
+        background_rm(&target);
+    }
+}
+
 // ---- CLI -----------------------------------------------------------------------------
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -694,6 +924,9 @@ pub struct Args {
     pub root: Option<String>,
     pub owner: Option<u32>,
     pub fixture: Option<String>,
+    pub dir: Option<String>,
+    pub baseline: Option<String>,
+    pub bin: Option<String>,
 }
 
 pub fn parse(args: &[String]) -> Result<Args, String> {
@@ -702,7 +935,16 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
     a.cmd = it.next().cloned().ok_or(USAGE)?;
     if !matches!(
         a.cmd.as_str(),
-        "template" | "up" | "reset" | "down" | "reap"
+        "template"
+            | "up"
+            | "reset"
+            | "down"
+            | "reap"
+            | "embedded-check"
+            | "embedded-up"
+            | "embedded-borrow"
+            | "embedded-reset"
+            | "embedded-down"
     ) {
         return Err(format!("testdb: unknown command: {}\n{USAGE}", a.cmd));
     }
@@ -718,6 +960,9 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
             "--dolt" => a.dolt = Some(v()?),
             "--root" => a.root = Some(v()?),
             "--fixture" => a.fixture = Some(v()?),
+            "--dir" => a.dir = Some(v()?),
+            "--baseline" => a.baseline = Some(v()?),
+            "--bin" => a.bin = Some(v()?),
             "--owner" => {
                 let s = v()?;
                 a.owner = Some(
@@ -759,6 +1004,18 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
                 return Err("testdb reap: --owner is required".into());
             }
         }
+        "embedded-check" => need(&a.bd, "--bd")?,
+        "embedded-up" => {
+            need(&a.tag, "--tag")?;
+            need(&a.bd, "--bd")?;
+        }
+        "embedded-borrow" => need(&a.baseline, "--baseline")?,
+        "embedded-reset" => {
+            need(&a.dir, "--dir")?;
+            need(&a.baseline, "--baseline")?;
+        }
+        // embedded-down: every path is optional — a missing one is a no-op, so a call
+        // site that already zeroed a var (e.g. server mode's TESTDB_DIR="") stays cheap.
         _ => {}
     }
     Ok(a)
@@ -873,6 +1130,59 @@ pub fn main(args: &[String]) -> i32 {
                 a.owner.unwrap_or(0),
                 Duration::from_secs(1),
             );
+            0
+        }
+        "embedded-check" => {
+            if embedded_check(a.bd.as_deref().unwrap_or("")) {
+                0
+            } else {
+                1
+            }
+        }
+        "embedded-up" => match embedded_up(a.bd.as_deref().unwrap_or(""), a.tag.as_deref().unwrap_or("x"))
+        {
+            Ok(u) => {
+                emit(&report(&[
+                    ("TESTDB_NAME", u.name),
+                    ("TESTDB_DIR", u.dir.display().to_string()),
+                    ("TESTDB_BASELINE", u.baseline.display().to_string()),
+                    (
+                        "TESTDB_BIN",
+                        u.bin.map(|p| p.display().to_string()).unwrap_or_default(),
+                    ),
+                    ("TESTDB_BD", u.bd),
+                ]));
+                0
+            }
+            Err(e) => fail(e),
+        },
+        "embedded-borrow" => {
+            match embedded_borrow(Path::new(a.baseline.as_deref().unwrap_or(""))) {
+                Ok(b) => {
+                    emit(&report(&[(
+                        "TESTDB_PRIVATE_DIR",
+                        b.dir.display().to_string(),
+                    )]));
+                    0
+                }
+                Err(e) => fail(e),
+            }
+        }
+        "embedded-reset" => match embedded_reset(
+            Path::new(a.dir.as_deref().unwrap_or("")),
+            Path::new(a.baseline.as_deref().unwrap_or("")),
+        ) {
+            Ok(()) => 0,
+            Err(e) => fail(e),
+        },
+        "embedded-down" => {
+            let paths: Vec<PathBuf> = [&a.dir, &a.baseline, &a.bin]
+                .into_iter()
+                .filter_map(|o| o.clone())
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+                .collect();
+            embedded_down(&paths);
             0
         }
         _ => 2,
