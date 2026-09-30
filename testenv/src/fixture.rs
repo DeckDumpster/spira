@@ -421,10 +421,18 @@ impl<'a> Session<'a> {
         ];
         env.extend(self.release_env());
         // ctrl.sh is the `ctrl` binary now (sp-6onps): a native executable under bin/, not
-        // a bash script under spira/ — no `bash` prefix needed to run it.
+        // a bash script under spira/. Launched through bash -c 'exec "$0" "$@"' rather than
+        // a bare exec of the ELF directly — every other setup step (stage, configure,
+        // install) runs this way, through bash, and this one seam is not the place to find
+        // out whether a direct podman-exec of a freshly built binary needs something a
+        // shell launch already provides for the others. Args travel as bash's own "$0"/"$@",
+        // never interpolated into the script text.
         let ctrl = self.in_release("bin/ctrl");
         self.setup_as_user(
             &[
+                "bash",
+                "-c",
+                "exec \"$0\" \"$@\"",
                 &ctrl,
                 "suspend",
                 unit,
@@ -1124,11 +1132,11 @@ mod tests {
         rt.execs.lock().unwrap().remove(0);
         assert_eq!(argv[0], vec!["bash", "/tmp/spira-release-abc123/spira/configure.sh"]);
         assert_eq!(
-            argv[1][..3],
-            ["/tmp/spira-release-abc123/bin/ctrl", "suspend", "spira-loom"]
+            argv[1][..6],
+            ["bash", "-c", "exec \"$0\" \"$@\"", "/tmp/spira-release-abc123/bin/ctrl", "suspend", "spira-loom"]
         );
-        assert_eq!(argv[2][2], "spira-cockpit");
-        assert_eq!(argv[3][2], "spira-watch-queue-watch");
+        assert_eq!(argv[2][5], "spira-cockpit");
+        assert_eq!(argv[3][5], "spira-watch-queue-watch");
         assert_eq!(
             argv[4],
             vec!["bash", "/tmp/spira-release-abc123/systemd/install.sh", "abc123"]
@@ -1227,7 +1235,7 @@ mod tests {
     fn a_failed_step_is_an_install_fault_and_stops() {
         let rt = FakeRuntime::new();
         rt.on(
-            |r| r.argv.get(1).map(String::as_str) == Some("suspend"),
+            |r| r.argv.get(4).map(String::as_str) == Some("suspend"),
             |_| ExecOutcome {
                 rc: 1,
                 output: String::new(),
