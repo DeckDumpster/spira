@@ -423,7 +423,7 @@ async fn ops_json(addr: SocketAddr) -> (u16, Value) {
 async fn ops_round_trips_shell_quoting_and_hides_absent_keys() {
     let run = ops_run_dir();
     // SP_APOS decodes to two apostrophes — close-quote, backslash-apostrophe, open-quote,
-    // twice — the same encoding cockpit.sh's Python writer uses.
+    // twice — the same encoding cockpit-collect's merge (formerly cockpit.sh's shq()) uses.
     std::fs::write(
         run.join("cockpit.env"),
         "SP_PLAIN='hello world'\nSP_APOS=''\\'''\\'''\nSP_MISSING_CONTROL='present'\n",

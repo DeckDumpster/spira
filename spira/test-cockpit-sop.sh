@@ -7,7 +7,7 @@
 #
 # WHAT THIS SUITE IS FOR
 # ----------------------
-# cockpit.sh emits three SOP metrics into the snapshot:
+# cockpit-collect emits three SOP metrics into the snapshot:
 #
 #   SP_SOP_NEVER_FIRED   SOPs on the shelf with no ledger entry — never exercised.
 #   SP_SOP_RECURRED      SOPs applied (check=pass) where held=no in the window — the fix
@@ -40,7 +40,7 @@
 #
 # defect: sp-wwav
 # tier: T2
-# covers: spira/cockpit.sh spira/sop.sh
+# covers: cockpit-collect/src/* spira/sop.sh
 # covers: spira/cockpit-metrics.py
 # scar: SP_SOP_NEVER_FIRED and SP_SOP_RECURRED were absent from the snapshot; a broken probe rendered as all-clear for dead-weight runbooks and recurring incidents.
 set -uo pipefail
@@ -60,7 +60,7 @@ cat > "$TMP/shelf.json" <<'JSON'
 {"memories":{"sop-disk-full":"MATCH: disk.full\nFIX: clear the oldest artifacts","sop-clock-skew":"MATCH: clock.skew\nFIX: restart the time-sync unit"}}
 JSON
 
-# cockpit.sh sops — just the SOP section, not the full probe. The seam exists for this
+# cockpit-collect probe sops — just the SOP section, not the full probe. The seam exists for this
 # purpose: it is the same function probe() calls, so what is tested is what runs.
 run_sops() {    # run_sops [env KEY=val ...] — extra env entries are prepended before bash
     env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
@@ -71,7 +71,7 @@ run_sops() {    # run_sops [env KEY=val ...] — extra env entries are prepended
         SPIRA_FAYTHS=t \
         SPIRA_SOP_LEDGER="$LEDGER" SPIRA_NOW="$NOW" \
         "$@" \
-        cockpit.sh sops 2>/dev/null
+        cockpit-collect probe sops 2>/dev/null
 }
 
 # Write a ledger entry directly — the cockpit probe reads the file, not a bead.

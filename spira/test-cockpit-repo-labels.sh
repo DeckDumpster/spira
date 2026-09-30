@@ -30,7 +30,7 @@
 #
 # defect: sp-sqlk
 # tier: T2
-# covers: spira/cockpit.sh spira/watchtower.sh
+# covers: cockpit-collect/src/* spira/watchtower.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -52,7 +52,7 @@ run_repo_labels() {    # run_repo_labels <fixture-file> [KEY=val ...]
         SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
         SPIRA_ASK_LABEL=needs-ryan \
         "$@" \
-        cockpit.sh repo_labels 2>/dev/null
+        cockpit-collect probe repo_labels 2>/dev/null
 }
 field() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1; }
 

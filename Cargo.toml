@@ -2,6 +2,7 @@
 members = [
     "loom",
     "cockpit/panel",
+    "cockpit-collect",
     "broker",
     "czar-pass",
     "supervise",

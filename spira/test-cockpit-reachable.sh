@@ -20,7 +20,7 @@
 #   And: health.sh renders "N ready · M reachable" and "K stranded" when K > 0.
 #
 # tier: T1
-# covers: spira/cockpit.sh cockpit/health.sh spira/collect.sh
+# covers: cockpit-collect/src/* cockpit/health.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -40,7 +40,7 @@ run_reachable() {
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SCOPE_LABEL=spira \
         SPIRA_BD="$bd_path" \
-        cockpit.sh reachable 2>/dev/null
+        cockpit-collect probe reachable 2>/dev/null
 }
 
 # Like run_reachable but passes SPIRA_SCOPE_LABEL so the scope filter is active.
@@ -53,7 +53,7 @@ run_reachable_scoped() {
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SCOPE_LABEL="$scope" \
         SPIRA_BD="$bd_path" \
-        cockpit.sh reachable 2>/dev/null
+        cockpit-collect probe reachable 2>/dev/null
 }
 
 # =============================================================================

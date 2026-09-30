@@ -7,7 +7,7 @@
 # WHAT THIS SUITE IS FOR
 # -----------------------
 # sp-niqjl: spira-czar-pass-prod.service exited every 30s for four days — 11,000 failures —
-# and nothing noticed, because watchtower.sh, cockpit.sh and doctor.sh contained no check of
+# and nothing noticed, because watchtower.sh, cockpit-collect and doctor.sh contained no check of
 # systemd unit state at all. doctor.sh now does the one-pass read (sp-utt1i); this suite
 # covers what doctor's own comment says is left: dedup, age-since-failed, and the anomaly a
 # persistently failed unit becomes.

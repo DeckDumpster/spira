@@ -5,7 +5,7 @@
 #
 #   ./test-cockpit-accept.sh
 #
-# Covers the ACCEPTANCE section of unsent_keys (spira/cockpit.sh) and its render
+# Covers the ACCEPTANCE section of unsent_keys (spira/cockpit-collect) and its render
 # in health.sh's GATE block:
 #   - a repo with no acceptance note at all renders NEVER, not FAIL and not 0
 #   - a stale FAIL note renders FAIL plus the count of releases cut since
@@ -14,7 +14,7 @@
 #   - health.sh's rendered row keeps NEVER, FAIL and ? visually distinct
 #
 # defect: sp-hhggy
-# covers: spira/cockpit.sh cockpit/health.sh
+# covers: cockpit-collect/src/* cockpit/health.sh
 # scar: acceptance had been discarding its verdict for days while the cockpit
 #   showed nothing, because a verdict-only row cannot distinguish stale calm
 #   from an untested release (law-absence-needs-a-positive-control).
@@ -33,7 +33,7 @@ run_unsent() {
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
         "$@" \
-        cockpit.sh unsent 2>/dev/null
+        cockpit-collect probe unsent 2>/dev/null
 }
 
 # A non-default SPIRA_PROD: the code strips a trailing "/spira" to find the repo

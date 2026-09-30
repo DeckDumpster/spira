@@ -465,16 +465,25 @@ if m: print(m.group(1).strip())
             # A single-token METRIC has no subcommand — malformed; skip enforcement so the
             # lint error is what the author sees, not a silent pass.
             if [ -n "$_metric_key" ] && [ -n "$_metric_subcmd" ] && [ "$_metric_key" != "$_metric_subcmd" ]; then
-                _metric_raw="$(timeout 30 ${SOP_METRIC_COCKPIT:+bash} "${SOP_METRIC_COCKPIT:-cockpit.sh}" "$_metric_subcmd" 2>/dev/null \
-                    | grep "^${_metric_key}=" | sed "s/^${_metric_key}=//" | head -1)" \
-                    || _metric_raw=""
+                # sp-kt4l3: cockpit.sh is retired; the default target is cockpit-collect's
+                # own `probe` subcommand. SOP_METRIC_COCKPIT still names a single program
+                # (a test's own fixture) invoked with just "$_metric_subcmd", unchanged.
+                if [ -n "${SOP_METRIC_COCKPIT:-}" ]; then
+                    _metric_raw="$(timeout 30 bash "$SOP_METRIC_COCKPIT" "$_metric_subcmd" 2>/dev/null \
+                        | grep "^${_metric_key}=" | sed "s/^${_metric_key}=//" | head -1)" \
+                        || _metric_raw=""
+                else
+                    _metric_raw="$(timeout 30 cockpit-collect probe "$_metric_subcmd" 2>/dev/null \
+                        | grep "^${_metric_key}=" | sed "s/^${_metric_key}=//" | head -1)" \
+                        || _metric_raw=""
+                fi
                 _metric_fixed="$(METRIC_V="$_metric_raw" python3 -c '
 import os
 v = os.environ.get("METRIC_V", "")
 print("yes" if v.isdigit() and int(v) == 0 else "no")
 ' 2>/dev/null || echo no)"
                 if [ "$_metric_fixed" = yes ]; then
-                    _metric_note="METRIC ${_metric_key}=0: fix confirmed by cockpit.sh ${_metric_subcmd}."
+                    _metric_note="METRIC ${_metric_key}=0: fix confirmed by cockpit-collect probe ${_metric_subcmd}."
                 else
                     held=unknown
                     _raw_display="${_metric_raw:-?}"

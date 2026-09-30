@@ -21,7 +21,7 @@
 # unsent_keys' SP_LANDED/SP_UNLANDED_N classification, not queue_keys, and cannot be
 # exercised through the `queue` subcommand at all once this suite stopped calling `once`.
 #
-# covers: spira/cockpit.sh spira/lib.sh cockpit/health.sh
+# covers: cockpit-collect/src/* spira/lib.sh cockpit/health.sh
 # scar: UNLND read closed beads and commit bodies, so batched open beads were invisible
 #       and body mentions falsely marked beads as landed.
 #
@@ -110,7 +110,7 @@ mkdir -p "$REPO/spira"
 printf 'test-foo.sh | quarantined | 2026-01-01T00:00:00Z | sp-abc | flaky dns\n' \
     > "$REPO/spira/suite-state-test"
 
-# Run cockpit.sh queue — the probe's own subcommand, not a full `once` — with bd reads
+# Run cockpit-collect probe queue — the probe's own subcommand, not a full `once` — with bd reads
 # answered from a canned-JSON fixture rather than a live store.
 queue() {
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
@@ -121,7 +121,7 @@ queue() {
         SPIRA_QUEUE_DIR="$TMP/queue" \
         SPIRA_SUITE_STATE_FILE="spira/suite-state-test" \
         SPIRA_BDJSON_FIXTURE="$TMP/beads.json" \
-        cockpit.sh queue 2>/dev/null
+        cockpit-collect probe queue 2>/dev/null
 }
 
 out="$(queue)"
@@ -229,7 +229,7 @@ out2="$(env -i PATH="$BASE_PATH" HOME="$TMP2" LC_ALL=C.UTF-8 \
     SPIRA_REPO_MAP="$MAP2" SPIRA_FAYTHS=t \
     SPIRA_QUEUE_DIR="$TMP2/queue" \
     SPIRA_BDJSON_FIXTURE="$BEADS2_JSON" \
-    cockpit.sh queue 2>/dev/null)"
+    cockpit-collect probe queue 2>/dev/null)"
 val2() { printf '%s' "$out2" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 
 is "SP_QUEUE_NEXT_N is the whole 32, not the row cap" "32" "$(val2 SP_QUEUE_NEXT_N)"
