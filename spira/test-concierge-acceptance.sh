@@ -38,8 +38,8 @@ fi
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 # EVERY `concierge.sh start` BELOW MUST NEVER TOUCH THE OPERATOR'S REAL CLIENT SETTINGS.
-# `start` now ensures the SessionStart hook is registered (install-session-hook.sh), which
-# defaults SPIRA_CLIENT_SETTINGS to $HOME/.claude/settings.json. Exported for the two direct
+# `start` now ensures the SessionStart hook is registered (`release session-hook install`),
+# which defaults SPIRA_CLIENT_SETTINGS to $HOME/.claude/settings.json. Exported for the two direct
 # invocations below; the systemd-run ones do not inherit this and name it explicitly.
 export SPIRA_CLIENT_SETTINGS="$TMP/settings.json"
 

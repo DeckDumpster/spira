@@ -28,9 +28,9 @@ HARNESS="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 # EVERY `concierge.sh start` BELOW MUST NEVER TOUCH THE OPERATOR'S REAL CLIENT SETTINGS.
-# `start` now ensures the SessionStart hook is registered (install-session-hook.sh), which
-# defaults SPIRA_CLIENT_SETTINGS to $HOME/.claude/settings.json — and none of the fixtures
-# below override HOME. Exported once here rather than on every invocation below.
+# `start` now ensures the SessionStart hook is registered (`release session-hook install`),
+# which defaults SPIRA_CLIENT_SETTINGS to $HOME/.claude/settings.json — and none of the
+# fixtures below override HOME. Exported once here rather than on every invocation below.
 export SPIRA_CLIENT_SETTINGS="$TMP/settings.json"
 
 echo "the escalation list — three classes, not the old five (sp-3dggv)"

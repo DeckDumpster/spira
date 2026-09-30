@@ -1,0 +1,19 @@
+[package]
+name = "auron"
+version = "1.0.0"
+edition = "2021"
+description = "auron — the watchdog over the loop. Its only power is speech: it reads timestamps and counters, asks the database one question, and raises or clears an alert bead. Replaces spira/auron.sh."
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "auron"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

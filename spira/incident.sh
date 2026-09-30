@@ -19,8 +19,14 @@
 # -v` has no such fallback and correctly skips a same-named directory to keep searching
 # PATH, so resolving through it first and exec'ing the absolute result is exec-safe.
 #
+# A second delivery of this same shim landed on local/main independently while this bead
+# was in flight (identical functional body — `command -v incident` + exec — different
+# comment header, which is all this merge conflict ever was). The subcommand list and the
+# write-ahead/dedupe rationale that header carried now describe `incident/DESIGN.md`
+# instead, which is the accurate, current home for that documentation.
+#
 # covers: incident/src/*.rs spira/conf.sh spira/lib.sh
-#         systemd/spira-ops.service spira/install-intake.sh
+#         systemd/spira-ops.service release/src/main.rs
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
 bin="$(command -v incident)" || {

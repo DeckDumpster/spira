@@ -13,6 +13,7 @@ use crate::conf::{self, Conf, Fayth, SystemPrompt};
 use crate::decide::{self, WorldStop};
 use crate::ledger::{self, Ledger};
 use crate::ports::{s, Bd, Env, Exec, Git, Seam};
+use crate::restrict;
 use crate::seam::Snapshot;
 use crate::session::{self, Beat, Heartbeat, Launcher, SessionSpec, Stop};
 use crate::stack;
@@ -948,17 +949,21 @@ impl<'a> Run<'a> {
         let argv = self.claude_argv(&sys_file);
         self.s.session_started = true;
         let agent = self.agent_bin();
-        let (prog, args) = if self.enforce {
-            // The model runs through work-env.sh, bound to this bead (design §3.5); by name,
-            // on the launcher's PATH (sp-gypjk).
+        let child = env.child();
+        let (prog, args, spec_env) = if self.enforce {
+            // The model runs bound to this bead under the restricted environment (design
+            // §3.5; replaces the work-env.sh wrapper process, sp-zpaq0): same allow-list,
+            // now applied in-process rather than through a subprocess and `env -i`.
             self.s.lc_model_restricted = true;
-            let mut a = s(&[&bead, "--", &agent]);
-            a.extend(argv);
-            ("work-env.sh".to_string(), a)
+            let path = child.get("PATH").cloned().unwrap_or_default();
+            let Some(work_dir) = restrict::work_bin_dir(&path, |p| is_executable(p)) else {
+                return Err(Abort::Die("work-env: work is not on PATH — the launcher sets PATH to a release".to_string()));
+            };
+            (agent, argv, restrict::restricted_env(&bead, &child, &work_dir))
         } else {
-            (agent, argv)
+            (agent, argv, child)
         };
-        let spec = SessionSpec { prog, args, stdin_file: task_file, log: logf, cwd: work.to_path_buf(), env: env.child(), timeout: self.fayth.timeout_seconds };
+        let spec = SessionSpec { prog, args, stdin_file: task_file, log: logf, cwd: work.to_path_buf(), env: spec_env, timeout: self.fayth.timeout_seconds };
         let rc = self.d.launcher.run(&spec, &self.stop);
         // Interrupted: bash's trap ran before `SESSION_RC=$rc`, so SESSION_RC stays 0.
         self.check_stop()?;

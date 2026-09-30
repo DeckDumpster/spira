@@ -72,9 +72,10 @@ exit 0
 STUB
 chmod +x "$STUBS/work"
 
-# The shim IS the model: records whether bd was reachable and whether work-env.sh's
-# restricted env (SPIRA_WORK_BEAD_ID) was present, then exits — this suite is about which
-# environment aeon.sh hands the model, not about what the model does with it.
+# The shim IS the model: records whether bd was reachable and whether the aeon's
+# restricted env (SPIRA_WORK_BEAD_ID; aeon/src/restrict.rs, formerly work-env.sh,
+# retired sp-zpaq0) was present, then exits — this suite is about which environment
+# the aeon hands the model, not about what the model does with it.
 cat > "$BIN/claude" <<SHIM
 #!/usr/bin/env bash
 cat /dev/stdin > /dev/null
@@ -126,6 +127,6 @@ is    "bead closed via the legacy path"                     "closed" "$(bead_sta
 is    "SEEN RED: the stub spira-lc was never invoked"       "absent" "$([ -e "$TMP/stub-lc-invoked" ] && echo INVOKED || echo absent)"
 is    "SEEN RED: the stub work client was never invoked"    "absent" "$([ -e "$TMP/stub-work-invoked" ] && echo INVOKED || echo absent)"
 is    "bd was on the model's PATH (legacy, unwrapped)"      "BD_FOUND" "$(cat "$TMP/bd-found" 2>/dev/null || echo absent)"
-is    "no work-env.sh restricted env reached the model"     "" "$(cat "$TMP/restricted-env" 2>/dev/null || true)"
+is    "no restricted env reached the model"                 "" "$(cat "$TMP/restricted-env" 2>/dev/null || true)"
 
 tl_summary

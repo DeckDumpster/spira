@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "auron",
     "loom",
     "cockpit/panel",
     "broker",

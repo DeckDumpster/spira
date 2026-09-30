@@ -158,21 +158,7 @@ printf 'seed: stub\n'; exit 0
 EOF
 chmod +x "$SPIRA_DIR/seed.sh"
 
-cat > "$SPIRA_DIR/install-session-hook.sh" <<'EOF'
-#!/usr/bin/env bash
-case "${1:-}" in
-    status)  printf 'ok  SessionStart\n' ;;
-    install) printf 'install-session-hook: stub\n' ;;
-esac
-exit 0
-EOF
-chmod +x "$SPIRA_DIR/install-session-hook.sh"
-
-cat > "$SPIRA_DIR/install-intake.sh" <<'EOF'
-#!/usr/bin/env bash
-printf 'install-intake: stub\n'; exit 0
-EOF
-chmod +x "$SPIRA_DIR/install-intake.sh"
+install_fixture_release_stub "$SPIRA_DIR"
 
 cat > "$SPIRA_DIR/ready.sh" <<'EOF'
 #!/usr/bin/env bash
