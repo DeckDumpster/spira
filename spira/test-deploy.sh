@@ -20,7 +20,7 @@
 #  11. (i) Migration check: mismatch refuses; unreachable triggers dolt start, then proceeds or "cannot read".
 #  12. (j) Bootstrap: deploy from tarball location with no deploy.sh in checkout.
 #  16. (k) --force: slays live aeons (--keep-work --reopen --why "deploy <tag>") and proceeds.
-#  19. (n) conf ordering: SPIRA_PROD written to conf before activate.sh restarts services.
+#  19. (n) conf ordering: SPIRA_PROD written to conf before release install-tarball restarts services.
 #
 # FAIL-FIRST (law-absence-needs-a-positive-control)
 # Each detector is shown to fire before it is trusted as silent.
@@ -145,8 +145,8 @@ esac
 WEOF
 chmod +x "$BIN/world.sh"
 
-# Mock activate.sh: creates release dir and swaps current symlink.
-cat > "$BIN/activate.sh" <<'AEOF'
+# Mock release: creates release dir and swaps current symlink (install-tarball subcommand).
+cat > "$BIN/release" <<'AEOF'
 #!/usr/bin/env bash
 printf 'activate %s\n' "$*" >> "${CALL_LOG:-/dev/null}"
 [ "${ACTIVATE_EXIT:-0}" = "0" ] || exit "${ACTIVATE_EXIT}"
@@ -157,7 +157,7 @@ mkdir -p "$releases/$release_name"
 _tmp="$releases/.current.new.$$"
 ln -s "$release_name" "$_tmp" && mv -T "$_tmp" "$releases/current"
 AEOF
-chmod +x "$BIN/activate.sh"
+chmod +x "$BIN/release"
 
 # Mock install.sh: records SPIRA_PROD and SPIRA_HOME at call time, both as the literal
 # string deploy.sh passed (usually "$SPIRA_RELEASES/current/spira", unchanged whichever
@@ -299,7 +299,7 @@ run_deploy() {
         "SPIRA_DOCTOR=1" \
         "SPIRA_SYSTEMCTL=$BIN/systemctl" \
         "SPIRA_WORLD_SH=$BIN/world.sh" \
-        "SPIRA_ACTIVATE_SH=$BIN/activate.sh" \
+        "SPIRA_ACTIVATE_SH=$BIN/release" \
         "SPIRA_INSTALL_SH=$BIN/install.sh" \
         "SPIRA_COCKPIT_LAYOUT_SH=$BIN/layout.sh" \
         "SPIRA_DOCTOR_SH=$BIN/doctor.sh" \
@@ -415,7 +415,7 @@ want   "rollback: prints doctor's own FAIL line"    "deploy: doctor:   FAIL  inj
 islink "rollback: current restored to prior"        "$RELEASES/current" "$PRIOR_RELEASE"
 # ExecStart is parameterized by the "current" symlink and never changes text across releases,
 # so install.sh's diff-based re-render alone restarts nothing — the already-active unit that
-# activate.sh restarted onto the new release must be restarted again onto the prior one.
+# release install-tarball restarted onto the new release must be restarted again onto the prior one.
 want   "rollback: restarts active unit onto prior release" \
        "SC --user restart spira-sentinel-prod.service" "$(cat "$SC_LOG")"
 # THE ROLLBACK'S RE-RENDER RESOLVES THE PRIOR RELEASE'S OWN BINARIES, as the forward one must
@@ -744,7 +744,7 @@ want   "toml-update: sibling key still intact after replace" "max_aeons = 4" "$(
 
 # ==========================================================================
 echo
-echo "PROPERTY 19: spira.toml written before activate.sh restarts services"
+echo "PROPERTY 19: spira.toml written before release install-tarball restarts services"
 # Services read the toml at restart; the write must be in effect before activate is called.
 # ==========================================================================
 _toml_timing_file="$TMP/toml-at-activate.txt"
@@ -1085,11 +1085,11 @@ rm -f "$_force_pf"
 # ==========================================================================
 echo
 echo "PROPERTY 17: read-only release dir — sidecar written to .tags/, deploy succeeds"
-# Acceptance test for issue #109: activate.sh makes the release dir read-only, so
+# Acceptance test for issue #109: release install-tarball makes the release dir read-only, so
 # the old deploy.sh silently failed to write .tag inside it, skew fell back to
 # timestamps, and every deploy rolled back.
 #
-# FAIL-FIRST: with activate.sh that chmod's the dir and a skew that reads .tag
+# FAIL-FIRST: with release install-tarball that chmod's the dir and a skew that reads .tag
 # from the OLD location (inside the release dir), the sidecar is missing, skew
 # gets CANNOT-VERIFY or a timestamp mismatch, and the test records this.
 # ==========================================================================
@@ -1111,7 +1111,7 @@ RDONLY_COMMIT="$(git -C "$RDONLY_REPO" rev-parse HEAD)"
 git -C "$RDONLY_REPO" tag -a "$RDONLY_TAG" HEAD \
     -m "$(printf 'spira release\nbead: sp-test')"
 
-# activate.sh mock: creates release dir, chmod's it read-only, writes MANIFEST.
+# release mock (install-tarball subcommand): creates release dir, chmods it read-only, writes MANIFEST.
 # Crucially it does NOT create a .tag inside the release dir (the real one can't).
 RDONLY_ACTIVATE="$TMP/rdonly-activate.sh"
 cat > "$RDONLY_ACTIVATE" <<RAEOF
@@ -1317,7 +1317,7 @@ IEOF
 chmod +x "$BIN_P18/install.sh"
 
 # Symlink the other mocks from BIN into BIN_P18.
-for _m in world.sh activate.sh layout.sh doctor.sh skew.sh slay.sh gh bd; do
+for _m in world.sh release layout.sh doctor.sh skew.sh slay.sh gh bd; do
     [ -f "$BIN/$_m" ] && ln -sf "$BIN/$_m" "$BIN_P18/$_m"
 done
 unset _m
@@ -1433,7 +1433,7 @@ exit 0
 SCEOF
 chmod +x "$BIN_P20/systemctl"
 
-for _m in world.sh activate.sh layout.sh doctor.sh skew.sh slay.sh gh bd; do
+for _m in world.sh release layout.sh doctor.sh skew.sh slay.sh gh bd; do
     [ -f "$BIN/$_m" ] && ln -sf "$BIN/$_m" "$BIN_P20/$_m"
 done
 unset _m
@@ -1532,7 +1532,7 @@ _tb_out="$(env -i \
     "SPIRA_DOCTOR=1" \
     "SPIRA_SYSTEMCTL=$BIN/systemctl" \
     "SPIRA_WORLD_SH=$BIN/world.sh" \
-    "SPIRA_ACTIVATE_SH=$BIN/activate.sh" \
+    "SPIRA_ACTIVATE_SH=$BIN/release" \
     "SPIRA_INSTALL_SH=$BIN/install.sh" \
     "SPIRA_COCKPIT_LAYOUT_SH=$BIN/layout.sh" \
     "SPIRA_DOCTOR_SH=$BIN/doctor.sh" \
@@ -1571,7 +1571,7 @@ _tb_out="$(env -i \
     "SPIRA_DOCTOR=1" \
     "SPIRA_SYSTEMCTL=$BIN/systemctl" \
     "SPIRA_WORLD_SH=$BIN/world.sh" \
-    "SPIRA_ACTIVATE_SH=$BIN/activate.sh" \
+    "SPIRA_ACTIVATE_SH=$BIN/release" \
     "SPIRA_INSTALL_SH=$BIN/install.sh" \
     "SPIRA_COCKPIT_LAYOUT_SH=$BIN/layout.sh" \
     "SPIRA_DOCTOR_SH=$BIN/doctor.sh" \
@@ -1611,7 +1611,7 @@ _tb_out="$(env -i \
     "SPIRA_DOCTOR=1" \
     "SPIRA_SYSTEMCTL=$BIN/systemctl" \
     "SPIRA_WORLD_SH=$BIN/world.sh" \
-    "SPIRA_ACTIVATE_SH=$BIN/activate.sh" \
+    "SPIRA_ACTIVATE_SH=$BIN/release" \
     "SPIRA_INSTALL_SH=$BIN/install.sh" \
     "SPIRA_COCKPIT_LAYOUT_SH=$BIN/layout.sh" \
     "SPIRA_DOCTOR_SH=$BIN/doctor.sh" \
@@ -1707,7 +1707,7 @@ _out="$(env -i \
     "SPIRA_DOCTOR=1" \
     "SPIRA_SYSTEMCTL=$BIN/systemctl" \
     "SPIRA_WORLD_SH=$BIN/world.sh" \
-    "SPIRA_ACTIVATE_SH=$BIN/activate.sh" \
+    "SPIRA_ACTIVATE_SH=$BIN/release" \
     "SPIRA_INSTALL_SH=$BIN/install.sh" \
     "SPIRA_COCKPIT_LAYOUT_SH=$BIN/layout.sh" \
     "SPIRA_DOCTOR_SH=$BIN/doctor.sh" \
@@ -1742,7 +1742,7 @@ _out="$(env -i \
     "SPIRA_DOCTOR=1" \
     "SPIRA_SYSTEMCTL=$BIN/systemctl" \
     "SPIRA_WORLD_SH=$BIN/world.sh" \
-    "SPIRA_ACTIVATE_SH=$BIN/activate.sh" \
+    "SPIRA_ACTIVATE_SH=$BIN/release" \
     "SPIRA_INSTALL_SH=$BIN/install.sh" \
     "SPIRA_COCKPIT_LAYOUT_SH=$BIN/layout.sh" \
     "SPIRA_DOCTOR_SH=$BIN/doctor.sh" \
@@ -1779,7 +1779,7 @@ _out="$(env -i \
     "SPIRA_DOCTOR=1" \
     "SPIRA_SYSTEMCTL=$BIN/systemctl" \
     "SPIRA_WORLD_SH=$BIN/world.sh" \
-    "SPIRA_ACTIVATE_SH=$BIN/activate.sh" \
+    "SPIRA_ACTIVATE_SH=$BIN/release" \
     "SPIRA_INSTALL_SH=$BIN/install.sh" \
     "SPIRA_COCKPIT_LAYOUT_SH=$BIN/layout.sh" \
     "SPIRA_DOCTOR_SH=$BIN/doctor.sh" \

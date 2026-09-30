@@ -476,9 +476,9 @@ data, and a stopped database makes every diagnostic you are about to run fail â€
 the operator is reading, because halting the loop must not blind the person halting it.
 
 Other operator-facing scripts carry `--help`. Highlights: `promote.sh` fast-forwards the
-production checkout and restarts only changed units; `stage.sh` stands up an isolated Spira for
-testing; `canary.sh` runs an end-to-end pipeline canary; `escape.sh` summons an aeon directly,
-bypassing pool and lane checks; `aeons.sh` sets the fleet ceiling.
+production checkout and restarts only changed units; `release stage up|down` stands up an
+isolated Spira for testing; `release canary` runs an end-to-end pipeline canary; `escape.sh`
+summons an aeon directly, bypassing pool and lane checks; `aeons.sh` sets the fleet ceiling.
 
 ---
 

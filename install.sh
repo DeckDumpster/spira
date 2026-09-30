@@ -90,7 +90,7 @@ _configure_prod_guard() {
 # _prod_guard <path> -> 0 when clear (or overridden), 2 (refuse) when <path> is a git
 # checkout. A git pull there would be a silent deploy with no audit trail — the release
 # model requires SPIRA_PROD to resolve through SPIRA_RELEASES/current, the symlink
-# activate.sh swaps atomically on each deployment. Override: SPIRA_INSTALL_PROD_GIT_CONSIDERED=1
+# release install-tarball swaps atomically on each deployment. Override: SPIRA_INSTALL_PROD_GIT_CONSIDERED=1
 _prod_guard() {
     local path="${1:-}"
     [ -n "${SPIRA_INSTALL_PROD_GIT_CONSIDERED:-}" ] && return 0
@@ -105,16 +105,16 @@ _prod_guard() {
     [ "$in_git" = 1 ] || return 0
     printf 'install: REFUSING — SPIRA_PROD (%s) is a git checkout\n' "$path" >&2
     printf 'install:   The release model requires SPIRA_PROD to resolve through\n' >&2
-    printf 'install:   %s/current (the symlink activate.sh swaps on each deploy).\n' \
+    printf 'install:   %s/current (the symlink release install-tarball swaps on each deploy).\n' \
         "${SPIRA_RELEASES:-}" >&2
-    printf 'install:   Activate a release tarball first: bash spira/activate.sh <tarball>\n' >&2
+    printf 'install:   Activate a release tarball first: release install-tarball <tarball>\n' >&2
     printf 'install:   Override: SPIRA_INSTALL_PROD_GIT_CONSIDERED=1\n' >&2
     return 2
 }
 
 # _bootstrap_decision <prod> <releases> -> 0 when <prod>'s parent directory resolves under
 # <releases> (phase 4 may bootstrap releases/bootstrap from the installing clone), 2 (refuse)
-# otherwise, naming activate.sh. Called only once <prod> is already known absent — existence
+# otherwise, naming release install-tarball. Called only once <prod> is already known absent — existence
 # is the caller's concern, not this decision's.
 _bootstrap_decision() {
     local prod="$1" releases="${2:-}"
@@ -124,7 +124,7 @@ _bootstrap_decision() {
     case "$prod_parent/" in
         "$rel_canon/"*) return 0 ;;
     esac
-    printf 'install: SPIRA_PROD (%s) does not exist — activate a release first: bash spira/activate.sh <tarball>\n' \
+    printf 'install: SPIRA_PROD (%s) does not exist — activate a release first: release install-tarball <tarball>\n' \
         "$prod" >&2
     return 2
 }

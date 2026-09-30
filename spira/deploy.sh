@@ -37,7 +37,7 @@
 #   8. world.sh drain — wait for live aeons to finish; refuse if they do not.
 #      With --force: drain --timeout 0, then slay each live aeon (--keep-work --reopen).
 #   9. Write SPIRA_PROD to spira.conf before restarting services.
-#  10. activate.sh — unpack, atomic symlink swap, daemon-reload, restart units.
+#  10. release install-tarball — unpack, atomic symlink swap, daemon-reload, restart units.
 #  11. activated release's install.sh — re-render unit files with SPIRA_HOME and SPIRA_PROD
 #      set to the release, so unit ExecStart paths are not stamped from the invoking directory.
 #  12. cockpit/layout.sh ensure.
@@ -49,7 +49,7 @@
 #   0  deployed
 #   1  refused (already current, drain timeout without --force, migration mismatch, health-check rollback)
 #   2  fatal (usage error, draft release, fetch failed, activation error)
-# covers: spira/deploy.sh spira/activate.sh spira/world.sh cockpit/layout.sh
+# covers: spira/deploy.sh release/src/install.rs spira/world.sh cockpit/layout.sh
 set -uo pipefail
 
 # Captured before conf.sh derives anything from THIS checkout, for _render_release_units to
@@ -71,7 +71,10 @@ _SC="${SPIRA_SYSTEMCTL:-systemctl}"
 # Sibling tools by bare name on the launcher's PATH (sp-gypjk); systemd/ and cockpit/ are
 # not on that PATH, so those two stay addressed relative to this tree.
 _WORLD="${SPIRA_WORLD_SH:-world.sh}"
-_ACTIVATE="${SPIRA_ACTIVATE_SH:-activate.sh}"
+# release install-tarball (sp-jsnbm) replaces activate.sh: unpack, atomic symlink swap,
+# daemon-reload, restart. SPIRA_ACTIVATE_SH keeps its name (a test double's own binary,
+# not necessarily named "release") but now takes the subcommand as its own first argument.
+_ACTIVATE="${SPIRA_ACTIVATE_SH:-release}"
 _INSTALL="${SPIRA_INSTALL_SH:-$HERE/../systemd/install.sh}"
 _COCKPIT="${SPIRA_COCKPIT_LAYOUT_SH:-$HERE/../cockpit/layout.sh}"
 _DOCTOR="${SPIRA_DOCTOR_SH:-doctor.sh}"
@@ -282,7 +285,7 @@ if [ "$dry_run" = 1 ]; then
         printf 'deploy: would world.sh drain\n'
     fi
     printf 'deploy: would update spira.conf: SPIRA_PROD=%s/current/spira\n' "$SPIRA_RELEASES"
-    printf 'deploy: would activate.sh %s.tar.gz\n' "$release_stem"
+    printf 'deploy: would release install-tarball %s.tar.gz\n' "$release_stem"
     # When a current release is active, verify the ExecStart target that install.sh would
     # render is executable. This catches a wrong SPIRA_PROD before any disruptive action.
     if [ -L "$SPIRA_RELEASES/current" ]; then
@@ -370,7 +373,7 @@ _promo_svc="spira-promote-${SPIRA_INSTANCE}.service"
 "$_SC" --user stop "$_promo_svc" 2>/dev/null || true
 
 # Ensure the tag sidecar directory exists and is writable before disrupting the instance.
-# The release dir is read-only after activate.sh; the sidecar goes beside it, not inside.
+# The release dir is read-only after release install-tarball; the sidecar goes beside it, not inside.
 _tags_dir="$SPIRA_RELEASES/.tags"
 mkdir -p "$_tags_dir" || {
     printf 'deploy: cannot create tag sidecar directory %s\n' "$_tags_dir" >&2; exit 1
@@ -530,7 +533,7 @@ log "deploy: spira.toml updated — SPIRA_PROD = $_new_prod"
 
 # Activate the tarball.
 log "deploy: activating"
-"$_ACTIVATE" "$_tarball" || { _rollback "activate.sh failed"; }
+"$_ACTIVATE" install-tarball "$_tarball" || { _rollback "release install-tarball failed"; }
 
 # Record the release tag in .tags/ (beside the release dirs, not inside the read-only one).
 printf '%s\n' "$tag" > "$SPIRA_RELEASES/.tags/$release_stem" || {

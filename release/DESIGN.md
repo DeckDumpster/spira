@@ -4,6 +4,12 @@ The release producer (sp-m3ipc, work item 1 of the epic "the running system is a
 brain `wiki/projects/spira/designs/runtime-is-a-release-2026-09-29.md`). It replaces, for
 local use, the Makefile's `install` target, `spira/activate.sh` and `spira/build-tarball.sh`.
 
+**sp-jsnbm** (wave 2 of the rewrite programme) extends it to the public (GitHub tag/tarball)
+pipeline: `install-tarball`, `stage` and `canary` move `spira/activate.sh`, `spira/stage.sh`
+and `spira/canary.sh` into this crate, so the GitHub acceptance workflow and `install.sh` call
+the same binary the local path does. `spira/build-tarball.sh` stays bash (it produces the
+tarball `install-tarball` consumes; a separate concern, untouched here — DESIGN.md "Callers").
+
 ## Intent
 
 *"In the running system, there should be ABSOLUTELY ZERO ambiguity about which binaries to
@@ -24,6 +30,10 @@ release activate <sha> [--hotfix "<reason>"] [--repo R] [--landed-ref REF] [--se
 release rollback [--settle S]                           activate the previous release
 release prune [--keep N]                                keep the newest N releases
 release status                                          current, previous, RUNNING UNLANDED, ALERT
+release install-tarball <tarball> [--dry-run] [--settle S]   the public pipeline's own install
+release stage up [ROOT] | down <ROOT>                   an isolated Spira for testing
+release canary [--stage ROOT] [--deadline S]            end-to-end pipeline canary on a stage
+release canary-worker                                   the stage's synthetic aeon (internal)
 ```
 
 Every subcommand also takes `--releases D` (else `$SPIRA_RELEASES`, else `spira.releases`,
@@ -194,6 +204,122 @@ removed, whatever their age: what `current` names, the rollback target, a standi
 Stage directories whose builder process is gone are removed too. A release is made writable
 before removal; one that still cannot be removed is reported, and prune exits 1.
 
+### install-tarball
+
+The public pipeline's own install (`spira/activate.sh`'s replacement): unpack a tarball
+`spira/build-tarball.sh` built beside existing releases, swap `current` atomically, and
+restart. It is a second, timestamp-named release lineage alongside `build`'s sha-named one
+(DESIGN.md "install-tarball: differences from activate" below), and the two never share a
+directory.
+
+1. `<tarball>` must be `spira-<timestamp>.tar.gz` (or `.tgz`); the release name is the
+   basename with the extension stripped — the tarball and the directory it unpacks to name
+   each other, exactly as `build-tarball.sh`'s own NAMING section documents. A name that
+   does not fit this shape is a refusal before anything is touched.
+2. If `spira-releases/<name>` already exists it is not re-unpacked (releases are immutable,
+   and this is the mechanism `deploy.sh`'s rollback depends on: re-running `install-tarball`
+   against a tarball already installed is a cheap re-activation, not a rebuild).
+3. Otherwise: extract into a staging directory beside the release dirs, confirm it produced
+   the promised `<name>/` (a mismatch is a refusal, nothing is moved), **move it into place
+   before marking it read-only** — renaming a directory into a different parent rewrites its
+   own `..` entry, which needs write permission on the directory being moved, so a read-only
+   source would make every install fail at the rename (`spira/activate.sh` chmods after its
+   own `mv` for the same reason; sp-jsnbm found this the hard way, in this crate's own unit
+   tests, before it ever reached a real install).
+4. Atomically swap `current` (a temp symlink beside it, renamed over it — same mechanism as
+   `activate`).
+5. `daemon-reload`, then restart every **active** `spira-*.service` unit that is not
+   transient. Best-effort: a `daemon-reload` or restart failure is a warning, not a refusal
+   — `deploy.sh` already wraps the whole call in its own coarser-grained rollback.
+6. Prune: keep the newest `--keep` (`cfg.keep`, the same key `build`/`prune` read)
+   timestamp-named releases, newest name first (the name is the timestamp, so lexical order
+   is chronological order), excluding whatever `current` now names. Best-effort, reported,
+   never fails the install.
+
+`--dry-run` reports the same three intentions `activate.sh --dry-run` printed and changes
+nothing.
+
+#### install-tarball: differences from `activate`
+
+Kept deliberately close to `spira/activate.sh`'s own behaviour rather than upgraded to
+`activate`'s stricter one:
+
+- **Every active `spira-*.service` unit restarts, not only the ones whose `ExecStart`
+  changed.** A tarball install has no prior release's rendered units to diff against — that
+  diff is what `activate`'s unit-render step (DESIGN.md "activate") produces, and
+  `install-tarball` never renders units at all (`install.sh --skip-build`, run separately by
+  the caller, does that for the public pipeline).
+- **A `daemon-reload` or restart failure is a warning, not a rollback.** `activate` rolls
+  back the whole switch when a restarted unit fails to come up; `install-tarball` does not,
+  because `deploy.sh` (its only caller) already wraps the call in its own rollback at the
+  whole-deploy grain, and a public-pipeline install has no "previous unit files" to restore
+  to in the first place (it never renders any).
+- **No live-aeon guard.** `spira/activate.sh` refused while aeons were live
+  (`SPIRA_ACTIVATE_FORCE=1` overrode it) — installing while aeons held worktrees under the
+  release directory destroyed in-flight work (scar: sp-s6hk). Under the "running system is a
+  release" design (DESIGN.md's own Intent) an aeon's worktree is never under
+  `spira-releases/`, so there is nothing left to disrupt, and the same reasoning
+  `activate`'s own "Live aeons" section already gives applies here unchanged; the guard and
+  its override are dropped rather than ported.
+- **A bad tarball name or missing file is a refusal (exit 1), not a usage error (exit 2).**
+  It is a domain refusal, like "no release `<sha>` in ..." from `verify::release_dir` — the
+  crate's own convention (DESIGN.md "Contract": "`2` usage") reserves 2 for CLI
+  argument-parsing errors, not for a malformed argument's content.
+- **The prune keep default is `cfg.keep` (5), not `spira/activate.sh`'s own hard-coded 100.**
+  Both still respect `SPIRA_RELEASES_KEEP` identically; only the unconfigured default moves,
+  to the one the rest of this crate already uses (DESIGN.md "prune").
+- **No cryptographic MANIFEST check.** `build-tarball.sh`'s own MANIFEST only hashes the
+  shipped binaries, not every tracked file (`build`'s MANIFEST hashes everything) — the two
+  are different, incompatible shapes, and `spira/activate.sh` never checked either. Verifying
+  the tarball's own promise (a real commit exists, the binaries it lists are present) is
+  `build-tarball.sh verify`'s job, run separately in the release workflow, not
+  `install-tarball`'s.
+
+### stage
+
+`spira/stage.sh`'s replacement: stand up (or tear down) a fully isolated Spira for
+testing — its own git repo and bare remote, its own beads database (`bd-embedded`, via a
+private `bin/bd` symlink so nothing this stage runs can resolve the caller's real `bd`), its
+own `SPIRA_RUN`, a minimal chamber (one `canary` fayth, `FAYTH_MAX_CONCURRENT=1`), a
+six-column `repo-map` line, and the two synthetic dispatch scripts `sentinel` needs in place
+of `systemd-run`: `fake-summon.sh` (execs `release canary-worker` synchronously) and
+`fake-launch.sh` (records the landing dispatch timestamp and exits 0 — `release canary` runs
+`landing-pass land` directly so it controls the timing).
+
+Every non-test `.sh`/`.py` file directly under `$SPIRA_RELEASE/spira/` (the release stage is
+run from, never a checkout — DESIGN.md's own Intent) is symlinked into the stage's own
+`spira/`, so a stage runs the actual code, not a copy frozen at setup. Isolation is asserted
+at build time: `up` refuses to return an env block where `SPIRA_DB`, `SPIRA_RUN` or
+`SPIRA_HOME` resolves outside the stage root, the same assertion `stage.sh` made. `down`
+refuses a path with no `spira/chamber/canary.fayth` — the one check that stands between it
+and an arbitrary `rm -rf`.
+
+`SPIRA_SCOPE_LABEL` is always empty in a stage's own env, never read from the caller's: the
+`spira.conf` default of `spira` would make sentinel query for `spira,plan` while the bead is
+created with `plan` only, and `plan_ready` stays 0 (the same reasoning `stage.sh` documented).
+
+### canary
+
+`spira/canary.sh`'s replacement: an end-to-end pipeline canary on a `stage`. Files a
+synthetic bead, runs the real `sentinel` (which dispatches `release canary-worker` via
+`SPIRA_SUMMON`), runs the real `landing-pass land` directly, and asserts a commit naming the
+bead id appears on `origin/main` inside `--deadline` (default 120s). **The one thing that is
+fake is the model:** `canary-worker` claims, commits and closes the bead without invoking
+Claude — the model is the one part canary cannot test, and `SPIRA_SUMMON`/`SPIRA_LAUNCH` are
+exactly that boundary.
+
+On failure it files a `spira,incident` bead in the **production** database — the caller's own
+`SPIRA_DB`, captured before a stage's env (own or `--stage`'s) replaces it — never the
+stage's, and never lets a forensics failure change canary's own exit status.
+
+`canary-worker` claims the first ready bead in the canary partition (`bd ready --limit 0
+--exclude-type epic,event -u --claim --label <scope,>plan --json`), creates branch
+`spira/<id>`, commits a marker file as `canary`/`canary@example.invalid`, pushes, records
+`branch=<name>` on the bead, and closes it. It is invoked only by `fake-summon.sh`, inheriting
+the full stage env; there is no per-stage copy of it (unlike `stage.sh`'s own
+`canary-worker.sh`, written fresh into every stage) because it is a subcommand of the one
+binary already on every launcher's `PATH`.
+
 ## Layout
 
 | module | what |
@@ -208,9 +334,17 @@ before removal; one that still cannot be removed is reported, and prune exits 1.
 | `git` | the `Git` trait (resolve, archive, is-ancestor) |
 | `activate` | activate, rollback, the hotfix rule, history, status |
 | `prune` | prune |
+| `install` | `install-tarball`: unpack, swap, restart, prune a timestamp-named release |
+| `stage` | stand up / tear down an isolated Spira; the fayth, repo-map and dispatch-script content |
+| `canary` | the end-to-end canary run, and `canary-worker`, the synthetic aeon |
 
 Unit tests run activation and rollback against a fake `Systemctl` and a temporary unit
-directory; nothing in a test touches the host's systemd.
+directory; `install-tarball` against a fake `Systemctl` and a fake `Unpack` (no real `tar`);
+`stage`'s pure content (the fayth, the repo-map line) and its build-time refusals directly.
+Nothing in a test touches the host's systemd, a real tarball, or a real `bd`/`git`/`sentinel`
+— `stage` and `canary`'s own orchestration is proved instead by running them for real, once,
+against a scratch `STAGE_ROOT` and the real `sentinel`/`landing-pass` binaries (this bead's
+own delivery evidence; `test-canary.sh` repeats this under the gate/round).
 
 ## Callers
 
@@ -218,12 +352,19 @@ directory; nothing in a test touches the host's systemd.
 while a release is in force, and `queue rollback-local` verifies and re-activates the previous
 round's (sp-gkfg1, queue/DESIGN.md §8 D13); `skew.sh refresh` in release mode builds,
 verifies and activates the checkout's head. The Makefile's `install` target is deleted.
-`spira/build-tarball.sh` and `spira/activate.sh` remain for the public pipeline only: the
-GitHub release workflow builds its tarball with the first (`.github/workflows/release.yml`,
-`make dist`, `acceptance-local.sh`), and a fresh install from that tarball activates it with
-the second (`acceptance.yml`, `acceptance-run.sh`, `acceptance-lib.sh`, `deploy.sh`,
-`install.sh`'s messages). `systemd/render.py` remains for `install.sh` and `unit-ensure.sh`,
-which own unit membership.
+
+`spira/build-tarball.sh` remains for the public pipeline only (sp-jsnbm keeps it bash: it
+produces the tarball this crate's `install-tarball` consumes, a separate concern from
+unpacking one): the GitHub release workflow builds its tarball with it
+(`.github/workflows/release.yml`, `make dist`, `acceptance-local.sh`). `install-tarball`
+replaces `spira/activate.sh`, which is deleted: `deploy.sh` (`SPIRA_ACTIVATE_SH`, default
+`release`, now takes `install-tarball` as its own first argument),
+`acceptance-lib.sh`'s `_install_from_tarball` (`${SPIRA_RELEASE_BIN:-release} install-tarball`,
+needing `SPIRA_RUN` as a sibling of the releases dir it did not need before — DESIGN.md
+"install-tarball" resolves `state_dir()` unconditionally), `acceptance-run.sh` and
+`install.sh`'s own messages. `stage`/`canary` replace `spira/stage.sh` and `spira/canary.sh`,
+which are deleted; today's only caller is their own suite, `test-canary.sh`. `systemd/render.py`
+remains for `install.sh` and `unit-ensure.sh`, which own unit membership.
 
 ## Not this bead
 

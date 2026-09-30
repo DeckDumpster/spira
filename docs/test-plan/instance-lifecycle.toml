@@ -41,20 +41,40 @@ id = "UC-instance-lifecycle-08"
 tier = "T2"
 statement = "`activate.sh` unpacks to a versioned read-only release dir, atomically repoints `current` and keeps the previous release; `--dry-run` changes nothing"
 
+[use_case.uncovered]
+reason = "activate.sh and its suite (test-activate.sh) retired; the behaviour moved to release install-tarball (release/DESIGN.md) and is proved by that crate's own unit tests (cargo test -p release: install_tarball_unpacks_read_only_swaps_current_and_restarts_active_services, install_tarball_dry_run_reports_intent_and_changes_nothing), not by a spira/test-*.sh suite this matrix can see"
+date = "2026-09-30"
+bead = "sp-jsnbm"
+
 [[use_case]]
 id = "UC-instance-lifecycle-09"
 tier = "T1"
 statement = "`activate.sh` prunes releases beyond `SPIRA_RELEASES_KEEP`, oldest first, and never prunes the `current` target"
+
+[use_case.uncovered]
+reason = "activate.sh and its suite (test-activate.sh) retired; the behaviour moved to release install-tarball's own prune (release/DESIGN.md) and is proved by cargo test -p release: install_tarball_prunes_the_oldest_timestamp_named_releases_beyond_keep_never_current, not by a spira/test-*.sh suite this matrix can see"
+date = "2026-09-30"
+bead = "sp-jsnbm"
 
 [[use_case]]
 id = "UC-instance-lifecycle-10"
 tier = "T2"
 statement = "`activate.sh` refuses while this instance's aeons are live, naming them and `SPIRA_ACTIVATE_FORCE`, leaving `current` untouched; after the swap it daemon-reloads and restarts only non-aeon units"
 
+[use_case.uncovered]
+reason = "the behaviour itself is retired, not merely untested: release install-tarball drops the live-aeon guard by design (release/DESIGN.md \"install-tarball: differences from activate\") — under runtime-is-a-release an aeon's worktree is never under spira-releases/, so there is nothing left for an install to disrupt. The daemon-reload-and-restart half is covered (every active spira-*.service restarts, not only non-aeon ones, a named difference in the same section)"
+date = "2026-09-30"
+bead = "sp-jsnbm"
+
 [[use_case]]
 id = "UC-instance-lifecycle-11"
 tier = "T2"
 statement = "rollback is re-activation of an already-unpacked release (unpack skipped), after which units execute the older code"
+
+[use_case.uncovered]
+reason = "activate.sh and its suite (test-activate.sh) retired; the mechanism (skip unpack when the release dir already exists) moved to release install-tarball and is proved by cargo test -p release: install_tarball_is_idempotent_when_the_release_already_exists, plus this bead's own real end-to-end re-run against a live tarball — not by a spira/test-*.sh suite this matrix can see"
+date = "2026-09-30"
+bead = "sp-jsnbm"
 
 [[use_case]]
 id = "UC-instance-lifecycle-12"

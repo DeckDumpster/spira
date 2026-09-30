@@ -23,7 +23,7 @@
 # sentinel → summon → claim → branch → commit → land path deterministically.
 #
 # TARBALL INSTALL. Phase A downloads the candidate tarball from the draft GitHub
-# release created by release.yml and installs via activate.sh + install.sh --skip-build.
+# release created by release.yml and installs via release install-tarball + install.sh --skip-build.
 # On PASS the draft is published (undrafted). On FAIL the draft is deleted and the
 # tag is retracted so no incomplete release is left visible.
 #

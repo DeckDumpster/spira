@@ -18,6 +18,11 @@ pub trait Systemctl {
     fn daemon_reload(&self) -> Result<(), String>;
     fn state(&self, unit: &str) -> Result<UnitState, String>;
     fn restart(&self, unit: &str) -> Result<(), String>;
+    /// Names of the active units matching `glob` (`systemctl --user list-units
+    /// --state=active --no-legend <glob>`), excluding a transient one (a `systemd-run`
+    /// unit with no file of its own — `install::install`'s restart-all step must never
+    /// touch one; DESIGN.md "install-tarball", the same exclusion `spira/activate.sh` made).
+    fn list_active(&self, glob: &str) -> Result<Vec<String>, String>;
 }
 
 pub struct RealSystemctl {
@@ -73,5 +78,20 @@ impl Systemctl for RealSystemctl {
     }
     fn restart(&self, unit: &str) -> Result<(), String> {
         self.run(&["restart", unit]).map(|_| ())
+    }
+    fn list_active(&self, glob: &str) -> Result<Vec<String>, String> {
+        let out = self.run(&["list-units", "--state=active", "--no-legend", glob])?;
+        let mut names = Vec::new();
+        for line in out.lines() {
+            let Some(unit) = line.split_whitespace().next() else { continue };
+            // A transient unit (systemd-run, e.g. spira-landing or spira-aeon-*) has no unit
+            // file of its own — restarting it re-execs whatever command line it was launched
+            // with, which named files in the release being replaced (sp-hvtdj).
+            let ufs = self.run(&["show", unit, "-p", "UnitFileState", "--value"]).unwrap_or_default();
+            if ufs.trim() != "transient" {
+                names.push(unit.to_string());
+            }
+        }
+        Ok(names)
     }
 }

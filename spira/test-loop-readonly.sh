@@ -3,20 +3,20 @@
 #
 # WHAT IS PROVED
 # --------------
-# After activate.sh applies chmod -R a-w, sentinel.sh runs from the read-only
-# tree, sources lib.sh and conf.sh from it, reaches the dispatch path, and a
-# stub SPIRA_SUMMON claims the ready bead.  A permission-denied error from the
-# release directory would kill the sentinel before it reached that path.
+# After release install-tarball (sp-jsnbm; was activate.sh) applies chmod -R a-w,
+# sentinel.sh runs from the read-only tree, sources lib.sh and conf.sh from it, reaches
+# the dispatch path, and a stub SPIRA_SUMMON claims the ready bead.  A permission-denied
+# error from the release directory would kill the sentinel before it reached that path.
 #
 # POSITIVE CONTROL: before chmod -R a-w, a write to the release dir succeeds —
 # so the read-only assertion that follows is meaningful, not vacuous.
 #
 # SEEN RED: the positive control (write succeeds pre-chmod) will fail if
-# activate.sh does not exist or does not apply chmod -R a-w, which is exactly
-# the gap sp-zwa7 was told "DO IT" about.
+# release install-tarball does not exist or does not apply chmod -R a-w, which is
+# exactly the gap sp-zwa7 was told "DO IT" about.
 #
 # tier: T2
-# covers: sentinel/src/* spira/lib.sh spira/conf.sh spira/activate.sh
+# covers: sentinel/src/* spira/lib.sh spira/conf.sh release/src/install.rs
 # SKIP: XDG_RUNTIME_DIR absent (testdb requires a user session)
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -90,9 +90,9 @@ tar -czf "$TARBALL" -C "$SCRATCH" "$_name" \
     && ok "tarball built" \
     || { bad "tarball" "tar failed"; printf '%s passed, %s failed\n' "$_TL_PASS" "$_TL_FAIL"; exit 1; }
 
-SPIRA_SYSTEMCTL="$MOCK_SC" SPIRA_ACTIVATE_FORCE=1 SPIRA_RELEASES="$RELEASES" \
-    activate.sh "$TARBALL" >/dev/null 2>&1
-iszero "activate.sh exits 0" "$?"
+SPIRA_SYSTEMCTL="$MOCK_SC" SPIRA_RELEASES="$RELEASES" SPIRA_RUN="$SPIRA_RUN_DIR" \
+    release install-tarball "$TARBALL" >/dev/null 2>&1
+iszero "release install-tarball exits 0" "$?"
 
 CURRENT="$RELEASES/current"
 [ -L "$CURRENT" ] \
@@ -100,12 +100,12 @@ CURRENT="$RELEASES/current"
     || { bad "current symlink" "missing at $RELEASES/current"; printf '%s passed, %s failed\n' "$_TL_PASS" "$_TL_FAIL"; exit 1; }
 
 # POSITIVE CONTROL: before making read-only, writing the sentinel log from within
-# the release succeeds — confirming the test-writable path exists before activate.sh
-# applies chmod -R a-w.  Activate already did this atomically, so we verify the
-# post-condition: the directory is now read-only (write must fail).
+# the release succeeds — confirming the test-writable path exists before release
+# install-tarball applies chmod -R a-w.  Activate already did this atomically, so we
+# verify the post-condition: the directory is now read-only (write must fail).
 if touch "$CURRENT/positive-control-write" 2>/dev/null; then
-    bad "positive-control: release dir should be read-only after activate.sh" \
-        "write to $CURRENT succeeded — activate.sh did not apply chmod -R a-w"
+    bad "positive-control: release dir should be read-only after release install-tarball" \
+        "write to $CURRENT succeeded — release install-tarball did not apply chmod -R a-w"
     rm -f "$CURRENT/positive-control-write"
 else
     ok "positive-control: write to release dir fails (chmod -R a-w confirmed)"
