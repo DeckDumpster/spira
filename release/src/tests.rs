@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::Duration;
 use testkit::TempDir;
 
@@ -399,6 +400,90 @@ fn verify_runs_the_releases_own_pre_activate_and_refuses_without_one() {
     bad.build(A).unwrap();
     let p = verify::verify(&bad.cfg, A, &with).unwrap().join("\n");
     assert!(p.contains("pre-activate failed") && p.contains("FAIL deps: dolt"), "{p}");
+}
+
+/// sp-vrn3v: `pre_activate_env` names the release **under verification**, plus the box's own
+/// tool tail appended after the system directories, exactly as `release_path_with_tail`
+/// documents — the same shape `host_values` renders into `Environment=PATH=` (sp-31gtu,
+/// sp-c7b85), reused here for a process this crate spawns directly instead of a unit.
+#[test]
+fn pre_activate_env_builds_the_release_own_path_and_release_var() {
+    let mut env = Env::new();
+    env.insert("SPIRA_RELEASES".into(), "/e".into());
+    env.insert("SPIRA_UNIT_DIR".into(), "/units".into());
+    let toml: spira_config::SpiraToml = spira_config::validate("[spira]\npath = \"/h/.local/bin:/h/.cargo/bin\"\n").unwrap();
+    let cfg = Config::resolve_with(&Flags::default(), &env, Some(toml)).unwrap();
+    let rel = PathBuf::from("/e").join(A);
+    let envs = verify::pre_activate_env(&cfg, &rel).unwrap();
+    assert_eq!(envs[0], (spira_config::RELEASE_ENV.to_string(), rel.display().to_string()));
+    assert_eq!(envs[1], ("PATH".to_string(), format!("{}/bin:{}/spira:/usr/local/bin:/usr/bin:/bin:/h/.local/bin:/h/.cargo/bin", rel.display(), rel.display())));
+
+    // No tail configured: PATH ends at the system directories, same as `release_path`.
+    let cfg = Config::resolve_with(&Flags::default(), &env, None).unwrap();
+    let envs = verify::pre_activate_env(&cfg, &rel).unwrap();
+    assert_eq!(envs[1].1, format!("{}/bin:{}/spira:/usr/local/bin:/usr/bin:/bin", rel.display(), rel.display()));
+}
+
+/// The same refusal `host_values` gives a tail inside a release or a checkout (sp-c7b85)
+/// applies here too: `pre_activate_env` must not hand pre-activate a `PATH` that could
+/// resolve back into a release or a checked-out tree instead of the one under verification.
+#[test]
+fn pre_activate_env_refuses_a_tail_inside_a_release_or_checkout() {
+    let mut env = Env::new();
+    env.insert("SPIRA_RELEASES".into(), "/e".into());
+    env.insert("SPIRA_UNIT_DIR".into(), "/units".into());
+    let bad: spira_config::SpiraToml = spira_config::validate("[spira]\npath = \"/x/spira-releases/def/bin\"\n").unwrap();
+    let cfg = Config::resolve_with(&Flags::default(), &env, Some(bad)).unwrap();
+    let rel = PathBuf::from("/e").join(A);
+    let e = verify::pre_activate_env(&cfg, &rel).unwrap_err();
+    assert!(e.contains("spira-releases"), "{e}");
+}
+
+/// sp-vrn3v's acceptance, end to end through a real child process: pre-activate's `deps`
+/// check resolves release-tier binaries with `command -v`, so the child must see
+/// `SPIRA_RELEASE` and `PATH` naming the release under verification — never whatever the
+/// caller inherited. The probe script fails loudly if either one is wrong.
+const PATH_PROBE: &str = "#!/bin/sh\nset -eu\n[ \"$SPIRA_RELEASE\" = \"$1\" ] || { echo \"FAIL wrong SPIRA_RELEASE: $SPIRA_RELEASE\" >&2; exit 1; }\ncase \"$PATH\" in \"$1\"/bin:\"$1\"/spira:*) : ;; *) echo \"FAIL wrong PATH: $PATH\" >&2; exit 1;; esac\nt=\"$(command -v tool)\"\n[ \"$t\" = \"$1/bin/tool\" ] || { echo \"FAIL command -v tool resolved to $t\" >&2; exit 1; }\nexit 0\n";
+
+#[test]
+fn verify_pre_activate_runs_with_the_release_under_verifications_own_env() {
+    let w = World::with_git(FakeGit { extra: vec![("spira/pre-activate.sh".into(), PATH_PROBE.into(), true)], ..Default::default() });
+    w.build(A).unwrap();
+    let with = VerifyOpts { pre_activate: true, system_dirs: vec![] };
+    assert_eq!(verify::verify(&w.cfg, A, &with).unwrap(), Vec::<String>::new());
+}
+
+/// The acceptance in the bead's own words: "verifying release B from a shell whose PATH
+/// points at release A uses B's binaries." Two releases are built side by side, each with
+/// its own `bin/tool`; the *caller's* real `PATH` is pointed at A's `bin/` before verifying
+/// B, and the probe script (same as above) still finds B's own `tool` and names B as
+/// `SPIRA_RELEASE` — proving the child's env is built from the release passed to `verify`,
+/// not inherited. Serialised (`ENV_LOCK`) and restored via `PathGuard` because this is the
+/// one test in this crate that touches the real process environment.
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+struct PathGuard(Option<std::ffi::OsString>);
+impl Drop for PathGuard {
+    fn drop(&mut self) {
+        match &self.0 {
+            Some(p) => std::env::set_var("PATH", p),
+            None => std::env::remove_var("PATH"),
+        }
+    }
+}
+
+#[test]
+fn verify_uses_the_release_under_verification_even_when_the_callers_shell_path_points_at_another_release() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let w = World::with_git(FakeGit { extra: vec![("spira/pre-activate.sh".into(), PATH_PROBE.into(), true)], ..Default::default() });
+    w.build(A).unwrap();
+    w.build(B).unwrap();
+
+    let _restore = PathGuard(std::env::var_os("PATH"));
+    std::env::set_var("PATH", w.rel(A).join("bin"));
+
+    let with = VerifyOpts { pre_activate: true, system_dirs: vec![] };
+    assert_eq!(verify::verify(&w.cfg, B, &with).unwrap(), Vec::<String>::new());
 }
 
 // ---------------------------------------------------------------- render

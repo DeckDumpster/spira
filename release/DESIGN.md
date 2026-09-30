@@ -91,6 +91,16 @@ Passes only if all hold, and reports every failure, not just the first:
 * the release's own `spira/pre-activate.sh <release>` passes (skip with
   `--no-pre-activate`; a release that has none is a failure).
 
+**pre-activate's environment (sp-vrn3v).** `pre-activate.sh`'s `deps` check resolves every
+release-tier binary with `command -v`, so it runs with `SPIRA_RELEASE` and `PATH` set from
+the release **under verification** — `<rel>/bin:<rel>/spira:<system dirs><tail>`
+(`release_path_with_tail`, the box's own tool tail from `Config::path_tail`) — never
+inherited from the caller. Before this, the child ran with whatever `PATH` the caller's
+shell had; at cutover that was the old checkout's `spira-config`, which lacked
+`path-tail`, and verify failed judging binaries that were never the release's own. Every
+other inherited variable is left alone: only `SPIRA_RELEASE` and `PATH` are ever ambiguous
+about which release they name.
+
 ### activate
 
 `activate <sha>` switches the running system onto a verified release:

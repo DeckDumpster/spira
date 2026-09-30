@@ -99,6 +99,21 @@ impl Config {
         self.spira.home_repo.clone().filter(|s| !s.is_empty())
     }
 
+    /// The box's own tool-directory tail (`spira.path`, or its `SPIRA_PATH` environment
+    /// override) — the same value [`host_values`](Config::host_values) renders into
+    /// `SPIRA_PATH_TAIL`, and what a child process this crate spawns *from* a release
+    /// (verify's pre-activate, sp-vrn3v) appends to [`spira_config::release_path_with_tail`]
+    /// after that release's own directories. `Err`, naming the offending entry, when a
+    /// segment resolves inside a release or a checkout (sp-c7b85).
+    pub fn path_tail(&self) -> Result<String, String> {
+        let tail = self.env("SPIRA_PATH").or_else(|| self.spira.path.clone().filter(|v| !v.is_empty())).unwrap_or_default();
+        let refusals = spira_config::tail_refusals(&tail);
+        if !refusals.is_empty() {
+            return Err(refusals.join("; "));
+        }
+        Ok(tail)
+    }
+
     /// The host values unit templates are rendered with (DESIGN.md "Render"): the
     /// environment, else the host config, else conf.sh's own default. A key with no value maps
     /// to the empty string, which the renderer refuses when a template uses it.
@@ -122,11 +137,7 @@ impl Config {
         m.insert("SPIRA_TESTDB_PORT".into(), pick("SPIRA_TESTDB_PORT", None, Some("3308".into())));
         m.insert("SPIRA_SNAP_STALE_S".into(), pick("SPIRA_SNAP_STALE_S", s.snap_stale_s.as_ref(), Some("60".into())));
         m.insert("DOLT".into(), self.env("DOLT").or_else(|| self.which("dolt")).unwrap_or_default());
-        let tail = pick("SPIRA_PATH", s.path.as_ref(), None);
-        let refusals = spira_config::tail_refusals(&tail);
-        if !refusals.is_empty() {
-            return Err(refusals.join("; "));
-        }
+        let tail = self.path_tail()?;
         m.insert("SPIRA_PATH_TAIL".into(), if tail.is_empty() { String::new() } else { format!(":{tail}") });
         Ok(m)
     }

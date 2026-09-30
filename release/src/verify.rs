@@ -61,16 +61,42 @@ pub fn verify(cfg: &Config, sha: &str, o: &VerifyOpts) -> Result<Vec<String>, St
         if !fsutil::is_executable(&pa) {
             problems.push(format!("{} is missing; refusing an unverifiable release", pa.display()));
         } else {
-            match Command::new(&pa).arg(&rel).output() {
-                Ok(out) if out.status.success() => {}
-                Ok(out) => {
-                    let err = String::from_utf8_lossy(&out.stderr);
-                    let tail: Vec<&str> = err.lines().rev().take(10).collect::<Vec<_>>().into_iter().rev().collect();
-                    problems.push(format!("pre-activate failed ({}): {}", out.status, tail.join(" | ")));
+            match pre_activate_env(cfg, &rel) {
+                Ok(envs) => {
+                    let mut cmd = Command::new(&pa);
+                    cmd.arg(&rel);
+                    for (k, v) in &envs {
+                        cmd.env(k, v);
+                    }
+                    match cmd.output() {
+                        Ok(out) if out.status.success() => {}
+                        Ok(out) => {
+                            let err = String::from_utf8_lossy(&out.stderr);
+                            let tail: Vec<&str> = err.lines().rev().take(10).collect::<Vec<_>>().into_iter().rev().collect();
+                            problems.push(format!("pre-activate failed ({}): {}", out.status, tail.join(" | ")));
+                        }
+                        Err(e) => problems.push(format!("cannot run {}: {e}", pa.display())),
+                    }
                 }
-                Err(e) => problems.push(format!("cannot run {}: {e}", pa.display())),
+                Err(e) => problems.push(format!("cannot build the release's own PATH for pre-activate: {e}")),
             }
         }
     }
     Ok(problems)
+}
+
+/// The `SPIRA_RELEASE` and `PATH` overrides `verify`'s pre-activate child runs with
+/// (sp-vrn3v), on top of whatever else the caller's process has: both are built from `rel`
+/// — the release **under verification** — never inherited from the caller. Before this, a
+/// bare command inside `pre-activate.sh` (its `deps` check runs `command -v` on every
+/// release-tier binary) resolved against whatever the caller's shell had on `PATH`; at
+/// cutover that was the old checkout's `spira-config`, which lacked `path-tail`, and verify
+/// failed judging binaries that were never the release's own. Every other inherited
+/// variable (`HOME`, `USER`, …) is harmless and stays; `SPIRA_RELEASE` and `PATH` are the
+/// only two ever ambiguous about which release they name, so only those two are replaced.
+pub(crate) fn pre_activate_env(cfg: &Config, rel: &Path) -> Result<[(String, String); 2], String> {
+    let rel_str = rel.display().to_string();
+    let tail = cfg.path_tail()?;
+    let path = spira_config::release_path_with_tail(&rel_str, &tail)?;
+    Ok([(spira_config::RELEASE_ENV.to_string(), rel_str), ("PATH".to_string(), path)])
 }
