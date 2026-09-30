@@ -20,8 +20,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 echo "test-incident-migrations.sh"
-
-INC="$HERE/incident.sh"
 STUB_BD="$HERE/incident-stub-bd.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/run"
@@ -32,7 +30,7 @@ run_migration() {  # run_migration <subcommand>
         SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" \
         SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" \
         SPIRA_INCIDENT_LOCK="$TMP/run/migrations-test.lock" \
-        bash "$INC" "$1" 2>&1
+        incident.sh "$1" 2>&1
 }
 seed() {  # seed <json-bead-on-stdin>
     env STUB_BD_STATE="$STUB_BD_STATE" python3 "$STUB_BD" seed

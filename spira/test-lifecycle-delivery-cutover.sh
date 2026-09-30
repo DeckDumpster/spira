@@ -30,11 +30,6 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
@@ -43,15 +38,14 @@ TMP="$(mktemp -d)"
 
 # A PLAIN DIRECTORY, NEVER THIS CHECKOUT: SPIRA_HOME points here, so conf.sh's SPIRA_REPO
 # derivation (git -C SPIRA_HOME rev-parse --show-toplevel) fails and falls back to this
-# tmp dir's parent — pinning SPIRA_LC_BIN below to the fixture's own build rather than
-# leaving conf.sh to guess at a real installed copy's target/release (law-gates-run-in-a-clean-environment).
+# tmp dir's parent, never a real installed copy (law-gates-run-in-a-clean-environment).
 SH="$TMP/spira"
 mkdir -p "$SH"
 cp "$HERE"/lib.sh "$HERE"/conf.sh "$HERE"/deps.toml "$HERE"/lc-delivery.sh \
    "$HERE"/suite-covers.sh "$SH/" 2>/dev/null
 
 SPIRA_HOME="$SH"
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+export PATH="$PATH:$(dirname "$DOLT_BIN")"
 unset SPIRA_LC_SOCKET
 
 PORT=$((23000 + (RANDOM % 5000)))
@@ -89,14 +83,10 @@ done
 
 root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
 
-# PIN CARGO_TARGET_DIR EXPLICITLY — same hazard as test-lifecycle-container.sh: a suite run
-# inside testenv-batch.sh's own podman exec sets its own CARGO_TARGET_DIR, and trusting
-# $REPO/target here would build into that redirected directory instead.
-CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO/spira-lc/Cargo.toml" --quiet 2>"$TMP/build.log" \
-    || bail "spira-lc failed to build: $(cat "$TMP/build.log")"
-BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-lc"
+# spira-lc is the tree under test's own build, found by name on the suite's PATH (sp-gypjk);
+# lifecycle is switched on for this suite with SPIRA_LIFECYCLE_ENFORCE, never by a path.
+command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
+export SPIRA_LIFECYCLE_ENFORCE=1
 
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$PORT"
@@ -104,21 +94,18 @@ export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
-export SPIRA_LC_BIN="$BIN"
 
-"$BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
+spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
 wantrc "schema applies cleanly" 0 $?
 cat "$TMP/schema.log" >&2
 
-# NOW source lib.sh — after SPIRA_LC_BIN is exported and pinned, and with SPIRA_HOME
-# pointed at the plain fixture directory above, so lib.sh's own conf.sh sourcing sees the
-# pin rather than recomputing a default from this checkout.
+# NOW source lib.sh — with SPIRA_HOME pointed at the plain fixture directory above.
 SPIRA_HOME="$SH"
 # shellcheck source=/dev/null
 . "$SH/lib.sh"
 # shellcheck source=/dev/null
 . "$SH/lc-delivery.sh"
-is "lc-delivery.sh resolves the fixture's own spira-lc, not a guessed default" "$BIN" "$SPIRA_LC_BIN"
+is "lc-delivery.sh reaches the lifecycle machine (switched on by SPIRA_LIFECYCLE_ENFORCE)" "1" "$SPIRA_LIFECYCLE_ENFORCE"
 
 seed_bead() {       # seed_bead <id>
     root_sql --use-db spira_lifecycle sql -q \

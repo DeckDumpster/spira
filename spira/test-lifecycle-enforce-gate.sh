@@ -2,15 +2,19 @@
 # test-lifecycle-enforce-gate.sh — whether an aeon takes the lifecycle semantic layer is
 #   lifecycle_enforce, an explicit config decision, never "work/spira-lc happen to exist".
 #
-# THE DEFECT THIS REPRODUCES (sp-74gzo). aeon.sh used to gate on `[ -x "$SPIRA_LC_BIN" ]` /
-# `[ -x "$SPIRA_WORK_BIN" ]` alone, and conf.sh auto-resolves both from
+# THE DEFECT THIS REPRODUCES (sp-74gzo). aeon.sh used to gate on the spira-lc and work
+# binaries being executable alone, and conf.sh auto-resolved both from
 # $SPIRA_REPO/target/release whenever unset. Any tree that has simply built the workspace —
 # a --with-bins corpus run, a production checkout after `round.sh land` — flipped every aeon
 # fixture onto the restricted path, whether or not the operator meant to cut over.
 #
 # SEEN RED FIRST: before the fix, case A below (binaries built, flag unset) takes the
-# restricted path — the stub SPIRA_LC_BIN/SPIRA_WORK_BIN are invoked and their marker files
-# appear — because the old gate only asked "are these executable", and stub scripts are.
+# restricted path — the stub spira-lc/work are invoked and their marker files appear —
+# because the old gate only asked "are these executable", and stub scripts are.
+#
+# The old cases B/C ("flag set, a binary missing — refuse") are deleted (sp-gypjk): tools are
+# invoked by name on the launcher's PATH and a release always carries both, so there is no
+# "binary missing" configuration left to refuse.
 #
 # tier: T1
 # covers: aeon/src/* spira/conf.sh
@@ -47,26 +51,26 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || bail "the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model"
+command -v aeon >/dev/null 2>&1 || bail "aeon is not on PATH — refusing to run the real model"
 
 # STAND-INS FOR "THE BINARIES ARE BUILT". This suite proves the GATE, not lc_claim_bead's own
 # correctness (test-aeon-lifecycle-cutover.sh covers that end to end against a real spira-lc
 # server) — an executable script that records its own invocation is enough to distinguish
 # "the gate ran this" from "the gate skipped it", exactly what a --with-bins tree looks like
-# from aeon.sh's point of view: something executable at $SPIRA_LC_BIN/$SPIRA_WORK_BIN.
-cat > "$TMP/stub-lc" <<STUB
+# from aeon's point of view: spira-lc and work found by name on PATH (the stub dir first).
+STUBS="$TMP/stubs"; mkdir -p "$STUBS"
+cat > "$STUBS/spira-lc" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$TMP/stub-lc-invoked"
 exit 0
 STUB
-chmod +x "$TMP/stub-lc"
-cat > "$TMP/stub-work" <<STUB
+chmod +x "$STUBS/spira-lc"
+cat > "$STUBS/work" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$TMP/stub-work-invoked"
 exit 0
 STUB
-chmod +x "$TMP/stub-work"
+chmod +x "$STUBS/work"
 
 # The shim IS the model: records whether bd was reachable and whether work-env.sh's
 # restricted env (SPIRA_WORK_BEAD_ID) was present, then exits — this suite is about which
@@ -91,7 +95,7 @@ seed() {
 }
 run_aeon() {
     rm -rf "$SPIRA_RUN/worktree"
-    "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1
+    PATH="$STUBS:$PATH" aeon --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1
     echo $?
 }
 bead_status() {
@@ -108,13 +112,12 @@ fresh() { rm -f "$TMP/stub-lc-invoked" "$TMP/stub-work-invoked" "$TMP/bd-found" 
 echo "test-lifecycle-enforce-gate.sh"
 
 # ======================================================================================
-# CASE A: binaries built and executable, lifecycle_enforce UNSET — the legacy path, not the
-# fact that SPIRA_LC_BIN/SPIRA_WORK_BIN resolve to something executable, decides.
+# CASE A: spira-lc/work on PATH, lifecycle_enforce UNSET — the legacy path, not the fact
+# that the tools are there, decides.
 # ======================================================================================
 echo
 echo "case A: flag unset, binaries present — legacy path (the regression this bead fixes)"
 
-export SPIRA_LC_BIN="$TMP/stub-lc" SPIRA_WORK_BIN="$TMP/stub-work"
 unset SPIRA_LIFECYCLE_ENFORCE
 fresh; seed sp-lea-1
 rc="$(run_aeon)"
@@ -124,34 +127,5 @@ is    "SEEN RED: the stub spira-lc was never invoked"       "absent" "$([ -e "$T
 is    "SEEN RED: the stub work client was never invoked"    "absent" "$([ -e "$TMP/stub-work-invoked" ] && echo INVOKED || echo absent)"
 is    "bd was on the model's PATH (legacy, unwrapped)"      "BD_FOUND" "$(cat "$TMP/bd-found" 2>/dev/null || echo absent)"
 is    "no work-env.sh restricted env reached the model"     "" "$(cat "$TMP/restricted-env" 2>/dev/null || true)"
-
-# ======================================================================================
-# CASE B: lifecycle_enforce=1 but neither binary exists — refuse loudly, never fall back.
-# ======================================================================================
-echo
-echo "case B: flag set, binaries missing — refuses, never falls back to the legacy path"
-
-export SPIRA_LIFECYCLE_ENFORCE=1
-export SPIRA_LC_BIN="$TMP/nonexistent-lc" SPIRA_WORK_BIN="$TMP/nonexistent-work"
-fresh; seed sp-lea-2
-rc="$(run_aeon)"
-is    "aeon.sh exits nonzero (a refusal, not a quiet idle)" "1" "$rc"
-is    "the model was never launched"                        "" "$(cat "$TMP/bd-found" 2>/dev/null || true)"
-is    "bead is back to open, not stuck claimed"              "open" "$(bead_status sp-lea-2)"
-want  "ledger names the misconfiguration, not a generic failure" \
-      "lifecycle-enforce-binary-missing" "$(ledger_line sp-lea-2)"
-
-# ======================================================================================
-# CASE C: lifecycle_enforce=1, only ONE binary missing — still refuses (both are required).
-# ======================================================================================
-echo
-echo "case C: flag set, one binary present and one missing — still refuses"
-
-export SPIRA_LC_BIN="$TMP/stub-lc" SPIRA_WORK_BIN="$TMP/nonexistent-work"
-fresh; seed sp-lea-3
-rc="$(run_aeon)"
-is   "aeon.sh exits nonzero" "1" "$rc"
-is   "bead is back to open" "open" "$(bead_status sp-lea-3)"
-want "ledger names the misconfiguration" "lifecycle-enforce-binary-missing" "$(ledger_line sp-lea-3)"
 
 tl_summary

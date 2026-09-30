@@ -46,16 +46,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # Resolve cargo/dolt BEFORE conf.sh — see test-lifecycle-container.sh's own note: the
 # testenv image puts cargo at /usr/local/cargo/bin, not under $HOME, and conf.sh can
 # overwrite PATH with the harness's own tool directories first.
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
 . "$HERE/conf.sh"
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+export PATH="$PATH:$(dirname "$DOLT_BIN")"
 unset SPIRA_LC_SOCKET
 
 REPO="$(cd "$HERE/.." && pwd)"
@@ -98,11 +93,10 @@ done
 
 root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
 
-CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO/spira-lc/Cargo.toml" --quiet 2>"$TMP/build.log" \
-    || bail "spira-lc failed to build: $(cat "$TMP/build.log")"
-BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-lc"
+# spira-lc is the tree under test's own build, found by name on the suite's PATH (sp-gypjk);
+# lifecycle is switched on for this suite with SPIRA_LIFECYCLE_ENFORCE, never by a path.
+command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
+export SPIRA_LIFECYCLE_ENFORCE=1
 
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$PORT"
@@ -111,7 +105,7 @@ export SPIRA_LC_DATA_DIR="$TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
 
-"$BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
+spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
 wantrc "schema applies cleanly" 0 $?
 cat "$TMP/schema.log" >&2
 
@@ -121,13 +115,13 @@ root_sql sql < "$TMP/grants_filled.sql" >"$TMP/grants.log" 2>&1
 wantrc "grants apply cleanly" 0 $?
 cat "$TMP/grants.log" >&2
 
-# From here on, every `$BIN` call runs AS spira_lc — the real production grant set (design
+# From here on, every `spira-lc` call runs AS spira_lc — the real production grant set (design
 # §3.6: "only spira_lc writes spira_lifecycle"), never root. A cascade that only works with
 # superuser privileges would be a false green.
 export SPIRA_LC_USER=spira_lc
 export SPIRA_LC_PASSWORD="$PASS"
 
-lc() { "$BIN" "$@"; }
+lc() { spira-lc "$@"; }
 batch_field() {   # batch_field <batch-id> <column>
     root_sql --use-db spira_lifecycle sql -q "SELECT $2 AS v FROM batch WHERE batch_id = '$1'" -r json \
         | python3 -c 'import json,sys; d=json.load(sys.stdin)["rows"]; print(d[0]["v"] if d else "")' 2>/dev/null
@@ -311,7 +305,6 @@ export SPIRA_HOME="$REPO/spira"
 export SPIRA_RUN="$TMP/shell-run"
 mkdir -p "$SPIRA_RUN/landstate" "$SPIRA_RUN/queue/fixture-repo"
 export SPIRA_QUEUE_DIR="$SPIRA_RUN/queue"
-export SPIRA_LC_BIN="$BIN"
 # shellcheck disable=SC1091
 . "$REPO/spira/batch.sh"
 

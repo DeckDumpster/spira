@@ -77,7 +77,7 @@ stub batch.sh 'exit 0'
 # THE QUEUE STEP IS `queue step <repo>` now (landing-pass/DESIGN.md §8 D5): the
 # stub stands in for the queue binary and runs the stubbed verdict.sh, which is all this
 # suite's ordering assertions read.
-stub queue 'if [ "${1:-}" = step ]; then bash "$SPIRA_HOME/verdict.sh" "${2:-}"; fi; exit 0'
+stub queue 'if [ "${1:-}" = step ]; then verdict.sh "${2:-}"; fi; exit 0'
 
 B() { bd -C "$SPIRA_DB" "$@"; }
 

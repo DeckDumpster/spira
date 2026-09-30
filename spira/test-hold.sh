@@ -70,7 +70,7 @@ echo "hold.sh:"
 seed sp-h1 open
 is "bead starts open" open "$(status_of sp-h1)"
 
-out="$(bash "$HERE/hold.sh" sp-h1 --pid $$ 2>&1)"
+out="$(hold.sh sp-h1 --pid $$ 2>&1)"
 rc=$?
 is "hold.sh exits 0"        0   "$rc"
 is "pidfile exists"          yes "$([ -f "$SPIRA_RUN/hold-sp-h1.pid" ] && echo yes || echo no)"
@@ -96,7 +96,7 @@ else bad "heartbeat is alive" "pid=${hbpid:-empty} not in /proc"; fi
 echo
 echo "hold.sh refuses double hold:"
 
-out="$(bash "$HERE/hold.sh" sp-h1 --pid $$ 2>&1)"
+out="$(hold.sh sp-h1 --pid $$ 2>&1)"
 rc=$?
 is "hold.sh refuses double hold" 1 "$rc"
 
@@ -106,7 +106,7 @@ is "hold.sh refuses double hold" 1 "$rc"
 echo
 echo "unhold.sh:"
 
-out="$(bash "$HERE/unhold.sh" sp-h1 2>&1)"
+out="$(unhold.sh sp-h1 2>&1)"
 rc=$?
 is "unhold.sh exits 0"          0   "$rc"
 is "pidfile is gone"             no  "$([ -f "$SPIRA_RUN/hold-sp-h1.pid" ] && echo yes || echo no)"
@@ -138,7 +138,7 @@ seed sp-h2 open
 # Start a short-lived background process to act as the holder.
 sleep 999 &
 holder_bg=$!
-bash "$HERE/hold.sh" sp-h2 --pid "$holder_bg" >/dev/null 2>&1
+hold.sh sp-h2 --pid "$holder_bg" >/dev/null 2>&1
 if holder_alive sp-h2; then ok "hold is alive while holder lives"
 else bad "hold is alive while holder lives" "returned 1"; fi
 

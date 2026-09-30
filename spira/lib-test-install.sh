@@ -9,7 +9,8 @@
 # install_fixture_build <fixture-root>
 #   Symlinks the real systemd/*.{service,timer,yaml}, install.sh and spira/{conf.sh,watchd.sh,
 #   lib.sh,units.sh,suite-covers.sh,lifecycle-cert.sh} into <fixture-root>/{systemd,spira}; writes an empty watchers manifest
-#   and repo-map.example, and a no-op install-session-hook.sh stub.
+#   and repo-map.example, a no-op install-session-hook.sh stub (install.sh finds it by name, so
+#   a caller puts <fixture-root>/spira first on PATH), and <fixture-root>/bin unit stubs.
 #
 # install_fixture_render <cache-key> <install.sh-invocation...>
 #   Runs "$@" (an install.sh --render call) once and caches its stdout+rc, keyed on a hash
@@ -54,20 +55,42 @@ install_fixture_build() {
     printf '# empty\n' > "$fixture/spira/repo-map.example"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$fixture/spira/install-session-hook.sh"
     chmod +x "$fixture/spira/install-session-hook.sh"
+    install_fixture_release_bins "$fixture"
 }
 
-# install_fixture_stub_bins <dir> -> writes executable no-op sentinel, queue and aeon stubs
-# into <dir>. The units ExecStart @SPIRA_SENTINEL_BIN@/@SPIRA_QUEUE_BIN@/@SPIRA_AEON_BIN@
-# (8e220de40) and install.sh refuses a unit whose ExecStart target is not executable; a
-# fixture whose SPIRA_REPO has no bin/ passes SPIRA_{SENTINEL,QUEUE,AEON}_BIN=<dir>/<name>.
-# Nothing here runs them — install only places and starts units against a mock systemctl.
-install_fixture_stub_bins() {
-    local dir="$1" b
+# THE UNIT BINARIES (sp-gypjk). Unit templates ExecStart the release's bin/<tool>
+# (@SPIRA_PROD_ROOT@/bin/<tool>, PROD_ROOT = dirname SPIRA_PROD), and install.sh refuses a unit
+# whose ExecStart target is not executable. A fixture therefore stages a release-shaped bin/
+# beside the spira/ its SPIRA_PROD names. Nothing here runs them — install only places and
+# starts units against a mock systemctl.
+INSTALL_FIXTURE_UNIT_BINS="sentinel queue aeon spira-supervise landing-pass reconciler-flow spira-lc"
+
+# install_fixture_release_bins <prod-root> -> no-op stubs at <prod-root>/bin/<tool> for every
+# binary a unit template ExecStarts.
+install_fixture_release_bins() {
+    local dir="$1/bin" b
     mkdir -p "$dir"
-    for b in sentinel queue aeon; do
+    for b in $INSTALL_FIXTURE_UNIT_BINS; do
         printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/$b"
         chmod +x "$dir/$b"
     done
+}
+
+# install_fixture_prod <prod-root> <spira-dir> -> prints <prod-root>/spira: a release-shaped
+# root whose spira/ is <spira-dir>, whose other top-level entries (cockpit/, systemd/, ...)
+# are the ones beside <spira-dir>, and whose bin/ holds the unit-binary stubs above. For a
+# suite that used to pass SPIRA_PROD=<a real tree's spira/> plus SPIRA_<TOOL>_BIN stubs.
+install_fixture_prod() {
+    local root="$1" sp f
+    sp="$(cd "$2" && pwd -P)"
+    mkdir -p "$root"
+    for f in "$sp/.."/*; do
+        case "$(basename "$f")" in spira|bin) continue ;; esac
+        ln -sfn "$f" "$root/$(basename "$f")"
+    done
+    ln -sfn "$sp" "$root/spira"
+    install_fixture_release_bins "$root"
+    printf '%s/spira' "$root"
 }
 
 install_fixture_render() {

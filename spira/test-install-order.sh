@@ -55,7 +55,7 @@ DEST="$TMP/home/.config/systemd/user"
 RUN_DIR="$TMP/run"; MOCK_BIN="$TMP/mock-bin"
 DOLT_DATA="$TMP/dolt"; DB="$TMP/db"
 mkdir -p "$DEST" "$RUN_DIR" "$MOCK_BIN" "$DOLT_DATA" "$DB/.beads"
-install_fixture_stub_bins "$MOCK_BIN"   # sentinel/queue/aeon: the units' @SPIRA_*_BIN@
+PROD="$(install_fixture_prod "$TMP/prod" "$HERE")"   # release-shaped prod root: spira/ -> this tree, bin/ unit stubs
 printf 'listener:\n  port: 3307\n' > "$DOLT_DATA/dolt-server.yaml"
 LOG="$TMP/calls.log"; BD_TRIES="$TMP/bd-tries"
 
@@ -90,12 +90,11 @@ for b in loginctl spira-supervise; do printf '#!/usr/bin/env bash\nexit 0\n' > "
 
 inst() {
     : > "$LOG"; rm -f "$BD_TRIES"; rm -f "$DEST"/*.service "$DEST"/*.timer 2>/dev/null
-    env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_PATH="$MOCK_BIN" \
+    env -i PATH="$MOCK_BIN:$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_PATH="$MOCK_BIN" \
         SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
         SPIRA_DOLT_DATA="$DOLT_DATA" SPIRA_TESTDB_DATA= SPIRA_DB="$DB" SPIRA_BD="$MOCK_BIN/bd" \
-        SPIRA_RUN="$RUN_DIR" SPIRA_HOME="$HERE" SPIRA_PROD="$HERE" SPIRA_REPO="$FAKE_REPO" \
-        SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_SUPERVISE_BIN="$MOCK_BIN/spira-supervise" \
-        SPIRA_SENTINEL_BIN="$MOCK_BIN/sentinel" SPIRA_QUEUE_BIN="$MOCK_BIN/queue" SPIRA_AEON_BIN="$MOCK_BIN/aeon" \
+        SPIRA_RUN="$RUN_DIR" SPIRA_HOME="$HERE" SPIRA_PROD="$PROD" SPIRA_REPO="$FAKE_REPO" \
+        SPIRA_COCKPIT="$REAL_COCKPIT" \
         SPIRA_INSTANCE=prod MOCK_INST=prod CALL_LOG="$LOG" BD_TRIES="$BD_TRIES" \
         BD_ANSWER_AFTER="${BD_ANSWER_AFTER:-0}" \
         SPIRA_INSTALL_FORCE=1 SPIRA_DRAIN_INTERVAL=0 \

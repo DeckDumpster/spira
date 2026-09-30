@@ -5,7 +5,7 @@
 # spira_lifecycle database.
 #
 # WHAT THIS PROVES:
-#   - inert by default: with SPIRA_LC_BIN unset, nothing here writes anything.
+#   - inert by default: with SPIRA_LIFECYCLE_ENFORCE off, nothing here writes anything.
 #   - a GatePass whose tip does not match the row's own is refused — the mechanism the tip
 #     invariant leans on (bead.rs's own TipMismatch, exercised through the shell wrapper).
 #   - THE TIP INVARIANT ITSELF: lc_resubmit on a CERTIFIED row with a moved tip — a harness
@@ -30,16 +30,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 . "$HERE/testlib/gate-fixture.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
 . "$HERE/conf.sh"
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+export PATH="$PATH:$(dirname "$DOLT_BIN")"
 unset SPIRA_LC_SOCKET
 
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
@@ -78,11 +73,10 @@ done
 [ "$up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/server.log")"
 root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
 
-CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO_ROOT/spira-lc/Cargo.toml" --quiet 2>"$TMP/build.log" \
-    || bail "spira-lc failed to build: $(cat "$TMP/build.log")"
-BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-lc"
+# spira-lc is the tree under test's own build, found by name on the suite's PATH (sp-gypjk);
+# lifecycle is switched on for this suite with SPIRA_LIFECYCLE_ENFORCE, never by a path.
+command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
+export SPIRA_LIFECYCLE_ENFORCE=1
 
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$PORT"
@@ -91,7 +85,7 @@ export SPIRA_LC_DATA_DIR="$TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
 
-"$BIN" admin-apply-ddl "$REPO_ROOT/lifecycle/schema.sql" > "$TMP/schema.log" 2>&1
+spira-lc admin-apply-ddl "$REPO_ROOT/lifecycle/schema.sql" > "$TMP/schema.log" 2>&1
 wantrc "schema applies cleanly" 0 $?
 cat "$TMP/schema.log" >&2
 
@@ -122,17 +116,17 @@ else:
 echo "test-lifecycle-cert.sh"
 
 # ---------------------------------------------------------------------------------------
-# INERT BY DEFAULT — no SPIRA_LC_BIN, no lifecycle write at all.
+# INERT BY DEFAULT — lifecycle off (SPIRA_LIFECYCLE_ENFORCE unset), no lifecycle write at all.
 # ---------------------------------------------------------------------------------------
 echo
-echo "inert by default (no SPIRA_LC_BIN):"
-unset SPIRA_LC_BIN
+echo "inert by default (lifecycle off):"
+unset SPIRA_LIFECYCLE_ENFORCE
 . "$HERE/lifecycle-cert.sh"
-lc_available; is "lc_available is false with SPIRA_LC_BIN unset" "1" "$?"
+lc_available; is "lc_available is false with lifecycle off" "1" "$?"
 lc_certify sp-inert deadbeef pass k1 >/dev/null 2>&1; is "lc_certify is cannot-tell, not applied" "2" "$?"
 
-export SPIRA_LC_BIN="$BIN"
-lc_available; is "POSITIVE CONTROL: lc_available is true once SPIRA_LC_BIN is set" "0" "$?"
+export SPIRA_LIFECYCLE_ENFORCE=1
+lc_available; is "POSITIVE CONTROL: lc_available is true once lifecycle is on" "0" "$?"
 
 # ---------------------------------------------------------------------------------------
 # A GatePass FOR A STALE TIP IS REFUSED (acceptance criterion 1).
@@ -219,7 +213,7 @@ printf 'repo | %s | push | origin/main |  | true\n' "$REPO" > "$MAP"
 TIP_PASS="$(git -C "$REPO" rev-parse spira/sp-gpass)"
 seed_bead sp-gpass WORKING - -
 gout="$(gate_fixture_run spira/sp-gpass repo \
-    SPIRA_GATE_BEAD=sp-gpass SPIRA_LC_BIN="$BIN" SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" \
+    SPIRA_GATE_BEAD=sp-gpass SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" \
     SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP" SPIRA_LC_USER=root SPIRA_LC_PASSWORD=)"
 want "gate.sh: reports PASS" "VERDICT=PASS" "$gout"
 is "gate.sh PASS: row is CERTIFIED" "CERTIFIED" "$(row_field sp-gpass state)"
@@ -237,7 +231,7 @@ gate_fixture_branch spira/sp-gred bad.txt trip
 printf 'repo | %s | push | origin/main |  | test ! -f bad.txt\n' "$REPO" > "$MAP"
 seed_bead sp-gred WORKING - -
 gout2="$(gate_fixture_run spira/sp-gred repo \
-    SPIRA_GATE_BEAD=sp-gred SPIRA_LC_BIN="$BIN" SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" \
+    SPIRA_GATE_BEAD=sp-gred SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" \
     SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP" SPIRA_LC_USER=root SPIRA_LC_PASSWORD=)"
 want "gate.sh: reports FAIL" "VERDICT=FAIL" "$gout2"
 is "gate.sh FAIL: row is REWORK, not CERTIFIED" "REWORK" "$(row_field sp-gred state)"

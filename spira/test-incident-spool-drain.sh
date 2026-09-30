@@ -21,8 +21,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 echo "test-incident-spool-drain.sh"
-
-INC="$HERE/incident.sh"
 STUB_BD="$HERE/incident-stub-bd.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/home" "$TMP/run"
@@ -59,7 +57,7 @@ out="$(printf 'db is down' | env -i HOME="$HOME" PATH="$PATH" \
     SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_REF="incident:db-down-probe" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
-    bash "$INC" file "db down probe" - 2>&1)"; rc=$?
+    incident.sh file "db down probe" - 2>&1)"; rc=$?
 is   "incident.sh file exits non-zero when the database is unreachable" "1" "$rc"
 is   "the entry stays spooled, not deleted" "1" "$(spool_count)"
 want "the caller is told it is spooled" "spooled" "$out"
@@ -79,7 +77,7 @@ drain_out="$(env -i HOME="$HOME" PATH="$PATH" \
     SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" \
     SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
-    bash "$INC" drain 2>&1)"; rc=$?
+    incident.sh drain 2>&1)"; rc=$?
 want "drain reports 2 drained" "drained 2" "$drain_out"
 want "and 0 still spooled"     "still spooled 0" "$drain_out"
 is   "drain exits 0 when nothing is left stuck" "0" "$rc"
@@ -94,7 +92,7 @@ drain_stuck_out="$(env -i HOME="$HOME" PATH="$PATH" \
     SPIRA_BD="$BROKEN_BD" \
     SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
-    bash "$INC" drain 2>&1)"; rc=$?
+    incident.sh drain 2>&1)"; rc=$?
 want "drain reports 0 drained when the database is down" "drained 0" "$drain_stuck_out"
 want "and both entries still spooled" "still spooled 2" "$drain_stuck_out"
 is   "drain exits non-zero while entries remain stuck" "1" "$rc"
@@ -110,7 +108,7 @@ env -i HOME="$HOME" PATH="$PATH" \
     SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" \
     SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
-    bash "$INC" drain >/dev/null 2>&1
+    incident.sh drain >/dev/null 2>&1
 is "the REF-less entry is moved to .bad" "1" "$(bad_count)"
 is "the spool holds no live (non-.bad) entries after quarantine" "0" "$(spool_count)"
 want "the log names why" "no REF" "$(cat "$ILOG" 2>/dev/null)"
@@ -126,7 +124,7 @@ env -i HOME="$HOME" PATH="$PATH" \
     SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" \
     SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
-    bash "$INC" drain >/dev/null 2>&1
+    incident.sh drain >/dev/null 2>&1
 # The FIRST filing only creates the bead (no recurrence event yet); a second, equally
 # pre-CAUSE entry for the same ref is what exercises bump_recur, whose cause is what
 # a pre-CAUSE entry must default to.
@@ -135,7 +133,7 @@ env -i HOME="$HOME" PATH="$PATH" \
     SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" \
     SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
-    bash "$INC" drain >/dev/null 2>&1
+    incident.sh drain >/dev/null 2>&1
 
 _precause_cause="$(python3 -c '
 import json

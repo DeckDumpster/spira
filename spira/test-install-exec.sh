@@ -89,25 +89,21 @@ ln -s "$REAL_COCKPIT" "$PRODROOT/cockpit"
 for _s in concierge.sh beads-push.sh; do ln -s "$REAL_REPO/$_s" "$PRODROOT/$_s"; done; unset _s
 stub_release_bins() {   # stub_release_bins <release-root> [mode]
     local b; mkdir -p "$1/bin"
-    for b in sentinel queue aeon; do
+    for b in sentinel queue aeon spira-supervise landing-pass reconciler-flow; do
         printf '#!/usr/bin/env bash\nexit 0\n' > "$1/bin/$b"
         chmod "${2:-+x}" "$1/bin/$b"
     done
 }
 stub_release_bins "$PRODROOT"
 
-# The sentinel, queue and aeon units ExecStart @SPIRA_*_BIN@ (8e220de40), which conf.sh
-# resolves from SPIRA_REPO's bin/. A release keeps bin/ beside its spira/ (= SPIRA_PROD), so
-# the fixture pins each binary to dirname(SPIRA_PROD)/bin — the stubs stub_release_bins
-# writes — and every scenario below still varies the whole release through TEST_PROD alone.
+# The units ExecStart the release's bin/<tool> (@SPIRA_PROD_ROOT@/bin/<tool>, sp-gypjk): a
+# release keeps bin/ beside its spira/ (= SPIRA_PROD) — the stubs stub_release_bins writes —
+# so every scenario below varies the whole release through TEST_PROD alone. The mocks go
+# first on the caller's PATH (conf.sh keeps it first and only appends SPIRA_PATH).
 inst() {
     > "$MOCK_LOG"
-    local _rel; _rel="$(dirname "${TEST_PROD:-$PRODROOT/spira}")"
     env -i \
-        "SPIRA_SENTINEL_BIN=$_rel/bin/sentinel" \
-        "SPIRA_QUEUE_BIN=$_rel/bin/queue" \
-        "SPIRA_AEON_BIN=$_rel/bin/aeon" \
-        "PATH=$PATH" \
+        "PATH=$MOCK_BIN:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
         "SPIRA_PATH=$MOCK_BIN" \
@@ -118,7 +114,6 @@ inst() {
         "SPIRA_PROD=${TEST_PROD:-$PRODROOT/spira}" \
         "SPIRA_REPO=$REAL_REPO" \
         "SPIRA_COCKPIT=$REAL_COCKPIT" \
-        "SPIRA_SUPERVISE_BIN=$MOCK_BIN/spira-supervise" \
         "MOCK_LOG=$MOCK_LOG" \
         SPIRA_INSTALL_FORCE=1 \
         bash "$FIXTURE/systemd/install.sh" "$@" 2>&1

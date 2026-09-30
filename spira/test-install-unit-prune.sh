@@ -59,32 +59,35 @@ SCTL
 chmod +x "$TMP/bin/systemctl"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/spira-supervise"
 chmod +x "$TMP/bin/spira-supervise"
+# A release-shaped prod root (sp-gypjk): the units ExecStart <root>/bin/<tool>, and a tree
+# under test has no bin/ of its own. spira/ is this tree's.
+. "$HERE/lib-test-install.sh"
+PROD="$(install_fixture_prod "$TMP/prod" "$HERE")"
 
 WATCHERS="$TMP/watchers"
 printf '# empty\n' > "$WATCHERS"
 
 # inst [extra-env...] — run install.sh for the 'test' instance.
-# SPIRA_PATH prepends the logger dir to PATH (conf.sh rebuilds PATH with it).
+# The logger dir goes first on PATH (conf.sh keeps the caller's PATH first).
 inst() {
     > "$SCTL_LOG"
     SCTL_LOG="$SCTL_LOG" \
-    SPIRA_PATH="$TMP/bin" \
+    PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" \
     SPIRA_CONF=/nonexistent \
     SPIRA_RUN="$SPIRA_RUN_DIR" \
     SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    SPIRA_PROD= SPIRA_REPO_MAP=/nonexistent \
+    SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
     SPIRA_WATCHERS="$WATCHERS" \
-    SPIRA_SUPERVISE_BIN="$TMP/bin/spira-supervise" \
     "$@" \
     bash "$HERE/../systemd/install.sh" test 2>&1
 }
 
 # Pre-seed DEST so install.sh sees existing unit files and skips the daemon-reload
 # and restart for unchanged units. Uses --render to get the content install.sh would write.
-rendered="$(SCTL_LOG="$SCTL_LOG" SPIRA_PATH="$TMP/bin" SPIRA_CONF=/nonexistent \
+rendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" SPIRA_CONF=/nonexistent \
     SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    SPIRA_PROD= SPIRA_REPO_MAP=/nonexistent \
+    SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 SPIRA_WATCHERS="$WATCHERS" \
     bash "$HERE/../systemd/install.sh" test --render 2>&1)"
 render_rc=$?

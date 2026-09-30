@@ -16,16 +16,11 @@
 # 5. MISSING-TARGET (gap G10). A newly-installed unit whose ExecStart is not
 #    executable is refused, not enabled, via unit-ensure.sh's own
 #    _ue_execstart_ok — not a copy of it.
-# 6. BINARY GUARD (sp-5dcpj). An already-enabled unit whose binary is missing is
-#    disabled on the next ensure regardless of whether cargo is on PATH — the old
-#    guard skipped the check entirely whenever cargo was present, which is exactly
-#    "cargo present, build never run" — the case that produced 1500+ failed broker
-#    ticks. Paired with a binary-present run that must NOT disable it. Also proven
-#    reachable on a run where no unit file's content changed — the guard used to
-#    sit after an early exit that skipped it in exactly that case.
-# 7. PRODUCER GUARD (sp-5dcpj). spira-broker.timer is disabled whenever
-#    spira_broker_producer_present is false, regardless of the binary or the
-#    rendered file — the case BINARY GUARD does not cover.
+# 6. PRODUCER GUARD (sp-5dcpj). spira-broker.timer is disabled whenever
+#    spira_broker_producer_present is false, regardless of the rendered file.
+#
+# The BINARY GUARD cases (an enabled unit whose binary is missing) are deleted with the
+# guard itself (sp-gypjk): a release always carries every binary.
 #
 # THE FIXTURE builds from the real installer (law-prefer-the-real-dependency).
 # A mock systemctl records calls without touching systemd.
@@ -35,6 +30,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+. "$HERE/lib-test-install.sh"
 
 echo "test-install-unit-ensure.sh"
 
@@ -75,27 +71,18 @@ MOCK
 sed -i "s|\$SC_LOG|$SC_LOG|" "$TMP/sc"
 chmod +x "$TMP/sc"
 
-# A real, executable ExecStart target for spira-cockpit.service's @SPIRA_SUPERVISE_BIN@.
-# _ENSURE_SUPERVISE overrides it per-call (the MISSING-TARGET case below points it at a
-# path that does not exist).
-printf '#!/bin/sh\nexec "$@"\n' > "$BIN/spira-supervise" && chmod +x "$BIN/spira-supervise"
+# A release-shaped prod root (sp-gypjk): units ExecStart <root>/bin/<tool>, so the
+# spira-cockpit.service ExecStart is $PROD_ROOT/bin/spira-supervise. _ENSURE_PROD overrides it
+# per-call — the MISSING-TARGET case below points it at a root whose bin/spira-supervise is gone.
+PROD="$(install_fixture_prod "$TMP/prod" "$HERE")"
+BADPROD="$(install_fixture_prod "$TMP/badprod" "$HERE")"
+rm -f "$TMP/badprod/bin/spira-supervise"
 
-# A real, executable czar-pass binary so the BINARY GUARD is quiet by default.
-# _ENSURE_CZAR_PASS_BIN overrides it per-call (the BINARY GUARD case below points it
-# at a path that does not exist).
-printf '#!/bin/sh\n' > "$BIN/spira-czar-pass" && chmod +x "$BIN/spira-czar-pass"
 
-# A fake cargo on PATH — the guard must fire on a missing binary regardless of
-# cargo's presence (the case the old cargo-gated guard missed).
-printf '#!/bin/sh\nexit 0\n' > "$BIN/cargo" && chmod +x "$BIN/cargo"
-
-# ensure <args> — run unit-ensure.sh in a controlled environment.
-# SPIRA_BROKER_BIN defaults to a path under $TMP that is never created, not to "" —
-# conf.sh fills an empty SPIRA_BROKER_BIN via spira_bin, and SPIRA_REPO here derives to
-# the real checkout, so an empty default would pick up a real built broker binary
-# whenever one exists and falsely satisfy the BINARY GUARD's executable check.
+# ensure <args> — run unit-ensure.sh in a controlled environment. The mocks go first on
+# the caller's PATH (conf.sh keeps it first and only appends SPIRA_PATH).
 ensure() {
-    env -i PATH="$PATH" HOME="$TMP/home" \
+    env -i PATH="$BIN:$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_PATH="$BIN" \
         SPIRA_WATCHERS="$TMP/watchers-empty" \
@@ -105,9 +92,7 @@ ensure() {
         SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
         SPIRA_INSTALL_FORCE=1 \
         SPIRA_SYSTEMCTL="$TMP/sc" \
-        SPIRA_SUPERVISE_BIN="${_ENSURE_SUPERVISE:-$BIN/spira-supervise}" \
-        SPIRA_CZAR_PASS_BIN="${_ENSURE_CZAR_PASS_BIN:-$BIN/spira-czar-pass}" \
-        SPIRA_BROKER_BIN="${_ENSURE_BROKER_BIN:-$TMP/no-such-broker}" \
+        SPIRA_PROD="${_ENSURE_PROD:-$PROD}" \
         SPIRA_BROKER_ENABLE="${_ENSURE_BROKER_ENABLE:-0}" \
         bash "$HERE/../systemd/unit-ensure.sh" "$@" 2>&1
 }
@@ -116,13 +101,13 @@ ensure() {
 echo
 echo "positive control — render produces valid output before testing:"
 # ==========================================================================
-rendered="$(env -i PATH="$PATH" HOME="$TMP/home" \
+rendered="$(env -i PATH="$BIN:$PATH" HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
     SPIRA_PATH="$BIN" \
     SPIRA_WATCHERS="$TMP/watchers-empty" \
     SPIRA_DB="$TMP/db" SPIRA_RUN="$TMP/run" \
     SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
-    SPIRA_SUPERVISE_BIN="$BIN/spira-supervise" \
+    SPIRA_PROD="$PROD" \
     bash "$HERE/../systemd/install.sh" --render 2>&1)"
 
 # Write all units to DEST (full install).
@@ -204,24 +189,21 @@ echo "MISSING-TARGET — unit with absent ExecStart binary is not enabled (real 
 # against a REAL template — not a reimplementation of the guard, which would
 # pass even if the guard in unit-ensure.sh were deleted.
 #
-# spira-cockpit.service's ExecStart is @SPIRA_SUPERVISE_BIN@, and unlike
-# spira-loom/broker.service, units.sh does not gate its inclusion in UNITS/ENABLE
-# on that binary's executability — so an unexecutable SPIRA_SUPERVISE_BIN reaches
-# _ue_execstart_ok unchanged. It is the one core (non-OPTIONAL) unit through which
-# the guard can be exercised end to end without editing UNITS/ENABLE from outside
-# the script.
+# spira-cockpit.service's ExecStart is @SPIRA_PROD_ROOT@/bin/spira-supervise, a core unit
+# units.sh always installs — so a prod root without that binary reaches _ue_execstart_ok
+# unchanged, exercising the guard end to end without editing UNITS/ENABLE from outside.
 #
 # Removing the installed file first makes ensure() see it as new — only new units
 # reach the enable step (an updated/DIFFERS unit is left for the operator to
 # restart, per unit-ensure.sh's own comment).
-BAD_SUPERVISE="$TMP/nonexistent-supervise-binary"
+BAD_SUPERVISE="$TMP/badprod/bin/spira-supervise"
 
 rm -f "$DEST/spira-cockpit-prod.service"
 : > "$SC_LOG"
-_ENSURE_SUPERVISE="$BAD_SUPERVISE"
+_ENSURE_PROD="$BADPROD"
 mt_out="$(ensure)"
 mt_rc=$?
-unset _ENSURE_SUPERVISE
+unset _ENSURE_PROD
 is   "MISSING-TARGET: ensure still exits 0 (a refused enable is not a script failure)" \
      "0" "$mt_rc"
 want "MISSING-TARGET: absent ExecStart target produces MISSING-TARGET line" \
@@ -245,58 +227,10 @@ want "MISSING-TARGET: present ExecStart target is enabled" \
 
 # ==========================================================================
 echo
-echo "BINARY GUARD — enabled unit disabled when its binary is missing, cargo or not (sp-5dcpj):"
-# ==========================================================================
-# POSITIVE CONTROL FIRST (law-absence-needs-a-positive-control): drive a content
-# change so the script passes the early no-op exit, with a fake cargo already on
-# PATH (added above), and a missing czar-pass binary. The guard must disable the
-# already-enabled timer despite cargo being present — the exact case the old
-# `! command -v cargo` gate missed.
-printf '\n# force a content change to re-enter the changed path (guard case)\n' >> "$czar_timer"
-: > "$SC_LOG"
-_ENSURE_CZAR_PASS_BIN="$TMP/nonexistent-czar-pass"
-guard_out="$(ensure)"
-unset _ENSURE_CZAR_PASS_BIN
-want "BINARY GUARD: disables the enabled timer whose binary is missing" \
-     "DISABLED spira-czar-pass-prod.timer" "$guard_out"
-if grep -q "disable spira-czar-pass-prod.timer" "$SC_LOG"; then
-    ok "BINARY GUARD: systemctl disable was actually called"
-else
-    bad "BINARY GUARD: systemctl disable was actually called" "$(cat "$SC_LOG")"
-fi
-
-# PAIR: same trigger, binary present — the guard must stay quiet.
-printf '\n# force another content change (no-guard case)\n' >> "$czar_timer"
-: > "$SC_LOG"
-noguard_out="$(ensure)"
-nowant "BINARY GUARD: does not disable when the binary is executable" \
-     "DISABLED spira-czar-pass" "$noguard_out"
-
-# ==========================================================================
-echo
-echo "BINARY GUARD — reachable on a run where nothing else changed (sp-5dcpj):"
-# ==========================================================================
-# The guard used to sit after an early exit that fired whenever no unit file's
-# rendered content changed on the run — unreachable in the production case this
-# bead describes, where landing this fix does not itself touch any unit template.
-# No content edit here; only the binary breaks.
-: > "$SC_LOG"
-_ENSURE_CZAR_PASS_BIN="$TMP/nonexistent-czar-pass"
-zero_change_out="$(ensure)"
-unset _ENSURE_CZAR_PASS_BIN
-want "BINARY GUARD: run itself reports no changes" "no changes" "$zero_change_out"
-want "BINARY GUARD: still disables the unit on that same run" \
-     "DISABLED spira-czar-pass-prod.timer" "$zero_change_out"
-
-# ==========================================================================
-echo
 echo "PRODUCER GUARD — spira-broker.timer needs the producer opt-in, disabled without it (sp-5dcpj):"
 # ==========================================================================
-printf '#!/bin/sh\n' > "$BIN/spira-broker" && chmod +x "$BIN/spira-broker"
-
-# POSITIVE CONTROL: producer present (SPIRA_BROKER_ENABLE=1) + binary executable —
-# the timer is installed and enabled.
-_ENSURE_BROKER_BIN="$BIN/spira-broker"
+# POSITIVE CONTROL: producer present (SPIRA_BROKER_ENABLE=1) — the timer is installed and
+# enabled.
 _ENSURE_BROKER_ENABLE=1
 : > "$SC_LOG"
 broker_on_out="$(ensure)"
@@ -322,7 +256,7 @@ fi
 _ENSURE_BROKER_ENABLE=1
 : > "$SC_LOG"
 prod_again_out="$(ensure)"
-unset _ENSURE_BROKER_ENABLE _ENSURE_BROKER_BIN
+unset _ENSURE_BROKER_ENABLE
 nowant "PRODUCER GUARD: does not disable when producer present" \
      "DISABLED spira-broker" "$prod_again_out"
 

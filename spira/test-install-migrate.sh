@@ -116,18 +116,21 @@ SCTL
 chmod +x "$TMP/bin/systemctl"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/spira-supervise"
 chmod +x "$TMP/bin/spira-supervise"
+# A release-shaped prod root (sp-gypjk): the units ExecStart <root>/bin/<tool>, and a tree
+# under test has no bin/ of its own. spira/ is this tree's.
+. "$HERE/lib-test-install.sh"
+PROD="$(install_fixture_prod "$TMP/prod" "$HERE")"
 
 inst() {
     > "$SCTL_LOG"
     SCTL_LOG="$SCTL_LOG" \
-    SPIRA_PATH="$TMP/bin" \
+    PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" \
     SPIRA_CONF=/nonexistent \
     SPIRA_RUN="$SPIRA_RUN_DIR" \
     SPIRA_WATCHERS="$WATCHERS" \
     SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    SPIRA_PROD= SPIRA_REPO_MAP=/nonexistent \
+    SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
-    SPIRA_SUPERVISE_BIN="$TMP/bin/spira-supervise" \
     bash "$HERE/../systemd/install.sh" "$_INST" "$@" 2>&1
 }
 

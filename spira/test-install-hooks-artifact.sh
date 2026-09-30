@@ -155,6 +155,9 @@ EOF
 chmod +x "$SPIRA_DIR/exclude.sh"
 
 ln -s "$REAL_REPO/install.sh" "$FIXTURE/install.sh"
+# Unit binaries (sp-gypjk): the units ExecStart $FIXTURE/bin/<tool>, the release layout.
+. "$HERE/lib-test-install.sh"
+install_fixture_release_bins "$FIXTURE"
 
 MOCK_BIN="$TMP/mock-bin"
 mkdir -p "$MOCK_BIN"
@@ -213,7 +216,7 @@ mkdir -p "$FAKE_HOME" "$FAKE_UNITDIR" "$FAKE_RUN" "$FAKE_DB"
 # Pre-seed FAKE_UNITDIR so phase 4's --diff / write step has something to
 # compare and does not report every unit as a fresh change on every run.
 _rendered="$(env -i \
-    "PATH=$MOCK_BIN:$PATH" \
+    "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
     "HOME=$FAKE_HOME" \
     SPIRA_CONF=/nonexistent \
     "SPIRA_PATH=$MOCK_BIN" \
@@ -247,7 +250,7 @@ run_install() {   # run_install <SPIRA_REPO> -- extra env assignments...
     [ "${1:-}" = "--" ] && shift
     > "$MOCK_LOG"
     env -i \
-        "PATH=$MOCK_BIN:$PATH" \
+        "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
         "HOME=$FAKE_HOME" \
         SPIRA_CONF=/nonexistent \
         "SPIRA_PATH=$MOCK_BIN" \

@@ -27,8 +27,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 echo "test-incident-delivers-satisfiable.sh"
-
-INC="$HERE/incident.sh"
 STUB_BD="$HERE/incident-stub-bd.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/home" "$TMP/run"
@@ -45,7 +43,7 @@ file_one() {  # file_one <ref> [VAR=val ...]
         SPIRA_INCIDENT_REF="$ref" \
         SPIRA_INCIDENT_LOCK="$TMP/run/delivers-test.lock" \
         SPIRA_INCIDENT_REPO= \
-        "$@" bash "$INC" file "delivers test" - >/dev/null 2>&1
+        "$@" incident.sh file "delivers test" - >/dev/null 2>&1
 }
 bead_of() {
     python3 -c '

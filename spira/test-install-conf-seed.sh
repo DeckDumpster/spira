@@ -40,19 +40,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 echo "test-install-conf-seed.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-[ -n "$CARGO_BIN" ] || skip "cargo not found — spira-config binary cannot be built"
-
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
-SPIRA_CONFIG_BIN="$HERE/../target/release/spira-config"
-if [ ! -x "$SPIRA_CONFIG_BIN" ]; then
-    CARGO_TARGET_DIR="$TMP/cargo-target" "$CARGO_BIN" build --release \
-        --manifest-path "$HERE/../spira-config/Cargo.toml" >/dev/null 2>&1
-    SPIRA_CONFIG_BIN="$TMP/cargo-target/release/spira-config"
-fi
-[ -x "$SPIRA_CONFIG_BIN" ] || bail "spira-config binary not found/built at $SPIRA_CONFIG_BIN"
+# spira-config is the tree under test's own build, by name on the suite's PATH (sp-gypjk).
+command -v spira-config >/dev/null 2>&1 || bail "spira-config is not on PATH"
 
 # A minimal harness tree, same shape test-conf-writeback.sh and test-conf-toml.sh already
 # build: no .git, so SPIRA_REPO derives to the fixture itself rather than any real checkout.
@@ -68,7 +59,6 @@ FIXHOME="$TMP/home"; mkdir -p "$FIXHOME"
 seed() {
     local conf="$1" toml="$2" inst="$3"
     env -i PATH="$PATH" HOME="$FIXHOME" \
-        SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
         SPIRA_WATCHERS="$HARNESS/spira/watchers" \
         SPIRA_CONF=/nonexistent SPIRA_TOML=/nonexistent \
         bash -c "
@@ -100,7 +90,7 @@ if [ -f "$TOML1" ]; then
 else
     bad "seed: spira.toml created at the target root" "missing: $TOML1"
 fi
-got1="$("$SPIRA_CONFIG_BIN" get spira.instance "$TOML1" 2>/dev/null)"
+got1="$(spira-config get spira.instance "$TOML1" 2>/dev/null)"
 is "seed: instance recorded in the new spira.toml" "$INST1" "$got1"
 if [ ! -e "$CONF1" ]; then
     ok "seed: no spira.conf created beside it"
@@ -114,7 +104,7 @@ echo "PROPERTY 2: IDEMPOTENT — a second call with the same instance is silent"
 # ==========================================================================
 out2="$(seed "$CONF1" "$TOML1" "$INST1")"
 is "idempotent: second call reports nothing" "" "$out2"
-got2="$("$SPIRA_CONFIG_BIN" get spira.instance "$TOML1" 2>/dev/null)"
+got2="$(spira-config get spira.instance "$TOML1" 2>/dev/null)"
 is "idempotent: instance unchanged" "$INST1" "$got2"
 
 # ==========================================================================
@@ -130,7 +120,7 @@ max_aeons = 4
 EOF
 
 # FAIL-FIRST: the fixture toml has no instance key yet.
-if [ "$("$SPIRA_CONFIG_BIN" get spira.instance "$TOML3" 2>/dev/null)" != "$INST3" ]; then
+if [ "$(spira-config get spira.instance "$TOML3" 2>/dev/null)" != "$INST3" ]; then
     ok "fail-first: fixture toml has no matching instance key yet"
 else
     bad "fail-first: fixture toml has no matching instance key yet" "found unexpectedly"
@@ -138,7 +128,7 @@ fi
 
 seed "$CONF3" "$TOML3" "$INST3" >/dev/null
 want "preserved: sibling key survives" "max_aeons = 4" "$(cat "$TOML3")"
-got3="$("$SPIRA_CONFIG_BIN" get spira.instance "$TOML3" 2>/dev/null)"
+got3="$(spira-config get spira.instance "$TOML3" 2>/dev/null)"
 is "preserved: instance recorded alongside it" "$INST3" "$got3"
 
 # ==========================================================================
@@ -157,7 +147,7 @@ if [ -f "$TOML4" ]; then
 else
     bad "legacy-conf: a spira.toml is created at the target root" "missing: $TOML4"
 fi
-got4="$("$SPIRA_CONFIG_BIN" get spira.instance "$TOML4" 2>/dev/null)"
+got4="$(spira-config get spira.instance "$TOML4" 2>/dev/null)"
 is "legacy-conf: instance recorded in the new spira.toml" "$INST4" "$got4"
 is "legacy-conf: the spira.conf itself is untouched" "$conf4_before" "$(cat "$CONF4")"
 nowant "legacy-conf: no SPIRA_INSTANCE line appended to spira.conf" "SPIRA_INSTANCE" "$(cat "$CONF4")"

@@ -32,13 +32,9 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 echo "test-incident-decisions.sh"
-
-DEDUP_PY="$HERE/incident-dedup-decision.py"
 STUB_BD="$HERE/incident-stub-bd.py"
-INC="$HERE/incident.sh"
-
 decide() {  # decide <status> <fallback> <ref> <json-on-stdin>
-    python3 "$DEDUP_PY" "$1" "$2" "$3"
+    incident-dedup-decision.py "$1" "$2" "$3"
 }
 
 # ======================================================================================
@@ -91,7 +87,7 @@ inc() {
         SPIRA_RUN="$TMP/run" SPIRA_HOME="$TMP/home" \
         SPIRA_INCIDENT_LOCK="$TMP/run/incident.lock" \
         SPIRA_INCIDENT_REPO= \
-        "$@" bash "$INC" file "decisions test" -
+        "$@" incident.sh file "decisions test" -
 }
 seed_bead() {  # seed_bead <id> <ref> — a noise bead with no ref: label, as older code left
     printf '{"id":"%s","external_ref":"%s","status":"open","labels":["spira","incident"]}' \
@@ -132,7 +128,7 @@ inc_env() {   # inc_env VAR=val [VAR=val ...] -- assignments only; ref comes fro
         SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_DB="fakedb" \
         SPIRA_RUN="$TMP/run" SPIRA_HOME="$TMP/home" \
         SPIRA_INCIDENT_LOCK="$TMP/run/incident.lock" \
-        "$@" bash "$INC" file "decisions repo test" - >/dev/null 2>&1
+        "$@" incident.sh file "decisions repo test" - >/dev/null 2>&1
 }
 
 # POSITIVE CONTROL: a declared repo matching the home repo is stamped without needing a
@@ -186,7 +182,7 @@ echo "4. the note-size decision (_recur_note_body) — pure function of (prev ha
 # out of the suite's output.
 export SPIRA_RUN="$TMP/source-run" SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_INCIDENT_CAUSE=probe
 # shellcheck disable=SC1090
-. "$INC"
+. "$HERE/incident.sh"
 PF="$TMP/payload"
 printf 'x%.0s' $(seq 1 500) > "$PF"
 PH="payload-hash:$(sha256sum "$PF" | cut -c1-16)"

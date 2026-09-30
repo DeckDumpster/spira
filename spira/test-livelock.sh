@@ -68,7 +68,7 @@ run_ll() {    # run_ll [KEY=val ...]  — extra args override env vars
         SPIRA_SPIKE_LABEL=spike \
         SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
         "$@" \
-        bash "$HERE/cockpit.sh" livelock 2>/dev/null
+        cockpit.sh livelock 2>/dev/null
 }
 field() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1; }
 
