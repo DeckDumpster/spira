@@ -161,20 +161,40 @@ id = "UC-operator-channel-28"
 tier = "T2"
 statement = "notify events half: an actionable line (matching SPIRA_ACTIONABLE from config) unread longer than SPIRA_NOTIFY_AGE is escalated once, with its text and…"
 
+[use_case.uncovered]
+reason = "test-watch-notify.sh deleted (sp-herv0, law-a-test-that-flips-is-deleted): the two-escalation case went red then green on a rerun of the same tree in sp-k6m1m's testenv run; sp-eywse finds the root cause and re-adds it"
+date = "2026-09-30"
+bead = "sp-eywse"
+
 [[use_case]]
 id = "UC-operator-channel-29"
 tier = "T2"
 statement = "notify health half: a daemon watcher that is inactive, failed or failing its probe beyond the threshold is escalated once with NRestarts, its last log line and…"
+
+[use_case.uncovered]
+reason = "test-watch-notify.sh deleted (sp-herv0, law-a-test-that-flips-is-deleted): the two-escalation case went red then green on a rerun of the same tree in sp-k6m1m's testenv run; sp-eywse finds the root cause and re-adds it"
+date = "2026-09-30"
+bead = "sp-eywse"
 
 [[use_case]]
 id = "UC-operator-channel-30"
 tier = "T2"
 statement = "During a world halt ($SPIRA_RUN/world.halted), status reads HALTED rather than DEGRADED, and notify escalates nothing and clears the unhealthy clocks."
 
+[use_case.uncovered]
+reason = "test-watch-notify.sh deleted (sp-herv0, law-a-test-that-flips-is-deleted): the two-escalation case went red then green on a rerun of the same tree in sp-k6m1m's testenv run; sp-eywse finds the root cause and re-adds it"
+date = "2026-09-30"
+bead = "sp-eywse"
+
 [[use_case]]
 id = "UC-operator-channel-31"
 tier = "T2"
 statement = "notify exits 3 rather than passing when the manifest is malformed or missing, the filter is empty, the threshold is non-numeric, it gets an argument, or there…"
+
+[use_case.uncovered]
+reason = "test-watch-notify.sh deleted (sp-herv0, law-a-test-that-flips-is-deleted): the two-escalation case went red then green on a rerun of the same tree in sp-k6m1m's testenv run; sp-eywse finds the root cause and re-adds it"
+date = "2026-09-30"
+bead = "sp-eywse"
 
 [[use_case]]
 id = "UC-operator-channel-32"
