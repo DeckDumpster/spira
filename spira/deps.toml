@@ -18,6 +18,8 @@
 #   release   one of Spira's own binaries, shipped in every release's bin/ and invoked by
 #             bare name on the launcher's PATH (sp-gypjk); a missing one is a broken
 #             release, never an optional feature. doctor.sh checks every one resolves.
+#             Its version is the release it came from: the probe resolves the binary's
+#             real path, spira-releases/<sha>/bin/<name>.
 
 [[dep]]
 name = "bd"
@@ -191,256 +193,256 @@ name = "aeon"
 tier = "release"
 purpose = "Spira's aeon binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v aeon)\""
 
 [[dep]]
 name = "batcher"
 tier = "release"
 purpose = "Spira's batcher binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v batcher)\""
 
 [[dep]]
 name = "bd-meter"
 tier = "release"
 purpose = "Spira's bd-meter binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v bd-meter)\""
 
 [[dep]]
 name = "beads-store"
 tier = "release"
 purpose = "Spira's beads-store binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v beads-store)\""
 
 [[dep]]
 name = "broker"
 tier = "release"
 purpose = "Spira's broker binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v broker)\""
 
 [[dep]]
 name = "czar-pass"
 tier = "release"
 purpose = "Spira's czar-pass binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v czar-pass)\""
 
 [[dep]]
 name = "gate"
 tier = "release"
 purpose = "Spira's gate binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v gate)\""
 
 [[dep]]
 name = "gate-check"
 tier = "release"
 purpose = "Spira's gate-check binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v gate-check)\""
 
 [[dep]]
 name = "gate-diag"
 tier = "release"
 purpose = "Spira's gate-diag binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v gate-diag)\""
 
 [[dep]]
 name = "gate-run"
 tier = "release"
 purpose = "Spira's gate-run binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v gate-run)\""
 
 [[dep]]
 name = "intent-report"
 tier = "release"
 purpose = "Spira's intent-report binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v intent-report)\""
 
 [[dep]]
 name = "landing-pass"
 tier = "release"
 purpose = "Spira's landing-pass binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v landing-pass)\""
 
 [[dep]]
 name = "lifecycle-guard"
 tier = "release"
 purpose = "Spira's lifecycle-guard binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v lifecycle-guard)\""
 
 [[dep]]
 name = "loom"
 tier = "release"
 purpose = "Spira's loom binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v loom)\""
 
 [[dep]]
 name = "panel"
 tier = "release"
 purpose = "Spira's panel binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v panel)\""
 
 [[dep]]
 name = "queue"
 tier = "release"
 purpose = "Spira's queue binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v queue)\""
 
 [[dep]]
 name = "queue-watch"
 tier = "release"
 purpose = "Spira's queue-watch binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v queue-watch)\""
 
 [[dep]]
 name = "rebase-stale"
 tier = "release"
 purpose = "Spira's rebase-stale binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v rebase-stale)\""
 
 [[dep]]
 name = "reconciler"
 tier = "release"
 purpose = "Spira's reconciler binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v reconciler)\""
 
 [[dep]]
 name = "reconciler-alert"
 tier = "release"
 purpose = "Spira's reconciler-alert binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v reconciler-alert)\""
 
 [[dep]]
 name = "reconciler-flow"
 tier = "release"
 purpose = "Spira's reconciler-flow binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v reconciler-flow)\""
 
 [[dep]]
 name = "release"
 tier = "release"
 purpose = "Spira's release binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v release)\""
 
 [[dep]]
 name = "round-vm"
 tier = "release"
 purpose = "Spira's round-vm binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v round-vm)\""
 
 [[dep]]
 name = "sentinel"
 tier = "release"
 purpose = "Spira's sentinel binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v sentinel)\""
 
 [[dep]]
 name = "spira"
 tier = "release"
 purpose = "Spira's spira binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v spira)\""
 
 [[dep]]
 name = "spira-claim"
 tier = "release"
 purpose = "Spira's spira-claim binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v spira-claim)\""
 
 [[dep]]
 name = "spira-config"
 tier = "release"
 purpose = "Spira's spira-config binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v spira-config)\""
 
 [[dep]]
 name = "spira-lc"
 tier = "release"
 purpose = "Spira's spira-lc binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v spira-lc)\""
 
 [[dep]]
 name = "spira-lint"
 tier = "release"
 purpose = "Spira's spira-lint binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v spira-lint)\""
 
 [[dep]]
 name = "spira-supervise"
 tier = "release"
 purpose = "Spira's spira-supervise binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v spira-supervise)\""
 
 [[dep]]
 name = "strand"
 tier = "release"
 purpose = "Spira's strand binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v strand)\""
 
 [[dep]]
 name = "suite-select"
 tier = "release"
 purpose = "Spira's suite-select binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v suite-select)\""
 
 [[dep]]
 name = "testenv"
 tier = "release"
 purpose = "Spira's testenv binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v testenv)\""
 
 [[dep]]
 name = "test-plan"
 tier = "release"
 purpose = "Spira's test-plan binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v test-plan)\""
 
 [[dep]]
 name = "tsd-lifecycle-export"
 tier = "release"
 purpose = "Spira's tsd-lifecycle-export binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v tsd-lifecycle-export)\""
 
 [[dep]]
 name = "tsd-write"
 tier = "release"
 purpose = "Spira's tsd-write binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v tsd-write)\""
 
 [[dep]]
 name = "work"
 tier = "release"
 purpose = "Spira's work binary, from the release's bin/"
 version_min = ""
-version_probe = ""
+version_probe = "readlink -f \"$(command -v work)\""
