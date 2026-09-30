@@ -28,7 +28,6 @@ TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up cfgcompatmaster || skip "testdb not available"
 
 # The batcher is the tree's own build, by name on this suite's PATH (sp-gypjk).
-command -v batcher >/dev/null || bail "batcher is not on PATH"
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 

@@ -22,7 +22,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 . "$HERE/conf.sh" >/dev/null 2>&1
 REMOTE_DIR="$(dirname "$HERE")/cockpit/remote"
-command -v spira-lint >/dev/null || bail "spira-lint is not on PATH"
 inventory_scan() { spira-lint --only inventory --scan "$1" 2>/dev/null; }
 
 

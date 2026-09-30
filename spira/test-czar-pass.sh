@@ -85,7 +85,6 @@ else
 fi
 
 # czar.sh execs czar-pass by name: the tree's own build, on this suite's PATH (sp-gypjk).
-command -v czar-pass >/dev/null || bail "czar-pass is not on PATH"
 
 # Minimal test environment — no real database needed: incident is stubbed,
 # summon_fayth silently returns 1 when fayth_ready finds no db (|| true guards it).

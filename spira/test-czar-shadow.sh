@@ -35,7 +35,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 . "$HERE/testlib.sh"
 # The queue binary (queue/DESIGN.md §7.4): the tree's own build, by name on PATH (sp-gypjk).
-command -v queue >/dev/null || { echo "FAIL: queue is not on PATH"; exit 1; }
 lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1: did not want [$2] in [$3]"; }
 
 FENCE="$HERE/czar-fence.sh"

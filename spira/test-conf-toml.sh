@@ -40,12 +40,6 @@ fi
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 CRATE="$HERE/../spira-config"
-if command -v spira-config >/dev/null 2>&1; then
-    ok "spira-config binary is on PATH"
-else
-    bail "spira-config is not on PATH"
-fi
-
 # A minimal harness tree so conf.sh resolves sensibly; spira-config comes from PATH.
 HARNESS="$T/harness"
 mkdir -p "$HARNESS/spira"
