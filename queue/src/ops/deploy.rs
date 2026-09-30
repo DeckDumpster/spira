@@ -212,7 +212,7 @@ pub fn run(w: &World, plan: &Plan, head: &str, home: &Path, lifecycle_on: bool) 
 /// lifecycle_enforce on.
 ///
 /// Fail closed: every binary the workspace's own `[[bin]]` targets declare
-/// ([`expected_bins`]) must be among what the round actually built, or the deploy refuses
+/// ([`release::workspace::expected_bins`], the one reader `release build` also uses) must be among what the round actually built, or the deploy refuses
 /// rather than link whatever happened to be there.
 fn install_bins(w: &World, from: &Path, checkout: &Path, lifecycle_on: bool) -> (usize, bool) {
     let to = checkout.join("target").join("release");
@@ -257,7 +257,7 @@ fn install_bins(w: &World, from: &Path, checkout: &Path, lifecycle_on: bool) -> 
     }
 
     if let Some(worktree) = from.parent().and_then(Path::parent) {
-        match expected_bins(worktree) {
+        match release::workspace::expected_bins(worktree) {
             Ok(expected) => {
                 let missing: Vec<&String> = expected
                     .iter()
@@ -283,56 +283,6 @@ fn install_bins(w: &World, from: &Path, checkout: &Path, lifecycle_on: bool) -> 
     }
 
     (n, ok)
-}
-
-/// Every binary name the workspace's own `[[bin]]` targets declare, read from
-/// `<worktree>/Cargo.toml`'s `[workspace] members` and each member's own `Cargo.toml`:
-/// its explicit `[[bin]]` tables, or (when it has none) the package name when
-/// `src/main.rs` exists (cargo's own default). THE SOURCE OF TRUTH, not the Makefile's
-/// `install` list — that list is hand-maintained prose and had already drifted as of
-/// 2026-09-29 (missing reconciler-alert, lifecycle-guard, spira-lc and test-plan, all
-/// already built and already running). A list that must be remembered and edited by hand
-/// for every new binary crate is exactly the failure mode this bead exists to close: the
-/// workspace's own manifests cannot go stale relative to what cargo actually builds.
-fn expected_bins(worktree: &Path) -> Result<Vec<String>, String> {
-    let root_toml = worktree.join("Cargo.toml");
-    let root = read_toml(&root_toml)?;
-    let members = root
-        .get("workspace")
-        .and_then(|v| v.get("members"))
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| format!("{} has no [workspace].members array", root_toml.display()))?;
-    let mut names = Vec::new();
-    for m in members {
-        let rel = m.as_str().ok_or_else(|| format!("{} has a non-string workspace member", root_toml.display()))?;
-        let dir = worktree.join(rel);
-        let manifest = dir.join("Cargo.toml");
-        let doc = read_toml(&manifest)?;
-        let bins = doc.get("bin").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-        if bins.is_empty() {
-            if dir.join("src").join("main.rs").is_file() {
-                let name = doc
-                    .get("package")
-                    .and_then(|p| p.get("name"))
-                    .and_then(|n| n.as_str())
-                    .ok_or_else(|| format!("{} has src/main.rs but no [package].name", manifest.display()))?;
-                names.push(name.to_string());
-            }
-        } else {
-            for b in &bins {
-                let name = b.get("name").and_then(|n| n.as_str()).ok_or_else(|| format!("{} has a [[bin]] with no name", manifest.display()))?;
-                names.push(name.to_string());
-            }
-        }
-    }
-    names.sort();
-    names.dedup();
-    Ok(names)
-}
-
-fn read_toml(path: &Path) -> Result<toml::Value, String> {
-    let src = fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    src.parse::<toml::Value>().map_err(|e| format!("cannot parse {}: {e}", path.display()))
 }
 
 /// Atomically make `<bin_dir>/<name>` a symlink to `target` (the checkout's own

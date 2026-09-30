@@ -1,0 +1,151 @@
+//! `release build <commit>` (DESIGN.md "build").
+
+use crate::config::Config;
+use crate::fsutil;
+use crate::git::Git;
+use crate::manifest::{self, Manifest};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// Compiles the workspace in `tree` with `CARGO_TARGET_DIR=target`. A trait so the rest of
+/// build is tested without cargo.
+pub trait Cargo {
+    fn build(&self, tree: &Path, target: &Path) -> Result<(), String>;
+}
+
+pub struct RealCargo;
+
+impl Cargo for RealCargo {
+    fn build(&self, tree: &Path, target: &Path) -> Result<(), String> {
+        let st = Command::new("cargo")
+            .args(["build", "--release", "--workspace", "--locked"])
+            .current_dir(tree)
+            .env("CARGO_TARGET_DIR", target)
+            .stdout(std::io::stderr())
+            .status()
+            .map_err(|e| format!("cannot run cargo: {e}"))?;
+        if !st.success() {
+            return Err(format!("cargo build --release --workspace --locked failed ({st})"));
+        }
+        Ok(())
+    }
+}
+
+pub struct BuildOpts<'a> {
+    pub repo: &'a Path,
+    pub commit: &'a str,
+    /// Where cargo's target directory lives; `None` means `$SPIRA_RUN/release/target`, else a
+    /// throw-away directory beside the stage.
+    pub target_dir: Option<PathBuf>,
+    /// The directories whose commands a release may not shadow ([`crate::SYSTEM_DIRS`]).
+    pub system_dirs: Vec<PathBuf>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Built {
+    pub sha: String,
+    pub dir: PathBuf,
+    /// False when `spira-releases/<sha>` already existed and nothing was built.
+    pub fresh: bool,
+}
+
+/// Removes a directory (read-only or not) when dropped, unless disarmed.
+struct Cleanup(Option<PathBuf>);
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        if let Some(p) = self.0.take() {
+            let _ = fsutil::remove_tree(&p);
+        }
+    }
+}
+
+pub fn build(cfg: &Config, git: &dyn Git, cargo: &dyn Cargo, o: &BuildOpts) -> Result<Built, String> {
+    let sha = git.resolve(o.repo, o.commit)?;
+    let dir = cfg.releases.join(&sha);
+    if fs::symlink_metadata(&dir).is_ok() {
+        eprintln!("release: {sha} already built at {} — releases are immutable; not rebuilding", dir.display());
+        return Ok(Built { sha, dir, fresh: false });
+    }
+    fs::create_dir_all(&cfg.releases).map_err(|e| format!("cannot create {}: {e}", cfg.releases.display()))?;
+    let pid = std::process::id();
+    let stage = cfg.releases.join(format!(".stage-{sha}-{pid}"));
+    let _ = fsutil::remove_tree(&stage);
+    fs::create_dir(&stage).map_err(|e| format!("cannot create {}: {e}", stage.display()))?;
+    let mut stage_guard = Cleanup(Some(stage.clone()));
+
+    git.archive(o.repo, &sha, &stage)?;
+    for k in manifest::HEADER_KEYS {
+        if fs::symlink_metadata(stage.join(k)).is_ok() {
+            return Err(format!("{sha} tracks a top-level file named {k:?}, which MANIFEST reserves as a header key"));
+        }
+    }
+    if fs::symlink_metadata(stage.join("bin")).is_ok() {
+        return Err(format!("{sha} tracks bin/, which a release reserves for its binaries"));
+    }
+
+    let (target, _target_guard) = match (&o.target_dir, &cfg.run) {
+        (Some(t), _) => (t.clone(), Cleanup(None)),
+        (None, Some(run)) => (run.join("release").join("target"), Cleanup(None)),
+        (None, None) => {
+            let t = cfg.releases.join(format!(".target-{pid}"));
+            (t.clone(), Cleanup(Some(t)))
+        }
+    };
+    fs::create_dir_all(&target).map_err(|e| format!("cannot create {}: {e}", target.display()))?;
+    eprintln!("release: building {sha} (target {})", target.display());
+    cargo.build(&stage, &target)?;
+
+    let bins = crate::workspace::expected_bins(&stage)?;
+    if bins.is_empty() {
+        return Err(format!("{sha}: the workspace declares no [[bin]] targets"));
+    }
+    let bin_dir = stage.join("bin");
+    fs::create_dir(&bin_dir).map_err(|e| format!("cannot create {}: {e}", bin_dir.display()))?;
+    let out = target.join("release");
+    let mut missing = Vec::new();
+    for b in &bins {
+        let src = out.join(b);
+        if !fsutil::is_executable(&src) {
+            missing.push(b.clone());
+            continue;
+        }
+        fs::copy(&src, bin_dir.join(b)).map_err(|e| format!("cannot copy {} into bin/: {e}", src.display()))?;
+    }
+    if !missing.is_empty() {
+        return Err(format!("the workspace declares {} but the build at {} did not produce {}", missing.join(", "), out.display(), if missing.len() == 1 { "it" } else { "them" }));
+    }
+
+    let clashes = clashes(&stage, &o.system_dirs);
+    if !clashes.is_empty() {
+        return Err(format!("{sha} would shadow system commands: {}", clashes.join("; ")));
+    }
+
+    let m = Manifest { commit: sha.clone(), built: Some(fsutil::now_rfc3339()), repo: cfg.home_repo(), entries: Manifest::scan(&stage)? };
+    fs::write(stage.join(manifest::FILE), m.render()).map_err(|e| format!("cannot write MANIFEST: {e}"))?;
+    fsutil::set_readonly(&stage)?;
+    fs::rename(&stage, &dir).map_err(|e| format!("cannot move {} to {}: {e}", stage.display(), dir.display()))?;
+    stage_guard.0 = None;
+    eprintln!("release: built {sha}: {} binaries, {} files", bins.len(), m.entries.len());
+    Ok(Built { sha, dir, fresh: true })
+}
+
+/// Executables directly in `<rel>/bin` or `<rel>/spira` whose name is also a command in one
+/// of `system_dirs` (DESIGN.md "Name clashes"), as `<rel path> shadows <system path>`.
+pub fn clashes(rel: &Path, system_dirs: &[PathBuf]) -> Vec<String> {
+    let mut out = Vec::new();
+    for sub in ["bin", "spira"] {
+        let Ok(rd) = fs::read_dir(rel.join(sub)) else { continue };
+        let mut names: Vec<String> = rd.flatten().filter(|e| fsutil::is_executable(&e.path())).map(|e| e.file_name().to_string_lossy().to_string()).collect();
+        names.sort();
+        for n in names {
+            for d in system_dirs {
+                let sys = d.join(&n);
+                if fs::symlink_metadata(&sys).is_ok() {
+                    out.push(format!("{sub}/{n} shadows {}", sys.display()));
+                }
+            }
+        }
+    }
+    out
+}
