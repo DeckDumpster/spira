@@ -42,7 +42,7 @@ pub struct LibSeam {
     pub db: Option<PathBuf>,
     pub bd: String,
     pub goal: String,
-    /// The queue binary: SPIRA_QUEUE_BIN, else the `queue` installed beside this binary.
+    /// The queue binary: `queue`, by name on the launcher's PATH (sp-gypjk).
     pub queue_bin: PathBuf,
     db_ok: OnceCell<bool>,
 }
@@ -54,15 +54,7 @@ impl LibSeam {
             db,
             bd,
             goal,
-            queue_bin: std::env::var_os("SPIRA_QUEUE_BIN")
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    std::env::current_exe()
-                        .ok()
-                        .and_then(|p| p.parent().map(|d| d.join("queue")))
-                        .unwrap_or_else(|| PathBuf::from("queue"))
-                }),
+            queue_bin: PathBuf::from("queue"),
             db_ok: OnceCell::new(),
         }
     }

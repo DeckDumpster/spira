@@ -245,10 +245,11 @@ pub fn backlog_baseline(duckdb_bin: &str, root: &Path, baseline_hours: f64) -> R
 }
 
 /// Appends this pass's backlog count to the `backlog` family via `tsd-write`, the one writer
-/// every run/tsd/ producer shells out to (sp-sbc6o) — best-effort: a missing or unbuilt
-/// binary leaves the family unwritten, never fails the pass that is trying to observe it.
+/// every run/tsd/ producer shells out to (sp-sbc6o), by name on the launcher's PATH
+/// (sp-gypjk) — best-effort: a failed write leaves the family unwritten, never fails the
+/// pass that is trying to observe it. An empty program (a unit test's "no writer") skips.
 pub fn append_backlog_sample(tsd_bin: &str, root: &Path, count: u64) {
-    if tsd_bin.is_empty() || !Path::new(tsd_bin).is_file() {
+    if tsd_bin.is_empty() {
         return;
     }
     let _ = Command::new(tsd_bin)

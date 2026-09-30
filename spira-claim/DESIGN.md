@@ -72,7 +72,7 @@ Diagnostics go to stderr, one line, prefixed `spira-claim:`.
 - **Epic lookup** — `{"prio":{epic:prio}, "started":[epic,...]}`, from `--epics FILE` or
   fetched (one `bd list --id` per ≤100 distinct epics, one `bd children` per distinct epic).
 - **Lifecycle snapshot** (machine mode only) — `spira-lc list` rows, from `--lifecycle FILE`
-  or fetched by running `$SPIRA_LC_BIN list`.
+  or fetched by running `spira-lc list`.
 - **Blocker records** (machine mode only) — bd rows for every `blocks` target, from
   `--blocker-records FILE` or fetched with chunked `bd list --id ... --status all`.
 
@@ -575,7 +575,7 @@ pass reported a `poison=<P>` different from `--poison-at`, the watch says so on 
 (`watch: note — the audit pass ran with poison=<P>, this clear verified against <p>`).
 
 **Where things are.** bd: `$SPIRA_BD` else `bd`; db: `--db`, `$SPIRA_DB`, spira-config
-`spira.db` (§2). spira-lc: `$SPIRA_LC_BIN` else `spira-lc`. `SPIRA_RUN`: `$SPIRA_RUN`, else
+`spira.db` (§2). spira-lc: by name, on the launcher's PATH (sp-gypjk). `SPIRA_RUN`: `$SPIRA_RUN`, else
 spira-config `spira.run`; neither → exit 2. Ask history: `$SPIRA_POISON_ASKED` else
 `$SPIRA_RUN/poison-asked` (lib.sh's resolution). Ask label: `$SPIRA_ASK_LABEL`, else
 spira-config `spira.ask_label`, else `needs-operator` (conf.sh:1027). Audit log:

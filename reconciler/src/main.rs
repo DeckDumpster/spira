@@ -167,26 +167,20 @@ impl Config {
             reconciler_label: env::var("SPIRA_RECONCILER_LABEL")
                 .unwrap_or_else(|_| "reconciler-gap".to_string()),
             incident_sh: env::var("SPIRA_INCIDENT_SH")
-                .unwrap_or_else(|_| format!("{}/incident.sh", spira_home)),
+                .unwrap_or_else(|_| "incident.sh".to_string()),
             systemctl: env::var("SPIRA_SYSTEMCTL").unwrap_or_else(|_| "systemctl".to_string()),
             tmux: env::var("SPIRA_TMUX").unwrap_or_else(|_| "tmux".to_string()),
             git: env::var("SPIRA_GIT").unwrap_or_else(|_| "git".to_string()),
             units_manifest_sh: env::var("SPIRA_UNITS_MANIFEST_SH")
-                .unwrap_or_else(|_| format!("{}/units-manifest.sh", spira_home)),
+                .unwrap_or_else(|_| "units-manifest.sh".to_string()),
             fleet_status_sh: env::var("SPIRA_FLEET_STATUS_SH")
-                .unwrap_or_else(|_| format!("{}/fleet-status.sh", spira_home)),
+                .unwrap_or_else(|_| "fleet-status.sh".to_string()),
             queue_certified_list_sh: env::var("SPIRA_QUEUE_CERTIFIED_LIST_SH")
-                .unwrap_or_else(|_| format!("{}/queue-certified-list.sh", spira_home)),
+                .unwrap_or_else(|_| "queue-certified-list.sh".to_string()),
             cockpit_sh: env::var("SPIRA_COCKPIT_SH")
-                .unwrap_or_else(|_| format!("{}/cockpit.sh", spira_home)),
-            // The queue binary (conf.sh exports SPIRA_QUEUE_BIN), else the one installed
-            // beside this binary.
-            queue_bin: env::var("SPIRA_QUEUE_BIN").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| {
-                env::current_exe()
-                    .ok()
-                    .and_then(|p| p.parent().map(|d| d.join("queue").display().to_string()))
-                    .unwrap_or_else(|| "queue".into())
-            }),
+                .unwrap_or_else(|_| "cockpit.sh".to_string()),
+            // The queue binary, by name on the launcher's PATH (sp-gypjk).
+            queue_bin: "queue".into(),
             queue_dir: env::var("SPIRA_QUEUE_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("queue")),
@@ -197,9 +191,9 @@ impl Config {
             cockpit_sessions: sessions,
             cockpit_mail: env::var("COCKPIT_MAIL").unwrap_or_default(),
             disk_usage_sh: env::var("SPIRA_DISK_USAGE_SH")
-                .unwrap_or_else(|_| format!("{}/disk-usage.sh", spira_home)),
+                .unwrap_or_else(|_| "disk-usage.sh".to_string()),
             disk_remedy_sh: env::var("SPIRA_DISK_REMEDY_SH")
-                .unwrap_or_else(|_| format!("{}/disk-remedy.sh", spira_home)),
+                .unwrap_or_else(|_| "disk-remedy.sh".to_string()),
             disk_floor_pct: env::var("SPIRA_DISK_FLOOR_PCT")
                 .ok()
                 .and_then(|v| v.parse().ok())

@@ -76,7 +76,6 @@ struct Config {
 impl Config {
     fn from_env() -> Config {
         let spira_run = env::var("SPIRA_RUN").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("/tmp/spira"));
-        let spira_home = env::var("SPIRA_HOME").unwrap_or_default();
         Config {
             lock_path: spira_run.join("reconciler-flow.lock"),
             state_path: env::var("SPIRA_RECONCILER_FLOW_STATE")
@@ -90,7 +89,7 @@ impl Config {
             status_log: env::var("SPIRA_RECONCILER_STATUS_LOG")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("tsd").join("reconciler-status.jsonl")),
-            tsd_bin: env::var("SPIRA_TSD_BIN").unwrap_or_default(),
+            tsd_bin: "tsd-write".to_string(), // by name, on the launcher's PATH (sp-gypjk)
             duckdb_bin: env::var("SPIRA_DUCKDB_BIN").unwrap_or_else(|_| "duckdb".to_string()),
             bd_bin: env::var("SPIRA_BD").unwrap_or_else(|_| "bd".to_string()),
             spira_db: env::var("SPIRA_DB").unwrap_or_default(),
@@ -101,7 +100,7 @@ impl Config {
                     .unwrap_or_else(|_| PathBuf::from(env::var("HOME").unwrap_or_default()).join(".config"));
                 config_home.join("spira").join("desired")
             }),
-            mail_sh: env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| format!("{spira_home}/mail.sh")),
+            mail_sh: env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| "mail.sh".to_string()),
             window_hours: env::var("SPIRA_FLOW_WINDOW_HOURS").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5),
             baseline_hours: env::var("SPIRA_FLOW_BASELINE_HOURS").ok().and_then(|v| v.parse().ok()).unwrap_or(24.0),
             grace_secs: env::var("SPIRA_FLOW_GRACE_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(1800),
