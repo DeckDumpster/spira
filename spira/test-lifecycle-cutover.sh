@@ -37,7 +37,7 @@
 #
 # defect: sp-o7nbr
 # tier: T2
-# covers: lifecycle/* spira-lc/* spira/verdict.sh queue/src/*
+# covers: lifecycle/* spira-lc/* queue/src/*
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -301,89 +301,11 @@ is "every racing land left its own event row, applied or refused" "$N" "$event_c
 # path" — the spira-lc CAS it proved was dormant in production before this deletion too.
 # queue's own abandon (queue/src/ops/batch.rs `abandon`) is covered by queue's own tests
 # and by test-queue-ops.sh's "abandon" cases; it does not call _abandon_open_batch.
-export SPIRA_HOME="$REPO/spira"
-export SPIRA_RUN="$TMP/shell-run"
-mkdir -p "$SPIRA_RUN/landstate" "$SPIRA_RUN/queue/fixture-repo"
-export SPIRA_QUEUE_DIR="$SPIRA_RUN/queue"
 
-# ── sp-o7nbr.3: verdict.sh's own CI-outcome lifecycle wiring, onto this same fixture ─────
-# Sources the real spira/verdict.sh (not a reimplementation) and calls its own
-# _lc_land_batch/_lc_settle_batch directly — the functions _verdict_process/_q_attribute
-# call in production on a real green fast-forward or a real red-attribution conclude.
-# Both walk OPEN -> CI_RUNNING -> {GREEN,ATTRIBUTING} themselves before land/settle, since
-# a real batch never has a CiStarted/Green(or Red) event fired for it any earlier.
-# shellcheck disable=SC1091
-. "$REPO/spira/verdict.sh"
-
-certify sp-lc-vland1 tipVL1
-certify sp-lc-vland2 tipVL2
-lc cut batch-verdict-land --repo fixture-repo --head headVL --base baseVL \
-    --members "sp-lc-vland1:tipVL1,sp-lc-vland2:tipVL2" --actor test >/dev/null
-vl_ob="$TMP/ob-file-verdict-land"
-cat > "$vl_ob" <<OBFILE
-pr=10
-head=headVL
-base=baseVL
-members=sp-lc-vland1:tipVL1 sp-lc-vland2:tipVL2
-opened=1
-branch=batch-verdict-land
-batch_id=batch-verdict-land
-version=2
-OBFILE
-_lc_land_batch "$vl_ob" 10 sha-verdict-land >/dev/null 2>&1
-is "verdict's _lc_land_batch walks OPEN -> CI_RUNNING -> GREEN -> LANDED" "LANDED" \
-    "$(batch_field batch-verdict-land state)"
-is "...and delivers member 1" "EXITED" "$(member_field sp-lc-vland1 delivery state)"
-is "...and lands member 1's bead" "LANDED" "$(member_field sp-lc-vland1 bead state)"
-is "...recording the merge sha" "sha-verdict-land" "$(member_field sp-lc-vland1 delivery merge_sha)"
-
-# POSITIVE CONTROL: the same (now-stale) record cannot land a second time — proves the
-# CiStarted/Green/land chain actually CASes against real state instead of trusting a
-# batch_file whose version field was never advanced past what cut wrote.
-_lc_land_batch "$vl_ob" 10 sha-verdict-land-again >/dev/null 2>&1
-is "a second _lc_land_batch call against an already-landed batch does not re-apply" \
-    "sha-verdict-land" "$(member_field sp-lc-vland1 delivery merge_sha)"
-
-certify sp-lc-vsettle-e tipVSE
-certify sp-lc-vsettle-r tipVSR
-lc cut batch-verdict-settle --repo fixture-repo --head headVS --base baseVS \
-    --members "sp-lc-vsettle-e:tipVSE,sp-lc-vsettle-r:tipVSR" --actor test >/dev/null
-vs_ob="$TMP/ob-file-verdict-settle"
-cat > "$vs_ob" <<OBFILE
-pr=11
-head=headVS
-base=baseVS
-members=sp-lc-vsettle-e:tipVSE sp-lc-vsettle-r:tipVSR
-opened=1
-branch=batch-verdict-settle
-batch_id=batch-verdict-settle
-version=2
-OBFILE
-_lc_settle_batch "$vs_ob" 11 sp-lc-vsettle-e sp-lc-vsettle-r >/dev/null 2>&1
-is "verdict's _lc_settle_batch walks OPEN -> CI_RUNNING -> ATTRIBUTING -> SETTLED" "SETTLED" \
-    "$(batch_field batch-verdict-settle state)"
-is "...ejecting the named member" "REWORK" "$(member_field sp-lc-vsettle-e bead state)"
-is "...and requeuing the other" "CERTIFIED" "$(member_field sp-lc-vsettle-r bead state)"
-
-# POSITIVE CONTROL: a pre-cutover open-batch record (no batch_id=/version=) is skipped by
-# _lc_land_batch too, exactly like _abandon_open_batch's own guard above — the batch it
-# names is real and OPEN, proving the guard prevented a CAS attempt rather than just
-# finding nothing to act on.
-certify sp-lc-vlegacy tipVLeg
-lc cut batch-verdict-legacy --repo fixture-repo --head headVLeg --base baseVLeg \
-    --members "sp-lc-vlegacy:tipVLeg" --actor test >/dev/null
-vleg_ob="$TMP/ob-file-verdict-legacy"
-cat > "$vleg_ob" <<OBFILE
-pr=12
-head=headVLeg
-base=baseVLeg
-members=sp-lc-vlegacy:tipVLeg
-opened=1
-branch=batch-verdict-legacy
-OBFILE
-_lc_land_batch "$vleg_ob" 12 sha-verdict-legacy >/dev/null 2>&1
-is "a pre-cutover record's batch is untouched by _lc_land_batch (no batch_id to CAS against)" \
-    "OPEN" "$(batch_field batch-verdict-legacy state)"
+# ── sp-o7nbr.3 (retired with verdict.sh, sp-flj4a): the CI-outcome land walk is `queue verdict`'s
+# lc_land now (queue/DESIGN-verdict.md D3), pinned by cargo test -p queue
+# green_with_lifecycle_on_walks_the_batch_to_landed_on_spira_lc; the settle walk retired with
+# verdict-owned attribution (D1).
 
 # ── criterion 5: stack pipelines new members onto an already-OPEN batch ──────────────────
 certify sp-lc-s1 tipS1

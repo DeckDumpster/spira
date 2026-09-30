@@ -5,8 +5,8 @@
 #
 # WRITER, NOT A HAND COPY OF ITS RULE. Earlier versions of this suite wrote the sidecar
 # with a bare printf and read it back with shell mirroring gate.sh's own if/elif — proving
-# only that the test agreed with itself. This drives the real writer (verdict.sh's
-# _attr_eject) and the real reader (gate.sh's own subprocess, via gate-fixture.sh),
+# only that the test agreed with itself. This drives the real writer (the lib.sh calls
+# `queue eject --red --suites` makes) and the real reader (gate.sh's own subprocess, via gate-fixture.sh),
 # so a change to either side that breaks the contract shows up here.
 #
 # This stays in gate-verdict rather than moving to landing-merge-queue (as
@@ -17,7 +17,7 @@
 # sp-wx2tw).
 #
 # tier: T1
-# covers: spira/verdict.sh spira/gate.sh
+# covers: queue/src/* spira/lib.sh spira/gate.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -49,10 +49,8 @@ _maildir_count() {  # _maildir_count <mailbox-dir> -> files in new/ + cur/
     printf '%d' "$n"
 }
 
-# _attr_eject now blocks the EJECTED mark unless bead_reopen actually succeeds
-# (sp-vjfv6), so sp-ej1 must exist in a real store for the writer section below —
-# SPIRA_DB_NONE would make every _attr_eject call fail the reopen and never reach
-# the sidecar write this suite exists to check.
+# sp-ej1 exists in a real store so the writer section's bead_reopen is a real reopen
+# against a real bead, not a refusal that happens to leave the sidecar behind.
 testdb_up reopen-queue-eject || { echo "test-reopen-queue-eject: could not build fixture database"; exit 1; }
 printf '{"id":"sp-ej1","title":"t","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
     | testdb_seed
@@ -80,45 +78,35 @@ echo
 is "no eject history: nothing reaches the gate command" "" "$(seen_ejected sp-noeject)"
 
 # ---------------------------------------------------------------------------
-# THE REAL WRITER. verdict.sh's _attr_eject is what the merge queue calls when it ejects a
-# branch; it reopens the bead, marks the landstate EJECTED, and writes the suites CSV to
-# $LANDSTATE/<id>.ejected. SPIRA_DB points at the throwaway testdb fixture (sp-ej1 seeded
-# open, so the reopen is a harmless no-op) rather than nowhere: _attr_eject now blocks the
-# EJECTED mark when bead_reopen fails (sp-vjfv6), so a reopen that cannot succeed would
-# never reach the sidecar write this suite checks. SPIRA_RUN is still the fixture's own RUN
-# (so LANDSTATE here is the same directory gate.sh's subprocess below reads), and SPIRA_MAIL
-# is pinned to that same RUN — not merely inherited via SPIRA_RUN's `:=` default, which never
-# fires once SPIRA_MAIL is already set (HOSTMAIL, above) — so the mail side effect
-# _attr_eject also has lands in this fixture's own mailbox rather than reaching anything real
-# (law-run-in-explicit-minimal-environment).
+# THE REAL WRITER. verdict.sh's _attr_eject is retired (queue/DESIGN-verdict.md D1); a
+# queue eject of a member that broke a test (`queue eject <id> --red --suites <csv>`) is
+# the writer now, and it writes through exactly these two lib.sh functions (queue/DESIGN.md
+# §2.2 eject, lifecycle OFF — seams R2 and R3): land_mark RED, then bead_reopen with the
+# suites, which writes $LANDSTATE/<id>.ejected. SPIRA_DB points at the throwaway testdb
+# fixture (sp-ej1 seeded open, so the reopen is a harmless no-op); SPIRA_RUN is the
+# fixture's own RUN, so LANDSTATE is the directory gate.sh's subprocess below reads.
 # ---------------------------------------------------------------------------
 _hostmail_before="$(_maildir_count "$HOSTMAIL/concierge")"
 (
     export HOME="$HOMEDIR" SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_RUN="$RUN" SPIRA_MAIL="$RUN/mail" \
            SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD"
-    . "$HERE/verdict.sh"
-    _attr_eject sp-ej1 deadbeef test-other.sh 1 repo suite-overlap "" "" "" "" "" "" >/dev/null 2>&1
+    . "$HERE/lib.sh"
+    land_mark sp-ej1 RED deadbeef "ejected" >/dev/null 2>&1
+    bead_reopen sp-ej1 eject-red "" test-other.sh >/dev/null 2>&1
 )
-is "writer: landstate reads EJECTED after _attr_eject" \
-    "EJECTED" "$(cut -d' ' -f1 < "$RUN/landstate/sp-ej1" 2>/dev/null)"
+is "writer: landstate reads RED after the eject" \
+    "RED" "$(cut -d' ' -f1 < "$RUN/landstate/sp-ej1" 2>/dev/null)"
+is "writer: the sidecar names the ejecting suite" \
+    "test-other.sh" "$(cat "$RUN/landstate/sp-ej1.ejected" 2>/dev/null)"
 is "reader: gate.sh's own subprocess is handed the ejected suite" \
     "test-other.sh" "$(seen_ejected sp-ej1)"
-
-# ---------------------------------------------------------------------------
-# MAIL ISOLATION (sp-rya9d, ACCEPTANCE): the ejection mail queue_notify_concierge sends
-# must land in this fixture's own concierge mailbox, and the host sentinel mailbox
-# (HOSTMAIL, standing in for a real production Maildir) must be left exactly as it was.
-# ---------------------------------------------------------------------------
-is "host concierge Maildir is untouched by the fixture's ejection mail" \
+is "host concierge Maildir is untouched by the fixture's eject" \
     "$_hostmail_before" "$(_maildir_count "$HOSTMAIL/concierge")"
-fixture_mail="$(cat "$RUN/mail/concierge/new"/* 2>/dev/null)"
-want "fixture mailbox received the ejection mail" \
-    "spira/sp-ej1 ejected from PR 1 (suite-overlap): test-other.sh" "$fixture_mail"
 
 # ---------------------------------------------------------------------------
 # THE DEFECT (sp-px6ng): a failed re-certification overwrites the EJECTED landstate
 # record with RED, which used to be the ejected suites' only home. The sidecar
-# _attr_eject also wrote must outlive that overwrite.
+# the eject also wrote must outlive that overwrite.
 # ---------------------------------------------------------------------------
 (
     export HOME="$HOMEDIR" SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB_NONE"

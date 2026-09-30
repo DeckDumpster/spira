@@ -11,7 +11,7 @@
 # 7. SPIRA_GH_APP_* keys are in the conf.sh allowlist.
 # 8. The covered scripts call spira_git_push rather than bare git push.
 #
-# covers: spira/git-credential-app.sh spira/lib.sh landing-pass/src/* spira/sending.sh spira/verdict.sh queue/src/* spira/conf.sh
+# covers: spira/git-credential-app.sh spira/lib.sh landing-pass/src/* spira/sending.sh queue/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -178,15 +178,18 @@ echo "8. STATIC CHECK — covered scripts use spira_git_push"
 # =========================================================================
 # landing.sh is the landing-pass binary now: it pushes through lib.sh's spira_git_push via its
 # seam (landing-pass/src/seam.rs Op::Push), which this source grep cannot see.
-for f in sending.sh verdict.sh; do
+for f in sending.sh; do
     # sending.sh's own remote-branch delete moved into lib.sh's spira_reap_landed_branch
     # (sp-jci6o), shared with bead_close_on_land's landing-time reap — spira_git_push is
     # still what it calls, just one hop further away than a literal grep on this file sees.
     #
     # queue.sh is the queue binary now: it pushes through lib.sh's spira_git_push via its
-    # seam R12 (queue/DESIGN.md §7.4), which this source grep cannot see. So does the
-    # batcher, which cuts and pushes what batch.sh once did (sp-vsob2) — batch.sh itself
-    # is deleted (sp-uwhx0), so it is no longer one of the covered scripts here.
+    # seam R12 (queue/DESIGN.md §7.4), which this source grep cannot see — and so does
+    # verdict.sh's settle, which moved into that binary (queue/DESIGN-verdict.md, D4), and
+    # so does the batcher, which cuts and pushes what batch.sh once did (sp-vsob2). Neither
+    # batch.sh nor verdict.sh exists any more (sp-uwhx0, sp-flj4a), so neither is one of
+    # the covered scripts here — sending.sh is the only file left whose push this loop can
+    # still see directly.
     if [ "$f" = "sending.sh" ]; then
         want_sym='spira_git_push|spira_reap_landed_branch'
     else

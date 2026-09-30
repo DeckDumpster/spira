@@ -125,7 +125,6 @@ spira/test-deploy.sh
 spira/test-destroy-branch.sh
 spira/test-doctor-config-files.sh
 spira/test-doctor-gate-compile-check.sh
-spira/test-eject-unattributed.sh
 spira/test-epic-claim-order.sh
 spira/test-escape-classify.sh
 spira/test-express-lane.sh
@@ -191,10 +190,8 @@ spira/test-pre-activate.sh
 spira/test-pr-notify.sh
 spira/test-pr-stall.sh
 spira/test-publish-backlog.sh
-spira/test-queue-eject-mail.sh
 spira/test-queue-flush.sh
 spira/test-queue-land-local.sh
-spira/test-queue-lock-wait.sh
 spira/test-queue-open-batch.sh
 spira/test-queue-ops.sh
 spira/test-queue-owner-mail.sh
@@ -234,14 +231,11 @@ spira/test-tsd-producers.sh
 spira/test-unclaimable.sh
 spira/test-uninstall.sh
 spira/test-units-lint.sh
-spira/test-verdict-replay.sh
-spira/test-verdict.sh
 spira/test-watch-notify.sh
 spira/test-watch-refresh.sh
 spira/test-withdrawn-suites-recert.sh
 spira/test-work-container.sh
 spira/tsd-ingest.sh
-spira/verdict.sh
 
 # NAMED EXCEPTION CLASS (not cutover debt): a test whose job is to police the spira-config
 # door must name the file it polices. sp-a8gna's brief allows "a short named exception list,

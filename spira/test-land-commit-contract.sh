@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-land-commit-contract.sh — the "spira: land <id>" commit message, written by
-# the batcher/verdict.sh/landing.sh, read by lib.sh's landed()/landed_sha() and by
+# the batcher/queue verdict/landing.sh, read by lib.sh's landed()/landed_sha() and by
 # gh-issue-backfill.sh's own ancestry search.
 #
 # gap G4 (docs/test-plan/landing-merge-queue.md section 6): the writer is one literal
@@ -12,7 +12,7 @@
 # CLOSED != LANDED (law-closed-is-not-landed) depends on them agreeing.
 #
 # tier: T2
-# covers: spira/lib.sh spira/gh-issue-backfill.sh spira/verdict.sh landing-pass/src/*
+# covers: spira/lib.sh spira/gh-issue-backfill.sh queue/src/* landing-pass/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -45,7 +45,7 @@ is "landed(): no commit -> not landed" "1" "$?"
 
 # ============================================================================
 echo
-echo "THE WRITER FORM — a real 'spira: land <id>' commit, exactly what the batcher/verdict.sh/landing.sh write:"
+echo "THE WRITER FORM — a real 'spira: land <id>' commit, exactly what the batcher/queue verdict/landing.sh write:"
 # ============================================================================
 git -C "$REPO" commit -q --allow-empty -m "spira: land sp-fix"
 FIX_SHA="$(git -C "$REPO" rev-parse HEAD)"

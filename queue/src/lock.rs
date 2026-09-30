@@ -1,5 +1,5 @@
 //! The per-repo queue lock: `$SPIRA_QUEUE_DIR/<repo>/lock`, an exclusive non-blocking
-//! flock — the same file and the same lock verdict.sh, batch.sh and batcher-cut's
+//! flock — the same file and the same lock queue verdict, batch.sh and batcher-cut's
 //! `try_lock` take, so every writer of a repo's queue state is serialised by one lock.
 
 use std::fs::{self, File, OpenOptions};
@@ -23,7 +23,7 @@ pub fn try_lock(queue_dir: &Path, repo: &str) -> Acquire {
 }
 
 /// The step lock (`<repo>/step.lock`): one stepper per repository. Deliberately NOT the
-/// queue lock — verdict.sh and batch.sh take that one themselves inside a step.
+/// queue lock — queue verdict and batch.sh take that one themselves inside a step.
 pub fn try_step_lock(queue_dir: &Path, repo: &str) -> Acquire {
     try_lock_file(queue_dir, repo, "step.lock")
 }
@@ -64,7 +64,7 @@ mod tests {
         let d = tmpdir("steplock");
         let s = try_step_lock(&d, "spira");
         assert!(matches!(s, Acquire::Held(_)));
-        // a step holding its lock never blocks the queue lock verdict.sh/batch.sh take
+        // a step holding its lock never blocks the queue lock queue verdict/batch.sh take
         assert!(matches!(try_lock(&d, "spira"), Acquire::Held(_)));
         assert!(matches!(try_step_lock(&d, "spira"), Acquire::Busy));
         assert!(matches!(try_step_lock(&d, "other"), Acquire::Held(_)));

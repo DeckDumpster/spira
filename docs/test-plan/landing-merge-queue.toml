@@ -26,3 +26,33 @@ statement = "A `basefail:<repo>:<suite>` bead is gated first, is exempt from the
 reason = "suite test-landing-basefail-select-t1.sh retired in the 2026-09-29 Rust cutover (landing-pass/DESIGN.md §7.4, commit 047e85a23); behaviour now verified by landing-pass unit tests order::tests::basefix_green_only_for_its_own_repository_and_suite and order::tests::base_fix_then_express_then_rest_each_by_priority_then_age"
 date = "2026-09-29"
 bead = "sp-4zqoa"
+
+[[use_case]]
+id = "UC-landing-merge-queue-43"
+tier = "T1"
+statement = "With no open batch, the forge is not called. A pending run within CI max is left alone. A run past CI max (per-repo override honoured) with no recent activity is cancelled, not rerun. A run is aged by max(run start, step activity)."
+
+[use_case.uncovered]
+reason = "suite test-verdict-action.sh retired with verdict.sh (queue/DESIGN-verdict.md, sp-flj4a); behaviour now verified by queue unit tests tests::verdict::classifiers_match_the_table, tests::verdict::no_open_batch_never_calls_the_forge, tests::verdict::pending_waits_while_the_run_is_young_or_progressing_and_cancels_a_stuck_one and real::tests::context_seam_carries_the_verdict_thresholds_with_the_per_repo_override"
+date = "2026-09-30"
+bead = "sp-flj4a"
+
+[[use_case]]
+id = "UC-landing-merge-queue-44"
+tier = "T1"
+statement = "A harness fault or provision fault reruns the workflow and bumps retries, with no eject or bisect. When retries run out, the PR is closed, members return to `CERTIFIED`, and the operator is mailed once."
+
+[use_case.uncovered]
+reason = "suite test-verdict-action.sh retired with verdict.sh (queue/DESIGN-verdict.md, sp-flj4a); behaviour now verified by queue unit tests tests::verdict::harness_fault_reruns_within_the_budget_then_closes_and_returns_members and tests::verdict::classifiers_match_the_table"
+date = "2026-09-30"
+bead = "sp-flj4a"
+
+[[use_case]]
+id = "UC-landing-merge-queue-49"
+tier = "T3"
+statement = "Replays run in parallel up to MAXPAR. A TERM signal logs `interrupted after`."
+
+[use_case.uncovered]
+reason = "behaviour retired, not ported: verdict-owned per-member CI replay attribution and its TERM log went with verdict.sh (queue/DESIGN-verdict.md D1, D6; sp-flj4a) — a queue.forge red goes to batcher judgement-ci; suite test-verdict-replay.sh deleted"
+date = "2026-09-30"
+bead = "sp-flj4a"

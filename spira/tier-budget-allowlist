@@ -303,7 +303,6 @@ test-pr-notify.sh	T1	3.0
 test-pr-stall.sh	T1	4.0
 test-pre-activate.sh	T1	4.0
 test-pve.sh	T1	5.0
-test-queue-eject-mail.sh	T1	22.5
 test-queue-flush.sh	T1	2.0
 test-queue-ops.sh	T1	12.5
 test-queue-protect.sh	T1	2.0
@@ -393,10 +392,7 @@ test-unit-drift.sh	T1	15.0
 test-unit-name.sh	T1	2.0
 test-unit-restart-limits.sh	T1	2.0
 test-units-lint.sh	T0	19.5
-test-verdict-action.sh	T1	5.5
-test-verdict-replay.sh	T3	109.0
 test-verdict-timer.sh	T1	1.5
-test-verdict.sh	T1	119.0
 test-verify-asks.sh	T1	8.5
 test-watch-notify.sh	T2	14.5
 test-watch-refresh.sh	T1	7.5

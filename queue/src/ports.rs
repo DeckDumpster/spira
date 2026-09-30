@@ -34,6 +34,27 @@ pub struct Settings {
     pub transition_pollsec: u64,
     pub transition_maxsec: u64,
     pub preflight_wall_secs: u64,
+    /// The verdict pass's thresholds, as conf.sh resolved them (DESIGN-verdict.md §3).
+    pub verdict: VerdictSettings,
+}
+
+/// `SPIRA_QUEUE_CI_MAXSEC[_<NAME>]`, `SPIRA_QUEUE_CI_IDLE_SEC[_<NAME>]` (already resolved for
+/// the named repository), `SPIRA_QUEUE_INFRA_RETRIES`, `SPIRA_QUEUE_LOCK_WAIT`,
+/// `SPIRA_QUEUE_LOCK_STARVE_MAX`, `SPIRA_INCIDENT_PRIORITY`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerdictSettings {
+    pub ci_maxsec: u64,
+    pub ci_idle_sec: u64,
+    pub infra_retries: u64,
+    pub lock_wait: u64,
+    pub lock_starve_max: u64,
+    pub incident_priority: String,
+}
+
+impl Default for VerdictSettings {
+    fn default() -> Self {
+        VerdictSettings { ci_maxsec: 3600, ci_idle_sec: 600, infra_retries: 2, lock_wait: 90, lock_starve_max: 5, incident_priority: "1".into() }
+    }
 }
 
 /// One repository as lib.sh resolves it (seam R1).
@@ -86,6 +107,9 @@ pub trait Git {
     fn branch_set(&self, repo: &Path, name: &str, sha: &str, force: bool) -> bool;
     /// `branch -D <name>`.
     fn branch_delete(&self, repo: &Path, name: &str) -> bool;
+    /// `branch -D <name>` with `SPIRA_REF_SANCTIONED=1` — the ref guard's consent for a
+    /// `spira/*` deletion (the verdict's own batch branch and stale queue refs).
+    fn branch_delete_sanctioned(&self, repo: &Path, name: &str) -> bool;
     /// `for-each-ref --format='%(refname:short) %(objectname)' <prefix>*`.
     fn branches(&self, repo: &Path, prefix: &str) -> Vec<(String, String)>;
     fn worktree_prune(&self, repo: &Path);
@@ -139,8 +163,9 @@ pub trait Lib {
     fn base_conflict(&self, path: &Path, base: &str, tip: &str) -> bool;
     /// `_pf_gate` under a wall of `wall_secs`: (rc, output); 124 = wall hit.
     fn pf_gate(&self, branch: &str, name: &str, stamp: &str, wall_secs: u64) -> (i32, String);
-    /// R19: `_verdict_settle_publish`: 0 settled-or-waiting, 1 error, 3 red.
-    fn settle_publish(&self, name: &str, path: &Path) -> i32;
+    /// R23: `BEADS_ACTOR=<actor> bdq create <title> --type bug --priority P --labels L
+    /// --body-file <body> --silent` → the new id (None when bd created nothing).
+    fn create_bug(&self, actor: &str, title: &str, priority: &str, labels: &str, body: &str) -> Option<String>;
 }
 
 /// The harness scripts and binaries queue runs as whole programs.
@@ -149,7 +174,13 @@ pub trait Scripts {
     fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String);
     /// `lc_off`: lifecycle_enforce is OFF — the child must not reach spira-lc (real.rs pins
     /// `SPIRA_LIFECYCLE_ENFORCE=0`, the one switch every child reads).
-    fn verdict(&self, repo: &str, lc_off: bool) -> i32;
+    /// `batcher judgement-ci <repo> --suites CSV --members CSV --evidence T --home --run --db`,
+    /// stdout and stderr combined (the verdict reads `id=` off it).
+    fn judgement_ci(&self, bin: &Path, s: &Settings, repo: &str, suites: &str, members: &str, evidence: &str) -> RunOut;
+    /// `testenv suites observe-flake <suite> <sha>`, best-effort.
+    fn observe_flake(&self, suite: &str, sha: &str);
+    /// `mail.sh send operator --from "Spira Queue <queue@spira>" --subject S`, body on stdin.
+    fn mail_operator(&self, subject: &str, body: &str);
     fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool, lc_off: bool) -> i32;
     fn czar_fence(&self, class: &str) -> bool;
     /// `release <args…>` — the release producer, by name on the launcher's PATH, with
@@ -173,6 +204,14 @@ pub trait Forge {
     /// One bounded line (DESIGN.md §5).
     fn pr_comment(&self, forge: &Path, repo: &Path, pr: &str, line: &str);
     fn branch_protect(&self, forge: &Path, repo: &Path, branch: &str) -> bool;
+    /// `check-status <repo> <pr> <branch>` → stdout, or None when the call failed.
+    fn check_status(&self, forge: &Path, repo: &Path, pr: &str, branch: &str) -> Option<String>;
+    /// `run-id <repo> <branch>` → the latest run's id (None when empty or failed).
+    fn run_id(&self, forge: &Path, repo: &Path, branch: &str) -> Option<String>;
+    /// `run-metadata <repo> <run>` → its stdout (empty when it failed).
+    fn run_metadata(&self, forge: &Path, repo: &Path, run: &str) -> String;
+    fn run_cancel(&self, forge: &Path, repo: &Path, run: &str);
+    fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str);
 }
 
 /// spira-lc (the lifecycle machine's CLI).
@@ -185,6 +224,10 @@ pub trait Lc {
     fn cut(&self, batch_id: &str, repo: &str, head: &str, base: &str, members: &str, actor: &str) -> Result<String, (i32, String)>;
     fn abandon_batch(&self, batch_id: &str, state: &str, version: &str, actor: &str, reason: &str) -> Result<(), (i32, String)>;
     fn eject_member(&self, batch_id: &str, bead: &str, state: &str, version: &str, actor: &str, reason: &str) -> Result<(), (i32, String)>;
+    /// `event batch <id> --expect S --version V --actor A --kind K` (one CAS'd event).
+    fn batch_event(&self, batch_id: &str, state: &str, version: &str, actor: &str, kind: &str) -> Result<(), (i32, String)>;
+    /// `land <id> --expect GREEN --version V --actor A --sha S`.
+    fn land_batch(&self, batch_id: &str, version: &str, actor: &str, sha: &str) -> Result<(), (i32, String)>;
     /// A reachability probe (one read against the lifecycle database). Err names why.
     fn probe(&self) -> Result<(), String>;
     /// `list --state IN_DELIVERY`. Err = cannot tell.

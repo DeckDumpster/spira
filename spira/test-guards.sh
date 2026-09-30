@@ -162,8 +162,8 @@ want "UC-safety-fences-01/queue-flush-blocked" '"decision":"block"' "$out"
 out="$(fence_run "/opt/spira/bin/queue stats" SPIRA_AEON=test-aeon)"
 nowant "UC-safety-fences-01/queue-stats-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run "bash spira/verdict.sh push spira" SPIRA_AEON=test-aeon)"
-want "UC-safety-fences-01/verdict-sh-blocked" '"decision":"block"' "$out"
+out="$(fence_run "queue verdict spira" SPIRA_AEON=test-aeon)"
+want "UC-safety-fences-01/queue-verdict-blocked" '"decision":"block"' "$out"
 
 out="$(fence_run "/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x" SPIRA_AEON=test-aeon)"
 nowant "UC-safety-fences-01/blocked-name-as-suite-arg-allowed" '"decision":"block"' "$out"
