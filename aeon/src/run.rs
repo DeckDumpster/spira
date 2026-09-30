@@ -817,7 +817,7 @@ impl<'a> Run<'a> {
                 // launcher's PATH, whose first entries are the release's bin/ and spira/.
                 ("SOP", "sop.sh".into()),
                 ("INCIDENT", "incident.sh".into()),
-                ("ASK", "mail.sh".into()),
+                ("ASK", "mail".into()),
                 ("SUITES", format!("{} suites", brief::TESTENV)),
                 ("TESTENV", brief::TESTENV.into()),
                 ("FOLLOWUP", brief::followup_brief(self.enforce, &bead, &self.s.repo_name)),

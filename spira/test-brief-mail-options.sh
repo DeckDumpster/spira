@@ -3,16 +3,16 @@
 # is a known cmd_send option (law-a-matcher-reads-code-not-prose).
 #
 # tier: T0
-# covers: spira/mail.sh spira/chamber/*.md UC-operator-channel-13
+# covers: mail/src/* spira/chamber/*.md UC-operator-channel-13
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
-MAIL="$HERE/mail.sh"
+MAIL="$HERE/mail"
 CHAMBER="$HERE/chamber"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
-# Extract cmd_send's known --options from mail.sh by scanning its option loop.
+# Extract cmd_send's known --options from mail by scanning its option loop.
 # Returns one option per line, sorted.
 cmd_send_opts() {
     python3 - "$MAIL" <<'PY'
@@ -53,7 +53,7 @@ for o in sorted(opts):
 PY
 }
 
-# Parsed once, not once per brief (coverage-map row 13): mail.sh does not change between
+# Parsed once, not once per brief (coverage-map row 13): mail does not change between
 # the briefs in one suite run, so re-parsing it per file bought nothing but forks.
 KNOWN_OPTS="$(cmd_send_opts)"
 

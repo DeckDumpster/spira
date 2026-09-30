@@ -48,7 +48,7 @@ wantrc "bead_has_label: unparseable JSON fails closed (not poisoned, proceeds)" 
 open_ask_blocker '[{"dependencies":[{"status":"open","labels":["needs-operator"],"dependency_type":"blocks","title":"decide"}]}]' sp-x
 wantrc "open_ask_blocker: open ask-labelled blocks dep IS a blocker (positive control)" 0 $?
 
-# sp-dvsqc: mail.sh wires a non-decision cited bead's ask via `dep relate`, which is
+# sp-dvsqc: mail wires a non-decision cited bead's ask via `dep relate`, which is
 # dependency_type "relates-to" — must NOT be read as a blocker (SEEN RED before the fix).
 open_ask_blocker '[{"dependencies":[{"status":"open","labels":["needs-operator"],"dependency_type":"relates-to","title":"decide"}]}]' sp-x
 wantrc "open_ask_blocker: relates-to edge is NOT a blocker (sp-dvsqc)" 1 $?

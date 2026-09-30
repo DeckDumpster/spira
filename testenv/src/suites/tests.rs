@@ -1,5 +1,5 @@
 //! Contract tests (DESIGN-suites.md §2, §6), one world of fakes per test: the clock, the
-//! lib.sh seam, incident.sh, mail.sh, host-check.sh, the queue and git are traits; the
+//! lib.sh seam, incident.sh, mail, host-check.sh, the queue and git are traits; the
 //! suites, the gate list, the lifecycle file and STATE live in a scratch directory.
 
 use std::cell::{Cell, RefCell};

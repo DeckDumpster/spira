@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # test-mail-dismiss-sweep.sh — deleting an ask mail dismisses the bead it tracked.
 #
-# mail.sh send records, for every operator question/decision that carries a bead, a
-# msgid -> bead line in SPIRA_MAIL_INDEX (spira/mail.sh's _index_record). mail.sh
+# mail send records, for every operator question/decision that carries a bead, a
+# msgid -> bead line in SPIRA_MAIL_INDEX (mail's _index_record). mail
 # sweep-dismissed reads that index and, for each entry whose mail file can no longer be
 # found by message-id anywhere under SPIRA_MAIL, closes the bead with
 # "dismissed by operator (mail deleted) — default taken: <X-Spira-Default>" — unless the
@@ -20,7 +20,7 @@
 # than pass it by accident (law-gates-run-in-a-clean-environment).
 #
 # tier: T2
-# covers: spira/mail.sh spira/conf.sh UC-operator-channel-27
+# covers: mail/src/* spira/conf.sh UC-operator-channel-27
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -43,7 +43,7 @@ export SPIRA_RUN="$TMP/run"
 export SPIRA_OPERATOR_ACTOR="ryan-op"                         # non-default: catches a hardcoded "operator"
 mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_RUN"
 
-MAIL=mail.sh   # invoked by name on the suite's PATH (sp-gypjk)
+MAIL=mail   # invoked by name on the suite's PATH (sp-gypjk)
 run() { "$MAIL" "$@"; }
 
 bead_status() {

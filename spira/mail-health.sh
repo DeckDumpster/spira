@@ -2,7 +2,7 @@
 # mail-health.sh — unread-age check over every registered mailbox.
 # Called from watchd.sh notify.
 #
-# For each mailbox in SPIRA_MAIL_READERS: if mail.sh unread-age exceeds
+# For each mailbox in SPIRA_MAIL_READERS: if mail unread-age exceeds
 # SPIRA_MAIL_UNREAD_AGE, mails the operator once per distinct backlog.
 # State in SPIRA_RUN/mail-health/<mailbox> — the mtime of the oldest
 # unread message when last mailed. Cleared when the mailbox empties so a
@@ -10,7 +10,7 @@
 #
 # Exit 0: nothing to report. Exit 1: mailed. Exit 3: could not check.
 #
-# covers: spira/mail-health.sh spira/mail.sh spira/conf.sh
+# covers: spira/mail-health.sh mail/src/* spira/conf.sh
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/conf.sh"
 
@@ -36,7 +36,7 @@ while IFS= read -r _line; do
     _mb="${_mb%"${_mb##*[![:space:]]}"}"
     [ -z "$_mb" ] && continue
 
-    age="$(mail.sh unread-age "$_mb" 2>/dev/null)" || { err=1; continue; }
+    age="$(mail unread-age "$_mb" 2>/dev/null)" || { err=1; continue; }
 
     sf="${_state_dir}/${_mb}"
 
@@ -56,13 +56,13 @@ while IFS= read -r _line; do
     [ "$prev" = "$key" ] && continue
 
     mkdir -p "$_state_dir" 2>/dev/null
-    count="$(mail.sh count "$_mb" 2>/dev/null || printf '?')"
+    count="$(mail count "$_mb" 2>/dev/null || printf '?')"
     age_m=$(( age / 60 ))
 
     printf '## Note\n%s is not reading its mail (%s message(s), oldest %s minutes unread).\n' \
         "$_mb" "$count" "$age_m" \
     | SPIRA_MAIL_REPEAT_CONSIDERED="mail-health has own dedup" \
-      mail.sh send operator \
+      mail send operator \
         --from "Mail health <health@spira>" \
         --subject "$_mb is not reading its mail" \
         2>/dev/null || { err=1; continue; }

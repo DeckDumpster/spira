@@ -12,7 +12,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 UNIT_DIR="$HERE/../systemd"
 
 echo
-echo "=== Service file: ExecStart invokes mail.sh tidy ==="
+echo "=== Service file: ExecStart invokes mail tidy ==="
 
 SVC="$UNIT_DIR/spira-mail-tidy.service"
 [ -r "$SVC" ] || bad "spira-mail-tidy.service readable" "not found at $SVC"
@@ -22,7 +22,7 @@ if [ -z "$execstart" ]; then
     bad "spira-mail-tidy.service has ExecStart" "absent"
 else
     ok "spira-mail-tidy.service has ExecStart"
-    want "ExecStart calls mail.sh"        "mail.sh"  "$execstart"
+    want "ExecStart calls the mail binary" "bin/mail" "$execstart"
     want "ExecStart calls tidy subcommand" "tidy"    "$execstart"
     want "ExecStart targets operator mailbox" "operator" "$execstart"
 fi

@@ -196,7 +196,7 @@ Precedence as testenv's own (§2.5 of DESIGN.md): environment, then spira.toml t
 | `SPIRA_QUARANTINE_CLEAN_RUNS` | `spira.quarantine_clean_runs` | 10 |
 | `SPIRA_QUARANTINE_MAX_AGE` | `spira.quarantine_max_age` | 604800 |
 | `SPIRA_INCIDENT` | — | `incident.sh` on PATH (sp-gypjk) |
-| `SPIRA_MAIL_CMD` (new) | — | `mail.sh` on PATH (sp-gypjk) |
+| `SPIRA_MAIL_CMD` (new) | — | `mail` on PATH (sp-gypjk) |
 | `LANDSTATE` | — | `$SPIRA_RUN/landstate` |
 | `SPIRA_AEON` | — | non-empty refuses transitions |
 | `SPIRA_GIT_NAME`, `SPIRA_GIT_EMAIL` | — | `spira`, `spira@spira.invalid` |
@@ -323,7 +323,7 @@ a **transition** — never by `list`, `names`, `corpus` or `status`.
 
 **Not seams:** `log` (reimplemented: `<ISO> spira: <msg>`), the suite-state parser (shared
 with the runner), the landstate read (a documented line format), git (subprocess),
-incident.sh, mail.sh, host-check.sh and the queue (whole programs, §5).
+incident.sh, mail, host-check.sh and the queue (whole programs, §5).
 
 ## 5. Collaborators (subprocesses; all behind traits and faked in the tests)
 
@@ -331,7 +331,7 @@ incident.sh, mail.sh, host-check.sh and the queue (whole programs, §5).
 |---|---|---|
 | `git` | transitions | `rev-parse`, `cat-file -e`, `show`, `hash-object -w --stdin`, `read-tree`, `update-index --cacheinfo`, `write-tree`, `commit-tree -F -`, `update-ref` |
 | `incident.sh file <title> -` | observe-flake | env (§3.5), payload on stdin, id on the last stdout line |
-| `mail.sh send operator --from … --subject … [--bead …]` | hygiene | body on stdin |
+| `mail send operator --from … --subject … [--bead …]` | hygiene | body on stdin |
 | `host-check.sh --count-undeclared` / `--count-copying` | status | one number on stdout; 30 s wall |
 | `queue submit <branch>` | transitions | `queue submit`, by name on the launcher's PATH (sp-gypjk; formerly `$SPIRA_QUEUE_BIN`, a sibling of this binary, or `queue.sh`); stdout+stderr to our stderr |
 

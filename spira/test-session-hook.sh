@@ -34,7 +34,7 @@
 #
 # defect: sp-4vp
 # tier: T1
-# covers: spira/install-session-hook.sh spira/hooks/session.sh spira/watchd.sh spira/mail.sh systemd/install.sh systemd/cockpit-ensure.service
+# covers: spira/install-session-hook.sh spira/hooks/session.sh spira/watchd.sh mail/src/* systemd/install.sh systemd/cockpit-ensure.service
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -53,7 +53,7 @@ command -v spira-config >/dev/null 2>&1 || bail "spira-config is not on PATH"
 # earn.
 CLONE="$TMP/clone"
 mkdir -p "$CLONE/spira/hooks"
-cp "$HERE/conf.sh" "$HERE/watchd.sh" "$HERE/install-session-hook.sh" "$HERE/mail.sh" "$CLONE/spira/"
+cp "$HERE/conf.sh" "$HERE/watchd.sh" "$HERE/install-session-hook.sh" "$HERE/mail" "$CLONE/spira/"
 cp "$HERE/inbox-triage.sh" "$CLONE/spira/"
 cp "$HERE/hooks/session.sh" "$CLONE/spira/hooks/"
 
@@ -274,7 +274,7 @@ printf 'From: Gate <gate@spira>\nSubject: A gate passed\nDate: Mon, 01 Jan 2024 
 
 mout="$(hook SessionStart startup)"
 has "the mail count line is printed"   "$mout" "You have 1 unread"
-has "and carries the list command"     "$mout" "mail.sh list concierge --unread"
+has "and carries the list command"     "$mout" "mail list concierge --unread"
 hasnt "no message body is printed"    "$mout" "Body text here"
 hasnt "no subject is printed"         "$mout" "A gate passed"
 # NOTHING MOVES TO cur/. The hook peeks, it does not read.
@@ -292,7 +292,7 @@ has "count grows with more messages" "$mout2" "You have 2 unread"
 rm "$MAIL_DIR/concierge/new/1.msg" "$MAIL_DIR/concierge/new/2.msg"
 mout3="$(hook SessionStart startup)"
 hasnt "zero unread: no mail line"    "$mout3" "You have 0 unread"
-hasnt "and no list command either"   "$mout3" "mail.sh list concierge --unread"
+hasnt "and no list command either"   "$mout3" "mail list concierge --unread"
 
 # NO MONITOR INSTRUCTION FOR MAIL. The count line is informational; the reader opens their
 # mail client themselves.

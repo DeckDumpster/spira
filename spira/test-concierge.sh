@@ -10,7 +10,7 @@
 # section used to skip outright when the live statute book was empty, so a container run
 # and a full run reported the same green for a different number of assertions. It now
 # drives compose_brief through the SPIRA_MEMORIES_CMD seam against a fixture persona and a
-# fixture chamber, always: the mechanism under test (no leftover {{, an executable mail.sh
+# fixture chamber, always: the mechanism under test (no leftover {{, an executable mail
 # and bead.sh, the statute book present, a typo'd core set refusing rather than composing
 # silently) does not depend on what is currently enacted in the real book.
 #
@@ -70,11 +70,11 @@ echo "the brief — composed against a fixture chamber and a fixture statute cac
 
 # A FIXTURE PERSONA, NOT THE SHIPPED ONE — editing chamber/concierge.fayth to drive this
 # would leave the suite one failed assertion away from having corrupted the thing it tests.
-# mail.sh and bead.sh are SYMLINKED IN rather than reimplemented, so "names an executable
+# mail and bead.sh are SYMLINKED IN rather than reimplemented, so "names an executable
 # tool" is checking the real tools under a fixture chamber, not a fixture's stand-ins.
 FX="$TMP/fx"; mkdir -p "$FX/chamber"
 cp "$HERE/chamber/concierge.md" "$FX/chamber/fx.md"
-ln -sf "$HERE/mail.sh" "$FX/mail.sh"
+ln -sf "$(command -v mail)" "$FX/mail"   # the real compiled binary, found on the suite's own PATH (mail is gone, sp-ooh1k)
 ln -sf "$HERE/bead.sh" "$FX/bead.sh"
 cat > "$FX/chamber/fx.fayth" <<'EOF'
 FAYTH_NAME=fx
@@ -96,7 +96,7 @@ if [ -n "$BRIEF" ] && [ -f "$BRIEF" ]; then
     # EVERY PLACEHOLDER, because an unsubstituted one is a command line the session will try
     # to run. The failure arrives hours later as "the concierge does not escalate anything".
     nowant "no placeholder survives rendering"  "{{"          "$B"
-    want   "the brief names the mail path"      "mail.sh send operator"  "$B"
+    want   "the brief names the mail path"      "mail send operator"  "$B"
     mail_path="$(printf '%s\n' "$B" | grep -oE '[^ `(]*mail\.sh' | head -1)"
     if [ -n "$mail_path" ] && command -v "$mail_path" >/dev/null 2>&1; then
         ok "mail path in brief resolves on PATH: $mail_path"

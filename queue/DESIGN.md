@@ -311,7 +311,7 @@ operation (the function name is part of the text, never data).
 | R6 `bead_close_on_land` | `bead_close_on_land <id> <sha>` | close + LANDED + branch reap |
 | R7 `gh_issue_closeout` | `gh_issue_closeout <id> <sha> <repo>` | GitHub issue close-out |
 | R8 `bead_comment` | `bdq comment <id> --stdin` (text piped inside the script) | bdq's retry, czar and fixture logic |
-| R9 `notify` | `queue_notify_concierge <repo> <subject> <body>` | mail.sh wiring |
+| R9 `notify` | `queue_notify_concierge <repo> <subject> <body>` | mail wiring |
 | R10 `event` | `spira_event <kind> - <title> <detail>` | rate-limited events log |
 | R11 `divergence` | `queue_local_check_divergence <repo> <path> <forge> <local>` | one alarm per foreign tip, state file |
 | R12 `push` | `spira_git_push <path> -q <remote> <src:dst>` | GitHub App credentials |

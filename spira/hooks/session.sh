@@ -91,7 +91,7 @@ if [ -n "${SPIRA_CONCIERGE:-}" ]; then
 fi
 
 WATCHD=watchd.sh
-MAIL=mail.sh
+MAIL=mail
 
 # FIRE THE ARCHIVIST ON CLEAR. A clear starts a new session while the previous transcript is
 # still on disk. The turns between the last drift sweep and now are uncovered; this catches

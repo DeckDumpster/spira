@@ -155,7 +155,7 @@ After each `done` line: `_tsd_aeon_session` (tsd family `aeon-session`) and
 | `$SPIRA_RUN/<bead>.lapsed` | w/r/rm | `<quiet_s>\t<last>` written by the heartbeat, consumed by teardown |
 | `$SPIRA_RUN/<bead>.thrash` | w/r/rm | last action, written by the heartbeat, consumed by teardown |
 | `$SPIRA_RUN/<bead>.slain` | r | written by slay.sh |
-| `$SPIRA_RUN/<bead>.operator-wait` | r/rm | written by mail.sh; honoured only if it holds this session's `SESSION_EPOCH` |
+| `$SPIRA_RUN/<bead>.operator-wait` | r/rm | written by mail; honoured only if it holds this session's `SESSION_EPOCH` |
 | `$SPIRA_RUN/worktree/<bead>` | w | the worktree (the sanctioned root) |
 | `$SPIRA_RUN/aeon-empty-gh/` | w | empty `GH_CONFIG_DIR` for the session |
 | `$SPIRA_MAIL/aeon-<bead>/{new,cur,tmp}` | w/rm | per-claim mailbox |

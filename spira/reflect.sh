@@ -67,7 +67,7 @@ if grep -q '^ESCALATE:' <<< "$out"; then
     q="$(grep -m1 '^ESCALATE:' <<< "$out" | sed 's/^ESCALATE: *//')"
     _dflt="$(grep -m1 '^CHECK:' <<< "$out" | sed 's/^CHECK: *//' || echo 'read the diagnosis and decide')"
     # The diagnosis IS the evidence, and it already exists in $out.
-    mail.sh send operator \
+    mail send operator \
         --from "Reflect <reflect@spira>" \
         --subject "$q" \
         --kind question \

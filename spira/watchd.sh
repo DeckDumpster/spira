@@ -1606,7 +1606,7 @@ _wd_ask() {
     [ "$fp" = "$prev" ] && return 0
 
     local _subj="$3" _dflt="$4" _why="$5" _ev="$6"
-    mail.sh send operator \
+    mail send operator \
         --from "Watchd <watchd@spira>" \
         --subject "$_subj" \
         --kind question \

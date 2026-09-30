@@ -46,7 +46,7 @@ CONF="${SPIRA_CONF_FILE:-}"
 # so the one question is whether each name resolves; each missing one is named.
 # --------------------------------------------------------------------------------------
 # The binaries come from deps.toml's release tier — one list, not a second literal here.
-SPIRA_RELEASE_TOOLS="$(spira_deps_list release | tr '\n' ' ')mail.sh gate.sh world.sh"
+SPIRA_RELEASE_TOOLS="$(spira_deps_list release | tr '\n' ' ')mail gate.sh world.sh"
 doctor_check_release_tools() {
     local t missing="" n=0
     for t in $SPIRA_RELEASE_TOOLS; do

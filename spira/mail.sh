@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# mail.sh — Maildir mailboxes for operator/concierge messages.
+# mail — Maildir mailboxes for operator/concierge messages.
 #
-#   mail.sh send <mailbox> --from "<s>" --subject "<s>" [--kind K] [--urgent]
+#   mail send <mailbox> --from "<s>" --subject "<s>" [--kind K] [--urgent]
 #                          [--default D] [--bead ID] [--digest] < body
-#   mail.sh template <kind>              print the kind's body skeleton
-#   mail.sh list <mailbox> [--unread]
-#   mail.sh read <mailbox> [<message>]   prints, moves new -> cur
-#   mail.sh count <mailbox>              number of unread messages
-#   mail.sh unread-age <mailbox>         seconds since oldest unread; empty if none
-#   mail.sh sendmail                     RFC 5322 on stdin; closes tracking bead on reply
-#   mail.sh sweep-dismissed [mailbox]    close asks whose mail was deleted (default operator)
+#   mail template <kind>              print the kind's body skeleton
+#   mail list <mailbox> [--unread]
+#   mail read <mailbox> [<message>]   prints, moves new -> cur
+#   mail count <mailbox>              number of unread messages
+#   mail unread-age <mailbox>         seconds since oldest unread; empty if none
+#   mail sendmail                     RFC 5322 on stdin; closes tracking bead on reply
+#   mail sweep-dismissed [mailbox]    close asks whose mail was deleted (default operator)
 #
 # Send reads its body from stdin under a SPIRA_LOOM_BUDGET_MS deadline — a caller whose
 # write end never closes gets a refusal on stderr, not a silent hang (sop-mail-send-loom-
@@ -59,18 +59,18 @@ _mail_deliver() {
 # _mailbox_valid <mailbox> <cmd> -> 0 if usable, else 1 with a message on stderr. The
 # mailbox is positional, and an option that lands in that slot (a caller's typo, a flag
 # meant for elsewhere) is otherwise a legal directory name: nine calls of the shape
-# `mail.sh list --unread` or `mail.sh list --help` each silently created and then
+# `mail list --unread` or `mail list --help` each silently created and then
 # truthfully reported on an empty mailbox named after the flag. No mailbox is
 # legitimately named with a leading '-'.
 _mailbox_valid() {
     local mailbox="$1" cmd="$2"
     if [ -z "$mailbox" ]; then
-        printf 'mail.sh %s: mailbox required\n' "$cmd" >&2
+        printf 'mail %s: mailbox required\n' "$cmd" >&2
         return 1
     fi
     case "$mailbox" in
         -*)
-            printf 'mail.sh %s: %s: looks like an option in the mailbox slot, not a mailbox name — refusing\n' \
+            printf 'mail %s: %s: looks like an option in the mailbox slot, not a mailbox name — refusing\n' \
                 "$cmd" "$mailbox" >&2
             return 1
             ;;
@@ -86,7 +86,7 @@ _mailbox_exists() {
     local mailbox="$1" cmd="$2" dir
     dir="$(_mail_dir "$mailbox")"
     [ -d "$dir/new" ] && [ -d "$dir/cur" ] && return 0
-    printf 'mail.sh %s: %s: no such mailbox\n' "$cmd" "$mailbox" >&2
+    printf 'mail %s: %s: no such mailbox\n' "$cmd" "$mailbox" >&2
     return 1
 }
 
@@ -432,14 +432,14 @@ cmd_send() {
             --bead)    bead="$2";    shift 2 ;;
             --urgent)  urgent=1;     shift ;;
             --digest)  digest=1;     shift ;;
-            *) printf 'mail.sh send: unknown option: %s\n' "$1" >&2; return 1 ;;
+            *) printf 'mail send: unknown option: %s\n' "$1" >&2; return 1 ;;
         esac
     done
 
     [ -z "$from" ] && [ -n "${SPIRA_MAIL_FROM:-}" ] && from="${SPIRA_MAIL_FROM}"
     local body
     if ! body="$(_read_body_deadline)"; then
-        printf 'mail.sh send: stdin read exceeded %sms deadline (SPIRA_LOOM_BUDGET_MS) — refusing to hang; ensure the body is piped and stdin is closed\n' \
+        printf 'mail send: stdin read exceeded %sms deadline (SPIRA_LOOM_BUDGET_MS) — refusing to hang; ensure the body is piped and stdin is closed\n' \
             "${SPIRA_LOOM_BUDGET_MS:-1500}" >&2
         return 1
     fi
@@ -548,9 +548,9 @@ cmd_send() {
 
 cmd_template() {
     local kind="${1:-}"
-    [ -z "$kind" ] && { printf 'mail.sh template: kind required\n' >&2; return 1; }
+    [ -z "$kind" ] && { printf 'mail template: kind required\n' >&2; return 1; }
     if ! _kind_exists "$kind"; then
-        printf 'mail.sh template: unknown kind: %s\n' "$kind" >&2
+        printf 'mail template: unknown kind: %s\n' "$kind" >&2
         return 1
     fi
     _kind_template "$kind"
@@ -594,7 +594,7 @@ cmd_read() {
         for candidate in "$dir/new/$msg" "$dir/cur/$msg"; do
             [ -f "$candidate" ] && { f="$candidate"; break; }
         done
-        [ -z "$f" ] && { printf 'mail.sh read: %s: not found\n' "$msg" >&2; return 1; }
+        [ -z "$f" ] && { printf 'mail read: %s: not found\n' "$msg" >&2; return 1; }
     else
         local oldest="" candidate
         for candidate in "$dir/new"/*; do
@@ -603,7 +603,7 @@ cmd_read() {
                 oldest="$candidate"
             fi
         done
-        [ -z "$oldest" ] && { printf 'mail.sh read: no unread mail in %s\n' "$mailbox" >&2; return 1; }
+        [ -z "$oldest" ] && { printf 'mail read: no unread mail in %s\n' "$mailbox" >&2; return 1; }
         f="$oldest"
     fi
 
@@ -706,7 +706,7 @@ _sendmail_close_bead() {
     local close_out close_rc
     close_out="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$bead" --reason-file - <<< "$reason" 2>&1)"; close_rc=$?
     if [ "$close_rc" -ne 0 ]; then
-        printf 'mail.sh: bead close failed for %s: %s\n' "$bead" "$close_out" >&2
+        printf 'mail: bead close failed for %s: %s\n' "$bead" "$close_out" >&2
         return "$close_rc"
     fi
     if [ "$kind" = "question" ] || [ "$kind" = "decision" ]; then
@@ -726,7 +726,7 @@ for x in d:
             local note_out note_rc
             note_out="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" note "$wid" \
                 "Operator verdict on decision bead $bead: $reason" 2>&1)"; note_rc=$?
-            [ "$note_rc" -eq 0 ] || printf 'mail.sh: note failed for %s: %s\n' "$wid" "$note_out" >&2
+            [ "$note_rc" -eq 0 ] || printf 'mail: note failed for %s: %s\n' "$wid" "$note_out" >&2
         done <<< "$work_ids"
     fi
 }
@@ -752,7 +752,7 @@ cmd_done() {
     local msgid="${1:-}"; shift || true
     local note="${*:-}"
     _mailbox_valid "$mailbox" done || return 1
-    [ -z "$msgid" ] && { printf 'mail.sh done: message id required\n' >&2; return 1; }
+    [ -z "$msgid" ] && { printf 'mail done: message id required\n' >&2; return 1; }
     _mailbox_exists "$mailbox" done || return 1
     local dir; dir="$(_mail_dir "$mailbox")"
     local f="" candidate
@@ -764,7 +764,7 @@ cmd_done() {
             [ -f "$candidate" ] && { f="$candidate"; break; }
         done
     fi
-    [ -z "$f" ] && { printf 'mail.sh done: %s: not found in %s\n' "$msgid" "$mailbox" >&2; return 1; }
+    [ -z "$f" ] && { printf 'mail done: %s: not found in %s\n' "$msgid" "$mailbox" >&2; return 1; }
     [[ "$f" == "$dir/new/"* ]] && { mv "$f" "$dir/cur/$(basename "$f")"; f="$dir/cur/$(basename "$f")"; }
     local base; base="$(basename "$f")"
     local dest
@@ -844,7 +844,7 @@ cmd_tidy() {
     while [ $# -gt 0 ]; do
         case "$1" in
             --dry-run) dry_run=1; shift ;;
-            *) printf 'mail.sh tidy: unknown option: %s\n' "$1" >&2; return 1 ;;
+            *) printf 'mail tidy: unknown option: %s\n' "$1" >&2; return 1 ;;
         esac
     done
 
@@ -1053,7 +1053,7 @@ cmd_sweep_dismissed() {
 }
 
 # Sourced (not executed) by a test that wants _lint_check, _repeat_check, cmd_tidy et al.
-# as callable functions without forking `mail.sh send` per case (spira/testlib.sh consumers).
+# as callable functions without forking `mail send` per case (spira/testlib.sh consumers).
 [ "${BASH_SOURCE[0]}" = "${0}" ] || return 0
 
 case "${1:-}" in
@@ -1071,5 +1071,5 @@ case "${1:-}" in
     ensure)     shift; _mailbox_valid "${1:-}" ensure || exit 2
                 _mail_ensure "$1" ;;
     sweep-dismissed) shift; cmd_sweep_dismissed "$@" ;;
-    *)          printf 'mail.sh: unknown command: %s\n' "${1:-}" >&2; exit 1 ;;
+    *)          printf 'mail: unknown command: %s\n' "${1:-}" >&2; exit 1 ;;
 esac

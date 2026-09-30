@@ -122,7 +122,7 @@ chmod +x "$COCKPIT_DIR/layout.sh"
 # succeeds and execution reaches phase 5, the subject under test.
 for _s in archive.sh archivist.sh auron.sh broker.sh czar.sh \
           gate-check.sh gh-intake.sh groom-trigger.sh maechen-trigger.sh \
-          loom.sh mail.sh pr-notify.sh skew.sh spira-mail-deliver.sh \
+          loom.sh mail pr-notify.sh skew.sh spira-mail-deliver.sh \
           watch-refresh.sh watchtower.sh; do
     printf '#!/usr/bin/env bash\ntrue\n' > "$SPIRA_DIR/$_s"
     chmod +x "$SPIRA_DIR/$_s"

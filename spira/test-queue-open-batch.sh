@@ -73,7 +73,7 @@ esac
 FORGE
 chmod +x "$SH/forge-fixture.sh"
 
-printf '#!/usr/bin/env bash\ntrue\n' > "$SH/mail.sh"; chmod +x "$SH/mail.sh"
+printf '#!/usr/bin/env bash\ntrue\n' > "$SH/mail"; chmod +x "$SH/mail"
 
 cat > "$SH/repo-map" <<RMAP
 $REPONAME | $REPO | queue | origin/main | | |

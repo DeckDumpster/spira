@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-work-container.sh — the aeon semantic layer end to end: a real spira_lifecycle
-# (its own throwaway dolt sql-server), a real bd (testdb.sh), and real mail.sh, driven
+# (its own throwaway dolt sql-server), a real bd (testdb.sh), and real mail, driven
 # through the built `work` client over `spira-lc serve`'s socket exactly as an aeon's
 # restricted environment would reach it.
 #
@@ -13,7 +13,7 @@
 # test-lifecycle-container.sh; testenv-batch.sh already provides the container.
 #
 # tier: T2
-# covers: work/* spira-lc/src/work.rs spira-lc/src/main.rs spira-lc/src/bd.rs spira/bead.sh spira/mail.sh
+# covers: work/* spira-lc/src/work.rs spira-lc/src/main.rs spira-lc/src/bd.rs spira/bead.sh mail/src/*
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

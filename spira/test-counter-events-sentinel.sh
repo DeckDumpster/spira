@@ -145,14 +145,14 @@ run_recurrences() {   # run_recurrences <mode> <ref> <id> -> runs SIN_AT+1 filin
     cat "$ILOG"
 }
 
-# mail.sh stub — records whether an escalation was actually sent.
-cat > "$TMP/mail.sh" <<'MAILEOF'
+# mail stub — records whether an escalation was actually sent.
+cat > "$TMP/mail" <<'MAILEOF'
 #!/usr/bin/env bash
 [ "${1:-}" = send ] || exit 0
 printf 'SENT\n' >> "$MAIL_LOG"
 MAILEOF
-chmod +x "$TMP/mail.sh"
-# incident.sh calls mail.sh by name (sp-gypjk): the stub goes first on PATH.
+chmod +x "$TMP/mail"
+# incident.sh calls mail by name (sp-gypjk): the stub goes first on PATH.
 export PATH="$TMP:$PATH"
 
 # ---- working bd sql: the true positive control -------------------------------------

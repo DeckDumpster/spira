@@ -263,7 +263,7 @@ impl Run<'_> {
                 let aj = if aj.is_empty() { "[]".to_string() } else { aj };
                 let unproven = self.sv("groom_claims_verified", &s(&[&new, &aj, &self.s.session_epoch.to_string()])).text();
                 if !unproven.is_empty() {
-                    self.bead_reopen("no-groom-ask", &format!("Reopened and poisoned: groom log claimed ESCALATED for {unproven} but no ask bead was filed in this session naming those beads. A log claim is not an escalation. File the ask via mail.sh send operator --kind question, then re-run the pass."));
+                    self.bead_reopen("no-groom-ask", &format!("Reopened and poisoned: groom log claimed ESCALATED for {unproven} but no ask bead was filed in this session naming those beads. A log claim is not an escalation. File the ask via mail send operator --kind question, then re-run the pass."));
                     let _ = self.d.bd.bd(&s(&["label", "add", &id, "spira-poison"]));
                     self.ts_print(&format!("{f}: {id} REOPENED and POISONED — groom log claimed ESCALATED for {unproven} but no ask bead found in this session"));
                     groom_silent = true;

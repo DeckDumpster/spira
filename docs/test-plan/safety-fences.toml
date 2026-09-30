@@ -54,7 +54,7 @@ statement = "in an aeon session, `bd update --status closed` in any argv form is
 [[use_case]]
 id = "UC-safety-fences-11"
 tier = "T1"
-statement = "in an aeon session, writes into `SPIRA_MAIL` are refused whether by Bash redirect/mv/cp/touch or by the Write/Edit tools, for both literal and expanded path; `mail.sh send` and reads are allowed"
+statement = "in an aeon session, writes into `SPIRA_MAIL` are refused whether by Bash redirect/mv/cp/touch or by the Write/Edit tools, for both literal and expanded path; `mail send` and reads are allowed"
 
 [[use_case]]
 id = "UC-safety-fences-12"

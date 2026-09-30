@@ -395,7 +395,7 @@ _bead_amend() {
     for pf in "$SPIRA_RUN"/aeon-*-"$id".pid; do
         [ -f "$pf" ] && aeon_alive "$pf" || continue
         [ -d "${SPIRA_MAIL:-}/aeon-$id/new" ] || break
-        SPIRA_MAIL_LINT_CONSIDERED=1 "$BEAD_HOME/mail.sh" send "aeon-$id" \
+        SPIRA_MAIL_LINT_CONSIDERED=1 mail send "aeon-$id" \
             --from "amend <amend@spira>" \
             --subject "Update while you work" <<< "$changed" 2>/dev/null || true
         break

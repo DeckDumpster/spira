@@ -262,7 +262,7 @@ archive() {              # archive <session> <transcript> <at_turn> <ctx> <why> 
         prompt="${prompt//\{\{WHY\}\}/$why}"
         prompt="${prompt//\{\{LINEAGE\}\}/$(lineage_brief "$sid" "$tp")}"
         prompt="${prompt//\{\{ARCHIVIST\}\}/archivist.sh}"
-        prompt="${prompt//\{\{NOTIFY\}\}/mail.sh}"
+        prompt="${prompt//\{\{NOTIFY\}\}/mail}"
         # EMPTY IS "YOU HAVE NO WIKI", NEVER A GUESS, and it substitutes a whole paragraph
         # rather than a path — a brief that rendered as a bare empty string would leave the
         # agent with a sentence pointing at nowhere, which is worse than no sentence. A
@@ -407,7 +407,7 @@ digest_send() {
         fi
         local body
         body="$(printf '## Note\nRecorded today, and where:\n\n'; cat "$DIGEST_PENDING")"
-        if printf '%s\n' "$body" | mail.sh send operator \
+        if printf '%s\n' "$body" | mail send operator \
                 --from "Archivist <archivist@spira>" \
                 --subject "Archivist digest: $n item(s) recorded today" \
                 --kind note --digest; then
@@ -531,7 +531,7 @@ for i in sorted(range(len(drifts)), key=lambda i: drifts[i], reverse=True):
 
         # NO PER-SESSION PUSH. The daily digest (digest_send, called right after write_state
         # ... safe) already reaches the operator with everything filed. A second, once-per-
-        # session --kind note here is not a --digest send, so mail.sh's own lint refuses it —
+        # session --kind note here is not a --digest send, so mail's own lint refuses it —
         # and everything it would have said is already delivered by the two readers of the
         # state file, the status line and the dashboard, the moment it is written.
     done <<< "$sorted_idx"

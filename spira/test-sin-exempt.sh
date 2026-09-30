@@ -46,13 +46,13 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/home" "$TMP/run"
 
 export STUB_BD_STATE="$TMP/state.json" STUB_BD_LOG="$TMP/bd.log" MAIL_LOG="$TMP/mail.log"
-cat > "$TMP/home/mail.sh" <<'M'
+cat > "$TMP/home/mail" <<'M'
 #!/usr/bin/env bash
 [ "${1:-}" = send ] || exit 0
 printf '%s\n' "$*" >> "$MAIL_LOG"
 cat >> "$MAIL_LOG"
 M
-chmod +x "$TMP/home/mail.sh"
+chmod +x "$TMP/home/mail"
 
 file_incident() {  # file_incident <ref> <title> <payload> [VAR=val ...]
     local ref="$1" title="$2" payload="$3"; shift 3

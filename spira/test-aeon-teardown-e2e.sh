@@ -5,7 +5,7 @@
 # NOT need a live session — the disposition precedence table, the spend parser, the
 # yield-headless phrasing table — already lives at T1 in test-aeon-disposition.sh,
 # test-session-result-fields.sh and test-session-yield-headless.sh. What is left here is the
-# WIRING: that aeon.sh's own marks, mail.sh's own marker, and attempts_of's own SQL agree
+# WIRING: that aeon.sh's own marks, mail's own marker, and attempts_of's own SQL agree
 # with what those T1 tables predict.
 #
 # Replaces seven suites (docs/test-plan/aeon-execution.md D8, D12, D15 — sp-g44ke):
@@ -26,7 +26,7 @@
 #
 # defect: sp-egge2 sp-ne93n sp-l7f5 sp-214 sp-ywlti sp-iu10 sp-2a4hd sp-wnsks
 # tier: T3
-# covers: aeon/src/* spira/lib.sh spira/mail.sh UC-aeon-execution-02 UC-aeon-execution-11 UC-aeon-execution-12 UC-aeon-execution-18
+# covers: aeon/src/* spira/lib.sh mail/src/* UC-aeon-execution-02 UC-aeon-execution-11 UC-aeon-execution-12 UC-aeon-execution-18
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -117,7 +117,7 @@ echo
 echo "ROW: decision-blocked — released, no attempt charged"
 # ==========================================================================================
 # Shim creates a decision bead blocking the claimed bead, then exits non-zero — simulating an
-# aeon that filed a question via mail.sh for a decision bead. The dep is added AFTER the bead
+# aeon that filed a question via mail for a decision bead. The dep is added AFTER the bead
 # is claimed (in_progress); bd ready only returns unblocked beads, so a pre-existing dep would
 # prevent the claim entirely.
 cat > "$FA_BIN/claude" <<'SHIM'
@@ -210,9 +210,9 @@ nowant "note does not say Unlanded"      "Unlanded"           "$notes_ow"
 want "ledger says operator-wait" "operator-wait" "$(fa_ledger_line sp-ow-2)"
 
 echo
-echo "mail.sh, driven directly (no aeon run): kind=question writes the operator-wait marker"
+echo "mail, driven directly (no aeon run): kind=question writes the operator-wait marker"
 BEAD_ID=sp-ow-mail SPIRA_RUN="$SPIRA_RUN" bash -c '
-. "$1/mail.sh" 2>/dev/null || true
+. "$1/mail" 2>/dev/null || true
 cmd_send operator --from "Builder <builder@spira>" --subject "fixture question" \
     --kind question --default "proceed without waiting" <<BODY
 ## Question
@@ -224,7 +224,7 @@ Can the fixture answer this itself?
 Proceed without waiting.
 BODY
 ' _ "$HERE" >/dev/null 2>&1
-is "mail.sh send kind=question wrote the marker itself" "yes" \
+is "mail send kind=question wrote the marker itself" "yes" \
    "$([ -e "$SPIRA_RUN/sp-ow-mail.operator-wait" ] && echo yes || echo no)"
 
 # ==========================================================================================
@@ -272,7 +272,7 @@ want "the close is recorded as carrying an operator-wait marker" \
 echo
 echo "ROW: operator-wait marker from a PREVIOUS session is ignored, not read as this one's wait (sp-nw7jb)"
 # ==========================================================================================
-# THE DEFECT THIS GUARDS. Before mail.sh stamped the marker with its writing session's own
+# THE DEFECT THIS GUARDS. Before mail stamped the marker with its writing session's own
 # SESSION_EPOCH, the marker carried no identity at all — any later session on the same bead
 # that exited without closing was released here with NO attempt charged, on the strength of
 # a question a DIFFERENT, earlier session asked. Reproduced by pre-seeding a marker stamped

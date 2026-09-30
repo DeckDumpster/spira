@@ -9,7 +9,7 @@
 # exists to batch the operator's own replies — then wakes and keeps waking on
 # SPIRA_MAIL_WAKE_BACKOFF (last step repeats) for as long as the mailbox has unread mail,
 # logging every attempt. Reading is
-# the ack, not the wake — a mailbox with nothing unread is never retried, and mail.sh's own
+# the ack, not the wake — a mailbox with nothing unread is never retried, and mail's own
 # new/ -> cur/ move is what makes a wake for an already-read message impossible to send
 # twice. Unregistered mailboxes are never watched.
 #
@@ -38,12 +38,12 @@ _wake_loop() {
         count="$(ls "$dir" 2>/dev/null | wc -l | tr -d ' ')"
         [ "${count:-0}" -gt 0 ] || return 0
         local age
-        age="$(mail.sh unread-age "$mailbox" 2>/dev/null)"
+        age="$(mail unread-age "$mailbox" 2>/dev/null)"
         case "$age" in ''|*[!0-9]*) age=0 ;; esac
         attempt=$((attempt+1))
         local wake_err
         # shellcheck disable=SC2086  # wake_cmd may be multi-word
-        if wake_err="$($wake_cmd "You have $count unread messages in $mailbox, oldest ${age}s old — mail.sh list $mailbox --unread" 2>&1)"; then
+        if wake_err="$($wake_cmd "You have $count unread messages in $mailbox, oldest ${age}s old — mail list $mailbox --unread" 2>&1)"; then
             printf '%s spira-mail-deliver: %s: wake sent (attempt %d, %d unread, oldest %ss)\n' \
                 "$(date -u +%FT%TZ)" "$mailbox" "$attempt" "$count" "$age"
         else

@@ -244,7 +244,7 @@ statement = "Concierge resume: the resume id is used only when the recorded cwd 
 [[use_case]]
 id = "UC-operator-channel-41"
 tier = "T1"
-statement = "The composed brief has no surviving {{, names an executable mail.sh and bead.sh (the harness one when SPIRA_WIKI is unset), and carries the statutes. A missing…"
+statement = "The composed brief has no surviving {{, names an executable mail and bead.sh (the harness one when SPIRA_WIKI is unset), and carries the statutes. A missing…"
 
 [[use_case]]
 id = "UC-operator-channel-42"

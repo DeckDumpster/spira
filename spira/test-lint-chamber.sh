@@ -130,7 +130,7 @@ for f in "$HERE"/chamber/*.md; do
         [ -x "$cand" ] || missing="$missing $cand"
     done < <(
         sed -e "s|{{SOP}}|$HERE/sop.sh|g" -e "s|{{INCIDENT}}|$HERE/incident.sh|g" \
-            -e "s|{{ASK}}|$HERE/mail.sh|g" \
+            -e "s|{{ASK}}|$HERE/mail|g" \
             -e "s|{{SUITES}}|testenv suites|g" "$f" |
         grep -oE '(^|[`( ])/[A-Za-z0-9_./-]+\.sh' | tr -d '`( ' | sort -u
     )

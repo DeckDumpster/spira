@@ -215,7 +215,7 @@ impl<'a> Sentinel<'a> {
         o
     }
 
-    /// `[ -x mail.sh ] && mail.sh send operator --from … --subject … --kind question
+    /// `[ -x mail ] && mail send operator --from … --subject … --kind question
     /// --default … <<body` → true only when the ask was accepted.
     pub fn mail(
         &self,
@@ -226,7 +226,7 @@ impl<'a> Sentinel<'a> {
         own_dedup: bool,
     ) -> bool {
         let mut s = Spec::args_owned(
-            "mail.sh",
+            "mail",
             vec![
                 "send".into(),
                 "operator".into(),

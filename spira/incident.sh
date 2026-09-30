@@ -388,7 +388,7 @@ Reopened by dedup — same external ref seen again within ${DEDUP_LOOKBACK_DAYS}
             local _sin_subj="$_prov — recurred $n times$age with no fix holding. Mute it, or keep paging?"
             local _sin_dflt="mute this alert and leave $id open for Ops to work unpaged; keep paging only if you want a decision on every recurrence"
             local _sin_ev; _sin_ev="$(head -c 2000 "$pf" 2>/dev/null || true)"
-            mail.sh send operator \
+            mail send operator \
                 --from "Incident <incident@spira>" \
                 --subject "$_sin_subj" \
                 --kind question \
@@ -518,7 +518,7 @@ MAILEOF
             local _ask_subj="undeclared repo: $(printf '%s' "$ref" | cut -c1-72)"
             local _ask_title="$_prov — $_ask_subj"
             local _ask_dflt="add repo:<name> to $id once you know which checkout owns the code this incident is about"
-            mail.sh send operator \
+            mail send operator \
                 --from "Incident <incident@spira>" \
                 --subject "$_ask_title" \
                 --kind question \

@@ -10,7 +10,7 @@
 # fixture working, not the check being unable to fire at all
 # (law-absence-needs-a-positive-control).
 #
-# REAL MAIL, NOT A STUB: mail.sh runs for real so a test can assert the actual inbox line
+# REAL MAIL, NOT A STUB: mail runs for real so a test can assert the actual inbox line
 # landed in $RUN/mail/concierge/new/*, the same seam test-pr-notify.sh uses for its own
 # "every transition is mailed" assertions.
 #

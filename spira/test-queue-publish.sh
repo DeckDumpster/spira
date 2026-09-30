@@ -9,7 +9,7 @@
 # no-op. The record lives at queue/<repo>/publish, never
 # queue/<repo>/open, so it can never be mistaken for a queue.forge batch in flight.
 #
-# REAL MAIL, NOT A STUB, for the divergence alarm (row 4): mail.sh runs for real so cases 5
+# REAL MAIL, NOT A STUB, for the divergence alarm (row 4): mail runs for real so cases 5
 # and 7 can assert the actual inbox line landed in $RUN/mail/concierge/new/*, naming the
 # foreign commit — the same seam test-publish-backlog.sh uses for its own alarm assertions.
 #
@@ -157,7 +157,7 @@ clear_calls()  { : > "$CALL_LOG"; }
 landing_log()  { cat "$RUN/landing.log" 2>/dev/null; }
 clear_log()    { : > "$RUN/landing.log"; }
 # Scoped to the divergence alarm's own subject line: land-local's ordinary "local landing"
-# notice goes through the same real mailbox once mail.sh is no longer stubbed, and would
+# notice goes through the same real mailbox once mail is no longer stubbed, and would
 # otherwise be indistinguishable from the alarm this suite is asserting on.
 divergence_files() { grep -l '^Subject:.*divergence:' "$RUN"/mail/concierge/new/* 2>/dev/null; }
 mail_count()   { divergence_files | wc -l | tr -d ' '; }

@@ -804,9 +804,9 @@ spira_conf_defaults() {
     : "${SPIRA_MEMORIES_CACHE=$SPIRA_RUN/memories-cache.json}"
     : "${SPIRA_MEMORIES_CACHE_AGE:=300}"
     : "${SPIRA_MAIL:=$SPIRA_RUN/mail}"
-    # MUTES OUTGOING MAIL: mail.sh files a muted message straight into `cur/` (seen), never
+    # MUTES OUTGOING MAIL: mail files a muted message straight into `cur/` (seen), never
     # `new/`, so it is recorded but wakes no reader. Replaces the local-overrides tracked
-    # edit to spira/mail.sh (sp-9hwim, design runtime-is-a-release #5) — same on/off, now a
+    # edit to mail (sp-9hwim, design runtime-is-a-release #5) — same on/off, now a
     # config key instead of an uncommitted patch to a checked-out file. Off by default: mail
     # flows normally unless an operator sets it, in spira.toml or the environment.
     : "${SPIRA_MAIL_MUTE:=0}"

@@ -205,7 +205,7 @@ the template with round-vm template`.
   only from inside that run.
 - **G5 No local mode.** No path runs the batch anywhere but the VM.
 - **G6 One alarm per outage.** The first failure of an outage mails the operator
-  (`$SPIRA_HOME/mail.sh send <mailbox> --kind alert`, mailbox `SPIRA_ROUND_VM_MAIL_MAILBOX`,
+  (`$SPIRA_HOME/mail send <mailbox> --kind alert`, mailbox `SPIRA_ROUND_VM_MAIL_MAILBOX`,
   default `operator`). Later failures are silent until an acquire succeeds, which ends the
   outage.
 - **G7 Nothing cached.** Config and `pve.env` are re-read on every attempt. A fixed
@@ -256,7 +256,7 @@ through the `spira-config` crate (never parsed by hand), then defaulted.
 pub struct Config {
     pub state_dir: PathBuf,          // SPIRA_ROUND_VM_STATE_DIR   / round_vm_state_dir  / $SPIRA_RUN/round-vm
     pub run_dir: PathBuf,            // SPIRA_RUN                  / run                 / required
-    pub spira_home: Option<PathBuf>, // SPIRA_HOME (where mail.sh lives)
+    pub spira_home: Option<PathBuf>, // SPIRA_HOME (where mail lives)
     pub pve_env_path: PathBuf,       // SPIRA_PVE_ENV              / pve_env             / $XDG_CONFIG_HOME/spira/pve.env
     pub ssh_user: String,            // SPIRA_ROUND_VM_SSH_USER    / round_vm_ssh_user   / root
     pub ssh_port: u16,               // SPIRA_ROUND_VM_SSH_PORT    / round_vm_ssh_port   / 22

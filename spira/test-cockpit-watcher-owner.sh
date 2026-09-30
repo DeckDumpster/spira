@@ -100,14 +100,14 @@ case "\${1:-}" in manifest) printf 'view|daemon|%s watch|\n' "$CR" ;; esac
 WDEOF
 chmod +x "$FAKE_HOME/watchd.sh"
 
-# mail.sh: deposits escalation mail so asks() can count it.
-cat > "$FAKE_HOME/mail.sh" <<'MAILEOF'
+# mail: deposits escalation mail so asks() can count it.
+cat > "$FAKE_HOME/mail" <<'MAILEOF'
 #!/usr/bin/env bash
 mkdir -p "$SPIRA_MAIL/operator/new"
 cat > "$SPIRA_MAIL/operator/new/$(date +%s%N)"
 exit 0
 MAILEOF
-chmod +x "$FAKE_HOME/mail.sh"
+chmod +x "$FAKE_HOME/mail"
 
 # ===========================================================================
 echo
@@ -198,8 +198,8 @@ printf '%s\n' "$(( $(date +%s) - 7200 ))" > "$UF"
 run_notify() {
     rm -rf "$MAIL"; mkdir -p "$MAIL"
     rm -f "$WDIR/notify-health.escalated"
-    # The fake home's mail.sh stub and the mock binaries go FIRST on PATH: watchd calls
-    # mail.sh and systemctl by name (sp-gypjk).
+    # The fake home's mail stub and the mock binaries go FIRST on PATH: watchd calls
+    # mail and systemctl by name (sp-gypjk).
     env -i \
         HOME="$TMP/home" \
         PATH="$FAKE_HOME:$MOCK_BIN:$PATH" \

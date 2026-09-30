@@ -18,15 +18,15 @@
 #
 # REGRESSION (law-a-regression-test-must-be-seen-to-fail): against the code before this
 # change, spira_ask_rebase_loop sends --kind question to the operator mailbox, which makes
-# mail.sh file a decision bead labeled needs-operator. Cases 1 and 2 below both fail on that
+# mail file a decision bead labeled needs-operator. Cases 1 and 2 below both fail on that
 # code: the event lands in operator/ instead of concierge/, and a needs-operator bead
 # appears where zero are expected. Verified by hand against the pre-change lib.sh.
 #
-# A REAL mail.sh AND A REAL bd ON A FIXTURE DATABASE — not a stub, so the needs-ryan-bead
-# assertion exercises the actual mechanism that would file one (mail.sh's own kind==question
+# A REAL mail AND A REAL bd ON A FIXTURE DATABASE — not a stub, so the needs-ryan-bead
+# assertion exercises the actual mechanism that would file one (mail's own kind==question
 # tracking-bead logic), rather than a hand-written model of it.
 #
-# covers: spira/lib.sh landing-pass/src/* spira/mail.sh
+# covers: spira/lib.sh landing-pass/src/* mail/src/*
 # hermetic-ok: uses a fixture database and a fixture SPIRA_MAIL dir, no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

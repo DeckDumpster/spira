@@ -11,7 +11,7 @@
 # assertion below is the one that was seen red before spira/lib.sh grew
 # queue_notify_concierge and queue.sh eject started calling it.
 #
-# covers: queue/src/* spira/lib.sh spira/mail.sh spira/conf.sh
+# covers: queue/src/* spira/lib.sh mail/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -70,7 +70,7 @@ queue() {
 }
 
 concierge_unread() {
-    SPIRA_HOME="$SH" SPIRA_MAIL="$MAIL" bash "$SH/mail.sh" count concierge 2>/dev/null
+    SPIRA_HOME="$SH" SPIRA_MAIL="$MAIL" bash "$SH/mail" count concierge 2>/dev/null
 }
 
 echo "test-queue-owner-mail.sh"

@@ -359,7 +359,7 @@ fn close_decision(db: &str, item: &Item, reason: &str) -> Result<(), String> {
     }
 }
 
-/// Run a command for its exit status, feeding it stdin — the seam `mail.sh sendmail` needs,
+/// Run a command for its exit status, feeding it stdin — the seam `mail sendmail` needs,
 /// since a message is a body on stdin and every other command here only ever needs argv.
 fn run_piped(cmd: &str, args: &[&str], stdin_body: &str) -> Result<(), String> {
     use std::io::Write;
@@ -397,10 +397,10 @@ fn run_piped(cmd: &str, args: &[&str], stdin_body: &str) -> Result<(), String> {
 /// the bd-scanning readers that used to notice this write after the fact
 /// (law-answers-need-a-delivery-path).
 fn notify_concierge(id: &str, subject: &str, from: &str, body: &str) -> Result<(), String> {
-    // mail.sh by name (sp-gypjk): the release's spira/ is on the launcher's PATH, which
+    // mail by name (sp-gypjk): the release's bin/ is on the launcher's PATH, which
     // child_path() hands on.
     let msg = format!("From: {from} <{from}@spira>\nSubject: {subject}\nX-Spira-Bead: {id}\n\n{body}\n");
-    run_piped("mail.sh", &["sendmail"], &msg)
+    run_piped("mail", &["sendmail"], &msg)
 }
 
 /// Forward an answer to the concierge, and if the mail itself fails to send, say so on the
@@ -1235,12 +1235,12 @@ mod tests {
             .mail()
             .env("SPIRA_OPERATOR_ACTOR", "optest")
             .env("MAIL_RC", "1")
-            .env("MAIL_ERR", "mail.sh: disk full");
+            .env("MAIL_ERR", "mail: disk full");
         let item = an_alert(&["overseer"]);
         let r = close_decision("/fake/db", &item, "raise the pool to 32");
         assert!(r.is_ok(), "a failed mail must not undo a successful close: {r:?}");
         want(&stub.argv_log(), "comments add sp-a1 [mail to concierge failed");
-        want(&stub.argv_log(), "mail.sh: disk full");
+        want(&stub.argv_log(), "mail: disk full");
     }
 
     /// THE FAILURE-RELAY CASE. `bd close` refuses (e.g. a blocked-issue guard); the pane must
@@ -1328,12 +1328,12 @@ mod tests {
             .env("SPIRA_DB", "/fake/db")
             .env("SPIRA_OPERATOR_ACTOR", "optest")
             .env("MAIL_RC", "1")
-            .env("MAIL_ERR", "mail.sh: disk full");
+            .env("MAIL_ERR", "mail: disk full");
         let item = an_alert(&["alert"]);
         let r = comment(View::Alerts, &item, "known, chasing it");
         assert!(r.is_ok(), "a failed mail must not undo a saved comment: {r:?}");
         want(&stub.argv_log(), "comments add sp-a1 [mail to concierge failed");
-        want(&stub.argv_log(), "mail.sh: disk full");
+        want(&stub.argv_log(), "mail: disk full");
     }
 
     /// `enact`'s other write path: `rule.sh` first, THEN the citation label — never the other

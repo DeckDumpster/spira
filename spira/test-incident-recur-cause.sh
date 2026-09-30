@@ -76,16 +76,16 @@ testdb_up rc_cause || {
 B() { bd -C "$SPIRA_DB" "$@"; }
 mkdir -p "$TMP/run"
 
-# Stub mail.sh so no real escalation fires but sends are recorded.
+# Stub mail so no real escalation fires but sends are recorded.
 mkdir -p "$TMP/inc-home"
 export MAIL_LOG="$TMP/mail.log"
-cat > "$TMP/inc-home/mail.sh" <<'M'
+cat > "$TMP/inc-home/mail" <<'M'
 #!/usr/bin/env bash
 [ "${1:-}" = send ] || exit 0
 printf '%s\n' "$*" >> "$MAIL_LOG"
 cat >> "$MAIL_LOG"
 M
-chmod +x "$TMP/inc-home/mail.sh"
+chmod +x "$TMP/inc-home/mail"
 
 file_incident() {  # file_incident <ref> <title> <payload> [VAR=val ...]
     local ref="$1" title="$2" payload="$3"; shift 3

@@ -78,7 +78,7 @@ echo "2. label-keyed dedup issues 0 bd show calls regardless of open-incident qu
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 export STUB_BD_STATE="$TMP/state.json" STUB_BD_LOG="$TMP/bd.log"
 mkdir -p "$TMP/home" "$TMP/run"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/home/mail.sh"; chmod +x "$TMP/home/mail.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/home/mail"; chmod +x "$TMP/home/mail"
 
 inc() {
     env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
@@ -113,13 +113,13 @@ echo "3. the repo/mail decision (UC-05):"
 # ======================================================================================
 rm -f "$STUB_BD_STATE" "$STUB_BD_LOG"
 : > "$TMP/mail.log"
-cat > "$TMP/home/mail.sh" <<'M'
+cat > "$TMP/home/mail" <<'M'
 #!/usr/bin/env bash
 [ "${1:-}" = send ] || exit 0
 printf '%s\n' "$*" >> "$MAIL_LOG"
 cat >> "$MAIL_LOG"
 M
-chmod +x "$TMP/home/mail.sh"
+chmod +x "$TMP/home/mail"
 
 inc_env() {   # inc_env VAR=val [VAR=val ...] -- assignments only; ref comes from one of them
     env -i HOME="$HOME" PATH="$TMP/home:$PATH" \

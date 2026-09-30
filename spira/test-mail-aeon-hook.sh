@@ -2,7 +2,7 @@
 #
 # test-mail-aeon-hook.sh — aeon mail delivery: the PostToolUse hook and aeon:<id> routing.
 # Split out of test-mail-aeon.sh (coverage-map row 11, DEMOTE-TO-T2): neither the hook nor
-# `mail.sh send aeon:<id>` touches a bead store, so this half never pays for testdb_up.
+# `mail send aeon:<id>` touches a bead store, so this half never pays for testdb_up.
 #
 # Acceptance criteria (each seen red first):
 #   (a) message dropped into the aeon's new/ appears in the hook's additionalContext exactly once
@@ -10,7 +10,7 @@
 #   aeon:<id> routing: live mailbox delivers; no mailbox refuses, naming "aeon"
 #
 # tier: T2
-# covers: spira/hooks/aeon-mail-deliver.sh spira/mail.sh UC-operator-channel-11
+# covers: spira/hooks/aeon-mail-deliver.sh mail/src/* UC-operator-channel-11
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -23,11 +23,13 @@ export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_MAIL="$TMP/mail"
 export SPIRA_CONF=""   # prevent reading a real spira.conf
 
-cp "$HERE/mail.sh" "$SPIRA_HOME/"
+
+# mail.sh is gone (sp-ooh1k): `run_mail` below calls the compiled `mail` binary by bare
+# name, and the suite's PATH (testenv --with-bins) already carries it.
 cp "$HERE/hooks/aeon-mail-deliver.sh" "$SPIRA_HOME/hooks/"
 HOOK="$SPIRA_HOME/hooks/aeon-mail-deliver.sh"
 
-run_mail() { SPIRA_HOME="$SPIRA_HOME" mail.sh "$@"; }
+run_mail() { SPIRA_HOME="$SPIRA_HOME" mail "$@"; }
 
 # ==========================================================================
 # (e) SEEN RED: empty mailbox hook must have been able to find something — plant
@@ -79,10 +81,10 @@ is  "hook exits 0 when BEAD_ID is empty"   0 "$rc"
 is  "hook is silent when BEAD_ID is empty" "" "$hook_nobid"
 
 # ==========================================================================
-# mail.sh aeon: address routing
+# mail aeon: address routing
 # ==========================================================================
 echo
-echo "mail.sh aeon: address routing"
+echo "mail aeon: address routing"
 
 ALIVE_BID="alive-bead-$$"
 mkdir -p "$SPIRA_MAIL/aeon-$ALIVE_BID/new" "$SPIRA_MAIL/aeon-$ALIVE_BID/cur" "$SPIRA_MAIL/aeon-$ALIVE_BID/tmp"

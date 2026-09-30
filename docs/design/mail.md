@@ -60,15 +60,15 @@ choice), `question`, `note` and `suit`. An urgent message of any kind must also 
 `## Why it is urgent`. Tightening a kind the operator finds unhelpful is an edit to its file,
 never to code.
 
-## `spira/mail.sh` — the one door
+## `mail` — the one door
 
-    mail.sh send <mailbox> --from "<sender>" --subject "<s>" --kind K [--urgent] [--bead ID] < body
-    mail.sh template <kind>                 print the kind's body skeleton to fill
-    mail.sh list <mailbox> [--unread]       one line per message: sender, subject, age
-    mail.sh read <mailbox> [<message>]      prints, and moves new -> cur
-    mail.sh count <mailbox>                 number of unread messages
-    mail.sh unread-age <mailbox>            seconds since the oldest unread message; empty if none
-    mail.sh sendmail                        RFC 5322 on stdin — the mail client's outgoing command
+    mail send <mailbox> --from "<sender>" --subject "<s>" --kind K [--urgent] [--bead ID] < body
+    mail template <kind>                 print the kind's body skeleton to fill
+    mail list <mailbox> [--unread]       one line per message: sender, subject, age
+    mail read <mailbox> [<message>]      prints, and moves new -> cur
+    mail count <mailbox>                 number of unread messages
+    mail unread-age <mailbox>            seconds since the oldest unread message; empty if none
+    mail sendmail                        RFC 5322 on stdin — the mail client's outgoing command
 
 **Send refuses**, naming the rule:
 
@@ -86,7 +86,7 @@ type, repo, branch, and the close reason or last note — before the producer's 
 id the store can't resolve renders `unresolved: <id>`; the send still succeeds
 (`law-a-bead-reference-carries-its-details`).
 
-**No other writer.** Every sender — incident, watchd, suites, sessions — calls `mail.sh send`.
+**No other writer.** Every sender — incident, watchd, suites, sessions — calls `mail send`.
 A `PreToolUse` fence refuses an agent writing into `SPIRA_MAIL` by any other path, alongside
 the existing fence on a hand-rolled `bd create`.
 
@@ -96,7 +96,7 @@ A reader registers for a mailbox in `SPIRA_MAIL_READERS` (`<mailbox>=<wake comma
 per line; the concierge's wake command is `concierge.sh wake`).
 `spira-mail-deliver.service` watches `new/` of every registered mailbox with `inotifywait`.
 On an arrival it waits `SPIRA_MAIL_SETTLE` (default 2s) for a burst to finish, then runs that
-mailbox's wake command with one line: **"You have N unread messages — mail.sh list <mailbox>
+mailbox's wake command with one line: **"You have N unread messages — mail list <mailbox>
 --unread"**. If the reader is not running the wake fails quietly; the mail stays unread.
 
 `SPIRA_WAKE` types the text into the concierge's tmux pane. If the operator is locally
@@ -109,15 +109,15 @@ and marks nothing read. It prints no Monitor instructions.
 
 ## Health
 
-One check, on the existing notify timer, over every registered mailbox: `mail.sh unread-age`
+One check, on the existing notify timer, over every registered mailbox: `mail unread-age`
 above `SPIRA_MAIL_UNREAD_AGE` (default 1800) mails the operator once per distinct backlog —
 "<reader> is not reading its mail". Cleared when the mailbox is empty.
 
 ## The operator's side
 
 - **Reading.** aerc on the `operator` Maildir. The harness ships an example
-  `aerc/accounts.conf` and `aerc/binds.conf`; `outgoing` is `mail.sh sendmail`.
-- **Answering.** A reply goes through `mail.sh sendmail`: it closes the tracking bead with the
+  `aerc/accounts.conf` and `aerc/binds.conf`; `outgoing` is `mail sendmail`.
+- **Answering.** A reply goes through `mail sendmail`: it closes the tracking bead with the
   reply's first paragraph as the verdict (or executes `uphold` / `retire` / `amend: …` for a
   suit), then delivers the reply to the original sender's mailbox, or to `concierge` when the
   sender has none. A key binding sends "accept default".
@@ -130,21 +130,21 @@ the attention pane from the cockpit layout, and the Monitor guidance from the co
 
 ## Work breakdown
 
-1. `mail.sh`: store, send with the fixed lint, list, read, count, unread-age.
+1. `mail`: store, send with the fixed lint, list, read, count, unread-age.
 2. Kinds as data: the kinds directory, `template`, and per-kind validation in `send`.
 3. The delivery daemon over registered mailboxes, with the count-only wake.
 4. The session hook prints the unread count.
 5. The unread-age health check over registered mailboxes.
-6. Senders move to `mail.sh send`: every `ask.sh` caller migrated, `ask.sh` deleted.
-7. Replies: `mail.sh sendmail`, verdict execution, aerc example config.
-8. The fence: writes into `SPIRA_MAIL` only through `mail.sh`.
+6. Senders move to `mail send`: every `ask.sh` caller migrated, `ask.sh` deleted.
+7. Replies: `mail sendmail`, verdict execution, aerc example config.
+8. The fence: writes into `SPIRA_MAIL` only through `mail`.
 9. Retirement of the answers watcher, the attention pane and Monitor guidance.
 
 ## Test strategy
 
 Every suite runs through `testenv-batch.sh` and plants its offender before trusting silence.
 
-- `mail.sh`: delivery is atomic (no partial file is ever listed); read moves new to cur;
+- `mail`: delivery is atomic (no partial file is ever listed); read moves new to cur;
   count and unread-age are right with zero, one and many messages; every lint rule refuses a
   planted offender and names itself, and the override is recorded in the header.
 - Kinds: an unknown kind, a missing header and an empty section are each refused; editing a
@@ -155,7 +155,7 @@ Every suite runs through `testenv-batch.sh` and plants its offender before trust
 - Replies: a fixture reply closes its bead with the first paragraph, executes each suit
   verdict, and lands in the sender's mailbox or the concierge's.
 - Migration: no caller of `ask.sh` remains (a grep that is first shown to find a planted one).
-- The fence refuses a direct write into a mailbox and allows `mail.sh`.
+- The fence refuses a direct write into a mailbox and allows `mail`.
 
 ## Dependencies
 
