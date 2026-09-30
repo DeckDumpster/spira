@@ -140,9 +140,39 @@ cat > "$SHIM/spira-config" <<EOF
 printf 'spira-config %s\n' "\$*" >> "\$WR_EXECLOG"
 exec $REAL_SPIRA_CONFIG "\$@"
 EOF
+# `watchd`'s own conf.sh seam needs ordinary coreutils conf.sh itself reaches for —
+# `dirname`/`basename`, to resolve the spira.toml cache beside a pinned SPIRA_CONF — which
+# the ORIGINAL bash's own single, pre-narrowing sourcing of conf.sh also needed, but never
+# under this restricted PATH: it ran before `PATH="$SHIM"` took effect. Silent, not logged
+# (unlike systemctl/stat/mkdir/watchd above): `watchd`'s own seam redirects conf.sh's
+# sourcing to /dev/null, so a missing `dirname` here produced no "command not found" this
+# suite's own tripwire could see — it silently turned `$(dirname "$conf")/spira.toml` into
+# `/spira.toml`, the toml cache was never found, and conf.sh re-derived every value from
+# its own XDG defaults instead of the fixture's $CONF.
+cat > "$SHIM/dirname" <<EOF
+#!/bin/bash
+exec $(command -v dirname) "\$@"
+EOF
+cat > "$SHIM/basename" <<EOF
+#!/bin/bash
+exec $(command -v basename) "\$@"
+EOF
+# `git` (repo-map candidate discovery, _spira_repo_map_candidate) and `python3` (deps.toml
+# validation): also reached by watchd's own conf.sh resolution now, same reason as
+# dirname/basename above — never about the database, so not a tripwire for THIS suite's
+# actual concern. The bash's single, pre-narrowing sourcing paid this cost unobserved too;
+# it is only visible now because a real subprocess re-pays it under this restricted PATH.
+cat > "$SHIM/git" <<EOF
+#!/bin/bash
+exec $(command -v git) "\$@"
+EOF
+cat > "$SHIM/python3" <<EOF
+#!/bin/bash
+exec $(command -v python3) "\$@"
+EOF
 # THE TRIPWIRES. A staleness check that queried the store would be the very failure it
 # exists to detect, so the programs that could reach one are present, loud and fatal.
-for f in bd dolt git python3 date; do
+for f in bd dolt date; do
     cat > "$SHIM/$f" <<'EOF'
 #!/bin/bash
 printf 'FORBIDDEN %s %s\n' "${0##*/}" "$*" >> "$WR_EXECLOG"
@@ -183,19 +213,6 @@ runpass() {
 }
 acted()  { tr '\n' ' ' < "$ACT"; }
 execs()  { grep -cE '^(systemctl|stat|mkdir|watchd|FORBIDDEN)' "$EXECLOG" 2>/dev/null || true; }
-
-# WARM THE TOML CACHE ONCE, OUTSIDE ANY COUNTED PASS. `watchd`'s own conf.sh seam converts
-# $CONF (a legacy spira.conf-format fixture) to a cached spira.toml beside it the first time
-# anything sources conf.sh with SPIRA_CONFIG_WRITE=1 (sp-48f6g: needed since watchd, a
-# compiled binary in the release's bin/, can never make $SPIRA_HOME equal a fixture's own
-# $SPIRA_PROD the way the bash watchd.sh's BASH_SOURCE-relative sourcing did). That
-# conversion is real work conf.sh does once — costing at least one `date` call — and every
-# `runpass` below runs `watchd manifest` under the shim-restricted PATH, where a `date`
-# call would trip the FORBIDDEN tripwire and inflate the exec count. Warmed here, under the
-# real PATH, before the log that counts execs even exists, the cached toml is found instead
-# of reconverted on every subsequent call.
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_WATCHERS="$MAN" \
-    "$REAL_WATCHD" manifest >/dev/null 2>&1 || true
 
 echo "the positive control — nothing has changed, and the check looked anyway"
 reset_mtimes; fresh_show
