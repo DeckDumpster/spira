@@ -67,6 +67,10 @@ pub struct Settings {
     pub round_members: u64,
     pub run_id: String,
     pub scratch_slots: usize,
+    /// sp-t26yx: a slot on the scratch root needs this much free there, and — on a tmpfs —
+    /// this much MemAvailable; otherwise the run is refused (`scratch-short`).
+    pub scratch_min_free_mib: u64,
+    pub scratch_min_mem_mib: u64,
     /// DESIGN.md §11.2: warm slots tried under `--deadline` (0 = no warm path).
     pub warm_slots: usize,
     /// DESIGN.md D9: setup's share of `--deadline`, percent, clamped to 10..=90.
@@ -200,6 +204,12 @@ impl Settings {
                 .or_else(|| src.get("SPIRA_BATCH_RUN_ID", None))
                 .unwrap_or_else(|| format!("local-{now}")),
             scratch_slots: src.num("SPIRA_TESTENV_SCRATCH_SLOTS", None).unwrap_or(4),
+            scratch_min_free_mib: src
+                .num("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB", None)
+                .unwrap_or(4096),
+            scratch_min_mem_mib: src
+                .num("SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB", None)
+                .unwrap_or(8192),
             warm_slots: src.num("SPIRA_TESTENV_WARM_SLOTS", None).unwrap_or(3),
             setup_share: src
                 .num("SPIRA_TESTENV_SETUP_SHARE", None)

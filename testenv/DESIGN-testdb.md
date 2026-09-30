@@ -51,6 +51,13 @@ diagnostics on stderr; exit 0 success, 1 failure, 2 usage.
 `R` defaults to `$TESTDB_ROOT`, else `/var/tmp/spira-testdb`. It must have **no `.dolt`
 ancestor** (bd refuses to init under one), which is why it is not `$SPIRA_TESTDB_DATA`.
 
+**Inside testenv `R` is `/tmp/spira-testdb`, a tmpfs (sp-t26yx, §2.5).** testenv sets
+`TESTDB_ROOT` and `TESTDB_REQUIRE_TMPFS=1` for the template build and in every server-mode
+suite's environment; with `TESTDB_REQUIRE_TMPFS=1`, `template` and `up` refuse a root whose
+nearest existing ancestor is not a tmpfs (`statfs` magic `0x01021994`), so a throwaway
+database can never silently fsync to the host disk again. A refused template is the
+existing embedded fallback, logged.
+
 ### 2.1 Template
 
 `R/template-<key>/` where `key` = the first 16 hex of sha256 over the canonical path, size
@@ -94,8 +101,11 @@ R/fx-<name>/                 name = sptest_<tag>_<epoch>_<pid>
   (`setsid`), stdin `/dev/null`, stdout and stderr to `server.log`, every inherited fd ≥ 3
   closed — a server holding the caller's `$(…)` pipe or a suite's lock fd hangs the caller.
   No CPU quota and no nice: it runs in the suite's own cgroup, under the batch's.
-* **Ready** means a TCP connect succeeds while the recorded pid is still alive, within
-  30 s.
+* **Ready** means the server sends its MySQL protocol-10 greeting (first packet, sequence 0,
+  payload byte `0x0a`) on a fresh connection while the recorded pid is still alive, within
+  30 s; each attempt's connect and read are bounded (200 ms, 500 ms). A bare TCP connect is
+  not readiness: the kernel completes the handshake for a listening socket before the
+  server accepts (sp-t26yx).
 * **Process identity.** A pid is ours only while `/proc/<pid>/cmdline` still names
   `sql-server` and this fixture's `config.yaml`; a zombie (`State Z`) counts as gone. We
   never signal a pid we cannot so identify (never kill a derived pid).
@@ -193,6 +203,32 @@ Measured inside the testenv image, idle: `bd --version` 81 ms (Go package init a
 206 ms, against embedded 254–287 ms and 408 ms. For the six suites (346 calls, ~106 s of
 non-bd wall) the idle floor is ~48 s of bd, a share of ~31 %; 20 % would need ≤ 75 ms per
 call, below `bd --version` itself.
+
+### 2.5 Test databases never touch the host disk (sp-t26yx)
+
+**The fault.** Under concurrent gate load (2026-09-30, sp-9thdw) the template build failed
+`bd init (server) → [mysql] … i/o timeout / failed to create database: invalid connection`,
+and the embedded fallback then overran the setup share. It is **not** a readiness race, a
+port collision or an fd limit: `packets.go:58 read` is a read on an *established* connection
+— bd's CREATE DATABASE — and bd's pool read timeout is 10 s. Dolt's CREATE DATABASE fsyncs
+its new store; with `R` on the container overlay (`/var/tmp`, the host's ext4 on a QEMU
+virtual disk at 66–99 % utilisation, IO pressure `full` 30–70 %), each fsync queued behind
+the host's writeback.
+
+**Measured, same host, same minutes** (`testenv testdb template`, real bd 1.2.1 and dolt
+2.2.3, alternating roots, IO pressure `full` avg10 16–39 %):
+
+| root | runs | failed (`i/o timeout`) | wall |
+|---|---|---|---|
+| ext4 (`/var/tmp`) | 4 | 4 | 15.6–23.2 s |
+| tmpfs (`/tmp`) | 4 | 0 | 4.9–5.5 s |
+
+**Decision.** Durability of a database that is deleted at the end of its suite is pure cost,
+so it is not bought: `R` is on the container's tmpfs (`podman run --systemd=true` mounts
+`/tmp` as tmpfs). The fixture is CPU/memory bound; the host disk is out of its path.
+*Rejected:* raising bd's read timeout (`BEADS_DOLT_POOL_READ_TIMEOUT`) or the setup share —
+both move the knee and keep the database IO-bound; a shared long-lived server — the
+isolation §1 exists for.
 
 ## 3. Non-goals
 

@@ -252,7 +252,51 @@ fn detach(cmd: &mut Command) {
 
 // ---- the server ----------------------------------------------------------------------
 
-/// Start `dolt sql-server` for `data` on `port`; returns its pid once it accepts.
+/// Is a MySQL server answering on `addr`: the connection is accepted AND the server sends
+/// its protocol-10 greeting. A bare TCP connect is not readiness — the kernel completes the
+/// handshake for a listening socket before the server calls accept (sp-t26yx). Bounded per
+/// attempt; the caller's overall [`READY_TIMEOUT`] is unchanged.
+pub fn greets(addr: &SocketAddr) -> bool {
+    use std::io::Read;
+    let Ok(mut s) = TcpStream::connect_timeout(addr, Duration::from_millis(200)) else {
+        return false;
+    };
+    let _ = s.set_read_timeout(Some(Duration::from_millis(500)));
+    let mut head = [0u8; 5];
+    s.read_exact(&mut head).is_ok() && is_greeting(&head)
+}
+
+/// The first five bytes of a MySQL packet stream: a 3-byte length, sequence 0, then the
+/// payload's first byte, 0x0a for a protocol-10 handshake (0xff is an error packet — e.g.
+/// too many connections — which is not ready).
+pub fn is_greeting(head: &[u8; 5]) -> bool {
+    let len = u32::from(head[0]) | u32::from(head[1]) << 8 | u32::from(head[2]) << 16;
+    len > 0 && head[3] == 0 && head[4] == 0x0a
+}
+
+/// Is `p` (or its nearest existing ancestor) on a tmpfs? A test database is thrown away, so
+/// its fsyncs are pure cost; on a disk-backed root they queue behind the host's writeback
+/// and a `bd init` overran bd's 10 s read timeout under load (sp-t26yx).
+pub fn on_tmpfs(p: &Path) -> bool {
+    const TMPFS_MAGIC: i64 = 0x0102_1994;
+    let mut cur = Some(p);
+    while let Some(d) = cur {
+        if d.exists() {
+            let Ok(c) = std::ffi::CString::new(d.as_os_str().as_encoded_bytes()) else {
+                return false;
+            };
+            // SAFETY: statfs into a zeroed struct we own, on a NUL-terminated path.
+            let mut st: libc::statfs = unsafe { std::mem::zeroed() };
+            let r = unsafe { libc::statfs(c.as_ptr(), &mut st) };
+            #[allow(clippy::unnecessary_cast)]
+            return r == 0 && st.f_type as i64 == TMPFS_MAGIC;
+        }
+        cur = d.parent();
+    }
+    false
+}
+
+/// Start `dolt sql-server` for `data` on `port`; returns its pid once it greets.
 fn start_server(dolt: &Path, data: &Path, port: u16, log: &Path) -> Result<u32, String> {
     let cfg = data.join("config.yaml");
     fs::write(&cfg, render_config(port, data))
@@ -285,7 +329,7 @@ fn start_server(dolt: &Path, data: &Path, port: u16, log: &Path) -> Result<u32, 
                 "dolt sql-server on port {port} exited before accepting"
             ));
         }
-        if TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() && pid_alive(pid) {
+        if greets(&addr) && pid_alive(pid) {
             return Ok(pid);
         }
         sleep(Duration::from_millis(20));
@@ -757,6 +801,12 @@ pub fn main(args: &[String]) -> i32 {
                 Err(e) => return fail(e),
             };
             let root = root_of(&a);
+            if std::env::var("TESTDB_REQUIRE_TMPFS").as_deref() == Ok("1") && !on_tmpfs(&root) {
+                return fail(format!(
+                    "root {} is not on a tmpfs (TESTDB_REQUIRE_TMPFS=1) — refusing to put a throwaway database on a disk it would fsync to",
+                    root.display()
+                ));
+            }
             let tpl = match ensure_template(&root, &tools) {
                 Ok(t) => t,
                 Err(e) => return fail(e),
