@@ -92,6 +92,7 @@ queue() {
     SPIRA_HOME_REPO="$REPONAME" \
     SPIRA_REPO="$REPO" \
     SPIRA_RUN="$RUN" \
+    SPIRA_MAIL="$RUN/mail" \
     SPIRA_QUEUE_DIR="$QDIR" \
     SPIRA_REPO_MAP="$RMAP" \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
@@ -105,6 +106,7 @@ verdict() {
     SPIRA_HOME_REPO="$REPONAME" \
     SPIRA_REPO="$REPO" \
     SPIRA_RUN="$RUN" \
+    SPIRA_MAIL="$RUN/mail" \
     SPIRA_QUEUE_DIR="$QDIR" \
     SPIRA_REPO_MAP="$RMAP" \
     SPIRA_FORGE="$SH/forge-fixture.sh" \

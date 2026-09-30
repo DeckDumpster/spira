@@ -61,6 +61,7 @@ pb() {
     SPIRA_HOME_REPO=fixlocal \
     SPIRA_REPO="$REPO" \
     SPIRA_RUN="$RUN" \
+    SPIRA_MAIL="$RUN/mail" \
     SPIRA_REPO_MAP="$RMAP" \
     SPIRA_LOCAL_BACKLOG_COUNT="${BKCOUNT:-50}" \
     SPIRA_LOCAL_BACKLOG_AGE="${BKAGE:-10800}" \
