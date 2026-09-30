@@ -88,11 +88,14 @@ reached the bash.
 
 ### The gate command's environment (unchanged list, `env -i`)
 
-`PATH=$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:/usr/local/bin:/usr/bin:/bin:$HOME/.cargo/bin`
-— set outright from `SPIRA_RELEASE` (sp-31gtu; `spira_config::release_path`), never the PATH
-the gate inherited, so a bare tool name is the release's; cargo appended for tree builds.
-`SPIRA_RELEASE` unset is `NO_VERDICT reason=release-unset` before anything runs, and it is
-passed through as `SPIRA_RELEASE`. `HOME`, `TERM=dumb`, `SPIRA_GATE_REPO`, `SPIRA_GATE_REPO_NAME`,
+`PATH=$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:/usr/local/bin:/usr/bin:/bin:<SPIRA_PATH tail>`
+— set outright from `SPIRA_RELEASE` and the box's own tool tail, `SPIRA_PATH`
+(`spira_config::release_path_from_env_with_tail`, sp-c7b85, amending sp-31gtu's
+`release_path_from_env`, which carried no tail: cargo, for tree builds, lives in the tail,
+not the release), never the PATH the gate inherited, so a bare tool name is the release's
+first and the box's own tools after the system directories. Either `SPIRA_RELEASE` unset or
+a tail entry inside a release or a checkout is `NO_VERDICT reason=release-unset` before
+anything runs, and `SPIRA_RELEASE` is passed through. `HOME`, `TERM=dumb`, `SPIRA_GATE_REPO`, `SPIRA_GATE_REPO_NAME`,
 `SPIRA_GATE_BRANCH`, `SPIRA_GATE_BASE`, `SPIRA_GATE_SELECT_HEAD=<branch>`, `SPIRA_GATE_FILES`,
 `SPIRA_GATE_HOST_CORES`, `SPIRA_GATE_EJECTED_SUITES`, `SPIRA_GATE_ALL` (default 0),
 `SPIRA_GATE_SUITES` (default on), `SPIRA_CERTIFY_ALWAYS_COVERS`, `SPIRA_BATCH_MAXPAR`,

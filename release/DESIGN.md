@@ -130,7 +130,11 @@ sp-31gtu), `SPIRA_PROD_COCK` is
 `SPIRA_TESTDB_DATA`, `SPIRA_TESTDB_PORT`, `SPIRA_SNAP_STALE_S`, `DOLT`) come from the
 environment, else `spira.toml`, and `DOLT` from `PATH`. **A key a template uses with no
 value is a refusal** naming the key and the template; render.py silently wrote an empty
-string.
+string. **`SPIRA_PATH_TAIL`** is the one exception to that refusal (sp-c7b85): the box's own
+tool-directory tail (`spira.path`, or its `SPIRA_PATH` environment override), appended after
+`Environment=PATH=`'s system directories — empty when nothing is configured, which is the
+ordinary case, not a refusal. `host_values` itself refuses (naming the entry) before
+rendering anything when a tail segment resolves inside a release or a checkout.
 
 **Live aeons.** `activate.sh` refused while aeons ran. Activation here never restarts an
 aeon (they are transient units with no file in the unit directory) and never restarts a
