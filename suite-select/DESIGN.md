@@ -189,5 +189,11 @@ Environment (the gate command's own, `gate/DESIGN.md`): `SPIRA_GATE_REPO` (defau
 * **Order.** The corpus is sorted by bytes (bash globbed in the caller's locale).
 * **Paths are not word-split.** The bash split changed-file lists on whitespace, so a path
   with a space was two paths; a rename (`R100\told\tnew`) became both paths, which is kept.
+* **Specificity counts the declared tokens.** `gate-budget-select.sh` counted `# covers:`
+  tokens with an unquoted `for _t in $cov`, so a glob token (`aeon/src/*`) was expanded
+  against the gate tree and counted once per matching file: a suite's rank depended on how
+  many files its directory held. Parity on the real tree found it (commit 9a16d5dde: the
+  bash kept 29 suites, this keeps 36 at the same 300 s budget); with `set -f` added to the
+  bash the two cuts are identical.
 * **The report's claim check strips `#function`.** The bash matched `file#func` tokens
   verbatim against paths, so a file claimed only at function level was reported unclaimed.
