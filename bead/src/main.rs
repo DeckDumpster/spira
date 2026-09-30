@@ -10,8 +10,8 @@ use std::process::{Command, Stdio};
 
 use bead::{
     branch_candidate, branch_label, chamber_partitions, incident_blocks_refusal, is_blocks_type,
-    lane_check, lint_judge, non_work_labels, parse_blocks_targets, parse_list_ids, parse_repo_map,
-    parse_show_row, persona_line, repos_section, work_labels, LaneCheck, LaneLabels, RepoRow,
+    lane_check, lint_judge, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
+    persona_line, repos_by_name, repos_section, work_labels, LaneCheck,
 };
 
 fn main() {
@@ -237,17 +237,17 @@ fn mail_send(home: &str, aeon_id: &str, body: &str) {
 }
 
 // =========================================================================================
-// Repo-map / env helpers
+// Repository map / env helpers
 // =========================================================================================
 
-fn read_repo_map_rows() -> Vec<RepoRow> {
+fn load_repos() -> std::collections::BTreeMap<String, spira_config::RepoSection> {
     let path = match env::var("SPIRA_REPO_MAP") {
         Ok(p) if !p.is_empty() => p,
-        _ => return Vec::new(),
+        _ => return std::collections::BTreeMap::new(),
     };
     match std::fs::read_to_string(&path) {
-        Ok(content) => parse_repo_map(&content),
-        Err(_) => Vec::new(),
+        Ok(content) => repos_by_name(&content),
+        Err(_) => std::collections::BTreeMap::new(),
     }
 }
 
@@ -315,14 +315,10 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         i += 1;
     }
 
-    let repo_rows = read_repo_map_rows();
+    let repos = load_repos();
     if let Some(r) = &repo {
-        if !repo_rows.iter().any(|row| &row.name == r) {
-            let valid = repo_rows
-                .iter()
-                .map(|row| row.name.clone())
-                .collect::<Vec<_>>()
-                .join(" ");
+        if !repos.contains_key(r) {
+            let valid = repos.keys().cloned().collect::<Vec<_>>().join(" ");
             let valid = if valid.is_empty() {
                 "<map not found>".to_string()
             } else {
@@ -382,14 +378,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         let lane_override = env::var("SPIRA_BEAD_LANE_OVERRIDE")
             .map(|v| !v.is_empty())
             .unwrap_or(false);
-        let lane_labels = LaneLabels::from_env();
-        if let LaneCheck::Refused(msg) = lane_check(
-            &fayth_labels,
-            &repo,
-            &repo_rows,
-            &lane_labels,
-            lane_override,
-        ) {
+        if let LaneCheck::Refused(msg) = lane_check(&fayth_labels, &repo, &repos, lane_override) {
             eprintln!("{msg}");
             return 2;
         }
@@ -593,7 +582,7 @@ fn cmd_contract(home: &str) -> i32 {
     print!("{}", schema_kinds_passthrough(home));
     println!();
     println!("REPOS");
-    print!("{}", repos_section(&read_repo_map_rows()));
+    print!("{}", repos_section(&load_repos()));
     0
 }
 

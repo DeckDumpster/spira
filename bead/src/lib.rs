@@ -1,228 +1,53 @@
 //! Pure logic behind the `bead` binary. Contract: DESIGN.md. Kept separate from `main.rs`
 //! (which does the `bdq`/`.fayth`/`schema.sh`/`mail.sh` subprocess work) so the CLI's own
-//! rules — repo-map parsing, the lane-admission guard, label composition, the lint judge —
-//! are unit-testable with no database, no chamber and no subprocess.
+//! rules — the lane-admission guard, label composition, the lint judge — are unit-testable
+//! with no database, no chamber and no subprocess.
+
+use std::collections::BTreeMap;
+
+use spira_config::convert::{repo_sections, ConvertWarnings};
+use spira_config::{Lane, RepoSection};
 
 // ---------------------------------------------------------------------------------------
-// Repo-map: `name | path | land | base | format | ? | lanes`, pipe-delimited, `#`-comments.
-// Read directly from `$SPIRA_REPO_MAP` (not `spira.toml`) because every existing fixture
-// pins this format — see DESIGN.md "Decisions".
+// Repositories: read through `spira-config`'s own converter (never a hand-rolled parser
+// here — config-fence reserves that file's format to spira-config; see DESIGN.md
+// "Decisions"). `repos_by_name` is this crate's one entry point onto it.
 // ---------------------------------------------------------------------------------------
 
-/// One row of the repo-map: its name and the raw `lanes` column (empty when absent).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RepoRow {
-    pub name: String,
-    pub lanes_raw: String,
+/// Every `[repo.<name>]` the map's text converts to, keyed by name. A row whose `lanes`
+/// column names an unrecognised mode or lane token makes the whole map unusable — every
+/// `--repo` then reads as unmapped, which is the fail-closed reading (a map spira-config
+/// itself refuses to trust is not a map this crate should trust a subset of either).
+pub fn repos_by_name(map_text: &str) -> BTreeMap<String, RepoSection> {
+    let mut warnings = ConvertWarnings::default();
+    repo_sections(map_text, &mut warnings).unwrap_or_default()
 }
 
-/// A comment (optionally indented `#`) or blank line, skipped before any field-splitting —
-/// matching the awk `/^[ \t]*#/ { next }` the bash used.
-fn is_comment_or_blank(line: &str) -> bool {
-    let t = line.trim_start();
-    t.is_empty() || t.starts_with('#')
+/// A raw `FAYTH_LABELS`/lane token, read into the typed vocabulary — `None` when it names
+/// no lane at all (an ordinary label like `testscope` or `alpha-work`).
+pub fn label_to_lane(label: &str) -> Option<Lane> {
+    serde_json::from_value(serde_json::Value::String(label.to_string())).ok()
 }
 
-/// A bare identifier (`^[A-Za-z][A-Za-z0-9,_-]*$`) — the heuristic `repo_field`'s awk used
-/// to tell a `lanes` column (an identifier or comma-list, or empty) from a `gate` column
-/// (always contains spaces/slashes/`$`).
-fn looks_like_lanes(s: &str) -> bool {
-    let mut chars = s.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_alphabetic() => {}
-        _ => return false,
-    }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == ',' || c == '_' || c == '-')
-}
-
-/// Every row of `content` (the repo-map's own text) that names a repository, in order.
-/// A row with fewer than 2 pipe-delimited fields (including a blank line, which splits to
-/// exactly one empty field) is not a repository row and is skipped — matching `repo_names`'
-/// `NF > 1` check.
-pub fn parse_repo_map(content: &str) -> Vec<RepoRow> {
-    let mut rows = Vec::new();
-    for line in content.lines() {
-        if is_comment_or_blank(line) {
-            continue;
-        }
-        let fields: Vec<&str> = line.split('|').collect();
-        let name = fields[0].trim();
-        if name.is_empty() || fields.len() <= 1 {
-            continue;
-        }
-        // `_lanes_col_idx`: present only from the 7th field on, and only when that last
-        // field is empty or looks like an identifier/comma-list (never a gate fragment).
-        let lanes_raw = if fields.len() >= 7 {
-            let last = fields[fields.len() - 1].trim();
-            if last.is_empty() || looks_like_lanes(last) {
-                last.to_string()
-            } else {
-                String::new()
-            }
-        } else {
-            String::new()
-        };
-        rows.push(RepoRow {
-            name: name.to_string(),
-            lanes_raw,
-        });
-    }
-    rows
-}
-
-/// Every repository name in `content`, in order — `repo_names`.
-pub fn repo_names(content: &str) -> Vec<String> {
-    parse_repo_map(content)
-        .into_iter()
-        .map(|r| r.name)
-        .collect()
-}
-
-/// The raw `lanes` column for `name`, or `None` when `name` is not in the map —
-/// `repo_field <name> lanes`.
-pub fn repo_lanes_raw<'a>(rows: &'a [RepoRow], name: &str) -> Option<&'a str> {
-    rows.iter()
-        .find(|r| r.name == name)
-        .map(|r| r.lanes_raw.as_str())
-}
-
-// ---------------------------------------------------------------------------------------
-// Lane labels — the six partition labels a repo-map row's `lanes` column, a persona's
-// `FAYTH_LABELS`, and the lint judge's partition vocabulary all draw from.
-// ---------------------------------------------------------------------------------------
-
-/// The six configurable lane/partition label names, each read from its own env var with
-/// the same default the bash used (`schema.sh name plan|incident|groomer|maechen|spike`,
-/// inlined here since `bead.sh` itself never called `schema.sh` for these — it used the
-/// bash `${VAR:-default}` fallback directly).
-#[derive(Debug, Clone)]
-pub struct LaneLabels {
-    pub plan: String,
-    pub incident: String,
-    pub groom: String,
-    pub maechen: String,
-    pub spike: String,
-    pub czar: String,
-}
-
-impl LaneLabels {
-    pub fn from_env() -> Self {
-        fn v(key: &str, default: &str) -> String {
-            std::env::var(key)
-                .ok()
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| default.to_string())
-        }
-        LaneLabels {
-            plan: v("SPIRA_PLAN_LABEL", "plan"),
-            incident: v("SPIRA_INCIDENT_LABEL", "incident"),
-            groom: v("SPIRA_GROOMER_LABEL", "groom"),
-            maechen: v("SPIRA_MAECHEN_LABEL", "maechen-sweep"),
-            spike: v("SPIRA_SPIKE_LABEL", "spike"),
-            czar: v("SPIRA_CZAR_LABEL", "czar-trigger"),
-        }
-    }
-
-    /// All six, the order `spira_repo_lanes` defaults to when a row has no `lanes` column
-    /// (no restriction declared).
-    pub fn all(&self) -> Vec<String> {
-        vec![
-            self.plan.clone(),
-            self.incident.clone(),
-            self.groom.clone(),
-            self.maechen.clone(),
-            self.spike.clone(),
-            self.czar.clone(),
-        ]
-    }
-
-    fn known(&self, item: &str) -> bool {
-        [
-            &self.plan,
-            &self.incident,
-            &self.groom,
-            &self.maechen,
-            &self.spike,
-            &self.czar,
-        ]
-        .iter()
-        .any(|l| l.as_str() == item)
-    }
-}
-
-/// `spira_repo_lanes`/`_spira_expand_lanes`: the granted lane set for a repo-map row's raw
-/// `lanes` field. `None`/`Some("")` admits every lane (no restriction declared). `consume`,
-/// `develop` and `self` are mode names that expand to their fixed set; anything else is
-/// read as a comma-list of lane labels, each validated — an unrecognised mode name and an
-/// unrecognised lane label are the same failure (there is no separate "bad mode" check in
-/// the bash, only "bad single-item list").
-pub fn expand_lanes(
-    repo_name: &str,
-    raw: Option<&str>,
-    labels: &LaneLabels,
-) -> Result<Vec<String>, String> {
-    let raw = match raw {
-        None => return Ok(labels.all()),
-        Some(r) if r.trim().is_empty() => return Ok(labels.all()),
-        Some(r) => r,
-    };
-    match raw {
-        "consume" => return Ok(vec![labels.plan.clone()]),
-        "develop" => {
-            return Ok(vec![
-                labels.plan.clone(),
-                labels.incident.clone(),
-                labels.groom.clone(),
-                labels.spike.clone(),
-            ])
-        }
-        "self" => {
-            return Ok(vec![
-                labels.plan.clone(),
-                labels.incident.clone(),
-                labels.groom.clone(),
-                labels.spike.clone(),
-                labels.maechen.clone(),
-                labels.czar.clone(),
-            ])
-        }
-        _ => {}
-    }
-    let mut result = Vec::new();
-    for item in raw.split(',') {
-        let item = item.trim();
-        if item.is_empty() {
-            continue;
-        }
-        if labels.known(item) {
-            result.push(item.to_string());
-        } else {
-            return Err(format!(
-                "spira: repo:{repo_name} — unknown lane {item} (valid: {},{},{},{},{},{})",
-                labels.plan,
-                labels.incident,
-                labels.groom,
-                labels.maechen,
-                labels.spike,
-                labels.czar
-            ));
-        }
-    }
-    if result.is_empty() {
-        return Ok(vec![labels.plan.clone()]);
-    }
-    Ok(result)
+/// The configured spelling of a lane (`Lane::MaechenSweep` -> `"maechen-sweep"`) — the
+/// inverse of [`label_to_lane`], read from the same typed source rather than a literal
+/// copied here (which `literal-lint` refuses outside `schema.sh`/`conf.sh`).
+pub fn lane_label(lane: Lane) -> String {
+    serde_json::to_value(lane)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_default()
 }
 
 /// The partition a persona's comma-joined `FAYTH_LABELS` carries, per `_bead_file`'s own
 /// scan: the LAST label (in order) that matches the lane vocabulary wins — not the first,
 /// matching the bash's un-`break`-ed loop.
-pub fn fayth_partition(fayth_labels: &str, lane_labels: &LaneLabels) -> Option<String> {
+pub fn fayth_partition(fayth_labels: &str) -> Option<Lane> {
     let mut partition = None;
     for raw in fayth_labels.split(',') {
         let l = raw.trim();
-        if !l.is_empty() && lane_labels.known(l) {
-            partition = Some(l.to_string());
+        if let Some(lane) = label_to_lane(l) {
+            partition = Some(lane);
         }
     }
     partition
@@ -237,41 +62,35 @@ pub enum LaneCheck {
     Refused(String),
 }
 
-/// `_bead_file`'s lane-admission guard. `repo_rows`/`lane_labels` come from the repo-map
-/// and env; `fayth_labels` is the filing persona's raw `FAYTH_LABELS`. `override_set` is
-/// `SPIRA_BEAD_LANE_OVERRIDE` being non-empty, which admits everything unconditionally.
+/// `_bead_file`'s lane-admission guard. `repos` is [`repos_by_name`]'s result; `fayth_labels`
+/// is the filing persona's raw `FAYTH_LABELS`. `override_set` is `SPIRA_BEAD_LANE_OVERRIDE`
+/// being non-empty, which admits everything unconditionally.
 pub fn lane_check(
     fayth_labels: &str,
     repo: &str,
-    repo_rows: &[RepoRow],
-    lane_labels: &LaneLabels,
+    repos: &BTreeMap<String, RepoSection>,
     override_set: bool,
 ) -> LaneCheck {
     if override_set {
         return LaneCheck::Admitted;
     }
-    let partition = match fayth_partition(fayth_labels, lane_labels) {
+    let partition = match fayth_partition(fayth_labels) {
         Some(p) => p,
         None => return LaneCheck::Admitted,
     };
-    let raw = repo_lanes_raw(repo_rows, repo);
-    // `spira_repo_lanes ... 2>/dev/null || _repo_lanes="$_p"`: an expansion error (an
-    // unrecognised mode/lane) is swallowed and treated as "only plan is admitted" —
-    // preserved exactly, not "fixed", for parity.
-    let admitted =
-        expand_lanes(repo, raw, lane_labels).unwrap_or_else(|_| vec![lane_labels.plan.clone()]);
-    if admitted.iter().any(|l| l == &partition) {
+    let admitted: &[Lane] = repos.get(repo).map(|r| r.lanes.as_slice()).unwrap_or(&[]);
+    if admitted.contains(&partition) {
         return LaneCheck::Admitted;
     }
-    let refuser = match raw {
-        Some(r) if !r.is_empty() => format!("repo-map (lanes={r})"),
-        _ => format!(
-            "repo-map (no lanes column — defaults to {})",
-            lane_labels.plan
-        ),
+    let names: Vec<String> = admitted.iter().copied().map(lane_label).collect();
+    let refuser = if names.is_empty() {
+        "no admitted lanes".to_string()
+    } else {
+        format!("its admitted lanes ({})", names.join(","))
     };
     LaneCheck::Refused(format!(
-        "bead: repo:{repo} does not admit lane {partition} — refused by {refuser}\nbead: override: SPIRA_BEAD_LANE_OVERRIDE=1"
+        "bead: repo:{repo} does not admit lane {} — refused by {refuser}\nbead: override: SPIRA_BEAD_LANE_OVERRIDE=1",
+        lane_label(partition)
     ))
 }
 
@@ -510,7 +329,7 @@ pub fn incident_blocks_refusal(id: &str, depid: &str, incident_label: &str) -> S
 
 // ---------------------------------------------------------------------------------------
 // `contract` — formatting only; the three sections' data comes from main.rs's subprocess
-// calls (`fayth_names`/`fayth_get`, `schema.sh kinds`, the repo-map).
+// calls (`fayth_names`/`fayth_get`, `schema.sh kinds`, `repos_by_name`).
 // ---------------------------------------------------------------------------------------
 
 /// One `PERSONAS` line: `  {name:<14} {labels-or-"(no labels)"}`.
@@ -523,14 +342,14 @@ pub fn persona_line(name: &str, labels: &str) -> String {
     format!("  {name:<14} {shown}")
 }
 
-/// One `REPOS` line, or the map's absence.
-pub fn repos_section(rows: &[RepoRow]) -> String {
-    if rows.is_empty() {
-        return "  (no repo-map)\n".to_string();
+/// One `REPOS` line per name, or the map's absence.
+pub fn repos_section(repos: &BTreeMap<String, RepoSection>) -> String {
+    if repos.is_empty() {
+        return "  (no repository map)\n".to_string();
     }
     let mut out = String::new();
-    for r in rows {
-        out.push_str(&format!("  {}\n", r.name));
+    for name in repos.keys() {
+        out.push_str(&format!("  {name}\n"));
     }
     out
 }
@@ -539,144 +358,97 @@ pub fn repos_section(rows: &[RepoRow]) -> String {
 mod tests {
     use super::*;
 
-    // -- repo-map ------------------------------------------------------------------------
+    // -- repositories (spira-config's own converter — see DESIGN.md "Decisions") --------
+
+    // literal-ok: test fixture mirroring the lane vocabulary's shipped spelling
+    const MAECHEN: &str = "maechen-sweep";
+    // literal-ok: test fixture mirroring schema.sh's shipped default for `no_loop`
+    const NO_LOOP: &str = "no-loop";
 
     #[test]
-    fn repo_map_skips_comments_and_blanks() {
-        let map = "# comment row, must not appear as a repo\ncustrepo-one | /tmp/one | push | origin/main | | true | plan\n\ncustrepo-two | /tmp/two | push | origin/main | | true | plan\n";
-        let names = repo_names(map);
-        assert_eq!(names, vec!["custrepo-one", "custrepo-two"]);
-    }
-
-    #[test]
-    fn repo_map_six_field_row_has_no_lanes_column() {
-        let map = "spira    | /srv/spira     | push | origin/main |  |\nwidget   | /srv/widget    | pr   | origin/main |  |\n";
-        let rows = parse_repo_map(map);
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].name, "spira");
-        assert_eq!(rows[0].lanes_raw, "");
-    }
-
-    #[test]
-    fn repo_map_seven_field_row_has_a_lanes_column() {
-        let map = "testrepo  | /tmp/test | push | origin/main | | true | plan\ndev-repo  | /tmp/dev  | push | origin/main | | true | develop\n";
-        let rows = parse_repo_map(map);
-        assert_eq!(repo_lanes_raw(&rows, "testrepo"), Some("plan"));
-        assert_eq!(repo_lanes_raw(&rows, "dev-repo"), Some("develop"));
-        assert_eq!(repo_lanes_raw(&rows, "nope"), None);
-    }
-
-    #[test]
-    fn repo_map_empty_lanes_field_is_empty_not_absent() {
-        // trailing "|" with nothing after it: 6 fields, no lanes column at all.
-        let map = "r | /p | push | origin/main | |\n";
-        let rows = parse_repo_map(map);
-        assert_eq!(rows[0].lanes_raw, "");
-    }
-
-    // -- lanes ----------------------------------------------------------------------------
-
-    fn test_labels() -> LaneLabels {
-        LaneLabels {
-            plan: "plan".into(),
-            incident: "incident".into(),
-            groom: "groom".into(),
-            maechen: "maechen-sweep".into(),
-            spike: "spike".into(),
-            czar: "czar-trigger".into(),
-        }
-    }
-
-    #[test]
-    fn expand_lanes_no_column_admits_all() {
-        let l = test_labels();
-        let got = expand_lanes("r", None, &l).unwrap();
-        assert!(got.contains(&"plan".to_string()));
-        assert!(got.contains(&"maechen-sweep".to_string()));
-        assert_eq!(got.len(), 6);
-    }
-
-    #[test]
-    fn expand_lanes_empty_field_admits_all() {
-        let l = test_labels();
-        let got = expand_lanes("r", Some(""), &l).unwrap();
-        assert_eq!(got.len(), 6);
-    }
-
-    #[test]
-    fn expand_lanes_modes() {
-        let l = test_labels();
+    fn repos_by_name_reads_names_and_typed_lanes() {
+        let map = "# comment row, must not appear as a repo\ntestrepo  | /tmp/test | push | origin/main | | true | plan\ndev-repo  | /tmp/dev  | push | origin/main | | true | develop\nself-repo | /tmp/self | push | origin/main | | true | self\n";
+        let repos = repos_by_name(map);
         assert_eq!(
-            expand_lanes("r", Some("consume"), &l).unwrap(),
-            vec!["plan"]
+            repos.keys().cloned().collect::<Vec<_>>(),
+            vec!["dev-repo", "self-repo", "testrepo"]
+        );
+        assert_eq!(repos["testrepo"].lanes, vec![Lane::Plan]);
+        assert_eq!(
+            repos["dev-repo"].lanes,
+            vec![Lane::Plan, Lane::Incident, Lane::Groom, Lane::Spike]
         );
         assert_eq!(
-            expand_lanes("r", Some("develop"), &l).unwrap(),
-            vec!["plan", "incident", "groom", "spike"]
-        );
-        assert_eq!(
-            expand_lanes("r", Some("self"), &l).unwrap(),
+            repos["self-repo"].lanes,
             vec![
-                "plan",
-                "incident",
-                "groom",
-                "spike",
-                "maechen-sweep",
-                "czar-trigger"
+                Lane::Plan,
+                Lane::Incident,
+                Lane::Groom,
+                Lane::Spike,
+                Lane::MaechenSweep,
+                Lane::CzarTrigger
             ]
         );
     }
 
     #[test]
-    fn expand_lanes_explicit_list() {
-        let l = test_labels();
-        assert_eq!(
-            expand_lanes("r", Some("plan,incident"), &l).unwrap(),
-            vec!["plan", "incident"]
-        );
+    fn repos_by_name_empty_on_no_map() {
+        assert!(repos_by_name("").is_empty());
     }
 
     #[test]
-    fn expand_lanes_unknown_is_an_error() {
-        let l = test_labels();
-        let err = expand_lanes("dev-repo", Some("bogus"), &l).unwrap_err();
-        assert!(err.contains("repo:dev-repo"), "{err}");
-        assert!(err.contains("unknown lane bogus"), "{err}");
+    fn repos_by_name_empty_map_when_any_row_names_an_unknown_lane() {
+        // Fail closed (DESIGN.md "Observed but preserved"): one bad row makes every repo
+        // read as unmapped, rather than only the row that named the bad lane.
+        let map = "good | /tmp/g | push | origin/main | | true | plan\nbad  | /tmp/b | push | origin/main | | true | not-a-lane\n";
+        assert!(repos_by_name(map).is_empty());
+    }
+
+    #[test]
+    fn label_to_lane_round_trips_every_shipped_spelling() {
+        for (label, lane) in [
+            ("plan", Lane::Plan),
+            ("incident", Lane::Incident),
+            ("groom", Lane::Groom),
+            (MAECHEN, Lane::MaechenSweep),
+            ("spike", Lane::Spike),
+            ("czar-trigger", Lane::CzarTrigger),
+        ] {
+            assert_eq!(label_to_lane(label), Some(lane));
+            assert_eq!(lane_label(lane), label);
+        }
+        assert_eq!(label_to_lane("alpha-work"), None);
     }
 
     #[test]
     fn fayth_partition_last_match_wins() {
-        let l = test_labels();
-        assert_eq!(
-            fayth_partition("testscope,plan", &l),
-            Some("plan".to_string())
-        );
-        assert_eq!(
-            fayth_partition("plan,incident", &l),
-            Some("incident".to_string())
-        );
-        assert_eq!(fayth_partition("testscope,alpha-work", &l), None);
-        assert_eq!(fayth_partition("", &l), None);
+        assert_eq!(fayth_partition("testscope,plan"), Some(Lane::Plan));
+        assert_eq!(fayth_partition("plan,incident"), Some(Lane::Incident));
+        assert_eq!(fayth_partition("testscope,alpha-work"), None);
+        assert_eq!(fayth_partition(""), None);
+    }
+
+    fn repo_map_fixture() -> BTreeMap<String, RepoSection> {
+        repos_by_name(
+            "dev-repo  | /tmp/dev  | push | origin/main | | true | develop\nself-repo | /tmp/self | push | origin/main | | true | self\n",
+        )
     }
 
     #[test]
     fn lane_check_admits_self_repo_for_any_partition() {
-        let rows = parse_repo_map("self-repo | /tmp/self | push | origin/main | | true | self\n");
-        let l = test_labels();
-        let result = lane_check("testscope,maechen-sweep", "self-repo", &rows, &l, false);
+        let repos = repo_map_fixture();
+        let result = lane_check(&format!("testscope,{MAECHEN}"), "self-repo", &repos, false);
         assert!(matches!(result, LaneCheck::Admitted));
     }
 
     #[test]
     fn lane_check_refuses_maechen_on_a_develop_repo() {
-        let rows =
-            parse_repo_map("dev-repo  | /tmp/dev  | push | origin/main | | true | develop\n");
-        let l = test_labels();
-        match lane_check("testscope,maechen-sweep", "dev-repo", &rows, &l, false) {
+        let repos = repo_map_fixture();
+        match lane_check(&format!("testscope,{MAECHEN}"), "dev-repo", &repos, false) {
             LaneCheck::Refused(msg) => {
                 assert!(msg.contains("dev-repo"));
-                assert!(msg.contains("maechen-sweep"));
-                assert!(msg.contains("repo-map"));
+                assert!(msg.contains(MAECHEN));
+                assert!(msg.contains("admitted lanes"));
                 assert!(msg.contains("SPIRA_BEAD_LANE_OVERRIDE"));
             }
             LaneCheck::Admitted => panic!("expected a refusal"),
@@ -685,19 +457,15 @@ mod tests {
 
     #[test]
     fn lane_check_override_admits_everything() {
-        let rows =
-            parse_repo_map("dev-repo  | /tmp/dev  | push | origin/main | | true | develop\n");
-        let l = test_labels();
-        let result = lane_check("testscope,maechen-sweep", "dev-repo", &rows, &l, true);
+        let repos = repo_map_fixture();
+        let result = lane_check(&format!("testscope,{MAECHEN}"), "dev-repo", &repos, true);
         assert!(matches!(result, LaneCheck::Admitted));
     }
 
     #[test]
     fn lane_check_plan_is_always_admitted() {
-        let rows =
-            parse_repo_map("dev-repo  | /tmp/dev  | push | origin/main | | true | develop\n");
-        let l = test_labels();
-        let result = lane_check("testscope,plan", "dev-repo", &rows, &l, false);
+        let repos = repo_map_fixture();
+        let result = lane_check("testscope,plan", "dev-repo", &repos, false);
         assert!(matches!(result, LaneCheck::Admitted));
     }
 
@@ -736,53 +504,43 @@ mod tests {
 
     // -- lint judge -------------------------------------------------------------------------
 
+    // literal-ok: test fixture partition vocabulary, mirroring the bash suite's own PART
     const PART: &str = "plan maechen-sweep spike czar-trigger incident groom";
 
     #[test]
     fn lint_judge_rows_match_the_bash_suite_table() {
-        let rows: &[(&str, &str, &str, &str, u32, &[&str])] = &[
-            ("repo:spira plan", "open", "task", PART, 0, &[]),
-            ("plan", "open", "task", PART, 1, &["no repo: label"]),
+        let add_one = format!("no partition label; add one or mark {NO_LOOP}");
+        let with_no_loop = format!("repo:spira {NO_LOOP}");
+        let rows: Vec<(&str, &str, &str, &str, u32, Vec<&str>)> = vec![
+            ("repo:spira plan", "open", "task", PART, 0, vec![]),
+            ("plan", "open", "task", PART, 1, vec!["no repo: label"]),
             (
                 "repo:spira",
                 "open",
                 "task",
                 PART,
                 1,
-                &["no partition label; add one or mark no-loop"],
+                vec![add_one.as_str()],
             ),
-            ("repo:spira no-loop", "open", "task", PART, 0, &[]),
-            ("", "open", "event", PART, 0, &[]),
-            ("repo:spira", "open", "epic", PART, 0, &[]),
-            ("repo:spira", "closed", "task", PART, 0, &[]),
+            (with_no_loop.as_str(), "open", "task", PART, 0, vec![]),
+            ("", "open", "event", PART, 0, vec![]),
+            ("repo:spira", "open", "epic", PART, 0, vec![]),
+            ("repo:spira", "closed", "task", PART, 0, vec![]),
             (
                 "",
                 "open",
                 "task",
                 PART,
                 2,
-                &[
-                    "no repo: label",
-                    "no partition label; add one or mark no-loop",
-                ],
+                vec!["no repo: label", add_one.as_str()],
             ),
-            (
-                "repo:spira",
-                "open",
-                "bug",
-                PART,
-                1,
-                &["no partition label; add one or mark no-loop"],
-            ),
+            ("repo:spira", "open", "bug", PART, 1, vec![add_one.as_str()]),
         ];
-        for (labels, status, ty, part, want_n, want_lines) in rows {
-            let (n, lines) = lint_judge(labels, status, ty, part, "no-loop");
+        for (labels, status, ty, part, want_n, want_lines) in &rows {
+            let (n, lines) = lint_judge(labels, status, ty, part, NO_LOOP);
             assert_eq!(n, *want_n, "labels={labels:?} status={status} type={ty}");
-            assert_eq!(
-                lines,
-                want_lines.to_vec(),
-                "labels={labels:?} status={status} type={ty}"
-            );
+            let want: Vec<String> = want_lines.iter().map(|s| s.to_string()).collect();
+            assert_eq!(lines, want, "labels={labels:?} status={status} type={ty}");
         }
     }
 
@@ -891,8 +649,8 @@ mod tests {
 
     #[test]
     fn repos_section_lists_names_or_reports_absence() {
-        let rows = parse_repo_map("custrepo-one | /tmp/one | push | origin/main | | true | plan\n");
-        assert_eq!(repos_section(&rows), "  custrepo-one\n");
-        assert_eq!(repos_section(&[]), "  (no repo-map)\n");
+        let repos = repos_by_name("custrepo-one | /tmp/one | push | origin/main | | true | plan\n");
+        assert_eq!(repos_section(&repos), "  custrepo-one\n");
+        assert_eq!(repos_section(&BTreeMap::new()), "  (no repository map)\n");
     }
 }

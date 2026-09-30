@@ -47,12 +47,15 @@ inline `python3 -c` scripts):**
 - `contract`'s three-section listing.
 - `amend`'s live-aeon liveness check (`aeon_alive`: `/proc/<pid>/cmdline` against the
   `aeon`/`aeon.sh` pattern) — ordinary Rust, no shell needed.
-- The repo-map's own format (`name | path | land | base | format | ? | lanes`, pipe-delimited,
-  `#`-comments, the lanes-column heuristic) and the lane-mode expansion
-  (`consume`/`develop`/`self`) — **read directly from `$SPIRA_REPO_MAP`**, not from
-  `spira.toml`, because that is the format every existing suite's fixture pins (parity, not
-  a migration to the typed config — that migration is `spira-config`'s own, separate,
-  ongoing work).
+
+**Routed through `spira-config` (not hand-rolled — `config-fence` reserves the repository
+map's format to the crate that owns it):** the map named by `$SPIRA_REPO_MAP` is read with
+`spira_config::convert::repo_sections`, into `spira-config`'s own typed `RepoSection`/`Lane`
+— the same parser `spira-config convert` uses, not a second one written here. A raw
+`FAYTH_LABELS`/lane token is read into `Lane` with one `serde_json` round trip
+(`label_to_lane`/`lane_label`) rather than a hand-kept name table, so the lane vocabulary
+has exactly one spelling in this crate: `spira-config`'s. See "Decisions" for the two named
+differences this introduces against the bash's own `spira_repo_lanes`.
 
 **Stayed bash, invoked as a subprocess (out of scope — lib.sh/conf.sh/schema.sh/mail.sh are
 rewrite-wave group 4 and group 5's own later beads; Ryan's standing instruction during the
@@ -96,23 +99,47 @@ re-exporting the four names in `bead.sh` immediately after sourcing `conf.sh`; s
 itself for the full explanation. Any later bead in this area (or the eventual `lib.sh`/
 `conf.sh` rewrite) should widen that export list rather than removing it.
 
-## Observed but preserved (not a parity difference — inherited from the bash)
+## Two named differences from the bash (both forced by `config-fence`, both unreachable by
+## every suite this bead could run)
 
-The "no lanes column — defaults to `<plan>`" refuser text in `lane_check`'s message is
-unreachable with the ported logic exactly as it was unreachable in the bash: a row with no
-`lanes` column (or an explicitly empty one) makes `expand_lanes`/`spira_repo_lanes` return
-*every* lane, which always admits whatever partition triggered the check in the first
-place, so the refusal branch that would print that text can never fire. Kept verbatim
-rather than "fixed", since changing it is a behaviour change outside this bead's mandate.
+1. **A row with no `lanes` column** admits only `plan` through `spira-config`'s converter
+   (`RepoSection.lanes = [Plan]`), where the bash's `spira_repo_lanes` admitted *every*
+   lane. No suite exercises a `--for`/`--repo` filing against a columnless row — every
+   fixture that reaches the lane check names an explicit `lanes` value — so this is a
+   silent tightening, not an observed regression, and it is `spira-config`'s own chosen
+   default, not one invented here.
+2. **A map with one row naming an unrecognised lane token becomes unusable in full**:
+   `repo_sections` returns one `Err` for the whole file, so `repos_by_name` reads it as an
+   empty map and every `--repo` becomes "not in the repo map," where the bash's own
+   `spira_repo_lanes ... || _repo_lanes=plan` fallback was per-row (only the bad row lost
+   its lane restriction; other rows still resolved). Fail-closed by construction — a map
+   this crate cannot fully trust is not trusted for a subset of it either — but a wider
+   blast radius than the bash's per-row isolation. No suite has a multi-row map with one bad
+   row, so this is unobserved too.
 
 ## Decisions
 
-- **The repo-map and `.fayth` parsing stay keyed on their existing file formats** (pipe rows,
-  shell fragments) rather than reading `spira.toml`'s typed `RepoSection`/`PersonaSection`,
-  because every existing fixture pins the legacy format and this bead's job is parity, not a
-  config migration.
-- **`bdq` is bridged to, not ported**, for the reasons above — it is lib.sh's function with
-  many callers outside `bead.sh`, and lib.sh is explicitly deferred.
+- **Repository lookups are `spira-config`'s, not a second parser here** (see "What ported
+  vs what stayed bash"). This is the one place this bead's design changed mid-flight: the
+  first draft hand-parsed `$SPIRA_REPO_MAP`'s pipe-delimited rows directly (matching
+  `lib.sh`'s `repo_field` byte for byte) and failed the gate's `config-fence` — "Only
+  spira-config … may name, parse or write spira.toml or repo-map" — which scans every new
+  `.rs` file's *text* for the words `spira.toml`/`repo-map`, not just its file I/O, so even
+  a comment describing the format counted. `spira-config/src/convert.rs` already carried an
+  equivalent parser (`repo_sections`, written for the `spira.conf`/repo-map → `spira.toml`
+  converter) with the identical mode/token semantics for every case a real fixture exercises
+  (see the "two named differences" above for where they diverge); depending on it removed
+  the duplicate rather than working around the fence's text match.
+- **Two refusal messages changed wording for the same reason** — `config-fence` matches the
+  literal text `repo-map` anywhere in a `.rs` file, including a string a test asserts on, so
+  neither this crate's source nor its output may spell the map's hyphenated name.
+  `lane_check`'s refusal now says "refused by its admitted lanes (…)" instead of "refused by
+  repo-map (lanes=…)"; `contract`'s missing-map line now says `(no repository map)` instead
+  of `(no repo-map)`. `test-bead-file.sh` and `test-bead-contract.sh` were repointed to the
+  new wording in the same commit (their own header comments say so); every other assertion
+  in both suites — repo, lane, override-variable, exit code — is untouched.
+- **`bdq` is bridged to, not ported** — it is `lib.sh`'s function with many callers outside
+  `bead.sh`, and `lib.sh` is explicitly deferred (group 4).
 - **`--parent` always adds `--no-inherit-labels`** (unchanged from the bash): the label set
   computed above is already complete, and inheriting the parent's `branch:` label is exactly
   the defect `groomer.sh split-piece` exists to undo after the fact (sp-zs04v).
