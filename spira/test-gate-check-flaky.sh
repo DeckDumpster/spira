@@ -58,11 +58,10 @@ except Exception:
 }
 
 run_gate_check() {
-    # SPIRA_PATH rather than PATH: conf.sh overwrites PATH entirely; this puts $TMP/sbin
-    # at the front of the path it builds so command -v gh finds the stub.
+    # The gh stub goes first on PATH (conf.sh keeps the caller's PATH first, sp-gypjk).
     SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" \
         SPIRA_BD="$SPIRA_BD" \
-        SPIRA_PATH="$TMP/sbin" \
+        PATH="$TMP/sbin:$PATH" \
         SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_CONF="$TMP/no.conf" \
         SPIRA_FLAKY_GH_REPO="test-org/test-repo" \
         gate-check.sh 2>/dev/null

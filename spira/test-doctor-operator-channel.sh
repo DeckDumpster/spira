@@ -42,7 +42,7 @@ mkdir -p "$TMP/home/.local/bin" "$TMP/run"
 
 run_doctor() {
     env -i \
-        PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" \
+        PATH="$TMP/home/.local/bin:$TOOLS:/usr/local/bin:/usr/bin:/bin" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_DB="$TMP/db" \

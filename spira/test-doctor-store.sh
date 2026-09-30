@@ -76,10 +76,9 @@ make_systemctl active
 run_doctor() {
     local extra="${1:-}"
     env -i \
-        PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" \
+        PATH="$BIN:$TOOLS:/usr/local/bin:/usr/bin:/bin" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_PATH="$BIN" \
         SPIRA_SYSTEMCTL="$BIN/systemctl" \
         SPIRA_BD="$BIN/bd" \
         SPIRA_DB="$TMP/db" \

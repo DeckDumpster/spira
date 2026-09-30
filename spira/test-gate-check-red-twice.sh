@@ -75,7 +75,7 @@ except Exception:
 run_gate_check() {
     SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" \
         SPIRA_BD="$SPIRA_BD" \
-        SPIRA_PATH="$TMP/sbin" \
+        PATH="$TMP/sbin:$PATH" \
         SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_CONF="$TMP/no.conf" \
         SPIRA_FLAKY_GH_REPO="test-org/test-repo" \
         gate-check.sh 2>/dev/null

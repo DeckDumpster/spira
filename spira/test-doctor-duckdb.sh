@@ -29,6 +29,7 @@ mkdir -p "$TMP/home/.local/bin" "$TMP/run"
 # reliably absent instead.
 run_doctor() {
     env -i \
+        PATH="$(dirname "$(command -v spira-config)"):$HERE:/usr/local/bin:/usr/bin:/bin" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_DB="$TMP/db" \
