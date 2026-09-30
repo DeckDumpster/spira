@@ -80,7 +80,7 @@ SH
 chmod +x "$BIN/systemctl"
 
 rm -f "$RUN/cockpit.env"
-env -i PATH="$BASE_PATH" SPIRA_PATH="$BIN" HOME="$TMP" LC_ALL=C.UTF-8 \
+env -i PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
     SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
@@ -128,7 +128,7 @@ echo "cockpit_may_write and the loop guard, sourced:"
 
 # may_write [env <ASSIGN...>] -> prints 1 if cockpit_may_write allows the write, else 0.
 may_write() {
-    env -i PATH="$BASE_PATH" SPIRA_PATH="$BIN" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
@@ -139,7 +139,7 @@ may_write() {
 
 # run_loop_guard [env <ASSIGN...>] -> exits with _loop_guard's own status, relaying stderr.
 run_loop_guard() {
-    env -i PATH="$BASE_PATH" SPIRA_PATH="$BIN" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \

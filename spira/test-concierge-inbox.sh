@@ -59,7 +59,7 @@ is   "an explicit SPIRA_MAIL_READERS is never overwritten" "concierge=echo wake"
 echo
 echo "the inbox-keeper watchd row — a harness watchd row, not an operator overlay file"
 want "spira/watchers carries an inbox-keeper daemon row" \
-    "inbox-keeper|daemon|@SPIRA_HOME@/inbox-keeper.sh" "$(cat "$HERE/watchers")"
+    "inbox-keeper|daemon|inbox-keeper.sh" "$(cat "$HERE/watchers")"
 MAN="$TMP/elsewhere/manifest-check"
 SPIRA_WATCHERS_OVERLAY="$TMP/elsewhere/no-overlay" watchd.sh manifest \
     > "$MAN" 2>"$TMP/elsewhere/manifest.err"; rc=$?

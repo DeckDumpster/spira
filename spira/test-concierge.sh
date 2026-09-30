@@ -185,10 +185,9 @@ SHIM_TMP="$(mktemp -d)"; trap 'rm -rf "$SHIM_TMP" "$TMP"' EXIT
 SHIM_REAL="$SHIM_TMP/realbin"; mkdir -p "$SHIM_REAL"
 printf '#!/bin/sh\nprintf "REAL:%%s\\n" "$*"\n' > "$SHIM_REAL/tmux"; chmod +x "$SHIM_REAL/tmux"
 
-# SPIRA_PATH, not PATH: conf.sh rebuilds PATH from SPIRA_PATH plus a fixed tail on every
-# source, so a bare PATH prefix here is discarded before write_tmux_shim's own `command -v
-# tmux` runs.
-shim_dir="$(SPIRA_PATH="$SHIM_REAL" SPIRA_RUN="$SHIM_TMP/run" bash "$HARNESS/concierge.sh" _write-tmux-shim)"
+# A PATH prefix: conf.sh keeps the caller's PATH first and only appends its tail (sp-gypjk),
+# so write_tmux_shim's own `command -v tmux` finds the fake.
+shim_dir="$(PATH="$SHIM_REAL:$PATH" SPIRA_RUN="$SHIM_TMP/run" bash "$HARNESS/concierge.sh" _write-tmux-shim)"
 want "the shim dir is under SPIRA_RUN" "$SHIM_TMP/run/concierge-tmux-shim" "$shim_dir"
 [ -x "$shim_dir/tmux" ] && ok "the shim script is executable" \
     || bad "the shim script is executable" "missing at $shim_dir/tmux"
