@@ -2434,3 +2434,22 @@ fn tree_builds_are_one_shot() {
         assert!(c.contains("--config profile.aeon.incremental=false"), "{c}");
     }
 }
+
+/// A tree-built testenv is told its harness is the gate tree: its own executable now
+/// resolves into the tmpfs build root, above which no spira/testenv.sh lies (sp-z61hj). A
+/// definition that builds no testenv sets nothing (the release's testenv finds its own).
+#[test]
+fn a_tree_built_testenv_is_given_the_gate_tree_as_its_harness() {
+    let steps = "bin SPIRA_LINT_BIN spira-lint\nbin SPIRA_TESTENV_BIN testenv\nstep bash spira/a-fence.sh\n";
+    let f = tree_owned(Some(steps), Some(steps));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let ran = f.ran.borrow();
+    let e = ran.last().unwrap();
+    let get = |k: &str| e.iter().find(|(x, _)| x == k).map(|(_, v)| v.clone());
+    assert_eq!(get("SPIRA_TESTENV_HARNESS").as_deref(), Some(GATE_TREE));
+    assert!(get("SPIRA_TESTENV_BIN").unwrap().starts_with(&format!("{GATE_TREE}/target/gate-tools/")));
+    drop(ran);
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(f.ran.borrow().iter().all(|e| e.iter().all(|(k, _)| k != "SPIRA_TESTENV_HARNESS")));
+}

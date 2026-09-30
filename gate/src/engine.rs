@@ -1305,6 +1305,13 @@ pub fn with_bins(
         let p = t.dir.join(&b.package).to_string_lossy().into_owned();
         env.retain(|(k, _)| k != &b.var);
         env.push((b.var.clone(), p));
+        // A tree-built testenv drives the tree's own harness (sp-isom7). It used to find it
+        // by walking up from its own executable, which now resolves into the tmpfs build root
+        // (sp-z61hj) — so the gate names it: the harness of the tree's testenv is the tree.
+        if b.package == "testenv" {
+            env.retain(|(k, _)| k != "SPIRA_TESTENV_HARNESS");
+            env.push(("SPIRA_TESTENV_HARNESS".into(), t.tree.to_string_lossy().into_owned()));
+        }
     }
     env
 }
