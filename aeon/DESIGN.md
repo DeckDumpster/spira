@@ -203,8 +203,8 @@ same way (`{{TESTENV}}` is `testenv`, `{{SOP}}` is `sop.sh`, …). Only the Clau
 (`$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:` then the system directories); the aeon hands it
 to the session and its subagents unchanged, and conf.sh (through the seam) appends only the
 box's tail. The worktree's git hooks are armed by `worktree-hooks.sh` with
-`SPIRA_HOME=$SPIRA_RELEASE/spira` (the `--home` directory when SPIRA_RELEASE is unset, which
-in production is the same release's `spira/`), so its pre-commit runs the release's hook,
+`SPIRA_HOME=<--home>` — the release's `spira/`, which is what every launcher passes as
+`--home` — so its pre-commit runs the release's hook by absolute path,
 which runs `spira-lint` by name: a fresh worktree commits with no build of its own.
 
 ### 2.8 Callers (every one found)

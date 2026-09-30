@@ -658,14 +658,12 @@ impl<'a> Run<'a> {
             dirty = set.into_iter().collect::<Vec<_>>();
             let body: String = dirty.iter().map(|l| format!("{l}\n")).collect();
             let _ = std::fs::write(gitdir.join("spira-dirty-before"), body);
-            // The worktree's hooks are the RELEASE's (sp-31gtu): worktree-hooks.sh arms the
-            // worktree with core.hooksPath naming hooks that run `$SPIRA_RELEASE/spira/hooks`
-            // by absolute path, and those call spira-lint by name on the release PATH — so a
+            // The worktree's hooks are the RELEASE's (sp-31gtu): the aeon's --home is the
+            // release's spira/ (its launcher passes it), worktree-hooks.sh arms the worktree
+            // with core.hooksPath naming hooks that run `<home>/hooks/pre-commit` by absolute
+            // path, and those call spira-lint by name on the launcher's release PATH — so a
             // fresh worktree commits with no build of its own.
-            let hooks_home = match self.d.env.child().get(spira_config::RELEASE_ENV).filter(|r| !r.is_empty()) {
-                Some(r) => format!("{r}/spira"),
-                None => self.home().display().to_string(),
-            };
+            let hooks_home = self.home().display().to_string();
             let _ = self.d.exec.exec("env", &s(&[&format!("SPIRA_HOME={hooks_home}"), "worktree-hooks.sh", "install", &wdisp]), None, None);
         }
 
