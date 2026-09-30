@@ -856,6 +856,24 @@ container (<step> <s>, …) — podman exec overhead <s>`.
   `podman exec` per step with retries (multiplies the toll); running setup through
   `podman run` arguments (the container is booted before the tree is built — warm spares).
 * **D14 — test databases live on the container tmpfs** (DESIGN-testdb.md §2.5).
+* **D16 — scratch and warm slots live on a tmpfs, bounded, fail closed.** A slot is
+  disposable build state: cargo's `target/` (1.4–2.4 GB a slot, seven slots) is rewritten
+  on every relink, and on the host's one virtual disk (66–100 % utilised, IO pressure
+  `full` 30–70 % under gate load) it competed with production Dolt and podman's own
+  database. The slots' root is `worktree::scratch_root($SPIRA_RUN)`:
+  `$SPIRA_TESTENV_SCRATCH` if set; else `$SPIRA_RUN/worktree` when `$SPIRA_RUN` is itself on
+  a tmpfs (unit tests); else `/tmp/spira-testenv-<sha256(SPIRA_RUN)[..6]>` when `/tmp` is a
+  tmpfs; else `$SPIRA_RUN/worktree`. Slot locks and spare records move with the slots.
+  Before a scratch or warm slot is used, the root must have
+  `SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB` (default 4096) free and, on a tmpfs,
+  `SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB` (default 8192) of MemAvailable — tmpfs pages are RAM,
+  and a build that pushed the host into swap would put it back on the disk. Short of either:
+  no warm slot, and a scratch slot is refused with `VERDICT FAULT rc=2
+  reason=scratch-short` — never a silent fallback to the disk. The caller's own worktree
+  (in place) is untouched. After the move every slot starts cold once (cargo keys its
+  fingerprints on the workspace path, so the old `target/` cannot be carried over); the old
+  disk slots under `$SPIRA_RUN/worktree/.testenv-{slot,warm}-*` are no longer read and can
+  be removed with `git worktree remove`.
 * **D15 — the refill boots through the slot's own harness.** `testenv warm refill <i>` is
   spawned with `SPIRA_TESTENV_HARNESS=<slot worktree>` and cwd `$SPIRA_RUN`. A gate's testenv
   lives in a transient `.gate.harness.*` worktree the gate removes the moment testenv exits;

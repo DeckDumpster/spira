@@ -132,6 +132,9 @@ impl World {
             ("SPIRA_BATCH_MAXPAR", "2".into()),
             // the warm path has its own tests; the rest keep the §4.1 worktree rules
             ("SPIRA_TESTENV_WARM_SLOTS", "0".into()),
+            // hermetic: the host's free space and RAM do not decide a unit test
+            ("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB", "0".into()),
+            ("SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB", "0".into()),
             ("HOME", root.display().to_string()),
         ]
         .into_iter()
@@ -1403,4 +1406,20 @@ fn a_gate_trial_off_the_warm_path_spawns_the_sweep_instead_of_running_it() {
     assert!(rt.purged.lock().unwrap().is_empty(), "nothing swept inline");
     assert_eq!(*w.sweeps.lock().unwrap(), 1, "the sweep was spawned");
     assert!(!w.lines.lock().unwrap().iter().any(|l| l.contains("phases:") && l.contains("sweep:")));
+}
+
+#[test]
+fn a_scratch_root_without_room_is_refused_never_a_disk_fallback() {
+    // sp-t26yx: fail closed when the scratch filesystem is short.
+    let mut w = World::new("scratch-short");
+    w.env
+        .insert("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB".into(), u64::MAX.to_string());
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(
+        w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root),
+        2
+    );
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=scratch-short");
+    assert!(rt.exec_argv().is_empty(), "nothing built or run");
 }

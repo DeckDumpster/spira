@@ -16,9 +16,10 @@ pub const PREFIX: &str = "spira-warm-";
 /// this slot's checkout.
 pub const NONCE_FILE: &str = "target/.testenv-warm-nonce";
 
-/// (worktree, lock, spare record) of slot `i` under `$SPIRA_RUN`.
+/// (worktree, lock, spare record) of slot `i`, under the scratch root of `$SPIRA_RUN`
+/// ([`crate::worktree::scratch_root`]).
 pub fn paths(run: &Path, i: usize) -> (PathBuf, PathBuf, PathBuf) {
-    let base = run.join("worktree");
+    let base = crate::worktree::scratch_root(run);
     (
         base.join(format!(".testenv-warm-{i}")),
         base.join(format!(".testenv-warm-{i}.lock")),

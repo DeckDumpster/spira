@@ -669,6 +669,8 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         cwd: &deps.cwd,
         run_dir: &s.run,
         slots: s.scratch_slots,
+        min_free_mib: s.scratch_min_free_mib,
+        min_mem_mib: s.scratch_min_mem_mib,
     };
     let warm_wanted = args.deadline.is_some() && args.artifacts.is_none() && s.warm_slots > 0;
     let warm_wt = if warm_wanted {
@@ -680,6 +682,11 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         Some(w) => w,
         None => match worktree::acquire(&wreq, &|m| deps.log(m)) {
             Ok(w) => w,
+            Err(e) if e.starts_with(worktree::SCRATCH_SHORT) => {
+                // Fail closed (sp-t26yx): never fall back to building on the host disk.
+                deps.log(&e);
+                return Finish::fault(2, worktree::SCRATCH_SHORT, 0);
+            }
             Err(e) => {
                 stderr(&format!("batch: {e}"));
                 return Finish::fault(2, "worktree", 0);
