@@ -48,9 +48,9 @@ pub struct Env {
     pub express_label: String,
     pub tsd_bin: Option<PathBuf>,
     pub round_vm: PathBuf,
-    /// The `queue` binary (SPIRA_QUEUE_BIN, else the one beside this binary): land-local.
+    /// The `queue` program (by name on the launcher's PATH; a unit test hands in a stub): land-local.
     pub queue_bin: PathBuf,
-    /// The `rebase-stale` binary (SPIRA_REBASE_STALE_BIN, else the one beside this binary).
+    /// The `rebase-stale` program (by name on the launcher's PATH).
     pub rebase_stale_bin: PathBuf,
     /// The round's slot budget for concurrent attribution (DESIGN.md §4.2):
     /// SPIRA_BATCHER_ROUND_SLOTS, else maxpar + 4.
@@ -175,7 +175,7 @@ fn lcq(env: &Env, args: &[&str]) -> Result<String, String> {
         // Structural, not advisory: off can never reach the binary even if a caller forgets.
         return Err("lifecycle_enforce is off".to_string());
     }
-    let bin = env.lc_bin.as_ref().ok_or_else(|| "SPIRA_LC_BIN unset".to_string())?;
+    let bin = env.lc_bin.as_ref().ok_or_else(|| "no spira-lc program".to_string())?;
     let mut cmd = Command::new("timeout");
     cmd.arg(env.lc_timeout.to_string()).arg(bin).args(args);
     run(&mut cmd, "spira-lc")
@@ -814,7 +814,7 @@ pub fn file_local_red_incident(
     let tmp = tmp_dir.join(format!("local-red-{}-{}.txt", repo.name, now()));
     fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
     let out = run(
-        Command::new("bash").arg(env.home.join("incident.sh")).arg("file").arg(&title).arg(&tmp).env("SPIRA_INCIDENT_TYPE", "bug").env(
+        Command::new("incident.sh").arg("file").arg(&title).arg(&tmp).env("SPIRA_INCIDENT_TYPE", "bug").env(
             "SPIRA_INCIDENT_PRIORITY",
             "1",
         ).env("SPIRA_INCIDENT_ACTOR", "batcher").env("SPIRA_INCIDENT_REPO", &repo.name).env(
@@ -856,8 +856,16 @@ pub fn write_local_verdict(env: &Env, repo: &str, verdict: &str, detail: &str) {
 // ---------------------------------------------------------------------------------------
 
 pub fn forge_pr_create(repo: &Repo, head: &str, base: &str, title: &str, body: &str) -> Result<String, String> {
-    let mut cmd = Command::new("bash");
-    cmd.arg(&repo.forge).arg("pr-create").arg(&repo.path).arg(head).arg(base).arg(title);
+    // A bare name (the default, forge.sh) is the launcher-PATH program, run directly; a
+    // configured SPIRA_FORGE path is run with bash, as batch.sh does.
+    let mut cmd = if repo.forge.components().count() == 1 {
+        Command::new(&repo.forge)
+    } else {
+        let mut c = Command::new("bash");
+        c.arg(&repo.forge);
+        c
+    };
+    cmd.arg("pr-create").arg(&repo.path).arg(head).arg(base).arg(title);
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
@@ -962,9 +970,6 @@ pub fn tsd_append_round(env: &Env, fields: &[(&str, String)]) {
 /// One row of `family` through tsd-write; best-effort, like every TSD write here.
 pub fn tsd_append(env: &Env, family: &str, fields: &[(&str, String)]) {
     let Some(bin) = &env.tsd_bin else { return };
-    if !bin.is_file() {
-        return;
-    }
     let mut cmd = Command::new(bin);
     cmd.arg("--family").arg(family).arg("--root").arg(&env.run);
     for (k, v) in fields {
@@ -1000,8 +1005,7 @@ pub fn file_judgement(env: &Env, repo: &Repo, j: &batcher::core::Judgement, memb
     let tmp = tmp_dir.join(format!("judgement-{}-{}.txt", repo.name, now()));
     fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
     let out = run(
-        Command::new("bash")
-            .arg(env.home.join("bead.sh"))
+        Command::new("bead.sh")
             .arg("file")
             .arg(&title)
             .arg("--for")
@@ -1235,7 +1239,7 @@ mod lifecycle_tests {
         let e = env(&d, Some(d.join("nonexistent-spira-lc")), true);
         assert!(lc_probe(&e).is_err());
         let e = env(&d, None, true);
-        assert_eq!(lc_probe(&e), Err("SPIRA_LC_BIN unset".to_string()));
+        assert_eq!(lc_probe(&e), Err("no spira-lc program".to_string()));
         // A reachable binary with a non-JSON reply is not an answer either.
         let e = env(&d, Some(fake_lc(&d, "not json")), true);
         assert!(lc_probe(&e).unwrap_err().contains("unparsed"));

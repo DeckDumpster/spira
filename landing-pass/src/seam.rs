@@ -118,17 +118,14 @@ __kv submitted_label "${SPIRA_SUBMITTED_LABEL:-spira-submitted}"
 __kv rebase_escalate_at "${SPIRA_REBASE_ESCALATE_AT:-3}"
 __kv git_name "${SPIRA_GIT_NAME:-spira}"
 __kv git_email "${SPIRA_GIT_EMAIL:-spira@spira.invalid}"
-__kv incident "${SPIRA_INCIDENT:-${SPIRA_HOME:-$HERE}/incident.sh}"
+__kv incident "${SPIRA_INCIDENT:-incident.sh}"
 __kv scope_label "${SPIRA_SCOPE_LABEL:-}"
-__kv queue_bin "${SPIRA_QUEUE_BIN:-}"
 __kv queue_dir "${SPIRA_QUEUE_DIR:-${SPIRA_RUN:-}/queue}"
-__kv lc_bin "${SPIRA_LC_BIN:-}"
-__kv prod "${SPIRA_PROD:-${SPIRA_HOME:-$HERE}}"
 __kv halt_grace "${SPIRA_HALT_GRACE:-30}"
 __kv path "${PATH:-}"
 __kv bdjson_fixture "${SPIRA_BDJSON_FIXTURE:-}"
 __kv toml "${SPIRA_TOML_FILE:-}"
-__kv pr_pass_branch_sh "${SPIRA_PR_PASS_BRANCH_SH:-${SPIRA_HOME:-$HERE}/pr-pass-branch.sh}"
+__kv pr_pass_branch_sh "${SPIRA_PR_PASS_BRANCH_SH:-pr-pass-branch.sh}"
 for __n in $(spira_repos); do
     __p="$(repo_root "$__n" 2>/dev/null)" || __p=""
     __m="$(repo_land "$__n" 2>/dev/null)"
@@ -151,10 +148,13 @@ done
 exit 0
 "#;
 
-const INCIDENT: &str = r#"[ -r "$1" ] || exit 2
+const INCIDENT: &str = r#"case "$1" in
+    */*) [ -r "$1" ] || exit 2; __p="$1" ;;
+    *) __p="$(command -v "$1")" || exit 2 ;;
+esac
 __id="$(SPIRA_INCIDENT_TYPE=bug SPIRA_INCIDENT_PRIORITY=1 SPIRA_INCIDENT_ACTOR=landing \
     SPIRA_INCIDENT_LABELS="$2" SPIRA_INCIDENT_REPO="$3" SPIRA_INCIDENT_REF="$4" \
-    SPIRA_INCIDENT_CAUSE=base-suite-red bash "$1" file "$5" - <<< "$6")" || exit 1
+    SPIRA_INCIDENT_CAUSE=base-suite-red bash "$__p" file "$5" - <<< "$6")" || exit 1
 printf '\036%s' "$__id"
 exit 0
 "#;

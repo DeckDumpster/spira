@@ -156,7 +156,7 @@ impl<'a> Pass<'a> {
         } else {
             String::new()
         };
-        for script in [self.s.repo.join("systemd/unit-ensure.sh"), self.s.repo.join("spira/land-build-ensure.sh")] {
+        for script in [self.s.repo.join("systemd/unit-ensure.sh"), PathBuf::from("land-build-ensure.sh")] {
             for l in self.tools.ensure(&script) {
                 self.log(&l);
             }
@@ -751,7 +751,7 @@ impl<'a> Pass<'a> {
             format!("  failing suite    {named}"),
             format!("  gate verdict     BASE_FAIL ({reason})"),
             format!("  first noticed by {br}, which is not at fault"),
-            format!("  reproduce        {}/gate.sh {base} {name}", self.s.home.display()),
+            format!("  reproduce        gate.sh {base} {name}"),
             String::new(),
             "The dedupe key is the repository and the suite, so every other branch blocked by this same".into(),
             "red bumps a recurrence on this bead rather than filing another one.".into(),

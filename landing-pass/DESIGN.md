@@ -91,12 +91,15 @@ read from the context seam's answer: `SPIRA_RUN`, `SPIRA_REPO`, `SPIRA_DB`, `SPI
 `SPIRA_VERDICT_TTL` (86400), `SPIRA_VERDICTS`, `SPIRA_DEFERRAL_ESCALATE_AT` (5),
 `SPIRA_EXPRESS_LABEL`, `SPIRA_CUTOVER_ROUND_LABEL`, `SPIRA_SUBMITTED_LABEL`,
 `SPIRA_REBASE_ESCALATE_AT` (3), `SPIRA_GIT_NAME/EMAIL`, `SPIRA_INCIDENT`,
-`SPIRA_SCOPE_LABEL`, `SPIRA_ID_PREFIX`, `SPIRA_CERTIFY_PAR` (4; §8 D14), `SPIRA_QUEUE_BIN`, `SPIRA_QUEUE_DIR`,
-`SPIRA_LC_BIN`, `SPIRA_PROD`, `SPIRA_HALT_GRACE` (30), `BD_TIMEOUT` (180),
+`SPIRA_SCOPE_LABEL`, `SPIRA_ID_PREFIX`, `SPIRA_CERTIFY_PAR` (4; §8 D14), `SPIRA_QUEUE_DIR`,
+`SPIRA_HALT_GRACE` (30), `BD_TIMEOUT` (180),
 `SPIRA_BDJSON_FIXTURE` (tests only). The pr pass also honours
-`SPIRA_PR_PASS_BRANCH_SH`, `SPIRA_LANDING_PASS_LOG` as before.
+`SPIRA_PR_PASS_BRANCH_SH`, `SPIRA_LANDING_PASS_LOG` as before. Every harness tool it runs
+(`queue`, `spira-lc`, `rebase-stale`, `gate.sh`, `gate-run.sh`, `confine.sh`, `skew.sh`,
+`land-build-ensure.sh`, `testenv.sh`, `incident.sh`, `pr-pass-branch.sh`) is invoked by bare
+name on the launcher's PATH (sp-gypjk); none is found through a variable or a directory.
 
-`halt` runs podman and `$SPIRA_PROD/testenv.sh` under conf.sh's PATH (the context seam's
+`halt` runs podman and `testenv.sh` under conf.sh's PATH (the context seam's
 `path`: `SPIRA_PATH` first), as `landing.sh halt` did by sourcing conf.sh; with no loadable
 context it prepends `SPIRA_PATH` to the inherited PATH itself (`halt::child_path`).
 
@@ -144,15 +147,15 @@ All paths under `$SPIRA_RUN` unless absolute. Formats unchanged (§3).
 
 | program | argv / env | from |
 |---|---|---|
-| `$SPIRA_HOME/gate.sh <branch> <repo>` | env `SPIRA_GATE_LOCK_WAIT=<secs>`, `SPIRA_GATE_BEAD=<id>`; stdout+stderr captured together | push/hold/queue walk |
-| `$SPIRA_HOME/gate-run.sh --status <branch> <repo>` | read-only | cert-gate-red note |
-| `$SPIRA_HOME/confine.sh <id> <branch> <repo-path> <base> <labels>` | labels are the bead's own label words | push/hold |
-| `$SPIRA_QUEUE_BIN step <repo>` | stdout+stderr combined, relabelled | queued repos, before and after the walk |
-| `$SPIRA_HOME/skew.sh refresh <repo-path>` | | push, queue |
-| `$SPIRA_REPO/systemd/unit-ensure.sh`, `$SPIRA_REPO/spira/land-build-ensure.sh` | | once per pass, when executable |
-| `$SPIRA_PROD/testenv.sh down --name <c> --volumes --force-foreign` | | `halt` |
+| `gate.sh <branch> <repo>` | env `SPIRA_GATE_LOCK_WAIT=<secs>`, `SPIRA_GATE_BEAD=<id>`; stdout+stderr captured together | push/hold/queue walk |
+| `gate-run.sh --status <branch> <repo>` | read-only | cert-gate-red note |
+| `confine.sh <id> <branch> <repo-path> <base> <labels>` | labels are the bead's own label words | push/hold |
+| `queue step <repo>` | stdout+stderr combined, relabelled | queued repos, before and after the walk |
+| `skew.sh refresh <repo-path>` | | push, queue |
+| `$SPIRA_REPO/systemd/unit-ensure.sh` (systemd/ is not on PATH), `land-build-ensure.sh` | | once per pass |
+| `testenv.sh down --name <c> --volumes --force-foreign` | | `halt` |
 | `$SPIRA_PR_PASS_BRANCH_SH <repo> <br> <id> <base> <name> <tip>` | exits 0–8 as documented there | pr pass (unchanged) |
-| `$SPIRA_LC_BIN show/event delivery …` | | pr pass content proof (unchanged) |
+| `spira-lc show/event delivery …` | | pr pass content proof (unchanged) |
 | `bd -C $SPIRA_DB show <ids…> --json` under `timeout $BD_TIMEOUT` | one retry on "invalid connection" | scan, re-reads, prune |
 | `git` | | everything else |
 
@@ -552,7 +555,7 @@ build or locate the binary — the testenv container already builds the workspac
 - **D5 — the queue step runs twice, not three times.** landing.sh called `queue.sh step`
   before certification twice in a row ("early", then the sp-len2q "verdict first" hotfix —
   the same call), and once after. Now: once before (`queue early:`), once after
-  (`queue late:`). The step is `$SPIRA_QUEUE_BIN step <repo>`; a missing binary is logged
+  (`queue late:`). The step is `queue step <repo>`; a missing tool is logged
   per repository, never a fallback to a deleted queue.sh.
 - **D6 — base-fix certification once.** landing.sh's push/hold BASE_FAIL arm carried the
   certification block twice, the first copy certifying on the scan's (stale) status. One
@@ -647,16 +650,16 @@ wins (`1`/`true` on, anything else off), else the typed `spira.lifecycle_enforce
 carried in the context answer.
 
 **OFF (production today):** landing-pass never invokes spira-lc, not even a probe. It also
-pins `SPIRA_LIFECYCLE_ENFORCE=0` and `SPIRA_LC_BIN=/nonexistent/spira-lc-disabled-by-lifecycle_enforce=0`
-(the sentinel's own `LC_DISABLED`) into its environment before any child starts, so the
-bash it still runs — pr-pass-branch.sh's `lc_deliver_pr_merged/closed`, the lib.sh seams —
-cannot reach spira-lc either (lc.sh/lc-delivery.sh treat a non-executable path as absent).
+pins `SPIRA_LIFECYCLE_ENFORCE=0` into its environment before any child starts, so the bash
+it still runs — pr-pass-branch.sh's `lc_deliver_pr_merged/closed`, the lib.sh seams — reads
+the same switch and does not reach spira-lc either (sp-gypjk: there is no poisoned
+`SPIRA_LC_BIN` path any more; spira-lc is invoked by name).
 Behaviour is the pre-lifecycle contract: landstate and labels only.
 
 | path | OFF | ON |
 |---|---|---|
 | pr: content already on base | the `CONTENT` landstate record, nothing else (f031f6dee's OFF semantics, kept) | the same, plus `Delivered` when the delivery row is `PR_OPEN` — best-effort additive; no row / not PR_OPEN is quiet; a machine that cannot be asked or refuses is a loud `landing-pass: <id>: LIFECYCLE: …` line on stderr and the pass goes on (f031f6dee's ON semantics) |
-| pr: helper exits 7/8 | helper's lc calls hold a dead `SPIRA_LC_BIN`: no-ops | helper records Delivered/Returned as before |
+| pr: helper exits 7/8 | helper's lc calls see `SPIRA_LIFECYCLE_ENFORCE=0`: no-ops | helper records Delivered/Returned as before |
 | push: landed / lost the race / conflict | no `lc_deliver_push_*` call at all | `lc_deliver_push_delivered / _requeued / _returned`; spira-lc probed once per pass (`list --state IN_DELIVERY`) before the first push landing — **unreachable refuses the landing loudly** (`landing: lifecycle_enforce is on and spira-lc is unreachable (<why>) — not landing <br> this pass; …`), because the landing would be a delivery the authoritative machine never saw |
 | queue / queue.local certification, hold, prune, halt | never touches spira-lc | never touches spira-lc (gate.sh's own certification event is gate.sh's) |
 

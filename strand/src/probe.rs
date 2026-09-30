@@ -300,10 +300,7 @@ pub fn wait_held(cfg: &Config, beads: &[Bead]) -> Result<HashSet<String>, String
     let unreachable = |why: String| {
         format!("lifecycle_enforce is on and spira-lc is unreachable ({why}) — cannot read the wait holds")
     };
-    let bin = cfg.lc_bin.as_deref().ok_or_else(|| unreachable("SPIRA_LC_BIN unset".into()))?;
-    if !is_executable(Path::new(bin)) {
-        return Err(unreachable(format!("{bin} is not executable")));
-    }
+    let bin = cfg.lc_bin.as_str();
     let o = run("timeout", &["30", bin, "list", "--hold", "wait"], None, &[]);
     if !o.ok {
         return Err(unreachable(format!("list --hold wait: {}", o.stderr.trim())));
@@ -316,11 +313,6 @@ pub fn wait_held(cfg: &Config, beads: &[Bead]) -> Result<HashSet<String>, String
         .filter_map(|r| r.get("bead_id").and_then(|x| x.as_str()).map(str::to_string))
         .filter(|s| !s.is_empty())
         .collect())
-}
-
-pub fn is_executable(p: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 // ------------------------------------------------------------------------------------------

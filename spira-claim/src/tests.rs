@@ -444,7 +444,6 @@ fn on_bd_mode_is_unchanged_and_the_label_is_not_the_poison() {
 fn on_machine_mode_unreachable_machine_is_cannot_tell() {
     enforce(true);
     let (ready, _, recs) = machine_fixture();
-    std::env::set_var("SPIRA_LC_BIN", "/nonexistent/spira-lc");
     let o = run(&["select", "--fayth", "t", "--blockers", "machine", "--blocker-records", &recs], &ready);
     assert_eq!((o.code, o.out.as_str()), (CANNOT_TELL, ""));
     assert!(o.err.contains("lifecycle_enforce is on"), "{}", o.err);

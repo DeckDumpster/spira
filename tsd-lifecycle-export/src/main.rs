@@ -6,7 +6,7 @@
 //   tsd-lifecycle-export lifecycle                       spira_lifecycle.event, post-cutover
 //
 // Every mode tracks its own progress in $SPIRA_RUN/tsd/.bead-stage-checkpoint-<mode>.json, so
-// re-running any of them exports nothing new. Rows are appended through $SPIRA_TSD_BIN
+// re-running any of them exports nothing new. Rows are appended through tsd-write (by name)
 // (tsd-write), the one IO seam every run/tsd/ producer already shells out to — never a
 // second, in-process writer of the same file.
 
@@ -270,12 +270,10 @@ impl LcRoConn {
 // ── the write path: every row through tsd-write, never a second in-process writer ─────────
 
 fn write_rows(run: &Path, rows: &[StageRow]) -> Result<(), String> {
-    let tsd_bin = env_var("SPIRA_TSD_BIN")?;
-    if !Path::new(&tsd_bin).is_file() {
-        return Err(format!("SPIRA_TSD_BIN {tsd_bin:?} is not a file"));
-    }
+    // tsd-write, by name on the launcher's PATH (sp-gypjk); a missing one fails the spawn below.
+    let tsd_bin = "tsd-write";
     for row in rows {
-        let mut cmd = Command::new(&tsd_bin);
+        let mut cmd = Command::new(tsd_bin);
         cmd.args(["--family", "bead-stage", "--root"])
             .arg(run)
             .args(["--ts", &row.ts])

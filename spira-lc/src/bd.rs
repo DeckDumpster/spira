@@ -10,19 +10,6 @@ fn bd_bin() -> String {
     std::env::var("SPIRA_BD").unwrap_or_else(|_| "bd".to_string())
 }
 
-/// `spira-lc serve` runs as a long-lived service with no reason to expect any particular
-/// working directory; a bare relative path like `spira/bead.sh` would resolve differently
-/// (or not at all) depending on how it was launched. Resolved against `SPIRA_REPO` (the
-/// same variable the harness's own shell code is rooted at) unless a caller overrides the
-/// binary/script path outright.
-fn repo_relative(env_override: &str, default_default: &str) -> String {
-    if let Ok(p) = std::env::var(env_override) {
-        return p;
-    }
-    let repo = std::env::var("SPIRA_REPO").unwrap_or_else(|_| ".".to_string());
-    format!("{repo}/{default_default}")
-}
-
 fn run(args: &[&str]) -> Result<String, String> {
     let mut cmd = Command::new(bd_bin());
     if let Ok(db) = std::env::var("SPIRA_DB") {
@@ -64,8 +51,9 @@ pub fn note(bead_id: &str, text: &str) -> Result<String, String> {
 /// `--parent` doc for why an inherited `branch:` label made `groomer.sh split-piece` a
 /// two-step dance that this avoids by filing with the right labels from the start.
 pub fn file_child(title: &str, persona: &str, repo: &str, parent: &str) -> Result<String, String> {
-    let bead_sh = repo_relative("SPIRA_BEAD_SH", "spira/bead.sh");
-    let out = Command::new(&bead_sh)
+    // bead.sh, by name on the launcher's PATH (sp-gypjk) — never repository-relative.
+    let bead_sh = "bead.sh";
+    let out = Command::new(bead_sh)
         .args(["file", title, "--for", persona, "--repo", repo, "--parent", parent])
         .output()
         .map_err(|e| format!("running {bead_sh}: {e}"))?;
@@ -80,7 +68,9 @@ pub fn file_child(title: &str, persona: &str, repo: &str, parent: &str) -> Resul
 /// blocked`, and the supersede-by confirmation request). `--bead` ties the tracking
 /// decision bead mail.sh files to the one this layer is bound to.
 pub fn ask_operator(from: &str, subject: &str, default: &str, bead_id: &str, body: &str) -> Result<String, String> {
-    let mail_sh = repo_relative("SPIRA_MAIL_SH", "spira/mail.sh");
+    // mail.sh, by name on the launcher's PATH (sp-gypjk); SPIRA_MAIL_SH is the harness-wide
+    // script-override seam.
+    let mail_sh = std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| "mail.sh".to_string());
     let mut child = Command::new(&mail_sh)
         .args(["send", "operator", "--from", from, "--subject", subject, "--kind", "question", "--default", default, "--bead", bead_id])
         .stdin(std::process::Stdio::piped())

@@ -313,7 +313,7 @@ impl Tools for FakeTools {
     }
     fn queue_step(&self, repo: &str) -> Result<Vec<String>, String> {
         if self.no_queue.get() {
-            return Err("no queue binary (SPIRA_QUEUE_BIN) — the queue step did not run".into());
+            return Err("no queue program — the queue step did not run".into());
         }
         self.steps.borrow_mut().push(repo.into());
         Ok(vec![format!("step {repo}")])
@@ -811,7 +811,7 @@ fn the_queue_step_runs_before_and_after_the_walk_and_a_missing_binary_is_said() 
     let h = H::new(LandMode::Queue);
     h.tools.no_queue.set(true);
     h.run();
-    assert!(h.logged("queue early: spira: no queue binary (SPIRA_QUEUE_BIN) — the queue step did not run"));
+    assert!(h.logged("queue early: spira: no queue program — the queue step did not run"));
     assert_eq!(h.tools.skews.borrow().len(), 1, "queue(forge) refreshes the checkout");
 }
 
@@ -1398,12 +1398,12 @@ fn records_keep_their_shell_formats() {
 
 #[test]
 fn the_context_answer_parses_into_settings_and_rows() {
-    let ans = "run=/r\0db=/db\0land_maxsec=3600\0gate_reserve=2700\0queue_bin=/b/queue\0home_repo=spira\0\
+    let ans = "run=/r\0db=/db\0land_maxsec=3600\0gate_reserve=2700\0home_repo=spira\0\
 repo=spira\u{1d}/h\u{1d}queue.local\u{1d}local/main\u{1d}local/main\u{1d}\u{1d}main\u{1d}refs/remotes/origin/main\0\
 repo=other\u{1d}\u{1d}\u{1d}\u{1d}\u{1d}\u{1d}\u{1d}\0";
     let (s, repos) = crate::real::parse_context(ans, Path::new("/home")).unwrap();
     assert_eq!((s.run.as_path(), s.land_maxsec, s.gate_reserve), (Path::new("/r"), 3600, 2700));
-    assert_eq!(s.queue_bin.as_deref(), Some(Path::new("/b/queue")));
+    assert_eq!(s.queue_bin.as_deref(), Some(Path::new("queue")), "queue by name, on the launcher's PATH");
     assert_eq!(repos[0].mode, LandMode::QueueLocal);
     assert_eq!(repos[0].base_remote, None);
     assert_eq!(repos[0].forge_ref.as_deref(), Some("refs/remotes/origin/main"));
@@ -1864,9 +1864,9 @@ fn real_halt_finds_podman_and_testenv_on_its_path() {
     let log = dir.join("log");
     let podman = bin.join("podman");
     testkit::write_exe(&podman, "#!/bin/sh\n[ \"$1\" = ps ] && echo spira-batch-stubbed\nexit 0\n");
-    std::fs::write(dir.join("testenv.sh"), format!("echo \"$*\" >> {}\ncommand -v podman >> {}\n", log.display(), log.display())).unwrap();
+    testkit::write_exe(&bin.join("testenv.sh"), &format!("#!/bin/sh\necho \"$*\" >> {}\ncommand -v podman >> {}\n", log.display(), log.display()));
     let path = format!("{}:/usr/bin:/bin", bin.display());
-    let h = RealHalt { prod: dir.to_path_buf(), path: Some(path) };
+    let h = RealHalt { path: Some(path) };
     assert_eq!(h.running_containers(), vec!["spira-batch-stubbed".to_string()]);
     assert!(h.teardown("spira-batch-stubbed"));
     let got = std::fs::read_to_string(&log).unwrap();

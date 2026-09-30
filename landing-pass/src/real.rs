@@ -123,14 +123,14 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         git_email: g("git_email"),
         incident: PathBuf::from(g("incident")),
         scope_label: g("scope_label"),
-        queue_bin: path_opt("queue_bin"),
+        // Every harness tool by name, on the launcher's PATH (sp-gypjk).
+        queue_bin: Some(PathBuf::from("queue")),
         queue_dir: path_opt("queue_dir").unwrap_or_else(|| PathBuf::from(&run).join("queue")),
-        lc_bin: path_opt("lc_bin"),
-        prod: path_opt("prod").unwrap_or_else(|| home.to_path_buf()),
+        lc_bin: Some(PathBuf::from("spira-lc")),
         halt_grace: num("halt_grace", 30).max(0) as u64,
         path: kv.get("path").filter(|v| !v.is_empty()).cloned(),
         bdjson_fixture: path_opt("bdjson_fixture"),
-        pr_pass_branch_sh: path_opt("pr_pass_branch_sh").unwrap_or_else(|| home.join("pr-pass-branch.sh")),
+        pr_pass_branch_sh: path_opt("pr_pass_branch_sh").unwrap_or_else(|| PathBuf::from("pr-pass-branch.sh")),
         toml: path_opt("toml"),
         lifecycle_enforce: false,
     };
@@ -278,8 +278,8 @@ pub fn json_only(s: &str) -> &str {
 impl RealBeads {
     fn show_raw(&self, ids: &[String]) -> Result<String, String> {
         if let Some(fx) = &self.fixture {
-            let mut c = command("python3");
-            c.arg(self.home.join("bdsim.py")).arg(fx).arg("show").args(ids).arg("--json").stdin(Stdio::null());
+            let mut c = command("bdsim.py");
+            c.arg(fx).arg("show").args(ids).arg("--json").stdin(Stdio::null());
             let (rc, so, _) = run_capture(c);
             return if rc == 0 { Ok(String::from_utf8_lossy(&so).into_owned()) } else { Err(format!("bdsim exited {rc}")) };
         }
@@ -642,7 +642,7 @@ pub fn executable(p: &Path) -> bool {
 
 impl RealTools {
     fn gate_command(&self, branch: &str, repo: &str, lock_wait: &str, bead: &str) -> std::process::Command {
-        let mut c = command(self.home.join("gate.sh"));
+        let mut c = command("gate.sh");
         c.arg(branch).arg(repo).env("SPIRA_GATE_LOCK_WAIT", lock_wait).env("SPIRA_GATE_BEAD", bead);
         self.with_env(&mut c);
         c
@@ -662,30 +662,24 @@ impl Tools for RealTools {
     fn gate_slots_free(&self, par: usize) -> Option<usize> {
         self.admission.as_ref().map(|d| admission_free(d, par))
     }
-    /// `gate-run.sh` is now a thin exec-shim into the Rust `gate-run` binary (sp-ubw2o), but
-    /// this call site still names the path, not `SPIRA_GATE_RUN_BIN`, directly — a session
-    /// (or a suite fixture) that plants its own script at this exact path to script this
-    /// method's behavior must keep working. Invoked directly (no `bash` prefix): the file is
-    /// executable with its own shebang.
+    /// `gate-run.sh`, by name on the launcher's PATH (sp-gypjk); a suite scripts this
+    /// method's behavior by putting its own gate-run.sh first on PATH. A failed run (or a
+    /// missing tool) is "no status".
     fn gate_status(&self, branch: &str, repo: &str) -> Option<String> {
-        let bin = self.home.join("gate-run.sh");
-        if !executable(&bin) {
-            return None;
-        }
-        let mut c = command(bin);
+        let mut c = command("gate-run.sh");
         c.arg("--status").arg(branch).arg(repo).stdin(Stdio::null());
         let (rc, so, _) = run_capture(c);
         if rc == 0 { Some(String::from_utf8_lossy(&so).trim_end_matches('\n').to_string()) } else { None }
     }
     fn confine(&self, id: &str, branch: &str, repo: &Path, base: &str, labels: &str) -> (i32, String) {
-        let mut c = command(self.home.join("confine.sh"));
+        let mut c = command("confine.sh");
         c.arg(id).arg(branch).arg(repo).arg(base).arg(labels);
         let (rc, s) = combined(c);
         (rc, s.trim_end_matches('\n').to_string())
     }
     fn queue_step(&self, repo: &str) -> Result<Vec<String>, String> {
-        let Some(bin) = self.queue_bin.as_ref().filter(|b| executable(b)) else {
-            return Err("no queue binary (SPIRA_QUEUE_BIN) — the queue step did not run".into());
+        let Some(bin) = self.queue_bin.as_ref() else {
+            return Err("no queue program — the queue step did not run".into());
         };
         let mut c = command(bin);
         c.arg("step").arg(repo);
@@ -694,27 +688,28 @@ impl Tools for RealTools {
         Ok(s.lines().map(String::from).collect())
     }
     fn skew_refresh(&self, repo: &Path) -> String {
-        let mut c = command(self.home.join("skew.sh"));
+        let mut c = command("skew.sh");
         c.arg("refresh").arg(repo);
         combined(c).1.trim_end_matches('\n').to_string()
     }
     fn ensure(&self, script: &Path) -> Vec<String> {
-        if !executable(script) {
-            return Vec::new();
-        }
-        let mut c = command("bash");
-        c.arg(script);
+        // A bare name is a launcher-PATH program, run directly; a path (systemd/ is not on
+        // PATH) is run with bash when it is there.
+        let c = if script.components().count() == 1 {
+            command(script)
+        } else {
+            if !executable(script) {
+                return Vec::new();
+            }
+            let mut c = command("bash");
+            c.arg(script);
+            c
+        };
         combined(c).1.lines().map(String::from).collect()
     }
     fn rebase_stale(&self, id: &str, repo: &str) -> i32 {
-        // SPIRA_REBASE_STALE_BIN (conf.sh exports it), else the one installed beside this binary.
-        let bin = std::env::var_os("SPIRA_REBASE_STALE_BIN")
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("rebase-stale"))))
-            .filter(|b| executable(b));
-        let Some(bin) = bin else { return 3 };
-        let mut c = command(bin);
+        // rebase-stale, by name on the launcher's PATH (sp-gypjk); a failed spawn is rc 3.
+        let mut c = command("rebase-stale");
         c.arg(id).arg(repo).env("SPIRA_HOME", &self.home);
         self.with_env(&mut c);
         match combined(c).0 {

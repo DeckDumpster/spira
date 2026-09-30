@@ -147,9 +147,12 @@ fn lc_mode(w: &World, label: &str) -> Result<bool, i32> {
 /// batch.sh's sweep, then the batcher's cut (queue.sh _batch_cut).
 fn batch_cut(w: &World, c: &Ctx, wait_zero: bool, lc_off: bool) -> i32 {
     w.scripts.batch_sweep(&c.r.name, wait_zero, lc_off);
-    let bin = c.s.batcher_bin.as_ref().filter(|b| is_executable(b));
-    let Some(bin) = bin else {
-        w.err(format!("queue.sh: SPIRA_BATCHER_BIN not available — cannot cut a round for {}", c.r.name));
+    if c.s.batcher_off {
+        w.out(format!("queue.sh: SPIRA_BATCHER_ENABLE=0 — the operator cuts rounds; no cut for {}", c.r.name));
+        return OK;
+    }
+    let Some(bin) = c.s.batcher_bin.as_ref() else {
+        w.err(format!("queue.sh: no batcher program — cannot cut a round for {}", c.r.name));
         return FAIL;
     };
     w.scripts.batcher_cut(bin, &c.r.name, wait_zero, lc_off)

@@ -177,7 +177,6 @@ fn first_line_state(t: &str) -> Option<LandState> {
 }
 
 pub struct RealHalt {
-    pub prod: PathBuf,
     /// PATH for podman and testenv.sh (see [`child_path`]); None inherits the caller's.
     pub path: Option<String>,
 }
@@ -229,11 +228,12 @@ impl HaltPorts for RealHalt {
     fn teardown(&self, name: &str) -> bool {
         // --force-foreign: the pass that owned this container was just signalled to death,
         // so its owner may be an orphan with no ancestor relation to this process.
-        let mut c = crate::util::command("bash");
+        // testenv.sh by name, looked up on the PATH handed to the child (sp-gypjk).
+        let mut c = crate::util::command("testenv.sh");
         if let Some(p) = &self.path {
             c.env("PATH", p);
         }
-        c.arg(self.prod.join("testenv.sh")).args(["down", "--name", name, "--volumes", "--force-foreign"]);
+        c.args(["down", "--name", name, "--volumes", "--force-foreign"]);
         crate::util::run_capture(c).0 == 0
     }
 }

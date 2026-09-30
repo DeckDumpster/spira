@@ -67,7 +67,7 @@ pub fn lifecycle_on(w: &World) -> bool {
 /// With the switch ON, spira-lc is authoritative: an unreachable machine is a loud refusal
 /// before anything changes. Never called with the switch OFF.
 pub fn require_lc(w: &World, label: &str) -> Result<(), i32> {
-    let why = if w.lc.available() { w.lc.probe().err() } else { Some("SPIRA_LC_BIN is not an executable".into()) };
+    let why = if w.lc.available() { w.lc.probe().err() } else { Some("no spira-lc program".into()) };
     match why {
         None => Ok(()),
         Some(e) => {

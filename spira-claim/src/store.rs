@@ -63,7 +63,7 @@ impl Store {
             db: db_flag
                 .or_else(|| std::env::var("SPIRA_DB").ok().filter(|s| !s.is_empty()))
                 .or_else(|| cfg.db.clone()),
-            lc: std::env::var("SPIRA_LC_BIN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "spira-lc".into()),
+            lc: "spira-lc".into(), // by name, on the launcher's PATH (sp-gypjk)
             timeout: Duration::from_secs(timeout_s.max(1)),
         }
     }
