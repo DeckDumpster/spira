@@ -17,13 +17,8 @@ pub struct Real {
     /// PATH (sp-gypjk). None = not on PATH.
     incident: Option<PathBuf>,
     mail: Option<PathBuf>,
-}
-
-fn executable(p: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    fs::metadata(p)
-        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
+    /// The PATH this run was given; host-check.sh is looked up on it at each call.
+    path: String,
 }
 
 impl Real {
@@ -34,6 +29,7 @@ impl Real {
             incident: get("SPIRA_INCIDENT").or_else(|| crate::util::which_in(&path, "incident.sh")),
             mail: get("SPIRA_MAIL_CMD").or_else(|| crate::util::which_in(&path, "mail.sh")),
             suite_dir: s.suite_dir.clone(),
+            path,
         }
     }
 }
@@ -247,10 +243,8 @@ impl Mail for Real {
 
 impl HostCheck for Real {
     fn count(&self, flag: &str) -> Option<String> {
-        let script = self.suite_dir.join("host-check.sh");
-        if !executable(&script) {
-            return None;
-        }
+        // host-check.sh on the launcher's PATH (sp-gypjk); absent or not executable is None.
+        let script = crate::util::which_in(&self.path, "host-check.sh")?;
         let mut child = Command::new("bash")
             .arg(&script)
             .arg(flag)
@@ -473,7 +467,8 @@ mod tests {
         let d = tmp("hc");
         fs::create_dir_all(d.join("spira")).unwrap();
         let s = Settings::load(&crate::settings::Source { env: &|_: &str| None, config: None }, &d);
-        let real = Real::new(&s, &|_: &str| None);
+        let on_path = d.join("spira").display().to_string();
+        let real = Real::new(&s, &|k: &str| (k == "PATH").then(|| on_path.clone()));
         assert_eq!(real.count("--count-undeclared"), None, "absent script");
         let hc = d.join("spira/host-check.sh");
         // Written by testkit (no ETXTBSY race, testkit/DESIGN.md), then made NOT executable for
