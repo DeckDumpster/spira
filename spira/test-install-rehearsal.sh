@@ -7,13 +7,12 @@
 #   Stub          — bd (container has no bd; stub created as spirauser inside the container
 #                   at /tmp/spira-stubs/bd satisfies conf.sh schema check, doctor.sh
 #                   fatal-binary check, and ready.sh database query)
-#   Stub          — SPIRA_LOOM_BIN (fake executable satisfies the binary-present gate in
-#                   ready.sh; SPIRA_LOOM_PROBE then handles the actual probe call)
+#   Stub          — loom, by name on PATH (ready.sh; SPIRA_LOOM_PROBE then handles the
+#                   actual probe call)
 #   Stub          — SPIRA_LOOM_PROBE (script prints "200 5ms" in place of HTTP call)
-#   Stub          — SPIRA_SUPERVISE_BIN, only when the checkout has no cargo build
-#                   (gate.yml's own run has a real one in bin/); a bare exit-0 script
-#                   satisfies install.sh's executable-target refusal for spira-cockpit.service
-#                   without paying a Rust build inside the container
+#   Stub          — the fake prod root's bin/ (the units' ExecStart targets): bare exit-0
+#                   scripts satisfy install.sh's executable-target refusal without paying a
+#                   Rust build inside the container
 #   Env override  — SPIRA_OPERATED=0 (this rehearsal has nobody at the console; doctor.sh's
 #                   operator-channel check is documented to WARN rather than FAIL here)
 #   Warn path     — tmux (absent in container; layout.sh pane check WARNs, not FAILs)
@@ -42,8 +41,6 @@ iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
 echo "test-install-rehearsal.sh"
 
 command -v podman >/dev/null 2>&1 || skip "podman not on PATH"
-
-TESTENV="$HERE/testenv.sh"
 CNAME="spira-testenv-reh-$$"
 # Stubs live inside the container at /tmp/spira-stubs, created as spirauser.
 # A bind-mount cannot carry execute permissions reliably across rootless podman's
@@ -52,14 +49,14 @@ CNAME="spira-testenv-reh-$$"
 STUBS_CTR="/tmp/spira-stubs"
 
 cleanup() {
-    bash "$TESTENV" down --name "$CNAME" --volumes >/dev/null 2>&1 || true
+    testenv.sh down --name "$CNAME" --volumes >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
-bash "$TESTENV" up --name "$CNAME" >&2
+testenv.sh up --name "$CNAME" >&2
 iszero "up exits 0" "$?"
 
-if ! bash "$TESTENV" probe --name "$CNAME"; then
+if ! testenv.sh probe --name "$CNAME"; then
     printf 'SKIP test-install-rehearsal.sh: user systemd not available in container\n' >&2
     exit 77
 fi
@@ -69,9 +66,10 @@ ok "user systemd running (probe exits 0)"
 # BASE EXECUTION ARRAY. Builds the common prefix for podman exec as spirauser.
 # Extra -e flags and "$CNAME" CMD are appended by each call site.
 #
-# SPIRA_PATH is prepended by conf.sh when it rebuilds PATH. Every script that
-# sources conf.sh (install.sh, uninstall.sh, ready.sh, sentinel.sh, seed.sh)
-# then finds stub bd on PATH via `command -v bd`. conf.sh also exports SPIRA_BD
+# THIS SUITE IS THE LAUNCHER of the container's processes, so it sets their PATH
+# (sp-gypjk): the stubs first, then the fake prod root's release layout (bin/, spira/) —
+# every tool is invoked by name. Every script that sources conf.sh (install.sh,
+# uninstall.sh, ready.sh, sentinel.sh, seed.sh) then finds stub bd and loom on PATH. conf.sh also exports SPIRA_BD
 # if it is not already set, but we set it explicitly here so the schema check
 # (conf.sh calls "$SPIRA_BD" -C "$SPIRA_DB" migrate schema) uses the stub
 # before the PATH rebuild has happened.
@@ -85,6 +83,7 @@ SPIRA_RUN_CTR="/tmp/spira-reh"
 CEXEC=(podman exec --user spirauser
     -e XDG_RUNTIME_DIR=/run/user/1001
     -e "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus"
+    -e "PATH=${STUBS_CTR}:/tmp/spira-prod/bin:/tmp/spira-prod/spira:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     -e "SPIRA_PATH=${STUBS_CTR}"
     -e "SPIRA_BD=${STUBS_CTR}/bd"
     -e "SPIRA_RUN=${SPIRA_RUN_CTR}"
@@ -105,7 +104,7 @@ CEXEC=(podman exec --user spirauser
 # The `migrate schema` call from conf.sh's schema check also exits 0 (no output),
 # which the check interprets as "no mismatch".
 #
-# loom stub: only needs to be executable so SPIRA_LOOM_BIN passes the -x gate.
+# loom stub: found by name on PATH (STUBS_CTR first).
 # loom-probe stub: must print "200 Nms" to pass the loom check in ready.sh.
 # ---------------------------------------------------------------------------
 "${CEXEC[@]}" "$CNAME" bash -c "
@@ -144,34 +143,15 @@ mkdir -p /tmp/spira-prod
 cp -a /workspace/spira /tmp/spira-prod/
 cp -a /workspace/cockpit /tmp/spira-prod/
 cp -a /workspace/beads-push.sh /workspace/concierge.sh /tmp/spira-prod/
+# The release's bin/: the units ExecStart /tmp/spira-prod/bin/<tool> (sp-gypjk). world.halted
+# (below) means units are only enabled, never started, so no-op stubs satisfy install.sh's
+# executable-bit check. NOT PROVEN here: the tree's own build staged as this bin/ (sp-isom7).
+mkdir -p /tmp/spira-prod/bin
+for b in sentinel queue aeon spira-supervise landing-pass reconciler-flow; do
+    printf '#!/bin/sh\nexit 0\n' > /tmp/spira-prod/bin/\$b && chmod +x /tmp/spira-prod/bin/\$b
+done
 " >&2
 iszero "stubs created inside container" "$?"
-
-# ---------------------------------------------------------------------------
-# spira-cockpit.service's ExecStart is @SPIRA_SUPERVISE_BIN@ (a compiled Rust binary,
-# unlike the shell-script units above), and unlike loom/broker/landing-pass it is not
-# gated on that binary's executability — install.sh refuses an unexecutable ExecStart
-# target outright, so a checkout with no cargo build cannot install at all.
-#
-# The gate's build job leaves a real binary in /workspace/bin, which spirauser can
-# read (the bind mount preserves the host's chmod +x) but not write to — /workspace
-# is bind-mounted with the host's ownership. So a missing binary is stubbed under
-# STUBS_CTR instead (spirauser-writable) and named to install.sh via an env override,
-# rather than by trying to create the file in place. world.halted (below) means the
-# unit is only enabled, never started, so a stub that merely satisfies the
-# executable-bit check is sufficient.
-# ---------------------------------------------------------------------------
-SUPERVISE_ENV=()
-if "${CEXEC[@]}" "$CNAME" bash -c \
-    '[ -x /workspace/bin/spira-supervise ] || [ -x /workspace/target/release/spira-supervise ]' \
-    >/dev/null 2>&1; then
-    ok "spira-supervise: real binary found in the checkout"
-else
-    "${CEXEC[@]}" "$CNAME" bash -c \
-        "printf '#!/bin/sh\nexit 0\n' > '${STUBS_CTR}/spira-supervise' && chmod +x '${STUBS_CTR}/spira-supervise'" >&2
-    iszero "spira-supervise stub created (no cargo build in this checkout)" "$?"
-    SUPERVISE_ENV=(-e "SPIRA_SUPERVISE_BIN=${STUBS_CTR}/spira-supervise")
-fi
 
 # ===========================================================================
 echo
@@ -219,7 +199,6 @@ iszero "world.halted created" "$?"
 
 "${CEXEC[@]}" \
     -e "SPIRA_INSTALL_FORCE=1" \
-    "${SUPERVISE_ENV[@]}" \
     "$CNAME" bash /workspace/systemd/install.sh >&2
 iszero "install.sh exits 0" "$?"
 
@@ -266,15 +245,13 @@ doc_rc=$?
 iszero "doctor.sh exits 0" "$doc_rc"
 nowant "doctor.sh: no FAIL at all" "FAIL" "$doc_out"
 
-# 5. ready.sh with stubs. SPIRA_LOOM_BIN points to the stub loom binary so the
-#    binary-present gate passes; SPIRA_LOOM_PROBE then returns "200 5ms".
+# 5. ready.sh with stubs. The stub loom is on PATH; SPIRA_LOOM_PROBE returns "200 5ms".
 #    sentinel.sh --report renders WARN (no open beads) and seed.sh --list renders
 #    WARN (no statutes in the stub db) — both are WARNs, not FAILs. The cockpit
 #    collector check is a known FAIL (see NOT PROVEN, header) since nothing here
 #    starts spira-cockpit-prod.service, so specific lines are asserted instead of
 #    the overall exit code.
 ready_out="$("${CEXEC[@]}" \
-    -e "SPIRA_LOOM_BIN=${STUBS_CTR}/loom" \
     -e "SPIRA_LOOM_PROBE=${STUBS_CTR}/loom-probe" \
     "$CNAME" bash /workspace/spira/ready.sh 2>&1)"
 want "ready.sh: sentinel timer active" "pass  sentinel timer active" "$ready_out"
@@ -320,7 +297,6 @@ echo "stray sweep positive control — plant a unit, confirm STRAY is reported:"
     "mkdir -p '${SPIRA_RUN_CTR}' && touch '${SPIRA_RUN_CTR}/world.halted'" >/dev/null
 "${CEXEC[@]}" \
     -e "SPIRA_INSTALL_FORCE=1" \
-    "${SUPERVISE_ENV[@]}" \
     "$CNAME" bash /workspace/systemd/install.sh >/dev/null 2>&1
 iszero "re-install for stray test exits 0" "$?"
 

@@ -122,6 +122,9 @@ EOF
 chmod +x "$COCKPIT_DIR/layout.sh"
 
 ln -s "$REAL_REPO/install.sh" "$FIXTURE/install.sh"
+# Unit binaries (sp-gypjk): the units ExecStart $FIXTURE/bin/<tool>, the release layout.
+. "$HERE/lib-test-install.sh"
+install_fixture_release_bins "$FIXTURE"
 
 MOCK_BIN="$TMP/mock-bin"
 mkdir -p "$MOCK_BIN"
@@ -198,7 +201,7 @@ run_install() {
     unset _a in_env
     > "$MOCK_LOG"
     env -i \
-        "PATH=$MOCK_BIN:$PATH" \
+        "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
         "HOME=$FAKE_HOME" \
         SPIRA_CONF=/nonexistent \
         "SPIRA_PATH=$MOCK_BIN" \

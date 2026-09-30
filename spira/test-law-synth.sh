@@ -112,7 +112,7 @@ is "law-synth: LAW_SYNTH_OVERRIDE=1 overrides floor check" "0" "$rc_synth_force"
 echo
 echo "=== cockpit.sh statute_keys: SP_STATUTE_SKEW against a real mismatch ==="
 
-run_statute_keys() { SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP" bash "$HERE/cockpit.sh" statute 2>/dev/null; }
+run_statute_keys() { SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP" cockpit.sh statute 2>/dev/null; }
 
 # POSITIVE CONTROL: fixture db has 3 law- entries (from the floor test above); the committed
 # page has 10 ### headings. 3 < 10/2 → MISMATCH.

@@ -73,7 +73,6 @@ testdb_up rc_cause || {
 # lib.sh is sourced for counter_of / counter_causes / recur_causes.
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
-INC="$HERE/incident.sh"
 B() { bd -C "$SPIRA_DB" "$@"; }
 mkdir -p "$TMP/run"
 
@@ -92,12 +91,12 @@ file_incident() {  # file_incident <ref> <title> <payload> [VAR=val ...]
     local ref="$1" title="$2" payload="$3"; shift 3
     printf '%s' "$payload" | \
         env SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" \
-        SPIRA_HOME="$TMP/inc-home" \
+        SPIRA_HOME="$TMP/inc-home" PATH="$TMP/inc-home:$PATH" \
         SPIRA_INCIDENT_REF="$ref" \
         SPIRA_INCIDENT_LOCK="$TMP/run/rc-cause-test.lock" \
         SPIRA_INCIDENT_REPO= \
         "$@" \
-        bash "$INC" file "$title" - 2>/dev/null
+        incident.sh file "$title" - 2>/dev/null
 }
 
 # --- helpers for section 3/4 (merged from test-watcher-reopen.sh) -----------------------
@@ -111,14 +110,14 @@ file_watcher_incident() {
         env SPIRA_CONF="$TMP/no-conf" \
         SPIRA_DB="$SPIRA_DB" \
         SPIRA_RUN="$TMP/run" \
-        SPIRA_HOME="$TMP/inc-home" \
+        SPIRA_HOME="$TMP/inc-home" PATH="$TMP/inc-home:$PATH" \
         SPIRA_INCIDENT_REF="$ref" \
         SPIRA_INCIDENT_LOCK="$TMP/run/watcher.lock" \
         SPIRA_INCIDENT_REPO= \
         SPIRA_SIN_EXEMPT=1 \
         SPIRA_INCIDENT_CAUSE=watchtower \
         "$@" \
-        bash "$INC" file "$title" - >/dev/null 2>&1
+        incident.sh file "$title" - >/dev/null 2>&1
 }
 
 # find_bead <ref> — print bead id (open, in_progress or closed) by external_ref. Uses the

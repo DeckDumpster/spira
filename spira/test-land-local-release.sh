@@ -16,10 +16,8 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
-# The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
-# test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
-QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
-[ -x "$QUEUE_BIN" ] || { echo "FAIL: the queue binary is not built at $QUEUE_BIN"; exit 1; }
+# The queue binary (queue/DESIGN.md §7.4), by name on the suite's PATH (sp-gypjk).
+command -v queue >/dev/null 2>&1 || { echo "FAIL: queue is not on PATH"; exit 1; }
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -113,7 +111,7 @@ run_q() {
     SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged (queue/DESIGN.md §8 D12)" \
     SPIRA_SYSTEMCTL="$MOCK_SC" \
     MOCK_AEONS="${MOCK_AEONS:-}" \
-        SPIRA_HOME="$SH" "$QUEUE_BIN" "$@" 2>&1
+        SPIRA_HOME="$SH" PATH="$SH:$PATH" queue "$@" 2>&1
 }
 run_skew() {
     MAIL_BODY_FILE="$MAIL_BODY_FILE" \
@@ -123,7 +121,7 @@ run_skew() {
     SPIRA_RUN="$RUN" \
     SPIRA_REPO_MAP="$RMAP" \
     SPIRA_RELEASES="$RELEASES" \
-        bash "$SH/skew.sh" "$@" 2>&1
+        PATH="$SH:$PATH" skew.sh "$@" 2>&1
 }
 localmain() { git -C "$REPO" rev-parse local/main; }
 current_name() { readlink "$RELEASES/current" 2>/dev/null; }

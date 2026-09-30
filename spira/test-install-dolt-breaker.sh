@@ -211,6 +211,9 @@ done
 unset _f _bn
 
 ln -s "$REAL_REPO/install.sh" "$FIXTURE/install.sh"
+# Unit binaries (sp-gypjk): the units ExecStart $FIXTURE/bin/<tool>, the release layout.
+. "$HERE/lib-test-install.sh"
+install_fixture_release_bins "$FIXTURE"
 
 # Mock system binaries.
 MOCK_BIN="$TMP/mock-bin"
@@ -337,7 +340,7 @@ BDSTUB
 # Pre-render units for the diff check.
 make_bd_stub 1
 _rendered="$(env -i \
-    "PATH=$MOCK_BIN:$PATH" \
+    "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
     "HOME=$FAKE_HOME" \
     SPIRA_CONF=/nonexistent \
     "SPIRA_PATH=$MOCK_BIN" \
@@ -368,7 +371,7 @@ unset _rendered _render_rc
 run_install() {
     local output_file="$1"
     env -i \
-        "PATH=$MOCK_BIN:$PATH" \
+        "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
         "HOME=$FAKE_HOME" \
         SPIRA_CONF=/nonexistent \
         "SPIRA_PATH=$MOCK_BIN" \

@@ -76,7 +76,7 @@ DEST="$TMP/home/.config/systemd/user"
 SPIRA_RUN_DIR="$TMP/run"
 MOCK_BIN="$TMP/mock-bin"
 mkdir -p "$DEST" "$SPIRA_RUN_DIR" "$MOCK_BIN"
-install_fixture_stub_bins "$MOCK_BIN"   # sentinel/queue/aeon: the units' @SPIRA_*_BIN@
+PROD="$(install_fixture_prod "$TMP/prod" "$HERE")"   # release-shaped prod root: spira/ -> this tree, bin/ unit stubs
 MOCK_LOG="$TMP/systemctl.log"
 # DRAIN_STATE is read by the oneshot-drain mock to simulate a transitioning service.
 DRAIN_STATE="$TMP/drain_state"
@@ -136,7 +136,7 @@ chmod +x "$MOCK_BIN/spira-supervise"
 inst() {
     > "$MOCK_LOG"
     env -i \
-        "PATH=$PATH" \
+        "PATH=$MOCK_BIN:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
         "SPIRA_PATH=$MOCK_BIN" \
@@ -145,12 +145,9 @@ inst() {
         SPIRA_TESTDB_DATA= \
         "SPIRA_RUN=$SPIRA_RUN_DIR" \
         "SPIRA_HOME=$HERE" \
-        "SPIRA_PROD=$HERE" \
+        "SPIRA_PROD=$PROD" \
         "SPIRA_REPO=$FAKE_REPO" \
         "SPIRA_COCKPIT=$REAL_COCKPIT" \
-        "SPIRA_SUPERVISE_BIN=$MOCK_BIN/spira-supervise" \
-        "SPIRA_SENTINEL_BIN=$MOCK_BIN/sentinel" "SPIRA_QUEUE_BIN=$MOCK_BIN/queue" \
-        "SPIRA_AEON_BIN=$MOCK_BIN/aeon" \
         "MOCK_LOG=$MOCK_LOG" \
         "MOCK_AEONS=${MOCK_AEONS:-}" \
         "MOCK_IS_ACTIVE=${MOCK_IS_ACTIVE:-active}" \

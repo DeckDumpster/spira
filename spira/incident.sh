@@ -389,12 +389,11 @@ Reopened by dedup — same external ref seen again within ${DEDUP_LOOKBACK_DAYS}
             local _sin_subj="$_prov — recurred $n times$age with no fix holding. Mute it, or keep paging?"
             local _sin_dflt="mute this alert and leave $id open for Ops to work unpaged; keep paging only if you want a decision on every recurrence"
             local _sin_ev; _sin_ev="$(head -c 2000 "$pf" 2>/dev/null || true)"
-            if [ -x "$SPIRA_HOME/mail.sh" ]; then
-                "$SPIRA_HOME/mail.sh" send operator \
-                    --from "Incident <incident@spira>" \
-                    --subject "$_sin_subj" \
-                    --kind question \
-                    --default "$_sin_dflt" <<MAILEOF >/dev/null 2>&1
+            mail.sh send operator \
+                --from "Incident <incident@spira>" \
+                --subject "$_sin_subj" \
+                --kind question \
+                --default "$_sin_dflt" <<MAILEOF >/dev/null 2>&1
 ## Question
 $_sin_subj
 
@@ -405,7 +404,6 @@ $id is "$title". It has fired $n times$age and each recurrence pages you while f
 
 $_sin_ev
 MAILEOF
-            fi
             ilog "$ref is a SIN at $n recurrences — escalated once"
         fi
         printf '%s' "$id"
@@ -521,7 +519,7 @@ MAILEOF
             local _ask_subj="undeclared repo: $(printf '%s' "$ref" | cut -c1-72)"
             local _ask_title="$_prov — $_ask_subj"
             local _ask_dflt="add repo:<name> to $id once you know which checkout owns the code this incident is about"
-            [ -x "$SPIRA_HOME/mail.sh" ] && "$SPIRA_HOME/mail.sh" send operator \
+            mail.sh send operator \
                 --from "Incident <incident@spira>" \
                 --subject "$_ask_title" \
                 --kind question \

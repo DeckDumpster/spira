@@ -76,13 +76,13 @@ for _d in spira systemd cockpit; do
     [ -d "$WORKSPACE/$_d" ] && cp -rp "$WORKSPACE/$_d" "$_stage/" || true
 done
 # The sentinel is a binary now (sentinel.sh is gone): the release ships it, and the ones it
-# runs, under bin/ — resolved exactly as conf.sh's spira_bin resolves them for this tree.
-while IFS= read -r _p; do
-    [ -x "$_p" ] && cp -p "$_p" "$_stage/bin/"
-done < <(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1
-         for b in sentinel strand spira-claim spira-config; do spira_bin "$b" 2>/dev/null; echo; done' _ "$HERE")
+# runs, under bin/ — staged from the tree under test's own build, found by name on PATH.
+for _b in sentinel strand spira-claim spira-config; do
+    _p="$(command -v "$_b" 2>/dev/null)" && cp -p "$_p" "$_stage/bin/"
+done
+unset _b _p
 [ -x "$_stage/bin/sentinel" ] && ok "release ships bin/sentinel" \
-    || bad "release ships bin/sentinel" "the sentinel binary was not found through spira_bin"
+    || bad "release ships bin/sentinel" "the sentinel binary was not found on PATH"
 printf 'commit 0000000000000000000000000000000000000000\ntimestamp %s\n' "$_ts" \
     > "$_stage/MANIFEST"
 TARBALL="$SCRATCH/$_name.tar.gz"
@@ -91,7 +91,7 @@ tar -czf "$TARBALL" -C "$SCRATCH" "$_name" \
     || { bad "tarball" "tar failed"; printf '%s passed, %s failed\n' "$_TL_PASS" "$_TL_FAIL"; exit 1; }
 
 SPIRA_SYSTEMCTL="$MOCK_SC" SPIRA_ACTIVATE_FORCE=1 SPIRA_RELEASES="$RELEASES" \
-    bash "$HERE/activate.sh" "$TARBALL" >/dev/null 2>&1
+    activate.sh "$TARBALL" >/dev/null 2>&1
 iszero "activate.sh exits 0" "$?"
 
 CURRENT="$RELEASES/current"
@@ -180,7 +180,8 @@ SENTINEL_OUT="$(
     SPIRA_SKIP_RECLAIM=1 \
     SPIRA_SKIP_CLOSED_CHECK=1 \
     SPIRA_INFERENCE_EVERY=99999 \
-        "$CURRENT/bin/sentinel" 2>&1
+    PATH="$CURRENT/bin:$CURRENT/spira:$PATH" \
+        sentinel 2>&1
 )"
 SENTINEL_RC=$?
 iszero "sentinel exits 0 from read-only release" "$SENTINEL_RC"

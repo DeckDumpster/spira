@@ -23,8 +23,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 echo "test-incident-systemd.sh"
-
-INC="$HERE/incident.sh"
 STUB_BD="$HERE/incident-stub-bd.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/home" "$TMP/run"
@@ -32,12 +30,12 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/home/mail.sh"; chmod +x "$TMP/hom
 export STUB_BD_STATE="$TMP/state.json" STUB_BD_LOG="$TMP/bd.log"
 
 sysinc() {  # sysinc <unit>
-    env -i HOME="$HOME" PATH="$PATH" \
+    env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
         SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" \
         SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
         SPIRA_INCIDENT_LOCK="$TMP/run/systemd-test.lock" \
         SPIRA_INCIDENT_CAUSE=systemd-fail \
-        bash "$INC" systemd "$1"
+        incident.sh systemd "$1"
 }
 bead_of() {
     python3 -c '
@@ -94,11 +92,11 @@ echo
 echo "an unreachable database leaves the systemd-triggered filing spooled, not lost:"
 # ======================================================================================
 rm -rf "$TMP/run/incident-spool"; mkdir -p "$TMP/run/incident-spool"
-out2="$(env -i HOME="$HOME" PATH="$PATH" \
+out2="$(env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
     SPIRA_BD="$TMP/no-such-bd" \
     SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/systemd-test.lock" \
-    bash "$INC" systemd "spira-db-down-unit.service" 2>&1)"; rc2=$?
+    incident.sh systemd "spira-db-down-unit.service" 2>&1)"; rc2=$?
 is "exits non-zero when the database is unreachable" "1" "$rc2"
 _spooled="$(find "$TMP/run/incident-spool" -maxdepth 1 -type f ! -name '*.bad' 2>/dev/null | wc -l | tr -d ' ')"
 is "the OnFailure= filing stays spooled rather than being dropped" "1" "${_spooled:-0}"

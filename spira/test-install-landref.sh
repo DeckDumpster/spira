@@ -94,6 +94,9 @@ cat > "$FIXTURE/spira/watchd.sh" <<'WATCHD'
 exit 0
 WATCHD
 chmod +x "$FIXTURE/spira/watchd.sh"
+# Unit binaries (sp-gypjk): the units ExecStart $FIXTURE/bin/<tool>, the release layout.
+. "$HERE/lib-test-install.sh"
+install_fixture_release_bins "$FIXTURE"
 
 # Mock systemctl: always reports no aeons, never active (so the live-aeon fence
 # does not fire and we reach the end-state check, which also needs to be silent).
@@ -134,7 +137,7 @@ inst() {
     done
     [ "${1:-}" = "--" ] && shift
     env -i \
-        "PATH=$MOCK_BIN:$GIT_BIN:/usr/local/bin:/usr/bin:/bin" \
+        "PATH=$MOCK_BIN:$FIXTURE/spira:$GIT_BIN:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
         "SPIRA_REPO=$repo" \

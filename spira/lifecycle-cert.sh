@@ -5,8 +5,8 @@
 # than a land_mark write. See lifecycle/src/bead.rs for the transition table this plays
 # against and design wiki/projects/spira/designs/bead-lifecycle-state-machine-2026-09-26.md.
 #
-# INERT UNTIL SPIRA_LC_BIN RESOLVES TO A REAL BINARY (conf.sh) — the cutover deploy (sp-sa8pn)
-# is what installs it and grants the DB. Until then every call here returns 2 ("cannot tell")
+# INERT UNTIL SPIRA_LIFECYCLE_ENFORCE IS ON (sp-gypjk) — the cutover deploy (sp-sa8pn)
+# is what turns it on and grants the DB. Until then every call here returns 2 ("cannot tell")
 # having touched nothing, so the legacy landstate path this bead is cutting over stays the
 # only one in force. This is deliberate, not a fallback to paper over: design's own non-goal
 # is "keeping the loop running during cutover" — there is none, the cutover is downtime.
@@ -17,9 +17,12 @@ set -u
 
 LC_LOG="${SPIRA_RUN:-/tmp}/lifecycle-cert.log"
 
-# lc_available -> 0 if SPIRA_LC_BIN names a binary this shell can run.
+# lc_available -> 0 when the lifecycle machine is on (SPIRA_LIFECYCLE_ENFORCE 1/true). spira-lc
+# itself is on every release's PATH (sp-gypjk); whether it is consulted is this switch, never
+# whether a binary happens to be found.
 lc_available() {
-    [ -n "${SPIRA_LC_BIN:-}" ] && [ -x "$SPIRA_LC_BIN" ]
+    case "${SPIRA_LIFECYCLE_ENFORCE:-0}" in 1|true) return 0 ;; esac
+    return 1
 }
 
 _lc_log() {   # _lc_log <bead-id> <verb> <detail...>
@@ -37,7 +40,7 @@ _lc_json_escape() {
 # _lc_show <bead-id> -> the bead row's JSON (spira-lc show), or empty on any failure.
 _lc_show() {
     lc_available || return 2
-    "$SPIRA_LC_BIN" show "$1" 2>/dev/null
+    spira-lc show "$1" 2>/dev/null
 }
 
 # _lc_field <json> <dotted-path, e.g. .bead.state> -> the value, or empty. python3, not
@@ -82,7 +85,7 @@ _lc_gate_red_reason() {
 _lc_event() {
     local id="$1" expect="$2" version="$3" kind="$4"
     lc_available || return 2
-    "$SPIRA_LC_BIN" event bead "$id" \
+    spira-lc event bead "$id" \
         --expect "$expect" --version "$version" \
         --actor "$(basename "${0:-lifecycle-cert}")" --kind "$kind" >/dev/null 2>&1
 }

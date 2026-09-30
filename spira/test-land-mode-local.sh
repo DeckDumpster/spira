@@ -33,7 +33,6 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
 # THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
 # pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
-LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 
 echo "test-land-mode-local.sh"
 
@@ -184,7 +183,7 @@ chmod +x "$GITSHIM/git"
 out="$(PATH="$GITSHIM:$PATH" SPIRA_PATH="$GITSHIM" SPIRA_HOME="$E_SH" SPIRA_RUN="$E_RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="$E_SH/bd-stub.sh" SPIRA_REPO="$TMP/no-such-home-repo" \
     SPIRA_REPO_MAP="$E_SH/repo-map" \
-        "$LANDING_PASS_BIN" land 2>&1)"
+        PATH="$E_SH:$PATH" landing-pass land 2>&1)"
 
 if grep -Eq 'fetch[^0-9a-zA-Z_.-].* local$' "$GIT_LOG"; then
     bad "landing-pass land: no fetch of a remote named local for the queue.local row" \

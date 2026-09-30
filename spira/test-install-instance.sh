@@ -62,7 +62,7 @@ mkdir -p "$SPIRA_RUN_DIR" "$DEST"
 touch "$SPIRA_RUN_DIR/world.halted"
 
 # Thin pass-through logger: records every systemctl call in order, then execs
-# the real binary. Set SPIRA_PATH so conf.sh prepends this dir to PATH.
+# the real binary. First on the caller's PATH (conf.sh keeps the caller's PATH first).
 SCTL_LOG="$TMP/systemctl.log"
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/systemctl" << 'SCTL'
@@ -73,19 +73,22 @@ SCTL
 chmod +x "$TMP/bin/systemctl"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/spira-supervise"
 chmod +x "$TMP/bin/spira-supervise"
+# A release-shaped prod root (sp-gypjk): the units ExecStart <root>/bin/<tool>, and a tree
+# under test has no bin/ of its own. spira/ is this tree's.
+. "$HERE/lib-test-install.sh"
+PROD="$(install_fixture_prod "$TMP/prod" "$HERE")"
 
 # inst [extra-env...] [args] — run install.sh for the 'test' instance.
-# SPIRA_PATH prepends the logger dir to PATH (conf.sh rebuilds PATH with it).
+# The logger dir goes first on PATH (conf.sh keeps the caller's PATH first).
 inst() {
     > "$SCTL_LOG"
     SCTL_LOG="$SCTL_LOG" \
-    SPIRA_PATH="$TMP/bin" \
+    PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" \
     SPIRA_CONF=/nonexistent \
     SPIRA_RUN="$SPIRA_RUN_DIR" \
     SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    SPIRA_PROD= SPIRA_REPO_MAP=/nonexistent \
+    SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
-    SPIRA_SUPERVISE_BIN="$TMP/bin/spira-supervise" \
     "$@" \
     bash "$HERE/../systemd/install.sh" test 2>&1
 }
@@ -99,9 +102,9 @@ WATCHERS="$TMP/watchers"
 printf '# empty\n' > "$WATCHERS"
 
 # Seed DEST via --render so unit files exist before the full install compares.
-rendered="$(SCTL_LOG="$SCTL_LOG" SPIRA_PATH="$TMP/bin" SPIRA_CONF=/nonexistent \
+rendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" SPIRA_CONF=/nonexistent \
     SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    SPIRA_PROD= SPIRA_REPO_MAP=/nonexistent \
+    SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 SPIRA_WATCHERS="$WATCHERS" \
     bash "$HERE/../systemd/install.sh" test --render 2>&1)"
 render_rc=$?
@@ -159,9 +162,9 @@ echo "WATCHER INSTALL — manifest row installs spira-watch-testview-test.servic
 
 printf 'testview|daemon|/bin/true\n' > "$WATCHERS"
 
-wrendered="$(SCTL_LOG="$SCTL_LOG" SPIRA_PATH="$TMP/bin" SPIRA_CONF=/nonexistent \
+wrendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" SPIRA_CONF=/nonexistent \
     SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    SPIRA_PROD= SPIRA_REPO_MAP=/nonexistent \
+    SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 SPIRA_WATCHERS="$WATCHERS" \
     bash "$HERE/../systemd/install.sh" test --render 2>&1)"
 current_unit=""

@@ -79,7 +79,7 @@ inc() {
         SPIRA_RUN="$RUN" \
         SPIRA_HOME="$HERE" \
         SPIRA_MAIL="$TMP/mail" \
-        "$@" bash "$HERE/incident.sh" file "the test sweep" -
+        "$@" incident.sh file "the test sweep" -
 }
 
 # Count open beads carrying the given external ref on the fixture database.
@@ -323,7 +323,7 @@ _cross_env() {
         SPIRA_HOME="$HERE" \
         SPIRA_MAIL="$TMP/mail" \
         "$@" \
-        bash "$HERE/incident.sh" file "$_cross_title" - >/dev/null 2>&1
+        incident.sh file "$_cross_title" - >/dev/null 2>&1
 }
 printf 'first filer\n'  | _cross_env SPIRA_INCIDENT_REPO=brain
 printf 'second filer\n' | _cross_env SPIRA_INCIDENT_REPO=fixture-repo

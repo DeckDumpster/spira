@@ -48,7 +48,7 @@ PIDFILE="$SPIRA_RUN/hold-$ID.pid"
 HBFILE="${PIDFILE%.pid}.hb"
 
 if [ "$MODE" = release ]; then
-    exec "$HERE/unhold.sh" "$ID"
+    exec unhold.sh "$ID"
 fi
 
 # Refuse if an aeon already holds it — the hold is for NON-aeon work.

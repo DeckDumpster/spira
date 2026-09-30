@@ -115,7 +115,7 @@ printf 'fixture | %s | hold | | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 # ===========================================================================
 printf '\npositive controls — scanner classifies each kind:\n'
 
-tbl="$(bash "$HERE/held.sh" 2>&1)"; rc=$?
+tbl="$(held.sh 2>&1)"; rc=$?
 isz "held.sh exits 0" "$rc"
 
 want "table shows NO REMOTE header"        "NO REMOTE"          "$tbl"
@@ -136,7 +136,7 @@ want "table names tst-orphan branch"       "spira/tst-orphan"   "$tbl"
 # ===========================================================================
 printf '\nsummary mode:\n'
 
-sum="$(bash "$HERE/held.sh" --summary 2>&1)"; rc=$?
+sum="$(held.sh --summary 2>&1)"; rc=$?
 isz "summary exits 0" "$rc"
 want "summary contains HOLD"             "HOLD"            "$sum"
 want "summary contains no remote"        "no remote"       "$sum"
@@ -156,7 +156,7 @@ BASE_BR2="$(git -C "$REPO2" symbolic-ref --short HEAD)"
 
 printf 'empty2 | %s | hold | | |\n' "$REPO2" > "$SPIRA_REPO_MAP"
 
-sum2="$(bash "$HERE/held.sh" --summary 2>&1)"
+sum2="$(held.sh --summary 2>&1)"
 nowant "summary is silent when no branches" "HOLD" "$sum2"
 
 # ===========================================================================
@@ -174,10 +174,10 @@ git -C "$REPO2" checkout -q "$BASE_BR2"
 printf 'fixture | %s | hold | | |\nfixture2 | %s | hold | | |\n' \
     "$REPO" "$REPO2" > "$SPIRA_REPO_MAP"
 
-tbl_both="$(bash "$HERE/held.sh" 2>&1)"
+tbl_both="$(held.sh 2>&1)"
 want "with no repo argument, fixture2's branch is shown" "spira/tst-r2held" "$tbl_both"
 
-tbl_named="$(bash "$HERE/held.sh" fixture 2>&1)"
+tbl_named="$(held.sh fixture 2>&1)"
 want   "named arg shows fixture"           "fixture"         "$tbl_named"
 want   "named arg shows HELD verdict"      "HELD"            "$tbl_named"
 nowant "named arg excludes the other repo's name"   "fixture2"          "$tbl_named"
@@ -195,10 +195,10 @@ git -C "$REPO" checkout -q "$BASE_BR"
 # Positive control: with the stub answering normally, this same never-seeded id is
 # legitimately ORPHAN — proving the matcher can tell "gone" from "unreadable" apart
 # (law-absence-needs-a-positive-control).
-baseline_line="$(bash "$HERE/held.sh" fixture 2>&1 | grep 'tst-unknown')"
+baseline_line="$(held.sh fixture 2>&1 | grep 'tst-unknown')"
 want "tst-unknown is ORPHAN when bd works and the bead is absent" "ORPHAN" "$baseline_line"
 
-unk_tbl="$(SPIRA_TEST_BD_FAIL_UNKNOWN=1 bash "$HERE/held.sh" fixture 2>&1)"; unk_rc=$?
+unk_tbl="$(SPIRA_TEST_BD_FAIL_UNKNOWN=1 held.sh fixture 2>&1)"; unk_rc=$?
 if [ "$unk_rc" -ne 0 ]; then ok "held.sh exits non-zero when bd is unreadable"
 else bad "held.sh exits non-zero when bd is unreadable: got exit 0"; fi
 

@@ -130,14 +130,14 @@ testdb_seed <<JSONL
 {"id":"tst-closed","title":"closed bead","status":"closed","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-20T00:00:00Z"}
 JSONL
 
-out="$(bash "$HERE/holds.sh" --repo fixture spira/batch.sh)"; rc=$?
+out="$(holds.sh --repo fixture spira/batch.sh)"; rc=$?
 wantrc "holder case exits 0"                     0 "$rc"
 want   "holder case names the open holder"       "$(printf 'tst-holder\tspira/batch.sh')" "$out"
 nowant "closed bead's branch is never reported"  "tst-closed" "$out"
 nowant "orphan branch (no bead) is never reported, and does not fail the run" "tst-orphan" "$out"
 
 # Positive control's complement: an untouched path is genuinely empty, not a broken check.
-empty_out="$(bash "$HERE/holds.sh" --repo fixture spira/never-touched.sh)"; empty_rc=$?
+empty_out="$(holds.sh --repo fixture spira/never-touched.sh)"; empty_rc=$?
 wantrc "untouched path exits 0" 0 "$empty_rc"
 is     "untouched path reports nothing" "" "$empty_out"
 
@@ -157,7 +157,7 @@ exec "$REAL_BD" "\$@"
 EOF
 chmod +x "$STUB_BD"
 
-unk_out="$(SPIRA_BD="$STUB_BD" bash "$HERE/holds.sh" --repo fixture spira/batch.sh 2>/dev/null)"
+unk_out="$(SPIRA_BD="$STUB_BD" holds.sh --repo fixture spira/batch.sh 2>/dev/null)"
 unk_rc=$?
 if [ "$unk_rc" -ne 0 ]; then ok "holds.sh exits non-zero when bd is unreadable"
 else bad "holds.sh exits non-zero when bd is unreadable" "got exit 0"; fi
@@ -207,7 +207,7 @@ testdb_seed <<JSONL
 JSONL
 
 rm -rf "$SPIRA_RUN/worktree"
-"$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1
+aeon --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1
 
 want "the claiming aeon's prompt names the holds section" "Files already in flight" "$(cat "$TMP/prompt" 2>/dev/null)"
 want "and names the open bead already touching the file"  "tst-holder"              "$(cat "$TMP/prompt" 2>/dev/null)"

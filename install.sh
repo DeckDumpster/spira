@@ -432,7 +432,7 @@ _phase_fail() {
 # PHASE 0 — PREFLIGHT (doctor.sh)
 # ---------------------------------------------------------------------------
 phase_start "phase 0: preflight"
-_doctor_out="$(SPIRA_DOCTOR_INSTALLING=1 "$SPIRA_HOME/doctor.sh" 2>&1)"
+_doctor_out="$(SPIRA_DOCTOR_INSTALLING=1 doctor.sh 2>&1)"
 _doctor_rc=$?
 printf '%s\n' "$_doctor_out" | sed 's/^/  /'
 if [ "$_doctor_rc" != 0 ]; then
@@ -493,7 +493,7 @@ else
         phase_info "would run: spira/configure.sh --out $_conf_dest"
     else
         phase_info "running configure.sh"
-        "$SPIRA_HOME/configure.sh" || _phase_fail "config" "configure.sh exited non-zero"
+        configure.sh || _phase_fail "config" "configure.sh exited non-zero"
     fi
     _changes=$((_changes+1))
 fi
@@ -511,7 +511,7 @@ else
         phase_info "would run: spira/build.sh"
     else
         phase_info "running build.sh"
-        "$SPIRA_HOME/build.sh" || _phase_fail "build" "build.sh exited non-zero"
+        build.sh || _phase_fail "build" "build.sh exited non-zero"
     fi
 fi
 
@@ -678,7 +678,7 @@ if [ -d "${SPIRA_DB:-}/.beads" ] || [ "$_dry" = 0 ]; then
         phase_info "seeding statutes after phase 4 — the database server is not running yet"
     else
         phase_info "seeding statutes"
-        "$SPIRA_HOME/seed.sh" 2>&1 | sed 's/^/  /'
+        seed.sh 2>&1 | sed 's/^/  /'
         _seed_rc=${PIPESTATUS[0]}
         [ -n "$_dolt_bg_pid" ] && { kill "$_dolt_bg_pid" 2>/dev/null || true; }
         if [ -n "${_dolt_bg_pid:-}" ] && [ -n "${_dolt_port:-}" ]; then
@@ -714,7 +714,7 @@ _prod_guard "${SPIRA_PROD:-}" || exit 2
 if [ "$_dry" = 1 ]; then
     phase_info "would run: mail.sh ensure operator"
 else
-    bash "$HERE/spira/mail.sh" ensure operator \
+    mail.sh ensure operator \
         || _phase_fail "units" "could not create the operator mailbox (mail.sh ensure operator)"
 fi
 
@@ -799,7 +799,7 @@ fi
 # failure here is real — the server is running — so it fails the install.
 if [ "${_seed_deferred:-0}" = 1 ]; then
     phase_info "seeding statutes (deferred from phase 3 — the database server is up now)"
-    "$SPIRA_HOME/seed.sh" 2>&1 | sed 's/^/  /'
+    seed.sh 2>&1 | sed 's/^/  /'
     [ "${PIPESTATUS[0]}" = 0 ] \
         || _phase_fail "units" "seed.sh failed with the database server running"
 fi
@@ -841,7 +841,7 @@ if [ -d "$SPIRA_REPO/.git" ] || [ -f "$SPIRA_REPO/.git" ]; then
     if [ "$_dry" = 1 ]; then
         phase_info "would run: spira/exclude.sh install $SPIRA_REPO"
     else
-        "$SPIRA_HOME/exclude.sh" install "$SPIRA_REPO" 2>&1 | sed 's/^/  /' \
+        exclude.sh install "$SPIRA_REPO" 2>&1 | sed 's/^/  /' \
             || _phase_fail "hooks" "exclude.sh install failed — core.hooksPath not set"
     fi
 else
@@ -852,7 +852,7 @@ if [ "$_ephemeral" = 1 ] || [ "$_no_hook" = 1 ]; then
     phase_skip "session hook skipped (--ephemeral or --no-session-hook)"
 else
     if [ "$_dry" = 1 ]; then
-        _hook_status="$("$SPIRA_HOME/install-session-hook.sh" status 2>/dev/null)" || true
+        _hook_status="$(install-session-hook.sh status 2>/dev/null)" || true
         if printf '%s\n' "$_hook_status" | grep -qE '^ok\s+SessionStart'; then
             phase_skip "session hook already installed"
         else
@@ -860,7 +860,7 @@ else
         fi
     else
         phase_info "installing session hook"
-        "$SPIRA_HOME/install-session-hook.sh" install \
+        install-session-hook.sh install \
             || _phase_fail "hooks" "install-session-hook.sh failed"
         _changes=$((_changes+1))
     fi
@@ -872,7 +872,7 @@ if [ -n "${SPIRA_ALERT_GLOB:-}" ] && [ "$_ephemeral" = 0 ]; then
         phase_info "would run: spira/install-intake.sh install (SPIRA_ALERT_GLOB=$SPIRA_ALERT_GLOB)"
     else
         phase_info "wiring alert intake for SPIRA_ALERT_GLOB=$SPIRA_ALERT_GLOB"
-        "$SPIRA_HOME/install-intake.sh" install 2>&1 | sed 's/^/  /' || true
+        install-intake.sh install 2>&1 | sed 's/^/  /' || true
     fi
 else
     phase_skip "alert intake skipped (SPIRA_ALERT_GLOB not set or --ephemeral)"
@@ -1010,12 +1010,12 @@ if [ "$_dry" = 1 ]; then
         phase_info "dry-run complete — no changes needed"
     fi
     phase_info "running ready.sh in read-only mode to show current state"
-    "$SPIRA_HOME/ready.sh" 2>&1 | sed 's/^/  /' || true
+    ready.sh 2>&1 | sed 's/^/  /' || true
     exit 0
 fi
 
 printf '\n'
-"$SPIRA_HOME/ready.sh"
+ready.sh
 _ready_rc=$?
 if [ "$_ready_rc" = 0 ]; then
     printf '\ninstall: done — Spira is ready.\n'

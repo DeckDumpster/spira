@@ -27,8 +27,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 echo "test-incident-delivers-satisfiable.sh"
-
-INC="$HERE/incident.sh"
 STUB_BD="$HERE/incident-stub-bd.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/home" "$TMP/run"
@@ -38,14 +36,14 @@ export STUB_BD_STATE="$TMP/state.json" STUB_BD_LOG="$TMP/bd.log"
 
 file_one() {  # file_one <ref> [VAR=val ...]
     local ref="$1"; shift
-    printf 'payload' | env -i HOME="$HOME" PATH="$PATH" \
+    printf 'payload' | env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
         SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" \
         SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$TMP/home" \
         SPIRA_INCIDENT_REF="$ref" \
         SPIRA_INCIDENT_LOCK="$TMP/run/delivers-test.lock" \
         SPIRA_INCIDENT_REPO= \
-        "$@" bash "$INC" file "delivers test" - >/dev/null 2>&1
+        "$@" incident.sh file "delivers test" - >/dev/null 2>&1
 }
 bead_of() {
     python3 -c '
