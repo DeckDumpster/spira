@@ -16,7 +16,7 @@
 #   3. SPIRA_ALLOW_DIRTY_STAGE=1 overrides the guard — the fence names its own bypass.
 #
 # Driven through `worktree-hooks.sh install` — the composed hook aeon.sh actually arms
-# (canonical exclude.sh/scratch-fence.sh/branch-guard.sh, then pre-commit-guard.sh) —
+# (canonical exclude.sh, spira-lint's scratch-fence rule, branch-guard.sh, then pre-commit-guard.sh) —
 # rather than a hand-written wrapper that calls pre-commit-guard.sh alone. A hand-written
 # hook proves this guard fires in isolation; it does not prove aeon.sh's real install
 # composes it correctly (UC-safety-fences-21 covers that composition directly; this suite
@@ -76,7 +76,7 @@ SNAP="$WGD/spira-dirty-before"
 } | sort -u > "$SNAP"
 
 # COMPOSE THE REAL HOOK, THE WAY aeon.sh DOES. worktree-hooks.sh install arms the
-# canonical fences (exclude.sh staged, scratch-fence.sh, branch-guard.sh staged) ahead of
+# canonical fences (exclude.sh staged, spira-lint's scratch-fence rule, branch-guard.sh staged) ahead of
 # pre-commit-guard.sh in one generated pre-commit — not a wrapper that calls
 # pre-commit-guard.sh alone, which would pass even if aeon.sh's own install were broken.
 SPIRA_HOME="$HERE" bash "$HERE/worktree-hooks.sh" install "$WORK" >/dev/null

@@ -3,8 +3,8 @@
 # test-branch-guard.sh — branch-guard.sh refuses aeon commits to the base branch, and aeon
 # commits outside SPIRA_WORK; it does not refuse operator commits, aeon commits on
 # non-base branches, or aeon commits inside their own worktree. Also exercises the real,
-# tracked hooks/pre-commit (exclude.sh + scratch-fence.sh + branch-guard.sh staged)
-# end-to-end through a clone armed by `exclude.sh install`.
+# tracked hooks/pre-commit (exclude.sh + spira-lint's scratch-fence rule + branch-guard.sh
+# staged) end-to-end through a clone armed by `exclude.sh install`.
 #
 # Positive controls throughout (the guard MUST fire on the bad cases), negative controls
 # (the guard MUST NOT fire on the good cases), and two check-mode cases (the audit detects
@@ -258,7 +258,7 @@ is "case 4: operator commit in production checkout is allowed" "0" "$rc"
 git -C "$REPO" config --unset core.hooksPath 2>/dev/null || true
 
 echo ""
-echo "test-branch-guard.sh — hooks/pre-commit: the tracked hook runs exclude.sh, scratch-fence.sh and branch-guard.sh staged, each seen to refuse through the REAL hook (UC-safety-fences-22, gap 5)"
+echo "test-branch-guard.sh — hooks/pre-commit: the tracked hook runs exclude.sh, spira-lint's scratch-fence rule and branch-guard.sh staged, each seen to refuse through the REAL hook (UC-safety-fences-22, gap 5)"
 
 # ---------------------------------------------------------------------------------------
 # A clone that LOOKS like the harness (carries the boundary/gate.sh/lib.sh signature
@@ -266,14 +266,21 @@ echo "test-branch-guard.sh — hooks/pre-commit: the tracked hook runs exclude.s
 # tracked hooks/pre-commit rather than a copy of it — the gap this row closes: test-
 # branch-guard used to copy hooks/pre-commit into a fixture and never run it, and test-
 # scratch-fence only grepped it for the string "scratch-fence".
+#
+# scratch-fence moved to spira-lint (sp-ekkak): the hook now runs "$SPIRA_LINT_BIN" --only
+# scratch-fence, so SPIRA_LINT_BIN is resolved from THIS checkout's real conf.sh (the one
+# artifact this throwaway clone cannot build itself) and exported so the hook's own
+# `: "${SPIRA_LINT_BIN:=…}"` default-assign sees it already set.
 # ---------------------------------------------------------------------------------------
 HREPO="$TMP/hrepo"
 mkdir -p "$HREPO/hooks"
 git init -q -b main "$HREPO"
 cp "$HERE/boundary" "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" \
-   "$HERE/exclude.sh" "$HERE/scratch-fence.sh" "$HERE/branch-guard.sh" "$HREPO/"
+   "$HERE/exclude.sh" "$HERE/branch-guard.sh" "$HREPO/"
 cp "$HERE/hooks/pre-commit" "$HREPO/hooks/pre-commit"
-chmod +x "$HREPO/exclude.sh" "$HREPO/scratch-fence.sh" "$HREPO/branch-guard.sh" "$HREPO/hooks/pre-commit"
+chmod +x "$HREPO/exclude.sh" "$HREPO/branch-guard.sh" "$HREPO/hooks/pre-commit"
+export SPIRA_LINT_BIN="${SPIRA_LINT_BIN:-$( . "$HERE/conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_LINT_BIN:-}")}"
+[ -x "${SPIRA_LINT_BIN:-}" ] || bail "spira-lint is not built (SPIRA_LINT_BIN) — cannot exercise the pre-commit hook's scratch-fence stage"
 GIT_AUTHOR_NAME=op GIT_AUTHOR_EMAIL="op@example.com" \
 GIT_COMMITTER_NAME=op GIT_COMMITTER_EMAIL="op@example.com" \
 git -C "$HREPO" add -A
