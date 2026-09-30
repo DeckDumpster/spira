@@ -350,7 +350,7 @@ echo "it reaches the actor that acts on it — the Ops sweep, not only a human a
 #
 # `--show` gathers and prints and touches nothing, so nothing here can reach a database.
 snap() {
-    env -i HOME="$HOMEDIR" PATH="$SH:$BIN_DIR:/usr/bin:/bin" \
+    env -i HOME="$HOMEDIR" PATH="$SH:$BIN_DIR:$HERE:/usr/bin:/bin" \
         SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         SPIRA_DB="$SPIRA_DB_NONE" SPIRA_YIELD="$YDIR" SPIRA_GATE_LOG="$GATELOG" \
         SPIRA_YIELD_WINDOW="$WINDOW" \

@@ -146,6 +146,22 @@ pub static GATE_CHILDREN: ChildSet = ChildSet::new();
 /// blocks TERM/INT in all threads so one thread can `sigwait` for them, and a child would
 /// otherwise inherit the block and survive `halt`), and in a process group of its own, so a
 /// forwarded TERM reaches the whole of it (gate.sh's own children too).
+/// Whether `program` can be run: a path (it has a `/`) must exist; a bare name must be an
+/// executable file in one of `PATH`'s directories — the launcher's PATH (sp-gypjk).
+pub fn runnable(program: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let exec = |p: &Path| std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false);
+    if program.as_os_str().is_empty() {
+        return false;
+    }
+    if program.to_string_lossy().contains('/') {
+        return std::fs::metadata(program).is_ok();
+    }
+    std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).any(|d| exec(&d.join(program))))
+        .unwrap_or(false)
+}
+
 pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     let mut c = Command::new(program);
     c.process_group(0);
@@ -200,5 +216,20 @@ mod tests {
         assert_eq!(tail_bytes("ab", 10), "ab\n");
         assert_eq!(branch_key("spira/sp-a.1"), "spira-sp-a.1");
         assert_eq!(first_line("x\ny"), "x");
+    }
+}
+
+#[cfg(test)]
+mod runnable_tests {
+    use super::runnable;
+    use std::path::Path;
+
+    #[test]
+    fn a_bare_name_is_looked_up_on_path_and_a_path_is_statted() {
+        assert!(runnable(Path::new("sh")), "sh is on every PATH");
+        assert!(!runnable(Path::new("no-such-spira-tool-sp-gypjk")));
+        assert!(runnable(Path::new("/bin/sh")));
+        assert!(!runnable(Path::new("/nonexistent/incident.sh")));
+        assert!(!runnable(Path::new("")));
     }
 }
