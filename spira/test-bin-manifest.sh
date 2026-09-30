@@ -62,7 +62,7 @@ echo "every declared program has a tier and a purpose:"
 _untiered=""; _unpurposed=""
 for _b in ${MANIFEST:-}; do
     _k="${_b//-/_}"; _t="TIER_$_k"; _p="PURPOSE_$_k"
-    case "${!_t:-}" in runtime|optional|dev|operator) ;; *) _untiered="$_untiered $_b" ;; esac
+    case "${!_t:-}" in runtime|optional|dev|operator|release) ;; *) _untiered="$_untiered $_b" ;; esac
     case "${!_p:-}" in ''|'required by the harness') _unpurposed="$_unpurposed $_b" ;; esac
 done
 is "every program has a valid tier"  "" "$_untiered"

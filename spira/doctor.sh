@@ -43,11 +43,8 @@ CONF="${SPIRA_CONF_FILE:-}"
 # launcher set — the release's bin/ and spira/ first. There is no resolver and no fallback,
 # so the one question is whether each name resolves; each missing one is named.
 # --------------------------------------------------------------------------------------
-SPIRA_RELEASE_TOOLS="loom broker czar-pass reconciler queue-watch spira-supervise spira-config
-tsd-write spira reconciler-flow sentinel strand spira-claim queue aeon testenv rebase-stale
-round-vm spira-lint batcher landing-pass work gate intent-report bd-meter beads-store
-suite-select panel spira-lc gate-run gate-check gate-diag test-plan tsd-lifecycle-export
-mail.sh gate.sh world.sh"
+# The binaries come from deps.toml's release tier — one list, not a second literal here.
+SPIRA_RELEASE_TOOLS="$(spira_deps_list release | tr '\n' ' ')mail.sh gate.sh world.sh"
 doctor_check_release_tools() {
     local t missing="" n=0
     for t in $SPIRA_RELEASE_TOOLS; do

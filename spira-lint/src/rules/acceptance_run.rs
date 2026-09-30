@@ -171,10 +171,15 @@ pub fn judge_lines(text: &str, conf_keys: &[String]) -> Vec<String> {
     }
 
     // deploy/uninstall/world/doctor run from this checkout only under _ci_deploy_env.
-    let bare = re(r#"bash "\$HERE/(deploy|uninstall|world|doctor)\.sh""#);
-    let wired = re(r#""\$\{_ci_deploy_env\[@\]\}" bash "\$HERE/(deploy|uninstall|world|doctor)\.sh""#);
+    // A call is the tool by bare name (sp-gypjk: found on the PATH _ci_env hands it) or the
+    // older `bash "$HERE/<tool>.sh"` shape, at the start of a command.
+    let bare = re(r#"(^\s*|\$\(|\|\s*|&&\s*|;\s*|" )(bash "\$HERE/)?(deploy|uninstall|world|doctor)\.sh"?(\s|$)"#);
+    let wired = re(r#""\$\{_ci_deploy_env\[@\]\}" (bash "\$HERE/)?(deploy|uninstall|world|doctor)\.sh"?(\s|$)"#);
     let conf_read = re(r#"\. "\$1/conf\.sh""#);
     for (i, l) in lines.iter().enumerate() {
+        if l.trim_start().starts_with('#') {
+            continue;
+        }
         if bare.is_match(l) && !l.contains("_ci_deploy_env") {
             out.push(format!("every deploy/uninstall/world/doctor call runs under _ci_deploy_env: line {}: {}", i + 1, l.trim()));
         }
@@ -281,6 +286,11 @@ mod tests {
         assert!(judge(&shortcut, SCRIPT_WANTS).iter().any(|m| m.starts_with("landing check does not rely")));
         let bare = format!("{good}bash \"$HERE/doctor.sh\"\n");
         assert!(judge_lines(&bare, &keys()).iter().any(|m| m.contains("runs under _ci_deploy_env: line")));
+        // sp-gypjk: the tools go by bare name now; an unwired bare call is caught the same.
+        let bare_name = format!("{good}  doctor.sh 2>&1\n");
+        assert!(judge_lines(&bare_name, &keys()).iter().any(|m| m.contains("runs under _ci_deploy_env: line")));
+        let wired_name = format!("{good}  env \"${{_ci_deploy_env[@]}}\" doctor.sh 2>&1\n");
+        assert!(!judge_lines(&wired_name, &keys()).iter().any(|m| m.contains("runs under _ci_deploy_env: line")));
         let draft = format!("{good}\"${{_ci_deploy_env[@]}}\" bash \"$HERE/deploy.sh\" \"$tag\"\n");
         assert!(judge_lines(&draft, &keys()).iter().any(|m| m.contains("--allow-draft")));
         let unit = format!("{good}systemctl --user start spira-x.service\n");

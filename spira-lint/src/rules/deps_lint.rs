@@ -50,7 +50,7 @@ pub fn declared(text: Option<String>) -> Result<BTreeSet<String>, LintError> {
 
 fn cv_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"command\s+-v\s+([a-z][a-z0-9_-]+)").expect("static regex"))
+    RE.get_or_init(|| Regex::new(r"command\s+-v\s+([a-z][a-z0-9_.-]*[a-z0-9_-])").expect("static regex"))
 }
 
 fn rust_re() -> &'static Regex {
@@ -70,6 +70,11 @@ pub fn shell_probes(text: &str) -> Vec<(usize, String)> {
         for c in cv_re().captures_iter(line) {
             let before = &line[..c.get(0).unwrap().start()];
             if before.matches('"').count() % 2 == 1 || before.matches('\'').count() % 2 == 1 {
+                continue;
+            }
+            // A spira/ script (`<x>.sh`, `<x>.py`) is the release's own, found on the
+            // launcher's PATH (sp-gypjk) — not an external program to declare.
+            if c[1].ends_with(".sh") || c[1].ends_with(".py") {
                 continue;
             }
             out.push((i + 1, c[1].to_string()));
@@ -169,6 +174,12 @@ mod tests {
         assert!(got[0].starts_with(&format!("deps-lint: src/main.rs:1: {PLANT}:")), "{got:?}");
         t.write("src/main.rs", "fn main() { let _ = std::process::Command::new(\"git\"); }\n");
         assert!(run(&t, &[MANIFEST, "src/main.rs"]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_spira_script_probe_is_not_an_external_program() {
+        assert!(shell_probes("if command -v land-build-ensure.sh >/dev/null; then :; fi\ncommand -v x.py\n").is_empty());
+        assert_eq!(shell_probes("command -v spira-config >/dev/null\n"), vec![(1, "spira-config".to_string())]);
     }
 
     #[test]
