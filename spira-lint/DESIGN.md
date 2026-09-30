@@ -333,28 +333,14 @@ intent: a build output is not something a suite covers.
 
 A suite with no declaration is skipped. If no suite declares anything, that is a refusal.
 
-## Rule `acceptance-run`
+## Rule `acceptance-run` — retired (sp-ak7qm)
 
-Moved from the grep checks of `spira/test-acceptance-run.sh` (the "pattern not found" reds).
-
-**Intent.** `spira/acceptance-run.sh` runs for real only in acceptance, on a clean machine.
-Its textual invariants are what the gate can hold it to on every branch.
-
-**Checks.** `acceptance-run.sh` and `acceptance-agent.sh` exist and are executable. Each
-fixed string and regex the suite asserted is present or absent, from the rule's `SCRIPT_WANTS`
-and `AGENT_WANTS` tables, which name each invariant. The checks that relate lines:
-- every `systemctl --user start` has a matching `list-unit-files 'spira-sentinel*.service'`
-- no non-comment `sentinel --report`
-- no `SPIRA_HOME_REPO` within the scope-label read
-- the phase-D override key appended to `$_aged_conf` is in conf.sh's `SPIRA_CONF_KEYS`,
-  read statically with `conf-key-registry`'s parser where the suite sourced conf.sh
-- every `deploy.sh … "$tag"` passes `--allow-draft`
-- every `deploy|uninstall|world|doctor.sh` call and every `. "$1/conf.sh"` read runs under
-  `_ci_deploy_env`, with at least 11 wired call sites
-
-**Stays a suite.** `test-acceptance-run.sh` keeps what needs a process: the script's usage
-errors, the phase-B output and guard fixtures, and `acceptance-agent.sh` driven twice
-against a scratch repository, plus the sweep session with no bead.
+`spira/acceptance-run.sh` moved into `release acceptance` (release/DESIGN.md "acceptance").
+Every invariant this rule held the script's text to is now structural in the Rust (one
+constructor per kind of call, so a deploy without `--allow-draft` or a tool without the
+release's launcher environment cannot be written) or a unit test of the `acceptance`
+module (the override key against `SPIRA_CONF_KEYS`, the whole run against a fake host).
+`acceptance-agent.sh` stays bash; `test-acceptance-agent.sh` drives it for real.
 
 ## Rule `gate-workflow`
 

@@ -1447,7 +1447,7 @@ print("SP_FUNNEL_DONE_AGE=%s"  % age)
     # The operator (2026-09-23): "i still don't know what the fuck is going on with
     # acceptance because i have no pane visibility about that."
     #
-    # WHY THE SOURCE IS THE NOTE AND NOT THE WORKFLOW RUN. acceptance-run.sh --record writes
+    # WHY THE SOURCE IS THE NOTE AND NOT THE WORKFLOW RUN. `release acceptance --record` writes
     # refs/notes/acceptance on the tag, and that note is the only durable verdict — a run's
     # conclusion says whether the JOB failed, which is a different question from whether the
     # release installs. It is also the number that exposed the real defect here: on
