@@ -1,9 +1,9 @@
 //! Where things are: the releases directory, the run directory, how many releases to keep,
 //! the systemd unit directory, and the host values units are rendered with.
 //!
-//! Resolved from flags, then the environment, then `spira.toml` (`$SPIRA_TOML`, else
-//! `$XDG_CONFIG_HOME/spira/spira.toml`) — never from a checkout. A root nothing resolves is
-//! a refusal naming what to set; there is no built-in path.
+//! Resolved from flags, then the environment, then the host config document, which only
+//! `spira-config` finds and reads (`spira_config::discover`). A root nothing resolves is a
+//! refusal naming what to set; there is no built-in path.
 
 use spira_config::{SpiraSection, SpiraToml};
 use std::collections::BTreeMap;
@@ -41,14 +41,14 @@ fn nonempty(v: Option<&String>) -> Option<String> {
 }
 
 impl Config {
-    /// Resolve from `flags`, `env` and the `spira.toml` `env` points at (if any).
+    /// Resolve from `flags`, `env` and the host config document `spira-config` discovers.
     pub fn resolve(flags: &Flags, env: &Env) -> Result<Config, String> {
-        let toml = load_toml(env)?;
-        Config::resolve_with(flags, env, toml)
+        let doc = spira_config::discover(None).map(|p| spira_config::load(&p)).transpose()?;
+        Config::resolve_with(flags, env, doc)
     }
 
-    pub fn resolve_with(flags: &Flags, env: &Env, toml: Option<SpiraToml>) -> Result<Config, String> {
-        let spira = toml.and_then(|t| t.spira).unwrap_or_default();
+    pub fn resolve_with(flags: &Flags, env: &Env, doc: Option<SpiraToml>) -> Result<Config, String> {
+        let spira = doc.and_then(|t| t.spira).unwrap_or_default();
         let releases = flags
             .releases
             .clone()
@@ -100,7 +100,7 @@ impl Config {
     }
 
     /// The host values unit templates are rendered with (DESIGN.md "Render"): the
-    /// environment, else `spira.toml`, else conf.sh's own default. A key with no value maps
+    /// environment, else the host config, else conf.sh's own default. A key with no value maps
     /// to the empty string, which the renderer refuses when a template uses it.
     pub fn host_values(&self) -> BTreeMap<String, String> {
         let s = &self.spira;
@@ -123,19 +123,5 @@ impl Config {
     fn which(&self, prog: &str) -> Option<String> {
         let path = self.env("PATH")?;
         path.split(':').filter(|d| !d.is_empty()).map(|d| PathBuf::from(d).join(prog)).find(|p| crate::fsutil::is_executable(p)).map(|p| p.display().to_string())
-    }
-}
-
-fn load_toml(env: &Env) -> Result<Option<SpiraToml>, String> {
-    let path = nonempty(env.get("SPIRA_TOML")).map(PathBuf::from).or_else(|| {
-        nonempty(env.get("XDG_CONFIG_HOME"))
-            .map(PathBuf::from)
-            .or_else(|| nonempty(env.get("HOME")).map(|h| PathBuf::from(h).join(".config")))
-            .map(|x| x.join("spira").join(spira_config::FILE_NAME))
-            .filter(|p| p.is_file())
-    });
-    match path {
-        None => Ok(None),
-        Some(p) => spira_config::load(&p).map(Some),
     }
 }

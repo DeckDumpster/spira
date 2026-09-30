@@ -7,7 +7,8 @@ local use, the Makefile's `install` target, `spira/activate.sh` and `spira/build
 ## Intent
 
 *"In the running system, there should be ABSOLUTELY ZERO ambiguity about which binaries to
-use"*, and using the system is decoupled from building it (per Ryan, 2026-09-29).
+use"*, and using the system is decoupled from building it (the operator, in the approved
+design).
 
 The running system executes exactly one thing: a directory `spira-releases/<sha>/` that is
 immutable, read-only and named by the commit it was built from. This crate is the only thing

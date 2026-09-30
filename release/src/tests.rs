@@ -134,7 +134,6 @@ impl World {
         let mut env = Env::new();
         env.insert("SPIRA_UNIT_DIR".into(), sb.p().join("units").display().to_string());
         env.insert("SPIRA_INSTANCE".into(), "prod".into());
-        env.insert("SPIRA_TOML".into(), sb.p().join("no-such.toml").display().to_string());
         let flags = Flags { releases: Some(sb.p().join("rel")), run: Some(sb.p().join("run")), keep: Some(2) };
         let cfg = Config::resolve_with(&flags, &env, None).unwrap();
         fs::create_dir_all(sb.p().join("units")).unwrap();
@@ -403,6 +402,7 @@ fn render_names_the_release_and_refuses_what_it_cannot_fill() {
     let wt = units::render("spira-watch@.service", WATCH, &rel, &host, Some("pool"), "prod").unwrap();
     assert!(wt.contains("watchd.sh exec pool"));
     let sup = units::render("x.service", "ExecStart=@SPIRA_SUPERVISE_BIN@ @SPIRA_HOME@/c.sh\n", &rel, &host, None, "prod").unwrap();
+    // path-ok: a unit rendered against a release names that release's own binary.
     assert!(sup.contains(&format!("{A}/bin/spira-supervise {}/{A}/spira/c.sh", "/r/spira-releases")), "{sup}");
     let e = units::render("y.service", "ExecStart=@NOPE@\n", &rel, &host, None, "prod").unwrap_err();
     assert!(e.contains("nothing fills: NOPE"), "{e}");

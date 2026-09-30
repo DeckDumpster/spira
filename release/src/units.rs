@@ -172,7 +172,7 @@ pub fn render(template_name: &str, text: &str, rel: &Path, host: &BTreeMap<Strin
         return Err(format!("{template_name} has placeholders nothing fills: {}", unknown.join(", ")));
     }
     if !empty.is_empty() {
-        return Err(format!("{template_name} uses {} but no value is set for it (environment or spira.toml)", empty.join(", ")));
+        return Err(format!("{template_name} uses {} but no value is set for it (environment or host config)", empty.join(", ")));
     }
     let mut out = substitute(text, lookup);
     if let Some(w) = watcher {
