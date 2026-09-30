@@ -310,6 +310,46 @@ mod tests {
     }
 
     #[test]
+    fn conflict_lock_is_clear_unless_the_gate_tree_lock_is_held() {
+        assert!(conflict_lock("/run/.gate.lock", false).is_ok());
+        let e = conflict_lock("/run/.gate.lock", true).unwrap_err();
+        assert!(e.message.contains("landing pass in flight"), "{}", e.message);
+    }
+
+    #[test]
+    fn conflict_instance_arg_is_clear_unless_it_disagrees_with_the_existing_config() {
+        assert!(conflict_instance_arg("prod", None, "spira.conf").is_ok());
+        assert!(conflict_instance_arg("prod", Some("prod"), "spira.conf").is_ok());
+        let e = conflict_instance_arg("test", Some("prod"), "spira.conf").unwrap_err();
+        assert!(e.message.contains("disagrees"), "{}", e.message);
+    }
+
+    #[test]
+    fn conflict_instance_run_is_clear_unless_another_instance_shares_the_run_dir() {
+        assert!(conflict_instance_run("/run/prod", "spira-sentinel-prod.service", []).is_ok());
+        // The same unit name (our own) is never a conflict, whatever its run dir says.
+        assert!(conflict_instance_run("/run/prod", "spira-sentinel-prod.service", [("spira-sentinel-prod.service", "/run/prod")]).is_ok());
+        let e = conflict_instance_run("/run/prod", "spira-sentinel-prod.service", [("spira-sentinel-test.service", "/run/prod")]).unwrap_err();
+        assert!(e.message.contains("instance 'test'"), "{}", e.message);
+    }
+
+    #[test]
+    fn prod_guard_refuses_a_git_checkout_unless_overridden() {
+        assert!(prod_guard("/prod", false, false, "/releases").is_ok());
+        assert!(prod_guard("/prod", true, true, "/releases").is_ok(), "the override bypasses it");
+        let e = prod_guard("/prod", true, false, "/releases").unwrap_err();
+        assert!(e.contains("git checkout"), "{e}");
+    }
+
+    #[test]
+    fn configure_prod_guard_requires_conf_sh_at_the_named_path() {
+        assert!(configure_prod_guard("", false).is_ok(), "unset is not this guard's concern");
+        assert!(configure_prod_guard("/harness", true).is_ok());
+        let e = configure_prod_guard("/harness", false).unwrap_err();
+        assert!(e.contains("does not contain conf.sh"), "{e}");
+    }
+
+    #[test]
     fn db_git_guard_refuses_a_remote_before_an_ancestor_checkout() {
         assert!(db_git_guard("/db", &["origin".to_string()], Some("/checkout")).unwrap_err().contains("remote"));
         assert!(db_git_guard("/db", &[], Some("/checkout")).unwrap_err().contains("checkout"));
