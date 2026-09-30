@@ -352,7 +352,7 @@ impl<'a> Sentinel<'a> {
         }
 
         // STATE — the open plan backlog. There is no goal epic: Spira works the whole
-        // backlog continuously (per Ryan, 2026-09-30, sp-k6m1m).
+        // backlog continuously (sp-2f9sa, sp-k6m1m).
         let (open_plan, plan_ready, plan_inprog) = if self.cfg.skip_reclaim {
             (Vec::new(), Some(0), 0)
         } else {

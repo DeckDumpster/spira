@@ -8,7 +8,7 @@ entry points. This document is the contract. The code satisfies it, and the unit
 
 Every pass compares the work graph to its desired state and closes the gap with the one
 deterministic action each gap names. There is no goal bead: Spira works the whole backlog
-continuously (per Ryan, 2026-09-30, sp-k6m1m), so "the work" is every open plan bead, never
+continuously (the operator's answer to sp-2f9sa, sp-k6m1m), so "the work" is every open plan bead, never
 one epic's children, and no pass ever declares it finished. The shape is the operator's: "look at the current state,
 the goal state, reflect on the gap … cheap, quick, and frequent to run with deterministic
 heuristics; drop down to inference when judgement is required."
@@ -994,7 +994,7 @@ About 30 suites carry `# covers: … spira/sentinel.sh`. That changes to
 
 ## 10. Decisions — the goal is retired (sp-k6m1m)
 
-Ryan, 2026-09-30 (answer to sp-2f9sa): Spira has no single goal bead; it works the backlog
+The operator's answer to sp-2f9sa: Spira has no single goal bead; it works the backlog
 continuously. What the pass keeps, and what it drops:
 
 - **Kept: the backlog count.** `open=` is now every open plan bead (`plan_open`), not the
