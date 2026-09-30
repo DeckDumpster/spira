@@ -3,7 +3,6 @@
 //! environment and the two output streams. `real.rs` implements them against the host;
 //! the unit tests implement them as fakes.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::model::{BeadRow, LandMode, LcBeadRow, RangeCommit};
@@ -97,25 +96,6 @@ pub trait Git {
     fn merge_abort(&self, wt: &Path);
     /// `status --porcelain` is empty.
     fn is_clean(&self, wt: &Path) -> bool;
-    /// `rev-parse --show-toplevel` run in `dir`; None outside a work tree.
-    fn toplevel(&self, dir: &Path) -> Option<PathBuf>;
-    /// Paths with a tracked modification (staged or not): `status --porcelain -z
-    /// --untracked-files=no`, both sides of a rename. Err when git fails.
-    fn tracked_changes(&self, repo: &Path) -> Result<Vec<String>, String>;
-    /// `ls-tree -r -z --full-tree <rev>`: every path with its mode and object.
-    fn tree(&self, repo: &Path, rev: &str) -> Result<BTreeMap<String, TreeEntry>, String>;
-    /// `cat-file blob <sha>`.
-    fn blob(&self, repo: &Path, sha: &str) -> Result<Vec<u8>, String>;
-    /// `reset -q --mixed <sha>`.
-    fn reset_mixed(&self, repo: &Path, sha: &str) -> bool;
-}
-
-/// One `ls-tree` entry: the octal mode as git prints it (`100644`, `100755`, `120000`,
-/// `160000`) and the object it names.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TreeEntry {
-    pub mode: String,
-    pub sha: String,
 }
 
 pub trait Bd {
@@ -161,10 +141,6 @@ pub trait Lib {
     fn pf_gate(&self, branch: &str, name: &str, stamp: &str, wall_secs: u64) -> (i32, String);
     /// R19: `_verdict_settle_publish`: 0 settled-or-waiting, 1 error, 3 red.
     fn settle_publish(&self, name: &str, path: &Path) -> i32;
-    /// R23: source `<home>/conf.sh` as a freshly started unit would (every `SPIRA_*` but
-    /// `SPIRA_CONF`/`SPIRA_TOML` removed) and answer the `SPIRA_DB` it resolved. Err when the
-    /// seam itself could not run.
-    fn conf_smoke(&self, home: &Path) -> Result<String, String>;
 }
 
 /// The harness scripts and binaries queue runs as whole programs.
@@ -177,10 +153,18 @@ pub trait Scripts {
     fn verdict(&self, repo: &str, lc_off: bool) -> i32;
     fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool, lc_off: bool) -> i32;
     fn czar_fence(&self, class: &str) -> bool;
-    /// `build-tarball.sh build --bin-dir … <head> <repo>` → the tarball path it printed.
-    fn build_tarball(&self, bins: &Path, repo_name: &str, name: &str, out: &Path, head: &str, repo: &Path) -> Option<PathBuf>;
-    /// `activate.sh <tarball>` (with SPIRA_ACTIVATE_LAND_LOCAL=1 when `land_local`).
-    fn activate(&self, tarball: &Path, land_local: bool) -> (i32, String);
+    /// `release <args…>` — the release producer, by name on the launcher's PATH, with
+    /// `SPIRA_DB=<db>` in its environment (`release verify`'s pre-activate store check reads
+    /// it). Stdout and stderr are kept apart: `release build` answers the sha on stdout.
+    fn release(&self, args: &[String], db: &str) -> RunOut;
+}
+
+/// A finished child: its exit status (127 when it could not run), stdout and stderr.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RunOut {
+    pub rc: i32,
+    pub out: String,
+    pub err: String,
 }
 
 pub trait Forge {

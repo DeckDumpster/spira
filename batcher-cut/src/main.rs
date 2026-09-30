@@ -403,7 +403,7 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
 /// the same every-member-named/bins-present contract before this box changes anything —
 /// green-at-head is stabilize_round's own control flow, already confirmed before this is ever
 /// called (sp-j21fv). Only the action taken once it passes differs — here, `queue
-/// land-local` (fast-forward, package, activate, LANDED, bead close) in place of a push and a
+/// land-local` (fast-forward, LANDED, bead close, then publish and activate the release) in place of a push and a
 /// PR. Never rebuilds binaries (law-deploy-the-tested-artifacts): the corpus's own --with-bins
 /// run already built the tree `bins_present` looks for.
 fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_start: u64, stable: &StableRound) -> Result<(), String> {

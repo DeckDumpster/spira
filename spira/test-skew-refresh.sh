@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: spira/skew.sh landing-pass/* queue/src/* spira/activate.sh spira/build-tarball.sh
+# covers: spira/skew.sh landing-pass/* queue/src/* release/src/*
 #
 # test-skew-refresh.sh — stage-and-swap refresh advances regardless of live aeon leases;
 # running processes keep their old inode; dirty tracked files are stashed; gap reports
@@ -10,7 +10,8 @@
 # (never a reset), and queue.sh rollback-local re-activates the previous release and moves
 # local/main back to its archived head — the container-tier design's own three cases
 # (wiki/projects/spira/designs/local-main-2026-09-27.md, "Test strategy"), run here against
-# the real queue.sh/activate.sh/build-tarball.sh/skew.sh, not fixture stand-ins for them.
+# the real queue, release and skew.sh, not fixture stand-ins for them (sp-gkfg1: a landing
+# publishes a release through the release binary).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -48,20 +49,27 @@ git -C "$REPO" remote set-head origin --auto >/dev/null 2>&1 || true
 
 reset_repo() { git -C "$REPO" reset -q --hard "$BASE_COMMIT"; }
 
-# Stub Makefile in REPO so that `make -C "$REPO" install SPIRA_RELEASES=...` works
-# without cargo.  Untracked — survives reset_repo but is never archived.
-cat > "$REPO/Makefile" <<'STUBMAKE'
-.PHONY: install
-install:
-	@set -eu; \
-	_sha="$$(git rev-parse HEAD)"; \
-	: "$${SPIRA_RELEASES?SPIRA_RELEASES not set}"; \
-	mkdir -p "$$SPIRA_RELEASES/$$_sha"; \
-	printf 'commit %%s\n' "$$_sha" > "$$SPIRA_RELEASES/$$_sha/MANIFEST"; \
-	_tmp="$$SPIRA_RELEASES/.current.new.$$$$"; \
-	ln -sf "$$_sha" "$$_tmp" && mv -T "$$_tmp" "$$SPIRA_RELEASES/current"; \
-	printf 'stub-install: current -> %%s\n' "$$_sha"
-STUBMAKE
+# Stub `release` for skew's release-mode refresh (release build/verify/activate), so the
+# refresh path runs without cargo. First on PATH only in run_skew_release.
+STUBBIN="$TMP/stubbin"; mkdir -p "$STUBBIN"
+cat > "$STUBBIN/release" <<'STUBREL'
+#!/usr/bin/env bash
+rel=""; a=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --releases) rel="$2"; shift 2 ;;
+        --repo|--landed-ref) shift 2 ;;
+        *) a+=("$1"); shift ;;
+    esac
+done
+case "${a[0]}" in
+    build)    mkdir -p "$rel/${a[1]}"; printf 'commit %s\n' "${a[1]}" > "$rel/${a[1]}/MANIFEST"; printf '%s\n' "${a[1]}" ;;
+    verify)   printf 'release %s verifies\n' "${a[1]}" ;;
+    activate) ln -sfn "${a[1]}" "$rel/.current.new.$$" && mv -T "$rel/.current.new.$$" "$rel/current"
+              printf 'stub-release: current -> %s\n' "${a[1]}" ;;
+esac
+STUBREL
+chmod +x "$STUBBIN/release"
 reset_repo
 
 run_skew_cmd() {
@@ -168,11 +176,11 @@ STASH_COUNT="$(git -C "$REPO" stash list 2>/dev/null | wc -l | tr -d ' ')"
 
 # ===========================================================================
 echo
-echo "refresh — release mode: fetch + make install + symlink flip:"
+echo "refresh — release mode: fetch + release build/verify/activate + symlink flip:"
 # ===========================================================================
 # In release mode (SPIRA_RELEASES set and releases/current is a symlink), refresh
-# must: fast-forward the checkout, call make install, and flip releases/current.
-# A mock 'make' creates the release dir and manifest so cargo is not required.
+# must: fast-forward the checkout, run release build/verify/activate, and flip current.
+# A stub 'release' creates the release dir and manifest so cargo is not required.
 
 RELEASES="$TMP/releases"
 OLD_SHA="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -183,7 +191,7 @@ reset_repo
 
 run_skew_release() {
     local run_dir="$1"; shift
-    env -i PATH="$PATH" \
+    env -i PATH="$STUBBIN:$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" \
@@ -196,7 +204,7 @@ run_skew_release() {
     return "${PIPESTATUS[0]:-$?}"
 }
 
-# T1a: refresh in release mode when behind — must advance, call make install, flip symlink
+# T1a: refresh in release mode when behind — must advance, publish a release, flip symlink
 reset_repo  # puts REPO at BASE_COMMIT, one behind AHEAD_COMMIT
 RUN6="$(mktemp -d "$TMP/run-XXXXX")"
 out6="$(run_skew_release "$RUN6" refresh "$REPO")"; rc6=$?
@@ -218,7 +226,7 @@ is   "release-mode refresh: current flipped to new sha" "$AHEAD_COMMIT" "$NEW_CU
     && ok "release-mode refresh: new release has MANIFEST" \
     || bad "release-mode refresh: new release has MANIFEST" "missing $RELEASES/$AHEAD_COMMIT/MANIFEST"
 
-# T1d: refresh when already up-to-date — must exit 0 and skip make install
+# T1d: refresh when already up-to-date — must exit 0 and publish nothing
 git -C "$REPO" merge --ff-only -q "$(git -C "$REPO" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)"
 ln -sf "$AHEAD_COMMIT" "$RELEASES/current"  # already current
 
@@ -226,7 +234,7 @@ RUN7="$(mktemp -d "$TMP/run-XXXXX")"
 out7="$(run_skew_release "$RUN7" refresh "$REPO")"; rc7=$?
 is   "release-mode already-current: exits 0"        "0"       "$rc7"
 want "release-mode already-current: reports current" "already" "$out7"
-nowant "release-mode already-current: no make call"  "stub-install" "$out7"
+nowant "release-mode already-current: no release call"  "stub-release" "$out7"
 
 # ===========================================================================
 echo
@@ -301,10 +309,10 @@ echo "queue.local — land then refresh, then rollback by ref move:"
 # ===========================================================================
 # The container tier's own three cases: skew refresh following local/main in a real
 # harness checkout; land then refresh; rollback by ref move. Every assertion below runs
-# against the real queue.sh/activate.sh/build-tarball.sh/skew.sh copied verbatim into a
-# scratch SPIRA_HOME — no stand-in for any of the four.
+# against the real queue and release binaries and skew.sh copied verbatim into a scratch
+# SPIRA_HOME — no stand-in for any of them but systemctl.
 LSH="$TMP/local-spira"; mkdir -p "$LSH"
-cp "$HERE"/skew.sh "$HERE"/activate.sh "$HERE"/build-tarball.sh \
+cp "$HERE"/skew.sh \
    "$HERE"/lib.sh "$HERE"/conf.sh "$HERE"/mail.sh "$HERE"/suite-covers.sh "$HERE"/lc.sh \
    "$HERE"/lifecycle-cert.sh "$LSH/" 2>/dev/null
 
@@ -324,7 +332,12 @@ name = "fakebin"
 path = "src/main.rs"
 EOF
 echo 'fn main() {}' > "$LREPO/src/main.rs"
-git -C "$LREPO" add Cargo.toml src
+# What release verify needs of a release: its own pre-activate.sh and a systemd/ directory.
+mkdir -p "$LREPO/spira" "$LREPO/systemd"
+printf '#!/bin/sh\nexit 0\n' > "$LREPO/spira/pre-activate.sh"
+chmod +x "$LREPO/spira/pre-activate.sh"
+printf '[Service]\nExecStart=@SPIRA_RELEASE@/bin/fakebin\n' > "$LREPO/systemd/spira-fake.service"
+git -C "$LREPO" add Cargo.toml src spira systemd
 git -C "$LREPO" commit -q -m base
 git -C "$LREPO" branch local/main trunk
 
@@ -333,6 +346,8 @@ mkdir -p "$LRUN/worktree" "$LQDIR" "$LRELEASES"
 LRMAP="$TMP/local-repo-map"
 printf 'lfixq | %s | queue.local | local/main | | |\n' "$LREPO" > "$LRMAP"
 ln -s spira-bootstrap "$LRELEASES/current"   # production runs a release, not a checkout
+# release activate daemon-reloads; a mock stands in for systemctl.
+printf '#!/bin/sh\nexit 0\n' > "$TMP/mock-sc"; chmod +x "$TMP/mock-sc"
 
 run_lq() {
     env -i PATH="$PATH" \
@@ -345,6 +360,7 @@ run_lq() {
         SPIRA_QUEUE_DIR="$LQDIR" \
         SPIRA_REPO_MAP="$LRMAP" \
         SPIRA_RELEASES="$LRELEASES" \
+        SPIRA_SYSTEMCTL="$TMP/mock-sc" \
         SPIRA_DB="$TMP/local-no-db" \
         SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged (queue/DESIGN.md §8 D12)" \
         SPIRA_HOME="$LSH" PATH="$LSH:$PATH" queue "$@" 2>&1
@@ -392,7 +408,7 @@ LHEAD1="$(lround r1 f1.txt round1)"
 lbins "$LHEAD1" bin1
 lout1="$(run_lq land-local lfixq --head "$LHEAD1" --members "sp-lskw1:$LHEAD1" --worktree "$(lbins_wt "$LHEAD1")")"; lrc1=$?
 is   "land 1: exits 0"                    "0"      "$lrc1"
-want "land 1: activates the round's release" "activated spira-$LHEAD1" "$lout1"
+want "land 1: activates the round's release" "activated release $LHEAD1" "$lout1"
 is   "land 1: local/main fast-forwards to the round head" "$LHEAD1" "$(git -C "$LREPO" rev-parse local/main)"
 
 echo
@@ -423,11 +439,11 @@ echo
 echo "queue.local rollback-local — re-activates the previous release, resets by ref move:"
 lout3="$(run_lq rollback-local lfixq)"; lrc3=$?
 is   "rollback: exits 0"                       "0"           "$lrc3"
-want "rollback: re-activates the first round's release" "activated spira-$LHEAD1" "$lout3"
+want "rollback: re-activates the first round's release" "activated release $LHEAD1" "$lout3"
 is   "rollback: local/main resets to the archived first-round head" \
      "$LHEAD1" "$(git -C "$LREPO" rev-parse local/main)"
 is   "rollback: current symlink points at the first round's release" \
-     "spira-$LHEAD1" "$(readlink "$LRELEASES/current")"
+     "$LHEAD1" "$(readlink "$LRELEASES/current")"
 
 echo
 tl_summary

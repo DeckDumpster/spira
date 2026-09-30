@@ -1,23 +1,26 @@
 #!/usr/bin/env bash
 #
-# test-land-local-release.sh — sp-sf60f: under queue.local, a land packages the round head's
-# source with the binaries its own tree's --with-bins corpus built and activates the result
-# atomically; a land with no corpus is refused before anything changes; rollback re-activates
-# the previous release and resets the ref to its archived head; skew.sh refresh, under
-# queue.local, only checks current against local/main's head and never deploys.
+# test-land-local-release.sh — sp-sf60f, sp-gkfg1: under queue.local, a landing of the
+# harness publishes a release (queue/DESIGN.md §8 D13): `release build <head> --bin-dir <the
+# round's own tested build>` → `release verify` → `release activate`, which re-renders the
+# installed units against spira-releases/<sha> and swaps current. A land with no corpus is
+# refused before anything changes; a failed build leaves current alone, keeps the landing
+# and exits non-zero; with no release in force the release is built and verified but not
+# activated; rollback re-activates the previous release and resets the ref to its archived
+# head; skew.sh refresh, under queue.local, only checks current against local/main's head.
 #
-# WHY THIS MATTERS: resetting a checkout advances the source but never touches whatever
-# binary is already running, so the two can silently disagree about schema or protocol.
+# WHY THIS MATTERS: the running system executes exactly one thing, the active release.
 # Every assertion below is either "the activated bin/ is this round's own corpus, byte for
-# byte" or "a mismatch is reported and nothing was deployed".
+# byte, and the units name its release" or "a failure is reported and current did not move".
 #
 # tier: T1
-# covers: queue/src/* spira/build-tarball.sh spira/activate.sh spira/skew.sh spira/lib.sh
+# covers: queue/src/* release/src/* spira/skew.sh spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
-# The queue binary (queue/DESIGN.md §7.4), by name on the suite's PATH (sp-gypjk).
+# The queue and release binaries, by name on the suite's PATH (sp-gypjk).
 command -v queue >/dev/null 2>&1 || { echo "FAIL: queue is not on PATH"; exit 1; }
+command -v release >/dev/null 2>&1 || { echo "FAIL: release is not on PATH"; exit 1; }
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -42,14 +45,14 @@ MAIL_BODY_FILE="$TMP/mail-body"
 rm -f "$MAIL_BODY_FILE"
 
 # ---------------------------------------------------------------------------
-# Fixture repo: a minimal cargo workspace (one [[bin]] target, no dependencies — cargo
-# metadata resolves it with no network call) so build-tarball.sh --workspace can discover
-# the binary NAME while a fake, content-stamped file supplies its BYTES from the
-# --with-bins corpus directory, never from an actual `cargo build`.
+# Fixture repo: a minimal cargo workspace (one [[bin]] target, no dependencies), a
+# spira/pre-activate.sh that passes (release verify runs the release's own), and one unit
+# template whose ExecStart names the release's binary. The binary's BYTES come from the
+# round worktree's target/release (release build --bin-dir), never from a cargo build.
 # ---------------------------------------------------------------------------
 REPO="$TMP/repo"
 git init -q -b trunk "$REPO"
-mkdir -p "$REPO/src"
+mkdir -p "$REPO/src" "$REPO/spira" "$REPO/systemd"
 cat > "$REPO/Cargo.toml" <<'EOF'
 [package]
 name = "fakebin"
@@ -61,19 +64,28 @@ name = "fakebin"
 path = "src/main.rs"
 EOF
 echo 'fn main() {}' > "$REPO/src/main.rs"
-git -C "$REPO" add Cargo.toml src
-git -C "$REPO" commit -q -m base
+printf '#!/bin/sh\nexit 0\n' > "$REPO/spira/pre-activate.sh"
+chmod +x "$REPO/spira/pre-activate.sh"
+cat > "$REPO/systemd/spira-fake.service" <<'EOF'
+[Service]
+Type=simple
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+ExecStart=@SPIRA_RELEASE@/bin/fakebin
+EOF
+git -C "$REPO" add Cargo.toml src spira systemd
+git -C "$REPO" -c core.hooksPath=/dev/null commit -q -m base
 git -C "$REPO" branch local/main trunk
 
-RUN="$TMP/run"; QDIR="$RUN/queue"; RELEASES="$TMP/releases"
-mkdir -p "$RUN/worktree" "$QDIR" "$RELEASES"
+RUN="$TMP/run"; QDIR="$RUN/queue"; RELEASES="$TMP/releases"; UNITS="$TMP/units"
+mkdir -p "$RUN/worktree" "$QDIR" "$RELEASES" "$UNITS" "$TMP/xdg"
 RMAP="$TMP/repo-map"
 printf 'fixq | %s | queue.local | local/main | | |\n' "$REPO" > "$RMAP"
+# The one installed unit release activate re-renders (it maps back to spira-fake.service).
+printf '[Service]\nExecStart=/old/bin/fakebin\n' > "$UNITS/spira-fake-prod.service"
+unit_text() { cat "$UNITS/spira-fake-prod.service" 2>/dev/null; }
 
 # ---------------------------------------------------------------------------
-# Mock systemctl (sp-zt0ae, sections 8-9) — live-aeon fixture for the release step's
-# guard. MOCK_AEONS, when exported, is echoed back as the live-unit list; unset (the
-# default for sections 0-7) it reports none, same as a real systemctl with no aeons up.
+# Mock systemctl: records every call; every unit is inactive, so activation restarts none.
 # ---------------------------------------------------------------------------
 SC_LOG="$TMP/sc.log"
 MOCK_SC="$TMP/mock-sc"
@@ -81,8 +93,7 @@ cat > "$MOCK_SC" <<EOF
 #!/usr/bin/env bash
 printf 'SC: %s\n' "\$*" >> "$SC_LOG"
 case "\$*" in
-    *spira-aeon-*) printf '%s\n' "\${MOCK_AEONS:-}" ;;
-    *list-units*)  printf 'spira-sentinel-prod.service loaded active running Sentinel\n' ;;
+    *show*) printf 'ActiveState=inactive\nResult=success\nType=simple\n' ;;
 esac
 exit 0
 EOF
@@ -101,6 +112,7 @@ seed() {
 
 run_q() {
     SPIRA_CONF=/nonexistent \
+    XDG_CONFIG_HOME="$TMP/xdg" \
     SPIRA_HOME="$SH" \
     SPIRA_HOME_REPO=fixq \
     SPIRA_REPO="$REPO" \
@@ -108,10 +120,11 @@ run_q() {
     SPIRA_QUEUE_DIR="$QDIR" \
     SPIRA_REPO_MAP="$RMAP" \
     SPIRA_RELEASES="$RELEASES" \
+    SPIRA_UNIT_DIR="$UNITS" \
+    SPIRA_INSTANCE=prod \
     SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged (queue/DESIGN.md §8 D12)" \
     SPIRA_SYSTEMCTL="$MOCK_SC" \
-    MOCK_AEONS="${MOCK_AEONS:-}" \
-        SPIRA_HOME="$SH" PATH="$SH:$PATH" queue "$@" 2>&1
+        PATH="$SH:$PATH" queue "$@" 2>&1
 }
 run_skew() {
     MAIL_BODY_FILE="$MAIL_BODY_FILE" \
@@ -132,14 +145,13 @@ mk_round() {
     git -C "$REPO" checkout -qb "$br" local/main
     printf '%s\n' "$content" > "$REPO/$file"
     git -C "$REPO" add "$file"
-    git -C "$REPO" commit -q -m "round: $file"
+    git -C "$REPO" -c core.hooksPath=/dev/null commit -q -m "round: $file"
     local head; head="$(git -C "$REPO" rev-parse "$br")"
     git -C "$REPO" checkout -q trunk
     git -C "$REPO" branch -D "$br" >/dev/null 2>&1
     printf '%s' "$head"
 }
-# mk_bins <head> <content> -> populate the --with-bins corpus for <head>'s own tree.
-# The round worktree queue land-local reads (--worktree, queue/DESIGN.md §8 D2/D3): one
+# The round worktree queue land-local reads (--worktree, queue/DESIGN.md §8 D2): one
 # detached worktree per tree, at <head>; its target/release is the round's own build.
 bins_wt() {   # bins_wt <head> -> the round worktree for <head>'s tree (created on first use)
     local head="$1" tree wt
@@ -148,19 +160,17 @@ bins_wt() {   # bins_wt <head> -> the round worktree for <head>'s tree (created 
     [ -d "$wt" ] || git -C "$REPO" worktree add -q --detach "$wt" "$head" >/dev/null 2>&1
     printf '%s' "$wt"
 }
-mk_bins() {   # mk_bins <head> <content> -> the round's own release build in its worktree
-    local head="$1" content="$2" dir
+mk_bins() {   # mk_bins <head> <content> [<name>] -> the round's own release build in its worktree
+    local head="$1" content="$2" name="${3:-fakebin}" dir
     dir="$(bins_wt "$head")/target/release"
     mkdir -p "$dir"
-    printf '%s' "$content" > "$dir/fakebin"
-    chmod +x "$dir/fakebin"
+    printf '%s' "$content" > "$dir/$name"
+    chmod +x "$dir/$name"
 }
 
-# Sections 0-7 exercise the release-activation path itself: the state sp-tkds8's cutover
-# leaves production in, where $SPIRA_RELEASES/current already exists. A dangling symlink is
-# enough — nothing here reads its target, only whether it is a symlink at all — and gives
-# section 1 something to assert stays unchanged. Sections 8-9 (sp-zt0ae) below are what
-# exercises today's pre-cutover state, where it does not exist yet.
+# Sections 0-7 run with a release in force ($SPIRA_RELEASES/current exists — the state the
+# cutover, sp-6p20x, leaves production in). A dangling symlink is enough to start from; the
+# first landing replaces it. Section 8 is the pre-cutover state, where it does not exist.
 ln -s spira-bootstrap "$RELEASES/current"
 
 # ============================================================================
@@ -191,19 +201,21 @@ is   "1: the bead is left open"          open "$(field sp-lrel1 status)"
 
 # ============================================================================
 echo
-echo "2 — the same head, corpus now built: packages, activates, lands"
+echo "2 — the same head, corpus now built: lands, publishes, activates"
 # ============================================================================
 mk_bins "$HEAD1" v1-binary
 
 out="$(run_q land-local fixq --head "$HEAD1" --members "sp-lrel1:$HEAD1" --worktree "$(bins_wt "$HEAD1")")"; rc=$?
 [ "$rc" -eq 0 ] && ok "2: exit 0 once the corpus exists" \
     || bad "2: exit 0 once the corpus exists" "got rc=$rc out=$out"
-want "2: reports the activated release" "activated spira-$HEAD1" "$out"
+want "2: reports the activated release" "activated release $HEAD1" "$out"
 is   "2: local/main advances to the round head" "$HEAD1" "$(localmain)"
-is   "2: current is activated to this round's release" "spira-$HEAD1" "$(current_name)"
+is   "2: current is this round's release, named by its commit" "$HEAD1" "$(current_name)"
 is   "2: bin/fakebin is this round's own corpus, byte for byte" \
-     "v1-binary" "$(cat "$RELEASES/spira-$HEAD1/bin/fakebin" 2>/dev/null)"
-want "2: MANIFEST records the round head commit" "commit $HEAD1" "$(cat "$RELEASES/spira-$HEAD1/MANIFEST" 2>/dev/null)"
+     "v1-binary" "$(cat "$RELEASES/$HEAD1/bin/fakebin" 2>/dev/null)"
+want "2: MANIFEST records the round head commit" "commit $HEAD1" "$(cat "$RELEASES/$HEAD1/MANIFEST" 2>/dev/null)"
+want "2: the installed unit now runs spira-releases/<sha>" "ExecStart=$RELEASES/$HEAD1/bin/fakebin" "$(unit_text)"
+want "2: systemd was reloaded"           "daemon-reload" "$(cat "$SC_LOG" 2>/dev/null)"
 is   "2: the bead is closed"             closed "$(field sp-lrel1 status)"
 want "2: close reason declares landed"   "OUTCOME: landed" "$(field sp-lrel1 close_reason)"
 
@@ -217,11 +229,12 @@ mk_bins "$HEAD2" v2-binary
 
 out="$(run_q land-local fixq --head "$HEAD2" --members "sp-lrel3:$HEAD2" --worktree "$(bins_wt "$HEAD2")")"; rc=$?
 [ "$rc" -eq 0 ] && ok "3: second round lands" || bad "3: second round lands" "got rc=$rc out=$out"
-is   "3: current advances to the second round's release" "spira-$HEAD2" "$(current_name)"
+is   "3: current advances to the second round's release" "$HEAD2" "$(current_name)"
 is   "3: bin/fakebin is the second round's own corpus" \
-     "v2-binary" "$(cat "$RELEASES/spira-$HEAD2/bin/fakebin" 2>/dev/null)"
-[ -d "$RELEASES/spira-$HEAD1" ] && ok "3: the first release directory is still present" \
-    || bad "3: the first release directory is still present" "missing $RELEASES/spira-$HEAD1"
+     "v2-binary" "$(cat "$RELEASES/$HEAD2/bin/fakebin" 2>/dev/null)"
+want "3: the unit follows" "ExecStart=$RELEASES/$HEAD2/bin/fakebin" "$(unit_text)"
+[ -d "$RELEASES/$HEAD1" ] && ok "3: the first release directory is still present" \
+    || bad "3: the first release directory is still present" "missing $RELEASES/$HEAD1"
 
 # ============================================================================
 echo
@@ -230,7 +243,7 @@ echo "4 — skew refresh under queue.local: matched — checks, deploys nothing"
 out="$(run_skew refresh "$REPO")"; rc=$?
 is   "4: exit 0 when running matches local/main" "0" "$rc"
 want "4: reports nothing to deploy" "nothing to deploy" "$out"
-is   "4: current is unchanged"      "spira-$HEAD2" "$(current_name)"
+is   "4: current is unchanged"      "$HEAD2" "$(current_name)"
 
 # ============================================================================
 echo
@@ -251,7 +264,7 @@ want "5: escalation reported on stdout" "escalated" "$out"
 [ -s "$MAIL_BODY_FILE" ] && ok "5: an alarm mail was actually sent" \
     || bad "5: an alarm mail was actually sent" "no mail body file was written"
 is   "5: current is still the second round's release — nothing was deployed" \
-     "spira-$HEAD2" "$(current_name)"
+     "$HEAD2" "$(current_name)"
 is   "5: the checkout HEAD was never touched" "$REPO_HEAD_BEFORE" "$(git -C "$REPO" rev-parse trunk)"
 is   "5: local/main is left exactly as found — refresh never resets it either way" \
      "$STRAY" "$(localmain)"
@@ -264,10 +277,9 @@ git -C "$REPO" update-ref refs/heads/local/main "$HEAD2"   # undo the stray writ
 
 out="$(run_q rollback-local fixq)"; rc=$?
 [ "$rc" -eq 0 ] && ok "6: rollback exits 0" || bad "6: rollback exits 0" "got rc=$rc out=$out"
-want "6: reports the re-activated release" "spira-$HEAD1" "$out"
-is   "6: current rolls back to the first round's release" "spira-$HEAD1" "$(current_name)"
-is   "6: bin/fakebin is the first round's corpus again" \
-     "v1-binary" "$(cat "$RELEASES/spira-$HEAD1/bin/fakebin" 2>/dev/null)"
+want "6: reports the re-activated release" "activated release $HEAD1" "$out"
+is   "6: current rolls back to the first round's release" "$HEAD1" "$(current_name)"
+want "6: the unit runs the first round's release again" "ExecStart=$RELEASES/$HEAD1/bin/fakebin" "$(unit_text)"
 is   "6: local/main resets to the first round's archived head" "$HEAD1" "$(localmain)"
 is   "6: the first round's bead is still landed (bead state is untouched)" \
      closed "$(field sp-lrel1 status)"
@@ -316,50 +328,45 @@ is   "7: GitHub's own ref is never written to" "$PRE_GITHUB_MAIN" "$(git -C "$GI
 
 # ============================================================================
 echo
-echo "8 — no current symlink, aeons live: release step is skipped, not refused (sp-zt0ae)"
+echo "8 — no release in force: the release step is skipped, loudly"
 # ============================================================================
-# Production has not run the installed-release cutover (sp-tkds8) yet, so nothing reads
-# $SPIRA_RELEASES/current. Absent that symlink, the land must skip packaging/activation
-# entirely — including its live-aeon refusal — rather than fail every land the loop makes,
-# since the loop always has aeons live.
+# Before the cutover nothing runs a release, and the first activation is the cutover's, never
+# a routine landing's: the landing lands and says production does not run it.
 rm -f "$RELEASES/current"
 seed sp-lrel8
 HEAD8="$(mk_round round-8 eight.txt v8)"
 mk_bins "$HEAD8" v8-binary
-export MOCK_AEONS="spira-aeon-abc-prod.service"
+UNIT_BEFORE="$(unit_text)"
 
 out="$(run_q land-local fixq --head "$HEAD8" --members "sp-lrel8:$HEAD8" --worktree "$(bins_wt "$HEAD8")")"; rc=$?
-unset MOCK_AEONS
-[ "$rc" -eq 0 ] && ok "8: exit 0 despite live aeons — skipped, not refused" \
-    || bad "8: exit 0 despite live aeons — skipped, not refused" "got rc=$rc out=$out"
-want   "8: names the skip"                   "release step skipped: production runs a checkout" "$out"
-nowant "8: never reports an activation"      "activated" "$out"
+[ "$rc" -eq 0 ] && ok "8: exit 0 — no release in force is not a fault" \
+    || bad "8: exit 0 — no release in force is not a fault" "got rc=$rc out=$out"
+want   "8: names the skip"                    "release step skipped: no release is in force" "$out"
+nowant "8: never reports an activation"       "activated release" "$out"
+[ ! -e "$RELEASES/$HEAD8" ] && ok "8: nothing was built" || bad "8: nothing was built" "$RELEASES/$HEAD8 exists"
 is     "8: local/main advances to the round head" "$HEAD8" "$(localmain)"
 is     "8: still nothing activated — no current symlink" "" "$(current_name)"
-is     "8: the bead is closed"               closed "$(field sp-lrel8 status)"
+is     "8: the installed unit is untouched"   "$UNIT_BEFORE" "$(unit_text)"
+is     "8: the bead is closed"                closed "$(field sp-lrel8 status)"
 
 # ============================================================================
 echo
-echo "9 — current symlink present, aeons live: activates without refusing (sp-zt0ae)"
+echo "9 — a failed build leaves current alone, keeps the landing, exits non-zero"
 # ============================================================================
-# Once production runs from a release (current exists), the release step must run even
-# with aeons live — the loop never has zero live aeons — so land-local's own call into
-# activate.sh must not hit the default live-aeon guard.
-ln -s "spira-$HEAD1" "$RELEASES/current"
+ln -s "$HEAD1" "$RELEASES/current"
 seed sp-lrel9
 HEAD9="$(mk_round round-9 nine.txt v9)"
-mk_bins "$HEAD9" v9-binary
-export MOCK_AEONS="spira-aeon-abc-prod.service"
+mk_bins "$HEAD9" not-the-declared-binary otherbin   # the round built something, not fakebin
 
 out="$(run_q land-local fixq --head "$HEAD9" --members "sp-lrel9:$HEAD9" --worktree "$(bins_wt "$HEAD9")")"; rc=$?
-unset MOCK_AEONS
-[ "$rc" -eq 0 ] && ok "9: exit 0 — the release step runs despite live aeons" \
-    || bad "9: exit 0 — the release step runs despite live aeons" "got rc=$rc out=$out"
-want   "9: reports the activated release"    "activated spira-$HEAD9" "$out"
-nowant "9: never refuses on the live-aeon guard" "refusing" "$out"
-is     "9: current advances to this round's release" "spira-$HEAD9" "$(current_name)"
-is     "9: bin/fakebin is this round's own corpus" \
-       "v9-binary" "$(cat "$RELEASES/spira-$HEAD9/bin/fakebin" 2>/dev/null)"
-is     "9: the bead is closed"               closed "$(field sp-lrel9 status)"
+[ "$rc" -ne 0 ] && ok "9: exit non-zero on a deploy fault" \
+    || bad "9: exit non-zero on a deploy fault" "got rc=$rc out=$out"
+want "9: reports a deploy fault naming the commit" "LAND DEPLOY FAILED for $HEAD9: release build exited" "$out"
+want "9: says current is untouched"         "current is untouched (still $HEAD1)" "$out"
+is   "9: current is still the previous release" "$HEAD1" "$(current_name)"
+[ ! -e "$RELEASES/$HEAD9" ] && ok "9: nothing is named by the failed sha" \
+    || bad "9: nothing is named by the failed sha" "$RELEASES/$HEAD9 exists"
+is   "9: local/main is at the landed head (never reverted)" "$HEAD9" "$(localmain)"
+is   "9: the landing stays recorded — the bead is closed" closed "$(field sp-lrel9 status)"
 
 tl_summary
