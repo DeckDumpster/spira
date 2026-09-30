@@ -107,7 +107,7 @@ is "hook drains large committed-phase stdin without SIGPIPE" "0" "$?"
 #    SEEN TO FAIL: with worktree-hooks.sh reduced to what aeon.sh used to do — copying
 #    pre-commit alone into the worktree hooks dir — this case deletes the branch and fails.
 git worktree add -q "$TR/wt" -b spira/sp-wt 2>/dev/null
-SPIRA_HOME="$HERE" bash "$HERE/worktree-hooks.sh" install "$TR/wt" >/dev/null 2>&1
+SPIRA_HOME="$HERE" worktree-hooks.sh install "$TR/wt" >/dev/null 2>&1
 
 git -C "$TR/wt" branch spira/sp-wt-victim 2>/dev/null
 git -C "$TR/wt" branch -D spira/sp-wt-victim >/dev/null 2>&1

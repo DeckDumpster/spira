@@ -53,9 +53,6 @@ cp "$HERE/lib.sh" "$HERE/lc.sh" "$HERE/lifecycle-cert.sh" "$HERE/conf.sh" "$HERE
 # THE RUST SENTINEL (sentinel.sh is gone): the binaries are resolved as conf.sh's spira_bin
 # resolves them for THIS tree, and passed explicitly, because the fixture's own SPIRA_REPO is
 # not the tree that built them.
-_rbin() { SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin "$2" 2>/dev/null' _ "$HERE" "$1"; }
-SENTINEL_BIN="${SPIRA_SENTINEL_BIN:-$(_rbin sentinel)}"
-export SPIRA_CLAIM_BIN="${SPIRA_CLAIM_BIN:-$(_rbin spira-claim)}"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub pilgrimage.sh 'exit 0'
 stub strand        'exit 0'
@@ -83,16 +80,16 @@ chmod +x "$TMP/mock-incident.sh"
 HOME_REPO="$(basename "$REPO")"
 printf '%s | %s | pr | main | |\n' "$HOME_REPO" "$REPO" > "$TMP/repo-map"
 
-sentinel() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+run_sentinel() {
+    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$HOME_REPO" \
     SPIRA_GOAL=sp-goal SPIRA_FAYTHS=t SPIRA_INFERENCE_EVERY=999999 \
     SPIRA_NOTIFY="$SH/ask.sh" SPIRA_REPO_MAP="$TMP/repo-map" \
     SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
     SPIRA_CONF="$TMP/no-such-conf" \
     SPIRA_INCIDENT_SH="$TMP/mock-incident.sh" \
-    SPIRA_SKIP_RECLAIM=1 SPIRA_STRAND_BIN="$SH/strand" \
-        "$SENTINEL_BIN" --audit 2>&1
+    SPIRA_SKIP_RECLAIM=1 \
+        sentinel --audit 2>&1
 }
 
 status_of() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | python3 -c '
@@ -115,7 +112,7 @@ JSONL
 touch "$RUN/sp-bare.log"
 rm -f "$RUN/landstate/sp-bare"
 : > "$INC_LOG"
-sentinel >/dev/null
+run_sentinel >/dev/null
 inc_out="$(cat "$INC_LOG")"
 want "positive control: an ordinary closed bead IS reported" "REF=closed-not-landed:sp-bare" "$inc_out"
 
@@ -134,7 +131,7 @@ touch "$RUN/sp-subs.log"
 rm -f "$RUN/landstate/sp-subs"
 : > "$INC_LOG"
 
-sentinel >/dev/null
+run_sentinel >/dev/null
 is "sp-subs stays closed either way" closed "$(status_of sp-subs)"
 inc_out="$(cat "$INC_LOG")"
 nowant "no incident is filed for the subsumed bead" "sp-subs" "$inc_out"

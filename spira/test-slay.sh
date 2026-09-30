@@ -47,7 +47,7 @@ T1TMP="$(mktemp -d)"; trap 'rm -rf "$T1TMP"' EXIT INT TERM
 slay_noargv() {   # slay_noargv <args...> -> stdout+stderr, with SLAY_RC set
     SLAY_OUT="$(env -i PATH="$PATH" HOME="$T1TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$T1TMP/no.conf" SPIRA_RUN="$T1TMP/run" SPIRA_DB="$T1TMP/no-such-store" \
-        bash "$SLAY" "$@" 2>&1)"
+        slay.sh "$@" 2>&1)"
     SLAY_RC=$?
 }
 
@@ -134,18 +134,14 @@ done
 [ "$lc_up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/lc-server.log")"
 lc_root_sql() { "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls "$@"; }
 
-CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$LCREPO/spira-lc/Cargo.toml" --quiet 2>"$TMP/lc-build.log" \
-    || bail "spira-lc failed to build: $(cat "$TMP/lc-build.log")"
-export SPIRA_LC_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-lc"
+command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LCPORT"
 export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$TMP/lc-data"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
-"$SPIRA_LC_BIN" admin-apply-ddl "$LCREPO/lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1
+spira-lc admin-apply-ddl "$LCREPO/lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1
 wantrc "spira-lc schema applies cleanly" 0 $?
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
@@ -250,7 +246,7 @@ make_work sp-s1
 is "bead starts in_progress"   in_progress "$(status_of sp-s1)"
 is "bead starts assigned"      aeon-test   "$(assignee_of sp-s1)"
 
-out="$(bash "$SLAY" --bead sp-s1 2>&1)"
+out="$(slay.sh --bead sp-s1 2>&1)"
 rc=$?
 is  "slay exits 0"             0    "$rc"
 # bd's own STATUS is no longer slay.sh's to flip (sp-rlyl0: HolderDead goes through
@@ -278,7 +274,7 @@ echo "slay --close:"
 seed sp-s2
 make_work sp-s2
 
-out="$(bash "$SLAY" --bead sp-s2 --close "operator decided to drop this" 2>&1)"
+out="$(slay.sh --bead sp-s2 --close "operator decided to drop this" 2>&1)"
 rc=$?
 is "slay --close exits 0"   0      "$rc"
 is "bd's own status is left unmoved by slay.sh now" in_progress "$(status_of sp-s2)"
@@ -294,7 +290,7 @@ echo "slay --keep-work:"
 seed sp-s3
 make_work sp-s3
 
-out="$(bash "$SLAY" --bead sp-s3 --keep-work 2>&1)"
+out="$(slay.sh --bead sp-s3 --keep-work 2>&1)"
 rc=$?
 is   "slay --keep-work exits 0"   0   "$rc"
 is   "the lifecycle row is released — WORKING to READY" READY "$(lc_state_of sp-s3)"
@@ -314,7 +310,7 @@ make_work sp-s4
 echo "uncommitted work" > "$SPIRA_RUN/worktree/sp-s4/unsaved.txt"
 git -C "$SPIRA_RUN/worktree/sp-s4" add unsaved.txt
 
-out="$(bash "$SLAY" --bead sp-s4 2>&1)"
+out="$(slay.sh --bead sp-s4 2>&1)"
 rc=$?
 is "slay with dirty worktree exits 0" 0 "$rc"
 salvaged="$(ls "$SPIRA_RUN/reaped"/sp-s4.*.patch 2>/dev/null | head -1)"
@@ -338,7 +334,7 @@ seed sp-wip1
 make_work sp-wip1
 echo "uncommitted work" > "$SPIRA_RUN/worktree/sp-wip1/dirty.txt"
 
-out="$(bash "$SLAY" --bead sp-wip1 --why "operator halted it" 2>&1)"
+out="$(slay.sh --bead sp-wip1 --why "operator halted it" 2>&1)"
 rc=$?
 is  "dirty slay exits 0"               0    "$rc"
 is  "the lifecycle row is released — WORKING to READY" READY "$(lc_state_of sp-wip1)"
@@ -362,7 +358,7 @@ teardown sp-wip1
 seed sp-wip2
 make_work sp-wip2
 
-out="$(bash "$SLAY" --bead sp-wip2 2>&1)"
+out="$(slay.sh --bead sp-wip2 2>&1)"
 is  "clean slay: branch goes to refs/slain" 0 \
     "$(git -C "$REPO" show-ref --verify -q refs/slain/sp-wip2 2>/dev/null; echo $?)"
 is  "clean slay: branch removed from refs/heads" 1 \
@@ -381,7 +377,7 @@ echo "parking:"
 seed sp-s5
 make_work sp-s5
 
-out="$(bash "$SLAY" --bead sp-s5 2>&1)"
+out="$(slay.sh --bead sp-s5 2>&1)"
 is   "branch with unique work is parked" 0 \
      "$(git -C "$REPO" show-ref --verify -q refs/slain/sp-s5 2>/dev/null; echo $?)"
 want "reports parking"                    "parked" "$out"
@@ -392,7 +388,7 @@ seed sp-s6
 git -C "$REPO" branch -q spira/sp-s6 main 2>/dev/null
 git -C "$REPO" worktree add -q "$SPIRA_RUN/worktree/sp-s6" spira/sp-s6 2>/dev/null
 
-out="$(bash "$SLAY" --bead sp-s6 2>&1)"
+out="$(slay.sh --bead sp-s6 2>&1)"
 is     "branch on main is NOT parked" 1 \
        "$(git -C "$REPO" show-ref --verify -q refs/slain/sp-s6 2>/dev/null; echo $?)"
 nowant "does not report parking"       "parked" "$out"
@@ -407,7 +403,7 @@ echo "slay --close on already-closed bead:"
 
 seed sp-s7 closed ""
 
-out="$(bash "$SLAY" --bead sp-s7 --close "second close" 2>&1)"
+out="$(slay.sh --bead sp-s7 --close "second close" 2>&1)"
 rc=$?
 is "slay --close on closed bead exits 0" 0      "$rc"
 is "bead is still closed"                closed "$(status_of sp-s7)"
@@ -426,7 +422,7 @@ echo
 echo "refusals:"
 
 # --- a bead id no bead carries -----------------------------------------------------
-out="$(bash "$SLAY" --bead sp-nosuchbead9 --why probe 2>&1)"; rc=$?
+out="$(slay.sh --bead sp-nosuchbead9 --why probe 2>&1)"; rc=$?
 is   "bogus id exits 2"                    2 "$rc"
 want "bogus id names the store"            "refusing to act" "$out"
 nowant "bogus id does not report a slaying" "slain: sp-nosuchbead9" "$out"
@@ -438,14 +434,14 @@ is   "bogus id leaves no .slain marker"    no \
 # at all; this is the one thing only a real bead can prove — that the refusal happens
 # before any mutation even when --bead names a bead that genuinely exists.
 seed sp-s8
-out="$(bash "$SLAY" --bead sp-s8 "blocked on the P0 fixes" 2>&1)"; rc=$?
+out="$(slay.sh --bead sp-s8 "blocked on the P0 fixes" 2>&1)"; rc=$?
 is   "a positional argument exits 2"       2 "$rc"
 want "refuses it by name"                  'unexpected argument' "$out"
 is   "the real bead was NOT touched"       in_progress "$(status_of sp-s8)"
 
 # --- POSITIVE CONTROL --------------------------------------------------------------
 # Without this, a slay.sh that refused EVERYTHING would pass both cases above.
-out="$(bash "$SLAY" --bead sp-s8 --keep-work --why "positive control" 2>&1)"; rc=$?
+out="$(slay.sh --bead sp-s8 --keep-work --why "positive control" 2>&1)"; rc=$?
 is   "a real id with a --why still slays"  0    "$rc"
 is   "and the bead is released — WORKING to READY" READY "$(lc_state_of sp-s8)"
 teardown sp-s8

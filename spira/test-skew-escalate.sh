@@ -86,7 +86,7 @@ run_skew() {
         SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$RELEASES" \
         "${@}" \
-        bash "$HERE/skew.sh" check --escalate 2>&1
+        skew.sh check --escalate 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -102,7 +102,7 @@ run_skew_ro() {
         SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$RELEASES" \
         "${@}" \
-        bash "$HERE/skew.sh" check 2>&1
+        skew.sh check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -117,7 +117,7 @@ run_skew_shared() {
         SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$RELEASES" \
         "${@}" \
-        bash "$HERE/skew.sh" check --escalate 2>&1
+        skew.sh check --escalate 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -136,7 +136,7 @@ cat > "$GOOD_BODY"
 EOFM
 chmod +x "$GOOD_HOME/mail.sh"
 
-good_out="$(run_skew SPIRA_HOME="$GOOD_HOME")"; good_rc=$?
+good_out="$(run_skew SPIRA_HOME="$GOOD_HOME" PATH="$GOOD_HOME:$PATH")"; good_rc=$?
 # NOT-LATEST was found; exit 1 is correct.
 is  "positive control exits 1 (divergence found)" "1" "$good_rc"
 # The escalation confirmation must appear on stdout so skew.log has it.
@@ -147,18 +147,6 @@ want "positive control: escalation noted on stdout" "escalated" "$good_out"
     || bad "body is non-empty" "mail.sh received an empty body"
 want "body contains ## Question" "## Question" "$(cat "$GOOD_BODY")"
 want "body contains ## Default"  "## Default"  "$(cat "$GOOD_BODY")"
-
-# ===========================================================================
-echo
-echo "no escalation path — warning appears on stdout, not silently dropped:"
-# ===========================================================================
-NO_HOME="$TMP/no-home"
-mkdir -p "$NO_HOME"
-# no mail.sh in NO_HOME
-
-no_path_out="$(run_skew SPIRA_HOME="$NO_HOME")"; no_path_rc=$?
-is  "no-path exits 1 (divergence found)" "1" "$no_path_rc"
-want "no-path warning appears on stdout" "mail.sh not found" "$no_path_out"
 
 # ===========================================================================
 echo
@@ -173,7 +161,7 @@ exit 1
 EOF
 chmod +x "$BAD_HOME/mail.sh"
 
-fail_out="$(run_skew SPIRA_HOME="$BAD_HOME")"; fail_rc=$?
+fail_out="$(run_skew SPIRA_HOME="$BAD_HOME" PATH="$BAD_HOME:$PATH")"; fail_rc=$?
 is  "failing notify exits 1" "1" "$fail_rc"
 want "failing notify message on stdout"  "escalation failed" "$fail_out"
 want "failing notify rc included"        "rc=1"              "$fail_out"
@@ -193,7 +181,7 @@ exit 0
 EOF
 chmod +x "$SENTINEL_HOME/mail.sh"
 
-ro_out="$(run_skew_ro SPIRA_HOME="$SENTINEL_HOME")"; ro_rc=$?
+ro_out="$(run_skew_ro SPIRA_HOME="$SENTINEL_HOME" PATH="$SENTINEL_HOME:$PATH")"; ro_rc=$?
 is  "read-only exits 1 (divergence found)" "1" "$ro_rc"
 [ ! -f "$SENTINEL_DIR/fired" ] && ok "read-only: mail.sh not called" \
     || bad "read-only: mail.sh not called" "sentinel file was created"
@@ -221,12 +209,12 @@ chmod +x "$DEDUPE_HOME/mail.sh"
 
 DEDUPE_RUN="$(mktemp -d "$TMP/dedup-run-XXXXX")"
 
-first_out="$(run_skew_shared "$DEDUPE_RUN" SPIRA_HOME="$DEDUPE_HOME")"; first_rc=$?
+first_out="$(run_skew_shared "$DEDUPE_RUN" SPIRA_HOME="$DEDUPE_HOME" PATH="$DEDUPE_HOME:$PATH")"; first_rc=$?
 is  "dedupe first call exits 1 (divergence)" "1" "$first_rc"
 want "dedupe first call: escalated" "escalated" "$first_out"
 is  "dedupe first call: notify fired once" "1" "$(cat "$DEDUPE_COUNT")"
 
-second_out="$(run_skew_shared "$DEDUPE_RUN" SPIRA_HOME="$DEDUPE_HOME")"; second_rc=$?
+second_out="$(run_skew_shared "$DEDUPE_RUN" SPIRA_HOME="$DEDUPE_HOME" PATH="$DEDUPE_HOME:$PATH")"; second_rc=$?
 is  "dedupe second call exits 1 (divergence still present)" "1" "$second_rc"
 nowant "dedupe second call: no re-escalation" "escalated" "$second_out"
 is  "dedupe second call: notify still fired exactly once total" "1" "$(cat "$DEDUPE_COUNT")"

@@ -47,7 +47,6 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 # THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
 # pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
-LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 
 echo "test-spike.sh"
 
@@ -75,10 +74,10 @@ echo
 echo "the partition is the spike's own:"
 # ======================================================================================
 export SPIRA_RUN="$TMP/run"
-export SPIRA_HOME="$TMP/home"
+export SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH"
 mkdir -p "$SPIRA_RUN" "$SPIRA_HOME/chamber"
 printf '#!/bin/sh\nexit 0\n' > "$SPIRA_HOME/aeon"; chmod +x "$SPIRA_HOME/aeon"
-export SPIRA_AEON_BIN="$SPIRA_HOME/aeon"   # summon_fayth launches the aeon binary; a stub here
+export PATH="$SPIRA_HOME:$PATH"   # summon_fayth launches the aeon on PATH; a stub here
 SUMMONED="$TMP/summoned.txt"
 export SPIRA_SUMMON="$TMP/summon.sh"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %s\n' "$SUMMONED" > "$SPIRA_SUMMON"
@@ -141,7 +140,7 @@ spike_branch() {
     git -C "$REPO" add -A && git -C "$REPO" commit -q -m "$id — work"
     git -C "$REPO" checkout -q main
 }
-confine() { bash "$HERE/confine.sh" "$1" "spira/$1" "$REPO" main 2>&1; }
+confine() { confine.sh "$1" "spira/$1" "$REPO" main 2>&1; }
 confine_rc() { confine "$1" >/dev/null 2>&1; printf '%s' "$?"; }
 
 beads "$(bead sp-poc "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL" task closed)"
@@ -229,11 +228,11 @@ printf 'home | %s | push | origin/main | |\n' "$LREPO" > "$SH/repo-map"
 
 land() {
     rm -f "$RUN/landing.progress"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$LREPO" \
+    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$LREPO" \
     SPIRA_HOME_REPO=home SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_SPIKE_LABEL="$SPIRA_SPIKE_LABEL" SPIRA_SPIKE_DIR="$SPIRA_SPIKE_DIR" \
     SPIRA_SPIKE_PATHS="$SPIRA_SPIKE_PATHS" \
-        "$LANDING_PASS_BIN" land 2>&1
+        landing-pass land 2>&1
 }
 status_of() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import json, sys

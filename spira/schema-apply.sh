@@ -84,7 +84,7 @@ fi
 # EXHAUSTIVE, and that is what retires the Gas Town types. Registration is the line between a
 # type and a typo: with a type unregistered, `bd create --type <it>` is refused outright
 # (verified both directions). An existing record whose type was later unregistered survives.
-want_types="$("$HERE/schema.sh" custom-types | paste -sd, -)"
+want_types="$(schema.sh custom-types | paste -sd, -)"
 have_types="$(bd -C "$DB" config get types.custom 2>/dev/null | tail -1)"
 if [ "$want_types" = "$have_types" ]; then say "custom types already exact: $want_types"
 else say "custom types: [$have_types] -> [$want_types]"
@@ -94,7 +94,7 @@ fi
 # ---- 2. custom statuses ----------------------------------------------------------------
 # awaiting_ci is deliberately NOT here — it is a gh:run gate, because a status still requires
 # every reader to remember to exclude it while a gate makes the bead not ready.
-want_st="$("$HERE/schema.sh" statuses | paste -sd, -)"
+want_st="$(schema.sh statuses | paste -sd, -)"
 have_st="$(bd -C "$DB" config get status.custom 2>/dev/null | tail -1)"
 if [ "$want_st" = "$have_st" ]; then say "custom statuses already exact: $want_st"
 else say "custom statuses: [$have_st] -> [$want_st]"
@@ -131,4 +131,4 @@ if [ -n "$_FAILED" ]; then
     exit 1
 fi
 say "applied. verifying with schema.sh check"
-"$HERE/schema.sh" check
+schema.sh check

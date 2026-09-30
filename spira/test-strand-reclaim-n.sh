@@ -31,7 +31,6 @@ testdb_up strandreclaimn || { echo "test-strand-reclaim-n: could not build fixtu
 
 mkdir -p "$TMP/run" "$TMP/home"
 # THE STRAND IS A BINARY (strand.sh is gone), resolved as conf.sh's spira_bin does.
-STRAND_BIN="${SPIRA_STRAND_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin strand 2>/dev/null' _ "$HERE")}"
 
 # mail.sh stub — the two rows below never reach escalation (RECLAIM_AT defaults to 5, well
 # above the single reclaim each row here earns), but a stub is cheap insurance against a
@@ -56,8 +55,8 @@ echo "test-strand-reclaim-n.sh"
 echo
 echo "case 1 — cmd_check processes every ghost row without dying mid-pass:"
 out="$(env SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" SPIRA_RUN="$TMP/run" \
-           SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$TMP/home" \
-       "$STRAND_BIN" check --from "$TMP/fixture.tsv" 2>"$TMP/err")"
+           SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH" \
+       strand check --from "$TMP/fixture.tsv" 2>"$TMP/err")"
 rc=$?
 wantrc "cmd_check exits 0" "0" "$rc"
 want   "first ghost row reclaimed"  "RECLAIMED sp-fakeg1"  "$out"

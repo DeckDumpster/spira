@@ -31,7 +31,7 @@ mkdir -p "$T/run"
 # (law-gates-run-in-a-clean-environment).
 export SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
-export SPIRA_HOME="$T"
+export SPIRA_HOME="$T" PATH="$T:$PATH"
 export SPIRA_DB="$T/no-db"
 # Non-default label values to prove mode expansion reads conf vars, not literals.
 export SPIRA_PLAN_LABEL="plan"

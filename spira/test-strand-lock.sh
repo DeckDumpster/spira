@@ -59,7 +59,6 @@ printf 'starved\t-\tescalate\t0 ready beads, 0 live aeons — nothing can move\t
 echo "sentinel ok" > "$TMP/run/sentinel.log"
 
 # THE STRAND IS A BINARY (strand.sh is gone), resolved as conf.sh's spira_bin does.
-STRAND_BIN="${SPIRA_STRAND_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin strand 2>/dev/null' _ "$HERE")}"
 
 # COUNT_FILE: each call to our mail.sh stub atomically increments it.
 COUNT_FILE="$TMP/count"
@@ -81,11 +80,11 @@ CHECK_ENV=(
     SPIRA_RUN="$TMP/run"
     SPIRA_STRAND_GRACE=0
     SPIRA_LABELS=-
-    SPIRA_HOME="$TMP/strand-home"
+    SPIRA_HOME="$TMP/strand-home" PATH="$TMP/strand-home:$PATH"
 )
 
 run_check() {
-    env "${CHECK_ENV[@]}" "$STRAND_BIN" check --from "$TMP/fixture.tsv" >/dev/null 2>&1
+    env "${CHECK_ENV[@]}" strand check --from "$TMP/fixture.tsv" >/dev/null 2>&1
 }
 
 echo "test-strand-lock.sh"
@@ -125,8 +124,8 @@ cat >/dev/null
 STUB
 chmod +x "$BARRIER_HOME/mail.sh"
 
-env SPIRA_RUN="$TMP/run" SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$BARRIER_HOME" \
-    "$STRAND_BIN" check --from "$TMP/fixture.tsv" >"$TMP/runner1.log" 2>&1 &
+env SPIRA_RUN="$TMP/run" SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$BARRIER_HOME" PATH="$BARRIER_HOME:$PATH" \
+    strand check --from "$TMP/fixture.tsv" >"$TMP/runner1.log" 2>&1 &
 P1=$!
 
 # Blocks until runner 1's mail.sh signals it is inside the critical section.
@@ -135,7 +134,7 @@ read -r _ < "$LOCKED_FIFO"
 # Runner 2 now races for the same lock runner 1 still holds. Deterministically declines.
 LOG2="$TMP/runner2.log"
 run_check_logged() {
-    env "${CHECK_ENV[@]}" "$STRAND_BIN" check --from "$TMP/fixture.tsv" >"$LOG2" 2>&1
+    env "${CHECK_ENV[@]}" strand check --from "$TMP/fixture.tsv" >"$LOG2" 2>&1
 }
 run_check_logged
 P2_rc=$?
@@ -165,7 +164,7 @@ exec 9>"$TMP/run/strands.json.lock"
 flock -x 9
 
 LOG3="$TMP/decline.log"
-env "${CHECK_ENV[@]}" "$STRAND_BIN" check --from "$TMP/fixture.tsv" >"$LOG3" 2>/dev/null
+env "${CHECK_ENV[@]}" strand check --from "$TMP/fixture.tsv" >"$LOG3" 2>/dev/null
 
 # Release the lock so subsequent cleanup can remove the file.
 exec 9>&-
@@ -189,8 +188,8 @@ printf 'pool-paused\t-\tinfo\t1 bead(s) ready but the task pool is set to zero: 
     > "$TMP/fixture-info.tsv"
 
 MAIL_SENT="$TMP/mail-sent-info"
-env SPIRA_RUN="$TMP/run" SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$TMP/strand-home" \
-    "$STRAND_BIN" check --from "$TMP/fixture-info.tsv" >/dev/null 2>&1
+env SPIRA_RUN="$TMP/run" SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$TMP/strand-home" PATH="$TMP/strand-home:$PATH" \
+    strand check --from "$TMP/fixture-info.tsv" >/dev/null 2>&1
 n_info="$(cat "$COUNT_FILE")"
 is "info row: mail.sh not called (count unchanged)" "1" "$n_info"
 
@@ -214,8 +213,8 @@ cat >> "$ARGS_A"
 STUB
 chmod +x "$TMP/home-a/mail.sh"
 
-env SPIRA_RUN="$TMP/run" SPIRA_STRAND_GRACE=0 SPIRA_LABELS=spira,plan SPIRA_HOME="$TMP/home-a" \
-    "$STRAND_BIN" check --from "$TMP/fixture-partition.tsv" >/dev/null 2>&1
+env SPIRA_RUN="$TMP/run" SPIRA_STRAND_GRACE=0 SPIRA_LABELS=spira,plan SPIRA_HOME="$TMP/home-a" PATH="$TMP/home-a:$PATH" \
+    strand check --from "$TMP/fixture-partition.tsv" >/dev/null 2>&1
 
 args_a="$(cat "$ARGS_A" 2>/dev/null || true)"
 want "full stack: sp-pa1 in evidence"          "sp-pa1"     "$args_a"

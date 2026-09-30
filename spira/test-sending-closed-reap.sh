@@ -56,7 +56,7 @@ stub gh 'exit 1'
 printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$REPONAME" "$REPO" push main '' '' > "$SH/repo-map"
 
 sending() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
+    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" \
     SPIRA_REPO_MAP="$SH/repo-map" \
         bash "$SH/sending.sh" --no-fetch 2>&1

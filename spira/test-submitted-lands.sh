@@ -33,7 +33,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 # THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
 # pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
-LANDING_PASS_BIN="${SPIRA_LANDING_PASS_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin landing-pass 2>/dev/null' _ "$HERE")}"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -67,6 +66,8 @@ stub gh         'exit 1'
 gate_pass() { stub gate.sh 'echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2; exit 0'; }
 gate_fail() { stub gate.sh 'echo "gate: VERDICT=FAIL reason=stub-fail branch=$1 repo=${2:-?}" >&2; exit 1'; }
 gate_pass
+# The fixture home (and its stubs) is the harness in force: bare names resolve here first.
+export PATH="$SPIRA_HOME:$PATH"
 
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
@@ -80,8 +81,8 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/c
 # THE SHIM IS THE SESSION: commit, then close the bead the way a builder does. conf.sh
 # replaces PATH, so the model is injected through SPIRA_AGENT and nothing else.
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || { echo "test-submitted-lands: the aeon binary is not built (SPIRA_AEON_BIN)" >&2; exit 1; }
+command -v aeon >/dev/null 2>&1 \
+    || { echo "test-submitted-lands: aeon is not on PATH" >&2; exit 1; }
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
@@ -105,15 +106,15 @@ seed() {   # seed <id> [status] [extra-label]
     printf '{"id":"%s","title":"t","status":"%s","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "${2:-open}" "$_lbl" | testdb_seed
 }
-run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/aeon.out" 2>&1; }
+run_aeon() { rm -rf "$SPIRA_RUN/worktree"; aeon --home "$SPIRA_HOME" builder > "$TMP/aeon.out" 2>&1; }
 landing() {
     rm -f "$SPIRA_RUN/landing.progress"
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO=fixture SPIRA_ID_PREFIX=sp SPIRA_GH="$SPIRA_HOME/gh" \
-        "$LANDING_PASS_BIN" land 2>&1
+        landing-pass land 2>&1
 }
 sending() {
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO=fixture SPIRA_GH="$SPIRA_HOME/gh" \
-        bash "$SPIRA_HOME/sending.sh" 2>&1
+        sending.sh 2>&1
 }
 on_base() { git -C "$REPO" fetch -q origin 2>/dev/null; git -C "$REPO" log --format=%s origin/main 2>/dev/null; }
 

@@ -29,21 +29,13 @@ T="$(mktemp -d)"; trap 'testdb_drop 2>/dev/null; rm -rf "$T"' EXIT INT TERM
 mkdir -p "$T/run" "$T/chamber" "$T/bin"
 export SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
-export SPIRA_HOME="$T"
+export SPIRA_HOME="$T" PATH="$T:$PATH"
 export SPIRA_DB="$T/no-db"
 
-# THE AEON IS A BINARY (aeon.sh is gone) and summon_fayth refuses to summon without an
-# executable SPIRA_AEON_BIN. SPIRA_HOME is the temp dir here, so conf.sh's own spira_bin would
-# look in its parent's bin/ and find nothing; resolve it the way conf.sh does for THIS tree
-# (SPIRA_ARTIFACTS under testenv), before lib.sh sources conf.sh. The mock SPIRA_SUMMON
-# never execs it — it only has to be the real, executable path summon_fayth passes on.
-_rbin() { env -u SPIRA_REPO SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin "$2" 2>/dev/null' _ "$HERE" "$1"; }
-[ -x "${SPIRA_AEON_BIN:-}" ] || SPIRA_AEON_BIN="$(_rbin aeon)"
-export SPIRA_AEON_BIN
-[ -x "$SPIRA_AEON_BIN" ] \
-    || { echo "test-summon-fast-path: the aeon binary is not built (SPIRA_AEON_BIN=$SPIRA_AEON_BIN)" >&2; exit 1; }
-[ -x "${SPIRA_SENTINEL_BIN:-}" ] || SPIRA_SENTINEL_BIN="$(_rbin sentinel)"
-export SPIRA_SENTINEL_BIN
+# THE AEON IS A BINARY (aeon.sh is gone): summon_fayth hands systemd-run the aeon it finds
+# on PATH (sp-gypjk). The mock SPIRA_SUMMON never execs it.
+command -v aeon >/dev/null 2>&1 \
+    || { echo "test-summon-fast-path: aeon is not on PATH" >&2; exit 1; }
 
 . "$HERE/lib.sh"
 
@@ -223,7 +215,7 @@ PARTS_FIXTURE="builder|plan|spira-poison
 ops|incident|spira-poison"
 
 run_bucket() {   # run_bucket <beads-json>
-    printf '%s' "$1" | PARTS="$PARTS_FIXTURE" python3 "$RB"
+    printf '%s' "$1" | PARTS="$PARTS_FIXTURE" ready-bucket.py
 }
 
 # POSITIVE CONTROL: a plain bead matching builder's labels counts for builder, not ops.
@@ -244,7 +236,7 @@ want "fayth: preference: every other persona is excluded" "builder 0" "$out"
 
 # SHARED EXCLUDE (QUEUE_WAIT/SUBMITTED): excluded from every fayth regardless of labels.
 out="$(printf '%s' '[{"id":"sp-4","labels":["plan","queue-wait"]}]' \
-    | PARTS="$PARTS_FIXTURE" SPIRA_QUEUE_WAIT_LABEL=queue-wait python3 "$RB")"
+    | PARTS="$PARTS_FIXTURE" SPIRA_QUEUE_WAIT_LABEL=queue-wait ready-bucket.py)"
 is "shared exclude: a queue-wait bead counts for nobody" "builder 0
 ops 0" "$out"
 
@@ -274,7 +266,6 @@ ln -s "$HERE/chamber" "$DSTUBS/chamber"
 ln -s "$HERE/ready-bucket.py" "$DSTUBS/ready-bucket.py"
 # THE SENTINEL IS A BINARY (sentinel.sh is gone): it sources lib.sh from SPIRA_HOME.
 for _s in lib.sh conf.sh lc.sh suite-covers.sh lifecycle-cert.sh; do ln -s "$HERE/$_s" "$DSTUBS/$_s"; done
-SENTINEL_BIN="${SPIRA_SENTINEL_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; printf %s "${SPIRA_SENTINEL_BIN:-}"' _ "$HERE")}"
 SUMMON_LOG="$T/d-summoned.log"
 printf '#!/bin/sh\necho summoned >> "%s"\n' "$SUMMON_LOG" > "$DSTUBS/mock-summon"; chmod +x "$DSTUBS/mock-summon"
 # SPIRA_SUMMON below is this mock, not systemd-run, so aeon_count takes its pidfile
@@ -298,16 +289,15 @@ run_summon_only() {   # run_summon_only <run-dir> [KEY=VAL ...]
     mkdir -p "$run"
     env -i \
         PATH="$PATH" HOME="$HOME" \
-        SPIRA_HOME="$DSTUBS" \
+        SPIRA_HOME="$DSTUBS" PATH="$DSTUBS:$PATH" \
         SPIRA_RUN="$run" \
         SPIRA_DB="$SPIRA_DB" \
         SPIRA_BD="$DSTUBS/counting-bd" \
         SPIRA_GOAL="sp-goal1" \
         SPIRA_SUMMON="$DSTUBS/mock-summon" \
-        SPIRA_AEON_BIN="$SPIRA_AEON_BIN" \
         SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL= SPIRA_MAX_AEONS=2 \
         "$@" \
-        "$SENTINEL_BIN" --summon-only 2>&1
+        sentinel --summon-only 2>&1
 }
 
 # builder is elastic (FAYTH_ELASTIC=1, builder.fayth): its fill loop is bound by the POOL,
@@ -354,10 +344,10 @@ echo "E — every aeon carries its own fast-path refill hook (ExecStopPost):"
 # know it exited) — the refill it wires must reach --summon-only, never the full pass, or
 # an aeon exiting is right back to waiting out the 2-minute cadence this bead exists to cut.
 export SPIRA_SUMMON="$T/bin/mock-summon-noop"   # already an absolute path; created in section A
-# The refill runs the sentinel BINARY (sentinel.sh is gone), named by SPIRA_SENTINEL_BIN.
-_prev_sentinel_bin="${SPIRA_SENTINEL_BIN-}"; export SPIRA_SENTINEL_BIN="$T/bin/sentinel"
-argv="$(summon_argv racer | tr '\n' ' ')"
-if [ -n "$_prev_sentinel_bin" ]; then SPIRA_SENTINEL_BIN="$_prev_sentinel_bin"; else unset SPIRA_SENTINEL_BIN; fi
+# The refill runs the sentinel BINARY (sentinel.sh is gone), resolved on PATH (sp-gypjk):
+# ExecStopPost needs an absolute path, so summon_argv hands it `command -v sentinel`.
+printf '#!/bin/sh\nexit 0\n' > "$T/bin/sentinel"; chmod +x "$T/bin/sentinel"
+argv="$(PATH="$T/bin:$PATH" summon_argv racer | tr '\n' ' ')"
 case "$argv" in
     *"--property=ExecStopPost=$T/bin/mock-summon-noop --user --collect --quiet $T/bin/sentinel --summon-only"*)
         ok "summon_argv: ExecStopPost refills via --summon-only, not a full pass" ;;

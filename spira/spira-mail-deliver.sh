@@ -38,7 +38,7 @@ _wake_loop() {
         count="$(ls "$dir" 2>/dev/null | wc -l | tr -d ' ')"
         [ "${count:-0}" -gt 0 ] || return 0
         local age
-        age="$("$SPIRA_HOME/mail.sh" unread-age "$mailbox" 2>/dev/null)"
+        age="$(mail.sh unread-age "$mailbox" 2>/dev/null)"
         case "$age" in ''|*[!0-9]*) age=0 ;; esac
         attempt=$((attempt+1))
         local wake_err

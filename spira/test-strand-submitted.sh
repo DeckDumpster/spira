@@ -43,7 +43,6 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/run" "$TMP/home"
 # THE STRAND IS A BINARY (strand.sh is gone), resolved as conf.sh's spira_bin does. Its roster
 # probe sources lib.sh from SPIRA_HOME, so the stub home carries the real lib.sh.
-STRAND_BIN="${SPIRA_STRAND_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin strand 2>/dev/null' _ "$HERE")}"
 for _s in lib.sh conf.sh lc.sh suite-covers.sh lifecycle-cert.sh; do ln -s "$HERE/$_s" "$TMP/home/$_s"; done
 
 SUBMITTED=mysubmitted-nondefault
@@ -80,14 +79,14 @@ MOCKBD
 chmod +x "$TMP/mock-bd"
 
 run_report() {
-    SPIRA_HOME="$TMP/home" \
+    SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH" \
     SPIRA_RUN="$TMP/run" \
     SPIRA_BD="$TMP/mock-bd" \
     SPIRA_DB="$TMP/no-db" \
     SPIRA_SUMMON=stub \
     SPIRA_SUBMITTED_LABEL="$SUBMITTED" \
     SPIRA_LABELS="spira,test-groom" \
-        "$STRAND_BIN" report 2>/dev/null
+        strand report 2>/dev/null
 }
 
 echo "test-strand-submitted.sh"
@@ -99,11 +98,11 @@ echo "case 0 — positive control: mock ready returns the bead → starved IS re
 # Same run, but --exclude-label from classify_one never carries a label matching the one
 # baked into the mock's check (nothing here names the submitted label back to the mock),
 # so the mock hands the bead back and starvation is real.
-out0="$(SPIRA_HOME="$TMP/home" SPIRA_RUN="$TMP/run" SPIRA_BD="$TMP/mock-bd" \
+out0="$(SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH" SPIRA_RUN="$TMP/run" SPIRA_BD="$TMP/mock-bd" \
         SPIRA_DB="$TMP/no-db" SPIRA_SUMMON=stub \
         SPIRA_SUBMITTED_LABEL=some-other-label-entirely \
         SPIRA_LABELS="spira,test-groom" \
-            "$STRAND_BIN" report 2>/dev/null)"
+            strand report 2>/dev/null)"
 want "positive control: starved IS reported" "starved" "$out0"
 
 # ======================================================================================

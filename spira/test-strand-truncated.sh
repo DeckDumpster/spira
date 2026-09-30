@@ -45,9 +45,6 @@ mkdir -p "$TMP/run"
 # THE STRAND AND SENTINEL ARE BINARIES (strand.sh, sentinel.sh are gone), resolved as conf.sh's
 # spira_bin resolves them for this tree. Both source lib.sh from SPIRA_HOME, so each stub
 # home carries the real lib.sh and what it sources.
-_rbin() { SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin "$2" 2>/dev/null' _ "$HERE" "$1"; }
-STRAND_BIN="${SPIRA_STRAND_BIN:-$(_rbin strand)}"
-SENTINEL_BIN="${SPIRA_SENTINEL_BIN:-$(_rbin sentinel)}"
 _libs() { local _s; for _s in lib.sh conf.sh lc.sh suite-covers.sh lifecycle-cert.sh; do ln -sf "$HERE/$_s" "$1/$_s"; done; }
 
 echo "test-strand-truncated.sh"
@@ -90,13 +87,13 @@ cat > "$TMP/run/sentinel.log" <<'LOG'
 LOG
 
 out="$(
-    SPIRA_HOME="$TMP/stubs" \
+    SPIRA_HOME="$TMP/stubs" PATH="$TMP/stubs:$PATH" \
     SPIRA_RUN="$TMP/run" \
     SPIRA_BD="$TMP/mock-bd" \
     SPIRA_SUMMON=stub \
     SPIRA_DB="$TMP/no-db" \
     SPIRA_LABELS="spira,test-plan" \
-        "$STRAND_BIN" report 2>/dev/null
+        strand report 2>/dev/null
 )"
 want   "detection: pass-truncated IS reported" "pass-truncated" "$out"
 nowant "detection: starved IS NOT reported"    "starved"        "$out"
@@ -112,13 +109,13 @@ cat > "$TMP/run/sentinel.log" <<'LOG'
 LOG
 
 out="$(
-    SPIRA_HOME="$TMP/stubs" \
+    SPIRA_HOME="$TMP/stubs" PATH="$TMP/stubs:$PATH" \
     SPIRA_RUN="$TMP/run" \
     SPIRA_BD="$TMP/mock-bd" \
     SPIRA_SUMMON=stub \
     SPIRA_DB="$TMP/no-db" \
     SPIRA_LABELS="spira,test-plan" \
-        "$STRAND_BIN" report 2>/dev/null
+        strand report 2>/dev/null
 )"
 want   "no truncation: starved IS raised"         "starved"        "$out"
 nowant "no truncation: pass-truncated not raised" "pass-truncated" "$out"
@@ -155,7 +152,7 @@ touch "$TMP/stubs2/repo-map"
 _run2="$TMP/run2"; mkdir -p "$_run2"
 out="$(env -i \
     PATH="$PATH" HOME="$HOME" \
-    SPIRA_HOME="$TMP/stubs2" \
+    SPIRA_HOME="$TMP/stubs2" PATH="$TMP/stubs2:$PATH" \
     SPIRA_RUN="$_run2" \
     SPIRA_DB="$TMP/no-db" \
     SPIRA_BD="$TMP/mock-bd" \
@@ -169,8 +166,8 @@ out="$(env -i \
     SPIRA_LAUNCH="$TMP/stubs2/mock-launch" \
     SPIRA_SUMMON="$TMP/stubs2/mock-summon" \
     SPIRA_NOTIFY="$TMP/stubs2/mock-notify" \
-    SPIRA_STRAND_BIN="$TMP/stubs2/strand" \
-        "$SENTINEL_BIN" 2>&1)"
+    PATH="$TMP/stubs2:$PATH" \
+        sentinel 2>&1)"
 
 want   "alpha logged as not evaluated" "CHECK7 alpha: not evaluated (pass budget exhausted)" "$out"
 want   "beta logged as not evaluated"  "CHECK7 beta: not evaluated (pass budget exhausted)"  "$out"
