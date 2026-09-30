@@ -31,7 +31,7 @@ git init -q -b main "$TMP/repo"
 RMAP="$TMP/repo-map"
 
 run() {
-    env -i PATH="$TMP/bin:$PATH" HOME="$TMP" \
+    env -i PATH="$TMP/bin:$TMP/spira:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_BATCH_WAIT=1800 \
         SPIRA_HOME="$TMP/spira" queue "$@" 2>&1

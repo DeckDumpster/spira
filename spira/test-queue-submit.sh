@@ -39,7 +39,7 @@ RMAP="$TMP/repo-map"
 printf 'fixq | %s | queue | main | | |\n' "$REPO" > "$RMAP"
 
 run() {
-    env -i PATH="$PATH" \
+    env -i PATH="$TMP/spira:$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME_REPO=fixq \
@@ -58,7 +58,7 @@ echo "certification honours SPIRA_CERTIFY_SUITES=off (fences only), as landing.s
 mkdir -p "$TMP/run/queue" "$TMP/run/landstate"
 : > "$GATE_LOG"
 git -C "$REPO" branch "spira/sp-cso01" main
-env -i PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent \
+env -i PATH="$TMP/spira:$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent \
     SPIRA_HOME_REPO=fixq SPIRA_REPO="$REPO" SPIRA_RUN="$TMP/run" \
     SPIRA_QUEUE_DIR="$TMP/run/queue" SPIRA_REPO_MAP="$RMAP" SPIRA_CERTIFY_SUITES=off \
     SPIRA_HOME="$TMP/spira" queue submit spira/sp-cso01 >/dev/null 2>&1
@@ -181,7 +181,7 @@ printf 'queuerepo | %s | queue | main | | |\n' "$REPO2" >> "$RMAP2"
 mkdir -p "$TMP/run2/queue" "$TMP/run2/landstate"
 : > "$GATE_LOG2"
 run2() {
-    env -i PATH="$PATH" \
+    env -i PATH="$TMP/spira2:$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME_REPO=holdhome \
@@ -209,7 +209,7 @@ RMAP3="$TMP/repo-map3"
 printf 'fixq | %s | queue | main | | |\n' "$REPO" > "$RMAP3"
 
 run3() {
-    env -i PATH="$PATH" \
+    env -i PATH="$TMP/spira2:$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME_REPO=fixq \
@@ -262,7 +262,7 @@ git -C "$TREPO" push -q origin main
 git -C "$TREPO" fetch -q origin
 
 transition() {
-    env -i PATH="$PATH" \
+    env -i PATH="$TSH:$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$TSH" \
