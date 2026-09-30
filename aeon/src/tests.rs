@@ -3,6 +3,7 @@
 //! because the worktree contract is about git's own refusals.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -198,6 +199,11 @@ struct Fx {
     home: PathBuf,
     run: PathBuf,
     repo: PathBuf,
+    /// A directory holding a stub `work` binary, so the restricted-env resolution
+    /// (`restrict::work_bin_dir`, sp-zpaq0) finds one exactly as the real release's
+    /// `bin/` does — without it, every `enforce=true` test would exercise the "work is
+    /// not on PATH" refusal instead of the restriction itself.
+    bin: PathBuf,
     w: W,
 }
 
@@ -230,8 +236,13 @@ fn fx(name: &str) -> Fx {
     std::fs::write(repo.join("f"), "seed\n").unwrap();
     git(&repo, &["add", "f"]);
     git(&repo, &["commit", "-qm", "seed"]);
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let work_stub = bin.join("work");
+    std::fs::write(&work_stub, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&work_stub, std::fs::Permissions::from_mode(0o755)).unwrap();
     let w: W = Arc::new(Mutex::new(World::default()));
-    Fx { _dir: dir, home, run, repo, w }
+    Fx { _dir: dir, home, run, repo, bin, w }
 }
 
 struct Outcome {
@@ -240,6 +251,8 @@ struct Outcome {
     ledger: String,
     w: W,
     seen: Vec<SessionSpec>,
+    /// Seconds the summon jitter slept.
+    slept: usize,
 }
 
 fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, seam_answers: BTreeMap<&'static str, Out>, act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync>) -> Outcome {
@@ -261,7 +274,7 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, s
         vars.insert(k.to_string(), v.to_string());
     }
     let mut base = BTreeMap::new();
-    base.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
+    base.insert("PATH".to_string(), format!("{}:{}", f.bin.display(), std::env::var("PATH").unwrap_or_default()));
     base.insert("GH_TOKEN".to_string(), "secret".to_string());
     for (k, v) in [("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")] {
         base.insert(k.into(), v.into());
@@ -277,11 +290,15 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, s
     let launcher = FakeLauncher { w: Arc::clone(&f.w), seen: Mutex::new(vec![]), act };
     let sink = MemSink::default();
     let clock = crate::util::now_epoch;
+    let slept = std::sync::atomic::AtomicUsize::new(0);
+    let sleep = |_: std::time::Duration| {
+        slept.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    };
     let dry = mode == Mode::DryRun;
     let cwd = std::env::current_dir().unwrap();
     let code = {
         let mut run = Run {
-            d: Deps { bd: &bd, seam: &seam, git: &git, exec: &exec, launcher: &launcher, sink: &sink, env: &env, clock: &clock },
+            d: Deps { bd: &bd, seam: &seam, git: &git, exec: &exec, launcher: &launcher, sink: &sink, env: &env, clock: &clock, sleep: &sleep },
             ledger: Ledger { path: conf.ledger(), dry },
             conf,
             fayth,
@@ -303,7 +320,7 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, s
     };
     let _ = std::env::set_current_dir(cwd);
     let seen = launcher.seen.lock().unwrap().clone();
-    Outcome { code, log: sink.all(), ledger: std::fs::read_to_string(f.run.join("aeon-ledger.log")).unwrap_or_default(), w: Arc::clone(&f.w), seen }
+    Outcome { code, log: sink.all(), ledger: std::fs::read_to_string(f.run.join("aeon-ledger.log")).unwrap_or_default(), w: Arc::clone(&f.w), seen, slept: slept.load(std::sync::atomic::Ordering::SeqCst) }
 }
 
 fn no_session() -> Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> {
@@ -426,7 +443,7 @@ fn binary_presence_alone_never_selects_the_restricted_path() {
     let o = go(&f, "spira,plan", &extra, false, Mode::Claim, BTreeMap::new(), commits_and_closes());
     let w = o.w.lock().unwrap();
     assert!(!w.seam_calls.iter().any(|c| c.0 == "lc_claim_bead"), "enforce off: no lifecycle CAS");
-    assert_ne!(o.seen[0].prog, "work-env.sh", "enforce off: the model is not wrapped in work-env.sh");
+    assert!(!o.seen[0].env.contains_key("SPIRA_WORK_BEAD_ID"), "enforce off: the model is not run under the restricted environment");
     let task = std::fs::read_to_string(f.run.join("sp-l.task.md")).unwrap();
     assert!(!task.contains("You have no `bd`") && task.contains("bd -C /db close sp-l --reason-file -"));
 }
@@ -449,8 +466,9 @@ fn enforce_claims_through_the_machine_and_restricts_the_model() {
     let w = o.w.lock().unwrap();
     let cas = w.seam_calls.iter().find(|c| c.0 == "lc_claim_bead").expect("lifecycle CAS claim");
     assert_eq!(cas.1[1], "aeon-ifrit");
-    assert_eq!(o.seen[0].prog, "work-env.sh");
-    assert!(o.seen[0].args[0] == "sp-r" && o.seen[0].args[1] == "--");
+    assert_eq!(o.seen[0].env.get("SPIRA_WORK_BEAD_ID").map(|s| s.as_str()), Some("sp-r"), "the model runs bound to this bead");
+    assert!(!o.seen[0].env.contains_key("SPIRA_DB"), "the restricted env never carries SPIRA_DB");
+    assert!(!o.seen[0].env.contains_key("GH_TOKEN"), "the restricted env never carries GH_TOKEN");
     let task = std::fs::read_to_string(f.run.join("sp-r.task.md")).unwrap();
     assert!(task.contains("**You have no `bd`.**"));
     assert!(ledger_lines(&o).last().unwrap().contains("status=submitted"));
@@ -732,4 +750,60 @@ fn sweep_runs_without_a_bead() {
     let task = std::fs::read_to_string(f.run.join("sweep-builder-4242.task.md")).unwrap();
     assert_eq!(task, "look at X");
     assert!(!f.run.join("aeon-builder-sweep-4242.pid").exists());
+}
+
+// ---- admission and summon jitter (sp-f4ig1) -------------------------------------------
+
+fn stub(f: &Fx, name: &str) -> PathBuf {
+    let p = f.bin.join(name);
+    std::fs::write(&p, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    p
+}
+
+#[test]
+fn an_agents_cargo_compiles_through_spira_admit_with_sccache_inside() {
+    let f = fx("admit");
+    seed(&f, "sp-adm");
+    let admit = stub(&f, "spira-admit");
+    let sccache = stub(&f, "sccache");
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0")], false, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let env = &o.seen[0].env;
+    let get = |k: &str| env.get(k).map(String::as_str);
+    assert_eq!(get("RUSTC_WRAPPER"), Some(admit.to_str().unwrap()));
+    assert_eq!(get("SPIRA_ADMIT_INNER"), Some(sccache.to_str().unwrap()));
+    assert_eq!(get("SPIRA_ADMIT_WHO"), Some("sp-adm"));
+    assert_eq!(get("SPIRA_RUN"), Some(f.run.to_str().unwrap()));
+    assert!(!o.log.contains("not admitted"), "{}", o.log);
+    assert_eq!(o.slept, 0, "SPIRA_SUMMON_JITTER=0 disables the jitter");
+    assert!(!o.log.contains("summon jitter"));
+}
+
+#[test]
+fn without_spira_admit_the_session_still_runs_on_the_plain_cache_and_says_so() {
+    let f = fx("admit-absent");
+    seed(&f, "sp-nadm");
+    let sccache = stub(&f, "sccache");
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0")], false, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let env = &o.seen[0].env;
+    if env.get("PATH").is_some_and(|p| p.split(':').any(|d| std::path::Path::new(d).join("spira-admit").exists())) {
+        return; // the host's PATH carries a spira-admit the fixture cannot hide
+    }
+    assert_eq!(env.get("RUSTC_WRAPPER").map(String::as_str), Some(sccache.to_str().unwrap()));
+    assert!(!env.contains_key("SPIRA_ADMIT_INNER"));
+    assert!(o.log.contains("spira-admit not on PATH — this session's builds are not admitted"), "{}", o.log);
+}
+
+#[test]
+fn the_summon_jitter_sleeps_what_it_logs_and_never_more_than_its_bound() {
+    let f = fx("jitter");
+    seed(&f, "sp-jit");
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "5")], false, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    assert!(o.slept <= 5, "{}", o.slept);
+    if o.slept > 0 {
+        assert!(o.log.contains(&format!("summon jitter {}s", o.slept)), "{}", o.log);
+    } else {
+        assert!(!o.log.contains("summon jitter"));
+    }
+    assert_eq!(o.seen.len(), 1, "the session still ran");
 }

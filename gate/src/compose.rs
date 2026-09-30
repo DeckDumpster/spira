@@ -304,10 +304,12 @@ pub fn parse_diff_raw(z: &[u8]) -> Vec<Changed> {
     out
 }
 
-/// The CPU budget of the host phases: `cargo -j` and `--test-threads`. The host's cores
-/// divided among the admission pool, so the pool's gates together use about the host.
-pub fn jobs(host_cores: u64, par: u64) -> u64 {
-    (host_cores / par.max(1)).max(1)
+/// The width of the host phases: `cargo -j` and `--test-threads` — the host's cores, whatever
+/// the pool's size. How many gates run together is `certify_par`'s job, never a narrower
+/// gate (law-reduce-the-count-never-throttle-the-job; gate/DESIGN-admission.md D3). It was
+/// `cores ÷ certify_par`, which slowed a lone gate for gates that did not exist.
+pub fn jobs(host_cores: u64) -> u64 {
+    host_cores.max(1)
 }
 
 fn pkgs(crates: &[String]) -> String {
@@ -771,10 +773,10 @@ mod tests {
     }
 
     #[test]
-    fn the_cpu_budget_divides_the_host_among_the_pool() {
-        assert_eq!(jobs(32, 4), 8);
-        assert_eq!(jobs(3, 4), 1);
-        assert_eq!(jobs(8, 0), 8);
+    fn a_gate_runs_at_the_hosts_full_width_whatever_the_pool() {
+        assert_eq!(jobs(32), 32);
+        assert_eq!(jobs(3), 3);
+        assert_eq!(jobs(0), 1);
     }
 
     #[test]

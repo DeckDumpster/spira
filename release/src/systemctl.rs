@@ -23,6 +23,10 @@ pub trait Systemctl {
     /// unit with no file of its own — `install::install`'s restart-all step must never
     /// touch one; DESIGN.md "install-tarball", the same exclusion `spira/activate.sh` made).
     fn list_active(&self, glob: &str) -> Result<Vec<String>, String>;
+    /// `systemctl --user cat <unit>`: the merged unit text (base file plus every drop-in),
+    /// whatever the instance's own run state — `intake::install`'s verify step reads this to
+    /// confirm systemd actually shows the drop-in it just wrote (DESIGN.md "intake").
+    fn cat(&self, unit: &str) -> Result<String, String>;
 }
 
 pub struct RealSystemctl {
@@ -78,6 +82,9 @@ impl Systemctl for RealSystemctl {
     }
     fn restart(&self, unit: &str) -> Result<(), String> {
         self.run(&["restart", unit]).map(|_| ())
+    }
+    fn cat(&self, unit: &str) -> Result<String, String> {
+        self.run(&["cat", unit])
     }
     fn list_active(&self, glob: &str) -> Result<Vec<String>, String> {
         let out = self.run(&["list-units", "--state=active", "--no-legend", glob])?;

@@ -10,6 +10,13 @@
 # Each refusal case is preceded by a positive control on the same path
 # (law-absence-needs-a-positive-control).
 #
+# sp-g9mhe (bead.sh -> the Rust `bead` binary): the lane refusal's wording changed from
+# "refused by repo-map (lanes=...)" to "refused by its admitted lanes (...)" — the old text
+# named the map file by its hyphenated name, which the Rust source may not (config-fence:
+# only spira-config may name/parse/write it, and the refusal is now built from spira-config's
+# own typed `Lane` values rather than the map's raw column). The repo/lane/override-variable
+# assertions below are unchanged; only "names refusing declaration" was reworded.
+#
 # tier: T1
 # covers: spira/bead.sh spira/lib.sh spira/schema.sh UC-dispatch-01 UC-dispatch-02 UC-dispatch-03
 set -uo pipefail
@@ -67,9 +74,15 @@ esac
 STUB
 chmod +x "$STUB_BD"
 
+# sp-g9mhe: bead.sh is now a shim onto the Rust `bead` binary, and sources conf.sh (which may
+# shell out to `spira-config`) before it even gets there — so the narrowed PATH below needs
+# spira-config's (and bead's own) directory the same way test-bead-contract.sh's fixture
+# already does, not just $HERE/usr/bin/bin.
+TOOLS="$(command -v spira-config)" && TOOLS="$(dirname "$TOOLS")"
+
 run_bead() {
     : > "$BD_LOG"
-    env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
@@ -197,7 +210,7 @@ out="$(run_bead "maechen sweep pass" --for maechen --repo dev-repo)"; rc=$?
 is     "dev-repo: exits non-zero"             "2"                        "$rc"
 want   "dev-repo: names repo in message"      "dev-repo"                 "$out"
 want   "dev-repo: names lane in message"      "maechen-sweep"            "$out"
-want   "dev-repo: names refusing declaration" "repo-map"                 "$out"
+want   "dev-repo: names refusing declaration" "admitted lanes"           "$out"
 want   "dev-repo: names override variable"    "SPIRA_BEAD_LANE_OVERRIDE" "$out"
 nowant "dev-repo: bd create NOT called"       "create"                   "$(cat "$BD_LOG")"
 

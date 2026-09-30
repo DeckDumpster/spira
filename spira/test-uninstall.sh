@@ -63,7 +63,7 @@ for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer; do
 done
 ln -s "$HERE/../systemd/install.sh"  "$FIXTURE/systemd/install.sh"
 ln -s "$HERE/../systemd/units.sh"    "$FIXTURE/systemd/units.sh"
-for f in conf.sh watchd.sh lib.sh owned.sh install-session-hook.sh; do
+for f in conf.sh watchd.sh lib.sh owned.sh; do
     [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
 done
 # Link the real uninstall.sh so the test drives it.
@@ -71,10 +71,13 @@ ln -s "$HERE/uninstall.sh" "$FIXTURE/spira/uninstall.sh"
 printf '# empty\n' > "$FIXTURE/spira/repo-map.example"
 printf '# empty\n' > "$FIXTURE/spira/watchers"
 
-# Stub install-intake.sh — alert drop-ins are not the focus here; we just need
-# it to not fail.
-printf '#!/usr/bin/env bash\necho "install-intake: $*"\n' > "$FIXTURE/spira/install-intake.sh"
-chmod +x "$FIXTURE/spira/install-intake.sh"
+# NO STUB FOR `release` (sp-7jr34). owned.sh's session-hook status and uninstall.sh's own
+# removal both now call the real `release session-hook` — exactly the removal this suite
+# means to exercise against the fixture settings.json below — so, like every other real
+# workspace binary this suite never stubs (sentinel, landing-pass, ...), it must resolve to
+# the real one testenv already built onto PATH, not a same-named file placed ahead of it in
+# $FIXTURE/spira. install-intake.sh had a stub here before; nothing in uninstall.sh's own
+# flow calls `release intake` at all (its ALERT DROP-INS step removes them directly).
 
 # Stub `layout`: record calls; do not kill any real sessions. `layout` is a binary now
 # (sp-llbmi), invoked by name from PATH — the stub goes in $FIXTURE/spira, which `un()`
