@@ -302,6 +302,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v loom)\""
 
 [[dep]]
+name = "mail"
+tier = "release"
+purpose = "Spira's mail binary, from the release's bin/ — Maildir send/read/sendmail/tidy (replaces spira/mail.sh, sp-ooh1k)"
+version_min = ""
+version_probe = "readlink -f \"$(command -v mail)\""
+
+[[dep]]
 name = "panel"
 tier = "release"
 purpose = "Spira's panel binary, from the release's bin/"

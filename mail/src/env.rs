@@ -59,6 +59,7 @@ impl Env {
             repeat_window_s: var_u64("SPIRA_MAIL_REPEAT_WINDOW", 14400),
             tidy_fresh_s: var_u64("SPIRA_MAIL_TIDY_FRESH", 86400),
             id_prefix: var("SPIRA_ID_PREFIX").unwrap_or_default(),
+            // literal-ok: rust fallback, matching mail.sh's own; SPIRA_ASK_LABEL set by conf.sh
             ask_label: var("SPIRA_ASK_LABEL").unwrap_or_else(|| "needs-operator".to_string()),
             db: var("SPIRA_DB").unwrap_or_default(),
             bd_bin: var("SPIRA_BD").unwrap_or_else(|| "bd".to_string()),

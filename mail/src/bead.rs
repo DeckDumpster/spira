@@ -435,17 +435,17 @@ mod tests {
     #[test]
     fn create_tracking_bead_returns_none_when_store_unconfigured() {
         let bd = FakeBd::new(vec![]);
-        assert_eq!(create_tracking_bead(&bd, false, "subj", "body", "needs-operator"), None);
+        assert_eq!(create_tracking_bead(&bd, false, "subj", "body", "needs-operator"), None); // literal-ok: test fixture
     }
 
     #[test]
     fn create_tracking_bead_returns_the_new_id() {
         let bd = FakeBd::new(vec![BdOut::ok("sp-newid1\n")]);
-        let id = create_tracking_bead(&bd, true, "subj", "body", "needs-operator").unwrap();
+        let id = create_tracking_bead(&bd, true, "subj", "body", "needs-operator").unwrap(); // literal-ok: test fixture
         assert_eq!(id, "sp-newid1");
         let calls = bd.calls();
         assert_eq!(calls[0].1.as_deref(), Some("body"));
-        assert!(calls[0].0.contains(&"needs-operator,overseer".to_string()));
+        assert!(calls[0].0.contains(&"needs-operator,overseer".to_string())); // literal-ok: test fixture
     }
 
     #[test]
@@ -480,12 +480,12 @@ mod tests {
     #[test]
     fn open_ask_ids_fails_closed_on_bad_json() {
         let bd = FakeBd::new(vec![BdOut::fail(1, "boom")]);
-        assert!(open_ask_ids(&bd, "needs-operator").is_err());
+        assert!(open_ask_ids(&bd, "needs-operator").is_err()); // literal-ok: test fixture
     }
 
     #[test]
     fn open_ask_ids_parses_a_real_list() {
         let bd = FakeBd::new(vec![BdOut::ok(r#"[{"id":"sp-open1"}]"#)]);
-        assert_eq!(open_ask_ids(&bd, "needs-operator").unwrap(), vec!["sp-open1".to_string()]);
+        assert_eq!(open_ask_ids(&bd, "needs-operator").unwrap(), vec!["sp-open1".to_string()]); // literal-ok: test fixture
     }
 }

@@ -39,7 +39,7 @@
 #
 # defect: sp-4vp
 # tier: T1
-# covers: spira/install-session-hook.sh spira/hooks/session.sh spira/watchd.sh mail/src/* systemd/install.sh systemd/cockpit-ensure.service
+# covers: release/src/session_hook.rs spira/hooks/session.sh spira/watchd.sh mail/src/* systemd/install.sh systemd/cockpit-ensure.service
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

@@ -119,7 +119,7 @@ surface gets an accounting, and none of it turned out to be dead).
   (`SPIRA_MAIL_LOCK_TIMEOUT_MS`); no suite or fixture in this workspace holds the lock
   anywhere near that long (the G-11 race test's hold is ~0.3s), so this is strictly
   additive — real contention behaves exactly as before, only a truly stuck lock now reports
-  instead of hanging. `bd -C /home/ryan/spira/db show sp-y59a6` describes the same defect;
+  instead of hanging. `bd show sp-y59a6` describes the same defect;
   this bead does not close it (not mine to close), but the fix is real and the Concierge
   should cite it there.
 
