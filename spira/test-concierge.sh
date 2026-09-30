@@ -97,7 +97,7 @@ if [ -n "$BRIEF" ] && [ -f "$BRIEF" ]; then
     # to run. The failure arrives hours later as "the concierge does not escalate anything".
     nowant "no placeholder survives rendering"  "{{"          "$B"
     want   "the brief names the mail path"      "mail.sh send operator"  "$B"
-    mail_path="$(printf '%s\n' "$B" | grep -oE '[^ `]+mail\.sh' | head -1)"
+    mail_path="$(printf '%s\n' "$B" | grep -oE '[^ `(]*mail\.sh' | head -1)"
     if [ -n "$mail_path" ] && command -v "$mail_path" >/dev/null 2>&1; then
         ok "mail path in brief resolves on PATH: $mail_path"
     else
@@ -107,7 +107,7 @@ if [ -n "$BRIEF" ] && [ -f "$BRIEF" ]; then
     # THE FILE, NOT THE STRING. The string check above is the positive control: the path
     # must be named for the grep below to find it. The assertion with teeth is this one —
     # a path that is named but absent passes the string check and fails here.
-    bead_path="$(printf '%s\n' "$B" | grep -oE '[^ `]+bead\.sh' | head -1)"
+    bead_path="$(printf '%s\n' "$B" | grep -oE '[^ `(]*bead\.sh' | head -1)"
     if [ -n "$bead_path" ] && command -v "$bead_path" >/dev/null 2>&1; then
         ok "bead tool in brief resolves on PATH: $bead_path"
     else
@@ -155,7 +155,7 @@ if [ -n "$BRIEF_NW" ] && [ -f "$BRIEF_NW" ]; then
     BNW="$(cat "$BRIEF_NW")"
     nowant "no-wiki brief does not name a wiki-relative tool"  ".claude/bead.sh" "$BNW"
     want   "no-wiki brief still names the harness bead tool"   "bead.sh file"    "$BNW"
-    bead_path="$(printf '%s\n' "$BNW" | grep -oE '[^ `]+bead\.sh' | head -1)"
+    bead_path="$(printf '%s\n' "$BNW" | grep -oE '[^ `(]*bead\.sh' | head -1)"
     if [ -n "$bead_path" ] && command -v "$bead_path" >/dev/null 2>&1; then
         ok "bead tool in brief resolves on PATH: $bead_path"
     else
