@@ -69,9 +69,24 @@ fn configured_names_env(schema: &std::path::Path, extra_env: &[(&str, &str)]) ->
     )
 }
 
+/// What `schema.sh` would otherwise read from the box rather than the tree (sp-g9f3t):
+/// conf.sh's config file search (explicit SPIRA_CONF/SPIRA_TOML, else XDG — the operator's
+/// own spira.toml) and the chamber its staleness check compares against it. Pinned to a path
+/// that does not exist, so the names are the tree's declarations plus any override the
+/// environment carries — the same on every box, whatever its config file or its mtimes.
+/// (Unpinned, the same tree flipped between 0 and 5 findings on the gate on mtimes alone.)
+const BOX_CONFIG_PINS: &[(&str, &str)] = &[
+    ("SPIRA_CONF", "/nonexistent/spira-lint/spira.conf"),
+    ("SPIRA_TOML", "/nonexistent/spira-lint/spira.toml"),
+    ("SPIRA_CHAMBER", "/nonexistent/spira-lint/chamber"),
+];
+
 fn run_schema(schema: &std::path::Path, args: &[&str], extra_env: &[(&str, &str)]) -> Option<String> {
     let mut cmd = Command::new(schema);
     cmd.args(args);
+    for (k, v) in BOX_CONFIG_PINS {
+        cmd.env(k, v);
+    }
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
@@ -298,5 +313,40 @@ mod tests {
             configured_names_env(&t.path().join("schema.sh"), &[("SPIRA_ASK_LABEL", "needs-ryan-lit-test")]);
         assert!(names2.contains(&"needs-operator".to_string()), "{names2:?}");
         assert!(names2.contains(&"needs-ryan-lit-test".to_string()), "{names2:?}");
+    }
+
+    /// sp-g9f3t, the 2026-09-30 base-red: the real schema.sh sources conf.sh, which reads the
+    /// box's own spira.toml (HOME/XDG, or SPIRA_CONF/SPIRA_TOML) — or not, depending on file
+    /// mtimes. A config file on the box is not an input to a tree's verdict: the same tree
+    /// must give the same names on any box. This fixture reads the box's config the way
+    /// conf.sh does; the rule must not see its `needs-box` label. An explicit environment
+    /// override still counts.
+    #[test]
+    fn the_boxs_config_file_is_not_an_input() {
+        let t = TempDir::new("lit-box");
+        testkit::write_exe(
+            t.path().join("schema.sh"),
+            "#!/usr/bin/env bash\ncfg=\"${SPIRA_TOML-${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml}\"\nask=\n[ -f \"$cfg\" ] && ask=\"$(sed -n 's/^ask_label = \"\\(.*\\)\"$/\\1/p' \"$cfg\")\"\ncase \"$1\" in\n  names) echo ask ;;\n  name) printf '%s' \"${SPIRA_ASK_LABEL:-${ask:-needs-operator}}\" ;;\n  default) printf '%s' needs-operator ;;\nesac\n",
+        );
+        t.write("home/.config/spira/spira.toml", "[spira]\nask_label = \"needs-box\"\n");
+        let home = t.path().join("home");
+        let home = home.to_str().unwrap();
+        let schema = t.path().join("schema.sh");
+        // Positive control: the fixture does read the box's config when nothing pins it.
+        let out = std::process::Command::new(&schema)
+            .args(["name", "ask"])
+            .env("HOME", home)
+            .env_remove("SPIRA_TOML")
+            .env_remove("SPIRA_ASK_LABEL")
+            .env_remove("XDG_CONFIG_HOME")
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "needs-box");
+        let (names, warning) = configured_names_env(&schema, &[("HOME", home)]);
+        assert!(warning.is_none(), "{warning:?}");
+        assert!(!names.contains(&"needs-box".to_string()), "the box's config reached the rule: {names:?}");
+        assert!(names.contains(&"needs-operator".to_string()), "{names:?}");
+        let (names, _) = configured_names_env(&schema, &[("HOME", home), ("SPIRA_ASK_LABEL", "needs-env")]);
+        assert!(names.contains(&"needs-env".to_string()), "{names:?}");
     }
 }

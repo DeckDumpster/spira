@@ -682,6 +682,18 @@ rule warns on stderr and falls back to the shipped defaults (`needs-operator`, `
 `awaiting-ci`, `maechen-sweep`, `maechen-remedy`, `review-finding`, `world-stop`) — never an
 empty list, which would make every tree "clean" (law-absence-needs-a-positive-control).
 
+**The box's config file is not an input (sp-g9f3t).** `schema.sh` sources conf.sh, whose
+config search reads the operator's own `spira.toml` (explicit `SPIRA_CONF`/`SPIRA_TOML`, else
+XDG) — but only when that file is newer than the tree's `spira/chamber/*.fayth`; otherwise it
+regenerates a persona-only `spira.toml` into the tree and reads that. On the gate the same
+local/main tree and the same binary flipped between 0 and 5 findings on mtimes alone (the
+operator's `ask_label = "needs-ryan"` was read or not), and two base trials were judged red
+on it. Every `schema.sh` call therefore runs with `SPIRA_CONF`, `SPIRA_TOML` and
+`SPIRA_CHAMBER` pinned to paths that do not exist: the names are the tree's own declarations
+plus any override the process environment carries (`SPIRA_ASK_LABEL` exported by an aeon
+still counts), identical on every box. A label an operator sets only in a config file is not
+guarded by this fence; a tree's verdict cannot depend on one box's file.
+
 **Scope.** Every tracked file (untracked files are not scanned — the bash original read `git
 ls-files`, the index, because what the next commit ships is what matters).
 
