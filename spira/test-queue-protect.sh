@@ -60,10 +60,9 @@ printf '%s | %s | queue | main | | |\n' "$QNAME" "$QREPO" > "$RMAP"
 
 protect_out="$(
     env -i \
-        PATH="/usr/local/bin:/usr/bin:/bin" \
+        PATH="$BIN:$PATH" \
         HOME="$FAKE_HOME" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_PATH="$BIN" \
         SPIRA_REPO_MAP="$RMAP" \
         SPIRA_RUN="$TMP/run" \
         SPIRA_FORGE="$BIN/forge-fixture.sh" \
@@ -100,10 +99,9 @@ rm -f "$TMP/run/queue-protected-$QNAME"
 
 fail_out="$(
     env -i \
-        PATH="/usr/local/bin:/usr/bin:/bin" \
+        PATH="$BIN:$PATH" \
         HOME="$FAKE_HOME" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_PATH="$BIN" \
         SPIRA_REPO_MAP="$RMAP" \
         SPIRA_RUN="$TMP/run" \
         SPIRA_FORGE="$BIN/forge-fixture-fail.sh" \

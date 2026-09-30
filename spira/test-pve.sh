@@ -5,8 +5,8 @@
 #   ./test-pve.sh
 #
 # No real Proxmox connection. curl is replaced by a shim that records calls and
-# returns fixture responses. The shim lives on SPIRA_PATH so it survives the
-# PATH reset conf.sh performs at load time.
+# returns fixture responses. The shim is first on PATH (sp-gypjk: conf.sh keeps the
+# caller's PATH first).
 #
 # THREE PROPERTIES (law-absence-needs-a-positive-control):
 #   1. A call with valid credentials and cacert routes to the right API path.
@@ -35,9 +35,8 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # ---------------------------------------------------------------------------
 # Fixture: fake CA cert and a populated pve.env.
-# SPIRA_PATH must carry the shim directory — conf.sh resets PATH to
-# "${SPIRA_PATH:+$SPIRA_PATH:}$HOME/.local/bin:..." and removes any injected
-# bin directory unless it is carried on SPIRA_PATH.
+# The shim directory goes first on PATH: conf.sh keeps the caller's PATH first and
+# only appends its tail (sp-gypjk).
 # ---------------------------------------------------------------------------
 CACERT="$TMP/fake-ca.pem"
 printf 'FAKE CA\n' > "$CACERT"
@@ -112,9 +111,8 @@ write_simple_shim
 run_pve() {
     local fixture="$1"; shift
     env -i \
-        PATH="$PATH" \
+        PATH="$SHIM_DIR:$PATH" \
         HOME="$TMP" \
-        SPIRA_PATH="$SHIM_DIR" \
         SPIRA_CONF="$TMP/no.conf" \
         SPIRA_PVE_ENV="$PVE_ENV" \
         CURL_LOG_PATH="$CURL_LOG" \
@@ -159,7 +157,7 @@ fi
 # ---------------------------------------------------------------------------
 reset_log
 no_env_out="$(env -i \
-    PATH="$PATH" HOME="$TMP" SPIRA_PATH="$SHIM_DIR" \
+    PATH="$SHIM_DIR:$PATH" HOME="$TMP" \
     SPIRA_CONF="$TMP/no.conf" \
     SPIRA_PVE_ENV="$TMP/missing.env" \
     CURL_LOG_PATH="$CURL_LOG" \
@@ -180,7 +178,7 @@ PVE_API_HOST=192.0.2.1
 PVE_CACERT=/tmp/surely-absent-cert-$$
 EOF
 missing_cert_out="$(env -i \
-    PATH="$PATH" HOME="$TMP" SPIRA_PATH="$SHIM_DIR" \
+    PATH="$SHIM_DIR:$PATH" HOME="$TMP" \
     SPIRA_CONF="$TMP/no.conf" \
     SPIRA_PVE_ENV="$bad_env" \
     CURL_LOG_PATH="$CURL_LOG" \

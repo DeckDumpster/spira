@@ -149,8 +149,8 @@ GHEOF
 chmod +x "$GH_BIN/gh"
 
 run() {  # run [args...] -> pr-notify.sh in a clean env; stdout in $TMP/out
-    env -i HOME="$TMP/home" PATH="$PATH" \
-        SPIRA_PATH="$GH_BIN" SPIRA_CONF="$CONF" SPIRA_REPO_MAP="$REPO_MAP" \
+    env -i HOME="$TMP/home" PATH="$GH_BIN:$PATH" \
+        SPIRA_CONF="$CONF" SPIRA_REPO_MAP="$REPO_MAP" \
         SPIRA_REPO="$TMP/empty-repo" GH_LOG="$GH_LOG" \
         pr-notify.sh "$@" > "$TMP/out" 2>"$TMP/err"
 }
@@ -304,8 +304,8 @@ GHEOF
 chmod +x "$GH_BIN/gh"
 
 runb() {  # runb <args...> -> pr-notify.sh against BRANCH_MAP
-    env -i HOME="$TMP/home" PATH="$PATH" \
-        SPIRA_PATH="$GH_BIN" SPIRA_CONF="$CONF" SPIRA_REPO_MAP="$BRANCH_MAP" \
+    env -i HOME="$TMP/home" PATH="$GH_BIN:$PATH" \
+        SPIRA_CONF="$CONF" SPIRA_REPO_MAP="$BRANCH_MAP" \
         SPIRA_REPO="$TMP/empty-repo" GH_LOG="$GH_LOG" \
         GH_BRANCH_HAS_PR="${GH_BRANCH_HAS_PR:-0}" \
         pr-notify.sh "$@" > "$TMP/out" 2>"$TMP/err"
@@ -374,8 +374,8 @@ red_json 1 "Round batch" suites > "$TMP/repos/queue-repo/.gh-pr-list.json"
 rm -f "$TMP/repos/queue-repo/.gh-pr-state"
 
 run_gone() {
-    env -i HOME="$TMP/home" PATH="$PATH" \
-        SPIRA_PATH="$GH_BIN" SPIRA_CONF="$CONF" SPIRA_REPO_MAP="$GONE_MAP" \
+    env -i HOME="$TMP/home" PATH="$GH_BIN:$PATH" \
+        SPIRA_CONF="$CONF" SPIRA_REPO_MAP="$GONE_MAP" \
         SPIRA_REPO="$TMP/empty-repo" GH_LOG="$GH_LOG" \
         pr-notify.sh --show > "$TMP/out" 2>"$TMP/err"
 }

@@ -170,9 +170,8 @@ chmod +x "$MOCK_BIN/systemctl"
 
 BASE_ENV=(
     HOME="$TMP/home"
-    PATH="$PATH"
+    PATH="$MOCK_BIN:$PATH"
     SPIRA_CONF=/nonexistent
-    SPIRA_PATH="$MOCK_BIN"
     SPIRA_RUN="$RUN"
     SPIRA_INSTANCE=test
     SPIRA_WATCHERS="$MAN"

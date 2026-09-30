@@ -66,7 +66,7 @@ queue() {
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
     SPIRA_MAIL="$MAIL" \
-        SPIRA_HOME="$SH" queue "$@"
+        SPIRA_HOME="$SH" command queue "$@"
 }
 
 echo "test-queue-owner-refuse.sh"

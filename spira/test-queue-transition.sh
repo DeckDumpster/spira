@@ -102,7 +102,7 @@ export SPIRA_QUEUE_TRANSITION_MAXSEC=5
 
 queue() {
     FIXTURE_CHECK_STATUS="${CHECK_STATUS:-green}" \
-        SPIRA_HOME="$SH" queue "$@" 2>&1
+        SPIRA_HOME="$SH" command queue "$@" 2>&1
 }
 verdict() {
     FIXTURE_CHECK_STATUS="${CHECK_STATUS:-green}" \

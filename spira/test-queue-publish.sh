@@ -92,7 +92,7 @@ queue() {
     SPIRA_FORGE="$SH/forge-fixture.sh" \
     SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged (queue/DESIGN.md §8 D12)" \
     SPIRA_RELEASES="$RELEASES" \
-        SPIRA_HOME="$SH" queue "$@" 2>&1
+        SPIRA_HOME="$SH" command queue "$@" 2>&1
 }
 verdict() {
     SPIRA_CONF=/nonexistent \
