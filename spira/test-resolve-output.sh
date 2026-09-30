@@ -17,7 +17,7 @@
 # Driven through BD_BIN and COCKPIT_DB overrides — no database build, under a second.
 #
 # tier: T1
-# covers: cockpit/resolve.sh
+# covers: cockpit/ops/src/resolve.rs
 # defect: sp-ve5s
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -28,10 +28,11 @@ pass=0; fail=0
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
-# A GUARD ON THE GUARD: the script must exist or a missing file gives a false pass via a
-# different error path.
-[ -f "$COCKPIT/resolve.sh" ] || {
-  echo "SKIP: cockpit/resolve.sh not found at $COCKPIT/resolve.sh" >&2; exit 77
+# A GUARD ON THE GUARD: the binary must exist or a missing file gives a false pass via a
+# different error path. `resolve` is a binary now (sp-llbmi), invoked by name from the
+# tree's build on PATH.
+command -v resolve >/dev/null 2>&1 || {
+  echo "SKIP: 'resolve' binary not found on PATH" >&2; exit 77
 }
 
 # Two separate paths: COCKPIT_DB has .beads/ so cockpit_db() accepts it; SPIRA_DB has no
@@ -51,7 +52,7 @@ run_resolve() {
     BD_BIN="$stub" \
     COCKPIT_DB="$DB" \
     SPIRA_DB="$SPIRA_DB_PATH" \
-    bash "$COCKPIT/resolve.sh" "$id" "$reason" 2>&1 >/dev/null
+    resolve "$id" "$reason" 2>&1 >/dev/null
   ) || rc=$?
   return "$rc"
 }

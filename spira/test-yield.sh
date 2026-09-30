@@ -30,7 +30,7 @@
 #
 # defect: sp-1xb0
 # tier: T1
-# covers: spira/yield.sh spira/gate.sh spira/watchtower.sh cockpit/health.sh UC-gate-verdict-22 UC-gate-verdict-23 UC-gate-verdict-24
+# covers: spira/yield.sh spira/gate.sh spira/watchtower.sh cockpit/ops/src/health.rs UC-gate-verdict-22 UC-gate-verdict-23 UC-gate-verdict-24
 # scar: yield.sh was absent; gate faults landed in the wrong column and no count existed, so the gate's cost-vs-catch ratio was unmeasured.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -385,7 +385,7 @@ echo "and the pane renders it without inventing a number:"
 # a snapshot written by a service and driving it here would be a test of tmux. What can go
 # wrong silently is the pair drifting — the collector emitting a key the pane does not read —
 # and that is what this compares.
-COCK="$HERE/cockpit.sh"; PANE="$HERE/../cockpit/health.sh"
+COCK="$HERE/cockpit.sh"; PANE="health"
 for k in SP_YIELD_REDS SP_YIELD_DEFECT SP_YIELD_FAULT SP_YIELD_UNKNOWN; do
     if grep -q "$k" "$COCK" 2>/dev/null && grep -q "$k" "$PANE" 2>/dev/null; then
         ok "$k is both written by the collector and read by the pane"

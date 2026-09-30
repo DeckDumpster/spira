@@ -18,7 +18,7 @@
 # one case here, keeping the richer assertion set (the SPIRA_CONCIERGE=1 export check).
 #
 # defect: sp-u4x
-# covers: concierge.sh systemd/concierge.service cockpit/layout.sh UC-operator-channel-40
+# covers: concierge.sh systemd/concierge.service cockpit/ops/src/layout.rs UC-operator-channel-40
 # requires: claude
 # host-reason: needs a real systemd --user session (systemd-run --wait), tmux, and the cockpit layout script; not available in the container
 # tier: T4
@@ -192,9 +192,11 @@ echo "cockpit.sh attaches the operator: layout.sh up builds the session pane fro
 # the fixture via TMUX_TMPDIR. We start health.sh loop in the only pane so pane_role()
 # identifies it as health — a manually-forced tag would be cleared by retag_dashboards.
 # With all panes tagged, session_pane() returns empty and up creates the concierge pane.
-LAYOUT_SH="$HARNESS/cockpit/layout.sh"
-if [ ! -x "$LAYOUT_SH" ]; then
-    bad "layout.sh present" "not found at $LAYOUT_SH"
+# `layout`/`health` are binaries now (sp-llbmi), invoked by name from the tree's build
+# on PATH.
+LAYOUT_SH="layout"
+if ! command -v "$LAYOUT_SH" >/dev/null 2>&1; then
+    bad "layout present" "'layout' not found on PATH"
 else
     LTMP="$TMP/layout-d"; mkdir -p "$LTMP"
     LDIR="$LTMP/tmux"; mkdir -p "$LDIR"
@@ -202,19 +204,23 @@ else
     LCONF="$LTMP/spira.conf"
     printf 'SPIRA_ID_PREFIX = sp\nSPIRA_PROD = %s\nSPIRA_RUN = %s\n' "$HARNESS" "$LTMP/run" > "$LCONF"
     mkdir -p "$LTMP/run"
+    # A fake release whose bin/ carries the real `health` binary, so the pane's own
+    # PATH (built by `layout` from $SPIRA_RELEASE) can find it by bare name.
+    LREL="$LTMP/release"; mkdir -p "$LREL/bin"
+    cp "$(command -v health)" "$LREL/bin/health"
 
     TMUX_TMPDIR="$LDIR" tmux start-server
     TMUX_TMPDIR="$LDIR" tmux new-session -d -s "$LSESS" -x 200 -y 50
 
     FIRST_PANE=$(TMUX_TMPDIR="$LDIR" tmux list-panes -t "$LSESS" -F '#{pane_id}')
     TMUX_TMPDIR="$LDIR" tmux respawn-pane -k -t "$FIRST_PANE" \
-        "SPIRA_RUN=$LTMP/run SPIRA_CONF=$LCONF bash $HARNESS/cockpit/health.sh loop"
+        "SPIRA_RUN=$LTMP/run SPIRA_CONF=$LCONF PATH=$LREL/bin:\$PATH health loop"
     sleep 0.5
 
-    TMUX="" TMUX_TMPDIR="$LDIR" SPIRA_CONF="$LCONF" SPIRA_REPO="$HARNESS" \
+    TMUX="" TMUX_TMPDIR="$LDIR" SPIRA_RELEASE="$LREL" SPIRA_CONF="$LCONF" SPIRA_REPO="$HARNESS" \
         COCKPIT_RIGHT_PCT=33 COCKPIT_BOTTOM_PCT=30 COCKPIT_CWD="$LTMP" \
         COCKPIT_MAIL="" COCKPIT_MOUSE=off COCKPIT_CLIENT_IDLE_SECS=0 \
-        bash "$LAYOUT_SH" up --window "$LSESS:0" 2>/dev/null || true
+        "$LAYOUT_SH" up --window "$LSESS:0" 2>/dev/null || true
 
     new_cmd=""
     while IFS='|' read -r tag pid; do

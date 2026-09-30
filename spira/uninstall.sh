@@ -11,7 +11,7 @@
 #   ~/.local/bin symlinks pointing into this harness tree
 #   session hooks in the agent settings file
 #   alert drop-ins (install-intake.sh uninstall)
-#   cockpit panes (layout.sh down — sessions are never killed)
+#   cockpit panes (layout down — sessions are never killed)
 #
 # Kept unless --purge:
 #   ~/.config/spira/  (the config the operator wrote)
@@ -354,14 +354,14 @@ if [ "${#_un_dropin_paths[@]}" -gt 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 6. COCKPIT PANES. Run layout.sh down; it removes tagged panes only and
-#    never kills the operator's session.
+# 6. COCKPIT PANES. Run `layout down`; it removes tagged panes only and
+#    never kills the operator's session. `layout` is a compiled binary on the release
+#    PATH now (sp-llbmi), not a script under cockpit/ — bare name, never a constructed path.
 # ---------------------------------------------------------------------------
 if [ "${#_un_cockpit_panes[@]}" -gt 0 ]; then
-    _un_cockpit_layout="$(dirname "$SPIRA_HOME")/cockpit/layout.sh"
-    if [ -x "$_un_cockpit_layout" ]; then
+    if command -v layout >/dev/null 2>&1; then
         printf '\nRemoving cockpit panes...\n'
-        "$_un_cockpit_layout" down 2>/dev/null || true
+        layout down 2>/dev/null || true
     fi
 fi
 

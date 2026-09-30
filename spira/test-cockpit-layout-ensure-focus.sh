@@ -17,13 +17,21 @@
 # active pane really is gone, focus MUST move to the session pane.
 #
 # defect: sp-gyl8n
-# covers: cockpit/layout.sh
+# covers: cockpit/ops/src/layout.rs
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 COCKPIT_DIR="$(dirname "$HERE")/cockpit"
-LAYOUT="$COCKPIT_DIR/layout.sh"
+# `layout` is a binary now (sp-llbmi); repair_dashboards is private to it, so this
+# drives the real `ensure` subcommand (which calls repair_dashboards internally for
+# every window cockpit_windows() finds) instead of sourcing the function directly.
+# SPIRA_RELEASE points at a fake release whose bin/layout is the real compiled
+# binary, so the installed-copy guard in `ensure` passes.
+LAYOUT="layout"
+_FAKE_RELEASE="$(mktemp -d)"
+mkdir -p "$_FAKE_RELEASE/bin"
+cp "$(command -v "$LAYOUT")" "$_FAKE_RELEASE/bin/layout"
 
 command -v tmux >/dev/null 2>&1 || { echo "  SKIP  tmux is not on PATH"; exit 77; }
 
@@ -34,7 +42,7 @@ FIXTURE_UP=0
 
 cleanup() {
     [ "$FIXTURE_UP" -eq 1 ] && TMUX_TMPDIR="$TMUXDIR" tmux kill-server 2>/dev/null || true
-    rm -rf "$TMP"
+    rm -rf "$TMP" "$_FAKE_RELEASE"
 }
 trap cleanup EXIT
 
@@ -90,13 +98,15 @@ with_duplicate() {
     echo "$sess_id $h1 $h2"
 }
 
-call_repair() {   # call_repair <window> -> nothing; runs repair_dashboards sourced
+call_repair() {   # call_repair <window> -> nothing; runs the real `ensure`, which calls
+                  # repair_dashboards internally for this window.
     local window="$1"
-    TMUX_TMPDIR="$TMUXDIR" env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$TMP" PATH="/usr/bin:/bin" TMUX_TMPDIR="$TMUXDIR" \
-        WINDOW="$window" MAIL_CMD="" SPIRA_REPO="$TMP" SPIRA_COCKPIT="$COCKPIT_DIR" \
+    TMUX_TMPDIR="$TMUXDIR" env -i SPIRA_RELEASE="$_FAKE_RELEASE" HOME="$TMP" \
+        PATH="$_FAKE_RELEASE/bin:/usr/bin:/bin" TMUX_TMPDIR="$TMUXDIR" \
+        MAIL_CMD="" SPIRA_REPO="$TMP" SPIRA_COCKPIT="$COCKPIT_DIR" \
         SPIRA_RUN="$RUN" SPIRA_INSTANCE=fixture COCKPIT_CWD="$TMP" \
         COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \
-        bash -c '. "'"$LAYOUT"'"; repair_dashboards' 2>/dev/null || true
+        "$LAYOUT" ensure 2>/dev/null || true
 }
 
 active_of() {   # active_of <window> -> pane_id of the active pane

@@ -919,16 +919,16 @@ if command -v tmux >/dev/null 2>&1 && tmux list-panes -a >/dev/null 2>&1; then
         phase_skip "cockpit panes already present"
     else
         if [ "$_dry" = 1 ]; then
-            phase_info "would run: cockpit/layout.sh up"
+            phase_info "would run: layout up"
         else
             phase_info "building cockpit panes"
-            "$_cockpit_dir/layout.sh" up 2>/dev/null || true
+            layout up 2>/dev/null || true
             _changes=$((_changes+1))
         fi
     fi
 else
     phase_info "tmux server not reachable — build the cockpit when ready:"
-    phase_info "  $SPIRA_REPO/cockpit/layout.sh up"
+    phase_info "  layout up"
 fi
 unset _bin _cockpit_dir _panel
 

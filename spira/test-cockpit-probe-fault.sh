@@ -21,16 +21,16 @@
 # single process instead of one `health.sh once` per case (1,844 lines + conf.sh, each).
 #
 # defect: sp-cof
-# covers: cockpit/health.sh spira/cockpit.sh
+# covers: cockpit/ops/src/health.rs spira/cockpit.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
-PANE="$HERE/../cockpit/health.sh"
+PANE="health"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 # ---- pane helpers (same pattern as test-now.sh) ----------------------------------------
 
-if [ ! -f "$PANE" ]; then
+if ! command -v "$PANE" >/dev/null 2>&1; then
     bail "cannot find the pane at $PANE — nothing to test"
 fi
 
@@ -189,7 +189,7 @@ RENDER_ALL="$(env -i PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
     SPIRA_RUN="$PD/repo/.runtime/spira" \
     SPIRA_SYSTEMCTL="$PD/bin/mock-systemctl" \
     SPIRA_SNAP_STALE_S=60 \
-    bash "$PANE" render-many "$FIXDIR" 0 0 2>/dev/null \
+    "$PANE" render-many "$FIXDIR" 0 0 2>/dev/null \
   | sed 's/\x1b\[[?0-9;]*[a-zA-Z]//g')"
 
 # block <fixture-name> -> that fixture's rendered frame, ANSI already stripped above.
