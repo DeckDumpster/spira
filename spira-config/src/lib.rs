@@ -886,8 +886,27 @@ pub fn set_path(doc: &SpiraToml, path: &str, value: &str) -> Result<SpiraToml, S
 /// A JSON null deserializes to `None` for every `Option<T>` field this schema has, and `toml`
 /// omits a `None` field entirely on serialization, so the key simply stops appearing in the
 /// document — never a leftover `key = ""` a reader would have to know means "unset".
+///
+/// A RETIRED key (`spira.<key>` in [`RETIRED_SPIRA_KEYS`], `repo.<name>.<key>` in
+/// [`RETIRED_REPO_KEYS`]) is not a field any more, so it cannot be nulled; `validate` already
+/// dropped it from `doc`, and writing `doc` back is what removes it from the file. Unsetting
+/// one is therefore the document unchanged, never an "unknown field" refusal — that refusal
+/// would leave the retired line in the live file with no CLI way to take it out.
 pub fn unset_path(doc: &SpiraToml, path: &str) -> Result<SpiraToml, String> {
+    if is_retired_path(path) {
+        return Ok(doc.clone());
+    }
     set_path_leaf(doc, path, serde_json::Value::Null)
+}
+
+/// Whether `path` names a retired key (see [`unset_path`]).
+pub fn is_retired_path(path: &str) -> bool {
+    let parts: Vec<&str> = path.split('.').collect();
+    match parts.as_slice() {
+        ["spira", key] => RETIRED_SPIRA_KEYS.iter().any(|r| r.key == *key),
+        ["repo", _, key] => RETIRED_REPO_KEYS.iter().any(|r| r.key == *key),
+        _ => false,
+    }
 }
 
 /// `spira-config set` for several paths at once, as a library call: read and validate
@@ -1057,6 +1076,18 @@ mod tests {
         // Positive control: a misspelt repo key is still refused.
         let err = validate("[repo.spira]\npath = \"/p\"\nmode = \"push\"\ngatee = 1\n").unwrap_err();
         assert!(err.contains("repo.spira"), "{err}");
+    }
+
+    #[test]
+    fn unsetting_a_retired_key_removes_it_instead_of_refusing() {
+        let text = "[repo.spira]\npath = \"/p\"\nmode = \"push\"\ngate = \"bash spira/x.sh\"\n";
+        let doc = validate(text).unwrap();
+        let out = toml::to_string_pretty(&unset_path(&doc, "repo.spira.gate").unwrap()).unwrap();
+        assert!(!out.contains("gate"), "{out}");
+        assert!(out.contains("path = \"/p\""), "{out}");
+        assert!(unset_path(&doc, "spira.aeon_cpu_quota").is_ok());
+        // Positive control: an unknown, never-retired key is still refused.
+        assert!(unset_path(&doc, "repo.spira.gatee").is_err());
     }
 
     #[test]
