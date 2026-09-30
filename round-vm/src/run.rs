@@ -127,7 +127,7 @@ if [ "$got" != "$SPIRA_RELEASE/bin/spira-config" ]; then
 fi
 printf 'export SPIRA_RELEASE=%q\nexport SPIRA_REPO=%q\nexport PATH=%q\n' "$SPIRA_RELEASE" "$SPIRA_REPO" "$PATH" > ~/round-launcher.env
 echo "round-vm: launcher: SPIRA_RELEASE=$SPIRA_RELEASE" >&2
-tag="$(bash spira/testenv.sh tag)" || tag=""
+tag="$(testenv container tag)" || tag=""
 if [ -n "$tag" ] && podman image exists "localhost/spira-testenv:$tag" 2>/dev/null; then
     echo "round-vm: template image: localhost/spira-testenv:$tag present" >&2
 elif [ -n "$tag" ]; then
@@ -746,7 +746,7 @@ mod tests {
         let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
         let stage = REMOTE_SCRIPT.find("release build").unwrap();
         let path = REMOTE_SCRIPT.find("export PATH=\"$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:").unwrap();
-        let first_script = REMOTE_SCRIPT.find("spira/testenv.sh").unwrap();
+        let first_script = REMOTE_SCRIPT.find("testenv container tag").unwrap();
         let tenv = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         assert!(build < stage && stage < path && path < first_script && path < tenv);
         assert!(REMOTE_SCRIPT.contains("export SPIRA_RELEASE=\"$HOME/round-releases/$rel_sha\""));

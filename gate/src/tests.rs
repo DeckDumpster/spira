@@ -2440,7 +2440,7 @@ fn tree_builds_are_one_shot() {
 }
 
 /// A tree-built testenv is told its harness is the gate tree: its own executable now
-/// resolves into the tmpfs build root, above which no spira/testenv.sh lies (sp-z61hj). A
+/// resolves into the tmpfs build root, above which no harness marker lies (sp-z61hj). A
 /// definition that builds no testenv sets nothing (the release's testenv finds its own).
 #[test]
 fn a_tree_built_testenv_is_given_the_gate_tree_as_its_harness() {

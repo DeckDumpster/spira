@@ -437,13 +437,15 @@ jobs:
         # machine with no layer cache, and attributing it here means a slow gate
         # reads as a slow image acquisition rather than as slow tests.
         #
-        # A MISS IS NOT A FAILURE. testenv.sh builds when the registry has no image
+        # A MISS IS NOT A FAILURE. testenv builds when the registry has no image
         # for this closure, which is exactly what happens on the first run after any
         # change to the Containerfile, the bd pin or doctor.sh's program lists. The
         # gate is slower in that case and still correct.
         env:
           SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
-        run: bash spira/testenv.sh image
+        # By name, from the staged release: `testenv container` replaced
+        # spira/testenv.sh (sp-s0e1k).
+        run: testenv container image
 
       - name: Publish the test image
         # THE STEP ABOVE CONSULTS A REGISTRY NOTHING EVER WROTE TO. Without this,
@@ -470,7 +472,7 @@ jobs:
         continue-on-error: true
         env:
           SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
-        run: bash spira/testenv.sh publish
+        run: testenv container publish
 
       - name: Lints
         # Cheap, pure Rust (spira-lint, downloaded above with the other release
@@ -513,7 +515,7 @@ jobs:
         # needs.select.outputs.suites (law-a-runner-takes-a-list).
         env:
           # The step above has already acquired the image under this closure's tag,
-          # so testenv.sh finds it locally. Naming the registry here as well keeps
+          # so testenv finds it locally. Naming the registry here as well keeps
           # the two steps agreeing about which image the gate is entitled to use.
           SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
         run: |
@@ -615,7 +617,7 @@ jobs:
 
       - name: G12 — install-rehearsal and cadence-tool (real systemd, host podman)
         # test-install-rehearsal.sh and test-cadence-tool.sh each build their OWN
-        # container via testenv.sh. Run through the step above they would be nested
+        # container via `testenv container up`. Run through the step above they would be nested
         # inside the corpus's own container, whose image carries no podman — that
         # is why they only ever SKIP (77) there. acceptance.yml is no longer the
         # place they run either: no prebuilt binaries there, plus a cold image

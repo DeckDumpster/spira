@@ -1950,13 +1950,13 @@ fn real_halt_finds_podman_and_testenv_on_its_path() {
     let log = dir.join("log");
     let podman = bin.join("podman");
     testkit::write_exe(&podman, "#!/bin/sh\n[ \"$1\" = ps ] && echo spira-batch-stubbed\nexit 0\n");
-    testkit::write_exe(&bin.join("testenv.sh"), &format!("#!/bin/sh\necho \"$*\" >> {}\ncommand -v podman >> {}\n", log.display(), log.display()));
+    testkit::write_exe(&bin.join("testenv"), &format!("#!/bin/sh\necho \"$*\" >> {}\ncommand -v podman >> {}\n", log.display(), log.display()));
     let path = format!("{}:/usr/bin:/bin", bin.display());
     let h = RealHalt { path: Some(path) };
     assert_eq!(h.running_containers(), vec!["spira-batch-stubbed".to_string()]);
     assert!(h.teardown("spira-batch-stubbed"));
     let got = std::fs::read_to_string(&log).unwrap();
-    assert!(got.contains("down --name spira-batch-stubbed --volumes --force-foreign"), "{got}");
-    assert!(got.contains(&podman.display().to_string()), "testenv.sh inherits the path: {got}");
+    assert!(got.contains("container down --name spira-batch-stubbed --volumes --force-foreign"), "{got}");
+    assert!(got.contains(&podman.display().to_string()), "testenv inherits the path: {got}");
     let _ = std::fs::remove_dir_all(&dir);
 }

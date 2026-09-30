@@ -1049,7 +1049,7 @@ spira_conf_defaults() {
     # prefix only -- the tag comes from the closure and is never written by hand.
     : "${SPIRA_TESTENV_REGISTRY:=}"
     # HOW MANY testenv containers may run at once, host-wide, across every caller
-    # (a lone `testenv.sh up`, batch.sh, an accept or debug session). Each running
+    # (a lone `testenv container up`, batch.sh, an accept or debug session). Each running
     # container's systemd holds inotify instances, keyring entries and pids for as long
     # as it lives, all three charged against this real UID's single, shared budget — so a
     # box oversubscribed on containers fails them outright rather than slowing down

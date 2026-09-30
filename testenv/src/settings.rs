@@ -101,23 +101,30 @@ pub fn derive_run(repo: &Path, instance: &str, env: &dyn Fn(&str) -> Option<Stri
     data.join(format!("spira{sfx}")).join("run")
 }
 
+fn instance_of(src: &Source) -> String {
+    src.get("SPIRA_INSTANCE", Some("spira.instance"))
+        .unwrap_or_else(|| "prod".into())
+}
+
+/// SPIRA_RUN: the environment, then `spira.run`, then derived from SPIRA_REPO (else
+/// `harness_repo`) as conf.sh derives it.
+pub fn resolve_run(src: &Source, harness_repo: &Path) -> PathBuf {
+    src.get("SPIRA_RUN", Some("spira.run"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let repo = src
+                .get("SPIRA_REPO", None)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| harness_repo.to_path_buf());
+            derive_run(&repo, &instance_of(src), src.env)
+        })
+}
+
 impl Settings {
     /// `harness_repo` is where SPIRA_RUN is derived from when nothing sets it (conf.sh's
     /// SPIRA_REPO); `now` names a local run.
     pub fn load(src: &Source, harness_repo: &Path, now: u64) -> Settings {
-        let instance = src
-            .get("SPIRA_INSTANCE", Some("spira.instance"))
-            .unwrap_or_else(|| "prod".into());
-        let run = src
-            .get("SPIRA_RUN", Some("spira.run"))
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                let repo = src
-                    .get("SPIRA_REPO", None)
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| harness_repo.to_path_buf());
-                derive_run(&repo, &instance, src.env)
-            });
+        let run = resolve_run(src, harness_repo);
         let path = |env: &str| src.get(env, None).map(PathBuf::from);
         Settings {
             results_root: path("SPIRA_BATCH_RESULTS").unwrap_or_else(|| run.join("batch-results")),

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# test-testenv.sh — testenv.sh up/down/probe and cargo cache timing.
+# test-testenv.sh — `testenv container` up/down/probe and cargo cache timing.
 #
 # WHAT THIS TESTS
 # ---------------
 # 1. POSITIVE CONTROL: prove podman can create and remove a container before asserting
-#    anything about testenv.sh (law-absence-needs-a-positive-control).
+#    anything about the driver (law-absence-needs-a-positive-control).
 # 2. UP: the container starts with PID 1 as systemd.
 # 3. USER SYSTEMD: systemctl --user status exits 0 as spirauser; the session bus is
 #    reachable via XDG_RUNTIME_DIR=/run/user/1001.
@@ -20,7 +20,7 @@
 #
 # defect: sp-aiocb
 # tier: T1
-# covers: spira/testenv.sh spira/testenv/Containerfile
+# covers: testenv/src/container.rs spira/testenv/Containerfile
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -30,12 +30,12 @@ echo "test-testenv.sh"
 
 command -v podman >/dev/null 2>&1 || skip "podman not on PATH"
 
-TESTENV="$HERE/testenv.sh"
+# the container driver: `testenv container`, by name on the PATH (sp-s0e1k)
 CNAME="spira-testenv-te-$$"
 TMP="$(mktemp -d)"
 
 cleanup() {
-    bash "$TESTENV" down --name "$CNAME" --volumes >/dev/null 2>&1 || true
+    testenv container down --name "$CNAME" --volumes >/dev/null 2>&1 || true
     rm -rf "$TMP"
 }
 trap cleanup EXIT INT TERM
@@ -46,7 +46,7 @@ echo "positive control — prove podman works on this host:"
 # ==========================================================================
 # Plant a short-lived container and verify it appears in `podman ps`; clean it
 # up before the real fixture uses the same image. A failure here means podman
-# itself is unavailable or misconfigured, not that testenv.sh is broken.
+# itself is unavailable or misconfigured, not that the driver is broken.
 PC_NAME="spira-testenv-pc-$$"
 if podman run -d --name "$PC_NAME" --rm docker.io/library/ubuntu:24.04 \
         bash -c 'exit 0' >/dev/null 2>&1; then
@@ -61,7 +61,7 @@ echo
 echo "up — start testenv container:"
 # ==========================================================================
 t0=$(date +%s%N)
-bash "$TESTENV" up --name "$CNAME" >&2
+testenv container up --name "$CNAME" >&2
 up_rc=$?
 t1=$(date +%s%N)
 startup_ms=$(( (t1 - t0) / 1000000 ))
@@ -95,9 +95,9 @@ want "status shows running state" "State:" "$sc_out"
 
 # ==========================================================================
 echo
-echo "probe — testenv.sh probe exits 0:"
+echo "probe — testenv container probe exits 0:"
 # ==========================================================================
-bash "$TESTENV" probe --name "$CNAME" >/dev/null 2>&1
+testenv container probe --name "$CNAME" >/dev/null 2>&1
 iszero "probe exits 0" "$?"
 
 # ==========================================================================
@@ -199,7 +199,7 @@ printf '  note  cargo --version under the pin: %s\n' "$pin_patched_out"
 echo
 echo "down — remove container:"
 # ==========================================================================
-bash "$TESTENV" down --name "$CNAME" >&2
+testenv container down --name "$CNAME" >&2
 iszero "down exits 0" "$?"
 
 # Container must be gone.
@@ -211,7 +211,7 @@ podman container exists "$CNAME" 2>/dev/null \
 echo
 echo "idempotent down — second down is a no-op:"
 # ==========================================================================
-bash "$TESTENV" down --name "$CNAME" >&2
+testenv container down --name "$CNAME" >&2
 iszero "second down exits 0" "$?"
 
 # ==========================================================================

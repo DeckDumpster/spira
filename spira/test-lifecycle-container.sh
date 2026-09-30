@@ -294,7 +294,7 @@ echo "# informational: same-user fallback (no service), p99 of $BENCH_N: ${fallb
 # A wall-clock ceiling is unmeasurable on a busy CPU: this harness runs many aeons and
 # their containers on the same box at once, and a 50ms budget has no margin for a
 # neighbor's scheduling delay. /proc/loadavg is host-wide even inside a container (no
-# --cpus limit is set — see testenv.sh's `podman run`), so a quarter of nproc, sustained
+# --cpus limit is set — see `testenv container up`'s `podman run` (testenv/src/container.rs)), so a quarter of nproc, sustained
 # over a minute, already means other tenants are doing real work; a tight budget like
 # this one flakes under exactly that, well short of the box being pegged. Above the
 # threshold the bench is reported but not asserted — the mechanism (one persistent
