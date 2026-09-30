@@ -464,7 +464,7 @@ impl<'a> Sentinel<'a> {
             tail.trim_end_matches('\n')
         ));
         let subj = format!("Spira bead {id} — {n} in_progress transition(s) without landing ({n} attempts) — change the approach or drop it?");
-        let dflt = format!("if the work is correct, re-label or split the bead and run attempts.sh clear {id} --apply; if it is not worth doing, close it");
+        let dflt = format!("if the work is correct, re-label or split the bead and run spira-claim unpoison --bead {id} --cause <why>; if it is not worth doing, close it");
         let body = format!(
             "## Question\n{subj}\n\n## Default\n{dflt}\n\nnothing downstream of it can proceed, and no aeon will take it again while it is poisoned\n\n{ev}\n"
         );
