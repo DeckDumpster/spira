@@ -184,6 +184,19 @@ runpass() {
 acted()  { tr '\n' ' ' < "$ACT"; }
 execs()  { grep -cE '^(systemctl|stat|mkdir|watchd|FORBIDDEN)' "$EXECLOG" 2>/dev/null || true; }
 
+# WARM THE TOML CACHE ONCE, OUTSIDE ANY COUNTED PASS. `watchd`'s own conf.sh seam converts
+# $CONF (a legacy spira.conf-format fixture) to a cached spira.toml beside it the first time
+# anything sources conf.sh with SPIRA_CONFIG_WRITE=1 (sp-48f6g: needed since watchd, a
+# compiled binary in the release's bin/, can never make $SPIRA_HOME equal a fixture's own
+# $SPIRA_PROD the way the bash watchd.sh's BASH_SOURCE-relative sourcing did). That
+# conversion is real work conf.sh does once — costing at least one `date` call — and every
+# `runpass` below runs `watchd manifest` under the shim-restricted PATH, where a `date`
+# call would trip the FORBIDDEN tripwire and inflate the exec count. Warmed here, under the
+# real PATH, before the log that counts execs even exists, the cached toml is found instead
+# of reconverted on every subsequent call.
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_WATCHERS="$MAN" \
+    "$REAL_WATCHD" manifest >/dev/null 2>&1 || true
+
 echo "the positive control — nothing has changed, and the check looked anyway"
 reset_mtimes; fresh_show
 runpass; rc=$?
