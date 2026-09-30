@@ -79,21 +79,17 @@ impl<'a> Sentinel<'a> {
     }
 
     /// The switch this pass resolved, handed to a worker systemd-run starts with a clean
-    /// environment — so the audit worker resolves the same mode, and (OFF) `landing-pass land` is
-    /// handed no live path to spira-lc. The audit worker disables its own children itself.
-    fn lifecycle_setenv(&self, landing: bool) -> Vec<String> {
-        let mut v = vec![format!(
+    /// environment — so the audit worker and `landing-pass land` resolve the same mode.
+    /// SPIRA_LIFECYCLE_ENFORCE=0 is the whole of OFF (sp-gypjk).
+    fn lifecycle_setenv(&self) -> Vec<String> {
+        vec![format!(
             "--setenv=SPIRA_LIFECYCLE_ENFORCE={}",
             if self.lc == crate::cfg::Lifecycle::On {
                 "1"
             } else {
                 "0"
             }
-        )];
-        if landing && self.lc == crate::cfg::Lifecycle::Off {
-            v.push(format!("--setenv=SPIRA_LC_BIN={}", crate::cfg::LC_DISABLED));
-        }
-        v
+        )]
     }
 
     fn drain_into_progress(&self, mailbox: &Path, stem: &str) {
@@ -194,7 +190,7 @@ impl<'a> Sentinel<'a> {
             ]));
             // B1: the switches the operator sets on the sentinel's unit reach the worker
             // that actually runs the checks they switch off.
-            a.extend(self.lifecycle_setenv(false));
+            a.extend(self.lifecycle_setenv());
             for k in ["SPIRA_SKIP_CLOSED_CHECK", "SPIRA_SKIP_RECLAIM"] {
                 if !self.cfg.raw(k).is_empty() {
                     a.push(format!("--setenv={k}={}", self.cfg.raw(k)));
@@ -357,8 +353,10 @@ impl<'a> Sentinel<'a> {
                 "--setenv=SPIRA_LAND_MAXSEC={}",
                 self.cfg.land_maxsec
             ));
-            a.extend(self.lifecycle_setenv(true));
-            a.push(self.cfg.landing_bin.clone().unwrap_or_else(|| "landing-pass".into()));
+            a.extend(self.lifecycle_setenv());
+            // systemd-run's transient unit has no launcher PATH: hand it the PATH-resolved
+            // program (the release's), or the bare name for systemd to refuse, naming it.
+            a.push(crate::pass::on_path(&self.cfg.landing_bin, self.cfg.raw("PATH")));
             a.push("land".into());
             let o = self.h.run(
                 Spec::args_owned(self.cfg.launch.clone(), a)

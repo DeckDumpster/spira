@@ -143,19 +143,7 @@ impl<'a> Sentinel<'a> {
             crate::cfg::Lifecycle::On,
             "OFF must never read spira-lc"
         );
-        let raw = self.ctx.get("SPIRA_LC_BIN").unwrap_or("").to_string();
-        let Some(bin) = self
-            .cfg
-            .lc_bin
-            .clone()
-            .filter(|b| crate::pass::is_exec(std::path::Path::new(b)))
-        else {
-            self.lc_unreachable(&format!(
-                "spira-lc is not installed (SPIRA_LC_BIN={})",
-                if raw.is_empty() { "<unset>" } else { &raw }
-            ));
-            return None;
-        };
+        let bin = self.cfg.lc_bin.clone();
         let o = self.h.run(Spec::args_owned(bin, vec!["list".into()]));
         if !o.ok() {
             let why = o
@@ -206,14 +194,7 @@ impl<'a> Sentinel<'a> {
     /// lc.sh `lc_show` + `lc_event`: read the row's current state and version, then apply
     /// `kind` under that CAS. Ok(()) applied; Err(rc) as lc.sh (1 no row, 2 cannot tell).
     pub fn lc_event(&self, id: &str, kind: &str, actor: &str) -> Result<(), i32> {
-        let Some(bin) = self
-            .cfg
-            .lc_bin
-            .clone()
-            .filter(|b| crate::pass::is_exec(std::path::Path::new(b)))
-        else {
-            return Err(2);
-        };
+        let bin = self.cfg.lc_bin.clone();
         let o = self
             .h
             .run(Spec::args_owned(bin.clone(), vec!["show".into(), id.into()]).err(Io::Null));

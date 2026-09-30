@@ -53,11 +53,6 @@ pub enum Lifecycle {
     On,
 }
 
-/// The path handed to children in OFF mode as `SPIRA_LC_BIN`: non-empty (so conf.sh's
-/// `: "${SPIRA_LC_BIN:=…}"` and `[ -z … ]` resolvers keep it) and never executable (so every
-/// lc.sh function's `[ -x "$SPIRA_LC_BIN" ]` guard turns it into a no-op).
-pub const LC_DISABLED: &str = "/nonexistent/spira-lc-disabled-by-lifecycle_enforce=0";
-
 /// `lifecycle_enforce`, resolved as the aeon crate resolves it (concierge/rw-aeon
 /// aeon/src/conf.rs): the unit's own environment wins (`SPIRA_LIFECYCLE_ENFORCE`, 1/true =
 /// on, anything else = off) — read from this process's ORIGINAL environment, because
@@ -246,12 +241,14 @@ pub struct Cfg {
     pub summon: String,
     pub skip_reclaim: bool,
     pub skip_closed: bool,
-    pub tsd_bin: Option<String>,
-    pub lc_bin: Option<String>,
+    /// Spira tools, invoked by bare name on the launcher's PATH (sp-gypjk). Plain fields so a
+    /// unit test can point one at a fixture; nothing reads them from the environment.
+    pub tsd_bin: String,
+    pub lc_bin: String,
     /// The landing worker CHECK 6 dispatches (`landing-pass land`, landing-pass/DESIGN.md §7.1).
-    pub landing_bin: Option<String>,
-    pub claim_bin: Option<String>,
-    pub strand_bin: Option<String>,
+    pub landing_bin: String,
+    pub claim_bin: String,
+    pub strand_bin: String,
     pub incident_sh: PathBuf,
     pub home_repo: String,
     pub fayths_str: String,
@@ -265,13 +262,6 @@ pub struct Cfg {
     pub reclaim_skip_label: String,
     /// For the systemd-run --setenv lists: the raw values, "" when unset.
     pub raw: BTreeMap<String, String>,
-}
-
-fn exe_ok(p: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(p)
-        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
 }
 
 impl Cfg {
@@ -291,25 +281,6 @@ impl Cfg {
                 .filter(|v| !v.is_empty())
                 .map(PathBuf::from)
                 .unwrap_or_else(|| run.join(d))
-        };
-        // spira_bin: $SPIRA_ARTIFACTS, else $SPIRA_REPO/bin.
-        let artifacts = c
-            .get("SPIRA_ARTIFACTS")
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| {
-                c.get("SPIRA_REPO")
-                    .filter(|v| !v.is_empty())
-                    .map(|r| Path::new(r).join("bin"))
-            });
-        let bin = |k: &str, name: &str| -> Option<String> {
-            c.get(k)
-                .filter(|v| !v.is_empty())
-                .map(str::to_string)
-                .or_else(|| {
-                    let p = artifacts.as_ref()?.join(name);
-                    exe_ok(&p).then(|| p.to_string_lossy().into_owned())
-                })
         };
         let mut raw = BTreeMap::new();
         for k in [
@@ -390,19 +361,18 @@ impl Cfg {
             summon: or("SPIRA_SUMMON", "systemd-run"),
             skip_reclaim: c.get("SPIRA_SKIP_RECLAIM") == Some("1"),
             skip_closed: c.get("SPIRA_SKIP_CLOSED_CHECK") == Some("1"),
-            tsd_bin: c
-                .get("SPIRA_TSD_BIN")
-                .filter(|v| !v.is_empty())
-                .map(str::to_string),
-            lc_bin: bin("SPIRA_LC_BIN", "spira-lc"),
-            landing_bin: bin("SPIRA_LANDING_PASS_BIN", "landing-pass"),
-            claim_bin: bin("SPIRA_CLAIM_BIN", "spira-claim"),
-            strand_bin: bin("SPIRA_STRAND_BIN", "strand"),
+            tsd_bin: "tsd-write".into(),
+            lc_bin: "spira-lc".into(),
+            landing_bin: "landing-pass".into(),
+            claim_bin: "spira-claim".into(),
+            strand_bin: "strand".into(),
+            // SPIRA_INCIDENT_SH stays a test seam (a mock incident.sh); unset, the release's
+            // incident.sh by name — `bash incident.sh` finds a slashless script on PATH.
             incident_sh: c
                 .get("SPIRA_INCIDENT_SH")
                 .filter(|v| !v.is_empty())
                 .map(PathBuf::from)
-                .unwrap_or_else(|| home.join("incident.sh")),
+                .unwrap_or_else(|| PathBuf::from("incident.sh")),
             home_repo,
             fayths_str: c.fayth_names().join(" "),
             pass_target: num("SPIRA_SENTINEL_PASS_TARGET_SECS", 60),
@@ -560,7 +530,8 @@ pub mod tests {
         assert_eq!(k.plan_labels(), vec!["plan"]);
         assert_eq!(k.home, PathBuf::from("/h"));
         assert_eq!(k.home_repo, "h");
-        assert_eq!(k.incident_sh, PathBuf::from("/h/incident.sh"));
+        assert_eq!(k.incident_sh, PathBuf::from("incident.sh"));
+        assert_eq!((k.lc_bin.as_str(), k.claim_bin.as_str(), k.strand_bin.as_str(), k.landing_bin.as_str(), k.tsd_bin.as_str()), ("spira-lc", "spira-claim", "strand", "landing-pass", "tsd-write"));
         assert_eq!(k.pass_target, 60);
     }
 }
