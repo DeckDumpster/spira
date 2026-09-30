@@ -37,6 +37,10 @@ export SPIRA_CONF=""   # prevent reading a real spira.conf
 
 cp "$HERE/mail.sh" "$SPIRA_HOME/"
 cp "$HERE/hooks/aeon-mail-deliver.sh" "$SPIRA_HOME/hooks/"
+# The aeon arms its worktree through worktree-hooks.sh (the tree's, by name), which composes
+# <home>/hooks/pre-commit into the worktree's hook: the fixture home carries a pass-through
+# one, since the canonical fences are not what this suite is about.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$SPIRA_HOME/hooks/pre-commit"; chmod +x "$SPIRA_HOME/hooks/pre-commit"
 
 # ==========================================================================
 # bead.sh amend — (b) and (c)
