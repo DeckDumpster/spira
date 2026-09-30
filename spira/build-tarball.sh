@@ -255,7 +255,24 @@ for pkg in meta['packages']:
         chmod +x "$stage/bin/${_bin_names[$_i]}"
     done
 
-    # Write MANIFEST — commit, timestamp, repo identity, and sha256 per binary.
+    # sp-ooh1k: mail.sh is now the `mail` binary (a cargo bin target's name can't carry a
+    # dot), but several callers outside this tree still spell the old name: the Concierge
+    # persona text builds "$SPIRA_HOME/mail.sh send operator ...", brain's
+    # escalation-hook.sh pattern-matches "mail.sh ... --kind question|suit" verbatim, and an
+    # operator's own aerc config (outside version control) may still say
+    # "outgoing = <release>/spira/mail.sh". A same-directory symlink is the whole fix, same
+    # pattern sp-6onps used for world.sh/slay.sh/aeons.sh/ctrl.sh below: bare-name PATH
+    # lookup for either spelling resolves to the identical binary, and it costs nothing to
+    # keep once every caller is repointed. Two locations, because the callers above name
+    # $SPIRA_HOME/mail.sh (spira/) specifically, not just whatever bin/ resolves on PATH.
+    if [ -f "$stage/bin/mail" ]; then
+        [ -e "$stage/bin/mail.sh" ] || ln -s mail "$stage/bin/mail.sh"
+        [ -e "$stage/spira/mail.sh" ] || ln -s ../bin/mail "$stage/spira/mail.sh"
+    fi
+
+    # Write MANIFEST — commit, timestamp, repo identity, and sha256 per binary (a compat
+    # symlink is not a binary this loop names; sha256sum would dereference it to the exact
+    # same hash as the real one anyway).
     printf 'commit %s\ntimestamp %s\nrepo %s\n' "$sha" "$ts" "$repo_name" > "$stage/MANIFEST"
     [ -n "$release_repo" ] && printf 'release-repo %s\n' "$release_repo" >> "$stage/MANIFEST"
     for _i in "${!_bin_names[@]}"; do
