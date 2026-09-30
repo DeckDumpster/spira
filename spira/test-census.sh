@@ -15,7 +15,7 @@
 # bd list against a real store.
 #
 # tier: T3
-# covers: spira/census.sh spira/lib.sh UC-ops-detection-remediation-07 UC-ops-detection-remediation-12 UC-ops-detection-remediation-14
+# covers: spira/census.sh spira/census/deliberate.py spira/lib.sh UC-ops-detection-remediation-07 UC-ops-detection-remediation-12 UC-ops-detection-remediation-14
 # hermetic-ok: uses a fixture database; no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -120,6 +120,32 @@ is "bead_reopen writes event_type=reopen with cause in new_value" "gate-red" "$_
 
 out2="$(run_census)"
 want "census reports sp-reopen-gate-red from the real reopen row" "1 sp-reopen-gate-red" "$out2"
+
+# ==============================================================================
+echo
+echo "2b. sp-eiatd: queue.sh eject is a deliberate reopen cause — counted, never ranked"
+# ==============================================================================
+# The census aeon's own evidence (sp-eiatd): a correctly-attributed queue.sh eject is the
+# system working (law-a-deliberate-state-is-not-a-fault), not a failure class. Before the
+# fix, sp-reopen-eject competed for the top unsuppressed Maechen slot alongside genuine
+# defects. PAIRED WITH A NON-DELIBERATE CAUSE (law-absence-needs-a-positive-control): if
+# this just emptied the ranked list rather than discriminating on cause, gate-red would
+# vanish too — it must not.
+testdb_reset
+bid_ej="$(plant_bead "eject-deliberate-bead")"
+bead_reopen "$bid_ej" eject "" >/dev/null 2>&1
+
+bid_gr="$(plant_bead "gate-red-still-ranks-bead")"
+bead_reopen "$bid_gr" gate-red "" >/dev/null 2>&1
+
+out2b="$(run_census)"
+lack "eject: excluded from the default ranked census" "sp-reopen-eject" "$out2b"
+want "gate-red: still ranks (discriminating positive control)" "1 sp-reopen-gate-red" "$out2b"
+
+out2b_sup="$(run_census --with-suppressed)"
+want "eject: still counted under --with-suppressed" "deliberate, not ranked: sp-reopen-eject 1 beads" "$out2b_sup"
+lack "eject: never appears in the ranked block itself, even with --with-suppressed" \
+    "1 sp-reopen-eject" "$(printf '%s\n' "$out2b_sup" | grep -v 'deliberate, not ranked' || true)"
 
 # ==============================================================================
 echo
