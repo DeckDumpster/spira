@@ -27,7 +27,7 @@
 # check is live. Bead ids are pinned to non-default strings; allowlist state
 # is reset between sections.
 #
-# covers: spira/maechen-trigger.sh spira/lib.sh spira/cockpit.sh
+# covers: spira/maechen-trigger.sh spira/lib.sh spira/cockpit.sh maechen-trigger/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1090

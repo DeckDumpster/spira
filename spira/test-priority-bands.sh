@@ -15,9 +15,9 @@
 # harness's own findings drawing an aeon ahead of a user's.
 #
 # tier: T1
-# covers: spira/conf.sh testenv/src/suites/ports.rs spira/gh-intake.sh spira/incident.sh
+# covers: spira/conf.sh testenv/src/suites/ports.rs spira/gh-intake.sh spira/incident.sh incident/*
 # tier: T0
-# covers: spira/conf.sh spira/suites.sh spira/gh-intake.sh spira/incident.sh
+# covers: spira/conf.sh spira/suites.sh spira/gh-intake.sh spira/incident.sh incident/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
