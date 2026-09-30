@@ -123,6 +123,14 @@ don't mutate state, so there is little to record).
 
 ## 6. Parity and what moved
 
+**sp-oppza, landed concurrently with this bead and merged in**: `check_config_files` now
+runs `spira-config migrate <toml>` immediately before `spira-config validate <toml>`, same
+order doctor.sh's own fix used — a box whose config predates sp-k6m1m (a goal set, no
+`id_prefix`) is repaired in place instead of failing validation on every such box. Idempotent
+(a no-op once `id_prefix` is set, including production's own state); its own exit code is
+never read, only its output, which is logged as a plain, unranked `Level::Raw` line (never
+folded into the validate verdict) and only when non-empty.
+
 11 dedicated suites are retired, their coverage moved to this crate's 52 unit tests:
 `test-doctor-concierge-singleton.sh`, `test-doctor-config-files.sh`, `test-doctor-duckdb.sh`,
 `test-doctor-events-probe.sh`, `test-doctor-failed-units.sh`,

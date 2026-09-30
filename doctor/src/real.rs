@@ -123,6 +123,20 @@ impl World for Real {
         }
     }
 
+    fn spira_config_migrate(&self, toml_path: &Path) -> String {
+        // Exit code deliberately ignored — matching doctor.sh's own `mig="$(spira-config
+        // migrate "$toml" 2>&1)"`, which never checked it either; only the text, when
+        // non-empty, is logged.
+        Command::new("spira-config")
+            .arg("migrate")
+            .arg(toml_path)
+            .stdin(Stdio::null())
+            .output()
+            .ok()
+            .map(|o| format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)).trim_end().to_string())
+            .unwrap_or_default()
+    }
+
     /// `find <dir> -maxdepth 2 -name '*.md'`, each match relative to `dir`: files directly
     /// in `dir` (depth 1) and files in its immediate subdirectories (depth 2).
     fn find_md_files(&self, dir: &Path) -> Vec<String> {

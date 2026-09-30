@@ -17,6 +17,11 @@ pub enum Level {
     Ok,
     Warn,
     Fail,
+    /// An informational line printed verbatim, with no `FAIL`/`warn`/`ok` tag and no
+    /// indentation — sp-oppza's migrate-then-validate note (`spira-config migrate`'s own
+    /// output, logged only when it actually migrated something) is not a verdict on its
+    /// own check, just as bash's `printf '%s\n' "$mig"` was not routed through `FAIL`/`OK`.
+    Raw,
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +44,9 @@ fn fail(msg: impl Into<String>, detail: impl Into<String>) -> Line {
 }
 fn fail_bare(msg: impl Into<String>) -> Line {
     Line { level: Level::Fail, msg: msg.into(), detail: None }
+}
+fn raw(msg: impl Into<String>) -> Line {
+    Line { level: Level::Raw, msg: msg.into(), detail: None }
 }
 
 /// One named section of the report, in the fixed order doctor.sh printed them.
@@ -82,6 +90,10 @@ pub fn run(w: &dyn World) -> i32 {
         w.out("");
         w.out(s.title);
         for l in &s.lines {
+            if l.level == Level::Raw {
+                w.out(&l.msg);
+                continue;
+            }
             let tag = match l.level {
                 Level::Fail => {
                     fatal += 1;
@@ -92,6 +104,7 @@ pub fn run(w: &dyn World) -> i32 {
                     "warn "
                 }
                 Level::Ok => "ok   ",
+                Level::Raw => unreachable!(),
             };
             w.out(&format!("  {tag} {}", l.msg));
             if let Some(d) = &l.detail {
@@ -183,6 +196,16 @@ pub fn check_config_files(w: &dyn World) -> Vec<Line> {
         if w.which("spira-config").is_none() {
             out.push(fail_bare(format!("cannot validate {t} — spira-config is not on PATH")));
         } else {
+            // sp-oppza ONE-TIME UPGRADE MIGRATION, ahead of validate: a box whose config
+            // predates sp-k6m1m (goal set, no id_prefix) is repaired in place instead of
+            // failing validation on every such box. Idempotent — a no-op once id_prefix is
+            // set, which includes production's own state, set by hand — so unconditional.
+            // Its own exit code is never checked (matching doctor.sh: `validate` is the one
+            // check this section gates on); only its output, when non-empty, is logged.
+            let mig = w.spira_config_migrate(Path::new(t));
+            if !mig.is_empty() {
+                out.push(raw(mig));
+            }
             match w.spira_config_validate(Path::new(t)) {
                 Ok(()) => out.push(ok(format!("{TOML_NAME} validates — {t}"))),
                 Err(e) => out.push(fail(format!("{TOML_NAME} fails validation — {t}"), e)),

@@ -36,6 +36,11 @@ pub trait World {
     /// or the document does not validate.
     fn spira_config_validate(&self, toml_path: &Path) -> Result<(), String>;
 
+    /// `spira-config migrate <toml>` (sp-oppza) -> its combined output, or empty when it had
+    /// nothing to migrate. Its own exit code is never read — same as doctor.sh's `mig="$(...
+    /// 2>&1)"` — `validate`, called right after, is what this section actually gates on.
+    fn spira_config_migrate(&self, toml_path: &Path) -> String;
+
     /// `find <dir> -maxdepth 2 -name '*.md'`, each path relative to `dir`.
     fn find_md_files(&self, dir: &Path) -> Vec<String>;
 

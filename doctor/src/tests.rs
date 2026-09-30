@@ -18,6 +18,7 @@ pub struct Fake {
     pub deps_release: RefCell<Vec<String>>,
     pub release_status: RefCell<String>,
     pub config_valid: RefCell<Result<(), String>>,
+    pub config_migrate: RefCell<String>,
     pub md_files: RefCell<BTreeMap<PathBuf, Vec<String>>>,
     pub overrides: RefCell<Result<String, String>>,
     pub repo_names: RefCell<Vec<String>>,
@@ -54,6 +55,7 @@ impl Default for Fake {
             deps_release: RefCell::new(Vec::new()),
             release_status: RefCell::new(String::new()),
             config_valid: RefCell::new(Ok(())),
+            config_migrate: RefCell::new(String::new()),
             md_files: RefCell::new(BTreeMap::new()),
             overrides: RefCell::new(Ok(String::new())),
             repo_names: RefCell::new(Vec::new()),
@@ -107,6 +109,9 @@ impl World for Fake {
     }
     fn spira_config_validate(&self, _toml_path: &Path) -> Result<(), String> {
         self.config_valid.borrow().clone()
+    }
+    fn spira_config_migrate(&self, _toml_path: &Path) -> String {
+        self.config_migrate.borrow().clone()
     }
     fn find_md_files(&self, dir: &Path) -> Vec<String> {
         self.md_files.borrow().get(dir).cloned().unwrap_or_default()
@@ -264,6 +269,54 @@ fn config_files_toml_fails_validation() {
     *f.config_valid.borrow_mut() = Err("bad key".into());
     let out = check_config_files(&f);
     assert_eq!(out[1].level, Level::Fail);
+}
+
+#[test]
+fn config_files_migrates_before_validating_when_migrate_has_output() {
+    // sp-oppza: `spira-config migrate <file>` runs immediately before `validate`, in that
+    // order, and its output (only when non-empty) is logged as a plain, unranked line —
+    // never folded into the validate verdict, and never gating on migrate's own exit code.
+    let f = Fake::default();
+    f.set("SPIRA_TOML_FILE", "/etc/spira-cfg.toml");
+    f.which.borrow_mut().insert("spira-config".into(), "/bin/spira-config".into());
+    *f.config_migrate.borrow_mut() = "spira-config migrate: /etc/spira-cfg.toml: set spira.id_prefix = \"sp\" from goal".into();
+    *f.config_valid.borrow_mut() = Ok(());
+
+    let out = check_config_files(&f);
+    // out[0]: the TOML_NAME-only line (no spira.conf); out[1]: the migrate note; out[2]: validates.
+    assert_eq!(out.len(), 3, "{out:?}");
+    assert_eq!(out[1].level, Level::Raw);
+    assert_eq!(out[1].msg, "spira-config migrate: /etc/spira-cfg.toml: set spira.id_prefix = \"sp\" from goal");
+    assert_eq!(out[2].level, Level::Ok);
+}
+
+#[test]
+fn config_files_migrate_silent_when_it_had_nothing_to_do() {
+    // The common case (a box whose config already has id_prefix, or predates nothing):
+    // migrate prints nothing, so no extra line appears at all — not even an empty one.
+    let f = Fake::default();
+    f.set("SPIRA_TOML_FILE", "/etc/spira-cfg.toml");
+    f.which.borrow_mut().insert("spira-config".into(), "/bin/spira-config".into());
+    *f.config_valid.borrow_mut() = Ok(());
+
+    let out = check_config_files(&f);
+    assert!(!out.iter().any(|l| l.level == Level::Raw), "{out:?}");
+}
+
+#[test]
+fn config_files_migrate_output_ignores_its_own_exit_code() {
+    // Even when validate then fails, the migrate note (if any) still precedes it and is
+    // still just logged, never turned into a FAIL of its own — validate is the one gate.
+    let f = Fake::default();
+    f.set("SPIRA_TOML_FILE", "/etc/spira-cfg.toml");
+    f.which.borrow_mut().insert("spira-config".into(), "/bin/spira-config".into());
+    *f.config_migrate.borrow_mut() = "spira-config migrate: /etc/spira-cfg.toml: some note".into();
+    *f.config_valid.borrow_mut() = Err("bad key".into());
+
+    let out = check_config_files(&f);
+    assert_eq!(out.len(), 3, "{out:?}");
+    assert_eq!(out[1].level, Level::Raw);
+    assert_eq!(out[2].level, Level::Fail);
 }
 
 #[test]
