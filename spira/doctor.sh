@@ -120,10 +120,11 @@ doctor_check_overrides() {
 # sp-0inic certified green and broke the build for its whole round because the row's gate
 # had been cut to three fences with no compile check at all (build-fence.sh, wired into
 # gate-touched.sh, was reachable only when the row's gate command still named one of them).
-# This is the runtime check for that: read the same repo-map the gate itself reads, and for
-# every repo carrying Rust crates, fail unless its configured gate command still names
-# build-fence.sh. (gate-touched.sh no longer calls it, sp-aprxm, so naming only that is not
-# enough; under gate_mode=unit the gate drops the step and its build phase is the check.)
+# This is the runtime check for that: ask the gate binary for the gate the repository's
+# landing ref defines (its tree's gate.steps since sp-quu2w, else the repo-map column), and
+# for every repo carrying Rust crates, fail unless it still names build-fence.sh.
+# (gate-touched.sh no longer calls it, sp-aprxm, so naming only that is not enough; under
+# gate_mode=unit the gate drops the step and its build phase is the check.)
 # --------------------------------------------------------------------------------------
 doctor_check_gate_compile_check() {
     . "$SPIRA_HOME/lib.sh"
@@ -134,15 +135,18 @@ doctor_check_gate_compile_check() {
         [ -n "$path" ] && [ -d "$path" ] || continue
         find "$path" -maxdepth 2 -name Cargo.toml 2>/dev/null | grep -q . || continue
         checked=$((checked + 1))
-        gate="$(repo_gate "$name" 2>/dev/null)"
+        # The gate the landing ref defines: its checked-in gate.steps, or the row's column
+        # for a repository that never adopted one (sp-quu2w) — resolved by the gate itself.
+        gate="$("${SPIRA_GATE_BIN:-gate-binary-unset}" --home "$SPIRA_HOME" --definition "$name" 2>&1)" \
+            || gate="<unresolved: ${gate:-no output}>"
         case "$gate" in
             *build-fence.sh*)
                 OK "$name: gate command reaches a compile check" ;;
             *)
                 FAIL "$name: gate command has no reachable compile check" \
                      "gate: ${gate:-<empty>}
-        A Rust compile break in $path certifies green. Add a call to spira/build-fence.sh
-        to this row's gate command." ;;
+        A Rust compile break in $path certifies green. Add \`step bash spira/build-fence.sh\`
+        to the repository's gate.steps (or a call to it to the row's gate column)." ;;
         esac
     done <<< "$(repo_names 2>/dev/null)"
     [ "$checked" -gt 0 ] || \
