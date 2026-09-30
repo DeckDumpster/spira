@@ -198,6 +198,14 @@ missing" refusal — a missing tool fails its spawn, naming itself. The briefs n
 same way (`{{TESTENV}}` is `testenv`, `{{SOP}}` is `sop.sh`, …). Only the Claude Code hooks
 (`spira/hooks/…`, not on PATH) are still addressed under `SPIRA_HOME`.
 
+**The aeon is a launcher (sp-31gtu).** Before anything else it sets its own PATH outright
+to `spira_config::release_path($SPIRA_RELEASE)` — `$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:`
+then the system directories — so conf.sh (through the seam) appends only the box's tail and
+the session, its subagents and every tool resolve to the release's copies. `SPIRA_RELEASE`
+unset is fatal, naming it. The worktree's git hooks are armed by `worktree-hooks.sh` with
+`SPIRA_HOME=$SPIRA_RELEASE/spira`, so its pre-commit runs the release's hook, which runs
+`spira-lint` by name: a fresh worktree commits with no build of its own.
+
 ### 2.8 Callers (every one found)
 
 | caller | line | how |

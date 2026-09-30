@@ -122,7 +122,9 @@ is installed.
 the watcher name; a `spira-*.timer`'s `Unit=spira-<x>.service` gains the instance suffix;
 the output is compared and written with exactly one trailing newline (what `install.sh` and
 `unit-ensure.sh` write). Release keys come from the release: `SPIRA_HOME` and `SPIRA_PROD`
-are `<rel>/spira`, `SPIRA_PROD_ROOT` and `SPIRA_REPO` are `<rel>`, `SPIRA_PROD_COCK` is
+are `<rel>/spira`, `SPIRA_PROD_ROOT`, `SPIRA_REPO` and `SPIRA_RELEASE` are `<rel>` (every
+service template sets `Environment=SPIRA_RELEASE=` and `Environment=PATH=` from it,
+sp-31gtu), `SPIRA_PROD_COCK` is
 `<rel>/cockpit`, and each `SPIRA_<X>_BIN` is `<rel>/bin/<its binary>`. Host keys
 (`SPIRA_RUN`, `SPIRA_DB`, `SPIRA_INSTANCE`, `SPIRA_COCKPIT`, `SPIRA_DOLT_DATA`,
 `SPIRA_TESTDB_DATA`, `SPIRA_TESTDB_PORT`, `SPIRA_SNAP_STALE_S`, `DOLT`) come from the

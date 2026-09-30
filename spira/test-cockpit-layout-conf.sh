@@ -36,7 +36,7 @@ FAKE_DEV_REPO="$TMP/devrepo"; mkdir -p "$FAKE_DEV_REPO"
 health_cmd() {
     env -i HOME="$TMP" PATH="/usr/bin:/bin" \
         SPIRA_REPO="$TMP" SPIRA_COCKPIT="$FAKE_COCK" \
-        SPIRA_RUN="$TMP/run" SPIRA_INSTANCE=fixture \
+        SPIRA_RUN="$TMP/run" SPIRA_INSTANCE=fixture SPIRA_RELEASE="$TMP/rel" \
         COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \
         COCKPIT_MAIL="" TMUX_BIN=/bin/false \
         "$@" \
@@ -56,6 +56,15 @@ echo "no SPIRA_CONF: no prefix at all:"
 out2="$(health_cmd env SPIRA_PROD="$TMP/noprod")"
 nowant "no SPIRA_CONF prefix when unset" "SPIRA_CONF=" "$out2"
 want "still runs this checkout's health.sh" "$FAKE_COCK/health.sh loop" "$out2"
+
+echo
+echo "the cockpit is a launcher: the pane sets SPIRA_RELEASE and PATH outright (sp-31gtu):"
+want "carries SPIRA_RELEASE" "SPIRA_RELEASE='$TMP/rel'" "$out2"
+want "carries the release PATH, set outright" \
+    "PATH='$TMP/rel/bin:$TMP/rel/spira:/usr/local/bin:/usr/bin:/bin'" "$out2"
+out_unset="$(health_cmd env -u SPIRA_RELEASE SPIRA_PROD="$TMP/noprod" 2>&1)"
+want "SPIRA_RELEASE unset is refused, naming it" "SPIRA_RELEASE is not set" "$out_unset"
+nowant "and no pane command is built" "health.sh loop" "$out_unset"
 
 echo
 echo "split-checkout mode: SPIRA_PROD outside SPIRA_REPO selects the prod renderer:"
