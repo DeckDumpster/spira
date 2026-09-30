@@ -29,7 +29,11 @@ impl Procs for FakeProcs {
 }
 
 fn h(pid: u32, start: u64, who: &str) -> Holder {
-    Holder { pid, start, who: who.into() }
+    Holder { pid, start, who: who.into(), weight: 1 }
+}
+
+fn hw(pid: u32, start: u64, who: &str, weight: u64) -> Holder {
+    Holder { pid, start, who: who.into(), weight }
 }
 
 fn run_dir() -> testkit::TempDir {
@@ -76,9 +80,11 @@ fn pools_have_their_own_directories_and_keys() {
 
 #[test]
 fn a_lease_round_trips_and_a_blank_who_is_a_dash() {
-    let l = Lease { slot: 2, pid: 10, start: 99, who: "sp-abc".into(), since: 5, waited: 3, last: 7 };
+    let l = Lease { slot: 2, pid: 10, start: 99, who: "sp-abc".into(), since: 5, waited: 3, last: 7, weight: 4 };
     assert_eq!(Lease::parse(2, &l.render()), Some(l));
-    let blank = Lease { slot: 1, pid: 10, start: 99, who: "a b".into(), since: 5, waited: 0, last: 5 };
+    let blank = Lease { slot: 1, pid: 10, start: 99, who: "a b".into(), since: 5, waited: 0, last: 5, weight: 1 };
+    // A lease written before weights existed reads as weight 1.
+    assert_eq!(Lease::parse(1, "pid=10 start=99 who=x since=5 waited=0 last=5").unwrap().weight, 1);
     assert!(blank.render().contains("who=a_b "));
     assert_eq!(Lease::parse(1, "garbage"), None);
     assert_eq!(Lease::parse(1, ""), None);
@@ -168,13 +174,17 @@ fn lowering_the_size_never_evicts_a_holder() {
     let p = FakeProcs::with(&[(10, 1, 1), (20, 2, 1), (30, 3, 1)]);
     try_take(&d, Pool::Test, 2, &h(10, 1, "a"), 0, 100, &p).unwrap();
     try_take(&d, Pool::Test, 2, &h(20, 2, "b"), 0, 100, &p).unwrap();
-    // Size lowered to 1: slot 2's holder keeps it; a newcomer waits for slot 1.
+    // Size lowered to 1: both holders keep their slots; a newcomer waits.
     let (t, _) = try_take(&d, Pool::Test, 1, &h(20, 2, "b"), 0, 101, &p).unwrap();
     assert_eq!(t, Take::Admitted { slot: 2, fresh: false });
     let (t, _) = try_take(&d, Pool::Test, 1, &h(30, 3, "c"), 0, 101, &p).unwrap();
     assert!(matches!(t, Take::Busy { .. }));
+    // The pool drains to its new size before anyone is admitted: b's one unit fills it.
     p.kill(10);
     let (t, _) = try_take(&d, Pool::Test, 1, &h(30, 3, "c"), 0, 102, &p).unwrap();
+    assert!(matches!(t, Take::Busy { .. }), "{t:?}");
+    p.kill(20);
+    let (t, _) = try_take(&d, Pool::Test, 1, &h(30, 3, "c"), 0, 103, &p).unwrap();
     assert_eq!(t, Take::Admitted { slot: 1, fresh: true });
 }
 
@@ -190,7 +200,7 @@ fn acquire_waits_visibly_then_admits_and_the_guard_releases() {
         *sleeps.borrow_mut() += 1;
         p.kill(10);
     };
-    let q = Request { run: &d, pool: Pool::Test, holder_pid: 20, who: "sp-new", inherit: None };
+    let q = Request { run: &d, pool: Pool::Test, holder_pid: 20, who: "sp-new", inherit: None, weight: 1 };
     let g = acquire(&q, &Seams { size_of: &|| 1, procs: &p, sleep: &sleep }, &mut |l: &str| said.push(l.to_string()));
     assert!(g.held());
     assert_eq!((g.slot(), g.token.as_str()), (1, "test:1"));
@@ -211,12 +221,12 @@ fn acquire_under_an_admitted_job_takes_nothing_and_never_waits() {
     try_take(&d, Pool::Test, 1, &h(10, 1, "sp-held"), 0, 100, &p).unwrap();
     let never = |_: Duration| panic!("an inherited job must not wait");
     let seams = Seams { size_of: &|| 1, procs: &p, sleep: &never };
-    let g = acquire(&Request { run: &d, pool: Pool::Test, holder_pid: 20, who: "x", inherit: Some("gate:2") }, &seams, &mut |_| {});
+    let g = acquire(&Request { run: &d, pool: Pool::Test, holder_pid: 20, who: "x", inherit: Some("gate:2"), weight: 1 }, &seams, &mut |_| {});
     assert!(!g.held());
     assert_eq!(g.token, "gate:2");
     // An empty value is not an inheritance.
     p.kill(10);
-    let g = acquire(&Request { run: &d, pool: Pool::Test, holder_pid: 20, who: "x", inherit: Some(" ") }, &seams, &mut |_| {});
+    let g = acquire(&Request { run: &d, pool: Pool::Test, holder_pid: 20, who: "x", inherit: Some(" "), weight: 1 }, &seams, &mut |_| {});
     assert!(g.held());
 }
 
@@ -225,7 +235,7 @@ fn an_unreadable_holder_runs_unadmitted_rather_than_failing() {
     let d = run_dir();
     let p = FakeProcs::default();
     let mut said = Vec::new();
-    let q = Request { run: &d, pool: Pool::Compile, holder_pid: 77, who: "x", inherit: None };
+    let q = Request { run: &d, pool: Pool::Compile, holder_pid: 77, who: "x", inherit: None, weight: 1 };
     let g = acquire(&q, &Seams { size_of: &|| 1, procs: &p, sleep: &|_| {} }, &mut |l: &str| said.push(l.to_string()));
     assert!(!g.held());
     assert!(said[0].contains("running without a compile slot"), "{said:?}");
@@ -273,4 +283,71 @@ fn only_a_crate_compile_is_a_build() {
     assert!(is_compile(&v(&["--crate-name", "gate", "--edition=2021", "gate/src/main.rs"])));
     assert!(!is_compile(&v(&["-vV"])));
     assert!(!is_compile(&v(&["-", "--crate-name___", "--print=file-names"])));
+}
+
+#[test]
+fn a_release_build_weighs_the_whole_pool_and_runs_alone() {
+    let d = run_dir();
+    let p = FakeProcs::with(&[(10, 1, 1), (20, 2, 1), (30, 3, 1)]);
+    // Size 3 units: two debug builds leave one unit — not enough for a release build (4).
+    try_take(&d, Pool::Compile, 3, &h(10, 1, "dbg-a"), 0, 100, &p).unwrap();
+    let (t, _) = try_take(&d, Pool::Compile, 3, &hw(20, 2, "rel", WEIGHT_RELEASE), 0, 101, &p).unwrap();
+    let Take::Busy { holders } = t else { panic!("{t:?}") };
+    assert_eq!(wait_line(Pool::Compile, 3, &holders, 110), "waiting for a compile slot: 1 of 3 held by dbg-a (pid 10, 10s)");
+    // FIFO: a later debug build that would fit does not jump the queued release build.
+    let (t, _) = try_take(&d, Pool::Compile, 3, &h(30, 3, "dbg-late"), 0, 102, &p).unwrap();
+    assert!(matches!(t, Take::Busy { .. }), "first come, first served: {t:?}");
+    // The debug build ends: the pool is empty, so the heavier-than-the-pool build runs alone.
+    p.kill(10);
+    let (t, _) = try_take(&d, Pool::Compile, 3, &hw(20, 2, "rel", WEIGHT_RELEASE), 0, 120, &p).unwrap();
+    assert_eq!(t, Take::Admitted { slot: 1, fresh: true });
+    let (t, _) = try_take(&d, Pool::Compile, 3, &h(30, 3, "dbg-late"), 0, 121, &p).unwrap();
+    let Take::Busy { holders } = t else { panic!("{t:?}") };
+    assert_eq!(wait_line(Pool::Compile, 3, &holders, 130), "waiting for a compile slot: 4 of 3 held by rel ×4 (pid 20, 10s)");
+}
+
+#[test]
+fn the_queue_position_is_the_first_wait_not_the_latest_scan() {
+    let d = run_dir();
+    let p = FakeProcs::with(&[(10, 1, 1), (20, 2, 1), (30, 3, 1)]);
+    try_take(&d, Pool::Test, 1, &h(10, 1, "held"), 0, 100, &p).unwrap();
+    try_take(&d, Pool::Test, 1, &h(20, 2, "first"), 0, 101, &p).unwrap();
+    try_take(&d, Pool::Test, 1, &h(30, 3, "second"), 0, 102, &p).unwrap();
+    // "first" scans again later; it keeps its place.
+    try_take(&d, Pool::Test, 1, &h(20, 2, "first"), 0, 150, &p).unwrap();
+    p.kill(10);
+    let (t, _) = try_take(&d, Pool::Test, 1, &h(30, 3, "second"), 0, 160, &p).unwrap();
+    assert!(matches!(t, Take::Busy { .. }), "second may not jump first: {t:?}");
+    let (t, _) = try_take(&d, Pool::Test, 1, &h(20, 2, "first"), 0, 161, &p).unwrap();
+    assert_eq!(t, Take::Admitted { slot: 1, fresh: true });
+    // Then "second" is at the head of the queue.
+    let (t, _) = try_take(&d, Pool::Test, 2, &h(30, 3, "second"), 0, 162, &p).unwrap();
+    assert_eq!(t, Take::Admitted { slot: 2, fresh: true });
+}
+
+#[test]
+fn a_dead_waiter_loses_its_place() {
+    let d = run_dir();
+    let p = FakeProcs::with(&[(10, 1, 1), (20, 2, 1), (30, 3, 1)]);
+    try_take(&d, Pool::Test, 1, &h(10, 1, "held"), 0, 100, &p).unwrap();
+    try_take(&d, Pool::Test, 1, &h(20, 2, "dies"), 0, 101, &p).unwrap();
+    try_take(&d, Pool::Test, 1, &h(30, 3, "lives"), 0, 102, &p).unwrap();
+    p.kill(10);
+    p.kill(20);
+    let (t, _) = try_take(&d, Pool::Test, 1, &h(30, 3, "lives"), 0, 103, &p).unwrap();
+    assert_eq!(t, Take::Admitted { slot: 1, fresh: true });
+    assert!(!d.join("test-admission/wait.20").exists());
+}
+
+#[test]
+fn release_like_rustc_invocations_weigh_more() {
+    let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(build_weight(&v(&["--crate-name", "x", "-C", "opt-level=z", "-C", "codegen-units=1"])), WEIGHT_RELEASE);
+    assert_eq!(build_weight(&v(&["--crate-name", "x", "-Copt-level=3"])), WEIGHT_RELEASE);
+    assert_eq!(build_weight(&v(&["--crate-name", "x", "-C", "lto"])), WEIGHT_RELEASE);
+    assert_eq!(build_weight(&v(&["--crate-name", "x", "-C", "opt-level=0", "-C", "debuginfo=1"])), 1);
+    assert_eq!(build_weight(&v(&["--crate-name", "x", "-C", "lto=off"])), 1);
+    assert_eq!(build_weight(&v(&["--crate-name", "x"])), 1);
+    assert_eq!(profile_weight("release"), WEIGHT_RELEASE);
+    assert_eq!(profile_weight("aeon"), 1);
 }

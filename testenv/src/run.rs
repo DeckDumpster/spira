@@ -604,7 +604,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     // HOST-WIDE ADMISSION (sp-f4ig1): the build takes a compile slot, the container through
     // teardown a test slot — one at a time, never both. Under a gate (SPIRA_ADMISSION) the
     // gate's slot covers both. Waiting never fails; it is said on stderr.
-    let admit = |pool: admission::Pool| -> admission::Guard {
+    let admit = |pool: admission::Pool, weight: u64| -> admission::Guard {
         let inherit = (deps.env)(admission::INHERIT_ENV);
         let who = [admission::WHO_ENV, "SPIRA_WORK_BEAD_ID", "BEAD_ID"]
             .iter()
@@ -619,6 +619,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             holder_pid: std::process::id(),
             who: &who,
             inherit: inherit.as_deref(),
+            weight,
         };
         let seams = admission::Seams {
             size_of: &size_of,
@@ -1038,7 +1039,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             artifacts.display()
         ));
     } else {
-        let lease = admit(admission::Pool::Compile);
+        let lease = admit(admission::Pool::Compile, admission::profile_weight(&args.profile));
         shift(lease.waited);
         if lease.waited > 0 {
             ph.mark("admit-compile");
@@ -1056,7 +1057,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         return Finish::fault(2, "interrupted", 0);
     }
     ph.mark("build");
-    let _test_lease = admit(admission::Pool::Test);
+    let _test_lease = admit(admission::Pool::Test, 1);
     shift(_test_lease.waited);
     if _test_lease.waited > 0 {
         ph.mark("admit-test");

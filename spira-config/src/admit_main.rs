@@ -3,7 +3,7 @@
 //! ```text
 //! spira-admit <rustc> <args…>                              RUSTC_WRAPPER mode (§3.3)
 //! spira-admit status [--json]                              every pool: size, held, waiting, holders
-//! spira-admit run --pool compile|test [--who W] -- <cmd…>  hold a lease around a command
+//! spira-admit run --pool compile|test [--who W] [--weight N] -- <cmd…>  hold a lease around a command
 //! ```
 
 use spira_config::admission::{self, Pool, RealProcs};
@@ -44,7 +44,7 @@ fn say(line: &str) {
 fn usage() -> ExitCode {
     eprintln!("usage: spira-admit <rustc> <args…>   (as RUSTC_WRAPPER)");
     eprintln!("       spira-admit status [--json]");
-    eprintln!("       spira-admit run --pool compile|test [--who W] -- <cmd…>");
+    eprintln!("       spira-admit run --pool compile|test [--who W] [--weight N] -- <cmd…>");
     ExitCode::from(2)
 }
 
@@ -66,7 +66,7 @@ fn wrapper(args: Vec<OsString>) -> ExitCode {
     if inherited.is_none() && admission::is_compile(&rest) {
         if let Some(run) = run_dir() {
             let who = who();
-            let q = admission::Request { run: &run, pool: Pool::Compile, holder_pid: std::os::unix::process::parent_id(), who: &who, inherit: None };
+            let q = admission::Request { run: &run, pool: Pool::Compile, holder_pid: std::os::unix::process::parent_id(), who: &who, inherit: None, weight: admission::build_weight(&rest) };
             let g = admission::acquire_real(&q, &mut |l: &str| say(l));
             // The lease is the cargo's, not ours: it ends when the cargo does.
             std::mem::forget(g);
@@ -145,11 +145,16 @@ fn status(args: &[OsString]) -> ExitCode {
 fn run(args: &[OsString]) -> ExitCode {
     let mut pool = None;
     let mut who_arg = None;
+    let mut weight: u64 = 1;
     let mut i = 0;
     while i < args.len() {
         match args[i].to_str() {
             Some("--pool") => {
                 pool = args.get(i + 1).and_then(|a| a.to_str()).and_then(Pool::parse);
+                i += 2;
+            }
+            Some("--weight") => {
+                weight = args.get(i + 1).and_then(|a| a.to_str()).and_then(|w| w.parse().ok()).unwrap_or(1);
                 i += 2;
             }
             Some("--who") => {
@@ -173,7 +178,7 @@ fn run(args: &[OsString]) -> ExitCode {
     };
     let who = who_arg.unwrap_or_else(who);
     let inherit = var(admission::INHERIT_ENV);
-    let q = admission::Request { run: &run, pool, holder_pid: std::process::id(), who: &who, inherit: inherit.as_deref() };
+    let q = admission::Request { run: &run, pool, holder_pid: std::process::id(), who: &who, inherit: inherit.as_deref(), weight };
     let g = admission::acquire_real(&q, &mut |l: &str| say(l));
     let status = Command::new(prog).args(&cmd[1..]).env(admission::INHERIT_ENV, &g.token).status();
     drop(g);

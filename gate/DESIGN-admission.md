@@ -59,8 +59,9 @@ What the operator ordered (Ryan, 2026-09-30):
   a slot while it holds another, so the pools cannot deadlock (there is no hold-and-wait).
 * **Inherited admission.** A process whose environment carries `SPIRA_ADMISSION=<pool>:<slot>`
   runs inside a job that is already admitted. It takes no slot of its own. The gate sets this on
-  every command it runs, so its testenv and cargo run on the gate's slot. testenv sets it on its
-  build, which is paid for by testenv's compile slot. Inheritance also follows the process tree
+  every command it runs, so its testenv and cargo run on the gate's slot. testenv's own build
+  uses the plain build wrapper (no `spira-admit`), so it runs on the compile slot testenv took
+  in-process. Inheritance also follows the process tree
   for compile leases: a cargo whose ancestor already holds a compile lease (for example a nested
   `cargo` run from a test) takes none.
 * **Waiting never fails.** A compile or test waiter waits for as long as it takes. It prints, to
@@ -69,31 +70,40 @@ What the operator ordered (Ryan, 2026-09-30):
   and, once it is admitted, `admitted to test slot 1 after 37s`. Under `--deadline`, testenv
   moves its deadline later by the time it spent waiting. The budget meters work, not queueing.
   The gate's bounded wait is unchanged (§6 D4). It now prints the same kind of waiting line.
+* **Sizes are in units, and the queue is first come, first served.** Every job has a weight.
+  It is 1, or `WEIGHT_RELEASE` = 4 for a release (LTO) build (§5). A waiter is admitted when
+  two things hold: no older live waiter is queued ahead of it, and its weight fits in what the
+  live leases leave of the size. A waiter is also admitted when the pool is empty, so a job
+  heavier than the whole pool runs alone instead of never running. A waiter's queue position is
+  its first `since`, which is written once.
 * **Sizes are re-read on every pass of a wait**, so a size an operator raises takes effect at
-  once. Lowering a size never evicts a holder: slots above the new size drain as their holders
+  once. Lowering a size never evicts a holder: the pool drains to its new size as holders
   finish.
 
 ### 3.2 Leases (compile and test)
 
 A lease is a file `slot.<n>` in the pool's directory. Its content is one line:
-`pid=<p> start=<starttime> who=<label> since=<epoch> waited=<secs> last=<epoch>`. Every
+`pid=<p> start=<starttime> who=<label> since=<epoch> waited=<secs> last=<epoch> weight=<units>`
+(a line without `weight=` reads as 1). Every
 read-modify-write of the directory happens under an exclusive `flock` on `<dir>/lock`, which is
 held only for the scan, never across a wait or a job.
 
 * **Live** means `/proc/<pid>/stat` exists and its field 22 (starttime) equals `start`. A
   dead or recycled pid frees the slot. The next scan **reclaims** it and writes the lease's
   telemetry row with `end=reclaimed`. Nothing depends on a holder exiting cleanly.
-* **Take**: under the lock, scan `slot.1..=size`. If a live lease already names this holder,
+* **Take**: under the lock, reap the dead first. If a live lease already names this holder,
   it is ours (`last` is refreshed). This is what lets the hundreds of `rustc` invocations of
-  one cargo share a single slot. Otherwise, if a live lease names an ancestor of the holder,
-  admission is inherited. Otherwise, the first free or dead slot is written. Otherwise the pool
-  is busy, and the scan returns the live holders for the waiting line.
+  one cargo share a single lease. Otherwise, if a live lease names an ancestor of the holder,
+  admission is inherited. Otherwise, if this holder is at the head of the queue and its weight
+  fits (§3.1), a lease is written at the lowest free slot number. Otherwise the pool is busy:
+  the waiter file is written (once), and the scan returns the live holders for the waiting
+  line.
 * **Release**: remove `slot.<n>` if it still names this holder, and write the telemetry row
   with `end=released`. testenv releases through a guard's `Drop`. A cargo lease is never
   released explicitly: it ends when the cargo process ends, and the next scan reclaims it.
   `spira-admit status` scans too. The row's `held_secs` is `last − since` (the last compile
   the lease saw), so the row stays honest when the reclaim happens late.
-* **Waiters** leave a `wait.<pid>` file (`start= who= since=`) while they wait. It is removed
+* **Waiters** leave a `wait.<pid>` file (`start= who= since= weight=`) while they wait. It is removed
   once they are admitted, and reclaimed if they die. `spira-admit status` counts these files.
 
 ### 3.3 The compile wrapper (`spira-admit` as `RUSTC_WRAPPER`)
@@ -110,7 +120,8 @@ compilation:
    metadata` makes too): exec at once. A probe is not a build, and `cargo metadata` must
    never queue behind builds.
 3. Otherwise, take a compile lease for the **parent process** (the cargo), waiting visibly if
-   the pool is busy. Then exec `SPIRA_ADMIT_INNER <rustc> <args…>`, or `<rustc> <args…>`
+   the pool is busy. The lease's weight is `WEIGHT_RELEASE` when the invocation is optimised
+   (`-C opt-level=` other than 0) or uses LTO, and 1 otherwise. Then exec `SPIRA_ADMIT_INNER <rustc> <args…>`, or `<rustc> <args…>`
    when the inner compiler is empty.
 
 The wrapper adds no `CARGO_*` variable, so sccache's keys are unchanged
@@ -136,7 +147,7 @@ logged: `aeon: summon jitter 13s`.
 ```
 spira-admit <rustc> <args…>                      # RUSTC_WRAPPER mode (§3.3)
 spira-admit status [--json]                      # pools: size, held, waiting, holders
-spira-admit run --pool compile|test [--who W] -- <cmd…>   # hold a lease around any command
+spira-admit run --pool compile|test [--who W] [--weight N] -- <cmd…>   # hold a lease
 ```
 
 `status` probes gate slots with a non-blocking flock. It names a gate holder from
@@ -153,7 +164,7 @@ exists for the replay harness (§5) and for a human who wants a job to join the 
   means 20. Each is exported to the shell by `export --sh` as `SPIRA_COMPILE_PAR`,
   `SPIRA_TEST_PAR` and `SPIRA_SUMMON_JITTER`, and each is registered in `conf.sh`'s key lists.
 * **Telemetry**: `$SPIRA_RUN/tsd/admission.jsonl`, family `admission`, one row per lease that
-  ends. The envelope is `ts`, `host` and `family`, followed by `pool`, `who`, `slot`, `size`,
+  ends. The envelope is `ts`, `host` and `family`, followed by `pool`, `who`, `slot`, `size`, `weight`,
   `waited_secs`, `held_secs` and `end` (`released` or `reclaimed`). From these rows come
   time-waiting and time-in-phase per aeon and per pool. Pool occupancy at any instant comes
   from `spira-admit status`. The gate's own wait was already in gate.log (`waited=`) and in
@@ -175,29 +186,35 @@ run) and from the PSI of the host.
 |---|---|---|---|---|---|---|
 | compile — agent `cargo build --profile aeon --workspace --all-targets`, deps from sccache, cold target | 38–43 s | 8.1–9.8 / 14 | 2.7 GiB (rustc peak 8) | 0 | 0 | 0.8–1.2 GiB (3.0 GiB target on disk) |
 | compile — agent `cargo test --profile aeon --workspace` after that build | 71 s | 1.0 / 5 | 0.6 GiB | 6 MiB | 0 | host-noisy |
-| compile — testenv in-place `cargo build --profile release --workspace` (LTO, cgu=1) | 127 s | MEASURE_REL_AVG / MEASURE_REL_PEAK | MEASURE_REL_ANON | 0 | 0 | MEASURE_REL_W |
-| test — testenv `up`→teardown, 8 suites at `batch_maxpar` 8 | MEASURE_T_WALL | MEASURE_T_AVG / MEASURE_T_PEAK | 0.55 GiB container (testenv: "cgroup peak 546MiB, ~68MiB/slot") | MEASURE_T_SHM | one private sql-server per running suite (≤ 8) | host-noisy |
+| compile — testenv in-place `cargo build --profile release --workspace` (LTO, cgu=1), cold target | 127–145 s | 7.1 / 33 | **15.3 GiB** (22 rustc alive; above 8 GiB for about 60 s) | 0 | 0 | ≈ 1.1 GiB (host) |
+| test — testenv `up`→teardown, 8 suites at `batch_maxpar` 8 | 78 s (up 3, install 11, testdb 4, suites 55, teardown 5) | 1.2 / 8 | 0.44–0.55 GiB container (testenv: "cgroup peak 536MiB, ~67MiB/slot") | 35 MiB in place; a scratch slot's release target ≈ 3.2 GiB | 7 private sql-servers at peak | 6.3 MiB/s host-wide during the suites; host io full avg10 ≤ 3.8% |
 | gate — a certification trial (gate.log, 2026-09-30, 30 trials) | 200–800 s (median ~400) | its own composition | a gate tree's target on tmpfs ≈ 0.7 GiB, plus a warm testenv slot ≈ 3.2 GiB | ≈ 3.9 GiB | ≤ 8 | — |
 
-**What binds each phase.** Compile is bound by cores and RAM. One build peaks near half the
-box's cores and carries 2.7 GiB of anon, and the release (LTO) build is heavier on both. Test
-is bound by dolt fixtures, fsync IO and tmpfs, not by cores: eight private sql-servers per
-trial, and a trial's RAM is small. Gate is bound by tmpfs and wall time. A gate holds about
-3.9 GiB of `/tmp` for as long as 800 s.
+**What binds each phase.** Compile is bound by RAM first and cores second. An aeon-profile
+build carries 2.7 GiB of anon and uses about 9 cores. A release (LTO) build carries **15.3
+GiB**, with 22 `rustc` alive for a minute. The jam's "~20 rustc" and its memory full-stall
+were testenv release builds that happened to coincide. Test is not bound by cores, RAM or IO
+on its own: one trial measured 1.2 cores, 0.5 GiB and io full ≤ 3.8%. What a trial holds is
+dolt fixtures (up to 8) and, when it does not run in place, a 3.2 GiB tmpfs scratch slot.
+Gate is bound by tmpfs and wall time. A gate holds about 3.9 GiB of `/tmp` for as long as
+800 s.
 
 **The sizes.** Each derived size is at least 1, re-read on every pass of a wait, and
 overridable by its key:
 
-* `compile_par = min(cores ÷ 10, MemAvailable ÷ 4 GiB)`. **3** on this box. Three builds
-  average about 27 of 32 cores together, and their peaks (3 × 14) oversubscribe the CPU only
-  for seconds, which costs time-slicing but no stalls. Their anon RAM (3 × 2.7 GiB, or about
-  3 × 4 GiB with a release build in one of them) is under a quarter of MemAvailable. At 14
-  agents unshaped, ~20 `rustc` processes were alive. At 3 slots the ceiling is the width of
-  3 cargo jobs.
+* `compile_par = min(cores ÷ 10, MemAvailable ÷ 4 GiB)` units. **3** on this box. A unit is
+  one aeon-profile build, about 9 cores and at most 4 GiB. A release build weighs
+  ⌈15.3 ÷ 4⌉ = **4** units (`WEIGHT_RELEASE`). That is more than this box's whole pool, so a
+  release build runs alone. Three debug builds average about 27 of 32 cores and carry about
+  8 GiB of anon. Their peaks (3 × 14 cores) oversubscribe the CPU only for seconds, which costs
+  time-slicing but no stalls. One release build is 15.3 GiB. Either load is under half of
+  MemAvailable. Unshaped, 14 agents could run three release builds at once, about 46 GiB, and
+  that is the stall the operator saw.
 * `test_par = min(cores ÷ 8, MemAvailable ÷ 8 GiB)`. **4** on this box. That is 32 private
-  sql-servers at most: the jam saw 34 alongside 20 `rustc`, and the compile pool now removes
-  the `rustc` half. The 8 GiB of memory per slot covers the container, eight dolt servers and
-  a scratch slot's release target on tmpfs.
+  sql-servers at most: the jam saw 34 alongside the release builds, and the compile pool now
+  keeps the two apart. The 8 GiB per slot covers a scratch slot's 3.2 GiB tmpfs target, the
+  0.55 GiB container, and margin. Four trials' scratch (4 × 3.2 GiB) plus three gates' ≈ 12
+  GiB stays under the 31 GiB `/tmp`.
 * `certify_par`: unchanged. It is derived as `min(cores ÷ 4, MemAvailable ÷ 400 MiB)` and set
   to 3 in production. A gate trial carries about 3.9 GiB of tmpfs, so 3 gates hold about
   12 GiB of the 31 GiB `/tmp`.
@@ -207,12 +224,13 @@ phase's pool size**, and nothing else. A job never runs narrower: no CPU quota, 
 `jobs` cap, no `--test-threads` cap, no smaller `batch_maxpar`, no nice or ionice.
 law-reduce-the-count-never-throttle-the-job.
 
-**Why the pools do not stack their peaks.** A worst-case instant has 3 compiles, 4 test trials
-and 3 gates running. That is about 27 + 4 × ~3 + 3 × ~9 average cores, roughly 2× the cores:
-CPU time-slicing, which delays jobs without stalling them. The anon RAM is about 12 + 4 × 1 +
-3 × 3 GiB, about 25 GiB, which is under the 36 GiB MemAvailable. The tmpfs is about 12 GiB of
-gates plus test scratch. Unshaped, the same 14 agents could put 14 builds (about 38 GiB of
-anon) on the box at once, and that is the stall the operator saw.
+**Why the pools do not stack their peaks.** Take a worst-case instant: the compile pool full
+(one release build at 15.3 GiB, or three debug builds), 4 test trials and 3 gates. The anon
+RAM is about 15 + 4 × 0.6 + 3 × 3, roughly 27 GiB, which is under the 36 GiB MemAvailable.
+The tmpfs is about 12 GiB of gates plus at most 13 GiB of test scratch. The average cores are
+about 27 + 4 × 1.2 + 3 × ~9, roughly 2× the box. That is CPU time-slicing, which delays jobs
+but never stalls them. Unshaped, 14 agents could put 14 builds on the box at once, three of
+them release builds.
 
 ## 6. Decisions
 
@@ -251,6 +269,11 @@ anon) on the box at once, and that is the stall the operator saw.
   landing path behind agent builds for no measured gain.
 * **D8: jitter at the aeon, not in lib.sh.** The summon loop is still bash
   (`ck7_summon_pass`), and new logic is Rust. The aeon is the first Rust code a summon reaches.
+* **D10: weights, not a second compile pool.** A release build measured 5.7× a debug build's
+  anon RAM. Counted as one slot, three release builds (46 GiB) would pass through a pool sized
+  for debug builds. A separate release pool would split one resource, the box's RAM and cores
+  for compiling, in two. A weight in units keeps one pool and one queue. FIFO keeps a heavy job
+  from being starved by light jobs that would fit around it.
 * **D9: dropped behaviour.** testenv's existing container-count queue
   (`SPIRA_TESTENV_MAX_CONCURRENT`, which gives up after `SPIRA_TESTENV_QUEUE_TIMEOUT`) stays
   as a backstop, and the test pool normally keeps it from ever engaging. Nothing else is
