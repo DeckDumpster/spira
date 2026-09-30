@@ -86,13 +86,18 @@ fn main() -> ExitCode {
             None
         }
     });
-    // The container helper, by name on the launcher's PATH (sp-gypjk) — never joined under
-    // the harness directory. Missing is a harness fault naming it.
-    let Some(testenv_sh) = testenv::util::which_in(&std::env::var("PATH").unwrap_or_default(), "testenv.sh") else {
-        eprintln!("batch: testenv.sh is not on PATH (the launcher puts the release's spira/ there)");
+    // The container helper is the one in this binary's own harness copy (sp-isom7): the
+    // directory Harness::locate found by that very file. In a release that is the release's
+    // spira/testenv.sh — what a PATH lookup would find — and when a gate builds testenv from
+    // the tree under test (gate.steps `bin SPIRA_TESTENV_BIN testenv`) it is that tree's, so
+    // the runner and the container it drives always come from the same tree. Missing is a
+    // harness fault naming it.
+    let testenv_sh = harness.script("testenv.sh");
+    if !testenv_sh.is_file() {
+        eprintln!("batch: {} is missing (the harness copy this testenv belongs to)", testenv_sh.display());
         println!("VERDICT FAULT rc=2 ran=0 reason=harness-missing");
         return ExitCode::from(2);
-    };
+    }
     let rt = Podman { testenv_sh };
     let stdin = || {
         let mut s = String::new();

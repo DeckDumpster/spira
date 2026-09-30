@@ -177,7 +177,7 @@ testenv owns orchestration; these stay separate components with their own contra
 | `git` | rev-parse tree/commit, worktree list/add/checkout, status, `show <rev>:spira/suite-state`, `show <rev>:spira/skip-allowlist.tsv` (§3.7), landref rungs |
 | `cargo` | `cargo build --profile <p> --workspace` in the worktree — **not** run at all under `--artifacts` |
 | `suite-select` (crate, linked) | diff-derived selection (the ONE selector, sp-wx2tw) |
-| `spira/testenv.sh` | `tag` (image build-closure hash), `up --name --checkout` (image acquisition, boot, linger, cargo-volume ownership), `probe`, `down --name --volumes` |
+| `spira/testenv.sh` (the harness copy's own — `<harness>/spira/testenv.sh`, the file `Harness::locate` found; a gate-built testenv therefore drives the tree under test's own, sp-isom7) | `tag` (image build-closure hash), `up --name --checkout` (image acquisition, boot, linger, cargo-volume ownership), `probe`, `down --name --volumes` |
 | `podman` | `exec`, `container inspect`, `container exists`, `ps -a`, `stop`, `rm`, `volume rm` |
 | `spira/gate-diag.sh`, `spira/gate-timing.sh` | red diagnostics table / batch-timing ledger row |
 | `spira/mail.sh`, `spira/incident.sh` | a refused repeat of a cached red: one Concierge note per key (payload on stdin), one incident (payload on stdin) |
