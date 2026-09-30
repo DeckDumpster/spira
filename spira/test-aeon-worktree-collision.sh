@@ -72,8 +72,8 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' \
     > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || { echo "test-aeon-worktree-collision: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model" >&2; exit 1; }
+command -v aeon >/dev/null 2>&1 \
+    || { echo "test-aeon-worktree-collision: aeon is not on PATH — refusing to run the real model" >&2; exit 1; }
 
 # The shim: commit trivial work and close whichever bead the prompt names, so a session that
 # reaches the model at all ends cleanly.
@@ -94,7 +94,7 @@ seed() {
     printf '{"id":"%s","title":"t","status":"%s","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "${2:-open}" "$_lbl" | testdb_seed
 }
-run_aeon() { "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
+run_aeon() { aeon --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
 
 # ======================================================================================
 echo

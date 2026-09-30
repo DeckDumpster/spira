@@ -160,8 +160,8 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || { echo "test-aeon-resume: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model" >&2; exit 1; }
+command -v aeon >/dev/null 2>&1 \
+    || { echo "test-aeon-resume: aeon is not on PATH — refusing to run the real model" >&2; exit 1; }
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
@@ -179,7 +179,7 @@ seed() {
     printf '{"id":"%s","title":"t","status":"%s","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "${2:-open}" "$_lbl" | testdb_seed
 }
-run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
+run_aeon() { rm -rf "$SPIRA_RUN/worktree"; aeon --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
 
 testdb_reset; seed sp-ar-slain
 git -C "$REPO" fetch -q origin main 2>/dev/null

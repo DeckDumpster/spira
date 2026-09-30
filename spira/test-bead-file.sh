@@ -85,7 +85,7 @@ run_bead() {
         SPIRA_PLAN_LABEL="plan" \
         SPIRA_SCOPE_LABEL="testscope" \
         SPIRA_BEAD_LANE_OVERRIDE="${SPIRA_BEAD_LANE_OVERRIDE:-}" \
-        bash "$HERE/bead.sh" file "$@" 2>&1
+        bead.sh file "$@" 2>&1
 }
 
 # =====================================================================================

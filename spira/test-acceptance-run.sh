@@ -19,8 +19,8 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
-SCRIPT="$HERE/acceptance-run.sh"
-AGENT="$HERE/acceptance-agent.sh"
+SCRIPT=acceptance-run.sh   # the SUT, by name on the suite's PATH (sp-gypjk)
+AGENT=acceptance-agent.sh   # the SUT, by name on the suite's PATH (sp-gypjk)
 echo "test-acceptance-run.sh"
 
 echo

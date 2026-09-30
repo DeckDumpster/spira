@@ -82,7 +82,7 @@ make_and_push spira/queue/20260101T000000Z
 land_via_merge spira/queue/20260101T000000Z
 
 # ---- dry run first: nothing on the remote may move --------------------------------
-out_dry="$("$HERE/branch-sweep.sh" "$REPO" --dry-run 2>&1)"
+out_dry="$(branch-sweep.sh "$REPO" --dry-run 2>&1)"
 rc_dry=$?
 is "dry run exits 0" 0 "$rc_dry"
 want "dry run names the landed branch as would-delete" "WOULD-DELETE  spira/sp-landed" "$out_dry"
@@ -93,7 +93,7 @@ if remote_has spira/sp-orphan; then ok "dry run left the orphan on the remote"; 
 if remote_has spira/queue/20260101T000000Z; then ok "dry run left the queue branch on the remote"; else bad "dry run left the queue branch on the remote" "dry run deleted a queue branch"; fi
 
 # ---- real sweep ---------------------------------------------------------------------
-out_real="$("$HERE/branch-sweep.sh" "$REPO" 2>&1)"
+out_real="$(branch-sweep.sh "$REPO" 2>&1)"
 rc_real=$?
 is "real sweep exits 0" 0 "$rc_real"
 want "real sweep reports the delete" "DELETED       spira/sp-landed" "$out_real"

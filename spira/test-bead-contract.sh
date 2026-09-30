@@ -52,7 +52,7 @@ run_contract() {
         SPIRA_CONF="$T/none.conf" \
         SPIRA_HOME="$T" \
         SPIRA_REPO_MAP="${1-$T/repo-map}" \
-        bash "$HERE/bead.sh" contract 2>&1
+        bead.sh contract 2>&1
 }
 
 echo "test-bead-contract.sh"
@@ -77,7 +77,7 @@ want "contract: beta listed as label-less" \
 
 # KINDS is asked of the live schema, never hand-copied here — a suite that hardcoded the
 # vocabulary would go stale the moment schema.sh's declaration changed under it.
-kinds_expected="$(bash "$HERE/schema.sh" kinds)"
+kinds_expected="$(schema.sh kinds)"
 kinds_ok=1
 while IFS= read -r k; do
     [ -n "$k" ] || continue

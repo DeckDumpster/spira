@@ -132,8 +132,8 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP HARNESS WIKI ORIGIN REPO
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || { echo "test-aeon-wiki-dirty: the aeon binary is not built (SPIRA_AEON_BIN)" >&2; exit 1; }
+command -v aeon >/dev/null 2>&1 \
+    || { echo "test-aeon-wiki-dirty: aeon is not on PATH" >&2; exit 1; }
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
@@ -153,7 +153,7 @@ testdb_reset
 b1="$(bd -C "$SPIRA_DB" create --title "test: wiki write" --type task -l "$_lbl" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b1" ] || { bad "bead created" "(bead-create failed)"; }
 rm -rf "$SPIRA_RUN/worktree"
-"$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
+aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 bead_status="$(bd -C "$SPIRA_DB" show "$b1" --json 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("status","") if d else "")' 2>/dev/null)"
 # A task bead's close is converted to open+spira-submitted at teardown (sp-qsona): only the
 # landing pass closes a work bead, so "open" here is the session's close having happened.

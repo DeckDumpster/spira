@@ -84,15 +84,8 @@ done
 [ "$up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/server.log")"
 root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
 
-CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO/spira-lc/Cargo.toml" --quiet 2>"$TMP/build-lc.log" \
-    || bail "spira-lc failed to build: $(cat "$TMP/build-lc.log")"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO/work/Cargo.toml" --quiet 2>"$TMP/build-work.log" \
-    || bail "work failed to build: $(cat "$TMP/build-work.log")"
-export SPIRA_LC_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-lc"
-export SPIRA_WORK_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/work"
+# spira-lc and work are the tree's own build, invoked by name on the suite's PATH (sp-gypjk).
+for _t in spira-lc work; do command -v "$_t" >/dev/null 2>&1 || bail "$_t is not on PATH"; done
 
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$PORT"
@@ -101,7 +94,7 @@ export SPIRA_LC_DATA_DIR="$TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
 
-"$SPIRA_LC_BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
+spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
 wantrc "schema applies cleanly" 0 $?
 # This suite connects as root throughout (grants restrict the spira_lc user specifically,
 # and grants.sql needs its @SPIRA_LC_PASSWORD@ placeholder filled first) — the grant
@@ -109,7 +102,7 @@ wantrc "schema applies cleanly" 0 $?
 # own wiring.
 
 SOCK="$TMP/spira-lc.sock"
-SPIRA_LC_SOCKET="$SOCK" "$SPIRA_LC_BIN" serve "$SOCK" >"$TMP/serve.log" 2>&1 &
+SPIRA_LC_SOCKET="$SOCK" spira-lc serve "$SOCK" >"$TMP/serve.log" 2>&1 &
 SERVE_PID=$!
 for _ in $(seq 1 50); do
     [ -S "$SOCK" ] && break
@@ -220,10 +213,10 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/c
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
 # The restricted path is an explicit config decision (sp-74gzo), not a fact discovered from
 # these binaries existing — without this, aeon.sh takes the legacy path even though
-# SPIRA_LC_BIN/SPIRA_WORK_BIN are both built and executable above.
+# spira-lc and work are both on PATH (checked above).
 export SPIRA_LIFECYCLE_ENFORCE=1
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || bail "the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model"
+command -v aeon >/dev/null 2>&1 \
+    || bail "aeon is not on PATH — refusing to run the real model"
 
 # The shim IS the model: it proves what its own environment actually grants it, then does
 # the one thing this bead's brief tells a real builder to do — `work submit`.
@@ -246,11 +239,11 @@ printf '%s' "\$?" > "$TMP/work-submit-rc"
 SHIM
 chmod +x "$BIN/claude"
 
-BID="$(bash "$HERE/bead.sh" file "aeon lifecycle cutover container fixture" --for builder --repo fixture 2>/dev/null | tail -1)"
+BID="$(bead.sh file "aeon lifecycle cutover container fixture" --for builder --repo fixture 2>/dev/null | tail -1)"
 [ -n "$BID" ] || bail "bead.sh file did not return an id"
 seed_bead "$BID" READY
 
-"$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder >"$TMP/aeon.log" 2>&1
+aeon --home "$SPIRA_HOME" builder >"$TMP/aeon.log" 2>&1
 is "aeon.sh: exits 0 on a submitted work bead" "0" "$?"
 
 is "model session ran (bead id captured)" "$BID" "$(cat "$TMP/last-bead" 2>/dev/null)"

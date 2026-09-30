@@ -96,7 +96,7 @@ is   "GREEN: existing path + fresh README passes check" "0" "$rc"
 # THE SHIPPED TREE passes check with SPIRA_WIKI unset so only the README is tested.
 # This is the assertion that the stale rows are gone and the renderer is current.
 # ---------------------------------------------------------------------------------------
-out="$(SPIRA_WIKI="" bash "$HERE/boundary.sh" check 2>&1)"; rc=$?
+out="$(SPIRA_WIKI="" boundary.sh check 2>&1)"; rc=$?
 is   "the shipped tree passes check" "0" "$rc"
 [ "$rc" = 0 ] || printf '%s\n' "$out"
 tl_summary

@@ -79,7 +79,7 @@ SNAP="$WGD/spira-dirty-before"
 # canonical fences (exclude.sh staged, spira-lint's scratch-fence rule, branch-guard.sh staged) ahead of
 # pre-commit-guard.sh in one generated pre-commit — not a wrapper that calls
 # pre-commit-guard.sh alone, which would pass even if aeon.sh's own install were broken.
-SPIRA_HOME="$HERE" bash "$HERE/worktree-hooks.sh" install "$WORK" >/dev/null
+SPIRA_HOME="$HERE" worktree-hooks.sh install "$WORK" >/dev/null
 
 # Verify setup: the snapshot must contain the archivist file or the test proves nothing.
 if grep -qF "wiki/notes/archivist-2026-09-08.md" "$SNAP"; then

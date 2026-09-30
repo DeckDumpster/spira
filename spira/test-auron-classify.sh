@@ -40,7 +40,7 @@ NOW=1800000000
 
 keys_of() {   # keys_of <observations-json> -> the firing keys, comma separated, or `-`
     local got
-    got="$(printf '%s' "$1" | python3 "$HERE/auron-classify.py" 2>/dev/null \
+    got="$(printf '%s' "$1" | auron-classify.py 2>/dev/null \
            | python3 -c '
 import sys, json
 ks = []
@@ -54,7 +54,7 @@ print(",".join(sorted(ks)))')"
 }
 
 evidence_of() {  # evidence_of <observations-json> <key>
-    printf '%s' "$1" | KEY="$2" python3 "$HERE/auron-classify.py" 2>/dev/null \
+    printf '%s' "$1" | KEY="$2" auron-classify.py 2>/dev/null \
         | KEY="$2" python3 -c '
 import sys, os, json
 for line in sys.stdin:

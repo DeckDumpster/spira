@@ -25,13 +25,11 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 echo "test-broker-units.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
-FAKE_BROKER="$TMP/fake-broker"
-printf '#!/bin/sh\n' > "$FAKE_BROKER"; chmod +x "$FAKE_BROKER"
 
-# get_enable BROKER_ENABLE BROKER_BIN
+# get_enable BROKER_ENABLE
 # Source units.sh in a minimal env and print the ENABLE array, one entry per line.
 get_enable() {
-    local broker_enable="$1" broker_bin="$2"
+    local broker_enable="$1"
     env -i \
         PATH="$PATH" \
         SPIRA_INSTANCE=prod \
@@ -39,7 +37,6 @@ get_enable() {
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
         SPIRA_BROKER_ENABLE="$broker_enable" \
-        SPIRA_BROKER_BIN="$broker_bin" \
         SPIRA_SELF_TEST=0 \
         bash -c '
             . "$SPIRA_HOME/../systemd/units.sh" 2>/dev/null
@@ -49,26 +46,21 @@ get_enable() {
 
 # ==========================================================================
 echo
-echo "A: POSITIVE CONTROL — SPIRA_BROKER_ENABLE=1 + binary present: broker timer in ENABLE:"
+echo "A: POSITIVE CONTROL — SPIRA_BROKER_ENABLE=1: broker timer in ENABLE:"
 # ==========================================================================
-pos_out="$(get_enable 1 "$FAKE_BROKER")"
-want "A: broker-prod.timer in ENABLE when BROKER_ENABLE=1 and binary executable" \
+pos_out="$(get_enable 1)"
+want "A: broker-prod.timer in ENABLE when BROKER_ENABLE=1" \
     "spira-broker-prod.timer" "$pos_out"
 
 # ==========================================================================
 echo
 echo "B: NO PRODUCER — SPIRA_BROKER_ENABLE=0: broker timer absent from ENABLE:"
 # ==========================================================================
-noprod_out="$(get_enable 0 "$FAKE_BROKER")"
+noprod_out="$(get_enable 0)"
 nowant "B: broker-prod.timer absent from ENABLE when BROKER_ENABLE=0" \
     "spira-broker-prod.timer" "$noprod_out"
 
-# ==========================================================================
-echo
-echo "C: BINARY MISSING — SPIRA_BROKER_ENABLE=1 but binary not executable: broker timer absent:"
-# ==========================================================================
-nomis_out="$(get_enable 1 "/nonexistent/broker")"
-nowant "C: broker-prod.timer absent from ENABLE when binary not executable" \
-    "spira-broker-prod.timer" "$nomis_out"
+# (case C — "binary missing" — is deleted with the not-built state, sp-gypjk: a release always
+# carries broker.)
 
 tl_summary

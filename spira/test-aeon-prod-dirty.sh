@@ -107,8 +107,8 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/c
 # ---- shim: stands in for claude -------------------------------------------------------
 # conf.sh replaces $PATH entirely, so a PATH shim silently runs the real model.
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP HARNESS
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || { echo "test-aeon-prod-dirty: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model" >&2; exit 1; }
+command -v aeon >/dev/null 2>&1 \
+    || { echo "test-aeon-prod-dirty: aeon is not on PATH — refusing to run the real model" >&2; exit 1; }
 
 # Shim behaviour is driven by $TMP/shim-dirty:
 #   clean       — commit only; leave worktree and SPIRA_REPO clean
@@ -194,7 +194,7 @@ b1="$(bd -C "$SPIRA_DB" create --title "test: own worktree dirty" --type task \
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b1" ] || { bad "case 1 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
-"$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
+aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 is "own-dirty: bead is reopened" "open" "$(bead_status "$b1")"
 nowant "own-dirty: reopened by the guard, so NOT converted to submitted" "spira-submitted" "$(bead_labels "$b1")"
 note1="$(latest_note "$b1")"
@@ -216,7 +216,7 @@ b2="$(bd -C "$SPIRA_DB" create --title "test: repo dirty only" --type task \
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b2" ] || { bad "case 2 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
-"$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
+aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 not_reopened "repo-dirty" "$b2"
 # Restore HARNESS so it does not affect later cases.
 git -C "$HARNESS" checkout -q -- incident.sh 2>/dev/null || true
@@ -231,7 +231,7 @@ b3="$(bd -C "$SPIRA_DB" create --title "test: clean" --type task \
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b3" ] || { bad "case 3 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
-"$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
+aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 not_reopened "clean" "$b3"
 
 # ============================================================
@@ -242,7 +242,7 @@ printf 'own-dirty' > "$TMP/shim-dirty"
 b4="$(bd -C "$SPIRA_DB" create --title "test: own dirty with override" --type task \
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b4" ] || { bad "case 4 bead created" "(bead-create failed)"; true; }
-SPIRA_ALLOW_PROD_DIRTY=1 "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
+SPIRA_ALLOW_PROD_DIRTY=1 aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 not_reopened "override (despite dirty worktree)" "$b4"
 
 echo

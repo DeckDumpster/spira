@@ -57,8 +57,8 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || { echo "test-aeon-slain-attempts: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model" >&2; exit 1; }
+command -v aeon >/dev/null 2>&1 \
+    || { echo "test-aeon-slain-attempts: aeon is not on PATH — refusing to run the real model" >&2; exit 1; }
 
 # The shim runs a turn and ends without closing the bead — same as any other session left
 # with an open bead, so the only thing distinguishing this run from a genuine failure is the
@@ -81,7 +81,7 @@ seed() {
 # The .slain marker as slay.sh writes it (date TAB reason) — cleanup() checks only that the
 # file exists, so pre-planting it stands in for an operator slaying this session mid-run.
 plant_slain_marker() { printf '%s\tslain by operator\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SPIRA_RUN/$1.slain"; }
-run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
+run_aeon() { rm -rf "$SPIRA_RUN/worktree"; PATH="$SPIRA_HOME:$PATH" aeon --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
 bead_status() {
     BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
         | python3 -c '

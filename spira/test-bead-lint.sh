@@ -62,7 +62,7 @@ run_lint() {              # run_lint <args...> -> sets LINT_OUT and LINT_RC from
         SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" \
         SPIRA_NO_LOOP_LABEL="no-loop" SPIRA_ASK_LABEL="needs-op-test" \
         SPIRA_INCIDENT_LABEL="incident-test" \
-        bash "$HERE/bead.sh" lint "$@" 2>&1)"
+        bead.sh lint "$@" 2>&1)"
     LINT_RC=$?
 }
 

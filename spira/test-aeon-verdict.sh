@@ -211,12 +211,9 @@ echo "the legacy reopen's positive control (everything else above is T1/T2):"
 # against a real account, silently and at full cost.
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
 # The aeon is a binary (aeon.sh is gone); it honours SPIRA_AGENT the same way. It and the
-# spira-claim it claims through are resolved as conf.sh's spira_bin does for THIS tree — the
-# temp SPIRA_HOME above is not a checkout, so its own resolution would find neither.
-_rbin() { env -u SPIRA_REPO SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin "$2" 2>/dev/null' _ "$HERE" "$1"; }
-export SPIRA_AEON_BIN="$(_rbin aeon)" SPIRA_CLAIM_BIN="$(_rbin spira-claim)"
-[ -x "$SPIRA_AEON_BIN" ] \
-    || { echo "test-aeon-verdict: the aeon binary is not built (SPIRA_AEON_BIN=$SPIRA_AEON_BIN) — refusing to run" >&2; exit 1; }
+# spira-claim it claims through are invoked by name, from the tree's build on PATH.
+command -v aeon >/dev/null 2>&1 \
+    || { echo "test-aeon-verdict: aeon is not on PATH — refusing to run" >&2; exit 1; }
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
 FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
@@ -255,7 +252,7 @@ seed() {   # seed <id> [status] [issue_type]
     printf '{"id":"%s","title":"t","status":"%s","issue_type":"%s","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "${2:-open}" "${3:-task}" "$_lbl" | testdb_seed
 }
-run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
+run_aeon() { rm -rf "$SPIRA_RUN/worktree"; aeon --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
 field() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
