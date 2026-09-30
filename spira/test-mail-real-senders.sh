@@ -20,14 +20,14 @@
 # real mail.sh, not a real database. Standing up a real recurrence count is test-sin-exempt.sh
 # and test-incident-recur-cause.sh's job, not this one's.
 #
-# archivist.sh's sweep, driven for real over a fabricated transcript that ctx-meter.sh measures
+# archivist's sweep, driven for real over a fabricated transcript that ctx-meter.sh measures
 # for real, with SPIRA_AGENT stubbed to do exactly what the real archivist's own brief
-# (chamber/archivist.md) tells it to: call `archivist.sh mark <session> archiving <n>` as it
+# (chamber/archivist.md) tells it to: call `archivist mark <session> archiving <n>` as it
 # files something. A sweep that crosses the top band sends no per-session note of its own — the
 # daily digest is the only path to the operator — so nothing here should ever reach the mailbox.
 #
 # tier: T2
-# covers: spira/lib.sh spira/watchd.sh spira/skew.sh spira/incident.sh spira/archivist.sh spira/ctx-meter.sh spira/incident-stub-bd.py spira/mail.sh UC-operator-channel-05
+# covers: spira/lib.sh spira/watchd.sh spira/skew.sh spira/incident.sh archivist/src/* spira/ctx-meter.sh spira/incident-stub-bd.py spira/mail.sh UC-operator-channel-05
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -134,13 +134,13 @@ want "incident.sh SIN message carries a Default"     "## Default"  "$body"
 want "incident.sh SIN message names the recurrence"  "recurred"    "$body"
 
 echo
-echo "archivist.sh: sweep over the top band sends no per-session note"
+echo "archivist: sweep over the top band sends no per-session note"
 
-ARC_SH=archivist.sh   # invoked by name on the suite's PATH (sp-gypjk)
+ARC_SH=archivist   # invoked by name on the suite's PATH (sp-gypjk)
 mkdir -p "$TMP/arc-chamber" "$TMP/arc-run" "$TMP/arc-projects/-test-project"
 cp "$HERE/chamber/archivist.md" "$TMP/arc-chamber/"
 
-# mkarctranscript <path> <turns> <ctx> — same synthetic shape test-archivist.sh uses, so
+# mkarctranscript <path> <turns> <ctx> — same synthetic shape test-archivist uses, so
 # ctx-meter.sh measures a real (if fabricated) transcript rather than a hand-typed SP_CTX_*.
 mkarctranscript() {
     local tp="$1" n="$2" ctx="$3" i per
@@ -156,9 +156,9 @@ mkarctranscript() {
 mkarctranscript "$TMP/arc-projects/-test-project/sess-realsender.jsonl" 50 1100000
 
 # THE STUB DOES EXACTLY WHAT chamber/archivist.md TELLS A REAL ARCHIVIST TO DO: call
-# `archivist.sh mark <session> archiving <n>` as it files something. That write is what
+# `archivist mark <session> archiving <n>` as it files something. That write is what
 # turns items_filed from 0 to 1 — archive() deliberately never parses the model's own prose
-# for a count (see archivist.sh's ITEMS COMES FROM THE STATE FILE comment).
+# for a count (see archivist's ITEMS COMES FROM THE STATE FILE comment).
 STUB_ARC_CLAUDE="$TMP/stub-archivist-claude"
 cat > "$STUB_ARC_CLAUDE" <<STUBEOF
 #!/usr/bin/env bash
@@ -180,18 +180,18 @@ after="$(unread)"
 # recorded it filed.
 state="$(sed -n 's/^state=//p' "$TMP/arc-run/archivist/sess-realsender.state" 2>/dev/null)"
 items="$(sed -n 's/^items_filed=//p' "$TMP/arc-run/archivist/sess-realsender.state" 2>/dev/null)"
-is "archivist.sh sweep records the session safe to clear" "safe" "$state"
-is "archivist.sh sweep records the item the stub filed"   "1"    "$items"
+is "archivist sweep records the session safe to clear" "safe" "$state"
+is "archivist sweep records the item the stub filed"   "1"    "$items"
 
 # NOTHING REACHES THE OPERATOR from this sweep: no items were queued for the digest (the
 # stub only calls `mark`, never `record`), so digest_send has nothing to send, and the
 # sweep itself sends no note of its own now that the per-session push is gone.
-is "archivist.sh sweep sends no mail with nothing queued for the digest" "$before" "$after"
+is "archivist sweep sends no mail with nothing queued for the digest" "$before" "$after"
 
 # THE LINT ITSELF STILL REFUSES THAT SHAPE: a `--kind note` from archivist@spira with no
 # `--digest` is exactly the ad hoc per-finding note mail.sh's guard exists to stop. This is
 # what G-05 exists to catch, so the guard is worth pinning directly even though nothing in
-# archivist.sh sends this shape any more.
+# archivist sends this shape any more.
 lint_err="$(printf 'body' | mail.sh send operator \
     --from "Archivist <archivist@spira>" --subject "isolated repro" --kind note 2>&1 >/dev/null)"
 rc=$?

@@ -98,7 +98,7 @@ pub fn mark(dir: &Path, id: &str, n: u32) {
 /// The bd label the legacy poison valve writes and every partition excludes.
 pub const POISON_LABEL: &str = "spira-poison";
 
-pub const POISON_NOTE: &str = "Triaged by the groomer, not a human: it reads the charged sessions' final results and either credits the harness-caused attempts and lifts the poison (groomer.sh unpoison) or splits/re-scopes the work. Any live holder keeps its claim and releases on its own exit path; no persona can claim it again while the ";
+pub const POISON_NOTE: &str = "Triaged by the groomer, not a human: it reads the charged sessions' final results and either credits the harness-caused attempts and lifts the poison (groomer unpoison) or splits/re-scopes the work. Any live holder keeps its claim and releases on its own exit path; no persona can claim it again while the ";
 
 pub const REQUEUE_DEFAULT: &str = "close the bead if its work has already landed under a different id or is no longer needed; file a harness-defect bead if the deliverable was not a commit; otherwise label it needs-rebase so an aeon can resolve the conflict";
 pub const RECLAIM_DEFAULT: &str = "close the bead if the work is no longer relevant; move it to a healthier lane if this box consistently kills workers; otherwise check infrastructure and re-queue when the box is stable";

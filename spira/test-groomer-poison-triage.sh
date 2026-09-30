@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-groomer-poison-triage.sh — groomer.sh triage-poison: the other side of poison
+# test-groomer-poison-triage.sh — groomer triage-poison: the other side of poison
 #   triage from `unpoison`, for the charge that WAS the work's fault.
 #
 # WHAT THIS SUITE IS GUARDING (sp-iruqq)
@@ -22,7 +22,7 @@
 # against a real store (test-attempts.sh, test-poison.sh).
 #
 # tier: T1
-# covers: spira/groomer.sh spira/lib.sh spira/conf.sh spira/chamber/groomer.md
+# covers: groomer/src/* spira/lib.sh spira/conf.sh spira/chamber/groomer.md
 # defect: sp-iruqq
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -58,7 +58,7 @@ run_groomer() {
         BD_LOG_PATH="$BD_LOG" \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_RUN="$RUN" \
-        groomer.sh "$@" 2>&1
+        groomer "$@" 2>&1
 }
 
 echo "test-groomer-poison-triage.sh"

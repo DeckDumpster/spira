@@ -17,11 +17,11 @@
 #
 # defect: sp-mebw
 # tier: T1
-# covers: spira/archivist.sh spira/conf.sh spira/hooks/session.sh spira/ctx-meter.sh spira/mail.sh spira/chamber/archivist.md
+# covers: archivist/src/* spira/conf.sh spira/hooks/session.sh spira/ctx-meter.sh spira/mail.sh spira/chamber/archivist.md
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
-ARC=archivist.sh   # the SUT, by name on the suite's PATH (sp-gypjk)
+ARC=archivist   # the SUT, by name on the suite's PATH (sp-gypjk)
 
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "no [$3] in [$2]" ;; esac; }
 hasnt() { case "$2" in *"$3"*) bad "$1" "found [$3] in [$2]" ;; *) ok "$1" ;; esac; }
@@ -56,17 +56,17 @@ exit 0
 STUB
 chmod +x "$STUB_CLAUDE"
 
-# Run archivist.sh list in a clean environment.
+# Run archivist list in a clean environment.
 alist() {
     env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
         SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
         SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
         SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
         SPIRA_ARCHIVIST_EVERY="$EVERY" \
-        bash "$ARC" list 2>/dev/null
+        "$ARC" list 2>/dev/null
 }
 
-# Run archivist.sh sweep in a clean environment with the stub claude.
+# Run archivist sweep in a clean environment with the stub claude.
 asweep() {
     env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
         SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
@@ -77,7 +77,7 @@ asweep() {
         SPIRA_ARCHIVIST_TIMEOUT=10 \
         SPIRA_ARCHIVIST_PER_PASS="${BUDGET:-1}" \
         SPIRA_CHAMBER="$T/chamber" \
-        bash "$ARC" sweep 2>&1
+        "$ARC" sweep 2>&1
 }
 
 # Write archivist state files.
@@ -354,7 +354,7 @@ out="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
     SPIRA_ARCHIVIST_TIMEOUT=10 \
     SPIRA_ARCHIVIST_PER_PASS=5 \
     SPIRA_CHAMBER="$T/chamber" \
-    bash "$ARC" sweep 2>&1)"
+    "$ARC" sweep 2>&1)"
 
 _st="$(sed -n 's/^state=//p' "$T/run/archivist/sess-refused.state" 2>/dev/null)"
 is   "a refused run is recorded as capacity, not failed" "capacity" "$_st"
@@ -419,7 +419,7 @@ alias_out="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
     SPIRA_ARCHIVIST_TIMEOUT=10 \
     SPIRA_ARCHIVIST_PER_PASS=1 \
     SPIRA_CHAMBER="$T/chamber" \
-    bash "$ARC" sweep 2>&1)"
+    "$ARC" sweep 2>&1)"
 has    "SPIRA_CLAUDE alias: deprecation warning is emitted" "$alias_out" "SPIRA_CLAUDE is deprecated"
 has    "SPIRA_CLAUDE alias: sweep still runs via the alias"  "$alias_out" "safe to clear"
 
@@ -454,7 +454,7 @@ tout="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
     SPIRA_ARCHIVIST_PER_PASS=5 \
     SPIRA_ARCHIVIST_TIMEOUT_RETRIES=3 \
     SPIRA_CHAMBER="$T/chamber" \
-    bash "$ARC" sweep 2>&1)"
+    "$ARC" sweep 2>&1)"
 
 _st="$(sed -n 's/^state=//p' "$T/run/archivist/sess-timed.state" 2>/dev/null)"
 is   "a timed-out run records state=timeout, not failed" "timeout" "$_st"
@@ -493,7 +493,7 @@ env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
     SPIRA_ARCHIVIST_PER_PASS=1 \
     SPIRA_ARCHIVIST_TIMEOUT_RETRIES=3 \
     SPIRA_CHAMBER="$T/chamber" \
-    bash "$ARC" sweep 2>/dev/null
+    "$ARC" sweep 2>/dev/null
 
 _st_crash="$(sed -n 's/^state=//p' "$T/run/archivist/sess-crash.state" 2>/dev/null)"
 is   "a crashed run (rc=1) records state=failed" "failed" "$_st_crash"
@@ -522,7 +522,7 @@ env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
     SPIRA_ARCHIVIST_PER_PASS=1 \
     SPIRA_ARCHIVIST_TIMEOUT_RETRIES=3 \
     SPIRA_CHAMBER="$T/chamber" \
-    bash "$ARC" sweep 2>/dev/null
+    "$ARC" sweep 2>/dev/null
 
 _st_ex="$(sed -n 's/^state=//p' "$T/run/archivist/sess-exhaust.state" 2>/dev/null)"
 is   "a timeout that exhausts its budget becomes failed" "failed" "$_st_ex"
@@ -533,7 +533,7 @@ adigest() {  # adigest <archivist.sh args...>
     env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
         SPIRA_RUN="$T/run" SPIRA_MAIL="$T/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
         SPIRA_TOKEN_PROJECTS="$T/projects" SPIRA_TZ=UTC \
-        bash "$ARC" "$@" 2>&1
+        "$ARC" "$@" 2>&1
 }
 
 # ==========================================================================================

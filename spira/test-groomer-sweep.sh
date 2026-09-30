@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # timeout: 150
 #
-# test-groomer-sweep.sh — groomer.sh sweep: mechanical livelock remedies before the model pass.
+# test-groomer-sweep.sh — groomer sweep: mechanical livelock remedies before the model pass.
 #
 # FOUR CATEGORIES, ONE PAIR (law-absence-needs-a-positive-control)
 # ----------------------------------------------------------------
@@ -15,7 +15,7 @@
 # the detector now returns only the two beads sweep cannot fix.
 #
 # tier: T1
-# covers: spira/groomer.sh spira/lib.sh spira/conf.sh
+# covers: groomer/src/* spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testdb.sh"
@@ -49,7 +49,7 @@ run_sweep() {
         SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SPIKE_LABEL=spike \
         SPIRA_SCOPE_LABEL="$SCOPE" \
-        groomer.sh sweep "$@" 2>&1
+        groomer sweep "$@" 2>&1
 }
 
 status_of() {

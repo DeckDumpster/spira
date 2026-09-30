@@ -821,7 +821,7 @@ impl<'a> Run<'a> {
                 ("SUITES", format!("{} suites", brief::TESTENV)),
                 ("TESTENV", brief::TESTENV.into()),
                 ("FOLLOWUP", brief::followup_brief(self.enforce, &bead, &self.s.repo_name)),
-                ("GROOM", "groomer.sh".into()),
+                ("GROOM", "groomer".into()),
                 ("DEP", "bead.sh dep add".into()),
                 ("SPIRA_HOME", home.clone()),
                 ("RUN", self.run_dir().display().to_string()),

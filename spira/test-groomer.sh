@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
-# test-groomer.sh — groomer.sh: graph hygiene operations and the unwanted-close refusal.
+# test-groomer — groomer: graph hygiene operations and the unwanted-close refusal.
 #
-#   ./test-groomer.sh
+#   ./test-groomer
 #
 # WHAT THIS SUITE IS GUARDING
 # ---------------------------
-# groomer.sh provides four hygiene operations (supersede, close, correct-lane, and the
+# groomer provides four hygiene operations (supersede, close, correct-lane, and the
 # composable split/merge that aeons do via bd create + supersede). The central property this
-# suite enforces is the one the bead makes a hard requirement: groomer.sh REFUSES to close a
+# suite enforces is the one the bead makes a hard requirement: groomer REFUSES to close a
 # bead as unwanted, and that refusal is in the code, not a sentence in a brief.
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control)
@@ -21,15 +21,15 @@
 #
 # STUB BD (law-gates-run-in-a-clean-environment)
 # ----------------------------------------------
-# groomer.sh calls bd for its side effects. A real bd call would require a live Dolt server
-# and a seeded database, and would test bd as much as groomer.sh. Instead, SPIRA_BD is set
-# to a stub that records its argv to a file and exits 0. The stub proves groomer.sh passed
+# groomer calls bd for its side effects. A real bd call would require a live Dolt server
+# and a seeded database, and would test bd as much as groomer. Instead, SPIRA_BD is set
+# to a stub that records its argv to a file and exits 0. The stub proves groomer passed
 # the right arguments; bd's own correctness is tested in suites that use testdb.sh.
 #
 # tier: T1
-# covers: spira/groomer.sh spira/conf.sh
+# covers: groomer/src/* spira/conf.sh
 # defect: sp-gsmx.8
-# scar: groomer.sh lacked a hard refusal of unwanted-close; the only barrier against closing a bead as unwanted was a sentence in a brief.
+# scar: groomer lacked a hard refusal of unwanted-close; the only barrier against closing a bead as unwanted was a sentence in a brief.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -72,7 +72,7 @@ exit 0
 STUB
 chmod +x "$STUB_BD"
 
-# Run groomer.sh in a clean environment. SPIRA_CONF points to a nonexistent file so no
+# Run groomer in a clean environment. SPIRA_CONF points to a nonexistent file so no
 # real config is read; defaults from conf.sh still apply. SPIRA_BD is the stub so no real
 # bd is called. SPIRA_DB is a temp path (bd never runs, so the value does not need to exist).
 run_groomer() {
@@ -81,14 +81,14 @@ run_groomer() {
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
         SPIRA_DB="$T/fixture.db" \
-        groomer.sh "$@" 2>&1
+        groomer "$@" 2>&1
 }
 
 # ==========================================================================================
 echo
-echo "POSITIVE CONTROL: groomer.sh unwanted is REFUSED (exits 2, prints REFUSED)"
+echo "POSITIVE CONTROL: groomer unwanted is REFUSED (exits 2, prints REFUSED)"
 # ==========================================================================================
-# PLANT THE OFFENDER. groomer.sh unwanted must exit 2 and say "REFUSED". Without this
+# PLANT THE OFFENDER. groomer unwanted must exit 2 and say "REFUSED". Without this
 # positive control, a script that simply does not have an 'unwanted' case and falls through
 # to "usage" (exit 1) would make every OTHER test pass while violating the acceptance
 # criterion.
@@ -101,7 +101,7 @@ is   "bd not called for unwanted"     ""       "$(cat "$BD_LOG" 2>/dev/null)"
 
 # ==========================================================================================
 echo
-echo "groomer.sh supersede <id> --with <successor>"
+echo "groomer supersede <id> --with <successor>"
 # ==========================================================================================
 : > "$BD_LOG"
 out="$(run_groomer supersede sp-aaa --with sp-bbb)"; rc=$?
@@ -111,7 +111,7 @@ want "bd called with --with successor"      "--with sp-bbb"    "$(cat "$BD_LOG")
 
 # ==========================================================================================
 echo
-echo "groomer.sh close <id> --evidence <text>"
+echo "groomer close <id> --evidence <text>"
 # ==========================================================================================
 : > "$BD_LOG"
 out="$(run_groomer close sp-ccc --evidence 'The referenced module was deleted in commit abc123')"; rc=$?
@@ -121,7 +121,7 @@ want "bd called with sp-ccc"    "sp-ccc"  "$(cat "$BD_LOG")"
 
 # ==========================================================================================
 echo
-echo "groomer.sh close without --evidence is refused (exits 1)"
+echo "groomer close without --evidence is refused (exits 1)"
 # ==========================================================================================
 : > "$BD_LOG"
 out="$(run_groomer close sp-ddd)"; rc=$?
@@ -131,7 +131,7 @@ is   "bd not called when evidence missing" ""       "$(cat "$BD_LOG" 2>/dev/null
 
 # ==========================================================================================
 echo
-echo "groomer.sh correct-lane <id> --lane <lane>"
+echo "groomer correct-lane <id> --lane <lane>"
 # ==========================================================================================
 : > "$BD_LOG"
 out="$(run_groomer correct-lane sp-eee --lane ops)"; rc=$?
@@ -142,7 +142,7 @@ want "bd called with sp-eee"        "sp-eee"       "$(cat "$BD_LOG")"
 
 # ==========================================================================================
 echo
-echo "groomer.sh supersede without --with is refused (exits 1)"
+echo "groomer supersede without --with is refused (exits 1)"
 # ==========================================================================================
 : > "$BD_LOG"
 out="$(run_groomer supersede sp-fff)"; rc=$?
@@ -151,7 +151,7 @@ is   "bd not called for missing --with" ""       "$(cat "$BD_LOG" 2>/dev/null)"
 
 # ==========================================================================================
 echo
-echo "groomer.sh depends-on-fix <bug-id> --fix <id> --evidence <text>"
+echo "groomer depends-on-fix <bug-id> --fix <id> --evidence <text>"
 # ==========================================================================================
 : > "$BD_LOG"
 out="$(run_groomer depends-on-fix sp-bug-1 --fix sp-fix-1 --evidence 'This fix addresses the root cause')"; rc=$?
@@ -164,7 +164,7 @@ want "note contains evidence"                 "This fix addresses" "$(cat "$BD_L
 
 # ==========================================================================================
 echo
-echo "groomer.sh depends-on-fix without --fix is refused (exits 1)"
+echo "groomer depends-on-fix without --fix is refused (exits 1)"
 # ==========================================================================================
 : > "$BD_LOG"
 out="$(run_groomer depends-on-fix sp-bug-2)"; rc=$?
@@ -174,7 +174,7 @@ is   "bd not called when --fix missing"       ""          "$(cat "$BD_LOG" 2>/de
 
 # ==========================================================================================
 echo
-echo "groomer.sh depends-on-fix without --evidence is refused (exits 1)"
+echo "groomer depends-on-fix without --evidence is refused (exits 1)"
 # ==========================================================================================
 : > "$BD_LOG"
 out="$(run_groomer depends-on-fix sp-bug-3 --fix sp-fix-3)"; rc=$?
@@ -184,7 +184,7 @@ is   "bd not called when --evidence missing"      ""          "$(cat "$BD_LOG" 2
 
 # ==========================================================================================
 echo
-echo "groomer.sh depends-on-fix refuses a closed fix bead (exits 1)"
+echo "groomer depends-on-fix refuses a closed fix bead (exits 1)"
 # ==========================================================================================
 : > "$BD_LOG"
 out="$(run_groomer depends-on-fix sp-bug-4 --fix closed-fix-1 --evidence 'This fix is closed')"; rc=$?
@@ -194,7 +194,7 @@ is   "dep add not called for closed fix"          ""          "$(grep '^dep add'
 
 # ==========================================================================================
 echo
-echo "groomer.sh with no arguments exits 1 (usage)"
+echo "groomer with no arguments exits 1 (usage)"
 # ==========================================================================================
 out="$(run_groomer)"; rc=$?
 is   "no arguments exits 1" 1 "$rc"

@@ -124,7 +124,7 @@ _bead_file() {
         # --no-inherit-labels: this call already computed the full, correct label set
         # above (persona partition + repo); inheriting the parent's on top would include
         # its branch: label too, which is exactly the two-step dance
-        # groomer.sh split-piece exists to undo after the fact (sp-zs04v).
+        # groomer split-piece exists to undo after the fact (sp-zs04v).
         [ -n "$parent" ]    && set -- "$@" --parent "$parent" --no-inherit-labels
         bdq "$@"
     else

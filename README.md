@@ -264,7 +264,7 @@ failed systemd unit, an arbitrary payload, or a spool flush. `spira/install-inta
 `OnFailure=` drop-ins over `SPIRA_ALERT_GLOB` so a failed unit files itself; dedup keys on the
 unit name, so a recurrence labels the open incident rather than filing a second one.
 
-**The archivist** (`archivist.sh`) rescues a session's unfinished business before it is cleared
+**The archivist** (`archivist`) rescues a session's unfinished business before it is cleared
 — questions asked and never answered, findings never filed, verdicts never recorded. It reads
 the transcript from disk rather than the conversation, costing that session no turn and no
 tokens: a persistence step that adds turns makes the problem worse in exactly the sessions that

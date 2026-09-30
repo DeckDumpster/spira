@@ -9,9 +9,15 @@
 # replace it until an ON-path equivalent exists. This is the trap that makes that a visible,
 # deliberate act instead of a silent regression at the next lifecycle_enforce flip.
 #
+# GROOMER SIDE, since sp-aufxu: the three detectors stay in lib.sh (leave lib.sh alone),
+# reached by `groomer`'s Rust `sweep()` through the same kind of bash seam `sentinel`
+# already uses onto lib.sh — so what this suite extracts and checks for the groomer half
+# moved from a `case … sweep) … ;;` block in bash to the `pub fn sweep(` function in
+# groomer/src/sweep.rs.
+#
 # defect: sp-pswer.1
 # tier: T1
-# covers: sentinel/src/pass.rs sentinel/src/check5.rs spira/lib.sh spira/groomer.sh
+# covers: sentinel/src/pass.rs sentinel/src/check5.rs spira/lib.sh groomer/src/sweep.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -44,24 +50,26 @@ want "SEEN RED: a lifecycle_enforce-gated call is caught" \
     "lifecycle_enforce" "$(lc "$(audit_body "$gated")")"
 
 # ---------------------------------------------------------------------------------------
-# GROOMER: the three STATE sweep functions still exist in lib.sh, and groomer.sh's sweep)
-# branch still calls all three with no lifecycle_enforce gate.
+# GROOMER: the three STATE sweep functions still exist in lib.sh, and groomer's Rust
+# `sweep()` still calls all three (through the lib.sh seam) with no lifecycle_enforce gate.
 # ---------------------------------------------------------------------------------------
 for fn in detect_landed_but_open detect_closed_unlanded_states detect_false_blockers; do
     want "lib.sh still defines $fn" "${fn}()" "$(grep -m1 "^${fn}()" "$ROOT/spira/lib.sh")"
 done
 
-sbody="$(sweep_body "$ROOT/spira/groomer.sh")"
+rust_sweep_body() { awk '/^pub fn sweep\(/{f=1} f{print} f && /^}$/{exit}' "$1"; }
+
+sbody="$(rust_sweep_body "$ROOT/groomer/src/sweep.rs")"
 for fn in detect_landed_but_open detect_closed_unlanded_states detect_false_blockers; do
-    want "groomer.sh sweep still calls $fn" "$fn" "$sbody"
+    want "groomer sweep() still calls seam.$fn" "$fn" "$sbody"
 done
 nowant "and does not gate the sweep on lifecycle_enforce" "lifecycle_enforce" "$(lc "$sbody")"
 
 # SEEN RED for the groomer side too.
-gated_groomer="$TMP/groomer.sh"
-sed 's/_sw_lbo="\$(detect_landed_but_open 2>\/dev\/null)"/if [ "${SPIRA_LIFECYCLE_ENFORCE:-0}" != 1 ]; then _sw_lbo="$(detect_landed_but_open 2>\/dev\/null)"; fi/' \
-    "$ROOT/spira/groomer.sh" > "$gated_groomer"
+gated_groomer="$TMP/sweep.rs"
+sed 's/let lbo = seam.detect_landed_but_open()?;/let lbo = if std::env::var("SPIRA_LIFECYCLE_ENFORCE").unwrap_or_default() != "1" { seam.detect_landed_but_open()? } else { String::new() };/' \
+    "$ROOT/groomer/src/sweep.rs" > "$gated_groomer"
 want "SEEN RED: a lifecycle_enforce-gated sweep call is caught" \
-    "lifecycle_enforce" "$(lc "$(sweep_body "$gated_groomer")")"
+    "lifecycle_enforce" "$(lc "$(rust_sweep_body "$gated_groomer")")"
 
 tl_summary

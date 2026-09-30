@@ -71,7 +71,7 @@ Where it runs: **cert** = certification/every commit, **batch** = batch CI, **ma
 | UC-aeon-execution-24 | `attempts.sh deadlocked` lists poisoned-but-cleanly-mergeable beads (WOULD) and keeps branchless ones (KEEP with a reason). A dry run changes nothing. `--apply` lifts poison, keeps the attempt record and notes why. | C, R | T2 | batch |
 | UC-aeon-execution-25 | A repeated lane-cap timeout files an ask saying "timed out" (lane too small), not "change the approach". | O | T1 (stub mail) | cert |
 | UC-aeon-execution-26 | `slay.sh` writes the `.slain` marker first. The default reopens, unassigns and removes the worktree and branch. `--close` adds `spira-dropped`. `--keep-work` keeps. Uncommitted work is saved as a patch plus a wip commit, and unique work is parked at `refs/slain/<id>`. Bad ids, positional args and a duplicate `--bead` exit 2 and change nothing. | C, R, FC | T2 + T1 args | batch / cert |
-| UC-aeon-execution-27 | The installed agent CLI accepts `--system-prompt-snapshot on` (the external contract `aeon.sh`/`archivist.sh` rely on). | K | doctor preflight (not CI) | doctor |
+| UC-aeon-execution-27 | The installed agent CLI accepts `--system-prompt-snapshot on` (the external contract `aeon.sh`/`archivist` rely on). | K | doctor preflight (not CI) | doctor |
 
 
 Machine-readable declarations live in `docs/test-plan/aeon-execution.toml` (schema: `test-plan/schema/catalogue.schema.json`), read by `spira/plan-lint.sh`.
@@ -165,7 +165,7 @@ Every seam below turns a full `aeon.sh` or `sentinel.sh` run on a real Dolt stor
 | G1 | **Lease-lapse teardown**: `bump_lapsed`, the `$SPIRA_RUN/lapsed/<id>-<ts>` record, the note, claim release, ledger `lapsed` and the attempt being charged | aeon.sh 754-770. No test greps `bump_lapsed` or `ledger_done … lapsed`. test-aeon-lease.sh tests a copy of the tick, not cleanup. |
 | G2 | Thrash teardown **behaviour**: requeue event `thrash`, no attempt charged, note, ledger `requeue-thrash` | aeon.sh 736-747; only line-order and awk greps in test-thrash.sh |
 | G3 | Timeout disposition: rc 124 with nothing committed → no charge, note, ledger `timeout`; and rc 124 **with** a commit falls through | aeon.sh 826-836; test-timeout.sh checks only line order |
-| G4 | Capacity lost mid-session in a bead aeon → `capacity_pause_set`, release, ledger `capacity`, no charge | aeon.sh 715-726; `capacity_reset_at` is referenced only by test-archivist.sh |
+| G4 | Capacity lost mid-session in a bead aeon → `capacity_pause_set`, release, ledger `capacity`, no charge | aeon.sh 715-726; `capacity_reset_at` is referenced only by test-archivist |
 | G5 | Aeon-side handling of a slain bead (release, ledger `slain`, no charge) | aeon.sh 727-734; test-slay.sh tests slay.sh, not the aeon's cleanup |
 | G6 | Gate still running when the bead is **open** → released, ledger `gate-unfinished`, no charge | aeon.sh 772-790; test-aeon-gate-close-silent.sh covers only the closed-bead switch |
 | G7 | Read-after-claim poison race → release, ledger `poison-raced` | aeon.sh 430-446; grep in test-timeout.sh only |
