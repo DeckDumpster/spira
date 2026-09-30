@@ -134,7 +134,7 @@ pub fn diff(ctx: &Ctx) -> Result<Vec<String>, String> {
 /// enable/restart/prune per unit, report the end state. Mirrors `systemd/install.sh`'s main
 /// body exactly, including its two accreted, harmless double-ups this port keeps rather than
 /// silently "fixing" mid-rewrite (DESIGN.md "Decisions"): `loginctl enable-linger` is called
-/// here AND again by the root installer's own phase, and `install-session-hook.sh install` is
+/// here AND again by the root installer's own phase, and `release session-hook install` is
 /// called here unconditionally on every run.
 pub fn run(ctx: &Ctx) -> Report {
     let mut r = Report::default();

@@ -4,8 +4,10 @@ Rewrite wave 6a (sp-31dm0, brain `wiki/projects/spira/remaining-bash-inventory.m
 Replaces `install.sh` (the root installer), `systemd/install.sh` (the per-instance unit
 renderer/writer), `systemd/unit-ensure.sh` (its non-disruptive sibling), `systemd/units.sh`
 (the unit-naming library) and `systemd/render.py` (the template substitution engine).
-`systemd/install-session-hook.sh` (sp-7jr34) and `systemd/install-intake.sh` stay bash and
-out of scope; this crate calls both by bare name exactly as the retired scripts did.
+`spira/install-session-hook.sh` and `spira/install-intake.sh` were retired by sp-7jr34,
+concurrently with this bead, into `release session-hook`/`release intake`; this crate's
+call sites were updated to match at merge time (merged from local/main before landing) —
+not re-ported here, since they were never this bead's scope.
 
 ## Intent
 
@@ -100,7 +102,7 @@ template this box ever actually renders, not a synthetic fixture.
   watcher instance to differ on its own: each instance's own rendered content includes the
   template body, so `render_all`/`run`'s per-unit comparison catches it directly — the dead
   check bought nothing even when it could have fired.
-- **`loginctl enable-linger` and `install-session-hook.sh install` are still called from two
+- **`loginctl enable-linger` and `release session-hook install` are still called from two
   places** (`units-install`'s own run, and `install`'s phase 4 stamp-file logic / phase 5).
   This is the original scripts' own accreted double-up (root `install.sh` called `systemd/
   install.sh` as a phase, and both independently called these two); both calls are harmless
@@ -146,8 +148,8 @@ template this box ever actually renders, not a synthetic fixture.
 
 ## Not this bead
 
-`install-session-hook.sh` (sp-7jr34, in flight) and `install-intake.sh` stay bash; both are
-called by bare name, unchanged. `conf.sh`/`lib.sh` (wave 4, last) stay bash; every value this
+`release session-hook`/`release intake` (sp-7jr34, landed concurrently) are called as
+`release` subcommands now, not by the retired script names. `conf.sh`/`lib.sh` (wave 4, last) stay bash; every value this
 crate needs from them is read from the environment a caller already resolved, the same
 contract `release`'s own `Config::resolve` already established. `doctor.sh`, `configure.sh`,
 `build.sh`, `seed.sh`, `mail.sh`, `exclude.sh`, `ready.sh`, `watchd.sh`, `ctrl.sh` are wave 5

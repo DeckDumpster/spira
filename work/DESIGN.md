@@ -15,9 +15,10 @@ socket (`SPIRA_LC_SOCKET`, default `/run/spira-lc/sock`) and prints the reply.
 - **Exit:** the machine's own exit code on a reply. `2` means cannot tell: unbound, socket
   unreachable, or a malformed reply; retrying is safe. `3` means refused: a foreign bead, an
   unknown verb, or the switch is off; do not retry.
-- **Callers:** only the model, and only through aeon.sh's `work-env.sh` wrap and the
-  `{{FINISH}}` brief. Both are rendered only when `LIFECYCLE_ENFORCE=1` (aeon.sh ~1810,
-  ~2285). No harness script invokes `work`.
+- **Callers:** only the model, and only under the aeon's restricted environment (design
+  §3.5; `aeon/src/restrict.rs`, formerly the `work-env.sh` wrap, retired sp-zpaq0) and the
+  `{{FINISH}}` brief. Both apply only when `LIFECYCLE_ENFORCE=1`. No harness script
+  invokes `work`.
 
 ## 3. Lifecycle switch
 
@@ -53,8 +54,10 @@ So the right answer is a loud, non-retryable refusal.
 - `on_unreachable_socket_is_cannot_tell`
 - `lib::off_refusal_names_the_switch_and_a_legacy_path_for_every_verb`
 
-**Cutover addition:** `spira/work-env.sh` runs `work` under `env -i` and does not pass
-`SPIRA_LIFECYCLE_ENFORCE`. In on mode, `work` then falls back to the spira.toml it can find
-from `HOME`. If on is set only through the environment (spira.conf or a unit), every verb
-would be refused. work-env.sh must add `"SPIRA_LIFECYCLE_ENFORCE=${LIFECYCLE_ENFORCE:-0}"`,
-or `$SPIRA_LIFECYCLE_ENFORCE`, to its `env -i` list. Nothing is needed for off.
+**Cutover addition (now `aeon/src/restrict.rs`; the wrapper process it describes, `spira/
+work-env.sh`, is retired — sp-zpaq0):** the restricted environment runs `work` under an
+allow-list and does not pass `SPIRA_LIFECYCLE_ENFORCE` unless it is present and non-empty
+in the aeon's own environment. In on mode, `work` then falls back to the spira.toml it can
+find from `HOME`. If on is set only through the environment (spira.conf or a unit), every
+verb would be refused, so `restrict.rs` carries `SPIRA_LIFECYCLE_ENFORCE` through
+(defaulted to `0`) rather than dropping it. Nothing is needed for off.

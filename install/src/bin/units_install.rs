@@ -298,11 +298,12 @@ fn main() -> ExitCode {
         }
     }
 
-    // install-session-hook.sh stays bash and owned by sp-7jr34; this call site is preserved
-    // unconditionally, matching systemd/install.sh's own unconditional call.
-    let hook_ok = Command::new("install-session-hook.sh").arg("install").status().map(|s| s.success()).unwrap_or(false);
+    // `release session-hook install` (sp-7jr34: replaces spira/install-session-hook.sh,
+    // which is gone) — this call site is preserved unconditionally, matching
+    // systemd/install.sh's own unconditional call.
+    let hook_ok = Command::new("release").args(["session-hook", "install"]).status().map(|s| s.success()).unwrap_or(false);
     if !hook_ok {
-        eprintln!("note: the session hook was not registered — run install-session-hook.sh install");
+        eprintln!("note: the session hook was not registered — run release session-hook install");
     }
 
     if let Some(home) = nonempty_env("SPIRA_HOME") {

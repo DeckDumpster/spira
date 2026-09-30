@@ -1,7 +1,7 @@
 //! `install` — the root installer (`install.sh`, in Rust). Nine phases: preflight, conflict
 //! checks, config, build, database, units, hooks, cockpit, verify. Every tool this phase
 //! sequence calls that has not itself moved to Rust yet (`doctor.sh`, `configure.sh`,
-//! `build.sh`, `seed.sh`, `mail.sh`, `install-session-hook.sh`, `install-intake.sh`,
+//! `build.sh`, `seed.sh`, `mail.sh`, `release session-hook`, `release intake`,
 //! `exclude.sh`, `ready.sh`) is invoked by bare name on the launcher `PATH`, exactly as
 //! `install.sh` did — none of them are this bead's scope.
 //!
@@ -446,11 +446,11 @@ fn main() -> ExitCode {
     if opts.ephemeral || opts.no_session_hook {
         skip("session hook skipped (--ephemeral or --no-session-hook)");
     } else if opts.dry {
-        would("run: spira/install-session-hook.sh install");
+        would("run: release session-hook install");
     } else {
         info("installing session hook");
-        if tool_status("install-session-hook.sh", &["install"]) != 0 {
-            eprintln!("install: phase hooks failed — install-session-hook.sh failed");
+        if tool_status("release", &["session-hook", "install"]) != 0 {
+            eprintln!("install: phase hooks failed — release session-hook install failed");
             return ExitCode::from(2);
         }
         changes += 1;
@@ -460,10 +460,10 @@ fn main() -> ExitCode {
         if opts.ephemeral {
             skip("alert intake skipped (--ephemeral)");
         } else if opts.dry {
-            would(&format!("run: spira/install-intake.sh install (SPIRA_ALERT_GLOB={glob})"));
+            would(&format!("run: release intake install (SPIRA_ALERT_GLOB={glob})"));
         } else {
             info(&format!("wiring alert intake for SPIRA_ALERT_GLOB={glob}"));
-            let (_, out) = tool_output("install-intake.sh", &["install"], &[]);
+            let (_, out) = tool_output("release", &["intake", "install"], &[]);
             print!("{out}");
         }
     } else {

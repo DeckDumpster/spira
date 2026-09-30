@@ -1,7 +1,7 @@
 //! The root installer (`install.sh`, in Rust): nine phases — preflight, conflicts, config,
 //! build, database, units, hooks, cockpit, verify. Every phase that shells to a tool not yet
 //! ported (`doctor.sh`, `configure.sh`, `build.sh`, `seed.sh`, `mail.sh`,
-//! `install-session-hook.sh`, `install-intake.sh`, `exclude.sh`, `ready.sh`, `loginctl`) does
+//! `release session-hook`, `release intake`, `exclude.sh`, `ready.sh`, `loginctl`) does
 //! so through [`Deps`], by bare name on the launcher `PATH` (sp-gypjk) — none of those tools
 //! move in this bead; wave 6a is `install.sh`, `systemd/install.sh`, `unit-ensure.sh`,
 //! `units.sh` and `render.py` only.

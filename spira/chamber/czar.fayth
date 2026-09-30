@@ -5,7 +5,7 @@
 # it may use, and what wakes it.
 #
 # law-one-supervised-pass-before-you-arm: the operator must review one czar run before
-# unattended operation is trusted. Use escape.sh to summon the czar for its first bead
+# unattended operation is trusted. Use `aeon --escape czar` to summon the czar for its first bead
 # and watch the transcript before treating this lane as autonomous.
 
 FAYTH_NAME=czar
