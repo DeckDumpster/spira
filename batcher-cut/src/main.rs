@@ -112,8 +112,16 @@ fn find_repo(env_: &Env, name: &str) -> Result<Repo, String> {
     if base.is_empty() {
         return Err(format!("{name}: spira_landref could not resolve a base ref"));
     }
-    let forge = env::var_os("SPIRA_FORGE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("forge.sh"));
+    let forge = default_forge();
     Ok(Repo { name: name.to_string(), path: PathBuf::from(path), base, forge, land })
+}
+
+/// Bare name on the launcher's PATH (sp-gypjk); forge.sh is retired (sp-t4y60) — sp-yv4b3
+/// found this default still naming the deleted script, which blinded production queue-watch
+/// ("forge check-status 459: No such file or directory (os error 2)"). Factored out so the
+/// regression has a seam to call without faking lib.sh's repo-map (see `tests` below).
+pub(crate) fn default_forge() -> PathBuf {
+    env::var_os("SPIRA_FORGE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("forge"))
 }
 
 fn now() -> u64 {
@@ -788,6 +796,45 @@ fn main() -> ExitCode {
             eprintln!("batcher: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    // Serialises the one test in this crate that touches the real process environment
+    // (SPIRA_FORGE) — same pattern as release's `ENV_LOCK`/`PathGuard` (release/src/tests.rs).
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvGuard(Option<std::ffi::OsString>);
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(f) => env::set_var("SPIRA_FORGE", f),
+                None => env::remove_var("SPIRA_FORGE"),
+            }
+        }
+    }
+
+    // REGRESSION (sp-yv4b3): production queue-watch went blind because this default named
+    // the retired `forge.sh` instead of the release's `forge` binary. Fails on the pre-fix
+    // default (`forge.sh`).
+    #[test]
+    fn default_forge_is_the_bare_release_binary_when_spira_forge_is_unset() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _restore = EnvGuard(env::var_os("SPIRA_FORGE"));
+        env::remove_var("SPIRA_FORGE");
+        assert_eq!(default_forge(), PathBuf::from("forge"), "default must name the bare release binary, not forge.sh");
+    }
+
+    #[test]
+    fn default_forge_still_honours_an_explicit_spira_forge_override() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _restore = EnvGuard(env::var_os("SPIRA_FORGE"));
+        env::set_var("SPIRA_FORGE", "/some/other/forge.sh");
+        assert_eq!(default_forge(), PathBuf::from("/some/other/forge.sh"));
     }
 }
 

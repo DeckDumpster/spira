@@ -1107,27 +1107,7 @@ mod tests {
         (a, Spool { dir })
     }
 
-    #[test]
-    fn the_spool_serves_reruns_while_the_corpus_runs_and_a_round_build_after_it() {
-        let fx = fixture();
-        let mut remote = FakeRemote::green();
-        remote.batch_secs = 300;
-        let (a, sp) = spool_fixture(&fx);
-        assert_eq!(go(&fx, &remote, &a), 0, "the exit code is the corpus's");
-        let attrs = remote.attrs.lock().unwrap().clone();
-        assert!(attrs.contains(&("j1".to_string(), true)), "j1 ran while the corpus did: {attrs:?}");
-        assert!(attrs.contains(&("j2".to_string(), false)), "the round build waited for the corpus: {attrs:?}");
-        let res = sp.res_dir();
-        assert_eq!(fs::read_to_string(res.join("j1.done")).unwrap(), "rc=0\n");
-        assert!(res.join("j1/test-a.sh.result").is_file(), "flattened out of the key dir");
-        assert_eq!(fs::read_to_string(res.join("j2.done")).unwrap(), "rc=1\n");
-        assert!(res.join("j2/bins/batcher").is_file(), "a round build brings its binaries back");
-        assert_eq!(fs::read_to_string(res.join("j3.done")).unwrap(), "rc=2\n", "a branch that cannot be mirrored is a fault");
-        assert_eq!(fs::read_to_string(sp.dir.join("corpus.done")).unwrap(), "rc=0\n");
-        assert!(fs::read_to_string(fx.d.path().join("results/test-b.sh.result")).is_ok(), "the corpus's results streamed in");
-        assert!(fx.fp.live_vms().is_empty(), "released once the spool closed");
-    }
-
+    // Deleted by sp-xbe3u (law-a-test-that-flips-is-deleted): it failed under the full-workspace unit gate and passed in isolation; sp-ajonc fixes the race and re-adds it.
     #[test]
     fn a_spool_run_whose_ssh_fails_writes_corpus_done_and_does_not_linger() {
         let fx = fixture();

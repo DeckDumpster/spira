@@ -857,8 +857,8 @@ pub fn write_local_verdict(env: &Env, repo: &str, verdict: &str, detail: &str) {
 // ---------------------------------------------------------------------------------------
 
 pub fn forge_pr_create(repo: &Repo, head: &str, base: &str, title: &str, body: &str) -> Result<String, String> {
-    // A bare name (the default, forge.sh) is the launcher-PATH program, run directly; a
-    // configured SPIRA_FORGE path is run with bash, as batch.sh does.
+    // A bare name (the default, `forge`, since sp-yv4b3) is the launcher-PATH program, run
+    // directly; a configured SPIRA_FORGE path is run with bash, as batch.sh did.
     let mut cmd = if repo.forge.components().count() == 1 {
         Command::new(&repo.forge)
     } else {
@@ -1092,7 +1092,7 @@ mod land_tests {
         let _ = force_push_branch(&r, "deadbeef", "spira/queue/1");
     }
 }
-
+// Deleted by sp-xbe3u (law-a-test-that-flips-is-deleted): it failed under the full-workspace unit gate and passed in isolation; sp-ajonc fixes the race and re-adds it.
 #[cfg(test)]
 mod result_path_tests {
     #[test]
