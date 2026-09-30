@@ -76,7 +76,7 @@ pub fn wrapper(path: &str, setting: Option<&str>) -> Result<Wrapper, String> {
         "off" => Ok(Wrapper::Off),
         "" | "sccache" => find_on(path, WRAPPER).map(Wrapper::Sccache).ok_or_else(|| {
             format!(
-                "sccache is not on the build's PATH ({path}) — every Spira build compiles through the box's shared compilation cache (spira/deps.toml; install: cargo install sccache --locked). {CACHE_ENV}=off builds uncached, on purpose"
+                "sccache is not on the build's PATH ({path}) — every Spira build compiles through the box's one shared compilation cache (spira/deps.toml; install: cargo install sccache --locked). {CACHE_ENV}=off builds uncached, on purpose"
             )
         }),
         other => Err(format!("{CACHE_ENV}={other:?} is not a build cache setting (unset, `sccache` or `off`)")),
