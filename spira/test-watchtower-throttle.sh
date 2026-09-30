@@ -98,7 +98,7 @@ MOCK
         INC_SUBJECTS="$TMP/inc-subjects" \
         INC_CAUSES="$TMP/inc-causes" \
         INC_REFS="$TMP/inc-refs" \
-        "$@" bash "$HERE/watchtower.sh" --throttle-check 2>/dev/null
+        "$@" watchtower.sh --throttle-check 2>/dev/null
 }
 
 stamp_exists() { [ -f "$TMP/run/queue-throttled" ] && echo yes || echo no; }

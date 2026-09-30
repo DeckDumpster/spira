@@ -93,7 +93,7 @@ wt_show() {
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
         SPIRA_SYSTEMCTL="$BIN/systemctl" SPIRA_JOURNALCTL="$BIN/journalctl" \
-        bash "$HERE/watchtower.sh" --show 2>/dev/null
+        watchtower.sh --show 2>/dev/null
 }
 fu_row() { printf '%s\n' "$1" | sed -n 's/^  FAILED UNITS  *//p' | head -1; }
 
@@ -113,7 +113,7 @@ MOCK
         SPIRA_SYSTEMCTL="$BIN/systemctl" SPIRA_JOURNALCTL="$BIN/journalctl" \
         SPIRA_INCIDENT_SH="$mock" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
-        bash "$HERE/watchtower.sh" >/dev/null 2>&1
+        watchtower.sh >/dev/null 2>&1
 }
 inc_calls() { cat "$TMP/inc-calls" 2>/dev/null || true; }
 seed_state() {   # seed_state <unit> <age-seconds> <escalated 0|1>

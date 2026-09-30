@@ -68,7 +68,7 @@ classify() {
     PARTS="$parts" ALL_PARTS="$all_parts" \
     SPIRA_SCOPE_LABEL="$SCOPE" SPIRA_CI_LABEL="$CI" SPIRA_ASK_LABEL="$ASK" \
     SPIRA_GROOM_ASK_LABEL="$GROOM_ASK" \
-        python3 "$HERE/unclaimable.py" <<< "$beads_json"
+        unclaimable.py <<< "$beads_json"
 }
 
 bead() { # bead <id> <extra-labels-csv-or-""> -> one bead JSON object, always scoped+repo'd

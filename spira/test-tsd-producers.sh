@@ -7,7 +7,7 @@
 # WHAT THIS SUITE CHECKS.
 #   1. aeon-session: ledger_done (aeon.sh) appends a row carrying bead/fayth/rc/status and
 #      the same wall_s/api_s/turns/cost_usd session_result_fields already computed for its
-#      own ledger line — best-effort when SPIRA_TSD_BIN is unusable.
+#      own ledger line — best-effort when tsd-write fails.
 #   2. slots: _tsd_slots_sample (lib.sh) turns a collect.sh fragment into one row, an absent
 #      key renders "?" rather than a silent 0; slots_keys' (cockpit.sh) fleet ceiling comes
 #      from config alone, never a database call.
@@ -34,20 +34,10 @@ printf 'test-tsd-producers.sh\n'
 
 T="$(mktemp -d)"; trap 'testdb_drop 2>/dev/null; rm -rf "$T"' EXIT INT TERM
 
-# ── build tsd-write (law-absence-needs-a-positive-control: no binary, no suite) ────────────
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-[ -n "$CARGO_BIN" ] || skip "cargo not found — tsd-write binary cannot be built"
-TSD_ROOT="$HERE/../tsd"
-TSD_BIN="$TSD_ROOT/target/release/tsd-write"
-if [ ! -x "$TSD_BIN" ]; then
-    cp -r "$TSD_ROOT/." "$T/tsd-src"
-    printf '  (building tsd-write into %s)\n' "$T/tsd-target"
-    CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/tsd-target" \
-        "$CARGO_BIN" build --release --manifest-path "$T/tsd-src/Cargo.toml" 2>&1 | tail -5
-    TSD_BIN="$T/tsd-target/release/tsd-write"
-fi
-[ -x "$TSD_BIN" ] || bail "tsd-write binary not found at $TSD_BIN"
+# ── tsd-write (law-absence-needs-a-positive-control: no binary, no suite) ─────────────────
+# tsd-write is the tree's own build, on the suite's PATH (sp-gypjk) — never built here.
+command -v tsd-write >/dev/null 2>&1 || bail "tsd-write is not on PATH"
+TSD_BIN=tsd-write
 
 jpy() {  # jpy <file> <python-expr-on-"rows"> — rows is a list of parsed JSON lines
     python3 -c '
@@ -67,7 +57,7 @@ printf '\n%s\n' "2. slots: _tsd_slots_sample (lib.sh) and slots_keys' config-onl
 # ============================================================================================
 RUN3="$T/run3"; mkdir -p "$RUN3"
 (
-    export SPIRA_RUN="$RUN3" SPIRA_TSD_BIN="$TSD_BIN"
+    export SPIRA_RUN="$RUN3"
     set -uo pipefail
     . "$HERE/lib.sh"
     FRAG="$T/slots.env"
@@ -88,7 +78,7 @@ fi
 # reached "ok") renders the missing ones "?", never a silent 0 that reads as an empty fleet.
 RUN3B="$T/run3b"; mkdir -p "$RUN3B"
 (
-    export SPIRA_RUN="$RUN3B" SPIRA_TSD_BIN="$TSD_BIN"
+    export SPIRA_RUN="$RUN3B"
     . "$HERE/lib.sh"
     FRAG="$T/slots-empty.env"
     printf '_PROBE_AT=0\n_PROBE_STATUS=never\n_PROBE_KILLED=0\n' > "$FRAG"
@@ -124,7 +114,7 @@ printf '\n%s\n' "3. round: TIMINGS ONLY — the phase whitelist keeps a round ro
 # ============================================================================================
 RUN4="$T/run4"; mkdir -p "$RUN4"
 (
-    export SPIRA_RUN="$RUN4" SPIRA_TSD_BIN="$TSD_BIN"
+    export SPIRA_RUN="$RUN4"
     . "$HERE/lib.sh"
     for p in build corpus attribute rerun land publish; do
         _tsd_round_phase "batch-1" "$p" 5 3 1
@@ -150,7 +140,7 @@ sed -n '/^\[ -n "\$BATCH_ID" \] && _tsd_round_phase "\$BATCH_ID" attribute \\$/,
 [ -s "$ATTR_TAIL" ] || bad "could not extract attribute.sh's round-phase call site"
 RUN5="$T/run5"; mkdir -p "$RUN5"
 (
-    export SPIRA_RUN="$RUN5" SPIRA_TSD_BIN="$TSD_BIN"
+    export SPIRA_RUN="$RUN5"
     . "$HERE/lib.sh"
     BATCH_ID="batch-attr-1"
     _ATTR_PASS_START=$(( EPOCHSECONDS - 7 ))
@@ -170,7 +160,7 @@ fi
 # --batch-id omitted: no row, and attribution's own output is unaffected either way.
 RUN5B="$T/run5b"; mkdir -p "$RUN5B"
 (
-    export SPIRA_RUN="$RUN5B" SPIRA_TSD_BIN="$TSD_BIN"
+    export SPIRA_RUN="$RUN5B"
     . "$HERE/lib.sh"
     BATCH_ID=""
     _ATTR_PASS_START=$(( EPOCHSECONDS - 7 ))
@@ -205,7 +195,6 @@ for _s in pilgrimage.sh strand reflect.sh; do
 done
 # THE SENTINEL IS A BINARY (sentinel.sh is gone): it sources lib.sh from SPIRA_HOME.
 for _s in lib.sh conf.sh lc.sh suite-covers.sh lifecycle-cert.sh; do ln -s "$HERE/$_s" "$SP_STUBS/$_s"; done
-SENTINEL_BIN="${SPIRA_SENTINEL_BIN:-$(SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; printf %s "${SPIRA_SENTINEL_BIN:-}"' _ "$HERE")}"
 printf '#!/bin/sh\necho inactive\n' > "$SP_STUBS/mock-systemctl"; chmod +x "$SP_STUBS/mock-systemctl"
 printf '#!/bin/sh\nexit 0\n'        > "$SP_STUBS/mock-launch";    chmod +x "$SP_STUBS/mock-launch"
 printf '#!/bin/sh\nexit 0\n'        > "$SP_STUBS/mock-notify";    chmod +x "$SP_STUBS/mock-notify"
@@ -217,7 +206,7 @@ ln -s "$HERE/chamber" "$SP_STUBS/chamber"
 SP_RUN="$T/sp-run"; mkdir -p "$SP_RUN"
 _pass_t0=$(date +%s)
 out_pass="$(env -i \
-    PATH="$PATH" HOME="$HOME" \
+    PATH="$SP_STUBS:$PATH" HOME="$HOME" \
     SPIRA_HOME="$SP_STUBS" \
     SPIRA_RUN="$SP_RUN" \
     SPIRA_DB="$SPIRA_DB" \
@@ -231,9 +220,7 @@ out_pass="$(env -i \
     SPIRA_SUMMON="$SP_STUBS/mock-summon" \
     SPIRA_NOTIFY="$SP_STUBS/mock-notify" \
     SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL= SPIRA_MAX_AEONS=2 \
-    SPIRA_TSD_BIN="$TSD_BIN" \
-    SPIRA_STRAND_BIN="$SP_STUBS/strand" \
-    "$SENTINEL_BIN" 2>&1)"
+    sentinel 2>&1)"
 rc=$?
 _pass_wall=$(( $(date +%s) - _pass_t0 ))
 is   "sentinel pass exits 0"                       "0"            "$rc"

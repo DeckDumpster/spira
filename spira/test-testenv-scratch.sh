@@ -48,7 +48,7 @@ ok "positive-control: bd rejects a plain directory"
 # ---- SKIP GUARD: check that the scratch command itself is reachable ------------------
 # Run once with stderr visible to get a clear error on missing bd-embedded. If it
 # fails with exit 77 that is a SKIP; any other failure is a hard error.
-if ! scratch_path="$(bash "$HERE/testenv.sh" scratch 2>"$TMP/scratch-err")"; then
+if ! scratch_path="$(testenv.sh scratch 2>"$TMP/scratch-err")"; then
     if grep -q 'no bd engine available' "$TMP/scratch-err" 2>/dev/null; then
         printf 'SKIP test-testenv-scratch: %s\n' "$(cat "$TMP/scratch-err")" >&2
         exit 77
@@ -157,7 +157,7 @@ fi
 # paths testenv.sh prints, then verify each is gone after exit.
 shell_stderr="$TMP/shell-stderr"
 shell_db="$(printf 'printf "%%s" "$SPIRA_DB"\n' \
-            | bash "$HERE/testenv.sh" shell 2>"$shell_stderr")"
+            | testenv.sh shell 2>"$shell_stderr")"
 shell_rc=$?
 
 shell_db_path="$(grep    'SPIRA_DB='    "$shell_stderr" | sed 's/.*SPIRA_DB=//'    | head -1)"
@@ -217,7 +217,7 @@ fi
 # ---- SHELL: passes arguments to inner bash -------------------------------------------
 # testenv.sh shell -c 'cmd' must execute cmd (not silently discard it).
 shell_c_stderr="$TMP/shell-c-stderr"
-shell_c_out="$(bash "$HERE/testenv.sh" shell -c 'printf hello-from-shell-c' 2>"$shell_c_stderr")"
+shell_c_out="$(testenv.sh shell -c 'printf hello-from-shell-c' 2>"$shell_c_stderr")"
 shell_c_rc=$?
 if [ "$shell_c_out" = "hello-from-shell-c" ]; then
     ok "shell: -c 'cmd' executes the command"

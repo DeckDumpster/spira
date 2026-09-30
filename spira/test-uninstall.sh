@@ -136,7 +136,7 @@ chmod +x "$MOCK_BIN/tmux"
 un() {
     > "$MOCK_LOG"; > "$LINGER_LOG"; > "$LAYOUT_LOG"
     env -i \
-        "PATH=$PATH" \
+        "PATH=$FIXTURE/spira:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
         "SPIRA_PATH=$MOCK_BIN" \
@@ -166,7 +166,7 @@ un() {
 _seed_units() {
     local rendered rc
     rendered="$(env -i \
-        "PATH=$PATH" \
+        "PATH=$FIXTURE/spira:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
         "SPIRA_PATH=$MOCK_BIN" \
@@ -302,7 +302,7 @@ echo "INSTANCE AWARENESS — refuses multiple instances; accepts explicit:"
 > "$DEST/spira-sentinel-test.service"
 
 multi_out="$(env -i \
-    "PATH=$PATH" \
+    "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \
     SPIRA_CONF=/nonexistent \
     "SPIRA_PATH=$MOCK_BIN" \
@@ -324,7 +324,7 @@ want    "instance: names the instances found" "test" "$multi_out"
 
 # Explicit argument should be accepted even with multiple sentinels.
 explicit_out="$(env -i \
-    "PATH=$PATH" \
+    "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \
     SPIRA_CONF=/nonexistent \
     "SPIRA_PATH=$MOCK_BIN" \
@@ -414,7 +414,7 @@ printf 'SPIRA_INSTANCE=test\n' > "$CONF_DIR/spira.conf"
 mkdir -p "$SPIRA_RUN_DIR/archive"
 
 purge_out="$(env -i \
-    "PATH=$PATH" \
+    "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \
     SPIRA_CONF=/nonexistent \
     "SPIRA_PATH=$MOCK_BIN" \
@@ -450,7 +450,7 @@ _seed_units || { printf 'fixture: re-seed for dry-run failed\n'; exit 1; }
 _unit_before="$(ls -1 "$DEST" 2>/dev/null | wc -l | tr -d ' ')"
 
 dryrun_out="$(env -i \
-    "PATH=$PATH" \
+    "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \
     SPIRA_CONF=/nonexistent \
     "SPIRA_PATH=$MOCK_BIN" \
@@ -521,7 +521,7 @@ _seed_purgedb() {
 un_purgedb() {
     local confirm="$1"; shift
     env -i \
-        "PATH=$PATH" \
+        "PATH=$FIXTURE/spira:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
         "SPIRA_PATH=$MOCK_BIN" \
@@ -624,7 +624,7 @@ chmod +x "$RACE_BIN/systemctl"
 # by the time it reaches the broker service the firing can no longer happen.
 : > "$RACE_STATE/active"; rm -f "$RACE_STATE/timer_stopped"
 race_out="$(env -i \
-    "PATH=$PATH" \
+    "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \
     SPIRA_CONF=/nonexistent \
     "SPIRA_PATH=$RACE_BIN" \
@@ -634,7 +634,6 @@ race_out="$(env -i \
     "SPIRA_REPO=$FAKE_REPO" \
     "SPIRA_COCKPIT=$REAL_COCKPIT" \
     "SPIRA_INSTANCE=test" \
-    "SPIRA_BROKER_BIN=$RACE_BIN/broker" \
     SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
     "SPIRA_SYSTEMCTL=$RACE_BIN/systemctl" \
     "SPIRA_LOGINCTL=$MOCK_BIN/loginctl" \
@@ -652,22 +651,16 @@ rm -rf "$RACE_STATE" "$RACE_BIN"
 
 # ==========================================================================
 echo
-echo "UNBUILT HERE, INSTALLED THERE — binary-gated units a tarball install left are removed:"
+echo "BINARY-BACKED UNITS ARE ALWAYS OWNED — a release carries every binary, so uninstall removes them:"
 # ==========================================================================
-# THE ACCEPTANCE FAILURE. A release tarball ships bin/broker and bin/loom, so installing from
-# it installs spira-broker/-loom units; acceptance then ran uninstall.sh from the source
-# checkout, which has no bin/. units.sh leaves a unit out of UNITS when its binary is not
-# built HERE, so owned.sh's manifest omitted them, and uninstall left spira-broker-prod.
-# service, .timer and spira-loom-prod.service behind (reported as strays, never removed).
-# `un` sets no SPIRA_BROKER_BIN/SPIRA_LOOM_BIN, so conf.sh resolves them under $FAKE_REPO,
-# where nothing is built — the source-checkout shape.
+# THE ACCEPTANCE FAILURE. Uninstall once ran from a source checkout with no bin/, and units.sh
+# left a unit out of UNITS when its binary was not built HERE, so spira-broker/-loom units a
+# tarball install put there were left behind as strays. Since sp-gypjk there is no "not built"
+# state: units.sh lists these units unconditionally, so owned.sh's manifest always has them.
 for _ub in spira-broker-test.service spira-broker-test.timer spira-loom-test.service \
            spira-reconciler-flow-test.service spira-reconciler-flow-test.timer; do
     printf '[Unit]\nDescription=left by a tarball install\n' > "$DEST/$_ub"
 done
-[ ! -x "$FAKE_REPO/bin/broker" ] && [ ! -x "$FAKE_REPO/target/release/broker" ] \
-    && ok  "unbuilt: positive control — no broker binary in the uninstalling tree" \
-    || bad "unbuilt: positive control — no broker binary in the uninstalling tree" "one exists"
 unbuilt_out="$(un)"
 unbuilt_rc=$?
 iszero "unbuilt: uninstall exits 0" "$unbuilt_rc"

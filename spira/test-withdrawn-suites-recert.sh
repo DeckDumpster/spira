@@ -22,10 +22,9 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
-# The queue binary (queue/DESIGN.md §7.4): the one conf.sh exports, else the tree under
-# test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
-QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
-[ -x "$QUEUE_BIN" ] || { echo "FAIL: the queue binary is not built at $QUEUE_BIN"; exit 1; }
+# The queue and gate binaries (queue/DESIGN.md §7.4) by name on the suite's PATH (sp-gypjk);
+# the minimal PATH submit() hands queue carries the directory they resolve in.
+BIN_DIR="$(dirname "$(command -v queue)")" || { echo "FAIL: queue is not on PATH"; exit 1; }
 
 echo "test-withdrawn-suites-recert.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -33,7 +32,6 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 
 REPO="$TMP/repo"; RUN="$TMP/run"; SH="$TMP/spira"
 mkdir -p "$RUN/worktree" "$RUN/landstate" "$RUN/queue/fixq" "$SH"
-GATE_BIN="${SPIRA_GATE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/gate}"   # gate.sh execs it (sp-0tpcs)
 cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
    "$HERE/exclude.sh" "$HERE/skew.sh" "$HERE/yield.sh" "$HERE/suite-covers.sh" \
    "$HERE/gate-sweep.sh" "$HERE/lc.sh" "$SH/"
@@ -62,7 +60,7 @@ printf 'fixq | %s | queue | main |  | %s\n' "$REPO" "$SH/gate-stub.sh" > "$RMAP"
 
 submit() {
     : > "$GATELOG"
-    env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" \
+    env -i PATH="$SH:$BIN_DIR:/usr/local/bin:/usr/bin:/bin" HOME="$TMP" \
         GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$SH" \
@@ -73,8 +71,7 @@ submit() {
         SPIRA_REPO_MAP="$RMAP" \
         SPIRA_QUEUE_DIR="$RUN/queue" \
         SPIRA_CERTIFY_SUITES=off \
-        SPIRA_GATE_BIN="$GATE_BIN" \
-        SPIRA_HOME="$SH" "$QUEUE_BIN" submit spira/sp-wsx 2>&1
+        SPIRA_HOME="$SH" queue submit spira/sp-wsx 2>&1
 }
 
 echo

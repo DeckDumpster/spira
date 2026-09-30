@@ -244,7 +244,7 @@ want "resume on a world that was not draining says so" "not draining" "$out"
 # later fails here rather than in production.
 HARNESS="$(cd "$HERE/.." && pwd)"
 if [ -d "$HARNESS/systemd" ]; then
-    doors="$(grep -lE 'ExecStart=.*(aeon\.sh|/bin/aeon |@SPIRA_AEON_BIN@)' "$HARNESS/systemd"/*.service 2>/dev/null | wc -l)"
+    doors="$(grep -lE 'ExecStart=.*(aeon\.sh|/bin/aeon )' "$HARNESS/systemd"/*.service 2>/dev/null | wc -l)"
     [ "${doors:-0}" -ge 1 ] && ok "units that ExecStart the aeon directly exist ($doors) — the gate must cover them" \
                             || bad "direct-ExecStart doors" "expected at least one, found ${doors:-0}"
     grep -q 'world.draining' "$HARNESS/aeon/src/run.rs" \

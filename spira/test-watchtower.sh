@@ -101,7 +101,7 @@ wt() {                   # wt [VAR=val ...] -> the snapshot
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
         SPIRA_PATH="$DF_CLEAN" SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
-        "$@" bash "$HERE/watchtower.sh" --show 2>/dev/null
+        "$@" watchtower.sh --show 2>/dev/null
 }
 # THE LABEL IS MATCHED LITERALLY, never with a `.*`. The value is separated from the label
 # by run of spaces, so a greedy wildcard in the label happily swallows the value too and
@@ -298,7 +298,7 @@ ledger() {               # ledger <json> -> the collector's keys for that ledger
     mkdir -p "$TMP/run"
     printf '%s' "$1" > "$TMP/run/strands.json"
     env -i PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
-        bash "$HERE/cockpit.sh" strands 2>/dev/null
+        cockpit.sh strands 2>/dev/null
 }
 key() {                  # key <keys> <name> -> its value
     printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1
@@ -355,7 +355,7 @@ k="$(ledger 'not json at all')"
 is "an unparsable ledger renders ?" "?" "$(key "$k" SP_STRAND_GHOST)"
 rm -f "$TMP/run/strands.json"
 k="$(env -i PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
-        bash "$HERE/cockpit.sh" strands 2>/dev/null)"
+        cockpit.sh strands 2>/dev/null)"
 is "a missing ledger renders ?"     "?" "$(key "$k" SP_STRAND_GHOST)"
 
 # A SNAPSHOT FROM A COLLECTOR PREDATING THE SPLIT RENDERS `?`. The two halves are briefly
@@ -429,7 +429,7 @@ wt_file() {   # wt_file [VAR=val ...] -> $TMP/ops-prompt written; $TMP/incident-
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_INCIDENT_SH="$mock" \
         SPIRA_PATH="$DF_CLEAN" SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
-        "$@" bash "$HERE/watchtower.sh" 2>/dev/null
+        "$@" watchtower.sh 2>/dev/null
 }
 
 fresh
@@ -563,7 +563,7 @@ wt_file_multi() {   # wt_file_multi [VAR=val ...] -> appends incident subjects t
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
         SPIRA_INCIDENT_SH="$mock" \
-        "$@" bash "$HERE/watchtower.sh" 2>/dev/null
+        "$@" watchtower.sh 2>/dev/null
 }
 # wt_sinexempt_multi: like wt_file_multi but captures SPIRA_SIN_EXEMPT (UC-ops-detection-
 # remediation-07) alongside the subject, one "<subject>|<SPIRA_SIN_EXEMPT>" line per
@@ -580,7 +580,7 @@ wt_sinexempt_multi() {   # wt_sinexempt_multi [VAR=val ...] -> appends to $TMP/i
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
         SPIRA_INCIDENT_SH="$mock" \
-        "$@" bash "$HERE/watchtower.sh" 2>/dev/null
+        "$@" watchtower.sh 2>/dev/null
 }
 # wt_refs_multi: like wt_file_multi but captures SPIRA_INCIDENT_REF (the actual dedupe key)
 # rather than the incident subject. Used to verify two passes with different measured values
@@ -596,7 +596,7 @@ wt_refs_multi() {   # wt_refs_multi [VAR=val ...] -> appends SPIRA_INCIDENT_REF 
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
         SPIRA_INCIDENT_SH="$mock" \
-        "$@" bash "$HERE/watchtower.sh" 2>/dev/null
+        "$@" watchtower.sh 2>/dev/null
 }
 wt_body_unadopted() {  # wt_body_unadopted [VAR=val ...] -> writes unadopted escalation body to $TMP/inc-unadopted-body
     local mock="$TMP/mock-inc-unadopted-body.sh"
@@ -610,7 +610,7 @@ wt_body_unadopted() {  # wt_body_unadopted [VAR=val ...] -> writes unadopted esc
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
         SPIRA_INCIDENT_SH="$mock" \
-        "$@" bash "$HERE/watchtower.sh" 2>/dev/null
+        "$@" watchtower.sh 2>/dev/null
 }
 
 # Below threshold: the prompt file is written, but no drain escalation incident is filed.

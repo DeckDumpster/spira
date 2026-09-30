@@ -60,8 +60,8 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || bail "the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model"
+command -v aeon >/dev/null 2>&1 \
+    || bail "aeon is not on PATH — refusing to run the real model"
 
 # Shim A (positive control): exits with the bead open and no marker — attempt IS charged.
 cat > "$BIN/claude-no-thrash" <<'SHIM'
@@ -108,7 +108,7 @@ seed() {
 }
 run_aeon() {
     rm -rf "$SPIRA_RUN/worktree"
-    "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1
+    aeon --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1
     echo $?
 }
 bead_status() {
@@ -190,7 +190,7 @@ fresh; seed sp-tt-3
 rm -rf "$SPIRA_RUN/worktree"
 marker="$SPIRA_RUN/sp-tt-3.thrash"
 rm -f "$marker"
-setsid "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out3" 2>&1 &
+setsid aeon --home "$SPIRA_HOME" builder > "$TMP/out3" 2>&1 &
 aeon_pid=$!
 
 _waited=0

@@ -76,7 +76,7 @@ run_tokens() {
         SPIRA_HOME="$TMP" SPIRA_REPO="$TMP" SPIRA_REPO_MAP="$TMP/no-map" \
         SPIRA_RUN="$RUN" SPIRA_TOKEN_PROJECTS="$PROJ" \
         SPIRA_TOKEN_WINDOW_H=87600 SPIRA_CONF="$TMP/no.conf" \
-        bash "$HERE/tokens.sh" "$1" 2>/dev/null
+        tokens.sh "$1" 2>/dev/null
 }
 
 ENV_OUT="$(run_tokens env)"
@@ -131,7 +131,7 @@ ENV2="$(env -i PATH="$PATH" HOME="$TMP" \
     SPIRA_HOME="$TMP" SPIRA_REPO="$TMP" SPIRA_REPO_MAP="$TMP/no-map" \
     SPIRA_RUN="$RUN" SPIRA_TOKEN_PROJECTS="$PROJ2" \
     SPIRA_TOKEN_WINDOW_H=87600 SPIRA_CONF="$TMP/no.conf" \
-    bash "$HERE/tokens.sh" env 2>/dev/null)"
+    tokens.sh env 2>/dev/null)"
 field2() { sed -n "s/^$1=//p" <<< "$ENV2"; }
 
 is "control1: aeon turns from log only"       "2" "$(field2 SP_TOK_AEON_TURNS)"
@@ -154,7 +154,7 @@ ENV3="$(env -i PATH="$PATH" HOME="$TMP" \
     SPIRA_HOME="$TMP" SPIRA_REPO="$TMP" SPIRA_REPO_MAP="$TMP/no-map" \
     SPIRA_RUN="$RUN" SPIRA_TOKEN_PROJECTS="$PROJ3" \
     SPIRA_TOKEN_WINDOW_H=87600 SPIRA_CONF="$TMP/no.conf" \
-    bash "$HERE/tokens.sh" env 2>/dev/null)"
+    tokens.sh env 2>/dev/null)"
 field3() { sed -n "s/^$1=//p" <<< "$ENV3"; }
 
 is "control2: archivist turns now zero"    "0" "$(field3 SP_TOK_ARC_TURNS)"

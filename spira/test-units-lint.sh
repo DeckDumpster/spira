@@ -29,10 +29,9 @@ CLONE="$TMP/clone"
 mkdir -p "$CLONE/spira" "$CLONE/cockpit"
 ln -s "$HERE"/*.sh "$CLONE/spira/"
 
-# conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2); CLONE carries
-# none of this checkout's own target/, so without this the render pass below reads no
-# configured value at all.
-SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)" || skip "no spira-config binary found — cannot be built here"
+# conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2), found by name
+# on the suite's PATH (sp-gypjk).
+command -v spira-config >/dev/null 2>&1 || bail "spira-config is not on PATH"
 cp -r "$ROOT/systemd" "$CLONE/systemd"
 ln -s "$ROOT/beads-push.sh" "$ROOT/concierge.sh" "$CLONE/"
 
@@ -63,7 +62,6 @@ printf 'test-units-lint.sh\n'
 # which is what every removed per-suite section actually needed to check content.
 # =======================================================================================
 rendered="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" \
-    SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
     bash "$CLONE/systemd/install.sh" --render 2>"$TMP/render.err")"
 is "the render pass produced units" "yes" "$([ -n "$rendered" ] && echo yes || echo no)"
 # `note:` lines are install.sh commenting on units this suite does not touch (an unbuilt
@@ -146,21 +144,21 @@ exit 0
 EOF
 chmod +x "$STUB/systemctl"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB/loginctl"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB/spira-supervise"
-chmod +x "$STUB/systemctl" "$STUB/loginctl" "$STUB/spira-supervise"
-# The sentinel/queue/aeon units ExecStart @SPIRA_*_BIN@ (8e220de40), and install refuses a unit
-# whose target is not executable: no-op stubs, pinned below.
-for _b in sentinel queue aeon; do
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB/$_b"; chmod +x "$STUB/$_b"
-done; unset _b
+chmod +x "$STUB/systemctl" "$STUB/loginctl"
+# A RELEASE-SHAPED PROD ROOT (sp-gypjk): units ExecStart @SPIRA_PROD_ROOT@/bin/<tool>, and
+# install refuses a unit whose target is not executable. The root links this tree's own
+# top-level entries and adds a bin/ of no-op stubs, one per binary any unit names.
+PRODROOT="$TMP/prodroot"; mkdir -p "$PRODROOT/bin"
+for _e in "$ROOT"/*; do ln -s "$_e" "$PRODROOT/"; done
+for _b in $(grep -oh '@SPIRA_PROD_ROOT@/bin/[a-z0-9-]*' "$ROOT"/systemd/*.service | sed 's#.*/bin/##' | sort -u); do
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$PRODROOT/bin/$_b"; chmod +x "$PRODROOT/bin/$_b"
+done; unset _b _e
 IHOME="$TMP/ihome"; mkdir -p "$IHOME"
 : > "$TMP/systemctl.log"
 printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PATH = %s\nSPIRA_PROD = %s\n' \
-    "$RUN" "$ROOT/cockpit" "$MAN" "$STUB" "$HERE" > "$TMP/install.conf"
+    "$RUN" "$ROOT/cockpit" "$MAN" "$STUB" "$PRODROOT/spira" > "$TMP/install.conf"
 env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_CONF="$TMP/install.conf" \
-    SPIRA_INSTALL_FORCE=1 SPIRA_HOME="$HERE" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
-    "SPIRA_SUPERVISE_BIN=$STUB/spira-supervise" \
-    "SPIRA_SENTINEL_BIN=$STUB/sentinel" "SPIRA_QUEUE_BIN=$STUB/queue" "SPIRA_AEON_BIN=$STUB/aeon" \
+    SPIRA_INSTALL_FORCE=1 SPIRA_HOME="$HERE" \
     bash "$CLONE/systemd/install.sh" > "$TMP/install.out" 2>&1
 ilog="$(cat "$TMP/systemctl.log")"
 has "the install ran" "$ilog" "daemon-reload"

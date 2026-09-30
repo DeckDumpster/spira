@@ -37,10 +37,9 @@ wantrc "cargo test -p work" 0 $?
 want "cargo test -p work: all pass, none ignored" "test result: ok" "$out"
 nowant "cargo test -p work: nothing failed" "FAILED" "$out"
 
-"$CARGO_BIN" build --manifest-path "$REPO/work/Cargo.toml" --quiet 2>"$TMP/build.log" \
-    || bail "work failed to build: $(cat "$TMP/build.log")"
-WORK_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/work"
-[ -x "$WORK_BIN" ] || bail "work binary missing after build: $WORK_BIN"
+# The tree's own `work`, resolved on the suite's PATH (sp-gypjk); its absolute path is kept
+# because a case below runs it under a minimal `env -i PATH`.
+WORK_BIN="$(command -v work)" || bail "work is not on PATH"
 
 # ── lifecycle_enforce OFF (the default): every verb refused before the socket ─────────
 # The cases below are the machine's own behaviour, so they run with the switch ON; this
@@ -87,9 +86,9 @@ else
     skip "bd is not installed on this box at all; the wrapper's exclusion cannot be distinguished from its absence"
 fi
 
-out="$(cd "$REPO" && SPIRA_WORK_BIN="$WORK_BIN" SPIRA_DB="/should/not/leak" SPIRA_BD="/should/not/leak" \
+out="$(cd "$REPO" && SPIRA_DB="/should/not/leak" SPIRA_BD="/should/not/leak" \
     SPIRA_LC_PASSWORD_FILE="/should/not/leak" \
-    bash "$HERE/work-env.sh" sp-bound1 -- bash -c '
+    work-env.sh sp-bound1 -- bash -c '
         command -v bd >/dev/null 2>&1 && { echo "BD_FOUND"; exit 1; }
         work_prog=work
         command -v "$work_prog" >/dev/null 2>&1 || { echo "WORK_MISSING"; exit 1; }

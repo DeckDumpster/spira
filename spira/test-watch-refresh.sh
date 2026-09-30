@@ -44,7 +44,7 @@ mkdir -p "$TMP/home"
 # conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2); the CLONE
 # below carries none of this checkout's own target/, so without this the pass below reads
 # no configured value at all and every property under test is vacuous.
-SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)" || skip "no spira-config binary found — cannot be built here"
+command -v spira-config >/dev/null 2>&1 || bail "spira-config is not on PATH"
 
 REAL_STAT="$(command -v stat)"
 REAL_MKDIR="$(command -v mkdir)"
@@ -150,7 +150,7 @@ fresh_show() { : > "$SHOW"; show "spira-watch-answers-prod.service" active "@$UN
 runpass() {
     : > "$ACT"
     env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="${WR_MAN:-$MAN}" \
-        SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+        \
         WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" SHIM="$SHIM" \
         SYSTEMCTL_RC="${SYSTEMCTL_RC:-0}" RESTART_RC="${RESTART_RC:-0}" \
         bash -c '
@@ -413,7 +413,7 @@ printf '0::/user.slice/user-1000.slice/user@1000.service/\n' \
 runreap() {
     : > "$REAP_ACT"
     env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
-        SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+        \
         WR_PROC_ROOT="$FAKEPROC" WR_REAP_ACT="$REAP_ACT" \
         bash -c '
             . "'"$CLONE"'/spira/watch-refresh.sh"
@@ -475,7 +475,7 @@ echo "the entry point, run as systemd runs it"
 EMPTYPROC="$TMP/empty-proc"; mkdir -p "$EMPTYPROC"
 reset_mtimes; fresh_show; touch -d "@$NEWER" "$COCKPIT/watch-answers.sh"; : > "$ACT"
 out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
-      SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+      \
       SPIRA_PATH="$SHIM" WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" \
       WR_PROC_ROOT="$EMPTYPROC" \
       bash "$CLONE/spira/watch-refresh.sh" 2>&1)"; rc=$?
@@ -483,7 +483,7 @@ is "it runs"                       "0" "$rc"
 has "and restarts the stale unit"  "$(acted)" "restart spira-watch-answers-prod.service"
 hasnt "and sourcing watchd.sh printed no manifest of its own" "$out" "|daemon|"
 out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
-      SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+      \
       SPIRA_PATH="$SHIM" WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" \
       WR_PROC_ROOT="$EMPTYPROC" \
       bash "$CLONE/spira/watch-refresh.sh" --nonsense 2>&1)"; rc=$?

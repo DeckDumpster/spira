@@ -27,27 +27,17 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-[ -n "$CARGO_BIN" ] || skip "cargo not found — tsd-lifecycle-export cannot be built"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH"
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+export PATH="$PATH:$(dirname "$DOLT_BIN")"
 
 REPO="$(cd "$HERE/.." && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
-# ── 0. build the two binaries this suite drives ───────────────────────────────────────────
-CARGO_TARGET_DIR_FOR_BUILD="$T/cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO/tsd-lifecycle-export/Cargo.toml" --quiet 2>"$T/build-export.log" \
-    || bail "tsd-lifecycle-export failed to build: $(cat "$T/build-export.log")"
-EXPORT_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/tsd-lifecycle-export"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO/tsd/Cargo.toml" --quiet 2>"$T/build-tsd.log" \
-    || bail "tsd-write failed to build: $(cat "$T/build-tsd.log")"
-TSD_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/tsd-write"
-[ -x "$EXPORT_BIN" ] && [ -x "$TSD_BIN" ] || bail "expected binaries were not produced"
+# ── 0. the two binaries this suite drives: the tree's own build, by name on PATH (sp-gypjk) ──
+command -v tsd-lifecycle-export >/dev/null 2>&1 && command -v tsd-write >/dev/null 2>&1 \
+    || bail "tsd-lifecycle-export and tsd-write must both be on PATH"
+EXPORT_BIN=tsd-lifecycle-export
 
 jpy() {  # jpy <file> <python-expr-on-"rows"> — rows is a list of parsed JSON lines
     python3 -c '
@@ -92,7 +82,7 @@ seedt sp-tle-b claimed ''    '2026-09-16T00:00:03Z'
 RUN1="$T/run1"; mkdir -p "$RUN1"
 run_export() {   # run_export <mode> <run-dir> [--since <ts>]
     local mode="$1" run="$2"; shift 2
-    SPIRA_RUN="$run" SPIRA_BD="$SPIRA_BD" SPIRA_DB="$SPIRA_DB" SPIRA_TSD_BIN="$TSD_BIN" \
+    SPIRA_RUN="$run" SPIRA_BD="$SPIRA_BD" SPIRA_DB="$SPIRA_DB" \
         "$EXPORT_BIN" "$mode" "$@"
 }
 run_export legacy "$RUN1" --since '2026-09-16T00:00:00Z' >"$T/export1.out" 2>&1
@@ -177,7 +167,7 @@ root_lc_sql --use-db spira_lifecycle sql -q \
     >/dev/null 2>&1
 
 RUN3="$T/run3"; mkdir -p "$RUN3"
-SPIRA_RUN="$RUN3" SPIRA_TSD_BIN="$TSD_BIN" \
+SPIRA_RUN="$RUN3" \
     SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LPORT" SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$LTMP" \
     SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
     "$EXPORT_BIN" lifecycle >"$T/export3.out" 2>&1
@@ -196,7 +186,7 @@ is "row 2: refusal is carried"      "ExpectMismatch" "$(jpy "$FAM3" 'rows[1]["re
 is "row 2: reason pulled from evidence" "flaky" "$(jpy "$FAM3" 'rows[1]["reason"]')"
 
 # re-run: nothing new
-SPIRA_RUN="$RUN3" SPIRA_TSD_BIN="$TSD_BIN" \
+SPIRA_RUN="$RUN3" \
     SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LPORT" SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$LTMP" \
     SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
     "$EXPORT_BIN" lifecycle >"$T/export3b.out" 2>&1

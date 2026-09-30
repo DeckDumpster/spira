@@ -3,15 +3,15 @@
 # test-tarball-bins.sh — every binary named in a non-optional unit's ExecStart
 # is shipped in the tarball; build-tarball.sh enforces all four required bins.
 #
-# The structural claim — that a scanned @*_BIN@ token is at least known to this table —
+# The structural claim — that non-optional units name at least one release binary —
 # and its own positive control now live in test-timer-templates.sh's T0 unit-lint, which
 # runs without paying for a build. What is left here needs the built tarball itself:
 #
 # CASES
 #   1. POSITIVE CONTROL: build without --supervise-bin exits non-zero.
 #   2. Build with all four bins: tarball contains bin/spira-supervise.
-#   3. Each @*_BIN@ token found in non-optional unit ExecStart lines corresponds to
-#      a binary present in the built tarball.
+#   3. Each @SPIRA_PROD_ROOT@/bin/<name> in a non-optional unit's ExecStart is a binary
+#      present in the built tarball.
 #   4. release.yml names a 'Build supervise' step.
 #
 # WHAT WOULD HAVE CAUGHT sp-mplcb:
@@ -36,20 +36,8 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t
 export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 # ---------------------------------------------------------------------------
-# Mapping table: @TOKEN@ → bin/<name>.
-# Add an entry here whenever a new @*_BIN@ token appears in a unit ExecStart.
-# If this table is missing a token found in systemd/*.service, case 3 reports
-# it as unknown and the test fails — forcing the developer to update both this
-# table and build-tarball.sh together.
-declare -A TOKEN_TO_BIN=(
-    [SPIRA_SUPERVISE_BIN]=spira-supervise
-    [SPIRA_LANDING_PASS_BIN]=landing-pass
-    [SPIRA_RECONCILER_FLOW_BIN]=reconciler-flow
-    [SPIRA_SENTINEL_BIN]=sentinel
-    [SPIRA_QUEUE_BIN]=queue
-    [SPIRA_AEON_BIN]=aeon
-)
-
+# A unit names the release binary it runs as @SPIRA_PROD_ROOT@/bin/<name> (sp-gypjk): the
+# name in the path IS the bin/ entry, so there is no token table to keep in step.
 # ---------------------------------------------------------------------------
 # OPTIONAL units, derived from systemd/units.sh itself (not a hand-copied list — the old
 # list silently fell out of sync, missing spira-landing-pass.service/.timer). Every
@@ -59,7 +47,7 @@ OPTIONAL_BLOCK="$(grep -E '^[[:space:]]*OPTIONAL\+=\(' "$REPO_ROOT/systemd/units
 is_optional() { case "$OPTIONAL_BLOCK" in *"$1"*) return 0 ;; *) return 1 ;; esac; }
 
 # ---------------------------------------------------------------------------
-# Scan: collect @*_BIN@ tokens from ExecStart lines of non-optional units. The positive
+# Scan: collect the bin/<name> each non-optional unit's ExecStart runs. The positive
 # control for this scan (at least one token found) lives in test-timer-templates.sh, which
 # runs the same scan without needing a build.
 declare -A FOUND_TOKENS=()
@@ -68,7 +56,7 @@ while IFS= read -r svc; do
     is_optional "$fname" && continue
     while IFS= read -r line; do
         [[ "$line" =~ ^ExecStart ]] || continue
-        for tok in $(printf '%s' "$line" | grep -oE '@[A-Z_]+_BIN@' | tr -d '@'); do
+        for tok in $(printf '%s' "$line" | grep -oE '@SPIRA_PROD_ROOT@/bin/[a-z0-9-]+' | sed 's#.*/bin/##'); do
             FOUND_TOKENS[$tok]=1
         done
     done < "$svc"
@@ -187,14 +175,14 @@ fi
 
 # ============================================================================
 echo
-echo "3. Each @*_BIN@ token in non-optional ExecStart maps to a bin/ in the tarball"
+echo "3. Each bin/<name> a non-optional ExecStart runs is in the tarball"
 # ============================================================================
 # The sentinel, queue and aeon binaries have no legacy --*-bin flag: they ship the way a
 # release really builds them, as workspace [[bin]] targets enumerated by --bin-dir (land-local
 # and make install's path). So this case builds its own tarball from a --bin-dir holding one
 # stub per mapped name, and checks every ExecStart token against THAT tree.
 mkdir -p "$TMP/bindir" "$TMP/out-bindir"
-for _b in "${TOKEN_TO_BIN[@]}"; do
+for _b in "${!FOUND_TOKENS[@]}"; do
     printf '#!/usr/bin/env bash\necho %s\n' "$_b" > "$TMP/bindir/$_b"
     chmod +x "$TMP/bindir/$_b"
 done
@@ -209,17 +197,11 @@ mkdir -p "$UNPACK3"
 [ -n "${tarball3:-}" ] && [ -f "$tarball3" ] && tar -xzf "$tarball3" -C "$UNPACK3"
 stem3="${tarball3:+$(basename "${tarball3%.tar.gz}")}"
 TREE3="${stem3:+$UNPACK3/$stem3}"
-for tok in "${!FOUND_TOKENS[@]}"; do
-    bin_name="${TOKEN_TO_BIN[$tok]:-}"
-    if [ -z "$bin_name" ]; then
-        bad "token @${tok}@ has a known bin/ mapping" \
-            "not in TOKEN_TO_BIN table — update test-tarball-bins.sh and build-tarball.sh together"
-        continue
-    fi
+for bin_name in "${!FOUND_TOKENS[@]}"; do
     if [ -x "${TREE3:-}/bin/$bin_name" ]; then
-        ok "bin/$bin_name is present for @${tok}@"
+        ok "bin/$bin_name is present in the tarball"
     else
-        bad "bin/$bin_name is present for @${tok}@" \
+        bad "bin/$bin_name is present in the tarball" \
             "not found in tarball — add it to build-tarball.sh and release.yml"
     fi
 done
