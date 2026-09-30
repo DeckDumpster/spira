@@ -7,6 +7,12 @@
 # can never conflict or disagree on merge (law-test-selection-and-plan-are-one-source). The
 # catalogues and suite headers are the one source; these files are always a fresh view of it.
 #
+# THE GENERATION ITSELF (build the matrix, render it, write both files) is the test-plan
+# crate's `write-matrix` (sp-pppt0): one process instead of two binary calls plus two `cp`s,
+# so the two documents can never disagree with each other the way separate writes briefly
+# could. This script's own job is gathering the two JSON inputs a shell script is already the
+# one source for (the suite headers via git, the tsd timings via tsd-query.sh).
+#
 # tier: T0
 # covers: spira/plan-matrix.sh docs/test-plan/coverage.json docs/test-plan/COVERAGE.md
 set -uo pipefail
@@ -29,17 +35,10 @@ tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 bash "$HERE/suite-coverage-json.sh" > "$tmp/suites.json"
 bash "$HERE/tsd-timings-json.sh" > "$tmp/timings.json"
 
-if ! "$bin" matrix --catalogue-dir "$DOCS_DIR" --suites "$tmp/suites.json" \
-    --timings "$tmp/timings.json" > "$tmp/coverage.json"
+if ! "$bin" write-matrix --catalogue-dir "$DOCS_DIR" --suites "$tmp/suites.json" \
+    --timings "$tmp/timings.json" --out-json "$JSON_OUT" --out-md "$MD_OUT"
 then
     printf 'plan-matrix.sh: matrix generation failed\n' >&2
     exit 1
 fi
-if ! "$bin" render --matrix "$tmp/coverage.json" > "$tmp/COVERAGE.md"; then
-    printf 'plan-matrix.sh: markdown render failed\n' >&2
-    exit 1
-fi
-
-cp "$tmp/coverage.json" "$JSON_OUT"
-cp "$tmp/COVERAGE.md" "$MD_OUT"
 printf 'plan-matrix.sh: wrote %s and %s\n' "${JSON_OUT#"$ROOT"/}" "${MD_OUT#"$ROOT"/}"
