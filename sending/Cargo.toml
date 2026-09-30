@@ -1,0 +1,17 @@
+[package]
+name = "sending"
+version = "1.0.0"
+edition = "2021"
+description = "sending — the Sending: delete the branch and worktree of every bead whose work has landed, and nothing else. Replaces spira/sending.sh (sp-arpjt)."
+
+[dependencies]
+serde_json = "1"
+spira-config = { path = "../spira-config" }
+
+[[bin]]
+name = "sending"
+path = "src/main.rs"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+

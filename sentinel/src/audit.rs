@@ -100,7 +100,7 @@ impl<'a> Sentinel<'a> {
             return;
         }
         let o = self.h.run(Spec::args_owned(
-            self.script("sending.sh").to_string_lossy().into_owned(),
+            self.cfg.sending_bin.clone(),
             vec!["--skip-queue".into()],
         ));
         let text = format!("{}{}", o.stdout, o.stderr);

@@ -24,7 +24,7 @@
 #
 # defect: sp-9ce60 (dispatch test plan, gaps G9/G10)
 # tier: T2
-# covers: spira/lib.sh sentinel/src/* spira/lc.sh UC-dispatch-20
+# covers: spira/lib.sh sentinel/src/* UC-dispatch-20
 # timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -78,7 +78,7 @@ lc_root_sql() { "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PO
 
 # spira-lc is the tree's own build, by name on this suite's PATH (sp-gypjk) — never a
 # second cargo build of it here.
-# lc.sh consults spira-lc only with lifecycle ON (sp-gypjk: the switch, not a binary path).
+# spira-lc's caller verbs consult the machine only with lifecycle ON (sp-gypjk; sp-arpjt).
 export SPIRA_LIFECYCLE_ENFORCE=1
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LC_PORT"
@@ -89,8 +89,6 @@ export SPIRA_LC_PASSWORD=""
 spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
 wantrc "spira_lifecycle schema applies cleanly" 0 $?
 
-# shellcheck disable=SC1090
-. "$HERE/lc.sh"
 
 NOW="$(date +%s)"
 # seed_working <id> <lease-delta-secs> [hold] — a WORKING row whose lease expired

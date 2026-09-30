@@ -25,10 +25,10 @@
 # never reached") — so this suite tests what ahead=0 branches actually do (SEND
 # content-landed, no event) rather than asserting a verdict the code cannot produce.
 #
-# THE SOURCE-GUARD THIS SUITE NEEDED. sending.sh ran a live sweep as a side effect of
-# being sourced. Two cases here — the mid-send HELD recheck and the FAILED/exit-status
-# path — call send_disposition and send_branch directly, so sending.sh gained the same
-# `BASH_SOURCE[0] != $0` guard landing.sh and pilgrimage.sh already carry.
+# THE BINARY (sp-arpjt). sending.sh is the `sending` binary now (sending/DESIGN.md), run
+# here by name from the tree's own build, end to end against the real lib.sh chokepoints.
+# Its dispositions, the mid-send recheck and the OFF-mode content-landed label are its own
+# unit tests; this suite is what they cannot see — the real deletions, the real machine.
 #
 # THE CONTENT-LANDED CASE AGAINST A REAL spira-lc (sp-i2m7y). The retired content-landed
 # bd label is gone; sp-cl1 (ahead=1, merge-tree equal to the base) now proves itself by a
@@ -38,7 +38,7 @@
 #
 # defect: sp-mqsl, sp-e5ow0, sp-796o, sp-kq8l, sp-bjzj, sp-3gih, sp-hl92, sp-1smg
 # tier: T2
-# covers: spira/sending.sh spira/lib.sh spira/lc.sh UC-landed-audit-reaping-14 UC-landed-audit-reaping-16 UC-landed-audit-reaping-17 UC-landed-audit-reaping-18 UC-landed-audit-reaping-19 UC-landed-audit-reaping-20 UC-landed-audit-reaping-21 UC-landed-audit-reaping-22
+# covers: sending/src/* spira/lib.sh UC-landed-audit-reaping-14 UC-landed-audit-reaping-16 UC-landed-audit-reaping-17 UC-landed-audit-reaping-18 UC-landed-audit-reaping-19 UC-landed-audit-reaping-20 UC-landed-audit-reaping-21 UC-landed-audit-reaping-22
 # host-reason: starts its own disposable `dolt sql-server`, same shape as test-lc-hold.sh
 #   (sp-ki12s) — testenv-batch.sh already provides the container.
 set -uo pipefail
@@ -95,7 +95,7 @@ done
 lc_root_sql() { "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls "$@"; }
 
 command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
-# lc.sh consults spira-lc only with lifecycle ON (sp-gypjk: the switch, not a binary path).
+# spira-lc's caller verbs consult the machine only with lifecycle ON (sp-gypjk; sp-arpjt).
 export SPIRA_LIFECYCLE_ENFORCE=1
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LC_PORT"
@@ -107,8 +107,6 @@ unset SPIRA_LC_SOCKET
 spira-lc admin-apply-ddl "$LCREPO/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
 wantrc "spira_lifecycle schema applies cleanly" 0 $?
 
-# shellcheck disable=SC1090
-. "$HERE/lc.sh"
 seed_lc() {   # seed_lc <bead-id> <state>
     lc_root_sql --use-db spira_lifecycle sql -q "DELETE FROM bead WHERE bead_id = '$1'" >/dev/null 2>&1
     lc_root_sql --use-db spira_lifecycle sql -q \
@@ -207,7 +205,7 @@ sending() {
     SPIRA_HOME="$HERE" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$STUB_BD" \
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$HOME_REPO" SPIRA_GH="$STUB_GH" \
     SPIRA_REPO_MAP="$TMP/repo-map" \
-        sending.sh --no-fetch --status-from "$STATUS_FILE" "$@" 2>&1
+        command sending --no-fetch --status-from "$STATUS_FILE" "$@" 2>&1
 }
 branch_exists() { git -C "$REPO" show-ref --verify -q "refs/heads/$1" 2>/dev/null; }
 
@@ -361,9 +359,9 @@ printf 'sp-held\tin_progress\n' > "$STATUS_FILE"
 git -C "$REPO" worktree add -q -b spira/sp-orphan "$RUN/worktree/sp-orphan" main >/dev/null 2>&1
 git -C "$REPO" update-ref -d refs/heads/spira/sp-orphan
 
-# THE LEGACY TREE. A detached worktree at the unsuffixed .landing path — retired
-# unconditionally on every pass now that the per-repository form exists.
-git -C "$REPO" worktree add -q --detach "$RUN/worktree/.landing" main >/dev/null 2>&1
+# A HARNESS TREE (leading dot, per-repository): never judged by PASS 2. (The retirement of
+# the unsuffixed legacy .landing/.rebase trees went with sending.sh, sp-arpjt: none exists.)
+git -C "$REPO" worktree add -q --detach "$RUN/worktree/.landing.$(basename "$REPO")" main >/dev/null 2>&1
 
 # One live remote branch, to prove the Sending deletes it too (UC-19) — sp-cl1 is going to
 # be SENT, so give it a remote counterpart before the pass. --no-fetch means sending.sh
@@ -512,11 +510,11 @@ else
     ok "sp-orphan's worktree is removed"
 fi
 
-# The legacy tree
-want "the legacy .landing tree is RETIRED" "RETIRED .landing" "$out"
-[ -e "$RUN/worktree/.landing" ] \
-    && bad "the legacy .landing tree is gone" "still present" \
-    || ok "the legacy .landing tree is gone"
+# The harness's own dot-tree is left alone
+nowant "the per-repository .landing tree is never judged" ".landing" "$out"
+[ -e "$RUN/worktree/.landing.$(basename "$REPO")" ] \
+    && ok "the per-repository .landing tree still stands" \
+    || bad "the per-repository .landing tree still stands" "it was removed"
 
 # The unresolvable-ref repo
 want "the unresolvable-ref repo is SKIPPED, naming the cause" "cannot resolve the ref it lands on" "$out"
@@ -557,46 +555,15 @@ printf '%s | %s | push | main | |\n' "$DHOME" "$DREPO" > "$TMP/dry-repo-map"
 dry_out="$(SPIRA_HOME="$HERE" SPIRA_RUN="$DRUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$STUB_BD" \
     SPIRA_REPO="$DREPO" SPIRA_HOME_REPO="$DHOME" SPIRA_REAPLOG="$DRUN/reap.log" \
     SPIRA_REPO_MAP="$TMP/dry-repo-map" \
-        sending.sh --dry-run --no-fetch 2>&1)"
+        command sending --dry-run --no-fetch 2>&1)"
 want "dry-run reports WOULD, not SENT"  "WOULD  sp-dry  send branch" "$dry_out"
 nowant "dry-run never reports SENT"     "SENT sp-dry"                "$dry_out"
 is "dry-run leaves the branch in place" 0 "$(git -C "$DREPO" show-ref --verify -q refs/heads/spira/sp-dry; echo $?)"
 is "dry-run does not fire a ContentOnBase event" "WORKING" "$(lc_row_state sp-dry)"
 
-# ---- mid-send HELD — send_branch's own recheck, not the top-of-loop witness ------------
-#
-# Calling send_branch directly (rather than through sweep_repo) exercises ONLY its
-# internal recheck: a branch that was clear at the top of the loop but is claimed by the
-# time the Sending is about to act on it must still be refused (UC-16). The source guard
-# added to sending.sh for this suite is what makes this callable at all.
-echo
-echo "mid-send HELD — send_branch's own recheck:"
-MREPO="$TMP/mid-repo"; MREMOTE="$TMP/mid-remote.git"; MRUN="$TMP/mid-run"
-git init -q --bare -b main "$MREMOTE"
-git init -q -b main "$MREPO"
-git -C "$MREPO" commit -q --allow-empty -m base
-git -C "$MREPO" remote add origin "$MREMOTE"
-git -C "$MREPO" push -q origin main
-git -C "$MREPO" remote set-head origin main
-mkdir -p "$MRUN/worktree"
-git -C "$MREPO" branch spira/sp-mid main
-
-(
-    export SPIRA_RUN="$MRUN" SPIRA_REAPLOG="$MRUN/reap.log" SPIRA_HOME="$HERE"
-    # shellcheck disable=SC1090
-    . "$HERE/sending.sh"
-    spira_status_seam - <<'SEAM'
-sp-mid	in_progress
-SEAM
-    REPO="$MREPO"; LANDREF="origin/main"; REPONAME="mid-repo"
-    out="$(send_branch sp-mid spira/sp-mid 2>&1)"
-    printf '%s\n' "$out"
-)  > "$TMP/mid-out" 2>&1
-mid_out="$(cat "$TMP/mid-out")"
-want "send_branch refuses a bead claimed since the top-of-loop check" "HELD   sp-mid" "$mid_out"
-want "the refusal names it a mid-send recheck" "(mid-send)" "$mid_out"
-is "the branch survives the mid-send HELD" 0 \
-    "$(git -C "$MREPO" show-ref --verify -q refs/heads/spira/sp-mid; echo $?)"
+# ---- mid-send HELD — the recheck immediately before a deletion is sending's own unit test
+# now (sending/src/tests.rs `mid_send_hold_queue_and_failure`): with sending.sh gone there is
+# no sourced send_branch for a suite to call between the loop's check and the deletion.
 
 # ---- FAILED and a non-zero exit status --------------------------------------------------
 #
@@ -626,7 +593,7 @@ printf '%s | %s | push | main | |\n' "$FHOME" "$FREPO" > "$TMP/fail-repo-map"
 fail_out="$(SPIRA_HOME="$HERE" SPIRA_RUN="$FRUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$STUB_BD" \
     SPIRA_REPO="$FREPO" SPIRA_HOME_REPO="$FHOME" SPIRA_REAPLOG="$FRUN/reap.log" \
     SPIRA_REPO_MAP="$TMP/fail-repo-map" \
-        sending.sh --no-fetch 2>&1)"
+        command sending --no-fetch 2>&1)"
 fail_rc=$?
 want "sp-fail is reported FAILED" "FAILED sp-fail" "$fail_out"
 wantrc "the pass exits non-zero when failed > 0" 1 "$fail_rc"

@@ -15,6 +15,7 @@
 
 mod bd;
 mod bd_facts;
+mod callers;
 mod classify_cmd;
 mod client;
 mod cutover;
@@ -40,6 +41,18 @@ fn main() {
         std::process::exit(serve::run(&args[1..]));
     }
 
+    // The caller verbs (callers.rs; DESIGN.md §2): the switch first, before any socket or
+    // connection — off, they answer exactly what the retired shell library answered off.
+    if let Some(verb) = args.first().filter(|v| callers::is_verb(v)) {
+        let rest = &args[1..];
+        let ans = if spira_config::lifecycle_enforce(None) {
+            callers::run(verb, rest, &mut Live { conn: None })
+        } else {
+            callers::off(verb, rest)
+        };
+        std::process::exit(emit(rest, ans));
+    }
+
     // The fast path: if the system-user service is up, its persistent connection answers
     // in well under the same-user fallback's per-call reconnect cost. Same-user fallback
     // (below) is always correct, just slower — see db.rs's module doc.
@@ -62,6 +75,49 @@ fn main() {
         println!("{out}");
     }
     std::process::exit(code);
+}
+
+/// The primitives as a caller verb reaches them: the service socket when it answers, else a
+/// same-user connection opened once, on first use.
+struct Live {
+    conn: Option<Result<Conn, String>>,
+}
+
+impl callers::Machine for Live {
+    fn call(&mut self, args: &[String]) -> (i32, String) {
+        if let Some(r) = client::try_socket(args) {
+            return r;
+        }
+        match self.conn.get_or_insert_with(|| Conn::from_env().map_err(|e| format!("cannot tell: {e:?}"))) {
+            Ok(c) => dispatch(args, c),
+            Err(e) => (CANNOT_TELL, e.clone()),
+        }
+    }
+}
+
+/// Print a caller verb's answer and write its certification log line; returns the exit code.
+fn emit(args: &[String], ans: callers::Answer) -> i32 {
+    use std::io::Write;
+    if !ans.stdout.is_empty() {
+        print!("{}", ans.stdout);
+        if !ans.stdout.ends_with('\n') {
+            println!();
+        }
+    }
+    if !ans.stderr.is_empty() {
+        eprint!("{}", ans.stderr);
+    }
+    if let Some((what, detail)) = ans.cert_log {
+        // lifecycle-cert.sh's log, same path and line shape: `<epoch> <verb> bead=<id> <detail>`.
+        let dir = std::env::var("SPIRA_RUN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/tmp".into());
+        let id = args.first().map(String::as_str).unwrap_or("");
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(std::path::Path::new(&dir).join("lifecycle-cert.log"))
+            .and_then(|mut f| writeln!(f, "{} {what} bead={id} {detail}", db::now_epoch()));
+    }
+    ans.code
 }
 
 /// Every verb but `serve` (which never reaches here — see `main`, and `serve::run`'s own
@@ -96,7 +152,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("classify") => classify_cmd::run(&args[1..], conn),
         _ => (
             CANNOT_TELL,
-            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--state S] [--hold poison|ask|wait|operator] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | create-bead <id> | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | classify --home DIR --bd-db PATH --landstate-dir DIR --queue-dir DIR [--repo NAME]... [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve".to_string(),
+            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--state S] [--hold poison|ask|wait|operator] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | create-bead <id> | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | classify --home DIR --bd-db PATH --landstate-dir DIR --queue-dir DIR [--repo NAME]... [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve | caller verbs (lifecycle_enforce on): hold|unhold|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit".to_string(),
         ),
     }
 }

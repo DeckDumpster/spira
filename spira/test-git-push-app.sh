@@ -11,7 +11,7 @@
 # 7. SPIRA_GH_APP_* keys are in the conf.sh allowlist.
 # 8. The covered scripts call spira_git_push rather than bare git push.
 #
-# covers: spira/git-credential-app.sh spira/lib.sh landing-pass/src/* spira/batch.sh spira/sending.sh spira/verdict.sh queue/src/* spira/conf.sh
+# covers: spira/git-credential-app.sh spira/lib.sh landing-pass/src/* spira/batch.sh sending/src/* spira/verdict.sh queue/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -178,10 +178,9 @@ echo "8. STATIC CHECK — covered scripts use spira_git_push"
 # =========================================================================
 # landing.sh is the landing-pass binary now: it pushes through lib.sh's spira_git_push via its
 # seam (landing-pass/src/seam.rs Op::Push), which this source grep cannot see.
-for f in batch.sh sending.sh verdict.sh; do
-    # sending.sh's own remote-branch delete moved into lib.sh's spira_reap_landed_branch
-    # (sp-jci6o), shared with bead_close_on_land's landing-time reap — spira_git_push is
-    # still what it calls, just one hop further away than a literal grep on this file sees.
+for f in batch.sh verdict.sh; do
+    # sending.sh is the `sending` binary now (sp-arpjt): its remote-branch delete is lib.sh's
+    # spira_reap_landed_branch through its seam, which this source grep cannot see.
     #
     # queue.sh is the queue binary now: it pushes through lib.sh's spira_git_push via its
     # seam R12 (queue/DESIGN.md §7.4), which this source grep cannot see.
@@ -191,8 +190,6 @@ for f in batch.sh sending.sh verdict.sh; do
     # it only gets the bare-push check below, not the positive presence check.
     if [ "$f" = "batch.sh" ]; then
         want_sym=''
-    elif [ "$f" = "sending.sh" ]; then
-        want_sym='spira_git_push|spira_reap_landed_branch'
     else
         want_sym='spira_git_push'
     fi

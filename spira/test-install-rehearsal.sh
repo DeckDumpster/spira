@@ -147,7 +147,7 @@ cp -a /workspace/beads-push.sh /workspace/concierge.sh /tmp/spira-prod/
 # (below) means units are only enabled, never started, so no-op stubs satisfy install.sh's
 # executable-bit check. NOT PROVEN here: the tree's own build staged as this bin/ (sp-isom7).
 mkdir -p /tmp/spira-prod/bin
-for b in sentinel queue aeon spira-supervise landing-pass reconciler-flow; do
+for b in sentinel queue aeon spira-supervise landing-pass reconciler-flow sending; do
     printf '#!/bin/sh\nexit 0\n' > /tmp/spira-prod/bin/\$b && chmod +x /tmp/spira-prod/bin/\$b
 done
 " >&2

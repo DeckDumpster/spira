@@ -178,7 +178,7 @@ impl<'a> PrTools for RealPrTools<'a> {
         c.env("SPIRA_ID_PREFIX", &self.s.id_prefix).stdin(Stdio::null());
         // The switch as this pass resolved it is already pinned into the environment the
         // helper inherits (lifecycle::pin_for_children): OFF, SPIRA_LIFECYCLE_ENFORCE=0 and its
-        // lc-delivery.sh calls never reach spira-lc.
+        // `spira-lc deliver` calls answer from the switch without reaching the machine.
         // The helper's own lines go straight to this pass's stdout (the unit's log).
         c.stdout(Stdio::inherit()).stderr(Stdio::inherit());
         match c.status() {

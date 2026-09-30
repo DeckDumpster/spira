@@ -25,7 +25,7 @@
 #
 # defect: sp-qsona (acceptance phase A stage 5)
 # tier: T3
-# covers: landing-pass/* spira/sending.sh spira/pr-pass-branch.sh spira/lib.sh aeon/src/*
+# covers: landing-pass/* sending/src/* spira/pr-pass-branch.sh spira/lib.sh aeon/src/*
 # hermetic-ok: uses a fixture database and local git repos, no systemd or gh
 # timeout: 240
 set -uo pipefail
@@ -114,7 +114,7 @@ landing() {
 }
 sending() {
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO=fixture SPIRA_GH="$SPIRA_HOME/gh" \
-        sending.sh 2>&1
+        command sending 2>&1
 }
 on_base() { git -C "$REPO" fetch -q origin 2>/dev/null; git -C "$REPO" log --format=%s origin/main 2>/dev/null; }
 

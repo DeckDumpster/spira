@@ -84,8 +84,6 @@ case "$cmd" in
 
     # shellcheck source=lib.sh
     . "$HERE/lib.sh"
-    # shellcheck source=lc.sh
-    . "$HERE/lc.sh"
 
     _sw_log() {
         local _ts _msg
@@ -121,7 +119,7 @@ case "$cmd" in
                 if [ "$_sw_dry" -eq 0 ]; then
                     "$BD_CMD" -C "$DB" label remove "$_sw_bid" "${SPIRA_CI_LABEL:?}" >/dev/null 2>&1 \
                         || printf 'groomer: sweep: WARN label remove %s failed for %s\n' "$SPIRA_CI_LABEL" "$_sw_bid" >&2
-                    lc_unhold "$_sw_bid" wait groomer.sh || true
+                    spira-lc unhold "$_sw_bid" wait groomer.sh || true
                 fi
                 _sw_n=$((_sw_n+1))
                 ;;
@@ -529,8 +527,6 @@ except Exception: pass
 
     # shellcheck source=lib.sh
     . "$HERE/lib.sh"
-    # shellcheck source=lc.sh
-    . "$HERE/lc.sh"
 
     _tp_labels="$("$BD_CMD" -C "$DB" label list "$id" 2>/dev/null)" || _tp_labels=""
     if ! grep -q spira-poison <<< "$_tp_labels"; then
@@ -542,7 +538,7 @@ except Exception: pass
     "$BD_CMD" -C "$DB" label remove "$id" spira-poison >/dev/null 2>&1 \
         || { printf 'groomer: triage-poison: could not remove spira-poison from %s\n' "$id" >&2; exit 1; }
     poison_asked_clear "$id"
-    lc_unhold "$id" poison groomer.sh >/dev/null 2>&1 || true
+    spira-lc unhold "$id" poison groomer.sh >/dev/null 2>&1 || true
     "$BD_CMD" -C "$DB" note "$id" "GROOM: Poison triage — WORK'S FAULT. $evidence Poison lifted (not credited — the charged attempts stand); the fix this triage names is the next claim. A poison.cleared event floors the attempt count so this does not immediately re-poison." >/dev/null 2>&1
     printf 'TRIAGED %s verdict=work-fault\n' "$id"
     ;;

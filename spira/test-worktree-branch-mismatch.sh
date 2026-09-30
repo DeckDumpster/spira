@@ -33,7 +33,7 @@
 #
 # defect: sp-87csm
 # tier: T1
-# covers: spira/lib.sh spira/sending.sh
+# covers: spira/lib.sh sending/src/*
 # scar: a bead's own worktree, checked out on a branch inherited from its parent, was
 #   destroyed the moment the parent's branch landed and the parent's own aeon had already
 #   gone, because the liveness check asked only about the branch's bead, never the path's.

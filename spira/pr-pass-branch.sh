@@ -22,8 +22,6 @@ repo="$1" br="$2" id="$3" baseref="$4" name="${5:-}" tip="$6"
 SPIRA_HOME="${SPIRA_HOME:?SPIRA_HOME is unset}"
 # shellcheck source=/dev/null
 . "$SPIRA_HOME/lib.sh"
-# shellcheck source=/dev/null
-. "$SPIRA_HOME/lc-delivery.sh"
 
 log()  { printf '%s spira: landing-pass %s: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$id" "$*"; }
 act()  { log "ACT: $*"; }
@@ -54,13 +52,13 @@ if submitted "$id" "$tip"; then
                 case "$_pr_st" in
                     MERGED)
                         _merge_sha="$(cd "$repo" && ghq pr view "$br" --json mergeCommit -q .mergeCommit.oid 2>/dev/null)"
-                        lc_deliver_pr_merged "$repo" "$id" "$br" "${_merge_sha:-$baseref}"
+                        spira-lc deliver pr-merged "$repo" "$id" "$br" "${_merge_sha:-$baseref}"
                         mark_submitted "$id" "$tip" done
                         act "$br's pull request is merged in $name — delivered"
                         exit 7
                         ;;
                     CLOSED)
-                        lc_deliver_pr_closed "$id" "pull request closed unmerged"
+                        spira-lc deliver pr-closed "$id" "pull request closed unmerged"
                         mark_submitted "$id" "$tip" done
                         act "$br's pull request was closed unmerged in $name — returned"
                         exit 8

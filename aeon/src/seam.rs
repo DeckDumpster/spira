@@ -23,7 +23,7 @@ case "$__aeon_fn" in
     _aeon_snapshot|_aeon_capacity_paused|_aeon_rebase|_aeon_repo_info|_aeon_base|\
     _aeon_thrash_meta|_aeon_rapid_recur|\
     aeon_name_take|aeon_count|fayth_free|spira_event|release_own_claim|lc_claim_bead|\
-    lc_bead_verified|lc_hold|park_unmapped|repo_root|repo_land|repo_land_queued|\
+    lc_bead_verified|park_unmapped|repo_root|repo_land|repo_land_queued|\
     spira_home_repo|qualify_base_ref|spira_prune_worktrees|bead_reopen|bump_requeue|\
     bump_lapsed|write_lapse_record|thrash_streak_bump|requeues_of|capacity_reset_at|\
     capacity_pause_set|session_outcome|session_yield_headless|trace_last|\

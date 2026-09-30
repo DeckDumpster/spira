@@ -194,12 +194,12 @@ for _s in pilgrimage.sh strand reflect.sh; do
     printf '#!/bin/sh\n' > "$SP_STUBS/$_s"; chmod +x "$SP_STUBS/$_s"
 done
 # THE SENTINEL IS A BINARY (sentinel.sh is gone): it sources lib.sh from SPIRA_HOME.
-for _s in lib.sh conf.sh lc.sh suite-covers.sh lifecycle-cert.sh; do ln -s "$HERE/$_s" "$SP_STUBS/$_s"; done
+for _s in lib.sh conf.sh suite-covers.sh; do ln -s "$HERE/$_s" "$SP_STUBS/$_s"; done
 printf '#!/bin/sh\necho inactive\n' > "$SP_STUBS/mock-systemctl"; chmod +x "$SP_STUBS/mock-systemctl"
 printf '#!/bin/sh\nexit 0\n'        > "$SP_STUBS/mock-launch";    chmod +x "$SP_STUBS/mock-launch"
 printf '#!/bin/sh\nexit 0\n'        > "$SP_STUBS/mock-notify";    chmod +x "$SP_STUBS/mock-notify"
 printf '#!/bin/sh\necho summoned >> "%s/summon.log"\n' "$T" > "$SP_STUBS/mock-summon"; chmod +x "$SP_STUBS/mock-summon"
-printf '#!/bin/sh\n' > "$SP_STUBS/sending.sh"; chmod +x "$SP_STUBS/sending.sh"
+printf '#!/bin/sh\n' > "$SP_STUBS/sending"; chmod +x "$SP_STUBS/sending"
 touch "$SP_STUBS/repo-map"
 ln -s "$HERE/chamber" "$SP_STUBS/chamber"
 

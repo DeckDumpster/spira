@@ -295,7 +295,7 @@ cost / members; percentage integer.
 
 One mechanism: `bash` reading a **fixed script from stdin**, compiled into the binary per
 operation, followed by that operation's NUL-terminated values. The script reads its values
-with `read -r -d ''`, then sources `lib.sh` (and `lc.sh`, and `batch.sh` or `verdict.sh`
+with `read -r -d ''`, then sources `lib.sh` (and `batch.sh` or `verdict.sh`
 where named) with stdin redirected from `/dev/null`, calls exactly one function, and exits
 with its status. Nothing is passed in argv or the environment. The script text is fixed per
 operation (the function name is part of the text, never data).
@@ -318,7 +318,7 @@ operation (the function name is part of the text, never data).
 | R14 `land_subject` | `land_subject <id>` | merge subject with title |
 | R15 `sort_rows` | `queue_sort_rows <path> <base>` with `PRIO_JSON` set **inside** the script from a value read on stdin; rows piped in | the ranking batch.sh also uses |
 | R16 `cancel_runs` | `queue_cancel_branch_runs <forge> <path> <branch> QUEUE` | RUN_CANCEL log lines |
-| R17 `lc_returned` | `lc_returned <id> <reason>` (switch ON only) | the Returned event CAS |
+| R17 `lc_returned` | not a seam since sp-arpjt: `spira-lc returned <id> <reason>` run directly (switch ON only) | the Returned event CAS |
 | R18 `batch_fns` (sources batch.sh) | `format_batch`, `_base_conflict`, `_pf_gate` (with `_PF_DEADLINE`) | open-batch only; the queue.forge assembly primitives |
 | R19 `settle_publish` (sources verdict.sh) | `_verdict_settle_publish <repo> <path>` | to-forge's wait; return 3 = red |
 | R20 `readback` | `repo_land`, `spira_landref` after a transition's write | the post-write verification reads what every other component will read |
@@ -403,7 +403,7 @@ store, and the real forge seam.
     it; until then queue sends one line of at most 200 bytes (§5).
 28. **`spira-lc … --reason R`** (abandon-batch, eject-member) takes free text in argv. Add
     `--reason-file -`; until then queue sends one bounded line.
-29. **`lc_returned <id> <reason>`** (lc.sh:163) ignores its reason and always sends
+29. **`spira-lc returned <id> <reason>`** (lc.sh's `lc_returned` until sp-arpjt) ignores its reason and always sends
     `batch-ejected`. queue passes the reason anyway; a manual eject is not a batch
     ejection, and the lifecycle's `ReturnedReason` has no manual-eject variant yet.
 

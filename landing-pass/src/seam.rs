@@ -1,7 +1,7 @@
 //! The lib.sh seam (DESIGN.md §6): `bash` with no arguments, reading a FIXED script from
 //! stdin followed by the operation's values, each NUL-terminated. argv is only `bash`; the
 //! environment is the caller's own. The script reads every value first, detaches stdin,
-//! sources lib.sh (and lc-delivery.sh where named), defines `progress` and `act` — which
+//! sources lib.sh, defines `progress` and `act` — which
 //! lib.sh functions call and which only the landing pass itself used to define — and calls
 //! exactly one function, whose name is part of the fixed text, never data
 //! (law-payloads-go-on-stdin).
@@ -181,9 +181,11 @@ fn body(op: Op) -> &'static str {
         Op::Note => "bdq note \"$1\" \"$2\" >/dev/null 2>&1\nexit 0\n",
         Op::Push => "__e=\"$(spira_git_push \"$1\" -q \"$2\" \"$3\" 2>&1 >/dev/null)\"; __rc=$?\nprintf '\\036%s' \"$__e\"\nexit $__rc\n",
         Op::LandSubject => "printf '\\036%s' \"$(land_subject \"$1\")\"\nexit 0\n",
-        Op::DeliverDelivered => ". \"$HERE/lc-delivery.sh\" || exit 96\nlc_deliver_push_delivered \"$1\" \"$2\" || true\nexit 0\n",
-        Op::DeliverRequeued => ". \"$HERE/lc-delivery.sh\" || exit 96\nlc_deliver_push_requeued \"$1\" \"$2\" || true\nexit 0\n",
-        Op::DeliverReturned => ". \"$HERE/lc-delivery.sh\" || exit 96\nlc_deliver_push_returned \"$1\" \"$2\" || true\nexit 0\n",
+        // spira-lc's caller verbs (sp-arpjt; lc-delivery.sh before): their log lines are
+        // lib.sh `log` lines, passed through like any other.
+        Op::DeliverDelivered => "spira-lc deliver push-delivered \"$1\" \"$2\" || true\nexit 0\n",
+        Op::DeliverRequeued => "spira-lc deliver push-requeued \"$1\" \"$2\" || true\nexit 0\n",
+        Op::DeliverReturned => "spira-lc deliver push-returned \"$1\" \"$2\" || true\nexit 0\n",
         Op::Closeout => "gh_issue_closeout \"$1\" \"$2\" \"$3\" || true\nexit 0\n",
         Op::CloseOnLand => "bead_close_on_land \"$1\" \"$2\" || true\nexit 0\n",
         Op::PruneWorktrees => "spira_prune_worktrees \"$1\" >/dev/null 2>&1\nexit 0\n",

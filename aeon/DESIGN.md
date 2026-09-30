@@ -456,7 +456,7 @@ is reimplemented in Rust, §6):
 | `aeon_count`, `fayth_free` | capacity (systemd unit list / pidfiles) |
 | `spira_event` | `aeon.claimed` |
 | `release_own_claim` | every release (lifecycle Release + bd unassign) |
-| `lc_claim_bead`, `lc_bead_verified`, `lc_hold` | lifecycle machine |
+| `lc_claim_bead`, `lc_bead_verified` (the eviction-race `hold` is `spira-lc hold`, run directly since sp-arpjt) | lifecycle machine |
 | `park_unmapped` | unmapped repo |
 | `repo_root`, `repo_land`, `repo_land_queued`, `spira_home_repo`, `qualify_base_ref` | repo-map |
 | `spira_prune_worktrees` | prune-with-repair before cutting a worktree |

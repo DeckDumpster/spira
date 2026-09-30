@@ -50,7 +50,7 @@
 #
 # tier: T3
 # defect: sp-mqnf sp-njwb sp-fx1p sp-pi3ez sp-wiyr2 sp-qd2ul
-# covers: sentinel/src/* spira/lib.sh spira/attempts.sh spira/lc.sh spira/chamber/* lifecycle/* spira-lc/*
+# covers: sentinel/src/* spira/lib.sh spira/attempts.sh spira/chamber/* lifecycle/* spira-lc/*
 # timeout: 240
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -133,28 +133,28 @@ mklc() {
         "$LC_BIN" create-bead "$i" >/dev/null 2>&1
     done
 }
-# mkpoison <id>... — mklc, then a real Hold{Poison} event through lc.sh's own lc_hold, for
+# mkpoison <id>... — mklc, then a real Hold{Poison} event through `spira-lc hold`, for
 # fixtures that need to start already poisoned (the stale-clear scenario below).
 mkpoison() {
     local i
     for i in "$@"; do
         mklc "$i"
-        bash -c '. "$1"/lc.sh; lc_hold "$2" poison "seed" test' _ "$SH" "$i" >/dev/null 2>&1
+        "$LC_BIN" hold "$i" poison "seed" test >/dev/null 2>&1
     done
 }
 # rmpoison <id>... — the test-side equivalent of a human clearing the hold directly
 # (bypassing attempts.sh/unpoison.sh, which have their own coverage elsewhere), via the same
-# lc_unhold this suite asserts sentinel.sh's own CHECK 4 reads.
+# `spira-lc unhold` this suite asserts the sentinel's own CHECK 4 reads.
 rmpoison() {
     local i
     for i in "$@"; do
-        bash -c '. "$1"/lc.sh; lc_unhold "$2" poison test' _ "$SH" "$i" >/dev/null 2>&1
+        "$LC_BIN" unhold "$i" poison test >/dev/null 2>&1
     done
 }
 # lcheld <id> -> 0 if spira-lc currently holds the poison kind on <id> — the real
-# lc_held/lc_holds this suite's own $SH/lc.sh ships, not a model of it.
+# `spira-lc held` (the caller verb that replaced lc.sh's lc_held, sp-arpjt), not a model of it.
 lcheld() {
-    bash -c '. "$1"/lc.sh; lc_held "$2" poison' _ "$SH" "$1"
+    "$LC_BIN" held "$1" poison
 }
 
 REPO="$TMP/repo"; RUN="$TMP/run"; REMOTE="$TMP/remote.git"; SH="$TMP/spira"
@@ -168,13 +168,13 @@ mkdir -p "$RUN/worktree" "$SH/chamber"
 
 # The program under test, run out of its own directory so it sources the real lib.sh but
 # finds stubbed sub-programs beside it.
-cp "$HERE/lib.sh" "$HERE/lc.sh" "$HERE/lifecycle-cert.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HERE/attempts.sh" "$SH/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HERE/attempts.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub pilgrimage.sh 'printf "%s" "${PILGRIMAGE_OUT:-}"'
 stub strand        'printf "%s" "${STRAND_OUT:-}"'
 # THE RUST SENTINEL (sentinel.sh is gone) and spira-claim are the tree's, by name on PATH;
 # the stubbed sub-programs in $SH are injected by putting $SH first on the sentinel's PATH.
-stub sending.sh    'printf "%s" "${SENDING_OUT:-}"'
+stub sending       'printf "%s" "${SENDING_OUT:-}"'
 stub gate.sh       'exit ${GATE_RC:-0}'
 stub reflect.sh    'touch "$SPIRA_RUN/reflect.fired"'
 # mail.sh is RECORDED, not merely swallowed: half of what poisoning must do is reach the

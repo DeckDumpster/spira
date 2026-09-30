@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-lifecycle-cert.sh — container-tier acceptance for certification onto events
-# (sp-vd9dn): spira/lifecycle-cert.sh and gate.sh's verdict() against a real, disposable
+# (sp-vd9dn): spira-lc certify/resubmit (lifecycle-cert.sh until sp-arpjt) and gate.sh's verdict() against a real, disposable
 # spira_lifecycle database.
 #
 # WHAT THIS PROVES:
@@ -23,7 +23,7 @@
 #
 # defect: sp-vd9dn
 # tier: T2
-# covers: spira/lifecycle-cert.sh spira/gate.sh gate/src/engine.rs lifecycle/src/bead.rs
+# covers: spira-lc/src/callers.rs spira/gate.sh gate/src/engine.rs lifecycle/src/bead.rs
 # timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -120,13 +120,12 @@ echo "test-lifecycle-cert.sh"
 # ---------------------------------------------------------------------------------------
 echo
 echo "inert by default (lifecycle off):"
-unset SPIRA_LIFECYCLE_ENFORCE
-. "$HERE/lifecycle-cert.sh"
-lc_available; is "lc_available is false with lifecycle off" "1" "$?"
-lc_certify sp-inert deadbeef pass k1 >/dev/null 2>&1; is "lc_certify is cannot-tell, not applied" "2" "$?"
+export SPIRA_LIFECYCLE_ENFORCE=0
+spira-lc certify sp-inert deadbeef pass k1 >/dev/null 2>&1; is "spira-lc certify is cannot-tell, not applied, with lifecycle off" "2" "$?"
+is "and nothing reached the machine" "" "$(row_field sp-inert state)"
 
 export SPIRA_LIFECYCLE_ENFORCE=1
-lc_available; is "POSITIVE CONTROL: lc_available is true once lifecycle is on" "0" "$?"
+spira-lc state sp-inert >/dev/null 2>&1; is "POSITIVE CONTROL: once lifecycle is on the machine answers (no row: 1)" "1" "$?"
 
 # ---------------------------------------------------------------------------------------
 # A GatePass FOR A STALE TIP IS REFUSED (acceptance criterion 1).
@@ -134,13 +133,13 @@ lc_available; is "POSITIVE CONTROL: lc_available is true once lifecycle is on" "
 echo
 echo "certification for a stale tip is refused:"
 seed_bead sp-stale SUBMITTED aaa111 -
-lc_certify sp-stale bbb222 pass keyA >/dev/null 2>&1
+spira-lc certify sp-stale bbb222 pass keyA >/dev/null 2>&1
 is "GatePass for a different tip is refused" "3" "$?"
 is "row state is unchanged" "SUBMITTED" "$(row_field sp-stale state)"
 is "row tip is unchanged" "aaa111" "$(row_field sp-stale tip)"
 is "row gate_key was never set" "" "$(row_field sp-stale gate_key)"
 
-lc_certify sp-stale aaa111 pass keyA >/dev/null 2>&1
+spira-lc certify sp-stale aaa111 pass keyA >/dev/null 2>&1
 is "POSITIVE CONTROL: GatePass for the matching tip applies" "0" "$?"
 is "row is now CERTIFIED" "CERTIFIED" "$(row_field sp-stale state)"
 is "row carries the gate key" "keyA" "$(row_field sp-stale gate_key)"
@@ -151,7 +150,7 @@ is "row carries the gate key" "keyA" "$(row_field sp-stale gate_key)"
 # ---------------------------------------------------------------------------------------
 echo
 echo "a harness rebase (moved tip) voids certification back to SUBMITTED:"
-lc_resubmit sp-stale ccc333 >/dev/null 2>&1
+spira-lc resubmit sp-stale ccc333 >/dev/null 2>&1
 is "lc_resubmit applies" "0" "$?"
 is "row is back to SUBMITTED" "SUBMITTED" "$(row_field sp-stale state)"
 is "row tip is the new (rebased) one" "ccc333" "$(row_field sp-stale tip)"
@@ -163,7 +162,7 @@ is "row's gate key is cleared — the old verdict no longer answers for this tre
 echo
 echo "GateRed sends a submitted bead to REWORK:"
 seed_bead sp-red SUBMITTED ddd444 -
-lc_certify sp-red ddd444 red "branch-red" >/dev/null 2>&1
+spira-lc certify sp-red ddd444 red "branch-red" >/dev/null 2>&1
 is "GateRed applies" "0" "$?"
 is "row is REWORK" "REWORK" "$(row_field sp-red state)"
 
@@ -176,7 +175,7 @@ is "row is REWORK" "REWORK" "$(row_field sp-red state)"
 echo
 echo "GateRed with an unrecognized raw reason still applies (mapped, not passed through):"
 seed_bead sp-red2 SUBMITTED fff777 -
-lc_certify sp-red2 fff777 red "a-reason-spira-lc-has-never-heard-of" >/dev/null 2>&1
+spira-lc certify sp-red2 fff777 red "a-reason-spira-lc-has-never-heard-of" >/dev/null 2>&1
 is "GateRed with an unmapped reason still applies" "0" "$?"
 is "row is REWORK" "REWORK" "$(row_field sp-red2 state)"
 
@@ -184,7 +183,7 @@ echo
 echo "GateInfra leaves a submitted bead SUBMITTED but still advances its version:"
 seed_bead sp-infra SUBMITTED eee555 -
 v0="$(row_field sp-infra version)"
-lc_certify sp-infra eee555 infra - >/dev/null 2>&1
+spira-lc certify sp-infra eee555 infra - >/dev/null 2>&1
 is "GateInfra applies" "0" "$?"
 is "row is still SUBMITTED" "SUBMITTED" "$(row_field sp-infra state)"
 is "row's version advanced (a recorded retry, not a silent no-op)" "$((v0 + 1))" "$(row_field sp-infra version)"
@@ -196,7 +195,7 @@ is "row's version advanced (a recorded retry, not a silent no-op)" "$((v0 + 1))"
 echo
 echo "a WORKING bead is auto-submitted at the given tip, then certified:"
 seed_bead sp-working WORKING - -
-lc_certify sp-working fff666 pass keyB >/dev/null 2>&1
+spira-lc certify sp-working fff666 pass keyB >/dev/null 2>&1
 is "lc_certify from WORKING applies" "0" "$?"
 is "row is CERTIFIED" "CERTIFIED" "$(row_field sp-working state)"
 is "row tip is the one it was certified at" "fff666" "$(row_field sp-working tip)"
