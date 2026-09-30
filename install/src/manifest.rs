@@ -183,8 +183,15 @@ impl Manifest {
     /// A unit file name present on disk that this manifest neither installs nor declined —
     /// units.sh's `unlisted`/`--diff`'s `UNLISTED` check, generalised over an arbitrary set of
     /// on-disk `.service`/`.timer` basenames in the templates directory.
+    ///
+    /// Checks membership in `self.units` directly, not `template_names()`: the original
+    /// bash's `UNITS` array carries the literal `spira-watch@.service` entry (excluded only
+    /// from the per-instance render loop, via its own `[ "$u" = "spira-watch@.service" ] &&
+    /// continue`), so that entry's presence in `UNITS` is what keeps `unlisted()` from ever
+    /// flagging it — `template_names()` filters it out for a different, render-only reason
+    /// and would wrongly make it look forgotten here.
     pub fn unlisted<'a>(&self, on_disk: impl IntoIterator<Item = &'a str>) -> Vec<String> {
-        let known: std::collections::BTreeSet<&str> = self.template_names().into_iter().chain(self.optional.iter().map(|s| s.as_str())).collect();
+        let known: std::collections::BTreeSet<&str> = self.units.iter().map(|u| u.name.as_str()).chain(self.optional.iter().map(|s| s.as_str())).collect();
         on_disk.into_iter().filter(|n| !known.contains(n)).map(str::to_string).collect()
     }
 }
@@ -296,5 +303,15 @@ mod tests {
         let on_disk = ["spira-sentinel.service", "spira-cockpit-new.service", "spira-lc.service"];
         let u = m.unlisted(on_disk);
         assert_eq!(u, vec!["spira-cockpit-new.service".to_string()]);
+    }
+
+    #[test]
+    fn unlisted_never_flags_the_watcher_template_itself() {
+        // spira-watch@.service is in `self.units` (enable: false) but excluded from
+        // `template_names()` — a real on-disk copy of the raw template must not be reported
+        // UNLISTED just because the render-only view doesn't carry it.
+        let m = build(&inputs()).unwrap();
+        let on_disk = ["spira-watch@.service"];
+        assert_eq!(m.unlisted(on_disk), Vec::<String>::new());
     }
 }

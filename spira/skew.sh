@@ -772,20 +772,20 @@ gap() {
 #
 # EXIT   0  the installed units match
 #        1  at least one differs — the output names which
-#        3  the check itself could not run (install.sh missing, render failure)
+#        3  the check itself could not run (units-install missing, render failure)
 #
 # `check` does not call this — a released, activated tree cannot drift from its own
 # templates, so unit staleness is a checkout-mode question, not a release-mode one. It costs
-# no database call: install.sh --diff renders templates from conf.sh and diffs files on disk.
+# no database call: units-install --diff renders templates from conf.sh and diffs files on disk.
 # =======================================================================================
 units() {
     local installer stale_out stale_rc
-    installer="$(cd "$SPIRA_HOME/../systemd" 2>/dev/null && pwd -P)/install.sh"
-    if [ ! -r "$installer" ]; then
-        printf 'skew: install.sh is missing at %s — unit staleness has no answer\n' "$installer" >&2
+    installer="${SPIRA_INSTALL_SH:-$(command -v units-install 2>/dev/null)}"
+    if [ -z "$installer" ] || [ ! -x "$installer" ]; then
+        printf 'skew: units-install is missing (not on PATH) — unit staleness has no answer\n' >&2
         return 3
     fi
-    stale_out="$(bash "$installer" --diff 2>&1)"; stale_rc=$?
+    stale_out="$("$installer" --diff 2>&1)"; stale_rc=$?
     if [ "$stale_rc" = 0 ]; then
         printf 'skew: units — installed units match what this box renders\n'
         return 0

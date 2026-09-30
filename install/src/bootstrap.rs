@@ -64,8 +64,22 @@ pub fn host_from_env(instance: &str) -> HostValues {
 
 /// `watchd.sh units` — the watcher manifest. Still bash (not this bead's scope); called by
 /// bare name exactly as units.sh did.
+///
+/// `systemd/units.sh` reached `watchd.sh` after `conf.sh` was already sourced, so
+/// `SPIRA_WATCHERS` had conf.sh's own default (`$SPIRA_HOME/watchers`, conf.sh line ~877)
+/// applied for free; this binary does not source conf.sh, and a batch-container or minimal
+/// test env can invoke it with `SPIRA_WATCHERS` unset, which `watchd.sh` itself does not
+/// default — same gap class as `bootstrap::host_from_env`'s render defaults, closed the same
+/// way: apply the one default `watchd.sh` actually needs here, in this process's own
+/// environment for the child, not the caller's.
 pub fn watch_names() -> Result<Vec<String>, String> {
-    let out = Command::new("watchd.sh").arg("units").output().map_err(|e| format!("cannot run watchd.sh: {e}"))?;
+    let watchers = nonempty_env("SPIRA_WATCHERS").or_else(|| nonempty_env("SPIRA_HOME").map(|h| format!("{h}/watchers")));
+    let mut cmd = Command::new("watchd.sh");
+    cmd.arg("units");
+    if let Some(w) = watchers {
+        cmd.env("SPIRA_WATCHERS", w);
+    }
+    let out = cmd.output().map_err(|e| format!("cannot run watchd.sh: {e}"))?;
     if !out.status.success() {
         return Err("the watcher manifest is malformed".into());
     }

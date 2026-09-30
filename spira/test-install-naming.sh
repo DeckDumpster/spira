@@ -56,7 +56,7 @@ want "naming: beads-push.service present (shared, plain name)" \
 # enable — already instance-qualified (inst_name applied per manifest entry, install/src/
 # manifest.rs, sp-31dm0: systemd/units.sh is retired). `--list-enable` is the T1 way to
 # prove the enable-time name, without a live install run against real systemd.
-enable_arr="$(env -i PATH="$PATH" SPIRA_HOME="$HERE" SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
+enable_arr="$(env -i PATH="$PATH" HOME="$HOME" SPIRA_HOME="$HERE" SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
     SPIRA_INSTANCE=test \
     SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
     SPIRA_WATCHERS="$WATCHERS" \

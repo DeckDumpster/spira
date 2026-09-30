@@ -33,6 +33,7 @@ get_enable() {
     local broker_enable="$1"
     env -i \
         PATH="$PATH" \
+        HOME="$HOME" \
         SPIRA_INSTANCE=prod \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
