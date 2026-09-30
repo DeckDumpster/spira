@@ -99,6 +99,8 @@ struct State {
     path: String,
     /// The compiler wrapper's environment for every build the trial runs (sp-z61hj).
     build_env: Vec<(String, String)>,
+    /// Why the build cache cannot be used; refused only by a trial that builds (sp-z61hj).
+    cache_refusal: Option<String>,
     /// What `--release-bins` builds with: HOME, SPIRA_RELEASE and the trial's timeout.
     home_dir: String,
     release: String,
@@ -176,8 +178,10 @@ impl<'w, W: World> Trial<'w, W> {
         }
         // THE BUILD CACHE (sp-z61hj; spira-config/DESIGN-build-cache.md): every cargo build the
         // trial runs — the tools, the unit phases, the build fence, testenv's — compiles
-        // through the box's one sccache, resolved on the PATH the command gets. Absent is a
-        // refusal, never a cold build of every dependency; SPIRA_BUILD_CACHE=off opts out, loudly.
+        // through the box's one sccache, resolved on the PATH the command gets. Resolved here,
+        // required where the trial builds in the tree (below: absent is a refusal, never a cold
+        // build of every dependency); a definition that builds nothing never needs it.
+        // SPIRA_BUILD_CACHE=off opts out, loudly.
         match w.build_wrapper(&self.s.path, ctx.var(spira_config::build::CACHE_ENV)) {
             Ok(wr) => {
                 if wr == spira_config::build::Wrapper::Off {
@@ -185,7 +189,7 @@ impl<'w, W: World> Trial<'w, W> {
                 }
                 self.s.build_env = wr.env();
             }
-            Err(e) => return v(NOVERDICT, "no-build-cache", format!("gate: {e} — refusing to judge")),
+            Err(e) => self.s.cache_refusal = Some(e),
         }
         self.s.home_dir = ctx.var("HOME").to_string();
         self.s.release = ctx.var(spira_config::RELEASE_ENV).to_string();
@@ -513,19 +517,6 @@ impl<'w, W: World> Trial<'w, W> {
             w.eprint(&e);
             return v(NOVERDICT, "tree-unidentified", "");
         }
-        // THE BUILD IS ON TMPFS (sp-z61hj): the tree's build directories are links into a
-        // RAM-backed root; short of room is a refusal, never the disk.
-        let lim = crate::target::Limits::from_vars(
-            ctx.var("SPIRA_GATE_TARGET_CAP_MIB"),
-            ctx.var("SPIRA_GATE_TARGET_MIN_FREE_MIB"),
-            ctx.var("SPIRA_GATE_TARGET_MIN_MEM_MIB"),
-        );
-        match w.target_on_tmpfs(&tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim) {
-            Ok(line) => w.eprint(&line),
-            Err(e) => {
-                return v(NOVERDICT, "scratch-short", format!("{e}\ngate: this is the host's room, not a fault in the branch."));
-            }
-        }
 
         let list = if status_list.trim().is_empty() {
             files.clone()
@@ -623,6 +614,30 @@ impl<'w, W: World> Trial<'w, W> {
                 return v(NOVERDICT, "tools-unattributed", format!("{e}\ngate: no trial of {br} ran — refusing to judge with tools it cannot attribute."));
             }
         };
+        // A TRIAL THAT BUILDS IN THE TREE (the tools phase, the unit phases, --release-bins)
+        // needs the build cache — absent, it refuses before any build (sp-z61hj) — and builds
+        // on tmpfs.
+        let builds = tree_def.as_ref().is_some_and(|d| !d.bins.is_empty())
+            || matches!(comp, Composition::Unit { .. })
+            || self.a.release_bins;
+        if builds {
+            if let Some(e) = &self.s.cache_refusal {
+                return v(NOVERDICT, "no-build-cache", format!("gate: {e} — refusing to judge"));
+            }
+            // THE BUILD IS ON TMPFS (sp-z61hj): the tree's build directories are links into a
+            // RAM-backed root; short of room is a refusal, never the disk.
+            let lim = crate::target::Limits::from_vars(
+                ctx.var("SPIRA_GATE_TARGET_CAP_MIB"),
+                ctx.var("SPIRA_GATE_TARGET_MIN_FREE_MIB"),
+                ctx.var("SPIRA_GATE_TARGET_MIN_MEM_MIB"),
+            );
+            match w.target_on_tmpfs(&tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim) {
+                Ok(line) => w.eprint(&line),
+                Err(e) => {
+                    return v(NOVERDICT, "scratch-short", format!("{e}\ngate: this is the host's room, not a fault in the branch."));
+                }
+            }
+        }
         let (rc, out, ph) = run_composed(
             w,
             &tree,

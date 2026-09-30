@@ -2389,15 +2389,22 @@ fn every_run_compiles_through_the_wrapper_resolved_on_the_commands_path() {
     }
 }
 
-/// No sccache: the trial refuses before any tree is touched — never a cold build of every
-/// dependency.
+/// No sccache: a trial that builds in the tree (here, the definition's tools) refuses before
+/// any build — never a cold build of every dependency. A trial that builds nothing (a
+/// column-gated repository) does not need the cache and is judged.
 #[test]
-fn an_absent_build_cache_is_no_verdict_before_anything_runs() {
-    let f = Fake::new();
+fn an_absent_build_cache_refuses_a_building_trial_before_anything_builds() {
+    let f = tree_owned(Some(STEPS), Some(STEPS));
     *f.wrapper.borrow_mut() = Err("sccache is not on the build's PATH (/x)".into());
     assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
     assert!(f.verdict_line().contains("reason=no-build-cache"), "{}", f.verdict_line());
-    assert!(f.checkouts.borrow().is_empty() && f.cmds.borrow().is_empty());
+    assert!(f.cmds.borrow().is_empty(), "nothing built: {:?}", f.cmds.borrow());
+
+    let f = Fake::new();
+    *f.wrapper.borrow_mut() = Err("sccache is not on the build's PATH (/x)".into());
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(f.targets.borrow().is_empty(), "no build, no tmpfs target");
+    assert!(f.ran.borrow().iter().all(|e| e.iter().all(|(k, _)| k != "RUSTC_WRAPPER")));
 }
 
 /// SPIRA_BUILD_CACHE=off is honoured and said out loud; the switch is passed on.
@@ -2416,12 +2423,12 @@ fn the_opt_out_is_loud_and_reaches_the_command() {
 /// The gate tree's build goes to tmpfs before anything builds; short of room is a refusal.
 #[test]
 fn the_gate_tree_builds_on_tmpfs_and_short_room_is_no_verdict() {
-    let f = Fake::new();
+    let f = tree_owned(Some(STEPS), Some(STEPS));
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert_eq!(f.targets.borrow().as_slice(), &[PathBuf::from(GATE_TREE)]);
     assert!(f.stderr().contains("gate: build on tmpfs at"), "{}", f.stderr());
 
-    let f = Fake::new();
+    let f = tree_owned(Some(STEPS), Some(STEPS));
     *f.target_err.borrow_mut() = Some("gate: MemAvailable is 12 MiB, below the 4096 MiB".into());
     assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
     assert!(f.verdict_line().contains("reason=scratch-short"), "{}", f.verdict_line());

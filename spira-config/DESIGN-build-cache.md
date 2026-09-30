@@ -43,8 +43,10 @@ one_shot(profile)       -> ["--config", "profile.<profile>.incremental=false"]
 * `setting` is `$SPIRA_BUILD_CACHE`. Unset or empty or `sccache` → the wrapper is required.
   `off` → `Wrapper::Off` (explicit, loud opt-out: `RUSTC_WRAPPER=""`, which overrides any
   cargo config). Anything else is a refusal naming the value.
-* **Absent sccache is a refusal (fail closed)** for every build *tool*: the gate
-  (`NO_VERDICT reason=no-build-cache`), testenv (`VERDICT FAULT rc=3 reason=no-build-cache`),
+* **Absent sccache is a refusal (fail closed)** for every build *tool*: the gate, for a
+  trial that builds in its tree — a definition with `bin` lines (the spira repository's, always),
+  a unit composition, or `--release-bins` (`NO_VERDICT reason=no-build-cache`; a column-gated
+  repository whose gate builds nothing is judged without it), testenv (`VERDICT FAULT rc=3 reason=no-build-cache`),
   `release build` (error). The refusal names `spira/deps.toml` and the opt-out.
 * **The aeon falls back, loudly.** An aeon session is not a build; it hands its agent an
   environment. With sccache absent the session still runs, with a log line saying its builds

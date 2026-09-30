@@ -784,7 +784,10 @@ Full contract: `spira-config/DESIGN-build-cache.md`. In the gate:
   gate command gets (`World::build_wrapper`); `RUSTC_WRAPPER` and
   `SCCACHE_IGNORE_SERVER_IO_ERROR=1` join the command's environment (with
   `SPIRA_BUILD_CACHE`, so testenv resolves the same). sccache absent →
-  `NO_VERDICT reason=no-build-cache`, before any tree is touched. `SPIRA_BUILD_CACHE=off` is
+  `NO_VERDICT reason=no-build-cache` for a trial that builds in the tree (a `bin` line, a unit
+  composition, `--release-bins`), before anything builds; a trial that builds nothing (a
+  column-gated repository, the suites' fixture repositories) does not need it. The tmpfs
+  preparation below applies to the same trials. `SPIRA_BUILD_CACHE=off` is
   honoured and printed.
 * **The tools phase and the unit phases are one-shot**: `--config
   profile.aeon.incremental=false` (never `CARGO_INCREMENTAL`, which sccache hashes into every
