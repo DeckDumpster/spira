@@ -51,6 +51,9 @@ pub trait World {
 
     // ---- files
     fn readable(&self, p: &Path) -> bool;
+    /// `command -v <name>`: a harness script found on the gate's PATH (the release's
+    /// `spira/`, sp-gypjk) — never joined under SPIRA_HOME. None = not on PATH.
+    fn which(&self, name: &str) -> Option<std::path::PathBuf>;
     fn exists(&self, p: &Path) -> bool;
     fn read(&self, p: &Path) -> Option<String>;
     fn mkdir_p(&self, p: &Path);

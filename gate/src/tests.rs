@@ -90,7 +90,6 @@ fn ctx() -> Ctx {
         ("HOME", "/home/u"),
         ("PATH", "/usr/bin"),
         ("LANDSTATE", "/run/landstate"),
-        ("SPIRA_TESTENV_BIN", "/bin/testenv"),
     ] {
         vars.insert(k.to_string(), v.to_string());
     }
@@ -203,6 +202,11 @@ impl World for Fake {
     }
     fn readable(&self, p: &Path) -> bool {
         self.readable.borrow().contains(p) || self.files.borrow().contains_key(p)
+    }
+    /// The fake PATH is one directory, /h: a script "is on PATH" when /h/<name> is readable.
+    fn which(&self, name: &str) -> Option<PathBuf> {
+        let p = Path::new("/h").join(name);
+        self.readable(&p).then_some(p)
     }
     fn exists(&self, p: &Path) -> bool {
         if p.ends_with(".git") {
@@ -691,7 +695,7 @@ fn a_red_the_base_trial_did_not_run_is_run_on_the_base_first() {
     );
     assert!(
         cmds[2].contains(&format!(
-            "\"$SPIRA_TESTENV_BIN\" --suites {SUITE} \"$SPIRA_GATE_BRANCH\""
+            "testenv --suites {SUITE} \"$SPIRA_GATE_BRANCH\""
         )),
         "{}",
         cmds[2]
@@ -744,7 +748,8 @@ fn a_red_the_base_deferred_by_deadline_is_re_run() {
     assert_eq!(f.run(), BASEFAIL);
 }
 
-/// A re-run that could not judge (testenv fault, no testenv) leaves it untestable.
+/// A re-run that could not judge (a testenv fault — including a testenv missing from PATH,
+/// which the shell reports as rc 127 and the runner's contract maps to 75) leaves it untestable.
 #[test]
 fn a_base_re_run_that_cannot_judge_is_untestable() {
     let f = Fake::new();
@@ -759,18 +764,6 @@ fn a_base_re_run_that_cannot_judge_is_untestable() {
         .insert((BASE.into(), SUITE.into()), (75, "batch: no image".into()));
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=base-untestable"));
-
-    let g = Fake::new();
-    g.set_var("SPIRA_TESTENV_BIN", "");
-    g.runs
-        .borrow_mut()
-        .insert(MERGE_SHA.into(), (1, red(SUITE)));
-    g.runs
-        .borrow_mut()
-        .insert(BASE.into(), (0, "  test-a.sh ok".into()));
-    assert_eq!(g.run(), NOVERDICT);
-    assert!(g.verdict_line().contains("reason=base-untestable"));
-    assert_eq!(g.cmds.borrow().len(), 2, "no re-run without testenv");
 }
 
 /// A red suite the base does not have is the branch's own; nothing to run on the base.

@@ -49,11 +49,8 @@ const VARS: &[&str] = &[
     "SPIRA_CERTIFY_ALWAYS_COVERS",
     "SPIRA_BATCH_MAXPAR",
     "SPIRA_VERDICT_REPEAT_CONSIDERED",
-    "SPIRA_LINT_BIN",
-    "SPIRA_TESTENV_BIN",
     "SPIRA_TESTENV_SETUP_SHARE",
     "SPIRA_TESTENV_WARM_SLOTS",
-    "SPIRA_SELECT_BIN",
     "LANDSTATE",
     "PATH",
     "HOME",
@@ -178,6 +175,13 @@ impl World for Real {
 
     fn readable(&self, p: &Path) -> bool {
         File::open(p).is_ok()
+    }
+    fn which(&self, name: &str) -> Option<PathBuf> {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::var_os("PATH")?;
+        std::env::split_paths(&path)
+            .map(|d| d.join(name))
+            .find(|p| fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false))
     }
     fn exists(&self, p: &Path) -> bool {
         p.exists()
