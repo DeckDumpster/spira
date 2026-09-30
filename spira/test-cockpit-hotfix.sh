@@ -14,6 +14,7 @@
 #
 # No database, no network.
 #
+# tier: T1
 # covers: cockpit/health.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
