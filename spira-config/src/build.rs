@@ -2,6 +2,12 @@
 //! shared compilation cache (`sccache`), and — for a one-shot build — without cargo's
 //! incremental cache. Every build tool (gate, testenv, release) asks here; none spells the
 //! wrapper or the switch itself.
+//!
+//! No `SCCACHE_BASEDIRS` or `--remap-path-prefix` knob lives here (sp-283wz,
+//! DESIGN-build-cache.md §2.5): sccache 0.18.0's Rust frontend never consults basedirs (that
+//! wiring exists only for its C/C++ frontend), and adding `--remap-path-prefix` would hash
+//! literally, regressing the dependency-crate cache hits this module already gets right.
+//! Read §2.5 before reaching for either on a workspace-crate cross-tree miss.
 
 use std::path::{Path, PathBuf};
 
