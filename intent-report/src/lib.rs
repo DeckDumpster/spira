@@ -259,6 +259,34 @@ pub fn bd_wait(textual: &str, w: Window) -> BTreeMap<String, SuiteBd> {
     by
 }
 
+/// One test-runner trial: the `__batch__` suite-timing row of a run that recorded its
+/// phases (testenv DESIGN.md §11, sp-govet). Older rows carry no `setup_secs` and are skipped.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RunnerTrial {
+    pub setup_secs: f64,
+    pub wall_secs: f64,
+    pub rc: i64,
+    pub warm: String,
+}
+
+pub fn runner_trials(textual: &str, w: Window) -> Vec<RunnerTrial> {
+    rows(textual)
+        .filter(|(t, v)| {
+            w.contains(*t)
+                && text(v, "family") == "suite-timing"
+                && text(v, "suite") == "__batch__"
+        })
+        .filter_map(|(_, v)| {
+            Some(RunnerTrial {
+                setup_secs: num(v.get("setup_secs"))?,
+                wall_secs: num(v.get("wall_secs")).unwrap_or(0.0),
+                rc: v.get("rc").and_then(Value::as_i64).unwrap_or(0),
+                warm: text(&v, "warm").to_string(),
+            })
+        })
+        .collect()
+}
+
 /// Seconds from each bead's latest CERTIFIED to its first LANDED in `w`.
 pub fn certified_to_landed(textual: &str, w: Window) -> Vec<f64> {
     let mut events: Vec<(u64, String, String)> = rows(textual)
@@ -482,6 +510,33 @@ pub fn render(inp: &Inputs, w: Window) -> String {
         }
     }
     let _ = writeln!(o);
+
+    // 6. Test-runner setup vs suites (the __batch__ row's phases).
+    let rt = runner_trials(inp.suite_timing, w);
+    let setup: Vec<f64> = rt.iter().map(|r| r.setup_secs).collect();
+    let rest: Vec<f64> = rt
+        .iter()
+        .filter(|r| r.rc != 2)
+        .map(|r| (r.wall_secs - r.setup_secs).max(0.0))
+        .collect();
+    let warm = |k: &str| rt.iter().filter(|r| r.warm == k).count();
+    let _ = writeln!(
+        o,
+        "6. Test-runner trials with phases: {}; setup median {} s, p90 {} s; suites+teardown median {} s, p90 {} s",
+        rt.len(),
+        q(quantile(&setup, 0.5)),
+        q(quantile(&setup, 0.9)),
+        q(quantile(&rest, 0.5)),
+        q(quantile(&rest, 0.9))
+    );
+    let _ = writeln!(
+        o,
+        "   warm spare {}, cold on a warm slot {}, no warm path {}; cut at the setup share (rc 2): {}\n",
+        warm("spare"),
+        warm("cold"),
+        rt.iter().filter(|r| r.warm.is_empty() || r.warm == "off").count(),
+        rt.iter().filter(|r| r.rc == 2).count()
+    );
 
     // 5. Certified -> landed.
     let lat = certified_to_landed(inp.landing_event, w);

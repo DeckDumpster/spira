@@ -42,6 +42,7 @@ intent-report [--run <dir>] [--since <dur|ISO>] [--until <dur|ISO>] [--no-backfi
 | attribution time per member defect | `tsd/round-attribution.jsonl` | `batcher` (`RedRecord::tsd_fields`, sp-hvtgs) | `ts`, `outcome`, `owner`, `attribution_secs` |
 | bd / Dolt wait per suite | `tsd/suite-timing.jsonl` | `testenv` (+ `bd-meter`) | `ts`, `suite`, `wall_secs`, `bd_calls`, `bd_ms` |
 | certified → landed | `tsd/landing-event.jsonl` | landing pass | `ts`, `bead`, `state` (`CERTIFIED`, `LANDED`) |
+| test-runner setup vs suites (sp-govet) | `tsd/suite-timing.jsonl`, `__batch__` rows | `testenv` (DESIGN.md §11) | `ts`, `rc`, `wall_secs`, `setup_secs`, `warm` |
 
 Unparseable lines and rows without a parseable `ts` are skipped, never fatal. Numeric fields
 are accepted as JSON numbers or numeric strings (the batcher writes through `tsd-write
@@ -70,6 +71,11 @@ row exists). Status comes from `rc` (0 PASS, 75 NO_VERDICT, 76 BASE_FAIL, else F
   `bd_ms`. The Intent's "zero suites waiting on a shared test database" is read here.
 * **Certified → landed**: for each bead's first `LANDED` in the window, its latest
   `CERTIFIED` at or before it; median and p90.
+* **Test-runner setup vs suites** (section 6): `__batch__` rows that carry `setup_secs`
+  (older rows do not, and are skipped): median and p90 of `setup_secs`, and of
+  `wall_secs - setup_secs` for runs that reached their suites (rc ≠ 2); how many claimed a
+  warm spare, booted cold on a warm slot, or had no warm path; how many were cut at their
+  setup share (rc 2).
 * Medians and p90 are interpolated (DuckDB `quantile_cont`), as testenv's `--report`.
 
 ## Decisions
