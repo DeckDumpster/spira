@@ -116,7 +116,7 @@ Dimensions (from taxonomy): correctness (C), fail-closed (F), observability (O),
 | UC-test-infrastructure-17 | `# requires:` unmet means the suite is recorded `skip-req` with the missing token in the fingerprint and not run. It stays distinct from a plain `skip` (77). Neither makes the batch red. | C,O | T1 (PATH-controlled dispatch) / cert |
 | UC-test-infrastructure-18 | Per-suite `SPIRA_SUITE_TIMEOUT` reaps a suite as `timeout` (fingerprint `timeout:*`). Later suites continue, the batch exits non-zero, and 0 disables the limit. | R | T2 (podman exec stub that sleeps) / PR-CI |
 | UC-test-infrastructure-19 | Verdict cache: a repeat attempt at the same (branch, sha, mode, selection) key after red is refused with exit 2 unless the override carries a reason of at least 10 characters, which is recorded. A refusal files one incident per branch (deduplicated). | F,I,O | T2 (stub filer) / PR-CI |
-| UC-test-infrastructure-20 | Constants mirrored from `testenv.sh` match, and every `_CONTAINER_*` used is declared. The batch cleanup trap removes the fixture home and owner file on TERM and on normal exit. | S,R | T0 (constants) + T2 (real `_batch_cleanup`) |
+| UC-test-infrastructure-20 | Constants mirrored from `testenv container` (testenv/src/container.rs) match, and every `_CONTAINER_*` used is declared. The batch cleanup trap removes the fixture home and owner file on TERM and on normal exit. | S,R | T0 (constants) + T2 (real `_batch_cleanup`) |
 
 ### C. Fixtures (`testdb.sh`)
 

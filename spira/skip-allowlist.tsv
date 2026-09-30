@@ -20,7 +20,6 @@ test-attribute.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed tes
 test-batch-owner.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides
 test-cadence-tool.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides
 test-install-rehearsal.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides
-test-testenv-owner-guard.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides
 test-testenv.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides
 test-testenv-systemctl.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides
 test-aeon-launch-grammar.sh	skip:claude_not_on_PATH	the real claude CLI needs a host session/auth the sandboxed container does not carry (T4 host acceptance)

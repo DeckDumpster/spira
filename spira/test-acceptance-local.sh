@@ -37,7 +37,7 @@ fi
 
 SCRATCH="$(mktemp -d)"
 CNAME="acc-local-test-$$"
-trap 'testenv.sh down --name "$CNAME" >/dev/null 2>&1; rm -rf "$SCRATCH"' EXIT INT TERM
+trap 'testenv container down --name "$CNAME" >/dev/null 2>&1; rm -rf "$SCRATCH"' EXIT INT TERM
 
 # ===========================================================================
 echo

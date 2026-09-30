@@ -159,8 +159,9 @@ It **never repoints anything**: it prints the new VMID; switching `PVE_TEMPLATE_
 4. Start, wait for the address, deliver the key (the same code as provision, §2.4), wait for
    ssh.
 5. Stream `git archive <commit>` of the tree to `/root/template-work` on the VM, then run
-   `TEMPLATE_SCRIPT` there: `testenv.sh image` (builds with podman's default `--layers`,
-   keeping the cache), `podman rmi` every other `localhost/spira-testenv:*` tag, `cargo
+   `TEMPLATE_SCRIPT` there: `cargo run -q --locked --release -p testenv -- container image`
+   (the tree's own driver — the VM has the tree and cargo but no release, sp-s0e1k; builds
+   with podman's default `--layers`, keeping the cache), `podman rmi` every other `localhost/spira-testenv:*` tag, `cargo
    fetch --locked`, then delete the work tree and `/root/.ssh/authorized_keys`. The script
    prints `image=<ref>`; a missing line is a failure.
 6. Graceful shutdown (the guest flushes its image store), verify stopped, convert to a
@@ -181,7 +182,7 @@ It **never repoints anything**: it prints the new VMID; switching `PVE_TEMPLATE_
    the operator's call and `qm destroy` refuses while a linked clone depends on it.
 
 **How the operator knows to run it.** `REMOTE_SCRIPT` checks, before testenv starts, whether
-the VM already holds the round's tag, and says so on the round's stderr either way:
+the VM already holds the round's tag (`testenv container tag`, from the staged release), and says so on the round's stderr either way:
 `round-vm: template image: <ref> present` or `... absent — this round builds it; refresh
 the template with round-vm template`.
 

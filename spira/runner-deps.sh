@@ -42,7 +42,7 @@ rc=0
 note() { printf 'runner-deps: %s\n' "$1" >&2; }
 gap()  { printf 'runner-deps: MISSING %s\n' "$1" >&2; rc=1; }
 
-# ROOTLESS PODMAN IS THE SUBSTRATE. testenv.sh runs the image with --systemd=true,
+# ROOTLESS PODMAN IS THE SUBSTRATE. `testenv container up` runs the image with --systemd=true,
 # so PID 1 inside the container is system systemd and a user manager starts under
 # it. uidmap supplies newuidmap/newgidmap, without which rootless refuses to map
 # anything; the network and storage helpers are what podman falls back to when the
