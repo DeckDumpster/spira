@@ -1,0 +1,19 @@
+[package]
+name = "bead"
+version = "0.1.0"
+edition = "2021"
+description = "bead — file a bead through the contract, lint the store against it, report it, wire a blocks edge (sp-g9mhe, replaces spira/bead.sh)."
+
+[lib]
+name = "bead"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bead"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

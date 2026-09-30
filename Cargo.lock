@@ -102,6 +102,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bead"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "testkit",
+]
+
+[[package]]
 name = "beads-store"
 version = "1.0.0"
 dependencies = [
@@ -787,6 +795,14 @@ dependencies = [
  "spira-config",
  "testkit",
  "ureq",
+]
+
+[[package]]
+name = "rule"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "testkit",
 ]
 
 [[package]]
