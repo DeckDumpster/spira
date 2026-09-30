@@ -40,11 +40,11 @@ set -uo pipefail
 . "$(dirname "$0")/lib.sh"
 
 # All six queue-stall detectors (deadlock, attribution-failed, sort-failed, loop-stalled,
-# ci-stalled, starved) plus ci-red now live in czar.sh --pass (sp-rpibz), running on a
+# ci-stalled, starved) plus ci-red now live in czar-pass --pass (sp-rpibz), running on a
 # 30s timer with deterministic remedies. The --queue-checks handler has been removed.
 
 if [ "${1:-}" = "--queue-checks" ]; then
-    log "watchtower: --queue-checks is retired; detectors now run in czar.sh --pass (sp-rpibz)"
+    log "watchtower: --queue-checks is retired; detectors now run in czar-pass --pass (sp-rpibz)"
     exit 0
 fi
 
@@ -1050,7 +1050,7 @@ fi
 # compact format — which sorts correctly as strings. No date parsing is needed: a later
 # timestamp always sorts after an earlier one in this format.
 #
-# CONFIGURED PATHS, NOT LITERALS. `sop.sh write` scans for absolute paths; a literal would
+# CONFIGURED PATHS, NOT LITERALS. `sop write` scans for absolute paths; a literal would
 # fail the inventory gate on every landing and on every colleague's clone.
 # ---------------------------------------------------------------------------------------
 LAPSED_DIR="${SPIRA_LAPSED_DIR:-$SPIRA_RUN/lapsed}"

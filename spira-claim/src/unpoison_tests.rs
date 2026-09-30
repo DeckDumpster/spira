@@ -162,6 +162,9 @@ impl World for Fake {
             self.on_sleep = Some(f);
         }
     }
+    fn mark_poison_lifted(&mut self, _id: &str, _attempts: u32) -> Result<(), String> {
+        unreachable!("unpoison never marks a lift — its own floor is poison.cleared")
+    }
 }
 
 fn opts(beads: &[&str]) -> Opts {
@@ -802,6 +805,7 @@ fn off_verify_fails_when_label_stays() {
         fn audit_read_from(&mut self, o: u64) -> Result<Vec<u8>, String> { self.0.audit_read_from(o) }
         fn now(&mut self) -> i64 { self.0.now() }
         fn sleep(&mut self, s: u64) { self.0.sleep(s) }
+        fn mark_poison_lifted(&mut self, id: &str, a: u32) -> Result<(), String> { self.0.mark_poison_lifted(id, a) }
     }
     let (code, out) = run(&legacy(&["sp-a"]), &mut NoRemove(&mut f2));
     assert_eq!(code, EXIT_FAILED, "{out}");

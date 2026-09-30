@@ -89,6 +89,11 @@ pub trait World {
     fn note(&mut self, id: &str, text: &str) -> Result<(), String>;
     fn open_asks(&mut self) -> Result<Vec<AskRow>, String>;
     fn close(&mut self, id: &str, reason: &str) -> Result<(), String>;
+    /// `$SPIRA_RUN/poison-lifted/<id>` <- `attempts` (sp-wiyr2): the count a lift happened at, so CHECK 4's very next
+    /// pass does not read the same unchanged count against a hold that is no longer there and poison it right back.
+    /// `unpoison` never calls this — its own floor (`poison.cleared`) is what keeps it lifted; `deadlocked` does,
+    /// since it deliberately never floors the count (DESIGN.md §9).
+    fn mark_poison_lifted(&mut self, id: &str, attempts: u32) -> Result<(), String>;
     /// Current length of the audit log in bytes (0 when absent).
     fn audit_len(&mut self) -> u64;
     /// The audit log's bytes from `offset` to its end.
@@ -799,6 +804,12 @@ impl World for Live {
 
     fn sleep(&mut self, secs: u64) {
         std::thread::sleep(Duration::from_secs(secs));
+    }
+
+    fn mark_poison_lifted(&mut self, id: &str, attempts: u32) -> Result<(), String> {
+        let dir = self.run_dir.join("poison-lifted");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        std::fs::write(dir.join(id), format!("{attempts}\n")).map_err(|e| e.to_string())
     }
 }
 

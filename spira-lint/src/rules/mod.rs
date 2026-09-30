@@ -6,7 +6,6 @@ pub mod covers_entries;
 pub mod deps_lint;
 pub mod event_taxonomy;
 pub mod fence_scripts;
-pub mod gh_intake_lint;
 pub mod incident_cause_lint;
 pub mod inventory;
 pub mod literal_lint;
