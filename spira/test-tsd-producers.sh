@@ -2,7 +2,8 @@
 #
 # test-tsd-producers.sh — the run/tsd/ producers sp-69m85 adds: aeon-session (aeon.sh's
 # ledger_done), slots (the cockpit collector), sentinel-phase (sentinel.sh's own CHECK
-# timings) and round (attribute.sh/testenv-batch.sh's TIMINGS-ONLY rows, never a state).
+# timings) and round (the whitelist behind attribute.sh/testenv-batch.sh's old TIMINGS-ONLY
+# rows, never a state — both scripts are gone, sp-uwhx0/the Rust cutover; see case 3).
 #
 # WHAT THIS SUITE CHECKS.
 #   1. aeon-session: ledger_done (aeon.sh) appends a row carrying bead/fayth/rc/status and
@@ -13,8 +14,9 @@
 #      from config alone, never a database call.
 #   3. round: _tsd_round_phase (lib.sh) refuses any phase outside build/corpus/attribute/
 #      rerun/land/publish — the whitelist that keeps a round row state-free (design §2a,
-#      "round rows carry no state") — and the shipped call sites in attribute.sh and
-#      testenv-batch.sh wire it with the fields they have in hand.
+#      "round rows carry no state"). attribute.sh and testenv-batch.sh's own shipped call
+#      sites, once extracted and proven here directly, are both gone now (sp-uwhx0, the
+#      Rust cutover) — the whitelist itself is what remains to prove.
 #   4. sentinel-phase: a real sentinel.sh pass (Dolt fixture) writes one row per CHECK, and
 #      their sum is within 5% of the pass's own measured wall time (the design's acceptance
 #      criterion, verbatim).
@@ -24,7 +26,7 @@
 #
 # tier: T3
 # covers: spira/lib.sh aeon/src/* sentinel/src/* spira/cockpit.sh spira/collect.sh
-#         spira/attribute.sh testenv/src/* reconciler-engine/src/io.rs
+#         testenv/src/* reconciler-engine/src/io.rs
 #         reconciler/src/main.rs reconciler-flow/src/main.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -132,44 +134,11 @@ is "round: no state name ever reaches the family (MUST-FAIL without the whitelis
 is "round: exactly the 6 timing phases landed — the 6 refused ones wrote nothing" \
    "6" "$(jpy "$FAM4" 'len(rows)')"
 
-# attribute.sh's own call site: --batch-id wires the shipped line, unmodified, with the
-# real wall time it measured and the real member/suite counts.
-ATTR_TAIL="$T/attr_tail.sh"
-sed -n '/^\[ -n "\$BATCH_ID" \] && _tsd_round_phase "\$BATCH_ID" attribute \\$/,/#SUITES_ARR\[@\]}"$/p' \
-    "$HERE/attribute.sh" > "$ATTR_TAIL"
-[ -s "$ATTR_TAIL" ] || bad "could not extract attribute.sh's round-phase call site"
-RUN5="$T/run5"; mkdir -p "$RUN5"
-(
-    export SPIRA_RUN="$RUN5"
-    . "$HERE/lib.sh"
-    BATCH_ID="batch-attr-1"
-    _ATTR_PASS_START=$(( EPOCHSECONDS - 7 ))
-    MEMBERS_ARR=(a b c)
-    SUITES_ARR=(s1 s2)
-    . "$ATTR_TAIL"
-)
-FAM5="$RUN5/tsd/round.jsonl"
-[ -f "$FAM5" ] && ok "attribute.sh's own call site wrote a round row" \
-                || bad "MUST-FAIL CHECK: attribute.sh's round-phase call site wrote nothing"
-if [ -f "$FAM5" ]; then
-    is "attribute.sh round row: batch_id" "batch-attr-1" "$(jpy "$FAM5" 'rows[0]["batch_id"]')"
-    is "attribute.sh round row: phase"    "attribute"    "$(jpy "$FAM5" 'rows[0]["phase"]')"
-    is "attribute.sh round row: members"  "3"            "$(jpy "$FAM5" 'rows[0]["members"]')"
-    is "attribute.sh round row: reds"     "2"             "$(jpy "$FAM5" 'rows[0]["reds"]')"
-fi
-# --batch-id omitted: no row, and attribution's own output is unaffected either way.
-RUN5B="$T/run5b"; mkdir -p "$RUN5B"
-(
-    export SPIRA_RUN="$RUN5B"
-    . "$HERE/lib.sh"
-    BATCH_ID=""
-    _ATTR_PASS_START=$(( EPOCHSECONDS - 7 ))
-    MEMBERS_ARR=(a b c)
-    SUITES_ARR=(s1 s2)
-    . "$ATTR_TAIL"
-)
-[ -f "$RUN5B/tsd/round.jsonl" ] && bad "a round row appeared despite no --batch-id" \
-                                 || ok "no round row written when --batch-id is omitted"
+# attribute.sh's round-phase call site (phase=attribute) was extracted from its source the
+# same way; attribute.sh is gone (sp-uwhx0, batcher/src/attrib.rs is round attribution now)
+# and that crate has no seam that writes this TIMINGS-ONLY family — the phase whitelist
+# itself (RUN4, above) still proves "attribute" is accepted and state names are refused;
+# there is no shipped call site left to prove wires it.
 
 # testenv-batch.sh's round-phase block was extracted from its source; testenv-batch.sh is gone
 # (the Rust cutover) and testenv's `build` round row is `cargo test -p testenv` (testenv/src/run.rs).
