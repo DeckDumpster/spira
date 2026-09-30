@@ -103,7 +103,7 @@ Each is a deterministic predicate naming the single action that closes its gap.
 8. **Judgement** — everything above passed, work remains, nothing is ready, nothing running.
    Only here is a model asked what is wrong, and only on whether the graph actually *moved*.
 
-**Auron** (`spira/auron.sh`) is the watchdog over the loop, and its only power is speech: it
+**Auron** (`bin/auron`; replaces `spira/auron.sh`) is the watchdog over the loop, and its only power is speech: it
 reads timestamps and counters and raises or clears an alert bead. It repairs nothing and
 summons nothing — a watchdog that can act is a second controller with no supervisor. It fires
 on sentinel-pass staleness, summon starvation, an unreachable database, and a lease held past
@@ -260,7 +260,7 @@ conforming client. A row may carry a **health assertion**, because a watcher rep
 identically whether nothing happened or it is reading the wrong database.
 
 **Incidents.** `spira/incident.sh` turns a production event into a bead ops can claim, from a
-failed systemd unit, an arbitrary payload, or a spool flush. `spira/install-intake.sh` wires
+failed systemd unit, an arbitrary payload, or a spool flush. `release intake install` wires
 `OnFailure=` drop-ins over `SPIRA_ALERT_GLOB` so a failed unit files itself; dedup keys on the
 unit name, so a recurrence labels the open incident rather than filing a second one.
 
@@ -476,8 +476,9 @@ the operator is reading, because halting the loop must not blind the person halt
 
 Other operator-facing scripts carry `--help`. Highlights: `promote.sh` fast-forwards the
 production checkout and restarts only changed units; `release stage up|down` stands up an
-isolated Spira for testing; `release canary` runs an end-to-end pipeline canary; `escape.sh`
-summons an aeon directly, bypassing pool and lane checks; `aeons.sh` sets the fleet ceiling.
+isolated Spira for testing; `release canary` runs an end-to-end pipeline canary; `aeon
+--escape <fayth>` summons an aeon directly, bypassing pool and lane checks; `aeons.sh` sets
+the fleet ceiling.
 
 ---
 
@@ -564,7 +565,7 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 | `spira-lint/src/rules/inventory.rs` | the fence that keeps one operator's infrastructure out of a repository meant to be cloned — repository names, hosts, paths, people, dates. It scans comments, which is where all of it was. Ported from spira/inventory.sh (sp-ekkak) |
 | `spira/inventory-deny` | the tokens that fence refuses beyond the structural ones. Ships EMPTY: a list of somebody else's names is itself the inventory |
 | `spira/actors.example` | commit author to harness, for authors the commit graph cannot vote on. Its rows are one installation's roster |
-| `spira/auron.sh` | the watchdog over the loop — reads timestamps and counters, raises or clears an alert bead. Its only power is speech: it repairs nothing, restarts nothing and summons nothing |
+| `auron/` | the watchdog over the loop (Rust; replaces spira/auron.sh, sp-zpaq0) — reads timestamps and counters, raises or clears an alert bead. Its only power is speech: it repairs nothing, restarts nothing and summons nothing |
 | `spira/skew.sh` | is the activated release the latest published — the hourly check that the installed release matches the most recent release tag; also the landing gate's fence against work landing in a copy nothing executes |
 | `spira/doctor.sh` | read-only preflight — every missing program, unreadable database, unmapped repository and unbuilt panel, named in one pass |
 | `spira/incident.sh` | turns a production event into a bead Ops can claim — systemd OnFailure, arbitrary payload, or a spool drain; deduplicates by external_ref |

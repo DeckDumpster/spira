@@ -45,7 +45,7 @@ times.
 
 - **Not the summoner.** Lanes, the pool, the fleet ceiling, the express grant and the
   elastic reservations are handled by `ck7_summon_pass`, `summon_fayth` and friends in
-  lib.sh. That code is shared with `escape.sh` and the aeon units, so it is reached through
+  lib.sh. That code is shared with `aeon --escape` and the aeon units, so it is reached through
   a seam (§6).
 - **Not the poison arithmetic.** Attempt, requeue and reclaim counts, and the CHECK 4
   decision itself, belong to `spira-claim` (`counts`, `decide`, `attempts`).
@@ -146,7 +146,7 @@ grep them. The exact strings are the ones §4 quotes; `src/tests.rs` pins the pa
 | `<id>.log` | existence (CHECK 5), trace tail (ask) | aeon session log | aeon.sh |
 | `roster-warn` stamp (`$SPIRA_ROSTER_WARN_STAMP`) | r/w | sorted excluded fayths | lib.sh |
 | `reflect.log` | append (reflect.sh output) | — | — |
-| `summon.lock` | flock (inside the CHECK 7 seam) | — | escape.sh |
+| `summon.lock` | flock (inside the CHECK 7 seam) | — | `aeon --escape` |
 | `.sentinel-tally.<pid>` | w/r/removed around each seam | `act\|progress<TAB>msg` lines (§6) | — |
 
 The directory paths come from the probe's variables (§6, S0): `SPIRA_POISON_ASKED`,

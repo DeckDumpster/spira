@@ -190,7 +190,7 @@ _file_status() {
 
 _session_hook_status() {
     local event="$1" out
-    out="$(install-session-hook.sh status 2>/dev/null)" || true
+    out="$(release session-hook status 2>/dev/null)" || true
     if printf '%s\n' "$out" | grep -qE "^ok[[:space:]]+$event([[:space:]]|$)"; then
         printf 'present'
     else
