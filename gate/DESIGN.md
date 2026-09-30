@@ -40,6 +40,7 @@ mechanically or returns it to an aeon with the conflicting hunks quoted.
 ```
 gate.sh <branch> [repo-name]                       # every caller, unchanged
 gate [--home <spira-dir>] <branch> [repo-name]     # what gate.sh execs
+gate [--home <spira-dir>] --definition [repo-name] # the landing ref's gate command (doctor.sh)
 ```
 
 * `repo-name` defaults to `spira_home_repo`.
@@ -201,12 +202,16 @@ tree and the key is what it was.
 ### Order of the trial (as the bash, plus the merge)
 
 repo map → repository → yield/meter armed → landing ref → changed files → ejected suites →
-**merge** → `bash -n` → beads data → foreign harness → empty gate string (PASS
-`syntax-only`) → preflight (`bash <path>` words exist on the base) → key → cache → admission →
+**merge** → `bash -n` → beads data → foreign harness → **the definition** (the tree's
+`gate.steps`, or the column for a repository that never adopted one; "The tree owns its
+gate") → empty gate string (PASS `syntax-only`, column only) → preflight (`bash <path>` words
+exist on the base for a column, on the revision under test for a tree definition) → key →
+cache → admission →
 sweep → tree lock → checkout the gate revision (proved by `rev-parse HEAD`) → **composition**
 and **re-entry** → branch trial (its phases, then the re-entry phase) → the re-entry proof →
 PASS, or: harness-fault line / 124 / 75 → base trial on the pinned landing commit (the same
-composition, over the crates the base has) → base re-run of the branch's red suites the base
+composition, over the crates the base has, the landing ref's own definition and tools) →
+base re-run of the branch's red suites the base
 trial did not run → attribution.
 
 The mode (`gate_mode`) is read just before the key, since it is part of it.
@@ -476,6 +481,85 @@ structure: **the gate cannot PASS a trial in which a fence it ran was silent.**
   tier-budget ledgers report `1 ledger`).
 * **NO_VERDICT, not FAIL.** A silent fence judged nothing; the branch is not shown to be at
   fault, and nothing is certified.
+
+## The tree owns its gate (sp-quu2w)
+
+### Intent
+
+The fence chain used to live in production config (the repo-map's gate column, mirrored as
+`[repo.<name>] gate` in spira.toml), and `$SPIRA_LINT_BIN` was the installed binary. So a
+branch that ported or deleted a fence could not pass its own gate: its tree no longer had the
+script the config named (wave 1, sp-pppt0: `bash spira/testdb-mode-lint.sh: No such file`),
+and the rule it added was not in the installed spira-lint. Landing it needed a hand-edited
+config flip in the same instant. **The tree under test owns its gate**: what a branch will
+land with is what its gate runs.
+
+### Contract
+
+* **The definition is `gate.steps` at the repository root** (`def::PATH`), read from the
+  revision under test (the merge, as everything else). One directive per line: `step
+  <command>` (one element of the `&&` chain, in order), `bin <VAR> <package>`, `#` comments,
+  blank lines. Anything else refuses. `Def::command()` joins the steps with ` && ` — the
+  string config held, byte for byte at migration — so the composition's build-fence drop
+  (`compose::gate_string`) and the fences' expectations (`fence::expected`) read the same
+  kind of string as before, now derived from the tree.
+* **Resolution (`def::resolve`)**, from the landing ref's blob and the tree's:
+
+  | landing ref has it | tree has it | the gate runs |
+  |---|---|---|
+  | no | no | the repo-map column, as before sp-quu2w (empty = `syntax-only`) |
+  | no | yes | the tree's (the adopting branch is gated by what it adds) |
+  | yes | yes | the tree's; a non-empty column is ignored with a warning |
+  | yes | no | **FAIL `gate-definition`**: deleting the gate is not a way through it |
+
+  A tree definition that does not parse, or names no step, is FAIL `gate-definition` when
+  the landing ref's parses, BASE_FAIL `base-gate-definition` when it does not. Nothing falls
+  back to config once the landing ref has adopted.
+* **Preflight on the tree under test.** Each `bash <path>` a tree definition names must be
+  in the revision under test: a branch that deletes a fence script and its `step` line
+  passes; one that deletes the script and leaves it named is FAIL `gate-definition`
+  (BASE_FAIL `base-gate-definition` when the landing ref already names a file it lacks). A
+  column keeps today's check against the base (NO_VERDICT `cmd-missing-file`).
+* **Tools from the tree.** Each `bin <VAR> <package>` is built before any step, in a `tools`
+  phase (`cargo build --profile aeon -j <jobs> -p <package>…`, then `[ -x
+  target/aeon/<package> ]`), and the steps get `<VAR>=<gate tree>/target/aeon/<package>` in
+  place of the installed value. The aeon profile is the unit phases' profile, so a unit
+  composition's build reuses it. The spira repository declares `bin SPIRA_LINT_BIN
+  spira-lint`. A tools phase that fails is a red like any other and is attributed by the base
+  trial.
+* **The base trial runs the landing ref's own definition** (`def::resolve_base`), its own
+  tools, its own steps — never the branch's. A landing-ref definition that does not read
+  leaves the base untested (BaseUntestable, NO_VERDICT).
+* **The key** hashes `Def::key_text()` (the command plus one `# bin VAR package` line per
+  tool) in place of the bare string; a column is hashed as before.
+* **`gate --definition [repo]`** prints the command the landing ref defines (or its column),
+  exit 1 naming why it cannot. doctor.sh's compile-check check (sp-1hmrm) reads it, so the
+  one resolution lives here.
+* **Config:** `[repo.<name>] gate` is retired in spira-config (`RETIRED_REPO_KEYS`, warning,
+  ignored; `convert` no longer carries the column). The repo-map column stays readable by
+  the gate for a repository that never adopted `gate.steps`, and retires with repo-map.
+
+### Decisions
+
+* **A line format, not a TOML array or one long string.** The five wave-1 fence ports each
+  edit the definition after this lands; one directive per line makes each port a one-line
+  diff that merges beside the others, and needs no quoting (the suite step carries both
+  quote kinds, which a TOML string would need escaping or `'''` for). The `step`/`bin`
+  keyword on every line keeps it extensible and makes an unknown line a refusal, not a
+  command.
+* **A fixed path, not a config key naming one.** A path in config is one more thing that can
+  disagree with the tree; a fixed path cannot, and adoption is recorded where it matters —
+  in the landing ref itself.
+* **The column survives for non-adopting repositories.** Dozens of suites' fixture
+  repositories gate through a repo-map column (including empty = syntax only); refusing a
+  tree without `gate.steps` outright would break every one of them for no safety gain,
+  because the refusal that matters — an adopted repository losing its definition — keys on
+  the landing ref, which the branch cannot change.
+* **`testenv` is not built from the tree.** It is the executor of the suite step, not a
+  check whose rules a branch adds; a branch that broke it would judge itself with the broken
+  runner. `bin SPIRA_TESTENV_BIN testenv` is one line if that is ever wanted.
+* **Dropped:** the config gate string as the spira repository's source of truth, and
+  hand-editing it at landing.
 
 ## Boundaries (ports)
 
