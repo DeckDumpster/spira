@@ -92,7 +92,7 @@ with_duplicate() {
 
 call_repair() {   # call_repair <window> -> nothing; runs repair_dashboards sourced
     local window="$1"
-    TMUX_TMPDIR="$TMUXDIR" env -i HOME="$TMP" PATH="/usr/bin:/bin" TMUX_TMPDIR="$TMUXDIR" \
+    TMUX_TMPDIR="$TMUXDIR" env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$TMP" PATH="/usr/bin:/bin" TMUX_TMPDIR="$TMUXDIR" \
         WINDOW="$window" MAIL_CMD="" SPIRA_REPO="$TMP" SPIRA_COCKPIT="$COCKPIT_DIR" \
         SPIRA_RUN="$RUN" SPIRA_INSTANCE=fixture COCKPIT_CWD="$TMP" \
         COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \

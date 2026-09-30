@@ -24,6 +24,11 @@ gate_fixture_init() {
     # first (so a sibling the copied gate.sh names is the copy), then the directory the
     # suite's PATH resolves `gate` in — the tree under test's build.
     GATE_PATH_DIR="$(dirname "$(command -v gate)")" || { echo "gate-fixture: gate is not on PATH" >&2; return 1; }
+    # A FIXTURE RELEASE (sp-31gtu): the gate builds its command's PATH outright from
+    # SPIRA_RELEASE, so the fixture is a release of its own — bin/ is the directory `gate` was
+    # found in, spira/ is the fixture's copy — the same two directories, in the same order.
+    REL="$tmp/rel"; mkdir -p "$REL"
+    ln -sfn "$GATE_PATH_DIR" "$REL/bin"; ln -sfn "$SH" "$REL/spira"
     cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" \
        "$HERE/skew.sh" "$HERE/yield.sh" "$HERE/suite-covers.sh" "$HERE/gate-sweep.sh" \
        "$HERE/lifecycle-cert.sh" "$SH/"
@@ -50,7 +55,7 @@ gate_fixture_branch() {
 # gate_fixture_run <branch> <repo-name> [VAR=VAL ...] — the copied gate.sh, in the fixed env.
 gate_fixture_run() {
     local br="$1" repo="$2"; shift 2
-    env -i HOME="$HOMEDIR" PATH="$SH:$GATE_PATH_DIR:/usr/bin:/bin" \
+    env -i HOME="$HOMEDIR" SPIRA_RELEASE="$REL" PATH="$REL/bin:$REL/spira:/usr/local/bin:/usr/bin:/bin" \
         GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
         SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         SPIRA_DB="$SPIRA_DB_NONE" SPIRA_REPO_MAP="$MAP" \

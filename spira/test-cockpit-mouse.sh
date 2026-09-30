@@ -87,7 +87,7 @@ call_mouse() {
     : > "$LOG"
     local -a extra=()
     [ -n "$mouse" ] && extra=(COCKPIT_MOUSE="$mouse")
-    env -i HOME="$TMP" PATH="/usr/bin:/bin" \
+    env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$TMP" PATH="/usr/bin:/bin" \
         SPIRA_REPO="$TMP" SPIRA_COCKPIT="$TMP/cockpit" SPIRA_RUN="$TMP/run" \
         SPIRA_INSTANCE=fixture COCKPIT_CWD="$TMP" \
         COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 COCKPIT_MAIL="" \

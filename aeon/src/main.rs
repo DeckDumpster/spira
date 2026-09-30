@@ -78,13 +78,12 @@ fn main() {
         let _ = std::io::stdin().read_to_string(&mut p);
         cli.mode = Mode::Sweep { prompt: Some(p.trim_end_matches('\n').to_string()) };
     }
-    // THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): built from SPIRA_RELEASE alone — never
-    // the PATH this process inherited — before conf.sh (through the seam) appends the box's
-    // own tail. So the session, its subagents and the worktree's hooks resolve every tool by
-    // name to the release's copy. Unset is fatal, naming it: there is no fallback.
-    match spira_config::release_path_from_env(std::env::var(spira_config::RELEASE_ENV).ok().as_deref()) {
-        Ok(p) => std::env::set_var("PATH", p),
-        Err(e) => fatal(&format!("{}: {e}", cli.fayth)),
+    // THE LAUNCHER SETS PATH (sp-31gtu): the aeon's launcher (the summon's systemd-run, the
+    // ops unit) hands it a PATH set outright from SPIRA_RELEASE, and the aeon carries it to
+    // the session and its subagents unchanged. It needs SPIRA_RELEASE itself to arm the
+    // worktree with the release's hooks: unset is fatal, naming it — there is no fallback.
+    if let Err(e) = spira_config::release_path_from_env(std::env::var(spira_config::RELEASE_ENV).ok().as_deref()) {
+        fatal(&format!("{}: {e}", cli.fayth));
     }
     let original: BTreeMap<String, String> = std::env::vars().collect();
     let exe = std::env::current_exe().ok();

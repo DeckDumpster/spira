@@ -100,7 +100,7 @@ run_watchdog() {
     local now; now=$(date +%s)
     touch -d "@$(( now - src_age_s ))" "$PROD/cockpit.sh"
 
-    env -i HOME="$TMP" PATH="$BIN:/usr/bin:/bin" SPIRA_PATH="$BIN" \
+    env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$TMP" PATH="$BIN:/usr/bin:/bin" SPIRA_PATH="$BIN" \
         SPIRA_REPO="$TMP" SPIRA_COCKPIT="$TMP/cockpit" SPIRA_RUN="$RUN" \
         COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \
         COCKPIT_MAIL="" \
@@ -147,7 +147,7 @@ echo ""
 echo "replaced during a pass: a promotion after an earlier fresh check is still caught"
 
 run_watchdog_once() {
-    env -i HOME="$TMP" PATH="$BIN:/usr/bin:/bin" SPIRA_PATH="$BIN" \
+    env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$TMP" PATH="$BIN:/usr/bin:/bin" SPIRA_PATH="$BIN" \
         SPIRA_REPO="$TMP" SPIRA_COCKPIT="$TMP/cockpit" SPIRA_RUN="$RUN" \
         COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \
         COCKPIT_MAIL="" \
