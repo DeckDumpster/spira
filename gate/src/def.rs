@@ -120,6 +120,7 @@ impl Def {
         let mut c = format!("cargo build --profile aeon -j {jobs}{pkgs}");
         for b in &self.bins {
             c.push_str(&format!(
+                // path-ok: the gate builds this binary into the gate tree and names where it lands.
                 " && {{ [ -x target/aeon/{p} ] || {{ echo 'gate: {PATH}: bin {v} {p} built no target/aeon/{p}'; exit 1; }}; }}",
                 p = b.package,
                 v = b.var
@@ -135,7 +136,7 @@ pub enum Resolved {
     /// The tree's own definition.
     Tree(Def),
     /// The repository has not adopted a tree definition (its landing ref has none): the
-    /// repo-map's gate column, as before sp-quu2w. Empty means syntax only.
+    /// repository's configured gate column, as before sp-quu2w. Empty means syntax only.
     Column(String),
     /// The definition cannot be read. `branch` says whose fault: true when the base's own
     /// definition reads (the branch broke it), false when the base's is broken too.
@@ -223,10 +224,12 @@ mod tests {
         let d = parse("bin SPIRA_LINT_BIN spira-lint\nstep a\n").unwrap();
         let c = d.tools_command(4).unwrap();
         assert!(c.starts_with("cargo build --profile aeon -j 4 -p spira-lint && "), "{c}");
+        // path-ok: asserting the tools phase's own proof of the binary it built.
         assert!(c.contains("[ -x target/aeon/spira-lint ]"), "{c}");
         assert_eq!(parse("step a\n").unwrap().tools_command(4), None);
         assert_eq!(
             Def::bin_path(std::path::Path::new("/t"), &d.bins[0]),
+            // path-ok: the gate tree's build output, asserted.
             std::path::PathBuf::from("/t/target/aeon/spira-lint")
         );
     }

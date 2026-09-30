@@ -28,7 +28,6 @@ echo "test-doctor-gate-compile-check.sh"
 SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)" || skip "no spira-config binary found — cannot be built here"
 GATE_BIN="${SPIRA_GATE_BIN:-${SPIRA_ARTIFACTS:-}/gate}"
 [ -x "$GATE_BIN" ] || GATE_BIN="$HERE/../bin/gate"
-[ -x "$GATE_BIN" ] || GATE_BIN="$HERE/../target/release/gate"
 [ -x "$GATE_BIN" ] || skip "no gate binary found — cannot be built here"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM

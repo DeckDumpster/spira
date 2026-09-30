@@ -2005,6 +2005,7 @@ fn a_tree_definition_is_the_gate_and_the_column_is_ignored() {
     let cmds = f.cmds.borrow();
     assert!(cmds[0].starts_with("cargo build --profile aeon") && cmds[0].contains("-p spira-lint"), "{cmds:?}");
     let lint = f.env_of(1, "SPIRA_LINT_BIN");
+    // path-ok: the binary the tools phase built in the gate tree, asserted.
     assert!(lint.starts_with(&format!("{RUN}/worktree/.gate.")) && lint.ends_with("/target/aeon/spira-lint"), "{lint}");
     assert!(f.appended.borrow().iter().any(|l| l.contains("phases=tools:")), "{:?}", f.appended.borrow());
 }
