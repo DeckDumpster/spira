@@ -42,11 +42,24 @@ pub fn parse_livelock(line: &str) -> Option<Livelock> {
 }
 
 /// `STATE <id> <kind> [<extra>] — <evidence>`. `kind` is the first token after the id;
-/// for `closed-never-landed` and `blocked-by-unlanded` a second token (the conflict tag
-/// or the blocker id) follows before the em dash.
+/// for `blocked-by-unlanded` a second token (the blocker id) follows before the em dash.
+///
+/// `closed-never-landed conflict|batch-ready` is the one shape that does NOT cleanly
+/// split on an em dash: lib.sh's own line carries `<repo> <branch> <base>` between the
+/// tag and its own `— reason` text (`detect_closed_unlanded_states`'s
+/// `printf 'STATE %s closed-never-landed conflict %s %s %s — does not merge, needs a
+/// rebase\n'`), and `groomer.sh` never split it further — `_sw_reason` was always
+/// everything after `closed-never-landed conflict `, repo/branch/base included. `extra`
+/// here is just the tag; `evidence` is that whole tail, matching the bash byte for byte.
 pub fn parse_state(line: &str) -> Option<StateLine> {
     let rest = line.strip_prefix("STATE ")?;
     let (id, rest) = rest.split_once(' ')?;
+    for tag in ["conflict", "batch-ready"] {
+        let prefix = format!("closed-never-landed {tag} ");
+        if let Some(tail) = rest.strip_prefix(prefix.as_str()) {
+            return Some(StateLine { id: id.to_string(), kind: "closed-never-landed".to_string(), extra: tag.to_string(), evidence: tail.to_string() });
+        }
+    }
     let (head, evidence) = rest.split_once(" — ").unwrap_or((rest, ""));
     let mut parts = head.splitn(2, ' ');
     let kind = parts.next().unwrap_or("").to_string();
@@ -250,11 +263,22 @@ mod sweep_tests {
     }
 
     #[test]
-    fn parses_a_state_line_with_extra_tag() {
-        let row = parse_state("STATE sp-2 closed-never-landed conflict — branch does not merge").unwrap();
+    fn parses_a_closed_never_landed_line_with_repo_branch_base_folded_into_evidence() {
+        // lib.sh's real shape: repo/branch/base sit between the tag and lib.sh's own
+        // `— reason`, and groomer.sh never split them out — the whole tail is the
+        // evidence this crate hands to `bead_reopen`'s note, unchanged.
+        let row = parse_state("STATE sp-2 closed-never-landed conflict fixture sp-2-branch abc123 — does not merge, needs a rebase").unwrap();
         assert_eq!(row.kind, "closed-never-landed");
         assert_eq!(row.extra, "conflict");
-        assert_eq!(row.evidence, "branch does not merge");
+        assert_eq!(row.evidence, "fixture sp-2-branch abc123 — does not merge, needs a rebase");
+    }
+
+    #[test]
+    fn parses_a_closed_never_landed_batch_ready_line() {
+        let row = parse_state("STATE sp-7 closed-never-landed batch-ready fixture sp-7-branch abc123 — merges cleanly, ready to requeue").unwrap();
+        assert_eq!(row.kind, "closed-never-landed");
+        assert_eq!(row.extra, "batch-ready");
+        assert_eq!(row.evidence, "fixture sp-7-branch abc123 — merges cleanly, ready to requeue");
     }
 
     #[test]
@@ -332,10 +356,10 @@ mod sweep_tests {
     fn sweep_reopens_conflict_and_batch_ready_and_then_checks_false_blockers() {
         let bd = FakeBd::new();
         let seam = FakeSeam::new();
-        *seam.closed_unlanded.borrow_mut() = "STATE sp-6 closed-never-landed conflict — does not merge\nSTATE sp-7 closed-never-landed batch-ready — merges clean\n".into();
+        *seam.closed_unlanded.borrow_mut() = "STATE sp-6 closed-never-landed conflict fixture sp-6-branch abc123 — does not merge, needs a rebase\nSTATE sp-7 closed-never-landed batch-ready fixture sp-7-branch abc123 — merges cleanly, ready to requeue\n".into();
         *seam.false_blockers.borrow_mut() = "STATE sp-8 blocked-by-unlanded sp-6 — was blocked\n".into();
         let out = sweep(&bd, &seam, false).unwrap();
-        assert!(seam.log().iter().any(|c| c == "bead_reopen sp-6 closed-never-landed-conflict Reopened by groomer sweep: closed but its branch does not merge cleanly into the base — does not merge. Needs a rebase before it can land."));
+        assert!(seam.log().iter().any(|c| c == "bead_reopen sp-6 closed-never-landed-conflict Reopened by groomer sweep: closed but its branch does not merge cleanly into the base — fixture sp-6-branch abc123 — does not merge, needs a rebase. Needs a rebase before it can land."));
         assert!(seam.log().iter().any(|c| c.starts_with("detect_false_blockers sp-6 sp-7")));
         assert!(bd.log().iter().any(|c| c.starts_with("note sp-8")));
         assert_eq!(out.acted, 3);
