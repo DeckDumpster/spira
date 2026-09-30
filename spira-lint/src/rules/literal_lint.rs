@@ -292,14 +292,12 @@ mod tests {
     #[test]
     fn configured_names_reads_both_name_and_default_from_a_real_schema_sh() {
         let t = TempDir::new("lit-schema");
-        t.write(
-            "schema.sh",
+        // write_exe: written and exec'd in a multi-threaded test binary, a plain write races
+        // another thread's fork into ETXTBSY (seen on this gate as a WARNING fallback).
+        testkit::write_exe(
+            t.path().join("schema.sh"),
             "#!/usr/bin/env bash\ncase \"$1\" in\n  names) echo ask ;;\n  name) [ \"$2\" = ask ] && printf '%s' \"${SPIRA_ASK_LABEL:-needs-operator}\" ;;\n  default) [ \"$2\" = ask ] && printf '%s' needs-operator ;;\nesac\n",
         );
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(t.path().join("schema.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
         let (names, warning) = configured_names(&t.path().join("schema.sh"));
         assert!(warning.is_none(), "{warning:?}");
         assert!(names.contains(&"needs-operator".to_string()));
