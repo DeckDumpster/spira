@@ -66,12 +66,17 @@ pub struct RealSeam {
 
 impl RealSeam {
     fn lib_call(&self, body: &str) -> Result<(bool, String), String> {
-        let script = format!(r#". "$0" >/dev/null 2>&1 || exit 97; {body}"#);
+        // Sourcing's own stdout goes to OUR stderr (never silently dropped — conf.sh's
+        // deprecation warnings live here, e.g. SPIRA_CLAUDE) and is inherited so it
+        // still reaches whoever is reading this process's output, the same seam idiom
+        // `sentinel::seams::PROBE` uses (`. "$LIB" >&2 || exit 97`).
+        let script = format!(r#". "$0" >&2 || exit 97; {body}"#);
         let o = Command::new("bash")
             .arg("-c")
             .arg(script)
             .arg(&self.lib_sh)
             .stdin(Stdio::null())
+            .stderr(Stdio::inherit())
             .output()
             .map_err(|e| format!("lib.sh: {e}"))?;
         Ok((o.status.success(), String::from_utf8_lossy(&o.stdout).into_owned()))
@@ -103,8 +108,11 @@ impl Seam for RealSeam {
     }
 
     fn probe(&self) -> HashMap<String, String> {
-        let script = r#". "$0" >/dev/null 2>&1 || exit 97; for _v in $(compgen -v SPIRA_); do printf '%s\0' "$_v=${!_v:-}"; done"#;
-        let o = Command::new("bash").arg("-c").arg(script).arg(&self.lib_sh).stdin(Stdio::null()).output();
+        // See `lib_call`: sourcing's stdout goes to our stderr, inherited, so conf.sh's
+        // own warnings (SPIRA_CLAUDE's deprecation notice among them) are never silently
+        // dropped just because this process happens to be reading lib.sh's variables.
+        let script = r#". "$0" >&2 || exit 97; for _v in $(compgen -v SPIRA_); do printf '%s\0' "$_v=${!_v:-}"; done"#;
+        let o = Command::new("bash").arg("-c").arg(script).arg(&self.lib_sh).stdin(Stdio::null()).stderr(Stdio::inherit()).output();
         let mut m = HashMap::new();
         if let Ok(o) = o {
             for entry in o.stdout.split(|b| *b == 0) {

@@ -47,9 +47,12 @@ pub fn log(msg: &str) -> String {
     line
 }
 
-fn covered(arc: &Path, sid: &str) -> Option<u64> {
+/// The covered cursor, raw — `None` if the file is absent; may hold a non-numeric
+/// sentinel (`-`/`?`) if a prior meter read was unreadable. Callers coerce it through
+/// [`numeric_logged`], which is where `arc_numeric`'s log line lives.
+fn covered_raw(arc: &Path, sid: &str) -> Option<String> {
     let text = std::fs::read_to_string(arc.join(format!("{sid}.covered"))).ok()?;
-    state::key(&text, "turn")?.parse().ok()
+    state::key(&text, "turn")
 }
 
 fn set_covered(arc: &Path, sid: &str, turn: u64) -> std::io::Result<()> {
@@ -59,10 +62,19 @@ fn set_covered(arc: &Path, sid: &str, turn: u64) -> std::io::Result<()> {
     std::fs::rename(&tmp, arc.join(format!("{sid}.covered")))
 }
 
-/// `arc_numeric`'s policy, without the log line (callers that care log it themselves):
-/// a non-numeric value coerces to 0.
-fn numeric(v: Option<&str>) -> u64 {
-    state::numeric_or_zero(v).0
+/// `arc_numeric`: coerce a meter or cursor value to a non-negative integer, LOGGING the
+/// coercion — the established "unreadable" sentinel in this codebase is `-` or `?`, and a
+/// sweep that silently treated one as 0 would be indistinguishable from one that read a
+/// real 0, which is exactly the ambiguity this log line exists to remove.
+fn numeric_logged(v: Option<&str>, context: &str) -> u64 {
+    let (n, ok) = state::numeric_or_zero(v);
+    if !ok {
+        log(&format!(
+            "archivist: {context} is '{}' — treating as 0 (not covered)",
+            v.filter(|s| !s.is_empty()).unwrap_or("(empty)")
+        ));
+    }
+    n
 }
 
 /// What came before this transcript, as a hint for the agent — never a dependency: a
@@ -95,7 +107,7 @@ fn lineage_brief(seam: &dyn Seam, sid: &str, tp: &str) -> String {
 /// blocks rather than skips (the manual `now` path; an operator told "busy" would just
 /// run it again in a loop).
 pub fn archive(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at: u64, ctx: &str, why: &str, wait: bool) -> i32 {
-    let from = covered(arc, sid).unwrap_or(0);
+    let from = numeric_logged(covered_raw(arc, sid).as_deref(), &format!("session {sid} prior cursor"));
     let tc_file = arc.join(format!("{sid}.timeout_count"));
     let mut tc: u32 = std::fs::read_to_string(&tc_file).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
     let effective_timeout = cfg.timeout * (tc as u64 + 1);
@@ -226,8 +238,8 @@ fn build_candidates(seam: &dyn Seam, cfg: &Env, arc: &Path, now: i64) -> Vec<Can
         if band < 0 {
             continue; // the meter could not read it
         }
-        let cov = covered(arc, &sid).unwrap_or(0);
-        let turns_n = numeric(Some(&turns_raw));
+        let cov = numeric_logged(covered_raw(arc, &sid).as_deref(), &format!("session {sid} cursor"));
+        let turns_n = numeric_logged(Some(&turns_raw), &format!("session {sid} turns"));
         let drift = turns_n as i64 - cov as i64;
         let prev_state = state::read_state_key(arc, &sid, "state");
         let would = candidates::would_archive(drift, cfg.every, prev_state.as_deref());
@@ -356,8 +368,8 @@ pub fn now_cmd(seam: &dyn Seam, cfg: &Env, arc: &Path, arg: Option<&str>) -> i32
         return 1;
     }
     let env = seam.ctx_meter_env(&tp);
-    let ctx = numeric(env.get("SP_CTX_NOW").map(String::as_str)).to_string();
-    let turns = numeric(env.get("SP_CTX_TURNS").map(String::as_str));
+    let ctx = numeric_logged(env.get("SP_CTX_NOW").map(String::as_str), &format!("session {sid} ctx")).to_string();
+    let turns = numeric_logged(env.get("SP_CTX_TURNS").map(String::as_str), &format!("session {sid} turns"));
     archive(seam, cfg, arc, &sid, &tp, turns, &ctx, "asked for by hand", true)
 }
 
@@ -593,7 +605,7 @@ mod tests {
         let rc = archive(&seam, &c, &dir, "sess-1", Path::new("/tmp/sess-1.jsonl"), 10, "5", "test run", false);
         assert_eq!(rc, 0);
         assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("safe".into()));
-        assert_eq!(covered(&dir, "sess-1"), Some(10));
+        assert_eq!(covered_raw(&dir, "sess-1"), Some("10".to_string()));
         assert_eq!(seam.agent_calls.borrow().len(), 1);
         assert!(seam.agent_calls.borrow()[0].contains("task for sess-1"));
     }
