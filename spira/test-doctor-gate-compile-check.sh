@@ -13,8 +13,12 @@
 # POSITIVE CONTROL FIRST (law-absence-needs-a-positive-control): the cut row must be seen
 # FAIL before the same row, repaired, is trusted to report OK.
 #
+# SINCE sp-quu2w THE TREE OWNS ITS GATE: a repository whose landing ref carries gate.steps is
+# gated by that file, and doctor asks the gate binary (`gate --definition`) for whichever
+# definition is in force, so the same check covers both a tree definition and a legacy row.
+#
 # tier: T1
-# covers: spira/doctor.sh spira/build-fence.sh spira/gate-touched.sh
+# covers: spira/doctor.sh spira/build-fence.sh spira/gate-touched.sh gate/src/def.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -22,12 +26,30 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 echo "test-doctor-gate-compile-check.sh"
 
 SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)" || skip "no spira-config binary found — cannot be built here"
+GATE_BIN="${SPIRA_GATE_BIN:-${SPIRA_ARTIFACTS:-}/gate}"
+[ -x "$GATE_BIN" ] || GATE_BIN="$HERE/../bin/gate"
+[ -x "$GATE_BIN" ] || skip "no gate binary found — cannot be built here"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 mkdir -p "$TMP/bin" "$TMP/db/.beads" "$TMP/run" "$TMP/home" "$TMP/chamber"
 mkdir -p "$TMP/rustrepo/crate/src" "$TMP/shellrepo"
 printf '[package]\nname = "fixture"\n' > "$TMP/rustrepo/crate/Cargo.toml"
+# Both fixtures are checkouts with the landing ref their rows declare: the gate resolves the
+# definition at that ref, exactly as a trial does.
+for r in rustrepo shellrepo; do
+    git -C "$TMP/$r" init -q -b main
+    git -C "$TMP/$r" add -A
+    git -C "$TMP/$r" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m init
+    git -C "$TMP/$r" update-ref refs/remotes/origin/main HEAD
+done
+# commit_steps <content> — land a gate.steps on rustrepo's landing ref.
+commit_steps() {
+    printf '%s\n' "$1" > "$TMP/rustrepo/gate.steps"
+    git -C "$TMP/rustrepo" add gate.steps
+    git -C "$TMP/rustrepo" -c user.name=t -c user.email=t@example.com commit -q -m steps
+    git -C "$TMP/rustrepo" update-ref refs/remotes/origin/main HEAD
+}
 
 cat > "$TMP/bin/bd" <<'FAKEBD'
 #!/usr/bin/env bash
@@ -67,6 +89,7 @@ run_doctor() {
         SPIRA_REPO_MAP="$1" \
         SPIRA_CHAMBER="$TMP/chamber" \
         SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+        SPIRA_GATE_BIN="$GATE_BIN" \
         SPIRA_PATH="$TMP/bin" \
         SPIRA_DB="$TMP/db" \
         SPIRA_RUN="$TMP/run" \
@@ -129,5 +152,24 @@ nowant "shell-only repo: no FAIL for it" "FAIL  shellrepo" "$shell_out"
 nowant "shell-only repo: no OK for it either — it was never checked" "ok    shellrepo" "$shell_out"
 want   "shell-only repo: the section says nothing carries Rust crates" \
        "no repository in the map carries Rust crates" "$shell_out"
+
+# ==========================================================================
+echo
+echo "THE TREE OWNS ITS GATE (sp-quu2w) — the landing ref's gate.steps is read, the column is not:"
+# ==========================================================================
+# Seen red first: a tree definition with no build fence FAILs even though the row's column
+# (ignored now) still names one.
+commit_steps "step bash spira/inventory.sh"
+tree_cut_out="$(run_doctor "$RMAP_FIXED")"
+want   "tree definition without build-fence: FAIL" "FAIL  rustrepo: gate command has no reachable compile check" "$tree_cut_out"
+nowant "the ignored column does not rescue it"       "ok    rustrepo"                                             "$tree_cut_out"
+# Green after: the tree definition names it, and the row's column is empty.
+commit_steps "step bash spira/inventory.sh
+step bash spira/build-fence.sh"
+RMAP_EMPTY="$TMP/repo-map-empty"
+printf 'rustrepo | %s | queue | origin/main | |\n' "$TMP/rustrepo" > "$RMAP_EMPTY"
+tree_ok_out="$(run_doctor "$RMAP_EMPTY")"
+want   "tree definition with build-fence, empty column: OK" "ok    rustrepo: gate command reaches a compile check" "$tree_ok_out"
+nowant "no FAIL for it"                                     "FAIL  rustrepo"                                        "$tree_ok_out"
 
 tl_summary

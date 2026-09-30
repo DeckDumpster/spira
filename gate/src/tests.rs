@@ -75,6 +75,9 @@ struct Fake {
     silent_fences: RefCell<HashSet<String>>,
     /// The tree each gate-string run happened in.
     trees: RefCell<Vec<PathBuf>>,
+    // ---- the tree owns its gate (sp-quu2w)
+    /// `<rev>:<path>` a revision does not carry (`ls_tree_has` is false for it).
+    gone: RefCell<HashSet<String>>,
 }
 
 fn ctx() -> Ctx {
@@ -157,6 +160,7 @@ impl Fake {
             reentry_runs: RefCell::new(HashMap::new()),
             silent_fences: RefCell::new(HashSet::new()),
             trees: RefCell::new(Vec::new()),
+            gone: RefCell::new(HashSet::new()),
         }
     }
     fn set_var(&self, k: &str, v: &str) {
@@ -262,8 +266,9 @@ impl World for Fake {
     fn ls_tree_all(&self, _: &Path, rev: &str) -> String {
         format!("tree-of {rev}\n")
     }
-    fn ls_tree_has(&self, _: &Path, _: &str, path: &str) -> bool {
-        path != "spira/missing.sh"
+    fn ls_tree_has(&self, _: &Path, rev: &str, path: &str) -> bool {
+        !self.gone.borrow().contains(&format!("{rev}:{path}"))
+            && path != "spira/missing.sh"
             && !path
                 .strip_prefix("spira/")
                 .is_some_and(|s| self.base_lacks.borrow().contains(s))
@@ -1965,4 +1970,128 @@ fn a_unit_composition_does_not_expect_the_build_fence_it_dropped() {
     }]);
     f.silent_fences.borrow_mut().insert("build-fence".into());
     assert_eq!(f.run(), PASS, "{}", f.stderr());
+}
+
+// ------------------------------------------------------------ the tree owns its gate (sp-quu2w)
+
+/// A two-fence tree definition that builds spira-lint from the tree.
+const STEPS: &str = "# the tree's gate\nbin SPIRA_LINT_BIN spira-lint\nstep bash spira/a-fence.sh\nstep \"$SPIRA_LINT_BIN\" --only payload-argv-lint\nstep bash spira/b-fence.sh\n";
+
+fn tree_owned(base: Option<&str>, merged: Option<&str>) -> Fake {
+    let f = Fake::new();
+    f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = "bash spira/config-only.sh".into();
+    if let Some(b) = base {
+        f.blobs.borrow_mut().insert(format!("{BASE}:gate.steps"), b.as_bytes().to_vec());
+    }
+    if let Some(m) = merged {
+        f.blobs.borrow_mut().insert(format!("{MERGE_SHA}:gate.steps"), m.as_bytes().to_vec());
+    }
+    f
+}
+
+fn gate_runs(f: &Fake) -> Vec<String> {
+    f.cmds.borrow().iter().filter(|c| !c.starts_with("cargo ")).cloned().collect()
+}
+
+#[test]
+fn a_tree_definition_is_the_gate_and_the_column_is_ignored() {
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let runs = gate_runs(&f);
+    assert_eq!(runs[0], r#"bash spira/a-fence.sh && "$SPIRA_LINT_BIN" --only payload-argv-lint && bash spira/b-fence.sh"#);
+    assert!(!runs.iter().any(|c| c.contains("config-only")), "{runs:?}");
+    assert!(f.stderr().contains("repo-map gate column is ignored"), "{}", f.stderr());
+    // The tools phase ran first and the steps got the tree's spira-lint.
+    let cmds = f.cmds.borrow();
+    assert!(cmds[0].starts_with("cargo build --profile aeon") && cmds[0].contains("-p spira-lint"), "{cmds:?}");
+    let lint = f.env_of(1, "SPIRA_LINT_BIN");
+    // path-ok: the binary the tools phase built in the gate tree, asserted.
+    assert!(lint.starts_with(&format!("{RUN}/worktree/.gate.")) && lint.ends_with("/target/aeon/spira-lint"), "{lint}");
+    assert!(f.appended.borrow().iter().any(|l| l.contains("phases=tools:")), "{:?}", f.appended.borrow());
+}
+
+#[test]
+fn a_branch_that_deletes_a_fence_and_its_step_passes() {
+    // The base still has b-fence and names it; the branch deletes both.
+    let without_b = STEPS.replace("step bash spira/b-fence.sh\n", "");
+    let f = tree_owned(Some(STEPS), Some(&without_b));
+    f.gone.borrow_mut().insert(format!("{MERGE_SHA}:spira/b-fence.sh"));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(!gate_runs(&f)[0].contains("b-fence"));
+}
+
+#[test]
+fn a_branch_that_deletes_a_fence_but_leaves_it_named_fails() {
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    f.gone.borrow_mut().insert(format!("{MERGE_SHA}:spira/b-fence.sh"));
+    assert_eq!(f.run(), FAIL);
+    assert!(f.verdict_line().contains("reason=gate-definition"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("names 'bash spira/b-fence.sh'"), "{}", f.stderr());
+    assert!(f.ran.borrow().is_empty(), "nothing runs on a definition that cannot run");
+}
+
+#[test]
+fn a_definition_the_base_already_breaks_is_the_bases() {
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    f.gone.borrow_mut().insert(format!("{MERGE_SHA}:spira/b-fence.sh"));
+    f.gone.borrow_mut().insert(format!("{BASE}:spira/b-fence.sh"));
+    assert_eq!(f.run(), BASEFAIL);
+    assert!(f.verdict_line().contains("reason=base-gate-definition"));
+    let f = tree_owned(Some("garbage\n"), Some("garbage\n"));
+    assert_eq!(f.run(), BASEFAIL);
+    assert!(f.verdict_line().contains("reason=base-gate-definition"));
+}
+
+#[test]
+fn a_branch_that_deletes_or_breaks_the_definition_fails_closed() {
+    let f = tree_owned(Some(STEPS), None);
+    assert_eq!(f.run(), FAIL);
+    assert!(f.verdict_line().contains("reason=gate-definition"));
+    assert!(f.ran.borrow().is_empty());
+    let f = tree_owned(Some(STEPS), Some("stpe bash spira/a-fence.sh\n"));
+    assert_eq!(f.run(), FAIL);
+    assert!(f.stderr().contains("unknown directive"), "{}", f.stderr());
+    let f = tree_owned(Some(STEPS), Some("# nothing\n"));
+    assert_eq!(f.run(), FAIL);
+    assert!(f.stderr().contains("names no step"), "{}", f.stderr());
+}
+
+#[test]
+fn a_repository_that_never_adopted_keeps_its_column() {
+    let f = tree_owned(None, None);
+    f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = "bash spira/fence.sh && run-suites".into();
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert_eq!(gate_runs(&f)[0], "bash spira/fence.sh && run-suites");
+    assert!(!f.cmds.borrow().iter().any(|c| c.contains("spira-lint")), "no tools phase");
+    assert_eq!(f.env_of(0, "SPIRA_LINT_BIN"), "");
+    // …and the branch that adopts one is gated by it on its own first trial.
+    let f = tree_owned(None, Some(STEPS));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(gate_runs(&f)[0].starts_with("bash spira/a-fence.sh"));
+}
+
+#[test]
+fn the_base_trial_runs_the_bases_own_definition() {
+    let branch_steps = STEPS.replace("step bash spira/b-fence.sh\n", "step bash spira/c-fence.sh\n");
+    let f = tree_owned(Some(STEPS), Some(&branch_steps));
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "c-fence: violation".into()));
+    assert_eq!(f.run(), FAIL);
+    assert!(f.verdict_line().contains("reason=branch-red"), "{}", f.verdict_line());
+    let runs = gate_runs(&f);
+    assert!(runs[0].ends_with("bash spira/c-fence.sh"), "{runs:?}");
+    assert!(runs[1].ends_with("bash spira/b-fence.sh"), "the base trial ran the branch's definition: {runs:?}");
+    // Both trials built their tools, and the base's steps got the tree's binary too.
+    let tools = f.cmds.borrow().iter().filter(|c| c.starts_with("cargo build")).count();
+    assert_eq!(tools, 2);
+}
+
+#[test]
+fn the_definition_is_part_of_the_verdict_key() {
+    let a = tree_owned(Some(STEPS), Some(STEPS));
+    assert_eq!(a.run(), PASS);
+    let b = tree_owned(Some(STEPS), Some(&STEPS.replace("bin SPIRA_LINT_BIN spira-lint\n", "")));
+    assert_eq!(b.run(), PASS);
+    let key = |f: &Fake| f.written.borrow().iter().find(|(p, _)| p.starts_with("/run/verdicts") && !p.to_string_lossy().contains("/trees/")).map(|(p, _)| p.clone());
+    assert!(key(&a).is_some() && key(&b).is_some());
+    assert_ne!(key(&a), key(&b), "a different tool set is a different trial");
 }
