@@ -168,9 +168,10 @@ want "and that its context is the bead, not a conversation" "ids rather than bod
 # THE OPS BRIEF'S WALL, asserted here because Ops is the only persona killed on a clock and
 # the brief is the whole of the mechanism: drop these clauses and nothing anywhere fails,
 # while every Ops session goes back to spending its last minute on an investigation it will
-# not get to finish. The deadline itself is rendered by aeon.sh — that it reaches the model
-# as a real time rather than as braces is asserted in test-aeon-verdict.sh, against the
-# actual render.
+# not get to finish. The deadline itself is rendered by aeon.sh; that it reaches the model as
+# a real time rather than as braces used to be asserted against the actual render in
+# test-aeon-verdict.sh, deleted 2026-09-30 (law-a-test-that-flips-is-deleted, sp-qf1l8) — the
+# placeholder-text check below is now this UC's only coverage until sp-jupa4 re-adds it.
 ops_brief="$(cat "$HERE/chamber/ops.md")"
 want "the ops brief tells the aeon when its session is killed" "{{DEADLINE}}" "$ops_brief"
 want "and makes the wrap-up a hard rule with a number in it" "At 90 seconds left, stop" "$ops_brief"

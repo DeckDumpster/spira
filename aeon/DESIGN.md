@@ -650,7 +650,7 @@ Kept, although they look wrong (flagged for the operator):
     `test-aeon-prod-dirty.sh:92`, `test-aeon-resume-collision.sh:47`,
     `test-aeon-resume.sh:148`, `test-aeon-prompt-layers.sh:112`,
     `test-aeon-lifecycle-cutover.sh:206`, `test-aeon-slain-attempts.sh:83`,
-    `test-aeon-wiki-dirty.sh:120`, `test-aeon-verdict.sh:257`,
+    `test-aeon-wiki-dirty.sh:120`,
     `test-aeon-worktree-collision.sh:57`, `test-aeon-world-stop.sh:94`,
     `test-aeon-teardown-e2e.sh:515`, `test-aeon-sweep.sh:52`, `test-cross-repo.sh:141`,
     `test-epic-claim-order.sh:261`, `test-groom-escalation-check.sh:101`,
@@ -662,7 +662,6 @@ Kept, although they look wrong (flagged for the operator):
 13. **Structural greps that read aeon.sh's source** — retire the assertion; the property is
     a `cargo test -p aeon` case now:
     `test-brief-notes.sh:170-174` (T6 BEAD_BODY through bound_bead_notes → `brief::tests::bead_body_is_bounded`),
-    `test-aeon-verdict.sh:158-163` (close_verdict call → `verdict` uses the `close_verdict` seam),
     `test-census-events.sh:410-432` (sp-ytw2h cause pairs: repoint its scan to `aeon/src/*.rs`,
     where the causes are `const` strings in `verdict.rs`),
     `test-thrash-teardown.sh:220-225` (process-group kill → `heartbeat::tests::trip_signals_session_group`),

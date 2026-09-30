@@ -74,7 +74,6 @@ spira/test-aeon-resume.sh
 spira/test-aeon-slain-attempts.sh
 spira/test-aeon-sweep.sh
 spira/test-aeon-teardown-e2e.sh
-spira/test-aeon-verdict.sh
 spira/test-aeon-wiki-dirty.sh
 spira/test-aeon-worktree-collision.sh
 # literal-ok: a file path, not the world-stop literal itself

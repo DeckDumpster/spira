@@ -876,7 +876,6 @@ named unit tests.
 
 - `test-lanes.sh:39`
 - `test-czar-pass.sh:287`
-- `test-aeon-verdict.sh:162-164`
 - `test-wire-token.sh:35`
 - `test-fayth.sh`
 - `test-event-taxonomy.sh:61`
