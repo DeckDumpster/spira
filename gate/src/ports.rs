@@ -114,18 +114,15 @@ pub trait World {
     /// process's `exec`, and which therefore cannot see a limit raised in the document while
     /// a gate already waits on it. None when no document is in force, or it sets no
     /// `certify_par`: the caller then falls back to the environment, then the derived
-    /// default, as before.
+    /// default, as before. The one mechanism `admission_par` re-reads from on every poll;
+    /// `admission_wait_line` below takes the result as its own `par` argument rather than
+    /// re-deriving it, so there is still only one source for what the pool's size is.
     fn certify_par_live(&self) -> Option<u64>;
-    /// Try `slot.<n>.lock` without waiting; true = held until exit.
-    fn admission_try(&self, dir: &Path, slot: u64) -> bool;
-    /// Record which branch holds `slot.<n>` (sp-q20wb), informational only — never read by
-    /// `admission_try` itself, only by another gate's waiting message. Best-effort: a write
-    /// that fails names nobody, it never blocks admission.
-    fn admission_mark(&self, dir: &Path, slot: u64, branch: &str);
-    /// The branch [`admission_mark`] last recorded for `slot.<n>`, if the file is there and
-    /// reads. None (an old gate, the file never written, or unreadable) is silently skipped
-    /// by the caller — this is a message's completeness, never a correctness question.
-    fn admission_holder(&self, dir: &Path, slot: u64) -> Option<String>;
+    /// Try `slot.<n>.lock` without waiting; true = held until exit, with `slot.<n>.holder`
+    /// naming `who` (sp-f4ig1; advisory, for `spira-admit status` and waiting lines).
+    fn admission_try(&self, dir: &Path, slot: u64, who: &str) -> bool;
+    /// The waiting line for a full gate pool of `par` under `run` (spira_config::admission).
+    fn admission_wait_line(&self, run: &str, par: u64) -> String;
     /// Open `<tree>.lock`; false when it cannot be opened.
     fn tree_lock_open(&self, lock: &Path) -> bool;
     /// Try the opened tree lock without waiting.

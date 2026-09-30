@@ -184,6 +184,7 @@ merge-failed messages, which are new.
 | `$SPIRA_VERDICTS/<key>` | `when=<UTC>\nat=<epoch>\nby=<caller>\nrepo=<name>\nbranch=<br>\nsuites=<csv or ->\ncompose=<label>\n`, written to `.<key>.<pid>` and renamed | PASS from a trial only |
 | `$SPIRA_VERDICTS/trees/<repo>/<T>` (the tree certificate, `src/cert.rs`) | `verdict=PASS\nsource=gate\ntree=<T>\nrepo=<name>\nrev=<gate revision>\nbranch=<br>\nby=<caller>\nwhen=<UTC>\nat=<epoch>\nharness=<harness_h or ->\nsuites=<csv or ->\n`, temp + rename | every PASS (`pass`, `cached`, `syntax-only`) once the merged tree `T` is known |
 | `$SPIRA_RUN/gate-admission/slot.<n>.lock` | empty; `flock` held for the trial | unless `SPIRA_GATE_SUITES=off` and no suites were named against the bead |
+| `$SPIRA_RUN/gate-admission/slot.<n>.holder` | `pid=<p> start=<starttime> who=<branch> since=<epoch> waited=0 last=<epoch>\n` (advisory; the flock is the lock; sp-f4ig1) | written when the slot is taken; read by `spira-admit status` and the waiting line |
 | `$SPIRA_RUN/worktree/.gate.<repo-basename>.<tree-key>` | the gate worktree (detached) | removed on every non-PASS verdict; kept on PASS for cargo's fingerprints |
 | `<tree>.lock`, `<tree>.lock.holder` | lock; `<pid> <pgid>\n` | holder removed at exit |
 | a temp file (`SPIRA_GATE_FILES`) | `git diff --name-status BASE...BR` | removed at exit |
@@ -375,9 +376,10 @@ phase reuses the harnesses.
 
 The unit phases run through the same port as the gate string (`run_gate`: `env -i`, the same
 environment, `timeout`, the tree), in order, stopping at the first failure. **Admission** is the
-same slot the trial already holds. **The CPU budget** is `J = max(1, host cores ÷ the admission
-pool size)` for both `cargo -j` and `--test-threads`, so the pool's gates together use about the
-host. **The timeout** is shared: each phase gets what is left of `SPIRA_GATE_TIMEOUT`, and a
+same slot the trial already holds. **The width** is the host's cores for both `cargo -j` and
+`--test-threads`. How many gates share the host is the pool size's job, never a narrower gate
+(sp-f4ig1, DESIGN-admission.md D3; law-reduce-the-count-never-throttle-the-job). It was `host
+cores ÷ the admission pool size` until then. **The timeout** is shared: each phase gets what is left of `SPIRA_GATE_TIMEOUT`, and a
 phase with nothing left is status 124 (NO_VERDICT `timeout`).
 
 **The base trial** runs the same composition on the landing ref, over the touched crates the
@@ -941,33 +943,39 @@ so nothing short of a new process ever saw the raised number.
 
 ### The fix
 
-* **Visible.** The first time a pass of the admission loop finds every slot busy, it prints
-  `gate: waiting for a certification slot (N of M held: <branches>)` once (a flag, not a
-  per-second line — a gate held for a while must not spam); `N` and the branch list come from
-  `World::admission_holder`, a small side file (`slot.<n>.lock.holder`, written by
-  `World::admission_mark` the instant a slot is actually granted) that is purely informational
-  — never read by `admission_try` itself, never a reason the branch's own admission depends on
-  whether it or another gate wrote one. A slot found busy with no holder file (an older gate
-  before this bead, or a lost write) is counted but named with nothing, never mistaken for
-  free. Being admitted after a real wait (not the instant fast path) prints `gate: admitted to
-  a certification slot after waiting <n>s`.
+* **Visible.** sp-f4ig1 landed concurrently and now owns this part: `World::admission_try`
+  takes the branch as `who` and records it against the slot directly
+  (`spira_config::admission::gate_holder_line`), and `World::admission_wait_line` renders the
+  occupancy line the admission loop prints — first, and every 60s while it keeps waiting —
+  plus an inline `gate: admitted to a gate slot after <n>s` the moment a wait that had
+  actually been announced ends. This bead's own contribution here — a small
+  `admission_mark`/`admission_holder` port pair writing `slot.<n>.lock.holder` directly —
+  was dropped at the merge in favour of sp-f4ig1's library: one holder-naming mechanism, not
+  two. What stays this bead's own: the admission loop is never silent, and the loop below
+  proves it by passing sp-f4ig1's `admission_wait_line` the *same* `par` this bead's own
+  re-read produces (see "Re-read"), not a second derivation.
 * **Logged.** `self.s.waited` — gate.log's `waited=` field — used to be set only by the
   tree-lock wait that runs after admission, unconditionally overwriting whatever (nothing)
-  admission had set. It is now set by the admission loop too (on every exit: granted, timed
-  out, or signalled), and the tree-lock section adds its own wait to that instead of replacing
-  it (`let admission_waited = self.s.waited;` carried across, `self.s.waited = admission_waited
-  + tree_waited`). The two waits are conceptually one queue from the caller's point of view —
-  "how long before this gate did anything" — so one field sums them; the printed "waited Ns
-  for TREE" message stays the tree-lock's own portion only, since the admission side already
-  announced its own wait separately.
-* **Re-read.** `World::certify_par_live` re-derives `[spira] certify_par` straight from
-  `spira.toml` (`spira_config::discover` + `load`, the same library call `gate_mode` already
-  makes per-trial) on every single pass of the admission loop — not `Ctx.SPIRA_CERTIFY_PAR`,
-  frozen at this process's own start. `admission_par` prefers this live read; only when no
-  document resolves, or it sets no `certify_par`, does it fall back to the frozen `Ctx` value
-  and then the derived-from-host default, exactly as before. A limit raised in the file
-  reaches every gate already polling within one second (the loop's own `sleep_ms(1000)`), not
-  only gates started afterward.
+  admission had set. It is now set right after the admission loop exits by any path (granted,
+  timed out, or signalled), and the tree-lock section adds its own wait to that instead of
+  replacing it (`let admission_waited = self.s.waited;` carried across, `self.s.waited =
+  admission_waited + tree_waited`). The two waits are conceptually one queue from the caller's
+  point of view — "how long before this gate did anything" — so one field sums them; the
+  printed "waited Ns for TREE" message stays the tree-lock's own portion only, since the
+  admission side already announced its own wait separately (sp-f4ig1's inline message, above).
+* **Re-read.** `World::certify_par_live` re-derives `[spira] certify_par` straight from the
+  config document (`spira_config::discover` + `load`, the same library call `gate_mode`
+  already makes per-trial) on every single pass of the admission loop — not
+  `Ctx.SPIRA_CERTIFY_PAR`, frozen at this process's own start. `admission_par` prefers this
+  live read; only when no document resolves, or it sets no `certify_par`, does it fall back to
+  the frozen `Ctx` value and then the derived-from-host default, exactly as before. A limit
+  raised in the file reaches every gate already polling within one second (the loop's own
+  `sleep_ms(1000)`), not only gates started afterward. `admission_par`'s result is the one
+  `par` the loop uses both to bound the slot-try range and to pass into
+  `admission_wait_line` — sp-f4ig1's own pool-sizing (`spira_config::admission::size_from_env`,
+  which reads the *process* environment, frozen the same way `Ctx` is) sizes the compile and
+  test pools, spawned fresh per job, but never substitutes for this read inside one
+  long-lived gate process: one mechanism sizes the gate's own pool, not two.
 
 ### Decisions
 
@@ -979,20 +987,20 @@ so nothing short of a new process ever saw the raised number.
   ambiguity, and that the reported defect is exactly "I edited the file and it didn't reach
   the waiting gate," `certify_par_live` is read first. The cost is a narrow case — an operator
   who explicitly pins `SPIRA_CERTIFY_PAR` in the gate's own calling environment *and* has an
-  unrelated `spira.toml` with its own `certify_par` set — decided in the file's favour instead
-  of the shell's, for the ordinary case to just work.
-* **The holder file is a new, separate side-channel — `slot.<n>.lock.holder` — never written
-  into `slot.<n>.lock` itself.** `admission_try`'s own open call truncates on every attempt
-  (`OpenOptions::truncate(true)`, real.rs), successful or not — a fourth gate merely trying
-  and failing to acquire slot 2 would erase whatever slot 2's real holder had written into
-  that same file. Mirroring the tree lock's own `<tree>.lock` / `<tree>.lock.holder` split
-  (`World::write_holder`) avoids this by construction rather than by care at each call site.
-  `write_holder` itself was not reused: it always writes `<pid> <pgid>`, and the message here
-  wants the branch name, so `admission_mark`/`admission_holder` are their own small port pair.
-* **No new admission pool semantics.** This bead is scoped to visibility, logging and the
-  live re-read of the one existing pool's size — not to changing what is pooled or how many
-  pools exist (sp-f4ig1, running concurrently, owns per-phase admission pools). Every change
-  here composes with a pool split cleanly: `admission_par`'s signature, `admission_try`'s
-  signature, and the message format are all unchanged in shape, only in when the count is
-  read and what gets printed around the same loop.
+  unrelated config document with its own `certify_par` set — decided in the file's favour
+  instead of the shell's, for the ordinary case to just work.
+* **sp-f4ig1's admission library superseded this bead's own holder-naming at the merge.**
+  Both beads landed changes to the same wait loop; the reconciliation
+  kept whichever mechanism was the more complete one for each concern — sp-f4ig1's shared
+  `spira_config::admission` for visibility and holder identity (it also serves the compile and
+  test pools, which this bead never touched), this bead's `certify_par_live` for the live
+  size re-read (sp-f4ig1 does not re-read the gate pool's own size mid-wait) and its
+  `self.s.waited` accounting (sp-f4ig1 did not log the admission wait at all). Nothing here
+  changed `admission_try`'s or `compose::jobs`'s signature a second time; the merge took
+  sp-f4ig1's versions of both.
+* **No new admission pool semantics from this bead.** It was, and remains, scoped to
+  visibility, logging and the live re-read of the gate's one pool's size — not to changing
+  what is pooled or how many pools exist. That part is entirely sp-f4ig1's (`gate/DESIGN-
+  admission.md`): three pools, compile/test/gate, gate's own staying the flock slots under
+  `gate-admission/` it always used.
 

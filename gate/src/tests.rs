@@ -29,6 +29,7 @@ struct Fake {
     beads: RefCell<String>,
     skew: Cell<i32>,
     admission_free: Cell<bool>,
+    admission_who: RefCell<Vec<String>>,
     lock_free: Cell<bool>,
     worktree: Cell<bool>,
     /// (status, output) by the SPIRA_GATE_BRANCH the trial ran with.
@@ -112,8 +113,6 @@ struct Fake {
     /// Calls to `certify_par_live` before it stops answering None and starts answering
     /// `certify_par_live` — the fixture for "the file is edited while a gate already waits."
     certify_par_live_after: Cell<u32>,
-    /// `admission_mark`/`admission_holder`'s backing store, by slot number.
-    admission_holders: RefCell<HashMap<u64, String>>,
     /// `admission_try` fails this many times (across every slot tried) before it answers
     /// `admission_free` — a countdown, so a test can make the wait last some real ticks
     /// before the slot is granted, rather than either instantly free or never free.
@@ -178,6 +177,7 @@ impl Fake {
             beads: RefCell::new(String::new()),
             skew: Cell::new(0),
             admission_free: Cell::new(true),
+            admission_who: RefCell::new(Vec::new()),
             lock_free: Cell::new(true),
             worktree: Cell::new(true),
             runs: RefCell::new(runs),
@@ -218,7 +218,6 @@ impl Fake {
             base_tree_override: RefCell::new(None),
             certify_par_live: Cell::new(None),
             certify_par_live_after: Cell::new(0),
-            admission_holders: RefCell::new(HashMap::new()),
             admission_free_after: Cell::new(0),
             admission_only_slot_free: Cell::new(None),
         }
@@ -399,7 +398,8 @@ impl World for Fake {
         }
         self.certify_par_live.get()
     }
-    fn admission_try(&self, _: &Path, slot: u64) -> bool {
+    fn admission_try(&self, _: &Path, slot: u64, who: &str) -> bool {
+        self.admission_who.borrow_mut().push(who.to_string());
         if let Some(only) = self.admission_only_slot_free.get() {
             return slot == only;
         }
@@ -410,11 +410,8 @@ impl World for Fake {
         }
         self.admission_free.get()
     }
-    fn admission_mark(&self, _: &Path, slot: u64, branch: &str) {
-        self.admission_holders.borrow_mut().insert(slot, branch.to_string());
-    }
-    fn admission_holder(&self, _: &Path, slot: u64) -> Option<String> {
-        self.admission_holders.borrow().get(&slot).cloned()
+    fn admission_wait_line(&self, _: &str, par: u64) -> String {
+        format!("waiting for a gate slot: {par} of {par} held by fake")
     }
     fn tree_lock_open(&self, _: &Path) -> bool {
         true
@@ -1412,6 +1409,22 @@ fn admission_times_out_as_no_verdict() {
 }
 
 #[test]
+fn a_full_gate_pool_is_said_naming_its_holders_and_a_taken_slot_names_the_branch() {
+    let f = Fake::new();
+    f.admission_free.set(false);
+    f.set_var("SPIRA_GATE_LOCK_WAIT", "5");
+    assert_eq!(f.run(), NOVERDICT);
+    assert_eq!(f.stderr().matches("gate: waiting for a gate slot: 2 of 2 held by fake").count(), 1, "{}", f.stderr());
+    // POSITIVE CONTROL: a free pool says nothing about waiting, records who holds the slot, and
+    // every command the trial runs inherits the gate's admission.
+    let g = Fake::new();
+    assert_eq!(g.run(), PASS);
+    assert!(!g.stderr().contains("waiting for a gate slot"));
+    assert_eq!(g.admission_who.borrow().first().map(String::as_str), Some(BR));
+    assert_eq!(g.env_of(0, "SPIRA_ADMISSION"), "gate");
+}
+
+#[test]
 fn fences_only_certification_takes_no_admission_slot() {
     let f = Fake::new();
     f.admission_free.set(false);
@@ -1446,41 +1459,13 @@ fn a_signal_is_no_verdict() {
 }
 
 // --------------------------------------------- admission is visible, logged, re-read (sp-q20wb)
-
-/// sp-q20wb: a gate that blocks on admission used to print nothing at all — not even the
-/// composition line — so a real queue looked exactly like a hang. It now names how many
-/// slots are held and by which branches, the moment it first cannot get one.
-#[test]
-fn a_blocked_admission_names_the_slots_and_their_branches() {
-    let f = Fake::new();
-    f.admission_free.set(false);
-    f.admission_holders.borrow_mut().insert(1, "spira/sp-other1".into());
-    f.admission_holders.borrow_mut().insert(2, "spira/sp-other2".into());
-    f.set_var("SPIRA_GATE_LOCK_WAIT", "5");
-    assert_eq!(f.run(), NOVERDICT);
-    assert!(
-        f.stderr().contains(
-            "gate: waiting for a certification slot (2 of 2 held: spira/sp-other1,spira/sp-other2)"
-        ),
-        "{}",
-        f.stderr()
-    );
-}
-
-/// A slot with no holder file recorded (an older gate, or a lost write) is named as held
-/// without a branch, never mistaken for a free slot — admission already proved it busy.
-#[test]
-fn a_blocked_admission_with_no_holder_file_still_reports_the_count() {
-    let f = Fake::new();
-    f.admission_free.set(false);
-    f.set_var("SPIRA_GATE_LOCK_WAIT", "5");
-    assert_eq!(f.run(), NOVERDICT);
-    assert!(
-        f.stderr().contains("gate: waiting for a certification slot (0 of 2 held: -)"),
-        "{}",
-        f.stderr()
-    );
-}
+//
+// sp-f4ig1 (landed after this bead, concurrently) owns the wait/holder-naming messages now —
+// `admission_wait_line`, backed by `spira_config::admission` — so the fake here is a stub
+// (`format!("waiting for a gate slot: {par} of {par} held by fake")`) and holder-naming
+// itself is tested in that crate, not here. What stays this bead's own to prove: the wait is
+// announced at all (not silent), gate.log's `waited=` covers admission, and the live
+// re-read of the pool's size (`certify_par_live`) reaches an already-waiting gate.
 
 /// The wait is announced once, not once per second: a gate held for a while does not spam.
 #[test]
@@ -1492,7 +1477,7 @@ fn the_waiting_message_prints_exactly_once() {
     let waits = f
         .stderr()
         .lines()
-        .filter(|l| l.starts_with("gate: waiting for a certification slot"))
+        .filter(|l| l.starts_with("gate: waiting for a gate slot"))
         .count();
     assert_eq!(waits, 1, "{}", f.stderr());
 }
@@ -1506,7 +1491,7 @@ fn an_admission_wait_is_announced_when_admitted_and_logged_as_waited() {
     f.admission_free_after.set(2); // both slots busy for exactly one full pass, then free
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert!(
-        f.stderr().contains("gate: admitted to a certification slot after waiting 1s"),
+        f.stderr().contains("gate: admitted to a gate slot after 1s"),
         "{}",
         f.stderr()
     );
@@ -1520,8 +1505,8 @@ fn an_admission_wait_is_announced_when_admitted_and_logged_as_waited() {
 fn an_instant_admission_announces_nothing() {
     let f = Fake::new();
     assert_eq!(f.run(), PASS);
-    assert!(!f.stderr().contains("gate: waiting for a certification slot"));
-    assert!(!f.stderr().contains("gate: admitted to a certification slot"));
+    assert!(!f.stderr().contains("gate: waiting for a gate slot"));
+    assert!(!f.stderr().contains("gate: admitted to a gate slot"));
 }
 
 /// sp-q20wb: raising the limit in the config document while a gate already waits must reach
@@ -1538,14 +1523,12 @@ fn a_limit_raised_in_the_live_config_admits_an_already_waiting_gate() {
     f.set_var("SPIRA_GATE_LOCK_WAIT", "5");
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert!(
-        f.stderr().contains(
-            "gate: waiting for a certification slot (0 of 2 held: -)"
-        ),
+        f.stderr().contains("gate: waiting for a gate slot: 2 of 2 held by fake"),
         "the first poll still used the frozen par of 2: {}",
         f.stderr()
     );
     assert!(
-        f.stderr().contains("gate: admitted to a certification slot after waiting 1s"),
+        f.stderr().contains("gate: admitted to a gate slot after 1s"),
         "the second poll saw the raised par (3) and slot 3 was free: {}",
         f.stderr()
     );
@@ -1697,14 +1680,15 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
     );
     assert_eq!(f.env_of(0, "SPIRA_GATE_SUITES"), "off", "…with suites off");
     assert_eq!(f.env_of(0, "SPIRA_CERTIFY_ALWAYS_COVERS"), "");
-    // host 8 cores / SPIRA_CERTIFY_PAR 2 = 4 jobs; spira-config brings its dependent queue
+    // the host's 8 cores, NOT divided by SPIRA_CERTIFY_PAR 2 (sp-f4ig1 D3: no per-job limit);
+    // spira-config brings its dependent queue
     assert_eq!(
         cmds[1],
-        "cargo build --profile aeon --config profile.aeon.incremental=false -j 4 --all-targets -p queue -p spira-config"
+        "cargo build --profile aeon --config profile.aeon.incremental=false -j 8 --all-targets -p queue -p spira-config"
     );
     assert_eq!(
         cmds[2],
-        "cargo test --profile aeon --config profile.aeon.incremental=false -j 4 -p queue -p spira-config -- --test-threads=4"
+        "cargo test --profile aeon --config profile.aeon.incremental=false -j 8 -p queue -p spira-config -- --test-threads=8"
     );
     assert!(f.stderr().contains(
         "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for: queue spira-config (touched: spira-config)"

@@ -436,16 +436,26 @@ impl<'w, W: World> Trial<'w, W> {
             let dir = PathBuf::from(format!("{}/gate-admission", self.s.run));
             w.mkdir_p(&dir);
             let t0 = w.now();
-            let mut announced = false;
-            let admitted_slot = 'wait: loop {
+            let mut said: Option<u64> = None;
+            'wait: loop {
                 // Re-read on every pass (sp-q20wb): a raised SPIRA_CERTIFY_PAR in the config
                 // document must reach a gate already waiting, which the frozen `Ctx` —
                 // captured once when lib.sh sourced conf.sh at this process's start — cannot.
+                // `admission_wait_line` below takes this same `par`, never re-deriving its
+                // own: one source for the pool's size, not two.
                 let par = self.admission_par(&ctx);
                 for slot in 1..=par {
-                    if w.admission_try(&dir, slot) {
-                        break 'wait slot;
+                    if w.admission_try(&dir, slot, &br) {
+                        if said.is_some() {
+                            w.eprint(&format!("gate: admitted to a gate slot after {}s", w.now().saturating_sub(t0)));
+                        }
+                        break 'wait;
                     }
+                }
+                // Visible, never silent (sp-f4ig1): who holds the pool, first and every 60s.
+                if said.map_or(true, |t| w.now().saturating_sub(t) >= 60) {
+                    w.eprint(&format!("gate: {}", w.admission_wait_line(&self.s.run, par)));
+                    said = Some(w.now());
                 }
                 if w.signalled() {
                     self.s.waited = w.now() - t0;
@@ -460,34 +470,12 @@ impl<'w, W: World> Trial<'w, W> {
                     return v(NOVERDICT, "admission-timeout", format!(
                         "gate: all {par} host-wide gate admission slots busy for {lock_wait}s — no verdict on {br}\ngate: this is host-wide gate concurrency (SPIRA_CERTIFY_PAR={par}), not a fault in the branch."));
                 }
-                if !announced {
-                    announced = true;
-                    // Every slot is, at this instant, held by someone else — the loop above
-                    // just tried each of them and failed — so naming who holds them now is
-                    // never stale. A slot with no holder file (an older gate, or the file
-                    // gone) is silently skipped: this message is informational, never a
-                    // reason to refuse.
-                    let held: Vec<String> = (1..=par).filter_map(|n| w.admission_holder(&dir, n)).collect();
-                    w.eprint(&format!(
-                        "gate: waiting for a certification slot ({} of {par} held: {})",
-                        held.len(),
-                        if held.is_empty() {
-                            "-".to_string()
-                        } else {
-                            held.join(",")
-                        }
-                    ));
-                }
                 w.sleep_ms(1000);
-            };
-            self.s.waited = w.now() - t0;
-            w.admission_mark(&dir, admitted_slot, &br);
-            if self.s.waited > 0 {
-                w.eprint(&format!(
-                    "gate: admitted to a certification slot after waiting {}s",
-                    self.s.waited
-                ));
             }
+            // sp-q20wb: gate.log's `waited=` covers admission too now, not only the tree
+            // lock that follows it — the tree-lock section below adds its own wait to this
+            // instead of overwriting it.
+            self.s.waited = w.now() - t0;
         }
 
         // THE TREE, locked for the whole trial.
@@ -582,10 +570,7 @@ impl<'w, W: World> Trial<'w, W> {
         if let Some(line) = describe_reentry(&self.s.bead, &re) {
             w.eprint(&line);
         }
-        let jobs = compose::jobs(
-            key::digits(&ctx.host_cores).unwrap_or(1),
-            self.admission_par(&ctx),
-        );
+        let jobs = compose::jobs(key::digits(&ctx.host_cores).unwrap_or(1));
 
         let env = |branch: &str, repeat: &str, c: &Composition| -> Vec<(String, String)> {
             let e = |k: &str, v: &str| (k.to_string(), v.to_string());
@@ -594,6 +579,9 @@ impl<'w, W: World> Trial<'w, W> {
                 // system dirs, then cargo for the tree builds. Never the inherited PATH.
                 e("PATH", &self.s.path),
                 e(spira_config::RELEASE_ENV, ctx.var(spira_config::RELEASE_ENV)),
+                // Everything the trial runs is on the gate's admission (sp-f4ig1): its testenv and
+                // cargo take no compile or test slot of their own (no hold-and-wait, no deadlock).
+                e(spira_config::admission::INHERIT_ENV, "gate"),
                 e("HOME", ctx.var("HOME")),
                 e("TERM", "dumb"),
                 e("SPIRA_GATE_REPO", &repo.to_string_lossy()),
