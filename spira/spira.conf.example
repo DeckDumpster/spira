@@ -61,10 +61,11 @@
 #
 # SPIRA_BD = ~/.local/bin/bd
 
-# ---- GOAL EPIC ------------------------------------------------------------------------
-# The bead id of the goal epic for this installation. Default: sp-spira
+# ---- ID PREFIX ------------------------------------------------------------------------
+# REQUIRED: the prefix of this installation's own bead ids, without the hyphen. Nothing
+# derives it, and `spira-config validate` (doctor, pre-activate) refuses a config that omits it.
 #
-# SPIRA_GOAL = sp-spira
+SPIRA_ID_PREFIX = sp
 
 # ---- REPOSITORIES ---------------------------------------------------------------------
 # Parent directory of all checkouts. Default: parent of SPIRA_REPO.

@@ -101,7 +101,11 @@ pub fn spira_section(
             "SPIRA_HOME_REPO" => s.home_repo = Some(val.clone()),
             "SPIRA_DB" => s.db = Some(val.clone()),
             "SPIRA_RUN" => s.run = Some(val.clone()),
-            "SPIRA_GOAL" => s.goal = Some(val.clone()),
+            // RETIRED (sp-k6m1m): Spira works the whole backlog, not one goal epic. The
+            // prefix the goal used to imply is SPIRA_ID_PREFIX, which is required.
+            "SPIRA_GOAL" => warnings.push(format!(
+                "spira.conf: {key} is retired (sp-k6m1m: there is no goal bead; set SPIRA_ID_PREFIX) and ignored — remove it"
+            )),
             "SPIRA_PATH" => s.path = Some(val.clone()),
             "SPIRA_WORKSPACES" => s.workspaces = Some(val.clone()),
             "SPIRA_PROD" => s.prod = Some(val.clone()),
@@ -866,12 +870,12 @@ pub fn convert(
         }
         persona.insert(name, section);
     }
-    Ok((
-        SpiraToml {
-            spira: Some(spira),
-            repo,
-            persona,
-        },
-        warnings,
-    ))
+    let doc = SpiraToml {
+        spira: Some(spira),
+        repo,
+        persona,
+    };
+    // A conf without SPIRA_ID_PREFIX still converts: the refusal is `spira-config validate`'s
+    // (doctor, pre-activate), the one place the required key is checked (sp-k6m1m).
+    Ok((doc, warnings))
 }

@@ -107,9 +107,6 @@
 # Default: the parent of the checkout the harness is installed in.
 # SPIRA_WORKSPACES = /srv/checkouts
 
-# The root epic every plan hangs from. The sentinel reports progress against it.
-# SPIRA_GOAL = sp-spira
-
 # The list of what should be watching: `name|kind|target[|health]` rows. One `daemon` row is
 # one systemd unit, so this file is what `systemd/install.sh` enables and disables against —
 # adding a watcher is a row plus an install run, never a new unit file. Point it outside the
@@ -138,8 +135,8 @@
 # It asks whether the state names ONE of your ids, and not whether it names a foreign one —
 # a database here may legitimately hold beads imported under other prefixes, so "names
 # something that is not ours" is true of a healthy watcher and would pass on a blind one.
-# Default: the prefix of SPIRA_GOAL, because the goal is a bead in this database.
-# SPIRA_ID_PREFIX = acme
+# REQUIRED — nothing derives it, and `spira-config validate` (doctor, pre-activate) refuses a config that omits it.
+SPIRA_ID_PREFIX = sp
 
 # How long a health command in the watcher manifest may run, in seconds. A probe is your own
 # command and `watchd.sh status` is what a session hook runs at every start, so an unbounded

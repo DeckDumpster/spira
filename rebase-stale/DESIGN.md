@@ -89,7 +89,7 @@ gate, and on green writes the landstate/queue entry itself.
 |---|---|
 | `SPIRA_HOME` (lib.sh, queue.sh) | environment (conf.sh exports it; required) |
 | repo path, land ref, home repo | lib.sh `repo_root` / `spira_landref` / `spira_home_repo` — the repo-map resolvers every queue caller uses, the same seam `batcher-cut::find_repo` uses; never a second parser |
-| `SPIRA_RUN`, `SPIRA_REBASE_STALE_LOG`, `SPIRA_DB`, `SPIRA_BD`, `SPIRA_GOAL`, `SPIRA_GIT_NAME`, `SPIRA_GIT_EMAIL` | environment (conf.sh exports), falling back to the `spira-config` library (`[spira] run / rebase_stale_log / db / bd / goal / git_name / git_email`) when unset |
+| `SPIRA_RUN`, `SPIRA_REBASE_STALE_LOG`, `SPIRA_DB`, `SPIRA_BD`, `SPIRA_GIT_NAME`, `SPIRA_GIT_EMAIL` | environment (conf.sh exports), falling back to the `spira-config` library (`[spira] run / rebase_stale_log / db / bd / git_name / git_email`) when unset |
 
 ## Liveness: live holder vs leftover worktree
 
@@ -105,8 +105,8 @@ The holder of `spira/<id>` is read from `git worktree list --porcelain`. Classif
      name `spira-aeon-<fayth>-<epoch>` does not carry the bead, so its pidfile is the
      per-bead witness of "the bead's aeon unit is active");
   3. the bead store says `in_progress` (a lease not released);
-  4. the bead store could not be read, proven by a positive control (`bd show $SPIRA_GOAL`
-     answers): an unreachable DB reads as live (law-absence-needs-a-positive-control). Once
+  4. the bead store could not be read, proven by a positive control (`bd list --limit 1`
+     answers with a row): an unreachable DB reads as live (law-absence-needs-a-positive-control). Once
      the control passes, a bead `bd` cannot show reads as status "" (not in_progress), as
      `spira_bead_status` does;
   5. any process's cwd is inside the worktree (a hand session or tool working there).
@@ -183,7 +183,7 @@ most 60 lines per file) plus the reason it was not mechanical.
 * `ResolveRule { path, kind }`; `CommentSyntax { prefixes }`.
 * `Hunk { ours: Vec<String>, theirs: Vec<String> }`; `ConflictFile { path, reason, quoted }`.
 * `BeadStatus` — `Known(String) | Unreachable` (the status witness's answer).
-* `Config { home, run, log, db, bd, goal, git_name, git_email, lock_wait_secs, target_dir }`.
+* `Config { home, run, log, db, bd, git_name, git_email, lock_wait_secs, target_dir }`.
 * `Seam` trait — the impure bead-store/queue boundary: `repo`, `home_repo`, `bead_status`,
   `reopen`, `bump_requeue`, `land_mark`, `note`, `submit`. `LibSeam` shells to lib.sh/queue.sh;
   tests use a recording fake. git is always real.

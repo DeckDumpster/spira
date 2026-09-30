@@ -211,7 +211,7 @@
       "additionalProperties": false
     },
     "SpiraSection": {
-      "description": "`[spira]` — host-wide keys. Every field is optional: `conf.sh` derives a default for each of these from where the harness is installed, and a clean clone sets none of them.",
+      "description": "`[spira]` — host-wide keys. Every field but one is optional: `conf.sh` derives a default for each of these from where the harness is installed, and a clean clone sets none of them. The exception is `id_prefix` — see [`require_id_prefix`].",
       "type": "object",
       "properties": {
         "actionable": {
@@ -1002,12 +1002,6 @@
             "null"
           ]
         },
-        "goal": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "groom_ask_label": {
           "type": [
             "string",
@@ -1048,6 +1042,7 @@
           "minimum": 0.0
         },
         "id_prefix": {
+          "description": "REQUIRED whenever `[spira]` sets anything: the prefix of this installation's own bead ids, without the hyphen (`sp` for `sp-k6m1m`). Nothing derives it — it used to be cut from the retired `goal` key (sp-k6m1m). `spira-config validate` (doctor, pre-activate) refuses a `[spira]` table without it ([`require_id_prefix`]).",
           "type": [
             "string",
             "null"

@@ -418,7 +418,7 @@ WARN does not.
 | 1 | the sentinel timer is active | fails |
 | 2 | the world is not halted | fails |
 | 3 | the database is readable and shipped statutes are in force | fails |
-| 4 | `sentinel.sh --report` names an open bead under `SPIRA_GOAL` | WARN if none |
+| 4 | `sentinel --report` names an open plan bead | WARN if none |
 | 5 | Loom answers 200 at `/api/beads` inside its budget | fails |
 | 6 | the configured agent binary is present | WARN by design — an ephemeral install is valid without a credentialled agent |
 | 7 | the two tagged tmux panes are present | WARN by design — the loop runs without a terminal surface |

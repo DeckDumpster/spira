@@ -72,7 +72,8 @@ NOT_AN_EVENT = (re.compile(r"^summoned a \S+ aeon$"), re.compile(r"^invoked refl
 # running. Counting it is what separates "judgement never fired" from "judgement was never
 # NEEDED" — two opposite health states that rendered as the same scary number, and one of
 # them was a real bug that hid here for 76 passes.
-STARVED_RE = re.compile(r"state: goal=\S+ open=(\d+) plan_ready=(\d+) in_progress=(\d+)")
+# Older passes carried one leading `<field>=<value>` before `open=` (sp-k6m1m dropped it).
+STARVED_RE = re.compile(r"state: (?:\w+=\S+ )?open=(\d+) plan_ready=(\d+) in_progress=(\d+)")
 
 
 def parse_ts(s):

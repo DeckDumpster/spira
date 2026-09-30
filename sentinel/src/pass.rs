@@ -296,7 +296,7 @@ impl<'a> Sentinel<'a> {
         0
     }
 
-    /// The bulk reads, the DB check and the goal check (every mode but --summon-only).
+    /// The bulk reads and the DB check (every mode but --summon-only).
     fn read_store(&self) -> Result<Snapshot, i32> {
         let bd = self.bd();
         let r = store::bulk(&bd, self.h, &store::ready_raw_args(&self.cfg));
@@ -321,19 +321,7 @@ impl<'a> Sentinel<'a> {
                 None
             }
         };
-        let snap = Snapshot::new(list_raw, list, ready);
-        // A GOAL THAT NAMES NO BEAD IS NEVER REACHED — and it stops nothing else. sp-ejf3's
-        // concern is a "goal reached" fired against a dangling reference; that is prevented
-        // by `goal_known` below. Refusing the whole pass instead stopped reclaim, landing and
-        // summoning (2026-09-29: sp-spira never existed; the bash check never fired because
-        // `bd show --json` prints `[]` for a missing bead, so it only surfaced in the rewrite).
-        if !self.cfg.skip_reclaim && snap.get(&self.cfg.goal).is_none() {
-            self.log(&format!(
-                "GOAL UNRESOLVABLE — {} names no bead in {}; completion is not assessed this pass, every other check runs",
-                self.cfg.goal, self.cfg.db
-            ));
-        }
-        Ok(snap)
+        Ok(Snapshot::new(list_raw, list, ready))
     }
 
     /// Write the snapshots (and the ready cache) where every child reads them.
@@ -363,21 +351,21 @@ impl<'a> Sentinel<'a> {
             return self.audit(&snap);
         }
 
-        // STATE
-        let (open_children, plan_ready, plan_inprog) = if self.cfg.skip_reclaim {
+        // STATE — the open plan backlog. There is no goal epic: Spira works the whole
+        // backlog continuously (per Ryan, 2026-09-30, sp-k6m1m).
+        let (open_plan, plan_ready, plan_inprog) = if self.cfg.skip_reclaim {
             (Vec::new(), Some(0), 0)
         } else {
             (
-                snap.goal_open_children(&self.cfg.goal),
+                snap.plan_open(&self.cfg),
                 snap.plan_ready(&self.cfg),
                 snap.plan_inprog(&self.cfg),
             )
         };
-        let n_open = open_children.len();
+        let n_open = open_plan.len();
         let live = self.live_total();
         self.log(&format!(
-            "state: goal={} open={} plan_ready={} in_progress={} aeons={} fayths=[{}]",
-            self.cfg.goal,
+            "state: open={} plan_ready={} in_progress={} aeons={} fayths=[{}]",
             n_open,
             plan_ready
                 .map(|n| n.to_string())
@@ -388,9 +376,8 @@ impl<'a> Sentinel<'a> {
         ));
         self.roster_warnings();
         if self.mode == Mode::Report {
-            self.h
-                .print(&format!("\nOpen beads under {}:", self.cfg.goal));
-            for id in &open_children {
+            self.h.print("\nOpen plan beads:");
+            for id in &open_plan {
                 self.h.print(&format!("  {id}"));
             }
             return 0;
@@ -400,14 +387,6 @@ impl<'a> Sentinel<'a> {
 
         self.phase("CHECK1");
         self.check1();
-        let goal_known = self.cfg.skip_reclaim || snap.get(&self.cfg.goal).is_some();
-        let goal_reached = goal_known && n_open == 0;
-        if goal_reached {
-            self.log(&format!(
-                "goal reached — {} has no open children; finishing the sending",
-                self.cfg.goal
-            ));
-        }
 
         self.phase("CHECK2");
         let lc_rows = match (self.cfg.skip_reclaim, self.lc) {
@@ -466,19 +445,8 @@ impl<'a> Sentinel<'a> {
         self.phase("CHECK7");
         self.seam("ck7", seams::CK7, None, Io::Inherit, Io::Inherit, true);
 
-        if goal_reached {
-            self.phase("end");
-            self.log(&format!(
-                "pass complete — {} action(s), {} progress, goal reached",
-                self.acted.get(),
-                self.progressed.get()
-            ));
-            self.budget_check();
-            return self.exit_code();
-        }
-
         self.phase("CHECK8");
-        self.check8(plan_ready, plan_inprog, n_open, &open_children);
+        self.check8(plan_ready, plan_inprog, n_open, &open_plan);
         self.phase("end");
         self.log(&format!(
             "pass complete — {} action(s), {} progress",

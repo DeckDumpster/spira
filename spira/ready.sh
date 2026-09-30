@@ -187,7 +187,7 @@ fi
 echo ""
 echo "ready work"
 # =============================================================================
-# sentinel --report lists open beads under SPIRA_GOAL. Each line of open work is
+# sentinel --report lists the open plan beads. Each line of open work is
 # indented with two spaces. A timeout guards against a slow or stuck database.
 if ! _rep="$(timeout 20 sentinel --report 2>&1)"; then
     UNKN "ready work — sentinel --report failed or timed out" \
@@ -195,11 +195,11 @@ if ! _rep="$(timeout 20 sentinel --report 2>&1)"; then
 else
     _n_open="$(printf '%s\n' "$_rep" | grep -c '^  ' || true)"
     if [ "${_n_open:-0}" -gt 0 ]; then
-        PASS "sentinel sees $_n_open open bead(s) under $SPIRA_GOAL"
+        PASS "sentinel sees $_n_open open plan bead(s)"
         printf '%s\n' "$_rep" | head -7 | sed 's/^/        /'
     else
-        WARN "sentinel sees no open work under $SPIRA_GOAL" \
-             "No beads are currently open under this goal — nothing to summon."
+        WARN "sentinel sees no open plan work" \
+             "No plan beads are currently open — nothing to summon."
     fi
 fi
 

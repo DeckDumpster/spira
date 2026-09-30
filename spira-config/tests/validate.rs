@@ -48,32 +48,81 @@ mod spira_section {
 
     #[test]
     fn valid() {
-        validate("[spira]\nhome_repo = \"home\"\nmax_aeons = 4\n").expect("valid");
+        validate("[spira]\nid_prefix = \"sp\"\nhome_repo = \"home\"\nmax_aeons = 4\n").expect("valid");
     }
 
     #[test]
     fn unknown_key() {
-        let err = validate("[spira]\nhome_repo = \"home\"\nspelled_rong = 1\n").unwrap_err();
+        let err = validate("[spira]\nid_prefix = \"sp\"\nhome_repo = \"home\"\nspelled_rong = 1\n").unwrap_err();
         assert!(err.starts_with("spira.spelled_rong"), "{err}");
     }
 
     #[test]
     fn wrong_type() {
-        let err = validate("[spira]\nmax_aeons = true\n").unwrap_err();
+        let err = validate("[spira]\nid_prefix = \"sp\"\nmax_aeons = true\n").unwrap_err();
         assert!(err.starts_with("spira.max_aeons"), "{err}");
     }
 
     #[test]
     fn bad_enum() {
-        let err = validate("[spira]\ncertify_suites = \"maybe\"\n").unwrap_err();
+        let err = validate("[spira]\nid_prefix = \"sp\"\ncertify_suites = \"maybe\"\n").unwrap_err();
         assert!(err.starts_with("spira.certify_suites"), "{err}");
     }
 
     #[test]
-    fn no_field_is_required() {
-        // Every [spira] key is optional (conf.sh's own philosophy): an empty table is a
-        // valid document, matching a clean clone that overrides nothing.
+    fn an_empty_table_needs_no_field() {
+        // An empty [spira] table configures nothing, matching a clean clone that overrides
+        // nothing — so not even id_prefix is required of it.
         validate("[spira]\n").expect("an empty [spira] table is valid");
+    }
+
+    // sp-k6m1m: id_prefix is the one required [spira] key. It used to be derived from the
+    // goal epic's id; with the goal retired, `spira-config validate` (validate_strict: doctor,
+    // pre-activate) refuses a table that sets anything and leaves the prefix out, naming the
+    // key. The typed readers still load such a document — refusing the whole file would drop
+    // every other key to its default.
+    #[test]
+    fn id_prefix_is_required_by_strict_validation_once_the_table_sets_anything() {
+        let text = "[spira]\nhome_repo = \"home\"\n";
+        let err = spira_config::validate_strict(text).unwrap_err();
+        assert!(err.starts_with("spira.id_prefix: required"), "{err}");
+        assert!(err.contains("sp-k6m1m"), "{err}");
+        validate(text).expect("a reader still loads it");
+        // Positive control: the same table with the prefix passes strict validation.
+        let (doc, _) = spira_config::validate_strict("[spira]\nhome_repo = \"home\"\nid_prefix = \"sp\"\n").expect("valid");
+        assert_eq!(doc.spira.unwrap().id_prefix.as_deref(), Some("sp"));
+        spira_config::validate_strict("[spira]\n").expect("an empty table configures nothing");
+        spira_config::validate_strict("[repo.a]\npath = \"/a\"\nmode = \"push\"\n").expect("no [spira] at all");
+    }
+
+    #[test]
+    fn an_unusable_id_prefix_is_refused() {
+        for bad in ["", "sp-", "s p", "sp-spira"] {
+            let err = spira_config::validate_strict(&format!("[spira]\nid_prefix = {bad:?}\n")).unwrap_err();
+            assert!(err.starts_with("spira.id_prefix:"), "{bad:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn the_retired_goal_key_warns_and_does_not_stand_in_for_the_prefix() {
+        let (doc, w) = spira_config::validate_strict("[spira]\nid_prefix = \"sp\"\ngoal = \"sp-spira\"\n")
+            .expect("a retired key is a warning, not an error");
+        assert!(w.iter().any(|w| w.contains("goal is retired (sp-k6m1m)")), "{w:?}");
+        assert!(!spira_config::export_sh(&doc).contains("GOAL"));
+        // Production's shape before the migration: goal set, id_prefix absent — refused.
+        let err = spira_config::validate_strict("[spira]\ngoal = \"sp-spira\"\ndb = \"/db\"\n").unwrap_err();
+        assert!(err.starts_with("spira.id_prefix: required"), "{err}");
+    }
+
+    #[test]
+    fn the_migration_is_one_set() {
+        let text = "[spira]\ngoal = \"sp-spira\"\ndb = \"/db\"\n";
+        let doc = validate(text).expect("the unmigrated file still opens for writing");
+        let fixed = spira_config::set_path(&doc, "spira.id_prefix", "sp").unwrap();
+        let out = toml::to_string_pretty(&fixed).unwrap();
+        let (back, _) = spira_config::validate_strict(&out).expect("repaired");
+        assert_eq!(back.spira.unwrap().db.as_deref(), Some("/db"), "the rest of [spira] survives");
+        assert!(!out.contains("goal"), "and the retired key is gone from the rewrite: {out}");
     }
 
     #[test]
@@ -81,27 +130,27 @@ mod spira_section {
         // Pinned away from the shipped default (4) per this repo's own fixture rule: 2
         // would still pass if the code had the default hard-coded instead of actually
         // reading the key.
-        let doc = validate("[spira]\nstack_max_depth = 2\n").expect("valid");
+        let doc = validate("[spira]\nid_prefix = \"sp\"\nstack_max_depth = 2\n").expect("valid");
         assert_eq!(doc.spira.unwrap().stack_max_depth, Some(2));
     }
 
     #[test]
     fn stack_max_depth_zero_is_valid() {
         // stacked-dependents-2026-09-28 §1: 0 reproduces today's no-stacking behaviour.
-        let doc = validate("[spira]\nstack_max_depth = 0\n").expect("valid");
+        let doc = validate("[spira]\nid_prefix = \"sp\"\nstack_max_depth = 0\n").expect("valid");
         assert_eq!(doc.spira.unwrap().stack_max_depth, Some(0));
     }
 
     #[test]
     fn mail_mute_true_is_valid() {
         // sp-9hwim: the typed replacement for the mail-mute file-existence override.
-        let doc = validate("[spira]\nmail_mute = true\n").expect("valid");
+        let doc = validate("[spira]\nid_prefix = \"sp\"\nmail_mute = true\n").expect("valid");
         assert_eq!(doc.spira.unwrap().mail_mute, Some(true));
     }
 
     #[test]
     fn mail_mute_wrong_type_is_refused() {
-        let err = validate("[spira]\nmail_mute = \"yes\"\n").unwrap_err();
+        let err = validate("[spira]\nid_prefix = \"sp\"\nmail_mute = \"yes\"\n").unwrap_err();
         assert!(err.starts_with("spira.mail_mute"), "{err}");
     }
 }
@@ -112,7 +161,7 @@ mod retired_keys {
 
     #[test]
     fn retired_key_warns_naming_the_key_and_bead() {
-        let (doc, warnings) = validate_with_warnings("[spira]\nqueue_local_gate = 1\n")
+        let (doc, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_local_gate = 1\n")
             .expect("a retired key must validate, not error");
         assert!(doc.spira.is_some());
         assert!(
@@ -123,7 +172,7 @@ mod retired_keys {
 
     #[test]
     fn a_misspelt_key_still_fails() {
-        let err = validate("[spira]\nqueue_batch_idle_cutt = 1\n").unwrap_err();
+        let err = validate("[spira]\nid_prefix = \"sp\"\nqueue_batch_idle_cutt = 1\n").unwrap_err();
         assert!(err.starts_with("spira.queue_batch_idle_cutt"), "{err}");
     }
 
@@ -256,13 +305,13 @@ mod persona_section {
 // batcher's cuts off, and dropping it silently would switch them back on.
 #[test]
 fn a_non_batcher_batcher_bin_is_read_as_batcher_enable_0() {
-    let (doc, w) = spira_config::validate_with_warnings("[spira]\nbatcher_bin = \"/bin/true\"\nlc_bin = \"/x/spira-lc\"\n").unwrap();
+    let (doc, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nbatcher_bin = \"/bin/true\"\nlc_bin = \"/x/spira-lc\"\n").unwrap();
     assert_eq!(doc.spira.as_ref().unwrap().batcher_enable.as_deref(), Some("0"));
     assert!(w.iter().any(|m| m.contains("batcher_enable = \"0\"")), "{w:?}");
     assert!(w.iter().any(|m| m.starts_with("lc_bin is retired (sp-gypjk)")), "{w:?}");
     // The batcher itself is not an off switch, and an explicit batcher_enable wins.
-    let (doc, _) = spira_config::validate_with_warnings("[spira]\nbatcher_bin = \"/r/bin/batcher\"\n").unwrap();
+    let (doc, _) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nbatcher_bin = \"/r/bin/batcher\"\n").unwrap();
     assert_eq!(doc.spira.as_ref().unwrap().batcher_enable, None);
-    let (doc, _) = spira_config::validate_with_warnings("[spira]\nbatcher_bin = \"/bin/true\"\nbatcher_enable = \"1\"\n").unwrap();
+    let (doc, _) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nbatcher_bin = \"/bin/true\"\nbatcher_enable = \"1\"\n").unwrap();
     assert_eq!(doc.spira.as_ref().unwrap().batcher_enable.as_deref(), Some("1"));
 }

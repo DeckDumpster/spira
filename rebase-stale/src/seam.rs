@@ -41,19 +41,17 @@ pub struct LibSeam {
     pub home: PathBuf,
     pub db: Option<PathBuf>,
     pub bd: String,
-    pub goal: String,
     /// The queue binary: `queue`, by name on the launcher's PATH (sp-gypjk).
     pub queue_bin: PathBuf,
     db_ok: OnceCell<bool>,
 }
 
 impl LibSeam {
-    pub fn new(home: PathBuf, db: Option<PathBuf>, bd: String, goal: String) -> LibSeam {
+    pub fn new(home: PathBuf, db: Option<PathBuf>, bd: String) -> LibSeam {
         LibSeam {
             home,
             db,
             bd,
-            goal,
             queue_bin: PathBuf::from("queue"),
             db_ok: OnceCell::new(),
         }
@@ -94,11 +92,10 @@ impl LibSeam {
         Ok(String::from_utf8_lossy(&o.stdout).trim().to_string())
     }
 
-    /// THE POSITIVE CONTROL: the store answered with at least one bead. It used to show the
-    /// goal bead, "the one row this harness cannot run without" — but the configured goal
-    /// (sp-spira) never existed, so the control never passed and every live-worktree check
-    /// read "the bead database did not answer" (2026-09-29 walkthrough). Any row proves the
-    /// store can say "in_progress"; no particular row is needed.
+    /// THE POSITIVE CONTROL: the store answered with at least one bead. Any row proves the
+    /// store can say "in_progress"; no particular row is needed (a control keyed on one
+    /// configured bead that never existed read "the bead database did not answer" on every
+    /// live-worktree check, 2026-09-29 walkthrough).
     fn bd_answers(&self) -> bool {
         let Some(db) = self.db.as_ref() else { return false };
         let Ok(o) = Command::new(&self.bd)
@@ -183,7 +180,7 @@ impl Seam for LibSeam {
         if !reachable {
             return BeadStatus::Unreachable;
         }
-        // The database answered for the goal bead; a bead it cannot show is "unknown",
+        // The database answered the positive control; a bead it cannot show is "unknown",
         // which is not in_progress — spira_bead_status's own reading.
         BeadStatus::Known(self.bd_show_status(id).unwrap_or_default())
     }
@@ -229,7 +226,7 @@ mod probe_tests {
     use super::*;
 
     /// A stub bd: `list` answers with `list_json`; `show sp-held` is in_progress; any other
-    /// `show` (the missing goal among them) fails, as bd does for an unknown id.
+    /// `show` fails, as bd does for an unknown id.
     fn stub(name: &str, list_json: &str) -> (testkit::TempDir, LibSeam) {
         let d = testkit::TempDir::new(&format!("rs-probe-{name}"));
         let bd = d.join("bd");
@@ -239,13 +236,13 @@ mod probe_tests {
                 "#!/bin/sh\ncase \"$3\" in\n list) printf '%s' '{list_json}' ;;\n show) [ \"$4\" = sp-held ] && printf '[{{\"id\":\"sp-held\",\"status\":\"in_progress\"}}]' && exit 0; exit 1 ;;\nesac\n"
             ),
         );
-        let seam = LibSeam::new(d.to_path_buf(), Some(d.to_path_buf()), bd.to_string_lossy().into(), "sp-spira".into());
+        let seam = LibSeam::new(d.to_path_buf(), Some(d.to_path_buf()), bd.to_string_lossy().into());
         (d, seam)
     }
 
     #[test]
-    fn a_missing_goal_bead_does_not_make_the_store_unreachable() {
-        let (d, seam) = stub("goal", r#"[{"id":"sp-any"}]"#);
+    fn any_listed_bead_makes_the_store_reachable() {
+        let (d, seam) = stub("any", r#"[{"id":"sp-any"}]"#);
         assert_eq!(seam.bead_status("sp-held"), BeadStatus::Known("in_progress".into()));
         let _ = std::fs::remove_dir_all(&d);
     }

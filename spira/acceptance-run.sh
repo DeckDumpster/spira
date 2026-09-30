@@ -381,9 +381,9 @@ fi
 
 if [ -n "$_bead_id" ]; then
     # Check: the bead is claimable by the builder persona — immediately, not after
-    # 6 minutes of polling. sentinel --report only shows SPIRA_GOAL children; it
-    # cannot see a bead that is not under the goal epic, so the old polling loop
-    # always timed out even when the sentinel was healthy and the bead was ready.
+    # 6 minutes of polling. The old loop polled sentinel --report, which could not
+    # see a bead outside one epic's children, so it always timed out even when the
+    # sentinel was healthy and the bead was ready.
     # Claimability (bd ready) is the discriminating question: a bead the sentinel
     # can see but no predicate matches is indistinguishable from a silent sentinel
     # (law-absence-needs-a-positive-control).

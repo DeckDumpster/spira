@@ -1,6 +1,7 @@
 //! `spira-config` — validate, read, export and convert `spira.toml`.
 //!
-//!   spira-config validate [file]        exit 1 and name the TOML path on the first error
+//!   spira-config validate [file]        exit 1 and name the TOML path on the first error;
+//!                                       also refuses a [spira] with no id_prefix (sp-k6m1m)
 //!   spira-config get <dotted.path>      one value read out of the document
 //!   spira-config export --sh            `[spira]` as quoted KEY=value lines
 //!   spira-config convert ...            spira.conf + repo-map + *.fayth -> spira.toml
@@ -21,7 +22,7 @@ use std::process::ExitCode;
 
 use spira_config::{
     convert, discover, export_sh, get_path, json_schema, load, set_path, shrink_reason,
-    tail_refusals, unset_path, validate, validate_with_warnings, write_atomic, SpiraToml,
+    tail_refusals, unset_path, validate, validate_strict, write_atomic, SpiraToml,
 };
 
 fn read_input(file: Option<&str>) -> Result<String, String> {
@@ -58,7 +59,9 @@ fn cmd_validate(file: Option<&str>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match validate_with_warnings(&text) {
+    // STRICT: the config in force must name its id prefix (sp-k6m1m). doctor and the
+    // release's pre-activate run this, so a release is never activated over one without it.
+    match validate_strict(&text) {
         Ok((_, warnings)) => {
             for w in &warnings {
                 eprintln!("spira-config: warning: {w}");
