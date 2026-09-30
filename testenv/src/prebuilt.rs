@@ -7,8 +7,8 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-/// Required whatever the workspace says: conf.sh refuses without `spira-config` under
-/// SPIRA_ARTIFACTS, every exec carries `SPIRA_TEST_PLAN_BIN`, and `testenv` is the runner.
+/// Required whatever the workspace says: conf.sh refuses without `spira-config` on the staged
+/// release's PATH, suites run `test-plan` by name, and `testenv` is the runner.
 pub const FLOOR: [&str; 3] = ["spira-config", "test-plan", "testenv"];
 
 /// The staging directory's name under `<worktree>/target/` (the container's profile dir).

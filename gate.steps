@@ -10,8 +10,8 @@
 #                           step, and give the steps $VAR = that binary instead of the
 #                           installed one — so a rule a branch adds to it runs on that branch.
 #                           This is BUILDING a tree under test, so it is passed by explicit
-#                           variable; every other tool a step uses (testenv) is the running
-#                           release's, invoked by bare name on the launcher's PATH (sp-gypjk)
+#                           variable; every other tool a step uses is the running release's,
+#                           invoked by bare name on the launcher's PATH (sp-gypjk)
 #   # comment, blank line   ignored
 #
 # Every `step bash <path>` must name a file this tree carries (the gate refuses the branch
@@ -22,6 +22,11 @@
 
 bin SPIRA_LINT_BIN spira-lint
 bin SPIRA_SELECT_BIN suite-select
+# The suite runner is the tree's own (sp-isom7): how a tree's suites are staged and launched —
+# the release layout testenv builds in the container and the PATH it sets from it — is part of
+# the tree under test, so a branch that changes it is judged by it. The release's testenv could
+# not run such a branch's suites at all (the first one to need this was sp-isom7 itself).
+bin SPIRA_TESTENV_BIN testenv
 
 # inventory, literal-lint, scratch-fence, gh-intake-lint, tmux-scope-fence and wiki-add-fence
 # (sp-ekkak), and testdb-mode-lint, bd-stdin-lint and incident-cause-lint, moved to
@@ -33,4 +38,4 @@ step bash spira/build-fence.sh
 # The suite selector (suite-select, sp-wx2tw) and the budgeted suite run. The selector's exit 1
 # is an unclaimed source file (the branch's fault: FAIL); any other failure is a refusal
 # (NO_VERDICT) — an empty selection from a broken selector is not "nothing to run".
-step { _s="$("$SPIRA_SELECT_BIN" gate "$SPIRA_GATE_BASE" "${SPIRA_GATE_SELECT_HEAD:-$SPIRA_GATE_BRANCH}")" || { _r=$?; [ "$_r" = 1 ] && exit 1; exit 75; }; [ -n "$_s" ] || exit 0; _b=0; testenv --deadline "${SPIRA_GATE_BUDGET:-300}" --suites "${_s//$'\n'/,}" "$SPIRA_GATE_BRANCH" || _b=$?; case "$_b" in 2|3|127) exit 75;; *) exit "$_b";; esac; }
+step { _s="$("$SPIRA_SELECT_BIN" gate "$SPIRA_GATE_BASE" "${SPIRA_GATE_SELECT_HEAD:-$SPIRA_GATE_BRANCH}")" || { _r=$?; [ "$_r" = 1 ] && exit 1; exit 75; }; [ -n "$_s" ] || exit 0; _b=0; "$SPIRA_TESTENV_BIN" --deadline "${SPIRA_GATE_BUDGET:-300}" --suites "${_s//$'\n'/,}" "$SPIRA_GATE_BRANCH" "$SPIRA_GATE_REPO" || _b=$?; case "$_b" in 2|3|127) exit 75;; *) exit "$_b";; esac; }

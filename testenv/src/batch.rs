@@ -187,8 +187,7 @@ impl Shared<'_> {
             // This suite declared `# testdb-mode: embedded`: undo the batch-wide server
             // fixture's env for it alone, so its own _testdb_embedded_check runs as it would
             // with no server template built at all (DESIGN-testdb.md §2.4, sp-gjx1b).
-            req.env
-                .retain(|(k, _)| k != "SPIRA_TESTDB_MODE" && k != "TESTDB_TESTENV");
+            req.env.retain(|(k, _)| k != "SPIRA_TESTDB_MODE");
         }
         req.timeout = self.cfg.timeout;
         req.deadline = self.deadline_at;
@@ -657,9 +656,7 @@ mod tests {
             .find(|r| r.argv[1].ends_with("test-srv.sh"))
             .unwrap();
         assert_eq!(emb.env_value("SPIRA_TESTDB_MODE"), None);
-        assert_eq!(emb.env_value("TESTDB_TESTENV"), None);
         assert_eq!(srv.env_value("SPIRA_TESTDB_MODE"), Some("server"));
-        assert!(srv.env_value("TESTDB_TESTENV").is_some());
     }
 
     #[test]

@@ -85,15 +85,10 @@ _TL_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$_TL_SELF/suite-covers.sh"
 _TL_TIER="$(suite_tier_of "${BASH_SOURCE[1]:-$0}")"
 _TL_UC="$(suite_uc_of "${BASH_SOURCE[1]:-$0}")"
-# THE SUITE'S PATH (sp-gypjk; interim until sp-isom7). Every Spira tool is invoked by its
-# bare name on a PATH the launcher sets — for a suite, testenv. Today's testenv hands a suite
-# the tree under test's build as SPIRA_ARTIFACTS rather than as PATH, so this library, which
-# every suite sources first, puts that build and this tree's own spira/ at the FRONT of PATH:
-# the same two directories a release puts there (bin/, spira/), so a suite resolves tools
-# exactly the way production does. sp-isom7 makes testenv stage the tree as a release and
-# set PATH itself; this block is deleted then.
-PATH="${SPIRA_ARTIFACTS:+$SPIRA_ARTIFACTS:}$_TL_SELF:$PATH"
-export PATH
+# THE SUITE'S PATH IS THE LAUNCHER'S (sp-isom7). testenv stages the tree under test as a
+# release and sets every suite's PATH outright from it ($SPIRA_RELEASE/bin, then
+# $SPIRA_RELEASE/spira), so a suite resolves tools by bare name exactly as production does.
+# This library never touches PATH.
 unset _TL_SELF
 
 _tl_init() {

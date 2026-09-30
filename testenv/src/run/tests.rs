@@ -309,13 +309,8 @@ fn a_mixed_batch_reports_every_suite_and_a_red_verdict() {
     assert!(rows.contains("\"suite\":\"__batch__\""));
     assert!(rows.contains("\"tier\":\"T2\""));
 
-    // every suite exec carries the artifact contract
-    for r in rt.suite_execs() {
-        assert_eq!(
-            r.env_value("SPIRA_ARTIFACTS"),
-            Some("/workspace/target/aeon")
-        );
-    }
+    // every suite exec carries the launcher contract: the staged release and a PATH from it
+    assert_staged(&rt, "/workspace/target/aeon");
 }
 
 // ---- the skip contract (DESIGN.md §3.7): fail closed, not open --------------------------
@@ -599,7 +594,7 @@ fn an_install_failure_is_rc_3_and_still_tears_down() {
     let w = World::new("install");
     let rt = runtime();
     rt.on(
-        |r| r.argv.get(1).map(String::as_str) == Some("/workspace/systemd/install.sh"),
+        |r| r.argv.get(1).is_some_and(|a| a.ends_with("/systemd/install.sh")),
         |_| ExecOutcome {
             rc: 1,
             output: String::new(),
@@ -939,12 +934,7 @@ fn prebuilt_artifacts_are_staged_and_tested_without_cargo() {
         "cargo must not be invoked"
     );
     assert!(w.has_line(|l| l.contains("--artifacts: 4 prebuilt executable(s)")));
-    for r in rt.suite_execs() {
-        assert_eq!(
-            r.env_value("SPIRA_ARTIFACTS"),
-            Some("/workspace/target/prebuilt")
-        );
-    }
+    assert_staged(&rt, "/workspace/target/prebuilt");
     let m = meta(&w.results_dir());
     let canon = fs::canonicalize(&dir).unwrap();
     assert!(m.contains(&format!(
@@ -1065,11 +1055,31 @@ fn without_artifacts_the_build_and_batch_meta_are_unchanged() {
     assert!(m.contains("profile=aeon\nartifacts="));
     assert!(m.contains("/target/aeon\n"));
     assert!(!m.contains("build=") && !m.contains("artifacts_id=") && !m.contains("staged="));
+    assert_staged(&rt, "/workspace/target/aeon");
+}
+
+/// The build at `artifacts` was staged as a release before any suite ran, and every suite's
+/// PATH is set outright from that release (sp-isom7).
+fn assert_staged(rt: &FakeRuntime, artifacts: &str) {
+    let execs = rt.execs.lock().unwrap().clone();
+    let stage = execs
+        .iter()
+        .position(|r| r.argv.get(2).map(String::as_str) == Some(crate::fixture::STAGE_SCRIPT))
+        .expect("the release was staged");
+    assert_eq!(execs[stage].argv[5], artifacts);
+    let release = execs[stage].argv[4].clone();
+    let first_suite = execs
+        .iter()
+        .position(|r| r.argv.get(1).is_some_and(|a| a.starts_with("/workspace/spira/test-")))
+        .expect("a suite ran");
+    assert!(stage < first_suite, "staged before any suite");
     for r in rt.suite_execs() {
-        assert_eq!(
-            r.env_value("SPIRA_ARTIFACTS"),
-            Some("/workspace/target/aeon")
-        );
+        assert_eq!(r.env_value("SPIRA_RELEASE"), Some(release.as_str()));
+        assert_eq!(r.env_value("SPIRA_ARTIFACTS"), None);
+        assert!(r
+            .env_value("PATH")
+            .unwrap()
+            .starts_with(&format!("{release}/bin:{release}/spira:")));
     }
 }
 

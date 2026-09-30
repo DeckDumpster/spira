@@ -18,7 +18,7 @@ Four properties are the point; everything else serves them:
 
 1. **One build tool, one artifact.** `cargo build --profile <p>` in the worktree under test,
    cargo's default `target/`. `target/<profile-dir>/` is always and only the artifact under
-   test, exported as `SPIRA_ARTIFACTS`. There is no `bin/` copy, no tree-keyed
+   test, staged inside the container as a release's `bin/` (§5). There is no `bin/` copy, no tree-keyed
    `cargo-target-bins/<tree>` cache, no one-off `-p spira-config` / `-p test-plan` builds.
    **One exception, named on the command line:** `--artifacts <dir>` hands testenv
    executables that cargo already built from this tree on another machine (the CI `build`
@@ -369,10 +369,11 @@ verdict, not a green one (`run::tests::a_suite_that_turns_from_green_to_an_undec
 parse args ─ resolve repo, landref, tree ─ acquire worktree (in place | scratch slot)
   ─ select suites ─ drop disabled (DISABLED records) ─ image tag ─ batch key
   ─ VERDICT CACHE (exit here on a hit)                        ← nothing built yet
-  ─ cargo build --profile p  (rc 4 on failure)  ─ SPIRA_ARTIFACTS=<wt>/target/<dir>
+  ─ cargo build --profile p  (rc 4 on failure)  ─ artifacts <wt>/target/<dir>
       └ --artifacts DIR: validated right after the worktree (rc 2), hashed into the key,
-        staged to <wt>/target/prebuilt here instead of building  ─ SPIRA_ARTIFACTS=…/prebuilt
+        staged to <wt>/target/prebuilt here instead of building  ─ artifacts …/prebuilt
   ─ orphan sweeps ─ claim owner file ─ testenv.sh up / probe
+  ─ stage the tree as a release, PATH from it (§5; rc 3 reason=stage)
   ─ configure, suspend loom+cockpit+queue-watch units, install  (skippable)
   ─ requirements check (skip-req records) ─ testdb template (else shared baseline)
   ─ schedule: exclusive first, then LPT; maxpar; PSI pause; per-suite timeout
@@ -433,7 +434,7 @@ uid 1001, `XDG_RUNTIME_DIR=/run/user/1001`, `CARGO_HOME=/var/spira/cargo`,
   `TESTDB_SHARED=1` and those six values (a ~26 ms copy each); otherwise
   `TESTDB_SHARED=0 TESTDB_NAME= TESTDB_DIR=` (a ~6 s `bd init` each).
 * **Server-mode template** (sp-v2lqd; built for every batch since sp-34ru2): formerly only when a runnable suite carried `# testdb-mode:
-  server`, `$SPIRA_ARTIFACTS/testenv testdb template --bd bd --dolt dolt` builds the
+  server`, `<stage>/bin/testenv testdb template --bd bd --dolt dolt` builds the
   pre-initialised store once; each such suite then gets a private Dolt sql-server copied
   from it (~0.1 s) instead of sharing `dolt-beads-test.service`. See DESIGN-testdb.md.
 * **Per-suite exec**: `podman exec --user spirauser -e ... <name> bash
@@ -442,8 +443,7 @@ uid 1001, `XDG_RUNTIME_DIR=/run/user/1001`, `CARGO_HOME=/var/spira/cargo`,
   first, with `.config/systemd/user`), `SPIRA_INSTANCE=<i>-<n>`,
   `SPIRA_RUN=/tmp/spira-batch-<i>-<n>`.
 * **Every** exec that runs harness code (configure, suspend, install, baseline, suites)
-  carries `SPIRA_ARTIFACTS=/workspace/target/<dir>` and
-  `SPIRA_TEST_PLAN_BIN=/workspace/target/<dir>/test-plan`.
+  carries `SPIRA_RELEASE=<stage>` and `PATH=<stage>/bin:<stage>/spira:<image PATH>` (§5).
 * **Teardown** (always, including on SIGINT/SIGTERM): only while the owner file still names
   us, `testenv.sh down --name <n> --volumes`; remove the host home; release the owner file
   only once podman confirms the container is gone.
@@ -468,34 +468,35 @@ The runtime is a trait (`ContainerRuntime`); the orchestration is unit-tested ag
   rewritten `unreached`, and the batch exits 2.
 * **Quarantined** suites run; a red or timeout is `quarantined-red` and does not block.
 
-## 5. SPIRA_ARTIFACTS and the release-tarball layout
+## 5. The staged release: one PATH, set by the launcher (sp-isom7)
 
-`conf.sh`'s `spira_bin <name>` resolves `${SPIRA_ARTIFACTS:-$SPIRA_REPO/bin}/<name>`:
-SPIRA_ARTIFACTS in a test run, the installed release's `bin/` in production, and no fallback
-between them. testenv exports SPIRA_ARTIFACTS **only to the processes that run the tree
-under test**: the container's configure/install/baseline/suite execs, and host helpers that
-run after the build. It never sets it in its own environment and strips an inherited one
-from pre-build helpers (`testenv.sh tag`, `select.sh`), so a cold tree cannot trip conf.sh's
-hard refusal for a missing `spira-config` before it has been built.
+Production runs one thing, a release (`spira-releases/<sha>`: the commit's tree plus `bin/`),
+and every launcher sets PATH outright to `$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:` then the
+system directories (brain `runtime-is-a-release-2026-09-29`). A suite running inside testenv
+is the one case where the system under test is used, so testenv is that suite's launcher and
+follows the same rule against a different release:
 
-The two known reds of this bead's first attempt are both **fixtures that build a
-production layout inside a test run** and then source that layout's `conf.sh`:
+1. **Stage.** After the container is up and before configure (whether or not the install
+   runs), testenv stages the tree under test as a release at `/tmp/spira-release-<instance>`
+   inside the container (`fixture::STAGE_SCRIPT`): every top-level entry of `/workspace`
+   linked in, `target/` left out, and `bin/` holding one link per workspace binary target
+   (`prebuilt::required` — the same list `--artifacts` validates; with `--artifacts`, the
+   staged set) into `target/<profile-dir>`. A binary the build did not produce is a refusal
+   naming it, `VERDICT FAULT rc=3 reason=stage`; `bin/` is never partial.
+2. **Set PATH outright.** Every exec that runs harness code — configure, unit suspend,
+   install, the requirement checks, the test-DB baseline and template, every suite — carries
+   `SPIRA_RELEASE=<stage>` and `PATH=<stage>/bin:<stage>/spira:<image PATH>` (the image's
+   own `PATH`, `fixture::IMAGE_PATH`). Nothing is appended to an inherited PATH.
+3. **Render against it.** configure gets `CONFIGURE_PROD=<stage>/spira` and install
+   `SPIRA_PROD=<stage>/spira`, so the units installed in the container name
+   `<stage>/bin/<tool>` and carry the same `Environment=PATH=` a production unit does.
 
-* test-artifact-install "conf.sh resolves SPIRA_LOOM_BIN to bin/loom in a tarball layout"
-* test-concierge "launcher's --model came from persona.modeltest.model" (sp-5odic.2 says
-  this one is red on the local/main baseline too).
-
-Such a fixture inherits the suite's SPIRA_ARTIFACTS, so `spira_bin` answers the test
-runner's `target/<dir>` instead of the fixture's `bin/`. testenv does **not** change how
-`conf.sh` resolves a tarball's `bin/`; it changes nothing in conf.sh at all. The rule that
-lets the two coexist is: *SPIRA_ARTIFACTS describes the checkout testenv built, and only
-that checkout.* testenv therefore also exports `SPIRA_ARTIFACTS_ROOT=/workspace` (host:
-the worktree) naming that checkout. Until conf.sh reads it, a fixture that simulates a
-different layout must clear SPIRA_ARTIFACTS for its own subshell (commit e5332cc67 does this
-for test-artifact-install). The structural fix — listed under Cutover because it is a bash
-edit — is for `spira_bin` to honour SPIRA_ARTIFACTS only when `$SPIRA_REPO` is
-`$SPIRA_ARTIFACTS_ROOT`; any other layout (a tarball, a fixture tree) then resolves its own
-`bin/` without the fixture having to know.
+`SPIRA_ARTIFACTS`, `SPIRA_ARTIFACTS_ROOT`, `SPIRA_TEST_PLAN_BIN` and `TESTDB_TESTENV` are
+gone: nothing in the tree reads them, and a suite finds `testenv`, `test-plan` and every
+other tool by name. `testlib.sh` does not touch PATH. Host-side helpers (`gate-timing.sh`,
+`gate-diag.sh`, `incident.sh`, `mail.sh`) run on testenv's own PATH — the running release's,
+set by whoever launched testenv. testenv still strips an inherited `SPIRA_ARTIFACTS` from
+cargo and `testenv.sh`, as hygiene against a stale shell.
 
 ## 6. Build profile (`[profile.aeon]`, already in the workspace Cargo.toml)
 

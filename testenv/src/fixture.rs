@@ -31,6 +31,32 @@ pub const CONTAINER_CARGO: &str = "/var/spira/cargo";
 pub const CONTAINER_CARGO_TARGET: &str = "/var/spira/cargo/target";
 pub const WORKSPACE: &str = "/workspace";
 
+/// The image's own PATH (Containerfile: `PATH=/usr/local/cargo/bin:$PATH` over Debian's
+/// default). A launched process's PATH is the staged release's `bin/` and `spira/`, then this
+/// — set outright, never appended to (sp-isom7).
+pub const IMAGE_PATH: &str =
+    "/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+/// Stage the tree under test as a release layout (DESIGN.md §5, sp-isom7): `$1` is the
+/// release root (made afresh), `$2` the build's artifact directory, `$3` the tree; the rest are
+/// the binaries `bin/` must hold. Every top-level entry of the tree is linked in beside `bin/`
+/// (a release is `git archive` of its commit plus `bin/`); `target/` is not part of a release.
+/// A binary the build did not produce is a refusal naming it, never a partial `bin/`.
+pub const STAGE_SCRIPT: &str = r#"set -eu
+r="$1"; a="$2"; w="$3"; shift 3
+rm -rf "$r"
+mkdir -p "$r/bin"
+for f in "$w"/*; do
+    n="${f##*/}"
+    case "$n" in bin|target) continue ;; esac
+    ln -s "$f" "$r/$n"
+done
+for b in "$@"; do
+    [ -x "$a/$b" ] || { echo "testenv: stage: $b was not built into $a" >&2; exit 1; }
+    ln -s "$a/$b" "$r/bin/$b"
+done
+"#;
+
 pub const BASELINE_SCRIPT: &str = ". /workspace/spira/testdb.sh && testdb_up batch_baseline && printf \"TESTDB_NAME=%s\\nTESTDB_DIR=%s\\nTESTDB_BASELINE=%s\\nTESTDB_BD=%s\\nTESTDB_BIN=%s\\nTESTDB_MODE=%s\\n\" \"$TESTDB_NAME\" \"$TESTDB_DIR\" \"${TESTDB_BASELINE:-}\" \"$TESTDB_BD\" \"${TESTDB_BIN:-}\" \"${TESTDB_MODE:-}\"";
 
 /// A harness fault in the container tier, with the exit status it maps to.
@@ -135,14 +161,13 @@ pub enum Fixtures {
 
 impl Fixtures {
     /// The suite environment that selects this tier in `testdb.sh`'s `testdb_up`. A server
-    /// fixture is made by `testenv testdb up`; `TESTDB_TESTENV` names the artifact under test
-    /// so a suite that repoints `SPIRA_REPO`/`SPIRA_HOME` at a fixture tree still finds it.
-    pub fn env(&self, artifacts: &str) -> Vec<(String, String)> {
+    /// fixture is made by `testenv testdb up`, found by name on the suite's PATH — the staged
+    /// release's `bin/` — however the suite repoints `SPIRA_REPO`/`SPIRA_HOME`.
+    pub fn env(&self) -> Vec<(String, String)> {
         match self {
             Fixtures::Server => {
                 let mut env = TestDb::env(None);
                 env.push(("SPIRA_TESTDB_MODE".into(), "server".into()));
-                env.push(("TESTDB_TESTENV".into(), format!("{artifacts}/testenv")));
                 env
             }
             Fixtures::Shared(t) => TestDb::env(Some(t)),
@@ -178,6 +203,11 @@ pub struct Session<'a> {
     pub instance: String,
     /// `/workspace/target/<profile-dir>` — the artifact under test, as the container sees it.
     pub artifacts: String,
+    /// The tree under test staged as a release inside the container (`/tmp/spira-release-
+    /// <instance>`): every exec's PATH is built from it, and nothing else (sp-isom7).
+    pub release: String,
+    /// The binaries the staged release's `bin/` holds: the workspace's binary targets.
+    pub bins: Vec<String>,
     pub liveness_retries: u32,
     pub liveness_sleep: Duration,
     /// The trial's setup cutoff (`--deadline`, DESIGN.md D9): every setup exec and
@@ -196,6 +226,8 @@ impl<'a> Session<'a> {
             name: format!("spira-batch-{instance}"),
             instance: instance.to_string(),
             artifacts: format!("{WORKSPACE}/target/{profile_dir}"),
+            release: format!("/tmp/spira-release-{instance}"),
+            bins: Vec::new(),
             liveness_retries: 3,
             liveness_sleep: Duration::from_secs(3),
             setup_deadline: None,
@@ -211,16 +243,61 @@ impl<'a> Session<'a> {
         format!("{}/testdb", self.batch_run())
     }
 
-    /// The artifact contract every exec that runs harness code carries (DESIGN.md §5).
-    pub fn artifact_env(&self) -> Vec<(String, String)> {
+    /// The launcher contract every exec that runs harness code carries (DESIGN.md §5): the
+    /// staged release, and a PATH set outright from it — the same rule production's launchers
+    /// follow, against a different release.
+    pub fn release_env(&self) -> Vec<(String, String)> {
         vec![
-            kv("SPIRA_ARTIFACTS", &self.artifacts),
-            kv("SPIRA_ARTIFACTS_ROOT", WORKSPACE),
-            kv(
-                "SPIRA_TEST_PLAN_BIN",
-                format!("{}/test-plan", self.artifacts),
-            ),
+            kv("SPIRA_RELEASE", &self.release),
+            kv("PATH", self.release_path()),
         ]
+    }
+
+    /// `<release>/bin:<release>/spira:<image PATH>`.
+    pub fn release_path(&self) -> String {
+        format!("{r}/bin:{r}/spira:{IMAGE_PATH}", r = self.release)
+    }
+
+    /// A program in the staged release, by the path an exec names it.
+    fn in_release(&self, rel: &str) -> String {
+        format!("{}/{rel}", self.release)
+    }
+
+    /// Stage the release layout ([`STAGE_SCRIPT`]); before configure, and whether or not the
+    /// install runs, since every suite's PATH names it.
+    pub fn stage_request(&self) -> ExecRequest {
+        let mut argv: Vec<&str> = vec![
+            "bash",
+            "-c",
+            STAGE_SCRIPT,
+            "_",
+            &self.release,
+            &self.artifacts,
+            WORKSPACE,
+        ];
+        argv.extend(self.bins.iter().map(String::as_str));
+        self.setup_as_user(&argv, vec![kv("XDG_RUNTIME_DIR", USER_RUNTIME)])
+    }
+
+    pub fn stage(&self, log: &dyn Fn(&str)) -> Result<(), Fault> {
+        let out = self.rt.exec(&self.stage_request());
+        if out.rc == RC_DEADLINE {
+            return Err(Fault::Deadline("install"));
+        }
+        if !out.ok() {
+            log(&format!("stage rc={} output tail:\n{}", out.rc, out.tail(40)));
+            return Err(Fault::Install(format!(
+                "staging the release layout at {} failed — harness fault",
+                self.release
+            )));
+        }
+        log(&format!(
+            "staged the tree under test as a release at {} ({} binaries); PATH={}",
+            self.release,
+            self.bins.len(),
+            self.release_path()
+        ));
+        Ok(())
     }
 
     fn user_env(&self) -> Vec<(String, String)> {
@@ -293,14 +370,15 @@ impl<'a> Session<'a> {
     pub fn configure_request(&self) -> ExecRequest {
         let mut env = self.user_env();
         env.extend([
-            kv("CONFIGURE_PROD", format!("{WORKSPACE}/spira")),
+            kv("CONFIGURE_PROD", self.in_release("spira")),
             kv("CONFIGURE_MAX_AEONS", "1"),
             kv("CONFIGURE_MAX_LIVE_AEONS", "1"),
             kv("CONFIGURE_LOOM_ADDR", "127.0.0.1:7300"),
             kv("CONFIGURE_DOLT_DATA", ""),
         ]);
-        env.extend(self.artifact_env());
-        self.setup_as_user(&["bash", "/workspace/spira/configure.sh"], env)
+        env.extend(self.release_env());
+        let configure = self.in_release("spira/configure.sh");
+        self.setup_as_user(&["bash", &configure], env)
     }
 
     pub fn suspend_request(&self, unit: &str, reason: &str) -> ExecRequest {
@@ -308,11 +386,12 @@ impl<'a> Session<'a> {
             kv("XDG_RUNTIME_DIR", USER_RUNTIME),
             kv("SPIRA_RUN", self.batch_run()),
         ];
-        env.extend(self.artifact_env());
+        env.extend(self.release_env());
+        let ctrl = self.in_release("spira/ctrl.sh");
         self.setup_as_user(
             &[
                 "bash",
-                "/workspace/spira/ctrl.sh",
+                &ctrl,
                 "suspend",
                 unit,
                 "--reason",
@@ -327,16 +406,14 @@ impl<'a> Session<'a> {
     pub fn install_request(&self) -> ExecRequest {
         let mut env = self.user_env();
         env.extend([
-            kv("SPIRA_PROD", format!("{WORKSPACE}/spira")),
+            kv("SPIRA_PROD", self.in_release("spira")),
             kv("SPIRA_INSTALL_FORCE", "1"),
             kv("SPIRA_RUN", self.batch_run()),
             kv("SPIRA_TESTDB_DATA", self.testdb_data()),
         ]);
-        env.extend(self.artifact_env());
-        self.setup_as_user(
-            &["bash", "/workspace/systemd/install.sh", &self.instance],
-            env,
-        )
+        env.extend(self.release_env());
+        let install = self.in_release("systemd/install.sh");
+        self.setup_as_user(&["bash", &install, &self.instance], env)
     }
 
     /// configure, suspend the Rust-backed units the container cannot run ([`SUSPENDED_UNITS`]),
@@ -394,9 +471,11 @@ impl<'a> Session<'a> {
             if t.is_empty() || t == "testenv" || !seen.insert(t.to_string()) {
                 continue;
             }
+            let mut env = vec![kv("XDG_RUNTIME_DIR", USER_RUNTIME)];
+            env.extend(self.release_env());
             let req = self.setup_as_user(
                 &["bash", "-c", "command -v \"$1\" >/dev/null 2>&1", "_", t],
-                vec![kv("XDG_RUNTIME_DIR", USER_RUNTIME)],
+                env,
             );
             let out = self.rt.exec(&req);
             if out.rc == RC_DEADLINE {
@@ -414,7 +493,7 @@ impl<'a> Session<'a> {
             kv("XDG_RUNTIME_DIR", USER_RUNTIME),
             kv("SPIRA_TESTDB_DATA", self.testdb_data()),
         ];
-        env.extend(self.artifact_env());
+        env.extend(self.release_env());
         self.setup_as_user(&["bash", "-c", BASELINE_SCRIPT], env)
     }
 
@@ -422,8 +501,8 @@ impl<'a> Session<'a> {
     /// built once here, so no server-mode suite waits on it (DESIGN-testdb.md §2.1).
     pub fn testdb_template_request(&self) -> ExecRequest {
         let mut env = vec![kv("XDG_RUNTIME_DIR", USER_RUNTIME)];
-        env.extend(self.artifact_env());
-        let exe = format!("{}/testenv", self.artifacts);
+        env.extend(self.release_env());
+        let exe = self.in_release("bin/testenv");
         self.setup_as_user(
             &[&exe, "testdb", "template", "--bd", "bd", "--dolt", "dolt"],
             env,
@@ -475,8 +554,8 @@ impl<'a> Session<'a> {
         }
         env.extend(self.user_env());
         env.push(kv("SPIRA_IN_TESTENV", "1"));
-        env.extend(self.artifact_env());
-        env.extend(fixtures.env(&self.artifacts));
+        env.extend(self.release_env());
+        env.extend(fixtures.env());
         env.push(kv("TMUX", ""));
         env.push(kv("SPIRA_PATH", ""));
         env.push(kv("SPIRA_BD_LOG", self.bd_log(mode, n, suite)));
@@ -501,7 +580,7 @@ impl<'a> Session<'a> {
     /// an artifact set without the meter falls back to the bare directory, unmetered.
     pub fn make_home(&self, n: usize) {
         let home = self.suite_home(n);
-        let meter = format!("{}/bd-meter", self.artifacts);
+        let meter = self.in_release("bin/bd-meter");
         let installed = self
             .rt
             .exec(&ExecRequest::new(&self.name, &[&meter, "--install", &home]).user(SPIRA_USER))
@@ -766,7 +845,7 @@ mod tests {
         assert_eq!(
             argv[0],
             vec![
-                format!("{}/bd-meter", s.artifacts),
+                "/tmp/spira-release-abc123/bin/bd-meter".to_string(),
                 "--install".into(),
                 s.suite_home(3)
             ]
@@ -791,41 +870,49 @@ mod tests {
         let rt = FakeRuntime::new();
         let s = session(&rt);
         let r = s.testdb_template_request();
-        assert_eq!(r.argv[0], format!("{}/testenv", s.artifacts));
+        assert_eq!(r.argv[0], "/tmp/spira-release-abc123/bin/testenv");
         assert_eq!(r.argv[1..], ["testdb", "template", "--bd", "bd", "--dolt", "dolt"]);
         assert_eq!(r.user.as_deref(), Some(SPIRA_USER));
-        assert_eq!(r.env_value("SPIRA_ARTIFACTS"), Some("/workspace/target/aeon"));
+        assert_eq!(r.env_value("SPIRA_RELEASE"), Some("/tmp/spira-release-abc123"));
     }
 
     #[test]
-    fn install_runs_configure_suspends_then_install_with_artifacts() {
+    fn install_runs_configure_suspends_then_install_from_the_staged_release() {
         let rt = FakeRuntime::new();
         let s = session(&rt);
         s.install(&|_| {}).unwrap();
         let argv = rt.exec_argv();
-        assert_eq!(argv[0], vec!["bash", "/workspace/spira/configure.sh"]);
+        assert_eq!(argv[0], vec!["bash", "/tmp/spira-release-abc123/spira/configure.sh"]);
         assert_eq!(
             argv[1][..4],
-            ["bash", "/workspace/spira/ctrl.sh", "suspend", "spira-loom"]
+            ["bash", "/tmp/spira-release-abc123/spira/ctrl.sh", "suspend", "spira-loom"]
         );
         assert_eq!(argv[2][3], "spira-cockpit");
         assert_eq!(argv[3][3], "spira-watch-queue-watch");
         assert_eq!(
             argv[4],
-            vec!["bash", "/workspace/systemd/install.sh", "abc123"]
+            vec!["bash", "/tmp/spira-release-abc123/systemd/install.sh", "abc123"]
         );
         let execs = rt.execs.lock().unwrap();
         for r in execs.iter() {
             assert_eq!(r.user.as_deref(), Some("spirauser"));
+            assert_eq!(r.env_value("SPIRA_RELEASE"), Some("/tmp/spira-release-abc123"));
             assert_eq!(
-                r.env_value("SPIRA_ARTIFACTS"),
-                Some("/workspace/target/aeon")
+                r.env_value("PATH"),
+                Some("/tmp/spira-release-abc123/bin:/tmp/spira-release-abc123/spira:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"),
+                "PATH is set outright from the staged release"
             );
+            assert_eq!(r.env_value("SPIRA_ARTIFACTS"), None);
             assert_eq!(r.container, "spira-batch-abc123");
         }
         assert_eq!(
             execs[0].env_value("CONFIGURE_PROD"),
-            Some("/workspace/spira")
+            Some("/tmp/spira-release-abc123/spira")
+        );
+        assert_eq!(
+            execs[4].env_value("SPIRA_PROD"),
+            Some("/tmp/spira-release-abc123/spira"),
+            "units render against the staged release's root, which has bin/"
         );
         assert_eq!(execs[0].env_value("CONFIGURE_DOLT_DATA"), Some(""));
         assert_eq!(execs[4].env_value("SPIRA_INSTALL_FORCE"), Some("1"));
@@ -837,6 +924,61 @@ mod tests {
             execs[4].env_value("SPIRA_TESTDB_DATA"),
             Some("/tmp/spira-batch-abc123/testdb")
         );
+    }
+
+    #[test]
+    fn staging_links_the_tree_and_the_workspace_binaries_as_a_release() {
+        let rt = FakeRuntime::new();
+        let mut s = session(&rt);
+        s.bins = vec!["spira-config".into(), "testenv".into()];
+        s.stage(&|_| {}).unwrap();
+        let argv = rt.exec_argv();
+        assert_eq!(argv.len(), 1);
+        assert_eq!(argv[0][..3], ["bash", "-c", STAGE_SCRIPT]);
+        assert_eq!(
+            argv[0][3..],
+            ["_", "/tmp/spira-release-abc123", "/workspace/target/aeon", "/workspace", "spira-config", "testenv"]
+        );
+        let rt = FakeRuntime::new();
+        rt.on(|r| r.argv.get(2).map(String::as_str) == Some(STAGE_SCRIPT), |_| ExecOutcome {
+            rc: 1,
+            output: "testenv: stage: testenv was not built into /workspace/target/aeon".into(),
+        });
+        let e = session(&rt).stage(&|_| {}).unwrap_err();
+        assert_eq!(e.rc(), 3, "a release that cannot be staged is a harness fault");
+    }
+
+    #[test]
+    fn the_stage_script_builds_a_release_layout_from_a_tree_and_a_build() {
+        // The script itself, run on the host against a scratch tree.
+        let d = testkit::TempDir::new("testenv-stage");
+        let (w, a, r) = (d.join("w"), d.join("a"), d.join("rel"));
+        for p in [w.join("spira"), w.join("systemd"), w.join("target/aeon"), a.clone()] {
+            std::fs::create_dir_all(&p).unwrap();
+        }
+        std::fs::write(w.join("spira/conf.sh"), "").unwrap();
+        for b in ["testenv", "spira-lint"] {
+            testkit::write_exe(&a.join(b), "#!/bin/sh\n");
+        }
+        let run = |bins: &[&str]| {
+            std::process::Command::new("bash")
+                .args(["-c", STAGE_SCRIPT, "_"])
+                .arg(&r)
+                .arg(&a)
+                .arg(&w)
+                .args(bins)
+                .output()
+                .unwrap()
+        };
+        assert!(run(&["testenv", "spira-lint"]).status.success());
+        assert!(r.join("spira/conf.sh").is_file());
+        assert!(r.join("systemd").is_dir());
+        assert!(!r.join("target").exists(), "target/ is not part of a release");
+        assert!(r.join("bin/testenv").is_file());
+        assert!(r.join("bin/spira-lint").is_file());
+        let o = run(&["testenv", "work"]);
+        assert!(!o.status.success());
+        assert!(String::from_utf8_lossy(&o.stderr).contains("work was not built"));
     }
 
     #[test]
@@ -894,6 +1036,7 @@ mod tests {
         let cut = Instant::now() + Duration::from_secs(60);
         s.setup_deadline = Some(cut);
         for r in [
+            s.stage_request(),
             s.configure_request(),
             s.suspend_request("u", "why"),
             s.install_request(),
@@ -975,8 +1118,8 @@ mod tests {
         assert_eq!(r.env_value("TESTDB_BASELINE"), None);
         assert_eq!(
             r.env_value("TESTDB_TESTENV"),
-            Some("/workspace/target/aeon/testenv"), // path-ok: the container-side artifact
-            "found however the suite repoints SPIRA_REPO"
+            None,
+            "testenv is found by name on the suite's PATH, however it repoints SPIRA_REPO"
         );
         // The fallback tiers never set the mode: testdb_up keeps its embedded default.
         let t = TestDb::parse("TESTDB_NAME=b\nTESTDB_BASELINE=/b\nTESTDB_MODE=embedded\n").unwrap();
@@ -1012,11 +1155,14 @@ mod tests {
         );
         assert_eq!(r.env_value("SPIRA_IN_TESTENV"), Some("1"));
         assert_eq!(r.env_value("TMUX"), Some(""));
-        assert_eq!(
-            r.env_value("SPIRA_TEST_PLAN_BIN"),
-            Some("/workspace/target/aeon/test-plan") // path-ok: the container-side path suites get
-        );
-        assert_eq!(r.env_value("SPIRA_ARTIFACTS_ROOT"), Some("/workspace"));
+        assert_eq!(r.env_value("SPIRA_TEST_PLAN_BIN"), None);
+        assert_eq!(r.env_value("SPIRA_ARTIFACTS"), None);
+        assert_eq!(r.env_value("SPIRA_ARTIFACTS_ROOT"), None);
+        assert_eq!(r.env_value("SPIRA_RELEASE"), Some("/tmp/spira-release-abc123"));
+        assert!(r
+            .env_value("PATH")
+            .unwrap()
+            .starts_with("/tmp/spira-release-abc123/bin:/tmp/spira-release-abc123/spira:"));
         let r = s.suite_request(Mode::Serial, 1, "test-a.sh", &Fixtures::PerSuite);
         assert_eq!(r.env_value("HOME"), None);
         assert_eq!(r.env_value("SPIRA_INSTANCE"), None);

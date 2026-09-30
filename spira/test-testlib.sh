@@ -200,17 +200,10 @@ SPIRA_TESTLIB_JSONL="$JSONL_OUT2" bash "$f2" >/dev/null 2>&1 || true
 want "case ids: the same string names the case in TAP and in JSONL" \
     '"case":"the stable case id"' "$(cat "$JSONL_OUT2" 2>/dev/null)"
 
-# --- the suite PATH (sp-gypjk; interim until sp-isom7) ------------------------------
-# Sourcing testlib.sh puts testenv's build of the tree ($SPIRA_ARTIFACTS) and the tree's
-# own spira/ at the FRONT of PATH — the same two directories a release puts there — so a
-# suite invokes every tool by bare name, exactly as production does.
-_TL_DIR="$(cd "$(dirname "$TESTLIB")" && pwd -P)"
-_TL_ART="$SCRATCH/artifacts"; mkdir -p "$_TL_ART"
-_TL_PATH="$(SPIRA_ARTIFACTS="$_TL_ART" PATH=/usr/bin:/bin bash -c ". '$TESTLIB' >/dev/null; printf '%s' \"\$PATH\"")"
-is "suite PATH: \$SPIRA_ARTIFACTS first, then the tree's spira/, then the caller's PATH" \
-    "$_TL_ART:$_TL_DIR:/usr/bin:/bin" "$_TL_PATH"
-_TL_PATH="$(env -u SPIRA_ARTIFACTS PATH=/usr/bin:/bin bash -c ". '$TESTLIB' >/dev/null; printf '%s' \"\$PATH\"")"
-is "suite PATH: without \$SPIRA_ARTIFACTS the tree's spira/ still comes first" \
-    "$_TL_DIR:/usr/bin:/bin" "$_TL_PATH"
+# --- the suite PATH is the launcher's (sp-isom7) ------------------------------------
+# testenv sets a suite's PATH outright from the staged release; sourcing testlib.sh leaves it
+# exactly as the launcher set it.
+_TL_PATH="$(PATH=/usr/bin:/bin bash -c ". '$TESTLIB' >/dev/null; printf '%s' \"\$PATH\"")"
+is "suite PATH: sourcing testlib.sh leaves the launcher's PATH untouched" "/usr/bin:/bin" "$_TL_PATH"
 
 tl_summary

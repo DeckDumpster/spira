@@ -311,11 +311,11 @@ fn read_file_bytes(p: &Path) -> Vec<u8> {
     fs::read(p).unwrap_or_default()
 }
 
-/// Run a helper script with SPIRA_ARTIFACTS scoped as given; stdout returned, stderr passed on.
+/// Run a helper script on the host, on testenv's own (launcher-set) PATH; stdout returned,
+/// stderr passed on.
 fn helper(
     script: &Path,
     args: &[&str],
-    artifacts: Option<&Path>,
     extra_env: &[(&str, String)],
     stdin: Option<&str>,
 ) -> Option<(i32, String)> {
@@ -324,18 +324,6 @@ fn helper(
     }
     let mut cmd = Command::new("bash");
     cmd.arg(script).args(args).stderr(Stdio::inherit());
-    match artifacts {
-        Some(a) => {
-            cmd.env("SPIRA_ARTIFACTS", a);
-            if let Some(root) = a.parent().and_then(Path::parent) {
-                cmd.env("SPIRA_ARTIFACTS_ROOT", root);
-            }
-        }
-        None => {
-            cmd.env_remove("SPIRA_ARTIFACTS")
-                .env_remove("SPIRA_ARTIFACTS_ROOT");
-        }
-    }
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
@@ -358,24 +346,12 @@ fn helper(
 
 /// Like `helper`, but runs a compiled binary directly — no `bash` hop — for a Rust-to-Rust
 /// call. `None` when the binary is not there (a caller falls back to the script shim).
-fn helper_bin(bin: &Path, args: &[&str], artifacts: Option<&Path>, extra_env: &[(&str, String)]) -> Option<(i32, String)> {
+fn helper_bin(bin: &Path, args: &[&str], extra_env: &[(&str, String)]) -> Option<(i32, String)> {
     if !bin.is_file() {
         return None;
     }
     let mut cmd = Command::new(bin);
     cmd.args(args).stderr(Stdio::inherit());
-    match artifacts {
-        Some(a) => {
-            cmd.env("SPIRA_ARTIFACTS", a);
-            if let Some(root) = a.parent().and_then(Path::parent) {
-                cmd.env("SPIRA_ARTIFACTS_ROOT", root);
-            }
-        }
-        None => {
-            cmd.env_remove("SPIRA_ARTIFACTS")
-                .env_remove("SPIRA_ARTIFACTS_ROOT");
-        }
-    }
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
@@ -392,8 +368,8 @@ fn gate_diag(deps: &Deps, artifacts: &Path, results_s: &str, run_env: &[(&str, S
     let bin = artifacts.join("gate-diag");
     let home = deps.harness.root.join("spira");
     let home_s = home.display().to_string();
-    helper_bin(&bin, &["--home", &home_s, results_s], Some(artifacts), run_env)
-        .or_else(|| helper(&deps.which("gate-diag.sh")?, &[results_s], Some(artifacts), run_env, None))
+    helper_bin(&bin, &["--home", &home_s, results_s], run_env)
+        .or_else(|| helper(&deps.which("gate-diag.sh")?, &[results_s], run_env, None))
 }
 
 /// Holds the container for the batch; tears it down however the run ends.
@@ -993,7 +969,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             return Finish::fault(2, "artifacts-stage", 0);
         }
         deps.log(&format!(
-            "staged prebuilt {} — SPIRA_ARTIFACTS={}",
+            "staged prebuilt {} — artifacts {}",
             p.dir.display(),
             artifacts.display()
         ));
@@ -1011,6 +987,11 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     // ---- container -----------------------------------------------------------------
     let instance = s.instance.clone().unwrap_or_else(|| key[..12].to_string());
     let mut session = Session::new(deps.rt, &instance, &pdir);
+    // The staged release's bin/: every binary target of the tree under test (sp-isom7).
+    session.bins = match &prebuilt {
+        Some(p) => p.names.clone(),
+        None => prebuilt::required(&wt.path),
+    };
     session.liveness_retries = s.liveness_retries;
     session.liveness_sleep = Duration::from_secs(s.liveness_sleep);
     session.setup_deadline = setup_cutoff;
@@ -1100,6 +1081,16 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         }
         deps.log(f.message());
         return Finish::fault(f.rc(), "container-up", 0);
+    }
+    // The tree under test as a release, whether or not the install runs: every exec's PATH
+    // is built from it (DESIGN.md §5).
+    if let Err(f) = session.stage(&|m| deps.log(m)) {
+        if let crate::fixture::Fault::Deadline(p) = f {
+            share_note(p, &ph);
+            return Finish::fault(2, deadline_reason(p), 0);
+        }
+        deps.log(f.message());
+        return Finish::fault(f.rc(), "stage", 0);
     }
     if !s.skip_install {
         if let Err(f) = session.install(&|m| deps.log(m)) {
@@ -1200,7 +1191,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             let _ = fs::write(&verdict_path, f.render());
         }
         if let Some(gt) = deps.which("gate-timing.sh") {
-            let _ = helper(&gt, &[&results_s, "red"], Some(&artifacts), &run_env, None);
+            let _ = helper(&gt, &[&results_s, "red"], &run_env, None);
         }
         return Finish {
             rc: 1,
@@ -1667,7 +1658,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             let _ = fs::write(&verdict_path, f.render());
         }
         if let Some(gt) = deps.which("gate-timing.sh") {
-            let _ = helper(&gt, &[&results_s, "red"], Some(&artifacts), &run_env, None);
+            let _ = helper(&gt, &[&results_s, "red"], &run_env, None);
         }
         return Finish {
             rc: 1,
@@ -1705,7 +1696,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         deps.log("every suite that finished before the deadline passed");
     }
     if let Some(gt) = deps.which("gate-timing.sh") {
-        let _ = helper(&gt, &[&results_s, "green"], Some(&artifacts), &run_env, None);
+        let _ = helper(&gt, &[&results_s, "green"], &run_env, None);
     }
     Finish {
         deferred: deferred_count,
@@ -1796,7 +1787,7 @@ fn build(
     ));
     match deps.builder.build(wt, &args.profile, cutoff) {
         Ok(d) => deps.log(&format!(
-            "build {:.1}s — SPIRA_ARTIFACTS={}",
+            "build {:.1}s — artifacts {}",
             d.as_secs_f64(),
             artifacts.display()
         )),
@@ -1871,7 +1862,6 @@ fn refuse_repeat(
                     "--kind",
                     "note",
                 ],
-                None,
                 &[],
                 Some(&body),
             );
@@ -1902,7 +1892,7 @@ fn refuse_repeat(
             ("SPIRA_INCIDENT_DELIVERS", "action".into()),
         ];
         let title = format!("repeat attempt: no change — {br}");
-        let _ = helper(&incident, &["file", &title, "-"], None, &env, Some(&body));
+        let _ = helper(&incident, &["file", &title, "-"], &env, Some(&body));
     }
 }
 
