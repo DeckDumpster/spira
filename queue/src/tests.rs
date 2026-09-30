@@ -275,21 +275,12 @@ impl Scripts for FScripts {
         self.calls.borrow_mut().push(format!("gate {br} {repo} bead={bead} suites={suites}"));
         (self.gate_rc.get(), "gate says".into())
     }
-    fn batch_sweep(&self, repo: &str, wz: bool, lc_off: bool) -> i32 {
-        self.calls.borrow_mut().push(format!("sweep {repo} wait0={wz}"));
-        self.lc_off.borrow_mut().push(lc_off);
-        0
-    }
     fn judgement_ci(&self, bin: &Path, s: &Settings, repo: &str, suites: &str, members: &str, evidence: &str) -> RunOut {
         self.calls.borrow_mut().push(format!("judgement-ci {} {repo} {suites} {members} {evidence} home={}", bin.display(), s.home.display()));
         self.judgement.borrow().clone()
     }
     fn observe_flake(&self, suite: &str, sha: &str) {
         self.calls.borrow_mut().push(format!("observe-flake {suite} {sha}"));
-    }
-    fn attribute(&self, round: &str, base: &str, suites: &str, members: &str, _: &Path) -> String {
-        self.calls.borrow_mut().push(format!("attribute {round} {base} {suites} {members}"));
-        "ATTR suite-a owner=sp-a method=single\nEJECT sp-a suite-a".into()
     }
     fn mail_operator(&self, subject: &str, body: &str) {
         self.calls.borrow_mut().push(format!("mail-operator {subject}\n{body}"));
@@ -735,7 +726,7 @@ fn flush_refuses_without_a_batcher_and_forces_wait_zero_with_one() {
     t.lib.s.batcher_bin = Some(bin);
     assert_eq!(t.run(&["flush"]), 0);
     let calls = t.scripts.calls.borrow().clone();
-    assert!(calls.contains(&"sweep spira wait0=true".to_string()) && calls.contains(&"cut spira wait0=true".to_string()));
+    assert!(calls.contains(&"cut spira wait0=true".to_string()));
 }
 
 #[test]
@@ -755,8 +746,10 @@ fn step_queue_local_publishes_with_stderr_folded_into_stdout() {
     t.git.set("refs/heads/local/main", "f0");
     let rc = t.run(&["step", "spira"]);
     assert_eq!(rc, 0);
-    // the verdict runs in process first (nothing to settle), then the sweep and the cut
-    assert_eq!(t.scripts.calls.borrow()[0], "sweep spira wait0=false");
+    // the verdict runs in process (nothing to settle) and batch.sh's old sweep is retired
+    // (sp-uwhx0) — with no batcher configured, the cut refuses before calling anything, so
+    // no Scripts call happens at all.
+    assert!(t.scripts.calls.borrow().is_empty(), "{:?}", t.scripts.calls.borrow());
     // the missing batcher's refusal is on stderr (it is _batch_cut's own), the publish's on stdout
     assert!(t.err().contains("no batcher program"));
     assert!(t.out().contains("nothing to publish for spira"));
@@ -883,11 +876,16 @@ fn a_single_step_under_a_held_step_lock_is_skipped_with_status_zero() {
 
 #[test]
 fn step_all_with_lifecycle_off_pins_every_child_off_and_never_touches_spira_lc() {
-    let t = T::new(LandMode::Queue);
+    let mut t = T::new(LandMode::Queue);
     t.repo("spira", LandMode::Queue);
     t.repo("svc", LandMode::Queue);
     *t.lib.repos.borrow_mut() = Ok(vec!["spira".into(), "svc".into()]);
     t.lc.available.set(true); // a binary is present: presence is never the switch
+    // The verdict runs in process now (no lc_off to pin on a child of its own); the
+    // batcher is the only remaining out-of-process, lc_off-taking call per repo.
+    let bin = t.dir.join("batcher");
+    testkit::write_exe(&bin, "#!/bin/sh\n");
+    t.lib.s.batcher_bin = Some(bin);
     assert_eq!(t.run(&["step", "--all"]), 0);
     assert_eq!(t.verdicts(), vec!["verdict spira", "verdict svc"]);
     let modes = t.scripts.lc_off.borrow().clone();

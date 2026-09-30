@@ -6,7 +6,7 @@
 #   (a) batch of 4 members + 2 certified → pane shows batch #N with 4 members and
 #       next with 2, in batcher order
 #   (c) an open bead that is batched still appears under its batch
-#   (d) the next-list order equals batch.sh's selection order (suite-trans, prio, epoch)
+#   (d) the next-list order equals the batcher's selection order (suite-trans, prio, epoch)
 #   (e) 32 CERTIFIED records, no open batch → header count is the whole 32, row count
 #       is capped (sp-hpeft: the header was reading the row-capped loop counter, so it
 #       could never show more than the cap regardless of how many records existed)
@@ -21,7 +21,7 @@
 # unsent_keys' SP_LANDED/SP_UNLANDED_N classification, not queue_keys, and cannot be
 # exercised through the `queue` subcommand at all once this suite stopped calling `once`.
 #
-# covers: spira/cockpit.sh spira/batch.sh spira/lib.sh cockpit/health.sh
+# covers: spira/cockpit.sh spira/lib.sh cockpit/health.sh
 # scar: UNLND read closed beads and commit bodies, so batched open beads were invisible
 #       and body mentions falsely marked beads as landed.
 #

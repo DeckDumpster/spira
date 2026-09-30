@@ -144,9 +144,12 @@ fn lc_mode(w: &World, label: &str) -> Result<bool, i32> {
     }
 }
 
-/// batch.sh's sweep, then the batcher's cut (queue.sh _batch_cut).
+/// The batcher's cut (queue.sh _batch_cut). Used to run batch.sh's own pre-cut sweep first
+/// (orphan-run reaping, closed-red-live mail, DIRTY-PR abandon, stale-certification
+/// reconciliation, the queue-stuck alert) — dead weight since batcher-cut (sp-jzfog) took
+/// over the round itself and no repo runs in `land=queue` mode (sp-uwhx0: batch.sh deleted,
+/// its sweep retired with it, not ported — see queue/DESIGN.md "batch.sh retirement").
 fn batch_cut(w: &World, c: &Ctx, wait_zero: bool, lc_off: bool) -> i32 {
-    w.scripts.batch_sweep(&c.r.name, wait_zero, lc_off);
     if c.s.batcher_off {
         w.out(format!("queue.sh: SPIRA_BATCHER_ENABLE=0 — the operator cuts rounds; no cut for {}", c.r.name));
         return OK;

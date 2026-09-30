@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-queue-step-eject-race.sh — gap G13 (docs/test-plan/landing-merge-queue.md
-# section 6): a landing pass's `queue step` (its in-process verdict, then batch.sh) racing a
+# section 6): a landing pass's `queue step` (its in-process verdict, then the batcher) racing a
 # concurrent operator `queue.sh eject`, on the SAME repo. Every existing lock case
 # (test-queue-ops.sh) holds the flock itself, in the SAME process, before calling
 # the command under test — it proves the refusal message, never a real race between
@@ -10,7 +10,7 @@
 # actually holds the per-repo lock, then launches a real `eject` while it is held.
 #
 # tier: T3
-# covers: queue/src/* spira/batch.sh UC-landing-merge-queue-30
+# covers: queue/src/* UC-landing-merge-queue-30
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -68,9 +68,8 @@ printf '#!/usr/bin/env bash\ntrue\n' > "$SH/mail.sh"; chmod +x "$SH/mail.sh"
 # the verdict's observe-flake goes to `testenv suites` now (testenv/DESIGN-suites.md §9).
 printf '#!/usr/bin/env bash\ntrue\n' > "$SH/testenv-stub.sh"; chmod +x "$SH/testenv-stub.sh"
 
-# _batch_cut (the queue binary) unconditionally invokes the batcher binary after batch.sh's
-# own sweep — this race is about the per-repo lock, not the batcher, so the stub
-# does nothing and exits 0.
+# _batch_cut (the queue binary) unconditionally invokes the batcher binary — this race
+# is about the per-repo lock, not the batcher, so the stub does nothing and exits 0.
 printf '#!/usr/bin/env bash\ntrue\n' > "$SH/batcher-stub.sh"; chmod +x "$SH/batcher-stub.sh"
 # Stubs are injected by name, first on PATH (sp-gypjk).
 STUBBIN="$TMP/stubbin"; mkdir -p "$STUBBIN"
