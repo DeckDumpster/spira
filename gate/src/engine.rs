@@ -660,7 +660,16 @@ impl<'w, W: World> Trial<'w, W> {
             return v(NOVERDICT, "timeout", format!(
                 "gate: {name}'s own gate was killed at {timeout}s — it judged nothing.\ngate: command: {cmd}\ngate: this is the harness's budget, not a fault in the branch; raise SPIRA_GATE_TIMEOUT.\n{out}"));
         }
+        // THE BUDGET IS THE TRIAL'S (testenv DESIGN.md D9, sp-govet): a trial whose setup did
+        // not finish inside its share of SPIRA_GATE_BUDGET, or whose every suite was deferred,
+        // judged nothing — a named NO_VERDICT, never a pass and never the branch's red.
         if rc == NOVERDICT {
+            if let Some(r) = parse::testenv_fault_reason(&out).filter(|r| r.starts_with("deadline-")) {
+                let phase = &r["deadline-".len()..];
+                return v(NOVERDICT, "budget", format!(
+                    "gate: {name}'s suites trial did not fit its budget — phase `{phase}` was cut at its share of SPIRA_GATE_BUDGET={}s; it judged nothing.\ngate: command: {cmd}\n{out}",
+                    ctx.var_or("SPIRA_GATE_BUDGET", "300")));
+            }
             return v(NOVERDICT, "harness-fault", format!(
                 "gate: {name}'s own gate reported a harness fault (exit {NOVERDICT}) — container or install failed.\ngate: command: {cmd}\n{out}"));
         }
@@ -685,7 +694,15 @@ impl<'w, W: World> Trial<'w, W> {
             .as_ref()
             .filter(|_| self.gate_at(&repo, &tree, &base_rev, &base_rev).is_ok())
         {
-            let base_comp = self.base_composition(&comp, &ctx, &tree);
+            // A branch red before its suites step ran (a fence, the selector) is judged on the
+            // base's fences only: the base's suites answer no question this red asks, and they
+            // were most of every such base trial's wall (sp-govet: base-gate 164-501 s behind
+            // a 12 s fence red).
+            let base_comp = if !comp.suites_off() && !parse::suites_step_ran(&out) {
+                Composition::Fences
+            } else {
+                self.base_composition(&comp, &ctx, &tree)
+            };
             let (r, o, ph) = run_composed(
                 w,
                 &tree,

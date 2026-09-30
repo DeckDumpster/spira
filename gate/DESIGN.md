@@ -254,6 +254,24 @@ Suite names come from the batch runner's lines: a `*.sh` word followed by `RED`,
 `FAILED` or `was killed` (reds); `TIMEOUT`/`was killed` (timeouts); those plus `ok`,
 `SKIPPED`, `SKIP-REQ`, `QUARANTINED-RED`, `DISABLED`, `UNREACHED` (ran).
 
+### The trial's budget (sp-govet)
+
+`SPIRA_GATE_BUDGET` is the **whole suites trial's** budget: the runner starts its clock when
+it starts, bounds its setup by a share of it and gives the suites what is left (testenv
+DESIGN.md §11, D9). Two consequences here:
+
+* **A budget cut is `NO_VERDICT reason=budget`.** When the gate string exits 75 and the
+  runner's last line is `VERDICT FAULT … reason=deadline-<phase>` (a setup phase cut at its
+  share, or `deadline-suites`: every suite deferred), the trial judged nothing. The message
+  names the phase and the budget; there is no base trial. Any other runner fault stays
+  `harness-fault`.
+* **A red before the suites step is judged on the base's fences only.** When the branch trial
+  failed and its output shows the suites step never started (no runner `VERDICT` line, no
+  suite line — a fence or the selector failed first), the base trial runs as composition
+  `fences` (suites off). Its suites cannot answer whose fault a fence red is, and they were
+  most of every such base trial's wall: in the rewrite waves a 12 s fence red was followed by
+  a 164–501 s base trial. Attribution is unchanged: base fences pass → `branch-red`, suite `-`.
+
 ## Composition (sp-2ghui)
 
 Design `gate-unit-round-integration-2026-09-29`, item 4: **what a branch touches decides what

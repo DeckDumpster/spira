@@ -105,6 +105,30 @@ pub fn harness_fault_detail(out: &str) -> Option<String> {
     last
 }
 
+/// The test runner's `VERDICT FAULT … reason=<word>` (its last line), when the suites step
+/// ended in a harness fault. testenv prints exactly one VERDICT line per run.
+pub fn testenv_fault_reason(out: &str) -> Option<String> {
+    out.lines()
+        .rev()
+        .find(|l| l.starts_with("VERDICT "))
+        .filter(|l| l.starts_with("VERDICT FAULT "))
+        .and_then(|l| l.split_whitespace().find_map(|w| w.strip_prefix("reason=")))
+        .map(str::to_string)
+}
+
+/// Whether the suites step started at all: testenv always ends with a `VERDICT` line (its
+/// DESIGN.md §2.3). A trial red before it (a fence, the selector) never reached the suites.
+/// A per-suite line (a red, a ran suite) counts too: a runner that died before its VERDICT
+/// line still ran suites, and their base must be run.
+pub fn suites_step_ran(out: &str) -> bool {
+    out.lines().any(|l| {
+        l.starts_with("VERDICT GREEN")
+            || l.starts_with("VERDICT RED")
+            || l.starts_with("VERDICT FAULT")
+    }) || !red_suites(out).is_empty()
+        || !ran_suites(out).is_empty()
+}
+
 /// Whose fault a failed branch trial is (`gate_attribute`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Attribution {
