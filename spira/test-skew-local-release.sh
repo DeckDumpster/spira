@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: spira/skew.sh
+# covers: skew/src/*
 #
-# test-skew-local-release.sh — skew.sh under queue.local (sp-9thdw). Nothing landing
+# test-skew-local-release.sh — skew under queue.local (sp-9thdw). Nothing landing
 # through this box's own home repo ever gets a release tag: `queue land-local` builds,
 # verifies and activates a commit straight off local/main, with no push to a forge. Before
 # this bead, `check()`'s tag machinery answered the only question it knew how to ask — "does
@@ -137,7 +137,7 @@ run_check() {
         SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$RELEASES" \
         "${@}" \
-        skew.sh check 2>&1
+        skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -253,7 +253,7 @@ refresh_out="$(env -i PATH="$STUBBIN:$PATH" \
     SPIRA_DOLT_DATA="" \
     SPIRA_TESTDB_DATA="" \
     SPIRA_RELEASES="$RELEASES" \
-    skew.sh refresh 2>&1)"; refresh_rc=$?
+    skew refresh 2>&1)"; refresh_rc=$?
 is     "refresh no-arg: exits 0"                 "0"                  "$refresh_rc"
 want   "refresh no-arg: reached queue.local check-only" "nothing to deploy" "$refresh_out"
 nowant "refresh no-arg: not a git checkout error"       "is not a git checkout" "$refresh_out"
@@ -273,7 +273,7 @@ refresh_out2="$(env -i PATH="$STUBBIN:$PATH" \
     SPIRA_DOLT_DATA="" \
     SPIRA_TESTDB_DATA="" \
     SPIRA_RELEASES="$RELEASES" \
-    skew.sh refresh 2>&1)"; refresh_rc2=$?
+    skew refresh 2>&1)"; refresh_rc2=$?
 is     "refresh no-arg, behind: exits 1"           "1"          "$refresh_rc2"
 want   "refresh no-arg, behind: LOCAL-SKEW"        "LOCAL-SKEW" "$refresh_out2"
 nowant "refresh no-arg, behind: not a git checkout error" "is not a git checkout" "$refresh_out2"
@@ -297,7 +297,7 @@ refresh_out3="$(env -i PATH="$STUBBIN:$PATH" \
     SPIRA_DOLT_DATA="" \
     SPIRA_TESTDB_DATA="" \
     SPIRA_RELEASES="$RELEASES" \
-    skew.sh refresh "$REPO" 2>&1)"; refresh_rc3=$?
+    skew refresh "$REPO" 2>&1)"; refresh_rc3=$?
 is     "refresh hotfix: exits 0"              "0"                 "$refresh_rc3"
 want   "refresh hotfix: names the hotfix"     "standing hotfix"   "$refresh_out3"
 nowant "refresh hotfix: no LOCAL-SKEW"        "LOCAL-SKEW"        "$refresh_out3"

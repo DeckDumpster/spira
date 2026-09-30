@@ -1,0 +1,18 @@
+[package]
+name = "doctor"
+version = "1.0.0"
+edition = "2021"
+description = "doctor — is the running harness healthy, right now. Replaces spira/doctor.sh."
+
+[lib]
+name = "doctor"
+path = "src/lib.rs"
+
+[[bin]]
+name = "doctor"
+path = "src/main.rs"
+
+[dependencies]
+
+[profile.release]
+opt-level = "z"

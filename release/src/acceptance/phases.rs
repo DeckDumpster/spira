@@ -25,7 +25,7 @@ impl Run<'_> {
         ]
     }
 
-    /// `deploy.sh`, `uninstall.sh`, `world.sh`, `doctor.sh`: by bare name on the launcher env.
+    /// `deploy.sh`, `uninstall.sh`, `world.sh`, `doctor`: by bare name on the launcher env.
     fn tool(&self, name: &str) -> Cmd {
         Cmd::new(name).envs(&self.launcher_env())
     }
@@ -667,8 +667,8 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
             (Some(a), Some(b)) => r.bad("phase D: memory count preserved through migration", &format!("before={a} after={b} — rows lost")),
             (a, b) => r.bad("phase D: memory count preserved through migration", &format!("could not count memories: before={a:?} after={b:?}")),
         }
-        let doc = h.show(&r.tool("doctor.sh"));
-        r.is0("phase D: doctor.sh no fatal after aged upgrade", doc);
+        let doc = h.show(&r.tool("doctor"));
+        r.is0("phase D: doctor no fatal after aged upgrade", doc);
         let got = fs::read_to_string(&conf).ok().and_then(|t| conf_line_value(&t, OVERRIDE_KEY)).unwrap_or_default();
         r.is_same("phase D: operator override survived aged upgrade", &val, &got);
 

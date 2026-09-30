@@ -292,8 +292,8 @@ for j, l in enumerate(lines[-n:]):
     # stands and whether it has stood past the configured alert threshold (spira.
     # hotfix_alert_hours) — the pane reads its RUNNING UNLANDED / ALERT lines verbatim
     # rather than re-deriving the age from $SPIRA_RUN/release/hotfix itself, same rule as
-    # doctor.sh. Empty when no hotfix stands (or the probe failed): `release` is a
-    # release-tier tool doctor.sh already checks resolves, so a genuinely broken `release
+    # doctor. Empty when no hotfix stands (or the probe failed): `release` is a
+    # release-tier tool doctor already checks resolves, so a genuinely broken `release
     # status` shows up there, not as a silent gap on this pane.
     local _rs_out _rs_line _rs_alert
     _rs_out="$(release status 2>/dev/null)" || _rs_out=""

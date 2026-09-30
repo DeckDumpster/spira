@@ -37,7 +37,7 @@
 #    nor the state file — no evidence, no claim.
 #
 # tier: T1
-# covers: spira/watchtower.sh spira/doctor.sh
+# covers: spira/watchtower.sh doctor/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

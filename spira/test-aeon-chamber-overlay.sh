@@ -14,7 +14,7 @@
 #    $SPIRA_CHAMBER_OVERLAY/$FAYTH.md (whole-file replace), $FAYTH.<section>.md (replaces one
 #    "## <section>" block) and $FAYTH.append.md (appended). A hand edit to the release
 #    checkout is reverted by the next skew refresh with nothing to say so (sp-r1ca2); an
-#    overlay survives it and doctor.sh reports it by name.
+#    overlay survives it and doctor reports it by name.
 # 3. {{FINISH}} FOLLOWS lifecycle_enforce (sp-wmcvb). sp-xethq rewrote builder.md's Finishing
 #    section unconditionally for the restricted `work` path; sp-74gzo then made that path
 #    explicit and off by default. With the flag off, every builder was still told "You have
@@ -28,7 +28,7 @@
 #
 # defect: sp-eibeu, sp-wmcvb
 # tier: T1
-# covers: aeon/src/* spira/chamber/builder.md spira/conf.sh spira/doctor.sh spira/work-env.sh
+# covers: aeon/src/* spira/chamber/builder.md spira/conf.sh doctor/src/* spira/work-env.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -226,18 +226,18 @@ close_bead "$BID_B"
 
 # ==========================================================================================
 echo
-echo "doctor.sh reports an active overlay by name and reports none when the directory is empty"
+echo "doctor reports an active overlay by name and reports none when the directory is empty"
 # ==========================================================================================
 mkdir -p "$SPIRA_CHAMBER_OVERLAY"
 printf 'Operator append.\n' > "$SPIRA_CHAMBER_OVERLAY/builder.append.md"
 out_active="$(SPIRA_HOME="$SPIRA_HOME" SPIRA_CHAMBER_OVERLAY="$SPIRA_CHAMBER_OVERLAY" \
-    SPIRA_DB="$SPIRA_DB" doctor.sh 2>&1)"
+    SPIRA_DB="$SPIRA_DB" doctor 2>&1)"
 want "doctor names the active overlay file" "builder.append.md" "$out_active"
 rm -f "$SPIRA_CHAMBER_OVERLAY/builder.append.md"
 
 EMPTY_OVERLAY="$TMP/overlay-none"
 out_none="$(SPIRA_HOME="$SPIRA_HOME" SPIRA_CHAMBER_OVERLAY="$EMPTY_OVERLAY" \
-    SPIRA_DB="$SPIRA_DB" doctor.sh 2>&1)"
+    SPIRA_DB="$SPIRA_DB" doctor 2>&1)"
 want "doctor reports none active when the overlay directory is empty" "none active" "$out_none"
 
 tl_summary

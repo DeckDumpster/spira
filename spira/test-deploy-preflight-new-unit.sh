@@ -29,7 +29,7 @@
 # approach as test-unit-drift.sh: real templates, real install.sh, a DEST this test controls.
 #
 # tier: T1
-# covers: spira/deploy.sh spira/doctor.sh systemd/install.sh spira/skew.sh
+# covers: spira/deploy.sh doctor/src/* systemd/install.sh skew/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -120,9 +120,9 @@ skew_out="$(env -i PATH="$PATH" HOME="$TMP/home" \
     SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
     SPIRA_DOLT_DATA="" \
     SPIRA_TESTDB_DATA="" \
-    skew.sh units)"; skew_rc=$?
-is   "skew.sh units: also catches the withheld unit" "1" "$skew_rc"
-want "skew.sh units: also names it MISSING" "MISSING" "$skew_out"
+    skew units)"; skew_rc=$?
+is   "skew units: also catches the withheld unit" "1" "$skew_rc"
+want "skew units: also names it MISSING" "MISSING" "$skew_out"
 
 # ==========================================================================
 echo
@@ -174,7 +174,7 @@ run_doctor() {
         SPIRA_OPERATED=0 \
         SPIRA_DOCTOR=1 \
         SPIRA_DOLT_DATA="" \
-        doctor.sh 2>&1
+        doctor 2>&1
 }
 
 doctor_out="$(run_doctor)"; doctor_rc=$?
@@ -185,9 +185,9 @@ pre_deploy_fails="$(printf '%s\n' "$doctor_out" | grep '^  FAIL  ')" || true
     && ok  "deploy.sh step 7: pre-deploy doctor has no FAIL — the deploy proceeds" \
     || bad "deploy.sh step 7: pre-deploy doctor has no FAIL — the deploy proceeds" \
            "$pre_deploy_fails"
-nowant "doctor.sh: does not name the withheld unit at all" "$new_unit_name" "$doctor_out"
-nowant "doctor.sh: no MISSING finding" "MISSING" "$doctor_out"
-is     "doctor.sh: exits 0 (only remaining fault would be unrelated)" "0" "$doctor_rc"
+nowant "doctor: does not name the withheld unit at all" "$new_unit_name" "$doctor_out"
+nowant "doctor: no MISSING finding" "MISSING" "$doctor_out"
+is     "doctor: exits 0 (only remaining fault would be unrelated)" "0" "$doctor_rc"
 
 echo
 tl_summary

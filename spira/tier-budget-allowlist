@@ -179,12 +179,6 @@ test-deploy-preflight-new-unit.sh	T1	12.0
 test-deploy.sh	T1	17.5
 test-destroy-branch.sh	T2	18.5
 test-destructive-bead.sh	T1	8.0
-test-doctor-concierge-singleton.sh	T1	2.5
-test-doctor-events-probe.sh	T1	11.0
-test-doctor-failed-units.sh	T1	5.0
-test-doctor-operator-channel.sh	T1	7.0
-test-doctor-snap-fresh.sh	T1	4.0
-test-doctor-store.sh	T1	12.0
 test-drain-banner.sh	T1	2.5
 test-event.sh	T1	10.5
 test-express-lane.sh	T1	25.5

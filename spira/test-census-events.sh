@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 #
-# test-census-events.sh — census.sh reads requeue/reclaim/recur events written by bump_*.
+# test-census-events.sh — census reads requeue/reclaim/recur events written by bump_*.
 #
 #   ./test-census-events.sh
 #
 # WHAT THIS SUITE GUARDS
 # ----------------------
-# Before sp-2lk, bump_requeue/bump_reclaim/bump_recur were no-ops and census.sh
+# Before sp-2lk, bump_requeue/bump_reclaim/bump_recur were no-ops and census
 # read labels that nothing wrote. Every pass reported all-clear regardless of how
 # many times beads were requeued or recurred. This suite asserts the wire-up works
-# end-to-end: bump_requeue/bump_recur/bump_reclaim write events, and census.sh
+# end-to-end: bump_requeue/bump_recur/bump_reclaim write events, and census
 # aggregates those events into the correct class counts.
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control, law-a-regression-test-must-be-seen-to-fail)
@@ -21,16 +21,16 @@
 # "wanted [sp-recur-suite-red] in []".
 #
 # THREE ACCEPTANCE CRITERIA:
-# 1. bump_requeue and bump_recur write events that census.sh counts.
+# 1. bump_requeue and bump_recur write events that census counts.
 # 2. The class name and occurrence count match the acceptance criteria from sp-2lk.
-# 3. bump_reclaim writes events that census.sh counts as sp-reclaim.
+# 3. bump_reclaim writes events that census counts as sp-reclaim.
 #
 # A REAL bd ON A THROWAWAY DATABASE (law-prefer-the-real-dependency).
 # Requires server mode: census_events_run_sql uses bd sql, and bd-embedded refuses
 # bd sql in embedded mode. Skips when SPIRA_TESTDB_DATA is not set.
 #
 # tier: T2
-# covers: spira/census.sh spira/lib.sh
+# covers: census/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -60,7 +60,7 @@ JSONL
 }
 
 census_out() {
-    SPIRA_DB="$TESTDB_DIR" census.sh --with-suppressed 2>/dev/null
+    SPIRA_DB="$TESTDB_DIR" census --with-suppressed 2>/dev/null
 }
 
 # ======================================================================================
@@ -174,7 +174,7 @@ echo
 echo "bead_reopen cause — census classifies harness reopens as sp-reopen-<cause> (sp-0wwcn)"
 # ======================================================================================
 # bead_reopen <id> <cause> <note> writes event_type='reopen' with new_value=<cause>.
-# census.sh must report sp-reopen-<cause> with the correct distinct-bead count.
+# census must report sp-reopen-<cause> with the correct distinct-bead count.
 # POSITIVE CONTROL first (law-absence-needs-a-positive-control): verify absence is detectable.
 testdb_reset
 testdb_seed <<'JSONL'
@@ -272,7 +272,7 @@ bump_requeue "sp-p1" merge-conflict >/dev/null 2>&1
 bump_requeue "sp-p2" merge-conflict >/dev/null 2>&1
 bump_requeue "sp-p3" merge-conflict >/dev/null 2>&1
 
-_fold_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" census.sh --with-suppressed 2>/dev/null)"
+_fold_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" census --with-suppressed 2>/dev/null)"
 _fold_line="$(printf '%s\n' "$_fold_out" | grep 'sp-reopen-rebase-conflict' || true)"
 want "covers:sp-requeue-merge-conflict suppresses sp-reopen-rebase-conflict" "[suppressed" "$_fold_line"
 nowant "sp-reopen-rebase-conflict not emitted unsuppressed" "sp-reopen-rebase-conflict" \
@@ -286,7 +286,7 @@ testdb_seed <<'JSONL'
 JSONL
 bump_requeue "sp-q1" merge-conflict >/dev/null 2>&1
 
-_unrel_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" census.sh --with-suppressed 2>/dev/null)"
+_unrel_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" census --with-suppressed 2>/dev/null)"
 _unrel_line="$(printf '%s\n' "$_unrel_out" | grep 'sp-reopen-rebase-conflict' || true)"
 nowant "unrelated covers: does not suppress sp-reopen-rebase-conflict" "[suppressed" "$_unrel_line"
 want "sp-reopen-rebase-conflict still appears without suppression" "sp-reopen-rebase-conflict" "$_unrel_out"
@@ -399,7 +399,7 @@ JSONL
 bead_reopen   "sp-ev2" eviction-race "Eviction race test" >/dev/null 2>&1
 bump_requeue  "sp-ev2" eviction-race >/dev/null 2>&1
 
-_evict_sup_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" census.sh --with-suppressed 2>/dev/null)"
+_evict_sup_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" census --with-suppressed 2>/dev/null)"
 _evict_sup_line="$(printf '%s\n' "$_evict_sup_out" | grep 'sp-reopen-eviction-race' || true)"
 want   "covers:sp-requeue-eviction-race suppresses sp-reopen-eviction-race" "[suppressed" "$_evict_sup_line"
 nowant "sp-reopen-eviction-race not emitted unsuppressed" "sp-reopen-eviction-race" \

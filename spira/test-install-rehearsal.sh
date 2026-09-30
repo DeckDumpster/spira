@@ -5,7 +5,7 @@
 #   Real systemd  — unit files installed to ~/.config/systemd/user/ (real systemctl --user),
 #                   sentinel timer enabled and started (real user session manager)
 #   Stub          — bd (container has no bd; stub created as spirauser inside the container
-#                   at /tmp/spira-stubs/bd satisfies conf.sh schema check, doctor.sh
+#                   at /tmp/spira-stubs/bd satisfies conf.sh schema check, doctor
 #                   fatal-binary check, and ready.sh database query)
 #   Stub          — loom, by name on PATH (ready.sh; SPIRA_LOOM_PROBE then handles the
 #                   actual probe call)
@@ -13,7 +13,7 @@
 #   Stub          — the fake prod root's bin/ (the units' ExecStart targets): bare exit-0
 #                   scripts satisfy install.sh's executable-target refusal without paying a
 #                   Rust build inside the container
-#   Env override  — SPIRA_OPERATED=0 (this rehearsal has nobody at the console; doctor.sh's
+#   Env override  — SPIRA_OPERATED=0 (this rehearsal has nobody at the console; doctor's
 #                   operator-channel check is documented to WARN rather than FAIL here)
 #   Warn path     — tmux (absent in container; layout.sh pane check WARNs, not FAILs)
 #   NOT PROVEN    — filed bead reaches ready + sentinel.sh --report names it
@@ -89,7 +89,7 @@ CEXEC=(podman exec --user spirauser
     -e "SPIRA_RUN=${SPIRA_RUN_CTR}"
     -e "SPIRA_WORKSPACES=/tmp"
     -e "SPIRA_HOME_REPO=home"
-    # This container has nobody at the console reading escalations; doctor.sh's
+    # This container has nobody at the console reading escalations; doctor's
     # operator-channel check (hunk, mail client) is documented to FAIL only on an
     # operated box and WARN on "a headless fixture or CI box" — which this is.
     -e "SPIRA_OPERATED=0"
@@ -237,13 +237,15 @@ want "sentinel timer active" "active" "$active_out"
     && ok "world not halted (stamp absent)" \
     || bad "world not halted" "world.halted still present after removal"
 
-# 4. doctor.sh exits 0 — the stub bd/store fixture created above satisfies its
+# 4. doctor exits 0 — the stub bd/store fixture created above satisfies its
 #    runtime-health checks (store reachable, no failed units, snapshot warns but
 #    does not FAIL since the collector has not run yet).
-doc_out="$("${CEXEC[@]}" "$CNAME" bash /workspace/spira/doctor.sh 2>&1)"
+# `doctor` is a compiled binary now (sp-yyk47), resolved by bare name on the container's
+# own PATH like every other release tool (sp-gypjk) — never a `bash .../doctor.sh` path.
+doc_out="$("${CEXEC[@]}" "$CNAME" doctor 2>&1)"
 doc_rc=$?
-iszero "doctor.sh exits 0" "$doc_rc"
-nowant "doctor.sh: no FAIL at all" "FAIL" "$doc_out"
+iszero "doctor exits 0" "$doc_rc"
+nowant "doctor: no FAIL at all" "FAIL" "$doc_out"
 
 # 5. ready.sh with stubs. The stub loom is on PATH; SPIRA_LOOM_PROBE returns "200 5ms".
 #    sentinel.sh --report renders WARN (no open beads) and seed.sh --list renders

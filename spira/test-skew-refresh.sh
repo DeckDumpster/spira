@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: spira/skew.sh landing-pass/* queue/src/* release/src/*
+# covers: skew/src/* landing-pass/* queue/src/* release/src/*
 #
 # test-skew-refresh.sh — stage-and-swap refresh advances regardless of live aeon leases;
 # running processes keep their old inode; dirty tracked files are stashed; gap reports
 # commits behind with a positive control that verifies the ref is resolvable; a queue-mode
 # repo's checkout is advanced by the landing pass's own refresh loop; and, under queue.local,
-# a round landed through queue.sh land-local is picked up by skew.sh refresh as check-only
+# a round landed through queue.sh land-local is picked up by skew refresh as check-only
 # (never a reset), and queue.sh rollback-local re-activates the previous release and moves
 # local/main back to its archived head — the container-tier design's own three cases
 # (wiki/projects/spira/designs/local-main-2026-09-27.md, "Test strategy"), run here against
-# the real queue, release and skew.sh, not fixture stand-ins for them (sp-gkfg1: a landing
+# the real queue, release and skew, not fixture stand-ins for them (sp-gkfg1: a landing
 # publishes a release through the release binary).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -82,7 +82,7 @@ run_skew_cmd() {
         SPIRA_RUN="$run_dir" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
-        skew.sh "$@" 2>&1
+        skew "$@" 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -200,7 +200,7 @@ run_skew_release() {
         SPIRA_RELEASES="$RELEASES" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
-        skew.sh "$@" 2>&1
+        skew "$@" 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -242,13 +242,13 @@ echo "landing pass — a queue-mode repo's checkout is advanced by the refresh l
 # ===========================================================================
 # verdict.sh advances a queue-mode repo's base by a fast-forward push; nothing else pulls
 # the shared checkout, so it lags origin/<base> until landing.sh's own end-of-pass loop
-# (landing.sh: "ADVANCE THE CHECKOUT HUMANS READ") calls skew.sh refresh on it — push and
+# (landing.sh: "ADVANCE THE CHECKOUT HUMANS READ") calls skew refresh on it — push and
 # queue repos both, because those are the two modes that advance the base through Spira.
 #
 # MINIMUM LANDSTATE: one repo-map row with land=queue and no spira/* branches. land_repo
 # reads the branch list first and returns immediately when it is empty (before touching
 # bd, gate.sh or confine.sh), so reaching the refresh loop needs none of those — just
-# landing.sh, lib.sh, conf.sh and the real skew.sh, wired through a repo-map whose only
+# landing.sh, lib.sh, conf.sh and the real skew, wired through a repo-map whose only
 # row is the queue repo itself, doubling as the home repo so nothing else is visited.
 #
 # THE POSITIVE CONTROL IS THE CONSTRUCTION. origin/main is advanced by one commit while
@@ -279,7 +279,10 @@ QUEUE_NEW="$(git -C "$QREPO" rev-parse origin/main)"
     || bad "queue-mode refresh setup" "checkout is already at origin/main before the pass"
 
 mkdir -p "$QSH" "$QRUN"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/skew.sh" "$QSH/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$QSH/"
+# `skew` is a compiled binary now (sp-yyk47): landing-pass's own `skew_refresh` resolves it
+# by bare name on PATH, which is `$QSH` first here, so the binary must actually be there.
+cp "$(command -v skew)" "$QSH/skew"
 cat > "$QSH/repo-map" <<MAP
 qfixture | $QREPO | queue | |
 MAP
@@ -309,11 +312,11 @@ echo "queue.local — land then refresh, then rollback by ref move:"
 # ===========================================================================
 # The container tier's own three cases: skew refresh following local/main in a real
 # harness checkout; land then refresh; rollback by ref move. Every assertion below runs
-# against the real queue and release binaries and skew.sh copied verbatim into a scratch
-# SPIRA_HOME — no stand-in for any of them but systemctl.
+# against the real queue and release binaries and skew (a compiled binary, sp-yyk47)
+# copied verbatim into a scratch SPIRA_HOME — no stand-in for any of them but systemctl.
 LSH="$TMP/local-spira"; mkdir -p "$LSH"
-cp "$HERE"/skew.sh \
-   "$HERE"/lib.sh "$HERE"/conf.sh "$HERE"/mail.sh "$HERE"/suite-covers.sh "$LSH/" 2>/dev/null
+cp "$HERE"/lib.sh "$HERE"/conf.sh "$HERE"/mail.sh "$HERE"/suite-covers.sh "$LSH/" 2>/dev/null
+cp "$(command -v skew)" "$LSH/skew"
 
 LREPO="$TMP/local-repo"
 git init -q -b trunk "$LREPO"
@@ -366,7 +369,7 @@ run_lskew() {
         SPIRA_RUN="$LRUN" \
         SPIRA_REPO_MAP="$LRMAP" \
         SPIRA_RELEASES="$LRELEASES" \
-        bash "$LSH/skew.sh" "$@" 2>&1
+        "$LSH/skew" "$@" 2>&1
 }
 lround() {  # lround <branch> <file> <content> -> commit on local/main's tip, print the head sha
     local br="$1" file="$2" content="$3"

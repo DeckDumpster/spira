@@ -312,4 +312,4 @@ fi
 printf 'configure: wrote %s\n' "$_out"
 printf 'configure: next steps:\n'
 printf '  1. Edit %s (at minimum: update SPIRA_PROD)\n' "$_out"
-printf '  2. Run: %s/doctor.sh\n' "$HERE"
+printf '  2. Run: doctor\n'

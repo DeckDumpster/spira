@@ -243,10 +243,10 @@ want "UC-safety-fences-02/git-C-prod-commit-blocked" '"decision":"block"' "$out"
 out="$(fence_run "git -C ${FAKE_PROD} reset --hard" SPIRA_AEON=test-aeon)"
 want "UC-safety-fences-02/git-C-prod-reset-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "bash \"${FAKE_PROD}/spira/census.sh\" --with-suppressed" SPIRA_AEON=test-aeon)"
+out="$(fence_run "bash \"${FAKE_PROD}/spira/census\" --with-suppressed" SPIRA_AEON=test-aeon)"
 nowant "UC-safety-fences-02/exec-from-prod-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run "cat ${FAKE_PROD}/spira/census.sh" SPIRA_AEON=test-aeon)"
+out="$(fence_run "cat ${FAKE_PROD}/spira/census" SPIRA_AEON=test-aeon)"
 nowant "UC-safety-fences-02/cat-read-from-prod-allowed" '"decision":"block"' "$out"
 
 for _cmd in \
@@ -259,11 +259,11 @@ for _cmd in \
     nowant "UC-safety-fences-02/rendered-brief-cmd-allowed-${_cmd##*/}" '"decision":"block"' "$out"
 done
 
-out="$(fence_run "bash ${FAKE_PROD}/census.sh --with-suppressed" SPIRA_AEON=test-aeon)"
-nowant "UC-safety-fences-02/census-sh-allowed" '"decision":"block"' "$out"
+out="$(fence_run "bash ${FAKE_PROD}/census --with-suppressed" SPIRA_AEON=test-aeon)"
+nowant "UC-safety-fences-02/census-allowed" '"decision":"block"' "$out"
 
 _dflag="--description"
-_bd_cmd="$(printf "bd -C /db create title %s - <<'DESC'\nbash \"%s/census.sh\" and /verdict.sh are mentioned\nDESC" "$_dflag" "${FAKE_PROD}")"
+_bd_cmd="$(printf "bd -C /db create title %s - <<'DESC'\nbash \"%s/census\" and /verdict.sh are mentioned\nDESC" "$_dflag" "${FAKE_PROD}")"
 out="$(fence_run "$_bd_cmd" SPIRA_AEON=test-aeon)"
 nowant "UC-safety-fences-02/prod-path-in-heredoc-allowed" '"decision":"block"' "$out"
 

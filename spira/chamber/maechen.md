@@ -90,14 +90,14 @@ sibling pass that may have advanced it while this pass was running:
 
 Aggregate failure events and rank by **since-watermark count** with open-remedy suppression:
 
-    bash "{{SPIRA_HOME}}/census.sh" --with-suppressed
+    census --with-suppressed
     census_rc=$?
 
 Capture `census_rc` before reading the output — it decides whether the watermark advances
 in Step 5. A census that exits non-zero means the substrate was unreachable; the output is
 not a ranking and must not be treated as one.
 
-`census.sh` queries the events table and outputs one line per class:
+`census` queries the events table and outputs one line per class:
 
     <distinct-beads-since-wm> <class> (<events-since-wm> detections, <all-time-beads> all-time)
 
@@ -113,10 +113,10 @@ unresolved, not how many separate conditions failed.
 Lines are ranked by distinct-bead count since the watermark. The all-time figure is retained
 for history and for diagnosing whether a class is genuinely new or recurring.
 
-When no watermark file exists, `census.sh` falls back to all-time counts and says so on
+When no watermark file exists, `census` falls back to all-time counts and says so on
 stderr; the output format is then `<beads> <class> (<events> detections)` (no all-time suffix).
 
-`census.sh` groups events by cause: each event row with `event_type='recurred'` and
+`census` groups events by cause: each event row with `event_type='recurred'` and
 `new_value='suite-red'` contributes to class `sp-recur-suite-red`. A class carrying
 `[suppressed]` in the output already has an open remedy bead and should be skipped.
 
@@ -175,7 +175,7 @@ properties. A bead missing any one is refused by the admissibility check (sp-ymw
    measurement (sp-vt0nj item 7) knows what to watch.
 
 File with `{{REMEDY_LABEL}}` and a machine-readable `covers:<class>` label
-alongside the partition labels. The `covers:` label is what `census.sh` reads to determine
+alongside the partition labels. The `covers:` label is what `census` reads to determine
 suppression — it must be the exact class key (e.g., `covers:sp-recur-suite-red`):
 
     cls="sp-recur-suite-red"   # replace with the actual class from census output
@@ -213,7 +213,7 @@ the stamp atomically before the watermark advance so a crash does not leave both
         && mv "{{RUN}}/maechen.lastpass.new" "{{RUN}}/maechen.lastpass"
 
 **Advance the watermark only when the census succeeded.** The trigger deliberately left the
-watermark at its pre-trigger value so census.sh could see the events that caused the trigger
+watermark at its pre-trigger value so census could see the events that caused the trigger
 to fire. Whether the watermark now moves depends on Step 1's `census_rc`:
 
 - When `census_rc` is 0 (census succeeded): advance the watermark only when it still holds

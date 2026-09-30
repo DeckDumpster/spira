@@ -1897,7 +1897,7 @@ except Exception:
 # harness log keeps it either way.
 #
 # <cause> is a stable slug (gate-red, rebase-conflict, closed-without-commit, …) written
-# as a harness event row so census.sh can break sp-reopen into classified subclasses.
+# as a harness event row so census can break sp-reopen into classified subclasses.
 # It is written AFTER bd's own `reopened` event, under event_type='reopen', so the two
 # rows are distinct and the census never double-counts a harness reopen.
 bead_reopen() {
@@ -3213,7 +3213,7 @@ reopens_of() {         # reopens_of <id> -> count of reopened events
 # BUMP FUNCTIONS. bump_attempt and bump_timeout are no-ops (attempts are counted via
 # status_changed events that bd writes natively; timeouts have no census role). The
 # remaining three — bump_reclaim, bump_requeue, bump_recur — write a typed event row so
-# that census.sh can aggregate failure classes across the whole store (sp-2lk).
+# that census can aggregate failure classes across the whole store (sp-2lk).
 #
 # Failure is silent — a missed counter is acceptable; a crash in a caller is not.
 # bump_attempt and bump_timeout remain no-ops so that callers compile without change
@@ -3348,8 +3348,8 @@ requeues_of() { _counter_events_query "${1:-}" requeued;  }
 timeouts_of() { printf '0'; }
 recurs_of()   { _counter_events_query "${1:-}" recurred;  }
 
-# CENSUS SQL — the query and runner used by census.sh to aggregate failure classes.
-# Kept in lib.sh so that tests can call it directly without parsing census.sh.
+# CENSUS SQL — the query and runner used by census to aggregate failure classes.
+# Kept in lib.sh so that tests can call it directly without parsing census.
 # --------------------------------------------------------------------------------------
 _census_events_sql() {   # _census_events_sql [since_epoch_s]
     # An optional Unix epoch lower bound adds "AND created_at > FROM_UNIXTIME(ts)" so
@@ -3459,7 +3459,7 @@ _census_deliberate_causes_sql_list() {
 
 # _census_deliberate_sql [since_epoch_s] -> the deliberate-cause reopen counts excluded
 # from _census_events_sql's ranked list above. Not ranked, never selectable, but still a
-# real count (law-absence-needs-a-positive-control) — census.sh shows it under
+# real count (law-absence-needs-a-positive-control) — census shows it under
 # --with-suppressed the same way _census_handwritten_sql's actor-excluded rows are shown.
 _census_deliberate_sql() {
     local since_clause=""
@@ -8463,7 +8463,9 @@ compute_gate_key() {
     files_h="$(printf '%s' "$files" | sha256sum | cut -d" " -f1)"
     CMD="$(repo_gate "$name" 2>/dev/null)"
     cmd_h="$(printf '%s' "$CMD" | sha256sum | cut -d" " -f1)"
-    harness_h="$(cat "${SPIRA_HOME:?}/gate.sh" "$SPIRA_HOME/exclude.sh" "$SPIRA_HOME/skew.sh" \
+    # `skew` is a compiled binary now (sp-yyk47), resolved on PATH like every other release
+    # tool (sp-gypjk), not found beside gate.sh/exclude.sh in SPIRA_HOME.
+    harness_h="$(cat "${SPIRA_HOME:?}/gate.sh" "$SPIRA_HOME/exclude.sh" "$(command -v skew 2>/dev/null)" \
         2>/dev/null | sha256sum | cut -d" " -f1)"
     [ -n "$harness_h" ] || return 1
     printf '%s\n' "$name $tree $files_h $cmd_h $harness_h" | sha256sum | cut -d" " -f1

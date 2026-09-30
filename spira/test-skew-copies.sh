@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: spira/skew.sh
+# covers: skew/src/*
 #
-# test-skew-copies.sh — `skew.sh copies` names every mapped repository carrying a harness
+# test-skew-copies.sh — `skew copies` names every mapped repository carrying a harness
 # copy, self or second, without being fooled by drift between them.
 #
 #   ./test-skew-copies.sh
@@ -31,7 +31,10 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 
 SH="$TMP/spira"; RUN="$TMP/run"; WS="$TMP/ws"
 mkdir -p "$SH" "$RUN" "$WS"
-cp "$HERE/conf.sh" "$HERE/lib.sh" "$HERE/exclude.sh" "$HERE/skew.sh" "$SH/"
+cp "$HERE/conf.sh" "$HERE/lib.sh" "$HERE/exclude.sh" "$SH/"
+# `skew` is a compiled binary now (sp-yyk47): copy the one already built for this branch
+# (found on the script's own, unmodified PATH) rather than a source file beside this suite.
+cp "$(command -v skew)" "$SH/skew"
 
 sig() { local d="$1" body="${2:-x}"; mkdir -p "$d"; printf '%s\n' "$body" > "$d/boundary"; printf '%s\n' "$body" > "$d/gate.sh"; printf '%s\n' "$body" > "$d/lib.sh"; }
 commit() { git -C "$1" add -A >/dev/null 2>&1; git -C "$1" commit -q -m "${2:-c}" >/dev/null 2>&1; } # hermetic-ok: $1 is always a path under $WS ($TMP); positional params can't be statically traced
@@ -66,7 +69,7 @@ run_copies() {
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB=/nonexistent-spira-db \
         SPIRA_REPO="$WS/home" SPIRA_HOME_REPO=home \
-        bash "$SH/skew.sh" copies 2>&1
+        "$SH/skew" copies 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 

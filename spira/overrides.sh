@@ -5,11 +5,11 @@
 #   overrides.sh apply [repo]     (re)apply every declared override that still needs it,
 #                                 retiring any whose bead has landed
 #   overrides.sh list             one line per override: name, bead, state
-#   overrides.sh doctor [repo]    problems doctor.sh should surface (failed / stale-closed)
+#   overrides.sh doctor [repo]    problems doctor should surface (failed / stale-closed)
 #
 # WHAT THIS REPLACES. A hand edit to the production checkout — a brief paragraph, a config
 # cap — used to be held by a user systemd timer running specs outside the harness, invisible
-# to doctor and the cockpit, and reverted for up to a minute by every `skew.sh refresh` before
+# to doctor and the cockpit, and reverted for up to a minute by every `skew refresh` before
 # the timer caught up (sp-qdh0x). `refresh` now calls this script immediately after it resets
 # the checkout, so there is no window where the reset brief is live.
 #
@@ -142,7 +142,7 @@ list_all() {
     [ "$found" = 1 ] || echo "overrides: none declared in $dir"
 }
 
-# doctor [repo] — problems doctor.sh should surface: an override that failed to apply or
+# doctor [repo] — problems doctor should surface: an override that failed to apply or
 # retire, or whose bead has been closed for over a day without landing (spec still active
 # means refresh has not seen a `spira: land <BEAD>` commit yet — worth a human look, not a
 # silent wait). One line per problem on stdout; exit 0 with none, 1 otherwise.

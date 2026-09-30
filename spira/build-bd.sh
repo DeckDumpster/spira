@@ -48,7 +48,7 @@ SRC="${BD_SRC:-$HOME/.cache/beads-src}"
 REPO="https://github.com/steveyegge/beads.git"
 GO="${GO:-$HOME/.local/go/bin/go}"
 # THE TAG COMES FROM SPIRA_BD_TAG IF THE ENVIRONMENT CARRIES IT, and falls back to the
-# hardcoded value above. conf.sh exposes the same key so doctor.sh reads the same pin
+# hardcoded value above. conf.sh exposes the same key so doctor reads the same pin
 # without this script having to source conf.sh. Changing the default tag means changing
 # both BD_TAG_PIN and the default in conf.sh's spira_conf_defaults.
 TAG="${SPIRA_BD_TAG:-$BD_TAG_PIN}"; MODE=probe; RELEASE_MODE=0

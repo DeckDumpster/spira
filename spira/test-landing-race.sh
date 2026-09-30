@@ -62,11 +62,11 @@ stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; 
 # leave every reason reading "unspecified" and half the contract untested.
 stub gate.sh 'echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2; exit 0'
 stub confine.sh 'exit 0'
-# skew.sh travels with landing.sh: landing.sh calls "$SPIRA_HOME/skew.sh refresh" at the end
+# skew travels with landing-pass: it resolves skew by bare name on PATH and calls "refresh" at the end
 # of every pass for push-mode repos. A fixture that does not provide it emits a "No such file"
 # error into every landing's output — the call is || true so tests still pass, but the error
 # contaminates $out and would break any future assertion that checks for a clean output.
-stub skew.sh 'exit 0'
+stub skew 'exit 0'
 
 B() { bd -C "$SPIRA_DB" "$@"; }
 status_of() { B show "$1" --json 2>/dev/null | python3 -c '

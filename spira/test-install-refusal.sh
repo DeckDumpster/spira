@@ -45,7 +45,7 @@ mk_install_fixture "$FIXTURE" "$TMP"
 
 # doctor.sh: fails iff DOCTOR_FAIL_FLAG names an existing file — the one knob this suite
 # turns between the positive control and the refusal case.
-cat > "$SPIRA_DIR/doctor.sh" <<'EOF'
+cat > "$SPIRA_DIR/doctor" <<'EOF'
 #!/usr/bin/env bash
 echo "spira doctor"
 if [ -n "${DOCTOR_FAIL_FLAG:-}" ] && [ -f "$DOCTOR_FAIL_FLAG" ]; then
@@ -55,7 +55,7 @@ fi
 echo "  ok    stub — all checks passed"
 exit 0
 EOF
-chmod +x "$SPIRA_DIR/doctor.sh"
+chmod +x "$SPIRA_DIR/doctor"
 
 cat > "$SPIRA_DIR/configure.sh" <<'EOF'
 #!/usr/bin/env bash

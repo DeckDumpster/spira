@@ -13,7 +13,7 @@
 #     threshold has not been reached.
 #
 # TWO CLOCKS, NOT ONE. The watermark ($SPIRA_RUN/maechen.watermark) bounds the census
-# query window — it tells census.sh how far back to look, and must not advance when a
+# query window — it tells census how far back to look, and must not advance when a
 # pass cannot read the substrate (db-93g). The time trigger cadence must be governed
 # by when a pass last ran, not by whether the census could be read: if the substrate is
 # temporarily unreadable every pass holds the watermark, elapsed since watermark grows
@@ -30,7 +30,7 @@
 # timestamp of the last window the Maechen pass examined. A missing or empty file means
 # epoch 0 (never fired), which guarantees the time trigger fires on the very first run.
 # The trigger does NOT advance the watermark — the Maechen PASS advances it in its
-# final step, after running census.sh. This ordering is load-bearing: census.sh reads
+# final step, after running census. This ordering is load-bearing: census reads
 # the watermark to bound its since-watermark query, so an advance before the census
 # would cause census to examine a window starting after the events that fired the
 # trigger — reporting 0 classes while the trigger window held the offenders. The dedup
@@ -132,7 +132,7 @@ now_ts="$(date +%s)"
 elapsed=$(( now_ts - lastpass_ts ))
 
 # TIME TRIGGER. Fire when more than SPIRA_MAECHEN_MAX_GAP_SECONDS have elapsed since
-# the last pass. Reads lastpass, not the watermark — the watermark bounds census.sh's
+# the last pass. Reads lastpass, not the watermark — the watermark bounds census's
 # query window and must not advance when the substrate is unreadable, but that must not
 # stop the time trigger from knowing that a pass happened.
 time_trigger=0

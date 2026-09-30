@@ -52,7 +52,7 @@
 # carry their own reasoning; a cadence changed for an operational reason ("while we clean this
 # up") is not a new default and must not be landed as one. A drop-in also survives a re-run of
 # install.sh, which rewrites the `.timer` but not the `.timer.d/` beside it — and leaves the
-# rendered unit byte-identical to the template, so `skew.sh units` stays clean.
+# rendered unit byte-identical to the template, so `skew units` stays clean.
 #
 # WHAT THIS DOES NOT DO. It does not enable, disable, start or stop anything. A timer that is
 # off stays off and is reported as off; changing the cadence of a stopped timer is a legitimate

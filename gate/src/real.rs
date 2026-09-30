@@ -423,12 +423,19 @@ impl World for Real {
             .unwrap_or_default()
     }
     fn skew_foreign(&self, skew: &Path, repo: &Path, base: &str, branch: &str) -> (i32, String) {
-        let o = Command::new("bash")
-            .arg(skew)
+        // `skew` is a compiled binary now (sp-yyk47), executed directly — never wrapped in
+        // `bash`, unlike the retired `skew.sh`. skew.sh found lib.sh beside its OWN script
+        // ($(dirname "$0")); `skew` does the release-relative equivalent from its own
+        // `current_exe()`, which — resolved through a symlinked release `bin/`, as every
+        // gate fixture builds one — can canonicalize to a path with no `../spira` sibling
+        // at all. SPIRA_HOME is passed explicitly, the same value `--home` gave this
+        // process, so `skew` finds lib.sh regardless of how its own binary was reached.
+        let o = Command::new(skew)
             .arg("foreign")
             .arg(repo)
             .arg(base)
             .arg(branch)
+            .env("SPIRA_HOME", &self.home)
             .stdin(Stdio::null())
             .output();
         match o {
@@ -474,8 +481,15 @@ impl World for Real {
     }
     fn harness_hash(&self) -> Option<String> {
         let mut buf = Vec::new();
-        for f in ["gate.sh", "exclude.sh", "skew.sh"] {
+        for f in ["gate.sh", "exclude.sh"] {
             if let Ok(mut h) = File::open(self.home.join(f)) {
+                let _ = h.read_to_end(&mut buf);
+            }
+        }
+        // `skew` is a compiled binary now (sp-yyk47), resolved on PATH like every other
+        // release tool (sp-gypjk) rather than found beside gate.sh/exclude.sh in `home`.
+        if let Some(skew) = self.which("skew") {
+            if let Ok(mut h) = File::open(skew) {
                 let _ = h.read_to_end(&mut buf);
             }
         }

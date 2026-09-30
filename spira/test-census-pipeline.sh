@@ -19,14 +19,14 @@
 # which UC-ops-detection-remediation-12 covers with 3 real rows in test-census.sh.
 #
 # tier: T1
-# covers: spira/census/count.py spira/census/merge.py spira/census/covers.py spira/census/covers_closed.py spira/census.sh UC-ops-detection-remediation-11 UC-ops-detection-remediation-13 UC-ops-detection-remediation-14 UC-ops-detection-remediation-15
+# covers: spira/census/count.py spira/census/merge.py spira/census/covers.py spira/census/covers_closed.py census/src/* UC-ops-detection-remediation-11 UC-ops-detection-remediation-13 UC-ops-detection-remediation-14 UC-ops-detection-remediation-15
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 lack() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in [$3]" ;; *) ok "$1" ;; esac; }
 
 CENSUS_DIR="$HERE/census"
-CENSUS="$HERE/census.sh"
+CENSUS="$(command -v census)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
 echo "test-census-pipeline.sh"
@@ -218,7 +218,7 @@ run_census_fake() {   # run_census_fake <SPIRA_RUN> [census-args...]
         SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S="${SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S:-120}" \
         CENSUS_OPEN_JSON="${CENSUS_OPEN_JSON:-}" \
         CENSUS_CLOSED_JSON="${CENSUS_CLOSED_JSON:-}" \
-        bash "$CENSUS" "$@"
+        "$CENSUS" "$@"
 }
 
 nowm_out="$(run_census_fake "$RUN_NO_WM" 2>"$T/nowm.stderr")"
@@ -322,7 +322,15 @@ want "substrate clock genuinely 600s off true UTC: measured skew named on stderr
     "600" "$(cat "$T/realfault.stderr")"
 
 # The refusal condition itself no longer references NOW() anywhere in the source.
-lack "skew guard source no longer references NOW()" "NOW()" "$(cat "$CENSUS")"
+# `census` is a compiled binary now (sp-yyk47); the clock-skew guard's own source lives in
+# census/src/real.rs (the crate this checkout's census.sh was retired into), not in a
+# script this suite can `cat`.
+CENSUS_CLOCK_SRC="$(cd "$HERE/.." && pwd -P)/census/src/real.rs"
+if [ -f "$CENSUS_CLOCK_SRC" ]; then
+    lack "skew guard source no longer references NOW()" "NOW()" "$(cat "$CENSUS_CLOCK_SRC")"
+else
+    echo "  SKIP  census/src/real.rs not found at $CENSUS_CLOCK_SRC — cannot check the clock-skew guard's own source"
+fi
 
 # A control that cannot check must refuse (law-a-control-that-cannot-check-must-refuse):
 # the skew query itself failing is not read as "in sync".

@@ -804,7 +804,7 @@ fi
 DRAIN_WARN_MINS="${SPIRA_DRAIN_WARN_MINS:-15}"
 
 # ---------------------------------------------------------------------------------------
-# FAILED SYSTEMD UNITS (sp-niqjl). doctor.sh's doctor_check_failed_units does the one-pass
+# FAILED SYSTEMD UNITS (sp-niqjl). doctor's doctor_check_failed_units does the one-pass
 # read of `systemctl --user list-units --state=failed`; this is that same read, direct
 # rather than through the collector, because the escalation below needs the CURRENT list,
 # not a snapshot that could be stale by exactly the margin an unwatched failing unit sat
@@ -1362,7 +1362,7 @@ fi
 # hotfix stands and whether it has stood past the configured alert threshold (spira.
 # hotfix_alert_hours, default 4h) — this reads its ALERT line rather than re-deriving the
 # age from $SPIRA_RUN/release/hotfix or computing a threshold of its own, same rule as
-# doctor.sh and the cockpit pane.
+# doctor and the cockpit pane.
 #
 # FILED ONCE PER HOTFIX. SPIRA_INCIDENT_REF is keyed on the standing commit
 # (incident:hotfix-<sha>), so incident.sh's own dedup bumps a recurrence on every sweep

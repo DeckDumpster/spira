@@ -7,7 +7,7 @@
 #
 # WHAT THIS TESTS
 # ---------------
-# gate.sh calls `skew.sh foreign <repo> <base> <ref>` to refuse any branch that changes a
+# gate.sh calls `skew foreign <repo> <base> <ref>` to refuse any branch that changes a
 # COPY of the harness in a repository that is not the harness's own. Correct work landing
 # there would pass its gate, close its bead naming a real commit, and never run — because
 # the tree that was edited is self-consistent and nothing compares the two.
@@ -26,7 +26,7 @@
 #
 # defect: sp-37q (test-skew.sh deleted in 7357fb3 when the full gate was removed; this
 #   recovers the foreign-subcommand coverage that gate.sh still relies on)
-# covers: spira/skew.sh spira/gate.sh spira/exclude.sh
+# covers: skew/src/* spira/gate.sh spira/exclude.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -36,7 +36,10 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 
 SH="$TMP/spira"; RUN="$TMP/run"; WS="$TMP/ws"
 mkdir -p "$SH" "$RUN" "$WS"
-cp "$HERE/conf.sh" "$HERE/lib.sh" "$HERE/exclude.sh" "$HERE/skew.sh" "$SH/"
+cp "$HERE/conf.sh" "$HERE/lib.sh" "$HERE/exclude.sh" "$SH/"
+# `skew` is a compiled binary now (sp-yyk47): copy the one already built for this branch
+# (found on the script's own, unmodified PATH) rather than a source file beside this suite.
+cp "$(command -v skew)" "$SH/skew"
 
 # The harness signature is three files together. This suite plants them using the real
 # exclude.sh matcher so a change to the signature fails here rather than passing here
@@ -77,7 +80,7 @@ export SPIRA_CONF=/nonexistent-spira-conf
 export SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB=/nonexistent-spira-db
 export SPIRA_REPO="$WS/home" SPIRA_HOME_REPO=home
 
-SKEW="$SH/skew.sh"
+SKEW="$SH/skew"
 
 echo "test-skew-foreign.sh"
 
@@ -187,7 +190,7 @@ want "and the refusal names the directory being added"           "vendor/spira" 
 
 # =======================================================================================
 # Initialization failure — conf.sh exits 1 (e.g., bd migrate schema fails due to a
-# database lock). skew.sh must exit 3 ("could not check"), never 1 ("foreign found"),
+# database lock). skew must exit 3 ("could not check"), never 1 ("foreign found"),
 # so gate.sh classifies it as a machinery fault rather than a foreign-harness refusal.
 # (class: sp-gate-conf-fail-as-foreign-harness)
 # =======================================================================================
@@ -196,10 +199,13 @@ echo "foreign — conf.sh init failure exits 3, not 1:"
 
 # A fixture spira directory with a conf.sh that calls exit 1, simulating the path that
 # fires when bd migrate schema fails due to a database lock. lib.sh sources conf.sh, so
-# conf.sh calling exit 1 exits the skew.sh process with status 1 — exactly the failure
-# mode this fix exists to reclassify as exit 3.
+# conf.sh calling exit 1 exits the whole process with status 1 — exactly the failure mode
+# this fix exists to reclassify as exit 3. `skew` checks this once, before dispatch
+# (`lib_sh_sources`, skew/src/real.rs), the same place skew.sh's own `trap ... EXIT` around
+# its `. lib.sh` fired.
 mkdir -p "$TMP/broken-spira"
-cp "$HERE/lib.sh" "$HERE/exclude.sh" "$HERE/skew.sh" "$TMP/broken-spira/"
+cp "$HERE/lib.sh" "$HERE/exclude.sh" "$TMP/broken-spira/"
+cp "$(command -v skew)" "$TMP/broken-spira/skew"
 # suite-covers.sh is sourced by lib.sh; provide an empty stub.
 : > "$TMP/broken-spira/suite-covers.sh"
 printf '# broken conf.sh — simulates bd migrate schema failure\nexit 1\n' \
@@ -207,7 +213,7 @@ printf '# broken conf.sh — simulates bd migrate schema failure\nexit 1\n' \
 SPIRA_CONF=/nonexistent-spira-conf \
 SPIRA_HOME="$TMP/broken-spira" PATH="$TMP/broken-spira:$PATH" SPIRA_RUN="$RUN" SPIRA_DB=/nonexistent-spira-db \
 SPIRA_REPO="$WS/home" SPIRA_HOME_REPO=home \
-    bash "$TMP/broken-spira/skew.sh" foreign "$WS/guest" main touches-harness >/dev/null 2>&1
+    "$TMP/broken-spira/skew" foreign "$WS/guest" main touches-harness >/dev/null 2>&1
 is "an init failure (conf.sh exit 1) exits 3, not 1" 3 "$?"
 
 tl_summary

@@ -144,8 +144,15 @@ want "and the fence says so" "make build ok" "$out"
 # (`cargo test -p gate`, compose.rs and tests.rs) cover the drop.
 # =========================================================================================
 echo "6. gate integration:"
-dr="$(cat "$HERE/doctor.sh")"
-want "doctor.sh requires the gate string to name build-fence.sh" '*build-fence.sh*)' "$dr"
+# `doctor` is a compiled binary now (sp-yyk47); its gate-compile-check lives in
+# doctor/src/lib.rs (this checkout's doctor.sh was retired into the `doctor` crate).
+DOCTOR_GATE_CHECK_SRC="$(cd "$HERE/.." && pwd -P)/doctor/src/lib.rs"
+if [ -f "$DOCTOR_GATE_CHECK_SRC" ]; then
+    dr="$(cat "$DOCTOR_GATE_CHECK_SRC")"
+    want "doctor requires the gate string to name build-fence.sh" 'build-fence.sh' "$dr"
+else
+    echo "  SKIP  doctor/src/lib.rs not found at $DOCTOR_GATE_CHECK_SRC — cannot check the gate-compile-check's own source"
+fi
 is "build-fence.sh is executable" "0" "$([ -x "$HERE/build-fence.sh" ]; echo $?)"
 
 tl_summary

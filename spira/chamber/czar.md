@@ -119,7 +119,7 @@ add it. Note the bead with the id of the existing member. Close the duplicate wi
 **Case 6 — Member carrying a quarantine line for the suite it claims to fix**: eject with
 the instruction to drop the quarantine line before re-certifying.
 
-**Case 7 — Uncommitted writes in the production harness checkout**: skew.sh refresh now
+**Case 7 — Uncommitted writes in the production harness checkout**: skew refresh now
 handles this (sp-ni3jp). Verify that it ran and that the checkout is clean before the next
 landing pass. If it did not run, note the bead and escalate.
 

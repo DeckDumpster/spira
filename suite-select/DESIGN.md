@@ -82,7 +82,7 @@ mode; the file buckets; the options.
 
 1. **Buckets** (`SPIRA_SELECT_INERT` default `*.md *.txt`; `SPIRA_SELECT_SOURCE` default
    `spira/*.sh`; `SPIRA_SELECT_PLUMBING` default `Makefile Cargo.toml Cargo.lock
-   */Cargo.toml install.sh systemd/* spira/conf.sh spira/lib.sh spira/skew.sh
+   */Cargo.toml install.sh systemd/* spira/conf.sh spira/lib.sh skew/src/*
    spira/testenv*.sh .github/*`). Inert files are dropped. No live file left: only the
    always-run suites (no `# covers:`), mode `diff`.
 2. **Covers match.** For each live file, each suite whose `# covers:` has a glob matching it

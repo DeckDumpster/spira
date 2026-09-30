@@ -1,0 +1,18 @@
+[package]
+name = "census"
+version = "1.0.0"
+edition = "2021"
+description = "census — Maechen census: failure classes ranked, with open-remedy suppression. Replaces spira/census.sh."
+
+[lib]
+name = "census"
+path = "src/lib.rs"
+
+[[bin]]
+name = "census"
+path = "src/main.rs"
+
+[dependencies]
+
+[profile.release]
+opt-level = "z"

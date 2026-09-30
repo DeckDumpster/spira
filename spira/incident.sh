@@ -151,7 +151,7 @@ mkdir -p "$SPOOL" "$(dirname "$ILOG")"
 
 ilog() { printf '%s incident: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$ILOG"; }
 # CAUSE OMISSION IS VISIBLE. A producer that does not set SPIRA_INCIDENT_CAUSE is noticed
-# at filing time rather than silently widening the "unrecorded" bucket in census.sh.
+# at filing time rather than silently widening the "unrecorded" bucket in census.
 [ "$INCIDENT_CAUSE" = "unrecorded" ] && ilog "warning: SPIRA_INCIDENT_CAUSE not set for ${SPIRA_INCIDENT_REF:-(unknown ref)} — recurrence will be recorded as 'unrecorded'; add SPIRA_INCIDENT_CAUSE=<slug> to the producer's env block"
 
 # Deterministic 8-char hex label token for an external_ref string. sha256sum is standard

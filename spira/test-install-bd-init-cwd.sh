@@ -39,13 +39,13 @@ SYSTEMD_DIR="$FIXTURE/systemd"
 COCKPIT_DIR="$FIXTURE/cockpit"
 mk_install_fixture "$FIXTURE" "$TMP"
 
-cat > "$SPIRA_DIR/doctor.sh" <<'EOF'
+cat > "$SPIRA_DIR/doctor" <<'EOF'
 #!/usr/bin/env bash
 echo "spira doctor"
 echo "  ok    stub — all checks passed"
 exit 0
 EOF
-chmod +x "$SPIRA_DIR/doctor.sh"
+chmod +x "$SPIRA_DIR/doctor"
 
 cat > "$SPIRA_DIR/configure.sh" <<'EOF'
 #!/usr/bin/env bash

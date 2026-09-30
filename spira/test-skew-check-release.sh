@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tier: T2
 #
-# test-skew-check-release.sh — skew.sh check asks whether the activated release is the
+# test-skew-check-release.sh — skew check asks whether the activated release is the
 # latest published and whether its MANIFEST commit matches its release tag.
 #
 # WHAT THIS SUITE IS FOR
@@ -20,7 +20,7 @@
 # THE FIXTURE IS A REAL GIT REPO with real annotated tags so the check can resolve
 # commits from release tags. Timestamps are fixed strings for determinism.
 #
-# covers: spira/skew.sh
+# covers: skew/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -104,7 +104,7 @@ run_skew() {
     run_dir="$(mktemp -d "$TMP/run-XXXXX")"
 
     # Use the test-specific RELEASES set up by reset_releases, not a new isolated copy.
-    # This allows test blocks to control what scenario skew.sh sees.
+    # This allows test blocks to control what scenario skew sees.
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
@@ -115,7 +115,7 @@ run_skew() {
         SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$RELEASES" \
         "${@}" \
-        skew.sh check 2>&1
+        skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -216,7 +216,7 @@ run_skew_noart() {
         SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$releases_dir" \
         "${@}" \
-        skew.sh check 2>&1
+        skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -288,7 +288,7 @@ run_skew_artifact() {
         SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$RELEASES" \
         "${@}" \
-        skew.sh check 2>&1
+        skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -449,7 +449,7 @@ run_skew_checkout() {
         SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$RELEASES_CK" \
         "${@}" \
-        skew.sh check 2>&1
+        skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 

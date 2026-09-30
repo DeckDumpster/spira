@@ -5,9 +5,9 @@
 # WHY IT EXISTS. A rebuild that installs bd at a different migration count from the
 # database cursor causes bd to exit 0 with its complaint on stdout — callers that check
 # exit status read success and parse the error as data. Pinning the known migration count
-# after every install makes an unannounced rebuild visible to doctor.sh before the loop
+# after every install makes an unannounced rebuild visible to doctor before the loop
 # tries to run (see the SPIRA_BD_PIN key in conf.sh and the "bd schema" section in
-# doctor.sh).
+# doctor).
 #
 #   bd-pin.sh show   — print the recorded pin (default)
 #   bd-pin.sh write  — record current bd state to the pin file
@@ -21,7 +21,7 @@
 # build opens an embedded engine that does not talk to the existing server, and the two
 # can diverge silently. The pin file records both so neither fact has to be re-derived.
 #
-# covers: spira/conf.sh spira/doctor.sh
+# covers: spira/conf.sh doctor/src/*
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/conf.sh"
 

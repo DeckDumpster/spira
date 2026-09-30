@@ -296,17 +296,17 @@ impl<'w, W: World> Trial<'w, W> {
                 "gate: {br} would land beads data in the harness tree:\n{}\ngate: a beads database is never public and belongs in no shared repository.\ngate: remove them from the branch — there is no override for this one.",
                 listed.join("\n")));
         }
-        let Some(skew) = w.which("skew.sh") else {
+        let Some(skew) = w.which("skew") else {
             return v(
                 NOVERDICT,
                 "missing-skew",
-                "gate: skew.sh is not on PATH — refusing to land unchecked".to_string(),
+                "gate: skew is not on PATH — refusing to land unchecked".to_string(),
             );
         };
         let (skew_rc, skew_out) = w.skew_foreign(&skew, &repo, &base_rev, &br);
         if skew_rc == 3 {
             return v(NOVERDICT, "skew-init-fault", format!(
-                "gate: skew.sh could not initialize — conf.sh or the database may be unavailable.\ngate: the foreign-harness check did not run; this is a machinery fault, not a branch fault.\n{skew_out}"));
+                "gate: skew could not initialize — conf.sh or the database may be unavailable.\ngate: the foreign-harness check did not run; this is a machinery fault, not a branch fault.\n{skew_out}"));
         }
         if skew_rc != 0 {
             return v(

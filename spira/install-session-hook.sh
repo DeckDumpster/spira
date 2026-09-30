@@ -37,7 +37,7 @@
 # and nothing that lands in this repository can change it. A registration done by hand is done
 # once and then rots invisibly — the failure being fixed here is a hook still bound to a path
 # whose harness had been decommissioned, printing its banner into every session on the box.
-# `status` is the check, and `doctor.sh` runs it.
+# `status` is the check, and `doctor` runs it.
 #
 # IT MANAGES ITS OWN ENTRIES AND NOBODY ELSE'S. `install` replaces Spira's and reports any
 # other command registered on the same events rather than removing it — deleting somebody

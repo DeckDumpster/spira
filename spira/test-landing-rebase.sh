@@ -11,7 +11,7 @@
 #
 # Extracted from test-landing.sh to reduce the critical-path suite time.
 #
-# covers: landing-pass/* spira/lib.sh spira/skew.sh
+# covers: landing-pass/* spira/lib.sh skew/src/*
 # timeout: 240
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

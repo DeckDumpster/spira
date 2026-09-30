@@ -21,7 +21,7 @@
 # SKIP CONDITION: none. Only bash and the filesystem are needed.
 #
 # defect: sp-qwmj (this suite was rewritten for sp-utt1i: doctor-check.sh reads conf.sh's
-# deps.toml manifest now, not doctor.sh's own program loops — doctor.sh no longer carries
+# deps.toml manifest now, not doctor's own program loops — doctor no longer carries
 # build-input checks at all)
 # tier: T1
 # covers: spira/testenv/doctor-check.sh spira/testenv/Containerfile spira/conf.sh

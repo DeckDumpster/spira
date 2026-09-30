@@ -34,9 +34,9 @@
 #   <fixture-root>/{systemd,spira,cockpit} symlinked to the real sources, spira/statutes/,
 #   and a fake git origin+repo under <tmp-root> with origin/HEAD set, so the landref check
 #   passes. Sets FAKE_ORIGIN and FAKE_REPO for the caller. Callers still write their own
-#   doctor.sh/configure.sh/build.sh/seed.sh/ready.sh/install-session-hook.sh/install-intake.sh/
+#   doctor/configure.sh/build.sh/seed.sh/ready.sh/install-session-hook.sh/install-intake.sh/
 #   cockpit/layout.sh and mock systemctl/loginctl/tmux/bd — those differ suite to suite (a
-#   passing doctor.sh here, a DOCTOR_FAIL_FLAG-gated one there) and are each suite's own.
+#   passing doctor here, a DOCTOR_FAIL_FLAG-gated one there) and are each suite's own.
 
 _LIB_INSTALL_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 

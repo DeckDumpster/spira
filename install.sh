@@ -20,7 +20,7 @@
 # NON-INTERACTIVE: every prompt has an env-var path (see configure.sh --help).
 #
 # PHASES
-#   0.   preflight  — doctor.sh; any fatal stops the install             exits 1
+#   0.   preflight  — doctor; any fatal stops the install             exits 1
 #   0.5  conflicts  — five checks; each exits 5 with its remedy;
 #                     override: SPIRA_INSTALL_CONFLICT_CONSIDERED=1
 #   1.   config     — configure.sh; never overwrites an existing file
@@ -34,7 +34,7 @@
 #
 # EXIT CODES
 #   0  ready — ready.sh passes (warns are allowed)
-#   1  preflight refused — the box is missing something doctor.sh can name
+#   1  preflight refused — the box is missing something doctor can name
 #   2  a phase failed
 #   3  installed but NOT ready — ready.sh exited non-zero
 #   5  conflict — the box needs attention before a fresh install:
@@ -67,7 +67,7 @@
 #       rm -rf /tmp/aws /tmp/awscliv2.zip /tmp/awscliv2.zip.sig
 #
 #     Verify: aws --version  (must show aws-cli/2.x)
-#     doctor.sh reports its version and warns when absent.
+#     doctor reports its version and warns when absent.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
@@ -217,7 +217,7 @@ _conflict_report() {
 # _conflict_foreign <unitdir> <our-home> <instance> <units-lib>
 # -> 0 clear, 5 (refuse) when the installed sentinel unit's ExecStart resolves
 # to a different SPIRA_HOME. A second harness copy owning these unit names is
-# the skew skew.sh reports hourly.
+# the skew check reports hourly.
 _conflict_foreign() {
     local unitdir="$1" our_home="$2" instance="$3" units_lib="$4"
     local inst_unit inst_file inst_exec inst_exec_dir inst_real our_real
@@ -429,10 +429,10 @@ _phase_fail() {
 }
 
 # ---------------------------------------------------------------------------
-# PHASE 0 — PREFLIGHT (doctor.sh)
+# PHASE 0 — PREFLIGHT (doctor)
 # ---------------------------------------------------------------------------
 phase_start "phase 0: preflight"
-_doctor_out="$(SPIRA_DOCTOR_INSTALLING=1 doctor.sh 2>&1)"
+_doctor_out="$(SPIRA_DOCTOR_INSTALLING=1 doctor 2>&1)"
 _doctor_rc=$?
 printf '%s\n' "$_doctor_out" | sed 's/^/  /'
 if [ "$_doctor_rc" != 0 ]; then

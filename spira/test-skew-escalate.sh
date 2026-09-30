@@ -7,7 +7,7 @@
 #
 # WHAT THIS SUITE IS FOR
 # ----------------------
-# escalate() in skew.sh was swallowing both streams of the mail.sh call
+# escalate() in skew was swallowing both streams of the mail.sh call
 # (>/dev/null 2>&1), so a failing send produced no output in skew.log and the
 # divergence went unreported for an entire day while the timer ran every hour.
 # This suite proves the fix: a failing send, and a missing mail.sh path, both
@@ -25,7 +25,7 @@
 # (law-gates-run-in-a-clean-environment).
 #
 # tier: T1
-# covers: spira/skew.sh UC-operator-channel-25
+# covers: skew/src/* UC-operator-channel-25
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -67,7 +67,7 @@ printf 'commit %s\ntimestamp %s\n' "$COMMIT2" "$TS2" > "$RELEASES/spira-${TS2}/M
 # Activate the older release so check() finds NOT-LATEST and calls escalate().
 ln -s "spira-${TS1}" "$RELEASES/current"
 
-# A skew.sh runner with an explicit minimal environment. Each call uses its own
+# A skew runner with an explicit minimal environment. Each call uses its own
 # SPIRA_RUN directory so the dedupe stamp never suppresses a second escalation
 # in the same test run. HOME is required by conf.sh for the SPIRA_DB default.
 #
@@ -86,7 +86,7 @@ run_skew() {
         SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$RELEASES" \
         "${@}" \
-        skew.sh check --escalate 2>&1
+        skew check --escalate 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -102,7 +102,7 @@ run_skew_ro() {
         SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$RELEASES" \
         "${@}" \
-        skew.sh check 2>&1
+        skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -117,7 +117,7 @@ run_skew_shared() {
         SPIRA_TESTDB_DATA="" \
         SPIRA_RELEASES="$RELEASES" \
         "${@}" \
-        skew.sh check --escalate 2>&1
+        skew check --escalate 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 

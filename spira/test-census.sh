@@ -15,7 +15,7 @@
 # bd list against a real store.
 #
 # tier: T3
-# covers: spira/census.sh spira/census/deliberate.py spira/lib.sh UC-ops-detection-remediation-07 UC-ops-detection-remediation-12 UC-ops-detection-remediation-14
+# covers: census/src/* spira/census/deliberate.py spira/lib.sh UC-ops-detection-remediation-07 UC-ops-detection-remediation-12 UC-ops-detection-remediation-14
 # hermetic-ok: uses a fixture database; no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -42,7 +42,7 @@ _PRE_LIB_SPIRA_DB="$SPIRA_DB"
 . "$HERE/lib.sh"
 SPIRA_DB="$_PRE_LIB_SPIRA_DB"; unset _PRE_LIB_SPIRA_DB
 
-CENSUS="$HERE/census.sh"
+CENSUS="$(command -v census)"
 B() { bd -C "$SPIRA_DB" "$@"; }
 REMEDY_LABEL=maechen-remedy
 
@@ -52,7 +52,7 @@ run_census() {
         SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$HERE" \
         SPIRA_RUN="${_CENSUS_RUN:-$TMP/no-run}" \
-        bash "$CENSUS" "$@" 2>/dev/null
+        "$CENSUS" "$@" 2>/dev/null
 }
 
 run_census_repo() {  # run_census_repo <repo-path> [census-args...]
@@ -62,7 +62,7 @@ run_census_repo() {  # run_census_repo <repo-path> [census-args...]
         SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$_rp" \
-        bash "$CENSUS" "$@" 2>/dev/null
+        "$CENSUS" "$@" 2>/dev/null
 }
 
 plant_bead() {  # plant_bead <title> → bead id on stdout
@@ -211,7 +211,7 @@ run_census_fixture() {
         SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$FIXTURE_REPO" \
-        bash "$CENSUS" "$@" 2>/dev/null
+        "$CENSUS" "$@" 2>/dev/null
 }
 
 B close "$remedy_id" --reason "test: verify closed remedy still suppresses" --force >/dev/null 2>&1

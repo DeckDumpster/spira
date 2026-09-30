@@ -1,0 +1,18 @@
+[package]
+name = "skew"
+version = "1.0.0"
+edition = "2021"
+description = "skew — is the activated release the latest published, and the landing gate's foreign-harness fence. Replaces spira/skew.sh."
+
+[lib]
+name = "skew"
+path = "src/lib.rs"
+
+[[bin]]
+name = "skew"
+path = "src/main.rs"
+
+[dependencies]
+
+[profile.release]
+opt-level = "z"

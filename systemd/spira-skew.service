@@ -4,7 +4,7 @@
 # the harness exists in two trees, correct work lands in one and the other goes on running,
 # with every check passing because the tree that was edited is self-consistent.
 Description=Spira skew — is the harness in force the harness that landed?
-Documentation=file://@SPIRA_HOME@/skew.sh
+Documentation=file://@SPIRA_PROD_ROOT@/skew/DESIGN.md
 After=default.target
 
 [Service]
@@ -15,21 +15,28 @@ After=default.target
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
-# ADVANCE THE CHECKOUT BEFORE CHECKING IT. The landing pass calls 'skew.sh refresh' on every
+# ADVANCE THE CHECKOUT BEFORE CHECKING IT. The landing pass calls 'skew refresh' on every
 # merge, which keeps the checkout current under normal operation. This ExecStartPre is the
 # safety net for when the landing pass is stopped: the skew timer then becomes the only path
 # that advances the checkout, and it advances it here, before the STALE check that depends on
 # it being current. The '-' prefix makes this non-fatal: a dirty tree, a non-fast-forward, or
 # a network failure still lets the check run and report what it found.
-ExecStartPre=-@SPIRA_PROD@/skew.sh refresh
-# @SPIRA_HOME@ is correct here even in split-checkout mode. If this used @SPIRA_PROD@,
-# skew.sh would run with SPIRA_REPO = the prod checkout root; the repo-map entry for
+#
+# `skew` is a compiled binary now (sp-yyk47), invoked from the release root's bin/
+# (`@SPIRA_PROD_ROOT@/bin/skew`, the same convention `spira-landing-pass.service` uses) —
+# never `@SPIRA_PROD@/skew` or `@SPIRA_HOME@/skew` by path, both of which named the retired
+# script's location, not the binary's. What stays load-bearing from the bash era is
+# SPIRA_HOME, set explicitly below, not the path skew was invoked from.
+Environment=SPIRA_HOME=@SPIRA_HOME@
+ExecStartPre=-@SPIRA_PROD_ROOT@/bin/skew refresh
+# @SPIRA_HOME@ is correct here even in split-checkout mode. If SPIRA_HOME were @SPIRA_PROD@,
+# skew would run with SPIRA_REPO = the prod checkout root; the repo-map entry for
 # "spira" would then point at the dev checkout, which copies() would classify as a second
-# harness copy — a false COPY finding on every run. Running from @SPIRA_HOME@ sets
+# harness copy — a false COPY finding on every run. Running with SPIRA_HOME=@SPIRA_HOME@ sets
 # SPIRA_REPO = the dev checkout root; the repo-map "spira" entry is "self"; no COPY.
 # In single-checkout mode @SPIRA_HOME@ = @SPIRA_PROD@ so this is a no-op.
-ExecStart=@SPIRA_PROD@/skew.sh check --escalate
-# DIVERGENCE IS NOT A UNIT FAILURE. skew.sh exits 1 when it found something and has already
+ExecStart=@SPIRA_PROD_ROOT@/bin/skew check --escalate
+# DIVERGENCE IS NOT A UNIT FAILURE. skew exits 1 when it found something and has already
 # put the decision in front of the operator; leaving the unit red on top of that is a second
 # alert for one condition, and a unit permanently red is one whose next genuine failure
 # nobody looks at (law-alerts-must-be-actionable). Exit 3 — could not check — stays a

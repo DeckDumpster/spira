@@ -30,7 +30,11 @@ gate_fixture_init() {
     REL="$tmp/rel"; mkdir -p "$REL"
     ln -sfn "$GATE_PATH_DIR" "$REL/bin"; ln -sfn "$SH" "$REL/spira"
     cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" \
-       "$HERE/skew.sh" "$HERE/yield.sh" "$HERE/suite-covers.sh" "$HERE/gate-sweep.sh" "$SH/"
+       "$HERE/yield.sh" "$HERE/suite-covers.sh" "$HERE/gate-sweep.sh" "$SH/"
+    # `skew` is a compiled binary now (sp-yyk47): reached via `$REL/bin` (GATE_PATH_DIR,
+    # above), never copied here — gate passes SPIRA_HOME="$SH" explicitly when it execs
+    # skew (gate/src/real.rs's skew_foreign), so it finds this fixture's lib.sh/conf.sh
+    # regardless of where cargo actually built the binary.
     export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
     git init -q --bare -b main "$REMOTE"
     git init -q -b main "$REPO"

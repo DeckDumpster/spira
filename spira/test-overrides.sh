@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# test-overrides.sh — operator overrides are a harness concept: `skew.sh refresh` re-applies
+# test-overrides.sh — operator overrides are a harness concept: `skew refresh` re-applies
 # them the instant it resets a checkout, and a declared override retires once HEAD carries a
 # `spira: land <bead>` commit.
 #
-# covers: spira/overrides.sh spira/skew.sh spira/doctor.sh
+# covers: spira/overrides.sh skew/src/* doctor/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -53,7 +53,7 @@ run_skew_cmd() {
         SPIRA_OVERRIDES="$OVDIR" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
-        skew.sh "$@" 2>&1
+        skew "$@" 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 

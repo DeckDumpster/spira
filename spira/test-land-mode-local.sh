@@ -134,7 +134,7 @@ mkdir -p "$E_RUN/worktree" "$E_SH"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$E_SH/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$E_SH/gate.sh"; chmod +x "$E_SH/gate.sh"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$E_SH/confine.sh"; chmod +x "$E_SH/confine.sh"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$E_SH/skew.sh"; chmod +x "$E_SH/skew.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$E_SH/skew"; chmod +x "$E_SH/skew"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$E_SH/bd-stub.sh"; chmod +x "$E_SH/bd-stub.sh"
 
 # fixture 1: an ordinary queue.forge repo, real origin, one unlanded branch — must fetch origin.

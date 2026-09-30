@@ -14,7 +14,7 @@
 #   --repo-name <name>: the identity stamped into MANIFEST's `repo` line (see below).
 #   --release-repo <owner/repo>: the forge repository that publishes this release, stamped
 #     into MANIFEST's `release-repo` line; conf.sh reads it back as SPIRA_RELEASE_REPO when
-#     nothing sets that, so an installed release always has a release source for skew.sh.
+#     nothing sets that, so an installed release always has a release source for skew.
 #   Legacy: --loom-bin, --panel-bin, --broker-bin, --supervise-bin, --landing-pass-bin,
 #   --reconciler-flow-bin still accepted.
 #

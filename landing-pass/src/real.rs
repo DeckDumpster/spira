@@ -701,7 +701,8 @@ impl Tools for RealTools {
         Ok(s.lines().map(String::from).collect())
     }
     fn skew_refresh(&self, repo: &Path) -> String {
-        let mut c = command("skew.sh");
+        // `skew` is a compiled binary now (sp-yyk47), same bare-name PATH resolution.
+        let mut c = command("skew");
         c.arg("refresh").arg(repo);
         combined(c).1.trim_end_matches('\n').to_string()
     }

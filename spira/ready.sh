@@ -3,7 +3,7 @@
 # ready.sh — the postflight. Answers exactly one question: can this installation
 # receive work right now?
 #
-# doctor.sh is the preflight and stays read-only; this is the armed check it does not
+# doctor is the preflight and stays read-only; this is the armed check it does not
 # make. Run it after install, or after any state change that could prevent the loop
 # from receiving work.
 #
@@ -207,7 +207,7 @@ fi
 echo ""
 echo "loom"
 # =============================================================================
-# Probe Loom at $SPIRA_LOOM_ADDR/api/beads. python3 is a fatal doctor.sh requirement
+# Probe Loom at $SPIRA_LOOM_ADDR/api/beads. python3 is a fatal doctor requirement
 # so it is always available. SPIRA_LOOM_PROBE overrides the HTTP call for test fixtures.
 _loom_url="http://$SPIRA_LOOM_ADDR/api/beads"
 # loom is in every release's bin/ (sp-gypjk): there is no "not built" state to skip on.

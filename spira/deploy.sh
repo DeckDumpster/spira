@@ -33,7 +33,7 @@
 #   4. Fetch the release tarball from the forge.
 #   5. Check DB migration compatibility before drain.
 #   6. Stop the promote timer (retired by this command).
-#   7. Pre-deploy health check: run doctor.sh; refuse if any FAIL (pre-existing issue, not release).
+#   7. Pre-deploy health check: run doctor; refuse if any FAIL (pre-existing issue, not release).
 #   8. world.sh drain — wait for live aeons to finish; refuse if they do not.
 #      With --force: drain --timeout 0, then slay each live aeon (--keep-work --reopen).
 #   9. Write SPIRA_PROD to spira.conf before restarting services.
@@ -42,7 +42,7 @@
 #      set to the release, so unit ExecStart paths are not stamped from the invoking directory.
 #  12. cockpit/layout.sh ensure.
 #  13. world.sh resume.
-#  14. Health check: world.sh status, doctor.sh, skew.sh check.
+#  14. Health check: world.sh status, doctor, skew check.
 #      On failure: restore prior state, restart, resume, exit 1 naming what failed.
 #
 # EXIT
@@ -77,8 +77,8 @@ _WORLD="${SPIRA_WORLD_SH:-world.sh}"
 _ACTIVATE="${SPIRA_ACTIVATE_SH:-release}"
 _INSTALL="${SPIRA_INSTALL_SH:-$HERE/../systemd/install.sh}"
 _COCKPIT="${SPIRA_COCKPIT_LAYOUT_SH:-$HERE/../cockpit/layout.sh}"
-_DOCTOR="${SPIRA_DOCTOR_SH:-doctor.sh}"
-_SKEW="${SPIRA_SKEW_SH:-skew.sh}"
+_DOCTOR="${SPIRA_DOCTOR_SH:-doctor}"
+_SKEW="${SPIRA_SKEW_SH:-skew}"
 _SLAY="${SPIRA_SLAY_SH:-slay.sh}"
 _CTRL="${SPIRA_CTRL_SH:-ctrl.sh}"
 
@@ -450,7 +450,7 @@ _render_release_units() {
         bash "${SPIRA_INSTALL_SH:-$SPIRA_RELEASES/current/systemd/install.sh}"
 }
 
-# _activated_release_cmd <cmd> [args...] — run a release-relative tool (doctor.sh, skew.sh)
+# _activated_release_cmd <cmd> [args...] — run a release-relative tool (doctor, skew)
 # against $SPIRA_RELEASES/current under the SAME pinning _render_release_units uses, rather
 # than this process's own ambient PATH/conf.sh state.
 #
@@ -460,7 +460,7 @@ _render_release_units() {
 # before this same run swapped current to the incoming release. A predecessor's conf.sh
 # that predates the launcher-PATH invariant (sp-gypjk: the launcher's bin/ and spira/ come
 # first and are never rewritten) can instead OVERWRITE $PATH wholesale, and every bare-name
-# call this process makes for the rest of its life — doctor.sh, skew.sh — then resolves
+# call this process makes for the rest of its life — doctor, skew — then resolves
 # through whatever the box happens to fall back to, not the release under test. Health-
 # checking then judged a manifest that was never the one just activated: a release that
 # added spira-watch-inbox-keeper/pr-notify/publish-backlog read back as ORPHANS with "no
@@ -641,7 +641,7 @@ _deploy_failed=""
     || _deploy_failed="${_deploy_failed:+$_deploy_failed, }world status"
 _skew_out="$(_activated_release_cmd "$_SKEW" check 2>/dev/null)"
 _skew_exit=$?
-# AN OLDER RELEASE THE OPERATOR NAMED IS NOT-LATEST BY CONSTRUCTION. skew.sh check answers
+# AN OLDER RELEASE THE OPERATOR NAMED IS NOT-LATEST BY CONSTRUCTION. skew check answers
 # NOT-LATEST (exit 1) whenever a newer release tag exists — exactly the state a deliberate
 # rollback to a named release produces — and reading it as a failed health check undid every
 # such rollback (acceptance phase C, 2026-09-26). Accepted ONLY when the finding is nothing
@@ -662,7 +662,7 @@ if [ "$_skew_exit" -eq 1 ] && [ "$_named_tag" = 1 ] \
 fi
 unset _skew_newer
 # THE SKEW UNIT IS THE SAME CHECK, ON A TIMER. Under the named older release its own
-# spira-skew unit runs skew.sh check, gets the same NOT-LATEST, exits 1 and sits failed; the
+# spira-skew unit runs skew check, gets the same NOT-LATEST, exits 1 and sits failed; the
 # re-run above cannot help, because it fails again for the same expected reason, and doctor
 # then counted it as a failed unit and rolled the deliberate rollback back (acceptance
 # phase C, 2026-09-27: "spira-skew-prod.service fails again … ROLLBACK — doctor"). The

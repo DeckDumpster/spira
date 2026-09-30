@@ -7,14 +7,14 @@
 # refused before anything changes; a failed build leaves current alone, keeps the landing
 # and exits non-zero; with no release in force the release is built and verified but not
 # activated; rollback re-activates the previous release and resets the ref to its archived
-# head; skew.sh refresh, under queue.local, only checks current against local/main's head.
+# head; skew refresh, under queue.local, only checks current against local/main's head.
 #
 # WHY THIS MATTERS: the running system executes exactly one thing, the active release.
 # Every assertion below is either "the activated bin/ is this round's own corpus, byte for
 # byte, and the units name its release" or "a failure is reported and current did not move".
 #
 # tier: T1
-# covers: queue/src/* release/src/* spira/skew.sh spira/lib.sh
+# covers: queue/src/* release/src/* skew/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -127,7 +127,7 @@ run_skew() {
     SPIRA_RUN="$RUN" \
     SPIRA_REPO_MAP="$RMAP" \
     SPIRA_RELEASES="$RELEASES" \
-        PATH="$SH:$PATH" skew.sh "$@" 2>&1
+        PATH="$SH:$PATH" skew "$@" 2>&1
 }
 localmain() { git -C "$REPO" rev-parse local/main; }
 current_name() { readlink "$RELEASES/current" 2>/dev/null; }

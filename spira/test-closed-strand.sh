@@ -42,7 +42,10 @@ git -C "$REPO" remote set-head origin main
 mkdir -p "$RUN/worktree" "$RUN/landstate" "$SH/chamber"
 
 cp "$HERE/lib.sh" "$HERE/conf.sh" \
-   "$HERE/incident.sh" "$HERE/skew.sh" "$HERE/suite-covers.sh" "$SH/"
+   "$HERE/incident.sh" "$HERE/suite-covers.sh" "$SH/"
+# `skew` is a compiled binary now (sp-yyk47): landing-pass's own `skew_refresh` resolves it
+# by bare name on PATH, which is `$SH` first here, so the binary must actually be there.
+cp "$(command -v skew)" "$SH/skew"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub pilgrimage.sh 'exit 0'
 stub strand        'exit 0'

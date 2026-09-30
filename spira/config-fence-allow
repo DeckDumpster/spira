@@ -36,7 +36,6 @@ spira/cockpit.sh
 spira/configure.sh
 spira/conf.sh
 spira/deploy.sh
-spira/doctor.sh
 spira/full-aeon-fixture.sh
 spira/gate-check.sh
 spira/gate-run.sh
@@ -54,7 +53,6 @@ spira/pre-activate.sh
 spira/pr-notify.sh
 spira/publish-backlog.sh
 spira/release.sh
-spira/skew.sh
 spira/stage.sh
 spira/test-aeon-base-ref-qualify.sh
 spira/test-aeon-chamber-overlay.sh

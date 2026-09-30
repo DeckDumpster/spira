@@ -270,7 +270,7 @@ the transcript from disk rather than the conversation, costing that session no t
 tokens: a persistence step that adds turns makes the problem worse in exactly the sessions that
 need it most.
 
-**`skew.sh`** asks whether the harness in force is the harness that landed. A second copy inside
+**`skew`** asks whether the harness in force is the harness that landed. A second copy inside
 a repository is how work aimed at the harness lands in it, passes its gate, and never runs.
 
 ---
@@ -395,7 +395,7 @@ install.sh [<instance>] [--dry-run] [--ephemeral] [--laptop] [--skip-build] [--n
 | code | meaning |
 |---|---|
 | `0` | ready — `ready.sh` passes (warns allowed) |
-| `1` | preflight refused — `doctor.sh` named a fatal missing dependency |
+| `1` | preflight refused — `doctor` named a fatal missing dependency |
 | `2` | a phase failed — config, build, database, units, or hooks |
 | `3` | installed but not ready — every phase completed, `ready.sh` exited non-zero |
 | `5` | conflict — another harness copy owns these unit names, a live aeon is running, a landing pass is in flight, the instance argument disagrees with the config, or a Dolt server is listening on the configured port with a different data directory |
@@ -443,7 +443,7 @@ After removing the declared inventory it sweeps for `spira-*` units; anything fo
 predicted by `spira/owned.sh` is reported as a stray rather than silently left behind.
 
 `spira/owned.sh` is the single declaration of what one installation owns outside the checkout,
-walked by both installer and uninstaller so the two cannot drift. `doctor.sh` is the read-only
+walked by both installer and uninstaller so the two cannot drift. `doctor` is the read-only
 preflight and names every missing program, unreadable database and unmapped repository in one
 pass, distinguishing *fatal* from *warn*. The units in `systemd/` are **templates** — never edit
 an installed unit; edit the template and re-run `install.sh`, and `systemd/install.sh --diff`
@@ -563,8 +563,6 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 | `spira/inventory-deny` | the tokens that fence refuses beyond the structural ones. Ships EMPTY: a list of somebody else's names is itself the inventory |
 | `spira/actors.example` | commit author to harness, for authors the commit graph cannot vote on. Its rows are one installation's roster |
 | `spira/auron.sh` | the watchdog over the loop — reads timestamps and counters, raises or clears an alert bead. Its only power is speech: it repairs nothing, restarts nothing and summons nothing |
-| `spira/skew.sh` | is the activated release the latest published — the hourly check that the installed release matches the most recent release tag; also the landing gate's fence against work landing in a copy nothing executes |
-| `spira/doctor.sh` | read-only preflight — every missing program, unreadable database, unmapped repository and unbuilt panel, named in one pass |
 | `spira/incident.sh` | turns a production event into a bead Ops can claim — systemd OnFailure, arbitrary payload, or a spool drain; deduplicates by external_ref |
 | `spira/statutes/` | the SEED statute book, one file per statute. Statutes live in the beads KV store, which is per-installation, so a clone gets the mechanism and none of the law unless it ships as text |
 | `spira/seed.sh` | writes those statutes into a fresh database, and never over one already in force |

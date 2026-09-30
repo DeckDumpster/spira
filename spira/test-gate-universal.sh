@@ -13,7 +13,7 @@
 # (class: sp-gate-conf-fail-as-foreign-harness).
 #
 # tier: T2
-# covers: spira/gate.sh spira/exclude.sh spira/skew.sh UC-gate-verdict-05
+# covers: spira/gate.sh spira/exclude.sh skew/src/* UC-gate-verdict-05
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -99,23 +99,45 @@ want "missing-exclude: names the reason" "reason=missing-exclude" "$out"
 mv "$TMP/exclude.sh.aside" "$SH/exclude.sh"
 
 # --------------------------------------------------------------------------------------
-# MISSING-SKEW. Same shape, for skew.sh.
+# `skew` is a compiled binary now (sp-yyk47), reached via `$REL/bin` — a symlink to the
+# shared GATE_PATH_DIR every concurrent gate-fixture suite points at, so it must never be
+# moved or overwritten in place. Instead, build a scratch bin/ of per-file symlinks to
+# everything GATE_PATH_DIR has EXCEPT skew (or a stand-in for it), and override PATH for
+# just these two `rungate` calls — `gate_fixture_run` lets trailing VAR=VAL args win over
+# its own PATH= (both are on the same `env` command line; the later one wins).
+scratch_bin_without_skew() {   # scratch_bin_without_skew <dir> [replacement-skew-script]
+    local d="$1" repl="${2:-}" f b
+    mkdir -p "$d"
+    for f in "$GATE_PATH_DIR"/*; do
+        b="$(basename "$f")"
+        [ "$b" = skew ] && continue
+        ln -sfn "$f" "$d/$b"
+    done
+    if [ -n "$repl" ]; then
+        printf '%s' "$repl" > "$d/skew"; chmod +x "$d/skew"
+    fi
+    printf '%s:%s:/usr/local/bin:/usr/bin:/bin' "$d" "$SH"
+}
+
+# --------------------------------------------------------------------------------------
+# MISSING-SKEW. Same shape, for skew.
 # --------------------------------------------------------------------------------------
 gate_fixture_branch spira/sp-u5 ok5.txt fine
-mv "$SH/skew.sh" "$TMP/skew.sh.aside"
-out="$(rungate spira/sp-u5)"; rc=$?
+NOSKEW_PATH="$(scratch_bin_without_skew "$TMP/no-skew-bin")"
+out="$(rungate spira/sp-u5 "PATH=$NOSKEW_PATH")"; rc=$?
 is   "missing-skew: exits NO_VERDICT" 75 "$rc"
 want "missing-skew: names the reason" "reason=missing-skew" "$out"
 
 # --------------------------------------------------------------------------------------
-# SKEW-INIT-FAULT. skew.sh exiting 3 (its own "could not check", e.g. a database lock mid
+# SKEW-INIT-FAULT. skew exiting 3 (its own "could not check", e.g. a database lock mid
 # bd-migrate) is a machinery fault, never read as a foreign-harness violation
 # (class: sp-gate-conf-fail-as-foreign-harness) — the branch is not at fault for the box's
 # database being unavailable.
 # --------------------------------------------------------------------------------------
-printf '#!/usr/bin/env bash\nexit 3\n' > "$SH/skew.sh"; chmod +x "$SH/skew.sh"   # found by name on PATH (sp-gypjk)
+FAULTSKEW_PATH="$(scratch_bin_without_skew "$TMP/fault-skew-bin" \
+    "$(printf '#!/usr/bin/env bash\nexit 3\n')")"
 gate_fixture_branch spira/sp-u6 ok6.txt fine
-out="$(rungate spira/sp-u6)"; rc=$?
+out="$(rungate spira/sp-u6 "PATH=$FAULTSKEW_PATH")"; rc=$?
 is     "skew-init-fault: exits NO_VERDICT, not FAIL" 75 "$rc"
 want   "skew-init-fault: names the reason"           "reason=skew-init-fault" "$out"
 nowant "skew-init-fault: is never charged as a FAIL" "VERDICT=FAIL" "$out"

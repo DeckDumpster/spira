@@ -529,7 +529,7 @@ _spira_fayth_paths() {
 # sp-usxfl), so a spira.conf newer than the toml is never a newer answer, only a STALE one
 # some other tool or a hand edit left behind. Regenerating from it would silently discard
 # whatever the toml alone has gained since — the "gutted spira.toml" failure this bead
-# retires. `doctor.sh` warns when both files are present so that stale spira.conf gets
+# retires. `doctor` warns when both files are present so that stale spira.conf gets
 # noticed and removed.
 #
 # AUTO-CONVERTS FROM A LEGACY spira.conf ONLY WHEN NO spira.toml EXISTS AT ALL, so a box that
@@ -867,7 +867,7 @@ spira_conf_defaults() {
     # repo-map, never inside the checkout a `spira: land` push can overwrite.
     : "${SPIRA_CHAMBER_OVERLAY:=${XDG_CONFIG_HOME:-$HOME/.config}/spira/chamber}"
     # DECLARED OPERATOR OVERRIDES held against a production checkout — a hand edit that must
-    # survive `skew.sh refresh` until the bead that makes it permanent lands. Same directory
+    # survive `skew refresh` until the bead that makes it permanent lands. Same directory
     # family as SPIRA_CHAMBER_OVERLAY and for the same reason: operator state beside the
     # repo-map, never inside a checkout `spira: land` can overwrite.
     : "${SPIRA_OVERRIDES:=${XDG_CONFIG_HOME:-$HOME/.config}/spira/overrides}"
@@ -1072,7 +1072,7 @@ spira_conf_defaults() {
     : "${SPIRA_RELEASE_REPO:=${SPIRA_GH_INTAKE_REPO}}"
     # AN INSTALLED RELEASE IS NEVER SOURCELESS. release.yml stamps the publishing repository
     # into MANIFEST (build-tarball.sh --release-repo); with nothing else set, that is where
-    # this release's successors are published, and skew.sh's currency check reads it.
+    # this release's successors are published, and skew's currency check reads it.
     if [ -z "$SPIRA_RELEASE_REPO" ] && [ -f "$SPIRA_REPO/MANIFEST" ]; then
         SPIRA_RELEASE_REPO="$(awk '$1=="release-repo"{print $2; exit}' "$SPIRA_REPO/MANIFEST" 2>/dev/null)" || true
     fi
@@ -1473,9 +1473,9 @@ spira_conf_defaults() {
     : "${SPIRA_WIKI:=}"
     : "${COCKPIT_DB:=$SPIRA_DB}"
     : "${COCKPIT_BOTTOM_PCT:=28}"
-    # Whether an operator is present. 1 (default) means the cockpit is staffed; doctor.sh
+    # Whether an operator is present. 1 (default) means the cockpit is staffed; doctor
     # treats missing operator tools as FAIL. Set to 0 in spira.conf for a headless fixture
-    # or a CI box where no operator is reading escalations; doctor.sh downgrades to WARN.
+    # or a CI box where no operator is reading escalations; doctor downgrades to WARN.
     : "${SPIRA_OPERATED:=1}"
     # The mail client in the cockpit's bottom-left pane; empty, or not on PATH, means no pane.
     : "${COCKPIT_MAIL=aerc}"
@@ -1586,15 +1586,15 @@ spira_conf_defaults() {
     # all of it. Point it at whichever volume has the room; nothing here ever deletes.
     : "${SPIRA_ARCHIVE:=$SPIRA_RUN/archive}"
     # WHERE THE BD BINARY PIN LIVES. A pin file records which bd is installed —
-    # its migration count, version string, sha256, and build flags — so doctor.sh
+    # its migration count, version string, sha256, and build flags — so doctor
     # can detect an unannounced rebuild before the loop tries to run. Default is
     # machine-local (under SPIRA_RUN, which is gitignored), not in the harness tree.
     # Populate it after every bd install with: spira/bd-pin.sh write
     : "${SPIRA_BD_PIN:=$SPIRA_RUN/bd-pin}"
     # THE RELEASE TAG THIS HARNESS EXPECTS TO BE RUNNING. Both build-bd.sh (which builds
-    # or downloads the binary) and doctor.sh (which checks the running binary) read this
+    # or downloads the binary) and doctor (which checks the running binary) read this
     # value, so the two cannot disagree about which version is correct. Changing it here
-    # changes what doctor.sh refuses and what build-bd.sh targets.
+    # changes what doctor refuses and what build-bd.sh targets.
     : "${SPIRA_BD_TAG:=v1.2.1}"
 
     # ---- THE ARCHIVIST: WHEN A FULL SESSION GETS ITS UNFINISHED BUSINESS RESCUED ---------
@@ -2244,8 +2244,8 @@ if [ -d "${SPIRA_DB:-}/.beads" ]; then
             _spira_schema_ok=1
         elif grep -q 'locked by another dolt process' <<< "$_spira_bd_out"; then
             # Lock contention means the store is in embedded mode — one exclusive lock,
-            # many waiters. Embedded mode is refused by doctor.sh; run it to diagnose.
-            printf 'spira: bd locked — store is in embedded mode (dolt_mode); run doctor.sh\n' >&2
+            # many waiters. Embedded mode is refused by doctor; run it to diagnose.
+            printf 'spira: bd locked — store is in embedded mode (dolt_mode); run doctor\n' >&2
             [ -z "${SPIRA_DOCTOR:-}" ] && { unset _spira_bd_out _spira_bd_rc _spira_schema_ok; exit 1; }
         else
             _spira_bd_db="$(printf '%s\n' "$_spira_bd_out" | grep -oE 'database is at v[0-9]+' | grep -oE '[0-9]+')"
@@ -2262,7 +2262,7 @@ if [ -d "${SPIRA_DB:-}/.beads" ]; then
                 printf 'spira: bd is %s\n' "$SPIRA_BD" >&2
             fi
             unset _spira_bd_db _spira_bd_bin
-            # SPIRA_DOCTOR=1 means doctor.sh is the caller; it runs its own schema check.
+            # SPIRA_DOCTOR=1 means doctor is the caller; it runs its own schema check.
             [ -z "${SPIRA_DOCTOR:-}" ] && { unset _spira_bd_out _spira_bd_rc _spira_schema_ok; exit 1; }
         fi
         unset _spira_bd_out _spira_bd_rc
@@ -2490,7 +2490,7 @@ spira_require() {        # spira_require <bin> [<bin>...] -> 0, or 1 having name
 #   spira_deps_list [tier]    emit all known program names, optionally filtered
 #
 # The data lives in deps.toml (same directory as this file), loaded once at
-# source time into per-program shell variables. doctor.sh reads from these
+# source time into per-program shell variables. doctor reads from these
 # rather than carrying its own hardcoded lists.
 # --------------------------------------------------------------------------------------
 

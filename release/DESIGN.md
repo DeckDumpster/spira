@@ -176,7 +176,7 @@ oneshot mid-run, and an aeon's tools stay on disk in its release. So there is no
 least `hotfix_alert_hours` (env `SPIRA_HOTFIX_ALERT_HOURS`, else `spira.hotfix_alert_hours`,
 else 4), an additional `ALERT hotfix <sha> standing <n>h >= threshold <n>h` line
 (sp-6p20x). Every consumer reads these two lines from `release status`'s own text rather
-than re-deriving the age or the threshold: `doctor.sh`'s `doctor_check_hotfix` (WARN on
+than re-deriving the age or the threshold: `doctor`'s `doctor_check_hotfix` (WARN on
 `RUNNING UNLANDED` alone, FAIL once `ALERT` joins it), the cockpit ops pane
 (`spira/cockpit.sh`'s snapshot carries them as `SP_HOTFIX_LINE` / `SP_HOTFIX_ALERT`;
 `cockpit/health.sh`'s `hotfix_banner` renders them), and `watchtower.sh` (files a bead once
@@ -371,7 +371,7 @@ starts every oneshot. It requires the `.tags/<current>` sidecar to name `<tag>` 
 the oneshots, and requires the unit set to equal B's snapshot. **D** installs `<prev-tag>`
 over the surviving state, seeds beads and statutes, writes an operator override
 (`SPIRA_CHECK5_MAX_FILE`, a key conf.sh honours), starts the world, and deploys `<tag>`. It
-then requires bead and memory counts to be preserved, `doctor.sh` to exit 0, the override to
+then requires bead and memory counts to be preserved, `doctor` to exit 0, the override to
 survive, no unit to fail within 2 min, and the world to be live, and requires a second probe
 bead to land. The forced rollback must either succeed with a live world or refuse and name
 the migration.
@@ -398,7 +398,7 @@ upgrade phases waived by operator      (when waived)
 script to about 55 textual invariants, because the script ran for real only on a clean
 machine. In Rust each one either is structural or is a unit test:
 
-- There is one `tool()` constructor for `deploy.sh`, `uninstall.sh`, `world.sh`, `doctor.sh`
+- There is one `tool()` constructor for `deploy.sh`, `uninstall.sh`, `world.sh`, `doctor`
   and every `conf.sh` read. So "every call runs under `_ci_deploy_env`" has no other way to
   be written.
 - There is one `deploy_tag()` that always passes `--allow-draft`.
@@ -417,11 +417,11 @@ a PASS, each class of FAIL, and the waiver.
    `release` on `PATH`, so the bare name could not resolve there.
 2. **Everything the release runs gets the release's launcher environment**:
    `SPIRA_RELEASE=<releases>/current` and `PATH=current/bin:current/spira:$PATH`. That covers
-   `install.sh`, `ready.sh`, `deploy.sh`, `uninstall.sh`, `world.sh`, `doctor.sh` and the
+   `install.sh`, `ready.sh`, `deploy.sh`, `uninstall.sh`, `world.sh`, `doctor` and the
    `conf.sh` reads. The script put only `current/bin` on PATH, and only for the last four. It
    then called `deploy.sh` and the others by bare name (sp-gypjk), but they live in
    `current/spira/`, which that PATH never reached. `install.sh` ran on the caller's own PATH
-   and so could not resolve `doctor.sh` or `spira-config`. Both are phase A FAILs on
+   and so could not resolve `doctor` or `spira-config`. Both are phase A FAILs on
    local/main: `release: command not found`, then `uninstall.sh` exit 127.
 3. **`conf.sh` is read from the release under test** (`current/spira/conf.sh`), not from
    the checkout the script sat in. There is no checkout: a release is the only thing that

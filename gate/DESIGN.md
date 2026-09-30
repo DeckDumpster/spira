@@ -27,8 +27,10 @@ mechanically or returns it to an aeon with the conflicting hunks quoted.
 
 * Changing what the repository gate string itself runs. Item 4 (sp-2ghui, "Composition" below)
   decides *around* it: whether it runs with suites on or off, and what runs after it.
-* Porting `exclude.sh`, `skew.sh`, `yield.sh`, `gate-sweep.sh` or `lifecycle-cert.sh`. The
-  binary calls them as the bash did; each moves in its own turn of the rewrite order.
+* Porting `exclude.sh`, `yield.sh`, `gate-sweep.sh` or `lifecycle-cert.sh`. The binary calls
+  them as the bash did; each moves in its own turn of the rewrite order. (`skew.sh` WAS
+  ported, by a different bead — sp-yyk47 — and is called as the compiled `skew` binary now,
+  never wrapped in `bash`; see `skew/DESIGN.md`.)
 * The verdict cache's storage format, the gate.log format and the admission pool's lock files.
   Other programs read all three (landing-pass probes `slot.N.lock`; the cockpit and
   `gate-timing.sh` read gate.log; the landing pass reads `verdicts/`).
@@ -40,13 +42,14 @@ mechanically or returns it to an aeon with the conflicting hunks quoted.
 ```
 gate.sh <branch> [repo-name]                       # every caller, unchanged
 gate [--home <spira-dir>] <branch> [repo-name]     # what gate.sh execs
-gate [--home <spira-dir>] --definition [repo-name] # the landing ref's gate command (doctor.sh)
+gate [--home <spira-dir>] --definition [repo-name] # the landing ref's gate command (doctor)
 ```
 
 * `repo-name` defaults to `spira_home_repo`.
 * `--home` is the directory holding `lib.sh` (and the files `harness_h` hashes). The default is
-  `$SPIRA_HOME`, then `<dir of this binary>/../spira`. `exclude.sh`, `skew.sh`, `yield.sh` and
-  `gate-sweep.sh` are found on PATH (sp-gypjk); exclude.sh or skew.sh missing is NO_VERDICT.
+  `$SPIRA_HOME`, then `<dir of this binary>/../spira`. `exclude.sh`, `skew` (a compiled
+  binary, sp-yyk47), `yield.sh` and `gate-sweep.sh` are found on PATH (sp-gypjk); exclude.sh
+  or skew missing is NO_VERDICT.
 * `gate.sh` execs with `exec -a "$0"`, so `/proc/<pid>/cmdline` still names `…/gate.sh` and the
   two process scans that look for a running gate (`gate-run.sh unmanaged_gate`, `world.sh
   live_workers`) keep matching.
@@ -122,7 +125,7 @@ After the landing ref (`spira_landref`) and the branch both resolve:
 
 0. **The base is pinned** (sp-hh5h0). The landing ref is resolved to a commit `BASE` once,
    here; one that does not resolve is NO_VERDICT `no-base`. Every later read uses that
-   commit, never the ref's name again: the changed-file list, the merge, `skew.sh`, the
+   commit, never the ref's name again: the changed-file list, the merge, `skew`, the
    preflight, the touched set, the gate command's `SPIRA_GATE_BASE`, and the base trial's
    checkout and `SPIRA_GATE_BRANCH`. The name appears only in messages. The ref moves while
    a trial runs, because a landing lands. On 2026-09-29 the gate re-read it by name for the
@@ -142,7 +145,7 @@ After the landing ref (`spira_landref`) and the branch both resolve:
    string runs in, and the tree id in the verdict key.
 
 What still reads the branch: the changed-file list (`BASE...BR`, what the branch changed),
-`skew.sh foreign` (a diff, same), `SPIRA_GATE_SELECT_HEAD`, the yield record's tree (whether the
+`skew foreign` (a diff, same), `SPIRA_GATE_SELECT_HEAD`, the yield record's tree (whether the
 *branch* changed between a red and a pass), and `lc_certify`'s tip.
 
 ### Exit status and the VERDICT line
@@ -201,7 +204,7 @@ and the branch tip resolved: `pass <key>` on 0, `infra <reason>` on 75/76, `red 
 changed-file list and of the gate string (under `gate_mode = "unit"`, of the gate string plus
 `\n# gate_mode=unit`, so a unit-mode PASS never answers for a suites-mode trial; suites mode
 hashes the string alone and its keys are unchanged), and `harness_h` is sha256 of `gate.sh`, `exclude.sh`,
-`skew.sh` **and this binary** concatenated. Only a PASS is cached; a cached PASS younger than
+the resolved `skew` binary **and this binary** concatenated. Only a PASS is cached; a cached PASS younger than
 `SPIRA_VERDICT_TTL` (by its own `at=`) is returned before admission and before the lock, with
 its own meter row and `suites=` line.
 

@@ -27,12 +27,12 @@
 # SINGLE-CHECKOUT MODEL
 # SPIRA_PROD inside SPIRA_REPO means one checkout serves as both development and
 # production. The landing pass is what advances the copy in force; promote.sh will
-# exit non-zero and point you to skew.sh refresh. If this is your layout, set:
+# exit non-zero and point you to skew refresh. If this is your layout, set:
 #
 # SPIRA_PROD = $SPIRA_HOME
 #
 # (or leave SPIRA_PROD unset and let the default derive a split-checkout path, then
-# never call promote.sh — skew.sh refresh is the right tool in single-checkout mode)
+# never call promote.sh — skew refresh is the right tool in single-checkout mode)
 
 # ---- DATABASE -------------------------------------------------------------------------
 # Where the beads database lives. Must NOT be inside the harness checkout (a git add -A

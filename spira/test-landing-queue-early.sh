@@ -67,7 +67,7 @@ cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
 stub mail.sh    '[ "${1:-}" = send ] || exit 0'
-stub skew.sh    'exit 0'
+stub skew        'exit 0'
 stub gh         'exit 1'
 
 # VERDICT STUB: stateful — outputs a landing line exactly once (simulates a batch file that

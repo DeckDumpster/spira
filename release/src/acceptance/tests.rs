@@ -226,7 +226,7 @@ impl Fake {
                 }
             }
             ("world.sh", ["status"]) => ok("world: RUNNING\n"),
-            ("uninstall.sh" | "world.sh" | "doctor.sh", _) => ok(""),
+            ("uninstall.sh" | "world.sh" | "doctor", _) => ok(""),
             ("bd", ["-C", _, "create", "--title", _, "--description", _, "--label", l, ..]) if l.starts_with("acceptance,") => {
                 self.next_id.set(self.next_id.get() + 1);
                 let id = format!("sp-p{}", self.next_id.get());
@@ -397,7 +397,7 @@ fn every_tool_runs_on_the_release_launcher_path_and_every_deploy_of_the_tag_allo
     let cur = b.root.join("tmp/releases/current");
     let want_path = format!("{}:{}:/usr/bin:/bin", cur.join("bin").display(), cur.join("spira").display());
     let log = f.log.borrow();
-    let tools: Vec<&Cmd> = log.iter().filter(|c| ["deploy.sh", "uninstall.sh", "world.sh", "doctor.sh"].contains(&c.prog.as_str())).collect();
+    let tools: Vec<&Cmd> = log.iter().filter(|c| ["deploy.sh", "uninstall.sh", "world.sh", "doctor"].contains(&c.prog.as_str())).collect();
     assert!(tools.len() >= 11, "{} tool calls", tools.len());
     for c in &tools {
         assert_eq!(c.env_of("PATH"), Some(want_path.as_str()), "{}", c.line());
@@ -420,7 +420,7 @@ fn every_tool_runs_on_the_release_launcher_path_and_every_deploy_of_the_tag_allo
     for c in log.iter().filter(|c| c.prog == "bash" && c.args.first().is_some_and(|a| a.ends_with("install.sh"))) {
         assert_eq!(c.env_of("SPIRA_OPERATED"), Some("0"));
         assert_eq!(c.env_of("SPIRA_HOME_REPO"), Some("scratch-repo"));
-        assert_eq!(c.env_of("PATH"), Some(want_path.as_str()), "install.sh resolves doctor.sh and spira-config by bare name");
+        assert_eq!(c.env_of("PATH"), Some(want_path.as_str()), "install.sh resolves doctor and spira-config by bare name");
         assert_eq!(c.env_of("SPIRA_RELEASE"), Some(cur.display().to_string().as_str()));
     }
     // The probe carries the builder partition's labels.

@@ -96,14 +96,14 @@ pub trait World {
     fn bash_n(&self, content: &[u8]) -> Result<(), String>;
     /// `bash exclude.sh filter` over stdin.
     fn exclude_filter(&self, exclude: &Path, names: &str) -> String;
-    /// `bash skew.sh foreign <repo> <base> <ref>` → (status, combined output).
+    /// `skew foreign <repo> <base> <ref>` → (status, combined output).
     fn skew_foreign(&self, skew: &Path, repo: &Path, base: &str, branch: &str) -> (i32, String);
     fn sweep(&self, sweep: &Path, repo: &Path);
     /// `SPIRA_RUN=<run> bash yield.sh <args…>`, output discarded.
     fn yield_sh(&self, yield_sh: &Path, run: &str, args: &[&str]);
     /// `spira-lc certify <bead> <tip> <outcome> <detail> gate` (the machine reads its switch).
     fn lc_certify(&self, bead: &str, tip: &str, outcome: &str, detail: &str);
-    /// sha256 of gate.sh, exclude.sh, skew.sh and this binary, concatenated.
+    /// sha256 of gate.sh, exclude.sh, the resolved `skew` binary and this binary, concatenated.
     fn harness_hash(&self) -> Option<String>;
 
     // ---- admission and the tree

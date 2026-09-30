@@ -48,7 +48,7 @@ pub struct Cert {
     pub by: String,
     pub when: String,
     pub at: u64,
-    /// sha256 of the gate's harness (gate.sh, exclude.sh, skew.sh, the binary); `-` for a round.
+    /// sha256 of the gate's harness (gate.sh, exclude.sh, the skew binary, the gate binary); `-` for a round.
     pub harness: String,
     pub suites: String,
 }

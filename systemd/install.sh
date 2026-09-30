@@ -309,7 +309,7 @@ fi
 # REFUSE IF THE CHECKOUT IS NOT ON ITS LANDREF OR IS BEHIND IT. Running install.sh from an
 # aeon's feature branch silently ships units whose ExecStart paths are inside that branch's
 # worktree, not the operator checkout; running it behind the landref means the templates it
-# renders predate work that has already landed. skew.sh sees and reports BEHIND, but its own
+# renders predate work that has already landed. skew sees and reports BEHIND, but its own
 # escalation used to recommend "Re-run install.sh" — so a behind checkout was recommending
 # itself as the remedy. This fence is Rung 4 closing that loop. (sp-mlcd)
 #

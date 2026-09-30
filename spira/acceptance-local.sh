@@ -47,7 +47,7 @@
 #     deploy of either release is handed its local tarball (deploy.sh --tarball);
 #   - /workspace is a self-contained CLONE of <tree> at its HEAD, carrying the
 #     repository's release tags plus a tag for the local release on HEAD — the
-#     forge run's checkout carries both, and skew.sh reads release currency and
+#     forge run's checkout carries both, and skew reads release currency and
 #     the MANIFEST commit from them. A worktree's own .git does not resolve inside
 #     the container, so mounting <tree> itself would leave skew with no tags.
 #   Refused when <tree> has uncommitted changes: the tarball and the mounted

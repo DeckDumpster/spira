@@ -43,6 +43,9 @@ members = [
     "suite-select",
     "release",
     "forge",
+    "skew",
+    "doctor",
+    "census",
 ]
 resolver = "2"
 

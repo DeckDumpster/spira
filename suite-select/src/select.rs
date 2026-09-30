@@ -90,7 +90,7 @@ pub struct Buckets {
 
 pub const DEFAULT_INERT: &str = "*.md *.txt";
 pub const DEFAULT_SOURCE: &str = "spira/*.sh";
-pub const DEFAULT_PLUMBING: &str = "Makefile Cargo.toml Cargo.lock */Cargo.toml install.sh systemd/* spira/conf.sh spira/lib.sh spira/skew.sh spira/testenv*.sh .github/*";
+pub const DEFAULT_PLUMBING: &str = "Makefile Cargo.toml Cargo.lock */Cargo.toml install.sh systemd/* spira/conf.sh spira/lib.sh skew/src/* spira/testenv*.sh .github/*";
 
 fn words(s: &str) -> Vec<String> {
     s.split_whitespace().map(str::to_string).collect()

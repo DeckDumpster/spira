@@ -230,7 +230,7 @@ cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$L_SH/"
 printf '#!/usr/bin/env bash\necho "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2\nexit 0\n' \
     > "$L_SH/gate.sh"; chmod +x "$L_SH/gate.sh"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$L_SH/confine.sh"; chmod +x "$L_SH/confine.sh"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$L_SH/skew.sh"; chmod +x "$L_SH/skew.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$L_SH/skew"; chmod +x "$L_SH/skew"
 
 testdb_seed <<'JSONL'
 {"id":"sp-epic2","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}

@@ -8,10 +8,11 @@
 # scratch Maildir and with no lint override, so the running message actually clears
 # mail.sh's send path.
 #
-# COVERAGE: land_escalate (lib.sh), watchd.sh's _wd_ask, and skew.sh's escalate are
-# standalone functions reachable without standing up a database or systemd — sourced
-# directly (skew.sh's escalate is extracted with sed rather than sourcing the whole file,
-# because skew.sh has no main guard and runs a real box audit at source time otherwise).
+# COVERAGE: land_escalate (lib.sh) and watchd.sh's _wd_ask are standalone functions
+# reachable without standing up a database or systemd — sourced directly. skew's escalate
+# is driven through a real `skew check --escalate` against a minimal NOT-LATEST fixture
+# (skew is a compiled binary now, sp-yyk47 — there is no source text left to sed out a
+# function body from).
 #
 # incident.sh's SIN escalation is driven through incident-stub-bd.py (a genuinely stateful
 # fake bd, not a canned response — test-sin-exempt.sh already established that it reproduces
@@ -27,7 +28,7 @@
 # daily digest is the only path to the operator — so nothing here should ever reach the mailbox.
 #
 # tier: T2
-# covers: spira/lib.sh spira/watchd.sh spira/skew.sh spira/incident.sh spira/archivist.sh spira/ctx-meter.sh spira/incident-stub-bd.py spira/mail.sh UC-operator-channel-05
+# covers: spira/lib.sh spira/watchd.sh skew/src/* spira/incident.sh spira/archivist.sh spira/ctx-meter.sh spira/incident-stub-bd.py spira/mail.sh UC-operator-channel-05
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -84,16 +85,39 @@ after="$(unread)"
 is "_wd_ask delivers exactly one message" "$((before + 1))" "$after"
 
 echo
-echo "skew.sh: escalate (question)"
+echo "skew: escalate (question)"
 
-ESCALATE_SRC="$TMP/skew-escalate.sh"
-sed -n '/^escalate() {/,/^}/p' "$HERE/skew.sh" > "$ESCALATE_SRC"
-[ -s "$ESCALATE_SRC" ] || bad "extracted skew.sh escalate() is non-empty" "sed found nothing — skew.sh's shape changed"
-. "$ESCALATE_SRC"
+# `skew` is a compiled binary now (sp-yyk47): its `escalate()` is no longer bash source to
+# extract with sed (that technique needed skew.sh's own text; a binary has none to read).
+# Instead, drive the real `skew check --escalate` through a real NOT-LATEST scenario — the
+# same minimal fixture test-skew-escalate.sh builds for its own coverage of escalate()'s
+# error handling — so this suite still exercises the real send path against the real
+# mail.sh, with no lint override, the property this suite exists to prove.
+SKEW_REPO="$TMP/skew-repo"
+git init -q -b main "$SKEW_REPO"
+git -C "$SKEW_REPO" config user.email t@t; git -C "$SKEW_REPO" config user.name t
+git -C "$SKEW_REPO" commit -q --allow-empty -m c1
+C1="$(git -C "$SKEW_REPO" rev-parse HEAD)"
+git -C "$SKEW_REPO" tag -a "spira-release-spira-20260101T000000Z" "$C1" -m v1
+git -C "$SKEW_REPO" commit -q --allow-empty -m c2
+C2="$(git -C "$SKEW_REPO" rev-parse HEAD)"
+git -C "$SKEW_REPO" tag -a "spira-release-spira-20260102T000000Z" "$C2" -m v2
+SKEW_RELEASES="$TMP/skew-releases"
+mkdir -p "$SKEW_RELEASES/spira-20260101T000000Z"
+printf 'commit %s\ntimestamp 20260101T000000Z\n' "$C1" > "$SKEW_RELEASES/spira-20260101T000000Z/MANIFEST"
+ln -s "spira-20260101T000000Z" "$SKEW_RELEASES/current"   # activates the OLDER tag -> NOT-LATEST
+SKEW_RUN="$TMP/skew-run"; mkdir -p "$SKEW_RUN"
+
 before="$(unread)"
-escalate "v2:REAL-SENDER-TEST=1" "planted by the real-sender test" >/dev/null 2>&1
+env -i PATH="$PATH" HOME="$TMP/home" \
+    SPIRA_CONF=/nonexistent \
+    SPIRA_HOME="$HERE" SPIRA_REPO="$SKEW_REPO" \
+    SPIRA_RUN="$SKEW_RUN" SPIRA_RELEASES="$SKEW_RELEASES" \
+    SPIRA_MAIL="$SPIRA_MAIL" \
+    SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
+    skew check --escalate >/dev/null 2>&1
 after="$(unread)"
-is "skew.sh escalate delivers exactly one message" "$((before + 1))" "$after"
+is "skew escalate delivers exactly one message" "$((before + 1))" "$after"
 
 echo
 echo "incident.sh: SIN escalation (question)"

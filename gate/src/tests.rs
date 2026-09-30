@@ -128,7 +128,7 @@ impl Fake {
         let readable: HashSet<PathBuf> = [
             "/cfg/repo-map",
             "/h/exclude.sh",
-            "/h/skew.sh",
+            "/h/skew",
             "/h/yield.sh",
         ]
         .iter()

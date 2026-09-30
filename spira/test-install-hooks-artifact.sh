@@ -73,13 +73,13 @@ printf '# empty\n' > "$SPIRA_DIR/watchers"
 printf '# empty\n' > "$SPIRA_DIR/repo-map.example"
 mkdir -p "$SPIRA_DIR/statutes"
 
-cat > "$SPIRA_DIR/doctor.sh" <<'EOF'
+cat > "$SPIRA_DIR/doctor" <<'EOF'
 #!/usr/bin/env bash
 echo "spira doctor"
 echo "  ok    stub — all checks passed"
 exit 0
 EOF
-chmod +x "$SPIRA_DIR/doctor.sh"
+chmod +x "$SPIRA_DIR/doctor"
 
 cat > "$SPIRA_DIR/configure.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -122,14 +122,14 @@ chmod +x "$COCKPIT_DIR/layout.sh"
 # succeeds and execution reaches phase 5, the subject under test.
 for _s in archive.sh archivist.sh auron.sh broker.sh czar.sh \
           gate-check.sh gh-intake.sh groom-trigger.sh maechen-trigger.sh \
-          loom.sh mail.sh pr-notify.sh skew.sh spira-mail-deliver.sh \
+          loom.sh mail.sh pr-notify.sh spira-mail-deliver.sh \
           watch-refresh.sh watchtower.sh; do
     printf '#!/usr/bin/env bash\ntrue\n' > "$SPIRA_DIR/$_s"
     chmod +x "$SPIRA_DIR/$_s"
 done
 # The Rust binaries units ExecStart from the release root: dirname(SPIRA_PROD)/bin.
 mkdir -p "$FIXTURE/bin"
-for _s in sentinel queue aeon; do
+for _s in sentinel queue aeon skew; do
     printf '#!/usr/bin/env bash\ntrue\n' > "$FIXTURE/bin/$_s"
     chmod +x "$FIXTURE/bin/$_s"
 done

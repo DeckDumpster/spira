@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: systemd/install.sh spira/skew.sh UC-instance-lifecycle-34
+# covers: systemd/install.sh skew/src/* UC-instance-lifecycle-34
 #
 # test-unit-drift.sh — a landed template change leaves the installed unit stale, and is
 # detected.
@@ -11,7 +11,7 @@
 # ----------------------
 # systemd/install.sh renders templates into units and copies them to ~/.config/systemd/user.
 # When a fast-forward changes a template, the installed copy stays stale and nothing detects
-# it — install.sh --diff exists to find that state, but nothing ran it until skew.sh gained
+# it — install.sh --diff exists to find that state, but nothing ran it until skew gained
 # a STALE finding. This suite proves the detector works: a matching unit passes, a differing
 # one is caught, and a check that cannot run says so rather than reporting clean.
 #
@@ -107,9 +107,9 @@ want "diff names at least one MISSING unit" "MISSING" "$diff_out"
 
 # ==========================================================================
 echo
-echo "skew.sh units — the standalone entry point:"
+echo "skew units — the standalone entry point:"
 # ==========================================================================
-# Set up a tree where skew.sh can find install.sh at $SPIRA_HOME/../systemd/install.sh.
+# Set up a tree where skew can find install.sh at $SPIRA_HOME/../systemd/install.sh.
 # SPIRA_HOME is $FIXTURE/spira, so it looks at $FIXTURE/systemd/install.sh.
 
 # Restore matching units from the cached render.
@@ -122,34 +122,41 @@ skew_units() {
         SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
-        skew.sh units 2>&1
+        skew units 2>&1
 }
 
 out="$(skew_units)"; rc=$?
-is "skew.sh units exits 0 when clean" "0" "$rc"
-want "skew.sh units says units match" "units match" "$out"
+is "skew units exits 0 when clean" "0" "$rc"
+want "skew units says units match" "units match" "$out"
 
 # Make one unit stale.
 stale_unit="$(find "$DEST" -maxdepth 1 -name '*.service' -type f | head -1)"
 if [ -n "$stale_unit" ]; then
     printf '\n# stale\n' >> "$stale_unit"
     out="$(skew_units)"; rc=$?
-    is "skew.sh units exits 1 on drift" "1" "$rc"
-    want "skew.sh units names the diff" "DIFFERS" "$out"
+    is "skew units exits 1 on drift" "1" "$rc"
+    want "skew units names the diff" "DIFFERS" "$out"
 fi
 
 # ==========================================================================
 echo
-echo "skew.sh units — missing installer:"
+echo "skew units — missing installer:"
 # ==========================================================================
-# Point SPIRA_HOME at a directory with no systemd/ sibling.
+# Point SPIRA_HOME at a directory with a real lib.sh/conf.sh (so `skew` initializes) but
+# no systemd/ sibling — bash's skew.sh found lib.sh beside its OWN script regardless of
+# SPIRA_HOME, so SPIRA_HOME there was purely `units()`'s own data path; `skew` (a compiled
+# binary) uses SPIRA_HOME to locate lib.sh too (DESIGN.md §5), so this fixture needs both:
+# a real init target and a missing installer sibling.
+mkdir -p "$TMP/empty-spira"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$TMP/empty-spira/"
+: > "$TMP/empty-spira/suite-covers.sh"
 out="$(env -i PATH="$PATH" HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$TMP/empty-spira" SPIRA_REPO="$TMP" \
     SPIRA_DOLT_DATA="" \
     SPIRA_TESTDB_DATA="" \
-    skew.sh units 2>&1)"; rc=$?
-is "skew.sh units exits 3 when installer missing" "3" "$rc"
-want "skew.sh units names the missing installer" "missing" "$out"
+    skew units 2>&1)"; rc=$?
+is "skew units exits 3 when installer missing" "3" "$rc"
+want "skew units names the missing installer" "missing" "$out"
 
 tl_summary

@@ -149,6 +149,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "census"
+version = "1.0.0"
+
+[[package]]
 name = "cfg-if"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -216,6 +220,10 @@ dependencies = [
  "block-buffer",
  "crypto-common",
 ]
+
+[[package]]
+name = "doctor"
+version = "1.0.0"
 
 [[package]]
 name = "dyn-clone"
@@ -1027,6 +1035,10 @@ dependencies = [
  "errno",
  "libc",
 ]
+
+[[package]]
+name = "skew"
+version = "1.0.0"
 
 [[package]]
 name = "slab"

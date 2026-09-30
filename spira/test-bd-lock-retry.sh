@@ -3,7 +3,7 @@
 # test-bd-lock-retry.sh — conf.sh refuses lock-contention errors immediately.
 #
 # Lock contention means the store is in embedded mode (one exclusive lock, all
-# callers serialise). Embedded mode is refused by doctor.sh (sp-a9nr1); conf.sh
+# callers serialise). Embedded mode is refused by doctor (sp-a9nr1); conf.sh
 # must treat lock contention as a configuration error and exit immediately,
 # not retry or continue.
 #
@@ -86,13 +86,13 @@ lock_out="$(source_conf 2>&1 || true)"
 nowant "lock: REACHED-PAST-GUARD absent (conf.sh refuses)"  "REACHED-PAST-GUARD"  "$lock_out"
 want   "lock: message names embedded mode"                  "embedded"            "$lock_out"
 want   "lock: message names dolt_mode"                      "dolt_mode"           "$lock_out"
-want   "lock: message directs user to doctor.sh"            "doctor.sh"           "$lock_out"
+want   "lock: message directs user to doctor"                "doctor"             "$lock_out"
 
 # ==========================================================================
 echo
 echo "SPIRA_DOCTOR=1 — lock contention continues past guard:"
 # ==========================================================================
-# doctor.sh sets SPIRA_DOCTOR=1 so conf.sh does not exit before doctor can
+# doctor sets SPIRA_DOCTOR=1 so conf.sh does not exit before doctor can
 # collect all FAILs and report them together.
 make_lock_bd
 doctor_out="$(source_conf SPIRA_DOCTOR=1 2>&1)"
