@@ -65,6 +65,8 @@ printf '%s\n' "\$*" >> "$MAIL_LOG"
 exit 0
 MSTUB
 chmod +x "$SH/mail.sh"
+# The fixture harness (with its stubs) is first on PATH: batch.sh calls mail.sh etc. by name (sp-gypjk).
+export PATH="$SH:$PATH"
 
 # Gate stub: unused in these cases (batch trigger is suppressed), kept for
 # completeness so batch.sh's gate seam resolves.

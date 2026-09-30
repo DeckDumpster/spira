@@ -28,30 +28,8 @@ echo "test-artifact-install.sh"
 SCRATCH="$(mktemp -d)"
 trap 'chmod -R u+w "$SCRATCH" 2>/dev/null; rm -rf "$SCRATCH"' EXIT INT TERM
 
-# ===========================================================================
-echo
-echo "case 1: conf.sh resolves SPIRA_LOOM_BIN to bin/loom in a tarball layout"
-# ===========================================================================
-TL="$SCRATCH/tarball-layout"
-mkdir -p "$TL/bin" "$TL/spira"
-printf '#!/bin/sh\n' > "$TL/bin/loom" && chmod +x "$TL/bin/loom"
-cp "$HERE/conf.sh" "$TL/spira/conf.sh"
-
-[ ! -x "$TL/loom/target/release/loom" ] \
-    && ok "positive-control: loom/target/release/loom absent in tarball layout (would be UNKN before the fix)" \
-    || bad "positive-control: loom/target/release/loom absent" "unexpectedly executable at $TL/loom/target/release/loom"
-
-[ -x "$TL/bin/loom" ] \
-    && ok "positive-control: bin/loom executable in tarball layout" \
-    || bad "positive-control: bin/loom executable" "not executable at $TL/bin/loom"
-
-# SPIRA_CONF_LOADED= forces a fresh re-derivation (the guard at conf.sh's top otherwise
-# inherits the parent shell's already-computed values). SPIRA_CONF=/nonexistent keeps the
-# operator's installed spira.conf out of the read.
-RESOLVED="$(SPIRA_CONF_LOADED= SPIRA_LOOM_BIN= SPIRA_REPO="$TL" SPIRA_CONF=/nonexistent \
-    bash -c '. "$1/spira/conf.sh" 2>/dev/null; printf "%s" "${SPIRA_LOOM_BIN:-}"' \
-    -- "$TL" 2>/dev/null || true)"
-want "conf.sh resolves SPIRA_LOOM_BIN to bin/loom in a tarball layout" "bin/loom" "$RESOLVED"
+# case 1 (conf.sh resolving SPIRA_LOOM_BIN to bin/loom) is deleted with the resolver (sp-gypjk):
+# every tool is invoked by name on the launcher's PATH.
 
 # ===========================================================================
 echo
@@ -90,7 +68,7 @@ env -i \
     "SPIRA_INSTANCE=prod" \
     "SPIRA_SYSTEMCTL=$MOCK_SC" \
     "SPIRA_ACTIVATE_FORCE=1" \
-    bash "$HERE/activate.sh" "$TARBALL" >&2
+    activate.sh "$TARBALL" >&2
 wantrc "activate.sh exits 0" 0 "$?"
 
 want "gap G8: the just-built marker (sp-x.fixed) is what's live after activation" \

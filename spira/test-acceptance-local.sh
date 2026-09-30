@@ -36,7 +36,7 @@ fi
 
 SCRATCH="$(mktemp -d)"
 CNAME="acc-local-test-$$"
-trap 'bash "$HERE/testenv.sh" down --name "$CNAME" >/dev/null 2>&1; rm -rf "$SCRATCH"' EXIT INT TERM
+trap 'testenv.sh down --name "$CNAME" >/dev/null 2>&1; rm -rf "$SCRATCH"' EXIT INT TERM
 
 # ===========================================================================
 echo

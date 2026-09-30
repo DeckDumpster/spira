@@ -70,8 +70,8 @@ printf 'work {{BEAD_ID}} on {{BRANCH}}\n{{PARK}}\n' \
 
 # Mock claude binary. THE GUARD IS NOT DECORATION: conf.sh replaces $PATH, so a PATH
 # shim would reach the real model through the replaced PATH and run it at full cost.
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || { printf 'test-aeon-sweep: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model\n' >&2; exit 1; }
+command -v aeon >/dev/null 2>&1 \
+    || { printf 'test-aeon-sweep: aeon is not on PATH — refusing to run the real model\n' >&2; exit 1; }
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
 # The mock emits a tool_use + result event so that session_outcome classifies it as
@@ -87,7 +87,7 @@ exit 0
 SHIM
 chmod +x "$BIN/claude"
 
-aeon() { "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$@" 2>/dev/null; }
+aeon() { command aeon --home "$SPIRA_HOME" "$@" 2>/dev/null; }
 
 # bd helpers against the fixture database.
 bead_status()   { BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \

@@ -107,8 +107,8 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/c
 
 BIN="$TMP/bin"; mkdir -p "$BIN"
 export SPIRA_AGENT="$BIN/claude" TMP
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || { echo "test-aeon-world-stop: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model" >&2; exit 1; }
+command -v aeon >/dev/null 2>&1 \
+    || { echo "test-aeon-world-stop: aeon is not on PATH — refusing to run the real model" >&2; exit 1; }
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
@@ -139,7 +139,7 @@ seed() {
 field() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
-run_aeon() { : > "$WORLD_CALLS"; rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
+run_aeon() { : > "$WORLD_CALLS"; rm -rf "$SPIRA_RUN/worktree"; PATH="$SPIRA_HOME:$PATH" aeon --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
 
 testdb_reset; seed sp-ws-3
 run_aeon

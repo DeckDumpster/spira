@@ -86,8 +86,8 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || { echo "test-aeon-gate-close-silent: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model" >&2; exit 1; }
+command -v aeon >/dev/null 2>&1 \
+    || { echo "test-aeon-gate-close-silent: aeon is not on PATH — refusing to run the real model" >&2; exit 1; }
 
 # gate-run.sh stub: exits with the code written to $TMP/gate-status-code
 cat > "$SPIRA_HOME/gate-run.sh" <<'STUB'
@@ -135,7 +135,8 @@ case "${1:-}" in
 esac
 STUB
 chmod +x "$SPIRA_HOME/queue.sh"
-export SPIRA_QUEUE_BIN="$SPIRA_HOME/queue.sh"   # the queue binary replaced queue.sh; this stub stands in for both
+ln -sf queue.sh "$SPIRA_HOME/queue"   # the queue binary replaced queue.sh; this stub stands in for both, by name
+# The aeon runs with the fixture home FIRST on PATH, so these stubs shadow the tree's tools.
 
 seed() {
     local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
@@ -183,7 +184,7 @@ run_aeon() {
     rm -rf "$SPIRA_RUN/worktree"
     printf '%s\n' "$gate_code" > "$TMP/gate-status-code"
     printf '%s\n' "$queue_code" > "$TMP/queue-submit-code"
-    "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1
+    PATH="$SPIRA_HOME:$PATH" aeon --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1
 }
 
 bead_notes() {
@@ -320,7 +321,7 @@ printf '%s %s' "$tip1" "$base1" > "$D2/key"
 date +%s > "$D2/started"
 : > "$D2/out"
 
-out1="$(bash "$HERE/gate-run.sh" --status "$BR2" fixture 2>&1)"; rc1=$?
+out1="$(gate-run.sh --status "$BR2" fixture 2>&1)"; rc1=$?
 is "hand-built key matches gate-run.sh's own — recorded PASS answers 0" "0" "$rc1"
 
 # A landing elsewhere moves the base, then this branch is rebased onto it — exactly the
@@ -332,7 +333,7 @@ git -C "$REPO" push -q origin main
 git -C "$REPO" checkout -q "$BR2"
 git -C "$REPO" rebase -q origin/main >/dev/null
 
-out2="$(bash "$HERE/gate-run.sh" --status "$BR2" fixture 2>&1)"; rc2=$?
+out2="$(gate-run.sh --status "$BR2" fixture 2>&1)"; rc2=$?
 is "rebased out from under a recorded PASS — status answers 4, not 3" "4" "$rc2"
 want "st=4: message names a different tree, not silence" "different tree" "$out2"
 
@@ -340,7 +341,7 @@ want "st=4: message names a different tree, not silence" "different tree" "$out2
 # just 3 renamed everywhere.
 BR3="spira/sp-gcs-nevergated"
 git -C "$REPO" branch -q "$BR3" origin/main 2>/dev/null || true
-out3="$(bash "$HERE/gate-run.sh" --status "$BR3" fixture 2>&1)"; rc3=$?
+out3="$(gate-run.sh --status "$BR3" fixture 2>&1)"; rc3=$?
 is "never gated: status still answers 3" "3" "$rc3"
 
 # ======================================================================================
@@ -400,7 +401,7 @@ date +%s > "$D4/started"
 : > "$D4/out"
 # no rc file written — the run died before ever recording one
 
-out4="$(bash "$HERE/gate-run.sh" --status "$BR4" fixture 2>&1)"; rc4=$?
+out4="$(gate-run.sh --status "$BR4" fixture 2>&1)"; rc4=$?
 is   "died without a verdict answers 5, never 1" "5" "$rc4"
 want "st=5: message says the run died without recording a verdict" "died" "$out4"
 nowant "st=5: message must never claim FAILED" "FAILED" "$out4"

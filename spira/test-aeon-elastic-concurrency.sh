@@ -46,17 +46,11 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 echo "test-aeon-elastic-concurrency.sh"
 
-# The aeon binary replaced aeon.sh. Nothing sources conf.sh for THIS tree before here, so
-# resolve it (and the spira-claim it ranks through) the way conf.sh's spira_bin does for this
-# checkout — SPIRA_ARTIFACTS under testenv — unless the caller already exported one.
-_rbin() { env -u SPIRA_REPO SPIRA_HOME="$HERE" bash -c '. "$1/conf.sh" >/dev/null 2>&1; spira_bin "$2" 2>/dev/null' _ "$HERE" "$1"; }
-[ -x "${SPIRA_AEON_BIN:-}" ] || SPIRA_AEON_BIN="$(_rbin aeon)"
-[ -x "${SPIRA_CLAIM_BIN:-}" ] || SPIRA_CLAIM_BIN="$(_rbin spira-claim)"
-export SPIRA_AEON_BIN SPIRA_CLAIM_BIN
+# aeon and spira-claim are invoked by name, from the tree's build on the suite's PATH.
 # The aeon binary (aeon/, which replaced aeon.sh) must be built — a refusal to run at all
 # here is louder than a suite that silently runs nothing.
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || { echo "test-aeon-elastic-concurrency.sh: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run" >&2; exit 1; }
+command -v aeon >/dev/null 2>&1 \
+    || { echo "test-aeon-elastic-concurrency.sh: aeon is not on PATH — refusing to run" >&2; exit 1; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
@@ -80,7 +74,7 @@ aeon_count() { printf '%s' "\${MOCK_AEON_COUNT:-0}"; }
 STUB
 
 run_aeon() {   # run_aeon <fayth> -> stdout+stderr captured
-    "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$1" 2>&1
+    aeon --home "$SPIRA_HOME" "$1" 2>&1
 }
 refused() { [[ "$1" == *"at capacity"* ]]; }
 

@@ -21,7 +21,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
-ARC="$HERE/archivist.sh"
+ARC=archivist.sh   # the SUT, by name on the suite's PATH (sp-gypjk)
 
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "no [$3] in [$2]" ;; esac; }
 hasnt() { case "$2" in *"$3"*) bad "$1" "found [$3] in [$2]" ;; *) ok "$1" ;; esac; }
@@ -268,7 +268,7 @@ out="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
     SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
     SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
     SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
-    bash "$HERE/ctx-meter.sh" env "$T/projects/-test-project/sess-viz.jsonl" 2>/dev/null)"
+    ctx-meter.sh env "$T/projects/-test-project/sess-viz.jsonl" 2>/dev/null)"
 has "env mode shows skipped archivist state" "$out" "SP_CTX_ARCHIVIST=skipped"
 
 # ==========================================================================================

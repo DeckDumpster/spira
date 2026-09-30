@@ -107,8 +107,8 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || { echo "test-aeon-eviction-race: the aeon binary is not built (SPIRA_AEON_BIN)" >&2; exit 1; }
+command -v aeon >/dev/null 2>&1 \
+    || { echo "test-aeon-eviction-race: aeon is not on PATH" >&2; exit 1; }
 
 # The shim commits, writes landstate=RED reason=ejected at the real (post-commit) tip, then
 # closes — reproducing the original race: the eviction is recorded, then the in-flight aeon
@@ -132,7 +132,7 @@ seed() {
     printf '{"id":"%s","title":"t","status":"%s","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "${2:-open}" "$_lbl" | testdb_seed
 }
-run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
+run_aeon() { rm -rf "$SPIRA_RUN/worktree"; aeon --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
 field() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }

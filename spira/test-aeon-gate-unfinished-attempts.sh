@@ -58,8 +58,8 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || { echo "test-aeon-gate-unfinished-attempts: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model" >&2; exit 1; }
+command -v aeon >/dev/null 2>&1 \
+    || { echo "test-aeon-gate-unfinished-attempts: aeon is not on PATH — refusing to run the real model" >&2; exit 1; }
 
 # gate-run.sh stub: always "still running" (exit 2), the shape gate_unfinished() (aeon.sh)
 # requires before it will read the bead's gate as still deciding.
@@ -88,7 +88,7 @@ seed() {
     printf '{"id":"%s","title":"t","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "$_lbl" | testdb_seed
 }
-run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
+run_aeon() { rm -rf "$SPIRA_RUN/worktree"; PATH="$SPIRA_HOME:$PATH" aeon --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
 bead_status() {
     BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
         | python3 -c '

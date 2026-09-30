@@ -27,7 +27,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 arch() {   # arch <home> [SPIRA_TOKEN_PROJECTS]
     env -i PATH="$PATH" HOME="$1" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_DB="$TMP/db" ${2:+SPIRA_TOKEN_PROJECTS="$2"} \
-        bash "$HERE/archive.sh" sweep 2>&1
+        archive.sh sweep 2>&1
 }
 
 mkdir -p "$TMP/h1"

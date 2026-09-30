@@ -148,7 +148,7 @@ _attr_run() {
 
     local results="$out/results"
     SPIRA_BATCH_RESULTS="$results" SPIRA_VERDICT_TTL=0 \
-        "${SPIRA_TESTENV_BIN:-$(spira_bin testenv 2>/dev/null)}" --suites "$suites_csv" "$sha" "$REPO" \
+        testenv --suites "$suites_csv" "$sha" "$REPO" \
         >"$out/log" 2>&1
     local rc=$?
     if [ "$rc" -ge 2 ]; then _ATTR_RUN_FAULT=1; fi

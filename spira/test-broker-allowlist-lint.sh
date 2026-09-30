@@ -14,19 +14,19 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 echo "test-broker-allowlist-lint.sh"
 
-LINT="$HERE/broker-allowlist-lint.sh"
+LINT=broker-allowlist-lint.sh   # the SUT, by name on the suite's PATH (sp-gypjk)
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # ---------------------------------------------------------------------------
 # POSITIVE CONTROL — a conf.sh with one name missing is caught by --scan-conf.
 # ---------------------------------------------------------------------------
-printf 'SPIRA_BROKER_BIN=x\nSPIRA_BROKER_GH_CONFIG_DIR=x\nSPIRA_GH=x\nSPIRA_GH_APP_CONFIG=x\n' \
+printf 'SPIRA_BROKER_GH_CONFIG_DIR=x\nSPIRA_GH=x\nSPIRA_GH_APP_CONFIG=x\n' \
     > "$TMP/conf-missing-one.sh"
 out="$(bash "$LINT" --scan-conf "$TMP/conf-missing-one.sh")"
 is "positive control: names the one missing var" "SPIRA_BROKER_GH_TOKEN" "$out"
 
 # The escape: adding the name silences it.
-printf 'SPIRA_BROKER_BIN=x\nSPIRA_BROKER_GH_CONFIG_DIR=x\nSPIRA_BROKER_GH_TOKEN=x\nSPIRA_GH=x\nSPIRA_GH_APP_CONFIG=x\n' \
+printf 'SPIRA_BROKER_GH_CONFIG_DIR=x\nSPIRA_BROKER_GH_TOKEN=x\nSPIRA_GH=x\nSPIRA_GH_APP_CONFIG=x\n' \
     > "$TMP/conf-complete.sh"
 is "a complete conf.sh reports nothing missing" "" "$(bash "$LINT" --scan-conf "$TMP/conf-complete.sh")"
 
@@ -35,13 +35,13 @@ is "a complete conf.sh reports nothing missing" "" "$(bash "$LINT" --scan-conf "
 # ---------------------------------------------------------------------------
 printf 'echo hello\n' > "$TMP/build-no-broker.sh"
 is "build.sh with no mention of broker is flagged" "broker" "$(bash "$LINT" --scan-build "$TMP/build-no-broker.sh")"
-printf 'printf broker: %%s\\n "$SPIRA_BROKER_BIN"\n' > "$TMP/build-with-broker.sh"
+printf 'command -v broker\n' > "$TMP/build-with-broker.sh"
 is "build.sh mentioning broker reports nothing" "" "$(bash "$LINT" --scan-build "$TMP/build-with-broker.sh")"
 
 # ---------------------------------------------------------------------------
 # broker.sh shim --scan-shim
 # ---------------------------------------------------------------------------
-printf '#!/usr/bin/env bash\n. "$(dirname "$0")/conf.sh"\nexec "$SPIRA_BROKER_BIN" "$@"\n' > "$TMP/shim-good.sh"
+printf '#!/usr/bin/env bash\n. "$(dirname "$0")/conf.sh"\nexec broker "$@"\n' > "$TMP/shim-good.sh"
 is "a thin shim reports nothing missing" "" "$(bash "$LINT" --scan-shim "$TMP/shim-good.sh")"
 
 printf '#!/usr/bin/env bash\nexec /bin/true\n' > "$TMP/shim-no-conf.sh"

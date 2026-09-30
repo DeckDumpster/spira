@@ -24,8 +24,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 command -v podman >/dev/null 2>&1 || skip "podman not on PATH"
 
-TESTENV="$HERE/testenv.sh"
-ATTRIBUTE="$HERE/attribute.sh"
+TESTENV=testenv.sh   # the SUT, by name on the suite's PATH (sp-gypjk)
+ATTRIBUTE=attribute.sh   # the SUT, by name on the suite's PATH (sp-gypjk)
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 

@@ -22,7 +22,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-CONF_NAMES=(SPIRA_BROKER_BIN SPIRA_BROKER_GH_CONFIG_DIR SPIRA_BROKER_GH_TOKEN SPIRA_GH SPIRA_GH_APP_CONFIG)
+CONF_NAMES=(SPIRA_BROKER_GH_CONFIG_DIR SPIRA_BROKER_GH_TOKEN SPIRA_GH SPIRA_GH_APP_CONFIG)
 
 scan_conf() {   # scan_conf <file> -> missing names, one per line; exit 0 either way
     local f="$1" name

@@ -47,12 +47,13 @@ custrepo-one | /tmp/one | push | origin/main | | true | plan
 custrepo-two | /tmp/two | push | origin/main | | true | plan
 MAP
 
+TOOLS="$(command -v spira-config)" && TOOLS="$(dirname "$TOOLS")"
 run_contract() {
-    env -i HOME="$T" PATH="/usr/bin:/bin" \
+    env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" \
         SPIRA_CONF="$T/none.conf" \
         SPIRA_HOME="$T" \
         SPIRA_REPO_MAP="${1-$T/repo-map}" \
-        bash "$HERE/bead.sh" contract 2>&1
+        bead.sh contract 2>&1
 }
 
 echo "test-bead-contract.sh"
@@ -77,7 +78,7 @@ want "contract: beta listed as label-less" \
 
 # KINDS is asked of the live schema, never hand-copied here — a suite that hardcoded the
 # vocabulary would go stale the moment schema.sh's declaration changed under it.
-kinds_expected="$(bash "$HERE/schema.sh" kinds)"
+kinds_expected="$(schema.sh kinds)"
 kinds_ok=1
 while IFS= read -r k; do
     [ -n "$k" ] || continue

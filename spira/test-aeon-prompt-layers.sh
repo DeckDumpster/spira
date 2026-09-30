@@ -115,8 +115,8 @@ export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || { printf 'test-aeon-prompt-layers: the aeon binary is not built (SPIRA_AEON_BIN)\n' >&2; exit 1; }
+command -v aeon >/dev/null 2>&1 \
+    || { printf 'test-aeon-prompt-layers: aeon is not on PATH\n' >&2; exit 1; }
 
 BIN="$TMP/bin"; mkdir -p "$BIN"
 export SPIRA_AGENT="$BIN/claude" TMP
@@ -131,7 +131,7 @@ exit 0
 SHIM
 chmod +x "$BIN/claude"
 
-aeon() { "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$@" 2>/dev/null; }
+aeon() { command aeon --home "$SPIRA_HOME" "$@" 2>/dev/null; }
 
 # Shared label for all test fayths.
 T_LABEL="test-layers-bead"

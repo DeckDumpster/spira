@@ -61,8 +61,8 @@ export SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 export SPIRA_CHAMBER_OVERLAY="$TMP/overlay-empty"   # deliberately absent for the golden check
 
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || { printf 'test-aeon-chamber-overlay: the aeon binary is not built (SPIRA_AEON_BIN)\n' >&2; exit 1; }
+command -v aeon >/dev/null 2>&1 \
+    || { printf 'test-aeon-chamber-overlay: aeon is not on PATH\n' >&2; exit 1; }
 
 BIN="$TMP/bin"; mkdir -p "$BIN"
 export SPIRA_AGENT="$BIN/claude" TMP
@@ -75,7 +75,7 @@ exit 0
 SHIM
 chmod +x "$BIN/claude"
 
-aeon() { "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$@" 2>/dev/null; }
+aeon() { command aeon --home "$SPIRA_HOME" "$@" 2>/dev/null; }
 
 T_LABEL="test-chamber-overlay-bead"
 make_bead() {
@@ -152,7 +152,8 @@ STUB
 chmod +x "$STUB_BIN/spira-lc"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB_BIN/work"
 chmod +x "$STUB_BIN/work"
-export SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_LC_BIN="$STUB_BIN/spira-lc" SPIRA_WORK_BIN="$STUB_BIN/work"
+_PATH_BEFORE_STUB="$PATH"
+export SPIRA_LIFECYCLE_ENFORCE=1 PATH="$STUB_BIN:$PATH"   # the stubs, by name, ahead of the tree's build
 BID_F1="$(make_bead)"
 [ -n "$BID_F1" ] || { printf 'test-aeon-chamber-overlay: could not create finish/restricted bead\n' >&2; exit 1; }
 aeon builder
@@ -167,7 +168,7 @@ BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" close "$BID_F1" --reason-file - >/dev/
 OUTCOME: submitted
 Test scaffolding cleanup — not a real session.
 REASON
-unset SPIRA_LIFECYCLE_ENFORCE SPIRA_LC_BIN SPIRA_WORK_BIN
+unset SPIRA_LIFECYCLE_ENFORCE; PATH="$_PATH_BEFORE_STUB"
 
 # ==========================================================================================
 echo
@@ -230,13 +231,13 @@ echo "doctor.sh reports an active overlay by name and reports none when the dire
 mkdir -p "$SPIRA_CHAMBER_OVERLAY"
 printf 'Operator append.\n' > "$SPIRA_CHAMBER_OVERLAY/builder.append.md"
 out_active="$(SPIRA_HOME="$SPIRA_HOME" SPIRA_CHAMBER_OVERLAY="$SPIRA_CHAMBER_OVERLAY" \
-    SPIRA_DB="$SPIRA_DB" bash "$HERE/doctor.sh" 2>&1)"
+    SPIRA_DB="$SPIRA_DB" doctor.sh 2>&1)"
 want "doctor names the active overlay file" "builder.append.md" "$out_active"
 rm -f "$SPIRA_CHAMBER_OVERLAY/builder.append.md"
 
 EMPTY_OVERLAY="$TMP/overlay-none"
 out_none="$(SPIRA_HOME="$SPIRA_HOME" SPIRA_CHAMBER_OVERLAY="$EMPTY_OVERLAY" \
-    SPIRA_DB="$SPIRA_DB" bash "$HERE/doctor.sh" 2>&1)"
+    SPIRA_DB="$SPIRA_DB" doctor.sh 2>&1)"
 want "doctor reports none active when the overlay directory is empty" "none active" "$out_none"
 
 tl_summary

@@ -44,10 +44,10 @@ ln -s "$HERE/conf.sh" "$HARNESS/spira/conf.sh"
 printf '# empty\n' > "$HARNESS/spira/repo-map.example"
 printf '# empty\n' > "$HARNESS/spira/watchers"
 
-# conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2); HARNESS
-# carries none of this checkout's own target/, so without this the config-file case below
-# reads no configured value at all.
-SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)" || skip "no spira-config binary found — cannot be built here"
+# conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2), by name
+# (sp-gypjk). Every `env -i` below is a launcher: its PATH leads with the directory the
+# suite's own spira-config resolves from (the tree's build), then the system dirs.
+TOOLS="$(command -v spira-config)" && TOOLS="$(dirname "$TOOLS")" || skip "spira-config is not on PATH"
 
 # A fake database: just needs .beads to exist so the schema check fires.
 FAKEDB="$TMP/fakedb"
@@ -88,14 +88,14 @@ BD_BAD="$TMP/bin-bad/bd"
 # Returns the value of SPIRA_BD; extra env vars can be appended.
 conf_val() {
     local spira_path="${1:-}"; shift || true
-    env -i PATH="/usr/local/bin:/usr/bin:/bin" \
+    env -i PATH="$TOOLS:/usr/bin:/bin" \
         HOME="$TMP/home" \
         SPIRA_HOME="$HARNESS/spira" \
         SPIRA_REPO="$HARNESS" \
         SPIRA_CONF=/nonexistent \
         SPIRA_WATCHERS="$HARNESS/spira/watchers" \
         SPIRA_DB="$TMP/empty-db" \
-        SPIRA_PATH="$spira_path" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+        SPIRA_PATH="$spira_path" \
         "$@" \
         bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_BD:-}\"" 2>/dev/null
 }
@@ -103,14 +103,14 @@ conf_val() {
 # Source conf.sh with the fake database (schema check fires); returns exit code.
 conf_with_db() {
     local spira_path="${1:-}"; shift || true
-    env -i PATH="/usr/local/bin:/usr/bin:/bin" \
+    env -i PATH="$TOOLS:/usr/bin:/bin" \
         HOME="$TMP/home" \
         SPIRA_HOME="$HARNESS/spira" \
         SPIRA_REPO="$HARNESS" \
         SPIRA_CONF=/nonexistent \
         SPIRA_WATCHERS="$HARNESS/spira/watchers" \
         SPIRA_DB="$FAKEDB" \
-        SPIRA_PATH="$spira_path" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+        SPIRA_PATH="$spira_path" \
         "$@" \
         bash -c ". '$HARNESS/spira/conf.sh'" 2>/dev/null
 }
@@ -164,26 +164,26 @@ echo "config file — SPIRA_BD from spira.conf wins over PATH-derived default:"
 CONF_FILE="$TMP/spira.conf"
 printf 'SPIRA_BD = %s\n' "$BD_GOOD" > "$CONF_FILE"
 # bin-bad is first on PATH; config pins bin-good.
-got="$(env -i PATH="/usr/local/bin:/usr/bin:/bin" \
+got="$(env -i PATH="$TOOLS:/usr/bin:/bin" \
     HOME="$TMP/home" \
     SPIRA_HOME="$HARNESS/spira" \
     SPIRA_REPO="$HARNESS" \
     SPIRA_CONF="$CONF_FILE" \
     SPIRA_WATCHERS="$HARNESS/spira/watchers" \
     SPIRA_DB="$TMP/empty-db" \
-    SPIRA_PATH="$TMP/bin-bad" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+    SPIRA_PATH="$TMP/bin-bad" \
     bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_BD:-}\"" 2>/dev/null)"
 is "config-file SPIRA_BD wins over PATH-derived default" "$BD_GOOD" "$got"
 
 # env still overrides the config file.
-got="$(env -i PATH="/usr/local/bin:/usr/bin:/bin" \
+got="$(env -i PATH="$TOOLS:/usr/bin:/bin" \
     HOME="$TMP/home" \
     SPIRA_HOME="$HARNESS/spira" \
     SPIRA_REPO="$HARNESS" \
     SPIRA_CONF="$CONF_FILE" \
     SPIRA_WATCHERS="$HARNESS/spira/watchers" \
     SPIRA_DB="$TMP/empty-db" \
-    SPIRA_PATH="$TMP/bin-bad" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+    SPIRA_PATH="$TMP/bin-bad" \
     SPIRA_BD="$BD_BAD" \
     bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_BD:-}\"" 2>/dev/null)"
 is "env wins over config file for SPIRA_BD" "$BD_BAD" "$got"
@@ -192,7 +192,7 @@ is "env wins over config file for SPIRA_BD" "$BD_BAD" "$got"
 echo
 echo "SPIRA_BD is exported — child processes inherit it:"
 # ==========================================================================
-exported="$(env -i PATH="/usr/local/bin:/usr/bin:/bin" \
+exported="$(env -i PATH="$TOOLS:/usr/bin:/bin" \
     HOME="$TMP/home" \
     SPIRA_HOME="$HARNESS/spira" \
     SPIRA_REPO="$HARNESS" \

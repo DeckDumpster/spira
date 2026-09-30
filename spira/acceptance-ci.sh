@@ -106,7 +106,7 @@ if [ -n "${GH_TOKEN:-}" ]; then
 fi
 
 _run_rc=0
-bash "${SPIRA_ACCEPTANCE_RUN:-$HERE/acceptance-run.sh}" "${_run_args[@]}" || _run_rc=$?
+"${SPIRA_ACCEPTANCE_RUN:-acceptance-run.sh}" "${_run_args[@]}" || _run_rc=$?
 
 _push_ok=0
 if [ -n "${GH_TOKEN:-}" ]; then

@@ -43,9 +43,8 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
 . "$HERE/testlib.sh"
-# The queue binary case L lands through (queue/DESIGN.md §7.4): the one conf.sh exports,
-# else the tree under test's own build (testenv's SPIRA_ARTIFACTS), else this checkout's bin/.
-QUEUE_BIN="${SPIRA_QUEUE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/queue}"
+# batcher, tsd-write and the queue binary case L lands through (queue/DESIGN.md §7.4) are the
+# tree under test's own build, invoked by name on the suite's PATH (sp-gypjk).
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -53,38 +52,10 @@ testdb_require test-batcher-cut
 TMP="$(mktemp -d)"; trap 'testdb_drop; chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT INT TERM
 testdb_up batchercut || { echo "test-batcher-cut: could not build fixture database"; exit 1; }
 
-# ── build the batcher binary (law-absence-needs-a-positive-control: no binary, no suite) ──
-# RESOLVE THE TOOLCHAIN DIRECTORY, NOT JUST cargo's OWN PATH. cargo execs `rustc` BY NAME,
-# and testdb.sh (sourced above) pulls in conf.sh, which overwrites PATH wholesale — so
-# finding cargo's path is not enough; its own directory has to go back on PATH for the
-# `rustc` it execs to resolve (same fix test-batcher.sh's own comment describes, needed
-# here because this suite, unlike that one, sources testdb.sh).
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-[ -z "$CARGO_BIN" ] && [ -x "/usr/local/cargo/bin/cargo" ] && CARGO_BIN="/usr/local/cargo/bin/cargo"
-if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-batcher-cut: cargo not found — the batcher binary cannot be built"
-    exit 77
-fi
-PATH="$(dirname "$CARGO_BIN"):$PATH"; export PATH
-# PIN CARGO_TARGET_DIR EXPLICITLY. A suite runs inside testenv-batch.sh's own podman exec,
-# which sets its own CARGO_TARGET_DIR for the suites that build Rust under test — trusting
-# $ROOT/target here would silently build into that redirected directory instead, and this
-# suite's own binary lookup would find nothing there (SEEN RED without this: the build
-# reported "Finished" while this suite's own expected output path stayed absent).
-CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
-BATCHER_BIN="$CARGO_TARGET_DIR_FOR_BUILD/release/batcher"
-if [ ! -x "$BATCHER_BIN" ]; then
-    printf '  (building batcher-cut into %s)\n' "$BATCHER_BIN"
-    CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-        "$CARGO_BIN" build --release --manifest-path "$ROOT/Cargo.toml" -p batcher-cut 2>&1 | tail -10
-fi
-[ -x "$BATCHER_BIN" ] || { echo "test-batcher-cut: batcher binary did not build"; exit 1; }
-TSD_BIN="$CARGO_TARGET_DIR_FOR_BUILD/release/tsd-write"
-if [ ! -x "$TSD_BIN" ]; then
-    CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-        "$CARGO_BIN" build --release --manifest-path "$ROOT/Cargo.toml" -p tsd 2>&1 | tail -10
-fi
+# ── the batcher binary (law-absence-needs-a-positive-control: no binary, no suite) ──
+for _t in batcher tsd-write queue; do
+    command -v "$_t" >/dev/null 2>&1 || { echo "test-batcher-cut: $_t is not on PATH"; exit 1; }
+done
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
@@ -276,6 +247,8 @@ case "${1:-}" in
 esac
 LCSTUB
 chmod +x "$SH/spira-lc-stub.sh"
+# The stub, by name: a directory whose spira-lc is it, put first on PATH for a case (sp-gypjk).
+mkdir -p "$SH/lc-stub-bin" && ln -sf ../spira-lc-stub.sh "$SH/lc-stub-bin/spira-lc"
 
 REQUEUE_SPY="$TMP/requeue-spy"; : > "$REQUEUE_SPY"
 cat >> "$SH/lib.sh" <<LIBSPY
@@ -292,7 +265,6 @@ cut_repo() {
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
     SPIRA_QUEUE_BATCH_WAIT=999999 \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
-    SPIRA_TSD_BIN="$TSD_BIN" \
     STUB_RED_SUITES="${STUB_RED_SUITES:-}" \
     STUB_FLAKE_SUITE="${STUB_FLAKE_SUITE:-}" \
     STUB_FLAKE_COUNTER_FILE="${STUB_FLAKE_COUNTER_FILE:-}" \
@@ -304,10 +276,9 @@ cut_repo() {
     SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-}" \
     SPIRA_BATCHER_WALL_SECS="${SPIRA_BATCHER_WALL_SECS:-}" \
     SPIRA_RELEASE_RUST_TOOLCHAIN="${SPIRA_RELEASE_RUST_TOOLCHAIN:-}" \
-    SPIRA_LC_BIN="${SPIRA_LC_BIN:-}" \
     SPIRA_LC_STUB_LOG="${SPIRA_LC_STUB_LOG:-}" \
     SPIRA_LC_STUB_RC="${SPIRA_LC_STUB_RC:-0}" \
-        "$BATCHER_BIN" cut "$REPONAME" --round-vm "$SH/round-vm-stub.sh" 2>&1
+        batcher cut "$REPONAME" --round-vm "$SH/round-vm-stub.sh" 2>&1
 }
 
 B() { "${TESTDB_BD:-bd}" -C "$SPIRA_DB" "$@"; }
@@ -370,13 +341,13 @@ is   "A: open-batch branch is spira/queue/*" "1" "$(case "$(open_field branch)" 
 is   "A: open-batch owner=batcher (sp-lomk3: verdict's own CI-red routing reads this)" \
     "batcher" "$(open_field owner)"
 is   "A: sp-caaa1 landstate BATCHED" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-caaa1")"
-is   "A: no batch_id without SPIRA_LC_BIN (legacy default, never blocks the PR)" "" "$(open_field batch_id)"
-is   "A: no version without SPIRA_LC_BIN"                                        "" "$(open_field version)"
+is   "A: no batch_id with the lifecycle switch off (legacy default, never blocks the PR)" "" "$(open_field batch_id)"
+is   "A: no version with the lifecycle switch off"                                  "" "$(open_field version)"
 want "A: commit message names spira: land sp-caaa1, with the bead's own title" \
     "spira: land sp-caaa1 — sp-caaa1 bead" \
     "$(git -C "$REPO" log --format=%s "$(open_field branch)" -n 5 2>/dev/null)"
 is   "A: forge pr-create called once" "1" "$(grep -c '^pr-create' "$FORGE_LOG")"
-if [ -x "$TSD_BIN" ]; then
+if command -v tsd-write >/dev/null 2>&1; then
     want "A: TSD batch-round row records verdict=green" '"verdict":"green"' \
         "$(tail -1 "$RUN/tsd/batch-round.jsonl" 2>/dev/null)"
 fi
@@ -462,7 +433,7 @@ nowant "G: nobody is ejected"                "ejected"               "$out_g"
 want   "G: the round proceeds to its PR"     "PR "                   "$out_g"
 is     "G: forge pr-create called once more" "$((prcreate_before_g + 1))" "$(grep -c '^pr-create' "$FORGE_LOG")"
 is     "G: sp-cgflk BATCHED"                 "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cgflk")"
-if [ -x "$TSD_BIN" ]; then
+if command -v tsd-write >/dev/null 2>&1; then
     want "G: the flake is recorded" '"outcome":"flaky"' "$(tail -1 "$RUN/tsd/round-attribution.jsonl" 2>/dev/null)"
 fi
 rm -f "$(open_batch_file)"
@@ -573,7 +544,7 @@ is   "D: stacked open-batch still owner=batcher" "batcher" "$(open_field owner)"
 # CASE E — judgement-ci (sp-lomk3): verdict.sh's own CI-red producer, on a red CI
 # check for a PR the batcher owns, calls this subcommand instead of running its
 # own attribution. Exercised directly here, the way verdict.sh's own suite
-# stubs SPIRA_BATCHER_BIN and asserts the wiring from its own side.
+# stubs the batcher and asserts the wiring from its own side.
 # =============================================================================
 echo
 echo "E. judgement-ci: files a judgement bead for a CI-only red:"
@@ -582,7 +553,7 @@ judge_ci() {
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
-        "$BATCHER_BIN" judgement-ci "$REPONAME" "$@" 2>&1
+        batcher judgement-ci "$REPONAME" "$@" 2>&1
 }
 
 out_e="$(judge_ci --suites test-owned.sh --members sp-caaa1 --evidence 'PR 1 — https://example.invalid/actions/runs/1')"
@@ -619,7 +590,7 @@ tip_f="$(git -C "$REPO" rev-parse spira/sp-cfff6)"
 git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cfff6"
 certify sp-cfff6 "$tip_f"
 
-SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_LC_BIN="$SH/spira-lc-stub.sh" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
+SPIRA_LIFECYCLE_ENFORCE=1 PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
 branch_f="$(open_field branch)"; head_f="$(open_field head)"; base_f="$(open_field base)"
 want "F: cut calls spira-lc create-bead for the member" "create-bead sp-cfff6" "$(cat "$LC_LOG")"
 want "F: cut calls spira-lc cut naming the same batch-id, head and base as the open-batch record" \
@@ -638,7 +609,7 @@ tip_g="$(git -C "$REPO" rev-parse spira/sp-cggg7)"
 git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cggg7"
 certify sp-cggg7 "$tip_g"
 
-SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_LC_BIN="$SH/spira-lc-stub.sh" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
+SPIRA_LIFECYCLE_ENFORCE=1 PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
 want "F: stacking calls spira-lc stack, not cut, on the same batch-id" \
     "stack $branch_f --members sp-cggg7:$tip_g --actor batcher" "$(cat "$LC_LOG")"
 nowant "F: stacking never calls spira-lc cut again for the same batch-id" "cut $branch_f " "$(cat "$LC_LOG")"
@@ -659,7 +630,7 @@ tip_h="$(git -C "$REPO" rev-parse spira/sp-chhh8)"
 git -C "$REPO" worktree remove -f "$RUN/worktree/sp-chhh8"
 certify sp-chhh8 "$tip_h"
 
-out_f_refused="$(SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_LC_BIN="$SH/spira-lc-stub.sh" SPIRA_LC_STUB_LOG="$LC_LOG" SPIRA_LC_STUB_RC=3 cut_repo)"
+out_f_refused="$(SPIRA_LIFECYCLE_ENFORCE=1 PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$LC_LOG" SPIRA_LC_STUB_RC=3 cut_repo)"
 want "F: PLANTED REFUSAL — cut still reports the PR opening" "PR " "$out_f_refused"
 want "F: PLANTED REFUSAL — the refusal is logged" "spira-lc cut refused for" "$out_f_refused"
 is   "F: PLANTED REFUSAL — open-batch batch_id stays unset" "" "$(open_field batch_id)"
@@ -698,7 +669,7 @@ cut_other() {
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
     SPIRA_QUEUE_BATCH_WAIT=999999 \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
-        "$BATCHER_BIN" cut "$1" --round-vm "$SH/round-vm-stub.sh" 2>&1
+        batcher cut "$1" --round-vm "$SH/round-vm-stub.sh" 2>&1
 }
 
 out_g_forge="$(cut_other forgealias)"
@@ -898,12 +869,9 @@ cut_local() {
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
     SPIRA_QUEUE_BATCH_WAIT=999999 \
     SPIRA_RELEASES="$LRELEASES" \
-    SPIRA_TSD_BIN="$TSD_BIN" \
-    SPIRA_LC_BIN="${SPIRA_LC_BIN:-}" \
     SPIRA_LC_STACKS_DIR="${SPIRA_LC_STACKS_DIR:-}" \
-    SPIRA_QUEUE_BIN="$QUEUE_BIN" \
     STUB_INSTALL_BINS="${STUB_INSTALL_BINS:-}" \
-        "$BATCHER_BIN" cut locland --round-vm "$SH/round-vm-stub.sh" 2>&1
+        batcher cut locland --round-vm "$SH/round-vm-stub.sh" 2>&1
 }
 
 # L1 — missing --with-bins corpus: terminal_ready refuses before land-local is ever called,
@@ -949,7 +917,7 @@ is     "L2: local/main fast-forwards to the round's own merge head" "$head_l2" "
 is     "L2: the round head descends from the member's own tip" "0" "$(git -C "$LREPO" merge-base --is-ancestor "$tip_l2" "$head_l2"; echo $?)"
 is     "L2: no open-batch file under queue.local" "0" "$([ -f "$QUEUEDIR/locland/open" ] && echo 1 || echo 0)"
 is     "L2: sp-clbb2 landstate LANDED" "LANDED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-clbb2")"
-if [ -x "$TSD_BIN" ]; then
+if command -v tsd-write >/dev/null 2>&1; then
     want "L2: TSD batch-round row records verdict=landed_local" '"verdict":"landed_local"' \
         "$(tail -1 "$RUN/tsd/batch-round.jsonl" 2>/dev/null)"
 fi
@@ -983,6 +951,7 @@ case "${1:-}" in
 esac
 LCSTACKSTUB
 chmod +x "$SH/spira-lc-stack-stub.sh"
+mkdir -p "$SH/lc-stack-stub-bin" && ln -sf ../spira-lc-stack-stub.sh "$SH/lc-stack-stub-bin/spira-lc"
 
 # A -> B -> C: a straight chain, each bead's branch built on the previous bead's own tip, the
 # same shape a real stacked worktree gets once bead 3 (aeon base = landing ref + stack) lands.
@@ -1019,7 +988,7 @@ certify sp-cmbb2 "$tip_mb" 300
 
 # Stacking is a lifecycle-machine concept (read_stack runs nothing with the switch OFF), so
 # this case runs ON.
-out_m="$(SPIRA_LIFECYCLE_ENFORCE=1 STUB_INSTALL_BINS=1 SPIRA_LC_BIN="$SH/spira-lc-stack-stub.sh" SPIRA_LC_STACKS_DIR="$LC_STACKS" cut_local)"
+out_m="$(SPIRA_LIFECYCLE_ENFORCE=1 STUB_INSTALL_BINS=1 PATH="$SH/lc-stack-stub-bin:$PATH" SPIRA_LC_STACKS_DIR="$LC_STACKS" cut_local)"
 want   "M: reports landing locally"                             "landed locally"  "$out_m"
 want   "M: all three members landed in one round"                "3 member(s)"    "$out_m"
 is     "M: sp-cmaa1 landstate LANDED (the closed-over prerequisite, never dropped as EMPTY)" \

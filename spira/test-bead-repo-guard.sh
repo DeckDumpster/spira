@@ -40,7 +40,7 @@ run_bead_file() {   # run_bead_file <repo> -> writes combined output to $TMP/out
     env -i PATH="$PATH" HOME="$TMP" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$MAP" SPIRA_BD="$STUB_BD" BD_TIMEOUT=10 \
-        bash "$HERE/bead.sh" file "guard test" --kind event --repo "$1" > "$TMP/out" 2>&1
+        bead.sh file "guard test" --kind event --repo "$1" > "$TMP/out" 2>&1
 }
 
 # ==========================================================================

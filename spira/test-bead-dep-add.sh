@@ -28,7 +28,7 @@ run_dep_add() {           # run_dep_add <args...> -> sets DA_OUT and DA_RC from 
     DA_OUT="$(SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
         SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" \
         SPIRA_INCIDENT_LABEL="incident-test" \
-        bash "$HERE/bead.sh" dep add "$@" 2>&1)"
+        bead.sh dep add "$@" 2>&1)"
     DA_RC=$?
 }
 

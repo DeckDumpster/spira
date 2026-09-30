@@ -353,23 +353,19 @@ done
 [ "$lc_up" = 1 ] || bail "dolt sql-server for spira_lifecycle never came up: $(cat "$LC_TMP/server.log")"
 lc_root_sql() { "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls "$@"; }
 
-LC_CARGO_TARGET="$LC_TMP/cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$LC_CARGO_TARGET" \
-    "$CARGO_BIN" build --manifest-path "$SRC_ROOT/spira-lc/Cargo.toml" --quiet 2>"$LC_TMP/build.log" \
-    || bail "spira-lc failed to build: $(cat "$LC_TMP/build.log")"
-export SPIRA_LC_BIN="$LC_CARGO_TARGET/debug/spira-lc"
+command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"   # the tree's build, by name (sp-gypjk)
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LC_PORT"
 export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$LC_TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
-"$SPIRA_LC_BIN" admin-apply-ddl "$SRC_ROOT/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
+spira-lc admin-apply-ddl "$SRC_ROOT/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
 wantrc "spira_lifecycle schema applies cleanly" 0 $?
 # shellcheck disable=SC1090
 . "$HERE/lc.sh"
 mklc() { lc_root_sql --use-db spira_lifecycle sql -q "DELETE FROM bead WHERE bead_id = '$1'" >/dev/null 2>&1
-         "$SPIRA_LC_BIN" create-bead "$1" >/dev/null 2>&1; }
+         spira-lc create-bead "$1" >/dev/null 2>&1; }
 
 if "$ATT" clear 2>/dev/null; then r=0; else r=1; fi
 is "clear with no args exits non-zero" 1 "$r"

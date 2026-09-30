@@ -78,7 +78,7 @@ seed() {
     printf '{"id":"%s","title":"t","status":"%s","issue_type":"task","priority":0,"labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "${2:-open}" "$_lbl" | testdb_seed
 }
-run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
+run_aeon() { rm -rf "$SPIRA_RUN/worktree"; aeon --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
 
 # ======================================================================================
 echo

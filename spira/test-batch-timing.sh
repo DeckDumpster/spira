@@ -28,7 +28,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 
-GATE_TIMING="$HERE/gate-timing.sh"
+GATE_TIMING=gate-timing.sh   # the SUT, by name on the suite's PATH (sp-gypjk)
 CONF_SH="$HERE/conf.sh"
 
 TMP="$(mktemp -d)"

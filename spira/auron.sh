@@ -558,7 +558,7 @@ json.dump({
 }, sys.stdout)
 PY
 
-firing_json="$(python3 "$HERE/auron-classify.py" < "$LOG_TAIL.obs" 2>/dev/null)"
+firing_json="$(auron-classify.py < "$LOG_TAIL.obs" 2>/dev/null)"
 
 declare -A F_TITLE
 firing_keys=""

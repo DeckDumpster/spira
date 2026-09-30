@@ -63,7 +63,7 @@ printf '0000000000000000000000000000000000000000000000000000000000000000  %s\n' 
 
 tamper_out="$(env -i PATH="$PATH" HOME="$FAKE_HOME" \
     BD_RELEASE_BASE_URL="file://$TAMPER_DIR" \
-    bash "$HERE/build-bd.sh" --from-release 2>&1)"
+    build-bd.sh --from-release 2>&1)"
 tamper_rc=$?
 
 if [ "$tamper_rc" -ne 0 ]; then
@@ -88,7 +88,7 @@ fi
 
 rel_out="$(env -i PATH="$PATH" HOME="$FAKE_HOME" \
     BD_RELEASE_BASE_URL="file://$STUB_DIR" \
-    bash "$HERE/build-bd.sh" --from-release 2>&1)"
+    build-bd.sh --from-release 2>&1)"
 rel_rc=$?
 
 if [ "$rel_rc" -eq 0 ]; then

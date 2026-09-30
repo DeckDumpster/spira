@@ -33,4 +33,4 @@ from_orig="$(_hdr from)"
     printf 'Date: %s\n' "$(date -u '+%a, %d %b %Y %H:%M:%S +0000')"
     printf '\n'
     printf '%s\n' "$default"
-} | bash "$HERE/../spira/mail.sh" sendmail
+} | mail.sh sendmail

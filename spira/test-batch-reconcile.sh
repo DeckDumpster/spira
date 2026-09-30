@@ -60,6 +60,8 @@ cat > "$SH/mail.sh" <<MAIL
 printf '%s\n' "\$*" >> "$MAIL_LOG"
 MAIL
 chmod +x "$SH/mail.sh"
+# The fixture harness (with its stubs) is first on PATH: batch.sh calls mail.sh etc. by name (sp-gypjk).
+export PATH="$SH:$PATH"
 
 cat > "$SH/forge-fixture.sh" << FORGE
 #!/usr/bin/env bash

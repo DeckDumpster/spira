@@ -93,7 +93,7 @@ _pf_left() {   # seconds left before the pre-flight wall; 0 when spent
 # never reached the Rust gate's env -i command and is retired, sp-wx2tw).
 _pf_gate() {
     SPIRA_GATE_BEAD="batch-$3" \
-        _pf_run "$(_pf_left)" bash "$HERE/gate.sh" "$1" "$2" 2>&1
+        _pf_run "$(_pf_left)" gate.sh "$1" "$2" 2>&1
 }
 
 _batch_open_file() { printf '%s/%s/open' "${SPIRA_QUEUE_DIR:?}" "$1"; }
@@ -276,7 +276,7 @@ main() {
     # PR closed (eviction/abandon/eject that predates queue_cancel_branch_runs, or a
     # PR closed by hand). The live batch's own branch is excluded because its PR is
     # still open.
-    queue_sweep_orphan_runs "${SPIRA_FORGE:-$HERE/forge.sh}" "$repo" || true
+    queue_sweep_orphan_runs "${SPIRA_FORGE:-forge.sh}" "$repo" || true
 
     # Closed beads with RED/EJECTED landstates and live branches are unreachable: the batch
     # builder ignores closed beads and queue_certified_list selects on CERTIFIED. Log and
@@ -295,7 +295,7 @@ main() {
         done <<< "$_crl_ids"
         printf '## Note\nBead(s) for %s are closed with a RED/EJECTED landstate and a live branch:\n\n%bThese beads cannot re-enter the queue. Re-open and recertify each branch to resume.\n' \
             "$name" "$_crl_list" \
-        | bash "$HERE/mail.sh" send operator \
+        | mail.sh send operator \
             --from "Spira Queue <queue@spira>" \
             --subject "Merge queue: $name — closed bead(s) with live evicted branch" \
             2>/dev/null || true
@@ -307,7 +307,7 @@ main() {
     # thing a stacked-onto PR cannot self-detect: it going DIRTY against the base out from
     # under it.
     if _batch_is_open "$name"; then
-        local _ob_forge="${SPIRA_FORGE:-$HERE/forge.sh}"
+        local _ob_forge="${SPIRA_FORGE:-forge.sh}"
         local _ob_file; _ob_file="$(_batch_open_file "$name")"
         local _ob_pr
         _ob_pr="$(grep '^pr=' "$_ob_file" 2>/dev/null | head -1)"; _ob_pr="${_ob_pr#pr=}"
@@ -326,7 +326,7 @@ main() {
                     "Batch abandoned: PR had merge conflicts (DIRTY). Members returned to CERTIFIED for re-batching."
                 printf '## Note\nBatch PR %s for %s was found unmergeable (DIRTY) and has been abandoned.\n\nMembers returned to CERTIFIED and will be re-batched on the next pass.\n' \
                     "$_ob_pr" "$name" \
-                | bash "$HERE/mail.sh" send operator \
+                | mail.sh send operator \
                     --from "Spira Queue <queue@spira>" \
                     --subject "Merge queue: $name — batch PR abandoned (conflicts)" \
                     2>/dev/null || true
@@ -469,7 +469,7 @@ main() {
             local stuck_age=$(( now - _stall_from ))
             printf '## Note\nThe merge queue for %s has not made progress in %ds (threshold %ds).\n\nQueue depth: %d branch(es). This may indicate a conflict loop or a stalled batch builder.\n' \
                 "$name" "$stuck_age" "${SPIRA_QUEUE_STUCK_AGE:-7200}" "$count" \
-            | bash "$HERE/mail.sh" send operator \
+            | mail.sh send operator \
                 --from "Spira Queue <queue@spira>" \
                 --subject "Merge queue: $name queue stuck (${stuck_age}s)" \
                 2>/dev/null && touch "$_stuck_flag" 2>/dev/null || true

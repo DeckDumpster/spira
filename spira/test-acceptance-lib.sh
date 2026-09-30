@@ -148,7 +148,7 @@ EOF
 chmod +x "$FAKEHERE/activate.sh"
 
 _lib_install_from_tarball() {  # <tarball> <releases-dir> <conf>
-    bash -c '. "$0"; HERE="$1"; _install_from_tarball "$2" "$3" "$4"' \
+    PATH="$FAKEHERE:$PATH" bash -c '. "$0"; HERE="$1"; _install_from_tarball "$2" "$3" "$4"' \
         "$LIB" "$FAKEHERE" "$1" "$2" "$3"
 }
 
@@ -160,7 +160,7 @@ want "conf forwarded"           "conf=/tmp/pinned-conf"      "$_ift_out"
 want "releases forwarded"       "releases=/tmp/pinned-rel"   "$_ift_out"
 want "SPIRA_ACTIVATE_FORCE=1"   "force=1"                    "$_ift_out"
 
-ACTIVATE_EXIT=1 bash -c '. "$0"; HERE="$1"; _install_from_tarball "$2" "$3" "$4"' \
+ACTIVATE_EXIT=1 PATH="$FAKEHERE:$PATH" bash -c '. "$0"; HERE="$1"; _install_from_tarball "$2" "$3" "$4"' \
     "$LIB" "$FAKEHERE" "/tmp/x.tar.gz" "/tmp/rel" "/tmp/conf" >/dev/null 2>&1
 _ift_fail_rc=$?
 is "activate.sh failure -> _install_from_tarball returns non-zero" "1" "$_ift_fail_rc"
@@ -449,12 +449,12 @@ wantrc "a missing tarball is refused" 1 $?
 
 # ===========================================================================
 echo
-echo "16. _ci_env: SPIRA_CONFIG_BIN points at the RELEASE's spira-config, not this checkout's"
+echo "16. _ci_env: PATH puts the RELEASE's bin/ first (spira-config and every tool by name)"
 # ===========================================================================
 # sp-seae6: deploy.sh/uninstall.sh/world.sh/doctor.sh run straight from this checkout
-# (never an activated release), so conf.sh's own SPIRA_CONFIG_BIN resolution finds
-# neither bin/spira-config nor a cargo build here and no config — SPIRA_OPERATED=0
-# included — is ever read. Pinned to non-default paths: a literal default would pass
+# (never an activated release), and every tool they call — spira-config, without which no
+# config (SPIRA_OPERATED=0 included) is ever read — is invoked by bare name (sp-gypjk), so
+# _ci_env is their launcher and sets PATH. Pinned to non-default paths: a literal default would pass
 # even if _ci_env stopped forwarding its argument or _releases stopped being read.
 _lib_ci_env() {  # <conf>
     bash -c '_releases="/tmp/pinned-releases"; . "$0"; _ci_env _ce "$1"; printf "%s\n" "${_ce[@]}"' \
@@ -463,8 +463,8 @@ _lib_ci_env() {  # <conf>
 
 _ce_out="$(_lib_ci_env "/tmp/pinned-conf")"
 want "conf forwarded"          "SPIRA_CONF=/tmp/pinned-conf"                              "$_ce_out"
-want "config-bin is the release's, not this checkout's" \
-    "SPIRA_CONFIG_BIN=/tmp/pinned-releases/current/bin/spira-config"                       "$_ce_out"
+want "PATH leads with the release's bin/, not this checkout's" \
+    "PATH=/tmp/pinned-releases/current/bin:"                                               "$_ce_out"
 
 # ===========================================================================
 echo

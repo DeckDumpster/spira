@@ -100,7 +100,7 @@ wantrc "start exits 0 when the launch succeeds" "0" "$_start_rc"
 _summon_argv="$(cat "$FAKE_SUMMON_LOG")"
 want "the unit name follows spira-acc-<round>-<ts>" "--unit=spira-acc-myround-" "$_summon_argv"
 want "the wrapped command is this script itself, with argv forwarded" \
-    "-- bash $SCRIPT $TMP/some-tree --predecessor spira-release-spira-x" "$_summon_argv"
+    "-- $(command -v acceptance-local.sh) $TMP/some-tree --predecessor spira-release-spira-x" "$_summon_argv"
 want "start reports the unit it launched" "started spira-acc-myround-" "$_start_out"
 want "start tells the operator how to stop it" "stop myround" "$_start_out"
 
