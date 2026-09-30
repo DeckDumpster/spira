@@ -144,7 +144,7 @@ pub fn home_repo(home_repo_env: Option<&str>, repo_env: Option<&str>, home_env: 
     std::path::Path::new(base).file_name().and_then(|n| n.to_str()).unwrap_or("").to_string()
 }
 
-/// `repo_names`: every repo-map row's name column, skipping `#`-comments and any row with
+/// `repo_names`: every row's name column in the repository map, skipping `#`-comments and any row with
 /// fewer than 2 `|`-separated fields (lib.sh's `awk ... NF > 1`).
 pub fn repo_names(repo_map_text: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -183,7 +183,7 @@ pub fn unit_from_cgroup_line(line: &str) -> String {
 }
 
 /// `_bdq_check_repo_label`: a `repo:<name>` in the create labels must be the home repo or
-/// a name the repo-map carries. Returns the invalid name to report, or None (allowed).
+/// a name the repository map carries. Returns the invalid name to report, or None (allowed).
 ///
 /// PORTED, NOT DROPPED. `incident.sh` never calls `bd` directly for `create` — every path
 /// goes through lib.sh's `bdq`, which applies this fence (plus the two below) underneath.
@@ -386,12 +386,12 @@ mod tests {
 
     #[test]
     fn home_repo_falls_back_to_repo_basename() {
-        assert_eq!(home_repo(None, Some("/home/ryan/spira/harness"), None), "harness");
+        assert_eq!(home_repo(None, Some("/srv/spira/harness"), None), "harness");
     }
 
     #[test]
     fn home_repo_falls_back_to_home_when_no_repo() {
-        assert_eq!(home_repo(None, None, Some("/home/ryan/spira/harness")), "harness");
+        assert_eq!(home_repo(None, None, Some("/srv/spira/harness")), "harness");
     }
 
     #[test]

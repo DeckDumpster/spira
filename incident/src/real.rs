@@ -62,17 +62,20 @@ impl RealBd {
 
 fn json_only(s: &str) -> &str {
     // bd --json can print warnings on stdout before the payload (lib.sh's json_only):
-    // skip to the first line that starts with '[' or '{'.
-    let mut start = s.len();
-    for (i, _) in s.match_indices('\n').map(|(i, _)| (i + 1, ())).chain(std::iter::once((0, ()))) {
+    // skip to the first line that starts with '[' or '{'. Position 0 is checked FIRST
+    // (the common, warning-free case), then each position right after a '\n' — the
+    // reverse order silently matched a LATER line's '{' before ever looking at line 0's
+    // '[', truncating the array's opening bracket and making every list() call parse as
+    // zero rows (found via the dedup-recurrence parity check in this session, sp-0ekp7).
+    let candidates = std::iter::once(0).chain(s.match_indices('\n').map(|(i, _)| i + 1));
+    for i in candidates {
         let rest = &s[i..];
         let trimmed = rest.trim_start();
         if trimmed.starts_with('[') || trimmed.starts_with('{') {
-            start = i;
-            break;
+            return &s[i..];
         }
     }
-    &s[start..]
+    &s[s.len()..]
 }
 
 fn parse_status(s: &str) -> BeadStatus {
@@ -246,5 +249,50 @@ pub struct RealClock;
 impl Clock for RealClock {
     fn now(&self) -> i64 {
         SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_only_strips_a_leading_warning_line() {
+        let input = "\u{1f4a1} some warning\n[{\"id\":\"sp-a\"}]\n";
+        assert_eq!(json_only(input), "[{\"id\":\"sp-a\"}]\n");
+    }
+
+    #[test]
+    fn json_only_leaves_clean_output_untouched() {
+        // Regression: a naive "check positions right after '\n' before position 0" scan
+        // matched the SECOND line's leading '{' before ever considering line 0's '[',
+        // silently truncating the array's opening bracket — every bd list() call parsed
+        // as zero rows no matter how many beads existed (found via the dedup/recurrence
+        // parity check in this session, sp-0ekp7). Multi-element, pretty-printed output
+        // (bd's real shape) is exactly the case that broke.
+        let input = "[\n  {\n    \"id\": \"sp-a\"\n  },\n  {\n    \"id\": \"sp-b\"\n  }\n]\n";
+        assert_eq!(json_only(input), input);
+    }
+
+    #[test]
+    fn json_only_empty_array_round_trips() {
+        assert_eq!(json_only("[]\n"), "[]\n");
+    }
+
+    #[test]
+    fn rows_from_json_parses_a_real_multi_element_bd_shape() {
+        let input = "[\n  {\n    \"id\": \"sp-a\",\n    \"status\": \"open\",\n    \"external_ref\": \"incident:x\",\n    \"labels\": [\"ref:aa\", \"spira\"]\n  },\n  {\n    \"id\": \"sp-b\",\n    \"status\": \"closed\",\n    \"closed_at\": \"2026-09-01T00:00:00Z\"\n  }\n]\n";
+        let rows = rows_from_json(input);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, "sp-a");
+        assert_eq!(rows[0].external_ref.as_deref(), Some("incident:x"));
+        assert_eq!(rows[0].labels, vec!["ref:aa".to_string(), "spira".to_string()]);
+        assert_eq!(rows[1].id, "sp-b");
+        assert_eq!(rows[1].closed_at.as_deref(), Some("2026-09-01T00:00:00Z"));
+    }
+
+    #[test]
+    fn rows_from_json_empty_array_is_empty_vec() {
+        assert_eq!(rows_from_json("[]\n").len(), 0);
     }
 }

@@ -238,7 +238,7 @@ fn file_new(bd: &dyn Bd, cfg: &FileConfig, reference: &str, title: &str, payload
         let effective = if repo == cfg.home_repo || cfg.known_repos.iter().any(|r| r == repo) {
             repo.to_string()
         } else {
-            log.push(format!("warning: SPIRA_INCIDENT_REPO={repo} has no repo-map entry; using {}", cfg.home_repo));
+            log.push(format!("warning: SPIRA_INCIDENT_REPO={repo} has no entry in the repository map; using {}", cfg.home_repo));
             cfg.home_repo.to_string()
         };
         bd.set_state(cfg.db, &id, &format!("repo={effective}"));
@@ -248,15 +248,19 @@ fn file_new(bd: &dyn Bd, cfg: &FileConfig, reference: &str, title: &str, payload
         Some("note") => {
             if cfg.sop_ledger.starts_with(cfg.spira_run) {
                 bd.label_add(cfg.db, &id, &format!("delivers:note:{}", cfg.sop_ledger));
+                log.push(format!("delivers: {id}: delivers:note:{} written (SPIRA_INCIDENT_DELIVERS=note)", cfg.sop_ledger));
             } else {
                 bd.label_add(cfg.db, &id, "delivers:action");
+                log.push(format!("delivers: {id}: delivers:action written (note path not satisfiable — fallback)"));
             }
         }
         Some(other) => {
             bd.label_add(cfg.db, &id, &format!("delivers:{other}"));
+            log.push(format!("delivers: {id}: delivers:{other} written (SPIRA_INCIDENT_DELIVERS set by caller)"));
         }
         None => {
             bd.label_add(cfg.db, &id, "delivers:action");
+            log.push(format!("delivers: {id}: delivers:action written (default — close reason is the evidence)"));
         }
     }
     bd.label_add(cfg.db, &id, &format!("ref:{}", decide::ref_hash(reference)));
@@ -266,7 +270,9 @@ fn file_new(bd: &dyn Bd, cfg: &FileConfig, reference: &str, title: &str, payload
         bd.note(
             cfg.db,
             &id,
-            "Repository not declared — SPIRA_INCIDENT_REPO was not set. An aeon claiming this bead works it in the home-repo fallback, which may be the wrong checkout.",
+            &format!(
+                "Repository not declared — SPIRA_INCIDENT_REPO was not set. An aeon claiming this bead works it in the home-repo fallback, which may be the wrong checkout. Set the repo dimension with: bd set-state {id} repo=<name>."
+            ),
         );
         log.push(format!("{reference} labelled needs-repo-triage — repo undeclared"));
     }

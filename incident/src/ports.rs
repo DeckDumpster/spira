@@ -1,5 +1,5 @@
 //! Every effect the intake has outside its own arguments, as a trait (DESIGN.md §5):
-//! `bd`, `mail.sh`, the repo-map and the clock. `real.rs` implements them against the
+//! `bd`, `mail.sh`, the repository map and the clock. `real.rs` implements them against the
 //! host; unit tests implement them as fakes so the orchestration in `run.rs` is testable
 //! without a database.
 

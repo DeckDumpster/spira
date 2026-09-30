@@ -90,7 +90,11 @@ impl Env {
             labels: env("SPIRA_INCIDENT_LABELS").unwrap_or_else(|| format!("spira,{incident_label}")),
             repo: env("SPIRA_INCIDENT_REPO"),
             kind: env_or("SPIRA_INCIDENT_TYPE", "bug"),
-            priority: env_or("SPIRA_INCIDENT_PRIORITY", "2"),
+            // conf.sh:1717 `: "${SPIRA_INCIDENT_PRIORITY:=3}"` — the bash never carried its
+            // own default; it relied on conf.sh setting one before incident.sh's `bdq
+            // create --priority "$SPIRA_INCIDENT_PRIORITY"` ran. Verified against a real
+            // `bd create` in this session: an unset/empty --priority silently became 3.
+            priority: env_or("SPIRA_INCIDENT_PRIORITY", "3"),
             actor: env("SPIRA_INCIDENT_ACTOR").or_else(|| env("BEADS_ACTOR")),
             delivers_pref: env("SPIRA_INCIDENT_DELIVERS"),
             sop_ledger: env_or("SPIRA_SOP_LEDGER", &format!("{spira_run}/sop/applied.jsonl")),
@@ -131,10 +135,12 @@ impl Env {
 }
 
 /// `repo_names` (lib.sh): every name in `$SPIRA_REPO_MAP`, a `|`-delimited file whose
-/// first column is the name and whose row must carry more than one column.
+/// first column is the name and whose row must carry more than one column. No fallback
+/// path: `spira/incident.sh`'s shim sources `lib.sh` before exec'ing this binary, and
+/// `conf.sh` guarantees `SPIRA_REPO_MAP` is exported by then — this crate only ever needs
+/// to read the variable, never derive the path itself.
 fn repo_names() -> Vec<String> {
-    let home = env_or("SPIRA_HOME", ".");
-    let map_path = env_or("SPIRA_REPO_MAP", &format!("{home}/repo-map"));
+    let Some(map_path) = env("SPIRA_REPO_MAP") else { return Vec::new() };
     let Ok(text) = std::fs::read_to_string(&map_path) else { return Vec::new() };
     text.lines()
         .filter(|l| !l.trim_start().starts_with('#'))
@@ -317,15 +323,25 @@ fn cmd_drain(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock) -> 
     }
 }
 
-fn cmd_list(env: &Env, bd: &dyn Bd) -> ExitCode {
+fn cmd_list(env: &Env, _bd: &dyn Bd) -> ExitCode {
     let db = match env.db.as_deref() {
         Some(d) => d,
         None => return require_db(env),
     };
-    match bd.list(db, &["open", "in_progress"], Some(&env.labels), None) {
-        Ok(rows) => {
-            for r in &rows {
-                println!("{}", r.id);
+    // `bd list` in its OWN default (non-JSON) rendering — the bash's `list` prints bd's
+    // human-readable table for an operator to read, not the machine `--json` shape the
+    // dedup scan needs. Filters the same four leading-character classes the bash's
+    // `grep -vE '^💡|^warning|^  Fix|^  Or'` drops (bd's own tip/warning chrome).
+    match std::process::Command::new(std::env::var("SPIRA_BD").unwrap_or_else(|_| "bd".into()))
+        .args(["-C", db, "list", "--status", "open,in_progress", "--limit", "0", "--label", &env.labels])
+        .output()
+    {
+        Ok(out) => {
+            for line in String::from_utf8_lossy(&out.stdout).lines() {
+                if line.starts_with("💡") || line.starts_with("warning") || line.starts_with("  Fix") || line.starts_with("  Or") {
+                    continue;
+                }
+                println!("{line}");
             }
         }
         Err(e) => eprintln!("incident: list: {e}"),
