@@ -29,6 +29,7 @@ struct Fake {
     beads: RefCell<String>,
     skew: Cell<i32>,
     admission_free: Cell<bool>,
+    admission_who: RefCell<Vec<String>>,
     lock_free: Cell<bool>,
     worktree: Cell<bool>,
     /// (status, output) by the SPIRA_GATE_BRANCH the trial ran with.
@@ -153,6 +154,7 @@ impl Fake {
             beads: RefCell::new(String::new()),
             skew: Cell::new(0),
             admission_free: Cell::new(true),
+            admission_who: RefCell::new(Vec::new()),
             lock_free: Cell::new(true),
             worktree: Cell::new(true),
             runs: RefCell::new(runs),
@@ -354,8 +356,12 @@ impl World for Fake {
     fn mem_avail_mib(&self) -> u64 {
         4000
     }
-    fn admission_try(&self, _: &Path, _: u64) -> bool {
+    fn admission_try(&self, _: &Path, _: u64, who: &str) -> bool {
+        self.admission_who.borrow_mut().push(who.to_string());
         self.admission_free.get()
+    }
+    fn admission_wait_line(&self, _: &str, par: u64) -> String {
+        format!("waiting for a gate slot: {par} of {par} held by fake")
     }
     fn tree_lock_open(&self, _: &Path) -> bool {
         true
@@ -1178,6 +1184,22 @@ fn admission_times_out_as_no_verdict() {
 }
 
 #[test]
+fn a_full_gate_pool_is_said_naming_its_holders_and_a_taken_slot_names_the_branch() {
+    let f = Fake::new();
+    f.admission_free.set(false);
+    f.set_var("SPIRA_GATE_LOCK_WAIT", "5");
+    assert_eq!(f.run(), NOVERDICT);
+    assert_eq!(f.stderr().matches("gate: waiting for a gate slot: 2 of 2 held by fake").count(), 1, "{}", f.stderr());
+    // POSITIVE CONTROL: a free pool says nothing about waiting, records who holds the slot, and
+    // every command the trial runs inherits the gate's admission.
+    let g = Fake::new();
+    assert_eq!(g.run(), PASS);
+    assert!(!g.stderr().contains("waiting for a gate slot"));
+    assert_eq!(g.admission_who.borrow().first().map(String::as_str), Some(BR));
+    assert_eq!(g.env_of(0, "SPIRA_ADMISSION"), "gate");
+}
+
+#[test]
 fn fences_only_certification_takes_no_admission_slot() {
     let f = Fake::new();
     f.admission_free.set(false);
@@ -1357,14 +1379,15 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
     );
     assert_eq!(f.env_of(0, "SPIRA_GATE_SUITES"), "off", "…with suites off");
     assert_eq!(f.env_of(0, "SPIRA_CERTIFY_ALWAYS_COVERS"), "");
-    // host 8 cores / SPIRA_CERTIFY_PAR 2 = 4 jobs; spira-config brings its dependent queue
+    // the host's 8 cores, NOT divided by SPIRA_CERTIFY_PAR 2 (sp-f4ig1 D3: no per-job limit);
+    // spira-config brings its dependent queue
     assert_eq!(
         cmds[1],
-        "cargo build --profile aeon --config profile.aeon.incremental=false -j 4 --all-targets -p queue -p spira-config"
+        "cargo build --profile aeon --config profile.aeon.incremental=false -j 8 --all-targets -p queue -p spira-config"
     );
     assert_eq!(
         cmds[2],
-        "cargo test --profile aeon --config profile.aeon.incremental=false -j 4 -p queue -p spira-config -- --test-threads=4"
+        "cargo test --profile aeon --config profile.aeon.incremental=false -j 8 -p queue -p spira-config -- --test-threads=8"
     );
     assert!(f.stderr().contains(
         "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for: queue spira-config (touched: spira-config)"

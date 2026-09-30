@@ -13,6 +13,11 @@
 #   optional, operator  WARN: present or waived, with a written reason
 #   dev                 not checked here — the image is what tests need to RUN against, and
 #                       dev-tier programs (bd-embedded, podman) are what tests need to EXIST
+#   release              not checked here, and never will be — testenv stages Spira's own
+#                       binaries into the container per run; the image never installs them,
+#                       so their absence here is not evidence of anything (sp-ehj2t). testenv
+#                       container's image_tag() hashes only the tiers this script reads —
+#                       adding a release-tier entry must never cold-build a new image.
 #
 # WAIVER FILE FORMAT. One program per non-comment, non-blank line:
 #   <name>  <reason text>
@@ -72,7 +77,8 @@ while read -r prog tier; do
     case "$tier" in
         runtime)            fatal_progs+=("$prog") ;;
         optional|operator)  warn_progs+=("$prog") ;;
-        dev)                ;;
+        dev|release)        ;;  # dev: what tests need to exist, not verify. release: staged per run, never in the image.
+        *)                  ;;  # an unrecognized tier string is unchecked, not fatal — a typo here is silent, not a build failure.
     esac
 done <<< "$manifest"
 

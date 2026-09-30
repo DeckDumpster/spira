@@ -428,12 +428,21 @@ impl<'w, W: World> Trial<'w, W> {
             let dir = PathBuf::from(format!("{}/gate-admission", self.s.run));
             w.mkdir_p(&dir);
             let t0 = w.now();
+            let mut said: Option<u64> = None;
             'wait: loop {
                 let par = self.admission_par(&ctx);
                 for slot in 1..=par {
-                    if w.admission_try(&dir, slot) {
+                    if w.admission_try(&dir, slot, &br) {
+                        if said.is_some() {
+                            w.eprint(&format!("gate: admitted to a gate slot after {}s", w.now().saturating_sub(t0)));
+                        }
                         break 'wait;
                     }
+                }
+                // Visible, never silent (sp-f4ig1): who holds the pool, first and every 60s.
+                if said.map_or(true, |t| w.now().saturating_sub(t) >= 60) {
+                    w.eprint(&format!("gate: {}", w.admission_wait_line(&self.s.run, par)));
+                    said = Some(w.now());
                 }
                 if w.signalled() {
                     return v(
@@ -541,10 +550,7 @@ impl<'w, W: World> Trial<'w, W> {
         if let Some(line) = describe_reentry(&self.s.bead, &re) {
             w.eprint(&line);
         }
-        let jobs = compose::jobs(
-            key::digits(&ctx.host_cores).unwrap_or(1),
-            self.admission_par(&ctx),
-        );
+        let jobs = compose::jobs(key::digits(&ctx.host_cores).unwrap_or(1));
 
         let env = |branch: &str, repeat: &str, c: &Composition| -> Vec<(String, String)> {
             let e = |k: &str, v: &str| (k.to_string(), v.to_string());
@@ -553,6 +559,9 @@ impl<'w, W: World> Trial<'w, W> {
                 // system dirs, then cargo for the tree builds. Never the inherited PATH.
                 e("PATH", &self.s.path),
                 e(spira_config::RELEASE_ENV, ctx.var(spira_config::RELEASE_ENV)),
+                // Everything the trial runs is on the gate's admission (sp-f4ig1): its testenv and
+                // cargo take no compile or test slot of their own (no hold-and-wait, no deadlock).
+                e(spira_config::admission::INHERIT_ENV, "gate"),
                 e("HOME", ctx.var("HOME")),
                 e("TERM", "dumb"),
                 e("SPIRA_GATE_REPO", &repo.to_string_lossy()),

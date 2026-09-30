@@ -14,6 +14,9 @@ struct FakeBuilder {
     dirs: Mutex<Vec<(PathBuf, String)>>,
     /// How long a build takes; it honours the cutoff the way cargo's kill does.
     delay: Duration,
+    /// A pool directory whose lease files the build records as it starts (sp-f4ig1).
+    watch: Option<PathBuf>,
+    seen: Mutex<Vec<String>>,
 }
 
 impl FakeBuilder {
@@ -23,6 +26,8 @@ impl FakeBuilder {
             fail,
             dirs: Mutex::new(vec![]),
             delay: Duration::ZERO,
+            watch: None,
+            seen: Mutex::new(vec![]),
         }
     }
     fn slow(delay: Duration) -> Self {
@@ -41,6 +46,14 @@ impl Builder for FakeBuilder {
         deadline: Option<Instant>,
     ) -> Result<Duration, BuildError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        if let Some(dir) = &self.watch {
+            for e in fs::read_dir(dir).into_iter().flatten().flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if name.starts_with("slot.") {
+                    self.seen.lock().unwrap().push(format!("{name} {}", fs::read_to_string(e.path()).unwrap_or_default().trim()));
+                }
+            }
+        }
         let end = Instant::now() + self.delay;
         while Instant::now() < end {
             if deadline.is_some_and(|d| Instant::now() >= d) {
@@ -1422,4 +1435,82 @@ fn a_scratch_root_without_room_is_refused_never_a_disk_fallback() {
     );
     assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=scratch-short");
     assert!(rt.exec_argv().is_empty(), "nothing built or run");
+}
+
+// ---------------------------------------------------------------- admission (sp-f4ig1)
+
+fn admission_rows(w: &World) -> Vec<serde_json::Value> {
+    fs::read_to_string(w.root.join("run/tsd/admission.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+fn lease_files(w: &World, pool: &str) -> Vec<String> {
+    fs::read_dir(w.root.join(format!("run/{pool}-admission")))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with("slot.") || n.starts_with("wait."))
+        .collect()
+}
+
+#[test]
+fn an_agents_trial_builds_on_a_compile_slot_then_tests_on_a_test_slot() {
+    let mut w = World::new("admit");
+    w.env.insert("SPIRA_ADMIT_WHO".into(), "sp-agent".into());
+    sh(&w.repo, "git checkout -q topic");
+    let rt = runtime();
+    let b = FakeBuilder { watch: Some(w.root.join("run/compile-admission")), ..FakeBuilder::new(None) };
+    assert_eq!(w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.repo.join("spira")), 0);
+    let seen = b.seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 1, "the build ran holding exactly one compile slot: {seen:?}");
+    assert!(seen[0].starts_with(&format!("slot.1 pid={} ", std::process::id())) && seen[0].contains("who=sp-agent"), "{seen:?}");
+    let rows = admission_rows(&w);
+    let pools: Vec<(&str, &str)> = rows.iter().map(|r| (r["pool"].as_str().unwrap(), r["end"].as_str().unwrap())).collect();
+    assert_eq!(pools, [("compile", "released"), ("test", "released")], "compile released before the test slot was taken");
+    assert!(rows.iter().all(|r| r["who"] == "sp-agent" && r["waited_secs"] == 0));
+    assert!(lease_files(&w, "compile").is_empty() && lease_files(&w, "test").is_empty(), "nothing left held");
+}
+
+#[test]
+fn under_a_gate_the_trial_runs_on_the_gates_slot_and_takes_none() {
+    let mut w = World::new("admit-gate");
+    w.env.insert("SPIRA_ADMISSION".into(), "gate".into());
+    sh(&w.repo, "git checkout -q topic");
+    let rt = runtime();
+    let b = FakeBuilder { watch: Some(w.root.join("run/compile-admission")), ..FakeBuilder::new(None) };
+    assert_eq!(w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.repo.join("spira")), 0);
+    assert!(b.seen.lock().unwrap().is_empty());
+    assert!(admission_rows(&w).is_empty());
+    assert!(!w.root.join("run/test-admission").exists());
+}
+
+#[test]
+fn a_full_test_pool_is_waited_for_visibly_and_never_failed() {
+    let mut w = World::new("admit-wait");
+    w.env.insert("SPIRA_TEST_PAR".into(), "1".into());
+    sh(&w.repo, "git checkout -q topic");
+    // A live holder that is not our ancestor: pid 1.
+    let start = spira_config::admission::Procs::start_of(&spira_config::admission::RealProcs, 1).expect("pid 1");
+    let dir = w.root.join("run/test-admission");
+    fs::create_dir_all(&dir).unwrap();
+    let slot = dir.join("slot.1");
+    fs::write(&slot, format!("pid=1 start={start} who=blocker since={} waited=0 last=0\n", spira_config::admission::now_epoch())).unwrap();
+    let freer = {
+        let slot = slot.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(1500));
+            fs::remove_file(slot).unwrap();
+        })
+    };
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.repo.join("spira")), 0);
+    freer.join().unwrap();
+    assert!(w.has_line(|l| l.contains("batch: waiting for a test slot: 1 of 1 held by blocker (pid 1, ")), "{:?}", w.lines.lock().unwrap());
+    assert!(w.has_line(|l| l.contains("batch: admitted to test slot 1 after ")));
+    assert!(w.last().starts_with("VERDICT GREEN"), "{}", w.last());
 }
