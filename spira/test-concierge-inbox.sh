@@ -17,7 +17,7 @@
 # EVERY CONFIGURED VALUE IS PINNED TO A NON-DEFAULT, so a literal written into the
 # mechanism cannot pass by coincidence.
 #
-# covers: spira/inbox-append.sh spira/inbox-triage spira/inbox-keeper.sh spira/conf.sh spira/watchers
+# covers: spira/inbox-append.sh inbox-triage/* spira/inbox-keeper.sh spira/conf.sh spira/watchers watchd/*
 # tier: T1
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

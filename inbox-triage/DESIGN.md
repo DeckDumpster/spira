@@ -8,7 +8,7 @@ bare name from the release PATH. Bead: sp-48f6g (rewrite wave 5b).
 The concierge's mandatory first action at every session start is arming this as a Monitor
 (`spira/hooks/session.sh`): it tails `SPIRA_CONCIERGE_INBOX` — the durable log every watcher
 and `inbox-append.sh`/`spira-mail-deliver` append to — and is how events reach the session
-with no keystroke into the pane (per Ryan, 2026-09-27: nothing types into the pane). It must
+with no keystroke into the pane (operator, 2026-09-27: nothing types into the pane). It must
 stay constantly attached; `inbox-keeper.sh` (a separate watcher, unchanged by this bead)
 re-arms it if it lapses.
 
@@ -39,17 +39,18 @@ cannot). Starts reading from the CURRENT end of the file (`tail -n 0 -F`'s behav
 is a live Monitor, not a replay tool; a session wanting history reads the file directly).
 Runs until killed; every shown line is flushed immediately.
 
-### An operator-side fork exists outside this repository
+### An operator-side fork may exist outside this repository
 
-`/home/ryan/spira/run/concierge-notes/inbox-triage.sh` is a hand-maintained copy that
-hardcodes the log path and the 600 s dedup window rather than sourcing `conf.sh` — it predates
-this rewrite and is what the brain Concierge's own live session Monitor runs today. This bead
-does not touch it (it is outside the harness repository and is a live process's script while
-this bead is delivered). The operator-side change this rewrite makes necessary: repoint that
-copy at the `inbox-triage` binary (or retire it in favour of the binary directly, now that the
-binary takes no arguments and behaves identically for the default 600 s window) at the next
-convenient re-arm. Reported, not done here (DESIGN.md is not production, and rearming a live
-Monitor for another session is out of this bead's reach).
+An installation may keep a hand-maintained copy of the old `inbox-triage.sh` somewhere in its
+own runtime state (outside this repository), hardcoding the log path and the dedup window
+rather than sourcing `conf.sh` — predating this rewrite, and possibly what a live Monitor is
+running at the moment this lands. This bead does not touch any such copy (outside the harness
+repository, and a live process's script while this bead is delivered). The operator-side
+change this rewrite makes necessary: repoint that copy at the `inbox-triage` binary (or retire
+it in favour of the binary directly, now that the binary takes no arguments and behaves
+identically for the default 600 s window) at the next convenient re-arm. Reported, not done
+here (DESIGN.md is not production, and rearming a live Monitor for another session is out of
+this bead's reach) — see the delivery report for the specific case found at review time.
 
 ## Decisions
 

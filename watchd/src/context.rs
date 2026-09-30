@@ -178,8 +178,8 @@ mod tests {
     fn spira_dir_is_a_sibling_of_bin_not_inside_it() {
         // The exe lives at <release-root>/bin/watchd; conf.sh lives at
         // <release-root>/spira/conf.sh — a sibling, never <release-root>/bin/spira.
-        let exe = Path::new("/home/ryan/spira/spira-releases/abc123/bin/watchd");
-        assert_eq!(spira_dir_from_exe(exe), Some(PathBuf::from("/home/ryan/spira/spira-releases/abc123/spira")));
+        let exe = Path::new("/opt/spira/spira-releases/abc123/bin/watchd");
+        assert_eq!(spira_dir_from_exe(exe), Some(PathBuf::from("/opt/spira/spira-releases/abc123/spira")));
     }
 
     #[test]
