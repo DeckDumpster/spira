@@ -59,8 +59,8 @@ fn alive_requires_pid_proc_and_matching_argv() {
 #[test]
 fn unmanaged_matches_gate_sh_and_exact_branch() {
     let procs = vec![
-        (10, "bash /home/spira/spira/gate.sh spira/sp-1 spira".to_string()),
-        (20, "bash /home/spira/spira/gate.sh spira/sp-12 spira".to_string()),
+        (10, "bash /opt/harness/spira/gate.sh spira/sp-1 spira".to_string()),
+        (20, "bash /opt/harness/spira/gate.sh spira/sp-12 spira".to_string()),
     ];
     assert_eq!(find_unmanaged("spira/sp-1", 999, &procs), Some(10));
 }
@@ -68,7 +68,7 @@ fn unmanaged_matches_gate_sh_and_exact_branch() {
 #[test]
 fn unmanaged_excludes_self_and_non_gate_processes() {
     let procs = vec![
-        (10, "bash /home/spira/spira/gate.sh spira/sp-1 spira".to_string()),
+        (10, "bash /opt/harness/spira/gate.sh spira/sp-1 spira".to_string()),
         (30, "sleep 10".to_string()),
     ];
     assert_eq!(find_unmanaged("spira/sp-1", 10, &procs), None);
