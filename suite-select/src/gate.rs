@@ -22,6 +22,14 @@ pub struct GateEnv {
     pub always_covers: Vec<String>,
     pub ejected: String,
     pub budget_secs: f64,
+    /// testenv's setup share of the budget, percent, clamped 10..=90 exactly as testenv
+    /// clamps `SPIRA_TESTENV_SETUP_SHARE` (testenv DESIGN.md D9).
+    pub setup_share: u64,
+    /// Whether a runner enforces the budget on the whole trial, so setup must be reserved:
+    /// true when `SPIRA_GATE_BUDGET` is set — the landing gate always sets it and its gate
+    /// string hands the same value to `testenv --deadline`. CI's call sets neither, runs
+    /// testenv without a deadline, and reserves nothing.
+    pub reserve_setup: bool,
     pub width: u64,
     pub runs: usize,
     pub run: Option<PathBuf>,
@@ -43,6 +51,11 @@ impl GateEnv {
         let Some(budget_secs) = budget::number(&budget_raw) else {
             return refuse(format!("SPIRA_GATE_BUDGET={budget_raw:?} is not a number of seconds"));
         };
+        let share_raw = or("SPIRA_TESTENV_SETUP_SHARE", "50");
+        let Some(setup_share) = digits(&share_raw) else {
+            return refuse(format!("SPIRA_TESTENV_SETUP_SHARE={share_raw:?} is not a whole percent"));
+        };
+        let setup_share = setup_share.clamp(10, 90);
         let width_raw = or("SPIRA_BATCH_MAXPAR", &or("SPIRA_GATE_HOST_CORES", "1"));
         let width = digits(&width_raw).filter(|w| *w > 0).unwrap_or(1);
         Ok(GateEnv {
@@ -57,6 +70,8 @@ impl GateEnv {
                 .collect(),
             ejected: get("SPIRA_GATE_EJECTED_SUITES").unwrap_or_default(),
             budget_secs,
+            setup_share,
+            reserve_setup: get("SPIRA_GATE_BUDGET").is_some_and(|v| !v.is_empty()),
             width,
             runs: 20,
             run: get("SPIRA_RUN").filter(|v| !v.is_empty()).map(PathBuf::from),
@@ -184,8 +199,17 @@ pub fn run(env: &GateEnv, g: &dyn Git, base: &str, head: &str) -> Result<GateOut
             }
             None => Default::default(),
         };
+        let setup = match &env.run {
+            Some(r) if env.reserve_setup => timing::load_setup(r, env.runs)?,
+            _ => None,
+        };
+        let (suite_budget, why) = suite_budget(env, setup);
+        log.push(format!(
+            "suite-select gate: the suites get {suite_budget:.0}s of the {}s budget ({why})",
+            env.budget_secs
+        ));
         let cands: Vec<&corpus::Suite> = covered.iter().filter_map(|n| corpus.get(n)).collect();
-        let cut = budget::fill(&budget::rank(&cands, &p90, &env.caps), env.budget_secs, env.width);
+        let cut = budget::fill(&budget::rank(&cands, &p90, &env.caps), suite_budget, env.width);
         log.extend(cut.log);
         kept = cut.selected;
     }
@@ -206,6 +230,30 @@ pub fn run(env: &GateEnv, g: &dyn Git, base: &str, head: &str) -> Result<GateOut
         n_ej
     ));
     Ok(GateOut { suites: kept, log })
+}
+
+/// THE SUITES' SHARE OF THE BUDGET (sp-govet): testenv's `--deadline` bounds the whole
+/// trial, so the suites get the budget minus setup. Setup is predicted as the P90 of the
+/// runner's measured `setup_secs`, capped at its share (testenv cuts setup there); with no
+/// measurement, the share itself — the most setup testenv will allow.
+pub fn suite_budget(env: &GateEnv, setup_p90: Option<f64>) -> (f64, String) {
+    if !env.reserve_setup {
+        return (
+            env.budget_secs,
+            "SPIRA_GATE_BUDGET unset: no runner deadline, nothing reserved for setup".into(),
+        );
+    }
+    let cap = env.budget_secs * env.setup_share as f64 / 100.0;
+    match setup_p90 {
+        Some(p) => {
+            let setup = p.clamp(0.0, cap);
+            (env.budget_secs - setup, format!("setup P90 {p:.0}s measured, reserved {setup:.0}s"))
+        }
+        None => (
+            env.budget_secs - cap,
+            format!("no setup measured, reserved its {}% share, {cap:.0}s", env.setup_share),
+        ),
+    }
 }
 
 /// For tests and callers that hold a map instead of the process environment.

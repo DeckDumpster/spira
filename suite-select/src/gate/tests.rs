@@ -178,7 +178,8 @@ fn suites_off_runs_only_what_covers_the_critical_file() {
 
 #[test]
 fn the_budget_cuts_most_specific_first_and_never_cuts_an_ejected_suite() {
-    // 5 suites at 1s each (T1 caps, no timings); budget 3 keeps the 3 most specific.
+    // 5 suites at 1s each (T1 caps, no timings); budget 6, half reserved for setup (no
+    // setup measured), keeps the 3 most specific.
     let mut suites: Vec<(String, String)> = Vec::new();
     for i in 1..=5 {
         let mut toks = vec!["spira/lib.sh".to_string()];
@@ -188,11 +189,11 @@ fn the_budget_cuts_most_specific_first_and_never_cuts_an_ejected_suite() {
     let refs: Vec<(&str, &str)> = suites.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
     let d = dir("budget", &refs);
     let g = git_changing("spira/lib.sh");
-    let o = run(&genv(&d.0, &[("SPIRA_GATE_BUDGET", "3")]), &g, "main", "br").unwrap();
+    let o = run(&genv(&d.0, &[("SPIRA_GATE_BUDGET", "6")]), &g, "main", "br").unwrap();
     assert_eq!(o.suites, ["test-s1.sh", "test-s2.sh", "test-s3.sh"]);
     assert!(o.log.iter().any(|l| l.contains("dropped test-s5.sh")));
     let o = run(
-        &genv(&d.0, &[("SPIRA_GATE_BUDGET", "3"), ("SPIRA_GATE_EJECTED_SUITES", "test-s5.sh")]),
+        &genv(&d.0, &[("SPIRA_GATE_BUDGET", "6"), ("SPIRA_GATE_EJECTED_SUITES", "test-s5.sh")]),
         &g,
         "main",
         "br",
@@ -200,11 +201,11 @@ fn the_budget_cuts_most_specific_first_and_never_cuts_an_ejected_suite() {
     .unwrap();
     assert_eq!(o.suites, ["test-s1.sh", "test-s2.sh", "test-s3.sh", "test-s5.sh"]);
     // Width divides.
-    let o = run(&genv(&d.0, &[("SPIRA_GATE_BUDGET", "3"), ("SPIRA_BATCH_MAXPAR", "2")]), &g, "main", "br").unwrap();
+    let o = run(&genv(&d.0, &[("SPIRA_GATE_BUDGET", "6"), ("SPIRA_BATCH_MAXPAR", "2")]), &g, "main", "br").unwrap();
     assert_eq!(o.suites.len(), 5);
     // A pinned tier cap is what an unmeasured suite costs.
     let o = run(
-        &genv(&d.0, &[("SPIRA_GATE_BUDGET", "3"), ("SPIRA_TIER_BUDGET_T1_MS", "1500")]),
+        &genv(&d.0, &[("SPIRA_GATE_BUDGET", "6"), ("SPIRA_TIER_BUDGET_T1_MS", "1500")]),
         &g,
         "main",
         "br",
@@ -225,9 +226,9 @@ fn a_measured_p90_replaces_the_tier_cap() {
     .unwrap();
     let r = run_dir.display().to_string();
     let g = git_changing("spira/lib.sh");
-    let o = run(&genv(&d.0, &[("SPIRA_RUN", &r), ("SPIRA_GATE_BUDGET", "1")]), &g, "main", "br").unwrap();
-    assert!(o.suites.is_empty(), "2s P90 over a 1s budget");
     let o = run(&genv(&d.0, &[("SPIRA_RUN", &r), ("SPIRA_GATE_BUDGET", "2")]), &g, "main", "br").unwrap();
+    assert!(o.suites.is_empty(), "2s P90 over the suites' 1s of a 2s budget");
+    let o = run(&genv(&d.0, &[("SPIRA_RUN", &r), ("SPIRA_GATE_BUDGET", "4")]), &g, "main", "br").unwrap();
     assert_eq!(o.suites, ["test-m.sh"]);
 }
 
@@ -301,4 +302,44 @@ fn the_real_installer_suite_claims_the_unit_installer() {
     )
     .unwrap();
     assert_eq!(s.suites, ["test-install-hooks-artifact.sh"]);
+}
+
+#[test]
+fn the_selector_plans_against_the_suites_share_not_the_whole_budget() {
+    let d = dir("setup", &[("test-m.sh", "# covers: spira/lib.sh\n")]);
+    let run_dir = d.0.join("run");
+    std::fs::create_dir_all(run_dir.join("tsd")).unwrap();
+    let rows = |setup: u64| {
+        format!(
+            "{{\"ts\":\"2026-09-28T00:00:01Z\",\"suite\":\"test-m.sh\",\"wall_secs\":70}}\n\
+             {{\"ts\":\"2026-09-28T00:00:02Z\",\"suite\":\"__batch__\",\"wall_secs\":99,\"setup_secs\":{setup}}}\n"
+        )
+    };
+    let r = run_dir.display().to_string();
+    let g = git_changing("spira/lib.sh");
+    let sel = |setup: u64, extra: &[(&str, &str)]| {
+        std::fs::write(run_dir.join("tsd/suite-timing.jsonl"), rows(setup)).unwrap();
+        let mut e = vec![("SPIRA_RUN", r.as_str()), ("SPIRA_GATE_BUDGET", "100")];
+        e.extend_from_slice(extra);
+        run(&genv(&d.0, &e), &g, "main", "br").unwrap()
+    };
+    // measured setup 20s: the suites get 80s, a 70s suite fits
+    let o = sel(20, &[]);
+    assert_eq!(o.suites, ["test-m.sh"]);
+    assert!(o.log.iter().any(|l| l.contains("the suites get 80s of the 100s budget (setup P90 20s measured")), "{:?}", o.log);
+    // measured setup 40s: 60s left, it does not
+    assert!(sel(40, &[]).suites.is_empty());
+    // a measured setup above the share is capped at it (testenv cuts setup there): 90% → 10s left
+    let o = sel(95, &[("SPIRA_TESTENV_SETUP_SHARE", "90")]);
+    assert!(o.log.iter().any(|l| l.contains("the suites get 10s")), "{:?}", o.log);
+    // no measurement: the whole share is reserved
+    let e = genv(&d.0, &[("SPIRA_GATE_BUDGET", "300")]);
+    assert_eq!(suite_budget(&e, None).0, 150.0);
+    assert_eq!(suite_budget(&genv(&d.0, &[("SPIRA_GATE_BUDGET", "300"), ("SPIRA_TESTENV_SETUP_SHARE", "20")]), None).0, 240.0);
+    // CI's call: no SPIRA_GATE_BUDGET, its testenv runs without a deadline — nothing reserved
+    let ci = genv(&d.0, &[]);
+    assert!(!ci.reserve_setup);
+    assert_eq!(suite_budget(&ci, Some(100.0)).0, 300.0);
+    // a share that is not a number is a refusal, not a guess
+    assert!(GateEnv::from_env(&env_from_pairs(&[("SPIRA_TESTENV_SETUP_SHARE", "half")])).is_err());
 }

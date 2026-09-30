@@ -62,6 +62,36 @@ pub fn p90s(text: &str, runs: usize) -> P90s {
     P90s { by_suite, skipped }
 }
 
+/// P90 of the test runner's measured setup (`setup_secs` on its `__batch__` rows, testenv
+/// DESIGN.md §11) over the newest `runs` rows that carry it; None when no row does (every
+/// row written before sp-govet).
+pub fn setup_p90(text: &str, runs: usize) -> Option<f64> {
+    let mut rows: Vec<(String, usize, f64)> = text
+        .lines()
+        .enumerate()
+        .filter_map(|(i, l)| {
+            let v = serde_json::from_str::<serde_json::Value>(l).ok()?;
+            if v.get("suite")?.as_str()? != "__batch__" {
+                return None;
+            }
+            Some((v.get("ts")?.as_str()?.to_string(), i, v.get("setup_secs")?.as_f64()?))
+        })
+        .collect();
+    rows.sort_by(|a, b| (&b.0, b.1).cmp(&(&a.0, a.1)));
+    let xs: Vec<f64> = rows.iter().take(runs.max(1)).map(|r| r.2).collect();
+    quantile_cont(&xs, 0.9)
+}
+
+/// [`setup_p90`] of `<run>/tsd/suite-timing.jsonl`; a missing file is no measurement.
+pub fn load_setup(run: &Path, runs: usize) -> Result<Option<f64>, Refusal> {
+    let p = run.join("tsd").join("suite-timing.jsonl");
+    match std::fs::read(&p) {
+        Ok(b) => Ok(setup_p90(&String::from_utf8_lossy(&b), runs)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => refuse(format!("cannot read {}: {e}", p.display())),
+    }
+}
+
 /// `<run>/tsd/suite-timing.jsonl`. No file: no P90s (every suite costs its tier cap). A file
 /// that exists and cannot be read is a refusal.
 pub fn load(run: &Path, runs: usize) -> Result<P90s, Refusal> {
@@ -99,6 +129,17 @@ mod tests {
         assert!((p.by_suite["test-a.sh"] - 2.8).abs() < 1e-9);
         assert_eq!(p.by_suite["test-b.sh"], 4.5);
         assert_eq!(p.skipped, 2);
+    }
+
+    #[test]
+    fn setup_p90_reads_only_batch_rows_that_carry_it() {
+        let t = "{\"suite\":\"__batch__\",\"ts\":\"2026-09-30T00:00:01Z\",\"wall_secs\":90}\n\
+                 {\"suite\":\"test-a.sh\",\"ts\":\"2026-09-30T00:00:02Z\",\"wall_secs\":9,\"setup_secs\":500}\n\
+                 {\"suite\":\"__batch__\",\"ts\":\"2026-09-30T00:00:03Z\",\"wall_secs\":90,\"setup_secs\":20}\n\
+                 {\"suite\":\"__batch__\",\"ts\":\"2026-09-30T00:00:04Z\",\"wall_secs\":99,\"setup_secs\":30}\n";
+        assert!((setup_p90(t, 20).unwrap() - 29.0).abs() < 1e-9);
+        assert_eq!(setup_p90(t, 1), Some(30.0), "newest first");
+        assert_eq!(setup_p90("{\"suite\":\"__batch__\",\"ts\":\"x\",\"wall_secs\":1}", 20), None);
     }
 
     #[test]

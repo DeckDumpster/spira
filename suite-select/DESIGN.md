@@ -111,7 +111,7 @@ that no suite's `# covers:` claims.
 Environment (the gate command's own, `gate/DESIGN.md`): `SPIRA_GATE_REPO` (default `.`),
 `SPIRA_GATE_FILES`, `SPIRA_GATE_TIERS` (default `T0,T1`), `SPIRA_GATE_ALL`,
 `SPIRA_GATE_SUITES`, `SPIRA_CERTIFY_ALWAYS_COVERS` (default `spira/lib.sh`),
-`SPIRA_GATE_EJECTED_SUITES`, `SPIRA_GATE_BUDGET` (default 300), `SPIRA_BATCH_MAXPAR`, else
+`SPIRA_GATE_EJECTED_SUITES`, `SPIRA_GATE_BUDGET` (default 300), `SPIRA_TESTENV_SETUP_SHARE` (default 50), `SPIRA_BATCH_MAXPAR`, else
 `SPIRA_GATE_HOST_CORES`, else 1 (the width), `SPIRA_RUN` (timings), `SPIRA_BATCH_SUITE_DIR`
 (default `spira`, relative to the working directory — the gate tree, or the CI checkout).
 
@@ -126,8 +126,17 @@ Environment (the gate command's own, `gate/DESIGN.md`): `SPIRA_GATE_REPO` (defau
 4. **Budget cut** (`budget`): rank the selection — tier bucket (T0/T1/untiered before T2+),
    then specificity (fewer `# covers:` tokens first; an always-run suite last), then tagged
    (`UC-` token) before untagged, then name — and add each while the running predicted total
-   divided by the width stays within the budget. Predicted cost: the P90 of the suite's last
-   20 timing rows, else its tier's cap. Each drop is named on stderr.
+   divided by the width stays within the **suites' budget**. Predicted cost: the P90 of the
+   suite's last 20 timing rows, else its tier's cap. Each drop is named on stderr.
+   **The suites' budget (sp-govet).** `testenv --deadline` bounds the whole trial, setup
+   included (testenv DESIGN.md D9), so the suites get the budget minus setup. When
+   `SPIRA_GATE_BUDGET` is set (the landing gate always sets it and hands the same value to
+   `--deadline`), setup is reserved: the P90 of `setup_secs` over the runner's last 20
+   `__batch__` rows that carry it, capped at its share `SPIRA_TESTENV_SETUP_SHARE` (default 50,
+   clamped 10–90 as testenv clamps it); with no such row, the whole share. When it is unset
+   (CI's call, whose testenv runs with no deadline) nothing is reserved. A share that is not
+   a whole number refuses. The decision is one stderr line:
+   `suite-select gate: the suites get <n>s of the <b>s budget (<why>)`.
 5. **Ejected suites** (`SPIRA_GATE_EJECTED_SUITES`) that exist in the suite directory are
    added after the cut, never ranked or dropped (law-a-retry-must-change-an-input).
 
