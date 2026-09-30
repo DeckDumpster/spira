@@ -787,7 +787,7 @@ spira_conf_defaults() {
     # the operator's own half-written message the way a keystroke wake could. An operator who
     # wants the old keystroke-wake reader back for another mailbox still sets
     # SPIRA_MAIL_READERS themselves; this default covers `concierge` alone.
-    : "${SPIRA_MAIL_READERS:=concierge=$SPIRA_HOME/inbox-append.sh}"
+    : "${SPIRA_MAIL_READERS:=concierge=inbox-append.sh}"
     : "${SPIRA_MAIL_UNREAD_AGE:=1800}"
     : "${SPIRA_MAIL_SETTLE:=2}"
     # A MACHINE EVENT (a watcher's own kind: event mail — PR transitions among them) gets its
@@ -1768,9 +1768,9 @@ spira_conf_defaults() {
     # WHERE OPEN-BATCH RECORDS ARE KEPT — one file per open batch.
     : "${SPIRA_QUEUE_DIR:=$SPIRA_RUN/queue}"
     # THE FORGE SEAM — the executable batch.sh calls to open pull requests. Empty means use
-    # $SPIRA_HOME/forge.sh. A fixture sets this to a local script so the suite never reaches
+    # forge.sh, by name on PATH. A fixture sets this to a local script so the suite never reaches
     # the real forge.
-    : "${SPIRA_FORGE:=$SPIRA_HOME/forge.sh}"
+    : "${SPIRA_FORGE:=forge.sh}"
     # THE GITHUB REPOSITORY deploy.sh targets when making gh release calls. deploy.sh
     # passes this as --repo so it works from an extracted tarball with no .git checkout.
     # Format: "owner/repo". Empty means deploy.sh derives it from git remote origin.
