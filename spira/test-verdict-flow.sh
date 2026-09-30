@@ -41,13 +41,7 @@ export SPIRA_HOME="$TMP/home"
 export SPIRA_RUN="$TMP/run"
 mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_RUN"
 
-MAIL="$HERE/mail"
-run() { bash "$MAIL" "$@"; }
-
-# Sourced (not run): mail's main guard makes this safe, and it is how the T1 _suit_reason
-# table below calls the seam directly instead of forking mail per row.
-# shellcheck disable=SC1090
-. "$MAIL"
+run() { mail "$@"; }
 
 bead_status() {
     bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
@@ -312,21 +306,14 @@ want "the verdict is the message's default" "take the accept-test default" "$(be
 want "work bead note contains the operator verdict" "take the accept-test default" "$(bead_notes "$BEAD_ACC")"
 
 # ==========================================================================
-# UC-18 / G-03 — suit verdict words -> close reason, at the T1 seam (no bd, no Maildir).
+# UC-18 / G-03 — suit verdict words -> close reason. This table used to call the sourced
+# bash seam `_suit_reason` directly (T1, no fork per row). mail is a compiled binary now
+# (sp-ooh1k): the table moved verbatim to mail/src/bead.rs's own unit tests
+# (`suit_reason_maps_uphold_retire_amend`, `cargo test -p mail`), case for case including
+# the case-insensitive uphold, the amend-with-clause and amend-with-no-clause forms, the
+# unrecognised-word passthrough, and the non-suit-kind-never-mapped guard. The real close
+# below (one uphold, end to end through sendmail) still runs here.
 # ==========================================================================
-echo
-echo "UC-18/G-03: _suit_reason maps verdict words to close reasons (T1 table)"
-
-is "uphold -> upheld"                    "upheld"           "$(_suit_reason suit "uphold this one")"
-is "Uphold (case-insensitive) -> upheld" "upheld"            "$(_suit_reason suit "Uphold.")"
-is "retire -> retired"                   "retired"           "$(_suit_reason suit "retire the statute")"
-is "amend: <clause> -> the clause"       "add a new clause"  "$(_suit_reason suit "amend: add a new clause")"
-is "amend with no clause -> amended"     "amended"           "$(_suit_reason suit "amend")"
-is "G-03: unrecognised suit word is left unmapped" \
-   "overruled, try again" "$(_suit_reason suit "overruled, try again")"
-is "a non-suit kind is never mapped, even with a suit word" \
-   "uphold this one" "$(_suit_reason question "uphold this one")"
-
 echo
 echo "UC-18: one real close — uphold closes the suit bead with reason 'upheld'"
 

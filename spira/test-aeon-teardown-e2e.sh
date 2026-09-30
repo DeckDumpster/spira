@@ -211,10 +211,10 @@ want "ledger says operator-wait" "operator-wait" "$(fa_ledger_line sp-ow-2)"
 
 echo
 echo "mail, driven directly (no aeon run): kind=question writes the operator-wait marker"
-BEAD_ID=sp-ow-mail SPIRA_RUN="$SPIRA_RUN" bash -c '
-. "$1/mail" 2>/dev/null || true
-cmd_send operator --from "Builder <builder@spira>" --subject "fixture question" \
-    --kind question --default "proceed without waiting" <<BODY
+# mail is a compiled binary now (sp-ooh1k) — there is no `cmd_send` bash function left to
+# source; call the real `send` subcommand instead (bare name, on the suite's own PATH).
+BEAD_ID=sp-ow-mail SPIRA_RUN="$SPIRA_RUN" mail send operator --from "Builder <builder@spira>" \
+    --subject "fixture question" --kind question --default "proceed without waiting" <<BODY >/dev/null 2>&1
 ## Question
 
 Can the fixture answer this itself?
@@ -223,7 +223,6 @@ Can the fixture answer this itself?
 
 Proceed without waiting.
 BODY
-' _ "$HERE" >/dev/null 2>&1
 is "mail send kind=question wrote the marker itself" "yes" \
    "$([ -e "$SPIRA_RUN/sp-ow-mail.operator-wait" ] && echo yes || echo no)"
 

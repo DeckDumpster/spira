@@ -74,7 +74,10 @@ queue() {
 }
 
 concierge_unread() {
-    SPIRA_HOME="$SH" SPIRA_MAIL="$MAIL" bash "$SH/mail" count concierge 2>/dev/null
+    # mail is a compiled binary now (sp-ooh1k) — never `bash <path>`, which only ever
+    # worked while this was a shell script. $SH is on PATH (below), so bare name resolves
+    # to the symlinked real binary staged there.
+    SPIRA_HOME="$SH" SPIRA_MAIL="$MAIL" PATH="$SH:$PATH" mail count concierge 2>/dev/null
 }
 
 echo "test-queue-owner-mail.sh"
