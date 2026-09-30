@@ -63,14 +63,21 @@ operation holds the lock` (stdout), exit 0. Under the lock, `settle_publish`:
 
 The status is `forge check-status <path> <pr> <branch>`'s first line, `provision_fault`
 normalised to `harness_fault`. On 3 the lock is dropped and `settle_publish_red` runs
-unlocked (attribution runs real suites; it must not hold the queue lock): red suites and
-run URL from the same check-status output (`red-suite: `, `run-url: ` lines, suites
-de-duplicated in order); `attribute.sh --round <branch> --base <base> --suites <csv>
---members <ids> --repo <path>` when both are non-empty; `pr-close`; one bead through
+unlocked: red suites and run URL from the same check-status output (`red-suite: `,
+`run-url: ` lines, suites de-duplicated in order); `pr-close`; one bead through
 `bdq create` (seam R23: actor `${SPIRA_QUEUE_ACTOR:-queue.sh}`, type bug, priority
 `SPIRA_INCIDENT_PRIORITY`, labels `spira,plan,repo:<repo>`, body the same text
-verdict.sh wrote); remove the record; write `publish-red` = `head=<head>\nfix_forward=<id>`
-atomically; `QUEUE PUBLISH_RED` line; concierge mail; stdout line.
+verdict.sh wrote, minus its "Local attribution" paragraph); remove the record; write
+`publish-red` = `head=<head>\nfix_forward=<id>` atomically; `QUEUE PUBLISH_RED` line;
+concierge mail; stdout line.
+
+**Local attribution (`attribute.sh --round <branch> --base <base> --suites <csv> --members
+<ids> --repo <path>`) is retired with attribute.sh, not ported (sp-uwhx0).** It bisected the
+published range against local git with a per-suite without-member rebuild — a one-off
+range, not a round, and the batcher's own attribution (`batcher/src/attrib.rs`, sp-hvtgs)
+has no seam for that shape; building one is a separate bead if a red publish turns out to
+need it. The fix-forward bead still files either way — it just names red suites and members
+instead of a local reproduction.
 
 `to-forge` calls the same `settle_publish` in process (it already holds the lock), where
 it was seam R19 sourcing verdict.sh.

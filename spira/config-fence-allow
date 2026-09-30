@@ -23,8 +23,6 @@ spira/acceptance-lib.sh
 spira/acceptance-local.sh
 spira/acceptance-run.sh
 spira/aeons.sh
-spira/attribute.sh
-spira/batch.sh
 spira/bead.sh
 spira/chamber/batcher.fayth
 spira/chamber/builder.fayth
@@ -78,11 +76,8 @@ spira/test-aeon-worktree-collision.sh
 # literal-ok: a file path, not the world-stop literal itself
 spira/test-aeon-world-stop.sh
 spira/test-auron.sh
-spira/test-batch-conflicting-pr.sh
 spira/test-batcher-cut.sh
-spira/test-batch-reconcile.sh
 spira/test-batch-red-main.sh
-spira/test-batch-stuck.sh
 spira/test-bd-resolve.sh
 spira/test-bead-contract.sh
 spira/test-bead-file.sh
@@ -95,7 +90,6 @@ spira/test-canary.sh
 spira/test-census-pipeline.sh
 spira/test-certified-withdraw.sh
 spira/test-certify.sh
-spira/test-cert-stale-gate-key.sh
 spira/test-chamber-repo-labels.sh
 spira/test-check5-invariant.sh
 spira/test-ci-park-state.sh
