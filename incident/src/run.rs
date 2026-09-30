@@ -180,7 +180,8 @@ fn bump_and_note(
     }
 
     ports::bump_recur(bd, cfg.db, id, cfg.cause);
-    log.push(format!("{reference} recurred ({n}) — {id}"));
+    let log_suffix = if was_reopened { " (reopened from closed)" } else { "" };
+    log.push(format!("{reference} recurred ({n}) — {id}{log_suffix}"));
 
     let already_sin = bd.label_list(cfg.db, id).iter().any(|l| l == "sin");
     if events_unknown {

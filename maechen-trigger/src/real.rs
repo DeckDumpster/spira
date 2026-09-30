@@ -39,7 +39,7 @@ impl Real {
 
     fn seam_ok(&self, body: &str, args: &[&str]) -> bool {
         let script = format!(". \"$0\" >/dev/null 2>&1 || exit 96\n{body}");
-        let out = Command::new("bash")
+        Command::new("bash")
             .arg("-c")
             .arg(script)
             .arg(self.home.join("lib.sh"))
@@ -47,22 +47,11 @@ impl Real {
             .env("SPIRA_HOME", &self.home)
             .env("SPIRA_DB", &self.db)
             .stdin(Stdio::null())
-            .output();
-        if let Ok(o) = &out {
-            eprintln!(
-                "DEBUG seam_ok args={:?} rc={:?} stdout={:?} stderr={:?} PATH={:?} SPIRA_REPO_MAP={:?} SPIRA_HOME_arg={:?}",
-                args,
-                o.status.code(),
-                String::from_utf8_lossy(&o.stdout),
-                String::from_utf8_lossy(&o.stderr),
-                std::env::var("PATH"),
-                std::env::var("SPIRA_REPO_MAP"),
-                self.home
-            );
-        } else {
-            eprintln!("DEBUG seam_ok args={args:?} SPAWN FAILED: {out:?}");
-        }
-        out.map(|o| o.status.success()).unwrap_or(false)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
     }
 
     fn read_epoch_file(&self, name: &str) -> i64 {
