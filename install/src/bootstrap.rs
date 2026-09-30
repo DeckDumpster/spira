@@ -30,24 +30,34 @@ pub fn which(prog: &str) -> Option<String> {
 }
 
 /// Resolve host values from the environment (conf.sh's own precedence: explicit environment
-/// wins; this derives nothing beyond `SPIRA_HOME = SPIRA_REPO/spira` when unset).
+/// wins). Derives nothing beyond what conf.sh itself derives with a plain, no-side-effect
+/// default for a render-relevant key: `SPIRA_HOME = SPIRA_REPO/spira` (conf.sh: no-colon
+/// derivation), `SPIRA_COCKPIT = dirname(SPIRA_HOME)/cockpit` (conf.sh line ~937),
+/// `SPIRA_SNAP_STALE_S = 60` (line ~951), `SPIRA_TESTDB_PORT = 3308` (line ~1015) — the three
+/// `: "${VAR:=default}"` conf.sh lines that matter to rendering. A caller that already
+/// sourced conf.sh (a human, `deploy.sh`) exports the real value first, so this default is
+/// reached only when nothing did — never a silent override of an explicit setting.
 pub fn host_from_env(instance: &str) -> HostValues {
     let repo = nonempty_env("SPIRA_REPO").unwrap_or_default();
     let home = nonempty_env("SPIRA_HOME").unwrap_or_else(|| format!("{repo}/spira"));
+    let cockpit = nonempty_env("SPIRA_COCKPIT").unwrap_or_else(|| {
+        let parent = Path::new(&home).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+        format!("{parent}/cockpit")
+    });
     let dolt = nonempty_env("DOLT").or_else(|| which("dolt")).unwrap_or_default();
     HostValues {
         home,
         repo,
         run: env_var("SPIRA_RUN"),
         db: env_var("SPIRA_DB"),
-        cockpit: env_var("SPIRA_COCKPIT"),
+        cockpit,
         dolt_data: env_var("SPIRA_DOLT_DATA"),
         testdb_data: env_var("SPIRA_TESTDB_DATA"),
         dolt,
         prod: env_var("SPIRA_PROD"),
         instance: instance.to_string(),
-        testdb_port: env_var("SPIRA_TESTDB_PORT"),
-        snap_stale_s: env_var("SPIRA_SNAP_STALE_S"),
+        testdb_port: nonempty_env("SPIRA_TESTDB_PORT").unwrap_or_else(|| "3308".to_string()),
+        snap_stale_s: nonempty_env("SPIRA_SNAP_STALE_S").unwrap_or_else(|| "60".to_string()),
         path_tail: crate::orchestrate::path_tail().unwrap_or_default(),
     }
 }
