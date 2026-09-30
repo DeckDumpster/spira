@@ -15,9 +15,9 @@
 # harness's own findings drawing an aeon ahead of a user's.
 #
 # tier: T1
-# covers: spira/conf.sh testenv/src/suites/ports.rs gh-intake/src/main.rs spira/incident.sh
+# covers: spira/conf.sh testenv/src/suites/ports.rs gh-intake/src/main.rs incident/src/main.rs
 # tier: T0
-# covers: spira/conf.sh spira/suites.sh gh-intake/src/main.rs spira/incident.sh
+# covers: spira/conf.sh spira/suites.sh gh-intake/src/main.rs incident/src/main.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -66,7 +66,7 @@ fi
 # BOTH SIDES READ THE KEY. A literal written into either program passes the comparison above
 # while the configured value does nothing. Comments here and in those files state the rule
 # being checked, so the match is against a comment-stripped view.
-for pair in "../testenv/src/suites/ports.rs SPIRA_SUITES_PRIORITY" "../gh-intake/src/main.rs SPIRA_GH_INTAKE_PRIORITY" "incident.sh SPIRA_INCIDENT_PRIORITY"; do
+for pair in "../testenv/src/suites/ports.rs SPIRA_SUITES_PRIORITY" "../gh-intake/src/main.rs SPIRA_GH_INTAKE_PRIORITY" "../incident/src/main.rs SPIRA_INCIDENT_PRIORITY"; do
     f="${pair%% *}"; k="${pair##* }"
     if [ ! -r "$HERE/$f" ]; then bad "$f is readable" "not found"; continue; fi
     # Matched with a case, not a pipe into `grep -q`: that exits at the first match, the
