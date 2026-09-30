@@ -2,6 +2,7 @@
 name = "testenv"
 version = "1.0.0"
 edition = "2021"
+default-run = "testenv"
 description = "testenv — the harness's test runner (replaces spira/testenv-batch.sh, sp-5odic): select suites for a tree, build that tree in place with cargo, run the suites in the fixture container, report a verdict, per-suite results and timings, and cache the verdict by tree."
 
 [lib]

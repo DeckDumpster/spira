@@ -95,7 +95,7 @@ round)
     cd "$HOME/round-work" || exit 2
     git fetch --quiet origin "+refs/heads/$ref:refs/heads/$ref" || exit 2
     git checkout --quiet --force --detach "refs/heads/$ref" || exit 2
-    cargo run -q --profile release -p testenv -- --mode parallel --profile release --suites "$suites" HEAD
+    cargo run -q --profile release -p testenv --bin testenv -- --mode parallel --profile release --suites "$suites" HEAD
     rc=$?
     rm -rf "$HOME/round-bins"; mkdir -p "$HOME/round-bins"
     find target/release -maxdepth 1 -type f -executable -exec cp {} "$HOME/round-bins/" \; 2>/dev/null

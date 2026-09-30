@@ -109,9 +109,9 @@ export SPIRA_BATCH_MAXPAR="$maxpar"
 if [ -n "$toolchain" ]; then export RUSTUP_TOOLCHAIN="$toolchain"; fi
 set +e
 if [ -n "$suites" ]; then
-    cargo run -q --profile release -p testenv -- --mode parallel --profile release --suites "$suites" round
+    cargo run -q --profile release -p testenv --bin testenv -- --mode parallel --profile release --suites "$suites" round
 else
-    cargo run -q --profile release -p testenv -- --mode parallel --profile release round
+    cargo run -q --profile release -p testenv --bin testenv -- --mode parallel --profile release round
 fi
 rc=$?
 mkdir -p ~/round-bins
@@ -564,6 +564,20 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
     })
 }
 
+/// `run`'s exit code for a non-zero remote exit (DESIGN.md §2.2): testenv's own contract
+/// (1 red, 2/3 its harness faults, 4 workspace build) passes through; anything else — cargo's
+/// 101, git's 128, a signal — never reached a testenv verdict and is round-vm's own fault, 2,
+/// named on stderr (sp-dp872).
+pub fn exit_for_remote(rc: i32) -> i32 {
+    match rc {
+        1..=4 => rc,
+        _ => {
+            eprintln!("round-vm run: the remote runner exited {rc}, outside testenv's contract (0-4) — no verdict; see its output above");
+            2
+        }
+    }
+}
+
 /// Where the VM's testenv writes the corpus's results.
 pub const REMOTE_RESULTS: &str = "round-work/.runtime/spira/batch-results/";
 
@@ -646,7 +660,7 @@ fn after_batch(
     let _ = fs::remove_dir_all(&bins);
 
     if remote_rc != 0 {
-        return remote_rc;
+        return exit_for_remote(remote_rc);
     }
     if own_fault {
         2
@@ -921,6 +935,44 @@ mod tests {
             let remote = FakeRemote { rc: Ok(rc), ..FakeRemote::green() };
             assert_eq!(go(&fx, &remote, &tree(&fx)), rc);
             assert!(fx.fp.live_vms().is_empty());
+        }
+    }
+
+    /// sp-dp872: the first round cut from the release exited 101 — cargo's own exit code
+    /// (`cargo run` could not pick a binary once testenv grew `bd-meter`), passed through as if
+    /// it were a testenv verdict. The batcher had no row for it. A remote exit outside
+    /// testenv's contract (0-4) is round-vm's own harness fault: exit 2, named, VM released —
+    /// on the no-ready-VM (cold) acquire path the walkthrough rounds took.
+    #[test]
+    fn a_remote_exit_outside_testenv_s_contract_is_exit_2_on_the_cold_path() {
+        for rc in [101, 128, 137, -1] {
+            let fx = fixture();
+            let remote = FakeRemote { rc: Ok(rc), files: BTreeMap::new(), ..FakeRemote::green() };
+            assert_eq!(go(&fx, &remote, &tree(&fx)), 2, "remote rc {rc}");
+            assert!(fx.fp.live_vms().is_empty(), "leaked {:?}", fx.fp.live_vms());
+            let m: Manifest = serde_json::from_str(&fs::read_to_string(fx.cfg.state_dir.join("manifests/treesha.json")).unwrap()).unwrap();
+            assert_eq!(m.acquire, AcquireMode::Cold, "no VM was ready: the no-ready-VM path");
+        }
+    }
+
+    #[test]
+    fn a_spool_run_whose_remote_exits_outside_the_contract_writes_corpus_done_rc_2() {
+        let fx = fixture();
+        let remote = FakeRemote { rc: Ok(101), files: BTreeMap::new(), ..FakeRemote::green() };
+        let (a, sp) = spool_fixture(&fx);
+        assert_eq!(go(&fx, &remote, &a), 2);
+        assert_eq!(fs::read_to_string(sp.dir.join("corpus.done")).unwrap(), "rc=2\n");
+        assert!(fx.fp.live_vms().is_empty());
+    }
+
+    /// sp-dp872: testenv has two binaries (testenv, bd-meter); an unqualified `cargo run -p
+    /// testenv` cannot choose and exits 101 before a suite runs.
+    #[test]
+    fn every_remote_cargo_run_names_the_testenv_binary() {
+        for script in [REMOTE_SCRIPT, crate::spool::REMOTE_ATTR_SCRIPT] {
+            for line in script.lines().filter(|l| l.contains("cargo run")) {
+                assert!(line.contains("--bin testenv"), "unqualified cargo run: {line}");
+            }
         }
     }
 
