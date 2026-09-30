@@ -161,6 +161,52 @@ fn sha256sum_line(bytes: &[u8]) -> Vec<u8> {
     format!("{}  -\n", crate::verdict::sha256_hex(bytes)).into_bytes()
 }
 
+/// The tiers doctor-check.sh's build-time check actually branches on (its case
+/// statement): FATAL on "runtime", WARN (present-or-waived) on "optional"/"operator".
+/// "dev" is an explicit no-op arm (what tests need to exist, not what the image build
+/// verifies) and "release" hits no arm at all — it is Spira's own binaries, which testenv
+/// stages into the container per run rather than the image installing them (sp-ehj2t).
+/// Neither tier can change whether the build passes, so neither may change the tag.
+const DEPS_TIERS_DOCTOR_CHECK_READS: &[&str] = &["runtime", "optional", "operator"];
+
+#[derive(serde::Deserialize)]
+struct DepsManifest {
+    #[serde(default)]
+    dep: Vec<DepsEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct DepsEntry {
+    name: String,
+    #[serde(default)]
+    tier: Option<String>,
+}
+
+/// The build closure's share of deps.toml: `<name> <tier>\n` for every entry whose tier
+/// doctor-check.sh checks, sorted by name so the text is independent of the manifest's own
+/// ordering. Unset tier defaults to "optional" (conf.sh's `spira_bin_tier` does the same).
+/// None when the manifest does not parse — the closure cannot be summarized, so the tag
+/// refuses rather than naming an image from an unreadable one.
+fn deps_closure(bytes: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let manifest: DepsManifest = toml::from_str(text).ok()?;
+    let mut rows: Vec<(String, String)> = manifest
+        .dep
+        .into_iter()
+        .map(|d| (d.name, d.tier.unwrap_or_else(|| "optional".to_string())))
+        .filter(|(_, tier)| DEPS_TIERS_DOCTOR_CHECK_READS.contains(&tier.as_str()))
+        .collect();
+    rows.sort();
+    let mut out = String::new();
+    for (name, tier) in rows {
+        out.push_str(&name);
+        out.push(' ');
+        out.push_str(&tier);
+        out.push('\n');
+    }
+    Some(out)
+}
+
 impl Driver<'_> {
     fn err(&self, l: &str) {
         self.host.err(l)
@@ -178,9 +224,10 @@ impl Driver<'_> {
         }
     }
 
-    /// The build-closure hash: Containerfile, the bd pin, deps.toml — by content, never by
-    /// path, so every checkout of one commit computes one tag. None when the closure cannot
-    /// be read (D18a).
+    /// The build-closure hash: Containerfile (by content), the bd pin, and the slice of
+    /// deps.toml the image build actually consumes — never by path, so every checkout of
+    /// one commit computes one tag. None when the closure cannot be read or deps.toml
+    /// cannot be summarized (D18a).
     pub fn image_tag(&self) -> Option<String> {
         let dir = self.need_harness("tag")?;
         let cf = dir.join("testenv/Containerfile");
@@ -199,13 +246,20 @@ impl Driver<'_> {
             ));
             return None;
         };
+        let Some(deps_text) = deps_closure(&deps_bytes) else {
+            self.err(&format!(
+                "testenv tag: {} does not parse as the dependency manifest — refusing to name an image from an unreadable closure",
+                deps.display()
+            ));
+            return None;
+        };
         let mut closure = sha256sum_line(&cf_bytes);
         if let Some(pin) = &self.conf.bd_pin {
             if self.host.is_file(pin) {
                 closure.extend(self.host.read(pin).unwrap_or_default());
             }
         }
-        closure.extend(sha256sum_line(&deps_bytes));
+        closure.extend(sha256sum_line(deps_text.as_bytes()));
         Some(crate::verdict::sha256_hex(&closure)[..12].to_string())
     }
 
