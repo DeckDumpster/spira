@@ -802,12 +802,25 @@ impl<'a> Session<'a> {
 
     /// A single failed or empty inspect is transient; only a definitive `false`, or
     /// `liveness_retries` non-true answers in a row, is death. A failed lookup says so.
+    ///
+    /// The detail names the container (sp-2zu0t: a harness-fault line that only says
+    /// `ExitCode=… OOMKilled=…` cannot be correlated to any container after the fact — the
+    /// container is already removed by the time anyone reads the gate's output) and, when
+    /// every attempt came back as a failed/empty lookup rather than a definitive `false`,
+    /// says so explicitly instead of asserting `ExitCode`/`OOMKilled` values that were never
+    /// actually read: under podman control-plane contention (DESIGN.md §11.4) `podman
+    /// inspect` itself can time out or error, which is evidence the *lookup* is unreliable,
+    /// not evidence the container died.
     pub fn liveness(&self) -> Liveness {
         let mut n = 0;
+        let mut confirmed_dead = false;
         loop {
             match self.rt.inspect(&self.name, "{{.State.Running}}").as_deref() {
                 Some("true") => return Liveness::Alive,
-                Some("false") => break,
+                Some("false") => {
+                    confirmed_dead = true;
+                    break;
+                }
                 _ => {
                     n += 1;
                     if n >= self.liveness_retries {
@@ -816,6 +829,18 @@ impl<'a> Session<'a> {
                     std::thread::sleep(self.liveness_sleep);
                 }
             }
+        }
+        let name = &self.name;
+        if !confirmed_dead {
+            // Every inspect attempt failed or was empty: the container's actual state was
+            // never read. ExitCode/OOMKilled would be fabricated confidence, so the detail
+            // says exactly what happened instead of printing stale-looking fault fields.
+            return Liveness::Dead {
+                detail: format!(
+                    "container={name} state unknown — {n} consecutive `podman inspect` \
+                     lookups failed or returned no answer (never saw Running=false)"
+                ),
+            };
         }
         let exit = self
             .rt
@@ -826,7 +851,7 @@ impl<'a> Session<'a> {
             .inspect(&self.name, "{{.State.OOMKilled}}")
             .unwrap_or_else(|| "inspect-failed".into());
         Liveness::Dead {
-            detail: format!("ExitCode={exit} OOMKilled={oom}"),
+            detail: format!("container={name} ExitCode={exit} OOMKilled={oom}"),
         }
     }
 
@@ -1529,12 +1554,54 @@ mod tests {
         assert_eq!(
             session(&rt).liveness(),
             Liveness::Dead {
-                detail: "ExitCode=inspect-failed OOMKilled=inspect-failed".into()
+                detail: "container=spira-batch-abc123 ExitCode=inspect-failed OOMKilled=inspect-failed"
+                    .into()
             }
         );
         let rt = FakeRuntime::new();
         rt.running_answers(&[None, None, None]);
         assert!(matches!(session(&rt).liveness(), Liveness::Dead { .. }));
+    }
+
+    /// sp-2zu0t: a `harness-fault` line that only says `ExitCode=… OOMKilled=…` cannot be
+    /// correlated to any container after the fact (the container is already removed by the
+    /// time anyone reads the gate's output), so the detail must name the container. And a
+    /// run of failed/empty inspects — the observed shape of podman control-plane contention,
+    /// DESIGN.md §11.4 — must say the lookup never got a definitive answer, never assert an
+    /// `ExitCode`/`OOMKilled` that was never actually read.
+    #[test]
+    fn liveness_detail_names_the_container_and_distinguishes_unreachable_from_confirmed_dead() {
+        let rt = FakeRuntime::new();
+        rt.running_answers(&[Some("false")]);
+        let Liveness::Dead { detail } = session(&rt).liveness() else {
+            panic!("expected Dead");
+        };
+        assert!(
+            detail.contains("container=spira-batch-abc123"),
+            "confirmed-dead detail must name the container: {detail}"
+        );
+        assert!(
+            detail.contains("ExitCode=") && detail.contains("OOMKilled="),
+            "confirmed-dead detail must carry the real exit fields: {detail}"
+        );
+
+        let rt = FakeRuntime::new();
+        rt.running_answers(&[None, None, None]);
+        let Liveness::Dead { detail } = session(&rt).liveness() else {
+            panic!("expected Dead");
+        };
+        assert!(
+            detail.contains("container=spira-batch-abc123"),
+            "unreachable detail must name the container too: {detail}"
+        );
+        assert!(
+            !detail.contains("ExitCode="),
+            "an inspect that never answered must not assert an ExitCode it never read: {detail}"
+        );
+        assert!(
+            detail.contains("never saw Running=false"),
+            "the unreachable case must say the state was never confirmed: {detail}"
+        );
     }
 
     #[test]

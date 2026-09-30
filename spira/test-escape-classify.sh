@@ -30,7 +30,7 @@
 #
 # tier: T2
 # requires: testenv
-# covers: spira/escape-classify.sh spira/incident.sh spira/lib.sh
+# covers: spira/escape-classify.sh spira/incident.sh spira/lib.sh incident/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

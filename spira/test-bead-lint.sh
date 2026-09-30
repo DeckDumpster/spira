@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 #
-# test-bead-lint.sh — bead.sh lint: the pure label/status/type judgement
-# (_bead_lint_judge, T1 over canned rows) and the real `bd show --json` wiring around it
-# (--all enumeration, unreadable ids, the branch: label existence check — T2, one fixture).
+# test-bead-lint.sh — bead.sh lint: the real `bd show --json` wiring around the label/
+# status/type judgement (--all enumeration, unreadable ids, the branch: label existence
+# check — T2, one fixture).
+#
+# T1 (the pure judgement, `_bead_lint_judge` over canned label/status/type/partition rows,
+# no bd, no Dolt) moved to the Rust `bead` crate's own unit tests
+# (bead/src/lib.rs::tests::lint_judge_rows_match_the_bash_suite_table, the same table,
+# row for row) when `bead.sh`'s logic moved into the `bead` binary and `bead.sh` itself
+# became a shim with no `_bead_lint_judge` function left to source (sp-g9mhe). Retiring it
+# here rather than leaving a source-and-call that can never work again.
 #
 # tier: T2
 # covers: spira/bead.sh UC-dispatch-04
@@ -11,42 +18,8 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 export SPIRA_NO_LOOP_LABEL="no-loop"
-# shellcheck disable=SC1090
-. "$HERE/bead.sh"
 
 echo "test-bead-lint.sh"
-
-# ===========================================================================================
-echo
-echo "T1: _bead_lint_judge over canned labels/status/type/partitions (no bd, no Dolt)"
-# ===========================================================================================
-# THE POSITIVE CONTROL IS FIRST (law-absence-needs-a-positive-control): a judge that never
-# fires would pass every "not reported" row below for the wrong reason.
-PART="plan maechen-sweep spike czar-trigger incident groom"
-
-# Row format: name|labels|status|type|partitions|want_rc|want_out ("\n" marks a line break
-# in a multi-line expected output; EMPTY marks an empty labels string).
-ROWS=(
-    "positive control: repo: + partition passes|repo:spira plan|open|task|${PART}|0|"
-    "missing repo: is reported|plan|open|task|${PART}|1|no repo: label"
-    "missing partition is reported|repo:spira|open|task|${PART}|1|no partition label; add one or mark no-loop"
-    "no-loop bypasses the partition check|repo:spira no-loop|open|task|${PART}|0|"
-    "event type is exempt from both checks|EMPTY|open|event|${PART}|0|"
-    "epic needs repo: but not a partition|repo:spira|open|epic|${PART}|0|"
-    "closed status skips the partition check|repo:spira|closed|task|${PART}|0|"
-    "zero labels reports both defects|EMPTY|open|task|${PART}|2|no repo: label\nno partition label; add one or mark no-loop"
-    "the check generalises across claimable types (bug)|repo:spira|open|bug|${PART}|1|no partition label; add one or mark no-loop"
-)
-
-for row in "${ROWS[@]}"; do
-    IFS='|' read -r name labels status type partitions want_rc want_out <<<"$row"
-    [ "$labels" = "EMPTY" ] && labels=""
-    want_out="${want_out//\\n/$'\n'}"
-    out="$(_bead_lint_judge "$labels" "$status" "$type" "$partitions")"
-    rc=$?
-    wantrc "$name (rc)"     "$want_rc"  "$rc"
-    is     "$name (output)" "$want_out" "$out"
-done
 
 # ===========================================================================================
 echo

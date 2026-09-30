@@ -46,6 +46,10 @@ members = [
     "suite-select",
     "release",
     "forge",
+    "incident",
+    "maechen-trigger",
+    "rule",
+    "bead",
 ]
 resolver = "2"
 
