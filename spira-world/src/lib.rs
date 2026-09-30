@@ -54,6 +54,30 @@ pub fn halt_stamp() -> PathBuf {
     spira_run().join("world.halted")
 }
 
+/// The argv paths `live_workers` matches against — every one of them, not just gate.sh:
+/// `$SPIRA_HOME/gate.sh`, `${SPIRA_PROD:-$SPIRA_HOME}/gate.sh`, `landing-pass` beside
+/// whichever of those two is in force (`dirname(prod)/bin/landing-pass`, matching
+/// `landing.sh`'s retirement into that binary), and whatever `landing-pass` resolves to
+/// on the launcher's own PATH right now. world.sh's own comment: "both homes, for the
+/// same reason live_aeons matches both" — this is that set, gathered once so `status` and
+/// any other caller can't each grow their own partial copy.
+pub fn live_worker_paths(home: &Path) -> Vec<String> {
+    let prod = spira_prod_or_home(home);
+    let mut v = vec![
+        home.join("gate.sh").to_string_lossy().into_owned(),
+        prod.join("gate.sh").to_string_lossy().into_owned(),
+    ];
+    if let Some(dir) = prod.parent() {
+        v.push(dir.join("bin").join("landing-pass").to_string_lossy().into_owned());
+    }
+    if let Ok(p) = env::var("PATH") {
+        if let Some(found) = p.split(':').map(Path::new).map(|d| d.join("landing-pass")).find(|c| c.is_file()) {
+            v.push(found.to_string_lossy().into_owned());
+        }
+    }
+    v
+}
+
 /// The drain stamp path: `$SPIRA_RUN/world.draining`.
 pub fn drain_stamp() -> PathBuf {
     spira_run().join("world.draining")

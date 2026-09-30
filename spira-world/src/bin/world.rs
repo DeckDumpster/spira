@@ -59,9 +59,12 @@ fn enumerate_timers() -> Vec<String> {
     };
     for base in sysctl::TIMER_PRIORITY {
         let qualified = format!("{base}{sfx}.timer");
-        let enabled = sysctl::run(&["is-enabled", &qualified]);
-        let active = sysctl::run(&["is-active", &qualified]);
-        if !enabled.is_empty() || !active.is_empty() {
+        // world.sh's own check is on EXIT STATUS, stdout thrown away (`>/dev/null 2>&1`):
+        // `is-enabled`/`is-active` on a timer systemd has never heard of exits nonzero
+        // with empty stdout, same as one it has heard of but printed nothing for (a
+        // stubbed systemctl in a T1 suite does exactly this) — stdout content is not the
+        // signal, the exit code is.
+        if sysctl::run_ok(&["is-enabled", &qualified]) || sysctl::run_ok(&["is-active", &qualified]) {
             add(qualified);
         } else {
             add(format!("{base}.timer"));
@@ -580,10 +583,7 @@ fn cmd_status() -> i32 {
 
     let home = spira_world::locate_home(&env::current_exe().unwrap_or_default()).unwrap_or_default();
     let prod = spira_prod_or_home(&home);
-    let worker_paths: Vec<String> = vec![
-        home.join("gate.sh").to_string_lossy().into_owned(),
-        prod.join("gate.sh").to_string_lossy().into_owned(),
-    ];
+    let worker_paths = spira_world::live_worker_paths(&home);
     let worker_refs: Vec<&str> = worker_paths.iter().map(String::as_str).collect();
     let wcount = spira_world::proc::live_workers(std::path::Path::new("/proc"), &worker_refs).len();
     println!("  {:<26} {}", "live workers (/proc)", wcount);
