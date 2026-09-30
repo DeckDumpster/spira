@@ -4,7 +4,7 @@
 #   wiki writes (wiki_write_paths, read from the transcript) an aeon may commit at exit:
 #   only those still dirty now, and never wiki/tasks.md.
 #
-# THE DEFECT. An aeon that calls sop.sh synth or writes any wiki page and exits without
+# THE DEFECT. An aeon that calls `sop synth` or writes any wiki page and exits without
 # committing leaves brain's shared checkout dirty. The next session to touch brain is
 # refused by brain-guard's harness-checkout-clean arm and ends up committing someone
 # else's work under its own author. The fix: aeon.sh commits wiki writes at exit,

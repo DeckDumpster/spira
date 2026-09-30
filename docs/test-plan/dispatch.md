@@ -7,7 +7,14 @@ Scope: from "a bead exists in the store" to "an aeon is summoned for it". This c
 Primary files (21, 240 suite-seconds on main-push run 35947142904): test-bd-stdin, test-bead-file-kinds, test-bead-lane-guard, test-bead-lint, test-check8-progressed, test-drain-expiry, test-effective-lanes, test-elastic-ceiling, test-fayth-free, test-fayth-predicates, test-fayth, test-gh-intake, test-lane-ceiling, test-lanes, test-reclaim-escalated, test-reclaim-needs-ryan, test-sentinel-capacity, test-sentinel-order, test-unclaimable-bead, test-unclaimable-cycle, test-unmapped-repo-park.
 Secondary files (5, cited but costed in their own areas): test-cockpit-unclaimable (3 s), test-fayth-project-instructions (2 s), test-id-prefix (1 s), test-ops-allowlist (6 s), test-spike (24 s).
 
-Code under test: `spira/lib.sh` (`spira_fayths`, `spira_lane_fayths`, `spira_task_fayths`, `fayth_exclude`, `fayth_ready` l.925, `fayth_free` l.1188, `summon_fayth` l.1275, `check2_protect_waiting` l.806, `detect_unclaimable_ready` l.3391, `file_unclaimable_incidents` l.3541, `_spira_lane_diag` l.4124, `spira_repo_lanes` l.4032), `spira/sentinel.sh` (CHECK 2/2c l.179–275, CHECK 7 l.1170–1275, CHECK 7c l.1333, CHECK 8 l.1385), `spira/bead.sh`, `spira/escape.sh`, `spira/strand-classify.py`, `spira/gh-intake.sh`, `spira/chamber/*.fayth`.
+Code under test: `spira/lib.sh` (`spira_fayths`, `spira_lane_fayths`, `spira_task_fayths`, `fayth_exclude`, `fayth_ready` l.925, `fayth_free` l.1188, `summon_fayth` l.1275, `check2_protect_waiting` l.806, `detect_unclaimable_ready` l.3391, `file_unclaimable_incidents` l.3541, `_spira_lane_diag` l.4124, `spira_repo_lanes` l.4032), `spira/sentinel.sh` (CHECK 2/2c l.179–275, CHECK 7 l.1170–1275, CHECK 7c l.1333, CHECK 8 l.1385), `spira/bead.sh`, `spira/escape.sh`, `spira/strand-classify.py`, the `gh-intake` crate (`gh-intake.sh`, deleted, sp-8fsql — see its DESIGN.md), `spira/chamber/*.fayth`.
+
+**sp-8fsql (2026-09-30):** `gh-intake.sh` is deleted; its dedup/promotion decision tree is
+`logic::run()` in the `gh-intake` crate, covered by `cargo test -p gh-intake`. Row 06 below
+and the "GitHub triage/dedup" row further down describe the retired script's shape and are
+kept for history; the recommendation they end on (`GH_INTAKE_LIB=1`) was superseded by real
+dependency injection rather than adopted. `spira/test-gh-intake.sh` is now a thin T1 wiring
+smoke test of the real binary; see `docs/test-plan/dispatch.toml`'s `UC-dispatch-06`.
 
 ---
 

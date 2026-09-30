@@ -373,6 +373,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gh-intake"
+version = "1.0.0"
+dependencies = [
+ "serde_json",
+ "sha2",
+ "ureq",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1095,6 +1104,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sop"
+version = "1.0.0"
+dependencies = [
+ "regex",
+ "serde_json",
+ "sha2",
+ "testkit",
+]
+
+[[package]]
 name = "spira-claim"
 version = "1.0.0"
 dependencies = [
@@ -1241,6 +1260,7 @@ dependencies = [
  "spira-config",
  "suite-select",
  "testkit",
+ "toml",
  "tsd",
 ]
 

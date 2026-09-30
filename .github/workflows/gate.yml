@@ -482,12 +482,15 @@ jobs:
         # standalone bash scripts to spira-lint rules of the same name (sp-ekkak):
         # inventory, literal-lint, scratch-fence, then (sp-hyc3a, carrying out
         # sp-nhid0's decision to retire the dead gate-spira.sh that used to run
-        # them) bd-stdin-lint, gh-intake-lint, incident-cause-lint, tmux-scope-fence
+        # them) bd-stdin-lint, incident-cause-lint, tmux-scope-fence
         # and wiki-add-fence, plus testdb-mode-lint (already had a live caller, no
-        # re-homing needed, added here for CI parity). orphan-test.sh is not yet a
+        # re-homing needed, added here for CI parity). gh-intake-lint is retired
+        # (sp-8fsql): its subject, spira/gh-intake.sh, is deleted, and the property
+        # it scanned for is now structural in the gh-intake crate (DESIGN.md §2).
+        # orphan-test.sh is not yet a
         # spira-lint rule, so it still runs as a script; it SKIPs (77) without a
         # SPIRA_GATE_BASE diff, which this job never sets, so it is inert here but
-        # harmless. sop.sh lint and suite-state-fence.sh are not here: both need a
+        # harmless. `sop lint` and suite-state-fence.sh are not here: both need a
         # real SPIRA_DB, which this fresh runner never has.
         #
         # By name, from the staged release (the step above). The first line is the
@@ -500,7 +503,6 @@ jobs:
           spira-lint --only scratch-fence
           spira-lint --only testdb-mode-lint
           spira-lint --only bd-stdin-lint
-          spira-lint --only gh-intake-lint
           spira-lint --only incident-cause-lint
           spira-lint --only tmux-scope-fence
           spira-lint --only wiki-add-fence

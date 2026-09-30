@@ -189,13 +189,13 @@ through lib.sh functions (§5), never hand-written SQL.
 
 `bd` (`$SPIRA_BD`), `git`, `spira-claim`, the model (`$SPIRA_AGENT`, default `claude`),
 `world.sh stop|start`, `gate-run.sh --status`,
-`worktree-hooks.sh install`, `holds.sh`, `wiki-commit.sh`, `sop.sh ledger-init|digest|log`,
+`worktree-hooks.sh install`, `holds.sh`, `wiki-commit.sh`, `sop ledger-init|digest|log`,
 `close-reason-flags.py`, `workflow-run-check.py`, the repository's own testdb library, and
 `bash` for the lib.sh seam. Every Spira tool and script is invoked by its bare name on the
 PATH the launcher set (sp-gypjk: the release's `bin/` and `spira/` first); there is no
 `SPIRA_*_BIN` override, no `$SPIRA_ARTIFACTS` or `$SPIRA_REPO/bin` lookup, and no "binary
 missing" refusal — a missing tool fails its spawn, naming itself. The briefs name tools the
-same way (`{{TESTENV}}` is `testenv`, `{{SOP}}` is `sop.sh`, …). Only the Claude Code hooks
+same way (`{{TESTENV}}` is `testenv`, `{{SOP}}` is `sop`, …). Only the Claude Code hooks
 (`spira/hooks/…`, not on PATH) are still addressed under `SPIRA_HOME`.
 
 **The aeon carries its launcher's PATH (sp-31gtu).** Its launcher — the summon's
