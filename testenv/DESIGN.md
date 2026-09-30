@@ -883,6 +883,19 @@ container (<step> <s>, …) — podman exec overhead <s>`.
   spare and every one paid a cold `up` — the `deadline-up` NO_VERDICTs. The slot holds the
   tree the trial just tested and outlives it.
 
+**Measured (same eight suites, `--deadline 300`, 2026-09-30).**
+
+| run | concurrency | setup NO_VERDICTs | setup s | post s | host disk writes |
+|---|---|---|---|---|---|
+| before, loaded (world running) | 4 | 4 of 4 (install, testdb) | 139–150+ | — | — |
+| before, loaded + a 126-suite corpus | 4 + 1 | 4 of 4 (2 install, 2 testdb) | cut at 150 | — | — |
+| after (one exec, tmpfs testdb), loaded | 4 | 0 of 4 | 55–76 | 91–136 | — |
+| before, world stopped | 2 | 0 of 2 | 34 | 115 | 1.87 GB |
+| after (+ tmpfs slots, spares), world stopped | 2 | 0 of 2 | 26 | 7 | 0.10 GB |
+
+With the slots on tmpfs a trial's container upper dir held 348 KB (32 files) mid-suite, so
+the container adds nothing to the disk either.
+
 **Not fixed here (reported).** The podman control plane itself (libpod sqlite and
 `layers.lock` on the saturated disk) still bounds `testenv.sh up` for a cold trial and the
 teardown; an external `podman save` of the 2 GB testenv image ran at least 16 minutes during the
