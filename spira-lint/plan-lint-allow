@@ -117,7 +117,6 @@ spira/test-sending-metrics.sh
 spira/test-sending.sh
 spira/test-sentinel-store-reads.sh
 spira/test-slay.sh
-spira/test-snap-stale-threshold.sh
 spira/test-testdb-failsafe.sh
 spira/test-testenv-image-heartbeat.sh
 spira/test-testenv-owner-guard.sh
