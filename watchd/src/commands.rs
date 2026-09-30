@@ -47,12 +47,19 @@ pub fn cmd_manifest(rows: &[Row]) {
     }
 }
 
-pub fn cmd_units(rows: &[Row], instance: &str) {
+/// The TEMPLATE form (`spira-watch@<name>.service`), never the installed, instance-qualified
+/// form (`paths::watch_unit_name`) — `systemd/units.sh` is what turns this into the installed
+/// name (`inst_watch_name`), same as the bash's own `cmd_units` did (a literal `@%s.service`,
+/// not a call through `watch_unit_name`). Scar: calling `watch_unit_name` here doubled the
+/// instance suffix on install, since units.sh re-qualifies whatever this prints.
+pub fn cmd_units(rows: &[Row]) -> String {
+    let mut out = String::new();
     for r in rows {
         if r.kind == Kind::Daemon {
-            println!("{}", paths::watch_unit_name(&r.name, instance));
+            out.push_str(&format!("spira-watch@{}.service\n", r.name));
         }
     }
+    out
 }
 
 pub fn cmd_keys() {
@@ -559,6 +566,23 @@ mod tests {
 
     fn row(name: &str, kind: Kind, target: &str, health: &str) -> Row {
         Row { name: name.into(), kind, target: target.into(), health: health.into() }
+    }
+
+    /// Scar: `cmd_units` once printed the INSTALLED, instance-qualified unit name
+    /// (`paths::watch_unit_name`) instead of the TEMPLATE form — `systemd/units.sh` applies
+    /// its own instance qualification to whatever this prints, so the installed name came
+    /// out with the instance suffix (and the "spira-watch-" prefix) doubled. Caught only by
+    /// running a real install inside a testenv container; this is the regression test that
+    /// should have caught it first.
+    #[test]
+    fn units_prints_the_template_form_never_the_instance_qualified_one() {
+        let rows = vec![
+            row("pool", Kind::Daemon, "pool.sh", ""),
+            row("mail-deliver", Kind::Extern, "mail-deliver", ""),
+            row("view", Kind::Off, "@SPIRA_VIEW@", ""),
+        ];
+        let out = cmd_units(&rows);
+        assert_eq!(out, "spira-watch@pool.service\n", "only daemon rows, and never instance-qualified: {out}");
     }
 
     #[test]

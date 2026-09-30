@@ -55,7 +55,7 @@ fn main() {
         "units" => {
             let ctx = load_context();
             let rows = need_rows(&ctx);
-            commands::cmd_units(&rows, &ctx.instance);
+            print!("{}", commands::cmd_units(&rows));
             0
         }
         "keys" => {
