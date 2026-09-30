@@ -202,8 +202,8 @@ pub fn verdict_rows(red: &[String], flaky: &[String]) -> String {
     out
 }
 
-/// One `results.jsonl` row, as `tap_jsonl_rows` (`spira/tap-jsonl.sh`, not ported here —
-/// DESIGN.md "Non-goals") writes it.
+/// One `results.jsonl` row, as `testenv::tap::jsonl_rows` (formerly `spira/tap-jsonl.sh`,
+/// ported by sp-9gd4e — see DESIGN.md) writes it.
 #[derive(Clone, Debug, Default)]
 pub struct TapRow {
     pub suite: String,

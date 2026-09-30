@@ -234,8 +234,15 @@ isolation §1 exists for.
 
 * ~~Embedded mode is untouched~~ — superseded by §2.4: embedded remains the fallback when
   the template cannot build, and outside testenv.
-* Porting `testdb_seed` or the embedded path to Rust.
+* ~~Porting `testdb_seed` or the embedded path to Rust~~ — superseded by §6 (sp-k2oyn): the
+  embedded fixture lifecycle (init, baseline, borrow, reset, drop) moved. `testdb_seed`
+  itself did not: it is one external call (`bd import`) with a tempfile around it, no
+  branching logic to port, and stays in `testdb.sh`.
 * Changing any suite. The 19 server-mode suites keep `SPIRA_TESTDB_MODE=server`.
+* A `--root`/tmpfs contract for embedded fixtures like §2.5's for the template. Each
+  embedded fixture is already its own directory under the OS temp dir (`std::env::temp_dir()`,
+  the same default `mktemp -d` used), never a shared root threaded through a template key —
+  there is no shared state for a disk-backed root to corrupt under load.
 
 ## 4. Decisions
 
@@ -255,6 +262,17 @@ isolation §1 exists for.
   removes the per-call open. Production runs server mode too, so the fixtures now match it.
 * **D5 — a subcommand of testenv, not a new crate:** testenv owns the fixture tier and is
   already resolved in every place a suite runs (`FLOOR` of `--artifacts`, `make install`).
+* **D7 — `testdb.sh` keeps its function names and shell-variable contract (sp-k2oyn).**
+  ~148 suites source it and call `testdb_up`/`testdb_reset`/`testdb_seed`/`testdb_drop`
+  inline, because only sourcing can export `SPIRA_DB`/`SPIRA_BD`/`PATH` into the calling
+  shell — a subprocess cannot. So the file is not deleted; every caller of the public API
+  needed zero changes for this bead, the same shape §2.3 already established for server
+  mode. What moved is what happens *behind* `testdb_up`, not how a suite asks for it.
+* **D8 — the embedded PATH shim and the borrower's private copy are real logic, `testdb_seed`
+  is not.** Building a fixture (`bd init`, snapshot, symlink), borrowing one (copy and
+  validate a baseline) and resetting one (the rename dance, sp-i0vz5) all branch and can
+  fail in ways worth a unit test. `testdb_seed` is `bd import` on a tempfile with no
+  decision in it; porting it would just add a process hop.
 
 ## 5. Tests
 
@@ -263,5 +281,62 @@ rendering; port rewrite of `metadata.json` and `dolt-server.port`; cmdline ident
 (ours / another fixture's / not dolt / zombie); argument parsing; the KEY=value report;
 and, when `dolt` and `bd` are on PATH, a real lifecycle — template once under
 concurrency, two fixtures isolated from each other, reset clearing a created issue, reap
-after the owner dies, down removing everything. Suites: the 19 server-mode suites and
-`test-testdb-*` exercise `testdb.sh` through it.
+after the owner dies, down removing everything. Embedded (§6): reset restores the baseline
+and drops extra state, and is a no-op-tolerant swap when `.beads` is already gone; reset
+and borrow both refuse a baseline with no `.beads` and leave the live fixture untouched;
+two borrowers of one baseline never share a directory or see each other's writes; down
+removes every path it is given and tolerates an empty or already-gone one; a failed
+`embedded-check` leaves no fixture directory behind; and, when a real `bd` with the
+embedded engine is on PATH, a live up → write → reset → down round trip. Suites: the 19
+server-mode suites, `test-testdb-*` (concurrent borrowers get distinct `SPIRA_DB`s, the
+fail-safe unset on a forced fixture-fault), and every other suite that sources `testdb.sh`
+exercise it through the unchanged bash API.
+
+## 6. Embedded mode moves behind testenv (sp-k2oyn)
+
+**Intent.** §1's fault was specific to server mode's shared Dolt server; embedded mode
+never shared a server. What it did carry, entirely in bash, was real logic worth the same
+treatment as §2's fixture lifecycle: a `bd init` with failure diagnostics, a baseline
+snapshot so `reset` never re-pays init's ~6 s, a PATH shim so a suite's bare `bd` calls
+reach the binary the fixture was built with, a borrower's private copy of a shared
+baseline, and a rename-based reset that avoids an overlay2 hazard (sp-i0vz5). Moving it
+behind `testenv testdb` gives it the same unit-test coverage §5 gives the server path,
+and turns `testdb.sh` into what §2.3 already made it for server mode: a call-site shim.
+
+**Contract.** Five more `testenv testdb` commands, same KEY=value / stderr-diagnostics /
+exit-code convention as §2:
+
+| command | does |
+|---|---|
+| `embedded-check --bd B` | throwaway `bd init`; exit 0 if it works, 1 otherwise (no output) |
+| `embedded-up --tag T --bd B` | `bd init` into a fresh dir, baseline snapshot, `bd` PATH shim; print `TESTDB_NAME TESTDB_DIR TESTDB_BASELINE TESTDB_BIN TESTDB_BD` (`TESTDB_BIN` empty if the shim could not be built) |
+| `embedded-borrow --baseline BASE` | a private copy of `BASE/.beads`; print `TESTDB_PRIVATE_DIR` |
+| `embedded-reset --dir D --baseline BASE` | swap `D/.beads` for a fresh copy of `BASE/.beads` |
+| `embedded-down [--dir D] [--baseline BASE] [--bin BIN]` | detach-and-remove each given path; every path optional, a missing or empty one is a no-op, always exits 0 |
+
+None of these take `--root`: an embedded fixture is its own directory under the OS temp
+dir (`std::env::temp_dir()`), never a member of a shared template tree, so there is
+nothing for a `--root` to name.
+
+**`testdb.sh` (call-site shape only, mirroring §2.3).** `_testdb_embedded_check` calls
+`embedded-check` and keeps its own session-level memoisation (the probe is slow; the cache
+is a call-site concern, not fixture logic). `testdb_up`'s shared-fixture branch calls
+`embedded-borrow`; its fresh-fixture branch calls `embedded-up`; `testdb_reset`'s embedded
+branch calls `embedded-reset`; `testdb_drop`'s generic cleanup loop (`TESTDB_DIR`,
+`TESTDB_BASELINE`, `TESTDB_BIN` — by the time it runs in server mode these are already
+empty, so in practice this was always the embedded path) calls `embedded-down`. Every
+failure mode a suite could observe is unchanged: a gone or empty baseline still exits
+`TESTDB_FAULT_EXIT` (default 75); a failed init still clears `TESTDB_NAME`/`TESTDB_DIR`
+and returns 1; `testdb_up` still unsets `SPIRA_DB`/`SPIRA_BD` before any of this runs
+(testdb.sh's own fail-safe, unchanged — DESIGN-testdb.md never owned that half).
+
+**The detach moves from a bash `&` to testenv (D9).** `testdb_drop`'s cleanup used to
+`mv` each leftover aside and background `rm -rf … &` in the calling shell, so a slow
+overlay2 delete (~19 s observed) never blocked past a Podman exec timeout. `embedded-down`
+does the same rename, then spawns the `rm -rf` as its own detached session (the same
+`detach()` server mode already uses for `reap`) before returning — the property survives
+moving the rename out of the calling shell.
+
+**Gone: nothing.** No caller changed. The public API (`testdb_require`, `testdb_up`,
+`testdb_reset`, `testdb_seed`, `testdb_drop`, `testdb_available`) is exactly what it was;
+every one of the ~148 sourcing suites needed no edit.

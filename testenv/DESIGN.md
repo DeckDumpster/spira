@@ -283,6 +283,48 @@ fields ignore them.
 from TAP lines `1..N`, `ok N - d`, `not ok N - d`, `# SKIP`/`# TODO` directives and
 `Bail out! reason`. Informational: the verdict is the suite's exit status, not its TAP.
 
+### 3.5a `jsonl_rows` — a suite's `results.jsonl` rows (sp-9gd4e)
+
+Replaces `spira/tap-jsonl.sh`'s `tap_jsonl_rows`, deleted (sp-9gd4e). Its only caller,
+`gate-diag`, now depends on this crate and calls `tap::jsonl_rows` directly instead of
+shelling out to the bash — "ONE PARSER, ONE PLACE" (the bash's own rule for itself and
+`suite-covers.sh`, which it sourced) now means one Rust function two crates share, not one
+sourced file. `suite-covers.sh` itself is untouched (`suites.sh`/`gate-touched.sh`'s
+concern, unrelated to this bead); its accessors were already ported to `suite-select::header`
+(`tier_of`, `covers_of`) by an earlier bead, and this function reuses them rather than
+re-deriving tier/UC from the suite source a third way.
+
+**Contract.** `jsonl_rows(suite, suite_source, out_text, fallback, secs) -> String`: zero or
+more `\n`-terminated JSON objects, `{"suite":s,"tier":t,"case":c,"status":st,"seconds":n,
+"uc":[...],"detail":d}`. `tier` and `uc` come from `suite_source` (empty/`[]` when
+undeclared or the source could not be read — never an error: absence is the ordinary case
+for most suites). `uc` is `# covers:`'s tokens matching the shell glob `UC-*-[0-9][0-9]`,
+verbatim.
+
+- **`out_text` opens with the literal line `TAP version 14`:** one row per `ok`/`not ok`
+  case (`status` `pass`/`fail`), with a `not ok`'s first following `# ` comment as `detail`;
+  a whole-suite `1..0 # SKIP <reason>` or `Bail out! <reason>` becomes one more row,
+  `case="(suite)"`, `status` `skip`/`bail`. A suite not yet migrated to testlib.sh emits no
+  TAP and never takes this branch (its `.out` does not open with the header line).
+- **Otherwise (`out_text` is `None`, unreadable, or does not open with the header):** one
+  `case="(suite)"` row built from `fallback` (the caller's own status vocabulary, not
+  reinterpreted here) — `ok`→pass, `skip`→skip, `unreached`→unreached, everything else
+  (`timeout`, `red`, `quarantined-red`, anything unrecognised)→fail, `detail="not migrated
+  to testlib.sh"`. Every suite gets a row on day one; migrating to testlib.sh only adds
+  per-case rows where there was one row before.
+
+**Escaping asymmetry, kept from the bash exactly.** `suite` and `tier` (and the whole
+fallback row) escape backslash, quote, newline and tab. `case` and `detail`, read from a TAP
+line, escape only backslash and quote — a stray tab in a suite's own failure message is
+passed through, not turned into the two characters `\t`. Two functions, `esc_full`/
+`esc_case`, not one, because the bash carried two (`_tap_json_escape` outside `awk`, a
+narrower `esc()` inside it) and a reader downstream may already depend on the difference.
+
+**Parity (sp-9gd4e's report has the full evidence).** Byte-identical to
+`bash -c '. spira/tap-jsonl.sh; tap_jsonl_rows …'` over every `spira/*.sh` file in the tree
+(633 files, exercising tier/UC extraction through the fallback branch) plus fixtures for
+the TAP branch, `1..0 # SKIP`, `Bail out!`, and the escaping asymmetry.
+
 ### 3.6 Suite headers and state
 
 Read from the **tree under test**. Headers before the first `set -` line:

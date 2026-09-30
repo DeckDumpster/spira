@@ -12,7 +12,7 @@
 # .github/workflows/gate.yml); it only hands over to the binary, by name on the launcher's PATH (sp-gypjk) — the same shim
 # `gate.sh` uses for `gate` (sp-0tpcs).
 #
-# covers: spira/gate-diag.sh .github/workflows/gate.yml spira/testenv-batch.sh spira/tap-jsonl.sh
+# covers: spira/gate-diag.sh .github/workflows/gate.yml spira/testenv-batch.sh
 . "$(dirname "$0")/conf.sh" || exit 75
 if ! command -v gate-diag >/dev/null 2>&1; then
     printf 'gate-diag: gate-diag is not on PATH (the launcher sets PATH to a release) — refusing to run.\n' >&2

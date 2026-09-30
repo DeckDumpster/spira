@@ -3,6 +3,12 @@
 # suite-state-fence.sh — refuse a landing when spira/suite-state is malformed,
 # names a non-existent suite, or keeps a quarantine alive on a CLOSED bead.
 #
+# The parse/lint logic moved to Rust (sp-9gd4e, DESIGN-suites.md §2.3/§6b):
+# `testenv suites lint` is suite-state.sh's `suite_state_lint` + `suite_state_parse`,
+# merged. This file keeps only what was never suite-state.sh's — locating that binary
+# and the bd CLOSED-bead check below — and calls it by bare name on the launcher's PATH
+# (sp-gypjk's convention; never a constructed path to it).
+#
 # A closed bead is nobody's work. suites.sh hygiene requires land_state:LANDED to
 # reactivate a quarantine; CLOSED is never LANDED, so the check is permanently
 # off with nobody accountable for it.
@@ -10,16 +16,23 @@
 # Exits 0 when clean, 1 when any check fails.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-. "$HERE/suite-state.sh"
 
-STATE_FILE="$(suite_state_file "$HERE/..")"
+STATE_FILE="${HERE%/}/../${SPIRA_SUITE_STATE_FILE:-spira/suite-state}"
 if [ ! -r "$STATE_FILE" ]; then
     printf 'suite-state-fence: no state file — nothing to lint\n'
     exit 0
 fi
 
+if ! command -v testenv >/dev/null 2>&1; then
+    printf 'suite-state-fence: testenv is not on PATH (the launcher sets PATH to a release) — refusing to lint unchecked\n' >&2
+    exit 1
+fi
+
+LINT_ROWS="$(mktemp)"
+trap 'rm -f "$LINT_ROWS"' EXIT
+
 rc=0
-suite_state_lint "$STATE_FILE" "$HERE" || rc=1
+testenv suites lint > "$LINT_ROWS" || rc=1
 
 # Derive SPIRA_DB from conf.sh if not already in the environment.
 [ -n "${SPIRA_DB:-}" ] || . "$HERE/lib.sh" 2>/dev/null || true
@@ -54,10 +67,10 @@ except Exception:
             "$suite" "$bead" >&2
         rc=1
     fi
-done < <(suite_state_parse "$STATE_FILE" 2>/dev/null)
+done < "$LINT_ROWS"
 
 if [ "$rc" -eq 0 ]; then
-    _n="$(suite_state_parse "$STATE_FILE" 2>/dev/null | wc -l | tr -d ' ')"
+    _n="$(wc -l < "$LINT_ROWS" | tr -d ' ')"
     printf 'suite-state-fence: clean — %s non-default entry/entries\n' "$_n"
 fi
 exit "$rc"
