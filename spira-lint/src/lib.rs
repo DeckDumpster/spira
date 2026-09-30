@@ -323,6 +323,10 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(rules::conf_key_registry::ConfKeyRegistry),
         Box::new(rules::tmp_leak::TmpLeak),
         Box::new(rules::plan_matrix::PlanMatrix::default()),
+        Box::new(rules::plan_lint::PlanLint::default()),
+        Box::new(rules::testdb_mode_lint::TestdbModeLint::default()),
+        Box::new(rules::bd_stdin_lint::BdStdinLint::default()),
+        Box::new(rules::incident_cause_lint::IncidentCauseLint::default()),
         Box::new(rules::lockfile_lint::LockfileLint::default()),
         Box::new(rules::tier_budget::Ledger::suites()),
         Box::new(rules::tier_budget::Ledger::areas()),
@@ -471,7 +475,7 @@ mod tests {
         }
         t.git(&["add", "."]);
         let tree = Tree::from_git(t.path()).unwrap();
-        let contract = ["event-taxonomy", "acceptance-run", "gate-workflow", "conf-key-registry", "tmp-leak", "plan-matrix", "lockfile-lint", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "gh-intake-lint"];
+        let contract = ["event-taxonomy", "acceptance-run", "gate-workflow", "conf-key-registry", "tmp-leak", "plan-matrix", "plan-lint", "lockfile-lint", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "gh-intake-lint"];
         let mut rules = all_rules();
         rules.retain(|r| !contract.contains(&r.name()));
         let mut lines = Vec::new();

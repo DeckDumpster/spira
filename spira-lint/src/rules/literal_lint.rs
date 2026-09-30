@@ -32,17 +32,25 @@ fn is_compound(v: &str) -> bool {
 /// operator override (law-schema-over-code: ask the declaration, not a copy of it).
 /// `None` for the warning when the shipped defaults had to stand in.
 pub fn configured_names(schema: &std::path::Path) -> (Vec<String>, Option<String>) {
+    configured_names_env(schema, &[])
+}
+
+/// [`configured_names`], with `extra_env` applied to every `schema.sh` invocation on top of
+/// the inherited process environment — a way for a test to simulate an operator override
+/// (`SPIRA_ASK_LABEL`, set by conf.sh in production) without mutating the real process
+/// environment, which every thread in the test binary shares and races on.
+fn configured_names_env(schema: &std::path::Path, extra_env: &[(&str, &str)]) -> (Vec<String>, Option<String>) {
     let executable = std::fs::metadata(schema).map(|m| {
         use std::os::unix::fs::PermissionsExt;
         m.permissions().mode() & 0o111 != 0
     }).unwrap_or(false);
     if executable {
-        if let Some(names) = run_schema(schema, &["names"]) {
+        if let Some(names) = run_schema(schema, &["names"], extra_env) {
             let keys: Vec<String> = names.lines().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect();
             let mut set = std::collections::BTreeSet::new();
             for k in &keys {
                 for cmd in ["name", "default"] {
-                    if let Some(v) = run_schema(schema, &[cmd, k]) {
+                    if let Some(v) = run_schema(schema, &[cmd, k], extra_env) {
                         let v = v.trim();
                         if is_compound(v) {
                             set.insert(v.to_string());
@@ -61,8 +69,13 @@ pub fn configured_names(schema: &std::path::Path) -> (Vec<String>, Option<String
     )
 }
 
-fn run_schema(schema: &std::path::Path, args: &[&str]) -> Option<String> {
-    let out = Command::new(schema).args(args).output().ok()?;
+fn run_schema(schema: &std::path::Path, args: &[&str], extra_env: &[(&str, &str)]) -> Option<String> {
+    let mut cmd = Command::new(schema);
+    cmd.args(args);
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
@@ -277,10 +290,12 @@ mod tests {
         assert!(names.contains(&"needs-operator".to_string()));
 
         // An exported override must ALSO appear, so a literal like the shipped default is
-        // still refused under an aeon's environment that overrides SPIRA_ASK_LABEL.
-        std::env::set_var("SPIRA_ASK_LABEL", "needs-ryan-lit-test");
-        let (names2, _) = configured_names(&t.path().join("schema.sh"));
-        std::env::remove_var("SPIRA_ASK_LABEL");
+        // still refused under an aeon's environment that overrides SPIRA_ASK_LABEL. Passed
+        // as an explicit extra_env rather than a real env::set_var: the test binary is
+        // multi-threaded, and every thread shares (and races on) the real process
+        // environment.
+        let (names2, _) =
+            configured_names_env(&t.path().join("schema.sh"), &[("SPIRA_ASK_LABEL", "needs-ryan-lit-test")]);
         assert!(names2.contains(&"needs-operator".to_string()), "{names2:?}");
         assert!(names2.contains(&"needs-ryan-lit-test".to_string()), "{names2:?}");
     }

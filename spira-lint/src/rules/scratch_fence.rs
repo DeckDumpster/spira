@@ -21,6 +21,30 @@ fn overridden() -> bool {
     std::env::var(OVERRIDE_VAR).as_deref() == Ok("1")
 }
 
+/// [`ScratchFence::check`], with the override's state passed in rather than read from the
+/// real process environment — the seam a test uses so no test needs a real
+/// `env::set_var`/`remove_var`, which every thread in the test binary shares and races on.
+fn check_with_override(rule: &ScratchFence, tree: &Tree, override_on: bool) -> Result<Vec<Finding>, LintError> {
+    let tracked = tree.entries.iter().filter(|e| e.tracked).count();
+    if tracked < 1 {
+        return Err(LintError::EmptyScope);
+    }
+    if override_on {
+        return Ok(Vec::new());
+    }
+    Ok(tree
+        .entries
+        .iter()
+        .filter(|e| rule.applies_to(e))
+        .map(|e| Finding {
+            rule: NAME,
+            path: e.path.clone(),
+            line: None,
+            message: "aeon scratch file at the harness root — delete it, or set SCRATCH_FENCE_OK=1 only for the commit that removes it".to_string(),
+        })
+        .collect())
+}
+
 impl Rule for ScratchFence {
     fn name(&self) -> &'static str {
         NAME
@@ -35,24 +59,7 @@ impl Rule for ScratchFence {
     /// indistinguishable from a clean tree unless checked directly
     /// (law-absence-needs-a-positive-control).
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
-        let tracked = tree.entries.iter().filter(|e| e.tracked).count();
-        if tracked < 1 {
-            return Err(LintError::EmptyScope);
-        }
-        if overridden() {
-            return Ok(Vec::new());
-        }
-        Ok(tree
-            .entries
-            .iter()
-            .filter(|e| self.applies_to(e))
-            .map(|e| Finding {
-                rule: NAME,
-                path: e.path.clone(),
-                line: None,
-                message: "aeon scratch file at the harness root — delete it, or set SCRATCH_FENCE_OK=1 only for the commit that removes it".to_string(),
-            })
-            .collect())
+        check_with_override(self, tree, overridden())
     }
 
     fn hint(&self) -> &'static str {
@@ -114,9 +121,8 @@ mod tests {
         t.git_init();
         t.write("sp-xxxx.md", "notes\n");
         t.git(&["add", "."]);
-        std::env::set_var(OVERRIDE_VAR, "1");
-        let got = ScratchFence.check(&Tree::from_git(t.path()).unwrap());
-        std::env::remove_var(OVERRIDE_VAR);
+        let tree = Tree::from_git(t.path()).unwrap();
+        let got = check_with_override(&ScratchFence, &tree, true);
         assert_eq!(got.unwrap(), Vec::<Finding>::new());
     }
 

@@ -486,6 +486,98 @@ Suite headers are read by the one parser the bash used (`covers_of`, and `tier_o
 `docs/test-plan/`; a catalogue with no use case. **Positive control:** `fence: plan-matrix
 checked <use cases> use-cases (<n> suites here, <m> at the base)`.
 
+## Rule `plan-lint`
+
+Ported from `spira/plan-lint.sh`'s default (`--lint`) mode (sp-pppt0). The script itself is
+not deleted: its `--orphans` mode is `plan-matrix` above (ported earlier, under sp-ufbkh) and
+`--check`/`--gaps` stay bash-callable utilities used by hand and by
+`test-plan-matrix-merge.sh` (`--gaps` is a report and was never a failure, so it has no gate
+role to port).
+
+**Why a rule.** `plan-lint.sh`'s default mode — every suite declares `# tier:`/`# covers:`,
+and every UC id on `# covers:` exists in the typed catalogue — was never wired into any gate
+string at all, so a violation reached the tree unchecked. This is the first gate coverage
+for it, and it found about 130 pre-existing suites with no `# tier:` and a handful of stale
+UC ids the moment it ran over the real corpus.
+
+**Checks**, over `spira/test-*.sh`: missing `# tier:` (`plan_matrix::tier_of`, empty or
+absent); missing `# covers:` (`covers_entries::covers_of`, empty or absent); a `UC-*` token
+on `# covers:` absent from every `docs/test-plan/*.toml` (loaded fresh via
+`test_plan::load_catalogues`; a malformed catalogue is reported as a finding, not a
+refusal — the same handling `plan-matrix` gives it). No catalogue directory still checks the
+headers; it just cannot check UC ids.
+
+**Allow list.** `spira-lint/plan-lint-allow`: exact suite paths, shrink-only, generated at
+authorship from every suite the real tree already violated (the `fence-scripts`/
+`testlib-migrated` pattern) — so the rule can gate every *new* suite from day one without
+failing every branch on debt it did not add. A listed suite's findings (all of them, not
+per-violation) are suppressed; a listed suite with no findings left is itself a finding
+("no longer needs an exception").
+
+**Refuses** (exit 3): no suites matched `spira/test-*.sh`. **Positive control:**
+`fence: plan-lint checked <n> suites`.
+
+## Rule `testdb-mode-lint`
+
+Ported from `spira/testdb-mode-lint.sh` (sp-pppt0), which is deleted.
+
+**Intent.** Embedded Dolt resets in ~5s; server mode pays a real dolt-beads-test round trip,
+median 110s. A suite that pins `SPIRA_TESTDB_MODE=server` without saying why is
+indistinguishable, at a glance, from one that needs the real engine.
+
+**Scope.** `spira/test-*.sh`, directly in `spira/`.
+
+**Violation.** A live (non-comment) line containing `SPIRA_TESTDB_MODE=server`
+(`export`-prefixed or inline), when the file carries no `# testdb-mode: server — <reason>`
+header (non-empty reason after the em dash) anywhere in it. One finding per request line.
+
+**Refuses** (exit 3): no suites in scope. **Positive control:** `fence: testdb-mode-lint
+checked <n> suites`.
+
+## Rule `bd-stdin-lint`
+
+Ported from `spira/bd-stdin-lint.sh` (sp-pppt0; defect sp-j5z3), which is deleted.
+
+**Intent.** `bd note <id> - <<EOF` and `bd create ... -d - <<EOF` store the literal `-` and
+discard the heredoc body that follows it — six beads shipped with a dash where their body or
+notes should be. The stdin forms (`--stdin`, `--body-file -`) are the fix.
+
+**Scope.** Every file under `spira/` or `chamber/` (git's default pathspec `*`, crossing
+`/`), one pass per file over both shapes together (never two passes for the same file).
+
+**Violation.** A live (non-comment) line matching either shape:
+`bd … note … <space>-<space><<` or `bd … create … (-d<space>-|-d-|--description<space>-)`
+followed by `<`, end of line, or a non-`-` character. One finding per line.
+
+**Refuses** (exit 3): no `spira/` or `chamber/` files in scope. **Positive control:**
+`fence: bd-stdin-lint checked <n> files`.
+
+## Rule `incident-cause-lint`
+
+Ported from `spira/incident-cause-lint.sh` (sp-pppt0), which is deleted.
+
+**Intent.** A producer that sets `SPIRA_INCIDENT_REF` without `SPIRA_INCIDENT_CAUSE` beside
+it files recurrences into the undifferentiated "unrecorded" bucket, collapsing the census
+taxonomy a remedy needs to rank failure classes.
+
+**Scope.** `spira/*.sh`, any depth, excluding suites (a basename starting `test-`) — the bash
+fence's `grep -rn --include='*.sh' | grep -v '/test-'`.
+
+**Violation.** A live, code (non-comment, not inside a quoted string before the `=`)
+`SPIRA_INCIDENT_REF=` assignment with no `SPIRA_INCIDENT_CAUSE` anywhere in its surrounding
+14-line window (10 before, 3 after, clamped to the file's bounds).
+
+**Intended difference from the bash fence.** The bash fence computed its window with
+`sed -n "$((l-10)),$((l+3))p"`; for a site on line 10 or earlier that produces a negative or
+zero start address, which GNU sed rejects as an unrecognised *option* (`-4` looks like a
+flag), not a line-address error — so the window search silently sees nothing and the site is
+refused even when its declared cause sits two lines above it. This rule clamps the window's
+start to line 1 instead, so a site near the top of a short file is judged on what is actually
+around it.
+
+**Refuses** (exit 3): no files in scope. **Positive control:** `fence: incident-cause-lint
+checked <n> files`.
+
 ## Rule `lockfile-lint`
 
 Ported from `spira/lockfile-lint.sh` (sp-4kws1; sp-ufbkh), which is deleted.

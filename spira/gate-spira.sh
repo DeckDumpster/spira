@@ -192,22 +192,22 @@ if ! lit="$("$SPIRA_LINT_BIN" --only literal-lint 2>&1)"; then
     exit 1
 fi
 
-# TESTDB-MODE FENCE. Server-mode Dolt costs a median 110s per suite against ~5s for
-# embedded; a suite that requests it without saying why is indistinguishable from one
-# copied from a suite that did. A stated reason (# testdb-mode: server — <reason>) is
-# required wherever SPIRA_TESTDB_MODE=server is requested.
-[ -r spira/testdb-mode-lint.sh ] || { say "spira/testdb-mode-lint.sh is missing — refusing to land unchecked"; exit 1; }
-if ! tml="$(bash spira/testdb-mode-lint.sh 2>&1)"; then
+# TESTDB-MODE FENCE (spira-lint's testdb-mode-lint rule; sp-pppt0). Server-mode Dolt costs
+# a median 110s per suite against ~5s for embedded; a suite that requests it without saying
+# why is indistinguishable from one copied from a suite that did. A stated reason
+# (# testdb-mode: server — <reason>) is required wherever SPIRA_TESTDB_MODE=server is
+# requested.
+if ! tml="$("$SPIRA_LINT_BIN" --only testdb-mode-lint 2>&1)"; then
     printf '%s\n' "$tml" >&2
     exit 1
 fi
 
-# BD-STDIN FENCE. `bd note <id> - <<EOF` and `bd create ... -d - <<EOF` store the literal
-# "-" and discard the heredoc body that follows it — six beads shipped with a dash where
-# their body or notes should be (sp-j5z3). The stdin forms (--stdin, --body-file -) are
-# required wherever spira/ or chamber/ pass a heredoc body to bd note or bd create.
-[ -r spira/bd-stdin-lint.sh ] || { say "spira/bd-stdin-lint.sh is missing — refusing to land unchecked"; exit 1; }
-if ! bsl="$(bash spira/bd-stdin-lint.sh 2>&1)"; then
+# BD-STDIN FENCE (spira-lint's bd-stdin-lint rule; sp-pppt0). `bd note <id> - <<EOF` and
+# `bd create ... -d - <<EOF` store the literal "-" and discard the heredoc body that
+# follows it — six beads shipped with a dash where their body or notes should be
+# (sp-j5z3). The stdin forms (--stdin, --body-file -) are required wherever spira/ or
+# chamber/ pass a heredoc body to bd note or bd create.
+if ! bsl="$("$SPIRA_LINT_BIN" --only bd-stdin-lint 2>&1)"; then
     printf '%s\n' "$bsl" >&2
     exit 1
 fi
@@ -220,11 +220,11 @@ if ! gil="$("$SPIRA_LINT_BIN" --only gh-intake-lint 2>&1)"; then
     exit 1
 fi
 
-# INCIDENT-CAUSE FENCE. A SPIRA_INCIDENT_REF filing site with no SPIRA_INCIDENT_CAUSE files
-# recurrences into the undifferentiated "unrecorded" bucket, collapsing the census taxonomy
-# a remedy needs to rank failure classes.
-[ -r spira/incident-cause-lint.sh ] || { say "spira/incident-cause-lint.sh is missing — refusing to land unchecked"; exit 1; }
-if ! icl="$(bash spira/incident-cause-lint.sh 2>&1)"; then
+# INCIDENT-CAUSE FENCE (spira-lint's incident-cause-lint rule; sp-pppt0). A
+# SPIRA_INCIDENT_REF filing site with no SPIRA_INCIDENT_CAUSE files recurrences into the
+# undifferentiated "unrecorded" bucket, collapsing the census taxonomy a remedy needs to
+# rank failure classes.
+if ! icl="$("$SPIRA_LINT_BIN" --only incident-cause-lint 2>&1)"; then
     printf '%s\n' "$icl" >&2
     exit 1
 fi

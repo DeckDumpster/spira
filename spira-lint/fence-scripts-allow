@@ -8,18 +8,14 @@
 #
 # Generated at authorship (sp-tvor6) from the tree, without the three fences that bead
 # ported (config-fence, binary-path-fence, payload-argv-lint) and their suites.
-spira/bd-stdin-lint.sh
 spira/broker-allowlist-lint.sh
 spira/build-fence.sh
 spira/czar-fence.sh
-spira/incident-cause-lint.sh
 spira/plan-lint.sh
 spira/suite-state-fence.sh
 spira/test-bead-lint.sh
 spira/test-broker-allowlist-lint.sh
 spira/test-build-fence.sh
 spira/test-czar-lint.sh
-spira/testdb-mode-lint.sh
 spira/test-plan-lint.sh
-spira/test-testdb-mode-lint.sh
 spira/test-units-lint.sh
