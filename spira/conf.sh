@@ -1848,7 +1848,7 @@ spira_conf_defaults() {
     # which admits a hand-posted commit status that bypasses gate enforcement. 15368 is the
     # GitHub Actions app. Must be a non-negative integer.
     : "${SPIRA_QUEUE_ACTIONS_APP_ID:=15368}"
-    # HOW LONG verdict.sh AND batch.sh WAIT FOR THE PER-REPO QUEUE LOCK before giving up.
+    # HOW LONG queue verdict AND batch.sh WAIT FOR THE PER-REPO QUEUE LOCK before giving up.
     # Must be well under the timer interval (OnUnitActiveSec=2min) so a waiting run
     # completes before the next tick fires, preventing concurrent runs.
     : "${SPIRA_QUEUE_LOCK_WAIT:=90}"

@@ -2,7 +2,7 @@
 #
 # test-queue-publish.sh — sp-bc49w: the queue.local publish queue. `queue.sh publish`
 # pushes local/main's commits since the forge target's own tip to one new forge branch and
-# opens one PR; verdict.sh settles it separately from the queue.forge batch machinery: green
+# opens one PR; `queue verdict` settles it separately from the queue.forge batch machinery: green
 # fast-forwards the forge target to IDENTICAL SHAs with no land_mark and no bead close, red
 # runs local attribution and files one fix-forward bead without reopening a member, and
 # "nothing to publish" is a no-op. The record lives at queue/<repo>/publish, never
@@ -13,7 +13,7 @@
 # foreign commit — the same seam test-publish-backlog.sh uses for its own alarm assertions.
 #
 # tier: T1
-# covers: queue/src/* spira/verdict.sh spira/lib.sh spira/conf.sh spira/attribute.sh
+# covers: queue/src/* spira/lib.sh spira/conf.sh spira/attribute.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -105,7 +105,7 @@ verdict() {
     SPIRA_FORGE="$SH/forge-fixture.sh" \
     FIXTURE_CHECK_STATUS="${CHECK_STATUS:-green}" \
     FIXTURE_RED_SUITES="${RED_SUITES:-}" \
-        bash "$SH/verdict.sh" "$REPONAME" 2>&1
+        SPIRA_HOME="$SH" command queue verdict "$REPONAME" 2>&1
 }
 # mk_bins <head> — land-local now refuses without a --with-bins corpus for the tree it is
 # landing; every head this suite lands needs one (see test-land-local-release.sh for the
