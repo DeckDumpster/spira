@@ -49,7 +49,7 @@ statement = "every bd-backed count is `?` when bd exits non-zero, exits 0 with e
 [[use_case]]
 id = "UC-cockpit-observability-09"
 tier = "T1"
-statement = "reachability: open work reachable from ready seeds through `blocks` edges counts as `SP_REACHABLE`; beads behind a needs-ryan ask or `spira-poison` count as `SP_STRANDED`; asks/insights are excluded, `relates-to` does not block, and the scope label is required"
+statement = "reachability: open work reachable from ready seeds through `blocks` edges counts as `SP_REACHABLE`; beads behind an ask label or `spira-poison` count as `SP_STRANDED`; asks/insights are excluded, `relates-to` does not block, and the scope label is required"
 
 [[use_case]]
 id = "UC-cockpit-observability-10"

@@ -64,7 +64,7 @@ statement = "in an aeon session, direct execution of `spira/test-*.sh` in any sh
 [[use_case]]
 id = "UC-safety-fences-13"
 tier = "T1"
-statement = "`DELETE FROM schema_migrations` is refused as a tool call (`bd sql`/`dolt sql`, case- and whitespace-insensitive) and at `bdq create` even with the needs-ryan label; both refusals point at `bd migrate schema`"
+statement = "`DELETE FROM schema_migrations` is refused as a tool call (`bd sql`/`dolt sql`, case- and whitespace-insensitive) and at `bdq create` even with the ask label; both refusals point at `bd migrate schema`"
 
 [[use_case]]
 id = "UC-safety-fences-14"
