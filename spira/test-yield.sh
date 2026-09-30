@@ -30,7 +30,7 @@
 #
 # defect: sp-1xb0
 # tier: T1
-# covers: spira/yield.sh spira/gate.sh spira/watchtower.sh cockpit/health.sh cockpit-collect/src/* UC-gate-verdict-22 UC-gate-verdict-23 UC-gate-verdict-24
+# covers: spira/yield.sh spira/gate.sh spira/watchtower.sh cockpit-collect/src/* UC-gate-verdict-22 UC-gate-verdict-23 UC-gate-verdict-24 cockpit/ops/src/health.rs
 # scar: yield.sh was absent; gate faults landed in the wrong column and no count existed, so the gate's cost-vs-catch ratio was unmeasured.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -381,23 +381,27 @@ mv "$TMP/yield.away" "$YDIR"
 echo
 echo "and the pane renders it without inventing a number:"
 # ======================================================================================
-# The collector's probe and the pane's row, checked as text rather than run: health.sh reads
+# The collector's probe and the pane's row, checked as text rather than run: health reads
 # a snapshot written by a service and driving it here would be a test of tmux. What can go
 # wrong silently is the pair drifting — the collector emitting a key the pane does not read —
-# and that is what this compares.
-COCK="$HERE/../cockpit-collect/src/probes/unsent.rs"; PANE="$HERE/../cockpit/health.sh"
+# and that is what this compares. `health` is a binary now (sp-llbmi); the "read by the
+# pane" half checks its Rust source instead of grepping the compiled binary. The collector
+# is cockpit-collect now too (sp-kt4l3); "written by" checks its Rust source the same way.
+COCK="$HERE/../cockpit-collect/src/probes/unsent.rs"
+PANE_SRC="$HERE/../cockpit/ops/src/health/sections.rs"
 for k in SP_YIELD_REDS SP_YIELD_DEFECT SP_YIELD_FAULT SP_YIELD_UNKNOWN; do
-    if grep -q "$k" "$COCK" 2>/dev/null && grep -q "$k" "$PANE" 2>/dev/null; then
+    if grep -q "$k" "$COCK" 2>/dev/null && grep -q "$k" "$PANE_SRC" 2>/dev/null; then
         ok "$k is both written by the collector and read by the pane"
     else
         bad "$k is both written by the collector and read by the pane" \
-            "written=$(grep -c "$k" "$COCK" 2>/dev/null) read=$(grep -c "$k" "$PANE" 2>/dev/null)"
+            "written=$(grep -c "$k" "$COCK" 2>/dev/null) read=$(grep -c "$k" "$PANE_SRC" 2>/dev/null)"
     fi
 done
-# THE PANE'S DEFAULT FOR EVERY YIELD FIELD IS `?`. A `:-0` anywhere here would render a
-# collector that never ran as a gate with a perfect record.
-if grep -oE 'SP_YIELD_[A-Z_]*:-[^}]*' "$PANE" | grep -qv ':-?$'; then
-    bad "every yield field on the pane defaults to ?" "one of them defaults to something else"
+# THE PANE'S DEFAULT FOR EVERY YIELD FIELD IS `?`. `snap.q(...)` (never `.unwrap_or("0")`)
+# is what makes that true in the Rust source; a collector that never ran must never render
+# as a gate with a perfect record.
+if grep -E 'SP_YIELD_[A-Z_]*' "$PANE_SRC" | grep -qE 'unwrap_or\("0"\)'; then
+    bad "every yield field on the pane defaults to ?" "one of them defaults to 0, not ?"
 else
     ok "every yield field on the pane defaults to ?"
 fi

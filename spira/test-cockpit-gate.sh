@@ -13,7 +13,7 @@
 #   - gate-run.sh --status emits nothing on stderr under a changing process table
 #
 # defect: sp-idml
-# covers: cockpit-collect/src/* spira/gate-run.sh cockpit/health.sh
+# covers: cockpit-collect/src/* spira/gate-run.sh cockpit/ops/src/health.rs
 # scar: the gate/landing section was absent from the cockpit snapshot, so the DONE-to-LANDED stretch and live gate status were invisible on the health pane.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -163,7 +163,7 @@ health_out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 TERM=dumb \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
     SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
-    bash "$(cd "$(dirname "$0")/../cockpit" && pwd)/health.sh" once 2>/dev/null)" || true
+    health once 2>/dev/null)" || true
 want "LAND label in output" "LAND" "$health_out"
 want "rc in output"         "rc"   "$health_out"
 want "branches in output"   "branches" "$health_out"

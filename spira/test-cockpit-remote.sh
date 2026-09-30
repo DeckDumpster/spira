@@ -113,22 +113,27 @@ fi
 
 # ======================================================================================
 echo
-echo "6. rebuild.sh reads COCKPIT_SESSIONS (not a hardcoded list):"
+echo "6. rebuild reads COCKPIT_SESSIONS (not a hardcoded list):"
 # ======================================================================================
-REBUILD="$(dirname "$REMOTE_DIR")/rebuild.sh"
-if [ -f "$REBUILD" ]; then
-    if grep -q 'COCKPIT_SESSIONS' "$REBUILD" 2>/dev/null; then
-        ok "rebuild.sh uses COCKPIT_SESSIONS"
+# `rebuild.sh` is a binary now (sp-llbmi); the source-grep moves to its Rust source, the
+# only place this fact can still be checked without running a real tmux server.
+REBUILD_SRC="$(dirname "$REMOTE_DIR")/ops/src/rebuild.rs"
+if [ -f "$REBUILD_SRC" ]; then
+    if grep -q 'COCKPIT_SESSIONS' "$REBUILD_SRC" 2>/dev/null; then
+        ok "rebuild reads COCKPIT_SESSIONS"
     else
-        bad "rebuild.sh uses COCKPIT_SESSIONS" "variable not found in rebuild.sh"
+        bad "rebuild reads COCKPIT_SESSIONS" "variable not found in rebuild.rs"
     fi
-    if grep -Eq '^SESSIONS="brain hunk chat"' "$REBUILD" 2>/dev/null; then
-        bad "rebuild.sh does not hardcode the session list" "hardcoded SESSIONS= found"
+    # The env var must be read as a FALLBACK (std::env::var(...).unwrap_or_else(default)),
+    # not shadowed by an unconditional literal — the same "overridable, not hardcoded"
+    # property the bash original's `${COCKPIT_SESSIONS:-brain hunk chat}` had.
+    if grep -A3 'COCKPIT_SESSIONS' "$REBUILD_SRC" | grep -q 'unwrap_or_else'; then
+        ok "rebuild does not hardcode the session list"
     else
-        ok "rebuild.sh does not hardcode the session list"
+        bad "rebuild does not hardcode the session list" "no unwrap_or_else fallback found after the COCKPIT_SESSIONS read"
     fi
 else
-    bad "rebuild.sh exists" "not found at $REBUILD"
+    bad "rebuild.rs exists" "not found at $REBUILD_SRC"
 fi
 
 echo

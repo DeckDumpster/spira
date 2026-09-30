@@ -32,7 +32,7 @@
 #
 # defect: sp-smbq0
 # tier: T1
-# covers: spira/conf.sh strand/src/* spira/doctor.sh cockpit-collect/src/* auron/src/* cockpit/layout.sh
+# covers: spira/conf.sh strand/src/* spira/doctor.sh cockpit-collect/src/* auron/src/* cockpit/ops/src/layout.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

@@ -14,7 +14,7 @@
 #   - health.sh's rendered row keeps NEVER, FAIL and ? visually distinct
 #
 # defect: sp-hhggy
-# covers: cockpit-collect/src/* cockpit/health.sh
+# covers: cockpit-collect/src/* cockpit/ops/src/health.rs
 # scar: acceptance had been discarding its verdict for days while the cockpit
 #   showed nothing, because a verdict-only row cannot distinguish stale calm
 #   from an untested release (law-absence-needs-a-positive-control).
@@ -114,7 +114,7 @@ SNAP
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
-        bash "$(cd "$(dirname "$0")/../cockpit" && pwd)/health.sh" once 2>/dev/null
+        health once 2>/dev/null
 }
 
 strip_ansi() { sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g'; }

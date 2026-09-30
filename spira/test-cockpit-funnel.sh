@@ -10,7 +10,7 @@
 #   (c) positive control — funnel keys absent from env renders ? in the pane (not 0).
 #
 # tier: T2
-# covers: cockpit-collect/src/* cockpit/health.sh
+# covers: cockpit-collect/src/* cockpit/ops/src/health.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -143,7 +143,7 @@ _done_age="$(val SP_FUNNEL_DONE_AGE)"
     || bad "SP_FUNNEL_DONE_AGE is non-empty" "got [$_done_age]"
 
 echo "--- (a) pane renders funnel ---"
-PANE="$HERE/../cockpit/health.sh"
+PANE="health"
 {
     printf '%s\n' "$out" | python3 -c '
 import sys
@@ -161,7 +161,7 @@ pane="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
     SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
     SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
-    bash "$PANE" once 0 120 2>/dev/null)"
+    "$PANE" once 0 120 2>/dev/null)"
 
 want "pane renders QUEUE label"    "QUEUE"   "$pane"
 # sp-bf31a: the done row's count is the STRANDED anomaly (SP_STRANDED_N=2), not the raw
@@ -212,7 +212,7 @@ pane_b="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
     SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
     SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
-    bash "$PANE" once 0 120 2>/dev/null)"
+    "$PANE" once 0 120 2>/dev/null)"
 
 want "unreadable: pane shows certify ?" "certify  ?" "$pane_b"
 want "unreadable: pane shows red ?"     "red  ?"     "$pane_b"
@@ -241,7 +241,7 @@ pane_c="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
     SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
     SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
-    bash "$PANE" once 0 120 2>/dev/null)"
+    "$PANE" once 0 120 2>/dev/null)"
 
 nowant "absent keys: pane does not render certify 0" "certify  0" "$pane_c"
 nowant "absent keys: pane does not render red 0"     "red  0"     "$pane_c"
