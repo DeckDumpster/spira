@@ -45,7 +45,12 @@ impl Wrapper {
     /// One line for a log: which cache this build compiles through.
     pub fn describe(&self) -> String {
         match self {
-            Wrapper::Sccache(p) => format!("build cache: sccache ({})", p.display()),
+            Wrapper::Sccache(p) => format!(
+                "build cache: sccache ({}) — dependency crates only, cross-tree; a workspace \
+                 crate's own build and every binary's link/codegen are per-tree (sp-283wz, \
+                 DESIGN-build-cache.md §2.5)",
+                p.display()
+            ),
             Wrapper::Off => format!("build cache: OFF ({CACHE_ENV}=off) — every dependency compiles cold"),
         }
     }
