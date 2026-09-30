@@ -136,7 +136,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
       - name: Read pinned toolchain for the selector
-        id: seltoolchain
+        id: toolchain
         if: github.event_name == 'pull_request'
         run: |
           v=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
@@ -146,7 +146,7 @@ jobs:
         if: github.event_name == 'pull_request'
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ steps.seltoolchain.outputs.version }}
+          toolchain: ${{ steps.toolchain.outputs.version }}
       - name: Build the selector
         if: github.event_name == 'pull_request'
         run: cargo build --release -p suite-select
