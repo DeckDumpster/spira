@@ -450,6 +450,20 @@ fn value_to_plain(v: &Value) -> String {
     }
 }
 
+/// Python's own truthiness (`if v.get("escalated")`, not `v.get("escalated") is True`):
+/// `strands.json`'s `escalated` field is a *timestamp* when set (0 while unescalated,
+/// a nonzero epoch once raised) — `strand_keys`' own row shape, not a boolean.
+fn py_truthy(v: Option<&Value>) -> bool {
+    match v {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(Value::Number(n)) => n.as_f64().map(|f| f != 0.0).unwrap_or(true),
+        Some(Value::String(s)) => !s.is_empty(),
+        Some(Value::Array(a)) => !a.is_empty(),
+        Some(Value::Object(o)) => !o.is_empty(),
+    }
+}
+
 // ---------------------------------------------------------------------------------------
 // core_counts_keys — SP_WAITING only (SP_READY belongs to core_detail_keys).
 // ---------------------------------------------------------------------------------------
@@ -698,6 +712,11 @@ pub fn livelock_keys() -> Kv {
         push(&mut out, "SP_LIVELOCK_N", n.to_string());
     }
 
+    // `detect_invalid_closed` (lib.sh) emits three row shapes: `INVALID-CLOSED <id> — ...`,
+    // `UNFILED-FOLLOW <id> — ...` and `ALLOWED-IC <id> — ...` (a bead on
+    // $SPIRA_RUN/invalid-closed.allow, reported but not counted as either). None of the
+    // three caps at 20 rows the way LIVELOCK above does — the bash's own cap check there is
+    // `[ "$_n" -ge 20 ] && true`, which never breaks — so every matching row is emitted.
     let ic_out = io::lib_call(&home, "detect_invalid_closed", &[]).unwrap_or_default();
     if ic_out.is_empty() && io::bdjson(&["list", "--status", "closed", "--limit", "1"]).is_none() {
         push(&mut out, "SP_INVALID_CLOSED", "?");
@@ -707,24 +726,30 @@ pub fn livelock_keys() -> Kv {
     } else {
         let mut inv_n = 0;
         let mut unf_n = 0;
+        let mut alw_n = 0;
         for line in ic_out.lines() {
+            if line.is_empty() {
+                continue;
+            }
             let mut s = sanitize(line);
             s.truncate(120);
-            if line.starts_with("INVALID_CLOSED ") || line.starts_with("INVCLSD ") {
+            if line.starts_with("INVALID-CLOSED ") {
                 push(&mut out, &format!("SP_INVCLSD{inv_n}"), s);
                 inv_n += 1;
-            } else if line.starts_with("UNFILED_FOLLOW ") || line.starts_with("UNFLFLW ") {
+            } else if line.starts_with("UNFILED-FOLLOW ") {
                 push(&mut out, &format!("SP_UNFLFLW{unf_n}"), s);
                 unf_n += 1;
-            }
-            if inv_n >= 20 && unf_n >= 20 {
-                break;
+            } else if line.starts_with("ALLOWED-IC ") {
+                push(&mut out, &format!("SP_ALLOWEDIC{alw_n}"), s);
+                alw_n += 1;
             }
         }
         push(&mut out, "SP_INVALID_CLOSED", inv_n.to_string());
         push(&mut out, "SP_INVCLSD_N", inv_n.to_string());
         push(&mut out, "SP_UNFILED_FOLLOW", unf_n.to_string());
         push(&mut out, "SP_UNFLFLW_N", unf_n.to_string());
+        push(&mut out, "SP_ALLOWED_IC", alw_n.to_string());
+        push(&mut out, "SP_ALLOWEDIC_N", alw_n.to_string());
     }
     out
 }
@@ -759,7 +784,7 @@ pub fn strand_keys() -> Kv {
         } else {
             *counts.entry(parts[1].to_string()).or_insert(0) += 1;
         }
-        if v.get("escalated").and_then(Value::as_bool).unwrap_or(false) {
+        if py_truthy(v.get("escalated")) {
             escalated += 1;
         }
     }
@@ -1067,9 +1092,11 @@ mod tests {
         let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
         let path = testkit::TempDir::new("cc-strand");
         std::env::set_var("SPIRA_RUN", path.path());
+        // `escalated` is a timestamp (0 while unescalated, a nonzero epoch once raised —
+        // strand.sh's own row shape), never a JSON boolean; this fixture uses the real shape.
         std::fs::write(
             path.path().join("strands.json"),
-            r#"{"a:ghost:1":{"escalated":false},"b:other:2":{"escalated":true}}"#,
+            r#"{"a:ghost:1":{"escalated":0},"b:other:2":{"escalated":1700000500}}"#,
         )
         .unwrap();
         let kv = strand_keys();
