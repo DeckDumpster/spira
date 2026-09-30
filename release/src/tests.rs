@@ -143,7 +143,7 @@ impl World {
         self.build_with(sha, &FakeCargo { bins: vec!["tool"] }, vec![])
     }
     fn build_with(&self, sha: &str, cargo: &FakeCargo, system_dirs: Vec<PathBuf>) -> Result<build::Built, String> {
-        let o = BuildOpts { repo: self.sb.p(), commit: sha, target_dir: Some(self.sb.p().join("target")), system_dirs };
+        let o = BuildOpts { repo: self.sb.p(), commit: sha, target_dir: Some(self.sb.p().join("target")), system_dirs, bin_dir: None };
         build::build(&self.cfg, &self.git, cargo, &o)
     }
     fn rel(&self, sha: &str) -> PathBuf {
@@ -299,6 +299,36 @@ fn build_of_an_existing_release_does_not_rebuild_it() {
     w.build(A).unwrap();
     let again = w.build_with(A, &FakeCargo { bins: vec![] }, vec![]).unwrap();
     assert!(!again.fresh);
+}
+
+/// A cargo that must never run: `--bin-dir` takes the tested binaries as they are.
+struct NoCargo;
+impl Cargo for NoCargo {
+    fn build(&self, _: &Path, _: &Path) -> Result<(), String> {
+        panic!("--bin-dir must not run cargo");
+    }
+}
+
+#[test]
+fn build_with_a_bin_dir_ships_those_binaries_without_cargo_and_still_refuses_a_partial_set() {
+    let w = World::new();
+    let tested = w.sb.p().join("round/target/release");
+    exe(&tested.join("tool"), "#!/bin/sh\n# the round's tested build\n");
+    exe(&tested.join("stray"), "#!/bin/sh\n");
+    let o = BuildOpts { repo: w.sb.p(), commit: A, target_dir: None, system_dirs: vec![], bin_dir: Some(tested.clone()) };
+    let b = build::build(&w.cfg, &w.git, &NoCargo, &o).unwrap();
+    assert!(b.fresh);
+    assert_eq!(fs::read_to_string(w.rel(A).join("bin/tool")).unwrap(), "#!/bin/sh\n# the round's tested build\n");
+    assert!(!w.rel(A).join("bin/stray").exists(), "only declared [[bin]] targets are shipped");
+    assert_eq!(verify::verify(&w.cfg, A, &no_pre()).unwrap(), Vec::<String>::new());
+    // A tested build missing a declared binary is refused, and nothing is named by the sha.
+    let w = World::new();
+    let empty = w.sb.p().join("empty");
+    fs::create_dir_all(&empty).unwrap();
+    let o = BuildOpts { repo: w.sb.p(), commit: A, target_dir: None, system_dirs: vec![], bin_dir: Some(empty) };
+    let e = build::build(&w.cfg, &w.git, &NoCargo, &o).unwrap_err();
+    assert!(e.contains("declares tool but the build"), "{e}");
+    assert!(!w.rel(A).exists());
 }
 
 #[test]

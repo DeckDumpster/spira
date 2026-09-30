@@ -40,6 +40,10 @@ pub struct BuildOpts<'a> {
     pub target_dir: Option<PathBuf>,
     /// The directories whose commands a release may not shadow ([`crate::SYSTEM_DIRS`]).
     pub system_dirs: Vec<PathBuf>,
+    /// `--bin-dir`: take the binaries from this directory (a round's own tested build of this
+    /// commit) instead of running cargo (law-deploy-the-tested-artifacts). The caller vouches
+    /// that it holds `<commit>`'s build; the same every-declared-binary rule applies.
+    pub bin_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -84,17 +88,27 @@ pub fn build(cfg: &Config, git: &dyn Git, cargo: &dyn Cargo, o: &BuildOpts) -> R
         return Err(format!("{sha} tracks bin/, which a release reserves for its binaries"));
     }
 
-    let (target, _target_guard) = match (&o.target_dir, &cfg.run) {
-        (Some(t), _) => (t.clone(), Cleanup(None)),
-        (None, Some(run)) => (run.join("release").join("target"), Cleanup(None)),
-        (None, None) => {
-            let t = cfg.releases.join(format!(".target-{pid}"));
-            (t.clone(), Cleanup(Some(t)))
+    // The binaries: a named tested build (--bin-dir), or cargo's own build of the stage.
+    let (out, _target_guard) = match &o.bin_dir {
+        Some(d) => {
+            eprintln!("release: {sha} takes its binaries from {} (no cargo build)", d.display());
+            (d.clone(), Cleanup(None))
+        }
+        None => {
+            let (target, guard) = match (&o.target_dir, &cfg.run) {
+                (Some(t), _) => (t.clone(), Cleanup(None)),
+                (None, Some(run)) => (run.join("release").join("target"), Cleanup(None)),
+                (None, None) => {
+                    let t = cfg.releases.join(format!(".target-{pid}"));
+                    (t.clone(), Cleanup(Some(t)))
+                }
+            };
+            fs::create_dir_all(&target).map_err(|e| format!("cannot create {}: {e}", target.display()))?;
+            eprintln!("release: building {sha} (target {})", target.display());
+            cargo.build(&stage, &target)?;
+            (target.join("release"), guard)
         }
     };
-    fs::create_dir_all(&target).map_err(|e| format!("cannot create {}: {e}", target.display()))?;
-    eprintln!("release: building {sha} (target {})", target.display());
-    cargo.build(&stage, &target)?;
 
     let bins = crate::workspace::expected_bins(&stage)?;
     if bins.is_empty() {
@@ -102,7 +116,6 @@ pub fn build(cfg: &Config, git: &dyn Git, cargo: &dyn Cargo, o: &BuildOpts) -> R
     }
     let bin_dir = stage.join("bin");
     fs::create_dir(&bin_dir).map_err(|e| format!("cannot create {}: {e}", bin_dir.display()))?;
-    let out = target.join("release");
     let mut missing = Vec::new();
     for b in &bins {
         let src = out.join(b);
