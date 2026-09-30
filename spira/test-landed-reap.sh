@@ -8,7 +8,7 @@
 #   ./test-landed-reap.sh
 #
 # WHY THIS EXISTS (sp-jci6o). bead_close_on_land is called from every LANDED land_mark site
-# — queue.sh, verdict.sh, batch.sh, landing.sh — and used to do nothing but flip the bead's
+# — queue.sh, verdict.sh, the batcher, landing.sh — and used to do nothing but flip the bead's
 # status. The per-pass Sending then had to re-walk every branch in every repository to
 # rediscover, by ancestry, which of them had just landed, which is the cost this bead
 # removes for queue-mode repositories. This suite proves the close itself now also reaps:
@@ -25,7 +25,7 @@
 #
 # defect: sp-jci6o
 # tier: T1
-# covers: spira/lib.sh spira/sending.sh spira/verdict.sh queue/src/* spira/batch.sh
+# covers: spira/lib.sh spira/sending.sh spira/verdict.sh queue/src/*
 # hermetic-ok: a stub bd (a JSON-file-per-id fixture) and local git repos — no database, no
 #   systemd, no real network
 set -uo pipefail

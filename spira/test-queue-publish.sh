@@ -13,7 +13,7 @@
 # foreign commit — the same seam test-publish-backlog.sh uses for its own alarm assertions.
 #
 # tier: T1
-# covers: queue/src/* spira/verdict.sh spira/lib.sh spira/conf.sh spira/attribute.sh
+# covers: queue/src/* spira/verdict.sh spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
