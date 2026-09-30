@@ -5,6 +5,17 @@
 
 use std::collections::BTreeMap;
 
+fn unquote(s: &str) -> String {
+    let b = s.as_bytes();
+    if b.len() >= 2 {
+        let (first, last) = (b[0], b[b.len() - 1]);
+        if (first == b'\'' && last == b'\'') || (first == b'"' && last == b'"') {
+            return s[1..s.len() - 1].to_string();
+        }
+    }
+    s.to_string()
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Env(BTreeMap<String, String>);
 
@@ -16,6 +27,12 @@ impl Env {
     /// Parses every line shaped `<prefix><REST>=<value>` (the bash's
     /// `sed -n 's/^\(PREFIX[A-Z_0-9]*\)=\(.*\)$/.../p'`), merging into this map. Lines that
     /// don't match are ignored, same as the sed filter.
+    ///
+    /// A value wrapped in one matching pair of quotes has them stripped — the bash read
+    /// every line through `eval`, which is shell quote removal on the assignment's RHS
+    /// (`SP_UNADOPTED_NAMES='sp-stray'` becomes `sp-stray`, not `'sp-stray'`). Only a single
+    /// outer pair is removed, not shell-parsed generally: cockpit.sh never emits anything
+    /// nested, escaped or substituted.
     pub fn merge_lines(&mut self, text: &str, prefix: &str) {
         for line in text.lines() {
             let Some(rest) = line.strip_prefix(prefix) else {
@@ -27,7 +44,7 @@ impl Env {
                 continue;
             }
             let key = format!("{prefix}{key_rest}");
-            let value = rest[eq + 1..].to_string();
+            let value = unquote(&rest[eq + 1..]);
             self.0.insert(key, value);
         }
     }
@@ -77,6 +94,15 @@ mod tests {
         assert_eq!(e.g("SP_UNLANDED_N"), "4");
         assert_eq!(e.g("SP_AT"), "1700000000");
         assert_eq!(e.g("SP_lowercase"), "?");
+    }
+
+    #[test]
+    fn merge_lines_strips_one_matching_pair_of_quotes_matching_evals_quote_removal() {
+        let mut e = Env::new();
+        e.merge_lines("SP_UNADOPTED_NAMES='sp-stray'\nSP_OTHER=\"sp-double\"\nSP_BARE=sp-bare\n", "SP_");
+        assert_eq!(e.g("SP_UNADOPTED_NAMES"), "sp-stray");
+        assert_eq!(e.g("SP_OTHER"), "sp-double");
+        assert_eq!(e.g("SP_BARE"), "sp-bare");
     }
 
     #[test]

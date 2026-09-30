@@ -402,7 +402,13 @@ fn czar_row(env: &Env, label: &str, tag: &str) -> String {
     )
 }
 
-fn czar_block(env: &Env) -> String {
+/// Per-class display of the four queue-check trigger classes, read from the `SP_CZAR_*`
+/// keys `cockpit.sh`'s `czar_triggers_keys` writes. `pub(super)` so `collect::tests` can
+/// assert each class renders `?` throughout when unset and is untouched by another
+/// class's keys — the T1 seam `test-watchtower.sh` used to reach by sourcing the bash
+/// file directly (`. ./watchtower.sh; collect_czar_block`), not reachable that way once
+/// the sweep is a compiled binary.
+pub(super) fn czar_block(env: &Env) -> String {
     let mut s = format!("  {:<22} {:<22} {:<12} {}\n", "class", "last fired", "handled by", "outcome");
     s += &czar_row(env, "deadlock", "DEADLOCK");
     s += &czar_row(env, "attribution-failed", "ATTRIB");
@@ -482,4 +488,37 @@ fn idle_while_ready_hits(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// UC-26/sp-m0qeh's T1 seam, ported: a class with no `SP_CZAR_*` keys set renders `?`
+    /// throughout, a fired class carries who handled it, and an unrelated class is
+    /// untouched by another class's keys (`test-watchtower.sh`'s "collect_czar_block() is
+    /// a T1 seam" section, which sourced the bash file directly — not reachable that way
+    /// once the sweep is a compiled binary, so the property moves here).
+    #[test]
+    fn czar_block_renders_unset_classes_as_unknown_throughout() {
+        let env = Env::new();
+        let block = czar_block(&env);
+        let row: Vec<&str> = block.lines().find(|l| l.contains("deadlock")).unwrap().split_whitespace().collect();
+        assert_eq!(row, vec!["deadlock", "?", "?", "?"]);
+    }
+
+    #[test]
+    fn czar_block_a_fired_class_carries_who_handled_it_and_leaves_others_untouched() {
+        let mut env = Env::new();
+        env.set("SP_CZAR_DEADLOCK_FIRED", "2026-09-20T10:00Z");
+        env.set("SP_CZAR_DEADLOCK_BY", "aeon-fake");
+        env.set("SP_CZAR_DEADLOCK_OUTCOME", "pending");
+        let block = czar_block(&env);
+
+        let deadlock: Vec<&str> = block.lines().find(|l| l.contains("deadlock")).unwrap().split_whitespace().collect();
+        assert_eq!(deadlock, vec!["deadlock", "2026-09-20T10:00Z", "aeon-fake", "pending"]);
+
+        let stalled: Vec<&str> = block.lines().find(|l| l.contains("loop-stalled")).unwrap().split_whitespace().collect();
+        assert_eq!(stalled, vec!["loop-stalled", "?", "?", "?"]);
+    }
 }

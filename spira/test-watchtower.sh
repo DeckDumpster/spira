@@ -1205,137 +1205,24 @@ nowant "low memory prevents nominal skip" \
        "SWEEP:NOMINAL" "$(head -1 "$TMP/ops-prompt" 2>/dev/null || echo "")"
 
 # ======================================================================================
-echo
-echo "collect_disk_mem() (UC-26, sp-m0qeh) is a T1 seam: sourcing watchtower must define it
-without running the sweep, and calling it directly must render the exact figures the T2 tests
-above just proved via a full subprocess run — same stub, same thresholds, in-process instead
-of forked:"
+# T1 SEAMS RETIRED (sp-lnmbq). Four blocks used to live here — collect_disk_mem(),
+# collect_czar_block(), collect_landing_field(), collect_gate_wait() — each sourcing
+# watchtower.sh directly (`. ./watchtower.sh; collect_xxx`) so the property could be
+# checked in-process instead of forking a whole run. That trick needed a bash script to
+# source; watchtower is a compiled binary now, so it cannot be sourced at all. Every one
+# of those properties is now a Rust unit test, run without forking anything:
+#   disk_mem::tests::{render_flags_breach_only_at_or_over_the_disk_threshold,
+#     render_flags_mem_breach_strictly_below_threshold, render_is_unknown_never_zero_on_a_failed_read}
+#   sweep::collect::tests::{czar_block_renders_unset_classes_as_unknown_throughout,
+#     czar_block_a_fired_class_carries_who_handled_it_and_leaves_others_untouched}
+#   landstate::tests::last_landed_picks_the_newest_landed_record,
+#     throttle::tests::minutes_since_last_landed_{is_none_with_no_landed_record,picks_the_newest_landed_record}
+#   gate_wait::tests::{picks_the_longest_wait_inside_the_window,
+#     rows_outside_the_window_are_excluded,no_rows_in_window_renders_unknown_not_zero,
+#     window_label_switches_from_minutes_to_hours}
+# The T2 behaviour these T1 seams cross-checked (same figures via a full `wt`/`wt_file`
+# subprocess run) is untouched, above and below this comment in this same suite.
 # ======================================================================================
-disk_mem_t1() {           # disk_mem_t1 [VAR=val ...] -> "$_disk_disp|$_mem_disp|$_disk_breach|$_mem_breach"
-    ( cd "$HERE" && env -i HOME="$TMP" PATH="$DF_CLEAN:$PATH" SPIRA_CONF=/nonexistent SPIRA_PATH="$DF_CLEAN" \
-        SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" "$@" \
-        bash -c 'set -uo pipefail
-                 . ./watchtower
-                 collect_disk_mem
-                 printf "%s|%s|%s|%s" "$_disk_disp" "$_mem_disp" "$_disk_breach" "$_mem_breach"' )
-}
-
-fresh
-rm -f "$TMP/ops-prompt"
-disk_mem_t1 >/dev/null
-[ ! -e "$TMP/ops-prompt" ] \
-    && ok "sourcing watchtower for collect_disk_mem files no sweep" \
-    || bad "sourcing watchtower for collect_disk_mem files no sweep" "ops-prompt was written"
-
-IFS='|' read -r t1_disk t1_mem t1_diskb t1_memb <<<"$(disk_mem_t1)"
-is "T1: ordinary disk usage renders the plain percentage" "12%" "$t1_disk"
-is "T1: ordinary disk usage is not a breach"               "0"  "$t1_diskb"
-
-IFS='|' read -r t1_disk t1_mem t1_diskb t1_memb <<<"$(disk_mem_t1 WT_DISK_PCT=97)"
-is "T1: disk at or above the warn threshold is a FAULT" "FAULT (97%, warn at 90%)" "$t1_disk"
-is "T1: ...and is flagged as a breach"                  "1" "$t1_diskb"
-
-IFS='|' read -r t1_disk t1_mem t1_diskb t1_memb <<<"$(disk_mem_t1 SPIRA_MEMINFO_PATH="$LOW_MEM")"
-is "T1: memory below the warn threshold is a FAULT" "FAULT (500MB, warn below 1500MB)" "$t1_mem"
-is "T1: ...and is flagged as a breach"              "1" "$t1_memb"
-
-# ======================================================================================
-echo
-echo "collect_czar_block() (UC-26, sp-m0qeh) is a T1 seam: sourcing watchtower must define
-it without running the sweep, and it must render each of the four trigger classes from the
-SP_CZAR_* variables the same way cockpit.env's eval leaves them, missing keys included:"
-# ======================================================================================
-czar_block_t1() {   # czar_block_t1 [VAR=val ...] -> $czar_block
-    ( cd "$HERE" && env -i HOME="$TMP" SPIRA_CONF=/nonexistent "$@" \
-        bash -c 'set -uo pipefail
-                 . ./watchtower
-                 collect_czar_block
-                 printf "%s" "$czar_block"' )
-}
-czar_row() { printf '%s\n' "$1" | grep -F "$2"; }
-
-fresh
-rm -f "$TMP/ops-prompt"
-czar_block_t1 >/dev/null
-[ ! -e "$TMP/ops-prompt" ] \
-    && ok "sourcing watchtower for collect_czar_block files no sweep" \
-    || bad "sourcing watchtower for collect_czar_block files no sweep" "ops-prompt was written"
-
-block="$(czar_block_t1)"
-row="$(czar_row "$block" deadlock)"
-want "T1: a class with no SP_CZAR_* keys set renders ? throughout" \
-     "?" "$(printf '%s\n' "$row" | awk '{print $2}')"
-
-block="$(czar_block_t1 SP_CZAR_DEADLOCK_FIRED=2026-09-20T10:00Z SP_CZAR_DEADLOCK_BY=aeon-fake SP_CZAR_DEADLOCK_OUTCOME=pending)"
-row="$(czar_row "$block" deadlock)"
-nowant "T1: a fired class does not fall back to ?" "?" "$row"
-want "T1: ...and carries who handled it through"    "aeon-fake" "$(printf '%s\n' "$row" | awk '{print $3}')"
-
-row="$(czar_row "$block" loop-stalled)"
-want "T1: an unrelated class is untouched by another class's keys" \
-     "?" "$(printf '%s\n' "$row" | awk '{print $2}')"
-
-# ======================================================================================
-echo
-echo "collect_landing_field() (UC-26, sp-fhzib) is a T1 seam: sourcing watchtower must
-define it without running the sweep, and calling it directly must render the same figures
-the T2 tests above proved via a full subprocess run, in-process instead of forked:"
-# ======================================================================================
-landing_field_t1() {   # landing_field_t1 [VAR=val ...] -> "$last_land_id|$since_land"
-    ( cd "$HERE" && env -i HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
-        WT_NOW="$NOW" "$@" \
-        bash -c 'set -uo pipefail
-                 now="$WT_NOW"
-                 . ./watchtower
-                 collect_landing_field
-                 printf "%s|%s" "$last_land_id" "$since_land"' )
-}
-
-fresh
-land_mark_at sp-land LANDED cafe1 "$(( NOW - 600 ))"
-IFS='|' read -r t1_id t1_since <<<"$(landing_field_t1)"
-is "T1: a LANDED record names the bead that landed" "sp-land" "$t1_id"
-is "T1: ...and renders its age in minutes"           "10"      "$t1_since"
-
-fresh
-land_mark sp-red1 RED cafe2 gate
-IFS='|' read -r t1_id t1_since <<<"$(landing_field_t1)"
-# last_land_id's own sentinel is "" (empty), not "?" — the heredoc's
-# ${last_land_id:-none recorded} is what turns it into words for the reader.
-is "T1: only RED leaves the bead id unset" ""  "$t1_id"
-is "T1: ...and renders the age as ?"       "?" "$t1_since"
-
-# ======================================================================================
-echo
-echo "collect_gate_wait() (UC-26, sp-fhzib) is a T1 seam: sourcing watchtower must
-define it without running the sweep, and calling it directly must bound the wait by TIME,
-not by row count, and render ? rather than 0 when nothing qualifies:"
-# ======================================================================================
-gate_wait_t1() {  # gate_wait_t1 [VAR=val ...] -> "$gate_wait_disp|$oldest_br|$gate_win_label"
-    ( cd "$HERE" && env -i HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
-        WT_NOW="$NOW" "$@" \
-        bash -c 'set -uo pipefail
-                 now="$WT_NOW"
-                 . ./watchtower
-                 collect_gate_wait
-                 printf "%s|%s|%s" "$gate_wait_disp" "$oldest_br" "$gate_win_label"' )
-}
-
-fresh
-{ row 90000 spira/sp-ancient 1584; row 600 spira/sp-recent 7; } > "$TMP/run/gate.log"
-IFS='|' read -r t1_disp t1_br t1_lbl <<<"$(gate_wait_t1)"
-is "T1: a row inside the window is reported" "7s"        "$t1_disp"
-is "T1: ...and names its branch"             "spira/sp-recent" "$t1_br"
-is "T1: ...and the window is named in the field" "last 6h" "$t1_lbl"
-
-fresh
-{ row 90000 spira/sp-ancient 1584; row 80000 spira/sp-older 900; } > "$TMP/run/gate.log"
-IFS='|' read -r t1_disp t1_br t1_lbl <<<"$(gate_wait_t1)"
-is "T1: nothing inside the window renders ?, never a bare zero" "?" "$t1_disp"
-
-fresh
-IFS='|' read -r t1_disp t1_br t1_lbl <<<"$(gate_wait_t1 SPIRA_WATCH_GATE_WINDOW=172800)"
-is "T1: the window is genuinely read from configuration" "last 48h" "$t1_lbl"
 
 # ======================================================================================
 echo
