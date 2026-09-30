@@ -543,7 +543,7 @@ REPOMAP_3LJK="$T/repomap-3ljk"
 printf 'home-3ljk | %s | push | origin/main | | true | self\ngitea-repo|%s|\n' \
     "$HOME_3LJK" "$GITEA_REPO" > "$REPOMAP_3LJK"
 : > "$BD_LOG"
-out_3ljk="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:/usr/lib/git-core" \
+out_3ljk="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:/usr/lib/git-core:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \

@@ -168,9 +168,140 @@ fn count_landings(world: &dyn World, repo_name_or_path: &str, since_ts: i64) -> 
         }
     };
     let subjects = world.git_log_subjects(&repo_path, since_ts, &base_ref);
-    let ids = engine::parse_landing_ids(&subjects);
-    eprintln!(
-        "DEBUG count_landings repo_name_or_path={repo_name_or_path:?} base_ref={base_ref:?} repo_path={repo_path:?} since_ts={since_ts} subjects={subjects:?} ids={ids:?}"
-    );
-    ids.len() as u64
+    engine::parse_landing_ids(&subjects).len() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use std::path::Path;
+
+    /// A `World` whose every answer is a canned value, to test `run`/`count_landings`'s
+    /// own orchestration without a database, a git checkout or the `lib.sh` seam.
+    #[derive(Default)]
+    struct FakeWorld {
+        home_repo: String,
+        repo_root: HashMap<String, PathBuf>,
+        /// `landref` answers keyed by the exact `repo_name_or_path` argument — deliberately
+        /// NOT keyed by, or assumed to be, any particular remote name. A base ref here can
+        /// be anything a remote's default branch resolves to ("gitea/master",
+        /// "upstream/trunk", …); count_landings must treat it as an opaque ref string, the
+        /// same way it treats "origin/main" — neither this fake nor count_landings itself
+        /// ever special-cases "origin" (that resolution lives entirely in the lib.sh seam,
+        /// `spira_landref`, which this bead does not port — DESIGN.md "Non-goals").
+        landref: HashMap<String, String>,
+        /// Commit subjects keyed by (repo_path, base_ref) — proves the exact ref
+        /// `landref` returned is the one actually passed to `git log`.
+        git_log: HashMap<(PathBuf, String), String>,
+        repo_map_text: String,
+        created: RefCell<Vec<(String, String, String)>>,
+    }
+
+    impl World for FakeWorld {
+        fn log(&self, _msg: &str) {}
+        fn read_watermark(&self) -> i64 {
+            0
+        }
+        fn read_lastpass(&self) -> i64 {
+            0
+        }
+        fn now(&self) -> i64 {
+            0
+        }
+        fn open_trigger_count(&self, _labels: &str) -> u64 {
+            0
+        }
+        fn lane_admitted(&self, _lane: &str) -> bool {
+            true
+        }
+        fn home_repo(&self) -> String {
+            self.home_repo.clone()
+        }
+        fn repo_root(&self, name: &str) -> Option<PathBuf> {
+            self.repo_root.get(name).cloned()
+        }
+        fn landref(&self, repo_path_or_name: &str) -> Option<String> {
+            self.landref.get(repo_path_or_name).cloned()
+        }
+        fn repo_map_text(&self) -> String {
+            self.repo_map_text.clone()
+        }
+        fn git_log_subjects(&self, repo_path: &Path, _since_ts: i64, base_ref: &str) -> String {
+            self.git_log.get(&(repo_path.to_path_buf(), base_ref.to_string())).cloned().unwrap_or_default()
+        }
+        fn detect_invalid_closed(&self) -> String {
+            String::new()
+        }
+        fn create_bead(&self, title: &str, labels: &str, description: &str) -> Result<(), String> {
+            self.created.borrow_mut().push((title.to_string(), labels.to_string(), description.to_string()));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn count_landings_treats_a_non_origin_base_ref_as_an_opaque_string() {
+        // Regression guard (per the Concierge, sp-0ekp7): count_landings must not assume
+        // or construct "origin/<branch>" anywhere — the base ref is whatever
+        // `spira_landref`'s seam call resolved, verbatim, and it may name any remote.
+        let repo_path = PathBuf::from("/repo/gitea-repo");
+        let mut w = FakeWorld::default();
+        w.landref.insert("/repo/gitea-repo".to_string(), "gitea/master".to_string());
+        w.git_log.insert(
+            (repo_path.clone(), "gitea/master".to_string()),
+            "sp-alt1: first landing on gitea remote\nsp-alt2: second landing on gitea remote\n".to_string(),
+        );
+        let n = count_landings(&w, "/repo/gitea-repo", 0);
+        assert_eq!(n, 2, "both landings on the non-origin remote's default branch must count");
+    }
+
+    #[test]
+    fn count_landings_by_name_resolves_repo_root_first() {
+        let repo_path = PathBuf::from("/repo/named");
+        let mut w = FakeWorld::default();
+        w.repo_root.insert("named-repo".to_string(), repo_path.clone());
+        w.landref.insert("named-repo".to_string(), "upstream/trunk".to_string());
+        w.git_log.insert((repo_path.clone(), "upstream/trunk".to_string()), "sp-x1: landed\n".to_string());
+        assert_eq!(count_landings(&w, "named-repo", 0), 1);
+    }
+
+    #[test]
+    fn count_landings_unresolvable_base_ref_counts_zero_and_logs() {
+        let w = FakeWorld::default();
+        assert_eq!(count_landings(&w, "/repo/nope", 0), 0);
+    }
+
+    #[test]
+    fn run_end_to_end_fires_the_landing_trigger_for_a_non_origin_satellite_repo() {
+        // The full repository-map → count_landings → threshold path, with a satellite repo
+        // whose only remote is not named "origin" — the exact shape of the scenario the
+        // Concierge asked to be covered (the real defect turned out to be in the bash
+        // test harness's own PATH construction, not here, but this is the regression
+        // guard on the Rust side of that contract either way).
+        let gitea_path = PathBuf::from("/repo/gitea-repo");
+        let home_path = PathBuf::from("/repo/home");
+        let mut w = FakeWorld::default();
+        w.home_repo = "home-repo".to_string();
+        w.repo_root.insert("home-repo".to_string(), home_path.clone());
+        w.landref.insert("home-repo".to_string(), "origin/main".to_string());
+        w.git_log.insert((home_path.clone(), "origin/main".to_string()), String::new());
+        w.landref.insert("/repo/gitea-repo".to_string(), "gitea/master".to_string());
+        w.git_log.insert(
+            (gitea_path.clone(), "gitea/master".to_string()),
+            "sp-alt1: first landing on gitea remote\nsp-alt2: second landing on gitea remote\n".to_string(),
+        );
+        w.repo_map_text = "gitea-repo|/repo/gitea-repo|\n".to_string();
+
+        // repo_root/is_dir gating in `run()` checks the filesystem directly for satellite
+        // rows (`Path::new(&path).is_dir()`); route around that by testing count_landings'
+        // contribution the same way `run()` sums it, since a fake filesystem is out of
+        // scope for this port (DESIGN.md "Non-goals" — no Rust reimplementation of the
+        // directory-existence checks the bash also just shelled out for).
+        let home_contribution = count_landings(&w, &w.home_repo(), 0);
+        let satellite_contribution = count_landings(&w, "/repo/gitea-repo", 0);
+        assert_eq!(home_contribution, 0);
+        assert_eq!(satellite_contribution, 2);
+        assert!(engine::landing_trigger(home_contribution + satellite_contribution, 2));
+    }
 }
