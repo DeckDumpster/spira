@@ -102,7 +102,7 @@ RMAP="$TMP/repo-map"
 printf '%s | %s | queue | main | | |\n' "$REPONAME" "$REPO" > "$RMAP"
 
 run() {
-    env -i PATH="$STUBBIN:$PATH" HOME="$TMP" \
+    env -i PATH="$SH:$STUBBIN:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$SH" \
         SPIRA_RUN="$RUN" \
@@ -553,7 +553,7 @@ printf 'RED %s %s\n'     "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ab03"
 > "$FORGE_LOG"; : > "$DIRTY_MERGE_LOG"; : > "$DIRTY_MAIL_LOG"
 printf '66601 in_progress\n' > "$RUNS_FILE"
 
-dirty_out="$(env -i PATH="$STUBBIN:$PATH" HOME="$TMP" \
+dirty_out="$(env -i PATH="$SH:$STUBBIN:$PATH" HOME="$TMP" \
     SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_RUN="$RUN" \
     SPIRA_DB="${SPIRA_DB:-/nonexistent}" SPIRA_BD="$SH/bd-stub.sh" BD_LOG="$BD_LOG" \
     SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$QUEUEDIR" \
@@ -593,7 +593,7 @@ import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
 
 real_run() {
-    env -i PATH="$STUBBIN:$PATH" HOME="$TMP" \
+    env -i PATH="$SH:$STUBBIN:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_RUN="$RUN" \
         SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD:-bd}" \
         SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$QUEUEDIR" \

@@ -87,7 +87,7 @@ openbatch() {
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
     SPIRA_PREFLIGHT_WALL_SECS=60 \
-        SPIRA_HOME="$SH" queue open-batch "$@" 2>&1
+        PATH="$SH:$PATH" SPIRA_HOME="$SH" queue open-batch "$@" 2>&1
 }
 
 seed() {

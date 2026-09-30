@@ -219,7 +219,7 @@ printf 'pid=%s\nstarted=%s\nrepo=spira\nbranch=spira/sp-cont\nphase=gate\n' \
     "$CONT_PID" "$(date +%s)" > "$LAND_RUN"
 printf '%s\n' "$CONT_NAME" > "$LAND_CONTAINERS"
 
-out="$(env -i PATH="$PATH" HOME="$HOME" \
+out="$(env -i PATH="$PROD_DIR:$BIN_DIR:$PATH" HOME="$HOME" \
     SPIRA_RUN="$SPIRA_RUN" \
     SPIRA_HOME="$HERE" \
     SPIRA_PROD="$PROD_DIR" \
