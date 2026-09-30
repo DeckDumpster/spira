@@ -55,12 +55,14 @@ spira/test-attempts.sh
 # suite reading the box, and requires them in different columns.
 spira/test-yield.sh
 
-# THE SOP LINT FENCE'S OWN POSITIVE CONTROL. gate-spira.sh calls sop.sh lint as a fence to
-# catch SOPs written directly with `bd remember` — the back door that bypasses the write
-# validator. Without a positive control, a lint that passes an empty shelf and a lint that
-# cannot detect anything look identical. This suite (which absorbed test-sop-lint.sh) plants
-# a malformed shelf via the SOP_SHELF_CMD seam and requires lint to name it; the gate's own
-# call into sop.sh lint is confirmed separately, at T0, by test-sop-gate-wired.sh.
+# THE SOP LINT FENCE'S OWN POSITIVE CONTROL. gate-spira.sh used to call `sop.sh lint` as a
+# fence to catch SOPs written directly with `bd remember` — the back door that bypasses the
+# write validator; that fence was never re-homed after gate-spira.sh's own retirement (see
+# test-sop-gate-wired.sh for why). sop.sh is now the `sop` crate (sp-8fsql): the validator
+# `write`/`lint`/`validate` all share is `cargo test -p sop`'s subject, not this suite's —
+# test-sop.sh is now a thin T1 wiring smoke test of the real binary against a real scratch
+# store (DESIGN.md §5). The gate's own (non-)call into `sop lint` is still confirmed, at T0,
+# by test-sop-gate-wired.sh.
 spira/test-sop.sh
 spira/test-sop-gate-wired.sh
 

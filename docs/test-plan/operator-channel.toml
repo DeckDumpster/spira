@@ -295,3 +295,8 @@ statement = "SOP validation (write and lint): SYMPTOM/CHECK/FIX present, MATCH i
 id = "UC-operator-channel-45"
 tier = "T2"
 statement = "The SOP ledger: applied appends one complete JSON record at the configured path, append-only in epoch order, and refuses bad arguments while writing nothing. A…"
+
+[use_case.uncovered]
+reason = "sop.sh is retired (sp-8fsql); applied's ledger-append decision tree (bad-argument refusals write nothing, one complete JSON record per call, epoch order, the three-valued log read) is now `logic::applied`/`ledger.rs` in the `sop` crate, covered by `cargo test -p sop` (sop/DESIGN.md §5), which plan-matrix's suite-header scan over spira/test-*.sh cannot see. spira/test-sop.sh is repointed to a thin T1 wiring smoke test of the real binary against a real scratch store; it still exercises `applied` end to end but the decision-tree cases it used to carry by name are what moved."
+date = "2026-09-30"
+bead = "sp-8fsql"

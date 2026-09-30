@@ -21,7 +21,7 @@ pub const SYSTEM_ALLOW: &[&str] = &[
     "echo", "printf", "date", "kill", "sleep", "wait", "read", "test", "mkdir", "rmdir", "rm", "mv", "cp", "ln",
     "stat", "sha256sum", "wc", "tr", "head", "tail", "tee", "diff", "patch", "timeout", "curl", "gcc", "nc",
     "dirname", "basename",
-    "setsid", "pgrep", "fuser", "script", "systemctl", "systemd-run",
+    "setsid", "pgrep", "fuser", "script", "systemctl", "systemd-run", "stty",
     "nodejs", // an alternate name for node on some platforms
     "gate_meter", "yield_note", "fayth_names", // shell functions, not programs
 ];

@@ -630,7 +630,7 @@ inventory this fence exists to keep out of a shared repository.
 **`--scan <file>`.** The one standalone mode spira-lint's CLI supports outside `--only`/`--root`
 (`main.rs`): scans one file's content against the same patterns and deny list, printing one
 offending token per line, exit 0 either way. `spira/inventory.sh --scan /dev/stdin` had one
-real caller beyond its own tests — `sop.sh write`/`validate`, checking a runbook body before
+real caller beyond its own tests — `sop write`/`validate`, checking a runbook body before
 it is staged — and `test-cockpit-remote.sh`'s positive control on two shipped files. Both now
 call `"$SPIRA_LINT_BIN" --only inventory --scan <file>`.
 
@@ -770,21 +770,19 @@ pattern is one `export TMUX_TMPDIR=…` clearing every bare call after it). Sepa
 file carries neither `CONCIERGE_SOCKET` nor `CONCIERGE_SESSION` anywhere, a non-comment line
 invoking `concierge.sh start/wake/here/stop` (with or without a quote before the subcommand).
 
-## Rule `gh-intake-lint`
+## Rule `gh-intake-lint` — RETIRED (sp-8fsql)
 
-Ported from `spira/gh-intake-lint.sh` (deleted).
+Was: ported from `spira/gh-intake-lint.sh` (deleted, sp-ekkak) to scan `spira/gh-intake.sh`
+for a mutating curl flag or a credential reference (law-beads-is-never-public).
 
-**Intent (law-beads-is-never-public).** The tracker is public and `gh-intake.sh` only reads
-it: a mutating curl flag (`-X POST/PATCH/PUT/DELETE`, `--data`, `-d `) is a write GitHub cannot
-take back, and a credential reference (`GITHUB_TOKEN`, `github.token`, an `Authorization`
-header) is a token the next caller can misuse.
-
-**Scope.** Exactly one file, `spira/gh-intake.sh`. Missing or unreadable refuses
-(`LintError::Refused`) rather than reporting clean — the bash original's `[ -r "$TARGET" ] ||
-exit 3`.
-
-**Violation.** A non-comment line matching the write or credential pattern. One finding per
-line, at its line, message the line text with leading whitespace stripped.
+Retired rather than kept refusing on a missing target: `spira/gh-intake.sh` itself is
+deleted (sp-8fsql; the `gh-intake` crate replaces it). The property this rule policed is now
+structural, not scanned — `gh-intake`'s `Http` port (`gh-intake/src/ports.rs`) has no
+parameter through which a credential could travel, and its one implementation (`real.rs`)
+never reads `GITHUB_TOKEN` or sets an `Authorization:` header. A regex over bash text cannot
+regress in a program that has no bash text to carry the regression; see
+`gh-intake/DESIGN.md` §2 and §5. Retired rather than ported, per rule one of the rewrite
+wave: a check whose subject is gone has no caller left to serve.
 
 ---
 
