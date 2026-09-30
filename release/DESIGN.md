@@ -495,6 +495,17 @@ suffix alone — resolving `Config` for them would refuse an uninstall on a box 
 directory cannot be found, which is exactly the state an uninstall may be reached from. `main.rs`
 resolves `Config` only inside the two branches that need it.
 
+**The `current`-or-`SPIRA_RELEASE` fallback** (`release_root_for_session_hook` in `main.rs`).
+`install`/`status` prefer `<releases>/current` when `Config` resolves AND that path actually
+exists — production's own shape, where a release rotates and `current` never does. When
+either is untrue (no `spira.toml`/`SPIRA_RELEASES` at all, or a releases directory with no
+`current` link yet), they fall back to `$SPIRA_RELEASE` itself as the release root directly,
+with no `current` join. This never fires in production; it fires in an environment with
+exactly one release and no rotation at all — `concierge.sh start`'s own test fixtures, and
+`testenv`'s synthetic per-run release — where "through `current`" has no meaning to begin
+with, and refusing to register anything would be strictly worse than addressing the one
+release that exists.
+
 **What is kept vs. dropped, against the script:**
 
 * Same four verbs, same `SessionStart`-only, no-matcher registration, same `PostCompact`

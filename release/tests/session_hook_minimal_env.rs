@@ -54,7 +54,7 @@ fn run_under_minimal_env(command: &str, stdin: &str) -> (i32, String) {
 }
 
 /// [`run_under_minimal_env`], against a caller-chosen `HOME` rather than this test process's
-/// real one — so a fixture can be isolated from the real host's own `spira.toml` and
+/// real one — so a fixture can be isolated from the real host's own config document and
 /// transcripts while still exercising the client's real minimal environment shape.
 fn run_under_minimal_env_as(home: &Path, command: &str, stdin: &str) -> (i32, String) {
     let home = home.display().to_string();
@@ -82,7 +82,7 @@ fn hook_and_meter_run_clean_under_the_clients_own_minimal_env() {
     let spira_config = build_spira_config();
 
     let tmp = testkit::TempDir::new("session-hook-minimal-env");
-    let home = tmp.path().join("home"); // fresh — no real spira.toml, no real transcripts
+    let home = tmp.path().join("home"); // fresh — no real host config document, no real transcripts
     std::fs::create_dir_all(&home).unwrap();
     let release_root = tmp.path().join("release");
     std::fs::create_dir_all(release_root.join("bin")).unwrap();
@@ -97,7 +97,7 @@ fn hook_and_meter_run_clean_under_the_clients_own_minimal_env() {
     // second checkout must never print into the operator's real sessions, but it means a
     // fixture must say, explicitly, that ITS OWN release IS the one in force. `SPIRA_CONF`
     // (the legacy pre-toml override conf.sh still reads) says so without touching the real
-    // host's spira.toml, and gives the hook a manifest with one real row rather than an
+    // host's config document, and gives the hook a manifest with one real row rather than an
     // empty one — the "no watchers means no output" case this is not trying to exercise.
     let run_dir = tmp.path().join("run");
     let manifest = tmp.path().join("watchers");

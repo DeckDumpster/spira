@@ -124,8 +124,9 @@ fn fail_err(m: String) -> (u8, String) {
 /// rotates, `current` never does, so the registered command never needs to change again.
 ///
 /// FALLS BACK TO `$SPIRA_RELEASE` ITSELF, taken as the release root directly with no
-/// `current` join, in two cases only: `Config` cannot resolve at all (no `spira.toml`, no
-/// `SPIRA_RELEASES`), or it resolves but the releases directory has no `current` link yet.
+/// `current` join, in two cases only: `Config` cannot resolve at all (no host config
+/// document, no `SPIRA_RELEASES`), or it resolves but the releases directory has no
+/// `current` link yet.
 /// This never fires in production, where `current` always exists and every launcher already
 /// sets `SPIRA_RELEASE` before calling this — it fires in a single-release environment with
 /// no rotation and no `current` concept at all (a test fixture's own synthetic release, or
