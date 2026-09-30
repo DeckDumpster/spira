@@ -1,0 +1,19 @@
+[package]
+name = "rule"
+version = "0.1.0"
+edition = "2021"
+description = "rule — enact, retire, list, show a statute in one command (sp-g9mhe, replaces rule.sh)."
+
+[lib]
+name = "rule"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rule"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
